@@ -392,7 +392,7 @@ def targetOf : FullActionA → CellId
   | .queueResizeA _ _ _ cell                => cell
   -- §MA-swiss: the 4 CapTP swiss-table effects act on the exporting/holding `exporter` cell (the
   -- `stateAuthB`-gated node the chained step touches).
-  | .exportSturdyRefA _ _ exporter _ _ _    => exporter
+  | .exportSturdyRefA _ _ exporter _ _      => exporter
   | .enlivenRefA _ _ exporter _             => exporter
   | .swissHandoffA _ _ _ exporter           => exporter
   | .swissDropA _ _ exporter                => exporter

@@ -27,6 +27,14 @@ extern lean_object *dregg_record_kernel_step_caps(lean_object *input);
  * re-encodes the resulting Option state (post-cells + post-caps + receipt-log length + commit). */
 extern lean_object *dregg_exec_full_turn(lean_object *input);
 
+/* The @[export]ed Lean `String -> String` GATED COMPLETE-TURN executor (FILL X): decodes the §WIDE wire
+ * (Turn envelope + action-tree node=auth+action+children + the 10-variant Authorization + all 45 effect
+ * arms + the escrow/nullifier/commitment/swiss/queue side-tables), runs the PROVED gated tree executor
+ * `FullForestAuth.execFullForestG` (the credentialValid ∧ cap-authority ∧ caveat-discharge fail-closed
+ * gate in front of `execFullA`, all-or-nothing), and re-encodes the §WIDE output (post-state + receipt-log
+ * length + commit; on rollback ok:0 echoes the unchanged pre-state). */
+extern lean_object *dregg_exec_full_forest_auth(lean_object *input);
+
 /* Returns 0 on success, 1 if module initialization reported an IO error. */
 int dregg_ffi_init(void) {
     lean_initialize_runtime_module();
@@ -97,6 +105,27 @@ size_t dregg_exec_full_turn_str(const char *in_utf8, char *out, size_t out_cap) 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_exec_full_turn(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+/* dregg_exec_full_forest_auth_str — the C string bridge over the Lean `String -> String` GATED
+ * COMPLETE-TURN executor export (FILL X). Identical marshalling discipline as the bridges above; it drives
+ * `dregg_exec_full_forest_auth`, whose input wire is the §WIDE `{"state":STATEW,"turn":TURNW}` and whose
+ * output is `{"state":STATEW,"loglen":N,"ok":B}`. The executed object is the credential-AWARE
+ * `FullForestAuth.execFullForestG` (a forged per-node credential ⇒ whole-turn rollback). Same return
+ * contract (full byte length; (size_t)-1 only on an unusable buffer). */
+size_t dregg_exec_full_forest_auth_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_exec_full_forest_auth(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

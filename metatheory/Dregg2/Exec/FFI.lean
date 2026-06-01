@@ -1599,7 +1599,7 @@ field names as JSON strings, the swiss `rights`/`held` as the narrow `AUTHS` arr
       | {"qenq":[id,m,actor,cell,depId,dAsset,deposit]}  -- queueEnqueueA
       | {"qdeq":[id,actor,cell,depId,deposit]}   -- queueDequeueA
       | {"qresize":[id,newCap,actor,cell]}       -- queueResizeA
-      | {"export":[sw,actor,exporter,target,AUTHS,AUTHS]}  -- exportSturdyRefA(rights,held)
+      | {"export":[sw,actor,exporter,target,AUTHS]}  -- exportSturdyRefA(rights); held read from committed caps
       | {"enliven":[sw,actor,exporter,AUTHS]}    -- enlivenRefA(claimed)
       | {"shandoff":[sw,certHash,introducer,exporter]}     -- swissHandoffA
       | {"sdrop":[sw,actor,exporter]}            -- swissDropA
@@ -1684,9 +1684,9 @@ def encodeActionW : FullActionA → String
         ++ toString depId ++ "," ++ toString deposit ++ "]}"
   | .queueResizeA id newCap actor cell => "{\"qresize\":[" ++ toString id ++ "," ++ toString newCap ++ ","
                                             ++ toString actor ++ "," ++ toString cell ++ "]}"
-  | .exportSturdyRefA sw actor exporter target rights held =>
+  | .exportSturdyRefA sw actor exporter target rights =>
       "{\"export\":[" ++ toString sw ++ "," ++ toString actor ++ "," ++ toString exporter ++ ","
-        ++ toString target ++ "," ++ encodeAuthsW rights ++ "," ++ encodeAuthsW held ++ "]}"
+        ++ toString target ++ "," ++ encodeAuthsW rights ++ "]}"
   | .enlivenRefA sw actor exporter claimed =>
       "{\"enliven\":[" ++ toString sw ++ "," ++ toString actor ++ "," ++ toString exporter ++ ","
         ++ encodeAuthsW claimed ++ "]}"
@@ -1941,8 +1941,8 @@ def parseActionW (cs : PState) : Option (FullActionA × PState) :=
   match lit "{\"export\":[" cs with
   | some r0 => do
       let (sw, r1) ← parseNat r0; let (actor, r2) ← cN r1; let (exporter, r3) ← cN r2
-      let (target, r4) ← cN r3; let (rights, r5) ← cA r4; let (held, r6) ← cA r5; let r7 ← lit "]}" r6
-      some (.exportSturdyRefA sw actor exporter target rights held, r7)
+      let (target, r4) ← cN r3; let (rights, r5) ← cA r4; let r6 ← lit "]}" r5
+      some (.exportSturdyRefA sw actor exporter target rights, r6)
   | none =>
   match lit "{\"enliven\":[" cs with
   | some r0 => do
@@ -2018,7 +2018,7 @@ def allActions : List FullActionA :=
   , .queueEnqueueA 117 118 119 120 121 122 (-123)
   , .queueDequeueA 124 125 126 127 (-128)
   , .queueResizeA 129 130 131 132
-  , .exportSturdyRefA 133 134 135 136 [.read] [.read, .write, .grant]
+  , .exportSturdyRefA 133 134 135 136 [.read]
   , .enlivenRefA 137 138 139 [.call]
   , .swissHandoffA 140 141 142 143
   , .swissDropA 144 145 146 ]
@@ -2031,40 +2031,127 @@ def allActionsRoundtrip : Bool := allActions.all actionRoundtrips
 -- a couple of spot checks of the actual wire bytes:
 #eval encodeActionW (.balanceA { actor := 1, src := 2, dst := 3, amt := -4 } 5)
 -- {"bal":[1,2,3,-4,5]}
-#eval encodeActionW (.exportSturdyRefA 133 134 135 136 [.read] [.read, .write])
--- {"export":[133,134,135,136,[0],[0,1]]}
+#eval encodeActionW (.exportSturdyRefA 133 134 135 136 [.read])
+-- {"export":[133,134,135,136,[0]]}
 -- fail-closed on an unknown tag:
 #eval (parseActionW "{\"bogus\":[1]}".toList).isNone                         -- true
 -- fail-closed on a wrong-arity bal (missing asset):
 #eval (parseActionW "{\"bal\":[1,2,3,-4]}".toList).isNone                    -- true
+
+/-! ## §W5c — the per-node CAVEAT codec (the within-cell, state-reading discharge leg, TRANSPORTED).
+
+THE SOUNDNESS FIX. The gated executor's third gate leg `caveatsDischarged na s` reads the node's
+PRE-state `s` against the node's tiered caveats (`FullForestAuth.GatedCaveat`: a `DriftStable.DriftTier`
+tag + a `check : RecChainedState → Bool` reading the node's own target cell). Until now the §WIDE wire
+carried NO caveats — so the lift supplied an EMPTY caveat list and `caveatsDischarged` ADMITTED BY
+CONSTRUCTION (`[].all _ = true`), silently un-enforcing the whole caveat thread over the swap boundary.
+We now TRANSPORT the caveat(s) on the wire, so a node whose caveat is VIOLATED by the wire pre-state
+makes the gate FAIL — `caveatsDischarged` has REAL teeth over `@[export] dregg_exec_full_forest_auth`.
+
+A transported caveat is a within-cell BALANCE-THRESHOLD read — exactly the `FullForestAuth.Demo`
+`trueCaveat`/`falseCaveat` shape: "cell C holds ≥ M of asset A", a `monotone` (drift-stable) read of a
+cell's balance in the wire pre-state. It carries its `DriftTier` tag (so a `.coordinated` caveat
+fail-closes intra-cell, routed to `CrossCaveat` — the dregg1 `authorize.rs:1608` cross-cell hole). The
+grammar (positionally deterministic, fail-closed):
+
+    WCAVEAT  := [tier,cell,asset,min]      (tier ∈ {0,1,2,3}; cell/asset : Nat; min : signed Int)
+    WCAVEATS := [] | [WCAVEAT(,WCAVEAT)*]
+
+where tier 0=monotone, 1=reservation, 2=locked, 3=coordinated (the `DriftStable.DriftTier` order). The
+caveat reads `s.kernel.bal cell asset ≥ min` on the node's PRE-state; a `coordinated` tier fail-closes
+(routed to `CrossCaveat`). The wire `min` is a SIGNED `Int` (balances are signed). -/
+
+/-- A WIRE caveat: a tiered, within-cell balance-threshold read TRANSPORTED on the node. `tier` is the
+`DriftStable.DriftTier` ordinal (0=monotone/1=reservation/2=locked/3=coordinated); the discharge
+condition is `bal cell asset ≥ min` on the node's pre-state (the `.coordinated` tier fail-closes,
+routed to `CrossCaveat`). This is the wire form of `FullForestAuth.GatedCaveat`. -/
+structure WCaveat where
+  /-- The drift-tier ordinal (0=monotone/1=reservation/2=locked/3=coordinated). -/
+  tier  : Nat
+  /-- The cell whose balance the caveat reads (the node's own target cell, within-cell). -/
+  cell  : CellId
+  /-- The asset the threshold is on. -/
+  asset : AssetId
+  /-- The signed lower bound: the caveat HOLDS iff `bal cell asset ≥ min` on the pre-state. -/
+  min   : Int
+
+/-- Encode one `WCAVEAT` `[tier,cell,asset,min]`. -/
+def encodeCaveatW (c : WCaveat) : String :=
+  "[" ++ toString c.tier ++ "," ++ toString c.cell ++ "," ++ toString c.asset ++ ","
+    ++ toString c.min ++ "]"
+
+/-- Parse one `WCAVEAT` `[tier,cell,asset,min]` (tier strict to {0,1,2,3}; `min` signed). Fail-closed. -/
+def parseCaveatW (cs : PState) : Option (WCaveat × PState) := do
+  let r0 ← lit "[" cs
+  let (tier, r1) ← parseNat r0
+  if tier > 3 then none else
+  let (cell, r2) ← cN r1
+  let (asset, r3) ← cN r2
+  let (min, r4) ← cI r3
+  let r5 ← lit "]" r4
+  some ({ tier := tier, cell := cell, asset := asset, min := min }, r5)
+
+/-- Encode a `WCAVEATS` array `[WCAVEAT(,WCAVEAT)*]` (or `[]`). -/
+def encodeCaveatsW : List WCaveat → String
+  | []      => "[]"
+  | c :: cs => "[" ++ encodeCaveatW c
+                 ++ (cs.foldl (fun acc x => acc ++ "," ++ encodeCaveatW x) "") ++ "]"
+
+/-- Parse a `WCAVEATS` array `[WCAVEAT(,WCAVEAT)*]` (or `[]`). Fuel-seeded by the wire length. -/
+def parseCaveatsW (cs : PState) : Option (List WCaveat × PState) :=
+  match lit "[]" cs with
+  | some rest => some ([], rest)
+  | none =>
+    match lit "[" cs with
+    | none => none
+    | some r0 =>
+      let rec loop (fuel : Nat) (cs : PState) : Option (List WCaveat × PState) :=
+        match fuel with
+        | 0 => none
+        | fuel + 1 =>
+          match parseCaveatW cs with
+          | none => none
+          | some (c, r1) =>
+            match lit "," r1 with
+            | some r2 => match loop fuel r2 with
+                         | some (rest, r3) => some (c :: rest, r3)
+                         | none => none
+            | none => match lit "]" r1 with
+                      | some r3 => some ([c], r3)
+                      | none => none
+      loop (cs.length + 1) r0
 
 /-! ## §W5 — the recursive ACTION-TREE codec (`FullForestA` = action + children[], + auth decoration).
 
 dregg1's turn is a CALL-FOREST: a node carries its action AND a list of delegated child subtrees (the
 `DelegationMode::None` default runs each child on the parent's target cell). META-FILL A's
 `FullForest.FullForestA` is exactly this tree; `execFullForestA` runs it all-or-nothing, per-asset.
-The wide codec marshals the WHOLE tree — and carries the `Authorization` WHO on every node (the
-META-FILL D decoration), round-tripped FAITHFULLY even though the executed `execFullForestA` erases it
-(the executed auth GATE is `FullForestAuth.execFullForestG`, a separate keystone; here the wire
-TRANSPORTS the credential). The grammar (recursive):
+The wide codec marshals the WHOLE tree — and carries the `Authorization` WHO PLUS the per-node CAVEATS
+on every node (the META-FILL D decoration), round-tripped FAITHFULLY. The executed ungated
+`execFullForestA` erases BOTH (auth + caveats), but the executed gated `FullForestAuth.execFullForestG`
+ENFORCES them: the credential GATES (WHO) and the caveats GATE (the within-cell state-reading discharge
+leg). The grammar (recursive):
 
-    NODE  := {"auth":AUTH,"action":ACTIONW,"children":KIDS}
+    NODE  := {"auth":AUTH,"caveats":WCAVEATS,"action":ACTIONW,"children":KIDS}
     KIDS  := [] | [EDGE(,EDGE)*]
     EDGE  := {"holder":N,"keep":AUTHS,"cap":CAP,"sub":NODE}
     CAP   := {"null":0} | {"node":N} | {"ep":[N,AUTHS]}         (the narrow cap codec, reused)
 
-The `auth` field is the per-node `Authorization Nat Nat` (the WHO); `action` the 51-arm `FullActionA`;
-`children` the delegated subtrees, each carrying the delegation edge data (holder / attenuation
-`keep` / `parentCap`). The tree recursion is fuel-bounded (seeded with the wire length).
+The `auth` field is the per-node `Authorization Nat Nat` (the WHO); `caveats` the per-node
+`List WCaveat` (the discharge leg, §W5c); `action` the 51-arm `FullActionA`; `children` the delegated
+subtrees, each carrying the delegation edge data (holder / attenuation `keep` / `parentCap`). The tree
+recursion is fuel-bounded (seeded with the wire length).
 
-We carry the auth as a SIDECAR `List (Authorization Nat Nat)` (pre-order), parallel to the structural
-`FullForestA` we execute — the executed tree is `eraseAuth` (drop the auth), so the proved
-`execFullForestA` runs UNCHANGED while the wire faithfully transports every node's credential. -/
+The executed tree is `eraseAuth` (drop the auth AND the caveats — they are ledger-orthogonal), so the
+proved `execFullForestA` runs UNCHANGED; the gated `execFullForestG` carries the caveats into the gate
+(`liftForestG`, §WG2) so a violated caveat fail-closes the whole turn. -/
 
 mutual
-/-- A WIRE node: its credential, its action, and its children (each a delegation edge to a node). -/
+/-- A WIRE node: its credential, its tiered caveats, its action, and its children (each a delegation
+edge to a node). -/
 structure WForest where
   auth     : AuthW
+  caveats  : List WCaveat
   action   : FullActionA
   children : List WChild
 
@@ -2077,10 +2164,11 @@ structure WChild where
 end
 
 mutual
-/-- Project a `WForest` onto the proved structural `FullForest.FullForestA` (drop the auth — the
-executed tree the conservation/no-amplify theorems are stated over). -/
+/-- Project a `WForest` onto the proved structural `FullForest.FullForestA` (drop the auth AND the
+caveats — the executed tree the conservation/no-amplify theorems are stated over; both are
+ledger-orthogonal). -/
 def eraseAuth : WForest → FullForestA
-  | ⟨_, a, kids⟩ => ⟨a, eraseAuthChildren kids⟩
+  | ⟨_, _, a, kids⟩ => ⟨a, eraseAuthChildren kids⟩
 /-- Project a child-edge list onto the ungated `FullChildA` edges. -/
 def eraseAuthChildren : List WChild → List FullChildA
   | []                       => []
@@ -2090,7 +2178,7 @@ end
 mutual
 /-- The pre-order list of every node's `Authorization` (the WHO sidecar — the credential transport). -/
 def authsOf : WForest → List AuthW
-  | ⟨na, _, kids⟩ => na :: authsOfChildren kids
+  | ⟨na, _, _, kids⟩ => na :: authsOfChildren kids
 /-- The pre-order auth list of a child-edge list. -/
 def authsOfChildren : List WChild → List AuthW
   | []                     => []
@@ -2100,10 +2188,11 @@ end
 /-! ### Tree encoder. -/
 
 mutual
-/-- Encode a `WForest` node `{"auth":AUTH,"action":ACTIONW,"children":KIDS}`. -/
+/-- Encode a `WForest` node `{"auth":AUTH,"caveats":WCAVEATS,"action":ACTIONW,"children":KIDS}`. -/
 def encodeForestW : WForest → String
-  | ⟨na, a, kids⟩ =>
-      "{\"auth\":" ++ encodeAuthW na ++ ",\"action\":" ++ encodeActionW a
+  | ⟨na, cavs, a, kids⟩ =>
+      "{\"auth\":" ++ encodeAuthW na ++ ",\"caveats\":" ++ encodeCaveatsW cavs
+        ++ ",\"action\":" ++ encodeActionW a
         ++ ",\"children\":" ++ encodeChildrenW kids ++ "}"
 /-- Encode a `KIDS` array `[EDGE(,EDGE)*]` (or `[]`). -/
 def encodeChildrenW : List WChild → String
@@ -2126,12 +2215,14 @@ def parseForestW (fuel : Nat) (cs : PState) : Option (WForest × PState) :=
   | fuel + 1 => do
       let r0 ← lit "{\"auth\":" cs
       let (na, r1) ← parseAuthW fuel r0
-      let r2 ← lit ",\"action\":" r1
+      let rc ← lit ",\"caveats\":" r1
+      let (cavs, rc1) ← parseCaveatsW rc
+      let r2 ← lit ",\"action\":" rc1
       let (a, r3) ← parseActionW r2
       let r4 ← lit ",\"children\":" r3
       let (kids, r5) ← parseChildrenW fuel r4
       let r6 ← lit "}" r5
-      some (⟨na, a, kids⟩, r6)
+      some (⟨na, cavs, a, kids⟩, r6)
 /-- Parse a `KIDS` array `[EDGE(,EDGE)*]` (or `[]`). -/
 def parseChildrenW (fuel : Nat) (cs : PState) : Option (List WChild × PState) :=
   match lit "[]" cs with
@@ -2174,14 +2265,16 @@ end
 
 /-! ### §W5-eval — the action-tree round-trips (a 2-level tree with auth on each node). -/
 
-/-- A demo tree: root mints to cell 5 under a signature credential, with ONE delegated child that
-transfers, itself carrying a token credential and a grandchild that revokes under `unchecked`. -/
+/-- A demo tree: root mints to cell 5 under a signature credential AND a within-cell caveat (cell 0
+holds ≥ 0 of asset 0, a monotone read), with ONE delegated child that transfers, itself carrying a
+token credential and a grandchild that revokes under `unchecked`. The caveat fields exercise the
+§W5c codec so the round-trip is non-trivial. -/
 def demoTree : WForest :=
-  ⟨ .signature 7 7, .mintA 1 5 0 50,
+  ⟨ .signature 7 7, [⟨0, 0, 0, 0⟩], .mintA 1 5 0 50,
     [ ⟨ 9, [.read, .write], .node 5,
-        ⟨ .token 3 3, .balanceA { actor := 5, src := 5, dst := 6, amt := 10 } 0,
+        ⟨ .token 3 3, [], .balanceA { actor := 5, src := 5, dst := 6, amt := 10 } 0,
           [ ⟨ 11, [.read], .endpoint 5 [.write],
-              ⟨ .unchecked, .revoke 5 12, [] ⟩ ⟩ ] ⟩ ⟩ ] ⟩
+              ⟨ .unchecked, [], .revoke 5 12, [] ⟩ ⟩ ] ⟩ ⟩ ] ⟩
 
 /-- Round-trip a `WForest` through the wire (compare re-encodings; no BEq on the tree). -/
 def forestRoundtrips (f : WForest) : Bool :=
@@ -2644,7 +2737,7 @@ def wideDemoState : WState :=
 signature credential. Actor 0 OWNS cell 0 ⇒ the transfer commits, conserving asset 0 (100+5 = 70+35). -/
 def wideDemoTurn : WTurn :=
   { agent := 0, nonce := 3, fee := 10, validUntil := 1000, prevHash := 0
-    root := ⟨ .signature 7 7, .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
+    root := ⟨ .signature 7 7, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
 
 /-- The complete-turn WIRE for the demo (state + envelope/tree). -/
 def wideDemoInput : String :=
@@ -2658,7 +2751,7 @@ def wideDemoInput : String :=
 `execFullForestA = none` ⇒ echo the UNCHANGED state, ok:0, loglen:0. -/
 def wideRollbackTurn : WTurn :=
   { agent := 0, nonce := 0, fee := 0, validUntil := 0, prevHash := 0
-    root := ⟨ .unchecked, .balanceA { actor := 0, src := 0, dst := 1, amt := 1000 } 0, [] ⟩ }
+    root := ⟨ .unchecked, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 1000 } 0, [] ⟩ }
 
 #eval execFullTurnWide
   ("{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn wideRollbackTurn ++ "}")
@@ -2759,3 +2852,321 @@ theorem toHex32_length (n : Nat) : (toHex32 n).toList.length = 64 := by
 #eval (lowerForestA (eraseAuth demoTree)).length == (authsOf demoTree).length   -- true (#actions = #nodes)
 
 #assert_axioms toHex32_length
+
+/-! # §WG — the GATED complete-turn export `dregg_exec_full_forest_auth` (FILL X).
+
+`execFullTurnWide` (`§W7`, the `dregg_exec_full_turn_wide` export) decodes the complete turn but runs the
+ungated `FullForest.execFullForestA (eraseAuth root)` — it ERASES the per-node `Authorization` and never
+fires the auth GATE. THIS section wires the C entry to the REAL gated executor
+`FullForestAuth.execFullForestG` (META-FILL D): per node the 3-part FAIL-CLOSED gate `credentialValid ∧
+capAuthorityG ∧ caveatsDischarged` fires IN FRONT of `execFullA`, then `execFullForestG` runs the gated
+tree all-or-nothing. The wire's per-node credential (the WHO) is no longer a dead decoration — it GATES.
+
+## What the gate executes, and why this is faithful
+
+The wire transports the `Authorization Nat Nat` per node (`§W3`). `execFullForestG` runs over a
+`FullForestG` whose `NodeAuth` decoration carries the credential PLUS the WHAT (`AuthMode`/`AuthContext`)
+and the caveat legs. The wire carries ONLY the credential, so the lift supplies the WHAT/caveat legs from
+ADMITTING defaults (`Demo.baseCapCtx`'s `.unchecked (Guard.all [])` cap mode — `authModeAdmits = true` for
+all inputs — and an EMPTY caveat list — `[].all _ && chainGateG none = true` for all inputs). The gate then
+reduces to its WHO leg: `gateOK na s = credentialValidG na = portalVerify (liftAuthW na.cred)`, EXACTLY the
+credential the wire carries. So a genuine credential (proof echoes statement under the §1 `Crypto.Reference`
+oracle) COMMITS; a forged one (`portalVerify = false`) ⇒ `none` ⇒ whole-forest ROLLBACK. The WHAT/caveat
+legs are present (the gate is the full 3-conjunction) but pinned to admit, isolating the wire-carried WHO
+as the load-bearing leg — the honest wiring of a codec that transports the credential and nothing else.
+
+The carriers are `Crypto.Reference`'s `D = P = Int` (the §1 portal realization); the wire's `Nat` digest /
+proof fields are lifted Nat→Int by `liftAuthW` (`oneOf` recurses). The EXECUTED object is the PROVED
+`execFullForestG`, carrying `execFullForestG_conserves_per_asset` / `_no_amplify` / `_each_attests` /
+`_unauthorized_fails` (`FullForestAuth.lean §7-§8`) — conservation/Granovetter/attestation SURVIVE the gate.
+
+## All-or-nothing rollback
+
+`OUT := {"state":STATEW,"loglen":N,"ok":B}` (the SAME shape as `§W7`). On a committed gated turn we emit the
+post-state at the input's orderings with `ok:1`; on a tree that aborts on ANY gate leg or any unauthorized
+action (`execFullForestG = none`) we ECHO the UNCHANGED input state with `loglen:0` and `ok:0` — the rollback
+is observable. On a malformed wire we fail-closed to an empty state with `ok:0`. -/
+
+open Dregg2.Exec.FullForestAuth (Authorization execFullForestG GatedCaveat portalVerify caveatsDischarged)
+open Dregg2.Exec.FullForestAuth.Demo (Dg Pf St Wt DNodeAuth DForest DChild mkAuth)
+
+/-- The trivial verify seam the gated dispatcher's signature needs (`Verifiable St Wt`). The WHAT leg of the
+gated node is `.unchecked (Guard.all [])`, which does NOT consult `Verify`; this instance only pins the type
+so `execFullForestG` over the Demo carriers elaborates (mirrors `Demo.demoVerifiable`, which is `local` and
+thus not visible here). -/
+local instance fillxVerifiable : Dregg2.Laws.Verifiable St Wt where
+  Verify _ _ := true
+
+/-! ## §WG1 — lift the wire credential `Authorization Nat Nat → Authorization Int Int`.
+
+The §1 portal is realized over `Crypto.Reference` (`D = P = Int`), so the wire's `Nat` digest/proof fields
+are coerced Nat→Int (the value is preserved; `Int.ofNat` is injective so a genuine credential stays genuine
+and a forged one stays forged). `oneOf` recurses through its candidate list (mutual, structural). -/
+
+/-! ### §WG1c — lift the wire caveat into a `FullForestAuth.GatedCaveat` (the discharge leg).
+
+The wire caveat `[tier,cell,asset,min]` becomes a `GatedCaveat` whose `tier` is the decoded
+`DriftStable.DriftTier` and whose `check` reads `s.kernel.bal cell asset ≥ min` on the pre-state — the
+SAME shape as `FullForestAuth.Demo.trueCaveat`/`falseCaveat`. A `.coordinated` (tier 3) caveat
+fail-closes intra-cell (`GatedCaveat.holds` routes it to `CrossCaveat`). With this lift the gate's
+`caveatsDischarged` leg consults the TRANSPORTED caveat — no longer admit-by-construction. -/
+
+/-- Decode the wire tier ordinal to a `DriftStable.DriftTier` (`>3` clamps to `.monotone`, but the
+parser already rejects `tier>3`). -/
+def liftTier : Nat → Dregg2.Confluence.DriftStable.DriftTier
+  | 0 => .monotone
+  | 1 => .reservation
+  | 2 => .locked
+  | _ => .coordinated
+
+/-- Lift a wire `WCaveat` to a `FullForestAuth.GatedCaveat`: the decoded `DriftTier` + the within-cell
+balance-threshold read `bal cell asset ≥ min` on the node's pre-state. THE caveat the gate now
+enforces over the wire. -/
+def liftCaveatW (c : WCaveat) : GatedCaveat :=
+  { tier := liftTier c.tier
+  , check := fun s => decide (c.min ≤ s.kernel.bal c.cell c.asset) }
+
+/-- Lift the per-node wire caveat list. -/
+def liftCaveatsW : List WCaveat → List GatedCaveat
+  | []      => []
+  | c :: cs => liftCaveatW c :: liftCaveatsW cs
+
+mutual
+/-- Lift a wire `Authorization Nat Nat` to the `Crypto.Reference`-typed `Authorization Int Int` (Nat→Int on
+every field; `oneOf` recurses). The WHO the gate verifies. -/
+def liftAuthW : AuthW → Authorization Dg Pf
+  | .signature pk sig             => .signature (Int.ofNat pk) (Int.ofNat sig)
+  | .proof vk pf ba br            => .proof (Int.ofNat vk) (Int.ofNat pf) ba br
+  | .breadstuff tok               => .breadstuff tok
+  | .bearer dm ds stark           => .bearer (Int.ofNat dm) (Int.ofNat ds) stark
+  | .unchecked                    => .unchecked
+  | .capTpDelivered im sm isig ss => .capTpDelivered (Int.ofNat im) (Int.ofNat sm) (Int.ofNat isig) (Int.ofNat ss)
+  | .custom st pf                 => .custom (Int.ofNat st) (Int.ofNat pf)
+  | .oneOf cands i                => .oneOf (liftAuthListW cands) i
+  | .stealth otp eph sig          => .stealth (Int.ofNat otp) (Int.ofNat eph) (Int.ofNat sig)
+  | .token key sig                => .token (Int.ofNat key) (Int.ofNat sig)
+/-- Lift a wire `oneOf` candidate list. -/
+def liftAuthListW : List AuthW → List (Authorization Dg Pf)
+  | []      => []
+  | a :: as => liftAuthW a :: liftAuthListW as
+end
+
+/-! ## §WG2 — decorate each wire node into a `FullForestG` over the Demo carriers.
+
+Each wire node `(auth, caveats, action, children)` becomes a gated node carrying
+`mkGAuth (liftAuthW auth) (liftCaveatsW caveats)` — the lifted credential (the WHO) PLUS the
+TRANSPORTED caveats (the discharge leg) AND the admitting WHAT (`.unchecked (Guard.all [])`). The gate's
+load-bearing legs are now the wire-carried WHO **and** the wire-carried CAVEATS — the caveat leg is no
+longer admit-by-construction. The action/children are the SAME structural data (`eraseG` of the result
+equals `eraseAuth` of the wire node, so the executed COMMIT run agrees with `§W7` exactly WHEN every
+credential AND caveat passes). -/
+
+/-- Build the gated `NodeAuth` from a lifted credential + lifted caveats: the WHO is the credential; the
+CAVEATS are the transported within-cell discharge leg; the WHAT (`.unchecked (Guard.all [])`) is pinned
+to admit. The gate is `credentialValid ∧ capAuthorityG ∧ caveatsDischarged`, with the caveat leg now
+fed the wire-carried caveats. (`Demo.mkAuth cred cavs` is exactly this decoration.) -/
+def mkGAuth (cred : Authorization Dg Pf) (cavs : List GatedCaveat) : DNodeAuth := mkAuth cred cavs
+
+mutual
+/-- Lift a wire `WForest` to a gated `Demo.DForest`: decorate the node with the lifted credential AND
+the lifted caveats (`mkGAuth (liftAuthW auth) (liftCaveatsW caveats)`), keep the structural action, lift
+the children. -/
+def liftForestG : WForest → DForest
+  | ⟨na, cavs, a, kids⟩ => ⟨mkGAuth (liftAuthW na) (liftCaveatsW cavs), a, liftChildrenG kids⟩
+/-- Lift a wire child-edge list to gated `Demo.DChild` edges (the delegation data is UNCHANGED). -/
+def liftChildrenG : List WChild → List DChild
+  | []                      => []
+  | ⟨h, k, pc, sub⟩ :: rest => (⟨h, k, pc, liftForestG sub⟩ : DChild) :: liftChildrenG rest
+end
+
+/-! ## §WG3 — the GATED complete-turn export. -/
+
+/-- **C entry point — marshal the COMPLETE TURN, run the GATED `execFullForestG`, marshal back.**
+
+The credential-AWARE wholesale-swap codec. Identical wire to `§W7` (`{"state":STATEW,"turn":TURNW}`), but
+the EXECUTED object is the PROVED `FullForestAuth.execFullForestG` — the per-node FAIL-CLOSED 3-part gate
+(`credentialValid ∧ capAuthorityG ∧ caveatsDischarged`) in front of `execFullA`, all-or-nothing over the
+per-asset combined measure. The wire's per-node `Authorization` GATES (a forged credential ⇒ whole-turn
+rollback), unlike `execFullTurnWide` which erases it.
+
+ALL-OR-NOTHING: on a committed gated turn we emit the post-state (cells/caps/bal read at the input's
+orderings, the side-tables verbatim) + the receipt-log length with `ok:1`. On a tree that aborts on ANY gate
+leg OR an unauthorized action (`execFullForestG = none`) we ECHO the UNCHANGED input state with `loglen:0`
+and `ok:0` — the rollback is observable. On a malformed wire we fail-closed to an empty state with `ok:0`. -/
+@[export dregg_exec_full_forest_auth]
+def execFullForestAuthStep (input : String) : String :=
+  match parseWWire input with
+  | none => encodeWOut { cells := [], caps := [], bal := [], escrows := [], nullifiers := [],
+                         commitments := [], queues := [], swiss := [] } 0 false
+  | some w =>
+    let k0 := stateOfWState w.state
+    let s0 : RecChainedState := { kernel := k0, log := [] }
+    let cellIds := w.state.cells.map Prod.fst
+    let capLabels := w.state.caps.map Prod.fst
+    let balKeys := balKeysOf w.state
+    let gforest : DForest := liftForestG w.turn.root
+    match execFullForestG s0 gforest with
+    | some s' =>
+        encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
+    | none =>
+        encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false
+
+/-! ### §WG-eval — the GATED export round-trips, AND matches `execFullForestG` run directly.
+
+The non-vacuity guard: (1) a genuine-credential turn (a transfer + an escrow lock, gated) ENCODES, the
+export RUNS it, and the result MATCHES running `execFullForestG` on the lifted tree directly; (2) a FORGED
+credential ⇒ the export ROLLS BACK (`ok:0`, state unchanged) — the gate has TEETH the §W7 export lacks. -/
+
+/-- A genuine-credential gated turn: the root TRANSFERS 30 of asset 0 (cell 0 → cell 1) under a genuine
+`.signature 7 7` (proof echoes statement ⇒ the §1 portal accepts), with ONE delegated child that LOCKS an
+escrow (`createEscrowA`) under a genuine `.token 3 3`. Both nodes' credentials pass ⇒ the gated tree
+COMMITS. -/
+def gatedDemoTurn : WTurn :=
+  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
+    root := ⟨ .signature 7 7, [⟨0, 0, 0, 0⟩], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0,
+              [ ⟨ 9, [.read], .node 0,
+                  ⟨ .token 3 3, [], .createEscrowA 2 0 0 1 0 10, [] ⟩ ⟩ ] ⟩ }
+
+/-- The complete-turn WIRE for the gated demo (the `§W7` `wideDemoState` + the gated turn). -/
+def gatedDemoInput : String :=
+  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn gatedDemoTurn ++ "}"
+
+#eval (parseWWire gatedDemoInput).isSome                                     -- true (whole wire parses)
+-- the GATED export commits (ok:1) — both credentials pass the portal:
+#eval execFullForestAuthStep gatedDemoInput
+-- ...and its output MATCHES running `execFullForestG` directly on the lifted tree + re-encoding:
+#eval (match parseWWire gatedDemoInput with
+       | some w =>
+         let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
+         let cellIds := w.state.cells.map Prod.fst
+         let capLabels := w.state.caps.map Prod.fst
+         let balKeys := balKeysOf w.state
+         (match execFullForestG s0 (liftForestG w.turn.root) with
+          | some s' => encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
+          | none    => encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false)
+           == execFullForestAuthStep gatedDemoInput
+       | none => false)                                                     -- true (export = direct run)
+
+/-- A FORGED-credential gated turn: the SAME transfer but under `.signature 7 8` (proof does NOT echo ⇒ the
+portal REJECTS). The gate fail-closes ⇒ whole-turn rollback. -/
+def forgedGatedTurn : WTurn :=
+  { agent := 0, nonce := 0, fee := 0, validUntil := 0, prevHash := 0
+    root := ⟨ .signature 7 8, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
+
+/-- The wire for the forged-credential turn. -/
+def forgedGatedInput : String :=
+  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn forgedGatedTurn ++ "}"
+
+-- the FORGED-credential turn ROLLS BACK (ok:0, state echoed unchanged) — the gate has teeth:
+#eval execFullForestAuthStep forgedGatedInput
+-- ...whereas the UNGATED §W7 export would COMMIT the very same transfer (the credential is dead there):
+#eval execFullTurnWide forgedGatedInput
+-- the WHO leg is exactly the wire-carried credential: genuine ⇒ portal true, forged ⇒ portal false:
+#eval portalVerify (liftAuthW (.signature 7 7 : AuthW))                      -- true  (genuine echoes)
+#eval portalVerify (liftAuthW (.signature 7 8 : AuthW))                      -- false (forged ⇒ rollback)
+-- malformed wire ⇒ fail-closed empty state, ok:0:
+#eval execFullForestAuthStep "garbage"
+-- {"state":{"cells":[],...},"loglen":0,"ok":0}
+
+/-! ### §WG-eval-caveat — THE CAVEAT TEETH (the violated-caveat rollback contrast).
+
+This is the proof the SOUNDNESS GAP is closed: a gated turn carrying a within-cell caveat that the WIRE
+PRE-STATE VIOLATES ROLLS BACK over `dregg_exec_full_forest_auth` (ok:0, state echoed), while the SAME
+turn — same wire path, same genuine credential, same transfer — with the caveat SATISFIED COMMITS
+(ok:1). The ONLY difference between the two wires is the caveat's `min` threshold, so this is the
+same-wire contrast that proves `caveatsDischarged` now has REAL teeth over `@[export]` — no longer
+admit-by-construction. (Mirrors the forged-credential teeth above, but for the CAVEAT leg.)
+
+The wire pre-state (`wideDemoState`) has cell 0 holding 100 of asset 0. A caveat `[0,0,0,M]` (tier
+monotone, cell 0, asset 0, min M) HOLDS iff `100 ≥ M`. So `M=0` satisfies (commit), `M=10000` violates
+(rollback). A SECOND axis: a `coordinated` (tier 3) caveat `[3,0,0,0]` fail-closes by routing to
+`CrossCaveat` even though its bound trivially holds — the cross-cell TOCTOU foreclosure. -/
+
+/-- A gated turn carrying a single within-cell caveat (tier `t`, cell 0, asset 0, threshold `m`) on a
+GENUINE-credential transfer (30 of asset 0, cell 0 → cell 1). Same transfer + credential as
+`gatedDemoTurn`'s root; only the caveat varies. -/
+def caveatTurn (t : Nat) (m : Int) : WTurn :=
+  { agent := 0, nonce := 1, fee := 0, validUntil := 1000, prevHash := 0
+    root := ⟨ .signature 7 7, [⟨t, 0, 0, m⟩], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
+
+/-- The wire for a caveat turn (the `§W7` `wideDemoState` + the parameterized caveat turn). -/
+def caveatInput (t : Nat) (m : Int) : String :=
+  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn (caveatTurn t m) ++ "}"
+
+/-- The SATISFIED-caveat wire: monotone caveat "cell 0 holds ≥ 0 of asset 0" (true — it holds 100). -/
+def satisfiedCaveatInput : String := caveatInput 0 0
+/-- The VIOLATED-caveat wire: monotone caveat "cell 0 holds ≥ 10000 of asset 0" (FALSE — it holds 100). -/
+def violatedCaveatInput : String := caveatInput 0 10000
+/-- The COORDINATED-caveat wire: a tier-3 (cross-cell) caveat — fail-closes by routing to `CrossCaveat`
+EVEN THOUGH its bound (≥ 0) trivially holds. -/
+def coordinatedCaveatInput : String := caveatInput 3 0
+
+-- THE TEETH (same wire path, only the caveat threshold differs):
+-- SATISFIED caveat ⇒ COMMITS (ok:1, bal cell0 asset0 = 70, cell1 asset0 = 35):
+#eval execFullForestAuthStep satisfiedCaveatInput
+-- VIOLATED caveat ⇒ ROLLS BACK (ok:0, state ECHOED unchanged: bal cell0 = 100, cell1 = 5):
+#eval execFullForestAuthStep violatedCaveatInput
+-- COORDINATED (cross-cell) caveat ⇒ ROLLS BACK (ok:0) — routed to CrossCaveat, fail-closed intra-cell:
+#eval execFullForestAuthStep coordinatedCaveatInput
+-- the contrast is EXACTLY the caveat leg: satisfied ⇒ discharges, violated ⇒ fail-closes, on the SAME pre-state:
+#eval (match parseWWire satisfiedCaveatInput with
+       | some w => caveatsDischarged (liftForestG w.turn.root).auth
+                     { kernel := stateOfWState w.state, log := [] }
+       | none => false)                                                      -- true  (satisfied ⇒ discharges)
+#eval (match parseWWire violatedCaveatInput with
+       | some w => caveatsDischarged (liftForestG w.turn.root).auth
+                     { kernel := stateOfWState w.state, log := [] }
+       | none => false)                                                      -- false (violated ⇒ fail-closes)
+-- ...whereas the UNGATED §W7 export COMMITS the violated-caveat turn (the caveat is dead there — the gap):
+#eval execFullTurnWide violatedCaveatInput
+-- ok:1 (the §W7 export erases the caveat — exactly the gap §WG closes)
+
+/-- A directly-built pre-state for the caveat-teeth THEOREM: cell 0 holds 100 of asset 0 (the
+`wideDemoState`'s cell-0 balance), built WITHOUT `stateOfWState`'s `.toFinset` (which blocks kernel
+reduction). This is the pre-state the transported caveat reads against. -/
+def cavePre : RecChainedState :=
+  { kernel := { accounts := {0}, cell := fun _ => .record [("balance", .int 0)]
+              , caps := fun _ => [], bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
+    log := [] }
+
+/-- **`caveat_teeth_same_wire` — THE SOUNDNESS-GAP-CLOSED THEOREM (PROVED, non-vacuous).** Over the SAME
+pre-state `cavePre` (cell 0 holds 100 of asset 0) and the SAME genuine-credential transfer, the gate's
+caveat leg of the VIOLATED-caveat turn FAILS (`caveatsDischarged = false`, the wire caveat needed cell 0
+≥ 10000) while the SATISFIED-caveat turn's leg HOLDS (`caveatsDischarged = true`, it needed cell 0 ≥ 0).
+Both nodes are produced by `liftForestG` from a real `WForest` (the wire→gate lift), read on the
+IDENTICAL pre-state — the ONLY difference is the TRANSPORTED caveat's `min`. This proves
+`caveatsDischarged` CONSULTS the transported caveat (it is NO LONGER admit-by-construction): a
+wire-violated caveat makes the gate fail-closed; a satisfied one discharges. The export's
+all-or-nothing rollback (`execFullForestAuthStep`, witnessed by the `#eval`s above on the FULL
+`parseWWire`/`stateOfWState` path) rides exactly this contrast. -/
+theorem caveat_teeth_same_wire :
+    caveatsDischarged (liftForestG (caveatTurn 0 0).root).auth cavePre = true
+    ∧
+    caveatsDischarged (liftForestG (caveatTurn 0 10000).root).auth cavePre = false := by
+  refine ⟨?_, ?_⟩ <;> rfl
+
+/-- **`caveat_teeth_coordinated` — the CROSS-CELL caveat fail-closure (PROVED).** A `coordinated` (tier
+3) transported caveat fail-closes the gate EVEN THOUGH its balance bound (cell 0 ≥ 0) TRIVIALLY HOLDS —
+`GatedCaveat.holds` routes the coordinated tier to `CrossCaveat` (the dregg1 `authorize.rs:1608`
+cross-cell-hole foreclosure). The wire CANNOT smuggle a cross-cell read through the intra-cell gate. -/
+theorem caveat_teeth_coordinated :
+    caveatsDischarged (liftForestG (caveatTurn 3 0).root).auth cavePre = false := by
+  rfl
+
+/-! ## §WG4 — keystone axiom-hygiene pins (the FILL X no-`sorryAx` guard).
+
+The gated export and its lifts must carry NO silent `sorry`. Pinned to the three standard kernel axioms
+`{propext, Classical.choice, Quot.sound}` (the `Finset`/`toFinset` in `stateOfWState` + the Demo carrier
+instances pull `Classical.choice`/`Quot.sound`; a `sorryAx` would FAIL the assert). -/
+
+#assert_axioms execFullForestAuthStep
+#assert_axioms liftAuthW
+#assert_axioms liftForestG
+#assert_axioms mkGAuth
+#assert_axioms parseCaveatW
+#assert_axioms parseCaveatsW
+#assert_axioms encodeCaveatsW
+#assert_axioms liftCaveatW
+#assert_axioms liftCaveatsW
+#assert_axioms caveat_teeth_same_wire
+#assert_axioms caveat_teeth_coordinated

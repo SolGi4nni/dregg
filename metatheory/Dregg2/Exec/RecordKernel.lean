@@ -2127,16 +2127,30 @@ are `⊆` the entry's exported rights (the non-amplification gate, `apply.rs:399
 zero/absent entry, `apply.rs:4051`). ALL FOUR are balance-NEUTRAL — they touch ONLY `swiss`, never
 `bal`/`escrows` (CapTP moves references, not balance). -/
 
+/-- **`heldAuths` — the exporter's REAL committed rights, read from the executed state.** The authority
+the `exporter` cell GENUINELY holds is the union of the auths conferred by every cap in its committed
+c-list `k.caps exporter` (`capAuthConferred` per cap, `apply.rs` reads the holder's own permission tier).
+This is adversary-UNCONTROLLABLE: it is a function of committed kernel state, NOT a free action/proof
+parameter, so the export non-amplification gate cannot be inflated by a lying prover. -/
+def heldAuths (k : RecordKernelState) (exporter : CellId) : List Auth :=
+  (k.caps exporter).flatMap capAuthConferred
+
 /-- **`swissExportK`** — INSERT a fresh swiss-table entry: swiss number `sw` → (`target`, `rights`),
 exported by `exporter`, with `refcount := 1` (the bearer holds one live ref) and no bound cert.
 Fail-closed if the swiss number is already in use (no duplicate export) OR the exported `rights` are NOT
-`⊆` the exporter's `held` rights (amplification denied, `apply.rs:3917`). balance-NEUTRAL. -/
-def swissExportK (k : RecordKernelState) (sw : Nat) (exporter target : CellId) (rights held : List Auth) :
+`⊆` the exporter's REAL committed rights `heldAuths k exporter` (amplification denied, `apply.rs:3917`).
+
+**SOUNDNESS FIX (capability-amplification hole closed):** the bound is now read from the
+adversary-UNCONTROLLABLE committed state `k.caps exporter` — NOT a caller/prover-supplied `held`
+parameter. A bare-authority actor can no longer mint a sturdy ref carrying rights its cell never held by
+claiming `held = everything`; the exported `rights` must be `⊆` the rights the exporter GENUINELY holds.
+balance-NEUTRAL. -/
+def swissExportK (k : RecordKernelState) (sw : Nat) (exporter target : CellId) (rights : List Auth) :
     Option RecordKernelState :=
   match findSwiss k.swiss sw with
   | some _ => none
   | none   =>
-      if rightsNarrowerOrEqual rights held then
+      if rightsNarrowerOrEqual rights (heldAuths k exporter) then
         some { k with swiss := { swiss := sw, exporter := exporter, target := target,
                                  rights := rights, refcount := 1, cert := none } :: k.swiss }
       else none
@@ -2183,14 +2197,14 @@ def swissDropK (k : RecordKernelState) (sw : Nat) : Option RecordKernelState :=
 
 /-- **`swissExportK_balNeutral` — PROVED.** Export touches only `swiss`, never `bal`/`escrows`. -/
 theorem swissExportK_balNeutral {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
-    {rights held : List Auth} (h : swissExportK k sw exporter target rights held = some k') (b : AssetId) :
+    {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') (b : AssetId) :
     recTotalAsset k' b = recTotalAsset k b ∧ escrowHeldAsset k' b = escrowHeldAsset k b := by
   unfold swissExportK at h
   cases hf : findSwiss k.swiss sw with
   | some e => simp only [hf] at h; exact absurd h (by simp)
   | none   =>
       simp only [hf] at h
-      by_cases hr : rightsNarrowerOrEqual rights held
+      by_cases hr : rightsNarrowerOrEqual rights (heldAuths k exporter)
       · rw [if_pos hr] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl⟩
       · rw [if_neg hr] at h; exact absurd h (by simp)
 
@@ -2238,7 +2252,7 @@ theorem swissDropK_balNeutral {k k' : RecordKernelState} {sw : Nat}
 puts a swiss-table entry for `sw` whose lookup returns the exported (target, rights) with `refcount = 1`.
 The de-THIN content a flag could not state. -/
 theorem swissExportK_inserts {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
-    {rights held : List Auth} (h : swissExportK k sw exporter target rights held = some k') :
+    {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') :
     findSwiss k'.swiss sw = some { swiss := sw, exporter := exporter, target := target,
                                    rights := rights, refcount := 1, cert := none } := by
   unfold swissExportK at h
@@ -2246,19 +2260,53 @@ theorem swissExportK_inserts {k k' : RecordKernelState} {sw : Nat} {exporter tar
   | some e => simp only [hf] at h; exact absurd h (by simp)
   | none   =>
       simp only [hf] at h
-      by_cases hr : rightsNarrowerOrEqual rights held
+      by_cases hr : rightsNarrowerOrEqual rights (heldAuths k exporter)
       · rw [if_pos hr] at h; simp only [Option.some.injEq] at h; subst h
         simp only [findSwiss, List.find?_cons, beq_self_eq_true]
       · rw [if_neg hr] at h; exact absurd h (by simp)
 
 /-- **`swissExportK_amplification_rejects` — PROVED (the NON-AMPLIFICATION gate, fail-closed).** An
-export whose declared `rights` are NOT `⊆` the exporter's `held` rights is REJECTED — a sturdy ref must
-not grant authority the exporter never held (`apply.rs:3917`). The CapTP soundness gate, NOT `True`. -/
+export whose declared `rights` are NOT `⊆` the exporter's REAL committed rights `heldAuths k exporter`
+is REJECTED — a sturdy ref must not grant authority the exporter never held (`apply.rs:3917`). The bound
+is read from adversary-UNCONTROLLABLE committed state, so a lying prover cannot inflate it. The CapTP
+soundness gate, NOT `True`. -/
 theorem swissExportK_amplification_rejects (k : RecordKernelState) (sw : Nat) (exporter target : CellId)
-    (rights held : List Auth) (hf : findSwiss k.swiss sw = none)
-    (hamp : rightsNarrowerOrEqual rights held = false) :
-    swissExportK k sw exporter target rights held = none := by
+    (rights : List Auth) (hf : findSwiss k.swiss sw = none)
+    (hamp : rightsNarrowerOrEqual rights (heldAuths k exporter) = false) :
+    swissExportK k sw exporter target rights = none := by
   simp only [swissExportK, hf]; rw [if_neg (by simp [hamp])]
+
+/-- **`swissExportK_real_held_bounds` — PROVED (the KEYSTONE: the export is bounded by the exporter's REAL
+held rights).** A COMMITTED export's declared `rights` are `⊆` the rights the exporter GENUINELY holds in
+committed state (`heldAuths k exporter` = ⋃ `capAuthConferred` over `k.caps exporter`). Because this bound
+is a function of the EXECUTED state — not a free prover-supplied `held` — the non-amplification guarantee
+is REAL: no sturdy ref can carry authority the exporter's c-list never conferred. This is the proof the
+capability-amplification hole is CLOSED (the old gate's bound was adversary-controllable). -/
+theorem swissExportK_real_held_bounds {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
+    {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') :
+    rightsNarrowerOrEqual rights (heldAuths k exporter) = true := by
+  unfold swissExportK at h
+  cases hf : findSwiss k.swiss sw with
+  | some e => simp only [hf] at h; exact absurd h (by simp)
+  | none   =>
+      simp only [hf] at h
+      by_cases hr : rightsNarrowerOrEqual rights (heldAuths k exporter)
+      · exact hr
+      · rw [if_neg hr] at h; exact absurd h (by simp)
+
+/-- **`swissExportK_overbroad_rejects` — PROVED (the TEETH, NON-VACUOUS).** An exporter whose committed
+c-list confers ONLY `[read]` (a single `endpoint t [read]` cap) that tries to export a ref carrying
+`[read, write]` is REJECTED — the OVER-BROAD export (amplification) the OLD `held`-parameter gate would
+have ADMITTED (just claim `held = [read, write]`) now FAILS, because `heldAuths` reads the cell's REAL
+rights and `write ∉ [read]`. The concrete amplification attempt closed. -/
+theorem swissExportK_overbroad_rejects (k : RecordKernelState) (sw : Nat) (exporter target t : CellId)
+    (hf : findSwiss k.swiss sw = none) (hcaps : k.caps exporter = [Cap.endpoint t [Auth.read]]) :
+    swissExportK k sw exporter target [Auth.read, Auth.write] = none := by
+  apply swissExportK_amplification_rejects k sw exporter target [Auth.read, Auth.write] hf
+  have hheld : heldAuths k exporter = [Auth.read] := by
+    simp only [heldAuths, hcaps, List.flatMap_cons, List.flatMap_nil, capAuthConferred,
+      List.append_nil]
+  rw [hheld]; decide
 
 /-- **`swissEnlivenK_absent_rejects` — PROVED (the MEMBERSHIP gate, fail-closed).** An enliven of an
 ABSENT swiss number is REJECTED (`apply.rs:3955`: validate membership against the committed table). The
@@ -2352,42 +2400,57 @@ theorem swissDropK_gc_at_one {k k' : RecordKernelState} {sw : Nat} {e : SwissRec
 
 /-! ## §SWISS runs (`#eval`) — export INSERTS, enliven LOOKS-UP-fail-closed + validates, refcount GCs. -/
 
-/-- A kernel with an EMPTY swiss-table; cell 0 holds `[read, call]` rights to be exported. -/
+/-- A kernel with an EMPTY swiss-table; cell 0 GENUINELY holds `[read, call]` rights — via a real
+`endpoint`-cap c-list entry (`capAuthConferred (.endpoint 1 [read, call]) = [read, call]`), so `heldAuths
+ksw0 0 = [read, call]`. The export non-amplification gate reads THESE committed rights, not a caller
+parameter. -/
 def ksw0 : RecordKernelState :=
   { accounts := {0, 1}
     cell := fun _ => .record [("balance", .int 0)]
-    caps := fun _ => []
+    caps := fun l => if l = 0 then [Cap.endpoint 1 [Auth.read, Auth.call]] else []
     swiss := [] }
 
--- EXPORT INSERTS: export swiss 42 → target 1 with rights [read] (⊆ held [read,call]) ⇒ entry present, refcount 1.
-#eval (swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+-- The REAL committed rights cell 0 holds, read from the c-list (NOT a caller parameter):
+#eval heldAuths ksw0 0  -- [read, call] — the adversary-uncontrollable bound the export gate uses
+-- EXPORT INSERTS: export swiss 42 → target 1 with rights [read] (⊆ REAL-held [read,call]) ⇒ entry present, refcount 1.
+#eval (swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => (findSwiss k.swiss 42).map (fun e => (e.target, e.refcount)))  -- some (1, 1) — INSERTED
--- AMPLIFICATION DENIED on export: exporting [grant] when only [read] is held ⇒ none.
-#eval (swissExportK ksw0 42 0 1 [Auth.grant] [Auth.read]).isSome  -- false — amplification denied
+-- AMPLIFICATION DENIED on export: exporting [grant] when only [read,call] is REALLY held ⇒ none.
+#eval (swissExportK ksw0 42 0 1 [Auth.grant]).isSome  -- false — amplification denied (grant ∉ real-held)
+-- THE TEETH — OVER-BROAD EXPORT REJECTED: an exporter REALLY holding only [read,call] CANNOT mint a ref
+-- carrying [read,write] — the amplification the OLD caller-supplied-`held` gate would have ADMITTED.
+#eval (swissExportK ksw0 42 0 1 [Auth.read, Auth.write]).isSome  -- false — write ∉ real-held ⇒ REJECTED
+-- CONTRAST — within-rights export COMMITS: [read,call] ⊆ real-held [read,call] ⇒ inserted.
+#eval (swissExportK ksw0 42 0 1 [Auth.read, Auth.call]).bind
+        (fun k => (findSwiss k.swiss 42).map (·.rights))  -- some [read, call] — within rights, COMMITS
+-- A cell holding NOTHING (caps = []) cannot export ANY non-empty ref (heldAuths = []):
+#eval (swissExportK ksw0 99 5 1 [Auth.read]).isSome  -- false — cell 5 holds no caps ⇒ real-held [] ⇒ REJECTED
 -- ENLIVEN LOOKS-UP-fail-closed: enliven an ABSENT swiss number ⇒ none.
 #eval (swissEnlivenK ksw0 99 [Auth.read]).isSome  -- false — absent ⇒ none (membership gate)
 -- ENLIVEN BUMPS refcount: export then enliven (claiming ⊆ rights) ⇒ refcount 1 → 2.
-#eval (((swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+#eval (((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissEnlivenK k 42 [Auth.read]))).bind
         (fun k => (findSwiss k.swiss 42).map (·.refcount))  -- some 2 — a new live reference
 -- ENLIVEN amplification denied: claiming [grant] against an entry exporting only [read] ⇒ none.
-#eval ((swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissEnlivenK k 42 [Auth.grant])).isSome  -- false — claim exceeds export
 -- HANDOFF binds the cert + bumps refcount: export then handoff cert 7 ⇒ cert = some 7, refcount 2.
-#eval ((swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissHandoffK k 42 7)).bind
         (fun k => (findSwiss k.swiss 42).map (fun e => (e.cert, e.refcount)))  -- some (some 7, 2)
 -- DROP GCs at zero: export (refcount 1) then drop ⇒ entry REMOVED (refcount hit 0 ⇒ GC).
-#eval ((swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissDropK k 42)).map (fun k => (findSwiss k.swiss 42).isSome)  -- some false — GC'd
 -- DROP fail-closed at zero: a 2nd drop after GC ⇒ none (absent).
-#eval ((swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).bind
+#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => (swissDropK k 42).bind (fun k => swissDropK k 42))).isSome  -- false
 -- balance-NEUTRAL: the combined measure is UNTOUCHED by export (and the rest).
-#eval (swissExportK ksw0 42 0 1 [Auth.read] [Auth.read, Auth.call]).map (fun k => recTotalAssetWithEscrow k 0)  -- some 0
+#eval (swissExportK ksw0 42 0 1 [Auth.read]).map (fun k => recTotalAssetWithEscrow k 0)  -- some 0
 
 #assert_axioms swissExportK_inserts
 #assert_axioms swissExportK_amplification_rejects
+#assert_axioms swissExportK_real_held_bounds
+#assert_axioms swissExportK_overbroad_rejects
 #assert_axioms swissEnlivenK_absent_rejects
 #assert_axioms swissEnlivenK_amplification_rejects
 #assert_axioms swissEnlivenK_bumps_refcount

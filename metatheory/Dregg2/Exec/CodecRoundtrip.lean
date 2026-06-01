@@ -7,31 +7,46 @@ swap's whole assurance rests on this — a SYMMETRIC codec bug (the encoder and 
 WRONG grammar) passes the differential silently; only a parse∘encode theorem catches it, because it
 pins the decoder to be the genuine left-inverse of the encoder on the value space.
 
-This file proves, for EVERY reachable `@[export]` grammar production of the COMPLETE-TURN wire codec
-(`Dregg2.Exec.FFI.Wide`, META-FILL I):
+This file is the IN-PROGRESS parse∘encode roundtrip proof of the COMPLETE-TURN wire codec
+(`Dregg2.Exec.FFI.Wide`, META-FILL I), targeting (for each production):
 
     parseX (sufficient fuel) (encodeX v).toList = some (v, [])
 
 — the parser, fed exactly the encoder's output, recovers `v` and consumes the WHOLE string (no
 trailing bytes), with NO fuel exhaustion (the fail-closed `fuel = 0` branch is unreachable on
-well-formed input — the *fuel-adequacy* obligation). The chain:
+well-formed input — the *fuel-adequacy* obligation).
 
-  * §0 leaf primitives — `lit` (literal-prefix consume), `parseInt`/`parseNat` (the signed/unsigned
-    decimal numbers, proved from `Nat.repr`/`Int.repr`'s digit structure), `parseStr` (JSON strings),
-    the `ofHex32 ∘ toHex32` digest field (the `[u8;32]` ByteArray32, lossless on the full 256-bit
-    range), `parseFlag` (0/1), `parseDig` (the quoted 64-hex digest), the auth-tag enum;
-  * §1 `parseValueW`/`parseFieldsW`/`parseCellsW` — the wide `Value` + record + cell grammar;
-  * §2 `parseAuthW` — the 10-variant `Authorization` sum (recursing through `oneOf`);
-  * §3 `parseActionW` — every one of the 51 `FullActionA` arms;
-  * §4 `parseForestW` — the recursive action-TREE (node + delegated children);
-  * §5 the side-tables (escrow / nats / queue / swiss) + `parseWState`;
-  * §6 `parseWTurn` / `parseWWire` — the Turn envelope + the whole-wire object.
+## HONEST RECEIPT — what is PROVED here vs what is DEFERRED.
 
-EVERY digest/commitment field is the low 256 bits of a `Nat`, so the roundtrip is the identity
-EXACTLY on the well-formed value space (`< 2^256`); we carry a `Wf` predicate that pins precisely
-that boundary constraint. This is NON-VACUOUS: the `Wf` hypothesis is satisfiable (the demo values
-witness it) and the theorem fails without the digest bound (a `2^256`-wrap value is a genuine
-counterexample), so the statement states real TEETH, not a triviality.
+**PROVED (a true left-inverse on these productions, all sorry-free, `#assert_axioms`-pinned):**
+
+  * §0 — EVERY leaf primitive: `lit` (literal-prefix consume, `lit_append`), `parseInt`/`parseNat`
+    inverting `toString` on signed/unsigned numbers (`parseInt_toString`/`parseNat_toString`, proved
+    from `Nat.repr`/`Int.repr`'s digit structure), `parseStr` on escape-free JSON strings
+    (`parseStr_clean`), the `ofHex32 ∘ toHex32` `[u8;32]` digest LOSSLESS on the full 256-bit range
+    (`ofHex32_toHex32`/`parseDig_encDig`), `parseFlag` (0/1, `parseFlag_bool`), the narrow `Auth` enum
+    tag (`authOfTag_authTag`), and the dispatch fail-closure lemmas (`litGo_none_mono`/`lit_ne_pre`);
+  * §1 — the wide `Value`/`FIELDS` SCALAR leaf (`parseValueW_scalar`) and the headline leaf facts
+    `fillJ_digest`/`fillJ_amount`/`fillJ_value_scalar` (§3 block) — the conserved-measure-relevant
+    primitives the executor reads;
+  * §2 — the per-asset `BAL` LEDGER ENTRY roundtrip (`parseBalEntry_encode`/`fillJ_bal_entry`) — the
+    conserved-measure entry the executor's per-asset laws are stated over;
+  * §5 — the RECURSIVE `Value`/`FIELDS` production (`parseValueW_roundtrip`/`parseFieldsW_roundtrip`,
+    the nested-record tree), which closes the cell-payload grammar in full generality.
+
+**DEFERRED (the codec for these is TCB — `#eval`-cross-validated in `FFI.lean` §W3/§W4/§W5/§W6/§WG, but
+NOT YET carrying a parse∘encode THEOREM here):** `parseAuthW` (the 10-variant `Authorization` sum incl.
+the recursive `oneOf`); `parseActionW` (the 51 `FullActionA` arms); `parseCaveatsW` (the per-node
+caveat array, §W5c); `parseForestW`/`parseChildrenW` (the recursive action-TREE + delegation edges);
+the side-tables (`parseEscrow`/`parseNats`/`parseQueue`/`parseSwiss`) + `parseWState`; and
+`parseWTurn`/`parseWWire` (the Turn envelope + whole-wire object). Each is round-trip-`#eval`'d at its
+codec site; the proof obligation is the FILL-J completion follow-on.
+
+EVERY digest/commitment field is the low 256 bits of a `Nat`, so the PROVED roundtrips are the identity
+EXACTLY on the well-formed value space (`< 2^256`); we carry a `Wf` predicate that pins precisely that
+boundary constraint. This is NON-VACUOUS: the `Wf` hypothesis is satisfiable (the demo values witness
+it) and the theorem fails without the digest bound (a `2^256`-wrap value is a genuine counterexample),
+so the PROVED statements state real TEETH, not a triviality.
 
 Soundness note: this file imports NO new axioms; the keystones are `#assert_axioms`-pinned to
 `{propext, Classical.choice, Quot.sound}` at the foot (the standard kernel triple — `Finset`/`toFinset`
@@ -666,6 +681,50 @@ theorem parseBalEntry_encode (c a : Nat) (amt : Int) (rest : PState) :
         rw [show (']'::rest) = ("]":String).toList ++ rest from rfl, lit_append]]
   simp
 
+/-! ## §2b — the DISPATCH toolkit: a TAG literal FAILS fail-closed on a DIFFERENT tag's encoding.
+
+The recursive productions (`Value`, `Authorization`, `FullActionA`, the action-TREE) are all
+fail-closed per-tag DISPATCHES: the parser tries `lit TAG₀`, then on `none` tries `lit TAG₁`, …. To
+reach arm `J`'s body we must discharge that `lit TAGₖ` FAILS for every EARLIER arm `k < J` when fed
+arm `J`'s encoding (which begins with the concrete string `TAGⱼ`). The workhorse is *failure
+monotonicity*: if `lit p` already fails on a CONCRETE finite prefix `q`, it fails on `q ++ rest` for
+any tail — so each (k, J) obligation reduces to a `decide` over the two SHORT concrete tag strings.
+This is what makes the 10-arm and 45-arm case-splits MECHANICAL rather than O(n²) hand-work. -/
+
+/-- **Failure monotonicity for `litGo` (clash form).** If `litGo p q = none` because of a GENUINE
+char CLASH — i.e. `litGo q p = none` ALSO fails (so `q` is NOT a prefix of `p`; the failure is a real
+mismatch, not `q` simply running out) — then `litGo p (q ++ rest) = none` for ANY tail. Both
+directions failing is exactly "neither is a prefix of the other", the precise condition under which
+extra bytes can't rescue the mismatch. (For two concrete distinct tag strings, BOTH `litGo` directions
+are `decide`-checkable.) -/
+theorem litGo_none_mono : ∀ (p q : List Char) (rest : PState),
+    litGo p q = none → litGo q p = none → litGo p (q ++ rest) = none := by
+  intro p
+  induction p with
+  | nil => intro q rest h _; simp [litGo] at h
+  | cons c cs ih =>
+    intro q rest h hsym
+    cases q with
+    | nil => simp [litGo] at hsym  -- `litGo [] (c::cs) = some _`, contradicting `hsym`
+    | cons d ds =>
+      simp only [List.cons_append]
+      unfold litGo at h hsym ⊢
+      by_cases hcd : (c == d) = true
+      · rw [if_pos hcd] at h ⊢
+        have hdc : (d == c) = true := by rw [beq_iff_eq] at hcd ⊢; exact hcd.symm
+        rw [if_pos hdc] at hsym
+        exact ih ds rest h hsym
+      · rw [if_neg hcd]
+
+/-- The dispatch obligation in its USABLE form: `tag` (the literal the parser is currently trying) FAILS
+on input that BEGINS with the concrete string `b` (a DIFFERENT arm's tag), for any tail. Both `litGo`
+directions are concrete; the two hypotheses are closed by `decide`. -/
+theorem lit_ne_pre (tag b : String) (rest : PState)
+    (h : litGo tag.toList b.toList = none)
+    (hsym : litGo b.toList tag.toList = none) :
+    lit tag (b.toList ++ rest) = none := by
+  unfold lit; exact litGo_none_mono tag.toList b.toList rest h hsym
+
 /-! ## §3 — the HEADLINE FILL-J assurances (the TCB-removing roundtrip facts).
 
 These are the load-bearing parse∘encode theorems the wholesale swap rests on: a symmetric codec bug
@@ -711,6 +770,263 @@ example : parseValueW 5 ((encodeValueW (.dig 255)).toList ++ ['x'])
             = some (.dig 255, ['x']) :=
   fillJ_value_scalar (.dig 255) ['x'] (show (255:Nat) < 2^256 by norm_num) (by intro fs h; cases h) 4
 
+/-! ## §5 — the RECURSIVE `Value` / `FIELDS` production (FILL-J production (a)).
+
+This COMPLETES the scalar leaf into the FULL `parseValueW ∘ encodeValueW = id` on the WHOLE `Value`
+algebra — including the `record` arm, which is mutually recursive with the fields list (a fold of
+`["name",valueW]` pairs). The fuel is threaded as the structural `valueSize`/`fieldsSize` measure; the
+*fuel-adequacy* obligation is that this measure DOMINATES the parse depth, so the fail-closed `fuel=0`
+branch is unreachable on well-formed input. We prove the pair by mutual structural induction, mirroring
+the `parseValueW`/`parseFieldsLoopW` recursion exactly: lit-the-tag, subparse, close-the-delimiter.
+
+`WfValue` (§1) pins the codec's boundary: digests `< 2^256` and field names escape-free. Both are
+satisfied by the demo values (non-vacuous) and load-bearing (the digest wrap / a `"`-bearing name are
+genuine counterexamples). -/
+
+/-- The three EARLIER `Value` tags (`int`/`dig`/`sym`) all FAIL on a `{"rec":…` prefix — the dispatch
+discharge for the `record` arm. -/
+private theorem value_tags_fail_on_rec (rest : PState) :
+    lit "{\"int\":" (("{\"rec\":" : String).toList ++ rest) = none
+    ∧ lit "{\"dig\":\"" (("{\"rec\":" : String).toList ++ rest) = none
+    ∧ lit "{\"sym\":" (("{\"rec\":" : String).toList ++ rest) = none := by
+  refine ⟨?_, ?_, ?_⟩
+  · exact lit_ne_pre "{\"int\":" "{\"rec\":" rest (by decide) (by decide)
+  · exact lit_ne_pre "{\"dig\":\"" "{\"rec\":" rest (by decide) (by decide)
+  · exact lit_ne_pre "{\"sym\":" "{\"rec\":" rest (by decide) (by decide)
+
+/-- Rebracket the `int` value's encoding into `lit`-then-`parseInt`-then-`}` shape. -/
+private theorem encInt_shape (i : Int) (rest : PState) :
+    (encodeValueW (.int i)).toList ++ rest
+      = ("{\"int\":":String).toList ++ ((toString i).toList ++ ('}' :: rest)) := by
+  unfold encodeValueW
+  rw [String.toList_append, String.toList_append, show ("}":String).toList = ['}'] from rfl]
+  simp [List.append_assoc]
+
+/-- `lit "}" ('}' :: rest) = some rest` — the closing-brace consume. -/
+private theorem lit_brace (rest : PState) : lit "}" ('}' :: rest) = some rest := by
+  rw [show ('}'::rest) = ("}":String).toList ++ rest from rfl, lit_append]
+
+/-- `lit "]" (']' :: rest) = some rest` — the closing-bracket consume. -/
+private theorem lit_brack (rest : PState) : lit "]" (']' :: rest) = some rest := by
+  rw [show (']'::rest) = ("]":String).toList ++ rest from rfl, lit_append]
+
+/-- `lit "," (',' :: rest) = some rest`. -/
+private theorem lit_commaC (rest : PState) : lit "," (',' :: rest) = some rest := by
+  rw [show (','::rest) = (",":String).toList ++ rest from rfl, lit_append]
+
+/-- Rebracket a NON-EMPTY fields array's encoding `[FIELD ++ TAIL ++ ]` into open-`[`-then-body form. -/
+private theorem encFieldsW_cons_shape (n : FieldName) (v : Value) (gs : List (FieldName × Value)) (rest : PState) :
+    (encodeFieldsW ((n, v) :: gs)).toList ++ rest
+      = '[' :: ((("[\"" ++ jsonEscape n ++ "\"," ++ encodeValueW v ++ "]"):String).toList
+          ++ ((encodeFieldsTailW gs).toList ++ (']' :: rest))) := by
+  unfold encodeFieldsW
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl,
+    show ("]":String).toList = [']'] from rfl]
+  simp [List.append_assoc]
+
+/-- Rebracket a NON-EMPTY fields TAIL `,FIELD ++ TAIL` into comma-then-field-then-tail form. -/
+private theorem encFieldsTailW_cons_shape (n2 : FieldName) (v2 : Value) (gs2 : List (FieldName × Value)) (rest : PState) :
+    (encodeFieldsTailW ((n2, v2) :: gs2)).toList ++ rest
+      = ',' :: ((("[\"" ++ jsonEscape n2 ++ "\"," ++ encodeValueW v2 ++ "]"):String).toList
+          ++ ((encodeFieldsTailW gs2).toList ++ rest)) := by
+  rw [show encodeFieldsTailW ((n2, v2) :: gs2)
+        = ",[\"" ++ jsonEscape n2 ++ "\"," ++ encodeValueW v2 ++ "]" ++ encodeFieldsTailW gs2 from rfl]
+  simp only [String.toList_append, show (",[\"":String).toList = ',' :: ("[\"":String).toList from rfl,
+    show ("]":String).toList = [']'] from rfl]
+  simp [List.append_assoc]
+
+/-! ### The combined `Value`/`FIELDS` roundtrip, proved by induction on FUEL with the value case-split
+inside. Fuel is bounded BELOW by the structural `valueSize`/`fieldsSize` (the *fuel-adequacy*); the
+`≥` form gives fuel-MONOTONICITY for free (any sufficient fuel works), which is exactly what the loop's
+`parseValueW fuel` sub-call needs. -/
+
+/-- The mutual roundtrip statement at a given fuel: BOTH the value parser AND the fields loop recover
+their argument whenever the fuel meets the structural bound. The fields clause is stated over the LOOP
+BODY (post opening-`[`): the first field, the comma-prefixed tail of the rest, then the closing `]`. -/
+private def ValueGoal (fuel : Nat) : Prop :=
+  (∀ (v : Value) (rest : PState), WfValue v → valueSize v ≤ fuel →
+      parseValueW fuel ((encodeValueW v).toList ++ rest) = some (v, rest))
+  ∧ (∀ (fs : List (FieldName × Value)) (rest : PState), WfFields fs → fieldsSize fs ≤ fuel →
+      parseFieldsW fuel ((encodeFieldsW fs).toList ++ rest) = some (fs, rest))
+  ∧ (∀ (fs : List (FieldName × Value)) (rest : PState), WfFields fs → fs ≠ [] → fieldsSize fs ≤ fuel →
+      parseFieldsLoopW fuel
+        ((("[\"" ++ jsonEscape (fs.headD default).1 ++ "\"," ++ encodeValueW (fs.headD default).2 ++ "]"):String).toList
+          ++ ((encodeFieldsTailW fs.tail).toList ++ (']' :: rest))) = some (fs, rest))
+
+/-- **The combined `Value`/`FIELDS` fuel-adequate roundtrip.** By STRONG induction on fuel: each
+recursive sub-call lands at strictly-smaller fuel, so the IH applies. This is the engine; the public
+`parseValueW_roundtrip` / `parseFieldsW_roundtrip` below unwrap it. -/
+private theorem valueGoal_all : ∀ fuel, ValueGoal fuel := by
+  intro fuel
+  induction fuel using Nat.strong_induction_on with
+  | _ fuel IH =>
+    -- FIRST establish the LOOP clause (depends only on IH at strictly-smaller fuel), then the
+    -- fields-W and value clauses can re-use it at the SAME fuel.
+    have hloop : ∀ (fs : List (FieldName × Value)) (rest : PState), WfFields fs → fs ≠ [] → fieldsSize fs ≤ fuel →
+        parseFieldsLoopW fuel
+          ((("[\"" ++ jsonEscape (fs.headD default).1 ++ "\"," ++ encodeValueW (fs.headD default).2 ++ "]"):String).toList
+            ++ ((encodeFieldsTailW fs.tail).toList ++ (']' :: rest))) = some (fs, rest) := by
+      intro fs rest hwf hne hsz
+      match fs, hwf, hne, hsz with
+      | (n, v) :: gs, hwf, _, hsz =>
+        obtain ⟨hn, hv, hgs⟩ := hwf
+        have hszsplit : fieldsSize ((n,v)::gs) = 1 + valueSize v + fieldsSize gs := by simp only [fieldsSize]
+        have hfpos : 0 < fuel := by rw [hszsplit] at hsz; omega
+        obtain ⟨fuel', rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by omega⟩
+        have hsz' : 1 + valueSize v + fieldsSize gs ≤ fuel' + 1 := by rw [hszsplit] at hsz; exact hsz
+        have hvfuel : valueSize v ≤ fuel' := by omega
+        have hgsfuel : fieldsSize gs ≤ fuel' := by omega
+        simp only [List.headD, List.tail]
+        unfold parseFieldsLoopW
+        rw [show (("[\"" ++ jsonEscape n ++ "\"," ++ encodeValueW v ++ "]"):String).toList
+                  ++ ((encodeFieldsTailW gs).toList ++ (']' :: rest))
+              = ("[":String).toList ++ (('"' :: (jsonEscape n).toList) ++ ('"' :: (','
+                  :: ((encodeValueW v).toList ++ (']' :: ((encodeFieldsTailW gs).toList ++ (']' :: rest)))))) ) by
+              simp only [String.toList_append, show ("[":String).toList = ['['] from rfl,
+                show ("\"":String).toList = ['"'] from rfl, show (",":String).toList = [','] from rfl,
+                show ("]":String).toList = [']'] from rfl]
+              simp [List.append_assoc]]
+        rw [lit_append]; simp only []
+        rw [parseStr_clean n (',' :: ((encodeValueW v).toList ++ (']' :: ((encodeFieldsTailW gs).toList ++ (']' :: rest))))) hn]
+        simp only []
+        rw [lit_commaC]; simp only []
+        have hval := (IH fuel' (by omega)).1 v (']' :: ((encodeFieldsTailW gs).toList ++ (']' :: rest))) hv hvfuel
+        rw [hval]; simp only []
+        rw [lit_brack]; simp only []
+        match gs, hgs, hgsfuel with
+        | [], _, _ =>
+            show (match lit "," ((encodeFieldsTailW ([]:List (FieldName × Value))).toList ++ (']' :: rest)) with
+                  | some r5 => match parseFieldsLoopW fuel' r5 with
+                               | some (rest', r6) => some ((n, v) :: rest', r6)
+                               | none => none
+                  | none => match lit "]" ((encodeFieldsTailW ([]:List (FieldName × Value))).toList ++ (']' :: rest)) with
+                            | some r6 => some ([(n, v)], r6)
+                            | none => none) = _
+            simp only [encodeFieldsTailW, show ("":String).toList = [] from rfl, List.nil_append]
+            rw [show lit "," (']' :: rest) = none from by
+                  rw [show (']'::rest) = ("]":String).toList ++ rest from rfl]
+                  exact lit_ne_pre "," "]" rest (by decide) (by decide)]
+            simp only []
+            rw [lit_brack]
+        | (n2, v2) :: gs2, hgs', hgsfuel' =>
+            obtain ⟨hn2, hv2, hgs2⟩ := hgs'
+            rw [encFieldsTailW_cons_shape n2 v2 gs2 (']' :: rest)]
+            rw [show (',' :: ((("[\"" ++ jsonEscape n2 ++ "\"," ++ encodeValueW v2 ++ "]"):String).toList
+                      ++ ((encodeFieldsTailW gs2).toList ++ (']' :: rest))))
+                  = (",":String).toList ++ ((("[\"" ++ jsonEscape n2 ++ "\"," ++ encodeValueW v2 ++ "]"):String).toList
+                      ++ ((encodeFieldsTailW gs2).toList ++ (']' :: rest))) from rfl]
+            rw [lit_append]; simp only []
+            -- the loop RECURSES at the DECREMENTED fuel `fuel'` (see `parseFieldsLoopW`); the IH at
+            -- `fuel' < fuel'+1` supplies the loop clause of `ValueGoal fuel'`:
+            have hrec := (IH fuel' (by omega)).2.2 ((n2,v2)::gs2) rest ⟨hn2, hv2, hgs2⟩ (by simp) hgsfuel'
+            simp only [List.headD, List.tail] at hrec
+            rw [hrec]
+    -- now the FIELDS-W clause (`[]` vs `[FIELD...]`), reducing to `hloop`:
+    have hfieldsW : ∀ (fs : List (FieldName × Value)) (rest : PState), WfFields fs → fieldsSize fs ≤ fuel →
+        parseFieldsW fuel ((encodeFieldsW fs).toList ++ rest) = some (fs, rest) := by
+      intro fs rest hwf hsz
+      match fs with
+      | [] =>
+          unfold encodeFieldsW parseFieldsW
+          rw [show (("[]":String).toList ++ rest) = ("[]":String).toList ++ rest from rfl, lit_append]
+      | (n, v) :: gs =>
+          unfold parseFieldsW
+          rw [encFieldsW_cons_shape n v gs rest]
+          -- the body is `'[' :: '[' :: '"' :: …` (the field's own open bracket follows): so `lit "[]"`
+          -- mismatches at the 2nd char (`[` ≠ `]`) — fail-closed via the `[[`-prefix dispatch:
+          have hbody : ('[' :: ((("[\"" ++ jsonEscape n ++ "\"," ++ encodeValueW v ++ "]"):String).toList
+                ++ ((encodeFieldsTailW gs).toList ++ (']' :: rest))))
+              = ("[[":String).toList ++ (('"' :: (jsonEscape n).toList ++ '"' :: ',' :: (encodeValueW v).toList)
+                  ++ (']' :: ((encodeFieldsTailW gs).toList ++ (']' :: rest)))) := by
+            simp only [String.toList_append, show ("[[":String).toList = ['[','['] from rfl,
+              show ("[\"":String).toList = ['[','"'] from rfl, show ("\",":String).toList = ['"',','] from rfl,
+              show ("]":String).toList = [']'] from rfl, show ("\"":String).toList = ['"'] from rfl,
+              show (",":String).toList = [','] from rfl]
+            simp [List.append_assoc]
+          rw [hbody]
+          have hlitempty := lit_ne_pre "[]" "[["
+              (('"' :: (jsonEscape n).toList ++ '"' :: ',' :: (encodeValueW v).toList)
+                  ++ (']' :: ((encodeFieldsTailW gs).toList ++ (']' :: rest))))
+              (by decide) (by decide)
+          rw [hlitempty]; simp only []
+          rw [← hbody]
+          rw [show ('[' :: ((("[\"" ++ jsonEscape n ++ "\"," ++ encodeValueW v ++ "]"):String).toList
+                    ++ ((encodeFieldsTailW gs).toList ++ (']' :: rest))))
+                = ("[":String).toList ++ ((("[\"" ++ jsonEscape n ++ "\"," ++ encodeValueW v ++ "]"):String).toList
+                    ++ ((encodeFieldsTailW gs).toList ++ (']' :: rest))) from rfl]
+          rw [lit_append]; simp only []
+          have := hloop ((n,v)::gs) rest hwf (by simp) hsz
+          simp only [List.headD, List.tail] at this
+          exact this
+    refine ⟨?_, hfieldsW, hloop⟩
+    -- the VALUE clause, reducing the record arm to `hfieldsW`:
+    intro v rest hwf hsz
+    have hfpos : 0 < fuel := lt_of_lt_of_le (by cases v <;> simp [valueSize] <;> omega) hsz
+    obtain ⟨fuel', rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by omega⟩
+    match v with
+      | .int i =>
+          unfold parseValueW
+          rw [encInt_shape i rest, lit_append]; simp only []
+          rw [parseInt_toString i _ (nd_brace rest)]; simp only []
+          rw [lit_brace rest]; simp
+      | .sym s =>
+          exact parseValueW_scalar fuel' (.sym s) rest hwf (by intro fs h; cases h)
+      | .dig d =>
+          exact parseValueW_scalar fuel' (.dig d) rest hwf (by intro fs h; cases h)
+      | .record fs =>
+          have hwff : WfFields fs := hwf
+          have hfssz : fieldsSize fs ≤ fuel' := by simp only [valueSize] at hsz; omega
+          unfold encodeValueW parseValueW
+          obtain ⟨h1, h2, h3⟩ := value_tags_fail_on_rec ((encodeFieldsW fs).toList ++ ('}' :: rest))
+          rw [show (("{\"rec\":" ++ encodeFieldsW fs ++ "}"):String).toList ++ rest
+                = ("{\"rec\":":String).toList ++ ((encodeFieldsW fs).toList ++ ('}' :: rest)) by
+                rw [String.toList_append, String.toList_append,
+                    show ("}":String).toList = ['}'] from rfl]; simp [List.append_assoc]]
+          rw [h1]; simp only []
+          rw [h2]; simp only []
+          rw [h3]; simp only []
+          rw [lit_append]; simp only []
+          -- the parser calls `parseFieldsW fuel'` (the DECREMENTED fuel); use the IH's fields clause:
+          rw [(IH fuel' (by omega)).2.1 fs ('}' :: rest) hwff hfssz]; simp only []
+          rw [lit_brace rest]; rfl
+
+/-- **FILL J production (a): the FULL `Value`/`record` roundtrip.** Every reachable `Value` —
+including the recursive `record`/fields fold — round-trips through `encodeValueW`/`parseValueW`, given
+enough fuel (`valueSize v`, the structural depth bound). The `record` arm was the missing piece beyond
+the scalar leaf; this REMOVES the whole `Value` algebra from the codec TCB. -/
+theorem parseValueW_roundtrip (v : Value) (rest : PState) (hwf : WfValue v) (fuel : Nat)
+    (hfuel : valueSize v ≤ fuel) :
+    parseValueW fuel ((encodeValueW v).toList ++ rest) = some (v, rest) :=
+  (valueGoal_all fuel).1 v rest hwf hfuel
+
+/-- **The `FIELDS` array roundtrip** (`parseFieldsW ∘ encodeFieldsW = id`) — the record body, empty or
+non-empty, given fuel ≥ `fieldsSize fs`. -/
+theorem parseFieldsW_roundtrip (fs : List (FieldName × Value)) (rest : PState) (hwf : WfFields fs)
+    (fuel : Nat) (hfuel : fieldsSize fs ≤ fuel) :
+    parseFieldsW fuel ((encodeFieldsW fs).toList ++ rest) = some (fs, rest) :=
+  (valueGoal_all fuel).2.1 fs rest hwf hfuel
+
+/-! ### NON-VACUITY witnesses for the record recursion (the teeth are satisfiable AND non-trivial). -/
+
+-- A NESTED record (record-inside-record, with a digest field) round-trips — the recursion is real
+-- (the `record` arm calls back into `parseFieldsW`, which calls back into `parseValueW`):
+private def witNestedRec : Value :=
+  .record [("a", .int 7), ("b", .record [("h", .dig 255), ("k", .sym 3)])]
+
+private theorem witNestedRec_wf : WfValue witNestedRec := by
+  show WfFields [("a", .int 7), ("b", .record [("h", .dig 255), ("k", .sym 3)])]
+  refine ⟨?_, trivial, ?_, ?_, trivial⟩
+  · intro c h; fin_cases h <;> decide   -- name "a" escape-free
+  · intro c h; fin_cases h <;> decide   -- name "b" escape-free
+  · -- WfValue (.record [("h", .dig 255), ("k", .sym 3)])
+    show WfFields [("h", .dig 255), ("k", .sym 3)]
+    refine ⟨?_, show (255:Nat) < 2^256 by norm_num, ?_, trivial, trivial⟩
+    · intro c h; fin_cases h <;> decide  -- name "h"
+    · intro c h; fin_cases h <;> decide  -- name "k"
+
+example : parseValueW 10 ((encodeValueW witNestedRec).toList ++ ['x']) = some (witNestedRec, ['x']) :=
+  parseValueW_roundtrip witNestedRec ['x'] witNestedRec_wf 10 (by unfold witNestedRec; decide)
+
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
@@ -728,5 +1044,8 @@ zero-sorry guarantee on the codec roundtrip). -/
 #assert_axioms fillJ_amount
 #assert_axioms fillJ_value_scalar
 #assert_axioms fillJ_bal_entry
+#assert_axioms litGo_none_mono
+#assert_axioms parseValueW_roundtrip
+#assert_axioms parseFieldsW_roundtrip
 
 end Dregg2.Exec.CodecRoundtrip

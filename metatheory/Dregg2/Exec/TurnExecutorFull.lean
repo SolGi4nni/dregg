@@ -1537,9 +1537,9 @@ moves REFERENCES (capability routing), never balance. -/
 /-- **Chained swiss export** — gate on `stateAuthB actor exporter` (the holder of the cap may export it)
 AND run `swissExportK` (INSERT a swiss→cap entry, refcount 1; fail-closed on duplicate OR amplification). -/
 def swissExportChainA (s : RecChainedState) (sw : Nat) (actor exporter target : CellId)
-    (rights held : List Auth) : Option RecChainedState :=
+    (rights : List Auth) : Option RecChainedState :=
   if stateAuthB s.kernel.caps actor exporter = true then
-    match swissExportK s.kernel sw exporter target rights held with
+    match swissExportK s.kernel sw exporter target rights with
     | some k' => some { kernel := k', log := { actor := actor, src := exporter, dst := exporter, amt := 0 } :: s.log }
     | none    => none
   else none
@@ -1576,7 +1576,7 @@ def swissDropChainA (s : RecChainedState) (sw : Nat) (actor exporter : CellId) :
 /-- **The 4 swiss chained steps are AUTHORIZED — PROVED.** A committed swiss step implies the actor held
 authority over the exporting/holding cell. The bridge the D auth gate reuses. -/
 theorem swissExportChainA_authorized {s s' : RecChainedState} {sw : Nat} {actor exporter target : CellId}
-    {rights held : List Auth} (h : swissExportChainA s sw actor exporter target rights held = some s') :
+    {rights : List Auth} (h : swissExportChainA s sw actor exporter target rights = some s') :
     stateAuthB s.kernel.caps actor exporter = true := by
   unfold swissExportChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor exporter = true
@@ -1610,12 +1610,12 @@ theorem swissDropChainA_authorized {s s' : RecChainedState} {sw : Nat} {actor ex
 /-- **The 4 swiss chained steps are balance-NEUTRAL — PROVED.** The swiss-table moves references, not
 balance, so the COMBINED per-asset measure is UNCHANGED ∀ asset. Reuses the kernel `*K_balNeutral`. -/
 theorem swissExportChainA_balNeutral {s s' : RecChainedState} {sw : Nat} {actor exporter target : CellId}
-    {rights held : List Auth} (h : swissExportChainA s sw actor exporter target rights held = some s')
+    {rights : List Auth} (h : swissExportChainA s sw actor exporter target rights = some s')
     (b : AssetId) : recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
   unfold swissExportChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor exporter = true
   · rw [if_pos hg] at h
-    cases hk : swissExportK s.kernel sw exporter target rights held with
+    cases hk : swissExportK s.kernel sw exporter target rights with
     | none    => rw [hk] at h; exact absurd h (by simp)
     | some k' =>
         rw [hk] at h; simp only [Option.some.injEq] at h; subst h
@@ -1667,12 +1667,12 @@ theorem swissDropChainA_balNeutral {s s' : RecChainedState} {sw : Nat} {actor ex
 
 /-- **The 4 swiss chained steps each append EXACTLY one receipt row — PROVED (the chainlink).** -/
 theorem swissExportChainA_chainlink {s s' : RecChainedState} {sw : Nat} {actor exporter target : CellId}
-    {rights held : List Auth} (h : swissExportChainA s sw actor exporter target rights held = some s') :
+    {rights : List Auth} (h : swissExportChainA s sw actor exporter target rights = some s') :
     s'.log = { actor := actor, src := exporter, dst := exporter, amt := 0 } :: s.log := by
   unfold swissExportChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor exporter = true
   · rw [if_pos hg] at h
-    cases hk : swissExportK s.kernel sw exporter target rights held with
+    cases hk : swissExportK s.kernel sw exporter target rights with
     | none    => rw [hk] at h; exact absurd h (by simp)
     | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
   · rw [if_neg hg] at h; exact absurd h (by simp)
@@ -2066,10 +2066,12 @@ inductive FullActionA where
   -- enliven-LOOKUP-fail-closed / handoff-cert-bind / refcount-GC are the REAL registry (`swiss*K`), PROVED.
   /-- `ExportSturdyRef { swiss_number, target, permissions }` (dregg1 `apply_export_sturdy_ref`,
   `apply.rs:3879`): the holder `exporter` mints a sturdy ref — INSERT a swiss→cap entry (`sw` → `target`
-  with `rights`, refcount 1). Fail-closed on duplicate swiss OR on amplification (`rights ⊄ held`,
-  `apply.rs:3917`). Authority: `actor` holds authority over the `exporter` cell (holder of the cap).
+  with `rights`, refcount 1). Fail-closed on duplicate swiss OR on amplification (`rights ⊄` the exporter's
+  REAL committed rights `heldAuths s.kernel exporter`, `apply.rs:3917`). **SOUNDNESS:** the held bound is
+  read from the EXECUTED c-list `s.kernel.caps exporter`, NOT a caller-supplied parameter — so no
+  capability amplification. Authority: `actor` holds authority over the `exporter` cell (holder of the cap).
   Monotonic. bal-NEUTRAL. -/
-  | exportSturdyRefA (sw : Nat) (actor exporter target : CellId) (rights held : List Auth)
+  | exportSturdyRefA (sw : Nat) (actor exporter target : CellId) (rights : List Auth)
   /-- `EnlivenRef { swiss_number, bearer, expected_cell_id, expected_permissions }` (dregg1
   `apply_enliven_ref`, `apply.rs:3955`): VALIDATE a presented swiss number against the committed
   swiss-table (fail-closed if absent) + validate non-amplification (`claimed ⊆ entry.rights`,
@@ -2152,7 +2154,7 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   | .queueDequeueA _ _ _ _ _,     _ => 0
   | .queueResizeA _ _ _ _,        _ => 0
   -- §MA-swiss: the 4 CapTP swiss-table effects move REFERENCES, never balance ⇒ `0` at every asset.
-  | .exportSturdyRefA _ _ _ _ _ _, _ => 0
+  | .exportSturdyRefA _ _ _ _ _, _ => 0
   | .enlivenRefA _ _ _ _,          _ => 0
   | .swissHandoffA _ _ _ _,        _ => 0
   | .swissDropA _ _ _,             _ => 0
@@ -2225,7 +2227,7 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   | .queueDequeueA id actor cell depId deposit          => queueDequeueChainA s id actor cell depId deposit
   | .queueResizeA id newCap actor cell  => queueResizeChainA s id newCap actor cell
   -- §MA-swiss: the 4 CapTP swiss-table effects route to the authority-gated swiss registry steps.
-  | .exportSturdyRefA sw actor exporter target rights held => swissExportChainA s sw actor exporter target rights held
+  | .exportSturdyRefA sw actor exporter target rights => swissExportChainA s sw actor exporter target rights
   | .enlivenRefA sw actor exporter claimed                 => swissEnlivenChainA s sw actor exporter claimed
   | .swissHandoffA sw certHash introducer exporter         => swissHandoffChainA s sw certHash introducer exporter
   | .swissDropA sw actor exporter                          => swissDropChainA s sw actor exporter
@@ -2555,7 +2557,7 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
             queueResizeChainA_balNeutral h b]
       simp only [recTotalAssetWithEscrow]; ring
   -- §MA-swiss: each swiss-table effect is balance-NEUTRAL (moves references, not balance) ⇒ `+0`.
-  | exportSturdyRefA sw actor exporter target rights held =>
+  | exportSturdyRefA sw actor exporter target rights =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       rw [show recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b from
             swissExportChainA_balNeutral h b]
@@ -2721,7 +2723,7 @@ def fullReceiptA : FullActionA → Turn
   | .queueResizeA _ _ actor cell     => { actor := actor, src := cell, dst := cell, amt := 0 }
   -- §MA-swiss: each swiss-table effect appends a balance-`0` self-`Turn` on the exporting `exporter`
   -- cell (the metadata clock row; the swiss entry lives in the off-ledger registry, not the receipt).
-  | .exportSturdyRefA _ actor exporter _ _ _ => { actor := actor, src := exporter, dst := exporter, amt := 0 }
+  | .exportSturdyRefA _ actor exporter _ _ => { actor := actor, src := exporter, dst := exporter, amt := 0 }
   | .enlivenRefA _ actor exporter _          => { actor := actor, src := exporter, dst := exporter, amt := 0 }
   | .swissHandoffA _ _ introducer exporter   => { actor := introducer, src := exporter, dst := exporter, amt := 0 }
   | .swissDropA _ actor exporter             => { actor := actor, src := exporter, dst := exporter, amt := 0 }
@@ -2895,7 +2897,7 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA, fullReceiptA] at h ⊢; exact queueDequeueChainA_chainlink h
   | queueResizeA id newCap actor cell =>
       simp only [execFullA, fullReceiptA] at h ⊢; exact queueResizeChainA_chainlink h
-  | exportSturdyRefA sw actor exporter target rights held =>
+  | exportSturdyRefA sw actor exporter target rights =>
       simp only [execFullA, fullReceiptA] at h ⊢; exact swissExportChainA_chainlink h
   | enlivenRefA sw actor exporter claimed =>
       simp only [execFullA, fullReceiptA] at h ⊢; exact swissEnlivenChainA_chainlink h
@@ -3187,8 +3189,8 @@ obligation (`swissExportK_amplification_rejects` / `swissEnlivenK_absent_rejects
 /-- **`exportSturdyRefA` authorized — PROVED.** A committed export implies the actor held authority over
 the `exporter` cell (the holder of the cap). -/
 theorem execFullA_exportSturdyRefA_authorized (s s' : RecChainedState) (sw : Nat)
-    (actor exporter target : CellId) (rights held : List Auth)
-    (h : execFullA s (.exportSturdyRefA sw actor exporter target rights held) = some s') :
+    (actor exporter target : CellId) (rights : List Auth)
+    (h : execFullA s (.exportSturdyRefA sw actor exporter target rights) = some s') :
     stateAuthB s.kernel.caps actor exporter = true :=
   swissExportChainA_authorized (by simpa only [execFullA] using h)
 
@@ -3644,7 +3646,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
    -- gate over the exporting cell ∧ their catalog COLORING (export/enliven/handoff Monotonic, drop
    -- Terminal). The membership / non-amplification / refcount-GC are the SEPARATE kernel obligation
    -- (`swissExportK_amplification_rejects` / `swissEnlivenK_absent_rejects` / `swissDropK_gc_at_one`).
-   | .exportSturdyRefA _ actor exporter _ _ _ =>
+   | .exportSturdyRefA _ actor exporter _ _ =>
        stateAuthB s.kernel.caps actor exporter = true ∧
        effectLinearity .exportSturdyRef = LinearityClass.Monotonic
    | .enlivenRefA _ actor exporter _ =>
@@ -3750,8 +3752,8 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   | queueResizeA id newCap actor cell =>
       exact ⟨execFullA_queueResizeA_authorized s s' id newCap actor cell h, rfl⟩
   -- §MA-swiss: discharge each swiss effect's (REAL `stateAuthB` authority gate ∧ the catalog coloring).
-  | exportSturdyRefA sw actor exporter target rights held =>
-      exact ⟨execFullA_exportSturdyRefA_authorized s s' sw actor exporter target rights held h, rfl⟩
+  | exportSturdyRefA sw actor exporter target rights =>
+      exact ⟨execFullA_exportSturdyRefA_authorized s s' sw actor exporter target rights h, rfl⟩
   | enlivenRefA sw actor exporter claimed =>
       exact ⟨execFullA_enlivenRefA_authorized s s' sw actor exporter claimed h, rfl⟩
   | swissHandoffA sw certHash introducer exporter =>
