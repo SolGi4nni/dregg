@@ -384,6 +384,12 @@ def targetOf : FullActionA → CellId
   | .makeSovereignA _ cell                  => cell
   | .refusalA _ cell                        => cell
   | .receiptArchiveA _ cell                 => cell
+  -- §MA-queue: the 4 ring-buffer FIFO queue effects act on the queue's representing `cell` (the
+  -- `stateAuthB`-gated node the chained step touches).
+  | .queueAllocateA _ _ cell _              => cell
+  | .queueEnqueueA _ _ _ cell               => cell
+  | .queueDequeueA _ _ cell                 => cell
+  | .queueResizeA _ _ _ cell                => cell
 
 mutual
 /-- **`sameTargetForest`** — the STRUCTURAL `DelegationMode::None` fidelity predicate: every child's

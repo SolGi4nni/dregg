@@ -1148,6 +1148,194 @@ def noteSpendChainA (s : RecChainedState) (nf : Nat) (actor : CellId) : Option R
   | some k' => some { kernel := k', log := escrowReceiptA actor :: s.log }
   | none    => none
 
+/-! ### §MA-queue — the REAL ring-buffer FIFO queue effects (Wave-7 de-THIN). The chained wrappers over
+`RecordKernel`'s `queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK`, EACH composed with a
+REAL `stateAuthB actor cell` authority gate over the queue's representing cell (dregg1's writer-ACL /
+owner gate, `apply.rs:3334,3433`) — fail-closed if the actor lacks authority. The kernel transition
+carries the FIFO/capacity/owner/emptiness gates; the chained wrapper adds the c-list authority gate and
+the receipt-chain row. ALL FOUR are balance-NEUTRAL: queues hold MESSAGES, never balance. -/
+
+/-- **Chained queue allocate** — gate on `stateAuthB actor cell` (the actor may create a queue on its
+cell) AND run `queueAllocateK` (fail-closed on a duplicate id). -/
+def queueAllocateChainA (s : RecChainedState) (id : Nat) (actor cell : CellId) (capacity : Nat) :
+    Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor cell = true then
+    match queueAllocateK s.kernel id actor capacity with
+    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
+    | none    => none
+  else none
+
+/-- **Chained queue enqueue** — gate on `stateAuthB actor cell` (the writer-ACL gate, `apply.rs:3334`)
+AND run `queueEnqueueK` (APPEND to the tail; fail-closed if absent OR FULL, `apply.rs:3348`). -/
+def queueEnqueueChainA (s : RecChainedState) (id : Nat) (m : Nat) (actor cell : CellId) :
+    Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor cell = true then
+    match queueEnqueueK s.kernel id m with
+    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
+    | none    => none
+  else none
+
+/-- **Chained queue dequeue** — gate on `stateAuthB actor cell` (the c-list read) AND run
+`queueDequeueK` with `actor` as the dequeuer (REMOVE-FROM-FRONT in FIFO order; fail-closed if absent, NOT
+the owner `apply.rs:3433`, OR EMPTY `apply.rs:3444`). The dequeued head message is dropped from the
+chained wrapper (it surfaces in the kernel transition's `Nat`); the receipt records the metadata row. -/
+def queueDequeueChainA (s : RecChainedState) (id : Nat) (actor cell : CellId) :
+    Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor cell = true then
+    match queueDequeueK s.kernel id actor with
+    | some (k', _) => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
+    | none         => none
+  else none
+
+/-- **Chained queue resize** — gate on `stateAuthB actor cell` AND run `queueResizeK` (fail-closed if
+absent OR shrinking below the current occupancy, `apply.rs:3534`). -/
+def queueResizeChainA (s : RecChainedState) (id : Nat) (newCap : Nat) (actor cell : CellId) :
+    Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor cell = true then
+    match queueResizeK s.kernel id newCap with
+    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
+    | none    => none
+  else none
+
+/-- **`queueChainA_factors` — PROVED.** A committed queue chained step (allocate/enqueue/dequeue/resize)
+implies the actor was authorized over the queue cell AND the kernel transition committed. The bridge the
+authority + bal-neutrality keystones reuse. Stated generically over the kernel `Option` result. -/
+theorem queueEnqueueChainA_authorized {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
+    (h : queueEnqueueChainA s id m actor cell = some s') :
+    stateAuthB s.kernel.caps actor cell = true := by
+  unfold queueEnqueueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · exact hg
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueDequeueChainA_authorized {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
+    (h : queueDequeueChainA s id actor cell = some s') :
+    stateAuthB s.kernel.caps actor cell = true := by
+  unfold queueDequeueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · exact hg
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueAllocateChainA_authorized {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
+    (h : queueAllocateChainA s id actor cell cap = some s') :
+    stateAuthB s.kernel.caps actor cell = true := by
+  unfold queueAllocateChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · exact hg
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueResizeChainA_authorized {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
+    (h : queueResizeChainA s id newCap actor cell = some s') :
+    stateAuthB s.kernel.caps actor cell = true := by
+  unfold queueResizeChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · exact hg
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`queueEnqueueChainA_balNeutral` — PROVED.** A committed enqueue leaves the COMBINED per-asset
+measure UNCHANGED ∀ asset (queues hold messages, not balance). Reuses `queueEnqueueK_balNeutral`. -/
+theorem queueEnqueueChainA_balNeutral {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
+    (h : queueEnqueueChainA s id m actor cell = some s') (b : AssetId) :
+    recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
+  unfold queueEnqueueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueEnqueueK s.kernel id m with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+        obtain ⟨hr, he⟩ := queueEnqueueK_balNeutral hk b
+        simp only [recTotalAssetWithEscrow, hr, he]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueDequeueChainA_balNeutral {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
+    (h : queueDequeueChainA s id actor cell = some s') (b : AssetId) :
+    recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
+  unfold queueDequeueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueDequeueK s.kernel id actor with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some kr =>
+        obtain ⟨k', m⟩ := kr
+        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+        obtain ⟨hr, he⟩ := queueDequeueK_balNeutral hk b
+        simp only [recTotalAssetWithEscrow, hr, he]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueAllocateChainA_balNeutral {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
+    (h : queueAllocateChainA s id actor cell cap = some s') (b : AssetId) :
+    recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
+  unfold queueAllocateChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueAllocateK s.kernel id actor cap with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+        obtain ⟨hr, he⟩ := queueAllocateK_balNeutral hk b
+        simp only [recTotalAssetWithEscrow, hr, he]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueResizeChainA_balNeutral {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
+    (h : queueResizeChainA s id newCap actor cell = some s') (b : AssetId) :
+    recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
+  unfold queueResizeChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueResizeK s.kernel id newCap with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+        obtain ⟨hr, he⟩ := queueResizeK_balNeutral hk b
+        simp only [recTotalAssetWithEscrow, hr, he]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`queueEnqueueChainA_chainlink` — PROVED.** A committed enqueue appends EXACTLY one receipt row. -/
+theorem queueEnqueueChainA_chainlink {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
+    (h : queueEnqueueChainA s id m actor cell = some s') :
+    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
+  unfold queueEnqueueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueEnqueueK s.kernel id m with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueDequeueChainA_chainlink {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
+    (h : queueDequeueChainA s id actor cell = some s') :
+    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
+  unfold queueDequeueChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueDequeueK s.kernel id actor with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some kr => obtain ⟨k', m⟩ := kr; rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueAllocateChainA_chainlink {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
+    (h : queueAllocateChainA s id actor cell cap = some s') :
+    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
+  unfold queueAllocateChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueAllocateK s.kernel id actor cap with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+theorem queueResizeChainA_chainlink {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
+    (h : queueResizeChainA s id newCap actor cell = some s') :
+    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
+  unfold queueResizeChainA at h
+  by_cases hg : stateAuthB s.kernel.caps actor cell = true
+  · rw [if_pos hg] at h
+    cases hk : queueResizeK s.kernel id newCap with
+    | none    => rw [hk] at h; exact absurd h (by simp)
+    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
 /-! ### §MA-bridge — the cross-chain bridge lock/finalize/cancel on the SHARED escrow holding-store
 (Wave-5 `PHASE-BRIDGE`). The chained wrappers over `RecordKernel`'s `bridgeLockKAsset` (≈ escrow-create,
 combined-conserving), `bridgeFinalizeKAsset` (a no-credit resolve — the value LEFT for the other chain,
@@ -1467,6 +1655,32 @@ inductive FullActionA where
   A LOG/field operation. Authority: dregg1 requires checkpoint cell_id = action_target (`stateAuthB
   actor cell`). Terminal. bal-NEUTRAL. -/
   | receiptArchiveA (actor cell : CellId)
+  -- §MA-queue: the 4 REAL ring-buffer FIFO QUEUE effects (Wave-7 de-THIN). Each touches ONLY the queue
+  -- side-table (`queues`), NEVER the `bal` ledger — queues hold MESSAGES (content hashes / capability
+  -- invocations, `CapInbox`), NOT balance — so `ledgerDeltaAsset = 0` for EVERY asset (bal-NEUTRAL).
+  -- The FIFO ORDER + capacity bound + emptiness fail-closed are the REAL automaton (`qbufEnqueue`/
+  -- `qbufDequeue` + the kernel `queue*K` transitions), PROVED — a flag/no-op shadow would have NO order
+  -- and NO bound (the GROUND-STORAGE de-THIN requirement).
+  /-- `QueueAllocate { capacity, program_vk }` (dregg1 `apply_queue_allocate`, `apply.rs:3227`): create a
+  fresh queue (id `id`, owner = `cell`'s actor) with `capacity` and an EMPTY buffer. Authority: `actor`
+  holds authority over the queue's representing `cell` (`stateAuthB`). Generative. bal-NEUTRAL. -/
+  | queueAllocateA  (id : Nat) (actor cell : CellId) (capacity : Nat)
+  /-- `QueueEnqueue { queue, message_hash, deposit }` (dregg1 `apply_queue_enqueue`, `apply.rs:3310`):
+  APPEND message hash `m` to the TAIL of queue `id`'s FIFO buffer. Fail-closed if the queue is absent OR
+  FULL (`apply.rs:3348`). Authority: `actor` holds authority over the queue `cell` (the writer-ACL gate,
+  `apply.rs:3334`). The anti-spam deposit (the `EffectsPaired` cell-ledger flow) is orthogonal to the
+  ORDER mechanism. Conservative. bal-NEUTRAL. -/
+  | queueEnqueueA   (id : Nat) (m : Nat) (actor cell : CellId)
+  /-- `QueueDequeue { queue }` (dregg1 `apply_queue_dequeue`, `apply.rs:3420`): REMOVE-FROM-FRONT of
+  queue `id`'s FIFO buffer (the OLDEST waiting message). Fail-closed if absent, the actor is NOT the
+  queue owner (`apply.rs:3433`), OR the buffer is EMPTY (`apply.rs:3444`). Authority: `actor` holds
+  authority over the queue `cell` AND is the kernel-level owner. Conservative. bal-NEUTRAL. -/
+  | queueDequeueA   (id : Nat) (actor cell : CellId)
+  /-- `QueueResize { queue, new_capacity }` (dregg1 `apply_queue_resize`, `apply.rs:3507`): change queue
+  `id`'s capacity to `newCap`. Fail-closed if absent OR shrinking below the current occupancy
+  (`apply.rs:3534`, "can't shrink below current occupancy"). Authority: `actor` holds authority over the
+  queue `cell`. Generative. bal-NEUTRAL. -/
+  | queueResizeA    (id : Nat) (newCap : Nat) (actor cell : CellId)
 
 /-- **The per-asset COMBINED ledger delta of a `FullActionA`, indexed by asset `b`** — the move of the
 COMBINED measure `recTotalAssetWithEscrow` (= `bal`-ledger + per-asset holding-store). Transfer and
@@ -1526,6 +1740,12 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   | .makeSovereignA _ _,          _ => 0
   | .refusalA _ _,                _ => 0
   | .receiptArchiveA _ _,         _ => 0
+  -- §MA-queue: the 4 queue effects touch ONLY the `queues` side-table (messages, not balance), NEVER
+  -- `bal`/`escrows` — so `0` for EVERY asset (balance-NEUTRAL; `recTotalAssetWithEscrow` UNCHANGED).
+  | .queueAllocateA _ _ _ _,      _ => 0
+  | .queueEnqueueA _ _ _ _,       _ => 0
+  | .queueDequeueA _ _ _,         _ => 0
+  | .queueResizeA _ _ _ _,        _ => 0
 
 /-- **The per-asset full executor.** Dispatch each kind to its chained per-asset primitive. ONE
 executor over the per-asset op-set; the asset-typed analog of `execFull`. The 5 pure-state effects
@@ -1586,6 +1806,12 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   | .makeSovereignA actor cell    => stateStep s sovereignField actor cell (.int 1)
   | .refusalA actor cell          => stateStep s refusalField actor cell (.int 1)
   | .receiptArchiveA actor cell   => stateStep s lifecycleField actor cell (.int 1)
+  -- §MA-queue: the 4 queue effects route to the chained ring-buffer FIFO steps (authority-gated +
+  -- the kernel-level capacity/owner/emptiness gates). The REAL FIFO automaton, NOT a flag.
+  | .queueAllocateA id actor cell cap   => queueAllocateChainA s id actor cell cap
+  | .queueEnqueueA id m actor cell      => queueEnqueueChainA s id m actor cell
+  | .queueDequeueA id actor cell        => queueDequeueChainA s id actor cell
+  | .queueResizeA id newCap actor cell  => queueResizeChainA s id newCap actor cell
 
 /-- **`execFullA_ledger_per_asset` — PROVED (the COMBINED per-asset conservation VECTOR).** Every
 committed `FullActionA` moves the COMBINED per-asset measure `recTotalAssetWithEscrow b` (= `bal`-ledger
@@ -1885,6 +2111,30 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
          = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
       rw [writeField_recTotalAsset s.kernel lifecycleField cell (.int 1) b,
           show escrowHeldAsset (writeField s.kernel lifecycleField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  -- §MA-queue: each queue effect is balance-NEUTRAL — read the COMBINED measure off the chained
+  -- balNeutral lemma (`recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b`), and
+  -- `ledgerDeltaAsset = 0`. The FIFO/capacity/owner gates live in the kernel transition; here the move
+  -- is `+0` at every asset (queues hold messages, not balance).
+  | queueAllocateA id actor cell cap =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      rw [show recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b from
+            queueAllocateChainA_balNeutral h b]
+      simp only [recTotalAssetWithEscrow]; ring
+  | queueEnqueueA id m actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      rw [show recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b from
+            queueEnqueueChainA_balNeutral h b]
+      simp only [recTotalAssetWithEscrow]; ring
+  | queueDequeueA id actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      rw [show recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b from
+            queueDequeueChainA_balNeutral h b]
+      simp only [recTotalAssetWithEscrow]; ring
+  | queueResizeA id newCap actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      rw [show recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b from
+            queueResizeChainA_balNeutral h b]
+      simp only [recTotalAssetWithEscrow]; ring
 
 /-- **The per-asset full turn executor.** A transaction of `FullActionA`s, all-or-nothing. -/
 def execFullTurnA (s : RecChainedState) : List FullActionA → Option RecChainedState
@@ -2021,6 +2271,12 @@ def fullReceiptA : FullActionA → Turn
   | .makeSovereignA actor cell       => { actor := actor, src := cell, dst := cell, amt := 0 }
   | .refusalA actor cell             => { actor := actor, src := cell, dst := cell, amt := 0 }
   | .receiptArchiveA actor cell      => { actor := actor, src := cell, dst := cell, amt := 0 }
+  -- §MA-queue: each queue effect appends a balance-`0` self-`Turn` on the queue `cell` (the metadata
+  -- clock row the chained step threads; the message lives in the off-ledger buffer, not the receipt).
+  | .queueAllocateA _ actor cell _   => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .queueEnqueueA _ _ actor cell    => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .queueDequeueA _ actor cell      => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .queueResizeA _ _ actor cell     => { actor := actor, src := cell, dst := cell, amt := 0 }
 
 /-- **`execFullA_chainlink` — PROVED.** A committed `FullActionA` extends the receipt chain by EXACTLY
 its `fullReceiptA`, newest-first, with no fork or rewrite. The per-action generalization across the
@@ -2181,6 +2437,15 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
   | receiptArchiveA actor cell =>
       simp only [execFullA, fullReceiptA] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  -- §MA-queue: each queue chained step appends EXACTLY its `fullReceiptA` row (the chainlink lemma).
+  | queueAllocateA id actor cell cap =>
+      simp only [execFullA, fullReceiptA] at h ⊢; exact queueAllocateChainA_chainlink h
+  | queueEnqueueA id m actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢; exact queueEnqueueChainA_chainlink h
+  | queueDequeueA id actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢; exact queueDequeueChainA_chainlink h
+  | queueResizeA id newCap actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢; exact queueResizeChainA_chainlink h
 
 /-- **`execFullA_obsadvance` — PROVED.** A committed `FullActionA` grows the chain by exactly one
 row, so a replayed action (which would re-append the same receipt) is detectable. -/
@@ -2417,6 +2682,41 @@ theorem execFullA_receiptArchiveA_authorized (s s' : RecChainedState) (actor cel
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
   state_authorized (by simpa only [execFullA] using h)
+
+/-! ### §MA-queue authority obligations — the 4 ring-buffer FIFO queue effects carry their REAL
+`stateAuthB actor cell` authority gate over the queue's representing cell (dregg1's writer-ACL / owner
+gate, `apply.rs:3334,3433`). NON-VACUOUS: an actor without authority over the queue cell cannot commit
+(witnessed by the fail-closed `#eval`s + `queueDequeueK_wrong_owner_rejects`). The FIFO ORDER + capacity
+bound + emptiness gate are the SEPARATE kernel-level obligation (`qbuf_fifo_order` /
+`queueEnqueueK_full_rejects` / `queueDequeueK_empty_rejects`). Every conjunct has teeth, NOT `True`. -/
+
+/-- **`queueAllocateA` authorized — PROVED.** A committed allocate implies the actor held authority over
+the queue's representing `cell`. -/
+theorem execFullA_queueAllocateA_authorized (s s' : RecChainedState) (id : Nat) (actor cell : CellId) (cap : Nat)
+    (h : execFullA s (.queueAllocateA id actor cell cap) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  queueAllocateChainA_authorized (by simpa only [execFullA] using h)
+
+/-- **`queueEnqueueA` authorized — PROVED.** A committed enqueue implies the actor held authority over
+the queue `cell` (dregg1's writer-ACL gate). -/
+theorem execFullA_queueEnqueueA_authorized (s s' : RecChainedState) (id m : Nat) (actor cell : CellId)
+    (h : execFullA s (.queueEnqueueA id m actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  queueEnqueueChainA_authorized (by simpa only [execFullA] using h)
+
+/-- **`queueDequeueA` authorized — PROVED.** A committed dequeue implies the actor held authority over
+the queue `cell` (AND was the kernel-level owner — the `queueDequeueK` `actor = owner` gate). -/
+theorem execFullA_queueDequeueA_authorized (s s' : RecChainedState) (id : Nat) (actor cell : CellId)
+    (h : execFullA s (.queueDequeueA id actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  queueDequeueChainA_authorized (by simpa only [execFullA] using h)
+
+/-- **`queueResizeA` authorized — PROVED.** A committed resize implies the actor held authority over the
+queue `cell`. -/
+theorem execFullA_queueResizeA_authorized (s s' : RecChainedState) (id newCap : Nat) (actor cell : CellId)
+    (h : execFullA s (.queueResizeA id newCap actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  queueResizeChainA_authorized (by simpa only [execFullA] using h)
 
 /-! ### §MA-auth authority obligations — the 6 distinct authority effects carry their REAL,
 NON-VACUOUS integrity content (grounding / `addEdge` / `removeEdge` / non-amplification / held-cap).
@@ -2825,7 +3125,25 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        effectLinearity .refusal = LinearityClass.Monotonic
    | .receiptArchiveA actor cell =>
        stateAuthB s.kernel.caps actor cell = true ∧
-       effectLinearity .receiptArchive = LinearityClass.Terminal)
+       effectLinearity .receiptArchive = LinearityClass.Terminal
+   -- §MA-queue: the 4 ring-buffer FIFO queue effects carry their REAL `stateAuthB actor cell` authority
+   -- gate over the queue's representing cell (dregg1's writer-ACL / owner gate) ∧ their catalog COLORING
+   -- (the faithful-mirror tripwire: queueAllocate/queueResize Generative, queueEnqueue/queueDequeue
+   -- Conservative). The FIFO ORDER + capacity bound + emptiness gate are the SEPARATE kernel-level
+   -- obligation (`qbuf_fifo_order` / `queueEnqueueK_full_rejects` / `queueDequeueK_empty_rejects`, in
+   -- `RecordKernel`). Every conjunct has teeth, NOT `True`.
+   | .queueAllocateA _ actor cell _ =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .queueAllocate = LinearityClass.Generative
+   | .queueEnqueueA _ _ actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .queueEnqueue = LinearityClass.Conservative
+   | .queueDequeueA _ actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .queueDequeue = LinearityClass.Conservative
+   | .queueResizeA _ _ actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .queueResize = LinearityClass.Generative)
 
 /-- **`execFullA_attests_per_asset` — THE PER-ASSET OP-SET IS STEP-COMPLETE BY CONSTRUCTION
 (PROVED).** Every committed `FullActionA` attests its full `StepInv` content: the per-asset ledger
@@ -2910,6 +3228,15 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   | makeSovereignA actor cell => exact ⟨execFullA_makeSovereignA_authorized s s' actor cell h, rfl⟩
   | refusalA actor cell => exact ⟨execFullA_refusalA_authorized s s' actor cell h, rfl⟩
   | receiptArchiveA actor cell => exact ⟨execFullA_receiptArchiveA_authorized s s' actor cell h, rfl⟩
+  -- §MA-queue: discharge each queue effect's (REAL `stateAuthB` authority gate ∧ the catalog coloring).
+  | queueAllocateA id actor cell cap =>
+      exact ⟨execFullA_queueAllocateA_authorized s s' id actor cell cap h, rfl⟩
+  | queueEnqueueA id m actor cell =>
+      exact ⟨execFullA_queueEnqueueA_authorized s s' id m actor cell h, rfl⟩
+  | queueDequeueA id actor cell =>
+      exact ⟨execFullA_queueDequeueA_authorized s s' id actor cell h, rfl⟩
+  | queueResizeA id newCap actor cell =>
+      exact ⟨execFullA_queueResizeA_authorized s s' id newCap actor cell h, rfl⟩
 
 /-- **`execFullTurnA_each_attests` — PROVED.** Step-completeness holds at EVERY action of a committed
 per-asset transaction, across all kinds: the per-node `fullActionInvA` witness threaded along the
@@ -2999,6 +3326,20 @@ theorem execFullTurnA_each_attests :
 #assert_axioms execFullA_makeSovereignA_authorized
 #assert_axioms execFullA_refusalA_authorized
 #assert_axioms execFullA_receiptArchiveA_authorized
+-- §MA-queue (Wave 7 de-THIN): the 4 REAL ring-buffer FIFO queue effects (queueAllocate/queueEnqueue/
+-- queueDequeue/queueResize). Each carries its REAL `stateAuthB` authority gate over the queue cell
+-- AND its bal-neutrality / chainlink — all pinned kernel-clean. The FIFO ORDER + capacity bound +
+-- emptiness fail-closed are PROVED in `RecordKernel` (`qbuf_fifo_order` / `queueEnqueueK_full_rejects` /
+-- `queueDequeueK_empty_rejects`, with their own `#assert_axioms`). The de-THIN content a flag-only
+-- model lacks: NO order, NO bound. The keystone `execFullA_attests_per_asset` (re-extended above)
+-- carries ALL into the forest by construction (FullForestA spine UNCHANGED — only `targetOf` gains arms).
+#assert_axioms execFullA_queueAllocateA_authorized
+#assert_axioms execFullA_queueEnqueueA_authorized
+#assert_axioms execFullA_queueDequeueA_authorized
+#assert_axioms execFullA_queueResizeA_authorized
+#assert_axioms queueEnqueueChainA_balNeutral
+#assert_axioms queueDequeueChainA_balNeutral
+#assert_axioms queueEnqueueChainA_chainlink
 -- META-FILL B Wave 2: the 6 DISTINCT AUTHORITY effects on the per-asset dispatch. The headline
 -- NON-AMPLIFICATION (genuine `capAuthConferred ⊆` over the real `List Auth` lattice) + the
 -- teeth (amplifying grant rejected) + grounding/addEdge/removeEdge/graph-unchanged graph moves,
