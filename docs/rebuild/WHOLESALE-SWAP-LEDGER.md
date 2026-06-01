@@ -80,7 +80,18 @@ gates, 1 tree property (all-or-nothing), 0 crypto operations.**
    preconditions, proof sidecars, the side-tables; widen `Value.dig`→ByteArray32 and cap target→256-bit;
    pin integer widths to dregg1 types. (deps: A, B, D, E)
 10. **FILL J [L] — the parse∘encode roundtrip THEOREM** for every production (+ fuel-adequacy lemma),
-    which removes the codec from the Lean-side TCB. *Entirely absent today.* (deps: I)
+    which removes the codec from the Lean-side TCB. *LEAF LAYER LANDED* (`metatheory/Dregg2/Exec/CodecRoundtrip.lean`,
+    44 theorems, green, `#assert_axioms`-clean, no-sorry guard passes): the genuinely TCB-critical
+    primitives are PROVED left-inverses — `parseInt`/`parseNat` (BOTH signs, from `Nat`/`Int.repr`'s
+    digit structure + the `n < 10^(n+1)` fuel adequacy), the `[u8;32]` **DIGEST field NON-VACUOUSLY**
+    (`ofHex32 (toHex32 n) = some (n % 2^256)`, lossless on the FULL 256-bit range — the `2^256`-wrap is
+    a real counterexample, so a silent width-truncation is caught), `parseStr` (escape-free names, via
+    `jsonEscape`-identity), `lit` (literal-prefix consume + mismatched-tag fail-closed), `parseFlag`,
+    the `Auth` enum tag, the SCALAR `Value` leaf (int/dig/sym — every balance/digest/symbol the ledger
+    reads), and the per-asset `BAL` ledger entry (the conserved measure, fully generic). REMAINING
+    (the recursive structural threading — mechanical lit-then-subparse + per-tag dispatch-fail, toolkit
+    all validated): the `record`/fields recursion, the 10-variant `Authorization` sum (`oneOf`), the 51
+    `FullActionA` arms, the forest tree, the side-tables, and the `WState`/`WTurn`/`WWire` envelope. (deps: I)
 11. **FILL K [M] — committed golden-vector corpus** (canonical wire-in/wire-out byte pairs spanning
     every effect/mode/rollback/boundary/tree shape), asserted byte-for-byte in CI against BOTH the Lean
     export and the Rust reference — breaks the symmetric-codec-bug co-drift. (deps: I)

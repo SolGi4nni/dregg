@@ -1006,15 +1006,190 @@ their per-asset balance-NEUTRALITY is PROVED off `writeField_recTotalAsset`/`sta
 step. The catalog COLORING (the faithful-mirror tripwire) is carried in the `fullActionInvA`
 `KindObligation` per effect. -/
 
-/-- The record fields the 6 simple bal-neutral effects target (the metatheory's named-field model of
-dregg1's `sealed_box` store / `sovereign` hosting flag / `field[4]` refusal-audit slot / `lifecycle`).
-The STATE move writes these; the §8 crypto (AEAD ciphertext / commitment) lives in the portal. -/
+/-- The record fields the 5 simple field-writing bal-neutral effects target (the metatheory's
+named-field model of dregg1's `sealed_box` store / `field[4]` refusal-audit slot / `lifecycle`).
+The STATE move writes these; the §8 crypto (AEAD ciphertext) lives in the portal. (`MakeSovereign`
+is NOT a field write but a whole-record VALUE-REBIND — FILL #133 below, `makeSovereignStep` — so it
+has no field name; its commitment lands in `commitmentField`, not a `sovereign` flag.) -/
 def sealField      : FieldName := "sealed_box"
 def unsealField    : FieldName := "unsealed"
 def sealPairField  : FieldName := "seal_pair"
-def sovereignField : FieldName := "sovereign"
 def refusalField   : FieldName := "refusal"
 def lifecycleField : FieldName := "lifecycle"
+
+/-! ### §MA-sovereign (FILL #133) — `MakeSovereign` is a VALUE-REBIND, not a flag.
+
+The wave-6 model wrote `sovereign := 1` (a status flag) and LEFT the cell's full record readable.
+That is NOT what dregg1's `apply_make_sovereign` → `Ledger::make_sovereign` (`cell/src/ledger.rs:1014`)
+does:
+
+```rust
+pub fn make_sovereign(&mut self, id: &CellId) -> Result<Cell, LedgerError> {
+    let cell = self.cells.remove(id)?;              // the host DROPS the readable cell
+    let commitment = cell.state_commitment();        // … and keeps ONLY a 32-byte commitment
+    self.sovereign_commitments.insert(*id, commitment);
+    self.dirty = true;
+    Ok(cell)
+}
+```
+
+The cell's full state is **REMOVED** from the host-readable `cells` map and **REPLACED** by a
+commitment-only representation in `sovereign_commitments`. The host can no longer read the cell's
+value/balance/nonce/permissions directly — to learn anything it must OPEN the commitment behind the
+§8 CryptoPortal (the federation stores only the 32-byte hash; the sovereign agent holds the preimage).
+That is the whole point of "making a cell sovereign": its state moves off the host and behind a
+commitment. A flag write models NONE of this — the value stays right there, readable.
+
+We re-model the value-rebind faithfully: `makeSovereignStep` REPLACES `target`'s entire `cell` record
+with the commitment-only record `[(commitmentField, .dig (stateCommitment v))]`, where `v` is the
+pre-state value and `stateCommitment` is the deterministic §8 hash (`cell.state_commitment()`). The
+host-readable scalar fields (`balance`, `nonce`, …) become `none` (no longer directly readable — the
+teeth, `makeSovereignStep_balance_unreadable`), while the commitment IS present and binds the preimage
+(`makeSovereignStep_commitment_present`/`_binds_preimage`). It stays bal-NEUTRAL **on the per-asset
+ledger**: `recTotalAsset`/`recTotalAssetWithEscrow` read `k.bal`/`k.escrows`, which are independent of
+`k.cell` — so a value-rebind that touches ONLY `k.cell` cannot move any asset's supply (the SAME
+`rfl`-grade conservation `writeField_recTotalAsset` enjoys, since it too touches only `k.cell`). The
+commitment binding (collision-resistance of `state_commitment`) is the §8 chain-layer portal — NOT
+proved sound here; what IS proved is the value-rebind itself: the readable state is genuinely gone. -/
+
+/-- The field carrying the post-rebind state commitment (dregg1's `sovereign_commitments[id]` slot,
+a 32-byte `cell.state_commitment()`). The commitment-only record carries EXACTLY this field. -/
+def commitmentField : FieldName := "commitment"
+
+/-- **`stateCommitment v`** — the metatheory's model of dregg1's `cell.state_commitment()`
+(`cell/src/commitment.rs`): a DETERMINISTIC hash of the cell's FULL state into a digest tag. The
+exact hash is the §8 CryptoPortal (collision-resistance ASSUMED, not proved); all the value-rebind
+needs is that it is a *function of the whole pre-state value* (so distinct pre-states give distinct
+commitment records — witnessed by the `#eval`s). A simple structural Gödel-style fold suffices for
+the model: leaves hash to small tags, records fold their (field-position, sub-hash) pairs. -/
+def stateCommitment : Value → Nat
+  | .int i  => 2 * (Int.natAbs i) + (if i < 0 then 1 else 0) |>.succ.succ.succ
+  | .dig d  => 7 * d + 3
+  | .sym s  => 11 * s + 5
+  | .record fs => 13 * (commitFields fs) + 1
+where
+  /-- Fold a record's fields into a hash, mixing each field's position so that field ORDER and the
+  per-field sub-hash both contribute (a structural digest of the whole record). -/
+  commitFields : List (FieldName × Value) → Nat
+  | []             => 17
+  | (_, v) :: rest => (commitFields rest) * 31 + (stateCommitment v) + 19
+
+/-- **`sovereignRebind cell target`** — REPLACE `target`'s entire cell with the commitment-only
+record `[(commitmentField, .dig (stateCommitment (cell target)))]`. The faithful kernel-level model of
+`cells.remove(id)` + `sovereign_commitments.insert(id, cell.state_commitment())`: the readable record
+is GONE; only the commitment remains. Every other cell untouched. (Contrast `writeField`, which keeps
+the record and edits ONE field — the wave-6 flag model. THIS drops the whole record.) -/
+def sovereignRebind (cell : CellId → Value) (target : CellId) : CellId → Value :=
+  fun c => if c = target then .record [(commitmentField, .dig (stateCommitment (cell target)))]
+           else cell c
+
+/-- **`makeSovereignKernel k target`** — apply the value-rebind to the record kernel: the `cell`
+function is replaced by `sovereignRebind`; `bal`/`accounts`/`caps`/`escrows`/side-tables ALL fixed
+(the rebind is a pure host-representation move on `cell`, never the per-asset ledger). -/
+def makeSovereignKernel (k : RecordKernelState) (target : CellId) : RecordKernelState :=
+  { k with cell := sovereignRebind k.cell target }
+
+/-- **`makeSovereignStep` — the executable semantics of `MakeSovereign` (PROVED computable).**
+Fail-closed: commits only when the actor holds authority over `target` (dregg1's self-sovereign gate
+`cell == action_target` ⇒ the cell's own authority, `stateAuthB`). On commit, REBIND `target` into
+commitment-form (the readable state is dropped behind the §8 commitment) and extend the receipt chain
+by one row (the metadata clock). NO `bal` move, NO cap edit — the regime invariant. -/
+def makeSovereignStep (s : RecChainedState) (actor target : CellId) :
+    Option RecChainedState :=
+  if stateAuthB s.kernel.caps actor target = true then
+    some { kernel := makeSovereignKernel s.kernel target,
+           log    := { actor := actor, src := target, dst := target, amt := 0 } :: s.log }
+  else
+    none
+
+/-- **`makeSovereignStep_factors` — PROVED.** A committed `makeSovereignStep` was authorized and
+produced exactly the commitment-rebind post-state + a one-row chain extension. The bridge every
+downstream `makeSovereign` theorem reuses (the analog of `stateStep_factors`). -/
+theorem makeSovereignStep_factors {s s' : RecChainedState} {actor target : CellId}
+    (h : makeSovereignStep s actor target = some s') :
+    stateAuthB s.kernel.caps actor target = true ∧
+    s' = { kernel := makeSovereignKernel s.kernel target,
+           log    := { actor := actor, src := target, dst := target, amt := 0 } :: s.log } := by
+  unfold makeSovereignStep at h
+  by_cases hauth : stateAuthB s.kernel.caps actor target = true
+  · rw [if_pos hauth] at h
+    exact ⟨hauth, (Option.some.inj h).symm⟩
+  · rw [if_neg hauth] at h; exact absurd h (by simp)
+
+/-- **Balance-NEUTRALITY of the value-rebind over the per-asset ledger — PROVED (`rfl`-grade).** The
+`makeSovereignKernel` rebind touches ONLY `k.cell`; `recTotalAsset` reads `k.bal`/`k.accounts`, which
+are the SAME projections — so it is `rfl`-unchanged for EVERY asset. THIS is why making a cell
+sovereign cannot move any asset's supply (the value moves behind the commitment on the host, not on
+the per-asset ledger): the per-asset balance is a separate domain. The exact analog of
+`writeField_recTotalAsset`, for the whole-record drop instead of a single-field write. -/
+theorem makeSovereignKernel_recTotalAsset (k : RecordKernelState) (target : CellId) (b : AssetId) :
+    recTotalAsset (makeSovereignKernel k target) b = recTotalAsset k b := rfl
+
+/-- The rebound cell IS the commitment-only literal record (the bridge the teeth reuse). -/
+theorem makeSovereignKernel_cell_eq (k : RecordKernelState) (target : CellId) :
+    (makeSovereignKernel k target).cell target
+      = .record [(commitmentField, .dig (stateCommitment (k.cell target)))] := by
+  simp only [makeSovereignKernel, sovereignRebind, if_true]
+
+/-- **THE FIDELITY TEETH (PROVED) — the readable balance is GONE.** After a committed
+`makeSovereignStep`, the rebound cell's `balance` scalar is `none` (no longer directly readable —
+the host dropped the record, keeping only the commitment). A FLAG model could NEVER prove this: with
+a flag, `Value.scalar (post target) "balance"` is still the original balance. So the statement has
+real teeth — it FAILS for the wave-6 flag model and HOLDS for the commitment-rebind. This is the
+"§8 CryptoPortal opening" boundary: to read the value the host must now open the commitment. -/
+theorem makeSovereignStep_balance_unreadable {s s' : RecChainedState} {actor target : CellId}
+    (h : makeSovereignStep s actor target = some s') :
+    Value.scalar (s'.kernel.cell target) balanceField = none := by
+  obtain ⟨_, hs'⟩ := makeSovereignStep_factors h
+  subst hs'
+  -- the rebound cell is the literal `[(commitmentField, .dig …)]`; the only field is `commitment`,
+  -- and `commitment ≠ balance` (closed string comparison) ⇒ the `balance` lookup misses ⇒ `none`
+  -- (computes by `rfl`: the field-name match is decidable on closed strings, value irrelevant).
+  rw [makeSovereignKernel_cell_eq s.kernel target]; rfl
+
+/-- **THE FIDELITY TEETH (PROVED) — EVERY pre-state field is dropped.** After a committed
+`makeSovereignStep`, ANY field `f` distinct from the commitment field reads `none` from the rebound
+cell — `nonce`, `permissions`, `verification_key`, the value, all gone. The general form of
+`_balance_unreadable`: the host-readable state is REPLACED, not merely flagged. -/
+theorem makeSovereignStep_fields_dropped {s s' : RecChainedState} {actor target : CellId}
+    (f : FieldName) (hf : f ≠ commitmentField)
+    (h : makeSovereignStep s actor target = some s') :
+    (s'.kernel.cell target).field f = none := by
+  obtain ⟨_, hs'⟩ := makeSovereignStep_factors h
+  subst hs'
+  -- the only field of the rebound record is `commitment`; any `f ≠ commitment` misses ⇒ `none`.
+  have hfb : ((commitmentField : FieldName) == f) = false :=
+    beq_eq_false_iff_ne.2 (fun hc => hf hc.symm)
+  rw [makeSovereignKernel_cell_eq s.kernel target]
+  simp only [Value.field, List.find?_cons, hfb, List.find?_nil, Option.map_none]
+
+/-- **THE COMMITMENT IS PRESENT — PROVED.** After a committed `makeSovereignStep`, the rebound cell
+carries the commitment field as a digest of the PRE-state value: `cell.state_commitment()`. The
+post-state binds the preimage (the §8 collision-resistance, ASSUMED, makes this binding sound; here
+we prove the binding is in fact recorded). -/
+theorem makeSovereignStep_commitment_present {s s' : RecChainedState} {actor target : CellId}
+    (h : makeSovereignStep s actor target = some s') :
+    (s'.kernel.cell target).field commitmentField
+      = some (.dig (stateCommitment (s.kernel.cell target))) := by
+  obtain ⟨_, hs'⟩ := makeSovereignStep_factors h
+  subst hs'
+  -- the head field of the rebound record IS `commitment`; the lookup hits it ⇒ `some (.dig …)`
+  -- (computes by `rfl`: the field-name match is decidable on closed strings).
+  rw [makeSovereignKernel_cell_eq s.kernel target]; rfl
+
+/-- **`makeSovereignStep` authorized — PROVED.** A committed rebind implies the actor held authority
+over `target` (dregg1's self-sovereign gate). -/
+theorem makeSovereignStep_authorized {s s' : RecChainedState} {actor target : CellId}
+    (h : makeSovereignStep s actor target = some s') :
+    stateAuthB s.kernel.caps actor target = true :=
+  (makeSovereignStep_factors h).1
+
+/-- **`makeSovereignStep` extends the chain by exactly one row — PROVED** (the metadata clock; the
+chainlink the spine reuses). -/
+theorem makeSovereignStep_chainlink {s s' : RecChainedState} {actor target : CellId}
+    (h : makeSovereignStep s actor target = some s') :
+    s'.log = { actor := actor, src := target, dst := target, amt := 0 } :: s.log := by
+  obtain ⟨_, hs'⟩ := makeSovereignStep_factors h; subst hs'; rfl
 
 /-! ### §MA-auth — the 6 DISTINCT AUTHORITY effects on the per-asset dispatch.
 
@@ -2038,7 +2213,9 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   | .sealA actor cell             => stateStep s sealField actor cell (.int 1)
   | .unsealA actor cell           => stateStep s unsealField actor cell (.int 1)
   | .createSealPairA actor sealerHolder _ => stateStep s sealPairField actor sealerHolder (.int 1)
-  | .makeSovereignA actor cell    => stateStep s sovereignField actor cell (.int 1)
+  -- FILL #133: MakeSovereign is a VALUE-REBIND, not a flag — the readable record is DROPPED behind a
+  -- commitment (`cells.remove(id)` + `sovereign_commitments.insert(id, cell.state_commitment())`).
+  | .makeSovereignA actor cell    => makeSovereignStep s actor cell
   | .refusalA actor cell          => stateStep s refusalField actor cell (.int 1)
   | .receiptArchiveA actor cell   => stateStep s lifecycleField actor cell (.int 1)
   -- §MA-queue: the 4 queue effects route to the chained ring-buffer FIFO steps (authority-gated +
@@ -2331,12 +2508,14 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       rw [writeField_recTotalAsset s.kernel sealPairField sealerHolder (.int 1) b,
           show escrowHeldAsset (writeField s.kernel sealPairField sealerHolder (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
   | makeSovereignA actor cell =>
+      -- FILL #133: the value-REBIND (whole-record drop) is bal-NEUTRAL on the per-asset ledger —
+      -- `recTotalAsset`/`escrowHeldAsset` read `bal`/`escrows`, both fixed by the `cell`-only rebind.
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
-      show recTotalAsset (writeField s.kernel sovereignField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel sovereignField cell (.int 1)) b
+      obtain ⟨_, hs'⟩ := makeSovereignStep_factors h; subst hs'
+      show recTotalAsset (makeSovereignKernel s.kernel cell) b + escrowHeldAsset (makeSovereignKernel s.kernel cell) b
          = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
-      rw [writeField_recTotalAsset s.kernel sovereignField cell (.int 1) b,
-          show escrowHeldAsset (writeField s.kernel sovereignField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+      rw [makeSovereignKernel_recTotalAsset s.kernel cell b,
+          show escrowHeldAsset (makeSovereignKernel s.kernel cell) b = escrowHeldAsset s.kernel b from rfl]; ring
   | refusalA actor cell =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
@@ -2698,8 +2877,9 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA, fullReceiptA] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
   | makeSovereignA actor cell =>
+      -- FILL #133: the rebind appends EXACTLY the same self-`Turn` clock row (`makeSovereignStep`).
       simp only [execFullA, fullReceiptA] at h ⊢
-      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+      obtain ⟨_, hs'⟩ := makeSovereignStep_factors h; subst hs'; rfl
   | refusalA actor cell =>
       simp only [execFullA, fullReceiptA] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
@@ -2939,12 +3119,13 @@ theorem execFullA_createSealPairA_authorized (s s' : RecChainedState) (actor sea
   state_authorized (by simpa only [execFullA] using h)
 
 /-- **`makeSovereignA` authorized — PROVED.** Implies the actor held authority over `cell` (dregg1's
-self-sovereign gate: `cell == action_target` ⇒ the cell's own authority). The commitment binding is
-the §8 portal. -/
+self-sovereign gate: `cell == action_target` ⇒ the cell's own authority). FILL #133: the action is a
+VALUE-REBIND (the readable state is dropped behind the §8 commitment), so the gate routes through
+`makeSovereignStep_authorized`, not the generic `stateStep`. -/
 theorem execFullA_makeSovereignA_authorized (s s' : RecChainedState) (actor cell : CellId)
     (h : execFullA s (.makeSovereignA actor cell) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
-  state_authorized (by simpa only [execFullA] using h)
+  makeSovereignStep_authorized (by simpa only [execFullA] using h)
 
 /-- **`refusalA` authorized — PROVED.** Implies the actor held authority over `cell` (dregg1's
 cross-cell `SetState` gate). Refusal NEVER mutates balance/caps/value — the move is the audit write. -/
@@ -3666,6 +3847,18 @@ theorem execFullTurnA_each_attests :
 #assert_axioms execFullA_makeSovereignA_authorized
 #assert_axioms execFullA_refusalA_authorized
 #assert_axioms execFullA_receiptArchiveA_authorized
+-- FILL #133: MakeSovereign is a VALUE-REBIND (commitment-form), NOT a flag. The faithful kernel move
+-- (`cells.remove(id)` + `sovereign_commitments.insert(id, cell.state_commitment())`) + its TEETH: the
+-- readable balance/fields are GONE (a flag model CANNOT prove this), the commitment IS present and
+-- binds the pre-state, and it stays bal-NEUTRAL on the per-asset ledger (`cell`-only ⇒ `bal` fixed).
+#assert_axioms makeSovereignStep_factors
+#assert_axioms makeSovereignKernel_recTotalAsset
+#assert_axioms makeSovereignKernel_cell_eq
+#assert_axioms makeSovereignStep_authorized
+#assert_axioms makeSovereignStep_chainlink
+#assert_axioms makeSovereignStep_balance_unreadable
+#assert_axioms makeSovereignStep_fields_dropped
+#assert_axioms makeSovereignStep_commitment_present
 -- §MA-queue (Wave 7 de-THIN): the 4 REAL ring-buffer FIFO queue effects (queueAllocate/queueEnqueue/
 -- queueDequeue/queueResize). Each carries its REAL `stateAuthB` authority gate over the queue cell
 -- AND its bal-neutrality / chainlink — all pinned kernel-clean. The FIFO ORDER + capacity bound +
@@ -4230,11 +4423,28 @@ portal — NOT exercised here, NEVER faked sound. -/
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
 #eval (execFullA fmaS (.createSealPairA 9 0 1)).isSome                               -- false (FAIL-CLOSED)
 
--- ★ MakeSovereign: flip cell 0's `sovereign` REPRESENTATION flag (0→1) — ASSESSED bal-neutral
---   (dregg1 PRESERVES balance; a representation move, NOT an escrow — NO value into commitment-form):
-#eval (execFullA fmaS (.makeSovereignA 0 0)).map (fun s => fieldOf "sovereign" (s.kernel.cell 0))  -- some 1 (REPR FLIPPED)
+-- ★ FILL #133 — MakeSovereign is a VALUE-REBIND, not a flag. dregg1's `make_sovereign` REMOVES the
+--   readable cell (`cells.remove(id)`) and keeps ONLY a 32-byte commitment (`sovereign_commitments`).
+--   The rebound cell carries the commitment-only record; the host can NO LONGER read its state.
+-- (a) it commits (the self-sovereign authority gate holds: actor = cell = owner):
+#eval (execFullA fmaS (.makeSovereignA 0 0)).isSome                                  -- true
+-- (b) ★ THE TEETH: the pre-state `balance` is NO LONGER directly readable — the record was DROPPED
+--     behind the commitment (a flag model leaves it readable; this is the §8-portal boundary):
 #eval (execFullA fmaS (.makeSovereignA 0 0)).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7) (BALANCE PRESERVED)
+        (fun s => Value.scalar (s.kernel.cell 0) "balance")                          -- some none (UNREADABLE)
+#eval (execFullA fmaS (.makeSovereignA 0 0)).map
+        (fun s => ((s.kernel.cell 0).field "nonce", (s.kernel.cell 0).field "permissions"))  -- some (none, none) (ALL DROPPED)
+-- (c) the COMMITMENT is present — a digest of the FULL pre-state value (`cell.state_commitment()`):
+#eval (execFullA fmaS (.makeSovereignA 0 0)).map
+        (fun s => (s.kernel.cell 0).field "commitment")                             -- some (some (Value.dig …)) (PRESENT)
+#eval ((fmaS.kernel.cell 0) |> stateCommitment, sovereignRebind fmaS.kernel.cell 0 0)  -- the rebound record IS commitment-only
+-- ...and DISTINCT pre-states give DISTINCT commitments (the binding is a function of the whole value):
+#eval (stateCommitment (.record [("balance", .int 0)]) == stateCommitment (.record [("balance", .int 1)]))  -- false (binds value)
+-- (d) bal-NEUTRAL on the per-asset ledger (the value moves behind the commitment on the HOST, not the
+--     per-asset supply — `recTotalAsset` reads `bal`, independent of the rebound `cell` record):
+#eval (execFullA fmaS (.makeSovereignA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7) (SUPPLY PRESERVED)
+-- (e) FAIL-CLOSED: an unauthorized actor (9 owns nothing) cannot make cell 0 sovereign:
 #eval (execFullA fmaS (.makeSovereignA 9 0)).isSome                                  -- false (FAIL-CLOSED)
 
 -- Refusal: write the `refusal` audit record (dregg1 bumps nonce + records commitment; NEVER touches
