@@ -964,6 +964,58 @@ def nonceField : FieldName := "nonce"
 def permsField : FieldName := "permissions"
 def vkField    : FieldName := "verification_key"
 
+/-! ### §MA-seal — the 6 SIMPLE bal-neutral effects (Wave 6) on the per-asset dispatch.
+
+dregg1's `turn/src/executor/apply.rs` runs a cluster of SIMPLE effects that flip a cell flag, write a
+metadata field, or record a receipt/refusal — and NEVER touch the per-asset `bal` ledger. Each is
+balance-NEUTRAL (`ledgerDeltaAsset = 0` for EVERY asset, `recTotalAsset` UNCHANGED), modeled FAITHFULLY
+as a `stateStep` field-write (the SAME already-proven authority-gated record write the 5 pure-state
+effects use) — the STATE move is real (a flag/marker/lifecycle field genuinely changes), while the §8
+CRYPTO is an HONEST portal carried at the chain layer, NEVER proved sound here:
+
+  * `Seal { pair_id, capability }` (`apply_seal` ~:2743) — store a sealed box (an AEAD ciphertext of a
+    held cap). The STATE move is the record write; the AEAD itself is the §8 CryptoPortal. Authority:
+    the actor holds the sealer cap over its cell (modeled as `stateAuthB actor cell` — the c-list read).
+    Catalog: `Generative` (it generates a fresh sealed box).
+  * `Unseal { sealed_box, recipient }` (`apply_unseal` ~:2874) — reveal the capability UNDER the §8 AEAD
+    portal (the decrypt verify is the §8 carrier, NOT proved sound). The STATE move is the reveal record.
+    Authority: holds the unsealer cap (`stateAuthB`). Catalog: `Generative`.
+  * `CreateSealPair { sealer_holder, unsealer_holder }` (`apply_create_seal_pair` ~:2675) — establish a
+    seal keypair (dregg1 grants sealer/unsealer caps; the AEAD KEYPAIR is the §8 portal). The STATE move
+    is the metadata write recording the pair into the sealer-holder's record. Authority: `stateAuthB
+    actor sealerHolder` (write to the holder's record). Catalog: `Generative`.
+  * `MakeSovereign { cell }` (`apply_make_sovereign` ~:3084) — convert a cell to commitment-only
+    (sovereign) REPRESENTATION. ASSESSED bal-neutral: dregg1's `ledger.make_sovereign` flips the HOSTING
+    representation flag and PRESERVES balance/state/history (NO value moves into commitment-form on the
+    per-asset ledger — it is a representation move, not an escrow). Modeled as the `stateStep` flag write.
+    Authority: dregg1 requires `cell == action_target` (self-sovereign) ⇒ the cell's own authority
+    (`stateAuthB actor cell`). Catalog: `Terminal` (one-way; no inverse). The commitment binding is the
+    §8 portal at the chain layer (exactly as bridgeMint's foreign finality).
+  * `Refusal { cell, … }` (`apply_refusal` ~:4114) — record a refusal witness: bump the nonce and write
+    the refusal commitment into the audit field; dregg1 NEVER mutates balance/caps/value. bal-NEUTRAL.
+    Authority: dregg1 gates a CROSS-cell refusal on `SetState` (modeled `stateAuthB actor cell`).
+    Catalog: `Monotonic` (the nonce bump).
+  * `ReceiptArchive { prefix_end_height, checkpoint }` (`apply_receipt_archive` ~:4441) — archive/prune
+    the receipt-chain prefix: transition lifecycle to `Archived` (the cell stays live) + bind the
+    checkpoint. A LOG/field operation; bal-NEUTRAL. Authority: dregg1 requires the checkpoint cell_id =
+    action_target (`stateAuthB actor cell`). Catalog: `Terminal`.
+
+ALL SIX route through `EffectsState.stateStep` (the ALREADY-PROVEN authority-gated field write), so
+their per-asset balance-NEUTRALITY is PROVED off `writeField_recTotalAsset`/`stateStep_recTotalAsset`
+(exactly as `setFieldA`/`incrementNonceA`/`setPermissionsA`/`setVKA`) — we do NOT re-prove the per-effect
+step. The catalog COLORING (the faithful-mirror tripwire) is carried in the `fullActionInvA`
+`KindObligation` per effect. -/
+
+/-- The record fields the 6 simple bal-neutral effects target (the metatheory's named-field model of
+dregg1's `sealed_box` store / `sovereign` hosting flag / `field[4]` refusal-audit slot / `lifecycle`).
+The STATE move writes these; the §8 crypto (AEAD ciphertext / commitment) lives in the portal. -/
+def sealField      : FieldName := "sealed_box"
+def unsealField    : FieldName := "unsealed"
+def sealPairField  : FieldName := "seal_pair"
+def sovereignField : FieldName := "sovereign"
+def refusalField   : FieldName := "refusal"
+def lifecycleField : FieldName := "lifecycle"
+
 /-! ### §MA-auth — the 6 DISTINCT AUTHORITY effects on the per-asset dispatch.
 
 dregg1's `turn/src/executor/apply.rs` runs a cluster of capability-graph effects BEYOND the bare
@@ -1385,6 +1437,36 @@ inductive FullActionA where
   UNLOCKED and the value REFUNDED to the originator (single-cell credit + resolve). COMBINED per-asset
   CONSERVING (≈ escrow refund). The timeout gate is carried at the theorem layer. -/
   | bridgeCancelA   (id : Nat) (actor : CellId)
+  -- §MA-seal: the 6 SIMPLE bal-NEUTRAL effects (Wave 6). Each writes a cell flag/metadata field or
+  -- records a refusal — and NEVER touches the `bal` ledger, so `ledgerDeltaAsset = 0` for EVERY asset.
+  -- The §8 crypto (AEAD for seal/unseal, the commitment for makeSovereign) is the CHAIN-LAYER portal.
+  /-- `Seal { pair_id, capability }` (dregg1 `apply_seal`): store a sealed box (the AEAD ciphertext of a
+  held cap) into `cell`'s record. The STATE move is the record write; the AEAD is the §8 portal.
+  Authority: `actor` holds the sealer cap over `cell` (`stateAuthB`). Generative. bal-NEUTRAL. -/
+  | sealA           (actor cell : CellId)
+  /-- `Unseal { sealed_box, recipient }` (dregg1 `apply_unseal`): reveal the capability under the §8
+  AEAD portal (the decrypt verify is the §8 carrier). The STATE move is the reveal record. Authority:
+  holds the unsealer cap (`stateAuthB`). Generative. bal-NEUTRAL. -/
+  | unsealA         (actor cell : CellId)
+  /-- `CreateSealPair { sealer_holder, unsealer_holder }` (dregg1 `apply_create_seal_pair`): establish a
+  seal keypair (the AEAD keypair is the §8 portal); the STATE move records the pair into the
+  sealer-holder's record. Authority: `stateAuthB actor sealerHolder`. Generative. bal-NEUTRAL. -/
+  | createSealPairA (actor sealerHolder unsealerHolder : CellId)
+  /-- `MakeSovereign { cell }` (dregg1 `apply_make_sovereign`): flip `cell` to commitment-only
+  (sovereign) REPRESENTATION. ASSESSED bal-neutral: dregg1's `make_sovereign` PRESERVES balance/state
+  (a representation move, NOT an escrow — no value moves into commitment-form on the per-asset ledger).
+  Authority: dregg1 requires `cell == action_target` (self-sovereign) ⇒ the cell's own authority
+  (`stateAuthB actor cell`). Terminal. bal-NEUTRAL. The commitment binding is the §8 portal. -/
+  | makeSovereignA  (actor cell : CellId)
+  /-- `Refusal { cell, … }` (dregg1 `apply_refusal`): record a refusal witness — bump the nonce + write
+  the refusal commitment into the audit field; dregg1 NEVER mutates balance/caps/value. Authority:
+  dregg1 gates a cross-cell refusal on `SetState` (`stateAuthB actor cell`). Monotonic. bal-NEUTRAL. -/
+  | refusalA        (actor cell : CellId)
+  /-- `ReceiptArchive { prefix_end_height, checkpoint }` (dregg1 `apply_receipt_archive`): archive/prune
+  the receipt-chain prefix — transition lifecycle to `Archived` (cell stays live) + bind the checkpoint.
+  A LOG/field operation. Authority: dregg1 requires checkpoint cell_id = action_target (`stateAuthB
+  actor cell`). Terminal. bal-NEUTRAL. -/
+  | receiptArchiveA (actor cell : CellId)
 
 /-- **The per-asset COMBINED ledger delta of a `FullActionA`, indexed by asset `b`** — the move of the
 COMBINED measure `recTotalAssetWithEscrow` (= `bal`-ledger + per-asset holding-store). Transfer and
@@ -1436,6 +1518,14 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   | .bridgeLockA _ _ _ _ _ _,     _ => 0
   | .bridgeFinalizeA _ _ a amount, b => if b = a then (-amount) else 0
   | .bridgeCancelA _ _,           _ => 0
+  -- §MA-seal: the 6 simple effects write a cell flag/metadata field or record a refusal, NEVER `bal` —
+  -- so `0` for EVERY asset (balance-NEUTRAL). The §8 crypto is the chain-layer portal, off the ledger.
+  | .sealA _ _,                   _ => 0
+  | .unsealA _ _,                 _ => 0
+  | .createSealPairA _ _ _,       _ => 0
+  | .makeSovereignA _ _,          _ => 0
+  | .refusalA _ _,                _ => 0
+  | .receiptArchiveA _ _,         _ => 0
 
 /-- **The per-asset full executor.** Dispatch each kind to its chained per-asset primitive. ONE
 executor over the per-asset op-set; the asset-typed analog of `execFull`. The 5 pure-state effects
@@ -1487,6 +1577,15 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
       bridgeLockChainA s id actor originator destination asset amount
   | .bridgeFinalizeA id actor asset amount => bridgeFinalizeChainA s id actor asset amount
   | .bridgeCancelA id actor                => bridgeCancelChainA s id actor
+  -- §MA-seal: the 6 simple bal-neutral effects route to the ALREADY-PROVEN authority-gated field write
+  -- (`stateStep`), each into its named record field. The §8 crypto (AEAD ciphertext / commitment) is
+  -- the chain-layer portal — the STATE move is the field write recorded here, NOT the crypto verify.
+  | .sealA actor cell             => stateStep s sealField actor cell (.int 1)
+  | .unsealA actor cell           => stateStep s unsealField actor cell (.int 1)
+  | .createSealPairA actor sealerHolder _ => stateStep s sealPairField actor sealerHolder (.int 1)
+  | .makeSovereignA actor cell    => stateStep s sovereignField actor cell (.int 1)
+  | .refusalA actor cell          => stateStep s refusalField actor cell (.int 1)
+  | .receiptArchiveA actor cell   => stateStep s lifecycleField actor cell (.int 1)
 
 /-- **`execFullA_ledger_per_asset` — PROVED (the COMBINED per-asset conservation VECTOR).** Every
 committed `FullActionA` moves the COMBINED per-asset measure `recTotalAssetWithEscrow b` (= `bal`-ledger
@@ -1742,6 +1841,50 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
   | bridgeCancelA id actor =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       rw [bridgeCancelChainA_combined_neutral b h, add_zero]
+  -- §MA-seal: the 6 simple effects are field writes (`stateStep`) — `bal` AND `escrows` fixed, so the
+  -- COMBINED measure is UNCHANGED for EVERY asset (balance-NEUTRAL), exactly as the 5 pure-state effects.
+  | sealA actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel sealField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel sealField cell (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel sealField cell (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel sealField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  | unsealA actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel unsealField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel unsealField cell (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel unsealField cell (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel unsealField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  | createSealPairA actor sealerHolder unsealerHolder =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel sealPairField sealerHolder (.int 1)) b + escrowHeldAsset (writeField s.kernel sealPairField sealerHolder (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel sealPairField sealerHolder (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel sealPairField sealerHolder (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  | makeSovereignA actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel sovereignField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel sovereignField cell (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel sovereignField cell (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel sovereignField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  | refusalA actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel refusalField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel refusalField cell (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel refusalField cell (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel refusalField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
+  | receiptArchiveA actor cell =>
+      simp only [execFullA, ledgerDeltaAsset] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
+      show recTotalAsset (writeField s.kernel lifecycleField cell (.int 1)) b + escrowHeldAsset (writeField s.kernel lifecycleField cell (.int 1)) b
+         = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+      rw [writeField_recTotalAsset s.kernel lifecycleField cell (.int 1) b,
+          show escrowHeldAsset (writeField s.kernel lifecycleField cell (.int 1)) b = escrowHeldAsset s.kernel b from rfl]; ring
 
 /-- **The per-asset full turn executor.** A transaction of `FullActionA`s, all-or-nothing. -/
 def execFullTurnA (s : RecChainedState) : List FullActionA → Option RecChainedState
@@ -1870,6 +2013,14 @@ def fullReceiptA : FullActionA → Turn
   | .bridgeLockA _ actor _ _ _ _     => escrowReceiptA actor
   | .bridgeFinalizeA _ actor _ _     => escrowReceiptA actor
   | .bridgeCancelA _ actor           => escrowReceiptA actor
+  -- §MA-seal: each simple effect appends a balance-`0` self-`Turn` on the WRITTEN cell (the metadata
+  -- clock row that `stateStep` threads; the §8 crypto lives in the portal, not the receipt).
+  | .sealA actor cell                => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .unsealA actor cell              => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .createSealPairA actor sealerHolder _ => { actor := actor, src := sealerHolder, dst := sealerHolder, amt := 0 }
+  | .makeSovereignA actor cell       => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .refusalA actor cell             => { actor := actor, src := cell, dst := cell, amt := 0 }
+  | .receiptArchiveA actor cell      => { actor := actor, src := cell, dst := cell, amt := 0 }
 
 /-- **`execFullA_chainlink` — PROVED.** A committed `FullActionA` extends the receipt chain by EXACTLY
 its `fullReceiptA`, newest-first, with no fork or rewrite. The per-action generalization across the
@@ -2011,6 +2162,25 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
       cases hk : bridgeCancelKAsset s.kernel id with
       | none => rw [hk] at h; exact absurd h (by simp)
       | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+  -- §MA-seal: each simple effect appends exactly the metadata clock row (`stateStep`).
+  | sealA actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  | unsealA actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  | createSealPairA actor sealerHolder unsealerHolder =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  | makeSovereignA actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  | refusalA actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
+  | receiptArchiveA actor cell =>
+      simp only [execFullA, fullReceiptA] at h ⊢
+      obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
 
 /-- **`execFullA_obsadvance` — PROVED.** A committed `FullActionA` grows the chain by exactly one
 row, so a replayed action (which would re-append the same receipt) is detectable. -/
@@ -2196,6 +2366,55 @@ theorem execFullA_setPermissionsA_authorized (s s' : RecChainedState) (actor cel
 `SetVerificationKey` gate). -/
 theorem execFullA_setVKA_authorized (s s' : RecChainedState) (actor cell : CellId) (vk : Int)
     (h : execFullA s (.setVKA actor cell vk) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-! ### §MA-seal authority obligations — the 6 simple bal-neutral effects carry their REAL `stateAuthB`
+authority gate (the faithful model of dregg1's sealer-cap / self-sovereign / `SetState` / archive
+gate). NON-VACUOUS: an actor without authority over the written cell cannot commit (see the fail-closed
+`#eval`s in §13-seal). The §8 crypto (AEAD / commitment) is the chain-layer portal, NOT an authority
+claim. -/
+
+/-- **`sealA` authorized — PROVED.** A committed `seal` implies the actor held authority over `cell`
+(`stateAuthB` — the faithful model of dregg1's "actor holds the sealer cap" gate). -/
+theorem execFullA_sealA_authorized (s s' : RecChainedState) (actor cell : CellId)
+    (h : execFullA s (.sealA actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-- **`unsealA` authorized — PROVED.** Implies the actor held authority over `cell` (the unsealer-cap
+gate). The §8 AEAD decrypt verify is the chain-layer portal, off this gate. -/
+theorem execFullA_unsealA_authorized (s s' : RecChainedState) (actor cell : CellId)
+    (h : execFullA s (.unsealA actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-- **`createSealPairA` authorized — PROVED.** Implies the actor held authority over the
+`sealerHolder` cell (the write to the holder's record). The §8 AEAD keypair is the portal. -/
+theorem execFullA_createSealPairA_authorized (s s' : RecChainedState) (actor sealerHolder unsealerHolder : CellId)
+    (h : execFullA s (.createSealPairA actor sealerHolder unsealerHolder) = some s') :
+    stateAuthB s.kernel.caps actor sealerHolder = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-- **`makeSovereignA` authorized — PROVED.** Implies the actor held authority over `cell` (dregg1's
+self-sovereign gate: `cell == action_target` ⇒ the cell's own authority). The commitment binding is
+the §8 portal. -/
+theorem execFullA_makeSovereignA_authorized (s s' : RecChainedState) (actor cell : CellId)
+    (h : execFullA s (.makeSovereignA actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-- **`refusalA` authorized — PROVED.** Implies the actor held authority over `cell` (dregg1's
+cross-cell `SetState` gate). Refusal NEVER mutates balance/caps/value — the move is the audit write. -/
+theorem execFullA_refusalA_authorized (s s' : RecChainedState) (actor cell : CellId)
+    (h : execFullA s (.refusalA actor cell) = some s') :
+    stateAuthB s.kernel.caps actor cell = true :=
+  state_authorized (by simpa only [execFullA] using h)
+
+/-- **`receiptArchiveA` authorized — PROVED.** Implies the actor held authority over `cell` (dregg1's
+checkpoint cell_id = action_target gate). The archive is a lifecycle/log write. -/
+theorem execFullA_receiptArchiveA_authorized (s s' : RecChainedState) (actor cell : CellId)
+    (h : execFullA s (.receiptArchiveA actor cell) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
   state_authorized (by simpa only [execFullA] using h)
 
@@ -2583,7 +2802,30 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
        effectLinearity .bridgeFinalize = LinearityClass.Conservative
    | .bridgeCancelA _ _ =>
        (∀ b, recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b) ∧
-       effectLinearity .bridgeCancel = LinearityClass.Conservative)
+       effectLinearity .bridgeCancel = LinearityClass.Conservative
+   -- §MA-seal: the 6 simple bal-neutral effects carry their REAL `stateAuthB` authority gate (over the
+   -- written cell — the sealer-cap / self-sovereign / SetState / archive gate) ∧ their catalog COLORING
+   -- (the faithful-mirror tripwire: seal/unseal/createSealPair Generative, makeSovereign/receiptArchive
+   -- Terminal, refusal Monotonic). The §8 crypto (AEAD / commitment) is the chain-layer portal — NOT an
+   -- authority claim, and honestly NOT proved sound here. Every conjunct has teeth (NOT `True`).
+   | .sealA actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .seal = LinearityClass.Generative
+   | .unsealA actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .unseal = LinearityClass.Generative
+   | .createSealPairA actor sealerHolder _ =>
+       stateAuthB s.kernel.caps actor sealerHolder = true ∧
+       effectLinearity .createSealPair = LinearityClass.Generative
+   | .makeSovereignA actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .makeSovereign = LinearityClass.Terminal
+   | .refusalA actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .refusal = LinearityClass.Monotonic
+   | .receiptArchiveA actor cell =>
+       stateAuthB s.kernel.caps actor cell = true ∧
+       effectLinearity .receiptArchive = LinearityClass.Terminal)
 
 /-- **`execFullA_attests_per_asset` — THE PER-ASSET OP-SET IS STEP-COMPLETE BY CONSTRUCTION
 (PROVED).** Every committed `FullActionA` attests its full `StepInv` content: the per-asset ledger
@@ -2660,6 +2902,14 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
       exact ⟨fun b => execFullA_bridgeFinalizeA_burns_per_asset s s' id actor asset amount b h, rfl⟩
   | bridgeCancelA id actor =>
       exact ⟨fun b => execFullA_bridgeCancelA_conserves_per_asset s s' id actor b h, rfl⟩
+  -- §MA-seal: discharge each simple effect's (REAL `stateAuthB` authority gate ∧ the catalog coloring).
+  | sealA actor cell => exact ⟨execFullA_sealA_authorized s s' actor cell h, rfl⟩
+  | unsealA actor cell => exact ⟨execFullA_unsealA_authorized s s' actor cell h, rfl⟩
+  | createSealPairA actor sealerHolder unsealerHolder =>
+      exact ⟨execFullA_createSealPairA_authorized s s' actor sealerHolder unsealerHolder h, rfl⟩
+  | makeSovereignA actor cell => exact ⟨execFullA_makeSovereignA_authorized s s' actor cell h, rfl⟩
+  | refusalA actor cell => exact ⟨execFullA_refusalA_authorized s s' actor cell h, rfl⟩
+  | receiptArchiveA actor cell => exact ⟨execFullA_receiptArchiveA_authorized s s' actor cell h, rfl⟩
 
 /-- **`execFullTurnA_each_attests` — PROVED.** Step-completeness holds at EVERY action of a committed
 per-asset transaction, across all kinds: the per-node `fullActionInvA` witness threaded along the
@@ -2736,6 +2986,19 @@ theorem execFullTurnA_each_attests :
 #assert_axioms execFullA_incrementNonceA_authorized
 #assert_axioms execFullA_setPermissionsA_authorized
 #assert_axioms execFullA_setVKA_authorized
+
+-- §MA-seal (Wave 6): the 6 SIMPLE bal-neutral effects (seal/unseal/createSealPair/makeSovereign/
+-- refusal/receiptArchive) — each a `stateStep` field write, balance-NEUTRAL (`recTotalAssetWithEscrow`
+-- UNCHANGED ∀ asset), authority-gated (`stateAuthB` over the written cell). The §8 crypto (AEAD /
+-- commitment) is the chain-layer portal, honestly NOT proved sound. The keystone
+-- `execFullA_attests_per_asset` (re-extended above) carries ALL into the forest by construction
+-- (FullForestA spine UNCHANGED — only `targetOf` gained arms).
+#assert_axioms execFullA_sealA_authorized
+#assert_axioms execFullA_unsealA_authorized
+#assert_axioms execFullA_createSealPairA_authorized
+#assert_axioms execFullA_makeSovereignA_authorized
+#assert_axioms execFullA_refusalA_authorized
+#assert_axioms execFullA_receiptArchiveA_authorized
 -- META-FILL B Wave 2: the 6 DISTINCT AUTHORITY effects on the per-asset dispatch. The headline
 -- NON-AMPLIFICATION (genuine `capAuthConferred ⊆` over the real `List Auth` lattice) + the
 -- teeth (amplifying grant rejected) + grounding/addEdge/removeEdge/graph-unchanged graph moves,
@@ -3228,5 +3491,81 @@ def bridgeMixedTurn : List FullActionA :=
 #eval (turnLedgerDeltaAsset bridgeMixedTurn 0, turnLedgerDeltaAsset bridgeMixedTurn 1) -- (0, -5)
 #eval (execFullTurnA fmaSup bridgeMixedTurn).map
         (fun s => (recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))  -- some (105, 2) — asset 0 fixed, asset 1 -5
+
+/-! ## §13-seal (Wave 6) — Non-vacuity for the 6 SIMPLE bal-neutral effects: the cell flag/metadata/
+refusal record MOVES (a flag genuinely flips), yet `recTotalAsset` is UNCHANGED in EVERY asset
+(balance-NEUTRALITY witnessed by an `#eval`); authority is REAL (an unauthorized actor fails-closed);
+the §8 crypto (AEAD for seal/unseal, the commitment for makeSovereign) is the HONEST chain-layer
+portal — NOT exercised here, NEVER faked sound. -/
+
+-- Reuse `fmaS` (cell 0 carries a record; empty caps ⇒ authority by OWNERSHIP, actor = cell).
+-- Pre-state per-asset supply: asset 0 = 105, asset 1 = 7.
+
+-- ★ THE KEYSTONE WITNESS: a `sealA` flips cell 0's `sealed_box` flag (0→1) and COMMITS, yet
+--   `recTotalAsset` is UNCHANGED at (105, 7) for BOTH assets (balance-NEUTRALITY):
+#eval (execFullA fmaS (.sealA 0 0)).isSome                                           -- true
+#eval (execFullA fmaS (.sealA 0 0)).map (fun s => fieldOf "sealed_box" (s.kernel.cell 0))  -- some 1 (FLAG FLIPPED)
+#eval (execFullA fmaS (.sealA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7) (UNCHANGED)
+-- ...the COMBINED per-asset measure is fixed too (the §8 AEAD lives in the portal, off the ledger):
+#eval (execFullA fmaS (.sealA 0 0)).map
+        (fun s => (recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))  -- some (105, 7)
+-- ...grows the receipt chain by exactly one (the metadata clock):
+#eval (execFullA fmaS (.sealA 0 0)).map (fun s => s.log.length)                      -- some 1
+-- An UNAUTHORIZED actor (9 owns nothing, empty caps) cannot seal cell 0 (FAIL-CLOSED — REAL gate):
+#eval (execFullA fmaS (.sealA 9 0)).isSome                                           -- false
+
+-- Unseal: flip the `unsealed` flag, balance-neutral; the §8 AEAD decrypt verify is the portal:
+#eval (execFullA fmaS (.unsealA 0 0)).map (fun s => fieldOf "unsealed" (s.kernel.cell 0))     -- some 1
+#eval (execFullA fmaS (.unsealA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
+#eval (execFullA fmaS (.unsealA 9 0)).isSome                                         -- false (FAIL-CLOSED)
+
+-- CreateSealPair: write the `seal_pair` marker into the SEALER-HOLDER's (cell 0) record, bal-neutral;
+--   the §8 AEAD keypair is the portal:
+#eval (execFullA fmaS (.createSealPairA 0 0 1)).map (fun s => fieldOf "seal_pair" (s.kernel.cell 0))  -- some 1
+#eval (execFullA fmaS (.createSealPairA 0 0 1)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
+#eval (execFullA fmaS (.createSealPairA 9 0 1)).isSome                               -- false (FAIL-CLOSED)
+
+-- ★ MakeSovereign: flip cell 0's `sovereign` REPRESENTATION flag (0→1) — ASSESSED bal-neutral
+--   (dregg1 PRESERVES balance; a representation move, NOT an escrow — NO value into commitment-form):
+#eval (execFullA fmaS (.makeSovereignA 0 0)).map (fun s => fieldOf "sovereign" (s.kernel.cell 0))  -- some 1 (REPR FLIPPED)
+#eval (execFullA fmaS (.makeSovereignA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7) (BALANCE PRESERVED)
+#eval (execFullA fmaS (.makeSovereignA 9 0)).isSome                                  -- false (FAIL-CLOSED)
+
+-- Refusal: write the `refusal` audit record (dregg1 bumps nonce + records commitment; NEVER touches
+--   balance/caps/value), balance-neutral:
+#eval (execFullA fmaS (.refusalA 0 0)).map (fun s => fieldOf "refusal" (s.kernel.cell 0))  -- some 1
+#eval (execFullA fmaS (.refusalA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
+#eval (execFullA fmaS (.refusalA 9 0)).isSome                                        -- false (FAIL-CLOSED)
+
+-- ReceiptArchive: transition the `lifecycle` field to Archived (a log/prune op), balance-neutral:
+#eval (execFullA fmaS (.receiptArchiveA 0 0)).map (fun s => fieldOf "lifecycle" (s.kernel.cell 0))  -- some 1
+#eval (execFullA fmaS (.receiptArchiveA 0 0)).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
+#eval (execFullA fmaS (.receiptArchiveA 9 0)).isSome                                 -- false (FAIL-CLOSED)
+
+-- Every simple effect's per-asset ledgerDelta is 0 at every asset (balance-NEUTRAL):
+#eval (ledgerDeltaAsset (.sealA 0 0) 0, ledgerDeltaAsset (.makeSovereignA 0 0) 1,
+       ledgerDeltaAsset (.refusalA 0 0) 0, ledgerDeltaAsset (.receiptArchiveA 0 0) 1)  -- (0, 0, 0, 0)
+
+-- A MIXED per-asset turn interleaving the simple effects with a transfer: ALL balance-neutral ⇒
+--   (105, 7) preserved; the chain grows by node count; the §8 crypto stays in the portal:
+def sealMixedTurn : List FullActionA :=
+  [ .createSealPairA 0 0 1
+  , .sealA 0 0
+  , .balanceA ⟨0, 0, 1, 30⟩ 0     -- transfer 30 of asset 0, cell 0 → cell 1 (conserves)
+  , .makeSovereignA 0 0
+  , .refusalA 0 0
+  , .receiptArchiveA 0 0 ]
+
+#eval (execFullTurnA fmaS sealMixedTurn).isSome                                      -- true (all commit)
+#eval (turnLedgerDeltaAsset sealMixedTurn 0, turnLedgerDeltaAsset sealMixedTurn 1)   -- (0, 0)
+#eval (execFullTurnA fmaS sealMixedTurn).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7) (CONSERVED)
+#eval (execFullTurnA fmaS sealMixedTurn).map (fun s => s.log.length)                 -- some 6 (chain grew by node count)
 
 end Dregg2.Exec.TurnExecutorFull

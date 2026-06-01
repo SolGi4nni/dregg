@@ -376,6 +376,14 @@ def targetOf : FullActionA → CellId
   | .bridgeLockA _ _ originator _ _ _       => originator
   | .bridgeFinalizeA _ actor _ _            => actor
   | .bridgeCancelA _ actor                  => actor
+  -- §MA-seal: the 6 simple bal-neutral effects act on the WRITTEN cell (the flag/metadata/refusal
+  -- record they touch); `createSealPair` acts on the `sealerHolder` it writes the pair record into.
+  | .sealA _ cell                           => cell
+  | .unsealA _ cell                         => cell
+  | .createSealPairA _ sealerHolder _       => sealerHolder
+  | .makeSovereignA _ cell                  => cell
+  | .refusalA _ cell                        => cell
+  | .receiptArchiveA _ cell                 => cell
 
 mutual
 /-- **`sameTargetForest`** — the STRUCTURAL `DelegationMode::None` fidelity predicate: every child's
