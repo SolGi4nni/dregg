@@ -1995,6 +1995,122 @@ theorem parseEscrows_encode (es : List EscrowRecord) (rest : PState) :
       apply parseEscrows_loop_works as a rest
       simp only [List.length_cons]; omega
 
+/-! ## §11b — the `QUEUES` side-table (`parseQueues`) roundtrip. Length-fuel loop (§11 template), and
+the element `parseQueue` is a 4-field `do`-block `[id,owner,capacity,buffer]` whose LAST field `buffer`
+is a NESTED `Nat`-list — reusing §9's `parseNats_encode` for that field (the first side-table whose
+element embeds another array codec). Self-delimiting, so it round-trips for ANY tail. -/
+
+set_option maxHeartbeats 1000000 in
+/-- **The `Q` entry roundtrip** — the 4-field record `[id,owner,capacity,buffer]`, where `buffer` is a
+nested `[N,N,…]` array discharged by §9's `parseNats_encode`. The three leading `Nat`s walk via
+`parseNat_toString`/`cN_step` (post-byte `,`); the `,` before `buffer` and the closing `]` are plain
+`lit_append`s (the buffer's `parseNats` leaves its argument `rest`, so the outer `]` is a clean literal
+consume). Self-delimiting, so it round-trips for ANY tail. -/
+theorem parseQueue_encode (q : QueueRecord) (rest : PState) :
+    parseQueue ((encodeQueue q).toList ++ rest) = some (q, rest) := by
+  unfold parseQueue encodeQueue
+  simp only [String.toList_append, List.append_assoc]
+  simp only [lit_append, parseNat_toString _ _ (nd_litComma _), cN_step _ _ (nd_litComma _),
+    parseNats_encode, Option.bind_eq_bind, Option.bind]
+
+private def encodeQueuesTail (qs : List QueueRecord) : String :=
+  qs.foldl (fun acc x => acc ++ "," ++ encodeQueue x) ""
+
+/-- A `Q` entry opens with `'['` (so the list body is `[[…`, making `lit "[]"` fail). -/
+private theorem encodeQueue_head (q : QueueRecord) : ∃ t, (encodeQueue q).toList = '[' :: t := by
+  refine ⟨(toString q.id ++ "," ++ toString q.owner ++ "," ++ toString q.capacity ++ ","
+    ++ encodeNats q.buffer ++ "]" : String).toList, ?_⟩
+  unfold encodeQueue
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl, List.cons_append,
+    List.nil_append, List.append_assoc]
+
+private theorem foldl_queuesTail (qs : List QueueRecord) : ∀ (acc : String),
+    qs.foldl (fun s x => s ++ "," ++ encodeQueue x) acc
+      = acc ++ qs.foldl (fun s x => s ++ "," ++ encodeQueue x) "" := by
+  induction qs with
+  | nil => intro acc; apply String.toList_inj.mp; simp
+  | cons b bs ih =>
+      intro acc; simp only [List.foldl_cons]
+      rw [ih (acc ++ "," ++ encodeQueue b), ih ("" ++ "," ++ encodeQueue b)]
+      apply String.toList_inj.mp; simp [String.toList_append, List.append_assoc]
+
+private theorem encQueuesTail_cons_shape (b : QueueRecord) (bs : List QueueRecord) (rest : PState) :
+    (encodeQueuesTail (b :: bs)).toList ++ rest
+      = ',' :: ((encodeQueue b).toList ++ ((encodeQueuesTail bs).toList ++ rest)) := by
+  conv_lhs => rw [show encodeQueuesTail (b :: bs) = ("" ++ "," ++ encodeQueue b) ++ encodeQueuesTail bs from by
+      show (b :: bs).foldl (fun s x => s ++ "," ++ encodeQueue x) "" = _
+      rw [List.foldl_cons]; exact foldl_queuesTail bs ("" ++ "," ++ encodeQueue b)]
+  simp only [String.toList_append, show ("":String).toList = [] from rfl,
+    show (",":String).toList = [','] from rfl, List.nil_append, List.cons_append, List.append_assoc]
+
+private theorem encodeQueues_cons_shape (a : QueueRecord) (as : List QueueRecord) (rest : PState) :
+    (encodeQueues (a :: as)).toList ++ rest
+      = '[' :: ((encodeQueue a).toList ++ ((encodeQueuesTail as).toList ++ (']' :: rest))) := by
+  rw [show encodeQueues (a :: as) = "[" ++ encodeQueue a ++ encodeQueuesTail as ++ "]" from rfl]
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl,
+    show ("]":String).toList = [']'] from rfl]
+  simp [List.append_assoc]
+
+set_option maxHeartbeats 1000000 in
+private theorem parseQueues_loop_works : ∀ (as : List QueueRecord) (a : QueueRecord)
+    (rest : PState) (fuel : Nat),
+    ((encodeQueue a).toList ++ ((encodeQueuesTail as).toList ++ (']' :: rest))).length < fuel →
+    parseQueues.loop fuel ((encodeQueue a).toList ++ ((encodeQueuesTail as).toList ++ (']' :: rest)))
+      = some (a :: as, rest) := by
+  intro as
+  induction as with
+  | nil =>
+      intro a rest fuel hf
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by omega⟩
+      rw [show (encodeQueuesTail ([] : List QueueRecord)).toList = [] from rfl, List.nil_append]
+      unfold parseQueues.loop
+      rw [parseQueue_encode a (']' :: rest)]
+      simp only []
+      rw [show lit "," (']' :: rest) = none from by
+            rw [show (']' :: rest) = ("]":String).toList ++ rest from rfl]
+            exact lit_ne_pre "," "]" rest (by decide) (by decide)]
+      simp only []
+      rw [lit_brack]
+  | cons a2 as2 ih =>
+      intro a rest fuel hf
+      rw [encQueuesTail_cons_shape a2 as2 (']' :: rest)] at hf ⊢
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by
+        simp only [List.length_append, List.length_cons] at hf; omega⟩
+      unfold parseQueues.loop
+      rw [parseQueue_encode a _]
+      simp only []
+      rw [lit_commaC]
+      simp only []
+      have hrec : ((encodeQueue a2).toList ++ ((encodeQueuesTail as2).toList ++ (']' :: rest))).length < f := by
+        simp only [List.length_append, List.length_cons] at hf ⊢; omega
+      rw [ih a2 rest f hrec]
+
+set_option maxHeartbeats 1000000 in
+/-- **FILL J production (h): the `QUEUES` side-table roundtrip** (`parseQueues ∘ encodeQueues = id`) —
+the storage-queue FIFO side-table whose element embeds a nested `buffer` array (closed via §9). -/
+theorem parseQueues_encode (qs : List QueueRecord) (rest : PState) :
+    parseQueues ((encodeQueues qs).toList ++ rest) = some (qs, rest) := by
+  cases qs with
+  | nil =>
+      unfold parseQueues
+      rw [show (encodeQueues ([] : List QueueRecord)) = "[]" from rfl]
+      rw [show (("[]":String).toList ++ rest) = ("[]":String).toList ++ rest from rfl, lit_append]
+  | cons a as =>
+      unfold parseQueues
+      rw [encodeQueues_cons_shape a as rest]
+      have hempty : lit "[]"
+          ('[' :: ((encodeQueue a).toList ++ ((encodeQueuesTail as).toList ++ (']' :: rest)))) = none := by
+        obtain ⟨t, ht⟩ := encodeQueue_head a
+        rw [ht, List.cons_append]
+        unfold lit
+        rw [show ("[]":String).toList = ['[', ']'] from by decide]
+        rw [litGo_cons_match, litGo_ne_head ']' [] '[' _ (by decide)]
+      rw [hempty]; simp only []
+      rw [lit_lbrack]
+      simp only []
+      apply parseQueues_loop_works as a rest
+      simp only [List.length_cons]; omega
+
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
@@ -2025,5 +2141,7 @@ zero-sorry guarantee on the codec roundtrip). -/
 #assert_axioms parseBal_encode
 #assert_axioms parseEscrow_encode
 #assert_axioms parseEscrows_encode
+#assert_axioms parseQueue_encode
+#assert_axioms parseQueues_encode
 
 end Dregg2.Exec.CodecRoundtrip
