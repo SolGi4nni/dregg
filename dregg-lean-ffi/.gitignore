@@ -6,3 +6,7 @@
 # build; do NOT commit it.
 *.a
 *.o
+# Archive backups produced when re-splicing the native closure (e.g. before adding a new
+# @[export]); large derived artifacts, never committed.
+*.a.bak
+*.bak

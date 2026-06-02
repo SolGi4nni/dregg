@@ -44,6 +44,16 @@ path = "src/state_differential.rs"
 name = "full_turn_differential"
 path = "src/full_turn_differential.rs"
 
+# THE SWAP marshaller round-trip GATE (T8/T9): marshals a WireState + WireTurn with the
+# byte-exact `marshal.rs` encoder, feeds it to the GATED complete-turn executor via the C
+# bridge `dregg_exec_full_forest_auth_str`, and asserts the output parses + commits with the
+# conserved balance delta (plus forged/overspend rollback + malformed-wire fail-closed). This
+# is the non-negotiable correctness gate for the cutover marshaller. `marshal.rs` is included
+# as a module (via #[path]); it is the reusable T8/T9 codec the node will eventually call.
+[[bin]]
+name = "marshal_roundtrip"
+path = "src/marshal_roundtrip.rs"
+
 [dependencies]
 # Reproduces circuit::air_descriptor::fingerprint (BLAKE3-derive-key) so the
 # decoded-Lean AIR can be fingerprint-bound to the Rust-native AIR.
