@@ -2536,6 +2536,9 @@ structure WState where
   commitments : List Nat
   queues      : List QueueRecord
   swiss       : List SwissRecord
+  /-- The kernel-state REVOCATION REGISTRY (hole #3 / `#139`): the committed revoked-credential
+  nullifier set the gate reads. Last on the wire (additive); DEFAULTS EMPTY. -/
+  revoked     : List Nat := []
 
 /-- Reconstruct a `RecordKernelState` from a decoded `WState`. `accounts` is exactly the listed cell
 ids; `cell`/`caps`/`bal` are the "listed slot, else default" reconstructions; the five side-tables are
@@ -2551,9 +2554,10 @@ def stateOfWState (w : WState) : RecordKernelState :=
     nullifiers := w.nullifiers
     commitments := w.commitments
     queues := w.queues
-    swiss := w.swiss }
+    swiss := w.swiss
+    revoked := w.revoked }
 
-/-- Encode a `WState` to the wide STATE JSON (all eight fields, in a fixed order). -/
+/-- Encode a `WState` to the wide STATE JSON (all nine fields, in a fixed order). -/
 def encodeWState (w : WState) : String :=
   "{\"cells\":" ++ encodeCellsW w.cells
     ++ ",\"caps\":" ++ encodeCapsEntries w.caps
@@ -2562,7 +2566,8 @@ def encodeWState (w : WState) : String :=
     ++ ",\"nullifiers\":" ++ encodeNats w.nullifiers
     ++ ",\"commitments\":" ++ encodeNats w.commitments
     ++ ",\"queues\":" ++ encodeQueues w.queues
-    ++ ",\"swiss\":" ++ encodeSwissTable w.swiss ++ "}"
+    ++ ",\"swiss\":" ++ encodeSwissTable w.swiss
+    ++ ",\"revoked\":" ++ encodeNats w.revoked ++ "}"
 
 /-- Parse the wide STATE `{"cells":…,"caps":…,"bal":…,"escrows":…,"nullifiers":…,
 "commitments":…,"queues":…,"swiss":…}`. Strict on field ORDER and the closing `}`; the caller
@@ -2584,9 +2589,11 @@ def parseWState (fuel : Nat) (cs : PState) : Option (WState × PState) := do
   let (queues, r13) ← parseQueues r12
   let r14 ← lit ",\"swiss\":" r13
   let (swiss, r15) ← parseSwissTable r14
-  let r16 ← lit "}" r15
+  let r16 ← lit ",\"revoked\":" r15
+  let (revoked, r17) ← parseNats r16
+  let r18 ← lit "}" r17
   some ({ cells := cells, caps := caps, bal := bal, escrows := escrows, nullifiers := nullifiers,
-          commitments := commitments, queues := queues, swiss := swiss }, r16)
+          commitments := commitments, queues := queues, swiss := swiss, revoked := revoked }, r18)
 
 /-- Read a `WState` BACK OUT of a `RecordKernelState`, at the SAME cell-id / label order the input
 listed (so the wire is positionally deterministic for the Rust reference). `cellIds`/`capLabels`/
@@ -2600,7 +2607,8 @@ def wstateOfState (cellIds : List CellId) (capLabels : List CellId)
     nullifiers := k.nullifiers
     commitments := k.commitments
     queues := k.queues
-    swiss := k.swiss }
+    swiss := k.swiss
+    revoked := k.revoked }
 
 /-! ## §W7 — the Turn ENVELOPE + the COMPLETE-TURN export `dregg_exec_full_turn_wide`.
 
