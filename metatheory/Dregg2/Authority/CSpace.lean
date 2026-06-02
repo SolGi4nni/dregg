@@ -131,4 +131,42 @@ theorem attenuateC_target (keep : List Auth) :
 #eval reaches (deriveC cs0 2 [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant])) 3 2 7  -- true (shared!)
 #eval cAuth (attenuateC [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant]))             -- [read] (grant dropped)
 
+/-! ## §4 — MONOTONICITY of reach under grant (the ANALYZABILITY half — why CAP/FLP do NOT bite the
+common path).
+
+The worry: a navigable DISTRIBUTED cspace makes cap-resolution a cross-node query, and cross-node
+queries inherit CAP (partition) and FLP (consensus). The escape: **resolution is MONOTONE under the
+grant fragment** — granting a cap NEVER removes anyone's reach. A monotone query over a join-semilattice
+state needs NO coordination (it is I-confluent / CRDT — the `Confluence`/drift-stability machinery): a
+node may answer "X reaches Y" from a STALE local replica and only ever UNDER-approximate (it might not
+have seen a grant yet), never wrongly grant. So `grant` + `resolve` is the coordination-free,
+available-under-partition, FLP-immune fragment; only `revoke` (the non-monotone op) carries the CAP/FLP
+cost — and that we DIAL (soft/hard fail), exactly as the single-machine principle predicts (n=1 ⇒
+immediate full revocation; distributed ⇒ topology-bounded). This theorem is that monotonicity. -/
+theorem reaches_mono_grant (cs : CSpace) (holder : Label) (cap : CCap) :
+    ∀ fuel src t, reaches cs fuel src t = true → reaches (grantC cs holder cap) fuel src t = true := by
+  intro fuel
+  induction fuel with
+  | zero => intro src t h; simp [reaches] at h
+  | succ n ih =>
+      intro src t h
+      simp only [reaches] at h ⊢
+      rw [List.any_eq_true] at h ⊢
+      obtain ⟨c, hmem, hc⟩ := h
+      refine ⟨c, ?_, ?_⟩
+      · -- `c` survives into the GROWN store (grant only adds at `holder`, others unchanged)
+        unfold grantC
+        by_cases hh : src = holder
+        · rw [if_pos hh]; exact List.mem_cons_of_mem _ hmem
+        · rw [if_neg hh]; exact hmem
+      · -- the per-cap reach predicate is preserved (a `cnode`'s onward walk is monotone by `ih`)
+        cases c with
+        | null => exact hc
+        | endpoint t' r => exact hc
+        | cnode table r =>
+            simp only [Bool.or_eq_true] at hc ⊢
+            rcases hc with h1 | h2
+            · exact Or.inl h1
+            · exact Or.inr (ih table t h2)
+
 end Dregg2.Authority.CSpace
