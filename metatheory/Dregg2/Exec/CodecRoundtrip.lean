@@ -45,14 +45,21 @@ well-formed input — the *fuel-adequacy* obligation).
   * §8 — the narrow `AUTHS` list (`parseAuths_encode`): the `Auth` tag array the `cA` action field
     carries, AND the GATEWAY for the input-LENGTH-fuel `let rec` loop pattern (the adequacy is carried by
     the self-maintaining `input.length < fuel` invariant — no length-bound lemma), reused by every
-    remaining length-fuel production.
+    remaining length-fuel production;
+  * §9/§10/§11/§11b/§11c — EVERY WIDE-STATE SIDE-TABLE list (each via §8's length-fuel loop recipe):
+    the `[N,N,…]` `Nat`-list (`parseNats_encode`, the `nullifiers`/`commitments`/`revoked` fields), the
+    `BAL` ledger-list (`parseBal_encode`, the conserved-measure field), the `ESCROWS` table
+    (`parseEscrows_encode`, a 7-field `do`-block element with two flags), the `QUEUES` table
+    (`parseQueues_encode`, whose element embeds a nested `buffer` `Nat`-list), and the `SWISS` table
+    (`parseSwissTable_encode`, whose element combines an AUTHS rights array — via §8 — with an optional
+    handoff `cert` — via `parseOptNat_encode`).
 
 **DEFERRED (the codec for these is TCB — `#eval`-cross-validated in `FFI.lean` §W3/§W4/§W5/§W6/§WG, but
 NOT YET carrying a parse∘encode THEOREM here):** `parseCaveatsW` (the per-node
 caveat array, §W5c); `parseForestW`/`parseChildrenW` (the recursive action-TREE + delegation edges);
-the side-tables (`parseEscrow`/`parseNats`/`parseQueue`/`parseSwiss`) + `parseWState` (all length-fuel
-loops — §8's invariant is the template); and `parseWTurn`/`parseWWire` (the Turn envelope + whole-wire
-object). Each is round-trip-`#eval`'d at its codec site; the proof obligation is the FILL-J follow-on.
+and `parseWState`/`parseWTurn`/`parseWWire` (the field-assembled wide-state record + the Turn envelope +
+whole-wire object). Each is round-trip-`#eval`'d at its codec site; the proof obligation is the FILL-J
+follow-on (the side-table list productions they assemble are now ALL proven above — §9–§11c).
 
 EVERY digest/commitment field is the low 256 bits of a `Nat`, so the PROVED roundtrips are the identity
 EXACTLY on the well-formed value space (`< 2^256`); we carry a `Wf` predicate that pins precisely that
@@ -2111,6 +2118,155 @@ theorem parseQueues_encode (qs : List QueueRecord) (rest : PState) :
       apply parseQueues_loop_works as a rest
       simp only [List.length_cons]; omega
 
+/-! ## §11c — the `SWISS` side-table (`parseSwissTable`) roundtrip. Length-fuel loop (§11/§11b template),
+and the element `parseSwiss` is a 6-field `do`-block `[swiss,exporter,target,rights,refcount,cert]` whose
+4th field `rights` is an AUTHS tag array (reusing §8's `parseAuths_encode` via §7's `cA_step`) and whose
+LAST field `cert` is an OPTIONAL `Nat` (`{"none":0}`/`{"some":N}`, discharged by the `parseOptNat_encode`
+leaf below). The first side-table element combining an AUTHS field AND an Option field. Self-delimiting,
+so it round-trips for ANY tail. -/
+
+/-- **The optional-`cert` leaf** (`parseOptNat ∘ encodeOptNat = id`). The `none` arm is a single literal
+consume; the `some n` arm fails the `{"none":0}` prefix (`lit_ne_pre` over the two concrete tags), opens
+`{"some":`, reads the `Nat` (post-byte `}`, non-digit), then closes `}`. Self-delimiting. -/
+theorem parseOptNat_encode (o : Option Nat) (rest : PState) :
+    parseOptNat ((encodeOptNat o).toList ++ rest) = some (o, rest) := by
+  cases o with
+  | none =>
+      unfold parseOptNat encodeOptNat
+      rw [show (("{\"none\":0}":String).toList ++ rest) = ("{\"none\":0}":String).toList ++ rest from rfl,
+        lit_append]
+  | some n =>
+      unfold parseOptNat encodeOptNat
+      rw [show (("{\"some\":" ++ toString n ++ "}":String).toList ++ rest)
+            = ("{\"some\":":String).toList ++ ((toString n).toList ++ ('}' :: rest)) from by
+          simp only [String.toList_append, show ("}":String).toList = ['}'] from by decide,
+            List.append_assoc, List.cons_append, List.nil_append]]
+      rw [lit_ne_pre "{\"none\":0}" "{\"some\":" _ (by decide) (by decide)]
+      simp only []
+      rw [lit_append]
+      simp only []
+      rw [parseNat_toString n ('}' :: rest) (nd_brace rest)]
+      simp only []
+      rw [show lit "}" ('}' :: rest) = some rest from by
+            rw [show ('}' :: rest) = ("}":String).toList ++ rest from by
+              simp only [show ("}":String).toList = ['}'] from by decide, List.cons_append,
+                List.nil_append]]
+            exact lit_append "}" rest]
+      simp only [Option.map_some]
+
+set_option maxHeartbeats 1000000 in
+/-- **The `SW` entry roundtrip** — the 6-field record `[swiss,exporter,target,rights,refcount,cert]`,
+where `rights` is an AUTHS array discharged by §7's `cA_step` (→ §8) and `cert` is an `Option Nat`
+discharged by `parseOptNat_encode`. The three leading `Nat`s walk via `parseNat_toString`/`cN_step`
+(post-byte `,`); the `,` before `cert` and the closing `]` are plain `lit_append`s (`parseOptNat`
+leaves its argument `rest`, so the outer `]` is a clean literal consume). Self-delimiting. -/
+theorem parseSwiss_encode (e : SwissRecord) (rest : PState) :
+    parseSwiss ((encodeSwiss e).toList ++ rest) = some (e, rest) := by
+  unfold parseSwiss encodeSwiss
+  simp only [String.toList_append, List.append_assoc]
+  simp only [lit_append, parseNat_toString _ _ (nd_litComma _), cN_step _ _ (nd_litComma _),
+    cA_step _ _, parseOptNat_encode, Option.bind_eq_bind, Option.bind]
+
+private def encodeSwissTail (es : List SwissRecord) : String :=
+  es.foldl (fun acc x => acc ++ "," ++ encodeSwiss x) ""
+
+/-- A `SW` entry opens with `'['` (so the list body is `[[…`, making `lit "[]"` fail). -/
+private theorem encodeSwiss_head (e : SwissRecord) : ∃ t, (encodeSwiss e).toList = '[' :: t := by
+  refine ⟨(toString e.swiss ++ "," ++ toString e.exporter ++ "," ++ toString e.target ++ ","
+    ++ encodeAuthsW e.rights ++ "," ++ toString e.refcount ++ "," ++ encodeOptNat e.cert ++ "]"
+    : String).toList, ?_⟩
+  unfold encodeSwiss
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl, List.cons_append,
+    List.nil_append, List.append_assoc]
+
+private theorem foldl_swissTail (es : List SwissRecord) : ∀ (acc : String),
+    es.foldl (fun s x => s ++ "," ++ encodeSwiss x) acc
+      = acc ++ es.foldl (fun s x => s ++ "," ++ encodeSwiss x) "" := by
+  induction es with
+  | nil => intro acc; apply String.toList_inj.mp; simp
+  | cons b bs ih =>
+      intro acc; simp only [List.foldl_cons]
+      rw [ih (acc ++ "," ++ encodeSwiss b), ih ("" ++ "," ++ encodeSwiss b)]
+      apply String.toList_inj.mp; simp [String.toList_append, List.append_assoc]
+
+private theorem encSwissTail_cons_shape (b : SwissRecord) (bs : List SwissRecord) (rest : PState) :
+    (encodeSwissTail (b :: bs)).toList ++ rest
+      = ',' :: ((encodeSwiss b).toList ++ ((encodeSwissTail bs).toList ++ rest)) := by
+  conv_lhs => rw [show encodeSwissTail (b :: bs) = ("" ++ "," ++ encodeSwiss b) ++ encodeSwissTail bs from by
+      show (b :: bs).foldl (fun s x => s ++ "," ++ encodeSwiss x) "" = _
+      rw [List.foldl_cons]; exact foldl_swissTail bs ("" ++ "," ++ encodeSwiss b)]
+  simp only [String.toList_append, show ("":String).toList = [] from rfl,
+    show (",":String).toList = [','] from rfl, List.nil_append, List.cons_append, List.append_assoc]
+
+private theorem encodeSwissTable_cons_shape (a : SwissRecord) (as : List SwissRecord) (rest : PState) :
+    (encodeSwissTable (a :: as)).toList ++ rest
+      = '[' :: ((encodeSwiss a).toList ++ ((encodeSwissTail as).toList ++ (']' :: rest))) := by
+  rw [show encodeSwissTable (a :: as) = "[" ++ encodeSwiss a ++ encodeSwissTail as ++ "]" from rfl]
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl,
+    show ("]":String).toList = [']'] from rfl]
+  simp [List.append_assoc]
+
+set_option maxHeartbeats 1000000 in
+private theorem parseSwissTable_loop_works : ∀ (as : List SwissRecord) (a : SwissRecord)
+    (rest : PState) (fuel : Nat),
+    ((encodeSwiss a).toList ++ ((encodeSwissTail as).toList ++ (']' :: rest))).length < fuel →
+    parseSwissTable.loop fuel ((encodeSwiss a).toList ++ ((encodeSwissTail as).toList ++ (']' :: rest)))
+      = some (a :: as, rest) := by
+  intro as
+  induction as with
+  | nil =>
+      intro a rest fuel hf
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by omega⟩
+      rw [show (encodeSwissTail ([] : List SwissRecord)).toList = [] from rfl, List.nil_append]
+      unfold parseSwissTable.loop
+      rw [parseSwiss_encode a (']' :: rest)]
+      simp only []
+      rw [show lit "," (']' :: rest) = none from by
+            rw [show (']' :: rest) = ("]":String).toList ++ rest from rfl]
+            exact lit_ne_pre "," "]" rest (by decide) (by decide)]
+      simp only []
+      rw [lit_brack]
+  | cons a2 as2 ih =>
+      intro a rest fuel hf
+      rw [encSwissTail_cons_shape a2 as2 (']' :: rest)] at hf ⊢
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by
+        simp only [List.length_append, List.length_cons] at hf; omega⟩
+      unfold parseSwissTable.loop
+      rw [parseSwiss_encode a _]
+      simp only []
+      rw [lit_commaC]
+      simp only []
+      have hrec : ((encodeSwiss a2).toList ++ ((encodeSwissTail as2).toList ++ (']' :: rest))).length < f := by
+        simp only [List.length_append, List.length_cons] at hf ⊢; omega
+      rw [ih a2 rest f hrec]
+
+set_option maxHeartbeats 1000000 in
+/-- **FILL J production (i): the `SWISS` side-table roundtrip** (`parseSwissTable ∘ encodeSwissTable =
+id`) — the CapTP swiss-table side-table whose element carries an AUTHS rights array (closed via §8) and
+an optional handoff `cert` (closed via `parseOptNat_encode`). -/
+theorem parseSwissTable_encode (ss : List SwissRecord) (rest : PState) :
+    parseSwissTable ((encodeSwissTable ss).toList ++ rest) = some (ss, rest) := by
+  cases ss with
+  | nil =>
+      unfold parseSwissTable
+      rw [show (encodeSwissTable ([] : List SwissRecord)) = "[]" from rfl]
+      rw [show (("[]":String).toList ++ rest) = ("[]":String).toList ++ rest from rfl, lit_append]
+  | cons a as =>
+      unfold parseSwissTable
+      rw [encodeSwissTable_cons_shape a as rest]
+      have hempty : lit "[]"
+          ('[' :: ((encodeSwiss a).toList ++ ((encodeSwissTail as).toList ++ (']' :: rest)))) = none := by
+        obtain ⟨t, ht⟩ := encodeSwiss_head a
+        rw [ht, List.cons_append]
+        unfold lit
+        rw [show ("[]":String).toList = ['[', ']'] from by decide]
+        rw [litGo_cons_match, litGo_ne_head ']' [] '[' _ (by decide)]
+      rw [hempty]; simp only []
+      rw [lit_lbrack]
+      simp only []
+      apply parseSwissTable_loop_works as a rest
+      simp only [List.length_cons]; omega
+
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
@@ -2143,5 +2299,8 @@ zero-sorry guarantee on the codec roundtrip). -/
 #assert_axioms parseEscrows_encode
 #assert_axioms parseQueue_encode
 #assert_axioms parseQueues_encode
+#assert_axioms parseOptNat_encode
+#assert_axioms parseSwiss_encode
+#assert_axioms parseSwissTable_encode
 
 end Dregg2.Exec.CodecRoundtrip
