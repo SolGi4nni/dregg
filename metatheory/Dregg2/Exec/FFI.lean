@@ -1546,6 +1546,17 @@ def authRoundtrips (a : AuthW) : Bool :=
 -- the RECURSIVE oneOf (nested candidates round-trip):
 #eval authRoundtrips (.oneOf [.signature 7 9, .token 14 15] 1)             -- true
 #eval authRoundtrips (.oneOf [.oneOf [.unchecked] 0, .breadstuff 3] 1)     -- true (nested)
+
+/-- The COMPLETE `Authorization`-variant corpus (all 10 arms + nested `oneOf`) for the HARD CI
+roundtrip guard — the WHO decoder is the security-critical wire layer; this fails the build if ANY
+auth variant stops round-tripping. (The universal parse∘encode THEOREM — FILL J #136 — is the deeper
+follow-up; this guard pins the corpus meanwhile.) -/
+def allAuths : List AuthW :=
+  [ .signature 7 9, .proof 1 2 3 4, .breadstuff 42, .bearer 5 6 true, .bearer 5 6 false,
+    .unchecked, .capTpDelivered 1 2 3 4, .custom 8 9, .stealth 11 12 13, .token 14 15,
+    .oneOf [.signature 7 9, .token 14 15] 1, .oneOf [.oneOf [.unchecked] 0, .breadstuff 3] 1 ]
+def allAuthsRoundtrip : Bool := allAuths.all authRoundtrips
+#guard allAuthsRoundtrip
 -- fail-closed on a malformed digest (non-hex / wrong length):
 #eval (parseAuthW 100 "{\"sig\":[\"zz\",9]}".toList).isNone                -- true
 
