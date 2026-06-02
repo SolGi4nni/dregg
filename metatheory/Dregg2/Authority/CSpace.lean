@@ -169,4 +169,52 @@ theorem reaches_mono_grant (cs : CSpace) (holder : Label) (cap : CCap) :
             · exact Or.inl h1
             · exact Or.inr (ih table t h2)
 
+/-! ## §5 — WRITE-THROUGH: a cnode MUTATES the remote table (the FULL vision, not the read-only
+cop-out).
+
+The thesis forbids restricting to read-only: a capability delegates authority to ACT, not just
+observe — so `cnode table [grant]` must let the holder MUTATE `table`'s store remotely. The key
+realization: **write-through does NOT break the monotone/non-monotone seam**, because that seam is
+about the OPERATION (add vs remove), ORTHOGONAL to local-vs-remote. A write-through GRANT is just
+`grantC` landing at the TARGET cell, so its monotonicity is the SAME theorem — insert-anywhere is
+monotone. The hardness stays confined to REMOVE (revoke — dialed) and MOVE/reparent (the CRDT-tree
+problem, Kleppmann's highly-available move). Here we build the GRANT fragment and prove it preserves
+reach-monotonicity (hence stays coordination-free / CAP-available / FLP-immune across the node hop). -/
+
+/-- Issuer may write-through-grant `cap` into `target`'s store iff it HOLDS a `cnode target` cap
+carrying `Auth.grant` AND `cap`'s conferred authority is ⊆ that cnode's rights — NON-AMPLIFICATION
+across the cnode (the `recKDelegateAtten` discipline, lifted to remote write: you cannot write-through
+authority you do not yourself hold over the table). -/
+def writeGrantOK (cs : CSpace) (issuer target : Label) (cap : CCap) : Bool :=
+  (cs issuer).any (fun c => match c with
+    | .cnode tbl r => (tbl == target) && r.contains Auth.grant && (cAuth cap).all (fun a => r.contains a)
+    | _            => false)
+
+/-- WRITE-THROUGH grant: gated, the issuer adds `cap` to the REMOTE `target`'s store. The STATE effect
+is EXACTLY `grantC cs target cap` (a CRDT add landing at `target`), fail-closed when the gate is
+false. So a remote write-through reuses the local insert — and inherits its monotonicity verbatim. -/
+def writeThroughGrant (cs : CSpace) (issuer target : Label) (cap : CCap) : CSpace :=
+  if writeGrantOK cs issuer target cap then grantC cs target cap else cs
+
+/-- **`writeThroughGrant_mono` — PROVED (write-through preserves ANALYZABILITY).** A remote
+write-through grant only GROWS reach — the SAME monotonicity as a local grant, because inserting a cap
+is monotone wherever it lands. So the distributed write-through GRANT fragment is coordination-free /
+CAP-available / FLP-immune, exactly like local grant: the seam survives the node hop. The non-monotone
+residue (revoke, move) is all that carries the distributed cost. -/
+theorem writeThroughGrant_mono (cs : CSpace) (issuer target : Label) (cap : CCap) :
+    ∀ fuel src t, reaches cs fuel src t = true →
+      reaches (writeThroughGrant cs issuer target cap) fuel src t = true := by
+  intro fuel src t h
+  unfold writeThroughGrant
+  by_cases hg : writeGrantOK cs issuer target cap
+  · rw [if_pos hg]; exact reaches_mono_grant cs target cap fuel src t h
+  · rw [if_neg hg]; exact h
+
+-- WRITE-THROUGH, operationally: cell 0 holds `cnode 1 [read,grant]`. It MUTATES cell 1's REMOTE store,
+-- inserting `endpoint 9` — now cell 1 reaches 9. The non-amplification gate bites on rights 0 lacks.
+#eval reaches cs0 3 1 9                                                          -- false (1 ⇏ 9 yet)
+#eval reaches (writeThroughGrant cs0 0 1 (CCap.endpoint 9 [Auth.read])) 3 1 9    -- true  (0 mutated 1!)
+#eval writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.read])                         -- true  (read ⊆ {read,grant})
+#eval writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.write])                        -- false (write ∉ — no amplify)
+
 end Dregg2.Authority.CSpace
