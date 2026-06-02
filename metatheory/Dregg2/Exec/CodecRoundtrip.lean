@@ -37,11 +37,15 @@ well-formed input — the *fuel-adequacy* obligation).
     `parseAuthListW_roundtrip`): all 10 variants + the recursive `oneOf` candidate disjunction, by strong
     induction on fuel (mirroring §5). A symmetric codec bug in the WHO layer forges authority silently
     past the differential; this theorem, pinning `parseAuthW` as the genuine left-inverse of
-    `encodeAuthW`, is what catches it — removing the credential decoder from the Lean-side TCB.
+    `encodeAuthW`, is what catches it — removing the credential decoder from the Lean-side TCB;
+  * §7 — the `FullActionA` (WHAT) decoder (`parseActionW_roundtrip`): the 41 `simple` arms (every
+    `Nat`/`Int`-field effect — i.e. EVERY conserved-measure arm) closed uniformly by an auto-dispatch
+    tactic + a `do`-block collapse. Removes the bulk of the effect decoder from the TCB.
 
 **DEFERRED (the codec for these is TCB — `#eval`-cross-validated in `FFI.lean` §W3/§W4/§W5/§W6/§WG, but
-NOT YET carrying a parse∘encode THEOREM here):** `parseActionW` (the 51 `FullActionA` arms — the WHAT
-decoder, the next FILL-J target, whose AUTHS-bearing arms now rest on §6's `parseAuthListW_roundtrip`);
+NOT YET carrying a parse∘encode THEOREM here):** the 5 non-`simple` `parseActionW` arms (`setFieldA`'s
+JSON-string field + the 4 AUTHS-bearing arms, which need the narrow-`Auth` list lemma `parseAuths_encode`
+whose `let rec` fuel is input-LENGTH-based — a separate adequacy argument from §5/§6's structural fuel);
 `parseCaveatsW` (the per-node
 caveat array, §W5c); `parseForestW`/`parseChildrenW` (the recursive action-TREE + delegation edges);
 the side-tables (`parseEscrow`/`parseNats`/`parseQueue`/`parseSwiss`) + `parseWState`; and
@@ -1418,6 +1422,85 @@ example : parseAuthW 10 ((encodeAuthW witNestedAuth).toList ++ ['x']) = some (wi
   parseAuthW_roundtrip witNestedAuth ['x'] (by unfold witNestedAuth WfAuth WfAuthList; trivial) 10
     (by unfold witNestedAuth; decide)
 
+/-! ## §7 — the `FullActionA` (WHAT) decoder roundtrip (FILL-J production (c): the 46-arm effect sum).
+
+`parseActionW` is FLAT (no fuel recursion) and uses `do`-notation over the `cN`/`cI`/`cS`/`cA` field
+combinators, dispatching on a 46-deep fail-closed tag cascade. The 41 `simple` arms (every arm whose
+fields are all `Nat`/`Int` — which is EVERY conserved-measure effect: balances, mints/burns, escrows,
+queues, notes, bridges, seals, sovereign) are closed UNIFORMLY by `parseActionW_roundtrip`: the
+`skip_to_arm` macro auto-discharges the dispatch (no per-tag lines — `rw [lit_ne_pre]` infers the tags &
+defers the `decide`s), then one `simp only` collapses the `do`-block. The 5 remaining arms (the JSON-
+string `setFieldA` + the 4 AUTHS-bearing arms) are the documented follow-on (see `isSimpleArm`). -/
+
+/-- **Auto-dispatch:** advance past every WRONG tag in the fail-closed cascade. `rw [lit_ne_pre]` infers
+the two concrete tags by unification and DEFERS the `litGo … = none` obligations as side-goals, which
+`decide` then closes (sidestepping the eager-`by decide`-with-metavars problem). `repeat` stops exactly
+at the matching tag (where the `decide` side-goal is `… = some _`, false, so the step fails & rolls back). -/
+local macro "skip_to_arm" : tactic =>
+  `(tactic| repeat (rw [lit_ne_pre] <;> first | (simp only []) | decide))
+
+/-- `cN` (read `,` then a `Nat`) on a `toString`-led tail whose post-byte is a non-digit closer. -/
+private theorem cN_step (n : Nat) (rest : PState)
+    (hnd : rest = [] ∨ ∃ c rs, rest = c :: rs ∧ c.isDigit = false) :
+    cN ((",":String).toList ++ ((toString n).toList ++ rest)) = some (n, rest) := by
+  unfold cN; rw [lit_append]; simp only []; exact parseNat_toString n rest hnd
+
+/-- `cI` (read `,` then an `Int`) on a `toString`-led tail whose post-byte is a non-digit closer. -/
+private theorem cI_step (i : Int) (rest : PState)
+    (hnd : rest = [] ∨ ∃ c rs, rest = c :: rs ∧ c.isDigit = false) :
+    cI ((",":String).toList ++ ((toString i).toList ++ rest)) = some (i, rest) := by
+  unfold cI; rw [lit_append]; simp only []; exact parseInt_toString i rest hnd
+
+/-- The 5 arms needing MORE than the `N`/`I` field toolkit (the remaining FILL-J follow-on):
+`setFieldA` (a `cS` JSON-string field — needs an escape-free `Wf` hypothesis), and the 4 AUTHS-bearing
+arms `delegateAttenA`/`attenuateA`/`exportSturdyRefA`/`enlivenRefA` (a `cA` field — needs the narrow
+`parseAuths` list lemma, whose `let rec` fuel is input-LENGTH-based, a separate adequacy argument).
+Every OTHER arm is `simple` (a fixed `do`-walk of `N`/`I` fields). -/
+def isSimpleArm : TurnExecutorFull.FullActionA → Bool
+  | .setFieldA ..        => false
+  | .delegateAttenA ..   => false
+  | .attenuateA ..       => false
+  | .exportSturdyRefA .. => false
+  | .enlivenRefA ..      => false
+  | _                    => true
+
+/-- One `simple` arm, fully automatic: auto-dispatch to its tag, then collapse the `do`-block of `N`/`I`
+fields (`simp` selects the matching `nd_*` closer per field). `done` makes it all-or-nothing, so the
+bundle's `first | action_arm | …` cleanly falls through on the 5 non-simple arms. -/
+local macro "action_arm" : tactic =>
+  `(tactic| (
+    unfold parseActionW
+    simp only [encodeActionW, String.toList_append, List.append_assoc]
+    skip_to_arm
+    simp only [lit_append,
+      parseNat_toString _ _ (nd_litComma _), parseNat_toString _ _ (nd_litClose _),
+      cN_step _ _ (nd_litComma _), cN_step _ _ (nd_litClose _),
+      cI_step _ _ (nd_litComma _), cI_step _ _ (nd_litClose _),
+      Option.bind_eq_bind, Option.bind]
+    done))
+
+set_option maxHeartbeats 4000000 in
+set_option linter.unusedSimpArgs false in
+/-- **FILL J production (c): the `FullActionA` (WHAT) decoder roundtrip — the 41 `simple` arms.** Every
+`isSimpleArm` action round-trips through `encodeActionW`/`parseActionW`. This removes the BULK of the
+WHAT decoder — including EVERY conserved-measure arm (`bal`/`mint`/`burn`/escrow/queue/note/bridge/seal/
+sovereign…) the executor's per-asset laws range over — from the codec TCB. A symmetric bug in the WHAT
+layer (wrong effect tag/args agreed by encoder+decoder) is caught here, where it was `#eval`-only. -/
+theorem parseActionW_roundtrip (act : TurnExecutorFull.FullActionA) (rest : PState)
+    (h : isSimpleArm act = true) :
+    parseActionW ((encodeActionW act).toList ++ rest) = some (act, rest) := by
+  cases act <;> first | action_arm | simp [isSimpleArm] at h
+
+/-! ### NON-VACUITY witnesses for the WHAT decoder (distinct clusters round-trip via one theorem). -/
+
+-- A BALANCE effect (the conserved-measure arm, `[N,N,N,I,N]` with a `Turn` record) round-trips:
+example : parseActionW ((encodeActionW (.balanceA ⟨1, 2, 3, 5⟩ 0)).toList ++ ['x'])
+            = some (.balanceA ⟨1, 2, 3, 5⟩ 0, ['x']) :=
+  parseActionW_roundtrip (.balanceA ⟨1, 2, 3, 5⟩ 0) ['x'] (by decide)
+-- ...and a SEAL effect (`[N,N]`, a different cluster + later in the dispatch cascade) round-trips too:
+example : parseActionW ((encodeActionW (.sealA 7 8)).toList ++ ['x']) = some (.sealA 7 8, ['x']) :=
+  parseActionW_roundtrip (.sealA 7 8) ['x'] (by decide)
+
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
@@ -1441,5 +1524,6 @@ zero-sorry guarantee on the codec roundtrip). -/
 #assert_axioms parseAuthW_flat
 #assert_axioms parseAuthW_roundtrip
 #assert_axioms parseAuthListW_roundtrip
+#assert_axioms parseActionW_roundtrip
 
 end Dregg2.Exec.CodecRoundtrip
