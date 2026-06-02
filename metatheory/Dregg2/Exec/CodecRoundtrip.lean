@@ -1660,6 +1660,107 @@ example : parseActionW ((encodeActionW (.setFieldA 1 2 "balance" 99)).toList ++ 
             = some (.setFieldA 1 2 "balance" 99, ['x']) :=
   parseActionW_setfield 1 2 "balance" 99 ['x'] (by decide)
 
+/-! ## §9 — the `[N,N,…]` Nat-list (`parseNats`) roundtrip — the SAME length-fuel loop as §8 (the
+`nullifiers`/`commitments` `WState` fields). This CONFIRMS §8's recipe is reusable verbatim for every
+length-fuel list: it is §8 with the element `toString (authTag a)`→`toString a` and the `authOfTag`
+step dropped (the element is the `Nat` directly). The first STATE-decoder sub-production. -/
+
+private def encodeNatsTail (ns : List Nat) : String :=
+  ns.foldl (fun acc x => acc ++ "," ++ toString x) ""
+
+private theorem foldl_natsTail (ns : List Nat) : ∀ (acc : String),
+    ns.foldl (fun s x => s ++ "," ++ toString x) acc
+      = acc ++ ns.foldl (fun s x => s ++ "," ++ toString x) "" := by
+  induction ns with
+  | nil => intro acc; apply String.toList_inj.mp; simp
+  | cons b bs ih =>
+      intro acc; simp only [List.foldl_cons]
+      rw [ih (acc ++ "," ++ toString b), ih ("" ++ "," ++ toString b)]
+      apply String.toList_inj.mp; simp [String.toList_append, List.append_assoc]
+
+private theorem encNatsTail_cons_shape (b : Nat) (bs : List Nat) (rest : PState) :
+    (encodeNatsTail (b :: bs)).toList ++ rest
+      = ',' :: ((toString b).toList ++ ((encodeNatsTail bs).toList ++ rest)) := by
+  conv_lhs => rw [show encodeNatsTail (b :: bs) = ("" ++ "," ++ toString b) ++ encodeNatsTail bs from by
+      show (b :: bs).foldl (fun s x => s ++ "," ++ toString x) "" = _
+      rw [List.foldl_cons]; exact foldl_natsTail bs ("" ++ "," ++ toString b)]
+  simp only [String.toList_append, show ("":String).toList = [] from rfl,
+    show (",":String).toList = [','] from rfl, List.nil_append, List.cons_append, List.append_assoc]
+
+private theorem encodeNats_cons_shape (a : Nat) (as : List Nat) (rest : PState) :
+    (encodeNats (a :: as)).toList ++ rest
+      = '[' :: ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest))) := by
+  simp only [encodeNats]
+  rw [show (as.foldl (fun acc x => acc ++ "," ++ toString x) "") = encodeNatsTail as from rfl]
+  simp only [String.toList_append, show ("[":String).toList = ['['] from rfl,
+    show ("]":String).toList = [']'] from rfl]
+  simp [List.append_assoc]
+
+private theorem nat_toString_len (a : Nat) : 1 ≤ (toString a).toList.length := by
+  obtain ⟨h0, t0, ht0, _, _, _⟩ := repr_cons a
+  rw [ht0]; simp
+
+private theorem parseNats_loop_works : ∀ (as : List Nat) (a : Nat) (rest : PState) (fuel : Nat),
+    ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest))).length < fuel →
+    parseNats.loop fuel ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest)))
+      = some (a :: as, rest) := by
+  intro as
+  induction as with
+  | nil =>
+      intro a rest fuel hf
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by omega⟩
+      rw [show (encodeNatsTail ([] : List Nat)).toList = [] from rfl, List.nil_append]
+      unfold parseNats.loop
+      rw [parseNat_toString a (']' :: rest) (nd_brack rest)]
+      simp only []
+      rw [show lit "," (']' :: rest) = none from by
+            rw [show (']' :: rest) = ("]":String).toList ++ rest from rfl]
+            exact lit_ne_pre "," "]" rest (by decide) (by decide)]
+      simp only []
+      rw [lit_brack]
+  | cons a2 as2 ih =>
+      intro a rest fuel hf
+      have hlen : 1 ≤ (toString a).toList.length := nat_toString_len a
+      rw [encNatsTail_cons_shape a2 as2 (']' :: rest)] at hf ⊢
+      obtain ⟨f, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by
+        simp only [List.length_append, List.length_cons] at hf; omega⟩
+      unfold parseNats.loop
+      rw [parseNat_toString a _ (nd_comma _)]
+      simp only []
+      rw [lit_commaC]
+      simp only []
+      have hrec : ((toString a2).toList ++ ((encodeNatsTail as2).toList ++ (']' :: rest))).length < f := by
+        simp only [List.length_append, List.length_cons] at hf ⊢; omega
+      rw [ih a2 rest f hrec]
+
+/-- **FILL J production (e): the `[N,N,…]` Nat-list roundtrip** (`parseNats ∘ encodeNats = id`) — the
+`nullifiers`/`commitments` `WState` fields, and the first confirmation that §8's length-fuel recipe is a
+verbatim template. -/
+theorem parseNats_encode (ns : List Nat) (rest : PState) :
+    parseNats ((encodeNats ns).toList ++ rest) = some (ns, rest) := by
+  cases ns with
+  | nil =>
+      unfold parseNats
+      simp only [encodeNats]
+      rw [show (("[]":String).toList ++ rest) = ("[]":String).toList ++ rest from rfl, lit_append]
+  | cons a as =>
+      unfold parseNats
+      rw [encodeNats_cons_shape a as rest]
+      obtain ⟨h0, t0, ht0, hh0dig, _, _⟩ := repr_cons a
+      have hempty : lit "[]"
+          ('[' :: ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest)))) = none := by
+        rw [ht0, List.cons_append]
+        unfold lit
+        rw [show ("[]":String).toList = ['[', ']'] from by decide]
+        rw [litGo_cons_match, litGo_ne_head ']' [] h0 _ (by intro heq; subst heq; exact absurd hh0dig (by decide))]
+      rw [hempty]; simp only []
+      rw [show ('[' :: ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest))))
+            = ("[":String).toList ++ ((toString a).toList ++ ((encodeNatsTail as).toList ++ (']' :: rest)))
+            from rfl, lit_append]
+      simp only []
+      apply parseNats_loop_works as a rest
+      simp only [List.length_append, List.length_cons]; omega
+
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
@@ -1686,5 +1787,6 @@ zero-sorry guarantee on the codec roundtrip). -/
 #assert_axioms parseActionW_roundtrip
 #assert_axioms parseActionW_setfield
 #assert_axioms parseAuths_encode
+#assert_axioms parseNats_encode
 
 end Dregg2.Exec.CodecRoundtrip
