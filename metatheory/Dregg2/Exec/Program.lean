@@ -1,28 +1,21 @@
 /-
 # Dregg2.Exec.Program — the RecordProgram as the coalgebra structure-map (over records).
 
-`dregg2 §1.5` / CLAUDETHOUGHT: **the `RecordProgram` IS the coalgebra structure-map** — the
-`AdmissibleTurn ⇒ Cell` arrow. dregg1 realizes it as `RecordProgram = None | Predicate([…]) |
-Cases([…]) | Circuit{hash}` over a ~21-variant `StateConstraint` catalog (`cell/src/program.rs`),
-with **default-deny on no matching case** (the partial, fail-closed arrow). This module is the
-faithful Lean transcription of that catalog and evaluator — but **name-keyed over the Preserves
-`Value`/`Schema`** of `Exec/Value.lean`, not bit-positioned over 8 fixed slots.
+`RecordProgram` is the coalgebra structure-map — the `AdmissibleTurn ⇒ Cell` arrow.
+Faithfully transcribed from dregg1's ~21-variant `StateConstraint` catalog
+(`cell/src/program.rs`), but **name-keyed** over the Preserves `Value`/`Schema` of
+`Exec/Value.lean`, not bit-positioned over 8 fixed slots.
 
-The evaluator `RecordProgram.admits : RecordProgram → method → (old new : Value) → Bool` is the
-admissibility filter: the *domain* of the structure-map (`{(method, new) | admits …}`). It is
-decidable and computable (it is the executable golden oracle). Crucially, **every constraint
-reads specific NAMED fields** (`Value.scalar`) — so under `flatten` each constraint is a Boolean
-function of a known set of *wires*, which is exactly what the Build-3 circuit compiler
-(`RecordCircuit`) places onto `fieldOffset` columns. That correspondence (`admits ↔ circuit`) is
-the prize; this module is its spec side.
+`RecordProgram.admits` is the admissibility filter: the *domain* of the structure-map. It is
+decidable and computable. Every constraint reads specific named fields (`Value.scalar`), so
+under `flatten` each constraint is a Boolean function of a known set of wires — exactly what
+the circuit compiler (`RecordCircuit`) places onto `fieldOffset` columns.
 
-The Heyting fragment (`anyOf` ⊔ / `not` ¬) realizes `Laws.predicate_heyting` in the slot-caveat
-vocabulary (`dregg2 §1.5`). Witnessed / sender / cross-cell (`boundDelta`) constraints — which
-need the verify/find seam (`Laws.Verifiable`/`CryptoKernel`) or a peer cell — are *declared*
-here and routed to their seam in later builds, exactly as dregg1's scalar evaluator defers
-`BoundDelta`/`Witnessed` to dedicated passes.
+The Heyting fragment (`anyOf` ⊔ / `not` ¬) realizes `Laws.predicate_heyting` (`dregg2 §1.5`).
+Witnessed/sender/cross-cell (`boundDelta`) constraints are *declared* here and routed to their
+seam downstream, exactly as dregg1's scalar evaluator defers `BoundDelta`/`Witnessed`.
 
-Pure, computable, `#eval`-able; imports only `Exec.Value` (Lean-core), so it checks fast.
+Pure, computable, `#eval`-able; imports only `Exec.Value`.
 -/
 import Dregg2.Exec.Value
 

@@ -2,19 +2,19 @@
 # Dregg2.Exec.CellProgram — the CellProgram DSL (the developer-facing coalgebra).
 
 `dregg2 §1.5`: "the CellProgram IS the coalgebra structure-map". This module gives the
-object a **developer writes** to determine a cell's admissibility, and shows its
-DENOTATION is the executable coalgebra structure-map `denote : KernelState → Turn →
-Option KernelState` — i.e. the `Boundary.TurnCoalg.step` for the kernel carrier.
+object a developer writes to determine a cell's admissibility, and shows its denotation
+is the executable coalgebra structure-map `denote : KernelState → Turn → Option KernelState`
+— i.e. the `Boundary.TurnCoalg.step` for the kernel carrier.
 
-A `CellProgram` is an ADDITIONAL gate layered ON TOP OF the kernel's own fail-closed
-checks (`Exec.exec`): it decides which turns the cell will even *consider*, and only
-those that it admits are then run through `Exec.exec` (which still enforces
-conservation + authority). So a program can only ever *tighten* `exec`, never bypass it.
+A `CellProgram` is an additional gate layered on top of the kernel's own fail-closed
+checks (`Exec.exec`): it decides which turns the cell will even consider, and only those
+it admits are then run through `Exec.exec` (which still enforces conservation + authority).
+So a program can only ever *tighten* `exec`, never bypass it.
 
-The keystones (PROVED, reusing `Kernel.exec_conserves` + `Execution.invariant_run`):
+The keystones (reusing `Kernel.exec_conserves` + `Execution.invariant_run`):
 - `denote_conserves` — any turn a CellProgram admits-and-commits preserves `total`
   (because `denote` succeeds only when `exec` succeeds, and `exec` conserves);
-- `denote_run_conserves` — conservation across an ENTIRE program run.
+- `denote_run_conserves` — conservation across an entire program run.
 
 The link to `Boundary.TurnCoalg` is stated as `OPEN` where a full coalgebra instance
 would need machinery (a concrete `Obs`/`AdmissibleTurn` and a totalising successor) not
@@ -110,25 +110,24 @@ theorem denote_eq_exec_on_success (p : CellProgram) (k k' : KernelState) (turn :
 
 /-! ## Conservation: a CellProgram cannot bypass the resource law -/
 
-/-- **`denote_conserves` — PROVED.** Any turn a `CellProgram` admits-and-commits still
-preserves `total`. The program only gates `exec`; it never bypasses conservation. Proved
-directly from `Kernel.exec_conserves` via `denote_eq_exec_on_success`. -/
+/-- **`denote_conserves`** — any turn a `CellProgram` admits-and-commits still preserves
+`total`. The program only gates `exec`; it never bypasses conservation. Follows from
+`Kernel.exec_conserves` via `denote_eq_exec_on_success`. -/
 theorem denote_conserves (p : CellProgram) (k k' : KernelState) (turn : Turn)
     (h : p.denote k turn = some k') : total k' = total k :=
   exec_conserves k k' turn (denote_eq_exec_on_success p k k' turn h)
 
 /-! ## The CellProgram-induced execution system and whole-run conservation -/
 
-/-- The `Execution.System` a `CellProgram` induces: a step is any turn the PROGRAM
+/-- The `Execution.System` a `CellProgram` induces: a step is any turn the program
 admits-and-commits (a tighter `Step` than `kernelSystem`'s). -/
 def CellProgram.system (p : CellProgram) : System where
   Config := KernelState
   Step k k' := ∃ turn, p.denote k turn = some k'
 
-/-- **`denote_run_conserves` — PROVED.** Conservation across an ENTIRE program run:
-`total` is invariant along any run of the program-induced system. Lifts the per-turn
-`denote_conserves` to the whole execution via `Execution.invariant_run`, the same shape
-as `Kernel.kernel_run_conserves`. -/
+/-- **`denote_run_conserves`** — conservation across an entire program run: `total` is
+invariant along any run of the program-induced system. Lifts the per-turn `denote_conserves`
+to the whole execution via `Execution.invariant_run`. -/
 theorem denote_run_conserves (p : CellProgram) {k k' : KernelState}
     (hrun : Run p.system k k') : total k' = total k := by
   have hpres : StepInvariant p.system (fun c => total c = total k) := by
@@ -137,8 +136,8 @@ theorem denote_run_conserves (p : CellProgram) {k k' : KernelState}
     rw [denote_conserves p a b turn hturn]; exact ha
   exact invariant_run hpres hrun rfl
 
-/-- A program-induced step is in particular a kernel step: the program system REFINES the
-kernel system (every program transition is a kernel transition). PROVED. -/
+/-- A program-induced step is in particular a kernel step: the program system refines the
+kernel system (every program transition is a kernel transition). -/
 theorem system_refines_kernel (p : CellProgram) {k k' : KernelState}
     (h : p.system.Step k k') : kernelSystem.Step k k' := by
   obtain ⟨turn, hturn⟩ := h
@@ -158,7 +157,7 @@ transition component `AdmissibleTurn ⇒ X` of that structure map, with:
 
 The correspondence below makes the transition component literal. Note `denote` lands in
 `Option KernelState`, i.e. the *partial* structure map; `Boundary.TurnCoalg.step` is the
-TOTAL map `Carrier → Obs × (AdmissibleTurn → Carrier)`. The two are reconciled by
+total map `Carrier → Obs × (AdmissibleTurn → Carrier)`. The two are reconciled by
 (a) restricting `AdmissibleTurn` to the turns the program actually admits-and-commits
 (making the map total on that subtype), and (b) choosing an `Obs`. -/
 
@@ -170,7 +169,7 @@ def CellProgram.coalgTransition (p : CellProgram) :
   p.denote
 
 /-- The transition component is definitionally `denote` (the correspondence is literal,
-not up-to-anything). PROVED. -/
+not up-to-anything). -/
 theorem CellProgram.coalgTransition_eq (p : CellProgram) (k : KernelState) (turn : Turn) :
     p.coalgTransition k turn = p.denote k turn := rfl
 

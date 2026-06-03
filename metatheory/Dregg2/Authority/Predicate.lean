@@ -1,27 +1,22 @@
 /-
-# Dregg2.Authority.Predicate — the WitnessedPredicate registry = the verify/find seam plugins.
+# Dregg2.Authority.Predicate — the WitnessedPredicate registry: verify/find seam plugins.
 
-**The slice (dregg2 §1.2, `cand-B`, the verify/find seam).** dregg1's `cell/src/predicate.rs`
-holds a `WitnessedPredicateRegistry` of *verifier plugins* keyed by `WitnessedPredicateKind`
-(`Dfa | Temporal | MerkleMembership | NonMembership | Pedersen | BlindedSet | Bridge |
-Custom{vk_hash}`). Each kind is a **decidable** `Verify : statement → witness → Bool` that lives
-**in the TCB**; the registry merely DISPATCHES by kind. The *prover* — the matcher / DFA-compiler /
-credential-issuer (`WitnessProducer`, the left adjoint) — is the **untrusted** `find` side: an
-opaque `Option`, with no completeness and no termination.
+Models dregg1's `WitnessedPredicateRegistry` (`cell/src/predicate.rs`): a map from
+`WitnessedPredicateKind` (`Dfa | Temporal | MerkleMembership | NonMembership | Pedersen |
+BlindedSet | Bridge | Custom{vk_hash}`) to decidable verifier plugins. Each plugin is a
+`Verify : statement → witness → Bool` in the TCB; the registry dispatches by kind. The
+prover (the `WitnessProducer` / matcher) is the untrusted `find` side: opaque, no
+completeness, no termination.
 
-This module models exactly that split, and PROVES the keystone: **a witness the registry ACCEPTS
-for a kind discharges that kind's predicate** (soundness-by-verification, `Laws.Discharged`), and
-this holds **against any prover**, adversarial included — because the TCB is the registry's
-`Verify`, never the `find` plugin.
+Keystone: a witness the registry accepts for a kind discharges that kind's predicate
+(soundness-by-verification), holding against any prover including adversarial ones.
 
-**The §8 rail (`REORIENT.md §6`, `CryptoKernel.lean`).** The ACTUAL crypto soundness of the crypto
-kinds (Merkle binding, Pedersen homomorphism, STARK extractability) is NEVER a Lean law. For those
-kinds the registry routes the check through `CryptoKernel.verify` — the §8 oracle. The Lean law
-here models ONLY the DISPATCH + the soundness-by-verification discipline (an accepted witness
-discharges its predicate); the `find`/prover stays untrusted and undecidable.
+§8 portal: the actual crypto soundness of the crypto kinds (Merkle binding, Pedersen
+homomorphism, STARK extractability) is NEVER a Lean law. For those kinds the registry
+routes through `CryptoKernel.verify` — the §8 oracle. The Lean law models dispatch +
+soundness-by-verification only; the `find`/prover stays untrusted and undecidable.
 
-Reuses `Laws.Verifiable`/`Discharged`/`Searchable`/`find` and `Crypto.CryptoKernel` unchanged.
-Defines only NEW names under `namespace Dregg2.Authority.Predicate`. Pure, `#eval`-able.
+Pure, `#eval`-able. Defines only new names under `namespace Dregg2.Authority.Predicate`.
 -/
 import Dregg2.Laws
 import Dregg2.CryptoKernel
@@ -96,13 +91,11 @@ theorem discharged_iff_registryVerify {Stmt Wit : Type}
       ↔ registryVerify reg k stmt wit = true :=
   Iff.rfl
 
-/-! ## THE KEYSTONE — soundness-by-verification through the registry. -/
+/-! ## The keystone — soundness-by-verification through the registry. -/
 
-/-- **`registry_sound` (THE KEYSTONE).** A witness the registry ACCEPTS for kind `k` *discharges*
-that kind's predicate. Soundness-by-verification, stated through `Laws.Discharged` at the
-registry-at-`k` seam instance: whenever the dispatch returns `true`, the abstract verifier accepts,
-so the witness is a genuine discharging certificate. The TCB is the registry's `Verify`, full stop;
-nothing about the *prover* enters this statement. -/
+/-- **`registry_sound`** — a witness the registry accepts for kind `k` discharges that
+kind's predicate. Soundness-by-verification through `Laws.Discharged` at the registry-at-`k`
+seam instance. The TCB is the registry's `Verify`; nothing about the prover enters. -/
 theorem registry_sound {Stmt Wit : Type}
     (reg : Registry Stmt Wit) (k : WitnessedKind) (stmt : Stmt) (wit : Wit)
     (haccept : registryVerify reg k stmt wit = true) :
@@ -125,16 +118,11 @@ theorem registry_sound_find {Stmt Wit : Type}
   -- document the seam (a returned witness must still pass `Verify`); soundness is `haccept` alone.
   registry_sound reg k stmt wit haccept
 
-/-! ## `find_untrusted` — the prover side carries NO completeness / termination, and even an
-ADVERSARIAL prover cannot make the registry accept an invalid witness. -/
+/-! ## The prover side carries no completeness / termination guarantee. -/
 
-/-- **The design law of the prover side (`find_untrusted`).** The `find`/prover is modelled as a
-bare `Stmt → Option Wit` with NO `Decidable`/totality/completeness guarantee: this very signature
-*is* the contract. We make the absence of a completeness promise precise: there exist a registry, a
-statement, and a prover that returns `none` even though a discharging witness exists. So "the prover
-found nothing" can NEVER be read as "no witness exists" — completeness is not on the table, by
-construction. (The prover here ignores its input and always gives up; the registry accepts the
-witness `()` regardless.) -/
+/-- **`find_untrusted`** — a prover returning `none` does not imply no witness exists.
+Concretely: there exist a registry and a statement where the prover gives up yet the
+registry accepts `()`. Completeness is not on the table. -/
 theorem find_untrusted :
     ∃ (Stmt Wit : Type) (reg : Registry Stmt Wit) (k : WitnessedKind)
       (find : Stmt → Option Wit) (stmt : Stmt) (wit : Wit),
@@ -199,9 +187,8 @@ theorem custom_distinct_vk {Stmt Wit : Type}
 
 /-! ## Routing a crypto kind through the §8 oracle.
 
-For the crypto kinds (`pedersen`, `merkleMembership`, …) the verifier plugin is NOT a Lean-proved
-check — it is the `CryptoKernel.verify` ORACLE (`dregg2 §8`). We build the verifier *from* a kernel
-and confirm the keystone still holds: the Lean law models the DISPATCH and the
+For the crypto kinds (`pedersen`, `merkleMembership`, …) the verifier plugin is the
+`CryptoKernel.verify` oracle (§8 portal). The Lean law models the dispatch and
 soundness-by-verification discipline; it never reasons into the crypto. -/
 
 /-- The verifier plugin for a crypto kind = the §8 `CryptoKernel.verify` oracle, wrapped to the
@@ -210,10 +197,10 @@ def cryptoVerifier {Digest Proof : Type} [AddCommGroup Digest] [CryptoKernel Dig
     Verifier Digest Proof :=
   fun stmt proof => CryptoKernel.verify stmt proof
 
-/-- **`crypto_kind_routes_to_oracle`.** When a crypto kind is registered with the
-`CryptoKernel.verify` oracle, an accepted proof discharges the kind's predicate — and "accepted"
-means *the oracle said true*, with no Lean reasoning into the crypto. The §8 rail intact: dispatch +
-soundness-by-verification in Lean; binding/extractability stays a circuit obligation. -/
+/-- **`crypto_kind_routes_to_oracle`** — when a crypto kind is registered with the
+`CryptoKernel.verify` oracle, an accepted proof discharges the kind's predicate. Acceptance
+means the oracle said true; no Lean reasoning into the crypto occurs. Binding and
+extractability remain circuit obligations (§8 portal). -/
 theorem crypto_kind_routes_to_oracle {Digest Proof : Type} [AddCommGroup Digest]
     [CryptoKernel Digest Proof]
     (base : Registry Digest Proof) (k : WitnessedKind) (stmt : Digest) (proof : Proof)

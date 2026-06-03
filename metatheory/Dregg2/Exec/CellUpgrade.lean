@@ -1,13 +1,12 @@
 /-
-# Dregg2.Exec.CellUpgrade — the anti-brick `set_program` upgrade as an EXECUTABLE turn.
+# Dregg2.Exec.CellUpgrade — the anti-brick `set_program` upgrade as an executable turn.
 
-This module makes `Dregg2.Upgrade`'s anti-brick *law* into a concrete, computable
-**upgrade transition** on a versioned cell (`dregg2-multicell-privacy §3`, `study-mina-relink §4`).
-The previous module (`Upgrade.lean`) supplies the decidable admissibility relation
-`setProgramAdmissible` and the keystone *existence* law `upgrade_never_bricks`. Here we wire
-that relation into an actual state-transition function `execUpgrade : VersionedCell →
-UpgradeRequest → Option VersionedCell` and re-derive — for the EXECUTABLE turn — the three
-load-bearing facts:
+This module makes `Dregg2.Upgrade`'s anti-brick *law* into a concrete, computable upgrade
+transition on a versioned cell (`dregg2-multicell-privacy §3`, `study-mina-relink §4`).
+`Upgrade.lean` supplies the decidable admissibility relation `setProgramAdmissible` and the
+keystone *existence* law `upgrade_never_bricks`. Here we wire that relation into a
+state-transition function `execUpgrade : VersionedCell → UpgradeRequest → Option VersionedCell`
+and re-derive — for the executable turn — the three load-bearing facts:
 
 * **`execUpgrade_never_bricks`** — for any cell and any live verifier version, there is an
   admissible upgrade that `execUpgrade` *actually performs* (returns `some`). The signature
@@ -27,10 +26,9 @@ and `Circuit{circuit_hash}` *is* its content hash — a content-addressed object
 We pin it as `ProgramId := Nat` (the circuit hash), keeping admissibility decidable and the
 upgrade transition computable, faithful to "the cell's `CellProgram` IS the side-loaded VK."
 
-Spec-and-executable-first: every theorem here is PROVED with no `sorry` (the heavy existential
-content lives in the reused `Upgrade` lemmas). The crypto-soundness of any actual proof check is
-the §8 circuit obligation, NOT merged into this semantic law — `setProgramAdmissible` is the
-decidable *oracle* `byProof v ⇒ v = live`, not a binding/extractability claim.
+The crypto-soundness of any actual proof check is the §8 circuit obligation, not merged into
+this semantic law — `setProgramAdmissible` is the decidable *oracle* `byProof v ⇒ v = live`,
+not a binding/extractability claim.
 -/
 import Dregg2.Upgrade
 

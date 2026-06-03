@@ -1,54 +1,24 @@
 /-
 # Metatheory.Categorical — deriving the abstract spec from categorical first principles.
 
-> The lead's aspiration: *"derive the abstract spec from categorical first principles and
-> some really reasonable stuff."*
+`Dregg2.*` postulates its spec structures as fields or named constructions. This module
+takes minimal categorical axioms and derives them as consequences (kernel-clean,
+`#assert_axioms`-pinned, zero `sorry`).
 
-The `Dregg2.*` library and `Metatheory.ConstructiveKnowledge` **postulate** their spec
-structures: `Dregg2.Core.Conservation` carries `tensor_add`/`unit_zero` as *fields* (the
-monoid-hom is a hypothesis you assert when you build a `Conservation`); `Dregg2.Laws`
-takes the `Predicate ⊣ Witness` Galois connection as a *named construction*; the cell
-coalgebra `Dregg2.Boundary.TurnCoalg` is a *given* structure map. This module begins the
-opposite movement: take a **minimal categorical axiom** and DERIVE the spec structure as
-its *consequence*.
+- **§1 Conservation.** From "`Σ` is a lax monoidal functor `C ⥤ Discrete M`" we derive
+  `Σ̃(A⊗B) = Σ̃A + Σ̃B` (tensorator `μ`) and `Σ̃ I = 0` (unit `ε`), recovering
+  `Dregg2.Core.Conservation.tensor_add`/`unit_zero` as consequences. No-free-copy follows:
+  a copy map `Δ : A ⟶ A⊗A` forces `Σ̃A = 0` in a cancellative `M`.
+- **§2 The verify/find seam.** `Predicate ⊣ Witness` as a `GaloisConnection`; attenuation,
+  demand/supply round-trips, and closure idempotence as standard adjunction consequences.
+- **§3 Coalgebra and pullbacks.** The cell as an `F`-coalgebra; the hyperedge/JointTurn as
+  a (wide) pullback — stated via `CategoryTheory.Limits`. Final-coalgebra existence is OPEN
+  (closed in `Metatheory.Open.FinalCoalgebra`).
 
-What is DERIVED-and-proved here (no `sorry`, kernel-clean, `#assert_axioms`-pinned):
-
-* **§1 Conservation.** From the single categorical datum *"`Σ` is a lax monoidal functor
-  `C ⥤ Discrete M`" (`M` a discrete `AddMonoid`)* we DERIVE — as the functor's *coherence
-  morphisms*, not as assumed fields — `Σ̃(A ⊗ B) = Σ̃ A + Σ̃ B` (the tensorator `μ`) and
-  `Σ̃ I = 0` (the unit `ε`). These are exactly the `tensor_add`/`unit_zero` that
-  `Dregg2.Core.Conservation` postulates. We then DERIVE **no-free-copy** purely
-  categorically: a comonoid copy map `Δ : A ⟶ A ⊗ A` that `Σ` respects forces
-  `Σ̃ A = Σ̃ A + Σ̃ A`, hence `Σ̃ A = 0` in a cancellative `M`. The Lean-side shadow of this
-  is `Dregg2.Core.withholding_no_free_copy`.
-
-* **§2 The verify/find seam.** We frame `Predicate ⊣ Witness` as a genuine
-  `GaloisConnection` (mathlib `Order.GaloisConnection`) and DERIVE the seam's
-  closure/monotonicity facts — attenuation (right adjoint monotone), the demand/supply
-  round-trips (unit/counit), and the closure idempotence — as standard *consequences* of
-  the adjunction, not as separately-stated laws.
-
-* **§3 (universal property stated).** The cell as a coalgebra of `F X = Obs × (Adm → X)`
-  and the hyperedge/JointTurn binding as a (wide) **pullback** in the category of
-  coalgebras — stated faithfully via mathlib `CategoryTheory.Limits`. The *anamorphism*
-  (final-coalgebra existence) is honestly OPEN.
-
-## The `study-category §5` honesty caveat (do not oversell "strong monoidal")
-
-Functoriality into a **discrete** target is *thin*. In `Discrete M` every hom is a
-proof-of-equality (`Discrete.eq_of_hom : (X ⟶ Y) → X.as = Y.as`), so the *only* content a
-(lax/strong) monoidal functor to `Discrete M` carries is **the equations its coherence
-morphisms witness** — `Σ̃(A⊗B) = Σ̃A + Σ̃B`, `Σ̃ I = 0`, and the invariance `Σ̃ A = Σ̃ B`
-along any turn `A ⟶ B`. The associativity/unitality coherence *diagrams* are automatic
-(every diagram in a discrete category commutes). So the honest reading of "conservation =
-a monoidal functor" is **monoid-hom on counts + invariance on morphisms** (per
-`Dregg2.Core` docstring / `dregg2.md §2.1`), and the "strong monoidal" packaging is
-*decorative*. We DERIVE precisely the thin content and say so; we do not claim the rich
-structure of a non-degenerate monoidal functor.
-
-DISCIPLINE: faithful Props; honest `-- OPEN:` (precisely stated) on the one genuinely-open
-obligation (the anamorphism). `#assert_axioms` pins the proved keystones.
+Honesty caveat (§1): functoriality into a discrete target is thin — the coherence diagrams
+are vacuous (every diagram in a discrete category commutes). The honest content of
+"conservation = a lax monoidal functor to `Discrete M`" is monoid-hom on counts plus
+invariance on morphisms. We derive precisely that and no more.
 -/
 import Dregg2.Core
 import Dregg2.Laws
@@ -69,20 +39,12 @@ open CategoryTheory MonoidalCategory
 
 universe u v w
 
-/-! # §1. Conservation, DERIVED from a lax monoidal functor to a discrete monoid.
+/-! # §1. Conservation, derived from a lax monoidal functor to a discrete monoid.
 
-`Dregg2.Core` *postulates* the conservation measure's two monoid-hom equations
-(`Conservation.tensor_add`, `Conservation.unit_zero`) as **fields**. Here we DERIVE them
-from a single categorical datum.
-
-THE ONE CATEGORICAL AXIOM (a named hypothesis, "some really reasonable stuff"):
-
-> Conservation is a **lax monoidal functor** `Σ : C ⥤ Discrete M` from the symmetric
-> monoidal category `C` of cells/turns to the **discrete** monoidal category on a
-> commutative `AddMonoid` `M`.
-
-Everything in this section is a *consequence* of that single datum — extracted by reading
-off the coherence morphisms `ε`/`μ` through `Discrete.eq_of_hom`. -/
+`Dregg2.Core` postulates the conservation measure's two monoid-hom equations as fields.
+Here we derive them from the single datum that conservation is a lax monoidal functor
+`Σ : C ⥤ Discrete M` — extracted by reading off the coherence morphisms `ε`/`μ` through
+`Discrete.eq_of_hom`. -/
 
 section Conservation
 
@@ -91,16 +53,13 @@ open Functor.LaxMonoidal
 variable {C : Type u} [Category.{v} C] [MonoidalCategory C]
 variable {M : Type w} [AddCommMonoid M]
 
-/-- The conservation measure **read off** a lax monoidal functor to the discrete monoid:
-`Σ̃ A := (Σ.obj A).as`. This is the only data a functor-to-`Discrete M` carries at the
-object level — the count assigned to a cell. -/
+/-- The conservation measure read off a lax monoidal functor to the discrete monoid:
+`Σ̃ A := (Σ.obj A).as` — the count assigned to a cell. -/
 def measure (Sig : C ⥤ Discrete M) (A : C) : M := (Sig.obj A).as
 
-/-- **DERIVED: the unit law `Σ̃ I = 0`** — *not assumed*. It is exactly the existence of
-the lax-monoidal unit coherence morphism `ε Σ : 𝟙_(Discrete M) ⟶ Σ.obj (𝟙_ C)`: in a
-discrete category a morphism IS an equality of objects (`Discrete.eq_of_hom`), and the
-discrete-monoidal unit has `.as = 0`. This is `Dregg2.Core.Conservation.unit_zero`,
-recovered as a theorem about the functor rather than a postulated field. -/
+/-- The unit law `Σ̃ I = 0`, derived (not assumed). The lax-monoidal unit coherence morphism
+`ε Σ : 𝟙_(Discrete M) ⟶ Σ.obj (𝟙_ C)` is, in a discrete category, an equality of objects
+(`Discrete.eq_of_hom`). This recovers `Dregg2.Core.Conservation.unit_zero` as a theorem. -/
 theorem measure_unit (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] :
     measure Sig (𝟙_ C) = 0 := by
   -- `ε Sig : 𝟙_ (Discrete M) ⟶ Sig.obj (𝟙_ C)` is a morphism in a discrete category…
@@ -108,54 +67,30 @@ theorem measure_unit (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] :
   -- …so it forces `(𝟙_ (Discrete M)).as = (Sig.obj (𝟙_ C)).as`. The LHS is `0`.
   simpa [measure, Discrete.addMonoidal_tensorUnit_as] using h.symm
 
-/-- **DERIVED: the additivity / monoid-hom law `Σ̃ (A ⊗ B) = Σ̃ A + Σ̃ B`** — *not
-assumed*. It is exactly the existence of the lax-monoidal **tensorator**
-`μ Σ A B : Σ.obj A ⊗ Σ.obj B ⟶ Σ.obj (A ⊗ B)`: by `Discrete.eq_of_hom` this morphism IS
-the equation `(Σ.obj A ⊗ Σ.obj B).as = (Σ.obj (A ⊗ B)).as`, and in the discrete *additive*
-monoidal category `(Σ.obj A ⊗ Σ.obj B).as = (Σ.obj A).as + (Σ.obj B).as`. This is
-`Dregg2.Core.Conservation.tensor_add`, recovered as a consequence of the functor's
-coherence rather than a postulated field. -/
+/-- The additivity law `Σ̃(A⊗B) = Σ̃A + Σ̃B`, derived (not assumed). The lax-monoidal
+tensorator `μ Σ A B` is an equality by `Discrete.eq_of_hom`. Recovers
+`Dregg2.Core.Conservation.tensor_add` as a consequence of the functor's coherence. -/
 theorem measure_tensor (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] (A B : C) :
     measure Sig (A ⊗ B) = measure Sig A + measure Sig B := by
   have h := Discrete.eq_of_hom (μ Sig A B)
   simpa [measure, Discrete.addMonoidal_tensorObj_as] using h.symm
 
 set_option linter.unusedSectionVars false in
-/-- **DERIVED: invariance along ordinary turns `Σ̃ A = Σ̃ B`** — *not assumed*. Any
-morphism `f : A ⟶ B` in `C` (a turn) is sent by the functor to `Σ.map f : Σ.obj A ⟶
-Σ.obj B`, a morphism in the discrete target, hence (`Discrete.eq_of_hom`) the equation
-`Σ̃ A = Σ̃ B`. This is the content of `Dregg2.Core.conservation_ordinary` — that an honest
-turn neither creates nor destroys resource — recovered as plain functoriality into a
-discrete category. (The mint/burn generators are exactly the morphisms one must *remove*
-from `C` for this to be the whole story: in the full system they live in a larger category
-where `Σ` is only lax/oplax-invariant; here the discrete-target shadow makes EVERY
-remaining morphism conservation-preserving.) Invariance needs neither `MonoidalCategory C`
-nor `AddCommMonoid M` — it is bare functoriality into a discrete category — so the
-unused-section-variable linter is locally silenced. -/
+/-- Invariance along ordinary turns `Σ̃ A = Σ̃ B`, derived. Any morphism `f : A ⟶ B` in
+`C` is sent by `Σ` to a morphism in the discrete target, which by `Discrete.eq_of_hom` is
+the equation `Σ̃ A = Σ̃ B`. Recovers `Dregg2.Core.conservation_ordinary` as bare
+functoriality into a discrete category. Needs neither `MonoidalCategory C` nor
+`AddCommMonoid M`; the unused-section-variable linter is locally silenced. -/
 theorem measure_invariant (Sig : C ⥤ Discrete M) {A B : C} (f : A ⟶ B) :
     measure Sig A = measure Sig B :=
   Discrete.eq_of_hom (Sig.map f)
 
-/-- **DERIVED: no-free-copy, categorically.** A **comonoid copy map** on `A` — any
-morphism `copy : A ⟶ A ⊗ A` of the monoidal category (the comultiplication `Δ` a comonoid
-object would carry; we take it as the bare morphism, which is all the argument needs) —
-is sent by functoriality of `Σ` into the discrete target to a morphism
-`Σ.obj A ⟶ Σ.obj (A ⊗ A)`, forcing (by invariance + additivity) `Σ̃ A = Σ̃ A + Σ̃ A`. In a
-**cancellative** `M` (`IsCancelAdd`) that collapses to `Σ̃ A = 0`: there is NO
-conservation-respecting duplication of a non-empty resource.
-
-This is the substructural "no Δ" of conservation, DERIVED from
-*(a comonoid copy morphism) + (lax monoidal functor to a cancellative discrete monoid)* — no
-extra postulate. It is the categorical first-principles source of
-`Dregg2.Core.withholding_no_free_copy` (whose hypotheses — `tensor_add`, the ordinary-turn
-balance, cancellation — are exactly `measure_tensor`, `measure_invariant`, `IsCancelAdd`
-here); there, the copy map appears as an *ordinary* `Turn A (A ⊗ A)`, the morphism analogue
-of `copy` here.
-
-(We use the bare copy morphism rather than mathlib's `ComonObj` typeclass *only* because
-`Mathlib.CategoryTheory.Monoidal.Comon_` is not built in this lib's pinned mathlib slice;
-the argument is identical — it consumes only `Σ.map copy`, i.e. that `copy` is *a* morphism
-`A ⟶ A ⊗ A` — and a `ComonObj A` would supply exactly such a `copy := Δ[A]`.) -/
+/-- No-free-copy, derived categorically. A copy map `copy : A ⟶ A ⊗ A` is sent by `Σ`
+to a morphism forcing `Σ̃A = Σ̃A + Σ̃A`; in a cancellative `M` that gives `Σ̃A = 0`.
+No conservation-respecting duplication of a non-empty resource is possible. This is the
+categorical source of `Dregg2.Core.withholding_no_free_copy`. (We use the bare morphism
+rather than `ComonObj` because `Mathlib.CategoryTheory.Monoidal.Comon_` is not in this
+lib's pinned mathlib slice; the argument needs only `Σ.map copy`.) -/
 theorem no_free_copy [IsCancelAdd M]
     (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] (A : C) (copy : A ⟶ A ⊗ A) :
     measure Sig A = 0 := by
@@ -166,62 +101,43 @@ theorem no_free_copy [IsCancelAdd M]
   -- `Σ̃ A = Σ̃ A + Σ̃ A` ⟹ `Σ̃ A = 0` by left-cancellation.
   exact left_eq_add.mp hinv
 
-/-! ### §1(a) deepened: conservation IS substructurality (the *absence of a natural Δ*).
+/-! ### §1(a): conservation is substructurality (the absence of a natural Δ).
 
-`no_free_copy` shows a *single* copy morphism is conservation-trivial. The first-principles
-statement is stronger and structural: conservation is exactly **the linear/affine
-discipline — there is no natural diagonal `Δ`** that `Σ` respects on resource-bearing
-objects. We make the linear and affine readings precise.
-
-* **Linear (no copy = no Δ):** a *family* of copy maps `δ A : A ⟶ A ⊗ A`, natural or not,
-  forces every count to `0`. So a cartesian (diagonal-bearing) structure is incompatible
-  with non-trivial conservation: `C` carrying conservation **cannot** be cartesian on the
-  resource fragment. This is "conservation = substructural / no-contraction."
-* **Affine (no discard = no `!`):** dually, a *discard* `wk A : A ⟶ I` (the affine
-  weakening `!`/projection to the unit) forces `Σ̃ A = 0` likewise (`Σ̃ A = Σ̃ I = 0`).
-  Conservation tolerates neither contraction (`Δ`) nor, on counted objects, weakening
-  (`wk`) — the **linear** reading, where resource is used *exactly* once. -/
+`no_free_copy` shows a single copy morphism forces `Σ̃A = 0`. The structural reading:
+- **Linear (no copy):** a family `δ A : A ⟶ A ⊗ A` forces every count to `0`. A
+  cartesian (diagonal-bearing) structure is incompatible with non-trivial conservation.
+- **Affine (no discard):** a discard `wk A : A ⟶ I` forces `Σ̃A = Σ̃I = 0`. Conservation
+  tolerates neither contraction nor weakening — the linear discipline. -/
 
 set_option linter.unusedSectionVars false in
-/-- **DERIVED (affine reading): no-free-discard.** A *discard / weakening* map
-`wk : A ⟶ 𝟙_ C` (the affine `!`-projection to the monoidal unit) forces `Σ̃ A = 0`:
-functoriality sends it to `Σ̃ A = Σ̃ I`, and `measure_unit` gives `Σ̃ I = 0`. So no counted
-resource may be silently dropped — the *affine* half of substructurality. (Needs no
-cancellativity: discarding is even more directly conservation-trivial than copying.) -/
+/-- No-free-discard (affine reading), derived. A discard `wk : A ⟶ 𝟙_ C` forces `Σ̃A = 0`
+via `Σ̃A = Σ̃I = 0`. No counted resource may be silently dropped. Needs no cancellativity. -/
 theorem no_free_discard (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] (A : C)
     (wk : A ⟶ 𝟙_ C) : measure Sig A = 0 := by
   rw [measure_invariant Sig wk]; exact measure_unit Sig
 
-/-- **DERIVED (linear reading): a *natural* diagonal collapses the whole measure.** If `C`
-carries a diagonal `δ A : A ⟶ A ⊗ A` on *every* object (the data of a cartesian / Δ-bearing
-structure — we ask only the components, naturality is not needed for the collapse), then a
-conservation functor into a cancellative discrete monoid measures **everything** as `0`:
-`∀ A, Σ̃ A = 0`. Contrapositive — the categorical first principle — *any non-trivial
-conservation measure proves the absence of a global diagonal*: a Δ-bearing (cartesian)
-monoidal category admits no faithful conservation. This is precisely "conservation = no
-free copy = substructurality," now as a statement about the category's structure, not one
-morphism. -/
+/-- A global diagonal collapses the whole measure (linear reading), derived. If `C` carries
+diagonal components `δ A : A ⟶ A ⊗ A` for every object, then `∀ A, Σ̃A = 0`. Any
+non-trivial conservation measure therefore witnesses the absence of a global diagonal:
+a cartesian monoidal category admits no faithful conservation. -/
 theorem diagonal_collapses_measure [IsCancelAdd M]
     (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal]
     (δ : ∀ A : C, A ⟶ A ⊗ A) : ∀ A : C, measure Sig A = 0 :=
   fun A => no_free_copy Sig A (δ A)
 
-/-- **The linear-logic punchline (DERIVED, contrapositive):** a conservation functor with
-*any* non-zero count witnesses that `C` has **no** global diagonal — `C` is genuinely
-substructural (non-cartesian) on the resource fragment. The absence of a natural copy IS
-conservation; their conjunction is contradictory once a single count is non-zero. -/
+/-- A non-zero count forbids a global diagonal: a conservation functor with any non-zero
+count witnesses that `C` is genuinely substructural (non-cartesian) on the resource
+fragment. The absence of a natural copy and a non-trivial conservation are contradictory. -/
 theorem nonzero_count_forbids_diagonal [IsCancelAdd M]
     (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal]
     {A : C} (hA : measure Sig A ≠ 0) : ¬ ∃ δ : ∀ A : C, A ⟶ A ⊗ A, True :=
   fun ⟨δ, _⟩ => hA (diagonal_collapses_measure Sig δ A)
 
-/-- **Bridge to the postulated spec.** Every lax monoidal functor `Σ : C ⥤ Discrete M`
-*induces* the object-level monoid-hom data that `Dregg2.Core.Conservation` postulates as
-fields: the `count = measure Σ`, with `unit_zero = measure_unit` and
-`tensor_add = measure_tensor` now THEOREMS. We package the derived pair to make explicit
-that the postulated fields are consequences. (The full `Conservation` structure additionally
-carries the mint/burn *inflow/outflow* bookkeeping, which is candidate-operational data, not
-categorical; we derive precisely the monoid-hom core it postulates.) -/
+/-- Bridge to the postulated spec: every lax monoidal functor `Σ : C ⥤ Discrete M` induces
+the monoid-hom data that `Dregg2.Core.Conservation` postulates as fields. `unit_zero` and
+`tensor_add` are now theorems (`measure_unit`/`measure_tensor`). The full `Conservation`
+structure additionally carries mint/burn bookkeeping (operational, not categorical); we
+derive only the monoid-hom core. -/
 theorem conservation_core_derived (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] :
     (measure Sig (𝟙_ C) = 0) ∧
       (∀ A B : C, measure Sig (A ⊗ B) = measure Sig A + measure Sig B) :=
@@ -229,37 +145,28 @@ theorem conservation_core_derived (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] :
 
 end Conservation
 
-/-! ### §1 honesty caveat, restated at the point of use (`study-category §5`).
+/-! ### §1 honesty caveat.
 
-`measure_unit`/`measure_tensor`/`measure_invariant` are the *entire* content of "`Σ` is a
-monoidal functor to `Discrete M`": the associativity/unitality coherence **diagrams** of
-the `LaxMonoidal` structure are vacuous here (every diagram in a discrete category
-commutes, `Subsingleton (X ⟶ Y)`), so they impose nothing beyond these three equations.
-Hence we have DERIVED *monoid-hom + invariance*, and ONLY that — the genuinely thin content
-the `Dregg2.Core` docstring already flags. We do not claim, and the discrete target cannot
-provide, the richer structure of a strong monoidal functor into a non-degenerate category. -/
+`measure_unit`/`measure_tensor`/`measure_invariant` are the entire content of "`Σ` is a
+monoidal functor to `Discrete M`": the coherence diagrams are vacuous (every diagram in a
+discrete category commutes). We have derived monoid-hom + invariance, and only that. -/
 
-/-! # §2. The verify/find seam, DERIVED as a Galois connection.
+/-! # §2. The verify/find seam, derived as a Galois connection.
 
-`Dregg2.Laws` constructs the `Predicate ⊣ Witness` Galois connection from a relation
-(`polarity_galois`). Here we take *"the seam is a `GaloisConnection demand supply`"* as the
-single categorical datum (an adjunction between the two preorders-as-thin-categories) and
-DERIVE the seam's operational laws — attenuation, the demand/supply round-trips, closure
-idempotence — as standard adjunction consequences. None of these is separately postulated;
-each is `GaloisConnection.*` applied to the seam. -/
+We take "the seam is a `GaloisConnection demand supply`" as the single datum and derive
+the seam's operational laws — attenuation, round-trips, closure idempotence — as standard
+adjunction consequences. None is separately postulated; each is `GaloisConnection.*`. -/
 
 section Seam
 
 variable {Demand : Type u} {Supply : Type v}
--- `Supply` is a `PartialOrder` (so the verification closure is genuinely idempotent — an
--- *equality*, via antisymmetry); `Demand` a `Preorder` suffices for the round-trips.
+-- `Supply` is a `PartialOrder` (closure idempotence uses antisymmetry);
+-- `Demand` a `Preorder` suffices for the round-trips.
 variable [Preorder Demand] [PartialOrder Supply]
 
-/-- **The seam, as one categorical datum.** `verifies` (the right adjoint / "what a supply
-verifies") and `realizes` (the left adjoint / "the demand a witness realizes") form a
-`GaloisConnection` — equivalently an adjunction `realizes ⊣ verifies` between the
-preorders-as-thin-categories `Supply` and `Demand`. This is the abstract `Predicate ⊣
-Witness` of `Dregg2.Laws`, stated as the seam's defining property. -/
+/-- The verify/find seam as a single categorical datum: `realizes` and `verifies` form a
+`GaloisConnection` (`realizes ⊣ verifies`). This is the abstract `Predicate ⊣ Witness` of
+`Dregg2.Laws`, stated as the seam's defining property. -/
 structure Seam where
   /-- Left adjoint: the (strongest) demand a supply realizes. -/
   realizes : Supply → Demand
@@ -270,226 +177,168 @@ structure Seam where
 
 variable (S : Seam (Demand := Demand) (Supply := Supply))
 
-/-- **DERIVED: attenuation is monotone (the right adjoint is monotone).** A weaker demand
-is verified by a weaker supply: `verifies` is monotone. In the seam reading, *attenuating a
-demand attenuates its required witness-strength* — the right-adjoint monotonicity that
-`Dregg2.Laws`/`ConstructiveKnowledge §3` reads as the discipline of attenuation. Consequence
-of the adjunction (`GaloisConnection.monotone_u`), not a separate law. -/
+/-- Attenuation is monotone: the right adjoint `verifies` is monotone (`GaloisConnection.monotone_u`).
+A weaker demand is verified by a weaker supply. -/
 theorem seam_attenuate_monotone : Monotone S.verifies :=
   S.adj.monotone_u
 
-/-- **DERIVED: `realizes` (demand-extraction) is monotone too** — `GaloisConnection.monotone_l`. -/
+/-- `realizes` is monotone too — `GaloisConnection.monotone_l`. -/
 theorem seam_realizes_monotone : Monotone S.realizes :=
   S.adj.monotone_l
 
-/-- **DERIVED: the supply round-trip (unit of the adjunction).** Verifying the demand a
-supply realizes returns *no less* supply than you started with: `s ≤ verifies (realizes s)`.
-This is the adjunction **unit** — "supply, demand-extracted then re-verified, is recovered
-up to ≤" — `GaloisConnection.le_u_l`. The "demand⊣supply round-trip" of `§2`. -/
+/-- Supply round-trip (adjunction unit): `s ≤ verifies (realizes s)` — supply re-verified
+after demand-extraction is at least as strong. `GaloisConnection.le_u_l`. -/
 theorem seam_unit (s : Supply) : s ≤ S.verifies (S.realizes s) :=
   S.adj.le_u_l s
 
-/-- **DERIVED: the demand round-trip (counit of the adjunction).** Extracting the demand of
-the witness that verifies a demand returns *no more* demand: `realizes (verifies d) ≤ d`.
-The adjunction **counit** — `GaloisConnection.l_u_le`. Together with `seam_unit` this is the
-full unit/counit of `realizes ⊣ verifies`. -/
+/-- Demand round-trip (adjunction counit): `realizes (verifies d) ≤ d`. Together with
+`seam_unit` this is the full unit/counit of `realizes ⊣ verifies`. `GaloisConnection.l_u_le`. -/
 theorem seam_counit (d : Demand) : S.realizes (S.verifies d) ≤ d :=
   S.adj.l_u_le d
 
-/-- **DERIVED: the verification closure is idempotent.** The composite
-`verifies ∘ realizes` (verify the demand your supply realizes) is a **closure operator**:
-applying it twice is applying it once. Idempotence is a standard adjunction consequence
-(`GaloisConnection.u_l_u_eq_u` composed). In the seam reading: *re-verifying a
-once-verified supply adds nothing* — the matcher reaches a fixed point in one round. -/
+/-- The verification closure is idempotent: `verifies ∘ realizes` applied twice equals applied
+once. Standard adjunction consequence (`GaloisConnection.u_l_u_eq_u`). -/
 theorem seam_closure_idem (s : Supply) :
     S.verifies (S.realizes (S.verifies (S.realizes s)))
       = S.verifies (S.realizes s) :=
   -- `u (l (u b)) = u b` (`GaloisConnection.u_l_u_eq_u`) at `b := realizes s`.
   S.adj.u_l_u_eq_u (S.realizes s)
 
-/-- **Bridge to `Dregg2.Laws`.** The concrete `Predicate ⊣ Witness` connection
-`Dregg2.Laws.predicate_witness_galois` is exactly a `Seam` (its `realizes`/`verifies` are
-the polar maps; `adj` is that connection). So §2's derived laws specialize to the verify/find
-seam of the real system. We record the abstract round-trip that instantiates there. -/
+/-- The abstract seam round-trip: `realizes s ≤ d → s ≤ verifies d`. Specializes to the
+`Dregg2.Laws.predicate_witness_galois` connection in the real system. -/
 theorem seam_roundtrip (s : Supply) (d : Demand)
     (h : S.realizes s ≤ d) : s ≤ S.verifies d :=
   (S.adj s d).mp h
 
 end Seam
 
-/-! # §4. Ordering / finality, DERIVED as a bounded lattice (the second judgement).
+/-! # §4. Ordering / finality, derived as a bounded lattice.
 
-`Dregg2.Finality` *postulates* the four-tier ladder as a `LinearOrder Tier` with the
-cross-tier commit rule `crossTierJoin := max` as a *named definition* and `no_downgrade`
-as a separately-proved run-monotonicity. Here we take *"finality is a **bounded lattice**
-of strengths, and commit = the **join** (least upper bound)"* as the single order-theoretic
-datum. The mathlib **lattice laws then specialize to the Tier order**: the load-bearing
-output of this section is that the *real* `Dregg2.Finality.Tier`'s `crossTierJoin` is the
-lattice join (`tier_commit_eq_crossTierJoin`), so commit is monotone (`commit_monotone`) and
-never-downgrades on the actual ladder (`tier_crossTierJoin_no_downgrade`).
-
-The intermediate `commitAtMax_*_def` lemmas below (`a ≤ a ⊔ b`, `a ⊔ b ≤ ⊤`, `sup_assoc`,
-`sup_comm`) are NOT derivations — they are mathlib's lattice/`BoundedOrder` facts restated at
-the abstract `commitAtMax := ⊔`. They earn their place only as the bricks the two
-`Tier`-touching results stand on; we name them `_def` and frame them as *unfolds of the join*,
-not as postulate-free re-derivations of a finality rule.
-
-THE ONE ORDER-THEORETIC AXIOM: *the finality tiers form a `Lattice τ` (a poset with binary
-joins), and the cross-tier commit of a multi-tier turn is the **join** `a ⊔ b`.* (A
-`BoundedOrder` additionally names a weakest `⊥` and a strongest `⊤` tier.) -/
+Taking "finality is a `Lattice τ` and commit = the join `a ⊔ b`" as the single datum, the
+mathlib lattice laws specialize to `Dregg2.Finality.Tier`: `crossTierJoin` is the lattice
+join (`tier_commit_eq_crossTierJoin`), commit is monotone (`commit_monotone`), and
+no-downgrade holds (`tier_crossTierJoin_no_downgrade`). The `commitAtMax_*_def` lemmas are
+join-unfolds (bricks for the two `Tier`-touching results), not independent derivations. -/
 
 section Finality
 
 variable {τ : Type u} [Lattice τ]
 
-/-- **Commit-at-max — the cross-tier commit rule, as the lattice join.** A turn touching
-cells of tiers `a` and `b` commits at their **join** `a ⊔ b`: the *least* tier at least as
-strong as both. This is `Dregg2.Finality.crossTierJoin` recovered as the lattice operation,
-not a separate `max` definition. -/
+/-- The cross-tier commit rule as the lattice join: a turn touching tiers `a` and `b`
+commits at `a ⊔ b`. This recovers `Dregg2.Finality.crossTierJoin` as the lattice operation. -/
 def commitAtMax (a b : τ) : τ := a ⊔ b
 
-/-- **`commitAtMax_le_left_def`** — `commitAtMax` UNFOLDS its left bound: `a ≤ a ⊔ b` is
-mathlib's `le_sup_left`, restated at `commitAtMax`. Not a derivation of a finality rule — just
-the join's upper-bound law. It is the brick the real-`Tier` `tier_crossTierJoin_no_downgrade`
-("a commit never falls below either participant's tier") stands on. -/
+/-- `a ≤ commitAtMax a b` — the join's left bound (`le_sup_left`), brick for
+`tier_crossTierJoin_no_downgrade`. Not an independent finality rule — a join unfold. -/
 theorem commitAtMax_le_left_def (a b : τ) : a ≤ commitAtMax a b := le_sup_left
 
-/-- **`commitAtMax_le_right_def`** — the right companion (`b ≤ a ⊔ b`, `le_sup_right`). -/
+/-- `b ≤ commitAtMax a b` — the join's right bound (`le_sup_right`). -/
 theorem commitAtMax_le_right_def (a b : τ) : b ≤ commitAtMax a b := le_sup_right
 
-/-- **`commit_monotone` (the load-bearing §4 law).** The cross-tier commit `(a,b) ↦ a ⊔ b` is
-**monotone**: strengthening either participant's tier can only strengthen (never weaken) the
-commit. The mathlib `sup_le_sup` specialized to the Tier order — this is the structural
-content of "no-downgrade" (finality is an order-homomorphism), and it is one of the two
-results this section actually exports to the real `Tier` (via `tier_commit_eq_crossTierJoin`). -/
+/-- `commitAtMax` is monotone: strengthening either participant's tier can only strengthen
+the commit. This is `sup_le_sup` specialized to the Tier order; one of the two results this
+section exports (via `tier_commit_eq_crossTierJoin`). -/
 theorem commit_monotone : Monotone (fun p : τ × τ => commitAtMax p.1 p.2) :=
   fun _ _ h => sup_le_sup h.1 h.2
 
-/-- **`commitAtMax_assoc_def` / `commitAtMax_comm_def`** — `commitAtMax` UNFOLDS to the join's
-`sup_assoc`/`sup_comm`, so an N-cell commit is well-defined independent of grouping/order.
-These are mathlib lattice laws restated at `commitAtMax`, not postulate-free derivations. -/
+/-- `commitAtMax` unfolds to `sup_assoc`/`sup_comm`: N-cell commits are independent of
+grouping/order. Mathlib lattice laws restated at `commitAtMax`; not independent derivations. -/
 theorem commitAtMax_assoc_def (a b c : τ) :
     commitAtMax (commitAtMax a b) c = commitAtMax a (commitAtMax b c) := sup_assoc a b c
 theorem commitAtMax_comm_def (a b : τ) : commitAtMax a b = commitAtMax b a := sup_comm a b
 
-/-- **`commitAtMax_le_top_def`** — the `BoundedOrder` law `a ⊔ b ≤ ⊤` restated at
-`commitAtMax` (mathlib `le_top`): a commit cannot exceed the strongest tier. An unfold of the
-join's top bound, not a derivation. -/
+/-- `commitAtMax a b ≤ ⊤` — the join's top bound (`le_top`). A commit cannot exceed the
+strongest tier. Join unfold, not an independent derivation. -/
 theorem commitAtMax_le_top_def [OrderTop τ] (a b : τ) : commitAtMax a b ≤ ⊤ := le_top
 
-/-- **DERIVED (bounded): a weakest tier `⊥` is the commit-identity.** In a `BoundedOrder`
-the bottom tier (the weakest mechanism — causal-only) is the join-identity: committing a
-cell with a `⊥`-tier participant leaves its tier unchanged. -/
+/-- The bottom tier `⊥` is the commit-identity: committing with a `⊥`-tier participant
+leaves the tier unchanged. Derived from `BoundedOrder`. -/
 theorem commit_bot_identity [OrderBot τ] (a : τ) : commitAtMax ⊥ a = a := by
   simp [commitAtMax]
 
-/-! ### §4 bridge: the abstract finality lattice IS `Dregg2.Finality.Tier`.
+/-! ### §4 bridge: the abstract finality lattice is `Dregg2.Finality.Tier`.
 
-`Dregg2.Finality.Tier` is a `LinearOrder` (hence a `Lattice`), and its `crossTierJoin` is
-exactly the lattice join. We additionally **derive the bounded structure** `Dregg2` leaves
-implicit: the ladder has a weakest tier `⊥ = causal` and a strongest `⊤ = constitutional`,
-so it is a genuine *bounded* lattice — the abstract §4 datum, realised. -/
+`Dregg2.Finality.Tier` is a `LinearOrder`, and its `crossTierJoin` is the lattice join. We
+also derive the bounded structure `Dregg2` leaves implicit: the ladder has `⊥ = causal`
+and `⊤ = constitutional`. -/
 
 open Dregg2.Finality in
-/-- **The four-tier ladder has a strongest tier (DERIVED `OrderTop`).** `constitutional`
-(rank 4) dominates every tier — the top of the §2.2 ladder. -/
+/-- The four-tier ladder has a strongest tier (`OrderTop`): `constitutional` dominates all. -/
 instance tierOrderTop : OrderTop Dregg2.Finality.Tier where
   top := Dregg2.Finality.Tier.constitutional
   le_top t := by cases t <;> decide
 
 open Dregg2.Finality in
-/-- **The four-tier ladder has a weakest tier (DERIVED `OrderBot`).** `causal` (rank 1) is
-below every tier — the coordination-free floor of the §2.2 ladder. -/
+/-- The four-tier ladder has a weakest tier (`OrderBot`): `causal` is below every tier. -/
 instance tierOrderBot : OrderBot Dregg2.Finality.Tier where
   bot := Dregg2.Finality.Tier.causal
   bot_le t := by cases t <;> decide
 
-/-- **DERIVED: the tier ladder is a *bounded* lattice.** Combining the derived `OrderTop`
-and `OrderBot`, `Tier` is a `BoundedOrder` — `causal ≤ t ≤ constitutional` for every `t`.
-The abstract §4 "bounded lattice of finality strengths" is the concrete `Tier`. -/
+/-- The tier ladder is a `BoundedOrder` — `causal ≤ t ≤ constitutional` for every `t`.
+Combines `tierOrderTop` and `tierOrderBot`. -/
 instance tierBoundedOrder : BoundedOrder Dregg2.Finality.Tier where
 
-/-- **Bridge: `commitAtMax` on `Tier` IS `Dregg2.Finality.crossTierJoin`.** The abstract
-commit-as-join specialises (definitionally, since `Tier`'s `⊔` is `max`) to the concrete
-cross-tier commit rule of the real finality module. So §4's derived no-downgrade /
-monotonicity laws are laws of the actual system, not of a parallel abstraction. -/
+/-- `commitAtMax` on `Tier` equals `Dregg2.Finality.crossTierJoin` (definitionally, since
+`Tier`'s `⊔` is `max`). The derived monotonicity laws therefore apply to the actual system. -/
 theorem tier_commit_eq_crossTierJoin (a b : Dregg2.Finality.Tier) :
     commitAtMax a b = Dregg2.Finality.crossTierJoin a b := rfl
 
-/-- **DERIVED at `Tier`: the concrete cross-tier commit never downgrades** — the §4
-monotonicity, specialised to the real ladder. -/
+/-- The concrete cross-tier commit never downgrades either participant: both bounds hold. -/
 theorem tier_crossTierJoin_no_downgrade (a b : Dregg2.Finality.Tier) :
     a ≤ Dregg2.Finality.crossTierJoin a b ∧ b ≤ Dregg2.Finality.crossTierJoin a b :=
   ⟨commitAtMax_le_left_def a b, commitAtMax_le_right_def a b⟩
 
 end Finality
 
-/-! # §5. I-confluence, DERIVED as a sub-join-semilattice (the third judgement).
+/-! # §5. I-confluence, derived as a sub-join-semilattice.
 
-`Dregg2.Confluence` *defines* `IConfluent I := ∀ x y, I x → I y → I (x ⊔ y)` over a
-`MergeState`/`SemilatticeSup`. The categorical reading we DERIVE here: I-confluence is
-exactly *"the coordination-free fragment `{x // I x}` is **closed under the invariant-merge
-join** — a **sub-join-semilattice**."* The closure is not an extra hypothesis; it is what
-makes the fragment a join-subalgebra, and we exhibit the sub-LUB structure. -/
+`Dregg2.Confluence` defines `IConfluent I := ∀ x y, I x → I y → I (x ⊔ y)`. The
+categorical reading: the coordination-free fragment `{x // I x}` is a sub-join-semilattice,
+and we exhibit its sub-LUB structure. -/
 
 section IConfluence
 
 variable {S : Type u} [SemilatticeSup S]
 
-/-- The third judgement (mirroring `Dregg2.Confluence.IConfluent`): an invariant `I` is
-**I-confluent** iff concurrent invariant-preserving versions merge invariant-safely (BEC
-Thm 3.1) — `I` is preserved by the `⊔` of the CvRDT merge-state. -/
+/-- `I` is **I-confluent** iff it is preserved by the `⊔` of the CvRDT merge-state
+(concurrent invariant-preserving versions merge safely). Mirrors `Dregg2.Confluence.IConfluent`. -/
 def IConfluent (I : S → Prop) : Prop := ∀ x y, I x → I y → I (x ⊔ y)
 
 /-- **Closed under the invariant-merge join** — the sub-(join-semi)lattice closure
 condition: the fragment `{x // I x}` is stable under `⊔`. -/
 def ClosedUnderJoin (I : S → Prop) : Prop := ∀ x y, I x → I y → I (x ⊔ y)
 
-/-- **`iconfluent_eq_closed_def` — a definitional UNFOLD, not a derivation.** `IConfluent I`
-and `ClosedUnderJoin I` are spelled out to the *same* proposition
-(`∀ x y, I x → I y → I (x ⊔ y)`), so this `iff` holds by `Iff.rfl` — it does NOT *derive* one
-notion from the other, it merely records that "I-confluence" and "closed-under-the-merge-join"
-are two names for one condition. The genuine first-principles content of §5 is downstream: that
-the fragment `{x // I x}` is a `SemilatticeSup` whose join is `confJoin` (`confJoin_lub`), and
-the `Dregg2.Confluence` bridge (`tier1Eligible_closedUnderJoin`). -/
+/-- `IConfluent I ↔ ClosedUnderJoin I` is a definitional unfold (both unfold to
+`∀ x y, I x → I y → I (x ⊔ y)`). Not a derivation — two names for one condition. The
+genuine content of §5 is `confJoin_lub` and `tier1Eligible_closedUnderJoin`. -/
 theorem iconfluent_eq_closed_def (I : S → Prop) : IConfluent I ↔ ClosedUnderJoin I :=
   Iff.rfl
 
-/-- **The invariant-merge join on the coordination-free fragment.** Given I-confluence, two
-in-fragment states merge to an in-fragment state — the `⊔` of `{x // I x}`, landing inside
-`I` by closure. This is the binary join of the **sub-join-semilattice**. -/
+/-- The binary join of the coordination-free fragment: given I-confluence, two `I`-states
+merge within `I`, the `⊔` of the sub-join-semilattice. -/
 def confJoin (I : S → Prop) (h : IConfluent I) (x y : {a // I a}) : {a // I a} :=
   ⟨x.1 ⊔ y.1, h x.1 y.1 x.2 y.2⟩
 
-/-- **DERIVED: the fragment's join is the ambient join (inclusion is join-preserving).** The
-sub-semilattice inclusion `{x // I x} ↪ S` preserves `⊔` — the merge of two coordination-free
-states computed in the fragment agrees with the ambient CvRDT merge. The fragment is a
-*genuine* sub-join-semilattice, not a re-merged copy. -/
+/-- The fragment's join equals the ambient join: the inclusion `{x // I x} ↪ S` preserves
+`⊔`. The fragment is a genuine sub-join-semilattice. -/
 theorem confJoin_incl (I : S → Prop) (h : IConfluent I) (x y : {a // I a}) :
     (confJoin I h x y).1 = x.1 ⊔ y.1 := rfl
 
-/-- **DERIVED: the fragment join is a least upper bound (left/right bounds).** Each input is
-below the merge — the merge dominates both concurrent versions, as a CvRDT join must. -/
+/-- Each input is below the fragment join — the merge dominates both concurrent versions. -/
 theorem confJoin_le_left (I : S → Prop) (h : IConfluent I) (x y : {a // I a}) :
     x.1 ≤ (confJoin I h x y).1 := le_sup_left
 theorem confJoin_le_right (I : S → Prop) (h : IConfluent I) (x y : {a // I a}) :
     y.1 ≤ (confJoin I h x y).1 := le_sup_right
 
-/-- **DERIVED: the fragment join is the LEAST upper bound.** Any in-fragment state `z`
-dominating both `x` and `y` dominates their merge — the merge is the *least* coordination-free
-state above both. With the bounds above, this proves `confJoin` is the join of the
-sub-semilattice, so `{x // I x}` is a `SemilatticeSup` whose join is `confJoin`. The
-coordination-free fragment is exactly the join-subalgebra of `I`-confluence. -/
+/-- The fragment join is least: any `I`-state `z` above both `x` and `y` is above their
+merge. This establishes `confJoin` as the join of the sub-semilattice. -/
 theorem confJoin_lub (I : S → Prop) (h : IConfluent I) (x y z : {a // I a})
     (hx : x.1 ≤ z.1) (hy : y.1 ≤ z.1) : (confJoin I h x y).1 ≤ z.1 :=
   sup_le hx hy
 
-/-- **Bridge to `Dregg2.Confluence`.** A `Dregg2.Confluence.Tier1Eligible` invariant (the
-real system's predicate for "runs coordination-free / tier-1") DERIVES the §5
-closed-under-the-merge-join property: its coordination-free fragment is a genuine
-sub-join-semilattice. We route through `Dregg2.Confluence.admits_sound` (the real module's
-tier-1 soundness obligation), so §5's abstract derivation lands on the actual judgement —
-tier-1 eligibility IS sub-semilattice closure. -/
+/-- A `Dregg2.Confluence.Tier1Eligible` invariant satisfies `ClosedUnderJoin`: its
+coordination-free fragment is a sub-join-semilattice. Routes through
+`Dregg2.Confluence.admits_sound` (the real module's tier-1 soundness). -/
 theorem tier1Eligible_closedUnderJoin {S' : Type u} [Dregg2.Confluence.MergeState S']
     (I : Dregg2.Confluence.Invariant S') (h : Dregg2.Confluence.Tier1Eligible I) :
     ClosedUnderJoin (S := S') I :=
@@ -499,28 +348,22 @@ end IConfluence
 
 /-! # §3. The cell as a coalgebra; the hyperedge as a (wide) pullback.
 
-`Dregg2.Boundary` *gives* the structure map `TurnCoalg.step : X → Obs × (Adm → X)`. We
-state it here as a **coalgebra of an endofunctor** and the JointTurn/hyperedge binding as a
-**pullback** (a limit), using mathlib's category-theoretic vocabulary, so that the cell's
-defining property is a *universal property* rather than a chosen structure map. The
-final-coalgebra existence (the anamorphism `νF`) is the one honest OPEN obligation. -/
+We re-state `Dregg2.Boundary.TurnCoalg.step` as a coalgebra of the endofunctor
+`F X = Obs × (Adm → X)`, and the JointTurn/hyperedge binding as a pullback limit, giving
+the cell a universal-property characterization. Final-coalgebra existence is OPEN. -/
 
 section Coalgebra
 
 variable {Obs Adm X Y Z : Type u}
 
-/-- The **object action** of the behaviour endofunctor `F`, `F X = Obs × (Adm → X)` — a
-Moore/DFA shape (output-on-state × input-indexed transition). This is `Dregg2.Boundary.F`
-named as the action of an endofunctor on `Type u`. -/
+/-- The object action of the behaviour endofunctor `F X = Obs × (Adm → X)` — a Moore/DFA
+shape (output-on-state × input-indexed transition). -/
 def Fobj (Obs Adm X : Type u) : Type u := Obs × (Adm → X)
 
-/-- The **morphism action** of the behaviour endofunctor `F` — its functorial lift of a map
-`f : X → Y` to `F X → F Y` (relabel the successors by `f`, leave the observation fixed).
-`Fobj`/`Fmap` together are the endofunctor `F : Type u → Type u`; the functor laws
-`Fmap id = id` and `Fmap (g ∘ f) = Fmap g ∘ Fmap f` hold definitionally
-(`Fmap_id`/`Fmap_comp`), so this is a *genuine* (if hand-spelled) endofunctor. We spell it
-with plain functions rather than the bundled `Type u ⥤ Type u` because this mathlib slice
-wraps `Type`-category morphisms in `ConcreteCategory.Fun`. -/
+/-- The functorial lift of `f : X → Y` to `F X → F Y`: relabel successors, leave
+the observation fixed. `Fmap id = id` and `Fmap (g∘f) = Fmap g ∘ Fmap f` hold definitionally.
+Spelled with plain functions rather than `Type u ⥤ Type u` because this mathlib slice wraps
+`Type`-category morphisms in `ConcreteCategory.Fun`. -/
 def Fmap (f : X → Y) : Fobj Obs Adm X → Fobj Obs Adm Y :=
   fun p => (p.1, fun a => f (p.2 a))
 
@@ -528,13 +371,9 @@ def Fmap (f : X → Y) : Fobj Obs Adm X → Fobj Obs Adm Y :=
 @[simp] theorem Fmap_comp (g : Y → Z) (f : X → Y) :
     Fmap (Obs := Obs) (Adm := Adm) (g ∘ f) = Fmap g ∘ Fmap f := rfl
 
-/-- **A cell IS an `F`-coalgebra** — a carrier `V` with a structure map `str : V → F V`.
-This is the universal-property re-statement of `Dregg2.Boundary.TurnCoalg`: the structure
-map is the defining datum of a coalgebra of the *endofunctor* `F = (Fobj, Fmap)`, rather
-than an ad-hoc `step` record. (Spelled here rather than importing
-`Mathlib.CategoryTheory.Endofunctor.Algebra` — not built in this lib's pinned mathlib
-slice — but `str` IS the endofunctor-coalgebra structure map `V → F V`, and `CoalgHom`
-below IS the coalgebra-morphism / functional-bisimulation condition.) -/
+/-- A cell as an `F`-coalgebra: a carrier `V` with structure map `str : V → F V`. This
+re-states `Dregg2.Boundary.TurnCoalg` as an endofunctor coalgebra. (`Mathlib.CategoryTheory.
+Endofunctor.Algebra` is not in this lib's pinned mathlib slice, so it is spelled by hand.) -/
 structure Cell (Obs Adm : Type u) where
   /-- The carrier (state space of cells). -/
   V : Type u
@@ -546,59 +385,42 @@ structure Cell (Obs Adm : Type u) where
 def Cell.obs (c : Cell Obs Adm) (x : c.V) : Obs := (c.str x).1
 def Cell.next (c : Cell Obs Adm) (x : c.V) (a : Adm) : c.V := (c.str x).2 a
 
-/-- **A coalgebra morphism / functional bisimulation** `c ⟶ d`: a carrier map `f` that
-commutes with the structure maps (`F.map f ∘ c.str = d.str ∘ f`). This is the precise
-"behaviour-preserving map" condition that the category of `F`-coalgebras imposes — a
-*functional bisimulation* between cells. -/
+/-- A coalgebra morphism / functional bisimulation `c ⟶ d`: a carrier map `f` commuting
+with the structure maps (`F.map f ∘ c.str = d.str ∘ f`). -/
 structure CoalgHom (c d : Cell Obs Adm) where
   /-- The underlying carrier map. -/
   f : c.V → d.V
   /-- The coalgebra-square: `f` intertwines the two structure maps. -/
   commutes : Fmap f ∘ c.str = d.str ∘ f
 
-/-- **Coalgebra reachability is the cell's life: every cell is behaviourally equivalent to
-itself.** The identity carrier map is a coalgebra morphism (the square commutes
-definitionally, `Fmap_id`), so every cell bisimulates itself — the categorical source of
-`Dregg2.Boundary.sound_refl`. -/
+/-- Every cell has the identity coalgebra morphism (the square commutes by `Fmap_id`):
+every cell bisimulates itself. Categorical source of `Dregg2.Boundary.sound_refl`. -/
 theorem cell_self_bisim (c : Cell Obs Adm) :
     ∃ h : CoalgHom c c, h.f = id :=
   ⟨⟨id, by simp⟩, rfl⟩
 
-/-! ### The hyperedge / JointTurn as a wide pullback (a limit).
+/-! ### The hyperedge / JointTurn as a wide pullback.
 
-`Dregg2.JointTurn`/`Dregg2.Hyperedge` bind several cells into one atomic joint turn. The
-categorical content: the *joint state space* over a shared interface is the **pullback** of
-the participating cells' projections to that interface — and a many-participant hyperedge is
-the **wide pullback** (the limit of the wide-cospan of projections). We state the universal
-property faithfully via mathlib `IsPullback`. -/
+The joint state space over a shared interface is the pullback of the participants'
+projections; a many-participant hyperedge is the wide pullback. Stated via `IsPullback`. -/
 
 variable {𝒞 : Type u} [Category.{v} 𝒞]
 
-/-- **The two-party JointTurn binding, stated as a pullback universal property.** Given two
-participant objects `P₁ P₂` with projections `π₁ π₂` to a shared interface `I`, the bound
-*joint* object `J` with its two legs `j₁ j₂` is characterised by being a **pullback**: it is
-the universal object whose two views agree on the interface (`j₁ ≫ π₁ = j₂ ≫ π₂`) and
-through which every other agreeing pair factors uniquely. This is the precise sense in which
-"a JointTurn is the atomic binding of two cells over their shared boundary." We *state* the
-property (as the `IsPullback` predicate) rather than postulate a chosen `J`. -/
+/-- The two-party JointTurn as a pullback: `J` is the universal object whose two views agree
+on the shared interface (`j₁ ≫ π₁ = j₂ ≫ π₂`) and through which every agreeing pair factors
+uniquely. States the universal property without postulating a chosen `J`. -/
 def IsJointTurn {I P₁ P₂ J : 𝒞} (j₁ : J ⟶ P₁) (j₂ : J ⟶ P₂)
     (π₁ : P₁ ⟶ I) (π₂ : P₂ ⟶ I) : Prop :=
   IsPullback j₁ j₂ π₁ π₂
 
-/-- **The pullback square of a JointTurn commutes (DERIVED from the universal property).**
-If `J` is the joint binding of `P₁,P₂` over `I`, the two participants' views of the interface
-agree: `j₁ ≫ π₁ = j₂ ≫ π₂`. This is "the bound cells share a consistent boundary," read off
-the `IsPullback` predicate (`IsPullback.w`) — not assumed separately. -/
+/-- The JointTurn pullback square commutes: `j₁ ≫ π₁ = j₂ ≫ π₂`. Read off `IsPullback.w`. -/
 theorem jointTurn_interface_agrees {I P₁ P₂ J : 𝒞}
     {j₁ : J ⟶ P₁} {j₂ : J ⟶ P₂} {π₁ : P₁ ⟶ I} {π₂ : P₂ ⟶ I}
     (h : IsJointTurn j₁ j₂ π₁ π₂) : j₁ ≫ π₁ = j₂ ≫ π₂ :=
   h.w
 
-/-- **The JointTurn is universal (DERIVED): every consistent pair of views factors through
-it.** For any object `W` with views `w₁ : W ⟶ P₁`, `w₂ : W ⟶ P₂` that agree on the interface
-(`w₁ ≫ π₁ = w₂ ≫ π₂`), there is a unique mediating map `W ⟶ J` recovering both views. This
-is the *binding is canonical* property — the atomic joint turn is determined, not chosen.
-It is the pullback `lift`/uniqueness, read off `IsPullback`. -/
+/-- The JointTurn is universal: any agreeing pair `(w₁, w₂)` factors through `J` by a
+unique mediator. The binding is determined, not chosen (`IsPullback` lift). -/
 theorem jointTurn_universal {I P₁ P₂ J : 𝒞}
     {j₁ : J ⟶ P₁} {j₂ : J ⟶ P₂} {π₁ : P₁ ⟶ I} {π₂ : P₂ ⟶ I}
     (h : IsJointTurn j₁ j₂ π₁ π₂)
@@ -606,10 +428,8 @@ theorem jointTurn_universal {I P₁ P₂ J : 𝒞}
     ∃ m : W ⟶ J, m ≫ j₁ = w₁ ∧ m ≫ j₂ = w₂ :=
   ⟨h.lift w₁ w₂ hw, h.lift_fst w₁ w₂ hw, h.lift_snd w₁ w₂ hw⟩
 
-/-- **The mediator is UNIQUE (DERIVED).** Two maps `W ⟶ J` that both reproduce the
-participants' views agree — the *binding is canonical* in the strong (uniqueness) sense,
-read off `IsPullback.hom_ext`. Together with `jointTurn_universal` this is the full
-existence-and-uniqueness universal property of the two-party hyperedge. -/
+/-- The mediator is unique: two maps `W ⟶ J` that reproduce both views must agree
+(`IsPullback.hom_ext`). Together with `jointTurn_universal` this is the full UP. -/
 theorem jointTurn_mediator_unique {I P₁ P₂ J : 𝒞}
     {j₁ : J ⟶ P₁} {j₂ : J ⟶ P₂} {π₁ : P₁ ⟶ I} {π₂ : P₂ ⟶ I}
     (h : IsJointTurn j₁ j₂ π₁ π₂)
@@ -617,32 +437,17 @@ theorem jointTurn_mediator_unique {I P₁ P₂ J : 𝒞}
     (e₁ : m ≫ j₁ = m' ≫ j₁) (e₂ : m ≫ j₂ = m' ≫ j₂) : m = m' :=
   h.hom_ext e₁ e₂
 
-/-! ### The N-ary hyperedge as a *wide* pullback (a limit over `TurnId`).
+/-! ### The N-ary hyperedge as a wide pullback.
 
-The binary `IsJointTurn` is the two-participant case. A real hyperedge binds **N**
-participants — indexed by a `TurnId`-shaped type `ι` — into one atomic joint turn over the
-shared interface `I`. The categorical content is the **wide pullback**: the limit of the
-wide cospan `(πᵢ : Pᵢ ⟶ I)ᵢ`. We state its universal property *by hand* (rather than via
-mathlib's `HasWidePullback`, which would demand a limit-existence instance) as a faithful
-cone-with-unique-mediator **witness bundle** (the `lift` mediator is genuine *data*, so the
-bundle is `Type`-valued — exactly the limit-cone data — while `agree`/`fac`/`uniq` are its
-universal-property laws), mirroring `IsPullback` for arbitrary arity. This is
-the honest N-ary generalisation of `IsJointTurn`.
+A real hyperedge binds N participants indexed by `ι` into one joint turn over `I`. The
+categorical content is the wide pullback of the cospan `(πᵢ : Pᵢ ⟶ I)ᵢ`. We state the
+universal property by hand (rather than via `HasWidePullback`) as a cone-with-unique-mediator
+bundle — `agree`/`fac`/`uniq` are its UP laws. `ι` plays the role of `TurnId`; `mathlib`'s
+`WidePullbackShape ι = Option ι` is this diagram shape. -/
 
-`ι` plays the role of `TurnId` (the participant index); `mathlib`'s
-`WidePullbackShape ι = Option ι` is exactly this diagram shape (the `none` apex is the
-interface `I`, the `some i` are the participants `Pᵢ`), and our cone legs `legs i` are its
-`π`. We give the predicate directly so the universal property is self-contained. -/
-
-/-- **An N-ary joint turn (wide-pullback cone with unique mediator).** A bound object `J`
-with legs `legs i : J ⟶ Pᵢ` into the `ι`-indexed participants is the hyperedge over the
-interface projections `proj i : Pᵢ ⟶ I` iff:
-* **(agree)** all participants' views of the interface coincide: every `legs i ≫ proj i` is
-  one and the same arrow `J ⟶ I` (the bound cells share a *single* consistent boundary), and
-* **(universal)** every other object `W` whose `ι`-indexed views agree on the interface
-  factors through `J` by a **unique** mediator.
-
-This is the wide pullback's universal property, arity `ι`. -/
+/-- An N-ary joint turn: `J` with legs `legs i : J ⟶ Pᵢ` is the wide pullback over
+`proj i : Pᵢ ⟶ I` iff (agree) all views of the interface coincide, and (universal) every
+agreeing `W` factors through `J` by a unique mediator. -/
 structure IsWideJointTurn {ι : Type w} {I J : 𝒞} (P : ι → 𝒞)
     (legs : ∀ i, J ⟶ P i) (proj : ∀ i, P i ⟶ I) where
   /-- All participants agree on the interface: a single shared boundary arrow `J ⟶ I`. -/
@@ -659,19 +464,16 @@ structure IsWideJointTurn {ι : Type w} {I J : 𝒞} (P : ι → 𝒞)
 
 variable {ι : Type w}
 
-/-- **DERIVED: the N-ary interface is globally consistent.** From the wide-pullback datum,
-every pair of bound participants sees the same interface — the hyperedge's defining
-"single shared boundary across all N cells," read off the `agree` field. -/
+/-- All N participants see the same interface: every pair `legs i ≫ proj i = legs i' ≫ proj i'`
+follows from `agree`. -/
 theorem wideJointTurn_interface_agrees {I J : 𝒞} {P : ι → 𝒞}
     {legs : ∀ i, J ⟶ P i} {proj : ∀ i, P i ⟶ I}
     (h : IsWideJointTurn P legs proj) (i i' : ι) :
     legs i ≫ proj i = legs i' ≫ proj i' :=
   h.agree i i'
 
-/-- **DERIVED: the N-ary hyperedge is universal.** Any object `W` with `ι`-indexed views
-that pairwise agree on the interface factors through the bound `J` by a mediator
-reproducing every view. The atomic N-party joint turn is *determined*, not chosen — the
-full wide-pullback `lift`/`fac`. -/
+/-- The N-ary hyperedge is universal: any `W` with pairwise-agreeing views factors through
+`J` via a mediator reproducing every view. The wide-pullback `lift`/`fac`. -/
 theorem wideJointTurn_universal {I J : 𝒞} {P : ι → 𝒞}
     {legs : ∀ i, J ⟶ P i} {proj : ∀ i, P i ⟶ I}
     (h : IsWideJointTurn P legs proj)
@@ -680,19 +482,16 @@ theorem wideJointTurn_universal {I J : 𝒞} {P : ι → 𝒞}
     ∃ m : W ⟶ J, ∀ i, m ≫ legs i = views i :=
   ⟨h.lift views hv, h.fac views hv⟩
 
-/-- **DERIVED: the N-ary mediator is unique** — the wide-pullback `uniq`, the strong-binding
-canonicity for arbitrary arity. With `wideJointTurn_universal` this is the complete
-existence-and-uniqueness universal property of the hyperedge. -/
+/-- The N-ary mediator is unique (wide-pullback `uniq`). With `wideJointTurn_universal` this
+is the complete existence-and-uniqueness universal property of the hyperedge. -/
 theorem wideJointTurn_mediator_unique {I J : 𝒞} {P : ι → 𝒞}
     {legs : ∀ i, J ⟶ P i} {proj : ∀ i, P i ⟶ I}
     (h : IsWideJointTurn P legs proj)
     {W : 𝒞} {m m' : W ⟶ J} (e : ∀ i, m ≫ legs i = m' ≫ legs i) : m = m' :=
   h.uniq e
 
-/-- **The binary `IsJointTurn` is the `ι := Bool` (two-participant) wide pullback (DERIVED).**
-A genuine `IsPullback` square refines to the N-ary `IsWideJointTurn` at `ι = Bool`: the
-wide pullback specialises to the ordinary pullback, so `IsWideJointTurn` is a *faithful*
-generalisation — the binary case is not lost, it is `N = 2`. -/
+/-- `IsJointTurn` is the `ι = Bool` case of `IsWideJointTurn`: the ordinary pullback
+is the `N = 2` wide pullback, so `IsWideJointTurn` faithfully generalises it. -/
 noncomputable def isJointTurn_to_wide {I P₁ P₂ J : 𝒞}
     {j₁ : J ⟶ P₁} {j₂ : J ⟶ P₂} {π₁ : P₁ ⟶ I} {π₂ : P₂ ⟶ I}
     (h : IsJointTurn j₁ j₂ π₁ π₂) :
@@ -709,16 +508,13 @@ noncomputable def isJointTurn_to_wide {I P₁ P₂ J : 𝒞}
     · exact h.lift_snd (views false) (views true) (hv false true)
   uniq {W m m'} e := h.hom_ext (e false) (e true)
 
-/-! ### §3 deepened: the final coalgebra `νF` — advancing the OPEN.
+/-! ### §3: the final coalgebra `νF` — the OPEN sharpened.
 
-Even with `νF`'s *existence* still open, we can prove most of its *structure*: what it
-would mean to be terminal, that the anamorphism (unfold) is **unique** if it exists, and
-that coinduction IS the terminal universal property. This sharpens the OPEN from "does a
-final coalgebra exist?" to "here is its universal property, fully stated and its
-uniqueness proved; only the *construction* of the carrier remains." -/
+Even with `νF`'s existence still open, we can prove its universal property and the
+uniqueness of the anamorphism. The OPEN is narrowed to: construct the carrier. -/
 
-/-- **Coalgebra morphism composition** — the category of `F`-coalgebras has composition.
-(Identity is `cell_self_bisim`.) We need it to state finality. -/
+/-- Coalgebra morphism composition (the category of `F`-coalgebras has composition;
+identity is `cell_self_bisim`). Needed to state finality. -/
 def CoalgHom.comp {c d e : Cell Obs Adm} (g : CoalgHom d e) (f : CoalgHom c d) :
     CoalgHom c e where
   f := g.f ∘ f.f

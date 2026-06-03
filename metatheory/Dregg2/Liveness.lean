@@ -115,14 +115,11 @@ on the acyclic half. -/
 def refcountZero (g : LivenessGraph) (c : CellId) : Prop :=
   ¬ hasInbound g c
 
-/-- **`theorem refcount_ne_reachability` — refcount ≠ reachability (the core remark).**
-There exists a liveness graph and a cell whose refcount is positive (`hasInbound`) yet
-which is **unreachable** (`¬ reachable`): a *dead cycle*. Concretely, cells `A,B` in a
-2-cycle (`A→B`, `B→A`) with no root: each pins the other's refcount ≥ 1 forever, yet
-neither is root-reachable. This is exactly why `total_refs == 0` is reachability-from-a-
-holder, not reachability-from-a-root, and why the runtime's collection trigger is
-**incomplete for cycles**. (Witnessed below; the residual `sorry` is the
-non-reachability of a rootless cycle.) -/
+/-- **`theorem refcount_ne_reachability` — refcount ≠ reachability.** There exists a liveness
+graph and a cell with positive refcount (`hasInbound`) that is not root-reachable (`¬ reachable`):
+a dead cycle. Concretely, cells `A` and `B` in a 2-cycle with no root each pin the other's
+refcount ≥ 1 forever, yet neither is root-reachable. This is why the runtime's collection
+trigger is incomplete for cycles. -/
 theorem refcount_ne_reachability :
     ∃ (g : LivenessGraph) (c : CellId), hasInbound g c ∧ ¬ reachable g c := by
   -- Two cells 0,1 in a mutual cycle, no roots.
@@ -207,18 +204,10 @@ theorem reachable_semidecidable_witness
 
 /-! ### The computability reduction: halting ↪ reachability ↪ deadness.
 
-The honest content of "deadness is undecidable" is a *computability* statement, not a
-distributed-adversary one (see `docs/rebuild/PHASE-DISTRIBUTED-ADVERSARY.md §4, O3`). We
-ground it from Mathlib's halting-problem development (`Mathlib.Computability.Halting`).
-
-**Why the original arbitrary-decider statement had to be sharpened.** The earlier form
-asserted `¬ ∃ decide : LivenessGraph → CellId → Bool, ∀ g c, …`. With `LivenessGraph.edge`
-a `Prop`-valued field, that quantifies over an *arbitrary* (not necessarily computable)
-function — and *classically every* `Prop`-predicate admits such a `Bool` decider
-(`fun g c => Classical.decide (Dead g c)`). So the bare-existence statement is classically
-**true**, i.e. its negation is unprovable: the original theorem was vacuous/false, not
-merely hard. The genuine, true claim is that **no *computable* procedure** decides
-deadness. We state and prove exactly that, by reducing the halting problem. -/
+Deadness is undecidable in the computability sense, not just the distributed-adversary sense.
+The true claim is that no *computable* procedure decides deadness (a bare-existence form over
+`Prop`-valued fields would be classically vacuous). We prove this by reduction from the halting
+problem via `Mathlib.Computability.Halting`. -/
 
 /-- **`haltGraph P`** — the 2-cell reduction gadget: a root cell `0` whose single outgoing
 edge to the target cell `1` exists **iff `P` holds**. Thus `1` is reachable iff `P`, and
@@ -248,20 +237,10 @@ theorem haltGraph_dead (P : Prop) : Dead (haltGraph P) 1 ↔ ¬ P := by
 
 open Nat.Partrec (Code) in
 open Nat.Partrec.Code in
-/-- **`theorem dead_undecidable` — deadness is undecidable (RESTATED-AND-PROVED).**
-Deadness is the FIND problem of the `Laws` verify/find seam: `reachable` is semi-decidable
-(exhibit a finite path — a `Verify`), so `Dead = ¬reachable` is co-semi-decidable AT BEST,
-and is in fact **not decidable by any algorithm**.
-
-The faithful, *true* formalization (the arbitrary-`Bool`-function form is classically
-vacuous — see the section note above): for every input `n`, there is **no computable**
-`d : Code → Bool` that soundly-and-completely decides deadness of the gadget cell across
-the `haltGraph`-of-halting family. Equivalently, *if* deadness were algorithmically
-decidable, the halting problem would be too. Proved by reduction:
-`d c = true ↔ Dead (haltGraph ((eval c n).Dom)) 1 ↔ ¬(eval c n).Dom`, so a computable `d`
-would make the halting-complement — hence halting itself — a `ComputablePred`,
-contradicting `ComputablePred.halting_problem`. Resolved operationally, never by decision,
-via `Lease`/`leaseExpired` below. -/
+/-- **`theorem dead_undecidable` — deadness is undecidable.** No computable `d : Code → Bool`
+soundly-and-completely decides deadness of the gadget cell across the `haltGraph`-of-halting
+family: if it did, `d c = true ↔ ¬(eval c n).Dom` would make halting's complement computable,
+contradicting `ComputablePred.halting_problem`. Resolved operationally via `Lease`/`leaseExpired`. -/
 theorem dead_undecidable (n : ℕ) :
     ¬ ∃ d : Code → Bool,
         Computable d ∧
@@ -344,16 +323,10 @@ style local certificate: it mentions only edges incident to `c` and their droppe
 def LocalEvidence (g : LivenessGraph) (c : CellId) : Prop :=
   refcountZero g c
 
-/-- **`theorem gc_safety_local` — collecting is safe on LOCAL/bilateral evidence; no
-consensus.** If the only inbound holders are direct edges and they have all dropped
-(`LocalEvidence`, i.e. `refcountZero`), then collecting `c` is sound — it cannot strand a
-still-holding honest vat, because a drop touches only the dropper's own count
-(`gc.rs:183`) and is session/epoch-gated (`gc.rs:193`). Formally: local evidence implies
-`c` is not reached by any honest holder's retained edge. NO global agreement appears in
-the hypotheses — this is the sharp ORCA result that GC-safety is local and bilateral.
-(The residual obligation ties `refcountZero` to non-reachability *on the acyclic
-projection* — it is sound-for-safety; the cyclic gap is the leak below, not a safety
-break.) -/
+/-- **`theorem gc_safety_local` — collecting is safe on local/bilateral evidence; no
+consensus required.** If `LocalEvidence g c` holds (`refcountZero`), `c` has no inbound
+holder. A drop touches only the dropper's own count and is session/epoch-gated — no global
+agreement required. This is the ORCA result: GC-safety is local and bilateral. -/
 theorem gc_safety_local
     (g : LivenessGraph) (c : CellId)
     (hlocal : LocalEvidence g c) :
@@ -386,16 +359,11 @@ def CrossVatSound (parties : List VatId) (d : RevocationDecision)
     (view : VatId → RevocationDecision → Prop) : Prop :=
   ∀ v ∈ parties, view v d
 
-/-- **`theorem revocation_needs_consensus` (PROVED) — revocation (unlike collection) requires
-agreement.** If a revocation is cross-vat sound (every relevant party's `view` agrees the cap is
-revoked) AND a vat only revokes its view *after* agreeing the epoch advanced
-(`hgate : view v d → d.agreeing v` — the operational law: no vat honors a revocation it didn't
-process), then all parties reached `Consensus` on the epoch-advance. Both hypotheses are genuinely
-load-bearing — drop `hgate` and a vat could treat the cap as revoked without agreeing, breaking the
-entailment. This is the dual of `gc_safety_local`: GC is the positive lifecycle (collect-when-
-unwanted, NO consensus); revocation is the negative lifecycle (kill-while-wanted, consensus-bound).
-The `hgate` link (view ⇒ agreement) is the operational-consensus contract, surfaced as a hypothesis
-rather than a §8 axiom. `[study-gc.md §2, dregg2 §3]` -/
+/-- **`theorem revocation_needs_consensus` — revocation requires agreement.** If a revocation is
+cross-vat sound (every relevant party's `view` agrees the cap is revoked) AND a vat only revokes
+its view after agreeing the epoch advanced (`hgate : view v d → d.agreeing v`), then all parties
+reached `Consensus`. The dual of `gc_safety_local`: GC is the positive lifecycle (collect-when-
+unwanted, no consensus); revocation is the negative lifecycle (kill-while-wanted, consensus-bound). -/
 theorem revocation_needs_consensus
     (parties : List VatId) (d : RevocationDecision)
     (view : VatId → RevocationDecision → Prop)
@@ -434,16 +402,12 @@ structure SoundLocalCollector where
   ORCA/CapTP safety discipline. -/
   sound : ∀ g c, collect g c = true → refcountZero g c
 
-/-- **`theorem crossvat_cycle_leaks` — THE IMPOSSIBILITY (the honest negative result).**
-No sound, local-evidence-only collector can reclaim a cross-vat cycle. Given any
-`SoundLocalCollector` and any `CrossVatCycle g a b`, the collector NEVER collects `a`
-(nor `b`): the cell is genuinely dead, yet `refcountZero` is false at every node of the
-cycle, so the collector's soundness side-condition forbids collecting it. Hence
-**cross-vat cycles leak** — there is no sound distributed cycle collector across
-mutually-distrusting vats (cooperative back-tracing is rejected: it requires unenforceable
-truthful peer reports AND breaks tier-3 graph privacy, `study-gc.md §1`). dregg2 ships
-this leak in full and bounds it only by **lease expiry** (`leaseExpired`), never by
-reachability. Proven directly from `sound` + the cycle giving each node an inbound edge. -/
+/-- **`theorem crossvat_cycle_leaks` — the cross-vat GC impossibility.** No sound,
+local-evidence-only collector can reclaim a cross-vat cycle: every node has a positive
+inbound count, so `refcountZero` is false and the collector's soundness side-condition
+forbids collecting. Cross-vat cycles leak; dregg2 bounds the leak by lease expiry
+(`leaseExpired`) alone. Cooperative back-tracing is rejected (requires unenforceable peer
+reports and breaks tier-3 graph privacy). -/
 theorem crossvat_cycle_leaks
     (col : SoundLocalCollector) (g : LivenessGraph) (a b : CellId)
     (hcyc : CrossVatCycle g a b) :

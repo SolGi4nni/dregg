@@ -170,16 +170,12 @@ theorem committed_conservation
       = (sout.sum (fun j => scheme.commit (outV j) (outB j))) := by
   rw [commit_sum scheme insV inB sin, commit_sum scheme outV outB sout, hval, hblind]
 
-/-! ### Value tier ⇒ camera: the commitment is a monoid hom, and committed
-conservation is the Pedersen opening of `Core`/`Resource` conservation.
+/-! ### Value tier ⇒ camera: the commitment as a monoid hom.
 
-The value tier does not merely *resemble* the resource world — it *lands* in it.
-The Pedersen `homomorphic` axiom is exactly the statement that the commitment map,
-read on the pair (value, blinding), is an additive monoid homomorphism into the
-commitment monoid `C`. And `committed_conservation` is the literal image, under that
-hom, of `Core`'s cleartext conservation (`conservation_ordinary`, a corollary of Law
-1's `conservation_step`) — value conserved on commitments *without revealing amounts*.
-These are real bridge lemmas (fully PROVED), not restatements. -/
+The Pedersen `homomorphic` axiom is exactly the statement that the commitment map, read
+on pairs (value, blinding), is an additive monoid homomorphism into `C`. `committed_conservation`
+is its image of `Core`'s cleartext conservation (`conservation_ordinary`): value conserved on
+commitments without revealing amounts. These are bridge lemmas, fully proved. -/
 
 /-- **The commitment as an additive monoid homomorphism.** The Pedersen homomorphism
 makes `fun p => commit p.1 p.2` a genuine `AddMonoidHom` from the product value⊕blinding
@@ -247,41 +243,20 @@ theorem committed_conservation_is_fpu
 
 /-! ## Tier 3 — Graph privacy (stealth · ZK auth-chain · blinded membership).
 
-**The honest model: information-theoretic hiding via an observer-view, NOT a `True`-carrier.**
+**The model.** Indistinguishability is **equality of an observer-view**: a concrete
+`Nat`-valued function `view` models everything an observer learns from the public transcript.
+Two objects are indistinguishable exactly when their views are equal: `Indistinguishable a a'
+≜ view a = view a'`. This is perfect (information-theoretic) hiding on the modelled view. The
+hiding laws say the view is constant on the anonymity class, and the kernel carries a
+k-anonymity law — the anonymity set has cardinality `≥ k > 1`. The `Reference` witness
+provides a genuinely non-constant `view` (it separates different recipient classes while
+collapsing each anonymity class), so the parametric theorems are non-vacuous.
 
-The earlier de-vacuification bundled the graph-tier hiding facts as bare `Prop` carriers
-(`Indistinguishable : StealthAddr → StealthAddr → Prop`, etc.) inside a kernel class with
-the laws as fields. That is the `CryptoKernel.lean` portal idiom, and it removed the
-`sorryAx`. But it left a TRAP: the only witness (`graphRef`/`memRef`) set every carrier to
-`fun _ => True`, so a reader could mistake a `True`-in-its-only-model theorem for a real
-privacy guarantee. `True`-discharge is honest ONLY for a property that *cannot* be modelled
-in Lean (e.g. `collisionHard` — "no PPT adversary"). For the hiding properties here there
-IS a genuine, non-trivial Lean model, so we MUST build it (the `BeaconSpaceInterior` rule:
-prefer a real witness to a degenerate one).
-
-**The model.** Indistinguishability is reframed as **equality of an observer-view** — a
-concrete `Nat`-valued function `view` modelling *everything an observer learns* (the public
-transcript). Two objects are indistinguishable EXACTLY when their views are equal:
-`Indistinguishable a a' ≜ view a = view a'`. This is *perfect (information-theoretic)
-hiding* on the modelled view — strictly stronger than, and the honest floor under, the
-computational advantage bound. The hiding LAWS then have real content: they say the view
-is **constant on the anonymity class** (genuinely collapses distinct secrets to one
-transcript), and the kernel additionally carries a **k-anonymity** law — the anonymity set
-has cardinality `≥ k > 1`, so the collapse is not the degenerate one-element class.
-
-A witness is non-trivial precisely when `view` is **not constant** (it genuinely
-distinguishes objects in *different* classes) yet **collapses each anonymity class** (it
-genuinely hides *within* a class). The `Reference` witness below does exactly this — `view`
-is a real quotient projection with ≥ 2 distinct values and a ≥ k anonymity class — so the
-parametric theorems are instantiated NON-vacuously, NOT by `fun _ => True`.
-
-**What stays a §8 portal.** *Computational* indistinguishability against a PPT adversary
-(the cryptographic advantage bound for the REAL Poseidon2/DH transcripts, where views are
-not literally equal but only computationally close) is NOT provable in Lean and remains an
-explicitly-carried obligation discharged by the circuit/crypto layer — see
-`Crypto/Primitives.lean::CryptoPrimitives.unlinkable` and `CryptoKernel.collisionHard`. The
-Lean model here proves the information-theoretic CORE (perfect view-collapse + k-anonymity);
-it does not, and does not claim to, prove the full computational property. -/
+**What stays a §8 portal.** Computational indistinguishability against a PPT adversary
+(the cryptographic advantage bound for the real Poseidon2/DH transcripts) is NOT provable
+in Lean — see `Crypto/Primitives.lean::CryptoPrimitives.unlinkable` and
+`CryptoKernel.collisionHard`. The Lean model proves the information-theoretic core (perfect
+view-collapse + k-anonymity); it does not claim the full computational property. -/
 
 /-- A **stealth address**: an abstract one-time destination key derived per-turn from
 a recipient's view/spend keys and an ephemeral scalar (EIP-5564/Monero;
@@ -354,15 +329,14 @@ structure Nullifier where
 gate over the concurrent spent-note set). -/
 abbrev SpentSet := Nullifier → Bool
 
-/-! ### The graph-privacy kernel — observer-views + GENUINE hiding laws as a class.
+/-! ### The graph-privacy kernel — observer-views + hiding laws as a class.
 
-The `Elem`-INDEPENDENT graph-tier objects (stealth, auth-chain, nullifier) and their hiding
-laws live as FIELDS of `GraphPrivacyKernel`. The KEY change from a `True`-carrier portal:
-indistinguishability is reframed as **equality of a concrete observer-`view`** (perfect,
-information-theoretic hiding on the modelled transcript), and the laws carry real content —
-the view is constant on the anonymity class, and the anonymity set has cardinality `≥ k`.
-A parametric theorem over `[GraphPrivacyKernel]` is non-vacuous because `Reference` exhibits
-a lawful instance whose `view` is genuinely non-constant (NOT `fun _ => True`). -/
+The `Elem`-independent graph-tier objects (stealth, auth-chain, nullifier) and their hiding
+laws live as fields of `GraphPrivacyKernel`. Indistinguishability is reframed as **equality
+of a concrete observer-`view`** (perfect, information-theoretic hiding on the modelled
+transcript): the view is constant on the anonymity class and the anonymity set has
+cardinality `≥ k`. A parametric theorem over `[GraphPrivacyKernel]` is non-vacuous because
+`Reference` exhibits a lawful instance whose `view` is genuinely non-constant. -/
 
 /-- **The graph-privacy kernel** (`Elem`-independent objects + GENUINE hiding laws). The
 hiding facts are modelled information-theoretically: `addrView`/`nullifierView` are concrete
@@ -442,13 +416,13 @@ class BlindedMembershipKernel (Elem : Type u) [DecidableEq Elem] where
     ∃ s : Finset Elem, k ≤ s.card ∧ e ∈ s ∧
       ∀ e' ∈ s, memberOf e' sc ∧ memberView e' sc = memberView e sc
 
-/-! ### The parametric graph-tier laws (bodies are the law-fields, NO `sorry`).
+/-! ### The parametric graph-tier laws (bodies are the law-fields, no `sorry`).
 
-Indistinguishability is now **observer-view equality** — `addrView a = addrView a'`,
+Indistinguishability is observer-view equality: `addrView a = addrView a'`,
 `memberView e sc = memberView e' sc`, `nullifierView n = nullifierView n'`. The theorems
-state perfect information-theoretic hiding on the modelled view, and (via the
-`k_anonymity` fields) that the collapse is over a genuinely-large anonymity set. They are
-non-vacuous: `Reference` instantiates them at a `view` that is genuinely non-constant. -/
+state perfect information-theoretic hiding on the modelled view; the k-anonymity fields
+ensure the collapse is over a genuinely large anonymity set. Non-vacuous: `Reference`
+instantiates them at a view that is genuinely non-constant. -/
 
 /-- **Graph tier law: stealth unlinkability (perfect, on the view).** Two stealth addresses
 derived for the *same* recipient have the SAME observer-view — two payments to one recipient
@@ -555,33 +529,27 @@ theorem anonymity_nullifier_reconciliation [GraphPrivacyKernel]
   ⟨nullifier_hides_identity note note',
     nullifier_prevents_double_spend note spent hspent⟩
 
-/-! ## The `Reference` instances — GENUINELY NON-TRIVIAL witnesses (NOT `fun _ => True`).
+/-! ## The `Reference` instances — non-trivial witnesses.
 
-A lawful witness whose observer-`view` is a genuine NON-CONSTANT function — it distinguishes
-addresses for *different* recipients while collapsing those for the *same* recipient. This
-is what makes the parametric theorems non-vacuous in the HONEST sense: not "there exists some
-instance" (the all-`True` model gave that, masquerading as a guarantee), but "there exists an
-instance where the hiding is real perfect-on-the-view collapse over a genuine `≥ k` anonymity
-set, and the view genuinely separates distinct classes." (Still a TEST stand-in for the
-information-theoretic core; the REAL computational unlinkability is the Rust/circuit
-discharge — see module header. This witnesses the Lean model is non-vacuous, NOT that the
-crypto holds.) -/
+A lawful witness whose observer-`view` is a genuinely non-constant function: it distinguishes
+addresses for different recipients while collapsing those for the same recipient. This makes
+the parametric theorems non-vacuous — there exists an instance where hiding is real
+perfect-on-the-view collapse over a genuine `≥ k` anonymity set, and the view genuinely
+separates distinct classes. (These are test witnesses for the information-theoretic core;
+the real computational unlinkability is the Rust/circuit discharge — see module header.) -/
 
 namespace Reference
 
-/-- Reference graph-privacy kernel with a **genuinely non-constant** observer-view.
-`recipientOf a := a.oneTimeKey % 2` (two recipients, `0`/`1` — so the view is NOT constant),
-`addrView a := recipientOf a` (depends ONLY on the recipient: collapses the anonymity class,
-separates the two classes), `nullifierView := 0` (the constant view IS the correct model of
-nullifier anonymity — perfect independence from holder), `k := 2`. The k-anonymity sets are
-real two-element `Finset`s of same-parity (hence same-recipient, same-view) addresses.
+/-- Reference graph-privacy kernel with a genuinely non-constant observer-view.
+`recipientOf a := a.oneTimeKey % 2` (two recipients, `0`/`1`), `addrView a := recipientOf a`
+(collapses the anonymity class, separates the two classes), `nullifierView := 0` (constant —
+the correct model of nullifier anonymity: perfect independence from holder), `k := 2`.
+The k-anonymity sets are real two-element `Finset`s of same-parity addresses.
 
-**A `def`, NOT an `instance`** (hardening): making it a global `instance` would let typeclass
-resolution silently satisfy a real `[GraphPrivacyKernel]` obligation with this TEST kernel.
-As a `def` it serves its one job — witnessing the interface is inhabitable by a non-trivial
-model (`#print axioms graphRef` = no axioms) — while forcing any genuine use to *name* the
-kernel it assumes (`@[reducible]` only silences the class-typed-`def` lint; it does NOT make
-this an auto-resolved instance). -/
+A `def`, not an `instance`: making it a global instance would let typeclass resolution
+silently satisfy a real `[GraphPrivacyKernel]` obligation with this test kernel. As a `def`
+it witnesses the interface is inhabitable by a non-trivial model while forcing genuine use
+to name the kernel it assumes. (`@[reducible]` only silences the class-typed-`def` lint.) -/
 @[reducible] def graphRef : GraphPrivacyKernel where
   k := 2
   k_gt_one := by decide
@@ -640,10 +608,9 @@ members), `memberView := fun _ _ => 0` (perfect view-collapse: members are indis
       simp only [Finset.mem_insert, Finset.mem_singleton] at he'
       exact ⟨by omega, rfl⟩
 
-/-- Non-vacuity (HONEST): `unlinkable` at `graphRef` is the real perfect-view collapse —
-two same-recipient addresses get the SAME `addrView` — and crucially the view is NOT
-constant: addresses of *different* parity get *different* views. So the theorem is not a
-`True`-masquerade. -/
+/-- Non-vacuity: `unlinkable` at `graphRef` is the real perfect-view collapse — same-recipient
+addresses get the same `addrView` — and the view is not constant: addresses of different
+parity get different views. -/
 example (a a' : StealthAddr) (h : a.oneTimeKey % 2 = a'.oneTimeKey % 2) :
     @GraphPrivacyKernel.addrView graphRef a = @GraphPrivacyKernel.addrView graphRef a' := by
   -- pass `graphRef` EXPLICITLY (it is a `def`, not an auto-resolved `instance`); the
@@ -671,11 +638,10 @@ example (sc : SetCommitment Nat) : ¬ @BlindedMembershipKernel.memberOf Nat _ me
 
 end Reference
 
--- TRIPWIRES: the graph-tier hiding theorems (now genuine view-equality / k-anonymity, not
--- `True`-carriers) and the proved structural keystones are kernel-clean (axioms ⊆ {propext,
--- Classical.choice, Quot.sound}) — no `sorry` leaked through. The residual *computational*
--- advantage bound enters ONLY as the §8 portal documented in the module header (carried by
--- `Crypto/Primitives.lean::unlinkable`), never as an axiom these pins would catch.
+-- Axiom-hygiene tripwires: the graph-tier theorems (view-equality / k-anonymity) and the
+-- structural keystones are kernel-clean (axioms ⊆ {propext, Classical.choice, Quot.sound}).
+-- The residual computational advantage bound is the §8 portal in the module header
+-- (carried by `Crypto/Primitives.lean::unlinkable`), not an axiom these pins would catch.
 #assert_axioms unlinkable
 #assert_axioms stealth_anonymity_set_large
 #assert_axioms zkauthchain_sound

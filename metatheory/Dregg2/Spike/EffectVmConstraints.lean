@@ -3,60 +3,43 @@ import Mathlib.Data.Int.GCD
 import Mathlib.RingTheory.Int.Basic
 
 /-
-# Dregg2.Spike.EffectVmConstraints — soundness of MORE real `EffectVmAir` constraints
+# Dregg2.Spike.EffectVmConstraints — soundness of further `EffectVmAir` constraints.
 
-This extends the proof-of-method established in `Dregg2.Spike.TransferAirSoundness`
-(the single Transfer-lo constraint) to a **batch** of further `EffectVmAir` constraints,
-each read verbatim from `circuit/src/effect_vm/air.rs` (with file:line) and each connected to
-its **protocol-level property** by a theorem. The point is a mechanized, *honest* ledger of
-which guarantees are in-circuit vs. deferred to the off-circuit executor.
+Extends `TransferAirSoundness` (the single Transfer-lo constraint) to a batch of further
+`EffectVmAir` constraints, each read verbatim from `circuit/src/effect_vm/air.rs` (cited
+with file:line) and connected to its protocol-level property. An honest ledger of which
+guarantees are in-circuit vs. deferred.
 
 Modeling convention (identical to the Transfer spike):
 * `p = 2013265921 = 15·2^27 + 1` is the BabyBear prime.
-* An AIR constraint is the statement "polynomial vanishes on the trace", i.e. its value is
-  `0` in the field, which we model as the integer divisibility `p ∣ poly`.
-* The load-bearing lemma `eq_zero_of_dvd_of_abs_lt` turns "`p ∣ d` with `|d| < p`" into `d = 0`.
+* An AIR constraint is "polynomial vanishes on the trace" = integer divisibility `p ∣ poly`.
+* `eq_zero_of_dvd_of_abs_lt` turns "`p ∣ d` with `|d| < p`" into `d = 0`.
 
-## Constraints formalized here (all verified against source)
+Constraints formalized here:
 
-1. **Selector validity** (air.rs:356–371):
-   * booleanity `s·(s−1) = 0` per selector,
-   * sum-to-one `Σ sᵢ − 1 = 0`.
-   `selectors_exactly_one`: with each `sᵢ` a canonical residue (`0 ≤ sᵢ < p`), booleanity
-   forces every `sᵢ ∈ {0,1}`, and sum-to-one then forces **exactly one** selector `= 1`
-   (the others `0`). This is the "exactly-one-effect-active" protocol invariant.
+1. **Selector validity** (air.rs:356–371): booleanity `s·(s−1) = 0` + sum-to-one.
+   `selectors_exactly_one`: exactly one selector `= 1` (the "exactly-one-effect-active" invariant).
 
-2. **NoOp passthrough** (air.rs:517–522):
-   `noop_is_identity`: when `s_noop = 1`, the constraint `s_noop·(after − before) = 0` forces
-   `after = before` for every state column (a genuine no-op).
+2. **NoOp passthrough** (air.rs:517–522): `noop_is_identity` — active NoOp forces
+   `after = before` for every state column.
 
-3. **Transfer hi-limb + direction-boolean** (air.rs:546, 551), companions to the lo-limb the
-   prior spike did:
-   * `transfer_hi_unchanged`: active transfer ⟹ `new_bal_hi = old_bal_hi`.
-   * `transfer_dir_boolean`: active transfer ⟹ `direction ∈ {0,1}`.
+3. **Transfer hi-limb + direction-boolean** (air.rs:546, 551):
+   `transfer_hi_unchanged` and `transfer_dir_boolean`.
 
-4. **Balance-limb range-check** (air.rs:458–488, columns.rs `NEW_BAL_LO_BIT_BASE = 36`,
-   `BAL_LIMB_BITS = 30`), the W9-RANGECHECK lane:
-   * `balance_lo_in_range`: the 30 bit-booleanity constraints + the recomposition constraint
-     force `new_bal_lo ∈ [0, 2^30)` — the in-circuit range proof is **sound**.
-   * `underflow_now_impossible`: **THE GAP IS CLOSED.** The exact `p−1` witness that satisfied
-     the Transfer-lo constraint in the prior spike (`transfer_underflow_attack`) has **no**
-     30-bit boolean decomposition, so it violates the range-check. Hence no wrapped debit can
-     satisfy the *combined* (transfer-lo ∧ range-check) constraint system: the underflow that
-     was previously deferred to the executor is now rejected in-circuit.
+4. **Balance-limb range-check** (air.rs:458–488, `BAL_LIMB_BITS = 30`):
+   `balance_lo_in_range` — the 30 bit-booleanity + recomposition constraints force
+   `new_bal_lo ∈ [0, 2^30)`.
+   `underflow_now_impossible` — the gap is closed: the `p−1` wrapped witness that satisfied
+   Transfer-lo alone has no 30-bit decomposition, so the combined (transfer-lo ∧ range-check)
+   system rejects the underflow in-circuit.
 
-5. **Nonce increment** (air.rs:2528):
-   `nonce_ticks_on_effect` / `nonce_frozen_on_noop`: the single global constraint
-   `new_nonce − old_nonce − (1 − s_noop) = 0` forces `new_nonce = old_nonce + 1` on an active
-   effect row and `new_nonce = old_nonce` on a NoOp/padding row.
+5. **Nonce increment** (air.rs:2528): `nonce_ticks_on_effect` / `nonce_frozen_on_noop`.
 
-## In-circuit vs deferred ledger (updated by this file)
-* IN-CIRCUIT (now proven): selector exactly-one; NoOp identity; transfer hi-limb invariance;
-  transfer direction booleanity; **balance_lo/hi range ∈ [0,2^30) — underflow wrap now
-  IMPOSSIBLE in-circuit**; nonce monotonic tick.
-* STILL DEFERRED / NOT THIS CONSTRAINT: cross-cell two-party *conservation* (a turn/net-delta
-  property, not a single row); `state_commitment = Poseidon2(...)` binding (a commitment
-  constraint, not modeled here).
+In-circuit vs deferred ledger:
+* In-circuit (proved here): selector exactly-one; NoOp identity; transfer hi-limb invariance;
+  direction booleanity; balance_lo range ∈ [0,2^30) (underflow impossible in-circuit); nonce tick.
+* Still deferred (honest): cross-cell two-party conservation (turn/net-delta scope, not a single
+  row); `state_commitment = Poseidon2(...)` binding (not modeled here).
 -/
 
 namespace Dregg2.Spike.EffectVmConstraints
@@ -104,16 +87,9 @@ Satisfied iff `p ∣ s·(s−1)`.
 def SelBool (s : ℤ) : Prop := p ∣ s * (s - 1)
 
 /--
-**THEOREM `selectors_exactly_one`** (air.rs:356–371).
-
-Given a finite list of selector residues `ss`, each canonical (`0 ≤ sᵢ < p`) and each
-satisfying booleanity, plus the **sum-to-one** constraint `p ∣ (Σ sᵢ − 1)` where the honest
-sum is small (`Σ sᵢ < p`, which holds since each `sᵢ ∈ {0,1}` and there are `< p` selectors),
-**exactly one** selector equals `1` and all the rest equal `0`.
-
-We state the protocol property as: every selector is in `{0,1}` AND the sum is exactly `1`.
-Together these mean "exactly one effect active" — a multiset of booleans summing to one has a
-single `1`.
+**`selectors_exactly_one`** (air.rs:356–371). Given canonical selector residues (`0 ≤ sᵢ < p`),
+booleanity, and sum-to-one (`p ∣ (Σ sᵢ − 1)`, with `Σ sᵢ < p`): every selector is in `{0,1}`
+and the sum is exactly `1` — exactly one effect is active.
 -/
 theorem selectors_exactly_one
     (ss : List ℤ)
@@ -159,10 +135,8 @@ Satisfied iff `p ∣ s_noop·(after − before)`.
 def NoOpCol (s_noop after before : ℤ) : Prop := p ∣ s_noop * (after - before)
 
 /--
-**THEOREM `noop_is_identity`** (air.rs:517–522).
-
-On an **active** NoOp row (`s_noop = 1`), with the two state-column residues canonical
-(`0 ≤ · < p`), the constraint forces `after = before`. A no-op truly changes nothing.
+**`noop_is_identity`** (air.rs:517–522). On an active NoOp row (`s_noop = 1`) with canonical
+residues, the constraint forces `after = before`.
 -/
 theorem noop_is_identity
     (after before : ℤ)
@@ -181,11 +155,8 @@ theorem noop_is_identity
 def TransferHi (s_transfer newHi oldHi : ℤ) : Prop := p ∣ s_transfer * (newHi - oldHi)
 
 /--
-**THEOREM `transfer_hi_unchanged`** (air.rs:546).
-
-An active transfer (`s_transfer = 1`) leaves the hi limb of the balance unchanged, given
-canonical hi-limb residues. (Single-limb amounts only touch the lo limb — the prior spike's
-domain.)
+**`transfer_hi_unchanged`** (air.rs:546). An active transfer (`s_transfer = 1`) leaves the
+hi balance limb unchanged given canonical residues.
 -/
 theorem transfer_hi_unchanged
     (newHi oldHi : ℤ)
@@ -202,10 +173,8 @@ theorem transfer_hi_unchanged
 def TransferDir (s_transfer dir : ℤ) : Prop := p ∣ s_transfer * (dir * (dir - 1))
 
 /--
-**THEOREM `transfer_dir_boolean`** (air.rs:551).
-
-An active transfer (`s_transfer = 1`) with a canonical `direction` residue forces
-`direction ∈ {0,1}` (0 = in/add, 1 = out/subtract).
+**`transfer_dir_boolean`** (air.rs:551). An active transfer with a canonical `direction`
+residue forces `direction ∈ {0,1}` (0 = add, 1 = subtract).
 -/
 theorem transfer_dir_boolean
     (dir : ℤ) (hlo : 0 ≤ dir) (hhi : dir < p)
@@ -257,12 +226,9 @@ private theorem recompose30_range {bits : Fin 30 → ℤ}
       _ < 2 ^ 30 := by omega
 
 /--
-**THEOREM `balance_lo_in_range`** (air.rs:458–488).
-
-The 30 bit-booleanity constraints (each bit `∈ {0,1}`) together with the recomposition
-constraint (`Σ bitᵢ·2^i = new_bal_lo` in the field) and a canonical `new_bal_lo` residue
-**force `new_bal_lo ∈ [0, 2^30)`**. The in-circuit range proof is sound: the post-state
-balance limb is provably a true 30-bit value, no executor re-derivation required.
+**`balance_lo_in_range`** (air.rs:458–488). The 30 bit-booleanity constraints plus the
+recomposition constraint, with a canonical `new_bal_lo` residue, force
+`new_bal_lo ∈ [0, 2^30)`. The in-circuit range proof is sound.
 -/
 theorem balance_lo_in_range
     (bits : Fin 30 → ℤ) (newBalLo : ℤ)
@@ -307,17 +273,11 @@ theorem underflow_witness_satisfies_transferLo : TransferLoSat 0 (p - 1) 1 1 := 
   rw [h]
 
 /--
-**THEOREM `underflow_now_impossible` — THE GAP IS CLOSED (air.rs:458–488).**
-
-The prior spike (`transfer_underflow_attack`) showed the Transfer-lo constraint *alone* admits
-the wrapped value `new_bal_lo = p − 1`. The W9-RANGECHECK lane added the bit-decomposition
-range check. Here we prove the wrap is **no longer satisfiable**: there is **no** 30-bit boolean
-decomposition `bits` whose recomposition equals `p − 1`, because `p − 1 ≥ 2^30` but every valid
-recomposition is `< 2^30`. Hence the wrapped witness violates the range-check constraint, and the
-combined (transfer-lo ∧ range-check) system rejects the underflow **in-circuit**.
-
-This is exactly the protocol property: the underflow that was previously caught only by the
-off-circuit executor is now caught by the AIR itself.
+**`underflow_now_impossible`** (air.rs:458–488) — the gap is closed. The Transfer-lo constraint
+alone admits the wrapped value `new_bal_lo = p − 1` (see `underflow_witness_satisfies_transferLo`).
+With the range-check, there is no 30-bit boolean decomposition whose recomposition equals `p − 1`
+(`p − 1 ≥ 2^30` but every valid recomposition is `< 2^30`), so the combined (transfer-lo ∧
+range-check) system rejects the underflow in-circuit.
 -/
 theorem underflow_now_impossible :
     ¬ ∃ bits : Fin 30 → ℤ,
@@ -332,12 +292,9 @@ theorem underflow_now_impossible :
   omega
 
 /--
-**COROLLARY `range_check_closes_transfer_underflow`.**
-
-Combining the two: the specific wrapped witness `new = p − 1` *does* satisfy the Transfer-lo
-constraint (so the lo-constraint is insufficient alone), **yet** it cannot satisfy the
-range-check (no bit-decomposition exists), so the conjoined constraint system rejects it. The
-single statement that ties the spike's gap to its closure.
+**`range_check_closes_transfer_underflow`.** The wrapped witness `new = p − 1` satisfies the
+Transfer-lo constraint alone but cannot satisfy the range-check (no 30-bit decomposition exists),
+so the conjoined system rejects it.
 -/
 theorem range_check_closes_transfer_underflow :
     TransferLoSat 0 (p - 1) 1 1
@@ -356,10 +313,8 @@ def NonceSat (newNonce oldNonce s_noop : ℤ) : Prop :=
   p ∣ (newNonce - oldNonce - (1 - s_noop))
 
 /--
-**THEOREM `nonce_ticks_on_effect`** (air.rs:2528).
-
-On an **active effect** row (`s_noop = 0`) with canonical nonce residues, the constraint forces
-`new_nonce = old_nonce + 1` — the nonce strictly increments per real effect.
+**`nonce_ticks_on_effect`** (air.rs:2528). On an active effect row (`s_noop = 0`) with canonical
+residues, the constraint forces `new_nonce = old_nonce + 1`.
 -/
 theorem nonce_ticks_on_effect
     (newNonce oldNonce : ℤ)

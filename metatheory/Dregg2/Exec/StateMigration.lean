@@ -1,49 +1,25 @@
 /-
 # Dregg2.Exec.StateMigration — re-shaping a cell's `Value` record when its `Schema` is upgraded.
 
-`Dregg2.Upgrade` proves a backend/verifier swap can never *brick* a cell: the owner-signature
-fallback (`bySignature`) keeps `set_program` admissible across any AIR-version bump. But a
-`set_program` may also change the cell's STATE SHAPE — its `Schema` (`Exec/Value.lean`): a v2 of
-an account cell might ADD a `frozen` flag, or RENAME `bal` to `balance`. The live `Value` record
-pinned to the *old* schema must be re-shaped to the *new* one, and this re-shaping is the dual
-hazard to verifier-bricking:
+When `set_program` changes a cell's schema, the live `Value` record must be re-shaped to the new
+schema. A careless migration can either leave the record non-conforming (a typed read of the upgraded
+cell faults — a data-brick) or silently destroy the conserved `balance` field (inflation/burn hidden
+in an "upgrade").
 
-  * a careless migration could leave the record NON-CONFORMING to the new schema (a typed read
-    of the upgraded cell then faults — a *data*-brick), or
-  * it could silently DESTROY the conserved quantity (drop/clobber the `balance` field — an
-    inflation/burn hidden inside an "upgrade").
+This module models `Migration : Schema → Schema → (Value → Value)` and proves three keystones:
 
-This module models a **`Migration : Schema → Schema → (Value → Value)`** — a field-remapping
-applied when the cell's schema is upgraded — and proves three keystones mirroring the three
-hazards, REUSING `Exec/Value.lean` (`conforms`/`balOf`-via-`scalar`), `Spec/Conservation`
-(`conservedInDomain Domain.balance`), and `Dregg2.Upgrade`'s anti-brick signature-fallback
-discipline:
+  * `migrate_conforms` — a migration of a conforming value conforms to the new schema (no data-brick).
+  * `migrate_conserves` — migration preserves the `balance`-field total (`balOf` before = after;
+    the `Spec.conservedInDomain Domain.balance` shape: migration delta is `0`).
+  * `migrate_anti_brick` — a migration that would violate conformance/conservation falls back to the
+    owner-signature discipline (`Upgrade.setProgramAdmissible … bySignature`, always admissible) and
+    applies the identity re-shaping — a bad migration never bricks the cell.
 
-  * `migrate_conforms` — a migration of a value conforming to the OLD schema conforms to the
-    NEW schema (no data-brick).
-  * `migrate_conserves` — migration PRESERVES the `balance`-field total: the conserved quantity
-    survives the schema change (`balOf` before = `balOf` after; the `Spec.conservedInDomain
-    Domain.balance` shape: the migration's balance delta is `0`).
-  * `migrate_anti_brick` — a migration that WOULD violate conformance/conservation FALLS BACK
-    to the owner-signature discipline (`Upgrade.setProgramAdmissible … bySignature`, always
-    admissible) and applies the IDENTITY re-shaping rather than committing the bad transform —
-    so a bad migration NEVER bricks the cell; it is routed to the fallback, exactly as a stale
-    proof routes to `bySignature` in `Upgrade`.
+HONEST scope: we model field-add and field-rename, the two migrations that arise in practice.
+Arbitrary schema rewriting is not attempted; `applyMigration` is a fail-soft gate that commits only
+when the result checks conforming AND balance-preserving, else falls back to identity.
 
-## HONEST scope
-We model the two migrations that arise in practice and keep the conservation guarantee crisp:
-**field-add** (extend the schema with a new field carrying a default value) and **field-rename**
-(re-key a field, value preserved). Both are realized through one `addField`/`renameField`
-primitive whose effect on `conforms` and on the `balance` field is provable. Full arbitrary
-schema rewriting is NOT attempted (a general remap can do anything, so its conformance is
-undecidable in this model); instead `applyMigration` is a fail-soft GATE — it commits the
-proposed transform only when the result is checked conforming AND balance-preserving, else it
-falls back to identity, exactly the `Upgrade.admit`-style "unproven proposal can never degrade"
-discipline. The gate is what makes `migrate_anti_brick` true for an ARBITRARY proposed transform.
-
-Pure, computable, `#eval`-able. Imports `Exec.Program` (for `Value.scalar`/`Value.field`),
-`Exec.RecordKernel` (for `balOf`/`balanceField`), `Spec.Conservation` (for `conservedInDomain`),
-and `Upgrade` (for the signature-fallback discipline). No `axiom`/`admit`/`native_decide`/`sorry`.
+Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`.
 -/
 import Dregg2.Exec.Program
 import Dregg2.Exec.RecordKernel

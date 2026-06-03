@@ -1,41 +1,21 @@
 /-
-# Dregg2.CatalogEffects — Phase (ii) COMPLETION: the dregg1 `Effect` catalog, exhaustively
-colored onto `Spec.Conservation`'s `LinearityClass`, with the per-class conservation
-obligation PROVED for every one of the ~52 variants.
+# Dregg2.CatalogEffects — exhaustive coloring of dregg1's ~52 `Effect` variants onto
+# `Spec.Conservation`'s `LinearityClass`, with per-class conservation obligations proved.
 
-`Dregg2.CatalogInstances` closed the Guard side (StateConstraint(27) + Authorization(9)) and
-*opened* the Effect side: its §3 defines the carrier `EffectKind` (the ~52 dregg1 `Effect`
-variant tags) and the total coloring `effectLinearity : EffectKind → LinearityClass`
-(transcribed verbatim from `turn/src/action.rs:1675 Effect::linearity`, exhaustive `match`,
-NO default arm). But it only pinned a HANDFUL of representative coincidence facts
-(`transfer`/`bridgeMint`/`burn`/`setField`/`incrementNonce`/`cellDestroy`). This module
-COMPLETES the catalog: it does NOT redefine `EffectKind` or `effectLinearity` (we EXTEND,
-never duplicate — those live in `CatalogInstances` and we `open` them), but it discharges:
+Extends `CatalogInstances` (which defines `EffectKind` and `effectLinearity`; this module
+opens them, never redefines them):
 
-  * §1 — the SIX per-class conservation obligations, each derived from `Spec.Conservation`'s
-    PROVED classifier facts (`requires_paired_sibling_iff` / `is_disclosed_non_conservation_iff`
-    / `paired_and_disclosed_exclusive`): Conservative ⇒ paired-sibling Σ=0; Generative ⇒
-    disclosed; Annihilative ⇒ disclosed; Monotonic / Terminal / Neutral ⇒ neither (their
-    own laws). These are the obligations every effect of that color INHERITS.
+  * §1 — the six per-class conservation obligations, derived from `Spec.Conservation`'s
+    proved classifier facts: Conservative ⇒ paired-sibling; Generative/Annihilative ⇒
+    disclosed; Monotonic/Terminal/Neutral ⇒ neither.
+  * §2 — per-effect coincidence theorems for all ~52 variants (`rfl` tripwire: coloring
+    drift from `Effect::linearity` breaks the matching `rfl`). Grouped by color.
+  * §3 — exhaustiveness three ways: `effectLinearity_total` (cases over all 52),
+    `every_effect_classified` (paired ⊕ disclosed ⊕ inert), and the bespoke
+    `effectObligation` discriminator with `effectObligation_coincides`.
 
-  * §2 — the per-effect coincidence theorems for ALL ~52 variants (each
-    `effectLinearity .x = <Class>` by `rfl`, the faithful-mirror tripwire: should the coloring
-    ever drift from `Effect::linearity`, the matching `rfl` breaks). Grouped by color; this is
-    the EXHAUSTIVE demonstration that no effect is left uncolored.
-
-  * §3 — EXHAUSTIVENESS, three ways: (a) `effectLinearity_total` — every effect's color is one
-    of the six (vacuously true by typing, proved by `cases` over all 52 so the count is
-    machine-checked); (b) `every_effect_classified` — every effect carries a determinate
-    obligation (paired XOR disclosed XOR inert), via the disjointness backbone; (c)
-    `effectObligation` — the bespoke `LinearityClass` discriminator (a TOTAL map color ↦
-    obligation-as-data), with `effectObligation_coincides` proving it matches the `Spec`
-    primitives at every effect. The discriminator is the one genuinely hand-written shape
-    (the Guard-triple codegen cannot emit a `LinearityClass → _` map).
-
-Discipline (NON-NEGOTIABLE): no `axiom`/`admit`/`native_decide`/`sorry`. Every fact is `rfl`
-or a `cases`-exhaustion or a derivation off a PROVED `Spec.Conservation` classifier. The whole
-namespace is pinned `#assert_namespace_axioms Dregg2.CatalogEffects`-clean. Verified standalone
-with `lake env lean Dregg2/CatalogEffects.lean`. Imports ONLY existing built modules.
+Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. Whole namespace pinned via
+`#assert_namespace_axioms Dregg2.CatalogEffects`.
 -/
 import Dregg2.CatalogInstances
 import Dregg2.Spec.Conservation
@@ -45,12 +25,11 @@ namespace Dregg2.CatalogEffects
 open Dregg2.Spec Dregg2.Spec.LinearityClass
 open Dregg2.CatalogInstances (EffectKind effectLinearity)
 
-/-! ## §1 — The six per-class conservation OBLIGATIONS.
+/-! ## §1 — The six per-class conservation obligations.
 
-Each color's obligation is read off `Spec.Conservation`'s PROVED classifiers. These say what
-EVERY effect of a given color must satisfy — the obligation an effect INHERITS from its color.
-We state them over `effectLinearity` so they bite on the real catalog: for any effect whose
-color is `c`, the obligation of `c` holds. -/
+Each color's obligation is derived from `Spec.Conservation`'s proved classifiers — the
+obligation any effect with that color inherits. Stated over `effectLinearity` so they apply
+to the real catalog. -/
 
 section ClassObligations
 
@@ -102,12 +81,11 @@ theorem neutral_inert (e : EffectKind)
 
 end ClassObligations
 
-/-! ## §2 — The per-effect coincidence theorems — ALL ~52 variants.
+/-! ## §2 — Per-effect coincidence theorems — all ~52 variants.
 
-Each is `effectLinearity .x = <Class>` by `rfl`: the faithful-mirror tripwire. If the coloring
-in `CatalogInstances` ever drifts from `turn/src/action.rs Effect::linearity`, the matching
-`rfl` here breaks the build. Grouped by color exactly as the Rust `match` arms are. This is the
-EXHAUSTIVE per-variant demonstration that no effect is left uncolored. -/
+Each is `effectLinearity .x = <Class>` by `rfl`: if the coloring ever drifts from
+`turn/src/action.rs Effect::linearity`, the matching `rfl` breaks the build. Grouped by
+color. -/
 
 section PerEffect
 
@@ -177,27 +155,22 @@ theorem n_exerciseViaCapability : effectLinearity .exerciseViaCapability = Neutr
 
 end PerEffect
 
-/-! ## §3 — EXHAUSTIVENESS (no effect uncolored), three ways. -/
+/-! ## §3 — Exhaustiveness (no effect uncolored), three ways. -/
 
 section Exhaustiveness
 
-/-- **(a) `effectLinearity_total`** — every one of the ~52 effect variants has a color that is
-one of the six. Stated as the disjunction over the six `LinearityClass` constructors and PROVED
-by `cases` over the WHOLE `EffectKind` (so the count is machine-checked: a missing variant or a
-mis-spelled constructor would not type-check, an over-broad coloring would be caught by §2). The
-proposition is vacuously true by typing — its VALUE is that the proof exhausts all 52 arms,
-confirming `effectLinearity` is genuinely total and lands inside the six-color codomain. -/
+/-- **(a) `effectLinearity_total`** — every effect's color is one of the six. The value
+of this proof is the `cases`-exhaustion over all 52 arms — a missing variant would not
+type-check. -/
 theorem effectLinearity_total (e : EffectKind) :
     effectLinearity e = Conservative ∨ effectLinearity e = Monotonic ∨
     effectLinearity e = Terminal ∨ effectLinearity e = Generative ∨
     effectLinearity e = Annihilative ∨ effectLinearity e = Neutral := by
   cases e <;> simp [effectLinearity]
 
-/-- **(b) `every_effect_classified`** — every effect carries a DETERMINATE conservation regime:
-it either requires a paired sibling (Conservative) or is a disclosed non-conservation
-(Generative/Annihilative) or is inert (Monotonic/Terminal/Neutral), and the first two are
-mutually exclusive (the soundness backbone, inherited from
-`Spec.Conservation.paired_and_disclosed_exclusive`). No effect is ambiguous or uncolored. -/
+/-- **(b) `every_effect_classified`** — every effect has a determinate conservation regime
+(paired / disclosed / inert), and the first two are mutually exclusive (from
+`Spec.Conservation.paired_and_disclosed_exclusive`). -/
 theorem every_effect_classified (e : EffectKind) :
     ((effectLinearity e).requires_paired_sibling = true ∧
        (effectLinearity e).is_disclosed_non_conservation = false) ∨
@@ -231,15 +204,12 @@ theorem effectLinearity_covers_all_colors :
 
 end Exhaustiveness
 
-/-! ## §4 — The BESPOKE `LinearityClass` discriminator (the genuinely hand-written shape).
+/-! ## §4 — The bespoke `LinearityClass` discriminator.
 
-The Guard-triple codegen emits `admits`-characterizations of `Guard`s; it cannot emit a TOTAL
-MAP out of `LinearityClass`. So this is hand-written: `effectObligation` reads a color and
-returns its conservation OBLIGATION AS DATA (which of the three regimes it lives in), and
-`effectObligation_coincides` proves — for EVERY effect — that this discriminator agrees with the
-`Spec.Conservation` primitives (`requires_paired_sibling` / `is_disclosed_non_conservation`).
-This closes the catalog: the dregg1 coloring is faithfully derived over the small Spec
-primitives, with the coincidence proved exhaustively. -/
+The Guard-triple codegen cannot emit a total map out of `LinearityClass`. `effectObligation`
+is hand-written: it maps a color to its conservation obligation as data, and
+`effectObligation_coincides` proves — for every effect — that it agrees with the
+`Spec.Conservation` primitives. -/
 
 section Discriminator
 
@@ -303,13 +273,10 @@ theorem effectObligation_total (e : EffectKind) :
 
 end Discriminator
 
-/-! ## §5 — Axiom-hygiene tripwire (the honesty pin over the WHOLE namespace).
+/-! ## §5 — Axiom-hygiene tripwire (whole-namespace honesty pin).
 
-Every theorem under `Dregg2.CatalogEffects` must rest only on the three kernel axioms
-(`propext`/`Classical.choice`/`Quot.sound`). A `sorryAx` anywhere — a faked `rfl`, a planted
-`sorry` in any obligation/coincidence proof — trips this. This is the "100% of output pinned"
-guarantee the codegen gives §1/§2 of `CatalogInstances`, here made module-wide over the
-hand-written Effect-catalog completion. Pure rejector; cannot close a goal. -/
+Every theorem under `Dregg2.CatalogEffects` must rest only on the three kernel axioms.
+A `sorryAx` anywhere trips this. Pure rejector; cannot close a goal. -/
 
 #assert_namespace_axioms Dregg2.CatalogEffects
 

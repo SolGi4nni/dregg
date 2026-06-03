@@ -1,5 +1,5 @@
 /-
-# Dregg2.Exec.AuthModes — dregg1's SIX authorization modes, dispatched onto the existing dregg2 primitives.
+# Dregg2.Exec.AuthModes — dregg1's six authorization modes, dispatched onto the dregg2 primitives.
 
 dregg1's `turn/src/executor/authorize.rs::verify_authorization` is not a binary
 "does the actor hold a cap?" gate. It is a *dispatch* over an `Authorization` sum
@@ -587,11 +587,7 @@ example : authModeAdmits (Rights := Rt) (CellId := C) (Ctx := Cx) (Gateway := Gw
 
 end Demo
 
-/-! ## §7 — Axiom-hygiene tripwires.
-
-Every soundness keystone depends ONLY on the three standard kernel axioms (no
-`sorryAx`). The CapTpDelivered non-amplification — the discipline dregg1's Rust is
-missing — is among the pinned theorems. -/
+/-! ## §7 — Axiom-hygiene tripwires. -/
 
 #assert_axioms custom_sound
 #assert_axioms token_sound

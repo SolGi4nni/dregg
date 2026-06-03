@@ -1,36 +1,16 @@
 /-
-# Dregg2.Crypto.Dfa — the FIFTH end-to-end §8 discharge: DFA structural-match acceptance.
+# Dregg2.Crypto.Dfa — §8 discharge: DFA structural-match acceptance.
 
-**The next obligation after Merkle / Pedersen / NonMembership / Temporal
-(`docs/rebuild/PHASE-CRYPTOKERNEL.md §5` "Path to the rest": Temporal/Dfa "need `Lookup`/`Gated` in
-`CircuitIR`; dial `fullDisclosure`/`selective`").** This discharges DFA acceptance
-(`WitnessedPredicateKind::Dfa`): a trace of automaton states, threaded by a transition relation `δ`,
-starts in the initial state and ends in an accepting state — i.e. the input string is accepted by the
-deterministic automaton. This is the `dfa_lookup_descriptor` family (`circuit/src/dsl/circuit.rs:1746`):
-the trace is rows `[state, byte, next_state]`, a `Lookup` constraint asserts each
-`(state, byte, next_state)` is a member of the transition table (`dfa_lookup_table`,
-`circuit.rs:1724`), a `Transition` constraint chains `next_state` to the following row's `state`, and
-boundary `PiBinding`s pin the first state to the initial state and the last to acceptance.
-
-The cascade mirrors the prior kinds:
+Discharges `WitnessedPredicateKind::Dfa` (`dfa_lookup_descriptor`, `circuit.rs:1746`): a trace of
+automaton states threaded by a transition relation `δ` starts in the initial state and ends in an
+accepting state. Per-step `Lookup` membership, `Transition` chaining, and boundary `PiBinding`s.
 
     dfa_bridge       : Satisfies dfaCircuit (q₀, accept, trace) ↔ DfaAccepts δ q₀ accept trace
-      [the gadget, FULLY proven — per-step `Lookup` membership + initial/accept boundary, no seam]
-    dfa_verify_sound : verify accepts → DfaAccepts …
-      [DERIVED off the bridge, given the STARK `extractable` carrier]
-    dfa_dial_wired   : the dial pinned to the verifier at the `fullDisclosure` floor
-      [the DFA structure and the accepted state-trace are PUBLIC ⇒ `fullDisclosure`]
+    dfa_verify_sound : verify accepts → DfaAccepts …  (derived off the bridge + `extractable`)
+    dfa_dial_wired   : dial at `fullDisclosure` (DFA structure and trace are public)
 
-**The per-step transition validity + initial/accept boundary is the genuinely-grounded part** (and
-the heart of the bridge): a satisfying trace is precisely a valid run of the automaton — every step's
-`(state, byte, next)` lies in the transition relation (the `Lookup` membership, modeled as a `δ`
-predicate exactly as the table lookup abstracts), the steps chain, and the endpoints are initial /
-accepting. This is FULLY proved combinatorics on the trace list; there is NO `compress`/hash in the
-DFA gadget, so NO primitive seam at all. The ONLY cryptographic residue is the STARK `extractable`
-carrier (a `Prop`, passed as a hypothesis), binding the disclosed statement to a satisfying trace.
-
-**Dial = `fullDisclosure`** (per `PHASE-CRYPTOKERNEL.md §5`): the DFA structure and the entire
-state-trace are public — the verifier learns cleartext + the whole run, the top of the dial.
+The DFA gadget is pure structural matching — no `compress`/hash, no primitive seam. Crypto residue:
+the STARK `extractable` carrier only.
 -/
 import Dregg2.Crypto.Primitives
 import Dregg2.Authority.Predicate
@@ -146,19 +126,11 @@ theorem dfa_complete (δ : State → Sym → State → Prop) (q₀ : State) (acc
     ∃ circuit : CircuitIR State Sym, Satisfies δ q₀ accept circuit :=
   ⟨⟨trace⟩, h⟩
 
-/-- **`dfa_bridge` — THE deliverable (the analog of `merkle_bridge`).** The DFA AIR's satisfiability is
-EXACTLY a valid accepting run of the automaton:
-
-  * `→` (SOUNDNESS): a satisfying trace's per-step `Lookup` validity + chaining + boundaries ARE a
-    valid accepting run (`dfa_sound`).
-  * `←` (COMPLETENESS): a genuine accepting run gives a satisfying trace (`dfa_complete`).
-
-The DFA gadget is pure structural matching — the `Lookup` table is abstracted as the transition
-relation `δ` (its membership predicate, exactly what the lookup constraint enforces), `compress` does
-NOT appear, so there is NO primitive seam ANYWHERE. The ONLY cryptographic residue is the STARK
-`extractable` carrier (consumed by `dfa_verify_sound`), binding the disclosed statement to a
-satisfying trace. Stated over `circuit.trace` on the `→` side (the witnessed run) and existentially on
-the `←` side (the prover's run is the witness). -/
+/-- **`dfa_bridge`** — the DFA AIR's satisfiability is exactly a valid accepting run of the automaton.
+Soundness: per-step `Lookup` validity + chaining + boundaries are `DfaAccepts` (`dfa_sound`).
+Completeness: a genuine accepting run gives a satisfying trace (`dfa_complete`).
+No `compress` anywhere — no primitive seam. Crypto residue: `extractable`, consumed by
+`dfa_verify_sound`. -/
 theorem dfa_bridge (δ : State → Sym → State → Prop) (q₀ : State) (accept : State → Prop)
     (trace : List (Step State Sym)) :
     -- SOUNDNESS: every satisfying trace over `trace` certifies an accepting run.
@@ -170,9 +142,7 @@ theorem dfa_bridge (δ : State → Sym → State → Prop) (q₀ : State) (accep
   ⟨fun circuit hc hsat => hc ▸ dfa_sound δ q₀ accept circuit hsat,
    dfa_complete δ q₀ accept trace⟩
 
--- TRIPWIRES: the DFA gadget is FULLY proven with NO primitive seam — both bridge directions are
--- kernel-clean. The `Lookup` is abstracted as the transition relation `δ`; there is no hash/`compress`
--- to flag (the DFA predicate is pure structural matching).
+-- Tripwires: both bridge directions are kernel-clean. No `compress`/hash — pure structural matching.
 #assert_axioms dfa_sound
 #assert_axioms dfa_complete
 #assert_axioms dfa_bridge
@@ -215,15 +185,9 @@ class DfaVerifierKernel (State Sym : Type) (Proof : Type) where
 
 variable {Proof : Type}
 
-/-- **`dfa_verify_sound` — the DERIVED verify law (the analog of `merkle_verify_sound`).** Given the
-STARK-soundness carrier `extractable`, an accepted DFA proof PROVES a valid accepting run of the
-disclosed automaton exists:
-
-    verify stmt proof = true  →  ∃ trace, DfaAccepts stmt.δ stmt.q₀ stmt.accept trace
-
-The proof composes `extract` (accept ⇒ satisfying trace, the crypto carrier) with `dfa_bridge`'s
-SOUNDNESS half (satisfying trace ⇒ accepting run, FULLY proved). The verify law is DERIVED, not
-assumed; the only hypothesis is `extractable`. -/
+/-- **`dfa_verify_sound`** — given `extractable`, an accepted DFA proof proves a valid accepting run
+exists: `verify stmt proof = true  →  ∃ trace, DfaAccepts stmt.δ stmt.q₀ stmt.accept trace`.
+Derived by composing `extract` with `dfa_bridge`'s soundness half; never assumed. -/
 theorem dfa_verify_sound {State Sym : Type} [K : DfaVerifierKernel State Sym Proof]
     (hext : K.extractable) (stmt : Statement State Sym) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -260,8 +224,8 @@ def dfaKindObligation (State Sym : Type) : KindObligation State Sym where
 @[simp] theorem dfaKindObligation_floor (State Sym : Type) :
     (dfaKindObligation State Sym).dialFloor = Dial.fullDisclosure := rfl
 
-/-- `fullDisclosure` is strictly above `selective` (the public DFA discloses MORE than Pedersen's
-chosen-facts floor): the floor is at the dial ceiling, non-degenerate above `selective`. -/
+/-- `fullDisclosure` is strictly above `selective`: the public DFA discloses more than Pedersen's
+chosen-facts floor. -/
 theorem dfa_floor_above_selective (State Sym : Type) :
     Dial.selective < (dfaKindObligation State Sym).dialFloor := by
   show Dial.selective < Dial.fullDisclosure
@@ -301,10 +265,9 @@ def dfaDisclose [DfaVerifierKernel S Y P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`dfa_dial_wired` — THE DIAL WIRING (the analog of `merkle_dial_wired`).** The DFA kind's
-epistemic floor is `fullDisclosure` (the public automaton + run), the dial's bottom notch's acceptance
-bit IS the DFA verifier's `Discharged` bit, and — given STARK `extractable` — an accepting proof PROVES
-a valid accepting run exists. The dial is pinned to the per-kind verifier. -/
+/-- **`dfa_dial_wired`** — the DFA kind's floor is `fullDisclosure` (public automaton + run), the
+dial's bottom notch IS the verifier's `Discharged` bit, and an accepting proof proves a valid run
+exists. Dial pinned to the per-kind verifier. -/
 theorem dfa_dial_wired [K : DfaVerifierKernel S Y P]
     (hext : K.extractable)
     (base : Registry (Statement S Y) P) (stmt : Statement S Y) (proof : P) :
@@ -322,11 +285,9 @@ theorem dfa_dial_wired [K : DfaVerifierKernel S Y P]
       (dfaDisclose base stmt proof)
   · exact fun haccept => dfa_verify_sound hext stmt proof haccept
 
-/-- **`dfa_registry_cascade` — the §8 discharge through the registry (the analog of
-`merkle_registry_cascade`).** Registering the DFA kind, an accepted proof both `Discharged`s the kind's
-predicate (the registry keystone, `registry_sound`) AND — given the STARK `extractable` carrier —
-PROVES a valid accepting run exists (`dfa_verify_sound`). The cascade
-`registry_sound ∘ dfa_verify_sound`; the single trust boundary is `extractable`. -/
+/-- **`dfa_registry_cascade`** — registering the DFA kind, an accepted proof both `Discharged`s the
+kind's predicate (`registry_sound`) and — given `extractable` — proves a valid accepting run exists
+(`dfa_verify_sound`). Single trust boundary: `extractable`. -/
 theorem dfa_registry_cascade [K : DfaVerifierKernel S Y P]
     (hext : K.extractable)
     (base : Registry (Statement S Y) P)
@@ -410,23 +371,18 @@ run), certifies `DfaAccepts`. This exercises the deliverable on a real automaton
 example : DfaAccepts δ q₀ accept aabTrace :=
   (dfa_bridge δ q₀ accept aabTrace).1 ⟨aabTrace⟩ rfl aab_accepts
 
-/-! ### The reference `VerifierKernel`/cascade — an HONEST follow-up.
+/-! ### The reference `VerifierKernel`/cascade.
 
-The cascade (`dfa_verify_sound`/`dfa_registry_cascade`/`dfa_dial_wired`) is proven GENERICALLY above
-for any `DfaVerifierKernel` — all kernel-clean. A concrete reference `def`-kernel (the analog of
-`Merkle.Reference.refKernel`) would witness it end-to-end over `ℕ`/`ℕ`. The honest obstacle: the
-generic `Statement.δ`/`Statement.accept` are `Prop`-VALUED functions, so a toy `verify` cannot DECIDE
-acceptance against an ARBITRARY disclosed statement (no `Decidable (DfaAccepts stmt.δ …)` for opaque
-`Prop` δ), and `DfaVerifierKernel.extract` is universally quantified over statements. A faithful
-reference therefore needs the statement's transition/accept carried as DECIDABLE data (a `Bool`-valued
-table + accept set), with `verify` deciding the proof-trace against THAT — a small refactor of the
-reference `Statement` (NOT the generic kernel, which is correct as-is). This is left as a documented
-`-- OPEN:` honest follow-up; the bridge + the generic verify-sound/cascade/dial are the landed
-deliverables, and the bridge non-vacuity above is fully exercised on the real `a⁺b` automaton.
+The cascade (`dfa_verify_sound`/`dfa_registry_cascade`/`dfa_dial_wired`) is proved generically
+above for any `DfaVerifierKernel`. A concrete reference `def`-kernel over `ℕ`/`ℕ` faces an honest
+obstacle: the generic `Statement.δ`/`accept` are `Prop`-valued, so a toy `verify` cannot decide
+acceptance against an arbitrary statement (no `Decidable (DfaAccepts stmt.δ …)` for opaque `Prop`
+δ). A faithful reference needs the statement's transition/accept as decidable data (`Bool`-valued
+table + accept set) — a small refactor of the reference `Statement`, not the generic kernel.
 
--- OPEN: reference `DfaVerifierKernel` over a decidable-table `Statement` (the `Merkle.Reference`
--- analog). Needs `Statement.δ`/`accept` as `Bool`-valued decidable data so the toy `verify` can
--- DECIDE acceptance against any statement (the generic cascade is already proven & kernel-clean). -/
+-- OPEN: reference `DfaVerifierKernel` over a decidable-table `Statement`. Needs
+-- `Statement.δ`/`accept` as `Bool`-valued decidable data so the toy `verify` can decide acceptance
+-- against any statement (the generic cascade is already proved and kernel-clean). -/
 
 end Reference
 

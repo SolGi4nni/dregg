@@ -182,12 +182,10 @@ theorem confinement_preserved
 /-! ## LossyMorphism: structural ⟶ cryptographic unforgeability (attenuation-only) -/
 
 /-- A boundary morphism with an *inbound* restriction `ρ_in` and an *outbound*
-restriction `ρ_out`. Crossing a vat boundary may only ATTENUATE authority (remove
-rights / narrow predicates); it can never amplify. **Attenuation is part of the
-definition** — the structure carries the proofs `in_le`/`out_le` as fields (a
-non-attenuating endomap is simply not a `LossyMorphism`); this is *loss =
-revocation-by-construction*. (Statement-repair: the earlier version omitted these
-fields, making the attenuation theorem unprovable for an arbitrary morphism.) -/
+restriction `ρ_out`. Crossing a vat boundary may only attenuate authority (remove rights
+/ narrow predicates); it can never amplify. Attenuation is part of the definition: the
+structure carries `in_le`/`out_le` as fields (a non-attenuating endomap is not a
+`LossyMorphism`). -/
 structure LossyMorphism (P : Type*) [LE P] where
   ρ_in  : P → P
   ρ_out : P → P
@@ -196,10 +194,9 @@ structure LossyMorphism (P : Type*) [LE P] where
   /-- The outbound restriction never amplifies. -/
   out_le : ∀ a, ρ_out a ≤ a
 
-/-- **LossyMorphism attenuation — PROVED** (now that attenuation is a structure field):
-`ρ_in`/`ρ_out` are attenuation-only, so structural unforgeability lifts to cryptographic
-unforgeability and *loss is revocation-by-construction* — a right not carried across the
-boundary is, by construction, unexercisable on the far side. -/
+/-- **`lossy_attenuation_only`** — `ρ_in`/`ρ_out` are attenuation-only (their bounds are
+carried as structure fields), so structural unforgeability lifts to cryptographic
+unforgeability: a right not carried across the boundary is unexercisable on the far side. -/
 theorem lossy_attenuation_only
     [HeytingAlgebra P] (m : LossyMorphism P) (a : P) :
     m.ρ_in a ≤ a ∧ m.ρ_out a ≤ a :=

@@ -1,32 +1,19 @@
 /-
-# Dregg2.Crypto.BlindedSet — the SEVENTH end-to-end §8 discharge: blinded issuer-set membership.
+# Dregg2.Crypto.BlindedSet — §8 discharge: blinded issuer-set membership.
 
-**The seventh `WitnessedKind` (`Authority/Predicate.lean::WitnessedKind.blindedSet`,
-`cell/src/predicate.rs::WitnessedPredicateKind::BlindedSet`).** A holder proves it belongs to
-an issuer's authorized set — a Poseidon2 commitment (the issuer root) over the authorized
-members — WITHOUT revealing WHICH member it is (HOLDER ANONYMITY). This is exactly dregg1's
-`generate_blinded_merkle_poseidon2_trace` (`circuit/src/dsl/membership.rs:152`): public inputs
-`[blinded_leaf, root]`, where `blinded_leaf = hash_fact(leaf, [blinding])` hides the leaf and
-`root` is the issuer's authorized-set commitment. A BlindedSet membership IS a Merkle membership
-against the issuer root — so the gadget REUSES `Crypto.Merkle` wholesale, and the blinding is a
-SEPARATE epistemic obligation (the dial floor + a holder-anonymity carrier), exactly the
-`Privacy.blinded_membership_hides_element` discipline.
-
-The cascade mirrors Merkle/NonMembership/…:
+A holder proves membership in an issuer's authorized set (a Poseidon2 Merkle commitment over its
+members) without revealing which member (`blinded_leaf = hash_fact(leaf,[blinding])`). The
+membership relation IS a Merkle membership against the issuer root, so the gadget reuses
+`Crypto.Merkle` wholesale. Blinding is a separate epistemic obligation (dial floor +
+`HolderAnonymity` carrier), never an `axiom`/`sorry`.
 
     blindedset_bridge       : Satisfies blindedSetCircuit (root, member) ↔ MemberOf member set
-      [the gadget — REUSES `merkle_bridge` BOTH directions, no new seam]
-    blindedset_verify_sound : verify accepts → MemberOf  (DERIVED off the bridge + `extractable`)
-    blindedset_dial_wired   : the dial pinned to the verifier at the `acceptanceOnly` ZK floor
-      [blinded ⇒ the verifier learns "authorized", not WHICH holder — the holder-anonymity floor]
+    blindedset_verify_sound : verify accepts → MemberOf  (derived off the bridge + `extractable`)
+    blindedset_dial_wired   : dial pinned to verifier at `acceptanceOnly` (ZK floor; holder hidden)
 
-**The membership combinatorics ARE the Merkle recomposition** (fully proved, no primitive seam).
-The genuinely-cryptographic residue is twofold and BOTH stay honest carriers: (a) `compress`'s
-collision-resistance (the Layer-A `collisionHard`, consumed by `extractable`, never by the
-bridge); (b) the HOLDER-ANONYMITY indistinguishability — that the blinded transcript hides WHICH
-member — which is the dial-floor obligation, carried as the `acceptanceOnly` floor + a
-`HolderAnonymity` view-indistinguishability `Prop` (mirroring `blinded_membership_hides_element`),
-NEVER an `axiom`/`sorry`.
+Cryptographic residue: (a) `compress` collision-resistance (`collisionHard`, consumed by
+`extractable`); (b) holder-anonymity indistinguishability (`HolderAnonymity` carrier). Both are
+honest `Prop` carriers, never `axiom`/`sorry`.
 -/
 import Dregg2.Crypto.Merkle
 import Dregg2.Crypto.VerifierKernel
@@ -100,22 +87,17 @@ theorem blindedset_complete (compress : Digest → Digest → Digest) (root memb
     ∃ circuit : CircuitIR Digest, Satisfies compress circuit root member :=
   merkle_complete compress root member h
 
-/-- **`blindedset_bridge` — THE deliverable (the analog of `merkle_bridge`).** The blinded-set
-AIR's satisfiability is EXACTLY issuer-set membership: a satisfying (blinded) trace proves the
-holder is authorized (`blindedset_sound`), and every authorized member has a satisfying trace
-(`blindedset_complete`). This is `merkle_bridge` REUSED both directions — a BlindedSet membership
-IS a Merkle membership against the issuer root, with NO primitive seam inside. The blinding lives
-ENTIRELY in the epistemic dial floor (holder anonymity), never in this recomposition equivalence;
-`compress`'s collision-resistance (Layer-A `collisionHard`) is the only crypto residue, consumed
-by `blindedset_verify_sound`'s `extractable`, never by the bridge. -/
+/-- **`blindedset_bridge`** — the blinded-set AIR's satisfiability is exactly issuer-set
+membership: a satisfying trace proves the holder is authorized (`blindedset_sound`), and every
+authorized member has a satisfying trace (`blindedset_complete`). This is `merkle_bridge` reused
+both directions — no primitive seam. Blinding lives in the dial floor (holder anonymity), not here;
+`compress` CR is consumed by `blindedset_verify_sound`'s `extractable`, never by the bridge. -/
 theorem blindedset_bridge (compress : Digest → Digest → Digest) (root member : Digest) :
     (∃ circuit : CircuitIR Digest, Satisfies compress circuit root member)
       ↔ MemberOf compress root member :=
   merkle_bridge compress root member
 
--- TRIPWIRES: the blinded-set bridge is FULLY proven by reuse of `merkle_bridge` — kernel-clean,
--- NO primitive seam. The membership recomposition is the Merkle gadget; the holder-anonymity is
--- the dial-floor carrier (below), never an axiom these pins would catch.
+-- Tripwires: both bridge directions rest only on `merkle_bridge` — no primitive seam.
 #assert_axioms blindedset_sound
 #assert_axioms blindedset_complete
 #assert_axioms blindedset_bridge
@@ -203,16 +185,11 @@ class BlindedSetVerifierKernel (Digest : Type u) (Proof : Type u) where
 
 variable {Proof : Type u}
 
-/-- **`blindedset_verify_sound` — the DERIVED verify law (the analog of `merkle_verify_sound`).**
-Given the STARK-soundness carrier `extractable`, an accepted blinded-set proof PROVES SOME member
-is genuinely in the issuer's authorized set:
-
-    verify stmt proof = true  →  ∃ member, MemberOf compress stmt.root member
-
-The proof composes `extract` (accept ⇒ satisfying membership trace, the crypto carrier) with
-`blindedset_bridge`'s SOUNDNESS half (`= merkle_bridge.mp`, FULLY proved). The verify law is
-DERIVED, not assumed; the only hypothesis is `extractable`. The member stays existentially hidden
-— exactly the holder anonymity the dial floor records. -/
+/-- **`blindedset_verify_sound`** — given the STARK-soundness carrier `extractable`, an accepted
+blinded-set proof proves some member is in the issuer's authorized set:
+`verify stmt proof = true  →  ∃ member, MemberOf compress stmt.root member`.
+Derived by composing `extract` with `blindedset_bridge`'s soundness half; never assumed. The member
+stays existentially hidden, which is the holder anonymity the dial floor records. -/
 theorem blindedset_verify_sound [K : BlindedSetVerifierKernel Digest Proof]
     (hext : K.extractable) (stmt : Statement Digest) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -287,11 +264,9 @@ def blindedSetDisclose [BlindedSetVerifierKernel D P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`blindedset_dial_wired` — THE DIAL WIRING (the analog of `merkle_dial_wired`).** The
-blinded-set kind's epistemic floor is `acceptanceOnly` (blinded ⇒ holder-anonymity ZK floor), the
-dial's bottom notch's acceptance bit IS the verifier's `Discharged` bit, and — given STARK
-`extractable` — an accepting proof PROVES SOME member is in the issuer's authorized set (the
-member existentially hidden, which is the anonymity). The dial is pinned to the per-kind
+/-- **`blindedset_dial_wired`** — the blinded-set kind's floor is `acceptanceOnly` (holder-anonymity
+ZK floor), the dial's bottom notch IS the verifier's `Discharged` bit, and an accepting proof
+proves some member is in the issuer's authorized set (member hidden). Dial pinned to the per-kind
 verifier. -/
 theorem blindedset_dial_wired [K : BlindedSetVerifierKernel D P]
     (hext : K.extractable)
@@ -310,11 +285,10 @@ theorem blindedset_dial_wired [K : BlindedSetVerifierKernel D P]
       (blindedSetDisclose base stmt proof)
   · exact fun haccept => blindedset_verify_sound hext stmt proof haccept
 
-/-- **`blindedset_registry_cascade` — the §8 discharge through the registry (the analog of
-`merkle_registry_cascade`).** Registering the blinded-set kind, an accepted proof both
-`Discharged`s the kind's predicate (`registry_sound`) AND — given the STARK `extractable` carrier
-— PROVES SOME member is in the issuer's authorized set (`blindedset_verify_sound`). The cascade
-`registry_sound ∘ blindedset_verify_sound`; the single trust boundary is `extractable`. -/
+/-- **`blindedset_registry_cascade`** — registering the blinded-set kind, an accepted proof both
+`Discharged`s the kind's predicate (`registry_sound`) and — given `extractable` — proves some
+member is in the issuer's authorized set (`blindedset_verify_sound`). Single trust boundary:
+`extractable`. -/
 theorem blindedset_registry_cascade [K : BlindedSetVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P)
@@ -399,8 +373,7 @@ theorem reference_cascade_nonvacuous :
       ∧ ∃ member : Int, MemberOf refCompress authStmt.root member :=
   blindedset_registry_cascade (K := refKernel) trivial base authStmt 0 (by decide)
 
--- The non-vacuity witness's axiom footprint (the task's `#print axioms` requirement): the
--- reference cascade rests only on the standard axioms — NO `sorryAx`, NO crypto axiom.
+-- Non-vacuity axiom footprint: rests only on the standard axioms — no `sorryAx`, no crypto axiom.
 #print axioms reference_cascade_nonvacuous
 
 /-- A degenerate reference holder-anonymity kernel over `ℤ`: `view := fun _ _ => 0` (the blinded
@@ -429,10 +402,9 @@ example :
 
 end Reference
 
--- TRIPWIRES: the blinded-set bridge (reused `merkle_bridge`) + derived verify-soundness + cascade
--- + dial wiring + holder-anonymity are kernel-clean. The membership recomposition is FULLY proved
--- (the Merkle gadget); the ONLY cryptographic residue is the `extractable` carrier and the
--- `HolderAnonymity` advantage bound (both honest `Prop` carriers / hypotheses), never a `sorry`.
+-- Tripwires: bridge + verify-soundness + cascade + dial wiring + holder-anonymity are kernel-clean.
+-- Crypto residue: `extractable` carrier and `HolderAnonymity` advantage bound (honest `Prop`
+-- carriers), never a `sorry`.
 #assert_axioms blindedset_bridge
 #assert_axioms blindedset_verify_sound
 #assert_axioms blindedset_hides_holder

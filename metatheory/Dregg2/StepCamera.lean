@@ -228,19 +228,15 @@ reads through `=` (the OFE laws are `Eq` refl/symm/trans/mono/limit, `validN` co
 theorem discrete_camera_of_RA (R : Type u)
     [Dregg2.Resource.ResourceAlgebra R] :
     Nonempty (Camera R) := by
-  -- PROVED (no restriction on `R`). With the `eqv_zero`-totality non-axiom dropped from
-  -- `OFE`, the faithful discrete OFE `Eqv n := Eq` (`discreteEqv`) is admissible at EVERY
-  -- depth, including `n = 0`. Then every camera field reads through `=`:
+  -- With the `eqv_zero`-totality non-axiom dropped from `OFE`, the faithful discrete OFE
+  -- `Eqv n := Eq` (`discreteEqv`) is admissible at every depth, including `n = 0`. Then
+  -- every camera field reads through `=`:
   --   * the OFE laws are `Eq` refl/symm/trans/mono/limit (the last from any single `n`);
   --   * `validN _ := valid` makes `validN_mono`/`valid_iff_validN`/`validN_eqv` trivial;
-  --   * `op_nonExpansive_r`/`core_nonExpansive` are `Eq`-congruence (substitute `b = b'`,
-  --     `a = b`) — NO constant-core assumption needed, the raw-`Eq` conclusion holds because
-  --     the hypothesis IS the equality;
+  --   * `op_nonExpansive_r`/`core_nonExpansive` are `Eq`-congruence — the raw-`Eq`
+  --     conclusion holds because the hypothesis IS the equality;
   --   * `extend` at depth `n` has hypothesis `a = op b1 b2`, so `c1 := b1`, `c2 := b2`
-  --     witnesses it directly — NO unit / decomposition needed, the approximate
-  --     decomposition is already exact under `Eqv := Eq`.
-  -- The previous swarm's blocker was entirely the `eqv_zero := True` totality (now removed),
-  -- which had forced `Eqv 0 := True` and unguarded the two raw-`Eq` conclusions at `n = 0`.
+  --     witnesses it directly — the approximate decomposition is already exact under `Eqv := Eq`.
   refine ⟨{
     -- inherited `ResourceAlgebra R` fields:
     op    := Dregg2.Resource.ResourceAlgebra.op

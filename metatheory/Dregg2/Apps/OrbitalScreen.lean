@@ -1,56 +1,28 @@
 /-
-# Dregg2.Apps.OrbitalScreen — a CONSERVATIVE, continuous-time-SOUND collision screen.
+# Dregg2.Apps.OrbitalScreen — a conservative, continuous-time-sound collision screen.
 
-This module replaces the *toy 1-D snapshot* `Verify` of `Dregg2.Apps.RightOfWay` with a
-genuine **orbital relative-motion screen** whose "clear" verdict is sound on the **continuous
-trajectory**, not merely at sampled times. It discharges the single substantive piece the
-`right-of-way-response.md` flags as NOT inherited from the dregg2 core:
+A genuine orbital relative-motion screen whose "clear" verdict is sound on the continuous trajectory,
+not merely at sampled times. The headline: `screen_clear_imp_continuous_clear` — if the screen returns
+clear for a pair over a maneuver step, no continuous-time conjunction occurs anywhere in the step.
 
-  > "The sharp risk is **discretization error**: a 'clear' verdict on *sampled* times that
-  >  misses a between-samples closest approach. The soundness hinges on the screen being
-  >  provably *conservative*."
+## Honesty label
 
-The headline theorem (`screen_clear_imp_continuous_clear`): if the screen returns `clear`
-for a pair over a maneuver step, then **no continuous-time conjunction occurs anywhere in the
-step** — the screen OVER-APPROXIMATES the conjunction set, so a "clear" verdict is genuinely
-sound against the between-samples closest approach.
+**Real (proved, with teeth):**
+  * The relative trajectory is modelled as an affine function `d(t) = d0 + v·t` — the structure of
+    linearized CW/Hill relative orbital motion over one short step. For an affine trajectory
+    `‖d(t)‖²` is a quadratic (upward parabola), its minimum over `[0,T]` is computable, and we screen
+    it exactly. `screen_clear_imp_continuous_clear` is a real continuous-time soundness theorem.
+  * A second, strictly more conservative screen (`coarseClear`) based only on a speed bound `‖v‖ ≤
+    vmax`: certifies clearance via `sep(0) − vmax·T ≥ thr`, sound for any speed-bounded trajectory
+    (`coarse_clear_imp_lipschitz_clear`). The honest Lipschitz fallback.
 
-================================================================================
-## HONESTY LABEL — what is REAL physics, what is a modelling choice, what is the residual.
-================================================================================
+**Modelling choices:** positions/velocities are `ℚ`, whole screen is decidable and `#eval`-able. One
+maneuver step = screening window `[0,T]`; chaining is out of scope.
 
-**REAL (proved, with teeth):**
-  * The relative trajectory over one maneuver step is modelled as an **affine function of
-    time** `d(t) = d0 + v·t` (per spatial axis). This is EXACTLY the structure of linearized
-    relative orbital motion over a short step — the Clohessy–Wiltshire / Hill relative
-    equations are linear, and over one screening step the closing motion is to first order
-    `d0 + v·t`; equivalently it is the first-order (rectilinear) bound on any C¹ relative
-    trajectory. For an affine trajectory the squared separation `‖d(t)‖²` is a quadratic
-    (an upward parabola in `t`), so its minimum over the continuous interval `[0,T]` is
-    attained at a *computable* time and we screen it EXACTLY — `screen_clear_imp_continuous_clear`
-    is a real continuous-time soundness theorem, not a sampling.
-  * A second, *strictly more conservative* screen (`coarseClear`) that needs only a velocity
-    bound `‖v‖ ≤ vmax`: it certifies clearance via `sep(0) − vmax·T ≥ thr` and is sound for
-    **any** trajectory whose relative speed is ≤ `vmax` over the step (`coarse_clear_imp_lipschitz_clear`),
-    i.e. it does not even assume affinity — it is the honest Lipschitz fallback.
-
-**MODELLING CHOICES (honest, labelled):**
-  * Positions/velocities are rationals (`ℚ`) on a per-axis basis with `sq`-separation, so the
-    whole screen is decidable and `#eval`-able. The geometry is the genuine 3-D Euclidean
-    `‖·‖²`; we never approximate the metric.
-  * "One maneuver step" is the screening window `[0,T]`. A real deployment screens a sequence
-    of steps (a propagated ephemeris); chaining is exactly the dregg2 `chained_sound`
-    invariant-lifting shape and is OUT OF SCOPE here (it is inherited, not re-proved).
-
-**THE RESIDUAL (stated precisely, never faked):**
-  * Real orbital relative motion is NOT globally affine — over long horizons the CW solution
-    has trigonometric terms (the `n·t` secular + oscillatory parts). The affine model is the
-    first-order truth over ONE short step; for a longer step the HONEST screen is the
-    `coarseClear` Lipschitz bound (sound for any speed-bounded trajectory) with `vmax` the
-    max relative speed over the step. We do NOT claim the affine screen is exact for a full
-    orbit — we claim it is exact for the affine model and conservative-sound (via `coarseClear`)
-    for any speed-bounded continuous trajectory. Upgrading to a curvature-aware bound (a second
-    derivative / `n²`-term envelope) is the next refinement and is flagged OPEN below.
+**Residual (stated precisely):** real orbital relative motion is not globally affine — the CW solution
+has oscillatory terms over long horizons. The affine screen is exact for the affine model;
+`coarseClear` is sound for any speed-bounded trajectory. A curvature-aware bound is the next
+refinement and is flagged OPEN below.
 
 Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
@@ -256,12 +228,10 @@ real continuous-time-sound physics. -/
 def screen (d0 v : Vec3) (T thrSq : ℚ) : Bool :=
   decide (thrSq ≤ sepSq d0 v (tca d0 v T))
 
-/-- **`screen_clear_imp_continuous_clear` — THE KEYSTONE (PROVED).** If the screen returns
-`clear` (`true`) for a pair over the step `[0,T]`, then at EVERY continuous time `t ∈ [0,T]`
-the squared separation is at least the threshold — there is NO between-samples conjunction.
-The screen OVER-APPROXIMATES the conjunction set: a `clear` verdict is sound on the continuous
-trajectory, not merely at sampled times. This is the real-physics content `referee_sound`
-carries when this `screen` is plugged in at the verify seam. -/
+/-- **`screen_clear_imp_continuous_clear`** — if the screen returns clear for a pair over `[0,T]`,
+then at every continuous time `t ∈ [0,T]` the squared separation is at least the threshold. The screen
+over-approximates the conjunction set: a clear verdict is sound on the continuous trajectory, not merely
+at sampled times. -/
 theorem screen_clear_imp_continuous_clear
     (d0 v : Vec3) (T thrSq : ℚ) (hscreen : screen d0 v T thrSq = true)
     (t : ℚ) (h0 : 0 ≤ t) (hT : t ≤ T) :

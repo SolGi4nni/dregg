@@ -1,53 +1,25 @@
 /-
-# Dregg2.Proof.CoinductiveAdversary — the COINDUCTIVE unbounded-interleaving adversary.
+# Dregg2.Proof.CoinductiveAdversary — the coinductive unbounded-interleaving adversary.
 
-`Proof/ContendedCrossCell.lean` proved the **finite** two-turn contention dichotomy:
-disjoint / I-confluent contending turns commit schedule-agnostically
-(`contended_commits_confluent`); coupled Σ=0 turns admit NO schedule-agnostic commit
-(`coupled_no_schedule_agnostic_commit`). Its §9 named the residue precisely (its `-- OPEN (2)`):
+Lifts `ContendedCrossCell`'s finite two-turn dichotomy to an infinite adversarial schedule: an
+`InfinitePi`-shaped stream of turns driving the `Boundary` νF `TurnCoalg`. Proves:
 
-  > The genuinely-COINDUCTIVE adversary — schedules of UNBOUNDED interleaved turns over the
-  > `Boundary.TurnCoalg`, where the adversary is an infinite stream and the safe-fragment result
-  > is a **confluence-up-to-bisimulation** over `νF` (the `Boundary` coalgebra) … names the exact
-  > missing piece: an adversary-stream confluence theorem over `inducedSystem`.
+  * **Safe fragment (`obsBisim_traj_of_bisim`)**: given a `Boundary.IsBisim` relating
+    implementation and golden-oracle cells, driving both by the same infinite schedule keeps the
+    running pair `ObsBisim` (a native coinductive greatest-fixpoint over νF) forever —
+    confluence-up-to-bisimulation across the unbounded interleaving.
 
-THIS module LIFTS the safe fragment coinductively. It models the adversary as an **infinite
-stream of turns** driving the `Boundary` νF `TurnCoalg`, defines the running multi-cell
-**trajectory** and its **observation stream**, and PROVES — over the abstract `νF` frame, with
-native Lean-4.30 coinductive predicates as the coinduction engine and `Boundary.IsBisim` as the
-per-step relation — that:
+  * **Safety carried (`stepComplete_carries_infinite`)**: a step-complete `Impl` carries any
+    `StepInv`-preserved predicate `Good` along the whole infinite trajectory.
 
-  * **(safe fragment, PROVED — `obsBisim_traj_of_bisim`)** along ANY infinite adversarial schedule,
-    if the implementation and the golden-oracle Spec start bisimilar (one `Boundary.IsBisim`
-    witness relating them — the lifted finite safe-fragment base case), the running configuration
-    stays bisimilar to the golden-oracle trajectory FOREVER: their observation streams coincide at
-    every index, and the running pair stays in the bisimulation. This is the coinductive lift of
-    `contended_commits_confluent`'s schedule-agnostic-commit, stated and proved as a greatest-fixpoint
-    `ObsBisim` over `νF` rather than a two-point commutation. It is **confluence-up-to-bisimulation**:
-    the multi-cell trajectory is bisimilar to the oracle trajectory along the unbounded interleaving.
+  * **General case (`obsBisim_of_uptoComm`, §8)**: derives `ObsBisim` without a global
+    `IsBisim` witness, via the ported `Dregg2.Paco` `gupaco`/`gpaco_clo` up-to closure. Native
+    coinduction cannot thread per-step commutation rewrites under its recursive occurrence; Paco
+    does, sound by `commClo_compatible`.
 
-  * **(invariant carried — PROVED — `stepComplete_carries_infinite`)** a step-complete `Impl` carries
-    any `StepInv`-preserved safety predicate `Good` along the ENTIRE infinite trajectory (every
-    reachable index), via `Boundary.stepComplete_preserves` over `inducedSystem` — the safety face
-    of the same lift. No drifting future across the unbounded schedule.
-
-  * **(GENERAL case — PROVED, §8, `obsBisim_of_uptoComm`)** *deriving* the bisimulation from the
-    per-step finite dichotomy alone, without being handed it. This needs an **up-to-context / up-to-
-    commutation closure** that native coinduction's strict guardedness does not provide: the native
-    `coinductive` greatest-fixpoint accepts only guarded recursive calls, so the per-step
-    `applyHalfOut_comm_disjoint`-style rewrite cannot be threaded *under* the coinductive hypothesis.
-    §8 supplies the missing principle from the now-ported `Dregg2.Paco`: re-present `ObsBisim` as a
-    `paco` greatest fixpoint (`obsGen`), define the up-to-commutation closure `commClo`, prove it
-    `Compatible` with `obsGen` (`commClo_compatible`), and thread a *bisimulation up to commClo*
-    through `gpaco_clo`/`gpaco_clo_final` to derive the full `ObsBisim`. The closure is applied under
-    the greatest fixpoint, sound by compatibility — exactly the `gupaco`-shaped principle the
-    obstruction named. The former residue is closed.
-
-Discipline (the rails): no `axiom`/`admit`/`native_decide`/`sorry`. Deps: `Dregg2.Boundary` (the νF
-frame) + `Dregg2.Confluence` (the I-confluence judgement) + Lean-4.30 native `coinductive` + the
-vendored-and-ported `Dregg2.Paco` (MIT, 4.26→4.30; supplies `gupaco`/`gpaco_clo` for §8). The CG-5 /
-binding stays a hypothesis (never derived). Every keystone `#assert_axioms`-clean. The adversary is
-EXPLICIT data (`Sched`), never an oracle.
+No `axiom`/`admit`/`native_decide`/`sorry`. Deps: `Dregg2.Boundary`, `Dregg2.Confluence`,
+`Dregg2.Paco` (MIT, ported). The CG-5 / binding stays a hypothesis. Every keystone
+`#assert_axioms`-clean.
 -/
 import Dregg2.Boundary
 import Dregg2.Confluence
@@ -276,48 +248,23 @@ theorem obsBisim_refl (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
 #assert_axioms safe_fragment_iconfluent
 #assert_axioms obsBisim_refl
 
-/-! ## §7 — OUTCOME + the sharp obstruction (the precise residue).
+/-! ## §7 — Summary.
 
-The COINDUCTIVE safe-fragment lift (§3) is PROVED over the `Boundary` νF frame with Lean-4.30 NATIVE
-coinductive predicates as the engine (no `axiom`/`sorry`); the GENERAL case (§8) additionally uses
-the vendored-and-ported `Dregg2.Paco` `gupaco`/`gpaco_clo` up-to closure:
+  * **Confluence-up-to-bisimulation (`obsBisim_traj_of_bisim`):** given a `Boundary.IsBisim`
+    relating implementation and oracle cells, driving both by the same infinite adversarial schedule
+    keeps the running pair `ObsBisim` forever — observation streams coincide at every tick
+    (`obsStream_eq_of_bisim`). Discharged by `ObsBisim.coinduct` (guarded post-fixpoint).
 
-  * **Confluence-up-to-bisimulation (PROVED):** `obsBisim_traj_of_bisim` — given the lifted finite
-    safe-fragment base case (a `Boundary.IsBisim` relating implementation and golden-oracle cells),
-    driving BOTH by the SAME infinite adversarial schedule keeps the running multi-cell trajectory
-    `ObsBisim` (a native greatest-fixpoint bisimilarity over `νF`) to the oracle FOREVER — observation
-    streams coincide at every tick (`obsStream_eq_of_bisim`). This is exactly the lift
-    `ContendedCrossCell.lean §9 -- OPEN (2)` named: a greatest-fixpoint over `νF`, not a two-point
-    commutation. Discharged by `ObsBisim.coinduct` (the running-pair family is a guarded post-fixpoint).
+  * **Safety carried infinitely (`stepComplete_carries_infinite`):** a step-complete `Impl` carries
+    any `StepInv`-preserved `Good` along the whole unbounded trajectory via
+    `Boundary.stepComplete_preserves` over `inducedSystem`.
 
-  * **Safety carried infinitely (PROVED):** `stepComplete_carries_infinite` — a step-complete `Impl`
-    carries any `StepInv`-preserved `Good` along the WHOLE unbounded trajectory, via
-    `Boundary.stepComplete_preserves` over the reachable `inducedSystem`. No drifting future.
+  * **Non-vacuous (`obsBisim_refl`):** `ObsBisim` is genuinely inhabited; `safe_fragment_iconfluent`
+    ties the supplied relation back to `Confluence.IConfluent`.
 
-  * **Non-vacuous (PROVED):** `obsBisim_refl` — `ObsBisim` is genuinely inhabited (reflexive
-    bisimulation lifts), so the greatest fixpoint is not the trivially-false predicate; and
-    `safe_fragment_iconfluent` ties the supplied relation back to `Confluence.IConfluent`.
-
-What native Lean-4.30 coinduction SUFFICED for: the greatest-fixpoint definition (`coinductive
-ObsBisim`) and its coinduction principle (`ObsBisim.coinduct`) carried the entire safe-fragment lift,
-GIVEN the bisimulation relation as input. No Paco-Lean / CSLib dependency was needed for this fragment.
-
--- (FORMER OPEN — now CLOSED in §8 via the ported `Dregg2.Paco` `gupaco`/`gpaco_clo`):
---   the GENERAL case is to *DERIVE* the bisimulation from the per-step finite dichotomy ALONE — prove
---   `ObsBisim` for two coalgebras NOT handed a witness `R`, building the relatedness step-by-step with
---   a per-step `applyHalfOut_comm_disjoint`-shaped commutation rewrite of the successor BEFORE
---   re-invoking the coinductive predicate. This needs an UP-TO closure: close `ObsBisim` not under the
---   bare generator but under "the generator composed with the commutation context". Native
---   `coinductive`/`ObsBisim.coinduct` accepts ONLY a bare post-fixpoint (the recursive occurrence must
---   be syntactically guarded, never wrapped in a semantic closure). The missing principle was exactly a
---   PACO `gupaco` (parametrized coinduction with a guarded up-to closure) + its compatibility/soundness
---   meta-theorem. §8 now supplies it: the vendored `Dregg2.Paco` is ported to 4.30, and
---   `obsBisim_of_uptoComm` (§8) DERIVES `ObsBisim` from a bisimulation *up to the commutation closure*
---   `commClo` — threaded through `gpaco_clo`/`gpaco_clo_final`, sound by `commClo_compatible`
---   (`Compatible obsGen commClo`). The closure is applied UNDER the greatest fixpoint, with soundness
---   preserved by compatibility — the precise `gupaco`-shaped principle the obstruction named. The
---   residue is gone; both the supplied-relation fragment (§3) and the derive-the-relation general case
---   (§8) are PROVED, `#assert_axioms`-clean.
+  * **General case (`obsBisim_of_uptoComm`, §8):** derives `ObsBisim` WITHOUT being handed a
+    global `IsBisim` witness, by threading the per-step commutation rewrite through the ported
+    `Dregg2.Paco` `gupaco`/`gpaco_clo` up-to closure, sound by `commClo_compatible`.
 -/
 
 /-! ## §8 — CLOSING the §7 OPEN: the GENERAL case via the ported Paco `gupaco` up-to closure.

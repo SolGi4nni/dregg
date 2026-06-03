@@ -1,45 +1,31 @@
 /-
-# Dregg2.DSL — the `dregg_program { … }` cell-program eDSL (PHASE-EDSL DSL-A).
+# Dregg2.DSL — the `dregg_program { … }` cell-program eDSL.
 
-This is **DSL-A** of `docs/rebuild/PHASE-EDSL.md`, restricted to the first-party / decidable
-fragment of the catalog (PHASE-EDSL §"Recommended minimal first DSL"): a term-level eDSL that
-elaborates a readable block of named-field constraints **directly to a verified
-`RecordProgram`** (`Exec/Program.lean`).
-
-It is the dregg2 migration of dregg1's external `#[dregg_caveat]`/`#[dregg_effect]` proc-macros
-(`dregg-dsl/src/lib.rs`, lowering to a flat `RequirementKind` IR fanned to 8 codegen backends).
-In dregg2 there is NO separate IR and NO codegen gap: a `dregg_program { … }` term *is* a
+A term-level eDSL that elaborates a readable block of named-field constraints directly to a
+verified `RecordProgram` (`Exec/Program.lean`). A `dregg_program { … }` term IS a
 `RecordProgram` — a value in the verified theory — so `recReplay_preserves_sumEquals` /
-`recCexec_attests` (`Exec/RecordCellLive.lean`) apply to *this exact term*.
+`recCexec_attests` apply to the exact elaborated term.
 
-## The rail (PHASE-EDSL §3, REORIENT §6)
-The eDSL is a **parser onto already-proved smart constructors** — `declare_syntax_cat` +
-`macro_rules` translating each atom to the EXACT `SimpleConstraint`/`StateConstraint`/
-`RecordProgram` constructor names of `Exec/Program.lean`. There is **no new metatheory** and
-**no `sorry`**: the elaborated term's behaviour is characterized by the existing `@[simp]
-admits_*` / `evalSimple_*` / `evalConstraint_*` lemmas, and is checked here by `rfl`/`decide`.
+The eDSL is a parser onto already-proved smart constructors: `declare_syntax_cat` +
+`macro_rules` translating each atom to the exact `SimpleConstraint`/`StateConstraint`/
+`RecordProgram` constructor of `Exec/Program.lean`. No new metatheory, no `sorry`.
 
-## Covered (first-party / decidable) vs deferred
-COVERED atoms (each → its catalog constructor, see the `macro_rules` below):
-  `f >= v` / `f <= v` / `f = v`          → `.simple (.fieldGe/.fieldLe/.fieldEquals …)`
-  `monotonic f` / `strictMono f`         → `.simple (.monotonic/.strictMono …)`
-  `immutable f` / `writeOnce f`          → `.simple (.immutable/.writeOnce …)`
-  `f := old + d`                         → `.simple (.fieldDelta …)`
-  `not c`                                → `.simple (.not …)`
-  `f <= g` (field ≤ field)               → `.fieldLeField …`
-  `sum [fs] = v`                         → `.sumEquals …`
-  `conserve [ins] => [outs]`             → `.sumEqualsAcross …`
-  `f in old + [lo, hi]`                  → `.fieldDeltaInRange …`
-  `f : a => b`                           → `.allowedTransitions …`
-  `any { c , … }`                        → `.anyOf …`
-  `on m { … }`                           → a `.cases` arm (`⟨.methodIs m, …⟩`)
-  `invariant { … }`                      → a `.predicate` block
+Covered atoms (each → its catalog constructor):
+  `f >= v` / `f <= v` / `f = v`     → `.simple (.fieldGe/.fieldLe/.fieldEquals …)`
+  `monotonic f` / `strictMono f`    → `.simple (.monotonic/.strictMono …)`
+  `immutable f` / `writeOnce f`     → `.simple (.immutable/.writeOnce …)`
+  `f := old + d`                    → `.simple (.fieldDelta …)`
+  `not c`                           → `.simple (.not …)`
+  `f <= g` (field ≤ field)          → `.fieldLeField …`
+  `sum [fs] = v`                    → `.sumEquals …`
+  `conserve [ins] => [outs]`        → `.sumEqualsAcross …`
+  `f in old + [lo, hi]`             → `.fieldDeltaInRange …`
+  `f : a => b`                      → `.allowedTransitions …`
+  `any { c , … }`                   → `.anyOf …`
+  `on m { … }`                      → a `.cases` arm
+  `invariant { … }`                 → a `.predicate` block
 
-DEFERRED (need the verify/find seam / proof-carrying elaboration — PHASE-EDSL §3, out of scope
-for DSL-A): `witnessed s`, `circuit h`, `boundDelta …`. Also deferred: DSL-B (`dregg_choreo`)
-and DSL-C (`dregg_effect`).
-
-Pure metaprogramming over `Exec.Program`; no `axiom`/`admit`/`native_decide`/`sorry`.
+Deferred (require the verify/find seam): `witnessed s`, `circuit h`, `boundDelta …`.
 -/
 import Dregg2.Exec.Program
 import Dregg2.Tactics      -- for the `#assert_axioms` honesty pin
@@ -147,12 +133,9 @@ macro_rules
 
 /-! ### `on m { … }` arms (`TransitionCase`). -/
 
-/-- `on m { c , … }` — a method-dispatching `Cases` arm; `m` is an **identifier** naming the
-method id (the symbol table). Resolving the symbol (`deposit`) to a `Nat` is left to the caller
-(define `def deposit : Nat := …`): the `on`-rule emits `TransitionGuard.methodIs deposit`, so
-the identifier is elaborated as an ordinary term reference to that `def`. Using `ident` (not
-`term`) avoids the `term`-grabs-the-`{…}`-block ambiguity, keeping this a pure `macro`
-(PHASE-EDSL §3 — the one place §3 anticipated possibly needing an `elab` is sidestepped). -/
+/-- `on m { c , … }` — a method-dispatching `Cases` arm; `m` is an identifier naming the method id.
+The caller resolves the symbol to a `Nat`; the rule emits `TransitionGuard.methodIs m`. Using
+`ident` (not `term`) avoids the `term`-grabs-the-`{…}` ambiguity. -/
 syntax (name := dreggCaseSyn) "on " ident " { " dregg_constraint,* " }" : dregg_case
 
 syntax (name := dreggCaseElab) "dregg_case% " dregg_case : term
@@ -162,20 +145,15 @@ macro_rules
 
 /-! ## §4 — The top-level `dregg_program { … }` block.
 
-A `dregg_program` block is a sequence of items, each either an `on m { … }` case or an
-`invariant { … }` predicate block. To stay decidable and structurally simple we support the two
-shapes PHASE-EDSL §4 uses:
+A `dregg_program` block is a `;`-separated sequence of `on m { … }` cases and `invariant { … }`
+blocks. Two shapes:
 
-  * **all-`invariant`** (the counter): `dregg_program { invariant { c , … } }` → `.predicate […]`.
-    (Constraints *within* a block are `,`-separated — a single-token separator that splices
-    cleanly; program ITEMS are `;`-separated.)
-    Multiple `invariant` blocks concatenate their constraints into one `.predicate`.
-  * **`on`-arms + a trailing `invariant`** (the escrow): each `on m { … }` becomes a method
-    arm; a trailing `invariant { … }` becomes an `always`-guarded arm (so its constraints bind
-    on every matching transition). Mixing `on`-arms with an `invariant` ⇒ a `.cases` program.
+  * All-`invariant` (counter shape): elaborates to `.predicate […]`.
+  * `on`-arms + trailing `invariant` (escrow shape): each `on` arm becomes a method arm; the
+    `invariant` becomes an `always`-guarded arm. Mixing ⇒ `.cases`.
 
-(If ONLY `invariant`s appear, we emit the leaner `.predicate` form so the counter elaborates to
-*exactly* `counterProgram`.) -/
+If only `invariant`s appear, we emit `.predicate` so the counter elaborates to exactly
+`counterProgram`. -/
 
 declare_syntax_cat dregg_item
 syntax dregg_case                              : dregg_item   -- an `on m { … }` arm
@@ -215,20 +193,19 @@ macro_rules
         -- a pure `.predicate` program (the counter shape).
         `(RecordProgram.predicate [ $invStxs,* ])
 
-/-! ## §5 — Worked example: the monotonic counter (PHASE-EDSL §4).
+/-! ## §5 — Worked example: the monotonic counter.
 
-`dregg_program { invariant { monotonic count } }` must elaborate to **exactly** the existing
-`counterProgram` (`Exec/Program.lean`): `.predicate [.simple (.monotonic "count")]`. Proved by
-`rfl`. -/
+`dregg_program { invariant { monotonic count } }` elaborates to exactly
+`counterProgram` (`.predicate [.simple (.monotonic "count")]`), proved by `rfl`. -/
 
 /-- The counter, written in the eDSL. -/
 def counter : RecordProgram := dregg_program {
   invariant { monotonic count }
 }
 
-/-- **The eDSL counter IS exactly the hand-written `counterProgram` — PROVED by `rfl`.** This is
-the headline of DSL-A: ~3 readable lines elaborate to the precise verified catalog term, so the
-already-proved `recReplay_preserves_sumEquals` / `recCexec_attests` apply to *this* term. -/
+/-- **The eDSL counter IS exactly `counterProgram` — proved by `rfl`.** The readable block
+elaborates to the precise verified catalog term; `recReplay_preserves_sumEquals` /
+`recCexec_attests` apply to this term. -/
 theorem counter_eq_counterProgram : counter = counterProgram := rfl
 
 #assert_axioms counter_eq_counterProgram
@@ -241,17 +218,14 @@ example : counter.admits 0 counterOld counterDn = false := by decide
 #eval counter.admits 0 counterOld counterUp     -- true
 #eval counter.admits 0 counterOld counterDn     -- false
 
-/-! ## §6 — Worked example: the escrow (PHASE-EDSL §4).
+/-! ## §6 — Worked example: the escrow.
 
-`deposit`/`release` are method ids (plain `Nat` defs — the caller-supplies-the-symbol-table
-discipline of §3). The escrow:
-
+`deposit`/`release` are method ids (plain `Nat` defs). The escrow:
   * `on deposit  { strictMono balance }`
   * `on release  { status : 1 => 2 , immutable amount }`
   * `invariant   { conserve [locked] => [paid] }`
 
-elaborates to the `.cases` program of PHASE-EDSL §4: two method arms + one `always` conservation
-arm; an unknown method is default-denied. -/
+Elaborates to a `.cases` program with two method arms + one `always` conservation arm. -/
 
 /-- Method ids (the symbol table the eDSL `on` resolves against). -/
 def deposit : Nat := 1
@@ -264,7 +238,7 @@ def escrow : RecordProgram := dregg_program {
   invariant   { conserve [locked] => [paid] }
 }
 
-/-- **The escrow elaborates to exactly the §4 `.cases` term — PROVED by `rfl`.** Two
+/-- **The escrow elaborates to exactly its `.cases` term — proved by `rfl`.** Two
 method-dispatching arms (`deposit`/`release`) + one `always` conservation arm. -/
 theorem escrow_eq_expected :
     escrow = RecordProgram.cases
@@ -301,11 +275,10 @@ example :
       (.record [("status", .int 1), ("amount", .int 7), ("locked", .int 50), ("paid", .int 0)])
       (.record [("status", .int 2), ("amount", .int 9), ("locked", .int 70), ("paid", .int 20)]) = false := by decide
 
--- HONEST SEMANTICS NOTE (corrects PHASE-EDSL §4 VC 1): because the escrow carries a trailing
--- `invariant` (an `always`-guarded arm), the `always` arm matches EVERY method — so an unknown
--- method is NOT default-denied; it is governed by the conservation invariant alone. (Pure
--- default-deny on unknown methods holds only for an `on`-arms-ONLY program with no `invariant`,
--- e.g. `Exec.depositOnly`.) An unknown method that VIOLATES conservation IS denied:
+-- HONEST SEMANTICS: because the escrow carries a trailing `invariant` (an `always`-guarded arm),
+-- the `always` arm matches EVERY method — so an unknown method is NOT default-denied; it is
+-- governed by the conservation invariant alone. Default-deny on unknown methods holds only for
+-- an `on`-arms-only program with no `invariant`. An unknown method that VIOLATES conservation IS denied:
 example :
     escrow.admits 3
       (.record [("locked", .int 50), ("paid", .int 0)])
@@ -322,10 +295,9 @@ example : depositOnly.admits 2 balLo balHi = false := by decide
   (.record [("locked", .int 50), ("paid", .int 0)])
   (.record [("locked", .int 99), ("paid", .int 0)])                            -- false (violates conservation)
 
-/-! ## §7 — A few more atom smoke-tests (each atom elaborates to its catalog constructor).
+/-! ## §7 — Atom smoke-tests.
 
-These pin the remaining first-party atoms to their exact constructors by `rfl`, documenting the
-1:1 surface→catalog map and guarding it against drift. -/
+Pin the remaining first-party atoms to their exact constructors by `rfl`. -/
 
 example : (dregg_program { invariant { balance >= 0 } } : RecordProgram)
         = .predicate [.simple (.fieldGe "balance" 0)] := rfl

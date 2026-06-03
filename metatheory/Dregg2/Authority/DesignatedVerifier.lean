@@ -1,66 +1,42 @@
 /-
-# Dregg2.Authority.DesignatedVerifier — the MISSING transferability axis (public vs designated-verifier).
+# Dregg2.Authority.DesignatedVerifier — the transferability axis (public vs designated-verifier).
 
-## The gap this module closes (the carry-forward synthesis Face-3 / ground-auth Part-2)
+dregg's authorization proof verifies as a pure function of the proof and public inputs, with no
+verifier-secret parameter anywhere:
 
-dregg is **hardwired to maximal transferability**, hence **non-repudiable**. Concretely, the
-running system's authorization proof verifies as a *pure function of the proof and PUBLIC inputs*,
-with **no verifier-secret parameter anywhere**:
+* `circuit/src/presentation.rs:224` — `pub fn verify(&self) -> PresentationVerification` takes only
+  `&self` and checks it against the public `federation_root` / `request_predicate` / `timestamp`
+  (no `verifier_secret` argument exists in the whole crate). Any third party holding the proof + root
+  recomputes the identical `Valid` verdict.
+* The Lean side: `Laws.Discharged p w := Verifiable.Verify p w = true` (`Dregg2/Laws.lean:38`) is a
+  single universal verify relation, not indexed by who is checking. The model cannot even express
+  "convincing only to verifier V" — every discharged transcript convinces everyone: non-repudiation.
 
-* `circuit/src/presentation.rs:224` — `pub fn verify(&self) -> PresentationVerification` takes ONLY
-  `&self` (the proof) and checks it against the *public* `federation_root` /
-  `request_predicate` / `timestamp` (`presentation.rs:36-46`, the "Public inputs" docblock). There
-  is no `verifier_secret` / `verifier_sk` argument — a grep of the whole crate finds none. So ANY
-  third party holding the proof + the public root recomputes the identical `Valid` verdict.
-* The Lean side mirrors exactly this: `Laws.Discharged p w := Verifiable.Verify p w = true`
-  (`Dregg2/Laws.lean:38`) and `Crypto.discharged_iff_verify` (`Dregg2/CryptoKernel.lean:75`) — a
-  **single UNIVERSAL** verify relation, *not indexed by who is checking*. The model therefore
-  **cannot even EXPRESS** "convincing only to verifier V": every discharged transcript convinces
-  everyone, which is precisely non-repudiation.
+This is a genuine missing axis, orthogonal to the disclosure dials of `Privacy.lean` and to the
+attenuation dial of `Caveat.lean`. Disclosure controls what the proof reveals; transferability
+controls to whom it is convincing. A proof can be fully zero-knowledge yet still non-repudiable.
 
-This is a genuine *missing axis*, orthogonal to the disclosure dials of `Privacy.lean` (Tier-1
-field privacy, `Dregg2/Privacy.lean:66`) and to the attenuation dial of `Caveat.lean`. Disclosure
-controls *what the proof reveals*; transferability controls *to whom the proof is convincing*. A
-proof can be fully zero-knowledge yet still non-repudiable (transferable to all verifiers); these
-are independent.
+This module adds the verifier-indexed discharge `DischargedFor : Verifier → Statement → Proof → Prop`
+and the two endpoints of a transferability dial:
 
-## What this module ADDS
+* **PUBLIC / transferable** = `∀ V, DischargedFor V s p` — convinces everyone, hence non-repudiable
+  (the current dregg behaviour, recovered as the `∀ V` collapse: `publicMode_collapses_to_universal`).
+* **DESIGNATED-VERIFIER** = `DischargedFor V₀ s p` for a specific `V₀` holding a verifier-secret,
+  together with `¬ Transferable` — convinces `V₀` and NOT everyone. Non-transferable / deniable:
+  `V₀` could have produced the same transcript using its verifier-secret, so the transcript proves
+  nothing to a third party, and the authorizer can repudiate.
 
-The **verifier-indexed discharge** `DischargedFor : Verifier → Statement → Proof → Prop`, and the
-two endpoints of a **transferability DIAL**:
+§8 portal: the DV-ZK / deniable-authentication crypto is an honest Prop-portal, carried as a class
+(`DVKernel`) of opaque oracles + named laws — never faked as proved in Lean. `verifyFor`, `simulate`,
+and the law `simulate_indistinguishable` are §8 obligations the deniable-auth scheme discharges.
 
-* **PUBLIC / transferable** = `∀ V, DischargedFor V s p` — convinces *everyone*, hence
-  **non-repudiable** (this is exactly the current dregg `presentation.rs::verify`, which has no
-  verifier index, recovered as the `∀ V` collapse: `publicMode_collapses_to_universal`).
-* **DESIGNATED-VERIFIER** = `DischargedFor V₀ s p` for a *specific* `V₀` holding a verifier-secret,
-  together with `¬ Transferable` — convinces `V₀` and **NOT everyone**. This is **non-transferable**
-  / **deniable**: by the SIMULATOR property, `V₀` could itself have produced the very same
-  transcript using its verifier-secret, so the transcript proves *nothing to a third party*, and the
-  authorizer can **REPUDIATE** it.
-
-## The §8 portal vs the modeled content (the RAIL, `CryptoKernel.lean`, `REORIENT §6`)
-
-The DV-ZK / deniable-authentication CRYPTO is an honest **§8 Prop-portal**, carried as a class
-(`DVKernel`) of opaque oracles + their *named laws* — NEVER faked as proved in Lean:
-
-* `verifyFor` (the verifier-indexed oracle), `simulate` (the verifier's own transcript-forger), and
-  the law **`simulate_indistinguishable`** (a `V₀`-simulated transcript verifies *under `V₀`* exactly
-  as a real one) are the §8 obligations the deniable-auth scheme (e.g. a chameleon-hash / DV-NIZK)
-  discharges. They are class fields, not theorems.
-
-The **genuine modeled content** (all PROVED here, no `sorry`/`axiom`/`native_decide`) is the
-*verifier-indexing of discharge* and the *simulator-based deniability argument*:
-
+Proved here (no `sorry`/`axiom`/`native_decide`):
 * `public_is_transferable` / `public_convinces_any_third_party` — public mode is non-repudiable;
-* `designated_not_transferable` — the designated mode has a verifier it does NOT convince (teeth);
-* `designated_is_deniable` — the SIMULATOR repudiation: the designated transcript is reproducible by
-  `V₀` alone, so it carries zero evidence against the authorizer for any third party;
-* `dial_endpoints_distinct` — the two modes are genuinely the two ENDPOINTS of the dial (a witnessed
-  separation, not a vacuous `True`).
+* `designated_not_transferable` — designated mode has a verifier it does NOT convince;
+* `designated_is_deniable` — the simulator repudiation;
+* `dial_endpoints_distinct` — the two modes are genuinely distinct (a witnessed separation, not vacuous).
 
-ADDITIVE: a NEW module under `namespace Dregg2.Authority.DV`. Pure, computable, `#eval`-able over a
-reference DV-kernel that witnesses the interface is inhabitable (so the parametric theorems are not
-vacuous).
+Pure, computable, `#eval`-able over a reference DV-kernel that witnesses the interface is inhabitable.
 -/
 import Dregg2.CryptoKernel
 
@@ -70,17 +46,15 @@ open Dregg2.Crypto (CryptoKernel)
 
 /-! ## The §8 portal: a verifier-indexed deniable-authentication kernel.
 
-This is the deniable-auth analogue of `CryptoKernel` (`Dregg2/CryptoKernel.lean:40`): the
-operation *types* are uninterpreted and the operations are opaque oracles; the law fields are the
-obligations the DV-NIZK / chameleon-hash impl discharges, **assumed, never proved in Lean** (§8).
-The single new thing over `CryptoKernel` is that the verify oracle is **indexed by the verifier** —
-which is exactly the axis the running `presentation.rs::verify` (`:224`) lacks. -/
+The deniable-auth analogue of `CryptoKernel` (`Dregg2/CryptoKernel.lean:40`): operation types are
+uninterpreted, operations are opaque oracles, law fields are §8 obligations assumed never proved.
+The single new element over `CryptoKernel`: the verify oracle is indexed by the verifier — the axis
+the running `presentation.rs::verify` (`:224`) lacks. -/
 
 /-- **`DVKernel Verifier Statement Proof VSecret`** — the §8 deniable-authentication portal.
-
-`Verifier` identifies a checking party; `VSecret` is a verifier's *verification secret* (the trapdoor
-that powers the simulator — a DV scheme's chameleon trapdoor / the designated verifier's secret key).
-All operations are OPAQUE; the law fields are §8 obligations the crypto scheme discharges. -/
+`Verifier` identifies a checking party; `VSecret` is a verifier's verification secret (the trapdoor
+powering the simulator — a chameleon trapdoor / designated verifier's secret key). All operations
+are opaque; the law fields are §8 obligations the crypto scheme discharges. -/
 class DVKernel (Verifier : Type) (Statement : Type) (Proof : Type) (VSecret : Type) where
   /-- **The verifier-INDEXED verify oracle (§8).** Does `proof` discharge `stmt` *for verifier* `V`?
   The verifier index is the whole point: unlike `CryptoKernel.verify` (`CryptoKernel.lean:46`) and
@@ -106,10 +80,9 @@ variable {Verifier Statement Proof VSecret : Type}
 
 /-! ## The new axis: verifier-INDEXED discharge `DischargedFor`. -/
 
-/-- **`DischargedFor V stmt proof`** — the verifier-indexed discharge: verifier `V` is convinced that
-`proof` discharges `stmt`. This is the missing generalization of `Laws.Discharged`
-(`Dregg2/Laws.lean:38`), which had NO verifier index — collapsing this to a single universal relation
-is exactly what hardwires dregg to non-repudiation. Here the verdict is *relative to a checker*. -/
+/-- **`DischargedFor V stmt proof`** — verifier `V` is convinced that `proof` discharges `stmt`.
+The verifier-indexed generalization of `Laws.Discharged` (`Dregg2/Laws.lean:38`), which had no
+verifier index — collapsing to a single universal relation hardwires dregg to non-repudiation. -/
 def DischargedFor [DVKernel Verifier Statement Proof VSecret]
     (V : Verifier) (stmt : Statement) (proof : Proof) : Prop :=
   DVKernel.verifyFor (VSecret := VSecret) V stmt proof = true
@@ -121,27 +94,25 @@ instance [DVKernel Verifier Statement Proof VSecret]
 
 /-! ## The transferability DIAL and its two endpoints. -/
 
-/-- **`Transferable Verifier stmt proof`** (= the PUBLIC endpoint) — the transcript convinces **every**
-verifier in `Verifier`. This is the `∀ V` collapse that recovers dregg's current behaviour: with no
-verifier index, `presentation.rs::verify` (`:224`) gives the same verdict to all checkers, so a valid
-proof is transferable to all = **non-repudiable**. `Verifier` is an EXPLICIT argument so the
-quantified universe is always pinned (it cannot be inferred from `stmt`/`proof`). -/
+/-- **`Transferable Verifier stmt proof`** (= the public endpoint) — the transcript convinces every
+verifier. The `∀ V` collapse that recovers dregg's current behaviour: `presentation.rs::verify` (`:224`)
+gives the same verdict to all checkers = non-repudiable. `Verifier` is explicit so the quantified
+universe is always pinned. -/
 def Transferable (Verifier : Type) {Statement Proof VSecret : Type}
     [DVKernel Verifier Statement Proof VSecret]
     (stmt : Statement) (proof : Proof) : Prop :=
   ∀ V : Verifier, DischargedFor (VSecret := VSecret) V stmt proof
 
-/-- **`DesignatedFor V₀ stmt proof`** (= the DESIGNATED-VERIFIER endpoint) — the transcript convinces
-the *specific* designated verifier `V₀` and is **NOT** transferable (does not convince everyone). This
-is the mode dregg cannot currently express; the two conjuncts are the dial set to its
-non-transferable extreme. -/
+/-- **`DesignatedFor V₀ stmt proof`** (= the designated-verifier endpoint) — the transcript convinces
+the specific `V₀` and is NOT transferable. The mode dregg cannot currently express; the two conjuncts
+set the dial to its non-transferable extreme. -/
 def DesignatedFor [DVKernel Verifier Statement Proof VSecret]
     (V₀ : Verifier) (stmt : Statement) (proof : Proof) : Prop :=
   DischargedFor (VSecret := VSecret) V₀ stmt proof
     ∧ ¬ Transferable Verifier (VSecret := VSecret) stmt proof
 
-/-- **`TransferDial`** — the transferability dial, a two-valued setting beside the disclosure dials of
-`Privacy.lean` (`:66`) and the attenuation dial of `Caveat.lean`. `public` is "convince everyone"
+/-- **`TransferDial`** — the transferability dial, a two-valued setting alongside the disclosure dials
+of `Privacy.lean` and the attenuation dial of `Caveat.lean`. `transferable` is "convince everyone"
 (non-repudiable); `designated V₀` is "convince only `V₀`" (deniable). -/
 inductive TransferDial (Verifier : Type) where
   /-- The PUBLIC setting: maximal transferability — the current, only mode dregg ships. -/
@@ -161,28 +132,26 @@ def DialHolds [DVKernel Verifier Statement Proof VSecret]
 
 /-! ## (a) PUBLIC mode is transferable / non-repudiable. -/
 
-/-- **`public_is_transferable` (PROVED)** — the public-endpoint dial setting is exactly
-`Transferable`: definitional, but it pins the claim that the `public` constructor denotes universal
-convincing. -/
+/-- **`public_is_transferable`** — the transferable-endpoint dial setting is exactly `Transferable`:
+definitional, pinning that the `transferable` constructor denotes universal convincing. -/
 theorem public_is_transferable [DVKernel Verifier Statement Proof VSecret]
     (stmt : Statement) (proof : Proof)
     (h : DialHolds (VSecret := VSecret) (Verifier := Verifier) .transferable stmt proof) :
     Transferable Verifier (VSecret := VSecret) stmt proof := h
 
-/-- **`public_convinces_any_third_party` (PROVED) — NON-REPUDIATION.** If a transcript is in the
-public mode, then *any* third party `W` — no matter who — is convinced (`DischargedFor W`). The
-authorizer cannot deny it to anyone: this is precisely the non-repudiation that dregg's
-verifier-index-free `presentation.rs::verify` (`:224`) forces on every authorization. -/
+/-- **`public_convinces_any_third_party`** — NON-REPUDIATION. If a transcript is transferable, any
+third party `W` is convinced (`DischargedFor W`). The authorizer cannot deny it to anyone: the
+non-repudiation that dregg's verifier-index-free `presentation.rs::verify` (`:224`) forces on every
+authorization. -/
 theorem public_convinces_any_third_party [DVKernel Verifier Statement Proof VSecret]
     (stmt : Statement) (proof : Proof)
     (h : Transferable Verifier (VSecret := VSecret) stmt proof) (W : Verifier) :
     DischargedFor (VSecret := VSecret) W stmt proof :=
   h W
 
-/-- **`publicMode_collapses_to_universal` (PROVED)** — the bridge naming the gap: the current dregg
-behaviour (a single universal verdict, `Laws.Discharged` with no index, `presentation.rs:224`) is
-EXACTLY the `public` endpoint of this new dial. The pre-existing model was the `∀ V` collapse all
-along; this module simply re-exposes the verifier index the collapse hid. -/
+/-- **`publicMode_collapses_to_universal`** — the current dregg behaviour (`Laws.Discharged` with no
+verifier index, `presentation.rs:224`) is exactly the `transferable` endpoint of the dial: the `∀ V`
+collapse that the pre-existing model used all along. -/
 theorem publicMode_collapses_to_universal [DVKernel Verifier Statement Proof VSecret]
     (stmt : Statement) (proof : Proof) :
     DialHolds (VSecret := VSecret) (Verifier := Verifier) .transferable stmt proof
@@ -191,18 +160,17 @@ theorem publicMode_collapses_to_universal [DVKernel Verifier Statement Proof VSe
 
 /-! ## (b) DESIGNATED mode is NON-transferable — a party other than `V₀` is not convinced. -/
 
-/-- **`designated_convinces_V0` (PROVED)** — the designated verifier `V₀` *is* convinced: the first
-conjunct of the designated endpoint. The mode is not vacuous on the side that matters to `V₀`. -/
+/-- **`designated_convinces_V0`** — the designated verifier `V₀` is convinced: the first conjunct of
+the designated endpoint. The mode is not vacuous on the side that matters to `V₀`. -/
 theorem designated_convinces_V0 [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
     (h : DesignatedFor (VSecret := VSecret) V₀ stmt proof) :
     DischargedFor (VSecret := VSecret) V₀ stmt proof := h.1
 
-/-- **`designated_not_transferable` (PROVED) — THE NON-TRANSFERABILITY TEETH.** A designated-verifier
-transcript is NOT transferable: there is no claim it convinces everyone. From `¬ Transferable` (= `¬
-∀ V, …`) we extract a *concrete* verifier `W` the transcript does **not** convince
-(`¬ DischargedFor W`). So a third party other than `V₀` can genuinely fail to be persuaded — the
-opposite of non-repudiation, and a behaviour dregg's universal verify cannot produce. -/
+/-- **`designated_not_transferable`** — a designated-verifier transcript is NOT transferable. From
+`¬ Transferable` (= `¬ ∀ V, …`) we extract a concrete verifier `W` the transcript does not convince
+(`¬ DischargedFor W`). A third party other than `V₀` can genuinely fail to be persuaded — the
+opposite of non-repudiation, a behaviour dregg's universal verify cannot produce. -/
 theorem designated_not_transferable [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
     (h : DesignatedFor (VSecret := VSecret) V₀ stmt proof) :
@@ -214,13 +182,12 @@ theorem designated_not_transferable [DVKernel Verifier Statement Proof VSecret]
 
 /-! ## (c) DESIGNATED mode is DENIABLE — the simulator repudiation. -/
 
-/-- **`designated_is_deniable` (PROVED) — THE SIMULATOR / REPUDIATION ARGUMENT.** For ANY statement
-and ANY designated verifier `V₀`, there exists a transcript `proof` that `V₀` accepts yet that `V₀`
-*produced itself* from its own verification-secret (`proof = simulate (vsecret V₀) stmt`). Because
-`V₀` could have manufactured the very transcript that convinces it, the transcript is **zero evidence
-to any third party** that the authorizer ever authorized `stmt`: the authorizer can REPUDIATE. This is
-the deniability that distinguishes the designated endpoint from the public one — and it rests on the
-§8 simulator law `DVKernel.simulate_verifies` (the crypto obligation), used here but not proved here. -/
+/-- **`designated_is_deniable`** — the simulator / repudiation argument. For any statement and any
+designated verifier `V₀`, there exists a transcript that `V₀` accepts yet that `V₀` produced itself
+from its own verification-secret (`proof = simulate (vsecret V₀) stmt`). Because `V₀` could have
+manufactured the very transcript that convinces it, the transcript is zero evidence to any third party
+that the authorizer ever authorized `stmt`: the authorizer can repudiate. Rests on the §8 simulator
+law `DVKernel.simulate_verifies` (the crypto obligation) — used here but not proved here. -/
 theorem designated_is_deniable [DVKernel Verifier Statement Proof VSecret]
     (V₀ : Verifier) (stmt : Statement) :
     ∃ proof : Proof,
@@ -236,13 +203,9 @@ theorem designated_is_deniable [DVKernel Verifier Statement Proof VSecret]
   -- the simulated transcript verifies under V₀ — the §8 simulator law, not a Lean derivation
   exact DVKernel.simulate_verifies V₀ stmt
 
-/-- **`repudiation_no_third_party_evidence` (PROVED) — the deniability bite, contrapositive face.**
-A transcript that `V₀` could have simulated tells a third party `W` *nothing* about whether the
-authorizer authorized `stmt`: it does NOT entail `DischargedFor W` (transferability is exactly the
-property a simulated transcript can lack). Formally — in any state of the designated mode the
-simulated transcript is consistent with `W` being unconvinced; the existence of a non-convincing
-verifier is the `designated_not_transferable` witness. We re-state it as: deniability ⇒ the
-authorization is NOT forced onto `W`. -/
+/-- **`repudiation_no_third_party_evidence`** — deniability contrapositive. A transcript `V₀` could
+have simulated tells a third party `W` nothing about whether the authorizer authorized `stmt`: it does
+not entail `DischargedFor W`. Deniability ⇒ the authorization is NOT forced onto `W`. -/
 theorem repudiation_no_third_party_evidence [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
     (h : DesignatedFor (VSecret := VSecret) V₀ stmt proof) :
@@ -250,22 +213,20 @@ theorem repudiation_no_third_party_evidence [DVKernel Verifier Statement Proof V
 
 /-! ## (d) The two modes are the dial's two ENDPOINTS — a witnessed separation (not vacuous). -/
 
-/-- **`designated_excludes_public` (PROVED)** — the designated endpoint is *disjoint* from the public
-endpoint: a transcript in the designated mode is NOT in the public mode (it is not transferable). So
-the dial's two settings denote genuinely different propositions on the same transcript — the endpoints
-do not collapse into one another. -/
+/-- **`designated_excludes_public`** — the designated endpoint is disjoint from the transferable
+endpoint: a transcript in the designated mode is NOT transferable. The dial's two settings denote
+genuinely different propositions on the same transcript. -/
 theorem designated_excludes_public [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
     (h : DialHolds (VSecret := VSecret) (Verifier := Verifier) (.designated V₀) stmt proof) :
     ¬ DialHolds (VSecret := VSecret) (Verifier := Verifier) .transferable stmt proof := h.2
 
-/-! ## A reference DV-kernel — the interface is inhabitable, so the theorems above are not vacuous.
+/-! ## A reference DV-kernel — the interface is inhabitable (theorems are not vacuous).
 
-A toy model with TWO verifiers (`v0` the designated one, `vOther` an outsider). `verifyFor`:
-`v0` accepts any proof that *echoes* its secret-derived simulation tag (so `v0` can always simulate);
-`vOther` accepts *only* a genuine public tag. `simulate v0secret stmt` produces exactly the tag `v0`
-echoes — so the §8 law holds **by construction** in the toy model, and there exist statements/proofs
-witnessing both endpoints. This is the Lean-as-host realization (the real one is the DV-NIZK FFI). -/
+A toy model with two verifiers (`v0` the designated one, `vOther` an outsider). `v0` accepts any
+proof echoing its secret-derived simulation tag; `vOther` accepts only a genuine public tag.
+`simulate v0secret stmt` produces exactly the tag `v0` echoes — the §8 law holds by construction,
+and there exist statements/proofs witnessing both endpoints. -/
 namespace Reference
 
 /-- Two verifiers: the designated `v0` and an outsider `vOther`. -/
@@ -290,12 +251,10 @@ def secretOf : V → VSec
 so a simulated transcript is genuinely non-transferable.) -/
 def sim : VSec → Stmt → Prf := fun s stmt => stmt + s + 1
 
-/-- Each verifier accepts its OWN trapdoor-simulated tag (so the §8 simulator law holds for every
-verifier — each can always simulate-for-itself), and additionally `vOther` accepts the genuine public
-tag `proof = stmt` (the honest, transferable proof). Crucially `v0` does NOT accept the public tag
-`stmt` (only its own `sim`), so a transcript can convince `v0` while a public proof convinces only
-`vOther` — the two verifiers genuinely disagree, which is what makes the designated mode
-non-transferable in this toy. -/
+/-- Each verifier accepts its own trapdoor-simulated tag (the §8 simulator law holds for every
+verifier). Additionally `vOther` accepts the genuine public tag `proof = stmt`. Crucially `v0` does
+NOT accept the public tag `stmt` (only its own `sim`), so the two verifiers genuinely disagree —
+what makes the designated mode non-transferable in this toy. -/
 def vrfy : V → Stmt → Prf → Bool
   | .v0,     stmt, proof => decide (proof = sim (secretOf .v0) stmt)
   | .vOther, stmt, proof => decide (proof = stmt) || decide (proof = sim (secretOf .vOther) stmt)
@@ -336,13 +295,10 @@ def simFor (Vv : V) (stmt : Stmt) : Prf :=
   DVKernel.simulate (Verifier := V) (Statement := Stmt) (Proof := Prf) (VSecret := VSec)
     (DVKernel.vsecret (Statement := Stmt) (Proof := Prf) (VSecret := VSec) Vv) stmt
 
-/-- **`dial_endpoints_distinct` (PROVED — the WITNESSED separation, NOT a vacuous `True`).** On the
-concrete reference kernel there is a transcript that genuinely sits at the DESIGNATED endpoint of the
-dial: `designatedProof` for statement `7` and designated verifier `v0` satisfies `DesignatedFor v0`
-(v0 is convinced AND it is not transferable) yet FAILS `Transferable V` (the outsider `vOther` is not
-convinced). So the two dial settings (`.transferable` vs `.designated v0`) denote genuinely different
-propositions on the *same* transcript — the endpoints are inhabited and separated, so the theorems
-above are not vacuous. -/
+/-- **`dial_endpoints_distinct`** — on the reference kernel there is a transcript that genuinely sits
+at the designated endpoint: `designatedProof` for statement `7` satisfies `DesignatedFor v0` (`v0`
+convinced AND not transferable) yet fails `Transferable V` (`vOther` is not convinced). The two dial
+settings denote genuinely different propositions — the endpoints are inhabited and separated. -/
 theorem dial_endpoints_distinct :
     DesignatedFor (Statement := Stmt) (Proof := Prf) (VSecret := VSec) V.v0 7 designatedProof
       ∧ ¬ Transferable V (Statement := Stmt) (Proof := Prf) (VSecret := VSec) 7 designatedProof := by
@@ -364,7 +320,7 @@ theorem dial_endpoints_distinct :
 
 end Reference
 
-/-! ## Axiom audit — the discipline holds (whitelist: `propext`, `Classical.choice`, `Quot.sound`). -/
+/-! ## Axiom audit (`propext`, `Classical.choice`, `Quot.sound` only). -/
 
 #print axioms public_convinces_any_third_party
 #print axioms designated_not_transferable

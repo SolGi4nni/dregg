@@ -5,15 +5,15 @@ This module is the **executable** facet of `Dregg2.Liveness` (which carries the
 spec-level design, `dregg2 §1.7` + `docs/rebuild/study-gc.md`). It is the operational dual
 of the coinductive cell (`Boundary` / `Exec.Cell`): a cell unfolds forever (`ν`) UNLESS it
 falls out of the reachable subobject, and the runtime reclaims it once it does. Here we
-make the *collection decision* concrete and prove the four load-bearing facts on it, by
-LIFTING the already-proved theorems of `Liveness` (we REUSE, we do not re-derive):
+make the collection decision concrete and prove the four load-bearing facts on it, by
+lifting the proved theorems of `Liveness`:
 
   * `Liveness.reachable`            — reachability-from-a-root (the true liveness predicate);
   * `Liveness.Live`                 — the operational over-approximation `reachable ∨ ¬expired`;
   * `Liveness.lease_completes_deadness`, `Liveness.gc_safety_local`,
     `Liveness.crossvat_cycle_leaks`, `Liveness.dead_undecidable` — the keystones we build on.
 
-The construction is the ONLY one consistent with codata + no-global-snapshot + graph-privacy
+The construction is the only one consistent with codata + no-global-snapshot + graph-privacy
 simultaneously (`study-gc.md §3,§5`):
 
   1. **`reachable` is positively witnessable** — a finite root-path is a `Verify`
@@ -29,9 +29,8 @@ simultaneously (`study-gc.md §3,§5`):
      co-witnessable. We do NOT pretend to collect them by reachability; they are reclaimed by
      lease expiry alone. This is the FIND/VERIFY seam, the same seam as everywhere in dregg2.
 
-Style: spec-first, reuse the proved core; the collector is *computable* and its soundness is
-*proved* (no `sorry` added here). The genuine impossibilities are stated honestly as `-- OPEN:`
-notes pointing at the already-honest obligations of `Liveness`, never weakened to close.
+The collector is computable and its soundness is proved. The genuine impossibilities are stated
+honestly as `-- OPEN:` notes pointing at the obligations of `Liveness`, never weakened to close.
 -/
 import Dregg2.Liveness
 
@@ -188,12 +187,9 @@ theorem crossvat_leak_reclaimed_by_lease
 
 open Nat.Partrec (Code) in
 open Nat.Partrec.Code in
-/-- We RE-EXPOSE the undecidability obligation under this module's namespace so a downstream reader
-sees, on the nose, that this executable layer does not (and provably cannot) ship a decision
-procedure for death — only the lease-timeout above. Mirrors `Liveness.dead_undecidable`'s genuine
-**computable**-undecidability form (the old arbitrary-`Bool`-function form was classically vacuous —
-`Classical.decide` always supplies such a function — so it is replaced, not merely re-typed); the
-proof is literally `Liveness`'s obligation, delegated. We add no new `sorry` and weaken nothing. -/
+/-- Re-exposes the undecidability obligation under this module's namespace: this executable layer
+cannot ship a decision procedure for death — only the lease-timeout. Mirrors `Liveness.dead_undecidable`'s
+computable-undecidability form; the proof is delegated there. No new `sorry`, nothing weakened. -/
 theorem death_not_decidable (n : ℕ) :
     ¬ ∃ d : Code → Bool,
         Computable d ∧

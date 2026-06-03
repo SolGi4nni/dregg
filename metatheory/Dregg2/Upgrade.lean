@@ -1,52 +1,30 @@
 /-
 # Dregg2.Upgrade — the anti-brick `set_program` upgrade law.
 
-This module encodes dregg2's **anti-brick upgrade clause** (`dregg2-multicell-privacy.md §3`):
-the #1 thing the design was missing, ADOPTED from Mina's `permissions.ml`.
+Encodes dregg2's anti-brick upgrade clause (`dregg2-multicell-privacy.md §3`), ported from
+Mina's `permissions.ml`.
 
-**The hazard.** dregg2 *will* swap its recursion backend / AIR encoding (the deferred
-`RecursionBackend` / `FriRecursionBackend` trait swap; `circuit/src/plonky3_recursion_impl.rs`,
-design §7: depth-as-security-parameter, recursion deferrable). The instant that happens, every
-live `Circuit{circuit_hash}` cell pinned to the *old* proof system becomes unverifiable —
-**bricked**: it can no longer produce a proof its own verifier will accept, so it can never be
-upgraded out of the dead state. A sovereign cell stranded forever.
+**The hazard.** When dregg2 swaps its recursion backend / AIR encoding (`RecursionBackend` /
+`FriRecursionBackend`; design §7), every live cell pinned to the old proof system becomes
+unverifiable — bricked: it cannot produce a proof its own verifier will accept.
 
-**The fix, grounded in Mina `permissions.ml` (the `set_verification_key` clause, ~line 77).**
-Mina's `Verification_key_perm.fallback_to_signature_with_older_version` pins a *transaction/AIR
-version* on the `set_verification_key` permission. The rule:
+**The fix (Mina `permissions.ml`, `set_verification_key` clause).** Mina's
+`Verification_key_perm.fallback_to_signature_with_older_version` pins a transaction/AIR version
+on the `set_verification_key` permission and applies `older_version ⇒ signature_fallback`: when
+the cell's pinned version is behind the live verifier, authorization falls back to a signature by
+the cell's owner. dregg2 adopts this rule verbatim.
 
-```
-set_verification_key =
-  ( Auth_required  (* the proof-or-signature authority required *)
-  , Mina_numbers.Txn_version.t )   (* the pinned version *)
+**Tie to authority.** A `set_program` is an authority-bearing turn (it mutates the cell's own
+admissibility coalgebra), so it requires the owner subject / a `control`-conferring cap. It is
+the `intra` arm of the `Integrity` case-split; the `bySignature` fallback is the always-available
+owner-edge that keeps that arm reachable.
 
-(* and the check, paraphrased: *)
-if stored_txn_version < current_txn_version
-then  (* the pinned proof system is STALE: a proof against it can't be trusted/checked *)
-      fall back to requiring the OWNER'S SIGNATURE
-else  require the configured (proof) authority
-```
-
-i.e. **`older_version ⇒ signature_fallback`**: when the cell's pinned version is behind the live
-verifier, authorization to `set_program` falls back to a signature by the cell's owner — so a
-backend/verifier swap can never strand a sovereign cell. (dregg2's migration is otherwise
-*stronger* than Mina's — transparent + conservative + content-hash-preserving, `study-mina-relink §4`.)
-
-**Tie to authority.** A `set_program` is itself an authority-bearing turn: it mutates the cell's
-own admissibility coalgebra, so it requires the owner subject / a `control`-conferring cap. We link
-to `Dregg2.Authority.Positional`: an admitted upgrade is exactly the `intra` arm of the
-`Integrity` case-split (the owner acting on its own object), and the `bySignature` fallback is the
-*always-available* owner-edge that keeps that arm reachable.
-
-Spec-first: the data (`AirVersion`, `UpgradeAuth`, `setProgramAdmissible`) is real and computable;
-the keystones (`upgrade_never_bricks`, `stale_version_falls_back_to_signature`) are fully
-PROVED and `#assert_axioms`-clean (no `sorry`). They follow directly from `adminBySignature` —
-the always-available owner-signature arm — which is the substance of the anti-brick guarantee.
-This module additionally ports the proved svenvs self-verification envelope as STANDALONE machinery
-(`invariant_intro`/`safety_preservation`/`self_improvement_is_safe`/`genealogy_sound`/
-`identity_vouch_unconditional`); see the honesty note at `upgrade_never_bricks` on exactly how
-much of that spine the two upgrade keystones consume (the genesis/`bySignature` case, not the
-fold).
+The two keystones (`upgrade_never_bricks`, `stale_version_falls_back_to_signature`) are proved
+and `#assert_axioms`-clean — they follow from `adminBySignature`, the unconditionally-true
+owner-signature arm. The module also ports the svenvs self-verification envelope as standalone
+machinery (`invariant_intro`/`safety_preservation`/`self_improvement_is_safe`/`genealogy_sound`/
+`identity_vouch_unconditional`); the honest note at `upgrade_never_bricks` says which parts the
+two keystones actually consume (the genesis/`bySignature` case, not the fold).
 -/
 import Dregg2.Authority.Positional
 import Dregg2.Tactics
@@ -279,9 +257,9 @@ theorem admit_all_keeps_sound {step : Step σ α} {safe}
     simp only [List.foldl_cons]
     exact ih _ (admit_keeps_sound h0)
 
-/-- **`self_improvement_is_safe`** — the headline: NO finite sequence of self-proposed envelope
-weakenings — adversarial or not — can ever make the enveloped system unsafe, for any controller
-(svenvs `self_improvement_is_safe`). Authority is earned by proof; safety is unconditional. -/
+/-- **`self_improvement_is_safe`** — no finite sequence of self-proposed envelope weakenings —
+adversarial or not — can ever make the enveloped system unsafe, for any controller (svenvs
+`self_improvement_is_safe`). Authority is earned by proof; safety is unconditional. -/
 theorem self_improvement_is_safe {step : Step σ α} {init safe shield}
     (proposals : List (Policy' σ α)) (p0 : Policy' σ α) (ctrl : Selector σ α)
     [∀ s, Decidable (admitAll step safe p0 proposals s (ctrl s))]
@@ -302,9 +280,9 @@ def VouchSound {J : Type*} (jsound : J → Prop) (vouches : J → J → Prop) : 
 def ForwardCertified {J : Type*} (vouches : J → J → Prop) (Jline : Nat → J) : Prop :=
   ∀ n, vouches (Jline n) (Jline (n + 1))
 
-/-- **`genealogy_sound`** — THE HEADLINE: sound genesis + forward-certified succession ⇒ every
-judge in the unbounded line is sound (svenvs `genealogy_sound`). Modus ponens folded over `Nat`:
-no Löb, no assumption beyond the carried `VouchSound` seam. -/
+/-- **`genealogy_sound`** — sound genesis + forward-certified succession ⇒ every judge in the
+unbounded line is sound (svenvs `genealogy_sound`). Modus ponens folded over `Nat`: no Löb,
+no assumption beyond the carried `VouchSound` seam. -/
 theorem genealogy_sound {J : Type*} {jsound : J → Prop} {vouches : J → J → Prop} {Jline : Nat → J}
     (hv : VouchSound jsound vouches) (h0 : jsound (Jline 0))
     (hfc : ForwardCertified vouches Jline) : ∀ n, jsound (Jline n) := by
@@ -390,56 +368,41 @@ theorem upgradeGenealogy_sound (stored : AirVersion) (Jline : Nat → AirVersion
 
 /-! ## The keystone: no backend swap can brick a cell -/
 
-/-- **`upgrade_never_bricks`** — THE keystone law. For *any* backend/verifier swap, i.e. any pair
-of pinned/live AIR versions `stored`, `live` (the recursion backend may bump the live version
-arbitrarily — `RecursionBackend`/`FriRecursionBackend`, design §7), there **exists** an admissible
-`set_program` authorization. Hence a cell can never become permanently unupgradeable / bricked:
-the signature fallback is always a path out.
+/-- **`upgrade_never_bricks`** — for any backend/verifier swap (any pair of pinned/live AIR
+versions `stored`, `live`), there exists an admissible `set_program` authorization. Hence a
+cell can never become permanently unupgradeable / bricked: the signature fallback is always a
+path out. The admissibility relation is total over version pairs — what fails for a
+proof-only permission (where `stale stored live` would make every `byProof` arm inadmissible).
 
-The honest existential here is non-trivial content: it asserts the admissibility *relation is total
-over version pairs*, which is precisely what fails for a naive proof-only permission (where
-`stale stored live` would make every `byProof` arm inadmissible and strand the cell).
-
-**WHERE THE PROOF COMES FROM (honest citation).** This follows from `adminBySignature` alone: the
-`bySignature` arm of `setProgramAdmissible` is `True` unconditionally, so the existential witness
-is just `⟨bySignature, trivial⟩` at *any* `live`/`stored`. We route it through
-`upgradeGenealogy_sound stored (fun _ => live) 0` only to exhibit the connection to the ported
-svenvs envelope, but that route is NOT load-bearing: `bumpEdge := True` makes the forward edge
-vacuous, so `genealogy_sound`'s induction does no work here beyond returning its *genesis*
-(`n = 0`) witness — and that genesis (`unbrickableGenesis`) is itself just `⟨bySignature, …⟩`.
-In other words, unbrickability is the *unconditional non-strengthening case* (the owner can
-always sign), exactly svenvs's "no Löb needed" reading; the genealogy fold is genuine standalone
-machinery (`genealogy_sound`, proved below) but it is the always-available owner edge, not the
-forward certification, that carries this keystone. -/
+**Honest citation.** This follows from `adminBySignature` alone: the `bySignature` arm is
+`True` unconditionally. We route through `upgradeGenealogy_sound` only to exhibit the
+connection to the ported svenvs envelope; that route is not load-bearing (`bumpEdge := True`
+makes the forward edge vacuous, so the induction reduces to the genesis witness, which is
+itself just `⟨bySignature, …⟩`). Unbrickability is the unconditional non-strengthening case;
+the genealogy fold is genuine standalone machinery but the owner-signature edge carries this
+keystone, not the forward certification. -/
 theorem upgrade_never_bricks (live stored : AirVersion) :
     ∃ auth : UpgradeAuth, setProgramAdmissible live stored auth :=
   -- The witness is the unconditional `bySignature` arm; we read it off the genesis node of
   -- `upgradeGenealogy_sound` (whose forward edge is vacuous, so only the genesis is used).
   upgradeGenealogy_sound stored (fun _ => live) 0
 
--- Axiom-hygiene pin: `upgrade_never_bricks` is `sorry`-free and depends only on the three standard
--- kernel axioms (the Lean-native cousin of svenvs's `verify-claims.sh`). Errors on any `sorryAx`.
+-- Axiom-hygiene pin: `upgrade_never_bricks` depends only on the three standard kernel axioms.
 #assert_axioms upgrade_never_bricks
 
-/-- **`stale_version_falls_back_to_signature`** — the `older_version ⇒ signature_fallback` rule,
-verbatim from Mina's `fallback_to_signature_with_older_version`. When the stored AIR version is
-stale (older than the live verifier's), the ONLY admissible authorization is `bySignature`:
-the proof arm against any non-live version is inadmissible, so the check **falls back to a
-signature rather than silently rejecting**. Two conjuncts:
+/-- **`stale_version_falls_back_to_signature`** — the `older_version ⇒ signature_fallback` rule
+from Mina's `fallback_to_signature_with_older_version`. When the stored AIR version is stale
+(older than the live verifier's), the only admissible authorization is `bySignature`:
+the proof arm against any non-live version is inadmissible, so the check falls back to a
+signature rather than silently rejecting. Two conjuncts:
 
-1. `bySignature` is admissible (the fallback is reachable), and
-2. a proof against the *stored* (stale) version is **not** admissible — establishing that the
-   fallback is genuinely the operative arm, not a redundant one.
+1. `bySignature` is admissible (`adminBySignature` — unconditionally true), and
+2. a proof against the stored (stale) version is not admissible — the fallback is
+   genuinely operative, not redundant. (`setProgramAdmissible live stored (byProof stored)`
+   reduces to `stored = live`, contradicting `stale stored live = stored < live`.)
 
-**WHERE THE PROOF COMES FROM (honest citation).** Both conjuncts are direct, NOT routed through
-the envelope. The signature conjunct is `adminBySignature` (the `bySignature` arm is `True`
-unconditionally — the same "owner can always sign / no Löb needed" non-strengthening fact that
-`signatureVouchUnbrickable` packages, but here we use it raw, since no fold is involved). The
-negative conjunct — that the proof arm against a stale stored version is dead — is a property of
-the version order: `setProgramAdmissible live stored (byProof stored)` reduces to `stored = live`,
-contradicting `stale stored live = stored < live`. The envelope spine
-(`identity_vouch_unconditional` etc.) is proved standalone below; this keystone does not consume
-its fold. -/
+Both conjuncts are direct — not routed through the envelope; the envelope spine is proved
+standalone but this keystone does not consume its fold. -/
 theorem stale_version_falls_back_to_signature (live stored : AirVersion)
     (h : stale stored live) :
     setProgramAdmissible live stored UpgradeAuth.bySignature ∧
@@ -453,15 +416,12 @@ theorem stale_version_falls_back_to_signature (live stored : AirVersion)
   simp only [stale, AirVersion] at h
   exact absurd hadm (Nat.ne_of_lt h)
 
--- Axiom-hygiene pin: `stale_version_falls_back_to_signature` is `sorry`-free, standard-axioms-only.
+-- Axiom-hygiene pin: `stale_version_falls_back_to_signature` depends only on standard axioms.
 #assert_axioms stale_version_falls_back_to_signature
 
--- Pin the ported envelope spine too, certifying the STANDALONE machinery is `sorryAx`-free:
--- the generic inductive invariant (`invariant_intro`/`safety_preservation`), the iterated
--- self-improvement headline (`self_improvement_is_safe`), and the genealogy forward-certification
--- (`genealogy_sound`). These are genuinely-proved, domain-agnostic results in their own right;
--- the two upgrade keystones above consume only the `bySignature`/genesis case of the upgrade-model
--- instance (`upgradeGenealogy_sound`), NOT the forward fold (its `bumpEdge` edge is vacuous).
+-- Pin the ported envelope spine (domain-agnostic, standalone machinery). The two upgrade
+-- keystones consume only the `bySignature`/genesis case of the upgrade-model instance
+-- (`upgradeGenealogy_sound`); the `bumpEdge` forward fold is vacuous for those keystones.
 #assert_axioms invariant_intro
 #assert_axioms safety_preservation
 #assert_axioms admit_preserves_safety

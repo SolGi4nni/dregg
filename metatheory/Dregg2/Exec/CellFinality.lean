@@ -262,8 +262,8 @@ def demoMap : TierMap := fun c =>
 #eval (commitTier demoMap [⟨0⟩]).rank             -- 1 (causal, solo stays liquid)
 #eval (Finality.crossTierJoin Finality.Tier.causal Finality.Tier.bft).rank  -- 3
 -- the gate's two concrete witnesses over `Finset ℕ` (eligible vs ineligible):
--- `tier1Admissible (fun _ => True)` holds (PROVED `top_iconfluent`);
--- `¬ tier1Admissible (fun s => s.card ≤ 1)` (PROVED `cardLeOne_not_tier1Admissible`).
+-- `tier1Admissible (fun _ => True)` holds (`top_iconfluent`);
+-- `¬ tier1Admissible (fun s => s.card ≤ 1)` (`cardLeOne_not_tier1Admissible`).
 #eval (({1} : Finset ℕ) ⊔ {2}).card               -- 2 : the merge that breaks `card ≤ 1`
 
 end Dregg2.Exec.CellFinality

@@ -1,52 +1,34 @@
 /-
-# Dregg2.Spec.Await — the await family, factored into its TWO orthogonal halves.
+# Dregg2.Spec.Await — the await family factored into its two orthogonal halves.
 
-This is the spec-layer resolution of the open *`zkpromise/zkawait + await
-unification`* thread (`docs/ZKPROMISE-ZKAWAIT-DESIGN.md`; `Dregg2.Await` four-faces;
-`Dregg2.Authority.Discharge` monotonicity). The executable `Dregg2.Await` shows the
-await family is *one* continuation primitive with four *faces*; this module makes the
-sharper structural claim those four faces obscure:
+The executable `Dregg2.Await` presents the await family as one continuation primitive with
+four faces. This module makes the sharper structural claim:
 
-> **The await family factors as a direct sum of two ORTHOGONAL components:**
+> **The await family factors as a direct sum of two orthogonal components:**
 >
 >   `await  ≅  (temporal discharge : a Guard deferred over time)  ⊕  (dataflow : a
 >             promise graph)`.
 >
->   * the **temporal** summand answers *"is this turn admissible YET?"* — it is a
->     `Spec.Guard` of the `witnessed` (third-party) kind whose discharge is **deferred
->     over a `Height`**: a `Conditional`. Its resolution is *exactly* `Guard.admits`
->     of that witnessed guard, gated by a deadline. A `Conditional` IS a third-party
->     **caveat** deferred over time — the `ConditionalTurn`/`discharge` face — and it
->     reuses the `Authority.Discharge` keystone (`admits_mono_discharge`) verbatim.
+>   * The **temporal** summand answers *"is this turn admissible yet?"* — a `Spec.Guard`
+>     of the `witnessed` (third-party) kind whose discharge is deferred over a `Height`:
+>     a `Conditional`. Its resolution is exactly `Guard.admits` of that witnessed guard,
+>     gated by a deadline. A `Conditional` is a third-party caveat deferred over time,
+>     reusing `Authority.Discharge.admits_mono_discharge` verbatim.
 >
->   * the **dataflow** summand answers *"WHERE does the awaited value come from?"* — it
->     is a `Promise`/`EventualRef`: a handle to a value produced by a pending step, and
->     a **`PromiseGraph`** is a DAG of such handles (the `promiseGraph`/`zkpromise`
->     face, the CapTP pipelining graph). It carries no predicate-over-time; it carries
->     a *value-future and a dependency edge*.
+>   * The **dataflow** summand answers *"where does the awaited value come from?"* — a
+>     `Promise`/`EventualRef`: a handle to a value produced by a pending step, and a
+>     `PromiseGraph` is a DAG of such handles (the CapTP pipelining graph). It carries
+>     a value-future and a dependency edge, no predicate-over-time.
 
-**The two faces (`await_two_faces`):** a promise is a *value-future* (it names a slot
-that will hold data); a conditional is a *predicate-over-time* (it names a guard that
-will or won't discharge before a deadline). They are two separate coordinates of the
-`Await` product — which, on its own, is the definitional fact that the field projections
-are `rfl`; the load-bearing content `await_two_faces` proves is the SUBSTANTIVE half: the
-temporal coordinate carries its full `Guard`-over-time semantics
-(`conditional_is_temporal_guard`) regardless of the paired dataflow coordinate. The await
-primitive is the *pair* of the two, and the four faces of `Dregg2.Await` are recovered as:
-`discharge`/`intent`/`ConditionalTurn` = the **temporal** projection;
-`zkpromise`/`promiseGraph` = the **dataflow** projection.
+`await_two_faces` proves the substantive claim: the temporal coordinate carries its full
+`Guard`-over-time semantics (`conditional_is_temporal_guard`) regardless of the paired
+dataflow coordinate. The four faces of `Dregg2.Await` are recovered as projections:
+`discharge`/`intent`/`ConditionalTurn` = the temporal projection;
+`zkpromise`/`promiseGraph` = the dataflow projection.
 
-## Discipline
-
-Abstract carriers throughout: `Statement`/`Witness` are the verify-seam types of
-`Spec.Guard`; `Gateway` is the third-party identity of `Authority.Caveat`; `Height` is
-an **abstract linear order** (`[LinearOrder Height]`), never `Nat`-for-semantics. No
-flat coproduct port — the temporal half is a *reuse* of `Guard.witnessed`, the dataflow
-half a *reuse* of `Await.promiseGraph`. Faithful `Prop`s; the keystones are PROVED clean
-(`#assert_axioms`). The pipelining-soundness obligation (a full topological sort returning
-an explicit order) is now CLOSED via the Szpilrajn linear extension of the reversed
-reflexive closure of `Depends`, sorted over the finite `Finset` of nodes — the module is
-`sorry`-free.
+Abstract carriers throughout: `Gateway` is the third-party identity; `Height` is an
+abstract linear order, never `Nat`-for-semantics. All keystones are axiom-clean
+(`#assert_axioms`); the module is `sorry`-free.
 -/
 import Dregg2.Spec.Guard
 import Dregg2.Await
@@ -159,17 +141,15 @@ def resolve (c : Conditional Gateway Request Height)
   else
     if c.deadline < c.height then Expired else Pending
 
-/-! ## §2 — KEYSTONE: `conditional_is_temporal_guard` (PROVED).
+/-! ## §2 — `conditional_is_temporal_guard` (the temporal keystone).
 
-A `Conditional`'s resolution is *exactly* `Guard.admits` of its witnessed guard, gated by
-`height ≤ deadline`. I.e. a `ConditionalTurn` IS a third-party caveat (a `Spec.Guard`)
-deferred over time — the unification with `Spec.Guard`. -/
+A `Conditional`'s resolution is exactly `Guard.admits` of its witnessed guard, gated by
+`height ≤ deadline`: a `ConditionalTurn` is a third-party caveat (`Spec.Guard`) deferred
+over time. -/
 
-/-- **`conditional_is_temporal_guard` (PROVED) — THE temporal keystone.** A conditional
-`resolve`s to `Resolved` **iff** its underlying `Spec.Guard.witnessed gateway` *admits*
-(under the discharge environment `d` as witness supply) **and** the clock is within the
-deadline. So the conditional's resolution is `Guard.admits` of its guard, gated by
-`height ≤ deadline`: a `Conditional` is a temporal `Guard`, nothing more. -/
+/-- **`conditional_is_temporal_guard`** — a conditional resolves to `Resolved` iff its
+underlying `Spec.Guard.witnessed gateway` admits (under the discharge environment `d`)
+and the clock is within the deadline (`height ≤ deadline`). -/
 theorem conditional_is_temporal_guard (c : Conditional Gateway Request Height)
     (req : Request) (d : Discharges Gateway) :
     c.resolve req d = State.Resolved ↔
@@ -183,11 +163,9 @@ theorem conditional_is_temporal_guard (c : Conditional Gateway Request Height)
     -- the not-admitted branch can never be `Resolved`
     by_cases hexp : c.deadline < c.height <;> simp [hexp]
 
-/-- **`resolved_iff_gateway_discharged` (PROVED)** — unfolding the guard one step: at the
-verify seam, `c.guard.admits req (fun _ => d)` is *definitionally* `d c.gateway` (the
-gateway discharged). So a conditional is `Resolved` exactly when its gateway has settled
-and the clock is within deadline. The `discharge`/third-party-caveat reading, made
-explicit. -/
+/-- **`resolved_iff_gateway_discharged`** — unfolding one step further: a conditional is
+`Resolved` exactly when its gateway has settled (`d c.gateway = true`) and the clock is
+within the deadline. -/
 theorem resolved_iff_gateway_discharged (c : Conditional Gateway Request Height)
     (req : Request) (d : Discharges Gateway) :
     c.resolve req d = State.Resolved ↔ (d c.gateway = true ∧ c.height ≤ c.deadline) := by
@@ -196,11 +174,11 @@ theorem resolved_iff_gateway_discharged (c : Conditional Gateway Request Height)
   · simpa [guard] using h1
   · simpa [guard] using h1
 
-/-! ## §3 — KEYSTONE: `resolve_monotone` (PROVED, reuses `admits_mono_discharge`).
+/-! ## §3 — `resolve_monotone` (reuses `admits_mono_discharge`).
 
-Once `Resolved`, never un-resolves: discharge moves FORWARD only. We reuse the
-`Authority.Discharge` keystone `admits_mono_discharge` verbatim by reading the
-conditional's gateway as a single third-party `Caveat` in a one-caveat `Token`. -/
+Once `Resolved`, never un-resolves: discharge moves forward only. The
+`Authority.Discharge.admits_mono_discharge` keystone applies by reading the conditional's
+gateway as a single third-party `Caveat` in a one-caveat `Token`. -/
 
 /-- A conditional, viewed as a one-caveat `Token`: a biscuit carrying the single
 third-party caveat on its gateway. This is the bridge through which the
@@ -216,15 +194,10 @@ theorem gateway_admits_eq_token (c : Conditional Gateway Request Height)
     (c.guard.admits req (fun _ => d) = true) ↔ (c.asToken).admits req d = true := by
   simp [guard, asToken, Token.admits, Caveat.ok]
 
-/-- **`resolve_monotone` (PROVED) — THE monotonicity keystone (reuses
-`Authority.Discharge.admits_mono_discharge`).** If the discharge environment only
-accumulates (`Discharges.le d d'` — a settled gateway stays settled) and the clock does
-not move (same `c`), then a `Resolved` conditional stays `Resolved`. Discharge resolves
-FORWARD, never un-resolves.
-
-Proof: `Resolved` gives `gateway discharged ∧ within-deadline`; the within-deadline part
-is unchanged (same `c`); the discharged part is exactly `asToken.admits`, which is monotone
-in the discharges by `admits_mono_discharge`. -/
+/-- **`resolve_monotone`** — if the discharge environment only accumulates
+(`Discharges.le d d'` — a settled gateway stays settled) and the clock does not move, a
+`Resolved` conditional stays `Resolved`. Discharge resolves forward only. Proof applies
+`admits_mono_discharge` via `asToken`. -/
 theorem resolve_monotone (c : Conditional Gateway Request Height)
     (req : Request) {d d' : Discharges Gateway}
     (hle : Dregg2.Authority.Discharges.le d d')
@@ -237,15 +210,10 @@ theorem resolve_monotone (c : Conditional Gateway Request Height)
   rw [gateway_admits_eq_token] at hadm ⊢
   exact Dregg2.Authority.admits_mono_discharge c.asToken req hle hadm
 
-/-- **`expired_stays_expired` (PROVED)** — the dual one-way street: once `Expired`, an
-*undischarged* conditional stays `Expired` as long as its gateway remains undischarged
-(the deadline cannot un-pass; the same clock keeps `deadline < height`). Stated for the
-genuine-timeout case (gateway not settled), which is the one that is permanent: an expired,
-never-discharged conditional never becomes pending or resolved.
-
-(If a gateway discharges *after* the deadline, the model's `resolve` reports `Expired`
-still — the timeout wins — but the clean, fully-permanent statement is the
-undischarged-throughout case, so we state exactly that.) -/
+/-- **`expired_stays_expired`** — once `Expired`, an undischarged conditional stays
+`Expired` as long as its gateway remains undischarged (the deadline cannot un-pass).
+Stated for the genuine-timeout case (gateway never settled), which is the permanently
+expired state. -/
 theorem expired_stays_expired (c : Conditional Gateway Request Height)
     (req : Request) (d d' : Discharges Gateway)
     (hund' : d' c.gateway = false)
@@ -320,12 +288,10 @@ def Acyclic (g : PromiseGraph Node) : Prop := ∀ i, ¬ Depends g i i
 
 /-! ### §5 — `pipeline_topological`: acyclic ⇒ resolves in topological order.
 
-The structural fact. We state the *existence of a resolution order* faithfully: a linear
-order on the nodes that **respects** the dependency edges (every dependency comes earlier),
-i.e. a topological sort. We PROVE the precise structural antecedents (irreflexivity +
-transitivity of `Depends` on an acyclic graph — a strict partial order on the nodes) that
-make a topological order exist; the *construction* of the explicit order from a `Finset`
-DAG is the heavy combinatorial step, left honest-OPEN below. -/
+On an acyclic graph, `Depends` is a strict partial order (irreflexive + transitive) on the
+finite carrier `g.nodes`, which guarantees a topological resolution order exists. Both the
+strict-partial-order content and the explicit `IsTopoOrder` list are proved below via the
+Szpilrajn linear extension (`extend_partialOrder`) and `Finset.sort`. -/
 
 /-- A list `order` is a **topological order** for `g` iff it lists exactly `g.nodes` and,
 whenever `i` depends on `j`, `j` appears **before** `i` (dependencies resolve first). This
@@ -376,20 +342,12 @@ private theorem idxOf_le_of_pairwise (s : Node → Node → Prop)
   rw [heq] at hlt
   exact absurd hlt (lt_irrefl _)
 
-/-- **`pipeline_topological` — acyclic ⇒ a topological resolution order EXISTS (CLOSED).**
-
-On an acyclic graph, `Depends` is a strict partial order (irreflexive + transitive — the
-real content of "no promise depends on its own future"), and on the finite carrier `g.nodes`
-that order admits an explicit topological resolution list.
-
-Both halves are now PROVED:
-  * the **strict-partial-order content** (`depends_irrefl` ∧ `depends_trans`);
-  * the **existence of the explicit `IsTopoOrder` list**, via the Szpilrajn linear extension
-    (`extend_partialOrder`) of the *reversed reflexive closure* `r a b := a = b ∨ Depends g b a`
-    (a partial order exactly because `Depends` is irreflexive+transitive on an acyclic graph),
-    sorted over the `Finset g.nodes` (`Finset.sort`). A dependency edge `dep i j` gives
-    `r j i`, hence `j` precedes `i` in the sorted list (`idxOf_le_of_pairwise`): dependencies
-    resolve first. -/
+/-- **`pipeline_topological`** — on an acyclic graph, a topological resolution order exists.
+`Depends` is a strict partial order on the finite carrier `g.nodes`; the explicit
+`IsTopoOrder` list is constructed via the Szpilrajn linear extension (`extend_partialOrder`)
+of the reversed reflexive closure `r a b := a = b ∨ Depends g b a`, sorted over `g.nodes`
+by `Finset.sort`. A dependency `dep i j` gives `r j i`, so `j` precedes `i` in the sorted
+list (`idxOf_le_of_pairwise`): dependencies resolve first. -/
 theorem pipeline_topological (g : PromiseGraph Node) (hac : Acyclic g) :
     -- the strict-partial-order content (PROVED): no self-dependency, transitive …
     ((∀ i, ¬ Depends g i i) ∧
@@ -435,13 +393,9 @@ We state it as a hypothesis-bundle (a `res` is *consistent* when it obeys this r
 def Consistent (g : PromiseGraph Node) (res : Node → Bool) : Prop :=
   ∀ i j, g.dep i j → res i = true → res j = true
 
-/-- **`broken_promise_propagates` (PROVED)** — a broken (unresolved/expired) promise's
-dependents cannot resolve: failure propagates *backward* along the dataflow edges. If `res`
-is a consistent resolution assignment and promise `j` is broken (`res j = false`), then any
-promise `i` that **directly** depends on `j` is also broken (`res i = false`).
-
-Proof: directly from `Consistent` by contraposition — if `i` resolved, consistency forces
-its dependency `j` to resolve, contradicting `j` broken. -/
+/-- **`broken_promise_propagates`** — a broken promise's direct dependents cannot resolve:
+if `res` is consistent and `j` is broken, any `i` with `g.dep i j` is also broken.
+Proof: contraposition on `Consistent`. -/
 theorem broken_promise_propagates (g : PromiseGraph Node) (res : Node → Bool)
     (hcon : Consistent g res) {i j : Node}
     (hdep : g.dep i j) (hbroken : res j = false) :
@@ -452,9 +406,8 @@ theorem broken_promise_propagates (g : PromiseGraph Node) (res : Node → Bool)
   rw [this] at hbroken
   exact absurd hbroken (by simp)
 
-/-- **`broken_promise_propagates_trans` (PROVED)** — the transitive form: a broken promise
-breaks *all* its transitive dependents. If `j` is broken and `i` transitively depends on
-`j`, then `i` is broken. Failure flows the full length of the dataflow chain. -/
+/-- **`broken_promise_propagates_trans`** — failure propagates the full transitive length:
+if `j` is broken and `i` transitively depends on `j`, then `i` is also broken. -/
 theorem broken_promise_propagates_trans (g : PromiseGraph Node) (res : Node → Bool)
     (hcon : Consistent g res) {i j : Node}
     (hdep : Depends g i j) (hbroken : res j = false) :
@@ -484,19 +437,12 @@ structure Await (Gateway Request Height Node : Type) where
   /-- The dataflow summand: a value-future / eventual reference. -/
   prom : Promise Node
 
-/-- **`await_two_faces` (PROVED) — the temporal coordinate carries its full `Guard` semantics
-regardless of the dataflow coordinate.** An `Await ⟨c, p⟩`'s temporal projection resolves to
-`Resolved` IFF its underlying witnessed `Spec.Guard` admits and the clock is within the deadline
-(`conditional_is_temporal_guard`) — and this equivalence holds for the conditional `c` *whatever*
-the paired promise `p` is, because `Await.cond` reads only the `c` coordinate. So the temporal
-half is a genuine `Guard`-over-time independent of the dataflow half.
-
-This is the LOAD-BEARING half of the "two faces" claim. The bare product-projection facts
-(`Await.cond ⟨c, p⟩ = c`, `Await.prom ⟨c, p⟩ = p`, and `Await.cond ⟨c, p'⟩ = Await.cond ⟨c, p⟩`)
-are pure `rfl` (`Prod.fst`/`Prod.snd` definitional unfolds), NOT a proof of orthogonality, so
-they are dropped here rather than dressed up: a `structure`'s field projections trivially recover
-its fields. The substantive content — that the temporal coordinate's `Guard` semantics survive
-any change to the dataflow coordinate — is what this theorem states. -/
+/-- **`await_two_faces`** — the temporal coordinate carries its full `Guard` semantics
+regardless of the dataflow coordinate. An `Await ⟨c, p⟩`'s temporal projection resolves to
+`Resolved` iff its underlying witnessed `Spec.Guard` admits and the clock is within the
+deadline (`conditional_is_temporal_guard`), for any paired promise `p`. The product-field
+projections (`cond`/`prom`) are definitional; the substantive content here is that the
+temporal `Guard`-over-time semantics are independent of the dataflow coordinate. -/
 theorem await_two_faces
     (c : Conditional Gateway Request Height) (p : Promise Node)
     (req : Request) (d : Discharges Gateway) :
@@ -520,10 +466,8 @@ end Conditional
 
 /-! ## §8 — Axiom-hygiene tripwires.
 
-Pin every PROVED keystone to the three standard kernel axioms (no `sorryAx`).
-`pipeline_topological` is now CLOSED — its explicit-order construction goes through the
-Szpilrajn linear extension (`extend_partialOrder`, which uses `Classical.choice`) and
-`Finset.sort`, so it is asserted here too; the module is now `sorry`-free. -/
+Pin every keystone to the three standard kernel axioms (no `sorryAx`). The module is
+`sorry`-free. -/
 
 #assert_axioms Conditional.PromiseGraph.pipeline_topological
 #assert_axioms Conditional.conditional_is_temporal_guard

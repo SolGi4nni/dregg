@@ -1,40 +1,16 @@
 /-
-# Dregg2.Exec.CellConfine — the CONFINEMENT crown: cap-safety / no-amplification carried FOREVER.
+# Dregg2.Exec.CellConfine — cap-safety / no-amplification carried FOREVER.
 
-`Exec/CellReal.lean` crowned the REAL executor with the coinductive living cell `livingCellA` (a
-`Boundary.TurnCoalg` over `execFullForestA`, the 46-effect per-asset auth-gated tree) and
-`Exec/CellCarry.lean` distilled the PARAMETRIC crown `livingCellA_carries`: ANY *state* predicate
-`Good` preserved by a SINGLE living-cell step holds along the ENTIRE unbounded adversarial trajectory.
-Conservation (`livingCellA_obs_invariant'`) and the append-only audit log (`livingCellA_logMono`) are
-its first two instances. This module supplies the THIRD — and it is the seL4 **object-integrity
-confinement** lifted onto the real machine over unbounded time:
+`livingCellA_confinement` is the coinductive lift of `Authority/Positional.confinement_preserved`
+(the lift of l4v `call_kernel_pas_refined`): fix an authority ceiling `U` with `control ∈ U`; if
+the initial kernel's caps are *confined by `U`* — every authority conferred by every held cap lies
+in `U` — they stay confined along the entire unbounded adversarial trajectory `trajA`, under every
+schedule. *Only connectivity begets connectivity, never beyond the ceiling.*
 
-> **No authority ever escapes a fixed ceiling.** `Authority/Positional.confinement_preserved` (the lift
-> of l4v `call_kernel_pas_refined`) says one authority-non-increasing turn preserves the
-> *policy-is-an-upper-bound* invariant `PasRefined` (`auth ⊆ policy`, never growth). Here we carry the
-> coinductive version: fix an authority ceiling `U` (with `control ∈ U`); if the initial kernel's caps
-> are *confined by `U`* — every authority conferred by every held cap, in every slot, lies in `U` — then
-> they stay confined along the ENTIRE unbounded adversarial trajectory `trajA`, under EVERY schedule.
-> *Only connectivity begets connectivity* — and never beyond the ceiling — FOREVER.
-
-The headline `livingCellA_confinement` is the coinductive lift of `confinement_preserved`. Its one-step
-obligation `cellNextA_confine` is discharged from how `execFullForestA` moves `caps`:
-
-* the vast majority of effects FRAME `caps` (`s'.kernel.caps = s.kernel.caps`) — confinement transfers
-  by rewriting (`CapsConfined.of_caps_eq`);
-* `revoke`/`dropRef`/`revokeDelegation` FILTER a slot (`caps' l ⊆ caps l`) — `CapsConfined.mono`;
-* `attenuateCapability` narrows the actor's `idx`-th cap IN PLACE (`List.modify (attenuate keep)`) —
-  the replacement confers ⊆ the original ⊆ `U` (`CapsConfined.attenuateSlot`);
-* `delegateAtten`/the rights-carrying introduce GRANT `attenuate keep (heldCapTo …)` — confers ⊆ the
-  GENUINELY-HELD parent cap ⊆ `U` (`execFullForestA_no_amplify`'s per-edge content, on the EXECUTED grant);
-* the rights-blind `delegate`/`introduce`/`validateHandoff` and `spawn` GRANT a `Cap.node t`
-  connectivity cap conferring exactly `[control] ⊆ U` (the `control ∈ U` hypothesis) — `CapsConfined.grant`.
-
-So the SAME no-amplification law that bounds each forest edge (`execFullForestA_no_amplify`) is here
-re-expressed as a STATE predicate the cell carries coinductively: the attenuating edges and the
-connectivity grants never push conferred authority past the fixed ceiling, at any index of the
-unbounded future. This is the confinement face of the living cell — `confinement_preserved` made
-temporal on the SHIPPED executor.
+The one-step obligation `cellNextA_confine` is discharged by how `execFullForestA` moves `caps`:
+most effects frame `caps`; `revoke`/`dropRef`/`revokeDelegation` filter a slot; `attenuateCapability`
+narrows in place; `delegateAtten` grants `attenuate keep (heldCapTo …)` (conferred ⊆ held ⊆ `U`);
+`delegate`/`introduce`/`validateHandoff`/`spawn` grant a `Cap.node` conferring `[control] ⊆ U`.
 -/
 import Dregg2.Exec.CellCarry
 import Dregg2.Exec.AuthTurn
@@ -49,28 +25,27 @@ open Dregg2.Exec.EffectsState (state_caps_unchanged stateAuthB)
 
 /-! ## Step 1 — `CapsConfined`: the seL4 `PasRefined` upper-bound shape, as a flat ceiling. -/
 
-/-- **`CapsConfined U caps`** — every authority conferred by every held cap, in EVERY slot, lies within
+/-- **`CapsConfined U caps`** — every authority conferred by every held cap, in every slot, lies within
 the fixed ceiling `U`. This is `Authority.PasRefined`'s `state_objs_in_policy` clause (`auth ⊆ policy`)
-with the per-edge policy collapsed to a single authority ceiling: the policy is an UPPER BOUND on
-conferred authority, never exceeded. The state predicate whose coinductive carry IS confinement. -/
+with the per-edge policy collapsed to a single authority ceiling: the policy is an upper bound on
+conferred authority, never exceeded. The state predicate whose coinductive carry is confinement. -/
 def CapsConfined (U : List Auth) (caps : Caps) : Prop :=
   ∀ (l : Label) (c : Cap) (a : Auth), c ∈ caps l → a ∈ capAuthConferred c → a ∈ U
 
-/-- **`CapsConfined.of_caps_eq` (PROVED) — the FRAME closure.** If `caps' = caps` (the vast majority of
-effects do not touch `caps`), confinement transfers verbatim. -/
+/-- **`CapsConfined.of_caps_eq` — the frame closure.** If `caps' = caps`, confinement transfers verbatim. -/
 theorem CapsConfined.of_caps_eq {U : List Auth} {caps caps' : Caps}
     (heq : caps' = caps) (h : CapsConfined U caps) : CapsConfined U caps' := by
   subst heq; exact h
 
-/-- **`CapsConfined.mono` (PROVED) — the SUBSET closure (revocation / filtering).** If every slot of
-`caps'` is a sublist of `caps` (so authority only SHRANK — `revoke`, `dropRef`, `revokeDelegation`),
+/-- **`CapsConfined.mono` — the subset closure (revocation / filtering).** If every slot of
+`caps'` is a sublist of `caps` (authority only shrank — `revoke`, `dropRef`, `revokeDelegation`),
 confinement is preserved: a cap held in `caps'` was held in `caps`, hence bounded. -/
 theorem CapsConfined.mono {U : List Auth} {caps caps' : Caps}
     (hsub : ∀ l, caps' l ⊆ caps l) (h : CapsConfined U caps) : CapsConfined U caps' :=
   fun l c a hc ha => h l c a (hsub l hc) ha
 
-/-- **`mem_modify_cases` (PROVED) — the `List.modify` membership dichotomy.** Every member of
-`l.modify n f` is EITHER a member of `l` (untouched) OR `f d` for some member `d` of `l` (the one
+/-- **`mem_modify_cases` — the `List.modify` membership dichotomy.** Every member of
+`l.modify n f` is either a member of `l` (untouched) or `f d` for some member `d` of `l` (the one
 replaced at index `n`). The list-level fact behind the in-place attenuation closure. -/
 theorem mem_modify_cases {α : Type _} (f : α → α) :
     ∀ (n : Nat) (l : List α) (c : α), c ∈ l.modify n f → c ∈ l ∨ ∃ d ∈ l, c = f d
@@ -89,9 +64,9 @@ theorem mem_modify_cases {α : Type _} (f : α → α) :
         · exact Or.inl (List.mem_cons.mpr (Or.inr h1))
         · exact Or.inr ⟨d, List.mem_cons.mpr (Or.inr hd), hcd⟩
 
-/-- **`CapsConfined.grant` (PROVED) — the GRANT closure.** Prepending a cap `c` to `holder`'s slot
-preserves confinement provided `c`'s OWN conferred authority lies within `U`. Covers every authority
-GRANT (`delegate`/`introduce`/`validateHandoff`/`spawn` grant `Cap.node t` conferring `[control]`;
+/-- **`CapsConfined.grant` — the grant closure.** Prepending a cap `c` to `holder`'s slot
+preserves confinement provided `c`'s own conferred authority lies within `U`. Covers every authority
+grant (`delegate`/`introduce`/`validateHandoff`/`spawn` grant `Cap.node t` conferring `[control]`;
 `delegateAtten` grants `attenuate keep (heldCapTo …)` whose conferred authority is bounded separately). -/
 theorem CapsConfined.grant {U : List Auth} {caps : Caps} {holder : Label} {c : Cap}
     (hc : ∀ a ∈ capAuthConferred c, a ∈ U) (h : CapsConfined U caps) :
@@ -105,9 +80,9 @@ theorem CapsConfined.grant {U : List Auth} {caps : Caps} {holder : Label} {c : C
     · exact h l d a hdrest ha            -- an already-held cap: bounded by confinement.
   · rw [if_neg hl] at hd; exact h l d a hd ha
 
-/-- **`CapsConfined.attenuateSlot` (PROVED) — the IN-PLACE NARROW closure (`AttenuateCapability`).**
+/-- **`CapsConfined.attenuateSlot` — the in-place narrow closure (`AttenuateCapability`).**
 Replacing the `idx`-th cap of `actor` with its `keep`-attenuation (`List.modify idx (attenuate keep)`)
-preserves confinement: a surviving cap is EITHER an untouched old cap (bounded) OR `attenuate keep d`
+preserves confinement: a surviving cap is either an untouched old cap (bounded) or `attenuate keep d`
 for the old cap `d` at `idx` (conferred ⊆ `d`'s ⊆ `U`, via `attenuate_subset`). -/
 theorem CapsConfined.attenuateSlot {U : List Auth} {caps : Caps} {actor : Label} {idx : Nat}
     {keep : List Auth} (h : CapsConfined U caps) :
@@ -330,13 +305,13 @@ theorem swissDropK_caps {k k' : RecordKernelState} {sw : Nat}
 
 /-! ## Step 3 — `execFullA_confine`: one full-action step preserves confinement (the CORE case split). -/
 
-/-- **`execFullA_confine` (PROVED) — the per-action confinement step.** With `control ∈ U`, EVERY
-committed `FullActionA` preserves `CapsConfined U`. The case split mirrors how each effect moves `caps`:
-the ~40 non-authority effects FRAME it (`*_caps_unchanged`/`rfl`); `revoke`/`dropRef`/`revokeDelegation`
-FILTER (`mono`); `attenuate` narrows in place (`attenuateSlot`); `delegate`/`introduce`/`validateHandoff`/
-`spawn` grant a `Cap.node` conferring `[control] ⊆ U` (`grant`); `delegateAtten` grants `attenuate keep
-(heldCapTo …)` whose conferred authority is ⊆ the held parent cap ⊆ `U` (`grant` + `attenuate_subset`).
-This is `confinement_preserved` discharged ON THE SHIPPED EXECUTOR, per effect. -/
+/-- **`execFullA_confine` — the per-action confinement step.** With `control ∈ U`, every
+committed `FullActionA` preserves `CapsConfined U`. The ~40 non-authority effects frame `caps`
+(`*_caps_unchanged`/`rfl`); `revoke`/`dropRef`/`revokeDelegation` filter (`mono`); `attenuate`
+narrows in place (`attenuateSlot`); `delegate`/`introduce`/`validateHandoff`/`spawn` grant a
+`Cap.node` conferring `[control] ⊆ U` (`grant`); `delegateAtten` grants `attenuate keep (heldCapTo …)`
+whose conferred authority is ⊆ the held parent cap ⊆ `U` (`grant` + `attenuate_subset`).
+This is `confinement_preserved` discharged on the executor, per effect. -/
 theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
     (s s' : RecChainedState) (fa : FullActionA)
     (h : execFullA s fa = some s') (hpre : CapsConfined U s.kernel.caps) :
@@ -637,9 +612,8 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
 
 /-! ## Step 4 — lift to the forest turn, then the full forest (the executed cell step). -/
 
-/-- **`execFullTurnA_confine` (PROVED)** — a committed full-TURN (the `Option`-monad fold of
-`execFullA`) preserves `CapsConfined U`: induct on the action list, chaining the per-action
-`execFullA_confine`. -/
+/-- **`execFullTurnA_confine`** — a committed full turn (the `Option`-monad fold of `execFullA`)
+preserves `CapsConfined U`: induction on the action list, chaining `execFullA_confine`. -/
 theorem execFullTurnA_confine {U : List Auth} (hctrl : Auth.control ∈ U) :
     ∀ (s s' : RecChainedState) (tt : List FullActionA),
       execFullTurnA s tt = some s' → CapsConfined U s.kernel.caps → CapsConfined U s'.kernel.caps
@@ -653,8 +627,8 @@ theorem execFullTurnA_confine {U : List Auth} (hctrl : Auth.control ∈ U) :
           rw [ha] at h
           exact execFullTurnA_confine hctrl s1 s' rest h (execFullA_confine hctrl s s1 a ha hpre)
 
-/-- **`execFullForestA_confine` (PROVED)** — a committed full-FOREST preserves `CapsConfined U`. Read
-through the pre-order bridge `execFullForestA_eq_execFullTurnA` into `execFullTurnA_confine`. -/
+/-- **`execFullForestA_confine`** — a committed full forest preserves `CapsConfined U`. Routes through
+the pre-order bridge `execFullForestA_eq_execFullTurnA` into `execFullTurnA_confine`. -/
 theorem execFullForestA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
     (s s' : RecChainedState) (f : FullForestA)
     (h : execFullForestA s f = some s') (hpre : CapsConfined U s.kernel.caps) :
@@ -662,9 +636,9 @@ theorem execFullForestA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
   rw [execFullForestA_eq_execFullTurnA] at h
   exact execFullTurnA_confine hctrl s s' (lowerForestA f) h hpre
 
-/-- **`cellNextA_confine` (PROVED) — THE ONE-STEP OBLIGATION.** A single living-cell step preserves
-`CapsConfined U`: on a COMMIT the forest confinement lemma applies; on a REJECT the state (hence `caps`)
-is the UNCHANGED `s`. The hypothesis `livingCellA_carries` consumes. -/
+/-- **`cellNextA_confine` — the one-step obligation.** A single living-cell step preserves
+`CapsConfined U`: on a commit the forest confinement lemma applies; on a reject the state (hence `caps`)
+is unchanged. Consumed by `livingCellA_carries`. -/
 theorem cellNextA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
     (s : RecChainedState) (cf : ConservingForest) (hpre : CapsConfined U s.kernel.caps) :
     CapsConfined U (cellNextA s cf).kernel.caps := by
@@ -673,25 +647,19 @@ theorem cellNextA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
   | some s' => simp only [Option.getD_some]; exact execFullForestA_confine hctrl s s' cf.1 hc hpre
   | none    => simp only [Option.getD_none]; exact hpre
 
-/-! ## Step 5 — `livingCellA_confinement`: the CONFINEMENT CROWN (carried FOREVER). -/
+/-! ## Step 5 — `livingCellA_confinement`: confinement carried FOREVER. -/
 
-/-- **`livingCellA_confinement` (PROVED) — THE CONFINEMENT CROWN.** Fix an authority ceiling `U`
-containing `control`. If the INITIAL kernel's caps are *confined by `U`* (every authority conferred by
-every held cap, in every slot, lies in `U`), then they STAY confined at EVERY index of the unbounded
-adversarial trajectory `trajA s sched`, under EVERY schedule `sched : SchedA`:
+/-- **`livingCellA_confinement`** — Fix an authority ceiling `U` containing `control`. If the initial
+kernel's caps are confined by `U` (every authority conferred by every held cap lies in `U`), they stay
+confined at every index of the unbounded adversarial trajectory `trajA s sched`, under every schedule:
 
   `∀ n, CapsConfined U (trajA s sched n).kernel.caps`.
 
-This is the seL4 object-integrity **confinement** (`Authority/Positional.confinement_preserved` — the
-lift of l4v `call_kernel_pas_refined`: a turn never grows authority beyond the policy upper bound) lifted
-COINDUCTIVELY onto the SHIPPED executor: *only connectivity begets connectivity, never beyond the ceiling,
-FOREVER*. The single-step obligation `cellNextA_confine` discharges the SAME no-amplification content the
-per-step `execFullForestA_no_amplify` proves — the attenuating delegation edges and the `Cap.node`
-connectivity grants never push conferred authority past the fixed ceiling — and `livingCellA_carries`
-carries it along the entire infinite adversarial future. Conservation (`livingCellA_obs_invariant'`) and
-the append-only log (`livingCellA_logMono`) were the first two carried crowns; THIS is the third, and the
-one that makes the cell a CONFINEMENT substrate (cap-safety over unbounded time), not merely a
-conservation/audit one. -/
+This is the seL4 object-integrity confinement (`Authority/Positional.confinement_preserved`, lifted from
+l4v `call_kernel_pas_refined`: a turn never grows authority beyond the policy upper bound) carried
+coinductively: the attenuating delegation edges and the `Cap.node` connectivity grants never push
+conferred authority past the fixed ceiling, for all time. `cellNextA_confine` is the one-step obligation;
+`livingCellA_carries` carries it over the entire adversarial future. -/
 theorem livingCellA_confinement {U : List Auth} (hctrl : Auth.control ∈ U)
     (s : RecChainedState) (hinit : CapsConfined U s.kernel.caps) (sched : SchedA) :
     ∀ n, CapsConfined U (trajA s sched n).kernel.caps :=
@@ -700,10 +668,9 @@ theorem livingCellA_confinement {U : List Auth} (hctrl : Auth.control ∈ U)
 
 /-! ## It runs (`#eval`) — confinement is non-vacuous on a real grant + a real ceiling.
 
-A real cap table where cell 0 holds an `endpoint 7 [read, write]` cap. The ceiling `U = full Auth` (all
-7 kinds) confines it; after a `delegateAttenA` that grants cell 1 the attenuation to `[read]` (conferring
-`[read] ⊆ U`), and after a `delegate` granting `Cap.node` (conferring `[control] ∈ U`), confinement still
-holds — but a ceiling MISSING the relevant authority would FAIL on the grant, so the bound has teeth. -/
+A real cap table where cell 0 holds an `endpoint 7 [read, write]` cap. The ceiling `U = full Auth`
+(all 7 kinds) confines it; a ceiling missing the relevant authority would fail on the grant, so the
+bound has teeth. -/
 
 /-- The full authority enumeration — the most permissive ceiling, containing `control`. -/
 def fullAuthCeiling : List Auth :=
@@ -715,7 +682,7 @@ def fullAuthCeiling : List Auth :=
 #eval decide (Auth.control ∈ [Auth.grant])                              -- false (a too-tight ceiling rejects connectivity grants)
 #eval decide (∀ a ∈ capAuthConferred (Cap.node 7), a ∈ fullAuthCeiling) -- true ([control] ⊆ full)
 
-/-! ## Axiom hygiene — the confinement crown + its one-step obligation pinned to the kernel triple. -/
+/-! ## Axiom hygiene — confinement + one-step obligation pinned to the kernel triple. -/
 
 #assert_axioms CapsConfined.grant
 #assert_axioms CapsConfined.attenuateSlot

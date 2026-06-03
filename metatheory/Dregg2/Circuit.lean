@@ -1,43 +1,26 @@
 /-
-# Dregg2.Circuit — the circuit-from-Lean bridge (the ZK/AIR constraint system as a
-first-class Lean object, PROVEN equivalent to the verified step spec).
+# Dregg2.Circuit — the circuit-from-Lean bridge: the ZK/AIR constraint system as a
+# first-class Lean object, proved equivalent to the verified step spec.
 
-`Exec/StepComplete.lean` makes the executable kernel **step-complete** and PROVES that
-every committed chained step attests the four `fullStepInv` conjuncts (Conservation ∧
-Authority ∧ ChainLink ∧ ObsAdvance). Those four conjuncts are *exactly* the public-input
-(PI) surface a ZK proof must bind. This module closes the last seam of `dregg2 §8`: it
-writes that PI surface down as an honest **arithmetic constraint system** (the AIR/R1CS
-shape — addition and multiplication over a field, here ℤ as the field stand-in), lays the
-pre/turn/post state out as field **variables** (`encode`), and PROVES the constraint system
-is SOUND ∧ COMPLETE against the verified spec:
+`Exec/StepComplete.lean` proves every committed step attests the four `fullStepInv`
+conjuncts (Conservation ∧ Authority ∧ ChainLink ∧ ObsAdvance). This module writes those
+conjuncts as an arithmetic constraint system (AIR/R1CS shape, ℤ as field stand-in) and
+proves soundness ∧ completeness:
 
     bridge : satisfied kernelCircuit (encode s t s') ↔ fullStepInv s t s'
 
-This is the object that **extracts** to the Rust prover: `kernelCircuit` is pure *data*
-(a `List Constraint`), and `bridge` certifies that checking it is the same as checking the
-Lean-verified `fullStepInv`. Given `bridge`, a `CryptoKernel.verify` defined as "evaluate
-`satisfied kernelCircuit`" has its §8 soundness law **DERIVED** (see `verify_law_derivable`),
-not assumed — the circuit no longer sits outside the proof.
+`kernelCircuit` is pure data that extracts to the Rust prover; `bridge` certifies that
+checking it is equivalent to checking `fullStepInv`. Given `bridge`, a verifier implemented
+as `decide (satisfied kernelCircuit …)` has its §8 soundness law derived, not assumed.
 
-## What the field layout captures
-We expose the scalars the four conjuncts range over as named variables:
-  * `totalPre`, `totalPost`   — the conserved measure (Conservation);
-  * `authBit`                 — the authority decision as a {0,1} bit (Authority);
-  * `lenPre`, `lenPost`       — the receipt-chain length (ObsAdvance + ChainLink length);
-  * `chainOk`                 — a {0,1} indicator that the post-log is `t :: pre-log`
-                                (the full ChainLink list-equality witness; a circuit binds
-                                it via a hash/Merkle argument — here a decidable indicator).
+Field layout: `totalPre`/`totalPost` (Conservation), `authBit` (Authority),
+`lenPre`/`lenPost` (ObsAdvance + ChainLink length), `chainOk` (ChainLink list-equality).
 
-## Honesty boundary (read `-- OPEN:` / `-- PRIMITIVE:` markers)
-Conservation and ObsAdvance are *pure arithmetic* and their two directions are both proved
-in full. Authority is a bit-equation and is proved both directions. ChainLink's full
-list-equality cannot be reconstructed from a finite bag of field scalars alone (a length +
-head match does not imply tail equality); a real circuit recovers it from a collision-
-resistant chain *digest*. We therefore carry the list-equality as a single decidable
-`chainOk` indicator variable and discharge BOTH directions of its conjunct against the
-spec honestly (the indicator is defined to *be* the spec predicate, mirroring what the
-digest binds). The only genuinely external obligation — that the Rust prover's digest
-equals this indicator — is the §8 binding law and is flagged `-- PRIMITIVE:` at the seam.
+Honesty boundary: Conservation and ObsAdvance are pure arithmetic (both directions proved).
+Authority is a {0,1} bit-equation (both directions proved). ChainLink full list-equality
+cannot be reconstructed from scalars alone; it is carried as a decidable `chainOk` indicator
+(defined to be the spec predicate). The only external obligation is that the Rust prover's
+digest binds to this indicator — that is the §8 binding law, flagged `-- PRIMITIVE:`.
 -/
 import Mathlib.Tactic
 import Dregg2.Exec.StepComplete
@@ -267,28 +250,11 @@ theorem cexec_satisfies_circuit {s s' : ChainedState} {t : Turn}
 
 /-! ## The §8 verify-law derivation story (the extraction seam). -/
 
-/-- **`verify_law_derivable` — the verify law is DERIVED, not assumed.**
-
-`CryptoKernel.verify` (`dregg2 §8`) is an opaque oracle whose soundness is normally an
-ASSUMED interface law. With `bridge` it becomes a THEOREM for the specific verifier that
-"checks the kernel circuit". Concretely, suppose a `verify` is implemented as
-
-    verifyStep s t s' := decide (satisfied kernelCircuit (encode s t s'))
-
-(`satisfied kernelCircuit (encode …)` is decidable: each gate is a ℤ-equality, each
-conjunct of `fullStepInv` is decidable, and `bridge` is the equivalence). Then its
-soundness law is exactly:
-
-    verifyStep s t s' = true  →  fullStepInv s t s'
-
-which is `(bridge …).mp ∘ of_decide_eq_true` — **derived from `bridge`**, never axiomatized.
-This theorem states that derived soundness law against a `Decidable (satisfied …)` instance.
-
-The remaining `-- PRIMITIVE:` obligation is *not* this implication (we prove it) but the
-binding of the real Rust prover's CR-hash chain digest to the `chainOk`/`vTotalPre`/… field
-wires — i.e. that the extracted `kernelCircuit` data is the circuit the Poseidon/WHIR prover
-actually proves. That is the genuine §8 cryptographic seam; the LOGICAL content of the
-verify law is discharged here. -/
+/-- **`verify_law_derivable`** — the verify soundness law is derived, not assumed.
+For a verifier implemented as `decide (satisfied kernelCircuit (encode s t s'))`, the law
+`verifyStep = true → fullStepInv` is `(bridge …).mp ∘ of_decide_eq_true`. The remaining
+`-- PRIMITIVE:` obligation is that the Rust prover's CR-hash digest binds to the `chainOk`/
+field wires — the genuine §8 cryptographic seam; the logical content is discharged here. -/
 theorem verify_law_derivable (s : ChainedState) (t : Turn) (s' : ChainedState)
     [Decidable (satisfied kernelCircuit (encode s t s'))]
     (h : decide (satisfied kernelCircuit (encode s t s')) = true) :

@@ -1,37 +1,17 @@
 /-
-# Dregg2.Crypto.Bridge — the SIXTH end-to-end §8 discharge: a cross-chain comparison predicate.
+# Dregg2.Crypto.Bridge — §8 discharge: cross-chain observation-bridge comparison predicate.
 
-**The next obligation after Merkle / Pedersen / NonMembership / Temporal / Dfa
-(`docs/rebuild/PHASE-CRYPTOKERNEL.md §5` "Path to the rest": `Bridge` "is the comparison AIR (range
-gadgets)").** This discharges the `WitnessedKind.bridge` obligation: a cross-chain / observation-bridge
-predicate that checks an OBSERVED foreign value `v` (e.g. an amount or balance read off a foreign
-chain) both (a) OPENS against a committed foreign-state digest `c` — the prover knows a preimage of the
-disclosed commitment — AND (b) satisfies a COMPARISON against a disclosed expected `threshold`
-(`threshold ≤ v`). This is the bridge-action family (`circuit/src/bridge_action_air.rs`): the AIR binds
-the typed foreign parameters into the trace and pins them to the public inputs (the OPENING half — a
-boundary `PiBinding` of the committed digest to the witnessed limbs), and the metatheory's Bridge kind
-adds the COMPARISON the §5 note names ("the comparison AIR (range gadgets)") — the observed value clears
-the expected threshold. The cascade mirrors the prior kinds:
+Discharges `WitnessedKind.bridge`: an observed foreign value `v` both (a) opens against a committed
+foreign-state digest `c` and (b) clears a disclosed `threshold` (`threshold ≤ v`). Mirrors
+`bridge_action_air.rs`.
 
     bridge_bridge       : Satisfies bridgeCircuit (c, threshold, v) ↔ BridgeRelation compress (c,threshold,v)
-      [the gadget, both directions — the COMPARISON via `RecordCircuit.range` (FULLY proven, no seam),
-       the OPENING via an abstract `compress` equation (structural; CR/binding is the Layer-A carrier)]
-    bridge_verify_sound : verify accepts → BridgeRelation …
-      [DERIVED off the bridge, given the STARK `extractable` carrier]
-    bridge_dial_wired   : the dial pinned to the verifier at the `selective` floor
-      [the foreign commitment `c` + threshold are DISCLOSED, the exact observed value `v` is the hidden
-       witness ⇒ `selective` (chosen facts + the conclusion), like Pedersen / Temporal]
+    bridge_verify_sound : verify accepts → BridgeRelation …  (derived off the bridge + `extractable`)
+    bridge_dial_wired   : dial at `selective` floor (commitment + threshold disclosed; `v` hidden)
 
-**The COMPARISON is the genuinely-grounded part** (and the heart of the bridge): an observed value with
-a valid `n`-bit boolean decomposition of `v - threshold` provably satisfies `threshold ≤ v`
-(`RecordCircuit.range_proves_le`, fully proved, no crypto) — exactly the §5 "comparison AIR (range
-gadgets)". This is the SAME range gadget Temporal rides; here it is one-sided (a `Gte` threshold,
-`bridge_action_air.rs` carries the amount limbs that the bridge compares). The ONLY cryptographic
-residue is (i) the abstract `compress` digest-OPENING equation `c = compress vDigest salt` — left
-ABSTRACT exactly like Merkle's node hash, its collision-resistance / binding being the Layer-A
-`CryptoPrimitives.collisionHard` / `binding` `Prop` carriers, NEVER touched by the bridge — and (ii)
-the STARK `extractable` carrier (a `Prop`, passed as a hypothesis) binding the disclosed statement to a
-satisfying trace. The comparison algebra is unconditional. Exactly the discipline the rails demand.
+The comparison half (`RecordCircuit.range_proves_le`) is fully proved with no primitive seam.
+Cryptographic residue: the abstract `compress` opening equation (CR/binding is the Layer-A
+`collisionHard`/`binding` carrier, never touched by the bridge) and the STARK `extractable` carrier.
 -/
 import Dregg2.Crypto.Primitives
 import Dregg2.Exec.RecordCircuit
@@ -151,19 +131,11 @@ theorem bridge_complete (compress : Digest → Digest → Digest)
       rw [this]; exact_mod_cast Nat.lt_two_pow_self)
   exact ⟨⟨cmpBits, vDigest, salt⟩, ⟨hcmpBool, hcmpRec⟩, hopen⟩
 
-/-- **`bridge_bridge` — THE deliverable (the analog of `merkle_bridge`/`temporal_bridge`).** The bridge
-AIR's satisfiability is EXACTLY the bridge relation `Opens c ∧ threshold ≤ v`:
-
-  * `→` (SOUNDNESS): a satisfying trace's comparison range gadget forces `threshold ≤ v`
-    (`range_proves_le`), and the opening boundary IS `Opens` (`bridge_sound`).
-  * `←` (COMPLETENESS): a genuine relation yields a satisfying trace (a boolean decomposition of
-    `v - threshold` via `range_complete`, plus the threaded opening witness — `bridge_complete`).
-
-The COMPARISON core (`RecordCircuit.range`) is FULLY proven — NO primitive seam (the §5 "range
-gadget"). The OPENING is an abstract `compress` equation threaded through, never opened; its CR/binding
-is the Layer-A `collisionHard`/`binding` carrier, consumed by `bridge_verify_sound`, NEVER here. Stated
-over `circuit.vDigest`/`circuit.salt` on the `→` side (the witnessed opening) and existentially on the
-`←` side (the prover's witness). -/
+/-- **`bridge_bridge`** — the bridge AIR's satisfiability is exactly `Opens c ∧ threshold ≤ v`.
+Soundness: the comparison range gadget forces `threshold ≤ v` (`range_proves_le`), the opening
+boundary IS `Opens`. Completeness: a genuine relation yields a satisfying trace via `range_complete`.
+The comparison core is fully proved with no primitive seam; the opening is an abstract `compress`
+equation threaded through, with CR/binding in the Layer-A carrier consumed by `bridge_verify_sound`. -/
 theorem bridge_bridge (compress : Digest → Digest → Digest)
     (c : Digest) (threshold v : Int) :
     -- SOUNDNESS: every satisfying trace certifies the bridge relation (at its own witnessed opening).
@@ -176,11 +148,9 @@ theorem bridge_bridge (compress : Digest → Digest → Digest)
   ⟨fun circuit hsat => bridge_sound compress circuit c threshold v hsat,
    fun vDigest salt h => bridge_complete compress c threshold v vDigest salt h⟩
 
--- TRIPWIRES: the bridge gadget's both directions are kernel-clean (axioms ⊆ {propext,
--- Classical.choice, Quot.sound}). The COMPARISON heart is FULLY proved via the `range_iff` gadget — NO
--- primitive seam; the OPENING is an abstract `compress` equation threaded through (its CR/binding is the
--- Layer-A carrier, never invoked here). The ONLY cryptographic residue is the `extractable` carrier
--- (consumed below by `bridge_verify_sound`), never a hidden `sorry`.
+-- Tripwires: both bridge directions are kernel-clean. Comparison is fully proved via `range_iff`
+-- (no primitive seam); opening is an abstract `compress` equation (CR/binding is the Layer-A
+-- carrier, never invoked here). Crypto residue: `extractable`, never a `sorry`.
 #assert_axioms bridge_sound
 #assert_axioms bridge_complete
 #assert_axioms bridge_bridge
@@ -228,15 +198,10 @@ class BridgeVerifierKernel (Dg : Type) [AddCommGroup Dg] (Proof : Type) where
 
 variable {Proof : Type}
 
-/-- **`bridge_verify_sound` — the DERIVED verify law (the analog of `temporal_verify_sound`).** Given
-the STARK-soundness + digest-binding carrier `extractable`, an accepted bridge proof PROVES that there
-is an observed value `v` that OPENS against the disclosed commitment `c` AND clears the `threshold`:
-
-    verify stmt proof = true  →  ∃ v vDigest salt, BridgeRelation compress stmt.c stmt.threshold v vDigest salt
-
-The proof composes `extract` (accept ⇒ satisfying trace, the crypto carrier) with `bridge_bridge`'s
-SOUNDNESS half (satisfying trace ⇒ relation, FULLY proved via the `range_iff` gadget). The verify law is
-DERIVED, not assumed; the only hypothesis is `extractable`. -/
+/-- **`bridge_verify_sound`** — given `extractable`, an accepted bridge proof proves some observed
+value opens against the disclosed commitment `c` and clears the threshold:
+`verify stmt proof = true  →  ∃ v vDigest salt, BridgeRelation compress stmt.c stmt.threshold v vDigest salt`.
+Derived by composing `extract` with `bridge_bridge`'s soundness half; never assumed. -/
 theorem bridge_verify_sound [K : BridgeVerifierKernel Dg Proof]
     (hext : K.extractable) (stmt : Statement Dg) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -323,11 +288,9 @@ def bridgeDisclose [BridgeVerifierKernel D P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`bridge_dial_wired` — THE DIAL WIRING (the analog of `temporal_dial_wired`).** The bridge kind's
-epistemic floor is `selective` (commitment + threshold disclosed, observation may be blinded), the
-dial's bottom notch's acceptance bit IS the bridge verifier's `Discharged` bit, and — given STARK
-`extractable` — an accepting proof PROVES the bridge relation (some observed value opens against `c` and
-clears the threshold). The dial is pinned to the per-kind verifier. -/
+/-- **`bridge_dial_wired`** — the bridge kind's floor is `selective` (commitment + threshold
+disclosed, observation may be hidden), the dial's bottom notch IS the bridge verifier's `Discharged`
+bit, and an accepting proof proves the bridge relation. Dial pinned to the per-kind verifier. -/
 theorem bridge_dial_wired [K : BridgeVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P) (stmt : Statement D) (proof : P) :
@@ -346,11 +309,9 @@ theorem bridge_dial_wired [K : BridgeVerifierKernel D P]
       (bridgeDisclose base stmt proof)
   · exact fun haccept => bridge_verify_sound hext stmt proof haccept
 
-/-- **`bridge_registry_cascade` — the §8 discharge through the registry (the analog of
-`temporal_registry_cascade`).** Registering the bridge kind, an accepted proof both `Discharged`s the
-kind's predicate (the registry keystone, `registry_sound`) AND — given the STARK `extractable` carrier —
-PROVES the bridge relation (`bridge_verify_sound`). The cascade `registry_sound ∘ bridge_verify_sound`;
-the single trust boundary is `extractable` (STARK soundness + the digest binding). -/
+/-- **`bridge_registry_cascade`** — registering the bridge kind, an accepted proof both `Discharged`s
+the kind's predicate (`registry_sound`) and — given `extractable` — proves the bridge relation
+(`bridge_verify_sound`). Single trust boundary: `extractable`. -/
 theorem bridge_registry_cascade [K : BridgeVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P)
@@ -443,8 +404,7 @@ theorem reference_cascade_nonvacuous :
           BridgeRelation refCompress sampleStmt.c sampleStmt.threshold v vD salt :=
   bridge_registry_cascade (K := refKernel) trivial base sampleStmt () (by decide)
 
--- The non-vacuity witness's axiom footprint (the task's `#print axioms` requirement): the reference
--- cascade rests only on the three standard kernel axioms — NO `sorryAx`, NO crypto axiom.
+-- Non-vacuity axiom footprint: rests only on the standard axioms — no `sorryAx`, no crypto axiom.
 #print axioms reference_cascade_nonvacuous
 
 /-- Non-vacuity of the dial wiring: the floor is `selective`, the dial's bottom notch is the verifier's
@@ -454,11 +414,9 @@ example : (bridgeKindObligation Int).dialFloor = Dial.selective :=
 
 end Reference
 
--- TRIPWIRES: the bridge bridge + derived verify-soundness + cascade + dial wiring are kernel-clean.
--- The COMPARISON heart is FULLY proved via the `range_iff` gadget — NO primitive seam; the OPENING is
--- an abstract `compress` equation threaded through (its CR/binding is the Layer-A `collisionHard`/
--- `binding` carrier, NEVER invoked). The ONLY cryptographic residue is the `extractable` carrier
--- (passed as a hypothesis), never a hidden `sorry`.
+-- Tripwires: bridge + verify-soundness + cascade + dial wiring are kernel-clean. Comparison is
+-- fully proved via `range_iff` (no primitive seam); opening is an abstract `compress` equation
+-- (CR/binding is the Layer-A carrier, never invoked). Crypto residue: `extractable`, never a `sorry`.
 #assert_axioms bridge_bridge
 #assert_axioms bridge_verify_sound
 #assert_axioms bridge_registry_cascade

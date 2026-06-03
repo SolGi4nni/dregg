@@ -1,18 +1,18 @@
 /-
-# Dregg2.Exec.CircuitEmit — the EXTRACTION EMITTER: Lean circuit data → a deterministic
-wire encoding the real Rust backend can decode, with a PROVED faithfulness theorem.
+# Dregg2.Exec.CircuitEmit — emits Lean circuit data to a deterministic wire encoding the
+real Rust backend can decode, with a faithfulness theorem.
 
-`Circuit.lean` gives us the verified circuit IR (`ConstraintSystem` = `List Constraint`,
+`Circuit.lean` gives the verified circuit IR (`ConstraintSystem` = `List Constraint`,
 `Expr` = var/const/add/mul over the field) plus the keystone
 
     bridge : satisfied kernelCircuit (encode s t s') ↔ fullStepInv s t s'
 
-so checking `kernelCircuit` *is* checking the verified `fullStepInv`. What was MISSING is the
-last hop: getting `kernelCircuit` — pure Lean *data* — OUT of Lean and into the real Rust
-prover/verifier (`circuit/src/dsl/circuit.rs`'s `CircuitDescriptor`/`ConstraintExpr`) in a way
-that PROVES the wire form did not lose the semantics `bridge` certified.
+so checking `kernelCircuit` *is* checking the verified `fullStepInv`. This module supplies the
+last hop: getting `kernelCircuit` — pure Lean data — out of Lean and into the real Rust
+prover/verifier (`circuit/src/dsl/circuit.rs`'s `CircuitDescriptor`/`ConstraintExpr`) without
+losing the semantics `bridge` certified.
 
-This module supplies that hop:
+The pieces:
 
   * **`EmittedDescriptor`** — a Lean structure mirroring the *fields* of Rust's
     `CircuitDescriptor` (name, trace_width, constraints), where each constraint is a pair of
@@ -23,9 +23,9 @@ This module supplies that hop:
   * **`decodeE`** — the inverse `EmittedDescriptor → ConstraintSystem`.
   * **`satisfiedEmitted`** — `satisfied` lifted to the emitted form.
   * **`emit_faithful`** — `satisfied cs a ↔ satisfiedEmitted (emit cs) a`: the wire form
-    DENOTES the same constraint system, so the semantics `bridge` proved survive emission.
-    Proved via a structure-preserving round trip (`decodeE_emit : decodeE (emit cs) = cs`),
-    so faithfulness is definitional + `bridge`-compatible. `#assert_axioms`-pinned.
+    denotes the same constraint system, so the semantics `bridge` proved survive emission.
+    Proved via a structure-preserving round trip (`decodeE_emit : decodeE (emit cs) = cs`).
+    `#assert_axioms`-pinned.
 
 The Rust side (in `dregg-lean-ffi`) decodes the printed wire string back into a real
 `circuit::dsl::CircuitDescriptor` and checks its `AirDescriptor::fingerprint` equals the

@@ -1,51 +1,30 @@
 /-
-# Dregg2.Spec.Choreography — the choreography-projection ↔ atomic-hyperedge BRIDGE.
+# Dregg2.Spec.Choreography — the choreography-projection ↔ atomic-hyperedge bridge.
 
-Two altitudes that have so far lived apart finally meet here:
+`Projection` (the cand-D front-end) splits each choreography interaction by colour:
+**blue** = write-set invariant is BEC-I-confluent (coordination-free, no commit);
+**red** = coupled (atomic Σ=0 settlement). The classifier is
+`Projection.BlueEligible = Confluence.IConfluent`.
 
-  * **`Projection`** (the cand-D front-end) splits each interaction of a choreography by
-    *colour*: **blue** = its write-set invariant is BEC-**I-confluent** (coordination-free,
-    partition-tolerant, NO commit); **red** = coupled (an atomic Σ=0 settlement that must
-    escalate). The classifier is `Projection.BlueEligible = Confluence.IConfluent`.
-  * **`Hyperedge`** (the back-end) is the atomic cross-cell commit: the **wide pullback**
-    over `TurnId` of the participants' `turnId ∘ next` maps + the N-ary CG-5 conservation
-    aggregate. `Hyperedge.hyperedge_sound` is the PROVED-clean N-ary keystone.
+`Hyperedge` (the back-end) is the atomic cross-cell commit: the wide pullback over `TurnId`
++ the N-ary CG-5 conservation aggregate. `hyperedge_sound` is the proved N-ary keystone.
 
-The bridge is the **projection-realization law**:
+The bridge: an interaction's colour is exactly "does its atomic commit need a hyperedge?":
 
-      RED interaction  ↦  one atomic `Hyperedge` over its participant cells
-      BLUE interaction ↦  independent per-cell commits (NO shared `tid` binding)
+  * **`red_projects_to_hyperedge`** — a red interaction's atomic commit assembles a
+    `Hyperedge` over its participant cells (structural half proved; the operational-LTS half
+    is `-- OPEN:` — that the live red commit operationally produces this hyperedge along the
+    composed-projection bisimulation requires the `Coordination` operational LTS).
+  * **`blue_needs_no_hyperedge`** — a blue interaction's invariant survives any concurrent
+    merge (`blue_merge_safe`), so it commits independently per cell, and the hyperedge
+    binding is genuine extra content a blue step never supplies (`hyper_binding_is_proper`).
+  * **`epp_membrane_is_projection`** — the per-endpoint projection of a red interaction IS
+    its hyperedge incidence; the vat-boundary membrane and the cell's hyperedge participation
+    are the same object (resting on `epp_correspondence`'s current head-duality scope,
+    noted honestly).
+  * **`red_iff_coupled`** — red ⟺ ¬ I-confluent ⟺ needs a hyperedge.
 
-i.e. the colour of an interaction is *exactly* "does its atomic commit need a hyperedge?".
-A red interaction's coupling FORCES the shared-`tid` wide-pullback binding (the cells cannot
-commit independently — their half-edges must sum to `0` against one apex `tid`); a blue one
-needs no such binding, because I-confluence (`Projection.blue_merge_safe`) lets every replica
-run the step and merge invariant-safely with no cross-cell cut.
-
-Three bridge theorems:
-
-  * **`red_projects_to_hyperedge`** — a red interaction's atomic commit IS a `Hyperedge`
-    over its incidence set; we prove the STRUCTURAL half (given the interaction's binding
-    data — the shared turn, the apex `tid`, CG-2 legs and CG-5 balance — it assembles a
-    `Hyperedge`, hence the tuple is `HyperAdmissible`) and honestly `-- OPEN:` the
-    operational-LTS half (that the live red commit *operationally produces* exactly this
-    hyperedge along the composed-projection bisimulation `Coordination` does not yet have).
-  * **`blue_needs_no_hyperedge`** — PROVED: a blue interaction's invariant survives ANY
-    concurrent merge (`blue_merge_safe`), so it commits independently per cell; and the
-    cross-cell hyperedge binding is genuine extra content a blue step never supplies
-    (`Hyperedge.hyper_binding_is_proper`) — there is no Σ=0 cut to require.
-  * **`epp_membrane_is_projection`** — connects the two altitudes: the per-endpoint
-    projection of a red interaction IS its hyperedge incidence; the vat-boundary membrane
-    that enforces a role's local type is the same object as the cell's hyperedge
-    participation. Rests on `Projection.epp_correspondence`'s current head-duality scope
-    (noted honestly), tied to `Hyperedge.legs_agree`.
-
-And `red_iff_coupled` ties the three judgements at the choreography altitude:
-**red ⟺ ¬ I-confluent ⟺ needs a hyperedge.**
-
-Style (matching the lib): faithful `Prop`s, real content; every `sorry` a precisely-stated
-genuine obligation (never `axiom`/`admit`/`native_decide`/`:True`); PROVED keystones pinned
-with `#assert_axioms`. NO `Nat`-for-semantics in the abstractions.
+Faithful `Prop`s; proved keystones pinned with `#assert_axioms`; no `Nat`-for-semantics.
 -/
 import Dregg2.Projection
 import Dregg2.Coordination
@@ -99,13 +78,10 @@ structure Interaction
   I-confluence is the blue/red classifier (`Coordination.StepEffect S`). -/
   effect   : StepEffect S
 
-/-- **`Interaction.colour` — the projection-time colour, read off the write-set invariant.**
-**blue** iff the effect's invariant is I-confluent (`BlueEligible`); **red** otherwise. This
-is the cand-D projection-split classifier at the choreography altitude — NOT the session type
-(`Coordination` §, claim #1 [REFUTED]: the colour is the third judgement, `Confluence`). The
-classification is decidable as a *mathematical* colour only relative to a decision of the
-(generally undecidable) `IConfluent` predicate; we expose it as the `Prop`-level split below
-(`IsRed`/`IsBlue`) rather than a spurious `Decidable` instance. -/
+/-- **`Interaction.colour`** — the projection-time colour, read off the write-set invariant:
+**blue** iff I-confluent (`BlueEligible`), **red** otherwise. The classification is
+decidable only relative to a decision of `IConfluent` (generally undecidable), so it is
+exposed as a `Prop`-level split (`IsRed`/`IsBlue`) rather than a `Decidable` instance. -/
 def Interaction.IsBlue
     {ι : Type v} [Fintype ι] {T : TurnCoalg Obs AdmissibleTurn}
     (P : Interaction (TurnId := TurnId) (Bal := Bal) (S := S) ι T) : Prop :=
@@ -221,12 +197,10 @@ A blue (I-confluent) interaction needs NO shared binding. Two halves, both PROVE
       cut) that the per-cell data does not supply (`Hyperedge.hyper_binding_is_proper`) — so
       a blue step, which requires only (a), is NOT carrying a hyperedge. -/
 
-/-- **`blue_commits_independently` — the positive half (PROVED).** A blue interaction's
-effect-invariant `P.effect.inv` is preserved by the merge of *any* two invariant-preserving
-cell-states. This is the coordination-free / no-commit guarantee at the merge level: a blue
-step runs on every replica and the replicas merge invariant-safely — independent per-cell
-commits, no shared `tid`. Direct from `Projection.blue_merge_safe`, which genuinely USES the
-I-confluence (it FAILS for a red invariant — `Confluence.cardLeOne_not_iconfluent`). -/
+/-- **`blue_commits_independently`** — a blue interaction's effect-invariant is preserved by
+the merge of any two invariant-preserving cell-states. Coordination-free: a blue step runs
+on every replica and merges invariant-safely, with no shared `tid`. From
+`Projection.blue_merge_safe` (which uses the I-confluence; fails for a red invariant). -/
 theorem blue_commits_independently
     {ι : Type v} [Fintype ι] {T : TurnCoalg Obs AdmissibleTurn}
     (P : Interaction (TurnId := TurnId) (Bal := Bal) (S := S) ι T)
@@ -344,25 +318,10 @@ theorem epp_membrane_is_projection
 #assert_axioms red_iff_coupled
 #assert_axioms epp_membrane_is_projection
 
-/- VERDICT (the bridge). The choreography projection-split and the atomic hyperedge are the
-**same classification read at two altitudes**:
-
-  * RED ↦ HYPEREDGE — a coupled interaction's atomic commit IS a wide-pullback `Hyperedge`
-    over its participant cells (`red_projects_to_hyperedge`, structural half PROVED via
-    `RedBinding.toHyperedge`; `red_legs_agree` exhibits the forced shared-`tid` cut). The
-    binding is the irreducible premise (`hyper_binding_is_proper`), exactly as red = coupled.
-  * BLUE ↦ INDEPENDENT COMMIT — an I-confluent interaction commits independently per cell
-    (`blue_commits_independently` / `blue_needs_no_hyperedge`, PROVED via
-    `Projection.blue_merge_safe`); it carries NO Σ=0 cross-cell cut.
-  * The colour IS the coupling judgement: `red_iff_coupled` ties red ⟺ ¬ I-confluent and
-    exhibits the forced-escalation clashing pair (`nonpairwise_escalation`).
-  * `epp_membrane_is_projection` connects the altitudes: the membrane enforcing a role's
-    local type (head-duality, `epp_correspondence`) and the cell's hyperedge incidence
-    (`legs_agree`) both hold for a red head interaction.
-
-The single OPEN residue is OPERATIONAL, not structural: that the live red commit operationally
-*produces* exactly this hyperedge along the composed-projection bisimulation — the same LTS
-`Coordination.projection_sound` / `epp_correspondence` await. Every structural keystone here is
-PROVED and axiom-clean. -/
+/- The choreography projection-split and the atomic hyperedge are the same classification
+read at two altitudes. The single open residue is operational, not structural: that the live
+red commit operationally produces exactly this hyperedge along the composed-projection
+bisimulation (`Coordination.projection_sound` / `epp_correspondence`). Every structural
+keystone is proved and axiom-clean. -/
 
 end Dregg2.Spec

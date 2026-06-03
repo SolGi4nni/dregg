@@ -1,17 +1,17 @@
 /-
-# Dregg2.Exec.CircuitEmitGadgets — emitting the OTHER §8 gadget circuits to the wire.
+# Dregg2.Exec.CircuitEmitGadgets — emitting the other §8 gadget circuits to the wire.
 
-`Dregg2.Exec.CircuitEmit` (imported read-only) discharged the EXTRACTION hop for the kernel
+`Dregg2.Exec.CircuitEmit` (imported read-only) discharged the extraction hop for the kernel
 (`emittedKernel_bridge`, var/const/add/mul AST) and the Merkle gadget (`emittedMerkle_bridge`,
 the column-indexed `MerkleHash`/`Transition`/`PiBinding` forms over abstract `Digest`s), plus the
-algebraic `ConstraintExpr` lowering (`emitA_faithful`). This module extends the SAME pattern —
+algebraic `ConstraintExpr` lowering (`emitA_faithful`). This module extends the same pattern —
 `emit<Gadget>` to the wire + an `emitted<Gadget>_bridge` composing emit-faithfulness with each
-gadget's own `*_bridge` — to the REMAINING §8 gadgets:
+gadget's own `*_bridge` — to the remaining §8 gadgets:
 
-  * **Temporal** (`Crypto.Temporal`) — TWO range gadgets (`t - lo ≥ 0`, `hi - t ≥ 0`), each the
-    honest `Binary`-bits + recomposition gadget. NO new wire forms beyond a `range` carrier.
+  * **Temporal** (`Crypto.Temporal`) — two range gadgets (`t - lo ≥ 0`, `hi - t ≥ 0`), each the
+    `Binary`-bits + recomposition gadget. No new wire forms beyond a `range` carrier.
     `emittedTemporal_bridge : (∃ trace, satisfiedEmittedTemporal …) ↔ InWindow lo hi t`.
-  * **NonMembership** (`Crypto.NonMembership`) — TWO reused Merkle sub-circuits (PART II's
+  * **NonMembership** (`Crypto.NonMembership`) — two reused Merkle sub-circuits (PART II's
     `EmittedConstraintM`/`satisfiedEmittedMerkle`) + the sorted-adjacency side condition + the two
     comparison range gadgets. `emittedNonMembership_bridge` composes with `nonmembership_bridge`.
   * **Pedersen** (`Crypto.Pedersen`) — the abstract-`commit` `PiBinding` boundaries (commitments to
@@ -23,25 +23,25 @@ gadget's own `*_bridge` — to the REMAINING §8 gadgets:
     (chaining) + the initial/accept boundary `PiBinding`s. Mirrors the `Lookup`-as-`δ` carrier.
     `emittedDfa_bridge` composes with `dfa_bridge`.
 
-HONEST status (which emit is green + Rust-decoder additions each needs):
+Status (which emit is green + the Rust-decoder additions each needs):
 
-  * **Temporal — GREEN.** No new Rust wire form: the range gadget is `Binary` per-bit + a
+  * **Temporal — green.** No new Rust wire form: the range gadget is `Binary` per-bit + a
     recomposition `Polynomial` (`Σ bᵢ·2ⁱ − diff = 0`), both already in PART III's `EmittedConstraintA`
     (`binary`/`polynomial`). The decoder needs only to read a `range` block = a `bit_cols` list + the
-    `diff` it recomposes; it lowers to `Binary`×n + one `Polynomial`. No NEW Rust enum variant.
-  * **NonMembership — GREEN.** Reuses PART II's Merkle wire form (already decoded) TWICE plus two
+    `diff` it recomposes; it lowers to `Binary`×n + one `Polynomial`. No new Rust enum variant.
+  * **NonMembership — green.** Reuses PART II's Merkle wire form (already decoded) twice plus two
     `range` blocks (as Temporal) plus a structural `adjacency` tag. The decoder needs the
     `non_membership` envelope = two `merkle` sub-descriptors + two `range` blocks + the `lo`/`hi`
     neighbor cells; the adjacency/ordering are the structural side conditions the Layer-A bridge owns
     (no new algebraic form).
-  * **Pedersen — GREEN over the abstract-`commit` carrier** (exactly as Merkle is green over abstract
+  * **Pedersen — green over the abstract-`commit` carrier** (exactly as Merkle is green over abstract
     `compress`). The wire form carries the `PiBinding` boundaries (note-commitment = public input) +
     per-note `range` blocks + a `conservation` tag (`Σ insC = Σ outsC`). The decoder needs the
     Pedersen value-commitment AIR's `commit(v,r)` column wiring + the sum-equality boundary
-    (`value_commitment.rs`); the commitment ALGEBRA (homomorphism) lives in the Layer-A
+    (`value_commitment.rs`); the commitment algebra (homomorphism) lives in the Layer-A
     `commit_hom`, not the wire — the wire denotes the structural conservation, the bridge owns the
     homomorphic step.
-  * **Dfa — GREEN over the abstract-`δ` `Lookup` carrier** (exactly as the `Lookup` is abstracted as
+  * **Dfa — green over the abstract-`δ` `Lookup` carrier** (exactly as the `Lookup` is abstracted as
     `δ` in `Crypto.Dfa`). The wire form carries the `Lookup` (per-row `(state,sym,next)` table
     membership), `Transition` (chaining), and the two boundary `PiBinding`s. The decoder needs the
     `dfa_lookup_descriptor` envelope = the `Lookup` table id + the `[state,byte,next]` column triple +

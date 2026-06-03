@@ -63,7 +63,7 @@ def committedTotal [CryptoKernel Digest Proof] (c : CommittedCell Digest Proof) 
   c.accounts.sum (fun i => commitmentOf (Proof := Proof) c i)
 
 /-- `committedTotal` collapses to a single commitment of the summed amount under the summed
-blinding (PROVED via `PrivacyKernel.commit_sum_kernel`, itself `map_sum` of `commitHom`). The
+blinding (via `PrivacyKernel.commit_sum_kernel`, itself `map_sum` of `commitHom`). The
 homomorphic sum of the visible commitments IS a commitment to the hidden grand total. -/
 theorem committedTotal_eq_commit_sum [CryptoKernel Digest Proof]
     (c : CommittedCell Digest Proof) :
@@ -182,7 +182,7 @@ def ofKernelState (Digest Proof : Type) [AddCommGroup Digest] [CryptoKernel Dige
     CommittedCell Digest Proof :=
   { accounts := k.accounts, amt := fun i => k.bal i, blind := bl }
 
-/-- **Corollary: the commitment of a cleartext conserving transfer conserves (PROVED).** Take
+/-- **Corollary: the commitment of a cleartext conserving transfer conserves.** Take
 a `KernelState` `k`, commit its balances under blinding `bl`, and perform the SAME `src⇒dst`
 move of cleartext `amt` (transfer blinding `s`) in the committed world: the `committedTotal`
 is preserved. So whenever the cleartext kernel would conserve `total` (Law 1,

@@ -1,31 +1,20 @@
 /-
-# Dregg2.Spec.Coherence — the `Spec.*` layer is ONE WEB, not islands.
+# Dregg2.Spec.Coherence — the `Spec.*` layer is one web.
 
-The factored middle layer (`Dregg2.Spec.*`) was built module-by-module, each one introducing
-its OWN abstract carriers behind its own discipline:
+The factored middle layer (`Dregg2.Spec.*`) declares its own abstract carriers per module:
+`Spec.Guard` (attenuation = meet), `Spec.Authority` (`Cap`/`Rights`/`confers`),
+`Spec.Conservation` (`LinearityClass`/`Domain`/`conservedInDomain`), `Spec.Lifecycle`
+(`Lifecycle`/`isTerminal`/`DeathCertificate`), `Hyperedge` (wide pullback + CG-5
+`balanced`), `Spec.Choreography` (`red_projects_to_hyperedge`), `Spec.VatBoundary`
+(`Epistemic`/`cross_vat_needs_witness`).
 
-  * `Spec.Guard` — `Guard Request Statement`, `Guard.admits · req w : Bool`, attenuation = meet.
-  * `Spec.Authority` — `Cap`/`Rights` (bounded meet-semilattice), the capability `Graph`,
-    `confers parent child := child.target = parent.target ∧ child.rights ≤ parent.rights`,
-    the generative/restrictive ops, `gen_step_traces`.
-  * `Spec.Conservation` — `LinearityClass`, `Domain`, `conservedInDomain dom deltas := deltas.sum = 0`
-    over an `AddCommMonoid Bal`.
-  * `Spec.Lifecycle` — `Lifecycle`, `isTerminal`, `DeathCertificate`, the `Transition` relation.
-  * `Hyperedge` — the atomic turn as a wide pullback, with CG-5 `balanced : Σ_{univ} halfEdge = 0`.
-  * `Spec.Choreography` — `red_projects_to_hyperedge` (RED ↦ atomic `Hyperedge`).
-  * `Spec.VatBoundary` — `Epistemic := Guard.admits …`, `cross_vat_needs_witness`.
+This module proves the **cross-links**: each pair coincides when instantiated at the shared
+types — the same `Guard`, the same `≤`, the same `Σ = 0`, the same revoke/terminal pole —
+wearing different module names. §7 names the shared `Prelude` the bridges show would be
+sound to factor out.
 
-Built apart, they *look* like islands: four different "narrowing" notions, two different
-"Σ = 0" laws, a `Revoke` op and a `destroyed` state that never meet. This module proves the
-**cross-links**: each pair of independently-built abstractions COINCIDES when instantiated at
-the shared types. The payoff is that the layer is demonstrably ONE web — the same `Guard`,
-the same `≤`, the same `Σ = 0`, the same revoke/terminal pole — wearing different module
-names. §7 then NAMES the shared `Prelude` the bridges prove would be sound to factor out.
-
-Discipline (matching the lib): faithful `Prop`s, real content; `#assert_axioms` on every
-clean keystone; honest `-- OPEN:` only on a genuine model gap, never `axiom`/`admit`/
-`native_decide`/`:True`/`Iff.rfl`-as-content. No `Nat`-for-semantics in the abstractions.
-Imports ONLY existing built modules.
+Faithful `Prop`s; `#assert_axioms` on every keystone; honest `-- OPEN:` only on genuine
+model gaps. No `Nat`-for-semantics.
 -/
 import Dregg2.Spec.Authority
 import Dregg2.Spec.Guard
@@ -376,13 +365,12 @@ end AttenuationOneOrder
 
 /-! ## §6 — Axiom-hygiene tripwires.
 
-Every cross-link above is PROVED-clean (no `sorry`): each depends ONLY on the three standard
-kernel axioms. Pinning them here certifies the web is genuinely woven — the coincidences are
-theorems, not `sorry`-aliases. (The independently-built modules already carry their own honest
-OPENs — `Authority.only_connectivity_begets_connectivity`, `Lifecycle.distributed_death_…`,
-`Hyperedge.hyperedge_sound_bisim`, `Choreography`'s operational LTS (`VatBoundary.phi_functorial`
-is now PROVED under its `NonDegenerate` hypothesis) — none of which this module needs or
-re-imports as content; the BRIDGES are clean.) -/
+Every cross-link above depends only on the three standard kernel axioms (no `sorry`); the
+pins certify the web is genuinely woven. The independently-built modules carry their own
+honest OPENs (`Authority.only_connectivity_begets_connectivity`,
+`Lifecycle.distributed_death_…`, `Hyperedge.hyperedge_sound_bisim`,
+`Choreography`'s operational LTS, `VatBoundary.phi_functorial` under `NonDegenerate`) —
+none of which this module needs; only the bridges are asserted here. -/
 
 #assert_axioms guard_is_authority_conferral
 #assert_axioms conferralGuard_admits_self

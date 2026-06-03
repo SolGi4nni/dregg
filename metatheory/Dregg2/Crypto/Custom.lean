@@ -1,39 +1,18 @@
 /-
-# Dregg2.Crypto.Custom — the EIGHTH end-to-end §8 discharge: the OPEN `vk`-keyed extension point.
+# Dregg2.Crypto.Custom — §8 discharge: open `vk`-keyed extension point.
 
-**The eighth (and final) `WitnessedKind` (`Authority/Predicate.lean::WitnessedKind.custom (vk)`,
-`cell/src/predicate.rs::WitnessedPredicateKind::Custom { vk_hash }`).** Where the seven built-in
-kinds (Merkle/Pedersen/NonMembership/Temporal/Dfa/Bridge/BlindedSet) each pin a FIXED relation and
-circuit, `custom (vk)` is the OPEN EXTENSION POINT: an app registers a content-addressed
-verification-key hash `vk` and supplies whatever `(CircuitIR, Relation)` that `vk` denotes. The
-soundness cascade is then PARAMETRIC over the registered triple — any future kind inherits the
-whole §8 discipline (`*_bridge` both directions + `*_verify_sound` derived off `extractable` +
-`KindObligation`/`DiscloseAt` + `registry_cascade`) merely by registering a `vk`, a circuit, and a
-relation. This is dregg1's `custom` map keyed on `vk_hash` (`predicate.rs:300`), lifted to the
-metatheory so the registry is genuinely OPEN, not a closed enum of seven.
+`WitnessedKind.custom (vk)` is the open extension point: an app registers a content-addressed
+verification-key hash `vk` with a `(CircuitIR, Relation, bridge)` bundle, and inherits the full §8
+discipline parametrically. Mirrors dregg1's `custom` map (`predicate.rs:300`).
 
-The cascade mirrors the built-ins, but PARAMETRIC over the registered relation:
+    custom_bridge           : Satisfies (circuitOf vk) w ↔ Relation vk stmt w
+    custom_verify_sound     : verify accepts → Relation vk stmt w  (derived off bridge + `extractable`)
+    custom_dial_wired       : dial at registration's own floor (default `fullDisclosure`)
+    custom_registry_cascade : `registry_sound ∘ custom_verify_sound` through `custom (vk)`
 
-    custom_bridge        : Satisfies (circuitOf vk) w ↔ Relation vk stmt w
-      [the gadget — for ANY registered `(vk, Circuit, Relation)` triple, BOTH directions,
-       discharged from the registration's own bridge field, no new seam]
-    custom_verify_sound  : verify accepts → Relation vk stmt w   (DERIVED off the bridge + `extractable`)
-    custom_dial_wired    : the dial pinned to the verifier at the registration's OWN floor
-      [parametric: the registering kind supplies its dial floor; default `fullDisclosure`]
-    custom_registry_cascade : `registry_sound ∘ custom_verify_sound`, through `custom (vk)`
-
-**The parametricity IS the content.** A `CustomRegistration` bundles a `vk`, its circuit/statement
-algebra, its relation, and the registration's OWN `bridge` (a `Prop`-level both-directions
-equivalence the app proves for its circuit — the SAME shape `merkle_bridge` etc. discharge). The
-`custom_bridge` theorem is then nothing but that field, surfaced; `custom_verify_sound` composes it
-with the `extractable` carrier exactly as the built-ins do. The genuinely-cryptographic residue is
-the same single seam: `extractable` (STARK soundness for the app's circuit) — never an `axiom` /
-`sorry`. The `Reference` section REGISTERS a concrete toy `vk` (an equality circuit) and witnesses
-the entire cascade end-to-end, proving the extension point is non-vacuous: registering a real
-relation lights up the whole §8 machinery.
-
-With this, ALL EIGHT `WitnessedKind`s are discharged and the registry is COMPLETE — the seven
-built-ins by fixed relations, `custom (vk)` as the open inheritance point for everything to come.
+A `CustomRegistration` bundles `vk`, circuit/statement/witness algebras, a relation, and the app's
+own `bridge` proof — the same shape the built-ins discharge. Crypto residue: `extractable` (STARK
+soundness for the app's circuit), never an `axiom`/`sorry`.
 -/
 import Dregg2.Authority.Predicate
 import Metatheory.EpistemicDial
@@ -107,20 +86,16 @@ theorem custom_complete (stmt : R.Statement) (wit : R.Witness)
     (h : R.Relation stmt wit) : R.Satisfies R.circuit stmt wit :=
   (R.bridge stmt wit).mpr h
 
-/-- **`custom_bridge` — THE deliverable (the parametric analog of `merkle_bridge`).** For the
-registered `(vk, Circuit, Relation)` triple, the circuit's satisfiability is EXACTLY the registered
-relation: a satisfying trace certifies it (`custom_sound`) and every related pair has a satisfying
-trace (`custom_complete`). This is the registration's OWN `bridge`, surfaced — the open extension
-point inherits the §8 bridge shape verbatim, parametric over the relation `vk` denotes. NO new
-primitive seam: the registration discharges the equivalence (the app proves it for its circuit, the
-same obligation the built-ins meet); the only crypto residue is the app circuit's `extractable`,
-consumed by `custom_verify_sound`, never by the bridge. -/
+/-- **`custom_bridge`** — for the registered triple, the circuit's satisfiability is exactly the
+registered relation. This is the registration's own `bridge`, surfaced. No new primitive seam: the
+app discharges the equivalence (same obligation the built-ins meet); the only crypto residue is the
+app circuit's `extractable`, consumed by `custom_verify_sound`. -/
 theorem custom_bridge (stmt : R.Statement) (wit : R.Witness) :
     R.Satisfies R.circuit stmt wit ↔ R.Relation stmt wit :=
   R.bridge stmt wit
 
--- TRIPWIRES: the parametric custom bridge is the registration's own equivalence, surfaced —
--- kernel-clean, NO seam beyond the app's `extractable`. The relation is whatever `vk` denotes.
+-- Tripwires: the parametric custom bridge is the registration's own equivalence — kernel-clean,
+-- no seam beyond the app's `extractable`.
 #assert_axioms custom_sound
 #assert_axioms custom_complete
 #assert_axioms custom_bridge
@@ -154,17 +129,11 @@ class CustomVerifierKernel (R : CustomRegistration) (Proof : Type u) where
 
 variable {Proof : Type u}
 
-/-- **`custom_verify_sound` — the DERIVED verify law, PARAMETRIC (the analog of
-`merkle_verify_sound`).** Given the STARK-soundness carrier `extractable` for the registered
-circuit, an accepted custom proof PROVES the registered relation holds for SOME witness:
-
-    verify stmt proof = true  →  ∃ wit, Relation vk stmt wit
-
-The proof composes `extract` (accept ⇒ satisfying trace, the crypto carrier) with `custom_bridge`'s
-SOUNDNESS half (= the registration's own bridge `.mp`). The verify law is DERIVED, not assumed; the
-only hypothesis is `extractable`. The relation is WHATEVER the registered `vk` denotes — so EVERY
-future open kind inherits this derived soundness merely by registering its circuit + relation +
-bridge. -/
+/-- **`custom_verify_sound`** — given `extractable` for the registered circuit, an accepted custom
+proof proves the registered relation holds for some witness:
+`verify stmt proof = true  →  ∃ wit, Relation vk stmt wit`.
+Derived by composing `extract` with `custom_bridge`'s soundness half; never assumed. Every future
+open kind inherits this derived soundness by registering its circuit + relation + bridge. -/
 theorem custom_verify_sound [K : CustomVerifierKernel R Proof]
     (hext : K.extractable) (stmt : R.Statement) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -237,11 +206,9 @@ def customDisclose [CustomVerifierKernel R P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`custom_dial_wired` — THE DIAL WIRING, PARAMETRIC (the analog of `merkle_dial_wired`).** The
-custom kind's epistemic floor is the registration's OWN `dialFloor` (parametric), the dial's bottom
-notch's acceptance bit IS the verifier's `Discharged` bit, and — given STARK `extractable` for the
-registered circuit — an accepting proof PROVES the registered relation holds for SOME witness. The
-dial is pinned to the per-`vk` verifier. -/
+/-- **`custom_dial_wired`** — the custom kind's floor is the registration's own `dialFloor`
+(parametric), the dial's bottom notch IS the verifier's `Discharged` bit, and an accepting proof
+proves the registered relation holds for some witness. Dial pinned to the per-`vk` verifier. -/
 theorem custom_dial_wired [K : CustomVerifierKernel R P]
     (hext : K.extractable)
     (base : Registry R.Statement P) (stmt : R.Statement) (proof : P) :
@@ -259,14 +226,11 @@ theorem custom_dial_wired [K : CustomVerifierKernel R P]
       (customDisclose R base stmt proof)
   · exact fun haccept => custom_verify_sound R hext stmt proof haccept
 
-/-- **`custom_registry_cascade` — the §8 discharge through the registry, PARAMETRIC (the analog of
-`merkle_registry_cascade`, and the open analog of `Predicate.custom_is_open_extension`).**
-Registering the custom kind at `custom R.vk`, an accepted proof both `Discharged`s the kind's
-predicate (the registry keystone, `registry_sound`) AND — given the STARK `extractable` carrier for
-the registered circuit — PROVES the registered relation holds for SOME witness
-(`custom_verify_sound`). The cascade `registry_sound ∘ custom_verify_sound`; the single trust
-boundary is `extractable`. THIS is the open inheritance point: any future kind registers its
-`(vk, circuit, relation, bridge)` and gets the full cascade for free. -/
+/-- **`custom_registry_cascade`** — registering the custom kind at `custom R.vk`, an accepted proof
+both `Discharged`s the kind's predicate (`registry_sound`) and — given `extractable` — proves the
+registered relation holds for some witness (`custom_verify_sound`). Single trust boundary:
+`extractable`. Any future kind registers its `(vk, circuit, relation, bridge)` and gets the full
+cascade for free. -/
 theorem custom_registry_cascade [K : CustomVerifierKernel R P]
     (hext : K.extractable)
     (base : Registry R.Statement P)
@@ -357,8 +321,7 @@ theorem reference_cascade_nonvacuous :
       ∧ ∃ wit : Int, eqRegistration.Relation 5 wit :=
   custom_registry_cascade eqRegistration (K := refKernel) trivial base 5 5 (by decide)
 
--- The non-vacuity witness's axiom footprint (the task's `#print axioms` requirement): the reference
--- cascade rests only on the standard axioms — NO `sorryAx`, NO crypto axiom.
+-- Non-vacuity axiom footprint: rests only on the standard axioms — no `sorryAx`, no crypto axiom.
 #print axioms reference_cascade_nonvacuous
 
 /-- Non-vacuity of the dial wiring: the floor is the registration's own (`fullDisclosure` for the
@@ -378,11 +341,8 @@ example (v : Verifier Int Int) (stmt wit : Int) :
 
 end Reference
 
--- TRIPWIRES: the parametric custom bridge + derived verify-soundness + cascade + dial wiring are
--- kernel-clean. The bridge IS the registration's own equivalence (the app proves it for its
--- circuit, the SAME obligation the built-ins meet — the reference's is `Iff.rfl`, fully proved);
--- the ONLY cryptographic residue is the `extractable` carrier (passed as a hypothesis), never a
--- hidden `sorry`. This completes ALL EIGHT `WitnessedKind`s — the registry is OPEN and COMPLETE.
+-- Tripwires: parametric bridge + verify-soundness + cascade + dial wiring are kernel-clean.
+-- The bridge is the registration's own equivalence; crypto residue: `extractable`, never a `sorry`.
 #assert_axioms custom_bridge
 #assert_axioms custom_verify_sound
 #assert_axioms custom_registry_cascade

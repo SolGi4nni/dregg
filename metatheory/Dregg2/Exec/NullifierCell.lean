@@ -1,38 +1,22 @@
 /-
-# Dregg2.Exec.NullifierCell — the "sets → cells" collapse, proved tier-1-safe.
+# Dregg2.Exec.NullifierCell — the nullifier set as an append-only cell, proved tier-1-safe.
 
-dregg1 keeps nullifier / revocation / authorized-sender sets as *executor
-side-tables* (`cell/src/nullifier_set.rs:63`, a `Mutex<NullifierSet>` threaded
-through the rollback signature by hand). dregg2's highest-leverage simplification
-(`00-synthesis §5.2`, `02-spine-cell §1.4`) is to make them **cells** whose state
-is a set-root + an **append-only** (insert-only, `Terminal`-linearity) transition
-program. No principled reason they aren't cells.
+The nullifier set is a **G-Set** (grow-only set): state = `Finset Nullifier`, join = `∪`,
+admissibility invariant = "once spent, forever spent" (`s₀ ⊆ s`). Because this invariant is
+upward-closed, it is `Confluence.IConfluent` — preserved under concurrent merge — hence
+`Confluence.Tier1Eligible`: the nullifier cell needs NO consensus (causal-only, coordination-
+free, partition-tolerant). Two replicas can accept disjoint spends offline and union their
+spent-sets with zero coordination.
 
-This module builds the canonical instance: the **nullifier set as an append-only
-cell**, and PROVES *why* it is tier-1-safe — it is the textbook I-confluent /
-tier-1-eligible CvRDT (`discoveries §3.7`: hash-keyed nullifier uniqueness is the
-canonical TIER-1-SAFE example; `balance≥0` is NOT). It is a **G-Set** (grow-only
-set): state = a `Finset Nullifier`, join = set union (`∪`), and its admissibility
-invariant (set membership / "each nullifier appears at most once") is **preserved
-by concurrent merge**. Therefore it is `Confluence.IConfluent`, hence
-`Confluence.Tier1Eligible` — it needs **NO consensus** (causal-only,
-coordination-free, partition-tolerant). Two replicas can each accept disjoint
-spends offline and union their spent-sets with zero coordination.
+Contrast (`dregg2.md §2.3`): a `balance≥0` cell is linear but NOT I-confluent — two
+concurrent debits each preserve the bound yet jointly overdraw. The discriminating witness is
+`Confluence.cardLeOne_not_iconfluent`.
 
-Contrast (the live soundness risk `dregg2.md §2.3` warns about): a `balance≥0`
-cell is linear but **NOT** I-confluent — two concurrent debits each preserve the
-bound yet jointly overdraw. That cell may NOT run tier-1. The discriminating
-witness is `Confluence.cardLeOne_not_iconfluent` (a `card ≤ 1` cap is the
-`balance≥0` shape: two singletons merge to a two-element set, breaking the bound).
+Reuses `Privacy.Nullifier` and `Confluence`'s `IConfluent`/`Tier1Eligible`/`MergeState`.
 
-We reuse `Privacy.Nullifier` (the deterministic per-note tag, `DecidableEq`) and
-`Confluence`'s `IConfluent` / `Tier1Eligible` / `MergeState` machinery — we
-DEFINE NONE of them; we only instantiate and connect.
-
-Crypto-soundness of `nullifierOf` (PRF/extractability) is a circuit obligation
-(`Privacy.lean` §8 caveat) and is NOT touched here: this module is the *set
-discipline* — insert-only membership and its merge law — which is pure,
-decidable, computable Lean. No `axiom`/`admit`/`native_decide`/`sorry`.
+Crypto-soundness of `nullifierOf` (PRF/extractability) is a circuit obligation (`Privacy.lean`
+§8 caveat), not touched here. This module is pure, decidable, computable Lean — no
+`axiom`/`admit`/`native_decide`/`sorry`.
 -/
 import Dregg2.Privacy
 import Dregg2.Confluence
@@ -48,12 +32,9 @@ universe u
 
 /-! ## The cell — a G-Set of consumed nullifiers. -/
 
-/-- **A `NullifierCell`** — the nullifier set lifted from an executor side-table to
-a cell. Its entire state is `spent`, the `Finset` of consumed nullifiers (the
-set-root, modelled as the live finite set rather than a Merkle digest). The
-transition rule is append-only: `spend` inserts, nothing ever removes
-(`Terminal`-linearity). This is dregg2's "sets → cells" collapse (`02-spine-cell
-§1.4`) made concrete. -/
+/-- **A `NullifierCell`** — the nullifier set as a cell. Its entire state is `spent`, the
+`Finset` of consumed nullifiers (modelled as the live finite set, not a Merkle digest).
+The transition rule is append-only: `spend` inserts, nothing ever removes. -/
 structure Cell where
   /-- The set of nullifiers already consumed — the live set-root. -/
   spent : Finset Nullifier
@@ -63,8 +44,7 @@ structure Cell where
 def empty : Cell := { spent := ∅ }
 
 /-- `isSpent c n` : is nullifier `n` already in the cell's spent set? Decidable and
-computable — this is the `MerkleMembership` query against the **live** root, not a
-stale slot-snapshot (`02-spine-cell §1.4`). -/
+computable — membership query against the live set-root. -/
 def isSpent (c : Cell) (n : Nullifier) : Prop := n ∈ c.spent
 
 instance (c : Cell) (n : Nullifier) : Decidable (isSpent c n) := by
@@ -134,15 +114,12 @@ theorem spend_monotone (c c' : Cell) (n : Nullifier)
     subst this
     exact Finset.subset_insert n c.spent
 
-/-! ## THE KEYSTONE — tier-1 eligibility: the nullifier set is I-confluent.
+/-! ## Tier-1 eligibility: the nullifier set is I-confluent.
 
-The mergeable state of a `NullifierCell` is its `spent : Finset Nullifier`. Two
-concurrent replicas merge by set **union** — the CvRDT join. We hand
-`Finset Nullifier` the `Confluence.MergeState` (join-semilattice) structure and
-prove its admissibility invariant is `Confluence.IConfluent`: preserved under `∪`.
-That is exactly `Confluence.Tier1Eligible`, so the nullifier cell may select the
-tier-1 (causal-only, coordination-free, partition-tolerant) finality rule — it
-needs NO consensus. This is `discoveries §3.7`'s canonical TIER-1-SAFE CvRDT. -/
+Concurrent replicas merge their spent sets by `⊔` (= `∪`) — the G-Set CvRDT join. The
+admissibility invariant `s₀ ⊆ s` is I-confluent: preserved under `∪`. That is exactly
+`Confluence.Tier1Eligible`, so the nullifier cell may run at tier-1 (causal-only,
+coordination-free, partition-tolerant) — it needs no consensus. -/
 
 /-- The spent-set state — `Finset Nullifier` — is a `Confluence.MergeState`:
 concurrent versions merge by `⊔` (= `∪`), the G-Set CvRDT join. This is the
@@ -155,19 +132,12 @@ is over the genuine union, not an opaque `⊔`. -/
 @[simp] theorem mergeState_sup_eq_union (a b : Finset Nullifier) :
     a ⊔ b = a ∪ b := rfl
 
-/-- **THE KEYSTONE (REAL CONTENT) — the nullifier-set safety invariant is `IConfluent`.**
-The genuine, *falsifiable* admissibility invariant of the spent set is **monotone
-no-loss**: relative to any already-consumed baseline `s₀`, a valid spent-set is one
-that still contains every baseline nullifier — `fun s => s₀ ⊆ s` ("once spent, forever
-spent: no consumed nullifier is ever dropped"). This is the formal no-double-spend
-safety property, and it has teeth: it is FALSE for a set that loses a baseline spend
-(witnessed by `nullifierSet_monotone_invariant_nontrivial`). We prove it is `IConfluent`
-— the union of two no-loss spent-sets is again no-loss:
-`s₀ ⊆ x → s₀ ⊆ y → s₀ ⊆ x ∪ y` (upward-closed sets are union-stable). This is the
-EXACT DUAL of why a bounded cap (`card ≤ 1` / `balance≥0`, an *upper* bound) is NOT
-I-confluent: an upper bound is broken by union, a lower/closure bound is preserved by
-it. Concurrent spends on disjoint nullifiers merge with zero coordination and lose
-nothing. -/
+/-- **The no-loss invariant is `IConfluent`.** The admissibility invariant `fun s => s₀ ⊆ s`
+("once spent, forever spent: no consumed nullifier is ever dropped") is falsifiable
+(witnessed by `nullifierSet_monotone_invariant_nontrivial`) and I-confluent:
+`s₀ ⊆ x → s₀ ⊆ y → s₀ ⊆ x ∪ y` (upward-closed sets are union-stable). This is the exact
+dual of why a `card ≤ 1` / `balance≥0` upper bound is NOT I-confluent: an upper bound is
+broken by union, a lower bound is preserved by it. -/
 theorem nullifierSet_monotone_iconfluent (s₀ : Finset Nullifier) :
     IConfluent (S := Finset Nullifier) (fun s => s₀ ⊆ s) := by
   intro x y hx _hy
@@ -185,14 +155,10 @@ theorem nullifierSet_monotone_invariant_nontrivial (n : Nullifier) :
   refine ⟨Finset.Subset.refl _, ?_⟩
   simp [Finset.subset_empty]
 
-/-- **Tier-1 carrier theorem (used by the revocation-set reuse in `Authority.Credential`).**
-This is the `s₀ = ∅` degenerate instance of `nullifierSet_monotone_iconfluent`: the
-empty-baseline no-loss invariant `fun s => ∅ ⊆ s` (which unfolds to `fun _ => True`,
-since every set contains `∅`). It is the *trivial carrier* — the structural fact that the
-G-Set lattice itself is I-confluent — kept under this name as the consensus-free hook the
-revocation cell instantiates. The genuine, falsifiable safety content is the general
-`nullifierSet_monotone_iconfluent` above (and its non-vacuity witness); this corollary is
-NOT that content and does not stand in for it. -/
+/-- **Tier-1 carrier theorem (revocation-set reuse hook, `Authority.Credential`).** The
+`s₀ = ∅` instance of `nullifierSet_monotone_iconfluent`: I-confluence of the trivial
+carrier `fun _ => True`. The falsifiable safety content is `nullifierSet_monotone_iconfluent`;
+this is its degenerate structural instance, kept for the downstream consensus-free reuse. -/
 theorem nullifierSet_iconfluent :
     IConfluent (S := Finset Nullifier) (fun _ => True) := by
   -- specialize the real theorem at the empty baseline, then discharge `∅ ⊆ s` (always true).
@@ -210,24 +176,18 @@ theorem merge_preserves_membership (a b : Finset Nullifier) (n : Nullifier) :
   rw [mergeState_sup_eq_union]
   exact Finset.mem_union
 
-/-- **THE CONCLUSION (REAL CONTENT) — the nullifier cell is `Tier1Eligible` for its
-genuine safety invariant: it needs NO consensus.** I-confluence of the monotone
-no-loss invariant is *exactly* tier-1 eligibility (`Confluence.Tier1Eligible`), the
-well-formedness side-condition the finality classifier checks. So the nullifier set
-runs at tier-1 — causal-only, coordination-free, partition-tolerant — for the real,
-falsifiable "once spent, forever spent" property, not merely for the trivial carrier:
-replicas accept spends offline and union without coordination AND without ever losing
-a consumed nullifier. This is the payoff of the "sets → cells" collapse (`02-spine-cell
-§1.4`, `discoveries §3.7`). -/
+/-- **The nullifier cell is `Tier1Eligible` for its genuine safety invariant.** I-confluence
+of the no-loss invariant is exactly `Confluence.Tier1Eligible`: the nullifier cell runs at
+tier-1 for the real, falsifiable "once spent, forever spent" property — replicas accept
+spends offline and union without coordination, never losing a consumed nullifier. -/
 theorem nullifierCell_monotone_tier1_eligible (s₀ : Finset Nullifier) :
     Tier1Eligible (S := Finset Nullifier) (fun s => s₀ ⊆ s) :=
   nullifierSet_monotone_iconfluent s₀
 
 /-- **Tier-1 carrier theorem (revocation-set reuse hook, `Authority.Credential`).** The
-`s₀ = ∅` instance of `nullifierCell_monotone_tier1_eligible`: tier-1 eligibility of the
-empty-baseline carrier `fun _ => True`. The falsifiable safety content is
-`nullifierCell_monotone_tier1_eligible`; this is its degenerate structural instance, kept
-under this name for the downstream consensus-free reuse. -/
+`s₀ = ∅` instance of `nullifierCell_monotone_tier1_eligible` — tier-1 eligibility for the
+trivial carrier. The falsifiable safety content is `nullifierCell_monotone_tier1_eligible`;
+this is its degenerate structural instance, kept for downstream consensus-free reuse. -/
 theorem nullifierCell_tier1_eligible :
     Tier1Eligible (S := Finset Nullifier) (fun _ => True) :=
   nullifierSet_iconfluent
@@ -243,17 +203,13 @@ CvRDT merge is the state-level `⊔`. -/
 theorem merge_spent (c d : Cell) :
     (merge c d).spent = c.spent ⊔ d.spent := rfl
 
-/-! ## The contrast — why `balance≥0` is NOT tier-1-safe (`discoveries §3.7`).
+/-! ## Contrast — why `balance≥0` is NOT tier-1-safe.
 
-The nullifier set is tier-1-safe because its invariant is grow-only / structural.
-A `balance≥0`-style invariant is the *opposite*: linear but NOT I-confluent — two
-concurrent debits each individually preserve the bound, yet their merge jointly
-overdraws. `Confluence.cardLeOne_not_iconfluent` is exactly this shape: a bounded
-`card ≤ 1` cap over `Finset ℕ` is preserved by each singleton but BROKEN by their
-union `{1} ⊔ {2} = {1,2}`. We re-expose it here as the discriminating witness: a
-cell with such an invariant CANNOT run tier-1 and MUST escalate to consensus
-(≥tier-2 / single-writer). This is what makes the third judgement non-vacuous —
-the nullifier set passes, `balance≥0` fails. -/
+The nullifier set's invariant is a lower bound (grow-only), preserved by union. A
+`balance≥0`-style invariant is an upper bound: two concurrent debits each preserve it,
+yet their merge jointly overdraws. `Confluence.cardLeOne_not_iconfluent` is exactly this
+shape — a `card ≤ 1` cap is broken by `{1} ⊔ {2} = {1,2}`. A cell carrying such an
+invariant cannot run tier-1 and must escalate to consensus. -/
 
 /-- **The contrast witness.** A `balance≥0`-shaped invariant (here the `card ≤ 1`
 cap, `Confluence.cardLeOne_not_iconfluent`) is NOT I-confluent — so a cell carrying

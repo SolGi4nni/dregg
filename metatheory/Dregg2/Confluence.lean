@@ -1,28 +1,17 @@
 /-
-# Dregg2.Confluence — the THIRD judgement (I-confluence).
+# Dregg2.Confluence — I-confluence: the third judgement (the invariant-merge property).
 
-`dregg2.md §2.3` declares I-confluence a **co-equal third judgement** alongside
-conservation (`Core`) and ordering — but the §8 module map (Core/Laws/Authority/
-Boundary) gave it no home. THIS is its home. (Internal-inconsistency fix, found by
-the handoff reading + the corpus pull.)
+I-confluence (BEC Thm 3.1): do concurrent invariant-preserving versions merge
+invariant-safely? It is independent of conservation and ordering:
+  - `balance ≥ 0` is linear but NOT I-confluent (two withdrawals merge to overdraft);
+  - a grow-only set is I-confluent but NOT linear.
 
-I-confluence is NEITHER linearity (`Core`) NOR the session/ordering type: it is the
-**invariant-merge** property (BEC Thm 3.1) — do concurrent invariant-preserving
-versions merge invariant-safely? The three are independent:
-  • `balance ≥ 0` is linear but NOT I-confluent (two withdrawals merge to overdraft);
-  • a grow-only set is I-confluent but NOT linear.
-It is the well-formedness side-condition deciding whether a cell may run at **tier-1**
-(causal-only / coordination-free / partition-tolerant) or must escalate to consensus.
+It is the static well-formedness condition that determines whether a cell may run at
+tier-1 (causal-only, coordination-free) or must escalate to consensus. The I-confluent
+fragment compiles coordination-free (Hydro/Dedalus/CALM); the non-I-confluent (coupled)
+fragment escalates via CryptoConcurrency's sum/coverage.
 
-Precedent (certified replicated-state verification — corpus, this round):
-  • Gomes–Kleppmann, strong-eventual-consistency in Isabelle (canonical certified CRDT);
-  • Burckhardt et al., replicated-data-types spec & verification (the optimality bound);
-  • certified-mergeable-RDTs (PLDI'22); Katara (CRDT synthesis).
-Compiling the I-confluent fragment: Hydro / Dedalus (CALM). The non-I-confluent
-(coupled) fragment escalates via CryptoConcurrency's sum/coverage COD.
-
-Spec-first: obligations stated with `sorry`; discharge after Core+Laws, alongside
-the Authority lift, BEFORE Boundary's JointTurn (which consumes the per-cell tier).
+Literature: Gomes–Kleppmann (Isabelle SEC); Burckhardt et al. (RDT spec & verification).
 -/
 import Mathlib.Order.Lattice
 import Mathlib.Data.Finset.Card
@@ -59,14 +48,9 @@ theorem admits_sound {S : Type u} [MergeState S] (I : Invariant S)
     (h : Tier1Eligible I) (x y : S) (hx : I x) (hy : I y) : I (x ⊔ y) := by
   exact h x y hx hy
 
-/-- **Non-pairwise escalation (CryptoConcurrency) — PROVED.** When `I` is NOT I-confluent,
-there genuinely EXISTS a concrete clashing pair: invariant-preserving versions `x` and `y`
-whose merge `x ⊔ y` violates `I`. This is the constructive contrapositive witness of
-`IConfluent` — escalation to consensus is *forced* by an exhibited counterexample, not
-merely declared. (The full CryptoConcurrency story is sum/coverage over the whole
-concurrent set — three pairwise-fine spends jointly overspending — but the *minimal*
-falsifier I-confluence already fails on is a clashing pair; this is the in-Lean witness
-that the coupled fragment is real, the obligation `coord/shared_budget.rs` discharges.) -/
+/-- **`nonpairwise_escalation`** — when `I` is not I-confluent, a concrete clashing pair
+`x`, `y` exists: each satisfies `I` but their merge `x ⊔ y` violates it. Escalation to
+consensus is forced by a constructive counterexample, not merely declared. -/
 theorem nonpairwise_escalation {S : Type u} [MergeState S] (I : Invariant S)
     (hI : ¬ IConfluent I) :
     ∃ x y : S, I x ∧ I y ∧ ¬ I (x ⊔ y) := by
@@ -79,14 +63,11 @@ theorem nonpairwise_escalation {S : Type u} [MergeState S] (I : Invariant S)
   by_contra hbad
   exact hcon ⟨x, y, hx, hy, hbad⟩
 
-/-! ## The third judgement is NON-TRIVIAL: some invariants are I-confluent, some are not.
+/-! ## I-confluence is non-trivial: both directions witnessed concretely.
 
-I-confluence genuinely *distinguishes* invariants — it is a real, falsifiable
-side-condition, not vacuous (audit: previously this independence was prose only). We
-exhibit both directions concretely over the grow-only-set semilattice `Finset ℕ` (⊔ = ∪).
-This is the in-Lean witness for "linear ⇏ I-confluent / I-confluent ⇏ linear": a bounded
-invariant (`card ≤ 1`, a `balance`-style cap) is NOT I-confluent and must escalate
-(≥tier-2), while a grow-only invariant IS I-confluent and runs tier-1 cross-group-free. -/
+Over `Finset ℕ` (⊔ = ∪): a bounded invariant (`card ≤ 1`) is NOT I-confluent and must
+escalate; a grow-only invariant IS I-confluent and runs tier-1. This proves the judgement
+is genuinely falsifiable, not vacuous. -/
 
 instance : MergeState (Finset ℕ) := { toSemilatticeSup := inferInstance }
 
@@ -95,12 +76,10 @@ preserved by any merge — grow-only sets run coordination-free (tier-1). -/
 theorem top_iconfluent : IConfluent (S := Finset ℕ) (fun _ => True) :=
   fun _ _ _ _ => trivial
 
-/-- **A concrete NON-I-confluent invariant (PROVED): "at most one element."** Two
-singletons each satisfy it, but their merge `{1} ⊔ {2} = {1,2}` has two elements — so a
-cell with this invariant CANNOT run tier-1; it must escalate (≥tier-2 / single-writer).
-This is the `balance ≥ 0` shape: a bounded resource whose concurrent merges overflow the
-bound. With `top_iconfluent`, this proves I-confluence is a genuine, falsifiable
-judgement. -/
+/-- **A concrete non-I-confluent invariant: "at most one element."** Two singletons each
+satisfy `card ≤ 1`, but their merge `{1} ⊔ {2} = {1,2}` does not — so a cell with this
+invariant must escalate (≥tier-2). The `balance ≥ 0` shape: a bounded resource whose
+concurrent merges overflow the bound. -/
 theorem cardLeOne_not_iconfluent :
     ¬ IConfluent (S := Finset ℕ) (fun s => s.card ≤ 1) := by
   intro h

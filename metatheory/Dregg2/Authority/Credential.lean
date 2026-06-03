@@ -1,33 +1,25 @@
 /-
 # Dregg2.Authority.Credential — verifiable credentials as keys-as-caps (issue / present / verify / revoke).
 
-dregg1's `credentials/` and `dregg2 §3` (the biscuit/VC layer): a **credential** is a
-*keys-as-caps attestation* — a claim about a subject, **issued** by an issuer over a schema,
-carrying an `attestation : Proof` (a signature / STARK over the issuer's statement). A holder
-**presents** it; a verifier **admits** it iff (a) the attestation passes the §8 oracle
-(`CryptoKernel.verify` against the issuer's statement — it really was issued) AND (b) the
-credential is **not revoked**. Revocation is *the lone consensus seam*: a **NEGATIVE discharge**
-— a *non-membership* proof against an attested revocation root, the de-facto dual of the
-biscuit/macaroon path-proof. Only root-epoch agreement is global; everything else is local.
+A credential is a keys-as-caps attestation — a claim about a subject issued by an issuer over a
+schema, carrying an `attestation : Proof` (a signature / STARK). A holder presents it; a verifier
+admits it iff (a) the attestation passes the §8 oracle (`CryptoKernel.verify` — it was genuinely
+issued) AND (b) the credential is not revoked (non-membership in the revocation set). Revocation is
+the lone consensus seam: a negative discharge against an attested revocation root. Only root-epoch
+agreement is global; everything else is local.
 
-The load-bearing content (all PROVED unless marked `-- OPEN:`):
-- a credential = `{ issuer, schema, subject, claim, attestation }`, with a content-addressed `id`;
-- `issue` (an issuer mints the attestation), `present` (a holder shows it), `revoke` (insert the
-  id into the revocation set), `verify` (admit iff the §8 oracle accepts the attestation AND the id
-  is *not* in the revocation set — non-membership);
-- **the keystone `credential_verifies_iff_issued_and_not_revoked`** — a presentation `verify`s iff
-  the attestation passes `CryptoKernel.verify` (issued) AND the id is not revoked (both directions);
-- **`revoke_blocks_verify`** — after `revoke`, the credential no longer `verify`s: the negative
-  discharge flips (non-membership becomes membership ⇒ rejected);
-- **`revocation_is_iconfluent`** — the *no-loss* invariant (every revoked id stays revoked) is
-  I-confluent (REUSING `Exec.NullifierCell`'s monotone invariant), so revocation needs only
-  root-epoch agreement, not full consensus — and the protected property is falsifiable, not `True`.
+Load-bearing content:
+- `VC = { issuer, schema, subject, claim, attestation }` with a content-addressed `id`;
+- `issue`, `present`, `revoke` (insert id into revocation set), `verify` (issued ∧ not-revoked);
+- keystone `credential_verifies_iff_issued_and_not_revoked` — both directions;
+- `revoke_blocks_verify` — after revocation the credential no longer verifies;
+- `revocation_is_iconfluent` — the no-loss invariant (every revoked id stays revoked) is I-confluent,
+  reusing `Exec.NullifierCell`'s monotone invariant, so revocation needs only root-epoch agreement.
 
-The §8 RAIL (`dregg2 §8`, `REORIENT §6`): the attestation's signature/STARK *soundness* is the
-`CryptoKernel.verify` ORACLE — **never** a Lean law. This module proves the issue/present/verify/
-revoke **discipline** (admissible iff issued-and-not-revoked); the circuits prove the oracle binds.
+§8 boundary: the attestation's signature/STARK soundness is the `CryptoKernel.verify` oracle — never
+a Lean law. This module proves the issue/present/verify/revoke discipline; the circuits prove the oracle binds.
 
-Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`-aliases.
+Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`.
 -/
 import Dregg2.CryptoKernel
 import Dregg2.Exec.NullifierCell
@@ -156,12 +148,10 @@ def verify [AddCommGroup Digest] [CryptoKernel Digest Proof] (rev : RevocationSe
 
 /-! ## THE KEYSTONE — `credential_verifies_iff_issued_and_not_revoked` (both directions). -/
 
-/-- **THE KEYSTONE (PROVED) — a presentation `verify`s iff issued-and-not-revoked.** A credential's
-presentation is admissible **iff** (a) its attestation passes the §8 oracle
-(`CryptoKernel.verify (issuerStmt cred) cred.attestation = true` — it was genuinely issued by the
-issuer) AND (b) its id is *not* in the revocation set (`isRevoked = false` — the negative
-discharge). Both directions, on the *presented* credential. This is the keys-as-caps law: authority
-is exactly *a verifiable attestation that has not been revoked*. -/
+/-- **THE KEYSTONE** — a presentation `verify`s iff issued-and-not-revoked. A credential is
+admissible iff (a) its attestation passes the §8 oracle (`CryptoKernel.verify (issuerStmt cred)
+cred.attestation = true`) AND (b) its id is not in the revocation set (`isRevoked = false`). Both
+directions. Authority = a verifiable attestation that has not been revoked. -/
 theorem credential_verifies_iff_issued_and_not_revoked [AddCommGroup Digest] [CryptoKernel Digest Proof]
     (rev : RevocationSet) (cred : VC Digest Proof) :
     verify rev (present cred) = true
@@ -183,10 +173,9 @@ theorem isRevoked_revoke! (rev : RevocationSet) (cred : VC Digest Proof) :
   unfold isRevoked revoke!
   exact decide_eq_true (Finset.mem_insert_self _ _)
 
-/-- **`revoke_blocks_verify` (PROVED) — the negative discharge.** After revoking (total form), the
-credential no longer `verify`s, **no matter how good its attestation is**: non-membership has become
-membership, so the negative-discharge leg fails and the fail-closed `&&` rejects. This is the dual
-of the path-proof: revocation is *the* consensus seam because flipping this one bit must be globally
+/-- **`revoke_blocks_verify`** — after revoking (total form), the credential no longer `verify`s
+regardless of its attestation: non-membership becomes membership, the negative-discharge leg fails,
+and the fail-closed `&&` rejects. Revocation is the consensus seam because this flip must be globally
 agreed (root-epoch agreement). -/
 theorem revoke_blocks_verify [AddCommGroup Digest] [CryptoKernel Digest Proof]
     (rev : RevocationSet) (cred : VC Digest Proof) :
@@ -214,31 +203,27 @@ verbatim from `Exec.NullifierCell`. Two issuers can revoke disjoint credentials 
 their revocation roots with **no coordination beyond the root epoch** — the "lone consensus seam"
 is the *narrowest* possible: grow-only, partition-tolerant. -/
 
-/-- **`revocation_is_iconfluent` (PROVED, REUSED — the REAL no-loss invariant).** For any baseline
-revocation root `rev₀`, the *no-loss* invariant "every credential revoked in `rev₀` is still
-revoked" (`fun s => rev₀ ⊆ s`) is `Confluence.IConfluent`: two issuers may revoke disjoint
-credentials offline and union their roots, and **no revocation is ever lost** (upward-closed sets are
-union-stable). This is `NullifierCell.nullifierSet_monotone_iconfluent` — a *falsifiable* safety
-property (a root that drops a revocation breaks it; witnessed by
-`NullifierCell.nullifierSet_monotone_invariant_nontrivial`), NOT the trivial `fun _ => True` carrier.
-Hence revocation needs only root-epoch agreement, not full consensus — the "lone consensus seam" is
-the narrowest it can be, and what it protects (no-loss-of-revocation) is genuine content. -/
+/-- **`revocation_is_iconfluent`** (reused from `NullifierCell`). For any baseline `rev₀`,
+the no-loss invariant "every credential revoked in `rev₀` is still revoked" (`fun s => rev₀ ⊆ s`)
+is I-confluent: two issuers may revoke disjoint credentials offline and union their roots, and no
+revocation is ever lost (upward-closed sets are union-stable). This is a falsifiable safety property
+(a root that drops a revocation breaks it), NOT the trivial carrier. Hence revocation needs only
+root-epoch agreement, not full consensus. -/
 theorem revocation_is_iconfluent (rev₀ : Finset Nullifier) :
     Dregg2.Confluence.IConfluent (S := Finset Nullifier) (fun s => rev₀ ⊆ s) :=
   NullifierCell.nullifierSet_monotone_iconfluent rev₀
 
-/-- **`revocation_tier1_eligible` (PROVED, REUSED — the REAL invariant)** — the revocation cell may
-run at tier-1 (causal-only, coordination-free, partition-tolerant) *for its genuine no-loss safety
-property* `fun s => rev₀ ⊆ s`, not merely the trivial carrier. The full-consensus cost is paid only
-at the root epoch; the revocation *content* merges freely without ever dropping a revocation.
-Re-exposed from `NullifierCell.nullifierCell_monotone_tier1_eligible`. -/
+/-- **`revocation_tier1_eligible`** (reused from `NullifierCell`). The revocation cell may run
+at tier-1 (causal-only, coordination-free, partition-tolerant) for the genuine no-loss safety
+property `fun s => rev₀ ⊆ s`. Full-consensus cost is paid only at the root epoch; revocation
+content merges freely without ever dropping a revocation. -/
 theorem revocation_tier1_eligible (rev₀ : Finset Nullifier) :
     Dregg2.Confluence.Tier1Eligible (S := Finset Nullifier) (fun s => rev₀ ⊆ s) :=
   NullifierCell.nullifierCell_monotone_tier1_eligible rev₀
 
-/-- **Non-vacuity of the revocation invariant (PROVED).** The no-loss invariant genuinely rules
-states out: a baseline that has revoked credential-id `n` satisfies `{n} ⊆ {n}` but FAILS for an
-empty root — so `revocation_is_iconfluent` protects a real, falsifiable property, not `True`. -/
+/-- **Non-vacuity of the revocation invariant.** A baseline that has revoked credential-id `n`
+satisfies `{n} ⊆ {n}` but fails for an empty root — so `revocation_is_iconfluent` protects a
+real, falsifiable property, not `True`. -/
 theorem revocation_invariant_nontrivial (n : Nullifier) :
     ({n} ⊆ ({n} : Finset Nullifier)) ∧ ¬ ({n} ⊆ (∅ : Finset Nullifier)) :=
   NullifierCell.nullifierSet_monotone_invariant_nontrivial n

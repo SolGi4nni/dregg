@@ -1,39 +1,24 @@
 /-
-# Dregg2.Authority.Blocklace — the CONCRETE byzantine-repelling DAG.
+# Dregg2.Authority.Blocklace — the concrete byzantine-repelling DAG.
 
-`Authority.CDT` says, abstractly, "CDT ≡ strand-log ≡ biscuit-graph" (`cand-C §1`): the same
-append-only partial order seen three ways. The **blocklace** is the *concrete* strand-log
-face — dregg1's 10879-LOC `blocklace/` crate (`finality.rs`, `ordering.rs`,
-`dissemination.rs`) — and it is the one face that carries the **byzantine-repelling**
-guarantee the CDT's pure-attenuation view does not even mention: a Byzantine author who
-**forks** (equivocates) is *caught*.
+`Authority.CDT` gives the abstract capability-derivation order (CDT ≡ strand-log ≡ biscuit-graph):
+the same append-only partial order seen three ways. The blocklace is the concrete strand-log face —
+mirroring dregg1's `blocklace/` crate (`finality.rs`, `ordering.rs`, `dissemination.rs`) — and is the
+face that carries the byzantine-repelling guarantee: a Byzantine author who forks (equivocates) is caught.
 
-This module mirrors that crate into verified Lean and proves its defining theorem.
+Literature anchor: Almog–Lewis–Naor–Shapiro, *"The Blocklace: A Byzantine-repelling and Universal CRDT"*
+(arXiv 2402.08068, `pdfs/blocklace-byzantine-repelling-universal-2402.08068.pdf`). We formalize:
 
-## The literature anchor
-Almog–Lewis–Naor–Shapiro, *"The Blocklace: A Byzantine-repelling and Universal CRDT"*
-(arXiv 2402.08068), the file `pdfs/blocklace-byzantine-repelling-universal-2402.08068.pdf`.
-We formalize:
+* **Def 2.x (observation / `≺`).** `≺` is the transitive closure of the direct predecessor/ack relation `←`.
+  `a ≺ b` reads "`b` observes `a`" — `a` is in `b`'s causal past. (`finality.rs::causal_past` / `is_predecessor`.)
+* **Def 4.2 (Equivocation).** An equivocation by node `p` is a pair of different `p`-blocks `a, b ∈ B`
+  incomparable under `≺` (`a ∥ b ≡ a ⊀ b ∧ b ⊀ a`). The pair's presence is the `EquivocationProof` (`finality.rs:181`).
+* **§5 (Byzantine-repelling).** The incomparable pair is witnessed: any observer who has gossiped both
+  branches holds the proof (`finality.rs::detect_equivocation`, `ordering.rs::has_equivocation_in_past`).
 
-* **Def 2.x (observation / `≺`).** `≺` is the transitive closure of the *pointed* (direct
-  predecessor / ack) relation `←`. `a ≺ b` reads "`b` **observes** `a`" — `a` is in `b`'s
-  **causal past**. (`finality.rs::causal_past` / `is_predecessor`.)
-* **Def 4.2 (Equivocation, Equivocator).** An equivocation by node `p` in a blocklace `B` is
-  a pair of *different* `p`-blocks `a, b ∈ B` **incomparable** under `≺`, written `a ∥ b ≡
-  a ⊀ b ∧ b ⊀ a`. The mere *presence* of such an incomparable `p`-pair proves `p` is an
-  equivocator (`eqvc(B)`). This is the C-spine `EquivocationProof` (`finality.rs:181`).
-* **§5 (Byzantine-repelling).** The presence of the incomparable pair is *witnessed*: any
-  observer who sees both blocks detects the fork (`finality.rs::detect_equivocation` /
-  `approved_by`, `ordering.rs::has_equivocation_in_past`).
-
-## The §8 boundary (the crypto seam — NOT proved here)
-A block carries an **opaque content-address `id` (`BlockId := Nat`)** and a **`signed`
-flag** (a `Prop`-carrier). Hash-injectivity and signature-unforgeability are §8
-crypto-interface obligations discharged by the circuit + Rust cascade — NEVER Lean theorems
-(`REORIENT §6`, exactly as `CDT.CapHash`). Every theorem below is a *semantic* DAG/order
-fact that does **not** depend on any property of hashing or signing. The ONE place crypto
-matters — "an equivocator cannot forge the absence of the fork" — is the honesty of the
-*observer's* causal-past computation, and is explicit, not assumed.
+§8 boundary (crypto seam — NOT proved here): hash-injectivity and signature-unforgeability are §8
+obligations discharged by the circuit + Rust cascade, never Lean theorems (same status as `CDT.CapHash`).
+Every theorem below is a semantic DAG/order fact that does not depend on any property of hashing or signing.
 
 Pure, computable, `#eval`-able. No `axiom`/`sorry`/`native_decide`.
 -/
@@ -51,9 +36,8 @@ open Dregg2.Authority
 /-! ## 1. Blocks and the append-only DAG (`finality.rs::Block` / `Blocklace`). -/
 
 /-- **`BlockId`** — the opaque content-address of a block (`finality.rs::BlockId([u8;32])`).
-Modelled as a `Nat` so the blocklace is concrete and `#eval`-able, but treated abstractly: NO
-theorem here depends on any property of the id (hash-injectivity is a §8 obligation, exactly
-as `CDT.CapHash`). -/
+Modelled as a `Nat` for concreteness and `#eval`-ability, but treated abstractly: no theorem
+here depends on any property of the id (hash-injectivity is a §8 obligation, same as `CDT.CapHash`). -/
 abbrev BlockId := Nat
 
 /-- **`AuthorId`** — the public key of a block's creator (`finality.rs::Block.creator`,
@@ -100,9 +84,9 @@ hypothesis (NOT a crypto axiom): the keyed map cannot hold two values at one key
 def Lace.Canonical (B : Lace) : Prop :=
   ∀ a ∈ B, ∀ b ∈ B, a.id = b.id → a = b
 
-/-- **`lookup_of_mem` (PROVED)** — in a canonical lace, a present block resolves to itself:
-`lookup` of `n.id` returns `n`. The content-address dereference is correct. (Direct induction
-on `B`; the distinctness invariant forces the first `id`-match to be `n` itself.) -/
+/-- **`lookup_of_mem`** — in a canonical lace, a present block resolves to itself:
+`lookup` of `n.id` returns `n`. Proved by induction on `B`; the distinctness invariant forces
+the first `id`-match to be `n` itself. -/
 theorem lookup_of_mem {B : Lace} (hcanon : B.Canonical) {n : Block} (hmem : n ∈ B) :
     B.lookup n.id = some n := by
   induction B with
@@ -184,29 +168,21 @@ into a `Prop`. -/
 def seesBoth (B : Lace) (o a b : Block) : Prop :=
   precedes B a o ∧ precedes B b o
 
-/-- **`equivocation_detectable` (PROVED) — THE byzantine-repelling theorem (paper §5,
-Def 4.2).** If author `p` equivocates in `B` with the forked pair `a, b`, then that
-equivocation is **witnessed by the pair itself**: there exist two distinct `p`-authored
-blocks `a, b ∈ B` that are incomparable — i.e. `Equivocator B p` holds, *constructively*, and
-the witnessing pair is exactly `(a, b)`. The fork cannot be hidden: its evidence is two
-concrete in-lace blocks.
-
-This is the content-independent core of `detect_equivocation`: the presence of the
-incomparable `p`-pair **is** the proof of equivocation. No quorum, no synchrony, no signature
-forgery assumption — purely the structure of the DAG (`REORIENT §6`: the §8 seam is untouched;
-this is a semantic order fact). -/
+/-- **`equivocation_detectable`** — the byzantine-repelling theorem (paper §5, Def 4.2).
+If author `p` equivocates in `B` with forked pair `a, b`, the equivocation is witnessed
+constructively by the pair itself: `Equivocator B p` holds with witness `(a, b)`. The fork
+cannot be hidden — its evidence is two concrete in-lace blocks. No quorum, no synchrony,
+no signature-forgery assumption: purely a semantic order fact (the §8 seam is untouched). -/
 theorem equivocation_detectable {B : Lace} {p : AuthorId} {a b : Block}
     (e : Equivocation B p a b) :
     Equivocator B p ∧ a ≠ b ∧ ¬ precedes B a b ∧ ¬ precedes B b a :=
   ⟨⟨a, b, e⟩, e.incomp⟩
 
-/-- **`observer_detects` (PROVED) — the observer's-eye form (`approved_by`).** An observer
-block `o` whose causal past contains *both* forked blocks `a, b` of an equivocation by `p`
-**holds the proof**: it sees two incomparable `p`-blocks. So ANY honest node that has gossiped
-in both forked branches detects the equivocator. The witness pair `(a, b)` is returned
-verbatim — this is what `finality.rs` inserts into `EquivocationProof` and what
-`ordering.rs::has_equivocation_in_past` returns `true` on, repelling the leader's
-ratification. -/
+/-- **`observer_detects`** — the observer's-eye form (`approved_by`). An observer block `o`
+whose causal past contains both forked blocks holds the proof: any honest node that has
+gossiped both branches detects the equivocator. The witness pair `(a, b)` is the payload
+`finality.rs` inserts into `EquivocationProof` and what `ordering.rs::has_equivocation_in_past`
+returns `true` on, repelling leader ratification. -/
 theorem observer_detects {B : Lace} {p : AuthorId} {a b o : Block}
     (e : Equivocation B p a b) (hsee : seesBoth B o a b) :
     Equivocation B p a b ∧ precedes B a o ∧ precedes B b o :=
@@ -214,11 +190,10 @@ theorem observer_detects {B : Lace} {p : AuthorId} {a b o : Block}
 
 /-! ## 5. Honest authors never equivocate (paper §5.1; `add_block` virtual chain).
 
-`finality.rs::add_block` makes the creator's new block point at its own current `tip`
-(`self.tips`), so an honest author's blocks form a **single ack-chain** — each block observes
-its predecessor. We model "honest" as exactly this discipline and prove the contrapositive of
-equivocation: honest `p`-blocks are **totally ordered** by `≺`, hence never incomparable,
-hence `p ∉ eqvc(B)`. -/
+`finality.rs::add_block` makes each new block point at the creator's current `tip`, so an
+honest author's blocks form a single ack-chain — each block observes its predecessor. We model
+"honest" as this total-order discipline and prove honest `p`-blocks are `≺`-totally-ordered,
+hence never incomparable, hence `p ∉ eqvc(B)`. -/
 
 /-- **`HonestChain B p`** — author `p` follows the honest virtual-chain discipline
 (`add_block`): `p`'s blocks are *totally ordered* by `≺`. Any two distinct `p`-blocks in `B`
@@ -230,11 +205,10 @@ def HonestChain (B : Lace) (p : AuthorId) : Prop :=
     a.creator = p → b.creator = p → a ≠ b →
     precedes B a b ∨ precedes B b a
 
-/-- **`honest_no_equivocation` (PROVED) — paper §5.1 (correct nodes are not equivocators).**
-An author following the honest virtual-chain discipline (`HonestChain`, i.e. its blocks are
-`≺`-totally-ordered) is **never** an equivocator: `¬ Equivocator B p`. Because an equivocation
-requires an *incomparable* `p`-pair, but every `p`-pair is comparable. The fork is structurally
-impossible for an author that always extends its own latest block. -/
+/-- **`honest_no_equivocation`** — paper §5.1. An author following the honest virtual-chain
+discipline (`HonestChain`) is never an equivocator: `¬ Equivocator B p`. An equivocation
+requires an incomparable `p`-pair, but under `HonestChain` every `p`-pair is comparable.
+The fork is structurally impossible for an author that always extends its own latest block. -/
 theorem honest_no_equivocation {B : Lace} {p : AuthorId}
     (hon : HonestChain B p) :
     ¬ Equivocator B p := by
@@ -244,9 +218,9 @@ theorem honest_no_equivocation {B : Lace} {p : AuthorId}
   · exact hnab hab
   · exact hnba hba
 
-/-- **`honest_chain_implies_comparable` (PROVED) — the positive form.** Under the honest
-discipline, any two distinct `p`-blocks are comparable (one observes the other). The
-ack-chain *is* a total order — the dual of `honest_no_equivocation`. -/
+/-- **`honest_chain_implies_comparable`** — under the honest discipline, any two distinct
+`p`-blocks are comparable (one observes the other). The ack-chain is a total order —
+the positive dual of `honest_no_equivocation`. -/
 theorem honest_chain_implies_comparable {B : Lace} {p : AuthorId}
     (hon : HonestChain B p) {a b : Block}
     (ha : B.lookup a.id = some a) (hb : B.lookup b.id = some b)
@@ -258,12 +232,11 @@ theorem honest_chain_implies_comparable {B : Lace} {p : AuthorId}
 
 /-! ## 6. The bridge: the CDT derivation order IS the blocklace causal order.
 
-`cand-C §1`: "CDT ≡ strand-log ≡ blocklace". `Authority.CDT` carries the *attenuation* order;
-the blocklace carries the *causal* (ack) order. The bridge `cdt_is_blocklace` exhibits the
-**structural correspondence**: a CDT `(child → parent)` edge IS a blocklace pointed/ack edge
-(`child` acks `parent`), and a CDT `DerivationPath` (root-to-node) IS a `≺`-chain (causal
-descent). So the keystone `CDT.path_attenuates` (authority shrinks down a derivation chain)
-transports onto the concrete log: authority shrinks down the causal/ack order. -/
+`Authority.CDT` carries the attenuation order; the blocklace carries the causal (ack) order.
+`cdt_is_blocklace` exhibits the structural correspondence: a CDT `(child → parent)` edge IS
+a blocklace pointed/ack edge, and a `DerivationPath` IS a `≺`-chain. So `CDT.path_attenuates`
+(authority shrinks down a derivation chain) transports to the concrete log: authority shrinks
+down the causal/ack order. -/
 
 /-- **The faithful translation `cdtNodeToBlock`.** A CDT `CapNode` becomes a `Block` whose
 ack set is exactly its (singleton or empty) parent pointer: `self ↦ id`, `parent ↦ preds`,
@@ -318,23 +291,14 @@ theorem cdt_edge_is_pointed {g : CDT.Tree} {child parent : CDT.CapNode}
   · exact lookup_of_mem hcanon (cdtNodeToBlock_mem hparent)
   · exact lookup_of_mem hcanon (cdtNodeToBlock_mem hchild)
 
-/-- **`cdt_is_blocklace` (PROVED) — THE BRIDGE (`cand-C §1`).** A CDT `DerivationPath g leaf
-root` (the abstract derivation/attenuation order) IS a blocklace `≺`-chain (the concrete
-causal/ack order): `root` is **observed by** `leaf` in the translated lace — `precedes
-(cdtToLace g) (root-block) (leaf-block)`, i.e. `leaf` causally observes `root`. So the
-abstract derivation order and the concrete blocklace causal order coincide; the strand-log
-face of the CDT *is* the blocklace.
+/-- **`cdt_is_blocklace`** — a CDT `DerivationPath g leaf root` IS a blocklace `≺`-chain: `leaf`
+causally observes `root` in the translated lace. The abstract derivation order and the concrete
+causal order coincide; the strand-log face of the CDT is the blocklace.
 
-Proved by induction on the `DerivationPath`: each present `child → mid` edge becomes a
-`pointed` (`precedes.base`) step, chained by `precedes.trans`. The non-trivial (`step`) case
-needs `mid ∈ g`, recovered from the path's `hpresent`. The `refl` (length-0) path maps to
-the degenerate case and is handled by the caller's choice of a genuine edge; here we prove the
-**non-trivial** transport — any path with at least one edge.
-
-Consequence (the transport of the keystone): since the orders coincide, `CDT.path_attenuates`
-("authority only shrinks down a derivation chain") reads on the concrete log as "authority
-only shrinks down the causal/ack order" — the seL4-integrity backbone carried by the
-byzantine-repelling DAG. -/
+Proved by induction on the path: each `child → mid` edge becomes a `precedes.base` step,
+chained by `precedes.trans`. The `refl` case is vacuous for non-trivial paths. Consequence:
+`CDT.path_attenuates` ("authority only shrinks down a derivation chain") reads on the concrete
+log as "authority only shrinks down the causal/ack order." -/
 theorem cdt_is_blocklace {g : CDT.Tree} {leaf root : CDT.CapNode}
     (hinj : ∀ m ∈ g, ∀ m' ∈ g, m.self = m'.self → m = m')
     (path : CDT.DerivationPath g leaf root) (hleaf : leaf ∈ g) (hne : leaf ≠ root) :
@@ -353,13 +317,12 @@ theorem cdt_is_blocklace {g : CDT.Tree} {leaf root : CDT.CapNode}
       · -- chain the head edge with the (inductive) tail `root ≺ mid`.
         exact .trans (ih hmidmem hmr) hstep
 
-/-! ## 7. A finality bridge: a block is final when a quorum acks it (tier-2/3, `Finality`).
+/-! ## 7. A finality bridge: a block is final when a quorum acks it (`Finality`).
 
-`finality.rs::FinalityTracker` advances a block to `Attested` once a *quorum* (2f+1) of
-distinct creators ack it (`record_ack`); the paper's exclusion is *eventual* and rides this
-threshold. We connect the ack-count to `Finality.Config.threshold` (the lifted `½(n+f)`),
-giving the tier-2 "ack-threshold" predicate as a pure count — the same shape
-`World.committedByQuorum` uses, here over the blocklace's own ack edges. -/
+`finality.rs::FinalityTracker` advances a block to `Attested` once a quorum (2f+1) of
+distinct creators ack it. We connect the ack-count to `Finality.Config.threshold` (the
+`½(n+f)` threshold), giving the tier-2 ack-threshold predicate as a pure count — the same
+shape `World.committedByQuorum` uses, here over the blocklace's own ack edges. -/
 
 /-- The set of distinct authors whose blocks in `B` ack (directly point to) `target`
 (`finality.rs::FinalityTracker.ack_counts`, counted by unique creator). -/
@@ -372,11 +335,9 @@ the blocklace ack face (`finality.rs::FinalityLevel.Attested`). -/
 def attested (B : Lace) (cfg : Finality.Config) (target : BlockId) : Prop :=
   cfg.threshold ≤ (ackers B target).length
 
-/-- **`attested_mono` (PROVED) — finality never regresses (`FinalityLevel` is monotone).**
-Appending blocks to the lace (CRDT growth / `World.recv_mono`) can only *add* ackers, so an
-attested block stays attested: `attested B cfg t → attested (b :: B) cfg t`. The
-"once Attested, never regresses to Bilateral" guarantee (`finality.rs:166`), as a count
-monotonicity. -/
+/-- **`attested_mono`** — finality never regresses. Appending blocks (CRDT growth) can only
+add ackers, so an attested block stays attested: `attested B cfg t → attested (b :: B) cfg t`.
+The "once Attested, stays Attested" guarantee (`finality.rs:166`), as a count monotonicity. -/
 theorem attested_mono {B : Lace} {cfg : Finality.Config} {target : BlockId} {b : Block}
     (h : attested B cfg target) : attested (b :: B) cfg target := by
   refine le_trans h ?_
@@ -422,9 +383,8 @@ def demoLace : Lace := [g0, g1, f1, f2]
 theorem demo_honest_edge : pointed demoLace g0 g1 := by
   refine ⟨by decide, by decide, by decide⟩
 
-/-- **`demo_honest_precedes` (PROVED)** — in the demo lace the honest successor observes its
-genesis: `g0 ≺ g1` (a single ack-chain step). Witnesses that the honest chain is a real,
-non-trivial `≺`-order. -/
+/-- **`demo_honest_precedes`** — in the demo lace the honest successor observes its genesis:
+`g0 ≺ g1`. Witnesses that the honest chain is a real, non-trivial `≺`-order. -/
 theorem demo_honest_precedes : precedes demoLace g0 g1 := .base demo_honest_edge
 
 /-- The fork blocks `f1, f2` are NOT directly pointed at each other (neither in the other's
@@ -468,17 +428,16 @@ theorem demo_no_fork_precedes :
   · have : f2 = g0 := demo_precedes_left_g0 h
     revert this; decide
 
-/-- **`demo_equivocation` (PROVED) — the detected fork.** Author `9` equivocates in
-`demoLace`: `f1` and `f2` are two distinct seq-1 `9`-blocks, both present, neither observing
-the other. The incomparability's `≺`-direction is discharged by `demo_no_fork_precedes` (the
-only chains in the tiny lace start at genesis `g0`, a different author). -/
+/-- **`demo_equivocation`** — author `9` equivocates in `demoLace`: `f1` and `f2` are two
+distinct seq-1 `9`-blocks, both present, neither observing the other. Incomparability is
+discharged by `demo_no_fork_precedes` (every `≺`-chain in the tiny lace starts at genesis
+`g0`, a different author). -/
 theorem demo_equivocation : Equivocation demoLace 9 f1 f2 := by
   refine ⟨by decide, by decide, by decide, by decide, ?_⟩
   exact ⟨by decide, demo_no_fork_precedes.1, demo_no_fork_precedes.2⟩
 
-/-- **`demo_detect` (PROVED)** — running the byzantine-repelling theorem on the concrete fork:
-author `9` is an equivocator and the witnessing incomparable pair is `(f1, f2)`. The fork is
-caught. -/
+/-- **`demo_detect`** — the byzantine-repelling theorem on the concrete fork: author `9` is an
+equivocator and the witnessing incomparable pair is `(f1, f2)`. -/
 theorem demo_detect :
     Equivocator demoLace 9 ∧ f1 ≠ f2 ∧ ¬ precedes demoLace f1 f2 ∧ ¬ precedes demoLace f2 f1 :=
   equivocation_detectable demo_equivocation

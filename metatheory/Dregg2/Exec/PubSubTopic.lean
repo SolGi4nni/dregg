@@ -1,15 +1,14 @@
 /-
-# Dregg2.Exec.PubSubTopic — the append-only event log with subscriber cursors, as a CELL.
+# Dregg2.Exec.PubSubTopic — the append-only event log with subscriber cursors, as a cell.
 
-`STORAGE-AS-CELL-PROGRAMS §3.3`: a `PubSubTopic` is **one publisher, multi-subscriber cursors
-over a shared append-only event log**. dregg1 realizes it as a `MerkleQueue` + a `BTreeMap` of
-subscriber cursors guarded by a hand-written executor (`storage/src/pubsub.rs`, 531 LOC). The
-storage-as-cell-programs thesis is that this is *not* a bespoke service — it is **a CELL**: a
-record state whose `RecordProgram` declares exactly the invariants the hand-written executor
-enforced, so that the executable structure-map arrow (`RecordCell.recExec`) *is* the topic.
+A `PubSubTopic` is one publisher with multi-subscriber cursors over a shared append-only event log.
+dregg1 realizes it as a `MerkleQueue` + a `BTreeMap` of subscriber cursors guarded by a
+hand-written executor (`storage/src/pubsub.rs`). This module shows the same structure as a
+**cell**: a record state whose `RecordProgram` declares the invariants the hand-written executor
+enforced, so that `RecordCell.recExec` *is* the topic.
 
-We model the topic NAME-KEYED over `Exec/Value.lean`'s Preserves record (not §3.3's 8 fixed
-bit-positioned slots — the `dregg2 §5` fix), keeping the load-bearing four fields:
+Modelled name-keyed over `Exec/Value.lean`'s Preserves record (not 8 fixed bit-positioned slots),
+keeping the load-bearing four fields:
 
 | §3.3 slot | this field    | role |
 |---|---|---|
@@ -23,20 +22,16 @@ committed set grows (a root that has absorbed more leaves has a strictly larger 
 exactly the quantity `monotonic` needs — "the event log only grows" is "its size only grows", and
 a real `event_root` commitment is paired with such a monotone counter at the circuit tier. The
 genuine cryptographic "this root extends that root" obligation is the §8 circuit interface,
-discharged separately (NEVER merged into the Lean law — `REORIENT §6`); here we prove the
-*ordering law* the cell declares.
+discharged separately (OPEN); here we prove the *ordering law* the cell declares.
 
-The `RecordProgram` is method-keyed (`cases`, default-deny): a **publish** (method `publishM`)
-advances `headSeq` strictly and grows `eventRoot`, holding `publisher` immutable and the cursors
-unchanged; a **subscribe** (method `subscribeM`) advances `cursorsRoot` monotonically, holding the
-log (`headSeq`/`eventRoot`) and `publisher` fixed. Any other method has no matching arm and is
-**default-denied** (the partial, fail-closed arrow).
+The `RecordProgram` is method-keyed (`cases`, default-deny): **publish** (method `publishM`)
+advances `headSeq` strictly and grows `eventRoot`, holding `publisher` immutable and cursors
+unchanged; **subscribe** (method `subscribeM`) advances `cursorsRoot` monotonically, holding
+the log and publisher fixed. Any other method has no matching arm and is default-denied.
 
-THE KEYSTONE `pubsub_append_only`: every *committed* transition advances the log monotonically
-(`eventRoot` new ≥ old) and the publish-seq strictly, and every committed subscribe advances
-cursors only-forward — proved by lifting `RecordCell.recExec_admitted` through the
-`monotonic`/`strictMono` `evalConstraint`/`evalSimple` definitions. Append-only is a *theorem* of
-the cell, not a property of an executor we have to trust.
+Headline theorem `pubsub_append_only`: every committed transition advances the log monotonically
+and the publish-seq strictly; every committed subscribe advances cursors only-forward. Append-only
+is a *theorem* of the cell, derived from `RecordCell.recExec_admitted`.
 
 Pure, computable, `#eval`-able; imports only `Exec.RecordCell` (which pulls `Exec.Program` /
 `Exec.Value`, all Lean-core), so it type-checks fast.
@@ -123,20 +118,19 @@ and the log/publisher untouched — which the `setScalar` leaves fixed). -/
 def subscribe (topic : Value) (newCursorsSize : Int) : Option Value :=
   recExec topicProgram subscribeM topic (.setScalar "cursorsRoot" newCursorsSize)
 
-/-! ## THE KEYSTONE — `pubsub_append_only`.
+/-! ## `pubsub_append_only`.
 
 A committed transition obeys the cell's declared law. We lift admissibility (`recExec_admitted`
-for subscribe; its two-field shadow `publish_admitted` for publish — nothing commits the program
-rejects) through the `cases`/`methodIs`/`evalConstraint`/`evalSimple` definitions to recover the
-honest `Int` (in)equalities. Three faces:
-  • a committed **publish** advances `headSeq` STRICTLY  (`new > old`);
-  • a committed **publish** grows `eventRoot` MONOTONICALLY (`new ≥ old`) — APPEND-ONLY;
+for subscribe; its two-field shadow `publish_admitted` for publish) through the
+`cases`/`methodIs`/`evalConstraint`/`evalSimple` definitions to recover the honest `Int`
+(in)equalities. Three faces:
+  • a committed **publish** advances `headSeq` strictly (`new > old`);
+  • a committed **publish** grows `eventRoot` monotonically (`new ≥ old`) — append-only;
   • a committed **subscribe** advances `cursorsRoot` only-forward (`new ≥ old`).
-Together: no committed transition rewinds the publish-seq or SHRINKS the event log; the log is
-append-only by THEOREM. -/
+Together: no committed transition rewinds the publish-seq or shrinks the event log. -/
 
-/-- **`publish_admitted` (PROVED)** — a committed publish was admitted by `topicProgram` (the
-`recExec_admitted` shadow for the two-field publish arrow: the filter is load-bearing, never
+/-- **`publish_admitted`** — a committed publish was admitted by `topicProgram` (the
+`recExec_admitted` shadow for the two-field publish arrow; the filter is load-bearing, never
 bypassed). -/
 theorem publish_admitted {topic : Value} {newSeq newRootSize : Int} {topic' : Value}
     (h : publish topic newSeq newRootSize = some topic') :
@@ -197,28 +191,27 @@ private theorem publish_facts {topic : Value} {newSeq newRootSize : Int} {topic'
     Bool.and_eq_true, evalConstraint] at harm
   exact harm
 
-/-- **`pubsub_publish_strict_seq` (PROVED).** A committed `publish` advances the publish sequence
-STRICTLY: `new.headSeq > old.headSeq`. The publisher's seq counter can never rewind. -/
+/-- **`pubsub_publish_strict_seq`.** A committed `publish` advances the publish sequence strictly:
+`new.headSeq > old.headSeq`. The publisher's seq counter can never rewind. -/
 theorem pubsub_publish_strict_seq
     {topic : Value} {newSeq newRootSize : Int} {topic' : Value}
     (h : publish topic newSeq newRootSize = some topic') :
     ∃ a b, topic.scalar "headSeq" = some a ∧ topic'.scalar "headSeq" = some b ∧ a < b :=
   strictMono_holds (publish_facts h).1
 
-/-- **`pubsub_publish_append_only` (THE KEYSTONE, publish half — PROVED).** A committed `publish`
-grows the event log MONOTONICALLY: `new.eventRoot ≥ old.eventRoot`. The log is APPEND-ONLY — no
-committed publish can SHRINK it (a publish to a smaller root size fails the `monotonic "eventRoot"`
-gate and returns `none`, so `some topic'` forces `≥`). The append-only discipline as a *theorem* of
-the cell, not a trusted executor. -/
+/-- **`pubsub_publish_append_only`** (append-only, publish half) — a committed `publish` grows the
+event log monotonically: `new.eventRoot ≥ old.eventRoot`. No committed publish can shrink it (a
+publish to a smaller root size fails the `monotonic "eventRoot"` gate and returns `none`, so
+`some topic'` forces `≥`). Append-only as a *theorem* of the cell, not a trusted executor. -/
 theorem pubsub_publish_append_only
     {topic : Value} {newSeq newRootSize : Int} {topic' : Value}
     (h : publish topic newSeq newRootSize = some topic') :
     ∃ a b, topic.scalar "eventRoot" = some a ∧ topic'.scalar "eventRoot" = some b ∧ a ≤ b :=
   monotonic_holds (publish_facts h).2.1
 
-/-- **`pubsub_subscribe_only_forward` (THE KEYSTONE, subscribe half — PROVED).** A committed
-`subscribe` advances the subscriber cursors only-forward: `new.cursorsRoot ≥ old.cursorsRoot`. A
-subscribe can never rewind a cursor below where it was — monotone subscriber cursors by theorem. -/
+/-- **`pubsub_subscribe_only_forward`** (subscribe half) — a committed `subscribe` advances the
+subscriber cursors only-forward: `new.cursorsRoot ≥ old.cursorsRoot`. A subscribe can never rewind
+a cursor below where it was. -/
 theorem pubsub_subscribe_only_forward
     {topic : Value} {newCursorsSize : Int} {topic' : Value}
     (h : subscribe topic newCursorsSize = some topic') :
@@ -229,11 +222,10 @@ theorem pubsub_subscribe_only_forward
     Bool.and_eq_true, evalConstraint] at harm
   exact monotonic_holds harm.1
 
-/-- **`pubsub_append_only` (THE KEYSTONE — PROVED).** The full append-only / only-forward law,
-bundled: a committed `publish` grows the event log (`eventRoot` ≥) AND advances `headSeq` strictly
-(`>`); a committed `subscribe` advances cursors only-forward (`cursorsRoot` ≥). The log is
-APPEND-ONLY and the publish-seq MONOTONE *by the cell-program's law*, holding on every committed
-codomain point — no committed transition rewinds or rewrites. -/
+/-- **`pubsub_append_only`** — the full append-only / only-forward law, bundled: a committed
+`publish` grows the event log (`eventRoot` ≥) and advances `headSeq` strictly (`>`); a committed
+`subscribe` advances cursors only-forward (`cursorsRoot` ≥). The log is append-only and the
+publish-seq monotone *by the cell-program's law*, on every committed codomain point. -/
 theorem pubsub_append_only :
     (∀ {topic topic' : Value} {newSeq newRootSize : Int},
         publish topic newSeq newRootSize = some topic' →
@@ -250,13 +242,13 @@ theorem pubsub_append_only :
 `§3.3`: `StateConstraint::SenderAuthorized { set: PublicRoot { slot: 2 } }` — only the holder of
 the key whose hash equals `publisher` may emit a publish. That gate compares the TURN's *sender*
 against the cell's `publisher` field. Our `RecOp`/`recExec` turn carries no sender principal yet
-(the auth gate is the verify/find seam — `Laws.Verifiable`/`CryptoKernel` — added downstream, per
-`REORIENT §6`: "the Lean cell proves *if* Verify accepts *then* admissible"). So we discharge the
+(the auth gate is the verify/find seam — `Laws.Verifiable`/`CryptoKernel` — added downstream:
+the Lean cell proves *if* Verify accepts *then* admissible). So we discharge the
 *half we can*: a committed publish leaves `publisher` UNCHANGED, hence whatever authority is keyed
 on it is stable across the turn (the gate's reference target can't be moved by the publish). The
 sender-equals-publisher check itself is the honest OPEN below. -/
 
-/-- **`pubsub_publisher_immutable` (PROVED)** — a committed publish leaves `publisher` unchanged
+/-- **`pubsub_publisher_immutable`** — a committed publish leaves `publisher` unchanged
 (when it was present): the authority target the `SenderAuthorized{slot 2}` gate keys on cannot be
 rebound by a publish. This is the *state half* of publisher-authority; the sender-check is the
 OPEN below. -/
@@ -278,9 +270,9 @@ theorem pubsub_publisher_immutable
 -- theorem now would be vacuous over a sender we cannot reference, so it is left UNWRITTEN rather
 -- than asserted with a `sorry`. The *state half* IS discharged (`pubsub_publisher_immutable`: the
 -- gate's authority target is fixed across every committed publish); the sender-side enforcement is
--- deferred honestly to the auth-gate build, per REORIENT §6 ("the Lean cell proves *if* Verify
--- accepts *then* admissible"; the sender-signature check routes through the authority seam, NOT
--- into this semantic law).
+-- deferred honestly to the auth-gate build: the Lean cell proves *if* Verify accepts *then*
+-- admissible, and the sender-signature check routes through the authority seam, NOT into this
+-- semantic law.
 
 /-! ## It runs (`#eval`) — publishes grow the log + advance the seq; a subscribe advances a
 cursor; a shrink / rewind is rejected. -/

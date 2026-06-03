@@ -1,28 +1,10 @@
 /-
-# Dregg2.Authority.Discharge — the await engine's AUTHORITY face (discharge monotonicity).
+# Dregg2.Authority.Discharge — discharge monotonicity for the await authority-face.
 
-A **third-party caveat** is a turn that *cannot* become admissible until a named gateway
-**DISCHARGES** it. This is the authority-face of the await family (`dregg2 §3`, `cand-A §3`,
-GLOSSARY "await family"): a suspended cross-vat turn — a `zkpromise` / `ConditionalTurn` —
-holds open until the gateway settles. Crucially, **discharges only ACCUMULATE**: a settled
-gateway stays settled, so resolution moves strictly *forward*. This module proves the
-▶-guarded "resolve forward, never un-resolve" property as a clean monotonicity law on
-`Token.admits` in the `Discharges` parameter, building on `Authority.Caveat`.
-
-## The four await faces (one resolver primitive, four projections)
-
-The await family is **one** suspension/resolution primitive seen through four faces:
-- **zkpromise** — the *data* face: a value that will exist (a future cell-state head).
-- **discharge** — **THIS module: the *authority* face** — a gateway settling a third-party
-  caveat so a suspended turn becomes admissible. The other three faces resolve a *value*,
-  an *intent*, a *call*; this one resolves *standing*.
-- **intent** — the *invariant* face: an I-confluent predicate the merge must satisfy.
-- **settled-call** — the *control* face: the cross-vat method return that wakes the caller.
-
-Each face is monotone in its accumulating evidence (`zkpromise`: the value, once known,
-stays known; `discharge`: a settled gateway stays settled). `admits_mono_discharge` is that
-fact for the authority face — the keystone — and it is exactly what makes await *sound*: the
-suspended turn resolves and never spontaneously un-resolves.
+A **third-party caveat** suspends a cross-vat turn until a named gateway discharges it.
+Discharges only accumulate: a settled gateway stays settled, so resolution moves strictly
+forward. This module proves that monotonicity on `Token.admits` in the `Discharges`
+parameter (`admits_mono_discharge`), building on `Authority.Caveat`.
 
 Pure, computable, `#eval`-able.
 -/
@@ -55,11 +37,10 @@ theorem Discharges.le_trans {d d' d'' : Discharges Gateway}
 
 /-! ## A satisfied caveat stays satisfied as discharges accumulate. -/
 
-/-- **`caveat_ok_mono` (PROVED)** — a satisfied caveat stays satisfied as discharges
-accumulate. A **local** caveat ignores discharges entirely (its truth is context-only, hence
-trivially preserved); a **third-party** caveat is satisfied iff its gateway has discharged, and
-discharges only grow — so by `Discharges.le` it stays satisfied. This is the single-caveat
-seed of the keystone. -/
+/-- **`caveat_ok_mono`** — a satisfied caveat stays satisfied as discharges accumulate. A
+local caveat ignores discharges (trivially preserved); a third-party caveat is satisfied iff
+its gateway has discharged, and discharges only grow, so by `Discharges.le` it stays
+satisfied. -/
 theorem caveat_ok_mono (c : Caveat Ctx Gateway) (ctx : Ctx)
     {d d' : Discharges Gateway} (hle : Discharges.le d d')
     (h : c.ok ctx d = true) : c.ok ctx d' = true := by
@@ -72,17 +53,12 @@ theorem caveat_ok_mono (c : Caveat Ctx Gateway) (ctx : Ctx)
     simp only [Caveat.ok] at h ⊢
     exact hle g h
 
-/-! ## THE KEYSTONE — admissibility resolves FORWARD, never un-resolves. -/
+/-! ## Admissibility resolves forward, never un-resolves. -/
 
-/-- **`admits_mono_discharge` (PROVED) — THE KEYSTONE.** If `d'` accumulates the discharges of
-`d` (`Discharges.le d d'`), then any request the token admits under `d` it still admits under
-`d'`. This is *"the await resolves FORWARD, never un-resolves"*: a suspended cross-vat turn,
-once a gateway settles it, stays admissible — and additional settlements can only ever keep it
-(or other turns) admissible. Monotonicity of admissibility in discharges.
-
-Proof: `Token.admits` is the conjunction (`List.all`) of `Caveat.ok` over the caveat chain;
-each conjunct is monotone by `caveat_ok_mono`, and `List.all_eq_true` lets us push the
-monotonicity through the conjunction memberwise. -/
+/-- **`admits_mono_discharge`** — if `d'` accumulates the discharges of `d`, any request the
+token admits under `d` it still admits under `d'`. A suspended cross-vat turn, once a gateway
+settles it, stays admissible. Proof: `Token.admits` is the `List.all` of `Caveat.ok` over the
+caveat chain; each conjunct is monotone by `caveat_ok_mono`, pushed through memberwise. -/
 theorem admits_mono_discharge (tok : Token Ctx Gateway) (ctx : Ctx)
     {d d' : Discharges Gateway} (hle : Discharges.le d d')
     (h : tok.admits ctx d = true) : tok.admits ctx d' = true := by
@@ -90,10 +66,9 @@ theorem admits_mono_discharge (tok : Token Ctx Gateway) (ctx : Ctx)
   intro c hc
   exact caveat_ok_mono c ctx hle (h c hc)
 
-/-- **`admits_mono_subset` (PROVED)** — the set form of the keystone: as discharges accumulate,
-the admissible-request set only *grows* (the suspended turns that become live). Dual in
-polarity to `attenuate_subset` (where authority *shrinks* down a delegation chain): along the
-delegation axis authority narrows, along the discharge/time axis admissibility widens. -/
+/-- **`admits_mono_subset`** — as discharges accumulate, the admissible-request set only grows.
+Dual in polarity to `attenuate_subset`: along the delegation axis authority narrows; along the
+discharge/time axis admissibility widens. -/
 theorem admits_mono_subset (tok : Token Ctx Gateway)
     {d d' : Discharges Gateway} (hle : Discharges.le d d') :
     {ctx | tok.admits ctx d = true} ⊆ {ctx | tok.admits ctx d' = true} :=
@@ -121,31 +96,23 @@ def Discharges.settle (d : Discharges Gateway) [DecidableEq Gateway] (g : Gatewa
     Discharges Gateway :=
   fun g' => if g' = g then true else d g'
 
-/-- **`settle_le` (PROVED)** — settling a gateway is a forward step: `d ≤ d.settle g`. Settling
-can only ADD the discharge of `g`; it retracts nothing. So `settle` is always a legal move in
-the accumulating-discharge order, and the keystone applies to it. -/
+/-- **`settle_le`** — settling a gateway is a forward step: `d ≤ d.settle g`. Settling adds
+the discharge of `g` and retracts nothing, so it is always a legal move in the
+accumulating-discharge order. -/
 theorem settle_le [DecidableEq Gateway] (d : Discharges Gateway) (g : Gateway) :
     Discharges.le d (d.settle g) := by
   intro g' hg'
   simp only [Discharges.settle]
   split <;> simp_all
 
-/-- **`settle_discharges` (PROVED)** — after settling `g`, gateway `g` reads as discharged. The
-resolution actually happens. -/
+/-- **`settle_discharges`** — after settling `g`, gateway `g` reads as discharged. -/
 theorem settle_discharges [DecidableEq Gateway] (d : Discharges Gateway) (g : Gateway) :
     (d.settle g) g = true := by
   simp [Discharges.settle]
 
-/-- **`resolve_forward` (PROVED) — the clean resolution theorem.** A turn suspended on a single
-third-party gateway `g` (its *only* unmet caveat) becomes admissible the moment that gateway
-discharges. Concretely: if the parent token already admits the request under `d`, then attaching
-a third-party caveat on `g` (the await suspension) yields a token that admits the request *after*
-`g` settles (`d.settle g`). This is the await authority-face closing the loop: suspend on a
-gateway, the gateway discharges, the turn resolves — forward, by `admits_mono_discharge`.
-
-It is a *clean provable instance* of resolution: we do not need to know which other caveats the
-token carries, only that the parent admitted and the new suspension is exactly the gateway we
-then settle. -/
+/-- **`resolve_forward`** — a turn suspended on gateway `g` becomes admissible the moment `g`
+discharges. If the parent token admits under `d`, then attaching a third-party caveat on `g`
+yields a token that admits after `g` settles (`d.settle g`). -/
 theorem resolve_forward [DecidableEq Gateway]
     (tok : Token Ctx Gateway) (ctx : Ctx) (d : Discharges Gateway) (g : Gateway)
     (hpar : tok.admits ctx d = true) :
@@ -162,9 +129,8 @@ theorem resolve_forward [DecidableEq Gateway]
     simp only [Caveat.ok]
     exact ⟨settle_discharges d g, trivial⟩
 
-/-- **`awaiting_resolves` (PROVED)** — the same fact stated through `Awaiting`: a turn that was
-suspended (`Awaiting`) on gateway `g` is no longer suspended after `g` discharges, *provided* the
-parent admitted. The `zkpromise`/`ConditionalTurn` becomes a live turn. -/
+/-- **`awaiting_resolves`** — a turn that was `Awaiting` on gateway `g` is no longer suspended
+after `g` discharges, provided the parent admitted. -/
 theorem awaiting_resolves [DecidableEq Gateway]
     (tok : Token Ctx Gateway) (ctx : Ctx) (d : Discharges Gateway) (g : Gateway)
     (hpar : tok.admits ctx d = true) :
@@ -173,12 +139,9 @@ theorem awaiting_resolves [DecidableEq Gateway]
   rw [resolve_forward tok ctx d g hpar]
   simp
 
-/-! ## It runs (`#eval`): blocked on a gateway → admitted after discharge → never un-admitted. -/
+/-! ## `#eval` demos: blocked → admitted → never un-admitted. -/
 
-/- `Height` (= the current block height) is reused from `Caveat`'s demos — a toy request
-context. -/
-
-/-- Two gateways resolving third-party caveats (an oracle and a co-signer, say). -/
+/-- Two gateways for demo purposes (an oracle and a co-signer). -/
 inductive GW where
   | oracle
   | cosigner

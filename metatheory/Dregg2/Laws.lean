@@ -69,11 +69,10 @@ class SoundSearchable (P : Type*) (W : Type*) [Verifiable P W] extends Searchabl
   for a satisfiable predicate.) -/
   find_sound : ∀ (p : P) (w : W), find p = some w → Discharged p w
 
-/-- **Soundness-by-verification — the contract, recovered as a lemma.** For any plugin that
-CARRIES the contract (`[SoundSearchable P W]`), whatever it returns verifies. This is the
-former `sorry`'d `search_sound` primitive, now discharged by the `SoundSearchable.find_sound`
-field — an honest assumption made explicit, not an unprovable claim. (For a bare untrusted
-`Searchable`, no such guarantee exists, by design; consumers re-`Verify`.) -/
+/-- **Soundness-by-verification — the contract, recovered as a lemma.** For any plugin
+carrying the contract (`[SoundSearchable P W]`), whatever it returns verifies. Discharged by
+the `SoundSearchable.find_sound` field. (For a bare untrusted `Searchable`, no such guarantee
+exists by design; consumers re-`Verify`.) -/
 theorem search_sound
     [Verifiable P W] [SoundSearchable P W] (p : P) (w : W)
     (h : Searchable.find p = some w) :
@@ -104,21 +103,11 @@ theorem polarity_galois {α β : Type*} (R : α → β → Prop) :
   · intro h a ha b hb; exact h hb a ha
   · intro h b hb a ha; exact h ha b hb
 
-/-- **Law: `Predicate ⊣ Witness` is a Galois connection** (the verify/find seam).
-
-The genuine predicate⊣witness content, obtained by instantiating `polarity_galois`
-at the verifier relation `Discharged` (= `Verify · · = true`). It pins the two
-preorders concretely:
-
-* predicates ordered as sets `Set P` under entailment/⊆;
-* witness-sets ordered as `(Set W)ᵒᵈ` (specificity: a smaller witness-set is "more
-  specific", hence the order dual).
-
-`l A = {w | every predicate in A is discharged by w}` (the witnesses satisfying all
-of `A`) and `u B = {p | every witness in B discharges p}` (the predicates satisfied
-by all of `B`) form an (antitone) Galois connection — the classic polarity induced
-by the `Discharged`/`Verify` relation. This replaces the earlier placeholder which
-quantified over *arbitrary* `l, u` and was false as stated. -/
+/-- **Law: `Predicate ⊣ Witness` is a Galois connection** (the verify/find seam). Obtained
+by instantiating `polarity_galois` at the `Discharged` relation. Predicates are ordered as
+`Set P` under entailment/⊆; witness-sets as `(Set W)ᵒᵈ` (specificity order). The left
+adjoint is `l A = {w | every predicate in A is discharged by w}`; the right adjoint is
+`u B = {p | every witness in B discharges p}`. -/
 theorem predicate_witness_galois [Verifiable P W] :
     GaloisConnection
       (fun A : Set P => toDual {w : W | ∀ p ∈ A, Discharged p w})

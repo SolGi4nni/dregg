@@ -1,78 +1,31 @@
 /-
 # Dregg2.Authority.SelectiveDisclosure — credential selective disclosure + predicate proofs + anonymous unlinkable multi-show.
 
-This module carries forward the REAL Rust semantics of `dregg-credentials`'
-**presentation** path — the headline credential feature that the existing Lean
-(`Authority/Credential.lean`, whose `claim` is one opaque `Nat`, all-or-nothing
-`verify`) and `Privacy.lean` (unlinkability present but DISCONNECTED from the
-credential object) only shadow. See the gap analysis in
-`docs/rebuild/GROUND-AUTH-ATTESTATION.md §1.2/§1.6` (Selective disclosure: **O**;
-predicate proofs: **S**; anonymous multi-show: **S, split & disconnected**) and
-`docs/rebuild/CARRY-FORWARD-SYNTHESIS.md §2 Face-2 #3/#4`.
+Models the `dregg-credentials` presentation path (`credentials/src/presentation.rs:176-359`).
+A `Credential` carries a vector of attributes (`schema.rs:101-115`). A `Presentation`:
+  1. Reveals a chosen subset in cleartext (`presentation.rs:257-265`); hidden attributes are
+     not transmitted (`presentation.rs:34-35`).
+  2. Proves `Gte/Lte/InRange/…` over hidden attributes without revealing values
+     (`bridge/src/present.rs:2780-2793`, per-request loop `presentation.rs:307-351`).
+  3. Anonymous unlinkable multi-show (`present_anonymous`, `presentation.rs:176-182`): omits
+     the holder binding and uses a fresh per-presentation blinding factor so the observer
+     cannot correlate two shows of the same credential.
 
-## What this models (the REAL Rust, `credentials/src/presentation.rs:176-359`)
+Three laws proved non-vacuously:
+  (a) `presentation_hides_undisclosed` — the view is determined only by disclosed attributes
+      and proven predicates; hidden attributes are not determined by it.
+  (b) `proven_predicate_holds` — a predicate the presentation proves genuinely holds of the
+      credential's attribute; `predicate_proof_has_teeth` shows a false predicate is unprovable.
+  (c) `multishow_unlinkable` — two presentations of the same credential with different fresh
+      blinding factors have equal observer-views.
 
-A `Credential` carries a *vector* of attributes (`CredentialAttributes` =
-`Vec<AttributeAttenuation{name, value}>`, `credentials/src/schema.rs:101-115`;
-re-applied at present time over `credential.attributes.attributes`,
-`presentation.rs:216-219`). A `Presentation`:
+§8 portal: the computational binding/hiding of the STARK / Poseidon2 commitment / per-show
+ring-blinding is the §8 oracle (`CryptoKernel.verify`). This module proves the
+information-theoretic core (perfect view-collapse on the modelled transcript); it does NOT
+claim the computational property.
 
-  1. **Selective disclosure** — reveals a chosen SUBSET in cleartext
-     (`PresentationOptions.disclose`, `presentation.rs:36-37`; the
-     `disclose_set` filter loop `presentation.rs:257-265`) and commits to exactly
-     the revealed terms via a Poseidon2 `revealed_facts_commitment`
-     (`presentation.rs:267-270, 365-372`). The HIDDEN rest is *not transmitted at
-     all* (`presentation.rs:34-35` doc: "Other attributes are not transmitted").
-
-  2. **Predicate proofs** — `Gte/Lte/InRange` (and `Gt/Lt/Neq`) over HIDDEN
-     attributes (`bridge/src/present.rs:2780-2793`; per-request loop
-     `presentation.rs:307-351` via `prove_predicate_for_fact`). The proof binds the
-     attribute's `predicate_value` (`schema.rs:90-98` `to_predicate_value`) into a
-     fact-hash *without revealing the value*.
-
-  3. **Anonymous unlinkable multi-show** — `present_anonymous`
-     (`presentation.rs:176-182`) (a) OMITS the holder `confine_user` binding
-     (`presentation.rs:231-244`, the UNLINKABILITY note `:204-212`) and (b) uses a
-     real STARK with a **fresh per-presentation blinding factor**, so the public
-     `blinded_leaf` differs across shows (`presentation.rs:292-299`) while the
-     observer cannot correlate two presentations of the same credential.
-
-## The three laws this PROVES (non-vacuously, reusing `Privacy.lean`'s view idiom)
-
-  (a) **`presentation_hides_undisclosed`** — a presentation reveals ONLY the
-      disclosed subset + the proven predicates: two credentials that agree on the
-      disclosed attributes and on every proven predicate's truth produce the SAME
-      observer-view. The hidden attributes are *not determined by* the view (the
-      anonymity-set / view-equality style of `Privacy.field_projection_hides_private`
-      and the `view`-collapse model, `Privacy.lean:97-109, 262-284`). NON-vacuous:
-      the `Reference` view is genuinely non-constant in the disclosed slots.
-
-  (b) **`proven_predicate_holds`** — a predicate that the presentation *proves*
-      genuinely holds of the underlying credential's attribute (the soundness law:
-      a `ProvenPredicate` carries a proof `evalPred pred (cred.attr i) = true`, and
-      this theorem extracts it). The teeth: `predicate_proof_has_teeth` exhibits a
-      predicate FALSE of a value for which NO proof can be produced.
-
-  (c) **`multishow_unlinkable`** — two presentations of the SAME credential (fresh
-      blinding each show) have EQUAL observer-views: a verifier cannot correlate
-      them (wiring `Privacy.lean`'s unlinkability-by-view-collapse INTO the
-      credential path it actually governs — the disconnect flagged in the audit).
-
-## §8 PORTAL (NEVER faked as proved)
-
-The *cryptographic soundness* of the underlying machinery — that the STARK / Poseidon2
-`revealed_facts_commitment` / predicate-circuit / per-presentation ring-blinding are
-*computationally* binding & hiding against a PPT adversary — is the §8 oracle
-(`CryptoKernel.verify`, `Crypto/Primitives.lean::unlinkable`,
-`bridge/src/present.rs:269-308` STARK verify). This module proves the
-*information-theoretic CORE* (perfect view-collapse on the modelled transcript +
-the disclosure discipline + predicate extraction), exactly as `Privacy.lean` does;
-it does NOT, and does not claim to, prove the computational property.
-
-DISCIPLINE: no `sorry`/`admit`/`axiom`/`native_decide` (kernel-clean: axioms ⊆
-{propext, Classical.choice, Quot.sound}); every modelled mechanism cites the REAL
-Rust file:line; statements are never weakened to close them (an honest `-- OPEN:`
-beats a vacuous theorem). ADDITIVE: a NEW module; edits no existing file.
+No `sorry`/`admit`/`axiom`/`native_decide` (kernel-clean: axioms ⊆
+{propext, Classical.choice, Quot.sound}); statements are never weakened to close them.
 -/
 import Dregg2.Privacy
 
@@ -82,7 +35,7 @@ open Dregg2.Privacy (StealthAddr Recipient)
 
 universe u
 
-/-! ## The predicate vocabulary — the REAL Rust `bridge::present::Predicate`.
+/-! ## The predicate vocabulary — the Rust `bridge::present::Predicate`.
 
 `bridge/src/present.rs:2780-2793`: `Gte(u32) | Lte(u32) | Gt(u32) | Lt(u32) |
 Neq(u32) | InRange(u32,u32)`. We model the value space as `Nat` (the Rust
@@ -120,7 +73,7 @@ def evalPred : Predicate → Nat → Bool
   | .neq t,        v => decide (v ≠ t)
   | .inRange lo hi, v => decide (lo ≤ v) && decide (v ≤ hi)
 
-/-! ## The credential — a VECTOR of attributes (the real `CredentialAttributes`).
+/-! ## The credential — a vector of attributes (the real `CredentialAttributes`).
 
 `credentials/src/schema.rs:101-115`: `CredentialAttributes{ attributes:
 Vec<AttributeAttenuation{name, value}> }`. We index the vector by `Fin n` (the
@@ -135,7 +88,7 @@ structure Credential (n : Nat) where
   /-- The attribute values, one per schema slot (the hidden secrets). -/
   attr : Fin n → Nat
 
-/-! ## A proven predicate — soundness is a CARRIED proof, not a `Bool` flag.
+/-! ## A proven predicate — soundness is a carried proof, not a `Bool` flag.
 
 The Rust predicate proof (`presentation.rs:342-349`, `BridgePredicateProof`) is a
 STARK that the named attribute satisfies the predicate. We model the proof object
@@ -159,7 +112,7 @@ structure ProvenPredicate {n : Nat} (cred : Credential n) where
   actual (hidden) value. The proof object cannot be forged for a false predicate. -/
   holds : evalPred pred (cred.attr slot) = true
 
-/-! ## The presentation — disclosed SUBSET + predicate proofs + per-show blinding.
+/-! ## The presentation — disclosed subset + predicate proofs + per-show blinding.
 
 `presentation.rs:184-359` `present_impl`. We model:
   * `disclose : Fin n → Bool` — the subset mask (`PresentationOptions.disclose` /
@@ -185,7 +138,7 @@ structure Presentation {n : Nat} (cred : Credential n) where
   /-- Anonymous path (omits `confine_user`, `presentation.rs:235-244`). -/
   anonymous : Bool
 
-/-! ### The OBSERVER-VIEW — what travels on the wire (the disclosure transcript).
+/-! ### The observer-view — what travels on the wire (the disclosure transcript).
 
 Reusing the `Privacy.lean` honest model (`Privacy.lean:262-284`): the observer-view
 is everything a verifier learns from a presentation. Information-theoretic hiding =
@@ -221,7 +174,7 @@ def observerView {n : Nat} {cred : Credential n} (p : Presentation cred) :
     (Fin n → Option Nat) × List (Fin n × Predicate) :=
   (disclosedView p, predicateView p)
 
-/-! ## LAW (a) — the presentation reveals ONLY the disclosed subset + proven predicates.
+/-! ## Law (a) — the presentation reveals only the disclosed subset + proven predicates.
 
 The hiding law in the `Privacy.field_projection_hides_private` style
 (`Privacy.lean:101-109`): if two credentials agree on every DISCLOSED attribute and
@@ -305,24 +258,16 @@ theorem predicate_proof_has_teeth {n : Nat} (cred : Credential n) (slot : Fin n)
   -- `evalPred (.gte 18) 17 = decide (18 ≤ 17) = false`, contradicting `… = true`.
   simp [evalPred] at h
 
-/-! ## LAW (c) — anonymous multi-show unlinkability, WIRED to the credential path.
+/-! ## LAW (c) — anonymous multi-show unlinkability.
 
-The disconnect the audit flags (`GROUND-AUTH-ATTESTATION.md §1.6`,
-`CARRY-FORWARD-SYNTHESIS.md §2 #4`): `Privacy.lean` has unlinkability-by-view-collapse
-but NOT bound to the credential object that actually multi-shows in Rust. Here we
-state it ABOUT the credential `Presentation`: two anonymous presentations of the SAME
-credential — each with a FRESH blinding factor (`presentation.rs:292-299`) and the
-SAME disclosure/predicate policy — have EQUAL observer-views. The verifier cannot
-correlate them. This is the `Privacy.unlinkable` collapse (`Privacy.lean:457-461`)
-landed on the credential path. -/
+Two anonymous presentations of the same credential — each with a fresh blinding factor
+(`presentation.rs:292-299`) and the same disclosure/predicate policy — have equal
+observer-views. The verifier cannot correlate them. -/
 
-/-- **LAW (c): multi-show unlinkability of one credential.** Two presentations `p₁
-p₂` of the SAME `cred`, sharing the disclosure mask and proving the same `(slot,
-predicate)` list — but with DIFFERENT fresh blinding factors (`p₁.blinding ≠
-p₂.blinding`) — have EQUAL observer-views. The per-show blinding is NOT in the view
-(`presentation.rs:133-152` strips it), so the two shows are indistinguishable on the
-wire: an observer cannot tell they came from the same holder. Wires
-`Privacy.unlinkable`'s view-collapse INTO the credential multi-show path. -/
+/-- **LAW (c): multi-show unlinkability.** Two presentations of the same `cred`, sharing
+the disclosure mask and predicate list but with different fresh blinding factors, have
+equal observer-views. The per-show blinding is stripped from the view
+(`presentation.rs:133-152`), so the two shows are indistinguishable on the wire. -/
 theorem multishow_unlinkable {n : Nat} {cred : Credential n}
     (p₁ p₂ : Presentation cred)
     (hmask : p₁.disclose = p₂.disclose)
@@ -344,14 +289,12 @@ theorem multishow_blinding_invisible {n : Nat} (cred : Credential n)
       = observerView (cred := cred) ⟨mask, [], 1, true⟩ := by
   rfl
 
-/-! ## The `Reference` witnesses — GENUINELY NON-TRIVIAL (not vacuous).
+/-! ## Reference witnesses — concrete non-vacuous instantiation.
 
-A lawful, fully-concrete instantiation showing the laws have real content: a 3-slot
-credential, a presentation disclosing slot 0 and proving `.gte 18` of slot 1 (which
-genuinely holds), and the demonstrations that (a) the disclosed slot is really
-revealed, (b) the predicate genuinely holds, (c) two shows with different blinding
-collapse to one view. The view is genuinely NON-CONSTANT (different disclosed values
-give different views), so the hiding theorems are non-vacuous in the HONEST sense. -/
+A 3-slot credential, a presentation disclosing slot 0 and proving `.gte 18` of slot 1.
+Demonstrates: (a) the disclosed slot is genuinely revealed, (b) the predicate holds,
+(c) two shows with different blinding collapse to one view. The view is non-constant in
+the disclosed slot, so the hiding theorems have real content. -/
 namespace Reference
 
 /-- A 3-attribute credential: `attr 0 = 42`, `attr 1 = 21` (an age ≥ 18),

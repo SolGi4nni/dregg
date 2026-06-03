@@ -1,64 +1,33 @@
 /-
-# Dregg2.Spec.ExecRefinementFull — closing the §4 OPEN: the FULL `Exec ⊑ Spec` FORWARD SIMULATION.
+# Dregg2.Spec.ExecRefinementFull — the full `Exec ⊑ Spec` forward simulation.
 
-`Spec/ExecRefinement.lean` proves the conservation + authority PROJECTIONS of the refinement square
-(`exec_step_refines`) but leaves an explicit **§4 OPEN**: define an abstract small-step LTS
-`AbsStep : AbstractState → AbstractState → Prop` (the spec's OWN operational transition) and prove
-that every executable step is a permitted abstract step —
+`Spec/ExecRefinement.lean` proves the conservation + authority projections of the refinement
+square but leaves an explicit `-- OPEN:` in §4: define an abstract small-step LTS
+`AbsStep : AbstractState → AbstractState → Prop` and prove every executable step is a
+permitted abstract step — `execFull s fa = some s' → AbsStep (absFull s) (absFull s')`.
 
-  `execFull s fa = some s' → AbsStep (absOf s) (absOf s')`
+This module closes that open for the whole `FullAction` op-set:
 
-— full FORWARD SIMULATION: the bottom edge of the square is a genuine abstract STEP, not merely the
-identity-on-projections. With that the square strengthens from "preserves the two projections" to
-"commutes with a genuine abstract step" — full `Exec ⊑ Spec`.
+1. **`AbsStep`** — the unified abstract small-step LTS. Constructors:
+   * `conserveIdentity` — balance conserved, graph unchanged;
+   * `conserveAddEdge` — balance conserved, graph gains one `Spec.addEdge`;
+   * `conserveRemoveEdge` — balance conserved, graph loses one `Spec.removeEdge`;
+   * `discloseSupply` — total moves by a disclosed `±amt`, graph unchanged (mint/burn).
 
-## The enabler (just landed): per-effect forward-sims to UNIFY
+2. **`exec_full_refines_spec`** — for every `FullAction` kind, a committed step is a
+   permitted `AbsStep`. By case-split, reusing `execFull_attests`.
 
-Every effect now carries a per-effect forward-sim theorem, but each over a slightly different
-abstract carrier (all the SAME *shape* `(balanceTotal : ℤ, authGraph : Graph Label ExecRights)`,
-re-named `absT`/`absA`/`absS`/`absP`). This module UNIFIES them onto the canonical
-`Spec.AbstractState` over the WHOLE op-set, via the SINGLE executor `Exec.TurnExecutorFull.execFull`
-that already runs every dregg1 turn kind (`balance`/`delegate`/`revoke`/`mint`/`burn`) and is proved
-step-complete by construction (`execFull_attests`). The three abstract carriers the per-effect work
-used (`absT`/`absA`/`absS`) are all `absFull` here — the unification the §4 OPEN asked for.
+3. **`exec_full_step_refines`** — the full square: both projections preserved AND the
+   bottom edge is a genuine `AbsStep`.
 
-## What this module BUILDS
+4. **`exec_fullTurn_refines_spec`** — a committed `execFullTurn` is matched by an `AbsRun`
+   (the reflexive-transitive closure of `AbsStep`).
 
-1. **`AbsStep : AbstractState → AbstractState → Prop`** — the unified abstract small-step LTS the §4
-   comment prescribes, as the disjunction the spec's own dynamics permit:
-     * **conservative** (the `balance`/`delegate`/`revoke` kinds): `Σδ = 0` over the `balance` domain
-       (tracked via `ledgerDelta = 0`), graph edited per `Spec.addEdge`/`removeEdge`/identity;
-     * **disclosed supply** (the `mint`/`burn` kinds): the abstract total moves by a DISCLOSED `±amt`
-       (`ledgerDelta`), graph identity.
-   Packaged as one inductive `AbsStep` whose constructors are exactly the spec-permitted transition
-   classes (conservative-with-graph-edit / disclosed-supply), each carrying its `Spec.Conservation`
-   content (`conservedInDomain`/`ledgerDelta`) and its `Spec.Authority` graph-dynamics
-   (`addEdge`/`removeEdge`/identity).
+The single named residue is `OnlyConnectivityCloses` — the whole-history connectivity
+closure. This is a property of multi-step runs, isolated as a named `def`-level hypothesis,
+not a `sorry`.
 
-2. **`exec_full_refines_spec`** — THE THEOREM: `execFull s fa = some s' → AbsStep (absFull s)
-   (absFull s')` for EVERY `FullAction` kind, by case-split reusing `execFull_attests` (mint/burn =
-   disclosed; balance/delegate/revoke = conservative; delegate/revoke carry the `addEdge`/`removeEdge`
-   graph dynamics).
-
-3. **`exec_full_step_refines`** — the FULL square assembled: both projections preserved (the
-   `ExecRefinement` content) AND the bottom edge is a genuine `AbsStep` — strengthening
-   `exec_step_refines` from projection-preserving to OPERATIONAL.
-
-## What remains OPEN (precisely)
-
-The single residue is `Spec.Authority.only_connectivity_begets_connectivity` — the WHOLE-HISTORY
-graph closure (no reachable edge appears that some authorized op did not generate). That is a
-property of MULTI-step RUNS, not of the single-step forward simulation this module closes: every
-SINGLE executable step is now a permitted abstract step (`AbsStep`), and the per-step
-non-amplification is carried by each constructor's `Spec.Introduce`/`Revoke`-shaped dynamics. The
-run-closure is isolated as the NAMED hypothesis `AbsRun.closure` (NOT a `sorry`) and discussed in §5;
-the per-step forward simulation — the §4 OPEN's headline — is CLOSED for the whole op-set here.
-
-## Discipline
-No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly `{propext,
-Classical.choice, Quot.sound}` on every keystone. Creates ONLY this file; consumes the already-built
-`Spec.ExecRefinement` + `Exec.TurnExecutorFull` + `Exec.EffectsAuthority` web; edits none. Verified
-standalone: `lake env lean Dregg2/Spec/ExecRefinementFull.lean`.
+No `sorry`/`admit`/`axiom`/`native_decide`. All keystones are axiom-clean.
 -/
 import Dregg2.Spec.ExecRefinement
 import Dregg2.Exec.TurnExecutorFull
@@ -77,10 +46,10 @@ open scoped BigOperators
 /-! ## §1 — The unified abstraction `absFull : RecChainedState → AbstractState`.
 
 The per-effect work used three syntactically-distinct carriers (`EffectTransfer.absT`,
-`EffectsAuthority.absA`, `EffectsState.absS` / `EffectsSupply.absS`), all the SAME shape
-`(balanceTotal : ℤ, authGraph : Graph Label ExecRights)` — which is EXACTLY `Spec.AbstractState`.
-We collapse them onto the canonical `Spec.AbstractState` here, so the §4 OPEN's `AbsStep` runs over
-the same abstract state `ExecRefinement.absOf` produces (the unification the OPEN asked for). -/
+`EffectsAuthority.absA`, `EffectsState.absS` / `EffectsSupply.absS`), all the same shape
+`(balanceTotal : ℤ, authGraph : Graph Label ExecRights)` = `Spec.AbstractState`. We collapse
+them onto the canonical `Spec.AbstractState` here, so `AbsStep` runs over the same abstract
+state `ExecRefinement.absOf` produces. -/
 
 /-- **`absFull s`** — the abstract Spec state a chained record kernel `s` denotes: its conserved
 `recTotal` (the `balance`-domain measure at `Bal = ℤ`) and its reconstructed `execGraph` (the
@@ -89,24 +58,20 @@ in the SAME `Spec.AbstractState` — so `absT`/`absA`/`absS` are all THIS functi
 def absFull (s : RecChainedState) : AbstractState :=
   { balanceTotal := recTotal s.kernel, authGraph := execGraph s.kernel.caps }
 
-/-- The unified abstraction agrees with the three per-regime carriers on both projections — PROVED
-by `rfl`. This is the load-bearing UNIFICATION: the disclosed-supply (`EffectsSupply.absS`),
-authority-edit (`EffectsAuthority.absA`), and metadata (`EffectsState.absS`) abstractions are, field
-for field, `absFull`. -/
+/-- The unified abstraction agrees with the three per-regime carriers on both projections (by `rfl`):
+`EffectsSupply.absS`, `EffectsAuthority.absA`, and `EffectsState.absS` are all `absFull`. -/
 theorem absFull_balanceTotal (s : RecChainedState) : (absFull s).balanceTotal = recTotal s.kernel :=
   rfl
 
 theorem absFull_authGraph (s : RecChainedState) : (absFull s).authGraph = execGraph s.kernel.caps :=
   rfl
 
-/-! ## §2 — The unified abstract small-step LTS `AbsStep` (the §4 OPEN, defined).
+/-! ## §2 — The unified abstract small-step LTS `AbsStep`.
 
-The §4 comment prescribes `AbsStep` as the `Spec.Conservation`-tracked, `Spec.Authority`-authorized
-abstract turn relation. The FULL op-set has TWO conservation regimes (the executable shadow of
-dregg1's per-domain `excess`): the `balance`/`delegate`/`revoke` kinds CONSERVE (`Σδ = 0`), the
-`mint`/`burn` kinds DISCLOSE (`±amt`); and THREE graph-dynamics (identity / `addEdge` / `removeEdge`).
-We package `AbsStep` as one inductive whose constructors are exactly the spec-permitted transition
-classes — each carrying its `Spec.Conservation` content AND its `Spec.Authority` graph dynamics. -/
+The full op-set has two conservation regimes: `balance`/`delegate`/`revoke` conserve (`Σδ = 0`);
+`mint`/`burn` disclose (`±amt`). Three graph-dynamics: identity / `addEdge` / `removeEdge`.
+`AbsStep` packages these as an inductive with constructors for each spec-permitted transition class,
+each carrying its `Spec.Conservation` content and `Spec.Authority` graph dynamics. -/
 
 /-- **`AbsStep a a'`** — the unified abstract small-step transition relation (the §4 OPEN's `AbsStep`):
 `a` may step to `a'` iff the move is one of the spec-permitted transition classes. The constructors:
@@ -209,12 +174,10 @@ theorem supply_authGraph_unchanged {s s' : RecChainedState} {fa : FullAction}
           · rw [if_pos hg] at hb; simp only [Option.some.injEq] at hb; rw [← hb]
           · rw [if_neg hg] at hb; exact absurd hb (by simp)
 
-/-- **`exec_full_refines_spec` — THE FORWARD SIMULATION (PROVED, the §4 OPEN closed for the whole
-op-set).** Every committed `FullAction` step is matched by a permitted abstract `AbsStep`:
-`execFull s fa = some s' → AbsStep (absFull s) (absFull s')`. The bottom edge of the simulation
-square is a genuine abstract STEP — full `Exec ⊑ Spec` forward simulation, across balance/effect,
-authority (delegate/revoke), AND supply (mint/burn). By case-split on the kind, reusing
-`execFull_attests` (per-kind step-completeness) + the disclosed-vs-conservative `ledgerDelta`. -/
+/-- **`exec_full_refines_spec`** — the forward simulation: every committed `FullAction` step is
+matched by a permitted abstract `AbsStep`. The bottom edge of the simulation square is a genuine
+abstract step — full `Exec ⊑ Spec` forward simulation across balance, authority (delegate/revoke),
+and supply (mint/burn). By case-split, reusing `execFull_attests` and `ledgerDelta`. -/
 theorem exec_full_refines_spec {s s' : RecChainedState} {fa : FullAction}
     (h : execFull s fa = some s') :
     AbsStep (absFull s) (absFull s') := by
@@ -256,13 +219,12 @@ theorem exec_full_refines_spec {s s' : RecChainedState} {fa : FullAction}
       · simp only [absFull]
         exact supply_authGraph_unchanged (by simp [Conserving]) h
 
-/-! ## §3.1 — `RefinesRec` is realized by `absFull`, and the bottom edge is an `AbsStep`.
+/-! ## §3.1 — `RefinesRec` realized by `absFull`.
 
-`ExecRefinement.Refines` ties the SCALAR `KernelState` to an abstract state by the two projections;
-the full executor lives in the RECORD world (`RecChainedState`), so we re-found the simulation
-relation `RefinesRec` over the record kernel — the same two corresponding projections (`recTotal` IS
-the abstract `balanceTotal`, `execGraph` IS the abstract `authGraph`), and confirm `absFull` realizes
-it. This is the record-world analog of `ExecRefinement.Refines`/`refines_absOf`. -/
+The full executor lives in the record world (`RecChainedState`); we re-found the simulation relation
+`RefinesRec` over the record kernel — the same two projections (`recTotal` IS the abstract
+`balanceTotal`, `execGraph` IS the abstract `authGraph`). Record-world analog of
+`ExecRefinement.Refines`/`refines_absOf`. -/
 
 /-- **`RefinesRec s a`** — the record-world simulation relation: the chained record kernel's conserved
 `recTotal` IS the abstract `balanceTotal`, and its reconstructed `execGraph` IS the abstract
@@ -281,14 +243,10 @@ AND the bottom edge is a genuine `AbsStep (absFull s) (absFull s')` — strength
 `ExecRefinement.exec_step_refines` from "preserves the two projections" to "commutes with a genuine
 abstract step". This is the FULL `Exec ⊑ Spec` forward-simulation square over the whole op-set. -/
 
-/-- **`exec_full_step_refines` — THE FULL SQUARE (PROVED-clean).** If `execFull s fa = some s'`, then
-there is an abstract successor `a' := absFull s'` with:
-  * `RefinesRec s' a'` (both Spec projections corresponded — the simulation relation holds at the
-    post-state);
-  * `AbsStep (absFull s) a'` (the bottom edge is a GENUINE abstract step, keyed to `Spec.Conservation`
-    + `Spec.Authority` dynamics).
-So the square COMMUTES WITH A REAL ABSTRACT STEP — the §4 OPEN's "full `Exec ⊑ Spec` forward
-simulation". This is `exec_step_refines` strengthened from projection-preserving to OPERATIONAL. -/
+/-- **`exec_full_step_refines`** — the full square: if `execFull s fa = some s'`, there is an
+abstract successor `a' := absFull s'` with `RefinesRec s' a'` AND a genuine `AbsStep (absFull s)
+a'` (keyed to `Spec.Conservation` + `Spec.Authority` dynamics). The square commutes with a real
+abstract step, strengthening `exec_step_refines` from projection-preserving to operational. -/
 theorem exec_full_step_refines {s s' : RecChainedState} {fa : FullAction}
     (h : execFull s fa = some s') :
     ∃ a', RefinesRec s' a' ∧ AbsStep (absFull s) a' :=

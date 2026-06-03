@@ -1,36 +1,20 @@
 /-
-# Dregg2.Boundary — the coinductive A-style soundness module (candidate decision).
+# Dregg2.Boundary — coinductive soundness: the ▶-guarded bisimulation module.
 
-This is the **candidate-DEPENDENT** module the README left open. The dregg2 decision
-(see `docs/rebuild/dregg2.md §1.3, §8`) picks the **coinductive / ▶-guarded
-bisimulation** shape over the explicit small-step or the purely-algebraic
-alternatives — because a cell is **live CODATA**: an element of the final coalgebra
-`νF`, `F X = Obs × (AdmissibleTurn ⇒ X)` (a Moore/DFA coalgebra), so it never bottoms
-out, and soundness is a statement about behavior over unbounded time, not a structural
-induction over a `List Turn`.
+A cell is live codata — an element of the final coalgebra `νF`, `F X = Obs × (AdmissibleTurn ⇒ X)`.
+Soundness is a statement over unbounded time, not induction over a finite turn list.
 
-The keystone type (`decisions §2`, Danielsson–Altenkirch stream-processor):
+The guard `▶` buys productivity, not soundness by itself; soundness requires each step
+to be contractive in `StepInv = Conservation ∧ Authority ∧ ChainLink ∧ ObsAdvance`.
+The well-posed keystone (`stepComplete_preserves`) states this as a safety invariant
+preserved along the whole execution, proved via `Execution.invariant_run`.
 
-    Cell = νC. µI. StepProof I × (Turn ⇒ C)
+`Sound`/`IsBisim` capture behavioural equivalence between coalgebras; their genuine
+basic fact is reflexivity (`sound_refl`). The earlier step-completeness ⇔ bisimilarity
+claim was false as stated (refuted by `Spec.Carrier = Empty`) and is removed.
 
-  * outer `νC` = the unbounded life of the cell (coinductive, never terminates);
-  * inner `µI` = the *bounded* per-turn proof obligation tree (inductive);
-  * the guard `▶` ("later", Birkedal) is typed off `previous_receipt_hash`: the head
-    observation is available now, the tail is available later → productive,
-    uniquely-solved corecursion.
-
-The central risk this module exists to discharge: a **non-contractive** step (one that
-locally type-checks while slowly leaking `Σ_k`) has *unbounded* consequence under
-coinduction — the chain corecurses forever, drifting. The guard `▶` buys
-**productivity, not soundness**; soundness needs each step to be *contractive in
-`StepInv`*. Hence `sound_of_step_complete`: soundness ⇔ each step attests the FULL
-`StepInv = Conservation ∧ Authority ∧ ChainLink ∧ ObsAdvance`.
-
-Style: spec-first, grind up — every theorem is stated with a `sorry` body.
-
-§8 caveat (README): crypto-soundness of `Verify P w` (binding/extractability) is a
-circuit obligation and is NEVER merged into this Lean law; `Verify` is a decidable
-oracle here.
+§8 caveat: crypto-soundness of `Verify P w` (binding/extractability) is a circuit
+obligation and is NEVER merged into this Lean law; `Verify` is a decidable oracle here.
 -/
 import Dregg2.Core
 import Dregg2.Laws
@@ -104,9 +88,9 @@ def Later (Q : Prop) : Prop := Q
 
 /-! ## Soundness as a ▶-guarded bisimulation to the golden-oracle Spec -/
 
-/- The Lean golden-oracle specification coalgebra (backend #8 of the differential
-harness). Kept abstract: its observations and admissible turns are the spec's, and
-`Sound`/`IsBisim` relate an implementation coalgebra to it. -/
+/- The Lean golden-oracle specification coalgebra. Kept abstract: its observations and
+admissible turns are the spec's, and `Sound`/`IsBisim` relate an implementation coalgebra
+to it. -/
 variable (Spec : TurnCoalg Obs AdmissibleTurn)
 
 /-- **`IsBisim` — a ▶-guarded bisimulation relation** between an implementation
@@ -153,14 +137,10 @@ def StepComplete (Impl : TurnCoalg Obs AdmissibleTurn)
   ∀ (x : Impl.Carrier) (t : AdmissibleTurn),
     StepInv Impl conservation authority chainLink obsAdvance x t (Impl.next x t)
 
-/-! ### The meaningful soundness keystone — step-completeness ⇒ whole-execution safety
+/-! ### Step-completeness ⇒ whole-execution safety (the well-posed keystone)
 
-The original `sound_of_step_complete` / `step_complete_of_sound` below (bisimulation to a
-free `Spec` parameter) are **false as stated** — with `Spec.Carrier = Empty`, `Sound Impl
-Spec x` is uninhabited while `StepComplete` holds (machine-checked). The well-posed
-keystone is a SAFETY statement: a state-predicate preserved by every `StepInv`-respecting
-transition holds along the ENTIRE execution. This is proved outright via
-`Execution.invariant_run`, tying the per-turn law to the userspace-program layer. -/
+A state-predicate `Good` preserved by every `StepInv`-respecting transition holds along
+the entire execution. Proved via `Execution.invariant_run`. -/
 
 /-- The transition system a cell-coalgebra induces: `Step x x'` iff some admissible turn
 sends `x` to `x'`. A cell's life is a `Run` of this system. -/
@@ -189,15 +169,10 @@ theorem stepComplete_preserves (Impl : TurnCoalg Obs AdmissibleTurn)
   obtain ⟨τ, rfl⟩ := hstep
   exact hpres s τ hs (hsc s τ)
 
-/-! ### `Sound`/`IsBisim` is behavioural EQUIVALENCE — not the soundness keystone.
+/-! ### `Sound`/`IsBisim` — behavioural equivalence, not the soundness keystone.
 
-The earlier `sound_of_step_complete` / `step_complete_of_sound` (step-completeness ⇔
-bisimilar-to-a-free-`Spec`) were **false as stated** (refuted via `Spec.Carrier = Empty`
-/ free `StepInv` parameters) and are **removed**: the step-completeness ⇒ soundness
-content lives, correctly and PROVED, in `stepComplete_preserves` above (a safety invariant
-along the whole execution). `Sound`/`IsBisim` remain as what they actually are — the
-notion that two coalgebras are *behaviourally equivalent* — whose genuine basic fact is
-reflexivity: every cell is bisimilar to itself. -/
+`Sound`/`IsBisim` capture behavioural equivalence between coalgebras. The
+step-completeness ⇒ soundness content lives in `stepComplete_preserves`. -/
 
 /-- **Equality is a bisimulation (reflexivity) — PROVED.** -/
 theorem bisim_eq (Impl : TurnCoalg Obs AdmissibleTurn) :
@@ -205,9 +180,9 @@ theorem bisim_eq (Impl : TurnCoalg Obs AdmissibleTurn) :
   obs_eq := fun x y h => by subst h; rfl
   step_rel := fun x y h t => by subst h; rfl
 
-/-- **Every cell is `Sound` relative to itself — PROVED.** The honest residue of the old
-keystone: `Sound` is an equivalence notion, so its reflexive instance holds for free; the
-*soundness-from-step-completeness* result is `stepComplete_preserves`, not this. -/
+/-- Every cell is `Sound` relative to itself — `Sound` is reflexive as a behavioural
+equivalence relation. The soundness-from-step-completeness result is
+`stepComplete_preserves`. -/
 theorem sound_refl (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier) :
     Sound Impl Impl x :=
   ⟨(fun a b => a = b), x, bisim_eq Impl, rfl⟩
@@ -215,10 +190,9 @@ theorem sound_refl (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier) :
 
 /-! ## `BoundaryRespecting` — the coinductive vat-boundary law
 
-Lift of `Authority.Integrity` (the l4v case-split) to the coinductive setting: a cell
-*respects the boundary* coinductively when, forever, every admissible turn is either
-intra-vat (trivial witness) or cross-vat (a discharged witness), AND the successor
-again respects the boundary (the `▶`-guarded recursive occurrence). -/
+Lift of `Authority.Integrity` to the coinductive setting: a cell respects the boundary
+when, forever, every admissible turn is intra-vat (trivial witness) or cross-vat
+(discharged witness), and the successor again respects the boundary (`▶`-guarded). -/
 
 /-- **`BoundaryRespecting`** — coinductive `BoundaryRespecting` predicate over cells.
 Stated as the closure property an invariant set `S` must satisfy to be a

@@ -1,20 +1,18 @@
 /-
-# Dregg2.Authority.CSpace — the CONTAINER capability model (tier-3 / seL4 CSpace, lifted & generalized).
+# Dregg2.Authority.CSpace — the container capability model (tier-3 / seL4 CSpace, lifted and generalized).
 
-SANDBOX prototype (no ripple into the existing flat `Cap`/`Caps`): we explore the container cap model
-— cnodes that point into cell-MUTABLE cap-stores, resolved by a (distributed) fuel-bounded walk — and
-prove its scaling laws here, BEFORE migrating the executor onto it. The payoff over the flat
-`Caps := Label → List Cap`: delegating ONE `cnode` shares a WHOLE authority subtree in O(1) (the seL4
-scaling), `revoke` walks the derivation tree (the MDB = the kernel-state revocation registry), and
-resolution is a fuel-bounded walk that is local+immediate at n=1 and topology-bounded when distributed.
+A prototype of the container cap model — cnodes that point into cell-mutable cap-stores, resolved by
+a fuel-bounded walk — with its scaling laws proved here, prior to migrating the executor onto it.
+Advantage over the flat `Caps := Label → List Cap`: delegating one `cnode` shares a whole authority
+subtree in O(1); `revoke` walks the derivation tree (the MDB); resolution is a fuel-bounded walk that
+is local+immediate at n=1 and topology-bounded when distributed.
 
-Two design commitments (ember, 2026-06-01) that make this STRONGER than seL4:
-- **cell-mutable captable**: a cell's cap-store IS its mutable state — the owning cell grows/shrinks
-  its own slots within its authority, and every `cnode`-holder tracks the change LIVE (dynamic
-  delegation; seL4's CNodes are kernel-managed, this is cell-owned).
-- **distributed captable**: `cnode table` names a cell `table` that may live on another node, so a
-  walk ACROSS a cnode is a (remote, topology-bounded) hop. n=1 collapses it to a local immediate walk
-  — the single-machine principle: the honest bounds are the distributed bounds, parametrized by depth.
+Two design differences from seL4:
+- **cell-mutable captable**: a cell's cap-store is its mutable state — the owning cell grows/shrinks
+  its own slots; seL4's CNodes are kernel-managed, this is cell-owned.
+- **distributed captable**: `cnode table` may name a cell on another node, so a walk across a cnode
+  is a remote, topology-bounded hop. n=1 collapses it to a local immediate walk (the single-machine
+  principle: honest distributed bounds parametrized by topology depth).
 
 Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. Pure, `#eval`-able.
 -/
@@ -96,9 +94,8 @@ in O(1): the holder now reaches the whole subtree, but may only exert `keep` ove
 def deriveC (cs : CSpace) (holder : Label) (keep : List Auth) (c : CCap) : CSpace :=
   grantC cs holder (attenuateC keep c)
 
-/-- **`attenuateC_cAuth_subset` — PROVED (the container RIGHTS non-amplification).** Attenuating any
-cap — leaf OR container — only narrows the rights it confers. The `cnode` case is the new content:
-sharing a whole table under `keep` cannot confer authority outside `keep`. -/
+/-- **`attenuateC_cAuth_subset`** — attenuating any cap (leaf or container) only narrows the rights
+it confers. The `cnode` case: sharing a whole table under `keep` cannot confer authority outside `keep`. -/
 theorem attenuateC_cAuth_subset (keep : List Auth) (c : CCap) :
     cAuth (attenuateC keep c) ⊆ cAuth c := by
   cases c with
@@ -115,12 +112,9 @@ def target? : CCap → Option Label
   | .endpoint t _ => some t
   | .cnode t _    => some t
 
-/-- **`attenuateC` preserves the REACH target** — narrowing rights never changes which cells a cap
-points at (`cnode`'s `table` / `endpoint`'s `target` is untouched by the rights filter). So
-attenuation is a pure rights-narrowing: connectivity is orthogonal to permission, exactly as in the
-flat model (`confersEdgeTo` vs `capAuthConferred`). The reach NON-AMPLIFICATION (a derived `cnode`
-lets the holder reach ⊆ the delegator's reach) is the next headline — its precise statement is a
-design call (transitive reach through cycles), which is the §4 MDB/derivation work. -/
+/-- **`attenuateC` preserves the reach target** — narrowing rights never changes which cells a cap
+points at (`cnode`'s `table` / `endpoint`'s `target` is untouched by the rights filter). Attenuation
+is a pure rights-narrowing: connectivity is orthogonal to permission, as in the flat model. -/
 theorem attenuateC_target (keep : List Auth) :
     ∀ c : CCap, target? (attenuateC keep c) = target? c := by
   intro c; cases c <;> rfl
@@ -131,18 +125,14 @@ theorem attenuateC_target (keep : List Auth) :
 #eval reaches (deriveC cs0 2 [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant])) 3 2 7  -- true (shared!)
 #eval cAuth (attenuateC [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant]))             -- [read] (grant dropped)
 
-/-! ## §4 — MONOTONICITY of reach under grant (the ANALYZABILITY half — why CAP/FLP do NOT bite the
-common path).
+/-! ## §4 — Monotonicity of reach under grant.
 
-The worry: a navigable DISTRIBUTED cspace makes cap-resolution a cross-node query, and cross-node
-queries inherit CAP (partition) and FLP (consensus). The escape: **resolution is MONOTONE under the
-grant fragment** — granting a cap NEVER removes anyone's reach. A monotone query over a join-semilattice
-state needs NO coordination (it is I-confluent / CRDT — the `Confluence`/drift-stability machinery): a
-node may answer "X reaches Y" from a STALE local replica and only ever UNDER-approximate (it might not
-have seen a grant yet), never wrongly grant. So `grant` + `resolve` is the coordination-free,
-available-under-partition, FLP-immune fragment; only `revoke` (the non-monotone op) carries the CAP/FLP
-cost — and that we DIAL (soft/hard fail), exactly as the single-machine principle predicts (n=1 ⇒
-immediate full revocation; distributed ⇒ topology-bounded). This theorem is that monotonicity. -/
+Resolution is monotone under the grant fragment — granting a cap never removes anyone's reach. A
+monotone query over a join-semilattice state needs no coordination (I-confluent / CRDT): a node may
+answer "X reaches Y" from a stale local replica and only ever under-approximate, never wrongly grant.
+So `grant` + `resolve` is coordination-free, available-under-partition, FLP-immune; only `revoke`
+(the non-monotone op) carries the CAP/FLP cost — dialed soft/hard, with n=1 giving immediate full
+revocation and distributed giving topology-bounded revocation. -/
 theorem reaches_mono_grant (cs : CSpace) (holder : Label) (cap : CCap) :
     ∀ fuel src t, reaches cs fuel src t = true → reaches (grantC cs holder cap) fuel src t = true := by
   intro fuel
@@ -169,17 +159,14 @@ theorem reaches_mono_grant (cs : CSpace) (holder : Label) (cap : CCap) :
             · exact Or.inl h1
             · exact Or.inr (ih table t h2)
 
-/-! ## §5 — WRITE-THROUGH: a cnode MUTATES the remote table (the FULL vision, not the read-only
-cop-out).
+/-! ## §5 — Write-through: a cnode mutates the remote table.
 
-The thesis forbids restricting to read-only: a capability delegates authority to ACT, not just
-observe — so `cnode table [grant]` must let the holder MUTATE `table`'s store remotely. The key
-realization: **write-through does NOT break the monotone/non-monotone seam**, because that seam is
-about the OPERATION (add vs remove), ORTHOGONAL to local-vs-remote. A write-through GRANT is just
-`grantC` landing at the TARGET cell, so its monotonicity is the SAME theorem — insert-anywhere is
-monotone. The hardness stays confined to REMOVE (revoke — dialed) and MOVE/reparent (the CRDT-tree
-problem, Kleppmann's highly-available move). Here we build the GRANT fragment and prove it preserves
-reach-monotonicity (hence stays coordination-free / CAP-available / FLP-immune across the node hop). -/
+A capability delegates authority to ACT, not just observe — `cnode table [grant]` lets the holder
+mutate `table`'s store remotely. Write-through does not break the monotone/non-monotone seam because
+that seam is about the operation (add vs remove), orthogonal to local-vs-remote. A write-through
+grant is just `grantC` landing at the target cell; its monotonicity is the same theorem —
+insert-anywhere is monotone. The hardness stays confined to REMOVE (revoke — dialed) and
+MOVE/reparent (the CRDT-tree problem, Kleppmann's highly-available move). -/
 
 /-- Issuer may write-through-grant `cap` into `target`'s store iff it HOLDS a `cnode target` cap
 carrying `Auth.grant` AND `cap`'s conferred authority is ⊆ that cnode's rights — NON-AMPLIFICATION
@@ -196,11 +183,10 @@ false. So a remote write-through reuses the local insert — and inherits its mo
 def writeThroughGrant (cs : CSpace) (issuer target : Label) (cap : CCap) : CSpace :=
   if writeGrantOK cs issuer target cap then grantC cs target cap else cs
 
-/-- **`writeThroughGrant_mono` — PROVED (write-through preserves ANALYZABILITY).** A remote
-write-through grant only GROWS reach — the SAME monotonicity as a local grant, because inserting a cap
-is monotone wherever it lands. So the distributed write-through GRANT fragment is coordination-free /
-CAP-available / FLP-immune, exactly like local grant: the seam survives the node hop. The non-monotone
-residue (revoke, move) is all that carries the distributed cost. -/
+/-- **`writeThroughGrant_mono`** — a remote write-through grant only grows reach: inserting a cap
+is monotone wherever it lands. The distributed write-through grant fragment is coordination-free /
+CAP-available / FLP-immune, exactly like local grant. The non-monotone residue (revoke, move) is all
+that carries the distributed cost. -/
 theorem writeThroughGrant_mono (cs : CSpace) (issuer target : Label) (cap : CCap) :
     ∀ fuel src t, reaches cs fuel src t = true →
       reaches (writeThroughGrant cs issuer target cap) fuel src t = true := by

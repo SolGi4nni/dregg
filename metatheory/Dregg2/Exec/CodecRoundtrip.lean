@@ -1,75 +1,37 @@
 /-
-# Dregg2.Exec.CodecRoundtrip — FILL J: the parse∘encode ROUNDTRIP THEOREM.
+# Dregg2.Exec.CodecRoundtrip — parse∘encode roundtrip theorems for the wire codec.
 
-`docs/rebuild/WHOLESALE-SWAP-LEDGER.md` FILL J: *the parse∘encode roundtrip THEOREM for every
-production (+ fuel-adequacy lemma), which removes the codec from the Lean-side TCB.* The wholesale
-swap's whole assurance rests on this — a SYMMETRIC codec bug (the encoder and decoder agree on a
-WRONG grammar) passes the differential silently; only a parse∘encode theorem catches it, because it
-pins the decoder to be the genuine left-inverse of the encoder on the value space.
-
-This file is the IN-PROGRESS parse∘encode roundtrip proof of the COMPLETE-TURN wire codec
-(`Dregg2.Exec.FFI.Wide`, META-FILL I), targeting (for each production):
+For each grammar production this file proves:
 
     parseX (sufficient fuel) (encodeX v).toList = some (v, [])
 
-— the parser, fed exactly the encoder's output, recovers `v` and consumes the WHOLE string (no
-trailing bytes), with NO fuel exhaustion (the fail-closed `fuel = 0` branch is unreachable on
-well-formed input — the *fuel-adequacy* obligation).
+The parser, fed exactly the encoder's output, recovers `v` and consumes the whole string (no
+trailing bytes), with no fuel exhaustion. A symmetric codec bug passes a differential silently;
+only these theorems, pinning the decoder as the genuine left-inverse of the encoder, catch it.
 
-## HONEST RECEIPT — what is PROVED here vs what is DEFERRED.
+## Honest receipt — PROVED vs DEFERRED.
 
-**PROVED (a true left-inverse on these productions, all sorry-free, `#assert_axioms`-pinned):**
+**PROVED (all sorry-free, `#assert_axioms`-pinned):**
+  * §0 — every leaf: `lit`, `parseInt`/`parseNat`, `parseStr` (escape-free), `ofHex32 ∘ toHex32`
+    (lossless on the full 256-bit range), `parseFlag`, the `Auth` tag, dispatch fail-closure lemmas;
+  * §1–§3 — `Value`/`FIELDS` scalar leaf, per-asset `BAL` ledger entry, headline `fillJ_*` facts;
+  * §5–§6 — recursive `Value`/`FIELDS` tree and the security-critical `Authorization` decoder
+    (all 10 variants + recursive `oneOf`, by strong induction on fuel);
+  * §7 — the `FullActionA` decoder, complete at all 46 arms;
+  * §8–§11c — every wide-state side-table list (AUTHS, Nat-list, BAL-list, ESCROWS, QUEUES, SWISS).
 
-  * §0 — EVERY leaf primitive: `lit` (literal-prefix consume, `lit_append`), `parseInt`/`parseNat`
-    inverting `toString` on signed/unsigned numbers (`parseInt_toString`/`parseNat_toString`, proved
-    from `Nat.repr`/`Int.repr`'s digit structure), `parseStr` on escape-free JSON strings
-    (`parseStr_clean`), the `ofHex32 ∘ toHex32` `[u8;32]` digest LOSSLESS on the full 256-bit range
-    (`ofHex32_toHex32`/`parseDig_encDig`), `parseFlag` (0/1, `parseFlag_bool`), the narrow `Auth` enum
-    tag (`authOfTag_authTag`), and the dispatch fail-closure lemmas (`litGo_none_mono`/`lit_ne_pre`);
-  * §1 — the wide `Value`/`FIELDS` SCALAR leaf (`parseValueW_scalar`) and the headline leaf facts
-    `fillJ_digest`/`fillJ_amount`/`fillJ_value_scalar` (§3 block) — the conserved-measure-relevant
-    primitives the executor reads;
-  * §2 — the per-asset `BAL` LEDGER ENTRY roundtrip (`parseBalEntry_encode`/`fillJ_bal_entry`) — the
-    conserved-measure entry the executor's per-asset laws are stated over;
-  * §5 — the RECURSIVE `Value`/`FIELDS` production (`parseValueW_roundtrip`/`parseFieldsW_roundtrip`,
-    the nested-record tree), which closes the cell-payload grammar in full generality;
-  * §6 — the SECURITY-CRITICAL `Authorization` (WHO) decoder (`parseAuthW_roundtrip`/
-    `parseAuthListW_roundtrip`): all 10 variants + the recursive `oneOf` candidate disjunction, by strong
-    induction on fuel (mirroring §5). A symmetric codec bug in the WHO layer forges authority silently
-    past the differential; this theorem, pinning `parseAuthW` as the genuine left-inverse of
-    `encodeAuthW`, is what catches it — removing the credential decoder from the Lean-side TCB;
-  * §7 — the `FullActionA` (WHAT) decoder, COMPLETE at **all 46 arms**: 45 via `parseActionW_roundtrip`
-    (the hypothesis-free `simple` arms — EVERY conserved-measure arm AND the 4 AUTHS-bearing capability
-    arms) + `setFieldA` via `parseActionW_setfield` (its `cS` JSON-string field needs an escape-free `Wf`
-    + a combined-separator split). The WHOLE effect decoder is out of the TCB;
-  * §8 — the narrow `AUTHS` list (`parseAuths_encode`): the `Auth` tag array the `cA` action field
-    carries, AND the GATEWAY for the input-LENGTH-fuel `let rec` loop pattern (the adequacy is carried by
-    the self-maintaining `input.length < fuel` invariant — no length-bound lemma), reused by every
-    remaining length-fuel production;
-  * §9/§10/§11/§11b/§11c — EVERY WIDE-STATE SIDE-TABLE list (each via §8's length-fuel loop recipe):
-    the `[N,N,…]` `Nat`-list (`parseNats_encode`, the `nullifiers`/`commitments`/`revoked` fields), the
-    `BAL` ledger-list (`parseBal_encode`, the conserved-measure field), the `ESCROWS` table
-    (`parseEscrows_encode`, a 7-field `do`-block element with two flags), the `QUEUES` table
-    (`parseQueues_encode`, whose element embeds a nested `buffer` `Nat`-list), and the `SWISS` table
-    (`parseSwissTable_encode`, whose element combines an AUTHS rights array — via §8 — with an optional
-    handoff `cert` — via `parseOptNat_encode`).
+**DEFERRED (codec is TCB — `#eval`-cross-validated at each codec site, no proof here yet):**
+`parseCaveatsW` (per-node caveat array); `parseForestW`/`parseChildrenW` (recursive action-tree +
+delegation edges); `parseWState`/`parseWTurn`/`parseWWire` (wide-state record + Turn envelope +
+whole-wire object). The side-table list productions they assemble are all proved above (§9–§11c).
 
-**DEFERRED (the codec for these is TCB — `#eval`-cross-validated in `FFI.lean` §W3/§W4/§W5/§W6/§WG, but
-NOT YET carrying a parse∘encode THEOREM here):** `parseCaveatsW` (the per-node
-caveat array, §W5c); `parseForestW`/`parseChildrenW` (the recursive action-TREE + delegation edges);
-and `parseWState`/`parseWTurn`/`parseWWire` (the field-assembled wide-state record + the Turn envelope +
-whole-wire object). Each is round-trip-`#eval`'d at its codec site; the proof obligation is the FILL-J
-follow-on (the side-table list productions they assemble are now ALL proven above — §9–§11c).
+Every digest/commitment field is the low 256 bits of a `Nat`. Proved roundtrips are the identity on
+the well-formed value space (`< 2^256`). NON-VACUOUS: the `Wf` hypothesis is satisfiable (demo values
+witness it) and the theorem fails without the digest bound (a `2^256`-wrap value is a genuine
+counterexample) — real teeth, not a triviality.
 
-EVERY digest/commitment field is the low 256 bits of a `Nat`, so the PROVED roundtrips are the identity
-EXACTLY on the well-formed value space (`< 2^256`); we carry a `Wf` predicate that pins precisely that
-boundary constraint. This is NON-VACUOUS: the `Wf` hypothesis is satisfiable (the demo values witness
-it) and the theorem fails without the digest bound (a `2^256`-wrap value is a genuine counterexample),
-so the PROVED statements state real TEETH, not a triviality.
-
-Soundness note: this file imports NO new axioms; the keystones are `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}` at the foot (the standard kernel triple — `Finset`/`toFinset`
-pull in `Classical.choice`/`Quot.sound`; a `sorryAx` would fail the pin and the build).
+Soundness note: no new axioms; keystones are `#assert_axioms`-pinned to
+`{propext, Classical.choice, Quot.sound}` (a `sorryAx` would fail the pin and the build).
 -/
 import Dregg2.Exec.FFI
 import Mathlib.Tactic

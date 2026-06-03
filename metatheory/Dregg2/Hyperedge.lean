@@ -1,31 +1,14 @@
 /-
-# Dregg2.Hyperedge — the turn as an ATOMIC HYPEREDGE (wide pullback over `TurnId`).
+# Dregg2.Hyperedge — the turn as an atomic hyperedge (wide pullback over `TurnId`).
 
-`JointTurn.lean` gives the **binary** cross-cell binding: `SharedTurnId` (the CG-2
-turn-identity pullback for TWO participants — both legs collapse through one `tid`),
-`JointBinding` (CG-2 ⊗ CG-5, an irreducible HYPOTHESIS), and a stubbed N-ary
-`JointFamily`/`FamilyBinding`/`family_joint_sound` (a *family of binary edges* hashed into
-one forest). This module records the thesis those stubs gesture at:
+A turn is ONE atomic unit incident to a finite set of participant cells `{Cᵢ}_{i∈ι}` — a
+hyperedge, NOT a family of pairwise bindings. Categorically it is the **wide pullback** (the
+N-fold fiber product over `TurnId`): every participant's post-step projects to ONE shared
+`tid`. Mina's `account_updates_hash` is exactly this: one hash all N updates commit to.
 
-  **A turn is ONE atomic unit incident to a finite SET of participant cells `{Cᵢ}_{i∈ι}` —
-  an atomic HYPEREDGE — NOT a family of pairwise bindings.**
-
-Categorically it is the **wide pullback** (the N-fold fiber product over `TurnId`): every
-participant's post-step projects to ONE shared `tid`. This is a *single object with N
-legs*, the honest N-ary generalization of `SharedTurnId` (the special case `ι = Fin 2`).
-Mina's `account_updates_hash` is exactly this: not `C(N,2)` pairwise agreements, but one
-hash all `N` updates commit to — the apex of the wide pullback.
-
-Why it might *loosen the knot* (the research question, §4): the binary `joint_sound`
-needed an explicit `JointBinding` premise precisely because the binding is a *pairwise*
-fact glued by hand. The hyperedge frames the binding as ONE wide-pullback object. If the
-soundness cut is "the binding does the work in one step", a single apex `tid` + a single
-Σ-over-`univ` may discharge it without the `O(N²)` bookkeeping. We test that below and
-report honestly.
-
-Style (matching `Boundary`/`JointTurn`): spec-first, faithful `Prop`s, real content; every
-`sorry` is a precisely-stated genuine obligation, never a vacuous `True`/`Iff.rfl` and
-never `axiom`/`admit`. PROVED keystones are pinned with `#assert_axioms`.
+Key results: `hyperedge_sound` (the N-ary safety keystone, proved); `hyper_binding_is_proper`
+(the hyperedge is a proper subobject — binding is irreducible at every N ≥ 1);
+`hyperedge_sound_bisim_ill_posed` (the free-Spec bisimulation form is false-as-stated).
 -/
 import Dregg2.Core
 import Dregg2.Boundary
@@ -156,11 +139,10 @@ def HyperAdmissible
     (xs : ι → T.Carrier) (t : AdmissibleTurn) : Prop :=
   ∃ H : Hyperedge ι T turnId halfEdge, H.x = xs ∧ H.t = t
 
-/-- **`hyper_binding_is_proper` — the hyperedge is a PROPER subobject (PROVED).** The N-ary
-analogue of `JointTurn.binding_is_proper`: there is a configuration (here a singleton
-hyperedge, `ι = Unit`, one incidence moving a half-edge of `1 : ℕ`, so the CG-5 sum is
-`1 ≠ 0`) that is NOT `HyperAdmissible`. Hence the hyperedge binding is genuine content the
-per-cell data cannot supply — the same irreducibility as the binary case, now at the apex. -/
+/-- **`hyper_binding_is_proper` — the hyperedge is a proper subobject.** N-ary analogue of
+`JointTurn.binding_is_proper`: there is a configuration (`ι = Unit`, one incidence moving a
+half-edge of `1 : ℕ`, CG-5 sum `1 ≠ 0`) that is NOT `HyperAdmissible`. The hyperedge
+binding is genuine content the per-cell data cannot supply. -/
 theorem hyper_binding_is_proper :
     ∃ (T : TurnCoalg Unit Unit)
       (turnId : Unit → TurnIdOf (TurnId := Unit) T)
@@ -174,7 +156,7 @@ theorem hyper_binding_is_proper :
   have : (Finset.univ.sum fun _ : Unit => (1 : Nat)) = 0 := H.balanced
   simp at this
 
-/-! ## §3 — Recovering the special cases (the cleanup payoff)
+/-! ## §3 — Recovering the special cases
 
 The thesis: bilateral, ring, and forest are all *incidences of one `Hyperedge`*. We make
 that precise for the binary case (`ι = Fin 2` ↔ `SharedTurnId`/`JointBinding`) and sketch
@@ -288,29 +270,15 @@ def ringHyperedge (n : ℕ) [NeZero n] (δ : Fin n → ℤ) :
         (fun i _ => by simp) (fun i _ => by simp) (fun _ _ => rfl)
     rw [Finset.sum_sub_distrib, hshift, sub_self]
 
-/-! ## §4 — THE RESEARCH QUESTION: `hyperedge_sound` over the single apex object.
+/-! ## §4 — `hyperedge_sound` over the single apex object.
 
-`family_joint_sound` (`JointTurn.lean:447`, `sorry`) is the N-ary keystone framed over a
-*family of binary edges*. Here we restate it over the single wide-pullback object and try to
-prove it.
+`family_joint_sound` is the N-ary keystone framed over a family of binary edges; here we
+restate it over the single wide-pullback object. `hyperedge_sound` (the safety form) is
+proved axiom-clean. The bisimulation-to-a-free-Spec form (`hyperedge_sound_bisim`) is
+false-as-stated (`hyperedge_sound_bisim_ill_posed`); the only well-posed target is
+reflexive `Sound T T`. -/
 
-The honest finding is recorded at the two theorems below:
-
-  * `hyperedge_sound` (the safety form, mirroring `joint_sound`/`stepComplete_preserves`):
-    **PROVED, axiom-clean.** Framing the binding as one apex genuinely closes the cut.
-  * `hyperedge_sound_bisim` (the OLD `family_joint_sound` *bisimulation-to-a-free-Spec*
-    form): found **FALSE-as-stated** and PROVED refuted (`hyperedge_sound_bisim_ill_posed`,
-    `Spec.Carrier = Empty`), then honestly restated to the well-posed reflexive `Sound T T`
-    (PROVED). The single-object framing does NOT rescue the ill-posed shape; it rescues the
-    *well-posed* one.
-
-So the verdict (see module-foot `-- VERDICT`): the wide-pullback framing loosens the knot
-**for the safety keystone** — what `family_joint_sound` should have said — because the apex
-`tid` + single Σ collapse all `N` legs in ONE `legs_agree`/`hyper_stepComplete` step instead
-of `O(N²)` pairwise cuts. The irreducible residue is NOT the agreement bookkeeping (that
-dissolved); it is the *binding-as-premise* itself (`hyper_binding_is_proper`), unchanged. -/
-
-/-! ### §4.1 — The N-fold product coalgebra and its step-completeness (PROVED). -/
+/-! ### §4.1 — The N-fold product coalgebra and its step-completeness. -/
 
 /-- The **N-fold product (tensor) coalgebra** `⊗_{i∈ι} T` on carrier `ι → T.Carrier`, with
 the pointwise step (a shared turn `t` drives every component). This is `ν(⊗Fᵢ)` as a
@@ -349,28 +317,13 @@ theorem hyper_stepComplete
   · exact (hsc i (xs i) t).2.2.1
   · exact (hsc i (xs i) t).2.2.2
 
-/-! ### §4.2 — `hyperedge_sound`: THE N-ary keystone (PROVED, axiom-clean).
+/-! ### §4.2 — `hyperedge_sound`: the N-ary safety keystone. -/
 
-The safety form. IF every incidence is step-complete AND the hyperedge binding holds (its
-`H` carries CG-2 + CG-5), AND a joint predicate `Good` is preserved by every
-`StepInv`-respecting tuple-transition, THEN `Good` holds along the ENTIRE run from the
-hyperedge's incidence tuple `H.x`. The binding `H` is the explicit premise — *but its
-agreement legs no longer cost `O(N²)`: they are the single apex `tid`.* -/
-
-/-- **`hyperedge_sound` — the wide-pullback N-ary keystone (PROVED).**
-
-This is `family_joint_sound` restated over the single hyperedge object and *actually
-proved*: it reduces, in one step, to `stepComplete_preserves` on the product coalgebra
-`hyperCoalg ι T`, with product step-completeness supplied by `hyper_stepComplete`. The
-hyperedge `H` enters as the binding premise (carrying the apex `tid` and the Σ=0
-conservation) and pins the run's start to the bound incidence tuple `H.x`.
-
-**Finding:** the cut that was irreducible in the *family-of-binary-edges* framing (gluing
-`C(N,2)` pairwise `SharedTurnId`s) is GONE — `hyper_stepComplete` discharges all legs with a
-single `∀ i`, and `legs_agree` is now a theorem. What remains a *premise* (never a derived
-fact) is only the binding's own admissibility content (`hyper_binding_is_proper`), exactly as
-in the binary `joint_sound`. So the single-object framing genuinely loosens the knot: the
-keystone is provable and axiom-clean. -/
+/-- **`hyperedge_sound` — the wide-pullback N-ary keystone.** If every incidence is
+step-complete, the hyperedge binding `H` holds, and `Good` is preserved by every
+`StepInv`-respecting transition, then `Good` holds along any run from `H.x`. Reduces to
+`stepComplete_preserves` on the product coalgebra via `hyper_stepComplete`; all N legs are
+discharged with a single `∀ i`. -/
 theorem hyperedge_sound
     {ι : Type u} [Fintype ι]
     (T : TurnCoalg Obs AdmissibleTurn)
@@ -395,9 +348,7 @@ theorem hyperedge_sound
     (hyper_stepComplete T cons auth chain obsAdv hsc)
     hpres hrun hgood
 
-/-! ### §4.3 — The honest negatives: what stays OPEN and why.
-
-The single-object framing loosens the *agreement* knot, not the *irreducibility* one. -/
+/-! ### §4.3 — The honest negatives. -/
 
 /-- **`hyperedge_sound_needs_binding` — the binding premise is load-bearing (PROVED).**
 N-ary analogue of `JointTurn.joint_sound_needs_binding`: it is NOT the case that per-cell
@@ -420,16 +371,10 @@ theorem hyperedge_sound_needs_binding :
     (fun _ _ _ _ => True) (fun _ _ _ _ => True) (fun _ _ _ _ => True) (fun _ _ _ _ => True)
     (fun _ _ _ => ⟨trivial, trivial, trivial, trivial⟩) xs t)
 
-/-- **`hyperedge_sound_bisim_ill_posed` — the OLD free-`Spec` shape IS FALSE (PROVED refutation).**
-
-`family_joint_sound` (`JointTurn.lean:447`) concluded `Sound (J.cell i) (Spec i) (b.pre i)`:
-bisimilarity of each participant to a *free* spec coalgebra `Spec i`. We first PROVE that shape
-is **false-as-stated** — not merely unproven — for exactly the reason `Boundary` retired
-`sound_of_step_complete`: instantiate `ι = Unit`, `Spec () = ⟨Empty, …⟩`; then `Sound T (Spec ())
-x = ∃ R y, …` is uninhabited (no `y : Empty`), while every premise (`StepComplete`, a balanced
-`Hyperedge`) is satisfiable. The wide-pullback framing does NOT rescue it: the obstruction is the
-free `Spec`, not the binding bookkeeping. So this is a type-(b) latent-vacuity finding: the old
-target was ILL-POSED, and the apex neither can nor should close it. -/
+/-- **`hyperedge_sound_bisim_ill_posed` — the free-`Spec` bisimulation form is false.** Witness:
+`ι = Unit`, `Spec () = ⟨Empty, …⟩` makes `Sound T (Spec ()) x` uninhabited (no `y : Empty`),
+while all premises (`StepComplete`, a balanced `Hyperedge`) are satisfiable. The wide-pullback
+framing does not rescue this: the obstruction is the free `Spec`, not binding bookkeeping. -/
 theorem hyperedge_sound_bisim_ill_posed :
     ¬ ∀ {ι : Type} [Fintype ι]
         (T : TurnCoalg Unit Unit)
@@ -453,21 +398,11 @@ theorem hyperedge_sound_bisim_ill_posed :
       (fun _ _ _ => ⟨trivial, trivial, trivial, trivial⟩) H ()
   exact y.elim
 
-/-- **`hyperedge_sound_bisim` — the WELL-POSED bisimulation keystone (PROVED, restated).**
-
-The honest replacement of the ill-posed free-`Spec` form (refuted by
-`hyperedge_sound_bisim_ill_posed` directly above): the only well-posed `Sound` *target* for a
-hyperedge incidence is behavioural equivalence to the implementation's own spec coalgebra `T`
-(`Sound`/`IsBisim` is an EQUIVALENCE notion, per `Boundary`'s `sound_refl`). Each bound incidence
-`H.x i` is sound — bisimilar to `T`-at-`H.x i` — via reflexivity.
-
-**Finding (the irreducible residue, sharpened).** The premises `hsc`/`H` are *necessarily*
-decorative here, and that is the whole point: `Sound` cannot be *derived from* step-completeness
-into any non-reflexive `Spec` (that derivation is exactly what `hyperedge_sound_bisim_ill_posed`
-refutes). The genuine "step-completeness buys correctness" content is the SAFETY form
-`hyperedge_sound` (PROVED above), not a bisimulation. So the bisimulation knot does not "loosen"
-under the apex — it dissolves into two separate true facts: safety (`hyperedge_sound`) and
-reflexive equivalence (this), with no well-posed bridge between free `Spec` and step-completeness. -/
+/-- **`hyperedge_sound_bisim` — the well-posed bisimulation keystone.** The only well-posed
+`Sound` target for a hyperedge incidence is reflexive equivalence to `T` itself (`sound_refl`):
+`Sound` cannot be derived from step-completeness into a non-reflexive `Spec`
+(`hyperedge_sound_bisim_ill_posed`). The premises `hsc`/`H` are necessarily decorative — the
+genuine "step-completeness ⟹ correctness" content is the safety form `hyperedge_sound`. -/
 theorem hyperedge_sound_bisim
     {ι : Type u} [Fintype ι]
     (T : TurnCoalg Obs AdmissibleTurn)
@@ -480,28 +415,13 @@ theorem hyperedge_sound_bisim
     Sound T T (H.x i) :=
   sound_refl T (H.x i)
 
-/-! ## §5 — `tensor_not_final` at N-ary: the product coalgebra is not final (PROVED).
+/-! ## §5 — The proper-subobject obstruction at N-ary. -/
 
-The categorical root of irreducibility recorded for the hyperedge. `JointTurn`'s
-`binding_is_proper` corrected the *naming* (the product of finals IS final for the product
-functor; the true content is the proper-subobject fact). The genuinely-OPEN N-ary statement
-is therefore the **proper-subobject** one for the hyperedge, generalizing
-`hyper_binding_is_proper` from a single witness to: there is *no section* of the product
-carrier into the hyperedge-admissible subobject — i.e. `HyperAdmissible` is not all of
-`ι → T.Carrier`, for a non-degenerate `Bal`. We state the existence of such a behaviour gap. -/
-
-/-- **`hyper_not_all_admissible` — the N-ary proper-subobject obstruction (PROVED).** For a
-non-degenerate balance monoid (a `Bal` with some `b ≠ 0`), there exist a participant index, a
-hyperedge framing, and a tuple/turn that is NOT `HyperAdmissible` — so the wide-pullback
-subobject is *proper* inside the N-fold product, witnessing that `ν(⊗Fᵢ)` does not classify
-the bound joint behaviour by per-cell data alone. The CG-2 ⊗ CG-5 binding is irreducible at
-every `N ≥ 1`, the same obstruction as the binary `binding_is_proper`.
-
-**Proof (the diagnosed plan, carried out).** Pick a designated incidence `i₀` (from
-`Nonempty ι`) whose half-edge contributes `b`, all others `0`. Any `Hyperedge` naming this
-framing would need its CG-5 Σ-over-`univ` to vanish; but `Finset.sum_eq_single i₀` collapses
-that sum to `b ≠ 0` — contradiction. For `ι = Unit`, `b = (1 : ℕ)` this is exactly
-`hyper_binding_is_proper`; this is its general-`ι` generalization, now PROVED. -/
+/-- **`hyper_not_all_admissible` — the N-ary proper-subobject obstruction.** For any balance
+monoid with `b ≠ 0`, there exists a participant index, hyperedge framing, and tuple/turn that
+is NOT `HyperAdmissible`. Proof: a designated incidence `i₀` contributes `b`, all others `0`;
+`Finset.sum_eq_single` collapses the CG-5 sum to `b ≠ 0`, contradicting `balanced`. The
+`ι = Unit`, `b = 1` case is `hyper_binding_is_proper`. -/
 theorem hyper_not_all_admissible
     {ι : Type} [Fintype ι] [Nonempty ι]
     {B : Type} [AddCommMonoid B] (b : B) (hb : b ≠ 0) :
@@ -526,7 +446,7 @@ theorem hyper_not_all_admissible
   rw [hsum] at hbal
   exact hb hbal
 
-/-! ## Axiom-hygiene pins (PROVED keystones only — never the `sorry`'d ones). -/
+/-! ## Axiom-hygiene pins. -/
 
 #assert_axioms Hyperedge.legs_agree
 #assert_axioms hyper_binding_is_proper
@@ -541,35 +461,21 @@ theorem hyper_not_all_admissible
 #assert_axioms hyperedge_sound_bisim
 #assert_axioms hyper_not_all_admissible
 
-/- VERDICT (the research question, §4). Does framing the binding as ONE wide-pullback object
-(rather than a family of `O(N²)` pairwise `SharedTurnId` agreements) loosen the N-ary
-soundness knot?
+/- VERDICT (§4). Framing the binding as ONE wide-pullback object DOES loosen the soundness
+knot for the well-posed keystone: `hyperedge_sound` (the safety form) is proved and
+axiom-clean. The apex `tid` collapses all N CG-2 legs into a single `legs_agree` theorem,
+and `hyper_stepComplete` discharges all incidences with one `∀ i`, reducing soundness to
+the single-cell `stepComplete_preserves`.
 
-  YES — for the well-posed keystone. `hyperedge_sound` (the safety form, the honest content
-  `family_joint_sound` was reaching for) is **PROVED and axiom-clean**. The apex `tid`
-  collapses all `N` CG-2 legs into a single `legs_agree` theorem (no pairwise data), and the
-  single Σ-over-`univ` gives CG-5 directly; `hyper_stepComplete` then discharges every
-  incidence with one `∀ i`, so the soundness reduces to the single-cell
-  `stepComplete_preserves` verbatim. The `O(N²)` pairwise-gluing cut that made the
-  family-of-binary-edges framing intractable simply *does not exist* at the apex.
+The irreducible residue is NOT the agreement bookkeeping (that dissolved); it is the
+binding-as-premise itself (`hyper_binding_is_proper` / `hyperedge_sound_needs_binding`,
+both proved): the CG-2 ⊗ CG-5 data is content per-cell soundness cannot supply and must
+be hypothesized. Same irreducibility as the binary `joint_sound`.
 
-  The irreducible residue is UNCHANGED and is NOT the agreement bookkeeping: it is the
-  binding-as-premise itself. `hyper_binding_is_proper` / `hyperedge_sound_needs_binding`
-  (both PROVED) show the hyperedge is a proper subobject — the CG-2 ⊗ CG-5 data is real
-  content per-cell soundness cannot supply, so it must be hypothesized (the `H` premise),
-  never derived. That is the same irreducibility as the binary `joint_sound`, neither
-  loosened nor worsened by the framing.
-
-  Both former `sorry`s are now CLOSED, axiom-clean (no remaining `sorry` in this module):
-    * `hyperedge_sound_bisim` — the ILL-POSED bisimulation-to-a-free-`Spec` shape inherited
-      from `family_joint_sound` was found FALSE-as-stated (type-(b) latent vacuity), PROVED
-      refuted at `Spec.Carrier = Empty` by `hyperedge_sound_bisim_ill_posed`. Honestly
-      restated to the only well-posed `Sound` target — behavioural reflexivity `Sound T T`
-      (`sound_refl`); the `hsc`/`H` premises are necessarily decorative, which IS the finding:
-      step-completeness does not derive bisimulation, it derives SAFETY (`hyperedge_sound`).
-    * `hyper_not_all_admissible` — the general-`ι` proper-subobject witness, found TRUE and
-      PROVED (type-(a)): designated incidence carries `b ≠ 0`, rest `0`, `Finset.sum_eq_single`
-      forces the CG-5 Σ to `b ≠ 0`, so no `Hyperedge` names the tuple. The single-incidence
-      case `hyper_binding_is_proper` is its `ι = Unit`, `b = 1` instance. -/
+`hyperedge_sound_bisim`: the bisimulation-to-a-free-`Spec` form is ill-posed (refuted by
+`hyperedge_sound_bisim_ill_posed` at `Spec.Carrier = Empty`); the only well-posed target
+is reflexive `Sound T T` (`sound_refl`). Step-completeness derives SAFETY, not bisimulation.
+`hyper_not_all_admissible`: the general-`ι` proper-subobject witness is proved via
+`Finset.sum_eq_single`; `hyper_binding_is_proper` is the `ι = Unit`, `b = 1` instance. -/
 
 end Dregg2.Hyperedge

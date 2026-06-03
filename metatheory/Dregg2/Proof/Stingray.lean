@@ -1,70 +1,37 @@
 /-
-# Dregg2.Proof.Stingray — dregg1's MISSING consensus layer: the Stingray bounded-counter
-# concurrent-spend model + the headline `stingray_no_concurrent_overspend` safety theorem.
+# Dregg2.Proof.Stingray — the Stingray bounded-counter concurrent-spend model.
 
-dregg2 already models dregg1's **Layer 1** (causal chaining = `Authority/Blocklace.lean`'s
-happened-before DAG, equivocation-by-incomparability, #105) and the **Cordial-Miners DAG
-consensus** safety (#106). It also has the generic *contended cross-cell* CAP/BEC obstruction
-(`Proof/ContendedCrossCell.coupled_no_schedule_agnostic_commit`). But dregg1's coordination
-crate has a THIRD layer that dregg2 never modelled:
+Ports dregg1's Stingray bounded-counter protocol (arXiv:2501.06531;
+`coord/src/budget.rs`, `coord/src/shared_budget.rs`) faithfully into Lean and proves the
+headline safety property `stingray_no_concurrent_overspend`:
 
-  **Layer 3 — Stingray bounded counters** (`coord/src/budget.rs`, `coord/src/shared_budget.rs`;
-  the Stingray protocol arXiv:2501.06531). An agent's total resource balance `B` is split into
-  per-silo *slices* of ceiling `B·(f+1)/(2f+1)`; each silo debits its OWN slice locally with NO
-  cross-silo coordination (the concurrent-spend hot path). This is precisely where a
-  *concurrent over-draw* against ONE over-subscribed budget could double-spend.
+  Two concurrent draws `a₁ a₂` against a single Stingray slice with `a₁ + a₂ > remaining`
+  can never both commit: whichever fires first debits the slice; the other sees
+  `remaining' < a₂` and is rejected fail-closed. The committed set depends on the adversary's
+  order — there is NO schedule-agnostic verdict (the CAP/BEC Thm 3.1 obstruction, same shape
+  as `ContendedCrossCell.coupled_no_schedule_agnostic_commit`, on the actual bounded counter).
 
-This module ports that model FAITHFULLY into Lean and proves ONE headline safety property:
+Faithfulness anchors: `Slice` mirrors `BudgetSlice { ceiling, spent }`; `Slice.remaining` is
+`ceiling.saturating_sub(spent)` (Nat truncated subtraction = saturating); `Slice.tryDebit` is
+`BudgetSlice::try_debit`; `sliceCeiling` is `balance·(f+1)/(2f+1)` in Nat floor-division.
 
-  **`stingray_no_concurrent_overspend` (PROVED).** Two concurrent draws `a₁ a₂` against a SINGLE
-  Stingray slice whose remaining budget cannot fund both (`a₁ + a₂ > remaining`, the
-  over-subscribed / coupled case) can NEVER both commit: whichever the adversary's scheduler
-  applies first commits and DEBITS the slice, and the other then sees `remaining' < a₂` and is
-  rejected fail-closed (`BudgetSlice::try_debit`'s `SliceExhausted`). So the committed set is a
-  genuine function of the adversary's order — there is NO schedule-agnostic verdict (the CAP/BEC
-  Thm 3.1 obstruction, the same shape as `ContendedCrossCell.coupled_no_schedule_agnostic_commit`,
-  here on the ACTUAL Stingray bounded counter rather than the generic bilateral kernel).
+Also proves the no-Byzantine soundness floor (`stingray_f0_ceiling_eq_balance`), the safe in-
+budget fragment (`inbudget_both_commit_schedule_agnostic`), and bridges to `Confluence.IConfluent`.
 
-Faithfulness anchors (the exact Rust this mirrors):
-  * `BudgetSlice { ceiling, spent }` ⇒ `Slice` here; `remaining = ceiling - spent`
-    (`saturating_sub`) ⇒ `Slice.remaining` (`Nat` truncated subtraction = the saturating one).
-  * `BudgetSlice::try_debit`: `if amount > remaining { Err SliceExhausted } else { spent += amount }`
-    ⇒ `Slice.tryDebit` (fail-closed `Option`).
-  * `StingrayCounter::compute_slice_ceiling`: `balance·(f+1)/(2f+1)` (u128 floor div) ⇒
-    `sliceCeiling` (`Nat` floor div — same flooring).
-  * The "no coordination" concurrent draw against one slice ⇒ the `SDraw`/`runDraws` scheduler.
+No `axiom`/`admit`/`native_decide`/`sorry`. The adversary's scheduling choice is explicit data
+(`SDraw`, `runDraws`); the impossibility is a proved `¬ ∃`. Read-only consumer of `Confluence`.
 
-We ALSO prove the formula's no-Byzantine soundness floor (`stingray_f0_ceiling_eq_balance` /
-`stingray_no_byzantine_total_le_balance`: at `f=0` the ceiling equals the true balance, so a
-single slice can never over-draw it), and we bridge the coupled case to the metatheory's third
-judgement `Confluence.IConfluent` exactly as `ContendedCrossCell` does, so the Stingray
-impossibility is the SAME obstruction the rest of dregg2 uses.
-
-Discipline (REORIENT §6 / the rails): no `axiom`/`admit`/`native_decide`/`sorry`. The adversary's
-scheduling choice enters as EXPLICIT data (`SDraw`, `runDraws`); the impossibility is a PROVED
-`¬ ∃` plus a constructive two-schedule counterexample. `#assert_axioms` on every keystone, `#eval`
-non-vacuity. Read-only consumer of `Confluence`; models nothing it does not also prove.
-
-GOSSIP RESIDUE (named, NOT built): the per-epoch *rebalance* reconciliation
-(`StingrayCounter::rebalance`: each silo signs a `SpendingCertificate` over `agent‖version‖spent‖
-silo`, the coordinator sums the f+1 honest certificates to recover true spending and redistributes
-fresh slices) is the gossip-dissemination half. Modelling it faithfully needs (a) an Ed25519
-signature abstraction over the certificate message with unforgeability, (b) a quorum/threshold
-argument that f+1 honest certificates pin the true total even with f Byzantine omissions/forgeries,
-and (c) the `2f+1`/`3f+1` silo-count bound. Named in §6; this module proves the WITHIN-epoch
-concurrent-spend safety that the rebalance protocol's epoch boundary brackets.
+GOSSIP RESIDUE (named, NOT built): the per-epoch `StingrayCounter::rebalance` reconciliation
+half — signed `SpendingCertificate`s, quorum reconstruction, epoch monotonicity — is described
+in the OPEN at §9. This module proves the within-epoch concurrent-spend safety that the rebalance
+epoch boundary brackets.
 -/
 import Dregg2.Confluence
 import Dregg2.Tactics
 
 namespace Dregg2.Proof.Stingray
 
-/-! ## §1 — The Stingray bounded counter, ported faithfully.
-
-`coord/src/budget.rs`'s `BudgetSlice` is `{ ceiling : u64, spent : u64, … }` with
-`remaining = ceiling.saturating_sub(spent)` and a fail-closed `try_debit`. We port the
-safety-relevant core (`ceiling`, `spent`) as `Nat`; truncated `Nat` subtraction is EXACTLY the
-`saturating_sub` the Rust uses, so `remaining` agrees on the nose. -/
+/-! ## §1 — The Stingray bounded counter (`BudgetSlice`), ported faithfully. -/
 
 /-- A Stingray budget **slice** (`coord/src/budget.rs::BudgetSlice`, safety-core): the per-silo
 ceiling and the amount already spent against it. -/
@@ -125,40 +92,30 @@ theorem tryDebit_remaining {s s' : Slice} {a₁ : Nat} (h : s.tryDebit a₁ = so
   rw [hcl, hsp]
   omega
 
-/-! ## §2 — The Stingray slice-ceiling formula (`compute_slice_ceiling`).
+/-! ## §2 — The slice-ceiling formula (`StingrayCounter::compute_slice_ceiling`).
 
-`StingrayCounter::compute_slice_ceiling` is `balance·(f+1)/(2f+1)` in `u128` floor division.
-`Nat` division floors identically, so this is a faithful port. The KEY structural facts:
-  * at `f=0` the ceiling EQUALS the balance (so one slice can spend everything but no more);
-  * for `f ≥ 1` the ceiling is a strict fraction `(f+1)/(2f+1) < 1` of the balance — which is
-    WHY the sum of `n` slices over-subscribes the budget (the concurrent-spend affordance) and
-    WHY a within-epoch over-draw of a single slice is exactly the contended case below. -/
+`balance·(f+1)/(2f+1)` in Nat floor-division. At `f=0` the ceiling equals the balance; for
+`f ≥ 1` it is a strict fraction, so `n` slices over-subscribe the budget (the concurrent-spend
+affordance). -/
 
 /-- The Stingray per-silo slice ceiling: `balance·(f+1)/(2f+1)` (`StingrayCounter::
 compute_slice_ceiling`). `Nat` floor division mirrors the Rust u128 floor division. -/
 def sliceCeiling (balance f : Nat) : Nat := balance * (f + 1) / (2 * f + 1)
 
-/-- **`sliceCeiling` non-vacuity** — the running Rust test vectors reproduced exactly:
-`balance=3000, f=1 ⇒ ceiling = 3000·2/3 = 2000` (`test_byzantine_agent_overspend_is_bounded`),
-and `balance=12000, f=1 ⇒ 8000` (`test_full_epoch_lifecycle`). The Lean port computes the SAME
-ceilings the Rust does. -/
+/-- Faithfulness check against Rust test vectors:
+`balance=3000, f=1 ⇒ 2000`; `balance=12000, f=1 ⇒ 8000`. -/
 theorem sliceCeiling_examples :
     sliceCeiling 3000 1 = 2000 ∧ sliceCeiling 12000 1 = 8000 := by
   unfold sliceCeiling; refine ⟨?_, ?_⟩ <;> rfl
 
-/-- **`stingray_f0_ceiling_eq_balance` (PROVED).** With NO Byzantine silos (`f=0`) the slice
-ceiling equals the true balance: `balance·1/1 = balance`. So a single silo's slice is exactly
-the whole budget — it can spend everything, but (by the fail-closed `tryDebit`) never MORE. This
-is the formula's soundness floor that the within-epoch over-draw theorem builds on. -/
+/-- With no Byzantine silos (`f=0`) the slice ceiling equals the balance: `balance·1/1 = balance`.
+A single silo's slice is exactly the whole budget — it can spend everything but not more. -/
 theorem stingray_f0_ceiling_eq_balance (balance : Nat) :
     sliceCeiling balance 0 = balance := by
   unfold sliceCeiling; simp
 
-/-- **`stingray_no_byzantine_total_le_balance` (PROVED).** The no-Byzantine soundness: at `f=0`,
-the committed spend against a fresh slice (`spent=0`, `ceiling = balance`) can NEVER exceed the
-true balance. Any single committed draw `a` satisfies `a ≤ balance`, and the resulting `spent`
-is `≤ balance`. The Stingray invariant "true_balance ≥ total_honestly_spent" in its sharpest,
-single-honest-silo form — a debit that would over-draw the true balance is rejected fail-closed. -/
+/-- At `f=0`, any committed draw `a` against a fresh slice satisfies `a ≤ balance` and the
+resulting `spent ≤ balance`. A debit over-drawing the true balance is rejected fail-closed. -/
 theorem stingray_no_byzantine_total_le_balance (balance a : Nat) {s' : Slice}
     (h : (Slice.mk (sliceCeiling balance 0) 0).tryDebit a = some s') :
     a ≤ balance ∧ s'.spent ≤ balance := by

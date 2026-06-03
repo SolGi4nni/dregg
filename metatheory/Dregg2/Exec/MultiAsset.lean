@@ -1,24 +1,21 @@
 /-
-# Dregg2.Exec.MultiAsset — multi-asset conservation, the TYPED per-asset law.
+# Dregg2.Exec.MultiAsset — multi-asset conservation, the typed per-asset law.
 
-The single-asset `Exec.Kernel` conserves ONE scalar (`total : KernelState → ℤ`). Real
-dregg1 cells hold MANY assets (`AssetId`), and conservation is **per-asset, never one
-aggregate scalar** (`dregg2.md §2.1`; `gaps-2 (c)`). A turn that moves 5 of asset 0 must
-leave the supply of asset 1 *literally untouched*; folding all assets into a single sum
-would let a cell silently swap one asset for another while the aggregate stays put. So the
-conserved quantity is a *family* `maTotal k a` indexed by `AssetId`, and the keystone is
-that **every** asset's total is preserved by **every** committed transfer.
+Real dregg cells hold MANY assets, and conservation is **per-asset, never one aggregate
+scalar** (`dregg2.md §2.1`). A turn that moves 5 of asset 0 must leave the supply of asset
+1 *literally untouched*; folding all assets into a single sum would let a cell silently swap
+one asset for another while the aggregate stays put. The conserved quantity is a *family*
+`maTotal k a` indexed by `AssetId`; the keystone is that every asset's total is preserved by
+every committed transfer.
 
-This is a NEW structure built PARALLEL to `KernelState` (it does not touch `Kernel.lean`):
-balances are a total `CellId → AssetId → ℤ` (ℤ so debt is representable; a *function*, not
-`Finsupp`, whose `+` is noncomputable), summed with `Finset.sum` over the live `accounts`.
-The proof mirrors `Kernel.transfer_sum_conserve` (debit/credit cancel for the moved asset),
-generalized: for the moved asset the cancellation runs per-cell; for every *other* asset the
-balance is unchanged pointwise, so the sum is unchanged trivially.
+Balances are a total `CellId → AssetId → ℤ` (ℤ so debt is representable), summed with
+`Finset.sum` over the live `accounts`. The proof mirrors `Kernel.transfer_sum_conserve`
+(debit/credit cancel for the moved asset); for every other asset the balance is unchanged
+pointwise so the sum is unchanged trivially.
 
-The camera bridge (`Resource.lean`): per-asset conservation is the `(ℕ,+)`/`(ℤ,+)` sum-
-shadow of the frame-preserving update, replicated once per `AssetId`. We connect the moved
-asset's debit/credit to `Resource.Fpu` over the `Auth` camera as a corollary.
+The camera bridge (`Resource.lean`): per-asset conservation is the `(ℤ,+)` shadow of a
+frame-preserving update, replicated per `AssetId`. We connect the moved asset's debit/credit
+to `Resource.Fpu` over the `Auth` camera as a corollary.
 
 Pure executable Lean, `#eval`-able. Crypto/Rust stay out (`dregg2 §8`).
 -/
@@ -85,7 +82,7 @@ def maExec (k : MultiState) (turn : MultiTurn) : Option MultiState :=
 indexed by `AssetId` (NOT collapsed to one scalar). -/
 def maTotal (k : MultiState) (a : AssetId) : ℤ := ∑ c ∈ k.accounts, k.bal c a
 
-/-! ## The kernel satisfies the per-asset law (the refinement, PROVED). -/
+/-! ## The kernel satisfies the per-asset law. -/
 
 /-- Sum of a single-point indicator over a set containing the point (the `Kernel`
 analog, restated locally). -/
@@ -123,10 +120,9 @@ theorem maTransfer_untouched (bal : MACellId → AssetId → ℤ) (src dst : MAC
   unfold maTransferBal
   rw [if_neg hb]
 
-/-- **THE KEYSTONE — per-asset conservation, PROVED of the executable multi-asset kernel.**
-Every committed transfer preserves `maTotal k a` for EVERY asset `a`: the moved asset by the
-debit/credit cancellation, every other asset because its column is untouched. This is the
-typed per-asset law (`dregg2 §2.1`), the multi-asset refinement of `Kernel.exec_conserves`. -/
+/-- **Per-asset conservation keystone.** Every committed transfer preserves `maTotal k a` for
+every asset `a`: the moved asset by the debit/credit cancellation, every other asset because
+its column is untouched. Multi-asset refinement of `Kernel.exec_conserves` (`dregg2 §2.1`). -/
 theorem maExec_conserves_per_asset (k k' : MultiState) (turn : MultiTurn)
     (h : maExec k turn = some k') (a : AssetId) : maTotal k' a = maTotal k a := by
   unfold maExec at h
@@ -149,8 +145,8 @@ theorem maExec_conserves_per_asset (k k' : MultiState) (turn : MultiTurn)
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **No state change without authority — PROVED** (the integrity/confinement shadow: the
-multi-asset kernel never moves a cell's resource for an unauthorized actor). -/
+/-- No state change without authority: the multi-asset kernel never moves a cell's resource for
+an unauthorized actor. -/
 theorem maExec_authorized (k k' : MultiState) (turn : MultiTurn)
     (h : maExec k turn = some k') : maAuthorizedB k turn = true := by
   unfold maExec at h
@@ -160,7 +156,7 @@ theorem maExec_authorized (k k' : MultiState) (turn : MultiTurn)
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Fail-closed — PROVED.** An unauthorized turn does NOT commit. -/
+/-- Fail-closed: an unauthorized turn does not commit. -/
 theorem maExec_unauthorized_fails (k : MultiState) (turn : MultiTurn)
     (h : maAuthorizedB k turn = false) : maExec k turn = none := by
   unfold maExec

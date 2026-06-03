@@ -8,7 +8,7 @@ is matched by an abstract LTS edge `AbsStep'` (`absStep'_forward`). The single l
 pole named at `LTS.lean §8 OPEN` is the **cross-cell / whole-history** lift — a `JointTurn` over
 ≥ 2 cells matched by an abstract MULTI-cell step. This module attempts exactly that on the
 cleanest executable target: the bilateral cross-cell transition `Exec.JointCell.jointApply`
-(`joint_cg5_conserves`, `joint_atomic` PROVED) over two concrete `Exec.KernelState` ledgers, with
+(`joint_cg5_conserves`, `joint_atomic`) over two concrete `Exec.KernelState` ledgers, with
 the abstract carrier the PAIR of `Spec.ExecRefinement.AbstractState`s (the same balance-total ⊗
 authority-graph abstraction the single-cell square uses, `absOf`).
 
@@ -32,8 +32,8 @@ turn establishes, the cross-cell analogue of `LTS.recAbsStep`'s (C)∧(A)∧(G):
   (G)  grounding on BOTH sides — each half-turn is authorized in its own ledger's authority graph
        (ownership ∨ `Graph.has`), the two legs of the cross-cell pullback.
 
-**(best) The bilateral cross-cell forward-simulation square is CLOSED** (`crossAbsStep_forward`,
-axiom-clean): every committed `jointApply A B bt = some (A', B')` is matched by `crossAbsStep`.
+**The bilateral cross-cell forward-simulation square is closed** (`crossAbsStep_forward`): every
+committed `jointApply A B bt = some (A', B')` is matched by `crossAbsStep`.
 It lifts to whole bilateral runs (`crossAbsRun_forward`). The CG-5 conservation conjunct is
 DERIVED on the running machine here — because `jointApply` threads ONE shared `amt` through both
 halves, the binding `halfA + halfB = 0` is realized in the transition itself. Where the binding
@@ -55,11 +55,10 @@ reflection of tensor-non-finality: per-cell-conserving ∧ per-cell-conserving i
 than (in fact incompatible with) the genuine cross-cell move; the cross-cell conserved measure is
 a NEW conjunct (the joint sum + the half-edge binding), not the conjunction of the per-cell ones.
 
-## Discipline (REORIENT §6 / the rails)
-No `axiom`/`admit`/`native_decide`/`sorry`. The CG-2 identity binding enters ONLY as an explicit
-HYPOTHESIS (`SharedBinding`), never derived from per-cell soundness. `#assert_axioms` on every
+## Discipline
+No `axiom`/`admit`/`native_decide`/`sorry`. The CG-2 identity binding enters only as an explicit
+hypothesis (`SharedBinding`), never derived from per-cell soundness. `#assert_axioms` on every
 closed keystone. Read-only consumer of `Exec.JointCell`, `Exec.Kernel`, `Spec.ExecRefinement`.
-Modifies nothing; imports only existing built modules.
 -/
 import Dregg2.Exec.JointCell
 import Dregg2.Spec.ExecRefinement
@@ -413,39 +412,14 @@ theorem crossAbsStep_needs_binding : ∃ out_amt in_amt : ℤ, ¬ FakeBalances o
 #assert_axioms crossAbsStep_bound
 #assert_axioms crossAbsStep_needs_binding
 
-/-! ## §10 — OUTCOME + the remaining residue.
+/-! ## §10 — Residue.
 
-The BILATERAL cross-cell operational forward-simulation square is CLOSED:
-
-  * `crossAbsStep_forward` — every committed `jointApply` is matched by the cross-cell LTS edge
-    `crossAbsStep` (C5 joint conservation + A two-sided authority frame + G two-sided grounding);
-  * `crossAbsRun_forward` — stable under iteration over whole bilateral histories;
-  * non-vacuous (`crossAbsStep_not_vacuous`), axiom-clean (the `#assert_axioms` pins).
-
-The CG-5 cross-cell conservation is DERIVED on the running machine (the shared-`amt` binding is
-realized in the transition); the CG-2 identity binding stays a HYPOTHESIS (`crossAbsStep_bound`,
-`crossAbsStep_needs_binding`), exactly as `study-category` demands.
-
-THE SHARP OBSTRUCTION (machine-checked): the cross-cell square does NOT assemble from the two
-single-cell squares. `half_breaks_per_cell_conservation` + `cross_conservation_is_not_per_cell`
-show the single-cell conservation conjunct (`LTS.recAbsStep`'s (C), `a'.bal = a.bal` per cell) is
-FALSE of a bilateral half (`total A' = total A - amt`). The cross-cell conserved measure is the
-JOINT SUM, recoverable only via the shared-`amt` binding (CG-5 `halves_sum_zero`) — a NEW conjunct,
-not the conjunction of the two per-cell ones. This is the operational reflection of tensor
-non-finality: per-cell-sound ∧ per-cell-sound ≠ cross-cell-sound.
-
--- OPEN (the residue beyond bilateral). The N-ARY cross-cell forward simulation — a `Hyperedge`
---   over a family of ledgers `(Kᵢ)_{i∈ι}` matched by a single cross-cell step whose (C5) is the
---   FINITE Σ-over-univ joint total (the `Hyperedge.balanced` aggregate). The bilateral square here
---   is the `ι = Fin 2` slice; the N-ary lift needs an executable N-ary `jointApply` (an
---   `account-update FOREST` transition over `ι → KernelState`) whose Σ-conservation generalizes
---   `joint_cg5_conserves` via `Finset.sum`. The abstract side already exists
---   (`Hyperedge.hyperedge_sound`, the wide-pullback keystone); the missing piece is the EXECUTABLE
---   N-ary forest transition, the direct analogue of the missing authority-mutating kernel
---   `LTS.lean §8` named — bounded engineering (a `Finset.sum` telescoping over the forest), not
---   research. The CONTENDED / adversary-scheduler case (concurrent overlapping hyperedges, the
---   coinductive `Boundary` over interleaved forests) is the genuine next research pole and remains
---   out of scope.
+-- OPEN (beyond bilateral): the N-ary cross-cell forward simulation — a `Hyperedge` over a family
+--   `(Kᵢ)_{i∈ι}` with (C5) = finite Σ joint total. The bilateral square is the `ι = Fin 2`
+--   slice; the N-ary lift needs an executable N-ary `jointApply` whose Σ-conservation generalizes
+--   `joint_cg5_conserves` via `Finset.sum`. The abstract side exists (`Hyperedge.hyperedge_sound`);
+--   the missing piece is the executable N-ary forest transition. The contended / coinductive case is
+--   handled by `CoinductiveAdversary`.
 -/
 
 end Dregg2.Proof.CrossCellLTS

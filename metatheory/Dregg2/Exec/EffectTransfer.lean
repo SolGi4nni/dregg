@@ -1,56 +1,35 @@
 /-
-# Dregg2.Exec.EffectTransfer — the VERTICAL SLICE: dregg1's `Transfer` effect, fully characterized.
+# Dregg2.Exec.EffectTransfer — dregg1's `Transfer` effect, fully characterized.
 
-**REFERENCE TEMPLATE — the pattern (executable def → conserves → authorized → metadata →
-forward-sim) that effects #2..51 instantiate.**
+Reference template: the five-keystone pattern (executable def → conserves → authorized → metadata →
+forward-sim) that each catalog effect instantiates.
 
-dregg1's `Transfer` (`turn/src/action.rs`, `executor/apply.rs`) is the prototypical *Conservative*
-effect: gated by authorization, it **debits the source** cell and **credits the destination** cell
-by `amount`, **advances the source's nonce** (replay protection), and **leaves capabilities
-untouched**. It is balance-conserving across the two cells (Σδ = 0) — the canonical `Paired` regime
-of the 52-effect catalog.
+dregg1's `Transfer` is the prototypical Conservative effect: gated by authorization, it debits the
+source cell and credits the destination cell by `amount`, advances the source's nonce (replay
+protection), and leaves capabilities untouched. It is balance-conserving across the two cells
+(Σδ = 0) — the canonical `Paired` regime of the 52-effect catalog.
 
-dregg2 already runs a `balance` action through `Exec/TurnExecutorFull.lean`'s `execFull` and
-`Exec/TurnExecutor.lean`'s `recCexec` (the chained record-cell transition), with conservation /
-authority / chain-link attested. THIS module's value-add is to drive ONE effect — `Transfer` — all
-the way through the executor layers as a **fully-characterized, reference-quality** effect:
+  1. `transferStep`        — Transfer's executable semantics over the chained record-kernel state:
+                              `recCexec`'s gated debit/credit, then advance the source's `nonce`
+                              field by 1. Concrete, computable, `#eval`-able.
+  2. `transfer_conserves`  — two-party balance conservation: source's decrease equals destination's
+                              increase, so `recTotal` is unchanged (`-amt` at `src`, `+amt` at `dst`,
+                              Σ = 0). The nonce bump does not perturb the balance measure.
+  3. `transfer_authorized` — a committed `transferStep` implies the source held a cap authorizing
+                              the debit (`authorizedB`, reusing `recCexec`'s gate).
+  4. `transfer_metadata`   — the source's `nonce` advances by exactly 1, and the cap table /
+                              authority graph is unchanged.
+  5. `transfer_forward_sim` — the refinement (not mere attestation): a committed `transferStep` is
+                              matched by an abstract `Spec` step `AbsStep (absT s) (absT s')` — the
+                              concrete instance of `Spec/ExecRefinement.lean`'s `recExec_step_refines`
+                              shape.
 
-  1. `transferStep`        — Transfer's EXECUTABLE semantics over the chained record-kernel state:
-                              `recCexec`'s gated debit/credit, THEN advance the source's `nonce`
-                              field by 1 (the metadata-domain move dregg1's Transfer carries).
-                              Concrete, computable, `#eval`-able.
-  2. `transfer_conserves`   — TWO-PARTY balance conservation: the source's decrease equals the
-                              destination's increase, so the conserved `balance` total `recTotal`
-                              is UNCHANGED (the genuine two-cell statement: `-amt` at `src`, `+amt`
-                              at `dst`, Σ = 0). The nonce bump does not perturb the balance measure.
-  3. `transfer_authorized`  — a committed `transferStep` ⇒ the source held a cap authorizing the
-                              debit (`authorizedB`, reusing `recCexec`'s gate).
-  4. `transfer_metadata`    — the metadata + authority domains: the source's `nonce` advances by
-                              EXACTLY 1, and the cap table / reconstructed authority graph is
-                              UNCHANGED.
-  5. `transfer_forward_sim` — the REFINEMENT (not mere attestation): a committed `transferStep`
-                              is matched by an abstract `Spec` step `AbsStep (absT s) (absT s')` —
-                              the abstract balance total is preserved (`Spec.conservedInDomain
-                              Domain.balance`), the turn passed the abstract authority `Guard`, and
-                              the abstract authority `Graph` is unchanged. This is the record-world
-                              forward-simulation square for Transfer, the concrete instance of
-                              `Spec/ExecRefinement.lean`'s `recExec_step_refines` shape.
+Each catalog effect copies the five-step skeleton. The mechanical steps reuse `recCexec_attests`
+verbatim; the bespoke step is per-effect (here, the `nonce` bump and its `balOf`-non-interference).
 
-## How effects #2..51 instantiate this template
-Each catalog effect copies the five-step skeleton. The REUSABLE steps (mechanical): the `recCexec`
-gate + the conservation/authority/chain-link facts come VERBATIM from `recCexec_attests`; the
-forward-sim `AbsStep` (conservation projection + authority `Guard` + graph-preservation) is the
-SAME `Spec.execGraph`/`Spec.execAuthGuard`/`Spec.conservedInDomain` instantiation for every
-authority-frame-preserving effect. The BESPOKE step is per-effect: which DOMAIN the effect moves
-and HOW its named-field write behaves (here, the `nonce` bump and its `balOf`-non-interference) —
-that is the only new lemma each effect must supply. So Transfer is `recCexec` + one metadata lemma;
-mint/burn (already in `TurnExecutorFull`) are `recCexec`-shaped + a supply-delta lemma; etc.
-
-## Discipline
 No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly `{propext,
-Classical.choice, Quot.sound}` on every keystone. Self-contained: reuses ONLY the already-built
-`Exec.TurnExecutor`/`Exec.RecordKernel`/`Spec.ExecRefinement` primitives; depends on no in-flight
-new module. Verified standalone: `lake env lean Dregg2/Exec/EffectTransfer.lean`.
+Classical.choice, Quot.sound}` on every keystone. Reuses only `Exec.TurnExecutor`/`Exec.RecordKernel`/
+`Spec.ExecRefinement`; edits none.
 -/
 import Dregg2.Exec.TurnExecutor
 import Dregg2.Spec.ExecRefinement
@@ -65,11 +44,11 @@ open scoped BigOperators
 
 /-! ## §0 — The metadata field: a cell's replay-protection `nonce`.
 
-dregg1's Transfer advances the source cell's `nonce` (replay protection). This is a NAMED field of
-the content-addressed record, DISTINCT from the conserved `balance` field — so writing it perturbs
-the metadata domain WITHOUT touching the conserved balance measure. We re-found a named-field write
+dregg1's Transfer advances the source cell's `nonce` (replay protection). This is a named field of
+the content-addressed record, distinct from the conserved `balance` field — so writing it perturbs
+the metadata domain without touching the conserved balance measure. We establish a named-field write
 for `nonce` exactly as `RecordKernel.setBalance` does for `balance`, and prove the load-bearing
-NON-INTERFERENCE lemma: a `nonce` write leaves `balOf` (the `balance` read) untouched. -/
+non-interference lemma: a `nonce` write leaves `balOf` (the `balance` read) untouched. -/
 
 /-- The canonical name of a cell's replay-protection nonce field. -/
 def nonceField : FieldName := "nonce"
@@ -118,10 +97,9 @@ theorem setNonce_nonceOf (cell : Value) (n : Int) : nonceOf (setNonce cell n) = 
   | dig _  => simp [Value.scalar, Value.field, nonceField]
   | sym _  => simp [Value.scalar, Value.field, nonceField]
 
-/-- **NON-INTERFERENCE — PROVED.** Writing the `nonce` field leaves the `balance` read (`balOf`)
-UNCHANGED. The two named fields are distinct (`"nonce" ≠ "balance"`), so a `nonce` write never
-perturbs the conserved balance measure — this is what lets the metadata move ride alongside the
-two-party balance conservation without disturbing it. -/
+/-- **Non-interference — PROVED.** Writing the `nonce` field leaves the `balance` read (`balOf`)
+unchanged. The two named fields are distinct (`"nonce" ≠ "balance"`), so a `nonce` write never
+perturbs the conserved balance measure. -/
 theorem setNonce_balOf (cell : Value) (n : Int) : balOf (setNonce cell n) = balOf cell := by
   have hlist : ∀ fs : List (FieldName × Value),
       ((Value.record (setNonce.setNonceList fs n)).scalar balanceField)
@@ -157,17 +135,16 @@ theorem setNonce_balOf (cell : Value) (n : Int) : balOf (setNonce cell n) = balO
   | dig _  => simp [Value.scalar, Value.field, balanceField, nonceField]
   | sym _  => simp [Value.scalar, Value.field, balanceField, nonceField]
 
-/-! ## §1 — `transferStep`: Transfer's EXECUTABLE semantics over the chained record kernel.
+/-! ## §1 — `transferStep`: Transfer's executable semantics over the chained record kernel.
 
 `transferStep s actor src dst amt` is the fully-characterized Transfer:
-  * run `recCexec` (the gated debit/credit + receipt-chain extension) — this fail-closes on
-    authority + availability + liveness + `src ≠ dst`, debits `src`'s `balance` by `amt`, credits
-    `dst`'s by `amt`, and appends the receipt; THEN
+  * run `recCexec` (the gated debit/credit + receipt-chain extension) — fail-closes on authority +
+    availability + liveness + `src ≠ dst`, debits `src`'s `balance` by `amt`, credits `dst`'s by
+    `amt`, and appends the receipt; then
   * advance `src`'s `nonce` field by 1 (the metadata move: read the post-debit nonce, write +1).
 
-Concrete + computable: it is `recCexec` (already executable) post-composed with the `setNonce`
-write. The cap table and authority graph are untouched (neither `recCexec` nor `setNonce` edits
-`caps`). -/
+Concrete and computable: `recCexec` post-composed with the `setNonce` write. The cap table and
+authority graph are untouched (neither `recCexec` nor `setNonce` edits `caps`). -/
 
 /-- Advance the source cell's `nonce` field by 1 in the kernel state (the metadata move). -/
 def bumpNonce (k : RecordKernelState) (src : CellId) : RecordKernelState :=
@@ -221,11 +198,11 @@ theorem bumpNonce_recTotal (k : RecordKernelState) (src : CellId) :
   · simp only [hc, if_pos]; exact setNonce_balOf (k.cell src) (nonceOf (k.cell src) + 1)
   · simp only [if_neg hc]
 
-/-- **`transfer_conserves` — TWO-PARTY BALANCE CONSERVATION (PROVED).** A committed `transferStep`
+/-- **`transfer_conserves` — two-party balance conservation (PROVED).** A committed `transferStep`
 preserves the total `balance` across the live accounts: `recTotal s'.kernel = recTotal s.kernel`.
-The source's `-amt` debit and the destination's `+amt` credit cancel (Σδ = 0, the genuine two-cell
-statement from `recKExec_conserves`), and the source's `nonce` bump does not perturb the balance
-measure (`bumpNonce_recTotal`). This is dregg1 Transfer's `Conservative`/`Paired` obligation. -/
+The source's `-amt` debit and the destination's `+amt` credit cancel (Σδ = 0, from
+`recKExec_conserves`), and the source's `nonce` bump does not perturb the balance measure
+(`bumpNonce_recTotal`). This is dregg1 Transfer's `Conservative`/`Paired` obligation. -/
 theorem transfer_conserves {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
     (h : transferStep s actor src dst amt = some s') :
     recTotal s'.kernel = recTotal s.kernel := by
@@ -320,14 +297,14 @@ theorem transfer_metadata {s s' : RecChainedState} {actor src dst : CellId} {amt
   simp only [bumpNonce, if_pos]
   exact setNonce_nonceOf (s1.kernel.cell src) (nonceOf (s1.kernel.cell src) + 1)
 
-/-! ## §5 — `transfer_forward_sim`: the REFINEMENT (forward-simulation square).
+/-! ## §5 — `transfer_forward_sim`: the refinement (forward-simulation square).
 
-Not mere attestation: a committed `transferStep` is matched by an abstract `Spec` STEP. We name the
+A committed `transferStep` is matched by an abstract `Spec` step (not mere attestation). We name the
 record-world abstract state and an `AbsStep` relation (the `Spec.Conservation`-conservative,
 `Spec.Authority`-authorized abstract turn relation over the `balance` domain + authority graph —
-exactly the record-world instance of the `Spec/ExecRefinement.lean §4` OPEN `AbsStep`), and prove
+the record-world instance of `Spec/ExecRefinement.lean §4`'s `AbsStep`), and prove
 `transferStep s = some s' → AbsStep (absT s) (absT s')`: every executable Transfer is an abstract
-step. This is the FULL forward-simulation bottom edge for Transfer, not the projection-identity. -/
+step. This is the full forward-simulation bottom edge for Transfer. -/
 
 section ForwardSim
 variable {Statement Witness : Type} [Verifiable Statement Witness]
@@ -355,13 +332,12 @@ def AbsStep (a a' : AbstractT) : Prop :=
   conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧
     a'.authGraph = a.authGraph
 
-/-- **`transfer_forward_sim` — THE REFINEMENT (PROVED).** A committed `transferStep` is matched by
+/-- **`transfer_forward_sim` — the refinement (PROVED).** A committed `transferStep` is matched by
 an abstract `Spec` step: `AbsStep (absT s) (absT s')` holds, AND the committed turn passed the
 abstract authority `Guard`. So every executable Transfer step is an abstract step (forward
 simulation), with the abstract balance total conserved, the authority graph preserved, and the turn
-admitted by the abstract gate. This is the record-world forward-simulation square for Transfer — the
-concrete instance of `Spec/ExecRefinement.lean`'s `recExec_step_refines` shape, strengthened to an
-`AbsStep` transition (not just the static projections). -/
+admitted by the abstract gate. The concrete instance of `Spec/ExecRefinement.lean`'s
+`recExec_step_refines` shape. -/
 theorem transfer_forward_sim {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
     (w : Statement → Witness) (h : transferStep s actor src dst amt = some s') :
     AbsStep (absT s) (absT s') ∧
@@ -393,10 +369,10 @@ theorem transfer_refines_recordSquare {s s' : RecChainedState} {actor src dst : 
 
 end ForwardSim
 
-/-! ## §6 — Axiom-hygiene tripwires (the honesty pins over the slice's keystones).
+/-! ## §6 — Axiom-hygiene tripwires.
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
-`native_decide`. Every theorem of the vertical slice is genuinely proved. -/
+`native_decide`. Every theorem here is genuinely proved. -/
 
 #assert_axioms setNonce_nonceOf
 #assert_axioms setNonce_balOf

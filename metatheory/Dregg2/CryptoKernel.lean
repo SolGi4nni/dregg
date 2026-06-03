@@ -1,27 +1,19 @@
 /-
-# Dregg2.CryptoKernel — the PORTAL between Lean semantics and the Rust world.
+# Dregg2.CryptoKernel — the portal between Lean semantics and the Rust world (§8 boundary).
 
-**The architecture (the new vision).** The dregg2 semantics live in Lean and are
-*parametric* over a `CryptoKernel`: an interface of the cryptographic operations dregg2
-needs (hash, verify, commit, nullifier), bundled with the algebraic **laws** Lean proofs
-rely on. The operation *types* (`Digest`, `Proof`) and *implementations* are
-**uninterpreted** in Lean — this is precisely the `dregg2 §8` boundary made into an
-interface: crypto-soundness is never *proved* in Lean, it is *assumed* as the interface's
-laws (the obligations the Rust impl + the circuits discharge).
+The dregg2 semantics are parametric over a `CryptoKernel`: an interface of the cryptographic
+operations (hash, verify, commit, nullifier) bundled with the algebraic laws Lean proofs rely
+on. Operation types (`Digest`, `Proof`) and implementations are uninterpreted in Lean —
+crypto-soundness is assumed as interface laws (obligations the Rust impl + circuits discharge,
+never proved in Lean).
 
-Two realizations of the SAME interface — the answer to "FFI or uninterpreted symbols?":
-*both*.
-  • **PROVING** — an abstract `[CryptoKernel Digest Proof]` (uninterpreted symbols + their
-    laws). Every Lean theorem is parametric over it, so it holds for *any* lawful impl.
-  • **RUNNING** — Rust supplies the concrete `Digest`/`Proof` types + impls
-    (Poseidon/Pedersen/WHIR-verify); the compiled Lean calls into them via FFI
-    (`@[extern "dregg_poseidon_hash"] opaque hash …`), which IS a lawful instance.
+Two realizations of the same interface:
+  * Proving — abstract `[CryptoKernel Digest Proof]`; every theorem holds for any lawful impl.
+  * Running — Rust supplies concrete types + impls (Poseidon/Pedersen/WHIR-verify); the
+    compiled Lean calls them via FFI, which is a lawful instance.
 
-So either entrypoint works: **Lean-as-host** (restricted — a reference/test CryptoKernel)
-or **Rust-as-host** (the compiled Lean calls Rust for the *actual semantics of actual
-things*). This module is the portal; everything cryptographic in the metatheory routes
-through it. (Network/clock/randomness — the nondeterministic external inputs needed for
-consensus — are a sibling `World` oracle, future work; this module is the crypto half.)
+This module is the portal; everything cryptographic in the metatheory routes through it.
+(Network/clock/randomness for consensus are a sibling `World` oracle.)
 -/
 import Mathlib.Tactic
 import Mathlib.Logic.Encodable.Basic
@@ -102,9 +94,8 @@ theorem intra_vat [CryptoKernel Digest Proof]
 /-! ## A reference (test) CryptoKernel — the Lean-as-host realization.
 
 A trivial lawful instance over `ℤ` (commit = a linear form, verify = a stub accepting a
-matching tag) — enough to `#eval`/test the Lean semantics WITHOUT Rust. The real instance
-is the Rust FFI one. This witnesses that the interface is inhabitable (the laws are
-satisfiable), so parametric theorems are not vacuous. -/
+matching tag) — enough to `#eval`/test the Lean semantics without Rust. The real instance
+is the Rust FFI one. This witnesses that the interface is inhabitable. -/
 namespace Reference
 
 /-- Reference digest = ℤ (a stand-in group; the real one is the curve/field). -/
@@ -112,8 +103,8 @@ abbrev D := Int
 /-- Reference proof = the claimed statement (a trivial "proof" = echo). -/
 abbrev P := Int
 
-/-- The reference hash: an injective `Encodable` encoding (a TEST stand-in, not the real
-collision-resistant hash). Lifted to a top-level def so its injectivity reduces. -/
+/-- Reference hash: an injective `Encodable` encoding (a test stand-in). Lifted to a top-level
+`def` so its injectivity reduces. -/
 def refHash (l : List Nat) : Int := (Encodable.encode l : Int)
 
 theorem refHash_inj : Function.Injective refHash := by

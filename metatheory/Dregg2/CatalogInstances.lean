@@ -1,41 +1,24 @@
 /-
-# Dregg2.CatalogInstances — Phase (ii): dregg1's catalogs as DERIVED Spec constructions.
+# Dregg2.CatalogInstances — dregg1's three catalogs as derived Spec constructions.
 
-This is **Phase (ii)** of `docs/rebuild/PHASE-CONSTRUCTION.md` — "catalog instantiation, where
-the metaprogramming pays off". We take dregg1's three real catalogs
+Takes dregg1's three real catalogs and instantiates them as derived smart-constructors
+over the small `Spec` primitives via the `Dregg2.Catalog` code-gen:
 
-  * `StateConstraint` (`cell/src/program.rs:597`, ~29 variants + `SimpleStateConstraint`),
-  * `Authorization`  (`turn/src/action.rs`, ~10 variants),
-  * `Effect`'s `LinearityClass` coloring (`turn/src/action.rs: Effect::linearity`, ~52 effects),
+  * `StateConstraint` (`cell/src/program.rs:597`, ~29 variants)
+  * `Authorization`  (`turn/src/action.rs`, ~10 variants)
+  * `Effect`'s `LinearityClass` coloring (`turn/src/action.rs: Effect::linearity`, ~52 effects)
 
-and instantiate the BULK of them as DERIVED smart-constructors over the small `Spec` primitives,
-using the `Dregg2.Catalog` code-gen (`catalog … where`). Each generated entry is the
-`Spec/Guard.lean §7` TRIPLE — smart-constructor `def` + `admits`-characterization (the
-legacy-coincidence lemma) + auto-`#assert_axioms` (the honesty tripwire) — emitted, not
-hand-written. The ANTI-GOAL (`Spec/Guard.lean §1`) is a flat ~90-variant coproduct inductive;
-the GOAL is derived constructors over `firstParty`/`witnessed`/`all`/`any`/`gnot`, each carrying
-its characterization.
+Generated (codegen emits Guard triple + auto-`#assert_axioms`):
+  * §1 — `StateConstraintGuard.*` — `StateConstraint` variants as `Guard` smart-constructors.
+  * §2 — `AuthorizationGuard.*`   — `Authorization` variants as `Guard` smart-constructors.
 
-## What is GENERATED (the codegen emits the triple, auto-`#assert_axioms`-clean)
+Hand-written (codegen emits Guard triples; these are not Guards):
+  * §3 — `effectLinearity : EffectKind → LinearityClass`, faithfully mirroring
+    `Effect::linearity` (exhaustive match, no default arm) + conservation obligations.
+  * `AnyOf`/`Not` carry explicit `by` proofs (still generated, not the default `simp [name]`).
 
-  * §1 — `StateConstraintGuard.*` — the `StateConstraint` slice as `Guard` smart-constructors.
-  * §2 — `AuthorizationGuard.*`    — the `Authorization` slice as `Guard` smart-constructors.
-
-## What is HAND-WRITTEN (genuinely bespoke — the codegen emits Guard triples; these are NOT Guards)
-
-  * §3 — the `Effect → LinearityClass` coloring (`effectLinearity`). This is a TOTAL MAP into
-    `LinearityClass` (a `Conservation` object), NOT a `Guard`, so the Guard-triple codegen
-    cannot express it. We hand-write the exhaustive coloring map (faithfully mirroring
-    `Effect::linearity`) + its conservation obligation per color, with `#assert_axioms` pins.
-  * A handful of recursive / discriminator-shaped `StateConstraint` variants (`AnyOf`/`Not`)
-    are derived over `any`/`gnot` but their characterization needs the `admits_any`/`admits_gnot`
-    structural lemmas, so they carry an explicit `by` proof in the catalog block (still GENERATED
-    by the codegen — just not the default `simp [name]` proof).
-
-Discipline (NON-NEGOTIABLE): no `axiom`/`admit`/`native_decide`/`sorry`. Every generated
-`admits_*` is a REAL characterization (the codegen's auto-`#assert_axioms` enforces it — a
-planted `sorry` would fail AT GENERATION TIME). Verified standalone with
-`lake env lean Dregg2/CatalogInstances.lean`.
+Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. A planted `sorry` fails at
+generation time. Module-wide pinned via `#assert_namespace_axioms Dregg2.CatalogInstances`.
 -/
 import Dregg2.Catalog
 import Dregg2.Spec.Conservation
@@ -44,17 +27,12 @@ namespace Dregg2.CatalogInstances
 
 open Dregg2.Spec Dregg2.Spec.Guard Dregg2.Laws Dregg2.Catalog
 
-/-! ## §1 — `StateConstraint` as DERIVED `Guard` smart-constructors (`cell/src/program.rs:597`).
+/-! ## §1 — `StateConstraint` as derived `Guard` smart-constructors (`cell/src/program.rs:597`).
 
-dregg1's `StateConstraint` enum is a per-cell-program admissibility predicate. Each variant reads
-some projection(s) of the request (the candidate post-state / transition facts) and accepts/rejects
-first-party — EXCEPT the authority/witness variants (`SenderAuthorized`/`Witnessed`), which route
-through the verify seam. We model a request projection as a `Request → Nat` field-reader (the
-`state.fields[index]` access) and generate each constraint as one primitive.
-
-The codegen sets up the same abstract `(Request, Statement, Witness, Verifiable)` context the
-worked slice in `Catalog.lean §2` uses. We generate the mechanical majority with the default
-`simp [name]` proof; the `any`/`gnot`-structured ones (`AnyOf`/`Not`) carry an explicit `by`. -/
+dregg1's `StateConstraint` is a per-cell-program admissibility predicate. Each variant reads
+request projections first-party, or routes authority/witness variants through the verify seam.
+Request projections are modelled as `Request → Nat` field-readers. `AnyOf`/`Not` carry explicit
+`by` proofs; the rest use the default `simp [name]`. -/
 
 section StateConstraintCatalog
 variable {Request : Type} {Statement : Type} {Witness : Type} [Verifiable Statement Witness]
@@ -198,15 +176,12 @@ catalog StateConstraintGuard where
 
 end StateConstraintCatalog
 
-/-! ## §2 — `Authorization` as DERIVED `Guard` smart-constructors (`turn/src/action.rs`).
+/-! ## §2 — `Authorization` as derived `Guard` smart-constructors (`turn/src/action.rs`).
 
-dregg1's `Authorization` enum answers "who may invoke this object" — the `AuthRequired ⊣
-Authorization` site (`Spec/Guard.lean §7`, `senderAuthorized`). Per `Guard.lean`'s thesis, every
-auth kind is the SAME object as a state-constraint guard: a deterministic gate that is either
-first-party (decidable now) or witnessed (routed through the verify seam, where dregg1's eight
-verifier kinds live as `Verifiable` instances). So `Signature`/`Bearer`/`Stealth`/`Token`/`Proof`
-are all `witnessed s` over their respective statement; `Unchecked` is the neutral `all []` (always
-admits); `OneOf` is the `any` coproduct. We GENERATE them as the same Guard triple. -/
+dregg1's `Authorization` answers "who may invoke this object". Each auth kind is the same
+structure as a state-constraint guard: first-party (decidable) or witnessed (verify seam).
+`Signature`/`Bearer`/`Stealth`/`Token`/`Proof` are all `witnessed s`; `Unchecked` is `all []`;
+`OneOf` is `any`. Generated as the same Guard triple. -/
 
 section AuthorizationCatalog
 variable {Request : Type} {Statement : Type} {Witness : Type} [Verifiable Statement Witness]
@@ -266,15 +241,10 @@ end AuthorizationCatalog
 
 /-! ## §3 — `Effect`'s `LinearityClass` coloring (`turn/src/action.rs: Effect::linearity`).
 
-This is the genuinely-BESPOKE slice: the codegen emits `Guard` triples, but an effect's linearity
-is a TOTAL MAP `Effect → LinearityClass` (a `Conservation` object), not a `Guard`. So we hand-write
-the coloring faithfully mirroring dregg1's `Effect::linearity` match (no default arm — exhaustive),
-then derive the conservation OBLIGATION per color from `Spec.Conservation` (`requires_paired_sibling`
-/ `is_disclosed_non_conservation`). This closes the third catalog as a derived construction over the
-`LinearityClass` primitives, with the coincidence pinned `#assert_axioms`-clean.
-
-We model the dregg1 `Effect` enum as an abstract carrier of its ~52 variant TAGS (we only need the
-discriminant for the coloring — the payloads do not affect linearity), as a finite enumeration. -/
+Hand-written (not generated): the coloring is a total map `Effect → LinearityClass`, not a
+`Guard`. Faithfully mirrors `Effect::linearity` (exhaustive match, no default arm); conservation
+obligations derived from `Spec.Conservation`. `EffectKind` carries only the ~52 variant
+discriminants — payloads do not affect linearity. -/
 
 section EffectLinearity
 
@@ -324,11 +294,10 @@ def effectLinearity : EffectKind → LinearityClass
   | .setField | .emitEvent | .setPermissions | .setVerificationKey | .refreshDelegation
   | .pipelinedSend | .exerciseViaCapability => Neutral
 
-/-! ### §3.1 — The per-effect conservation OBLIGATIONS (the legacy-coincidence facts).
+/-! ### §3.1 — Per-effect conservation obligations (the coincidence facts).
 
-For each color we derive — directly from `Spec.Conservation`'s PROVED classifier facts — what the
-effect's conservation obligation IS. These are the `Effect`-catalog analogue of the `admits`
-characterizations: each pins a representative effect to its obligation. -/
+For each color, derived from `Spec.Conservation`'s proved classifier facts. Each pins a
+representative effect to its obligation. -/
 
 /-- A `transfer` is `Conservative`: its per-domain deltas must sum to `0` (it requires a paired
 sibling). Mirrors `Effect::Transfer => Conservative`. -/
@@ -375,11 +344,9 @@ theorem incrementNonce_monotonic : effectLinearity .incrementNonce = Monotonic :
 /-- A `cellDestroy` is `Terminal`: one-way, no inverse. Mirrors `Effect::CellDestroy => Terminal`. -/
 theorem cellDestroy_terminal : effectLinearity .cellDestroy = Terminal := rfl
 
-/-- **The coloring is EXHAUSTIVELY DISCRIMINATING across all six colors** — every color is
-witnessed by at least one effect, and the two soundness classifiers separate them. This is the
-`Effect`-catalog coincidence keystone: the dregg1 coloring lands on each of the six `Spec`
-primitives, and `paired` ⊥ `disclosed` (from `Spec.Conservation.paired_and_disclosed_exclusive`)
-keeps the conserved and disclosed-broken regimes disjoint. -/
+/-- The coloring covers all six colors — every color is witnessed by at least one effect.
+`paired` ⊥ `disclosed` (from `Spec.Conservation.paired_and_disclosed_exclusive`) keeps
+the conserved and disclosed-broken regimes disjoint. -/
 theorem effectLinearity_covers_all_colors :
     effectLinearity .transfer = Conservative ∧
     effectLinearity .incrementNonce = Monotonic ∧
@@ -399,13 +366,10 @@ theorem effect_paired_disclosed_exclusive (e : EffectKind) :
 
 end EffectLinearity
 
-/-! ## §4 — Axiom-hygiene tripwires for the BESPOKE §3 facts.
+/-! ## §4 — Axiom-hygiene tripwires for the hand-written §3 facts.
 
-The §1/§2 catalog entries are auto-`#assert_axioms`-pinned BY THE CODEGEN (each generated
-`admits_*` self-pins — that is the honesty tripwire, fired at generation time on 100% of output).
-The hand-written §3 effect-coloring facts are NOT codegen output, so we pin them here explicitly,
-matching the discipline. `#assert_namespace_axioms` would also cover them; we list them for the
-same fail-loud guarantee the codegen gives §1/§2. -/
+§1/§2 catalog entries are auto-pinned by the codegen. The hand-written §3 effect-coloring
+facts are pinned here explicitly to match the same discipline. -/
 
 #assert_axioms transfer_conservative
 #assert_axioms transfer_requires_paired
@@ -420,10 +384,8 @@ same fail-loud guarantee the codegen gives §1/§2. -/
 #assert_axioms effectLinearity_covers_all_colors
 #assert_axioms effect_paired_disclosed_exclusive
 
--- BLANKET module-wide pin: every theorem under this namespace (the codegen's generated `admits_*`
--- AND the §3 hand-written facts) must rest only on the three kernel axioms. A `sorryAx` anywhere
--- — generated or hand-written — trips this. This is the "100% of output pinned" guarantee made
--- module-level. (Pure rejector; cannot close a goal.)
+-- Blanket module-wide pin: every theorem under this namespace must rest only on the three
+-- kernel axioms. Pure rejector; cannot close a goal.
 #assert_namespace_axioms Dregg2.CatalogInstances
 
 end Dregg2.CatalogInstances

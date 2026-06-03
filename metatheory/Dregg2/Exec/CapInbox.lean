@@ -1,40 +1,28 @@
 /-
-# Dregg2.Exec.CapInbox — a store-and-forward CapInbox as a *cell-program pattern*.
+# Dregg2.Exec.CapInbox — a store-and-forward inbox as a cell-program pattern.
 
-`STORAGE-AS-CELL-PROGRAMS.md §3.1`: a CapInbox (the subscriber-delivery, store-and-forward
-queue) is **not a new Effect** — it is a **cell** whose mutable state is a name-keyed record and
-whose FIFO discipline is exactly a `RecordProgram`'s `StateConstraint`s, enforced by the same
-per-turn evaluator every other cell uses. The doc's §3.1 slot table (`head`/`tail`/`capacity`/
-`owner`/`sender_set`/`total_deposits`/`message_root`) is bit-positional (an inherited Mina
-artifact); dregg2's direction (`dregg2 §5`, `Exec/Value.lean`) is **name-keyed records, NOT 8
-fixed slots** — so this module models the inbox as a `Value` record `{ "head", "tail",
-"capacity", "owner", "inflight", … }` and the queue invariants as the constraint catalog of
-`Exec/Program.lean`.
+A CapInbox is a cell whose state is a name-keyed record (`head`/`tail`/`capacity`/`owner`/
+`inflight`) and whose FIFO discipline is a `RecordProgram`'s `StateConstraint`s.
 
-The FIFO discipline encoded as `inboxProgram : RecordProgram` constraints:
-- `monotonic "head"`  — a *send* advances the producer cursor (never retreats).
-- `monotonic "tail"`  — a *dequeue* advances the consumer cursor (never retreats).
-- `immutable "capacity"` / `immutable "owner"` — the queue metadata is fixed for the cell's life.
-- `fieldLeField "tail" "head"` — **the FIFO safety invariant**: the consumer never passes the
-  producer (`tail ≤ head`), so a dequeue can only read a message a send has already produced.
-- the capacity bound `head - tail ≤ capacity` is a cross-slot *minus* not in the base 21-variant
-  catalog (`STORAGE-AS-CELL-PROGRAMS §3.1` / `§7.2`). We encode it the **clean** way the doc
-  recommends: a derived `"inflight"` field carrying `head - tail`, bounded by `fieldLe "inflight"
-  capacity`. (See the `-- OPEN:` note below for the proper `FieldLteOther` variant.)
+The FIFO discipline as `inboxProgram` constraints:
+- `monotonic "head"` / `monotonic "tail"` — cursors never retreat.
+- `immutable "capacity"` / `immutable "owner"` — metadata fixed for the cell's life.
+- `fieldLeField "tail" "head"` — the FIFO safety invariant: consumer never passes producer.
+- `fieldLe "inflight" capacity` — capacity bound via a derived `inflight = head - tail` field.
 
-THE KEYSTONE `inbox_fifo`: a *committed* send-or-dequeue preserves `tail ≤ head` AND advances the
-right cursor monotonically — proved by lifting `RecordCell.recExec_admitted` + `evalConstraint`
-for `fieldLeField`/`monotonic`, exactly as `RecordCell.recExec_mono_holds` does for one constraint.
+  -- OPEN: the true capacity bound is the cross-slot relational `head - tail ≤ capacity`, which
+  -- requires a `FieldLteOther` constraint variant not in the base 21-variant catalog. We use the
+  -- honest derived-`inflight` encoding instead. See `inboxProgram` for details.
 
-SenderAuthorized: a *send* must present an authorized-sender `Caveat.Token` that discharges
-(`STORAGE-AS-CELL-PROGRAMS §3.1` "sender authorization"; the routing through the token layer of
-`Authority/Caveat.lean`). Here it is a clean gate-AND-lemma (`send_requires_authorized_token`):
-an admitted gated send presented a token that discharges. The *binding* of that token to the
-on-wire sender identity stays an `-- OPEN:`, deferred to the verify/find seam exactly as dregg1's
-scalar evaluator defers it (`Exec/Program.lean`'s `boundDelta`/`Witnessed` deferral).
+Keystone `inbox_fifo`: a committed send-or-dequeue preserves `tail ≤ head` and advances the
+right cursor monotonically.
 
-Pure, computable, `#eval`-able; imports `Exec.RecordCell` (⇒ `Exec.Program` ⇒ `Exec.Value`) and
-`Authority.Caveat` (the token layer). Type-checks fast (Lean-core for the record side).
+The `sendAuthorized` / `gatedSend` gate routes sends through the `Authority.Caveat` token layer.
+The `send_requires_authorized_token` lemma: a committed gated send presented a discharging token.
+The binding of that token to the on-wire sender identity is an OPEN (deferred to the verify/find
+seam — see the `-- OPEN:` note in the SenderAuthorized section).
+
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Exec.RecordCell
 import Dregg2.Authority.Caveat
@@ -47,13 +35,10 @@ open Dregg2.Authority
 
 /-! ## The inbox record + its schema (the name-keyed §3.1 slot layout). -/
 
-/-- **The CapInbox schema** (`STORAGE-AS-CELL-PROGRAMS §3.1`, name-keyed not 8-slot):
-- `head`     — the producer cursor: next seq a *send* will write (monotone ↑).
-- `tail`     — the consumer cursor: next seq a *dequeue* will read (monotone ↑, `tail ≤ head`).
-- `capacity` — max in-flight messages; immutable for the cell's life.
-- `owner`    — hash of the owner pubkey; immutable; only the owner may dequeue.
-- `inflight` — the derived `head - tail` register (the clean encoding of the capacity bound;
-  see the `-- OPEN:` note). Bounded by `inflight ≤ capacity`. -/
+/-- The CapInbox schema (name-keyed, not 8-slot):
+- `head` — producer cursor (monotone ↑); `tail` — consumer cursor (monotone ↑, `tail ≤ head`);
+- `capacity` — max in-flight messages (immutable); `owner` — owner hash (immutable);
+- `inflight` — derived `head - tail` register, bounded by `inflight ≤ capacity`. -/
 def inboxSchema : Schema :=
   [ ("head",     .scalar)
   , ("tail",     .scalar)
@@ -68,12 +53,9 @@ def methodDequeue : Nat := 2
 
 /-! ## The inbox program — the FIFO discipline as `StateConstraint`s. -/
 
-/-- **`inboxProgram` (the CapInbox cell-program)** — a `predicate` conjunction of the FIFO
-constraints (`STORAGE-AS-CELL-PROGRAMS §3.1`, "StateConstraints declared"). It is a `predicate`
-(not `cases`) so the *invariants* (`tail ≤ head`, immutables) hold under EVERY method; `head`/`tail`
-are each `monotonic` (a send advances head, a dequeue advances tail — neither ever retreats). The
-capacity bound is the derived-`inflight` encoding (`fieldLe "inflight" cap`, with `inflight`
-itself monotone-tracked); the proper cross-slot variant is the `-- OPEN:` below. -/
+/-- The CapInbox cell-program: a `predicate` conjunction of FIFO constraints (holds under every
+method). The capacity bound uses the derived-`inflight` encoding; see the `-- OPEN:` for the
+proper cross-slot `FieldLteOther` variant. -/
 def inboxProgram (capacity : Int) : RecordProgram :=
   .predicate
     [ .simple (.monotonic "head")        -- a send advances head; never retreats
@@ -82,22 +64,17 @@ def inboxProgram (capacity : Int) : RecordProgram :=
     , .simple (.immutable "owner")       -- owner fixed for the cell's life
     , .fieldLeField "tail" "head"        -- THE FIFO SAFETY INVARIANT: tail ≤ head
     , .simple (.fieldLe "inflight" capacity) ]  -- capacity bound, via the derived register
-  -- OPEN: the *true* capacity bound is the cross-slot relational `head - tail ≤ capacity`, which is
-  -- NOT in the base 21-variant catalog (`STORAGE-AS-CELL-PROGRAMS §3.1`, citing §7.2 / SLOT-CAVEATS-
-  -- EVALUATION §3.4). The clean fix the doc recommends is a new constraint
-  --   `FieldLteOther (idx other : FieldName) (plusDelta : Int)`  meaning  `new[idx] ≤ new[other] + δ`,
-  -- which would let us write `fieldLteOther "head" "tail" capacity` directly and DROP the derived
-  -- `inflight` register. We do NOT fake it here: instead we carry an honest derived `inflight` field
-  -- that `inboxExec` keeps equal to `head - tail` (see `inflightTracks` below), and bound THAT with
-  -- the in-catalog `fieldLe`. The relational variant is left for the catalog-extension build.
+  -- OPEN: the true capacity bound is `head - tail ≤ capacity`, a cross-slot relational constraint
+  -- not in the base 21-variant catalog. The clean fix is a `FieldLteOther` variant
+  --   `new[idx] ≤ new[other] + δ`
+  -- which would let us write `fieldLteOther "head" "tail" capacity` directly. Instead we carry an
+  -- honest derived `inflight` field kept equal to `head - tail` by `inboxExec`, and bound that
+  -- with the in-catalog `fieldLe`. The relational variant is deferred.
 
 /-! ## The executable inbox transition (send / dequeue), gated by `inboxProgram.admits`. -/
 
-/-- A *send*: advance `head` by one and re-derive `inflight = inflight + 1` (one more in-flight).
-A *dequeue*: advance `tail` by one and re-derive `inflight = inflight - 1`. We model each as a list
-of `RecOp`s; `applyOpList` folds them so the candidate record carries BOTH updates, then the single
-program filter gates the whole candidate (so a send that would breach `tail ≤ head` or the capacity
-bound is rejected atomically). -/
+/-- Send ops: advance `head` + `inflight` by 1. Dequeue ops: advance `tail` by 1, decrement
+`inflight`. Both are lists of `RecOp`s; `applyOpList` folds them and the program gates atomically. -/
 def sendOps : List RecOp :=
   [ .addScalar "head" 1, .addScalar "inflight" 1 ]
 def dequeueOps : List RecOp :=

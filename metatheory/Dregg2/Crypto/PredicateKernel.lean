@@ -1,22 +1,14 @@
 /-
-# Dregg2.Crypto.PredicateKernel — Layer C: per-kind circuit obligations + the DIAL wiring.
+# Dregg2.Crypto.PredicateKernel — Layer C: per-kind circuit obligations + dial wiring.
 
-**The third layer (`PHASE-CRYPTOKERNEL.md §2.3, §5.4`).** Lifts `Authority/Predicate.lean`'s
-registry so each `WitnessedKind` carries (i) its statement algebra, (ii) its circuit, (iii)
-its `Dial` floor — and finally WIRES `EpistemicDial` to the per-kind verifier (the dial's
-`accepts` no longer floats above the portal; it is pinned to the kind's verify seam).
+Lifts `Authority/Predicate.lean`'s registry so each `WitnessedKind` carries its statement algebra,
+circuit, and `Dial` floor — and wires `EpistemicDial` to the per-kind verifier (the dial's `accepts`
+is pinned to the kind's verify seam, not floating above it).
 
-This module lands the FIRST kind end-to-end — **Merkle membership** — composing the cascade:
-
-    merkle_verify_sound (Layer B)   accept ⇒ MerkleMembers      [derived off the bridge]
-      ∘ registry_sound (Predicate)  accept ⇒ Discharged          [the dispatch keystone]
-      ∘ DiscloseAt @ acceptanceOnly the dial pinned to verify    [blinded ⇒ ZK floor]
-
-`merkleKindObligation` records `(circuit-relation, statement, dial floor = acceptanceOnly)`:
-blinded Merkle membership sits at the zero-knowledge floor (`EpistemicDial.Dial.acceptanceOnly`),
-the one-bit disclosure notch — the verifier learns "it is a member" and nothing about WHICH
-leaf. `merkle_dial_wired` instantiates `DiscloseAt` so its `accepts` IS the kind's verify seam
-at that floor, discharging the design's "the dial floats above the portal" gap.
+This module covers the first kind end-to-end: Merkle membership. `merkleKindObligation` records
+the circuit relation, statement, and dial floor (`acceptanceOnly` — the verifier learns one bit:
+"it is a member", nothing about which leaf). `merkle_dial_wired` instantiates `DiscloseAt` so its
+`accepts` IS the kind's verify seam at that floor.
 -/
 import Dregg2.Crypto.VerifierKernel
 import Dregg2.Authority.Predicate
@@ -29,15 +21,12 @@ open Dregg2.Crypto Dregg2.Crypto.Merkle Dregg2.Authority.Predicate Dregg2.Laws M
 
 /-! ## The per-kind obligation record (statement algebra + relation + dial floor).
 
-Universe note: the registry/dial machinery (`Verifiable`, `Registry`, `DiscloseAt`) lives at
-`Type` (universe 0), so this Layer-C wiring instantiates `Digest`/`Proof` at `Type`. The
-`MerkleVerifierKernel` (universe-polymorphic) restricts cleanly to `Type`. -/
+The registry/dial machinery lives at `Type` (universe 0); `MerkleVerifierKernel` is universe-polymorphic
+and restricts cleanly. -/
 
-/-- **`KindObligation`** — per-kind discharge data (`PHASE-CRYPTOKERNEL.md §2.3`). For a kind
-over `Digest`/`Proof`, records the public-input `Statement` type, the `relation` the AIR
-encodes (proved equivalent to circuit-satisfiability by the gadget bridge), and the `dialFloor`
-— the epistemic boundary this kind discloses at. The circuit itself lives in the gadget module
-(`Crypto/Merkle.lean`); this record names the statement algebra and the dial position. -/
+/-- `KindObligation` — per-kind discharge data: the public-input `Statement` type, the `relation`
+the AIR encodes (proved equivalent to circuit-satisfiability by the gadget bridge), and the
+`dialFloor` — the epistemic boundary this kind discloses at. -/
 structure KindObligation (Digest Proof : Type) where
   /-- The public-input algebra for this kind (e.g. `Digest × Digest` for Merkle `(root,leaf)`). -/
   Statement : Type
@@ -50,10 +39,8 @@ structure KindObligation (Digest Proof : Type) where
 
 variable {Digest Proof : Type}
 
-/-- **The Merkle kind's obligation.** Statement = `(root, leaf)`; relation = `MerkleMembers`
-(membership recomposition); **dial floor = `acceptanceOnly`** — blinded Merkle membership
-discloses ONE bit (it verifies), hiding which leaf (the ZK floor, `PHASE-CRYPTOKERNEL.md §5.4`:
-"blinded ⇒ ZK floor"). -/
+/-- The Merkle kind's obligation. Statement = `(root, leaf)`; relation = `MerkleMembers`;
+dial floor = `acceptanceOnly` — the verifier learns one bit (membership), not which leaf. -/
 def merkleKindObligation [K : MerkleVerifierKernel Digest Proof] :
     KindObligation Digest Proof where
   Statement := Digest × Digest
@@ -72,13 +59,10 @@ def merkleVerifier [K : MerkleVerifierKernel Digest Proof] :
     Verifier (Digest × Digest) Proof :=
   fun s proof => K.verify s.1 s.2 proof
 
-/-- **`merkle_registry_cascade` — the FIRST end-to-end §8 discharge (PROVED).** Registering
-the Merkle kind with its `verify` oracle, an accepted proof both (a) `Discharged`s the kind's
-predicate (the registry-dispatch keystone, `registry_sound`) AND (b) — given the STARK
-`extractable` carrier — PROVES `MerkleMembers` (the derived `merkle_verify_sound`). This is the
-cascade `registry_sound ∘ merkle_verify_sound`: "verify accepts ⇒ admissible (Lean, proved) ∘
-verify accepts ⇒ it actually happened (STARK carrier)". The single trust boundary is
-`extractable`; the membership recomposition itself is fully proved. -/
+/-- `merkle_registry_cascade` — an accepted Merkle proof both `Discharged`s the registry predicate
+(`registry_sound`) and, given the STARK `extractable` carrier, proves `MerkleMembers`
+(`merkle_verify_sound`). The single trust boundary is `extractable`; membership recomposition is
+fully proved. -/
 theorem merkle_registry_cascade [K : MerkleVerifierKernel Digest Proof]
     (hext : K.extractable)
     (base : Registry (Digest × Digest) Proof)
@@ -102,26 +86,19 @@ def merkleReg [MerkleVerifierKernel Digest Proof]
     (base : Registry (Digest × Digest) Proof) : Registry (Digest × Digest) Proof :=
   fun j => if j = .merkleMembership then some merkleVerifier else base j
 
-/-- The `Verifiable` seam this kind dispatches through (named `def`, passed explicitly via
-`@` so `Discharged`/`DiscloseAt` share ONE instance — `base` is explicit, so this is not an
-auto-synthesized `instance`). -/
+/-- The `Verifiable` seam this kind dispatches through. Explicit `def` (not auto-synthesized
+`instance`) so `Discharged`/`DiscloseAt` share the same instance. -/
 @[reducible] def merkleSeam [MerkleVerifierKernel Digest Proof]
     (base : Registry (Digest × Digest) Proof) : Verifiable (Digest × Digest) Proof :=
   verifiableOfRegistry (merkleReg base) .merkleMembership
 
-/-! ## THE DIAL WIRING — `DiscloseAt` instantiated at the Merkle kind's floor.
+/-! ## Dial wiring — `DiscloseAt` instantiated at the Merkle kind's floor.
 
-The design's gap: `EpistemicDial.accepts` floats above the portal — it is pinned to abstract
-`Discharged pred wit`, not to a per-kind kernel verifier. Here we CLOSE it: build a
-`DiscloseAt` whose `pred`/`wit` are the Merkle statement/proof and whose `accepts` at every
-notch is `Discharged (root,leaf) proof` under the registry-at-`merkleMembership` seam — so the
-dial's acceptance bit IS the Merkle verifier's bit, at the `acceptanceOnly` floor. -/
+The dial's `accepts` is pinned to `Discharged (root,leaf) proof` under the registry seam, so the
+dial's acceptance bit IS the Merkle verifier's bit at the `acceptanceOnly` floor. -/
 
-/-- **`merkleDisclose` — the dial pinned to the Merkle verifier.** A `DiscloseAt` over the
-trivial information order `Unit` (the leaked-info coarsening is not the point here; the wiring
-is), whose `accepts d := Discharged (root,leaf) proof` (position-independent: the verifier
-consults the witness, never the dial), `accepts_eq := fun _ => Iff.rfl`. This realizes the
-design's "instantiate `DiscloseAt` at the `acceptanceOnly` floor (blinded membership)". -/
+/-- `merkleDisclose` — a `DiscloseAt` over `Unit` whose `accepts d := Discharged (root,leaf) proof`
+(position-independent). Realizes the dial at the `acceptanceOnly` (blinded membership) floor. -/
 def merkleDisclose [MerkleVerifierKernel Digest Proof]
     (base : Registry (Digest × Digest) Proof) (root leaf : Digest) (proof : Proof) :
     @DiscloseAt Unit (Digest × Digest) Proof _ (merkleSeam base) :=
@@ -133,13 +110,9 @@ def merkleDisclose [MerkleVerifierKernel Digest Proof]
     accepts := fun _ => Discharged (root, leaf) proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`merkle_dial_wired` — THE DIAL WIRING (PROVED, `PHASE-CRYPTOKERNEL.md §5.4`).** The
-Merkle kind's epistemic floor is the ZK `acceptanceOnly` notch, and at that floor the dial's
-acceptance bit IS exactly the Merkle verifier's `Discharged` bit (`accepts_bot_iff_discharged`).
-Plus: given STARK `extractable`, that accepting bit PROVES `MerkleMembers` — so the dial's
-bottom notch, the registry dispatch, and the membership relation are all ONE wired cascade.
-This discharges "the dial floats above the portal": `accepts ⊥` is pinned to the per-kind
-verifier. -/
+/-- `merkle_dial_wired` — the Merkle kind's floor is `acceptanceOnly`; at that floor the dial's
+acceptance bit is exactly the Merkle verifier's `Discharged` bit; and given STARK `extractable`,
+that bit proves `MerkleMembers`. The dial is pinned to the per-kind verifier. -/
 theorem merkle_dial_wired [K : MerkleVerifierKernel Digest Proof]
     (hext : K.extractable)
     (base : Registry (Digest × Digest) Proof) (root leaf : Digest) (proof : Proof) :
@@ -185,8 +158,8 @@ example (leaf : Int) :
 
 end Reference
 
--- TRIPWIRES: the cascade + dial wiring are kernel-clean; the ONLY cryptographic content is
--- the `extractable` carrier (passed as a hypothesis), never a hidden `sorry`.
+-- Tripwires: the cascade + dial wiring rest only on the `extractable` carrier (as a hypothesis),
+-- never a hidden `sorry`.
 #assert_axioms merkle_registry_cascade
 #assert_axioms merkle_dial_wired
 

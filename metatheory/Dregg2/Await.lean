@@ -1,49 +1,26 @@
 /-
-# Dregg2.Await — the await family: algebraic effects + handlers + one-shot
-# (linear) continuations, with the turn as the rollback handler.
+# Dregg2.Await — algebraic effects + handlers + one-shot (linear) continuations,
+# with the turn as the rollback handler.
 
-This module encodes dregg2's **await family** as a *single* continuation primitive
-shown to have *four faces* (`CLAUDETHOUGHT.md §1, "The await family"`; design
-`docs/ZKPROMISE-ZKAWAIT-DESIGN.md`). The design correction that makes this module
-worth stating precisely:
-
-> "It's **algebraic effects + handlers with *linear (one-shot)* continuations** — and
-> the sharpest design correction here: one-shotness must be a *static linear-typing
-> invariant on the zkpromise*, not Dolan's runtime 'raise on second resume', because
-> that runtime guard **IS** the double-spend you're preventing."
+The await family is a single continuation primitive with four faces (`zkpromise`,
+`discharge`, `intent`, `promiseGraph`). One-shotness is a **static linear-typing
+invariant** on the zkpromise, not a runtime guard — the runtime guard IS the
+double-spend it is meant to prevent (see `runtime_guard_is_double_spend`).
 
 Literature anchors:
-  * **Plotkin–Pretnar**, *Handling Algebraic Effects* (LMCS 2013) — effects are an
-    algebraic signature `Op` of operations (parameter/return arities); a *handler*
-    is an interpretation of that signature; running an effectful computation under a
-    handler is the unique homomorphism out of the free model. Here `Effect`/`Handler`.
-  * **One-shot / linear continuations** (Bruggeman–Waddell–Dybvig `call/1cc`;
-    Berdine–O'Hearn–Reddy–Thielecke, *Linear continuations*; OCaml 5 effect
-    handlers, whose continuations are *one-shot*). The resumption may be invoked
-    **at most once**. dregg2's sharpening: that "at most once" is a **static linear
-    (use-exactly-once) type discipline**, not a runtime flag — see `OneShot` below
-    and `runtime_guard_is_double_spend`.
-  * **CapTP promises** (Miller, *Robust Composition*; the E language `when`/
-    `whenResolved`) — a promise is a first-class handle to a not-yet-resolved result;
-    resolution fulfils it; pipelining is dataflow over pending promises. Here the
+  * **Plotkin–Pretnar**, *Handling Algebraic Effects* (LMCS 2013) — `Effect`/`Handler`.
+  * **One-shot / linear continuations** (Bruggeman–Waddell–Dybvig; Berdine et al.;
+    OCaml 5 effect handlers). The resumption may be invoked **at most once** — here
+    enforced as a type-level invariant (`OneShot`), not a runtime flag.
+  * **CapTP promises** (Miller, *Robust Composition*; the E language `when`) —
     `zkpromise`/`discharge`/`promiseGraph` faces.
 
-Design fact this module hard-codes (`CLAUDETHOUGHT.md §1`, `Boundary.lean` docstring
-"the turn IS the rollback handler"):
+The turn is the rollback handler: commit = invoke the held continuation exactly once;
+abort = discard it (never resume). See `turnAsRollbackHandler`.
 
-> "The turn *is* the rollback handler (commit = replay held effects + emit witness at
-> the boundary = the deferred-prover; abort = conservation-preserving refund)."
-
-So `turnAsRollbackHandler` is the canonical `Handler`: **commit = invoke the held
-continuation exactly once; abort/rollback = discard it (never resume)**. The two
-outcomes are precisely the two *legal* uses of an affine resource — used once, or
-dropped — which is why the continuation must be **affine/linear**, not duplicable.
-
-Style: spec-first, grind up. Faithful `Prop`s; `sorry` bodies are real obligations.
-This module commits only to the *shape* of the await algebra (the verify side, in the
-sense of `Laws.lean`); the proof-carrying resolution of a `zkpromise` (binding /
-extractability of the underlying STARK) is a circuit obligation and is NOT merged into
-this Lean law (cf. `Boundary.lean` §8 caveat).
+The proof-carrying resolution of a `zkpromise` (binding/extractability of the
+underlying STARK) is a circuit obligation and is NOT merged into this Lean law
+(cf. `Boundary.lean` §8 caveat).
 -/
 import Dregg2.Core
 import Dregg2.Laws
@@ -92,11 +69,10 @@ inductive Computation (Promise Cap Effct : Type u) (A : Type u) where
 /-! ## 2. One-shot (linear) continuations — the static discipline
 
 The continuation captured by a handler is an **affine resource**: it must be used
-**exactly once** (commit) or **dropped** (rollback), and **never twice**. dregg2's
-correction (`CLAUDETHOUGHT.md §1`): this is a *type-level* invariant, not a runtime
-guard. We model the type-level invariant by a wrapper `OneShot` whose **only**
-eliminator, `OneShot.resume`, *consumes* the wrapper (takes it by value and returns no
-fresh `OneShot`) — so in a linear/affine ambient there is no term that resumes twice.
+**exactly once** (commit) or **dropped** (rollback), never twice. This is a
+*type-level* invariant, not a runtime guard. The wrapper `OneShot` has a single
+eliminator `OneShot.resume` that consumes it — so in a linear/affine context there
+is no term that resumes twice.
 -/
 
 /-- **`OneShot k`** — a continuation `k : R → S` wrapped as a *use-exactly-once*
@@ -129,12 +105,9 @@ structure Linear {R S : Type u} (_k : OneShot R S) where
   /-- The affine law: a continuation is used at most once. -/
   at_most_once : uses ≤ 1
 
-/-- **`theorem one_shot_is_static`** — one-shotness is a *typing* invariant, not a
-runtime check. Statement: for the one-shot API, *every* well-typed elimination of an
-`OneShot` arises from `resume`, which consumes it; hence the affine count is bounded
-*by the types* (any `Linear` plan built from `resume` has `uses ≤ 1`) with no runtime
-inspection. Formally: any `Linear` witness over `k` already entails `uses ≤ 1` — the
-bound is carried in the type, discharged without evaluating `k`. -/
+/-- **`theorem one_shot_is_static`** — one-shotness is a typing invariant, not a
+runtime check: any `Linear` witness over `k` already carries `uses ≤ 1` in its type,
+discharged without evaluating `k`. -/
 theorem one_shot_is_static {R S : Type u} (k : OneShot R S) (plan : Linear k) :
     plan.uses ≤ 1 :=
   plan.at_most_once
@@ -185,17 +158,10 @@ def Guarded.tryResume {R S : Type u} (g : Guarded R S) (r : R) :
     -- first use: resume and flip the flag to consumed
     (GuardResult.resumed (g.k.resume r), { g with resumed := true })
 
-/-- **`theorem runtime_guard_rejects_reuse`** — the runtime await-guard REJECTS a
-double-spend: presenting an **already-consumed** one-shot continuation to the guard is
-denied. Concretely, for any guarded continuation whose flag is already set
-(`g.resumed = true` — it has been used once), `tryResume` returns `denied` and leaves
-the guard state unchanged.
-
-The hypothesis `hconsumed : g.resumed = true` is LOAD-BEARING: it is exactly the
-"already spent" precondition, and the `denied` conclusion is reached only through the
-`if g.resumed` true-branch — drop it and the guard might resume (the false-branch).
-This is a genuine state (a reuse attempt on a spent continuation) producing a genuine
-guard-deny, not an abstract arithmetic fact. -/
+/-- **`theorem runtime_guard_rejects_reuse`** — for a guarded continuation already
+consumed (`g.resumed = true`), `tryResume` returns `denied` and leaves the guard
+state unchanged. The hypothesis `hconsumed` is load-bearing: it determines the
+true-branch of `if g.resumed`. -/
 theorem runtime_guard_rejects_reuse
     {R S : Type u} (g : Guarded R S) (r : R)
     (hconsumed : g.resumed = true) :
@@ -203,23 +169,12 @@ theorem runtime_guard_rejects_reuse
   unfold Guarded.tryResume
   simp only [hconsumed, if_true]
 
-/-- **`theorem runtime_guard_is_double_spend` — the anti-pattern (Dolan), stated on the
-concrete guard.** The runtime guard does NOT prevent the second resume from being
-*issued*: the second call is a well-typed term that runs *into* the guard before being
-denied. We make that precise as a reuse *sequence*: starting from a fresh guard
-(`resumed := false`), the FIRST `tryResume` is admitted (it `resumed`, observing the
-continuation and thereby touching any conserved resource it carries), and only the
-SECOND `tryResume` — on the now-consumed guard — is denied.
-
-So the deny happens *after* the continuation was already re-entered once and would have
-re-observed its held effects: in a continuation carrying a conserved `Conservation.count`
-that first-then-deny ordering **is** the double-spend window. Contrast `OneShot`, whose
-static discipline removes the second call as a *constructible term* entirely (no second
-`OneShot` value exists to resume), closing the window the runtime flag leaves open.
-
-Concretely: for a fresh guard, `tryResume` admits (`resumed _`) and yields a consumed
-guard `g₁` with `g₁.resumed = true`; feeding `g₁` back to `tryResume` is denied. The
-admitted-then-denied pair is the double-spend window the runtime guard cannot close. -/
+/-- **`theorem runtime_guard_is_double_spend`** — the runtime guard does not prevent the
+second resume from being *issued*: starting from a fresh guard, the FIRST `tryResume` is
+admitted (the continuation is re-entered and may touch conserved resources), and only the
+SECOND call — on the now-consumed guard — is denied. The deny happens after re-entry: that
+admitted-then-denied ordering is the double-spend window. Contrast `OneShot`, which removes
+the second call as a *constructible term* (no second `OneShot` value exists). -/
 theorem runtime_guard_is_double_spend
     {R S : Type u} (k : OneShot R S) (r : R) :
     -- a fresh runtime-guarded continuation
@@ -268,17 +223,10 @@ inductive CommitOrAbort where
   | abort
   deriving Repr, DecidableEq
 
-/-- **`turnAsRollbackHandler` — THE handler: the turn IS the rollback handler**
-(`CLAUDETHOUGHT.md §1`; `Boundary.lean` docstring). It is parameterized by a `decide`
-oracle that, per operation, yields `commit` or `abort`:
-
-  * **commit** ⇒ `OneShot.resume` the continuation exactly once (replay + emit witness);
-  * **abort/rollback** ⇒ **discard** the continuation (never resume) and yield the
-    refund result `refund`.
-
-This makes "rollback = discard the continuation; commit = invoke it once" *definitional*
-— the two arms are exactly the two legal affine uses, so the turn-handler can never
-double-resume (it structurally resumes in one arm only). -/
+/-- **`turnAsRollbackHandler`** — the turn as the rollback handler, parameterized by a
+`decide` oracle. On `commit`: `OneShot.resume` the continuation exactly once (replay +
+emit witness). On `abort`: discard the continuation and return `refund`. The two arms are
+the only two legal affine uses, making double-resume structurally impossible. -/
 def turnAsRollbackHandler
     {Promise Cap Effct A S : Type u}
     (onRet  : A → S)
@@ -320,14 +268,12 @@ theorem commit_resumes_once
       = OneShot.resume k (resumeWith Reply) := by
   simp only [turnAsRollbackHandler, h]
 
-/-! ## 4. The four faces — four presentations of the SAME await primitive
+/-! ## 4. The four faces — four presentations of the same await primitive
 
-`CLAUDETHOUGHT.md §1`: the await family is *one* continuation primitive with four
-faces — `zkpromise` (specified resolver), `discharge` (named gateway / third-party
-caveat — the authority face), `intent` (existential resolver, "a hole that fires when
-filled"), and the `promiseGraph` (dataflow over pending promises). We give one
-structure per face, then a `def`/`theorem` `four_faces_unify` exhibiting them as
-views of a common `AwaitCore`. -/
+The await family is one continuation primitive with four faces: `zkpromise` (specified
+resolver), `discharge` (named gateway / third-party caveat), `intent` (existential
+resolver), and `promiseGraph` (dataflow over pending promises). Each face is a view of
+`AwaitCore`; `four_faces_unify` makes that explicit. -/
 
 /-- **`AwaitCore` — the single await primitive the four faces present.** It is exactly:
 an effect operation `await` on a promise of type `Promise`, captured by a handler as a
@@ -339,12 +285,9 @@ structure AwaitCore (Promise Reply S : Type u) where
   /-- The captured one-shot continuation resumed on resolution. -/
   kont    : OneShot Reply S
 
-/-- **Face 1 — `zkpromise`** (`design §"What zkpromise should mean"`): a promise whose
-**resolution is witnessed by a zero-knowledge proof**. The resolver proves "I produced
-the awaited value / exercised the awaited authority" (`Discharged p w`, from `Laws.lean`)
-binding a public `expectedOutput`, without revealing more. `[Verifiable P W]` supplies
-the decidable verify side; the proof's *binding/extractability* is a circuit obligation,
-not merged here. -/
+/-- **Face 1 — `zkpromise`**: a promise whose resolution is witnessed by a
+zero-knowledge proof (`Discharged p w`), binding a public `expectedOutput`. The
+proof's binding/extractability is a circuit obligation, not merged here. -/
 structure zkpromise (P W : Type u) [Verifiable P W] (Reply S : Type u) where
   /-- The resolution predicate the witness must discharge. -/
   resolver       : P
@@ -354,10 +297,9 @@ structure zkpromise (P W : Type u) [Verifiable P W] (Reply S : Type u) where
   /-- The captured one-shot continuation (resumed once on a *verified* resolution). -/
   kont           : OneShot Reply S
 
-/-- **Face 2 — `discharge`** (`CLAUDETHOUGHT.md §Authority`: "discharge (third-party
-caveat) = the await engine's authority-face"): resolving/fulfilling a promise by a
-**named gateway** presenting a discharging witness for a caveat predicate `caveat`.
-This is the macaroon/biscuit third-party-caveat shape — fulfilment = `Discharged`. -/
+/-- **Face 2 — `discharge`**: fulfilling a promise by a named gateway presenting a
+discharging witness for a caveat predicate. Macaroon/biscuit third-party-caveat shape
+— fulfilment = `Discharged`. -/
 structure discharge (P W : Type u) [Verifiable P W] (Reply S : Type u) where
   /-- The third-party caveat that must be discharged to fulfil the promise. -/
   caveat  : P
@@ -366,11 +308,9 @@ structure discharge (P W : Type u) [Verifiable P W] (Reply S : Type u) where
   /-- The captured one-shot continuation, resumed once on a valid discharge. -/
   kont    : OneShot Reply S
 
-/-- **Face 3 — `intent`** (`CLAUDETHOUGHT.md §1`: "intent (existential resolver — the
-'inverse membrane,' a hole that fires when filled)"): a *conditional/deferred* turn —
-a **guarded effect** whose resolver is **existential** (anyone producing a fill that
-satisfies `want` resolves it). This is the await with an `∃`-quantified resolver rather
-than a named one; the guard `want` is the predicate the fill must satisfy. -/
+/-- **Face 3 — `intent`**: a guarded effect with an **existential** resolver — anyone
+producing a fill satisfying `want` resolves it. The guard `want` is the predicate the
+fill must satisfy. -/
 structure intent (P W : Type u) [Verifiable P W] (Reply S : Type u) where
   /-- The guard: the predicate any fill must satisfy (the "hole's shape"). -/
   want : P
@@ -385,23 +325,19 @@ def intent.Fires {P W : Type u} [Verifiable P W] {Reply S : Type u}
     (i : intent P W Reply S) : Prop :=
   ∃ w : W, Discharged i.want w
 
-/-- **Face 4 — `promiseGraph`** (`design §4 "zk-continuation folding"`,
-`CLAUDETHOUGHT.md §1`: "the promise-graph"): the **dataflow graph of pending promises**
-— nodes are awaited promises (carrying their one-shot continuations) and edges are
-dependencies (a promise awaiting another, `PendingTurnRegistry.dependents`). A linear
-chain folds into one IVC proof (the zk-continuation case); here we capture the graph
-shape: nodes plus a dependency relation. -/
+/-- **Face 4 — `promiseGraph`**: the dataflow graph of pending promises — nodes are
+awaited promises (with their one-shot continuations) and edges are dependencies. A
+linear chain folds into one IVC proof; here we capture the graph shape: nodes plus a
+dependency relation. -/
 structure promiseGraph (Promise Reply S : Type u) where
   /-- The pending nodes — each an `AwaitCore` (a promise + its one-shot continuation). -/
   nodes : List (AwaitCore Promise Reply S)
   /-- The dependency edges: `deps i j` means node `i` awaits node `j`'s resolution. -/
   deps  : Nat → Nat → Prop
 
-/-- **`AwaitCore` extraction from each face** — each face *is* an `AwaitCore` once you
-forget its face-specific resolver data. These four functions are the "same primitive,
-four views" made operational. For `zkpromise`/`discharge`/`intent` the promise handle
-is the resolver datum (`resolver`/`caveat`/`want` respectively), demonstrating that
-each face only *decorates* the core await with "who resolves and how". -/
+/-- **`AwaitCore` extraction from each face** — each face is an `AwaitCore` once
+face-specific resolver data is forgotten. For `zkpromise`/`discharge`/`intent` the
+promise handle is the resolver datum (`resolver`/`caveat`/`want` respectively). -/
 def zkpromise.toCore {P W : Type u} [Verifiable P W] {Reply S : Type u}
     (z : zkpromise P W Reply S) : AwaitCore P Reply S :=
   { promise := z.resolver, kont := z.kont }
@@ -416,13 +352,9 @@ def intent.toCore {P W : Type u} [Verifiable P W] {Reply S : Type u}
     (i : intent P W Reply S) : AwaitCore P Reply S :=
   { promise := i.want, kont := i.kont }
 
-/-- **`theorem four_faces_unify` — the four faces are four presentations of the SAME
-await primitive.** Each face projects to the common `AwaitCore` *preserving the
-one-shot continuation* (the load-bearing shared structure): a `zkpromise`, a
-`discharge`, and an `intent` over the *same* resolver/caveat/guard `p` and the *same*
-continuation `k` all extract to the identical `AwaitCore p k`; and any `AwaitCore`
-node sits as a node of a `promiseGraph`. Hence the four are interconvertible views of
-one primitive — the unification claim. -/
+/-- **`theorem four_faces_unify`** — a `zkpromise`, `discharge`, and `intent` over the
+same resolver `p` and continuation `k` all extract to the identical `AwaitCore p k`.
+The four faces are interconvertible views of one primitive. -/
 theorem four_faces_unify
     {P W : Type u} [Verifiable P W] {Reply S : Type u}
     (p : P) (out : Reply) (k : OneShot Reply S) :

@@ -1,29 +1,20 @@
 /-
-# Dregg2.Crypto.Merkle — the first end-to-end §8 discharge: Merkle membership.
+# Dregg2.Crypto.Merkle — §8 discharge: Merkle membership.
 
-**The first obligation discharged end-to-end (`PHASE-CRYPTOKERNEL.md §5`).** This builds a
-Lean `CircuitIR` mirroring the SUBSET of the real `ConstraintExpr`
-(`circuit/src/dsl/circuit.rs`) that Merkle needs — `MerkleHash` (Poseidon2 4-to-1, the
-abstract Layer-A `compress`), `Transition` (chain continuity), `PiBinding` (boundary) — and
-the concrete `merkleCircuit : CircuitIR` mirroring `merkle_poseidon2_descriptor()`
-(`circuit/src/dsl/descriptors.rs:65`). It then PROVES the gadget bridge
+Builds a Lean `CircuitIR` mirroring the Merkle-relevant subset of `ConstraintExpr`
+(`circuit/src/dsl/circuit.rs`): `MerkleHash` (Poseidon2 4-to-1, abstract Layer-A `compress`),
+`Transition` (chain continuity), `PiBinding` (boundary). Mirrors `merkle_poseidon2_descriptor()`
+(`descriptors.rs:65`). Proves the gadget bridge:
 
     merkle_bridge : Satisfies merkleCircuit (root, leaf, path) ↔ MerkleMembers compress root leaf
 
-— path-recomposition SOUNDNESS (`→`: a satisfying trace proves membership) and COMPLETENESS
-(`←`: a real member has a satisfying trace), with `compress` left ABSTRACT (its
-collision-resistance is the Layer-A `CryptoPrimitives.collisionHard` `Prop`, never touched
-here). This is `Circuit.lean`'s `bridge` lifted to the Merkle gadget, following the HONEST
-gadget pattern of `Exec/RecordCircuit.lean`'s `range_iff`: the gadget is FULLY proven, with
-NO primitive seam inside it — the only `Prop` carrier is the hash's CR, which the bridge
-never needs.
+Soundness (`→`): a satisfying trace proves membership. Completeness (`←`): a real member has a
+satisfying trace. `compress` is abstract throughout — no primitive seam. The only `Prop` carrier
+is `compress`'s collision-resistance (`CryptoPrimitives.collisionHard`), consumed elsewhere.
 
-The trace shape (faithful to the real AIR, `descriptors.rs:65`): a multi-row trace where
-row `i` carries `(current_i, sib_i, position_i)` and a `MerkleHash` constraint binds
-`parent_i = compress (current_i) (combine sib_i)`; a `Transition` binds `current_{i+1} =
-parent_i`; `PiBinding`s bind `current_0 = leaf` (first row) and `parent_{last} = root`
-(last row). We model the 4-to-1 hash as the Layer-A two-input `compress` of `current` and a
-sibling-fold `combine`, which is exactly the position-independent node hash the AIR enforces.
+Trace shape (faithful to `descriptors.rs:65`): row `i` carries `(current_i, sib_i, position_i)`;
+`MerkleHash` binds `parent_i = compress current_i sib_i`; `Transition` binds
+`current_{i+1} = parent_i`; `PiBinding`s bind `current_0 = leaf`, `parent_{last} = root`.
 -/
 import Dregg2.Crypto.Primitives
 import Dregg2.Tactics
@@ -268,22 +259,16 @@ theorem merkle_sound (compress : Digest → Digest → Digest) (root leaf : Dige
   rw [getLast_parent_eq_recompose compress circuit.rows leaf last hhc hl hhash htrans] at hlp
   exact hlp
 
-/-- **`merkle_bridge` — THE deliverable (`PHASE-CRYPTOKERNEL.md §5.2`).** The Merkle AIR's
-satisfiability is EXACTLY membership: a satisfying trace proves the leaf is in the tree
-(`merkle_sound`, soundness), and every member has a satisfying trace (`merkle_complete`,
-completeness). `compress` is abstract throughout — this is `Circuit.lean`'s `bridge` lifted
-to the Merkle gadget, with NO primitive seam inside (the `RecordCircuit.range_iff` pattern).
-The only cryptographic residue is `compress`'s collision-resistance (Layer-A `collisionHard`),
-which the bridge never invokes. -/
+/-- **`merkle_bridge`** — the Merkle AIR's satisfiability is exactly membership: soundness
+(`merkle_sound`) + completeness (`merkle_complete`), with `compress` abstract. No primitive seam.
+The only crypto residue is `compress`'s CR (`collisionHard`), which the bridge never invokes. -/
 theorem merkle_bridge (compress : Digest → Digest → Digest) (root leaf : Digest) :
     (∃ circuit : CircuitIR Digest, Satisfies compress circuit root leaf)
       ↔ MerkleMembers compress root leaf :=
   ⟨fun ⟨c, hc⟩ => merkle_sound compress root leaf c hc, merkle_complete compress root leaf⟩
 
--- TRIPWIRES: the Merkle gadget is FULLY proven with NO primitive seam — both bridge
--- directions are kernel-clean (axioms ⊆ {propext, Classical.choice, Quot.sound}). The hash's
--- collision-resistance never enters; it is the Layer-A `collisionHard` carrier, consumed
--- elsewhere (the verifier-kernel extractability), not here.
+-- Tripwires: both bridge directions are kernel-clean. Hash CR never enters the gadget — it is
+-- the Layer-A `collisionHard` carrier, consumed by the verifier-kernel extractability.
 #assert_axioms merkle_sound
 #assert_axioms merkle_complete
 #assert_axioms merkle_bridge

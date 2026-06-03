@@ -1,37 +1,29 @@
 /-
 # Dregg2.Authority.CDT — the capability-derivation-tree as the authority spine.
 
-This is **candidate C's primary structural object** (`cand-C §1`, `dregg2 §1.1`): one
-append-only, content-addressed partial order of `(parent → child)` edges, each edge a
-**monotone attenuation**. The same structure, viewed three ways (the deepest collapse,
-`cand-C §1`):
+The CDT is an append-only, content-addressed partial order of `(parent → child)` edges, each a
+monotone attenuation. The same structure seen three ways:
 
-  * as a **cap graph** it is the seL4 CDT (`Mint`/`Copy`/`Revoke`);
-  * as a **strand log** it is the blocklace (per-strand append-only causal DAG);
-  * as a **biscuit delegation graph** it is the `Authority.Caveat` token chain.
+  * as a **cap graph**: the seL4 CDT (`Mint`/`Copy`/`Revoke`);
+  * as a **strand log**: the blocklace (per-strand append-only causal DAG);
+  * as a **biscuit delegation graph**: the `Authority.Caveat` token chain.
 
-> **CDT ≡ strand-log ≡ biscuit-graph.** A capability *is* a derivation node; appending a
-> turn *is* minting/exercising an edge. There is no second data structure.
+CDT ≡ strand-log ≡ biscuit-graph. A capability is a derivation node; appending a turn is
+minting/exercising an edge. There is no second data structure.
 
-Here the CDT is modelled abstractly: a node carries its `authority` as a **set of rights**
-(`Finset Authority.Auth`, ordered by ⊆ — the rights-lattice). A `CapHash` is an **opaque,
-content-address id** — kept abstract (its injectivity / collision-resistance is a §8
-crypto-interface obligation, NEVER a Lean law; see `REORIENT §6`).
+The CDT is modelled abstractly: a node carries its `authority` as a `Finset Authority.Auth`
+(the rights-lattice, ordered by ⊆). A `CapHash` is an opaque content-address id — its
+injectivity / collision-resistance is a §8 crypto-interface obligation, never a Lean law.
 
-The load-bearing content:
-- a **`CapNode`** = `(self : CapHash, parent : Option CapHash, authority : Finset Auth)`;
-- the **attenuation-edge invariant** `attenuates child parent := child.authority ⊆
-  parent.authority` — the ONE rule the whole system rests on (`dregg2 §1.1`);
-- a **`WellFormedCDT`**: every non-root node attenuates its (present) parent;
-- **THE KEYSTONE — `path_attenuates`**: authority down ANY root-to-node `DerivationPath`
-  in a well-formed CDT only SHRINKS (leaf.authority ⊆ root.authority), by induction on the
-  path (transitivity of ⊆). "Authority never grows along a derivation chain" — the
-  seL4-integrity / LossyMorphism backbone;
-- the **bridge to `Caveat`**: a `Token`'s attenuation chain (`Token.attenuate` /
-  `attenuate_narrows`) IS the biscuit rendering of a CDT path — `chain_renders_path`
-  exhibits both as one append-only, monotone-narrowing order;
-- a **binding / non-vacuity witness**: an *amplifying* edge is rejected by `WellFormedCDT`
-  (the invariant has teeth) — `amplifying_rejected`.
+Load-bearing content:
+- `CapNode` = `(self : CapHash, parent : Option CapHash, authority : Finset Auth)`;
+- the attenuation-edge invariant `attenuates child parent := child.authority ⊆ parent.authority`;
+- `WellFormedCDT`: every non-root node attenuates its (present) parent;
+- keystone `path_attenuates`: authority down any derivation path only shrinks (`leaf.authority ⊆
+  root.authority`) — "authority never grows along a derivation chain" (seL4-integrity backbone);
+- bridge to `Caveat`: `chain_renders_path` shows a `Token`'s attenuation chain and a CDT path
+  are one append-only, monotone-narrowing order;
+- `amplifying_rejected`: an amplifying edge is rejected by `WellFormedCDT` — the invariant has teeth.
 
 Pure, computable, `#eval`-able.
 -/
@@ -45,12 +37,11 @@ open Dregg2.Authority
 
 /-! ## The opaque content-address id -/
 
-/-- **`CapHash`** — the content-address identity of a derivation node:
-`H(canonical{root, target, authority, facet, caveats, parent, delta})` (`cand-C §1`). It is
-an **opaque id** — modelled as a `Nat` so the CDT is concrete and `#eval`-able, but treated
-abstractly: NO Lean theorem here depends on any property of hashing. Collision-resistance /
-injectivity is a §8 crypto-interface obligation, discharged by the circuit + Rust cascade,
-never merged into this semantic law (`REORIENT §6`). -/
+/-- **`CapHash`** — the content-address identity of a derivation node
+(`H(canonical{root, target, authority, facet, caveats, parent, delta})`). Modelled as a `Nat`
+for concreteness and `#eval`-ability, but treated abstractly: no Lean theorem here depends on
+any property of hashing. Collision-resistance / injectivity is a §8 obligation discharged by
+the circuit + Rust cascade, never a Lean law. -/
 abbrev CapHash := Nat
 
 /-- The rights set a node confers — the authority lattice, ordered by ⊆. Reuses
@@ -82,10 +73,9 @@ def Tree.lookup (g : Tree) (h : CapHash) : Option CapNode :=
 
 /-! ## The attenuation edge invariant — the ONE rule -/
 
-/-- **`attenuates child parent`** — the edge invariant (`dregg2 §1.1`): a child confers no
-more authority than its parent. A child caps's rights are a **subset** of its parent's. This
-is the lattice form of `attenuate_narrows` (the `Caveat` chain) and the LossyMorphism
-`in_le`/`out_le` — attenuation only narrows. -/
+/-- **`attenuates child parent`** — the edge invariant: a child confers no more authority than
+its parent (`child.authority ⊆ parent.authority`). The lattice form of `attenuate_narrows`
+and the LossyMorphism `in_le`/`out_le` — attenuation only narrows. -/
 def attenuates (child parent : CapNode) : Prop :=
   child.authority ⊆ parent.authority
 
@@ -124,12 +114,11 @@ inductive DerivationPath (g : Tree) : CapNode → CapNode → Prop where
       (rest : DerivationPath g mid root) :
       DerivationPath g child root
 
-/-! ## THE KEYSTONE — authority only shrinks down a derivation path. -/
+/-! ## The keystone — authority only shrinks down a derivation path. -/
 
-/-- **`edge_attenuates` (PROVED)** — in a well-formed CDT, any present edge `child → mid`
-(i.e. `child.parent = some mid.self` with `mid` resolving to itself) is a monotone
-attenuation: `child.authority ⊆ mid.authority`. The well-formedness invariant, *applied* to
-one edge — the inductive step's engine. -/
+/-- **`edge_attenuates`** — in a well-formed CDT, any present edge `child → mid` is a
+monotone attenuation: `child.authority ⊆ mid.authority`. The well-formedness invariant
+applied to one edge — the inductive step's engine. -/
 theorem edge_attenuates {g : Tree} (wf : WellFormedCDT g)
     {child mid : CapNode} (hchild : child ∈ g)
     (hedge : child.parent = some mid.self)
@@ -141,15 +130,11 @@ theorem edge_attenuates {g : Tree} (wf : WellFormedCDT g)
   cases hlk
   exact hatt
 
-/-- **`path_attenuates` (PROVED) — THE KEYSTONE.** Authority down ANY root-to-node
-derivation path in a well-formed CDT only SHRINKS: the leaf confers no more than the root
-(`leaf.authority ⊆ root.authority`). Proved by induction on the path, chaining
-`edge_attenuates` (each edge narrows) through transitivity of ⊆.
-
-This is "authority never grows along a derivation chain" — the seL4-integrity property
-carried across the net (`cand-C §0`), the lattice realization of the LossyMorphism backbone.
-It requires only that the *leaf* lives in `g` (so well-formedness applies, and every higher
-node on the path resolves to a present node by the path's `hpresent` edges). -/
+/-- **`path_attenuates`** — the keystone. Authority down any root-to-node derivation path in
+a well-formed CDT only shrinks: `leaf.authority ⊆ root.authority`. Proved by induction on
+the path, chaining `edge_attenuates` through transitivity of ⊆. "Authority never grows along
+a derivation chain" — the seL4-integrity property, the lattice realization of the
+LossyMorphism backbone. -/
 theorem path_narrows {g : Tree} (wf : WellFormedCDT g) :
     ∀ {leaf root : CapNode}, DerivationPath g leaf root →
       leaf ∈ g →
@@ -167,10 +152,9 @@ theorem path_narrows {g : Tree} (wf : WellFormedCDT g) :
       have hmidmem : mid ∈ g := List.mem_of_find?_eq_some hpresent
       exact Finset.Subset.trans hstep (ih hmidmem)
 
-/-- **`path_attenuates` (PROVED) — THE KEYSTONE, directly-usable form.** Along ANY root-to-node
+/-- **`path_attenuates`** — directly-usable form of `path_narrows`. Along any root-to-node
 derivation path in a well-formed CDT, the leaf confers no more authority than the root:
-`leaf.authority ⊆ root.authority`. A thin re-statement of `path_narrows` with arguments
-positional rather than under a `∀` — "authority never grows along a derivation chain." -/
+`leaf.authority ⊆ root.authority`. -/
 theorem path_attenuates {g : Tree} (wf : WellFormedCDT g)
     {leaf root : CapNode} (path : DerivationPath g leaf root) (hleaf : leaf ∈ g) :
     leaf.authority ⊆ root.authority :=
@@ -185,10 +169,9 @@ def amplifies (child parent : CapNode) : Prop :=
 instance (child parent : CapNode) : Decidable (amplifies child parent) := by
   unfold amplifies; exact inferInstance
 
-/-- **`amplifying_rejected` (PROVED)** — the invariant is not vacuous: if a node's parent
-resolves in `g` but the edge to it *amplifies* (the child grabs a right the parent lacks),
-then `g` is NOT well-formed. A node that does not attenuate its parent is rejected — the ONE
-rule has teeth (it can fail, it is not satisfied-by-everything). -/
+/-- **`amplifying_rejected`** — the invariant is not vacuous: if a node's parent resolves in
+`g` but the edge amplifies (the child grabs a right the parent lacks), then `g` is NOT
+well-formed. A node that does not attenuate its parent is rejected — the rule has real teeth. -/
 theorem amplifying_rejected {g : Tree} {n pn : CapNode}
     (hn : n ∈ g) (hpar : n.parent = some pn.self)
     (hlk : g.lookup pn.self = some pn)
@@ -202,39 +185,34 @@ theorem amplifying_rejected {g : Tree} {n pn : CapNode}
 
 /-! ## The bridge to `Caveat`: a CDT path IS the biscuit token chain.
 
-The `Authority.Caveat` `Token` is a root + an **append-only attenuation chain of caveats**;
-`Token.attenuate` appends one (narrows), and `attenuate_narrows` PROVES the admissible set
-can only shrink. That chain is the **biscuit rendering of a CDT path**: each `Token.attenuate`
-edge is one CDT `(child → parent)` attenuation edge, viewed on the *admissible-request*
-lattice (`Set Ctx` under ⊆) instead of the *rights* lattice (`Finset Auth` under ⊆). One
-append-only, monotone-narrowing partial order, two faces. -/
+`Authority.Caveat.Token` is a root plus an append-only attenuation chain of caveats;
+`Token.attenuate` appends one, and `attenuate_narrows` proves the admissible set can only
+shrink. Each `Token.attenuate` edge is one CDT `(child → parent)` attenuation edge viewed on
+the admissible-request lattice (`Set Ctx` under ⊆) instead of the rights lattice (`Finset Auth`
+under ⊆). One append-only, monotone-narrowing order, two faces. -/
 
-/-- **`chain_renders_path` (PROVED) — the CDT ⟷ biscuit bridge.** A `Token`'s attenuation
-chain narrows on EXACTLY the lattice `path_attenuates`/`amplifying_rejected` narrow on (⊆,
-fail-closed). We exhibit the correspondence as the shared narrowing law: appending an edge
-(`Token.attenuate`, the biscuit face) admits a subset of what the parent admitted —
-the same monotone-narrowing edge the CDT's `attenuates` (the rights face) enforces. So the
-token chain and a CDT path are one append-only, monotone-attenuation order. -/
+/-- **`chain_renders_path`** — the CDT ↔ biscuit bridge. A `Token`'s attenuation chain
+narrows on exactly the same lattice as `path_attenuates` (⊆, fail-closed): appending an edge
+admits a subset of what the parent admitted. The token chain and a CDT path are one
+append-only, monotone-attenuation order. -/
 theorem chain_renders_path {Ctx Gateway : Type}
     (tok : Token Ctx Gateway) (c : Caveat Ctx Gateway)
     (ctx : Ctx) (d : Discharges Gateway) :
     (tok.attenuate c).admits ctx d = true → tok.admits ctx d = true :=
   attenuate_narrows tok c ctx d
 
-/-- The same correspondence at the set level: the biscuit-chain edge's admissible set is a
-**subset** of its parent's — structurally identical to a CDT edge's `attenuates`
-(`child.authority ⊆ parent.authority`). Both are ⊆ on a lattice; the chain and the path are
-the same append-only narrowing order. **PROVED.** -/
+/-- The biscuit-chain edge's admissible set is a subset of its parent's — structurally
+identical to a CDT edge's `attenuates` (`child.authority ⊆ parent.authority`). Both are ⊆ on
+a lattice; the chain and the path are the same append-only narrowing order. -/
 theorem chain_edge_is_subset {Ctx Gateway : Type}
     (tok : Token Ctx Gateway) (c : Caveat Ctx Gateway)
     (d : Discharges Gateway) :
     {ctx | (tok.attenuate c).admits ctx d = true} ⊆ {ctx | tok.admits ctx d = true} :=
   attenuate_subset tok c d
 
-/-- And the CDT edge invariant, as a `Subset` on the rights lattice, to make the parallel
-literal: a well-formed edge `attenuates child parent` IS `child.authority ⊆ parent.authority`
-— the same shape as `chain_edge_is_subset`, on the rights face instead of the request face.
-**PROVED** (definitional). -/
+/-- The CDT edge invariant as a `Subset` on the rights lattice: `attenuates child parent` IS
+`child.authority ⊆ parent.authority` — the same shape as `chain_edge_is_subset` on the rights
+face instead of the request face. (Definitional.) -/
 theorem cdt_edge_is_subset {child parent : CapNode} (h : attenuates child parent) :
     child.authority ⊆ parent.authority := h
 
@@ -274,10 +252,10 @@ def badCDT : Tree := [amplifier, child, root]
 
 /-! ## The demo CDT, PROVED well-formed, and the keystone exercised on a concrete path. -/
 
-/-- **`goodCDT_wellFormed` (PROVED)** — the three-node `root ← child ← grandchild` CDT
-satisfies the structural invariant: every non-root node attenuates its resolved parent. The
-amplifying `badCDT` could never be proved here (its `child→child`? no — its `amplifier→child`
-edge fails ⊆); this shows the invariant *can* be satisfied and is not vacuous. -/
+/-- **`goodCDT_wellFormed`** — the three-node `root ← child ← grandchild` CDT satisfies the
+structural invariant: every non-root node attenuates its resolved parent. The amplifying
+`badCDT` cannot be proved here (`amplifier→child` fails ⊆); this shows the invariant can
+be satisfied and is not vacuous. -/
 theorem goodCDT_wellFormed : WellFormedCDT goodCDT := by
   intro n hn p hpar
   -- `goodCDT = [grandchild, child, root]`; case on which node `n` is.
@@ -298,16 +276,14 @@ def goodPath : DerivationPath goodCDT grandchild root :=
   .step (mid := child) (by rfl) (by decide)
     (.step (mid := root) (by rfl) (by decide) (.refl root))
 
-/-- **`goodCDT_keystone` (PROVED)** — the keystone on the concrete CDT: descending the real
-`grandchild ⤳ child ⤳ root` path, authority shrinks — `grandchild.authority ⊆ root.authority`.
-The `#eval` above *computes* the inclusion; this *derives* it from `path_attenuates` (the
-inductive shrink law) on a genuine, store-resolved path. -/
+/-- **`goodCDT_keystone`** — the keystone on the concrete CDT: descending `grandchild ⤳ child
+⤳ root`, authority shrinks — `grandchild.authority ⊆ root.authority`. The `#eval` above
+computes the inclusion; this derives it from `path_attenuates` on a genuine store-resolved path. -/
 theorem goodCDT_keystone : grandchild.authority ⊆ root.authority :=
   path_attenuates goodCDT_wellFormed goodPath (by decide)
 
-/-- **`badCDT_rejected` (PROVED)** — the teeth, on the concrete CDT: `badCDT` (the amplifying
-edge spliced in) is NOT well-formed, because `amplifier → child` grabs `grant` the parent
-dropped. A node that does not attenuate its parent is rejected. -/
+/-- **`badCDT_rejected`** — `badCDT` is NOT well-formed: `amplifier → child` grabs `grant`
+the parent dropped. A node that does not attenuate its parent is rejected. -/
 theorem badCDT_rejected : ¬ WellFormedCDT badCDT :=
   amplifying_rejected
     (n := amplifier) (pn := child)

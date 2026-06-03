@@ -34,9 +34,9 @@ bilateral kernel `Exec.JointCell` (decidable, `#eval`-able) so every witness is 
 and we bridge the classifier to `Confluence.IConfluent` so the dichotomy is the SAME third
 judgement the rest of the metatheory uses.
 
-Discipline (REORIENT §6 / the rails): no `axiom`/`admit`/`native_decide`/`sorry`. The scheduler,
-adversary, and partition are explicit hypotheses/data. `#assert_axioms` on every keystone.
-Read-only consumer of `Exec.JointCell`, `Exec.Kernel`, `Confluence`. Modifies nothing.
+Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. The scheduler, adversary, and partition
+are explicit hypotheses/data. `#assert_axioms` on every keystone. Read-only consumer of
+`Exec.JointCell`, `Exec.Kernel`, `Confluence`.
 -/
 import Dregg2.Exec.JointCell
 import Dregg2.Confluence
@@ -443,45 +443,15 @@ theorem dichotomy_nonvacuous :
 #assert_axioms coupled_is_nonconfluent_must_escalate
 #assert_axioms dichotomy_nonvacuous
 
-/-! ## §9 — OUTCOME + the remaining residue.
+/-! ## §9 — Residue.
 
-The contended / adversary-scheduled cross-cell dichotomy is PROVED on the executable bilateral
-kernel, BOTH poles closed:
-
-  * **Safe fragment (PROVED):** `contended_commits_confluent` — two contending cross-cell turns
-    debiting DISJOINT shared cells (the I-confluent fragment, `disjoint_is_iconfluent_fragment` /
-    `Coordination.iconfluent_fragment_crossgroup_free`) commit under EITHER adversary schedule and
-    leave the SAME shared ledger (pointwise balances + accounts + caps). Schedule-agnostic,
-    partition-tolerant, coordination-free. Rests on the commutation lemma
-    `applyHalfOut_comm_disjoint` + frame-independence `debitFires_frame_disjoint`.
-
-  * **Impossibility (PROVED):** `coupled_no_schedule_agnostic_commit` — for two cross-cell turns
-    COUPLED on one pot (a Σ=0 settlement, `¬ DisjointDebits`, `¬ IConfluent` via
-    `coupled_is_nonconfluent_must_escalate` / `cardLeOne_not_iconfluent`), there is NO
-    schedule-agnostic atomic commit: the two adversary schedules `fst12`/`fst21` produce DISTINCT
-    committed sets (`coupled_schedules_disagree`), so no deterministic local verdict is faithful
-    to all schedules without consensus. The CAP / BEC Thm 3.1 / CryptoConcurrency obstruction as a
-    `¬ ∃` theorem — the "design AROUND, don't fix" boundary made precise. Each schedule's outcome
-    is VALID but they cannot both be canonical (validity ≠ canonicity, `Spec.JointViaHyper`).
-
-  * **Dichotomy real:** `dichotomy_nonvacuous` — the coupled example is outside the safe fragment
-    and is a genuine contention; the classifier splits a real distinction.
-
-All keystones `#assert_axioms`-clean. The adversary/scheduler/partition enter ONLY as explicit
-data (`Schedule`, `runSchedule`) and hypotheses (`DisjointDebits`, the per-turn fire premises);
-the impossibility is a PROVED `¬ ∃`, never vague.
-
--- OPEN (the residue beyond two-turn bilateral contention). (1) The N-ARY contended case — k > 2
---   overlapping HYPEREDGES (`Hyperedge` over a family) under a scheduler that is a permutation of
---   `Fin k`, with the safe fragment being pairwise-disjoint debit supports and the impossibility a
---   k-way coupled overdraw; this needs an executable N-ary `runSchedule` over `Sym (Fin k)` and a
---   `Finset.sum`-telescoping generalisation of `applyHalfOut_comm_disjoint` (bounded engineering).
---   (2) The genuinely-COINDUCTIVE adversary — schedules of UNBOUNDED interleaved turns over the
---   `Boundary.TurnCoalg`, where the adversary is an infinite stream and the safe-fragment result
---   is a confluence-up-to-bisimulation over `νF` (the `Boundary` coalgebra), not the two-point
---   commutation here. That is the full coinductive machinery the complete result needs; this module
---   proves the FINITE-contention dichotomy that any coinductive lift must specialise to, and names
---   the exact missing piece: an adversary-stream confluence theorem over `inducedSystem`.
+-- OPEN (beyond two-turn bilateral contention):
+-- (1) N-ary: k > 2 overlapping hyperedges under a permutation scheduler, with the safe fragment
+--     being pairwise-disjoint debit supports and the impossibility a k-way coupled overdraw;
+--     needs a `Finset.sum`-telescoping generalisation of `applyHalfOut_comm_disjoint`.
+-- (2) Coinductive: schedules of unbounded interleaved turns over `Boundary.TurnCoalg`, where the
+--     adversary is an infinite stream and the safe-fragment result is a confluence-up-to-
+--     bisimulation over νF — handled by `CoinductiveAdversary`.
 -/
 
 end Dregg2.Proof.ContendedCrossCell

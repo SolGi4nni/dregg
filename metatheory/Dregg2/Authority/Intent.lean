@@ -1,49 +1,24 @@
 /-
-# Dregg2.Authority.Intent — the intent face: the ∃-resolver / INVERSE vat boundary.
+# Dregg2.Authority.Intent — the intent face: the ∃-resolver / inverse vat boundary.
 
-dregg2's await family has four faces (`Await.lean §4`); this module gives the
-*intent* face its own authority-grade development: an **existentially-quantified
-hole**. Where the vat boundary (`Authority/Positional.lean`, `Exec/VatBoundary.lean`)
-gates a **complete turn crossing OUT** — a proof of what passes — an intent gates the
-**MISSING HALF**: a predicate `want : P` on the filler, fired when *any* filler `w : W`
-with `Verify want w = true` arrives. The intent is the *inverse* membrane:
+An **intent** gates an *incoming filler*: a predicate `want : P` fires when any filler
+`w : W` with `Verify want w = true` arrives. This is the inverse of the vat boundary,
+which gates an *outgoing* settled turn.
 
-  * vat boundary : gates an **outgoing morphism** (a settled turn leaving the vat);
-  * intent       : gates an **incoming filler** (`λ(fill satisfying P). effects`).
+The asymmetry between the two sides is carried in the types:
+- **VERIFY is tractable and in-TCB**: `Verifiable.Verify : P → W → Bool` is a total
+  decidable function; the cell can always decide acceptance.
+- **FIND is undecidable and untrusted**: `Searchable.find : P → Option W` is an opaque
+  plugin with no completeness, termination, or `Decidable` promise. It may return `none`,
+  loop (modelled by `Option`), or return a wrong fill. Its only contract is
+  soundness-by-verification (`Laws.search_sound`).
 
-(`cand-A §3`: "Intent is the inverse boundary: a vat boundary gates a *complete* turn
-crossing out; an intent gates the *filler* crossing in." `dregg2 §4`; the intent face
-is named in `Await.lean` as Face 3, here developed to its own keystone.)
+The keystone (`intent_fill_verifies`): whatever an untrusted matcher returns, if the
+cell's VERIFY accepts it, the fill genuinely satisfies the predicate. Soundness rests on
+VERIFY alone; FIND is never trusted.
 
-## THE DESIGN LAW — the asymmetry lives in the TYPES (read this).
-
-The VERIFY/FIND seam (`Laws.lean`) is *sharpest* at the intent. The two sides of the
-hole have categorically different status, and that status is carried by their **types**,
-not by any runtime flag:
-
-  * **VERIFY a claimed fill is TRACTABLE and IN-TCB.** `Verifiable.Verify : P → W → Bool`
-    — a total, decidable function. The cell that owns the intent runs it to *accept or
-    reject* a proposed fill. We witness "VERIFY is decidable" by the `Decidable
-    (Discharged want w)` instance below: the cell can always decide acceptance.
-
-  * **FIND a fill is UNDECIDABLE and UNTRUSTED.** `Searchable.find : P → Option W` — an
-    opaque plugin (the *matcher*). Finding a `w` that satisfies an arbitrary predicate is
-    undecidable in general: matching the existential hole is at least higher-order
-    unification, which is undecidable (`cand-A §3`: `no_general_matcher` via
-    `HOU ⪯ GeneralMatch`, machine-checked in Coq; winner-determination is NP-hard, no
-    PTAS). So `find` carries **NO completeness, NO termination, NO `Decidable` promise** —
-    it may return `none`, may loop (modelled by `Option`), may even return a *wrong*
-    fill. The matcher is a bounded, pluggable, untrusted plugin emitting a checkable
-    witness; its only contract is **soundness-by-verification** (`Laws.search_sound`).
-
-The keystone (`intent_fill_verifies`) is that this asymmetry is *safe*: whatever an
-untrusted, possibly-adversarial matcher returns, IF the cell's VERIFY accepts it, the
-fill genuinely satisfies the predicate. Soundness rests on VERIFY alone; FIND is never
-trusted. The `#eval` demos exhibit this against both a correct and an adversarial
-matcher.
-
-We do NOT redefine `Verifiable`/`Discharged`/`Searchable`/`find`/`search_sound`/`Await`;
-we *import* and build the intent keystone on top of them.
+Reuses `Verifiable`/`Discharged`/`Searchable`/`find`/`search_sound`/`Await` unchanged.
+Pure, `#eval`-able.
 -/
 import Dregg2.Laws
 import Dregg2.Await
@@ -112,15 +87,12 @@ def Intent.resolve [Verifiable P W] [Searchable P W] (i : Intent P W) : Option W
   | none   => none
   | some w => if Verifiable.Verify i.want w then some w else none
 
-/-! ## 3. THE KEYSTONE — soundness-by-verification at the intent. -/
+/-! ## 3. The keystone — soundness-by-verification at the intent. -/
 
-/-- **`intent_fill_verifies` (KEYSTONE part (a)) — an ACCEPTED fill genuinely satisfies
-the predicate.** If `resolve` yields `some w`, then `w` discharges the intent's
-predicate. The matcher (`find`) is untrusted and may be buggy or adversarial, yet the
-fill the cell *accepts* is sound, because acceptance gates on the decidable `Verify`.
-This is the intent-face instance of soundness-by-verification — the same content as
-`Laws.search_sound`, but recovered here from the *cell's own VERIFY step* (no appeal to
-the `search_sound` contract is needed, because `resolve` re-checks `Verify` itself). -/
+/-- **`intent_fill_verifies` (keystone, part (a))** — if `resolve` yields `some w`, then
+`w` discharges the intent's predicate. The matcher may be buggy or adversarial; the
+accepted fill is sound because acceptance gates on the decidable `Verify`. (`resolve`
+re-checks `Verify` itself, so no appeal to `search_sound` is needed.) -/
 theorem intent_fill_verifies
     [Verifiable P W] [Searchable P W] (i : Intent P W) (w : W)
     (h : i.resolve = some w) :
@@ -162,37 +134,27 @@ theorem intent_resolve_fires
     i.Fires :=
   ⟨w, intent_fill_verifies i w h⟩
 
-/-- **`intent_sound_against_adversary` — soundness holds even against an adversarial
-matcher.** For ANY `Searchable P W` instance whatsoever (including one engineered to
-return wrong fills), every fill the cell *accepts* still discharges the predicate. The
-statement quantifies over the matcher being arbitrary by simply not constraining it: the
-instance is a free parameter, and the conclusion holds regardless. This is the formal
-content of "VERIFY in the TCB, FIND outside it." -/
+/-- **`intent_sound_against_adversary`** — for any `Searchable P W` instance (including
+one engineered to return wrong fills), every fill the cell accepts still discharges the
+predicate. VERIFY is in the TCB; FIND is not. -/
 theorem intent_sound_against_adversary
     [Verifiable P W] [Searchable P W] (i : Intent P W) :
     ∀ w : W, i.resolve = some w → Discharged i.want w :=
   fun w h => intent_fill_verifies i w h
 
-/-! ## KEYSTONE part (b) — the asymmetry is in the TYPES.
+/-! ## Keystone part (b) — the asymmetry is in the types.
 
-The design law in this module's header is realized concretely:
-
-  * VERIFY is decidable — witnessed by the `Decidable (Intent.Accepts i w)` instance in
-    §1 (and `Laws`' own `Decidable (Discharged p w)`). The cell can ALWAYS decide
-    acceptance.
-  * FIND carries NO such guarantee — `Searchable.find : P → Option W` is an opaque
-    typeclass method with no `Decidable`/`DecidableEq`/completeness/termination law. There
-    is intentionally **no** instance `Decidable (Intent.Fires i)` in this module: deciding
-    *whether any filler exists* is the undecidable FIND problem (HOU-undecidable), and
-    asserting it would be the dishonest "general matcher" the design forbids.
+VERIFY is decidable: the `Decidable (Intent.Accepts i w)` instance in §1 witnesses this.
+FIND carries no such guarantee: `Searchable.find : P → Option W` is an opaque typeclass
+method with no completeness or termination law.
 
   -- OPEN: `Decidable (Intent.Fires i)` is NOT provided and MUST NOT be — `Fires` is
   -- `∃ w, Discharged want w`, whose decision is general fill-finding (higher-order
-  -- unification), undecidable (`cand-A §3`, `no_general_matcher` via `HOU ⪯ GeneralMatch`).
-  -- The matcher is an untrusted plugin (`Intent.propose`); we never claim to decide `Fires`.
+  -- unification), undecidable. The matcher is an untrusted plugin (`Intent.propose`);
+  -- we never claim to decide `Fires`.
 -/
 
-/-! ## 4. The duality — an intent is the INVERSE of the vat-boundary cross case. -/
+/-! ## 4. The duality — an intent is the inverse of the vat-boundary cross case. -/
 
 /-- **`ofAwait` / `toAwait`** — the intent developed here is *the same object* as
 `Await.intent` (Face 3 of the await family), forgetting/restoring the continuation and
@@ -227,31 +189,14 @@ boundary then admits a **cross** change iff some witness discharges `i.want` —
 the intent gates, but presented as an *outgoing* membrane over abstract object-states `KO`. -/
 def Intent.boundaryPred (i : Intent P W) : KO → KO → P := fun _ _ => i.want
 
-/-- **`intent_inverts_boundary` (the duality lemma) — intent is the INVERSE vat boundary
-(PROVED, non-trivially).**
-
-The two faces are genuinely *different objects*, not the same `Discharged` twice:
-
-  * **OUTGOING** is the real vat-boundary relation `Authority.Integrity` (`Positional.lean`,
-    the lift of l4v `integrity_obj_atomic`). Its `cross` constructor admits a non-owner
-    object change `ko ⟶ ko'` *iff* SOME witness discharges the boundary predicate, i.e. the
-    **existential** admissibility `∃ w, Discharged (i.boundaryPred ko ko') w`.
-  * **INCOMING** is the intent's own existential firing `i.Fires = ∃ w, Discharged i.want w`
-    — the filler-crossing-*in* condition.
-
-The duality is the equivalence of these two *distinct* faces, going through the inductive
-`Integrity.cross` introduction (NOT `Iff.rfl`): **an outgoing cross-vat change is admissible
-exactly when the intent fires.** The forward direction destructs the `Integrity` proof — but
-`intra` (own-vat, l4v `troa_lrefl`) is unavailable because we take a genuinely cross actor
-(`owner ∉ subjects`, here `subjects = []`), so admissibility can *only* come from a discharged
-witness, which is precisely a firing of the intent. The reverse direction takes a firing
-witness and builds the `cross` constructor.
-
-The pointwise companion `intent_accepts_witnesses_boundary` then shows the INCOMING local
-acceptance `i.Accepts w` is exactly a *witness producing* the OUTGOING admissibility: an
-accepted incoming filler is what lets the outgoing turn cross. Together: the intent is the vat
-boundary with the morphism direction reversed — the incoming filler-gate and the outgoing
-turn-gate are inverse, and each side's witness is the other side's admission proof. -/
+/-- **`intent_inverts_boundary`** — an outgoing cross-vat change is admissible (via
+`Integrity.cross`) exactly when the intent fires. The duality goes through the inductive
+`Integrity.cross` introduction (not `Iff.rfl`): the forward direction destructs the
+`Integrity` proof — `intra` is unavailable because `owner ∉ subjects = []` — so
+admissibility can only come from a discharged witness, which is precisely a firing of the
+intent. The companion `intent_accepts_witnesses_boundary` shows an accepted incoming filler
+is exactly a witness producing the outgoing admissibility. Together: the intent is the vat
+boundary with the morphism direction reversed. -/
 theorem intent_inverts_boundary [Verifiable P W] (i : Intent P W)
     (owner : Label) (ko ko' : KO) :
     Integrity W owner ([] : List Label) (i.boundaryPred) ko ko' ↔ i.Fires := by
@@ -273,15 +218,10 @@ theorem intent_accepts_witnesses_boundary [Verifiable P W] (i : Intent P W)
     Integrity W owner ([] : List Label) (i.boundaryPred) ko ko' :=
   Integrity.cross w hacc
 
-/-! ## 5. `#eval` demos — soundness against a correct AND an adversarial matcher.
+/-! ## 5. `#eval` demos — soundness against a correct and an adversarial matcher.
 
-A concrete intent: "find a `Nat` with `check w = true`", where `check w := w % 3 == 0`
-(any multiple of 3 fills the hole). VERIFY = run `check`. We exhibit:
-  * a CORRECT matcher returning `6` (a satisfying fill — ACCEPTED);
-  * an ADVERSARIAL matcher returning `7` (NOT a multiple of 3 — REJECTED by VERIFY);
-  * a GIVE-UP matcher returning `none` (no fill — resolves to `none`).
-Soundness (`intent_fill_verifies`) means `resolve` yields `some w` ONLY in the first case.
--/
+Intent predicate: "a multiple of 3" (`w % 3 == 0`). Three matchers: correct (returns 6,
+accepted), adversarial (returns 7, rejected by VERIFY), give-up (returns `none`). -/
 
 /-- Demo predicate space: a single predicate "is a multiple of 3". -/
 inductive DivBy3 where
@@ -311,15 +251,10 @@ def demoIntent : Intent DivBy3 Fill := { want := DivBy3.mult3 }
 @[reducible] def emptyMatcher : Searchable DivBy3 Fill where
   find := fun _ => none
 
-/-! ### A discriminating witness that `Laws.SoundSearchable`'s `find_sound` contract is
-non-vacuous. The `goodMatcher` (proposes `6`) SATISFIES the soundness-by-verification
-contract — every fill it returns verifies — so it lifts to a `SoundSearchable`. The
-`evilMatcher` (proposes `7`) does NOT (`7 % 3 ≠ 0`), which we prove below: the contract has
-teeth, it is a genuine constraint that not every untrusted `Searchable` meets. -/
+/-! ### `goodMatcher` lifts to `SoundSearchable`; `evilMatcher` does not — the contract has teeth. -/
 
-/-- **`goodMatcher` IS a contracted plugin (`SoundSearchable`).** Its only return `6`
-verifies (`6 % 3 == 0`), so the soundness-by-verification field is provable: a discriminating
-witness that the `find_sound` assumption is satisfiable (not vacuous). -/
+/-- **`goodMatcher`** is a contracted `SoundSearchable` plugin: its only return `6` verifies
+(`6 % 3 == 0`), witnessing that the `find_sound` assumption is satisfiable (non-vacuous). -/
 instance goodSoundMatcher : SoundSearchable DivBy3 Fill where
   find := goodMatcher.find
   find_sound := fun p w h => by
@@ -330,11 +265,10 @@ instance goodSoundMatcher : SoundSearchable DivBy3 Fill where
     unfold Discharged
     rfl
 
-/-- **TEETH — `evilMatcher` CANNOT be a contracted plugin.** No `SoundSearchable` instance
-agreeing with `evilMatcher.find` can exist: it returns `7`, which does NOT verify
-(`7 % 3 ≠ 0`), so any `find_sound` for it would prove the false `Discharged mult3 7`. The
-soundness contract is therefore a genuine (non-trivial) constraint — exactly the honest
-content of "FIND is untrusted; the contract is an assumption a real plugin must EARN." -/
+/-- **`evilMatcher_not_sound`** — no `SoundSearchable` instance agreeing with
+`evilMatcher.find` can exist: it returns `7`, which does not verify (`7 % 3 ≠ 0`), so any
+`find_sound` for it would prove the false `Discharged mult3 7`. The soundness contract is a
+genuine, non-trivial constraint. -/
 theorem evilMatcher_not_sound
     (s : SoundSearchable DivBy3 Fill) (hagree : s.find = evilMatcher.find) :
     False := by

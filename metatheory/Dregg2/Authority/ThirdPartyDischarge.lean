@@ -234,7 +234,7 @@ def accepts (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
         && boundTo m parentTail
         && predicateHolds m ctx
 
-/-! ## THE SOUNDNESS LAW — acceptance is EXACTLY the four-conjunct gate. -/
+/-! ## Soundness — acceptance is exactly the four-conjunct gate. -/
 
 /-- **`accepts_iff` (PROVED) — the integrity/soundness law.** A discharge is accepted IFF it
 discharges the right ticket (the recovered `r` keys the macaroon), AND binds to the correct parent,
@@ -266,7 +266,7 @@ theorem accepts_iff (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
       obtain rfl : r = r' := Option.some.inj hrec'
       exact ⟨⟨⟨⟨hk, hf⟩, hc⟩, hb⟩, hp⟩
 
-/-! ## COMPLETENESS — an honestly-minted, fresh, in-context discharge is accepted. -/
+/-! ## Completeness — an honestly-minted, fresh, in-context discharge is accepted. -/
 
 /-- **`honest_discharge_accepted` (PROVED).** If the 3P honestly minted the discharge bound to the
 parent (`mintDischarge`), the verifier recovers exactly that key from the VID (AEAD correctness:
@@ -295,12 +295,11 @@ theorem honest_discharge_accepted
     unfold boundTo mintDischarge bindCaveat
     simp [List.any_append]
 
-/-! ## TEETH — the negative laws: stale (replay) and cross-bound (wrong-parent) are REJECTED. -/
+/-! ## Teeth — the negative laws: stale (replay) and cross-bound (wrong-parent) are rejected. -/
 
-/-- **`stale_discharge_rejected` (PROVED) — REPLAY TEETH.** A discharge whose freshness check FAILS
-(stale = replayed beyond `MAX_DISCHARGE_AGE`, or `created_at = 0`) is REJECTED, no matter what else
-holds. This is the replay protection of `macaroon.rs:275-289`: an attacker who captures a valid
-discharge cannot replay it after the 300-second window. -/
+/-- **`stale_discharge_rejected`** — a discharge whose freshness check fails (stale = replayed
+beyond `MAX_DISCHARGE_AGE`, or `created_at = 0`) is rejected. Replay protection from
+`macaroon.rs:275-289`: a captured discharge cannot be replayed after the 300-second window. -/
 theorem stale_discharge_rejected (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
     (parentTail : Bytes) (ctx : Ctx) (now : Time)
     (hstale : fresh m.createdAt now = false) :
@@ -310,11 +309,11 @@ theorem stale_discharge_rejected (tpc : ThirdPartyCaveat Ctx) (m : DischargeMaca
   | none => rfl
   | some r => simp [hstale]
 
-/-- **`unbound_discharge_rejected` (PROVED) — CROSS-BIND TEETH (the headline).** A discharge that is
-NOT bound to the parent it is presented against (`boundTo m parentTail = false`: no bind caveat, or a
-bind caveat carrying `binding_hash` of a DIFFERENT parent) is REJECTED. This is `DischargeUnbound`
-(`macaroon.rs:306,324-329`): a discharge minted for parent A cannot be replayed against parent B —
-the bind-to-parent step defeats cross-context replay. -/
+/-- **`unbound_discharge_rejected`** — a discharge not bound to the parent it is presented
+against (`boundTo m parentTail = false`: no bind caveat, or a bind caveat carrying
+`binding_hash` of a different parent) is rejected. `DischargeUnbound`
+(`macaroon.rs:306,324-329`): a discharge minted for parent A cannot be replayed against
+parent B — the bind-to-parent step defeats cross-context replay. -/
 theorem unbound_discharge_rejected (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
     (parentTail : Bytes) (ctx : Ctx) (now : Time)
     (hunbound : boundTo m parentTail = false) :

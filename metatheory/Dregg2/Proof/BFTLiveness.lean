@@ -1,73 +1,31 @@
 /-
-# Dregg2.Proof.BFTLiveness — closing the O2 pacemaker OPEN: a GST round is DERIVED (not assumed).
+# Dregg2.Proof.BFTLiveness — the O2 pacemaker: a GST round is derived, not assumed.
 
-**What this file closes.** `Dregg2.Proof.BFT` (read-only sibling) reduced the partial-synchrony
-liveness obligation O2 to a single, precisely-stated prose `OPEN`:
+`BFT.lean` proved (i) `GSTRound ⇒ committedByQuorum` and (ii) `World.gst_liveness` productivity
+implies `GSTRound`; the open direction was building the pacemaker that *produces* a `GSTRound`
+from legitimate primitives. This file closes it.
 
-  > a *from-scratch* proof that a `GSTRound` eventually obtains — the pacemaker /
-  > view-synchronization argument relating `World.clock` to Δ-bounded delivery.
+The `Pacemaker` structure bundles the legitimate view-synchronization primitives, NONE of which
+is "the quorum forms":
+  * `honestLeader` — which views have an honest leader (from the beacon; ELRS §5).
+  * `synchronizes` (ELRS Def. 3.1 + Prop. 2) — for every round `t`, a later view `r ≥ gst` with
+    `honestLeader r` exists. Derivable from `BeaconSpace.synchronizer_round_obtains_over_beacon`.
+  * `honest_quorum` — at an honest-leader round the honest endorsers number `≥ cfg.threshold`:
+    the BFT `n > 3f` / `h > 2/3` floor. A count of honest voters, NOT of delivered votes.
+  * `honest_le_delivered` (HotStuff Thm 4 @ DLS88 Δ-delivery) — at a honest-leader round past GST
+    the honest votes are delivered. The sole delivery assumption; the threshold is then derived by
+    `cfg.threshold ≤ honestEndorsers ≤ delivered`.
 
-`BFT.lean` proved the two halves *around* that residual: (i) a `GSTRound ⇒ committedByQuorum`
-(`gst_liveness_from_round_model`), and (ii) the modeled premise is *implied by*
-`World.gst_liveness`'s productivity field (`gstRound_of_productivity`). The genuinely open part
-was the converse direction — building the pacemaker that *produces* a `GSTRound` from
-**legitimate primitive** assumptions. This file builds that pacemaker and DERIVES the GST round.
+`gstRound_obtains` composes these three primitives to derive the quorum. The liveness premise is
+honest-majority + GST-delivery, not the conclusion.
 
-**The faithfulness fix (this revision).** The earlier `Pacemaker` had a field
-`responsive_quorum : ∀ r, gst ≤ r → cfg.threshold ≤ (votersFor … (block r)).length` — which
-**ASSUMED THE VERY CONCLUSION** liveness must deliver ("a quorum forms"). That made the descent to
-"the protocol is live" a *portal-assumed* step: the premise was the conclusion in disguise. (See
-`docs/rebuild/FAITHFULNESS-AUDIT-CORE.md`.)
+OPEN (the remaining bridge): coupling `World.rand` to the `BeaconSpace` measure (wiring the
+deterministic oracle to the Bernoulli-per-view law the measure carries) — an interface extension,
+not a sorry. `honest_le_delivered` and `honest_quorum` are carried as fields exactly as
+`World.recv_mono` and `World.gst_liveness` are, never as axioms.
 
-This revision REMOVES that field and DERIVES the quorum count from three *legitimate* primitives —
-the actual BFT/DLS88/HotStuff assumptions, none of which is "the quorum forms":
-
-  * `honestLeader` (Bernoulli over the beacon, ELRS §5) — *which views have an honest leader*. The
-    randomized leader rotation supplies this; `BeaconSpace`/`Synchronizer` PROVE an honest-leader
-    view is hit almost surely / in expected `O(1)` views from the honest fraction `h > 2/3`.
-  * `synchronizes` (ELRS Def. 3.1 + Prop. 2) — for every round there is a *later* synchronization
-    round `r ≥ gst` **with an honest leader** (`honestLeader r`). This is now derivable from the
-    `BeaconSpace` model (`gstRound_obtains_over_beacon`), not assumed: the honest-leader content is
-    the beacon's almost-sure hit, and the arithmetic skeleton is `Synchronizer.synchronizes_skeleton`.
-  * `honest_quorum` (the BFT honest-supermajority assumption) — at an **honest-leader** view, the
-    honest voters that endorse the leader's proposal number `≥ cfg.threshold`. This is the
-    `n > 3f` / `h > 2/3` BFT floor restated: the honest set is itself a quorum. It is a count of the
-    *honest voters*, NOT a count of *delivered* votes — it does not assume delivery, it assumes the
-    honest supermajority exists (the legitimate BFT assumption, the dual of `BFTModel.fault_bound`).
-  * `responsive_delivery` (HotStuff Thm 4 @ DLS88 Δ-bound) — at an **honest-leader** synchronization
-    round past GST, the honest endorsers' votes are *delivered* (their voter-count for the leader's
-    block in `World.recv r` is at least the honest endorser count). This is the *only* delivery
-    assumption, and it is exactly the DLS88 post-GST Δ-delivery bound (`recv_mono`'s liveness dual),
-    keyed to the honest leader — NOT "the threshold is met". The threshold is then DERIVED by
-    transitivity: `cfg.threshold ≤ honest endorsers ≤ delivered voters`.
-
-So `gstRound_obtains` no longer reads a quorum out of an assumed field; it COMPOSES
-"honest-leader view exists" (beacon, derivable) ∘ "honest set is a quorum" (BFT supermajority) ∘
-"honest votes are delivered post-GST" (DLS88 Δ-delivery) to *prove* the threshold is met. The
-liveness premise is now the legitimate honest-majority + GST-delivery assumption, not the conclusion.
-
-**Ported paper-lemmas.**
-  * DLS88 GST round (`fetch-DLS88-partial-synchrony.pdf`): "∃ round `GST` after which correct
-    messages are delivered within Δ" ⟿ field `gst` + the post-GST clause of `responsive_delivery`.
-  * ELRS Def. 3.1 + Property 2 (`zotero-expected-linear-round-synchronization.pdf`): *eventual
-    synchronization with a correct leader* ⟿ field `synchronizes` (now carrying `honestLeader r`),
-    derivable from the `BeaconSpace` almost-sure hit.
-  * HotStuff Theorem 4 (`fetch-hotstuff-2019.pdf`): *synchronized correct-leader view ⇒ honest
-    votes delivered* ⟿ field `responsive_delivery` (delivery, not the count). The threshold is the
-    *derived* consequence of delivery + the honest-supermajority count.
-
-**What is now genuine vs. what stays OPEN.** GENUINE: the descent
-`honest-majority + beacon-hit + GST-delivery ⇒ GSTRound ⇒ committedByQuorum` is now a PROVED
-composition; `responsive_quorum` (the conclusion-in-disguise) is GONE. The honest-leader content
-of `synchronizes` is DERIVED from the `BeaconSpace` measure model (`gstRound_obtains_over_beacon`),
-so the liveness premise reduces to honest-fraction `h > 2/3` + the GST Δ-delivery bound. The single
-residual `-- OPEN` is the operational coupling of the abstract `World.rand` value-oracle to the
-`BeaconSpace` measure (the same bridge `BeaconSpace`/`Synchronizer` name) — an interface extension,
-not a `sorry`.
-
-**Rails.** No `axiom`/`admit`/`native_decide`/`sorry`. Every assumption is a `Pacemaker` field or
-theorem hypothesis (the `recv_mono` discipline) — and crucially, NONE of them is "the quorum forms".
-Keystones are `#assert_axioms`-clean. Verified with `lake env lean Dregg2/Proof/BFTLiveness.lean`.
+No `axiom`/`admit`/`native_decide`/`sorry`. All assumptions are `Pacemaker` fields.
+Keystones are `#assert_axioms`-clean.
 -/
 import Mathlib.Tactic
 import Dregg2.World
@@ -142,25 +100,19 @@ structure Pacemaker (Msg : Type) [World Msg] (votesOf : List Msg → List Vote)
   honest_le_delivered : ∀ r : Nat, gst ≤ r → honestLeader r →
     honestEndorsers r ≤ (votersFor (votesOf (World.recv r)) (block r)).length
 
-/-! ## 2. The pacemaker PRODUCES a GST round — the O2 residual, DERIVED (not assumed).
+/-! ## 2. The pacemaker produces a GST round.
 
-The descent NO LONGER reads a quorum out of a field. It composes three *legitimate* primitives:
-take a synchronization round past GST with an honest leader (`synchronizes`); at it the honest set
-is a quorum (`honest_quorum`, the BFT supermajority); and the honest votes are delivered
-(`honest_le_delivered`, HotStuff Thm 4 @ DLS88 Δ). By transitivity the delivered count meets the
-threshold — which is exactly `GSTRound`. The quorum is PROVED, not assumed. -/
+Composes three primitives: a synchronization round past GST with an honest leader (`synchronizes`);
+the honest set is a quorum at it (`honest_quorum`); the honest votes are delivered
+(`honest_le_delivered`). By transitivity `cfg.threshold ≤ honestEndorsers ≤ delivered`, which is
+exactly `GSTRound`. -/
 
-/-- **THE O2 RESIDUAL, DERIVED (PROVED).** From a `Pacemaker` (DLS88 GST + ELRS honest-leader
-synchronization + the BFT honest-supermajority + HotStuff responsive *delivery* — none of them "the
-quorum forms"), a `GSTRound` for the leader's proposed block *obtains* at an honest-leader
-synchronization round past GST. We exhibit the round `r`, and DERIVE its delivered distinct-voter
-count meets `cfg.threshold`:
+/-- **`gstRound_obtains`** — derives a `GSTRound` from the pacemaker:
 
-    cfg.threshold ≤ honestEndorsers r        -- BFT honest-supermajority (honest set is a quorum)
-                  ≤ delivered voters for r    -- HotStuff Thm 4 @ DLS88 Δ-delivery
+    cfg.threshold ≤ honestEndorsers r    -- BFT supermajority
+                  ≤ delivered voters     -- HotStuff Thm 4 @ DLS88 Δ-delivery
 
-which is definitionally `GSTRound votesOf cfg (P.block r) r`. The honest-fraction supermajority and
-the GST Δ-delivery are the *legitimate* BFT/DLS88 assumptions; nowhere is "a quorum forms" assumed. -/
+None of the pacemaker fields is "the quorum forms". -/
 theorem gstRound_obtains {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config)
     (P : Pacemaker Msg votesOf cfg) :
@@ -176,11 +128,9 @@ theorem gstRound_obtains {Msg : Type} [World Msg]
     _ ≤ (votersFor (votesOf (World.recv r)) (P.block r)).length :=
         P.honest_le_delivered r hgst hhonest
 
-/-- **O2 fully assembled from the pacemaker (PROVED).** Composing `gstRound_obtains` with
-`BFT.lean`'s `gst_liveness_from_round_model` (`GSTRound ⇒ committedByQuorum`): from the pacemaker
-alone, *some* block is `committedByQuorum` at some round. This is τ-BFT progress after GST, derived
-end-to-end from the view-synchronization primitives — and now the premise is the honest-majority +
-GST-delivery assumption, not the conclusion. -/
+/-- **`liveness_of_pacemaker`** — composes `gstRound_obtains` with `gst_liveness_from_round_model`:
+from the pacemaker alone, some block is `committedByQuorum`. τ-BFT progress after GST, with
+honest-majority + GST-delivery as the premise. -/
 theorem liveness_of_pacemaker {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config)
     (P : Pacemaker Msg votesOf cfg) :
@@ -188,21 +138,15 @@ theorem liveness_of_pacemaker {Msg : Type} [World Msg]
   obtain ⟨r, block, hr⟩ := gstRound_obtains votesOf cfg P
   exact ⟨r, block, gst_liveness_from_round_model (Msg := Msg) votesOf cfg block hr⟩
 
-/-! ## 3. `World.gst_liveness` is DERIVABLE from the pacemaker — assumption reduced, not added.
+/-! ## 3. `World.gst_liveness` is derivable from the pacemaker.
 
-The brief's invariant: keep `World.gst_liveness` derivable from these *more-primitive* assumptions,
-so we *reduce* what is assumed. We prove the `gst_liveness` field's CONCLUSION (for the leader's
-proposed block, a threshold-meeting round exists) from the `Pacemaker` fields. Since the pacemaker
-fields are the *legitimate* obligations a partial-synchrony runtime discharges (honest supermajority
-+ GST Δ-delivery + an honest-leader synchronizer) — and NONE of them is the threshold-conclusion —
-this shows the oracle field is no longer a primitive assumption: it follows from legitimate ones. -/
+`gst_liveness`'s conclusion — "a round meeting `cfg.threshold` exists" — is derived from the
+`Pacemaker` fields, none of which is that conclusion. The oracle field reduces to the legitimate
+honest-supermajority + GST-delivery obligations. -/
 
-/-- **`World.gst_liveness`-shaped conclusion, DERIVED from the pacemaker (PROVED).** The
-`gst_liveness` field assumes: "(for a block) a round whose delivered distinct-voter count meets
-`cfg.threshold` exists". We *derive* that conclusion for the synchronization round's leader-block,
-from the `Pacemaker` primitives alone — so `World.gst_liveness` reduces to (is implied by) the
-honest-majority + GST-delivery assumptions. The inline-unfolded form below is *definitionally* the
-`gst_liveness` field's conclusion (`votersFor`/`quorumReached` unfold to the same dedup-count). -/
+/-- **`gst_liveness_of_pacemaker`** — derives the `World.gst_liveness`-shaped conclusion from the
+pacemaker primitives alone; `World.gst_liveness` is no longer primitive, it follows from
+`honest_quorum` + `honest_le_delivered`. -/
 theorem gst_liveness_of_pacemaker {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config)
     (P : Pacemaker Msg votesOf cfg) :
@@ -211,16 +155,12 @@ theorem gst_liveness_of_pacemaker {Msg : Type} [World Msg]
   obtain ⟨r, block, hr⟩ := gstRound_obtains votesOf cfg P
   exact ⟨block, r, hr⟩
 
-/-! ## 4. The pacemaker is INHABITED — the reduction is non-vacuous.
+/-! ## 4. The pacemaker is inhabited — the reduction is non-vacuous.
 
-Like `BFTModel.Inhabited` and `World.Reference`, we witness that the `Pacemaker` fields are jointly
-satisfiable, so `gstRound_obtains` is not vacuously about an empty synchronizer. We use the reference
-`World` instance (over `Msg = Vote`), whose `fixedVotes` schedule delivers three distinct voters
-(0,1,2) for block 7 by round 3. With `gst = 3` and `honestEndorsers = 3`, every round `r ≥ 3` has all
-three delivered (the schedule is saturated), so a threshold-3 honest quorum for block 7 is met. Note
-the honest-leader predicate is trivially true here (`fun _ => True`), and `honest_quorum` is the
-honest-set count `3 ≥ 3`, while `honest_le_delivered` is the *delivery* fact `3 ≤ delivered` — the
-two are now separate (delivery is not the count). -/
+Using the reference `World` instance (`Msg = Vote`), whose `fixedVotes` schedule delivers voters
+0,1,2 for block 7 by round 3. With `gst = 3` and `honestEndorsers = 3`, a threshold-3 quorum is
+met. `honest_quorum` is the honest-set count `3 ≥ 3`; `honest_le_delivered` is the delivery fact
+`3 ≤ delivered` — the two fields are distinct (delivery is not the count). -/
 namespace Inhabited
 
 open Dregg2.World.Reference
@@ -259,8 +199,7 @@ def pacemaker : Pacemaker M votesOf cfg where
   honest_quorum := fun _ _ => by show (3 : Nat) ≤ 3; omega
   honest_le_delivered := fun r hr _ => ref_delivered_at r hr
 
-/-- The inhabiting pacemaker is real: `gstRound_obtains` applies, so a `GSTRound` genuinely obtains
-for the reference world (the theorem is non-vacuous, and the quorum is DERIVED). -/
+/-- A `GSTRound` genuinely obtains for the reference world — the theorem is non-vacuous. -/
 example : ∃ r block, GSTRound (Msg := M) votesOf cfg block r :=
   gstRound_obtains votesOf cfg pacemaker
 
@@ -272,36 +211,14 @@ example : ∃ (block r : Nat), cfg.threshold ≤
 end Inhabited
 
 /-
-**OPEN (the genuinely-remaining research, named — NOT a `sorry`, NOT an axiom).** This file
-*derives* the deterministic pacemaker reduction `BFT.lean`'s `OPEN` named: from the legitimate
-primitives (DLS88 GST + ELRS honest-leader synchronization + the BFT honest-supermajority +
-HotStuff responsive delivery), a `GSTRound` and hence liveness PROVABLY obtain — and the
-conclusion-in-disguise field `responsive_quorum` is GONE.
+OPEN (named, not a sorry): the operational coupling of `World.rand : Nat → Nat` to the
+`BeaconSpace` probability measure — proving that the runtime beacon stream realizes the
+Bernoulli(`h`)-per-view law. Mathlib has `Measure.infinitePi` (used in `BeaconSpaceInterior`),
+but wiring it to `World.rand` needs a `World`-interface extension (a randomness measure, not a
+value oracle), off this file's allowed surface.
 
-Two things now hold that did not before:
-  (1) The liveness premise is the *legitimate* honest-majority + GST-Δ-delivery assumption, NOT
-      "the quorum forms". `gstRound_obtains` DERIVES `cfg.threshold ≤ delivered` via
-      `cfg.threshold ≤ honestEndorsers` (BFT supermajority) `≤ delivered` (DLS88 Δ-delivery).
-  (2) The honest-leader content of `synchronizes` is itself DERIVED from the `BeaconSpace` measure
-      model: `BeaconSpace.synchronizer_round_obtains_over_beacon` PROVES an honest-leader
-      synchronization round exists from the honest fraction `h > 2/3` (the geometric a.s. hit), so
-      the `synchronizes` field is not an assumption about leaders existing — it is the beacon's hit.
-
-What stays open is ONE bridge, named (NOT a `sorry`, NOT an axiom): the operational coupling of the
-abstract `World.rand : Nat → Nat` value-oracle to the `BeaconSpace` probability measure — i.e.
-proving that the runtime's deterministic beacon stream realizes the Bernoulli(`h`)-per-view law the
-`BeaconSpace` measure carries. `BeaconSpace`/`Synchronizer` name this same bridge: mathlib HAS the
-product-measure machinery (`Measure.infinitePi`, used in `BeaconSpaceInterior`), but wiring it to the
-`World.rand` oracle needs a `World`-interface extension (a randomness *measure*, not a value oracle),
-off this file's allowed surface. Likewise `honest_le_delivered` (HotStuff Thm 4 @ DLS88 Δ) and
-`honest_quorum` (the honest-supermajority count) are the legitimate BFT/DLS88 assumptions a real
-runtime discharges — they are carried as fields exactly as `World.recv_mono` and `World.gst_liveness`
-are, never as `axiom`s.
-
-Net effect on the dregg2 assumption budget: `World.gst_liveness` is no longer a primitive — it is
-*derived* (`gst_liveness_of_pacemaker`) from the strictly more-primitive `Pacemaker` fields, NONE of
-which is the threshold-conclusion. We removed the conclusion-in-disguise; we added only the legitimate
-honest-majority + GST-delivery assumptions.
+`World.gst_liveness` is no longer primitive — it is derived (`gst_liveness_of_pacemaker`) from
+the strictly-more-primitive `Pacemaker` fields, none of which is the threshold-conclusion.
 -/
 
 /-! ## 5. Axiom hygiene — every keystone is kernel-clean.

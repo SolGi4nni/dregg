@@ -1,49 +1,34 @@
 /-
-# Dregg2.Authority.CaveatChain — the macaroon as a REAL HMAC-authenticated append-only caveat chain.
+# Dregg2.Authority.CaveatChain — the macaroon as a real HMAC-authenticated append-only caveat chain.
 
-The existing `Authority/Caveat.lean` reduces a caveat to a bare `Ctx → Bool` and a token to a
-*list* of those checks. That captures the **narrowing algebra** (`attenuate_narrows`) but is, by the
-honest admission of `docs/rebuild/GROUND-AUTH-ATTESTATION.md` (the **O**verlooked verdict, §1.6 row
-"HMAC chain `Tᵢ=HMAC(Tᵢ₋₁,Cᵢ)`"), **inexpressible** of the macaroon's *reason to exist*: chain
-integrity. A `Ctx → Bool` list cannot say "you cannot remove, reorder, or forge a caveat" — the whole
-point of the running tag (`docs/rebuild/CARRY-FORWARD-SYNTHESIS.md §2 Face 2 item #1`, the #1
-carry-forward).
+`Authority/Caveat.lean` reduces a caveat to a bare `Ctx → Bool` and a token to a list of those
+checks. That captures the narrowing algebra (`attenuate_narrows`) but cannot express the macaroon's
+reason to exist: chain integrity. A `Ctx → Bool` list cannot say "you cannot remove, reorder, or
+forge a caveat" — the whole point of the running HMAC tag.
 
-This module carries the REAL Rust semantics of `macaroon/src/macaroon.rs`:
+This module carries the real Rust semantics of `macaroon/src/macaroon.rs`:
 
 ```text
-//! macaroon/src/macaroon.rs:7-21 (the module-header invariant)
+//! macaroon/src/macaroon.rs:7-21
 //!   T₀ = HMAC(root_key, nonce_bytes)
 //!   Tᵢ = HMAC(Tᵢ₋₁, encode(Cᵢ))
 ```
 
-faithfully grounded, line-by-line:
-- **`Macaroon::new`** seeds `T₀ = HMAC(root_key, nonce_bytes)` (`macaroon.rs:118-129`, the header
-  `macaroon.rs:14-21`). Here: `seedTag root nonce = mac root nonce`.
-- **`add_first_party`** = append-only attenuation; advances the tail
-  `new_tail = HMAC(old_tail, encode(caveat))` (`macaroon.rs:146-156`). Here: `Chain.append`.
-- **`verify`** replays the chain from the root key and does a **constant-time** final-tail compare
-  (`macaroon.rs:204-262`, the compare at `macaroon.rs:257`). Here: `Chain.replayTag` + `Chain.verify`.
-- The integrity tests it must satisfy — **tamper** (`macaroon.rs:464-484`), **removal**
-  (`macaroon.rs:486-506`), **wrong key** (`macaroon.rs:455-462`) — are the negative theorems below
-  (`tamper_breaks_tag`, `removal_breaks_tag`, `wrong_root_breaks_tag` … via the unforgeability portal).
+- **`Macaroon::new`** seeds `T₀ = HMAC(root_key, nonce_bytes)` (`macaroon.rs:118-129`). Here: `seedTag root nonce = mac root nonce`.
+- **`add_first_party`** = append-only attenuation; `new_tail = HMAC(old_tail, encode(caveat))` (`macaroon.rs:146-156`). Here: `Chain.append`.
+- **`verify`** replays the chain from root and does a constant-time final-tail compare (`macaroon.rs:204-262`). Here: `Chain.replayTag` + `Chain.verify`.
+- Integrity tests — tamper (`macaroon.rs:464-484`), removal (`macaroon.rs:486-506`), wrong key (`macaroon.rs:455-462`) — are the negative theorems below via the unforgeability portal.
 
-## What is REAL semantics here vs what stays a §8 portal
+Real semantics here: the fold structure of the tag, append-only attenuation, conjunction admit-semantics
+(`Token.admits` = `List.all`, `token/src/dregg_caveats.rs:388`), and the replay-and-compare verifier.
 
-REAL (modeled exactly as the Rust computes it): the *fold structure* of the tag, append-only
-attenuation, the conjunction admit-semantics (`Token.admits` = `List.all`,
-`token/src/dregg_caveats.rs:388`), and the replay-and-compare verifier.
+§8 PORTAL (honest carried crypto assumption, NEVER faked as proved — mirroring `Dregg2.CryptoKernel`):
+the keyed-hash `mac : Key → Bytes → Tag` itself. Its security — that an adversary lacking the root key
+or any running tag cannot produce a tag for a forged chain — is the `MacUnforgeable` Prop-carrier. The
+integrity theorems are stated relative to it: we do NOT prove HMAC secure; we prove the reduction.
 
-§8 PORTAL (honest carried crypto assumption, NEVER faked as proved — `dregg2 §8`, mirroring
-`Dregg2.CryptoKernel`): the keyed-hash `mac : Key → Bytes → Tag` itself. Its *security* — that an
-adversary holding neither the root key nor any running tag cannot produce a tag for a forged chain —
-is the `MacUnforgeable` **Prop-carrier**. The integrity theorems are stated *relative to* it: an
-adversary that forges/reorders/drops a caveat and still verifies would yield a `Mac` query the
-adversary could not have made, contradicting the portal. We do NOT prove HMAC secure (we cannot, and
-must not pretend to); we prove the **reduction**.
-
-Builds on `Dregg2.Authority.Caveat` (reusing its `Caveat`/`Token.admits` narrowing layer) and bridges
-back to it: a verified chain yields a `Ctx → Bool` admit-gate (`verifiedChainGate`).
+Builds on `Dregg2.Authority.Caveat` (reusing its `Caveat`/`Token.admits` narrowing layer); a verified
+chain yields a `Ctx → Bool` admit-gate (`verifiedChainGate`).
 
 Pure, computable, `#eval`-able. No `sorry`/`admit`/`axiom`/`native_decide`.
 -/
@@ -72,9 +57,9 @@ Abstract; the only thing the chain semantics needs is that distinct caveats enco
 to be hashed — collision-freedom of `encode∘C` is folded into the `mac` portal's unforgeability. -/
 variable {Bytes : Type}
 
-/-- **The §8 keyed-hash portal — `MacKernel`.** `mac key bytes` is HMAC-SHA256 (`macaroon.rs`'s
+/-- **`MacKernel`** — the §8 keyed-hash portal. `mac key bytes` is HMAC-SHA256 (`macaroon.rs`'s
 `crypto::hmac_sha256`). Uninterpreted (like `Dregg2.Crypto.CryptoKernel.hash`); its security is the
-`unforgeable` Prop-carrier, the obligation the Rust HMAC discharges, NEVER a Lean law. -/
+`unforgeable` Prop-carrier, the obligation the Rust HMAC discharges, never a Lean law. -/
 class MacKernel (Key Bytes Tag : Type) where
   /-- HMAC-SHA256: `mac key msg` (`crypto::hmac_sha256(key, msg)`). -/
   mac : Key → Bytes → Tag
@@ -162,9 +147,9 @@ def Chain.verify (c : Chain Ctx Gateway (Key Tag) Bytes Tag) : Bool :=
 
 /-! ## (c) Verification recomputes the chain tag and accepts iff it matches. -/
 
-/-- **`verify_iff_wellTagged` (PROVED).** `verify` accepts EXACTLY when the stored tail equals the
-replayed tail — i.e. `verify = true ↔ wellTagged`. This is the precise statement of the Rust
-constant-time compare (`macaroon.rs:257-259`): accept iff `current_tail == self.tail`. -/
+/-- **`verify_iff_wellTagged`** — `verify` accepts exactly when the stored tail equals the replayed
+tail: `verify = true ↔ wellTagged`. The Rust constant-time compare (`macaroon.rs:257-259`):
+accept iff `current_tail == self.tail`. -/
 theorem verify_iff_wellTagged (c : Chain Ctx Gateway (Key Tag) Bytes Tag) :
     c.verify = true ↔ c.wellTagged := by
   unfold Chain.verify Chain.wellTagged
@@ -173,25 +158,25 @@ theorem verify_iff_wellTagged (c : Chain Ctx Gateway (Key Tag) Bytes Tag) :
 
 /-! ## Honest construction always verifies (the chain Rust actually builds is well-tagged). -/
 
-/-- **`replayTag_seed` (PROVED).** A freshly `seed`ed chain replays to its own tail (`T₀`). -/
+/-- **`replayTag_seed`** — a freshly `seed`ed chain replays to its own tail (`T₀`). -/
 theorem replayTag_seed (Ctx Gateway : Type) (root : Key Tag) (nonce : Bytes) :
     replayTag (seed (Ctx := Ctx) (Gateway := Gateway) root nonce)
       = (seed (Ctx := Ctx) (Gateway := Gateway) root nonce).tail := by
   simp [replayTag, seed, foldTag]
 
-/-- **`replayTag_append` (PROVED).** Appending a link advances the replayed tail by exactly one HMAC
-step over the OLD replayed tail — the fold's defining recurrence (`Tᵢ = mac Tᵢ₋₁ encode(Cᵢ)`). -/
+/-- **`replayTag_append`** — appending a link advances the replayed tail by one HMAC step over
+the old replayed tail: the fold's defining recurrence (`Tᵢ = mac Tᵢ₋₁ encode(Cᵢ)`). -/
 theorem replayTag_append (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link Ctx Gateway Bytes) :
     replayTag (c.append link) = mac (replayTag c) link.encoded := by
   simp [replayTag, Chain.append, foldTag, List.foldl_append]
 
-/-- **`wellTagged_seed` (PROVED).** `Macaroon::new` produces a well-tagged chain. -/
+/-- **`wellTagged_seed`** — `Macaroon::new` produces a well-tagged chain. -/
 theorem wellTagged_seed (Ctx Gateway : Type) (root : Key Tag) (nonce : Bytes) :
     (seed (Ctx := Ctx) (Gateway := Gateway) root nonce).wellTagged :=
   (replayTag_seed Ctx Gateway root nonce).symm
 
-/-- **`wellTagged_append` (PROVED).** `add_first_party` preserves well-taggedness: if the parent was
-well-tagged, the attenuated chain is too. So EVERY chain built by `seed` then any number of `append`s
+/-- **`wellTagged_append`** — `add_first_party` preserves well-taggedness: if the parent was
+well-tagged, the attenuated child is too. Every chain built by `seed` then any number of `append`s
 verifies (`macaroon.rs:434-453` `test_attenuation_and_verify`). -/
 theorem wellTagged_append (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link Ctx Gateway Bytes)
     (h : c.wellTagged) : (c.append link).wellTagged := by
@@ -199,8 +184,8 @@ theorem wellTagged_append (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Li
   rw [replayTag_append, ← h]
   rfl
 
-/-- **`honest_chain_verifies` (PROVED).** Corollary: a `seed` then `append`s always `verify`s. The
-positive companion to the negative integrity theorems. -/
+/-- **`honest_chain_verifies`** — a `seed` then `append`s always `verify`s. Positive companion to
+the negative integrity theorems. -/
 theorem honest_chain_verifies (Ctx Gateway : Type) (root : Key Tag) (nonce : Bytes)
     (link : Link Ctx Gateway Bytes) :
     ((seed (Ctx := Ctx) (Gateway := Gateway) root nonce).append link).verify = true :=
@@ -215,11 +200,9 @@ def Chain.admits (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (ctx : Ctx) (d : Di
     Bool :=
   c.links.all (fun l => l.caveat.ok ctx d)
 
-/-- **`append_narrows` (PROVED) — append-only attenuation can only RESTRICT.** Anything the
-attenuated chain admits, the parent already admitted: appending a caveat never grows authority. This
-is the cryptographic realization of "a key may only narrow" (`caveat.rs:2-9,47-49`,
-`macaroon.rs:146-150` "can only restrict … never expand"), now stated on the REAL HMAC chain rather
-than the bare `Ctx → Bool` list. -/
+/-- **`append_narrows`** — append-only attenuation can only restrict. Anything the attenuated chain
+admits, the parent already admitted: appending a caveat never grows authority. "A key may only
+narrow" (`caveat.rs:2-9,47-49`, `macaroon.rs:146-150`), now stated on the real HMAC chain. -/
 theorem append_narrows (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link Ctx Gateway Bytes)
     (ctx : Ctx) (d : Discharges Gateway) :
     (c.append link).admits ctx d = true → c.admits ctx d = true := by
@@ -227,8 +210,8 @@ theorem append_narrows (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link 
   simp only [List.all_append, Bool.and_eq_true]
   intro h; exact h.1
 
-/-- **`append_subset` (PROVED)** — the set form: the attenuated chain's admissible-request set is a
-SUBSET of the parent's. Authority strictly shrinks as caveats are appended down the chain. -/
+/-- **`append_subset`** — set form: the attenuated chain's admissible-request set is a subset of
+the parent's. Authority strictly shrinks as caveats are appended. -/
 theorem append_subset (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link Ctx Gateway Bytes)
     (d : Discharges Gateway) :
     {ctx | (c.append link).admits ctx d = true} ⊆ {ctx | c.admits ctx d = true} :=
@@ -236,24 +219,21 @@ theorem append_subset (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link C
 
 /-! ## Bridge to `Authority.Caveat`: a verified chain yields a `Ctx → Bool` admit-gate / a `Token`. -/
 
-/-- **`verifiedChainGate` (PROVED to exist).** A *verified* chain projects to the existing
-`Authority.Caveat` abstraction: its admit decision is a `Ctx → Bool` gate (here, with the discharges
-fixed). This is the bridge the task asks for — a verified chain *yields a `Ctx`-to-`Bool` gate* — so
-everything proved about `Token.admits` in `Authority/Caveat.lean` (narrowing, the verify-seam) applies
-to a chain that has passed `verify`. -/
+/-- **`verifiedChainGate`** — a verified chain projects to the `Authority.Caveat` abstraction: its
+admit decision as a `Ctx → Bool` gate (with discharges fixed). Everything proved about `Token.admits`
+in `Authority/Caveat.lean` applies to a chain that has passed `verify`. -/
 def verifiedChainGate (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (d : Discharges Gateway) :
     Ctx → Bool :=
   fun ctx => c.verify && c.admits ctx d
 
-/-- **`chainToken` (PROVED to exist).** A chain's links project to an `Authority.Token` (dropping the
-HMAC tail): the narrowing algebra carries over verbatim. The chain ADDS chain-integrity *on top of*
-the token's admit-semantics; this map shows the chain is a faithful refinement of the existing token,
-not a parallel object. -/
+/-- **`chainToken`** — a chain's links project to an `Authority.Token` (dropping the HMAC tail):
+the narrowing algebra carries over verbatim. The chain adds integrity on top of the token's
+admit-semantics; this map shows the chain is a faithful refinement, not a parallel object. -/
 def chainToken (c : Chain Ctx Gateway (Key Tag) Bytes Tag) : Token Ctx Gateway :=
   { kind := .macaroon, caveats := c.links.map (·.caveat) }
 
-/-- **`chainToken_admits` (PROVED)** — the projection preserves admit-semantics: the chain's
-`admits` equals its projected token's `Token.admits`. So the bridge is meaning-preserving. -/
+/-- **`chainToken_admits`** — the projection preserves admit-semantics: the chain's `admits`
+equals its projected token's `Token.admits`. The bridge is meaning-preserving. -/
 theorem chainToken_admits (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (ctx : Ctx)
     (d : Discharges Gateway) :
     c.admits ctx d = (chainToken c).admits ctx d := by
@@ -261,14 +241,12 @@ theorem chainToken_admits (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (ctx : Ctx
   rw [List.all_map]
   rfl
 
-/-! ## (b) Tail-binding / chain-integrity — stated RELATIVE to the keyed-hash being unforgeable.
+/-! ## (b) Tail-binding / chain-integrity — stated relative to keyed-hash unforgeability.
 
-The HONEST shape: we do NOT prove HMAC secure. We expose the §8 unforgeability assumption as the
-precise *reduction premise* — a `Prop` saying "if a chain VERIFIES, its stored tail was produced by
-the legitimate fold from the root" — and prove the integrity laws as immediate consequences of that
-premise plus the (proved) fold structure. The premise is the formal content of `MacKernel.unforgeable`
-specialized to chains; the real HMAC discharges it (assumed), the toy reference kernel discharges it
-trivially (because there it is literally true by construction). -/
+We do NOT prove HMAC secure. We expose the §8 unforgeability assumption as a precise reduction
+premise — "if a chain verifies, its stored tail was produced by the legitimate fold from the root" —
+and prove the integrity laws as consequences of that premise plus the proved fold structure. The real
+HMAC discharges the premise (assumed); the toy reference kernel discharges it trivially. -/
 
 /-- **The unforgeability premise, specialized to chains (the §8 reduction hook).** "Any chain that
 `verify`s is well-tagged." Note this is *definitionally* `verify_iff_wellTagged` — so it is, in this
@@ -284,24 +262,19 @@ theorem chainIntegrityPremise_holds (Ctx Gateway : Type) :
     ChainIntegrityPremise (Tag := Tag) (Bytes := Bytes) Ctx Gateway :=
   fun c h => (verify_iff_wellTagged c).mp h
 
-/-- **`integrity_tail_binds` (PROVED).** Chain-integrity, positive form: if a chain verifies, its
-stored tail IS the legitimate fold of its links from its root. There is no accepted chain whose tail
-is detached from its caveat list — the tail BINDS the entire ordered caveat sequence. This is the
-formal meaning of `macaroon.rs:257` accepting iff `current_tail == self.tail` after replaying ALL
-links in order. -/
+/-- **`integrity_tail_binds`** — positive form: if a chain verifies, its stored tail is the
+legitimate fold of its links from its root. No accepted chain has a tail detached from its caveat
+list — the tail binds the entire ordered caveat sequence (`macaroon.rs:257`). -/
 theorem integrity_tail_binds (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (h : c.verify = true) :
     c.tail = foldTag (seedTag c.root c.nonce) c.links :=
   (verify_iff_wellTagged c).mp h
 
-/-- **`forgery_requires_mac_query` (PROVED) — the integrity REDUCTION (the teeth).** Suppose an
-adversary presents a *forged* chain `cForged` (different links and/or order) that nonetheless
-`verify`s against the SAME stored tail as an honest chain `cHonest` over the same root+nonce. Then the
-adversary has exhibited a MAC *collision at the tail*: the legitimate fold over the forged links
-equals the legitimate fold over the honest links, despite the link lists differing. Producing such a
-pair without the root key is *exactly* what `MacKernel.unforgeable` forbids — so this theorem is the
-honest reduction "forge ⇒ break HMAC", with HMAC's security left as the §8 portal (it is the premise,
-never discharged here). The conclusion is an equation between fold outputs, the artifact a collision
-adversary would have to produce. -/
+/-- **`forgery_requires_mac_query`** — the integrity reduction. If a forged chain `cForged` (different
+links) `verify`s against the same stored tail as an honest chain `cHonest` over the same root+nonce,
+the adversary has exhibited a MAC collision at the tail: the fold over forged links equals the fold
+over honest links, despite differing link lists. Producing this without the root key is what
+`MacKernel.unforgeable` forbids — the reduction "forge ⇒ break HMAC", with HMAC security left as
+the §8 portal. -/
 theorem forgery_requires_mac_query
     (cHonest cForged : Chain Ctx Gateway (Key Tag) Bytes Tag)
     (hroot : cForged.root = cHonest.root) (hnonce : cForged.nonce = cHonest.nonce)
@@ -319,12 +292,11 @@ theorem forgery_requires_mac_query
     integrity_tail_binds cForged hF
   rw [← eF, ← eH]; exact hsameTail
 
-/-- **`removal_breaks_tail` (PROVED) — the dropped-caveat law (`macaroon.rs:486-506`
-`test_removed_caveat_fails`).** If you take a verifying chain and DROP its last appended caveat
-(reverting `links` to the parent's) WITHOUT recomputing the tail, the result fails `verify` UNLESS the
-parent's fold already collided with the child's tail — i.e. unless `mac` mapped the extra HMAC step to
-the identity at that point, which is precisely a collision the unforgeability portal rules out. Stated
-as: the stripped chain verifies → a MAC step was a no-op (the collision witness). -/
+/-- **`removal_breaks_tail`** — the dropped-caveat law (`macaroon.rs:486-506`
+`test_removed_caveat_fails`). If a verifying chain has its last caveat dropped (reverting `links`
+to the parent's) without recomputing the tail, the result fails `verify` unless the parent's fold
+collided with the child's tail — a MAC no-op, exactly what the unforgeability portal rules out.
+Stated as: the stripped chain verifies → a MAC step was a no-op (the collision witness). -/
 theorem removal_breaks_tail
     (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (link : Link Ctx Gateway Bytes)
     -- `child` = c.append link (a verifying attenuated chain); `stripped` reverts links to `c.links`

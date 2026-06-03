@@ -19,17 +19,14 @@ binding discipline** in the verified semantics. It mirrors two real systems:
   (`Unexpected_verification_key_hash`). The account's `proved_state` bit tracks whether the
   whole app-state is still proof-vouched — reset to `false` on any non-proof state edit.
 
-**The §8 rail (critical, `REORIENT.md §6`, `CryptoKernel.lean`).** Two things are NEVER proved in
-Lean: (1) the VK's **collision-resistance** (the content hash binds its preimage) and (2) that a
-proof actually **verifies against the VK** (`CryptoKernel.verify`). Both are crypto-interface
-obligations discharged by the circuits + Rust. Here:
-  * `canonicalVk` is an **opaque** content-hash; its injectivity is a named `Prop`
-    (`VkInjective`), surfaced as an explicit *hypothesis* on the theorems that need it — NOT an
-    `axiom`. The hash circuit discharges it.
-  * `CryptoKernel.verify` is the §8 oracle, called but never reasoned-into.
-The Lean law models ONLY the **structural binding discipline**: a VK is content-addressed; a
-proof-turn's claimed VK must equal the cell's current VK; `proved_state` resets correctly; Derived
-child VKs are reproducible from `(base, params)`.
+§8 portal: two things are never proved in Lean: (1) the VK's collision-resistance (the content
+hash binds its preimage) and (2) that a proof actually verifies against the VK
+(`CryptoKernel.verify`). Both are crypto-interface obligations discharged by the circuits + Rust.
+`canonicalVk` is an opaque content-hash; its injectivity is the named `Prop` `VkInjective`,
+surfaced as an explicit hypothesis — not an axiom. `CryptoKernel.verify` is the §8 oracle, called
+but never reasoned-into. The Lean law models only the structural binding discipline: a VK is
+content-addressed; a proof-turn's claimed VK must equal the cell's current VK; `proved_state`
+resets correctly; derived child VKs are reproducible from `(base, params)`.
 
 Pure, computable, `#eval`-able. Imports `CryptoKernel` (the §8 oracle/laws) and `Upgrade` (for the
 anti-brick bridge note); reuses `Dregg2.Crypto.CryptoKernel` and `Dregg2.Upgrade.AirVersion`
@@ -45,10 +42,9 @@ open Dregg2.Crypto
 /-! ## `ProvingSystemId` — which proving system a VK is bound to. -/
 
 /-- **`ProvingSystemId`** — the proving-system tag carried in `canonical_vk_v2`
-(`cell/src/vk_v2.rs`). The VK names not just the AIR but the *verifier family*: a proof for the
-SAME AIR under a different proving system is a DIFFERENT circuit identity (a different VK). This is
-why `canonicalVk` mixes the proving system into the hash — swapping the backend swaps the VK,
-which is exactly the brick hazard `Upgrade.lean` guards. -/
+(`cell/src/vk_v2.rs`). A proof for the same AIR under a different proving system is a different
+circuit identity (a different VK): swapping the backend swaps the VK, which is the brick hazard
+`Upgrade.lean` guards. -/
 inductive ProvingSystemId where
   /-- Plonky3 over BabyBear with FRI (dregg1's default). -/
   | plonky3BabyBearFri
@@ -68,11 +64,10 @@ is a §8 crypto-interface obligation (the hash circuit's binding), NEVER a Lean 
 as the `VkInjective` hypothesis, not an axiom. -/
 abbrev VkHash := Nat
 
-/-- **`VkComponents`** — the FOUR components a `canonical_vk_v2` content-addresses
-(`cell/src/vk_v2.rs`): `programHash` (which cell-program / AIR bytes), `airFingerprint` (which AIR
-descriptor), `verifierFingerprint` (which verifier impl), and `provingSystem` (which proving
-system). Hashing all four is what makes the VK name the *whole* circuit identity — generalizing the
-Factory's `factoryHash`, which fixed only `(schema, program)`. -/
+/-- **`VkComponents`** — the four components a `canonical_vk_v2` content-addresses
+(`cell/src/vk_v2.rs`): `programHash` (cell-program / AIR bytes), `airFingerprint` (AIR
+descriptor), `verifierFingerprint` (verifier impl), and `provingSystem` (proving system). All four
+are hashed, so the VK names the whole circuit identity. -/
 structure VkComponents where
   /-- Hash of the cell-program / AIR bytes (`program_bytes`). -/
   programHash : Nat
@@ -92,14 +87,12 @@ honest injectivity hypothesis standing for *content-address binding* — collisi
 hash, a §8 obligation discharged by the hash circuit, NOT a Lean theorem. -/
 opaque canonicalVk : VkComponents → VkHash
 
-/-- **`VkInjective` (§8 OBLIGATION, a named hypothesis — NOT an axiom).** Content-addressing means
-the hash binds its preimage: two VKs with the same hash have the same four components. This is
-exactly collision-resistance of `canonical_vk_v2`, which is a crypto-interface obligation (the hash
-circuit's extractability), NEVER a Lean theorem. We carry it as an explicit hypothesis on the
-theorems that need it (`vk_determines_components`) — the Lean cell proves "*if* the hash is
-injective *then* equal-vk ⇒ equal-components"; the circuit discharges the injectivity.
-(`CryptoKernel.lean`'s `hash_inj` is the same idiom; `REORIENT.md §6`: crypto-soundness is never
-merged into the Lean law.) -/
+/-- **`VkInjective`** (§8 obligation, a named hypothesis — NOT an axiom). Content-addressing
+means the hash binds its preimage: two VKs with the same hash have the same four components.
+This is collision-resistance of `canonical_vk_v2`, a crypto-interface obligation (the hash
+circuit's extractability), never a Lean theorem. Carried as an explicit hypothesis on theorems
+that need it: the Lean cell proves "if the hash is injective then equal-vk ⇒ equal-components";
+the circuit discharges the injectivity. -/
 def VkInjective : Prop := Function.Injective canonicalVk
 
 /-- **`vkOf c`** — the content-addressed VK hash of components `c`. -/
@@ -137,12 +130,12 @@ structure ProofTurn (Digest : Type) (Proof : Type) where
   /-- The side-loaded proof itself (verified against the cell's current VK by the §8 oracle). -/
   proof : Proof
 
-/-! ## THE BINDING KEYSTONE — `admitProof` and `proof_binds_current_vk`.
+/-! ## VK binding — `admitProof` and `proof_binds_current_vk`.
 
-A proof-turn is admissible ONLY when (1) its claimed VK matches the cell's current VK
-(`Unexpected_verification_key_hash` discipline — you cannot prove against a stale/swapped VK) AND
+A proof-turn is admissible only when (1) its claimed VK matches the cell's current VK
+(`Unexpected_verification_key_hash` discipline — you cannot prove against a stale/swapped VK) and
 (2) the §8 `CryptoKernel.verify` oracle accepts the proof against the cell's statement. The Lean
-law owns (1) — the *structural binding*; (2) is the opaque oracle. -/
+law owns (1), the structural binding; (2) is the opaque oracle. -/
 
 variable {Digest Proof : Type} [AddCommGroup Digest]
 
@@ -154,11 +147,11 @@ def admitProof [CryptoKernel Digest Proof]
     (cell : VkCell Digest) (t : ProofTurn Digest Proof) : Bool :=
   decide (t.claimedVk = cell.currentVk) && CryptoKernel.verify cell.stmt t.proof
 
-/-- **`proof_binds_current_vk`** — THE binding keystone. Any proof-turn that `admitProof` accepts
-MUST have claimed exactly the cell's current VK. You cannot get a proof admitted against a stale or
-swapped VK: this is Mina's `Unexpected_verification_key_hash` assertion lifted into the verified
-semantics. (Note: this is the STRUCTURAL discipline — it does NOT claim the proof is sound, which is
-the §8 oracle's separate obligation.) -/
+/-- **`proof_binds_current_vk`** — any proof-turn that `admitProof` accepts must have claimed
+exactly the cell's current VK. You cannot get a proof admitted against a stale or swapped VK:
+Mina's `Unexpected_verification_key_hash` assertion lifted into the verified semantics. Note:
+this is the structural discipline — it does NOT claim the proof is sound (that is the §8 oracle's
+separate obligation). -/
 theorem proof_binds_current_vk [CryptoKernel Digest Proof]
     (cell : VkCell Digest) (t : ProofTurn Digest Proof)
     (h : admitProof cell t = true) : t.claimedVk = cell.currentVk := by
@@ -178,11 +171,11 @@ theorem mismatched_vk_rejected [CryptoKernel Digest Proof]
   have : decide (t.claimedVk = cell.currentVk) = false := decide_eq_false h
   rw [this, Bool.false_and]
 
-/-! ## THE `proved_state` KEYSTONE — `editUnproven`, `editProved`, and the reset law.
+/-! ## `proved_state` — `editUnproven`, `editProved`, and the reset law.
 
 `proved_state` is "is this state still circuit-vouched?" (Mina, `zkapp_account.ml:215`). It is set
-true only when a proof keeps/sets the whole state, and **reset to false** whenever the state is
-touched without a full proof (`zkapp_command_logic.ml:1522-1547`). -/
+true only when a proof keeps/sets the whole state, and reset to false whenever the state is touched
+without a full proof (`zkapp_command_logic.ml:1522-1547`). -/
 
 /-- **`editUnproven cell newStmt`** — touch the cell's state WITHOUT a full proof (a signature/owner
 edit). The new statement is installed and `provedState` is **reset to `false`**: the state is no

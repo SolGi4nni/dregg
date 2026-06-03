@@ -1,59 +1,36 @@
 /-
-# Dregg2.Apps.NameService — dregg1's NAMESERVICE as a verified dregg2 cell-program, with the
-"once registered, a name is registered FOREVER" safety CARRIED along the unbounded trajectory.
+# Dregg2.Apps.NameService — dregg1's nameservice as a verified cell-program; "once registered, forever registered."
 
-This is `starbridge-apps/nameservice` (`src/lib.rs`) modelled as a dregg2 cell-program and run on
-the SHIPPED per-asset executor (`execFullForestA`, the 46-effect auth-gated forest), then crowned by
-the coinductive living cell. The dregg1 CORE state machine is:
+Models `starbridge-apps/nameservice` (`src/lib.rs`) on the shipped per-asset executor, crowned by the
+coinductive living cell. The dregg1 core state machine:
 
-  * **register(name, owner)** — anchor a name binding permanently: `SetField(NAME_HASH_SLOT, name_hash)`
-    + `SetField(OWNER_HASH_SLOT, owner_hash)` + `SetField(EXPIRY_SLOT, expiry)`, GATED by the cell
-    program's `StateConstraint::WriteOnce { index: NAME_HASH_SLOT }` — *"names cannot be re-bound"*
-    (the `lib.rs` doc-comment; closes `APPS-USERSPACE-GAPS.md` Gap 1, *"name-hash slot may only be
-    written once"*). The name→cell binding is PERMANENT.
-  * **transfer(name, old_owner, new_owner)** — `SetField(OWNER_HASH_SLOT, new_owner_hash)` + a
-    `name-transferred` event; ownership changes ONLY by an (authorized) transfer.
-  * **revoke(name)** — `SetField(REVOKED_SLOT, tombstone)`, GATED by `WriteOnce { REVOKED_SLOT }` —
-    *"revocations are one-way"*.
+  * **register(name, owner)** — anchors a permanent name binding via `WriteOnce { NAME_HASH_SLOT }`;
+  * **transfer(name, old_owner, new_owner)** — changes ownership only by authorized transfer;
+  * **revoke(name)** — writes a tombstone, also via `WriteOnce { REVOKED_SLOT }` ("revocations are one-way").
 
-================================================================================
-## THE MODELLING DECISION — the registry is the kernel's GROW-ONLY commitment set.
-================================================================================
+## Modelling decision
 
-dregg1 enforces the name-binding's permanence with a **cell-program caveat** (`WriteOnce`) that GATES
-the `SetField` — *names, once bound, stay bound*. The dregg2 executable kernel already carries the
-exact algebraic shape that makes "stays bound" a THEOREM on the real machine: the **grow-only
-commitment set** `k.commitments` (dregg1's off-ledger note-commitment tree, `META-FILL C`), which
-`Exec/CellCommit.lean` proved is monotone across the ENTIRE 46-effect executor
-(`execFullForestA_commitments_grow`) and persists along the unbounded adversarial trajectory
-(`livingCellA_commitments_persist`).
+dregg1 enforces permanence with a `WriteOnce` caveat gating `SetField`. The dregg2 kernel provides
+the algebraic equivalent: the grow-only commitment set `k.commitments`, proved monotone across the
+whole 46-effect executor (`execFullForestA_commitments_grow`, `Exec/CellCommit.lean`) and persistent
+along the unbounded adversarial trajectory.
 
-So we model the registry FAITHFULLY: **a name registration ANCHORS the binding by publishing a
-content-addressed name-binding commitment `nameCommit name owner` into `k.commitments`** — exactly
-dregg1's *"anchor the registration in cell state"* (`lib.rs` §"The userspace stance"). Because
-`commitments` is grow-only on the real executor, *"once registered, the name's binding is never
-silently deleted, for all time, against any adversarial schedule"* — dregg1's `WriteOnce
-(NAME_HASH_SLOT)` permanence — is the carried headline `nameservice_registration_forever`.
+A name registration anchors the binding by publishing a content-addressed commitment `nameCommit name
+owner` into `k.commitments`. Because `commitments` is grow-only, "once registered, never silently
+deleted" is the carried headline `nameservice_registration_forever`.
 
-What is GENUINE here (not a relabel of CellCommit):
-  * `nameCommit` is a CONTENT-ADDRESSED, INJECTIVE binding encoding (`nameCommit_inj`: distinct
-    `(name, owner)` bindings produce distinct registry entries — collision-resistance, the property a
-    name HASH must have so two names can never alias the same registry slot);
-  * `register`/`transfer`/`revoke` are REAL `FullForestA` turns that genuinely COMMIT on the
-    executor (`register_commits` etc.) and grow the registry (`register_publishes`);
-  * the headline carries not just the registration but, after a transfer, BOTH the original
-    registration AND the new ownership binding (`nameservice_transfer_audit_forever`) — the full
-    audit trail, no binding silently dropped;
-  * `resolveRegistered` is a decidable registry reader with a soundness lemma against the carried
-    state (`resolve_sound_forever`).
+What is genuine (not a relabel of CellCommit):
+  * `nameCommit` is injective (`nameCommit_inj`): distinct `(name, owner)` bindings produce distinct
+    registry entries — the collision-freedom a name hash requires;
+  * `register`/`transfer`/`revoke` genuinely commit on the executor and grow the registry;
+  * the headline carries the full audit trail after a transfer — both original and new ownership
+    bindings persist (`nameservice_transfer_audit_forever`);
+  * `resolveRegistered` is a decidable registry reader with a soundness lemma.
 
-What is a PORTAL / out of scope (stated plainly): the §8 crypto (the BLAKE3 `field_from_bytes` name
-hash; the Pedersen commitment opening behind `noteCreate`) is the THEOREM-level carrier, off this
-executable layer — exactly as in `CellCommit`/`CellNullifier`. We model `nameCommit` as an injective
-`Nat`-encoding (the content-address abstraction), prove the registry DISCIPLINE (publish-once,
-never-deleted), not the hash's collision-resistance itself. Expiry/rent and the credential-gated
-attested tier (`lib.rs` §"identity-attested tier") are out of scope for the CORE + ONE carried
-invariant bar.
+What is a portal / out of scope: the §8 crypto (BLAKE3 name hash; Pedersen commitment opening behind
+`noteCreate`). We model `nameCommit` as an injective `Nat`-encoding, prove the registry discipline
+(publish-once, never-deleted), not the hash's collision-resistance itself. Expiry/rent and the
+credential-gated attested tier are out of scope.
 
 Zero `sorry`/`admit`/`native_decide`/`axiom`. Every keystone is `#assert_axioms`-pinned to
 `{propext, Classical.choice, Quot.sound}`.
@@ -200,12 +177,10 @@ theorem nameservice_step_preserves (s s' : RecChainedState) (f : FullForestA) (n
   have : nameCommit name owner ∈ s'.kernel.commitments := hgrow hmem
   exact List.contains_iff_mem.mpr this
 
-/-! ## §4 — THE CARRY: a registered name is registered FOREVER (the unbounded νF crown).
+/-! ## §4 — The carry: a registered name is registered forever.
 
-The `ConservingForest` alphabet the living cell ranges over: each CORE op is a `noteCreateA`, which is
-balance-NEUTRAL (grows ONLY `commitments`), so its per-asset ledger delta is `0` in every asset — it
-inhabits `ConservingForest`. We then carry the binding-membership predicate via `livingCellA_carries`
-through `CellCommit`'s already-proven persistence crown. -/
+Each core op is a `noteCreateA` — balance-neutral (grows only `commitments`) — so it inhabits
+`ConservingForest`. The binding-membership predicate is then carried via `livingCellA_carries`. -/
 
 /-- A registration as a `ConservingForest` (the living cell's turn alphabet): `noteCreateA` writes ONLY
 the `commitments` set, never `bal`, so its per-asset net delta is `0` in every asset. -/
@@ -215,18 +190,11 @@ def registerCF (name : Name) (owner : Owner) : ConservingForest :=
       simp only [register, lowerForestA, lowerChildrenA, turnLedgerDeltaAsset, List.map_cons,
         List.map_nil, List.sum_cons, List.sum_nil, ledgerDeltaAsset, add_zero] ⟩
 
-/-- **`nameservice_registration_forever` (PROVED) — THE HEADLINE: a registered name stays registered
-FOREVER.** Once a name→owner binding is registered in the initial state `s`, it is registered at EVERY
-index of the unbounded adversarial trajectory `trajA s sched`, under EVERY schedule of conserving
-turns: `isRegistered (trajA s sched n) name owner = true` for all `n`. No silent deletion, no
-re-binding, no retraction — dregg1's `WriteOnce { NAME_HASH_SLOT }` *"names cannot be re-bound … the
-slot is frozen for the cell's lifetime"* (closing `APPS-USERSPACE-GAPS.md` Gap 1), now a COINDUCTIVE
-theorem on the SHIPPED executor.
-
-It is the `Good := isRegistered · name owner = true` instance of `livingCellA_carries`, whose one-step
-obligation is `nameservice_step_preserves` on a commit (the grow-only registry frame) and the stay-put
-self-loop on a reject (`cellNextA` leaves the state — hence the registry — UNCHANGED). A genuinely
-NON-conservation app safety: it reads the registry, never the per-asset measure. -/
+/-- **`nameservice_registration_forever`** — once a name→owner binding is registered in the initial
+state, it is registered at every index of every adversarial trajectory `trajA s sched`. No silent
+deletion, no re-binding. The `Good := isRegistered · name owner = true` instance of
+`livingCellA_carries`, with `nameservice_step_preserves` as the one-step obligation. A genuinely
+non-conservation safety: it reads the registry, never the per-asset measure. -/
 theorem nameservice_registration_forever (s : RecChainedState) (name : Name) (owner : Owner)
     (hinit : isRegistered s name owner = true) (sched : SchedA) :
     ∀ n, isRegistered (trajA s sched n) name owner = true :=

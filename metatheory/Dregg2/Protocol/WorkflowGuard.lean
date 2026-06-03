@@ -1,40 +1,23 @@
 /-
-# Dregg2.Protocol.WorkflowGuard — the RDII workflow's gates RE-FOUND as `Spec.Guard` instances.
+# Dregg2.Protocol.WorkflowGuard — the workflow's gates re-expressed as `Spec.Guard` instances.
 
-This is the **Spec layer of the first verified application** (PHASE-CONSTRUCTION §2, the
-"minimal closed loop for ONE application"; first-90-days step 5). `Protocol/Workflow.lean`
-is the executable RDII "DocuSign-for-workflows" demonstrator — author→reviewer→CI, every
-step capability-gated, phase-ordered, and attested via the `CryptoKernel.verify` portal. It
-already PROVES its guarantees (`exec_authorized` / `exec_in_order` / `exec_attested` /
-`merge_requires_approved`) *directly* over the concrete `exec`.
+`Protocol/Workflow.lean` is the executable "DocuSign-for-workflows" demonstrator: author→reviewer→CI,
+every step capability-gated, phase-ordered, and attested via `CryptoKernel.verify`. It already
+proves its guarantees (`exec_authorized` / `exec_in_order` / `exec_attested` / `merge_requires_approved`)
+directly over `exec`.
 
-This module **re-founds those guarantees on the abstract `Spec.Guard` law**: it expresses
-each workflow gate as a `Spec.Guard` term and PROVES the concrete `Workflow.lean` predicate
-is EXACTLY the corresponding `Guard.admits`. The three gates are:
+This module re-founds those guarantees on the abstract `Spec.Guard` law: each gate is expressed as a
+`Spec.Guard` term and proved to coincide exactly with the corresponding `Guard.admits`. The three gates:
 
-  1. **authorization** — "only the authorized signer may take this step" — a `firstParty`
-     Guard over the actor/role field (`req.actor = authorizedParty req.step`). In the RDII
-     model "who may sign" is a decidable role check (the held-cap role id), so it is the
-     intra-vat *positional* / first-party face of authority (cf. `Coherence §1`); the
-     witnessed face is the attestation gate (3).
-  2. **phase-ordering** — "release only after review" — a `firstParty` Guard over the phase
-     field (`req.phase = precond req.step`), the `allowedTransitions`-style choreography
-     precondition.
-  3. **attestation** — "the step carries a verifying proof" — a `witnessed` Guard at the
-     verify seam (`CryptoKernel.verify stmt att`, the §8 oracle, ZK-capable).
+  1. **authorization** — "only the authorized signer" — a `firstParty` Guard on the actor/role field.
+  2. **phase-ordering** — "release only after review" — a `firstParty` Guard on the phase field.
+  3. **attestation** — "the step carries a verifying proof" — a `witnessed` Guard at the §8 verify
+     seam (`CryptoKernel.verify`, ZK-capable). This is the honest §8 seam, not a gap.
 
-The payoff (the closed loop's Spec side): the workflow's authorization is **machine-checked
-from the abstract `Spec.Guard` law down to the running predicate** — the concrete app gate
-*refines* the abstract Guard law, with no remainder. `workflow_step_admits_iff_guards` ties
-the whole step's admissibility to the conjunction (`Guard.all`) of the three gates: the
-workflow step commits *exactly* when the abstract Guard web admits it.
+`workflow_step_admits_iff_guards` ties the whole step to the conjunction (`Guard.all`) of the three
+gates: the step commits exactly when the abstract Guard web admits it.
 
-Discipline (matching the lib): faithful `↔`s with real content, every keystone
-`#assert_axioms`-clean, no `axiom`/`admit`/`native_decide`/`sorry`. Imports ONLY existing
-built modules; touches no sibling file. The attestation gate's `witnessed` branch routes
-through the `Verifiable`/`CryptoKernel.verify` oracle — that is the honest §8 seam, NOT a
-gap: `admits (witnessed stmt) = Verify stmt (w stmt)`, and the bridge to the workflow's
-`verify` is exact under the natural witness supply.
+Faithful `↔`s with real content; every keystone `#assert_axioms`-clean; no `sorry`/`admit`.
 -/
 import Dregg2.Protocol.Workflow
 import Dregg2.Spec.Guard
@@ -48,11 +31,9 @@ open Dregg2.Laws
 
 /-! ## §1 — The `Request`: the facts a workflow gate reads.
 
-A `Spec.Guard` reads a `Request` — the transition/action facts. For the workflow, the gate
-reads exactly the three fields `exec`'s `if`-guard inspects: the step kind, the actor, and
-the current phase. (No `Nat`-for-semantics: the request bundles the actual workflow fields.)
-The attestation is supplied separately — through the verify seam's witness map (§4) — exactly
-as `Spec.Guard.admits` splits demand (the guard) from supply (`(req, w)`). -/
+The gate reads the three fields `exec`'s `if`-guard inspects: step kind, actor, and current
+phase. The attestation is supplied separately through the verify seam's witness map (§4),
+exactly as `Spec.Guard.admits` splits demand from supply. -/
 
 /-- **`WFRequest`** — the facts a workflow gate reads: the step, the actor taking it, and
 the phase the workflow is in. This IS the trio `Workflow.exec` decides against. -/
@@ -62,31 +43,23 @@ structure WFRequest where
   phase : Phase
   deriving Repr
 
-/-! ## §2 — The three gates as `Spec.Guard` terms.
-
-Each gate is one line over `Guard.firstParty` / `Guard.witnessed`, mirroring the
-`Spec/Guard.lean §7` derived reconstructions and `Coherence §1`'s `conferralGuard`. -/
+/-! ## §2 — The three gates as `Spec.Guard` terms. -/
 
 variable {Digest Proof : Type} [AddCommGroup Digest]
 
-/-- **The authorization gate (`firstParty`).** "Only the authorized signer may take this
-step": admits iff `req.actor = authorizedParty req.step`. The role/cap check is decidable
-*now* (the intra-vat positional face), so it is a `firstParty` Guard — the same shape as
-`Coherence.conferralGuard`. `Statement`/`Witness` are free here (no witnessed branch). -/
+/-- **The authorization gate (`firstParty`).** Admits iff `req.actor = authorizedParty req.step`.
+The role/cap check is decidable, so it is a `firstParty` Guard. -/
 def authGuard {Statement : Type} : Guard WFRequest Statement :=
   Guard.firstParty (fun req => decide (req.actor = authorizedParty req.step))
 
-/-- **The phase-ordering gate (`firstParty`).** "Release only after review": admits iff
-`req.phase = precond req.step` — the choreography precondition (an `allowedTransitions`-style
-predicate over the phase field). Decidable now ⇒ `firstParty`. -/
+/-- **The phase-ordering gate (`firstParty`).** Admits iff `req.phase = precond req.step` —
+the choreography precondition. Decidable ⇒ `firstParty`. -/
 def orderGuard {Statement : Type} : Guard WFRequest Statement :=
   Guard.firstParty (fun req => decide (req.phase = precond req.step))
 
-/-- **The attestation gate (`witnessed`).** "The step carries a verifying proof": a
-`witnessed` Guard at the §8 verify seam over the step's statement `stmt`. `admits` routes
-through `Verifiable.Verify stmt (w stmt)` — i.e. `CryptoKernel.verify stmt att` under the
-natural witness supply (§4). This is `Guard.senderAuthorized` reused for the attestation
-claim (the same `witnessed` primitive). ZK-capable, fail-closed. -/
+/-- **The attestation gate (`witnessed`).** A `witnessed` Guard at the §8 verify seam over
+`stmt`. `admits` routes through `Verifiable.Verify stmt (w stmt)`, i.e. `CryptoKernel.verify
+stmt att` under the natural witness supply. ZK-capable, fail-closed. -/
 def attestGuard (stmt : Digest) : Guard WFRequest Digest :=
   Guard.witnessed stmt
 
@@ -105,22 +78,18 @@ irrelevant — they never touch the seam.) -/
 /-- The witness supply that hands the workflow's attestation `att` to the verify seam. -/
 def wsupply (att : Proof) : Digest → Proof := fun _ => att
 
-/-! ## §4 — The refinement equivalences (the real content).
+/-! ## §4 — The refinement equivalences.
 
-Each concrete `Workflow.lean` gate check IS, with no remainder, the corresponding
-`Guard.admits`. We prove the `↔` per gate, then assemble the whole-step `↔`. The verify
-oracle is the `Verifiable Digest Proof` instance INDUCED by the `CryptoKernel`
-(`verifiableOfCryptoKernel`), so the witnessed branch's `Verify` IS `CryptoKernel.verify`. -/
+Each concrete gate check coincides exactly with the corresponding `Guard.admits`. The verify
+oracle is the `Verifiable Digest Proof` instance induced by `CryptoKernel`, so the witnessed
+branch's `Verify` is `CryptoKernel.verify`. -/
 
 section Refinement
 
 variable [CryptoKernel Digest Proof]
 
-/-- **`workflow_authz_is_guard` (PROVED) — the authorization gate refines the abstract Guard.**
-The concrete workflow authorization check (`actor = authorizedParty s`, the predicate behind
-`Workflow.exec_authorized`) holds IFF the abstract `authGuard` admits the request. The app's
-"who may sign" gate is EXACTLY a `Spec.Guard.firstParty` admission — machine-checked from the
-abstract law to the running role check. -/
+/-- **`workflow_authz_is_guard`.** The concrete authorization check (`actor = authorizedParty s`)
+holds iff the abstract `authGuard` admits the request. -/
 theorem workflow_authz_is_guard (s : StepKind) (actor : Party) (phase : Phase)
     (att : Proof) :
     Guard.admits (authGuard (Statement := Digest)) ⟨s, actor, phase⟩ (wsupply att) = true
@@ -129,10 +98,8 @@ theorem workflow_authz_is_guard (s : StepKind) (actor : Party) (phase : Phase)
   rw [Guard.admits_firstParty]
   exact decide_eq_true_iff
 
-/-- **`workflow_order_is_guard` (PROVED) — the phase-ordering gate refines the abstract Guard.**
-The concrete choreography check (`phase = precond s`, the predicate behind
-`Workflow.exec_in_order`) holds IFF the abstract `orderGuard` admits. The app's "release only
-after review" precondition is EXACTLY a `Spec.Guard.firstParty` admission. -/
+/-- **`workflow_order_is_guard`.** The concrete choreography check (`phase = precond s`)
+holds iff the abstract `orderGuard` admits the request. -/
 theorem workflow_order_is_guard (s : StepKind) (actor : Party) (phase : Phase)
     (att : Proof) :
     Guard.admits (orderGuard (Statement := Digest)) ⟨s, actor, phase⟩ (wsupply att) = true
@@ -141,11 +108,9 @@ theorem workflow_order_is_guard (s : StepKind) (actor : Party) (phase : Phase)
   rw [Guard.admits_firstParty]
   exact decide_eq_true_iff
 
-/-- **`workflow_attest_is_guard` (PROVED) — the attestation gate refines the abstract Guard.**
-The concrete attestation check (`CryptoKernel.verify stmt att = true`, the predicate behind
-`Workflow.exec_attested`) holds IFF the abstract `attestGuard stmt` admits under the natural
-supply. The app's "the step carries a verifying proof" gate is EXACTLY a `Spec.Guard.witnessed`
-admission at the §8 verify seam — the oracle, honestly stated, NOT a hidden gap. -/
+/-- **`workflow_attest_is_guard`.** The concrete attestation check
+(`CryptoKernel.verify stmt att = true`) holds iff `attestGuard stmt` admits under the natural
+supply. The §8 verify seam is honestly stated — not a hidden gap. -/
 theorem workflow_attest_is_guard (stmt : Digest) (s : StepKind) (actor : Party) (phase : Phase)
     (att : Proof) :
     Guard.admits (attestGuard stmt) ⟨s, actor, phase⟩ (wsupply att) = true
@@ -154,18 +119,11 @@ theorem workflow_attest_is_guard (stmt : Digest) (s : StepKind) (actor : Party) 
   rw [Guard.admits_witnessed]
   rfl
 
-/-! ## §5 — The whole-step refinement (the app-level statement).
+/-! ## §5 — The whole-step refinement. -/
 
-The workflow step's `exec` `if`-guard is the conjunction of the three concrete checks; the
-abstract `stepGuard` is `Guard.all` of the three abstract gates. They coincide. -/
-
-/-- **`workflow_step_admits_iff_guards` (PROVED) — the closed-loop Spec statement.**
-The whole-step abstract Guard web (`stepGuard stmt` = the `Guard.all` conjunction of
-authorization, ordering, and attestation) admits the request `⟨s, actor, phase⟩` under the
-natural supply EXACTLY when all three concrete `Workflow.exec` checks hold. So the workflow
-step is admissible *precisely when the abstract Guard law admits it* — the app's authorization
-is machine-checked from the abstract `Spec.Guard` down to the running predicate, no remainder.
-This is the Spec side of the first verified application. -/
+/-- **`workflow_step_admits_iff_guards`.** `stepGuard stmt` admits `⟨s, actor, phase⟩` under
+the natural supply iff all three concrete `Workflow.exec` checks hold. The workflow step is
+admissible precisely when the abstract Guard web admits it, with no remainder. -/
 theorem workflow_step_admits_iff_guards (stmt : Digest)
     (s : StepKind) (actor : Party) (phase : Phase) (att : Proof) :
     Guard.admits (stepGuard stmt) ⟨s, actor, phase⟩ (wsupply att) = true
@@ -189,12 +147,9 @@ theorem workflow_step_admits_iff_guards (stmt : Digest)
     · exact (workflow_order_is_guard s actor phase att).mpr ho
     · exact (workflow_attest_is_guard stmt s actor phase att).mpr hv
 
-/-- **`exec_admits_step_guard` (PROVED) — `exec` commits ⇒ the abstract Guard web admits.**
-The executable bridge: whenever the concrete `Workflow.exec` commits a step (returns `some`),
-the abstract `stepGuard` admits the corresponding request. So every step the running workflow
-takes is one the abstract `Spec.Guard` law sanctions — the refinement direction the app needs.
-(The three concrete consequences are exactly `Workflow.exec_authorized` / `exec_in_order` /
-`exec_attested`, here re-collected onto the Guard web.) -/
+/-- **`exec_admits_step_guard`.** Whenever `Workflow.exec` commits (returns `some`), the abstract
+`stepGuard` admits the request. Every step the running workflow takes is sanctioned by the
+`Spec.Guard` law. -/
 theorem exec_admits_step_guard (stmt : Digest)
     {k k' : WState Proof} {s : StepKind} {actor : Party} {att : Proof}
     (h : Workflow.exec stmt k s actor att = some k') :
@@ -204,12 +159,10 @@ theorem exec_admits_step_guard (stmt : Digest)
 
 end Refinement
 
-/-! ## §6 — Discriminating smoke checks (`example`/`#eval`, fail-closed).
+/-! ## §6 — Discriminating smoke checks (`example`/`#eval`).
 
-On the reference kernel (`verify stmt att = decide (stmt = att)`; statement `7`, good att
-`7`), the abstract Guard web ADMITS an authorized in-order attested step and REJECTS any step
-that is out-of-order, unauthorized, or unattested. These are the negative regression guards:
-the Guard refinement is DISCRIMINATING, not vacuous. -/
+On the reference kernel, the Guard web admits an authorized in-order attested step and rejects
+any step that is out-of-order, unauthorized, or unattested. The refinement is non-vacuous. -/
 
 section Smoke
 
@@ -264,10 +217,7 @@ end Smoke
 
 /-! ## §7 — Axiom-hygiene tripwires.
 
-Each refinement keystone depends ONLY on the three standard kernel axioms (no `sorryAx`):
-the three per-gate equivalences, the whole-step web equivalence, and the `exec`⇒admits
-bridge. This certifies the workflow's authorization is genuinely machine-checked from the
-abstract `Spec.Guard` law down to the running predicate — not a `sorry`-alias. -/
+Each keystone depends only on `{propext, Classical.choice, Quot.sound}` (no `sorryAx`). -/
 
 #assert_axioms workflow_authz_is_guard
 #assert_axioms workflow_order_is_guard

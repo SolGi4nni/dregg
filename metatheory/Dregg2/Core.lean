@@ -1,27 +1,15 @@
 /-
 # Dregg2.Core — the symmetric-monoidal category of cells & turns, plus conservation.
 
-Law 1 (Conservation) is the linear/symmetric-monoidal structure on the category
-whose **objects are cells** and whose **morphisms are turns**. The load-bearing
-content of conservation `Σ_k` is a **monoid-homomorphism on counts +
-invariance on ordinary turns**: `Σ_k (A ⊗ B) = Σ_k A + Σ_k B` (additive across
-the monoidal product) and `Σ_k A = Σ_k B` for every `ordinary` turn `A ⟶ B` —
-i.e. an honest turn neither creates nor destroys units of resource `k`; it can
-only move, withhold (copy `Δ`), or erase (`◇`) them. (The "strong monoidal
-functor" packaging is *decorative* — its target is discrete on objects, so the
-functor laws collapse to the monoid-hom + invariance; per `dregg2.md §2.1` /
-`00-synthesis.md §1`, treat the monoid-hom + invariance as the real obligation.)
+Law 1 (Conservation) is the linear/symmetric-monoidal structure on the category whose
+objects are cells and morphisms are turns. The load-bearing content is a monoid-homomorphism
+`Σ_k` + invariance on ordinary turns: `Σ_k (A ⊗ B) = Σ_k A + Σ_k B` and `Σ_k A = Σ_k B`
+for every ordinary turn. Mint/burn are the only generators allowed to change `Σ_k`.
 
-Mint/burn are the *only* generators allowed to change `Σ_k`; they are modelled as
-explicit typed generators, so conservation is an equality (`=`), never a monotone
-bound (`≥`).
-
-Design note: "spec-first, grind up." Law 1's per-turn balance is the one obligation the
-in-module data cannot derive; it is carried as the **typeclass field** `ConservesStep cons`
-(the `CryptoKernel`/`World` Prop-portal idiom — an explicit, auto-resolved assumption, NOT a
-`sorry`), and DISCHARGED for the executable machine in `Exec.StepComplete` (the PROVED
-`conservation_step_realized`). The three case-corollaries are then proved from the field. The
-boundary law (a different, candidate-dependent module) lands LAST.
+Law 1's per-turn balance cannot be derived from the abstract data alone; it is carried as the
+typeclass field `ConservesStep cons` (the `CryptoKernel`/`World` Prop-portal idiom — an
+explicit, auto-resolved assumption, NOT a `sorry`), and discharged for the executable machine
+in `Exec.StepComplete`. The case-corollaries are proved from that field.
 -/
 import Mathlib.CategoryTheory.Category.Basic
 import Mathlib.CategoryTheory.Monoidal.Category
@@ -133,9 +121,8 @@ structure Conservation (M : Type u) [AddCommMonoid M] where
   languages for monoidal categories* (the `⊗`/`I` structure these shadow). -/
   tensor_add : ∀ A B, count (tensor A B) = count A + count B
 
-/-- The new `tensor`/`unit`/`unit_zero`/`tensor_add` fields are satisfiable: the trivial
-zero-measure is a `Conservation ℕ` (witnesses that de-hollowing added no unmeetable
-obligation). The monoid-hom equations hold by `simp` on the constant-`0` measure. -/
+/-- The `tensor`/`unit`/`unit_zero`/`tensor_add` fields are satisfiable: the trivial
+zero-measure is a `Conservation ℕ`. The monoid-hom equations hold by `simp`. -/
 example : Conservation ℕ where
   count  := fun _ => 0
   minted := fun _ => 0
@@ -149,38 +136,29 @@ example : Conservation ℕ where
   unit_zero  := rfl
   tensor_add := by simp
 
-/-- **The conservation balance (Law 1) — the operational obligation, now a TYPECLASS field.**
-Every turn balances inflow against outflow: `count A + minted tag = count B + burned tag`.
+/-- **`ConservesStep` — the conservation balance (Law 1) as a typeclass field.** Every turn
+balances inflow against outflow: `count A + minted tag = count B + burned tag`.
 
-This was the one `sorry` of the abstract `Core` layer: there is no data in
-`Conservation`/`Turn` from which the equality follows *in-module* — it is the law the
-operational semantics must satisfy. Rather than leave it as a `sorry`-bodied theorem (an
-unprovable claim) we make it an **explicit assumption carried as a class field**, exactly the
-`CryptoKernel`/`World` Prop-portal idiom: `ConservesStep cons` is "the measure `cons` is
-realized by an operational model that conserves every turn". The abstract case-corollaries
-below then take `[ConservesStep cons]` (auto-resolved) and are PROVED from the field — no
-`sorry` anywhere.
+The equality cannot be derived from the abstract `Conservation`/`Turn` data alone — it is
+the law the operational semantics must satisfy. It is carried as an explicit typeclass field
+(the `CryptoKernel`/`World` Prop-portal idiom), so the abstract corollaries below take
+`[ConservesStep cons]` and are proved from the field with no `sorry`.
 
-This is NOT a vacuous assumption: the executable kernel DISCHARGES it. The instance is
-provided in `Exec.StepComplete` from the PROVED `cexec_attests` /
-`conservation_step_realized` — the class field is satisfied by a real proof about the
-running machine, never re-`sorry`'d. -/
+This is NOT a vacuous assumption: the executable kernel discharges it. The instance is
+provided in `Exec.StepComplete` from the proved `conservation_step_realized`. -/
 class ConservesStep (cons : Conservation M) : Prop where
   /-- The Law-1 balance for every turn — the operational model's obligation. -/
   step : ∀ {A B : Cell} (f : Turn A B),
     cons.count A + cons.minted f.tag = cons.count B + cons.burned f.tag
 
-/-- **The conservation balance (Law 1).** Accessor for the `ConservesStep` class field, so
-the abstract law reads as a lemma `conservation_step cons f` (the constraint
-`[ConservesStep cons]` is implicit, auto-resolved at every call site). Equality, never `≥`. -/
+/-- **`conservation_step`** — accessor for the `ConservesStep` field. Equality, never `≥`. -/
 theorem conservation_step
     (cons : Conservation M) [ConservesStep cons]
     {A B : Cell} (f : Turn A B) :
     cons.count A + cons.minted f.tag = cons.count B + cons.burned f.tag :=
   ConservesStep.step f
 
-/-- **Conservation on ordinary turns — PROVED** from `conservation_step`: an `ordinary`
-turn preserves the measure exactly (both inflow and outflow collapse to `0`). -/
+/-- An `ordinary` turn preserves the measure exactly (inflow and outflow both `0`). -/
 theorem conservation_ordinary
     (cons : Conservation M) [ConservesStep cons]
     {A B : Cell} (f : Turn A B) (h : f.tag = TurnTag.ordinary) :
@@ -189,8 +167,7 @@ theorem conservation_ordinary
   rw [h, cons.ord_minted, cons.ord_burned, add_zero, add_zero] at hs
   exact hs
 
-/-- A `mint` generator increases the measure by its inflow — **PROVED** from
-`conservation_step` + `mint_pure`. -/
+/-- A `mint` generator increases the measure by its inflow. -/
 theorem mint_delta
     (cons : Conservation M) [ConservesStep cons] (k amount : Nat)
     {A B : Cell} (f : Turn A B) (h : f.tag = TurnTag.mint k amount) :
@@ -199,9 +176,8 @@ theorem mint_delta
   rw [h, cons.mint_pure, add_zero] at hs
   exact hs.symm
 
-/-- A `burn` generator decreases the measure by its outflow, stated **additively**
-(`count A = count B + outflow`, no truncated subtraction) — **PROVED** from
-`conservation_step` + `burn_pure`. -/
+/-- A `burn` generator decreases the measure by its outflow, stated additively
+(`count A = count B + outflow`, no truncated subtraction). -/
 theorem burn_delta
     (cons : Conservation M) [ConservesStep cons] (k amount : Nat)
     {A B : Cell} (f : Turn A B) (h : f.tag = TurnTag.burn k amount) :

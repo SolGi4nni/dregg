@@ -1,14 +1,11 @@
 /-
 # Dregg2.Tactics — shared proof automation for the dregg2 metatheory.
 
-Small, honest helpers shared across the modules and the executable protocols. The rule:
-these CLOSE genuinely-routine goals (reflexivity, definitional simp, injection cleanup,
-linear arithmetic). They are NOT a way to make a real obligation *look* discharged — if a
-helper does not close a goal, the goal is real: prove it properly or leave an explicit
-`sorry` with a one-line reason. (Never `admit`, never a fresh `axiom`, never
-`native_decide` on a non-decidable prop.)
-
-Grows as recurring patterns emerge from the proof-discharge swarm.
+Small helpers shared across modules and executable protocols. These close genuinely routine
+goals (reflexivity, definitional simp, injection cleanup, linear arithmetic) — not a way
+to make a real obligation look discharged. If a helper does not close a goal, the goal is
+real: prove it properly or leave an explicit `sorry` with a one-line reason.
+(Never `admit`, never a fresh `axiom`, never `native_decide` on a non-decidable prop.)
 -/
 import Mathlib.Tactic.Tauto
 import Mathlib.Tactic.Ring
@@ -16,21 +13,17 @@ import Lean
 
 /-! ## Axiom-hygiene tripwire — the `sorryAx` regression guard.
 
-A theorem can *look* clean ("PROVED, no sorry") while transitively depending on a
-`sorryAx` pulled in through a renamed/aliased lemma or a spec-first `sorry`'d primitive.
-This bit us once (a strengthened theorem silently inherited `sorryAx`). `#assert_axioms`
-turns the prose promise "depends only on the standard kernel axioms" into a *build-checked*
-one: it ELABORATES to an error if the named declaration's axiom set escapes
+`#assert_axioms` elaborates to an error if the named declaration's axiom set escapes
 `{propext, Classical.choice, Quot.sound}` (notably: any `sorryAx`). It can only reject,
-never close a goal — the safest possible addition. Pin it under each "PROVED" keystone.
+never close a goal. Pin it under each proved keystone.
 
-Defined at TOP LEVEL (outside the namespace) so the `#assert_axioms` command token parses
-in every importing module without needing `open`.
+Defined at top level (outside the namespace) so the command token parses in every
+importing module without needing `open`.
 
 (Honest note on §8 oracles: `CryptoKernel`/`World`/`Verifiable` obligations enter as
-*typeclass parameters/hypotheses*, NOT `axiom`-keyword declarations, so they do not appear
-in `collectAxioms` and correctly do not trip this guard. A genuine `axiom`-keyword oracle,
-were one ever added, would have to be allow-listed by name with a comment — by design.) -/
+typeclass parameters/hypotheses, NOT `axiom`-keyword declarations, so they do not appear
+in `collectAxioms` and do not trip this guard. A genuine `axiom`-keyword oracle, were one
+ever added, would need to be allow-listed by name with a comment — by design.) -/
 
 open Lean Elab Command in
 /-- `#assert_axioms foo` errors unless every axiom `foo` depends on is one of the three
@@ -45,26 +38,21 @@ elab "#assert_axioms" id:ident : command => do
     throwError "axiom-hygiene FAIL: {name} depends on non-kernel axioms {bad.toList} \
       (a `sorryAx` here means a silent `sorry` leaked into a 'PROVED' keystone)"
 
-/-! ## `#assert_namespace_axioms` — module-wide axiom-hygiene pinning (the ledger-collapser).
+/-! ## `#assert_namespace_axioms` — module-wide axiom-hygiene pinning.
 
-`Claims.lean` hand-lists ~110 fully-qualified `#assert_axioms` names. `#assert_namespace_axioms`
-does the same job over a whole NAMESPACE in one line: it walks `getEnv`, finds every
-THEOREM whose name lies under the given prefix, runs `collectAxioms`, and THROWS if any
-depends on an axiom outside `{propext, Classical.choice, Quot.sound}` (notably `sorryAx`).
-It is a pure REJECTOR — it can only error, never close a goal — so it is the safest
-possible automation.
+`#assert_namespace_axioms` pins every theorem under a namespace to the three standard
+kernel axioms in one line: it walks `getEnv`, finds every theorem under the prefix, runs
+`collectAxioms`, and throws if any depends on an axiom outside
+`{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). Pure rejector — it can only
+error, never close a goal.
 
-**The honesty caveat (the `except` list).** Module-wide pinning could silently hide a
-keystone that *legitimately* rests on a §8 oracle / Law-1 `sorry`'d primitive — exactly the
-ones `Claims.lean` deliberately does NOT pin (its §12/§16 PARKED pins). So a name passed in
-the `except` clause is SKIPPED (and reported), preserving the discipline "a keystone resting
-on a primitive is NOT pinned". Each skip must be justified by a comment, exactly as the
-PARKED pins are. This collapses the clean majority of the ledger while keeping the
-fail-loud guard for the rest.
+**The `except` list (honesty caveat).** A name in the `except` clause is skipped (and
+reported). Use this for keystones that legitimately rest on a §8 oracle or a Law-1
+`sorry`'d primitive — each skip must be justified by a comment, preserving the discipline
+that a keystone resting on a primitive is not pinned.
 
 (Like `#assert_axioms`, this only sees `axiom`-keyword declarations; §8 oracles that enter
-as typeclass parameters / hypotheses — `Verifiable` / `CryptoKernel` / `World` — do not
-appear in `collectAxioms` and so do not trip it. By design.) -/
+as typeclass parameters / hypotheses do not appear in `collectAxioms`. By design.) -/
 
 /-- `#assert_namespace_axioms NS (except a b …)?` — pin EVERY theorem under namespace `NS` to the
 three standard kernel axioms, erroring on the first one that escapes (a `sorryAx` ⇒ a silent
@@ -138,17 +126,13 @@ that returned `some (newState…)`. -/
 macro "option_inj" "at" h:ident : tactic =>
   `(tactic| simp only [Option.some.injEq, Prod.mk.injEq] at $h:ident)
 
-/-! ## §3 — Effect-arm combinators (the per-effect dispatch-proof de-boilerplaters).
+/-! ## Effect-arm combinators (per-effect dispatch-proof helpers).
 
-The big `cases fa with` dispatch proofs (`execFullA_ledger_per_asset`, `_chainlink`,
-`_attests_per_asset`, … over the ~46-arm `FullActionA`) repeat a tiny vocabulary of moves per
-arm: reject the `none` (fail-closed) branch against the commit hypothesis, substitute the
-committed state on the `some` branch, peel an inner `if gate then … else none`, and discharge a
-balance-NEUTRAL (caps/log-only) edit. Each combinator below is a `macro` that expands to EXACTLY
-those visible tactic steps — it can only do what the spelled-out block does (NO oracle, no
-`native_decide`), so a wrong arm still fails loudly. They make adding the next effect a few
-lines instead of a 9-site copy-paste (and shrink the laundering surface: less copy-paste, fewer
-places a subtly-wrong arm can hide). -/
+The `cases fa with` dispatch proofs over `FullActionA` repeat a small vocabulary of moves
+per arm: reject the `none` (fail-closed) branch, substitute the committed state on `some`,
+peel an `if gate then … else none`, discharge a balance-neutral edit. Each combinator below
+expands to exactly those tactic steps — no oracle, no `native_decide`, so a wrong arm still
+fails loudly. -/
 
 /-- `reject_none h hk` — the FAIL-CLOSED `none` branch. `hk : f = none` rewrites the commit
 hypothesis `h : f = some _` to `none = some _`, closed by `absurd`. -/

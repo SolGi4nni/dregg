@@ -39,10 +39,10 @@ dregg2 runs resources in two registers, mirroring the caps↔keys split:
     (`Laws.lean`) — succinctly checkable (a field sum, sum-`≤`-1, a sorted-id accumulator,
     a Pedersen `●/◦` opening). This is a *sub-camera* (the succinctly-verifiable fragment),
     NOT a ceiling on the metatheory.
-So: do NOT restrict the camera to the ZK-able fragment — that was a category error. The
+Do NOT restrict the camera to the ZK-able fragment — that is a category error. The
 metatheory models the whole system (runtime + proof-carrying); the verifier constrains
-only what may travel as an attested cross-vat certificate. (This is the resource-tier
-shadow of `dregg2.md §3` caps-as-caps vs keys-as-caps.)
+only what may travel as an attested cross-vat certificate. (Resource-tier shadow of
+`dregg2.md §3` caps-as-caps vs keys-as-caps.)
 
 ## "Full camera" vs what is here
 This module is a *discrete* resource algebra (RA): partial commutative monoid + `valid`

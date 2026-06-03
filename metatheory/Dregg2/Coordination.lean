@@ -1,62 +1,32 @@
 /-
 # Dregg2.Coordination — the multiparty-session-type / choreography layer.
 
-This is the **top of the coordination stack** (`dregg2-multicell-privacy.md §6`):
+Models multi-party, multi-round agent coordination as multiparty session types (MPST):
 
-    CellProgram (one cell's coalgebra, `Boundary.lean`)
-      → JointTurn (one atomic multi-cell step = Mina's `zkapp_command` forest)
-        → **Coordination** (a multi-party, multi-turn, session-typed choreography
-           reified as a protocol-cell, privacy-by-projection, statically-classified
-           I-confluent fragment).
+  * A **global type `G`** (choreography) describes the whole protocol — who communicates with
+    whom, in what order, with what branching/recursion (Honda–Yoshida–Carbone JACM 2016);
+  * **Projection** `G ↾ p` (`project G p`) gives each role its local endpoint type;
+  * A well-formed (projectable) `G` enjoys progress + deadlock-freedom by design (Law 2).
 
-A `JointTurn` is *one* atomic step; real agent coordination — negotiation, auction,
-commit-reveal vote, request→subtasks→aggregate→return workflow — is a **stateful,
-multi-round, multi-party** interaction, i.e. a structured *composition of JointTurns
-over time*. We model it as a **multiparty session type** (MPST):
+Reified as a cell: a coordination is a protocol-cell whose `CellProgram` is `G`; its
+admissibility predicate is "is this the next legal action under `G`" and its state is
+messages-so-far. The protocol-cell's coalgebra is a `Boundary.TurnCoalg`, so `G` (resp.
+`G ↾ p`) embeds into the final coalgebra `νF` of `Boundary`.
 
-  * a **global type `G`** (a choreography) describes the whole protocol — who talks to
-    whom, in what order, with what branching/recursion (Honda–Yoshida–Carbone, JACM
-    2016; Carbone–Montesi choreographic programming);
-  * **projection** `G ↾ p` (`project G p`) gives each role its **local/endpoint type**
-    — its own view of the protocol;
-  * a well-formed (projectable) `G` enjoys **progress + deadlock-freedom by design**
-    (the MPST/EPP fidelity guarantee) — the multi-party-multi-turn safety property
-    (Law 2, *ordering*).
-
-Reified as a cell (`dregg2 §6`, [F]): a coordination is a **protocol-cell** whose
-`CellProgram` *is* `G` — its admissibility predicate = "is this the next legal action
-under `G`," its state = messages-so-far; participant cells advance it via JointTurns,
-the await family connecting steps (a "receive" *is* a zkpromise awaiting the matching
-"send"). A coordination is therefore **a cell coordinating cells** — the cell concept
-recursing, no new top-level primitive. The protocol-cell's coalgebra is exactly a
-`Boundary.TurnCoalg`, so this module **embeds `G` (resp. `G ↾ p`) into the final
-coalgebra `νF`** of `Boundary` (`study-choreography` claim #3: a local session type IS
-a communicating automaton / Moore coalgebra — grounded in `coalgebraic-semantics-silva`).
-
-Three judgements, kept ORTHOGONAL (`study-choreography` claim #1, **[REFUTED]** the
-linearity⇒I-confluence conflation):
+Three orthogonal judgements:
   * **Law 1 (conservation / linearity)** — `Core` / `Resource`;
-  * **Law 2 (ordering / session)** — THIS module's `project`/projectability;
-  * **the third judgement (I-confluence)** — `Confluence.IConfluent`, a BEC-style
-    invariant-confluence analysis over a step's write-set × cell-state-lattice, **NOT**
-    detected by the session type. We import it and link each protocol step's
-    *cross-group runnability* to it (`iconfluent_fragment_crossgroup_free`): a step
-    whose effect is I-confluent runs cross-group, partition-tolerant, with no atomic
-    commit; a coupled (Σ=0 settlement) step must block (`dregg2 §6`, §7-(1)).
+  * **Law 2 (ordering / session)** — this module's `project` / projectability;
+  * **I-confluence** — `Confluence.IConfluent` over a step's write-set × cell-state-lattice,
+    NOT detected by the session type. An I-confluent step runs cross-group, partition-tolerant,
+    with no atomic commit; a coupled (Σ=0 settlement) step must block.
 
-Privacy-by-projection (`dregg2 §6`, [F]): party `p` sees only `project G p`; the
-global choreography is graph-hidden by the protocol structure itself.
+OPEN: the linearity⇒I-confluence conflation is refuted — these are independent judgements.
+The branching `merge` in projection is genuinely partial (MPST projection is sound but
+incomplete). Recursion (`mu`/`var`) is handled by the `NoRec` precondition; deadlock-freedom
+and privacy-by-projection hold on the non-recursive fragment.
 
-Style: spec-first, grind up — projection/data is DEFINED (computable where feasible);
-the soundness/fidelity/deadlock-freedom THEOREMS are stated as faithful Props with
-`sorry` bodies (each `sorry` = a real obligation; many are `study-choreography`'s
-CONFIRMED-OPEN problems — flagged in the relevant docstrings). The branching `merge`
-in projection is genuinely partial (classical MPST projection is **sound but
-incomplete**, claim #2) and is left abstract / partial on purpose.
-
-Naming note: `src`/`dst` are used for the sender/receiver roles of a communication;
-the obvious word `to` is a Lean reserved token (so is `Sort` — payload sorts are
-named `Payload`).
+Naming note: `to` and `Sort` are Lean reserved tokens — sender/receiver roles use `src`/`dst`;
+payload sorts are named `Payload`.
 -/
 import Dregg2.Confluence
 import Dregg2.Boundary
@@ -316,21 +286,15 @@ end
 
 /-- **`Projectable G` — well-formedness = every role projects successfully.** A `G` is
 well-formed iff for every role the merge in every branching reconciles (no `mergeLocal`
-failure). This is the MPST projectability side-condition; a `Projectable G` is what the
-EPP/fidelity and deadlock-freedom theorems below take as hypothesis. The honest content
-is "no `mergeLocal` invoked while computing `project G p` returned `none`" — now made
-CONCRETE via `MergesAt` (previously this was the vacuous `∀ p ∈ roles G, True`, audit
-2026-05-29). It is a genuine, falsifiable Prop: a `choice` whose passive-role branches
-do not agree (so the identity-merge fails) is NOT `Projectable`. -/
+failure). The honest content is "no `mergeLocal` invoked while computing `project G p`
+returned `none`" — made concrete via `MergesAt`. A `choice` whose passive-role branches
+disagree (identity-merge fails) is NOT `Projectable`. -/
 def Projectable (G : GlobalType) : Prop :=
   ∀ p : Role, p ∈ roles G → MergesAt G p
 
-/-- **`Projectable` is NON-VACUOUS (PROVED).** A two-branch `choice` whose passive role's
-branch continuations *disagree* fails `MergesAt` (the identity `mergeLocal` returns
-`none`), hence is not `Projectable`. Concretely `0 → 1 : { a . (2→3 done) , b . done }`:
-role `2` is passive in the outer choice, and its two branch projections are
-`recv 0 _ done`-ish vs `done`, which the identity merge rejects. We witness the merge
-failure directly — this is the falsifiable content the old `∀ p, True` lacked. -/
+/-- **`Projectable` is non-vacuous.** A two-branch `choice` whose passive role's continuations
+disagree fails `MergesAt` (identity merge returns `none`). Concretely `0 → 1 : { a . (2→3 done) , b . done }`:
+role `2` is passive; its two branch projections disagree and the merge rejects them. -/
 theorem projectBranches_can_fail :
     ∃ (branches : List (Label × GlobalType)) (p : Role),
       projectBranches branches p = none := by
@@ -400,19 +364,12 @@ def Dual : LocalType → LocalType → Prop
 
 /-! ## Theorems — fidelity, deadlock-freedom, the I-confluent fragment, privacy -/
 
-/-- **`projection_sound` — MPST fidelity / Endpoint-Projection soundness.** Running the
-projected endpoints `{ G ↾ p | p ∈ roles G }` *in parallel* realizes exactly the global
-choreography `G`: the trace of the composed endpoints equals the traces of `G` (no extra
-or missing communications). This is the standard MPST fidelity theorem (Honda–Yoshida–
-Carbone) and Carbone–Montesi's EPP soundness — "the local types faithfully implement the
-global protocol."
-
-Here stated via its crispest checkable content — **head-duality at a communication**:
-for a protocol-cell running `comm a b s k` (with `a ≠ b`), the sender's projection is a
-`send` and the receiver's is the *dual* `recv` (`Dual`), i.e. the two endpoints
-synchronise on exactly the message `G` prescribes. (The full statement is a bisimulation
-of the parallel-composed projections to `pc.coalg` at `pc.start`, in `Boundary.IsBisim`'s
-sense — the realization the discharge must produce.) `sorry`. -/
+/-- **`projection_sound` — MPST fidelity / EPP soundness.** The projected endpoints
+`{ G ↾ p | p ∈ roles G }` in parallel realize exactly `G`. Stated via head-duality: for a
+protocol-cell running `comm a b s k` with `a ≠ b`, the sender's projection is a `send` and
+the receiver's the dual `recv`, so they synchronise on exactly the prescribed message.
+(The full statement is a bisimulation of the composed projections to `pc.coalg`, whose
+discharge is OPEN.) -/
 theorem projection_sound
     {Obs AdmissibleTurn : Type u}
     (pc : ProtocolCell Obs AdmissibleTurn)
@@ -420,10 +377,7 @@ theorem projection_sound
     (a b : Role) (s : Payload) (k : GlobalType)
     (hG : pc.G = GlobalType.comm a b s k) (hab : a ≠ b) :
     Dual (project pc.G a) (project pc.G b) := by
-  -- PROVED (the stated head-duality content): rewrite `pc.G` to the `comm a b s k`,
-  -- compute both projections — `a` is the sender so `project … a = send b s _`, and
-  -- `b ≠ a` is not the sender but is the receiver so `project … b = recv a s _` — then
-  -- `Dual (send …) (recv …)` unfolds to the sort equality `s = s`.
+  -- Rewrite `pc.G` to `comm a b s k`; compute both projections and unfold `Dual`.
   rw [hG]
   simp only [project, if_true, if_neg hab.symm, Dual]
 
@@ -440,51 +394,37 @@ structure StepEffect (S : Type u) [Dregg2.Confluence.MergeState S] where
   inv : Dregg2.Confluence.Invariant S
 
 /-- **`iconfluent_fragment_crossgroup_free` — the I-confluent fragment runs cross-group
-free; the coupled fragment must block.** `dregg2 §6` + §7-(1), corrected by
-`study-choreography` claim #1 (**[REFUTED]** the linearity⇒I-confluence conflation): the
-classifier is **NOT** the session type — it is `Confluence.IConfluent` over the step's
-write-set × cell-state-lattice (a third, independent judgement). The two-sided claim:
+free; the coupled fragment must block.** The classifier is NOT the session type — it is
+`Confluence.IConfluent` over the step's write-set × cell-state-lattice (an independent
+third judgement):
 
-  * **I-confluent step** (commutative/monotone — append a commitment, add to a CRDT set,
-    post an intent, an independent grant): if `Confluence.IConfluent step.inv`, the step
-    needs **no cross-group coordination** — it runs partition-tolerant, no atomic commit
-    (`Confluence.Tier1Eligible`, the tier-1 gate). Hence a choreography whose steps are
-    ALL I-confluent runs fully cross-group free.
-  * **Coupled step** (an atomic Σ=0 settlement): if `¬ Confluence.IConfluent step.inv`,
-    the step is the blocking atomic JointTurn — cross-group blocks under partition
-    (`Confluence.nonpairwise_escalation`; the genuine impossibility of §7-(1), matching
-    BEC Thm 3.1 + CryptoConcurrency's consensus reduction).
+  * **I-confluent step** (commutative/monotone): if `Confluence.IConfluent step.inv`, the
+    step needs no cross-group coordination — it runs partition-tolerant, no atomic commit
+    (`Confluence.Tier1Eligible`). A choreography whose steps are all I-confluent runs fully
+    cross-group free.
+  * **Coupled step** (atomic Σ=0 settlement): if `¬ Confluence.IConfluent step.inv`, the
+    step must block under partition (`Confluence.nonpairwise_escalation`; matches BEC Thm 3.1).
 
-(`study-choreography` claim #5: a choreography that statically partitions these fragments
-over Byzantine parties is CONFIRMED-OPEN / likely NEW — this theorem names that formal
-object.)
+The load-bearing content: when the step is I-confluent, any two invariant-preserving versions
+of the touched state merge invariant-safely — that is what "partition-tolerant, no commit"
+means, i.e. `Confluence.admits_sound` specialised to `step.inv`. The bare definitional unfold
+`Tier1Eligible ↔ IConfluent` is recorded as `tier1Eligible_iff_iconfluent_def` below.
 
-We give the theorem its REAL operational content rather than the definitional unfold
-`Tier1Eligible ↔ IConfluent` (which is `Iff.rfl` — `Tier1Eligible I := IConfluent I` in
-`Confluence.lean`; that bare unfold is recorded honestly as `tier1Eligible_iff_iconfluent_def`
-below). The load-bearing claim is the **blue direction's payoff**: when the step is
-I-confluent, the cells it touches may run it cross-group with NO commit because *any* two
-invariant-preserving versions of the touched state merge invariant-safely — this is what
-"runs partition-tolerant, no atomic commit" *means* operationally, and it is exactly
-`Confluence.admits_sound`'s conclusion specialised to `step.inv`. -/
+OPEN: a choreography that statically partitions these two fragments over Byzantine parties is
+an open problem (likely new). -/
 theorem iconfluent_fragment_crossgroup_free
     {S : Type u} [Dregg2.Confluence.MergeState S]
     (step : StepEffect S)
     (hI : Dregg2.Confluence.IConfluent step.inv)
     (x y : S) (hx : step.inv x) (hy : step.inv y) :
     step.inv (x ⊔ y) :=
-  -- PROVED: an I-confluent step's concurrent merges preserve its invariant — the
-  -- cross-group-free / no-commit guarantee at the merge level (the choreography read of
-  -- BEC Thm 3.1). This is genuine content: it FAILS for the non-I-confluent (coupled,
-  -- Σ=0 settlement) fragment — see `Confluence.cardLeOne_not_iconfluent`, which is the
-  -- red step that must block / escalate (`Confluence.nonpairwise_escalation`).
+  -- An I-confluent step's concurrent merges preserve its invariant — the cross-group-free
+  -- guarantee. This fails for the coupled (Σ=0 settlement) fragment, which must escalate.
   hI x y hx hy
 
-/-- **`tier1Eligible_iff_iconfluent_def` — the honest definitional unfold.** `Tier1Eligible`
-is *defined as* `IConfluent` in `Confluence.lean`, so the tier-1 gate of a step coincides
-with the I-confluence of its invariant by definition (`Iff.rfl`). Carries NO independent
-content beyond that `def`-equality — recorded under a `_def` name so it does not pose as
-the cross-group-freedom theorem (which is `iconfluent_fragment_crossgroup_free` above). -/
+/-- **`tier1Eligible_iff_iconfluent_def` — the definitional unfold.** `Tier1Eligible` is
+defined as `IConfluent`, so the coincidence is `Iff.rfl` with no independent content.
+Named `_def` to distinguish it from the cross-group-freedom theorem above. -/
 theorem tier1Eligible_iff_iconfluent_def
     {S : Type u} [Dregg2.Confluence.MergeState S]
     (step : StepEffect S) :
@@ -492,20 +432,16 @@ theorem tier1Eligible_iff_iconfluent_def
       ↔ Dregg2.Confluence.IConfluent step.inv :=
   Iff.rfl
 
-/-! ### The non-recursion fragment `NoRec` (the honest precondition for privacy)
+/-! ### The non-recursion fragment `NoRec` (precondition for privacy)
 
-`privacy_by_projection` ("an uninvolved role projects to `done`") is FALSE as a bare
-statement over ALL `GlobalType`s, because of the two *recursion* constructors:
-  • `project (var X) p = LocalType.var X` while `roles (var X) = []`, so for `G = var 0`
-    EVERY `p` satisfies `p ∉ roles G` yet `project G p = var X ≠ done` (a kernel-checked
-    counterexample — see `privacy_var_counterexample` below);
-  • `project (mu X body) p = LocalType.mu X (project body p)`, never `done`.
-The honest move (project rule #1: STRENGTHEN the hypothesis, never weaken the conclusion)
-is to restrict to the fragment where these constructors do not occur. `NoRec G` says `G`
-is built from `comm`/`choice`/`done` only — no `mu`, no `var`, anywhere (including inside
-every branch continuation). On this fragment the privacy property is a genuine theorem:
-the `comm`/`choice`/`done` cases reduce to `done` via `mergeLocal` (the passive-role
-branch-merge of `done` with `done` is `some done`). -/
+`privacy_by_projection` ("an uninvolved role projects to `done`") is false as a bare statement
+over all `GlobalType`s: `project (var X) p = LocalType.var X` while `roles (var X) = []`, so
+for `G = var 0` every `p` satisfies `p ∉ roles G` yet `project G p ≠ done` (kernel-checked
+counterexample, see `privacy_var_counterexample`). Likewise for `mu`.
+
+The honest fix is to restrict to `NoRec G`: `G` built from `comm`/`choice`/`done` only.
+On this fragment the privacy property is a genuine theorem — the passive-role branch-merge
+of `done` with `done` is `some done`. -/
 mutual
   /-- `NoRec G` — `G` uses no recursion constructors (`mu`/`var`) anywhere. The honest
   precondition under which an uninvolved role provably projects to `done`. -/
@@ -532,37 +468,17 @@ theorem privacy_var_counterexample :
   · simp [roles]
   · decide
 
-/- **`privacy_by_projection` — each endpoint sees only its own projection.** `dregg2
-§6`, the "graph" privacy tier (`study-choreography` claim #6, CONFIRMED-OPEN): a
-participant `p` learns only `project G p`; the global choreography `G` and co-parties'
-moves are graph-hidden by the protocol structure itself. Non-participants (roles ∉
-`roles G`) learn nothing — their projection is `done`.
+/- **`privacy_by_projection` — each endpoint sees only its own projection.** A participant `p`
+learns only `project G p`; co-parties' moves are hidden by the protocol structure. An
+uninvolved role (not in `roles G`) projects to `done` (learns nothing).
 
-Stated as the checkable information-flow consequence: an uninvolved role projects to
-`done` (sees nothing). **HONEST SCOPE (restated 2026-05-30).** This holds on the
-**non-recursive fragment** `NoRec G` (built from `comm`/`choice`/`done` — no `mu`/`var`).
-It is FALSE without that hypothesis: `project (var X) p = var X ≠ done` for the open
-variable, and `project (mu X b) p = mu X _ ≠ done` (kernel counterexample:
-`privacy_var_counterexample`). The added `NoRec` hypothesis is the *minimal* honest
-precondition — the prior author refused to fake the bare (false) statement and left it
-`sorry`; we instead STRENGTHEN the hypothesis (project rule #1: strengthening a
-hypothesis to make a false statement true is allowed; weakening the conclusion is not)
-and prove it for real. The recursion cases are discharged by `NoRec` contradicting the
-`mu`/`var` constructors; the `comm`/`choice`/`done` cases reduce to `done` via the
-identity `mergeLocal` (passive-role branch-merge of `done` with `done` is `some done`).
+HONEST SCOPE: holds on the non-recursive fragment `NoRec G` (see `privacy_var_counterexample`
+for the counterexample on `var`). Proved by mutual structural recursion (the `GlobalType`
+nested inductive prevents `induction`); the companion `privacy_branches` proves the
+passive-role collapse.
 
-The full property is "a role's knowledge is a function of `project G p` ALONE" (two
-global types with the same projection at `p` are indistinguishable to `p`); and the full
-*cryptographic* conformance ("`p` ZK-proves its move is admissible under a *committed* `G`
-without revealing `G`") is the CONFIRMED-OPEN gap (claim #6) — the ZK substrate exists
-(Kachina/UC-ZK/commitment-nullifier) but its composition with MPST does not.
-
-`GlobalType` is a *nested* inductive (the `List (Label × GlobalType)` inside `choice`),
-so the `induction` tactic cannot drive the recursion. We instead prove it as a MUTUAL
-structurally-recursive theorem pair — the same idiom `project`/`projectBranches`/`roles`
-use throughout this file — so the termination checker sees each branch `g` as a subterm.
-The companion lemma `privacy_branches` proves the passive-role collapse:
-`projectBranches branches p = some done` when every branch is `NoRec` and `p` is absent. -/
+OPEN: the full cryptographic conformance ("`p` ZK-proves its move is admissible under a
+committed `G` without revealing `G`") awaits composition of the ZK substrate with MPST. -/
 mutual
   theorem privacy_by_projection :
       ∀ (G : GlobalType), NoRec G → ∀ (p : Role), p ∉ roles G →
@@ -609,27 +525,19 @@ mutual
         simp only [projectBranches, htail, hgdone, mergeLocal, if_true]
 end
 
-/- Axiom-hygiene pin: `privacy_by_projection` rests only on the three standard kernel
-axioms (no `sorryAx`). The restated, `NoRec`-guarded theorem is genuinely PROVED. -/
+/- Axiom-hygiene: `privacy_by_projection` rests only on the three standard kernel axioms. -/
 #assert_axioms privacy_by_projection
 #assert_axioms privacy_branches
 
 
-/-! ## The operational endpoint-configuration LTS (the reachability machinery)
+/-! ## The operational endpoint-configuration LTS (reachability machinery)
 
-The obstruction the old `sorry` named precisely: a `waiting` head `recv src s` nested
-below earlier actions has its `Dual` partner only among **reachable configurations** of
-the composed endpoint system, not necessarily the *initial* projection. Below we build
-exactly the operational machinery the sibling built for the kernel (`Proof/LTS.lean`):
-a small-step reduction, its reflexive-transitive closure, and progress stated — and
-proved — over *reachable* residuals. We work at the level of the **global type's own
-reduction** `GStep` (the standard MPST/choreography reduction semantics, e.g. Honda–
-Yoshida–Carbone JACM 2016 §reduction, Carbone–Montesi), because by the EPP soundness
-fact `projection_sound` the composed endpoint configuration `{ G ↾ p }` is in lockstep
-bisimulation with `G`'s reduction — a residual config is reachable **iff** it is the
-projection of a `GStep`-reachable residual `G'`. So reachable endpoint configurations
-are exactly `{ project G' p | G ⟶* G' }`, and progress over them is progress over the
-`GStep`-reachable `G'`. -/
+A `waiting` head `recv src s` nested below earlier actions has its `Dual` partner only among
+reachable configurations, not necessarily the initial projection. We build the small-step
+reduction `GStep`, its reflexive-transitive closure `GReach`, and prove progress over reachable
+residuals. We work at the level of `G`'s own reduction (Honda–Yoshida–Carbone) because by
+`projection_sound` the composed endpoint system is in lockstep bisimulation with `G`'s
+reduction: reachable endpoint configs are exactly `{ project G' p | G ⟶* G' }`. -/
 
 /-- **`GStep G G'` — the choreography's small-step reduction** (the head action fires):
   * `comm a b s k ⟶ k` — the message `a → b : ⟨s⟩` is exchanged, the protocol continues;
@@ -680,20 +588,17 @@ theorem GReach.noRec_preserved {G G' : GlobalType} (h : GReach G G') (hnr : NoRe
 
 /-! ### Head-duality at any configuration
 
-The crisp content `projection_sound` proves at the *initial* config holds at EVERY
-config, by the same computation: the two role-participants of the head action project to
-a `Dual` pair. This is the per-configuration enabled-communication witness. -/
+The head-duality proved at the initial config holds at every reachable config, by the same
+computation: the two participants of the head action project to a `Dual` pair. -/
 
-/-- **Head-duality (the per-config progress witness).** At ANY `comm a b s k` config with
-`a ≠ b`, the sender's projection is a `send` and the receiver's the dual `recv`, so they
-are `Dual` — an enabled communication. (Same computation as `projection_sound`, here for
-an arbitrary residual config rather than only the initial one.) -/
+/-- Head-duality at any `comm a b s k` config with `a ≠ b`: the sender's projection is a
+`send` and the receiver's the dual `recv`. -/
 theorem dual_comm_heads {a b : Role} (s : Payload) (k : GlobalType) (hab : a ≠ b) :
     Dual (project (GlobalType.comm a b s k) a) (project (GlobalType.comm a b s k) b) := by
   simp only [project, if_true, if_neg hab.symm, Dual]
 
-/-- **Head-duality at a choice.** At ANY `choice a b bs` config with `a ≠ b`, the
-selector's projection is a `select` and the offerer's an `offer`, which are `Dual`. -/
+/-- Head-duality at any `choice a b bs` config with `a ≠ b`: the selector's projection is a
+`select` and the offerer's an `offer`, which are `Dual`. -/
 theorem dual_choice_heads {a b : Role} (bs : List (Label × GlobalType)) (hab : a ≠ b) :
     Dual (project (GlobalType.choice a b bs) a) (project (GlobalType.choice a b bs) b) := by
   simp only [project, if_true, if_neg hab.symm, Dual]
@@ -744,24 +649,16 @@ theorem GReach.noSelf_preserved {G G' : GlobalType} (h : GReach G G') (hns : NoS
   | refl => exact hns
   | step s _ ih => exact ih (s.noSelf_preserved (by assumption))
 
-/-! ### THE original statement is FALSE/too-weak — a kernel-checked counterexample.
+/-! ### The initial-projection statement is false — a kernel-checked counterexample.
 
-Before stating the operationally-correct theorem, we record (machine-checked) that the
-*old* statement — progress quantified over the **initial** projections — is actually
-FALSE for a `Projectable` `G`. This mirrors the `privacy_var_counterexample` /
-`dead_undecidable` finds this session: the `sorry` was not a missing proof of a true
-statement but a placeholder over a statement too weak to be true. -/
+Progress quantified over only the initial projections is false for a `Projectable` `G`. -/
 
-/-- **`deadlock_initial_counterexample` — the OLD statement is FALSE (kernel-checked).**
-For `G = 0→2:⟨0⟩ . 0→1:⟨1⟩ . end` (`comm 0 2 0 (comm 0 1 1 done)`), which IS `Projectable`
-(and `NoSelfComm`, `NoRec`): role `1` projects to `recv 0 1 done` — `waiting`, expecting a
-sort-`1` message — but role `1`'s only partner `0` projects to `send 2 0 (send 1 1 done)`,
-whose HEAD is the sort-`0` send to role `2`; the sort-`1` send to `1` is buried beneath it.
-No role's **initial** projection has a sort-`1` `send` at its head, so role `1` has NO
-`Dual` partner among the initial projections — the partner only appears in the *reachable*
-residual `0→1:⟨1⟩.end` after `0→2` fires. Hence the old conclusion FAILS: a `Projectable`
-`G` with a `waiting` role that finds no initial `Dual` partner. The faithful statement must
-quantify over reachable configs. -/
+/-- **`deadlock_initial_counterexample` (kernel-checked).** For `G = 0→2:⟨0⟩ . 0→1:⟨1⟩ . end`,
+which is `Projectable` + `NoSelfComm` + `NoRec`: role `1` projects to `recv 0 1 done` (waiting)
+but role `0`'s initial head is the sort-`0` send to `2`; the sort-`1` send to `1` is buried
+beneath it. No initial projection has a sort-`1` `send`, so role `1` has no `Dual` partner
+at the initial config — the partner appears only in the reachable residual after `0→2` fires.
+The faithful progress statement must quantify over reachable configs. -/
 theorem deadlock_initial_counterexample :
     ∃ (G : GlobalType), Projectable G ∧ NoSelfComm G ∧ NoRec G ∧
       ∃ p ∈ roles G, (project G p).waiting = true ∧
@@ -787,41 +684,23 @@ theorem deadlock_initial_counterexample :
     rcases hq with rfl | rfl | rfl | rfl <;>
       simp [project, Dual] at hdual
 
-/-! ### `deadlock_freedom_by_design` — restated over REACHABLE configs, and CLOSED.
+/-! ### `deadlock_freedom_by_design` — restated over reachable configs and proved.
 
-The operationally-correct Carbone–Montesi progress theorem: progress is a property of
-**reachable configurations**, and a reachable non-terminal config always has an enabled
-communication. Because the composed endpoint config is in lockstep with `G`'s reduction
-(`projection_sound` / EPP), this is: for every `GReach`-reachable residual `G'` that is
-non-`done`, its head action's two participants project to a `Dual` pair. We prove it for
-the honest fragment (`NoRec`, well-scoped `NoSelfComm`), reusing the `NoRec` predicate the
-sibling-proved `privacy_by_projection` introduced. -/
+The Carbone–Montesi progress theorem: a reachable non-terminal config always has an enabled
+communication. We prove it for the `NoRec` + `NoSelfComm` fragment. -/
 
-/-- **`deadlock_freedom_by_design` — Carbone–Montesi progress, RESTATED over reachable
-configurations and CLOSED.** A well-scoped (`NoSelfComm`), recursion-free (`NoRec`)
-choreography yields a **deadlock-free** endpoint system: **every reachable, non-terminated
-configuration has an enabled communication** — the two participants of its head action
-project to a `Dual` pair, so the protocol can always make progress; it never reaches a
-stuck non-`done` configuration. This is *deadlock-freedom by construction*: every send in
-`G` has its matching receive *in `G`*, born `Dual` at the head of each reachable residual,
-preserved by projection.
-
-This is the OPERATIONALLY-CORRECT statement the old `sorry`'s comment demanded ("the
-faithful statement quantifies over all reachable configurations of the composed LTS").
-The old form — over the *initial* projections — is FALSE (`deadlock_initial_counterexample`):
-a nested `recv`'s `Dual` partner lives in a *reachable* residual, not the initial config.
-Here we quantify over `GReach G G'` (reachability) and find the partner where it actually
-is. PROVED for the `NoRec` fragment (`mu`/`var` need an unfolding `GStep`, the residue
-named below). -/
+/-- **`deadlock_freedom_by_design` — Carbone–Montesi progress.** A well-scoped (`NoSelfComm`),
+recursion-free (`NoRec`) choreography is deadlock-free: every reachable non-`done` configuration
+has an enabled communication — the two participants of its head action project to a `Dual` pair.
+The old form (over initial projections) is false (`deadlock_initial_counterexample`); the
+correct statement quantifies over `GReach G G'`. -/
 theorem deadlock_freedom_by_design
     (G : GlobalType) (hnr : NoRec G) (hns : NoSelfComm G)
     (G' : GlobalType) (hreach : GReach G G') (hdone : G' ≠ GlobalType.done) :
     ∃ (a b : Role), a ≠ b ∧ Dual (project G' a) (project G' b) := by
-  -- The reachable residual `G'` is recursion-free and well-scoped (preservation).
   have hnr' : NoRec G' := hreach.noRec_preserved hnr
   have hns' : NoSelfComm G' := hreach.noSelf_preserved hns
-  -- Case on the HEAD constructor of `G'`. `mu`/`var` are excluded by `NoRec`; `done` by
-  -- hypothesis; the head action `comm`/`choice` exhibits its `Dual` pair via head-duality.
+  -- Case on the head constructor of `G'`: `mu`/`var` excluded by `NoRec`, `done` by hypothesis.
   cases G' with
   | comm a b s k =>
       have hab : a ≠ b := hns'.1
@@ -880,11 +759,8 @@ theorem GReach.guarded_preserved {G G' : GlobalType} (h : GReach G G') (hg : Gua
   | refl => exact hg
   | step s _ ih => exact ih (s.guarded_preserved (by assumption))
 
-/-- **`deadlock_freedom_progress_step` — progress in its operational ENABLED form.** The
-above as the textbook "a non-terminal reachable config can take a step": every reachable
-non-`done` recursion-free (`NoRec`), guarded (`Guarded`, no empty choice) residual `G'`
-has a `GStep` successor — the protocol is never stuck. (The `Dual` head pair of
-`deadlock_freedom_by_design` is exactly the synchronisation that fires this step.) -/
+/-- **`deadlock_freedom_progress_step` — progress as "can take a step".** Every reachable
+non-`done` `NoRec` + `Guarded` residual has a `GStep` successor — the protocol is never stuck. -/
 theorem deadlock_freedom_progress_step
     (G : GlobalType) (hnr : NoRec G) (hgrd : Guarded G)
     (G' : GlobalType) (hreach : GReach G G') (hdone : G' ≠ GlobalType.done) :
@@ -905,10 +781,7 @@ theorem deadlock_freedom_progress_step
   | var X => exact absurd hnr' (by simp [NoRec])
   | done => exact absurd rfl hdone
 
-/- Axiom-hygiene pins: the operational endpoint-configuration LTS keystones rest only on
-the three standard kernel axioms (no `sorryAx`). The restated, reachable-config
-`deadlock_freedom_by_design` is genuinely PROVED; the old-statement refutation and the
-preservation/progress-step lemmas are clean. -/
+/- Axiom-hygiene: the LTS keystones rest only on the three standard kernel axioms. -/
 #assert_axioms deadlock_freedom_by_design
 #assert_axioms deadlock_freedom_progress_step
 #assert_axioms deadlock_initial_counterexample

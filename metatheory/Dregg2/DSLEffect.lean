@@ -1,54 +1,20 @@
 /-
-# Dregg2.DSLEffect — the `dregg_effect <name> (args) : <Class>` effects eDSL (PHASE-EDSL DSL-C).
+# Dregg2.DSLEffect — the `dregg_effect <name> (args) : <Class>` effects eDSL.
 
-This is **DSL-C** of `docs/rebuild/PHASE-EDSL.md`, completing the eDSL trilogy:
-  * DSL-A (`Dregg2/DSL.lean`)        — `dregg_program { … }` → a verified `Exec.RecordProgram`;
-  * DSL-B (`Dregg2/DSLChoreo.lean`)  — `dregg_choreo  { … }` → a verified `Coordination.GlobalType`;
-  * DSL-C (**here**)                 — `dregg_effect <name> (args) : <Class>` → an effect's
-    `Spec.Conservation.LinearityClass` coloring + its INHERITED conservation obligation.
+Parses an effect declaration onto the proved `Spec.Conservation` conservation primitives
+(`LinearityClass`, `requires_paired_sibling`, `is_disclosed_non_conservation`) and the
+`CatalogEffects` discriminator (`Regime`, `Regime.ofClass`, `effectObligation`). Declaring
+an effect's color generates (not hand-writes) its conservation obligation:
 
-Where DSL-A parses cell constraints onto `RecordProgram` constructors and DSL-B parses MPST
-statements onto `GlobalType` constructors, **DSL-C parses an effect *declaration* onto the
-already-proved `Spec.Conservation` conservation primitives** (`LinearityClass`,
-`requires_paired_sibling`, `is_disclosed_non_conservation`) and the `CatalogEffects` discriminator
-(`Regime`, `Regime.ofClass`, `effectObligation`). Declaring an effect's color generates — it does
-NOT hand-write — its conservation obligation as a `theorem`:
+  * `Conservative`          ⇒ paired-sibling Σδ = 0 (`requires_paired_sibling = true`)
+  * `Generative`/`Annihilative` ⇒ disclosed non-conservation (`is_disclosed_non_conservation = true`)
+  * `Monotonic`/`Terminal`/`Neutral` ⇒ inert (neither paired nor disclosed)
 
-  * `Conservative`              ⇒ paired-sibling Σδ = 0   (`requires_paired_sibling = true`)
-  * `Generative` / `Annihilative` ⇒ disclosed non-conservation (`is_disclosed_non_conservation = true`)
-  * `Monotonic` / `Terminal` / `Neutral` ⇒ INERT (neither paired nor disclosed)
+The generated obligation is closed by the proved `CatalogEffects` per-class lemmas (or `rfl`).
+The `(args)` are documentary (payload field names); an effect's linearity is a property of
+its kind, not its payload values. Args may be omitted: `dregg_effect setField : Neutral`.
 
-## The rail (same as DSL-A/B; PHASE-EDSL §3, REORIENT §6)
-The eDSL is a **parser onto already-proved constructors and theorems** — a `command`/`term` macro
-translating each declaration to the EXACT `Spec.Conservation` / `CatalogEffects` shape. There is
-**no new metatheory** and **no `sorry`**: the generated obligation theorem is closed by the proved
-class-obligation lemmas of `CatalogEffects` (`conservative_requires_paired`, `generative_discloses`,
-`annihilative_discloses`, `monotonic_inert`, `terminal_inert`, `neutral_inert`) — or, equivalently,
-by `rfl` against the `Spec.Conservation` `def`s (the `LinearityClass` classifiers compute). The
-surface→theorem map is pinned here by `rfl`/`#assert_axioms`.
-
-HONEST: this is a PARSER onto proved constructors. It introduces no `axiom`/`admit`/
-`native_decide`/`sorry`. The `rfl`-coincidences (each declared effect's color equals the
-`CatalogEffects.effectLinearity` coloring of the namesake catalog variant) are pinned with
-`#assert_axioms`. The whole namespace is `#assert_namespace_axioms`-clean.
-
-## Surface (effect declaration → coloring + obligation)
-  `dregg_effect transfer (amount) : Conservative`
-      ↦  `def transfer.color    : LinearityClass := .Conservative`
-         `def transfer.regime   : Regime         := .Paired`            (`Regime.ofClass`)
-         `theorem transfer.obligation : transfer.color.requires_paired_sibling = true := …`
-
-  `dregg_effect mint (amount) : Generative`
-      ↦  `… .color = .Generative`, `… .regime = .Disclosed`,
-         `theorem mint.obligation : mint.color.is_disclosed_non_conservation = true := …`
-
-The `(args)` are documentary surface (the effect's payload fields, e.g. `amount`): an effect's
-LINEARITY is a property of its *kind*, independent of payload values (cf. `Spec.Conservation`'s
-`linearity : Effect → LinearityClass`, where `transfer 7` and `transfer 9` share a color). So the
-args are parsed and recorded as a `List String` (the field names) but do not affect the coloring —
-exactly as in the real `Effect::linearity`. Args may be omitted: `dregg_effect setField : Neutral`.
-
-Pure metaprogramming over `Spec.Conservation` + `CatalogEffects`; no `axiom`/`admit`/`native_decide`/`sorry`.
+No `axiom`/`admit`/`native_decide`/`sorry`.
 -/
 import Dregg2.CatalogEffects
 import Dregg2.Tactics      -- for the `#assert_axioms` / `#assert_namespace_axioms` honesty pins
@@ -84,20 +50,11 @@ macro_rules
   | `(dregg_color% Annihilative) => `(LinearityClass.Annihilative)
   | `(dregg_color% Neutral)      => `(LinearityClass.Neutral)
 
-/-! ## §2 — The conservation OBLIGATION of a color, as a proposition shape.
+/-! ## §2 — The conservation obligation of a color.
 
-Every color carries one of three obligations, read straight off `Spec.Conservation`'s PROVED
-classifiers (and the `CatalogEffects` per-class theorems). `obligationProp c` is the proposition an
-effect of color `c` must satisfy; it is a thin selector over the `Spec` primitives so the generated
-`theorem … .obligation` is stated in exactly the `Spec.Conservation` vocabulary:
-
-  * `Conservative`              ⇒ `c.requires_paired_sibling = true`
-  * `Generative`/`Annihilative` ⇒ `c.is_disclosed_non_conservation = true`
-  * `Monotonic`/`Terminal`/`Neutral` ⇒ `requires_paired_sibling = false ∧ is_disclosed_non_conservation = false`
-
-This is NOT new metatheory: it is the obligation `CatalogEffects.§1` already proves every effect of
-that color inherits. The `def` is exhaustive (no default arm) — a new color cannot compile until it
-states its obligation. -/
+`obligationProp c` is the proposition an effect of color `c` must satisfy, stated in the
+`Spec.Conservation` vocabulary. The `def` is exhaustive — a new color cannot compile without
+stating its obligation. -/
 
 /-- The conservation obligation of a color, AS A PROPOSITION over the proved `Spec.Conservation`
 classifiers. Exhaustive `match`, no default arm. -/
@@ -112,11 +69,9 @@ def obligationProp : LinearityClass → Prop
   | .Neutral      => (LinearityClass.Neutral).requires_paired_sibling = false ∧
                      (LinearityClass.Neutral).is_disclosed_non_conservation = false
 
-/-- **Every color's obligation HOLDS** — discharged from the `CatalogEffects` per-class theorems
-(equivalently, by `rfl`, since the `Spec.Conservation` classifiers compute). This is the single
-proved fact the `dregg_effect` command instantiates per declaration: the generated
-`theorem … .obligation` is `obligation_holds <color>` specialized. No `sorry`; the obligation is
-the one `Spec.Conservation`/`CatalogEffects` already prove. -/
+/-- Every color's obligation holds — discharged from `CatalogEffects` per-class theorems (or
+equivalently by `rfl`, since the classifiers compute). This is the single proved fact the
+`dregg_effect` command instantiates per declaration. -/
 theorem obligation_holds : (c : LinearityClass) → obligationProp c
   | .Conservative => rfl
   | .Generative   => rfl
@@ -129,18 +84,13 @@ theorem obligation_holds : (c : LinearityClass) → obligationProp c
 
 /-! ## §3 — The `dregg_effect` declaration command.
 
-`dregg_effect <name> (a, b, …) : <Color>` (the `(args)` optional) elaborates to THREE generated
-declarations under `<name>` (the dot-namespaced shape mirrors `CatalogInstances`' per-effect facts):
+`dregg_effect <name> (a, …)? : <Color>` generates four declarations:
+  * `def  <name>.color  : LinearityClass`
+  * `def  <name>.regime : Regime`
+  * `def  <name>.args   : List String`
+  * `theorem <name>.obligation : obligationProp <name>.color := obligation_holds <name>.color`
 
-  * `def  <name>.color  : LinearityClass := <Color>`           — the coloring;
-  * `def  <name>.regime : Regime := Regime.ofClass <Color>`     — the `CatalogEffects` discriminator
-    regime (`Paired`/`Disclosed`/`Inert`) as DATA;
-  * `def  <name>.args   : List String := ["a", "b", …]`         — the documentary payload fields;
-  * `theorem <name>.obligation : obligationProp <name>.color := obligation_holds <name>.color` —
-    the INHERITED conservation obligation, GENERATED (not hand-written), closed by the proved §2 fact.
-
-The command is a pure `macro` over the proved §1/§2 primitives. Field names in `(args)` are
-identifiers, turned into `String` literals (the name-keyed discipline of DSL-A's `dreggField%`). -/
+A pure `macro` over the §1/§2 primitives. -/
 
 /-- One payload-field name inside the `(args)` list — an identifier, recorded as its `String`. -/
 syntax (name := dreggArgName) "dreggArgName% " ident : term
@@ -180,18 +130,15 @@ macro_rules
         `Spec.Conservation` obligation the color demands; its proof is the one already-proved fact. -/
         theorem $oblId : obligationProp $colorId := obligation_holds $colorId)
 
-/-! ## §4 — Worked example: `transfer : Conservative` (PHASE-EDSL DSL-C).
+/-! ## §4 — Worked example: `transfer : Conservative`.
 
 A transfer moves an `amount` of an `asset` between two cells. Its color is `Conservative` — its
-per-domain deltas must sum to `0` (a debit matched by an equal credit). The declaration generates
-the coloring, the `Paired` regime, and the paired-sibling obligation. -/
+per-domain deltas must sum to `0`. The declaration generates the `Paired` regime and the
+paired-sibling obligation. -/
 
 dregg_effect transfer (amount, asset, fromCell, toCell) : Conservative
 
-/-- **The declared `transfer` color IS exactly the `CatalogEffects` catalog coloring of the namesake
-`transfer` Effect variant — PROVED by `rfl`.** This is the headline of DSL-C: a one-line effect
-declaration elaborates to the precise verified `Spec.Conservation` color the dregg1 `Effect::linearity`
-catalog assigns, so the proved per-class obligation applies to *this* declaration. -/
+/-- The declared `transfer` color IS exactly the `CatalogEffects` catalog coloring — proved by `rfl`. -/
 theorem transfer_color_eq_catalog :
     transfer.color = Dregg2.CatalogInstances.effectLinearity .transfer := rfl
 
@@ -209,17 +156,16 @@ example : transfer.args = ["amount", "asset", "fromCell", "toCell"] := rfl
 
 #assert_axioms transfer_regime_eq
 
-/-! ## §5 — Worked example: `mint : Generative` (PHASE-EDSL DSL-C).
+/-! ## §5 — Worked example: `mint : Generative`.
 
 A mint creates an `amount` of an `asset` from nothing. Its color is `Generative` — it breaks
-`Σδ = 0`, but the broken amount is DISCLOSED (bound into the receipt). The declaration generates the
-`Disclosed` regime and the disclosure obligation. -/
+`Σδ = 0`, but the broken amount is disclosed (bound into the receipt). Generates the `Disclosed`
+regime and the disclosure obligation. -/
 
 dregg_effect mint (amount, asset) : Generative
 
-/-- **The declared `mint` color matches the catalog coloring of the namesake `bridgeMint` Generative
-variant — PROVED by `rfl`.** (`mint` is the surface name for the catalog's `bridgeMint`/`createCell`
-generative family — all `Generative`.) -/
+/-- The declared `mint` color matches the catalog coloring of `bridgeMint` — proved by `rfl`.
+(`mint` is the surface name for the `bridgeMint`/`createCell` generative family.) -/
 theorem mint_color_eq_catalog :
     mint.color = Dregg2.CatalogInstances.effectLinearity .bridgeMint := rfl
 
@@ -234,19 +180,18 @@ example : mint.color.is_disclosed_non_conservation = true := mint.obligation
 
 #assert_axioms mint_regime_eq
 
-/-! ## §6 — Worked example: `burn : Annihilative`, and the three INERT colors.
+/-! ## §6 — Worked examples: `burn : Annihilative` and the three inert colors.
 
-`burn` destroys a resource — `Annihilative`, the dual of `Generative`: it too breaks `Σδ = 0` and
-discloses. The three inert colors (`Monotonic`/`Terminal`/`Neutral`) carry NO conservation delta,
-so their generated obligation is the conjunction "neither paired nor disclosed". -/
+`burn` destroys a resource (`Annihilative`, dual of `Generative`): it breaks `Σδ = 0` and
+discloses. The three inert colors (`Monotonic`/`Terminal`/`Neutral`) carry no conservation delta;
+their obligation is "neither paired nor disclosed". -/
 
 dregg_effect burn (amount, asset) : Annihilative
 dregg_effect incrementNonce : Monotonic
 dregg_effect cellDestroy : Terminal
 dregg_effect setField (field, value) : Neutral
 
-/-- `burn`'s color matches the catalog `burn` Annihilative variant (by `rfl`); its obligation is
-disclosure. -/
+/-- `burn`'s color matches the catalog `burn` Annihilative variant — by `rfl`; obligation is disclosure. -/
 theorem burn_color_eq_catalog :
     burn.color = Dregg2.CatalogInstances.effectLinearity .burn := rfl
 example : burn.color.is_disclosed_non_conservation = true := burn.obligation
@@ -254,8 +199,7 @@ example : burn.regime = Regime.Disclosed := rfl
 
 #assert_axioms burn_color_eq_catalog
 
-/-- An INERT effect (`incrementNonce`, `Monotonic`): its obligation is "neither paired nor
-disclosed", and its regime is `Inert`. Matches the catalog `incrementNonce` Monotonic variant. -/
+/-- `incrementNonce` is `Monotonic` (inert): obligation is "neither paired nor disclosed". -/
 theorem incrementNonce_color_eq_catalog :
     incrementNonce.color = Dregg2.CatalogInstances.effectLinearity .incrementNonce := rfl
 example : incrementNonce.color.requires_paired_sibling = false ∧
@@ -264,15 +208,15 @@ example : incrementNonce.regime = Regime.Inert := rfl
 
 #assert_axioms incrementNonce_color_eq_catalog
 
-/-- `cellDestroy` is `Terminal` (one-way, no inverse) — inert; matches the catalog variant. -/
+/-- `cellDestroy` is `Terminal` (one-way, no inverse) — inert. -/
 theorem cellDestroy_color_eq_catalog :
     cellDestroy.color = Dregg2.CatalogInstances.effectLinearity .cellDestroy := rfl
 example : cellDestroy.regime = Regime.Inert := rfl
 
 #assert_axioms cellDestroy_color_eq_catalog
 
-/-- `setField` is `Neutral` (pure book-keeping) — inert; matches the catalog variant. It takes args
-yet is uncoloured by them, confirming linearity is a property of the KIND, not the payload. -/
+/-- `setField` is `Neutral` (pure book-keeping) — inert. It takes args but is not coloured by them,
+confirming linearity is a property of the kind, not the payload values. -/
 theorem setField_color_eq_catalog :
     setField.color = Dregg2.CatalogInstances.effectLinearity .setField := rfl
 example : setField.color.requires_paired_sibling = false ∧
@@ -281,17 +225,13 @@ example : setField.regime = Regime.Inert := rfl
 
 #assert_axioms setField_color_eq_catalog
 
-/-! ## §7 — `effectObligation` coincidence: the generated regime IS the `CatalogEffects`
-discriminator at the namesake catalog variant.
+/-! ## §7 — `effectObligation` coincidence.
 
-`CatalogEffects.effectObligation : EffectKind → Regime` is the proved discriminator (`Regime.ofClass
-∘ effectLinearity`). Each declared effect's generated `.regime` coincides with `effectObligation` at
-its namesake catalog variant — by `rfl`. This bundles the surface declarations onto the proved
-`CatalogEffects` discriminator: the `dregg_effect` parser reproduces exactly the obligation regime
-`CatalogEffects` computes. -/
+Each declared effect's `.regime` coincides with `effectObligation` at its namesake catalog variant
+— by `rfl`. -/
 
-/-- The six declared regimes coincide with the proved `CatalogEffects.effectObligation` at their
-namesake catalog variants — the surface→discriminator map, pinned by `rfl`. -/
+/-- The six declared regimes coincide with `CatalogEffects.effectObligation` at their catalog
+variants — pinned by `rfl`. -/
 theorem regimes_coincide_with_catalog :
     transfer.regime        = effectObligation .transfer ∧
     mint.regime            = effectObligation .bridgeMint ∧
@@ -313,13 +253,10 @@ theorem regimes_coincide_with_catalog :
 #eval setField.regime        -- Inert
 #eval setField.args          -- ["field", "value"]
 
-/-! ## §9 — Axiom-hygiene tripwire (the honesty pin over the WHOLE namespace).
+/-! ## §9 — Axiom-hygiene tripwire.
 
-Every theorem under `Dregg2.DSLEffect` — including the GENERATED `<name>.obligation` theorems the
-`dregg_effect` command emits — must rest only on the three kernel axioms
-(`propext`/`Classical.choice`/`Quot.sound`). A `sorryAx` anywhere (a faked `rfl`, a planted `sorry`
-in the obligation-generator) trips this. This is the DSL-A/B `#assert_axioms` discipline made
-module-wide over the effects-DSL surface: the parser introduces no metatheory and no axiom. -/
+Every theorem under `Dregg2.DSLEffect` — including the generated `<name>.obligation` theorems —
+must rest only on the three kernel axioms. A `sorryAx` anywhere trips this. -/
 
 #assert_namespace_axioms Dregg2.DSLEffect
 

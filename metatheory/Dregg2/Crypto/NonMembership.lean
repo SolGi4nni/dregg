@@ -1,33 +1,17 @@
 /-
-# Dregg2.Crypto.NonMembership — the THIRD end-to-end §8 discharge: sorted-tree non-membership.
+# Dregg2.Crypto.NonMembership — §8 discharge: sorted-tree non-membership.
 
-**The next obligation after Merkle (membership) and Pedersen (conservation)
-(`docs/rebuild/PHASE-CRYPTOKERNEL.md §5` "Path to the rest": NonMembership "reuses the Merkle
-gadget twice + adjacency").** Where `Crypto/Merkle.lean` discharged that a leaf IS in the tree,
-this discharges that an element is ABSENT — the neighbor-bracketing proof of a sorted tree:
+Where `Crypto/Merkle.lean` discharges that a leaf is in the tree, this discharges that an element
+is absent — the neighbor-bracketing proof of a sorted tree: an element `e` is absent iff there
+exist adjacent present leaves `lo`, `hi` with `lo < e < hi`. The "present" half reuses the Merkle
+gadget twice; the adjacency + ordering is the honest combinatorial core (`sorted_gap_excludes`).
 
-    an element `e` is NOT in the committed set
-      ⟺ there exist two ADJACENT present leaves `lo`, `hi` with `lo < e < hi`.
+    nonmembership_bridge       : Satisfies nonMembershipCircuit (root, e) ↔ e ∉ committedSet
+    nonmembership_verify_sound : verify accepts → e ∉ committedSet  (derived + `extractable`)
+    nonmembership_dial_wired   : dial at `acceptanceOnly` (blinded; one bit "absent", ZK floor)
 
-The "present" half reuses the Merkle membership gadget TWICE (a Merkle path for `lo`, a Merkle
-path for `hi`, both recomposing the SAME committed root). The "adjacency + ordering" half is the
-honest combinatorial core: `lo`, `hi` are CONSECUTIVE in the sorted leaf list (nothing lies
-strictly between them in the set) and the comparison `lo < e < hi` is the range/comparison gadget
-(`Exec/RecordCircuit.range_iff`, no primitive seam). The cascade mirrors Merkle/Pedersen:
-
-    nonmembership_bridge      : Satisfies nonMembershipCircuit (root, e) ↔ e ∉ committedSet
-      [the gadget, FULLY proven — two Merkle bridges + the SORTED-ADJACENCY soundness lemma]
-    nonmembership_verify_sound: verify accepts → e ∉ committedSet
-      [DERIVED off the bridge, given the STARK `extractable` carrier]
-    nonmembership_dial_wired  : the dial pinned to the verifier at the `acceptanceOnly` floor
-      [blinded non-membership discloses ONE bit ("e is absent") ⇒ the ZK floor, like membership]
-
-**The sorted-adjacency soundness is the genuinely-grounded part** (and the heart of the bridge):
-in a SORTED list, if `lo`/`hi` are adjacent present elements and `lo < e < hi`, then `e` cannot be
-present — a fully PROVED combinatorial fact (`sorted_gap_excludes`). The ONLY cryptographic residue
-is the same as Merkle's: `compress`'s collision-resistance (the Layer-A `collisionHard` carrier),
-consumed by the verifier-kernel `extractable`, never by the bridge. The adjacency combinatorics are
-unconditional — exactly the discipline the rails demand (`compress` abstract, no primitive seam).
+Crypto residue: `compress` CR (`collisionHard`), consumed by `extractable`, never by the bridge.
+The adjacency combinatorics are unconditional.
 -/
 import Dregg2.Crypto.Merkle
 import Dregg2.Exec.RecordCircuit
@@ -207,19 +191,11 @@ theorem nonmembership_complete (compress : Digest → Digest → Digest)
   obtain ⟨hiC, hhiSat⟩ := merkle_complete compress root hi himem
   exact ⟨⟨lo, hi, loC, hiC⟩, hloSat, hhiSat, hsorted, hadj, hlo, hhi⟩
 
-/-- **`nonmembership_bridge` — THE deliverable (the analog of `merkle_bridge`/`pedersen_conservation_bridge`).**
-The non-membership AIR's satisfiability is EXACTLY genuine absence:
-
-  * `→` (SOUNDNESS): a satisfying trace's two ADJACENT present neighbors bracketing `e` force
-    `e ∉ leaves` via `sorted_gap_excludes` (the sorted-adjacency combinatorial core, fully proved).
-  * `←` (COMPLETENESS): genuine absence, with the bracketing neighbors as witnesses, gives a
-    satisfying trace (the two Merkle sub-proofs via `merkle_complete`, the adjacency + comparisons
-    by hypothesis).
-
-`compress` is abstract throughout — NO primitive seam. The only cryptographic residue is `compress`'s
-collision-resistance (Layer-A `collisionHard`), consumed by `nonmembership_verify_sound`'s
-`extractable` carrier, NEVER by the bridge. Stated as the soundness biconditional + the completeness
-constructor (completeness needs the prover's bracketing witnesses, which the existential supplies). -/
+/-- **`nonmembership_bridge`** — the non-membership AIR's satisfiability is exactly genuine absence.
+Soundness: two adjacent present neighbors bracketing `e` force `e ∉ leaves` via
+`sorted_gap_excludes`. Completeness: genuine absence with bracketing witnesses gives a satisfying
+trace. `compress` abstract throughout — no primitive seam. Crypto residue: `compress` CR
+(`collisionHard`), consumed by `extractable`, never by the bridge. -/
 theorem nonmembership_bridge (compress : Digest → Digest → Digest)
     (root e : Digest) (leaves : List Digest) :
     -- SOUNDNESS (the heart): every satisfying trace certifies genuine absence.
@@ -233,10 +209,8 @@ theorem nonmembership_bridge (compress : Digest → Digest → Digest)
    fun lo hi hsorted hadj hlo hhi hlomem himem =>
      nonmembership_complete compress root e leaves lo hi hsorted hadj hlo hhi hlomem himem⟩
 
--- TRIPWIRES: the non-membership gadget is FULLY proven with NO primitive seam — the soundness
--- heart `sorted_gap_excludes` is pure combinatorics, the two membership sub-proofs ride
--- `merkle_bridge`, and `compress`'s collision-resistance never enters (it is the Layer-A
--- `collisionHard` carrier, consumed by the verifier-kernel extractability, not here).
+-- Tripwires: both bridge directions are kernel-clean. Soundness heart (`sorted_gap_excludes`) is
+-- pure combinatorics; the two Merkle sub-proofs ride `merkle_bridge`; `compress` CR never enters.
 #assert_axioms sorted_gap_excludes
 #assert_axioms nonmembership_sound
 #assert_axioms nonmembership_complete
@@ -282,15 +256,9 @@ class NonMembershipVerifierKernel (Digest : Type u) (Proof : Type u) [LinearOrde
 
 variable {Proof : Type u}
 
-/-- **`nonmembership_verify_sound` — the DERIVED verify law (the analog of `merkle_verify_sound`).**
-Given the STARK-soundness carrier `extractable`, an accepted non-membership proof PROVES the element
-is genuinely absent from the committed sorted set:
-
-    verify stmt proof = true  →  ∃ leaves, NonMember leaves stmt.elem
-
-The proof composes `extract` (accept ⇒ satisfying trace over the genuine committed list, the crypto
-carrier) with `nonmembership_bridge`'s SOUNDNESS half (satisfying trace ⇒ absence, FULLY proved via
-`sorted_gap_excludes`). The verify law is DERIVED, not assumed; the only hypothesis is `extractable`. -/
+/-- **`nonmembership_verify_sound`** — given `extractable`, an accepted non-membership proof proves
+the element is genuinely absent: `verify stmt proof = true  →  ∃ leaves, NonMember leaves stmt.elem`.
+Derived by composing `extract` with `nonmembership_bridge`'s soundness half; never assumed. -/
 theorem nonmembership_verify_sound [K : NonMembershipVerifierKernel Digest Proof]
     (hext : K.extractable) (stmt : Statement Digest) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -365,10 +333,9 @@ def nonMembershipDisclose [NonMembershipVerifierKernel D P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`nonmembership_dial_wired` — THE DIAL WIRING (the analog of `merkle_dial_wired`).** The
-non-membership kind's epistemic floor is `acceptanceOnly` (blinded ⇒ ZK floor), the dial's bottom
-notch's acceptance bit IS the verifier's `Discharged` bit, and — given STARK `extractable` — an
-accepting proof PROVES genuine absence. The dial is pinned to the per-kind verifier. -/
+/-- **`nonmembership_dial_wired`** — the non-membership kind's floor is `acceptanceOnly` (blinded,
+ZK floor), the dial's bottom notch IS the verifier's `Discharged` bit, and an accepting proof
+proves genuine absence. Dial pinned to the per-kind verifier. -/
 theorem nonmembership_dial_wired [K : NonMembershipVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P) (stmt : Statement D) (proof : P) :
@@ -386,11 +353,9 @@ theorem nonmembership_dial_wired [K : NonMembershipVerifierKernel D P]
       (nonMembershipDisclose base stmt proof)
   · exact fun haccept => nonmembership_verify_sound hext stmt proof haccept
 
-/-- **`nonmembership_registry_cascade` — the §8 discharge through the registry (the analog of
-`merkle_registry_cascade`).** Registering the non-membership kind, an accepted proof both
-`Discharged`s the kind's predicate (the registry keystone, `registry_sound`) AND — given the STARK
-`extractable` carrier — PROVES genuine absence (`nonmembership_verify_sound`). The cascade
-`registry_sound ∘ nonmembership_verify_sound`; the single trust boundary is `extractable`. -/
+/-- **`nonmembership_registry_cascade`** — registering the non-membership kind, an accepted proof
+both `Discharged`s the kind's predicate (`registry_sound`) and — given `extractable` — proves
+genuine absence (`nonmembership_verify_sound`). Single trust boundary: `extractable`. -/
 theorem nonmembership_registry_cascade [K : NonMembershipVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P)
@@ -504,8 +469,7 @@ theorem reference_cascade_nonvacuous :
       ∧ ∃ leaves : List Int, NonMember leaves absentStmt.elem :=
   nonmembership_registry_cascade (K := refKernel) trivial base absentStmt 0 (by decide)
 
--- The non-vacuity witness's axiom footprint (the task's `#print axioms` requirement): the reference
--- cascade rests only on the kernel's three standard axioms — NO `sorryAx`, NO crypto axiom.
+-- Non-vacuity axiom footprint: rests only on the standard axioms — no `sorryAx`, no crypto axiom.
 #print axioms reference_cascade_nonvacuous
 
 /-- Non-vacuity of the dial wiring: the floor is `acceptanceOnly`, the dial's bottom notch is the
@@ -516,11 +480,8 @@ example :
 
 end Reference
 
--- TRIPWIRES: the non-membership bridge + derived verify-soundness + cascade + dial wiring are
--- kernel-clean. The bridge's SOUNDNESS heart (`sorted_gap_excludes`) and the two Merkle sub-proofs
--- are FULLY proved — NO primitive seam. The ONLY cryptographic residue is the `extractable` carrier
--- (passed as a hypothesis, binding the committed list to the root via `compress` CR), never a
--- hidden `sorry`.
+-- Tripwires: bridge + verify-soundness + cascade + dial wiring are kernel-clean. `sorted_gap_excludes`
+-- and both Merkle sub-proofs are fully proved. Crypto residue: `extractable`, never a `sorry`.
 #assert_axioms sorted_gap_excludes
 #assert_axioms nonmembership_bridge
 #assert_axioms nonmembership_verify_sound

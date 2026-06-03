@@ -1,61 +1,42 @@
 /-
-# Dregg2.Apps.EpistemicSheaf — the constellation as a SHEAF OF VERIFIERS.
+# Dregg2.Apps.EpistemicSheaf — the constellation as a sheaf of verifiers.
 
-The distributed-epistemic SPINE of the Right-of-Way demo (`docs/rebuild/SHEAF-OF-VERIFIERS.md`;
-`Metatheory/EpistemicConsensus.lean`). The constellation is a **sheaf of verifiers**: each
-satellite / operator is a *local verifier* with PARTIAL knowledge of the orbital picture,
-mutually distrusting. The collision-avoidance agreement is a **GLOBAL SECTION** (H⁰ — everyone
-consistent); a fork / disagreement is the **OBSTRUCTION** (H¹). The referee-as-theorem means
-consensus is reached WITHOUT a trusted central cop.
+The constellation is a sheaf of verifiers: each satellite / operator is a local verifier with
+partial knowledge, mutually distrusting. Collision-avoidance agreement is a global section (H⁰
+content — everyone consistent); a fork / disagreement is an obstruction (H¹ content). Consensus
+is reached without a trusted central authority.
 
-This module instantiates two things, with the EXACT honesty discipline of SHEAF-OF-VERIFIERS:
+This module instantiates two things, following the honesty discipline of `SHEAF-OF-VERIFIERS.md`:
 
-  1. **Consensus = a global section (H⁰ CONTENT, REAL).** A `Verify`-discharged "the maneuver
-     clears the conjunction" fact is **distributed knowledge of the honest operators** — proved
-     by instantiating `Metatheory.EpistemicConsensus.honest_distributed_knows_discharged` at the
-     orbital screen. No Byzantine subset can forge it (`no_dist_knowledge_of_unrealizable`); the
-     honest group's distributed knowledge EXCEEDS any single operator's (the partial-knowledge
-     point). This is the H⁰ *content*, term-proved.
+  1. **Consensus = a global section (H⁰ content, proved).** A `Verify`-discharged clearance fact
+     is distributed knowledge of the honest operators — via `honest_distributed_knows_discharged`.
+     No Byzantine subset can forge it; the honest group's distributed knowledge exceeds any single
+     member's.
 
-  2. **The fork = witnessed non-gluing (the OBSTRUCTION, REAL).** A finite sheaf-gluing of
-     per-operator screen verdicts over a shared overlap: each operator's local verdict must
-     agree on the boundary; a buggy / Byzantine operator whose verdict DISAGREES on the overlap
-     fails to glue — no global section. Modeled exactly on `proofForest_sound`'s split (valid
-     ∧ agree-on-overlap ⟹ global) and its witnessed non-gluing `¬ chainLinked [node0, badNode]`
-     (`docs/rebuild/SHEAF-OF-VERIFIERS.md §1.4, §2.1`).
+  2. **The fork = witnessed non-gluing (obstruction, proved).** A finite sheaf-gluing of
+     per-operator screen verdicts over a shared overlap: the sections glue iff they agree on the
+     boundary; a Byzantine operator whose verdict disagrees fails to glue — no global section.
 
-================================================================================
-## HONESTY LABEL — matching SHEAF-OF-VERIFIERS's REAL/ESTABLISHED/POETRY ledger EXACTLY.
-================================================================================
+## Honesty label
 
-**REAL (proved here, `#assert_axioms`-clean):**
-  * the H⁰ *content*: honest distributed knowledge of a discharged clearance fact, and its
-    fault-tolerance / unforgeability / partial-knowledge (group > member) — all inherited from
-    `Metatheory.EpistemicConsensus` and instantiated at the orbital screen;
-  * the finite GLUING: per-operator valid ∧ agree-on-overlap ⟹ a glued global verdict;
-  * the gluing BITES: a witnessed NON-gluing — a Byzantine operator whose verdict disagrees on
-    the overlap, so no global section exists (the fork, as a real failed hypothesis).
+**REAL (proved, `#assert_axioms`-clean):** the H⁰ content (honest distributed knowledge, inherited
+from `Metatheory.EpistemicConsensus`, instantiated at the orbital screen); the finite gluing; the
+witnessed non-gluing (the fork as a real failed hypothesis).
 
-**ESTABLISHED (in the lit, cited, not claimed as a dregg theorem):** "consensus = H⁰" (three
-literatures + the 2025 task-sheaf theorem) and "fork = a sound H¹ obstruction detector" — see
-SHEAF-OF-VERIFIERS §3. We use the *content*, and CITE the cohomology framing.
+**ESTABLISHED (in the lit, cited, not claimed as a dregg theorem):** "consensus = H⁰" and "fork =
+a sound H¹ obstruction detector" (SHEAF-OF-VERIFIERS §3). We use the content and cite the framing.
 
-**POETRY / OUT OF SCOPE (honestly NOT built — matching SHEAF-OF-VERIFIERS):** the cohomology
-OBJECTS (a Čech complex, `δ⁰`, an `H⁰`/`H¹` group), a functorial restriction `ρ`, a `Presheaf`
-instance. We have the gluing and the witnessed non-gluing (the *content*); we do NOT name them
-`H⁰`/`H¹` as objects. Calling this "cohomology" would let vocabulary stand in for an absent
+**OUT OF SCOPE (honestly not built):** the cohomology objects themselves (a Čech complex, `δ⁰`, an
+`H⁰`/`H¹` group, a `Presheaf` instance). We have the gluing and the non-gluing; we do NOT name
+them `H⁰`/`H¹` as objects. Calling this "cohomology" would let vocabulary stand in for an absent
 coboundary — exactly what SHEAF-OF-VERIFIERS refuses, and so do we.
 
 Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
 
-NOTE ON SOURCING. The epistemic frame (`Frame`, `Knows`, `DistKnows`, `verified`, and the four
-keystones `honest_distributed_knows_discharged` / `no_dist_knowledge_of_unrealizable` /
-`honest_dist_knowledge_composes` / `distKnows_mono_group`) is **ported verbatim** from
-`Metatheory/EpistemicConsensus.lean` (which in turn formalizes Goubault–Kniazev–Ledent–Rajsbaum,
-*Simplicial Models for the Epistemic Logic of Faulty Agents*, arXiv:2311.01351). We port the
-~4 definitions + 3 one-line keystones we need rather than depend on the un-globbed sibling lib,
-so this Apps module is green under any build order. The proofs are identical to the cited source;
-this is a faithful re-derivation, not new mathematics. CITATION: `Metatheory.EpistemicConsensus`.
+NOTE ON SOURCING. The epistemic frame (`Frame`, `DistKnows`, `verified`, and the keystones) is
+ported from `Metatheory/EpistemicConsensus.lean` (which formalizes Goubault–Kniazev–Ledent–
+Rajsbaum, arXiv:2311.01351). Ported rather than imported to keep this module buildable under any
+order. The proofs are identical to the cited source. CITATION: `Metatheory.EpistemicConsensus`.
 -/
 import Dregg2.Laws
 import Dregg2.Tactics
@@ -66,12 +47,11 @@ namespace Dregg2.Apps.EpistemicSheaf
 open Dregg2.Laws
 open Dregg2.Apps.OrbitalScreen
 
-/-! ## 0. The epistemic frame — PORTED from `Metatheory.EpistemicConsensus` (cited above).
+/-! ## 0. The epistemic frame — ported from `Metatheory.EpistemicConsensus`.
 
 A minimal faithful copy of the distributed-knowledge frame: worlds `Ω`, operators `ι`, each
-operator's partial-knowledge relation `Indist` (the simplicial `∼ᵢ`), a Byzantine subset, and
-the single-agent / distributed knowledge modalities. The keystones are the SAME one-line proofs
-as the source — included so this module needs no out-of-glob dependency. -/
+operator's partial-knowledge relation `Indist`, a Byzantine subset, and the distributed knowledge
+modality. Keystones are identical one-line proofs from the source. -/
 
 /-- A `Claim` carries a verifier-side statement (the realizability core of the cited source). -/
 structure Claim (P : Type) where
@@ -189,13 +169,10 @@ abbrev Constellation (Ω ι : Type) := Frame Ω ι
 
 variable {Ω ι : Type}
 
-/-- **`consensus_on_clearance` — CONSENSUS = a global section (H⁰ CONTENT, PROVED).** If the
-conservative screen certifies a pair clear (`screen … = true`, the REAL continuous-time-sound
-physics), then "the maneuver clears the conjunction" is **distributed knowledge of the honest
-operators** at the actual orbital world — a global section over the honest sub-complex. No
-central authority decides it; each operator's own `Verify` settles it, and the verdict is
-world-independent so it survives every partial-knowledge edge. This is
-`honest_distributed_knows_discharged` instantiated at the orbital screen. -/
+/-- **`consensus_on_clearance` — consensus = a global section (H⁰ content).** If the conservative
+screen certifies a pair clear, "the maneuver clears the conjunction" is distributed knowledge of the
+honest operators at the actual world. No central authority decides it; each operator's own `Verify`
+settles it. `honest_distributed_knows_discharged` instantiated at the orbital screen. -/
 theorem consensus_on_clearance (F : Constellation Ω ι) (p : ClearanceProblem)
     (hclear : screen p.d0 p.v p.T p.thrSq = true) :
     F.DistKnows F.Honest
@@ -278,13 +255,10 @@ and the honest operator B glue: both accepted, and they agree on the overlap (`5
 theorem honest_sections_glue : Glues opA opB_honest := by
   refine ⟨rfl, rfl, ?_⟩; rfl
 
-/-- **`byzantine_section_does_not_glue` — THE OBSTRUCTION, witnessed (PROVED).** Operator A and
-the Byzantine operator B do NOT glue: each is LOCALLY valid (`verdict = true` on both), yet they
-DISAGREE on the overlap (`5 ≠ 99`) — the compatible-family hypothesis fails, so there is NO
-global section. This is the fork / bug / version-skew as a real failed gluing hypothesis, the
-exact orbital twin of `¬ chainLinked [node0, badNode]` (`SHEAF-OF-VERIFIERS §2.1`): local
-validity is per-operator; gluing is the overlap-agreement; the obstruction is the failure to
-glue. A *sound* obstruction detector (the H¹ content), CITED — not claimed as an H¹ object. -/
+/-- **`byzantine_section_does_not_glue` — the obstruction, witnessed.** Operator A and the Byzantine
+operator B do not glue: each is locally valid (`verdict = true`), yet they disagree on the overlap
+(`5 ≠ 99`) — the compatible-family hypothesis fails, so there is no global section. This is the fork
+as a real failed gluing hypothesis (the H¹ content, cited, not claimed as an H¹ object). -/
 theorem byzantine_section_does_not_glue : ¬ Glues opA opB_byzantine := by
   rintro ⟨_, _, hbnd⟩
   -- `opA.boundary = 5`, `opB_byzantine.boundary = 99`; `5 = 99` is false.

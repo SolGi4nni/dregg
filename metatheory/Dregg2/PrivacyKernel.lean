@@ -1,33 +1,23 @@
 /-
-# Dregg2.PrivacyKernel — the privacy tiers REALIZED over the CryptoKernel portal.
+# Dregg2.PrivacyKernel — the value and nullifier privacy tiers realized over `CryptoKernel`.
 
-`Privacy.lean` states the three privacy tiers over *abstract* carriers (a bespoke
-`Commitment` structure with its homomorphism as a structure field, an opaque
-`nullifierOf`), and honestly leaves the crypto-soundness obligations as `sorry`. This
-module does the complementary thing: it realizes the **value** and **nullifier** tiers
-*over the `CryptoKernel` portal* (`Dregg2/CryptoKernel.lean`), so the algebraic
-properties become genuinely PROVED — not as fields of a structure we cooked up, but as
-consequences of the CryptoKernel's *interface laws* (`commit_hom`, the determinism of
-`nullifier`). The crypto SOUNDNESS (hiding, unlinkability, extractability) remains an
-interface obligation — a `§8:` note — exactly as in `Privacy.lean`; what changes is that
-the *algebra* (homomorphism ⇒ conservation, determinism ⇒ anti-double-spend) is now
-discharged relative to the portal rather than postulated.
+Realizes the value and nullifier tiers from `Privacy.lean` over the `CryptoKernel` portal
+(`Dregg2/CryptoKernel.lean`): the algebraic properties are proved as consequences of the
+kernel's interface laws (`commit_hom`, determinism of `nullifier`) rather than postulated.
 
   • **value tier** (`committed_conservation_kernel`): the Pedersen opening of Law 1 over
-    HIDDEN amounts. From cleartext conservation (`Σ vᵢ = Σ vₒ`, `Σ rᵢ = Σ rₒ`) the SUM of
-    `CryptoKernel.commit`ments balances. PROVED via `commit_hom` (an interface LAW, not a
-    stub) packaged as an `AddMonoidHom` `(Int × Int) →+ Digest`, then `map_sum`.
+    hidden amounts. From cleartext conservation (`Σ vᵢ = Σ vₒ`, `Σ rᵢ = Σ rₒ`) the sum of
+    `CryptoKernel.commit`ments balances. Proved via `commit_hom` packaged as an
+    `AddMonoidHom` `(Int × Int) →+ Digest`, then `map_sum`.
 
   • **nullifier tier** (`nullifier_no_double_spend`): a spent-set check rejects re-spending
-    the same note — same digest ⇒ same `CryptoKernel.nullifier` ⇒ rejected. Pure
-    Bool/structural logic; the determinism is the function-ness of `nullifier`.
+    the same note — same digest ⇒ same nullifier ⇒ rejected. Pure Bool/structural logic.
 
-  • **crypto soundness** (hiding / unlinkability / extractability): stays an INTERFACE
-    obligation, see the `§8:` notes. NOT faked here.
+  • **crypto soundness** (hiding / unlinkability / extractability): remains an interface
+    obligation — see the `§8:` notes.
 
-Note: `CryptoKernel.commit`/`nullifier` take the `Proof` type as an EXPLICIT first argument
-(the class carries `Proof` even though `commit` does not mention it), so all calls below
-pass `Proof` positionally.
+Note: `CryptoKernel.commit`/`nullifier` take `Proof` as an explicit first argument; all
+calls below pass `Proof` positionally.
 -/
 import Dregg2.CryptoKernel
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic

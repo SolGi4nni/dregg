@@ -1,48 +1,26 @@
 /-
-# Dregg2.Proof.BFT — the distributed-adversary / Byzantine / partial-synchrony
-# model as a LAYER over `World`, and the STRONG forms of the two BFT OPENs.
+# Dregg2.Proof.BFT — the distributed-adversary / Byzantine / partial-synchrony model,
+# layered over `World`, with the strong forms of both BFT obligations.
 
-**What this file is.** `World.lean` (read-only sibling) closed the two BFT obligations
-only in their *weak* forms:
+`World.lean` delivers the two BFT obligations only weakly:
+  * O1: `quorum_intersection_safety` proves the bare pigeonhole (two quorums share a voter),
+    without the adversary/honesty model needed to turn that shared voter into a contradiction.
+  * O2: `liveness_after_gst` assumes `World.gst_liveness` as an oracle field.
 
-  * **O1 — quorum intersection.** `World.quorum_intersection_safety` proved only the bare
-    pigeonhole: two quorums for distinct blocks **share *a* voter**. Its own docstring scopes
-    out the *full* BFT-safety contradiction ("a shared voter is a contradiction because an
-    honest node never double-votes") as needing "the adversary/honesty model and Malkhi–Reiter".
-  * **O2 — liveness after GST.** `World.liveness_after_gst` discharged liveness from an
-    *assumed* class field `World.gst_liveness` — an oracle law, honest but unproven.
+This file adds the adversary/honesty model as an explicit structure (`BFTModel`) and proves:
 
-**What this file adds.** The adversary/honesty model the weak forms deliberately omitted,
-built as an explicit `structure` (NOT axioms — every assumption is a field/hypothesis, exactly
-the `World.recv_mono` / `gst_liveness` discipline), and then the STRONG theorems:
+  * **O1 STRONG (`bft_safety`)**: under `n > 3f`, ≤ `f` Byzantine voters, the `n − f` quorum
+    threshold, and honest-vote-once, two quorums for conflicting blocks are a contradiction.
+    (Li–Lesani / Malkhi–Reiter quorum-intersection-at-an-honest-process.)
+  * **O2 reduced (`gst_liveness_from_round_model`)**: the `World.gst_liveness` conclusion is
+    derived from a DLS88 GST round structure + HotStuff-style honest-leader delivery hypothesis
+    — reducing the oracle assumption to "honest votes are delivered within Δ after GST".
 
-  * **O1 STRONG (`bft_safety`, PROVED).** Under `n > 3f`, at most `f` Byzantine voters, the
-    BFT quorum threshold `n − f` (the `2f+1`-of-`3f+1` quorum), and the honest-vote-once law,
-    two quorums for *conflicting* blocks are a **CONTRADICTION**. The model is
-    Li–Lesani / Malkhi–Reiter *quorum intersection at a well-behaved (honest) process*
-    (Def. 3, `zotero-reconfigurable-heterogeneous-quorum-systems`): the intersection of two
-    quorums has more than `f` members, so — purging the ≤ `f` Byzantine ones — it contains an
-    **honest** voter; that honest voter voted for both conflicting blocks, contradicting
-    honest-vote-once. Mechanization shape follows `zotero-formal-verification-blockchain-bft`
-    (threshold-guard `n − f` quorums, intersection ≥ `f + 1` ⇒ a correct process in common).
+OPEN (O2 residual): a from-scratch proof that a `GSTRound` eventually obtains (pacemaker /
+view-synchrony); see the `OPEN` block in §4. This is left as a named obstruction, not a sorry.
 
-  * **O2 (`gst_liveness_from_round_model`, PROVED-FRAGMENT + reduced-assumption).** Outcome
-    (b)+(a) of the brief: we *derive* the `World.gst_liveness`-shaped conclusion from a
-    **more primitive, more-honest** set of hypotheses than the assumed oracle field — a modeled
-    DLS88 GST round structure (after GST, message delay ≤ Δ; `fetch-DLS88-partial-synchrony`
-    §1) plus a HotStuff-style synchronized-view + honest-leader assumption
-    (`fetch-hotstuff-2019` §"Optimistic Responsiveness"). We prove that *if* after GST a
-    synchronized view has an honest leader and the honest supermajority's votes are delivered,
-    *then* a quorum forms — reducing what `World` must assume from "a round meeting threshold
-    exists" (the full conclusion) to "after GST honest votes are delivered within Δ" (a
-    strictly weaker, FLP-respecting delivery hypothesis). The residual — a *from-scratch*
-    proof that the GST round structure itself eventually obtains (the pacemaker / view-synchrony
-    argument) — is the genuine DLS88+HotStuff research and is left a sharp `OPEN` note, NOT a
-    `sorry` and NOT an axiom.
-
-**Rails.** No `axiom`/`admit`/`native_decide`/`sorry`. Every adversary assumption is a
-structure field or theorem hypothesis. Keystones are `#assert_axioms`-clean. Verified with
-`lake env lean Dregg2/Proof/BFT.lean`.
+No `axiom`/`admit`/`native_decide`/`sorry`. All adversary assumptions are structure fields.
+Keystones are `#assert_axioms`-clean.
 -/
 import Mathlib.Tactic
 import Dregg2.World
@@ -164,13 +142,10 @@ theorem honest_witness_in_intersection
   rw [Finset.mem_filter, Finset.mem_inter, List.mem_toFinset, List.mem_toFinset] at hv
   exact ⟨v, hv.2, hv.1.1, hv.1.2⟩
 
-/-- **O1 STRONG — the full BFT safety theorem (PROVED, `#assert_axioms`-clean).** The theorem
-`World.quorum_intersection_safety`'s docstring deferred: two quorums for **conflicting**
-(distinct) blocks are a **CONTRADICTION** under the adversary/honesty model. Proof: the honest
-witness (above) voted for both conflicting blocks; honest-vote-once forces the blocks equal,
-contradicting `b₁ ≠ b₂`. This is BFT *agreement* / safety: no two conflicting blocks both
-reach a BFT quorum. (Grounded in Li–Lesani / Malkhi–Reiter quorum-intersection-at-an-honest-
-process; mechanization shape per `zotero-formal-verification-blockchain-bft`.) -/
+/-- **O1 strong — the full BFT safety theorem.** Two quorums for conflicting (distinct) blocks are
+a contradiction: the honest witness voted for both; honest-vote-once collapses the blocks equal,
+contradicting `b₁ ≠ b₂`. No two conflicting blocks both reach a BFT quorum. (Li–Lesani /
+Malkhi–Reiter quorum-intersection-at-an-honest-process.) -/
 theorem bft_safety
     (cfg : Finality.Config) (votes : List Vote) (M : BFTModel cfg votes)
     (b₁ b₂ : Nat) (hconflict : b₁ ≠ b₂)
@@ -180,9 +155,8 @@ theorem bft_safety
   obtain ⟨v, hhonest, hv1, hv2⟩ := honest_witness_in_intersection cfg votes M b₁ b₂ hq1 hq2
   exact hconflict (M.honest_vote_once v b₁ b₂ hhonest hv1 hv2)
 
-/-- **Restated positively — BFT agreement (PROVED).** The contrapositive of `bft_safety`: if
-two blocks both reach a BFT quorum (`n − f` distinct voters each) under the honest model, they
-are the **same** block. "At most one block per height reaches a quorum." -/
+/-- **BFT agreement** — contrapositive of `bft_safety`: if two blocks both reach a BFT quorum
+under the honest model they are the same block. At most one block per height reaches a quorum. -/
 theorem bft_agreement
     (cfg : Finality.Config) (votes : List Vote) (M : BFTModel cfg votes)
     (b₁ b₂ : Nat)
@@ -192,13 +166,10 @@ theorem bft_agreement
   by_contra hne
   exact bft_safety cfg votes M b₁ b₂ hne hq1 hq2
 
-/-! ## 3. The model is INHABITED — the strong theorem is non-vacuous.
+/-! ## 3. The model is inhabited — the strong theorem is non-vacuous.
 
-Like `World.Reference`, we witness that `BFTModel`'s fields are jointly satisfiable, so
-`bft_safety` is not vacuously about an empty model. A tiny config (`n = 4, f = 1`, the minimal
-`n = 3f + 1`) with three honest voters `0,1,2` all voting for block `7` and *no one* Byzantine
-inhabits it. The honest-vote-once law holds because, in this `votes`, no voter endorses two
-distinct blocks. -/
+A minimal config (`n = 4, f = 1`) with three honest voters all endorsing block 7 and no Byzantine
+voters witnesses joint satisfiability of `BFTModel`'s fields. -/
 namespace Inhabited
 
 /-- `n = 4, f = 1`: the minimal BFT config (`n = 3f + 1`). -/
@@ -276,15 +247,10 @@ def GSTRound [World Msg] (votesOf : List Msg → List Vote)
     (cfg : Finality.Config) (block : Nat) (r : Nat) : Prop :=
   cfg.threshold ≤ (votersFor (votesOf (World.recv r)) block).length
 
-/-- **O2 (PROVED-FRAGMENT, reduced-assumption).** *If* the modeled post-GST good event
-(`GSTRound`) holds at some round `r` — i.e. after GST a synchronized honest supermajority's
-votes for `block` are delivered (DLS88 Δ-bound + HotStuff responsive view) — *then* that block
-is `committedByQuorum` at `r`. This **derives** the `World.gst_liveness` conclusion from a
-strictly more primitive delivery hypothesis, reducing what the oracle must assume: not "a
-threshold-meeting round exists" (the whole conclusion) but "after GST honest votes are
-delivered" (the FLP-respecting Δ-delivery the runtime genuinely guarantees). The residual — a
-*from-scratch* proof that a `GSTRound` eventually obtains (the pacemaker / view-synchronization
-liveness argument) — is the genuine DLS88+HotStuff research; see the OPEN note below. -/
+/-- **O2 (reduced-assumption form)**: if a `GSTRound` holds at round `r` — i.e. after GST a
+synchronized honest supermajority's votes are delivered (DLS88 Δ-bound + HotStuff responsive view)
+— then `block` is `committedByQuorum` at `r`. Derives the `World.gst_liveness` conclusion from the
+weaker delivery hypothesis "honest votes are delivered within Δ after GST". -/
 theorem gst_liveness_from_round_model [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config) (block : Nat)
     {r : Nat} (hgst : GSTRound votesOf cfg block r) :
@@ -294,11 +260,8 @@ theorem gst_liveness_from_round_model [World Msg]
   simp only [quorumReached, decide_eq_true_eq]
   exact hgst
 
-/-- **O2, the existential form (PROVED).** Packaging: if a post-GST good round *exists*, the
-block is committed at some round — matching `World.liveness_after_gst`'s shape but with the
-existence of the GST round as the explicit, weaker premise (rather than `World.gst_liveness`'s
-assumed productivity field). The honest reduction: liveness now rests on "∃ a delivered honest
-supermajority round after GST" instead of on the assumed oracle field. -/
+/-- **O2 existential form**: if a `GSTRound` exists, the block is committed at some round —
+`World.liveness_after_gst`'s shape with the delivery existence as an explicit weaker premise. -/
 theorem liveness_after_gst_modeled [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config) (block : Nat)
     (hgst : ∃ r, GSTRound votesOf cfg block r) :
@@ -306,13 +269,8 @@ theorem liveness_after_gst_modeled [World Msg]
   obtain ⟨r, hr⟩ := hgst
   exact ⟨r, gst_liveness_from_round_model votesOf cfg block hr⟩
 
-/-- **O2 — bridge to the assumed oracle (PROVED): the reduced assumption is no stronger.**
-This shows the modeled premise is *implied by* `World.gst_liveness`'s productivity hypothesis
-`hprod`, so adopting the modeled hypotheses does not assume anything new beyond what the
-existing `World` field already grants — it merely makes the GST round structure explicit. Given
-`hprod` (the distinct-voter count grows without bound), instantiating it at `cfg.threshold`
-yields a `GSTRound`. Hence the modeled-form liveness is derivable wherever the oracle field's
-premise holds — the reduction is sound, not a strengthening. -/
+/-- **Bridge to the oracle**: the modeled premise is implied by `World.gst_liveness`'s productivity
+field `hprod` (voter count grows without bound) — the reduction is sound, not a strengthening. -/
 theorem gstRound_of_productivity [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config) (block : Nat)
     (hprod : ∀ k : Nat, ∃ r : Nat, k ≤ (votersFor (votesOf (World.recv r)) block).length) :
@@ -321,32 +279,17 @@ theorem gstRound_of_productivity [World Msg]
   exact ⟨r, hr⟩
 
 /-
-**OPEN (O2 residual — sharp obstruction, NOT a `sorry`).** What is *not* proved here, and why
-it is genuine research, not a gap to paper over:
-
-  A *from-scratch* proof that a `GSTRound` eventually obtains — i.e. that the DLS88 GST round
-  structure actually arises from a `World` whose only safety law is `recv_mono`. This is the
-  pacemaker / view-synchronization liveness argument: after GST, views must eventually
-  synchronize for a duration `≥ 2Δ` under an honest leader (HotStuff §"Optimistic
-  Responsiveness"; DLS88 §"GST + L"). Proving it requires (i) relating `World.clock` to real
-  Δ-bounded delivery (the interface deliberately omits this — asynchrony is the adversary's,
-  not a law), (ii) a modeled view/round automaton with leader rotation and timeouts, and
-  (iii) the FLP-respecting argument that an honest leader is eventually hit within a stable
-  view. Every verified-distributed-systems effort (`verdi`, `velisarios`, `ironfleet`) spends
-  an entire development on one protocol's liveness; it is off the critical path and is honestly
-  left as the named obstruction. The dregg2-coherent resolution stands: `World.gst_liveness`
-  remains the assumed oracle law (honest, like `recv_mono`), and THIS file *reduces* what that
-  law's premise must supply (Δ-delivery, not the full conclusion) via
-  `gstRound_of_productivity` + `gst_liveness_from_round_model`.
+OPEN (O2 residual, not a sorry): a from-scratch proof that a `GSTRound` eventually obtains —
+the pacemaker / view-synchronization argument. Requires: (i) relating `World.clock` to Δ-bounded
+delivery; (ii) a modeled view automaton with leader rotation and timeouts; (iii) the FLP-respecting
+argument that an honest leader is eventually hit. `World.gst_liveness` remains the assumed oracle
+law; this file reduces its premise to Δ-delivery (not the full conclusion).
 -/
 
-/-! ## 5. Axiom hygiene — the keystones are kernel-clean.
+/-! ## 5. Axiom hygiene — every keystone is kernel-clean.
 
-`bft_safety` / `bft_agreement` reduce to the `BFTModel` STRUCTURE FIELDS (hypotheses, not
-`axiom`s) plus pure `Finset` counting; the O2 theorems reduce to the `GSTRound` hypothesis (a
-`def` consumed as a premise) — so none pull in `sorryAx` or any oracle axiom. `collectAxioms`
-sees only the three standard kernel axioms. The model's assumptions live entirely in
-`BFTModel`'s fields and the theorem premises, never in `#print axioms`. -/
+All theorems reduce to `BFTModel` structure fields (hypotheses, not axioms) and `GSTRound` (a
+`def`-as-premise); none pull `sorryAx` or any oracle axiom. -/
 #assert_axioms honest_witness_in_intersection
 #assert_axioms bft_safety
 #assert_axioms bft_agreement

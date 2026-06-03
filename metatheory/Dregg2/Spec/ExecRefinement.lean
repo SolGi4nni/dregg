@@ -1,19 +1,12 @@
 /-
-# Dregg2.Spec.ExecRefinement — the FIRST refinement square: `Exec ⊑ Spec`.
+# Dregg2.Spec.ExecRefinement — the first refinement square: `Exec ⊑ Spec`.
 
-Until now the executable kernel (`Dregg2.Exec.Kernel`) and the matured abstract spec
-(`Dregg2.Spec.*`) were two disjoint worlds: `Exec` proved its OWN conservation
-(`exec_conserves`) and its OWN authority gate (`exec_authorized` / `authorizedB`), but it
-never *touched* `Spec` (grep: NONE). This module is the beachhead that turns "Exec does not
-touch Spec" into "**Exec ⊑ Spec** (first square proved)" — the start of re-founding `Exec` as
-a *refinement of* the matured `Spec`, exactly the l4v `Design ⊑ Abstract` move, here
-`Dregg2.Exec.Kernel ⊑ Dregg2.Spec.{Conservation,Guard,Authority}`.
-
-A refinement square is the commuting diagram
+This module proves `Dregg2.Exec.Kernel ⊑ Dregg2.Spec.{Conservation,Guard,Authority}` — the
+l4v `Design ⊑ Abstract` move. The refinement square:
 
 ```
         Refines
-   k  ───────────▶  a            (the simulation relation: balances + caps correspond)
+   k  ───────────▶  a
    │                │
    │ exec k t       │ abstract step (Spec law)
    ▼                ▼
@@ -21,38 +14,25 @@ A refinement square is the commuting diagram
         Refines
 ```
 
-We do NOT prove the *full* operational diagram (that needs an abstract small-step relation —
-the same residue `Proof/Refine` and `Spec.Authority.only_connectivity_…` already flag). We DO
-prove the two tractable PROJECTIONS of the square — conservation and authority — cleanly:
+Two tractable projections of the square are proved:
 
-  1. **Conservation refinement** (`exec_refines_conservation`, PROVED-clean): an
-     `exec`-committed step's per-cell balance deltas satisfy `Spec`'s
-     `conservedInDomain Domain.balance` — i.e. `Exec.exec_conserves` IS `Spec`'s `Σδ = 0` law
-     over `Bal = ℤ`. The toy single-domain ℤ ledger is *exactly* the `balance` domain of the
-     multi-domain abstract conservation; the executable `Finset.sum` debit/credit cancellation
-     is the `Bal = ℤ` instance of `Spec.conservation_over_monoid`.
+  1. **Conservation refinement** (`exec_refines_conservation`): an `exec`-committed step's
+     per-cell balance deltas satisfy `Spec`'s `conservedInDomain Domain.balance` — i.e.
+     `exec_conserves` IS `Spec`'s `Σδ = 0` law over `Bal = ℤ`.
 
-  2. **Authority refinement** (`exec_authz_refines_guard`, PROVED-clean): the executable cap
-     gate `Exec.authorizedB` admitting a turn ⇒ the corresponding abstract `Spec.Guard.admits`
-     (a `firstParty` gate over the turn) is `true`. The decidable kernel gate REFINES the
-     abstract `Guard` demand. We additionally tie `authorizedB`-by-ownership to
-     `Spec.Authority.Graph.has` / `confers` on a graph reconstructed from `Exec.caps`, in the
-     same shape `Coherence.guard_is_authority_conferral` uses (conferral-is-a-`Guard`). We do
-     NOT import `Coherence` (it is not pre-built); we re-derive the slice directly from
-     `Spec.Guard`/`Spec.Authority`.
+  2. **Authority refinement** (`exec_authz_refines_guard`): `Exec.authorizedB` admitting a
+     turn implies the corresponding abstract `Spec.Guard.admits` is `true`. Ownership is
+     tied to `Spec.Authority.confers_refl`; held caps are tied to `Graph.has` on the
+     reconstructed graph.
 
-  3. **The simulation relation + commuting square** (`Refines`, `exec_step_refines`): the
-     conservation+authority PROJECTIONS of the square are PROVED; the residual operational
-     thread (the abstract small-step relation that would let us *construct* `a'` from `a` and
-     show full bisimulation) is honestly `-- OPEN:`-marked with a precise statement of what is
-     missing.
+  3. **The simulation relation** (`Refines`, `exec_step_refines`): the conservation and
+     authority projections are proved; the residual operational thread (an abstract small-step
+     LTS for full bisimulation) is `-- OPEN:`-marked with a precise statement.
 
-## Discipline (matching the lib)
-Abstract value types where the Spec side is abstract; faithful `Prop`s; `#assert_axioms` on
-the clean keystones; honest `-- OPEN:` only on the genuine operational gap; NO
-`axiom`/`admit`/`native_decide`/`:True`/`Iff.rfl`-as-content/sorry-alias except the single
-localized operational residue. Imports ONLY existing built modules. Does NOT modify any
-existing file — it only *consumes* `Exec.Kernel` and the `Spec.*` web.
+Also proves a second refinement square for the content-addressed record kernel
+(`Exec.RecordKernel ⊑ Spec`), landing on the same abstract `Domain.balance` law.
+
+Faithful `Prop`s; `#assert_axioms` on all keystones; the `-- OPEN:` is prose, not `sorry`.
 -/
 import Dregg2.Exec.Kernel
 import Dregg2.Exec.RecordKernel
@@ -405,17 +385,13 @@ theorem run_refines_conservation {k k' : KernelState} (a : AbstractState)
 
 end Square
 
-/-! ## §3.5 — The SECOND refinement square: the CONTENT-ADDRESSED record kernel `⊑ Spec`.
+/-! ## §3.5 — The second refinement square: the content-addressed record kernel `⊑ Spec`.
 
-§1–§3 refine the toy scalar kernel (`Exec.Kernel`, `bal : CellId → ℤ`). The construction study's
-single-highest-leverage move (`PHASE-CONSTRUCTION.md §1`) replaces that scalar ledger with the
-content-addressed `Value` record cell (`Exec.RecordKernel`, `cell : CellId → Value`), conserving a
-NAMED FIELD (`balance`) rather than the whole-state ℤ. Here we exhibit that as a SECOND refinement
-square onto the SAME abstract law — `Spec.conservedInDomain Domain.balance` — proving the record
-kernel's `balance`-field conservation IS the `Bal = ℤ`, `Domain.balance` instance of the abstract
-multi-domain conservation, exactly as §1 does for the scalar kernel. So the abstract `Domain.balance`
-law is now refined by BOTH the toy scalar ledger AND the concrete record cell — the latter being the
-seam toward "verified dregg". -/
+§1–§3 refine the toy scalar kernel (`Exec.Kernel`, `bal : CellId → ℤ`). Here we prove the
+same square for the content-addressed `Value` record cell (`Exec.RecordKernel`, `cell : CellId
+→ Value`), which conserves a named `balance` field rather than the whole-state ℤ. The record
+kernel's `balance`-field conservation IS `Spec.conservedInDomain Domain.balance` at `Bal = ℤ`
+— the same abstract law as §1, now refined by the concrete record cell. -/
 
 /-- **`refineRecordConservation s s'`** — the per-cell `balance`-FIELD deltas of a record-kernel step
 `s ⟶ s'`, packaged as the `List ℤ` that `Spec.conservedInDomain` consumes (the record-cell analog of
@@ -432,13 +408,10 @@ theorem refineRecordConservation_sum (s s' : RecordKernelState) (hacc : s'.accou
   rw [Finset.sum_map_toList s.accounts (fun c => balOf (s'.cell c) - balOf (s.cell c)),
       Finset.sum_sub_distrib, hacc]
 
-/-- **KEYSTONE (second square) — `recExec_refines_conservation` (PROVED-clean).** A committed
-record-kernel step's per-cell `balance`-field deltas satisfy `Spec`'s balance-domain conservation
-(`conservedInDomain Domain.balance`, i.e. `Σδ = 0` over `Bal = ℤ`). This is the conservation
-PROJECTION of the SECOND refinement square: `RecordKernel.recKExec_conserves` (the content-addressed
-record cell preserves the total `balance` field) IS, with no remainder, `Spec`'s `Σδ = 0` law over
-`Bal = ℤ`, `Domain.balance` — the SAME abstract law §1 refines the scalar kernel onto, now refined by
-the concrete record cell. -/
+/-- **`recExec_refines_conservation`** — a committed record-kernel step's per-cell
+`balance`-field deltas satisfy `conservedInDomain Domain.balance`. This is the conservation
+projection of the second refinement square: `recKExec_conserves` IS `Spec`'s `Σδ = 0` over
+`Bal = ℤ`, `Domain.balance`. -/
 theorem recExec_refines_conservation (k k' : RecordKernelState) (turn : Turn)
     (h : recKExec k turn = some k') :
     conservedInDomain Domain.balance (refineRecordConservation k k') := by
@@ -457,21 +430,18 @@ theorem recExec_refines_conservation_over_monoid (k k' : RecordKernelState) (tur
   conservation_over_monoid Domain.balance pre (refineRecordConservation k k')
     (recExec_refines_conservation k k' turn h)
 
-/-- **`recExec_authz_refines_guard` (PROVED-clean)** — the record kernel's authority gate is the
-SAME `authorizedB` the scalar kernel uses, so it refines the SAME abstract `Spec.Guard.firstParty`
-gate (authority is orthogonal to the state representation). A committed record step's turn passes the
-abstract authority `Guard`. -/
+/-- **`recExec_step_passes_guard`** — the record kernel uses the same `authorizedB` gate as the
+scalar kernel, so a committed record step's turn passes the same abstract `Spec.Guard.firstParty`
+guard (authority is orthogonal to the state representation). -/
 theorem recExec_step_passes_guard {Statement Witness : Type} [Verifiable Statement Witness]
     (k k' : RecordKernelState) (turn : Turn) (w : Statement → Witness)
     (h : recKExec k turn = some k') :
     Guard.admits (execAuthGuard (Statement := Statement) k.caps) turn w = true :=
   exec_authz_refines_guard k.caps turn w (recKExec_authorized k k' turn h)
 
-/-- **The record refinement square (PROVED-clean projections).** A committed record-kernel step
-preserves BOTH Spec projections over the content-addressed cell: the `balance`-domain conservation
-(`recKExec_conserves`, the named-field measure) and the authority `Guard` (the same gate). Assembled
-as one commuting statement, mirroring §3's `exec_step_refines` but for `RecordKernel`. The operational
-LTS residue (§4) is shared and remains the single OPEN. -/
+/-- **`recExec_step_refines`** — assembles the second refinement square: a committed record-kernel
+step preserves both Spec projections (balance-domain conservation + authority guard), mirroring
+`exec_step_refines` for the content-addressed cell. The operational LTS residue (§4) is shared. -/
 theorem recExec_step_refines {Statement Witness : Type} [Verifiable Statement Witness]
     (k k' : RecordKernelState) (turn : Turn) (w : Statement → Witness)
     (h : recKExec k turn = some k') :
@@ -519,11 +489,8 @@ abstract transition. The honest residual obligation:
 
 /-! ## §5 — Axiom-hygiene tripwires.
 
-The conservation and authority squares (§1, §2) and the projection-assembled commuting square
-(§3) are PROVED-clean: each depends ONLY on the three standard kernel axioms (no `sorryAx`).
-Pinning them here certifies the FIRST `Exec ⊑ Spec` square is genuinely proved, not a
-`sorry`-alias. The operational residue (§4) is an `-- OPEN:` PROSE obligation, not a `sorry`
-declaration — so there is nothing axiom-dirty to exclude; the whole file is clean. -/
+All keystones depend only on the three standard kernel axioms (no `sorryAx`). The operational
+residue (§4) is an `-- OPEN:` prose obligation, not a `sorry`; the whole file is clean. -/
 
 #assert_axioms refineConservation_sum
 #assert_axioms exec_refines_conservation

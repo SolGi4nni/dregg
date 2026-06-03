@@ -1,63 +1,46 @@
 /-
-# Dregg2.Exec.EffectsSupply — the DISCLOSED-SUPPLY + GENERATIVE-RESOURCE regime, fully characterized.
+# Dregg2.Exec.EffectsSupply — the disclosed-supply and generative-resource effects, fully characterized.
 
-**Sibling of `Exec/EffectTransfer.lean` (the `Conservative`/`Paired` reference) and of
-`Exec/TurnExecutorFull.lean`'s mint/burn (the `Disclosed` supply prototype).** This module drives the
-*resource-creating* and *bridge-supply* half of dregg1's `Effect` catalog (`turn/src/action.rs:760
-Effect`) all the way through the executor layer, each as a fully-characterized, reference-quality
-effect proving the SAME five-keystone pattern `EffectTransfer` names:
+Sibling of `Exec/EffectTransfer.lean` (`Conservative`/`Paired` reference) and of
+`Exec/TurnExecutorFull.lean`'s mint/burn (the `Disclosed` supply prototype). Each effect here is
+proved against the same five-keystone pattern:
 
   1. **executable step** — concrete, `#eval`-able semantics over `RecChainedState`;
-  2. **conserves** — the DOMAIN-LEVEL conservation/disclosure obligation. For the *disclosed-supply*
-     effects this is NOT `Σδ = 0` but the DISCLOSED form: `recTotal` moves by a disclosed `±amount`,
-     flagged `is_disclosed_non_conservation` (mirroring `TurnExecutorFull`'s mint/burn treatment); for
-     the *paired-bridge* effects (lock/finalize/cancel) it IS `Σδ = 0` (an internal escrow move);
+  2. **conserves** — the domain-level conservation/disclosure obligation. For disclosed-supply
+     effects this is NOT `Σδ = 0` but the disclosed form: `recTotal` moves by a disclosed `±amount`,
+     flagged `is_disclosed_non_conservation`; for the paired-bridge effects (lock/finalize/cancel)
+     it IS `Σδ = 0` (an internal escrow move);
   3. **authorized** — a committed step was gated by the relevant authority;
   4. **metadata** — the receipt chain advances by exactly one row (replay-detectable), and the cap
      table is framed (resource creation/supply never edits connectivity);
   5. **forward-sim** — a committed step is matched by an abstract `Spec` step `AbsStep (absT s)
      (absT s')` over the (`balance`-domain total, authority graph) abstraction, with the disclosed
-     supply delta recorded on the bottom edge — the record-world refinement square for each effect.
+     supply delta on the bottom edge.
 
-## The effects (catalog colors from `CatalogEffects`, EXCLUDING mint/burn which are DONE)
+## Effects covered
 
-  * **`CreateCell`** (`g_createCell`, Generative) — mint a FRESH live account with a DISCLOSED
-    initial balance: `recTotal` grows by exactly the disclosed `balance` (`is_disclosed_non_conservation`).
-  * **`CreateCellFromFactory`** (`g_createCellFromFactory`, Generative) — `CreateCell` whose child runs
-    a PUBLISHED `FactoryDescriptor` program: constructor transparency (the child's program IS the
-    factory's, reused from `Exec/Factory.lean`) + the same disclosed-balance creation.
-  * **`SpawnWithDelegation`** (`g_spawnWithDelegation`, Generative) — spawn a child with a DISCLOSED
-    delegated authority snapshot: fresh cell created with disclosed provenance (the parent) + the
-    delegated cap; `recTotal` grows by the disclosed child balance.
-  * **`BridgeMint`** (`g_bridgeMint`, Generative — the §8 PORTAL inflow) — credit a cell by a disclosed
-    `value` observed off a FOREIGN chain. dregg2 CANNOT verify Cardano consensus, so the foreign
-    finality is a `Prop`-carrier portal `ForeignFinal` carried as a HYPOTHESIS (`PHASE-… §8`); the LOCAL
-    state transition (the disclosed `+value` credit + the nullifier nonce-pairing) is executable + proved.
-  * **`BridgeLock`** (`c_bridgeLock`, Conservative) — Phase-1 lock: ESCROW `value` from a cell into a
-    bridge lock-cell (an INTERNAL `Σδ = 0` move) + record the lock's `nullifier`. The foreign destination
-    is a `Prop` portal; the local escrow conserves.
-  * **`BridgeFinalize`** (`c_bridgeFinalize`, Conservative) — Phase-3 finalize: on a foreign receipt
-    (`Prop` portal), CONSUME the lock (the nullifier becomes permanently spent — a nonce advance) while
-    the balance is FRAMED (the value already left at lock time): `Σδ = 0`.
-  * **`BridgeCancel`** (`c_bridgeCancel`, Conservative) — Phase-4 cancel after timeout: REFUND the
+  * `CreateCell` (`g_createCell`, Generative) — mint a fresh live account with a disclosed
+    initial balance: `recTotal` grows by exactly the disclosed `balance`.
+  * `CreateCellFromFactory` (`g_createCellFromFactory`, Generative) — `CreateCell` whose child runs
+    a published `FactoryDescriptor` program: constructor transparency + the same disclosed-balance creation.
+  * `SpawnWithDelegation` (`g_spawnWithDelegation`, Generative) — spawn a child with a disclosed
+    delegated authority snapshot; `recTotal` grows by the disclosed child balance.
+  * `BridgeMint` (`g_bridgeMint`, Generative — §8 portal inflow) — credit a cell by a disclosed
+    `value` observed off a foreign chain. dregg2 cannot verify foreign consensus, so the foreign
+    finality is a `Prop`-carrier portal `ForeignFinal` carried as a hypothesis (OPEN: discharged
+    outside Lean); the local state transition is executable and proved.
+  * `BridgeLock` (`c_bridgeLock`, Conservative) — Phase-1 lock: escrow `value` from a cell into a
+    bridge lock-cell (an internal `Σδ = 0` move) + record the lock's `nullifier`. The foreign
+    destination is a `Prop` portal; the local escrow conserves.
+  * `BridgeFinalize` (`c_bridgeFinalize`, Conservative) — Phase-3 finalize: on a foreign receipt
+    (Prop portal), consume the lock (the nullifier becomes permanently spent) while the balance is
+    framed (the value already left at lock time): `Σδ = 0`.
+  * `BridgeCancel` (`c_bridgeCancel`, Conservative) — Phase-4 cancel after timeout: refund the
     escrow back to the owner (the inverse of the lock — `Σδ = 0`) + retire the lock nonce.
 
-## Reusable vs. bespoke (the `EffectTransfer` discipline)
-
-REUSABLE (mechanical, verbatim): the `recCreditCell` single-cell credit + its `recCreditCell_recTotal_delta`
-(the disclosed `±v` move), reused from `TurnExecutorFull`; `mintAuthorizedB` (the privileged supply gate)
-+ its `recKMint_*` facts; `Factory.createFromFactory` + `constructor_transparency`; the forward-sim
-`AbsStep`/`absT` shape (conservation projection on the disclosed delta + authority-graph framing) is the
-SAME `Spec.execGraph`/`conservedInDomain` instantiation as `EffectTransfer`. BESPOKE per effect: which
-domain it discloses and the named-field/account-set write (the fresh-account insert for `CreateCell`, the
-escrow pairing for the bridge phases, the nullifier nonce). The §8 foreign-finality `Prop` portal is the
-ONE genuinely new bespoke shape — carried, never discharged in Lean.
-
-## Discipline (REORIENT §6)
 No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly `{propext,
-Classical.choice, Quot.sound}` on every keystone. Pure, computable, `#eval`-able. Reuses ONLY built
+Classical.choice, Quot.sound}` on every keystone. Pure, computable, `#eval`-able. Reuses only built
 modules (`TurnExecutorFull`/`RecordKernel`/`Factory`/`CatalogEffects`/`Spec.ExecRefinement`); edits none.
-Verified standalone: `lake env lean Dregg2/Exec/EffectsSupply.lean`.
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.Factory
@@ -79,14 +62,14 @@ open scoped BigOperators
 /-! ## §0 — Shared scaffolding: the disclosed-creation credit, the lock-nullifier nonce, the foreign portal.
 
 The disclosed-supply / generative effects share two named-field moves and one §8 portal:
-  * a FRESH-ACCOUNT insert (`createCellInto`) that adds a live cell with a disclosed balance — the
+  * a fresh-account insert (`createCellInto`) that adds a live cell with a disclosed balance — the
     generative analog of `recCreditCell` but it grows `accounts`, so `recTotal` rises by the disclosed
     balance of the new (previously absent ⇒ measure-`0`) cell;
-  * a NULLIFIER-NONCE write (`setLock` / `lockOf`) recording a bridge lock's spent state (the
-    replay-protection metadata, the `nonce`-field analog for the bridge phases);
-  * the FOREIGN-FINALITY portal `ForeignFinal` — an OPAQUE `Prop` the cross-chain proof discharges
-    OUTSIDE Lean (dregg2 cannot verify Cardano consensus). It is carried as a hypothesis on the bridge
-    keystones, NEVER proved here. -/
+  * a nullifier-nonce write (`setLock` / `lockOf`) recording a bridge lock's spent state (the
+    replay-protection metadata for the bridge phases);
+  * the foreign-finality portal `ForeignFinal` — an opaque `Prop` the cross-chain proof discharges
+    outside Lean (dregg2 cannot verify Cardano consensus). It is carried as a hypothesis on the bridge
+    keystones, never proved here (OPEN: §8 portal obligation). -/
 
 /-- **The disclosed bridge-lock field** — a cell record's `bridge_lock` nullifier-nonce field, recording
 whether/which note is locked for a cross-chain bridge (the replay-protection metadata of the bridge
@@ -98,19 +81,18 @@ metadata measure. -/
 def lockOf (v : Value) : Int := (v.scalar lockField).getD 0
 
 /-- **`ForeignFinal`** — the §8 cross-chain finality portal. A `Prop` standing for "the foreign chain
-(e.g. Cardano) has FINALIZED the corresponding transaction at `nullifier` for `value`". dregg2 CANNOT
-verify foreign consensus inside Lean, so this is an OPAQUE carrier (cf. `Crypto.Bridge`'s `extractable`
-and `Factory`'s `HashInjective`): the BridgeVerifierKernel / observation bridge discharges it; here it is
-a HYPOTHESIS on every bridge keystone, surfaced honestly, never proved. -/
+has finalized the corresponding transaction at `nullifier` for `value`". dregg2 cannot verify foreign
+consensus inside Lean, so this is an opaque carrier (OPEN: discharged by the BridgeVerifierKernel /
+observation bridge): it is a hypothesis on every bridge keystone, never proved here. -/
 opaque ForeignFinal (nullifier : ℤ) (value : ℤ) : Prop
 
 /-! ## §1 — `CreateCell`: a Generative effect that mints a fresh live account (disclosed supply).
 
-`Effect::CreateCell { public_key, token_id, balance }` (`action.rs:786`) adds a NEW cell to the ledger
-with an initial `balance`. It is `Generative` (`CatalogEffects.g_createCell`): it brings `balance` units
-into existence, a DISCLOSED non-conservation (the created amount is on the receipt). The executable
-semantics: gate on `mintAuthorizedB` (creation is privileged — only an authority may coin a new cell's
-endowment), require the new id is FRESH (`∉ accounts`), then insert it with the disclosed `balance`. -/
+`Effect::CreateCell` adds a new cell to the ledger with an initial `balance`. It is Generative
+(`CatalogEffects.g_createCell`): it brings `balance` units into existence, a disclosed non-conservation
+(the created amount is on the receipt). The executable semantics: gate on `mintAuthorizedB` (creation
+is privileged — only an authority may coin a new cell's endowment), require the new id is fresh
+(`∉ accounts`), then insert it with the disclosed `balance`. -/
 
 /-- Insert a fresh cell `newCell` into the ledger with initial `balance` field `bal` (and a cleared
 lock). The generative account-set write: it adds `newCell` to `accounts` AND sets its `balance`. -/
@@ -118,10 +100,10 @@ def createCellInto (k : RecordKernelState) (newCell : CellId) (bal : ℤ) : Reco
   { k with accounts := insert newCell k.accounts
            cell := fun c => if c = newCell then setBalance (.record []) bal else k.cell c }
 
-/-- **`createCellStep` — `CreateCell`'s executable semantics (PROVED computable).** Fail-closed: an
-authorized creator (`mintAuthorizedB actor newCell` — creation is privileged, like minting supply), a
-FRESH id (`newCell ∉ accounts`), and a non-negative endowment. On commit, the fresh cell is inserted with
-the disclosed `bal` and a receipt carrying the disclosed creation amount is appended. -/
+/-- **`createCellStep` — `CreateCell`'s executable semantics.** Fail-closed: an authorized creator
+(`mintAuthorizedB actor newCell` — creation is privileged, like minting supply), a fresh id
+(`newCell ∉ accounts`), and a non-negative endowment. On commit, the fresh cell is inserted with the
+disclosed `bal` and a receipt carrying the disclosed creation amount is appended. -/
 def createCellStep (s : RecChainedState) (actor newCell : CellId) (bal : ℤ) :
     Option RecChainedState :=
   if mintAuthorizedB s.kernel.caps actor newCell = true ∧ newCell ∉ s.kernel.accounts ∧ 0 ≤ bal then
@@ -147,11 +129,11 @@ theorem createCellStep_factors {s s' : RecChainedState} {actor newCell : CellId}
     exact ⟨hg.1, hg.2.1, hg.2.2, by rw [← h]; rfl⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-! ### §1.2 — `create_conserves` (the DISCLOSED form): `recTotal` grows by exactly the disclosed `bal`. -/
+/-! ### §1.2 — `create_conserves` (disclosed form): `recTotal` grows by exactly the disclosed `bal`. -/
 
-/-- The fresh-account insert raises `recTotal` by EXACTLY the disclosed `bal` — PROVED. The new cell was
-absent (`∉ accounts`, so it contributed `0`); inserting it with `balance = bal` adds `bal`. Reuses
-`Finset.sum_insert` (the fresh-cell single-point growth). -/
+/-- The fresh-account insert raises `recTotal` by exactly the disclosed `bal`. The new cell was
+absent (`∉ accounts`, so it contributed `0`); inserting it with `balance = bal` adds `bal`.
+Uses `Finset.sum_insert` (the fresh-cell single-point growth). -/
 theorem createCellInto_recTotal (k : RecordKernelState) (newCell : CellId) (bal : ℤ)
     (hfresh : newCell ∉ k.accounts) :
     recTotal (createCellInto k newCell bal) = recTotal k + bal := by
@@ -166,10 +148,9 @@ theorem createCellInto_recTotal (k : RecordKernelState) (newCell : CellId) (bal 
   have hcne : c ≠ newCell := fun heq => hfresh (heq ▸ hc)
   simp only [if_neg hcne]
 
-/-- **`create_conserves` — DISCLOSED non-conservation (PROVED).** A committed `createCellStep` raises the
-total `balance` by EXACTLY the disclosed `bal`: `recTotal s'.kernel = recTotal s.kernel + bal`. This is
-the Generative DISCLOSURE obligation in executable form — the supply move is NOT `Σδ = 0`, it is the
-flagged disclosed delta `+bal` (mirroring mint's `recKMint_delta`). -/
+/-- **`create_conserves` — disclosed non-conservation (PROVED).** A committed `createCellStep` raises the
+total `balance` by exactly the disclosed `bal`: `recTotal s'.kernel = recTotal s.kernel + bal`. The supply
+move is not `Σδ = 0`; it is the disclosed delta `+bal` (the Generative disclosure obligation). -/
 theorem create_conserves {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
     recTotal s'.kernel = recTotal s.kernel + bal := by
@@ -177,16 +158,14 @@ theorem create_conserves {s s' : RecChainedState} {actor newCell : CellId} {bal 
   subst hs'
   exact createCellInto_recTotal s.kernel newCell bal hfresh
 
-/-- **`create_discloses` — PROVED.** `CreateCell` is Generative, hence carries the disclosed
-non-conservation obligation: its created supply must be revealed in the receipt. Discharged off
-`CatalogEffects.generative_discloses` + `g_createCell`. -/
+/-- **`create_discloses` — PROVED.** `CreateCell` is Generative, so its created supply is disclosed.
+Discharged via `CatalogEffects.generative_discloses` + `g_createCell`. -/
 theorem create_discloses :
     (effectLinearity .createCell).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .createCell Dregg2.CatalogEffects.g_createCell
 
 /-- **`create_disclosed_domain` — PROVED.** The realized balance-domain delta of a committed
-`createCellStep` is EXACTLY the disclosed `[bal]` (NOT `[0]`) — the executable shadow of dregg1's
-disclosed-creation receipt for the Generative effect. -/
+`createCellStep` is exactly the disclosed `[bal]` (not `[0]`). -/
 theorem create_disclosed_domain {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
     [recTotal s'.kernel - recTotal s.kernel] = [bal] := by
@@ -194,9 +173,9 @@ theorem create_disclosed_domain {s s' : RecChainedState} {actor newCell : CellId
 
 /-! ### §1.3 — `create_authorized` + fail-closed. -/
 
-/-- **`create_authorized` — PROVED.** A committed `createCellStep` implies the creator held the privileged
-creation authority over the new cell (`mintAuthorizedB` — bare ownership is NOT enough; creation coins
-supply). The integrity obligation, reused from the gate. -/
+/-- **`create_authorized` — PROVED.** A committed `createCellStep` implies the creator held
+creation authority over the new cell (`mintAuthorizedB` — bare ownership is not enough; creation
+coins supply). -/
 theorem create_authorized {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
     mintAuthorizedB s.kernel.caps actor newCell = true :=
@@ -212,8 +191,8 @@ theorem create_unauthorized_fails (s : RecChainedState) (actor newCell : CellId)
 
 /-! ### §1.4 — `create_metadata`: caps framed + the chain advances by one. -/
 
-/-- **`create_caps_unchanged` — PROVED.** A committed `createCellStep` leaves the cap table UNTOUCHED
-(creation edits `accounts`/`cell`, never `caps`). -/
+/-- **`create_caps_unchanged` — PROVED.** A committed `createCellStep` leaves the cap table
+untouched (creation edits `accounts`/`cell`, never `caps`). -/
 theorem create_caps_unchanged {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
     s'.kernel.caps = s.kernel.caps := by
@@ -234,10 +213,10 @@ theorem create_metadata {s s' : RecChainedState} {actor newCell : CellId} {bal :
 
 /-! ## §2 — `CreateCellFromFactory`: constructor transparency + disclosed creation.
 
-`Effect::CreateCellFromFactory` (`STORAGE-AS-CELL-PROGRAMS.md §2`, `CatalogEffects.g_createCellFromFactory`,
-Generative) mints a cell whose lifetime program IS a published `FactoryDescriptor`'s program. We compose
-`Factory.createFromFactory` (constructor transparency, REUSED VERBATIM) with `createCellStep`'s disclosed
-ledger insert: the factory pins the child's invariants, the supply move is the disclosed `+bal`. -/
+`Effect::CreateCellFromFactory` (`CatalogEffects.g_createCellFromFactory`, Generative) mints a cell
+whose lifetime program is a published `FactoryDescriptor`'s program. Composed from
+`Factory.createFromFactory` (constructor transparency) with `createCellStep`'s disclosed ledger insert:
+the factory pins the child's invariants, the supply move is the disclosed `+bal`. -/
 
 /-- **`createFromFactoryStep` — `CreateCellFromFactory`'s executable semantics.** First mint the child
 program/state via `Factory.createFromFactory` (rejects a non-conforming initial value, fail-closed);
@@ -271,11 +250,9 @@ theorem factory_create_factors {s : RecChainedState} {actor newCell : CellId} {b
           obtain ⟨hsl, hch⟩ := h
           exact ⟨by rw [hch], by rw [hsl]⟩
 
-/-- **`factory_constructor_transparency` (THE KEYSTONE — PROVED).** The cell a committed
-`createFromFactoryStep` mints carries EXACTLY the factory's declared `program` AND conforms to its schema:
-no hidden behavior, the published contract is the child's lifetime invariant set. Reused VERBATIM from
-`Factory.factory_mints_conforming` — the generative resource is created with DISCLOSED PROVENANCE (the
-`vk`-addressed program). -/
+/-- **`factory_constructor_transparency` — PROVED.** The cell a committed `createFromFactoryStep` mints
+carries exactly the factory's declared `program` and conforms to its schema: no hidden behavior, the
+published contract is the child's lifetime invariant set. Delegated to `Factory.factory_mints_conforming`. -/
 theorem factory_constructor_transparency {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     {d : Factory.FactoryDescriptor} {initial : Value} {s' : RecChainedState} {child : Factory.Cell}
     (h : createFromFactoryStep s actor newCell bal d initial = some (s', child)) :
@@ -314,11 +291,10 @@ theorem factory_create_metadata {s : RecChainedState} {actor newCell : CellId} {
 
 /-! ## §3 — `SpawnWithDelegation`: a child spawned with a disclosed delegated authority snapshot.
 
-`Effect::SpawnWithDelegation` (`action.rs:873`, `CatalogEffects.g_spawnWithDelegation`, Generative) spawns
-a child cell that inherits a snapshot of the parent's authority. We model it as `createCellStep` (the
-disclosed-supply child) COMPOSED with handing the child a delegated cap (the disclosed authority snapshot),
-recording the parent as the child's provenance. The balance creation is the disclosed `+bal`; the
-authority grant is a NEW edge (`addEdge` shape). -/
+`Effect::SpawnWithDelegation` (`CatalogEffects.g_spawnWithDelegation`, Generative) spawns a child cell
+that inherits a snapshot of the parent's authority. Modeled as `createCellStep` (the disclosed-supply
+child) composed with handing the child a delegated cap (the disclosed authority snapshot). The balance
+creation is the disclosed `+bal`; the authority grant adds a new cap edge. -/
 
 /-- **`spawnStep` — `SpawnWithDelegation`'s executable semantics.** Fail-closed via `createCellStep` (the
 authorized, fresh-id, non-negative child), and on commit ALSO grant the child a snapshot cap to `target`
@@ -374,10 +350,9 @@ theorem spawn_authorized {s s' : RecChainedState} {actor child target : CellId} 
   obtain ⟨s1, hc, _⟩ := spawnStep_factors h
   exact create_authorized hc
 
-/-- **`spawn_provenance` (the DISCLOSED-AUTHORITY keystone — PROVED).** The spawned child carries EXACTLY
-the delegated snapshot cap `node target` (its disclosed authority provenance): reading the child's cap
-table after a committed spawn yields `Cap.node target :: <inherited>`. The generative resource is created
-with disclosed authority. -/
+/-- **`spawn_provenance` — PROVED.** The spawned child carries exactly the delegated snapshot cap
+`node target` (its disclosed authority provenance): reading the child's cap table after a committed
+spawn yields `Cap.node target :: <inherited>`. -/
 theorem spawn_provenance {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
     ∃ rest, s'.kernel.caps child = Cap.node target :: rest := by
@@ -396,18 +371,17 @@ theorem spawn_metadata {s s' : RecChainedState} {actor child target : CellId} {b
   have := (create_metadata hc).1
   simpa using this
 
-/-! ## §4 — `BridgeMint`: the §8 PORTAL inflow (foreign-finality as a `Prop` carrier).
+/-! ## §4 — `BridgeMint`: the §8 portal inflow (foreign-finality as a `Prop` carrier).
 
-`Effect::BridgeMint` (`action.rs:897`, `CatalogEffects.g_bridgeMint`, Generative) credits a cell with a
-value observed off a FOREIGN chain. The §8-PORTAL RULE: dregg2 CANNOT verify Cardano consensus inside
-Lean, so the foreign finality is the OPAQUE `Prop` `ForeignFinal nullifier value` carried as a HYPOTHESIS;
-the LOCAL state transition — the disclosed `+value` credit + the nullifier-nonce pairing (so the same
-foreign tx cannot be minted twice) — is executable and PROVED. -/
+`Effect::BridgeMint` (`CatalogEffects.g_bridgeMint`, Generative) credits a cell with a value observed
+off a foreign chain. dregg2 cannot verify foreign consensus inside Lean, so the foreign finality is the
+opaque `Prop` `ForeignFinal nullifier value` carried as a hypothesis (OPEN: §8 portal); the local state
+transition — the disclosed `+value` credit + the nullifier-nonce pairing — is executable and proved. -/
 
-/-- **`bridgeMintStep` — `BridgeMint`'s executable LOCAL semantics.** Fail-closed: an authorized minter
+/-- **`bridgeMintStep` — `BridgeMint`'s executable local semantics.** Fail-closed: an authorized minter
 (`mintAuthorizedB` — the bridge mint is privileged supply), the target is live, and a non-negative value.
 On commit, credit the cell's `balance` by the disclosed `value` and append a receipt carrying it. The
-foreign finality is NOT checked here (it is the §8 portal hypothesis on the keystone). -/
+foreign finality is not checked here (it is the §8 portal hypothesis on the keystone). -/
 def bridgeMintStep (s : RecChainedState) (actor cell : CellId) (value : ℤ) :
     Option RecChainedState :=
   match recKMint s.kernel actor cell value with
@@ -425,11 +399,10 @@ theorem bridgeMintStep_factors {s s' : RecChainedState} {actor cell : CellId} {v
   | none => rw [hm] at h; exact absurd h (by simp)
   | some k' => rw [hm] at h; simp only [Option.some.injEq] at h; exact ⟨k', rfl, h.symm⟩
 
-/-- **`bridge_mint_conserves` — DISCLOSED non-conservation, GATED BY THE §8 PORTAL (PROVED).** GIVEN the
-foreign-finality portal `ForeignFinal nullifier value` (the cross-chain proof, discharged OUTSIDE Lean), a
-committed `bridgeMintStep` raises `recTotal` by EXACTLY the disclosed `value`: `recTotal s'.kernel =
-recTotal s.kernel + value`. The LOCAL disclosed credit is `recKMint_delta` (proved); the foreign half is
-the carried hypothesis — the honest §8 split. -/
+/-- **`bridge_mint_conserves` — disclosed non-conservation, gated by the §8 portal (PROVED).** Given the
+foreign-finality portal `ForeignFinal nullifier value` (the cross-chain proof, discharged outside Lean), a
+committed `bridgeMintStep` raises `recTotal` by exactly the disclosed `value`. The local disclosed credit
+is `recKMint_delta` (proved); the foreign half is the carried hypothesis (OPEN: §8 portal). -/
 theorem bridge_mint_conserves {s s' : RecChainedState} {actor cell : CellId} {value nullifier : ℤ}
     (_hforeign : ForeignFinal nullifier value)
     (h : bridgeMintStep s actor cell value = some s') :
@@ -438,8 +411,7 @@ theorem bridge_mint_conserves {s s' : RecChainedState} {actor cell : CellId} {va
   subst hs'
   exact recKMint_delta s.kernel k' actor cell value hm
 
-/-- **`bridge_mint_discloses` — PROVED.** `BridgeMint` is Generative ⇒ disclosed (`mintEffect` already
-names this color in `TurnExecutorFull`; re-exposed at the bridge name). -/
+/-- **`bridge_mint_discloses` — PROVED.** `BridgeMint` is Generative, so its supply delta is disclosed. -/
 theorem bridge_mint_discloses :
     (effectLinearity .bridgeMint).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .bridgeMint Dregg2.CatalogEffects.g_bridgeMint
@@ -482,20 +454,18 @@ theorem bridge_mint_metadata {s s' : RecChainedState} {actor cell : CellId} {val
   · subst hs'; simp
   · rw [bridge_mint_caps_unchanged h]
 
-/-! ## §5 — `BridgeLock` / `BridgeCancel` / `BridgeFinalize`: the PAIRED bridge escrow phases.
+/-! ## §5 — `BridgeLock` / `BridgeCancel` / `BridgeFinalize`: the paired bridge escrow phases.
 
-`Effect::BridgeLock` (`action.rs:907`), `BridgeCancel` (`:936`), `BridgeFinalize` (`:925`) are the
-Conservative (`c_bridgeLock`/`c_bridgeCancel`/`c_bridgeFinalize`, `Σδ = 0`) escrow phases. We model a
-bridge LOCK-CELL: locking ESCROWS `value` from the owner into the lock-cell (an INTERNAL transfer,
-balance-conserving), recording the lock nullifier; cancel REFUNDS it (the inverse); finalize CONSUMES the
-lock (the value already left — balance FRAMED, the nullifier retired). The foreign destination/receipt is
-the §8 `Prop` portal; the LOCAL escrow conserves. We reuse `recTransfer` (the proved two-party
-balance-conserving move) for lock/cancel. -/
+`BridgeLock`/`BridgeCancel`/`BridgeFinalize` are the Conservative escrow phases (`Σδ = 0`). We model a
+bridge lock-cell: locking escrows `value` from the owner into the lock-cell (an internal transfer,
+balance-conserving) recording the lock nullifier; cancel refunds it (the inverse); finalize consumes the
+lock (the value already left — balance framed, the nullifier retired). The foreign destination/receipt is
+the §8 Prop portal; the local escrow conserves. Reuses `recTransfer` for lock/cancel. -/
 
-/-- **`bridgeLockStep` — `BridgeLock`'s executable LOCAL semantics.** Fail-closed: the owner is authorized
-(`authorizedB` over the move), `value` is available in `owner`, and `owner ≠ lockCell` (distinct escrow),
-both live. On commit, escrow `value` owner→lockCell and append the lock receipt (carrying the
-`nullifier`). -/
+/-- **`bridgeLockStep` — `BridgeLock`'s executable local semantics.** Fail-closed: the owner is
+authorized (`authorizedB` over the move), `value` is available in `owner`, and `owner ≠ lockCell`
+(distinct escrow), both live. On commit, escrow `value` owner→lockCell and append the lock receipt
+carrying the `nullifier`. -/
 def bridgeLockStep (s : RecChainedState) (owner lockCell : CellId) (value nullifier : ℤ) :
     Option RecChainedState :=
   match recCexec s { actor := owner, src := owner, dst := lockCell, amt := value } with
@@ -556,10 +526,10 @@ theorem lockWrite_recTotal (k : RecordKernelState) (lockCell : CellId) (nullifie
   · simp only [hc, if_pos]; exact setLockField_balOf (k.cell lockCell) nullifier
   · simp only [if_neg hc]
 
-/-- **`bridge_lock_conserves` — TWO-PARTY balance conservation (PROVED, the PAIRED regime).** A committed
+/-- **`bridge_lock_conserves` — two-party balance conservation (PROVED, the paired regime).** A committed
 `bridgeLockStep` preserves `recTotal`: the owner's `-value` debit and the lock-cell's `+value` credit
-cancel (the proved two-party escrow), and the lock-nonce write does not perturb the balance measure. The
-bridge LOCK is an INTERNAL `Σδ = 0` move — the value is escrowed, not destroyed. -/
+cancel (the two-party escrow), and the lock-nonce write does not perturb the balance measure. The bridge
+lock is an internal `Σδ = 0` move — the value is escrowed, not destroyed. -/
 theorem bridge_lock_conserves {s s' : RecChainedState} {owner lockCell : CellId} {value nullifier : ℤ}
     (h : bridgeLockStep s owner lockCell value nullifier = some s') :
     recTotal s'.kernel = recTotal s.kernel := by
@@ -598,12 +568,11 @@ theorem bridge_lock_metadata {s s' : RecChainedState} {owner lockCell : CellId} 
   have : s1.log = lockTurn owner lockCell value :: s.log := (recCexec_attests hc).2.2.1
   rw [this]; simp
 
-/-! ### §5.2 — `BridgeCancel`: refund the escrow (the inverse of lock), gated by timeout (a `Prop` portal). -/
+/-! ### §5.2 — `BridgeCancel`: refund the escrow (the inverse of lock), gated by timeout (a Prop portal). -/
 
-/-- **`bridgeCancelStep` — `BridgeCancel`'s executable LOCAL semantics.** The Phase-4 refund: escrow the
-locked `value` BACK from the lock-cell to the owner (the inverse two-party move), via `recCexec`. The
-timeout-expiry is a §8 portal (the foreign block height — not verifiable in Lean); the LOCAL refund
-conserves. -/
+/-- **`bridgeCancelStep` — `BridgeCancel`'s executable local semantics.** The Phase-4 refund: escrow the
+locked `value` back from the lock-cell to the owner (the inverse two-party move), via `recCexec`. The
+timeout-expiry is a §8 portal (OPEN: not verifiable in Lean); the local refund conserves. -/
 def bridgeCancelStep (s : RecChainedState) (owner lockCell : CellId) (value : ℤ) :
     Option RecChainedState :=
   recCexec s { actor := owner, src := lockCell, dst := owner, amt := value }
@@ -634,12 +603,12 @@ theorem bridge_cancel_metadata {s s' : RecChainedState} {owner lockCell : CellId
   have : s'.log = cancelTurn owner lockCell value :: s.log := (recCexec_attests h).2.2.1
   rw [this]; simp
 
-/-! ### §5.3 — `BridgeFinalize`: consume the lock on a foreign receipt (`Prop` portal); balance FRAMED. -/
+/-! ### §5.3 — `BridgeFinalize`: consume the lock on a foreign receipt (Prop portal); balance framed. -/
 
-/-- **`bridgeFinalizeStep` — `BridgeFinalize`'s executable LOCAL semantics.** On a foreign receipt (the §8
-portal hypothesis), CONSUME the lock: retire the lock-cell's `bridge_lock` nullifier-nonce (write a
-disclosed "spent" marker — here `bumping` it, a metadata advance). The escrowed value already LEFT at lock
-time, so the balance is FRAMED here. Fail-closed only on liveness of the lock-cell. -/
+/-- **`bridgeFinalizeStep` — `BridgeFinalize`'s executable local semantics.** On a foreign receipt (the
+§8 portal hypothesis, OPEN), consume the lock: retire the lock-cell's `bridge_lock` nullifier-nonce
+(write a spent marker, a metadata advance). The escrowed value already left at lock time, so the balance
+is framed here. Fail-closed only on liveness of the lock-cell. -/
 def bridgeFinalizeStep (s : RecChainedState) (actor lockCell : CellId) (spentMarker : ℤ) :
     Option RecChainedState :=
   if lockCell ∈ s.kernel.accounts then
@@ -663,10 +632,10 @@ theorem bridgeFinalizeStep_factors {s s' : RecChainedState} {actor lockCell : Ce
   · rw [if_pos hl, Option.some.injEq] at h; exact ⟨hl, h.symm⟩
   · rw [if_neg hl] at h; exact absurd h (by simp)
 
-/-- **`bridge_finalize_conserves` — balance FRAMED (PROVED, the PAIRED `Σδ = 0` form), GATED BY THE §8
-PORTAL.** GIVEN the foreign-receipt portal `ForeignFinal nullifier value`, a committed
+/-- **`bridge_finalize_conserves` — balance framed (PROVED, `Σδ = 0`), gated by the §8 portal.** Given
+the foreign-receipt portal `ForeignFinal nullifier value` (OPEN: discharged outside Lean), a committed
 `bridgeFinalizeStep` preserves `recTotal`: the value already left at lock time, so finalization touches
-only the `bridge_lock` nonce (the spent marker), never the balance field — `Σδ = 0`. -/
+only the `bridge_lock` nonce (the spent marker), never the balance field. -/
 theorem bridge_finalize_conserves {s s' : RecChainedState} {actor lockCell : CellId}
     {spentMarker nullifier value : ℤ}
     (_hforeign : ForeignFinal nullifier value)
@@ -676,10 +645,9 @@ theorem bridge_finalize_conserves {s s' : RecChainedState} {actor lockCell : Cel
   subst hs'
   exact lockWrite_recTotal s.kernel lockCell spentMarker
 
-/-- **`bridge_finalize_consumes_lock` (the NULLIFIER keystone — PROVED).** A committed finalize writes the
-lock-cell's `bridge_lock` field to EXACTLY the disclosed `spentMarker` — the nullifier becomes permanently
-spent (replay-protection: the same foreign tx cannot be finalized twice). The metadata move of the bridge
-finalize. -/
+/-- **`bridge_finalize_consumes_lock` — PROVED.** A committed finalize writes the lock-cell's
+`bridge_lock` field to exactly the disclosed `spentMarker` — the nullifier becomes permanently spent
+(replay-protection: the same foreign tx cannot be finalized twice). -/
 theorem bridge_finalize_consumes_lock {s s' : RecChainedState} {actor lockCell : CellId} {spentMarker : ℤ}
     (h : bridgeFinalizeStep s actor lockCell spentMarker = some s') :
     lockOf (s'.kernel.cell lockCell) = spentMarker := by
@@ -705,10 +673,10 @@ theorem bridge_finalize_metadata {s s' : RecChainedState} {actor lockCell : Cell
 /-! ## §6 — Forward-simulation: every disclosed-supply / generative step is an abstract `Spec` step.
 
 Mirroring `EffectTransfer §5`: the record-world abstract state `AbstractS` = (`balance`-domain total,
-authority graph). For the DISCLOSED effects the bottom edge records the disclosed `±delta` (NOT a
-conservation `0`); for the PAIRED bridge phases it records `0`. The authority graph is framed for all
+authority graph). For the disclosed effects the bottom edge records the disclosed `±delta` (not a
+conservation `0`); for the paired bridge phases it records `0`. The authority graph is framed for all
 (creation/supply never edits connectivity, except spawn which extends it — handled by its own provenance
-keystone, so its forward-sim is the conservation+disclosure projection). -/
+keystone). -/
 
 section ForwardSim
 variable {Statement Witness : Type} [Verifiable Statement Witness]
@@ -778,13 +746,13 @@ theorem bridge_lock_forward_sim {s s' : RecChainedState} {owner lockCell : CellI
 
 end ForwardSim
 
-/-! ## §7 — Axiom-hygiene tripwires (the honesty pins over EVERY keystone).
+/-! ## §7 — Axiom-hygiene tripwires (honesty pins over every keystone).
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
-`native_decide`. The §8 foreign-finality portal `ForeignFinal` is an `opaque` `Prop` (a DATA carrier, like
-`Factory.factoryHash` / `Crypto.Bridge`'s `extractable`), NOT an axiom — it never closes a goal, it is a
-hypothesis on the bridge keystones. The `#assert_axioms` below confirm the local transitions are genuinely
-proved; the foreign half is carried, never faked. -/
+`native_decide`. The §8 foreign-finality portal `ForeignFinal` is an `opaque` `Prop` (a data carrier,
+never an axiom — it never closes a goal, only appears as a hypothesis on the bridge keystones). The
+`#assert_axioms` below confirm the local transitions are genuinely proved; the foreign half is carried,
+never faked. -/
 
 #assert_axioms createCellStep_factors
 #assert_axioms createCellInto_recTotal
@@ -841,10 +809,10 @@ proved; the foreign half is carried, never faked. -/
 
 /-! ## §8 — Non-vacuity: each effect commits and moves the right measure; unauthorized rejected.
 
-A chained record state: cells 0,1 with balances 100,5; actor 9 holds the privileged `node 0` and `node 2`
+Fixture: cells 0,1 with balances 100,5; actor 9 holds the privileged `node 0` and `node 2`
 mint/create caps; owner 0 owns its own cell (authority by ownership for the escrow moves). -/
 
-/-- The non-vacuity fixture (`fs0`-shaped): cell 0 = 100, cell 1 = 5; actor 9 holds `node 0`,`node 2`
+/-- The non-vacuity fixture: cell 0 = 100, cell 1 = 5; actor 9 holds `node 0`,`node 2`
 (create/mint authority over cells 0 and the fresh 2). -/
 def ss0 : RecChainedState :=
   { kernel :=

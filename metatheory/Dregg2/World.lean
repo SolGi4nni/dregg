@@ -1,37 +1,26 @@
 /-
-# Dregg2.World — the SIBLING portal to `CryptoKernel` for the nondeterministic
-external inputs that consensus / finality need (network, clock, randomness).
+# Dregg2.World — the portal for nondeterministic external inputs (network, clock, randomness).
 
-**The architecture (mirrors `CryptoKernel`).** `CryptoKernel.lean` is the portal for the
-*cryptographic* operations dregg2 needs (hash/verify/commit/nullifier) — an interface of
-opaque ops bundled with the algebraic laws Lean proofs rely on, with two realizations of
-the SAME interface (an abstract `[CryptoKernel …]` for PROVING; a Rust FFI instance for
-RUNNING). `World` is its sibling: the portal for the *nondeterministic external inputs*
-consensus needs — the **network** (which messages/votes a round received), the **clock**
-(a monotone logical time), and **randomness** (leader election / sortition). These are
-exactly the things a deterministic Lean semantics cannot produce on its own; like crypto,
-they are supplied from outside and treated as an uninterpreted oracle whose only Lean-side
-commitments are its stated laws (the obligations the operational environment discharges).
+The sibling of `CryptoKernel`: where `CryptoKernel.lean` is the portal for cryptographic
+operations (hash/verify/commit/nullifier), `World` is the portal for the nondeterministic
+external inputs consensus needs — the **network** (which messages/votes a round received),
+the **clock** (a monotone logical time), and **randomness** (leader election / sortition).
+Like crypto, these are supplied from outside and treated as an uninterpreted oracle whose
+only Lean-side commitments are its stated laws.
 
-Two realizations of the SAME interface (the `CryptoKernel` answer to "FFI or uninterpreted
-symbols?" — *both*):
+Two realizations of the same interface:
   • **PROVING** — an abstract `[World Msg]` (uninterpreted symbols + their laws). Every
-    Lean theorem here is parametric over it, so it holds for *any* lawful environment
-    (any scheduling of the network, any clock, any randomness beacon).
-  • **RUNNING** — Rust (the node's runtime) supplies the concrete delivery, the system
-    clock, and the randomness beacon; the compiled Lean calls into them via FFI
-    (`@[extern "dregg_world_recv"] opaque recv …`, `dregg_world_clock`,
-    `dregg_world_rand`), which IS a lawful instance. The `recv` oracle is the network
-    adversary's scheduling made into an interface; Lean never *proves* the network behaves,
-    it *assumes* the laws the runtime guarantees (e.g. clock monotonicity).
+    Lean theorem here is parametric, holding for any lawful environment.
+  • **RUNNING** — Rust (the node's runtime) supplies the concrete delivery, system clock,
+    and randomness beacon via FFI (`@[extern "dregg_world_recv"] opaque recv …`,
+    `dregg_world_clock`, `dregg_world_rand`). The `recv` oracle is the network adversary's
+    delivery schedule as an interface; Lean assumes only the laws the runtime guarantees.
 
-This is the network/clock/randomness half the `CryptoKernel` doc flagged as "a sibling
-`World` oracle, future work". With it we can express *real finality* over the network: a
-concrete `quorumReached` vote-count meeting `Finality`'s lifted `½(n+f)` threshold, the
-abstract `Finality.Committed` predicate instantiated as "a quorum of votes was received
-over `World.recv`", and the clean monotonicity facts that follow. The Byzantine /
-asynchrony guarantees (safety under equivocation, liveness after GST) are NOT provable from
-this interface alone — they need the full τ-BFT protocol — and are left as honest `OPEN`s.
+This lets us express real finality over the network: a concrete `quorumReached` vote-count
+meeting `Finality`'s `½(n+f)` threshold, `Finality.Committed` instantiated as "a quorum of
+votes was received over `World.recv`", and clean monotonicity facts. Byzantine / asynchrony
+guarantees (safety under equivocation, liveness after GST) are NOT provable from this
+interface alone — they need the full τ-BFT protocol — and are honest `OPEN`s.
 -/
 import Mathlib.Tactic
 import Dregg2.Finality
@@ -416,12 +405,11 @@ example :
 
 end Reference
 
-/-! ## Axiom hygiene — both new keystones are kernel-clean.
+/-! ## Axiom hygiene.
 
-`quorum_intersection_safety` is a real pigeonhole proof; `liveness_after_gst` reduces to the
-NAMED `World.gst_liveness` class FIELD (a hypothesis, not an `axiom`), so neither pulls in
-`sorryAx` or any §8 oracle axiom — `collectAxioms` sees only the three standard kernel
-axioms. The class field, being a hypothesis, never appears here. -/
+`quorum_intersection_safety` is a real pigeonhole proof; `liveness_after_gst` reduces to
+`World.gst_liveness` (a class field / hypothesis, not an `axiom`). Neither pulls in
+`sorryAx` — `collectAxioms` sees only the three standard kernel axioms. -/
 #assert_axioms quorum_intersection_safety
 #assert_axioms liveness_after_gst
 

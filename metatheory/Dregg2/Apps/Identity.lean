@@ -1,59 +1,29 @@
 /-
-# Dregg2.Apps.Identity — the IDENTITY app as a verified cell-program: REVOKED STAYS REVOKED, FOREVER.
+# Dregg2.Apps.Identity — the identity app as a verified cell-program: revoked stays revoked, forever.
 
 dregg1's identity / verifiable-credential app (`credentials/src/{issuance,revocation,verification}.rs`)
-is a three-verb protocol: **issue** mints a credential carrying a stable 32-byte id
-(`blake3(encoded)`, `issuance.rs:127`); **revoke** inserts that id into an issuer-side grow-only
-`RevocationRegistry` — a `HashSet<[u8;32]>` that is **insert-only** (`revoke()`, `revocation.rs:224`
-only `.insert`s, never removes) — and republishes a root commitment; **present/verify** admits a
-credential ONLY when a real non-membership check passes (`verify_non_revocation`, `revocation.rs:199`:
-recompute-root → match-expected → check the id is *absent* from the committed set; on presence it
-returns `NonRevocationError::Revoked` and `verify` rejects, `verification.rs:257`). The verifier never
-trusts a self-asserted `revoked` boolean — it checks genuine absence against the committed set.
+is a three-verb protocol: **issue** mints a credential with a stable id; **revoke** inserts that id into
+a grow-only `RevocationRegistry` (`HashSet<[u8;32]>`, insert-only, never removes); **verify** admits a
+credential only when a non-membership check passes (`verify_non_revocation` — on presence returns
+`NonRevocationError::Revoked`). The verifier never trusts a self-asserted boolean; it checks genuine
+absence against the committed set.
 
-The **headline safety** the whole protocol exists to guarantee — the one the grow-only registry buys —
-is **permanent revocation**: *once an identity's credential is revoked, it can NEVER be re-validated.*
-Because the registry only grows, a revoked id stays in the committed set for all time, so every future
-non-membership check fails-closed (`Revoked`). dregg2 already models the registry as the kernel-state
-`s.kernel.revoked : List Nat` (`RecordKernel.lean`, hole #3 / `#139`, `self.revocation_channel` — the
-MDB/derivation-table root `cap_revoke` tears down; single-machine ⇒ immediate revocation) and the
-verifier's negative-discharge leg as `FullForestAuth.revocationGate` (`gateOK = … && revocationGate`,
-`revocationGate na s = !(s.kernel.revoked.contains na.credNul)`), with the per-step teeth
-`FullForestAuth.gateOK_revoked_fails` (a revoked credential's gate fail-closes). This module lifts that
-ONE-STEP teeth to the **coinductive living cell** over the SHIPPED executor and carries it FOREVER.
+The headline safety: permanent revocation — once revoked, a credential can never be re-validated. The
+registry is modelled as `s.kernel.revoked : List Nat` (`RecordKernel.lean`), with the verifier's
+negative-discharge leg as `FullForestAuth.revocationGate` and per-step teeth `gateOK_revoked_fails`.
+This module carries that one-step fact to the coinductive living cell, forever.
 
-The construction mirrors `Exec/CellNullifier.lean` (the no-double-spend crown over the grow-only
-`nullifiers` set) and `Exec/CellConfine.lean` (confinement carried forever), distilled by
-`Exec/CellCarry.lean`'s parametric crown `livingCellA_carries` (ANY state predicate `Good` preserved
-by ONE living-cell step holds along the ENTIRE unbounded adversarial trajectory `trajA`, under EVERY
-schedule). For the revocation registry the per-step bookkeeping is the SHARPEST of the three crowns:
-the current 46-effect executor `execFullA` has **NO arm that grows `revoked`** (only the FFI
-marshaller writes it back; cf. `gatedNode_check_eq_use` — the gate READS the committed registry, the
-ledger effects never edit it), so EVERY committed effect leaves the registry literally UNCHANGED. We
-therefore prove the strongest frame — per-step EQUALITY `s'.kernel.revoked = s.kernel.revoked` — and
-read the grow-only `⊆` and the permanent-revocation carry off it. (Equality is the faithful invariant:
-a ledger turn must NOT silently un-revoke; only an explicit consensus-seam `cap_revoke` may grow the
-set, and that — were it added as an effect — would still preserve the carried `⊆`.)
+The current 46-effect executor has no arm that grows `revoked` (the authority `revoke`/`dropRef`
+effects edit only `caps` via `recCRevoke`, not this credential-revocation side-table). So the frame
+is the sharpest possible: per-step equality `s'.kernel.revoked = s.kernel.revoked`.
 
 Five theorems, ascending:
-
-* **`execFullA_revoked_eq`** — the per-effect REGISTRY FRAME: a committed `FullActionA` leaves the
-  revocation registry UNCHANGED (`s'.kernel.revoked = s.kernel.revoked`). The 46-arm dispatch walk
-  (mirroring `execFullA_nullifiers_grow`); every kernel transform writes a NON-`revoked` field, so the
-  `.revoked` projection reduces by `rfl`. The `revoke`/`dropRef`/`revokeDelegation` *authority* effects
-  route through `recCRevoke`/`recKRevokeTarget` which edit ONLY `caps` — they do NOT grow this
-  credential-revocation registry (a distinct side-table). The sharpest dual of the conservation frame.
-* **`execFullTurnA_revoked_eq` / `execFullForestA_revoked_eq`** — the turn- and forest-level lift, by
-  induction on the action list (chain by `Eq.trans`) through `execFullForestA_eq_execFullTurnA`.
-* **`livingCellA_revoked_grow`** — THE CROWN: `rev0 ⊆ s.kernel.revoked` carried by `livingCellA_carries`
-  (one-step obligation = the forest frame on a commit + the stay-put self-loop on a reject). A genuinely
-  NON-conservation safety (it reads the registry, never the per-asset measure) — *"once revoked, forever
-  revoked"* on the SHIPPED machine, against EVERY adversarial schedule.
-* **`livingCellA_identity_revoked_forever`** — the HEADLINE, the teeth made temporal: if an identity's
-  credential nullifier `credNul` is in the registry initially, it is STILL there at EVERY index of EVERY
-  trajectory (`credNul ∈ (trajA …).kernel.revoked`) — so its `revocationGate` / `gateOK` fail-close at
-  every reachable state (`FullForestAuth.gateOK_revoked_fails`). The dregg1 `verify_non_revocation` →
-  `Revoked` rejection, lifted to *"a revoked identity can never be re-validated, for all time."*
+* `execFullA_revoked_eq` — per-effect registry frame: a committed effect leaves the registry unchanged.
+* `execFullTurnA_revoked_eq` / `execFullForestA_revoked_eq` — turn- and forest-level lift by induction.
+* `livingCellA_revoked_grow` — the crown: `rev0 ⊆ s.kernel.revoked` carried forever by
+  `livingCellA_carries` against every adversarial schedule.
+* `livingCellA_identity_revoked_forever` — the headline: if `credNul` is revoked initially, it is in
+  the registry at every trajectory index — so `gateOK` fail-closes at every reachable state.
 -/
 import Dregg2.Exec.CellNullifier
 import Dregg2.Exec.FullForestAuth
@@ -67,12 +37,11 @@ open Dregg2.Exec.FullForest
 open Dregg2.Authority
 open Dregg2.Exec.EffectsState (stateStep stateStep_factors)
 
-/-! ## Step 0 — registry-frame lemmas for the DEEPLY-NESTED kernel ops (queue-deposit + swiss).
+/-! ## Step 0 — registry-frame lemmas for the deeply-nested kernel ops (queue-deposit + swiss).
 
-The same five kernel ops that `CellNullifier` hoists (their bodies nest a `match … | some k₁ => if …`
-too deep to `unfold`+`split` cleanly inline). Each touches ONLY `queues`/`swiss`/`bal`/`escrows` —
-never `revoked` — so a committed step leaves `revoked` literally unchanged. We hoist them to `private`
-frame lemmas on `.revoked`, the exact dual of `CellNullifier`'s `_nullifiers` helpers. -/
+These five kernel ops touch only `queues`/`swiss`/`bal`/`escrows` — never `revoked` — so a committed
+step leaves `revoked` unchanged. Hoisted as `private` frame lemmas, the dual of `CellNullifier`'s
+`_nullifiers` helpers. -/
 
 /-- `queueEnqueueK` commits to `{ k with queues := … }` — `revoked` untouched. -/
 private theorem queueEnqueueK_revoked (k : RecordKernelState) (id m : Nat) (k₁ : RecordKernelState)
@@ -160,21 +129,15 @@ private theorem swissDropK_revoked (k : RecordKernelState) (sw : Nat)
       · injection h with h; subst h; rfl
       · injection h with h; subst h; rfl
 
-/-! ## Step 1 — `execFullA_revoked_eq`: the per-effect REGISTRY FRAME (the 46-arm dispatch).
+/-! ## Step 1 — `execFullA_revoked_eq`: the per-effect registry frame (46-arm dispatch).
 
-Mirrors `CellNullifier.execFullA_nullifiers_grow`'s `cases fa with` walk, but for the credential
-revocation registry the result is even SHARPER: EVERY arm leaves `revoked` UNCHANGED (there is no
-grower in the current executor — `noteSpend` grows `nullifiers`, not `revoked`; the authority
-`revoke`/`dropRef`/`revokeDelegation` effects edit `caps` via `recKRevokeTarget`, not this
-credential-revocation side-table). So every arm reduces to `k'.revoked = s.kernel.revoked` (the kernel
-op writes a NON-`revoked` field, projection by `rfl`) or a direct factored-state `rfl`. -/
+Every arm leaves `revoked` unchanged: no current effect grows the credential-revocation registry
+(`noteSpend` grows `nullifiers`; the authority `revoke`/`dropRef`/`revokeDelegation` effects edit `caps`
+via `recKRevokeTarget`). Each arm reduces `k'.revoked = s.kernel.revoked` by `rfl`. -/
 
-/-- **`execFullA_revoked_eq` (PROVED) — the per-effect revocation-registry FRAME.** A committed
-`FullActionA` leaves the credential revocation registry UNCHANGED: `s'.kernel.revoked =
-s.kernel.revoked`. No effect of the current executor grows it (the `cap_revoke` consensus seam is the
-gate's READ side, not a ledger effect); every kernel transform writes some OTHER field, so the
-`.revoked` projection is `rfl`. The sharpest dual of the conservation frame `execFullA_ledger_per_asset`
-(there the moved value cancels; here the registry is literally fixed). -/
+/-- **`execFullA_revoked_eq`** — a committed `FullActionA` leaves the credential revocation registry
+unchanged: `s'.kernel.revoked = s.kernel.revoked`. No current effect grows it; every kernel transform
+writes a different field. The sharpest dual of `execFullA_ledger_per_asset`. -/
 theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
     (h : execFullA s fa = some s') : s'.kernel.revoked = s.kernel.revoked := by
   cases fa with
@@ -601,18 +564,11 @@ theorem execFullForestA_revoked_grow (s s' : RecChainedState) (f : FullForestA)
 
 /-! ## Step 3 — THE CROWN: `rev0 ⊆ s.kernel.revoked` carried FOREVER by `livingCellA_carries`. -/
 
-/-- **`livingCellA_revoked_grow` (PROVED) — THE permanent-revocation crown: the revocation registry is
-grow-only FOREVER.** Fix ANY baseline of revoked credential ids `rev0 ⊆ s.kernel.revoked`. Along the
-ENTIRE unbounded adversarial trajectory `trajA s sched`, under EVERY schedule, every id in `rev0` stays
-revoked: `rev0 ⊆ (trajA s sched n).kernel.revoked` at EVERY index `n`. This is the dregg1 grow-only
-`RevocationRegistry` safety — *"once revoked, forever revoked"* — and it is a genuinely NON-conservation
-property: it is carried by `livingCellA_carries` with `Good := (rev0 ⊆ ·.kernel.revoked)`, whose
-one-step obligation is discharged from the per-step **registry frame** (`execFullForestA_revoked_grow`
-on a commit — the registry never shrinks) and the **stay-put self-loop** on a reject (`cellNextA` leaves
-the state, hence the registry, UNCHANGED). It reads the revocation registry, NEVER the per-asset measure
-`recTotalAssetWithEscrow` — exactly as `CellNullifier.livingCellA_no_double_spend` reads the nullifier
-set. Conservation (`livingCellA_obs_invariant`) is the badge instance; THIS is the
-*permanent-revocation* instance the per-asset measure cannot express. -/
+/-- **`livingCellA_revoked_grow`** — the permanent-revocation crown: for any baseline `rev0 ⊆
+s.kernel.revoked`, every id in `rev0` stays revoked at every index of every adversarial trajectory
+`trajA s sched`. Carried by `livingCellA_carries` with `Good := (rev0 ⊆ ·.kernel.revoked)`, whose
+one-step obligation is `execFullForestA_revoked_grow` on a commit and the stay-put self-loop on a reject.
+A genuinely non-conservation safety: it reads the registry, never the per-asset measure. -/
 theorem livingCellA_revoked_grow (rev0 : List Nat) (s : RecChainedState)
     (hinit : rev0 ⊆ s.kernel.revoked) (sched : SchedA) :
     ∀ n, rev0 ⊆ (trajA s sched n).kernel.revoked :=
@@ -631,11 +587,9 @@ theorem livingCellA_revoked_grow (rev0 : List Nat) (s : RecChainedState)
 
 /-! ## Step 4 — THE HEADLINE: `identity_revoked_forever` — a revoked identity can NEVER be re-validated. -/
 
-/-- **`livingCellA_identity_revoked_forever` (PROVED) — THE HEADLINE.** If an identity's credential
-nullifier `credNul` is in the committed revocation registry in the initial state, then at EVERY index of
-EVERY adversarial trajectory it is STILL revoked: `credNul ∈ (trajA s sched n).kernel.revoked`. The
-single-element instance of the crown (`rev0 := [credNul]`) — the registry-membership fact the
-verifier's negative discharge consumes. -/
+/-- **`livingCellA_identity_revoked_forever`** — if `credNul` is in the revocation registry initially,
+it is in the registry at every index of every adversarial trajectory. The single-element instance of
+the crown (`rev0 := [credNul]`). -/
 theorem livingCellA_identity_revoked_forever (credNul : Nat) (s : RecChainedState)
     (hinit : credNul ∈ s.kernel.revoked) (sched : SchedA) :
     ∀ n, credNul ∈ (trajA s sched n).kernel.revoked := by
@@ -644,20 +598,11 @@ theorem livingCellA_identity_revoked_forever (credNul : Nat) (s : RecChainedStat
     intro x hx; rw [List.mem_singleton] at hx; subst hx; exact hinit) sched n
   exact h (List.mem_singleton.mpr rfl)
 
-/-- **`identity_gate_revoked_forever` (PROVED) — THE TEETH, made temporal.** The headline payoff: a
-revoked identity's credential gate fail-closes at EVERY reachable state of EVERY trajectory. If
-`na.credNul` is revoked initially, then at EVERY index `n` the FULL auth gate rejects the node —
-`FullForestAuth.gateOK na (trajA s sched n) = false` — so its gated step returns `none` and the
-whole forest rolls back. This composes the temporal "still-revoked" fact
-(`livingCellA_identity_revoked_forever`) with the per-step revocation teeth
-(`FullForestAuth.gateOK_revoked_fails`): the dregg1 `verify_non_revocation` → `Revoked` rejection
-(`revocation.rs:212`, `verification.rs:257`) is lifted to *"a revoked identity can never be
-re-validated, for all time, against any adversarial schedule."* This is the identity app's whole
-purpose, certified coinductively on the SHIPPED executor.
-
-NOTE on the `na`-type parameters: `NodeAuthC` carries the gated-layer section variables
-`{Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag}` — they are inferred from `na`'s
-type and play no role in the proof (the revocation leg reads ONLY `na.credNul` and the kernel registry). -/
+/-- **`identity_gate_revoked_forever`** — a revoked identity's auth gate fail-closes at every reachable
+state of every trajectory: if `na.credNul` is revoked initially, then `gateOK na (trajA s sched n) =
+false` for all `n`. Composes `livingCellA_identity_revoked_forever` with `gateOK_revoked_fails`.
+The `NodeAuthC` type parameters `{Digest Proof … Tag}` are inferred from `na`; the proof reads only
+`na.credNul` and the kernel registry. -/
 theorem identity_gate_revoked_forever
     {Digest Proof Request Stmt Wit CellId Rights Ctx Gateway Bytes Tag : Type}
     [DecidableEq CellId] [SemilatticeInf Rights] [OrderTop Rights] [DecidableLE Rights]
@@ -675,14 +620,11 @@ theorem identity_gate_revoked_forever
   rw [List.contains_iff_mem]
   exact livingCellA_identity_revoked_forever na.credNul s hinit sched n
 
-/-! ## It runs (`#eval`) — the registry is non-empty and STABLE across a real committed turn.
+/-! ## It runs (`#eval`) — the registry is non-empty and stable across a real committed turn.
 
-The permanent-revocation invariant would be vacuous if the registry were always empty, OR if a ledger
-turn could silently un-revoke. We exhibit a kernel with `credNul = 42` ALREADY revoked, run a real
-conserving transfer (`CellReal.transferCF`, actor 0 moves 30 of asset 0), and observe `42` is STILL
-revoked afterward (the frame `execFullForestA_revoked_eq` holds on the nose) — so
-`livingCellA_identity_revoked_forever` bounds a genuinely non-empty, genuinely stable registry, and the
-gate (`revocationGate`) keeps fail-closing on `42`. -/
+We exhibit a kernel with `credNul = 42` already revoked, run a real conserving transfer, and observe
+`42` is still revoked afterward. This witnesses non-vacuity: the carried invariant bounds a genuinely
+non-empty, genuinely stable registry. -/
 
 /-- A real kernel state with credential id `42` ALREADY revoked: `fma0` with `revoked := [42]`. -/
 def fmaRevoked : RecChainedState :=
@@ -698,7 +640,7 @@ def fmaRevoked : RecChainedState :=
 -- a credential id NOT revoked (`99`) is genuinely absent — the registry has teeth, not all-true:
 #eval fmaRevoked.kernel.revoked.contains 99                                           -- false
 
-/-! ## Axiom hygiene — the permanent-revocation crown pinned to the standard kernel triple (NO `sorryAx`). -/
+/-! ## Axiom hygiene -/
 
 #assert_axioms execFullA_revoked_eq
 #assert_axioms execFullTurnA_revoked_eq

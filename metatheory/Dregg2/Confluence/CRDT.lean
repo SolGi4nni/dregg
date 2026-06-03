@@ -70,11 +70,11 @@ open Dregg2.Confluence
 
 universe u v w
 
-/-! ## §0. Reuse combinators — written ONCE, used by the catalog below.
+/-! ## §0. Reuse combinators — used by the catalog below.
 
 `MergeState` already `extends SemilatticeSup`, and mathlib gives `SemilatticeSup`
-for `Prod` and `Pi`. So the structural `MergeState` instances are one-liners, but
-we PACKAGE the I-confluence lift as a named lemma each so the catalog reuses it. -/
+for `Prod` and `Pi`. The structural `MergeState` instances are one-liners; the
+I-confluence lift is named so the catalog can reuse it. -/
 
 /-- **Product merge-state.** `A × B` is a `MergeState` when both factors are
 (componentwise join, `Prod.instSemilatticeSup`). -/
@@ -83,9 +83,8 @@ instance ProductMergeState {A : Type u} {B : Type v}
   toSemilatticeSup := inferInstance
 
 /-- **The product I-confluence lift.** If `I_A` is I-confluent over `A` and `I_B`
-over `B`, then the conjunctive invariant `fun p => I_A p.1 ∧ I_B p.2` is I-confluent
-over `A × B`. (Merge is componentwise, so each conjunct closes independently — this
-is the safe composition the dregg classifier uses to certify a product cell.) -/
+over `B`, the conjunctive invariant `fun p => I_A p.1 ∧ I_B p.2` is I-confluent
+over `A × B`. Merge is componentwise, so each conjunct closes independently. -/
 theorem product_iconfluent {A : Type u} {B : Type v}
     [MergeState A] [MergeState B]
     {I_A : Invariant A} {I_B : Invariant B}
@@ -133,11 +132,10 @@ pointwise.) Confirms our `⊔` is the CRDT merge, not an accident of the encodin
 theorem gcounter_merge_apply {ι : Type u} (f g : GCounter ι) (k : ι) :
     (f ⊔ g) k = max (f k) (g k) := rfl
 
-/-- **The keystone: a grow-only LOWER BOUND is I-confluent.** For a fixed key `i`
-and threshold `k`, the invariant "replica `i` has counted at least `k`" survives
-merge — because merge only ever raises counts (`f i ≤ (f ⊔ g) i` via `le_sup_left`).
-A grow-only counter's "≥ k" invariant therefore runs **tier-1** (coordination-free,
-partition-tolerant): the BEC-positive direction, concretely. -/
+/-- **The keystone: a grow-only lower bound is I-confluent.** The invariant "replica
+`i` has counted at least `k`" survives merge, because merge only ever raises counts
+(`le_sup_left`). A grow-only counter's "≥ k" invariant runs tier-1
+(coordination-free, partition-tolerant). -/
 theorem gcounter_lowerBound_iconfluent {ι : Type u} (i : ι) (k : ℕ) :
     IConfluent (S := GCounter ι) (fun f => k ≤ f i) := by
   intro x y hx _hy
@@ -175,12 +173,11 @@ def pnValue {ι : Type u} [Fintype ι] (p : PNCounter ι) : ℤ :=
 theorem pncounter_merge {ι : Type u} (p q : PNCounter ι) :
     p ⊔ q = (fun k => max (p.1 k) (q.1 k), fun k => max (p.2 k) (q.2 k)) := rfl
 
-/-- **The tier-2 lift, positive direction: a grow-only invariant ON the `inc` half
-is I-confluent** even though the PN value itself is non-monotone. Concretely "the
-increment-side total for replica `i` is ≥ k" survives merge — this is exactly
-`gcounter_lowerBound_iconfluent` lifted through the product. The point: a PN
-counter is a perfectly good tier-1 cell *for invariants phrased on its monotone
-components*; only the coupled `value`-bound (see §6) forces escalation. -/
+/-- **The tier-2 lift, positive direction: a grow-only invariant on the `inc` half
+is I-confluent**, even though the PN value itself is non-monotone. "The increment-
+side total for replica `i` is ≥ k" survives merge — `gcounter_lowerBound_iconfluent`
+lifted through the product. A PN counter runs tier-1 for invariants on its monotone
+components; only the coupled `value`-bound (§6) forces escalation. -/
 theorem pncounter_incLowerBound_iconfluent {ι : Type u} (i : ι) (k : ℕ) :
     IConfluent (S := PNCounter ι) (fun p => k ≤ p.1 i) := by
   intro x y hx _hy
@@ -205,17 +202,14 @@ theorem gset_merge {α : Type u} [DecidableEq α] (s t : GSet α) : s ⊔ t = s 
   Finset.sup_eq_union
 
 /-- **The keystone: membership is I-confluent.** "`a ∈ s`" survives merge because
-`s ⊆ s ∪ t` (`le_sup_left` = `Finset.subset_union_left`). A grow-only set's
-"contains `a`" runs tier-1. (Generalizes `Confluence.top_iconfluent`'s spirit to a
-genuinely-falsifiable, witnessed invariant rather than `True`.) -/
+`s ⊆ s ∪ t` (`le_sup_left`). A grow-only set's "contains `a`" runs tier-1. -/
 theorem gset_member_iconfluent {α : Type u} [DecidableEq α] (a : α) :
     IConfluent (S := GSet α) (fun s => a ∈ s) := by
   intro x y hx _hy
   rw [gset_merge]
   exact Finset.mem_union_left _ hx
 
-/-- We re-export the `Confluence.lean` grow-only `True` witness through `GSet`,
-recording that the existing `top_iconfluent` is the `GSet`-level grow-only case. -/
+/-- The trivially-true invariant is I-confluent over any `GSet` (the `top_iconfluent` case). -/
 theorem gset_top_iconfluent {α : Type u} [DecidableEq α] :
     IConfluent (S := GSet α) (fun _ => True) :=
   fun _ _ _ _ => trivial
@@ -244,17 +238,11 @@ def orPresent {α : Type u} {τ : Type v} [DecidableEq α] [DecidableEq τ]
   (a, t) ∈ o.1 ∧ (a, t) ∉ o.2
 
 /-- **The keystone: "added-and-not-removed" is I-confluent for a tag-fixed lookup.**
-For a *specific* tagged add `(a, t)`, the add-wins invariant "`(a,t)` is present"
-survives merge: the add half only grows (`le_sup_left`) so membership in `adds`
-persists, and we require the *hypothesis* that neither replica had tombstoned this
-tag (the add-wins observed-remove condition: a remove can only fire after observing
-the add, so two replicas that both still see the element have not tombstoned it).
-The merge's `removes` is `o₁.2 ∪ o₂.2`, so non-membership there is exactly the
-conjunction of the two non-memberships — which is the I-confluence obligation.
-
-This is the genuine OR-set read theorem, not a free product compose: the `removes`
-side is ANTI-monotone for the read (more tombstones ⇒ less present), so we cannot
-just apply `product_iconfluent`; we discharge the `∉ (R₁ ∪ R₂)` obligation by hand. -/
+For a specific tagged add `(a, t)`, the add-wins invariant "`(a,t)` is present"
+survives merge: the add half only grows (`le_sup_left`), and both replicas having
+not tombstoned `(a,t)` together imply non-membership in the merged removes
+(`o₁.2 ∪ o₂.2`). This is not a free product compose — the `removes` side is
+anti-monotone for the read, so the `∉ (R₁ ∪ R₂)` obligation is discharged by hand. -/
 theorem orset_present_iconfluent {α : Type u} {τ : Type v}
     [DecidableEq α] [DecidableEq τ] (a : α) (t : τ) :
     IConfluent (S := ORSet α τ) (fun o => orPresent o a t) := by
@@ -280,8 +268,8 @@ timestamps — the tie obligation the spec demands be handled explicitly rather 
 glossed. We build the `SemilatticeSup` by hand (this is a REAL proof: `sup` must be
 commutative, associative, idempotent, and the `≤`/`sup` laws must agree). -/
 
-/-- An LWW register: a timestamp `ts : T` and a value `val : V`. We require a
-`LinearOrder` on both so the max-by-(ts, val) merge is total and well-defined. -/
+/-- An LWW register with timestamp `ts : T` and value `val : V`. Both carry a
+`LinearOrder` so the max-by-(ts, val) merge is total and well-defined. -/
 structure LWW (T : Type u) (V : Type v) where
   ts : T
   val : V
@@ -305,11 +293,9 @@ theorem lexKey_injective : Function.Injective (lexKey (T := T) (V := V)) := by
   obtain ⟨ht, hv⟩ := Prod.mk.injEq .. ▸ h'
   cases a; cases b; simp_all
 
-/-- **The lexicographic order is a `LinearOrder`** — discharged by transporting the
-canonical `T ×ₗ V` linear order (`Prod.Lex.instLinearOrder`) across the injective
-`lexKey` (`LinearOrder.lift'`). The tie / total-order obligation is therefore handled
-EXPLICITLY by the lex tie-break (equal ts ⇒ compare val), not glossed; and because
-the order is total, the derived `⊔ = max` is a well-defined commutative merge. -/
+/-- `LWW T V` is a `LinearOrder` — transported from `T ×ₗ V` across the injective
+`lexKey` (`LinearOrder.lift'`). The tie-break (equal ts ⇒ compare val) is explicit,
+making `⊔ = max` a well-defined commutative merge. -/
 instance instLinearOrder : LinearOrder (LWW T V) :=
   LinearOrder.lift' lexKey lexKey_injective
 
@@ -318,18 +304,15 @@ instance instLinearOrder : LinearOrder (LWW T V) :=
 instance instMergeState : MergeState (LWW T V) where
   toSemilatticeSup := inferInstance
 
-/-- **Merge is commutative — the well-definedness obligation, PROVED.** This is the
-`sup_comm` the spec asks to be handled explicitly: a max-by-timestamp merge with a
-total tie-break IS commutative even on equal timestamps (a tie picks the larger
-value either way, symmetrically). -/
+/-- **Merge is commutative.** A max-by-timestamp merge with a total tie-break
+is commutative even on equal timestamps (`sup_comm`). -/
 theorem merge_comm (a b : LWW T V) : a ⊔ b = b ⊔ a := sup_comm a b
 
-/-- **Merge is idempotent — `a ⊔ a = a`, PROVED.** (Re-merging a replica with itself
-is a no-op; `sup_idem`.) -/
+/-- **Merge is idempotent** (`sup_idem`): re-merging a replica with itself is a no-op. -/
 theorem merge_idem (a : LWW T V) : a ⊔ a = a := sup_idem a
 
-/-- **Merge is associative, PROVED** (`sup_assoc`) — so a fan-in of replicas merges
-to the same register regardless of order. -/
+/-- **Merge is associative** (`sup_assoc`): a fan-in of replicas merges to the same
+register regardless of order. -/
 theorem merge_assoc (a b c : LWW T V) : a ⊔ b ⊔ c = a ⊔ (b ⊔ c) := sup_assoc a b c
 
 /-- The register order implies the timestamp order: `a ≤ b → a.ts ≤ b.ts`. (Unfolds
@@ -342,8 +325,8 @@ theorem le_imp_ts_le {a b : LWW T V} (h : a ≤ b) : a.ts ≤ b.ts := by
   · exact le_of_eq h1
 
 /-- **The keystone: a timestamp lower bound is I-confluent.** "the register's
-timestamp is ≥ t₀" survives merge — merge never lowers the timestamp (it picks a
-`max`). So an LWW cell whose invariant is "monotone clock" runs tier-1. -/
+timestamp is ≥ t₀" survives merge (merge picks a `max`, never lowering the timestamp).
+An LWW cell with a "monotone clock" invariant runs tier-1. -/
 theorem ts_lowerBound_iconfluent (t₀ : T) :
     IConfluent (S := LWW T V) (fun r => t₀ ≤ r.ts) := by
   intro x y hx _hy
@@ -380,13 +363,9 @@ def consumed (b : Budget) : ℕ := b 0 + b 1
 /-- The bounded invariant: total consumption is within budget `B`. -/
 def withinBudget (B : ℕ) (b : Budget) : Prop := consumed b ≤ B
 
-/-- **The bounded total is NOT I-confluent (PROVED).** With budget `B = 1`, replica
-state `x` = "replica 0 consumed 1, replica 1 consumed 0" and `y` = "replica 0
-consumed 0, replica 1 consumed 1" each satisfy `consumed ≤ 1`. But their merge is
-the per-key max `(1, 1)`, whose `consumed = 2 > 1`. So a bounded counter CANNOT run
-tier-1: it must escalate (≥ tier-2 / single-writer / consensus). This mirrors
-`Confluence.cardLeOne_not_iconfluent` for the budget shape — the `balance ≥ 0`
-overdraft, concretely. -/
+/-- **The bounded total is NOT I-confluent.** With `B = 1`, states `x = (1,0)` and
+`y = (0,1)` each satisfy `consumed ≤ 1`, but their merge `(1,1)` has `consumed = 2 > 1`.
+A bounded counter cannot run tier-1; it must escalate to tier-2 / consensus. -/
 theorem withinBudget_not_iconfluent :
     ¬ IConfluent (S := Budget) (withinBudget 1) := by
   intro h
@@ -406,11 +385,8 @@ theorem withinBudget_not_iconfluent :
     rw [this]; decide
   exact hno hbad
 
-/-- **The forced escalation, via `Confluence.nonpairwise_escalation`.** Because the
-bounded total is not I-confluent, there GENUINELY EXISTS a clashing pair — the
-constructive witness that escalation to consensus is forced, not merely declared.
-(This is the §6a non-confluence handed to the existing `Confluence` escalation
-machinery; it is the in-Lean witness that the coupled fragment is real.) -/
+/-- The constructive escalation witness via `Confluence.nonpairwise_escalation`: a
+clashing pair exists, so consensus is genuinely forced. -/
 theorem withinBudget_escalation :
     ∃ x y : Budget, withinBudget 1 x ∧ withinBudget 1 y ∧ ¬ withinBudget 1 (x ⊔ y) :=
   nonpairwise_escalation (withinBudget 1) withinBudget_not_iconfluent
@@ -437,12 +413,11 @@ content: `sup_le`). -/
 `q i`. (Over a general index `ι`.) -/
 def withinQuota {ι : Type u} (q : ι → ℕ) (b : ι → ℕ) : Prop := ∀ i, b i ≤ q i
 
-/-- **Refinement keystone (1): the local quota discipline IS I-confluent (PROVED).**
-The merge of two within-quota states is per-key `max`, and `max (x i) (y i) ≤ q i`
-follows from `x i ≤ q i` and `y i ≤ q i` (`sup_le` / `max_le`). So a quota-partitioned
-escrow runs tier-1. This is the real work: an UPPER bound under a grow-only merge is
-NOT automatically preserved — it is preserved *exactly because* `⊔` is a least upper
-bound, so a common upper bound of both operands bounds their join. -/
+/-- **Refinement keystone (1): the local quota discipline is I-confluent.** The
+merge of two within-quota states is per-key `max`; `max (x i) (y i) ≤ q i` follows
+from both operands being bounded by `q i` (`max_le`). A quota-partitioned escrow
+runs tier-1. Note: an upper bound under a grow-only merge is preserved exactly
+because `⊔` is the least upper bound — a common upper bound bounds the join. -/
 theorem withinQuota_iconfluent {ι : Type u} (q : ι → ℕ) :
     IConfluent (S := GCounter ι) (withinQuota q) := by
   intro x y hx hy i
@@ -451,22 +426,20 @@ theorem withinQuota_iconfluent {ι : Type u} (q : ι → ℕ) :
   rw [gcounter_merge_apply]
   exact max_le (hx i) (hy i)
 
-/-- **Refinement keystone (2): the local discipline IMPLIES the global bound
-(PROVED).** If `Σ q = B` and every replica is within its quota, then total
-consumption `Σ b ≤ Σ q = B`. (`Finset.sum_le_sum` of the per-key bounds.) Combined
-with keystone (1): the partitioned escrow keeps `value ≤ B` coordination-free. -/
+/-- **Refinement keystone (2): the local discipline implies the global bound.** If
+`Σ q = B` and every replica is within its quota, then `Σ b ≤ Σ q = B`
+(`Finset.sum_le_sum`). Combined with keystone (1), a partitioned escrow keeps
+`value ≤ B` coordination-free. -/
 theorem withinQuota_implies_global {ι : Type u} [Fintype ι]
     (q b : ι → ℕ) (B : ℕ) (hsum : (∑ i, q i) = B) (hq : withinQuota q b) :
     (∑ i, b i) ≤ B := by
   calc (∑ i, b i) ≤ (∑ i, q i) := Finset.sum_le_sum (fun i _ => hq i)
     _ = B := hsum
 
-/-- **The escrow refinement, packaged (PROVED).** A quota partition `q` with
-`Σ q = B` yields BOTH: (i) the local discipline is I-confluent (tier-1 eligible),
-and (ii) any state satisfying it respects the global bound `≤ B`. This is the
-Balegas/Sypytkowski bounded-counter as a single positive theorem — the escrow cell
-is coordination-free yet globally bound-preserving, the bridge to dregg's escrow
-holding-store. -/
+/-- **The escrow refinement, packaged.** A quota partition `q` with `Σ q = B` yields:
+(i) the local discipline is I-confluent (tier-1 eligible), and (ii) any satisfying
+state respects the global bound `≤ B`. The escrow cell is coordination-free yet
+globally bound-preserving (Balegas/Sypytkowski bounded-counter). -/
 theorem escrow_refinement {ι : Type u} [Fintype ι] (q : ι → ℕ) (B : ℕ)
     (hsum : (∑ i, q i) = B) :
     IConfluent (S := GCounter ι) (withinQuota q) ∧
@@ -484,11 +457,9 @@ the post-decrement state still satisfies `withinQuota`. -/
 def localConsume {ι : Type u} [DecidableEq ι] (b : ι → ℕ) (i : ι) (d : ℕ) : ι → ℕ :=
   fun j => if j = i then b j + d else b j
 
-/-- **A local decrement within the replica's remaining quota stays in-bound
-(PROVED).** If `b` was within quota and replica `i` had at least `d` reserve left
-(`b i + d ≤ q i`), then after consuming `d` at `i` the state is still within quota —
-NO coordination needed. This is the operational guarantee the escrow holding-store
-gives each replica. -/
+/-- **A local decrement within the replica's remaining quota stays in-bound.**
+If `b` was within quota and `b i + d ≤ q i`, consuming `d` at replica `i` keeps
+the state within quota — no coordination needed. -/
 theorem localConsume_withinQuota {ι : Type u} [DecidableEq ι]
     (q b : ι → ℕ) (i : ι) (d : ℕ)
     (hb : withinQuota q b) (hroom : b i + d ≤ q i) :
@@ -521,21 +492,17 @@ hold and which do not.
     quota discipline is a per-replica UPPER bound that `sup_le` closes at every
     arity). So the n-ary-safe escrow is the §6b theorem, NOT a pairwise lift. -/
 
-/-- **The grow-only n-ary lift (PROVED).** If `a` is present in some replica `s` of
-a finite family `F : Finset (GSet α)`, then `a` is present in the whole-family merge
-`F.sup id` (the n-ary `⊔`). Witnesses that grow-only invariants compose to ALL
-arities — the safe side of the n-ary story. -/
+/-- **The grow-only n-ary lift.** If `a ∈ s` for some `s ∈ F`, then `a ∈ F.sup id`
+(the n-ary `⊔`). Grow-only invariants compose to all arities. -/
 theorem gset_member_nary {α : Type u} [DecidableEq α] (a : α) (F : Finset (GSet α))
     (s : GSet α) (hsF : s ∈ F) (has : a ∈ s) : a ∈ F.sup id := by
   have hle : s ≤ F.sup id := Finset.le_sup (f := id) hsF
   exact hle has
 
-/-- **The bounded case is NOT n-ary-safe — the honest gap, as a THEOREM (PROVED).**
-Pairwise-within-budget does not lift to triple-within-budget. With `B = 2` and three
-replicas each consuming `1`, EVERY pair is within budget but the triple is not. We
-state this as the explicit non-lift: there is a function `c : Fin 3 → ℕ` (here the
-constant `1`) such that all pairwise sums are `≤ 2` yet the total is `> 2`. This is
-why §6b's quota partition — not a pairwise closure — is the correct tier-1 escrow. -/
+/-- **The bounded case is NOT n-ary-safe — the honest gap, proved.** With `B = 2`
+and three replicas each consuming `1`, every pair is within budget but the triple is
+not. This is why the quota partition (§6b), not a pairwise closure, is the correct
+tier-1 escrow. -/
 theorem bounded_not_nary_safe :
     ∃ c : Fin 3 → ℕ,
       (∀ i j, i ≠ j → c i + c j ≤ 2) ∧ ¬ ((∑ i, c i) ≤ 2) := by
@@ -546,10 +513,10 @@ theorem bounded_not_nary_safe :
 
 /-! ## §8. #eval witnesses — non-vacuity, by computation.
 
-These are computational sanity checks (the merge laws hold on concrete inputs, the
-grow-only invariant survives merge, the bounded clash is real, an escrow local
-decrement stays in-bound). They are NOT proofs — the theorems above are — but they
-make the catalog's claims concretely inspectable. -/
+Computational sanity checks: the merge laws on concrete inputs, the grow-only
+invariant surviving merge, the bounded clash, and an escrow local decrement. These
+are not proofs — the theorems above are — but they make the catalog concretely
+inspectable. -/
 
 section Evals
 
@@ -598,9 +565,8 @@ end Evals
 
 /-! ## §9. Axiom-hygiene pins (`#assert_axioms`) — every keystone is sorry-free.
 
-Each pin ELABORATES TO AN ERROR if the keystone transitively depends on any axiom
-outside `{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). This is the
-build-checked guarantee that the catalog is genuinely proved, not `sorry`'d. -/
+Each pin elaborates to an error if the keystone depends on any axiom outside
+`{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). -/
 
 -- Combinators
 #assert_axioms product_iconfluent

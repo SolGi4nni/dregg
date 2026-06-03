@@ -1,41 +1,20 @@
 /-
-# Dregg2.Exec.CellNullifier — the NO-DOUBLE-SPEND crown: the nullifier set is grow-only FOREVER.
+# Dregg2.Exec.CellNullifier — the nullifier set is grow-only FOREVER (no double-spend).
 
-`Exec/CellReal.lean` crowned the REAL executor with the coinductive living cell `livingCellA` (a
-`Boundary.TurnCoalg` over `execFullForestA`, the 46-effect per-asset auth-gated tree) and proved the
-per-asset CONSERVATION badge never drifts; `Exec/CellCarry.lean` distilled the PARAMETRIC crown
-`livingCellA_carries` (ANY state predicate `Good` preserved by ONE living-cell step holds along the
-ENTIRE unbounded adversarial trajectory `trajA`, under EVERY schedule) and exercised it with the
-NON-conservation append-only-log invariant (`livingCellA_logMono`).
+The kernel's spent-note nullifier set (`s.kernel.nullifiers`) is grow-only: relative to any consumed
+baseline `nul0`, every nullifier in `nul0` stays consumed at every index of the unbounded trajectory,
+against every adversarial schedule. Combined with the per-step double-spend gate (`noteSpendNullifier`
+rejects a repeat, `note_no_double_spend`), this is the formal "once spent, forever spent ⇒ no
+double-spend" guarantee.
 
-This module is the **canonical anti-replay safety carried forever** — the property a ledger exists to
-guarantee: **a spent note can never be un-spent, and never re-spent, for all time.** The kernel's
-spent-note nullifier SET (`s.kernel.nullifiers`, dregg1's `note_nullifiers`, `apply.rs:941`) is
-**grow-only**: relative to ANY consumed baseline `nul0`, every nullifier in `nul0` stays consumed at
-EVERY index of the unbounded trajectory, against EVERY adversarial schedule. Combined with the
-per-step double-spend gate (`noteSpendNullifier` rejects a repeat, `note_no_double_spend`), this is the
-formal "once spent, forever spent ⇒ no double-spend" guarantee on the SHIPPED machine.
-
-The shape, mirroring `CellCarry.livingCellA_logMono` (a NON-conservation invariant carried by
-`livingCellA_carries`):
-
-* **`execFullA_nullifiers_grow`** — the per-effect REGISTRY FRAME: a committed `FullActionA` never
-  SHRINKS the nullifier set (`s.kernel.nullifiers ⊆ s'.kernel.nullifiers`). The `noteSpendA` arm GROWS
-  it (`nf :: …`, `List.subset_cons_self`); the OTHER 45 effects leave it literally UNCHANGED (every
-  kernel transform writes `bal`/`caps`/`accounts`/`escrows`/`commitments`/`queues`/`swiss`/`cell` via a
-  record-update that does not touch `nullifiers`, so the projection is `rfl`). This is the EXACT
-  structural dual of the conservation frame `execFullA_ledger_per_asset` — there the measured quantity
-  is the per-asset total and the moved value cancels; here it is the spent-set and it only grows.
-* **`execFullTurnA_nullifiers_grow` / `execFullForestA_nullifiers_grow`** — the turn- and forest-level
-  lift, by induction on the action list (chain `⊆` by `List.Subset.trans`) through the pre-order bridge
-  `execFullForestA_eq_execFullTurnA`.
-* **`livingCellA_no_double_spend`** — THE CROWN: `Good s := nul0 ⊆ s.kernel.nullifiers` carried by
-  `livingCellA_carries`, whose one-step obligation is the forest frame on a commit and the stay-put
-  self-loop on a reject. A genuinely NON-conservation safety (it reads the registry, never the
-  per-asset measure) — the canonical "no double-spend, forever" the per-asset badge cannot express.
-* **`livingCellA_spent_note_never_respent`** — the anti-replay teeth made temporal: if `nf` is spent in
-  the initial state, then at EVERY index of EVERY trajectory `nf` is STILL spent (so a fresh
-  `noteSpendNullifier … nf` there fails-closed, `note_no_double_spend`).
+* **`execFullA_nullifiers_grow`** — the per-effect registry frame: a committed `FullActionA` never
+  shrinks the nullifier set. `noteSpendA` grows it (`nf :: …`); the other 45 effects leave it unchanged.
+* **`execFullTurnA_nullifiers_grow` / `execFullForestA_nullifiers_grow`** — turn- and forest-level lifts,
+  by induction on the action list chained by `List.Subset.trans`.
+* **`livingCellA_no_double_spend`** — `Good s := nul0 ⊆ s.kernel.nullifiers` carried by
+  `livingCellA_carries`. A non-conservation safety (reads the registry, not the per-asset measure).
+* **`livingCellA_spent_note_never_respent`** — if `nf` is spent in the initial state, it remains spent
+  at every index of every trajectory, so a fresh `noteSpendNullifier … nf` always fails-closed.
 -/
 import Dregg2.Exec.CellCarry
 
@@ -156,11 +135,9 @@ GROWS it by one — `List.subset_cons_self`), and EVERY other arm leaves it lite
 (`List.Subset.refl`), because every kernel transform is a record-update of a field OTHER than
 `nullifiers`, so the `.nullifiers` projection reduces by `rfl`. -/
 
-/-- **`execFullA_nullifiers_grow` (PROVED) — the per-effect anti-replay frame.** A committed
-`FullActionA` never SHRINKS the spent-note nullifier set: `s.kernel.nullifiers ⊆ s'.kernel.nullifiers`.
-`noteSpendA` conses a fresh nullifier (grows); the other 45 effects touch other kernel fields only
-(frame: `nullifiers` literally unchanged). The structural dual of the conservation frame
-`execFullA_ledger_per_asset`. -/
+/-- **`execFullA_nullifiers_grow`** — a committed `FullActionA` never shrinks the spent-note
+nullifier set: `s.kernel.nullifiers ⊆ s'.kernel.nullifiers`. `noteSpendA` conses a fresh nullifier;
+the other 45 effects touch other kernel fields only (frame: `nullifiers` literally unchanged). -/
 theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
     (h : execFullA s fa = some s') : s.kernel.nullifiers ⊆ s'.kernel.nullifiers := by
   cases fa with
@@ -611,10 +588,8 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
 
 /-! ## Step 2 — the turn- and forest-level lift (induction on the list + the pre-order bridge). -/
 
-/-- **`execFullTurnA_nullifiers_grow` (PROVED).** A committed per-asset full TURN never shrinks the
-spent-note nullifier set. By induction on the action list — each committed `execFullA` step grows-or-
-keeps the set (`execFullA_nullifiers_grow`), chained by `List.Subset.trans`; the empty turn is
-`Subset.refl`. Mirrors `CellCarry.execFullTurnA_logMono`'s structure exactly. -/
+/-- **`execFullTurnA_nullifiers_grow`** — a committed full turn never shrinks the spent-note nullifier
+set. By induction on the action list, chaining `execFullA_nullifiers_grow` by `List.Subset.trans`. -/
 theorem execFullTurnA_nullifiers_grow :
     ∀ (s s' : RecChainedState) (tt : List FullActionA),
       execFullTurnA s tt = some s' → s.kernel.nullifiers ⊆ s'.kernel.nullifiers
@@ -630,28 +605,21 @@ theorem execFullTurnA_nullifiers_grow :
             (execFullA_nullifiers_grow s s1 a ha)
             (execFullTurnA_nullifiers_grow s1 s' rest h)
 
-/-- **`execFullForestA_nullifiers_grow` (PROVED).** A committed full FOREST never shrinks the
-nullifier set. Read straight through the pre-order bridge `execFullForestA_eq_execFullTurnA` into the
-turn-level lemma — the same route `CellCarry.execFullForestA_logMono` takes. -/
+/-- **`execFullForestA_nullifiers_grow`** — a committed full forest never shrinks the nullifier set.
+Routes through the pre-order bridge `execFullForestA_eq_execFullTurnA` to the turn-level lemma. -/
 theorem execFullForestA_nullifiers_grow (s s' : RecChainedState) (f : FullForestA)
     (h : execFullForestA s f = some s') : s.kernel.nullifiers ⊆ s'.kernel.nullifiers := by
   rw [execFullForestA_eq_execFullTurnA] at h
   exact execFullTurnA_nullifiers_grow s s' (lowerForestA f) h
 
-/-! ## Step 3 — THE CROWN: `nul0 ⊆ s.kernel.nullifiers` carried forever by `livingCellA_carries`. -/
+/-! ## Step 3 — `nul0 ⊆ s.kernel.nullifiers` carried forever by `livingCellA_carries`. -/
 
-/-- **`livingCellA_no_double_spend` (PROVED) — THE no-double-spend crown: the spent-note set is
-grow-only FOREVER.** Fix ANY baseline of consumed nullifiers `nul0 ⊆ s.kernel.nullifiers`. Along the
-ENTIRE unbounded adversarial trajectory `trajA s sched`, under EVERY schedule, every nullifier in
-`nul0` stays consumed: `nul0 ⊆ (trajA s sched n).kernel.nullifiers` at EVERY index `n`. This is the
-canonical ledger anti-replay safety — *"once spent, forever spent"* — and it is a genuinely
-NON-conservation property: it is carried by `livingCellA_carries` with `Good := (nul0 ⊆
-·.kernel.nullifiers)`, whose one-step obligation is discharged from the executor's **registry frame**
-(`execFullForestA_nullifiers_grow` on a commit — the set only grows) and the **stay-put self-loop** on
-a reject (`cellNextA` leaves the state, hence the nullifier set, UNCHANGED). It reads the spent-set,
-NEVER the per-asset measure `recTotalAssetWithEscrow` — exactly as `CellCarry.livingCellA_logMono`
-reads the log shape. Conservation (`livingCellA_obs_invariant`) is the badge instance; THIS is the
-"no double-spend" instance the per-asset measure cannot express. -/
+/-- **`livingCellA_no_double_spend`** — Fix any baseline of consumed nullifiers `nul0 ⊆ s.kernel.nullifiers`.
+Along the entire unbounded adversarial trajectory `trajA s sched`, under every schedule, every nullifier
+in `nul0` stays consumed: `nul0 ⊆ (trajA s sched n).kernel.nullifiers` at every index `n`. This is the
+canonical ledger anti-replay safety ("once spent, forever spent") — a genuinely non-conservation property
+carried by `livingCellA_carries`. The one-step obligation is: on a commit, `execFullForestA_nullifiers_grow`
+(the set only grows); on a reject, the state is unchanged. -/
 theorem livingCellA_no_double_spend (nul0 : List Nat) (s : RecChainedState)
     (hinit : nul0 ⊆ s.kernel.nullifiers) (sched : SchedA) :
     ∀ n, nul0 ⊆ (trajA s sched n).kernel.nullifiers :=
@@ -668,11 +636,11 @@ theorem livingCellA_no_double_spend (nul0 : List Nat) (s : RecChainedState)
       | none    => simp only [Option.getD_none]; exact h)
     s hinit sched
 
-/-- **`livingCellA_spent_note_never_respent` (PROVED) — the anti-replay teeth, made temporal.** If a
-nullifier `nf` is consumed in the initial state, then at EVERY index of EVERY trajectory `nf` is STILL
-consumed: `nf ∈ (trajA s sched n).kernel.nullifiers`. So a fresh `noteSpendNullifier (…).kernel nf` at
-ANY reachable state fails-closed (`note_no_double_spend`) — the note can NEVER be spent twice, for all
-time, against any adversarial schedule. The single-element instance of the crown (`nul0 := [nf]`). -/
+/-- **`livingCellA_spent_note_never_respent`** — if a nullifier `nf` is consumed in the initial state,
+then at every index of every trajectory `nf` is still consumed. So a fresh `noteSpendNullifier … nf`
+at any reachable state fails-closed (`note_no_double_spend`) — the note cannot be spent twice, for all
+time, against any adversarial schedule. The single-element instance of `livingCellA_no_double_spend`
+(`nul0 := [nf]`). -/
 theorem livingCellA_spent_note_never_respent (nf : Nat) (s : RecChainedState)
     (hinit : nf ∈ s.kernel.nullifiers) (sched : SchedA) :
     ∀ n, nf ∈ (trajA s sched n).kernel.nullifiers := by
@@ -681,24 +649,20 @@ theorem livingCellA_spent_note_never_respent (nf : Nat) (s : RecChainedState)
     intro x hx; rw [List.mem_singleton] at hx; subst hx; exact hinit) sched n
   exact h (List.mem_singleton.mpr rfl)
 
-/-- **`livingCellA_respend_fails_closed` (PROVED) — the gate fires at every reachable state.** The
-direct anti-replay consequence: a previously-spent `nf` cannot be re-spent at ANY index of ANY
-trajectory — `noteSpendNullifier` returns `none` (fail-closed). This composes the temporal
-"still-spent" fact (`livingCellA_spent_note_never_respent`) with the per-step double-spend gate
-(`note_no_double_spend`) — the double-spend is impossible on the SHIPPED machine, forever. -/
+/-- **`livingCellA_respend_fails_closed`** — a previously-spent `nf` cannot be re-spent at any index
+of any trajectory: `noteSpendNullifier` returns `none` (fail-closed). Composes the temporal
+"still-spent" fact with the per-step double-spend gate (`note_no_double_spend`). -/
 theorem livingCellA_respend_fails_closed (nf : Nat) (s : RecChainedState)
     (hinit : nf ∈ s.kernel.nullifiers) (sched : SchedA) :
     ∀ n, noteSpendNullifier (trajA s sched n).kernel nf = none :=
   fun n => note_no_double_spend _ nf (livingCellA_spent_note_never_respent nf s hinit sched n)
 
-/-! ## It runs (`#eval`) — the spent set STRICTLY grows on a real committed noteSpend (non-vacuity).
+/-! ## It runs (`#eval`) — the spent set strictly grows on a committed noteSpend (non-vacuity).
 
-The grow-only invariant would be vacuous if no turn ever inserted a nullifier. A single committed
-`noteSpendA 77` appends `77` to the set: it goes `[] → [77]`. So `execFullA_nullifiers_grow` bounds a
-strictly-growing quantity and `livingCellA_no_double_spend` is non-trivially true (the noteSpend arm
-genuinely MOVES the carried set, while the carried `⊆` is preserved). -/
+A single committed `noteSpendA 77` appends `77` to the set (`[] → [77]`), demonstrating that the
+grow-only invariant bounds a quantity that actually moves. -/
 
-/-- A real committed noteSpend turn: actor 0 spends nullifier 77 — the single `noteSpendA`, no children.
+/-- A committed noteSpend turn: actor 0 spends nullifier 77 — the single `noteSpendA`, no children.
 The kernel-side double-spend gate admits a fresh `77` and records it. -/
 def spendCF : FullForestA := ⟨.noteSpendA 77 0, []⟩
 
@@ -709,7 +673,7 @@ def spendCF : FullForestA := ⟨.noteSpendA 77 0, []⟩
 -- the anti-replay teeth: spending 77 AGAIN on the resulting state fails-closed (none)
 #eval ((execFullForestA fma0 spendCF).bind (fun s' => noteSpendNullifier s'.kernel 77)).isNone  -- true
 
-/-! ## Axiom hygiene — the no-double-spend crown pinned to the standard kernel triple (NO `sorryAx`). -/
+/-! ## Axiom hygiene — no-double-spend pinned to the standard kernel triple. -/
 
 #assert_axioms execFullA_nullifiers_grow
 #assert_axioms execFullTurnA_nullifiers_grow

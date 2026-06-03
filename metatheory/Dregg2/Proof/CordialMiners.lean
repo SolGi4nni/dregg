@@ -3,9 +3,9 @@
 # faithfully, with a real safety theorem proved by transferring the BFT quorum-
 # intersection core onto the leaderless DAG.
 
-**The model-mismatch this closes (a Magnesium axis).** dregg2's `Dregg2/Proof/BFT.lean`
-modeled *classical* quorum-voting BFT (rounds of explicit votes, `n − f` quorum, honest-vote-
-once → Malkhi–Reiter intersection). But dregg1 does NOT run classical voting BFT: it runs
+**The model-mismatch this closes.** `Dregg2/Proof/BFT.lean` modeled classical quorum-voting BFT
+(rounds of explicit votes, `n − f` quorum, honest-vote-once → Malkhi–Reiter intersection). But
+dregg1 does NOT run classical voting BFT: it runs
 **Cordial Miners** (Keidar–Naor–Shapiro–Spiegelman, arXiv:2205.09174), a *leaderless DAG-BFT*
 where blocks reference predecessors forming a DAG and ordering/finality is *derived from the
 DAG structure + quorum reads*, never from a round of votes. The concrete protocol lives in
@@ -431,12 +431,11 @@ theorem honest_one_ratification_of_bft
     l₁.id = l₂.id :=
   M.honest_vote_once v l₁.id l₂.id _hhonest hv1 hv2
 
-/-- **`cordial_agreement_via_bft` (PROVED) — the packaged safety theorem.** The clean form:
-under a `BFTModel` over the combined ratification votes (which already carries honest-vote-once)
-plus id-determinism, two super-ratified leaders are equal. No separate honesty oracle — the
-honesty law is discharged by the BFT model itself (`honest_one_ratification_of_bft`). This is
-the headline result: **dregg1's Cordial-Miners finality is safe, with safety inherited directly
-from the classical BFT quorum-intersection core.** -/
+/-- **`cordial_agreement_via_bft`** — the packaged safety theorem. Under a `BFTModel` over the
+combined ratification votes plus id-determinism, two super-ratified leaders are equal. The
+honesty law is discharged by the BFT model's `honest_vote_once` directly
+(`honest_one_ratification_of_bft`); no separate oracle. Dregg1's Cordial-Miners finality is safe,
+with safety inherited from the classical BFT quorum-intersection core. -/
 theorem cordial_agreement_via_bft
     (S : CordialState) (cfg : Finality.Config) (l₁ l₂ : Block)
     (sr₁ : SuperRatification S cfg l₁) (sr₂ : SuperRatification S cfg l₂)

@@ -57,12 +57,10 @@ def BlueEligible {S : Type u} [Confluence.MergeState S] (I : Confluence.Invarian
   Confluence.IConfluent I
 
 /-- **`blue_iff_tier1Eligible_def` — the honest definitional unfold.** `BlueEligible I`
-and `Confluence.Tier1Eligible I` are BOTH *defined as* `Confluence.IConfluent I` (here and
-in `Confluence.lean` respectively), so this biconditional is `Iff.rfl` — it carries no
-content beyond that shared `def`-equality, and is named `_def` accordingly (audit
-2026-05-29: the bare name posed as a soundness theorem). The classifier's REAL operational
-payoff — that a blue step's concurrent merges preserve its invariant — is `blue_merge_safe`
-below, which actually USES the I-confluence and FAILS for non-blue invariants. -/
+and `Confluence.Tier1Eligible I` are both *defined as* `Confluence.IConfluent I`, so this
+biconditional is `Iff.rfl` — it carries no content beyond that shared `def`-equality, and
+is named `_def` accordingly. The classifier's operational payoff is `blue_merge_safe` below,
+which actually uses I-confluence and fails for non-blue invariants. -/
 theorem blue_iff_tier1Eligible_def {S : Type u} [Confluence.MergeState S]
     (I : Confluence.Invariant S) :
     BlueEligible I ↔ Confluence.Tier1Eligible I :=
@@ -92,23 +90,18 @@ def route : Colour → ProjectionTarget
 
 /-! ## 2. Endpoint-projection correspondence (the keystone) and Byzantine soundness -/
 
-/-- **`epp_correspondence` — the keystone (cand-D §7), re-exported at the choreography
-altitude.** For a `Projectable` protocol-cell, the parallel composition of `G`'s endpoint
-projections realises `G`: every `comm` step of the global type is matched by dual
-`send`/`recv` actions at the projected endpoints (head-duality level — the full
-bisimulation is the EPP correspondence of `deadlock-freedom-by-design-choreography-cm13`).
+/-- **`epp_correspondence` — the keystone (cand-D §7).** For a `Projectable` protocol-cell,
+the parallel composition of `G`'s endpoint projections realises `G`: every `comm` step of
+the global type is matched by dual `send`/`recv` actions at the projected endpoints
+(head-duality — full bisimulation is the EPP correspondence of
+`deadlock-freedom-by-design-choreography-cm13`).
 
-**HONEST STATUS (audit 2026-05-29):** this **IS** `Coordination.projection_sound` —
-re-exported here at the choreography altitude with NO independent content yet. It is
-literally `:= Coordination.projection_sound …` (previously this was a byte-identical
-COPY of that proof, a true duplicate; it is now an explicit alias so the dependency is
-visible). The cand-D §7 "two altitudes" realization — that the per-endpoint instance of
-this correspondence IS `Boundary.boundary_law` (the monitored vat-boundary = the
-projection) — is the INTENDED stronger statement; making it carry content independent of
-`projection_sound` requires the operational LTS of `Coordination` (the parallel-composed
-projection ⤳ `pc.coalg` bisimulation), which is not yet formalized. Until then this alias
-honestly claims only what `projection_sound` proves: head-duality at the projected
-endpoints. -/
+**OPEN (honest status):** this is `Coordination.projection_sound` re-exported at the
+choreography altitude with no independent content yet. The cand-D §7 stronger claim — that
+the per-endpoint instance IS `Boundary.boundary_law` (monitored vat-boundary = projection)
+— requires the operational LTS of `Coordination` (parallel-composed projection ⤳
+`pc.coalg` bisimulation), which is not yet formalized. Until then this alias claims only
+what `projection_sound` proves: head-duality at the projected endpoints. -/
 theorem epp_correspondence
     {Obs AdmissibleTurn : Type u}
     (pc : ProtocolCell Obs AdmissibleTurn)

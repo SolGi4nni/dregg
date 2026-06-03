@@ -19,13 +19,12 @@ We **reuse, never redefine**:
   accepts — the witnessed `WitnessedPredicate::Custom { vk_hash }` of §3.4 made into an interface
   obligation we USE. Its soundness/extractability is the CIRCUIT obligation, NEVER a Lean law.
 
-THE KEYSTONE (two parts), both PROVED:
+Headline theorems (both proved):
 - `blinded_no_double_spend` — a nullifier already spent cannot be consumed again (lifted from
-  `NullifierCell.spend_no_double_spend`): the same item is consumed at most once.
-- `consume_needs_verify` — a *committed* `consume` implies `CryptoKernel.verify` accepted the
-  spend proof: the privacy gate. You cannot spend without a valid proof.
-Plus `countSpent_le_added` — the conservation-ish bound (spent never exceeds added), preserved
-by every transition.
+  `NullifierCell.spend_no_double_spend`).
+- `consume_needs_verify` — a committed `consume` implies `CryptoKernel.verify` accepted the
+  spend proof: the privacy gate.
+- `countSpent_le_added` — spent never exceeds added, preserved by every transition.
 
 Parametric over `[CryptoKernel Digest Proof]`, so every theorem holds for *any* lawful kernel
 (the abstract proving instance) AND for the Rust FFI one (the running instance). The `#eval`
@@ -102,13 +101,11 @@ def consume (s : State Digest) (spendStmt : Digest) (proof : Proof) (n : Nullifi
   else
     none                                    -- spend proof rejected ⇒ fail-closed (privacy gate)
 
-/-! ## THE KEYSTONE, part (a) — `blinded_no_double_spend` (REUSING the nullifier cell's law). -/
+/-! ## Keystone (a) — `blinded_no_double_spend` (lifted from `NullifierCell`). -/
 
-/-- **Anti-double-spend, reuse rejected — PROVED (lifted from `NullifierCell`).** If nullifier
-`n` is already in the spent set, then NO `consume` succeeds with that `n`, *regardless* of the
-spend statement/proof: the consume returns `none`. The same item is consumed at most once. This
-delegates straight to `NullifierCell.spend_rejects_double` (the reused cell's own law); the
-verify gate cannot rescue an already-spent nullifier. -/
+/-- If nullifier `n` is already in the spent set, `consume` returns `none` regardless of the
+spend proof. Delegates to `NullifierCell.spend_rejects_double`; the verify gate cannot rescue an
+already-spent nullifier. -/
 theorem consume_rejects_double (s : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier)
     (h : n ∈ s.nullifiers.spent) :
@@ -120,12 +117,9 @@ theorem consume_rejects_double (s : State Digest)
   · rw [if_pos hv]
   · rw [if_neg hv]
 
-/-- **THE KEYSTONE (a) — `blinded_no_double_spend`.** The two halves the spent set guarantees,
-stated for the `BlindedQueue` `consume` and PROVED by REUSING `NullifierCell.spend_no_double_spend`:
-- a nullifier already spent is rejected (`consume … = none`) — anti-double-spend; AND
-- a *successful* consume lands the nullifier in the resulting state's spent set (so it can never be
-  spent a second time — grow-only).
-Together: each blinded item is consumed **at most once**. -/
+/-- Anti-double-spend keystone, proved by reusing `NullifierCell.spend_no_double_spend`: (a) an
+already-spent nullifier is rejected; (b) a successful consume lands `n` in the new spent set. Each
+blinded item is consumed at most once. -/
 theorem blinded_no_double_spend (s : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier) :
     (n ∈ s.nullifiers.spent → consume s spendStmt proof n = none)
@@ -161,13 +155,11 @@ theorem blinded_no_double_spend (s : State Digest)
   · rw [if_neg hv] at hcons
     exact absurd hcons (by simp)
 
-/-! ## THE KEYSTONE, part (b) — `consume_needs_verify` (the privacy gate). -/
+/-! ## Keystone (b) — `consume_needs_verify` (the privacy gate). -/
 
-/-- **THE KEYSTONE (b) — `consume_needs_verify`.** A *committed* `consume` implies the
-`CryptoKernel.verify` oracle ACCEPTED the spend proof. This is the privacy gate of
-`STORAGE-AS-CELL-PROGRAMS §3.4`: you cannot spend a blinded item without presenting a valid spend
-proof. The soundness/extractability of that proof is the §8 circuit obligation we *use*, never
-prove; this theorem is the *cell-side* guarantee that the oracle was consulted and accepted. -/
+/-- A committed `consume` implies `CryptoKernel.verify` accepted the spend proof. The
+soundness/extractability of that proof is a circuit obligation; this theorem is the cell-side
+guarantee that the oracle was consulted and accepted. -/
 theorem consume_needs_verify (s s' : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier)
     (h : consume s spendStmt proof n = some s') :
@@ -182,8 +174,7 @@ theorem consume_needs_verify (s s' : State Digest)
 /-- The standing invariant of a well-formed queue: spent never exceeds added. -/
 def Invariant (s : State Digest) : Prop := s.countSpent ≤ s.countAdded
 
-/-! **`add` preserves the bound — PROVED.** Adding bumps `countAdded` and leaves `countSpent`
-fixed, so `countSpent ≤ countAdded` only becomes *slacker* (the gap widens). -/
+/-! **`add` preserves the bound.** Adding bumps `countAdded` and leaves `countSpent` fixed. -/
 omit [AddCommGroup Digest] [CryptoKernel Digest Proof] in
 theorem add_preserves_bound [DecidableEq Digest] (s : State Digest) (c : Digest)
     (h : Invariant s) : Invariant (add s c) := by
@@ -191,20 +182,13 @@ theorem add_preserves_bound [DecidableEq Digest] (s : State Digest) (c : Digest)
   simp only
   omega
 
-/-- **`consume` preserves the bound — PROVED (the conservation-ish keystone).** A successful
-`consume` bumps `countSpent` by exactly 1 and leaves `countAdded` fixed. Because a `consume`
-*requires a fresh nullifier* and the bound held before, after the bump `countSpent ≤ countAdded`
-still holds — PROVIDED the queue admitted at least as many adds as the new spend count. We prove
-the clean monotone step: if before the consume `countSpent < countAdded` (there is an unspent
-item to consume), the bound is preserved.
+/-- A successful `consume` bumps `countSpent` by 1 and leaves `countAdded` fixed. Requires
+`countSpent < countAdded` as a hypothesis.
 
-`-- OPEN:` the *tight* form `Invariant s → Invariant s'` needs the cross-field link "a fresh
-nullifier corresponds to a distinct previously-added commitment" — i.e. `countSpent < countAdded`
-must HOLD whenever a fresh `spend` succeeds. That linkage (nullifier ⟷ commitment) is precisely
-the spend AIR's extractability obligation (`§3.4` slot-6 witnessed predicate / `dregg2 §8`): the
-proof witnesses an item in the commitments tree. It is an INTERFACE obligation discharged by the
-circuit, NOT provable from the set discipline alone — so here we take `countSpent < countAdded`
-as the (verify-supplied) hypothesis rather than weakening or asserting it. -/
+-- OPEN: the tight form `Invariant s → Invariant s'` needs "a fresh nullifier corresponds to a
+-- distinct previously-added commitment" — i.e. `countSpent < countAdded` must hold whenever a
+-- fresh spend succeeds. That linkage is the spend AIR's extractability obligation (the
+-- `dregg2 §8` circuit), not provable from the set discipline alone. -/
 theorem consume_preserves_bound (s s' : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier)
     (hlt : s.countSpent < s.countAdded)
@@ -226,10 +210,8 @@ theorem consume_preserves_bound (s s' : State Digest)
         omega
   · rw [if_neg hv] at h; exact absurd h (by simp)
 
-/-- **`countSpent_le_added` — the bound as the named conservation lemma.** Restates
-`consume_preserves_bound` as the headline guarantee: after a (fresh, verified) consume from a
-queue with an unspent item, `countSpent ≤ countAdded`. The "spent never exceeds added" bound of
-`STORAGE-AS-CELL-PROGRAMS §3.4`. -/
+/-- After a successful consume with `countSpent < countAdded`, `countSpent ≤ countAdded` still
+holds in the resulting state. -/
 theorem countSpent_le_added (s s' : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier)
     (hlt : s.countSpent < s.countAdded)
@@ -237,10 +219,10 @@ theorem countSpent_le_added (s s' : State Digest)
     s'.countSpent ≤ s'.countAdded :=
   consume_preserves_bound s s' spendStmt proof n hlt h
 
-/-! ## `add` is monotone / grow-only — every prior commitment survives, count only climbs. -/
+/-! ## `add` is grow-only — every prior commitment survives, count only climbs. -/
 
-/-! **`add` is grow-only — PROVED.** Every previously-added commitment is still present after an
-`add`, and `countAdded` strictly increases. The §3.4 "commitments only added" discipline. -/
+/-! Every previously-added commitment is still present after an `add`, and `countAdded` strictly
+increases. -/
 omit [AddCommGroup Digest] [CryptoKernel Digest Proof] in
 theorem add_monotone [DecidableEq Digest] (s : State Digest) (c : Digest) :
     s.commitments ⊆ (add s c).commitments ∧ s.countAdded < (add s c).countAdded := by
@@ -248,9 +230,8 @@ theorem add_monotone [DecidableEq Digest] (s : State Digest) (c : Digest) :
   · exact Finset.subset_insert c s.commitments
   · unfold add; simp only; omega
 
-/-- **A successful `consume` never *removes* a spent nullifier — PROVED (grow-only).** The spent
-set only grows: every nullifier spent before the consume is still spent after. Lifts
-`NullifierCell.spend_monotone` through the queue wrapper. -/
+/-- The spent set only grows: every nullifier present before a consume is still present after.
+Lifts `NullifierCell.spend_monotone`. -/
 theorem consume_nullifiers_monotone (s s' : State Digest)
     (spendStmt : Digest) (proof : Proof) (n : Nullifier)
     (h : consume s spendStmt proof n = some s') :
@@ -269,13 +250,10 @@ theorem consume_nullifiers_monotone (s s' : State Digest)
         exact NullifierCell.spend_monotone s.nullifiers nz n hsp
   · rw [if_neg hv] at h; exact absurd h (by simp)
 
-/-! ## It runs (`#eval`) — against the `Reference` CryptoKernel of `CryptoKernel.lean`.
+/-! ## It runs (`#eval`) — against the `Reference` CryptoKernel.
 
-The reference kernel's `verify stmt proof := decide (stmt = proof)` (accepts iff the proof
-*echoes* the statement). So a "valid" spend proof is `proof = spendStmt`; a "bad" one is anything
-else. `Digest = Proof = Int` there. We demo: add two commitments; consume with a valid proof
-(nullifier recorded); consume the SAME nullifier again (rejected by anti-double-spend); and
-consume with a BAD proof (rejected by the verify gate). -/
+The reference kernel accepts iff `proof = stmt`. Demos: add two commitments; consume with a
+valid proof; re-consume the same nullifier (rejected); consume with a bad proof (rejected). -/
 
 open Dregg2.Crypto.Reference (D P)
 

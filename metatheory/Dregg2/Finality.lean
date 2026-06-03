@@ -1,37 +1,17 @@
 /-
-# Dregg2.Finality — the SECOND judgement (ordering / canonicity / consensus).
+# Dregg2.Finality — the pluggable finality tier (dregg2 §2.2).
 
-`dregg2.md §2.2` (Law 2: "the pluggable finality tier `[G]`") states that canonicity
-— *which valid history is THE history* — is **not** carried inside any proof. It is a
-per-cell **pluggable finality tier** layered on top of ONE underlying DAG: a
-join-semilattice CvRDT, proven a Merkle-CRDT (`discoveries §4`). `Confluence.lean`
-already encodes only this judgement's *I-confluence side-condition* (the static gate
-deciding tier-1 eligibility). THIS module encodes the **canonicity law itself**: the
-tier lattice, the `τ_unified` selector, and the cross-tier commit/no-downgrade laws.
+Canonicity — *which valid history is THE history* — is a per-cell pluggable tier layered
+over ONE CvRDT DAG (the single Merkle-CRDT substrate). This module encodes the four-tier
+ladder (`Tier`), the `τ_unified` selector, and the cross-tier commit / no-downgrade laws.
 
-The four-tier ladder (the dregg2 §2.2 table — synchrony / partition behaviour in the
-constructor docs):
-  1. **Causal-only / CRDT** — add block, causal order, n≥1, no synchrony assumption,
-     NEVER blocks (phones over BLE keep working).
-  2. **Ack-threshold** — k-of-m acks, no leader, small n, no synchrony for safety,
-     degrades to tier 1 under partition.
-  3. **Cordial-Miners τ-BFT** — DAG waves + leader + 3-step ratify, known committee Π
-     with n≥3, GST/asynchronous, STALLS under partition, resumes after GST.
-  4. **Constitutional** — τ-BFT + self-amending `(P, σ, Δ)`, known parties + PKI,
-     partial-synchrony, stalls plus a deadline.
+The `½(n+f)` quorum is lifted into per-group `Config` (not hardcoded); the four
+"globalism seams" (single global order; GST required for any progress; fixed σ-quorum;
+synchronized deadline) are deliberately excluded — tiers 1–2 progress with n=1 and no
+synchrony.
 
-Literature anchors (this round's corpus): blocklace / **Cordial Miners** (the leaderful
-DAG BFT giving tier 3); **Merkle-CRDT** join-semilattice DAG (the single substrate);
-the constitutional / self-amending-governance line (tier 4). The `½(n+f)` quorum that a
-naive design hardcodes is lifted into per-group **config** here (`Config.threshold`), and
-the four "globalism seams" the design rejects (single global total order; GST as a
-precondition for ANY progress; a fixed σ-quorum forbidding n=1; a synchronized
-wall-clock deadline) are deliberately NOT baked into the lattice — tiers 1–2 make
-progress with no synchrony and n=1.
-
-Spec-first, grind up: data that is cheap is defined (`Tier`, `rank`, the order
-instances, `crossTierJoin`); the genuine distributed-agreement / classifier obligations
-are honest `Prop`s with `sorry` bodies. Each `sorry` is a real obligation.
+Cheap data (`Tier`, `rank`, `crossTierJoin`) is defined; genuine distributed-agreement
+obligations are honest `Prop`s with `sorry` bodies. Each `sorry` is a real obligation.
 -/
 import Mathlib.Order.Lattice
 import Mathlib.Algebra.Order.Group.Nat
@@ -155,12 +135,9 @@ structure FinalityRule (H : Type u) where
   committed : Committed H
   /-- The canonicity selector the rule installs. -/
   canonical : Canonical H
-  /-- **Commit soundness (the operational obligation each rule satisfies by
-  construction):** once the tier's quorum has committed `h`, `h` is canonical. This is
-  the `commit ⇒ canonical` link the §2.2 finality rules establish; making it a field
-  means a `FinalityRule` value IS, by definition, a rule whose commits are canonical.
-  (Statement-repair: the earlier version left `committed`/`canonical` unlinked, so
-  `commit_at_join_of_tiers` was unprovable.) -/
+  /-- **Commit soundness:** once the tier's quorum has committed `h`, `h` is canonical.
+  Making this a field means a `FinalityRule` value IS, by definition, a rule whose commits
+  are canonical — the `commit ⇒ canonical` link required for `commit_at_join_of_tiers`. -/
   commit_canonical : ∀ h, committed h → canonical h
 
 /-- **Reference group.** The set of participants `τ_unified` runs per-group (§2.2 "`τ`
@@ -270,13 +247,10 @@ def finalitySystem : Execution.System where
   Config := Tier
   Step t t' := t ≤ t'
 
-/-- **No-downgrade (§2.2: "no finalized value downgrades").** Along ANY run of the
-finality-strength system — i.e. any sequence of (re-)finalization events on one value —
-the final tier is no weaker than the initial tier: finality strength is monotone
-non-decreasing over time. This protects tier-1 fast-path values from being
-"un-finalized" and tier-3/4 values from silent weakening. Proved by lifting the per-step
-"a step never lowers the tier" to the whole run via `Execution.invariant_run`, exactly as
-`Protocol.Transfer.channel_run_conserves` lifts per-step conservation. -/
+/-- **No-downgrade (§2.2).** Along any run of the finality-strength system, the final
+tier is no weaker than the initial tier: finality strength is monotone non-decreasing.
+Proved by lifting the per-step "a step never lowers the tier" to the whole run via
+`Execution.invariant_run`. -/
 theorem no_downgrade {t₀ t : Tier} (hrun : Execution.Run finalitySystem t₀ t) :
     t₀ ≤ t := by
   -- `fun s => t₀ ≤ s` is a step-invariant: every admissible step satisfies `a ≤ b`, so
@@ -322,25 +296,19 @@ theorem conservedAtTier_holds {M : Type u} [AddCommMonoid M]
   unfold conservedAtTier
   exact Core.conservation_step cons f
 
-/-- **Conservation is tier-independent (§2.2 closing clause) — the REAL tier-erasure law.**
-For ANY two finality tiers `t₁ t₂` (in particular two *distinct* tiers — e.g. `causal` vs
-`constitutional`), the conservation balance *predicate* of a turn is the **same proposition**:
-`conservedAtTier t₁ f = conservedAtTier t₂ f`, proved by `rfl`. This is genuine independence,
-not "both verdicts happen to be true" — the two sides are *definitionally identical* because the
-`Tier` argument is discarded by the measure (`conservedAtTier` does not mention `_t`). Re-tagging
-the cell's finality tier cannot change the conservation verdict because the tier never enters it.
-Law 1 (conservation) and Law 2 (ordering/tier) are thereby orthogonal — mirroring §2.3's
-I-confluence being orthogonal to both. (Earlier this was stated as an `↔` discharged by
-`iff_of_true`, which would have held even for a tier-*dependent* verdict as long as both sides were
-true; the equality-by-`rfl` form is the honest content.) -/
+/-- **Conservation is tier-independent (§2.2 closing clause).** For any two finality tiers
+`t₁ t₂`, the conservation balance predicate is the **same proposition**:
+`conservedAtTier t₁ f = conservedAtTier t₂ f`, proved by `rfl`. This is genuine independence —
+the two sides are *definitionally identical* because the `Tier` argument is discarded by the
+measure (`conservedAtTier` does not mention `_t`). Re-tagging a cell's finality tier cannot
+change the conservation verdict; Law 1 (conservation) and Law 2 (ordering/tier) are orthogonal. -/
 theorem conservation_tier_independent {M : Type u} [AddCommMonoid M]
     (cons : Core.Conservation M) (t₁ t₂ : Tier)
     {A B : Core.Cell} (f : Core.Turn A B) :
     conservedAtTier cons t₁ f = conservedAtTier cons t₂ f :=
   rfl
 
-/-- The `↔` corollary (so downstream callers expecting the biconditional still resolve), now a
-*consequence* of the genuine equality rather than a both-sides-true coincidence. -/
+/-- The `↔` corollary for downstream callers expecting the biconditional. -/
 theorem conservation_tier_independent_iff {M : Type u} [AddCommMonoid M]
     (cons : Core.Conservation M) (t₁ t₂ : Tier)
     {A B : Core.Cell} (f : Core.Turn A B) :

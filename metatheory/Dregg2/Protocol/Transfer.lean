@@ -1,17 +1,12 @@
 /-
-# Dregg2.Protocol.Transfer — an EXECUTABLE two-cell atomic token transfer.
+# Dregg2.Protocol.Transfer — an executable two-cell atomic token transfer.
 
-The first *runnable* dregg2 protocol: a concrete instantiation of the abstract stack
-(`Core.Conservation`, `Boundary.TurnCoalg`, and the `JointTurn` cross-cell `⊗`) as
-actual computable Lean you can `#eval`. Two sovereign account-cells; a transfer is the
-canonical CROSS-CELL ATOMIC turn — a debit on the sender ⊗ a credit on the receiver,
-committing all-or-nothing (atomicity = the `will_succeed` cumulative AND), with the
-amount debited exactly equal to the amount credited (CG-5, the conservation aggregate).
-
-Unlike the abstract modules (whose laws are `sorry`'d obligations to discharge against
-the operational model), the protocol-level theorems here are **proved outright** by
-computation (`omega`) for the concrete state — worked instances of Law 1 / CG-5 /
-atomicity. This is what "dregg2, executable in Lean" looks like at the smallest scale.
+A concrete instantiation of the abstract stack (`Core.Conservation`, `Boundary.TurnCoalg`,
+and the `JointTurn` cross-cell `⊗`) as computable Lean. Two sovereign account-cells; a
+transfer is the canonical cross-cell atomic turn — a debit on the sender ⊗ a credit on the
+receiver, all-or-nothing (atomicity = the `will_succeed` cumulative AND), with the amount
+debited exactly equal to the amount credited (CG-5, the conservation aggregate). The
+protocol-level theorems are proved by `omega` for the concrete state.
 -/
 import Dregg2.Core
 import Dregg2.Boundary
@@ -158,9 +153,8 @@ theorem channel_step_conserves {s t : Acct × Acct} (h : channel.Step s t) :
   · have hc := transfer_conserves s.2 s.1 amt h2
     simp only [total, Amount] at *; omega
 
-/-- **Conservation over an ENTIRE channel execution — PROVED.** For any run of
-arbitrarily many transfers in either direction, total supply equals its initial value.
-The first dregg2 theorem about a *userspace program's whole execution* (not one turn):
+/-- **Conservation over an entire channel execution.** For any run of arbitrarily many
+transfers in either direction, total supply equals its initial value.
 `Execution.invariant_run` lifts the per-step `channel_step_conserves` to the trace. -/
 theorem channel_run_conserves {s t : Acct × Acct} (hrun : Run channel s t) :
     total t = total s := by

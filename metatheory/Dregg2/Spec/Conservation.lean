@@ -211,12 +211,10 @@ carried so the SAME predicate names the four independent domain obligations.) -/
 def conservedInDomain (_dom : Domain) (deltas : List Bal) : Prop :=
   deltas.sum = 0
 
-/-- **KEY THEOREM 1 — `conservation_over_monoid`.** The `ℤ` conservation of `Core`
-generalized to an arbitrary `AddCommMonoid Bal`: if the `Conservative` deltas sum to `0`,
-then adding them to any prior domain total `pre` leaves it unchanged
-(`pre + Σδ = pre`). This is the clean `AddCommMonoid` fact underlying every per-domain
-conservation proof — the executable kernels' `Finset.sum` debit/credit cancellation is the
-`Bal = ℤ` instance of exactly this. PROVED, axiom-clean. -/
+/-- **KEY THEOREM 1 — `conservation_over_monoid`.** Generalizes `Core`'s `ℤ` conservation
+to an arbitrary `AddCommMonoid Bal`: if the `Conservative` deltas sum to `0`, adding them
+to any prior total `pre` leaves it unchanged (`pre + Σδ = pre`). The executable kernels'
+`Finset.sum` debit/credit cancellation is the `Bal = ℤ` instance. -/
 theorem conservation_over_monoid (dom : Domain) (pre : Bal) (deltas : List Bal)
     (hcons : conservedInDomain dom deltas) :
     pre + deltas.sum = pre := by
@@ -267,9 +265,9 @@ def Receipt.WellFormed (r : Receipt Bal) : Prop :=
 
 /-- **KEY THEOREM 2 — `disclosed_non_conservation`.** For a well-formed receipt whose effect
 is a disclosed non-conservation (`Generative`/`Annihilative`), the disclosed delta is
-PRESENT (the obligation is discharged structurally) — and dually, a non-disclosed color
-carries NO delta. The delta itself is NOT constrained to be `0` (that is the whole point:
-mint/burn legitimately break conservation), but its disclosure is FORCED. PROVED. -/
+present (structurally forced) — and dually, a non-disclosed color carries no delta. The
+delta itself is not constrained to be `0` (mint/burn legitimately break conservation), but
+its disclosure is required by `WellFormed`. -/
 theorem disclosed_non_conservation (r : Receipt Bal) (hwf : r.WellFormed) :
     (r.color.is_disclosed_non_conservation = true → r.disclosedDelta.isSome) ∧
     (r.color.is_disclosed_non_conservation = false → r.disclosedDelta = none) := by
@@ -328,12 +326,11 @@ theorem committed_of_cleartext (h : Cleartext →+ Commitment)
     (∑ i ∈ s, h (δ i)) = 0 := by
   rw [← map_sum h δ s, hcleartext, map_zero]
 
-/-- **KEY THEOREM 3 — `committed_iff_cleartext`.** Under the BINDING hypothesis that the
-commitment hom `h` is injective, conservation over hidden committed values is EQUIVALENT to
-cleartext conservation: `Σ (cleartext δ) = 0 ↔ Σ (h ∘ δ) = 0`. So the federation's blind
-check (`Σ commitments = 0`) is sound *and* complete for real cleartext conservation —
-"value hidden yet provably conserved". PROVED via `map_sum`/`map_zero` + injectivity; rests
-on the hom + injectivity HYPOTHESES (parameters, not axioms — `#assert_axioms`-clean). -/
+/-- **KEY THEOREM 3 — `committed_iff_cleartext`.** Under the binding hypothesis that `h` is
+injective, conservation over hidden committed values is equivalent to cleartext conservation:
+`Σ (cleartext δ) = 0 ↔ Σ (h ∘ δ) = 0`. The federation's blind check (`Σ commitments = 0`)
+is sound and complete for real cleartext conservation. Proved via `map_sum`/`map_zero` +
+injectivity (hypotheses, not axioms). -/
 theorem committed_iff_cleartext (h : Cleartext →+ Commitment) (hinj : Function.Injective h)
     {ι : Type*} (s : Finset ι) (δ : ι → Cleartext) :
     (∑ i ∈ s, δ i) = 0 ↔ (∑ i ∈ s, h (δ i)) = 0 := by
@@ -370,11 +367,9 @@ def turnConserves (td : TurnDeltas Bal) : Prop :=
   conservedInDomain Domain.gas       (td Domain.gas) ∧
   conservedInDomain Domain.crossCell (td Domain.crossCell)
 
-/-- **KEY THEOREM 4 — `multi_domain_independent`.** A turn conserves IFF every domain
-conserves independently. The `↔` makes the independence precise in both directions:
-whole-turn conservation is *nothing more* than the four separate domain checks (forward), and
-those four checks SUFFICE (backward) — so no domain can borrow conservation from another.
-PROVED, axiom-clean. -/
+/-- **KEY THEOREM 4 — `multi_domain_independent`.** A turn conserves iff every domain
+conserves independently. The `↔` is precise in both directions: whole-turn conservation is
+exactly the four separate domain checks, so no domain can borrow conservation from another. -/
 theorem multi_domain_independent (td : TurnDeltas Bal) :
     turnConserves td ↔
       (∀ dom : Domain, conservedInDomain dom (td dom)) := by
@@ -422,10 +417,7 @@ def RangeObligation {ι Bal : Type*} (InRange : Bal → Prop) (s : Finset ι) (�
 
 /-! ## Axiom-hygiene — pin the clean keystones.
 
-The four key theorems plus their supporting classifier facts are axiom-clean (they rest only
-on `propext`/`Classical.choice`/`Quot.sound`). `committed_iff_cleartext` rests additionally
-on its hom + injectivity HYPOTHESES — those are parameters, not `axiom`-keyword declarations,
-so they correctly do not appear in `collectAxioms` and the guard passes. -/
+The four key theorems plus their supporting classifier facts are axiom-clean. -/
 
 #assert_axioms LinearityClass.requires_paired_sibling_iff
 #assert_axioms LinearityClass.is_disclosed_non_conservation_iff

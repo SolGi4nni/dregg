@@ -1,59 +1,31 @@
 /-
-# Dregg2.Confluence.DriftStable — the DRIFT-STABLE BRIDGE (the coordination-cost ladder, in theorems).
+# Dregg2.Confluence.DriftStable — the coordination-cost ladder, in theorems.
 
-`Dregg2.Confluence` gives the *abstract* third judgement (`IConfluent`); `Confluence.CRDT` gives the
-*instance catalog* (grow-only counters/sets/registers ARE tier-1; the bounded-counter is NOT, and the
-escrow quota-partition is the way out). THIS module welds `docs/rebuild/DRIFT-STABILITY-SPECTRUM.md`
-§4–§5 — *conditional drift-stability* and *the tiered caveat (verify-not-find dispatch)* — into
-load-bearing theorems.
+`Confluence.CRDT` gives the instance catalog (grow-only = tier-1; bounded = NOT, escrow
+quota-partition = the way out). This module formalizes two further pieces from
+`DRIFT-STABILITY-SPECTRUM.md` §4–§5: *conditional drift-stability* and the *tiered caveat
+(verify-not-find dispatch)*.
 
-## The two windows (DRIFT-STABILITY-SPECTRUM §0), and which one this is
+A state-reading caveat `φ` has two soundness windows. The commit-instant (TOCTOU) window is
+already handled: `Exec.CrossCaveat.caveated_check_eq_use` (the equalizer). This module is the
+composition-window drift: while parties compose a turn, cells drift forward; a turn composed
+against `x` must remain valid at commit against `x ⊔ Δ`.
 
-A state-reading caveat `φ` has TWO soundness windows:
+What is proved (the load-bearing five):
+  1. `IConfluentUnder E φ` — conditional drift-stability: confluence in the sublattice cut out
+     by environment guarantee `E`. `IConfluent φ` is the `E = ⊤` case.
+  2. `driftStable_composes` — an I-confluent caveat survives forward-compatible drift: `φ` true
+     at compose-state `x` and at drift `Δ` gives `φ` at `x ⊔ Δ`, no re-check needed.
+  3. `locked_driftStable` — a chain environment (pairwise-comparable reachable states) makes
+     ANY `φ` drift-stable, because the merge equals one operand.
+  4. The dual (as theorems): `monotone_caveat_driftStable` (grow-only composes free) and
+     `bounded_caveat_needs_coordination` (the bounded-counter is NOT drift-stable, with the two
+     built escape hatches in `BoundedEscape`).
+  5. The tiered caveat (§5): a computable `DriftTier` tag + `TieredCaveat` carrying the
+     tier-appropriate proof. The tier is a checked witness, never a search.
 
-  * **Commit-instant (TOCTOU)** — is `φ` checked on the SAME snapshot the turn commits against? SOLVED,
-    BUILT: `Exec.CrossCaveat.caveated_check_eq_use` (the equalizer / a limit). Not this module.
-  * **Composition-window DRIFT** — while parties *compose* a turn (negotiate / sign / await), the cells
-    drift forward underneath them; is a turn composed against `x` still valid at commit against `x ⊔ Δ`?
-    This is the MERGE question (a colimit / monotone-merge property — the *dual* of the equalizer). THIS
-    module is exactly the drift window: governed by the coordination-cost ladder (§2/§4).
-
-## What is proved here (FOCUSED — the load-bearing five, not a sprawl)
-
-  1. `IConfluentUnder E φ` — **conditional drift-stability** (§4): confluence in the *sublattice cut out
-     by an environment guarantee `E`*. `IConfluent φ` is the `E = ⊤` case (`iconfluent_iff_under_top`).
-  2. `driftStable_composes` — **THE HEADLINE drift-window theorem**: an I-confluent caveat survives
-     forward-compatible drift. A caveat `φ` true at the composition-state `x`, merged with an
-     invariant-preserving concurrent drift `Δ` (`φ Δ`), STAYS true at the commit-state `x ⊔ Δ` — so the
-     composed turn commits validly WITHOUT re-check / WITHOUT coordination. This is literally
-     `Confluence.admits_sound` with the merge READ AS the drift: compose-against-`x`,
-     commit-against-`x ⊔ Δ`, no round trip. (§2 tier-1.)
-  3. `locked_driftStable` — **the lock collapses the merge** (§4): under a single-writer / chain
-     environment `E` whose reachable states are pairwise comparable (`E x → E y → x ≤ y ∨ y ≤ x`),
-     ANY `φ` is `IConfluentUnder E` — because a comparable merge is one of its operands, so the merge
-     never escapes the invariant. Coordination ONCE (acquire the lock) buys drift-stability even for a
-     genuinely non-monotone `φ`. We instantiate `E` non-vacuously (a version-stamped chain) so the lock
-     is real, not a vacuous environment.
-  4. THE TEETH (the dual), as REAL theorems, not prose:
-       * `monotone_caveat_driftStable` — instantiates `driftStable_composes` with the catalog's grow-only
-         `CRDT.gcounter_lowerBound_iconfluent`: a grow-only caveat composes under drift FOR FREE.
-       * `bounded_caveat_needs_coordination` — the bounded-counter (`CRDT.withinBudget`) is NOT
-         drift-stable (`CRDT.withinBudget_not_iconfluent`), exhibiting the clashing pair, so it MUST take
-         either the equalizer (cite `Exec.CrossCaveat.crossCaveat_sound`) or the OCC freshness window
-         (cite `Authority.ThirdParty.stale_discharge_rejected`). Stated as the explicit non-lift +
-         escalation witness, with the two escape hatches carried as a structured `BoundedEscape`.
-  5. THE TIERED CAVEAT (§5, the verify-not-find dispatch): a computable `DriftTier` tag + a dependent
-     `TieredCaveat` carrying the *tier-appropriate proof as a field* (monotone ⇒ `IConfluent φ`,
-     reservation ⇒ the escrow obligation, locked ⇒ `IConfluentUnder env φ`, coordinated ⇒ `Unit`/must
-     take the equalizer). `tieredCaveat_driftStable` reads the (computable) tag and the carried witness
-     genuinely justifies skipping coordination — the conclusion FOLLOWS from the witness, not `True`.
-     This is dregg's load-bearing seam (`§5`): *the tier is a checked witness, never a search* — the
-     executor pays the MINIMAL sound coordination per caveat.
-
-DISCIPLINE: ZERO sorry/admit/native_decide/axiom; pure Lean + mathlib + the dregg2 deps (`Confluence`,
-`Confluence.CRDT`, `Exec.CrossCaveat`, `Authority.ThirdPartyDischarge`) — NO external oracle. Every
-keystone is `#assert_axioms`-pinned to `{propext, Classical.choice, Quot.sound}`. The
-limit/colimit/up-set framing is faithful order theory, NOT a built categorical-limit object.
+Zero sorry/admit/native_decide/axiom. Every keystone is `#assert_axioms`-pinned to
+`{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Tactics
 import Dregg2.Confluence
@@ -67,83 +39,66 @@ open Dregg2.Confluence
 
 universe u
 
-/-! ## §1. Conditional drift-stability — `IConfluentUnder` (DRIFT-STABILITY-SPECTRUM §4).
+/-! ## §1. Conditional drift-stability — `IConfluentUnder`.
 
-Drift-stability is *relative to which merges are reachable*. An environment guarantee `E` (a
-sub-`Invariant`) RESTRICTS the reachable states, hence the reachable merges, ENLARGING what is stable:
-`φ` need only survive merges of states BOTH satisfying `E`. This is confluence in the sublattice cut
-out by `E`. The plain `IConfluent` is the `E = ⊤` case. -/
+An environment guarantee `E` restricts the reachable states and thereby enlarges what is
+drift-stable: `φ` need only survive merges of states both satisfying `E`. Plain `IConfluent`
+is the `E = ⊤` case. -/
 
-/-- **Conditional drift-stability (`IConfluentUnder`).** `φ` is I-confluent over the sublattice cut out
-by the environment guarantee `E`: concurrent `E`-states that each preserve `φ` merge `φ`-safely. More
-guarantee (a stronger `E`) ⇒ more stable. (DRIFT-STABILITY-SPECTRUM §4.) -/
+/-- **Conditional drift-stability (`IConfluentUnder`).** `φ` is I-confluent over the sublattice cut
+out by `E`: concurrent `E`-states that each preserve `φ` merge `φ`-safely. A stronger `E` enlarges
+what is stable. -/
 def IConfluentUnder {S : Type u} [MergeState S] (E φ : Invariant S) : Prop :=
   ∀ x y : S, E x → E y → φ x → φ y → φ (x ⊔ y)
 
 /-- **`IConfluent` is the `E = ⊤` case of `IConfluentUnder`.** Unconditional drift-stability is
-conditional drift-stability under the always-true environment — the ladder's bottom rung (no
-guarantee). This grounds `IConfluentUnder` as a genuine generalization. -/
+conditional stability under the always-true environment (no guarantee). -/
 theorem iconfluent_iff_under_top {S : Type u} [MergeState S] (φ : Invariant S) :
     IConfluent φ ↔ IConfluentUnder (fun _ => True) φ := by
   constructor
   · intro h x y _ _ hx hy; exact h x y hx hy
   · intro h x y hx hy; exact h x y trivial trivial hx hy
 
-/-- **A stronger environment only ENLARGES drift-stability (monotone in `E`).** If `φ` is I-confluent
-under `E` and `E'` is at-most-`E` (a stronger guarantee `E' x → E x`), then `φ` is I-confluent under
-`E'` too — narrowing the reachable states never breaks a merge that already held. This is why climbing
-the ladder (lock ⊃ reservation ⊃ nothing) only ever helps. -/
+/-- **A stronger environment enlarges drift-stability (monotone in `E`).** If `φ` is I-confluent
+under `E` and `E'` is stronger (`E' x → E x`), then `φ` is I-confluent under `E'` too. -/
 theorem iconfluentUnder_mono {S : Type u} [MergeState S] {E E' φ : Invariant S}
     (hEE' : ∀ s, E' s → E s) (h : IConfluentUnder E φ) : IConfluentUnder E' φ := by
   intro x y hx hy hφx hφy
   exact h x y (hEE' x hx) (hEE' y hy) hφx hφy
 
-/-! ## §2. THE HEADLINE — `driftStable_composes` (the drift-window theorem, §2 tier-1).
+/-! ## §2. `driftStable_composes` — the drift-window theorem.
 
-The composition window: a turn is COMPOSED (negotiated/signed/awaited) against the state `x`, but
-COMMITS against `x ⊔ Δ` where `Δ` is whatever concurrent invariant-preserving drift landed underneath.
-If the caveat `φ` is I-confluent, then `φ` true at the compose-state `x` and `φ` true of the drift `Δ`
-gives `φ` true at the commit-state `x ⊔ Δ` — so the composed turn commits validly with NO re-check and
-NO coordination round trip. The merge IS the drift; this is `Confluence.admits_sound` read through that
-lens. -/
+A turn composed against `x` commits against `x ⊔ Δ` (the drift). If `φ` is I-confluent,
+`φ x` and `φ Δ` together give `φ (x ⊔ Δ)` — no re-check, no coordination. -/
 
-/-- **`driftStable_composes` — THE HEADLINE (PROVED).** An I-confluent caveat survives forward-compatible
-drift. Read the variables operationally: `x` = the state a turn is COMPOSED against; `Δstate` = the
-concurrent invariant-preserving drift that landed during composition; `x ⊔ Δstate` = the state the turn
-COMMITS against. If `φ` is I-confluent, `φ` holding at compose-time (`hx`) and the drift preserving `φ`
-(`hΔ`) imply `φ` holds at COMMIT-time — so the composed turn commits WITHOUT re-checking `φ` and WITHOUT
-any coordination. (This genuinely USES `Confluence.admits_sound`: the merge `x ⊔ Δstate` is the drift,
-and `admits_sound` is what closes it.) -/
+/-- **`driftStable_composes`.** An I-confluent caveat survives forward-compatible drift. With `x` the
+compose-state, `Δstate` the concurrent drift, and `x ⊔ Δstate` the commit-state: `φ x` and `φ Δstate`
+imply `φ (x ⊔ Δstate)` — the composed turn commits without re-checking `φ` and without coordination
+(`Confluence.admits_sound`). -/
 theorem driftStable_composes {S : Type u} [MergeState S] {φ : Invariant S}
     (hI : IConfluent φ) {x Δstate : S} (hx : φ x) (hΔ : φ Δstate) :
     φ (x ⊔ Δstate) :=
   -- the merge `x ⊔ Δstate` is the drift; `admits_sound` (= the I-confluence gate) closes it.
   admits_sound φ hI x Δstate hx hΔ
 
-/-- **Under-`E` form: drift-stability within an environment.** If the compose-state, the drift, and the
-commit are all reachable under `E`, an `IConfluentUnder E` caveat survives the drift — the lock/
-reservation version of the headline (the merge need only be safe among `E`-states). -/
+/-- **Under-`E` form: drift-stability within an environment.** For compose-state and drift both
+reachable under `E`, an `IConfluentUnder E` caveat survives the drift. -/
 theorem driftStable_composes_under {S : Type u} [MergeState S] {E φ : Invariant S}
     (hI : IConfluentUnder E φ) {x Δstate : S} (hEx : E x) (hEΔ : E Δstate)
     (hx : φ x) (hΔ : φ Δstate) :
     φ (x ⊔ Δstate) :=
   hI x Δstate hEx hEΔ hx hΔ
 
-/-! ## §3. THE LOCK — `locked_driftStable` (DRIFT-STABILITY-SPECTRUM §4, tier-4).
+/-! ## §3. `locked_driftStable` — the lock collapses the merge.
 
-A lock sets `E = single-writer`, so the reachable drift is a CHAIN: any two reachable states are
-COMPARABLE. A comparable merge is one of its operands (`x ⊔ y = y` if `x ≤ y`), so the merge never
-escapes the invariant — hence under such an `E`, ANY `φ` is drift-stable. Coordination ONCE (acquiring
-the lock = establishing `E`) buys drift-stability for a genuinely non-monotone `φ`. We make `E` real:
-not the vacuous `E = ⊤`, but a *comparability* environment, and we exhibit a CONCRETE non-vacuous
-instance (a version-stamped chain) so the lock genuinely forces comparability. -/
+Under a single-writer environment `E`, reachable states form a chain (pairwise comparable). A
+comparable merge equals one operand, so the merge never escapes the invariant — ANY `φ` is
+drift-stable under such `E`. Coordination once (acquiring the lock) buys drift-stability even
+for non-monotone `φ`. -/
 
-/-- **`locked_driftStable` — the lock collapses the merge (PROVED).** If the environment `E` guarantees
-its reachable states are pairwise COMPARABLE (`E x → E y → x ≤ y ∨ y ≤ x` — the chain a single-writer
-lock cuts out), then EVERY invariant `φ` is `IConfluentUnder E`. Proof: a comparable merge equals one
-of its operands (`sup_eq_right`/`sup_eq_left`), and that operand already satisfies `φ`. So the lock —
-establishing comparability, paid once at acquire — makes even non-monotone caveats drift-stable.
-(Genuinely uses comparability: a non-comparable `E` would NOT close this.) -/
+/-- **`locked_driftStable`.** If `E` guarantees pairwise comparability (`E x → E y → x ≤ y ∨ y ≤ x`),
+every `φ` is `IConfluentUnder E`. A comparable merge equals one operand (`sup_eq_right`/`sup_eq_left`),
+so the invariant is preserved trivially. -/
 theorem locked_driftStable {S : Type u} [MergeState S] {E : Invariant S}
     (hchain : ∀ x y : S, E x → E y → x ≤ y ∨ y ≤ x) (φ : Invariant S) :
     IConfluentUnder E φ := by
@@ -154,27 +109,22 @@ theorem locked_driftStable {S : Type u} [MergeState S] {E : Invariant S}
   · -- `y ≤ x` ⇒ `x ⊔ y = x`; `φ x` holds.
     rw [sup_eq_left.mpr hle]; exact hφx
 
-/-! ### §3a. The lock is NON-VACUOUS — a concrete version-stamped chain.
+/-! ### §3a. The lock is non-vacuous — a concrete version-stamped chain.
 
-We instantiate the lock environment over the G-counter `Fin 1 → ℕ` (a single-writer cell carries one
-monotone version). `E v g := g 0 = v` pins the version; the single-writer guarantee is that any two
-reachable states have comparable versions (here we take the comparability of the version field
-directly). On `Fin 1 → ℕ` the pointwise order IS comparability of the single component, so a `lockEnv`
-environment genuinely forces comparable merges — and `locked_driftStable` then makes the
-DELIBERATELY-non-monotone "EXACTLY version `v`" caveat drift-stable under it. -/
+The lock environment is instantiated over `Fin 1 → ℕ` (a single-writer cell with one monotone
+version slot). On this one-element index, pointwise order is linear, so `lockEnv` genuinely
+forces comparable merges and `locked_driftStable` applies. -/
 
 /-- A single-writer cell: a one-slot G-counter carrying a monotone version. -/
 abbrev VersionCell := CRDT.GCounter (Fin 1)
 
-/-- The lock environment: the cell's version is observed; single-writer means the writer holds the
-lock, so all reachable versions are comparable. Modeled as the comparability predicate over the order
-on `Fin 1 → ℕ` (which is exactly comparability of the single slot). -/
+/-- The lock environment: all reachable states are comparable (single-writer). Modeled as the
+always-true predicate; comparability comes from `versionCell_chain`. -/
 def lockEnv : Invariant VersionCell := fun _ => True
 
-/-- **The single-slot G-counter is a CHAIN under the lock (PROVED).** On `Fin 1 → ℕ` any two states are
-comparable: the pointwise order on a one-element index reduces to the linear order on the single slot.
-This discharges the `hchain` hypothesis of `locked_driftStable` with a GENUINE comparability fact (not
-the vacuous `E = ⊤` masquerade: the content is that `Fin 1 → ℕ` is linearly ordered). -/
+/-- **The single-slot G-counter is a chain.** On `Fin 1 → ℕ` any two states are comparable: the
+pointwise order on a one-element index reduces to the linear order on the single slot. Discharges
+`hchain` for `locked_driftStable`. -/
 theorem versionCell_chain (x y : VersionCell) : x ≤ y ∨ y ≤ x := by
   rcases le_total (x 0) (y 0) with h | h
   · left; intro i
@@ -184,36 +134,32 @@ theorem versionCell_chain (x y : VersionCell) : x ≤ y ∨ y ≤ x := by
     have : i = 0 := Subsingleton.elim i 0
     subst this; exact h
 
-/-- **A genuinely NON-monotone caveat made drift-stable BY the lock (PROVED).** "the cell is at EXACTLY
-version `v`" is NOT I-confluent in general (two different versions merge to neither). But under the
-single-writer chain (`versionCell_chain`), `locked_driftStable` makes it drift-stable: the lock cuts
-the drift to a chain, so the only reachable merge of two equal-version states is that same version.
-This is the tier-4 payoff — coordination once (the lock) buys drift-stability for a non-monotone read. -/
+/-- **A non-monotone caveat made drift-stable by the lock.** "the cell is at exactly version `v`" is
+NOT I-confluent in general, but under the single-writer chain (`versionCell_chain`),
+`locked_driftStable` makes it drift-stable: the lock cuts drift to a chain, so equal-version states
+merge to that same version. -/
 theorem lockedExactVersion_driftStable (v : ℕ) :
     IConfluentUnder (S := VersionCell) lockEnv (fun g => g 0 = v) :=
   locked_driftStable (fun x y _ _ => versionCell_chain x y) (fun g => g 0 = v)
 
-/-! ## §4. THE TEETH (the dual) — monotone composes free; bounded NEEDS coordination.
+/-! ## §4. The dual — monotone composes free; bounded needs coordination.
 
-We instantiate the headline on a real grow-only caveat (composes for free), and we show the
-bounded-counter caveat is genuinely NOT drift-stable, forcing one of the two built escape hatches:
-the equalizer (`CrossCaveat.crossCaveat_sound`) or the OCC freshness window
-(`ThirdParty.stale_discharge_rejected`). -/
+A grow-only caveat composes under drift for free; the bounded-counter caveat is NOT drift-stable,
+forcing one of two built escape hatches: the equalizer (`CrossCaveat.crossCaveat_sound`) or the
+OCC freshness window (`ThirdParty.stale_discharge_rejected`). -/
 
-/-- **`monotone_caveat_driftStable` — the grow-only caveat composes under drift FOR FREE (PROVED).**
-Instantiates `driftStable_composes` with the catalog's `CRDT.gcounter_lowerBound_iconfluent`: the
-grow-only lower-bound caveat "replica `i` has counted ≥ `k`", composed against `x` and committed against
-the drift-merge `x ⊔ Δ`, stays true — NO coordination, NO re-check. The tier-1 free side. -/
+/-- **`monotone_caveat_driftStable`.** The grow-only lower-bound caveat "replica `i` has counted ≥ `k`"
+composes under drift for free — `driftStable_composes` with `CRDT.gcounter_lowerBound_iconfluent`.
+No coordination, no re-check (tier-1). -/
 theorem monotone_caveat_driftStable {ι : Type u} (i : ι) (k : ℕ)
     {x Δstate : CRDT.GCounter ι} (hx : k ≤ x i) (hΔ : k ≤ Δstate i) :
     k ≤ (x ⊔ Δstate) i :=
   driftStable_composes (CRDT.gcounter_lowerBound_iconfluent i k) hx hΔ
 
-/-- **The two BUILT escape hatches for a non-drift-stable caveat.** When `φ` is NOT drift-stable, the
-executor cannot skip coordination; it must take EITHER the commit-instant equalizer (the atomic
-joint-turn check, `CrossCaveat.crossCaveat_sound`) OR read within the OCC freshness window
-(`ThirdParty.stale_discharge_rejected`'s `MAX_DISCHARGE_AGE`). We carry the CHOICE structurally so the
-"needs coordination" theorem points at a concrete sound fallback, not at prose. -/
+/-- **The two escape hatches for a non-drift-stable caveat.** When `φ` is NOT drift-stable, the
+executor must take either the commit-instant equalizer (`CrossCaveat.crossCaveat_sound`) or read
+within the OCC freshness window (`ThirdParty.stale_discharge_rejected`). Carried structurally so
+the theorem points at a concrete sound fallback. -/
 inductive BoundedEscape where
   /-- Take the atomic equalizer per use — `CrossCaveat.crossCaveat_sound` (blocks under partition). -/
   | equalizer
@@ -222,12 +168,9 @@ inductive BoundedEscape where
   | freshnessWindow
 deriving DecidableEq, Repr
 
-/-- **`bounded_caveat_needs_coordination` — THE TEETH (PROVED).** The bounded-counter caveat
-(`CRDT.withinBudget 1`, the `balance ≥ 0` / quota-overflow shape) is NOT drift-stable: there genuinely
-EXISTS a clashing drift pair `x`, `Δ` — both within budget, but the drift-merge `x ⊔ Δ` overshoots — so
-composing-and-committing without re-check is UNSOUND. Therefore the caveat MUST take one of the two
-built escape hatches (`BoundedEscape`). We state it as: NOT `IConfluent`, the constructive clashing
-witness (`CRDT.withinBudget_escalation`), AND a nonempty set of sound fallbacks. -/
+/-- **`bounded_caveat_needs_coordination`.** The bounded-counter caveat (`CRDT.withinBudget 1`) is
+NOT drift-stable: a clashing drift pair `x`, `Δ` exists — both within budget, but their merge
+overshoots — so committing without re-check is unsound. The caveat must take a `BoundedEscape`. -/
 theorem bounded_caveat_needs_coordination :
     ¬ IConfluent (S := CRDT.Budget) (CRDT.withinBudget 1) ∧
     (∃ x Δ : CRDT.Budget,
@@ -240,11 +183,9 @@ theorem bounded_caveat_needs_coordination :
   · -- a sound fallback exists: take the equalizer (or, equally, the freshness window).
     exact ⟨BoundedEscape.equalizer, trivial⟩
 
-/-- **The equalizer fallback is SOUND, cited to the built theorem (PROVED).** The `BoundedEscape.equalizer`
-choice is justified by `Exec.CrossCaveat.crossCaveat_sound`: a committed caveated bilateral turn proves
-the caveat held on EXACTLY the (atomic) commit snapshot — the commit-instant window the bounded caveat
-needs (no composition-window drift because the check and use are one indivisible step). This wires the
-"needs coordination" verdict to a concrete sound mechanism, not prose. -/
+/-- **The equalizer fallback is sound.** `BoundedEscape.equalizer` is justified by
+`Exec.CrossCaveat.crossCaveat_sound`: a committed caveated bilateral turn proves the caveat held
+on the atomic commit snapshot. -/
 theorem boundedEscape_equalizer_sound
     {φ : Dregg2.Exec.CrossCaveat.CrossCaveat}
     {A B A' B' : Dregg2.Exec.KernelState} {bt : Dregg2.Exec.JointCell.BiTurn}
@@ -254,11 +195,9 @@ theorem boundedEscape_equalizer_sound
       bind.sidOfA = bind.sidOfB ∧ φ A B = true :=
   Dregg2.Exec.CrossCaveat.crossCaveat_sound bind h
 
-/-- **The freshness-window fallback is SOUND, cited to the built theorem (PROVED).** The
-`BoundedEscape.freshnessWindow` choice is justified by `Authority.ThirdParty.stale_discharge_rejected`:
-a discharge whose freshness check fails is REJECTED — so a non-monotone fact read for a turn is only
-honored within `MAX_DISCHARGE_AGE`, after which it is stale and rejected. This is the OCC bound for
-time-bounded non-monotone caveats. -/
+/-- **The freshness-window fallback is sound.** `BoundedEscape.freshnessWindow` is justified by
+`Authority.ThirdParty.stale_discharge_rejected`: a discharge whose freshness check fails is rejected
+— so a non-monotone fact is only honored within `MAX_DISCHARGE_AGE`. -/
 theorem boundedEscape_freshness_sound
     [Authority.ThirdParty.DischargeCrypto]
     {Ctx : Type} (tpc : Authority.ThirdParty.ThirdPartyCaveat Ctx)
@@ -268,13 +207,12 @@ theorem boundedEscape_freshness_sound
     Authority.ThirdParty.accepts tpc m parentTail ctx now = false :=
   Authority.ThirdParty.stale_discharge_rejected tpc m parentTail ctx now hstale
 
-/-! ## §5. THE TIERED CAVEAT — the verify-not-find dispatch (DRIFT-STABILITY-SPECTRUM §5).
+/-! ## §5. The tiered caveat — the verify-not-find dispatch.
 
-"Is `φ` I-confluent?" is NOT decidable (a `∀` over all merges) — so we DON'T decide it. The tier is
-CARRIED as a witness (supplied at construction; the CRDT library hands it over for free), and the
-executor reads the (computable) tag and DISPATCHES: monotone ⇒ run coordination-free; coordinated ⇒
-take the equalizer. Dispatch is computable (read data); soundness is the carried proof; inference is
-never attempted. This is dregg's load-bearing seam: *the tier is a checked witness, never a search.* -/
+"Is `φ` I-confluent?" is not decidable, so it is not decided. The tier is carried as a witness
+(supplied at construction), and the executor reads the computable tag and dispatches: monotone ⇒
+coordination-free; coordinated ⇒ take the equalizer. The tier is a checked witness, never a
+search. -/
 
 /-- **The drift-stability tier (computable tag).** Read by the executor to dispatch coordination. -/
 inductive DriftTier where
@@ -311,14 +249,11 @@ structure TieredCaveat (S : Type u) [MergeState S] where
   tier    : DriftTier
   witness : DriftWitness env φ tier
 
-/-- **`tieredCaveat_driftStable` — the dispatch is SOUND (PROVED, NON-VACUOUS).** For any tiered caveat
-whose (computable) tier is NOT `coordinated`, the carried witness GENUINELY yields drift-stability: a
-caveat true at the compose-state `x`, merged with an environment-reachable invariant-preserving drift
-`Δ`, stays true at the commit-state `x ⊔ Δ`. The conclusion FOLLOWS FROM the carried witness (not
-`True`): `monotone`/`reservation` carry `IConfluent φ` (the env hypotheses are discharged trivially —
-they are unconditionally stable), `locked` carries `IConfluentUnder env φ` (the env hypotheses are
-USED). For `coordinated` there is no witness, so the theorem (correctly) does not apply — the executor
-takes the equalizer instead. -/
+/-- **`tieredCaveat_driftStable`.** For any tiered caveat with tier ≠ `coordinated`, the carried
+witness yields drift-stability: a caveat true at compose-state `x` and drift `Δ` stays true at
+`x ⊔ Δ`. The conclusion follows from the witness: `monotone`/`reservation` carry `IConfluent φ`;
+`locked` carries `IConfluentUnder env φ` (env hypotheses genuinely consumed). For `coordinated`
+no witness exists — the executor takes the equalizer. -/
 theorem tieredCaveat_driftStable {S : Type u} [MergeState S]
     (tc : TieredCaveat S) (hne : tc.tier ≠ .coordinated)
     {x Δstate : S} (hEx : tc.env x) (hEΔ : tc.env Δstate)
@@ -342,11 +277,7 @@ theorem tieredCaveat_driftStable {S : Type u} [MergeState S]
       exact driftStable_composes_under hw.down hEx hEΔ hx hΔ
   | coordinated => exact absurd htier hne
 
-/-! ### §5a. The tiered-caveat dispatch is NON-VACUOUS — concrete instances on the catalog.
-
-We build a monotone tiered caveat from the grow-only G-counter and a locked tiered caveat from the
-single-writer version cell, and show `tieredCaveat_driftStable` genuinely fires on each (drift survives
-without coordination). The conclusion is the real `φ`, not `True`. -/
+/-! ### §5a. The dispatch is non-vacuous — concrete instances on the catalog. -/
 
 /-- A MONOTONE tiered caveat: the grow-only lower-bound "replica `i` ≥ `k`" carrying its `IConfluent`. -/
 def monotoneTC {ι : Type u} (i : ι) (k : ℕ) : TieredCaveat (CRDT.GCounter ι) where
@@ -355,39 +286,36 @@ def monotoneTC {ι : Type u} (i : ι) (k : ℕ) : TieredCaveat (CRDT.GCounter ι
   tier    := .monotone
   witness := PLift.up (CRDT.gcounter_lowerBound_iconfluent i k)
 
-/-- **The monotone tiered caveat is drift-stable BY DISPATCH (PROVED).** Reading the `.monotone` tag and
-the carried `IConfluent` witness, the grow-only caveat composes under any drift — `tieredCaveat_driftStable`
-fires, no coordination. -/
+/-- **The monotone tiered caveat is drift-stable by dispatch.** Reading the `.monotone` tag and the
+carried `IConfluent` witness, `tieredCaveat_driftStable` fires — no coordination. -/
 theorem monotoneTC_driftStable {ι : Type u} (i : ι) (k : ℕ)
     {x Δstate : CRDT.GCounter ι} (hx : k ≤ x i) (hΔ : k ≤ Δstate i) :
     k ≤ (x ⊔ Δstate) i :=
   tieredCaveat_driftStable (monotoneTC i k)
     (show DriftTier.monotone ≠ DriftTier.coordinated by decide) trivial trivial hx hΔ
 
-/-- A LOCKED tiered caveat: the non-monotone "EXACTLY version `v`" on the single-writer cell, carrying
-the `IConfluentUnder` proof the chain (`versionCell_chain`) supplies. -/
+/-- A locked tiered caveat: the non-monotone "exactly version `v`" on the single-writer cell,
+carrying the `IConfluentUnder` proof supplied by `versionCell_chain`. -/
 def lockedTC (v : ℕ) : TieredCaveat VersionCell where
   env     := fun _ => True
   φ       := fun g => g 0 = v
   tier    := .locked
   witness := PLift.up (locked_driftStable (fun x y _ _ => versionCell_chain x y) (fun g => g 0 = v))
 
-/-- **The locked tiered caveat is drift-stable BY DISPATCH (PROVED), and it carries a NON-monotone `φ`.**
-Reading the `.locked` tag and the carried `IConfluentUnder env φ` witness, the EXACTLY-version-`v`
-caveat (which is NOT unconditionally I-confluent) survives drift under the lock — the env hypotheses are
-genuinely consumed in the dispatch. The lock's once-paid coordination buys drift-stability for a
-non-monotone read. -/
+/-- **The locked tiered caveat is drift-stable by dispatch, with a non-monotone `φ`.** Reading the
+`.locked` tag and the carried `IConfluentUnder env φ` witness, the "exactly version `v`" caveat
+(which is NOT unconditionally I-confluent) survives drift under the lock — env hypotheses genuinely
+consumed. -/
 theorem lockedTC_driftStable (v : ℕ) {x Δstate : VersionCell}
     (hx : x 0 = v) (hΔ : Δstate 0 = v) :
     (x ⊔ Δstate) 0 = v :=
   tieredCaveat_driftStable (lockedTC v)
     (show DriftTier.locked ≠ DriftTier.coordinated by decide) trivial trivial hx hΔ
 
-/-! ## §6. #eval witnesses — non-vacuity by computation (DRIFT-STABILITY-SPECTRUM §0/§2).
+/-! ## §6. #eval witnesses — non-vacuity by computation.
 
-A grow-only caveat survives a CONCRETE drift-merge (composes free); the bounded caveat FAILS a concrete
-drift-merge (needs coordination). These are computational sanity checks, not proofs — the theorems
-above are the proofs — but they make the drift-window claims concretely inspectable. -/
+Computational sanity checks: a grow-only caveat survives a concrete drift-merge; the bounded
+caveat fails one. Not proofs — the theorems above are — but concretely inspectable. -/
 
 section Evals
 
@@ -425,9 +353,8 @@ end Evals
 
 /-! ## §7. Axiom-hygiene pins (`#assert_axioms`) — every keystone is sorry-free.
 
-Each pin ELABORATES TO AN ERROR if the keystone transitively depends on any axiom outside
-`{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). Build-checked: the bridge is genuinely
-proved, not `sorry`'d. -/
+Each pin elaborates to an error if the keystone depends on any axiom outside
+`{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). -/
 
 -- §1 conditional drift-stability
 #assert_axioms iconfluent_iff_under_top

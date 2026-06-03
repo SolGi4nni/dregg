@@ -1,26 +1,19 @@
 /-
-# Dregg2.Crypto.Pedersen — the SECOND end-to-end §8 discharge: Pedersen value conservation.
+# Dregg2.Crypto.Pedersen — §8 discharge: Pedersen value conservation.
 
-**The next obligation after Merkle (`PHASE-CRYPTOKERNEL.md §5` "Path to the rest").** Where
-`Crypto/Merkle.lean` discharged membership, this discharges the hidden-value-transfer
-CONSERVATION: a transfer over Pedersen commitments preserves total value, and every amount is
-non-negative — so no inflation is hidden behind the commitments. The cascade mirrors Merkle's:
+Where `Crypto/Merkle.lean` discharges membership, this discharges hidden-value-transfer
+conservation: a transfer over Pedersen commitments preserves total value and every amount is
+non-negative (no inflation hidden behind commitments).
 
     pedersen_conservation_bridge : Satisfies pedersenCircuit (insC, outsC) ↔ Conserves …
-      [the gadget, FULLY proven — uses `commit_hom`/`commit_zero`, NO primitive seam]
-    pedersen_verify_sound        : verify accepts → Conserves …
-      [DERIVED off the bridge, given the STARK `extractable` carrier]
-    pedersen_dial_wired          : the dial pinned to the verifier at the `selective` floor
-      [Pedersen DISCLOSES the commitments (not the amounts) ⇒ `selective`, not `acceptanceOnly`]
+    pedersen_verify_sound        : verify accepts → Conserves …  (derived + `extractable`)
+    pedersen_dial_wired          : dial at `selective` (commitments disclosed, amounts hidden)
 
-**The algebra is the genuinely-grounded part.** Pedersen's additive homomorphism
-(`CryptoPrimitives.commit_hom`, Layer A) is the one PROVED algebraic law; conservation is
-`map_sum` over it — re-homing `PrivacyKernel.committed_conservation_kernel` onto the Layer-A
-`CryptoPrimitives` portal. Non-negativity is the honest bit-decomposition range gadget
-(`Exec/RecordCircuit.range_iff`), no seam. The ONLY cryptographic residue is the Pedersen
-`binding` carrier (DLog) — a `Prop`, never a Lean law, never `sorry`: binding is what makes the
-*commitment* sum equation testify to the *amount* equation, i.e. the verifier cannot open the
-balanced commitments to unbalanced amounts. The conservation algebra itself is unconditional.
+The algebra is the genuinely grounded part: `CryptoPrimitives.commit_hom` is the proved additive
+homomorphism; conservation is `map_sum` over it. Non-negativity uses `Exec/RecordCircuit.range_iff`
+(no seam). The only crypto residue is the Pedersen `binding` carrier (DLog) — a `Prop`, never a
+Lean law, never `sorry`: binding is what makes the commitment-sum equation testify to the amount
+equation. The conservation algebra itself is unconditional.
 -/
 import Dregg2.Crypto.Primitives
 import Dregg2.Exec.RecordCircuit
@@ -38,12 +31,9 @@ universe u
 
 variable {Digest : Type u} [AddCommGroup Digest]
 
-/-! ## The Pedersen homomorphism re-homed onto Layer A (`CryptoPrimitives`).
+/-! ## The Pedersen homomorphism over Layer A (`CryptoPrimitives`).
 
-`PrivacyKernel.committed_conservation_kernel` proved conservation over the OLD flat
-`CryptoKernel`. Here we re-home the same `map_sum` argument onto the Layer-A
-`CryptoPrimitives.commit`/`commit_hom` (the overhaul's grounded primitive), exactly as
-`PHASE-CRYPTOKERNEL.md §5` calls for ("the Layer-A `commit`/`commit_hom` re-homed"). -/
+Conservation is the `map_sum` argument over `CryptoPrimitives.commit`/`commit_hom`. -/
 
 /-- **The Layer-A Pedersen commitment as an additive monoid hom** `(Int × Int) →+ Digest`.
 `commit_hom` is `f (x+y) = f x + f y` on pairs `(value, blinding)`, and `commit_zero` (derived
@@ -181,22 +171,12 @@ theorem statementOf_outsC_sum (commit : Int → Int → Digest) (circuit : Circu
     (statementOf commit circuit).outsC.sum = listCommit commit circuit.outs :=
   rfl
 
-/-- **`pedersen_conservation_bridge` — THE deliverable (the analog of `merkle_bridge`).** With
-the disclosed `Statement` pinned to the trace's commitments (`statementOf`), the Pedersen AIR is
-satisfied IFF the hidden amounts CONSERVE over the commitment group (and are each in range). Both
-directions PROVED:
-
-  * `→` (SOUNDNESS): a satisfying trace forces `Σ commit(inputs) = Σ commit(outputs)` (the
-    disclosed sums are equal, and they equal the `listCommit` group sums by `statementOf`) and
-    each amount in range — so value is conserved over the commitments.
-  * `←` (COMPLETENESS): conserving amounts give a satisfying trace (the `PiBinding`s hold by
-    construction, the range witnesses are the `bits`, and the sum equality transports through
-    the same `statementOf` identity).
-
-NO primitive seam inside — `commit` is abstract. The `binding` of the commitment (that this
-COMMITMENT equation testifies to the *amount* equation) is the Layer-A `CryptoPrimitives.binding`
-`Prop`, consumed by `pedersen_verify_sound`, never here; and the homomorphic step from commitment-
-to value-conservation is `pedersen_value_conservation` (which uses `commit_hom`). -/
+/-- **`pedersen_conservation_bridge`** — with the disclosed `Statement` pinned to the trace's
+commitments (`statementOf`), the Pedersen AIR is satisfied iff the hidden amounts conserve and are
+each in range. Both directions proved: soundness uses the `statementOf` identity to equate the
+disclosed sums; completeness threads the `PiBinding`s by construction. `commit` abstract — no
+primitive seam. The `binding` carrier (that the commitment equation testifies to the amount
+equation) is consumed by `pedersen_verify_sound`, never by the bridge. -/
 theorem pedersen_conservation_bridge (commit : Int → Int → Digest) (circuit : CircuitIR) :
     Satisfies commit (statementOf commit circuit) circuit ↔ Conserves commit circuit := by
   constructor
@@ -226,12 +206,11 @@ theorem pedersen_amounts_nonneg (commit : Int → Int → Digest) (circuit : Cir
     obtain ⟨h0, h1⟩ := range_sound nt.bits hbool
     rw [hrec] at h0 h1; exact ⟨h0, h1⟩
 
-/-! ## The homomorphic step — commitment-sum ⇒ VALUE conservation (THIS uses `commit_hom`).
+/-! ## The homomorphic step — commitment-sum ⇒ value conservation (uses `commit_hom`).
 
-The bridge above is structural over `commit`. The genuinely-grounded Pedersen content is that the
-SUM of commitments equals the commitment of the SUMMED value+blinding (`commit_hom`/`map_sum`) —
-so a balanced commitment sum, given matching total blindings, means the *values* balance. This is
-where `CryptoPrimitives.commit_hom` does the work. -/
+The bridge above is structural over `commit`. The genuinely grounded Pedersen content is that the
+sum of commitments equals the commitment of the summed value+blinding (`commit_hom`/`map_sum`) —
+so a balanced commitment sum, given matching total blindings, means the values balance. -/
 
 /-- A note-list's commitment sum collapses to a single commitment of the summed value under the
 summed blinding (over the `CryptoPrimitives` portal) — `Σ commit vᵢ rᵢ = commit (Σ vᵢ) (Σ rᵢ)`.
@@ -248,14 +227,11 @@ theorem listCommit_collapse [CryptoPrimitives Digest] (notes : List Note) :
       simp only [List.map_cons, List.sum_cons, ih]
       rw [CryptoPrimitives.commit_hom]
 
-/-- **`pedersen_value_conservation` — the homomorphic conservation theorem (uses `commit_hom`).**
-A satisfying trace whose total input blinding equals total output blinding has its INPUT VALUE SUM
-equal to its OUTPUT VALUE SUM *as committed*: `commit (Σ inValue) (Σ inBl) = commit (Σ outValue)
-(Σ outBl)`. This is the Pedersen homomorphism collapsing the per-note commitment sums (the bridge's
-commitment-conservation) into a single value-level commitment equation — the real
-`committed_conservation_kernel` content, re-homed onto the circuit trace. The step from this
-commitment equation to `Σ inValue = Σ outValue` on the amounts is exactly `binding` (the carrier),
-honestly not asserted here. -/
+/-- **`pedersen_value_conservation`** — a conserving trace has its input value sum equal to its
+output value sum as committed: `commit (Σ inValue) (Σ inBl) = commit (Σ outValue) (Σ outBl)`.
+The Pedersen homomorphism (`commit_hom`) collapses per-note commitment sums into a single
+commitment equation. The step from this equation to `Σ inValue = Σ outValue` is the `binding`
+carrier, honestly not asserted here. -/
 theorem pedersen_value_conservation [CryptoPrimitives Digest] (circuit : CircuitIR)
     (h : Conserves (CryptoPrimitives.commit (Digest := Digest)) circuit) :
     CryptoPrimitives.commit ((circuit.ins.map Note.value).sum) ((circuit.ins.map Note.blinding).sum)
@@ -265,13 +241,11 @@ theorem pedersen_value_conservation [CryptoPrimitives Digest] (circuit : Circuit
   rw [← listCommit_collapse, ← listCommit_collapse]
   exact hbal
 
-/-! ## The cleartext→commitment conservation theorem (the `committed_conservation_kernel` re-home).
+/-! ## Cleartext → commitment conservation (the `committed_conservation` theorem).
 
-The classic Pedersen opening of Law 1 over HIDDEN amounts, now over the Layer-A portal: from
-cleartext value conservation (`Σ vᵢ = Σ vₒ`) and matching blinding totals, the COMMITMENT sums
-balance — a verifier confirms conservation while seeing only commitments. PROVED via `commit_sum`
-(= `commit_hom` + `map_sum`). This is the indexed-`Finset` form the executor uses; the bridge
-above is the list/trace form the circuit uses. -/
+From cleartext value conservation (`Σ vᵢ = Σ vₒ`) and matching blinding totals, the commitment
+sums balance — a verifier confirms conservation while seeing only commitments. Proved via
+`commit_sum` (`commit_hom` + `map_sum`). Indexed-`Finset` form used by the executor. -/
 theorem committed_conservation [CryptoPrimitives Digest]
     {ι κ : Type} (insV : ι → Int) (inB : ι → Int) (outV : κ → Int) (outB : κ → Int)
     (sin : Finset ι) (sout : Finset κ)
@@ -315,17 +289,11 @@ class PedersenVerifierKernel (Digest : Type u) (Proof : Type u) [AddCommGroup Di
 
 variable {Proof : Type u}
 
-/-- **`pedersen_verify_sound` — the DERIVED verify law (the analog of `merkle_verify_sound`).**
-Given the STARK-soundness carrier `extractable`, an accepted Pedersen proof PROVES that the hidden
-amounts CONSERVE (and are each non-negative):
-
-    verify stmt proof = true  →  ∃ circuit, statementOf circuit = stmt ∧ Conserves circuit
-
-The proof composes `extract` (accept ⇒ satisfying trace, the crypto carrier) with
-`pedersen_conservation_bridge` (satisfying trace ⇔ conservation, FULLY proved via `commit_hom`).
-The verify law is DERIVED, not assumed. The ONLY hypothesis is `extractable`; the `binding`
-carrier names the residual cryptographic content (commitment-eq testifies amount-eq) but the
-algebra is unconditional. -/
+/-- **`pedersen_verify_sound`** — given `extractable`, an accepted Pedersen proof proves the hidden
+amounts conserve: `verify stmt proof = true  →  ∃ circuit, statementOf circuit = stmt ∧ Conserves circuit`.
+Derived by composing `extract` with `pedersen_conservation_bridge`; never assumed. The `binding`
+carrier names the residual crypto content (commitment-eq testifies amount-eq), but the algebra
+is unconditional. -/
 theorem pedersen_verify_sound [K : PedersenVerifierKernel Digest Proof]
     (hext : K.extractable) (stmt : Statement Digest) (proof : Proof)
     (haccept : K.verify stmt proof = true) :
@@ -372,14 +340,10 @@ theorem pedersen_floor_above_bot :
   show Dial.acceptanceOnly < Dial.selective
   exact Dial.acceptanceOnly_lt_selective
 
-/-! ### The dial wiring — `DiscloseAt` instantiated at the Pedersen verifier's `selective` floor.
+/-! ### The dial wiring — `DiscloseAt` at the Pedersen verifier's `selective` floor.
 
-We instantiate over the `Type` universe (the registry/dial machinery lives at universe 0), as
-`PredicateKernel` does. The statement/proof are the Pedersen `Statement`/`Proof`; `accepts` at
-every notch is the position-independent `Discharged` check (the verifier consults the witness,
-never the disclosure level), and the `leaked` information at the floor is the disclosed
-commitments themselves (the `selective` content) — coarsened to `Unit` here, the wiring being the
-point. -/
+Instantiated over `Type` (the registry/dial machinery lives at universe 0). `accepts` at every
+notch is the position-independent `Discharged` check; `leaked` is coarsened to `Unit`. -/
 
 section Wiring
 
@@ -413,11 +377,9 @@ def pedersenDisclose [PedersenVerifierKernel D P]
     accepts := fun _ => Discharged stmt proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`pedersen_dial_wired` — THE DIAL WIRING (the analog of `merkle_dial_wired`).** The Pedersen
-kind's epistemic floor is `selective` (commitments disclosed), the dial's bottom notch's
-acceptance bit IS the Pedersen verifier's `Discharged` bit, and — given STARK `extractable` — an
-accepting proof PROVES conservation. The dial is pinned to the per-kind verifier, no longer
-floating above the portal. -/
+/-- **`pedersen_dial_wired`** — the Pedersen kind's floor is `selective` (commitments disclosed),
+the dial's bottom notch IS the verifier's `Discharged` bit, and an accepting proof proves
+conservation. Dial pinned to the per-kind verifier. -/
 theorem pedersen_dial_wired [K : PedersenVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P) (stmt : Statement D) (proof : P) :
@@ -436,11 +398,9 @@ theorem pedersen_dial_wired [K : PedersenVerifierKernel D P]
       (pedersenDisclose base stmt proof)
   · exact fun haccept => pedersen_verify_sound hext stmt proof haccept
 
-/-- **`pedersen_registry_cascade` — the §8 discharge through the registry (the analog of
-`merkle_registry_cascade`).** Registering the Pedersen kind, an accepted proof both
-`Discharged`s the kind's predicate (the registry keystone, `registry_sound`) AND — given the
-STARK `extractable` carrier — PROVES conservation (`pedersen_verify_sound`). The cascade
-`registry_sound ∘ pedersen_verify_sound`; the single trust boundary is `extractable`. -/
+/-- **`pedersen_registry_cascade`** — registering the Pedersen kind, an accepted proof both
+`Discharged`s the kind's predicate (`registry_sound`) and — given `extractable` — proves
+conservation (`pedersen_verify_sound`). Single trust boundary: `extractable`. -/
 theorem pedersen_registry_cascade [K : PedersenVerifierKernel D P]
     (hext : K.extractable)
     (base : Registry (Statement D) P)
@@ -574,10 +534,9 @@ example :
 
 end Reference
 
--- TRIPWIRES: the conservation bridge + derived verify-soundness + cascade + dial wiring are
--- kernel-clean. The bridge & range/non-negativity are FULLY proved (the algebra rests on
--- `commit_hom`, the honest `range_iff` gadget — NO primitive seam). The ONLY cryptographic
--- residue is the `extractable`/`binding` carriers (passed as hypotheses), never a hidden `sorry`.
+-- Tripwires: bridge + verify-soundness + cascade + dial wiring are kernel-clean. The algebra
+-- rests on `commit_hom` and the `range_iff` gadget (no primitive seam). Crypto residue:
+-- `extractable`/`binding` carriers (hypotheses), never a `sorry`.
 #assert_axioms commit_sum
 #assert_axioms pedersen_conservation_bridge
 #assert_axioms pedersen_amounts_nonneg

@@ -1,35 +1,25 @@
 /-
 # Dregg2.Catalog — the catalog code-gen (`catalog … where`) + the `discharge` guard-seam tactic.
 
-This is the "industrialize the repetition" module of PHASE-METAPROGRAMMING. Two deliverables
-live here, both behind the `Conserve.lean` honesty rail (real work wrapped in
-`first | <real>; done | fail "<diagnostic>"`, negative-tested with `fail_if_success`):
+Two deliverables:
 
-1. **`catalog NS where | name (binders) := <Guard body> admits <rhs> (by <proof>)?`** — a
-   `command` elaborator that, per entry, emits the `Spec/Guard.lean §7` TRIPLE:
+1. **`catalog NS where | name (binders) := <Guard body> ⊨ <rhs> (by <proof>)?`** — a
+   `command` elaborator emitting the `Spec/Guard.lean §7` triple per entry:
 
        def name (binders) : Guard _ _ := <body>
        @[simp] theorem admits_name (binders) (req w) :
            admits (name <args>) req w = true ↔ <rhs> := by <proof | simp [name]>
-       #assert_axioms admits_name        -- the honesty pin, wired into 100% of output
+       #assert_axioms admits_name        -- honesty pin on 100% of output
 
-   The auto-`#assert_axioms` is the tripwire: a variant whose default `simp [name]` proof
-   secretly needs a `sorry` FAILS AT GENERATION TIME — the codegen cannot manufacture a fake
-   lemma. We DEMONSTRATE it by REGENERATING a real slice of `Spec/Guard.lean §7`
-   (`monotonic`/`sumEquals`/`senderAuthorized`/`nonMembership`) and confirming the generated
-   `admits_*` lemmas are `#assert_axioms`-clean.
+   The auto-`#assert_axioms` is the tripwire: a default proof that secretly needs a `sorry`
+   fails at generation time. The anti-goal is a flat coproduct inductive; the goal is
+   derived smart-constructors over the small primitives (`firstParty`/`witnessed`/`all`/`any`/`gnot`).
 
-   The flat ~90-variant Lean inductive is the ANTI-GOAL (`Guard.lean §1`): we generate
-   smart-constructors over the SMALL primitives (`firstParty`/`witnessed`/`all`/`any`/`gnot`),
-   NOT a coproduct.
+2. **`discharge`** — the guard-seam opener. Rewrites goals mentioning `Guard.admits` via the
+   structural `admits_*` simp set + `Bool.and/or_eq_true`, leaving one goal per leaf. The
+   `Dregg2` aesop rule-set closes leaves automatically — behind the fail-loud rail.
 
-2. **`discharge`** — the guard-seam opener (PHASE-METAPROGRAMMING §2.1). Rewrites a
-   goal/hyp mentioning `Guard.admits` via the `admits_all`/`admits_any`/`admits_gnot`/
-   `admits_firstParty`/`admits_witnessed` simp set + `Bool.and_eq_true`/`or_eq_true`, leaving
-   one goal per leaf. The `Dregg2` aesop rule-set (§2.6) collects that same lemma set so the
-   leaves close automatically — BEHIND the fail-loud rail, never as a license to skip it.
-
-Discipline: no `axiom` / `admit` / `native_decide` / `sorry`. Nothing here can fake a goal.
+Discipline: no `axiom`/`admit`/`native_decide`/`sorry`.
 -/
 import Dregg2.Spec.Guard
 import Dregg2.Tactics
@@ -41,11 +31,10 @@ open Dregg2.Spec Dregg2.Spec.Guard Dregg2.Laws
 
 /-! ## §1 — The catalog code-gen elaborator.
 
-The catalog source-of-truth is *Rust* (`cell/src/program.rs` / `turn/src/action.rs`); we do
-NOT derive against a Lean inductive (that flat port is the legacy mistake). Instead a
-declarative block elaborates each entry to the Guard §7 triple. We restrict the per-entry
-binders to the explicit `(id : type)` form (exactly the §7 shape) so we can reconstruct the
-`name <args>` application head for the characterization lemma. -/
+The catalog source-of-truth is Rust (`cell/src/program.rs` / `turn/src/action.rs`). A
+declarative block elaborates each entry to the Guard §7 triple. Per-entry binders are
+restricted to the explicit `(id : type)` form so the characterization lemma can reconstruct
+`name <args>`. -/
 
 /-- One catalog entry: `| name (binders)* := <Guard body> admits <rhs> (by <proof>)?`.
 Binders are explicit `(id : type)` groups (the §7 shape) — `bracketedBinder`s spliced
@@ -116,13 +105,10 @@ elab_rules : command
       --    that secretly needed a `sorry` trips this `#assert_axioms` AT GENERATION TIME.
       elabCommand <| ← `(command| #assert_axioms $thmName:ident)
 
-/-! ## §2 — Worked slice: REGENERATE `Spec/Guard.lean §7` via the codegen.
+/-! ## §2 — Worked slice: regenerate `Spec/Guard.lean §7` via the codegen.
 
-The exact §7 reconstructions (`monotonic`/`sumEquals`/`senderAuthorized`/`nonMembership`),
-now GENERATED rather than hand-written. We set up the same `variable` context the §7 file
-uses (abstract `Request`/`Statement`/`Witness`, the `Verifiable` oracle), then the block
-emits all three decls per entry. The generated `admits_*` lemmas self-pin via the auto
-`#assert_axioms` — proof that the tripwire fires on the real slice. -/
+Demonstrates the codegen on the `monotonic`/`sumEquals`/`senderAuthorized`/`nonMembership`
+slice. The generated `admits_*` lemmas self-pin via the auto `#assert_axioms`. -/
 
 section CatalogDemo
 variable {Request : Type} {Statement : Type} {Witness : Type} [Verifiable Statement Witness]
@@ -147,30 +133,20 @@ end CatalogDemo
 
 /-! ## §3 — The `Dregg2` aesop rule-set (the leaf closer behind the fail-loud rail).
 
-aesop ships in the toolchain but is unused across `Dregg2/`. We DECLARE a named rule-set
-`Dregg2` here so downstream modules (`import Dregg2.Catalog`) can register the guard-seam
-simp lemmas into it and close the leaves after `discharge` with `aesop (rule_sets := [Dregg2])`
-— used ONLY behind `first | … | fail` (never a license to skip the honesty wrapper).
-
-(Aesop's own rule: a rule-set is NOT visible in the file that declares it — only in
-importing files. So the lemma registration `attribute [aesop … (rule_sets := [Dregg2])] …`
-and any `aesop (rule_sets := [Dregg2])` USE both live in importing modules / the verified
-scratch test, not here. `discharge` below is self-contained `simp only`, so it does not
-depend on the rule-set and compiles in this declaring file.) -/
+A named aesop rule-set `Dregg2` for downstream modules to register guard-seam simp
+lemmas and close leaves with `aesop (rule_sets := [Dregg2])` — only behind the
+`first | … | fail` honesty wrapper. Per aesop's scoping rules, registration and use
+live in importing modules; `discharge` is self-contained `simp only` and does not
+depend on the rule-set. -/
 
 declare_aesop_rule_sets [Dregg2]
 
 /-! ## §4 — `discharge`: the guard-seam opener.
 
-The single most-repeated opening move across `Spec/Guard` consumers and every `Exec/*`
-admissibility proof: unfold `admits`, push it through the `all`/`any`/`gnot` structure via
-the §3 `@[simp]` lemmas, and split the boolean conjunction/disjunction into one goal per
-leaf (`firstParty` decidable-now / `witnessed` oracle).
-
-HONESTY RAIL (the `Conserve.lean` template): the real rewrite is wrapped in
-`first | (…; done) | fail "…"`. The `done` is load-bearing — it forces the tactic to FAIL
-LOUDLY rather than leave a half-unfolded `admits` masquerading as progress, and the `fail`
-branch reports a clear diagnostic when the goal mentions no `admits` at all. -/
+Unfolds `admits` through the `all`/`any`/`gnot` structure via the `@[simp]` lemmas, splits
+the boolean conjunction/disjunction, and leaves one goal per leaf. Honesty rail: the rewrite
+is wrapped in `first | (…; done) | fail "…"`. The `done` is load-bearing — it fails loudly
+if any leaf is left open, preventing half-unfolded progress. -/
 
 /-- `discharge` — reduce a goal mentioning `Guard.admits` to its leaf obligations and close
 them from context: rewrite via the structural `admits_*` simp set (`all`/`any`/`gnot`/
@@ -202,11 +178,10 @@ macro "discharge" : tactic =>
     | fail "discharge: no `Guard.admits` to unfold (or a leaf was left open) — \
         is this a guard goal, and are its context facts present?")
 
-/-! ## §5 — Demonstrations / regression tests (the honesty rail, build-checked).
+/-! ## §5 — Demonstrations / regression tests.
 
-These `example`s ARE the usage doc + the regression guard for `discharge`: one shows it
-closing a REAL `admits` goal; one is a `fail_if_success` negative test proving it CANNOT
-fake-close a non-guard goal. (No `#assert_axioms` on anonymous `example`s.) -/
+`example`s demonstrating `discharge` on real goals and `fail_if_success` negative tests
+confirming it cannot close non-guard goals or false leaves. -/
 
 section DischargeDemo
 variable {Request : Type} {Statement : Type} {Witness : Type} [Verifiable Statement Witness]

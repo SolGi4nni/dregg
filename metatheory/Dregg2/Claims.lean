@@ -1,58 +1,27 @@
 /-
-# Dregg2.Claims — the consolidated axiom-hygiene ledger (dregg2's `verify-claims`).
+# Dregg2.Claims — the consolidated axiom-hygiene ledger.
 
-This module is the MACHINE-CHECKED half of `metatheory/CLAIMS.md`. It imports the
-ROOT (`Dregg2`, which transitively pulls in every module) and then re-pins, in ONE
-place, every keystone the corpus advertises as "PROVED / axiom-clean" with
-`#assert_axioms`. Each pin ELABORATES to an error (via the `Dregg2.Tactics` tripwire)
-unless the named theorem's entire axiom set is `{propext, Classical.choice, Quot.sound}`
-— in particular it FAILS on any `sorryAx`. So `lake build` (and `lake env lean` on this
-file) becomes a credibility artifact: if any claimed keystone silently regresses to
-`sorry`, the build breaks HERE, at the ledger, not somewhere downstream.
+The machine-checked half of `metatheory/CLAIMS.md`. Imports the root `Dregg2` (which
+transitively pulls in every module) and re-pins every keystone the corpus advertises as
+proved/axiom-clean via `#assert_axioms`. A pin fails unless the theorem's full axiom set
+is `{propext, Classical.choice, Quot.sound}` — in particular it fails on any `sorryAx`.
 
-Discipline (this file proves NOTHING new — it AUDITS):
-  * Contents are ONLY `import Dregg2` + `#assert_axioms` lines + comments.
-  * No `axiom` / `admit` / `native_decide` / `sorry`.
-  * A keystone that legitimately RESTS on a §8/Law-1 primitive (a `sorry`'d operational
-    obligation, or an `axiom`-keyword crypto oracle) is NOT pinned here — that would
-    correctly fail. Such keystones, and the genuine OPENs (cross-cell/operational
-    bisimulation, Byzantine quorum-intersection, distributed-death co-witnessability,
-    the Authority whole-history closure, the §8 crypto obligations), are listed in
-    `metatheory/CLAIMS.md`, NOT here.
+This file proves nothing new — it audits:
+  * Contents are ONLY `import Dregg2` + `#assert_axioms`/`#assert_namespace_axioms` lines.
+  * No `axiom`/`admit`/`native_decide`/`sorry`.
+  * Keystones that rest on §8 primitives or `sorry`'d operational obligations are NOT pinned
+    here (they would correctly fail). Genuine OPENs are listed in `metatheory/CLAIMS.md`.
+  * §8 oracles entering as typeclass parameters/hypotheses (`CryptoKernel`/`World`/`Verifiable`)
+    do not appear in `collectAxioms`; theorems depending on them are kernel-clean and pinned.
+  * Wrong names cause `unknownConstant` build errors — deliberately.
 
-(§8 oracles that enter as TYPECLASS PARAMETERS / HYPOTHESES — `CryptoKernel` / `World` /
-`Verifiable` — do NOT appear in `collectAxioms` and so do NOT trip the guard; the
-theorems that take them as hypotheses are genuinely kernel-clean and ARE pinned.)
-
-NOTE: keystones are referenced here by their FULLY-QUALIFIED names (the home modules pin
-them bare, from inside their own `namespace`). A wrong name is an `unknownConstant` build
-error — which is, deliberately, the point.
-
-## The two-layer zero-sorry guard (be honest about which is which).
-
-There are TWO complementary, deliberately-different guards keeping the corpus at ZERO sorry:
-
-  (b) THIS LEDGER (`#assert_axioms` per-decl, `#assert_namespace_axioms` per-namespace).
-      STRONGER but TARGETED: it catches a sorry even when it is *transitively inherited*
-      through a renamed/aliased lemma — `collectAxioms` follows the whole dependency DAG and
-      rejects any `sorryAx`. BUT its reach is exactly its PIN LIST. `#assert_axioms` is
-      per-declaration; `#assert_namespace_axioms` is per-namespace. Neither is whole-corpus:
-      a sorry in an UNPINNED decl in an UNPINNED namespace would NOT trip this layer. (We pin
-      aggressively, but the pin list is, by construction, an enumeration — not a closure.)
-
-  (a) THE TEXTUAL CI GREP (`scripts/no-sorry-metatheory.sh`, wired as the CI job
-      `metatheory-no-sorry`). WEAKER per-decl (purely textual; it does not chase transitive
-      inheritance — that is (b)'s job) but COMPREHENSIVE: it runs the whole `lake build` and
-      FAILS on ANY `declaration uses \`sorry\`` warning, which Lean emits for EVERY declaration
-      closed with `sorry`, `admit`, or `sorryAx` — pinned or not, named or anonymous, in any
-      module. No enumeration is needed to stay total. This is the real whole-corpus net.
-
-So: (b) is the deep-but-targeted transitive-inheritance tripwire; (a) is the broad textual
-whole-corpus floor. They are NOT redundant — each covers what the other cannot. The honest
-summary: the comprehensive "there is no sorry ANYWHERE" guarantee is (a), the CI grep; this
-ledger (b) is the stronger guarantee that the SPECIFICALLY-PINNED keystones additionally carry
-no INHERITED sorry. (Lean has no first-class whole-corpus `#assert_no_sorry` command, so (a)
-necessarily lives outside the build, in CI, as the textual net.)
+Two-layer zero-sorry guard:
+  (a) Textual CI grep (`scripts/no-sorry-metatheory.sh`): comprehensive but textual only;
+      runs the whole `lake build` and fails on any `declaration uses 'sorry'` warning.
+      This is the whole-corpus net.
+  (b) This ledger (`#assert_axioms` / `#assert_namespace_axioms`): stronger per-claim
+      (follows the full dependency DAG, catches transitively-inherited sorry) but targeted
+      to its pin list. Not redundant with (a) — each covers what the other cannot.
 -/
 import Dregg2
 
@@ -64,12 +33,12 @@ namespace Dregg2.Claims
 #assert_axioms Dregg2.Conserve.sum_conserve_of_deltas_zero
 #assert_axioms Dregg2.Conserve.sum_transfer_conserve
 
-/-! ## §0a — The abstract `Core` Law-1 + `Laws` find/verify seam — both formerly `sorry`'d,
-now carried as TYPECLASS FIELDS (the `CryptoKernel` Prop-portal idiom) and recovered as
-kernel-clean lemmas. `Core.conservation_step` accesses `ConservesStep.step` (discharged by the
-executable kernel, §1); `Laws.search_sound` accesses `SoundSearchable.find_sound` (the genuine,
-non-trivial plugin contract — `Authority.goodSoundMatcher` satisfies it, `evilMatcher_not_sound`
-proves a returns-7 plugin CANNOT). Both are now PINNED: they carry NO `sorry`. -/
+/-! ## §0a — `Core` Law-1 + `Laws` find/verify seam (carried as typeclass fields).
+
+`Core.conservation_step` accesses `ConservesStep.step` (discharged by the executable
+kernel, §1). `Laws.search_sound` accesses `SoundSearchable.find_sound` — the non-trivial
+plugin contract (`Authority.goodSoundMatcher` satisfies it; `evilMatcher_not_sound` proves
+a returns-7 plugin cannot). -/
 #assert_axioms Dregg2.Core.conservation_step
 #assert_axioms Dregg2.Core.conservation_ordinary
 #assert_axioms Dregg2.Core.mint_delta
@@ -79,19 +48,17 @@ proves a returns-7 plugin CANNOT). Both are now PINNED: they carry NO `sorry`. -
 #assert_axioms Dregg2.Authority.goodSoundMatcher
 #assert_axioms Dregg2.Authority.evilMatcher_not_sound
 
-/-! ## §1 — The executable spine (Phase 2): cexec is step-complete, the cell lives.
-`cexec_attests` realizes the abstract `Core.ConservesStep` class field AS A THEOREM
-about the executable machine; `conservation_step_realizes_balance` discharges the abstract
-Law-1 balance from it, providing the `instConservesStepExec` instance (so the abstract
-`Core` corollaries auto-resolve their `[ConservesStep]` constraint against the running kernel —
-a real proof, never a re-`sorry`). `livingCell_sound` is the genuine
-bisimulation-to-golden-oracle. (`Dregg2.Exec.*`) -/
+/-! ## §1 — The executable spine: `cexec` is step-complete, the cell lives.
+
+`cexec_attests` realizes `Core.ConservesStep` as a theorem about the executable machine;
+`conservation_step_realizes_balance` discharges the abstract Law-1 balance and provides
+`instConservesStepExec`. `livingCell_sound` is the bisimulation-to-golden-oracle. -/
 #assert_axioms Dregg2.Exec.cexec_attests
 #assert_axioms Dregg2.Exec.conservation_step_realized
 #assert_axioms Dregg2.Exec.conservation_step_realizes_balance
 #assert_axioms Dregg2.Exec.livingCell_sound
 
-/-! ## §1b — The record cell GROWS νF life (de-toy): conservation over name-keyed records. -/
+/-! ## §1b — Record cell: conservation over name-keyed records. -/
 #assert_axioms Dregg2.Exec.RecordCell.recCexec_attests
 #assert_axioms Dregg2.Exec.RecordCell.recordCell_obs_advances
 #assert_axioms Dregg2.Exec.RecordCell.recReplay_preserves_sumEquals
@@ -202,10 +169,9 @@ bisimulation-to-golden-oracle. (`Dregg2.Exec.*`) -/
 #assert_axioms Dregg2.Spec.Conditional.await_two_faces
 #assert_axioms Dregg2.Spec.Conditional.temporal_face_is_await_discharge
 
-/-! ## §11 — Spec.VatBoundary: Φ the named-lossy caps↔keys functor. `phi_functorial` is now
-PROVED (and PINNED) under its explicit `NonDegenerate` hypothesis (the honest residual is that
-named hypothesis, NOT a `sorry`); `nonDegenerate_concrete` proves the hypothesis is satisfiable,
-and `phi_functorial_concrete` is `phi_functorial` applied to it — all axiom-clean. -/
+/-! ## §11 — Spec.VatBoundary: Φ the named-lossy caps↔keys functor. `phi_functorial` is
+proved under the explicit `NonDegenerate` hypothesis (the honest residual — not a `sorry`);
+`nonDegenerate_concrete` proves the hypothesis is satisfiable. -/
 #assert_axioms Dregg2.Spec.phi_admits_iff_discharged
 #assert_axioms Dregg2.Spec.cross_vat_needs_witness
 #assert_axioms Dregg2.Spec.phi_drops_confinement
@@ -220,16 +186,11 @@ and `phi_functorial_concrete` is `phi_functorial` applied to it — all axiom-cl
 #assert_axioms Dregg2.Spec.nonDegenerate_concrete
 #assert_axioms Dregg2.Spec.phi_functorial_concrete
 
-/-! ## §12 — Spec.Coherence: the cross-subsystem weave (one order; guard=authority meet).
+/-! ## §12 — Spec.Coherence: the cross-subsystem weave (guard = authority meet).
 
-PENDING-OLEAN-REBUILD (race-safe parking). `Dregg2.Spec.Coherence` is `sorry`-free in
-source and self-pins its keystones in its own module, but its import was added to the root
-`Dregg2.lean` only after the last `Dregg2.olean` was produced — so these constants are NOT
-yet in this file's import closure (a `lake build` will pull them in; this agent must not
-build, other agents hold the tree). Pinning a not-yet-in-closure constant is a hard
-`unknownConstant` build error, so the pins below are PARKED, not deleted. Re-enable
-(uncomment) once `Dregg2.Spec.Coherence.olean` exists. They are listed in
-`metatheory/CLAIMS.md` as PROVED (home-module self-pinned). -/
+OPEN: pins parked pending olean rebuild. `Dregg2.Spec.Coherence` is sorry-free in source
+and self-pins in its own module, but is not yet in this file's import closure. Re-enable
+once `Dregg2.Spec.Coherence.olean` exists. Listed as proved in `metatheory/CLAIMS.md`. -/
 -- #assert_axioms Dregg2.Spec.guard_is_authority_conferral
 -- #assert_axioms Dregg2.Spec.conferralGuard_admits_self
 -- #assert_axioms Dregg2.Spec.introduce_passes_conferralGuard
@@ -264,13 +225,9 @@ build, other agents hold the tree). Pinning a not-yet-in-closure constant is a h
 
 /-! ## §16 — Upgrade: anti-brick set_program (version pin + signature fallback).
 
-The two anti-brick keystones below ARE in closure and pinned. The eight Envelope-spine
-keystones (`invariant_intro`, `safety_preservation`, `admit_preserves_safety`,
-`self_improvement_is_safe`, `genealogy_sound`, `identity_vouch_unconditional`,
-`upgradeGenealogy_sound`, `signatureVouchUnbrickable`) exist `sorry`-free in
-`Dregg2/Upgrade.lean` source (and the module self-pins them), but the live `Upgrade.olean`
-predates that source edit, so they are not yet in this file's closure — PARKED (same
-race-safe reason as §12), listed PROVED in `metatheory/CLAIMS.md`, re-enable after rebuild. -/
+The two anti-brick keystones are pinned. The eight Envelope-spine keystones are sorry-free
+in source and self-pinned in `Dregg2/Upgrade.lean`, but not yet in this file's closure —
+parked (same reason as §12). Re-enable after rebuild. -/
 #assert_axioms Dregg2.Upgrade.upgrade_never_bricks
 #assert_axioms Dregg2.Upgrade.stale_version_falls_back_to_signature
 -- #assert_axioms Dregg2.Upgrade.invariant_intro
@@ -289,14 +246,9 @@ race-safe reason as §12), listed PROVED in `metatheory/CLAIMS.md`, re-enable af
 #assert_axioms Dregg2.Proof.refine_integrity
 #assert_axioms Dregg2.Proof.refine_integrity_intra
 
-/-! ## §18 — Session wave (2026-05-30): the VCG/WP program logic, the operational-LTS first
-stone, the 2nd §8 discharge (Pedersen), and the first-app Spec layer. These are whole NEW
-clean modules (zero `sorry`), so we pin them at the NAMESPACE level via the
-`#assert_namespace_axioms` command (Track C) rather than line-by-line — every theorem in each
-namespace is asserted kernel-clean at once. (Privacy Tier-3's de-vacuified keystones,
-`Crypto.Merkle`'s verifier-derivation, and `Exec.RecordKernel`'s record-cell `cexec_attests`
-are pinned in their HOME modules; the operational-LTS / Byzantine / death-undecidability OPENs
-remain listed in `metatheory/CLAIMS.md`, NOT here.) -/
+/-! ## §18 — VCG/WP program logic, operational LTS, Pedersen §8 discharge, first-app Spec.
+
+Pinned at the namespace level (every theorem in each namespace is asserted kernel-clean). -/
 #assert_namespace_axioms Dregg2.Proof.WP
 #assert_namespace_axioms Dregg2.Proof.LTS
 #assert_namespace_axioms Dregg2.Crypto.Merkle
@@ -304,15 +256,11 @@ remain listed in `metatheory/CLAIMS.md`, NOT here.) -/
 #assert_namespace_axioms Dregg2.Crypto.PredicateKernel
 #assert_namespace_axioms Dregg2.Protocol.WorkflowGuard
 
-/-! ## §19 — Autonomous wave (2026-05-30): honest-OPENs CLOSED + the authority-turn LTS.
-Four sorries that were OPEN are now PROVED — and THREE of them were FALSE/contradictory *as stated*
-(restated honestly, then proved): deadness-undecidability in its genuine **computable** form (via a
-`haltGraph` halting reduction; the old arbitrary-`Bool`-function form was classically vacuous), its
-`Lifecycle` + `CellLiveness` re-exports, the quorum-intersection pigeonhole (`hbound` restated to the
-honest union-cardinality bound), and GST-liveness (discharged from a NEW assumed `World.gst_liveness`
-oracle law, the `recv_mono` pattern — a class field, hence kernel-clean here). Plus the authority-turn
-executable transition completing the single-cell operational LTS (`Proof.LTS`'s `authAbsStep_forward`/
-`absStep'_forward` are auto-covered by §18's namespace pin). -/
+/-! ## §19 — OPENs closed + authority-turn LTS.
+
+Deadness-undecidability (computable form via `haltGraph` halting reduction),
+quorum-intersection (honest union-cardinality bound), and GST-liveness (from a
+`World.gst_liveness` class field). -/
 #assert_axioms Dregg2.Liveness.dead_undecidable
 #assert_axioms Dregg2.Spec.Lifecycle.distributed_death_not_co_witnessable
 #assert_axioms Dregg2.Exec.CellLiveness.death_not_decidable
@@ -324,79 +272,58 @@ executable transition completing the single-cell operational LTS (`Proof.LTS`'s 
 #assert_axioms Dregg2.Exec.recKRevokeTarget_execGraph
 #assert_axioms Dregg2.Exec.recKDelegate_grounds
 
-/-! ## §20 — Autonomous wave 2 (2026-05-30): the last LTS-gated + framing OPENs closed.
-`deadlock_freedom_by_design` (was FALSE over initial projections — counterexample `deadlock_initial_counterexample`;
-restated + proved over the choreography reachable-config LTS `GStep`/`GReach`, on the `NoRec` fragment) and BOTH
-`Hyperedge` opens (`hyperedge_sound_bisim` was ill-posed over a free `Spec` — `hyperedge_sound_bisim_ill_posed`
-records the refutation; restated to the reflexive form; `hyper_not_all_admissible` was true, proved). Plus the
-THIRD §8 discharge, `Crypto.NonMembership` (sorted-tree neighbor-bracketing). All now sorry-free ⟹ pinnable at
-the namespace level. (HISTORICAL: this wave left 3 by-design sorries — `Core.conservation_step`,
-`Laws.search_sound`, `Spec.VatBoundary.phi_functorial`-abstract. The ZERO-SORRY wave then RETIRED all three:
-the first two became typeclass FIELDS — `Core.ConservesStep.step` / `Laws.SoundSearchable.find_sound` — recovered
-as kernel-clean lemmas (§0a) and discharged/witnessed; `phi_functorial` became PROVED under an explicit
-`NonDegenerate` hypothesis (§11). The corpus is now at ZERO `sorry`.) -/
+/-! ## §20 — LTS-gated + framing OPENs closed; third §8 discharge (`Crypto.NonMembership`).
+
+`deadlock_freedom_by_design` proved over the choreography reachable-config LTS `GStep`/
+`GReach` on the `NoRec` fragment. Both `Hyperedge` opens restated and proved.
+`Crypto.NonMembership` (sorted-tree neighbor-bracketing). -/
 #assert_namespace_axioms Dregg2.Crypto.NonMembership
 #assert_namespace_axioms Dregg2.Coordination
 #assert_namespace_axioms Dregg2.Hyperedge
 
-/-! ## §21 — Autonomous wave 3 (2026-05-30): papers collected → the hard problems' STRONG forms,
-two more §8 discharges, and the closed userspace-verification loop. The classics (FLP/DLS88/HotStuff)
-+ modern quorum-systems paper were fetched into `pdfs/`; with them: `Crypto.Temporal`/`Crypto.Dfa`
-(4th/5th §8 discharges, both-direction bridges, no seam), `Proof.BFT` (O1 STRONG `bft_safety` via the
-honest-witness `n−f` quorum intersection — Malkhi–Reiter/Li–Lesani — + O2 reduced-assumption GST
-liveness; all adversary assumptions are structure FIELDS, not axioms), `Proof.CrossCellLTS`
-(the bilateral cross-cell forward-simulation square + a PROVED obstruction that it does NOT reduce to
-the single-cell squares — tensor-non-finality, operationally), and `Proof.WPCatalog` (the closed
-loop: eDSL program → vcg → fail-loud `vcg_discharge` → `vcg_run_sound` capstones). All sorry-free
-(their residuals are PROSE `-- OPEN:`s — Dfa reference kernel, BFT pacemaker, N-ary forest — not
-sorries), so namespace-pinnable. -/
+/-! ## §21 — 4th/5th §8 discharges + BFT safety/liveness + cross-cell LTS + WP catalog.
+
+`Crypto.Temporal`/`Crypto.Dfa` (both-direction bridges), `Proof.BFT` (O1 strong
+`bft_safety` via `n−f` quorum intersection + O2 GST liveness; all adversary assumptions
+are structure fields), `Proof.CrossCellLTS` (bilateral forward-simulation + tensor-non-finality
+obstruction), `Proof.WPCatalog` (eDSL → vcg → `vcg_run_sound` closed loop). Residuals are
+prose OPEN comments, not sorries. -/
 #assert_namespace_axioms Dregg2.Crypto.Temporal
 #assert_namespace_axioms Dregg2.Crypto.Dfa
 #assert_namespace_axioms Dregg2.Proof.BFT
 #assert_namespace_axioms Dregg2.Proof.CrossCellLTS
 #assert_namespace_axioms Dregg2.Proof.WPCatalog
 
-/-! ## §22 — Papers-in-hand wave (2026-05-30): the hard problems' deep forms.
-With FLP/DLS88/HotStuff/Streamlet + the quorum-systems/view-sync papers fetched: `Proof.BFTLiveness`
-(the O2 PACEMAKER closed — a GST round provably obtains from a DLS88+ELRS+HotStuff `Pacemaker`, all
-honest fields; `World.gst_liveness` now DERIVED), `Proof.ForestLTS` (the N-ary cross-cell forest
-square, Σ=0 binding hypothesis-routed; bilateral = `Fin 2` slice), `Proof.ContendedCrossCell` (the
-contention DICHOTOMY, BOTH poles PROVED: I-confluent ⇒ schedule-agnostic commit; coupled Σ=0 ⇒ `¬∃`
-schedule-agnostic commit, the BEC/CAP impossibility as a theorem), and `Crypto.Bridge` (the 6th §8
-discharge). All sorry-free (residuals — the randomized synchronizer construction, the coinductive
-unbounded-interleaving adversary, Custom/BlindedSet kinds — are PROSE `-- OPEN:`s). The actual-
-metatheory sibling `Metatheory/EpistemicConsensus.lean` (fault-tolerant distributed-knowledge-by-
-verification + a UC static-composition fragment) self-pins in its own file (verified standalone). -/
+/-! ## §22 — BFT liveness + N-ary forest LTS + contention dichotomy + 6th §8 discharge.
+
+`Proof.BFTLiveness` (pacemaker closed; `World.gst_liveness` derived from DLS88+HotStuff fields),
+`Proof.ForestLTS` (N-ary cross-cell forest square), `Proof.ContendedCrossCell` (I-confluent ⇒
+schedule-agnostic commit; coupled Σ=0 ⇒ ¬∃ schedule-agnostic commit), `Crypto.Bridge`
+(6th §8 discharge). -/
 #assert_namespace_axioms Dregg2.Proof.BFTLiveness
 #assert_namespace_axioms Dregg2.Proof.ForestLTS
 #assert_namespace_axioms Dregg2.Proof.ContendedCrossCell
 #assert_namespace_axioms Dregg2.Crypto.Bridge
 
-/-! ## §23 — Cascade-integration wave (2026-05-31): the replacement reaches the wire + the coinductive
-OPEN closes. The cascade is REPLACE-not-certify (the verified kernel swaps in for dregg1's busted
-executor). `Exec.TurnExecutor` (`execTurn_attests` = all 4 StepInv conjuncts over a linear multi-Action
-turn, step-complete by construction) + `Exec.Forest` (`execForest_attests` — the nested delegated
-call-forest, Granovetter-preserving via `derive_no_amplify`, N-ary Σ=0 conservation) = the replacement
-turn-executor. `Exec.CircuitEmit` (`emittedMerkle_bridge`/`emitA_faithful`/`merkleC1_position_valid` —
-the kernel + Merkle + algebraic ConstraintExpr circuits emit faithfully to the fingerprint-bound Rust
-backend). `Proof.CoinductiveAdversary` (`obsBisim_of_uptoComm`) CLOSES the last coinductive research
-residue via the VENDORED+PORTED Paco (`namespace Paco`, hxrts/paco-lean MIT, 4.26→4.30, 23 modules)'s
-gupaco up-to-context closure. (FFI caps-marshalling + record-state are Rust-side / dregg-lean-ffi,
-differential-validated, not pinned here.) -/
+/-! ## §23 — Replacement executor reaches the wire + coinductive OPEN closes.
+
+`Exec.TurnExecutor` (all 4 StepInv conjuncts, step-complete by construction) +
+`Exec.Forest` (nested delegated call-forest, Granovetter-preserving, N-ary Σ=0
+conservation) = the replacement turn-executor. `Exec.CircuitEmit` (kernel + Merkle +
+algebraic ConstraintExpr circuits emit faithfully to the fingerprint-bound Rust backend).
+`Proof.CoinductiveAdversary` (`obsBisim_of_uptoComm`) closes the coinductive open via
+vendored Paco (gupaco up-to-context closure). -/
 #assert_namespace_axioms Dregg2.Exec.TurnExecutor
 #assert_namespace_axioms Dregg2.Exec.Forest
 #assert_namespace_axioms Dregg2.Exec.CircuitEmit
 #assert_namespace_axioms Dregg2.Proof.CoinductiveAdversary
 #assert_namespace_axioms Paco
 
-/-! ## §24 — Widening wave (2026-05-31): full op-set + cross-cell forest + runtime-character + eDSL-C +
-schema-migration + §8-gadgets-to-wire. The replacement executor covers EVERY dregg1 turn kind
-(`TurnExecutorFull.execFull_attests`); the nested forest spans cells (`CrossCellForest`, Σ=0
-binding-carried); the Robigalia OS payoff is theorems (`CellRuntime`: checkpoint/replay/time-travel);
-the eDSL trilogy is complete (`DSLEffect`); cells migrate schemas without bricking
-(`StateMigration.migrate_*`); and the other §8 gadget circuits emit to the wire (`CircuitEmitGadgets`,
-each composing emit-faithfulness with its gadget bridge — the Rust decoder fingerprint-matched native
-for Merkle in dregg-lean-ffi). -/
+/-! ## §24 — Full op-set + cross-cell forest + runtime + eDSL + schema-migration + gadget circuits.
+
+`TurnExecutorFull` covers every turn kind; `CrossCellForest` (Σ=0 binding-carried);
+`CellRuntime` (checkpoint/replay/time-travel); `DSLEffect` (eDSL trilogy); `migrate_*`
+(schema migration without bricking); `CircuitEmitGadgets` (gadget circuits to the wire). -/
 #assert_namespace_axioms Dregg2.Exec.TurnExecutorFull
 #assert_namespace_axioms Dregg2.Exec.CrossCellForest
 #assert_namespace_axioms Dregg2.Exec.CellRuntime
@@ -406,137 +333,92 @@ for Merkle in dregg-lean-ffi). -/
 #assert_axioms Dregg2.Exec.migrate_conserves
 #assert_axioms Dregg2.Exec.migrate_anti_brick
 
-/-! ## §25 — Open-loops wave (2026-05-31): gas-metering as a fail-closed liveness guard +
-the CANONICAL interior-h probabilistic-oracle witness. `Gas` layers a `Nat`-valued resource bound
-beside `execFullTurn` (`gas_exhaustion_fails_closed`: over-budget ⇒ none with no partial mutation;
-`gas_sufficient_runs`: when affordable the metered state EQUALS the un-metered one — a pure guard;
-`gas_conserves`/`gas_preserves_attests`: removes no safety, orthogonal to ℤ-conservation).
-`BeaconSpaceInterior` supersedes the Dirac-`h=1` boundary witness with `Measure.infinitePi
-(Bernoulli 3/4)^ℕ` at strictly-interior `h=3/4`, discharging `indep_block` via genuine cross-view
-independence (`Measure.infinitePi_pi`) — the BeaconSpace abstraction is non-vacuously instantiable at
-a real interior honest-fraction (the ProductMeasure "obstruction" was a stale uncompiled olean, now built). -/
+/-! ## §25 — Gas metering + canonical interior beacon-space witness.
+
+`Gas`: `gas_exhaustion_fails_closed` (over-budget ⇒ none, no partial mutation);
+`gas_sufficient_runs` (metered = un-metered when affordable); orthogonal to conservation.
+`BeaconSpaceInterior`: instantiation at strictly-interior `h=3/4` via `Measure.infinitePi
+(Bernoulli 3/4)^ℕ` with genuine cross-view independence. -/
 #assert_namespace_axioms Dregg2.Exec.Gas
 #assert_namespace_axioms Dregg2.Proof.BeaconSpaceInterior
 
-/-! ## §26 — Wave 10 (2026-05-31): the executor axis begins + the proof-carrying forest.
-`ProofForest` packages the ship-the-tree architecture: per-node `StepProofValid` (the §8 circuit
-seam, an explicit hypothesis) × `Linked` (prev.newCommit = next.oldCommit) ⇒ the whole forest attests
-StepInv (reusing `execForest_attests`) — aggregation/recursion is deferred PERF, not correctness.
-`TriDomain` (E1) extends conservation from balance-only to the three domains dregg1 enforces
-(balance+authority+metadata), each conserving independently. `AuthModes` (E2) gives the 6 real
-authorization modes with witness dispatch + per-mode soundness — incl. `captp_granted_le_held`, the
-non-amplification the dregg1 Rust was missing (now also fixed in captp/handoff.rs). `EffectTransfer`
-(E3) is the vertical-slice reference template (exec→conserves→authorized→metadata→forward-sim) that
-the other 50 effects instantiate. `TransferAir` (Spike) formalizes the REAL air.rs:473 constraint over
-BabyBear: field-constraint+range ⇒ ℤ balance update, AND `transfer_underflow_attack` — the off-circuit
-wrap gap as a theorem (since closed in-circuit by the RANGECHECK Rust lane, width 126→186). -/
+/-! ## §26 — Proof-carrying forest + tri-domain conservation + auth modes + Transfer vertical slice.
+
+`ProofForest`: per-node `StepProofValid` × `Linked` ⇒ whole forest attests StepInv.
+`TriDomain` (balance+authority+metadata, each independently conserving). `AuthModes` (6 modes
+with witness dispatch; `captp_granted_le_held` non-amplification). `EffectTransfer` (vertical-slice
+template). `TransferAir` (BabyBear constraint soundness + `transfer_underflow_attack` gap theorem). -/
 #assert_namespace_axioms Dregg2.Exec.ProofForest
 #assert_namespace_axioms Dregg2.Exec.TriDomain
 #assert_namespace_axioms Dregg2.Exec.AuthModes
 #assert_namespace_axioms Dregg2.Exec.EffectTransfer
 #assert_namespace_axioms Dregg2.Spike.TransferAir
 
-/-! ## §27 — Wave 11: E3-breadth, the full effect catalog via the EffectTransfer template.
-Each cluster instantiates exec→conserves→authorized→metadata→forward-sim across its regime:
-`EffectsPaired` (Conservative Σδ=0 — escrow/notes/obligations/queues/bridge-lock-phases; crypto via
-§8 Prop-portal), `EffectsSupply` (Generative disclosed-supply — CreateCell/Factory/Spawn/BridgeMint;
-foreign-finality §8-portal), `EffectsAuthority` (cap-graph edits — each carrying NON-AMPLIFICATION,
-granted≤held), `EffectsState` (Neutral/Monotonic/Terminal field+lifecycle, via the generic field-write
-+ balance/authority non-interference). With EffectTransfer + TurnExecutorFull's mint/burn/grant/revoke,
-this covers dregg1's full effect catalog at the executor (E3 complete). -/
+/-! ## §27 — Full effect catalog via the EffectTransfer template (E3 complete).
+
+`EffectsPaired` (Conservative Σδ=0), `EffectsSupply` (Generative/disclosed), `EffectsAuthority`
+(cap-graph edits, granted≤held non-amplification), `EffectsState` (Neutral/Monotonic/Terminal). -/
 #assert_namespace_axioms Dregg2.Exec.EffectsPaired
 #assert_namespace_axioms Dregg2.Exec.EffectsSupply
 #assert_namespace_axioms Dregg2.Exec.EffectsAuthority
 #assert_namespace_axioms Dregg2.Exec.EffectsState
 
-/-! ## §28 — Wave 12: executor axis E4–E6 complete. `ExecRefinementFull` (E5) closes the general
-forward simulation — a unified `AbsStep` LTS + `exec_full_refines_spec` (every execFull step over all
-5 kinds is a permitted abstract step) + the full operational square `exec_full_step_refines`; the
-whole-history `only_connectivity_begets_connectivity` closure is isolated as the named hypothesis
-`OnlyConnectivityCloses` (NOT a sorry). `ConditionalTurn` (E4) makes dregg1's conditional/await turns
-executable: `execConditionalTurn` (finite Kahn topo-sort + EventualRef slots) with
-conserves/atomic/dependency-sound/forward-sim, the EventualRef read identified with `Await.Op.await`.
-(E6 = the `@[export] dregg_exec_full_turn` FFI lives in Exec/FFI.lean, an export module verified
-standalone + archive-rebuilt; cross-validated by the 9000-case multi-action+adversarial differential.)
-With E1–E6 + the full effect catalog, the verified executor models dregg1's turn semantics and runs. -/
+/-! ## §28 — Executor axis E4–E6 complete: refinement + conditional turns + FFI.
+
+`ExecRefinementFull` (E5): unified `AbsStep` LTS + `exec_full_refines_spec` + full operational
+square; `OnlyConnectivityCloses` is a named hypothesis, not a sorry. `ConditionalTurn` (E4):
+`execConditionalTurn` (finite Kahn topo-sort + EventualRef slots), EventualRef = `Await.Op.await`.
+E6: `@[export] dregg_exec_full_turn` FFI in `Exec/FFI.lean`. -/
 #assert_namespace_axioms Dregg2.Spec.ExecRefinementFull
 #assert_namespace_axioms Dregg2.Exec.ConditionalTurn
 
-/-! ## §29 — Magnesium-axis first increments. `Spike.EffectVmConstraints` formalizes 7 MORE real
-EffectVmAir constraints over BabyBear (selector exactly-one, NoOp identity, transfer hi/dir, balance-lo
-range-check soundness, nonce tick) — the headline `underflow_now_impossible` proves the in-circuit
-range proof (W9-RANGECHECK) makes the wrap the Transfer spike exhibited IMPOSSIBLE in-circuit (no
-executor re-derivation). `Proof.CordialMiners` models dregg1's ACTUAL consensus (the DAG-BFT
-wave/leader/ratify/super-ratify commit rule from blocklace/ordering.rs) and proves `cordial_agreement`
-(no two conflicting committed leaders per wave) by transferring the `n>3f` quorum-intersection core
-from `Proof.BFT` + the equivocation read from `Authority.Blocklace`; liveness/GST/dissemination/Stingray
-are named OPENs (not sorries). -/
+/-! ## §29 — EffectVM constraints + Cordial-Miners DAG consensus.
+
+`Spike.EffectVmConstraints`: 7 BabyBear AIR constraints; `underflow_now_impossible` proves
+the in-circuit range proof makes the Transfer-spike wrap impossible.
+`Proof.CordialMiners`: models dregg1's DAG-BFT (wave/leader/ratify/super-ratify) and proves
+`cordial_agreement` via `n>3f` quorum intersection. Liveness/GST/dissemination are named OPENs. -/
 #assert_namespace_axioms Dregg2.Spike.EffectVmConstraints
 #assert_namespace_axioms Dregg2.Proof.CordialMiners
 
-/-! ## §30 — De-vacuification wave (post faithfulness-audit). The audit (docs/rebuild/
-FAITHFULNESS-AUDIT.md) found systematic over-claims (kernel-clean but vacuous); this wave fixes the
-load-bearing ones. (1) `EffectsAuthority` rights non-amplification was `(⟨t,()⟩).rights ≤ itself`
-(`le_refl`, vacuous over `ExecRights := Unit`); NOW genuine over the real `List Auth` lattice —
-`IsNonAmplifying held granted := capAuthConferred granted ⊆ capAuthConferred held`, with
-`introduce_non_amplifying`/`exercise_non_amplifying` comparing granted-vs-held (two caps) via
-`attenuate_subset`, and `amplifying_grant_rejected` proving teeth (a `node` cap conferring `[control]`
-over a held `endpoint [read,write]` is rejected). `revokeDelegation_authorized` given a load-bearing
-held-edge premise (was a no-premise alias). (2) `TriDomain` authority measure now folds the REAL cap
-table (`authMeasure` over `s.kernel.caps`), so the authority-conservation conjunct is graph-tied, not
-free-param `x=x`. (3) `ConditionalTurn.CondAbsStep` now `conservedInDomain Domain.balance [a'−a]`
-(teeth: `not_condAbsStep_of_ne`), was the always-true `∃δ,a'=a+δ`. (4) `CordialMiners`
-`SuperRatification` now DERIVED from the lace (`ratifyingVoters` over `S.lace`), not assumed fields —
-`cordial_agreement_from_lace`. (5) `EffectVmConstraints2` adds SetField-gating + hi-limb range +
-commitment-shape, and exposes `setfield_aux_honesty_gap` (a new off-circuit gap, as a theorem). -/
+/-! ## §30 — De-vacuification: faithfulness-audit findings fixed.
+
+(1) `EffectsAuthority` non-amplification: genuine over the real `List Auth` lattice
+(`introduce_non_amplifying`/`exercise_non_amplifying` via `attenuate_subset`;
+`amplifying_grant_rejected` as teeth). (2) `TriDomain` authority measure folds the real
+cap table. (3) `ConditionalTurn.CondAbsStep` now `conservedInDomain Domain.balance [a'−a]`
+(was the always-true `∃δ,a'=a+δ`). (4) `CordialMiners` SuperRatification derived from the
+lace. (5) `EffectVmConstraints2` adds SetField-gating + `setfield_aux_honesty_gap` (gap as theorem). -/
 #assert_namespace_axioms Dregg2.Spike.EffectVmConstraints2
 
-/-! ## §31 — Carry-forward wave: the CAVEAT + ATTESTATION faces, faithful to the REAL Rust
-(docs/rebuild/CARRY-FORWARD-SYNTHESIS.md). The turn is a 3-faced generator (effects ⊕ caveats ⊕
-attestation); we had built the effect face deeply while the caveat/attestation faces were thin/shadow
-and the Rust was the richer ground truth. These ADDITIVE modules carry the real semantics:
-`Authority.CaveatChain` = the macaroon HMAC append-only chain (verify_iff_wellTagged, append_narrows,
-integrity_tail_binds, forgery_requires_mac_query reducing forge⇒break-HMAC, removal_breaks_tail) — NOT
-the old `Ctx→Bool`; `Authority.ThirdParty` = the real 3P discharge (accepts_iff over ticket/VID
-key-recovery ∧ bind-to-parent ∧ freshness ∧ predicate, with stale/unbound/cross-bound rejection teeth)
-— NOT a Bool flip; `Authority.SelectiveDisclosure` = hidden-attribute predicate proofs + selective
-reveal + anonymous unlinkable multi-show wired to credentials; `Authority.DV` = THE REPUDIATION FIX —
-a verifier-indexed `DischargedFor` + the transferability DIAL (public = ∀V ⇒ non-repudiable; designated
-= V₀-only ⇒ deniable via the simulator property), the new attestation-face axis. Crypto (HMAC/AEAD/
-ZK/DV-ZK) stays an honest §8 Prop-portal throughout (MacKernel/DischargeCrypto), never faked. -/
+/-! ## §31 — Caveat + attestation faces, faithful to the Rust ground truth.
+
+`Authority.CaveatChain`: macaroon HMAC append-only chain (verify_iff_wellTagged, append_narrows,
+forgery_requires_mac_query). `Authority.ThirdParty`: real 3P discharge (accepts_iff over
+ticket/VID key-recovery ∧ bind-to-parent ∧ freshness; rejection teeth). `Authority.SelectiveDisclosure`:
+hidden-attribute proofs + selective reveal + anonymous multi-show. `Authority.DV`: verifier-indexed
+`DischargedFor` + transferability dial (public = ∀V non-repudiable; designated = V₀-only deniable).
+Crypto stays an honest §8 Prop-portal throughout. -/
 #assert_namespace_axioms Dregg2.Authority.CaveatChain
 #assert_namespace_axioms Dregg2.Authority.ThirdParty
 #assert_namespace_axioms Dregg2.Authority.SelectiveDisclosure
 #assert_namespace_axioms Dregg2.Authority.DV
 
-/-! ## §32 — The SOUNDNESS WITNESS (consistency + non-vacuity). The worry: do the Prop-carrying
-typeclasses hide a vacuous (assumptions unsatisfiable ⇒ vacuous theorems) or contradictory (conjunction
-derives False) system? `Dregg2.Consistency` answers NO at the system level: `dregg_consistent_nonempty`
-exhibits a single axiom-clean `SystemModel` jointly instantiating all 11 system-level Prop-carriers,
-each with a DISCRIMINATING (non-trivial) witness, with cluster lemmas confirming the interacting
-carriers (World⊗BFT⊗Pacemaker, BFT⊗SuperRatification, anonymity⊗membership) co-instantiate without
-deriving False. The audit's single TRIVIAL-ONLY finding (Crypto/BlindedSet HolderAnonymity, the all-True
-shape) is given a non-trivial witness here + the library de-vacuification is queued. The 3 formerly
-by-design sorries are now RETIRED to ZERO as typeclass FIELDS / a proved-under-hypothesis theorem
-(conservation_step = the Core.ConservesStep field, discharged by Exec.conservation_step_realizes_balance;
-search_sound = the Laws.SoundSearchable.find_sound field, witnessed by goodSoundMatcher with
-evilMatcher_not_sound as teeth; phi_functorial PROVED under NonDegenerate, satisfiable by
-nonDegenerate_concrete). The ~15 crypto-standard carriers
-are the honest §8 boundary (necessarily Lean-trivial — that is 'assume DLog is hard', not vacuity), NOT
-counted as the non-vacuity evidence. This proves CONSISTENCY + NON-VACUITY, distinct from FAITHFULNESS
-(the Rust-grounding axis). -/
+/-! ## §32 — Consistency + non-vacuity witness.
+
+`Dregg2.Consistency`: `dregg_consistent_nonempty` exhibits a single axiom-clean `SystemModel`
+instantiating all 11 system-level Prop-carriers with discriminating (non-trivial) witnesses;
+cluster lemmas confirm co-instantiation does not derive False. The §8 crypto carriers are the
+honest boundary (assume DLog is hard = Lean-trivial by design), not counted as non-vacuity
+evidence. -/
 #assert_namespace_axioms Dregg2.Consistency
 
-/-! ## §33 — The handler-transformer DISCOVERY (higher-order frontier, honest first-order win).
-`Dregg2.HandlerTransformer`: a real first-order unification — `SafeStep` (the safe-composition
-preorder), `instSafeStepFpu` (the camera frame-preserving update IS a `SafeStep` instance),
-`safe_transformer_composes` (the general composition law), `conservation_is_safe_transformer`
-(facet 2 is an instance), and `overshare_rejected` (TEETH — an over-sharing transformer is genuinely
-refused). This makes 'a safe handler-transformer = a frame-preserving update' a theorem with a rejecting
-witness (= the Iris handler frame-rule, de Vilhena–Pottier POPL'21, instantiated). HONEST OPENs (named,
-not sorries): the Fpu=sheaf-gluing weld (camera and proof-forest share no carrier — `proofForest_sheaf_sound`
-composes over chainLinked, not SafeStep) and the comodel-morphism / sheaf-of-handlers / recursive-camera
-higher-order tier (the stalks are verdicts, not handlers). -/
+/-! ## §33 — Handler-transformer: safe composition = frame-preserving update.
+
+`Dregg2.HandlerTransformer`: `SafeStep` preorder; `instSafeStepFpu` (camera Fpu IS a
+`SafeStep`); `safe_transformer_composes`; `conservation_is_safe_transformer`; `overshare_rejected`
+(teeth: an over-sharing transformer is refused). Honest OPENs: the Fpu=sheaf-gluing weld and the
+comodel-morphism/sheaf-of-handlers tier. -/
 #assert_namespace_axioms Dregg2.HandlerTransformer
 
 end Dregg2.Claims

@@ -1,43 +1,17 @@
 /-
-# Dregg2.JointTurn — THE load-bearing cross-cell atomic-turn layer.
+# Dregg2.JointTurn — the cross-cell atomic-turn layer.
 
-This is the one place the single-cell coinductive frame of `Boundary.lean` is
-**extended, not inhabited** (`dregg2.md §1.6`, §10 honesty note; `study-category §1.4`;
-`dregg2-multicell-privacy §1, §5`). If we cannot nail multi-cell, nothing else is worth
-anything: zkRPC, multiagent coordination, and emergent consensus are all N-cell
-`JointTurn`s (`dregg2-multicell-privacy §1`: a toolcall = a 2-cell JointTurn
-`agent-cell ⊗ service-cell`).
+This extends (not inhabits) the single-cell coinductive frame of `Boundary.lean` to
+multi-cell turns (`dregg2.md §1.6`). A cross-cell turn is the **equalizer / pullback** of
+the participants' `step` maps over the shared turn-identity — a span/tuple, NOT a tensored
+coalgebra. The CG-2 ⊗ CG-5 binding is an explicit **hypothesis**, never derivable from
+per-cell data (`binding_is_proper`): CG-5 is the price of having no global ledger.
 
-Grounding:
+Mina grounding: a turn is a `zkapp_command` account-update forest; every participant's
+proof commits to one `account_updates_hash` (the shared turn-id). Atomicity is a
+`will_succeed` prophecy + cumulative AND — no live 2PC coordinator.
 
-  * **Mina** (`study-mina-relink`, ADOPT): a turn over cells is a `zkapp_command`
-    **account-update FOREST**; every participant's per-cell proof commits to the same
-    `account_updates_hash` — the **shared turn-id**. Atomicity is the in-circuit
-    `will_succeed` prophecy + a **cumulative AND** (`success`) over all updates, *not*
-    a live 2-phase-commit coordinator.
-  * **Category theory** (`study-category §1.4`, `dregg2.md §1.6`): a cross-cell turn is
-    the **equalizer / pullback** of the participants' `step` maps over the shared
-    turn-identity. It is a *span / tuple*, NOT a coalgebra step — adding a tensored
-    coalgebra would be the WRONG fix.
-  * **The irreducibility theorem** (`tensor_not_final`): `νF₁ ⊗ νF₂` is **NOT** the
-    final coalgebra of the product behaviour. Hence **cross-cell soundness is
-    IRREDUCIBLE to per-cell ∧ per-cell**: the CG-2 ⊗ CG-5 binding is an explicit
-    **HYPOTHESIS**, never a theorem derivable from the two per-cell `Sound`s. Deriving
-    it would make the Boundary module unsound. CG-5 is the *price of having no global
-    ledger* — Mina never needs it because one ledger gives one namespace.
-
-In the live γ.2 code (`[C]`): the per-cell halves are `StateConstraint::BoundDelta`
-(`program.rs:747`, `EqualAndOpposite` paired swap); the aggregate proof is
-`circuit::bilateral_aggregation_air` (`CrossSideExistenceAir`, signed
-edge-fingerprint balance sum == 0); the AIR constraint groups ARE the equalizer
-conditions — **CG-2** (every cell's row agrees on `TURN_HASH`/`EFFECTS_HASH`/
-`ACTOR_NONCE`/`PREVIOUS_RECEIPT_HASH` = the pullback over the shared turn) and **CG-5**
-(every claimed half-edge has its matching peer half = the balance equalizer).
-
-Style: spec-first, grind up. Every theorem is stated with a real, faithful `Prop` and a
-`sorry` body; each `sorry` is a genuine obligation. We give the clear **binary (2-cell)**
-version as primary (per `study-category §1.4` and the brief's allowance), and an N-ary
-indexed-family version (`JointFamily`) for the general forest.
+Binary (2-cell) form is primary; N-ary indexed family (`JointFamily`) is the general forest.
 -/
 import Dregg2.Core
 import Dregg2.Boundary
@@ -50,13 +24,10 @@ open Dregg2.Boundary
 
 universe u
 
-/- Cross-cell layer parameters. `Obs`/`AdmissibleTurn` are the single-cell
-behaviour-functor parameters from `Boundary.lean` (the `F X = Obs × (AdmissibleTurn ⇒ X)`
-data); `TurnId` is the type of shared turn-identities (the `account_updates_hash`
-analog); `Bal` is the commutative monoid the cross-cell conservation aggregate (CG-5)
-lands in — exactly `Core.Conservation`'s value monoid, instantiated over Pedersen
-commitments in the private case (`dregg2-multicell-privacy §2`: the equalizer runs over
-commitments, never cleartext). -/
+/- Cross-cell layer parameters. `Obs`/`AdmissibleTurn` are the single-cell behaviour-functor
+parameters; `TurnId` is the type of shared turn-identities; `Bal` is the commutative monoid the
+CG-5 conservation aggregate lands in (instantiated over Pedersen commitments in the private tier
+— the equalizer runs over commitments, never cleartext). -/
 variable {Obs AdmissibleTurn TurnId : Type u}
 variable {Bal : Type u} [AddCommMonoid Bal]
 
@@ -189,11 +160,9 @@ def jointPred
     (T₁.Carrier × T₂.Carrier) → AdmissibleTurn → (T₁.Carrier × T₂.Carrier) → Prop :=
   fun x t x' => P₁ x.1 t x'.1 ∧ P₂ x.2 t x'.2
 
-/-- **`joint_stepComplete` — the joint coalgebra is step-complete (PROVED).** If both
-participants are per-cell step-complete, then `jointCoalg T₁ T₂` is step-complete against
-the componentwise-assembled `jointPred` invariants. This is what makes the single-cell
-keystone `Boundary.stepComplete_preserves` directly applicable to the joint coalgebra —
-the joint turn is "just another `TurnCoalg`". -/
+/-- **`joint_stepComplete` — the joint coalgebra is step-complete.** If both participants are
+per-cell step-complete, `jointCoalg T₁ T₂` is step-complete against the componentwise
+`jointPred` invariants, making `Boundary.stepComplete_preserves` directly applicable. -/
 theorem joint_stepComplete
     (T₁ T₂ : TurnCoalg Obs AdmissibleTurn)
     (cons₁ auth₁ chain₁ obs₁ : T₁.Carrier → AdmissibleTurn → T₁.Carrier → Prop)
@@ -208,25 +177,12 @@ theorem joint_stepComplete
   obtain ⟨c₂, a₂, k₂, o₂⟩ := hsc₂ x.2 t
   exact ⟨⟨c₁, c₂⟩, ⟨a₁, a₂⟩, ⟨k₁, k₂⟩, ⟨o₁, o₂⟩⟩
 
-/-- **`joint_sound` — THE cross-cell keystone (`dregg2-multicell-privacy §5`,
-`study-category §1.4`), reframed as joint-execution SAFETY** (mirroring
-`Boundary.stepComplete_preserves`; see Boundary's §"meaningful soundness keystone" for why
-the old bisimulation-to-a-free-`Spec` shape — `Sound (jointCoalg)(jointCoalg)` — was
-vacuous/ill-posed and is retired here exactly as `sound_of_step_complete` was).
-
-If each participant is per-cell step-complete (its coalgebra discharges the full
-`StepInv`), **AND** the `JointBinding` holds (CG-2 ⊗ CG-5 — supplied as a HYPOTHESIS),
-**AND** a joint state-predicate `Good` is preserved by every joint `StepInv`-respecting
-transition, then `Good` holds at **every** configuration reachable along any `Run` of the
-induced joint transition system, started from the binding's bound pre-state pair
-`(b.shared.x₁, b.shared.x₂)`.
-
-Proved by applying `Boundary.stepComplete_preserves` directly to the joint coalgebra
-`jointCoalg T₁ T₂` (it is just another `TurnCoalg`), with joint step-completeness supplied
-by `joint_stepComplete`. The `JointBinding b` is an explicit **premise, never derived from
-the per-cell data** — it is what makes the cross-cell `Good` (e.g. the CG-5 conservation
-aggregate) preserved; compare the single-cell `stepComplete_preserves`, which needs no such
-cut. That irreducibility is `binding_is_proper`. -/
+/-- **`joint_sound` — the cross-cell safety keystone.** If each participant is per-cell
+step-complete, the `JointBinding` holds (CG-2 ⊗ CG-5, supplied as a hypothesis), and a joint
+predicate `Good` is preserved by every `StepInv`-respecting transition, then `Good` holds at
+every configuration reachable from the binding's bound pre-state pair. Proved by applying
+`Boundary.stepComplete_preserves` to `jointCoalg T₁ T₂` with `joint_stepComplete`. The
+`JointBinding` premise is irreducible from per-cell data (`binding_is_proper`). -/
 theorem joint_sound
     (T₁ T₂ : TurnCoalg Obs AdmissibleTurn)
     (turnId₁ : TurnIdOf (TurnId := TurnId) T₁) (turnId₂ : TurnIdOf (TurnId := TurnId) T₂)
@@ -254,20 +210,10 @@ theorem joint_sound
     (joint_stepComplete T₁ T₂ cons₁ auth₁ chain₁ obs₁ cons₂ auth₂ chain₂ obs₂ hsc₁ hsc₂)
     hpres hrun hgood
 
-/-- **`joint_sound_needs_binding` — the negative companion (why the binding is not
-optional), reframed as the honest consequence of `binding_is_proper` (PROVED).**
-
-It is NOT the case that per-cell step-completeness alone entails the joint invariant for
-every pre-state pair. Concretely: the joint `Good` that `joint_sound` delivers is the
-binding-carved `JointAdmissible` predicate, and there is a configuration — the
-`binding_is_proper` witness, two one-state cells each moving a half-edge of `1 : ℕ`, whose
-CG-5 sum `1 + 1 = 2 ≠ 0` — where both participants are (vacuously) step-complete yet the
-start pair is **not** `JointAdmissible`. So no theorem of the form "both step-complete ⇒
-joint-admissible everywhere" can hold; the `JointBinding` premise of `joint_sound` is
-load-bearing, not derivable. (The earlier `Sound (jointCoalg)(jointCoalg)` framing of this
-was vacuous — `Sound _ _ _` is reflexively inhabited via `sound_refl`, so its universal
-form is *true* and proves nothing; the honest negative is over the binding's own
-admissibility predicate.) -/
+/-- **`joint_sound_needs_binding` — the `JointBinding` premise is load-bearing.** Per-cell
+step-completeness alone does not entail joint admissibility for every pre-state pair: the
+`binding_is_proper` witness (two one-state cells, half-edges `1 : ℕ`, CG-5 `1 + 1 ≠ 0`)
+is vacuously step-complete but not `JointAdmissible`. -/
 theorem joint_sound_needs_binding :
     ¬ ∀ (T₁ T₂ : TurnCoalg Unit Unit)
         (turnId₁ : TurnIdOf (TurnId := Unit) T₁) (turnId₂ : TurnIdOf (TurnId := Unit) T₂)
@@ -317,19 +263,11 @@ structure BoundJointBehaviour
               JointAdmissible T₁ T₂ turnId₁ turnId₂ half₁ half₂
                 (drive s t).1 (drive s t).2 t
 
-/-- **`binding_is_proper` — the CORRECT cross-cell irreducibility (PROVED).**
-
-*Correction (audit):* the earlier `tensor_not_final` ("νF₁ ⊗ νF₂ is not final") was
-**mis-stated** — the product of two final coalgebras IS final for the product functor, so
-that claim is false. The true, soundness-critical content is a **proper-subobject** fact:
-`JointBinding` (CG-2 ⊗ CG-5) is a *non-trivial constraint*, so the joint-admissible
-configurations are a proper **equalizer subobject** of the product carrier, NOT all of it.
-Hence cross-cell admissibility is genuinely MORE than per-cell × per-cell — there exist
-product configurations the binding **excludes** — so the binding cannot be recovered from
-the per-cell data and must be hypothesized (`joint_sound`'s premise), not derived.
-
-Witnessed concretely: two one-state cells each moving a half-edge of `1 : ℕ`, whose CG-5
-balance `1 + 1 = 2 ≠ 0` fails — so that product state is not `JointAdmissible`. -/
+/-- **`binding_is_proper` — the cross-cell irreducibility.** The `JointBinding` (CG-2 ⊗ CG-5)
+is a non-trivial constraint: the joint-admissible configurations are a proper equalizer
+subobject of the product carrier, not all of it. Witness: two one-state cells each moving a
+half-edge of `1 : ℕ`; CG-5 balance `1 + 1 = 2 ≠ 0`, so that product state is not
+`JointAdmissible`. Hence the binding cannot be recovered from per-cell data. -/
 theorem binding_is_proper :
     ∃ (T₁ T₂ : TurnCoalg Unit Unit)
       (turnId₁ : TurnIdOf (TurnId := Unit) T₁) (turnId₂ : TurnIdOf (TurnId := Unit) T₂)
@@ -343,13 +281,11 @@ theorem binding_is_proper :
   rintro ⟨b, -, -, -⟩
   exact absurd b.balanced (by decide)
 
-/-! ## `atomicity_as_proof` — atomicity is a PROOF property, not a coordinator
+/-! ## `atomicity_as_proof` — atomicity is a proof property, not a coordinator.
 
-Mina's shape (`dregg2-multicell-privacy §1`, [G, ADOPT]): a `will_succeed` **prophecy**
-plus an **in-circuit cumulative AND** (`success`) over all participants. dregg2's
-divergence: Mina's single global durable write becomes per-cell tier-local commits gated
-on the *same* shared aggregate proof — the proof is shared, the finality per-cell. There
-is NO live two-phase-commit coordinator; all-or-none is *proven by the aggregate*. -/
+Mina grounding: a `will_succeed` prophecy + in-circuit cumulative AND. dregg2's design:
+per-cell tier-local commits gated on the same shared aggregate proof — proof is shared,
+finality per-cell. No live 2PC coordinator; all-or-none is proven by the aggregate. -/
 
 /-- **`LocalSucceeds`** — the in-circuit success bit each participant contributes for the
 shared turn: its local step-proof admitted its share (the per-cell coalgebra accepts `t`
@@ -403,12 +339,7 @@ theorem atomicity_as_proof
   unfold JointCommit willSucceed
   exact and_congr (gate₁ x₁ t) (gate₂ x₂ t)
 
-/-! ## N-ary family version (the general account-update FOREST)
-
-The binary version above is the clear, load-bearing primitive (`study-category §1.4`); a
-real `zkapp_command` is a *forest* over an index `ι` of participating cells. We restate
-the shared turn-id and the binding for a family. The conservation aggregate (CG-5) is the
-**finite monoid-sum** over participants — requiring `Fintype ι`. -/
+/-! ## N-ary family version (the general account-update forest). -/
 
 /-- A **participating family**: an index `ι` of cells, each a `TurnCoalg`, with per-cell
 turn-id and half-edge projections. The forest Mina hashes into one `account_updates_hash`. -/
@@ -440,21 +371,11 @@ structure FamilyBinding
   /-- CG-5: the cross-cell conservation aggregate over the whole forest balances to `0`. -/
   balanced : (Finset.univ.sum fun i => J.half i (pre i) t) = 0
 
-/-- **`family_joint_sound` — N-ary keystone (PROVED, well-posed).** If every participant in the
-forest is step-complete and a joint invariant `Good i` is preserved by every `StepInv`-respecting
-transition, then along any run from the binding's bound pre-state each participant's `Good` holds
-(per-participant no-drift) **AND** the forest's CG-5 conservation aggregate balances to `0` (the
-cross-cell content the `FamilyBinding` supplies). Both hypotheses are load-bearing: `hsc`/`hpres`
-drive the safety half (via `Boundary.stepComplete_preserves`), the binding `b` supplies the
-conservation half (`b.balanced`).
-
-(Honesty note — this REPLACES a prior false-as-stated form that concluded `Sound (J.cell i) (Spec i)
-(b.pre i)` for a *free* `Spec`, which is refutable at `Spec.Carrier = Empty` — the same pattern
-`Boundary` retired for `sound_of_step_complete`. The genuine *single-object* N-ary soundness over the
-forest's product coalgebra — where the binding selects the admissible tuple and the apex dissolves
-the O(N²) pairwise bookkeeping — is `Dregg2.Spec.JointViaHyper.joint_via_hyperedge`, derived from
-`Hyperedge.hyperedge_sound`. This theorem is the per-participant + aggregate reading; that one is the
-unified reading.) -/
+/-- **`family_joint_sound` — N-ary keystone.** If every participant is step-complete and `Good i`
+is preserved by every `StepInv`-respecting transition, then along any run from the binding's
+bound pre-state each participant's `Good` holds AND the CG-5 aggregate balances to `0`. Both
+hypotheses are load-bearing: `hsc`/`hpres` drive the safety half; `b.balanced` supplies the
+conservation half. The single-object unified reading is `Hyperedge.hyperedge_sound`. -/
 theorem family_joint_sound
     (ι : Type u) [Fintype ι]
     (J : JointFamily (Obs := Obs) (AdmissibleTurn := AdmissibleTurn)

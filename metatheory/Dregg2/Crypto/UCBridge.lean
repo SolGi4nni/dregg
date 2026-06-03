@@ -1,15 +1,14 @@
 /-
-# Dregg2.Crypto.UCBridge — the CROSS-SYSTEM bridge for the dynamic-UC commitment obligation.
+# Dregg2.Crypto.UCBridge — cross-system bridge for the dynamic-UC commitment obligation.
 
-**The §8-boundary philosophy made concrete (the dynamic-UC hole, closed pragmatically).**
-`Metatheory.EpistemicConsensus §6` ("The UC angle") states the FULL Canetti dynamic UC theorem
+`Metatheory.EpistemicConsensus §6` states the full Canetti dynamic UC theorem
 
     (∀ Z, view_Z(π) ≈ view_Z(F))  →  (∀ Z, view_Z(ρ^π) ≈ view_Z(ρ^F))
 
-as a SHARP OPEN, resting on "simulator existence + computational indistinguishability of
+as a sharp OPEN, resting on "simulator existence + computational indistinguishability of
 ensembles" — the same genuinely-cryptographic residue that `Crypto.Primitives` isolates as the
 `Prop` carriers `CryptoPrimitives.binding` (DLog binding) and `CryptoPrimitives.unlinkable`
-(hiding/anonymity). Those carriers are NEVER proved in Lean — Lean's `Verify` is a *decidable*
+(hiding/anonymity). Those carriers are never proved in Lean — Lean's `Verify` is a decidable
 oracle, not a probabilistic ensemble, and `≈` is not a Lean order-law.
 
 This module does NOT prove UC in Lean. It CARRIES the *core commitment-security* obligation
@@ -57,11 +56,11 @@ with Isabelle2025-RC3 at the ML/proof-automation level; it needs the RC3-matched
 long-established in the AFP; what is blocked is recompiling that AFP under this release candidate.
 
 ## Axiom hygiene.
-This module is `#assert_axioms`-clean: the cross-system facts are FIELDS of a `Prop`-bundling
-structure (`FComDischarge`), passed as *hypotheses* — there is NO `axiom` and NO `sorry`. The
-bridge theorem `binding_unlinkable_discharged_by_crypthol` PROVES (in Lean, kernel-clean) that
-GIVEN such a discharge structure for a primitive set, that set's `binding` and `unlinkable`
-carriers are inhabited — i.e. the carriers are now *witnessed by CryptHOL*, not assumed.
+This module is `#assert_axioms`-clean: the cross-system facts are fields of the `FComDischarge`
+structure, passed as hypotheses — no `axiom`, no `sorry`. The bridge theorem
+`binding_unlinkable_discharged_by_crypthol` proves (in Lean, kernel-clean) that given such a
+discharge structure, the `binding` and `unlinkable` carriers are inhabited — witnessed by CryptHOL,
+not assumed.
 -/
 import Dregg2.Crypto.Primitives
 import Dregg2.Tactics
@@ -74,18 +73,15 @@ variable {Digest : Type u} [AddCommGroup Digest]
 
 /-! ## The cross-system discharge structure.
 
-`FComDischarge P` bundles — as `Prop` FIELDS (carriers, never `axiom`s) — the CORE security
-guarantees the dregg2 Pedersen commitment must satisfy to realize the ideal commitment
-functionality `F_com`. Each field NAMES the exact CryptHOL theorem that establishes it (see the
-module docstring). The structure is *inhabited only by transporting a CryptHOL proof*: to
-construct an `FComDischarge`, the caller must vouch (under the trust caveat above) that the
-CryptHOL `Dregg2_FCom.thy` realization theorem holds for this primitive set. -/
+`FComDischarge P` bundles — as `Prop` fields (carriers, never `axiom`s) — the core security
+guarantees dregg2's Pedersen commitment must satisfy to realize `F_com`. Each field names the
+CryptHOL theorem that establishes it. To construct an `FComDischarge`, the caller vouches (under
+the trust caveat in the module header) that `Dregg2_FCom.thy`'s realization theorem holds for
+this primitive set. -/
 
-/-- **`FComDischarge`** — the F_com realization obligation for a `CryptoPrimitives` set, as a
-`Prop`-bundling carrier. Its fields are exactly the UC-relevant security properties PROVED in
-CryptHOL (`Dregg2_FCom.thy`); inhabiting it is the cross-system bridge act. NOT an `axiom`. The
-structure BUNDLES the carried `Prop`s + their cross-system proofs + the entailments into the
-dregg2 carriers; it lives in `Type` (it is data — which Props, proved how), never an `axiom`. -/
+/-- `FComDischarge` — the F_com realization obligation for a `CryptoPrimitives` set, as a
+`Prop`-bundling carrier. Its fields are the UC-relevant security properties proved in CryptHOL
+(`Dregg2_FCom.thy`); inhabiting it is the cross-system bridge act. Not an `axiom`. -/
 structure FComDischarge (P : CryptoPrimitives Digest) where
   /-- **Correctness** (CryptHOL `pedersen.abstract_correct`): an honest open of `commit v r`
   always verifies. Carried; proved in `Dregg2_FCom.thy`. -/
@@ -97,8 +93,8 @@ structure FComDischarge (P : CryptoPrimitives Digest) where
   `pedersen_asymp.dregg2_binding_under_dlog`): equivocating a commitment is exactly as hard as
   discrete log; negligible under DLog hardness — dregg2's `binding`. Carried. -/
   bindingReducesToDLog : Prop
-  /-- The discharge ASSERTS each transported guarantee holds (witnessed by the CryptHOL proof,
-  under the transport-fidelity caveat). These are the operational contents, not free `True`s. -/
+  /-- The discharge asserts each transported guarantee holds (witnessed by the CryptHOL proof,
+  under the transport-fidelity caveat). These are operational contents, not free `True`s. -/
   correct_holds : correct
   /-- Perfect hiding holds (CryptHOL). -/
   hiding_holds : perfectHiding
@@ -111,37 +107,32 @@ structure FComDischarge (P : CryptoPrimitives Digest) where
   carrier: perfect hiding is the unlinkability of the committed value. -/
   entails_unlinkable : perfectHiding → P.unlinkable
 
-/-- **`binding_discharged_by_crypthol`** — GIVEN a CryptHOL F_com discharge for a primitive
-set, that set's `binding` carrier is INHABITED. The DLog-binding obligation dregg2 carries is
-now witnessed by the CryptHOL `pedersen_bind` proof — not assumed in Lean. Kernel-clean. -/
+/-- `binding_discharged_by_crypthol` — given a CryptHOL F_com discharge, the `binding` carrier
+is inhabited, witnessed by the CryptHOL `pedersen_bind` proof. Kernel-clean. -/
 theorem binding_discharged_by_crypthol
     {P : CryptoPrimitives Digest} (d : FComDischarge P) : P.binding :=
   d.entails_binding d.binding_holds
 
-/-- **`unlinkable_discharged_by_crypthol`** — GIVEN a CryptHOL F_com discharge, the (hiding
-half of the) `unlinkable` carrier is INHABITED, witnessed by the CryptHOL
-`abstract_perfect_hiding` proof. Kernel-clean. -/
+/-- `unlinkable_discharged_by_crypthol` — given a CryptHOL F_com discharge, the hiding half of
+`unlinkable` is inhabited, witnessed by `abstract_perfect_hiding`. Kernel-clean. -/
 theorem unlinkable_discharged_by_crypthol
     {P : CryptoPrimitives Digest} (d : FComDischarge P) : P.unlinkable :=
   d.entails_unlinkable d.hiding_holds
 
-/-- **`binding_unlinkable_discharged_by_crypthol`** — THE BRIDGE THEOREM. A CryptHOL F_com
-discharge witnesses BOTH dregg2 commitment-security carriers (`binding` ∧ `unlinkable`). This
-is the cross-system §8 closure for the commitment fragment of the dynamic-UC obligation:
-the carriers `EpistemicConsensus §6` leaves OPEN-in-Lean are discharged by a real proof in a
-real UC tool. PROVED in Lean (kernel-clean) FROM the carried CryptHOL facts — Lean does NOT
-prove UC; it threads the cross-system witness. -/
+/-- `binding_unlinkable_discharged_by_crypthol` — the bridge theorem. A CryptHOL F_com discharge
+witnesses both `binding` and `unlinkable`. The carriers that `EpistemicConsensus §6` leaves OPEN
+in Lean are discharged by a real proof in a real UC tool. Proved in Lean (kernel-clean) from the
+carried CryptHOL facts — Lean threads the cross-system witness; it does not prove UC itself. -/
 theorem binding_unlinkable_discharged_by_crypthol
     {P : CryptoPrimitives Digest} (d : FComDischarge P) : P.binding ∧ P.unlinkable :=
   ⟨binding_discharged_by_crypthol d, unlinkable_discharged_by_crypthol d⟩
 
 /-! ## Non-vacuity over the reference instance.
 
-To witness that `FComDischarge` is inhabitable (the bridge act is performable), we discharge it
-for the `Reference` toy primitive set (`Crypto.Primitives.Reference`, whose carriers are `True`).
-This is NOT the real CryptHOL transport — it is the inhabitation witness showing the structure is
-constructible. The REAL discharge is for the Poseidon2/Pedersen FFI instance, vouched under the
-transport-fidelity caveat against `Dregg2_FCom.thy`. -/
+Witnesses that `FComDischarge` is inhabitable by discharging it for the toy primitive set
+(`Crypto.Primitives.Reference`, carriers `True`). Not the real CryptHOL transport — an
+inhabitation witness only. The real discharge is for the Poseidon2/Pedersen FFI instance,
+vouched under the transport-fidelity caveat against `Dregg2_FCom.thy`. -/
 
 namespace Reference
 open Dregg2.Crypto.Reference
@@ -164,9 +155,8 @@ example : (instCryptoPrimitives.binding) ∧ (instCryptoPrimitives.unlinkable) :
 
 end Reference
 
--- TRIPWIRES: the bridge theorems rest ONLY on the carried `FComDischarge` fields (the
--- cross-system CryptHOL facts, passed as a hypothesis), NEVER on a Lean `axiom` or a hidden
--- `sorry`. `#assert_axioms`-clean ⇒ no `sorryAx`. This is a CARRIER, not a Lean UC proof.
+-- Tripwires: the bridge theorems rest only on the carried `FComDischarge` fields (passed as a
+-- hypothesis), never on a Lean `axiom` or hidden `sorry`. This is a carrier, not a Lean UC proof.
 #assert_axioms binding_discharged_by_crypthol
 #assert_axioms unlinkable_discharged_by_crypthol
 #assert_axioms binding_unlinkable_discharged_by_crypthol

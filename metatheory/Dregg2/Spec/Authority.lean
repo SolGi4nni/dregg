@@ -1,50 +1,37 @@
 /-
-# Dregg2.Spec.Authority — the GENERATIVE half of the capability-graph dynamics.
+# Dregg2.Spec.Authority — the generative half of the capability-graph dynamics.
 
-The metatheory already carries the **restrictive** half of the capability law in two
-places — `Dregg2.Authority.Caveat.attenuate_narrows` (appending a caveat can only narrow
-the admissible set) and `Dregg2.Authority.CDT.path_attenuates` (authority only shrinks
-down a derivation path). Both are *narrowing-only* laws: they discipline how an existing
-edge may be weakened. Neither says ANYTHING about how an edge comes to exist in the first
-place. That is the gap this module fills.
+The metatheory carries the *restrictive* half of the capability law in two places —
+`Dregg2.Authority.Caveat.attenuate_narrows` (appending a caveat only narrows the
+admissible set) and `Dregg2.Authority.CDT.path_attenuates` (authority only shrinks down a
+derivation path). This module provides the complementary *generative* half: how an edge
+comes to exist in the first place.
 
-The object-capability model is fundamentally a **graph dynamics**:
+The object-capability model is a **graph dynamics**:
 
   * **nodes** = cells (`CellId`);
-  * **edges** = capabilities — a `Cap = { target, rights }` where `Rights` carries an
-    **attenuation preorder** `≤` ("narrower-or-equal"), a bounded meet-semilattice
-    (`SemilatticeInf` + `OrderTop`); a graph `G` records which cell `Holds` which cap.
+  * **edges** = capabilities — a `Cap = { target, rights }` where `Rights` is a bounded
+    meet-semilattice with attenuation preorder `≤`; a graph `G` records which cell holds
+    which cap.
 
-On this graph there are exactly two families of authorized moves:
+Two families of authorized moves:
 
-  * **GENERATIVE** ops grow the graph, each one AUTHORIZED by something already in it —
-    `introduce` (Granovetter delegation), `amplify` (sealer/unsealer rights amplification),
-    `mint` (powerbox/factory), `endow` (parenthood at creation);
-  * **RESTRICTIVE** ops shrink it — `attenuate` (narrow an edge via `≤`), `revoke`
-    (remove an edge, terminal).
+  * **Generative** ops grow the graph, each authorized by something already in it —
+    `introduce` (Granovetter delegation), `amplify` (sealer/unsealer), `mint`
+    (powerbox/factory), `endow` (parenthood at creation);
+  * **Restrictive** ops shrink it — `attenuate` (narrow an edge via `≤`), `revoke`
+    (remove an edge).
 
-Grounded in dregg1's *actual* enforcement, not invented:
+Grounded in dregg1's enforcement: `apply_introduce` enforces the four-part discipline
+(connectivity premise, held cap, `is_attenuation` non-amplification, consent);
+`apply_unseal` requires the held unsealer cap; `FactoryDescriptor.allowed_cap_templates`
+requires contract conformance.
 
-  * `turn/src/executor/apply.rs : apply_introduce` enforces the FOUR-part introduce
-    discipline verbatim — (1) the introducer has access to the recipient
-    (`has_access(recipient)`, the Granovetter connectivity premise), (2) the introducer
-    holds a cap to the target (`lookup_by_target`), (3) `is_attenuation(held, granted)`
-    ("granted permissions exceed introducer's own — **amplification denied**"), (4) the
-    target consents (`delegate != Impossible`). The result is `grant_with_expiry` — an
-    attenuated edge with abstract expiry.
-  * `apply_unseal` requires the actor to **hold** the unsealer capability
-    (`lookup_by_target(unsealer_cap_id)` or `CapabilityNotHeld`) before it will recover a
-    cap — amplification needs a held amplifier.
-  * `cell/src/factory.rs : FactoryDescriptor.allowed_cap_templates` — a held factory cap
-    mints a child cap that must CONFORM to the factory's contract.
+The headline invariant is Miller's **"only connectivity begets connectivity"**: in any
+reachable graph, every edge traces back to an authorized generative act.
 
-The headline invariant is Miller's **"only connectivity begets connectivity"** (no edge
-ex nihilo, no ambient authority): in any graph reachable from initial conditions by the
-authorized ops, every edge traces back to an authorized generative act.
-
-This reframes attenuation: `attenuate_narrows` / `path_attenuates` are the **conferral
-sub-rule** (clause 3 of `introduce`, the `≤` premise), NOT the whole law. The spine is the
-generative discipline; narrowing is one premise inside it.
+`attenuate_narrows` / `path_attenuates` are the *conferral sub-rule* (clause 3 of
+`introduce`, the `≤` premise), not the whole law. The spine is the generative discipline.
 
 Faithful Props throughout. `CellId`/`Rights`/`FactoryContract` are abstract; `Rights`
 carries an order, never `Nat`.
@@ -113,15 +100,13 @@ the very order `Caveat.attenuate_narrows` and `CDT.attenuates` narrow along. It 
 def confers (parent child : Cap CellId Rights) : Prop :=
   child.target = parent.target ∧ child.rights ≤ parent.rights
 
-/-- Conferral is reflexive: a cap confers itself (the identity delegation — `is_attenuation`
-of a cap against itself always holds; cf. the implicit self-cap in `apply.rs`'s self-grant
-branch). PROVED. -/
+/-- Conferral is reflexive: a cap confers itself (the identity delegation —
+`is_attenuation` of a cap against itself always holds). -/
 theorem confers_refl (c : Cap CellId Rights) : confers c c :=
   ⟨rfl, le_refl _⟩
 
-/-- Conferral is transitive: chaining two non-amplifying delegations is non-amplifying. The
-authority order's transitivity, lifted — this is the engine of `path_attenuates` at the
-graph level. PROVED. -/
+/-- Conferral is transitive: chaining two non-amplifying delegations is non-amplifying —
+the authority order's transitivity lifted to the graph level. -/
 theorem confers_trans {a b c : Cap CellId Rights}
     (hab : confers a b) (hbc : confers b c) : confers a c :=
   ⟨hbc.1.trans hab.1, le_trans hbc.2 hab.2⟩
@@ -303,40 +288,36 @@ inductive Reachable (consents : CellId → Prop)
 
 /-! ## §5 — THE KEYSTONE THEOREMS. -/
 
-/-- **`introduce_non_amplifying` (PROVED) — the "amplification denied" rule.** The cap an
-`Introduce` step confers is `≤` the introducer's own held cap, on the rights attenuation
-order. This rides clause 3 (`confers parent cap`) of the introduce discipline directly: the
-conferred rights never exceed the held rights. This is the grounded
-`is_attenuation(held, granted)` check (`apply.rs:2835`, "granted permissions exceed
-introducer's own — amplification denied"), as a theorem of the dynamics. -/
+/-- **`introduce_non_amplifying`** — the "amplification denied" rule: the cap an `Introduce`
+step confers is `≤` the introducer's held cap on the rights attenuation order (clause 3 of
+the introduce discipline, `is_attenuation(held, granted)`). -/
 theorem introduce_non_amplifying {G G' : Graph CellId Rights}
     {consents : CellId → Prop} {holder recipient : CellId} {parent cap : Cap CellId Rights}
     (step : Introduce G consents holder recipient parent cap G') :
     cap.rights ≤ parent.rights :=
   step.nonAmplifying.2
 
-/-- **`introduce_same_target` (PROVED)** — companion: the conferred cap names the SAME target
-as the held parent cap. Introduction re-shares an existing edge's target; it cannot conjure a
-cap to a target the introducer could not already reach. -/
+/-- **`introduce_same_target`** — companion: the conferred cap names the same target as the
+held parent cap. Introduction re-shares an existing edge's target; it cannot conjure a cap
+to a target the introducer could not already reach. -/
 theorem introduce_same_target {G G' : Graph CellId Rights}
     {consents : CellId → Prop} {holder recipient : CellId} {parent cap : Cap CellId Rights}
     (step : Introduce G consents holder recipient parent cap G') :
     cap.target = parent.target :=
   step.nonAmplifying.1
 
-/-- **`amplify_needs_held_amplifier` (PROVED) — the amplification discipline.** An `Amplify`
-step succeeds only if the actor HOLDS the amplifier cap in the pre-graph. Rights
-amplification is not ambient: it requires the sealer/unsealer edge already in the graph
-(`apply_unseal`'s `lookup_by_target(unsealer_cap_id)` premise — `CapabilityNotHeld`
-otherwise). -/
+/-- **`amplify_needs_held_amplifier`** — an `Amplify` step succeeds only if the actor holds
+the amplifier cap in the pre-graph. Rights amplification is not ambient: it requires the
+sealer/unsealer edge already present (`apply_unseal`'s `lookup_by_target` premise;
+`CapabilityNotHeld` otherwise). -/
 theorem amplify_needs_held_amplifier {G G' : Graph CellId Rights}
     {actor : CellId} {amplifier recovered : Cap CellId Rights}
     (step : Amplify G actor amplifier recovered G') :
     G actor amplifier :=
   step.holds_amplifier
 
-/-- **`mint_needs_held_factory` (PROVED)** — minting needs a held factory cap; the powerbox
-is not ambient. -/
+/-- **`mint_needs_held_factory`** — minting needs a held factory cap; the powerbox is not
+ambient. -/
 theorem mint_needs_held_factory {G G' : Graph CellId Rights}
     {minter : CellId} {factory : Cap CellId Rights}
     {contract : FactoryContract CellId Rights} {child : Cap CellId Rights}
@@ -344,9 +325,8 @@ theorem mint_needs_held_factory {G G' : Graph CellId Rights}
     G minter factory :=
   step.holds_factory
 
-/-- **`mint_conforms_to_contract` (PROVED)** — the minted child cap conforms to the factory's
-contract (`allowed_cap_templates`); a factory cannot mint outside its declared constructor
-contract. -/
+/-- **`mint_conforms_to_contract`** — the minted child cap conforms to the factory's contract
+(`allowed_cap_templates`); a factory cannot mint outside its declared contract. -/
 theorem mint_conforms_to_contract {G G' : Graph CellId Rights}
     {minter : CellId} {factory : Cap CellId Rights}
     {contract : FactoryContract CellId Rights} {child : Cap CellId Rights}
@@ -361,22 +341,21 @@ The two narrowing laws already in the metatheory (`Caveat.attenuate_narrows`,
 We make this literal: every generative op that re-shares a target (introduce/endow/attenuate)
 carries `confers source result`, whose `.2` IS the `≤` of the narrowing laws. -/
 
-/-- **`gen_conferral_is_attenuation` (PROVED) — the reframing.** For an `Introduce` step, the
-conferral premise `confers parent cap` is precisely `Caveat`/`CDT`-style narrowing: the
-conferred rights are `≤` the held rights. So `attenuate_narrows`/`path_attenuates` are the
-*conferral sub-rule* of the generative law, NOT the spine — the spine is the four-part
-generative discipline, of which this `≤` is clause 3. -/
+/-- **`gen_conferral_is_attenuation`** — for an `Introduce` step, the conferral premise
+`confers parent cap` is precisely `Caveat`/`CDT`-style narrowing: the conferred rights are `≤`
+the held rights. So `attenuate_narrows`/`path_attenuates` are the *conferral sub-rule* of the
+generative law, not the spine — the spine is the four-part generative discipline, of which
+this `≤` is clause 3. -/
 theorem gen_conferral_is_attenuation {G G' : Graph CellId Rights}
     {consents : CellId → Prop} {holder recipient : CellId} {parent cap : Cap CellId Rights}
     (step : Introduce G consents holder recipient parent cap G') :
     cap.rights ≤ parent.rights ∧ cap.target = parent.target :=
   ⟨step.nonAmplifying.2, step.nonAmplifying.1⟩
 
-/-- **`attenuate_is_restrictive_narrowing` (PROVED)** — the restrictive `Attenuate` step's
-narrowed cap is `≤` the original on the rights order: the graph-level form of
-`Caveat.attenuate_narrows`. The same `≤`, now firing as a *restrictive* (not generative) act —
-showing the meet-semilattice attenuation appears on BOTH sides of the dynamics, always as a
-premise/effect, never as the whole law. -/
+/-- **`attenuate_is_restrictive_narrowing`** — the restrictive `Attenuate` step's narrowed cap
+is `≤` the original on the rights order: the graph-level form of `Caveat.attenuate_narrows`.
+The same `≤` appearing as a *restrictive* (not generative) act — attenuation is a premise or
+effect in both families, never the whole law. -/
 theorem attenuate_is_restrictive_narrowing {G G' : Graph CellId Rights}
     {holder : CellId} {cap narrowed : Cap CellId Rights}
     (step : Attenuate G holder cap narrowed G') :
@@ -405,15 +384,10 @@ def AddedByAuthorizedGen (consents : CellId → Prop)
     ∨ (∃ factory contract, Mint G h factory contract c G' ∧ G h factory)
     ∨ (∃ parent source, Endow G parent h c source G' ∧ G parent source) )
 
-/-- **`gen_step_traces` (PROVED) — the per-step non-forgeability lemma, the core of the
-headline.** If a single generative step `G ⟶ G'` makes an edge `h ⟶ c` appear that was NOT
-in `G`, then that edge is `AddedByAuthorizedGen`: it came from one of the four authorized
-generative constructors, and that constructor's authorizing edge was already present in `G`.
-No generative step can fabricate an edge whose authority is not already grounded in `G`.
-
-This is the inductive STEP of "only connectivity begets connectivity", fully proved: it
-establishes that connectivity (`G holder parent` / `G actor amplifier` / `G minter factory` /
-`G parent source`) is what begets the new connectivity (`G' h c`). -/
+/-- **`gen_step_traces`** — per-step non-forgeability: if a single generative step `G ⟶ G'`
+makes an edge `h ⟶ c` appear that was not in `G`, then that edge is `AddedByAuthorizedGen`.
+No generative step can fabricate an edge whose authority is not already grounded in `G`. This
+is the inductive step of "only connectivity begets connectivity". -/
 theorem gen_step_traces {consents : CellId → Prop} {G G' : Graph CellId Rights}
     (act : GenAct consents G G') {h : CellId} {c : Cap CellId Rights}
     (hnew : G' h c) (hold : ¬ G h c) :
@@ -466,37 +440,19 @@ theorem revoke_step_adds_nothing {G G' : Graph CellId Rights}
   rw [hres, removeEdge] at hnew
   exact hnew.1
 
-/-- **`only_connectivity_begets_connectivity` (the headline invariant — PROVED, closed).**
-The whole-history non-forgeability closure over `Reachable`, with the per-step generative core
-(`gen_step_traces`) discharged into it AND the residual whole-history (`attenuate`) thread now
-closed by carrying a `confers`-stable origin witness.
+/-- **`only_connectivity_begets_connectivity`** — the whole-history non-forgeability closure
+over `Reachable`. Every edge `h ⟶ c` in a reachable graph either:
 
-The FULL invariant we want: *in any reachable graph `G`, every edge `h ⟶ c` traces — through
-the finite step history — back to either an initial edge of `G0` or an authorized generative
-act, possibly through subsequent NON-AMPLIFYING narrowings.* The faithful statement is the
-disjunction below, **strengthened** (not weakened) from the naïve "edge itself is a generative
-addition": an edge `h ⟶ c` in a reachable `G` either
+  (a) **descends by conferral** from an initial edge `h ⟶ c0` in `G0`
+      (`confers c0 c` — same target, rights `≤`), or
+  (b) **descends by conferral** from an edge `h ⟶ c0` that was freshly added by some
+      authorized generative act (`AddedByAuthorizedGen`) along the history.
 
-  (a) **descends by conferral** from an edge `h ⟶ c0` present in the initial graph `G0`
-      (`confers c0 c` — `c`'s authority is `≤` and same-target as an initial edge held by `h`),
-      OR
-  (b) **descends by conferral** from an edge `h ⟶ c0` that, at some step `Gpre ⟶ Gpost` along
-      the history, was the new edge of an authorized generative act (`AddedByAuthorizedGen`).
-
-The `confers c0 c` witness is the key. It is the SINGLE collapsed `confers`-chain (conferral is
-reflexive AND transitive — `confers_refl`/`confers_trans` — so an arbitrarily long chain of
-narrowings collapses to ONE `confers`). A directly-conferred edge uses `confers_refl` (chain
-length 0, recovering the naïve statement); an `attenuate` step that re-shapes `h ⟶ cap` into
-`h ⟶ narrowed` extends the predecessor's witness by ONE narrowing via `confers_trans`
-(`confers c0 cap` then `confers cap narrowed` ⟹ `confers c0 narrowed`). No edge appears ex
-nihilo, and no narrowing forges authority — that is exactly what the `confers`-witness pins.
-
-WHAT IS PROVED: ALL FOUR induction cases. `refl` (initial edges, `confers_refl`); generative
-steps (new edge grounded by `gen_step_traces`, witness `confers_refl`; pre-existing edge
-inherits the IH); `revoke` (only removes edges — `revoke_step_adds_nothing` — inherit the IH);
-and the formerly-OPEN `attenuate` case: the freshly-added narrowed edge inherits the removed
-predecessor cap's origin witness, extended by one narrowing through `confers_trans`. The
-`#assert_axioms` pin below (which errors on `sorryAx`) certifies the closure is axiom-clean. -/
+The `confers c0 c` witness collapses an arbitrarily long chain of narrowings into one
+`confers` (reflexive + transitive). A directly-generative edge uses `confers_refl`; each
+`attenuate` step extends the predecessor's witness by one `confers_trans`. No edge appears
+ex nihilo, and no narrowing forges authority. All four induction cases are discharged;
+`#assert_axioms` below certifies the closure is axiom-clean. -/
 theorem only_connectivity_begets_connectivity {consents : CellId → Prop}
     {G0 G : Graph CellId Rights} (reach : Reachable consents G0 G)
     {h : CellId} {c : Cap CellId Rights} (hedge : G h c) :
@@ -556,32 +512,32 @@ Closing the "no flat coproduct; legacy ops as derived instances" loop: each prim
 recovered as a `GenAct`/`RestrictAct` constructor — a one-line lift, with a lemma witnessing
 it. -/
 
-/-- `introduce` is an authorized generative act. DERIVED. -/
+/-- `introduce` is an authorized generative act (derived instance). -/
 theorem introduce_is_gen {G G' : Graph CellId Rights} {consents : CellId → Prop}
     {holder recipient : CellId} {parent cap : Cap CellId Rights}
     (st : Introduce G consents holder recipient parent cap G') : GenAct consents G G' :=
   .introduce st
 
-/-- `mint` is an authorized generative act. DERIVED. -/
+/-- `mint` is an authorized generative act (derived instance). -/
 theorem mint_is_gen {G G' : Graph CellId Rights} {consents : CellId → Prop}
     {minter : CellId} {factory : Cap CellId Rights}
     {contract : FactoryContract CellId Rights} {child : Cap CellId Rights}
     (st : Mint G minter factory contract child G') : GenAct consents G G' :=
   .mint st
 
-/-- `amplify` is an authorized generative act. DERIVED. -/
+/-- `amplify` is an authorized generative act (derived instance). -/
 theorem amplify_is_gen {G G' : Graph CellId Rights} {consents : CellId → Prop}
     {actor : CellId} {amplifier recovered : Cap CellId Rights}
     (st : Amplify G actor amplifier recovered G') : GenAct consents G G' :=
   .amplify st
 
-/-- `attenuate` is a restrictive act. DERIVED. -/
+/-- `attenuate` is a restrictive act (derived instance). -/
 theorem attenuate_is_restrict {G G' : Graph CellId Rights}
     {holder : CellId} {cap narrowed : Cap CellId Rights}
     (st : Attenuate G holder cap narrowed G') : RestrictAct G G' :=
   .attenuate st
 
-/-- `revoke` is a restrictive act (terminal). DERIVED. -/
+/-- `revoke` is a restrictive act, terminal (derived instance). -/
 theorem revoke_is_restrict {G G' : Graph CellId Rights}
     {holder : CellId} {cap : Cap CellId Rights}
     (st : Revoke G holder cap G') : RestrictAct G G' :=
@@ -589,10 +545,9 @@ theorem revoke_is_restrict {G G' : Graph CellId Rights}
 
 /-! ## §7 — Axiom-hygiene tripwires.
 
-Pin the clean keystones: each depends ONLY on the three standard kernel axioms (no
-`sorryAx`). The headline `only_connectivity_begets_connectivity` is NOW INCLUDED — its
-formerly-OPEN attenuate-trace thread is closed (the narrowed edge inherits its predecessor's
-origin witness via `confers_trans`), so the closure is axiom-clean and the pin certifies it. -/
+Pin the clean keystones: each depends only on the three standard kernel axioms (no `sorryAx`).
+The headline `only_connectivity_begets_connectivity` is included — the attenuate-trace thread
+is closed (the narrowed edge inherits its predecessor's origin witness via `confers_trans`). -/
 
 #assert_axioms confers_refl
 #assert_axioms confers_trans
@@ -610,8 +565,7 @@ origin witness via `confers_trans`), so the closure is axiom-clean and the pin c
 #assert_axioms amplify_is_gen
 #assert_axioms attenuate_is_restrict
 #assert_axioms revoke_is_restrict
--- The headline closure is now axiom-clean: this pin errors on `sorryAx`, so its passing
--- compilation certifies the formerly-OPEN attenuate-trace thread is genuinely discharged.
+-- This pin errors on `sorryAx`; its passing certifies the whole closure is axiom-clean.
 #assert_axioms only_connectivity_begets_connectivity
 
 end Dregg2.Spec
