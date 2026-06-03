@@ -1,0 +1,303 @@
+/-
+# Dregg2.Verify.Catalog — the Hatchery's SHAPE CATALOG (HATCHERY.md Tier 4).
+
+Tier 3 (`Verify/Contract.lean`) made a verified invariant a first-class VALUE (`CellContract`): the
+author supplies `(Inv, step_ob)` and gets `forever` / `always` free. But the author still hand-writes
+`step_ob`. This module is Tier 4 — the **declarative spec language** (`HATCHERY.md §128–§151`): the
+five safety SHAPES we keep re-deriving become *macros*. The author names a FIELD (and the data the
+shape needs — a tracked element, an asset, an authority ceiling, two asset classes) and the macro
+EXPANDS to a real `CellContract` whose `step_ob` is discharged THROUGH the Tier-1/2 engine
+(`exec_frame` / the registered `[Dregg2]` frame lemmas / the per-asset conservation lemma / field
+algebra). No hand proof — *this is the smart-contract spec language* (`HATCHERY.md §130`).
+
+## The four shapes shipped (the safety-only `□` fragment — `HATCHERY.md §144`)
+
+| macro                       | property class            | `Inv`                                    | one-step discharge                          |
+|-----------------------------|---------------------------|------------------------------------------|---------------------------------------------|
+| `monotone_registry% f x`    | grow-only set membership  | `x ∈ ·.kernel.f`                         | `exec_frame` + the registered `f`-grow lemma |
+| `conservation% a`           | equality of a measure     | `cellObsA · a = cellObsA s0 a`           | the per-asset `cellObsA_next` (rewrite)     |
+| `confinement% U`            | authority ⊆ a ceiling     | `CapsConfined U ·.kernel.caps`           | `cellNextA_confine` (the `[Dregg2]` cap step) |
+| `automaton_inv% a b`        | linear relation of fields | `obs·a + obs·b = obs s0 a + obs s0 b`    | `cellObsA_next` ×2 + `omega` (field algebra) |
+
+Each macro produces a REAL `CellContract` (NOT a stub): the `step_ob` field is filled by a tactic that
+runs the executor case-split and closes BOTH arms honestly. The GATE (`§5`) shows each macro, applied
+to its canonical field, elaborating to a building contract — and `monotone_registry% revoked`
+reproducing `Apps.Identity.livingCellA_identity_revoked_forever` as a *one-liner* `.forever` call.
+
+## DEFERRED (NOT faked — `HATCHERY.md §150`, H5)
+
+`eventually% Goal` / liveness (`◇`-progress) is OMITTED, not stubbed: `◇` needs the CTL/μ-calculus
+`lfp` layer + a fairness hypothesis on `SchedA` (`HATCHERY.md §204`, deferred to the CTL/μ workflow).
+A `CellContract` carries a SINGLE state predicate along `trajA` — the safety (`□`) fragment — so a
+liveness shape has no honest home here yet. Shipping a fake `eventually%` would violate the file's
+discipline; it is recorded as future work rather than emitted.
+
+Discipline: NO `sorry`/`admit`/`native_decide`/SMT. Every macro-emitted contract + its `forever`/
+`always` payoff is `#assert_axioms`-pinned to the kernel triple `{propext, Classical.choice,
+Quot.sound}` at the foot of the file. The macros emit ordinary kernel-checked terms — the catalog
+cannot launder a gap into a false "PROVED": if a discharge tactic failed, the elaboration would error.
+-/
+import Dregg2.Verify.Contract
+import Dregg2.Exec.CellConfine
+
+namespace Dregg2.Verify
+
+open Dregg2.Exec
+open Dregg2.Exec.TurnExecutorFull (fma0)
+open Dregg2.Exec.FullForest
+open Dregg2.Authority
+open Dregg2.Proof.Temporal (Always)
+
+/-! ## §1 — `monotone_registry% f x` — "once `x` is in registry `f`, it stays — forever".
+
+The grow-only registry shape (`HATCHERY.md §133–§135, §147`): the three kernel registries `revoked`
+(`#139` revocation root-of-trust), `commitments` (`#121` Pedersen commitment tree), `nullifiers`
+(anti-double-spend) are all GROW-ONLY — a committed forest only ever extends them
+(`execFullForestA_{revoked,commitments,nullifiers}_grow`, the `⊆`-shaped forest lemmas registered in
+the `[Dregg2]` rule-set). So a tracked element `x` that is present stays present.
+
+`monotone_registry% f x` expands to the membership contract `Inv s := x ∈ s.kernel.f` with `shape :=
+.membership`. The `step_ob` is the executor case-split (`cellNextA` = commit-on-`some` / stay-put-on-
+`none`): on a **commit** the registered `f`-grow lemma `… s s' cf.1 hc` gives `s.kernel.f ⊆ s'.kernel.f`,
+APPLIED to the membership hypothesis (`⊆` is `∀ {a}, a ∈ · → a ∈ ·`) to relocate `x` into `s'`; on a
+**reject** the stay-put self-loop leaves the state — and so the membership — unchanged. This is exactly
+`Contract.revokedPersists`, generalized over the three grow-only registries by the field name. -/
+
+/-- **`monotone_registry% f x`** (`f ∈ {revoked, commitments, nullifiers}`) — the grow-only-registry
+contract: `x ∈ ·.kernel.f`, carried by the registered forest-grow lemma. Produces a real
+`CellContract` (`shape := .membership`); `.forever` then gives *"`x` stays in `f` at every index of
+every adversarial trajectory"* with no hand proof. -/
+syntax (name := monotoneRegistryStx) "monotone_registry% " ident ppSpace term:max : term
+
+macro_rules
+  | `(monotone_registry% revoked $x:term) =>
+    `(({  Inv := fun s => $x ∈ s.kernel.revoked
+          step_ob := fun a cf h => by
+            show $x ∈ (cellNextA a cf).kernel.revoked
+            unfold cellNextA
+            cases hc : execFullForestA a cf.1 with
+            | some a' => simp only [Option.getD_some]
+                         exact Dregg2.Apps.Identity.execFullForestA_revoked_grow a a' cf.1 hc h
+            | none    => simp only [Option.getD_none]; exact h
+          shape := .membership } : CellContract))
+  | `(monotone_registry% commitments $x:term) =>
+    `(({  Inv := fun s => $x ∈ s.kernel.commitments
+          step_ob := fun a cf h => by
+            show $x ∈ (cellNextA a cf).kernel.commitments
+            unfold cellNextA
+            cases hc : execFullForestA a cf.1 with
+            | some a' => simp only [Option.getD_some]
+                         exact Dregg2.Exec.execFullForestA_commitments_grow a a' cf.1 hc h
+            | none    => simp only [Option.getD_none]; exact h
+          shape := .membership } : CellContract))
+  | `(monotone_registry% nullifiers $x:term) =>
+    `(({  Inv := fun s => $x ∈ s.kernel.nullifiers
+          step_ob := fun a cf h => by
+            show $x ∈ (cellNextA a cf).kernel.nullifiers
+            unfold cellNextA
+            cases hc : execFullForestA a cf.1 with
+            | some a' => simp only [Option.getD_some]
+                         exact Dregg2.Exec.execFullForestA_nullifiers_grow a a' cf.1 hc h
+            | none    => simp only [Option.getD_none]; exact h
+          shape := .membership } : CellContract))
+
+/-! ## §2 — `conservation% a` — "asset `a`'s supply never drifts from its starting value".
+
+The per-asset conservation shape (`HATCHERY.md §136, §146`): over a `ConservingForest` (per-asset net
+delta `0` in every asset) the combined per-asset measure `cellObsA · a = recTotalAssetWithEscrow ·
+.kernel a` is INVARIANT. `conservation% a` is parametric in a baseline state `s0`: it expands to the
+contract `Inv s := cellObsA s a = cellObsA s0 a` (`shape := .constant`). The `step_ob` is the proved
+one-step `cellObsA_next` (commit conserves EVERY asset — `execFullForestA_conserves_per_asset`
+discharged by the conserving subtype's `∀ b, Δ = 0`; stay-put trivial), specialized to asset `a` by
+`congrFun`. The supply generators (mint/burn) are the disclosed boundary, EXCLUDED from
+`ConservingForest` — so this is the genuine *"no hidden inflation"* invariant, per asset. -/
+
+/-- **`conservation% a`** — the per-asset conservation contract (parametric in the baseline `s0`):
+`cellObsA · a = cellObsA s0 a`, carried by `cellObsA_next`. Produces a real `CellContract`
+(`shape := .constant`); `.forever` gives *"asset `a`'s total supply never drifts, ever"*. Note the
+expansion mentions the baseline `s0` (bind it at the use site, e.g. `conservation% (0 : AssetId)`
+applied with `s0 := fma0`). -/
+syntax (name := conservationStx) "conservation% " term:max : term
+
+macro_rules
+  | `(conservation% $a:term) =>
+    `((fun (s0 : RecChainedState) =>
+        ({  Inv := fun s => cellObsA s $a = cellObsA s0 $a
+            step_ob := fun a' cf h => by
+              show cellObsA (cellNextA a' cf) $a = cellObsA s0 $a
+              rw [congrFun (cellObsA_next a' cf) $a]; exact h
+            shape := .constant } : CellContract)))
+
+/-! ## §3 — `confinement% U` — "authority never exceeds the ceiling `U`".
+
+The capability-confinement shape (`HATCHERY.md §137, §148`) — the seL4 `PasRefined` object-integrity
+upper bound (`Exec/CellConfine.lean`). `confinement% U` expands to a FUNCTION `Auth.control ∈ U →
+CellContract`: the carry needs `control ∈ U` (every connectivity grant confers `[control]`, which must
+lie under the ceiling), so the macro surfaces that hypothesis EXPLICITLY rather than baking it in
+(honest by construction). Applied to a proof `hctrl : Auth.control ∈ U` it yields the contract
+`Inv s := CapsConfined U s.kernel.caps` (`shape := .other` — the confinement shape is its own
+category) whose `step_ob` is the proved `cellNextA_confine hctrl` (commit: the forest confinement
+lemma routes every cap-writing effect — grant/attenuate/revoke — under `U`; reject: caps unchanged).
+`.forever` then gives *"caps stay confined by `U` at every index, every schedule"* — capability safety,
+forever, the seL4 shape. -/
+
+/-- **`confinement% U`** — the authority-confinement shape: expands to `Auth.control ∈ U →
+CellContract`, the contract being `CapsConfined U ·.kernel.caps` carried by `cellNextA_confine`. The
+`control ∈ U` hypothesis is surfaced explicitly (the carry genuinely needs it). Apply to a proof to get
+a real `CellContract`. -/
+syntax (name := confinementStx) "confinement% " term:max : term
+
+macro_rules
+  | `(confinement% $U:term) =>
+    `((fun (hctrl : Auth.control ∈ $U) =>
+        ({  Inv := fun s => CapsConfined $U s.kernel.caps
+            step_ob := fun a cf h => cellNextA_confine hctrl a cf h
+            shape := .other } : CellContract)))
+
+/-! ## §4 — `automaton_inv% a b` — a field-RELATIONAL invariant (linear field algebra).
+
+The field-relational shape (`HATCHERY.md §138, §149`: *"a relation among fields … discharged by
+`exec_frame` + `omega`/field algebra"*). The Subscription headline `seq_tail ≤ seq_head` is the
+archetype on a self-contained automaton; on the REAL kernel state the analogous *linear relation among
+two fields* is the COMBINED two-asset supply: `cellObsA s a + cellObsA s b` is conserved (a single
+linear equation relating two ledger columns). It is genuinely relational — it constrains a sum of two
+distinct fields, NOT either field alone (`obs a = 105`, `obs b = 7`, but the carried datum is their sum
+`112`).
+
+`automaton_inv% a b` is parametric in the baseline `s0`: it expands to `Inv s := cellObsA s a +
+cellObsA s b = cellObsA s0 a + cellObsA s0 b` (`shape := .other`). The `step_ob` is `exec_frame`-style
+(the executor commit/stay-put split), with the commit arm closed by FIELD ALGEBRA: the per-asset
+`cellObsA_next` gives `obs(next) a = obs(s) a` AND `obs(next) b = obs(s) b`, and `omega` combines the
+two equalities with the baseline. Demonstrates the `automaton_inv%` discharge route (`exec_frame` +
+`omega`) on a non-trivial linear relation the per-asset *scalar* invariants cannot state. -/
+
+/-- **`automaton_inv% a b`** — a linear two-field relational invariant (parametric in baseline `s0`):
+the combined supply `cellObsA · a + cellObsA · b` is conserved, discharged by `cellObsA_next` ×2 +
+`omega`. Produces a real `CellContract` (`shape := .other`); `.forever` gives *"the combined two-asset
+supply never drifts"*. The canonical `automaton_inv%` instance: a relation among fields closed by field
+algebra, the kernel-state analogue of Subscription's `tail ≤ head`. -/
+syntax (name := automatonInvStx) "automaton_inv% " term:max ppSpace term:max : term
+
+macro_rules
+  | `(automaton_inv% $a:term $b:term) =>
+    `((fun (s0 : RecChainedState) =>
+        ({  Inv := fun s => cellObsA s $a + cellObsA s $b = cellObsA s0 $a + cellObsA s0 $b
+            step_ob := fun a' cf h => by
+              show cellObsA (cellNextA a' cf) $a + cellObsA (cellNextA a' cf) $b
+                 = cellObsA s0 $a + cellObsA s0 $b
+              have ha : cellObsA (cellNextA a' cf) $a = cellObsA a' $a := congrFun (cellObsA_next a' cf) $a
+              have hb : cellObsA (cellNextA a' cf) $b = cellObsA a' $b := congrFun (cellObsA_next a' cf) $b
+              omega
+            shape := .other } : CellContract)))
+
+/-! ## §5 — THE GATE: each macro elaborates to a BUILDING `CellContract` at its canonical field.
+
+These `def`s/`example`s force elaboration of each macro and show the contract is real (its `.forever`
+delivers the unbounded-time carry). The headline: `monotone_registry% revoked` reproduces the shipped
+`Apps.Identity.livingCellA_identity_revoked_forever` as a single `.forever` call. -/
+
+/-- **GATE (1) — `monotone_registry% revoked` builds.** The contract at the revocation registry. -/
+def gateRevoked (credNul : Nat) : CellContract := monotone_registry% revoked credNul
+
+/-- **GATE (1, headline) — `monotone_registry% revoked` reproduces the Identity crown as a ONE-LINER.**
+`Apps.Identity.livingCellA_identity_revoked_forever`'s statement — *a revoked credential stays revoked
+at every index of every adversarial trajectory* — delivered by `(monotone_registry% revoked
+credNul).forever`. No hand proof: the macro built the `CellContract`, `.forever` is the free payoff.
+THIS is the Tier-4 promise — a verified "revoked ⇒ revoked forever" theorem from a single declaration. -/
+example (credNul : Nat) (s : RecChainedState) (hinit : credNul ∈ s.kernel.revoked) (sched : SchedA) :
+    ∀ n, credNul ∈ (trajA s sched n).kernel.revoked :=
+  (monotone_registry% revoked credNul).forever hinit sched
+
+/-- …and `.always` lifts the SAME one-liner into the LTL `□` modality. -/
+example (credNul : Nat) (s : RecChainedState) (hinit : credNul ∈ s.kernel.revoked) (sched : SchedA) :
+    Always (fun s' => credNul ∈ s'.kernel.revoked) s sched :=
+  (monotone_registry% revoked credNul).always hinit sched
+
+/-- **GATE (1′) — `monotone_registry% commitments` builds + reproduces commitment-persistence.** -/
+example (c : Nat) (s : RecChainedState) (hinit : c ∈ s.kernel.commitments) (sched : SchedA) :
+    ∀ n, c ∈ (trajA s sched n).kernel.commitments :=
+  (monotone_registry% commitments c).forever hinit sched
+
+/-- **GATE (1″) — `monotone_registry% nullifiers` builds + reproduces no-double-spend.** -/
+example (n : Nat) (s : RecChainedState) (hinit : n ∈ s.kernel.nullifiers) (sched : SchedA) :
+    ∀ m, n ∈ (trajA s sched m).kernel.nullifiers :=
+  (monotone_registry% nullifiers n).forever hinit sched
+
+/-- **GATE (2) — `conservation% 0` builds.** The per-asset conservation contract at asset `0`,
+baseline `fma0`. -/
+def gateConserved : CellContract := (conservation% (0 : AssetId)) fma0
+
+/-- **GATE (2, payoff) — `conservation% 0` reproduces `CellReal.livingCellA_obs_invariant` (asset 0).**
+*Asset 0's total supply never drifts from its starting value, at every index of every trajectory.* -/
+example (sched : SchedA) :
+    ∀ n, cellObsA (trajA fma0 sched n) 0 = cellObsA fma0 0 :=
+  ((conservation% (0 : AssetId)) fma0).forever rfl sched
+
+/-- **GATE (3) — `confinement% fullAuthCeiling` builds.** The capability-confinement contract under the
+full authority ceiling (which contains `control`, supplied by `by decide`). -/
+def gateConfined : CellContract :=
+  (confinement% fullAuthCeiling) (by decide)
+
+/-- **GATE (3, payoff) — `confinement%` reproduces `CellConfine.livingCellA_confinement`.** *Caps stay
+confined by the ceiling at every index of every adversarial trajectory* — capability safety, forever. -/
+example (s : RecChainedState) (hinit : CapsConfined fullAuthCeiling s.kernel.caps) (sched : SchedA) :
+    ∀ n, CapsConfined fullAuthCeiling (trajA s sched n).kernel.caps :=
+  ((confinement% fullAuthCeiling) (by decide)).forever hinit sched
+
+/-- **GATE (4) — `automaton_inv% 0 1` builds.** The combined two-asset supply relational invariant,
+baseline `fma0`. -/
+def gateAutomaton : CellContract := (automaton_inv% (0 : AssetId) (1 : AssetId)) fma0
+
+/-- **GATE (4, payoff) — `automaton_inv% 0 1`: the combined `asset0 + asset1` supply is conserved
+forever.** A linear relation among two ledger fields, carried at every index of every trajectory. -/
+example (sched : SchedA) :
+    ∀ n, cellObsA (trajA fma0 sched n) 0 + cellObsA (trajA fma0 sched n) 1
+       = cellObsA fma0 0 + cellObsA fma0 1 :=
+  ((automaton_inv% (0 : AssetId) (1 : AssetId)) fma0).forever rfl sched
+
+/-! ## §6 — It runs (`#eval`) — the macro contracts are NON-VACUOUS; the tags genuinely VARY.
+
+The macro-built contracts carry quantities that GENUINELY MOVE / discriminate (not `x = x`):
+* `monotone_registry%` — a real revoked id `42` is present (`true`) while `99` is absent (`false`):
+  the registry has TEETH, so `42 ∈ revoked` is a non-trivial fact (`Apps/Identity.lean`'s witness).
+* `conservation%` — asset 0's supply is `105`, conserved across a real transfer; the bound is a
+  genuine moving quantity (a transfer redistributes `bal` while holding the TOTAL).
+* `automaton_inv%` — the combined `obs 0 + obs 1 = 105 + 7 = 112` is RELATIONAL: it differs from
+  either field alone (`105`, `7`), so the carried datum genuinely combines two fields (not a constant
+  re-statement of one).
+And the four macros emit three distinct `SafetyShape`s (`.membership`, `.constant`, `.other`). -/
+
+-- monotone_registry%: the revocation registry has teeth (42 present, 99 absent — non-vacuous membership).
+#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42                  -- true  (42 IS revoked)
+#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99                  -- false (99 is NOT — teeth)
+
+-- conservation%: asset-0 supply is a real moving-but-conserved quantity (105 before = 105 after a transfer).
+#eval cellObsA fma0 0                                                             -- 105
+#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0))  -- some true
+
+-- automaton_inv%: the RELATION combines two fields (112) and differs from either alone (105, 7).
+#eval cellObsA fma0 0 + cellObsA fma0 1                                           -- 112 (the combined supply)
+#eval decide (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 0)               -- true (relational ≠ field-0 alone)
+#eval decide (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 1)               -- true (relational ≠ field-1 alone)
+-- and the combined supply is conserved by a real conserving transfer (the relational invariant holds AFTER):
+#eval (execFullForestA fma0 transferCF.1).map
+        (fun s' => decide (cellObsA s' 0 + cellObsA s' 1 = cellObsA fma0 0 + cellObsA fma0 1))  -- some true
+
+-- The macros emit GENUINELY DISTINCT `SafetyShape`s (not a single hard-wired tag).
+#eval (gateRevoked 42).shape                                                      -- SafetyShape.membership
+#eval gateConserved.shape                                                         -- SafetyShape.constant
+#eval gateAutomaton.shape                                                         -- SafetyShape.other
+#eval decide ((gateRevoked 42).shape ≠ gateConserved.shape)                       -- true (distinct shapes)
+
+/-! ## §7 — Axiom hygiene — the macro-emitted contracts + their payoff, kernel-triple clean.
+
+`#assert_axioms` on each GATE `def` pins the macro-EMITTED `CellContract` (Inv + the tactic-discharged
+`step_ob`) to `{propext, Classical.choice, Quot.sound}` — certifying the catalog macros produce
+ordinary kernel-checked terms with NO `sorry`/`native_decide`/SMT oracle. -/
+
+#assert_axioms gateRevoked
+#assert_axioms gateConserved
+#assert_axioms gateConfined
+#assert_axioms gateAutomaton
+
+end Dregg2.Verify

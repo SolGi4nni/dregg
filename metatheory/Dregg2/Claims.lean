@@ -421,4 +421,32 @@ evidence. -/
 comodel-morphism/sheaf-of-handlers tier. -/
 #assert_namespace_axioms Dregg2.HandlerTransformer
 
+/-! ## §34 — The Hatchery (HATCHERY.md H1–H4) + the web-citizen ProofWidgets surface.
+
+`Dregg2.Verify.*` is the Hatchery verification toolkit: `carry_forever`/`exec_frame` (Tier 1, with
+an HONEST hand-back — `logMono_handback_demo` proves it never fakes a close), the `[Dregg2]`-tagged
+forest-monotone frame family (Tier 2), the first-class `CellContract` with `forever` + the REAL LTL
+`□` `always` (Tier 3, wired through `Proof.Temporal.always_of_step_invariant`), and the declarative
+shape-catalog macros `monotone_registry%`/`conservation%`/`confinement%`/`automaton_inv%` (Tier 4).
+`Verify.Regression` reproduces six shipped crowns via the catalog with both-directions defeq
+witnesses. The headline keystones, pinned to the kernel triple:
+
+The presentation layer `Dregg2.Widget.*` (the ProofWidgets vocabulary — every panel rendering REAL
+executor state / `Lean.collectAxioms` verdicts, NO placeholder data) is built in-corpus via the root
+import but is intentionally NOT pinned here: `Widget.Basic` declares two clearly-named DEMO axioms to
+exhibit the amber "carrier-bounded" trust tier (a synthetic theorem depending on a fake §8 carrier, so
+its badge is genuinely amber). That by-design dependency would correctly fail a clean-triple pin —
+exactly as the §8-resting keystones are (correctly) omitted from this ledger. -/
+#assert_axioms Dregg2.Verify.logMono_via_tactics
+#assert_axioms Dregg2.Verify.revoked_grow_via_tactics
+#assert_axioms Dregg2.Verify.identity_revoked_forever_via_tactics
+#assert_axioms Dregg2.Verify.commitments_persist_via_auto
+#assert_axioms Dregg2.Verify.logMono_handback_demo
+#assert_axioms Dregg2.Verify.CellContract.forever
+#assert_axioms Dregg2.Verify.CellContract.always
+#assert_axioms Dregg2.Verify.logAppendOnly
+#assert_axioms Dregg2.Verify.conserved
+#assert_axioms Dregg2.Verify.revokedPersists
+#assert_axioms Dregg2.Verify.identity_revoked_forever_via_catalog
+
 end Dregg2.Claims
