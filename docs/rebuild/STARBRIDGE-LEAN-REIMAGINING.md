@@ -379,3 +379,74 @@ because every panel is a Lean term the user's own browser elaborated, checked, o
   **Path through (next session):** one consistent pipeline — re-emit the closure `.c` with stage1 +
   link all-stage1; OR (lighter, try first) patch the runtime's `extern "C"` Lean-`Bool` decls
   `bool`→`uint8_t` (`util/kvmap.cpp` is the one hit at init) + rebuild `leancpp`, keeping all-`-flto`.
+- 2026-06-03 — **✅ RUNG A LANDED: the verified executor runs a real turn in wasm, BYTE-IDENTICAL to
+  native.** The "lighter" path was correct. `node web/spike/out-exec/exec.js`:
+  `dregg_exec_full_forest_auth` **commits** the genuine gated turn (`bal [[0,0,70],[1,0,35]]`,
+  `loglen:1`, `ok:1`, asset-0 conserved 105) and **rolls back** the forged-credential turn (`100/5`,
+  `loglen:0`, `ok:0`) — `RESULT: PASS`, and the commit output is **byte-identical (312 B) to the
+  native FFI golden oracle** (`dregg-lean-ffi/.../marshal_roundtrip`). **Executor wasm = 40.7 MB**
+  (`-flto -Oz --gc-sections`; not a few MB because mathlib's module-init graph is unconditionally
+  runtime-reachable). Fix chain (all reproducible in `web/spike/build-*.sh`, full write-up in
+  `web/spike/RECIPE.md §RESOLVED`): (1) `-DLEAN_EMSCRIPTEN` (bug #1 Name-hash), (2) `-fwasm-exceptions`
+  on all Lean `.c`, (3) **`lean_mk_bool_data_value` extern `bool`→`uint8`** in `src/util/kvmap.cpp` —
+  the only real blocker (C++ `bool` i1 ≠ codegen `uint8_t` i8 under `-flto` → bitcast trap at
+  `register_option(bool)`); a genuine v4.30 wasm-portability bug, **upstreamed to leanprover/lean4**
+  (`emberian:kvmap-bool-data-value-uint8`), (4) drop 3 rogue `def main`s from the closure archives
+  (`Apps/AgentOrchestration`, `batteries/runLinter`, `importGraph/MainGraph`) that were hijacking the
+  wasm entry over `exec_host`'s, (5) `-sEXPORTED_FUNCTIONS=_main,_malloc` (init-time `EM_ASM`). Linux
+  build validated on persvati (runtime+stdlib clean; mac `.so`/`.dylib` bit-rot is mac-only). **This
+  is THE SWAP landing in the browser substrate (Rung A): the proved `execFullForestG` executing +
+  attesting, in wasm. Rungs B (kernel re-check) / C (elaborator) now sit on a working v4.30 wasm Lean.**
+- 2026-06-03 (cont.) — **✅ RUNG-A SURFACE: the in-browser verified-turn STUDIO (`web/spike/host/`).**
+  The bare textarea host page is now a real Pillar-4 surface over the executor: a **scenario library**
+  (genuine / forged-sig / insufficient-balance / caveat-satisfied / caveat-violated / zero / delegation-
+  forest), structured **quick controls** + the canonical JSON wire as source-of-truth (⌘/Ctrl+Enter to
+  run), a **verdict** banner (COMMIT / ROLLBACK / REJECTED-unparsed), a **conservation ledger** (per-asset
+  Σ before→after with the live ✓), the `<DreggForest>` **call-forest** view (root + delegation edges +
+  sub-nodes, coloured by verdict), a **capability** view, a **state diff** over all five side-tables, an
+  **honest proof-tier panel** (live observations vs. *proved-in-Lean-at-build-time* vs. *Rung B/C not yet
+  wired* — no faked in-browser re-check), and a **time-travel session** (a committing turn's post-state
+  becomes the next pre-state; the balance gate visibly halts the chain once a cell can't fund the move).
+  **Honesty discipline:** every scenario verdict is a SINGLE SOURCE OF TRUTH (`host/scenarios.js`) shared
+  by the page AND a headless regression check (`host/verify-scenarios.mjs`, `node` → **ALL 7 VERIFIED**),
+  so the page can never ship a verdict the executor doesn't actually produce. Driven + verified in a real
+  browser (Preview): boot ~0.36–1.4 s (wasm cached/cold), per-turn ~0.5–3 ms, console clean. Serve via the
+  `dregg-host` launch config (`:8011`), open `/host/`. Finding surfaced + matches MEMORY: delegated
+  children currently fail-close the whole turn (cap hand-off onto children not yet wired in `execFullForestG`).
+- 2026-06-03 (cont.) — **🔬 RUNG B/C: the wasm Lean ELABORATOR builds + RUNS (parses + elaborates in
+  wasm); one deliberate build step (GMP oleans) remains.** Per ember's steer ("load the source in the
+  browser" — which subsumes a kernel-only Rung B and reaches Rung C), I linked the actual Lean frontend
+  `bin/lean.{js,wasm}` (~75 MB) from the stage1 archives and got it booting + elaborating past the parser
+  under Node. This is **uncharted** (lean4 dropped `linux_wasm32` after v4.15; nobody builds the v4.30
+  frontend for wasm, least of all on macOS). Full recipe + the 6-issue chain in `web/spike/RECIPE.md`
+  §"Rung B/C". Source fixes landed (all upstream-worthy, siblings to the kvmap PR): (1) `util/shell.cpp`
+  NODEFS harness was Linux-only (`/home`+`/tmp`; macOS cwd is under `/Users`/`/private`, `/tmp` is a
+  symlink) → cross-platform mounts; (2) `-DLEAN_EMSCRIPTEN` was missing from the stdlib-`.c` path
+  (`LEANC_EXTRA_CC_FLAGS` + lake `moreLeancArgs`) → `unknown parser category 'level'` — PROVEN fixed;
+  (3) `-sSTACK_SIZE=64MB` (default 64 KB overflows the elaborator). Build-config workarounds: (4) macOS
+  `libtool` can't archive wasm objects (empty `.a`) → archive with `emar`; (5) `lake` content-hash replay
+  skips C recompiles on a flag-only change → compile the stdlib `.c` directly with the executor's proven
+  `emcc … -DLEAN_EMSCRIPTEN -fwasm-exceptions … -flto -Oz -c` recipe. **THE ONE REMAINING STEP:** olean
+  bignum encoding — wasm build is `USE_GMP=OFF` (native bignums) but elan's oleans are GMP-encoded
+  (`olean_header.flags` mismatch) → must either build GMP-for-wasm (`USE_GMP=ON`) or regenerate oleans
+  with a non-GMP lean. Both are large, deliberate builds **best done on a Linux host** (sidesteps the
+  libtool + reconfigure-clobber macOS pain). The elaborator itself already runs — this is the clean finish.
+- 2026-06-04 — **🔧 persvati `MULTI_THREAD=ON` campaign: threads-on wasm `lean` BUILDS; blocked on a
+  genuine FFI-ABI wall (not the earlier GMP/width framing).** Ran the full threads-on build on `ssh
+  persvati` (24c Linux, where `ar` archives wasm objects — no macOS libtool problem). Cleared every
+  emscripten constraint in turn: generated the emscripten-gated `Leanc.lean`; `-sINITIAL_MEMORY` > 64 MB
+  `STACK_SIZE`; lake `moreLeancArgs` needs `-pthread` (atomics) for the `--shared-memory` link;
+  `NODE_OPTIONS=--max-old-space-size=16384` for emscripten's acorn-optimizer; and **the big one — V8's
+  hard 100 k-wasm-export limit**: the lean CLI's `MAIN_MODULE=1+LINKABLE=1+EXPORT_ALL=1` exported ~218 k
+  symbols (won't instantiate in Node *or* Chrome) → switched to a static exe with curated
+  `EXPORTED_FUNCTIONS` (`CMakeLists.txt:841`; `lean.js` 216 MB→237 KB) — a **real, upstream-worthy general
+  fix** any in-browser lean needs. **REMAINING WALL (confirmed genuine — reproduced in a clean
+  from-scratch build, NOT staleness):** the module fails to instantiate with `need 5, got 4` — wasm-ld
+  enforces exact call arities native linkers tolerate, and 6 runtime `@[extern]` functions
+  (`lean_internal_get_default_max_{heartbeat,memory}`, `lean_io_create_temp{file,dir}`,
+  `lean_read_module_data_parts`, `lean_compacted_region_free`) disagree by one arg (the IO world-token)
+  between the compiled C++ runtime and the Lean codegen, despite self-consistent-looking source. This is
+  the RECIPE's pre-identified hard blocker (`web/spike/RECIPE.md §"persvati threads-on campaign"`), now
+  CONFIRMED; the fix needs forensic wasm-level + upstream signature reconciliation. **Honest status: the
+  threads-on elaborator BUILDS but does NOT instantiate / does NOT elaborate yet.** Rung A (the executor
+  studio) remains the shipped, working capability.
