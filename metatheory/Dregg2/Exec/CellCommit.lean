@@ -387,8 +387,14 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
   | emitEventA actor cell topic data =>
-      simp only [execFullA, emitStep, Option.some.injEq] at h; subst h
-      exact List.Subset.refl _
+      -- §EMIT-LIVE: `emitStep` is now live-cell guarded — peel the `cell ∈ accounts` gate, then the
+      -- log-only post-state frames `commitments` (kernel unchanged).
+      simp only [execFullA] at h
+      by_cases hlive : cell ∈ s.kernel.accounts
+      · rw [if_pos hlive] at h
+        simp only [emitStep, Option.some.injEq] at h; subst h
+        exact List.Subset.refl _
+      · rw [if_neg hlive] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
@@ -441,9 +447,10 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
       exact subset_of_commitments_eq (createCellFromFactoryChainA_sideTables h).1
   | spawnA actor child target =>
       simp only [execFullA] at h
-      obtain ⟨s1, hc, hs'⟩ := spawnChainA_factors h; subst hs'
+      -- §SPAWN-FACTOR: new 4-tuple shape — `⟨s1, ⟨held-edge, target∈accounts⟩, createCellChainA=…, s'=…⟩`.
+      obtain ⟨s1, _, hc, hs'⟩ := spawnChainA_factors h; subst hs'
       obtain ⟨_, _, hc'⟩ := createCellChainA_factors hc; subst hc'
-      -- post = `{ createCell-state with caps := … }`: both edits frame `commitments`.
+      -- post = `{ createCell-state with caps/delegate/delegations := … }`: every edit frames `commitments`.
       exact List.Subset.refl _
   | bridgeMintA actor cell a value =>
       simp only [execFullA, recCMintAsset] at h

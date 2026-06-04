@@ -117,6 +117,27 @@ what `addEdge` adds): `capConfersEdge (.node t) = true`. -/
 @[simp] theorem capConfersEdge_node (t : CellId) :
     capConfersEdge (.node t) = true := rfl
 
+/-- **The connectivity bridge.** Any cap that `confersEdgeTo t` (the `execGraph` edge test against a
+named target `t`) is ipso facto edge-bearing for its own target (`capConfersEdge`). The two predicates
+agree on the rights-bearing core: a `node` is unconditionally edge-bearing; a write-carrying
+`endpoint t` confers the edge precisely because it `contains write`, which is exactly
+`capConfersEdge`'s endpoint test; a `null` cap confers nothing (vacuous). This is what lets us count
+the COPIED held cap (`heldCapTo`, which is no longer literally a `node t`) as an edge in `authMeasure`. -/
+theorem capConfersEdge_of_confersEdgeTo (t : CellId) (c : Dregg2.Authority.Cap)
+    (h : confersEdgeTo t c = true) : capConfersEdge c = true := by
+  cases c with
+  | null =>
+      -- `confersEdgeTo t null = (null == node t) || false = false`, contradicting `h`.
+      simp [confersEdgeTo] at h
+  | node t' =>
+      -- A node is unconditionally edge-bearing.
+      rfl
+  | endpoint t' r =>
+      -- `confersEdgeTo` reduces to `(t' == t) && r.contains write`; the conjunct gives `r.contains write`.
+      simp only [confersEdgeTo] at h
+      simp only [capConfersEdge]
+      exact (Bool.and_eq_true_iff.mp h).2
+
 /-- **`authMeasure s H`** — the AUTHORITY-domain measure: the number of edge-bearing cap entries the
 holders in the finite domain `H` actually hold, read straight off `s.kernel.caps`. The on-state,
 non-vacuous count the authority `excess` gate ranges over (grants raise it, revokes lower it, value
@@ -252,29 +273,40 @@ theorem authMeasure_of_caps_eq (s s' : RecChainedState) (H : Finset CellId)
   unfold authMeasure; rw [hc]
 
 /-- **`delegate` raises the measure by exactly `1` when the recipient is in domain.** `recKDelegate`
-commits by `grant`-ing a fresh `node t` cap (edge-bearing) onto `rec`'s slot; the filtered length of
-`rec`'s slot rises by one, every other holder is untouched. The on-state realization of the disclosed
-`+1` grant inflow — pinned to the structural `addEdge` (`execFull_delegate_addEdge`). PROVED. -/
+commits by `grant`-ing the delegator's COPIED held `t`-conferring cap (`heldCapTo`, still edge-bearing
+by the connectivity bridge) onto `rec`'s slot; the filtered length of `rec`'s slot rises by one, every
+other holder is untouched. The on-state realization of the disclosed `+1` grant inflow — pinned to the
+structural `addEdge` (`execFull_delegate_addEdge`). PROVED. -/
 theorem delegate_authMeasure (s s' : RecChainedState) (del rec t : CellId) (H : Finset CellId)
     (hrec : rec ∈ H) (h : execFull s (.delegate del rec t) = some s') :
     authMeasure s' H = authMeasure s H + 1 := by
-  -- Extract the committed caps edit: `s'.kernel.caps = grant s.kernel.caps rec (.node t)`.
+  -- Extract the committed caps edit: `s'.kernel.caps = grant s.kernel.caps rec (heldCapTo … del t)`.
   simp only [execFull, recCDelegate] at h
   cases hd : recKDelegate s.kernel del rec t with
   | none => rw [hd] at h; exact absurd h (by simp)
   | some k' =>
       rw [hd] at h; simp only [Option.some.injEq] at h; subst h
-      have hcaps : k'.caps = grant s.kernel.caps rec (.node t) := by
+      -- Recover the Granovetter held-edge premise the committed `recKDelegate` ran on.
+      have hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true := by
         unfold recKDelegate at hd
-        by_cases hg : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
-        · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; rw [← hd]
-        · rw [if_neg hg] at hd; exact absurd hd (by simp)
+        by_cases hg' : (s.kernel.caps del).any (fun cap => confersEdgeTo t cap) = true
+        · exact hg'
+        · rw [if_neg hg'] at hd; exact absurd hd (by simp)
+      -- The committed cap-edit grants the COPIED held cap (`heldCapTo`), not a manufactured `node t`.
+      have hcaps : k'.caps = grant s.kernel.caps rec (heldCapTo s.kernel.caps del t) := by
+        unfold recKDelegate at hd
+        rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; rw [← hd]
+      -- The copied held cap is edge-bearing: it `confersEdgeTo t` (heldCapTo_mem), hence `capConfersEdge`.
+      have hheld : capConfersEdge (heldCapTo s.kernel.caps del t) = true :=
+        capConfersEdge_of_confersEdgeTo t (heldCapTo s.kernel.caps del t)
+          (heldCapTo_mem s.kernel.caps del t hg).2
       -- The measure splits off `rec`'s summand; on `rec` the filtered length is `+1`, elsewhere equal.
       unfold authMeasure
       simp only [hcaps]
-      -- pointwise: `grant caps rec (.node t) h = if h = rec then (.node t) :: caps h else caps h`.
+      -- pointwise: `grant caps rec (heldCapTo …) h = if h = rec then (heldCapTo …) :: caps h else caps h`.
       have hpt : ∀ h : CellId,
-          (((grant s.kernel.caps rec (.node t) h).filter (fun c => capConfersEdge c)).length : ℤ)
+          (((grant s.kernel.caps rec (heldCapTo s.kernel.caps del t) h).filter
+              (fun c => capConfersEdge c)).length : ℤ)
             = (((s.kernel.caps h).filter (fun c => capConfersEdge c)).length : ℤ)
               + (if h = rec then 1 else 0) := by
         intro h
@@ -282,7 +314,7 @@ theorem delegate_authMeasure (s s' : RecChainedState) (del rec t : CellId) (H : 
         by_cases hh : h = rec
         · subst hh
           rw [if_pos rfl, List.filter_cons]
-          simp only [capConfersEdge_node, if_true, List.length_cons]
+          simp only [hheld, if_true, List.length_cons]
           push_cast; ring
         · simp only [if_neg hh, add_zero]
       rw [Finset.sum_congr rfl (fun h _ => hpt h)]

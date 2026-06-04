@@ -171,7 +171,7 @@ theorem introduce_addEdge {s s' : RecChainedState} {introducer recipient target 
   unfold recKDelegate at hd
   by_cases hg : (s.kernel.caps introducer).any (fun cap => confersEdgeTo target cap) = true
   · rw [if_pos hg] at hd; simp only [Option.some.injEq] at hd; subst hd
-    exact recKDelegate_execGraph s.kernel.caps recipient target
+    exact recKDelegate_execGraph s.kernel.caps introducer recipient target hg
   · rw [if_neg hg] at hd; exact absurd hd (by simp)
 
 /-- **(c) `introduce_authorized` — PROVED.** A committed introduction HOLDS the Granovetter source

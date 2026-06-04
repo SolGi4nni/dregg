@@ -239,11 +239,16 @@ theorem authAbsStep_forward (consents : Label → Prop)
     (h : Exec.recKDelegate k delegator recipient t = some k') :
     authAbsStep consents (recAbsOf k) (recAbsOf k') := by
   -- The post-state's caps are the granted table; extract that equation.
-  have hk' : k' = { k with caps := Exec.grant k.caps recipient (Authority.Cap.node t) } := by
+  -- Codex's no-amplification semantics: delegation COPIES the held cap (`heldCapTo`), it does not
+  -- manufacture `Cap.node t`. The committed-step hypothesis forces the held-edge condition `hg`.
+  have hg : (k.caps delegator).any (fun cap => Exec.confersEdgeTo t cap) = true := by
     unfold Exec.recKDelegate at h
     by_cases hg : (k.caps delegator).any (fun cap => Exec.confersEdgeTo t cap) = true
-    · rw [if_pos hg] at h; exact (Option.some.injEq _ _ ▸ h).symm
+    · exact hg
     · rw [if_neg hg] at h; exact absurd h (by simp)
+  have hk' : k' = { k with caps := Exec.grant k.caps recipient (Exec.heldCapTo k.caps delegator t) } := by
+    unfold Exec.recKDelegate at h
+    rw [if_pos hg] at h; exact (Option.some.injEq _ _ ▸ h).symm
   refine ⟨?_, ?_⟩
   · -- (C') the balance total is fixed (the DUAL frame).
     simp only [recAbsOf]
@@ -254,7 +259,7 @@ theorem authAbsStep_forward (consents : Label → Prop)
     have hres : execGraph k'.caps
         = Spec.addEdge (execGraph k.caps) recipient (⟨t, ()⟩ : Spec.Cap Label ExecRights) := by
       rw [hk']
-      exact Exec.recKDelegate_execGraph k.caps recipient t
+      exact Exec.recKDelegate_execGraph k.caps delegator recipient t hg
     -- Build the `Endow`: parent = delegator, child = recipient, cap = source = ⟨t,()⟩.
     refine Spec.AuthStep.gen (Spec.GenAct.endow (parent := delegator) (child := recipient)
       (cap := ⟨t, ()⟩) (source := ⟨t, ()⟩) ?_)

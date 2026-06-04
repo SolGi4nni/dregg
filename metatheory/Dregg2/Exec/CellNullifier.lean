@@ -250,8 +250,13 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; exact List.Subset.refl _
   | emitEventA actor cell topic data =>
-      simp only [execFullA, emitStep] at h
-      option_inj at h; subst h; exact List.Subset.refl _
+      -- §LIVE-CELL: the emit append is now gated on `cell ∈ accounts`; peel the gate, then the
+      -- committed `emitStep` post-state shares `s.kernel` (frame: `nullifiers` literally unchanged).
+      simp only [execFullA] at h
+      split at h
+      · simp only [emitStep] at h
+        option_inj at h; subst h; exact List.Subset.refl _
+      · exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact List.Subset.refl _
@@ -331,7 +336,11 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, _, hs1⟩ := createCellChainA_factors hc
       subst hs' hs1; exact List.Subset.refl _
   | spawnA actor child target =>
-      obtain ⟨s1, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
+      -- §SPAWN: the new `spawnChainA_factors` exposes the live-held-edge gate as a SEPARATE conjunct
+      -- (`_hg`), then the committed `createCellChainA` (into `s1`) and the held-cap copy post-state.
+      -- The cap/delegation edit is `nullifiers`-orthogonal, and `createCellChainA` writes a fresh cell
+      -- (frame: `nullifiers` literally unchanged).
+      obtain ⟨s1, _hg, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
       subst hs'
       obtain ⟨_, _, hc'⟩ := createCellChainA_factors hc; subst hc'; exact List.Subset.refl _
   | bridgeMintA actor cell a value =>

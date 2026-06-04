@@ -294,8 +294,11 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; rfl
   | emitEventA actor cell topic data =>
-      simp only [execFullA, emitStep] at h
-      option_inj at h; subst h; rfl
+      -- Codex's emitStep is now live-cell guarded: peel the `if cell ∈ accounts`.
+      simp only [execFullA] at h
+      by_cases hlive : cell ∈ s.kernel.accounts
+      · rw [if_pos hlive] at h; simp only [emitStep, Option.some.injEq] at h; subst h; rfl
+      · rw [if_neg hlive] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
@@ -368,7 +371,8 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, _, hs1⟩ := createCellChainA_factors hc
       subst hs' hs1; rfl
   | spawnA actor child target =>
-      obtain ⟨s1, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
+      -- Codex's spawnChainA_factors gained the (held-edge ∧ live-target) authority conjunct.
+      obtain ⟨s1, _, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
       subst hs'
       obtain ⟨_, _, hc'⟩ := createCellChainA_factors hc; subst hc'; rfl
   | bridgeMintA actor cell a value =>

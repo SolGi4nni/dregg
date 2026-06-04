@@ -478,8 +478,12 @@ theorem execFullA_subWF_preserved (s s' : RecChainedState) (fa : FullActionA)
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors (stateStepGuarded_eq h); subst hs'; exact hwf
   | emitEventA actor cell topic data =>
-      simp only [execFullA, emitStep] at h
-      option_inj at h; subst h; exact hwf
+      -- §LIVE-CELL: `emitEventA` now gates the authority-free log append on `cell ∈ accounts`. Peel the
+      -- live-cell `if`; a committed emit is exactly an `emitStep` (kernel UNCHANGED ⇒ `queues` frame).
+      simp only [execFullA] at h
+      by_cases hlive : cell ∈ s.kernel.accounts
+      · rw [if_pos hlive] at h; simp only [emitStep, Option.some.injEq] at h; subst h; exact hwf
+      · rw [if_neg hlive] at h; exact absurd h (by simp)
   | incrementNonceA actor cell n =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; exact hwf
@@ -552,7 +556,10 @@ theorem execFullA_subWF_preserved (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, _, hs1⟩ := createCellChainA_factors hc
       subst hs' hs1; exact hwf
   | spawnA actor child target =>
-      obtain ⟨s1, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
+      -- §SPAWN: `spawnChainA_factors` now yields a 3-part body (live-held gate ∧ `createCellChainA`-commit
+      -- ∧ the held-cap-copy/delegation snapshot post-state). The post-state edits `caps`/`delegate`/
+      -- `delegations` only — `queues` rides `s1.kernel.queues` = `createCellChainA`'s `queues` (frame).
+      obtain ⟨s1, _, hc, hs'⟩ := spawnChainA_factors (by simpa only [execFullA] using h)
       subst hs'
       obtain ⟨_, _, hc'⟩ := createCellChainA_factors hc; subst hc'; exact hwf
   | bridgeMintA actor cell a value =>
