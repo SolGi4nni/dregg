@@ -216,6 +216,12 @@ import Dregg2.Circuit.Spec.bridgeoutboundfinalize -- bridgeFinalizeA: outbound b
 import Dregg2.Circuit.Spec.sealpaircreation      -- createSealPairA: two c-list grants spec (sealer/unsealer caps)
 import Dregg2.Circuit.Spec.sealboxoperations     -- sealA/unsealA: capability box bind/move spec
 import Dregg2.Circuit.Spec.queuepipelinedsend    -- queueEnqueueA + deposit: FIFO append + parked deposit spec (combined-conserving)
+-- D5 executor⟺spec wave-2 (repaired harder families — root cause was a missing `open Dregg2.Exec.EffectsState (stateAuthB)` that cascaded into leaked sorryAx; gate-verified green + #assert_axioms-clean):
+import Dregg2.Circuit.Spec.cellstatelog          -- emitEventA: event/log-append spec + full frame (balance-neutral, no authority gate beyond cell-existence)
+import Dregg2.Circuit.Spec.swissexport           -- exportSturdyRefA: CapTP sturdy-ref mint spec (swissExportK; non-amplifying rights ⊆ held, no-dup, balance-neutral)
+import Dregg2.Circuit.Spec.queuefifocore         -- queueAllocate/Resize/Enqueue/DequeueA: the 4 FIFO ring-buffer ops (insert-fresh / no-id-reuse / no-shrink-below-occupancy / dead-cell-rejection, balance-neutral)
+import Dregg2.Circuit.Spec.queuepipelinefanout   -- queuePipelineStepA: atomic dequeue→fanout-enqueue pipeline step spec
+import Dregg2.Circuit.Spec.bridgeoutboundcancel  -- bridgeCancelA: timeout-refund spec (credit originator + resolve, combined-conserving)
 import Dregg2.DSLEffect                -- `dregg_effect <name> : <Class>` effects eDSL → Spec.Conservation LinearityClass coloring + inherited obligation; #assert_namespace_axioms-clean
 import Dregg2.Exec.Gas                  -- gas-metering layered beside execFullTurn: gasCost_pos (no free action) + gas_exhaustion_fails_closed (over-budget ⇒ none, no partial mutation) + gas_sufficient_runs (pure guard, identical state) + gas_conserves/_preserves_attests (removes no safety); Nat-resource orthogonal to ℤ-conservation
 import Dregg2.Proof.BeaconSpaceInterior -- interior-h non-vacuity witness: Measure.infinitePi (Bernoulli 3/4)^ℕ at h=3/4, indep_block via infinitePi_pi; BeaconSpace is non-vacuously instantiable at a genuine interior honest-fraction
