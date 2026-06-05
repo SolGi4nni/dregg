@@ -6248,35 +6248,35 @@ holds `node 0` (authority over cell 0). -/
 -- ★ LOCK then CANCEL (refund to originator 0, live): COMBINED stays (105, 7); held returns to 0; the
 --   bare bal at asset 1 returns to 7 (the value came BACK):
 #guard (((execFullA fmaSup (.bridgeLockA 7 9 0 1 1 5)).bind
-        (fun s => execFullA s (.bridgeCancelA 7 9))).map
+        (fun s => execFullA s (.bridgeCancelA 7 0))).map
         (fun s => (recTotalAssetWithEscrow s.kernel 1, recTotalAssetWithEscrow s.kernel 0,
-                   escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (7, 105, 0, 7)` (refund round-trip); code yields `none` — the `.bridgeCancelA 7 9` follow-up step fails-closed (bridgeLock alone commits, line 6243-area passes).
+                   escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))) == some (7, 105, 0, 7)  --  some (7, 105, 0, 7) — cancel by the recorded CREATOR (originator 0): held→0, bare bal→7 (value came back)
 -- ★ LOCK then FINALIZE (the §8 confirmation arrived — the value LEFT for the other chain): COMBINED
 --   DROPS by exactly 5 at asset 1 (7→2), asset 0 FIXED at 105; held drops to 0; bare bal stays at 2:
 #guard (((execFullA fmaSup (.bridgeLockA 7 9 0 1 1 5)).bind
-        (fun s => execFullA s (.bridgeFinalizeA 7 9 1 5))).map
+        (fun s => execFullA s (.bridgeFinalizeA 7 0 1 5))).map
         (fun s => (recTotalAssetWithEscrow s.kernel 1, recTotalAssetWithEscrow s.kernel 0,
-                   escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (2, 105, 0, 2)` (-5 at asset 1); code yields `none` — the `.bridgeFinalizeA 7 9 1 5` follow-up step fails-closed (bridgeLock alone commits).
+                   escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))) == some (2, 105, 0, 2)  --  some (2, 105, 0, 2) — finalize by the CREATOR (originator 0): combined −5 at asset 1 (disclosed outflow)
 -- ...the FINALIZE's disclosed delta is -5 at asset 1, 0 at asset 0 (the disclosed OUTFLOW, no laundering):
 #guard ((ledgerDeltaAsset (.bridgeFinalizeA 7 9 1 5) 0, ledgerDeltaAsset (.bridgeFinalizeA 7 9 1 5) 1)) == (0, -5)  --  (0, -5)
 -- DOUBLE-FINALIZE fail-closed (the record is already resolved):
 #guard ((((execFullA fmaSup (.bridgeLockA 7 9 0 1 1 5)).bind
-        (fun s => execFullA s (.bridgeFinalizeA 7 9 1 5))).bind
-        (fun s => execFullA s (.bridgeFinalizeA 7 9 1 5))).isSome) == false  --  false
+        (fun s => execFullA s (.bridgeFinalizeA 7 0 1 5))).bind
+        (fun s => execFullA s (.bridgeFinalizeA 7 0 1 5))).isSome) == false  --  false (record already resolved ⇒ bridgeAuthOK finds no unresolved row)
 -- MISMATCHED-amount finalize fail-closed (disclosed 99 ≠ parked 5 — the receipt-vs-pending check):
 #guard (((execFullA fmaSup (.bridgeLockA 7 9 0 1 1 5)).bind
-        (fun s => execFullA s (.bridgeFinalizeA 7 9 1 99))).isSome) == false  --  false
+        (fun s => execFullA s (.bridgeFinalizeA 7 0 1 99))).isSome) == false  --  false (disclosed 99 ≠ parked 5 — receipt-vs-pending check, even for the creator)
 -- UNAUTHORIZED lock fail-closed (actor 0 holds no authority over... actually owns itself; use actor 5):
 #guard ((execFullA fmaSup (.bridgeLockA 7 5 0 1 1 5)).isSome) == false  --  false (actor 5 unauthorized over cell 0)
 -- A MIXED bridge turn: lock 5 of asset 1 then finalize it → asset 1 net -5 (7→2), asset 0 conserved:
 def bridgeMixedTurn : List FullActionA :=
-  [ .bridgeLockA 7 9 0 1 1 5
-  , .bridgeFinalizeA 7 9 1 5 ]
+  [ .bridgeLockA 7 9 0 1 1 5      -- relayer 9 locks originator 0's 5 of asset 1
+  , .bridgeFinalizeA 7 0 1 5 ]    -- the recorded creator (originator 0) finalizes
 
-#guard ((execFullTurnA fmaSup bridgeMixedTurn).isSome) == false  -- TODO(triage): comment claimed `true` (all commit); code yields `none` — the turn's `.bridgeFinalizeA 7 9 1 5` step fails-closed (same root as line 6255).
+#guard ((execFullTurnA fmaSup bridgeMixedTurn).isSome)  --  true (lock by relayer 9, finalize by creator 0 — both commit)
 #guard ((turnLedgerDeltaAsset bridgeMixedTurn 0, turnLedgerDeltaAsset bridgeMixedTurn 1)) == (0, -5)  --  (0, -5)
 #guard ((execFullTurnA fmaSup bridgeMixedTurn).map
-        (fun s => (recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (105, 2)`; code yields `none` (the finalize step in the turn fails-closed)
+        (fun s => (recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))) == some (105, 2)  --  some (105, 2) (asset 0 conserved; asset 1 combined −5 via the disclosed finalize outflow)
 
 /-! ## §13-seal (Wave 6) — Non-vacuity for the 6 SIMPLE bal-neutral effects: the cell flag/metadata/
 refusal record MOVES (a flag genuinely flips), yet `recTotalAsset` is UNCHANGED in EVERY asset
@@ -6293,7 +6293,10 @@ portal — NOT exercised here, NEVER faked sound. -/
 def fmaW3 : RecChainedState :=
   { kernel :=
       { fmaS.kernel with
-        caps := fun l => if l = 0 then [sealerCap 5, unsealerCap 5] else []
+        -- cell 0 holds the sealer+unsealer caps for pair 5 AND the payload `node 42` it seals: sealA
+        -- correctly requires `payload ∈ caps actor` (no forging — you can only seal a cap you HOLD), so
+        -- the payload must be present for the demo to commit (an under-spec'd fixture before; #44 triage).
+        caps := fun l => if l = 0 then [sealerCap 5, unsealerCap 5, Cap.node 42] else []
         delegate := fun c => if c = 1 then some 0 else none }   -- child 1's parent is cell 0
     log := [] }
 
@@ -6308,12 +6311,12 @@ def fmaW3 : RecChainedState :=
 
 -- Seal: cell 0 HOLDS the sealer cap for pair 5, so it can SEAL a payload cap (here `Cap.node 42`) into a
 -- box bound to pair 5 — the box BINDS the SPECIFIC cap (REAL). Balance-NEUTRAL:
-#guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).isSome) == false  -- TODO(triage): comment claimed `true`; code yields `none` — `.sealA 5 0 (Cap.node 42)` fails-closed against fixture fmaW3 (the sealer-cap gate or box-store rejects).
-#guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).map (fun s => s.kernel.sealedBoxes.length)).isNone  -- TODO(triage): comment claimed `some 1` (box stored); code yields `none` (sealA fails-closed)
+#guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).isSome)  --  true (cell 0 holds the sealer cap for pair 5 AND the payload `node 42`)
+#guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).map (fun s => s.kernel.sealedBoxes.length)) == some 1  --  some 1 (box stored)
 #guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).map
-        (fun s => (findSealedBox s.kernel.sealedBoxes 5).map (·.payload))).isNone  -- TODO(triage): comment claimed `some (some (Cap.node 42))`; code yields `none` (sealA fails-closed)
+        (fun s => (findSealedBox s.kernel.sealedBoxes 5).map (·.payload))) == some (some (Cap.node 42))  --  some (some (Cap.node 42)) (THE cap, bound to pair 5)
 #guard ((execFullA fmaW3 (.sealA 5 0 (Cap.node 42))).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (105, 7)` (bal-NEUTRAL); code yields `none` (sealA fails-closed)
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (bal-NEUTRAL)
 -- FAIL-CLOSED: a cell NOT holding the sealer cap for pair 5 (cell 9, empty caps) cannot seal:
 #guard ((execFullA fmaW3 (.sealA 5 9 (Cap.node 42))).isSome) == false  --  false (CapabilityNotHeld)
 
@@ -6322,9 +6325,9 @@ def fmaW3 : RecChainedState :=
 -- through the box; a flag could NEVER witness this):
 def fmaW3Sealed : Option RecChainedState := execFullA fmaW3 (.sealA 5 0 (Cap.node 42))
 #guard ((fmaW3Sealed.bind (fun s => execFullA s (.unsealA 5 0 1))).map
-        (fun s => s.kernel.caps 1)).isNone  -- TODO(triage): comment claimed `some [Cap.node 42]` (cap moved to recipient); code yields `none` — `fmaW3Sealed` is itself `none` because the seal (line 6310) fails-closed, so the unseal chain never runs.
+        (fun s => s.kernel.caps 1)) == some [Cap.node 42]  --  some [Cap.node 42] (cap MOVED through the box to recipient 1)
 #guard ((fmaW3Sealed.bind (fun s => execFullA s (.unsealA 5 0 1))).map
-        (fun s => (s.kernel.caps 1).contains (Cap.node 42))).isNone  -- TODO(triage): comment claimed `some true` (recipient holds the sealed cap); code yields `none` (seal-then-unseal chain never runs; fmaW3Sealed = none)
+        (fun s => (s.kernel.caps 1).contains (Cap.node 42))) == some true  --  some true (recipient 1 holds the sealed cap)
 -- FAIL-CLOSED: unseal of a pair with NO box returns none (the cap must genuinely have been sealed):
 #guard ((execFullA fmaW3 (.unsealA 5 0 1)).isSome) == false  --  false (no box for pair 5)
 -- FAIL-CLOSED: a cell NOT holding the unsealer cap cannot unseal even an existing box:
@@ -6349,9 +6352,9 @@ def fmaW3Sealed : Option RecChainedState := execFullA fmaW3 (.sealA 5 0 (Cap.nod
 #guard ((execFullA fmaS (.cellSealA 9 0)).isSome) == false  --  false
 
 -- ★ WAVE-3 NON-VACUITY: refreshDelegation SNAPSHOTS the parent's CURRENT c-list. Child 1's parent is
--- cell 0 (which holds [sealerCap 5, unsealerCap 5]); refresh writes that snapshot into child 1's delegation:
+-- cell 0 (which holds [sealerCap 5, unsealerCap 5, node 42]); refresh writes that snapshot into child 1:
 #guard ((execFullA fmaW3 (.refreshDelegationA 1 1)).isSome)  --  true (self-authorized, has parent 0)
-#guard ((execFullA fmaW3 (.refreshDelegationA 1 1)).map (fun s => (s.kernel.delegations 1).length)) == some 2  --  some 2 (parent's 2 caps snapshotted)
+#guard ((execFullA fmaW3 (.refreshDelegationA 1 1)).map (fun s => (s.kernel.delegations 1).length)) == some 3  --  some 3 (parent cell 0's 3 caps snapshotted)
 -- FAIL-CLOSED: a cell with NO parent (cell 0, delegate = 0) cannot refresh:
 #guard ((execFullA fmaW3 (.refreshDelegationA 0 0)).isSome) == false  --  false (no parent)
 
