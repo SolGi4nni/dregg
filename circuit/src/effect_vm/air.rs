@@ -278,6 +278,22 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
                 offset: pi::NOTESPEND_NULLIFIER,
                 length_in_felts: 1,
             },
+            // D5b: NoteCreate commitment cross-binding (approach A). Single felt
+            // carrying fold_bytes32_to_bb(commitment); pinned to every
+            // sel::NOTE_CREATE row's param0 by the per-row gated constraint.
+            crate::air_descriptor::PiSlot {
+                name: "notecreate_commitment",
+                offset: pi::NOTECREATE_COMMITMENT,
+                length_in_felts: 1,
+            },
+            // D5c: Burn target cross-binding (approach A). Single felt carrying
+            // fold_bytes32_to_bb(target); pinned to every sel::BURN row's
+            // param0 (BURN_TARGET) by the per-row gated constraint.
+            crate::air_descriptor::PiSlot {
+                name: "burn_target",
+                offset: pi::BURN_TARGET_PI,
+                length_in_felts: 1,
+            },
         ],
         // Constraint groups: selector validity (NUM_EFFECTS+1), per-effect
         // gated constraints (~NUM_EFFECTS large groups), boundary bindings
@@ -293,7 +309,11 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
         // shape; the per-bit constraints are an internal property of the group.
         // + 1 (D5: NoteSpend nullifier cross-binding — one per-row gated
         //   equality `s_notespend * (param0 - PI[NOTESPEND_NULLIFIER])`).
-        constraint_polynomial_count: NUM_EFFECTS + 1 + NUM_EFFECTS + 1 + 1,
+        // + 1 (D5b: NoteCreate commitment cross-binding — one per-row gated
+        //   equality `s_notecreate * (param0 - PI[NOTECREATE_COMMITMENT])`).
+        // + 1 (D5c: Burn target cross-binding — one per-row gated equality
+        //   `s_burn * (param0 - PI[BURN_TARGET_PI])`).
+        constraint_polynomial_count: NUM_EFFECTS + 1 + NUM_EFFECTS + 1 + 1 + 1 + 1,
         // 32 prior + 8 (γ.2 #131/#132: 4 FEDERATION_ID + 4 OWNER_CELL_ID
         // row-0 boundary bindings).
         boundary_constraint_count: 40,
@@ -1071,6 +1091,51 @@ impl StarkAir for EffectVmAir {
             let c_ns_nullifier =
                 s_notespend * (local[PARAM_BASE + param::NULLIFIER] - pi_nullifier);
             combined = combined + alpha_pow * c_ns_nullifier;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // ====================================================================
+        // D5b: NoteCreate commitment CROSS-BINDING (approach A) — per-row gated
+        // PI equality. When sel::NOTE_CREATE == 1, the row's param0
+        // (`param::NOTE_COMMITMENT`, the single folded
+        // `fold_bytes32_to_bb(commitment)` felt that also drives the balance
+        // DEBIT) MUST equal PI[NOTECREATE_COMMITMENT]. Identical mechanism to
+        // the NoteSpend nullifier weld above: PI is constant across rows, so a
+        // malicious prover that feeds a different commitment C' into the
+        // EffectVM (param0 = fold(C')) cannot satisfy this unless PI carries
+        // fold(C'). The off-AIR verifier reconstructs PI[NOTECREATE_COMMITMENT]
+        // from the SCHEMA_NOTE_CREATE binding proof's fields[0] — the proof
+        // that certifies the commitment against its value/asset/range opening
+        // — so the EffectVM can no longer mint a note creation for a
+        // commitment the binding proof never validated. Gated by s_notecreate;
+        // sentinel ZERO when no NoteCreate row is present (vacuous).
+        if public_inputs.len() >= pi::BASE_COUNT {
+            let pi_commitment = public_inputs[pi::NOTECREATE_COMMITMENT];
+            let c_nc_commitment =
+                s_notecreate * (local[PARAM_BASE + param::NOTE_COMMITMENT] - pi_commitment);
+            combined = combined + alpha_pow * c_nc_commitment;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // ====================================================================
+        // D5c: Burn target CROSS-BINDING (approach A) — per-row gated PI
+        // equality. When sel::BURN == 1, the row's param0 (`param::BURN_TARGET`
+        // = `fold_bytes32_to_bb(target.as_bytes())`) MUST equal
+        // PI[BURN_TARGET_PI]. The Burn row's balance-debit constraint operates
+        // on the trace's running balance; this weld pins WHICH cell the burn
+        // is attributed to. The off-AIR verifier reconstructs PI[BURN_TARGET_PI]
+        // from the SCHEMA_BURN binding proof's fields[0] (the target whose
+        // `old_balance - new_balance == amount` the proof validated against the
+        // ledger snapshot), so a malicious executor can no longer prove the
+        // burn arithmetic for target T while feeding a Burn for a different
+        // target T' into the EffectVM. Gated by s_burn; sentinel ZERO when no
+        // Burn row is present (vacuous).
+        if public_inputs.len() >= pi::BASE_COUNT {
+            let s_burn_xb = local[sel::BURN];
+            let pi_burn_target = public_inputs[pi::BURN_TARGET_PI];
+            let c_burn_target =
+                s_burn_xb * (local[PARAM_BASE + param::BURN_TARGET] - pi_burn_target);
+            combined = combined + alpha_pow * c_burn_target;
             alpha_pow = alpha_pow * alpha;
         }
 

@@ -228,6 +228,34 @@ impl TurnExecutor {
             public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER] = nullifier_bb;
         }
 
+        // D5b: NoteCreate commitment CROSS-BINDING (approach A) — off-AIR
+        // equality. Same shape as the NoteSpend weld above: reconstruct
+        // PI[NOTECREATE_COMMITMENT] from the SCHEMA_NOTE_CREATE binding
+        // proof's certified commitment (fields[0]) when present, else fall
+        // back to the runtime NoteCreate's commitment. The PI-match loop
+        // below rejects any EffectVM proof whose folded NoteCreate param0
+        // disagrees, welding the EffectVM's debited note-creation to the
+        // commitment the binding proof validated against its value/asset/
+        // range opening. Sentinel ZERO when this cell's proof carries no
+        // NoteCreate row.
+        if let Some(commitment_bb) =
+            self.expected_notecreate_commitment_bb(turn, &vm_effects)
+        {
+            public_inputs[effect_vm::pi::NOTECREATE_COMMITMENT] = commitment_bb;
+        }
+
+        // D5c: Burn target CROSS-BINDING (approach A) — off-AIR equality.
+        // Reconstruct PI[BURN_TARGET_PI] from the SCHEMA_BURN binding proof's
+        // certified target (fields[0]) when present, else from the runtime
+        // Burn's target. The binding proof validates `old - new == amount`
+        // for THAT target against the ledger snapshot, so welding the
+        // EffectVM's burn param0 to it forbids proving the arithmetic for one
+        // cell while attributing the burn to another. Sentinel ZERO when this
+        // cell's proof carries no Burn row.
+        if let Some(target_bb) = self.expected_burn_target_bb(turn, &vm_effects) {
+            public_inputs[effect_vm::pi::BURN_TARGET_PI] = target_bb;
+        }
+
         // Sovereign-witness AIR teeth (SOVEREIGN-WITNESS-AIR-DESIGN.md §3.2):
         //
         // This path (`verify_and_commit_proof`) is the proof-carrying path
@@ -1326,6 +1354,88 @@ impl TurnExecutor {
 
         // No binding proof: fall back to the runtime fold (already byte-
         // identical to the trace's param0).
+        Some(runtime_fold)
+    }
+
+    /// D5b (NoteCreate commitment cross-binding, approach A): compute the
+    /// expected `PI[NOTECREATE_COMMITMENT]` felt, or `None` when this cell's
+    /// proof carries no NoteCreate row. The returned felt is
+    /// `fold_bytes32_to_bb(commitment)`, matching the trace's NoteCreate
+    /// `param0`. Sourced from the TRUSTED side:
+    ///   1. the turn's `SCHEMA_NOTE_CREATE` binding proof, if present (its
+    ///      `fields[0]` is the certified commitment that
+    ///      `verify_effect_binding_proofs` STARK-verifies + PI-matches against
+    ///      its value/asset/range opening); failing that
+    ///   2. the runtime NoteCreate effect's own commitment (backwards compat).
+    fn expected_notecreate_commitment_bb(
+        &self,
+        turn: &Turn,
+        vm_effects: &[dregg_circuit::effect_vm::Effect],
+    ) -> Option<dregg_circuit::field::BabyBear> {
+        use dregg_circuit::effect_vm::{Effect as VmEffect, fold_bytes32_to_bb};
+
+        // No NoteCreate row in this cell's proof → sentinel ZERO (None).
+        let runtime_fold = vm_effects.iter().find_map(|e| match e {
+            VmEffect::NoteCreate { commitment, .. } => Some(*commitment),
+            _ => None,
+        })?;
+
+        // Prefer the binding-proof-certified commitment (fields[0] ==
+        // commitment.0 per `extract_binding_params` for note-create).
+        let effects = Self::dfs_collect_effects(turn);
+        for bp in &turn.effect_binding_proofs {
+            if bp.schema_id != "dregg-effect-note-create-v1" {
+                continue;
+            }
+            if let Some(eff) = effects.get(bp.effect_index as usize) {
+                if matches!(eff, Effect::NoteCreate { .. }) {
+                    if let Some(commitment_32) = Self::extract_named_field_32b(eff, "commitment") {
+                        return Some(fold_bytes32_to_bb(&commitment_32));
+                    }
+                }
+            }
+        }
+
+        Some(runtime_fold)
+    }
+
+    /// D5c (Burn target cross-binding, approach A): compute the expected
+    /// `PI[BURN_TARGET_PI]` felt, or `None` when this cell's proof carries no
+    /// Burn row. The returned felt is `fold_bytes32_to_bb(target.as_bytes())`,
+    /// matching the trace's Burn `param0`. Sourced from the TRUSTED side:
+    ///   1. the turn's `SCHEMA_BURN` binding proof, if present (its `fields[0]`
+    ///      is the certified target — the cell whose `old - new == amount`
+    ///      balance arithmetic `verify_effect_binding_proofs_with_ledger`
+    ///      validates against the ledger snapshot); failing that
+    ///   2. the runtime Burn effect's own target (backwards compat).
+    fn expected_burn_target_bb(
+        &self,
+        turn: &Turn,
+        vm_effects: &[dregg_circuit::effect_vm::Effect],
+    ) -> Option<dregg_circuit::field::BabyBear> {
+        use dregg_circuit::effect_vm::{Effect as VmEffect, fold_bytes32_to_bb};
+
+        // No Burn row in this cell's proof → sentinel ZERO (None).
+        let runtime_fold = vm_effects.iter().find_map(|e| match e {
+            VmEffect::Burn { target_hash, .. } => Some(*target_hash),
+            _ => None,
+        })?;
+
+        // Prefer the binding-proof-certified target. SCHEMA_BURN fields[0] ==
+        // `*target.as_bytes()` per `extract_burn_binding_params`; fold it with
+        // the SAME `fold_bytes32_to_bb` the bridge uses
+        // (`hash_to_bb(target.as_bytes())`), so the value is byte-identical to
+        // the trace's Burn param0.
+        let effects = Self::dfs_collect_effects(turn);
+        for bp in &turn.effect_binding_proofs {
+            if bp.schema_id != "dregg-effect-burn-v1" {
+                continue;
+            }
+            if let Some(Effect::Burn { target, .. }) = effects.get(bp.effect_index as usize) {
+                return Some(fold_bytes32_to_bb(target.as_bytes()));
+            }
+        }
+
         Some(runtime_fold)
     }
 

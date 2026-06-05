@@ -316,6 +316,8 @@ pub const VK_PI_LAYOUT_VERSION: u32 = 2;
 ///   190..194 FEDERATION_ID[4]                    (γ.2 #131)
 ///   194..198 OWNER_CELL_ID[4]                    (γ.2 #132)
 ///   198     NOTESPEND_NULLIFIER                  (D5 nullifier cross-binding)
+///   199     NOTECREATE_COMMITMENT                (D5b commitment cross-binding)
+///   200     BURN_TARGET_PI                       (D5c burn-target cross-binding)
 ///
 /// ---- Slot-caveat manifest (Cav-Codex Block 3) ----
 ///
@@ -590,7 +592,64 @@ pub const OWNER_CELL_ID_LEN: usize = 4;
 // the 256-bit value), so the sentinel collision is not an exploit surface.
 pub const NOTESPEND_NULLIFIER: usize = OWNER_CELL_ID_BASE + OWNER_CELL_ID_LEN; // 198
 
-pub const BASE_COUNT: usize = NOTESPEND_NULLIFIER + 1; // 199
+// ---- D5b: NoteCreate commitment cross-binding (approach A, sibling) ----
+//
+// THE GAP this closes (mirrors NOTESPEND_NULLIFIER above): the EffectVM's
+// NoteCreate row carries `param0` (`param::NOTE_COMMITMENT`) = a single folded
+// BabyBear note commitment (`fold_bytes32_to_bb(commitment.0)`), absorbed into
+// `effects_hash` and driving the balance DEBIT. But that param was NOT cross-
+// bound to the proof that certifies the commitment against its
+// value/asset_type/range_proof opening — the `SCHEMA_NOTE_CREATE` binding
+// proof (`effect_action_air`, `fields[0]` = the 32-byte commitment). A
+// malicious executor could prove commitment C via the binding proof (effect
+// at DFS index i) yet feed a DIFFERENT C' into the EffectVM trace; the
+// effects_hash reconstruction uses the trace's C' while the binding-proof
+// PI-check uses the indexed effect's C, and prior to this slot NOTHING
+// cross-checked C == C' — so the debited note creation could be attributed
+// to a commitment the binding proof never validated.
+//
+// Three teeth, all referencing the SAME folded commitment:
+//   (1) this PI slot — a single felt carrying `fold_bytes32_to_bb(commitment)`.
+//   (2) AIR per-row constraint (air.rs), gated by `sel::NOTE_CREATE`: every
+//       NoteCreate row's `param0` (NOTE_COMMITMENT) MUST equal
+//       `PI[NOTECREATE_COMMITMENT]`.
+//   (3) off-AIR equality (turn::executor::proof_verify): the verifier
+//       reconstructs `PI[NOTECREATE_COMMITMENT]` from the SCHEMA_NOTE_CREATE
+//       binding proof's `fields[0]` and the PI-match loop rejects any proof
+//       whose PI disagrees.
+//
+// Sentinel: ZERO when the proof carries no NoteCreate row (same rationale as
+// NOTESPEND_NULLIFIER — a real commitment is ~never the zero fold).
+pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
+
+// ---- D5c: Burn target cross-binding (approach A, sibling) ----
+//
+// THE GAP this closes: the EffectVM's Burn row carries `param0`
+// (`param::BURN_TARGET`) = a single folded BabyBear target-cell id
+// (`fold_bytes32_to_bb(target.as_bytes())`). The Burn row's balance-debit
+// constraint operates on the trace's RUNNING balance, but the *which cell*
+// the burn applies to is what the `SCHEMA_BURN` binding proof certifies the
+// algebraic `old_balance - new_balance == amount` relation against
+// (`fields[0]` = the 32-byte target cell id, validated against the ledger
+// snapshot in `extract_burn_binding_params`). Prior to this slot, a malicious
+// executor could supply a SCHEMA_BURN proof for the balance math of target T
+// yet feed a Burn for a DIFFERENT target T' into the EffectVM — nothing
+// welded the EffectVM's burn target to the cell whose balance arithmetic the
+// binding proof actually validated.
+//
+// Three teeth, all referencing the SAME folded target:
+//   (1) this PI slot — `fold_bytes32_to_bb(target.as_bytes())`.
+//   (2) AIR per-row constraint (air.rs), gated by `sel::BURN`: every Burn
+//       row's `param0` (BURN_TARGET) MUST equal `PI[BURN_TARGET_PI]`.
+//   (3) off-AIR equality (turn::executor::proof_verify): the verifier
+//       reconstructs `PI[BURN_TARGET_PI]` from the SCHEMA_BURN binding proof's
+//       `fields[0]` (the ledger-validated target) and the PI-match loop
+//       rejects any proof whose PI disagrees.
+//
+// Sentinel: ZERO when the proof carries no Burn row.
+pub const BURN_TARGET_PI: usize = NOTECREATE_COMMITMENT + 1; // 200
+
+pub const BASE_COUNT: usize = BURN_TARGET_PI + 1; // 201
 /// Elements per custom effect entry in PI (8 vk_hash + 4 proof_commit).
 /// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`).
 pub const CUSTOM_ENTRY_SIZE: usize = 12;

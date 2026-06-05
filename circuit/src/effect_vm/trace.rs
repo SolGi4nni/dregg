@@ -1684,6 +1684,45 @@ pub fn generate_effect_vm_trace_ext(
         public_inputs[pi::NOTESPEND_NULLIFIER] = n;
     }
 
+    // ---- D5b: NoteCreate commitment cross-binding (approach A) ----
+    //
+    // Surface the first NoteCreate row's folded commitment (param0,
+    // NOTE_COMMITMENT) into PI[NOTECREATE_COMMITMENT]. The AIR's per-row gated
+    // constraint pins every sel::NOTE_CREATE row's param0 to this slot, and the
+    // off-AIR verifier reconstructs the same value from the SCHEMA_NOTE_CREATE
+    // binding proof's fields[0]. Sentinel: ZERO when no NoteCreate row is
+    // present. Multi-distinct-commitment proofs need PI extension (deferred,
+    // same posture as NoteSpend).
+    let first_notecreate_commitment: Option<BabyBear> = effects.iter().find_map(|eff| {
+        if let Effect::NoteCreate { commitment, .. } = eff {
+            Some(*commitment)
+        } else {
+            None
+        }
+    });
+    if let Some(c) = first_notecreate_commitment {
+        public_inputs[pi::NOTECREATE_COMMITMENT] = c;
+    }
+
+    // ---- D5c: Burn target cross-binding (approach A) ----
+    //
+    // Surface the first Burn row's folded target (param0, BURN_TARGET) into
+    // PI[BURN_TARGET_PI]. The AIR's per-row gated constraint pins every
+    // sel::BURN row's param0 to this slot, and the off-AIR verifier
+    // reconstructs the same value from the SCHEMA_BURN binding proof's
+    // fields[0] (the ledger-validated burn target). Sentinel: ZERO when no
+    // Burn row is present.
+    let first_burn_target: Option<BabyBear> = effects.iter().find_map(|eff| {
+        if let Effect::Burn { target_hash, .. } = eff {
+            Some(*target_hash)
+        } else {
+            None
+        }
+    });
+    if let Some(t) = first_burn_target {
+        public_inputs[pi::BURN_TARGET_PI] = t;
+    }
+
     // ---- γ.2 follow-up (#131/#132): per-cell federation + owner binding ----
     //
     // Surface the 4-felt commitments to the federation id + owner cell id.

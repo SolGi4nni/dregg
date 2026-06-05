@@ -115,6 +115,8 @@ pub mod fold_air;
 pub mod fold_types;
 #[allow(deprecated)]
 pub mod garbled_air;
+#[cfg(feature = "plonky3")]
+pub mod garbled_air_p3;
 pub mod merkle_air;
 pub mod merkle_types;
 #[allow(deprecated)]

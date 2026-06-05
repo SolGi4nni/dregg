@@ -563,6 +563,238 @@ fn test_notespend_nullifier_cross_binding_rejects_swap() {
     );
 }
 
+/// D5b (NoteCreate commitment cross-binding, approach A) — POSITIVE.
+///
+/// An honest NoteCreate whose EffectVM param0 (folded commitment) matches
+/// PI[NOTECREATE_COMMITMENT] verifies, and the gated per-row constraint is
+/// satisfied (zero) on the NoteCreate row.
+#[test]
+fn test_notecreate_commitment_cross_binding_positive() {
+    let state = make_initial_state(1000);
+    let commitment = BabyBear::new(0x00C0_FFEE);
+    let effects = vec![Effect::NoteCreate {
+        commitment,
+        value: 400,
+    }];
+
+    let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+    // The trace generator surfaced the folded commitment into the PI slot.
+    assert_eq!(
+        public_inputs[pi::NOTECREATE_COMMITMENT], commitment,
+        "PI[NOTECREATE_COMMITMENT] must carry the NoteCreate's commitment"
+    );
+    // ...and the NoteCreate row's param0 carries the same value.
+    let nc_row = trace
+        .iter()
+        .position(|row| row[sel::NOTE_CREATE] == BabyBear::ONE)
+        .expect("at least one row must carry sel::NOTE_CREATE");
+    assert_eq!(
+        trace[nc_row][PARAM_BASE + param::NOTE_COMMITMENT],
+        commitment,
+        "NoteCreate row param0 must equal the commitment"
+    );
+
+    let air = EffectVmAir::new(trace.len());
+    // Gated constraint is zero on every row (NoteCreate row included).
+    for alpha_val in [7u32, 13, 101] {
+        let alpha = BabyBear::new(alpha_val);
+        for row in 0..trace.len().saturating_sub(1) {
+            let c = air.eval_constraints(&trace[row], &trace[row + 1], &public_inputs, alpha);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "matched commitment: constraint non-zero at row {row} alpha={alpha_val}"
+            );
+        }
+    }
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_ok(),
+        "matched NoteCreate commitment should verify: {:?}",
+        result.err()
+    );
+}
+
+/// D5b (NoteCreate commitment cross-binding, approach A) — ADVERSARIAL.
+///
+/// THE ATTACK: a malicious executor proves commitment C via the
+/// SCHEMA_NOTE_CREATE binding proof but feeds a DIFFERENT C' into the
+/// EffectVM. We model that by SWAPPING the EffectVM trace's param0 (the folded
+/// commitment the AIR sees) to a value distinct from PI[NOTECREATE_COMMITMENT]
+/// (which the off-AIR verifier reconstructs from the binding proof's certified
+/// commitment). The gated per-row equality MUST fire, and the STARK MUST
+/// reject. If it does not, the binding is fake.
+#[test]
+fn test_notecreate_commitment_cross_binding_rejects_swap() {
+    let state = make_initial_state(1000);
+    let commitment = BabyBear::new(0x00C0_FFEE);
+    let effects = vec![Effect::NoteCreate {
+        commitment,
+        value: 400,
+    }];
+
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    assert_eq!(public_inputs[pi::NOTECREATE_COMMITMENT], commitment);
+
+    let nc_row = trace
+        .iter()
+        .position(|row| row[sel::NOTE_CREATE] == BabyBear::ONE)
+        .expect("at least one row must carry sel::NOTE_CREATE");
+
+    // SWAP: executor feeds a different folded commitment C' into the
+    // EffectVM's NoteCreate param0 while the PI still commits to C.
+    let swapped = BabyBear::new(0x0BAD_BEEF);
+    assert_ne!(swapped, commitment, "swap must change the value");
+    trace[nc_row][PARAM_BASE + param::NOTE_COMMITMENT] = swapped;
+
+    let air = EffectVmAir::new(trace.len());
+
+    // (1) The gated constraint MUST be non-zero on the NoteCreate row for at
+    // least one challenge — the binding genuinely catches the swap.
+    let mut fired = false;
+    for alpha_val in [7u32, 13, 101] {
+        let alpha = BabyBear::new(alpha_val);
+        let next = (nc_row + 1) % trace.len();
+        let c = air.eval_constraints(&trace[nc_row], &trace[next], &public_inputs, alpha);
+        if c != BabyBear::ZERO {
+            fired = true;
+        }
+    }
+    assert!(
+        fired,
+        "ADVERSARIAL: swapped NoteCreate commitment did NOT trip the gated AIR \
+         constraint — the cross-binding is FAKE"
+    );
+
+    // (2) End-to-end: the STARK proof+verify MUST reject the swapped trace.
+    let result = std::panic::catch_unwind(|| {
+        let proof = prove(&air, &trace, &public_inputs);
+        verify(&air, &proof, &public_inputs)
+    });
+    assert!(
+        result.is_err() || matches!(result, Ok(Err(_))),
+        "ADVERSARIAL: swapped NoteCreate commitment must be REJECTED by the STARK"
+    );
+}
+
+/// D5c (Burn target cross-binding, approach A) — POSITIVE.
+///
+/// An honest Burn whose EffectVM param0 (folded target) matches
+/// PI[BURN_TARGET_PI] verifies, and the gated per-row constraint is satisfied
+/// (zero) on the Burn row.
+#[test]
+fn test_burn_target_cross_binding_positive() {
+    let state = make_initial_state(1000);
+    let target_hash = BabyBear::new(0x0000_CE11);
+    let effects = vec![Effect::Burn {
+        target_hash,
+        amount_lo: BabyBear::new(250),
+        amount_full: 250,
+    }];
+
+    let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+    assert_eq!(
+        public_inputs[pi::BURN_TARGET_PI], target_hash,
+        "PI[BURN_TARGET_PI] must carry the Burn's target"
+    );
+    let burn_row = trace
+        .iter()
+        .position(|row| row[sel::BURN] == BabyBear::ONE)
+        .expect("at least one row must carry sel::BURN");
+    assert_eq!(
+        trace[burn_row][PARAM_BASE + param::BURN_TARGET],
+        target_hash,
+        "Burn row param0 must equal the target"
+    );
+
+    let air = EffectVmAir::new(trace.len());
+    for alpha_val in [7u32, 13, 101] {
+        let alpha = BabyBear::new(alpha_val);
+        for row in 0..trace.len().saturating_sub(1) {
+            let c = air.eval_constraints(&trace[row], &trace[row + 1], &public_inputs, alpha);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "matched burn target: constraint non-zero at row {row} alpha={alpha_val}"
+            );
+        }
+    }
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_ok(),
+        "matched Burn target should verify: {:?}",
+        result.err()
+    );
+}
+
+/// D5c (Burn target cross-binding, approach A) — ADVERSARIAL.
+///
+/// THE ATTACK: a malicious executor proves the `old - new == amount` balance
+/// arithmetic for target T via the SCHEMA_BURN binding proof but feeds a Burn
+/// for a DIFFERENT target T' into the EffectVM. We model that by SWAPPING the
+/// EffectVM trace's param0 (the folded target the AIR sees) to a value
+/// distinct from PI[BURN_TARGET_PI] (which the off-AIR verifier reconstructs
+/// from the binding proof's ledger-validated target). The gated per-row
+/// equality MUST fire, and the STARK MUST reject. If it does not, the binding
+/// is fake.
+#[test]
+fn test_burn_target_cross_binding_rejects_swap() {
+    let state = make_initial_state(1000);
+    let target_hash = BabyBear::new(0x0000_CE11);
+    let effects = vec![Effect::Burn {
+        target_hash,
+        amount_lo: BabyBear::new(250),
+        amount_full: 250,
+    }];
+
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    assert_eq!(public_inputs[pi::BURN_TARGET_PI], target_hash);
+
+    let burn_row = trace
+        .iter()
+        .position(|row| row[sel::BURN] == BabyBear::ONE)
+        .expect("at least one row must carry sel::BURN");
+
+    // SWAP: executor feeds a different folded target T' into the EffectVM's
+    // Burn param0 while the PI still commits to T.
+    let swapped = BabyBear::new(0x0000_DEAD);
+    assert_ne!(swapped, target_hash, "swap must change the value");
+    trace[burn_row][PARAM_BASE + param::BURN_TARGET] = swapped;
+
+    let air = EffectVmAir::new(trace.len());
+
+    // (1) The gated constraint MUST be non-zero on the Burn row for at least
+    // one challenge — the binding genuinely catches the swap.
+    let mut fired = false;
+    for alpha_val in [7u32, 13, 101] {
+        let alpha = BabyBear::new(alpha_val);
+        let next = (burn_row + 1) % trace.len();
+        let c = air.eval_constraints(&trace[burn_row], &trace[next], &public_inputs, alpha);
+        if c != BabyBear::ZERO {
+            fired = true;
+        }
+    }
+    assert!(
+        fired,
+        "ADVERSARIAL: swapped Burn target did NOT trip the gated AIR \
+         constraint — the cross-binding is FAKE"
+    );
+
+    // (2) End-to-end: the STARK proof+verify MUST reject the swapped trace.
+    let result = std::panic::catch_unwind(|| {
+        let proof = prove(&air, &trace, &public_inputs);
+        verify(&air, &proof, &public_inputs)
+    });
+    assert!(
+        result.is_err() || matches!(result, Ok(Err(_))),
+        "ADVERSARIAL: swapped Burn target must be REJECTED by the STARK"
+    );
+}
+
 #[test]
 fn test_setfield_correct() {
     let state = make_initial_state(100);
