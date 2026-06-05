@@ -261,8 +261,7 @@ def cap : Int := 1000000
 -- some (... bytesThisEpoch = 1500 ...)
 
 -- A relay EXCEEDING quota is rejected: 500 + 2_000_000 = 2_000_500 > 1_000_000 ⇒ none (fail-closed).
-#eval relayStep cap methodRelay relayCell (opRelay 2000000)
--- none
+#guard (relayStep cap methodRelay relayCell (opRelay 2000000)).isNone  -- none
 
 -- A slash that lowers bond AND bumps disputeCount commits. We model the two-field turn by applying
 -- the dispute bump first (a state where disputeCount = 1), then the bond decrease; the combined new
@@ -271,30 +270,25 @@ def cap : Int := 1000000
 def slashedOld : Value := relayCell                                   -- disputeCount = 0
 def slashedNew : Value :=                                             -- bond 1000→900, dispute 0→1
   setField (setField relayCell "bond" (.int 900)) "disputeCount" (.int 1)
-#eval (relayProgram cap).admits methodSlash slashedOld slashedNew
--- true  (bond decreased, but disputeCount advanced 0→1 ⇒ the BoundedBy discipline is satisfied)
+#guard ((relayProgram cap).admits methodSlash slashedOld slashedNew)  -- true  (bond decreased, but disputeCount advanced 0→1 ⇒ the BoundedBy discipline is satisfied)
 
 -- A bond-drain WITHOUT a dispute is REJECTED: bond 1000→900 but disputeCount stays 0 ⇒ the anti-drain
 -- `anyOf [monotonic bond, strictMono disputeCount]` fails (bond decreased AND no dispute) ⇒ none.
-#eval relayStep cap methodSlash relayCell (opSlash 100)
--- none  (silent bond drain blocked)
+#guard (relayStep cap methodSlash relayCell (opSlash 100)).isNone  -- none  (silent bond drain blocked)
 
 -- Bond can't go below the floor: dropping bond to 50 (< bondMin 100), even WITH a dispute bump, is
 -- rejected by the floor constraint `bondMin ≤ bond` (100 ≤ 50 is false) ⇒ none.
 def underfloorNew : Value :=
   setField (setField relayCell "bond" (.int 50)) "disputeCount" (.int 1)
-#eval (relayProgram cap).admits methodSlash relayCell underfloorNew
--- false  (50 < 100 floor ⇒ rejected even though a dispute was recorded)
+#guard ((relayProgram cap).admits methodSlash relayCell underfloorNew) == false  -- false  (50 < 100 floor ⇒ rejected even though a dispute was recorded)
 
 -- A legitimate slash all the way (bond 1000→100 = exactly the floor) WITH a dispute commits.
 def slashToFloorNew : Value :=
   setField (setField relayCell "bond" (.int 100)) "disputeCount" (.int 1)
-#eval (relayProgram cap).admits methodSlash relayCell slashToFloorNew
--- true  (100 ≥ 100 floor, dispute recorded)
+#guard ((relayProgram cap).admits methodSlash relayCell slashToFloorNew)  -- true  (100 ≥ 100 floor, dispute recorded)
 
 -- Mutating an immutable (changing the operator id) is rejected.
 def tamperNew : Value := setField relayCell "operator" (.int 99)
-#eval (relayProgram cap).admits methodRelay relayCell tamperNew
--- false  (operator is immutable)
+#guard ((relayProgram cap).admits methodRelay relayCell tamperNew) == false  -- false  (operator is immutable)
 
 end Dregg2.Exec.RelayOperator

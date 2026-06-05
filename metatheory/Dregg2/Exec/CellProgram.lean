@@ -191,10 +191,10 @@ guard composed from the DSL). -/
 def reservePolicy : CellProgram :=
   CellProgram.ofGuard (.and .selfOnly (.reserveSrc 50))
 
-#eval (CellProgram.permissive.denote s0 t1).isSome     -- true (collapses to exec)
-#eval (CellProgram.permissive.denote s0 tBad).isSome    -- false (exec rejects)
-#eval (reservePolicy.denote s0 t1).isSome               -- true (100-30=70 ≥ 50)
-#eval (reservePolicy.denote s0 { t1 with amt := 60 }).isSome  -- false (100-60=40 < 50)
-#eval (CellProgram.permissive.denote s0 t1).map total   -- some 105 (conserved)
+#guard ((CellProgram.permissive.denote s0 t1).isSome)  --  true (collapses to exec)
+#guard ((CellProgram.permissive.denote s0 tBad).isSome) == false  --  false (exec rejects)
+#guard ((reservePolicy.denote s0 t1).isSome)  --  true (100-30=70 ≥ 50)
+#guard ((reservePolicy.denote s0 { t1 with amt := 60 }).isSome) == false  --  false (100-60=40 < 50)
+#guard ((CellProgram.permissive.denote s0 t1).map total) == some 105  --  some 105 (conserved)
 
 end Dregg2.Exec

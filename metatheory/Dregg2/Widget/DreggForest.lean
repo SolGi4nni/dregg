@@ -360,35 +360,35 @@ on the command to see the interactive graph. -/
 DIFFERENT graph. If the derivation were placeholder, these counts/labels would not track the value. -/
 
 -- `goodFullForest`: 3 nodes (mint root, transfer child, burn grandchild) ⇒ 3 vertices, 2 delegation edges.
-#eval (forestVertices goodFullForest).size        -- 3
-#eval (forestEdges goodFullForest).size            -- 2
+#guard (forestVertices goodFullForest).size == 3   -- 3
+#guard (forestEdges goodFullForest).size == 2      -- 2
 -- The vertex ids are the unique pre-order paths (root, child, grandchild):
-#eval (forestVertices goodFullForest).map (fun v => v.id)          -- #["n", "n.0", "n.0.0"]
+#guard ((forestVertices goodFullForest).map (fun v => v.id)) == #["n", "n.0", "n.0.0"]  -- #["n", "n.0", "n.0.0"]
 -- The derived node labels ARE the real constructors, in pre-order (mint → balance → burn):
-#eval forestCtorNames goodFullForest               -- ["mintA", "balanceA", "burnA"]
+#guard forestCtorNames goodFullForest == ["mintA", "balanceA", "burnA"]  -- ["mintA", "balanceA", "burnA"]
 -- The edges connect parent path → child path (the actual delegation structure):
-#eval (forestEdges goodFullForest).map (fun e => (e.source, e.target))  -- #[("n","n.0"), ("n.0","n.0.0")]
+#guard ((forestEdges goodFullForest).map (fun e => (e.source, e.target))) == #[("n","n.0"), ("n.0","n.0.0")]  -- #[("n","n.0"), ("n.0","n.0.0")]
 
 -- A DIFFERENT forest ⇒ a DIFFERENT graph. `deepFullForest` is a 3-level transfer chain: still 3 nodes / 2
 -- edges, but the labels are ALL `balanceA` (not mint/burn) — the labels track the value, not a fixed table.
-#eval (forestVertices deepFullForest).size         -- 3
-#eval forestCtorNames deepFullForest               -- ["balanceA", "balanceA", "balanceA"]
+#guard (forestVertices deepFullForest).size == 3   -- 3
+#guard forestCtorNames deepFullForest == ["balanceA", "balanceA", "balanceA"]  -- ["balanceA", "balanceA", "balanceA"]
 -- `emitOnlyForest` is a SINGLE node, NO edges — the walk genuinely shrinks for a childless forest.
-#eval (forestVertices emitOnlyForest).size         -- 1
-#eval (forestEdges emitOnlyForest).size            -- 0
-#eval forestCtorNames emitOnlyForest               -- ["emitEventA"]
+#guard (forestVertices emitOnlyForest).size == 1   -- 1
+#guard (forestEdges emitOnlyForest).size == 0      -- 0
+#guard forestCtorNames emitOnlyForest == ["emitEventA"]  -- ["emitEventA"]
 -- `authFullForest` (introduce → exercise) — distinct constructors again, derived from the value.
-#eval forestCtorNames authFullForest               -- ["introduceA", "exerciseA"]
+#guard forestCtorNames authFullForest == ["introduceA", "exerciseA"]  -- ["introduceA", "exerciseA"]
 -- The label lists genuinely DIFFER across forests (not a constant) — the derivation tracks the value:
-#eval decide (forestCtorNames goodFullForest ≠ forestCtorNames deepFullForest)  -- true
+#guard decide (forestCtorNames goodFullForest ≠ forestCtorNames deepFullForest)  -- true
 
 -- The EDGE labels are the ATTENUATED conferred rights (not the declared cap). `goodFullForest`'s first edge
 -- keeps `[read]` of an `endpoint [read,write]` cap ⇒ conferred drops `write` (the Granovetter shrink shows).
 -- (Read off the first child WITHOUT `head!` — a total match, so no `Inhabited` obligation.)
-#eval match goodFullForest.children with
-      | ⟨_, keep, pc, _⟩ :: _ => (authsStr (capAuthConferred (attenuate keep pc)),  -- ("[read]",
-                                  authsStr (capAuthConferred pc))                   --  "[read, write]")
-      | []                    => ("(no edge)", "(no edge)")
+#guard (match goodFullForest.children with
+        | ⟨_, keep, pc, _⟩ :: _ => (authsStr (capAuthConferred (attenuate keep pc)),  -- ("[read]",
+                                    authsStr (capAuthConferred pc))                   --  "[read, write]")
+        | []                    => ("(no edge)", "(no edge)")) == ("[read]", "[read, write]")
 
 /-! ## §7 — Axiom hygiene. The pure derivations (the glyph + the walk) are pinned kernel-clean.
 

@@ -537,28 +537,28 @@ theorem escrow_refinement_reflexive {offered : DreggResources} (e : EscrowWitnes
 
 /-! ## 8. `#eval` smoke — the auction's load-bearing bits, decided by the model alone. -/
 
-#eval winningReceipt.outcome.as |>.toAdd      -- (0, 3)  the settled allocation (3 art to the winner)
-#eval winningReceipt.spentEscrow.locked        -- false   the escrow is consumed (one-shot)
-#eval winningBid.validity.kind                 -- true    causal reveal-ordering (anti-frontrunning)
+#guard (winningReceipt.outcome.as |>.toAdd) == (0, 3)  -- (0, 3)  the settled allocation (3 art to winner)
+#guard winningReceipt.spentEscrow.locked == false  -- false   the escrow is consumed (one-shot)
+#guard winningBid.validity.kind                -- true    causal reveal-ordering (anti-frontrunning)
 -- (b): the honest fill saw the reveal (g0 ≺ g1) ⇒ admitted; the fork fill did not (f1 ∦ f2) ⇒ rejected.
-#eval decide (g0.id ∈ g1.preds)                -- true    honest fill at g1 observed reveal at g0
-#eval decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds)  -- false  fork fill at f2 never saw reveal at f1
+#guard decide (g0.id ∈ g1.preds)               -- true    honest fill at g1 observed reveal at g0
+#guard decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds) == false  -- false  fork fill at f2 never saw reveal at f1
 -- (c⁺): the winning settle conserves both asset totals (0 gold, 3 art on each side).
-#eval assetTotal goldHom winningBid.offered    -- 0       gold in
-#eval assetTotal goldHom winningReceipt.outcome -- 0      gold out (conserved)
-#eval assetTotal artHom winningBid.offered     -- 3       art in
-#eval assetTotal artHom winningReceipt.outcome  -- 3      art out (conserved)
+#guard assetTotal goldHom winningBid.offered == 0     -- 0       gold in
+#guard assetTotal goldHom winningReceipt.outcome == 0 -- 0      gold out (conserved)
+#guard assetTotal artHom winningBid.offered == 3      -- 3       art in
+#guard assetTotal artHom winningReceipt.outcome == 3  -- 3      art out (conserved)
 -- (c⁺ teeth): the mint-one-art settle's art total grows 3 ⟶ 4 (Σ catches it; the shadow is silent).
-#eval assetTotal artHom mintSettle.inputs      -- 3       art in
-#eval assetTotal artHom mintSettle.outputs     -- 4       art out (MINTED — rejected by Σ)
+#guard assetTotal artHom mintSettle.inputs == 3       -- 3       art in
+#guard assetTotal artHom mintSettle.outputs == 4      -- 4       art out (MINTED — rejected by Σ)
 -- (Q1): the cross-exchange ledger balances gold (5 in / 5 out) and art (1 in / 1 out).
-#eval assetTotal goldHom crossExchange.ledger.inputs   -- 5    gold in (buyer pays)
-#eval assetTotal goldHom crossExchange.ledger.outputs  -- 5    gold out (seller paid)
-#eval assetTotal artHom crossExchange.ledger.inputs    -- 1    art in (seller stock)
-#eval assetTotal artHom crossExchange.ledger.outputs   -- 1    art out (buyer gets)
+#guard assetTotal goldHom crossExchange.ledger.inputs == 5   -- 5    gold in (buyer pays)
+#guard assetTotal goldHom crossExchange.ledger.outputs == 5  -- 5    gold out (seller paid)
+#guard assetTotal artHom crossExchange.ledger.inputs == 1    -- 1    art in (seller stock)
+#guard assetTotal artHom crossExchange.ledger.outputs == 1   -- 1    art out (buyer gets)
 -- (Q1 teeth): the SKIM ledger mints gold (5 in / 6 out) while delivering art correctly (1 in / 1 out).
-#eval assetTotal goldHom skimLedger.inputs     -- 5       gold in
-#eval assetTotal goldHom skimLedger.outputs    -- 6       gold out (SKIMMED — rejected by Σ, shadow fooled)
+#guard assetTotal goldHom skimLedger.inputs == 5      -- 5       gold in
+#guard assetTotal goldHom skimLedger.outputs == 6     -- 6       gold out (SKIMMED — rejected by Σ, shadow fooled)
 
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 

@@ -189,13 +189,13 @@ def counterCell : Value := .record [("count", .int 5)]
 -- Incrementing by 1 ⇒ candidate `count = 6 ≥ 5` ⇒ admitted ⇒ commits.
 #eval recExec monoCountProgram 0 counterCell (.addScalar "count" 1)    -- some (record [("count", int 6)])
 -- Decrementing by 2 ⇒ candidate `count = 3 ≥ 5`? no ⇒ rejected ⇒ none (fail-closed).
-#eval recExec monoCountProgram 0 counterCell (.addScalar "count" (-2)) -- none
+#guard (recExec monoCountProgram 0 counterCell (.addScalar "count" (-2))).isNone  --  none
 -- `setScalar` to a higher value commits; to a lower value is rejected.
 #eval recExec monoCountProgram 0 counterCell (.setScalar "count" 9)    -- some (record [("count", int 9)])
-#eval recExec monoCountProgram 0 counterCell (.setScalar "count" 2)    -- none
+#guard (recExec monoCountProgram 0 counterCell (.setScalar "count" 2)).isNone  --  none
 -- The terminal program `.none` admits every candidate — the op always commits.
 #eval recExec .none 0 counterCell (.addScalar "count" (-100))          -- some (record [("count", int -95)])
 -- A `circuit` program admits nothing in the pure evaluator (needs its proof) ⇒ always none.
-#eval recExec (.circuit 7) 0 counterCell (.addScalar "count" 1)        -- none
+#guard (recExec (.circuit 7) 0 counterCell (.addScalar "count" 1)).isNone  --  none
 
 end Dregg2.Exec.RecordCell

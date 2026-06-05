@@ -351,31 +351,31 @@ A clear maneuver ACCEPTED; a garbage maneuver REJECTED (the `referee_sound` teet
 out-of-fuel sat cannot burn; the forced-trade naive-ordering excluded. -/
 
 -- The TOY screen: the near-miss scenario HAS a conjunction (sats at 0 and 1, threshold 5).
-#eval hasConjunction conjScenario                       -- true  (a near-miss exists)
+#guard hasConjunction conjScenario                       -- true  (a near-miss exists)
 -- The clearing maneuver VERIFIES (post-maneuver scenario conjunction-free):
-#eval Verify conjScenario clearManeuver                 -- true  (ACCEPTED)
+#guard Verify conjScenario clearManeuver                 -- true  (ACCEPTED)
 -- The garbage maneuver does NOT verify (the conjunction is not cleared):
-#eval Verify conjScenario garbageManeuver               -- false (REJECTED — referee_sound teeth)
+#guard Verify conjScenario garbageManeuver == false      -- false (REJECTED — referee_sound teeth)
 
 -- THE REFEREE against a CORRECT proposer: ACCEPTS the clearing maneuver.
-#eval (@referee goodProposer conjScenario)              -- some { target := 0, delta := 100 }
+#guard (@referee goodProposer conjScenario) == some { target := 0, delta := 100 }
 -- THE REFEREE against an ADVERSARIAL proposer: REJECTS (the propose-then-VERIFY filter).
-#eval (@referee evilProposer conjScenario)              -- none  (adversarial fill never escapes)
--- The untrusted PROPOSE step DOES surface the adversarial maneuver …
-#eval (@Searchable.find Scenario Maneuver evilProposer conjScenario)   -- some garbage
--- … but the referee's own VERIFY rejects it (decidable, in-TCB).
+#guard (@referee evilProposer conjScenario) == none  -- none  (adversarial fill never escapes)
+-- The untrusted PROPOSE step DOES surface the adversarial maneuver (illustrative — exact garbage
+-- not asserted), but the referee's own VERIFY rejects it (decidable, in-TCB).
+#guard (@Searchable.find Scenario Maneuver evilProposer conjScenario).isSome  -- some garbage
 
 -- FUEL-AS-CELL: the out-of-fuel sat CANNOT burn (the budget gate).
-#eval (applyHalfOut satA_empty burnA).isSome            -- false (bal fuelA = 0 < 10)
+#guard (applyHalfOut satA_empty burnA).isSome == false   -- false (bal fuelA = 0 < 10)
 -- A fueled sat CAN burn (the gate is two-sided).
-#eval (applyHalfOut satB_fueled burnB).isSome           -- true  (bal fuelB = 50 ≥ 10)
+#guard (applyHalfOut satB_fueled burnB).isSome           -- true  (bal fuelB = 50 ≥ 10)
 
 -- THE FORCED TRADE: the naive free-yield (1 out, 2 in) does NOT balance ⇒ excluded …
 -- (`FakeBalances out in` is `out + in = 0`; the naive `(1,2)` gives `3 ≠ 0`, so it is
 --  the `binding_is_proper` witness — a configuration the binding PROVABLY excludes.)
-#eval (((1 : ℤ) + 2) == 0)                              -- false (1+2 ≠ 0 ⇒ naive ordering excluded)
+#guard (((1 : ℤ) + 2) == 0) == false                     -- false (1+2 ≠ 0 ⇒ naive ordering excluded)
 -- … while a real trade of any amount balances (here amt = 10 ⇒ -10 + 10 = 0).
-#eval (halfA burnB + halfB burnB)                       -- 0     (EqualAndOpposite)
+#guard (halfA burnB + halfB burnB) == 0                  -- 0     (EqualAndOpposite)
 
 /-! ## 9. THE REAL-PHYSICS REFEREE — the same seam, now carrying CONTINUOUS-TIME-SOUND physics.
 
@@ -499,12 +499,12 @@ theorem physReferee_accepts_clear :
 /-! ### `#eval` — the real-physics referee, runnable. -/
 
 -- The conservative referee REJECTS the crossing pair (endpoint-sampler would have accepted):
-#eval (@physReferee samplerProposer crossingScenario)   -- none  (mid-step conjunction caught)
+#guard (@physReferee samplerProposer crossingScenario).isSome == false  -- none  (mid-step conjunction caught)
 -- … ACCEPTS a genuinely-clear scenario:
-#eval (@physReferee samplerProposer clearScenario)      -- some ()
+#guard (@physReferee samplerProposer clearScenario).isSome              -- some ()
 -- The underlying screen verdicts (the REAL continuous-time-sound physics):
-#eval VerifyPhys crossingScenario ()                    -- false (clear at samples, NOT continuously)
-#eval VerifyPhys clearScenario ()                       -- true  (clear on the whole step)
+#guard VerifyPhys crossingScenario () == false          -- false (clear at samples, NOT continuously)
+#guard VerifyPhys clearScenario ()                      -- true  (clear on the whole step)
 
 /-! ## 8. Axiom-hygiene — every keystone pinned to the three standard kernel axioms.
 

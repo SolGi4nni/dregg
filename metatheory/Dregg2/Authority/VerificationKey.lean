@@ -339,23 +339,23 @@ def goodTurn : ProofTurn D P := { claimedVk := demoVk, proof := 5 }
 /-- A proof-turn claiming a MISMATCHED VK (`demoVk + 1`): rejected by the binding gate. -/
 def badVkTurn : ProofTurn D P := { claimedVk := demoVk + 1, proof := 5 }
 
--- the content hash of the four components (an opaque value; just shows it computes structurally).
-#eval demoComponents.provingSystem   -- ProvingSystemId.plonky3BabyBearFri
+-- the chosen proving system of the four components.
+#guard decide (demoComponents.provingSystem = .plonky3BabyBearFri)
 
 -- matching VK + valid proof ⇒ admitted.
-#eval admitProof demoCell goodTurn    -- true
+#guard admitProof demoCell goodTurn
 
 -- mismatched claimed VK ⇒ rejected (the swapped-VK attack is impossible).
-#eval admitProof demoCell badVkTurn   -- false
+#guard admitProof demoCell badVkTurn == false
 
 -- an unproven state edit resets provedState to false.
-#eval (editUnproven demoCell 9).provedState   -- false
+#guard (editUnproven demoCell 9).provedState == false
 
 -- a Derived child VK reproduced from (base, params): same base+params ⇒ same child VK.
-#eval decide (childVk (.derived demoVk) 42 = deriveVk demoVk 42)   -- true
+#guard decide (childVk (.derived demoVk) 42 = deriveVk demoVk 42)
 
 -- a Fixed child VK ignores params.
-#eval decide (childVk (.fixed 99) 42 = 99)   -- true
+#guard decide (childVk (.fixed 99) 42 = 99)
 
 end Demos
 

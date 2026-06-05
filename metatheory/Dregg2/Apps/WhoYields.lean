@@ -340,16 +340,12 @@ def sym2 : ConjGraph 2 where
   irrefl := by decide
   tag := fun _ => 5   -- identical tags: the symmetric cell
 
-#eval forcedTrade.roleOf 0                 -- A's role (out of fuel)
-#eval forcedTrade.roleOf 1                 -- B's role (fuelled) — DISTINCT ⇒ forced yielder
-#eval (forcedTrade.roleOf 0 == forcedTrade.roleOf 1)  -- false: rigid, who-yields forced
-#eval (forcedTrade.yielder 0 1).val        -- the forced yielder of the A–B pair
-
-#eval sym2.roleOf 0                         -- same as …
-#eval sym2.roleOf 1                         -- … this: identical roles ⇒ TIE ⇒ negotiation needed
-#eval (sym2.roleOf 0 == sym2.roleOf 1)      -- true: symmetric, the deterministic rule is silent
-
-#eval List.map asym3.roleOf (List.finRange 3)   -- three forced roles on the asymmetric path
+-- DISTINCT roles ⇒ who-yields is FORCED (rigid): A (out of fuel) vs B (fuelled).
+#guard (forcedTrade.roleOf 0 == forcedTrade.roleOf 1) == false  -- false: rigid, who-yields forced
+-- SYMMETRIC: identical roles ⇒ TIE ⇒ the deterministic rule is silent, negotiation needed.
+#guard (sym2.roleOf 0 == sym2.roleOf 1)      -- true: symmetric, the deterministic rule is silent
+-- The asymmetric path separates all three sats (3 distinct forced roles).
+#guard (List.map asym3.roleOf (List.finRange 3)).dedup.length == 3  -- three forced roles on the path
 
 /-! ## 9. Axiom hygiene. -/
 

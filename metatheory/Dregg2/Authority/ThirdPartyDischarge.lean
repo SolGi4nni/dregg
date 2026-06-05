@@ -392,18 +392,18 @@ def tpcA : ThirdPartyCaveat Height :=
   { location := [], vid := DischargeCrypto.aeadSeal tailA rKey, ticket := [], predicate := fun _ => true }
 
 -- honest run at t=1100 (age 100s ≤ 300), height 150 ≥ 100, bound to A ⇒ ACCEPTED
-#eval accepts tpcA honestM tailA 150 1100        -- true
+#guard accepts tpcA honestM tailA 150 1100                 -- ACCEPTED
 -- STALE replay at t=2000 (age 1000s > 300) ⇒ REJECTED (replay teeth)
-#eval accepts tpcA honestM tailA 150 2000         -- false
+#guard accepts tpcA honestM tailA 150 2000 == false        -- REJECTED (replay teeth)
 -- created_at = 0 ⇒ REJECTED fail-closed
-#eval fresh 0 100                                 -- false
+#guard fresh 0 100 == false                                -- REJECTED fail-closed
 -- CROSS-BIND: present A's discharge against parent B ⇒ REJECTED (wrong-parent teeth)
 --   (recoverKey fails under tailB anyway, AND boundTo would fail — double fail-closed)
-#eval accepts tpcA honestM tailB 150 1100         -- false
+#guard accepts tpcA honestM tailB 150 1100 == false        -- REJECTED (wrong-parent teeth)
 -- predicate bites: height 50 < 100 ⇒ REJECTED even though fresh+bound
-#eval accepts tpcA honestM tailA 50 1100          -- false
+#guard accepts tpcA honestM tailA 50 1100 == false         -- REJECTED (predicate bites)
 -- the bound check in isolation: honest discharge is bound to A, not to B
-#eval boundTo honestM tailA                       -- true
-#eval boundTo honestM tailB                       -- false
+#guard boundTo honestM tailA
+#guard boundTo honestM tailB == false
 
 end Dregg2.Authority.ThirdParty

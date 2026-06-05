@@ -282,16 +282,16 @@ theorem evilMatcher_not_sound
   exact Bool.false_ne_true hd2
 
 -- The good matcher proposes 6, a genuine fill: ACCEPTED → `some 6`.
-#eval (@Intent.resolve DivBy3 Fill demoVerifiable goodMatcher demoIntent)   -- some 6
+#guard (@Intent.resolve DivBy3 Fill demoVerifiable goodMatcher demoIntent) == some 6
 -- The adversarial matcher proposes 7, NOT a multiple of 3: REJECTED by VERIFY → `none`.
 -- Soundness holds against a buggy/adversarial matcher: the bad fill never escapes.
-#eval (@Intent.resolve DivBy3 Fill demoVerifiable evilMatcher demoIntent)   -- none
+#guard (@Intent.resolve DivBy3 Fill demoVerifiable evilMatcher demoIntent) == none
 -- The give-up matcher finds nothing: `none`.
-#eval (@Intent.resolve DivBy3 Fill demoVerifiable emptyMatcher demoIntent)  -- none
+#guard (@Intent.resolve DivBy3 Fill demoVerifiable emptyMatcher demoIntent) == none
 -- The untrusted PROPOSE step (pre-verification) does surface the adversarial 7 …
-#eval (@Intent.propose DivBy3 Fill evilMatcher demoIntent)                  -- some 7
+#guard (@Intent.propose DivBy3 Fill evilMatcher demoIntent) == some 7
 -- … but the cell's own VERIFY rejects it (decidable, in-TCB):
-#eval (@Intent.Accepts DivBy3 Fill demoVerifiable demoIntent 7 : Bool)      -- false
-#eval (@Intent.Accepts DivBy3 Fill demoVerifiable demoIntent 6 : Bool)      -- true
+#guard (@Intent.Accepts DivBy3 Fill demoVerifiable demoIntent 7 : Bool) == false
+#guard (@Intent.Accepts DivBy3 Fill demoVerifiable demoIntent 6 : Bool)
 
 end Dregg2.Authority

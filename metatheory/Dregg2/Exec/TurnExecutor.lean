@@ -339,7 +339,7 @@ def goodTurn : TxTurn :=
 -- (`src ≠ dst` gate). So `goodTurn` as-written does NOT commit — it demonstrates the
 -- all-or-nothing rollback (one bad action ⇒ whole turn `none`). The committing version below
 -- replaces the self-move with a real distinct-cell transition.
-#eval (execTurn ts0 goodTurn).isSome                    -- false (middle self-move rejected ⇒ rollback)
+#guard ((execTurn ts0 goodTurn).isSome) == false  --  false (middle self-move rejected ⇒ rollback)
 
 /-- The committing multi-`Action` turn: (1) transfer 0→1 of 30; (2) transfer 0→2 of 5 (a distinct
 state-machine transition on a different domain pair); (3) transfer 1→2 of 10. All authorized
@@ -349,19 +349,19 @@ def goodTurn2 : TxTurn :=
   , { method := 2, effect := .transfer, move := { actor := 0, src := 0, dst := 2, amt := 5  } }
   , { method := 3, effect := .transfer, move := { actor := 1, src := 1, dst := 2, amt := 10 } } ]
 
-#eval (execTurn ts0 goodTurn2).isSome                          -- true  (whole transaction commits)
-#eval (execTurn ts0 goodTurn2).map (fun s => recTotal s.kernel) -- some 105 (CONSERVED end-to-end)
-#eval recTotal ts0.kernel                                       -- 105
-#eval (execTurn ts0 goodTurn2).map (fun s => s.log.length)      -- some 3 (chain grew by action count)
+#guard ((execTurn ts0 goodTurn2).isSome)  --  true  (whole transaction commits)
+#guard ((execTurn ts0 goodTurn2).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (CONSERVED end-to-end)
+#guard (recTotal ts0.kernel) == 105  --  105
+#guard ((execTurn ts0 goodTurn2).map (fun s => s.log.length)) == some 3  --  some 3 (chain grew by action count)
 -- The non-balance field (`nonce`) survives across the whole transaction (content-addressed cell):
-#eval (execTurn ts0 goodTurn2).map (fun s => (s.kernel.cell 0).scalar "nonce")  -- some (some 0)
-#eval (execTurn ts0 goodTurn2).map (fun s => balOf (s.kernel.cell 0))           -- some 65 (100−30−5)
+#guard ((execTurn ts0 goodTurn2).map (fun s => (s.kernel.cell 0).scalar "nonce")) == some (some 0)  --  some (some 0)
+#guard ((execTurn ts0 goodTurn2).map (fun s => balOf (s.kernel.cell 0))) == some 65  --  some 65 (100−30−5)
 
 /-- An UNAUTHORIZED turn: actor 9 (owns nothing, no cap) attempts to move from cell 0. -/
 def badAuthTurn : TxTurn :=
   [ { method := 1, effect := .transfer, move := { actor := 9, src := 0, dst := 1, amt := 10 } } ]
 
-#eval (execTurn ts0 badAuthTurn).isSome                 -- false (fail-closed: unauthorized ⇒ reject)
+#guard ((execTurn ts0 badAuthTurn).isSome) == false  --  false (fail-closed: unauthorized ⇒ reject)
 
 /-- A CONSERVATION/availability-violating turn: cell 1 only has balance 5 but action tries to move
 10 — `recKExec`'s `amt ≤ balOf src` gate rejects (the precondition/availability check). -/
@@ -369,7 +369,7 @@ def badConsTurn : TxTurn :=
   [ { method := 1, effect := .transfer, move := { actor := 0, src := 0, dst := 1, amt := 30 } }
   , { method := 2, effect := .transfer, move := { actor := 1, src := 1, dst := 2, amt := 999 } } ]
 
-#eval (execTurn ts0 badConsTurn).isSome                 -- false (overdraft ⇒ whole turn rolled back)
+#guard ((execTurn ts0 badConsTurn).isSome) == false  --  false (overdraft ⇒ whole turn rolled back)
 -- All-or-nothing: even though action (1) alone would commit, action (2)'s failure aborts EVERYTHING.
 
 /-- A FAILED-PRECONDITION turn: a transfer whose `src = dst` (the self-loop precondition the kernel
@@ -377,7 +377,7 @@ forbids). Demonstrates the precondition gate rejecting + rolling back. -/
 def badPrecondTurn : TxTurn :=
   [ { method := 1, effect := .transfer, move := { actor := 0, src := 0, dst := 0, amt := 5 } } ]
 
-#eval (execTurn ts0 badPrecondTurn).isSome              -- false (src = dst precondition fails)
+#guard ((execTurn ts0 badPrecondTurn).isSome) == false  --  false (src = dst precondition fails)
 
 /-! ## §9 — OPEN: the nested call-FOREST (`may_delegate` recursion).
 

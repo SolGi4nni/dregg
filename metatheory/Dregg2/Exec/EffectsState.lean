@@ -735,31 +735,31 @@ def ss0 : RecChainedState :=
     log := [] }
 
 -- A SetField on cell 0's "status" → 7 commits (actor 0 owns target 0):
-#eval (stateStep ss0 "status" 0 0 (.int 7)).isSome                                  -- true
+#guard ((stateStep ss0 "status" 0 0 (.int 7)).isSome)  --  true
 -- ...conserves the total balance (105 unchanged):
-#eval (stateStep ss0 "status" 0 0 (.int 7)).map (fun s => recTotal s.kernel)        -- some 105
-#eval recTotal ss0.kernel                                                           -- 105
+#guard ((stateStep ss0 "status" 0 0 (.int 7)).map (fun s => recTotal s.kernel)) == some 105  --  some 105
+#guard (recTotal ss0.kernel) == 105  --  105
 -- ...writes the field (status reads 7):
-#eval (stateStep ss0 "status" 0 0 (.int 7)).map (fun s => fieldOf "status" (s.kernel.cell 0)) -- some 7
+#guard ((stateStep ss0 "status" 0 0 (.int 7)).map (fun s => fieldOf "status" (s.kernel.cell 0))) == some 7  --  some 7
 -- ...does NOT perturb the balance field of the target:
-#eval (stateStep ss0 "status" 0 0 (.int 7)).map (fun s => balOf (s.kernel.cell 0))  -- some 100
+#guard ((stateStep ss0 "status" 0 0 (.int 7)).map (fun s => balOf (s.kernel.cell 0))) == some 100  --  some 100
 -- ...advances the receipt chain by exactly one row (the metadata clock):
-#eval (stateStep ss0 "status" 0 0 (.int 7)).map (fun s => s.log.length)             -- some 1
+#guard ((stateStep ss0 "status" 0 0 (.int 7)).map (fun s => s.log.length)) == some 1  --  some 1
 -- An unauthorized actor (9 owns nothing) cannot write a field (fail-closed):
-#eval (stateStep ss0 "status" 9 0 (.int 7)).isSome                                  -- false
+#guard ((stateStep ss0 "status" 9 0 (.int 7)).isSome) == false  --  false
 -- Self-targeting a non-live cell is rejected too: ownership alone cannot create ghost state.
-#eval (stateStep ss0 "status" 9 9 (.int 7)).isSome                                  -- false
+#guard ((stateStep ss0 "status" 9 9 (.int 7)).isSome) == false  --  false
 
 -- A Monotonic counter bump (nonce 0 → 1) commits and conserves:
-#eval (stateStep ss0 "nonce" 0 0 (.int 1)).map (fun s => fieldOf "nonce" (s.kernel.cell 0)) -- some 1
-#eval (stateStep ss0 "nonce" 0 0 (.int 1)).map (fun s => recTotal s.kernel)         -- some 105
+#guard ((stateStep ss0 "nonce" 0 0 (.int 1)).map (fun s => fieldOf "nonce" (s.kernel.cell 0))) == some 1  --  some 1
+#guard ((stateStep ss0 "nonce" 0 0 (.int 1)).map (fun s => recTotal s.kernel)) == some 105  --  some 105
 
 -- A TERMINAL Seal of cell 0 commits and raises the flag:
-#eval (sealStep ss0 0 0).isSome                                                     -- true
-#eval (sealStep ss0 0 0).map (fun s => isSealed (s.kernel.cell 0))                  -- some true
-#eval (sealStep ss0 0 0).map (fun s => recTotal s.kernel)                           -- some 105 (conserved)
+#guard ((sealStep ss0 0 0).isSome)  --  true
+#guard ((sealStep ss0 0 0).map (fun s => isSealed (s.kernel.cell 0))) == some true  --  some true
+#guard ((sealStep ss0 0 0).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved)
 -- ...and a SECOND seal of the now-sealed cell is REJECTED (irreversibility / no double-seal):
-#eval ((sealStep ss0 0 0).bind (fun s => sealStep s 0 0)).isSome                    -- false
+#guard (((sealStep ss0 0 0).bind (fun s => sealStep s 0 0)).isSome) == false  --  false
 
 /-! ### §10.R6 — THE R6 TEETH: a write into a NON-LIVE (Sealed/Destroyed) cell is REJECTED.
 
@@ -773,15 +773,15 @@ def ssR6 : RecChainedState :=
   { ss0 with kernel := { ss0.kernel with lifecycle := fun c => if c = 0 then 1 else 0 } }
 
 -- A field write into the now-SEALED cell 0 is REJECTED (R6 CLOSED) — was `true` (the LIVE HOLE):
-#eval (stateStep ssR6 "status" 0 0 (.int 7)).isSome                                 -- false (R6 CLOSED)
+#guard ((stateStep ssR6 "status" 0 0 (.int 7)).isSome) == false  --  false (R6 CLOSED)
 -- ...even though authority + membership STILL hold (the cell exists and the actor owns it):
-#eval (stateAuthB ssR6.kernel.caps 0 0 && decide (0 ∈ ssR6.kernel.accounts))        -- true
+#guard ((stateAuthB ssR6.kernel.caps 0 0 && decide (0 ∈ ssR6.kernel.accounts)))  --  true
 -- A write into a LIVE sibling (cell 1, lifecycle 0) still COMMITS — the gate only tightens non-live:
-#eval (stateStep ssR6 "balance2" 1 1 (.int 7)).isSome                               -- true (live cell ok)
+#guard ((stateStep ssR6 "balance2" 1 1 (.int 7)).isSome)  --  true (live cell ok)
 -- A nonce write (the live executor's `.incrementNonceA` arm) into the Sealed cell is REJECTED too:
-#eval (stateStep ssR6 "nonce" 0 0 (.int 1)).isSome                                  -- false (R6 CLOSED)
+#guard ((stateStep ssR6 "nonce" 0 0 (.int 1)).isSome) == false  --  false (R6 CLOSED)
 -- And the guarded `.setFieldA` path inherits it (a Sealed cell rejects even a caveat-clean write):
-#eval (stateStepGuarded ssR6 "freeField" 0 0 99).isSome                             -- false (R6 CLOSED)
+#guard ((stateStepGuarded ssR6 "freeField" 0 0 99).isSome) == false  --  false (R6 CLOSED)
 
 /-- Non-vacuity of the R6 close: a write into a non-Live cell provably FAILS (`state_nonlive_fails`). -/
 example : stateStep ssR6 "status" 0 0 (.int 7) = none :=
@@ -827,33 +827,33 @@ def ssCav : RecChainedState :=
     log := [] }
 
 -- IMMUTABLE: rewriting `status` (committed 3) to ANY different value is REJECTED; writing 3 (no-op) commits.
-#eval (stateStepGuarded ssCav "status" 0 0 9).isSome    -- false (Immutable rejects any rewrite)
-#eval (stateStepGuarded ssCav "status" 0 0 3).isSome    -- true  (no-op write to the committed value)
+#guard ((stateStepGuarded ssCav "status" 0 0 9).isSome) == false  --  false (Immutable rejects any rewrite)
+#guard ((stateStepGuarded ssCav "status" 0 0 3).isSome)  --  true  (no-op write to the committed value)
 
 -- MONOTONIC SEQUENCE: `seq` (committed 5) admits only +1 (→6); a non-+1 write (→7) is REJECTED.
-#eval (stateStepGuarded ssCav "seq" 0 0 6).isSome       -- true  (5 → 6 = old+1)
-#eval (stateStepGuarded ssCav "seq" 0 0 7).isSome       -- false (5 ↛ 7: not old+1)
+#guard ((stateStepGuarded ssCav "seq" 0 0 6).isSome)  --  true  (5 → 6 = old+1)
+#guard ((stateStepGuarded ssCav "seq" 0 0 7).isSome) == false  --  false (5 ↛ 7: not old+1)
 
 -- WRITE ONCE: `owner` already set (7 ≠ 0) ⇒ a SECOND (different) write is REJECTED; rewriting 7 is a no-op-OK.
-#eval (stateStepGuarded ssCav "owner" 0 0 8).isSome     -- false (write-once, already set)
-#eval (stateStepGuarded ssCav "owner" 0 0 7).isSome     -- true  (unchanged)
+#guard ((stateStepGuarded ssCav "owner" 0 0 8).isSome) == false  --  false (write-once, already set)
+#guard ((stateStepGuarded ssCav "owner" 0 0 7).isSome)  --  true  (unchanged)
 
 -- MONOTONIC: `level` (committed 2) admits new ≥ old (→4); a decrease (→1) is REJECTED.
-#eval (stateStepGuarded ssCav "level" 0 0 4).isSome     -- true  (2 ≤ 4)
-#eval (stateStepGuarded ssCav "level" 0 0 1).isSome     -- false (1 < 2)
+#guard ((stateStepGuarded ssCav "level" 0 0 4).isSome)  --  true  (2 ≤ 4)
+#guard ((stateStepGuarded ssCav "level" 0 0 1).isSome) == false  --  false (1 < 2)
 
 -- BOUNDED BY [10,20]: `band` admits 18 (in range); 25 (out of range) is REJECTED.
-#eval (stateStepGuarded ssCav "band" 0 0 18).isSome     -- true  (10 ≤ 18 ≤ 20)
-#eval (stateStepGuarded ssCav "band" 0 0 25).isSome     -- false (25 > 20)
+#guard ((stateStepGuarded ssCav "band" 0 0 18).isSome)  --  true  (10 ≤ 18 ≤ 20)
+#guard ((stateStepGuarded ssCav "band" 0 0 25).isSome) == false  --  false (25 > 20)
 
 -- SENDER AUTHORIZED [0]: actor 0 may write `admin`; actor 1 (not in the set) is REJECTED — even
 -- though actor 1 would need to OWN cell 0 too, the caveat gate alone refuses a non-member.
-#eval (stateStepGuarded { ssCav with kernel := { ssCav.kernel with caps := fun _ => [] } } "admin" 0 0 1).isSome  -- true (actor 0 authorized)
+#guard ((stateStepGuarded { ssCav with kernel := { ssCav.kernel with caps := fun _ => [] } } "admin" 0 0 1).isSome)  --  true (actor 0 authorized)
 -- A slot with NO caveat (`balance`-adjacent free field) writes freely (recovers prior semantics):
-#eval (stateStepGuarded ssCav "freeField" 0 0 999).isSome   -- true (no caveat bound)
+#guard ((stateStepGuarded ssCav "freeField" 0 0 999).isSome)  --  true (no caveat bound)
 
 -- The committed satisfying write conserves balance and reads back the value (the lifted keystones):
-#eval (stateStepGuarded ssCav "seq" 0 0 6).map (fun s => recTotal s.kernel)              -- some 105 (conserved)
-#eval (stateStepGuarded ssCav "seq" 0 0 6).map (fun s => fieldOf "seq" (s.kernel.cell 0)) -- some 6
+#guard ((stateStepGuarded ssCav "seq" 0 0 6).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved)
+#guard ((stateStepGuarded ssCav "seq" 0 0 6).map (fun s => fieldOf "seq" (s.kernel.cell 0))) == some 6  --  some 6
 
 end Dregg2.Exec.EffectsState

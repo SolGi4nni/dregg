@@ -641,13 +641,13 @@ def demoBatch : ConditionalBatch :=
     edges := [(1, 0)] }
 
 -- The topo order puts producer (0) before consumer (1):
-#eval topoOrder demoBatch                                  -- some [0, 1]
+#guard (topoOrder demoBatch) == some [0, 1]  --  some [0, 1]
 -- The batch commits (both nodes succeed) all-or-nothing:
-#eval (execConditionalTurn demoBatch fs0).isSome           -- true
+#guard ((execConditionalTurn demoBatch fs0).isSome)  --  true
 -- ...conserves `recTotal` (net 0): 105 → 155 → 105:
-#eval (execConditionalTurn demoBatch fs0).map (fun r => recTotal r.1.kernel)  -- some 105
+#guard ((execConditionalTurn demoBatch fs0).map (fun r => recTotal r.1.kernel)) == some 105  --  some 105
 -- ...and both producers' slots are resolved in the outputs:
-#eval (execConditionalTurn demoBatch fs0).map (fun r => (r.2 0, r.2 1))       -- some (true, true)
+#guard ((execConditionalTurn demoBatch fs0).map (fun r => (r.2 0, r.2 1))) == some (true, true)  --  some (true, true)
 
 /-! ### The `CondAbsStep` predicate has TEETH — a non-step pair is rejected.
 
@@ -663,22 +663,22 @@ example : CondAbsStep 105 105 := (condAbsStep_iff_eq 105 105).mpr rfl
 example : ¬ CondAbsStep 105 155 := not_condAbsStep_of_ne 105 155 (by decide)
 
 -- The teeth, as `decide`-able equalities the predicate reduces to (`CondAbsStep a a' ↔ a' = a`):
-#eval decide ((105 : ℤ) = 105)    -- true  — `CondAbsStep 105 105` holds (conserving step)
-#eval decide ((155 : ℤ) = 105)    -- false — `CondAbsStep 105 155` REJECTED (total moved 105→155)
+#guard (decide ((105 : ℤ) = 105))  --  true  — `CondAbsStep 105 105` holds (conserving step)
+#guard (decide ((155 : ℤ) = 105)) == false  --  false — `CondAbsStep 105 155` REJECTED (total moved 105→155)
 
 /-- A batch with a DEPENDENCY CYCLE (each node awaits the other) is rejected (`PipelineError::Cycle`). -/
 def cycleBatch : ConditionalBatch :=
   { nodes := [ [FullAction.mint 9 0 10], [FullAction.burn 9 0 10] ]
     edges := [(0, 1), (1, 0)] }
 
-#eval topoOrder cycleBatch                                 -- none (cycle)
-#eval (execConditionalTurn cycleBatch fs0).isSome          -- false (atomic abort, no commit)
+#guard (topoOrder cycleBatch).isNone  --  none (cycle)
+#guard ((execConditionalTurn cycleBatch fs0).isSome) == false  --  false (atomic abort, no commit)
 
 /-- A batch whose CONSUMER turn fails (unauthorized burn) rolls the WHOLE batch back (atomic). -/
 def badBatch : ConditionalBatch :=
   { nodes := [ [FullAction.mint 9 0 50], [FullAction.burn 0 0 10] ]  -- node 1 unauthorized
     edges := [(1, 0)] }
 
-#eval (execConditionalTurn badBatch fs0).isSome            -- false (rollback; node 0's mint discarded)
+#guard ((execConditionalTurn badBatch fs0).isSome) == false  --  false (rollback; node 0's mint discarded)
 
 end Dregg2.Exec.ConditionalTurn

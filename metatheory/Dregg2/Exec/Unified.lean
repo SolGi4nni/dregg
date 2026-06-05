@@ -188,10 +188,10 @@ theorem unified_ledger_conserves {k k'' : KernelState} {ops : List KernelOp}
 0 to 1: net delta `+50`, so `total` goes 105 → 155. -/
 def opsDemo : List KernelOp := [.mint 9 0 50, .transfer 0 0 1 30]
 
-#eval delta (.mint 9 0 50)                       -- 50
-#eval delta (.transfer 0 0 1 30)                 -- 0
-#eval delta (.burn 9 0 40)                       -- -40
-#eval traceDelta opsDemo                         -- 50
+#guard (delta (.mint 9 0 50)) == 50  --  50
+#guard (delta (.transfer 0 0 1 30)) == 0  --  0
+#guard (delta (.burn 9 0 40)) == -40  --  -40
+#guard (traceDelta opsDemo) == 50  --  50
 
 /-- Start state with a minting authority (actor 9 holds `node 0`). -/
 def sLedger : KernelState :=
@@ -199,6 +199,6 @@ def sLedger : KernelState :=
     bal := fun c => if c = 0 then 100 else if c = 1 then 5 else 0
     caps := fun a => if a = 9 then [Cap.node 0] else [] }
 
-#eval (step sLedger (.mint 9 0 50)).map total    -- some 155 (= 105 + 50)
-#eval (step sLedger (.grantCap 3 (Cap.node 7))).map total  -- some 105 (cap op conserves)
-#eval (step sLedger (.transfer 9 0 1 30)).map total        -- some 105 (transfer conserves)
+#guard ((step sLedger (.mint 9 0 50)).map total) == some 155  --  some 155 (= 105 + 50)
+#guard ((step sLedger (.grantCap 3 (Cap.node 7))).map total) == some 105  --  some 105 (cap op conserves)
+#guard ((step sLedger (.transfer 9 0 1 30)).map total) == some 105  --  some 105 (transfer conserves)

@@ -210,19 +210,19 @@ def turnBack : Turn := { actor := 1, src := 1, dst := 0, amt := 10 }
 
 -- checkpoint → mutate → restore recovers the original cell.
 example : restore (checkpoint cell0) = cell0 := rfl
-#eval ((cexec (restore (checkpoint cell0)) turn0).map (fun s => cellObs s) ==
-       (cexec cell0 turn0).map (fun s => cellObs s))   -- true (restore recovers, then steps identically)
+#guard (((cexec (restore (checkpoint cell0)) turn0).map (fun s => cellObs s) ==
+       (cexec cell0 turn0).map (fun s => cellObs s)))  --  true (restore recovers, then steps identically)
 
 -- replay reproduces: the logged single-turn list from cell0 vs from its restored checkpoint.
-#eval (replayFrom (restore (checkpoint cell0)) [turn0]).map cellObs   -- some 105 (conserved)
+#guard ((replayFrom (restore (checkpoint cell0)) [turn0]).map cellObs) == some 105  --  some 105 (conserved)
 example : replayFrom (restore (checkpoint cell0)) [turn0] = replayFrom cell0 [turn0] := rfl
 
 -- a FORK diverges: from the restored snapshot, suffix [turn0] vs suffix [] reach DIFFERENT states
 -- (different log length) yet agree on the conserved badge (105 on both).
-#eval (replayFrom (restore (checkpoint cell0)) [turn0]).map (fun s => s.log.length)  -- some 1
-#eval (replayFrom (restore (checkpoint cell0)) ([] : List Turn)).map (fun s => s.log.length)  -- some 0 (diverged)
-#eval (replayFrom (restore (checkpoint cell0)) [turn0]).map cellObs                  -- some 105
-#eval (replayFrom (restore (checkpoint cell0)) ([] : List Turn)).map cellObs         -- some 105 (badge agrees)
+#guard ((replayFrom (restore (checkpoint cell0)) [turn0]).map (fun s => s.log.length)) == some 1  --  some 1
+#guard ((replayFrom (restore (checkpoint cell0)) ([] : List Turn)).map (fun s => s.log.length)) == some 0  --  some 0 (diverged)
+#guard ((replayFrom (restore (checkpoint cell0)) [turn0]).map cellObs) == some 105  --  some 105
+#guard ((replayFrom (restore (checkpoint cell0)) ([] : List Turn)).map cellObs) == some 105  --  some 105 (badge agrees)
 
 /-- The fork genuinely DIVERGES on state (the two branches differ) while AGREEING on the badge — the
 non-vacuity witness for `time_travel_fork`: it is not the trivial case where both suffixes coincide. -/
@@ -233,8 +233,7 @@ example :
 
 -- record-cell: checkpoint→restore roundtrip + a committing replay on the live counter.
 example : recRestore (recCheckpoint conserveCell) = conserveCell := rfl
-#eval (recReplay (recRestore (recCheckpoint liveCounter)) [Dregg2.Exec.RecordCell.RecOp.addScalar "count" 1]).map recHeight
-                                                                     -- some 1 (committed; chain advanced)
+#guard ((recReplay (recRestore (recCheckpoint liveCounter)) [Dregg2.Exec.RecordCell.RecOp.addScalar "count" 1]).map recHeight) == some 1  -- some 1 (committed; chain advanced)
 
 /-! ## Axiom hygiene — every runtime-character keystone is kernel-axiom-clean. -/
 

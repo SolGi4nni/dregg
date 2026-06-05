@@ -255,10 +255,10 @@ constant, these would print the same label; they do not. (This mirrors `Basic.le
 here so the gallery file is self-evidently non-vacuous.) -/
 
 -- A real-row shape (kernel triple only) ⇒ green.
-#eval (classifyAxioms false #[``propext, ``Classical.choice, ``Quot.sound]).label  -- "KernelChecked"
+#guard (classifyAxioms false #[``propext, ``Classical.choice, ``Quot.sound]).label == "KernelChecked"  -- "KernelChecked"
 -- The synthetic-row shape (a §8 carrier-named extra axiom) ⇒ amber.
-#eval (classifyAxioms false #[``propext, `demoEd25519VerifyExtern]).label           -- "CarrierBounded"
+#guard (classifyAxioms false #[``propext, `demoEd25519VerifyExtern]).label == "CarrierBounded"  -- "CarrierBounded"
 -- The two are distinct — the gallery genuinely partitions its rows.
-#eval decide (classifyAxioms false #[``propext] ≠ classifyAxioms false #[``propext, `fooExtern])  -- true
+#guard decide (classifyAxioms false #[``propext] ≠ classifyAxioms false #[``propext, `fooExtern])  -- true
 
 end Dregg2.Widget

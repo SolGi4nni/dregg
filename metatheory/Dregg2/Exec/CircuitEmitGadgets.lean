@@ -188,8 +188,8 @@ def emitTemporalJson (d : EmittedTemporalDescriptor) : String :=
 def temporalWire : String := emitTemporalJson emittedTemporal
 
 #eval temporalWire
-#eval emittedTemporal.publicInputCount   -- 3 ([lo, hi, t])
-#eval emittedTemporal.traceWidth          -- 2 (two comparison lanes)
+#guard (emittedTemporal.publicInputCount) == 3  --  3 ([lo, hi, t])
+#guard (emittedTemporal.traceWidth) == 2  --  2 (two comparison lanes)
 
 #assert_axioms emit_faithful_temporal
 #assert_axioms emittedTemporal_bridge
@@ -310,7 +310,7 @@ def emitNonMembershipJson (d : EmittedNonMembershipDescriptor) : String :=
 def nonMembershipWire : String := emitNonMembershipJson emittedNonMembership
 
 #eval nonMembershipWire
-#eval emittedNonMembership.publicInputCount   -- 2 ([root, e])
+#guard (emittedNonMembership.publicInputCount) == 2  --  2 ([root, e])
 
 #assert_axioms emit_faithful_nonMembership
 #assert_axioms emittedNonMembership_bridge
@@ -406,7 +406,7 @@ def emitPedersenJson (d : EmittedPedersenDescriptor) : String :=
 def pedersenWire : String := emitPedersenJson emittedPedersen
 
 #eval pedersenWire
-#eval emittedPedersen.hasConservation     -- true (the conservation boundary)
+#guard (emittedPedersen.hasConservation)  --  true (the conservation boundary)
 
 #assert_axioms emit_faithful_pedersen
 #assert_axioms emittedPedersen_bridge
@@ -511,8 +511,8 @@ def emitDfaJson (d : EmittedDfaDescriptor) : String :=
 def dfaWire : String := emitDfaJson emittedDfa
 
 #eval dfaWire
-#eval emittedDfa.publicInputCount   -- 2 ([q₀, accept-marker])
-#eval emittedDfa.traceWidth          -- 3 ([state, byte, next_state])
+#guard (emittedDfa.publicInputCount) == 2  --  2 ([q₀, accept-marker])
+#guard (emittedDfa.traceWidth) == 3  --  3 ([state, byte, next_state])
 
 #assert_axioms emit_faithful_dfa
 #assert_axioms emittedDfa_bridge

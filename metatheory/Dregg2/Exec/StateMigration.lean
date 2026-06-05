@@ -288,20 +288,20 @@ def badMig : Migration where
   reshape   := fun _ => .record [("frozen", .int 0)]
 
 -- Good migration: passes the gate, applies the field-add, balance preserved, conforms to v2.
-#eval migrationOK goodMig acctV1                                   -- true
+#guard (migrationOK goodMig acctV1)  --  true
 #eval applyMigration goodMig acctV1
   -- record [("frozen", int 0), ("balance", int 100)]
-#eval conforms (applyMigration goodMig acctV1) (.record schemaV2)  -- true
-#eval balOf (applyMigration goodMig acctV1) == balOf acctV1        -- true
-#eval balOf (applyMigration goodMig acctV1)                        -- 100 (conserved)
+#guard (conforms (applyMigration goodMig acctV1) (.record schemaV2))  --  true
+#guard (balOf (applyMigration goodMig acctV1) == balOf acctV1)  --  true
+#guard (balOf (applyMigration goodMig acctV1)) == 100  --  100 (conserved)
 
 -- Bad migration: FAILS the gate (balance destroyed), so it falls back to the ORIGINAL value —
 -- the cell is NOT bricked; balance survives; the migration is authorized by the owner signature.
-#eval migrationOK badMig acctV1                                    -- false
+#guard (migrationOK badMig acctV1) == false  --  false
 #eval applyMigration badMig acctV1                                 -- record [("balance", int 100)] (fell back to identity = acctV1)
-#eval balOf (applyMigration badMig acctV1) == balOf acctV1         -- true  (conserved via fallback)
-#eval balOf (applyMigration badMig acctV1)                         -- 100  (conserved via fallback)
-#eval decide (setProgramAdmissible 7 3 migrationFallbackAuth)      -- true (owner-signature arm)
+#guard (balOf (applyMigration badMig acctV1) == balOf acctV1)  --  true  (conserved via fallback)
+#guard (balOf (applyMigration badMig acctV1)) == 100  --  100  (conserved via fallback)
+#guard (decide (setProgramAdmissible 7 3 migrationFallbackAuth))  --  true (owner-signature arm)
 
 -- A field-RENAME migration (re-key, value preserved) also keeps the balance under `renameField`:
 #eval renameField "bal" "balance" (.record [("bal", .int 42)])

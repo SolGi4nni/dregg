@@ -164,19 +164,19 @@ def oracleSettled : Discharges GW := none'.settle .oracle
 /-- Both gateways discharged. -/
 def bothSettled : Discharges GW := oracleSettled.settle .cosigner
 
-#eval suspendedTurn.admits 150 none'          -- false: blocked, oracle has not discharged
-#eval suspendedTurn.admits 150 oracleSettled  -- true:  oracle discharged ⇒ the turn resolves forward
-#eval suspendedTurn.admits 150 bothSettled    -- true:  MORE discharges never un-admit (keystone)
+#guard suspendedTurn.admits 150 none' == false  -- blocked, oracle has not discharged
+#guard suspendedTurn.admits 150 oracleSettled   -- oracle discharged ⇒ the turn resolves forward
+#guard suspendedTurn.admits 150 bothSettled     -- MORE discharges never un-admit (keystone)
 
 -- the height-window caveat still bites: discharge resolves the gateway, not the local gate
-#eval suspendedTurn.admits 50  oracleSettled  -- false: 50 < 100 — a local caveat narrowed it out
+#guard suspendedTurn.admits 50  oracleSettled == false  -- 50 < 100 — a local caveat narrowed it out
 
 -- `Awaiting` as a runnable scheduler poll: suspended under none', live under oracleSettled
-#eval decide (Awaiting suspendedTurn 150 none')          -- true:  still suspended
-#eval decide (Awaiting suspendedTurn 150 oracleSettled)  -- false: resolved
+#guard decide (Awaiting suspendedTurn 150 none')                  -- still suspended
+#guard decide (Awaiting suspendedTurn 150 oracleSettled) == false -- resolved
 
 -- forward-only order witnesses: settling adds a discharge, retracts none
-#eval (none'.settle GW.oracle) GW.oracle      -- true:  oracle now settled
-#eval (none'.settle GW.oracle) GW.cosigner    -- false: untouched gateway unchanged
+#guard (none'.settle GW.oracle) GW.oracle               -- oracle now settled
+#guard (none'.settle GW.oracle) GW.cosigner == false    -- untouched gateway unchanged
 
 end Dregg2.Authority

@@ -276,20 +276,20 @@ def burnTurn : List CellEffect := [.burn 0 40]
 def mixedTurn : List CellEffect :=
   [.setField 0 1 7, .mint 0 50, .transfer 0 1 30, .burn 0 20, .emitEvent 0 3]
 
-#eval linearity (.transfer 0 1 30)            -- Dregg2.Exec.Effect.LinearityClass.conservative
-#eval linearity (.mint 0 50)                  -- ...generative
-#eval linearity (.burn 0 40)                  -- ...annihilative
-#eval requiresPairedSibling (linearity (.transfer 0 1 30))  -- true
-#eval requiresPairedSibling (linearity (.mint 0 50))        -- false (disclosed, not paired)
+#guard decide ((linearity (.transfer 0 1 30)) = Dregg2.Exec.Effect.LinearityClass.conservative)  --  Dregg2.Exec.Effect.LinearityClass.conservative
+#guard decide (linearity (.mint 0 50) = .generative)  -- ...generative
+#guard decide (linearity (.burn 0 40) = .annihilative)  -- ...annihilative
+#guard (requiresPairedSibling (linearity (.transfer 0 1 30)))  --  true
+#guard (requiresPairedSibling (linearity (.mint 0 50))) == false  --  false (disclosed, not paired)
 
-#eval turnDelta transferTurn                  -- 0   (transfers conserve)
-#eval turnDelta mintTurn                       -- 50  (mint adds)
-#eval turnDelta burnTurn                       -- -40 (burn subtracts)
-#eval turnDelta mixedTurn                      -- 30  (= 0 + 50 + 0 - 20 + 0)
+#guard (turnDelta transferTurn) == 0  --  0   (transfers conserve)
+#guard (turnDelta mintTurn) == 50  --  50  (mint adds)
+#guard (turnDelta burnTurn) == -40  --  -40 (burn subtracts)
+#guard (turnDelta mixedTurn) == 30  --  30  (= 0 + 50 + 0 - 20 + 0)
 
-#eval applyTurn 105 transferTurn              -- 105 (a transfer turn conserves)
-#eval applyTurn 105 mintTurn                   -- 155 (a mint turn adds 50)
-#eval applyTurn 105 burnTurn                   -- 65  (a burn turn subtracts 40)
-#eval applyTurn 105 mixedTurn                  -- 135 (the ledger law over a mixed turn: 105 + 30)
+#guard (applyTurn 105 transferTurn) == 105  --  105 (a transfer turn conserves)
+#guard (applyTurn 105 mintTurn) == 155  --  155 (a mint turn adds 50)
+#guard (applyTurn 105 burnTurn) == 65  --  65  (a burn turn subtracts 40)
+#guard (applyTurn 105 mixedTurn) == 135  --  135 (the ledger law over a mixed turn: 105 + 30)
 
 end Dregg2.Exec.Effect

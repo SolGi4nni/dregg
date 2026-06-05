@@ -201,9 +201,9 @@ example : Reclaimable (renew demoLeased 120 50) 120 = false :=
   captp_renewed_not_reclaimed demoLeased 120 50 (by decide)
 
 -- Expired lease ⇒ reclaimable; current lease ⇒ not. Locally-decidable, no global view.
-#eval Reclaimable demoLeased 200                 -- expected: true  (200 ≥ 150, lease lapsed)
-#eval Reclaimable demoLeased 120                 -- expected: false (120 < 150, lease current)
-#eval Reclaimable (renew demoLeased 120 50) 120  -- expected: false (renewed: lapses at 170)
+#guard (Reclaimable demoLeased 200)  --  expected: true  (200 ≥ 150, lease lapsed)
+#guard (Reclaimable demoLeased 120) == false  --  expected: false (120 < 150, lease current)
+#guard (Reclaimable (renew demoLeased 120 50) 120) == false  --  expected: false (renewed: lapses at 170)
 #eval s!"demo handle holder={demoLeased.handle.holder}, lease expiresAt={demoLeased.lease.expiresAt}: \
 reclaim@200={Reclaimable demoLeased 200}, reclaim@120={Reclaimable demoLeased 120}"
 

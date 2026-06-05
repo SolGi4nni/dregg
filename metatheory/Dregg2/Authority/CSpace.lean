@@ -75,11 +75,11 @@ def cs0 : CSpace := fun l =>
   else if l = 1 then [CCap.endpoint 7 [Auth.read, Auth.write]]
   else []
 
-#eval reaches cs0 3 0 7    -- true  (0 ⟶ cnode 1 ⟶ endpoint 7)
-#eval reaches cs0 1 0 7    -- false (one hop is not enough — the depth bound bites)
-#eval reaches cs0 3 0 1    -- true  (0 reaches the table cell 1 directly)
-#eval reaches cs0 3 1 7    -- true  (1 holds the endpoint)
-#eval reaches cs0 3 7 0    -- false (7 holds nothing)
+#guard reaches cs0 3 0 7            -- 0 ⟶ cnode 1 ⟶ endpoint 7
+#guard reaches cs0 1 0 7 == false   -- one hop is not enough — the depth bound bites
+#guard reaches cs0 3 0 1            -- 0 reaches the table cell 1 directly
+#guard reaches cs0 3 1 7            -- 1 holds the endpoint
+#guard reaches cs0 3 7 0 == false   -- 7 holds nothing
 
 /-! ## §3 — `grant`/`derive`: O(1) subtree sharing (the seL4 scaling move). -/
 
@@ -121,9 +121,9 @@ theorem attenuateC_target (keep : List Auth) :
 
 -- O(1) SUBTREE SHARING, operationally: cell 2 holds nothing (can't reach 7); ONE `deriveC` of cell
 -- 0's container cap hands 2 the whole subtree under table 1 — now 2 reaches 7 too, read-only.
-#eval reaches cs0 3 2 7    -- false (2 holds nothing)
-#eval reaches (deriveC cs0 2 [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant])) 3 2 7  -- true (shared!)
-#eval cAuth (attenuateC [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant]))             -- [read] (grant dropped)
+#guard reaches cs0 3 2 7 == false   -- 2 holds nothing
+#guard reaches (deriveC cs0 2 [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant])) 3 2 7  -- shared!
+#guard cAuth (attenuateC [Auth.read] (CCap.cnode 1 [Auth.read, Auth.grant])) == [Auth.read]  -- grant dropped
 
 /-! ## §4 — Monotonicity of reach under grant.
 
@@ -198,9 +198,9 @@ theorem writeThroughGrant_mono (cs : CSpace) (issuer target : Label) (cap : CCap
 
 -- WRITE-THROUGH, operationally: cell 0 holds `cnode 1 [read,grant]`. It MUTATES cell 1's REMOTE store,
 -- inserting `endpoint 9` — now cell 1 reaches 9. The non-amplification gate bites on rights 0 lacks.
-#eval reaches cs0 3 1 9                                                          -- false (1 ⇏ 9 yet)
-#eval reaches (writeThroughGrant cs0 0 1 (CCap.endpoint 9 [Auth.read])) 3 1 9    -- true  (0 mutated 1!)
-#eval writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.read])                         -- true  (read ⊆ {read,grant})
-#eval writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.write])                        -- false (write ∉ — no amplify)
+#guard reaches cs0 3 1 9 == false                                                       -- 1 ⇏ 9 yet
+#guard reaches (writeThroughGrant cs0 0 1 (CCap.endpoint 9 [Auth.read])) 3 1 9           -- 0 mutated 1!
+#guard writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.read])                                -- read ⊆ {read,grant}
+#guard writeGrantOK cs0 0 1 (CCap.endpoint 9 [Auth.write]) == false                      -- write ∉ — no amplify
 
 end Dregg2.Authority.CSpace

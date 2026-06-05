@@ -142,14 +142,14 @@ def avoidanceDeal : BiTurn :=
   { actorA := 0, srcA := 0, actorB := 7, dstB := 7, amt := 30, sid := 42 }
 
 -- The graph flow value across the A→B edge:
-#eval flowAB avoidanceDeal             -- 30  (avoidance responsibility flowing A → B)
+#guard flowAB avoidanceDeal == 30      -- 30  (avoidance responsibility flowing A → B)
 -- Divergence at A (flow leaving) and B (flow entering):
-#eval divA avoidanceDeal               -- -30 (leaves A's cell)
-#eval divB avoidanceDeal               -- 30  (enters B's cell)
+#guard divA avoidanceDeal == -30       -- -30 (leaves A's cell)
+#guard divB avoidanceDeal == 30        -- 30  (enters B's cell)
 -- THE BRIDGE: net flow across the A–B boundary is ZERO — Σδ=0 IS flow-balance.
-#eval boundaryFlow avoidanceDeal       -- 0   (balanced flow = balanced ledger; one equation)
+#guard boundaryFlow avoidanceDeal == 0 -- 0   (balanced flow = balanced ledger; one equation)
 -- The forced-trade naive ordering LEAKS (1 out, 2 in ⇒ net 3 ≠ 0 ⇒ excluded):
-#eval ((1 : ℤ) + 2)                    -- 3   (≠ 0: the leak the binding excludes)
+#guard ((1 : ℤ) + 2) == 3              -- 3   (≠ 0: the leak the binding excludes)
 
 /-! ## 6. Axiom hygiene + the OPEN generalization. -/
 

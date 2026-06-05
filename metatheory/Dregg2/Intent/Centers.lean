@@ -433,8 +433,8 @@ example (X Y : Type) :
       = tensorμ X WriterObj Y WriterObj ≫ (X ⊗ Y) ◁ μₘ[WriterObj] :=
   rfl
 
-#eval (Multiplicative.toAdd
-  ((Multiplicative.ofAdd 3 * Multiplicative.ofAdd 5 : Multiplicative ℕ)))  -- 8 (pool coalesces 3,5)
+#guard (Multiplicative.toAdd
+  ((Multiplicative.ofAdd 3 * Multiplicative.ofAdd 5 : Multiplicative ℕ))) == 8  -- pool coalesces 3,5
 
 /-! ## 7. The escrow ↔ ∃ weld (Flake–Laugwitz–Posur Cor 3.11, 3.19/3.20) — the projection formula.
 

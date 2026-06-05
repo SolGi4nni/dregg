@@ -149,21 +149,21 @@ def windowed : Token Height Unit :=
 /-- No discharges needed (no third-party caveats). -/
 def noDischarges : Discharges Unit := fun _ => false
 
-#eval rootBiscuit.admits 150 noDischarges        -- true  (root admits everything)
-#eval windowed.admits 150 noDischarges           -- true  (150 ∈ [100,200])
-#eval windowed.admits 50  noDischarges           -- false (50 < 100 — a caveat narrowed it out)
-#eval windowed.admits 250 noDischarges           -- false (250 > 200)
-#eval windowed.crossVatVerifiable                -- true  (a biscuit travels off-island)
-#eval rootBiscuit.crossVatVerifiable             -- true
+#guard rootBiscuit.admits 150 noDischarges           -- root admits everything
+#guard windowed.admits 150 noDischarges              -- 150 ∈ [100,200]
+#guard windowed.admits 50  noDischarges == false     -- 50 < 100 — a caveat narrowed it out
+#guard windowed.admits 250 noDischarges == false     -- 250 > 200
+#guard windowed.crossVatVerifiable                   -- a biscuit travels off-island
+#guard rootBiscuit.crossVatVerifiable
 
 /-- A macaroon version of the same window — cannot be verified off-island. -/
 def macWindowed : Token Height Unit := { windowed with kind := .macaroon }
-#eval macWindowed.crossVatVerifiable             -- false (HMAC ≠ third-party-verifiable)
+#guard macWindowed.crossVatVerifiable == false   -- HMAC ≠ third-party-verifiable
 
 /-- A third-party caveat: this turn cannot become admissible until gateway `()` discharges it
 (the await authority-face). -/
 def needsGateway : Token Height Unit := windowed.attenuate (.thirdParty ())
-#eval needsGateway.admits 150 (fun _ => false)   -- false (gateway has not discharged)
-#eval needsGateway.admits 150 (fun _ => true)    -- true  (gateway discharged ⇒ suspended turn resolves)
+#guard needsGateway.admits 150 (fun _ => false) == false  -- gateway has not discharged
+#guard needsGateway.admits 150 (fun _ => true)            -- gateway discharged ⇒ suspended turn resolves
 
 end Dregg2.Authority

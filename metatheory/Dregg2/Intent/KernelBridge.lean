@@ -274,8 +274,8 @@ build. The refinement bridge is kernel-clean. -/
 
 /-! ### `#eval` smoke — the refinement is computable on the auction's settle. -/
 
-#eval toBal settleIntent.offered.as 1     -- 3 : the settled art allocation, as a real per-asset Δ
-#eval toBal settleIntent.offered.as 0     -- 0 : gold untouched
-#eval toBal crossBid.offered.as 0         -- 5 : the cross-asset bid's gold (≠ wanted art → rejected)
+#guard toBal settleIntent.offered.as 1 == 3     -- the settled art allocation, as a real per-asset Δ
+#guard toBal settleIntent.offered.as 0 == 0     -- gold untouched
+#guard toBal crossBid.offered.as 0 == 5         -- the cross-asset bid's gold (≠ wanted art → rejected)
 
 end Dregg2.Intent

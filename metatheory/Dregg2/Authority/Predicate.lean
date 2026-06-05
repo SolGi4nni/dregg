@@ -242,22 +242,22 @@ def demoReg : Registry Stmt Wit := fun
 def adversarialFind : Stmt → Option Wit := fun _ => some 999
 
 -- Accept: the honest witness `7` discharges the `dfa` predicate at statement `7`.
-#eval registryVerify demoReg .dfa 7 7            -- true   (accepted ⇒ Discharged by `registry_sound`)
+#guard registryVerify demoReg .dfa 7 7            -- accepted ⇒ Discharged by `registry_sound`
 -- Accept: `10` discharges the `pedersen` predicate at statement `5` (10 = 2*5).
-#eval registryVerify demoReg .pedersen 5 10      -- true
+#guard registryVerify demoReg .pedersen 5 10
 -- Reject: a BAD witness is rejected even though the adversarial prover proposes it.
-#eval (adversarialFind 7).map (registryVerify demoReg .dfa 7)   -- some false
+#guard (adversarialFind 7).map (registryVerify demoReg .dfa 7) == some false
 -- Reject (fail closed): an unregistered kind never accepts, whatever the witness.
-#eval registryVerify demoReg .bridge 7 7         -- false  (KindNotRegistered ⇒ no accept)
+#guard registryVerify demoReg .bridge 7 7 == false  -- KindNotRegistered ⇒ no accept
 
 /-- Install a custom verifier at `custom 42` (the open extension point), content-addressed by `42`. -/
 def customReg : Registry Stmt Wit :=
   fun k => if k = .custom 42 then some (fun stmt wit => decide (wit = stmt + 1)) else demoReg k
 
 -- The custom verifier dispatches for `custom 42`: `8` discharges at statement `7` (8 = 7+1).
-#eval registryVerify customReg (.custom 42) 7 8  -- true
+#guard registryVerify customReg (.custom 42) 7 8
 -- A DIFFERENT vk (`custom 43`) does not see the `custom 42` verifier — content-addressed separation.
-#eval registryVerify customReg (.custom 43) 7 8  -- false
+#guard registryVerify customReg (.custom 43) 7 8 == false
 
 end Demo
 

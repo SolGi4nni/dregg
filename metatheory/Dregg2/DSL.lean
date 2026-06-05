@@ -215,8 +215,8 @@ theorem counter_eq_counterProgram : counter = counterProgram := rfl
 example : counter.admits 0 counterOld counterUp = true := by decide
 example : counter.admits 0 counterOld counterDn = false := by decide
 
-#eval counter.admits 0 counterOld counterUp     -- true
-#eval counter.admits 0 counterOld counterDn     -- false
+#guard counter.admits 0 counterOld counterUp
+#guard counter.admits 0 counterOld counterDn == false
 
 /-! ## §6 — Worked example: the escrow.
 
@@ -288,12 +288,12 @@ example :
 -- existing `Exec.depositOnly` (method 2 has no matching arm):
 example : depositOnly.admits 2 balLo balHi = false := by decide
 
-#eval escrow.admits deposit
+#guard escrow.admits deposit
   (.record [("balance", .int 100), ("locked", .int 50), ("paid", .int 0)])
-  (.record [("balance", .int 150), ("locked", .int 50), ("paid", .int 0)])     -- true
-#eval escrow.admits 3
+  (.record [("balance", .int 150), ("locked", .int 50), ("paid", .int 0)])
+#guard escrow.admits 3
   (.record [("locked", .int 50), ("paid", .int 0)])
-  (.record [("locked", .int 99), ("paid", .int 0)])                            -- false (violates conservation)
+  (.record [("locked", .int 99), ("paid", .int 0)]) == false   -- (violates conservation)
 
 /-! ## §7 — Atom smoke-tests.
 

@@ -275,17 +275,17 @@ theorem fork_is_genuine :
 /-! ## 4. `#eval` witnesses — consensus and the fork, runnable. -/
 
 -- The honest family GLUES (consensus / global section): both clear, overlap agrees.
-#eval (decide (opA.verdict = true ∧ opB_honest.verdict = true ∧ opA.boundary = opB_honest.boundary))
+#guard (decide (opA.verdict = true ∧ opB_honest.verdict = true ∧ opA.boundary = opB_honest.boundary))
                                                             -- true  (H⁰: a global section)
 -- The Byzantine family does NOT glue (the fork / obstruction): valid locally, disagree on overlap.
-#eval (decide (opA.verdict = true ∧ opB_byzantine.verdict = true
-               ∧ opA.boundary = opB_byzantine.boundary))    -- false (overlap disagreement ⇒ no glue)
+#guard (decide (opA.verdict = true ∧ opB_byzantine.verdict = true
+               ∧ opA.boundary = opB_byzantine.boundary)) == false  -- false (overlap disagreement ⇒ no glue)
 -- Each operator is individually valid — the obstruction is PURELY the overlap disagreement:
-#eval opA.verdict                                           -- true
-#eval opB_byzantine.verdict                                 -- true  (locally fine …)
-#eval (opA.boundary == opB_byzantine.boundary)              -- false (… but disagrees: the fork)
+#guard opA.verdict                                          -- true
+#guard opB_byzantine.verdict                                -- true  (locally fine …)
+#guard (opA.boundary == opB_byzantine.boundary) == false    -- false (… but disagrees: the fork)
 -- A clearance claim, discharged by the REAL conservative screen (clear pair):
-#eval screen (⟨8,0,0⟩ : Vec3) (⟨0,3,0⟩ : Vec3) 10 25        -- true  (the H⁰ fact the operators know)
+#guard screen (⟨8,0,0⟩ : Vec3) (⟨0,3,0⟩ : Vec3) 10 25       -- true  (the H⁰ fact the operators know)
 
 /-! ## 5. Axiom hygiene. -/
 

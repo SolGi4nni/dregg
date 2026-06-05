@@ -204,12 +204,12 @@ Mirrors `CrossCaveat.lean:140-145`: the SAME coordinated caveat admits when the 
 rejects when `B` violates it, while the RAW bilateral turn commits regardless — proving the coordinated
 discharge (not the underlying turn) is what gates. -/
 
-#eval covenantCoord.tier                                                  -- DriftTier.coordinated (the promoted tier)
-#eval decide (covenantCoord.tier = DriftTier.coordinated)                 -- true  (it IS the no-drift-witness tier)
-#eval (dischargeCoordinated covenantCoord sA sB goodBi).isSome            -- true  (covenant holds ⇒ ADMITS via equalizer)
-#eval (dischargeCoordinated covenantCoord sA sBhigh goodBi).isSome        -- false (covenant violated by B ⇒ REJECT)
-#eval (jointApply sA sBhigh goodBi).isSome                                -- true  (RAW turn fine; only the coordinated caveat rejects)
-#eval (dischargeCoordinated covenantCoord sA sB goodBi).map (fun p => jointTotal p.1 p.2)  -- some 125 (CG-5 conserved on the admitted discharge)
+#guard decide ((covenantCoord.tier) = DriftTier.coordinated)  --  DriftTier.coordinated (the promoted tier)
+#guard (decide (covenantCoord.tier = DriftTier.coordinated))  --  true  (it IS the no-drift-witness tier)
+#guard ((dischargeCoordinated covenantCoord sA sB goodBi).isSome)  --  true  (covenant holds ⇒ ADMITS via equalizer)
+#guard ((dischargeCoordinated covenantCoord sA sBhigh goodBi).isSome) == false  --  false (covenant violated by B ⇒ REJECT)
+#guard ((jointApply sA sBhigh goodBi).isSome)  --  true  (RAW turn fine; only the coordinated caveat rejects)
+#guard ((dischargeCoordinated covenantCoord sA sB goodBi).map (fun p => jointTotal p.1 p.2)) == some 125  --  some 125 (CG-5 conserved on the admitted discharge)
 
 /-! ## §5. Axiom-hygiene tripwires — pin each coordinated-discharge keystone kernel-clean.
 

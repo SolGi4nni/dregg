@@ -254,15 +254,15 @@ def counterOld : Value := .record [("count", .int 5)]
 def counterUp  : Value := .record [("count", .int 7)]   -- 7 ≥ 5  → admitted
 def counterDn  : Value := .record [("count", .int 3)]   -- 3 ≥ 5? → denied
 
-#eval counterProgram.admits 0 counterOld counterUp     -- true
-#eval counterProgram.admits 0 counterOld counterDn     -- false
+#guard (counterProgram.admits 0 counterOld counterUp)  --  true
+#guard (counterProgram.admits 0 counterOld counterDn) == false  --  false
 
 /-- A bounded state machine on `status`: only Open(0)→Claimed(1)→Paid(2). -/
 def smProgram : RecordProgram :=
   .predicate [.allowedTransitions "status" [(0, 1), (1, 2)]]
 
-#eval smProgram.admits 0 (.record [("status", .int 0)]) (.record [("status", .int 1)])  -- true  (Open→Claimed)
-#eval smProgram.admits 0 (.record [("status", .int 0)]) (.record [("status", .int 2)])  -- false (Open↛Paid)
+#guard (smProgram.admits 0 (.record [("status", .int 0)]) (.record [("status", .int 1)]))  --  true  (Open→Claimed)
+#guard (smProgram.admits 0 (.record [("status", .int 0)]) (.record [("status", .int 2)])) == false  --  false (Open↛Paid)
 
 /-- A `Cases` program: on method `1` (a "deposit"), balance must strictly increase; any other
 method has no matching arm and is **default-denied**. -/
@@ -272,13 +272,13 @@ def depositOnly : RecordProgram :=
 def balLo : Value := .record [("balance", .int 100)]
 def balHi : Value := .record [("balance", .int 150)]
 
-#eval depositOnly.admits 1 balLo balHi    -- true  (method 1, balance ↑)
-#eval depositOnly.admits 1 balHi balLo    -- false (method 1, balance ↓)
-#eval depositOnly.admits 2 balLo balHi    -- false (method 2: no matching case → default-deny)
+#guard (depositOnly.admits 1 balLo balHi)  --  true  (method 1, balance ↑)
+#guard (depositOnly.admits 1 balHi balLo) == false  --  false (method 1, balance ↓)
+#guard (depositOnly.admits 2 balLo balHi) == false  --  false (method 2: no matching case → default-deny)
 
 /-- Intra-cell conservation: `Σ new[ins] = Σ old[ins] + Σ new[outs]` (a split). -/
 def splitProgram : RecordProgram := .predicate [.sumEqualsAcross ["a"] ["b"]]
 -- old a=10; new a=4, b=6  ⇒  4 = 10 + 6? no.  new a=16, b=6 ⇒ 16 = 10 + 6 ✓
-#eval splitProgram.admits 0 (.record [("a", .int 10)]) (.record [("a", .int 16), ("b", .int 6)])  -- true
+#guard (splitProgram.admits 0 (.record [("a", .int 10)]) (.record [("a", .int 16), ("b", .int 6)]))  --  true
 
 end Dregg2.Exec

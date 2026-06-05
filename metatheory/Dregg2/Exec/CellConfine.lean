@@ -1439,11 +1439,11 @@ bound has teeth. -/
 def fullAuthCeiling : List Auth :=
   [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control]
 
-#eval decide (Auth.control ∈ fullAuthCeiling)                            -- true (the carry hypothesis holds)
+#guard (decide (Auth.control ∈ fullAuthCeiling))  --  true (the carry hypothesis holds)
 -- `[read]` is confined by the full ceiling; `[grant]`-only ceiling does NOT contain `control`:
-#eval decide (∀ a ∈ capAuthConferred (Cap.endpoint 7 [Auth.read]), a ∈ fullAuthCeiling)  -- true
-#eval decide (Auth.control ∈ [Auth.grant])                              -- false (a too-tight ceiling rejects connectivity grants)
-#eval decide (∀ a ∈ capAuthConferred (Cap.node 7), a ∈ fullAuthCeiling) -- true ([control] ⊆ full)
+#guard (decide (∀ a ∈ capAuthConferred (Cap.endpoint 7 [Auth.read]), a ∈ fullAuthCeiling))  --  true
+#guard (decide (Auth.control ∈ [Auth.grant])) == false  --  false (a too-tight ceiling rejects connectivity grants)
+#guard (decide (∀ a ∈ capAuthConferred (Cap.node 7), a ∈ fullAuthCeiling))  --  true ([control] ⊆ full)
 
 /-! ## Axiom hygiene — confinement + one-step obligation pinned to the kernel triple. -/
 

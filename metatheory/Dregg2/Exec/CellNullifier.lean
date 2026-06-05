@@ -819,12 +819,12 @@ grow-only invariant bounds a quantity that actually moves. -/
 The kernel-side double-spend gate admits a fresh `77` and records it. -/
 def spendCF : FullForestA := ⟨.noteSpendA 77 0, []⟩
 
-#eval (execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers)              -- some [77] (grew from [])
-#eval fma0.kernel.nullifiers                                                            -- []   (BEFORE — strictly fewer)
-#eval (execFullForestA fma0 spendCF).map (fun s' => decide (([] : List Nat) ⊆ s'.kernel.nullifiers))  -- some true (the carried ⊆ from ∅)
-#eval (execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers.contains 77)  -- some true (77 is now spent)
+#guard ((execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers)) == some [77]  --  some [77] (grew from [])
+#guard (fma0.kernel.nullifiers) == []  --  []   (BEFORE — strictly fewer)
+#guard ((execFullForestA fma0 spendCF).map (fun s' => decide (([] : List Nat) ⊆ s'.kernel.nullifiers))) == some true  --  some true (the carried ⊆ from ∅)
+#guard ((execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers.contains 77)) == some true  --  some true (77 is now spent)
 -- the anti-replay teeth: spending 77 AGAIN on the resulting state fails-closed (none)
-#eval ((execFullForestA fma0 spendCF).bind (fun s' => noteSpendNullifier s'.kernel 77)).isNone  -- true
+#guard (((execFullForestA fma0 spendCF).bind (fun s' => noteSpendNullifier s'.kernel 77)).isNone)  --  true
 
 /-! ## Axiom hygiene — no-double-spend pinned to the standard kernel triple. -/
 

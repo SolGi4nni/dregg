@@ -240,15 +240,15 @@ def amplifier : CapNode := { self := 3, parent := some 1, authority := {Auth.rea
 /-- A CDT with the amplifying edge spliced in — NOT well-formed. -/
 def badCDT : Tree := [amplifier, child, root]
 
-#eval goodCDT.lookup 0 == some root            -- true  (root resolves)
-#eval decide (attenuates child root)           -- true  (read/write ⊆ read/write/grant)
-#eval decide (attenuates grandchild child)     -- true  (read ⊆ read/write)
-#eval decide (attenuates amplifier child)      -- false (grant ∉ child's rights — amplifies!)
-#eval decide (amplifies amplifier child)       -- true  (the edge would grow authority)
+#guard goodCDT.lookup 0 == some root                      -- root resolves
+#guard decide (attenuates child root)                     -- read/write ⊆ read/write/grant
+#guard decide (attenuates grandchild child)               -- read ⊆ read/write
+#guard decide (attenuates amplifier child) == false       -- grant ∉ child's rights — amplifies!
+#guard decide (amplifies amplifier child)                 -- the edge would grow authority
 
 -- The grandchild's rights are a subset of the root's — the keystone, computed: authority
 -- shrank all the way down the derivation chain (read ⊆ read/write/grant).
-#eval decide (grandchild.authority ⊆ root.authority)   -- true
+#guard decide (grandchild.authority ⊆ root.authority)
 
 /-! ## The demo CDT, PROVED well-formed, and the keystone exercised on a concrete path. -/
 

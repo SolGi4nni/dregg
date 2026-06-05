@@ -230,14 +230,14 @@ private def n2 : Nullifier := { tag := 2 }
 private def tags (c : Cell) : List Nat := (c.spent.image (·.tag)).sort (· ≤ ·)
 
 -- spend a fresh nullifier into the empty cell ⇒ admitted, now {1}
-#eval (spend empty n1).map tags                          -- some [1]
+#guard ((spend empty n1).map tags) == some [1]  --  some [1]
 -- spend it AGAIN ⇒ rejected (fail-closed double-spend)
-#eval ((spend empty n1).bind (fun c => spend c n1)).isNone  -- true  (none)
+#guard (((spend empty n1).bind (fun c => spend c n1)).isNone)  --  true  (none)
 -- spend a different fresh nullifier ⇒ admitted, now {1,2}
-#eval ((spend empty n1).bind (fun c => spend c n2)).map tags  -- some [1, 2]
+#guard (((spend empty n1).bind (fun c => spend c n2)).map tags) == some [1, 2]  --  some [1, 2]
 -- two replicas spent disjoint nullifiers offline; union (the tier-1 CvRDT join, no consensus)
-#eval tags (merge { spent := {n1} } { spent := {n2} })       -- [1, 2]
+#guard (tags (merge { spent := {n1} } { spent := {n2} })) == [1, 2]  --  [1, 2]
 -- merge is idempotent / commutative on overlap — a re-seen spend is absorbed, never doubled
-#eval tags (merge { spent := {n1, n2} } { spent := {n2} })   -- [1, 2]
+#guard (tags (merge { spent := {n1, n2} } { spent := {n2} })) == [1, 2]  --  [1, 2]
 
 end Dregg2.Exec.NullifierCell

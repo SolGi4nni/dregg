@@ -264,24 +264,24 @@ private def n2 : Nullifier := { tag := 2 }
 private def q0 : State D := add (add (empty (Digest := D)) 7) 9
 
 -- two items added ⇒ countAdded = 2, countSpent = 0
-#eval (q0.countAdded, q0.countSpent)                                   -- (2, 0)
+#guard ((q0.countAdded, q0.countSpent)) == (2, 0)  --  (2, 0)
 
 /-- A *valid* spend: statement `42`, proof `42` (echo ⇒ `verify` accepts), nullifier `n1`. -/
 private def q1? : Option (State D) := consume q0 (42 : D) (42 : P) n1
 
 -- valid proof + fresh nullifier ⇒ admitted; countSpent bumped to 1
-#eval q1?.map (fun s => (s.countAdded, s.countSpent))                  -- some (2, 1)
+#guard (q1?.map (fun s => (s.countAdded, s.countSpent))) == some (2, 1)  --  some (2, 1)
 -- the nullifier n1 is now recorded in the spent set
-#eval q1?.map (fun s => decide (n1 ∈ s.nullifiers.spent))              -- some true
+#guard (q1?.map (fun s => decide (n1 ∈ s.nullifiers.spent))) == some true  --  some true
 
 -- consume the SAME nullifier n1 AGAIN (valid proof, but already spent) ⇒ rejected (anti-double-spend)
-#eval (q1?.bind (fun s => consume s (42 : D) (42 : P) n1)).isNone      -- true
+#guard ((q1?.bind (fun s => consume s (42 : D) (42 : P) n1)).isNone)  --  true
 
 -- consume with a BAD proof (statement 42, proof 99 ≠ 42 ⇒ verify rejects), fresh nullifier n2 ⇒ rejected (privacy gate)
-#eval (q1?.bind (fun s => consume s (42 : D) (99 : P) n2)).isNone      -- true
+#guard ((q1?.bind (fun s => consume s (42 : D) (99 : P) n2)).isNone)  --  true
 
 -- a DIFFERENT valid spend (statement 5, proof 5), fresh nullifier n2 ⇒ admitted; countSpent = 2
-#eval (q1?.bind (fun s => consume s (5 : D) (5 : P) n2)).map
-        (fun s => (s.countAdded, s.countSpent))                        -- some (2, 2)
+#guard ((q1?.bind (fun s => consume s (5 : D) (5 : P) n2)).map
+        (fun s => (s.countAdded, s.countSpent))) == some (2, 2)  --  some (2, 2)
 
 end Dregg2.Exec.BlindedQueue

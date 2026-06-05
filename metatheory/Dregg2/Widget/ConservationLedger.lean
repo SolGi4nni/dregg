@@ -201,21 +201,21 @@ per-asset conserved total is literally equal before and after (the law), AND the
 by ±30 (a real transfer beneath the invariant). The conserved-vs-moved contrast is the non-vacuity. -/
 
 -- The forest genuinely commits (so `ledgerAfter` is the executor's output, not the `getD` fallback).
-#eval (execFullForestA fma0 transferCF.1).isSome                              -- true
+#guard (execFullForestA fma0 transferCF.1).isSome                             -- true
 -- The per-asset conserved totals BEFORE — the real `fma0` supplies (asset 0 = 105, asset 1 = 7).
-#eval chartedAssets.map (conservedTotal ledgerBefore)                          -- [105, 7]
+#guard chartedAssets.map (conservedTotal ledgerBefore) == [105, 7]            -- [105, 7]
 -- The per-asset conserved totals AFTER — IDENTICAL (the proved conservation law, from real numbers).
-#eval chartedAssets.map (conservedTotal ledgerAfter)                           -- [105, 7]
+#guard chartedAssets.map (conservedTotal ledgerAfter) == [105, 7]             -- [105, 7]
 -- Machine-checked flatness: every charted asset's conserved total is unchanged across the commit.
-#eval chartedAssets.all (fun b => decide (conservedTotal ledgerAfter b = conservedTotal ledgerBefore b))  -- true
+#guard chartedAssets.all (fun b => decide (conservedTotal ledgerAfter b = conservedTotal ledgerBefore b))  -- true
 -- …yet the per-cell `bal` ledger genuinely MOVES — cell 0's asset 0 falls 30, cell 1's rises 30 (NOT flat).
-#eval balDelta 0 0                                                             -- -30
-#eval balDelta 1 0                                                             -- +30
+#guard balDelta 0 0 == -30                                                     -- -30
+#guard balDelta 1 0 == 30                                                      -- +30
 -- The contrast that proves non-vacuity: totals flat (Δ=0) WHILE the books move (Δ≠0) — a real transfer,
 -- conserved. (`true` = "some per-cell delta is nonzero" — the chart is not a constant.)
-#eval (chartedCells.any (fun c => decide (balDelta c 0 ≠ 0)))                   -- true
+#guard (chartedCells.any (fun c => decide (balDelta c 0 ≠ 0)))                 -- true
 -- The chart `data` itself, as fed to Recharts — real numbers, one datum per asset (no placeholder).
-#eval ledgerData.size                                                          -- 2
+#guard ledgerData.size == 2                                                    -- 2
 
 /-! ## §7 — Axiom hygiene. The pure ledger derivations are pinned kernel-clean.
 

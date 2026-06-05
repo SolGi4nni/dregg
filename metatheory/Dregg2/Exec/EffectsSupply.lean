@@ -880,51 +880,51 @@ def ss0 : RecChainedState :=
 
 -- CreateCell: actor 9 (holds `node 2`) creates fresh cell 2 with disclosed balance 50 — commits,
 -- discloses +50 (105 → 155), grows the chain by one:
-#eval (createCellStep ss0 9 2 50).isSome                                    -- true
-#eval (createCellStep ss0 9 2 50).map (fun s => recTotal s.kernel)          -- some 155
-#eval recTotal ss0.kernel                                                   -- 105
-#eval (createCellStep ss0 9 2 50).map (fun s => s.log.length)               -- some 1
+#guard ((createCellStep ss0 9 2 50).isSome)  --  true
+#guard ((createCellStep ss0 9 2 50).map (fun s => recTotal s.kernel)) == some 155  --  some 155
+#guard (recTotal ss0.kernel) == 105  --  105
+#guard ((createCellStep ss0 9 2 50).map (fun s => s.log.length)) == some 1  --  some 1
 -- ...the fresh cell 2 carries the disclosed balance:
-#eval (createCellStep ss0 9 2 50).map (fun s => balOf (s.kernel.cell 2))    -- some 50
+#guard ((createCellStep ss0 9 2 50).map (fun s => balOf (s.kernel.cell 2))) == some 50  --  some 50
 -- An unauthorized creator (actor 0 holds no create cap) is rejected (fail-closed):
-#eval (createCellStep ss0 0 2 50).isSome                                    -- false
+#guard ((createCellStep ss0 0 2 50).isSome) == false  --  false
 -- A non-fresh id (cell 1 already live) is rejected:
-#eval (createCellStep ss0 9 1 50).isSome                                    -- false
+#guard ((createCellStep ss0 9 1 50).isSome) == false  --  false
 
 -- SpawnWithDelegation: child creation alone cannot mint authority to an unheld parent target:
-#eval (spawnStep ss0 9 2 1 20).isSome                                       -- false
+#guard ((spawnStep ss0 9 2 1 20).isSome) == false  --  false
 -- ...but actor 9 can spawn child 2 (balance 20) with a copy of its held parent `node 0` cap:
-#eval (spawnStep ss0 9 2 0 20).isSome                                       -- true
-#eval (spawnStep ss0 9 2 0 20).map (fun s => recTotal s.kernel)             -- some 125 (disclosed +20)
+#guard ((spawnStep ss0 9 2 0 20).isSome)  --  true
+#guard ((spawnStep ss0 9 2 0 20).map (fun s => recTotal s.kernel)) == some 125  --  some 125 (disclosed +20)
 -- ...and the child carries the concrete copied parent cap (`node 0`), not a manufactured target cap:
-#eval ((spawnStep ss0 9 2 0 20).map (fun s => s.kernel.caps 2)).getD []     -- [Cap.node 0]
-#eval (spawnStep ss0 9 2 0 20).map
-        (fun s => (s.kernel.delegate 2, s.kernel.delegations 2))             -- some (some 9, [Cap.node 0, Cap.node 2])
+#guard (((spawnStep ss0 9 2 0 20).map (fun s => s.kernel.caps 2)).getD []) == [Cap.node 0]  --  [Cap.node 0]
+#guard ((spawnStep ss0 9 2 0 20).map
+        (fun s => (s.kernel.delegate 2, s.kernel.delegations 2))) == some (some 9, [Cap.node 0, Cap.node 2])  --  some (some 9, [Cap.node 0, Cap.node 2])
 
 -- BridgeMint: actor 9 (holds `node 0`) mints +40 into cell 0 — local credit commits, discloses +40:
-#eval (bridgeMintStep ss0 9 0 40).isSome                                    -- true
-#eval (bridgeMintStep ss0 9 0 40).map (fun s => recTotal s.kernel)          -- some 145 (= 105 + 40)
+#guard ((bridgeMintStep ss0 9 0 40).isSome)  --  true
+#guard ((bridgeMintStep ss0 9 0 40).map (fun s => recTotal s.kernel)) == some 145  --  some 145 (= 105 + 40)
 -- An unauthorized bridge-mint (actor 0) is rejected (the LOCAL gate, independent of foreign finality):
-#eval (bridgeMintStep ss0 0 0 40).isSome                                    -- false
+#guard ((bridgeMintStep ss0 0 0 40).isSome) == false  --  false
 
 -- BridgeLock: owner 0 escrows 30 into lock-cell 1 (owns cell 0) — commits, CONSERVES (105 → 105):
-#eval (bridgeLockStep ss0 0 1 30 777).isSome                              -- true
-#eval (bridgeLockStep ss0 0 1 30 777).map (fun s => recTotal s.kernel)    -- some 105 (PAIRED Σ=0)
+#guard ((bridgeLockStep ss0 0 1 30 777).isSome)  --  true
+#guard ((bridgeLockStep ss0 0 1 30 777).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (PAIRED Σ=0)
 -- ...the value moved owner 0 (100→70) into lock-cell 1 (5→35):
-#eval (bridgeLockStep ss0 0 1 30 777).map (fun s => balOf (s.kernel.cell 0))  -- some 70
-#eval (bridgeLockStep ss0 0 1 30 777).map (fun s => balOf (s.kernel.cell 1))  -- some 35
+#guard ((bridgeLockStep ss0 0 1 30 777).map (fun s => balOf (s.kernel.cell 0))) == some 70  --  some 70
+#guard ((bridgeLockStep ss0 0 1 30 777).map (fun s => balOf (s.kernel.cell 1))) == some 35  --  some 35
 -- ...and lock-cell 1's `bridge_lock` nullifier-nonce is set to 777:
-#eval (bridgeLockStep ss0 0 1 30 777).map (fun s => lockOf (s.kernel.cell 1)) -- some 777
+#guard ((bridgeLockStep ss0 0 1 30 777).map (fun s => lockOf (s.kernel.cell 1))) == some 777  --  some 777
 
 -- BridgeCancel: owner 0 refunds 30 back from lock-cell 1 — commits, CONSERVES:
-#eval (bridgeCancelStep ss0 0 1 30).isSome                                -- false (no value at lock yet)
+#guard ((bridgeCancelStep ss0 0 1 30).isSome) == false  --  false (no value at lock yet)
 -- (cancel after a lock: lock then cancel round-trips conservatively — checked via composition below)
 
 -- BridgeFinalize: consume lock-cell 1's nullifier (live) — commits, CONSERVES, retires the lock to 999:
-#eval (bridgeFinalizeStep ss0 9 1 999).isSome                               -- true
-#eval (bridgeFinalizeStep ss0 9 1 999).map (fun s => recTotal s.kernel)     -- some 105 (balance FRAMED)
-#eval (bridgeFinalizeStep ss0 9 1 999).map (fun s => lockOf (s.kernel.cell 1))  -- some 999 (spent)
+#guard ((bridgeFinalizeStep ss0 9 1 999).isSome)  --  true
+#guard ((bridgeFinalizeStep ss0 9 1 999).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (balance FRAMED)
+#guard ((bridgeFinalizeStep ss0 9 1 999).map (fun s => lockOf (s.kernel.cell 1))) == some 999  --  some 999 (spent)
 -- A finalize on a dead lock-cell is rejected:
-#eval (bridgeFinalizeStep ss0 9 7 999).isSome                               -- false
+#guard ((bridgeFinalizeStep ss0 9 7 999).isSome) == false  --  false
 
 end Dregg2.Exec.EffectsSupply

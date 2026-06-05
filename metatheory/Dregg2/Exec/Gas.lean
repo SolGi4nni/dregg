@@ -302,30 +302,30 @@ Reuses `TurnExecutorFull.fs0` (cell 0 bal 100, cell 1 bal 5; actor 9 holds a `no
 delegator 0 holds a `node 7` cap) and `mixedTurn` (mint +50, transfer, burn −50 → nets to 0). -/
 
 -- `mixedTurn` costs mint(5) + balance(2) + burn(4) = 11 gas.
-#eval totalCost mixedTurn                                              -- 11
+#guard (totalCost mixedTurn) == 11  --  11
 
 -- With AMPLE budget (20 ≥ 11) the metered run commits to the SAME state as the un-metered turn,
 -- leaving 20 − 11 = 9 gas:
-#eval (execGas 20 mixedTurn fs0).map (fun p => (recTotal p.1.kernel, p.2))   -- some (105, 9)
-#eval (execGas 20 mixedTurn fs0).map (fun p => p.1.log.length)              -- some 3
+#guard ((execGas 20 mixedTurn fs0).map (fun p => (recTotal p.1.kernel, p.2))) == some (105, 9)  --  some (105, 9)
+#guard ((execGas 20 mixedTurn fs0).map (fun p => p.1.log.length)) == some 3  --  some 3
 -- ...matching the un-metered executor exactly (pure guard):
-#eval (execFullTurn fs0 mixedTurn).map (fun s => recTotal s.kernel)         -- some 105
+#guard ((execFullTurn fs0 mixedTurn).map (fun s => recTotal s.kernel)) == some 105  --  some 105
 
 -- With EXACTLY enough budget (11) it still commits, leaving 0 gas:
-#eval (execGas 11 mixedTurn fs0).map (fun p => p.2)                         -- some 0
+#guard ((execGas 11 mixedTurn fs0).map (fun p => p.2)) == some 0  --  some 0
 
 -- With an INSUFFICIENT budget (10 < 11) the metered run FAILS CLOSED — no state at all:
-#eval (execGas 10 mixedTurn fs0).isSome                                    -- false
+#guard ((execGas 10 mixedTurn fs0).isSome) == false  --  false
 
 -- Fail-closed even mid-turn: budget 7 covers mint(5)+balance(2)=7 but NOT the burn(4); the whole
 -- turn aborts to `none` (no partial commit — the mint is NOT left applied):
-#eval (execGas 7 mixedTurn fs0).isSome                                     -- false
+#guard ((execGas 7 mixedTurn fs0).isSome) == false  --  false
 
 -- A single affordable action commits and charges exactly its cost (mint = 5):
-#eval (execGas 10 [FullAction.mint 9 0 50] fs0).map (fun p => p.2)         -- some 5
+#guard ((execGas 10 [FullAction.mint 9 0 50] fs0).map (fun p => p.2)) == some 5  --  some 5
 -- ...a single unaffordable action fails closed (revoke costs 1, budget 0):
-#eval (execGas 0 [FullAction.revoke 0 7] fs0).isSome                       -- false
+#guard ((execGas 0 [FullAction.revoke 0 7] fs0).isSome) == false  --  false
 -- ...the empty turn always commits, consuming nothing:
-#eval (execGas 0 ([] : List FullAction) fs0).map (fun p => p.2)            -- some 0
+#guard ((execGas 0 ([] : List FullAction) fs0).map (fun p => p.2)) == some 0  --  some 0
 
 end Dregg2.Exec.Gas

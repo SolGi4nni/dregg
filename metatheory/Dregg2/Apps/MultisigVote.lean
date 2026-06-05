@@ -281,20 +281,20 @@ theorem capbearer_counts_toward_quorum :
 /-! ## 8. `#eval` smoke — the vote's load-bearing bits, decided by the model alone. -/
 
 -- empty proposal: tally 0, does not pass.
-#eval (tally prop0 voteK0, passes prop0 voteK0)                                            -- (0, false)
+#guard (tally prop0 voteK0, passes prop0 voteK0) == (0, false)                             -- (0, false)
 -- outsider (3) rejected; registry voter (0) and cap-bearer (4) admitted.
-#eval (castVote prop0 voteK0 3).isSome                                                     -- false
-#eval ((castVote prop0 voteK0 0).isSome, (castVote prop0 voteK0 4).isSome)                 -- (true, true)
+#guard (castVote prop0 voteK0 3).isSome == false                                          -- false
+#guard ((castVote prop0 voteK0 0).isSome, (castVote prop0 voteK0 4).isSome) == (true, true)  -- (true, true)
 -- one vote: tally 1, still sub-threshold.
-#eval (castVote prop0 voteK0 0).map (fun k => (tally prop0 k, passes prop0 k))             -- some (1, false)
+#guard (castVote prop0 voteK0 0).map (fun k => (tally prop0 k, passes prop0 k)) == some (1, false)  -- some (1, false)
 -- double vote rejected; tally stays 1.
-#eval ((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 0)).isSome                -- false
+#guard ((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 0)).isSome == false      -- false
 -- two distinct enfranchised votes (0 then 1): quorum reached, PASSES.
-#eval ((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 1)).map
-        (fun k => (tally prop0 k, passes prop0 k))                                         -- some (2, true)
+#guard (((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 1)).map
+        (fun k => (tally prop0 k, passes prop0 k))) == some (2, true)                      -- some (2, true)
 -- registry + cap-bearer (0 then 4): quorum reached via the cap branch.
-#eval ((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 4)).map
-        (fun k => (tally prop0 k, passes prop0 k))                                         -- some (2, true)
+#guard (((castVote prop0 voteK0 0).bind (fun k => castVote prop0 k 4)).map
+        (fun k => (tally prop0 k, passes prop0 k))) == some (2, true)                      -- some (2, true)
 
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 

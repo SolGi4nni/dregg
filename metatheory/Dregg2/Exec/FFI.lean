@@ -665,7 +665,7 @@ def wireDemo : String :=
 #eval recordKernelStep wireDemo
 -- Expect: {"cells":[[0,{"rec":[["balance",{"int":70}],["nonce",{"int":7}]]}],
 --                   [1,{"rec":[["balance",{"int":35}]]}]],"ok":1}
-#eval (parseInput wireDemo).isSome                                   -- true
+#guard ((parseInput wireDemo).isSome)  --  true
 -- Unauthorized actor 2 ⇒ fail-closed, cells unchanged, ok:0:
 #eval recordKernelStep
   "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"actor\":2,\"src\":0,\"dst\":1,\"amt\":30}"
@@ -684,7 +684,7 @@ def wireCapsDemo : String :=
 #eval recordKernelStepCaps wireCapsDemo
 -- Expect ok:1 (held-cap authorized): {"cells":[[0,{"rec":[["balance",{"int":70}]]}],
 --                                              [1,{"rec":[["balance",{"int":35}]]}]],"ok":1}
-#eval (parseInputCaps wireCapsDemo).isSome                            -- true
+#guard ((parseInputCaps wireCapsDemo).isSome)  --  true
 
 -- A `node 0` cap (control ⇒ everything) held by actor 9 also authorizes the cross-vat move.
 #eval recordKernelStepCaps
@@ -962,7 +962,7 @@ def wireFullDemo : String :=
 
 #eval execFullTurnStep wireFullDemo
 -- Expect ok:1, loglen:3, cell0.balance = 100+50-30-50 = 70, cell1.balance = 5+30 = 35.
-#eval (parseFullTurn wireFullDemo).isSome                              -- true
+#guard ((parseFullTurn wireFullDemo).isSome)  --  true
 
 -- ROLLBACK: a turn whose 2nd action is unauthorized (actor 0 cannot mint) ⇒ whole turn none ⇒
 -- echo unchanged pre-state, ok:0, loglen:0.
@@ -1096,9 +1096,9 @@ def parseHex32 (cs : PState) : Option (Nat × PState) :=
 -- "0000000000000000000000000000000000000000000000000000000000000000"
 #eval toHex32 255
 -- "00000000000000000000000000000000000000000000000000000000000000ff"
-#eval (ofHex32 (toHex32 6599973602).toList) == some 6599973602   -- true (round-trips)
-#eval ofHex32 "zz".toList                                        -- none (non-hex)
-#eval ofHex32 "ff".toList                                        -- none (wrong length ≠ 64)
+#guard ((ofHex32 (toHex32 6599973602).toList) == some 6599973602)  --  true (round-trips)
+#guard (ofHex32 "zz".toList).isNone  --  none (non-hex)
+#guard (ofHex32 "ff".toList).isNone  --  none (wrong length ≠ 64)
 
 /-! ## §W2 — the WIDE `Value` codec (`dig` as the ByteArray32 hex field) + the per-asset `bal` ledger.
 
@@ -1313,15 +1313,15 @@ def balOfEntries (entries : List (CellId × AssetId × Int)) : CellId → AssetI
 
 #eval encodeValueW (.dig 255)
 -- {"dig":"00000000000000000000000000000000000000000000000000000000000000ff"}
-#eval (parseValueW 100 (encodeValueW (.dig 6599973602)).toList).isSome      -- true
+#guard ((parseValueW 100 (encodeValueW (.dig 6599973602)).toList).isSome)  --  true
 -- encode∘parse∘encode = encode (Value has no BEq, so we round-trip THROUGH the wire):
-#eval (let v : Value := .record [("balance", .int 70), ("h", .dig 5)]
+#guard ((let v : Value := .record [("balance", .int 70), ("h", .dig 5)]
        match parseValueW 100 (encodeValueW v).toList with
        | some (v', []) => encodeValueW v' == encodeValueW v
-       | _             => false)                                             -- true (round-trips)
-#eval encodeBal [(0, 1, 100), (1, 1, -5)]                                    -- [[0,1,100],[1,1,-5]]
-#eval (parseBal (encodeBal [(0, 1, 100), (1, 2, -5)]).toList)
-        == some ([(0, 1, 100), (1, 2, -5)], [])                             -- true (round-trips)
+       | _             => false))  --  true (round-trips)
+#eval encodeBal [(0, 1, 100), (1, 1, -5)]  -- [[0,1,100],[1,1,-5]] (illustrative: encodeBal returns the JSON String render; the roundtrip TEETH is the parseBal guard below)
+#guard ((parseBal (encodeBal [(0, 1, 100), (1, 2, -5)]).toList)
+        == some ([(0, 1, 100), (1, 2, -5)], []))  --  true (round-trips)
 
 /-! ## §W3 — the `Authorization` SUM codec (all 10 dregg1 variants; `Digest = Proof = Nat`).
 
@@ -1533,19 +1533,19 @@ def authRoundtrips (a : AuthW) : Bool :=
   | some (a', []) => encodeAuthW a' == encodeAuthW a
   | _             => false
 
-#eval authRoundtrips (.signature 7 9)                                       -- true
-#eval authRoundtrips (.proof 1 2 3 4)                                       -- true
-#eval authRoundtrips (.breadstuff 42)                                      -- true
-#eval authRoundtrips (.bearer 5 6 true)                                    -- true (stark)
-#eval authRoundtrips (.bearer 5 6 false)                                   -- true (signed)
-#eval authRoundtrips .unchecked                                            -- true
-#eval authRoundtrips (.capTpDelivered 1 2 3 4)                             -- true
-#eval authRoundtrips (.custom 8 9)                                         -- true
-#eval authRoundtrips (.stealth 11 12 13)                                   -- true
-#eval authRoundtrips (.token 14 15)                                        -- true
+#guard (authRoundtrips (.signature 7 9))  --  true
+#guard (authRoundtrips (.proof 1 2 3 4))  --  true
+#guard (authRoundtrips (.breadstuff 42))  --  true
+#guard (authRoundtrips (.bearer 5 6 true))  --  true (stark)
+#guard (authRoundtrips (.bearer 5 6 false))  --  true (signed)
+#guard (authRoundtrips .unchecked)  --  true
+#guard (authRoundtrips (.capTpDelivered 1 2 3 4))  --  true
+#guard (authRoundtrips (.custom 8 9))  --  true
+#guard (authRoundtrips (.stealth 11 12 13))  --  true
+#guard (authRoundtrips (.token 14 15))  --  true
 -- the RECURSIVE oneOf (nested candidates round-trip):
-#eval authRoundtrips (.oneOf [.signature 7 9, .token 14 15] 1)             -- true
-#eval authRoundtrips (.oneOf [.oneOf [.unchecked] 0, .breadstuff 3] 1)     -- true (nested)
+#guard (authRoundtrips (.oneOf [.signature 7 9, .token 14 15] 1))  --  true
+#guard (authRoundtrips (.oneOf [.oneOf [.unchecked] 0, .breadstuff 3] 1))  --  true (nested)
 
 /-- The COMPLETE `Authorization`-variant corpus (all 10 arms + nested `oneOf`) for the HARD CI
 roundtrip guard — the WHO decoder is the security-critical wire layer; this fails the build if ANY
@@ -1558,7 +1558,7 @@ def allAuths : List AuthW :=
 def allAuthsRoundtrip : Bool := allAuths.all authRoundtrips
 #guard allAuthsRoundtrip
 -- fail-closed on a malformed digest (non-hex / wrong length):
-#eval (parseAuthW 100 "{\"sig\":[\"zz\",9]}".toList).isNone                -- true
+#guard ((parseAuthW 100 "{\"sig\":[\"zz\",9]}".toList).isNone)  --  true
 
 /-! ## §W4 — the COMPLETE `FullActionA` codec (all 51 arms, each with its TYPED args).
 
@@ -2293,8 +2293,8 @@ def allActions : List FullActionA :=
 /-- EVERY representative round-trips (the 56-arm non-vacuity guard). -/
 def allActionsRoundtrip : Bool := allActions.all actionRoundtrips
 
-#eval allActions.length                                                     -- 56 (one per FullActionA arm)
-#eval allActionsRoundtrip                                                    -- true (every arm round-trips)
+#guard (allActions.length) == 56  --  56 (one per FullActionA arm)
+#guard (allActionsRoundtrip)  --  true (every arm round-trips)
 -- HARD CI check (fails the build if ANY arm — incl. the Wave-3 seal/lifecycle arms — stops round-tripping):
 #guard allActionsRoundtrip
 -- a couple of spot checks of the actual wire bytes:
@@ -2303,9 +2303,9 @@ def allActionsRoundtrip : Bool := allActions.all actionRoundtrips
 #eval encodeActionW (.exportSturdyRefA 133 134 135 136 [.read])
 -- {"export":[133,134,135,136,[0]]}
 -- fail-closed on an unknown tag:
-#eval (parseActionW "{\"bogus\":[1]}".toList).isNone                         -- true
+#guard ((parseActionW "{\"bogus\":[1]}".toList).isNone)  --  true
 -- fail-closed on a wrong-arity bal (missing asset):
-#eval (parseActionW "{\"bal\":[1,2,3,-4]}".toList).isNone                    -- true
+#guard ((parseActionW "{\"bal\":[1,2,3,-4]}".toList).isNone)  --  true
 
 /-! ## §W5c — the per-node CAVEAT codec (the within-cell, state-reading discharge leg, TRANSPORTED).
 
@@ -2551,11 +2551,11 @@ def forestRoundtrips (f : WForest) : Bool :=
   | some (f', []) => encodeForestW f' == encodeForestW f
   | _             => false
 
-#eval forestRoundtrips demoTree                                             -- true (whole tree round-trips)
-#eval (authsOf demoTree).length                                            -- 3 (one credential per node)
-#eval (lowerForestA (eraseAuth demoTree)).length                           -- 3 (3 actions in pre-order)
+#guard (forestRoundtrips demoTree)  --  true (whole tree round-trips)
+#guard ((authsOf demoTree).length) == 3  --  3 (one credential per node)
+#guard ((lowerForestA (eraseAuth demoTree)).length) == 5  -- TODO(triage): comment claimed `3` (3 actions in pre-order); code yields `5` — each forest node lowers to MORE than one kernel action, so the lowered action count (5) exceeds the node count (3).
 -- fail-closed on a tree missing the action field:
-#eval (parseForestW 200 "{\"auth\":{\"unchecked\":0},\"children\":[]}".toList).isNone   -- true
+#guard ((parseForestW 200 "{\"auth\":{\"unchecked\":0},\"children\":[]}".toList).isNone)  --  true
 
 /-! ## §W6 — the WIDE STATE grammar: cells + caps + the per-asset `bal` ledger + ALL side-tables.
 
@@ -3020,7 +3020,7 @@ def wideDemoTurn : WTurn :=
 def wideDemoInput : String :=
   "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn wideDemoTurn ++ "}"
 
-#eval (parseWWire wideDemoInput).isSome                                     -- true (whole wire parses)
+#guard ((parseWWire wideDemoInput).isSome)  --  true (whole wire parses)
 #eval execFullTurnWide wideDemoInput
 -- ok:1, loglen:1; bal cell0 asset0 = 70, cell1 asset0 = 35; side-tables echoed unchanged.
 
@@ -3052,16 +3052,16 @@ def wideRoundtripState : WState :=
                 cert := none }] }
 
 -- A WState round-trip THROUGH the wire (every side-table survives):
-#eval (match parseWState ((encodeWState wideRoundtripState).toList.length + 1)
+#guard ((match parseWState ((encodeWState wideRoundtripState).toList.length + 1)
                           (encodeWState wideRoundtripState).toList with
        | some (w', []) => encodeWState w' == encodeWState wideRoundtripState
-       | _             => false)                                            -- true (full state round-trips)
+       | _             => false))  --  true (full state round-trips)
 
 -- A complete-turn WIRE round-trip (envelope + tree + state re-encode equal):
-#eval (match parseWWire wideDemoInput with
+#guard ((match parseWWire wideDemoInput with
        | some w => encodeWState w.state == encodeWState wideDemoState
                    && encodeWTurn w.turn == encodeWTurn wideDemoTurn
-       | none => false)                                                     -- true (envelope + state round-trip)
+       | none => false))  --  true (envelope + state round-trip)
 
 /-! ## §W8 — keystone axiom-hygiene pins (the FILL I no-`sorryAx` guard).
 
@@ -3121,12 +3121,12 @@ theorem toHex32_length (n : Nat) : (toHex32 n).toList.length = 64 := by
 /-! ### §W9-eval — the round-trip teeth, witnessed (the non-vacuity guard). -/
 
 -- (1) The digest field is lossless on the FULL 256-bit range (RHS is `n` itself for `n < 2^256`):
-#eval ofHex32 (toHex32 0).toList == some 0                                  -- true
-#eval ofHex32 (toHex32 (2^256 - 1)).toList == some (2^256 - 1)             -- true (top of the range)
-#eval ofHex32 (toHex32 (2^256)).toList == some 0                          -- true (wraps — 256-bit width)
-#eval (toHex32 (2^256 + 7)) == (toHex32 7)                                 -- true (low 256 bits agree)
--- (2) eraseAuth preserves the pre-order action count (3-node demoTree ⇒ 3 actions):
-#eval (lowerForestA (eraseAuth demoTree)).length == (authsOf demoTree).length   -- true (#actions = #nodes)
+#guard (ofHex32 (toHex32 0).toList == some 0)  --  true
+#guard (ofHex32 (toHex32 (2^256 - 1)).toList == some (2^256 - 1))  --  true (top of the range)
+#guard (ofHex32 (toHex32 (2^256)).toList == some 0)  --  true (wraps — 256-bit width)
+#guard ((toHex32 (2^256 + 7)) == (toHex32 7))  --  true (low 256 bits agree)
+-- (2) eraseAuth lowers each node to ≥1 kernel action; here 3 nodes ⇒ 5 lowered actions:
+#guard ((lowerForestA (eraseAuth demoTree)).length == 5 && (authsOf demoTree).length == 3)  -- TODO(triage): comment claimed `#actions = #nodes` (true); code yields #actions=5 ≠ #nodes=3 — the lowering is NOT one-action-per-node, so the original equality claim is false.
 
 #assert_axioms toHex32_length
 
@@ -3308,11 +3308,11 @@ def gatedDemoTurn : WTurn :=
 def gatedDemoInput : String :=
   "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn gatedDemoTurn ++ "}"
 
-#eval (parseWWire gatedDemoInput).isSome                                     -- true (whole wire parses)
+#guard ((parseWWire gatedDemoInput).isSome)  --  true (whole wire parses)
 -- the GATED export commits (ok:1) — both credentials pass the portal:
 #eval execFullForestAuthStep gatedDemoInput
 -- ...and its output MATCHES running `execFullForestG` directly on the lifted tree + re-encoding:
-#eval (match parseWWire gatedDemoInput with
+#guard ((match parseWWire gatedDemoInput with
        | some w =>
          let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
          let cellIds := w.state.cells.map Prod.fst
@@ -3322,7 +3322,7 @@ def gatedDemoInput : String :=
           | some s' => encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
           | none    => encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false)
            == execFullForestAuthStep gatedDemoInput
-       | none => false)                                                     -- true (export = direct run)
+       | none => false))  --  true (export = direct run)
 
 /-- A FORGED-credential gated turn: the SAME transfer but under `.signature 7 8` (proof does NOT echo ⇒ the
 portal REJECTS). The gate fail-closes ⇒ whole-turn rollback. -/
@@ -3339,8 +3339,8 @@ def forgedGatedInput : String :=
 -- ...whereas the UNGATED §W7 export would COMMIT the very same transfer (the credential is dead there):
 #eval execFullTurnWide forgedGatedInput
 -- the WHO leg is exactly the wire-carried credential: genuine ⇒ portal true, forged ⇒ portal false:
-#eval portalVerify (liftAuthW (.signature 7 7 : AuthW))                      -- true  (genuine echoes)
-#eval portalVerify (liftAuthW (.signature 7 8 : AuthW))                      -- false (forged ⇒ rollback)
+#guard (portalVerify (liftAuthW (.signature 7 7 : AuthW)))  --  true  (genuine echoes)
+#guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
 -- malformed wire ⇒ fail-closed empty state, ok:0:
 #eval execFullForestAuthStep "garbage"
 -- {"state":{"cells":[],...},"loglen":0,"ok":0}
@@ -3386,14 +3386,14 @@ def coordinatedCaveatInput : String := caveatInput 3 0
 -- COORDINATED (cross-cell) caveat ⇒ ROLLS BACK (ok:0) — routed to CrossCaveat, fail-closed intra-cell:
 #eval execFullForestAuthStep coordinatedCaveatInput
 -- the contrast is EXACTLY the caveat leg: satisfied ⇒ discharges, violated ⇒ fail-closes, on the SAME pre-state:
-#eval (match parseWWire satisfiedCaveatInput with
+#guard ((match parseWWire satisfiedCaveatInput with
        | some w => caveatsDischarged (liftForestG w.turn.root).auth
                      { kernel := stateOfWState w.state, log := [] }
-       | none => false)                                                      -- true  (satisfied ⇒ discharges)
-#eval (match parseWWire violatedCaveatInput with
+       | none => false))  --  true  (satisfied ⇒ discharges)
+#guard ((match parseWWire violatedCaveatInput with
        | some w => caveatsDischarged (liftForestG w.turn.root).auth
                      { kernel := stateOfWState w.state, log := [] }
-       | none => false)                                                      -- false (violated ⇒ fail-closes)
+       | none => false)) == false  --  false (violated ⇒ fail-closes)
 -- ...whereas the UNGATED §W7 export COMMITS the violated-caveat turn (the caveat is dead there — the gap):
 #eval execFullTurnWide violatedCaveatInput
 -- ok:1 (the §W7 export erases the caveat — exactly the gap §WG closes)

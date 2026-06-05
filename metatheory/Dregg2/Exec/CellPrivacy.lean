@@ -212,16 +212,16 @@ def demoCell : CommittedCell Reference.D Reference.P :=
     blind := fun i => if i = 0 then 7   else if i = 1 then 3 else 0 }
 
 -- The committed total (reference: 100+7 + 5+3 = 115) — the conserved hidden badge.
-#eval committedTotal (Proof := Reference.P) demoCell                       -- 115
+#guard (committedTotal (Proof := Reference.P) demoCell) == 115  --  115
 
 -- After hiding-transfer of amount 30 (blinding 4) from account 0 to account 1: still 115.
-#eval committedTotal (Proof := Reference.P)
-        (committedTransfer (Proof := Reference.P) demoCell 0 1 30 4)        -- 115
+#guard (committedTotal (Proof := Reference.P)
+        (committedTransfer (Proof := Reference.P) demoCell 0 1 30 4)) == 115  --  115
 
 -- They are equal — the keystone, evaluated: the committed total is preserved across a hidden
 -- transfer (the verifier never saw amount 30).
-#eval decide (committedTotal (Proof := Reference.P)
+#guard (decide (committedTotal (Proof := Reference.P)
         (committedTransfer (Proof := Reference.P) demoCell 0 1 30 4)
-      = committedTotal (Proof := Reference.P) demoCell)                     -- true
+      = committedTotal (Proof := Reference.P) demoCell))  --  true
 
 end Dregg2.Exec.CellPrivacy

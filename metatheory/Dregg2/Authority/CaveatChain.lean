@@ -347,25 +347,25 @@ def windowed : Chain H Unit Nat Nat Nat :=
 
 def noD : Discharges Unit := fun _ => false
 
-#eval root5.verify                       -- true  (Macaroon::new is well-tagged)
-#eval windowed.verify                    -- true  (honest attenuation chain verifies)
-#eval windowed.admits 150 noD            -- true  (150 ∈ [100,200])
-#eval windowed.admits 50  noD            -- false (a caveat narrowed it out)
-#eval (verifiedChainGate (Ctx := H) windowed noD) 150  -- true  (gate: verified ∧ admits)
-#eval (verifiedChainGate (Ctx := H) windowed noD) 50   -- false
+#guard root5.verify                       -- Macaroon::new is well-tagged
+#guard windowed.verify                    -- honest attenuation chain verifies
+#guard windowed.admits 150 noD            -- 150 ∈ [100,200]
+#guard windowed.admits 50  noD == false   -- a caveat narrowed it out
+#guard (verifiedChainGate (Ctx := H) windowed noD) 150            -- gate: verified ∧ admits
+#guard (verifiedChainGate (Ctx := H) windowed noD) 50 == false
 
 /-- A FORGED chain: take `windowed`'s tail but drop the last caveat (the `test_removed_caveat_fails`
 attack) without re-signing. -/
 def forgedDropped : Chain H Unit Nat Nat Nat :=
   { windowed with links := windowed.links.dropLast }
 
-#eval forgedDropped.verify               -- false  (tail no longer binds the truncated link list)
+#guard forgedDropped.verify == false     -- tail no longer binds the truncated link list
 
 /-- A FORGED chain: tamper the encoded bytes of a caveat (the `test_tampered_caveat_fails` attack). -/
 def forgedTampered : Chain H Unit Nat Nat Nat :=
   { windowed with links := [{ caveat := .local (fun _ => true), encoded := 999 }] ++ windowed.links.tail }
 
-#eval forgedTampered.verify              -- false  (replayed tail diverges from stored tail)
+#guard forgedTampered.verify == false    -- replayed tail diverges from stored tail
 
 end Demo
 

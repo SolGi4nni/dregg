@@ -465,43 +465,43 @@ def hs0Destroyed : RecordKernelState :=
 
 -- §TEETH-1 (the `delta ≠ 0` MILESTONE): a mint of 25 of asset 0 into LIVE cell 0 RAISES the combined
 -- per-asset measure from 100 to 125 (`delta = +25`, NON-ZERO — the path `turn_conserves` sums).
-#eval (execEffect (mintEffect 0 0 0 25) hs0).map
-        (fun k => (recTotalAssetWithEscrow hs0 0, recTotalAssetWithEscrow k 0))   -- some (100, 125)
+#guard ((execEffect (mintEffect 0 0 0 25) hs0).map
+        (fun k => (recTotalAssetWithEscrow hs0 0, recTotalAssetWithEscrow k 0))) == some (100, 125)  --  some (100, 125)
 -- §TEETH-2 (R6 CLOSED): a mint into the SEALED cell 0 is REJECTED — the live-cell admission gate bites.
-#eval (execEffect (mintEffect 0 0 0 25) hs0Sealed).isSome    -- false
+#guard ((execEffect (mintEffect 0 0 0 25) hs0Sealed).isSome) == false  --  false
 -- §TEETH-3 (R6 CLOSED): a mint into the DESTROYED cell 0 is REJECTED too.
-#eval (execEffect (mintEffect 0 0 0 25) hs0Destroyed).isSome -- false
+#guard ((execEffect (mintEffect 0 0 0 25) hs0Destroyed).isSome) == false  --  false
 -- §TEETH-4: a burn of 40 of asset 0 from LIVE cell 0 LOWERS the combined measure to 60 (`delta = -40`).
-#eval (execEffect (burnEffect 0 0 0 40) hs0).map
-        (fun k => recTotalAssetWithEscrow k 0)               -- some 60
+#guard ((execEffect (burnEffect 0 0 0 40) hs0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 60  --  some 60
 -- §TEETH-5: an UNAUTHORIZED mint (actor 1 holds NO node cap on cell 0) is REJECTED even into a Live cell.
-#eval (execEffect (mintEffect 1 0 0 25) hs0).isSome          -- false
+#guard ((execEffect (mintEffect 1 0 0 25) hs0).isSome) == false  --  false
 -- §TEETH-6 (account-growth, neutral): createCell of fresh cell 2 (by privileged actor 0) SUCCEEDS and
 -- leaves the combined measure UNCHANGED (born empty), while genuinely growing `accounts`.
-#eval (execEffect (createCellEffect 0 2) hs0).map
-        (fun k => (recTotalAssetWithEscrow k 0, decide (2 ∈ k.accounts)))  -- some (100, true)
+#guard ((execEffect (createCellEffect 0 2) hs0).map
+        (fun k => (recTotalAssetWithEscrow k 0, decide (2 ∈ k.accounts)))) == some (100, true)  --  some (100, true)
 -- §TEETH-7: createCell of a STALE id (cell 0 already exists) is REJECTED (the freshness gate bites —
 -- this is the supply-amplification guard: a re-inserted credited id cannot manufacture supply).
-#eval (execEffect (createCellEffect 0 0) hs0).isSome         -- false
+#guard ((execEffect (createCellEffect 0 0) hs0).isSome) == false  --  false
 -- §TEETH-8 (R6 CLOSED, state write): a SetField/IncrementNonce into the SEALED cell 0 is REJECTED.
-#eval (execEffect (incrementNonceEffect 0 0 7) hs0Sealed).isSome  -- false
+#guard ((execEffect (incrementNonceEffect 0 0 7) hs0Sealed).isSome) == false  --  false
 -- §TEETH-9: the SAME nonce write into a LIVE cell 0 SUCCEEDS and writes the field, measure unchanged.
-#eval (execEffect (incrementNonceEffect 0 0 7) hs0).map
-        (fun k => (fieldOf nonceField (k.cell 0), recTotalAssetWithEscrow k 0))  -- some (7, 100)
+#guard ((execEffect (incrementNonceEffect 0 0 7) hs0).map
+        (fun k => (fieldOf nonceField (k.cell 0), recTotalAssetWithEscrow k 0))) == some (7, 100)  --  some (7, 100)
 -- §TEETH-10: a turn = [mint 25; burn 10; setPermissions] runs through the registry foldlM and the
 -- combined measure lands at 100 + 25 - 10 = 115 (the SUM of NON-ZERO deltas — the headline law).
-#eval (execTurn [mintEffect 0 0 0 25, burnEffect 0 0 0 10, setPermissionsEffect 0 0 3] hs0).map
-        (fun k => recTotalAssetWithEscrow k 0)               -- some 115
+#guard ((execTurn [mintEffect 0 0 0 25, burnEffect 0 0 0 10, setPermissionsEffect 0 0 3] hs0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 115  --  some 115
 -- §TEETH-11: makeSovereign/refusal/receiptArchive into a SEALED cell are all REJECTED (R6 for all arms).
-#eval (execEffect (makeSovereignEffect 0 0) hs0Sealed).isSome   -- false
-#eval (execEffect (refusalEffect 0 0) hs0Sealed).isSome         -- false
-#eval (execEffect (receiptArchiveEffect 0 0 9) hs0Sealed).isSome -- false
+#guard ((execEffect (makeSovereignEffect 0 0) hs0Sealed).isSome) == false  --  false
+#guard ((execEffect (refusalEffect 0 0) hs0Sealed).isSome) == false  --  false
+#guard ((execEffect (receiptArchiveEffect 0 0 9) hs0Sealed).isSome) == false  --  false
 
 /-! ## §5 — turnDelta cross-check: the SUMMED non-zero deltas match the §TEETH-10 turn.
 
 The §TEETH-10 turn's combined per-asset delta at asset 0 is `+25 - 10 + 0 = +15` (the SUM the
 algebra's `turn_conserves` holds the measure to — evaluated to cross-check the milestone). -/
-#eval turnDelta [mintEffect 0 0 0 25, burnEffect 0 0 0 10, setPermissionsEffect 0 0 3] 0  -- 15
+#guard (turnDelta [mintEffect 0 0 0 25, burnEffect 0 0 0 10, setPermissionsEffect 0 0 3] 0) == 15  --  15
 
 /-! ## §6 — Axiom-hygiene pins (the keystones rest only on the three kernel axioms).
 

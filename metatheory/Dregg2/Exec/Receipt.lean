@@ -280,20 +280,20 @@ def tamperedChain : ReceiptChain := [r2, r1, rGenBad]
 /-- A fresh receipt appended onto `goodChain` (links to current head `r2`). -/
 def r3 : Receipt := mkReceipt (demoHash r2) 50 40 10
 
-#eval decide (rGen.prevHash = genesisSentinel)              -- true  (genesis pins sentinel)
-#eval decide (r1.prevHash = demoHash rGen)                  -- true  (r1 links to genesis)
-#eval decide (r2.prevHash = demoHash r1)                    -- true  (r2 links to r1)
+#guard (decide (rGen.prevHash = genesisSentinel))  --  true  (genesis pins sentinel)
+#guard (decide (r1.prevHash = demoHash rGen))  --  true  (r1 links to genesis)
+#guard (decide (r2.prevHash = demoHash r1))  --  true  (r2 links to r1)
 -- well-linked? walk the links of goodChain:
-#eval decide (r2.prevHash = demoHash r1 ∧ r1.prevHash = demoHash rGen
-                ∧ rGen.prevHash = genesisSentinel)          -- true  (goodChain is well-linked)
+#guard (decide (r2.prevHash = demoHash r1 ∧ r1.prevHash = demoHash rGen
+                ∧ rGen.prevHash = genesisSentinel))  --  true  (goodChain is well-linked)
 -- tampered chain detected: rGenBad does NOT pin the sentinel:
-#eval decide (rGenBad.prevHash = genesisSentinel)           -- false (TAMPER DETECTED at genesis)
-#eval decide (r1.prevHash = demoHash rGenBad)               -- false (TAMPER DETECTED: broken link)
+#guard (decide (rGenBad.prevHash = genesisSentinel)) == false  --  false (TAMPER DETECTED at genesis)
+#guard (decide (r1.prevHash = demoHash rGenBad)) == false  --  false (TAMPER DETECTED: broken link)
 -- appending r3 keeps it well-linked (r3 links to head r2):
-#eval decide (r3.prevHash = demoHash r2)                    -- true  (append is well-linked)
+#guard (decide (r3.prevHash = demoHash r2))  --  true  (append is well-linked)
 -- replay reproduces the chain from the turn-log (oldest-first turns, folded newest-first):
-#eval (replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]).length   -- 3
-#eval decide (replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]
-                = replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]) -- true (deterministic)
+#guard ((replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]).length) == 3  --  3
+#guard (decide (replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]
+                = replayFold demoHash [] [(100,100,0), (100,70,30), (70,50,20)]))  --  true (deterministic)
 
 end Dregg2.Exec.Receipts

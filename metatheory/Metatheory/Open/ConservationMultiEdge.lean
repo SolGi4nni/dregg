@@ -390,19 +390,19 @@ def round3 : Round :=
     { actorA := 1, srcA := 1, actorB := 8, dstB := 8, amt := 12, sid := 2 },
     { actorA := 2, srcA := 2, actorB := 9, dstB := 9, amt := 7,  sid := 3 } ]
 
-#eval round3.map flowAB              -- [30, 12, 7]  (three oriented A→B flow values)
-#eval round3.map boundaryFlow        -- [0, 0, 0]    (each edge balanced)
-#eval roundBoundaryFlow round3       -- 0            (the MULTI-EDGE total cross-boundary flow)
-#eval (round3.map divA).sum          -- -49          (total flow leaving the source cells)
-#eval (round3.map divB).sum          -- 49           (total flow entering the sink cells)
-#eval (round3.map divA).sum + (round3.map divB).sum   -- 0  (equal-and-opposite over the round)
+#guard round3.map flowAB       == [30, 12, 7]  -- (three oriented A→B flow values)
+#guard round3.map boundaryFlow == [0, 0, 0]    -- (each edge balanced)
+#guard roundBoundaryFlow round3 == 0           -- (the MULTI-EDGE total cross-boundary flow)
+#guard (round3.map divA).sum == -49            -- (total flow leaving the source cells)
+#guard (round3.map divB).sum == 49             -- (total flow entering the sink cells)
+#guard (round3.map divA).sum + (round3.map divB).sum == 0   -- (equal-and-opposite over the round)
 
 -- The WL-cut reading on the asymmetric path `asym3` (all three sats WL-separated): place each
 -- maneuver on a conflict edge (0–1, 1–2, …); every edge crosses the WL cut, so the cut flow = 0.
 def placeOnAsym3 : Placement 3 := fun bt =>
   if bt.amt = 30 then (0, 1) else if bt.amt = 12 then (1, 2) else (0, 1)
 
-#eval cutFlow ConjGraph.asym3 placeOnAsym3 round3   -- 0  (flow across the literal WL cell boundary balances)
+#guard cutFlow ConjGraph.asym3 placeOnAsym3 round3 == 0   -- (flow across the literal WL cell boundary balances)
 
 /-! ## 6. Axiom hygiene. -/
 

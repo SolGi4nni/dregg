@@ -338,17 +338,17 @@ def clearD0 : Vec3 := ⟨8, 0, 0⟩
 /-- Velocity of the clear pair: purely along-track, so separation never drops. -/
 def clearV  : Vec3 := ⟨0, 3, 0⟩
 
-#eval screen clearD0 clearV 10 25                       -- true  (separation never closes; CLEAR)
-#eval screen crossingD0 crossingV crossingT crossingThrSq -- false (mid-step crossing caught)
+#guard screen clearD0 clearV 10 25                       -- true  (separation never closes; CLEAR)
+#guard screen crossingD0 crossingV crossingT crossingThrSq == false  -- false (mid-step crossing caught)
 -- The closest-approach time of the crossing pair is mid-step (≈ 5), NOT an endpoint:
-#eval tca crossingD0 crossingV crossingT                -- 5   (the between-samples minimum)
-#eval sepSq crossingD0 crossingV 0                      -- 100 (endpoint: clear)
-#eval sepSq crossingD0 crossingV 5                      -- 0   (mid-step: COLLISION the sampler missed)
-#eval sepSq crossingD0 crossingV 10                     -- 100 (endpoint: clear)
+#guard tca crossingD0 crossingV crossingT == 5          -- 5   (the between-samples minimum)
+#guard sepSq crossingD0 crossingV 0 == 100              -- 100 (endpoint: clear)
+#guard sepSq crossingD0 crossingV 5 == 0                -- 0   (mid-step: COLLISION the sampler missed)
+#guard sepSq crossingD0 crossingV 10 == 100             -- 100 (endpoint: clear)
 -- The coarse Lipschitz screen: sep0=8, vmax=0.5, T=10, thr=2  →  8 - 5 = 3 ≥ 2 ⇒ clear.
-#eval coarseClear 8 (1/2) 10 2                          -- true
+#guard coarseClear 8 (1/2) 10 2                          -- true
 -- vmax=1 closes faster: 8 - 10 = -2 < 2 ⇒ not clear (conservative rejection).
-#eval coarseClear 8 1 10 2                              -- false
+#guard coarseClear 8 1 10 2 == false                     -- false
 
 /-! ## 8. Axiom hygiene + the OPEN refinement. -/
 

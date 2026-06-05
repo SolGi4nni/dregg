@@ -198,18 +198,21 @@ genuinely partitions. These run the PURE / `CoreM` cores directly, so the contra
   carrier-bearing shape — so the pill is not a constant. -/
 
 -- The live statement is the real revocation invariant: non-empty and mentions `revoked`.
-#eval show MetaM Bool from do
+-- (MetaM check: `throwError` on failure FAILS THE BUILD — a build-enforced assertion, not a glance.)
+#eval show MetaM Unit from do
   let s ← statementOf ``Dregg2.Apps.Identity.livingCellA_identity_revoked_forever
-  return (!s.isEmpty) && decide ((s.splitOn "revoked").length > 1)  -- true
+  unless (!s.isEmpty) && decide ((s.splitOn "revoked").length > 1) do
+    throwError "statementOf revocation crown should be non-empty and mention `revoked`"  -- true
 
 -- The renderer is decl-specific, not a constant: the crown's statement is strictly longer than a trivial
 -- `rfl` theorem's (`demo_clean : 3 = 3` is a much smaller type than the revocation ∀-statement).
-#eval show MetaM Bool from do
+#eval show MetaM Unit from do
   let big ← statementOf ``Dregg2.Apps.Identity.livingCellA_identity_revoked_forever
   let small ← statementOf ``Dregg2.Widget.demo_clean
-  return decide (small.length < big.length)                        -- true
+  unless decide (small.length < big.length) do
+    throwError "crown statement should be strictly longer than the trivial rfl theorem's"  -- true
 
 -- The tier pill moves: kernel-clean ⇒ green; a §8-carrier-bearing shape ⇒ amber. Not a constant.
-#eval decide (classifyAxioms false #[``propext] ≠ classifyAxioms false #[``propext, `fooExtern])  -- true
+#guard decide (classifyAxioms false #[``propext] ≠ classifyAxioms false #[``propext, `fooExtern])  -- true
 
 end Dregg2.Widget

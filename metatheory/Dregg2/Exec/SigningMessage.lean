@@ -464,22 +464,22 @@ def demoA : SigningAction :=
 def demoA' : SigningAction := { demoA with target := [1,1,2] }
 
 -- Tamper witnesses (all `false`):
-#eval decide (sigMsgFull demoA [0] = sigMsgFull demoA' [0])        -- false: retarget ⇒ different preimage
-#eval decide (sigMsgFull demoA [0] = sigMsgFull demoA [9])         -- false: different federation ⇒ different preimage
-#eval decide (u64le 1 = u64le 2)                                   -- false: encoder injective
+#guard (decide (sigMsgFull demoA [0] = sigMsgFull demoA' [0])) == false  --  false: retarget ⇒ different preimage
+#guard (decide (sigMsgFull demoA [0] = sigMsgFull demoA [9])) == false  --  false: different federation ⇒ different preimage
+#guard (decide (u64le 1 = u64le 2)) == false  --  false: encoder injective
 -- Encoder round-trips:
-#eval u64leDecode (u64le 123456789)                                -- 123456789
-#eval (i64le (-5)).length                                          -- 8
+#guard (u64leDecode (u64le 123456789)) == 123456789  --  123456789
+#guard ((i64le (-5)).length) == 8  --  8
 -- Separator distinctness:
-#eval decide (domainSep .kFull = domainSep .kPartial)              -- false
-#eval decide (domainSep .kCustom = domainSep .kStealth)            -- false
+#guard (decide (domainSep .kFull = domainSep .kPartial)) == false  --  false
+#guard (decide (domainSep .kCustom = domainSep .kStealth)) == false  --  false
 -- Byte-literal fidelity (all `true`):
-#eval decide (sepFull    = ascii "dregg-action-sig-v2:")           -- true
-#eval decide (sepPartial = ascii "dregg-partial-sig-v2:")          -- true
-#eval decide (sepCustom  = ascii "dregg-custom-sig-v1:")           -- true
-#eval decide (sepStealth = ascii "dregg-stealth-sig-v1:")          -- true
-#eval decide (sepBearer  = ascii "dregg-bearer-delegation-v1:")    -- true
-#eval decide (sepHandoff = ascii "dregg-handoff-cert-v1")          -- true
+#guard (decide (sepFull    = ascii "dregg-action-sig-v2:"))  --  true
+#guard (decide (sepPartial = ascii "dregg-partial-sig-v2:"))  --  true
+#guard (decide (sepCustom  = ascii "dregg-custom-sig-v1:"))  --  true
+#guard (decide (sepStealth = ascii "dregg-stealth-sig-v1:"))  --  true
+#guard (decide (sepBearer  = ascii "dregg-bearer-delegation-v1:"))  --  true
+#guard (decide (sepHandoff = ascii "dregg-handoff-cert-v1"))  --  true
 
 /-! ## §9 — Axiom-hygiene pins. -/
 

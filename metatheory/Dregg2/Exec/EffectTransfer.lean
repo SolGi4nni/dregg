@@ -407,23 +407,23 @@ def es0 : RecChainedState :=
     log := [] }
 
 -- A Transfer of 30 from cell 0 to cell 1 commits (actor 0 owns src 0):
-#eval (transferStep es0 0 0 1 30).isSome                                  -- true
+#guard ((transferStep es0 0 0 1 30).isSome)  --  true
 -- ...conserves the total balance (105 = 70 + 35, unchanged):
-#eval (transferStep es0 0 0 1 30).map (fun s => recTotal s.kernel)        -- some 105
-#eval recTotal es0.kernel                                                 -- 105
+#guard ((transferStep es0 0 0 1 30).map (fun s => recTotal s.kernel)) == some 105  --  some 105
+#guard (recTotal es0.kernel) == 105  --  105
 -- ...debits the source's balance 100 → 70:
-#eval (transferStep es0 0 0 1 30).map (fun s => balOf (s.kernel.cell 0))  -- some 70
+#guard ((transferStep es0 0 0 1 30).map (fun s => balOf (s.kernel.cell 0))) == some 70  --  some 70
 -- ...credits the destination's balance 5 → 35:
-#eval (transferStep es0 0 0 1 30).map (fun s => balOf (s.kernel.cell 1))  -- some 35
+#guard ((transferStep es0 0 0 1 30).map (fun s => balOf (s.kernel.cell 1))) == some 35  --  some 35
 -- ...advances the SOURCE's nonce by exactly 1 (0 → 1):
-#eval (transferStep es0 0 0 1 30).map (fun s => nonceOf (s.kernel.cell 0)) -- some 1
+#guard ((transferStep es0 0 0 1 30).map (fun s => nonceOf (s.kernel.cell 0))) == some 1  --  some 1
 -- ...grows the receipt chain by exactly one row:
-#eval (transferStep es0 0 0 1 30).map (fun s => s.log.length)             -- some 1
+#guard ((transferStep es0 0 0 1 30).map (fun s => s.log.length)) == some 1  --  some 1
 -- An unauthorized actor (9 owns nothing, no cap) cannot transfer (fail-closed):
-#eval (transferStep es0 9 0 1 30).isSome                                  -- false
+#guard ((transferStep es0 9 0 1 30).isSome) == false  --  false
 -- An overdraft (more than available) is rejected (availability gate):
-#eval (transferStep es0 0 0 1 999).isSome                                 -- false
+#guard ((transferStep es0 0 0 1 999).isSome) == false  --  false
 -- A self-transfer (src = dst) is rejected (the precondition the kernel forbids):
-#eval (transferStep es0 0 0 0 10).isSome                                  -- false
+#guard ((transferStep es0 0 0 0 10).isSome) == false  --  false
 
 end Dregg2.Exec.EffectTransfer

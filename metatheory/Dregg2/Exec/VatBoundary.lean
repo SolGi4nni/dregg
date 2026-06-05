@@ -137,9 +137,8 @@ def crossT1 : VatTurn := { turn := t1, crossing := true, token := actorIs0, disc
 /-- A crossing turn by actor 2, presenting the same biscuit — the caveat rejects it. -/
 def crossBad : VatTurn := { turn := tBad, crossing := true, token := actorIs0, discharges := fun _ => false }
 
-#eval vatAdmits cell0 crossT1     -- true  (actor 0 satisfies "actor = 0"; token discharges)
-#eval vatAdmits cell0 crossBad    -- false (actor 2 fails the caveat — cross-vat denied)
-#eval vatAdmits cell0 { turn := t1, crossing := false, token := actorIs0, discharges := fun _ => false }
-                                  -- true  (intra-vat: actor 0 owns src 0 by authorizedB)
+#guard (vatAdmits cell0 crossT1)  --  true  (actor 0 satisfies "actor = 0"; token discharges)
+#guard (vatAdmits cell0 crossBad) == false  --  false (actor 2 fails the caveat — cross-vat denied)
+#guard (vatAdmits cell0 { turn := t1, crossing := false, token := actorIs0, discharges := fun _ => false })  -- true  (intra-vat: actor 0 owns src 0 by authorizedB)
 
 end Dregg2.Exec

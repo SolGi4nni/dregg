@@ -1322,42 +1322,42 @@ instance : Decidable (badPortal.verified) := instDecidableFalse
 -- the FAITHFUL holding-store / nullifier-set effects (single-cell + side-table).
 
 -- FAITHFUL ESCROW: createEscrow id=7 debits creator 0 by 30 (single cell), parks an off-ledger record.
-#eval (createEscrowChain ep0 7 0 0 1 30).isSome                                        -- true
-#eval (createEscrowChain ep0 7 0 0 1 30).map (fun s => balOf (s.kernel.cell 0))        -- some 70 (DEBITED)
-#eval (createEscrowChain ep0 7 0 0 1 30).map (fun s => recTotal s.kernel)              -- some 75 (cell-ledger DROPPED by 30)
-#eval (createEscrowChain ep0 7 0 0 1 30).map (fun s => chainTotal s)                   -- some 105 (COMBINED conserved)
-#eval (createEscrowChain ep0 7 0 0 1 30).map (fun s => escrowHeld s.kernel)            -- some 30 (parked off-ledger)
+#guard ((createEscrowChain ep0 7 0 0 1 30).isSome)  --  true
+#guard ((createEscrowChain ep0 7 0 0 1 30).map (fun s => balOf (s.kernel.cell 0))) == some 70  --  some 70 (DEBITED)
+#guard ((createEscrowChain ep0 7 0 0 1 30).map (fun s => recTotal s.kernel)) == some 75  --  some 75 (cell-ledger DROPPED by 30)
+#guard ((createEscrowChain ep0 7 0 0 1 30).map (fun s => chainTotal s)) == some 105  --  some 105 (COMBINED conserved)
+#guard ((createEscrowChain ep0 7 0 0 1 30).map (fun s => escrowHeld s.kernel)) == some 30  --  some 30 (parked off-ledger)
 -- release: credit recipient 1 by 30 (single cell), mark resolved; combined stays 105.
-#eval ((createEscrowChain ep0 7 0 0 1 30).bind (fun s => releaseEscrowChain s 7 0)).map
-        (fun s => (balOf (s.kernel.cell 1), chainTotal s, escrowHeld s.kernel))        -- some (35, 105, 0)
+#guard (((createEscrowChain ep0 7 0 0 1 30).bind (fun s => releaseEscrowChain s 7 0)).map
+        (fun s => (balOf (s.kernel.cell 1), chainTotal s, escrowHeld s.kernel))) == some (35, 105, 0)  --  some (35, 105, 0)
 -- refund returns to creator 0 instead.
-#eval ((createEscrowChain ep0 7 0 0 1 30).bind (fun s => refundEscrowChain s 7 0)).map
-        (fun s => (balOf (s.kernel.cell 0), chainTotal s))                             -- some (100, 105)
+#guard (((createEscrowChain ep0 7 0 0 1 30).bind (fun s => refundEscrowChain s 7 0)).map
+        (fun s => (balOf (s.kernel.cell 0), chainTotal s))) == some (100, 105)  --  some (100, 105)
 -- FAITHFUL OBLIGATION (same holding-store): create locks stake, fulfill returns to obligor.
-#eval (createObligationChain ep0 8 0 0 1 30).map (fun s => escrowHeld s.kernel)        -- some 30
-#eval ((createObligationChain ep0 8 0 0 1 30).bind (fun s => fulfillObligationChain s 8 0)).map
-        (fun s => (balOf (s.kernel.cell 0), chainTotal s))                             -- some (100, 105)
+#guard ((createObligationChain ep0 8 0 0 1 30).map (fun s => escrowHeld s.kernel)) == some 30  --  some 30
+#guard (((createObligationChain ep0 8 0 0 1 30).bind (fun s => fulfillObligationChain s 8 0)).map
+        (fun s => (balOf (s.kernel.cell 0), chainTotal s))) == some (100, 105)  --  some (100, 105)
 -- FAITHFUL NOTE SPEND: nullifier-SET insert under the §8 portal; DOUBLE-SPEND rejected.
-#eval (noteSpendChain okPortal ep0 42 0).isSome                                        -- true
-#eval (noteSpendChain badPortal ep0 42 0).isSome                                       -- false (no crypto)
-#eval (noteSpendChain okPortal ep0 42 0).map (fun s => s.kernel.nullifiers.contains 42) -- some true (in the SET)
-#eval ((noteSpendChain okPortal ep0 42 0).bind (fun s => noteSpendChain okPortal s 42 0)).isSome -- false (double-spend!)
+#guard ((noteSpendChain okPortal ep0 42 0).isSome)  --  true
+#guard ((noteSpendChain badPortal ep0 42 0).isSome) == false  --  false (no crypto)
+#guard ((noteSpendChain okPortal ep0 42 0).map (fun s => s.kernel.nullifiers.contains 42)) == some true  --  some true (in the SET)
+#guard (((noteSpendChain okPortal ep0 42 0).bind (fun s => noteSpendChain okPortal s 42 0)).isSome) == false  --  false (double-spend!)
 -- queueEnqueue: deposit 30 sender 0 → queue cell 1, status enqueued(1); conserves.
-#eval (queueEnqueueStep ep0 0 0 1 30).map (fun s => recTotal s.kernel)                 -- some 105
-#eval (queueEnqueueStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status") -- some (some 1)
-#eval (queueDequeueStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")  -- some (some 2)
-#eval (queueAtomicTxStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")  -- some (some 3)
-#eval (queuePipelineStepStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status") -- some (some 4)
+#guard ((queueEnqueueStep ep0 0 0 1 30).map (fun s => recTotal s.kernel)) == some 105  --  some 105
+#guard ((queueEnqueueStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")) == some (some 1)  --  some (some 1)
+#guard ((queueDequeueStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")) == some (some 2)  --  some (some 2)
+#guard ((queueAtomicTxStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")) == some (some 3)  --  some (some 3)
+#guard ((queuePipelineStepStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "queue_status")) == some (some 4)  --  some (some 4)
 -- bridgeLock: lock 30 owner 0 → bridge cell 1, status locked(1); conserves.
-#eval (bridgeLockStep ep0 0 0 1 30).map (fun s => recTotal s.kernel)                   -- some 105
-#eval (bridgeLockStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status") -- some (some 1)
-#eval (bridgeFinalizeStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status") -- some (some 2)
-#eval (bridgeCancelStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status")   -- some (some 3)
+#guard ((bridgeLockStep ep0 0 0 1 30).map (fun s => recTotal s.kernel)) == some 105  --  some 105
+#guard ((bridgeLockStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status")) == some (some 1)  --  some (some 1)
+#guard ((bridgeFinalizeStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status")) == some (some 2)  --  some (some 2)
+#guard ((bridgeCancelStep ep0 0 0 1 30).map (fun s => (s.kernel.cell 0).scalar "bridge_status")) == some (some 3)  --  some (some 3)
 -- Fail-closed: an unauthorized actor (9 owns nothing) commits NO Conservative effect.
-#eval (createEscrowChain ep0 7 9 0 1 30).isSome                                        -- false (unauthorized)
-#eval (queueEnqueueStep ep0 9 0 1 30).isSome                                           -- false
+#guard ((createEscrowChain ep0 7 9 0 1 30).isSome) == false  --  false (unauthorized)
+#guard ((queueEnqueueStep ep0 9 0 1 30).isSome) == false  --  false
 -- Overdraft (more than available) is rejected (availability gate).
-#eval (createEscrowChain ep0 7 1 1 2 999).isSome                                       -- false (overdraft)
+#guard ((createEscrowChain ep0 7 1 1 2 999).isSome) == false  --  false (overdraft)
 
 /-! ### §2-PER-ASSET non-vacuity (`META-FILL C`, `#121`): the COMBINED per-asset escrow + committed
 escrow + noteCreate, with the asset-isolation GUARD (a lock at asset 1 leaves asset 0 untouched). -/
@@ -1372,25 +1372,25 @@ def epa0 : RecChainedState :=
     log := [] }
 
 -- PER-ASSET ESCROW: lock 30 of asset 1 → recipient 1; combined per-asset CONSERVED, asset 0 untouched.
-#eval (createEscrowChainAsset epa0 7 0 0 1 1 30).isSome                                -- true
-#eval (createEscrowChainAsset epa0 7 0 0 1 1 30).map
-        (fun s => (recTotalAsset s.kernel 1, escrowHeldAsset s.kernel 1))             -- some (70, 30) — bal DOWN, held UP at asset 1
-#eval (createEscrowChainAsset epa0 7 0 0 1 1 30).map
-        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0))                         -- some (100, 0) — COMBINED conserved BOTH assets
+#guard ((createEscrowChainAsset epa0 7 0 0 1 1 30).isSome)  --  true
+#guard ((createEscrowChainAsset epa0 7 0 0 1 1 30).map
+        (fun s => (recTotalAsset s.kernel 1, escrowHeldAsset s.kernel 1))) == some (70, 30)  --  some (70, 30) — bal DOWN, held UP at asset 1
+#guard ((createEscrowChainAsset epa0 7 0 0 1 1 30).map
+        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0))) == some (100, 0)  --  some (100, 0) — COMBINED conserved BOTH assets
 -- release: combined per-asset stays (100,0), held returns to 0, bal back to 100 at asset 1.
 #eval ((createEscrowChainAsset epa0 7 0 0 1 1 30).bind (fun s => releaseEscrowChainAsset s 7 0)).map
         (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))
                                                                                       -- some (100, 0, 0, 100)
 -- COMMITTED ESCROW (#121): portal-gated; combined per-asset conserved; fail-closed without crypto.
-#eval (createCommittedEscrowChain okPortal epa0 9 0 0 1 1 30).map
-        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1))  -- some (100, 0, 30)
-#eval (createCommittedEscrowChain badPortal epa0 9 0 0 1 1 30).isSome                  -- false (no opening portal)
+#guard ((createCommittedEscrowChain okPortal epa0 9 0 0 1 1 30).map
+        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1))) == some (100, 0, 30)  --  some (100, 0, 30)
+#guard ((createCommittedEscrowChain badPortal epa0 9 0 0 1 1 30).isSome) == false  --  false (no opening portal)
 -- NOTE CREATE (#121): grow-only commitment SET under the §8 portal; bal-NEUTRAL; fail-closed.
-#eval (noteCreateChain okPortal epa0 42 0).map (fun s => s.kernel.commitments.contains 42)  -- some true
-#eval (noteCreateChain okPortal epa0 42 0).map (fun s => (chainTotalAsset s 1, chainTotalAsset s 0))  -- some (100, 0) — NEUTRAL
-#eval (noteCreateChain badPortal epa0 42 0).isSome                                     -- false (no range proof)
+#guard ((noteCreateChain okPortal epa0 42 0).map (fun s => s.kernel.commitments.contains 42)) == some true  --  some true
+#guard ((noteCreateChain okPortal epa0 42 0).map (fun s => (chainTotalAsset s 1, chainTotalAsset s 0))) == some (100, 0)  --  some (100, 0) — NEUTRAL
+#guard ((noteCreateChain badPortal epa0 42 0).isSome) == false  --  false (no range proof)
 -- noteCreate→noteSpend round-trip: create grows commitments, spend grows nullifiers (distinct sets).
-#eval ((noteCreateChain okPortal epa0 42 0).bind (fun s => noteSpendChain okPortal s 7 0)).map
-        (fun s => (s.kernel.commitments.contains 42, s.kernel.nullifiers.contains 7))  -- some (true, true)
+#guard (((noteCreateChain okPortal epa0 42 0).bind (fun s => noteSpendChain okPortal s 7 0)).map
+        (fun s => (s.kernel.commitments.contains 42, s.kernel.nullifiers.contains 7))) == some (true, true)  --  some (true, true)
 
 end Dregg2.Exec.EffectsPaired

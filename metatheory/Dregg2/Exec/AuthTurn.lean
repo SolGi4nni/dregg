@@ -375,20 +375,19 @@ def rsCap : RecordKernelState :=
   { rs0 with caps := fun l => if l = 0 then [Cap.node 7] else [] }
 
 -- Delegator 0 holds a cap to target 7; delegates connectivity to 7 to recipient 1. Commits.
-#eval (recKDelegate rsCap 0 1 7).isSome   -- true (delegator 0 holds a `node 7` cap)
+#guard ((recKDelegate rsCap 0 1 7).isSome)  --  true (delegator 0 holds a `node 7` cap)
 -- A delegator with no connectivity to the target cannot delegate it:
-#eval (recKDelegate rsCap 5 1 9).isSome   -- false (5 holds no cap conferring an edge to 9)
+#guard ((recKDelegate rsCap 5 1 9).isSome) == false  --  false (5 holds no cap conferring an edge to 9)
 -- After delegation, recipient 1 holds the `node 7` cap (the new edge to 7):
-#eval ((recKDelegate rsCap 0 1 7).map (fun k => k.caps 1)).getD []   -- [Cap.node 7]
+#guard (((recKDelegate rsCap 0 1 7).map (fun k => k.caps 1)).getD []) == [Cap.node 7]  --  [Cap.node 7]
 -- Revocation always commits (it only subtracts): revoking 7 from 0 empties its slot.
-#eval ((recKRevokeTarget rsCap 0 7).caps 0)  -- [] (the `node 7` cap is filtered out)
+#guard (((recKRevokeTarget rsCap 0 7).caps 0)) == []  --  [] (the `node 7` cap is filtered out)
 
 /-- A state where delegator 0 holds only endpoint-write authority to target 7. -/
 def rsEndpointWrite : RecordKernelState :=
   { rs0 with caps := fun l => if l = 0 then [Cap.endpoint 7 [Auth.write]] else [] }
 
 -- Ordinary delegation copies the held endpoint cap; it does not upgrade write into `node`/control.
-#eval ((recKDelegate rsEndpointWrite 0 1 7).map (fun k => k.caps 1)).getD []
--- [Cap.endpoint 7 [Auth.write]]
+#guard (((recKDelegate rsEndpointWrite 0 1 7).map (fun k => k.caps 1)).getD []) == [Cap.endpoint 7 [Auth.write]]  -- [Cap.endpoint 7 [Auth.write]]
 
 end Dregg2.Exec

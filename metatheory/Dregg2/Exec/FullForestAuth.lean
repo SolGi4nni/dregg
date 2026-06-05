@@ -189,13 +189,13 @@ def goodSig : Authorization Crypto.Reference.D Crypto.Reference.P := .signature 
 /-- A FORGED signature credential: the proof (8) does NOT echo the statement (7). PORTAL rejects. -/
 def forgedSig : Authorization Crypto.Reference.D Crypto.Reference.P := .signature 7 8
 
-#eval portalVerify goodSig                                            -- true  (genuine ⇒ portal accepts)
-#eval portalVerify forgedSig                                          -- false (forged ⇒ portal fail-closes)
-#eval portalVerify (Digest := Crypto.Reference.D) (Proof := Crypto.Reference.P) .unchecked  -- false (§8 anchor)
+#guard (portalVerify goodSig)  --  true  (genuine ⇒ portal accepts)
+#guard (portalVerify forgedSig) == false  --  false (forged ⇒ portal fail-closes)
+#guard (portalVerify (Digest := Crypto.Reference.D) (Proof := Crypto.Reference.P) .unchecked) == false  --  false (§8 anchor)
 -- OneOf selects a genuine candidate at index 1 ⇒ verifies; an Unchecked at the slot ⇒ rejected:
-#eval portalVerify (.oneOf [forgedSig, goodSig] 1)                    -- true  (index-1 candidate genuine)
-#eval portalVerify (.oneOf [goodSig, .unchecked] 1)                   -- false (Unchecked at slot ⇒ no bypass)
-#eval portalVerify (.oneOf [goodSig] 5)                               -- false (out of bounds ⇒ fail-closed)
+#guard (portalVerify (.oneOf [forgedSig, goodSig] 1))  --  true  (index-1 candidate genuine)
+#guard (portalVerify (.oneOf [goodSig, .unchecked] 1)) == false  --  false (Unchecked at slot ⇒ no bypass)
+#guard (portalVerify (.oneOf [goodSig] 5)) == false  --  false (out of bounds ⇒ fail-closed)
 
 end PortalDemo
 
@@ -1100,31 +1100,31 @@ def launderFullForestG : DForest :=
 
 -- (1) VALID credential + discharged caveats ⇒ the whole gated forest COMMITS. Run against the GROUNDED
 --     `fmaDeleg` (cell 0 holds the caps the EXECUTED delegation handoffs gate on — same as the A-side):
-#eval (execFullForestG fmaDeleg goodFullForestG).isSome                              -- true
+#guard ((execFullForestG fmaDeleg goodFullForestG).isSome)  --  true
 -- ...per-asset NET is 0 in BOTH assets ⇒ conserved (the gate AND the delegations are ledger-orthogonal):
-#eval turnLedgerDeltaAsset ((lowerForestG goodFullForestG).map Prod.snd) 0           -- 0 (asset 0)
-#eval turnLedgerDeltaAsset ((lowerForestG goodFullForestG).map Prod.snd) 1           -- 0 (asset 1)
-#eval (execFullForestG fmaDeleg goodFullForestG).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (105, 7)
+#guard (turnLedgerDeltaAsset ((lowerForestG goodFullForestG).map Prod.snd) 0) == 0  --  0 (asset 0)
+#guard (turnLedgerDeltaAsset ((lowerForestG goodFullForestG).map Prod.snd) 1) == 0  --  0 (asset 1)
+#guard ((execFullForestG fmaDeleg goodFullForestG).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
 -- (2) FORGED credential ⇒ none EVEN WITH valid caps (credential-orthogonality):
-#eval (execFullForestG fmaDeleg forgedCredForestG).isSome                            -- false
-#eval credentialValidG forgedCredForestG.auth                                       -- false (portal fail-closes)
-#eval credentialValidG goodFullForestG.auth                                         -- true  (portal accepts)
+#guard ((execFullForestG fmaDeleg forgedCredForestG).isSome) == false  --  false
+#guard (credentialValidG forgedCredForestG.auth) == false  --  false (portal fail-closes)
+#guard (credentialValidG goodFullForestG.auth)  --  true  (portal accepts)
 -- (3) VALID credential, FALSE caveat ⇒ none (caveat-orthogonality):
-#eval (execFullForestG fmaDeleg falseCaveatForestG).isSome                           -- false
-#eval caveatsDischarged falseCaveatForestG.auth fmaDeleg                             -- false (caveat fail-closes)
-#eval caveatsDischarged goodFullForestG.auth fmaDeleg                                -- true  (caveat discharges)
+#guard ((execFullForestG fmaDeleg falseCaveatForestG).isSome) == false  --  false
+#guard (caveatsDischarged falseCaveatForestG.auth fmaDeleg) == false  --  false (caveat fail-closes)
+#guard (caveatsDischarged goodFullForestG.auth fmaDeleg)  --  true  (caveat discharges)
 -- (4) the launder forest COMMITS through the gate but the per-asset delta is NONZERO in EACH asset
 --     (CAUGHT — a scalar aggregate would hide both):
-#eval (execFullForestG fmaDeleg launderFullForestG).isSome                           -- true (auth orthogonal)
-#eval turnLedgerDeltaAsset ((lowerForestG launderFullForestG).map Prod.snd) 0        -- -50 (NOT 0)
-#eval turnLedgerDeltaAsset ((lowerForestG launderFullForestG).map Prod.snd) 1        -- 50  (NOT 0)
-#eval (execFullForestG fmaDeleg launderFullForestG).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))              -- some (55, 57) CAUGHT
+#guard ((execFullForestG fmaDeleg launderFullForestG).isSome)  --  true (auth orthogonal)
+#guard (turnLedgerDeltaAsset ((lowerForestG launderFullForestG).map Prod.snd) 0) == -50  --  -50 (NOT 0)
+#guard (turnLedgerDeltaAsset ((lowerForestG launderFullForestG).map Prod.snd) 1) == 50  --  50  (NOT 0)
+#guard ((execFullForestG fmaDeleg launderFullForestG).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (55, 57)  --  some (55, 57) CAUGHT
 -- ...the gate passing then erasing gives the IDENTICAL committed run (effect-projection bridge):
-#eval (execFullForestA fmaDeleg (eraseG goodFullForestG)).isSome                     -- true
-#eval ((execFullForestG fmaDeleg goodFullForestG).map (fun s => s.log.length)
-        == (execFullForestA fmaDeleg (eraseG goodFullForestG)).map (fun s => s.log.length))  -- true (identical run)
+#guard ((execFullForestA fmaDeleg (eraseG goodFullForestG)).isSome)  --  true
+#guard (((execFullForestG fmaDeleg goodFullForestG).map (fun s => s.log.length)
+        == (execFullForestA fmaDeleg (eraseG goodFullForestG)).map (fun s => s.log.length)))  --  true (identical run)
 
 end Demo
 

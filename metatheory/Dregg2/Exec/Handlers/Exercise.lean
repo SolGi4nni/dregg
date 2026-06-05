@@ -405,29 +405,29 @@ def exerciseFuelZero : ExerciseArgs :=
 -- §TEETH-1 (R4 REJECT): a `control`-facet inner effect under a NARROWED `[write, read]` cap mask ⇒ the
 -- whole exercise is REJECTED (the facet-mask gate bites — `control ∉ [write, read]`), even though the
 -- actor HOLDS connectivity to the target. This is the R4 over-reach guard.
-#eval (exerciseStep ex0 exerciseControlUnderWrite).isSome         -- false
+#guard ((exerciseStep ex0 exerciseControlUnderWrite).isSome) == false  --  false
 -- §TEETH-2 (R4 ADMIT): the SAME inner effect declaring only the `write` facet ⇒ ADMITTED and runs.
-#eval (exerciseStep ex0 exerciseWriteUnderWrite).isSome           -- true
+#guard ((exerciseStep ex0 exerciseWriteUnderWrite).isSome)  --  true
 -- §TEETH-3 (HOLD-GATE): an actor (cell 1) holding NO cap to target 2 ⇒ REJECTED (no edge).
-#eval (exerciseStep ex0 exerciseNoEdge).isSome   -- false
+#guard ((exerciseStep ex0 exerciseNoEdge).isSome) == false  --  false
 -- §TEETH-4 (FULL facet): cell 0's `node 2` cap is the FULL mask, so a `control`-facet inner effect on
 -- target 2 is ADMITTED (the node cap confers every facet).
-#eval (exerciseStep ex0 exerciseControlUnderNode).isSome   -- true
+#guard ((exerciseStep ex0 exerciseControlUnderNode).isSome)  --  true
 -- §TEETH-5 (SUB-FOREST CONSERVES): exercise of a balance-neutral inner forest leaves the combined
 -- per-asset measure UNCHANGED (delta = sum of inner deltas = 0).
-#eval (exerciseStep ex0 exerciseWriteUnderWrite).map
-        (fun k => (recTotalAssetWithEscrow ex0 0, recTotalAssetWithEscrow k 0))   -- some (100, 100)
+#guard ((exerciseStep ex0 exerciseWriteUnderWrite).map
+        (fun k => (recTotalAssetWithEscrow ex0 0, recTotalAssetWithEscrow k 0))) == some (100, 100)  --  some (100, 100)
 -- §TEETH-6 (SUMMED delta): the sub-forest delta is the SUM of inner deltas (here 0 ⇒ unchanged).
-#eval subTurnDelta (innerEffects exerciseWriteUnderWrite.inner) 0   -- 0
+#guard (subTurnDelta (innerEffects exerciseWriteUnderWrite.inner) 0) == 0  --  0
 -- §TEETH-7 (FLAT NESTING): an exercise whose inner forest CONTAINS another exercise (cell 0 exercises
 -- its node-2 cap, whose sub-forest exercises the read-cap to 1) — structural nesting, no fuel needed.
-#eval (exerciseStep ex0 exerciseNested).isSome   -- true
+#guard ((exerciseStep ex0 exerciseNested).isSome)  --  true
 -- §TEETH-8 (FUEL fail-close): the fuel-bounded builder at depth 0 yields the bare (empty) exercise,
 -- which commits (no sub-effects) under the full node-2 facet.
-#eval (exerciseStep ex0 exerciseFuelZero).isSome  -- true
+#guard ((exerciseStep ex0 exerciseFuelZero).isSome)  --  true
 -- §TEETH-9 (a turn = [exercise] runs through the SCAFFOLD registry foldlM and conserves).
-#eval (execTurn [exerciseEffect 0 1 [innerWrite]] ex0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                   -- some 100
+#guard ((execTurn [exerciseEffect 0 1 [innerWrite]] ex0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 
 /-! ## §9 — Axiom-hygiene pins (every keystone rests only on the three kernel axioms).
 

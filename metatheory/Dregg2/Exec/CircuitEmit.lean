@@ -249,8 +249,8 @@ def kernelWire : String := emitJson emittedKernel
 -- Print the wire string + sanity facts. `#eval kernelWire` prints the bytes the Rust
 -- decoder parses; the Rust differential pins this exact string as its golden input.
 #eval kernelWire
-#eval emittedKernel.constraints.length   -- 4 gates
-#eval emittedKernel.traceWidth            -- 6 wires
+#guard (emittedKernel.constraints.length) == 4  --  4 gates
+#guard (emittedKernel.traceWidth) == 6  --  6 wires
 
 /-! ## Axiom-hygiene pins (the §8 honesty tripwire). -/
 
@@ -455,8 +455,8 @@ def merkleWire : String := emitMerkleJson emittedMerkle
 
 -- Print the Merkle wire bytes the Rust decoder parses + sanity facts.
 #eval merkleWire
-#eval emittedMerkle.constraints.length   -- 4 wire constraints (MerkleHash + Transition + 2 PiBinding)
-#eval emittedMerkle.traceWidth            -- 6 wires
+#guard (emittedMerkle.constraints.length) == 4  --  4 wire constraints (MerkleHash + Transition + 2 PiBinding)
+#guard (emittedMerkle.traceWidth) == 6  --  6 wires
 
 /-! ### Axiom-hygiene pins for the Merkle extension. -/
 

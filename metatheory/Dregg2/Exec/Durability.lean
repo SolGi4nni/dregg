@@ -362,19 +362,19 @@ turn that genuinely moved the ledger. -/
 /-- The durable state after one real committed transfer on `fma0`. -/
 def dStep1 : DurableState := durableApply (durableInit fma0) transferCF.1
 
-#eval (durableInit fma0).wal.length                         -- 0 (fresh checkpoint, empty WAL)
-#eval dStep1.wal.length                                     -- 1 (the committed transfer was written-ahead)
-#eval (live dStep1).isSome                                  -- true (live state present)
-#eval (recover (crash dStep1)).isSome                       -- true (recovery after crash succeeds)
+#guard ((durableInit fma0).wal.length) == 0  --  0 (fresh checkpoint, empty WAL)
+#guard (dStep1.wal.length) == 1  --  1 (the committed transfer was written-ahead)
+#guard ((live dStep1).isSome)  --  true (live state present)
+#guard ((recover (crash dStep1)).isSome)  --  true (recovery after crash succeeds)
 -- Crash-recovery reproduces EXACTLY the live state (the headline, decided on the asset-0 badge):
-#eval (Option.bind (recover (crash dStep1)) (fun r =>
-        Option.map (fun l => decide (cellObsA r 0 = cellObsA l 0)) (live dStep1)))  -- some true
+#guard ((Option.bind (recover (crash dStep1)) (fun r =>
+        Option.map (fun l => decide (cellObsA r 0 = cellObsA l 0)) (live dStep1)))) == some true  --  some true
 -- The recovered asset-0 badge equals the DIRECTLY-executed transfer's badge (no lost commit):
-#eval (Option.map (fun r => cellObsA r 0) (recover (crash dStep1)))                  -- some 105
-#eval (Option.map (fun s' => cellObsA s' 0) (execFullForestA fma0 transferCF.1))     -- some 105 (EQUAL)
+#guard ((Option.map (fun r => cellObsA r 0) (recover (crash dStep1)))) == some 105  --  some 105
+#guard ((Option.map (fun s' => cellObsA s' 0) (execFullForestA fma0 transferCF.1))) == some 105  --  some 105 (EQUAL)
 -- A torn tail past the committed prefix recovers the committed state, ignoring the torn forest:
-#eval (recoverSynced { snap := recSnapshot fma0, committed := [transferCF.1], torn := transferCF.1 }
-        |>.map (fun r => cellObsA r 0))                                              -- some 105
+#guard ((recoverSynced { snap := recSnapshot fma0, committed := [transferCF.1], torn := transferCF.1 }
+        |>.map (fun r => cellObsA r 0))) == some 105  --  some 105
 
 /-! ## Axiom hygiene — every durability keystone pinned to the standard kernel triple (NO `sorryAx`). -/
 

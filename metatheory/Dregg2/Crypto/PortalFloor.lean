@@ -373,14 +373,14 @@ instance instMacKernelE : MacKernelE Nat Nat Nat where
 /-! ### Non-vacuity `#eval`s + soundness witnesses. -/
 
 -- The eight oracles fire (genuine ⇒ accept, forged ⇒ reject):
-#eval instSignatureKernel.sigVerify 7 7 7            -- true  (genuine signature)
-#eval instSignatureKernel.sigVerify 7 7 8            -- false (forged signature)
-#eval instVerifierKernel.verify 0 0                  -- true  (valid proof)
-#eval instVerifierKernel.verify 1 0                  -- false (invalid statement)
-#eval instSealKernel.aeadOpen 5 5                    -- true  (sealed under key)
-#eval instSealKernel.aeadOpen 5 6                    -- false (not sealed)
-#eval instMacKernelE.verifyTag 3 4 (Nat.pair 3 4)    -- true  (genuine tag)
-#eval instMacKernelE.verifyTag 3 4 0                 -- false (forged tag)
+#guard instSignatureKernel.sigVerify 7 7 7            -- genuine signature
+#guard instSignatureKernel.sigVerify 7 7 8 == false   -- forged signature
+#guard instVerifierKernel.verify 0 0                  -- valid proof
+#guard instVerifierKernel.verify 1 0 == false         -- invalid statement
+#guard instSealKernel.aeadOpen 5 5                    -- sealed under key
+#guard instSealKernel.aeadOpen 5 6 == false           -- not sealed
+#guard instMacKernelE.verifyTag 3 4 (Nat.pair 3 4)    -- genuine tag
+#guard instMacKernelE.verifyTag 3 4 0 == false        -- forged tag
 
 /-- Soundness witness: an accepting ed25519 signature proves `Signed` at the reference kernel. -/
 example : instSignatureKernel.Signed 7 7 :=

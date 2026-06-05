@@ -106,9 +106,9 @@ def settleRoute : Match settleIntent.offered settleReceipt.outcome :=
 
 /-! ### `#eval` smoke. -/
 
-#eval settleReceipt.outcome.as |>.toAdd     -- (0, 3) : the settled allocation (3 art)
-#eval settleReceipt.spentEscrow.locked      -- false  (escrow consumed)
-#eval settleIntent.validity.kind            -- true   (causal reveal-ordering — anti-frontrunning)
+#guard (settleReceipt.outcome.as |>.toAdd) == (0, 3)   -- the settled allocation (3 art)
+#guard settleReceipt.spentEscrow.locked == false       -- escrow consumed
+#guard settleIntent.validity.kind                      -- causal reveal-ordering — anti-frontrunning
 
 /-! ### Axiom hygiene — pin EVERY Phase-2 intent theorem to the three kernel axioms.
 

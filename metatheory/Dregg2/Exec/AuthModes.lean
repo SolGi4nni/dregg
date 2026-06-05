@@ -577,13 +577,13 @@ example : authModeAdmits (Rights := Rt) (CellId := C) (Ctx := Cx) (Gateway := Gw
     (.unchecked (Guard.all [])) baseCtx = true :=
   unchecked_unconstrained_admits (Guard.all [])  baseCtx (fun _ _ => by simp)
 
-#eval authModeAdmits (Rights := Rt) (.custom .dfa) baseCtx                        -- true
-#eval authModeAdmits (Request := R) (Stmt := S) (Wit := W) (CellId := C) (Rights := Rt)
-        (.token demoToken) baseCtx                                                -- true
-#eval authModeAdmits (Request := R) (Stmt := S) (Wit := W) (Ctx := Cx) (Gateway := Gw)
-        (.capTpDelivered demoCert True) baseCtx                                   -- true
-#eval authModeAdmits (.oneOf demoCandidates 0) baseCtx                            -- true
-#eval authModeAdmits (.oneOf demoCandidates 5) baseCtx                            -- false (OOB)
+#guard (authModeAdmits (Rights := Rt) (.custom .dfa) baseCtx)  --  true
+#guard (authModeAdmits (Request := R) (Stmt := S) (Wit := W) (CellId := C) (Rights := Rt)
+        (.token demoToken) baseCtx)  --  true
+#guard (authModeAdmits (Request := R) (Stmt := S) (Wit := W) (Ctx := Cx) (Gateway := Gw)
+        (.capTpDelivered demoCert True) baseCtx)  --  true
+#guard (authModeAdmits (.oneOf demoCandidates 0) baseCtx)  --  true
+#guard (authModeAdmits (.oneOf demoCandidates 5) baseCtx) == false  --  false (OOB)
 
 end Demo
 

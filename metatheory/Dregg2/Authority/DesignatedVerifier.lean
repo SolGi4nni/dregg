@@ -312,11 +312,11 @@ theorem dial_endpoints_distinct :
   exact ⟨⟨hv0, hnt⟩, hnt⟩
 
 -- It runs: v0 accepts its simulated transcript; vOther rejects it.
-#eval check V.v0 7 designatedProof       -- true  : the designated verifier is convinced
-#eval check V.vOther 7 designatedProof   -- false : a third party is NOT convinced
+#guard check V.v0 7 designatedProof              -- the designated verifier is convinced
+#guard check V.vOther 7 designatedProof == false -- a third party is NOT convinced
 -- the simulator law concretely: each verifier accepts its own simulation
-#eval check V.v0 7 (simFor V.v0 7)         -- true
-#eval check V.vOther 7 (simFor V.vOther 7) -- true
+#guard check V.v0 7 (simFor V.v0 7)
+#guard check V.vOther 7 (simFor V.vOther 7)
 
 end Reference
 

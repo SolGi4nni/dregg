@@ -169,9 +169,9 @@ def t1 : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 /-- Actor 2 attempts the same — unauthorized (no cap on src 0). -/
 def tBad : Turn := { actor := 2, src := 0, dst := 1, amt := 30 }
 
-#eval (exec s0 t1).isSome                       -- true
-#eval (exec s0 tBad).isSome                      -- false
-#eval (exec s0 t1).map total                     -- some 105 (conserved: 70 + 35)
-#eval total s0                                   -- 105
+#guard ((exec s0 t1).isSome)  --  true
+#guard ((exec s0 tBad).isSome) == false  --  false
+#guard ((exec s0 t1).map total) == some 105  --  some 105 (conserved: 70 + 35)
+#guard (total s0) == 105  --  105
 
 end Dregg2.Exec

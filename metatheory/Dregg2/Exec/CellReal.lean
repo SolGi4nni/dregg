@@ -143,10 +143,10 @@ def transferCF : ConservingForest :=
     simp only [lowerForestA, lowerChildrenA, turnLedgerDeltaAsset, List.map_cons, List.map_nil,
       List.sum_cons, List.sum_nil, ledgerDeltaAsset, add_zero]⟩
 
-#eval (execFullForestA fma0 transferCF.1).isSome                      -- true (the conserving transfer commits)
+#guard ((execFullForestA fma0 transferCF.1).isSome)  --  true (the conserving transfer commits)
 #eval (execFullForestA fma0 transferCF.1).map (fun s' => cellObsA s' 0)  -- the asset-0 badge AFTER the turn
 #eval cellObsA fma0 0                                                  -- the asset-0 badge BEFORE — EQUAL (conserved)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0))  -- some true
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0))) == some true  --  some true
 
 /-! ## Axiom hygiene — keystones pinned to the standard kernel triple. -/
 

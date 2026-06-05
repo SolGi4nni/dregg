@@ -248,9 +248,9 @@ theorem demoIntent_deadline_met : demoIntent.validity.Met Dregg2.Authority.Block
 
 /-! ### `#eval` smoke. -/
 
-#eval demoReceipt.spentEscrow.locked        -- false (escrow consumed)
-#eval demoIntent.validity.kind              -- true  (causal / lightcone fact)
-#eval demoFrameIntent.validity.kind         -- false (frame convention, carries δ)
-#eval demoUnfunded.resource.locked          -- false (released — unfulfillable)
+#guard demoReceipt.spentEscrow.locked == false   -- escrow consumed
+#guard demoIntent.validity.kind                  -- causal / lightcone fact
+#guard demoFrameIntent.validity.kind == false    -- frame convention, carries δ
+#guard demoUnfunded.resource.locked == false     -- released — unfulfillable
 
 end Dregg2.Intent

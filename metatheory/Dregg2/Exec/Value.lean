@@ -215,18 +215,18 @@ def nested0 : Value :=
   .record [("balance", .int 100),
            ("limits", .record [("daily", .int 50), ("perTx", .int 10)])]
 
-#eval width (.record accountSchema)              -- 3
-#eval conforms acct0 (.record accountSchema)     -- true
-#eval flatten (.record accountSchema) acct0      -- [100, 0, 42]
+#guard (width (.record accountSchema)) == 3  --  3
+#guard (conforms acct0 (.record accountSchema))  --  true
+#guard (flatten (.record accountSchema) acct0) == [100, 0, 42]  --  [100, 0, 42]
 #eval fieldOffset accountSchema "nonce"          -- some (1, scalar)
 #eval fieldOffset accountSchema "owner"          -- some (2, digest)
 
-#eval width (.record nestedSchema)               -- 3  (1 + (1+1))
-#eval conforms nested0 (.record nestedSchema)    -- true
-#eval flatten (.record nestedSchema) nested0     -- [100, 50, 10]  (nested record inlined)
+#guard (width (.record nestedSchema)) == 3  --  3  (1 + (1+1))
+#guard (conforms nested0 (.record nestedSchema))  --  true
+#guard (flatten (.record nestedSchema) nested0) == [100, 50, 10]  --  [100, 50, 10]  (nested record inlined)
 
 -- A malformed witness still flattens to the schema width (here 3), defaulting to 0:
-#eval flatten (.record accountSchema) (.int 7)   -- [0, 0, 0]
-#eval (flatten (.record accountSchema) (.int 7)).length = width (.record accountSchema)  -- true
+#guard (flatten (.record accountSchema) (.int 7)) == [0, 0, 0]  --  [0, 0, 0]
+#guard ((flatten (.record accountSchema) (.int 7)).length = width (.record accountSchema))  --  true
 
 end Dregg2.Exec

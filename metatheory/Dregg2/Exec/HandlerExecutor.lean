@@ -495,37 +495,37 @@ def teethEscrow : Option RecChainedState :=
 
 -- §TEETH-R1 (TRANSFER INTO A SEALED CELL): `execFullA` ADMITS a transfer into the SEALED cell 1 — the
 -- LIVE HOLE (no `acceptsEffects` gate on the bare `recKExecAsset`). The handler executor REJECTS it.
-#eval (execFullA teethSealed (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0)).isSome  -- true  (LIVE HOLE)
-#eval (execHandlerOne (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0) teethSealed).isSome -- false (CLOSED)
+#guard ((execFullA teethSealed (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0)).isSome)  --  true  (LIVE HOLE)
+#guard ((execHandlerOne (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0) teethSealed).isSome) == false  --  false (CLOSED)
 
 -- §TEETH-R6 (STATE WRITE INTO A SEALED CELL): R6 is now CLOSED IN THE LIVE EXECUTOR TOO. The bare
 -- `EffectsState.stateStep` gained a `cellLive` (lifecycle-liveness) conjunct, so `execFullA` itself
 -- now REJECTS a nonce write into the SEALED cell 1 — matching the handler. Both return `none`.
-#eval (execFullA teethSealed (.incrementNonceA 0 1 7)).isSome     -- false (R6 CLOSED in the live executor)
-#eval (execHandlerOne (.incrementNonceA 0 1 7) teethSealed).isSome -- false (CLOSED by acceptsEffects)
+#guard ((execFullA teethSealed (.incrementNonceA 0 1 7)).isSome) == false  --  false (R6 CLOSED in the live executor)
+#guard ((execHandlerOne (.incrementNonceA 0 1 7) teethSealed).isSome) == false  --  false (CLOSED by acceptsEffects)
 -- ...and a write into the LIVE cell 0 still COMMITS in both — the gate only tightens the non-live case.
-#eval (execFullA teethSealed (.incrementNonceA 0 0 7)).isSome     -- true  (live cell still accepts)
-#eval (execHandlerOne (.incrementNonceA 0 0 7) teethSealed).isSome -- true  (live cell still accepts)
+#guard ((execFullA teethSealed (.incrementNonceA 0 0 7)).isSome)  --  true  (live cell still accepts)
+#guard ((execHandlerOne (.incrementNonceA 0 0 7) teethSealed).isSome)  --  true  (live cell still accepts)
 
 -- §TEETH-R2 (ESCROW RELEASE BY A STRANGER): `execFullA` ADMITS a release of escrow 9 by cell 5 (a
 -- stranger, NOT the recipient) — the LIVE HOLE (`releaseEscrowKAsset` takes only the id, no actor).
 -- The handler executor REJECTS it (the settle-actor `authorizedB` gate bites).
-#eval (teethEscrow.bind (fun s => execFullA s (.releaseEscrowA 9 5))).isSome       -- true  (LIVE HOLE)
-#eval (teethEscrow.bind (fun s => execHandlerOne (.releaseEscrowA 9 5) s)).isSome  -- false (CLOSED)
+#guard ((teethEscrow.bind (fun s => execFullA s (.releaseEscrowA 9 5))).isSome)  --  true  (LIVE HOLE)
+#guard ((teethEscrow.bind (fun s => execHandlerOne (.releaseEscrowA 9 5) s)).isSome) == false  --  false (CLOSED)
 -- the HONEST release (by the recipient cell 1) STILL succeeds under the handler executor (not everything-rejected).
-#eval (teethEscrow.bind (fun s => execHandlerOne (.releaseEscrowA 9 1) s)).isSome  -- true  (honest path admitted)
+#guard ((teethEscrow.bind (fun s => execHandlerOne (.releaseEscrowA 9 1) s)).isSome)  --  true  (honest path admitted)
 
 -- §TEETH-CONSERVATION: a whole handler turn conserves the combined measure (the derived global law,
 -- evaluated): a transfer 0→1 (30 of asset 0, both LIVE) + a self nonce-write on cell 0 leaves the
 -- asset-0 measure at 100 (the internal transfer cancels, the write is balance-neutral — the SUM of
 -- per-effect deltas is 0, exactly what `execHandlerTurn_conserves` proves).
-#eval (execHandlerTurn [.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, .incrementNonceA 0 0 7]
+#guard ((execHandlerTurn [.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, .incrementNonceA 0 0 7]
         { kernel :=
             { accounts := {0, 1}
               cell := fun _ => .record [("balance", .int 0)]
               caps := fun c => if c = 0 then [Cap.node 0, Cap.node 1] else []
               bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
-          log := [] }).map (fun s => recTotalAssetWithEscrow s.kernel 0)               -- some 100
+          log := [] }).map (fun s => recTotalAssetWithEscrow s.kernel 0)) == some 100  --  some 100
 
 /-! ## §8 — Axiom-hygiene pins (every cutover keystone rests only on the three kernel axioms).
 

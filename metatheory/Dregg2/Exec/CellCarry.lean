@@ -155,10 +155,10 @@ transfers 30 of asset 0 from cell 0 to cell 1, a real commit on `fma0`) appends 
 `fullReceiptA` row: the log goes `0 → 1`. So `livingCellA_logMono` is non-trivially true (it bounds a
 strictly-growing quantity), and `livingCellA_carries` is exercised by a property that genuinely moves. -/
 
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => s'.log.length)   -- some 1 (grew from 0)
-#eval fma0.log.length                                                     -- 0   (BEFORE — strictly less)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length < s'.log.length))  -- some true
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length ≤ s'.log.length))  -- some true (the carried ≤)
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => s'.log.length)) == some 1  --  some 1 (grew from 0)
+#guard (fma0.log.length) == 0  --  0   (BEFORE — strictly less)
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length < s'.log.length))) == some true  --  some true
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length ≤ s'.log.length))) == some true  --  some true (the carried ≤)
 
 /-! ## Axiom hygiene — the parametric crown + the NON-conservation demo pinned to the kernel triple. -/
 

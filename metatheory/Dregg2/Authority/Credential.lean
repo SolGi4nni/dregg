@@ -270,19 +270,19 @@ non-parametric, but pinning here keeps the `#eval`s' implicit `Digest`/`Proof` d
 private def rev0 : RevocationSet := noRevocations
 
 -- issue + present + verify a genuine credential ⇒ accepted
-#eval verify rev0 (present goodCred)                                 -- true
+#guard verify rev0 (present goodCred)                            -- accepted
 -- revoke it, then present again ⇒ rejected (the negative discharge)
-#eval verify (revoke! rev0 goodCred) (present goodCred)             -- false
+#guard verify (revoke! rev0 goodCred) (present goodCred) == false  -- rejected (revoked)
 -- a forged attestation (bad proof) ⇒ rejected by the §8 oracle even un-revoked
-#eval verify rev0 (present forgedCred)                               -- false
+#guard verify rev0 (present forgedCred) == false                 -- rejected (forged)
 -- the id really is in the revocation set after revoke!
-#eval isRevoked (revoke! rev0 goodCred) goodCred                    -- true
+#guard isRevoked (revoke! rev0 goodCred) goodCred                -- in the revocation set
 -- and not before
-#eval isRevoked rev0 goodCred                                       -- false
+#guard isRevoked rev0 goodCred == false                          -- not before revoke
 -- revoke via the partial (fresh) form succeeds, re-revoke fails-closed (insert-only)
-#eval (revoke rev0 goodCred).isSome                                 -- true
-#eval ((revoke rev0 goodCred).bind
-        (fun r => revoke r goodCred)).isNone                         -- true (already revoked)
+#guard (revoke rev0 goodCred).isSome                             -- fresh revoke succeeds
+#guard ((revoke rev0 goodCred).bind
+        (fun r => revoke r goodCred)).isNone                     -- re-revoke fails-closed
 
 end Demo
 

@@ -315,7 +315,7 @@ def inbox2 : Value :=
           , ("owner", .dig 7), ("inflight", .int 2) ]
 
 -- `conforms` to the schema (a well-shaped inbox record):
-#eval conforms freshInbox (.record inboxSchema)   -- true
+#guard (conforms freshInbox (.record inboxSchema))  --  true
 
 -- A SEND on a fresh inbox: head 0→1, inflight 0→1. tail (0) ≤ head (1) ✓, inflight (1) ≤ cap (3) ✓
 #eval inboxExec (inboxProgram 3) methodSend freshInbox sendOps
@@ -334,14 +334,12 @@ def inbox2 : Value :=
 
 -- A MALFORMED transition: tail > head. Start from a (deliberately malformed) state where a dequeue
 -- would push tail past head — `tail = head = 0`, dequeue ⇒ tail 1 > head 0 ⇒ REJECTED:
-#eval inboxExec (inboxProgram 3) methodDequeue freshInbox dequeueOps
--- none  (tail would be 1 > head 0 — fieldLeField "tail" "head" rejects the consumer passing producer)
+#guard (inboxExec (inboxProgram 3) methodDequeue freshInbox dequeueOps).isNone  -- none  (tail would be 1 > head 0 — fieldLeField "tail" "head" rejects the consumer passing producer)
 
 -- A MALFORMED transition: head NON-MONOTONE (a send that tries to RETREAT head). We can't express a
 -- retreat with `sendOps` (it only adds), so feed an explicit retreating op list; `monotonic "head"`
 -- rejects head 2 → 1:
-#eval inboxExec (inboxProgram 3) methodSend inbox2 [ .addScalar "head" (-1), .addScalar "inflight" (-1) ]
--- none  (head would be 1 < old head 2 — monotonic "head" rejects the retreat)
+#guard (inboxExec (inboxProgram 3) methodSend inbox2 [ .addScalar "head" (-1), .addScalar "inflight" (-1) ]).isNone  -- none  (head would be 1 < old head 2 — monotonic "head" rejects the retreat)
 
 /-! ### A SenderAuthorized send demo through the token layer. -/
 
@@ -358,7 +356,6 @@ def noDischarges : Discharges Unit := fun _ => false
 -- some (record [head 1, tail 0, capacity 3, owner 7, inflight 1])
 
 -- A gated send whose token FAILS to discharge (ctx 2000 > 1000) ⇒ REJECTED before the program runs:
-#eval gatedSend 3 senderToken 2000 noDischarges freshInbox
--- none  (the authorized-sender caveat narrowed this request out — sender not authorized here)
+#guard (gatedSend 3 senderToken 2000 noDischarges freshInbox).isNone  -- none  (the authorized-sender caveat narrowed this request out — sender not authorized here)
 
 end Dregg2.Exec.CapInbox

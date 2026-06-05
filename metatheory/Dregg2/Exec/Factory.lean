@@ -291,7 +291,7 @@ def badInit : Value := .int 7
 
 -- Minting from the counter factory with a conforming initial value succeeds, and the minted cell
 -- carries EXACTLY the factory's program:
-#eval (createFromFactory counterFactory counterInit).isSome      -- true
+#guard ((createFromFactory counterFactory counterInit).isSome)  --  true
 -- (`RecordProgram` is a nested-`List` inductive, so it has no `DecidableEq`; we compare via the
 -- derived `Repr` — the minted program prints identically to the factory's, witnessing the keystone
 -- `constructor_transparency` is true at this datum.)
@@ -300,7 +300,7 @@ def badInit : Value := .int 7
       | none   => false
 
 -- A non-conforming initial value is rejected at mint time (fail-closed):
-#eval (createFromFactory counterFactory badInit).isSome           -- false
+#guard ((createFromFactory counterFactory badInit).isSome) == false  --  false
 
 -- The minted cell, stepped: an increment commits; a decrement is rejected by the factory's
 -- monotonic program (the lifetime invariant, enforced on a *minted* cell):
@@ -313,7 +313,7 @@ def badInit : Value := .int 7
 
 -- Content-addressing: re-publishing the same contract yields the same `vk`; the descriptor is
 -- well-formed (its `vk` is the hash of its content):
-#eval decide (counterFactory.vk
-  = (mkDescriptor [("count", .scalar)] (.predicate [.simple (.monotonic "count")])).vk)  -- true
+#guard (decide (counterFactory.vk
+  = (mkDescriptor [("count", .scalar)] (.predicate [.simple (.monotonic "count")])).vk))  --  true
 
 end Dregg2.Exec.Factory

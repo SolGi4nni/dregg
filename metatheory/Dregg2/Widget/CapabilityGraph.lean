@@ -199,28 +199,30 @@ the delegation chain visibly drops rights (`read,write` ↦ `read` ↦ `∅`). I
 vacuous (e.g. always empty, or ignoring the cap table), these would not show the shrinking labels. -/
 
 -- The owner holds `read·write` on `7`; the picture's owner→7 edge is labelled exactly this.
-#eval (capGraphRows capGraphDemo capGraphDemoHolders).map (fun r => (r.holder, r.target, rightsLabel r.rights))
+#guard ((capGraphRows capGraphDemo capGraphDemoHolders).map (fun r => (r.holder, r.target, rightsLabel r.rights)))
+  == [(0, some 7, "read·write"), (1, some 7, "read"), (2, some 7, "∅")]
   -- [(0, some 7, "read·write"), (1, some 7, "read"), (2, some 7, "∅")]
 
 -- The Granovetter shrink, as a Bool: holder 1's rights ⊊ holder 0's, and holder 2's are empty.
-#eval
-  let rows := capGraphRows capGraphDemo capGraphDemoHolders
-  let r0 : Nat := (rows.find? (·.holder == 0)).map (·.rights.length) |>.getD 0   -- 2
-  let r1 : Nat := (rows.find? (·.holder == 1)).map (·.rights.length) |>.getD 99  -- 1
-  let r2 : Nat := (rows.find? (·.holder == 2)).map (·.rights.length) |>.getD 99  -- 0
-  decide (r1 < r0 ∧ r2 < r1)                                                     -- true (strictly attenuating)
+#guard
+  (let rows := capGraphRows capGraphDemo capGraphDemoHolders
+   let r0 : Nat := (rows.find? (·.holder == 0)).map (·.rights.length) |>.getD 0   -- 2
+   let r1 : Nat := (rows.find? (·.holder == 1)).map (·.rights.length) |>.getD 99  -- 1
+   let r2 : Nat := (rows.find? (·.holder == 2)).map (·.rights.length) |>.getD 99  -- 0
+   decide (r1 < r0 ∧ r2 < r1))                                                    -- true (strictly attenuating)
 
 -- The node set is computed from the table (owner/children + the shared target 7), not hand-listed.
-#eval capNodes (capGraphRows capGraphDemo capGraphDemoHolders)            -- [0, 1, 2, 7]
-#eval (capVertices capGraphDemo capGraphDemoHolders).size                 -- 4
-#eval (capEdges capGraphDemo capGraphDemoHolders).size                    -- 3
+#guard capNodes (capGraphRows capGraphDemo capGraphDemoHolders) == [0, 1, 2, 7]  -- [0, 1, 2, 7]
+#guard (capVertices capGraphDemo capGraphDemoHolders).size == 4            -- 4
+#guard (capEdges capGraphDemo capGraphDemoHolders).size == 3               -- 3
 
 -- The existing `c0` example also renders (single holder, single edge) — a second real table.
-#eval (capGraphRows c0 c0Holders).map (fun r => (r.holder, r.target, rightsLabel r.rights))
+#guard ((capGraphRows c0 c0Holders).map (fun r => (r.holder, r.target, rightsLabel r.rights)))
+  == [(0, some 7, "read·write")]
   -- [(0, some 7, "read·write")]
 
 -- The graph value's own moving quantity: the delegation graph has MORE nodes/edges than `c0`'s.
-#eval decide ((capEdges capGraphDemo capGraphDemoHolders).size > (capEdges c0 c0Holders).size)  -- true
+#guard decide ((capEdges capGraphDemo capGraphDemoHolders).size > (capEdges c0 c0Holders).size)  -- true
 
 /-! ## §5 — FORCE THE RENDER. `#html` elaborates the `GraphDisplay` over the real `Caps`.
 

@@ -257,16 +257,16 @@ def conserveCell : RecChained :=
 -- Move 4 from a to b: candidate a=3, then set b=7 — but a single `RecOp` only touches one field,
 -- so a conserving move needs a two-field op set; with the tiny `RecOp` we demonstrate the GATE:
 -- setting `a := 3` alone makes Σ = 3 + 3 = 6 ≠ 10 ⇒ REJECTED (fail-closed conservation).
-#eval recCexec conserveCell (.setScalar "a" 3)        -- none  (Σ would be 6 ≠ 10 — rejected)
-#eval (recCexec conserveCell (.setScalar "a" 3)).isNone  -- true
+#guard (recCexec conserveCell (.setScalar "a" 3)).isNone  --  none  (Σ would be 6 ≠ 10 — rejected)
+#guard ((recCexec conserveCell (.setScalar "a" 3)).isNone)  --  true
 -- The badge (height) of the un-moved cell is 0; a rejected op leaves it at 0 (stay-put).
-#eval recHeight conserveCell                          -- 0
-#eval recHeight (recNext conserveCell (.setScalar "a" 3))  -- 0 (stay-put on rejection)
+#guard (recHeight conserveCell) == 0  --  0
+#guard (recHeight (recNext conserveCell (.setScalar "a" 3))) == 0  --  0 (stay-put on rejection)
 -- A monotonic-count cell DOES advance: incrementing commits and the height ticks to 1.
 def liveCounter : RecChained :=
   { value := .record [("count", .int 5)], program := monoCountProgram, method := 0, log := [] }
-#eval (recCexec liveCounter (.addScalar "count" 1)).map recHeight   -- some 1 (chain advanced)
-#eval (recCexec liveCounter (.addScalar "count" (-1))).isNone       -- true (decrement rejected)
+#guard ((recCexec liveCounter (.addScalar "count" 1)).map recHeight) == some 1  --  some 1 (chain advanced)
+#guard ((recCexec liveCounter (.addScalar "count" (-1))).isNone)  --  true (decrement rejected)
 
 /-! ## Axiom hygiene — every keystone is kernel-axiom-clean (no `sorryAx`). -/
 

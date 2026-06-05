@@ -331,16 +331,13 @@ def cellAtRound3 : NetCell := mkNetCell 3 7
 def cellAtRound4 : NetCell := mkNetCell 4 7
 
 -- DEMO 1 — a turn below quorum is NOT BFT-final (tier is the never-blocking causal tier).
-#eval (cellAtRound2.tier, decide cellAtRound2.IsBftFinal)
--- expected: (Dregg2.Finality.Tier.causal, false)
+#guard ((cellAtRound2.tier, decide cellAtRound2.IsBftFinal)) == (Dregg2.Finality.Tier.causal, false)  -- expected: (Dregg2.Finality.Tier.causal, false)
 
 -- DEMO 2 — reaching quorum makes the turn BFT-final (tier rises to the τ-BFT tier).
-#eval (cellAtRound3.tier, decide cellAtRound3.IsBftFinal)
--- expected: (Dregg2.Finality.Tier.bft, true)
+#guard ((cellAtRound3.tier, decide cellAtRound3.IsBftFinal)) == (Dregg2.Finality.Tier.bft, true)  -- expected: (Dregg2.Finality.Tier.bft, true)
 
 -- DEMO 3 — growing the quorum (round 4, more votes) HOLDS the BFT tier (no downgrade).
-#eval (cellAtRound4.tier, decide cellAtRound4.IsBftFinal)
--- expected: (Dregg2.Finality.Tier.bft, true)
+#guard ((cellAtRound4.tier, decide cellAtRound4.IsBftFinal)) == (Dregg2.Finality.Tier.bft, true)  -- expected: (Dregg2.Finality.Tier.bft, true)
 
 -- DEMO 4 — the tier order witnesses the rise then hold: causal < bft = bft.
 #eval (decide (cellAtRound2.tier < cellAtRound3.tier),

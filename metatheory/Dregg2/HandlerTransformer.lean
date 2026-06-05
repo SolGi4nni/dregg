@@ -344,8 +344,8 @@ example : Safe ((idTransformer (R := Auth Nat)).comp idTransformer) :=
   safe_transformer_composes id_is_safe id_is_safe
 
 -- v0 accepts its designated transcript; vOther rejects it.
-#eval Reference.check Reference.V.v0 7 Reference.designatedProof       -- true
-#eval Reference.check Reference.V.vOther 7 Reference.designatedProof   -- false
+#guard Reference.check Reference.V.v0 7 Reference.designatedProof
+#guard Reference.check Reference.V.vOther 7 Reference.designatedProof == false
 
 /-! ## §9 — Verdict.
 

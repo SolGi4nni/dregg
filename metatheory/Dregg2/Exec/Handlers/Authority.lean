@@ -346,41 +346,37 @@ def as0 : RecordKernelState :=
 
 -- §TEETH-1 (KEY FIX — Granovetter premise bites): a delegation by cell 1 (which holds NO cap to
 -- target 7) is REJECTED — connectivity does not begin from nothing.
-#eval (execEffect (delegateEffect 1 0 7) as0).isSome        -- false (delegator 1 lacks connectivity)
+#guard ((execEffect (delegateEffect 1 0 7) as0).isSome) == false  --  false (delegator 1 lacks connectivity)
 -- §TEETH-2 (within-rights delegation): cell 0 (which HOLDS connectivity to 7) delegates to cell 1 —
 -- SUCCEEDS (the held cap to 7 is attenuated and granted; granted ⊆ held).
-#eval (execEffect (delegateEffect 0 1 7) as0).isSome        -- true (delegator 0 holds a `node 7` cap)
+#guard ((execEffect (delegateEffect 0 1 7) as0).isSome)  --  true (delegator 0 holds a `node 7` cap)
 -- §TEETH-3 (granted ⊆ held): after the delegation, recipient cell 1 holds the (attenuated-to-full)
 -- held cap to 7 — `attenuate allAuths (Cap.node 7) = Cap.node 7` (a node cap has no rights list to
 -- narrow), so the granted cap is exactly the held cap, NOT a manufactured stronger cap.
-#eval (execEffect (delegateEffect 0 1 7) as0).map (fun k => k.caps 1)   -- some [Cap.node 7]
+#guard ((execEffect (delegateEffect 0 1 7) as0).map (fun k => k.caps 1)) == some [Cap.node 7]  --  some [Cap.node 7]
 -- §TEETH-4 (NARROWED delegation): cell 0 delegates its endpoint-9-write cap attenuated to `[]` (drop
 -- write) — the granted cap confers NO rights (strictly narrower than the held `[write]`).
-#eval (execEffect (delegateAttenEffect 0 1 9 []) as0).map (fun k => k.caps 1)
-        -- some [Cap.endpoint 9 []]   (write DROPPED — granted ⊊ held)
+#guard ((execEffect (delegateAttenEffect 0 1 9 []) as0).map (fun k => k.caps 1)) == some [Cap.endpoint 9 []]  -- some [Cap.endpoint 9 []]   (write DROPPED — granted ⊊ held)
 -- §TEETH-5 (revoke is TOTAL): cell 0 revokes its connectivity to target 7 — ALWAYS succeeds, and the
 -- `node 7` cap is filtered out of its slot (only the endpoint-9 cap survives).
-#eval (execEffect (revokeEffect 0 7) as0).map (fun k => k.caps 0)
-        -- some [Cap.endpoint 9 [Auth.write]]   (the `node 7` cap is gone)
+#guard ((execEffect (revokeEffect 0 7) as0).map (fun k => k.caps 0)) == some [Cap.endpoint 9 [Auth.write]]  -- some [Cap.endpoint 9 [Auth.write]]   (the `node 7` cap is gone)
 -- §TEETH-6 (dropRef is TOTAL + self-limiting): dropRef always commits; cell 0's reach only shrinks.
-#eval (execEffect (dropRefEffect 0 9) as0).map (fun k => k.caps 0)
-        -- some [Cap.node 7]   (the endpoint-9 cap dropped)
+#guard ((execEffect (dropRefEffect 0 9) as0).map (fun k => k.caps 0)) == some [Cap.node 7]  -- some [Cap.node 7]   (the endpoint-9 cap dropped)
 -- §TEETH-7 (attenuate is TOTAL + self-limiting): cell 0 narrows its OWN idx-1 cap (endpoint 9) to `[]`
 -- — always commits; the actor's own authority shrinks (write dropped).
-#eval (execEffect (attenuateEffect 0 1 []) as0).map (fun k => k.caps 0)
-        -- some [Cap.node 7, Cap.endpoint 9 []]   (idx-1 narrowed in place)
+#guard ((execEffect (attenuateEffect 0 1 []) as0).map (fun k => k.caps 0)) == some [Cap.node 7, Cap.endpoint 9 []]  -- some [Cap.node 7, Cap.endpoint 9 []]   (idx-1 narrowed in place)
 -- §TEETH-8 (CONSERVATION): a within-rights delegation leaves the combined per-asset measure UNCHANGED.
-#eval (execEffect (delegateEffect 0 1 7) as0).map
-        (fun k => (recTotalAssetWithEscrow as0 0, recTotalAssetWithEscrow k 0))   -- some (100, 100)
+#guard ((execEffect (delegateEffect 0 1 7) as0).map
+        (fun k => (recTotalAssetWithEscrow as0 0, recTotalAssetWithEscrow k 0))) == some (100, 100)  --  some (100, 100)
 -- §TEETH-9 (CONSERVATION): a revoke leaves the combined per-asset measure UNCHANGED.
-#eval (execEffect (revokeEffect 0 7) as0).map (fun k => recTotalAssetWithEscrow k 0)   -- some 100
+#guard ((execEffect (revokeEffect 0 7) as0).map (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 -- §TEETH-10 (turn conserves): a turn = [delegate; attenuate; revoke] runs through the registry foldlM
 -- and the combined measure is unchanged (every authority effect has `delta = 0`).
-#eval (execTurn [delegateEffect 0 1 7, attenuateEffect 0 1 [], revokeEffect 1 7] as0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                          -- some 100
+#guard ((execTurn [delegateEffect 0 1 7, attenuateEffect 0 1 [], revokeEffect 1 7] as0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 
 /-! ## §5 — turnDelta cross-check: the authority turn moves the measure by exactly 0. -/
-#eval turnDelta [delegateEffect 0 1 7, attenuateEffect 0 1 [], revokeEffect 1 7] 0  -- 0
+#guard (turnDelta [delegateEffect 0 1 7, attenuateEffect 0 1 [], revokeEffect 1 7] 0) == 0  --  0
 
 /-! ## §6 — Axiom-hygiene pins (every handler keystone rests only on the three kernel axioms).
 

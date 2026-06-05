@@ -308,17 +308,17 @@ theorem teeth_conjunction_in_step :
   refine ⟨3, by norm_num, ?_, teeth_midstep_conjunction⟩
   unfold teethT; norm_num
 
-/-! ## 5. `#eval` witnesses — the curvature screen, runnable. -/
+/-! ## 5. build-enforced witnesses — the curvature screen, runnable. -/
 
 -- A genuinely-clear curved pair: sep0=10, slope=0, κ=1, T=2 → envelope min = 10 − ½·1·4 = 8 ≥ 6.
-#eval curvScreen 10 0 1 2 6        -- true  (small curvature drop; still clear)
+#guard curvScreen 10 0 1 2 6                                    -- (small curvature drop; still clear)
 -- The teeth pair: affine (κ=0) says clear, curvature (κ=2) says NOT clear.
-#eval curvScreen teethSep0 teethSlope 0 teethT teethThr        -- true  (affine: FOOLED)
-#eval curvScreen teethSep0 teethSlope teethKappa teethT teethThr -- false (curvature: SOUND reject)
+#guard curvScreen teethSep0 teethSlope 0 teethT teethThr        -- (affine: FOOLED)
+#guard curvScreen teethSep0 teethSlope teethKappa teethT teethThr == false -- (curvature: SOUND reject)
 -- The endpoint envelope values exposing the mid-step drop the affine screen misses:
-#eval envelope teethSep0 teethSlope teethKappa 0               -- 10  (clear)
-#eval envelope teethSep0 teethSlope teethKappa teethT          -- -6  (breach: 10 − ½·2·16)
-#eval teethSepFn 3                                             -- 1   (realized mid-step conjunction)
+#guard envelope teethSep0 teethSlope teethKappa 0 == 10         -- (clear)
+#guard envelope teethSep0 teethSlope teethKappa teethT == -6    -- (breach: 10 − ½·2·16)
+#guard teethSepFn 3 == 1                                        -- (realized mid-step conjunction)
 
 /-! ## 6. Axiom hygiene. Every keystone pinned to the standard kernel axioms. -/
 

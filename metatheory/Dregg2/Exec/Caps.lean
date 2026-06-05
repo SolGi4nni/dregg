@@ -239,11 +239,10 @@ theorem exec_authorized_is_integrity
 def c0 : Caps := fun l => if l = 0 then [Cap.endpoint 7 [Auth.read, Auth.write]] else []
 
 -- Attenuate the endpoint cap to read-only.
-#eval capAuthConferred (attenuate [Auth.read] (Cap.endpoint 7 [Auth.read, Auth.write]))
-  -- [Dregg2.Authority.Auth.read]
-#eval invoke c0 0 7 Auth.write          -- true  (holds write on 7)
-#eval invoke c0 0 7 Auth.grant          -- false (write/read only)
-#eval invoke (revoke c0 0 (Cap.endpoint 7 [Auth.read, Auth.write])) 0 7 Auth.write  -- false
-#eval invoke (grant c0 1 (Cap.node 7)) 1 7 Auth.control                              -- true
+#guard (capAuthConferred (attenuate [Auth.read] (Cap.endpoint 7 [Auth.read, Auth.write]))) == [Dregg2.Authority.Auth.read]  -- [Dregg2.Authority.Auth.read]
+#guard (invoke c0 0 7 Auth.write)  --  true  (holds write on 7)
+#guard (invoke c0 0 7 Auth.grant) == false  --  false (write/read only)
+#guard (invoke (revoke c0 0 (Cap.endpoint 7 [Auth.read, Auth.write])) 0 7 Auth.write) == false  --  false
+#guard (invoke (grant c0 1 (Cap.node 7)) 1 7 Auth.control)  --  true
 
 end Dregg2.Exec

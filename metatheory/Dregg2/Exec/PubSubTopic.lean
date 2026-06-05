@@ -292,8 +292,7 @@ def topic0 : Value :=
 
 -- REJECTED: a publish that GROWS the log but REWINDS the head seq (0 → 0, not strict) — strictMono
 -- fails ⇒ none.
-#eval publish topic0 0 3
-  -- none  (0 > 0 is false)
+#guard (publish topic0 0 3).isNone  -- none  (0 > 0 is false)
 -- REJECTED: a publish that advances the seq but SHRINKS the event log (size 5 → 2) — monotonic
 -- fails ⇒ none (APPEND-ONLY enforced).
 #eval publish (.record [("headSeq", .int 1), ("eventRoot", .int 5),
@@ -304,8 +303,7 @@ def topic0 : Value :=
                           ("cursorsRoot", .int 4), ("publisher", .dig 7)]) 1
   -- none  (1 ≥ 4 is false)
 -- REJECTED (default-deny): an unknown method (3) matches no arm ⇒ none.
-#eval recExec topicProgram 3 topic0 (.setScalar "headSeq" 99)
-  -- none  (no matching case → default-deny)
+#guard (recExec topicProgram 3 topic0 (.setScalar "headSeq" 99)).isNone  -- none  (no matching case → default-deny)
 
 -- Two successive publishes: the head advances (1, then 2) and the log grows (3, then 7) — the
 -- append-only stream of §3.3, each a gated turn through the same program.

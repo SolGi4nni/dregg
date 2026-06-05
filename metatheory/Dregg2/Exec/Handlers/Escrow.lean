@@ -431,32 +431,30 @@ def esLocked : Option RecordKernelState :=
   createEscrowStep es0 { id := 9, actor := 0, creator := 0, recipient := 1, asset := 0, amount := 40 }
 
 -- §TEETH-1 (R2 ATTACK): an UNAUTHORIZED actor 5 RELEASING escrow 9 (recipient is 1, not 5) ⇒ REJECTED.
-#eval (esLocked.bind (fun k => execEffect (releaseEscrowEffect 5 9) k)).isSome     -- false
+#guard ((esLocked.bind (fun k => execEffect (releaseEscrowEffect 5 9) k)).isSome) == false  --  false
 -- §TEETH-2 (R2 ATTACK): an UNAUTHORIZED actor 5 REFUNDING escrow 9 (creator is 0, not 5) ⇒ REJECTED.
-#eval (esLocked.bind (fun k => execEffect (refundEscrowEffect 5 9) k)).isSome      -- false
+#guard ((esLocked.bind (fun k => execEffect (refundEscrowEffect 5 9) k)).isSome) == false  --  false
 -- §TEETH-3 (HONEST RELEASE): the recipient (cell 1) releases escrow 9 ⇒ SUCCEEDS (actor-gate passes).
-#eval (esLocked.bind (fun k => execEffect (releaseEscrowEffect 1 9) k)).isSome     -- true
+#guard ((esLocked.bind (fun k => execEffect (releaseEscrowEffect 1 9) k)).isSome)  --  true
 -- §TEETH-4 (HONEST REFUND): the creator (cell 0) refunds escrow 9 ⇒ SUCCEEDS (actor-gate passes).
-#eval (esLocked.bind (fun k => execEffect (refundEscrowEffect 0 9) k)).isSome      -- true
+#guard ((esLocked.bind (fun k => execEffect (refundEscrowEffect 0 9) k)).isSome)  --  true
 -- §TEETH-5 (CONSERVATION): an honest release conserves the combined per-asset measure (lock returns).
-#eval (esLocked.bind (fun k => execEffect (releaseEscrowEffect 1 9) k)).map
-        (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))  -- some (100, 100, 0)
+#guard ((esLocked.bind (fun k => execEffect (releaseEscrowEffect 1 9) k)).map
+        (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))) == some (100, 100, 0)  --  some (100, 100, 0)
 -- §TEETH-6 (CREATE conserves): create itself fixes the combined measure (ledger 60, held 40, total 100).
-#eval esLocked.map (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))
-        -- some (100, 60, 40)
+#guard (esLocked.map (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))) == some (100, 60, 40)  -- some (100, 60, 40)
 -- §TEETH-7 (OBLIGATION alias): slash (=release) by the beneficiary 1 SUCCEEDS, by a stranger 5 REJECTED.
-#eval (esLocked.bind (fun k => slashObligationA.step k { actor := 1, id := 9 })).isSome   -- true
-#eval (esLocked.bind (fun k => slashObligationA.step k { actor := 5, id := 9 })).isSome   -- false
+#guard ((esLocked.bind (fun k => slashObligationA.step k { actor := 1, id := 9 })).isSome)  --  true
+#guard ((esLocked.bind (fun k => slashObligationA.step k { actor := 5, id := 9 })).isSome) == false  --  false
 -- §TEETH-8 (NOTE double-spend): a first spend of nullifier 7 succeeds; a replay is REJECTED.
-#eval (execEffect (noteSpendEffect 0 7) es0).isSome                                       -- true
-#eval ((noteSpendStep es0 { actor := 0, nf := 7 }).bind
-        (fun k => noteSpendStep k { actor := 0, nf := 7 })).isSome                        -- false
+#guard ((execEffect (noteSpendEffect 0 7) es0).isSome)  --  true
+#guard (((noteSpendStep es0 { actor := 0, nf := 7 }).bind
+        (fun k => noteSpendStep k { actor := 0, nf := 7 })).isSome) == false  --  false
 -- §TEETH-9 (NOTE create total): a note-create always commits and is balance-neutral.
-#eval (execEffect (noteCreateEffect 0 42) es0).map (fun k => (k.commitments, recTotalAssetWithEscrow k 0))
-        -- some ([42], 100)
+#guard ((execEffect (noteCreateEffect 0 42) es0).map (fun k => (k.commitments, recTotalAssetWithEscrow k 0))) == some ([42], 100)  -- some ([42], 100)
 -- §TEETH-10 (turn conserves): a turn [create; release-by-recipient] runs the foldlM and conserves.
-#eval (execTurn [createEscrowEffect 9 0 0 1 0 40, releaseEscrowEffect 1 9] es0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                            -- some 100
+#guard ((execTurn [createEscrowEffect 9 0 0 1 0 40, releaseEscrowEffect 1 9] es0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 
 /-! ## §7 — Axiom-hygiene pins (every handler keystone rests only on the three kernel axioms).
 

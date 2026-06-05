@@ -344,41 +344,40 @@ def brLocked : Option RecordKernelState :=
   bridgeLockStep br0 { id := 9, actor := 0, originator := 0, destination := 1, asset := 1, amount := 30 }
 
 -- §TEETH-1 (LOCK conserves): the lock fixes the COMBINED measure at asset 1 (100, held 0 → bare 70, held 30).
-#eval brLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAsset k 1, escrowHeldAsset k 1))
-        -- some (100, 70, 30) — combined CONSERVED, bare DOWN, held UP
+#guard (brLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAsset k 1, escrowHeldAsset k 1))) == some (100, 70, 30)  -- some (100, 70, 30) — combined CONSERVED, bare DOWN, held UP
 -- §TEETH-2 (THE `delta < 0` MILESTONE, R12 CLOSED): the CREATOR (cell 0) finalizes bridge 9 ⇒ the combined
 -- measure DROPS from 100 to 70 at asset 1 (a disclosed outflow of 30), asset 0 FIXED at 0. The NEW total
 -- is STRICTLY LESS than the OLD total — the `delta < 0` is genuinely accounted.
-#eval (brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 30) k)).map
-        (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))   -- some (70, 0) — DROPPED by 30 at asset 1
+#guard ((brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 30) k)).map
+        (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))) == some (70, 0)  --  some (70, 0) — DROPPED by 30 at asset 1
 -- §TEETH-3 (the drop is STRICTLY NEGATIVE — the milestone, made explicit): new < old at the bridged asset.
-#eval (brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 30) k)).map
-        (fun k' => decide (recTotalAssetWithEscrow k' 1 < recTotalAssetWithEscrow br0 1))   -- some true
+#guard ((brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 30) k)).map
+        (fun k' => decide (recTotalAssetWithEscrow k' 1 < recTotalAssetWithEscrow br0 1))) == some true  --  some true
 -- §TEETH-4 (CREATOR-ONLY finalize, R-audit gate): a NON-creator (cell 5) finalizing bridge 9 ⇒ REJECTED.
-#eval (brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 5 1 30) k)).isSome    -- false
+#guard ((brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 5 1 30) k)).isSome) == false  --  false
 -- §TEETH-5 (CREATOR-ONLY cancel): a NON-creator (cell 5) cancelling bridge 9 ⇒ REJECTED.
-#eval (brLocked.bind (fun k => execEffect (bridgeCancelEffect 5 9) k)).isSome           -- false
+#guard ((brLocked.bind (fun k => execEffect (bridgeCancelEffect 5 9) k)).isSome) == false  --  false
 -- §TEETH-6 (HONEST CANCEL conserves): the creator (cell 0) cancels bridge 9 ⇒ the value REFUNDS to the
 -- originator; combined CONSERVED at (100, 0), held back to 0, bare back to 100.
-#eval (brLocked.bind (fun k => execEffect (bridgeCancelEffect 0 9) k)).map
+#guard ((brLocked.bind (fun k => execEffect (bridgeCancelEffect 0 9) k)).map
         (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0,
-                   escrowHeldAsset k 1, recTotalAsset k 1))                    -- some (100, 0, 0, 100) — REFUND round-trip CONSERVED
+                   escrowHeldAsset k 1, recTotalAsset k 1))) == some (100, 0, 0, 100)  --  some (100, 0, 0, 100) — REFUND round-trip CONSERVED
 -- §TEETH-7 (MISMATCHED finalize fail-closed): disclosed amount 99 ≠ parked 30 (receipt-vs-pending) ⇒ REJECTED.
-#eval (brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 99) k)).isSome    -- false
+#guard ((brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 1 99) k)).isSome) == false  --  false
 -- §TEETH-8 (MISMATCHED-ASSET finalize fail-closed): disclosed asset 0 ≠ parked 1 ⇒ REJECTED.
-#eval (brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 0 30) k)).isSome    -- false
+#guard ((brLocked.bind (fun k => execEffect (bridgeFinalizeEffect 9 0 0 30) k)).isSome) == false  --  false
 -- §TEETH-9 (UNAUTHORIZED lock fail-closed): actor 5 owns nothing ⇒ the lock is REJECTED.
-#eval (execEffect (bridgeLockEffect 9 5 0 1 1 30) br0).isSome                           -- false
+#guard ((execEffect (bridgeLockEffect 9 5 0 1 1 30) br0).isSome) == false  --  false
 -- §TEETH-10 (PIPELINED-SEND total + neutral): always commits, leaves the combined measure unchanged.
-#eval (execEffect (pipelinedSendEffect 0) br0).map (fun k => recTotalAssetWithEscrow k 1)  -- some 100
+#guard ((execEffect (pipelinedSendEffect 0) br0).map (fun k => recTotalAssetWithEscrow k 1)) == some 100  --  some 100
 -- §TEETH-11 (turn SUMS the `delta < 0`): a turn [lock; finalize-by-creator] runs through the registry
 -- foldlM; the combined measure lands at 100 - 30 = 70 — the SUM of (lock 0) + (finalize -30), the headline
 -- `turn_conserves` law summing a NEGATIVE per-effect delta.
-#eval (execTurn [bridgeLockEffect 9 0 0 1 1 30, bridgeFinalizeEffect 9 0 1 30] br0).map
-        (fun k => recTotalAssetWithEscrow k 1)                                          -- some 70
+#guard ((execTurn [bridgeLockEffect 9 0 0 1 1 30, bridgeFinalizeEffect 9 0 1 30] br0).map
+        (fun k => recTotalAssetWithEscrow k 1)) == some 70  --  some 70
 -- §TEETH-12 (turnDelta cross-check): the §TEETH-11 turn's combined per-asset delta at asset 1 is
 -- `0 + (-30) = -30` (the SUM the algebra's `turn_conserves` holds the measure to — the NEGATIVE milestone).
-#eval turnDelta [bridgeLockEffect 9 0 0 1 1 30, bridgeFinalizeEffect 9 0 1 30] 1          -- -30
+#guard (turnDelta [bridgeLockEffect 9 0 0 1 1 30, bridgeFinalizeEffect 9 0 1 30] 1) == -30  --  -30
 
 /-! ## §7 — Axiom-hygiene pins (every handler keystone rests only on the three kernel axioms).
 

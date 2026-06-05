@@ -556,53 +556,53 @@ def qhEnqUnrelated : Option RecordKernelState :=
 
 -- §TEETH-1 (P0-1 ATTACK): owner 0 dequeues but names the UNRELATED deposit 99 (recipient 8 ≠ actor 0) ⇒
 -- REJECTED. The binding gate bites: a deposit destined to someone else cannot be drained.
-#eval (qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 99) k)).isSome   -- false
+#guard ((qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 99) k)).isSome) == false  --  false
 -- §TEETH-2 (HONEST): owner 0 dequeues and names its OWN bound deposit 9 (recipient 0 = actor 0) ⇒ SUCCEEDS.
-#eval (qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).isSome    -- true
+#guard ((qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).isSome)  --  true
 -- §TEETH-3 (CONSERVATION): the honest bound refund conserves the combined per-asset measure.
-#eval (qhEnq.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).map
-        (fun k => recTotalAssetWithEscrow k 0)                                      -- some 100
+#guard ((qhEnq.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 -- §TEETH-4 (DEPOSIT MOVES the bare ledger): enqueue debits the sender's ledger (100 → 70), combined held.
-#eval qhEnq.map (fun k => (recTotalAsset k 0, recTotalAssetWithEscrow k 0))         -- some (70, 100)
+#guard (qhEnq.map (fun k => (recTotalAsset k 0, recTotalAssetWithEscrow k 0))) == some (70, 100)  --  some (70, 100)
 -- §TEETH-5 (FIFO order): after enqueue the message is in the buffer.
-#eval qhEnq.bind (fun k => (findQueue k.queues 7).map (·.buffer))                   -- some [111]
+#guard (qhEnq.bind (fun k => (findQueue k.queues 7).map (·.buffer))) == some [111]  --  some [111]
 -- §TEETH-6 (ALLOCATE): actor 0 allocates a fresh queue id 12 (owner 0) ⇒ SUCCEEDS, combined unchanged.
-#eval (execEffect (allocateEffect 0 12 0 4) qh0).map
-        (fun k => (recTotalAssetWithEscrow k 0, ((findQueue k.queues 12).map (·.capacity))))  -- some (0, some 4)
+#guard ((execEffect (allocateEffect 0 12 0 4) qh0).map
+        (fun k => (recTotalAssetWithEscrow k 0, ((findQueue k.queues 12).map (·.capacity))))) == some (100, some 4)  -- TODO(triage): comment claimed `some (0, some 4)`; code yields `some (100, some 4)` — the combined asset-0 measure of fixture qh0 is 100, not 0 (stale fixture value; allocate is correctly balance-neutral and capacity 4 is right).
 -- §TEETH-7 (ALLOCATE duplicate id REJECTED): re-allocating the existing queue 7 ⇒ none.
-#eval (execEffect (allocateEffect 0 7 0 4) qh0).isSome                              -- false
+#guard ((execEffect (allocateEffect 0 7 0 4) qh0).isSome) == false  --  false
 -- §TEETH-8 (RESIZE): grow queue 7's capacity to 5 ⇒ SUCCEEDS; shrink below occupancy is rejected (see kernel).
-#eval (execEffect (resizeEffect 0 7 5 0) qh0).map
-        (fun k => (findQueue k.queues 7).map (·.capacity))                          -- some (some 5)
+#guard ((execEffect (resizeEffect 0 7 5 0) qh0).map
+        (fun k => (findQueue k.queues 7).map (·.capacity))) == some (some 5)  --  some (some 5)
 -- §TEETH-9 (ENQUEUE deposit gate): a deposit of 200 (> sender's 100) is REJECTED.
-#eval (execEffect (enqueueEffect 7 111 5 0 9 0 200) qh0).isSome                     -- false
+#guard ((execEffect (enqueueEffect 7 111 5 0 9 0 200) qh0).isSome) == false  --  false
 -- §TEETH-10 (ATOMIC-TX all-or-nothing + conserve): a batch [enqueue dep30; dequeue-refund bound 9] runs
 -- the fold and conserves the combined measure (deposit parked then refunded back).
-#eval (execEffect (atomicTxEffect 0
+#guard ((execEffect (atomicTxEffect 0
         [ QueueTxOpK.enqueue 7 111 5 0 9 0 30, QueueTxOpK.dequeue 7 0 9 ]) qh0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                      -- some 100
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 -- §TEETH-11 (ATOMIC-TX P0-1 binding carries into the batch): a batch whose dequeue names an UNRELATED
 -- deposit (recipient ≠ actor) ROLLS BACK the whole batch (the binding gate bites inside the fold).
-#eval (execEffect (atomicTxEffect 0
+#guard ((execEffect (atomicTxEffect 0
         [ QueueTxOpK.enqueue 7 111 5 0 9 0 30, QueueTxOpK.enqueue 7 222 5 8 99 0 20,
-          QueueTxOpK.dequeue 7 0 99 ]) qh0).isSome                                  -- false
+          QueueTxOpK.dequeue 7 0 99 ]) qh0).isSome) == false  --  false
 -- §TEETH-12 (PIPELINE fan-out): allocate a sink queue (id 13, owner 0), enqueue a message into source 7,
 -- then pipeline the head from 7 into sink 13 ⇒ SUCCEEDS; the message LANDED in the sink and the combined
 -- measure is UNCHANGED (the fixture's asset-0 measure 100 stays 100 — messages move, not value).
-#eval ((queueAllocateK qh0 13 0 3).bind (fun k => queueEnqueueK k 7 111)).bind
+#guard (((queueAllocateK qh0 13 0 3).bind (fun k => queueEnqueueK k 7 111)).bind
         (fun k => execEffect (pipelineEffect 7 0 [0] [13]) k) |>.map
-        (fun k => ((findQueue k.queues 13).map (·.buffer), recTotalAssetWithEscrow k 0))  -- some (some [111], 100)
+        (fun k => ((findQueue k.queues 13).map (·.buffer), recTotalAssetWithEscrow k 0))) == some (some [111], 100)  --  some (some [111], 100)
 -- §TEETH-13 (PIPELINE source-empty REJECTED): pipelining an EMPTY source queue ⇒ none.
-#eval (execEffect (pipelineEffect 7 0 [0] [13]) qh0).isSome                         -- false
+#guard ((execEffect (pipelineEffect 7 0 [0] [13]) qh0).isSome) == false  --  false
 
 /-! ## §9 — turn_conserves cross-check: a registry turn of queue effects conserves the combined measure.
 
 The §8-TEETH-10 atomic batch's combined per-asset delta is `0` (deposit parked then refunded) — the SUM
 the algebra's `turn_conserves` holds the measure to. A whole TURN of queue effects (allocate; enqueue;
 bound dequeue) runs through the generic `execTurn` foldlM and conserves. -/
-#eval turnDelta [allocateEffect 0 12 0 4, enqueueEffect 7 111 5 0 9 0 30, dequeueEffect 7 0 9] 0  -- 0
-#eval (execTurn [enqueueEffect 7 111 5 0 9 0 30, dequeueEffect 7 0 9] qh0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                      -- some 100
+#guard (turnDelta [allocateEffect 0 12 0 4, enqueueEffect 7 111 5 0 9 0 30, dequeueEffect 7 0 9] 0) == 0  --  0
+#guard ((execTurn [enqueueEffect 7 111 5 0 9 0 30, dequeueEffect 7 0 9] qh0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 
 /-! ## §10 — Axiom-hygiene pins (every handler keystone rests only on the three kernel axioms).
 

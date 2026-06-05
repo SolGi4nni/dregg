@@ -158,10 +158,10 @@ def sMint : KernelState :=
     bal := fun c => if c = 0 then 100 else if c = 1 then 5 else 0
     caps := fun a => if a = 9 then [Cap.node 0] else [] }
 
-#eval (execMint sMint 9 0 50).map total       -- some 155 (100+5+50)
-#eval (execMint sMint 7 0 50).isSome           -- false (actor 7 unauthorized)
-#eval (execBurn sMint 9 0 40).map total        -- some 65  (100+5-40)
-#eval (execBurn sMint 9 0 200).isSome          -- false (insufficient balance)
-#eval total sMint                              -- 105
+#guard ((execMint sMint 9 0 50).map total) == some 155  --  some 155 (100+5+50)
+#guard ((execMint sMint 7 0 50).isSome) == false  --  false (actor 7 unauthorized)
+#guard ((execBurn sMint 9 0 40).map total) == some 65  --  some 65  (100+5-40)
+#guard ((execBurn sMint 9 0 200).isSome) == false  --  false (insufficient balance)
+#guard (total sMint) == 105  --  105
 
 end Dregg2.Exec

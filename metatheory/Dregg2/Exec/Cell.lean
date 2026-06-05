@@ -197,9 +197,9 @@ def cell0 : ChainedState := { kernel := s0, log := [] }
 /-- The authorized transfer turn (actor 0 owns src 0). -/
 def turn0 : Turn := t1
 
-#eval cellObs cell0                                   -- 105 (the conserved badge)
-#eval (cexec cell0 turn0).map (fun s => cellObs s)    -- some 105 (conserved after the turn)
-#eval (cexec cell0 turn0).map (fun s => s.log.length) -- some 1   (the chain advanced — ObsAdvance)
-#eval cellObs (cellNext cell0 tBad)                   -- 105 (inadmissible turn ⇒ stay-put, badge unchanged)
+#guard (cellObs cell0) == 105  --  105 (the conserved badge)
+#guard ((cexec cell0 turn0).map (fun s => cellObs s)) == some 105  --  some 105 (conserved after the turn)
+#guard ((cexec cell0 turn0).map (fun s => s.log.length)) == some 1  --  some 1   (the chain advanced — ObsAdvance)
+#guard (cellObs (cellNext cell0 tBad)) == 105  --  105 (inadmissible turn ⇒ stay-put, badge unchanged)
 
 end Dregg2.Exec

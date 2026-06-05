@@ -472,22 +472,22 @@ def hs0Sealed : RecordKernelState :=
 def goodTransfer : ClosedEffect := transferEffect { actor := 0, src := 0, dst := 1, amt := 30 } 0
 
 -- §TEETH-1 (R1 CLOSED): a transfer into the SEALED cell 1 is REJECTED — admission gate bites.
-#eval (execEffect goodTransfer hs0Sealed).isSome        -- false  (R1 attack rejected)
+#guard ((execEffect goodTransfer hs0Sealed).isSome) == false  --  false  (R1 attack rejected)
 -- §TEETH-2: the SAME transfer into a LIVE cell 1 SUCCEEDS (self-authorized, amount available).
-#eval (execEffect goodTransfer hs0).isSome              -- true   (honest path admitted)
+#guard ((execEffect goodTransfer hs0).isSome)  --  true   (honest path admitted)
 -- §TEETH-3: conservation — the combined per-asset measure is UNCHANGED by the honest transfer (delta 0).
-#eval (execEffect goodTransfer hs0).map
-        (fun k => (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow hs0 0))   -- some (100, 100)
+#guard ((execEffect goodTransfer hs0).map
+        (fun k => (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow hs0 0))) == some (100, 100)  --  some (100, 100)
 -- §TEETH-4: a turn = [transfer; state-write on cell 1] runs through the registry foldlM and conserves.
-#eval (execTurn [goodTransfer, stateEffect 1] hs0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                    -- some 100
+#guard ((execTurn [goodTransfer, stateEffect 1] hs0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 -- §TEETH-5: a state-write into the SEALED cell 1 is REJECTED (admission bites for stateH too).
-#eval (execEffect (stateEffect 1) hs0Sealed).isSome     -- false
+#guard ((execEffect (stateEffect 1) hs0Sealed).isSome) == false  --  false
 -- §TEETH-6: escrow-create from the LIVE owner cell 0 succeeds and conserves the combined measure.
-#eval (execEffect (escrowEffect 7 0 0 1 0 40) hs0).map
-        (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))  -- some (100, 60, 40)
+#guard ((execEffect (escrowEffect 7 0 0 1 0 40) hs0).map
+        (fun k => (recTotalAssetWithEscrow k 0, recTotalAsset k 0, escrowHeldAsset k 0))) == some (100, 60, 40)  --  some (100, 60, 40)
 -- §TEETH-7: an UNAUTHORIZED transfer (actor 5 owns nothing, holds no cap) is REJECTED even into a Live cell.
-#eval (execEffect (transferEffect { actor := 5, src := 0, dst := 1, amt := 30 } 0) hs0).isSome  -- false
+#guard ((execEffect (transferEffect { actor := 5, src := 0, dst := 1, amt := 30 } 0) hs0).isSome) == false  --  false
 
 /-! ## §6 — Axiom-hygiene pins (the keystones rest only on the three kernel axioms). -/
 

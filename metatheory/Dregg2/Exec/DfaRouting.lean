@@ -465,8 +465,8 @@ theorem unauthorized_route_rejected (route : Route Nat Nat) (hmem : sidewaysHop 
   rw [sidewaysHop_unauthorized] at this
   exact absurd this (by decide)
 
-#eval goodRoute.dest        -- some 2  (delivered to the valid destination)
-#eval badRoute.dest         -- some 1  (stops at the non-accepting relay — no delivery)
+#guard (goodRoute.dest) == some 2  --  some 2  (delivered to the valid destination)
+#guard (badRoute.dest) == some 1  --  some 1  (stops at the non-accepting relay — no delivery)
 
 end Reference
 

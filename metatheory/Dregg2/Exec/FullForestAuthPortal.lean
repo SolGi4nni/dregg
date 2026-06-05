@@ -313,18 +313,18 @@ def goodToken : Authorization Nat Nat := .token 3 (Nat.pair 3 3)
 def forgedToken : Authorization Nat Nat := .token 3 0
 
 -- The production portal RUNS per-arm: genuine ⇒ accept, forged ⇒ reject, .unchecked ⇒ reject.
-#eval portalVerifyReal goodSig                                       -- true  (ed25519 accepts)
-#eval portalVerifyReal forgedSig                                     -- false (ed25519 rejects)
-#eval portalVerifyReal goodProof                                     -- true  (STARK accepts)
-#eval portalVerifyReal goodToken                                     -- true  (HMAC accepts)
-#eval portalVerifyReal forgedToken                                   -- false (HMAC rejects)
-#eval portalVerifyReal (Digest := Nat) (Proof := Nat) .unchecked     -- false (§8 anchor)
+#guard (portalVerifyReal goodSig)  --  true  (ed25519 accepts)
+#guard (portalVerifyReal forgedSig) == false  --  false (ed25519 rejects)
+#guard (portalVerifyReal goodProof)  --  true  (STARK accepts)
+#guard (portalVerifyReal goodToken)  --  true  (HMAC accepts)
+#guard (portalVerifyReal forgedToken) == false  --  false (HMAC rejects)
+#guard (portalVerifyReal (Digest := Nat) (Proof := Nat) .unchecked) == false  --  false (§8 anchor)
 -- OneOf selects a genuine candidate ⇒ accepts; an Unchecked at the slot ⇒ rejected:
-#eval portalVerifyReal (.oneOf [forgedSig, goodSig] 1)               -- true  (index-1 genuine)
-#eval portalVerifyReal (.oneOf [goodSig, .unchecked] 1)             -- false (Unchecked at slot)
+#guard (portalVerifyReal (.oneOf [forgedSig, goodSig] 1))  --  true  (index-1 genuine)
+#guard (portalVerifyReal (.oneOf [goodSig, .unchecked] 1)) == false  --  false (Unchecked at slot)
 -- the production AuthPortal's credentialValid IS portalVerifyReal:
-#eval AuthPortal.credentialValid (Ctx := Unit) goodSig ()            -- true
-#eval AuthPortal.credentialValid (Ctx := Unit) forgedSig ()         -- false
+#guard (AuthPortal.credentialValid (Ctx := Unit) goodSig ())  --  true
+#guard (AuthPortal.credentialValid (Ctx := Unit) forgedSig ()) == false  --  false
 
 /-- Soundness witness at the reference kernel: a genuine signature arm proves `Signed`. -/
 example : (instRealAuthPortal.sig).Signed 7 7 :=

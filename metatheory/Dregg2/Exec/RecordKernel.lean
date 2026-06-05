@@ -1910,40 +1910,40 @@ def brg0 : RecordKernelState :=
 def brgLocked : Option RecordKernelState := bridgeLockKAsset brg0 9 0 0 1 1 30
 
 -- LOCK: bare ledger DROPS at asset 1 (100→70), held RISES to 30, COMBINED CONSERVED at (100, 0).
-#eval (recTotalAssetWithEscrow brg0 1, recTotalAssetWithEscrow brg0 0)                  -- (100, 0)
-#eval brgLocked.map (fun k => (recTotalAsset k 1, escrowHeldAsset k 1))                 -- some (70, 30) — bare DOWN, held UP
-#eval brgLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))  -- some (100, 0) — CONSERVED both
+#guard ((recTotalAssetWithEscrow brg0 1, recTotalAssetWithEscrow brg0 0)) == (100, 0)  --  (100, 0)
+#guard (brgLocked.map (fun k => (recTotalAsset k 1, escrowHeldAsset k 1))) == some (70, 30)  --  some (70, 30) — bare DOWN, held UP
+#guard (brgLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))) == some (100, 0)  --  some (100, 0) — CONSERVED both
 -- the parked record carries the bridge tag (it is in the SHARED escrow store, tagged):
-#eval brgLocked.map (fun k => k.escrows.map (fun r => (r.id, r.amount, r.asset, r.bridge)))  -- some [(9, 30, 1, true)]
+#guard (brgLocked.map (fun k => k.escrows.map (fun r => (r.id, r.amount, r.asset, r.bridge)))) == some [(9, 30, 1, true)]  --  some [(9, 30, 1, true)]
 -- LOCK then CANCEL (refund to originator 0): COMBINED stays (100, 0), held returns to 0, bal back to 100.
-#eval (brgLocked.bind (fun k => bridgeCancelKAsset k 9)).map
+#guard ((brgLocked.bind (fun k => bridgeCancelKAsset k 9)).map
         (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0,
-                   escrowHeldAsset k 1, recTotalAsset k 1))                             -- some (100, 0, 0, 100) — REFUND round-trip CONSERVED
+                   escrowHeldAsset k 1, recTotalAsset k 1))) == some (100, 0, 0, 100)  --  some (100, 0, 0, 100) — REFUND round-trip CONSERVED
 -- LOCK then FINALIZE (value LEFT for the other chain): COMBINED DROPS by 30 at asset 1 (100→70),
 --   asset 0 FIXED at 0; held drops to 0; the bare bal STAYS at 70 (the value already left, now burned).
 --   The finalize DISCLOSES the bridged (asset 1, amount 30) — the executor gates on the record matching.
-#eval (brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 30)).map
+#guard ((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 30)).map
         (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0,
-                   escrowHeldAsset k 1, recTotalAsset k 1))                             -- some (70, 0, 0, 70) — COMBINED -30 at asset 1, asset 0 FIXED
+                   escrowHeldAsset k 1, recTotalAsset k 1))) == some (70, 0, 0, 70)  --  some (70, 0, 0, 70) — COMBINED -30 at asset 1, asset 0 FIXED
 -- double-finalize fail-closed (the record is already resolved):
-#eval ((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 30)).bind
-        (fun k => bridgeFinalizeKAsset k 9 1 30)).isSome                                -- false
+#guard (((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 30)).bind
+        (fun k => bridgeFinalizeKAsset k 9 1 30)).isSome) == false  --  false
 -- MISMATCHED finalize fail-closed (disclosed amount 99 ≠ parked 30, the receipt-vs-pending check):
-#eval (brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 99)).isSome                  -- false
+#guard ((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 99)).isSome) == false  --  false
 -- MISMATCHED-asset finalize fail-closed (disclosed asset 0 ≠ parked 1):
-#eval (brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 0 30)).isSome                  -- false
+#guard ((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 0 30)).isSome) == false  --  false
 -- double-lock fail-closed (the id is already in use):
-#eval (brgLocked.bind (fun k => bridgeLockKAsset k 9 0 0 1 1 10)).isSome                -- false
+#guard ((brgLocked.bind (fun k => bridgeLockKAsset k 9 0 0 1 1 10)).isSome) == false  --  false
 -- unauthorized lock fail-closed (actor 5 owns nothing):
-#eval (bridgeLockKAsset brg0 9 5 0 1 1 30).isSome                                       -- false
+#guard ((bridgeLockKAsset brg0 9 5 0 1 1 30).isSome) == false  --  false
 -- ORDINARY escrow rows in the shared holding-store are NOT bridge rows: finalize/cancel reject them.
 def brgOrdinaryEscrowSameId : RecordKernelState :=
   { brg0 with
     escrows := [{ id := 9, creator := 0, recipient := 1, amount := 30, resolved := false,
                   asset := 1, bridge := false }] }
 
-#eval (bridgeFinalizeKAsset brgOrdinaryEscrowSameId 9 1 30).isSome                      -- false
-#eval (bridgeCancelKAsset brgOrdinaryEscrowSameId 9).isSome                              -- false
+#guard ((bridgeFinalizeKAsset brgOrdinaryEscrowSameId 9 1 30).isSome) == false  --  false
+#guard ((bridgeCancelKAsset brgOrdinaryEscrowSameId 9).isSome) == false  --  false
 
 #assert_axioms bridge_lock_conserves_combined_per_asset
 #assert_axioms bridge_lock_debits_per_asset
@@ -2302,22 +2302,22 @@ def kq0 : RecordKernelState :=
     queues := [{ id := 7, owner := 0, capacity := 2, buffer := [] }] }
 
 -- FIFO ORDER WITNESS: enqueue 111 then 222; dequeue → 111 (the OLDER); dequeue remainder → 222.
-#eval (queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222) |>.map (fun k =>
-        (findQueue k.queues 7).map (·.buffer))                          -- some (some [111, 222]) — FIFO order, tail-appended
-#eval ((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
-        (fun k => (queueDequeueK k 7 0).map Prod.snd)                    -- some 111 — head dequeued FIRST (the older)
-#eval (((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
+#guard ((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222) |>.map (fun k =>
+        (findQueue k.queues 7).map (·.buffer))) == some (some [111, 222])  --  some (some [111, 222]) — FIFO order, tail-appended
+#guard (((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
+        (fun k => (queueDequeueK k 7 0).map Prod.snd)) == some 111  --  some 111 — head dequeued FIRST (the older)
+#guard ((((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
         (fun k => (queueDequeueK k 7 0).map Prod.fst)).bind
-        (fun k => (queueDequeueK k 7 0).map Prod.snd)                    -- some 222 — then the younger (FIFO preserved)
+        (fun k => (queueDequeueK k 7 0).map Prod.snd)) == some 222  --  some 222 — then the younger (FIFO preserved)
 -- CAPACITY BOUND: a 3rd enqueue into the (cap-2) full queue is REJECTED.
-#eval (((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
-        (fun k => queueEnqueueK k 7 333)).isSome                         -- false — full ⇒ none (capacity bound)
+#guard ((((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
+        (fun k => queueEnqueueK k 7 333)).isSome) == false  --  false — full ⇒ none (capacity bound)
 -- EMPTY fail-closed: dequeue the empty queue ⇒ none.
-#eval (queueDequeueK kq0 7 0).isSome                                     -- false — empty ⇒ none
+#guard ((queueDequeueK kq0 7 0).isSome) == false  --  false — empty ⇒ none
 -- AUTHORITY gate: a non-owner (cell 1) dequeue ⇒ none even when non-empty.
-#eval ((queueEnqueueK kq0 7 111).bind (fun k => (queueDequeueK k 7 1).map Prod.snd))  -- none — wrong owner ⇒ none
+#guard (((queueEnqueueK kq0 7 111).bind (fun k => (queueDequeueK k 7 1).map Prod.snd))).isNone  --  none — wrong owner ⇒ none
 -- bal-NEUTRAL: the combined per-asset measure is UNTOUCHED by enqueue (and dequeue).
-#eval ((queueEnqueueK kq0 7 111).map (fun k => recTotalAssetWithEscrow k 0))          -- some 0 — UNCHANGED (queues hold messages, not balance)
+#guard (((queueEnqueueK kq0 7 111).map (fun k => recTotalAssetWithEscrow k 0))) == some 0  --  some 0 — UNCHANGED (queues hold messages, not balance)
 
 #assert_axioms qbuf_fifo_order
 #assert_axioms qbuf_fifo_empty
@@ -2344,22 +2344,22 @@ def kqd0 : RecordKernelState :=
 
 -- DEPOSIT MOVES the bare ledger: enqueue 111 from sender 5 with deposit 30 (record id 9) ⇒ bare
 -- `recTotalAsset 0` DROPS 100 → 70 (the deposit left the sender's ledger and is PARKED).
-#eval (queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).map (fun k => recTotalAsset k 0)  -- some 70 — bare ledger MOVED
+#guard ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).map (fun k => recTotalAsset k 0)) == some 70  --  some 70 — bare ledger MOVED
 -- COMBINED CONSERVED: the parked deposit is counted in the holding-store, so the COMBINED measure is FIXED.
-#eval (queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).map (fun k => recTotalAssetWithEscrow k 0)  -- some 100 — COMBINED conserved
+#guard ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).map (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100 — COMBINED conserved
 -- FIFO buffer ALSO advanced (the order op composed with the deposit): the message is in the buffer.
-#eval (queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind (fun k => (findQueue k.queues 7).map (·.buffer))  -- some [111]
+#guard ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind (fun k => (findQueue k.queues 7).map (·.buffer))) == some [111]  --  some [111]
 -- REFUND on dequeue: enqueue-with-deposit then dequeue (owner 0 reclaims deposit) ⇒ bare ledger RETURNS to 100.
-#eval ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
-        (fun k => (queueDequeueRefundK k 7 0 9).map (fun p => recTotalAsset p.1 0)))  -- some 100 — refund RETURNED the deposit
+#guard (((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
+        (fun k => (queueDequeueRefundK k 7 0 9).map (fun p => recTotalAsset p.1 0)))) == some 100  --  some 100 — refund RETURNED the deposit
 -- ROUND-TRIP combined: still conserved after enqueue+dequeue.
-#eval ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
-        (fun k => (queueDequeueRefundK k 7 0 9).map (fun p => recTotalAssetWithEscrow p.1 0)))  -- some 100 — combined conserved
+#guard (((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
+        (fun k => (queueDequeueRefundK k 7 0 9).map (fun p => recTotalAssetWithEscrow p.1 0)))) == some 100  --  some 100 — combined conserved
 -- DEPOSIT GATE fail-closed: a deposit of 200 (> sender's 100) is REJECTED even though the FIFO append would succeed.
-#eval (queueEnqueueDepositK kqd0 7 111 5 0 9 0 200).isSome  -- false — InsufficientBalance (deposit gate)
+#guard ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 200).isSome) == false  --  false — InsufficientBalance (deposit gate)
 -- REFUND fail-closed: dequeue with a deposit-record id that was never parked ⇒ none.
-#eval ((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
-        (fun k => (queueDequeueRefundK k 7 0 999).map Prod.snd)).isSome  -- false — no such deposit record
+#guard (((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
+        (fun k => (queueDequeueRefundK k 7 0 999).map Prod.snd)).isSome) == false  --  false — no such deposit record
 
 #assert_axioms queueEnqueueDepositK_conserves_combined
 #assert_axioms queueEnqueueDepositK_debits
@@ -2665,39 +2665,39 @@ def ksw0 : RecordKernelState :=
 -- The REAL committed rights cell 0 holds, read from the c-list (NOT a caller parameter):
 #eval heldAuths ksw0 0  -- [read, call] — the adversary-uncontrollable bound the export gate uses
 -- EXPORT INSERTS: export swiss 42 → target 1 with rights [read] (⊆ REAL-held [read,call]) ⇒ entry present, refcount 1.
-#eval (swissExportK ksw0 42 0 1 [Auth.read]).bind
-        (fun k => (findSwiss k.swiss 42).map (fun e => (e.target, e.refcount)))  -- some (1, 1) — INSERTED
+#guard ((swissExportK ksw0 42 0 1 [Auth.read]).bind
+        (fun k => (findSwiss k.swiss 42).map (fun e => (e.target, e.refcount)))) == some (1, 1)  --  some (1, 1) — INSERTED
 -- AMPLIFICATION DENIED on export: exporting [grant] when only [read,call] is REALLY held ⇒ none.
-#eval (swissExportK ksw0 42 0 1 [Auth.grant]).isSome  -- false — amplification denied (grant ∉ real-held)
+#guard ((swissExportK ksw0 42 0 1 [Auth.grant]).isSome) == false  --  false — amplification denied (grant ∉ real-held)
 -- THE TEETH — OVER-BROAD EXPORT REJECTED: an exporter REALLY holding only [read,call] CANNOT mint a ref
 -- carrying [read,write] — the amplification the OLD caller-supplied-`held` gate would have ADMITTED.
-#eval (swissExportK ksw0 42 0 1 [Auth.read, Auth.write]).isSome  -- false — write ∉ real-held ⇒ REJECTED
+#guard ((swissExportK ksw0 42 0 1 [Auth.read, Auth.write]).isSome) == false  --  false — write ∉ real-held ⇒ REJECTED
 -- CONTRAST — within-rights export COMMITS: [read,call] ⊆ real-held [read,call] ⇒ inserted.
 #eval (swissExportK ksw0 42 0 1 [Auth.read, Auth.call]).bind
         (fun k => (findSwiss k.swiss 42).map (·.rights))  -- some [read, call] — within rights, COMMITS
 -- A cell holding NOTHING (caps = []) cannot export ANY non-empty ref (heldAuths = []):
-#eval (swissExportK ksw0 99 5 1 [Auth.read]).isSome  -- false — cell 5 holds no caps ⇒ real-held [] ⇒ REJECTED
+#guard ((swissExportK ksw0 99 5 1 [Auth.read]).isSome) == false  --  false — cell 5 holds no caps ⇒ real-held [] ⇒ REJECTED
 -- ENLIVEN LOOKS-UP-fail-closed: enliven an ABSENT swiss number ⇒ none.
-#eval (swissEnlivenK ksw0 99 [Auth.read]).isSome  -- false — absent ⇒ none (membership gate)
+#guard ((swissEnlivenK ksw0 99 [Auth.read]).isSome) == false  --  false — absent ⇒ none (membership gate)
 -- ENLIVEN BUMPS refcount: export then enliven (claiming ⊆ rights) ⇒ refcount 1 → 2.
-#eval (((swissExportK ksw0 42 0 1 [Auth.read]).bind
+#guard ((((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissEnlivenK k 42 [Auth.read]))).bind
-        (fun k => (findSwiss k.swiss 42).map (·.refcount))  -- some 2 — a new live reference
+        (fun k => (findSwiss k.swiss 42).map (·.refcount))) == some 2  --  some 2 — a new live reference
 -- ENLIVEN amplification denied: claiming [grant] against an entry exporting only [read] ⇒ none.
-#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
-        (fun k => swissEnlivenK k 42 [Auth.grant])).isSome  -- false — claim exceeds export
+#guard (((swissExportK ksw0 42 0 1 [Auth.read]).bind
+        (fun k => swissEnlivenK k 42 [Auth.grant])).isSome) == false  --  false — claim exceeds export
 -- HANDOFF binds the cert + bumps refcount: export then handoff cert 7 ⇒ cert = some 7, refcount 2.
-#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
+#guard (((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => swissHandoffK k 42 7)).bind
-        (fun k => (findSwiss k.swiss 42).map (fun e => (e.cert, e.refcount)))  -- some (some 7, 2)
+        (fun k => (findSwiss k.swiss 42).map (fun e => (e.cert, e.refcount)))) == some (some 7, 2)  --  some (some 7, 2)
 -- DROP GCs at zero: export (refcount 1) then drop ⇒ entry REMOVED (refcount hit 0 ⇒ GC).
-#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
-        (fun k => swissDropK k 42)).map (fun k => (findSwiss k.swiss 42).isSome)  -- some false — GC'd
+#guard (((swissExportK ksw0 42 0 1 [Auth.read]).bind
+        (fun k => swissDropK k 42)).map (fun k => (findSwiss k.swiss 42).isSome)) == some false  --  some false — GC'd
 -- DROP fail-closed at zero: a 2nd drop after GC ⇒ none (absent).
-#eval ((swissExportK ksw0 42 0 1 [Auth.read]).bind
-        (fun k => (swissDropK k 42).bind (fun k => swissDropK k 42))).isSome  -- false
+#guard (((swissExportK ksw0 42 0 1 [Auth.read]).bind
+        (fun k => (swissDropK k 42).bind (fun k => swissDropK k 42))).isSome) == false  --  false
 -- balance-NEUTRAL: the combined measure is UNTOUCHED by export (and the rest).
-#eval (swissExportK ksw0 42 0 1 [Auth.read]).map (fun k => recTotalAssetWithEscrow k 0)  -- some 0
+#guard ((swissExportK ksw0 42 0 1 [Auth.read]).map (fun k => recTotalAssetWithEscrow k 0)) == some 0  --  some 0
 
 #assert_axioms swissExportK_inserts
 #assert_axioms swissExportK_amplification_rejects
@@ -2727,22 +2727,21 @@ def res0 : RecordKernelState :=
 def resLocked : Option RecordKernelState := createEscrowKAsset res0 9 0 0 1 1 30
 
 -- NON-VACUITY GUARD (locked at asset≠0): the held value MOVES at asset 1 ONLY.
-#eval (escrowHeldAsset res0 1, escrowHeldAsset res0 0)                       -- (0, 0) before
-#eval resLocked.map (fun k => (escrowHeldAsset k 1, escrowHeldAsset k 0))    -- some (30, 0) — held GENUINELY non-zero at asset 1, asset 0 UNTOUCHED
+#guard ((escrowHeldAsset res0 1, escrowHeldAsset res0 0)) == (0, 0)  --  (0, 0) before
+#guard (resLocked.map (fun k => (escrowHeldAsset k 1, escrowHeldAsset k 0))) == some (30, 0)  --  some (30, 0) — held GENUINELY non-zero at asset 1, asset 0 UNTOUCHED
 -- the BARE per-asset ledger DROPS at asset 1 (a real debit); asset 0 untouched:
-#eval resLocked.map (fun k => (recTotalAsset k 1, recTotalAsset k 0))        -- some (70, 0)
+#guard (resLocked.map (fun k => (recTotalAsset k 1, recTotalAsset k 0))) == some (70, 0)  --  some (70, 0)
 -- the COMBINED per-asset measure is CONSERVED at asset 1 AND asset 0:
-#eval (recTotalAssetWithEscrow res0 1, recTotalAssetWithEscrow res0 0)       -- (100, 0)
-#eval resLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))
-                                                                            -- some (100, 0) — CONSERVED both assets
+#guard ((recTotalAssetWithEscrow res0 1, recTotalAssetWithEscrow res0 0)) == (100, 0)  --  (100, 0)
+#guard (resLocked.map (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0))) == some (100, 0)  -- some (100, 0) — CONSERVED both assets
 -- SETTLE (release to recipient 1): mirror — combined stays (100,0), held returns to 0, bal back to 100 at asset 1.
-#eval (resLocked.bind (fun k => releaseEscrowKAsset k 9)).map
+#guard ((resLocked.bind (fun k => releaseEscrowKAsset k 9)).map
         (fun k => (recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 0,
-                   escrowHeldAsset k 1, recTotalAsset k 1))                 -- some (100, 0, 0, 100)
+                   escrowHeldAsset k 1, recTotalAsset k 1))) == some (100, 0, 0, 100)  --  some (100, 0, 0, 100)
 -- noteCreate round-trip + noteSpend independence; double-spend fail-closed.
-#eval (noteCreateCommitment res0 42).commitments                            -- [42]
-#eval (noteSpendNullifier res0 7).map (fun k => k.nullifiers)               -- some [7]
-#eval ((noteSpendNullifier res0 7).bind (fun k => noteSpendNullifier k 7)).isSome  -- false
+#guard ((noteCreateCommitment res0 42).commitments) == [42]  --  [42]
+#guard ((noteSpendNullifier res0 7).map (fun k => k.nullifiers)) == some [7]  --  some [7]
+#guard (((noteSpendNullifier res0 7).bind (fun k => noteSpendNullifier k 7)).isSome) == false  --  false
 
 /-! ## Axiom-hygiene tripwires — pin the re-proved keystones over the content-addressed cell. -/
 
@@ -2804,13 +2803,13 @@ def rt1 : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 /-- Actor 2 attempts the same — unauthorized. -/
 def rtBad : Turn := { actor := 2, src := 0, dst := 1, amt := 30 }
 
-#eval (recKExec rs0 rt1).isSome                              -- true
-#eval (recKExec rs0 rtBad).isSome                             -- false
-#eval (recKExec rs0 rt1).map recTotal                        -- some 105 (conserved: 70 + 35)
-#eval recTotal rs0                                           -- 105
+#guard ((recKExec rs0 rt1).isSome)  --  true
+#guard ((recKExec rs0 rtBad).isSome) == false  --  false
+#guard ((recKExec rs0 rt1).map recTotal) == some 105  --  some 105 (conserved: 70 + 35)
+#guard (recTotal rs0) == 105  --  105
 -- The non-balance field (`nonce`) survives the transfer on the content-addressed record:
-#eval (recKExec rs0 rt1).map (fun k => (k.cell 0).scalar "nonce")   -- some (some 0)
-#eval (recKExec rs0 rt1).map (fun k => balOf (k.cell 0))            -- some 70
+#guard ((recKExec rs0 rt1).map (fun k => (k.cell 0).scalar "nonce")) == some (some 0)  --  some (some 0)
+#guard ((recKExec rs0 rt1).map (fun k => balOf (k.cell 0))) == some 70  --  some 70
 
 /-! ### §MULTI-ASSET runs (`#eval`) — the per-asset ledger conserves each asset class. -/
 
@@ -2823,13 +2822,12 @@ def rms0 : RecordKernelState :=
     bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0)
                       else if c = 1 then (if a = 0 then 5 else 0) else 0 }
 
-#eval recTotalAsset rms0 0                                            -- 105 (asset 0 supply)
-#eval recTotalAsset rms0 1                                            -- 7   (asset 1 supply)
-#eval (recKExecAsset rms0 rt1 0).map (fun k => recTotalAsset k 0)     -- some 105 (asset 0 conserved)
-#eval (recKExecAsset rms0 rt1 0).map (fun k => recTotalAsset k 1)     -- some 7   (asset 1 UNTOUCHED)
-#eval (recKExecAsset rms0 rtBad 0).isSome                             -- false   (unauthorized)
+#guard (recTotalAsset rms0 0) == 105  --  105 (asset 0 supply)
+#guard (recTotalAsset rms0 1) == 7  --  7   (asset 1 supply)
+#guard ((recKExecAsset rms0 rt1 0).map (fun k => recTotalAsset k 0)) == some 105  --  some 105 (asset 0 conserved)
+#guard ((recKExecAsset rms0 rt1 0).map (fun k => recTotalAsset k 1)) == some 7  --  some 7   (asset 1 UNTOUCHED)
+#guard ((recKExecAsset rms0 rtBad 0).isSome) == false  --  false   (unauthorized)
 -- moving asset 0 cannot inflate asset 1's supply — the scalar-laundering attack is unrepresentable:
-#eval (recKExecAsset rms0 rt1 0).map (fun k => (k.bal 0 0, k.bal 0 1, k.bal 1 0, k.bal 1 1))
-                                                                      -- some (70, 7, 35, 0)
+#guard ((recKExecAsset rms0 rt1 0).map (fun k => (k.bal 0 0, k.bal 0 1, k.bal 1 0, k.bal 1 1))) == some (70, 7, 35, 0)  -- some (70, 7, 35, 0)
 
 end Dregg2.Exec

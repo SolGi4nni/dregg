@@ -221,18 +221,17 @@ example : liveCell demoGraph demoLease 99 1 :=
 
 -- Demo 1: a CURRENT lease (now=5 < expiresAt=10) means the local collection trigger does NOT fire
 -- even with refcount zero — fail-closed for safety while leased.
-#eval collectDecision true demoLease 5    -- expected: false (lease not yet lapsed)
+#guard (collectDecision true demoLease 5) == false  --  expected: false (lease not yet lapsed)
 
 -- Demo 2: an unreachable cell with a LAPSED lease (now=20 ≥ 10) AND refcount zero is collectible.
-#eval collectDecision true demoLease 20   -- expected: true (refcount zero ∧ lease lapsed)
+#guard (collectDecision true demoLease 20)  --  expected: true (refcount zero ∧ lease lapsed)
 
 -- Demo 3: refcount NONZERO (e.g. a pinned cross-vat-cycle node) never collects locally, even past
 -- the lease — the trigger correctly refuses; such a node is reclaimed by the lease at the `liveCell`
 -- level (`crossvat_leak_reclaimed_by_lease`), not by this local refcount trigger.
-#eval collectDecision false demoLease 20  -- expected: false (refcount nonzero pins it)
+#guard (collectDecision false demoLease 20) == false  --  expected: false (refcount nonzero pins it)
 
 -- The lease-expiry predicate itself, locally decidable at three times.
-#eval (leaseExpired demoLease 5, leaseExpired demoLease 10, leaseExpired demoLease 20)
-  -- expected: (false, true, true)
+#guard ((leaseExpired demoLease 5, leaseExpired demoLease 10, leaseExpired demoLease 20)) == (false, true, true)  -- expected: (false, true, true)
 
 end Dregg2.Exec.CellLiveness

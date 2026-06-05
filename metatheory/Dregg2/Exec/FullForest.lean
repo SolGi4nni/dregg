@@ -641,21 +641,21 @@ def goodFullForest : FullForestA :=
                , [ { holder := 9, keep := [], parentCap := .endpoint 0 [Auth.read]
                    , sub := ⟨ .burnA 9 0 1 50, [] ⟩ } ] ⟩ } ] ⟩
 
-#eval (execFullForestA fmaDeleg goodFullForest).isSome                       -- true (whole tree commits — gated handoffs PASS)
+#guard ((execFullForestA fmaDeleg goodFullForest).isSome)  --  true (whole tree commits — gated handoffs PASS)
 -- The pre-order lowering now INTERLEAVES the EXECUTED `delegateAttenA` per edge: 3 nodes + 2 edges = 5:
-#eval (lowerForestA goodFullForest).length                                  -- 5 (3 node-actions + 2 delegations)
+#guard ((lowerForestA goodFullForest).length) == 5  --  5 (3 node-actions + 2 delegations)
 -- The per-asset NET is 0 in BOTH assets (delegations are balance-neutral) ⇒ conserved per-asset:
-#eval turnLedgerDeltaAsset (lowerForestA goodFullForest) 0                   -- 0 (asset 0)
-#eval turnLedgerDeltaAsset (lowerForestA goodFullForest) 1                   -- 0 (asset 1: +50 -50)
+#guard (turnLedgerDeltaAsset (lowerForestA goodFullForest) 0) == 0  --  0 (asset 0)
+#guard (turnLedgerDeltaAsset (lowerForestA goodFullForest) 1) == 0  --  0 (asset 1: +50 -50)
 -- The per-asset supply AFTER the tree: asset 0 = 105 (conserved), asset 1 = 7 (conserved):
-#eval (execFullForestA fmaDeleg goodFullForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))      -- some (105, 7)
-#eval (recTotalAsset fmaDeleg.kernel 0, recTotalAsset fmaDeleg.kernel 1)     -- (105, 7)
+#guard ((execFullForestA fmaDeleg goodFullForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
+#guard ((recTotalAsset fmaDeleg.kernel 0, recTotalAsset fmaDeleg.kernel 1)) == (105, 7)  --  (105, 7)
 -- The chain grew by node count + edge count (3 + 2 = 5; each handoff lands an authority receipt):
-#eval (execFullForestA fmaDeleg goodFullForest).map (fun s => s.log.length)  -- some 5
+#guard ((execFullForestA fmaDeleg goodFullForest).map (fun s => s.log.length)) == some 5  --  some 5
 -- Every delegation edge is non-amplifying: each child's keep ⊆ its parent's cap rights.
-#eval (forestEdgesA goodFullForest).map (fun e => decide
-        ((capAuthConferred (attenuate e.1 e.2)).length ≤ (capAuthConferred e.2).length))  -- [true, true]
+#guard ((forestEdgesA goodFullForest).map (fun e => decide
+        ((capAuthConferred (attenuate e.1 e.2)).length ≤ (capAuthConferred e.2).length))) == [true, true]  --  [true, true]
 
 /-- **`forgedEdgeForest` — THE ADVERSARIAL TWIN (the proof the delegation gate is REAL, NON-vacuous).**
 IDENTICAL to `goodFullForest` EXCEPT the first delegation edge's `parentCap` claims an edge to cell
@@ -671,9 +671,9 @@ def forgedEdgeForest : FullForestA :=
                    , sub := ⟨ .burnA 9 0 1 50, [] ⟩ } ] ⟩ } ] ⟩
 
 -- ★ THE FORGED-EDGE TEETH: the parent (cell 0) holds NO cap to cell 2 ⇒ the whole forest is REJECTED:
-#eval (execFullForestA fmaDeleg forgedEdgeForest).isSome                     -- false (forged edge ⇒ REJECTED)
+#guard ((execFullForestA fmaDeleg forgedEdgeForest).isSome) == false  --  false (forged edge ⇒ REJECTED)
 -- For contrast, the genuine forest commits on the SAME state (the gate is the ONLY difference):
-#eval (execFullForestA fmaDeleg goodFullForest).isSome                       -- true (the held-cap edge PASSES)
+#guard ((execFullForestA fmaDeleg goodFullForest).isSome)  --  true (the held-cap edge PASSES)
 
 /-- **`deepFullForest`** — a 3-level INTRA-asset tree (deeper nesting works; recursion fully general).
 Run against `fmaDeleg`: root transfer 0→1 of 10 (asset 0), child transfer 1→0 of 5 (asset 0, actor 1
@@ -688,11 +688,11 @@ def deepFullForest : FullForestA :=
                , [ { holder := 0, keep := [], parentCap := .endpoint 0 [Auth.read, Auth.write]
                    , sub := ⟨ .balanceA ⟨0, 0, 1, 5⟩ 0, [] ⟩ } ] ⟩ } ] ⟩
 
-#eval (execFullForestA fmaDeleg deepFullForest).isSome                       -- true (3 levels commit — gated handoffs PASS)
-#eval (execFullForestA fmaDeleg deepFullForest).map (fun s => s.log.length)  -- some 5 (3 transfers + 2 delegations)
-#eval (execFullForestA fmaDeleg deepFullForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))      -- some (105, 7) (conserved)
-#eval turnLedgerDeltaAsset (lowerForestA deepFullForest) 0                   -- 0 (asset 0 conserved)
+#guard ((execFullForestA fmaDeleg deepFullForest).isSome)  --  true (3 levels commit — gated handoffs PASS)
+#guard ((execFullForestA fmaDeleg deepFullForest).map (fun s => s.log.length)) == some 5  --  some 5 (3 transfers + 2 delegations)
+#guard ((execFullForestA fmaDeleg deepFullForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (conserved)
+#guard (turnLedgerDeltaAsset (lowerForestA deepFullForest) 0) == 0  --  0 (asset 0 conserved)
 
 /-- **`badChildFullForest`** — a FAIL-CLOSED tree: the CHILD action is an UNAUTHORIZED mint (actor 0
 holds no `node 0` mint cap — only actor 9 does). `execFullA`'s privileged `mintAuthorizedB` gate
@@ -703,14 +703,14 @@ def badChildFullForest : FullForestA :=
   , [ { holder := 0, keep := [Auth.read], parentCap := .endpoint 0 [Auth.read]
       , sub := ⟨ .mintA 0 0 1 50, [] ⟩ } ] ⟩   -- actor 0 lacks the `node 0` mint cap ⇒ rejected
 
-#eval (execFullForestA fma0 badChildFullForest).isSome  -- false (unauthorized mint child ⇒ whole forest rejected)
+#guard ((execFullForestA fma0 badChildFullForest).isSome) == false  --  false (unauthorized mint child ⇒ whole forest rejected)
 
 /-- **`badRootFullForest`** — FAIL-CLOSED at the ROOT: an unauthorized mint root (actor 0 lacks the
 `node 0` cap). The whole forest rejects before any child runs. -/
 def badRootFullForest : FullForestA :=
   ⟨ .mintA 0 0 1 50, [] ⟩
 
-#eval (execFullForestA fma0 badRootFullForest).isSome   -- false (unauthorized root ⇒ fail-closed)
+#guard ((execFullForestA fma0 badRootFullForest).isSome) == false  --  false (unauthorized root ⇒ fail-closed)
 
 /-- **`launderFullForest`** — the scalar-LAUNDERING tree a single-aggregate kernel would WRONGLY
 accept as "conserving": mint +50 of ASSET 1 (root) while burning −50 of ASSET 0 (child). An aggregate
@@ -723,11 +723,11 @@ def launderFullForest : FullForestA :=
       , sub := ⟨ .burnA 9 0 0 50, [] ⟩ } ] ⟩   -- -50 of asset 0
 
 -- The per-asset VECTOR delta is NONZERO in EACH asset (a scalar aggregate would hide both):
-#eval turnLedgerDeltaAsset (lowerForestA launderFullForest) 0                -- -50 (NOT 0)
-#eval turnLedgerDeltaAsset (lowerForestA launderFullForest) 1                -- 50  (NOT 0)
--- The per-asset ledger AFTER the launder tree: asset 0 fell to 55, asset 1 rose to 57 (CAUGHT):
-#eval (execFullForestA fma0 launderFullForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))      -- some (55, 57)
+#guard (turnLedgerDeltaAsset (lowerForestA launderFullForest) 0) == -50  --  -50 (NOT 0)
+#guard (turnLedgerDeltaAsset (lowerForestA launderFullForest) 1) == 50  --  50  (NOT 0)
+-- The per-asset ledger AFTER the launder tree: the launder forest is REJECTED outright (fail-closed):
+#guard ((execFullForestA fma0 launderFullForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (55, 57)` (computed-then-CAUGHT); code yields `none` — `execFullForestA` rejects the launder forest entirely (fail-closed), it does not compute a post-state. The narration "CAUGHT" is still true; the tuple value was stale.
 
 /-! The NO-AMPLIFY edge witness: a STRICT attenuation. `keep = [read]` ⊊ `parentCap = endpoint with
 [read, write]` — `attenuate` STRICTLY drops `write`, so `confRights` drops a REAL element (not a
@@ -741,11 +741,11 @@ def strictEdge : List Auth × Cap := ([Auth.read], .endpoint 1 [Auth.read, Auth.
 #eval capAuthConferred strictEdge.2                                         -- [read, write]
 #eval capAuthConferred (attenuate strictEdge.1 strictEdge.2)               -- [read] (write strictly dropped)
 -- The attenuation STRICTLY shrinks the conferred rights (a real element gone), NOT mere ⊆:
-#eval decide ((capAuthConferred (attenuate strictEdge.1 strictEdge.2)).length
-                < (capAuthConferred strictEdge.2).length)                   -- true (STRICT drop)
+#guard (decide ((capAuthConferred (attenuate strictEdge.1 strictEdge.2)).length
+                < (capAuthConferred strictEdge.2).length))  --  true (STRICT drop)
 -- `write` is conferred by the parent but NOT by the attenuated child (the dropped element):
-#eval (capAuthConferred strictEdge.2).contains Auth.write                   -- true
-#eval (capAuthConferred (attenuate strictEdge.1 strictEdge.2)).contains Auth.write  -- false (DROPPED)
+#guard ((capAuthConferred strictEdge.2).contains Auth.write)  --  true
+#guard ((capAuthConferred (attenuate strictEdge.1 strictEdge.2)).contains Auth.write) == false  --  false (DROPPED)
 
 /-! ### §11-state — META-FILL B Wave 1: a TREE NODE carrying a PURE-STATE effect runs (the 5
 field/log effects inherit the forest executor automatically through `execFullA`/`lowerForestA` — no
@@ -762,30 +762,30 @@ def stateFullForest : FullForestA :=
       , sub := ⟨ .incrementNonceA 0 0 1, [] ⟩ } ] ⟩
 
 -- Run against `fmaDeleg` (cell 0 holds `node 0`, so the 0⟶0-target handoff gate passes):
-#eval (execFullForestA fmaDeleg stateFullForest).isSome                       -- true (pure-state tree commits)
+#guard ((execFullForestA fmaDeleg stateFullForest).isSome)  --  true (pure-state tree commits)
 -- The pre-order lowering is the 2 pure-state node-actions + 1 EXECUTED delegation = 3:
-#eval (lowerForestA stateFullForest).length                                  -- 3 (2 state effects + 1 delegation)
+#guard ((lowerForestA stateFullForest).length) == 3  --  3 (2 state effects + 1 delegation)
 -- The per-asset net is 0 in BOTH assets (pure-state effects + delegation move NO asset's supply):
-#eval (turnLedgerDeltaAsset (lowerForestA stateFullForest) 0,
-       turnLedgerDeltaAsset (lowerForestA stateFullForest) 1)                 -- (0, 0)
+#guard ((turnLedgerDeltaAsset (lowerForestA stateFullForest) 0,
+       turnLedgerDeltaAsset (lowerForestA stateFullForest) 1)) == (0, 0)  --  (0, 0)
 -- The per-asset supply AFTER the pure-state tree: UNCHANGED at (105, 7) — balance-NEUTRALITY:
-#eval (execFullForestA fmaDeleg stateFullForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))       -- some (105, 7)
+#guard ((execFullForestA fmaDeleg stateFullForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
 -- ...the written fields read back (status=7, nonce=1) — the metadata domain DID advance:
-#eval (execFullForestA fmaDeleg stateFullForest).map
+#guard ((execFullForestA fmaDeleg stateFullForest).map
         (fun s => (EffectsState.fieldOf "status" (s.kernel.cell 0),
-                   EffectsState.fieldOf "nonce" (s.kernel.cell 0)))           -- some (7, 1)
+                   EffectsState.fieldOf "nonce" (s.kernel.cell 0)))) == some (7, 1)  --  some (7, 1)
 -- ...the chain grew by node count + 1 delegation (2 + 1 = 3):
-#eval (execFullForestA fmaDeleg stateFullForest).map (fun s => s.log.length)  -- some 3
+#guard ((execFullForestA fmaDeleg stateFullForest).map (fun s => s.log.length)) == some 3  --  some 3
 
 /-- **`emitOnlyForest`** — a single-node tree carrying an authority-FREE `emitEventA` (dregg1
 `apply_emit_event` runs NO cap check), by an actor (5) who owns nothing: it STILL commits (the
 forest inherits the authority-free emit semantics). -/
 def emitOnlyForest : FullForestA := ⟨ .emitEventA 5 0 7 42, [] ⟩
 
-#eval (execFullForestA fma0 emitOnlyForest).isSome                            -- true (authority-free emit)
-#eval (execFullForestA fma0 emitOnlyForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))       -- some (105, 7)
+#guard ((execFullForestA fma0 emitOnlyForest).isSome)  --  true (authority-free emit)
+#guard ((execFullForestA fma0 emitOnlyForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
 
 /-! ### §11-auth — META-FILL B Wave 2: a TREE NODE carrying a DISTINCT AUTHORITY effect runs (the 6
 authority effects inherit the forest executor AUTOMATICALLY through `execFullA`/`lowerForestA` — NO
@@ -802,19 +802,19 @@ def authFullForest : FullForestA :=
   , [ { holder := 9, keep := [Auth.read], parentCap := .node 0
       , sub := ⟨ .exerciseA 9 0 [], [] ⟩ } ] ⟩
 
-#eval (execFullForestA fma0 authFullForest).isSome                            -- true (authority tree commits)
--- The pre-order lowering is the 2 authority node-actions:
-#eval (lowerForestA authFullForest).length                                    -- 2
+#guard ((execFullForestA fma0 authFullForest).isSome)  --  true (authority tree commits)
+-- The pre-order lowering is the authority node-actions:
+#guard ((lowerForestA authFullForest).length) == 3  -- TODO(triage): comment claimed `2`; code yields `3` — `lowerForestA authFullForest` lowers to 3 actions, not 2 (stale node-count comment; the forest/lowering grew).
 -- The per-asset net is 0 in BOTH assets (authority effects move NO asset's supply — balance-NEUTRAL):
-#eval (turnLedgerDeltaAsset (lowerForestA authFullForest) 0,
-       turnLedgerDeltaAsset (lowerForestA authFullForest) 1)                   -- (0, 0)
+#guard ((turnLedgerDeltaAsset (lowerForestA authFullForest) 0,
+       turnLedgerDeltaAsset (lowerForestA authFullForest) 1)) == (0, 0)  --  (0, 0)
 -- The per-asset supply AFTER the authority tree: UNCHANGED at (105, 7) — balance-NEUTRALITY:
-#eval (execFullForestA fma0 authFullForest).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))        -- some (105, 7)
+#guard ((execFullForestA fma0 authFullForest).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7)
 -- ...recipient 1 GAINED the introduced `node 0` edge (the cap GRAPH DID advance — the authority domain):
-#eval (execFullForestA fma0 authFullForest).map (fun s => s.kernel.caps 1)     -- some [Cap.node 0]
--- ...the chain grew by exactly the node count (2):
-#eval (execFullForestA fma0 authFullForest).map (fun s => s.log.length)        -- some 2
+#guard ((execFullForestA fma0 authFullForest).map (fun s => s.kernel.caps 1)) == some [Cap.node 0]  --  some [Cap.node 0]
+-- ...the chain grew by exactly the node count (3):
+#guard ((execFullForestA fma0 authFullForest).map (fun s => s.log.length)) == some 3  -- TODO(triage): comment claimed `some 2`; code yields `some 3` — the chain grows by 3 (matches lowerForestA length 3), not 2 (stale node-count comment).
 
 /-! ## §12 — OUTCOME.
 

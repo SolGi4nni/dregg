@@ -464,37 +464,37 @@ def ah0 : TurnHdr :=
   { agent := 7, nonce := 3, fee := 10, validUntil := some 100, prevReceipt := some 42,
     writeSet := [7], forestNonEmpty := true }
 
-#eval admissible ac0 ah0 as0                                            -- true  (admissible)
-#eval admissible ac0 { ah0 with forestNonEmpty := false } as0          -- false (EmptyForest)
-#eval admissible ac0 { ah0 with nonce := 99 } as0                      -- false (replay)
-#eval admissible ac0 { ah0 with fee := 500 } as0                       -- false (underfunded)
-#eval admissible ac0 { ah0 with validUntil := some 10 } as0            -- false (expired: now 50 > 10)
-#eval admissible ac0 { ah0 with prevReceipt := some 99 } as0           -- false (chain fork)
-#eval admissible { ac0 with frozen := [7] } ah0 as0                    -- false (agent frozen)
-#eval admissible { ac0 with budget := 5 } ah0 as0                      -- false (over budget: 10 > 5)
-#eval admissible { ac0 with storedHead := none } ah0 as0               -- false (fork: head is genesis)
+#guard (admissible ac0 ah0 as0)  --  true  (admissible)
+#guard (admissible ac0 { ah0 with forestNonEmpty := false } as0) == false  --  false (EmptyForest)
+#guard (admissible ac0 { ah0 with nonce := 99 } as0) == false  --  false (replay)
+#guard (admissible ac0 { ah0 with fee := 500 } as0) == false  --  false (underfunded)
+#guard (admissible ac0 { ah0 with validUntil := some 10 } as0) == false  --  false (expired: now 50 > 10)
+#guard (admissible ac0 { ah0 with prevReceipt := some 99 } as0) == false  --  false (chain fork)
+#guard (admissible { ac0 with frozen := [7] } ah0 as0) == false  --  false (agent frozen)
+#guard (admissible { ac0 with budget := 5 } ah0 as0) == false  --  false (over budget: 10 > 5)
+#guard (admissible { ac0 with storedHead := none } ah0 as0) == false  --  false (fork: head is genesis)
 
 -- The committed prologue: balance 100 → 90, nonce 3 → 4.
-#eval balOf ((commitPrologue as0 7 10).kernel.cell 7)                  -- 90
-#eval nonceOf ((commitPrologue as0 7 10).kernel.cell 7)               -- 4
+#guard (balOf ((commitPrologue as0 7 10).kernel.cell 7)) == 90  --  90
+#guard (nonceOf ((commitPrologue as0 7 10).kernel.cell 7)) == 4  --  4
 -- Frame: cell 7 is the ONLY cell touched (cell 1 unchanged — empty record reads 0).
-#eval balOf ((commitPrologue as0 7 10).kernel.cell 1)                 -- 0
+#guard (balOf ((commitPrologue as0 7 10).kernel.cell 1)) == 0  --  0
 
 -- The prologue SURVIVES a failed body (`runTurn` with a body that always fails):
-#eval (runTurn ac0 ah0 as0 (fun _ => none)).isSome                    -- true  (committed anyway!)
-#eval (runTurn ac0 ah0 as0 (fun _ => none)).map
-        (fun s' => (balOf (s'.kernel.cell 7), nonceOf (s'.kernel.cell 7)))  -- some (90, 4)
+#guard ((runTurn ac0 ah0 as0 (fun _ => none)).isSome)  --  true  (committed anyway!)
+#guard ((runTurn ac0 ah0 as0 (fun _ => none)).map
+        (fun s' => (balOf (s'.kernel.cell 7), nonceOf (s'.kernel.cell 7)))) == some (90, 4)  --  some (90, 4)
 -- ...whereas the NAIVE pure fold LOSES it (rolls everything back):
-#eval (runTurnPure ac0 ah0 as0 (fun _ => none)).isSome                 -- false (prologue lost!)
+#guard ((runTurnPure ac0 ah0 as0 (fun _ => none)).isSome) == false  --  false (prologue lost!)
 
 -- A committing body runs ON TOP of the prologue (identity body keeps the post-prologue state):
-#eval (runTurn ac0 ah0 as0 (fun s => some s)).map
-        (fun s' => (balOf (s'.kernel.cell 7), nonceOf (s'.kernel.cell 7)))  -- some (90, 4)
+#guard ((runTurn ac0 ah0 as0 (fun s => some s)).map
+        (fun s' => (balOf (s'.kernel.cell 7), nonceOf (s'.kernel.cell 7)))) == some (90, 4)  --  some (90, 4)
 
 -- Replay closed: after the failed turn, the SAME header is no longer admissible (nonce advanced):
-#eval ((runTurn ac0 ah0 as0 (fun _ => none)).map (fun s' => admissible ac0 ah0 s'))  -- some false
+#guard (((runTurn ac0 ah0 as0 (fun _ => none)).map (fun s' => admissible ac0 ah0 s'))) == some false  --  some false
 
 -- An inadmissible turn is rejected with NO state edit (the agent is never charged):
-#eval (runTurn ac0 { ah0 with nonce := 99 } as0 (fun _ => none)).isSome  -- false
+#guard ((runTurn ac0 { ah0 with nonce := 99 } as0 (fun _ => none)).isSome) == false  --  false
 
 end Dregg2.Exec.Admission

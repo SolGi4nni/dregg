@@ -711,14 +711,14 @@ def as0 : RecChainedState :=
     log := [] }
 
 -- (1) INTRODUCE: actor 0 (holds `node 7`) introduces recipient 1 to target 7. Commits.
-#eval (introduceStep as0 0 1 7).isSome                                   -- true
+#guard ((introduceStep as0 0 1 7).isSome)  --  true
 -- ...is conservation-trivial (recTotal 105 unchanged) and grows the chain by one:
-#eval (introduceStep as0 0 1 7).map (fun s => recTotal s.kernel)         -- some 105
-#eval (introduceStep as0 0 1 7).map (fun s => s.log.length)              -- some 1
+#guard ((introduceStep as0 0 1 7).map (fun s => recTotal s.kernel)) == some 105  --  some 105
+#guard ((introduceStep as0 0 1 7).map (fun s => s.log.length)) == some 1  --  some 1
 -- ...and recipient 1 now holds the `node 7` cap (the new authority edge):
-#eval ((introduceStep as0 0 1 7).map (fun s => s.kernel.caps 1)).getD [] -- [Dregg2.Authority.Cap.node 7]
+#guard (((introduceStep as0 0 1 7).map (fun s => s.kernel.caps 1)).getD []) == [Dregg2.Authority.Cap.node 7]  --  [Dregg2.Authority.Cap.node 7]
 -- An introducer with NO connectivity to the target cannot introduce it (fail-closed):
-#eval (introduceStep as0 5 1 9).isSome                                   -- false
+#guard ((introduceStep as0 5 1 9).isSome) == false  --  false
 
 -- (1') THE TEETH — genuine rights non-amplification over the real `List Auth` lattice.
 -- Holder 2 holds `endpoint 9 [read, write]`; attenuating to `[read]` confers `[read]`, a real SUBSET:
@@ -736,25 +736,25 @@ example : ¬ IsNonAmplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.w
     (Dregg2.Authority.Cap.node 9) Auth.control (by decide) (by decide)
 
 -- (2) REVOKE-DELEGATION: holder 0 drops its edge to 7. Always commits, conservation-trivial.
-#eval (revokeDelegationStep as0 0 7).log.length                          -- 1
-#eval recTotal (revokeDelegationStep as0 0 7).kernel                     -- 105 (FIXED)
-#eval (revokeDelegationStep as0 0 7).kernel.caps 0                       -- [] (node 7 gone)
+#guard ((revokeDelegationStep as0 0 7).log.length) == 1  --  1
+#guard (recTotal (revokeDelegationStep as0 0 7).kernel) == 105  --  105 (FIXED)
+#guard ((revokeDelegationStep as0 0 7).kernel.caps 0) == []  --  [] (node 7 gone)
 
 -- (3) ATTENUATE: narrow actor 2's `endpoint 9 [read,write]` to keep only `read`.
 #eval (attenuateStep as0 2 0 [Auth.read]).kernel.caps 2                   -- [endpoint 9 [read]]
-#eval recTotal (attenuateStep as0 2 0 [Auth.read]).kernel                -- 105 (FIXED)
+#guard (recTotal (attenuateStep as0 2 0 [Auth.read]).kernel) == 105  --  105 (FIXED)
 -- ...the narrowed cap confers a SUBSET: [read] ⊆ [read, write].
 #eval capAuthConferred (attenuate [Auth.read] (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write]))  -- [read]
 
 -- (4) DROP-REF: holder 0 GC-drops its reference to 7.
-#eval (dropRefStep as0 0 7).kernel.caps 0                                -- []
-#eval recTotal (dropRefStep as0 0 7).kernel                              -- 105 (FIXED)
+#guard ((dropRefStep as0 0 7).kernel.caps 0) == []  --  []
+#guard (recTotal (dropRefStep as0 0 7).kernel) == 105  --  105 (FIXED)
 
 -- (5) EXERCISE: actor 0 (holds `node 7`) exercises its cap to target 7. Commits; graph unchanged.
-#eval (exerciseStep as0 0 7).isSome                                      -- true
-#eval ((exerciseStep as0 0 7).map (fun s => s.kernel.caps 0)).getD []    -- [Cap.node 7] (unchanged)
+#guard ((exerciseStep as0 0 7).isSome)  --  true
+#guard (((exerciseStep as0 0 7).map (fun s => s.kernel.caps 0)).getD []) == [Dregg2.Authority.Cap.node 7]  -- [Cap.node 7] (unchanged)
 -- An actor NOT holding an edge to the target cannot exercise (fail-closed):
-#eval (exerciseStep as0 5 9).isSome                                      -- false
+#guard ((exerciseStep as0 5 9).isSome) == false  --  false
 
 -- (7) SET-PERMISSIONS: a strictly-narrower gate (admit only label 0) narrows the all-true gate —
 -- the non-amplification witness fires on concrete gates (anyone the new gate admits, `l = 0`, the

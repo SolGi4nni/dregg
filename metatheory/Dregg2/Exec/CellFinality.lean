@@ -258,12 +258,12 @@ def demoMap : TierMap := fun c =>
   else Finality.Tier.causal
 
 -- the causal cell #0 + bft cell #1 commit at bft (the join = max):
-#eval (commitTier demoMap [⟨0⟩, ⟨1⟩]).rank        -- 3 (bft)
-#eval (commitTier demoMap [⟨0⟩]).rank             -- 1 (causal, solo stays liquid)
-#eval (Finality.crossTierJoin Finality.Tier.causal Finality.Tier.bft).rank  -- 3
+#guard ((commitTier demoMap [⟨0⟩, ⟨1⟩]).rank) == 3  --  3 (bft)
+#guard ((commitTier demoMap [⟨0⟩]).rank) == 1  --  1 (causal, solo stays liquid)
+#guard ((Finality.crossTierJoin Finality.Tier.causal Finality.Tier.bft).rank) == 3  --  3
 -- the gate's two concrete witnesses over `Finset ℕ` (eligible vs ineligible):
 -- `tier1Admissible (fun _ => True)` holds (`top_iconfluent`);
 -- `¬ tier1Admissible (fun s => s.card ≤ 1)` (`cardLeOne_not_tier1Admissible`).
-#eval (({1} : Finset ℕ) ⊔ {2}).card               -- 2 : the merge that breaks `card ≤ 1`
+#guard ((({1} : Finset ℕ) ⊔ {2}).card) == 2  --  2 : the merge that breaks `card ≤ 1`
 
 end Dregg2.Exec.CellFinality

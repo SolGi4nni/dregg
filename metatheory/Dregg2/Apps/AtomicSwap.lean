@@ -452,35 +452,35 @@ theorem settle_unlocked_no_delivery : settleSwap swap0 fundedIds = none := by de
 /-! ## 8. `#eval` smoke — the swap's load-bearing bits, decided by the model alone. -/
 
 -- pre-state combined per-asset measure: each of assets 0,1,2 totals 100 (cell c holds 100 of asset c).
-#eval (recTotalAssetWithEscrow swap0 0, recTotalAssetWithEscrow swap0 1, recTotalAssetWithEscrow swap0 2)  -- (100, 100, 100)
+#guard (recTotalAssetWithEscrow swap0 0, recTotalAssetWithEscrow swap0 1, recTotalAssetWithEscrow swap0 2) == (100, 100, 100)  -- (100, 100, 100)
 -- FUNDED swap LOCKS all 3 legs: succeeds, parks 3 records, combined measure UNCHANGED at every asset.
-#eval (runSwap swap0 fundedLegs).isSome                                                                    -- true
-#eval (runSwap swap0 fundedLegs).map (fun k => k.escrows.length)                                           -- some 3 (all parked)
-#eval (runSwap swap0 fundedLegs).map (fun k =>
-        (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 2))           -- some (100, 100, 100) — CONSERVED
+#guard (runSwap swap0 fundedLegs).isSome                                                                    -- true
+#guard (runSwap swap0 fundedLegs).map (fun k => k.escrows.length) == some 3                                 -- some 3 (all parked)
+#guard ((runSwap swap0 fundedLegs).map (fun k =>
+        (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 2))) == some (100, 100, 100)  -- some (100, 100, 100) — CONSERVED
 -- but the BARE ledgers genuinely dropped at each escrowed asset (value moved into the holding-store):
-#eval (runSwap swap0 fundedLegs).map (fun k =>
-        (recTotalAsset k 0, recTotalAsset k 1, recTotalAsset k 2))                                         -- some (70, 70, 70) — bare DOWN
-#eval (runSwap swap0 fundedLegs).map (fun k =>
-        (escrowHeldAsset k 0, escrowHeldAsset k 1, escrowHeldAsset k 2))                                    -- some (30, 30, 30) — held UP
+#guard ((runSwap swap0 fundedLegs).map (fun k =>
+        (recTotalAsset k 0, recTotalAsset k 1, recTotalAsset k 2))) == some (70, 70, 70)                    -- some (70, 70, 70) — bare DOWN
+#guard ((runSwap swap0 fundedLegs).map (fun k =>
+        (escrowHeldAsset k 0, escrowHeldAsset k 1, escrowHeldAsset k 2))) == some (30, 30, 30)              -- some (30, 30, 30) — held UP
 -- UNDERFUNDED swap is REJECTED (party 2 has 0 of asset 0): fold fails, rollback to pre-state.
-#eval (runSwap swap0 underfundedLegs).isSome                                                               -- false
+#guard (runSwap swap0 underfundedLegs).isSome == false                                                     -- false
 -- the rollback leaves EVERY asset's combined measure (and bare ledger) exactly at the pre-state:
-#eval (recTotalAssetWithEscrow (atomicSwap swap0 underfundedLegs) 0,
+#guard (recTotalAssetWithEscrow (atomicSwap swap0 underfundedLegs) 0,
        recTotalAssetWithEscrow (atomicSwap swap0 underfundedLegs) 1,
-       recTotalAssetWithEscrow (atomicSwap swap0 underfundedLegs) 2)                                        -- (100, 100, 100) — UNCHANGED
-#eval (recTotalAsset (atomicSwap swap0 underfundedLegs) 0,
+       recTotalAssetWithEscrow (atomicSwap swap0 underfundedLegs) 2) == (100, 100, 100)                     -- (100, 100, 100) — UNCHANGED
+#guard (recTotalAsset (atomicSwap swap0 underfundedLegs) 0,
        recTotalAsset (atomicSwap swap0 underfundedLegs) 1,
-       recTotalAsset (atomicSwap swap0 underfundedLegs) 2)                                                  -- (100, 100, 100) — no leg moved
-#eval (atomicSwap swap0 underfundedLegs).escrows.length                                                    -- 0 — nothing parked
+       recTotalAsset (atomicSwap swap0 underfundedLegs) 2) == (100, 100, 100)                               -- (100, 100, 100) — no leg moved
+#guard (atomicSwap swap0 underfundedLegs).escrows.length == 0                                               -- 0 — nothing parked
 -- LIVENESS ◇: the funded+locked swap CAN always settle (no deadlock) and DELIVERS each counterparty.
-#eval ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).isSome                            -- true — reaches settlement
-#eval ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).map (fun k => (k.bal 1 0, k.bal 2 1, k.bal 0 2))  -- some (30, 30, 30) — delivered
-#eval ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).map (fun k =>
-        (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 2))           -- some (100, 100, 100) — conserved end-to-end
+#guard ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).isSome                           -- true — reaches settlement
+#guard (((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).map (fun k => (k.bal 1 0, k.bal 2 1, k.bal 0 2))) == some (30, 30, 30)  -- some (30, 30, 30) — delivered
+#guard (((runSwap swap0 fundedLegs).bind (fun k => settleSwap k fundedIds)).map (fun k =>
+        (recTotalAssetWithEscrow k 0, recTotalAssetWithEscrow k 1, recTotalAssetWithEscrow k 2))) == some (100, 100, 100)  -- some (100, 100, 100) — conserved end-to-end
 -- LIVENESS TEETH: a wrong id / a non-locked swap delivers NOTHING (no phantom credit).
-#eval ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k [999])).isSome                                -- false — wrong id, no delivery
-#eval (settleSwap swap0 fundedIds).isSome                                                                   -- false — never locked, no delivery
+#guard ((runSwap swap0 fundedLegs).bind (fun k => settleSwap k [999])).isSome == false                      -- false — wrong id, no delivery
+#guard (settleSwap swap0 fundedIds).isSome == false                                                         -- false — never locked, no delivery
 
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 

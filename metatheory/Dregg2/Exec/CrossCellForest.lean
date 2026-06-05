@@ -411,20 +411,20 @@ def goodCrossForest : CrossCellForest :=
       , sub := ⟨ 7, 7, 7, -30, [] ⟩ } ] ⟩
 
 -- The flattening: two cross-cell half-edges, on cells 0 and 7.
-#eval (forestHalves goodCrossForest).length                          -- 2
-#eval (forestHalves goodCrossForest).map (fun hh => (hh.cell, hh.δ))  -- [(0, 30), (7, -30)]
+#guard ((forestHalves goodCrossForest).length) == 2  --  2
+#guard ((forestHalves goodCrossForest).map (fun hh => (hh.cell, hh.δ))) == [(0, 30), (7, -30)]  --  [(0, 30), (7, -30)]
 -- The cross-cell CG-5 Σ=0 binding HOLDS for the good forest: 30 + (-30) = 0.
-#eval (forestHalves goodCrossForest).foldl (fun acc hh => acc + hh.δ) 0   -- 0 (balanced)
+#guard ((forestHalves goodCrossForest).foldl (fun acc hh => acc + hh.δ) 0) == 0  --  0 (balanced)
 -- The whole cross-cell forest commits (both halves authorized by ownership):
-#eval (execCrossForest goodCrossForest cellOf 42).isSome              -- true
+#guard ((execCrossForest goodCrossForest cellOf 42).isSome)  --  true
 -- Conserved JOINT total: cellA 105 + cellB 20 = 125 before; after, 75 + 50 = 125.
-#eval total cellA + total cellB                                       -- 125
-#eval (execCrossForest goodCrossForest cellOf 42).map
-        (fun cs => ∑ i, total (cs i))                                 -- some 125 (CG-5: conserved)
+#guard (total cellA + total cellB) == 125  --  125
+#guard ((execCrossForest goodCrossForest cellOf 42).map
+        (fun cs => ∑ i, total (cs i))) == some 125  --  some 125 (CG-5: conserved)
 -- Every cross-cell delegation edge is non-amplifying: child [read] ⊆ parent [read,write].
-#eval (forestEdges goodCrossForest).map (fun e =>
+#guard ((forestEdges goodCrossForest).map (fun e =>
         decide ((capAuthConferred (attenuate e.1 e.2)).length
-                  ≤ (capAuthConferred e.2).length))                   -- [true]
+                  ≤ (capAuthConferred e.2).length))) == [true]  --  [true]
 
 /-- An UNBALANCED cross-cell forest: the child's δ is `−10` while the parent's is `30` — the δ's
 sum to `30 + (-10) = 20 ≠ 0`, VIOLATING the cross-cell CG-5 binding. It still COMMITS per-cell
@@ -437,9 +437,9 @@ def unbalancedCrossForest : CrossCellForest :=
       , sub := ⟨ 7, 7, 7, -10, [] ⟩ } ] ⟩
 
 -- The binding does NOT hold (Σ δ = 20 ≠ 0): the joint total is NOT conserved (125 ≠ 145).
-#eval (forestHalves unbalancedCrossForest).foldl (fun acc hh => acc + hh.δ) 0   -- 20 (UNBALANCED)
-#eval (execCrossForest unbalancedCrossForest cellOf 42).map
-        (fun cs => ∑ i, total (cs i))   -- some 105 ≠ 125 (binding VIOLATED ⇒ NOT conserved)
+#guard ((forestHalves unbalancedCrossForest).foldl (fun acc hh => acc + hh.δ) 0) == 20  --  20 (UNBALANCED)
+#guard ((execCrossForest unbalancedCrossForest cellOf 42).map
+        (fun cs => ∑ i, total (cs i))) == some 105  --  some 105 ≠ 125 (binding VIOLATED ⇒ NOT conserved)
 
 /-- An UNAUTHORIZED cross-cell forest: the child's actor (9) owns nothing on cell 7 and holds no cap
 — it acts BEYOND any delegated authority. `applyForestHalf`'s authority gate rejects it, and
@@ -450,14 +450,14 @@ def badChildCrossForest : CrossCellForest :=
   , [ { holder := 9, keep := [Auth.read], parentCap := .endpoint 7 [Auth.read]
       , sub := ⟨ 7, 9, 7, -30, [] ⟩ } ] ⟩
 
-#eval (execCrossForest badChildCrossForest cellOf 42).isSome  -- false (child unauthorized ⇒ whole forest rejected)
+#guard ((execCrossForest badChildCrossForest cellOf 42).isSome) == false  --  false (child unauthorized ⇒ whole forest rejected)
 
 /-- An UNAUTHORIZED ROOT cross-cell forest: actor 9 on cell 0 owns nothing — the root half fails, so
 the whole forest rejects (fail-closed, atomic over the family). -/
 def badRootCrossForest : CrossCellForest :=
   ⟨ 0, 9, 0, 30, [] ⟩
 
-#eval (execCrossForest badRootCrossForest cellOf 42).isSome   -- false (unauthorized root ⇒ fail-closed)
+#guard ((execCrossForest badRootCrossForest cellOf 42).isSome) == false  --  false (unauthorized root ⇒ fail-closed)
 
 /-! ## §11 — OUTCOME.
 

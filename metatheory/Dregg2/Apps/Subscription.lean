@@ -984,16 +984,16 @@ holds on the post-state — the carried invariant bounds a queue that genuinely 
 /-- A subscription with 2 published, 1 consumed, capacity 8 — well-formed (`1 ≤ 2`, in-flight `1 ≤ 8`). -/
 def sub0 : SubState := { head := 2, tail := 1, capacity := 8 }
 
-#eval decide sub0.WF                                          -- true  (well-formed start)
-#eval (publish sub0).map (fun s => (s.head, s.tail, s.inFlight))   -- some (3, 1, 2)  (head advanced)
-#eval (consume sub0).map (fun s => (s.head, s.tail, s.inFlight))   -- some (2, 2, 0)  (tail advanced)
-#eval (publish sub0).map (fun s => decide s.WF)              -- some true  (publish preserves WF)
-#eval (consume sub0).map (fun s => decide s.WF)              -- some true  (consume preserves WF)
+#guard decide sub0.WF                                         -- true  (well-formed start)
+#guard (publish sub0).map (fun s => (s.head, s.tail, s.inFlight)) == some (3, 1, 2)  -- some (3, 1, 2)  (head advanced)
+#guard (consume sub0).map (fun s => (s.head, s.tail, s.inFlight)) == some (2, 2, 0)  -- some (2, 2, 0)  (tail advanced)
+#guard (publish sub0).map (fun s => decide s.WF) == some true  -- some true  (publish preserves WF)
+#guard (consume sub0).map (fun s => decide s.WF) == some true  -- some true  (consume preserves WF)
 -- the boundary teeth: a FULL queue rejects publish; an EMPTY queue rejects consume.
-#eval (publish { head := 8, tail := 0, capacity := 8 }).isSome  -- false (full ⇒ rejected — capacity bound)
-#eval (consume { head := 5, tail := 5, capacity := 8 }).isSome  -- false (empty ⇒ rejected — no read past producer)
+#guard (publish { head := 8, tail := 0, capacity := 8 }).isSome == false  -- false (full ⇒ rejected — capacity bound)
+#guard (consume { head := 5, tail := 5, capacity := 8 }).isSome == false  -- false (empty ⇒ rejected — no read past producer)
 -- consumer-safe forever along the alternating schedule (a few indices; the theorem covers ALL n):
-#eval decide (subTraj sub0 (fun n => if n % 2 = 0 then SubOp.pub else SubOp.con) 4).WF  -- true
+#guard decide (subTraj sub0 (fun n => if n % 2 = 0 then SubOp.pub else SubOp.con) 4).WF  -- true
 
 /-! ### §B `#eval` — the REAL living cell. -/
 
@@ -1006,16 +1006,16 @@ def subForest : FullForestA :=
       , sub := ⟨ .queueEnqueueA 7 111 0 0 9 0 0, [] ⟩ } ] ⟩
 
 -- The subscription program COMMITS (allocate + publish run, gated handoff passes — cell 0 holds the cap):
-#eval (execFullForestA fmaDeleg subForest).isSome                       -- true (the subscription commits)
+#guard (execFullForestA fmaDeleg subForest).isSome                      -- true (the subscription commits)
 -- The post-state's queue 7 holds the published message `[111]` (in-flight count 1, capacity 2):
-#eval (execFullForestA fmaDeleg subForest).bind
-        (fun s => (findQueue s.kernel.queues 7).map (fun q => (q.buffer, q.capacity)))  -- some ([111], 2)
+#guard ((execFullForestA fmaDeleg subForest).bind
+        (fun s => (findQueue s.kernel.queues 7).map (fun q => (q.buffer, q.capacity)))) == some ([111], 2)  -- some ([111], 2)
 -- subWF HOLDS on the post-state — every queue (here the one we built) is within capacity:
-#eval (execFullForestA fmaDeleg subForest).map
-        (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity)))  -- some true (the carried subWF)
+#guard ((execFullForestA fmaDeleg subForest).map
+        (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity)))) == some true  -- some true (the carried subWF)
 -- the in-flight bound has teeth on the committed queue: 1 ≤ 2 (NOT over capacity):
-#eval (execFullForestA fmaDeleg subForest).bind
-        (fun s => (findQueue s.kernel.queues 7).map (fun q => decide (q.buffer.length ≤ q.capacity)))  -- some true
+#guard ((execFullForestA fmaDeleg subForest).bind
+        (fun s => (findQueue s.kernel.queues 7).map (fun q => decide (q.buffer.length ≤ q.capacity)))) == some true  -- some true
 
 /-! ## Axiom hygiene — every keystone pinned to the standard kernel triple (NO `sorryAx`). -/
 

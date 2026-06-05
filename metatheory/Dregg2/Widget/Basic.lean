@@ -278,17 +278,17 @@ with no elaboration at all. If the classifier were vacuous (always one tier), th
 print the same value; they do not. -/
 
 -- KernelChecked: no extra axioms.
-#eval (classifyAxioms false #[``propext, ``Classical.choice, ``Quot.sound]).label  -- "KernelChecked"
+#guard (classifyAxioms false #[``propext, ``Classical.choice, ``Quot.sound]).label == "KernelChecked"  -- "KernelChecked"
 -- CarrierBounded: an extra axiom whose name carries a §8 fragment ("Extern").
-#eval (classifyAxioms false #[``propext, `dregg_someVerifyExtern]).label            -- "CarrierBounded"
+#guard (classifyAxioms false #[``propext, `dregg_someVerifyExtern]).label == "CarrierBounded"  -- "CarrierBounded"
 -- ExtraAxioms: an extra axiom that is NOT a recognised carrier.
-#eval (classifyAxioms false #[``propext, `someRandomAssumption]).label              -- "ExtraAxioms"
+#guard (classifyAxioms false #[``propext, `someRandomAssumption]).label == "ExtraAxioms"  -- "ExtraAxioms"
 -- ExtraAxioms: a hidden sorry shows up RED.
-#eval (classifyAxioms false #[``sorryAx]).label                                     -- "ExtraAxioms"
+#guard (classifyAxioms false #[``sorryAx]).label == "ExtraAxioms"                   -- "ExtraAxioms"
 -- AxiomItself: the decl is an axiom.
-#eval (classifyAxioms true #[]).label                                               -- "AxiomItself"
+#guard (classifyAxioms true #[]).label == "AxiomItself"                             -- "AxiomItself"
 -- The four verdicts are pairwise distinct — the classifier genuinely partitions.
-#eval decide (Tier.kernelChecked ≠ Tier.carrierBounded ∧ Tier.carrierBounded ≠ Tier.extraAxioms
+#guard decide (Tier.kernelChecked ≠ Tier.carrierBounded ∧ Tier.carrierBounded ≠ Tier.extraAxioms
               ∧ Tier.extraAxioms ≠ Tier.axiomItself)                                -- true
 
 /-- Two clearly-named **demo carrier axioms** — present ONLY to exhibit the `carrierBounded` /

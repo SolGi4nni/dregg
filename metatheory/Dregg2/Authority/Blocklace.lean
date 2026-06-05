@@ -373,11 +373,11 @@ def f2 : Block := { id := 3, creator := 9, seq := 1, preds := [0] }
 def demoLace : Lace := [g0, g1, f1, f2]
 
 -- The honest ack edge resolves (g0 is in g1's preds) and both blocks are present.
-#eval (demoLace.lookup 0).isSome && (demoLace.lookup 1).isSome   -- true
-#eval decide (g0.id ∈ g1.preds)                                  -- true  (g1 acks g0)
+#guard (demoLace.lookup 0).isSome && (demoLace.lookup 1).isSome   -- both present
+#guard decide (g0.id ∈ g1.preds)                                  -- g1 acks g0
 -- The fork blocks share author 9 and seq 1 but neither acks the other.
-#eval decide (f1.creator = f2.creator ∧ f1.seq = f2.seq)         -- true  (same strand+seq)
-#eval decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds)               -- false (neither acks other)
+#guard decide (f1.creator = f2.creator ∧ f1.seq = f2.seq)         -- same strand+seq
+#guard decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds) == false      -- neither acks other
 
 /-- The honest ack edge `g0 ← g1` is a `pointed` edge in `demoLace` (PROVED, `decide`). -/
 theorem demo_honest_edge : pointed demoLace g0 g1 := by

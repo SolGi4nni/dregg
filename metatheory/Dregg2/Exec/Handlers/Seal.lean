@@ -573,43 +573,43 @@ def skSealed : Option RecordKernelState :=
 
 -- §TEETH-1 (R3 ATTACK): creating a NEW seal-pair under pid 5 — which ALREADY binds a box — is REJECTED
 -- (the freshness gate bites: a stale unsealer must not be able to open the new pair's box).
-#eval (skSealed.bind (fun k =>
-        execEffect (createSealPairEffect 5 0 0 1) k)).isSome              -- false  (R3 attack rejected)
+#guard ((skSealed.bind (fun k =>
+        execEffect (createSealPairEffect 5 0 0 1) k)).isSome) == false  --  false  (R3 attack rejected)
 -- §TEETH-2 (R3 honest): creating a seal-pair under a FRESH pid 6 SUCCEEDS (not everything-rejected).
-#eval (skSealed.bind (fun k =>
-        execEffect (createSealPairEffect 6 0 0 1) k)).isSome              -- true   (fresh pid admitted)
+#guard ((skSealed.bind (fun k =>
+        execEffect (createSealPairEffect 6 0 0 1) k)).isSome)  --  true   (fresh pid admitted)
 -- §TEETH-3 (cap MOVES): the recipient (cell 1) unseals box 5 ⇒ the `node 99` payload lands in cell 1.
-#eval (skSealed.bind (fun k => execEffect (unsealEffect 5 1 1) k)).map
-        (fun k => (k.caps 1).contains (Cap.node 99))                      -- some true
+#guard ((skSealed.bind (fun k => execEffect (unsealEffect 5 1 1) k)).map
+        (fun k => (k.caps 1).contains (Cap.node 99))) == some true  --  some true
 -- §TEETH-4 (unseal needs a seal cap for the pid): cell 2 holds NO endpoint cap keyed to pid 5
 -- (`holdsSealCapFor 5` fails), so its unseal attempt is REJECTED (fail-closed on cap-not-held).
-#eval (skSealed.bind (fun k => execEffect (unsealEffect 5 2 2) k)).isSome -- false
+#guard ((skSealed.bind (fun k => execEffect (unsealEffect 5 2 2) k)).isSome) == false  --  false
 -- §TEETH-5 (unseal of an absent box fail-closed): no box under pid 99 ⇒ none even with a held cap.
-#eval (execEffect (unsealEffect 99 1 1) sk0).isSome                       -- false
+#guard ((execEffect (unsealEffect 99 1 1) sk0).isSome) == false  --  false
 -- §TEETH-6 (seal needs a HELD payload): sealing a cap the actor does NOT hold ⇒ none.
-#eval (skSealed.bind (fun k =>
-        execEffect (sealEffect 5 0 (Cap.node 12345)) k)).isSome           -- false
+#guard ((skSealed.bind (fun k =>
+        execEffect (sealEffect 5 0 (Cap.node 12345)) k)).isSome) == false  --  false
 -- §TEETH-7 (export AMPLIFICATION denied): exporting [read, write] when cell 0 holds only [read, call]
 -- (write ∉ committed-held) ⇒ none (the non-amplification gate, carried from the kernel op).
-#eval (execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read, Auth.write]) sk0).isSome  -- false
+#guard ((execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read, Auth.write]) sk0).isSome) == false  --  false
 -- §TEETH-8 (export subset OK): exporting [read] (⊆ [read, call]) by the authorized holder SUCCEEDS.
-#eval (execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).isSome               -- true
+#guard ((execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).isSome)  --  true
 -- §TEETH-9 (export conserves): a committed export leaves the combined per-asset measure UNCHANGED.
-#eval (execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).map
-        (fun k => (recTotalAssetWithEscrow sk0 0, recTotalAssetWithEscrow k 0))  -- some (100, 100)
+#guard ((execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).map
+        (fun k => (recTotalAssetWithEscrow sk0 0, recTotalAssetWithEscrow k 0))) == some (100, 100)  --  some (100, 100)
 -- §TEETH-10 (export UNAUTHORIZED): cell 1 holds no authority over exporter 0 ⇒ none.
-#eval (execEffect (exportSturdyRefEffect 42 1 0 1 [Auth.read]) sk0).isSome               -- false
+#guard ((execEffect (exportSturdyRefEffect 42 1 0 1 [Auth.read]) sk0).isSome) == false  --  false
 -- §TEETH-11 (enliven/handoff/drop fail-closed on an absent swiss number).
-#eval (execEffect (enlivenRefEffect 999 0 0 [Auth.read]) sk0).isSome                     -- false
-#eval (execEffect (swissHandoffEffect 999 1234 0 0) sk0).isSome                          -- false
-#eval (execEffect (swissDropEffect 999 0 0) sk0).isSome                                  -- false
+#guard ((execEffect (enlivenRefEffect 999 0 0 [Auth.read]) sk0).isSome) == false  --  false
+#guard ((execEffect (swissHandoffEffect 999 1234 0 0) sk0).isSome) == false  --  false
+#guard ((execEffect (swissDropEffect 999 0 0) sk0).isSome) == false  --  false
 -- §TEETH-12 (drop GCs the ref): export sw 42, then a single drop removes it (refcount 1 → 0 ⇒ GC).
-#eval ((execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).bind
+#guard (((execEffect (exportSturdyRefEffect 42 0 0 1 [Auth.read]) sk0).bind
         (fun k => execEffect (swissDropEffect 42 0 0) k)).map
-        (fun k => (findSwiss k.swiss 42).isNone)                                         -- some true
+        (fun k => (findSwiss k.swiss 42).isNone)) == some true  --  some true
 -- §TEETH-13 (turn conserves): a turn [export; enliven] runs the foldlM and conserves the measure.
-#eval (execTurn [exportSturdyRefEffect 42 0 0 1 [Auth.read], enlivenRefEffect 42 0 0 [Auth.read]] sk0).map
-        (fun k => recTotalAssetWithEscrow k 0)                                           -- some 100
+#guard ((execTurn [exportSturdyRefEffect 42 0 0 1 [Auth.read], enlivenRefEffect 42 0 0 [Auth.read]] sk0).map
+        (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
 
 /-! ## §5 — Axiom-hygiene pins (every handler keystone rests only on the three kernel axioms).
 

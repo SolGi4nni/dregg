@@ -826,15 +826,15 @@ non-empty, genuinely stable registry. -/
 def fmaRevoked : RecChainedState :=
   { fma0 with kernel := { fma0.kernel with revoked := [42] } }
 
-#eval fmaRevoked.kernel.revoked                                                       -- [42] (42 is revoked)
-#eval fmaRevoked.kernel.revoked.contains 42                                           -- true
+#guard fmaRevoked.kernel.revoked == [42]                                              -- [42] (42 is revoked)
+#guard fmaRevoked.kernel.revoked.contains 42                                          -- true
 -- run the real conserving transfer; the revocation registry is UNCHANGED (still [42]):
-#eval (execFullForestA fmaRevoked transferCF.1).map (fun s' => s'.kernel.revoked)            -- some [42]
-#eval (execFullForestA fmaRevoked transferCF.1).map (fun s' => s'.kernel.revoked.contains 42)  -- some true (STILL revoked)
-#eval (execFullForestA fmaRevoked transferCF.1).map
-        (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.revoked))                    -- some true (the carried ⊆)
+#guard (execFullForestA fmaRevoked transferCF.1).map (fun s' => s'.kernel.revoked) == some [42]            -- some [42]
+#guard (execFullForestA fmaRevoked transferCF.1).map (fun s' => s'.kernel.revoked.contains 42) == some true  -- some true (STILL revoked)
+#guard (execFullForestA fmaRevoked transferCF.1).map
+        (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.revoked)) == some true       -- some true (the carried ⊆)
 -- a credential id NOT revoked (`99`) is genuinely absent — the registry has teeth, not all-true:
-#eval fmaRevoked.kernel.revoked.contains 99                                           -- false
+#guard fmaRevoked.kernel.revoked.contains 99 == false                                 -- false
 
 /-! ## Axiom hygiene -/
 

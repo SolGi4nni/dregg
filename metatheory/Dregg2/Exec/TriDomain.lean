@@ -605,9 +605,9 @@ example : ((execFull fs0 (.mint 9 0 50)).map (fun s' => recTotal s'.kernel)) = s
 -- The `authMeasure` genuinely READS the cap table and MOVES: over the holder domain `{0,1}`, slot
 -- `0` already holds an edge-bearing `node 7` cap (measure `1`); a delegate to `1` grants `1` a fresh
 -- `node 7` cap, raising the measure to `2`; a mint leaves it fixed at `1` (authority framed).
-#eval authMeasure fs0 {0, 1}                                        -- 1 (slot 0 holds `node 7`)
-#eval (execFull fs0 (.delegate 0 1 7)).map (fun s' => authMeasure s' {0, 1})  -- some 2
-#eval (execFull fs0 (.mint 9 0 50)).map (fun s' => authMeasure s' {0, 1})     -- some 1 (authority framed)
+#guard (authMeasure fs0 {0, 1}) == 1  --  1 (slot 0 holds `node 7`)
+#guard ((execFull fs0 (.delegate 0 1 7)).map (fun s' => authMeasure s' {0, 1})) == some 2  --  some 2
+#guard ((execFull fs0 (.mint 9 0 50)).map (fun s' => authMeasure s' {0, 1})) == some 1  --  some 1 (authority framed)
 
 /-- The authority measure of `fs0` over `{0,1}` is `1` (slot `0` holds the edge-bearing `node 7`
 cap), and a delegate to `1` raises it to `2` — the on-state count genuinely reads and moves. PROVED

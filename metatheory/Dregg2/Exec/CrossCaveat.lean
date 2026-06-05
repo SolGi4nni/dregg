@@ -137,12 +137,12 @@ def covenant : CrossCaveat := fun A B => decide (B.bal 7 ≤ A.bal 0)
 def sBhigh : KernelState :=
   { accounts := {7}, bal := fun c => if c = 7 then 200 else 0, caps := fun _ => [] }
 
-#eval covenant sA sB                                              -- true  (20 ≤ 100 — covenant holds)
-#eval covenant sA sBhigh                                          -- false (200 ≤ 100 — violated)
-#eval (jointApplyCaveated covenant sA sB goodBi).isSome           -- true  (bound + covenant ⇒ ADMITS)
-#eval (jointApplyCaveated covenant sA sBhigh goodBi).isSome       -- false (covenant violated by B ⇒ REJECT)
-#eval (jointApply sA sBhigh goodBi).isSome                        -- true  (RAW turn fine; only the caveat rejects)
-#eval (jointApplyCaveated covenant sA sB goodBi).map (fun p => jointTotal p.1 p.2)  -- some 125 (CG-5 still conserved)
+#guard (covenant sA sB)  --  true  (20 ≤ 100 — covenant holds)
+#guard (covenant sA sBhigh) == false  --  false (200 ≤ 100 — violated)
+#guard ((jointApplyCaveated covenant sA sB goodBi).isSome)  --  true  (bound + covenant ⇒ ADMITS)
+#guard ((jointApplyCaveated covenant sA sBhigh goodBi).isSome) == false  --  false (covenant violated by B ⇒ REJECT)
+#guard ((jointApply sA sBhigh goodBi).isSome)  --  true  (RAW turn fine; only the caveat rejects)
+#guard ((jointApplyCaveated covenant sA sB goodBi).map (fun p => jointTotal p.1 p.2)) == some 125  --  some 125 (CG-5 still conserved)
 
 /-- **`covenant_rejects_high` — the cross-cell read genuinely gates (PROVED).** When `B`'s state
 violates the covenant (cell 7 = 200 > cell 0 = 100), the caveated turn is rejected — a theorem, not

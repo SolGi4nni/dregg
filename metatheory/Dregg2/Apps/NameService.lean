@@ -276,18 +276,18 @@ def afterTransfer : Option RecChainedState :=
   afterRegister.bind (fun s => execFullForestA s (transfer aliceName aliceOwner bobOwner))
 
 -- The registration COMMITS and the binding is now registered + resolvable:
-#eval (execFullForestA fma0 (register aliceName aliceOwner)).isSome                       -- true (commits)
-#eval afterRegister.map (fun s => isRegistered s aliceName aliceOwner)                    -- some true (anchored)
-#eval afterRegister.map (fun s => resolveRegistered s aliceName aliceOwner)               -- some (some <commit>)
-#eval afterRegister.map (fun s => s.kernel.commitments.length)                            -- some 1 (grew from 0)
-#eval fma0.kernel.commitments.length                                                      -- 0 (BEFORE)
+#guard (execFullForestA fma0 (register aliceName aliceOwner)).isSome                      -- true (commits)
+#guard afterRegister.map (fun s => isRegistered s aliceName aliceOwner) == some true      -- some true (anchored)
+#guard afterRegister.map (fun s => (resolveRegistered s aliceName aliceOwner).isSome) == some true  -- some (some <commit>)
+#guard afterRegister.map (fun s => s.kernel.commitments.length) == some 1                 -- some 1 (grew from 0)
+#guard fma0.kernel.commitments.length == 0                                                -- 0 (BEFORE)
 
 -- After the transfer, BOTH bindings are registered (the permanent audit trail):
-#eval afterTransfer.map (fun s => isRegistered s aliceName aliceOwner)                    -- some true (original kept)
-#eval afterTransfer.map (fun s => isRegistered s aliceName bobOwner)                      -- some true (new binding)
-#eval afterTransfer.map (fun s => s.kernel.commitments.length)                            -- some 2 (both anchored)
+#guard afterTransfer.map (fun s => isRegistered s aliceName aliceOwner) == some true      -- some true (original kept)
+#guard afterTransfer.map (fun s => isRegistered s aliceName bobOwner) == some true        -- some true (new binding)
+#guard afterTransfer.map (fun s => s.kernel.commitments.length) == some 2                 -- some 2 (both anchored)
 -- The two bindings are DISTINCT registry entries (collision-free):
-#eval decide (nameCommit aliceName aliceOwner ≠ nameCommit aliceName bobOwner)            -- true
+#guard decide (nameCommit aliceName aliceOwner ≠ nameCommit aliceName bobOwner)           -- true
 
 /-! ## §6 — Axiom hygiene — every keystone pinned to the three standard kernel axioms (NO `sorryAx`). -/
 

@@ -337,12 +337,12 @@ fails on availability, whole turn rejected. -/
 def overdrawBi : BiTurn :=
   { actorA := 1, srcA := 1, actorB := 7, dstB := 7, amt := 30, sid := 42 }
 
-#eval (jointApply sA sB goodBi).isSome                                 -- true (both halves commit)
-#eval (jointApply sA sB unauthBi).isSome                               -- false (A's half unauthorized)
-#eval (jointApply sA sB overdrawBi).isSome                             -- false (A's half overdraws)
-#eval jointTotal sA sB                                                 -- 125 (= 105 + 20)
-#eval (jointApply sA sB goodBi).map (fun p => jointTotal p.1 p.2)      -- some 125 (CG-5: conserved)
-#eval (jointApply sA sB goodBi).map (fun p => (total p.1, total p.2))  -- some (75, 50): A↓30, B↑30
-#eval halfA goodBi + halfB goodBi                                      -- 0 (EqualAndOpposite)
+#guard ((jointApply sA sB goodBi).isSome)  --  true (both halves commit)
+#guard ((jointApply sA sB unauthBi).isSome) == false  --  false (A's half unauthorized)
+#guard ((jointApply sA sB overdrawBi).isSome) == false  --  false (A's half overdraws)
+#guard (jointTotal sA sB) == 125  --  125 (= 105 + 20)
+#guard ((jointApply sA sB goodBi).map (fun p => jointTotal p.1 p.2)) == some 125  --  some 125 (CG-5: conserved)
+#guard ((jointApply sA sB goodBi).map (fun p => (total p.1, total p.2))) == some (75, 50)  --  some (75, 50): A↓30, B↑30
+#guard (halfA goodBi + halfB goodBi) == 0  --  0 (EqualAndOpposite)
 
 end Dregg2.Exec.JointCell

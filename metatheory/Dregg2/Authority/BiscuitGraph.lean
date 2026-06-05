@@ -187,11 +187,11 @@ def amplifyLeaf : Block := { authority := {Auth.read, Auth.grant}, vkey := 9, si
 theorem amplify_rejected : ¬ WellFormed demoSig rootKey [amplifyLeaf, midBlock, rootBlock] :=
   amplifying_block_rejected demoSig rootKey (by decide)
 
-#eval decide (attenuates leafBlock midBlock)      -- true  (read ⊆ read/write)
-#eval demoSig midBlock.vkey leafBlock             -- true  (leaf.sig 8 == mid.vkey 8)
-#eval demoSig midBlock.vkey forgedLeaf            -- false (999 ≠ 8 — forged)
-#eval decide (attenuates amplifyLeaf midBlock)    -- false (grant ∉ mid's rights — amplifies)
-#eval decide (leafBlock.authority ⊆ rootBlock.authority)  -- true (the keystone, computed)
+#guard decide (attenuates leafBlock midBlock)               -- read ⊆ read/write
+#guard demoSig midBlock.vkey leafBlock                      -- leaf.sig 8 == mid.vkey 8
+#guard demoSig midBlock.vkey forgedLeaf == false            -- 999 ≠ 8 — forged
+#guard decide (attenuates amplifyLeaf midBlock) == false    -- grant ∉ mid's rights — amplifies
+#guard decide (leafBlock.authority ⊆ rootBlock.authority)   -- the keystone, computed
 
 /-! ### Axiom hygiene. -/
 

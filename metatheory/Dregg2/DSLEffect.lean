@@ -243,15 +243,15 @@ theorem regimes_coincide_with_catalog :
 
 #assert_axioms regimes_coincide_with_catalog
 
-/-! ## §8 — `#eval` smoke-tests (the colors/regimes evaluate as declared). -/
+/-! ## §8 — build-enforced smoke-tests (the colors/regimes evaluate as declared). -/
 
-#eval transfer.regime        -- Paired
-#eval mint.regime            -- Disclosed
-#eval burn.regime            -- Disclosed
-#eval incrementNonce.regime  -- Inert
-#eval cellDestroy.regime     -- Inert
-#eval setField.regime        -- Inert
-#eval setField.args          -- ["field", "value"]
+#guard transfer.regime       = Regime.Paired
+#guard mint.regime           = Regime.Disclosed
+#guard burn.regime           = Regime.Disclosed
+#guard incrementNonce.regime = Regime.Inert
+#guard cellDestroy.regime    = Regime.Inert
+#guard setField.regime       = Regime.Inert
+#guard setField.args         = ["field", "value"]
 
 /-! ## §9 — Axiom-hygiene tripwire.
 

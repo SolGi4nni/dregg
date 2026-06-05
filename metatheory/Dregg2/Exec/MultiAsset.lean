@@ -205,14 +205,13 @@ def mt1 : MultiTurn := { actor := 0, src := 0, dst := 1, asset := 0, amt := 30 }
 /-- Actor 2 attempts the same — unauthorized (no ownership, no auth-table grant). -/
 def mtBad : MultiTurn := { actor := 2, src := 0, dst := 1, asset := 0, amt := 30 }
 
-#eval (maExec ms0 mt1).isSome                    -- true
-#eval (maExec ms0 mtBad).isSome                  -- false
-#eval maTotal ms0 0                              -- 105  (asset 0 supply)
-#eval maTotal ms0 1                              -- 7    (asset 1 supply)
-#eval (maExec ms0 mt1).map (fun k => maTotal k 0) -- some 105 (asset 0 conserved: 70 + 35)
-#eval (maExec ms0 mt1).map (fun k => maTotal k 1) -- some 7   (asset 1 untouched)
+#guard ((maExec ms0 mt1).isSome)  --  true
+#guard ((maExec ms0 mtBad).isSome) == false  --  false
+#guard (maTotal ms0 0) == 105  --  105  (asset 0 supply)
+#guard (maTotal ms0 1) == 7  --  7    (asset 1 supply)
+#guard ((maExec ms0 mt1).map (fun k => maTotal k 0)) == some 105  --  some 105 (asset 0 conserved: 70 + 35)
+#guard ((maExec ms0 mt1).map (fun k => maTotal k 1)) == some 7  --  some 7   (asset 1 untouched)
 -- the committed cell-0 balances: 70 of asset 0, still 7 of asset 1.
-#eval (maExec ms0 mt1).map (fun k => (k.bal 0 0, k.bal 0 1, k.bal 1 0, k.bal 1 1))
-                                                  -- some (70, 7, 35, 0)
+#guard ((maExec ms0 mt1).map (fun k => (k.bal 0 0, k.bal 0 1, k.bal 1 0, k.bal 1 1))) == some (70, 7, 35, 0)  -- some (70, 7, 35, 0)
 
 end Dregg2.Exec.MultiAsset

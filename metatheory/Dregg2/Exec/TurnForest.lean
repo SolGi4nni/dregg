@@ -345,15 +345,15 @@ def goodForest : TurnForest :=
       , sub := ⟨ { method := 2, effect := .transfer
                  , move := { actor := 1, src := 1, dst := 2, amt := 10 } }, [] ⟩ } ] ⟩
 
-#eval (execForest ts0 goodForest).isSome                              -- true (whole forest commits)
-#eval (execForest ts0 goodForest).map (fun s => recTotal s.kernel)    -- some 105 (CONSERVED end-to-end)
-#eval recTotal ts0.kernel                                             -- 105
-#eval (execForest ts0 goodForest).map (fun s => s.log.length)         -- some 2 (chain grew by node count)
+#guard ((execForest ts0 goodForest).isSome)  --  true (whole forest commits)
+#guard ((execForest ts0 goodForest).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (CONSERVED end-to-end)
+#guard (recTotal ts0.kernel) == 105  --  105
+#guard ((execForest ts0 goodForest).map (fun s => s.log.length)) == some 2  --  some 2 (chain grew by node count)
 -- The pre-order flattening IS the linear turn over the two node-actions:
-#eval (forestActions goodForest).length                               -- 2
+#guard ((forestActions goodForest).length) == 2  --  2
 -- Every delegation edge is non-amplifying: the child's [read] ⊆ the parent's [read,write].
-#eval (forestEdges goodForest).map (fun e => decide ((capAuthConferred (attenuate e.1 e.2)).length
-                                                      ≤ (capAuthConferred e.2).length))  -- [true]
+#guard ((forestEdges goodForest).map (fun e => decide ((capAuthConferred (attenuate e.1 e.2)).length
+                                                      ≤ (capAuthConferred e.2).length))) == [true]  --  [true]
 
 /-- A 3-LEVEL forest (deeper nesting works — the recursion is fully general): root 0→1 of 10,
 child 1→2 of 5, grandchild 0→2 of 5. -/
@@ -365,9 +365,9 @@ def deepForest : TurnForest :=
                    , sub := ⟨ { method := 3, effect := .transfer
                               , move := { actor := 0, src := 0, dst := 2, amt := 5 } }, [] ⟩ } ] ⟩ } ] ⟩
 
-#eval (execForest ts0 deepForest).isSome                              -- true (3 levels commit)
-#eval (execForest ts0 deepForest).map (fun s => s.log.length)         -- some 3
-#eval (execForest ts0 deepForest).map (fun s => recTotal s.kernel)    -- some 105 (conserved across depth)
+#guard ((execForest ts0 deepForest).isSome)  --  true (3 levels commit)
+#guard ((execForest ts0 deepForest).map (fun s => s.log.length)) == some 3  --  some 3
+#guard ((execForest ts0 deepForest).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved across depth)
 
 /-- A FAIL-CLOSED forest: the CHILD action's actor (9) owns nothing and holds no cap on cell 1 — it
 attempts to act BEYOND any delegated authority. `recCexec`'s authority gate rejects it, and
@@ -379,14 +379,14 @@ def badChildForest : TurnForest :=
       , sub := ⟨ { method := 2, effect := .transfer
                  , move := { actor := 9, src := 1, dst := 2, amt := 10 } }, [] ⟩ } ] ⟩
 
-#eval (execForest ts0 badChildForest).isSome  -- false (child exceeds delegated authority ⇒ whole forest rejected)
+#guard ((execForest ts0 badChildForest).isSome) == false  --  false (child exceeds delegated authority ⇒ whole forest rejected)
 
 /-- A FAIL-CLOSED forest at the ROOT: an unauthorized root (actor 9 on cell 0). The whole forest
 rejects before any child runs. -/
 def badRootForest : TurnForest :=
   ⟨ { method := 1, effect := .transfer, move := { actor := 9, src := 0, dst := 1, amt := 10 } }, [] ⟩
 
-#eval (execForest ts0 badRootForest).isSome   -- false (unauthorized root ⇒ fail-closed)
+#guard ((execForest ts0 badRootForest).isSome) == false  --  false (unauthorized root ⇒ fail-closed)
 
 /-! ## §9 — OUTCOME.
 

@@ -721,11 +721,11 @@ genuinely moves. -/
 commitment cannot conflict) and grows `commitments` by one. -/
 def noteCreateFA : FullForestA := ⟨.noteCreateA 42 9, []⟩
 
-#eval (execFullForestA fma0 noteCreateFA).map (fun s' => s'.kernel.commitments)            -- some [42] (grew from [])
-#eval fma0.kernel.commitments.length                                                       -- 0   (BEFORE — strictly less)
-#eval (execFullForestA fma0 noteCreateFA).map (fun s' => decide (42 ∈ s'.kernel.commitments))  -- some true
+#guard ((execFullForestA fma0 noteCreateFA).map (fun s' => s'.kernel.commitments)) == some [42]  --  some [42] (grew from [])
+#guard (fma0.kernel.commitments.length) == 0  --  0   (BEFORE — strictly less)
+#guard ((execFullForestA fma0 noteCreateFA).map (fun s' => decide (42 ∈ s'.kernel.commitments))) == some true  --  some true
 -- The carried predicate at a published baseline `[42]` holds AFTER the create (and would FAIL on `∅`-state):
-#eval (execFullForestA fma0 noteCreateFA).map (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.commitments))  -- some true
+#guard ((execFullForestA fma0 noteCreateFA).map (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.commitments))) == some true  --  some true
 
 /-! ## Axiom hygiene — the persistence crown + the registry frame pinned to the kernel triple (NO `sorryAx`). -/
 
