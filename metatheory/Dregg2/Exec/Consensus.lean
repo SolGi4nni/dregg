@@ -47,6 +47,12 @@ ones except to cite them in prose.
 import Dregg2.World
 import Dregg2.Finality
 import Dregg2.Tactics
+-- Wire the additive Cordial-Miners liveness residual (xsort total-order / single-lace agreement /
+-- the NAMED post-GST dissemination + pacemaker residuals) into the build graph through this
+-- consensus cell. `CordialMinersLiveness` imports `Proof.CordialMiners` (the real DAG model); it is
+-- the liveness companion to this module's quorum→finality-tier safety bridge. No cycle: that subtree
+-- never imports `Exec.Consensus`.
+import Dregg2.Proof.CordialMinersLiveness
 
 namespace Dregg2.Exec.Consensus
 
