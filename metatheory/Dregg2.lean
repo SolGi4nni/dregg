@@ -187,7 +187,35 @@ import Dregg2.Apps.SealedBidAuction    -- Track-A Phase 4 (the proving ground): 
 import Dregg2.Exec.CellRuntime         -- OS-level cell runtime theorems: checkpoint_restore_roundtrip + replay_deterministic_run + replayFrom_conserves + time_travel_fork; νF fork noted
 import Dregg2.Exec.StateMigration      -- schema-upgrade state migration: migrate_conforms + migrate_conserves (balance survives) + migrate_anti_brick (gate-fail ⇒ signature fallback, never bricks)
 import Dregg2.Exec.CircuitEmitGadgets  -- emits the remaining §8 gadgets to the wire: emittedTemporal/NonMembership/Pedersen/Dfa_bridge (each composes emit-faithfulness with the gadget's *_bridge)
-import Dregg2.Circuit.Transfer         -- crown jewel: the circuit⟺protocol bridge for ONE REAL effect (Transfer) over the real recKExec executor — transfer_circuit_sound (circuit ⇒ executor admits + genuine debit/credit/conserve) + transfer_circuit_complete (every committed step satisfies) + transfer_bridge_iff (sat ⇔ admitGuard); NON-VACUOUS (rejects_nonconserving = Orchard-class value-forgery forbidden BY CONSTRUCTION · rejects_unauthorized · rejects_overdraft + decidable #guard forgery witnesses); emitTransferFaithful composes with emit. The PROVEN PATTERN a swarm copies per effect
+import Dregg2.Circuit.Transfer         -- crown jewel: the circuit⟺protocol bridge for ONE REAL effect (Transfer) over the real recKExec executor — transfer_circuit_sound (circuit ⇒ executor admits + genuine debit/credit/conserve) + transfer_circuit_complete (every committed step satisfies) + transfer_bridge_iff (sat ⇔ admitGuard); NON-VACUOUS (rejects_nonconserving = Orchard-class value-forgery forbidden BY CONSTRUCTION · rejects_unauthorized · rejects_overdraft + decidable #guard forgery witnesses); emitTransferFaithful composes with emit. PLUS Stage-A: TransferSpec (independent declarative FULL-17-field spec) + recKExec_iff_spec (executor⟺spec, both directions, validates recKExec) + recTransfer_correct
+import Dregg2.Circuit.StateCommit       -- D5-CORE KEYSTONE: FULL-STATE circuit⟺spec (kills the "two-balance projection" ghost). recStateCommit + injective-only portals (CombineInjective/FrameDigestBindsCells/MovedDigestBindsCells/RestHashIffFrame) + AccountsWF (PROVED preserved); transfer_circuit_full_sound (satisfiedS ⇒ FULL TransferSpec, frame RECONSTRUCTED by funext from reused frame-digest EQ gates + injectivity — NO frame/update-correctness portal) + _full_complete + ANTI-GHOST teeth (stateCircuit_rejects_third_cell / _field_tamper + concrete #guard: a forgery accepted by transferCircuit is REJECTED by stateCircuit). Frame PROVED not portaled. De-portaling (concrete Merkle/Poseidon over finite accounts) = tracked follow-up
+-- D5 executor⟺spec wave (independent declarative full-state spec + executor⟺spec per effect family; each #assert_axioms-clean):
+import Dregg2.Circuit.Spec.balancemovement       -- balanceA: recCexecAsset_iff_spec + debit/credit/other-untouched + rejects unauthorized/overdraft/self
+import Dregg2.Circuit.Spec.supplycreation        -- mintA: per-asset supply mint spec (supply Δ = +amt at one asset, frame elsewhere)
+import Dregg2.Circuit.Spec.supplydestruction     -- burnA: per-asset supply burn spec
+import Dregg2.Circuit.Spec.cellstatefield        -- setFieldA: field-write spec + full frame
+import Dregg2.Circuit.Spec.cellstatemonotone     -- incrementNonceA: monotone nonce-bump spec
+import Dregg2.Circuit.Spec.cellstatepermissions  -- setPermissionsA: permissions-write spec
+import Dregg2.Circuit.Spec.cellstatevk           -- setVKA: verification-key-write spec
+import Dregg2.Circuit.Spec.cellstateaudit        -- receiptArchiveA: archive/checkpoint spec
+import Dregg2.Circuit.Spec.sovereigncommitment   -- makeSovereignA: representation-flip spec (balance-neutral)
+import Dregg2.Circuit.Spec.accountgrowth         -- createCellA: fresh-cell growth spec (born empty ⇒ conservation-neutral)
+import Dregg2.Circuit.Spec.factorycreation       -- createCellFromFactoryA: factory-mint spec (caveats/programVk installed)
+import Dregg2.Circuit.Spec.authorityunattenuated -- introduceA: Granovetter introduce spec (non-amplifying edge)
+import Dregg2.Circuit.Spec.authorityattenuation  -- attenuateA/delegateAttenA: attenuated delegation spec (granted ⊆ held)
+import Dregg2.Circuit.Spec.authorityrevocation   -- revoke/dropRefA/revokeDelegationA: edge-removal spec (authority shrinks)
+import Dregg2.Circuit.Spec.notenullifier         -- noteSpendA: nullifier-set insert spec (anti-replay, balance-neutral)
+import Dregg2.Circuit.Spec.notecommitment        -- noteCreateA: commitment-set grow-only spec
+import Dregg2.Circuit.Spec.escrowholdingcreate   -- createEscrowA: lock spec (single-cell debit + parked, combined-conserving)
+import Dregg2.Circuit.Spec.escrowholdingrelease  -- releaseEscrowA: release-to-recipient spec
+import Dregg2.Circuit.Spec.escrowholdingrefund   -- refundEscrowA: refund-to-creator spec
+import Dregg2.Circuit.Spec.escrowcommitted       -- createCommittedEscrowA: hiding-portal-gated escrow spec
+import Dregg2.Circuit.Spec.bridgeinboundmint     -- bridgeMintA: §8 portal inflow spec (disclosed +value at one asset)
+import Dregg2.Circuit.Spec.bridgeoutboundlock    -- bridgeLockA: outbound lock spec (debit + parked bridge record)
+import Dregg2.Circuit.Spec.bridgeoutboundfinalize -- bridgeFinalizeA: outbound burn spec (combined measure drops, disclosed outflow)
+import Dregg2.Circuit.Spec.sealpaircreation      -- createSealPairA: two c-list grants spec (sealer/unsealer caps)
+import Dregg2.Circuit.Spec.sealboxoperations     -- sealA/unsealA: capability box bind/move spec
+import Dregg2.Circuit.Spec.queuepipelinedsend    -- queueEnqueueA + deposit: FIFO append + parked deposit spec (combined-conserving)
 import Dregg2.DSLEffect                -- `dregg_effect <name> : <Class>` effects eDSL → Spec.Conservation LinearityClass coloring + inherited obligation; #assert_namespace_axioms-clean
 import Dregg2.Exec.Gas                  -- gas-metering layered beside execFullTurn: gasCost_pos (no free action) + gas_exhaustion_fails_closed (over-budget ⇒ none, no partial mutation) + gas_sufficient_runs (pure guard, identical state) + gas_conserves/_preserves_attests (removes no safety); Nat-resource orthogonal to ℤ-conservation
 import Dregg2.Proof.BeaconSpaceInterior -- interior-h non-vacuity witness: Measure.infinitePi (Bernoulli 3/4)^ℕ at h=3/4, indep_block via infinitePi_pi; BeaconSpace is non-vacuously instantiable at a genuine interior honest-fraction
