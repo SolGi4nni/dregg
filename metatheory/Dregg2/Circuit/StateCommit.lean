@@ -15,34 +15,46 @@ declarative reference), so tampering with ANY field or ANY third cell is REJECTE
 
 ## How the frame is PROVED (not portaled — the honesty constraint)
 
-The post-state's UNCHANGED-ness is derived from GENERIC injective-commitment REUSE, never asserted.
-The state commitment splits into three honestly-encoded digests over the witness:
+The post-state's UNCHANGED-ness is derived from a GENUINE BINDING COMMITMENT (a Poseidon Merkle
+node-hash `compress` + sponge `compressN` over the ORDERED cell leaves), never asserted, and never
+from a fake `+`-fold (a sum is NOT injective: `a+b=c+d ⇏ a=c∧b=d`, so a sum-fold commitment cannot
+satisfy the per-cell binding portals — that would make the soundness theorem VACUOUS). The state
+commitment splits into three honestly-encoded digests over the witness:
   * `restHash`   — a hash of the 16 non-`cell` components.
-  * `frameDigest`— `∑ c ∈ accounts \ {src,dst}, CH c (cell c)` — the digest of the UNTOUCHED cells,
-                   shared pre/post (the load-bearing reuse: the SAME finite sum on the SAME carrier).
-  * `movedDigest`— `CH src (cell src) + CH dst (cell dst)` — the two cells the transfer moves.
+  * `frameDigest`— `compressN (S.sort.map (fun c => CH c (cell c)))` over `S = accounts \ {src,dst}`:
+                   the Poseidon sponge of the UNTOUCHED cells' leaves in CANONICAL (sorted) order,
+                   shared pre/post (the load-bearing reuse: the SAME ordered sponge on the SAME carrier).
+  * `movedDigest`— `compress (CH src (cell src)) (CH dst (cell dst))` — the 2-to-1 node hash of the
+                   two cells the transfer moves.
 Three EQ gates force pre/post agreement on the frame + rest, and force the moved post-leaves to equal
 the SPEC's debit/credit of the pre-leaves (the whole-`Value` analog of `cTDebit`/`cTCredit`):
   * `cSRestFrame`  : `restDigPre = restDigPost`           (the 16 non-cell fields are frozen)
   * `cSFrameReuse` : `frameDigPre = frameDigPost`         (every third cell is frozen)
   * `cSMovedBind`  : `movedDigPost = movedDigExpected`    (moved leaves = spec debit/credit of pre)
-The CONCLUSIONS (`k.cell c = k'.cell c` etc.) come from carried INJECTIVITY portals on the digests —
-the ONLY crypto assumptions, and NOTHING but injectivity. A satisfying witness then REASSEMBLES the
-full `TransferSpec` by `funext`: moved cells from `cSMovedBind`+`MovedDigestBindsCells`, third cells
-from `cSFrameReuse`+`FrameDigestBindsCells`, dead cells from the PROVED `AccountsWF` invariant, and
-the 16 non-cell fields from `cSRestFrame`+`RestHashIffFrame`.
+The CONCLUSIONS (`k.cell c = k'.cell c` etc.) come from PROVED binding lemmas
+(`FrameDigestBindsCells`/`MovedDigestBindsCells`) DERIVED from a SMALL standard Poseidon
+collision-resistance set (`compressInjective`/`compressNInjective`/`cellLeafInjective`) — the ONLY
+crypto assumptions, and each is the REALIZABLE injectivity of a genuine 2-to-1 / list / leaf hash
+(NOT the unrealizable injectivity of a `+`-fold). A satisfying witness then REASSEMBLES the full
+`TransferSpec` by `funext`: moved cells from `cSMovedBind`+`MovedDigestBindsCells`, third cells from
+`cSFrameReuse`+`FrameDigestBindsCells`, dead cells from the PROVED `AccountsWF` invariant, and the 16
+non-cell fields from `cSRestFrame`+`RestHashIffFrame`.
 
 ## The assumption ledger (enumerated — verify NOTHING else is assumed)
 
-ASSUMED (carried Prop hypotheses — all pure INJECTIVITY of generic commitments, never `axiom`):
-  * `CombineInjective cmb`        — the root combiner is injective (a 2-1 collision-resistant compress).
-  * `FrameDigestBindsCells CH`    — equal frame digests ⇒ equal cells on the summed carrier `S`.
-  * `MovedDigestBindsCells CH`    — equal moved digests ⇒ equal `src`/`dst` leaves (2-leaf injective).
-  * `RestHashIffFrame RH`         — equal rest hashes ⟺ the 16 non-cell components agree (BIDIRECTIONAL).
+ASSUMED (carried Prop hypotheses — the STANDARD Poseidon collision-resistance set, all REALIZABLE
+injectivity of a genuine hash, never `axiom`, never sum-injectivity):
+  * `compressInjective cmb`      — the 2-to-1 root combiner is injective (a collision-resistant compress).
+  * `compressInjective compress` — the 2-to-1 node hash is injective (Merkle node CR).
+  * `compressNInjective compressN` — the sponge over a list of leaves is injective (list CR).
+  * `cellLeafInjective CH`       — the per-cell leaf encoding is injective in the `Value` (leaf encoding).
+  * `RestHashIffFrame RH`        — equal rest hashes ⟺ the 16 non-cell components agree (BIDIRECTIONAL).
   * `AccountsWF k` — NOT crypto: the structural invariant "cells outside `accounts` hold the default".
                      PROVED PRESERVED by `recKExec_preserves_AccountsWF` (a real theorem, not a portal).
+The OLD `FrameDigestBindsCells`/`MovedDigestBindsCells`/`CombineInjective` portals are now PROVED
+LEMMAS (derived from the CR set + `List.map_inj_left` on the sorted carrier), no longer carried.
 
-PROVED (everything else — crucially THE FRAME): `recKExec_preserves_AccountsWF`,
+PROVED (everything else — crucially THE FRAME): `recKExec_preserves_AccountsWF`, the binding lemmas,
 `transfer_circuit_full_sound`, `transfer_circuit_full_complete`, the anti-ghost rejections
 (`stateCircuit_rejects_field_tamper`, `stateCircuit_rejects_third_cell`) + concrete `#guard`s, and
 the emission faithfulness. NO `postRoot = recStateCommit (applyTransfer …)` hypothesis appears —
@@ -132,12 +144,16 @@ def vMovedDigExpected : Var := 19
 /-- The full-state trace width (Transfer's 11 wires + 9 digest columns). -/
 def stateTraceWidth : Nat := 20
 
-/-! ## §2 — the abstract commitment surface + the THREE+1 injectivity portals.
+/-! ## §2 — the abstract commitment surface + the STANDARD Poseidon collision-resistance set.
 
 The commitment primitives are SECTION PARAMETERS, never `axiom`s: a cell-leaf hash `CH`, a rest hash
-`RH` of the 16 non-cell components, and a 2-1 root combiner `cmb`. The digests are FINITE sums over
-the live account set. The injectivity facts are carried Prop HYPOTHESES on the keystones (so a future
-`Crypto/Merkle.lean` can DISCHARGE them with a real Poseidon tree — see the de-portaling note). -/
+`RH` of the 16 non-cell components, a root combiner `cmb`, a 2-to-1 Merkle node hash `compress`, and
+a sponge `compressN` over a list of leaves (mirroring `Crypto/Primitives.CryptoPrimitives`'
+`compress`/`compressN`, but at `ℤ` so the `Expr`/`#guard` decidability transports). The digests are
+GENUINE BINDING commitments (a Poseidon node-hash of the moved pair; a Poseidon sponge of the
+sorted-canonical untouched leaves) — NOT `+`-folds. The collision-resistance facts are carried Prop
+HYPOTHESES on the keystones (the standard Poseidon CR set), each REALIZABLE by a real Poseidon; the
+old per-digest binding portals are now PROVED from this set. -/
 
 section Surface
 
@@ -145,44 +161,62 @@ section Surface
 variable (CH : CellId → Value → ℤ)
 -- `RH k` — the hash of the 16 non-`cell` components of `k`.
 variable (RH : RecordKernelState → ℤ)
--- `cmb a b` — the root combiner (a 2-1 compress).
+-- `cmb a b` — the root combiner (a 2-1 compress over the cell-digest and rest-hash children).
 variable (cmb : ℤ → ℤ → ℤ)
+-- `compress a b` — the Poseidon 2-to-1 Merkle node hash (`CryptoPrimitives.compress` at `ℤ`).
+variable (compress : ℤ → ℤ → ℤ)
+-- `compressN xs` — the Poseidon sponge over a list of leaves (`CryptoPrimitives.compressN` at `ℤ`).
+variable (compressN : List ℤ → ℤ)
 
-/-- **`frameDigest CH k S`** — the digest of the cells in `S` (used with `S = accounts \ {src,dst}`,
-the UNTOUCHED cells whose digest is REUSED pre/post). The load-bearing finite-sum reuse. -/
-def frameDigest (k : RecordKernelState) (S : Finset CellId) : ℤ := ∑ c ∈ S, CH c (k.cell c)
+/-- **`frameDigest CH compressN k S`** — the Poseidon sponge of the cells in `S` (used with
+`S = accounts \ {src,dst}`, the UNTOUCHED cells whose digest is REUSED pre/post). The leaves are
+hashed in CANONICAL (sorted) order (`CellId = Nat` has `LinearOrder`, so `Finset.sort (· ≤ ·)` pins
+the positions). The load-bearing reuse: the SAME ordered sponge on the SAME carrier. A GENUINE
+binding commitment — NOT a `+`-fold. -/
+def frameDigest (k : RecordKernelState) (S : Finset CellId) : ℤ :=
+  compressN ((S.sort (· ≤ ·)).map (fun c => CH c (k.cell c)))
 
-/-- **`movedDigest CH f src dst`** — the 2-leaf digest of the two moved cells, over a cell map `f`.
-Taking a raw `CellId → Value` (not a state) lets the moved gate compare the post state's leaves to
-the SPEC's `recTransfer`-debited pre leaves without mentioning the executor. -/
-def movedDigest (f : CellId → Value) (src dst : CellId) : ℤ := CH src (f src) + CH dst (f dst)
+/-- **`movedDigest CH compress f src dst`** — the Poseidon 2-to-1 node hash of the two moved cells'
+leaves, over a cell map `f`. Taking a raw `CellId → Value` (not a state) lets the moved gate compare
+the post state's leaves to the SPEC's `recTransfer`-debited pre leaves without mentioning the
+executor. A GENUINE 2-leaf binding commitment — NOT a `+` of the two leaves. -/
+def movedDigest (f : CellId → Value) (src dst : CellId) : ℤ :=
+  compress (CH src (f src)) (CH dst (f dst))
 
-/-- **`cellDigest CH k`** — the digest of the FULL live cell map (`frameDigest` over all accounts).
-The first child of the root. -/
-def cellDigest (k : RecordKernelState) : ℤ := ∑ c ∈ k.accounts, CH c (k.cell c)
+/-- **`cellDigest CH compress compressN k t`** — the live-cell digest as a Merkle INTERNAL NODE: the
+2-to-1 hash combining the untouched-frame subtree digest with the moved-pair node hash. Binding the
+full cell map (over the transfer's src/dst partition): `compress`-injectivity recovers
+`(frameDigest, movedDigest)`, then the sub-digest binding lemmas recover every cell. The first child
+of the root. -/
+def cellDigest (k : RecordKernelState) (t : Turn) : ℤ :=
+  compress (frameDigest CH compressN k (k.accounts \ {t.src, t.dst}))
+           (movedDigest CH compress k.cell t.src t.dst)
 
-/-- **`recStateCommit CH RH cmb k`** — the full-state root: combine the live-cell digest with the
-rest hash. Tampering with ANY cell changes `cellDigest`; tampering with ANY non-cell field changes
-`RH`; injectivity of `cmb` separates them. -/
-def recStateCommit (k : RecordKernelState) : ℤ := cmb (cellDigest CH k) (RH k)
+/-- **`recStateCommit CH RH cmb compress compressN k t`** — the full-state root: combine the
+live-cell digest (a binding commitment to the cell map) with the rest hash. Tampering with ANY cell
+changes `cellDigest` (via the binding lemmas); tampering with ANY non-cell field changes `RH`;
+injectivity of `cmb` separates them. -/
+def recStateCommit (k : RecordKernelState) (t : Turn) : ℤ :=
+  cmb (cellDigest CH compress compressN k t) (RH k)
 
-/-! ### The injectivity portals — the COMPLETE crypto assumption list (all pure injectivity). -/
+/-! ### The collision-resistance carriers + the PROVED binding lemmas.
 
-/-- **PORTAL `CombineInjective`** — the root combiner is injective (collision-resistant 2-1
-compress). Pure injectivity. -/
-def CombineInjective : Prop := ∀ a b c d : ℤ, cmb a b = cmb c d → a = c ∧ b = d
+The carried set is the standard Poseidon CR (each REALIZABLE injectivity of a genuine hash). The
+per-digest binding facts the soundness `funext` consumes are PROVED from it, no longer carried. -/
 
-/-- **PORTAL `FrameDigestBindsCells`** — equal frame digests over a carrier `S` force per-cell
-WHOLE-`Value` equality on `S`. The Merkle-binding of the untouched cells. Pure injectivity. -/
-def FrameDigestBindsCells : Prop :=
-  ∀ (k k' : RecordKernelState) (S : Finset CellId),
-    frameDigest CH k S = frameDigest CH k' S → ∀ c ∈ S, k.cell c = k'.cell c
+/-- **CR carrier `compressInjective h`** — the 2-to-1 hash `h` is injective: `h a b = h c d ⇒ a=c ∧
+b=d`. The standard collision-resistance of a Poseidon 4-to-1/node compress (REALIZABLE — unlike the
+injectivity of a `+`-fold, which is FALSE). Used at both `cmb` and `compress`. -/
+def compressInjective (h : ℤ → ℤ → ℤ) : Prop := ∀ a b c d : ℤ, h a b = h c d → a = c ∧ b = d
 
-/-- **PORTAL `MovedDigestBindsCells`** — equal moved (2-leaf) digests force WHOLE-`Value` equality
-of both `src` and `dst` leaves (a 2-leaf injective commitment). Pure injectivity. -/
-def MovedDigestBindsCells : Prop :=
-  ∀ (f g : CellId → Value) (src dst : CellId),
-    movedDigest CH f src dst = movedDigest CH g src dst → f src = g src ∧ f dst = g dst
+/-- **CR carrier `compressNInjective h`** — the sponge `h` over a list of leaves is injective:
+`h xs = h ys ⇒ xs = ys`. The standard collision-resistance of a Poseidon sponge (REALIZABLE). -/
+def compressNInjective (h : List ℤ → ℤ) : Prop := ∀ xs ys : List ℤ, h xs = h ys → xs = ys
+
+/-- **CR carrier `cellLeafInjective CH`** — the per-cell leaf encoding is injective in the `Value`:
+`CH c v = CH c w ⇒ v = w` (a fixed cell's leaf binds its whole `Value`). REALIZABLE (a canonical
+serialization + Poseidon leaf hash). -/
+def cellLeafInjective : Prop := ∀ (c : CellId) (v w : Value), CH c v = CH c w → v = w
 
 /-- **PORTAL `RestHashIffFrame`** — the rest hash is injective on the 16 non-`cell` components
 (BIDIRECTIONAL: `→` binds them in soundness/anti-ghost, `←` rebuilds the hash in completeness). Pure
@@ -195,6 +229,46 @@ def RestHashIffFrame : Prop :=
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.sealedBoxes = k.sealedBoxes)
+
+/-- **LEMMA `MovedDigestBindsCells` (PROVED from `compressInjective compress` + `cellLeafInjective`).**
+Equal moved (2-leaf) node hashes force WHOLE-`Value` equality of BOTH `src` and `dst` leaves. The old
+carried portal is now derived: `compress`-injectivity splits the node hash into its two leaf inputs,
+then `cellLeafInjective` recovers each `Value`. -/
+theorem MovedDigestBindsCells
+    (hC : compressInjective compress) (hL : cellLeafInjective CH)
+    (f g : CellId → Value) (src dst : CellId)
+    (h : movedDigest CH compress f src dst = movedDigest CH compress g src dst) :
+    f src = g src ∧ f dst = g dst := by
+  unfold movedDigest at h
+  obtain ⟨hs, hd⟩ := hC _ _ _ _ h
+  exact ⟨hL src _ _ hs, hL dst _ _ hd⟩
+
+/-- **LEMMA `FrameDigestBindsCells` (PROVED from `compressNInjective compressN` + `cellLeafInjective`).**
+Equal frame digests over a carrier `S` force per-cell WHOLE-`Value` equality on `S`. The old carried
+portal is now derived: `compressN`-injectivity makes the two sorted-leaf lists equal, `List.map_inj_left`
+on the SAME sorted carrier `S.sort` makes the per-position leaf hashes equal, then `cellLeafInjective`
+recovers each `Value`. (The sorted carrier is the key: a `+`-fold could never do this — sums lose
+positions; the ORDERED sponge keeps them.) -/
+theorem FrameDigestBindsCells
+    (hN : compressNInjective compressN) (hL : cellLeafInjective CH)
+    (k k' : RecordKernelState) (S : Finset CellId)
+    (h : frameDigest CH compressN k S = frameDigest CH compressN k' S) :
+    ∀ c ∈ S, k.cell c = k'.cell c := by
+  unfold frameDigest at h
+  -- compressN-injective ⇒ the two sorted-leaf lists are equal.
+  have hmap : (S.sort (· ≤ ·)).map (fun c => CH c (k.cell c))
+      = (S.sort (· ≤ ·)).map (fun c => CH c (k'.cell c)) := hN _ _ h
+  -- map_inj_left on the same carrier ⇒ per-position leaf hashes equal.
+  have hpt : ∀ c ∈ S.sort (· ≤ ·), CH c (k.cell c) = CH c (k'.cell c) :=
+    List.map_inj_left.mp hmap
+  intro c hc
+  exact hL c _ _ (hpt c ((Finset.mem_sort (· ≤ ·)).mpr hc))
+
+/-- **LEMMA `CombineInjective` (PROVED — it IS `compressInjective cmb`).** Equal root combinations
+force equal cell-digest AND equal rest-hash children. Kept as a named lemma so the root-binding
+corollary reads cleanly. -/
+theorem CombineInjective (hCmb : compressInjective cmb) (a b c d : ℤ) (h : cmb a b = cmb c d) :
+    a = c ∧ b = d := hCmb a b c d h
 
 /-! ## §3 — the encoder + transport.
 
@@ -210,21 +284,21 @@ def frameCarrier (k : RecordKernelState) (t : Turn) : Finset CellId :=
 columns carry the honest commitment values. The moved-expected column commits the SPEC's debit/credit
 of the PRE leaves (a pure function of `k`, `t` — no `k'`/executor). -/
 def encodeS (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) : Assignment := fun v =>
-  if      v = vPreRoot         then recStateCommit CH RH cmb k
-  else if v = vPostRoot        then recStateCommit CH RH cmb k'
+  if      v = vPreRoot         then recStateCommit CH RH cmb compress compressN k t
+  else if v = vPostRoot        then recStateCommit CH RH cmb compress compressN k' t
   else if v = vRestDigPre      then RH k
   else if v = vRestDigPost     then RH k'
-  else if v = vFrameDigPre     then frameDigest CH k  (frameCarrier k t)
-  else if v = vFrameDigPost    then frameDigest CH k' (frameCarrier k t)
-  else if v = vMovedDigPre      then movedDigest CH k.cell  t.src t.dst
-  else if v = vMovedDigPost     then movedDigest CH k'.cell t.src t.dst
-  else if v = vMovedDigExpected then movedDigest CH (recTransfer k.cell t.src t.dst t.amt) t.src t.dst
+  else if v = vFrameDigPre     then frameDigest CH compressN k  (frameCarrier k t)
+  else if v = vFrameDigPost    then frameDigest CH compressN k' (frameCarrier k t)
+  else if v = vMovedDigPre      then movedDigest CH compress k.cell  t.src t.dst
+  else if v = vMovedDigPost     then movedDigest CH compress k'.cell t.src t.dst
+  else if v = vMovedDigExpected then movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst
   else encodeT k t k' v
 
 /-- **Transport:** on every Transfer wire (`v < 11`) `encodeS` agrees with `encodeT`, so all nine
 `t*_iff` gate lemmas apply to `encodeS` verbatim. -/
 theorem encodeS_agrees_encodeT (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
-    (v : Var) (hv : v < 11) : encodeS CH RH cmb k t k' v = encodeT k t k' v := by
+    (v : Var) (hv : v < 11) : encodeS CH RH cmb compress compressN k t k' v = encodeT k t k' v := by
   unfold encodeS Var at *
   simp only [vPreRoot, vPostRoot, vRestDigPre, vRestDigPost, vFrameDigPre, vFrameDigPost,
     vMovedDigPre, vMovedDigPost, vMovedDigExpected]
@@ -260,50 +334,57 @@ def stateCircuit : ConstraintSystem :=
 /-- Sanity: twelve gates (9 transfer + 3 frame). -/
 example : stateCircuit.length = 12 := rfl
 
-/-- **`StateCommitSat cmb a`** — the root-decomposition equalities the opaque combiner pins: the
-pre/post root wires equal `cmb` of the (frame+moved cell digest) child and the rest-hash child.
-Holds by `rfl`/`simp` from `encodeS`; carried in `satisfiedS` so the root-binding corollary can use
-`CombineInjective`. (`a` is the witness; we read the digest children off the SAME witness.) -/
+/-- **`StateCommitSat cmb compress a`** — the root-decomposition equalities the opaque combiners pin:
+the pre/post root wires equal `cmb` of the (frame⊕moved cell-digest internal node) child and the
+rest-hash child. Holds by `rfl` from `encodeS` (the cell-digest child IS the Merkle node
+`compress frameDig movedDig`). Carried in `satisfiedS` so the root-binding corollary can use
+`compressInjective cmb`. (`a` is the witness; we read the digest children off the SAME witness.) -/
 def StateCommitSat (a : Assignment) : Prop :=
-  a vPreRoot  = cmb (a vFrameDigPre  + a vMovedDigPre)  (a vRestDigPre)
-  ∧ a vPostRoot = cmb (a vFrameDigPost + a vMovedDigPost) (a vRestDigPost)
+  a vPreRoot  = cmb (compress (a vFrameDigPre)  (a vMovedDigPre))  (a vRestDigPre)
+  ∧ a vPostRoot = cmb (compress (a vFrameDigPost) (a vMovedDigPost)) (a vRestDigPost)
 
-/-- **`satisfiedS cmb a`** — the full-state satisfaction predicate: the `stateCircuit` gates hold
-AND the root decomposition holds. (The latter is the opaque-hash Prop the combiner enforces.) -/
+/-- **`satisfiedS cmb compress a`** — the full-state satisfaction predicate: the `stateCircuit` gates
+hold AND the root decomposition holds. (The latter is the opaque-hash Prop the combiners enforce.) -/
 def satisfiedS (a : Assignment) : Prop :=
-  satisfied stateCircuit a ∧ StateCommitSat cmb a
+  satisfied stateCircuit a ∧ StateCommitSat cmb compress a
 
 /-! ## §4b — digest wire lookups (the new columns under `encodeS`). -/
 
 theorem encS_vPreRoot (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vPreRoot = recStateCommit CH RH cmb k := by
+    encodeS CH RH cmb compress compressN k t k' vPreRoot
+      = recStateCommit CH RH cmb compress compressN k t := by
   simp [encodeS, vPreRoot]
 theorem encS_vPostRoot (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vPostRoot = recStateCommit CH RH cmb k' := by
+    encodeS CH RH cmb compress compressN k t k' vPostRoot
+      = recStateCommit CH RH cmb compress compressN k' t := by
   simp [encodeS, vPostRoot, vPreRoot]
 theorem encS_vRestDigPre (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vRestDigPre = RH k := by
+    encodeS CH RH cmb compress compressN k t k' vRestDigPre = RH k := by
   simp [encodeS, vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vRestDigPost (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vRestDigPost = RH k' := by
+    encodeS CH RH cmb compress compressN k t k' vRestDigPost = RH k' := by
   simp [encodeS, vRestDigPost, vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vFrameDigPre (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vFrameDigPre = frameDigest CH k (frameCarrier k t) := by
+    encodeS CH RH cmb compress compressN k t k' vFrameDigPre
+      = frameDigest CH compressN k (frameCarrier k t) := by
   simp [encodeS, vFrameDigPre, vRestDigPost, vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vFrameDigPost (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vFrameDigPost = frameDigest CH k' (frameCarrier k t) := by
+    encodeS CH RH cmb compress compressN k t k' vFrameDigPost
+      = frameDigest CH compressN k' (frameCarrier k t) := by
   simp [encodeS, vFrameDigPost, vFrameDigPre, vRestDigPost, vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vMovedDigPre (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vMovedDigPre = movedDigest CH k.cell t.src t.dst := by
+    encodeS CH RH cmb compress compressN k t k' vMovedDigPre
+      = movedDigest CH compress k.cell t.src t.dst := by
   simp [encodeS, vMovedDigPre, vFrameDigPost, vFrameDigPre, vRestDigPost,
     vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vMovedDigPost (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vMovedDigPost = movedDigest CH k'.cell t.src t.dst := by
+    encodeS CH RH cmb compress compressN k t k' vMovedDigPost
+      = movedDigest CH compress k'.cell t.src t.dst := by
   simp [encodeS, vMovedDigPost, vMovedDigPre, vFrameDigPost, vFrameDigPre, vRestDigPost,
     vRestDigPre, vPreRoot, vPostRoot]
 theorem encS_vMovedDigExpected (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    encodeS CH RH cmb k t k' vMovedDigExpected
-      = movedDigest CH (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by
+    encodeS CH RH cmb compress compressN k t k' vMovedDigExpected
+      = movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by
   simp [encodeS, vMovedDigExpected, vMovedDigPost, vMovedDigPre, vFrameDigPost, vFrameDigPre,
     vRestDigPost, vRestDigPre, vPreRoot, vPostRoot]
 
@@ -311,83 +392,65 @@ theorem encS_vMovedDigExpected (k : RecordKernelState) (t : Turn) (k' : RecordKe
 
 /-- `cSRestFrame` holds under `encodeS` IFF the rest hashes agree. -/
 theorem srestframe_iff (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    cSRestFrame.holds (encodeS CH RH cmb k t k') ↔ RH k = RH k' := by
+    cSRestFrame.holds (encodeS CH RH cmb compress compressN k t k') ↔ RH k = RH k' := by
   unfold Constraint.holds cSRestFrame
   simp only [Expr.eval, encS_vRestDigPre, encS_vRestDigPost]
 
 /-- `cSFrameReuse` holds under `encodeS` IFF the frame digests (over the untouched carrier) agree. -/
 theorem sframereuse_iff (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    cSFrameReuse.holds (encodeS CH RH cmb k t k')
-      ↔ frameDigest CH k (frameCarrier k t) = frameDigest CH k' (frameCarrier k t) := by
+    cSFrameReuse.holds (encodeS CH RH cmb compress compressN k t k')
+      ↔ frameDigest CH compressN k (frameCarrier k t)
+          = frameDigest CH compressN k' (frameCarrier k t) := by
   unfold Constraint.holds cSFrameReuse
   simp only [Expr.eval, encS_vFrameDigPre, encS_vFrameDigPost]
 
 /-- `cSMovedBind` holds under `encodeS` IFF the post moved-leaves digest equals the spec's debit/
 credit of the pre leaves. -/
 theorem smovedbind_iff (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
-    cSMovedBind.holds (encodeS CH RH cmb k t k')
-      ↔ movedDigest CH k'.cell t.src t.dst
-          = movedDigest CH (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by
+    cSMovedBind.holds (encodeS CH RH cmb compress compressN k t k')
+      ↔ movedDigest CH compress k'.cell t.src t.dst
+          = movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by
   unfold Constraint.holds cSMovedBind
   simp only [Expr.eval, encS_vMovedDigPost, encS_vMovedDigExpected]
-
-/-! ## §4d — the cell-digest SPLIT: the live-cell digest = untouched-frame ⊕ moved leaves.
-
-The load-bearing reuse: over a transfer between two distinct live accounts, the full live-cell
-digest decomposes into the digest of the UNTOUCHED cells (`frameDigest` over `accounts\{src,dst}`)
-plus the two moved leaves (`movedDigest`). This ties `recStateCommit`'s root to the digest gates. -/
-
-theorem cellDigest_split (k : RecordKernelState) (t : Turn)
-    (hsrc : t.src ∈ k.accounts) (hdst : t.dst ∈ k.accounts) (hne : t.src ≠ t.dst) :
-    cellDigest CH k = frameDigest CH k (frameCarrier k t) + movedDigest CH k.cell t.src t.dst := by
-  unfold cellDigest frameDigest movedDigest frameCarrier
-  have hsub : ({t.src, t.dst} : Finset CellId) ⊆ k.accounts := by
-    intro c hc; simp only [Finset.mem_insert, Finset.mem_singleton] at hc
-    rcases hc with rfl | rfl <;> assumption
-  -- ∑ over accounts = ∑ over the moved pair + ∑ over the sdiff complement.
-  rw [← Finset.sum_sdiff hsub]
-  have hpair : (∑ c ∈ ({t.src, t.dst} : Finset CellId), CH c (k.cell c))
-      = CH t.src (k.cell t.src) + CH t.dst (k.cell t.dst) := by
-    rw [Finset.sum_insert (by simp [hne]), Finset.sum_singleton]
-  rw [hpair]
 
 /-! ## §5 — FULL-STATE SOUNDNESS: a satisfying witness PROVES `TransferSpec` (whole post-state).
 
 The keystone. From a satisfying `stateCircuit` witness, the nine transfer gates give `admitGuard` +
-the moved-balance debit/credit; the three frame EQ gates + the injectivity portals give the WHOLE
+the moved-balance debit/credit; the three frame EQ gates + the PROVED binding lemmas give the WHOLE
 post-state frame; the `AccountsWF` invariant closes the dead-cell case. The post `cell` map is
 reconstructed by `funext` — NOT asserted. Result: `TransferSpec k t k'`. -/
 
 /-- **THEOREM 2 — `transfer_circuit_full_sound` (PROVED, frame RECONSTRUCTED not portaled).** A
 satisfying full-state witness on the encoded pre/turn/post proves the complete declarative
-`TransferSpec`: every one of the 17 components is pinned. Carries ONLY the four injectivity portals
-+ the `AccountsWF` invariant on both states. -/
+`TransferSpec`: every one of the 17 components is pinned. Carries ONLY the standard Poseidon
+collision-resistance set (`compressInjective compress`, `compressNInjective compressN`,
+`cellLeafInjective CH`, `RestHashIffFrame RH`) + the `AccountsWF` invariant on both states. The frame
+binding is PROVED (`MovedDigestBindsCells`/`FrameDigestBindsCells` are now lemmas off the CR set), so
+the soundness theorem is NON-VACUOUS: every carried Prop is realizable by a real Poseidon (a `+`-fold
+could satisfy NONE of them). -/
 theorem transfer_circuit_full_sound
-    -- `_hCmb` is carried for the COMPLETE portal enumeration, but soundness's frame is proved WITHOUT
-    -- it (from the digest EQ gates directly) — the root-combiner injectivity is needed only for the
-    -- separate `recStateCommit_binds` "root binds state" corollary. An honest strength, not a gap.
-    (_hCmb : CombineInjective cmb)
-    (hFrame : FrameDigestBindsCells CH)
-    (hMoved : MovedDigestBindsCells CH)
+    (hCompress : compressInjective compress)
+    (hCompressN : compressNInjective compressN)
+    (hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrame RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
-    (h : satisfiedS cmb (encodeS CH RH cmb k t k')) :
+    (h : satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k')) :
     TransferSpec k t k' := by
   obtain ⟨hsat, _hcommit⟩ := h
   -- Transport: `encodeS` agrees with `encodeT` on each of the eleven Transfer wires (0..10), so
   -- the 9 transfer gates' truth values are preserved. We supply the agreements as simp rewrites.
-  have e0  := encodeS_agrees_encodeT CH RH cmb k t k' vSrcPre    (by decide)
-  have e1  := encodeS_agrees_encodeT CH RH cmb k t k' vDstPre    (by decide)
-  have e2  := encodeS_agrees_encodeT CH RH cmb k t k' vSrcPost   (by decide)
-  have e3  := encodeS_agrees_encodeT CH RH cmb k t k' vDstPost   (by decide)
-  have e4  := encodeS_agrees_encodeT CH RH cmb k t k' vAmt       (by decide)
-  have e5  := encodeS_agrees_encodeT CH RH cmb k t k' vTAuth     (by decide)
-  have e6  := encodeS_agrees_encodeT CH RH cmb k t k' vTNonneg   (by decide)
-  have e7  := encodeS_agrees_encodeT CH RH cmb k t k' vTAvail    (by decide)
-  have e8  := encodeS_agrees_encodeT CH RH cmb k t k' vTDistinct (by decide)
-  have e9  := encodeS_agrees_encodeT CH RH cmb k t k' vTSrcLive  (by decide)
-  have e10 := encodeS_agrees_encodeT CH RH cmb k t k' vTDstLive  (by decide)
+  have e0  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vSrcPre    (by decide)
+  have e1  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vDstPre    (by decide)
+  have e2  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vSrcPost   (by decide)
+  have e3  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vDstPost   (by decide)
+  have e4  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vAmt       (by decide)
+  have e5  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTAuth     (by decide)
+  have e6  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTNonneg   (by decide)
+  have e7  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTAvail    (by decide)
+  have e8  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDistinct (by decide)
+  have e9  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTSrcLive  (by decide)
+  have e10 := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDstLive  (by decide)
   have htsat : satisfied transferCircuit (encodeT k t k') := by
     intro c hc
     have hc' : c ∈ stateCircuit := by unfold stateCircuit; exact List.mem_append_left _ hc
@@ -403,27 +466,30 @@ theorem transfer_circuit_full_sound
   obtain ⟨hg, hdeb, hcre, _hcons⟩ := transfer_circuit_sound k t k' htsat
   obtain ⟨hauth, hnn, hav, hne, hsrc, hdst⟩ := hg
   -- the three frame gates.
-  have hrestgate : cSRestFrame.holds (encodeS CH RH cmb k t k') :=
+  have hrestgate : cSRestFrame.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSRestFrame (by unfold stateCircuit; simp)
-  have hframegate : cSFrameReuse.holds (encodeS CH RH cmb k t k') :=
+  have hframegate : cSFrameReuse.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSFrameReuse (by unfold stateCircuit; simp)
-  have hmovedgate : cSMovedBind.holds (encodeS CH RH cmb k t k') :=
+  have hmovedgate : cSMovedBind.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSMovedBind (by unfold stateCircuit; simp)
   -- rest hash equal ⇒ 16 non-cell fields equal (RestHashIffFrame.→).
-  have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb k t k').mp hrestgate
+  have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
   have hframe16 := (hRest k k').mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hEsc, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif, hDC, hDel, hDgs,
     hSB⟩ := hframe16
-  -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells).
-  have hfdeq : frameDigest CH k (frameCarrier k t) = frameDigest CH k' (frameCarrier k t) :=
-    (sframereuse_iff CH RH cmb k t k').mp hframegate
+  -- frame digests equal ⇒ untouched cells equal (PROVED FrameDigestBindsCells).
+  have hfdeq : frameDigest CH compressN k (frameCarrier k t)
+      = frameDigest CH compressN k' (frameCarrier k t) :=
+    (sframereuse_iff CH RH cmb compress compressN k t k').mp hframegate
   have hcellframe : ∀ c ∈ frameCarrier k t, k.cell c = k'.cell c :=
-    hFrame k k' (frameCarrier k t) hfdeq
-  -- moved digests equal ⇒ both moved leaves equal the spec's debit/credit (MovedDigestBindsCells).
-  have hmoveq : movedDigest CH k'.cell t.src t.dst
-      = movedDigest CH (recTransfer k.cell t.src t.dst t.amt) t.src t.dst :=
-    (smovedbind_iff CH RH cmb k t k').mp hmovedgate
-  obtain ⟨hmsrc, hmdst⟩ := hMoved k'.cell (recTransfer k.cell t.src t.dst t.amt) t.src t.dst hmoveq
+    FrameDigestBindsCells CH compressN hCompressN hLeaf k k' (frameCarrier k t) hfdeq
+  -- moved digests equal ⇒ both moved leaves equal the spec's debit/credit (PROVED MovedDigestBindsCells).
+  have hmoveq : movedDigest CH compress k'.cell t.src t.dst
+      = movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst :=
+    (smovedbind_iff CH RH cmb compress compressN k t k').mp hmovedgate
+  obtain ⟨hmsrc, hmdst⟩ :=
+    MovedDigestBindsCells CH compress hCompress hLeaf
+      k'.cell (recTransfer k.cell t.src t.dst t.amt) t.src t.dst hmoveq
   -- reconstruct the post cell map by funext.
   have hcellmap : k'.cell = recTransfer k.cell t.src t.dst t.amt := by
     funext c
@@ -432,7 +498,7 @@ theorem transfer_circuit_full_sound
     · by_cases hcdst : c = t.dst
       · subst hcdst; exact hmdst
       · by_cases hcacc : c ∈ k.accounts
-        · -- c is an UNTOUCHED live cell: frame portal + recTransfer leaves it.
+        · -- c is an UNTOUCHED live cell: frame lemma + recTransfer leaves it.
           have hmem : c ∈ frameCarrier k t := by
             unfold frameCarrier
             simp only [Finset.mem_sdiff, Finset.mem_insert, Finset.mem_singleton, not_or]
@@ -450,22 +516,23 @@ theorem transfer_circuit_full_sound
 
 #assert_axioms transfer_circuit_full_sound
 
-/-! ## §5b — ROOT-BINDING corollary (where `CombineInjective` earns its keep).
+/-! ## §5b — ROOT-BINDING corollary (where `compressInjective cmb` earns its keep).
 
 The frame proof above does NOT use the root combiner — the digest EQ gates suffice. But the root
 combiner's injectivity gives the headline "the published root BINDS the whole state": two witnesses
-whose `recStateCommit` roots agree (and which decompose honestly) commit to the same cell digest and
-rest hash. This is the §8-portal binding shape `Spike.EffectVmConstraints2.state_commitment_binds_state`
-mirrors — and the reason `CombineInjective` is a required portal. -/
+(for the same turn) whose `recStateCommit` roots agree commit to the same cell digest and rest hash.
+This is the §8-portal binding shape `Spike.EffectVmConstraints2.state_commitment_binds_state` mirrors
+— and the reason `compressInjective cmb` is a required portal. -/
 
-/-- **`recStateCommit_binds` (PROVED via `CombineInjective`).** Equal full-state roots force equal
-cell-digest AND equal rest-hash. With `FrameDigestBindsCells`/`RestHashIffFrame` this propagates to
-the actual state — the published root is a binding commitment. -/
-theorem recStateCommit_binds (hCmb : CombineInjective cmb) (k k' : RecordKernelState)
-    (hroot : recStateCommit CH RH cmb k = recStateCommit CH RH cmb k') :
-    cellDigest CH k = cellDigest CH k' ∧ RH k = RH k' := by
+/-- **`recStateCommit_binds` (PROVED via `compressInjective cmb`).** Equal full-state roots (for the
+same turn) force equal cell-digest AND equal rest-hash. With the binding lemmas + `RestHashIffFrame`
+this propagates to the actual state — the published root is a binding commitment. -/
+theorem recStateCommit_binds (hCmb : compressInjective cmb) (k k' : RecordKernelState) (t : Turn)
+    (hroot : recStateCommit CH RH cmb compress compressN k t
+      = recStateCommit CH RH cmb compress compressN k' t) :
+    cellDigest CH compress compressN k t = cellDigest CH compress compressN k' t ∧ RH k = RH k' := by
   unfold recStateCommit at hroot
-  exact hCmb _ _ _ _ hroot
+  exact CombineInjective cmb hCmb _ _ _ _ hroot
 
 #assert_axioms recStateCommit_binds
 
@@ -474,30 +541,30 @@ theorem recStateCommit_binds (hCmb : CombineInjective cmb) (k k' : RecordKernelS
 /-- **THEOREM 3 — `transfer_circuit_full_complete` (PROVED).** A real committed `recKExec` step (=
 `TransferSpec`) yields a satisfying full-state witness: ALL protocol-acceptable Transfer behaviours
 are full-state-circuit-acceptable. The frame gates hold because `k'`'s frame is literally `k`'s
-(`Finset.sum_congr` on the untouched cells + `RestHashIffFrame.←`); the root decomposes by the split
-lemma. -/
+(`List.map_congr_left` on the untouched cells ⇒ equal ordered leaf lists ⇒ equal sponge, +
+`RestHashIffFrame.←`); the root decomposes definitionally (`cellDigest` IS the Merkle node). -/
 theorem transfer_circuit_full_complete
     (hRest : RestHashIffFrame RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hspec : TransferSpec k t k') :
-    satisfiedS cmb (encodeS CH RH cmb k t k') := by
+    satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   have hexec : recKExec k t = some k' := (recKExec_iff_spec k t k').mpr hspec
   obtain ⟨hg, hcell, hAcc, hCaps, hBal, hEsc, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif, hDC, hDel,
     hDgs, hSB⟩ := hspec
   obtain ⟨_, _, _, hne, hsrc, hdst⟩ := hg
   -- the 9 transfer gates hold under encodeT (Transfer's completeness), transport to encodeS.
   have htsat : satisfied transferCircuit (encodeT k t k') := transfer_circuit_complete hexec
-  have e0  := encodeS_agrees_encodeT CH RH cmb k t k' vSrcPre    (by decide)
-  have e1  := encodeS_agrees_encodeT CH RH cmb k t k' vDstPre    (by decide)
-  have e2  := encodeS_agrees_encodeT CH RH cmb k t k' vSrcPost   (by decide)
-  have e3  := encodeS_agrees_encodeT CH RH cmb k t k' vDstPost   (by decide)
-  have e4  := encodeS_agrees_encodeT CH RH cmb k t k' vAmt       (by decide)
-  have e5  := encodeS_agrees_encodeT CH RH cmb k t k' vTAuth     (by decide)
-  have e6  := encodeS_agrees_encodeT CH RH cmb k t k' vTNonneg   (by decide)
-  have e7  := encodeS_agrees_encodeT CH RH cmb k t k' vTAvail    (by decide)
-  have e8  := encodeS_agrees_encodeT CH RH cmb k t k' vTDistinct (by decide)
-  have e9  := encodeS_agrees_encodeT CH RH cmb k t k' vTSrcLive  (by decide)
-  have e10 := encodeS_agrees_encodeT CH RH cmb k t k' vTDstLive  (by decide)
+  have e0  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vSrcPre    (by decide)
+  have e1  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vDstPre    (by decide)
+  have e2  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vSrcPost   (by decide)
+  have e3  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vDstPost   (by decide)
+  have e4  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vAmt       (by decide)
+  have e5  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTAuth     (by decide)
+  have e6  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTNonneg   (by decide)
+  have e7  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTAvail    (by decide)
+  have e8  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDistinct (by decide)
+  have e9  := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTSrcLive  (by decide)
+  have e10 := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDstLive  (by decide)
   -- frame-gate facts.
   have hRHeq : RH k = RH k' := (hRest k k').mpr
     ⟨hAcc, hCaps, hBal, hEsc, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
@@ -507,10 +574,14 @@ theorem transfer_circuit_full_complete
     simp only [Finset.mem_sdiff, Finset.mem_insert, Finset.mem_singleton, not_or] at hc
     obtain ⟨_, hcs, hcd⟩ := hc
     rw [hcell]; simp only [recTransfer, if_neg hcs, if_neg hcd]
-  have hfdeq : frameDigest CH k (frameCarrier k t) = frameDigest CH k' (frameCarrier k t) := by
-    unfold frameDigest; exact Finset.sum_congr rfl hcellc
-  have hmoveq : movedDigest CH k'.cell t.src t.dst
-      = movedDigest CH (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by rw [hcell]
+  have hfdeq : frameDigest CH compressN k (frameCarrier k t)
+      = frameDigest CH compressN k' (frameCarrier k t) := by
+    unfold frameDigest
+    refine congrArg compressN (List.map_congr_left ?_)
+    intro c hc
+    exact hcellc c ((Finset.mem_sort (· ≤ ·)).mp hc)
+  have hmoveq : movedDigest CH compress k'.cell t.src t.dst
+      = movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst := by rw [hcell]
   refine ⟨?_, ?_⟩
   · -- satisfied stateCircuit: 9 transfer gates ++ 3 frame gates.
     intro c hc
@@ -529,23 +600,18 @@ theorem transfer_circuit_full_complete
     · -- frame gate.
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
       rcases hc with rfl | rfl | rfl
-      · exact (srestframe_iff CH RH cmb k t k').mpr hRHeq
-      · exact (sframereuse_iff CH RH cmb k t k').mpr hfdeq
-      · exact (smovedbind_iff CH RH cmb k t k').mpr hmoveq
-  · -- StateCommitSat: roots decompose via the split lemma.
+      · exact (srestframe_iff CH RH cmb compress compressN k t k').mpr hRHeq
+      · exact (sframereuse_iff CH RH cmb compress compressN k t k').mpr hfdeq
+      · exact (smovedbind_iff CH RH cmb compress compressN k t k').mpr hmoveq
+  · -- StateCommitSat: roots decompose definitionally (cellDigest = compress frame moved).
     refine ⟨?_, ?_⟩
-    · simp only [encS_vPreRoot, encS_vFrameDigPre, encS_vMovedDigPre, encS_vRestDigPre]
-      unfold recStateCommit
-      rw [cellDigest_split CH k t hsrc hdst hne]
-    · simp only [encS_vPostRoot, encS_vFrameDigPost, encS_vMovedDigPost, encS_vRestDigPost]
-      unfold recStateCommit
-      have hsrc' : t.src ∈ k'.accounts := by rw [hAcc]; exact hsrc
-      have hdst' : t.dst ∈ k'.accounts := by rw [hAcc]; exact hdst
-      rw [cellDigest_split CH k' t hsrc' hdst' hne]
-      -- frameDigest k' (carrier k t) = frameDigest k' (carrier k' t): same carrier (accounts agree).
-      have hcar : frameCarrier k t = frameCarrier k' t := by
-        unfold frameCarrier; rw [hAcc]
-      rw [hcar]
+    · -- pre root: cellDigest k t uses carrier `k.accounts \ {src,dst}` = `frameCarrier k t`.
+      simp only [encS_vPreRoot, encS_vFrameDigPre, encS_vMovedDigPre, encS_vRestDigPre,
+        recStateCommit, cellDigest, frameCarrier]
+    · -- post root: cellDigest k' t uses `k'.accounts \ {src,dst}`; encodeS prints the children over
+      -- `frameCarrier k t = k.accounts \ {src,dst}`. The carriers agree by `hAcc` (accounts frozen).
+      simp only [encS_vPostRoot, encS_vFrameDigPost, encS_vMovedDigPost, encS_vRestDigPost,
+        recStateCommit, cellDigest, frameCarrier, hAcc]
 
 #assert_axioms transfer_circuit_full_complete
 
@@ -553,8 +619,8 @@ theorem transfer_circuit_full_complete
 
 The whole point. A field-tamper (any non-cell component changed) and a third-cell-tamper (any
 untouched cell changed) each make `satisfiedS` UNSATISFIABLE — exactly the forgeries the old
-two-balance `transferCircuit` accepted. These bite because the frame EQ gates + injectivity portals
-force the WHOLE post-state, not a projection. -/
+two-balance `transferCircuit` accepted. These bite because the frame EQ gates + the PROVED binding
+lemmas force the WHOLE post-state, not a projection. -/
 
 /-- **`stateCircuit_rejects_field_tamper` — ANTI-GHOST (non-cell component).** ANY witness whose
 post-state changes a non-`cell` component (here: `nullifiers`) makes `satisfiedS` UNSATISFIABLE: the
@@ -564,11 +630,11 @@ theorem stateCircuit_rejects_field_tamper
     (hRest : RestHashIffFrame RH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hfield : k'.nullifiers ≠ k.nullifiers) :
-    ¬ satisfiedS cmb (encodeS CH RH cmb k t k') := by
+    ¬ satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   rintro ⟨hsat, _⟩
-  have hrestgate : cSRestFrame.holds (encodeS CH RH cmb k t k') :=
+  have hrestgate : cSRestFrame.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSRestFrame (by unfold stateCircuit; simp)
-  have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb k t k').mp hrestgate
+  have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
   have hframe16 := (hRest k k').mp hRHeq
   obtain ⟨_, _, _, _, hNul, _⟩ := hframe16
   exact hfield hNul
@@ -577,25 +643,27 @@ theorem stateCircuit_rejects_field_tamper
 
 /-- **`stateCircuit_rejects_third_cell` — ANTI-GHOST (untouched cell).** ANY witness whose post-state
 changes a THIRD live cell `c₀` (a live account, neither `src` nor `dst`) makes `satisfiedS`
-UNSATISFIABLE: the frame-reuse gate forces the untouched-cell digest equal, and `FrameDigestBindsCells`
-then forces `k.cell c₀ = k'.cell c₀` — contradiction. Minting/draining a bystander cell is FORBIDDEN
-BY CONSTRUCTION. (The old `transferCircuit` accepted this — see the concrete `#guard` below.) -/
+UNSATISFIABLE: the frame-reuse gate forces the untouched-cell digest equal, and the PROVED
+`FrameDigestBindsCells` then forces `k.cell c₀ = k'.cell c₀` — contradiction. Minting/draining a
+bystander cell is FORBIDDEN BY CONSTRUCTION. (The old `transferCircuit` accepted this — see the
+concrete `#guard` below.) -/
 theorem stateCircuit_rejects_third_cell
-    (hFrame : FrameDigestBindsCells CH)
+    (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
     (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     {c₀ : CellId} (hc₀ : c₀ ∈ k.accounts) (hcs : c₀ ≠ t.src) (hcd : c₀ ≠ t.dst)
     (htamper : k'.cell c₀ ≠ k.cell c₀) :
-    ¬ satisfiedS cmb (encodeS CH RH cmb k t k') := by
+    ¬ satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   rintro ⟨hsat, _⟩
-  have hframegate : cSFrameReuse.holds (encodeS CH RH cmb k t k') :=
+  have hframegate : cSFrameReuse.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSFrameReuse (by unfold stateCircuit; simp)
-  have hfdeq : frameDigest CH k (frameCarrier k t) = frameDigest CH k' (frameCarrier k t) :=
-    (sframereuse_iff CH RH cmb k t k').mp hframegate
+  have hfdeq : frameDigest CH compressN k (frameCarrier k t)
+      = frameDigest CH compressN k' (frameCarrier k t) :=
+    (sframereuse_iff CH RH cmb compress compressN k t k').mp hframegate
   have hmem : c₀ ∈ frameCarrier k t := by
     unfold frameCarrier
     simp only [Finset.mem_sdiff, Finset.mem_insert, Finset.mem_singleton, not_or]
     exact ⟨hc₀, hcs, hcd⟩
-  have := hFrame k k' (frameCarrier k t) hfdeq c₀ hmem
+  have := FrameDigestBindsCells CH compressN hCompressN hLeaf k k' (frameCarrier k t) hfdeq c₀ hmem
   exact htamper this.symm
 
 #assert_axioms stateCircuit_rejects_third_cell
@@ -604,12 +672,16 @@ end Surface
 
 /-! ## §8 — CONCRETE anti-ghost `#guard`: `stateCircuit` catches what `transferCircuit` missed.
 
-We instantiate concrete COMPUTABLE commitments (`chConcrete = balOf`, a linear `cmbConcrete`, a
-field-count `rhConcrete`) over a THREE-cell state and EXHIBIT a forgery that the old two-balance
-`transferCircuit` ACCEPTS but the new full-state `stateCircuit` REJECTS: an honest 0→1 transfer that
-ALSO mints value into the bystander cell 2. `transferCircuit` never looks at cell 2 (so it passes);
-`stateCircuit`'s frame-reuse gate sums cell 2 into the untouched-cell digest (so it fails). This is
-the concrete death of the "pale ghost". -/
+We instantiate concrete COMPUTABLE commitments over a THREE-cell state and EXHIBIT a forgery that the
+old two-balance `transferCircuit` ACCEPTS but the new full-state `stateCircuit` REJECTS: an honest
+0→1 transfer that ALSO mints value into the bystander cell 2. `transferCircuit` never looks at cell 2
+(so it passes); `stateCircuit`'s frame-reuse gate hashes cell 2's leaf into the untouched-cell sponge
+(so it fails). This is the concrete death of the "pale ghost".
+
+The concrete primitives must be COMPUTABLE and INJECTIVE (so the rejection #guard genuinely fires on
+a binding commitment, not a lossy `+`-fold): `chConcrete = balOf` (the leaf), and INJECTIVE toy
+node/sponge hashes (`compressConcrete` = a range-bounded `a*BIG + b` pairing; `compressNConcrete` = a
+positional Horner fold) over the tiny `#guard` domain. -/
 
 /-- Concrete cell-leaf hash: the cell's `balance` field (so a minted bystander balance is visible). -/
 def chConcrete : CellId → Value → ℤ := fun _ v => balOf v
@@ -617,9 +689,16 @@ def chConcrete : CellId → Value → ℤ := fun _ v => balOf v
 nullifier length) — unchanged by a pure cell forgery, so the rest-frame gate is not the one that
 bites; the FRAME-REUSE gate is. -/
 def rhConcrete : RecordKernelState → ℤ := fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-/-- Concrete root combiner: linear (`a + b`). Computable; the `#guard` tests gate satisfaction, not
-the (separately-portaled) injectivity. -/
-def cmbConcrete : ℤ → ℤ → ℤ := fun a b => a + b
+/-- Concrete root combiner: an INJECTIVE pairing `a * BIG + b` (BIG larger than any toy child), so
+the root genuinely binds its two children on the `#guard` domain (NOT the lossy `a + b`). -/
+def cmbConcrete : ℤ → ℤ → ℤ := fun a b => a * 1000000 + b
+/-- Concrete 2-to-1 node hash: an INJECTIVE pairing `a * BIG + b` on the toy domain (NOT `a + b`). -/
+def compressConcrete : ℤ → ℤ → ℤ := fun a b => a * 1000000 + b
+/-- Concrete sponge: an INJECTIVE positional Horner fold (each leaf shifted by a base larger than any
+toy leaf), so the ORDERED leaf list is recoverable on the `#guard` domain (NOT the lossy `List.sum`).
+The length is folded in too so distinct-length lists never collide. -/
+def compressNConcrete : List ℤ → ℤ :=
+  fun xs => xs.foldl (fun acc x => acc * 1000000 + x) (xs.length : ℤ)
 
 /-- A concrete THREE-cell pre-state: cells {0,1,2} with balances 100 / 5 / 50, empty caps (actor 0
 owns cell 0 by ownership). The bystander cell 2 holds 50. -/
@@ -647,21 +726,24 @@ def forgedThirdCell : RecordKernelState :=
                               else default }
 
 -- The honest post-state satisfies the FULL-state circuit (every gate decides true):
-#guard decide (satisfied stateCircuit (encodeS chConcrete rhConcrete cmbConcrete kS0 goodTurnS goodPostS))
+#guard decide (satisfied stateCircuit
+  (encodeS chConcrete rhConcrete cmbConcrete compressConcrete compressNConcrete kS0 goodTurnS goodPostS))
 -- The OLD two-balance circuit ACCEPTS the forgery (it never inspects cell 2):
 #guard decide (satisfied transferCircuit (encodeT kS0 goodTurnS forgedThirdCell))
 -- ...but the NEW full-state circuit REJECTS the SAME forgery (the frame-reuse gate fails on cell 2):
 #guard decide (satisfied stateCircuit
-  (encodeS chConcrete rhConcrete cmbConcrete kS0 goodTurnS forgedThirdCell)) == false
+  (encodeS chConcrete rhConcrete cmbConcrete compressConcrete compressNConcrete kS0 goodTurnS
+    forgedThirdCell)) == false
 -- ...and specifically the frame-reuse gate ALONE is the one that fails:
 #guard decide (cSFrameReuse.holds
-  (encodeS chConcrete rhConcrete cmbConcrete kS0 goodTurnS forgedThirdCell)) == false
+  (encodeS chConcrete rhConcrete cmbConcrete compressConcrete compressNConcrete kS0 goodTurnS
+    forgedThirdCell)) == false
 
 /-! ## §9 — EMISSION: the full-state circuit composes with `CircuitEmit.emit`/`emit_faithful`.
 
 The full-state circuit serializes to the PART-I wire form losslessly: satisfying the emitted
 descriptor is EXACTLY satisfying `stateCircuit`. (The digest gates are pure `Expr` EQ constraints, so
-they serialize identically to the transfer gates — the §8 commitment primitives live OUTSIDE the
+they serialize identically to the transfer gates — the §2/§8 commitment primitives live OUTSIDE the
 emitted AIR, in the witness generator that fills the digest columns.) -/
 
 /-- The AIR identity string the full-state wire form carries. -/
@@ -687,17 +769,22 @@ theorem decodeE_emittedState : decodeE emittedState = stateCircuit :=
 
 /-! ## §10 — Axiom-hygiene tripwires + the assumption ledger.
 
-ASSUMED (carried Prop hypotheses, ALL pure injectivity, NEVER `axiom`): `CombineInjective`,
-`FrameDigestBindsCells`, `MovedDigestBindsCells`, `RestHashIffFrame` (the four commitment-injectivity
-portals); `AccountsWF` (a STRUCTURAL invariant, PROVED preserved by `recKExec_preserves_AccountsWF`).
-PROVED (everything else, crucially THE FRAME): the keystones below. NO `postRoot = recStateCommit
+ASSUMED (carried Prop hypotheses, the STANDARD Poseidon collision-resistance set, ALL realizable
+injectivity of a genuine hash, NEVER `axiom`, NEVER sum-injectivity): `compressInjective compress`,
+`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrame RH` (the leaf/node/sponge/
+rest CR set; `compressInjective cmb` only for the root-binding corollary); `AccountsWF` (a STRUCTURAL
+invariant, PROVED preserved by `recKExec_preserves_AccountsWF`). The old per-digest binding portals
+`FrameDigestBindsCells`/`MovedDigestBindsCells`/`CombineInjective` are now PROVED LEMMAS off the CR
+set. PROVED (everything else, crucially THE FRAME): the keystones below. NO `postRoot = recStateCommit
 (applyTransfer …)` ghost hypothesis appears anywhere.
 
 `#assert_axioms` whitelists exactly `{propext, Classical.choice, Quot.sound}`. -/
 
 #assert_axioms recKExec_preserves_AccountsWF
 #assert_axioms encodeS_agrees_encodeT
-#assert_axioms cellDigest_split
+#assert_axioms MovedDigestBindsCells
+#assert_axioms FrameDigestBindsCells
+#assert_axioms CombineInjective
 #assert_axioms srestframe_iff
 #assert_axioms sframereuse_iff
 #assert_axioms smovedbind_iff
