@@ -6008,7 +6008,10 @@ exercise/handoff to target 7) and `endpoint 9 [read, write]` (rights-carrying, f
 teeth; the `write` makes it confer connectivity to 9 too). Asset 0 = 105, asset 1 = 7. -/
 def fmaA : RecChainedState :=
   { kernel :=
-      { accounts := {0, 1}
+      -- cell 7 is a real (live, empty) account: actor 0 holds `Cap.node 7` to it, so exercising that
+      -- cap runs inner effects AGAINST the live target 7 (an under-spec'd fixture before — 7 was a cap
+      -- target but not an account, so inner `emitEventA 0 7` fail-closed; #44 triage made it faithful).
+      { accounts := {0, 1, 7}
         cell := fun _ => .record [("balance", .int 0)]
         caps := fun l => if l = 0 then [Cap.node 7, Cap.endpoint 9 [Auth.read, Auth.write]] else []
         bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0)
@@ -6082,10 +6085,10 @@ example : ¬ IsNonAmplifyingF (Cap.endpoint 9 [Auth.read, Auth.write]) (Cap.node
 --   The inner effect (an `emitEvent` against 7) GENUINELY RUNS — the log grows by 2 (the exercise's
 --   own receipt + the inner emit receipt), proving it is NO LONGER a no-op shadow. An actor without
 --   the held edge FAILS-CLOSED; a FAILING inner effect aborts the whole exercise (fail-closed):
-#guard ((execFullA fmaA (.exerciseA 0 7 [.emitEventA 0 7 99 1])).isSome) == false  -- TODO(triage): comment claimed `true` (exercise w/ non-empty inner commits, inner emit RUNS), code yields `none` (.isSome=false) — the inner emitEventA against cell 7 fails-closed and aborts the exercise. Empty-inner exercise (6094) DOES commit, so the inner-effect execution is the failing path.
-#guard (((execFullA fmaA (.exerciseA 0 7 [.emitEventA 0 7 99 1])).map (fun s => s.log.length)).getD 0) == 0  -- TODO(triage): comment claimed log length 2 (exercise + inner emit receipts); code yields 0 (result is none, .getD 0)
+#guard ((execFullA fmaA (.exerciseA 0 7 [.emitEventA 0 7 99 1])).isSome)  --  true (inner emit against the now-live target 7 RUNS — exercise is no shadow)
+#guard (((execFullA fmaA (.exerciseA 0 7 [.emitEventA 0 7 99 1])).map (fun s => s.log.length)).getD 0) == 2  --  2 (exercise receipt + inner emit receipt)
 #guard ((execFullA fmaA (.exerciseA 0 7 [.emitEventA 0 7 99 1])).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (105, 7)`; code yields `none` (exercise w/ non-empty inner fails-closed)
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (emit is balance-neutral)
 -- a committed exercise carrying a balance-MOVING inner (mint 3 of asset 1 into a live cell, by an actor
 --   that holds the privileged `node`-cap): the inner mint actually CREDITS — combined delta sums the inner.
 #guard ((execFullA fmaA (.exerciseA 0 7 [])).isSome)  --  true (empty inner: pure hold-check)
@@ -6100,10 +6103,10 @@ def authMixedTurn : List FullActionA :=
   , .exerciseA 0 7 [.emitEventA 0 7 99 1]
   , .revokeDelegationA 0 7 ]
 
-#guard ((execFullTurnA fmaA authMixedTurn).isSome) == false  -- TODO(triage): comment claimed `true` (all commit); code yields `none` — the turn contains `.exerciseA 0 7 [.emitEventA 0 7 99 1]` whose inner emit fails-closed (same root cause as line 6087), aborting the whole turn.
+#guard ((execFullTurnA fmaA authMixedTurn).isSome)  --  true (all commit; the exercise inner emit runs against the live target 7)
 #guard ((turnLedgerDeltaAsset authMixedTurn 0, turnLedgerDeltaAsset authMixedTurn 1)) == (0, 0)  --  (0, 0)
 #guard ((execFullTurnA fmaA authMixedTurn).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))).isNone  -- TODO(triage): comment claimed `some (105, 7)` (CONSERVED); code yields `none` (the exercise step in the turn fails-closed)
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (CONSERVED)
 
 /-! ## §13-supply (META-FILL C Wave 3) — Non-vacuity for ACCOUNT-GROWTH + SUPPLY: `createCell` GROWS
 `accounts` yet `recTotalAsset` is UNCHANGED (born EMPTY ⇒ NEUTRAL); `bridgeMint` discloses `+value` at
