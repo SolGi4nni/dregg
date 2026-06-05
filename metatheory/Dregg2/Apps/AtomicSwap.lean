@@ -211,23 +211,30 @@ theorem swap_conserves_end_to_end (b : AssetId) (legs : List SwapLeg) (ids : Lis
 
 /-! ## 6. KEYSTONE — AUTHORITY (only escrowed assets move).
 
-Every committed lock required the party to be AUTHORIZED over its own escrowed cell (`actor = party`,
-the `authorizedB` gate): no party can lock an asset it does not control. And a release only ever
-credits the counterparty of an EXISTING parked record — it cannot pull an un-escrowed asset. -/
+Each committed lock is SELF-authorized: `actor = party = src`, so `authorizedB` holds via its reflexive
+`actor == src` arm — UNCONDITIONALLY, for any cap table (self-escrow needs no capability). That is the
+correct semantics (you may always escrow your OWN asset), but it does NOT consult the cap-table; so
+`lockLeg_authorized`/`swap_all_legs_authorized` are honest-but-TRIVIAL self-authorization facts, NOT a
+cap-bearing "only authorized actors" guarantee. The GENUINE authority content is two-fold:
+`release_only_parked` (a release credits only an EXISTING parked record — no un-escrowed pull) and
+`unauthorized_lock_rejected` (an actor that is NOT the owner and holds NO cap is REJECTED — the real
+cap-table gate that the `actor == src` arm never touches). -/
 
-/-- **`lockLeg_authorized`** — a committed single lock required the party to be authorized over its
-OWN cell (the `authorizedB` gate on `{actor := party, src := party, ..}`). A party cannot escrow an
-asset it does not control. Reads off the kernel keystone `createEscrowKAsset_authorized`. -/
+/-- **`lockLeg_authorized` (self-authorization — HONEST SCOPE)** — a committed lock satisfies
+`authorizedB` on `{actor := party, src := party, ..}`. NOTE this is TRIVIALLY true: `actor == src`
+(party == party) is `authorizedB`'s reflexive arm, satisfied for ANY cap table — it does NOT consult
+the caps. It records that self-escrow is authorized, not a cap-bearing guarantee; the genuine cap-gated
+authority is `unauthorized_lock_rejected`. Reads off the kernel keystone `createEscrowKAsset_authorized`. -/
 theorem lockLeg_authorized {k k' : RecordKernelState} {leg : SwapLeg} (h : lockLeg k leg = some k') :
     authorizedB k.caps
       { actor := leg.party, src := leg.party, dst := leg.counterparty, amt := leg.amount } = true :=
   createEscrowKAsset_authorized h
 
-/-- **`swap_all_legs_authorized` (AUTHORITY)** — in a committed lock fold, EVERY leg's party was
-authorized over its own escrowed cell, each read AT THE STATE its lock saw. NON-VACUOUS: the
-conclusion quantifies over every leg of a non-empty swap and asserts a real `authorizedB = true`
-witness at each — an unauthorized leg would have failed the fold (`createEscrowKAsset` returns
-`none`), so a committed swap is one where every party genuinely held authority. -/
+/-- **`swap_all_legs_authorized` (self-authorization, folded — HONEST SCOPE)** — in a committed lock
+fold, every leg's party self-authorizes (`actor == src`). Like `lockLeg_authorized`, each witness is
+the TRIVIAL `actor == src` arm of `authorizedB` (true for any caps), so this is a self-authorization
+fact, NOT a cap-bearing "only authorized actors" theorem. The cap-table gate is exercised genuinely by
+`unauthorized_lock_rejected`. -/
 theorem swap_all_legs_authorized :
     ∀ (legs : List SwapLeg) (k k' : RecordKernelState),
       runSwap k legs = some k' →
@@ -281,6 +288,22 @@ def swap0 : RecordKernelState :=
     cell := fun _ => .record [("balance", .int 0)]
     caps := fun _ => []
     bal := fun c a => if c = a ∧ c ∈ ({0, 1, 2} : Finset CellId) then 100 else 0 }
+
+/-- **`unauthorized_lock_rejected` (AUTHORITY — the genuine cap-gated teeth)** — an actor that is NOT
+the asset owner and holds NO capability over the owner's cell CANNOT escrow that asset: the kernel
+fail-closes (`createEscrowKAsset = none`). Party `1` attempts to escrow party `0`'s asset 0 (actor `1`
+≠ creator `0`) against `swap0`'s EMPTY cap table — `authorizedB` fails on BOTH arms (`1 ≠ 0`, and
+`caps 1 = []`), so the lock is rejected. The lock is funded (cell 0 holds 100 of asset 0) and the id is
+fresh, so AUTHORITY is the SOLE reason for rejection — this exercises the cap-table branch of
+`authorizedB` that the self-authorized `lockLeg_authorized` (`actor == src`) never touches: the real
+"you cannot move an asset you do not control" content. -/
+theorem unauthorized_lock_rejected :
+    createEscrowKAsset swap0 99 1 0 2 0 30 = none := by
+  unfold createEscrowKAsset
+  split
+  · rename_i hcond
+    exact absurd hcond.1 (by simp [authorizedB, swap0])
+  · rfl
 
 /-- A 3-leg cyclic swap: party 0 → 1 (asset 0), party 1 → 2 (asset 1), party 2 → 0 (asset 2), each
 escrowing 30. Every leg is funded (each party holds 100 of its own asset). -/
@@ -363,6 +386,7 @@ leaked. -/
 #assert_axioms lockLeg_authorized
 #assert_axioms swap_all_legs_authorized
 #assert_axioms release_only_parked
+#assert_axioms unauthorized_lock_rejected
 #assert_axioms funded_swap_commits
 #assert_axioms underfunded_swap_rejected
 #assert_axioms underfunded_rolls_back
