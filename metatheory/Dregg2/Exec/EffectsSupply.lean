@@ -32,9 +32,12 @@ proved against the same five-keystone pattern:
   * `BridgeLock` (`c_bridgeLock`, Conservative) — Phase-1 lock: escrow `value` from a cell into a
     bridge lock-cell (an internal `Σδ = 0` move) + record the lock's `nullifier`. The foreign
     destination is a `Prop` portal; the local escrow conserves.
-  * `BridgeFinalize` (`c_bridgeFinalize`, Conservative) — Phase-3 finalize: on a foreign receipt
-    (Prop portal), consume the lock (the nullifier becomes permanently spent) while the balance is
-    framed (the value already left at lock time): `Σδ = 0`.
+  * `BridgeFinalize` (`a_bridgeFinalize`, Annihilative — disclosed cross-chain OUTFLOW) — Phase-3
+    finalize: on a foreign receipt (Prop portal), consume the lock (the nullifier becomes permanently
+    spent). The catalog color is `Annihilative` (the value leaves for the other chain — a disclosed
+    burn, NOT conserved). This module's LOCAL toy frames the balance (the value already left at lock
+    time, so this no-credit step touches the local total by `0`); the value-leaves-now accounting is
+    the `Bridge` handler's `bridgeFinalizeKAsset` (`delta = -amount`).
   * `BridgeCancel` (`c_bridgeCancel`, Conservative) — Phase-4 cancel after timeout: refund the
     escrow back to the owner (the inverse of the lock — `Σδ = 0`) + retire the lock nonce.
 

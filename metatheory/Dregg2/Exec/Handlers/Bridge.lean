@@ -413,13 +413,15 @@ Deliberately OUT of this batch (documented, NOT a silent gap):
     deferred — adding it is a disjunct in the gate (creator OR valid-receipt-holder), the conservation and
     disclosed-outflow accounting unchanged.
 
-  * **The catalog `Annihilative` relabel.** This handler's NEGATIVE `delta` is the LOAD-BEARING fix of the
-    R12 mislabel (the combined measure is now correctly DROPPED, not falsely conserved). The companion
-    relabel of `CatalogInstances.effectLinearity .bridgeFinalize` from `Conservative` to `Annihilative`
-    (and its `CatalogEffects.c_bridgeFinalize` `rfl`-witness) is a catalog-wide edit with its own cascade
-    (the stale `EffectsPaired.bridgeFinalize_conserves` toy models a DIFFERENT paired field-write step, not
-    this value-moving finalize); it is tracked separately (P1 #28). The algebra-level accounting — the
-    thing that makes the disclosed outflow REAL in `turn_conserves` — is closed HERE.
+  * **The catalog `Annihilative` relabel — LANDED.** This handler's NEGATIVE `delta` is the LOAD-BEARING
+    fix of the R12 mislabel (the combined measure is now correctly DROPPED, not falsely conserved). The
+    companion relabel of `CatalogInstances.effectLinearity .bridgeFinalize` from `Conservative` to
+    `Annihilative` (now witnessed by `CatalogEffects.a_bridgeFinalize`, and the `TurnExecutorFull`
+    per-effect characterization's coloring conjunct) is now done, so the catalog classification AGREES
+    with this handler's proved `delta = -amount` sign. `EffectsPaired.bridgeFinalize_conserves` /
+    `EffectsSupply.bridgeFinalizeStep` are SEPARATE local toys (a paired field-write / a balance-framed
+    no-credit step), decoupled from the catalog color. The algebra-level accounting — the thing that makes
+    the disclosed outflow REAL in `turn_conserves` — is closed HERE.
 -/
 
 end Dregg2.Exec.Handlers.Bridge

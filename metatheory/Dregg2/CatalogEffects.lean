@@ -89,7 +89,7 @@ color. -/
 
 section PerEffect
 
-/-! ### §2.1 — Conservative (19): paired-delta resource moves (Σδ = 0). -/
+/-! ### §2.1 — Conservative (18): paired-delta resource moves (Σδ = 0). -/
 theorem c_transfer              : effectLinearity .transfer = Conservative := rfl
 theorem c_createEscrow          : effectLinearity .createEscrow = Conservative := rfl
 theorem c_releaseEscrow         : effectLinearity .releaseEscrow = Conservative := rfl
@@ -107,7 +107,6 @@ theorem c_queueDequeue          : effectLinearity .queueDequeue = Conservative :
 theorem c_queueAtomicTx         : effectLinearity .queueAtomicTx = Conservative := rfl
 theorem c_queuePipelineStep     : effectLinearity .queuePipelineStep = Conservative := rfl
 theorem c_bridgeLock            : effectLinearity .bridgeLock = Conservative := rfl
-theorem c_bridgeFinalize        : effectLinearity .bridgeFinalize = Conservative := rfl
 theorem c_bridgeCancel          : effectLinearity .bridgeCancel = Conservative := rfl
 
 /-! ### §2.2 — Monotonic (5): scalar counters / refcounts going up. -/
@@ -141,8 +140,11 @@ theorem g_unseal                : effectLinearity .unseal = Generative := rfl
 theorem g_grantCapability       : effectLinearity .grantCapability = Generative := rfl
 theorem g_introduce             : effectLinearity .introduce = Generative := rfl
 
-/-! ### §2.5 — Annihilative (1): destroys a resource (disclosed non-conservation). -/
+/-! ### §2.5 — Annihilative (2): destroys/removes a resource (disclosed non-conservation).
+`bridgeFinalize` is a DISCLOSED CROSS-CHAIN OUTFLOW — the `Bridge` handler proves `delta = -amount`
+(the value leaves for the other chain, a disclosed burn), so it is Annihilative, not Conservative. -/
 theorem a_burn                  : effectLinearity .burn = Annihilative := rfl
+theorem a_bridgeFinalize        : effectLinearity .bridgeFinalize = Annihilative := rfl
 
 /-! ### §2.6 — Neutral (7): no resource delta; pure book-keeping. -/
 theorem n_setField              : effectLinearity .setField = Neutral := rfl

@@ -408,26 +408,28 @@ theorem handler_refines_execFullA_release (s s' : RecChainedState) (id : Nat) (a
     rw [hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-! ### §6.3 — R6: STATE WRITE. The handler and `execFullA` gate on DIFFERENT existence predicates.
+/-! ### §6.3 — R6: STATE WRITE. The handler and `execFullA` now gate on the SAME predicates (RECONCILED).
 
-This is the one representative where the relationship is HONESTLY a conditional, and that is itself a
-load-bearing finding: `stateWriteH`'s admission gate is lifecycle-LIVENESS (`acceptsEffects cell`, i.e.
-`lifecycle cell = lcLive` — the R6 fix the bare `EffectsState.stateStep` LACKS), whereas `execFullA`'s
-`.incrementNonceA` arm gates on `cell ∈ accounts` (membership, NOT liveness). Neither predicate implies
-the other in general (a Live non-account; a Sealed account). So the strengthening is stated on the
-HONEST PATH where BOTH hold — `cell ∈ accounts` (the cell exists) — under which the handler's extra
-liveness gate is a pure narrowing and the two produce the SAME `writeField` post-state. The authority
-conjunct is shared VERBATIM: `stateWriteH.auth = authorizedB caps {actor,src:=cell,dst:=cell,amt:=0}`
-which is DEFINITIONALLY `EffectsState.stateAuthB caps actor cell`, the gate `execFullA`'s `stateStep`
-checks. (The representative for the whole field-write/lifecycle family — `setField`/`setPermissions`/
-`setVK`/`makeSovereign`/`refusal`/`receiptArchive`/`emit`/the cell-lifecycle arms — which
-`toClosedEffect` routes through the SAME `stateWriteH`.) -/
+R6 IS NOW CLOSED IN THE LIVE EXECUTOR. The bare `EffectsState.stateStep` gained a `cellLive`
+(lifecycle-liveness) conjunct — so `execFullA`'s `.incrementNonceA`/`.setPermissionsA`/`.setVKA`/
+`.refusalA`/`.receiptArchiveA` arms (and `.setFieldA` via `stateStepGuarded`) now REJECT a write into a
+Sealed/Destroyed cell, exactly like `stateWriteH`'s `acceptsEffects` gate. `EffectsState.cellLive` is
+DEFINITIONALLY `acceptsEffects` (both = `lifecycle cell == 0`/`lcLive`), so the two admission predicates
+coincide. The handler still ADDITIONALLY requires `cell ∈ accounts` (membership) which the bare step
+also checks; the strengthening is still stated on the honest path where the cell EXISTS, but the
+liveness conjunct is now discharged DIRECTLY from the handler's `acceptsEffects` rather than carried as
+an unproved gap. The authority conjunct is shared VERBATIM: `stateWriteH.auth = authorizedB caps
+{actor,src:=cell,dst:=cell,amt:=0}` which is DEFINITIONALLY `EffectsState.stateAuthB caps actor cell`,
+the gate `execFullA`'s `stateStep` checks. (The representative for the whole field-write/lifecycle
+family — `setField`/`setPermissions`/`setVK`/`makeSovereign`/`refusal`/`receiptArchive`/`emit`/the
+cell-lifecycle arms — which `toClosedEffect` routes through the SAME `stateWriteH`.) -/
 
-/-- **`handler_refines_execFullA_stateWrite` — THE R6 STRENGTHENING (PROVED, honest-path conditional).**
+/-- **`handler_refines_execFullA_stateWrite` — THE R6 STRENGTHENING (PROVED).**
 On the honest path where the target cell EXISTS (`cell ∈ accounts`), whenever the handler executor
-commits a nonce write, `execFullA` ALSO commits it AND produces the SAME kernel. The handler's extra
-`acceptsEffects` liveness gate (the R6 fix) only NARROWS what commits; the shared authority gate
-(`stateAuthB`) and the SAME `writeField nonceField` post-state make the kernels coincide. -/
+commits a nonce write, `execFullA` ALSO commits it AND produces the SAME kernel. With R6 reconciled,
+`execFullA`'s bare `stateStep` now shares the handler's `acceptsEffects`/`cellLive` liveness gate
+(definitionally), so the handler's liveness conjunct discharges the executor's; the shared authority
+gate (`stateAuthB`) and the SAME `writeField nonceField` post-state make the kernels coincide. -/
 theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cell : CellId) (n : Int)
     (hmem : cell ∈ s.kernel.accounts)
     (h : execHandlerOne (.incrementNonceA actor cell n) s = some s') :
@@ -450,8 +452,13 @@ theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cel
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
     · show Dregg2.Exec.EffectsState.stateStep s nonceField actor cell (.int n) = _
       unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
+      -- R6 NOW RECONCILED: `execFullA`'s bare `stateStep` ALSO consults lifecycle liveness
+      -- (`cellLive`, the R6 fix). `cellLive s.kernel cell` is DEFINITIONALLY `acceptsEffects s.kernel
+      -- cell` (both = `lifecycle cell == 0`), so the handler's liveness conjunct (`hg.1`) discharges
+      -- the executor's NEW liveness conjunct directly — no longer just the honest-path membership.
+      have hlive : Dregg2.Exec.EffectsState.cellLive s.kernel cell = true := hg.1
       -- `nonceField` is the SAME field name in both layers (`rfl`).
-      rw [if_pos ⟨hg.2, hmem⟩]
+      rw [if_pos ⟨hg.2, hmem, hlive⟩]
     · -- kernels agree: both are the `writeField` post-state at the nonce field.
       rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
@@ -491,10 +498,14 @@ def teethEscrow : Option RecChainedState :=
 #eval (execFullA teethSealed (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0)).isSome  -- true  (LIVE HOLE)
 #eval (execHandlerOne (.balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0) teethSealed).isSome -- false (CLOSED)
 
--- §TEETH-R6 (STATE WRITE INTO A SEALED CELL): `execFullA` ADMITS a nonce write into the SEALED cell 1
--- (the bare `stateStep` gates on membership, NOT liveness) — the LIVE HOLE. The handler REJECTS it.
-#eval (execFullA teethSealed (.incrementNonceA 0 1 7)).isSome     -- true  (LIVE HOLE — write into a Sealed cell)
+-- §TEETH-R6 (STATE WRITE INTO A SEALED CELL): R6 is now CLOSED IN THE LIVE EXECUTOR TOO. The bare
+-- `EffectsState.stateStep` gained a `cellLive` (lifecycle-liveness) conjunct, so `execFullA` itself
+-- now REJECTS a nonce write into the SEALED cell 1 — matching the handler. Both return `none`.
+#eval (execFullA teethSealed (.incrementNonceA 0 1 7)).isSome     -- false (R6 CLOSED in the live executor)
 #eval (execHandlerOne (.incrementNonceA 0 1 7) teethSealed).isSome -- false (CLOSED by acceptsEffects)
+-- ...and a write into the LIVE cell 0 still COMMITS in both — the gate only tightens the non-live case.
+#eval (execFullA teethSealed (.incrementNonceA 0 0 7)).isSome     -- true  (live cell still accepts)
+#eval (execHandlerOne (.incrementNonceA 0 0 7) teethSealed).isSome -- true  (live cell still accepts)
 
 -- §TEETH-R2 (ESCROW RELEASE BY A STRANGER): `execFullA` ADMITS a release of escrow 9 by cell 5 (a
 -- stranger, NOT the recipient) — the LIVE HOLE (`releaseEscrowKAsset` takes only the id, no actor).
@@ -548,12 +559,14 @@ Deliberately OUT of this file (documented, NOT a silent gap):
     / delegate / queue arms each follow the transfer template (gate-then-bare-step); the
     obligation/committed/slash/fulfil ALIASES inherit their target's proof verbatim.
 
-  * **The state-write existence-predicate MISMATCH (a real finding, not a gap).** `stateWriteH` admits on
-    lifecycle-LIVENESS (`acceptsEffects`, the R6 fix) while `execFullA`'s `stateStep` admits on
-    `cell ∈ accounts` (membership). Neither implies the other; the strengthening is therefore stated on
-    the honest path (`cell ∈ accounts`). Reconciling the two predicates at the cutover — making `stateStep`
-    ALSO consult liveness (or `accounts ⊆ live`) — is a one-line gate edit tracked with the executor
-    soundness items (the R6 close is the handler's `acceptsEffects`; the executor should adopt it).
+  * **The state-write existence-predicate MISMATCH — RESOLVED (R6 closed in the live executor).** The
+    bare `EffectsState.stateStep` now ALSO consults lifecycle-LIVENESS (`cellLive`, definitionally
+    `acceptsEffects` = `lifecycle cell == 0`), so `execFullA`'s state-write arms reject a write into a
+    Sealed/Destroyed cell exactly like `stateWriteH`. The admission predicates coincide; the handler
+    additionally checks membership (`cell ∈ accounts`), which the bare step also checks, so the
+    strengthening is still stated on the honest path where the cell exists — but the liveness conjunct is
+    now PROVED through, not carried open. (`#eval §TEETH-R6`: `execFullA` now returns `none` on the
+    Sealed-cell write, matching the handler.)
 
   * **The committed-escrow `hidingProof` / queue-atomic `QueueTxOpA` projections.** `toClosedEffect` maps
     the committed escrow onto the plain escrow lock (the §8 Pedersen hiding portal is off the executable

@@ -175,6 +175,16 @@ authority over the `target` cell. Reuses `RecordKernel.authorizedB` with `src = 
 def stateAuthB (caps : Caps) (actor target : CellId) : Bool :=
   authorizedB caps { actor := actor, src := target, dst := target, amt := 0 }
 
+/-- **`cellLive k target` — the LIFECYCLE-LIVENESS gate (the R6 fix, defined LOCALLY).** Does
+`target`'s lifecycle state admit new effects? `true` only for the Live discriminant (`0`); a Sealed
+(`1`) or Destroyed (`3`) cell is fail-closed REJECTED. This is the bare-kernel-level twin of
+`TurnExecutorFull.acceptsEffects` (dregg1's `CellLifecycle::accepts_effects`, `lifecycle.rs:109`),
+defined HERE because `EffectsState` is imported BY `TurnExecutorFull` (so it cannot import it back
+without a cycle). It reads only the `RecordKernelState.lifecycle` side-table — the SAME `0`=Live
+discriminant `acceptsEffects` checks, so the two predicates are definitionally interchangeable at the
+cutover. Closing R6: a state write into a non-Live cell now FAILS in the live executor. -/
+def cellLive (k : RecordKernelState) (target : CellId) : Bool := k.lifecycle target == 0
+
 /-- Write field `f` of `target` to `v` in the kernel state (the bespoke field-write semantics);
 every other cell untouched. The metadata-domain move shared by all Neutral/Monotonic/Terminal
 effects (a state set, a counter bump, a lifecycle flag). -/
@@ -183,12 +193,21 @@ def writeField (k : RecordKernelState) (f : FieldName) (target : CellId) (v : Va
   { k with cell := fun c => if c = target then setField f (k.cell c) v else k.cell c }
 
 /-- **`stateStep` — the executable semantics of a Neutral/Monotonic/Terminal effect (PROVED
-computable).** Fail-closed: commits only when the actor holds authority over `target` AND `target` is
-a live account. On commit, write field `f` of `target` to `v` and extend the receipt chain by one row
-(the metadata advance). NO balance move, NO cap edit — the regime invariant. -/
+computable).** Fail-closed: commits only when the actor holds authority over `target`, `target` is
+a live account (MEMBERSHIP), AND `target`'s lifecycle admits new effects (LIVENESS — `cellLive`, the
+R6 fix). On commit, write field `f` of `target` to `v` and extend the receipt chain by one row
+(the metadata advance). NO balance move, NO cap edit — the regime invariant.
+
+**R6 — lifecycle liveness now gates the LIVE executor.** Previously the gate consulted only authority
++ membership (`target ∈ accounts`), so a field write into a SEALED/Destroyed cell silently COMMITTED
+(bypassing `cellSeal`). The `cellLive` conjunct closes that hole HERE, in the bare step the live
+executor (`execFullA`'s `.incrementNonceA`/`.setPermissionsA`/`.setVKA`/`.refusalA`/`.receiptArchiveA`
+arms, and — via `stateStepGuarded` — `.setFieldA`) runs: a write into a non-Live cell now returns
+`none`, matching the handler's `acceptsEffects` gate. -/
 def stateStep (s : RecChainedState) (f : FieldName) (actor target : CellId) (v : Value) :
     Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor target = true ∧ target ∈ s.kernel.accounts then
+  if stateAuthB s.kernel.caps actor target = true ∧ target ∈ s.kernel.accounts
+      ∧ cellLive s.kernel target = true then
     some { kernel := writeField s.kernel f target v,
            log    := { actor := actor, src := target, dst := target, amt := 0 } :: s.log }
   else
@@ -204,6 +223,7 @@ theorem stateStep_factors {s s' : RecChainedState} {f : FieldName} {actor target
              log := { actor := actor, src := target, dst := target, amt := 0 } :: s.log } := by
   unfold stateStep at h
   by_cases hg : stateAuthB s.kernel.caps actor target = true ∧ target ∈ s.kernel.accounts
+      ∧ cellLive s.kernel target = true
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact ⟨hg.1, h.symm⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
@@ -348,8 +368,34 @@ theorem state_target_live {s s' : RecChainedState} {f : FieldName} {actor target
     target ∈ s.kernel.accounts := by
   unfold stateStep at h
   by_cases hg : stateAuthB s.kernel.caps actor target = true ∧ target ∈ s.kernel.accounts
-  · exact hg.2
+      ∧ cellLive s.kernel target = true
+  · exact hg.2.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`state_target_lifecycle_live` — PROVED (the R6 teeth).** A committed Neutral/metadata field
+write targeted a LIFECYCLE-LIVE cell (`cellLive`, i.e. the lifecycle discriminant is `0`=Live). This
+is the executor-level R6 close: a write into a Sealed/Destroyed cell cannot have committed. -/
+theorem state_target_lifecycle_live {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
+    {v : Value} (h : stateStep s f actor target v = some s') :
+    cellLive s.kernel target = true := by
+  unfold stateStep at h
+  by_cases hg : stateAuthB s.kernel.caps actor target = true ∧ target ∈ s.kernel.accounts
+      ∧ cellLive s.kernel target = true
+  · exact hg.2.2
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`state_nonlive_fails` — PROVED (FAIL-CLOSED, the R6 teeth).** A field write into a cell whose
+lifecycle does NOT admit effects (`cellLive = false`: Sealed or Destroyed) does NOT commit in the
+live executor. This is the executable shadow of dregg1's `accepts_effects` rejection — the hole the
+handler closed (`acceptsEffects`) is now closed in the bare step `execFullA` runs. -/
+theorem state_nonlive_fails (s : RecChainedState) (f : FieldName) (actor target : CellId)
+    (v : Value) (h : cellLive s.kernel target = false) :
+    stateStep s f actor target v = none := by
+  unfold stateStep
+  rw [if_neg]
+  intro hg
+  rw [h] at hg
+  exact absurd hg.2.2 (by simp)
 
 /-- **`state_unauthorized_fails` — PROVED (fail-closed).** If the actor lacks authority over the
 target, no Neutral/metadata effect commits. The integrity/confinement core for the regime. -/
@@ -649,6 +695,8 @@ theorem guarded_state_field_written {s s' : RecChainedState} {f : FieldName} {ac
 #assert_axioms state_authGraph_unchanged
 #assert_axioms state_authorized
 #assert_axioms state_target_live
+#assert_axioms state_target_lifecycle_live
+#assert_axioms state_nonlive_fails
 #assert_axioms state_unauthorized_fails
 #assert_axioms state_obsadvance
 #assert_axioms state_field_written
@@ -712,6 +760,32 @@ def ss0 : RecChainedState :=
 #eval (sealStep ss0 0 0).map (fun s => recTotal s.kernel)                           -- some 105 (conserved)
 -- ...and a SECOND seal of the now-sealed cell is REJECTED (irreversibility / no double-seal):
 #eval ((sealStep ss0 0 0).bind (fun s => sealStep s 0 0)).isSome                    -- false
+
+/-! ### §10.R6 — THE R6 TEETH: a write into a NON-LIVE (Sealed/Destroyed) cell is REJECTED.
+
+The cutover finding, evaluated. `ssR6` is `ss0` with cell 0's LIFECYCLE side-table flipped to Sealed
+(`1`) — the cell still EXISTS (`0 ∈ accounts`) and the actor still OWNS it (so authority + membership
+both pass), but its lifecycle no longer admits effects. Previously the live `stateStep` gated ONLY on
+authority + membership, so this write COMMITTED (the R6 hole — a write bypassing `cellSeal`). With the
+`cellLive` gate it now returns `none`, matching the handler's `acceptsEffects`. A LIVE sibling cell
+(cell 1, lifecycle `0`) still accepts the same write — the gate only TIGHTENS the non-live case. -/
+def ssR6 : RecChainedState :=
+  { ss0 with kernel := { ss0.kernel with lifecycle := fun c => if c = 0 then 1 else 0 } }
+
+-- A field write into the now-SEALED cell 0 is REJECTED (R6 CLOSED) — was `true` (the LIVE HOLE):
+#eval (stateStep ssR6 "status" 0 0 (.int 7)).isSome                                 -- false (R6 CLOSED)
+-- ...even though authority + membership STILL hold (the cell exists and the actor owns it):
+#eval (stateAuthB ssR6.kernel.caps 0 0 && decide (0 ∈ ssR6.kernel.accounts))        -- true
+-- A write into a LIVE sibling (cell 1, lifecycle 0) still COMMITS — the gate only tightens non-live:
+#eval (stateStep ssR6 "balance2" 1 1 (.int 7)).isSome                               -- true (live cell ok)
+-- A nonce write (the live executor's `.incrementNonceA` arm) into the Sealed cell is REJECTED too:
+#eval (stateStep ssR6 "nonce" 0 0 (.int 1)).isSome                                  -- false (R6 CLOSED)
+-- And the guarded `.setFieldA` path inherits it (a Sealed cell rejects even a caveat-clean write):
+#eval (stateStepGuarded ssR6 "freeField" 0 0 99).isSome                             -- false (R6 CLOSED)
+
+/-- Non-vacuity of the R6 close: a write into a non-Live cell provably FAILS (`state_nonlive_fails`). -/
+example : stateStep ssR6 "status" 0 0 (.int 7) = none :=
+  state_nonlive_fails ssR6 "status" 0 0 (.int 7) (by decide)
 
 /-- Non-vacuity of the headline forward-sim at a concrete `SetField` — `state_forward_sim`
 instantiated (balance conserved, authority graph preserved, actor admitted). -/

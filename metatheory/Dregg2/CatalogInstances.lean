@@ -278,7 +278,7 @@ def effectLinearity : EffectKind → LinearityClass
   | .createCommittedEscrow | .releaseCommittedEscrow | .refundCommittedEscrow
   | .noteSpend | .noteCreate | .createObligation | .fulfillObligation | .slashObligation
   | .queueEnqueue | .queueDequeue | .queueAtomicTx | .queuePipelineStep
-  | .bridgeLock | .bridgeFinalize | .bridgeCancel => Conservative
+  | .bridgeLock | .bridgeCancel => Conservative
   -- Monotonic: scalar counters / refcounts going up.
   | .incrementNonce | .exportSturdyRef | .enlivenRef | .validateHandoff | .refusal => Monotonic
   -- Terminal: one-way state transitions, no inverse.
@@ -288,8 +288,10 @@ def effectLinearity : EffectKind → LinearityClass
   | .bridgeMint | .createCell | .createCellFromFactory | .spawnWithDelegation
   | .queueAllocate | .queueResize | .createSealPair | .seal | .unseal
   | .grantCapability | .introduce => Generative
-  -- Annihilative: destroys a resource (disclosed non-conservation).
-  | .burn => Annihilative
+  -- Annihilative: destroys/removes a resource (disclosed non-conservation). `bridgeFinalize` is a
+  -- DISCLOSED CROSS-CHAIN OUTFLOW: the `Bridge` handler proves `delta = -amount` (the value leaves
+  -- for the other chain — a disclosed burn), so it is Annihilative, NOT Conservative.
+  | .burn | .bridgeFinalize => Annihilative
   -- Neutral: no resource delta; pure book-keeping.
   | .setField | .emitEvent | .setPermissions | .setVerificationKey | .refreshDelegation
   | .pipelinedSend | .exerciseViaCapability => Neutral

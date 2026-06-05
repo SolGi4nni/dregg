@@ -1001,6 +1001,10 @@ program-VK slot, and INSTALL the factory's `slotCaveats` onto the minted cell �
 invariants are enforced for life. Balance-NEUTRAL (born `0`; initial fields are non-`balance` slots). -/
 def createCellFromFactoryChainA (s : RecChainedState) (actor newCell : CellId) (vk : Int) :
     Option RecChainedState :=
+  -- (0) REJECT a negative `vk` BEFORE the registry lookup: `findFactory … vk.toNat` would otherwise
+  -- collapse every negative key to `0` (`Int.toNat (-1) = 0`), so a negative `vk` would silently ALIAS
+  -- factory `0`. Fail-closed on `vk < 0` so the content-addressed key cannot be forged downward.
+  if 0 ≤ vk then
   match findFactory s.kernel.factories vk.toNat with
   | none   => none                              -- (1) unknown factory: fail closed (`apply.rs:3140`)
   | some e =>
@@ -1018,6 +1022,7 @@ def createCellFromFactoryChainA (s : RecChainedState) (actor newCell : CellId) (
                   slotCaveats := fun c => if c = newCell then e.caveats else s1.kernel.slotCaveats c } }
         | none => none
       else none
+  else none                                       -- (0) negative `vk`: fail closed (no factory aliasing)
 
 /-- **`createCellFromFactoryChainA` factors through its gates — PROVED.** A committed factory creation
 implies: the factory was found, it conformed, and the underlying `createCellChainA` committed (into an
@@ -1035,17 +1040,19 @@ theorem createCellFromFactoryChainA_factors {s s' : RecChainedState} {actor newC
               else s1.kernel.cell c
             slotCaveats := fun c => if c = newCell then e.caveats else s1.kernel.slotCaveats c } } := by
   unfold createCellFromFactoryChainA at h
-  split at h
-  · exact absurd h (by simp)                     -- factory not found ⇒ `none`
-  · next e he =>
-      split at h
-      · next hcf =>                              -- conforms = true
-          split at h
-          · next s1 hc =>
-              simp only [Option.some.injEq] at h
-              exact ⟨e, s1, he, hcf, hc, h.symm⟩
-          · next hc => exact absurd h (by simp)  -- createCell failed ⇒ `none`
-      · exact absurd h (by simp)                 -- non-conforming factory ⇒ `none`
+  split at h                                      -- (0) the `0 ≤ vk` guard
+  · split at h
+    · exact absurd h (by simp)                   -- factory not found ⇒ `none`
+    · next e he =>
+        split at h
+        · next hcf =>                            -- conforms = true
+            split at h
+            · next s1 hc =>
+                simp only [Option.some.injEq] at h
+                exact ⟨e, s1, he, hcf, hc, h.symm⟩
+            · next hc => exact absurd h (by simp)-- createCell failed ⇒ `none`
+        · exact absurd h (by simp)               -- non-conforming factory ⇒ `none`
+  · exact absurd h (by simp)                     -- negative `vk` ⇒ `none`
 
 /-- The field+caveat install over a born-EMPTY cell leaves `recTotalAsset` UNCHANGED — the installed
 fields are named record slots (not the `bal` ledger), and `slotCaveats` is balance-orthogonal. PROVED. -/
@@ -1119,7 +1126,7 @@ VK never mints a cell (dregg1 `apply.rs:3140` `validate_and_record` errors `fact
 theorem createCellFromFactoryChainA_unknown_factory_fails (s : RecChainedState) (actor newCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :
     createCellFromFactoryChainA s actor newCell vk = none := by
-  simp only [createCellFromFactoryChainA, h]
+  simp only [createCellFromFactoryChainA, h, ite_self]
 
 /-- **`createCellFromFactoryChainA_nonconforming_fails` — PROVED (fail-closed).** A factory whose own
 declared initial state VIOLATES its own caveats never mints (the `validate_and_record` constraint
@@ -1128,7 +1135,7 @@ theorem createCellFromFactoryChainA_nonconforming_fails (s : RecChainedState) (a
     (vk : Int) (e : FactoryEntry) (hfind : findFactory s.kernel.factories vk.toNat = some e)
     (hbad : e.conforms = false) :
     createCellFromFactoryChainA s actor newCell vk = none := by
-  simp only [createCellFromFactoryChainA, hfind, hbad, Bool.false_eq_true, if_false]
+  simp only [createCellFromFactoryChainA, hfind, hbad, Bool.false_eq_true, if_false, ite_self]
 
 /-- **`createCellFromFactoryChainA_balance_field_fails` — PROVED (fail-closed).** Factory initial fields
 cannot initialize the reserved scalar `balance` field. The fresh per-asset ledger is born empty
@@ -5307,15 +5314,15 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
    -- `Conservative` coloring (combined-conserving lock). FINALIZE carries the genuine DISCLOSED-OUTFLOW
    -- witness — the COMBINED measure MOVED DOWN by the disclosed `-amount` at the disclosed `asset`
    -- (`∀ b`, the §8 confirmation portal having fired; NOT a `True`, the move has teeth) ∧ the
-   -- `Conservative` coloring. CANCEL carries the refund-CONSERVATION witness (combined fixed `∀ b`) ∧
-   -- the coloring. Every conjunct has teeth.
+   -- `Annihilative` coloring (the value left for the other chain — a disclosed burn, NOT conserved).
+   -- CANCEL carries the refund-CONSERVATION witness (combined fixed `∀ b`) ∧ the coloring. Teeth.
    | .bridgeLockA _ actor originator destination _ amount =>
        authorizedB s.kernel.caps { actor := actor, src := originator, dst := destination, amt := amount } = true ∧
        effectLinearity .bridgeLock = LinearityClass.Conservative
    | .bridgeFinalizeA _ _ asset amount =>
        (∀ b, recTotalAssetWithEscrow s'.kernel b
           = recTotalAssetWithEscrow s.kernel b - (if b = asset then amount else 0)) ∧
-       effectLinearity .bridgeFinalize = LinearityClass.Conservative
+       effectLinearity .bridgeFinalize = LinearityClass.Annihilative
    | .bridgeCancelA _ _ =>
        (∀ b, recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b) ∧
        effectLinearity .bridgeCancel = LinearityClass.Conservative
@@ -6490,6 +6497,20 @@ def facBadBalanceS : RecChainedState :=
         (fun s => fieldOf "head" (s.kernel.cell 5))                                -- some 3 (monotone advance admitted)
 -- A factory whose OWN initial state violates its caveats is REJECTED at mint (validate_and_record):
 #eval (FactoryEntry.conforms { caveats := [.boundedBy "x" 0 10], initialFields := [("x", 99)], programVk := 0 })  -- false
+
+-- §MA-factory NEGATIVE-VK ATTACK (codex P1): `findFactory … vk.toNat` would map every negative `vk`
+-- to key `0` (`Int.toNat (-1) = 0`), so a negative `vk` could ALIAS factory `0`. `fac0S` parks the
+-- subscription factory at key `0` (the alias target); the guard rejects `vk = -1` BEFORE the lookup.
+def fac0S : RecChainedState :=
+  { facS with kernel := { facS.kernel with factories := [(0, subFactory)] } }
+-- The honest call with the real non-negative key `0` MINTS (the factory genuinely lives at `0`):
+#eval (execFullA fac0S (.createCellFromFactoryA 0 5 0)).isSome                      -- true
+-- THE ATTACK: `vk = -1` no longer aliases factory `0` — it is REJECTED before `findFactory`:
+#eval (execFullA fac0S (.createCellFromFactoryA 0 5 (-1))).isSome                   -- false (no aliasing)
+-- ...and is rejected even when the alias target is a conforming, mintable factory at key `0`:
+#eval (createCellFromFactoryChainA fac0S 0 5 (-1)).isSome                           -- false
+-- A legit non-negative `vk` against the original (key-42) registry still works unchanged:
+#eval (execFullA facS (.createCellFromFactoryA 0 5 42)).isSome                      -- true
 
 /-! ### §MA-queue-batch #eval (WAVE 4) — the ATOMIC cross-queue transaction + the PIPELINE fan-out step
 on the executed dispatch. The atomic batch is ALL-OR-NOTHING (a single failing sub-op rolls back the
