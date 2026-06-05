@@ -167,6 +167,13 @@ pub mod temporal_predicate_dsl;
 #[cfg(feature = "plonky3")]
 pub mod plonky3_prover;
 
+/// Generic Plonky3 AIR that interprets a Lean-emitted circuit descriptor at
+/// `eval`-time and drives the real `p3-uni-stark` prover — so Lean-emitted
+/// circuits REPLACE hand-coded AIRs. The data-driven analogue of
+/// `plonky3_prover::P3MerklePoseidon2Air`. See module docs.
+#[cfg(feature = "plonky3")]
+pub mod lean_descriptor_air;
+
 #[cfg(feature = "plonky3")]
 pub mod plonky3_recursion;
 
