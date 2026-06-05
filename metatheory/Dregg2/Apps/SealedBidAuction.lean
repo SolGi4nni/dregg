@@ -15,6 +15,16 @@ decision-free core — see the OPEN block below for the model-shape calls deferr
     `fulfill_conserves`). The teeth: a cross-asset settle that WOULD mint (5 gold ⟶ 1 art with no market
     offer) is rejected — `no Converts`, so no fill, so nothing minted (`settle_cannot_mint`, via
     `res_no_convert`).
+  * **(c⁺) STRONG per-asset Σ-CONSERVATION** — strictly above the thin shadow: each asset's total is an
+    `AddMonoidHom (ℕ × ℕ) →+ ℕ` and the settle preserves EVERY such total (`settle_sigma_conserves`,
+    refining `Converts` to a named per-asset ledger). The teeth: a hypothetical mint-one-asset settle is
+    CAUGHT by Σ where the shadow is silent (`mint_rejected_by_sigma`).
+  * **(Q1) CROSS-ASSET exchange** — the cross-asset bid (pay gold, get art) is FILLED by an
+    offer-generated conversion (a seller `Offer gold ⟶ art`, realized as a balanced two-leg `Exchange`),
+    and the matched exchange still conserves every asset's Σ-total (`crossBid_fillable_by_offer`,
+    `exchange_sigma_conserves` — Q2 survives Q1). The teeth: a SKIMMING settle the per-leg shadow accepts
+    is rejected by Σ (`thinShadow_accepts_skim` vs `skim_rejected_by_sigma`) — no minting without a
+    balanced backing offer.
   * **one-shot (no double-settle)** — the settled escrow is released and can never fund a second settle
     (`settle_no_double`, the abstract `no_double_fulfill` instantiated).
   * **loser-refund LIVENESS** — the genuine `◇`: from a `JustProgress` package over a refund potential,
@@ -50,7 +60,7 @@ import Dregg2.Proof.Fairness
 
 namespace Dregg2.Apps.SealedBidAuction
 
-open CategoryTheory
+open CategoryTheory MonoidalCategory
 open Dregg2.Intent
 open Dregg2.Time.Deadline (Deadline)
 open Dregg2.Time.Causal (Frontier CausalAfter frontrunExcluded)
@@ -205,6 +215,214 @@ theorem settle_cannot_mint (revealEvt : Frontier) :
     ¬ Converts (crossBid revealEvt).offered (crossBid revealEvt).wanted :=
   res_no_convert (by decide)
 
+/-! ## 4b. KEYSTONE (c⁺) — STRONG per-asset Σ-conservation (strictly above the thin shadow).
+
+`settle_conserves` (§4) is the THIN Coecke–Fritz convertibility shadow: "*some* conversion `offered ⟶
+outcome` exists". In the discrete `DemoRes` that shadow already forces `offered = outcome`, but it does
+so OPAQUELY — it never names a quantity, so it cannot be *aimed* at a single asset, and it is silent the
+moment a settle spans more than one leg (the cross-asset exchange of §4c, where a per-leg `Converts` can
+be satisfied while the GLOBAL ledger is short). The Phase-3 invariant we want is the per-asset ledger:
+**for every asset, Σ of the inputs = Σ of the outputs**. We realize "Σ of an asset" as an
+`AddMonoidHom (ℕ × ℕ) →+ ℕ` (the count of one asset kind is an additive homomorphism of bundle union),
+and prove the settle preserves EACH such total — strictly stronger than, and refining, the thin shadow. -/
+
+/-- **`assetTotal h r`** — the Σ-total of resource bundle `r` read through the asset-selector
+homomorphism `h : (ℕ × ℕ) →+ ℕ`. Bundle union is `*` on `Multiplicative (ℕ × ℕ)` = `+` on `(ℕ × ℕ)`, so
+a *fixed asset's count* is an `AddMonoidHom` and `assetTotal h` is additive over bundling
+(`assetTotal_tensor`). This is the per-asset ledger projection the Phase-3 `Σ in = Σ out` invariant lives
+on. -/
+def assetTotal (h : (ℕ × ℕ) →+ ℕ) (r : DreggResources) : ℕ := h (Multiplicative.toAdd r.as)
+
+/-- **`goldHom`** — the gold-count selector, the first-coordinate `AddMonoidHom`. -/
+def goldHom : (ℕ × ℕ) →+ ℕ := AddMonoidHom.fst ℕ ℕ
+/-- **`artHom`** — the art-count selector, the second-coordinate `AddMonoidHom`. -/
+def artHom : (ℕ × ℕ) →+ ℕ := AddMonoidHom.snd ℕ ℕ
+
+/-- **`assetTotal_tensor`** — every asset total is ADDITIVE over bundle union (`⊗`): the Σ of a
+side-by-side bundle is the sum of the Σ's. This is the homomorphism property that makes Σ-conservation a
+genuine *ledger* law (totals add across composed positions), and it is exactly why `assetTotal` is the
+right refinement of the thin shadow — the shadow has no such additive structure. -/
+theorem assetTotal_tensor (h : (ℕ × ℕ) →+ ℕ) (a b : DreggResources) :
+    assetTotal h (a ⊗ b) = assetTotal h a + assetTotal h b := by
+  show h (Multiplicative.toAdd (a.as * b.as))
+     = h (Multiplicative.toAdd a.as) + h (Multiplicative.toAdd b.as)
+  rw [show Multiplicative.toAdd (a.as * b.as)
+        = Multiplicative.toAdd a.as + Multiplicative.toAdd b.as from rfl, map_add]
+
+/-- **`converts_preserves_assetTotal`** — a conversion in `DemoRes` preserves EVERY asset total. A
+`DemoRes` morphism forces the underlying bundles equal (`Discrete.eq_of_hom`), so reading either through
+any selector `h` gives the same Σ. This is the bridge from the rich/thin convertibility layer to the
+per-asset ledger: holding a conversion is enough to pin each asset's count. -/
+theorem converts_preserves_assetTotal {a c : DreggResources} (hc : Converts a c)
+    (h : (ℕ × ℕ) →+ ℕ) : assetTotal h a = assetTotal h c := by
+  obtain ⟨f⟩ := hc
+  have he : a.as = c.as := Discrete.eq_of_hom f
+  simp only [assetTotal, he]
+
+/-- **`settle_sigma_conserves` (KEYSTONE c⁺)** — the auction settle conserves EACH asset's Σ-total: for
+every asset selector `h`, the offered-side total equals the outcome-side total. Strictly stronger than
+`settle_conserves` (the thin shadow): it does not merely assert "a conversion exists", it pins every
+asset count across the settle. Proved by feeding the settle's own conversion (the receipt's
+`fulfill_conserves` witness) to `converts_preserves_assetTotal`. -/
+theorem settle_sigma_conserves (i : KernelIntent demoLace demoReg demoStmtOf)
+    (f : i.offered ⟶ i.wanted) (hpred : i.predicate i.wanted) (hlock : i.resource.locked = true)
+    (h : (ℕ × ℕ) →+ ℕ) :
+    assetTotal h i.offered = assetTotal h (auctionSettle i f hpred hlock).outcome :=
+  converts_preserves_assetTotal (settle_conserves i f hpred hlock) h
+
+/-- The concrete winning settle conserves both asset totals: 0 gold in = 0 gold out, 3 art in = 3 art
+out — the winner's "3 art" allocation neither mints nor burns either asset. -/
+theorem winning_sigma_conserves :
+    assetTotal goldHom winningBid.offered = assetTotal goldHom winningReceipt.outcome ∧
+      assetTotal artHom winningBid.offered = assetTotal artHom winningReceipt.outcome :=
+  ⟨settle_sigma_conserves winningBid (𝟙 (res 0 3)) rfl rfl goldHom,
+   settle_sigma_conserves winningBid (𝟙 (res 0 3)) rfl rfl artHom⟩
+
+/-! ### The (c⁺) TEETH — a mint a hypothetical settle would carry is CAUGHT by Σ, missed by the shadow.
+
+We model a *hypothetical* settle as a raw `(inputs, outputs)` ledger — the layer at which a mint can even
+be EXPRESSED (a `fulfill` cannot mint, because its outcome is definitionally `wanted` and its conversion
+forces equality; the threat is a settle that side-steps the conversion and just *asserts* an outcome). On
+this layer the thin convertibility shadow is computed PER-LEG; the global asset totals are computed by
+Σ. The two diverge exactly on a mint. -/
+
+/-- **`SettleLedger`** — a raw settle as a global `(inputs, outputs)` bundle pair, the layer at which a
+mint is expressible (no conversion is demanded — that is precisely the threat Σ must catch). -/
+structure SettleLedger where
+  /-- Everything escrowed into the settle (buyer payment ⊗ seller stock). -/
+  inputs  : DreggResources
+  /-- Everything paid out of the settle (buyer receipt ⊗ seller receipt). -/
+  outputs : DreggResources
+
+/-- **`SettleLedger.sigmaConserves`** — the strong per-asset law on a raw settle: every asset's Σ-total
+is preserved from inputs to outputs. This is the auditable ledger predicate the kernel enforces. -/
+def SettleLedger.sigmaConserves (s : SettleLedger) : Prop :=
+  ∀ h : (ℕ × ℕ) →+ ℕ, assetTotal h s.inputs = assetTotal h s.outputs
+
+/-- An honest same-bundle settle satisfies Σ-conservation (`inputs = outputs`, so every total agrees) —
+non-vacuity of the predicate. -/
+theorem honest_settle_sigmaConserves (r : DreggResources) :
+    SettleLedger.sigmaConserves ⟨r, r⟩ := fun _ => rfl
+
+/-- A hypothetical **mint-one-art settle**: inputs "3 art", outputs "4 art" — one art conjured from
+nothing. The thin shadow would be SILENT (it only asks whether outputs are reachable, never whether the
+total grew); Σ-conservation on the art selector CATCHES it. -/
+def mintSettle : SettleLedger := ⟨res 0 3, res 0 4⟩
+
+/-- **`mint_rejected_by_sigma` (the (c⁺) TEETH)** — the mint-one-art settle FAILS Σ-conservation: the art
+selector reads 3 in, 4 out, so `assetTotal artHom` is not preserved. A mint that the thin convertibility
+shadow does not even name is caught by the per-asset ledger. -/
+theorem mint_rejected_by_sigma : ¬ SettleLedger.sigmaConserves mintSettle := by
+  intro hc
+  have h4 := hc artHom
+  simp [assetTotal, artHom, mintSettle, res, mkBundle] at h4
+
+/-! ## 4c. KEYSTONE (Q1) — the CROSS-ASSET exchange, FILLED by an offer-generated conversion.
+
+§4's `crossBid` (pay 5 gold, get 1 art) is unfillable *by a resource fact* — no `5 gold ⟶ 1 art`
+conversion lives in the discrete `DemoRes` (`settle_cannot_mint`). The market supplies the missing
+conversion as a standing **`Offer`** (the seller's `gives ⟶ gets`); the exchange is the buyer's bid
+MATCHED against that offer. The discrete category has only identity morphisms, so the offer-generated
+conversion is realized one layer up — as a balanced two-leg ledger — and we prove **Q2 survives Q1**: the
+matched exchange conserves every asset's Σ-total (the seller is paid exactly what the buyer pays; the
+buyer receives exactly what the seller gives; no asset is minted on either leg). -/
+
+/-- **`Offer`** — a seller's standing market offer: hand over `gives` (e.g. 1 art) in return for `gets`
+(e.g. 5 gold). This is the offer-generated conversion `gives ⟶ gets` the discrete resource theory
+lacks — the market layer's contribution that makes a genuine cross-asset bid fillable. -/
+structure Offer where
+  /-- What the seller hands over (delivers the buyer's wanted). -/
+  gives : DreggResources
+  /-- What the seller receives (the buyer's payment). -/
+  gets  : DreggResources
+
+/-- **`Exchange`** — a buyer bid (pays `buyerPays`, wants `buyerGets`) MATCHED against a seller `offer`,
+with the matching conditions: the seller delivers exactly the buyer's wanted (`hgive`) and receives
+exactly the buyer's payment (`hget`). The two legs together are the offer-generated fill of the
+cross-asset bid. -/
+structure Exchange where
+  /-- The buyer's escrowed payment. -/
+  buyerPays : DreggResources
+  /-- The buyer's demanded outcome. -/
+  buyerGets : DreggResources
+  /-- The matched seller offer. -/
+  offer : Offer
+  /-- Match condition: the seller's `gives` IS the buyer's wanted. -/
+  hgive : offer.gives.as = buyerGets.as
+  /-- Match condition: the seller's `gets` IS the buyer's payment. -/
+  hget : offer.gets.as = buyerPays.as
+
+/-- The global ledger of an exchange: inputs = buyer payment ⊗ seller stock; outputs = buyer receipt ⊗
+seller receipt. The settle's full books — both legs, not one. -/
+def Exchange.ledger (e : Exchange) : SettleLedger :=
+  ⟨e.buyerPays ⊗ e.offer.gives, e.buyerGets ⊗ e.offer.gets⟩
+
+/-- **`exchange_sigma_conserves` (Q2 SURVIVES Q1 — the keystone)** — a matched exchange conserves EVERY
+asset's Σ-total across its full two-leg ledger. The seller is paid exactly what the buyer pays and the
+buyer receives exactly what the seller gives, so `inputs = buyerPays ⊗ gives` and `outputs = buyerGets ⊗
+gets` carry identical per-asset totals (`assetTotal_tensor` + the match conditions + commutativity of
+bundle union). The cross-asset exchange mints NOTHING — the strong per-asset law of §4b holds on the
+genuine exchange, not just the same-bundle identity settle. -/
+theorem exchange_sigma_conserves (e : Exchange) : e.ledger.sigmaConserves := by
+  intro h
+  show assetTotal h (e.buyerPays ⊗ e.offer.gives)
+     = assetTotal h (e.buyerGets ⊗ e.offer.gets)
+  rw [assetTotal_tensor, assetTotal_tensor]
+  -- assetTotal h gives = assetTotal h buyerGets (hgive); assetTotal h gets = assetTotal h buyerPays (hget)
+  have hg : assetTotal h e.offer.gives = assetTotal h e.buyerGets := by
+    simp only [assetTotal, e.hgive]
+  have ht : assetTotal h e.offer.gets = assetTotal h e.buyerPays := by
+    simp only [assetTotal, e.hget]
+  rw [hg, ht, Nat.add_comm]
+
+/-- **`crossExchange`** — the concrete fill of `crossBid` (pay 5 gold, get 1 art): match it against a
+seller offer that GIVES "1 art" and GETS "5 gold". The match conditions hold by `rfl`. This is the
+offer-generated conversion that makes the cross-asset bid fillable. -/
+def crossExchange : Exchange where
+  buyerPays := res 5 0
+  buyerGets := res 0 1
+  offer := ⟨res 0 1, res 5 0⟩
+  hgive := rfl
+  hget := rfl
+
+/-- **`crossBid_fillable_by_offer` (Q1 KEYSTONE — the bid is FILLED, no minting)** — the cross-asset bid
+that was unfillable-without-a-market is now FILLED by `crossExchange`, and the fill conserves every
+asset's Σ-total. The exact bundles `crossBid` offers and wants ARE the buyer legs of the exchange
+(`rfl`/`rfl`), and the seller's offer-generated leg supplies the missing `gold ⟶ art` conversion while
+the global ledger balances. Q1 (fillability) and Q2 (per-asset conservation) hold simultaneously. -/
+theorem crossBid_fillable_by_offer (revealEvt : Frontier) :
+    crossExchange.buyerPays = (crossBid revealEvt).offered ∧
+      crossExchange.buyerGets = (crossBid revealEvt).wanted ∧
+      crossExchange.ledger.sigmaConserves :=
+  ⟨rfl, rfl, exchange_sigma_conserves crossExchange⟩
+
+/-! ### The (Q1) TEETH — no minting WITHOUT a backing/balanced offer, even when the per-leg shadow agrees.
+
+A SKIMMING settle is the adversarial cross-asset case: the buyer pays 5 gold for 1 art; the seller
+DELIVERS the 1 art correctly (so the per-leg convertibility shadow on the delivery leg is satisfied) but
+takes 6 gold — skimming one gold from nowhere. Such a settle CANNOT be a matched `Exchange` (its `gets`
+≠ the buyer's payment, so the `hget` match condition is unprovable — `Exchange` structurally excludes
+the skim). To exhibit the threat we drop to the raw ledger layer, where the skim is expressible, and show
+the thin shadow accepts it while Σ catches it. -/
+
+/-- The skim's raw global ledger: 5 gold + 1 art in (buyer pays 5 gold, seller stocks 1 art), 1 art + 6
+gold out (buyer gets 1 art, seller gets 6 gold). -/
+def skimLedger : SettleLedger := ⟨res 5 0 ⊗ res 0 1, res 0 1 ⊗ res 6 0⟩
+
+/-- **`thinShadow_accepts_skim` (the shadow is FOOLED)** — the thin per-leg convertibility check on the
+seller's delivery leg PASSES: the seller's "1 art" `gives` converts to the buyer's "1 art" wanted (the
+identity). The shadow sees a valid delivery and says yes — it never inspects the gold leg's totals. -/
+theorem thinShadow_accepts_skim : Converts (res 0 1) (res 0 1) := Converts.refl' _
+
+/-- **`skim_rejected_by_sigma` (the (Q1) TEETH — Σ catches what the shadow misses)** — the skim ledger
+FAILS Σ-conservation on the gold selector: 5 gold in, 6 gold out — one gold minted by the seller's skim.
+The per-leg shadow accepted this exact settle (`thinShadow_accepts_skim`); the global per-asset ledger
+rejects it. No minting survives Σ even when a backing per-leg conversion is present. -/
+theorem skim_rejected_by_sigma : ¬ SettleLedger.sigmaConserves skimLedger := by
+  intro hc
+  have hgold := hc goldHom
+  simp [assetTotal, goldHom, skimLedger, res, mkBundle] at hgold
+
 /-! ## 5. KEYSTONE one-shot — no double-settle from one escrow. -/
 
 /-- **`settle_no_double` (the one-shot teeth)** — the settled escrow is RELEASED, so it can never again
@@ -325,6 +543,22 @@ theorem escrow_refinement_reflexive {offered : DreggResources} (e : EscrowWitnes
 -- (b): the honest fill saw the reveal (g0 ≺ g1) ⇒ admitted; the fork fill did not (f1 ∦ f2) ⇒ rejected.
 #eval decide (g0.id ∈ g1.preds)                -- true    honest fill at g1 observed reveal at g0
 #eval decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds)  -- false  fork fill at f2 never saw reveal at f1
+-- (c⁺): the winning settle conserves both asset totals (0 gold, 3 art on each side).
+#eval assetTotal goldHom winningBid.offered    -- 0       gold in
+#eval assetTotal goldHom winningReceipt.outcome -- 0      gold out (conserved)
+#eval assetTotal artHom winningBid.offered     -- 3       art in
+#eval assetTotal artHom winningReceipt.outcome  -- 3      art out (conserved)
+-- (c⁺ teeth): the mint-one-art settle's art total grows 3 ⟶ 4 (Σ catches it; the shadow is silent).
+#eval assetTotal artHom mintSettle.inputs      -- 3       art in
+#eval assetTotal artHom mintSettle.outputs     -- 4       art out (MINTED — rejected by Σ)
+-- (Q1): the cross-exchange ledger balances gold (5 in / 5 out) and art (1 in / 1 out).
+#eval assetTotal goldHom crossExchange.ledger.inputs   -- 5    gold in (buyer pays)
+#eval assetTotal goldHom crossExchange.ledger.outputs  -- 5    gold out (seller paid)
+#eval assetTotal artHom crossExchange.ledger.inputs    -- 1    art in (seller stock)
+#eval assetTotal artHom crossExchange.ledger.outputs   -- 1    art out (buyer gets)
+-- (Q1 teeth): the SKIM ledger mints gold (5 in / 6 out) while delivering art correctly (1 in / 1 out).
+#eval assetTotal goldHom skimLedger.inputs     -- 5       gold in
+#eval assetTotal goldHom skimLedger.outputs    -- 6       gold out (SKIMMED — rejected by Σ, shadow fooled)
 
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 
@@ -340,6 +574,16 @@ decision-free core (the (a) obligation is a carried hypothesis, NOT an axiom). -
 #assert_axioms settle_conserves
 #assert_axioms winning_settle_conserves
 #assert_axioms settle_cannot_mint
+#assert_axioms assetTotal_tensor
+#assert_axioms converts_preserves_assetTotal
+#assert_axioms settle_sigma_conserves
+#assert_axioms winning_sigma_conserves
+#assert_axioms honest_settle_sigmaConserves
+#assert_axioms mint_rejected_by_sigma
+#assert_axioms exchange_sigma_conserves
+#assert_axioms crossBid_fillable_by_offer
+#assert_axioms thinShadow_accepts_skim
+#assert_axioms skim_rejected_by_sigma
 #assert_axioms settle_no_double
 #assert_axioms winning_no_double
 #assert_axioms loser_refunded_eventually
