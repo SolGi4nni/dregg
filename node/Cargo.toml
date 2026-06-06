@@ -32,6 +32,8 @@ starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
 starbridge-subscription = { path = "../starbridge-apps/subscription" }
 starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
+starbridge-compartment-workflow-mandate = { path = "../starbridge-apps/compartment-workflow-mandate" }
+starbridge-storage-gateway-mandate = { path = "../starbridge-apps/storage-gateway-mandate" }
 dregg-macaroon = { workspace = true, features = ["crypto"] }
 ark-serialize = { workspace = true }
 ark-std = "0.5.0"

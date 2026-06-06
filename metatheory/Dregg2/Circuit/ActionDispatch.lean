@@ -81,6 +81,7 @@ import Dregg2.Circuit.Spec.swissdrop
 import Dregg2.Circuit.Spec.swissexport
 import Dregg2.Circuit.Spec.swissenliven
 import Dregg2.Circuit.Spec.swisshandoff
+import Dregg2.Circuit.Spec.Turn
 import Dregg2.Exec.TurnExecutorFull
 
 namespace Dregg2.Circuit.ActionDispatch
@@ -339,6 +340,20 @@ mutual
     | st, a :: rest, st' =>
         ∃ st1, fullActionStep st a st1 ∧ turnSpec st1 rest st'
 end
+
+/-- **`turnSpec_eq_spec`** — the apex dispatcher's `turnSpec` is the generic `Spec.Turn.turnSpec`
+instantiated at `fullActionStep`. -/
+theorem turnSpec_eq_spec (st : RecChainedState) (acts : List FullActionA) (st' : RecChainedState) :
+    turnSpec st acts st' ↔ Spec.Turn.turnSpec fullActionStep st acts st' := by
+  induction acts generalizing st with
+  | nil => simp [turnSpec, Spec.Turn.turnSpec]
+  | cons a rest ih =>
+      simp only [turnSpec, Spec.Turn.turnSpec]
+      constructor
+      · intro ⟨st1, hstep, htail⟩
+        exact ⟨st1, hstep, (ih st1).mp htail⟩
+      · intro ⟨st1, hstep, htail⟩
+        exact ⟨st1, hstep, (ih st1).mpr htail⟩
 
 /-- **The full-state declarative spec of a committed `exerciseA`.** Hold-gate + inner fold from
 the hold post-state (auth receipt prepended, kernel frozen). Definitionally the `exerciseA` arm of
@@ -667,6 +682,7 @@ theorem exerciseSpec_ledger_per_asset (st st' : RecChainedState) (actor target :
 
 /-! ## §9 — axiom-hygiene tripwires. -/
 
+#assert_axioms turnSpec_eq_spec
 #assert_axioms exerciseHoldState_kernel
 #assert_axioms exerciseStepA_iff_holdSpec
 #assert_axioms execInnerA_eq_execFullTurnA

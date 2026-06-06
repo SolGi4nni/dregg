@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Starbridge — Compartment Workflow Mandate</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Starbridge-app fragment for the compartment workflow mandate.
+      Mounts under /starbridge-apps/compartment-workflow-mandate/ on the
+      site build. Policy lives in starbridge-apps/compartment-workflow-mandate/src/lib.rs;
+      maps Lean CompartmentWorkflowMandate*.lean slot caveats and DAG admission.
+
+      factory_vk hex mirrors CWM_FACTORY_VK in src/lib.rs:
+        *b"starbridge-cwm-mandate-factory!!"
+        = 737461726272696467652d63776d2d6d616e646174652d666163746f72792121
+    -->
+    <link rel="stylesheet" href="/assets/style.css" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 960px; }
+      header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; margin-bottom: 1rem; }
+      .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; }
+      @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+      h1 { margin: 0 0 0.5rem 0; }
+      .lede { color: #555; }
+      code { font-family: ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <header class="starbridge-cwm-chrome">
+      <h1><code>dregg</code> Compartment Workflow Mandate</h1>
+      <p class="lede">
+        DAG charter mandate (review → redact → sign) with
+        <code>MonotonicSequence</code> step cursor, immutable commitment anchor,
+        and clearance-label admission. Backed by
+        <code>cwm_factory_descriptor()</code> in
+        <code>starbridge-apps/compartment-workflow-mandate/src/lib.rs</code>.
+      </p>
+    </header>
+    <main class="layout">
+      <dregg-app
+        runtime="in-memory"
+        factory-vk="737461726272696467652d63776d2d6d616e646174652d666163746f72792121"
+        registry-uri="dregg://cell/cwm-mandate-default"
+      >
+        <dregg-cwm-mandate slot="primary" uri="dregg://cell/cwm-mandate-default"></dregg-cwm-mandate>
+        <dregg-cwm-advance-form slot="actions" mandate-uri="dregg://cell/cwm-mandate-default"></dregg-cwm-advance-form>
+      </dregg-app>
+    </main>
+    <script type="module" src="/_includes/studio/app-boot.js"></script>
+    <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
+    <script type="module" src="./inspectors.js"></script>
+    <script type="module" src="./turn-builders.js"></script>
+    <script type="module" src="/starbridge-apps/shared/turn-builders/index.js"></script>
+    <script type="module" src="/starbridge-apps/shared/app-runtime-ready.js"></script>
+  </body>
+</html>

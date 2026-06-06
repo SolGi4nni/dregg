@@ -141,12 +141,12 @@ theorem turnSpec_of_turnStateChain (step : ActionStep) :
                     simpa [hchain, List.get_cons_succ] using hwit }
 termination_by _ _ acts _ => acts.length
 
-/-- Every `turnSpec` commitment yields a `TurnStateChain` (existence, by induction). -/
-theorem turnStateChain_of_turnSpec (step : ActionStep) (s : RecChainedState) (acts : List FullActionA)
-    (s' : RecChainedState) (h : Spec.Turn.turnSpec step s acts s') :
-    TurnStateChain step s acts s' := by
-  induction acts generalizing s s' with
-  | nil =>
+/-- Every `turnSpec` commitment yields a `TurnStateChain` (existence, by structural recursion).
+Uses classical choice on the cons-case existential (constructing data, not proving a `Prop`). -/
+noncomputable def turnStateChain_of_turnSpec (step : ActionStep) :
+    ∀ (s : RecChainedState) (acts : List FullActionA) (s' : RecChainedState),
+      Spec.Turn.turnSpec step s acts s' → TurnStateChain step s acts s'
+  | s, [], s', h => by
       simp only [Spec.Turn.turnSpec] at h
       subst h
       exact { chain := [s]
@@ -154,19 +154,24 @@ theorem turnStateChain_of_turnSpec (step : ActionStep) (s : RecChainedState) (ac
             , chain_head := by simp
             , chain_last := by simp
             , step_witness := fun i => absurd i.2 (Nat.not_lt_zero _) }
-  | cons a rest ih =>
-      rw [show Spec.Turn.turnSpec step s (a :: rest) s' =
-            (∃ s₁, step s a s₁ ∧ Spec.Turn.turnSpec step s₁ rest s') from rfl] at h
-      obtain ⟨s1, hhead, htail⟩ := h
-      let w := ih s1 s' htail
+  | s, a :: rest, s', h => by
+      classical
+      simp only [Spec.Turn.turnSpec] at h
+      let s1 := Classical.choose h
+      have hpair := Classical.choose_spec h
+      have hhead : step s a s1 := hpair.1
+      have htail : Spec.Turn.turnSpec step s1 rest s' := hpair.2
+      let w := turnStateChain_of_turnSpec step s1 rest s' htail
       refine ⟨s :: w.chain, ?_, ?_, ?_, ?_⟩
       · simp [w.chain_len]
       · simp
-      · simp [w.chain_len]
+      · simp [w.chain_len, w.chain_last]
       · intro i
-        cases i using Fin.cases
-        · simpa using hhead
-        · simpa [List.get_cons_succ] using w.step_witness ⟨i.val - 1, by omega⟩
+        match i with
+        | ⟨0, _⟩ => simpa [List.get_cons_zero, w.chain_head] using hhead
+        | ⟨j + 1, hj⟩ =>
+            have hj' : j < rest.length := Nat.lt_of_succ_lt_succ hj
+            simpa [List.get_cons_succ] using w.step_witness ⟨j, hj'⟩
 
 /-- **`fullAction_turn_refines_exec`** — the Wave-1 apex dispatcher composes with `execFullTurnA`. -/
 theorem fullAction_turn_refines_exec (s s' : RecChainedState) (acts : List FullActionA)
@@ -178,7 +183,6 @@ theorem fullAction_turn_refines_exec (s s' : RecChainedState) (acts : List FullA
 #assert_axioms turn_circuit_refines_exec_of_steps
 #assert_axioms turn_conservation_descends
 #assert_axioms turnSpec_of_turnStateChain
-#assert_axioms turnStateChain_of_turnSpec
 #assert_axioms fullAction_turn_refines_exec
 
 end GenericTurn

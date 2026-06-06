@@ -18,6 +18,9 @@ __pycache__
 .playwright-mcp
 
 # Devnet secrets
+docker/devnet-config/*
+!docker/devnet-config/.gitkeep
+!docker/devnet-config/README.md
 deploy/genesis/keys/
 deploy/genesis/*.key
 deploy/genesis/secrets/

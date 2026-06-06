@@ -5,9 +5,17 @@
   "version": "0.0.0",
   "status": "unported",
   "legacy_path": "apps/privacy-voting",
+  "runtime_mode": "legacy-http",
+  "legacy_listen": "privacy-voting:3100",
+  "caddy_prefix": "/voting",
+  "listen_port": 3100,
   "factory_vks": [],
   "page": null,
   "inspectors": [],
   "turn_builders": [],
-  "required_apis": []
+  "required_apis": [],
+  "manifest_health": {
+    "status": "legacy-http",
+    "porting_target": "starbridge-apps/privacy-voting"
+  }
 }

@@ -1,6 +1,6 @@
 # `dregg` Devnet
 
-Launch a local 4-node federation with one command.
+Launch a local 3-node federation with one command.
 
 ## Quick Start
 
@@ -9,19 +9,38 @@ Launch a local 4-node federation with one command.
 ```
 
 This will:
-1. Generate genesis configuration (keys + genesis.json) in `docker/devnet-config/`
-2. Build the Docker image
-3. Start 4 validator nodes + an nginx explorer frontend
+1. Build the site (`site/dist`) if missing (or pass `--rebuild-site` to force)
+2. Generate genesis configuration (keys + genesis.json) in `docker/devnet-config/`
+3. Build the Docker image
+4. Start 3 validator nodes, gallery, discharge gateway, site, and reverse proxy
 
 ## Endpoints
 
-| Service    | URL                    | Description                |
-|------------|------------------------|----------------------------|
-| Node 0     | http://localhost:8420  | API + faucet enabled       |
-| Node 1     | http://localhost:8421  | API                        |
-| Node 2     | http://localhost:8422  | API                        |
-| Node 3     | http://localhost:8423  | API                        |
-| Explorer   | http://localhost:3000  | Block explorer UI          |
+| Service        | URL                                      | Description                          |
+|----------------|------------------------------------------|--------------------------------------|
+| Proxy          | http://localhost:8400                    | Unified entry (API, gallery, site)   |
+| Node 0         | http://localhost:8420                    | API + faucet enabled                 |
+| Node 1         | http://localhost:8421                    | API                                  |
+| Node 2         | http://localhost:8422                    | API                                  |
+| Gallery        | http://localhost:3040                    | Gallery backend + frontend           |
+| Discharge      | http://localhost:8480                    | Macaroon discharge gateway           |
+| Explorer       | http://localhost:3000                    | Block explorer UI                    |
+
+### Via proxy (`:8400`)
+
+| Path                  | Backend              | Description                    |
+|-----------------------|----------------------|--------------------------------|
+| `/api/*`              | Federation nodes     | Round-robin across 3 nodes     |
+| `/gallery/*`          | Gallery              | Gallery API + frontend         |
+| `/discharge/*`        | Discharge gateway    | Third-party caveat discharge   |
+| `/starbridge-apps/*`  | Site                 | Starbridge app bundles         |
+| `/_includes/*`        | Site                 | Studio/runtime includes        |
+| `/assets/*`, `/pkg/*` | Site                 | Static assets + WASM packages  |
+| `/studio`             | Site                 | Studio UI                      |
+| `/starbridge`         | Site                 | Starbridge shell               |
+| `/learn/*`            | Site                 | Documentation                  |
+| `/apps`               | Site                 | Apps catalog                   |
+| `/health`             | Proxy                | Proxy health check             |
 
 ## Faucet
 
@@ -40,11 +59,11 @@ Rate limit: 1 request per recipient cell per minute. Max 10000 per request.
 Generate configuration without Docker:
 
 ```bash
-cargo run --release -p dregg-node -- genesis \
-  --validators 4 \
+cargo run -p dregg-node -- genesis \
+  --validators 3 \
   --epoch-length 1000 \
   --checkpoint-interval 100 \
-  --output ./devnet-config/
+  --output ./docker/devnet-config/
 ```
 
 ## Stop
@@ -66,6 +85,6 @@ Remove all data volumes and regenerate:
 
 ```bash
 docker compose -f docker/docker-compose.yml down -v
-rm -rf docker/devnet-config/
+rm -rf docker/devnet-config/*
 ./docker/start-devnet.sh
 ```

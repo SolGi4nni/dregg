@@ -5,9 +5,17 @@
   "version": "0.0.0",
   "status": "unported",
   "legacy_path": "apps/compute-exchange",
+  "runtime_mode": "legacy-http",
+  "legacy_listen": "compute-exchange:3040",
+  "caddy_prefix": "/compute",
+  "listen_port": 3040,
   "factory_vks": [],
   "page": null,
   "inspectors": [],
   "turn_builders": [],
-  "required_apis": []
+  "required_apis": [],
+  "manifest_health": {
+    "status": "legacy-http",
+    "porting_target": "starbridge-apps/compute-exchange"
+  }
 }

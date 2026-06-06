@@ -24,6 +24,17 @@ import Dregg2.Circuit.Inst.noteSpendA
 import Dregg2.Circuit.Inst.createEscrowA
 import Dregg2.Circuit.Inst.createCellA
 import Dregg2.Circuit.Inst.spawnA
+import Dregg2.Circuit.Inst.noteCreateA
+import Dregg2.Circuit.Inst.releaseEscrowA
+import Dregg2.Circuit.Inst.refundEscrowA
+import Dregg2.Circuit.Inst.revoke
+import Dregg2.Circuit.Inst.sealA
+import Dregg2.Circuit.Inst.bridgeLockA
+import Dregg2.Circuit.Inst.queueEnqueueA
+import Dregg2.Circuit.EffectCommit
+import Dregg2.Circuit.EffectInstances
+import Dregg2.Circuit.Inst.exerciseA
+import Dregg2.Circuit.Spec.exercise
 
 namespace Dregg2.Circuit.EffectRefinement
 
@@ -44,6 +55,18 @@ open Dregg2.Circuit.Inst.NoteSpendA
 open Dregg2.Circuit.Inst.CreateEscrowA
 open Dregg2.Circuit.Inst.CreateCellA
 open Dregg2.Circuit.Inst.SpawnA
+open Dregg2.Circuit.Inst.NoteCreateA
+open Dregg2.Circuit.Inst.ReleaseEscrowA
+open Dregg2.Circuit.Inst.RefundEscrowA
+open Dregg2.Circuit.Inst.Revoke
+open Dregg2.Circuit.Inst.SealA
+open Dregg2.Circuit.Inst.BridgeLockA
+open Dregg2.Circuit.Inst.QueueEnqueueA
+open Dregg2.Circuit.EffectCommit
+open Dregg2.Circuit.EffectInstances
+open Dregg2.Circuit.Inst.ExerciseA
+open Dregg2.Circuit.Spec.Exercise
+open Dregg2.Circuit.ActionDispatch
 open Dregg2.Circuit.Spec.SupplyCreation
 open Dregg2.Circuit.Spec.SupplyDestruction
 open Dregg2.Circuit.Spec.AccountGrowth
@@ -51,6 +74,14 @@ open Dregg2.Circuit.Spec.BalanceMovement
 open Dregg2.Circuit.Spec.AuthorityUnattenuated
 open Dregg2.Circuit.Spec.NoteNullifier
 open Dregg2.Circuit.Spec.EscrowHoldingCreate
+open Dregg2.Circuit.Spec.NoteCommitment
+open Dregg2.Circuit.Spec.EscrowHoldingRelease
+open Dregg2.Circuit.Spec.EscrowHoldingRefund
+open Dregg2.Circuit.Spec.AuthorityRevocation
+open Dregg2.Circuit.Spec.SealBoxOperations
+open Dregg2.Circuit.Spec.BridgeOutboundLock
+open Dregg2.Circuit.Spec.QueueFifoCore
+open Dregg2.Circuit.Spec.CellStateField
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
@@ -509,7 +540,7 @@ def delegateCircuitStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injecti
   effect2CircuitStep S (delegateE D hD) s args s'
 
 theorem delegateRestFrameEncodes (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoCaps S.RH) :
+    (hRest : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps S.RH) :
     RestFrameEncodes2 S (delegateE D hD) :=
   fun k k' hframe => (hRest k k').mpr hframe
 
@@ -518,14 +549,14 @@ theorem delegate_exec_equiv_spec (s : RecChainedState) (args : DelegateArgs) (s'
   execFullA_delegate_iff_spec s args.del args.recipient args.target s'
 
 theorem delegate_circuit_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : DelegateArgs) (s' : RecChainedState)
     (h : delegateCircuitStep S D hD s args s') :
     delegateSpecStep s args s' :=
   delegate_full_sound S D hD hRest hLog s args s' h
 
 theorem delegate_spec_refines_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoCaps S.RH)
+    (hRest : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps S.RH)
     (s : RecChainedState) (args : DelegateArgs) (s' : RecChainedState)
     (h : delegateSpecStep s args s') :
     delegateCircuitStep S D hD s args s' :=
@@ -534,7 +565,7 @@ theorem delegate_spec_refines_circuit (S : Surface2) (D : Caps → ℤ) (hD : Fu
     ((apex_iff_delegateSpec D hD s args s').mpr h)
 
 theorem delegate_circuit_refines_exec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
-    (hRest : RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (hRest : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : DelegateArgs) (s' : RecChainedState)
     (h : delegateCircuitStep S D hD s args s') :
     delegateExecStep s args s' :=
@@ -663,5 +694,515 @@ theorem createEscrow_circuit_refines_exec (S : Surface2) (D : (CellId → AssetI
 #assert_axioms createEscrow_circuit_refines_spec
 #assert_axioms createEscrow_spec_refines_circuit
 #assert_axioms createEscrow_circuit_refines_exec
+
+/-! ## §11 — NoteCreateA diamond (circuit ⟺ NoteCreateASpec ⟺ execFullA). -/
+
+def noteCreateExecStep (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.noteCreateA args.cm args.actor) = some s'
+
+def noteCreateSpecStep (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState) : Prop :=
+  NoteCreateASpec s args.cm args.actor s'
+
+def noteCreateCircuitStep (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState) : Prop :=
+  effect2CircuitStep S (noteCreateE LE cN hN hLE) s args s'
+
+theorem noteCreateRestFrameEncodes (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE) (hRest : RestIffNoCommitments S.RH) :
+    RestFrameEncodes2 S (noteCreateE LE cN hN hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem noteCreate_exec_equiv_spec (s : RecChainedState) (args : NoteCreateArgs)
+    (s' : RecChainedState) :
+    noteCreateExecStep s args s' ↔ noteCreateSpecStep s args s' :=
+  execNoteCreateA_iff_spec s args.cm args.actor s'
+
+theorem noteCreate_circuit_refines_spec (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoCommitments S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState)
+    (h : noteCreateCircuitStep S LE cN hN hLE s args s') :
+    noteCreateSpecStep s args s' :=
+  noteCreateA_full_sound S LE cN hN hLE hRest hLog s args s' h
+
+theorem noteCreate_spec_refines_circuit (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoCommitments S.RH)
+    (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState)
+    (h : noteCreateSpecStep s args s') :
+    noteCreateCircuitStep S LE cN hN hLE s args s' :=
+  effect2_apex_refines_circuit S (noteCreateE LE cN hN hLE)
+    (noteCreateRestFrameEncodes S LE cN hN hLE hRest) (noteCreateGuardEncodes LE cN hN hLE) s args s'
+    ((apex_iff_noteCreateASpec LE cN hN hLE s args s').mpr h)
+
+theorem noteCreate_circuit_refines_exec (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoCommitments S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : NoteCreateArgs) (s' : RecChainedState)
+    (h : noteCreateCircuitStep S LE cN hN hLE s args s') :
+    noteCreateExecStep s args s' :=
+  (noteCreate_exec_equiv_spec s args s').mpr
+    (noteCreate_circuit_refines_spec S LE cN hN hLE hRest hLog s args s' h)
+
+#assert_axioms noteCreate_exec_equiv_spec
+#assert_axioms noteCreate_circuit_refines_spec
+#assert_axioms noteCreate_spec_refines_circuit
+#assert_axioms noteCreate_circuit_refines_exec
+
+/-! ## §12 — ReleaseEscrowA diamond (dual circuit ⟺ ReleaseEscrowSpec ⟺ execFullA). -/
+
+def releaseEscrowExecStep (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.releaseEscrowA args.id args.actor) = some s'
+
+def releaseEscrowSpecStep (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState) : Prop :=
+  ReleaseEscrowSpec s args.id args.actor s'
+
+def releaseEscrowCircuitStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState) : Prop :=
+  satisfiedE2Dual S (releaseEscrowE D hD LE cN hN hLE)
+    (encodeE2Dual S (releaseEscrowE D hD LE cN hN hLE) s args s')
+
+theorem releaseEscrowRestFrameEncodes (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE) (hRest : RestIffNoBalEscrows S.RH) :
+    RestFrameEncodes2Dual S (releaseEscrowE D hD LE cN hN hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem releaseEscrow_exec_equiv_spec (s : RecChainedState) (args : ReleaseArgs)
+    (s' : RecChainedState) :
+    releaseEscrowExecStep s args s' ↔ releaseEscrowSpecStep s args s' :=
+  execFullA_releaseEscrow_iff_spec s args.id args.actor s'
+
+theorem releaseEscrow_circuit_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState)
+    (h : releaseEscrowCircuitStep S D hD LE cN hN hLE s args s') :
+    releaseEscrowSpecStep s args s' :=
+  releaseEscrowA_full_sound S D hD LE cN hN hLE hRest hLog s args s' h
+
+theorem releaseEscrow_spec_refines_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH)
+    (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState)
+    (h : releaseEscrowSpecStep s args s') :
+    releaseEscrowCircuitStep S D hD LE cN hN hLE s args s' :=
+  effect2dual_circuit_full_complete S (releaseEscrowE D hD LE cN hN hLE)
+    (releaseEscrowRestFrameEncodes S D hD LE cN hN hLE hRest)
+    (releaseEscrowGuardEncodes D hD LE cN hN hLE) s args s'
+    ((apex_iff_releaseEscrowSpec D hD LE cN hN hLE s args s').mpr h)
+
+theorem releaseEscrow_circuit_refines_exec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ReleaseArgs) (s' : RecChainedState)
+    (h : releaseEscrowCircuitStep S D hD LE cN hN hLE s args s') :
+    releaseEscrowExecStep s args s' :=
+  (releaseEscrow_exec_equiv_spec s args s').mpr
+    (releaseEscrow_circuit_refines_spec S D hD LE cN hN hLE hRest hLog s args s' h)
+
+#assert_axioms releaseEscrow_exec_equiv_spec
+#assert_axioms releaseEscrow_circuit_refines_spec
+#assert_axioms releaseEscrow_spec_refines_circuit
+#assert_axioms releaseEscrow_circuit_refines_exec
+
+/-! ## §13 — RefundEscrowA diamond (dual circuit ⟺ RefundEscrowSpec ⟺ execFullA). -/
+
+def refundEscrowExecStep (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.refundEscrowA args.id args.actor) = some s'
+
+def refundEscrowSpecStep (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState) : Prop :=
+  RefundEscrowSpec s args.id args.actor s'
+
+def refundEscrowCircuitStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState) : Prop :=
+  satisfiedE2Dual S (refundEscrowE D hD LE cN hN hLE)
+    (encodeE2Dual S (refundEscrowE D hD LE cN hN hLE) s args s')
+
+theorem refundEscrowRestFrameEncodes (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE) (hRest : RestIffNoBalEscrows S.RH) :
+    RestFrameEncodes2Dual S (refundEscrowE D hD LE cN hN hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem refundEscrow_exec_equiv_spec (s : RecChainedState) (args : RefundEscrowArgs)
+    (s' : RecChainedState) :
+    refundEscrowExecStep s args s' ↔ refundEscrowSpecStep s args s' :=
+  execFullA_refundEscrowA_iff_spec s args.id args.actor s'
+
+theorem refundEscrow_circuit_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState)
+    (h : refundEscrowCircuitStep S D hD LE cN hN hLE s args s') :
+    refundEscrowSpecStep s args s' :=
+  refundEscrowA_full_sound S D hD LE cN hN hLE hRest hLog s args s' h
+
+theorem refundEscrow_spec_refines_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH)
+    (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState)
+    (h : refundEscrowSpecStep s args s') :
+    refundEscrowCircuitStep S D hD LE cN hN hLE s args s' :=
+  effect2dual_circuit_full_complete S (refundEscrowE D hD LE cN hN hLE)
+    (refundEscrowRestFrameEncodes S D hD LE cN hN hLE hRest)
+    (refundEscrowGuardEncodes D hD LE cN hN hLE) s args s'
+    ((apex_iff_refundEscrowSpec D hD LE cN hN hLE s args s').mpr h)
+
+theorem refundEscrow_circuit_refines_exec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RefundEscrowArgs) (s' : RecChainedState)
+    (h : refundEscrowCircuitStep S D hD LE cN hN hLE s args s') :
+    refundEscrowExecStep s args s' :=
+  (refundEscrow_exec_equiv_spec s args s').mpr
+    (refundEscrow_circuit_refines_spec S D hD LE cN hN hLE hRest hLog s args s' h)
+
+#assert_axioms refundEscrow_exec_equiv_spec
+#assert_axioms refundEscrow_circuit_refines_spec
+#assert_axioms refundEscrow_spec_refines_circuit
+#assert_axioms refundEscrow_circuit_refines_exec
+
+/-! ## §14 — Revoke diamond (circuit ⟺ RevokeSpec ⟺ execFullA). -/
+
+def revokeExecStep (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.revoke args.holder args.t) = some s'
+
+def revokeSpecStep (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) : Prop :=
+  RevokeSpec s args.holder args.t s'
+
+def revokeCircuitStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) : Prop :=
+  effect2CircuitStep S (revokeE D hD) s args s'
+
+theorem revokeRestFrameEncodes (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH) :
+    RestFrameEncodes2 S (revokeE D hD) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem revoke_exec_equiv_spec (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState) :
+    revokeExecStep s args s' ↔ revokeSpecStep s args s' :=
+  execFullA_revoke_iff_spec s args.holder args.t s'
+
+theorem revoke_circuit_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState)
+    (h : revokeCircuitStep S D hD s args s') :
+    revokeSpecStep s args s' :=
+  revoke_full_sound S D hD hRest hLog s args s' h
+
+theorem revoke_spec_refines_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH)
+    (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState)
+    (h : revokeSpecStep s args s') :
+    revokeCircuitStep S D hD s args s' :=
+  effect2_apex_refines_circuit S (revokeE D hD)
+    (revokeRestFrameEncodes S D hD hRest) (revokeGuardEncodes D hD) s args s'
+    ((apex_iff_revokeSpec D hD s args s').mpr h)
+
+theorem revoke_circuit_refines_exec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.Revoke.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RevokeArgs) (s' : RecChainedState)
+    (h : revokeCircuitStep S D hD s args s') :
+    revokeExecStep s args s' :=
+  (revoke_exec_equiv_spec s args s').mpr
+    (revoke_circuit_refines_spec S D hD hRest hLog s args s' h)
+
+#assert_axioms revoke_exec_equiv_spec
+#assert_axioms revoke_circuit_refines_spec
+#assert_axioms revoke_spec_refines_circuit
+#assert_axioms revoke_circuit_refines_exec
+
+/-! ## §15 — SealA diamond (circuit ⟺ SealSpec ⟺ execFullA). -/
+
+def sealExecStep (s : RecChainedState) (args : SealArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.sealA args.pid args.actor args.payload) = some s'
+
+def sealSpecStep (s : RecChainedState) (args : SealArgs) (s' : RecChainedState) : Prop :=
+  SealSpec s args.pid args.actor args.payload s'
+
+def sealCircuitStep (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState) : Prop :=
+  effect2CircuitStep S (sealE LE cN hN hLE) s args s'
+
+theorem sealRestFrameEncodes (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE) (hRest : RestIffNoSealedBoxes S.RH) :
+    RestFrameEncodes2 S (sealE LE cN hN hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem seal_exec_equiv_spec (s : RecChainedState) (args : SealArgs) (s' : RecChainedState) :
+    sealExecStep s args s' ↔ sealSpecStep s args s' :=
+  execFullA_seal_iff_spec s args.pid args.actor args.payload s'
+
+theorem seal_circuit_refines_spec (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoSealedBoxes S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState)
+    (h : sealCircuitStep S LE cN hN hLE s args s') :
+    sealSpecStep s args s' :=
+  sealA_full_sound S LE cN hN hLE hRest hLog s args s' h
+
+theorem seal_spec_refines_circuit (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoSealedBoxes S.RH)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState)
+    (h : sealSpecStep s args s') :
+    sealCircuitStep S LE cN hN hLE s args s' :=
+  effect2_apex_refines_circuit S (sealE LE cN hN hLE)
+    (sealRestFrameEncodes S LE cN hN hLE hRest) (sealGuardEncodes LE cN hN hLE) s args s'
+    ((apex_iff_sealSpec LE cN hN hLE s args s').mpr h)
+
+theorem seal_circuit_refines_exec (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoSealedBoxes S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState)
+    (h : sealCircuitStep S LE cN hN hLE s args s') :
+    sealExecStep s args s' :=
+  (seal_exec_equiv_spec s args s').mpr
+    (seal_circuit_refines_spec S LE cN hN hLE hRest hLog s args s' h)
+
+#assert_axioms seal_exec_equiv_spec
+#assert_axioms seal_circuit_refines_spec
+#assert_axioms seal_spec_refines_circuit
+#assert_axioms seal_circuit_refines_exec
+
+/-! ## §16 — BridgeLockA diamond (dual circuit ⟺ BridgeOutboundLockSpec ⟺ execFullA). -/
+
+def bridgeLockExecStep (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.bridgeLockA args.id args.actor args.originator args.destination args.asset args.amount) =
+    some s'
+
+def bridgeLockSpecStep (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState) : Prop :=
+  BridgeOutboundLockSpec s args.id args.actor args.originator args.destination args.asset args.amount s'
+
+def bridgeLockCircuitStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState) : Prop :=
+  satisfiedE2Dual S (bridgeLockE D hD LE cN hN hLE)
+    (encodeE2Dual S (bridgeLockE D hD LE cN hN hLE) s args s')
+
+theorem bridgeLockRestFrameEncodes (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE) (hRest : RestIffNoBalEscrows S.RH) :
+    RestFrameEncodes2Dual S (bridgeLockE D hD LE cN hN hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem bridgeLock_exec_equiv_spec (s : RecChainedState) (args : BridgeLockArgs)
+    (s' : RecChainedState) :
+    bridgeLockExecStep s args s' ↔ bridgeLockSpecStep s args s' :=
+  execFullA_bridgeLockA_iff_spec s args.id args.actor args.originator args.destination args.asset
+    args.amount s'
+
+theorem bridgeLock_circuit_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState)
+    (h : bridgeLockCircuitStep S D hD LE cN hN hLE s args s') :
+    bridgeLockSpecStep s args s' :=
+  bridgeLockA_full_sound S D hD LE cN hN hLE hRest hLog s args s' h
+
+theorem bridgeLock_spec_refines_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH)
+    (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState)
+    (h : bridgeLockSpecStep s args s') :
+    bridgeLockCircuitStep S D hD LE cN hN hLE s args s' :=
+  effect2dual_circuit_full_complete S (bridgeLockE D hD LE cN hN hLE)
+    (bridgeLockRestFrameEncodes S D hD LE cN hN hLE hRest)
+    (bridgeLockGuardEncodes D hD LE cN hN hLE) s args s'
+    ((apex_iff_bridgeOutboundLockSpec D hD LE cN hN hLE s args s').mpr h)
+
+theorem bridgeLock_circuit_refines_exec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : BridgeLockArgs) (s' : RecChainedState)
+    (h : bridgeLockCircuitStep S D hD LE cN hN hLE s args s') :
+    bridgeLockExecStep s args s' :=
+  (bridgeLock_exec_equiv_spec s args s').mpr
+    (bridgeLock_circuit_refines_spec S D hD LE cN hN hLE hRest hLog s args s' h)
+
+#assert_axioms bridgeLock_exec_equiv_spec
+#assert_axioms bridgeLock_circuit_refines_spec
+#assert_axioms bridgeLock_spec_refines_circuit
+#assert_axioms bridgeLock_circuit_refines_exec
+
+/-! ## §17 — QueueEnqueueA diamond (triple circuit ⟺ QueueEnqueueSpec ⟺ execFullA). -/
+
+def queueEnqueueExecStep (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.queueEnqueueA args.id args.m args.actor args.cell args.depId args.dAsset args.deposit) =
+    some s'
+
+def queueEnqueueSpecStep (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
+  QueueEnqueueSpec s args.id args.m args.actor args.cell args.depId args.dAsset args.deposit s'
+
+def queueEnqueueCircuitStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
+    (LE : EscrowRecord → ℤ) (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
+  satisfiedE2Triple S (queueEnqueueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+    (encodeE2Triple S (queueEnqueueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s')
+
+theorem queueEnqueueRestFrameEncodes (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH) :
+    RestFrameEncodes2Triple S (queueEnqueueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) :=
+  fun k k' hframe => (hRest k k').mpr hframe
+
+theorem queueEnqueue_exec_equiv_spec (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) :
+    queueEnqueueExecStep s args s' ↔ queueEnqueueSpecStep s args s' :=
+  execFullA_queueEnqueueA_iff_spec s args.id args.m args.actor args.cell args.depId args.dAsset
+    args.deposit s'
+
+theorem queueEnqueue_circuit_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
+    (h : queueEnqueueCircuitStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s') :
+    queueEnqueueSpecStep s args s' :=
+  queueEnqueueA_full_sound S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest hLog s args s' h
+
+theorem queueEnqueue_spec_refines_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH)
+    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
+    (h : queueEnqueueSpecStep s args s') :
+    queueEnqueueCircuitStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s' :=
+  effect2triple_circuit_full_complete S (queueEnqueueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+    (queueEnqueueRestFrameEncodes S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest)
+    (enqueueGuardEncodes D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s'
+    ((apex_iff_queueEnqueueSpec D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s').mpr h)
+
+theorem queueEnqueue_circuit_refines_exec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
+    (h : queueEnqueueCircuitStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s') :
+    queueEnqueueExecStep s args s' :=
+  (queueEnqueue_exec_equiv_spec s args s').mpr
+    (queueEnqueue_circuit_refines_spec S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest hLog s args s' h)
+
+#assert_axioms queueEnqueue_exec_equiv_spec
+#assert_axioms queueEnqueue_circuit_refines_spec
+#assert_axioms queueEnqueue_spec_refines_circuit
+#assert_axioms queueEnqueue_circuit_refines_exec
+
+/-! ## §18 — SetFieldA diamond (v1 circuit ⟺ SetFieldSpec ⟺ execFullA). -/
+
+def setFieldExecStep (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState) : Prop :=
+  execFullA s (.setFieldA args.actor args.cell args.f args.v) = some s'
+
+def setFieldSpecStep (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState) : Prop :=
+  SetFieldSpec s args.actor args.cell args.f args.v s'
+
+def setFieldCircuitStep (S : CommitSurface) (s : RecChainedState) (args : SetFieldArgs)
+    (s' : RecChainedState) : Prop :=
+  satisfiedE S setFieldE (encodeE S setFieldE s args s')
+
+theorem setField_exec_equiv_spec (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState) :
+    setFieldExecStep s args s' ↔ setFieldSpecStep s args s' :=
+  execFullA_setFieldA_iff_spec s args.actor args.cell args.f args.v s'
+
+theorem setField_circuit_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : setFieldCircuitStep S s args s') :
+    setFieldSpecStep s args s' :=
+  setFieldE_full_sound S hN hL hRest hLog s args s' hwf hwf' h
+
+theorem setField_spec_refines_circuit (S : CommitSurface) (hRest : RestHashIffFrame S.RH)
+    (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (h : setFieldSpecStep s args s') :
+    setFieldCircuitStep S s args s' :=
+  effect_circuit_full_complete S setFieldE hRest setFieldGuardEncodes s args s'
+    ((apex_iff_setFieldSpec s args s').mpr h)
+
+theorem setField_circuit_refines_exec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SetFieldArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : setFieldCircuitStep S s args s') :
+    setFieldExecStep s args s' :=
+  (setField_exec_equiv_spec s args s').mpr
+    (setField_circuit_refines_spec S hN hL hRest hLog s args s' hwf hwf' h)
+
+#assert_axioms setField_exec_equiv_spec
+#assert_axioms setField_circuit_refines_spec
+#assert_axioms setField_spec_refines_circuit
+#assert_axioms setField_circuit_refines_exec
+
+/-! ## §19 — ExerciseA composite (v1 hold-layer ⟺ `ExerciseHoldSpec`; inner turn composed). -/
+
+def exerciseHoldSpecStep (pre : RecChainedState) (args : ExerciseHoldArgs) (post : RecChainedState) :
+    Prop :=
+  ExerciseHoldSpec pre args.actor args.target post
+
+theorem exerciseHold_exec_equiv_spec_step (pre post : RecChainedState) (args : ExerciseHoldArgs) :
+    exerciseHoldExecStep pre post args ↔ exerciseHoldSpecStep pre args post :=
+  exerciseHold_exec_equiv_spec pre post args
+
+theorem exerciseHold_circuit_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (pre post : RecChainedState) (args : ExerciseHoldArgs)
+    (hwf : AccountsWF pre.kernel) (hwf' : AccountsWF post.kernel)
+    (h : exerciseHoldCircuitStep S pre args post) :
+    exerciseHoldSpecStep pre args post :=
+  exercise_circuit_refines_hold_spec S hN hL hRest hLog pre post args hwf hwf' h
+
+theorem exercise_composite_circuit_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (pre post : RecChainedState) (args : ExerciseFullArgs)
+    (innerTurnH : Prop) (hinner : innerTurnH)
+    (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hwf : AccountsWF pre.kernel)
+    (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
+        (exerciseHoldState pre args.actor)) :
+    exerciseSpecStep pre post args :=
+  exercise_circuit_refines_spec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hwf hhold
+
+theorem exercise_composite_circuit_refines_exec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (pre post : RecChainedState) (args : ExerciseFullArgs)
+    (innerTurnH : Prop) (hinner : innerTurnH)
+    (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hwf : AccountsWF pre.kernel)
+    (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
+        (exerciseHoldState pre args.actor)) :
+    exerciseExecStep pre post args :=
+  exercise_circuit_refines_exec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hwf hhold
+
+#assert_axioms exerciseHold_exec_equiv_spec_step
+#assert_axioms exerciseHold_circuit_refines_spec
+#assert_axioms exercise_composite_circuit_refines_spec
+#assert_axioms exercise_composite_circuit_refines_exec
 
 end Dregg2.Circuit.EffectRefinement

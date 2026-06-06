@@ -1,0 +1,96 @@
+// starbridge-apps/compartment-workflow-mandate/pages/turn-builders.js
+//
+// JS shim for workflow-mandate turn presets. Mirrors build_advance_step_action
+// and build_init_mandate_action in src/lib.rs. Policy lives in Rust.
+
+const STEP_CURSOR_SLOT = 0;
+const COMMITMENT_ANCHOR_SLOT = 1;
+const CHARTER_TERMINAL_SLOT = 2;
+const CLEARANCE_GRAPH_ROOT_SLOT = 3;
+const SPEND_POLICY_SLOT = 4;
+
+const PHASES = ['review', 'redact', 'sign'];
+
+function u64BE(n) {
+  const view = new Uint8Array(32);
+  const bn = BigInt(n);
+  for (let i = 0; i < 8; i += 1) {
+    view[31 - i] = Number((bn >> BigInt(i * 8)) & 0xffn);
+  }
+  return Array.from(view);
+}
+
+async function labelField(name) {
+  if (window.dregg?.blake3) {
+    return window.dregg.blake3(new TextEncoder().encode(name));
+  }
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name));
+  return Array.from(new Uint8Array(buf));
+}
+
+function phaseForCursor(cursor) {
+  return PHASES[cursor] ?? 'review';
+}
+
+/**
+ * Advance the mandate step cursor by one (MonotonicSequence +1).
+ * @param {string} mandateUri
+ * @param {number} currentCursor
+ * @returns {Promise<object>}
+ */
+async function advance_step(mandateUri, currentCursor) {
+  const newCursor = currentCursor + 1;
+  const phase = phaseForCursor(newCursor - 1);
+  const phaseLabel = await labelField(phase);
+  return window.dregg.signTurn({
+    target: mandateUri,
+    method: 'advance_step',
+    effects: [
+      { kind: 'SetField', cell: mandateUri, index: STEP_CURSOR_SLOT, value: u64BE(newCursor) },
+      {
+        kind: 'EmitEvent',
+        cell: mandateUri,
+        topic: 'workflow-step-advanced',
+        data: [u64BE(currentCursor), u64BE(newCursor), phaseLabel],
+      },
+    ],
+  });
+}
+
+/**
+ * Initialize mandate metadata slots (demo charter).
+ * @param {string} mandateUri
+ * @param {object} [opts]
+ */
+async function init_mandate(mandateUri, opts = {}) {
+  const anchor = opts.commitmentAnchor ?? 42;
+  const terminal = opts.charterTerminal ?? 3;
+  const spend = opts.spendPolicy ?? 5;
+  const clearanceRoot = opts.clearanceGraphRoot ?? u64BE(0);
+  return window.dregg.signTurn({
+    target: mandateUri,
+    method: 'init_mandate',
+    effects: [
+      { kind: 'SetField', cell: mandateUri, index: COMMITMENT_ANCHOR_SLOT, value: u64BE(anchor) },
+      { kind: 'SetField', cell: mandateUri, index: CHARTER_TERMINAL_SLOT, value: u64BE(terminal) },
+      { kind: 'SetField', cell: mandateUri, index: CLEARANCE_GRAPH_ROOT_SLOT, value: clearanceRoot },
+      { kind: 'SetField', cell: mandateUri, index: SPEND_POLICY_SLOT, value: u64BE(spend) },
+      {
+        kind: 'EmitEvent',
+        cell: mandateUri,
+        topic: 'workflow-mandate-initialized',
+        data: [u64BE(anchor), u64BE(terminal), clearanceRoot, u64BE(spend)],
+      },
+    ],
+  });
+}
+
+const builders = { advance_step, init_mandate };
+
+if (typeof window !== 'undefined') {
+  window.dregg = window.dregg || {};
+  window.dregg.builders = window.dregg.builders || {};
+  window.dregg.builders.compartmentWorkflowMandate = builders;
+}
+
+export { advance_step, init_mandate, builders };

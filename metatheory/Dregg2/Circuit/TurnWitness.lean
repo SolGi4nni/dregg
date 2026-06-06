@@ -18,7 +18,8 @@ namespace Dregg2.Circuit.TurnWitness
 
 open Dregg2.Circuit.Refinement (Refines StepRel)
 open Dregg2.Circuit.ActionDispatch
-  (fullActionStep fullActionStep_exec_iff actionTag turnSpec execFullTurnA_iff_turnSpec)
+  (fullActionStep fullActionStep_exec_iff actionTag turnSpec turnSpec_eq_spec
+   execFullTurnA_iff_turnSpec)
 open Dregg2.Circuit.TurnRefinement (TurnStateChain turnSpec_of_turnStateChain)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -83,27 +84,27 @@ theorem turn_witness_refines_turnCircuit
       ∀ (i : Fin acts.length),
         stepWitnessSatisfies w.steps[i] (states[i.val]'(by rw [hchain_len]; omega))
           (states[i.val + 1]'(by rw [hchain_len]; omega)) acts[i]) :
-    turnSpec s acts s' := by
-  refine turnSpec_of_turnStateChain fullActionStep s acts s' ?_
-  refine {
-    chain := states
-    chain_len := hchain_len
-    chain_head := hchain_head
-    chain_last := hchain_last
-    step_witness := fun i => (hsteps i).2 }
+    turnSpec s acts s' :=
+  (turnSpec_eq_spec s acts s').mpr <|
+    turnSpec_of_turnStateChain fullActionStep s s' acts {
+      chain := states
+      chain_len := hchain_len
+      chain_head := hchain_head
+      chain_last := hchain_last
+      step_witness := fun i => (hsteps i).2 }
 
 /-! ## §4 — Link to `execFullTurnA` (via `ActionDispatch` bridge). -/
 
-/-- **`turn_witness_refines_exec`** — a `turnSpec fullActionStep` commitment refines to a genuine
+/-- **`turn_witness_refines_exec`** — a `turnSpec` commitment refines to a genuine
 `execFullTurnA` execution. -/
 theorem turn_witness_refines_exec (s s' : RecChainedState) (acts : List FullActionA)
-    (h : turnSpec fullActionStep s acts s') :
+    (h : turnSpec s acts s') :
     execFullTurnA s acts = some s' :=
   (execFullTurnA_iff_turnSpec s s' acts).mpr h
 
 /-- **`turnWitness_exec_link`** — alias: declarative turn spec ⟹ executor commit. -/
 theorem turnWitness_exec_link (s s' : RecChainedState) (acts : List FullActionA)
-    (h : turnSpec fullActionStep s acts s') :
+    (h : turnSpec s acts s') :
     execFullTurnA s acts = some s' :=
   turn_witness_refines_exec s s' acts h
 

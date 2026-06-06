@@ -1,7 +1,5 @@
-# Standalone PoC crate: Rust hosts the compiled Lean kernel and calls it for real.
-# An EMPTY [workspace] table detaches this crate from the metatheory cargo workspace
-# so building it does not disturb the repo's workspace (other agents are editing it).
-[workspace]
+# Rust hosts the compiled Lean kernel and calls it for real.
+# Member of the repo root workspace (see root Cargo.toml).
 
 [package]
 name = "dregg-lean-ffi"

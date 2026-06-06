@@ -3108,6 +3108,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-lean-ffi"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cc",
+ "proptest",
+]
+
+[[package]]
 name = "dregg-macaroon"
 version = "0.1.0"
 dependencies = [
@@ -3186,9 +3195,11 @@ dependencies = [
  "rustls 0.23.40",
  "serde",
  "serde_json",
+ "starbridge-compartment-workflow-mandate",
  "starbridge-governed-namespace",
  "starbridge-identity",
  "starbridge-nameservice",
+ "starbridge-storage-gateway-mandate",
  "starbridge-subscription",
  "subtle",
  "tempfile",

@@ -64,3 +64,7 @@ import('/starbridge-apps/nameservice/pages/turn-builders.js').catch(() => {});
 // vote_on_proposal, commit_table_update, register_service }` map at
 // module-load time (pages/ path fix §4.8).
 import('/starbridge-apps/governed-namespace/pages/turn-builders.js').catch(() => {});
+
+// Mandate apps (Lean-gated composition scaffolds).
+import('/starbridge-apps/compartment-workflow-mandate/pages/turn-builders.js').catch(() => {});
+import('/starbridge-apps/storage-gateway-mandate/pages/turn-builders.js').catch(() => {});

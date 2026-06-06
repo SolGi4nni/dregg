@@ -1,5 +1,5 @@
 # =============================================================================
-# Full-stack devnet: 3 federation nodes + gallery + discharge-gateway + proxy
+# Full-stack devnet: 3 federation nodes + gallery + discharge-gateway + site + proxy
 #
 # Usage:
 #   docker compose up -d          # start full stack
@@ -141,7 +141,20 @@ services:
       - devnet
 
   # ---------------------------------------------------------------------------
-  # Reverse proxy (local dev — routes /api to nodes, /gallery to gallery)
+  # Site static assets (Studio, learn docs, starbridge-apps)
+  # ---------------------------------------------------------------------------
+  site:
+    image: nginx:alpine
+    volumes:
+      - ../site/dist:/usr/share/nginx/html:ro
+      - ./site-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "8080"
+    networks:
+      - devnet
+
+  # ---------------------------------------------------------------------------
+  # Reverse proxy (local dev — routes /api, /gallery, /discharge, site)
   # ---------------------------------------------------------------------------
   proxy:
     image: caddy:2-alpine
@@ -152,6 +165,7 @@ services:
     depends_on:
       - node-0
       - gallery
+      - site
     networks:
       - devnet
 

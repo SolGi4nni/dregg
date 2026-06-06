@@ -31,10 +31,10 @@ function waitForRuntime(timeoutMs = 20000) {
 
 // Attributes on inspector elements that carry a placeholder cell URI we must
 // rewrite to the real created cell id.
-const URI_ATTRS = ['uri', 'registry-uri', 'issuer-uri', 'verifier-uri', 'credential-uri'];
+const URI_ATTRS = ['uri', 'registry-uri', 'issuer-uri', 'verifier-uri', 'credential-uri', 'mandate-uri', 'gateway-uri'];
 
 function rewriteUris(realCellUri, placeholder) {
-  const sel = '[uri],[registry-uri],[issuer-uri],[verifier-uri],[credential-uri]';
+  const sel = '[uri],[registry-uri],[issuer-uri],[verifier-uri],[credential-uri],[mandate-uri],[gateway-uri]';
   for (const el of document.querySelectorAll(sel)) {
     for (const attr of URI_ATTRS) {
       const v = el.getAttribute(attr);

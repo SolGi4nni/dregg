@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Starbridge — Storage Gateway Mandate</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Starbridge-app fragment for the storage gateway mandate.
+      Mounts under /starbridge-apps/storage-gateway-mandate/ on the site build.
+      Policy lives in starbridge-apps/storage-gateway-mandate/src/lib.rs;
+      maps Lean StorageGatewayMandate*.lean volume budget + prefix admission.
+
+      factory_vk hex mirrors SGM_FACTORY_VK in src/lib.rs:
+        *b"starbridge-sgm-mandate-factory!!"
+        = 737461726272696467652d73676d2d6d616e646174652d666163746f72792121
+    -->
+    <link rel="stylesheet" href="/assets/style.css" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 960px; }
+      header { border-bottom: 1px solid #ddd; padding-bottom: 1rem; margin-bottom: 1rem; }
+      .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; }
+      @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+      h1 { margin: 0 0 0.5rem 0; }
+      .lede { color: #555; }
+      code { font-family: ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <header class="starbridge-sgm-chrome">
+      <h1><code>dregg</code> Storage Gateway Mandate</h1>
+      <p class="lede">
+        VFS gateway mandate with GET/PUT/LIST ops, prefix authorization,
+        clearance labels, and monotonic Stingray volume budget. Backed by
+        <code>sgm_factory_descriptor()</code> in
+        <code>starbridge-apps/storage-gateway-mandate/src/lib.rs</code>.
+      </p>
+    </header>
+    <main class="layout">
+      <dregg-app
+        runtime="in-memory"
+        factory-vk="737461726272696467652d73676d2d6d616e646174652d666163746f72792121"
+        registry-uri="dregg://cell/sgm-gateway-default"
+      >
+        <dregg-sgm-gateway slot="primary" uri="dregg://cell/sgm-gateway-default"></dregg-sgm-gateway>
+        <dregg-sgm-storage-form slot="actions" mandate-uri="dregg://cell/sgm-gateway-default"></dregg-sgm-storage-form>
+      </dregg-app>
+    </main>
+    <script type="module" src="/_includes/studio/app-boot.js"></script>
+    <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
+    <script type="module" src="./inspectors.js"></script>
+    <script type="module" src="./turn-builders.js"></script>
+    <script type="module" src="/starbridge-apps/shared/turn-builders/index.js"></script>
+    <script type="module" src="/starbridge-apps/shared/app-runtime-ready.js"></script>
+  </body>
+</html>

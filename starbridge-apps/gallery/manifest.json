@@ -5,9 +5,17 @@
   "version": "0.0.0",
   "status": "unported",
   "legacy_path": "apps/gallery",
+  "runtime_mode": "legacy-http",
+  "legacy_listen": "gallery:3040",
+  "caddy_prefix": "/gallery",
+  "listen_port": 3040,
   "factory_vks": [],
   "page": null,
   "inspectors": [],
   "turn_builders": [],
-  "required_apis": []
+  "required_apis": [],
+  "manifest_health": {
+    "status": "legacy-http",
+    "porting_target": "starbridge-apps/gallery"
+  }
 }
