@@ -13,14 +13,23 @@ This is the ungated cell-program dual of `ComputeExchangeGated`. Load-bearing gu
   * **AUTHORITY (honest scope)** — self-authorized escrow ops (`actor = buyer`).
 
 Templates: `Apps/BountyBoard.lean`, `Apps/ComputeExchangeGated.lean`. Zero `sorry`/`admit`/`axiom`.
+
+## App-level semantics (the Hatchery payoff)
+
+One-step lemmas (`cx_*_conserves`, `cx_settle_requires_live_provider`) are the *obligation*; the crown
+theorems below are the *assurance*: along ANY adversarial schedule on the real living cell, payment
+supply never drifts and D3 settle-liveness cannot be bypassed while a job stays open to a dead provider.
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest
+import Dregg2.Exec.CellCarry
+import Dregg2.Exec.CellReal
 
 namespace Dregg2.Apps.ComputeExchange
 
 open Dregg2.Exec
+open Dregg2.Exec (cellObsA)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 
@@ -85,6 +94,19 @@ theorem cx_settle_requires_live_provider (s : RecChainedState) {r : EscrowRecord
   rw [execFullForestA_eq_execFullTurnA]
   simp only [cxSettle, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hchain]
 
+/-! ## App-level crown — payment supply fixed forever on the living cell (`trajA`). -/
+
+/-- **`cx_pay_supply_forever` — APP SEMANTICS (ungated crown).** From any baseline `s0`, along EVERY
+adversarial schedule on the real executor, the compute market's payment asset combined supply
+(`recTotalAssetWithEscrow` on `payAsset`) never drifts — order/settle/refund only move value between
+ledger and holding-store, never mint or burn. Instantiated from the parametric `livingCellA_carries`
+conservation substrate (`cellObsA_next`). -/
+theorem cx_pay_supply_forever (s0 : RecChainedState) (sched : SchedA) :
+    ∀ n, recTotalAssetWithEscrow (trajA s0 sched n).kernel payAsset =
+          recTotalAssetWithEscrow s0.kernel payAsset := by
+  intro n
+  simpa [cellObsA] using congrFun (livingCellA_obs_invariant' s0 sched n) payAsset
+
 def mkt0 : RecChainedState :=
   { kernel :=
       { accounts := {0, 1}
@@ -93,6 +115,14 @@ def mkt0 : RecChainedState :=
         bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0)
                           else if c = 1 then (if a = 0 then 5 else 0) else 0 }
     log := [] }
+
+/-- **`cx_mkt0_pay_supply_forever` — the canonical funded-market witness.** On `mkt0`, payment asset `0`
+stays at 105 combined units forever (100 buyer + 5 provider on the bare ledger at start). -/
+theorem cx_mkt0_pay_supply_forever (sched : SchedA) :
+    ∀ n, recTotalAssetWithEscrow (trajA mkt0 sched n).kernel payAsset = 105 :=
+  fun n => by
+    have h := cx_pay_supply_forever mkt0 sched n
+    simpa [mkt0, payAsset, buyer, provider] using h
 
 abbrev payAmt : Int := 40
 
@@ -119,5 +149,7 @@ def mktOrdered : Option RecChainedState :=
 #assert_axioms cx_settle_conserves
 #assert_axioms cx_refund_conserves
 #assert_axioms cx_settle_requires_live_provider
+#assert_axioms cx_pay_supply_forever
+#assert_axioms cx_mkt0_pay_supply_forever
 
 end Dregg2.Apps.ComputeExchange

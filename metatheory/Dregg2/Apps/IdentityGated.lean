@@ -30,7 +30,7 @@ namespace Dregg2.Apps.IdentityGated
 
 open Dregg2.Exec
 open Dregg2.Verify (gateRevoked identity_revoked_forever_production)
-open Production (Contract Sched)
+open Dregg2.Verify.Production (Contract Sched)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState

@@ -19,12 +19,31 @@ executor (not merely carried); the op conserves every asset.
   3. `sub_op_conserves`       — a committed consume moves NO asset's supply (per-asset Δ = 0).
 
 Mirrors the green `NameserviceGated`/`IdentityGated` template. Zero sorry/admit/native_decide/axiom.
+
+## App-level semantics (Hatchery bridge — §4b)
+
+Per-op teeth (forged/replay/skip rejection) are obligations; `sub_queue_wellformed_forever` is the
+production payoff: along `trajG`, no subscription queue ever exceeds capacity — the same headline as
+`Apps.Subscription.subscription_wellformed_forever`, wired through `subWFContract`.
+
+**Composability (§4c):** `subWF` composes with other Hatchery shapes via `CellContract.composeContracts`
+— see `Verify/Contract.lean` (`subWFAndRevoked`, `subWFAndLogMono`). `sub_queue_and_pay_conserved_forever`
+is the gated-app witness: queue well-formedness + per-asset conservation, one composed `.forever`.
 -/
 import Dregg2.Exec.GatedForestCfg
+import Dregg2.Exec.CellExecutor
+import Dregg2.Exec.CellReal
+import Dregg2.Apps.Subscription
+import Dregg2.Verify.Contract
 
 namespace Dregg2.Apps.SubscriptionGated
 
 open Dregg2.Exec
+open Dregg2.Exec (cellObsA trajG SchedG)
+open Dregg2.Apps.Subscription (subWF)
+open Dregg2.Verify (subscription_wellformed_forever_production composeContracts
+  subscription_and_revoked_forever assetConserved subWFContract)
+open Dregg2.Verify.Production (Contract Sched)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState
@@ -108,6 +127,38 @@ theorem sub_op_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (
     recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b :=
   execFullForestG_conserves_per_asset s s' (subNode cred value) b h (subNode_delta_zero cred value b)
 
+/-! ## §4b — Hatchery bridge: queue well-formedness forever on `trajG`. -/
+
+/-- **`sub_queue_wellformed_forever` — APP SEMANTICS (production crown).** From a well-formed start
+(`subWF` — every queue's buffer length ≤ capacity), along EVERY adversarial production schedule, no
+subscription queue ever overflows. The gated consume-step teeth enforce replay/skip rejection; this
+theorem carries the capacity headline the dregg1 subscription cell is FOR. -/
+theorem sub_queue_wellformed_forever (s : RecChainedState) (hinit : subWF s.kernel) (sched : SchedG) :
+    ∀ n, subWF (trajG s sched n).kernel :=
+  subscription_wellformed_forever_production s hinit sched
+
+/-! ## §4c — Composability: `subWF` ∩ another Hatchery invariant on `trajG`. -/
+
+/-- **Subscription queue safety ∩ per-asset conservation** — composed contract for a gated subscription
+cell whose payment ledger must also stay fixed. -/
+noncomputable def subWFPaySafety (s0 : RecChainedState) (a : AssetId) : Contract :=
+  composeContracts subWFContract (assetConserved s0 a)
+
+/-- **`sub_queue_and_pay_conserved_forever` — COMPOSED PRODUCTION CROWN.** Well-formed queues AND
+fixed payment-asset supply, at every `trajG` index — one composed `.forever`, no hand carry proof. -/
+theorem sub_queue_and_pay_conserved_forever (s0 : RecChainedState) (a : AssetId) (s : RecChainedState)
+    (hsub : subWF s.kernel) (hpay : cellObsA s a = cellObsA s0 a) (sched : SchedG) :
+    ∀ n, subWF (trajG s sched n).kernel ∧
+         cellObsA (trajG s sched n) a = cellObsA s0 a :=
+  (subWFPaySafety s0 a).forever (And.intro hsub hpay) sched
+
+/-- Re-export the canonical `subWF ∩ revoked` composed crown from `Verify/Contract` (identity registry
++ subscription capacity, one object). -/
+theorem sub_queue_and_revoked_forever (credNul : Nat) (s : RecChainedState)
+    (hsub : subWF s.kernel) (hrev : credNul ∈ s.kernel.revoked) (sched : SchedG) :
+    ∀ n, subWF (trajG s sched n).kernel ∧ credNul ∈ (trajG s sched n).kernel.revoked :=
+  subscription_and_revoked_forever credNul s hsub hrev sched
+
 /-! ## Non-vacuity: a concrete subscription-cell state (seq currently = 5) + `#guard` witnesses. -/
 
 /-- A subscription cell with `MonotonicSequence seq`, the head currently at `5`. -/
@@ -145,5 +196,9 @@ def sub0 : RecChainedState :=
 #assert_axioms sub_nonsequential_rejected
 #assert_axioms subNode_delta_zero
 #assert_axioms sub_op_conserves
+#assert_axioms sub_queue_wellformed_forever
+#assert_axioms subWFPaySafety
+#assert_axioms sub_queue_and_pay_conserved_forever
+#assert_axioms sub_queue_and_revoked_forever
 
 end Dregg2.Apps.SubscriptionGated

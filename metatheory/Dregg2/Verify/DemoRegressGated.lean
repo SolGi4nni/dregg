@@ -10,6 +10,7 @@ import Dregg2.Verify.Catalog
 import Dregg2.Verify.Tactics
 import Dregg2.Apps.NameService
 import Dregg2.Apps.Subscription
+import Dregg2.Apps.ComputeExchangeGated
 
 namespace Dregg2.Verify
 
@@ -120,6 +121,20 @@ example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) 
     ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
   subscription_wellformed_forever_production s hinit sched
 
+/-! ## §5b — ComputeExchange: payment conservation on `trajG`. -/
+
+theorem cx_pay_conserved_foreverG_via_contract (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.ComputeExchangeGated.payAsset = cellObsA s0 Dregg2.Apps.ComputeExchangeGated.payAsset :=
+  asset_conserved_forever_production s0 Dregg2.Apps.ComputeExchangeGated.payAsset sched
+
+example (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.ComputeExchangeGated.payAsset = cellObsA s0 Dregg2.Apps.ComputeExchangeGated.payAsset :=
+  cx_pay_conserved_foreverG_via_contract s0 sched
+
+example (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.ComputeExchangeGated.payAsset = cellObsA s0 Dregg2.Apps.ComputeExchangeGated.payAsset :=
+  Dregg2.Apps.ComputeExchangeGated.cx_pay_conserved_forever s0 sched
+
 /-! ## §6 — Log monotonicity: tactics + contract on `trajG`. -/
 
 theorem logMono_foreverG_via_tactics (s : RecChainedState) (sched : SchedG) :
@@ -162,6 +177,7 @@ example (s : RecChainedState) (sched : SchedG) :
 #assert_axioms commitments_persistG_via_contract
 #assert_axioms nameservice_registration_foreverG_via_contract
 #assert_axioms subscription_wellformed_foreverG_via_contract
+#assert_axioms cx_pay_conserved_foreverG_via_contract
 #assert_axioms logMono_foreverG_via_tactics
 
 end Dregg2.Verify

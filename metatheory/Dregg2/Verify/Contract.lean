@@ -95,13 +95,33 @@ def CellContract.lift {E E' : CellExecutor} (C : CellContract E)
 
 namespace CellContract
 
+/-- Conjunction of two contracts on the same executor: both invariants hold at every step. -/
+def and {E : CellExecutor} (C₁ C₂ : CellContract E) : CellContract E where
+  Inv s := C₁.Inv s ∧ C₂.Inv s
+  step_ob s c h := And.intro (C₁.step_ob s c h.1) (C₂.step_ob s c h.2)
+  shape := .other
+
+/-- **`composeContracts`** — the composability hook: contract conjunction as a named combinator.
+Apps compose by intersecting invariants; `.forever` on the composed contract carries BOTH along
+`trajG` (or any `CellCarries` executor) with a single initial hypothesis pair. -/
+def composeContracts {E : CellExecutor} (C₁ C₂ : CellContract E) : CellContract E :=
+  and C₁ C₂
+
 /-- Forever carry — parametric over any `CellExecutor` with a `CellCarries` instance. -/
 theorem forever {E : CellExecutor} [CellCarries E] (C : CellContract E) {s : RecChainedState}
     (h : C.Inv s) (sched : E.TurnSched) :
     ∀ n, C.Inv (E.traj s sched n) :=
   CellCarries.carries C.Inv C.step_ob s h sched
 
+/-- Composed forever carry — both conjuncts hold at every trajectory index. -/
+theorem forever_compose {E : CellExecutor} [CellCarries E] (C₁ C₂ : CellContract E)
+    {s : RecChainedState} (h₁ : C₁.Inv s) (h₂ : C₂.Inv s) (sched : E.TurnSched) :
+    ∀ n, C₁.Inv (E.traj s sched n) ∧ C₂.Inv (E.traj s sched n) :=
+  (composeContracts C₁ C₂).forever (And.intro h₁ h₂) sched
+
 end CellContract
+
+export CellContract (and composeContracts forever_compose)
 
 namespace Production
 
@@ -152,6 +172,15 @@ def conserved (s0 : RecChainedState) : Contract where
   Inv s := cellObsA s = cellObsA s0
   step_ob a cf h := by
     rw [CellExecutor.kernelForest_next_eq, cellObsA_next]
+    exact h
+  shape := .constant
+
+/-- Per-asset conservation (`conservation% a` shape, without importing `Catalog`). -/
+def assetConservedKF (s0 : RecChainedState) (a : AssetId) : Contract where
+  Inv s := cellObsA s a = cellObsA s0 a
+  step_ob a' cf h := by
+    rw [CellExecutor.kernelForest_next_eq]
+    rw [congrFun (cellObsA_next a' cf) a]
     exact h
   shape := .constant
 
@@ -234,6 +263,9 @@ noncomputable def logAppendOnly (s0 : RecChainedState) : Contract :=
 
 noncomputable def conserved (s0 : RecChainedState) : Contract :=
   liftFromKernelForest (KernelForest.conserved s0)
+
+noncomputable def assetConserved (s0 : RecChainedState) (a : AssetId) : Contract :=
+  liftFromKernelForest (KernelForest.assetConservedKF s0 a)
 
 noncomputable def revokedPersists (x : Nat) : Contract :=
   liftFromKernelForest (KernelForest.revokedPersists x)
@@ -334,9 +366,60 @@ theorem subscription_wellformed_forever_production (s : RecChainedState)
     ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
   subWFContract.forever hinit sched
 
+theorem asset_conserved_forever_production (s0 : RecChainedState) (a : AssetId) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) a = cellObsA s0 a :=
+  (assetConserved s0 a).forever rfl sched
+
 theorem log_mono_forever_production (s : RecChainedState) (sched : SchedG) :
     ∀ n, s.log.length ≤ (trajG s sched n).log.length :=
   (logAppendOnly s).forever (le_refl _) sched
+
+/-! ## §3b — Composability: contract conjunction + composed forever crowns.
+
+`CellContract.composeContracts` intersects two verified invariants. The payoff is a SINGLE
+`.forever` / production crown certifying BOTH properties along `trajG` — the Hatchery pattern for
+multi-app / multi-shape assurance without re-proving the carry skeleton. -/
+
+open CellContract (composeContracts forever_compose)
+
+/-- **Identity revocation ∩ per-asset conservation** — the composed safety contract behind a gated
+market whose payment supply must stay fixed while revoked credentials stay in the committed registry
+(`Apps/IdentityGated` + `Apps/ComputeExchangeGated` headline shapes, packaged as one object). -/
+noncomputable def revokedPaySafety (credNul : Nat) (s0 : RecChainedState) (payAsset : AssetId) : Contract :=
+  composeContracts (revokedPersists credNul) (assetConserved s0 payAsset)
+
+/-- **`revoked_pay_safety_forever` — COMPOSED PRODUCTION CROWN.** Revoked credentials persist in the
+registry AND the payment asset's combined supply never drifts — one composed contract, one `.forever`. -/
+theorem revoked_pay_safety_forever (credNul : Nat) (s0 : RecChainedState) (payAsset : AssetId)
+    (s : RecChainedState) (hrev : credNul ∈ s.kernel.revoked)
+    (hpay : cellObsA s payAsset = cellObsA s0 payAsset) (sched : SchedG) :
+    ∀ n, credNul ∈ (trajG s sched n).kernel.revoked ∧
+         cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset :=
+  (revokedPaySafety credNul s0 payAsset).forever (And.intro hrev hpay) sched
+
+/-- **Subscription well-formedness ∩ revocation persistence** — queue capacity safety composed with
+the identity revocation registry shape (`subWF` + `revokedPersists`). -/
+noncomputable def subWFAndRevoked (credNul : Nat) : Contract :=
+  composeContracts subWFContract (revokedPersists credNul)
+
+/-- **`subscription_and_revoked_forever` — COMPOSED PRODUCTION CROWN.** From a well-formed queue
+kernel AND an initially-revoked credential, BOTH invariants hold at every `trajG` index. -/
+theorem subscription_and_revoked_forever (credNul : Nat) (s : RecChainedState)
+    (hsub : Dregg2.Apps.Subscription.subWF s.kernel) (hrev : credNul ∈ s.kernel.revoked)
+    (sched : SchedG) :
+    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel ∧
+         credNul ∈ (trajG s sched n).kernel.revoked :=
+  (subWFAndRevoked credNul).forever (And.intro hsub hrev) sched
+
+/-- **`subscription_and_conserved_forever` — subscription ∩ log-monotone (second invariant example).** -/
+noncomputable def subWFAndLogMono (s0 : RecChainedState) : Contract :=
+  composeContracts subWFContract (logAppendOnly s0)
+
+theorem subscription_and_log_mono_forever (s0 : RecChainedState) (sched : SchedG)
+    (hsub : Dregg2.Apps.Subscription.subWF s0.kernel) :
+    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s0 sched n).kernel ∧
+         s0.log.length ≤ (trajG s0 sched n).log.length :=
+  (subWFAndLogMono s0).forever (And.intro hsub (le_refl s0.log.length)) sched
 
 /-! ## §4 — Non-vacuity guards — the contracts are substantive and the tag carries distinct info.
 
@@ -369,7 +452,10 @@ contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying da
 
 /-! ## §5 — Axiom hygiene — the contract object + its methods + the instances, kernel-triple clean. -/
 
+#assert_axioms CellContract.and
+#assert_axioms CellContract.composeContracts
 #assert_axioms CellContract.forever
+#assert_axioms CellContract.forever_compose
 #assert_axioms Production.always
 #assert_axioms Production.liftFromKernelForest
 #assert_axioms logAppendOnly
@@ -385,5 +471,11 @@ contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying da
 #assert_axioms nameservice_registration_forever_production
 #assert_axioms subscription_wellformed_forever_production
 #assert_axioms log_mono_forever_production
+#assert_axioms revokedPaySafety
+#assert_axioms revoked_pay_safety_forever
+#assert_axioms subWFAndRevoked
+#assert_axioms subscription_and_revoked_forever
+#assert_axioms subWFAndLogMono
+#assert_axioms subscription_and_log_mono_forever
 
 end Dregg2.Verify

@@ -25,7 +25,9 @@ open Dregg2.Exec.FullForest (fmaDeleg)
 
 open Dregg2.Exec.FullForestAuth (execFullForestG)
 open Dregg2.Exec.StarbridgeGated (execForestG launderFullForestG)
-open Production
+open Dregg2.Exec.TurnExecutorFull (fma0)
+open Dregg2.Exec (cellObsA)
+open Production (Contract Sched)
 
 /-! ## Blue — per-cell `CellContract.forever` on production trajectories. -/
 
@@ -48,12 +50,12 @@ theorem joint_demo_halves_balance :
     halfA jointDemoSwap + halfB jointDemoSwap = 0 := by
   simp [halfA, halfB, jointDemoSwap]
 
-/-- Abstract weave: red interaction binding ⇒ cross-cell conservation (`Spec.Coherence`). -/
 /-- Operational red crown: combined asset-0 + asset-1 total is `□` along every `trajG`. -/
 theorem red_combined_total_forever (sched : SchedG) :
     ∀ n, cellObsA (trajG fma0 sched n) 0 + cellObsA (trajG fma0 sched n) 1
-       = cellObsA fma0 0 + cellObsA fma0 1 :=
-  gateAutomaton.forever rfl sched
+       = cellObsA fma0 0 + cellObsA fma0 1 := by
+  intro n
+  exact gateAutomaton.forever rfl sched n
 
 theorem red_binding_implies_cross_cell_conservation
     {ι : Type v} [Fintype ι] {T : TurnCoalg Obs AdmissibleTurn}

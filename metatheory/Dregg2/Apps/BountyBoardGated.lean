@@ -39,6 +39,14 @@ per-asset conservation off `execFullForestG_conserves_per_asset`).
                                        frozen cell;
   7. `bb_cancel_requires_live_poster`  — the symmetric refund-side teeth (`refundEscrowKAsset_nonlive_fails`).
 
+## App-level semantics (Hatchery bridge — §9)
+
+Per-op teeth are obligations; §9 connects them to production crowns on `trajG`:
+  * `bb_asset_conserved_forever` — reward-asset supply never drifts (`conservation%` shape);
+  * `bb_board0_assets_conserved_forever` — the canonical funded-board witness;
+  * `bb_revoked_rejected_forever` — revoked bounty credentials fail at every schedule index;
+  * `bb_safety_forever` — composed conservation + revocation-registry persistence.
+
 Plus a concrete FUNDED state (`board0`) whose `#guard`s witness non-vacuity: a good post COMMITS &
 PARKS the reward (poster's ledger drops, combined measure fixed); a claim CREDITS the claimant; a cancel
 REFUNDS the poster; a forged credential ⇒ `none`; a revoked credential ⇒ `none`; a claim to a SEALED
@@ -50,15 +58,27 @@ keystones + the proved kernel escrow conservation/liveness teeth. `#assert_axiom
 `{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Exec.GatedForestCfg
+import Dregg2.Exec.CellExecutor
+import Dregg2.Exec.CellReal
+import Dregg2.Verify.Catalog
+import Dregg2.Verify.Contract
 
 namespace Dregg2.Apps.BountyBoardGated
 
 open Dregg2.Exec
+open Dregg2.Exec (cellObsA trajG SchedG)
+open Dregg2.Verify (gateRevoked asset_conserved_forever_production assetConserved composeContracts)
+open Dregg2.Verify.Production (Contract Sched)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.FullForestAuth
 open Dregg2.Exec.StarbridgeGated
 open Dregg2.Exec.StarbridgeGated
+
+/-! ## §1a — Domain carriers for Hatchery contracts. -/
+
+/-- The reward asset class (asset `0` on `board0`). -/
+abbrev rewardAsset : AssetId := 0
 
 /-! ## §1 — Each bounty-board op as a GATED LEAF NODE through `execFullForestG`.
 
@@ -380,7 +400,53 @@ def boardSealedClaimant : RecChainedState :=
 -- ...and the SAME claim against the LIVE-claimant posted board COMMITS (sealing is the sole blocker):
 #guard ((boardPosted.bind (fun s => execFullForestG s (claimNode goodCred bountyId 1))).isSome)    --  true (live ⇒ delivered)
 
-/-! ## §9 — Axiom-hygiene tripwires (the honesty pins). Every keystone depends ONLY on the three
+/-! ## §9 — Hatchery bridge: production crowns on `trajG` (app semantics, not just per-op teeth). -/
+
+/-- Per-baseline reward conservation contract (the bounty board's `conservation% rewardAsset` shape). -/
+noncomputable def bbRewardConserved (s0 : RecChainedState) : Contract :=
+  assetConserved s0 rewardAsset
+
+/-- **`bb_asset_conserved_forever` — APP SEMANTICS (production crown).** From any baseline `s0`, along
+EVERY adversarial production schedule, the reward asset's combined supply never drifts — the value-
+moving bounty board inherits the Hatchery `conservation%` shape on `trajG`. -/
+theorem bb_asset_conserved_forever (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) rewardAsset = cellObsA s0 rewardAsset :=
+  asset_conserved_forever_production s0 rewardAsset sched
+
+/-- **`bb_board0_asset0_conserved_forever` — canonical funded-board witness (asset 0 baseline).** -/
+theorem bb_board0_asset0_conserved_forever (sched : SchedG) :
+    ∀ n, cellObsA (trajG board0 sched n) 0 = cellObsA board0 0 :=
+  bb_asset_conserved_forever board0 sched
+
+/-- **`bb_board0_asset1_conserved_forever` — canonical funded-board witness (asset 1 baseline).** -/
+theorem bb_board0_asset1_conserved_forever (sched : SchedG) :
+    ∀ n, cellObsA (trajG board0 sched n) 1 = cellObsA board0 1 :=
+  fun n => asset_conserved_forever_production board0 1 sched n
+
+/-- **`bb_revoked_rejected_forever` — APP SEMANTICS (revocation crown).** If nullifier `nul` is in the
+committed revocation registry initially, EVERY bounty op with that credential is rejected at EVERY
+index of EVERY production schedule — composed from `gateRevoked` persistence + `bb_revoked_rejected`. -/
+theorem bb_revoked_rejected_forever (s : RecChainedState) (cred : Authorization Dg Pf) (nul : Nat)
+    (a : FullActionA) (hinit : nul ∈ s.kernel.revoked) (sched : SchedG) :
+    ∀ n, execFullForestG (trajG s sched n) (bbNodeNul cred nul a) = none := by
+  intro n
+  exact bb_revoked_rejected (trajG s sched n) cred nul a
+    (List.contains_iff_mem.mpr ((gateRevoked nul).forever hinit sched n))
+
+/-- **Composed bounty safety: reward conservation ∩ revocation-registry persistence.** -/
+noncomputable def bbSafetyContract (s0 : RecChainedState) (nul : Nat) : Contract :=
+  composeContracts (bbRewardConserved s0) (gateRevoked nul)
+
+/-- **`bb_safety_forever` — COMPOSED PRODUCTION CROWN.** Reward supply fixed AND revoked nullifier
+stays in the committed registry, at every `trajG` index — conservation + identity revocation shape. -/
+theorem bb_safety_forever (s0 : RecChainedState) (nul : Nat) (s : RecChainedState)
+    (hpay : cellObsA s rewardAsset = cellObsA s0 rewardAsset) (hrev : nul ∈ s.kernel.revoked)
+    (sched : SchedG) :
+    ∀ n, cellObsA (trajG s sched n) rewardAsset = cellObsA s0 rewardAsset ∧
+         nul ∈ (trajG s sched n).kernel.revoked :=
+  (bbSafetyContract s0 nul).forever (And.intro hpay hrev) sched
+
+/-! ## §10 — Axiom-hygiene tripwires (the honesty pins). Every keystone depends ONLY on the three
 standard kernel axioms `{propext, Classical.choice, Quot.sound}` — no `sorryAx`. (The portal soundness
 is a Prop carrier in `FullForestAuth`, never an axiom, so it does not appear.) -/
 
@@ -394,5 +460,12 @@ is a Prop carrier in `FullForestAuth`, never an axiom, so it does not appear.) -
 #assert_axioms bb_cancel_conserves
 #assert_axioms bb_claim_requires_live_claimant
 #assert_axioms bb_cancel_requires_live_poster
+#assert_axioms bbRewardConserved
+#assert_axioms bb_asset_conserved_forever
+#assert_axioms bb_board0_asset0_conserved_forever
+#assert_axioms bb_board0_asset1_conserved_forever
+#assert_axioms bb_revoked_rejected_forever
+#assert_axioms bbSafetyContract
+#assert_axioms bb_safety_forever
 
 end Dregg2.Apps.BountyBoardGated

@@ -45,7 +45,7 @@ def chainView : StateView RecChainedState :=
 def releaseGuardProp (s : RecChainedState) (args : ReleaseArgs) : Prop :=
   match s.kernel.escrows.find? (matchesId args.id) with
   | none => False
-  | some r => releaseGuard s args.id r
+  | some r => releaseGuard s args.id args.actor r
 
 instance (s : RecChainedState) (args : ReleaseArgs) : Decidable (releaseGuardProp s args) := by
   unfold releaseGuardProp
@@ -54,7 +54,7 @@ instance (s : RecChainedState) (args : ReleaseArgs) : Decidable (releaseGuardPro
   | some r =>
     unfold releaseGuard
     rw [hf]
-    exact inferInstanceAs (Decidable (_ ∧ _ ∧ _))
+    exact inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _))
 
 def releaseGuardEncode (s : RecChainedState) (args : ReleaseArgs) (_s' : RecChainedState) :
     Assignment :=
@@ -142,7 +142,7 @@ theorem releaseEscrowRestFrameDecodes (S : Surface2) (D : (CellId → AssetId �
 /-! ### §2b — apex ↔ `ReleaseEscrowSpec` (the found-record witness). -/
 
 theorem releaseGuardProp_iff_guard (s : RecChainedState) (args : ReleaseArgs) :
-    releaseGuardProp s args ↔ ∃ r, releaseGuard s args.id r := by
+    releaseGuardProp s args ↔ ∃ r, releaseGuard s args.id args.actor r := by
   unfold releaseGuardProp
   cases hf : s.kernel.escrows.find? (matchesId args.id) with
   | none =>
@@ -156,10 +156,10 @@ theorem releaseGuardProp_iff_guard (s : RecChainedState) (args : ReleaseArgs) :
     · intro hg
       exact ⟨r, hg⟩
     · rintro ⟨r', hg⟩
-      rcases hg with ⟨hfind', hrec, hlive⟩
+      rcases hg with ⟨hfind', hrec, hlive, hauth⟩
       have hr' : r' = r := Option.some.inj (hfind'.symm.trans hf)
       subst hr'
-      exact ⟨hf, hrec, hlive⟩
+      exact ⟨hf, hrec, hlive, hauth⟩
 
 theorem balExpected_eq_credit (s : RecChainedState) (args : ReleaseArgs) (r : EscrowRecord)
     (hfind : s.kernel.escrows.find? (matchesId args.id) = some r) :
@@ -183,14 +183,14 @@ theorem apex_iff_releaseEscrowSpec (D : (CellId → AssetId → ℤ) → ℤ) (h
   constructor
   · rintro ⟨hg, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
-    rcases (releaseGuardProp_iff_guard s args).mp hg with ⟨r, hfind, hrec, hlive⟩
-    refine ⟨r, ⟨hfind, hrec, hlive⟩, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
+    rcases (releaseGuardProp_iff_guard s args).mp hg with ⟨r, hfind, hrec, hlive, hauth⟩
+    refine ⟨r, ⟨hfind, hrec, hlive, hauth⟩, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
       hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     rw [← balExpected_eq_credit s args r hfind]; exact hbal
-  · rintro ⟨r, ⟨hfind, hrec, hlive⟩, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
+  · rintro ⟨r, ⟨hfind, hrec, hlive, hauth⟩, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
       hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     have hg : releaseGuardProp s args :=
-      (releaseGuardProp_iff_guard s args).mpr ⟨r, hfind, hrec, hlive⟩
+      (releaseGuardProp_iff_guard s args).mpr ⟨r, hfind, hrec, hlive, hauth⟩
     refine ⟨hg, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
     rw [balExpected_eq_credit s args r hfind]; exact hbal

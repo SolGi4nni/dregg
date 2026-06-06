@@ -52,12 +52,28 @@ credential ⇒ `none`, settling to a SEALED provider ⇒ `none`, and the whole l
 Zero `sorry`/`admit`/`native_decide`/`axiom`. NEW file only — does NOT touch any existing app,
 `FullForestAuth.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor keystones + the proved
 escrow combined-conservation/liveness teeth.
+
+## App-level semantics (Hatchery bridge — §8b)
+
+The per-op theorems above are obligations; §8b connects them to the production assurance stack:
+  * `cx_pay_conserved_forever` — payment supply never drifts on `trajG` (Tier-4 `conservation%`);
+  * `cx_revoked_rejected_forever` — a revoked market participant cannot order/settle/refund, ever;
+  * `cx_revoked_pay_safety_forever` — composed Identity revocation + payment conservation
+    (`CellContract.composeContracts` / `revokedPaySafety` in `Verify/Contract.lean`).
 -/
 import Dregg2.Exec.GatedForestCfg
+import Dregg2.Exec.CellExecutor
+import Dregg2.Exec.CellReal
+import Dregg2.Verify.Catalog
+import Dregg2.Verify.Contract
 
 namespace Dregg2.Apps.ComputeExchangeGated
 
 open Dregg2.Exec
+open Dregg2.Exec (cellObsA trajG SchedG)
+open Dregg2.Verify (gateRevoked asset_conserved_forever_production assetConserved
+  revoked_pay_safety_forever)
+open Dregg2.Verify.Production (Contract Sched)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState
@@ -398,6 +414,55 @@ def mktRevoked : RecChainedState :=
           (fun s => execFullForestG s (settleNode goodCred))).map
         (fun s => s.kernel.bal 1 0)) == some 30  --  some 30 (provider paid, end-to-end)
 
+/-! ## §8b — Hatchery bridge: production crowns on `trajG` (app semantics, not just per-op teeth). -/
+
+/-- Per-baseline payment conservation contract (the compute market's `conservation% payAsset` shape). -/
+noncomputable def cxPayConserved (s0 : RecChainedState) : Contract :=
+  assetConserved s0 payAsset
+
+/-- **`cx_pay_conserved_forever` — APP SEMANTICS (production crown).** From any baseline `s0`, along
+EVERY adversarial production schedule, the payment asset's combined supply never drifts — the value-
+moving market inherits the Hatchery `conservation%` shape on `trajG`. -/
+theorem cx_pay_conserved_forever (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) payAsset = cellObsA s0 payAsset :=
+  asset_conserved_forever_production s0 payAsset sched
+
+/-- **`cx_mkt0_pay_conserved_forever` — the canonical funded-market production witness.** -/
+theorem cx_mkt0_pay_conserved_forever (sched : SchedG) :
+    ∀ n, cellObsA (trajG mkt0 sched n) payAsset = 100 :=
+  fun n => by
+    have h := cx_pay_conserved_forever mkt0 sched n
+    simpa [mkt0, payAsset, cellObsA] using h
+
+/-- **`cx_revoked_rejected_forever` — APP SEMANTICS (revocation crown).** If nullifier `nul` is in the
+committed revocation registry initially, EVERY market op with that credential is rejected at EVERY
+index of EVERY production schedule — composed from `gateRevoked` persistence + `cx_revoked_rejected`. -/
+theorem cx_revoked_rejected_forever (s : RecChainedState) (cred : Authorization Dg Pf) (nul : Nat)
+    (action : FullActionA) (hinit : nul ∈ s.kernel.revoked) (sched : SchedG) :
+    ∀ n, execFullForestG (trajG s sched n) (cxNodeRevoked cred nul action) = none := by
+  intro n
+  exact cx_revoked_rejected (trajG s sched n) cred nul action
+    (List.contains_iff_mem.mpr ((gateRevoked nul).forever hinit sched n))
+
+/-- **`cx_revoked_pay_safety_forever` — COMPOSED APP CROWN (Identity ∩ ComputeExchange).** Revoked
+nullifier stays in the committed registry AND the market payment asset's supply stays at the `mkt0`
+baseline — one `revokedPaySafety` composed contract from `Verify/Contract.lean`. -/
+theorem cx_revoked_pay_safety_forever (credNul : Nat) (s : RecChainedState)
+    (hrev : credNul ∈ s.kernel.revoked)
+    (hpay : cellObsA s payAsset = cellObsA mkt0 payAsset) (sched : SchedG) :
+    ∀ n, credNul ∈ (trajG s sched n).kernel.revoked ∧
+         cellObsA (trajG s sched n) payAsset = cellObsA mkt0 payAsset :=
+  revoked_pay_safety_forever credNul mkt0 payAsset s hrev hpay sched
+
+/-- **`cx_mkt0_revoked_pay_safety_forever` — funded-market composed witness (`s = mkt0`).** -/
+theorem cx_mkt0_revoked_pay_safety_forever (credNul : Nat)
+    (hrev : credNul ∈ mkt0.kernel.revoked) (sched : SchedG) :
+    ∀ n, credNul ∈ (trajG mkt0 sched n).kernel.revoked ∧
+         cellObsA (trajG mkt0 sched n) payAsset = 100 :=
+  fun n => by
+    have h := cx_revoked_pay_safety_forever credNul mkt0 hrev rfl sched n
+    simpa [mkt0, payAsset, cellObsA] using h
+
 /-! ## §10 — Axiom-hygiene tripwires (the honesty pins). Every keystone depends ONLY on the three
 standard kernel axioms `{propext, Classical.choice, Quot.sound}` — no `sorryAx`. (The portal soundness
 is a Prop carrier in `FullForestAuth`, never an axiom, so it does not appear.) -/
@@ -415,5 +480,10 @@ is a Prop carrier in `FullForestAuth`, never an axiom, so it does not appear.) -
 #assert_axioms cx_refund_conserves
 #assert_axioms settle_runs_release
 #assert_axioms cx_settle_requires_live_provider
+#assert_axioms cx_pay_conserved_forever
+#assert_axioms cx_mkt0_pay_conserved_forever
+#assert_axioms cx_revoked_rejected_forever
+#assert_axioms cx_revoked_pay_safety_forever
+#assert_axioms cx_mkt0_revoked_pay_safety_forever
 
 end Dregg2.Apps.ComputeExchangeGated

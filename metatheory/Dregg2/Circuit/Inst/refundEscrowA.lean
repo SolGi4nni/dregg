@@ -45,7 +45,7 @@ def chainView : StateView RecChainedState :=
 def refundEscrowGuardProp (s : RecChainedState) (args : RefundEscrowArgs) : Prop :=
   match s.kernel.escrows.find? (matchPred args.id) with
   | none => False
-  | some r => admitRefund s.kernel args.id r
+  | some r => admitRefund s.kernel args.id args.actor r
 
 instance (s : RecChainedState) (args : RefundEscrowArgs) : Decidable (refundEscrowGuardProp s args) := by
   unfold refundEscrowGuardProp
@@ -54,7 +54,7 @@ instance (s : RecChainedState) (args : RefundEscrowArgs) : Decidable (refundEscr
   | some r =>
     unfold admitRefund
     rw [hf]
-    exact inferInstanceAs (Decidable (_ ∧ _ ∧ _))
+    exact inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _))
 
 def refundEscrowGuardEncode (s : RecChainedState) (args : RefundEscrowArgs) (_s' : RecChainedState) :
     Assignment :=
@@ -142,7 +142,7 @@ theorem refundEscrowRestFrameDecodes (S : Surface2) (D : (CellId → AssetId →
 /-! ### §2b — apex ↔ `RefundEscrowSpec` (the found-record witness). -/
 
 theorem refundEscrowGuardProp_iff_admitRefund (s : RecChainedState) (args : RefundEscrowArgs) :
-    refundEscrowGuardProp s args ↔ ∃ r, admitRefund s.kernel args.id r := by
+    refundEscrowGuardProp s args ↔ ∃ r, admitRefund s.kernel args.id args.actor r := by
   unfold refundEscrowGuardProp
   cases hf : s.kernel.escrows.find? (matchPred args.id) with
   | none =>
@@ -156,10 +156,10 @@ theorem refundEscrowGuardProp_iff_admitRefund (s : RecChainedState) (args : Refu
     · intro hg
       exact ⟨r, hg⟩
     · rintro ⟨r', hg⟩
-      rcases hg with ⟨hfind', hmem, hlive⟩
+      rcases hg with ⟨hfind', hmem, hlive, hauth⟩
       have hr' : r' = r := Option.some.inj (hfind'.symm.trans hf)
       subst hr'
-      exact ⟨hfind', hmem, hlive⟩
+      exact ⟨hfind', hmem, hlive, hauth⟩
 
 theorem balExpected_eq_credit (s : RecChainedState) (args : RefundEscrowArgs) (r : EscrowRecord)
     (hfind : s.kernel.escrows.find? (matchPred args.id) = some r) :
@@ -183,14 +183,14 @@ theorem apex_iff_refundEscrowSpec (D : (CellId → AssetId → ℤ) → ℤ) (hD
   constructor
   · rintro ⟨hg, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
-    rcases (refundEscrowGuardProp_iff_admitRefund s args).mp hg with ⟨r, ⟨hfind, hmem, hlive⟩⟩
-    refine ⟨r, ⟨hfind, hmem, hlive⟩, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
+    rcases (refundEscrowGuardProp_iff_admitRefund s args).mp hg with ⟨r, ⟨hfind, hmem, hlive, hauth⟩⟩
+    refine ⟨r, ⟨hfind, hmem, hlive, hauth⟩, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
       hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     rw [← balExpected_eq_credit s args r hfind]; exact hbal
-  · rintro ⟨r, ⟨hfind, hmem, hlive⟩, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
+  · rintro ⟨r, ⟨hfind, hmem, hlive, hauth⟩, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw,
       hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     have hg : refundEscrowGuardProp s args :=
-      (refundEscrowGuardProp_iff_admitRefund s args).mpr ⟨r, ⟨hfind, hmem, hlive⟩⟩
+      (refundEscrowGuardProp_iff_admitRefund s args).mpr ⟨r, ⟨hfind, hmem, hlive, hauth⟩⟩
     refine ⟨hg, ?_, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
     rw [balExpected_eq_credit s args r hfind]; exact hbal
