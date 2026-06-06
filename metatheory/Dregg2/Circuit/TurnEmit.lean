@@ -474,18 +474,18 @@ def stepEmittedEncodeAgrees
         encodeE2 S (queuePipelineStepE LQ cN hN hLQ) st ⟨srcId, owner, sinkCells, sinkIds⟩ st'
   | .pipelinedSendA actor =>
       assignmentOf sw.assignment = encodeE CS pipelinedSendE st ⟨actor⟩ st'
-  | .exportSturdyRefA sw actor exporter target rights =>
+  | .exportSturdyRefA swId actor exporter target rights =>
       assignmentOf sw.assignment =
-        encodeE2 S (swissExportE LS cN hN hLS) st ⟨sw, actor, exporter, target, rights⟩ st'
-  | .enlivenRefA sw actor exporter claimed =>
+        encodeE2 S (swissExportE LS cN hN hLS) st ⟨swId, actor, exporter, target, rights⟩ st'
+  | .enlivenRefA swId actor exporter claimed =>
       assignmentOf sw.assignment =
-        encodeE2 S (enlivenE LS cN hN hLS) st ⟨sw, actor, exporter, claimed⟩ st'
-  | .swissHandoffA sw certHash introducer exporter =>
+        encodeE2 S (enlivenE LS cN hN hLS) st ⟨swId, actor, exporter, claimed⟩ st'
+  | .swissHandoffA swId certHash introducer exporter =>
       assignmentOf sw.assignment =
-        encodeE2 S (swissHandoffE LS cN hN hLS) st ⟨sw, certHash, introducer, exporter⟩ st'
-  | .swissDropA sw actor exporter =>
+        encodeE2 S (swissHandoffE LS cN hN hLS) st ⟨swId, certHash, introducer, exporter⟩ st'
+  | .swissDropA swId actor exporter =>
       assignmentOf sw.assignment =
-        encodeE2 S (swissDropE LS cN hN hLS) st ⟨sw, actor, exporter⟩ st'
+        encodeE2 S (swissDropE LS cN hN hLS) st ⟨swId, actor, exporter⟩ st'
   | .cellSealA actor cell =>
       assignmentOf sw.assignment = encodeE2 S (cellSealE DLife hDLife) st ⟨actor, cell⟩ st'
   | .cellUnsealA actor cell =>
@@ -730,14 +730,12 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       exact bridgeFinalizeA_emitted_refines_spec S LE_escrow cN hN hLE_escrow hRestEscrowsOnly hLog st
         ⟨id, actor, asset, amount⟩ st'
-        ((bridgeFinalizeA_emitted_equiv_circuit S LE_escrow cN hN hLE_escrow st ⟨id, actor, asset, amount⟩ st')
-          .mpr hcircuit)
+        ((bridgeFinalizeA_emitted_equiv_circuit S LE_escrow cN hN hLE_escrow st ⟨id, actor, asset, amount⟩ st').mpr hcircuit)
   | .bridgeCancelA id actor =>
       simp only [fullActionStep]
       exact bridgeCancelA_emitted_refines_spec S D_bal hD_bal LE_escrow cN hN hLE_escrow hRestEscrow hLog st
         ⟨id, actor⟩ st'
-        ((bridgeCancelA_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st ⟨id, actor⟩ st')
-          .mpr hcircuit)
+        ((bridgeCancelA_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st ⟨id, actor⟩ st').mpr hcircuit)
   | .unsealA pid actor recipient =>
       simp only [fullActionStep, fullActionCircuitStep]
       cases hbox : findSealedBox st.kernel.sealedBoxes pid with
@@ -769,8 +767,7 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩
       exact receiptArchiveA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
-        ((effect1_emitted_equiv_circuit_local CS receiptArchiveE receiptArchiveAAirName st ⟨actor, cell⟩ st')
-          .mpr hc)
+        ((effect1_emitted_equiv_circuit_local CS receiptArchiveE receiptArchiveAAirName st ⟨actor, cell⟩ st').mpr hc)
   | .queueAllocateA id actor cell capacity =>
       simp only [fullActionStep]
       exact queueAllocateA_emitted_refines_spec S LQ cN hN hLQ hRestQueuesOnly hLog st
@@ -796,8 +793,7 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       exact queuePipelineStepA_emitted_refines_spec S LQ cN hN hLQ hRestQueuesOnly hLog st
         ⟨srcId, owner, sinkCells, sinkIds⟩ st'
-        ((queuePipelineStepA_emitted_equiv_circuit S LQ cN hN hLQ st ⟨srcId, owner, sinkCells, sinkIds⟩ st')
-          .mpr hcircuit)
+        ((queuePipelineStepA_emitted_equiv_circuit S LQ cN hN hLQ st ⟨srcId, owner, sinkCells, sinkIds⟩ st').mpr hcircuit)
   | .pipelinedSendA actor =>
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩
@@ -807,8 +803,7 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       exact exportSturdyRefA_emitted_refines_spec S LS cN hN hLS hRestSwiss hLog st
         ⟨sw, actor, exporter, target, rights⟩ st'
-        ((exportSturdyRefA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, actor, exporter, target, rights⟩ st')
-          .mpr hcircuit)
+        ((exportSturdyRefA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, actor, exporter, target, rights⟩ st').mpr hcircuit)
   | .enlivenRefA sw actor exporter claimed =>
       simp only [fullActionStep]
       exact enlivenRefA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_enliven S.RH hRestSwiss) hLog
@@ -818,8 +813,7 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       exact swissHandoffA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_handoff S.RH hRestSwiss)
         hLog st ⟨sw, certHash, introducer, exporter⟩ st'
-        ((swissHandoffA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, certHash, introducer, exporter⟩ st')
-          .mpr hcircuit)
+        ((swissHandoffA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, certHash, introducer, exporter⟩ st').mpr hcircuit)
   | .swissDropA sw actor exporter =>
       simp only [fullActionStep]
       exact swissDropA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_drop S.RH hRestSwiss) hLog

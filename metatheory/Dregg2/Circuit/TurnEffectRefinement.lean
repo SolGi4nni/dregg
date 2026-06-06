@@ -577,7 +577,7 @@ theorem fullAction_circuit_refines_spec
       | some box =>
           have hc : unsealCircuitStep S D_caps hD_caps st ⟨pid, actor, recipient, box⟩ st' :=
             by simpa [fullActionCircuitStep, hbox] using h
-          exact unseal_circuit_refines_fullActionStep S D_caps hD_caps
+          exact unseal_circuit_refines_spec S D_caps hD_caps
             (restIffNoCaps_delegate_to_unseal S.RH hRestCaps) hLog st ⟨pid, actor, recipient, box⟩ st' hc
       | none =>
           have hf : False := by simpa [fullActionCircuitStep, hbox] using h
