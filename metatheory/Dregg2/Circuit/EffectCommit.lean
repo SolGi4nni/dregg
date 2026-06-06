@@ -347,21 +347,14 @@ The four EQ gates pin the WHOLE post-state (frame ∧ touched ∧ log); the guar
 def effectCircuit {St Args : Type} (E : EffectSpec St Args) : ConstraintSystem :=
   E.guardGates ++ [cERest, cEFrame, cETouched, cELog]
 
-/-- **`EffectCommitSat S E pre args post a`** — the root-decomposition the opaque combiner pins (holds
-by `rfl` from `encodeE`): the POST root wire equals `cmb` of (the cell digest = `cmb` of the frame
-digest with the touched digest) with (`cmb` of the rest hash with the log hash), read off the SAME
-witness. This is the published-root binding shape; carried in `satisfiedE` so the root-binding corollary
-can invoke `cmb`-injectivity. (The soundness `funext` does NOT consume this — the EQ gates suffice.) -/
-def EffectCommitSat {St Args : Type} (S : CommitSurface) (E : EffectSpec St Args) (a : Assignment) :
-    Prop :=
-  a vEPostRoot
-      = S.cmb (S.cmb (a vEFramePost) (a vETouchedPost))
-              (S.cmb (a vERestPost) (a vELogPost))
-
 /-- **`satisfiedE S E a`** — the full-state effect satisfaction predicate: the `effectCircuit` gates
-hold AND the post-root decomposition holds. -/
-def satisfiedE {St Args : Type} (S : CommitSurface) (E : EffectSpec St Args) (a : Assignment) : Prop :=
-  satisfied (effectCircuit E) a ∧ EffectCommitSat S E a
+hold. The four frame-forcing EQ gates ARE the binding mechanism — via the reused frame/touched/log
+digests + injectivity, they pin the WHOLE post-state (this is exactly what `effect_circuit_full_sound`
+extracts). (`S` is kept in the signature so the surface is fixed across the soundness/completeness API;
+a published-root-commits-the-state corollary, à la `StateCommit.recStateCommit_binds`, can be added on
+top via `cmb`-injectivity — not needed for the crown-jewel soundness, which the EQ gates already give.) -/
+def satisfiedE {St Args : Type} (_S : CommitSurface) (E : EffectSpec St Args) (a : Assignment) : Prop :=
+  satisfied (effectCircuit E) a
 
 /-! ## §5b — the four frame-gate ↔ digest-equality lemmas (each EQ gate's protocol content). -/
 
@@ -402,5 +395,212 @@ theorem elog_iff :
   simp only [Expr.eval, encE_logPost, encE_logExp]
 
 end GateIff
+
+/-! ## §6 — the generic crown-jewel theorems (proved ONCE).
+
+`effect_circuit_full_sound` is the literal generalization of the two instances' `*_full_sound`: the
+`funext` switches on `c ∈ T` (decidable Finset membership) instead of the hard-coded `c = src ∨ c =
+dst` / `c = cell`. It carries ONLY injectivity portals + `AccountsWF` + a per-effect `GuardDecodes`
+obligation. NO `postRoot = effectStateCommit (applyEffect …)` ghost. -/
+
+/-- Per-effect GUARD obligation (the `→`): the guard gates, on the guard's own witness, DECODE to the
+guard predicate. Each effect discharges this from its executor⟺spec `*_iff` lemmas. -/
+def GuardDecodes {St Args : Type} (E : EffectSpec St Args) : Prop :=
+  ∀ (pre : St) (args : Args) (post : St),
+    satisfied E.guardGates (E.guardEncode pre args post) → E.guardProp pre args
+
+/-- Per-effect GUARD obligation (the `←`, for completeness): the guard predicate ENCODES to satisfied
+guard gates. -/
+def GuardEncodes {St Args : Type} (E : EffectSpec St Args) : Prop :=
+  ∀ (pre : St) (args : Args) (post : St),
+    E.guardProp pre args → satisfied E.guardGates (E.guardEncode pre args post)
+
+section Sound
+variable {St Args : Type} (S : CommitSurface) (E : EffectSpec St Args)
+
+/-- **`effect_circuit_full_sound` — the generic crown jewel.** A satisfying full-state witness pins the
+WHOLE post-state: the effect's `apex` holds (guard ∧ post-cell = `touchedCellMap` ∧ log ∧ 16-field
+frame). The post `cell` map is RECONSTRUCTED by `funext` (touched → `expectedLeaf`; live-untouched →
+frozen by the frame digest; dead → `AccountsWF`); the log + 16 fields from the rest/log gates. Carries
+only the realizable Poseidon-CR injectivity portals + `AccountsWF` + the per-effect `GuardDecodes`. -/
+theorem effect_circuit_full_sound
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (hGuard : GuardDecodes E)
+    (pre : St) (args : Args) (post : St)
+    (hwf  : AccountsWF (E.view.toKernel pre)) (hwf' : AccountsWF (E.view.toKernel post))
+    (h : satisfiedE S E (encodeE S E pre args post)) :
+    E.apex pre args post := by
+  have hArith : satisfied (effectCircuit E) (encodeE S E pre args post) := h
+  -- guard: the guardGates portion of the circuit, transported to the guard's own witness, decoded.
+  have hguardSat : satisfied E.guardGates (encodeE S E pre args post) := by
+    intro c hc; exact hArith c (by unfold effectCircuit; exact List.mem_append_left _ hc)
+  have hguardSat' : satisfied E.guardGates (E.guardEncode pre args post) :=
+    (E.guardLocal _ _ (fun w hw => encodeE_agrees_guardEncode S E pre args post w hw)).mp hguardSat
+  have hguard : E.guardProp pre args := hGuard pre args post hguardSat'
+  -- the four frame-forcing EQ gates hold:
+  have hrest  : cERest.holds (encodeE S E pre args post)    := hArith cERest    (by simp [effectCircuit])
+  have hframe : cEFrame.holds (encodeE S E pre args post)   := hArith cEFrame   (by simp [effectCircuit])
+  have htouch : cETouched.holds (encodeE S E pre args post) := hArith cETouched (by simp [effectCircuit])
+  have hlog   : cELog.holds (encodeE S E pre args post)     := hArith cELog     (by simp [effectCircuit])
+  -- decode: rest-frame (16 fields), untouched cells, touched cells, log.
+  have hkframe : kernelFrame (E.view.toKernel pre) (E.view.toKernel post) :=
+    (hRest (E.view.toKernel pre) (E.view.toKernel post)).mp ((erest_iff S E pre args post).mp hrest)
+  have hframeCells : ∀ c ∈ (E.view.toKernel pre).accounts \ E.touched pre args,
+      (E.view.toKernel pre).cell c = (E.view.toKernel post).cell c :=
+    FrameDigestBindsCells S.CH S.compressN hN hL _ _ _ ((eframe_iff S E pre args post).mp hframe)
+  have htouchCells : ∀ c ∈ E.touched pre args,
+      (E.view.toKernel post).cell c = E.expectedLeaf pre args c := by
+    have hte := (etouched_iff S E pre args post).mp htouch
+    unfold touchedDigest at hte
+    exact FrameDigestBindsCells S.CH S.compressN hN hL
+      { accounts := ∅, cell := (E.view.toKernel post).cell, caps := fun _ => [] }
+      { accounts := ∅, cell := E.expectedLeaf pre args, caps := fun _ => [] }
+      (E.touched pre args) hte
+  have hlogVal : E.view.getLog post = E.postLog pre args :=
+    hLog _ _ ((elog_iff S E pre args post).mp hlog)
+  -- reconstruct the post cell map by funext over (touched / live-untouched / dead).
+  have hcellmap : (E.view.toKernel post).cell
+      = touchedCellMap (E.view.toKernel pre).cell (E.touched pre args) (E.expectedLeaf pre args) := by
+    funext c
+    unfold touchedCellMap
+    by_cases hcT : c ∈ E.touched pre args
+    · rw [if_pos hcT]; exact htouchCells c hcT
+    · rw [if_neg hcT]
+      by_cases hcA : c ∈ (E.view.toKernel pre).accounts
+      · exact (hframeCells c (Finset.mem_sdiff.mpr ⟨hcA, hcT⟩)).symm
+      · have haccEq : (E.view.toKernel post).accounts = (E.view.toKernel pre).accounts := hkframe.1
+        rw [hwf' c (by rw [haccEq]; exact hcA), hwf c hcA]
+  exact ⟨hguard, hcellmap, hlogVal, hkframe⟩
+
+/-- `frameDigest` depends on its state only through `cell` ON the carrier `S`: agree there ⇒ equal
+digests. The completeness-side congruence (the dual of `FrameDigestBindsCells`). -/
+private theorem frameDigest_congr (CH : CellId → Value → ℤ) (cN : List ℤ → ℤ)
+    (k k' : RecordKernelState) (T : Finset CellId) (h : ∀ c ∈ T, k.cell c = k'.cell c) :
+    StateCommit.frameDigest CH cN k T = StateCommit.frameDigest CH cN k' T := by
+  unfold StateCommit.frameDigest
+  refine congrArg cN (List.map_congr_left ?_)
+  intro c hc
+  rw [h c ((Finset.mem_sort _).mp hc)]
+
+/-- **`effect_circuit_full_complete`** — every apex-satisfying step yields a satisfying full-state
+witness. The four EQ gates are discharged from the apex's frame/cell/log clauses; the guard gates from
+the per-effect `GuardEncodes`. -/
+theorem effect_circuit_full_complete
+    (hRest : RestHashIffFrame S.RH) (hGuardEnc : GuardEncodes E)
+    (pre : St) (args : Args) (post : St)
+    (hspec : E.apex pre args post) :
+    satisfiedE S E (encodeE S E pre args post) := by
+  obtain ⟨hguard, hcellmap, hlogVal, hkframe⟩ := hspec
+  show satisfied (effectCircuit E) (encodeE S E pre args post)
+  -- post.cell agrees with pre.cell off T (from the cell map), and with expectedLeaf on T.
+  have hoff : ∀ c ∈ (E.view.toKernel pre).accounts \ E.touched pre args,
+      (E.view.toKernel pre).cell c = (E.view.toKernel post).cell c := by
+    intro c hc
+    have hcT : c ∉ E.touched pre args := (Finset.mem_sdiff.mp hc).2
+    rw [hcellmap, touchedCellMap, if_neg hcT]
+  have hon : ∀ c ∈ E.touched pre args,
+      (E.view.toKernel post).cell c = E.expectedLeaf pre args c := by
+    intro c hc; rw [hcellmap, touchedCellMap, if_pos hc]
+  intro c hc
+  rcases List.mem_append.mp hc with hcg | hc4
+  · -- a guard gate
+    have hge : satisfied E.guardGates (encodeE S E pre args post) :=
+      (E.guardLocal _ _ (fun w hw => encodeE_agrees_guardEncode S E pre args post w hw)).mpr
+        (hGuardEnc pre args post hguard)
+    exact hge c hcg
+  · -- one of the four EQ gates
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc4
+    rcases hc4 with rfl | rfl | rfl | rfl
+    · exact (erest_iff S E pre args post).mpr
+        ((hRest (E.view.toKernel pre) (E.view.toKernel post)).mpr hkframe)
+    · exact (eframe_iff S E pre args post).mpr
+        (frameDigest_congr S.CH S.compressN _ _ _ hoff)
+    · refine (etouched_iff S E pre args post).mpr ?_
+      unfold touchedDigest
+      exact frameDigest_congr S.CH S.compressN
+        { accounts := ∅, cell := (E.view.toKernel post).cell, caps := fun _ => [] }
+        { accounts := ∅, cell := E.expectedLeaf pre args, caps := fun _ => [] }
+        (E.touched pre args) hon
+    · exact (elog_iff S E pre args post).mpr (by rw [hlogVal])
+
+/-! ### Anti-ghost teeth (each forgery a single EQ gate REJECTS). -/
+
+/-- **field tamper REJECTED:** a post-state whose `nullifiers` (any non-`cell` component) differ from
+`pre`'s cannot satisfy — `cERest` + `RestHashIffFrame`. -/
+theorem effectCircuit_rejects_field_tamper (hRest : RestHashIffFrame S.RH)
+    (pre : St) (args : Args) (post : St)
+    (htamper : (E.view.toKernel post).nullifiers ≠ (E.view.toKernel pre).nullifiers) :
+    ¬ satisfiedE S E (encodeE S E pre args post) := by
+  intro h
+  have hrest : cERest.holds (encodeE S E pre args post) := h cERest (by simp [effectCircuit])
+  have hkf := (hRest (E.view.toKernel pre) (E.view.toKernel post)).mp
+    ((erest_iff S E pre args post).mp hrest)
+  exact htamper hkf.2.2.2.2.1
+
+/-- **third-cell tamper REJECTED:** a live bystander cell (`c₀ ∈ accounts`, `c₀ ∉ T`) whose post value
+differs from pre cannot satisfy — `cEFrame` + `FrameDigestBindsCells`. -/
+theorem effectCircuit_rejects_third_cell
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (pre : St) (args : Args) (post : St) {c₀ : CellId}
+    (hc₀ : c₀ ∈ (E.view.toKernel pre).accounts) (hc₀T : c₀ ∉ E.touched pre args)
+    (htamper : (E.view.toKernel pre).cell c₀ ≠ (E.view.toKernel post).cell c₀) :
+    ¬ satisfiedE S E (encodeE S E pre args post) := by
+  intro h
+  have hframe : cEFrame.holds (encodeE S E pre args post) := h cEFrame (by simp [effectCircuit])
+  exact htamper (FrameDigestBindsCells S.CH S.compressN hN hL _ _ _
+    ((eframe_iff S E pre args post).mp hframe) c₀ (Finset.mem_sdiff.mpr ⟨hc₀, hc₀T⟩))
+
+/-- **wrong-touched tamper REJECTED:** a touched cell whose post value differs from the spec's
+`expectedLeaf` cannot satisfy — `cETouched` + `FrameDigestBindsCells` on carrier `T`. -/
+theorem effectCircuit_rejects_wrong_touched
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (pre : St) (args : Args) (post : St) {c₀ : CellId}
+    (hc₀ : c₀ ∈ E.touched pre args)
+    (htamper : (E.view.toKernel post).cell c₀ ≠ E.expectedLeaf pre args c₀) :
+    ¬ satisfiedE S E (encodeE S E pre args post) := by
+  intro h
+  have htouch : cETouched.holds (encodeE S E pre args post) := h cETouched (by simp [effectCircuit])
+  have hte := (etouched_iff S E pre args post).mp htouch
+  unfold touchedDigest at hte
+  exact htamper (FrameDigestBindsCells S.CH S.compressN hN hL
+    { accounts := ∅, cell := (E.view.toKernel post).cell, caps := fun _ => [] }
+    { accounts := ∅, cell := E.expectedLeaf pre args, caps := fun _ => [] }
+    (E.touched pre args) hte c₀ hc₀)
+
+/-- **log forgery REJECTED:** a post-log differing from the spec-predicted post-log cannot satisfy —
+`cELog` + `logHashInjective`. -/
+theorem effectCircuit_rejects_log_forge (hLog : logHashInjective S.LH)
+    (pre : St) (args : Args) (post : St)
+    (htamper : E.view.getLog post ≠ E.postLog pre args) :
+    ¬ satisfiedE S E (encodeE S E pre args post) := by
+  intro h
+  have hlog : cELog.holds (encodeE S E pre args post) := h cELog (by simp [effectCircuit])
+  exact htamper (hLog _ _ ((elog_iff S E pre args post).mp hlog))
+
+end Sound
+
+/-! ## §7 — emission: the effect circuit serializes losslessly to the wire form. -/
+
+/-- The emitted effect circuit (serialized via `CircuitEmit.emit`). -/
+def emittedEffect {St Args : Type} (name : String) (E : EffectSpec St Args) : EmittedDescriptor :=
+  emit name E.traceWidth (effectCircuit E)
+
+/-- **`emitEffectFaithful`** — satisfying the emitted effect circuit is EXACTLY satisfying
+`effectCircuit E` (a direct instance of `CircuitEmit.emit_faithful`). -/
+theorem emitEffectFaithful {St Args : Type} (name : String) (E : EffectSpec St Args) (a : Assignment) :
+    satisfied (effectCircuit E) a ↔ satisfiedEmitted (emittedEffect name E) a :=
+  emit_faithful name E.traceWidth (effectCircuit E) a
+
+/-! ## §8 — axiom-hygiene tripwires (the portals are HYPOTHESES, so the theorems stay kernel-clean). -/
+
+#assert_axioms encodeE_agrees_guardEncode
+#assert_axioms effect_circuit_full_sound
+#assert_axioms effect_circuit_full_complete
+#assert_axioms effectCircuit_rejects_field_tamper
+#assert_axioms effectCircuit_rejects_third_cell
+#assert_axioms effectCircuit_rejects_wrong_touched
+#assert_axioms effectCircuit_rejects_log_forge
+#assert_axioms emitEffectFaithful
 
 end Dregg2.Circuit.EffectCommit
