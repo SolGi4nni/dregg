@@ -203,15 +203,15 @@ example :
   rw [Bool.eq_false_iff, ne_eq, workflow_step_admits_iff_guards]
   decide
 
--- The same, executable, as `#eval` (the discriminating admit/reject vector):
-#eval Guard.admits (stepGuard (Digest := Reference.D) 7)
-  ⟨.submit, 0, .init⟩ (wsupply gAtt)   -- true   (authorized, in-order, attested)
-#eval Guard.admits (stepGuard (Digest := Reference.D) 7)
-  ⟨.merge, 2, .init⟩ (wsupply gAtt)    -- false  (out of order: can't merge from init)
-#eval Guard.admits (stepGuard (Digest := Reference.D) 7)
-  ⟨.submit, 1, .init⟩ (wsupply gAtt)   -- false  (unauthorized: reviewer can't submit)
-#eval Guard.admits (stepGuard (Digest := Reference.D) 7)
-  ⟨.submit, 0, .init⟩ (wsupply bAtt)   -- false  (unattested: bad proof 9 ≠ 7)
+-- The same, executable, as `#guard` (the discriminating admit/reject vector):
+#guard (Guard.admits (stepGuard (Digest := Reference.D) 7)
+  ⟨.submit, 0, .init⟩ (wsupply gAtt))   -- true   (authorized, in-order, attested)
+#guard (Guard.admits (stepGuard (Digest := Reference.D) 7)
+  ⟨.merge, 2, .init⟩ (wsupply gAtt) == false)    -- false  (out of order: can't merge from init)
+#guard (Guard.admits (stepGuard (Digest := Reference.D) 7)
+  ⟨.submit, 1, .init⟩ (wsupply gAtt) == false)   -- false  (unauthorized: reviewer can't submit)
+#guard (Guard.admits (stepGuard (Digest := Reference.D) 7)
+  ⟨.submit, 0, .init⟩ (wsupply bAtt) == false)   -- false  (unattested: bad proof 9 ≠ 7)
 
 end Smoke
 

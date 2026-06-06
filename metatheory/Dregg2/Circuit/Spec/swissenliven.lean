@@ -31,7 +31,7 @@ def enlivenSwissUpdate (ss : List SwissRecord) (sw : Nat) (claimed : List Auth) 
 def EnlivenGuard (s : RecChainedState) (sw : Nat) (actor exporter : CellId) (claimed : List Auth) : Prop :=
   stateAuthB s.kernel.caps actor exporter = true
   ∧ ∃ e : SwissRecord, findSwiss s.kernel.swiss sw = some e
-      ∧ rightsNarrowerOrEqual claimed e.rights
+      ∧ rightsNarrowerOrEqual claimed e.rights = true
 
 theorem enlivenRecord_correct (e : SwissRecord) :
     (enlivenRecord e).swiss = e.swiss
@@ -54,6 +54,19 @@ theorem enlivenSwissUpdate_some (ss : List SwissRecord) (sw : Nat) (claimed : Li
     enlivenSwissUpdate ss sw claimed = some (enlivenSwissPost ss sw e) := by
   simp only [enlivenSwissUpdate, hf, if_pos hr]
 
+theorem enlivenSwissUpdate_eq_k (k : RecordKernelState) (sw : Nat) (claimed : List Auth)
+    (ss : List SwissRecord) :
+    enlivenSwissUpdate k.swiss sw claimed = some ss ↔
+      swissEnlivenK k sw claimed = some { k with swiss := ss } := by
+  unfold enlivenSwissUpdate swissEnlivenK
+  cases hf : findSwiss k.swiss sw with
+  | none   => simp [hf]
+  | some e =>
+      simp only [hf]
+      by_cases hr : rightsNarrowerOrEqual claimed e.rights
+      · simp only [if_pos hr]; constructor <;> intro h <;> simp [Option.some.injEq] at h <;> subst h <;> rfl
+      · simp only [if_neg hr]; constructor <;> intro h <;> simp at h
+
 /-- Existential post-state: guard + kernel witness + log head (queue-atomic style). -/
 def EnlivenSpec (s : RecChainedState) (sw : Nat) (actor exporter : CellId) (claimed : List Auth)
     (s' : RecChainedState) : Prop :=
@@ -73,30 +86,31 @@ theorem enlivenChain_iff_spec (s : RecChainedState) (sw : Nat) (actor exporter :
       simp only [hk]
       constructor
       · intro h; exact absurd h (by simp)
-      · rintro ⟨⟨_, ⟨_, ⟨e, ⟨hf, _⟩⟩⟩, ⟨_, hf'⟩⟩
-        exact absurd hf' (by simp [hk])
+      · rintro ⟨_, ⟨k', hk', _⟩⟩; exact absurd hk' (by simp [hk])
     | some k' =>
       simp only [hk]
       constructor
       · intro h
         simp only [Option.some.injEq] at h
         subst h
-        refine ⟨⟨hauth, ?_⟩, k', rfl, rfl⟩
+        refine ⟨⟨hauth, ?_⟩, ⟨k', ⟨rfl, rfl⟩⟩⟩
         unfold swissEnlivenK at hk
         cases hf : findSwiss s.kernel.swiss sw with
         | none => simp [hf] at hk
         | some e =>
           simp only [hf] at hk
           by_cases hr : rightsNarrowerOrEqual claimed e.rights
-          · simp only [if_pos hr] at hk; exact ⟨e, hf, hr⟩
+          · simp only [if_pos hr] at hk; exact ⟨e, ⟨rfl, hr⟩⟩
           · simp only [if_neg hr] at hk; exact absurd hk (by simp)
-      · rintro ⟨_, k'', hk', hs'⟩
-        simp only [Option.some.injEq] at hk'; subst hk'
-        cases s'; simpa using hs'
+      · rintro ⟨_, ⟨k'', hk', hs'⟩⟩
+        simp only [Option.some.injEq] at hk'
+        subst hk'
+        rw [hs']
+        rfl
   · rw [if_neg hauth]
     constructor
     · intro h; exact absurd h (by simp)
-    · rintro ⟨⟨hauth', _, _⟩, _⟩; exact absurd hauth' hauth
+    · rintro ⟨⟨hauth', _⟩, _⟩; exact absurd hauth' hauth
 
 theorem execFullA_enliven_iff_spec (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (s' : RecChainedState) :
@@ -110,31 +124,33 @@ theorem enliven_spec_bumps_refcount (s : RecChainedState) (sw : Nat) (actor expo
     (hf : findSwiss s.kernel.swiss sw = some e)
     (h : execFullA s (.enlivenRefA sw actor exporter claimed) = some s') :
     findSwiss s'.kernel.swiss sw = some (enlivenRecord e) := by
-  rcases (execFullA_enliven_iff_spec s sw actor exporter claimed s').mp h with ⟨hg, k', hk, hs'⟩
-  obtain ⟨_, ⟨e', hf', hr⟩⟩ := hg.2
-  have heq : e' = e := Option.some.inj (hf.symm.trans hf')
+  rcases (execFullA_enliven_iff_spec s sw actor exporter claimed s').mp h with
+    ⟨⟨_, ⟨e', ⟨hf', _⟩⟩⟩, ⟨kw, ⟨hk, hs'⟩⟩⟩
+  have heq : e' = e := Option.some.inj (hf'.symm.trans hf)
   subst heq
-  unfold swissEnlivenK at hk
-  simp only [hf, if_pos hr] at hk
-  rcases hs' with ⟨hker, _⟩
-  rw [← hker, hk]
-  exact enlivenRecord_lookup s.kernel.swiss sw e hf
+  have hker := congr_arg (·.kernel) hs'
+  have hk' : swissEnlivenK s.kernel sw claimed = some s'.kernel :=
+    hk.trans (congr_arg some hker.symm)
+  exact swissEnlivenK_bumps_refcount hf' hk'
 
 theorem enliven_spec_non_amplifying (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (s' : RecChainedState)
     (h : execFullA s (.enlivenRefA sw actor exporter claimed) = some s') :
     ∃ e : SwissRecord, findSwiss s.kernel.swiss sw = some e
-      ∧ rightsNarrowerOrEqual claimed e.rights :=
+      ∧ rightsNarrowerOrEqual claimed e.rights = true :=
   (execFullA_enliven_iff_spec s sw actor exporter claimed s').mp h |>.1.2
 
 theorem enliven_spec_balance_neutral (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (s' : RecChainedState)
     (h : execFullA s (.enlivenRefA sw actor exporter claimed) = some s') :
     s'.kernel.bal = s.kernel.bal ∧ s'.kernel.accounts = s.kernel.accounts := by
-  rcases (execFullA_enliven_iff_spec s sw actor exporter claimed s').mp h with ⟨_, k', _, hs'⟩
-  rcases hs' with ⟨hker, _⟩
-  rcases withSwiss_preserves_rest s.kernel k'.swiss with ⟨_, _, _, _, _, _, _, hBal, hAcc, _, _, _, _, _, _, _⟩
-  rw [← hker]; exact ⟨hBal, hAcc⟩
+  rcases (execFullA_enliven_iff_spec s sw actor exporter claimed s').mp h with
+    ⟨_, ⟨kw, ⟨hk, hs'⟩⟩⟩
+  have hkw := swissEnlivenK_only_swiss hk
+  have hbal := kernel_swiss_update_bal_accounts hkw
+  have hker : s'.kernel = kw := congr_arg RecChainedState.kernel hs'
+  rw [hker]
+  exact hbal
 
 theorem enliven_spec_authorized (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (s' : RecChainedState)
@@ -145,22 +161,29 @@ theorem enliven_spec_authorized (s : RecChainedState) (sw : Nat) (actor exporter
 theorem enliven_rejects_unauthorized (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (hbad : stateAuthB s.kernel.caps actor exporter ≠ true) :
     execFullA s (.enlivenRefA sw actor exporter claimed) = none := by
-  simp only [execFullA, enlivenChain_iff_spec, if_neg hbad]
+  simp only [execFullA, swissEnlivenChainA, if_neg hbad]
 
 theorem enliven_rejects_absent (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (hf : findSwiss s.kernel.swiss sw = none) :
     execFullA s (.enlivenRefA sw actor exporter claimed) = none := by
-  simp only [execFullA, enlivenChain_iff_spec, swissEnlivenK, hf]
+  simp only [execFullA, swissEnlivenChainA]
+  by_cases hauth : stateAuthB s.kernel.caps actor exporter = true
+  · rw [if_pos hauth, swissEnlivenK_absent_rejects s.kernel sw claimed hf]
+  · rw [if_neg hauth]
 
 theorem enliven_rejects_amplifying (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
     (claimed : List Auth) (e : SwissRecord) (hf : findSwiss s.kernel.swiss sw = some e)
     (hbad : rightsNarrowerOrEqual claimed e.rights = false) :
     execFullA s (.enlivenRefA sw actor exporter claimed) = none := by
-  simp only [execFullA, enlivenChain_iff_spec, swissEnlivenK, hf, if_neg hbad]
+  simp only [execFullA, swissEnlivenChainA]
+  by_cases hauth : stateAuthB s.kernel.caps actor exporter = true
+  · rw [if_pos hauth, swissEnlivenK_amplification_rejects s.kernel sw claimed e hf hbad]
+  · rw [if_neg hauth]
 
 #assert_axioms enlivenRecord_correct
 #assert_axioms enlivenRecord_lookup
 #assert_axioms enlivenSwissUpdate_some
+#assert_axioms enlivenSwissUpdate_eq_k
 #assert_axioms enlivenChain_iff_spec
 #assert_axioms execFullA_enliven_iff_spec
 #assert_axioms enliven_spec_bumps_refcount

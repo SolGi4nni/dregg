@@ -757,8 +757,8 @@ theorem decodeE_emittedSetField : decodeE emittedSetField = setFieldCircuit :=
 circuit. Copy into the Rust `lean_emitted_setfield_roundtrip` golden. -/
 def setFieldDescriptorJson : String := emitDescriptorJson emittedSetField
 
--- Print the setField wire bytes the Rust decoder parses.
-#eval setFieldDescriptorJson
+-- `#guard` golden pin: setField wire bytes the Rust decoder parses (Rust `SETFIELD_DESCRIPTOR_JSON`).
+#guard (setFieldDescriptorJson == r#"{"name":"dregg-setfield-fullstate-v1","trace_width":16,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":1},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":3},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"var","v":7}},{"lhs":{"t":"var","v":8},"rhs":{"t":"var","v":9}},{"lhs":{"t":"var","v":11},"rhs":{"t":"var","v":12}},{"lhs":{"t":"var","v":14},"rhs":{"t":"var","v":15}}]}"#)
 
 /-! ## §10 — Axiom-hygiene tripwires + the assumption ledger.
 

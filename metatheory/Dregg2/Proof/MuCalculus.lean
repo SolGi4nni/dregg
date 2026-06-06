@@ -399,15 +399,11 @@ standard kernel triple `{propext, Classical.choice, Quot.sound}`, exactly as `CT
 -- future drift). No `except` clause — even the alternation teeth (through `CTL.EF_EG_dual`) pin clean.
 #assert_namespace_axioms Dregg2.Proof.MuCalculus
 
-/-! ## It runs (`#eval`) — the fixpoint alternation, decided on the finite witness (non-vacuity).
+/-! ## It runs (`#guard`) — the fixpoint alternation, decided on the finite witness (non-vacuity).
 
 `branchSys` is fully decidable, so the membership facts behind the alternation teeth are
-`#eval`-checkable directly on the underlying step relation. -/
+`#guard`-checkable directly on the underlying step relation. -/
 
--- `0 ∈ EF {1}`: `0 → 1` reaches the target (the μ-formula's content) — true.
-#eval decide (∃ t : Fin 3, CTL.branchStep 0 t ∧ t = (1 : Fin 3))
--- `0 ∉ AX {1}` ⇒ the ν-`□`-formula cannot keep `0` in `{1}ᶜ`-safety as `EF` does — the escape 0→1 is
--- precisely why `0` leaves `AG {1}ᶜ`: `0` has a successor (`1`) INSIDE `{1}`, i.e. outside `{1}ᶜ`.
-#eval decide (∃ t : Fin 3, CTL.branchStep 0 t ∧ t = (1 : Fin 3))   -- the 0→1 witness, again — true
+#guard (decide (∃ t : Fin 3, CTL.branchStep 0 t ∧ t = (1 : Fin 3)))
 
 end Dregg2.Proof.MuCalculus

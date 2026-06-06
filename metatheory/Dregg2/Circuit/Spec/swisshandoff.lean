@@ -76,26 +76,27 @@ theorem handoffChain_iff_spec (s : RecChainedState) (sw certHash : Nat) (introdu
       simp only [hk]
       constructor
       · intro h; exact absurd h (by simp)
-      · rintro ⟨⟨_, ⟨e, hf⟩⟩, ⟨_, hf'⟩⟩
-        exact absurd hf' (by simp [hk])
+      · rintro ⟨_, ⟨k', hk', _⟩⟩; exact absurd hk' (by simp [hk])
     | some k' =>
       simp only [hk]
       constructor
       · intro h
         simp only [Option.some.injEq] at h
         subst h
-        refine ⟨⟨hauth, ?_⟩, k', rfl, rfl⟩
+        refine ⟨⟨hauth, ?_⟩, ⟨k', ⟨rfl, rfl⟩⟩⟩
         unfold swissHandoffK at hk
         cases hf : findSwiss s.kernel.swiss sw with
         | none => simp [hf] at hk
-        | some e => simp only [hf] at hk; exact ⟨e, hf⟩
-      · rintro ⟨_, k'', hk', hs'⟩
-        simp only [Option.some.injEq] at hk'; subst hk'
-        cases s'; simpa using hs'
+        | some e => simp only [hf] at hk; exact ⟨e, rfl⟩
+      · rintro ⟨_, ⟨k'', hk', hs'⟩⟩
+        simp only [Option.some.injEq] at hk'
+        subst hk'
+        rw [hs']
+        rfl
   · rw [if_neg hauth]
     constructor
     · intro h; exact absurd h (by simp)
-    · rintro ⟨⟨hauth', _, _⟩, _⟩; exact absurd hauth' hauth
+    · rintro ⟨⟨hauth', _⟩, _⟩; exact absurd hauth' hauth
 
 theorem execFullA_handoff_iff_spec (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (s' : RecChainedState) :
@@ -108,20 +109,28 @@ theorem handoff_spec_binds_cert (s : RecChainedState) (sw certHash : Nat) (intro
     (s' : RecChainedState) (e : SwissRecord) (hf : findSwiss s.kernel.swiss sw = some e)
     (h : execFullA s (.swissHandoffA sw certHash introducer exporter) = some s') :
     findSwiss s'.kernel.swiss sw = some (handoffRecord e certHash) := by
-  rcases (execFullA_handoff_iff_spec s sw certHash introducer exporter s').mp h with ⟨_, k', hk, hs'⟩
+  rcases (execFullA_handoff_iff_spec s sw certHash introducer exporter s').mp h with
+    ⟨_, ⟨kw, ⟨hk, hs'⟩⟩⟩
+  have hker : s'.kernel = kw := by cases s'; cases hs'; rfl
+  rw [hker]
   unfold swissHandoffK at hk
   simp only [hf] at hk
-  rcases hs' with ⟨hker, _⟩
-  rw [← hker, hk]
+  have heq := (Option.some.inj hk).symm
+  have hpost : kw.swiss = handoffSwissPost s.kernel.swiss sw e certHash :=
+    congr_arg (fun k : RecordKernelState => k.swiss) heq
+  rw [hpost]
   exact handoffRecord_lookup s.kernel.swiss sw e certHash hf
 
 theorem handoff_spec_balance_neutral (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (s' : RecChainedState) (h : execFullA s (.swissHandoffA sw certHash introducer exporter) = some s') :
     s'.kernel.bal = s.kernel.bal ∧ s'.kernel.accounts = s.kernel.accounts := by
-  rcases (execFullA_handoff_iff_spec s sw certHash introducer exporter s').mp h with ⟨_, k', _, hs'⟩
-  rcases hs' with ⟨hker, _⟩
-  rcases withSwiss_preserves_rest s.kernel k'.swiss with ⟨_, _, _, _, _, _, _, hBal, hAcc, _, _, _, _, _, _, _⟩
-  rw [← hker]; exact ⟨hBal, hAcc⟩
+  rcases (execFullA_handoff_iff_spec s sw certHash introducer exporter s').mp h with
+    ⟨_, ⟨kw, ⟨hk, hs'⟩⟩⟩
+  have hkw := swissHandoffK_only_swiss hk
+  have hbal := kernel_swiss_update_bal_accounts hkw
+  have hker : s'.kernel = kw := congr_arg RecChainedState.kernel hs'
+  rw [hker]
+  exact hbal
 
 theorem handoff_spec_authorized (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (s' : RecChainedState) (h : execFullA s (.swissHandoffA sw certHash introducer exporter) = some s') :
@@ -131,12 +140,15 @@ theorem handoff_spec_authorized (s : RecChainedState) (sw certHash : Nat) (intro
 theorem handoff_rejects_unauthorized (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (hbad : stateAuthB s.kernel.caps introducer exporter ≠ true) :
     execFullA s (.swissHandoffA sw certHash introducer exporter) = none := by
-  simp only [execFullA, handoffChain_iff_spec, if_neg hbad]
+  simp only [execFullA, swissHandoffChainA, if_neg hbad]
 
 theorem handoff_rejects_absent (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (hf : findSwiss s.kernel.swiss sw = none) :
     execFullA s (.swissHandoffA sw certHash introducer exporter) = none := by
-  simp only [execFullA, handoffChain_iff_spec, swissHandoffK, hf]
+  simp only [execFullA, swissHandoffChainA]
+  by_cases hauth : stateAuthB s.kernel.caps introducer exporter = true
+  · rw [if_pos hauth, swissHandoffK, hf]
+  · rw [if_neg hauth]
 
 theorem handoff_no_spec_when_unauthorized (s : RecChainedState) (sw certHash : Nat) (introducer exporter : CellId)
     (s' : RecChainedState) (hbad : stateAuthB s.kernel.caps introducer exporter ≠ true) :

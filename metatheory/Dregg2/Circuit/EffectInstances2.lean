@@ -231,7 +231,7 @@ def mintEmitted : EmittedDescriptor := emittedEffect2 mintAirName mintEWire
 /-- Canonical mint wire string — copy into Rust `lean_emitted_mint_roundtrip` golden. -/
 def mintDescriptorJson : String := emitDescriptorJson mintEmitted
 
-#eval mintDescriptorJson
+#guard (mintDescriptorJson == r#"{"name":"dregg-mint-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#)
 #guard mintEmitted.constraints.length == 4
 #guard mintEmitted.traceWidth == 72
 

@@ -168,16 +168,16 @@ theorem apex_iff_enlivenSpec (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
     refine ⟨hg, s'.kernel, hk, ?_⟩
     cases s'; simp [hlog]
   · rintro ⟨hg, k', hk, hs'⟩
-    rcases hs' with ⟨hker, hlog⟩
     rcases withSwiss_preserves_rest s.kernel k'.swiss with
       ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     obtain ⟨e, hf, hr⟩ := hg.2
     have hupd := enlivenSwissUpdate_some s.kernel.swiss args.sw args.claimed e hf hr
-    have hsw := (enlivenSwissUpdate_eq_k s.kernel args.sw args.claimed k'.swiss).mpr hk
-    subst hker
+    have hk' := swissEnlivenK_eq_withSwiss hk
+    have hsw := (enlivenSwissUpdate_eq_k s.kernel args.sw args.claimed k'.swiss).mpr hk'
     cases s'
-    simp [hlog, enlivenSwissPostClause, hsw, hupd]
-    exact ⟨hg, rfl, hlog, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+    subst hs'
+    simp [enlivenSwissPostClause, hsw, hupd]
+    exact ⟨hg, rfl, rfl, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩⟩
 
 /-! ### §2c — THE VALIDATION. -/

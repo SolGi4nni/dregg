@@ -246,10 +246,10 @@ theorem execUpgrade_is_authorized_intra
     ⟨hctrl, owner_mem_ownerSubjects cell, hadm⟩
   exact Upgrade.upgrade_is_authorized_intra W t caps p ko ko' hauth
 
-/-! ## `#eval` demos — the executable upgrade turn, run.
+/-! ## `#guard` demos — the executable upgrade turn, run.
 
 A current-version cell admits a proof upgrade; a stale cell rejects the proof but admits the
-signature fallback. (`Option.isSome` projected to `Bool` so the demos print cleanly.) -/
+signature fallback. (`Option.isSome` projected to `Bool` so the guards check cleanly.) -/
 
 /-- A demo cell, pinned to program `7` at AIR version `3`, owned by label `42`. -/
 def demoCell : VersionedCell := { program := 7, airVersion := 3, owner := 42 }
@@ -269,17 +269,17 @@ def demoSig : UpgradeRequest := sigRequest 9 5
 
 -- live = 3 (current): a current-version PROOF upgrade is admitted and performed.
 -- Expect: `some { program := 8, airVersion := 3, owner := 42 }`.
-#eval execUpgrade 3 demoCell demoProofCurrent
+#guard (execUpgrade 3 demoCell demoProofCurrent == some { program := 8, airVersion := 3, owner := 42 })
 
 -- live = 5 (verifier swapped past the cell's pinned v3 ⇒ stale): the PROOF upgrade is REJECTED.
 -- Expect: `none`.
-#eval execUpgrade 5 demoCell demoProofStale
+#guard (execUpgrade 5 demoCell demoProofStale).isNone
 
 -- live = 5 (stale): the owner-SIGNATURE fallback is admitted — the cell is NOT bricked.
 -- Expect: `some { program := 9, airVersion := 5, owner := 42 }`.
-#eval execUpgrade 5 demoCell demoSig
+#guard (execUpgrade 5 demoCell demoSig == some { program := 9, airVersion := 5, owner := 42 })
 
 -- The keystone, demonstrated: at the stale live version, an admissible upgrade EXISTS (true).
-#eval (execUpgrade 5 demoCell demoSig).isSome
+#guard (execUpgrade 5 demoCell demoSig).isSome
 
 end Dregg2.Exec.CellUpgrade

@@ -43,7 +43,8 @@ import Dregg2.Exec.CellCommit
 import Dregg2.Exec.CellNullifier
 import Dregg2.Exec.CellConfine
 import Dregg2.Apps.Identity
-import Dregg2.Catalog          -- declares the `[Dregg2]` aesop rule-set
+import Dregg2.Exec.CellExecutor
+import Dregg2.Catalog          -- declares the `[Dregg2]` aesop rule-set + `@[dregg_frame]`
 import Aesop
 
 namespace Dregg2.Verify
@@ -52,6 +53,7 @@ open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Authority
+open Dregg2.Exec.StarbridgeGated (DForest execForestG execForestG_erases eraseForestG)
 
 /-! ## §1 — The reusable forest-monotone combinator (generalizing `execFullForestA_logMono`).
 
@@ -237,21 +239,17 @@ attribute [aesop safe apply (rule_sets := [Dregg2])]
   execFullForestA_nullifiers_grow
   Dregg2.Apps.Identity.execFullForestA_revoked_grow
 
-/-! ## §4 — It runs (`#eval`) — the combinator-derived crowns bound quantities that GENUINELY MOVE.
+/-! ## §4 — Non-vacuity guards — the combinator-derived crowns bind quantities that GENUINELY MOVE.
 
-Non-vacuity: the combinator instances carry the SAME moving quantities the hand crowns do. A real
-`noteCreateA` grows `commitments` (`0 → 1`); a real `noteSpendA` grows `nullifiers` (`0 → 1`); a real
-transfer grows `log.length` (`0 → 1`). The carried `⊆`/`≤` therefore bound strictly-growing registries,
-not trivially-true `x = x`. (The discriminating contrast: a NON-revoked id `99` is genuinely absent —
-the registry has teeth — shown in `Apps/Identity.lean`.) -/
+A real `noteCreateA` grows `commitments`; a real `noteSpendA` grows `nullifiers`; a real transfer
+strictly grows `log.length`. Each `#guard` fails the build if the carried bound stops being substantive. -/
 
--- commitments: a real noteCreate grows the set, and the carried `[42] ⊆ ·` holds AFTER (would FAIL on ∅).
-#eval (execFullForestA fma0 noteCreateFA).map (fun s' => s'.kernel.commitments)                       -- some [42]
-#eval (execFullForestA fma0 noteCreateFA).map (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.commitments))  -- some true
--- nullifiers: a real noteSpend grows the set (anti-replay teeth).
-#eval (execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers)                             -- some [77]
--- log.length: a real conserving transfer strictly grows the audit log.
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length < s'.log.length))    -- some true
+#guard ((execFullForestA fma0 noteCreateFA).map (fun s' => s'.kernel.commitments) == some [42])
+#guard ((execFullForestA fma0 noteCreateFA).map
+          (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.commitments)) == some true)
+#guard ((execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers) == some [77])
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (fma0.log.length < s'.log.length)) == some true)
 
 /-! ## §5 — Axiom hygiene — the combinator + every derived crown pinned to the kernel triple. -/
 
@@ -313,7 +311,6 @@ attribute [aesop safe apply (rule_sets := [Dregg2])]
   execForestG_commitments_grow
   execForestG_nullifiers_grow
 
-/-- `@[dregg_frame]` — production forest-grow lemmas for `exec_frame_production`. -/
 attribute [dregg_frame]
   execForestG_revoked_subset_grow
   execForestG_commitments_grow

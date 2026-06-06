@@ -346,8 +346,8 @@ def cellAtRound4 : NetCell := mkNetCell 4 7
 #guard ((cellAtRound4.tier, decide cellAtRound4.IsBftFinal)) == (Dregg2.Finality.Tier.bft, true)  -- expected: (Dregg2.Finality.Tier.bft, true)
 
 -- DEMO 4 — the tier order witnesses the rise then hold: causal < bft = bft.
-#eval (decide (cellAtRound2.tier < cellAtRound3.tier),
-       decide (cellAtRound3.tier ≤ cellAtRound4.tier))
+#guard ((decide (cellAtRound2.tier < cellAtRound3.tier),
+         decide (cellAtRound3.tier ≤ cellAtRound4.tier)) == (true, true))
 -- expected: (true, true)
 
 /-! ## 7. Axiom-hygiene tripwires.

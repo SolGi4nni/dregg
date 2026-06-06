@@ -29,7 +29,7 @@ property (grow-only `monotone`, set-`membership` persistence, `constant` observa
 the downstream proof-badge / contract-card widget (`Dregg2/Widget/ContractView.lean`, which renders a
 card *by category*) and for the §-eval demonstration that the three shipped instances carry GENUINELY
 DISTINCT shapes (`logAppendOnly = monotone`, `conserved = constant`, `revokedPersists = membership` —
-`#eval`-distinguished below). It gates nothing in the proofs; the proofs stand on `Inv`/`step_ob`.
+`#guard`-distinguished below). It gates nothing in the proofs; the proofs stand on `Inv`/`step_ob`.
 
 ## What this is NOT
 
@@ -60,7 +60,7 @@ open Dregg2.Proof.Temporal (Always always_of_step_invariant)
 
 /-- **`SafetyShape`** — the qualitative shape of a carried safety property. A REAL tag: it is the
 category the downstream contract-card widget (`Widget/ContractView.lean`) renders by, and it carries
-genuinely distinct information across the shipped instances (`#eval`-distinguished in §4). It gates
+genuinely distinct information across the shipped instances (`#guard`-distinguished in §4). It gates
 NOTHING in the proofs — `CellContract`'s force is entirely in `Inv`/`step_ob` — but it is not
 decorative either: it is consumed by the widget layer and by the non-triviality demonstration.
 
@@ -188,6 +188,30 @@ def subWFContract : Contract where
     | none    => simp only [Option.getD_none]; exact h
   shape := .other
 
+/-- **`subsetNullifiersContract base` — the `⊆`-shaped grow-only nullifier contract.** -/
+def subsetNullifiersContract (base : List Nat) : Contract where
+  Inv s := base ⊆ s.kernel.nullifiers
+  step_ob a cf h := by
+    rw [CellExecutor.kernelForest_next_eq]
+    unfold cellNextA
+    cases hc : execFullForestA a cf.1 with
+    | some a' => simp only [Option.getD_some]
+                 exact List.Subset.trans h (execFullForestA_nullifiers_grow a a' cf.1 hc)
+    | none    => simp only [Option.getD_none]; exact h
+  shape := .membership
+
+/-- **`subsetCommitmentsContract base` — the `⊆`-shaped grow-only commitment contract.** -/
+def subsetCommitmentsContract (base : List Nat) : Contract where
+  Inv s := base ⊆ s.kernel.commitments
+  step_ob a cf h := by
+    rw [CellExecutor.kernelForest_next_eq]
+    unfold cellNextA
+    cases hc : execFullForestA a cf.1 with
+    | some a' => simp only [Option.getD_some]
+                 exact List.Subset.trans h (execFullForestA_commitments_grow a a' cf.1 hc)
+    | none    => simp only [Option.getD_none]; exact h
+  shape := .membership
+
 end KernelForest
 
 open Production (Contract Sched liftFromKernelForest)
@@ -208,6 +232,12 @@ noncomputable def nameRegisteredContract (name owner : Dregg2.Apps.NameService.N
 
 noncomputable def subWFContract : Contract :=
   liftFromKernelForest KernelForest.subWFContract
+
+noncomputable def subsetNullifiersContract (base : List Nat) : Contract :=
+  liftFromKernelForest (KernelForest.subsetNullifiersContract base)
+
+noncomputable def subsetCommitmentsContract (base : List Nat) : Contract :=
+  liftFromKernelForest (KernelForest.subsetCommitmentsContract base)
 
 /-! ## §3a — The three standing apps, re-expressed as first-class `CellContract`s (HATCHERY.md H3 gate).
 
@@ -258,40 +288,70 @@ example (x : Nat) (s : RecChainedState) (hinit : x ∈ s.kernel.revoked) (sched 
     ∀ n, x ∈ (trajG s sched n).kernel.revoked :=
   (revokedPersists x).forever hinit sched
 
-/-! ## §4 — It runs (`#eval`) — the contracts are NON-VACUOUS and the tag carries DISTINCT info.
+/-- Named production crown for widgets / regression (the `revokedPersists` contract's `.forever`). -/
+theorem identity_revoked_forever_production (x : Nat) (s : RecChainedState)
+    (hinit : x ∈ s.kernel.revoked) (sched : SchedG) :
+    ∀ n, x ∈ (trajG s sched n).kernel.revoked :=
+  (revokedPersists x).forever hinit sched
+
+theorem spent_note_never_respent_production (nf : Nat) (s : RecChainedState)
+    (hinit : nf ∈ s.kernel.nullifiers) (sched : SchedG) :
+    ∀ n, nf ∈ (trajG s sched n).kernel.nullifiers :=
+  (subsetNullifiersContract [nf]).forever (List.singleton_subset_iff.mpr hinit) sched
+
+theorem no_double_spend_production (nul0 : List Nat) (s : RecChainedState)
+    (hinit : nul0 ⊆ s.kernel.nullifiers) (sched : SchedG) :
+    ∀ n, nul0 ⊆ (trajG s sched n).kernel.nullifiers :=
+  (subsetNullifiersContract nul0).forever hinit sched
+
+theorem commitments_persist_production (com0 : List Nat) (s : RecChainedState)
+    (hinit : com0 ⊆ s.kernel.commitments) (sched : SchedG) :
+    ∀ n, com0 ⊆ (trajG s sched n).kernel.commitments :=
+  (subsetCommitmentsContract com0).forever hinit sched
+
+theorem nameservice_registration_forever_production (s : RecChainedState)
+    (name owner : Dregg2.Apps.NameService.Name)
+    (hinit : Dregg2.Apps.NameService.isRegistered s name owner = true) (sched : SchedG) :
+    ∀ n, Dregg2.Apps.NameService.isRegistered (trajG s sched n) name owner = true :=
+  (nameRegisteredContract name owner).forever hinit sched
+
+theorem subscription_wellformed_forever_production (s : RecChainedState)
+    (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
+    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
+  subWFContract.forever hinit sched
+
+theorem log_mono_forever_production (s : RecChainedState) (sched : SchedG) :
+    ∀ n, s.log.length ≤ (trajG s sched n).log.length :=
+  (logAppendOnly s).forever (le_refl _) sched
+
+/-! ## §4 — Non-vacuity guards — the contracts are substantive and the tag carries distinct info.
 
 `logAppendOnly`'s `Inv` bounds a STRICTLY-GROWING quantity: a real committed transfer (`transferCF`,
 actor 0 transfers 30 of asset 0 from cell 0 to cell 1) grows the audit log `0 → 1`, so the carried `≤`
 is a bound on a quantity that genuinely moves — not a trivially-true `x = x`. And the three shipped
 contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying data, not a constant. -/
 
--- NON-VACUITY of `logAppendOnly`: the bounded quantity strictly grows on a real commit (0 < 1).
-#eval fma0.log.length                                                                                  -- 0  (BEFORE)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => s'.log.length)                                -- some 1  (AFTER — grew)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length < s'.log.length))     -- some true (STRICT — moves)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length ≤ s'.log.length))     -- some true (the carried `Inv` of `logAppendOnly fma0` holds AFTER)
-
--- The `SafetyShape` tag carries GENUINELY DISTINCT info across the three shipped contracts.
-#eval (KernelForest.logAppendOnly fma0).shape                                  -- SafetyShape.monotone
-#eval (KernelForest.conserved fma0).shape                                      -- SafetyShape.constant
-#eval (KernelForest.revokedPersists 42).shape                                  -- SafetyShape.membership
-#eval decide ((KernelForest.logAppendOnly fma0).shape ≠ (KernelForest.conserved fma0).shape)        -- true
-#eval decide ((KernelForest.conserved fma0).shape ≠ (KernelForest.revokedPersists 42).shape)        -- true
-
--- The two added app contracts (§3a) are NON-VACUOUS: the registry/queue readers DISCRIMINATE.
--- NameService: a binding not yet registered is genuinely `false` (the registry has teeth), and a real
--- `register` turn lands it `true` — so `nameRegisteredContract`'s `Inv` is a non-trivial fact.
-#eval Dregg2.Apps.NameService.isRegistered fma0
-        Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner                   -- false (not registered — teeth)
-#eval Dregg2.Apps.NameService.afterRegister.map (fun s => Dregg2.Apps.NameService.isRegistered s
-        Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner)                  -- some true (a real register lands it)
-#eval (KernelForest.nameRegisteredContract Dregg2.Apps.NameService.aliceName
-        Dregg2.Apps.NameService.aliceOwner).shape                                              -- SafetyShape.membership
--- Subscription: a real committed program builds a within-capacity queue (in-flight 1 ≤ capacity 2 — teeth).
-#eval (execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
-        (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity)))        -- some true (the carried subWF holds AFTER)
-#eval KernelForest.subWFContract.shape                                                                      -- SafetyShape.other
-#eval decide ((KernelForest.nameRegisteredContract 1 100).shape ≠ KernelForest.subWFContract.shape)                      -- true
+#guard (fma0.log.length == 0)
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => s'.log.length) == some 1)
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (fma0.log.length < s'.log.length)) == some true)
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (fma0.log.length ≤ s'.log.length)) == some true)
+#guard ((KernelForest.logAppendOnly fma0).shape == SafetyShape.monotone)
+#guard ((KernelForest.conserved fma0).shape == SafetyShape.constant)
+#guard ((KernelForest.revokedPersists 42).shape == SafetyShape.membership)
+#guard ((KernelForest.logAppendOnly fma0).shape ≠ (KernelForest.conserved fma0).shape)
+#guard ((KernelForest.conserved fma0).shape ≠ (KernelForest.revokedPersists 42).shape)
+#guard (Dregg2.Apps.NameService.isRegistered fma0
+          Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner == false)
+#guard (Dregg2.Apps.NameService.afterRegister.map (fun s => Dregg2.Apps.NameService.isRegistered s
+          Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner) == some true)
+#guard ((KernelForest.nameRegisteredContract Dregg2.Apps.NameService.aliceName
+          Dregg2.Apps.NameService.aliceOwner).shape == SafetyShape.membership)
+#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
+          (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity))) == some true)
+#guard (KernelForest.subWFContract.shape == SafetyShape.other)
+#guard ((KernelForest.nameRegisteredContract 1 100).shape ≠ KernelForest.subWFContract.shape)
 
 /-! ## §5 — Axiom hygiene — the contract object + its methods + the instances, kernel-triple clean. -/
 
@@ -303,5 +363,12 @@ contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying da
 #assert_axioms revokedPersists
 #assert_axioms nameRegisteredContract
 #assert_axioms subWFContract
+#assert_axioms identity_revoked_forever_production
+#assert_axioms spent_note_never_respent_production
+#assert_axioms no_double_spend_production
+#assert_axioms commitments_persist_production
+#assert_axioms nameservice_registration_forever_production
+#assert_axioms subscription_wellformed_forever_production
+#assert_axioms log_mono_forever_production
 
 end Dregg2.Verify

@@ -305,8 +305,8 @@ def aliceToBob : Transfer := { sender := 1, receiver := 2, amount := 50_000_000 
 
 -- The transfer's deltas sum to zero (the §4 balance invariant), and conservation holds for
 -- any prior community total (here 1000 micro of pre-existing credit elsewhere).
-#eval aliceToBob.deltas                              -- [-50000000, 50000000]
-#eval aliceToBob.deltas.sum                          -- 0  (Σδ = 0, conserving)
+#guard (aliceToBob.deltas == [-50000000, 50000000])                              -- [-50000000, 50000000]
+#guard (aliceToBob.deltas.sum == 0)                                              -- 0  (Σδ = 0, conserving)
 example : (1000 : Micro) + aliceToBob.deltas.sum = 1000 := clockdag_transfer_conserves aliceToBob 1000
 
 /-! ### 5.2 A detected double-spend (Invariant 2).
@@ -326,8 +326,8 @@ def dsTx2 : Dregg2.Authority.Blocklace.Block := { id := 3, creator := 9, seq := 
 def demoTxDag : TxDag := [genTx, dsTx1, dsTx2]
 
 -- The two double-spend txs share sender 9 and seq 1, but neither acks the other (incomparable).
-#eval decide (dsTx1.creator = dsTx2.creator ∧ dsTx1.seq = dsTx2.seq)   -- true  (same sender+seq)
-#eval decide (dsTx1.id ∈ dsTx2.preds ∨ dsTx2.id ∈ dsTx1.preds)         -- false (incomparable)
+#guard (decide (dsTx1.creator = dsTx2.creator ∧ dsTx1.seq = dsTx2.seq))   -- true  (same sender+seq)
+#guard (decide (dsTx1.id ∈ dsTx2.preds ∨ dsTx2.id ∈ dsTx1.preds) == false)         -- false (incomparable)
 
 /-- Sender `9`'s txs are not directly pointed at each other — the structural core of the
 double-spend conflict. -/
@@ -391,11 +391,11 @@ def commB : Dregg2.Exec.KernelState :=
 def demoSwap : HtlcSwap :=
   { actorA := 0, srcA := 0, actorB := 7, dstB := 7, amt := 30, sid := 42 }
 
-#eval (Dregg2.Exec.JointCell.jointApply commA commB demoSwap).isSome              -- true (commits)
-#eval Dregg2.Exec.JointCell.jointTotal commA commB                                -- 125 (105 + 20)
-#eval (Dregg2.Exec.JointCell.jointApply commA commB demoSwap).map
-        (fun p => Dregg2.Exec.JointCell.jointTotal p.1 p.2)                        -- some 125 (conserved)
-#eval Dregg2.Exec.JointCell.halfA demoSwap + Dregg2.Exec.JointCell.halfB demoSwap -- 0 (equal+opposite)
+#guard ((Dregg2.Exec.JointCell.jointApply commA commB demoSwap).isSome)              -- true (commits)
+#guard (Dregg2.Exec.JointCell.jointTotal commA commB == 125)                                -- 125 (105 + 20)
+#guard ((Dregg2.Exec.JointCell.jointApply commA commB demoSwap).map
+        (fun p => Dregg2.Exec.JointCell.jointTotal p.1 p.2) == some 125)                        -- some 125 (conserved)
+#guard (Dregg2.Exec.JointCell.halfA demoSwap + Dregg2.Exec.JointCell.halfB demoSwap == 0) -- 0 (equal+opposite)
 
 /-! ## 6. Axiom hygiene — pin the four SAFETY keystones (each reuses a verified dregg2 theorem).
 

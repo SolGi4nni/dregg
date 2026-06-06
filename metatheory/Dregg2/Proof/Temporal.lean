@@ -353,23 +353,23 @@ theorem always_conj_safety (s : RecChainedState) (sched : SchedA) :
     Always (fun s' => cellObsA s' = cellObsA s ∧ s.log.length ≤ s'.log.length) s sched :=
   always_and.mpr ⟨always_conserved s sched, always_logMono s sched⟩
 
-/-! ## It runs (`#eval`) — the temporal operators evaluated on a REAL committed transfer (non-vacuity).
+/-! ## It runs (`#guard`) — the temporal operators evaluated on a REAL committed transfer (non-vacuity).
 
 `CellReal.transferCF` (actor 0 transfers 30 of asset 0 from cell 0 to cell 1, a genuine commit on
 `fma0`) drives the head step. We check the `□`/`◇`/`◯` operators at concrete early indices so the
 temporal layer is demonstrably non-vacuous: the conserved badge IS equal at the next step, the log
 length DID grow, and the `Next` operator sees the real successor. (Full `□` is a `∀ n` Prop; the
-`#eval`s sample its content at the live indices the transfer actually moves.) -/
+`#guard`s sample its content at the live indices the transfer actually moves.) -/
 
-/-- The constant schedule firing `transferCF` at every tick (a concrete `SchedA` for `#eval`). -/
+/-- The constant schedule firing `transferCF` at every tick (a concrete `SchedA` for regression guards). -/
 def transferSched : SchedA := fun _ => transferCF
 
-#eval decide (cellObsA (trajA fma0 transferSched 1) 0 = cellObsA fma0 0)   -- true (□-conservation, index 1)
-#eval decide (cellObsA (trajA fma0 transferSched 2) 0 = cellObsA fma0 0)   -- true (□-conservation, index 2)
-#eval decide (fma0.log.length ≤ (trajA fma0 transferSched 1).log.length)   -- true (□-logMono, index 1)
-#eval decide (fma0.log.length < (trajA fma0 transferSched 1).log.length)   -- true (the log STRICTLY grew: ◇-progress witness)
-#eval (trajA fma0 transferSched 2).log.length                              -- 2 (two commits ⇒ two appended receipt rows)
-#eval decide ((trajA fma0 transferSched 0).log.length ≤ (trajA fma0 transferSched 3).log.length)  -- true (◯/suffix monotone)
+#guard (decide (cellObsA (trajA fma0 transferSched 1) 0 = cellObsA fma0 0))
+#guard (decide (cellObsA (trajA fma0 transferSched 2) 0 = cellObsA fma0 0))
+#guard (decide (fma0.log.length ≤ (trajA fma0 transferSched 1).log.length))
+#guard (decide (fma0.log.length < (trajA fma0 transferSched 1).log.length))
+#guard ((trajA fma0 transferSched 2).log.length == 2)
+#guard (decide ((trajA fma0 transferSched 0).log.length ≤ (trajA fma0 transferSched 3).log.length))
 
 /-! ## Axiom hygiene — every temporal keystone pinned to the standard kernel triple (NO `sorryAx`).
 

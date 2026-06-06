@@ -49,7 +49,7 @@ Status (which emit is green + the Rust-decoder additions each needs):
     `ConstraintExpr::Lookup`), `δ` being its membership predicate.
 
 No `axiom`/`admit`/`native_decide`/`sorry`. Bridges `#assert_axioms`-pinned. Golden wire bytes via
-`#eval`.
+`#guard`.
 -/
 import Dregg2.Exec.CircuitEmit
 import Dregg2.Crypto.Temporal
@@ -171,7 +171,7 @@ theorem emittedTemporal_bridge (lo hi t : Int) :
   · rintro ⟨c, h⟩; exact ⟨c, (emit_faithful_temporal c lo hi t).mp h⟩
   · rintro ⟨c, h⟩; exact ⟨c, (emit_faithful_temporal c lo hi t).mpr h⟩
 
-/-! ### Canonical temporal wire rendering (`#eval`-printable). -/
+/-! ### Canonical temporal wire rendering (`#guard`-pinned golden). -/
 
 /-- Render an `EmittedRange` as JSON `{"bit_cols":[…]}` — the decoder lowers it to `Binary`×n + the
 recomposition `Polynomial`. -/
@@ -187,7 +187,7 @@ def emitTemporalJson (d : EmittedTemporalDescriptor) : String :=
 /-- The canonical temporal wire string — copy this into the Rust golden. -/
 def temporalWire : String := emitTemporalJson emittedTemporal
 
-#eval temporalWire
+#guard (temporalWire == r#"{"name":"dregg-temporal-predicate-v1","trace_width":2,"public_input_count":3,"lo_range":{"bit_cols":[0]},"hi_range":{"bit_cols":[1]}}"#)
 #guard (emittedTemporal.publicInputCount) == 3  --  3 ([lo, hi, t])
 #guard (emittedTemporal.traceWidth) == 2  --  2 (two comparison lanes)
 
@@ -295,7 +295,7 @@ theorem emittedNonMembership_bridge {Digest : Type u} [LinearOrder Digest]
     obtain ⟨circuit, hsat⟩ := hcomplete lo hi hsorted hadj hlo hhi hlomem himem
     exact ⟨circuit, (emit_faithful_nonMembership compress circuit root e leaves).mpr hsat⟩
 
-/-! ### Canonical non-membership wire rendering (`#eval`-printable; reuses the Merkle renderer). -/
+/-! ### Canonical non-membership wire rendering (`#guard`-pinned golden; reuses the Merkle renderer). -/
 
 /-- **`emitNonMembershipJson`** — the full canonical wire string: name, widths, the TWO reused Merkle
 sub-descriptors (rendered by PART II's `emitMerkleJson`), and the PI count. The decoder rebuilds the
@@ -309,7 +309,7 @@ def emitNonMembershipJson (d : EmittedNonMembershipDescriptor) : String :=
 /-- The canonical non-membership wire string — copy this into the Rust golden. -/
 def nonMembershipWire : String := emitNonMembershipJson emittedNonMembership
 
-#eval nonMembershipWire
+#guard (nonMembershipWire == r#"{"name":"dregg-non-membership-v1","trace_width":6,"public_input_count":2,"lo_merkle":{"name":"dregg-merkle-poseidon2-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]},"hi_merkle":{"name":"dregg-merkle-poseidon2-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}}"#)
 #guard (emittedNonMembership.publicInputCount) == 2  --  2 ([root, e])
 
 #assert_axioms emit_faithful_nonMembership
@@ -392,7 +392,7 @@ theorem emittedPedersen_bridge {Digest : Type u} [AddCommGroup Digest]
   rw [emit_faithful_pedersen commit (statementOf commit circuit) circuit]
   exact pedersen_conservation_bridge commit circuit
 
-/-! ### Canonical Pedersen wire rendering (`#eval`-printable). -/
+/-! ### Canonical Pedersen wire rendering (`#guard`-pinned golden). -/
 
 /-- **`emitPedersenJson`** — the full canonical wire string for the emitted Pedersen descriptor. The
 decoder rebuilds the value-commitment column wiring (commit `PiBinding`s + per-note range + the
@@ -405,7 +405,7 @@ def emitPedersenJson (d : EmittedPedersenDescriptor) : String :=
 /-- The canonical Pedersen wire string — copy this into the Rust golden. -/
 def pedersenWire : String := emitPedersenJson emittedPedersen
 
-#eval pedersenWire
+#guard (pedersenWire == r#"{"name":"dregg-pedersen-value-commitment-v1","trace_width":3,"public_input_count":0,"has_conservation":true}"#)
 #guard (emittedPedersen.hasConservation)  --  true (the conservation boundary)
 
 #assert_axioms emit_faithful_pedersen
@@ -497,7 +497,7 @@ theorem emittedDfa_bridge {State Sym : Type u} (δ : State → Sym → State →
     obtain ⟨circuit, hsat⟩ := hcomplete hacc
     exact ⟨circuit, (emit_faithful_dfa δ q₀ accept circuit).mpr hsat⟩
 
-/-! ### Canonical DFA wire rendering (`#eval`-printable). -/
+/-! ### Canonical DFA wire rendering (`#guard`-pinned golden). -/
 
 /-- **`emitDfaJson`** — the full canonical wire string for the emitted DFA descriptor. The decoder
 rebuilds the `dfa_lookup_descriptor`: the `Lookup` table id + the `[state,byte,next]` column triple +
@@ -510,7 +510,7 @@ def emitDfaJson (d : EmittedDfaDescriptor) : String :=
 /-- The canonical DFA wire string — copy this into the Rust golden. -/
 def dfaWire : String := emitDfaJson emittedDfa
 
-#eval dfaWire
+#guard (dfaWire == r#"{"name":"dregg-dfa-lookup-v1","trace_width":3,"lookup_table_id":0,"public_input_count":2}"#)
 #guard (emittedDfa.publicInputCount) == 2  --  2 ([q₀, accept-marker])
 #guard (emittedDfa.traceWidth) == 3  --  3 ([state, byte, next_state])
 

@@ -365,13 +365,13 @@ theorem demo_bridge_fires :
     show demoFs.T - demoFs.δ ≤ demoRt Dregg2.Authority.Blocklace.g0
     simp [demoRt, demoFs, Dregg2.Authority.Blocklace.g0, Dregg2.Authority.Blocklace.g1]
 
-/-! ### `#eval` smoke — the deadline kinds + their discharge bits. -/
+/-! ### `#guard` smoke — the deadline kinds + their discharge bits. -/
 
-#eval demoCausal.kind                                                        -- true  (lightcone fact)
-#eval demoFrame.kind                                                         -- false (frame convention)
+#guard (demoCausal.kind)                                                        -- true  (lightcone fact)
+#guard (demoFrame.kind == false)                                                -- false (frame convention)
 -- the causal demo is met for free (the ack edge is present); the frame one is not (no authority).
-#eval decide (Dregg2.Authority.Blocklace.g0.id ∈ Dregg2.Authority.Blocklace.g1.preds)  -- true
-#eval registryVerify (fun _ => none : Registry Nat Nat) .temporal 0 0        -- false (frame fails closed)
+#guard (decide (Dregg2.Authority.Blocklace.g0.id ∈ Dregg2.Authority.Blocklace.g1.preds))  -- true
+#guard (registryVerify (fun _ => none : Registry Nat Nat) .temporal 0 0 == false)        -- false (frame fails closed)
 
 /-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
 

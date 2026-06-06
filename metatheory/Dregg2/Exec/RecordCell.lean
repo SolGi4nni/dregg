@@ -181,20 +181,20 @@ theorem recExec_mono_holds
           rw [hoa, hnb] at hadm
           exact ⟨a, b, rfl, rfl, of_decide_eq_true hadm⟩
 
-/-! ## `#eval` demos — a counter cell: increment commits, decrement is rejected (fail-closed). -/
+/-! ## `#guard` demos — a counter cell: increment commits, decrement is rejected (fail-closed). -/
 
 /-- A counter record sitting at `count = 5`. -/
 def counterCell : Value := .record [("count", .int 5)]
 
 -- Incrementing by 1 ⇒ candidate `count = 6 ≥ 5` ⇒ admitted ⇒ commits.
-#eval recExec monoCountProgram 0 counterCell (.addScalar "count" 1)    -- some (record [("count", int 6)])
+#guard ((recExec monoCountProgram 0 counterCell (.addScalar "count" 1)).map (fun v => v.scalar "count")) == some (some 6)  --  some (record [("count", int 6)])
 -- Decrementing by 2 ⇒ candidate `count = 3 ≥ 5`? no ⇒ rejected ⇒ none (fail-closed).
 #guard (recExec monoCountProgram 0 counterCell (.addScalar "count" (-2))).isNone  --  none
 -- `setScalar` to a higher value commits; to a lower value is rejected.
-#eval recExec monoCountProgram 0 counterCell (.setScalar "count" 9)    -- some (record [("count", int 9)])
+#guard ((recExec monoCountProgram 0 counterCell (.setScalar "count" 9)).map (fun v => v.scalar "count")) == some (some 9)  --  some (record [("count", int 9)])
 #guard (recExec monoCountProgram 0 counterCell (.setScalar "count" 2)).isNone  --  none
 -- The terminal program `.none` admits every candidate — the op always commits.
-#eval recExec .none 0 counterCell (.addScalar "count" (-100))          -- some (record [("count", int -95)])
+#guard ((recExec .none 0 counterCell (.addScalar "count" (-100))).map (fun v => v.scalar "count")) == some (some (-95))  --  some (record [("count", int -95)])
 -- A `circuit` program admits nothing in the pure evaluator (needs its proof) ⇒ always none.
 #guard (recExec (.circuit 7) 0 counterCell (.addScalar "count" 1)).isNone  --  none
 

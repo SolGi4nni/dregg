@@ -238,7 +238,7 @@ theorem quota_enforced
       rw [hu] at hquota
       exact ⟨used, rfl, of_decide_eq_true hquota⟩
 
-/-! ## `#eval` demos — the economic discipline, executable. -/
+/-! ## `#guard` demos — the economic discipline, executable. -/
 
 /-- A relay-operator cell at rest: bond 1000, floor 100, quota 1_000_000, 500 bytes used this
 epoch, operator id 7, 0 disputes, hosted-root 0. (Quota cap = 1_000_000.) -/
@@ -257,8 +257,7 @@ def cap : Int := 1000000
 
 -- A relay WITHIN quota commits: 500 + 1000 = 1500 ≤ 1_000_000, bond unchanged (non-decreasing),
 -- disputes unchanged, all immutables held ⇒ admitted.
-#eval relayStep cap methodRelay relayCell (opRelay 1000)
--- some (... bytesThisEpoch = 1500 ...)
+#guard ((relayStep cap methodRelay relayCell (opRelay 1000)).map (fun v => v.scalar "bytesThisEpoch")) == some (some 1500)  --  some (... bytesThisEpoch = 1500 ...)
 
 -- A relay EXCEEDING quota is rejected: 500 + 2_000_000 = 2_000_500 > 1_000_000 ⇒ none (fail-closed).
 #guard (relayStep cap methodRelay relayCell (opRelay 2000000)).isNone  -- none

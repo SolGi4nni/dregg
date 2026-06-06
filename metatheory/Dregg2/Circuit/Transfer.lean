@@ -638,8 +638,8 @@ genuine Lean-derived `transferCircuit` (not a hand-coded mirror). Copy this exac
 Rust `lean_emitted_transfer_roundtrip` golden. -/
 def transferDescriptorJson : String := emitDescriptorJson emittedTransfer
 
--- Print the transfer wire bytes the Rust decoder parses (the golden input for the Rust round-trip).
-#eval transferDescriptorJson
+-- `#guard` golden pin: transfer wire bytes the Rust decoder parses (Rust `TRANSFER_DESCRIPTOR_JSON`).
+#guard (transferDescriptorJson == r#"{"name":"dregg-transfer-v1","trace_width":11,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}]}"#)
 
 -- Sanity: the emitted descriptor has the nine gates and eleven wires.
 #guard emittedTransfer.constraints.length == 9
@@ -689,8 +689,8 @@ into the Rust `lean_emitted_transfer_field_sound` golden. -/
 def transferDescriptorRangedJson : String :=
   CircuitEmit.emitRangedDescriptorJson emittedTransferRanged
 
--- Print the range-checked transfer wire bytes (the golden input for the Rust field-soundness test).
-#eval transferDescriptorRangedJson
+-- `#guard` golden pin: range-checked transfer wire bytes (Rust `TRANSFER_DESCRIPTOR_RANGED_JSON`).
+#guard (transferDescriptorRangedJson == r#"{"name":"dregg-transfer-v1","trace_width":11,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}],"ranges":[{"wire":0,"bits":30},{"wire":1,"bits":30},{"wire":2,"bits":30},{"wire":3,"bits":30}]}"#)
 
 -- Sanity: the ranged descriptor carries four range checks (one per balance wire), each 30 bits.
 #guard emittedTransferRanged.ranges.length == 4

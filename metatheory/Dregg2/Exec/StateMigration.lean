@@ -264,7 +264,7 @@ theorem migrate_anti_brick_preserves (m : Migration) (v : Value)
 #assert_axioms conformsFields_cons_of
 #assert_axioms prepend_fresh_conformsFields
 
-/-! ## It runs (`#eval`) — a field-add migration that preserves balance, and a bad one that falls back. -/
+/-! ## It runs (`#guard`) — a field-add migration that preserves balance, and a bad one that falls back. -/
 
 /-- v1 account schema: just a `balance`. -/
 def schemaV1 : Schema := [("balance", .scalar)]
@@ -289,8 +289,8 @@ def badMig : Migration where
 
 -- Good migration: passes the gate, applies the field-add, balance preserved, conforms to v2.
 #guard (migrationOK goodMig acctV1)  --  true
-#eval applyMigration goodMig acctV1
-  -- record [("frozen", int 0), ("balance", int 100)]
+#guard ((applyMigration goodMig acctV1).scalar "frozen") == some 0  --  record [("frozen", int 0), ("balance", int 100)]
+#guard ((applyMigration goodMig acctV1).scalar "balance") == some 100
 #guard (conforms (applyMigration goodMig acctV1) (.record schemaV2))  --  true
 #guard (balOf (applyMigration goodMig acctV1) == balOf acctV1)  --  true
 #guard (balOf (applyMigration goodMig acctV1)) == 100  --  100 (conserved)
@@ -298,13 +298,14 @@ def badMig : Migration where
 -- Bad migration: FAILS the gate (balance destroyed), so it falls back to the ORIGINAL value —
 -- the cell is NOT bricked; balance survives; the migration is authorized by the owner signature.
 #guard (migrationOK badMig acctV1) == false  --  false
-#eval applyMigration badMig acctV1                                 -- record [("balance", int 100)] (fell back to identity = acctV1)
+#guard ((applyMigration badMig acctV1).scalar "balance") == some 100  --  record [("balance", int 100)] (fell back to identity = acctV1)
+#guard ((applyMigration badMig acctV1).scalar "frozen").isNone
 #guard (balOf (applyMigration badMig acctV1) == balOf acctV1)  --  true  (conserved via fallback)
 #guard (balOf (applyMigration badMig acctV1)) == 100  --  100  (conserved via fallback)
 #guard (decide (setProgramAdmissible 7 3 migrationFallbackAuth))  --  true (owner-signature arm)
 
 -- A field-RENAME migration (re-key, value preserved) also keeps the balance under `renameField`:
-#eval renameField "bal" "balance" (.record [("bal", .int 42)])
-  -- record [("balance", int 42)]
+#guard ((renameField "bal" "balance" (.record [("bal", .int 42)])).scalar "balance") == some 42  --  record [("balance", int 42)]
+#guard ((renameField "bal" "balance" (.record [("bal", .int 42)])).scalar "bal").isNone
 
 end Dregg2.Exec

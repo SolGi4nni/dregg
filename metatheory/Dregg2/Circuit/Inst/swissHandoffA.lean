@@ -165,16 +165,16 @@ theorem apex_iff_handoffSpec (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
     refine ⟨hg, s'.kernel, hk, ?_⟩
     cases s'; simp [hlog]
   · rintro ⟨hg, k', hk, hs'⟩
-    rcases hs' with ⟨hker, hlog⟩
     rcases withSwiss_preserves_rest s.kernel k'.swiss with
       ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     obtain ⟨e, hf⟩ := hg.2
     have hupd := handoffSwissUpdate_some s.kernel.swiss args.sw args.certHash e hf
-    have hsw := (handoffSwissUpdate_eq_k s.kernel args.sw args.certHash k'.swiss).mpr hk
-    subst hker
+    have hk' := swissHandoffK_eq_withSwiss hk
+    have hsw := (handoffSwissUpdate_eq_k s.kernel args.sw args.certHash k'.swiss).mpr hk'
     cases s'
-    simp [hlog, handoffSwissPostClause, hsw, hupd]
-    exact ⟨hg, rfl, hlog, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+    subst hs'
+    simp [handoffSwissPostClause, hsw, hupd]
+    exact ⟨hg, rfl, rfl, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩⟩
 
 /-! ### §2c — THE VALIDATION. -/

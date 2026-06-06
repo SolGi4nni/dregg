@@ -301,7 +301,7 @@ theorem gatedSend_also_admitted
 -- `Exec/Program.lean`'s `boundDelta`/`Witnessed` deferral). We defer it identically and honestly,
 -- rather than fake a binding the single-cell evaluator cannot witness.
 
-/-! ## It runs (`#eval`) — a fresh inbox; a send; a dequeue; rejected malformed transitions. -/
+/-! ## It runs (`#guard`) — a fresh inbox; a send; a dequeue; rejected malformed transitions. -/
 
 /-- A fresh inbox at `head = tail = 0`, `inflight = 0`, capacity 3, owner-ref 7. Conforms to
 `inboxSchema`; `tail ≤ head` (0 ≤ 0) and `inflight ≤ capacity` (0 ≤ 3) hold. -/
@@ -318,19 +318,18 @@ def inbox2 : Value :=
 #guard (conforms freshInbox (.record inboxSchema))  --  true
 
 -- A SEND on a fresh inbox: head 0→1, inflight 0→1. tail (0) ≤ head (1) ✓, inflight (1) ≤ cap (3) ✓
-#eval inboxExec (inboxProgram 3) methodSend freshInbox sendOps
--- some (record [head 1, tail 0, capacity 3, owner 7, inflight 1])
+#guard (((inboxExec (inboxProgram 3) methodSend freshInbox sendOps).map
+        (fun v => (v.scalar "head", v.scalar "tail", v.scalar "inflight"))) == some (some 1, some 0, some 1))  --  some (record [head 1, tail 0, capacity 3, owner 7, inflight 1])
 
 -- A DEQUEUE on `inbox2` (head 2, tail 0): tail 0→1, inflight 2→1. tail (1) ≤ head (2) ✓
-#eval inboxExec (inboxProgram 3) methodDequeue inbox2 dequeueOps
--- some (record [head 2, tail 1, capacity 3, owner 7, inflight 1])
+#guard (((inboxExec (inboxProgram 3) methodDequeue inbox2 dequeueOps).map
+        (fun v => (v.scalar "head", v.scalar "tail", v.scalar "inflight"))) == some (some 2, some 1, some 1))  --  some (record [head 2, tail 1, capacity 3, owner 7, inflight 1])
 
 -- A SEND that would BREACH CAPACITY: at inbox2 (inflight 2), a send → inflight 3 ≤ cap 3 still ok;
 -- but at a full inbox (inflight = cap = 3) a further send → inflight 4 > 3 ⇒ REJECTED (none):
-#eval inboxExec (inboxProgram 3) methodSend
+#guard (inboxExec (inboxProgram 3) methodSend
         (.record [ ("head", .int 3), ("tail", .int 0), ("capacity", .int 3)
-                 , ("owner", .dig 7), ("inflight", .int 3) ]) sendOps
--- none  (inflight would be 4 > capacity 3 — capacity bound rejects)
+                 , ("owner", .dig 7), ("inflight", .int 3) ]) sendOps).isNone  --  none  (inflight would be 4 > capacity 3 — capacity bound rejects)
 
 -- A MALFORMED transition: tail > head. Start from a (deliberately malformed) state where a dequeue
 -- would push tail past head — `tail = head = 0`, dequeue ⇒ tail 1 > head 0 ⇒ REJECTED:
@@ -352,8 +351,8 @@ def senderToken : Token SendCtx Unit :=
 def noDischarges : Discharges Unit := fun _ => false
 
 -- A gated send WITH a discharging token at ctx 500 (≤ 1000) ⇒ token discharges AND program admits:
-#eval gatedSend 3 senderToken 500 noDischarges freshInbox
--- some (record [head 1, tail 0, capacity 3, owner 7, inflight 1])
+#guard (((gatedSend 3 senderToken 500 noDischarges freshInbox).map
+        (fun v => (v.scalar "head", v.scalar "tail", v.scalar "inflight"))) == some (some 1, some 0, some 1))  --  some (record [head 1, tail 0, capacity 3, owner 7, inflight 1])
 
 -- A gated send whose token FAILS to discharge (ctx 2000 > 1000) ⇒ REJECTED before the program runs:
 #guard (gatedSend 3 senderToken 2000 noDischarges freshInbox).isNone  -- none  (the authorized-sender caveat narrowed this request out — sender not authorized here)

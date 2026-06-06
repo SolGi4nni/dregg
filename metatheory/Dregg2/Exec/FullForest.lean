@@ -738,8 +738,8 @@ def launderFullForest : FullForestA :=
 def strictEdge : List Auth × Cap := ([Auth.read], .endpoint 1 [Auth.read, Auth.write])
 
 -- The parent confers `[read, write]`; the attenuated child confers only `[read]` — write DROPPED:
-#eval capAuthConferred strictEdge.2                                         -- [read, write]
-#eval capAuthConferred (attenuate strictEdge.1 strictEdge.2)               -- [read] (write strictly dropped)
+#guard (capAuthConferred strictEdge.2 == [Auth.read, Auth.write])  --  [read, write]
+#guard (capAuthConferred (attenuate strictEdge.1 strictEdge.2) == [Auth.read])  --  [read] (write strictly dropped)
 -- The attenuation STRICTLY shrinks the conferred rights (a real element gone), NOT mere ⊆:
 #guard (decide ((capAuthConferred (attenuate strictEdge.1 strictEdge.2)).length
                 < (capAuthConferred strictEdge.2).length))  --  true (STRICT drop)

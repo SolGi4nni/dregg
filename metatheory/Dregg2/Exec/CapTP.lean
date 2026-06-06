@@ -417,7 +417,7 @@ does not yet carry; we leave it as a documented residue rather than a `sorry`/`a
   --   death_is_timed_out / cross-vat-cycle impossibility); needs a cross-vat lease model.
 -/
 
-/-! ## §5 — Non-vacuity: concrete small instances (#eval / example).
+/-! ## §5 — Non-vacuity: concrete small instances (#guard / example).
 
 Concrete witnesses that the pipelined-call and 3-vat-handoff models are inhabited and the
 keystones fire on real data — not vacuous. We use the simplest non-degenerate carriers:
@@ -488,8 +488,10 @@ example : Introduce demoGraph (fun _ => True) true false
 example : demoCert.granted.rights ≤ demoCert.held.rights :=
   handoff_non_amplifying demoValid
 
-#eval s!"demo pipelined eventual-send: method={demoCall.method}, target cell={demoCall.targetCell}"
-#eval s!"demo handoff: A={demoCert.introducer} → B={demoCert.recipient}, target consents, non-amplifying ✓"
+#guard (s!"demo pipelined eventual-send: method={demoCall.method}, target cell={demoCall.targetCell}"
+        == "demo pipelined eventual-send: method=get_balance, target cell=false")
+#guard (s!"demo handoff: A={demoCert.introducer} → B={demoCert.recipient}, target consents, non-amplifying ✓"
+        == "demo handoff: A=true → B=false, target consents, non-amplifying ✓")
 
 end NonVacuity
 

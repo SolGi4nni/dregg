@@ -17,8 +17,8 @@ The pieces:
   * **`EmittedDescriptor`** — a Lean structure mirroring the *fields* of Rust's
     `CircuitDescriptor` (name, trace_width, constraints), where each constraint is a pair of
     `EmittedExpr` ASTs (mirroring the var/const/add/mul shape; the generic
-    `ConstraintExpr::Polynomial`/AST surface). It is `Repr`-printable, so `#eval emitJson …`
-    prints the canonical wire string the Rust decoder parses.
+    `ConstraintExpr::Polynomial`/AST surface). It is `Repr`-printable; `#guard` golden pins on
+    `emitJson …` check the canonical wire string the Rust decoder parses.
   * **`emit`** — the deterministic serializer `ConstraintSystem → EmittedDescriptor`.
   * **`decodeE`** — the inverse `EmittedDescriptor → ConstraintSystem`.
   * **`satisfiedEmitted`** — `satisfied` lifted to the emitted form.
@@ -211,7 +211,7 @@ theorem emittedKernel_bridge (s : Dregg2.Exec.ChainedState) (t : Dregg2.Exec.Tur
   rw [← emit_faithful]
   exact bridge s t s'
 
-/-! ## The canonical wire string (`#eval`-printable; the byte form Rust decodes).
+/-! ## The canonical wire string (`#guard`-pinned golden; the byte form Rust decodes).
 
 A deterministic, minimal JSON renderer. The Rust decoder (`circuit_decode.rs`) parses this
 exact grammar. Keeping the renderer in Lean (not a derived `ToJson`) makes the wire grammar
@@ -239,7 +239,7 @@ private def constraintsToJson : List EmittedConstraint → String
   | c :: cs => "[" ++ c.toJson ++ (cs.foldl (fun acc x => acc ++ "," ++ x.toJson) "") ++ "]"
 
 /-- **`emitJson`** — the full canonical wire string for an emitted descriptor. This is what
-`#eval` prints and the Rust decoder ingests. -/
+the `#guard` golden pin checks and the Rust decoder ingests. -/
 def emitJson (d : EmittedDescriptor) : String :=
   "{\"name\":\"" ++ d.name ++ "\",\"trace_width\":" ++ toString d.traceWidth ++
   ",\"constraints\":" ++ constraintsToJson d.constraints ++ "}"
@@ -258,9 +258,8 @@ def emitDescriptorJson (d : EmittedDescriptor) : String := emitJson d
 /-- The canonical wire string for the kernel circuit — copy this into the Rust golden. -/
 def kernelWire : String := emitJson emittedKernel
 
--- Print the wire string + sanity facts. `#eval kernelWire` prints the bytes the Rust
--- decoder parses; the Rust differential pins this exact string as its golden input.
-#eval kernelWire
+-- `#guard` golden pin: kernel wire bytes the Rust decoder parses.
+#guard (kernelWire == r#"{"name":"dregg-kernel-step-v1","trace_width":6,"constraints":[{"lhs":{"t":"var","v":1},"rhs":{"t":"var","v":0}},{"lhs":{"t":"var","v":2},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":4},"rhs":{"t":"add","l":{"t":"var","v":3},"r":{"t":"const","v":1}}}]}"#)
 #guard (emittedKernel.constraints.length) == 4  --  4 gates
 #guard (emittedKernel.traceWidth) == 6  --  6 wires
 
@@ -429,7 +428,7 @@ theorem emittedMerkle_bridge {Digest : Type u} (compress : Digest → Digest →
   · rintro ⟨circuit, h⟩
     exact ⟨circuit.rows, (emit_faithful_merkle compress circuit.rows root leaf).mpr h⟩
 
-/-! ### Canonical Merkle wire rendering (`#eval`-printable; the bytes the Rust decoder ingests).
+/-! ### Canonical Merkle wire rendering (`#guard`-pinned golden; the bytes the Rust decoder ingests).
 
 Renders the column-indexed forms to a stable JSON grammar mirroring the Rust `ConstraintExpr`
 variant tags (`merkle_hash`/`transition`/`pi_binding_first`/`pi_binding_last`) so the decoder
@@ -465,8 +464,8 @@ def emitMerkleJson (d : EmittedMerkleDescriptor) : String :=
 /-- The canonical Merkle wire string — copy this into the Rust golden. -/
 def merkleWire : String := emitMerkleJson emittedMerkle
 
--- Print the Merkle wire bytes the Rust decoder parses + sanity facts.
-#eval merkleWire
+-- `#guard` golden pin: Merkle wire bytes the Rust decoder parses.
+#guard (merkleWire == r#"{"name":"dregg-merkle-poseidon2-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}"#)
 #guard (emittedMerkle.constraints.length) == 4  --  4 wire constraints (MerkleHash + Transition + 2 PiBinding)
 #guard (emittedMerkle.traceWidth) == 6  --  6 wires
 
@@ -796,7 +795,7 @@ theorem merkleC1_position_valid (env : RowEnv) :
     · exact Or.inr (Or.inr (Or.inr (by linarith [sub_eq_zero.1 h3])))
   · rintro (h | h | h | h) <;> rw [h] <;> ring
 
-/-! ### Canonical algebraic wire rendering (`#eval`-printable; the Rust decoder grammar).
+/-! ### Canonical algebraic wire rendering (`#guard`-pinned golden; the Rust decoder grammar).
 
 The wire tags mirror the snake-cased Rust `ConstraintExpr` variant names so the decoder rebuilds
 the exact enum. `polynomial` terms carry `coeff` (signed integer) + `cols` (the column-index
@@ -836,9 +835,9 @@ def EmittedConstraintA.toJson : EmittedConstraintA → String
       "{\"t\":\"conditional_nonzero\",\"selector_col\":" ++ toString sel ++ ",\"value_col\":" ++ toString v ++ ",\"inverse_col\":" ++ toString inv ++ "}"
   | .atLeastOne flags        => "{\"t\":\"at_least_one\",\"flag_cols\":" ++ natsToJson flags ++ "}"
 
--- Print the C1 wire form + sanity facts. The Rust decoder reconstructs
+-- `#guard` golden pin: C1 polynomial wire form. The Rust decoder reconstructs
 -- `ConstraintExpr::Polynomial { terms }` from this exact grammar.
-#eval merkleC1Poly.toJson
+#guard (merkleC1Poly.toJson == r#"{"t":"polynomial","terms":[{"coeff":1,"cols":[4,4,4,4]},{"coeff":-6,"cols":[4,4,4]},{"coeff":11,"cols":[4,4]},{"coeff":-6,"cols":[4]}]}"#)
 
 /-! ### Axiom-hygiene pins for the algebraic extension. -/
 

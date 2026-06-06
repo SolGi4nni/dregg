@@ -300,7 +300,7 @@ example : True := by
     (have : VC_preserve ledgerSM 0 badSpec := by vcg_discharge)
   trivial
 
-/-! ## §7 — `#eval` discriminating checks (fail-closed: admit the good, reject the bad).
+/-! ## §7 — `#guard` discriminating checks (fail-closed: admit the good, reject the bad).
 
 The VCG runs over the EXACT `ledgerSM` term the eDSL produced. Its admissibility gate must fire on
 a well-formed lifecycle move and reject every violation — so VC class 1 is about a genuinely-gated
@@ -308,37 +308,21 @@ arrow, not a vacuous one. (Method is irrelevant for a `.predicate` program — a
 
 /- A good move: Open→Settling (status 0→1), `seq` ticks up (3→4), conservation held (escrowed 100,
 paidOut 0 → escrowed 70, paidOut 30; 70+30 = 100). ADMITTED. -/
-#eval ledgerSM.admits 0
-  (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
-  (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 4), ("status", .int 1)])  -- true
-
 example : ledgerSM.admits 0
   (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
   (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 4), ("status", .int 1)]) = true := by decide
 
 /- A bad move — conservation VIOLATED (70 + 40 = 110 ≠ 100). REJECTED (fail-closed). -/
-#eval ledgerSM.admits 0
-  (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
-  (.record [("escrowed", .int 70),  ("paidOut", .int 40), ("seq", .int 4), ("status", .int 1)])  -- false
-
 example : ledgerSM.admits 0
   (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
   (.record [("escrowed", .int 70),  ("paidOut", .int 40), ("seq", .int 4), ("status", .int 1)]) = false := by decide
 
 /- A bad move — `seq` DECREASED (3 → 2), monotone violated. REJECTED. -/
-#eval ledgerSM.admits 0
-  (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
-  (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 2), ("status", .int 1)])  -- false
-
 example : ledgerSM.admits 0
   (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
   (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 2), ("status", .int 1)]) = false := by decide
 
 /- A bad move — illegal lifecycle edge Open→Settled (status 0→2, not an allowed edge). REJECTED. -/
-#eval ledgerSM.admits 0
-  (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
-  (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 4), ("status", .int 2)])  -- false
-
 example : ledgerSM.admits 0
   (.record [("escrowed", .int 100), ("paidOut", .int 0), ("seq", .int 3), ("status", .int 0)])
   (.record [("escrowed", .int 70),  ("paidOut", .int 30), ("seq", .int 4), ("status", .int 2)]) = false := by decide

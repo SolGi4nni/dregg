@@ -269,24 +269,24 @@ theorem token_is_object_reflection_of_conservation {α : Type u} [DecidableEq α
 #assert_axioms cancellative_self_substitutes
 #assert_axioms token_is_object_reflection_of_conservation
 
-/-! ## §8. Non-vacuity #evals — the witnesses are CONCRETE and have teeth. -/
+/-! ## §8. Non-vacuity `#guard`s — the witnesses are CONCRETE and have teeth. -/
 
 section Evals
 open GSet
 
 -- A nonempty `GSet ℕ` is idempotent: `{7} ∪ {7} = {7}` → `true`.
-#eval decide (((⟨{7}⟩ : GSet ℕ) * (⟨{7}⟩ : GSet ℕ)).carrier = (⟨{7}⟩ : GSet ℕ).carrier)  -- true
+#guard (decide (((⟨{7}⟩ : GSet ℕ) * (⟨{7}⟩ : GSet ℕ)).carrier = (⟨{7}⟩ : GSet ℕ).carrier))  -- true
 -- … but it is NOT the unit: `{7} = ∅` → `false`.
-#eval decide (((⟨{7}⟩ : GSet ℕ).carrier) = (1 : GSet ℕ).carrier)                          -- false
+#guard (decide (((⟨{7}⟩ : GSet ℕ).carrier) = (1 : GSet ℕ).carrier) == false)                  -- false
 -- The identity retract reads back what it embeds, concretely on a ℤ-money element.
-#eval decide ((SoundSubstitution.id (Multiplicative ℤ)).read
+#guard (decide ((SoundSubstitution.id (Multiplicative ℤ)).read
                 ((SoundSubstitution.id (Multiplicative ℤ)).embed (Multiplicative.ofAdd 5))
-              = Multiplicative.ofAdd 5)                                                    -- true
+              = Multiplicative.ofAdd 5))                                                    -- true
 -- The obstruction's contradiction is concrete: in the cancellative `Multiplicative ℤ`,
 -- the ONLY idempotent is `1` — `ofAdd 3` is NOT idempotent (`ofAdd 3 * ofAdd 3 = ofAdd 6 ≠
 -- ofAdd 3`), so there is no non-trivial idempotent to embed into.
-#eval decide ((Multiplicative.ofAdd (3 : ℤ) * Multiplicative.ofAdd (3 : ℤ))
-              = Multiplicative.ofAdd (3 : ℤ))                                              -- false
+#guard (decide ((Multiplicative.ofAdd (3 : ℤ) * Multiplicative.ofAdd (3 : ℤ))
+              = Multiplicative.ofAdd (3 : ℤ)) == false)                                      -- false
 
 end Evals
 

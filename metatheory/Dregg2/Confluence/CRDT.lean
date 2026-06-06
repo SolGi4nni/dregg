@@ -525,41 +525,41 @@ def gcEx : GCounter (Fin 3) := fun i => [2, 0, 5].get i
 def gcEx2 : GCounter (Fin 3) := fun i => [1, 4, 5].get i
 
 -- Merge is per-key max: `(2,0,5) ⊔ (1,4,5) = (2,4,5)`.
-#eval ((gcEx ⊔ gcEx2) 0, (gcEx ⊔ gcEx2) 1, (gcEx ⊔ gcEx2) 2)  -- (2, 4, 5)
+#guard (((gcEx ⊔ gcEx2) 0, (gcEx ⊔ gcEx2) 1, (gcEx ⊔ gcEx2) 2) == (2, 4, 5))  -- (2, 4, 5)
 
 -- Merge idempotent (`g ⊔ g = g`): `true`.
-#eval decide (∀ i : Fin 3, (gcEx ⊔ gcEx) i = gcEx i)  -- true
+#guard (decide (∀ i : Fin 3, (gcEx ⊔ gcEx) i = gcEx i))  -- true
 
 -- Merge commutative on this pair: `true`.
-#eval decide (∀ i : Fin 3, (gcEx ⊔ gcEx2) i = (gcEx2 ⊔ gcEx) i)  -- true
+#guard (decide (∀ i : Fin 3, (gcEx ⊔ gcEx2) i = (gcEx2 ⊔ gcEx) i))  -- true
 
 -- A grow-only lower bound `2 ≤ g 0` survives merge with `gcEx2` (`2 ≤ 2`): `true`.
-#eval decide (2 ≤ (gcEx ⊔ gcEx2) 0)  -- true
+#guard (decide (2 ≤ (gcEx ⊔ gcEx2) 0))  -- true
 
 -- The bounded clash: `(1,0)` and `(0,1)` each `consumed ≤ 1`, merge `consumed = 2 > 1`.
 def clashX : Budget := fun i => if i = 0 then 1 else 0
 def clashY : Budget := fun i => if i = 0 then 0 else 1
-#eval (consumed clashX, consumed clashY, consumed (clashX ⊔ clashY))  -- (1, 1, 2)
+#guard ((consumed clashX, consumed clashY, consumed (clashX ⊔ clashY)) == (1, 1, 2))  -- (1, 1, 2)
 -- The clash, as the decidable underlying inequality: `¬ consumed (merge) ≤ 1`.
-#eval decide (¬ consumed (clashX ⊔ clashY) ≤ 1)  -- true
+#guard (decide (¬ consumed (clashX ⊔ clashY) ≤ 1))  -- true
 
 -- An escrow with quota `(3, 2)` (B = 5); replica 0 consumes 2 (room: 0+2 ≤ 3) ⇒
 -- still within quota, and global `2 + 0 = 2 ≤ 5`.
 def quotaEx : GCounter (Fin 2) := fun i => if i = 0 then 3 else 2
 def escrowState : GCounter (Fin 2) := fun _ => 0
 -- The local decrement stays in-bound, as the decidable underlying ∀: `∀ i, b i ≤ q i`.
-#eval decide (∀ i : Fin 2, (localConsume escrowState 0 2) i ≤ quotaEx i)  -- true
-#eval ((∑ i, (localConsume escrowState 0 2) i), (∑ i, quotaEx i))  -- (2, 5)
+#guard (decide (∀ i : Fin 2, (localConsume escrowState 0 2) i ≤ quotaEx i))  -- true
+#guard (((∑ i, (localConsume escrowState 0 2) i), (∑ i, quotaEx i)) == (2, 5))  -- (2, 5)
 
 -- An LWW register merge keeps the larger timestamp. `(ts=3, val=7) ⊔ (ts=5, val=1)`
 -- should yield ts=5 (timestamp 5 wins). We read the lex key components.
 def lwwA : LWW ℕ ℕ := ⟨3, 7⟩
 def lwwB : LWW ℕ ℕ := ⟨5, 1⟩
 -- max-by-(ts,val): the lex key of the merge is the larger of the two keys.
-#eval decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwB) = LWW.lexKey lwwB)  -- true (ts 5 wins)
+#guard (decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwB) = LWW.lexKey lwwB))  -- true (ts 5 wins)
 -- LWW merge commutative / idempotent on lex keys.
-#eval decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwB) = max (LWW.lexKey lwwB) (LWW.lexKey lwwA))  -- true
-#eval decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwA) = LWW.lexKey lwwA)  -- true
+#guard (decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwB) = max (LWW.lexKey lwwB) (LWW.lexKey lwwA)))  -- true
+#guard (decide (max (LWW.lexKey lwwA) (LWW.lexKey lwwA) = LWW.lexKey lwwA))  -- true
 
 end Evals
 

@@ -24,13 +24,11 @@ runs the executor case-split and closes BOTH arms honestly. The GATE (`§5`) sho
 to its canonical field, elaborating to a building contract — and `monotone_registry% revoked`
 reproducing `Apps.Identity.livingCellA_identity_revoked_forever` as a *one-liner* `.forever` call.
 
-## DEFERRED (NOT faked — `HATCHERY.md §150`, H5)
+## Liveness shape (`eventually% Goal` — `Verify/LivenessContract.lean`)
 
-`eventually% Goal` / liveness (`◇`-progress) is OMITTED, not stubbed: `◇` needs the CTL/μ-calculus
-`lfp` layer + a fairness hypothesis on `SchedA` (`HATCHERY.md §204`, deferred to the CTL/μ workflow).
-A `CellContract` carries a SINGLE state predicate along `trajA` — the safety (`□`) fragment — so a
-liveness shape has no honest home here yet. Shipping a fake `eventually%` would violate the file's
-discipline; it is recorded as future work rather than emitted.
+`eventually% Goal` names a `LivenessContract` whose `.Goal` is discharged via `just_progress` /
+`AF_just` (van Glabbeek justness — NOT naive `◇` over stutter schedules). Kernel witnesses live in
+`Proof/Fairness`; production `EventuallyG` on `trajG` is in `LivenessContract`.
 
 Discipline: NO `sorry`/`admit`/`native_decide`/SMT. Every macro-emitted contract + its `forever`/
 `always` payoff is `#assert_axioms`-pinned to the kernel triple `{propext, Classical.choice,
@@ -38,6 +36,7 @@ Quot.sound}` at the foot of the file. The macros emit ordinary kernel-checked te
 cannot launder a gap into a false "PROVED": if a discharge tactic failed, the elaboration would error.
 -/
 import Dregg2.Verify.Contract
+import Dregg2.Verify.LivenessContract
 import Dregg2.Exec.CellConfine
 
 namespace Dregg2.Verify
@@ -47,6 +46,7 @@ open Dregg2.Exec.TurnExecutorFull (fma0)
 open Dregg2.Exec.FullForest
 open Dregg2.Authority
 open Dregg2.Proof.Temporal (Always)
+open Dregg2.Proof.Fairness (Pgoal)
 open KernelForest (Contract Sched)
 open Production (liftFromKernelForest)
 
@@ -262,7 +262,13 @@ example (sched : SchedA) :
        = cellObsA fma0 0 + cellObsA fma0 1 :=
   ((automaton_inv% (0 : AssetId) (1 : AssetId)) fma0).forever rfl sched
 
-/-! ## §6 — It runs (`#eval`) — the macro contracts are NON-VACUOUS; the tags genuinely VARY.
+syntax (name := eventuallyStx) "eventually% " term:max : term
+
+macro_rules
+  | `(eventually% $goal:term) =>
+    `(({ Goal := $goal } : LivenessContract))
+
+/-! ## §6 — Non-vacuity guards — the macro contracts are substantive; the tags genuinely vary.
 
 The macro-built contracts carry quantities that GENUINELY MOVE / discriminate (not `x = x`):
 * `monotone_registry%` — a real revoked id `42` is present (`true`) while `99` is absent (`false`):
@@ -274,27 +280,21 @@ The macro-built contracts carry quantities that GENUINELY MOVE / discriminate (n
   re-statement of one).
 And the four macros emit three distinct `SafetyShape`s (`.membership`, `.constant`, `.other`). -/
 
--- monotone_registry%: the revocation registry has teeth (42 present, 99 absent — non-vacuous membership).
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42                  -- true  (42 IS revoked)
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99                  -- false (99 is NOT — teeth)
-
--- conservation%: asset-0 supply is a real moving-but-conserved quantity (105 before = 105 after a transfer).
-#eval cellObsA fma0 0                                                             -- 105
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0))  -- some true
-
--- automaton_inv%: the RELATION combines two fields (112) and differs from either alone (105, 7).
-#eval cellObsA fma0 0 + cellObsA fma0 1                                           -- 112 (the combined supply)
-#eval decide (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 0)               -- true (relational ≠ field-0 alone)
-#eval decide (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 1)               -- true (relational ≠ field-1 alone)
--- and the combined supply is conserved by a real conserving transfer (the relational invariant holds AFTER):
-#eval (execFullForestA fma0 transferCF.1).map
-        (fun s' => decide (cellObsA s' 0 + cellObsA s' 1 = cellObsA fma0 0 + cellObsA fma0 1))  -- some true
-
--- The macros emit GENUINELY DISTINCT `SafetyShape`s (not a single hard-wired tag).
-#eval (monotone_registry% revoked 42).shape                                                      -- SafetyShape.membership
-#eval ((conservation% (0 : AssetId)) fma0).shape                                                         -- SafetyShape.constant
-#eval ((automaton_inv% (0 : AssetId) (1 : AssetId)) fma0).shape                                                         -- SafetyShape.other
-#eval decide ((monotone_registry% revoked 42).shape ≠ ((conservation% (0 : AssetId)) fma0).shape)                       -- true
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42)
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99 == false)
+#guard (cellObsA fma0 0 == 105)
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0)) == some true)
+#guard (cellObsA fma0 0 + cellObsA fma0 1 == 112)
+#guard (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 0)
+#guard (cellObsA fma0 0 + cellObsA fma0 1 ≠ cellObsA fma0 1)
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (cellObsA s' 0 + cellObsA s' 1 = cellObsA fma0 0 + cellObsA fma0 1)) == some true)
+#guard ((monotone_registry% revoked 42).shape == SafetyShape.membership)
+#guard (((conservation% (0 : AssetId)) fma0).shape == SafetyShape.constant)
+#guard (((automaton_inv% (0 : AssetId) (1 : AssetId)) fma0).shape == SafetyShape.other)
+#guard ((monotone_registry% revoked 42).shape ≠ ((conservation% (0 : AssetId)) fma0).shape)
+example : (eventually% Pgoal).Goal = Pgoal := rfl
 
 /-! ## §7 — Axiom hygiene — the macro-emitted contracts + their payoff, kernel-triple clean.
 

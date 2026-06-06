@@ -304,13 +304,13 @@ def fs : FrameStatement := { authority := F, T := 1000, δ := 5 }
 def honestAtt : Wit := encodeStmt fs
 
 -- WITH the authority + honest attestation ⇒ the frame predicate is ACCEPTED (holds).
-#eval registryVerify regWithAuthority .temporal (encodeStmt fs) honestAtt      -- true
+#guard (registryVerify regWithAuthority .temporal (encodeStmt fs) honestAtt)      -- true
 -- A FORGED reading (off by one) ⇒ REJECTED even with the authority present.
-#eval registryVerify regWithAuthority .temporal (encodeStmt fs) (honestAtt + 1) -- false
+#guard (registryVerify regWithAuthority .temporal (encodeStmt fs) (honestAtt + 1) == false) -- false
 -- WITHOUT any time authority ⇒ FALSE for the honest attestation too ("no frame, no fact").
-#eval registryVerify regNoAuthority .temporal (encodeStmt fs) honestAtt        -- false
+#guard (registryVerify regNoAuthority .temporal (encodeStmt fs) honestAtt == false)        -- false
 -- The skew δ is carried explicitly in the statement (not assumed 0).
-#eval decide (fs.δ = 5 ∧ 0 < fs.δ)                                              -- true
+#guard (decide (fs.δ = 5 ∧ 0 < fs.δ))                                              -- true
 
 /-- The honest run discharges (soundness-by-verification): the accepted attestation is `Discharged`. -/
 theorem demo_frameWithin_holds : FrameWithin regWithAuthority encodeStmt fs honestAtt := by

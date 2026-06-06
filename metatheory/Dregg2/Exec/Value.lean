@@ -196,7 +196,7 @@ theorem fieldOffset_lt_width : ∀ (schema : Schema) (name : FieldName) (off : N
             have ih := fieldOffset_lt_width rest name p.1 p.2 hr
             simp only [widthFields]; omega
 
-/-! ## It runs (`#eval`) — an account cell as a record. -/
+/-! ## It runs (`#guard`) — an account cell as a record. -/
 
 /-- A simple account-cell schema: a balance, a nonce, and an owner reference. -/
 def accountSchema : Schema :=
@@ -218,8 +218,8 @@ def nested0 : Value :=
 #guard (width (.record accountSchema)) == 3  --  3
 #guard (conforms acct0 (.record accountSchema))  --  true
 #guard (flatten (.record accountSchema) acct0) == [100, 0, 42]  --  [100, 0, 42]
-#eval fieldOffset accountSchema "nonce"          -- some (1, scalar)
-#eval fieldOffset accountSchema "owner"          -- some (2, digest)
+#guard (match fieldOffset accountSchema "nonce" with | some (1, .scalar) => true | _ => false)
+#guard (match fieldOffset accountSchema "owner" with | some (2, .digest) => true | _ => false)
 
 #guard (width (.record nestedSchema)) == 3  --  3  (1 + (1+1))
 #guard (conforms nested0 (.record nestedSchema))  --  true

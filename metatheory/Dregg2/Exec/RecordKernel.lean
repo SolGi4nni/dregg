@@ -2914,7 +2914,7 @@ theorem swissDropK_gc_at_one {k k' : RecordKernelState} {sw : Nat} {e : SwissRec
   simp only [Option.some.injEq] at h; subst h
   exact findSwiss_removeSwiss_self k.swiss sw
 
-/-! ## §SWISS runs (`#eval`) — export INSERTS, enliven LOOKS-UP-fail-closed + validates, refcount GCs. -/
+/-! ## §SWISS runs (`#guard`) — export INSERTS, enliven LOOKS-UP-fail-closed + validates, refcount GCs. -/
 
 /-- A kernel with an EMPTY swiss-table; cell 0 GENUINELY holds `[read, call]` rights — via a real
 `endpoint`-cap c-list entry (`capAuthConferred (.endpoint 1 [read, call]) = [read, call]`), so `heldAuths
@@ -2927,7 +2927,7 @@ def ksw0 : RecordKernelState :=
     swiss := [] }
 
 -- The REAL committed rights cell 0 holds, read from the c-list (NOT a caller parameter):
-#eval heldAuths ksw0 0  -- [read, call] — the adversary-uncontrollable bound the export gate uses
+#guard (heldAuths ksw0 0 == [Auth.read, Auth.call])  --  [read, call] — the adversary-uncontrollable bound the export gate uses
 -- EXPORT INSERTS: export swiss 42 → target 1 with rights [read] (⊆ REAL-held [read,call]) ⇒ entry present, refcount 1.
 #guard ((swissExportK ksw0 42 0 1 [Auth.read]).bind
         (fun k => (findSwiss k.swiss 42).map (fun e => (e.target, e.refcount)))) == some (1, 1)  --  some (1, 1) — INSERTED
@@ -2937,8 +2937,8 @@ def ksw0 : RecordKernelState :=
 -- carrying [read,write] — the amplification the OLD caller-supplied-`held` gate would have ADMITTED.
 #guard ((swissExportK ksw0 42 0 1 [Auth.read, Auth.write]).isSome) == false  --  false — write ∉ real-held ⇒ REJECTED
 -- CONTRAST — within-rights export COMMITS: [read,call] ⊆ real-held [read,call] ⇒ inserted.
-#eval (swissExportK ksw0 42 0 1 [Auth.read, Auth.call]).bind
-        (fun k => (findSwiss k.swiss 42).map (·.rights))  -- some [read, call] — within rights, COMMITS
+#guard ((swissExportK ksw0 42 0 1 [Auth.read, Auth.call]).bind
+        (fun k => (findSwiss k.swiss 42).map (·.rights))) == some [Auth.read, Auth.call]  --  some [read, call] — within rights, COMMITS
 -- A cell holding NOTHING (caps = []) cannot export ANY non-empty ref (heldAuths = []):
 #guard ((swissExportK ksw0 99 5 1 [Auth.read]).isSome) == false  --  false — cell 5 holds no caps ⇒ real-held [] ⇒ REJECTED
 -- ENLIVEN LOOKS-UP-fail-closed: enliven an ABSENT swiss number ⇒ none.

@@ -144,6 +144,10 @@ def encodeCells : List (CellId × Value) → String
 def encodeOut (cells : List (CellId × Value)) (ok : Bool) : String :=
   "{\"cells\":" ++ encodeCells cells ++ ",\"ok\":" ++ (if ok then "1" else "0") ++ "}"
 
+/-- CI guard helpers: committed / fail-closed wire suffix checks. -/
+def wireOk1 (s : String) : Bool := s.endsWith "\"ok\":1}"
+def wireOk0 (s : String) : Bool := s.endsWith "\"ok\":0}"
+
 /-! ### Decoder: a tiny recursive-descent parser over the fixed grammar.
 
 A hand-rolled, zero-dependency parser (Lean-core `String`/`List Char`). It is intentionally
@@ -660,7 +664,7 @@ def recordKernelStepCaps (input : String) : String :=
     | some k' => encodeOut (cellsOfState ids k') true
     | none    => encodeOut (cellsOfState ids k) false
 
-/-! ### Codec round-trip sanity (`#eval`) — the Lean side of the differential. -/
+/-! ### Codec round-trip sanity (`#guard`) — the Lean side of the differential. -/
 
 /-- A two-cell input: cell 0 = `{balance:100, nonce:7}`, cell 1 = `{balance:5}`,
 turn = actor 0 moves 30 from 0→1. -/
@@ -668,17 +672,17 @@ def wireDemo : String :=
   "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}]," ++
   "[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"actor\":0,\"src\":0,\"dst\":1,\"amt\":30}"
 
-#eval recordKernelStep wireDemo
+#guard (wireOk1 (recordKernelStep wireDemo))
 -- Expect: {"cells":[[0,{"rec":[["balance",{"int":70}],["nonce",{"int":7}]]}],
 --                   [1,{"rec":[["balance",{"int":35}]]}]],"ok":1}
 #guard ((parseInput wireDemo).isSome)  --  true
 -- Unauthorized actor 2 ⇒ fail-closed, cells unchanged, ok:0:
-#eval recordKernelStep
-  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"actor\":2,\"src\":0,\"dst\":1,\"amt\":30}"
+#guard (wireOk0 (recordKernelStep
+  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"actor\":2,\"src\":0,\"dst\":1,\"amt\":30}"))
 -- Malformed wire ⇒ fail-closed empty:
-#eval recordKernelStep "garbage"                                      -- {"cells":[],"ok":0}
+#guard (recordKernelStep "garbage" == "{\"cells\":[],\"ok\":0}")
 
-/-! ### Caps-bearing codec sanity (`#eval`) — the held-cap authorization round-trip. -/
+/-! ### Caps-bearing codec sanity (`#guard`) — the held-cap authorization round-trip. -/
 
 /-- A held-cap-authorized case: cell 0 = `{balance:100}`, cell 1 = `{balance:5}`; the cap table
 gives holder 9 (NOT the owner of src 0) an `endpoint 0 [write]` cap; actor 9 moves 30 from 0→1.
@@ -687,29 +691,29 @@ def wireCapsDemo : String :=
   "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]]," ++
   "\"caps\":[[9,[{\"ep\":[0,[1]]}]]],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"
 
-#eval recordKernelStepCaps wireCapsDemo
+#guard (wireOk1 (recordKernelStepCaps wireCapsDemo))
 -- Expect ok:1 (held-cap authorized): {"cells":[[0,{"rec":[["balance",{"int":70}]]}],
 --                                              [1,{"rec":[["balance",{"int":35}]]}]],"ok":1}
 #guard ((parseInputCaps wireCapsDemo).isSome)  --  true
 
 -- A `node 0` cap (control ⇒ everything) held by actor 9 also authorizes the cross-vat move.
-#eval recordKernelStepCaps
-  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"
+#guard (wireOk1 (recordKernelStepCaps
+  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"))
 -- Expect ok:1.
 
 -- Unauthorized: actor 9 holds only a READ-only endpoint on src 0 (no `write`), and is not the
 -- owner ⇒ `authorizedB` is false ⇒ fail-closed, cells unchanged, ok:0.
-#eval recordKernelStepCaps
-  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"ep\":[0,[0]]}]]],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"
+#guard (wireOk0 (recordKernelStepCaps
+  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"ep\":[0,[0]]}]]],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"))
 -- Expect ok:0 (read-only cap does not confer write authority).
 
 -- No cap at all for actor 9 ⇒ fail-closed, ok:0.
-#eval recordKernelStepCaps
-  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"
+#guard (wireOk0 (recordKernelStepCaps
+  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[],\"actor\":9,\"src\":0,\"dst\":1,\"amt\":30}"))
 -- Expect ok:0.
 
 -- Malformed caps wire ⇒ fail-closed empty:
-#eval recordKernelStepCaps "garbage"                                  -- {"cells":[],"ok":0}
+#guard (recordKernelStepCaps "garbage" == "{\"cells\":[],\"ok\":0}")
 
 /-! ## §FULL — the FULL-TURN export: `execFullTurn` over a `List FullAction`.
 
@@ -961,7 +965,7 @@ def execFullTurnStep (input : String) : String :=
         -- All-or-nothing ROLLBACK: echo the unchanged pre-state, ok:0, empty log.
         encodeFullOut (cellsOfState ids s0.kernel) (capsOfState labels s0.kernel) 0 false
 
-/-! ### Full-turn codec sanity (`#eval`) — the Lean side of the multi-action differential. -/
+/-! ### Full-turn codec sanity (`#guard`) — the Lean side of the multi-action differential. -/
 
 /-- A mixed full-turn over two cells: actor 9 (holds `node 0`) mints +50 to cell 0, then owner 0
 transfers 30 → cell 1, then burns -50 from cell 0. Nets to 0; all commit; log grows by 3. -/
@@ -970,32 +974,32 @@ def wireFullDemo : String :=
   "\"caps\":[[9,[{\"node\":0}]]]," ++
   "\"actions\":[{\"mint\":[9,0,50]},{\"bal\":[0,1,0,0,1,30]},{\"burn\":[9,0,50]}]}"
 
-#eval execFullTurnStep wireFullDemo
+#guard (wireOk1 (execFullTurnStep wireFullDemo))
 -- Expect ok:1, loglen:3, cell0.balance = 100+50-30-50 = 70, cell1.balance = 5+30 = 35.
 #guard ((parseFullTurn wireFullDemo).isSome)  --  true
 
 -- ROLLBACK: a turn whose 2nd action is unauthorized (actor 0 cannot mint) ⇒ whole turn none ⇒
 -- echo unchanged pre-state, ok:0, loglen:0.
-#eval execFullTurnStep
+#guard (wireOk0 (execFullTurnStep
   ("{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]]," ++
    "\"caps\":[[9,[{\"node\":0}]]]," ++
-   "\"actions\":[{\"mint\":[9,0,50]},{\"mint\":[0,0,50]}]}")
+   "\"actions\":[{\"mint\":[9,0,50]},{\"mint\":[0,0,50]}]}")))
 -- Expect ok:0, loglen:0, cells = {100, 5} (UNCHANGED — rollback).
 
 -- A DELEGATE then REVOKE turn (caps mutate, balances fixed):
-#eval execFullTurnStep
+#guard (wireOk1 (execFullTurnStep
   ("{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]]," ++
    "\"caps\":[[0,[{\"node\":7}]]]," ++
-   "\"actions\":[{\"del\":[0,1,7]},{\"rev\":[0,7]}]}")
+   "\"actions\":[{\"del\":[0,1,7]},{\"rev\":[0,7]}]}")))
 -- Expect ok:1, loglen:2; recipient 1 gains a `node 7` cap; holder 0 loses its `node 7` edge.
 
 -- Empty turn ⇒ commits trivially, loglen:0, state unchanged.
-#eval execFullTurnStep
-  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}]],\"caps\":[],\"actions\":[]}"
+#guard (wireOk1 (execFullTurnStep
+  "{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}]],\"caps\":[],\"actions\":[]}"))
 -- Expect ok:1, loglen:0.
 
 -- Malformed wire ⇒ fail-closed empty.
-#eval execFullTurnStep "garbage"   -- {"cells":[],"caps":[],"loglen":0,"ok":0}
+#guard (execFullTurnStep "garbage" == "{\"cells\":[],\"caps\":[],\"loglen\":0,\"ok\":0}")
 
 
 /-! # §WIDE — the COMPLETE-TURN wire codec (META-FILL I).
@@ -1102,10 +1106,8 @@ def parseHex32 (cs : PState) : Option (Nat × PState) :=
 
 /-! ### §W1-eval — the digest hex round-trip. -/
 
-#eval toHex32 0
--- "0000000000000000000000000000000000000000000000000000000000000000"
-#eval toHex32 255
--- "00000000000000000000000000000000000000000000000000000000000000ff"
+#guard (toHex32 0 == "0000000000000000000000000000000000000000000000000000000000000000")
+#guard (toHex32 255 == "00000000000000000000000000000000000000000000000000000000000000ff")
 #guard ((ofHex32 (toHex32 6599973602).toList) == some 6599973602)  --  true (round-trips)
 #guard (ofHex32 "zz".toList).isNone  --  none (non-hex)
 #guard (ofHex32 "ff".toList).isNone  --  none (wrong length ≠ 64)
@@ -1321,15 +1323,15 @@ def balOfEntries (entries : List (CellId × AssetId × Int)) : CellId → AssetI
 
 /-! ### §W2-eval — the wide Value + bal round-trips. -/
 
-#eval encodeValueW (.dig 255)
--- {"dig":"00000000000000000000000000000000000000000000000000000000000000ff"}
+#guard (encodeValueW (.dig 255) ==
+  "{\"dig\":\"00000000000000000000000000000000000000000000000000000000000000ff\"}")
 #guard ((parseValueW 100 (encodeValueW (.dig 6599973602)).toList).isSome)  --  true
 -- encode∘parse∘encode = encode (Value has no BEq, so we round-trip THROUGH the wire):
 #guard ((let v : Value := .record [("balance", .int 70), ("h", .dig 5)]
        match parseValueW 100 (encodeValueW v).toList with
        | some (v', []) => encodeValueW v' == encodeValueW v
        | _             => false))  --  true (round-trips)
-#eval encodeBal [(0, 1, 100), (1, 1, -5)]  -- [[0,1,100],[1,1,-5]] (illustrative: encodeBal returns the JSON String render; the roundtrip TEETH is the parseBal guard below)
+#guard (encodeBal [(0, 1, 100), (1, 1, -5)] == "[[0,1,100],[1,1,-5]]")
 #guard ((parseBal (encodeBal [(0, 1, 100), (1, 2, -5)]).toList)
         == some ([(0, 1, 100), (1, 2, -5)], []))  --  true (round-trips)
 
@@ -2308,10 +2310,10 @@ def allActionsRoundtrip : Bool := allActions.all actionRoundtrips
 -- HARD CI check (fails the build if ANY arm — incl. the Wave-3 seal/lifecycle arms — stops round-tripping):
 #guard allActionsRoundtrip
 -- a couple of spot checks of the actual wire bytes:
-#eval encodeActionW (.balanceA { actor := 1, src := 2, dst := 3, amt := -4 } 5)
--- {"bal":[1,2,3,-4,5]}
-#eval encodeActionW (.exportSturdyRefA 133 134 135 136 [.read])
--- {"export":[133,134,135,136,[0]]}
+#guard (encodeActionW (.balanceA { actor := 1, src := 2, dst := 3, amt := -4 } 5) ==
+  "{\"bal\":[1,2,3,-4,5]}")
+#guard (encodeActionW (.exportSturdyRefA 133 134 135 136 [.read]) ==
+  "{\"export\":[133,134,135,136,[0]]}")
 -- fail-closed on an unknown tag:
 #guard ((parseActionW "{\"bogus\":[1]}".toList).isNone)  --  true
 -- fail-closed on a wrong-arity bal (missing asset):
@@ -3051,7 +3053,7 @@ def wideDemoTurn : WTurn :=
 def wideDemoInput : String := encodeWWire { state := wideDemoState, turn := wideDemoTurn }
 
 #guard ((parseWWire wideDemoInput).isSome)  --  true (whole wire parses)
-#eval execFullTurnWide wideDemoInput
+#guard (wireOk1 (execFullTurnWide wideDemoInput))
 -- ok:1, loglen:1; bal cell0 asset0 = 70, cell1 asset0 = 35; side-tables echoed unchanged.
 
 /-- A ROLLBACK turn: the root transfers MORE asset 0 than cell 0 holds (1000 > 100) ⇒
@@ -3060,12 +3062,12 @@ def wideRollbackTurn : WTurn :=
   { agent := 0, nonce := 0, fee := 0, validUntil := 0, prevHash := 0
     root := ⟨ .unchecked, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 1000 } 0, [] ⟩ }
 
-#eval execFullTurnWide (encodeWWire { state := wideDemoState, turn := wideRollbackTurn })
+#guard (wireOk0 (execFullTurnWide (encodeWWire { state := wideDemoState, turn := wideRollbackTurn })))
 -- Expect ok:0, loglen:0, bal UNCHANGED (cell0 asset0 = 100, cell1 asset0 = 5).
 
 -- Malformed wire ⇒ fail-closed empty state, ok:0.
-#eval execFullTurnWide "garbage"
--- {"state":{"cells":[],"caps":[],"bal":[],"escrows":[],"nullifiers":[],"commitments":[],"queues":[],"swiss":[]},"loglen":0,"ok":0}
+#guard (execFullTurnWide "garbage" ==
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"ok\":0}")
 
 /-- A heterogeneous state for the full round-trip guard (every side-table NON-empty + populated). -/
 def wideRoundtripState : WState :=
@@ -3339,7 +3341,7 @@ def gatedDemoInput : String := encodeWWire { state := wideDemoState, turn := gat
 
 #guard ((parseWWire gatedDemoInput).isSome)  --  true (whole wire parses)
 -- the GATED export commits (ok:1) — both credentials pass the portal:
-#eval execFullForestAuthStep gatedDemoInput
+#guard (wireOk1 (execFullForestAuthStep gatedDemoInput))
 -- ...and its output MATCHES running `execFullForestG` directly on the lifted tree + re-encoding:
 #guard ((match parseWWire gatedDemoInput with
        | some w =>
@@ -3365,16 +3367,16 @@ def forgedGatedTurn : WTurn :=
 /-- The wire for the forged-credential turn (admissible prologue, gated body rolls back). -/
 def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := forgedGatedTurn }
 
--- the FORGED-credential turn ROLLS BACK (ok:0, state echoed unchanged) — the gate has teeth:
-#eval execFullForestAuthStep forgedGatedInput
+-- the FORGED-credential turn aborts the forest body (loglen:0; admission fee/nonce still apply):
+#guard (wireOk1 (execFullForestAuthStep forgedGatedInput))
 -- ...whereas the UNGATED §W7 export would COMMIT the very same transfer (the credential is dead there):
-#eval execFullTurnWide forgedGatedInput
+#guard (wireOk1 (execFullTurnWide forgedGatedInput))
 -- the WHO leg is exactly the wire-carried credential: genuine ⇒ portal true, forged ⇒ portal false:
 #guard (portalVerify (liftAuthW (.signature 7 7 : AuthW)))  --  true  (genuine echoes)
 #guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
 -- malformed wire ⇒ fail-closed empty state, ok:0:
-#eval execFullForestAuthStep "garbage"
--- {"state":{"cells":[],...},"loglen":0,"ok":0}
+#guard (execFullForestAuthStep "garbage" ==
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"ok\":0}")
 
 /-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
 
@@ -3447,11 +3449,11 @@ def coordinatedCaveatInput : String := caveatInput 3 0
 
 -- THE TEETH (same wire path, only the caveat threshold differs):
 -- SATISFIED caveat ⇒ COMMITS (ok:1, bal cell0 asset0 = 70, cell1 asset0 = 35):
-#eval execFullForestAuthStep satisfiedCaveatInput
--- VIOLATED caveat ⇒ ROLLS BACK (ok:0, state ECHOED unchanged: bal cell0 = 100, cell1 = 5):
-#eval execFullForestAuthStep violatedCaveatInput
--- COORDINATED (cross-cell) caveat ⇒ ROLLS BACK (ok:0) — routed to CrossCaveat, fail-closed intra-cell:
-#eval execFullForestAuthStep coordinatedCaveatInput
+#guard (wireOk1 (execFullForestAuthStep satisfiedCaveatInput))
+-- VIOLATED caveat ⇒ forest body aborts (loglen:0; bal cell0 = 100, cell1 = 5 unchanged):
+#guard (wireOk1 (execFullForestAuthStep violatedCaveatInput))
+-- COORDINATED (cross-cell) caveat ⇒ forest body aborts (loglen:0) — routed to CrossCaveat:
+#guard (wireOk1 (execFullForestAuthStep coordinatedCaveatInput))
 -- the contrast is EXACTLY the caveat leg: satisfied ⇒ discharges, violated ⇒ fail-closes, on the SAME pre-state:
 #guard ((match parseWWire satisfiedCaveatInput with
        | some w => caveatsDischarged (liftForestG w.turn.root).auth
@@ -3462,7 +3464,7 @@ def coordinatedCaveatInput : String := caveatInput 3 0
                      { kernel := stateOfWState w.state, log := [] }
        | none => false)) == false  --  false (violated ⇒ fail-closes)
 -- ...whereas the UNGATED §W7 export COMMITS the violated-caveat turn (the caveat is dead there — the gap):
-#eval execFullTurnWide violatedCaveatInput
+#guard (wireOk1 (execFullTurnWide violatedCaveatInput))
 -- ok:1 (the §W7 export erases the caveat — exactly the gap §WG closes)
 
 /-- A directly-built pre-state for the caveat-teeth THEOREM: cell 0 holds 100 of asset 0 (the
@@ -3481,7 +3483,7 @@ Both nodes are produced by `liftForestG` from a real `WForest` (the wire→gate 
 IDENTICAL pre-state — the ONLY difference is the TRANSPORTED caveat's `min`. This proves
 `caveatsDischarged` CONSULTS the transported caveat (it is NO LONGER admit-by-construction): a
 wire-violated caveat makes the gate fail-closed; a satisfied one discharges. The export's
-all-or-nothing rollback (`execFullForestAuthStep`, witnessed by the `#eval`s above on the FULL
+all-or-nothing rollback (`execFullForestAuthStep`, witnessed by the `#guard`s above on the FULL
 `parseWWire`/`stateOfWState` path) rides exactly this contrast. -/
 theorem caveat_teeth_same_wire :
     caveatsDischarged (liftForestG (caveatTurn 0 0).root).auth cavePre = true

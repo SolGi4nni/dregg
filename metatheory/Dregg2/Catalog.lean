@@ -141,6 +141,9 @@ depend on the rule-set. -/
 
 declare_aesop_rule_sets [Dregg2]
 
+/-- Hatchery forest-grow frame lemmas tagged for `exec_frame` / `exec_frame_production`. -/
+register_simp_attr dregg_frame
+
 /-! ## §4 — `discharge`: the guard-seam opener.
 
 Unfolds `admits` through the `all`/`any`/`gnot` structure via the `@[simp]` lemmas, splits

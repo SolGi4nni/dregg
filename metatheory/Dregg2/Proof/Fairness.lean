@@ -694,24 +694,22 @@ non-vacuous face of `loser_refund_eventually`: the `JustProgress` machinery is g
 theorem refund_demo_eventually : Eventually Pgoal fma0 transferSched :=
   just_progress refundDemo
 
-/-! ## §8 — Non-vacuity (`#eval`): the concurrency relation + commit discriminant are REAL. -/
+/-! ## §8 — Non-vacuity guards: the concurrency relation + commit discriminant are REAL. -/
 
-#eval decide (Disjoint (npcA cf0) (afcA cf5))                      -- true  (independent cells — concurrent)
-#eval decide (¬ Disjoint (npcA cf0) (afcA cf0))                    -- true  (a forest interferes with itself)
-#eval (npcA cf0).1.unquot                                          -- {0}   (root actor's target)
-#eval (afcA cf5).1.unquot                                          -- {5, 6} (over-approx transfer set)
-#eval (execFullForestA fma0 cf0.1).isSome                          -- true  (the commit discriminant on a live transfer)
-#eval (execFullForestA fma0 cf5.1).isSome                          -- false (cells 5,6 not live ⇒ a STUTTER — the self-loop)
-#eval (execFullForestA fma0 badRootFullForest).isSome              -- false (a STUTTER — the fail-closed self-loop branch)
--- §6.bis closure-(3) commit-vs-commit (NON-stutter): an independent COMMITTING emit preserves a commit.
-#eval (execFullForestA fma0 emitFar.1).isSome                      -- true  (emitFar COMMITS on LIVE cell 1 — not a stutter)
-#eval decide (Disjoint (npcA transferCF) (afcA emitFar))          -- true  (transferCF {0} ‖ emitFar {1} — concurrent)
-#eval (execFullForestA (cellNextA fma0 emitFar) transferCF.1).isSome  -- true  (commit PRESERVED across the independent step)
--- §7.bis the concrete liveness demonstrator: the goal IS reached at index 1 (the receipt lands).
-#eval (trajA fma0 transferSched 0).log.length                     -- 0     (fma0: non-Pgoal — the unique non-goal index)
-#eval (trajA fma0 transferSched 1).log.length                     -- 1     (Pgoal reached — `refund_demo_eventually`'s witness)
-#eval decide ((npcA transferCF).Nonempty ∧ npcA transferCF ⊆ ({0,1} : Finset CellId))  -- true (transferCF ∈ BReg)
-#eval (afcA transferCF).1.unquot                                  -- {0, 1} (the demonstrator's interference reach)
+#guard (decide (Disjoint (npcA cf0) (afcA cf5)))
+#guard (decide (¬ Disjoint (npcA cf0) (afcA cf0)))
+#guard (npcA cf0 == {0})
+#guard (afcA cf5 == {5, 6})
+#guard ((execFullForestA fma0 cf0.1).isSome)
+#guard ((execFullForestA fma0 cf5.1).isSome == false)
+#guard ((execFullForestA fma0 badRootFullForest).isSome == false)
+#guard ((execFullForestA fma0 emitFar.1).isSome)
+#guard (decide (Disjoint (npcA transferCF) (afcA emitFar)))
+#guard ((execFullForestA (cellNextA fma0 emitFar) transferCF.1).isSome)
+#guard ((trajA fma0 transferSched 0).log.length == 0)
+#guard ((trajA fma0 transferSched 1).log.length == 1)
+#guard (decide ((npcA transferCF).Nonempty ∧ npcA transferCF ⊆ ({0, 1} : Finset CellId)))
+#guard (afcA transferCF == ({0, 1} : Finset CellId))
 
 /-! ## §9 — Axiom hygiene — every keystone pinned to the standard kernel triple. -/
 

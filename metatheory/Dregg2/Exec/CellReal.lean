@@ -132,7 +132,7 @@ theorem livingCellA_obs_invariant (s : RecChainedState) (sched : SchedA) :
       show cellObsA (cellNextA (trajA s sched k) (sched k)) = cellObsA s
       rw [cellObsA_next]; exact ih
 
-/-! ## It runs (`#eval`) — the real living cell on a genuine conserving transfer (non-vacuity). -/
+/-! ## It runs (`#guard`) — the real living cell on a genuine conserving transfer (non-vacuity). -/
 
 /-- A conserving forest: actor 0 transfers 30 of asset 0 from cell 0 to cell 1 — a single
 `balanceA`, no children. Per-asset net delta is `0` in every asset, so it inhabits `ConservingForest`:
@@ -143,10 +143,9 @@ def transferCF : ConservingForest :=
     simp only [lowerForestA, lowerChildrenA, turnLedgerDeltaAsset, List.map_cons, List.map_nil,
       List.sum_cons, List.sum_nil, ledgerDeltaAsset, add_zero]⟩
 
-#guard ((execFullForestA fma0 transferCF.1).isSome)  --  true (the conserving transfer commits)
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => cellObsA s' 0)  -- the asset-0 badge AFTER the turn
-#eval cellObsA fma0 0                                                  -- the asset-0 badge BEFORE — EQUAL (conserved)
-#guard ((execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0))) == some true  --  some true
+#guard ((execFullForestA fma0 transferCF.1).isSome)
+#guard (cellObsA fma0 0 == 105)
+#guard ((execFullForestA fma0 transferCF.1).map (fun s' => decide (cellObsA s' 0 = cellObsA fma0 0)) == some true)
 
 /-! ## Axiom hygiene — keystones pinned to the standard kernel triple. -/
 

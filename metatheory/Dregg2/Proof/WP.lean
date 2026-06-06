@@ -351,17 +351,13 @@ joint binding; wiring that VC class as a `vcg` side-condition is a clean phase-2
 single-cell theorem for it here — an honest OPEN beats a vacuous proof.
 -/
 
-/-! ## §7 — `#eval` sanity: the worked-example programs are the real in-tree ones. -/
+/-! ## §7 — Non-vacuity guards: the worked-example programs are the real in-tree ones. -/
 
--- The counter VCG runs over the EXACT `monoCountProgram` the hand proof uses (`RecordCell.lean`).
--- Its admissibility gate fires on an increment (count 5 → 6) and rejects a decrement — the VCG's
--- VC class 1 is therefore about a genuinely-gated arrow, not a vacuous one.
-#eval monoCountProgram.admits 0 (.record [("count", .int 5)]) (.record [("count", .int 6)])  -- true
-#eval monoCountProgram.admits 0 (.record [("count", .int 5)]) (.record [("count", .int 3)])  -- false
--- The escrow program pins `escrowed + paidOut = 100`: a conserving move (40+60) admits.
-#eval (escrowProgram 100).admits 0 (.record [("escrowed", .int 100), ("paidOut", .int 0)])
-        (.record [("escrowed", .int 40), ("paidOut", .int 60)])                              -- true
-#eval (escrowProgram 100).admits 0 (.record [("escrowed", .int 100), ("paidOut", .int 0)])
-        (.record [("escrowed", .int 40), ("paidOut", .int 70)])                              -- false (110≠100)
+#guard (monoCountProgram.admits 0 (.record [("count", .int 5)]) (.record [("count", .int 6)]))
+#guard (monoCountProgram.admits 0 (.record [("count", .int 5)]) (.record [("count", .int 3)]) == false)
+#guard ((escrowProgram 100).admits 0 (.record [("escrowed", .int 100), ("paidOut", .int 0)])
+        (.record [("escrowed", .int 40), ("paidOut", .int 60)]))
+#guard ((escrowProgram 100).admits 0 (.record [("escrowed", .int 100), ("paidOut", .int 0)])
+        (.record [("escrowed", .int 40), ("paidOut", .int 70)]) == false)
 
 end Dregg2.Proof.WP

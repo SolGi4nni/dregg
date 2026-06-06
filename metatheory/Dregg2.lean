@@ -348,8 +348,11 @@ import Dregg2.Verify.Tactics    -- Tier 1: carry_forever (livingCellA_carries pl
 import Dregg2.Verify.Contract   -- Tier 3: first-class CellContract (Inv + step_ob) → forever (livingCellA_carries) + always (the REAL LTL □ via Proof.Temporal.always_of_step_invariant); three concrete contracts discharged through the engine
 import Dregg2.Verify.Catalog    -- Tier 4: declarative shape macros monotone_registry% / conservation% / confinement% / automaton_inv% → real CellContracts (confinement surfaces its control∈U hypothesis honestly; automaton_inv is genuinely relational, obs a + obs b)
 import Dregg2.Verify.Regression -- H4 gate: six shipped crowns (identity_revoked_forever / no_double_spend / commitments_persist / …) reproduced via the catalog with both-directions defeq witnesses vs the hand proofs
-import Dregg2.Verify.FramesG     -- gated Hatchery Tier 2: erasure-lifted forest-grow lemmas + `cellNextG_carries_rel`
-import Dregg2.Verify.TacticsG    -- gated Hatchery Tier 1: `carry_foreverG` + identity/logMono forever crowns on `execFullForestG`
+import Dregg2.Verify.LivenessContract  -- Hatchery liveness tier: `EventuallyG` + `eventually%` + justness bridge
+import Dregg2.Verify.ChoreographyBridge -- blue ↦ `CellContract.forever`, red ↦ `HyperAdmissible`
+import Dregg2.Verify.DemoRegressGated   -- H4 gate on production `trajG` (catalog + tactic crowns)
+import Dregg2.Verify.FramesG     -- deprecated re-export → `Verify/Frames` §6 `Production`
+import Dregg2.Verify.TacticsG    -- deprecated re-export → `Verify/Tactics` §8 `Production`
 import Dregg2.Verify.ContractG   -- deprecated re-export; production contracts live in `Verify/Contract`
 -- ── THE WEB-CITIZEN SURFACE: ProofWidgets driven by REAL Lean terms (no placeholder data — the prime directive). ──
 import Dregg2.Widget.Basic             -- shared Html helpers + the trust-badge classifier: tier read off Lean.collectAxioms (KernelChecked / CarrierBounded / ExtraAxioms) — cannot be hand-faked; 2 by-design demo axioms exhibit the amber carrier-bounded tier

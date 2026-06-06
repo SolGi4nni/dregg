@@ -6147,7 +6147,7 @@ def fmaEndpointIntro : RecChainedState :=
 
 -- (1') THE TEETH — genuine rights NON-AMPLIFICATION over the real `List Auth` lattice.
 -- Attenuating the held `endpoint 9 [read, write]` to keep only `[read]` STRICTLY DROPS `write`:
-#eval capAuthConferred (attenuate [Auth.read] (Cap.endpoint 9 [Auth.read, Auth.write]))  -- [read] ⊊ [read,write]
+#guard (capAuthConferred (attenuate [Auth.read] (Cap.endpoint 9 [Auth.read, Auth.write])) == [Auth.read])  --  [read] ⊊ [read,write]
 -- the genuine non-amplification fires on this concrete held cap (granted ⊆ held, REAL rights):
 example : IsNonAmplifyingF (Cap.endpoint 9 [Auth.read, Auth.write])
     (attenuate [Auth.read] (Cap.endpoint 9 [Auth.read, Auth.write])) :=
@@ -6161,8 +6161,7 @@ example : ¬ IsNonAmplifyingF (Cap.endpoint 9 [Auth.read, Auth.write]) (Cap.node
 -- (2) ATTENUATE: narrow actor 0's slot-1 cap (`endpoint 9 [read, write]`) to keep only `read`.
 --   COMMITS, balance-neutral, and the slot's cap is genuinely narrowed:
 #guard ((execFullA fmaA (.attenuateA 0 1 [Auth.read])).isSome)  --  true
-#eval ((execFullA fmaA (.attenuateA 0 1 [Auth.read])).map (fun s => s.kernel.caps 0)).getD []
---                                                       -- [node 7, endpoint 9 [read]] (write DROPPED)
+#guard (((execFullA fmaA (.attenuateA 0 1 [Auth.read])).map (fun s => s.kernel.caps 0)).getD []) == [Cap.node 7, Cap.endpoint 9 [Auth.read]]  --  [node 7, endpoint 9 [read]] (write DROPPED)
 #guard ((execFullA fmaA (.attenuateA 0 1 [Auth.read])).map
         (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)  --  some (105, 7) (UNCHANGED)
 
@@ -6475,9 +6474,16 @@ def fmaW3Sealed : Option RecChainedState := execFullA fmaW3 (.sealA 5 0 (Cap.nod
 #guard ((execFullA fmaS (.makeSovereignA 0 0)).map
         (fun s => ((s.kernel.cell 0).field "nonce").isNone && ((s.kernel.cell 0).field "permissions").isNone)) == some true  -- some (none, none) (ALL DROPPED)
 -- (c) the COMMITMENT is present — a digest of the FULL pre-state value (`cell.state_commitment()`):
-#eval (execFullA fmaS (.makeSovereignA 0 0)).map
-        (fun s => (s.kernel.cell 0).field "commitment")                             -- some (some (Value.dig …)) (PRESENT)
-#eval ((fmaS.kernel.cell 0) |> stateCommitment, sovereignRebind fmaS.kernel.cell 0 0)  -- the rebound record IS commitment-only
+#guard (match (execFullA fmaS (.makeSovereignA 0 0)).map
+              (fun s => (s.kernel.cell 0).field commitmentField) with
+        | some (some (Value.dig d)) => d == stateCommitment (fmaS.kernel.cell 0)
+        | _ => false)  --  some (some (Value.dig …)) (PRESENT)
+#guard (match sovereignRebind fmaS.kernel.cell 0 0 with
+        | Value.record fs =>
+          match fs.find? (fun p => p.1 == commitmentField) with
+          | some (_, Value.dig d) => d == stateCommitment (fmaS.kernel.cell 0) && fs.length == 1
+          | _ => false
+        | _ => false)  --  the rebound record IS commitment-only
 -- ...and DISTINCT pre-states give DISTINCT commitments (the binding is a function of the whole value):
 #guard ((stateCommitment (.record [("balance", .int 0)]) == stateCommitment (.record [("balance", .int 1)]))) == false  --  false (binds value)
 -- (d) bal-NEUTRAL on the per-asset ledger (the value moves behind the commitment on the HOST, not the
@@ -6587,8 +6593,8 @@ def facBadBalanceS : RecChainedState :=
 -- The conforming factory (vk 42) MINTS the fresh cell 5 (born EMPTY ⇒ conservation-neutral):
 #guard ((execFullA facS (.createCellFromFactoryA 0 5 42)).isSome)  --  true
 -- ...and INSTALLS the factory's slot caveats onto the minted cell (the constructor-transparency keystone):
-#eval (execFullA facS (.createCellFromFactoryA 0 5 42)).map
-        (fun s => reprStr (s.kernel.slotCaveats 5))                                -- some "[…monotonic head, immutable owner]"
+#guard ((execFullA facS (.createCellFromFactoryA 0 5 42)).map
+        (fun s => reprStr (s.kernel.slotCaveats 5)) == reprStr subFactory.caveats)  --  some "[…monotonic head, immutable owner]"
 -- ...and writes the factory's initial fields + program VK onto the cell:
 #guard ((execFullA facS (.createCellFromFactoryA 0 5 42)).map
         (fun s => (fieldOf "head" (s.kernel.cell 5), fieldOf "owner" (s.kernel.cell 5),

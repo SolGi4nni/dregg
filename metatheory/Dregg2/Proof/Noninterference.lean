@@ -566,18 +566,13 @@ theorem makeSovereign_leaks :
   -- i.e. `227176 = 301328` — refuted.
   exact absurd heq (by decide)
 
-/-! ## §8 — Non-vacuity #eval demos (the slice is real, the leak is real). -/
+/-! ## §8 — Non-vacuity guards (the slice is real, the leak is real). -/
 
--- K1 is inhabited: the LOW write commits from the HIGH-differing states.
-#eval (execFullA sLeak lowWrite).isSome    -- true
-#eval (execFullA tLeak lowWrite).isSome    -- true
-
--- the leak is real: the two commitments genuinely differ (the §8 closed-term witness).
-#eval decide (stateCommitment (.record [(balanceField, .int 0), ("secret", .int 7)])
-            ≠ stateCommitment (.record [(balanceField, .int 0), ("secret", .int 99)]))  -- true
-
--- the lattice has teeth: High does NOT flow to Low.
-#eval decide (¬ flowsTo .priv .pub)        -- true
+#guard ((execFullA sLeak lowWrite).isSome)
+#guard ((execFullA tLeak lowWrite).isSome)
+#guard (decide (stateCommitment (.record [(balanceField, .int 0), ("secret", .int 7)])
+            ≠ stateCommitment (.record [(balanceField, .int 0), ("secret", .int 99)])))
+#guard (decide (¬ flowsTo .priv .pub))
 
 /-! ## §9 — Axiom-hygiene tripwires.
 

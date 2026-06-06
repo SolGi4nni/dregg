@@ -135,40 +135,12 @@ lemmas the macro uses (`execFullForestA_{nullifiers,commitments}_grow`). This is
 Tier-4 shape over a subset baseline — the `step_ob` is the commit/stay-put split, the commit arm chained
 by `List.Subset.trans` (exactly the hand crowns' one-step body). `.forever` then reproduces each crown. -/
 
-/-- **`subsetNullifiersContract base` — the `⊆`-shaped grow-only nullifier contract.** `Inv s := base ⊆
-s.kernel.nullifiers`, carried by `execFullForestA_nullifiers_grow` (commit: chain by `Subset.trans`;
-reject: stay-put). The `⊆` generalization of `monotone_registry% nullifiers` over a baseline list. -/
-def subsetNullifiersContract (base : List Nat) : Contract where
-  Inv s := base ⊆ s.kernel.nullifiers
-  step_ob a cf h := by
-    rw [CellExecutor.kernelForest_next_eq]
-    unfold cellNextA
-    cases hc : execFullForestA a cf.1 with
-    | some a' => simp only [Option.getD_some]
-                 exact List.Subset.trans h (execFullForestA_nullifiers_grow a a' cf.1 hc)
-    | none    => simp only [Option.getD_none]; exact h
-  shape := .membership
-
-/-- **`subsetCommitmentsContract base` — the `⊆`-shaped grow-only commitment contract.** `Inv s := base ⊆
-s.kernel.commitments`, carried by `execFullForestA_commitments_grow`. The `⊆` generalization of
-`monotone_registry% commitments`. -/
-def subsetCommitmentsContract (base : List Nat) : Contract where
-  Inv s := base ⊆ s.kernel.commitments
-  step_ob a cf h := by
-    rw [CellExecutor.kernelForest_next_eq]
-    unfold cellNextA
-    cases hc : execFullForestA a cf.1 with
-    | some a' => simp only [Option.getD_some]
-                 exact List.Subset.trans h (execFullForestA_commitments_grow a a' cf.1 hc)
-    | none    => simp only [Option.getD_none]; exact h
-  shape := .membership
-
 /-- **REPRODUCED — `Exec.livingCellA_no_double_spend`** (`Exec/CellNullifier.lean:623`) via the
 `⊆`-contract `.forever`. Identical statement; no hand temporal proof. -/
 theorem no_double_spend_via_contract (nul0 : List Nat) (s : RecChainedState)
     (hinit : nul0 ⊆ s.kernel.nullifiers) (sched : SchedA) :
     ∀ n, nul0 ⊆ (trajA s sched n).kernel.nullifiers :=
-  (subsetNullifiersContract nul0).forever hinit sched
+  (KernelForest.subsetNullifiersContract nul0).forever hinit sched
 
 /-- Regression-equality (→): our `⊆`-contract reproduction discharges the shipped crown's type. -/
 example (nul0 : List Nat) (s : RecChainedState) (hinit : nul0 ⊆ s.kernel.nullifiers) (sched : SchedA) :
@@ -185,7 +157,7 @@ example (nul0 : List Nat) (s : RecChainedState) (hinit : nul0 ⊆ s.kernel.nulli
 theorem commitments_persist_via_contract (com0 : List Nat) (s : RecChainedState) (sched : SchedA)
     (hinit : com0 ⊆ s.kernel.commitments) :
     ∀ n, com0 ⊆ (trajA s sched n).kernel.commitments :=
-  (subsetCommitmentsContract com0).forever hinit sched
+  (KernelForest.subsetCommitmentsContract com0).forever hinit sched
 
 /-- Regression-equality (→): our reproduction discharges the shipped crown's type. -/
 example (com0 : List Nat) (s : RecChainedState) (sched : SchedA)
@@ -263,42 +235,29 @@ example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) 
     ∀ n, Dregg2.Apps.Subscription.subWF (trajA s sched n).kernel :=
   Dregg2.Apps.Subscription.subscription_wellformed_forever s hinit sched
 
-/-! ## §6 — It runs (`#eval`) — the reproduced crowns carry the SAME moving quantities (non-vacuity).
+/-! ## §6 — Non-vacuity guards — the reproduced crowns bind quantities that genuinely move. -/
 
-Each reproduction bounds a quantity the corresponding hand crown's own `#eval` witnesses to be
-non-trivial — the Hatchery reproduces the non-vacuous theorems, not vacuities:
-* Identity / nullifier membership: the registries have TEETH (`42` revoked, `99` not; spent `[77]`).
-* commitment / nullifier `⊆`: a real committed turn GROWS the set (`[] → [77]` for nullifiers).
-* NameService: a real `register` lands `isRegistered = true`, and a non-registered binding is `false`.
-* Subscription: `subWF` holds on a well-formed start and is preserved across a real committed turn. -/
-
--- Identity / nullifier headline: the registries discriminate (teeth — not a trivially-true `x = x`).
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42            -- true  (42 IS revoked)
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99            -- false (99 NOT — teeth)
-#eval (execFullForestA fma0 Dregg2.Exec.spendCF).map (fun s' => s'.kernel.nullifiers.contains 77)  -- some true (77 spent)
-
--- `⊆` crowns: a real committed noteSpend GROWS the nullifier set (the carried `⊆` bounds a moving set).
-#eval (execFullForestA fma0 Dregg2.Exec.spendCF).map (fun s' => decide ([77] ⊆ s'.kernel.nullifiers))  -- some true
-#eval fma0.kernel.nullifiers                                                -- [] (BEFORE — the set genuinely grows)
-
--- NameService: a non-registered binding is `false` (the registry discriminates — `isRegistered` has teeth).
-#eval Dregg2.Apps.NameService.isRegistered fma0 Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner  -- false (not yet registered)
-#eval Dregg2.Apps.NameService.afterRegister.map
-        (fun s => Dregg2.Apps.NameService.isRegistered s Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner)  -- some true (real register lands it)
-
--- Subscription: a REAL committed program builds a within-capacity queue, and the carried bound has
--- teeth (in-flight 1 ≤ capacity 2). `subWF` is a `∀ q ∈ queues` Prop (not `Decidable`), so we witness
--- it through the equivalent `List.all`/`findQueue` Bool readers — Subscription's own non-vacuity shape.
-#eval (execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).isSome  -- true (the subscription commits)
-#eval (execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
-        (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity)))  -- some true (carried subWF holds AFTER)
-#eval (execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).bind
-        (fun s => (Dregg2.Exec.findQueue s.kernel.queues 7).map (fun q => (q.buffer, q.capacity)))  -- some ([111], 2) (a real queue, in-flight 1 ≤ cap 2 — teeth)
-
--- The reproduced contracts carry genuinely distinct `SafetyShape`s (not one hard-wired tag).
-#eval (subsetNullifiersContract [77]).shape                                 -- SafetyShape.membership
-#eval KernelForest.subWFContract.shape                                                   -- SafetyShape.other
-#eval decide ((subsetNullifiersContract [77]).shape ≠ KernelForest.subWFContract.shape)  -- true (distinct shapes)
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42)
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99 == false)
+#guard ((execFullForestA fma0 Dregg2.Exec.spendCF).map
+          (fun s' => s'.kernel.nullifiers.contains 77) == some true)
+#guard ((execFullForestA fma0 Dregg2.Exec.spendCF).map
+          (fun s' => decide ([77] ⊆ s'.kernel.nullifiers)) == some true)
+#guard (fma0.kernel.nullifiers == [])
+#guard (Dregg2.Apps.NameService.isRegistered fma0
+          Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner == false)
+#guard (Dregg2.Apps.NameService.afterRegister.map
+          (fun s => Dregg2.Apps.NameService.isRegistered s
+            Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner) == some true)
+#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).isSome)
+#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
+          (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity))) == some true)
+#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).bind
+          (fun s => (Dregg2.Exec.findQueue s.kernel.queues 7).map (fun q => (q.buffer, q.capacity)))
+          == some ([111], 2))
+#guard ((KernelForest.subsetNullifiersContract [77]).shape == SafetyShape.membership)
+#guard (KernelForest.subWFContract.shape == SafetyShape.other)
+#guard ((KernelForest.subsetNullifiersContract [77]).shape ≠ KernelForest.subWFContract.shape)
 
 /-! ## §7 — Axiom hygiene — every reproduced crown pinned to the kernel triple `{propext, Classical.choice, Quot.sound}`.
 

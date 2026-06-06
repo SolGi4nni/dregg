@@ -782,8 +782,8 @@ Lean-derived `stateCircuit` (the 9 transfer gates + 3 frame-forcing EQ gates). C
 into the Rust `lean_emitted_state_roundtrip` golden. -/
 def stateDescriptorJson : String := emitDescriptorJson emittedState
 
--- Print the full-state wire bytes the Rust decoder parses (the golden input for the Rust round-trip).
-#eval stateDescriptorJson
+-- `#guard` golden pin: full-state wire bytes the Rust decoder parses (Rust `STATE_DESCRIPTOR_JSON`).
+#guard (stateDescriptorJson == r#"{"name":"dregg-transfer-fullstate-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}]}"#)
 
 /-- The four balance wires range-checked into `[0, 2³⁰)` — same field-soundness teeth as
 `Transfer.transferRanges`. -/
@@ -802,8 +802,8 @@ circuit: `stateDescriptorJson` extended with `"ranges":[{"wire":i,"bits":30},…
 wires. Copy into the Rust `lean_emitted_state_field_sound` golden. -/
 def stateDescriptorRangedJson : String := emitRangedDescriptorJson emittedStateRanged
 
--- Print the range-checked full-state wire bytes (the golden input for the Rust field-soundness test).
-#eval stateDescriptorRangedJson
+-- `#guard` golden pin: range-checked full-state wire bytes (Rust `STATE_DESCRIPTOR_RANGED_JSON`).
+#guard (stateDescriptorRangedJson == r#"{"name":"dregg-transfer-fullstate-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}],"ranges":[{"wire":0,"bits":30},{"wire":1,"bits":30},{"wire":2,"bits":30},{"wire":3,"bits":30}]}"#)
 
 #guard emittedStateRanged.ranges.length == 4
 #guard emittedStateRanged.ranges.all (fun r => r.bits == 30)

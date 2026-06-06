@@ -1378,9 +1378,8 @@ def epa0 : RecChainedState :=
 #guard ((createEscrowChainAsset epa0 7 0 0 1 1 30).map
         (fun s => (chainTotalAsset s 1, chainTotalAsset s 0))) == some (100, 0)  --  some (100, 0) — COMBINED conserved BOTH assets
 -- release: combined per-asset stays (100,0), held returns to 0, bal back to 100 at asset 1.
-#eval ((createEscrowChainAsset epa0 7 0 0 1 1 30).bind (fun s => releaseEscrowChainAsset s 7 0)).map
-        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))
-                                                                                      -- some (100, 0, 0, 100)
+#guard (((createEscrowChainAsset epa0 7 0 0 1 1 30).bind (fun s => releaseEscrowChainAsset s 7 0)).map
+        (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1, recTotalAsset s.kernel 1))) == some (100, 0, 0, 100)  --  some (100, 0, 0, 100)
 -- COMMITTED ESCROW (#121): portal-gated; combined per-asset conserved; fail-closed without crypto.
 #guard ((createCommittedEscrowChain okPortal epa0 9 0 0 1 1 30).map
         (fun s => (chainTotalAsset s 1, chainTotalAsset s 0, escrowHeldAsset s.kernel 1))) == some (100, 0, 30)  --  some (100, 0, 30)

@@ -164,14 +164,14 @@ predicate fails — `f2` is a frontrun and is rejected by the order. -/
 theorem demo_frontrun_caught : ¬ frontrunExcluded demoLace f1 f2 :=
   demo_causalAfter_fails.1
 
-/-! ### `#eval` smoke — the causal-after / frontrun bits, decided by the lace alone (no clock). -/
+/-! ### `#guard` smoke — the causal-after / frontrun bits, decided by the lace alone (no clock). -/
 
 -- The honest ack edge IS a pointed edge, so `g0 ≺ g1` is a base step (the witness `CausalAfter` uses).
-#eval decide (g0.id ∈ g1.preds)                                   -- true  (g1 acks g0 ⇒ g0 ≺ g1)
+#guard (decide (g0.id ∈ g1.preds))                                   -- true  (g1 acks g0 ⇒ g0 ≺ g1)
 -- The fork blocks do not ack each other — the structural root of their concurrency.
-#eval decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds)               -- false (f1 ∦ f2 ⇒ causal_after FAILS)
+#guard (decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds) == false)               -- false (f1 ∦ f2 ⇒ causal_after FAILS)
 -- Anti-frontrunning reads the SAME bit: fill `g1` saw reveal `g0` ⇔ the ack edge is present.
-#eval decide (g0.id ∈ g1.preds)                                   -- true  (frontrunExcluded holds)
+#guard (decide (g0.id ∈ g1.preds))                                   -- true  (frontrunExcluded holds)
 
 /-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
 

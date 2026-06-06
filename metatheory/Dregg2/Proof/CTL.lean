@@ -614,14 +614,12 @@ present in `Temporal.lean`). -/
 -- standard kernel triple (`Classical.choice` is permitted, exactly as in `Temporal.lean`).
 #assert_namespace_axioms Dregg2.Proof.CTL
 
-/-! ## It runs (`#eval`) — the branching separation, decided on the finite witness (non-vacuity).
+/-! ## Non-vacuity guards — the branching separation on the finite witness.
 
-The `Fin 3` branching system is fully decidable, so the separation teeth are `#eval`-checkable:
-`0` is in the existential modalities but not the universal ones. -/
+The `Fin 3` branching system is fully decidable: `0` is in the existential modalities but not the universal ones. -/
 
--- `EX`/`AX` membership unfolds to `∃ t, branchStep 0 t ∧ t ∈ tgt` / `∀ t, …` — decidable on `Fin 3`.
-#eval decide (∃ t : Fin 3, branchStep 0 t ∧ t = (1 : Fin 3))        -- true  (0→1 witnesses EX tgt)
-#eval decide (∀ t : Fin 3, branchStep 0 t → t = (1 : Fin 3))        -- false (0→2 escapes ⇒ ¬ AX tgt)
-#eval decide (∃ t : Fin 3, branchStep 0 t ∧ ¬ (t = (1 : Fin 3)))    -- true  (the trap successor 2 separates EX/AX)
+#guard (decide (∃ t : Fin 3, branchStep 0 t ∧ t = (1 : Fin 3)))
+#guard (decide (∀ t : Fin 3, branchStep 0 t → t = (1 : Fin 3)) == false)
+#guard (decide (∃ t : Fin 3, branchStep 0 t ∧ ¬ (t = (1 : Fin 3))))
 
 end Dregg2.Proof.CTL

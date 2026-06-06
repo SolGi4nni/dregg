@@ -37,6 +37,7 @@ Substrate: Lean 4.30 `elab`/`macro` + `aesop` (an existing v4.30 dependency). No
 -/
 import Dregg2.Verify.Frames
 import Dregg2.Exec.CellExecutor
+import Dregg2.Tactics
 
 namespace Dregg2.Verify
 
@@ -200,15 +201,12 @@ example (credNul : Nat) (s : RecChainedState) (hinit : credNul ∈ s.kernel.revo
     ∀ n, credNul ∈ (trajA s sched n).kernel.revoked :=
   Dregg2.Apps.Identity.livingCellA_identity_revoked_forever credNul s hinit sched
 
-/-! ## §6 — It runs (`#eval`) — the tactic-built crowns bound the SAME moving quantities (non-vacuity).
+/-! ## §6 — Non-vacuity guards — the tactic-built crowns bind quantities that genuinely move. -/
 
-Identical witnesses to the hand crowns: a real committed transfer strictly grows `log.length` (`0→1`);
-a non-revoked id `99` is genuinely absent (the registry has teeth — not a trivially-true `x = x`). The
-tactics reproduce non-vacuous theorems, not vacuities. -/
-
-#eval (execFullForestA fma0 transferCF.1).map (fun s' => decide (fma0.log.length < s'.log.length))  -- some true
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42                                     -- true  (42 revoked)
-#eval Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99                                     -- false (teeth: 99 absent)
+#guard ((execFullForestA fma0 transferCF.1).map
+          (fun s' => decide (fma0.log.length < s'.log.length)) == some true)
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42)
+#guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99 == false)
 
 /-! ## §7 — Axiom hygiene — the tactic-reproduced crowns pinned to the kernel triple (NO `sorryAx`). -/
 
@@ -247,9 +245,11 @@ elab "exec_frame_production" grow?:(ppSpace colGt term)? : tactic => do
     | some g => `(tactic| first
         | exact Trans.trans $hgood:ident ($g $s:ident $s':ident ($cg:ident).val $hc:ident)
         | aesop (rule_sets := [Dregg2])
+        | dregg_auto
         | skip)
     | none   => `(tactic| first
         | aesop (rule_sets := [Dregg2])
+        | dregg_auto
         | skip)
   evalTactic closer
 

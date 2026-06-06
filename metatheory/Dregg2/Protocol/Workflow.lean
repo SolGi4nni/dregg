@@ -139,7 +139,7 @@ theorem merge_requires_approved [CryptoKernel Digest Proof] {stmt : Digest}
     (h : exec stmt k .merge actor att = some k') : k.phase = .approved :=
   exec_in_order h
 
-/-! ## It runs (`#eval`, on the reference kernel — Rust supplies the real one). -/
+/-! ## It runs (`#guard`, on the reference kernel — Rust supplies the real one). -/
 
 section Demo
 
@@ -150,10 +150,10 @@ def s0 : WState Reference.P := { phase := .init, log := [] }
 (stmt = att)`); the real kernel checks a signature/ZK proof. We use statement `7`. -/
 def att : Reference.P := 7
 
-#eval (exec (7 : Reference.D) s0 .submit 0 att).map (·.phase)        -- some submitted (author, init)
-#eval (exec (7 : Reference.D) s0 .merge 2 att).map (·.phase)         -- none (can't merge from init)
-#eval (exec (7 : Reference.D) s0 .submit 1 att).map (·.phase)        -- none (reviewer can't submit)
-#eval (exec (7 : Reference.D) s0 .submit 0 9).map (·.phase)          -- none (bad attestation: 9 ≠ 7)
+#guard ((exec (7 : Reference.D) s0 .submit 0 att).map (·.phase) == some .submitted)  -- some submitted (author, init)
+#guard ((exec (7 : Reference.D) s0 .merge 2 att).map (·.phase) == none)              -- none (can't merge from init)
+#guard ((exec (7 : Reference.D) s0 .submit 1 att).map (·.phase) == none)             -- none (reviewer can't submit)
+#guard ((exec (7 : Reference.D) s0 .submit 0 9).map (·.phase) == none)               -- none (bad attestation: 9 ≠ 7)
 
 /-- The happy path: submit → approve → merge, threaded. -/
 def runHappy : Option (WState Reference.P) := do
@@ -161,8 +161,8 @@ def runHappy : Option (WState Reference.P) := do
   let k2 ← exec (7 : Reference.D) k1 .approve 1 att
   exec (7 : Reference.D) k2 .merge 2 att
 
-#eval runHappy.map (·.phase)         -- some merged
-#eval runHappy.map (·.log.length)    -- some 3   (three attested receipts in the audit trail)
+#guard (runHappy.map (·.phase) == some .merged)       -- some merged
+#guard (runHappy.map (·.log.length) == some 3)         -- some 3   (three attested receipts in the audit trail)
 
 end Demo
 

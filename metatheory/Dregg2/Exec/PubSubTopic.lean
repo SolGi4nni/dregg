@@ -274,7 +274,7 @@ theorem pubsub_publisher_immutable
 -- admissible, and the sender-signature check routes through the authority seam, NOT into this
 -- semantic law.
 
-/-! ## It runs (`#eval`) — publishes grow the log + advance the seq; a subscribe advances a
+/-! ## It runs (`#guard`) — publishes grow the log + advance the seq; a subscribe advances a
 cursor; a shrink / rewind is rejected. -/
 
 /-- A fresh topic at seq 0, empty log (size 0), no cursors (size 0), publisher-hash 7. -/
@@ -284,33 +284,28 @@ def topic0 : Value :=
 
 -- A publish: advance the head seq (0 → 1) AND grow the event log (0 → 3) together — strictMono +
 -- monotonic both hold ⇒ commits.
-#eval publish topic0 1 3
-  -- some (record [headSeq 1, eventRoot 3, cursorsRoot 0, publisher 7])
+#guard (((publish topic0 1 3).map (fun t => (t.scalar "headSeq", t.scalar "eventRoot", t.scalar "cursorsRoot"))) == some (some 1, some 3, some 0))  --  some (record [headSeq 1, eventRoot 3, cursorsRoot 0, publisher 7])
 -- A subscribe ADVANCES a cursor (size 0 → 2) — monotonic holds ⇒ commits.
-#eval subscribe topic0 2
-  -- some (record […, cursorsRoot 2, …])
+#guard (((subscribe topic0 2).map (fun t => t.scalar "cursorsRoot")) == some (some 2))  --  some (record […, cursorsRoot 2, …])
 
 -- REJECTED: a publish that GROWS the log but REWINDS the head seq (0 → 0, not strict) — strictMono
 -- fails ⇒ none.
 #guard (publish topic0 0 3).isNone  -- none  (0 > 0 is false)
 -- REJECTED: a publish that advances the seq but SHRINKS the event log (size 5 → 2) — monotonic
 -- fails ⇒ none (APPEND-ONLY enforced).
-#eval publish (.record [("headSeq", .int 1), ("eventRoot", .int 5),
-                        ("cursorsRoot", .int 0), ("publisher", .dig 7)]) 2 2
-  -- none  (2 ≥ 5 is false — the log cannot shrink)
+#guard (publish (.record [("headSeq", .int 1), ("eventRoot", .int 5),
+                          ("cursorsRoot", .int 0), ("publisher", .dig 7)]) 2 2).isNone  --  none  (2 ≥ 5 is false — the log cannot shrink)
 -- REJECTED: a subscribe that REWINDS a cursor (size 4 → 1) — monotonic fails ⇒ none.
-#eval subscribe (.record [("headSeq", .int 1), ("eventRoot", .int 3),
-                          ("cursorsRoot", .int 4), ("publisher", .dig 7)]) 1
-  -- none  (1 ≥ 4 is false)
+#guard (subscribe (.record [("headSeq", .int 1), ("eventRoot", .int 3),
+                            ("cursorsRoot", .int 4), ("publisher", .dig 7)]) 1).isNone  --  none  (1 ≥ 4 is false)
 -- REJECTED (default-deny): an unknown method (3) matches no arm ⇒ none.
 #guard (recExec topicProgram 3 topic0 (.setScalar "headSeq" 99)).isNone  -- none  (no matching case → default-deny)
 
 -- Two successive publishes: the head advances (1, then 2) and the log grows (3, then 7) — the
 -- append-only stream of §3.3, each a gated turn through the same program.
-#eval (do
+#guard ((do
   let t1 ← publish topic0 1 3     -- seq 0→1, log 0→3
   let t2 ← publish t1 2 7         -- seq 1→2, log 3→7
-  pure t2 : Option Value)
-  -- some (record [headSeq 2, eventRoot 7, cursorsRoot 0, publisher 7])
+  pure t2 : Option Value).map (fun t => (t.scalar "headSeq", t.scalar "eventRoot", t.scalar "cursorsRoot")) == some (some 2, some 7, some 0))  --  some (record [headSeq 2, eventRoot 7, cursorsRoot 0, publisher 7])
 
 end Dregg2.Exec.PubSubTopic

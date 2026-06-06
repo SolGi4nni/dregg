@@ -401,21 +401,18 @@ theorem inbudget_both_commit_schedule_agnostic (s : Slice) (a₁ a₂ : Nat)
 #assert_axioms stingray_overdraw_must_escalate
 #assert_axioms inbudget_both_commit_schedule_agnostic
 
-/-! ## §8 — Non-vacuity `#eval`s (the model RUNS, the witnesses are real). -/
+/-! ## §8 — Non-vacuity guards (the model runs, the witnesses are real). -/
 
--- The Rust ceiling vectors, recomputed: 2000 and 8000.
-#eval sliceCeiling 3000 1   -- 2000
-#eval sliceCeiling 12000 1  -- 8000
-#eval sliceCeiling 1000 0   -- 1000  (f=0 ⇒ ceiling = balance)
--- The over-subscribed run: d12 commits draw 1, aborts draw 2; d21 flips.
-#eval (runDraws potSlice drawAmt drawAmt .d12).c₁  -- true
-#eval (runDraws potSlice drawAmt drawAmt .d12).c₂  -- false
-#eval (runDraws potSlice drawAmt drawAmt .d21).c₁  -- false
-#eval (runDraws potSlice drawAmt drawAmt .d21).c₂  -- true
--- The in-budget run (two 800-draws against ceiling 2000, fit 1600 ≤ 2000): both commit, both orders.
-#eval (runDraws potSlice 800 800 .d12).c₁  -- true
-#eval (runDraws potSlice 800 800 .d12).c₂  -- true
-#eval (runDraws potSlice 800 800 .d21).slice == (runDraws potSlice 800 800 .d12).slice  -- true
+#guard (sliceCeiling 3000 1 == 2000)
+#guard (sliceCeiling 12000 1 == 8000)
+#guard (sliceCeiling 1000 0 == 1000)
+#guard ((runDraws potSlice drawAmt drawAmt .d12).c₁)
+#guard ((runDraws potSlice drawAmt drawAmt .d12).c₂ == false)
+#guard ((runDraws potSlice drawAmt drawAmt .d21).c₁ == false)
+#guard ((runDraws potSlice drawAmt drawAmt .d21).c₂)
+#guard ((runDraws potSlice 800 800 .d12).c₁)
+#guard ((runDraws potSlice 800 800 .d12).c₂)
+#guard ((runDraws potSlice 800 800 .d21).slice == (runDraws potSlice 800 800 .d12).slice)
 
 /-! ## §9 — OUTCOME + the gossip-dissemination residue (NAMED, not built).
 

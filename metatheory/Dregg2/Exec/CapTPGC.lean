@@ -204,8 +204,9 @@ example : Reclaimable (renew demoLeased 120 50) 120 = false :=
 #guard (Reclaimable demoLeased 200)  --  expected: true  (200 ≥ 150, lease lapsed)
 #guard (Reclaimable demoLeased 120) == false  --  expected: false (120 < 150, lease current)
 #guard (Reclaimable (renew demoLeased 120 50) 120) == false  --  expected: false (renewed: lapses at 170)
-#eval s!"demo handle holder={demoLeased.handle.holder}, lease expiresAt={demoLeased.lease.expiresAt}: \
+#guard (s!"demo handle holder={demoLeased.handle.holder}, lease expiresAt={demoLeased.lease.expiresAt}: \
 reclaim@200={Reclaimable demoLeased 200}, reclaim@120={Reclaimable demoLeased 120}"
+        == "demo handle holder=0, lease expiresAt=150: reclaim@200=true, reclaim@120=false")
 
 end NonVacuity
 

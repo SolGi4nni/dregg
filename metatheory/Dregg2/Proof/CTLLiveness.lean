@@ -257,15 +257,14 @@ theorem af_just_separates_plain :
 -- Module-wide pin: EVERY theorem under the namespace stays kernel-clean (catches future drift).
 #assert_namespace_axioms Dregg2.Proof.CTLLiveness
 
-/-! ## It runs (`#eval`) — the just-paths separation, sampled on the real executor (non-vacuity).
+/-! ## Non-vacuity guards — the just-paths separation on the real executor.
 
-The just `transferSched` reaches the goal at index 1 (a receipt lands); the unjust `badSched`
-stutters forever (log frozen at 0). The samples make the load-bearing separation concrete. -/
+The just `transferSched` reaches the goal at index 1; the unjust `badSched` stutters forever. -/
 
-#eval (trajA fma0 transferSched 1).log.length        -- 1  (just schedule: Pgoal reached — AF_just holds)
-#eval (trajA fma0 badSched 1).log.length             -- 0  (unjust stutter: Pgoal NEVER reached — plain AF fails)
-#eval (trajA fma0 badSched 5).log.length             -- 0  (still frozen — the eternal-stutter branch)
-#eval decide (1 ≤ (trajA fma0 transferSched 1).log.length)  -- true  (Pgoal at the just hit)
-#eval decide (1 ≤ (trajA fma0 badSched 7).log.length)       -- false (Pgoal absent on the rejected schedule)
+#guard ((trajA fma0 transferSched 1).log.length == 1)
+#guard ((trajA fma0 badSched 1).log.length == 0)
+#guard ((trajA fma0 badSched 5).log.length == 0)
+#guard (decide (1 ≤ (trajA fma0 transferSched 1).log.length))
+#guard (decide (1 ≤ (trajA fma0 badSched 7).log.length) == false)
 
 end Dregg2.Proof.CTLLiveness

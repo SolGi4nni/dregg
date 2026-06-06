@@ -164,16 +164,16 @@ theorem apex_iff_dropSpec (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
     refine ⟨hg, s'.kernel, hk, ?_⟩
     cases s'; simp [hlog]
   · rintro ⟨hg, k', hk, hs'⟩
-    rcases hs' with ⟨hker, hlog⟩
     rcases withSwiss_preserves_rest s.kernel k'.swiss with
       ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
     obtain ⟨e, hf, hpos⟩ := hg.2
     have hupd := dropSwissPost_eq_update s.kernel.swiss args.sw e hf hpos
-    have hsw := (dropSwissUpdate_eq_k s.kernel args.sw k'.swiss).mpr hk
-    subst hker
+    have hk' := swissDropK_eq_withSwiss hk
+    have hsw := (dropSwissUpdate_eq_k s.kernel args.sw k'.swiss).mpr hk'
     cases s'
-    simp [hlog, dropSwissPostClause, hsw, hupd]
-    exact ⟨hg, rfl, hlog, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
+    subst hs'
+    simp [dropSwissPostClause, hsw, hupd]
+    exact ⟨hg, rfl, rfl, ⟨hAcc, hCell, hCaps, hEsc, hNul, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩⟩
 
 /-! ### §2c — THE VALIDATION. -/

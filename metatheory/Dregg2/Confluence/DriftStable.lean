@@ -324,30 +324,30 @@ def dsX : CRDT.GCounter (Fin 2) := fun i => if i = 0 then 2 else 0          -- c
 def dsΔ : CRDT.GCounter (Fin 2) := fun i => if i = 0 then 5 else 3          -- concurrent drift
 
 -- compose-state satisfies `2 ≤ x 0`; drift satisfies `2 ≤ Δ 0`; the MERGE still does ⇒ composes free.
-#eval decide (2 ≤ dsX 0)                       -- true  (caveat holds at compose-time)
-#eval decide (2 ≤ dsΔ 0)                       -- true  (drift preserves the caveat)
-#eval decide (2 ≤ (dsX ⊔ dsΔ) 0)               -- true  (SURVIVES the drift-merge — no coordination)
-#eval ((dsX ⊔ dsΔ) 0, (dsX ⊔ dsΔ) 1)           -- (5, 3)  the drift-merged commit-state
+#guard (decide (2 ≤ dsX 0))                       -- true  (caveat holds at compose-time)
+#guard (decide (2 ≤ dsΔ 0))                       -- true  (drift preserves the caveat)
+#guard (decide (2 ≤ (dsX ⊔ dsΔ) 0))               -- true  (SURVIVES the drift-merge — no coordination)
+#guard (((dsX ⊔ dsΔ) 0, (dsX ⊔ dsΔ) 1) == (5, 3))  -- (5, 3)  the drift-merged commit-state
 
 -- The bounded caveat: `(1,0)` composed, `(0,1)` drift; each within budget 1, MERGE overshoots ⇒ NEEDS
 -- coordination (the drift-window is unsound; take the equalizer / freshness window).
 def bdX : CRDT.Budget := fun i => if i = 0 then 1 else 0                    -- compose-state
 def bdΔ : CRDT.Budget := fun i => if i = 0 then 0 else 1                    -- concurrent drift
-#eval decide (CRDT.consumed bdX ≤ 1)           -- true  (within budget at compose-time)
-#eval decide (CRDT.consumed bdΔ ≤ 1)           -- true  (drift within budget)
-#eval decide (CRDT.consumed (bdX ⊔ bdΔ) ≤ 1)   -- false (drift-merge OVERSHOOTS — NOT drift-stable)
-#eval CRDT.consumed (bdX ⊔ bdΔ)                -- 2     (the overshoot: needs coordination)
+#guard (decide (CRDT.consumed bdX ≤ 1))           -- true  (within budget at compose-time)
+#guard (decide (CRDT.consumed bdΔ ≤ 1))           -- true  (drift within budget)
+#guard (decide (CRDT.consumed (bdX ⊔ bdΔ) ≤ 1) == false)   -- false (drift-merge OVERSHOOTS — NOT drift-stable)
+#guard (CRDT.consumed (bdX ⊔ bdΔ) == 2)                -- 2     (the overshoot: needs coordination)
 
 -- The lock collapses the merge: two equal-version states (single-writer chain) merge to that version.
 def lkX : VersionCell := fun _ => 7
 def lkΔ : VersionCell := fun _ => 7
-#eval decide ((lkX ⊔ lkΔ) 0 = 7)               -- true  (non-monotone "version = 7" SURVIVES under lock)
+#guard (decide ((lkX ⊔ lkΔ) 0 = 7))               -- true  (non-monotone "version = 7" SURVIVES under lock)
 
 -- The tier tag is computable (the executor reads it to dispatch); a fallback exists for the bounded case.
-#eval (monotoneTC (ι := Fin 2) 0 2).tier       -- DriftTier.monotone
-#eval (lockedTC 7).tier                         -- DriftTier.locked
-#eval (decide ((monotoneTC (ι := Fin 2) 0 2).tier = DriftTier.coordinated))  -- false (⇒ dispatch fires)
-#eval (BoundedEscape.equalizer, BoundedEscape.freshnessWindow)               -- the two sound fallbacks
+#guard ((monotoneTC (ι := Fin 2) 0 2).tier == DriftTier.monotone)       -- DriftTier.monotone
+#guard ((lockedTC 7).tier == DriftTier.locked)                         -- DriftTier.locked
+#guard (decide ((monotoneTC (ι := Fin 2) 0 2).tier = DriftTier.coordinated) == false)  -- false (⇒ dispatch fires)
+#guard ((BoundedEscape.equalizer, BoundedEscape.freshnessWindow) == (.equalizer, .freshnessWindow))  -- the two sound fallbacks
 
 end Evals
 

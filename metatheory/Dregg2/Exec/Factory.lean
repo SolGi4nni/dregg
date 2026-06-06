@@ -275,7 +275,7 @@ theorem same_content_same_vk
   unfold FactoryDescriptor.WellFormed at hw₁ hw₂
   rw [hw₁, hw₂, hs, hp]
 
-/-! ## It runs (`#eval`) — a counter factory mints a counter cell; a bad turn is rejected. -/
+/-! ## It runs (`#guard`) — a counter factory mints a counter cell; a bad turn is rejected. -/
 
 /-- The canonical living-cell example as a PUBLISHED contract: a factory whose schema is one
 scalar field `count`, and whose lifetime program is `monotonic "count"` (count only ever
@@ -295,21 +295,21 @@ def badInit : Value := .int 7
 -- (`RecordProgram` is a nested-`List` inductive, so it has no `DecidableEq`; we compare via the
 -- derived `Repr` — the minted program prints identically to the factory's, witnessing the keystone
 -- `constructor_transparency` is true at this datum.)
-#eval match createFromFactory counterFactory counterInit with
+#guard (match createFromFactory counterFactory counterInit with
       | some c => reprStr c.program == reprStr counterFactory.program   -- the keystone, computed: true
-      | none   => false
+      | none   => false)
 
 -- A non-conforming initial value is rejected at mint time (fail-closed):
 #guard ((createFromFactory counterFactory badInit).isSome) == false  --  false
 
 -- The minted cell, stepped: an increment commits; a decrement is rejected by the factory's
 -- monotonic program (the lifetime invariant, enforced on a *minted* cell):
-#eval match createFromFactory counterFactory counterInit with
-      | some c => (cellStep c 0 (.addScalar "count" 3)).map (fun (c' : Cell) => c'.state)   -- some (record [count := 8])
-      | none   => none
-#eval match createFromFactory counterFactory counterInit with
+#guard (match createFromFactory counterFactory counterInit with
+      | some c => (cellStep c 0 (.addScalar "count" 3)).map (fun (c' : Cell) => (c'.state).scalar "count")   -- some (record [count := 8])
+      | none   => none) == some (some 8)
+#guard (match createFromFactory counterFactory counterInit with
       | some c => (cellStep c 0 (.addScalar "count" (-2))).isSome       -- false (8↛3 violates monotonic)
-      | none   => false
+      | none   => false) == false
 
 -- Content-addressing: re-publishing the same contract yields the same `vk`; the descriptor is
 -- well-formed (its `vk` is the hash of its content):

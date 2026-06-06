@@ -59,18 +59,18 @@ def transfer (sender receiver : Acct) (amt : Amount) : Option (Acct × Acct) :=
 guard). Atomicity is this PROOF property, not a live coordinator. -/
 def willSucceed (sender : Acct) (amt : Amount) : Bool := decide (amt ≤ sender.bal)
 
-/-! ## It runs (`#eval`). -/
+/-! ## It runs (`#guard`). -/
 
 /-- Alice starts with 100. -/
 def alice : Acct := ⟨100⟩
 /-- Bob starts with 5. -/
 def bob : Acct := ⟨5⟩
 
-#eval transfer alice bob 30    -- some ({ bal := 70 }, { bal := 35 })
-#eval transfer alice bob 200   -- none   (atomic reject — Bob is NOT credited)
-#eval willSucceed alice 30     -- true
-#eval (acctCoalg.next alice (.credit 7)).bal   -- 107  (the coalgebra steps as codata)
-#eval (acctCoalg.next alice (.debit 40)).bal   -- 60
+#guard (transfer alice bob 30 == some (⟨70⟩, ⟨35⟩))    -- some ({ bal := 70 }, { bal := 35 })
+#guard (transfer alice bob 200 == none)              -- none   (atomic reject — Bob is NOT credited)
+#guard (willSucceed alice 30)                         -- true
+#guard ((acctCoalg.next alice (.credit 7)).bal == 107)   -- 107  (the coalgebra steps as codata)
+#guard ((acctCoalg.next alice (.debit 40)).bal == 60)    -- 60
 
 /-! ## And it is PROVED (no `sorry`). -/
 
@@ -173,7 +173,7 @@ def runBatch : Acct × Acct → List (Bool × Amount) → Option (Acct × Acct)
       | some s' => runBatch s' rest
       | none    => none
 
-#eval runBatch (alice, bob) [(true, 30), (false, 10), (true, 5)]
+#guard (runBatch (alice, bob) [(true, 30), (false, 10), (true, 5)] == some (⟨75⟩, ⟨30⟩))
   -- some ({ bal := 75 }, { bal := 30 })   — total 105 preserved throughout
 
 end Dregg2.Protocol.Transfer

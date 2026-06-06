@@ -722,8 +722,8 @@ def as0 : RecChainedState :=
 
 -- (1') THE TEETH — genuine rights non-amplification over the real `List Auth` lattice.
 -- Holder 2 holds `endpoint 9 [read, write]`; attenuating to `[read]` confers `[read]`, a real SUBSET:
-#eval capAuthConferred (attenuate [Auth.read]
-        (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write]))             -- [read] ⊆ [read, write]
+#guard (capAuthConferred (attenuate [Auth.read]
+        (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])) == [Auth.read])  --  [read] ⊆ [read, write]
 -- the genuine `introduce_non_amplifying` fires on this concrete held cap (granted ⊆ held, real rights):
 example : IsNonAmplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])
     (attenuate [Auth.read] (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])) :=
@@ -741,10 +741,10 @@ example : ¬ IsNonAmplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.w
 #guard ((revokeDelegationStep as0 0 7).kernel.caps 0) == []  --  [] (node 7 gone)
 
 -- (3) ATTENUATE: narrow actor 2's `endpoint 9 [read,write]` to keep only `read`.
-#eval (attenuateStep as0 2 0 [Auth.read]).kernel.caps 2                   -- [endpoint 9 [read]]
+#guard ((attenuateStep as0 2 0 [Auth.read]).kernel.caps 2 == [Dregg2.Authority.Cap.endpoint 9 [Auth.read]])  --  [endpoint 9 [read]]
 #guard (recTotal (attenuateStep as0 2 0 [Auth.read]).kernel) == 105  --  105 (FIXED)
 -- ...the narrowed cap confers a SUBSET: [read] ⊆ [read, write].
-#eval capAuthConferred (attenuate [Auth.read] (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write]))  -- [read]
+#guard (capAuthConferred (attenuate [Auth.read] (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])) == [Auth.read])  --  [read]
 
 -- (4) DROP-REF: holder 0 GC-drops its reference to 7.
 #guard ((dropRefStep as0 0 7).kernel.caps 0) == []  --  []
