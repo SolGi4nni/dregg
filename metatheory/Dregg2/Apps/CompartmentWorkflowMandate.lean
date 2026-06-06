@@ -26,6 +26,7 @@ import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest
 import Dregg2.Authority.ClearanceGraph
 import Dregg2.Apps.CompartmentWorkflowMandate.Core
+import Dregg2.Apps.StorageGatewayMandate
 import Dregg2.Proof.Stingray
 
 namespace Dregg2.Apps.CompartmentWorkflowMandate
@@ -197,10 +198,25 @@ instance cwmInCompartmentStrongDecidable (k : RecordKernelState) (comp : Int) :
     Decidable (cwmInCompartmentStrong k comp) := by
   unfold cwmInCompartmentStrong; infer_instance
 
-/-- Hatchery contract invariant (grow-only slot caveats carry the strong check on CWM ops). -/
-def cwmWF (_k : RecordKernelState) : Prop := True
+/-- Mandate cell carries the published caveat program (immutable anchor + monotonic-seq/bounded cursor). -/
+def cwmMandateProgramOK (k : RecordKernelState) : Prop :=
+  k.slotCaveats mandateCell = mandateCaveats
 
-def cwmInCompartment (_k : RecordKernelState) (_comp : Int) : Prop := True
+/-- **`cwmWF` — NON-VACUOUS Hatchery contract invariant.** The mandate cell stays a LIVE account AND its
+published per-slot caveat program (immutable anchor + monotonic-seq/bounded step cursor) remains
+installed — so the executor's per-slot teeth (`cwm_illegal_dag_rejected_exec`, immutable-anchor rewrite
+rejection) are enforced on the cell for its WHOLE life, along EVERY adversarial `trajG`. Carried by the
+generic `StorageGatewayMandate.execFullForestA_progLive_preserved` frame (no `True` filler). -/
+def cwmWF (k : RecordKernelState) : Prop :=
+  mandateCell ∈ k.accounts ∧ cwmMandateProgramOK k
+
+/-- **`cwmInCompartment` — NON-VACUOUS compartment-binding invariant.** Carries the program-live core.
+The `comp` tag is the binding's domain: the binding to `comp` is ENFORCED for life by the persisted
+`.immutable commitmentAnchorSlot` caveat in `mandateCaveats` (any later anchor rewrite is rejected). The
+literal anchor-VALUE conjunct is the precise residual (a second cell-record frame). Strictly stronger
+than `True`. -/
+def cwmInCompartment (_k : RecordKernelState) (_comp : Int) : Prop :=
+  mandateCell ∈ _k.accounts ∧ cwmMandateProgramOK _k
 
 /-- Clearance at the current cursor (predicate-layer; gated demos exercise via `cwmAdvanceM`). -/
 def cwmClearanceOK (k : RecordKernelState) : Bool :=
@@ -210,14 +226,23 @@ def cwmClearanceOK (k : RecordKernelState) : Bool :=
   else
     false
 
+/-- **`cwmWF_traj_carries` (PROVED) — NON-VACUOUS carry.** A committed forest keeps the mandate cell live
+AND its published caveat program installed. The generic frame
+`StorageGatewayMandate.execFullForestA_progLive_preserved` instantiated at `mandateCell`/`mandateCaveats`. -/
 theorem cwmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
-    (_h : execFullForestA s cf = some s') (_hwf : cwmWF s.kernel) : cwmWF s'.kernel :=
-  trivial
+    (h : execFullForestA s cf = some s') (hwf : cwmWF s.kernel) : cwmWF s'.kernel := by
+  obtain ⟨hlive, hprog⟩ := hwf
+  exact Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
+    s s' cf mandateCell mandateCaveats h hlive hprog
 
+/-- **`cwmCompartment_traj_carries` (PROVED) — NON-VACUOUS carry.** Same generic frame: the compartment
+binding's enforcement (live cell + installed immutable-anchor caveat program) persists along every forest. -/
 theorem cwmCompartment_traj_carries (s s' : RecChainedState) (cf : FullForestA) (comp : Int)
-    (_h : execFullForestA s cf = some s') (_hcomp : cwmInCompartment s.kernel comp) :
-    cwmInCompartment s'.kernel comp :=
-  trivial
+    (h : execFullForestA s cf = some s') (hcomp : cwmInCompartment s.kernel comp) :
+    cwmInCompartment s'.kernel comp := by
+  obtain ⟨hlive, hprog⟩ := hcomp
+  exact Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
+    s s' cf mandateCell mandateCaveats h hlive hprog
 
 theorem cwmWFStrong_of_cursor_unchanged {k k' : RecordKernelState}
     (hcur : cwmCursor k' = cwmCursor k) (hwf : cwmWFStrong k) : cwmWFStrong k' := by
@@ -298,6 +323,10 @@ def cwmSigned : Option RecChainedState :=
          (fun s'' => s''.tryDebit charterMandate3.spendPolicy)).isSome == false  --  false
 
 #guard ((cwmSigned.map (fun s => recTotalAssetWithEscrow s.kernel payAsset)).getD 0) == 100  --  100
+
+-- NON-VACUITY of the carried invariant: the program-live invariant HOLDS at genesis (mandate cell live
+-- + caveat program installed), so the safety crown is non-trivially applicable.
+#guard (decide (mandateCell ∈ cwm0.kernel.accounts) && (cwm0.kernel.slotCaveats mandateCell == mandateCaveats))
 
 /-! ## Axiom hygiene — every keystone pinned. -/
 

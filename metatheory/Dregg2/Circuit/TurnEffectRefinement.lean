@@ -398,7 +398,11 @@ abbrev fullActionCircuitStepInst
     hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide hDSide DLeg hDLeg
     DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth
 
-/-- **`fullAction_circuit_refines_spec`** — per-action SOUNDNESS: circuit ⊑ `fullActionStep`. -/
+/-- **`fullAction_circuit_refines_spec`** — per-action SOUNDNESS: circuit ⊑ `fullActionStep`.
+
+CONDITIONAL: four effect arms (`exerciseA`, `createObligationA`, `releaseCommittedEscrowA`,
+`refundCommittedEscrowA`) are open fronts (sorry-bearing downstream); this theorem transitively
+depends on `sorry` and is NOT `#assert_axioms`-certified. Not whole-action adversarial soundness. -/
 theorem fullAction_circuit_refines_spec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -654,7 +658,10 @@ theorem fullAction_circuit_refines_spec
 
 /-! ## §2 — Turn-level diamond (compose generic `TurnRefinement` lemmas). -/
 
-/-- **`fullAction_turn_circuit_refines_spec`** — turn circuit ⊑ `turnSpec fullActionStep`. -/
+/-- **`fullAction_turn_circuit_refines_spec`** — turn circuit ⊑ `turnSpec fullActionStep`.
+
+CONDITIONAL: depends on `fullAction_circuit_refines_spec`, so it transitively depends on `sorry`
+(four open effect arms) and is NOT `#assert_axioms`-certified. Not whole-turn adversarial soundness. -/
 theorem fullAction_turn_circuit_refines_spec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -711,7 +718,10 @@ theorem fullAction_turn_circuit_refines_spec
       hRestDelegations hLog)
     s acts s' hc
 
-/-- **`fullAction_turn_circuit_refines_exec`** — full diamond: turn circuit ⊑ `execFullTurnA`. -/
+/-- **`fullAction_turn_circuit_refines_exec`** — full diamond: turn circuit ⊑ `execFullTurnA`.
+
+CONDITIONAL: depends on `fullAction_circuit_refines_spec`, so it transitively depends on `sorry`
+(four open effect arms) and is NOT `#assert_axioms`-certified. Not whole-turn adversarial soundness. -/
 theorem fullAction_turn_circuit_refines_exec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)

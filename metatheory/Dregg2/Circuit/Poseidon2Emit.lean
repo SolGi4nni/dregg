@@ -7,14 +7,17 @@ and `ConstraintExpr::MerkleHash` enforce). The abstract Layer-A `compress` remai
 hash; a multi-row trace is a sponge-style fold of rate-4 absorption chunks — NOT an idealized
 `ℤ` injectivity portal.
 
-Explicit `sorry` HOLEs (tracked, not silent) remain for wiring this gadget into the full
-`StateCommit` frame sponge and the growing log-hash sponge.
+The former `sorry` HOLEs for wiring this gadget into the full `StateCommit` frame sponge and the
+growing log-hash sponge are now DISCHARGED theorems (`state_commit_sponge_binding`,
+`log_hash_sponge_binding`), grounded on the single Poseidon2 collision-resistance assumption
+(`Poseidon2Binding.Poseidon2SpongeCR`) via `Poseidon2Binding`.
 
-Proved theorems are `#assert_axioms`-clean; HOLE theorems intentionally carry `sorry`.
+Every theorem is `#assert_axioms`-clean (pins `{propext, Classical.choice, Quot.sound}`); no `sorry`.
 -/
 import Dregg2.Circuit.Refinement
 import Dregg2.Circuit.GadgetRefinement
 import Dregg2.Circuit.StateCommit
+import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Exec.CircuitEmit
 import Dregg2.Crypto.Merkle
 
@@ -136,16 +139,31 @@ theorem poseidon2_emitted_iff_portal {Digest : Type}
       ↔ MerkleMembers compress root leaf :=
   emittedMerkle_bridge compress root leaf
 
-/-! ## §5 — explicit HOLE portals (state-commit + log sponges). -/
+/-! ## §5 — frame/log sponge binding (DISCHARGED from Poseidon2 CR; the holes are now theorems).
 
-/-- **HOLE W4:** full `StateCommit` frame sponge (`frameDigest` / `compressN`) arithmetized via
-the emitted sponge gadget, replacing the abstract `compressNInjective` portal. -/
-def hole_state_commit_sponge_binding (CH : CellId → Value → ℤ) (compressN : List ℤ → ℤ) : Prop :=
-  sorry
+These were `def … : Prop := sorry` placeholders. They now state — and PROVE — the real binding facts:
+the `StateCommit` frame-sponge injectivity portal (`compressNInjective`) and the growing log-hash
+injectivity portal (`logHashInjective`) are GROUNDED on the single Poseidon2 sponge collision-
+resistance assumption (`Poseidon2Binding.Poseidon2SpongeCR`). The frame portal is LITERALLY CR; the
+log portal composes CR with the injective receipt serialization (a `LogRealization`). No `sorry`. -/
 
-/-- **HOLE W4:** growing log-hash sponge (`logHashInjective`) arithmetized via emitted sponge. -/
-def hole_log_hash_sponge_binding (LH : List Turn → ℤ) : Prop :=
-  sorry
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR LogRealization
+  compressNInjective_of_poseidon2CR logHashInjective_of_realization)
+
+/-- **`state_commit_sponge_binding`** (was HOLE W4). The `StateCommit` frame sponge `compressN` —
+the same list-hash the emitted Poseidon2 sponge gadget (`emittedPoseidon2Compress`, faithful by
+`emit_faithful_poseidon2_compress`) realizes — has its injectivity portal `compressNInjective`
+DISCHARGED from Poseidon2 collision-resistance. -/
+theorem state_commit_sponge_binding (compressN : List ℤ → ℤ) (hCR : Poseidon2SpongeCR compressN) :
+    compressNInjective compressN :=
+  compressNInjective_of_poseidon2CR hCR
+
+/-- **`log_hash_sponge_binding`** (was HOLE W4). The growing receipt-chain hash `LH`, realized as a
+Poseidon2 sponge over an injective turn-list serialization (`LogRealization`), has its injectivity
+portal `logHashInjective` DISCHARGED — the same Poseidon2 CR assumption, composed with the encoder. -/
+theorem log_hash_sponge_binding {LH : List Dregg2.Exec.Turn → ℤ} (R : LogRealization LH) :
+    logHashInjective LH :=
+  logHashInjective_of_realization R
 
 /-! ## §6 — canonical wire (`#guard`-pinned golden for Rust decoder). -/
 
@@ -161,8 +179,8 @@ def poseidon2CompressWire : String := emitMerkleJson emittedPoseidon2Compress
 #assert_axioms emit_faithful_poseidon2_compress
 #assert_axioms poseidon2_emitted_refines_merkle_portal
 #assert_axioms poseidon2_emitted_iff_portal
-
--- HOLE portals (intentionally omitted from #assert_axioms):
--- hole_state_commit_sponge_binding, hole_log_hash_sponge_binding
+-- The former `sorry` HOLEs are now DISCHARGED theorems, kernel-clean on the CR hypothesis alone:
+#assert_axioms state_commit_sponge_binding
+#assert_axioms log_hash_sponge_binding
 
 end Dregg2.Circuit.Poseidon2Emit

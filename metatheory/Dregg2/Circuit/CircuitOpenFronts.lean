@@ -102,19 +102,15 @@ def countOpenFronts : Nat := openFronts.length
 
 /-! Wave-3 circuit ⊑ spec hole theorems: see `TurnEffectRefinement.HolePortals` (34 per-action + fallback). -/
 
-/-! ## §3 — Wave 4–7 sorry portals (tracked, not hidden). -/
+/-! ## §3 — Wave 4–7 fronts: tracked declaratively in `openFronts`, no vacuous portals.
 
-/-- HOLE W4: arithmetized Poseidon2 sponge replaces abstract digest injectivity. -/
-theorem hole_poseidon2_digest_sound : True := by sorry
-
-/-- HOLE W5: whole-turn circuit equals folded per-step emitted descriptors. -/
-theorem hole_turn_circuit_fold_emitted : True := by sorry
-
-/-- HOLE W6: coordinated covenant φ discharged inside polynomial system. -/
-theorem hole_coordinated_covenant_in_circuit : True := by sorry
-
-/-- HOLE W7: exercise inner turn arithmetized (no abstract `innerTurnH`). -/
-theorem hole_exercise_inner_turn_in_circuit : True := by sorry
+    These four fronts have NO standalone `: True := by sorry` placeholder (those were doubly-vacuous:
+    a `True` statement AND a `sorry` body, asserting nothing). Each is registered as a plain
+    `OpenFront` entry above instead:
+    * W4 arithmetized Poseidon2 sponge / digest CR → `poseidon2_in_circuit`, `digest_injective_to_cr`
+    * W5 whole-turn = folded per-step emitted descriptors → `turn_circuit_composition`
+    * W6 coordinated covenant φ in the polynomial system → `coordinated_covenant_in_poly`
+    * W7 exercise inner turn arithmetized → `exercise_inner_turn_witness` -/
 
 #guard countOpenFronts == openFronts.length
 

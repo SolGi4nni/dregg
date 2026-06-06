@@ -1057,17 +1057,11 @@ theorem createCommittedEscrowA_emitted_refines_spec (S : Surface2) (D : (CellId 
       createCommittedEscrowA_emitted_equiv_circuit S D hD LE cN hN hLE pre args post)
     s args s' h
 
-/-- HOLE: `releaseCommittedEscrowA` has no Inst emission (`releaseCommittedEscrowAHoleName`). -/
-theorem releaseCommittedEscrowA_emitted_refines_spec (s : RecChainedState) (id : Nat) (actor : CellId)
-    (s' : RecChainedState) :
-    CommittedEscrowSettleSpec s id actor (fun r => r.recipient) releaseSettleAuthB s' := by
-  sorry -- HOLE: releaseCommittedEscrowA
-
-/-- HOLE: `refundCommittedEscrowA` has no Inst emission (`refundCommittedEscrowAHoleName`). -/
-theorem refundCommittedEscrowA_emitted_refines_spec (s : RecChainedState) (id : Nat) (actor : CellId)
-    (s' : RecChainedState) :
-    CommittedEscrowSettleSpec s id actor (fun r => r.creator) refundSettleAuthB s' := by
-  sorry -- HOLE: refundCommittedEscrowA
+/-! `releaseCommittedEscrowA` / `refundCommittedEscrowA` have no Inst emission yet
+    (`releaseCommittedEscrowAHoleName` / `refundCommittedEscrowAHoleName`); their open fronts are
+    tracked declaratively in `CircuitOpenFronts.openFronts`
+    (`releaseCommittedEscrowA_circuit` / `refundCommittedEscrowA_circuit`). No false-as-stated
+    `*_emitted_refines_spec` placeholder is carried here. -/
 
 def bridgeFinalizeAEmittedStep (S : Surface2) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)

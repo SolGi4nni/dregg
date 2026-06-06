@@ -253,7 +253,15 @@ theorem turn_emitted_refines_turnSpec
       chain_last := h.chain_last
       step_witness := fun i => hstep _ _ _ _ (h.step_sat i) }
 
-/-- **`turn_emitted_refines_exec`** — compose emitted-turn soundness with the executor bridge. -/
+/-- **`turn_emitted_refines_exec`** — compose emitted-turn soundness with the executor bridge.
+
+HONEST CAVEAT: this is parametric in a per-step refinement hypothesis `hstep`. When `hstep` is
+discharged via `step_emitted_refines_fullActionStep`, BOTH of that lemma's conditionalities flow
+through here: (1) it is sorry-bearing (four effect arms — `exerciseA`, `createObligationA`,
+`releaseCommittedEscrowA`, `refundCommittedEscrowA` — are open holes, so the composed result is
+NOT `#assert_axioms`-pinned), and (2) it establishes only honest-encoded-trace soundness, NOT
+adversarial-trace soundness (the encoder-agreement hypothesis is dead in the per-step proof). Do
+not read this as whole-turn adversarial soundness of the executor bridge. -/
 theorem turn_emitted_refines_exec
     (lookup : DescriptorLookup)
     (hstep :
@@ -501,7 +509,20 @@ def stepEmittedEncodeAgrees
 
 /-- **`step_emitted_refines_fullActionStep`** — `stepEmittedSat` on the central registry + honest
 encoder refines to `fullActionStep` for every effect with an emitted diamond; other arms defer to
-the circuit dispatch (`fullAction_circuit_refines_spec`). -/
+the circuit dispatch (`fullAction_circuit_refines_spec`).
+
+HONEST CAVEAT (two conditionalities — this is NOT whole-turn adversarial soundness):
+
+1. **Sorry-bearing.** Four effect arms are open holes (explicit `sorry`):
+   `exerciseA`, `createObligationA`, `releaseCommittedEscrowA`, `refundCommittedEscrowA`.
+   This theorem therefore depends on `sorry` and is NOT `#assert_axioms`-pinned. Treat the
+   four arms above (and the lemmas they would need) as a registered open front, not as proved.
+
+2. **Honest-trace only (dead `hEnc`).** The `hEnc` hypothesis (`stepEmittedEncodeAgrees`)
+   is carried in the signature but is NEVER used in the proof body. Consequently this proves
+   "honest-encoded trace ⇒ `fullActionStep`", i.e. soundness against an honestly-produced
+   witness — it does NOT establish adversarial-trace soundness (a maliciously crafted witness
+   is not constrained by `hEnc` here). The dead hypothesis should not be read as load-bearing. -/
 theorem step_emitted_refines_fullActionStep
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -703,6 +724,7 @@ theorem step_emitted_refines_fullActionStep
         ((attenuateA_emitted_equiv_circuit S D_caps hD_caps st ⟨actor, idx, keep⟩ st').mpr hcircuit)
   | .exerciseA actor target inner =>
       simp only [fullActionStep]
+      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
       sorry -- HOLE: exerciseA emitted ⊑ spec (hold-gate only; inner turn not wired)
   | .createCellFromFactoryA actor newCell vk =>
       simp only [fullActionStep]
@@ -713,6 +735,7 @@ theorem step_emitted_refines_fullActionStep
             createCellFromFactoryAAirName st ⟨actor, newCell, vk⟩ st').mpr hcircuit)
   | .createObligationA id actor obligor beneficiary asset stake =>
       simp only [fullActionStep]
+      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
       sorry -- HOLE: createObligationA emitted ⊑ spec (no Inst emission)
   | .createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
       simp only [fullActionStep]
@@ -722,9 +745,11 @@ theorem step_emitted_refines_fullActionStep
             ⟨id, actor, creator, recipient, asset, amount, hidingProof⟩ st').mpr hcircuit)
   | .releaseCommittedEscrowA id actor =>
       simp only [fullActionStep]
+      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
       sorry -- HOLE: releaseCommittedEscrowA emitted ⊑ spec (no Inst emission)
   | .refundCommittedEscrowA id actor =>
       simp only [fullActionStep]
+      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
       sorry -- HOLE: refundCommittedEscrowA emitted ⊑ spec (no Inst emission)
   | .bridgeFinalizeA id actor asset amount =>
       simp only [fullActionStep]
