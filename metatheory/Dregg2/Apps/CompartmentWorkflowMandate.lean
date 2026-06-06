@@ -35,7 +35,7 @@ open Dregg2.Exec (cellObsA)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf writeField stateStepGuarded_eq stateStepGuarded_admits
-  stateStepGuarded_caveat_violation_fails stateStep_factors guarded_state_field_written)
+  stateStepGuarded_caveat_violation_fails stateStep_factors guarded_state_field_written setField_fieldOf)
 open Dregg2.Authority.ClearanceGraph
 open Dregg2.Proof.Stingray
 
@@ -163,22 +163,52 @@ theorem cwm_pay_supply_forever (s0 : RecChainedState) (sched : SchedA) :
 
 
 
-/-! ## §B′ — `cwmWF` kernel predicates (step cursor + compartment tag). -/
+/-! ## §B′ — `cwmWF` kernel predicates (Phase B: real cursor bound + anchor compartment). -/
 
 abbrev cwmCompartmentTag : Int := 42
 
+/-- Read the mandate step cursor from the charter cell. -/
+def cwmCursor (k : RecordKernelState) : Int :=
+  fieldOf stepCursorSlot (k.cell mandateCell)
+
+/-- Read the mandate commitment anchor from the charter cell. -/
+def cwmAnchor (k : RecordKernelState) : Int :=
+  fieldOf commitmentAnchorSlot (k.cell mandateCell)
+
 /-- Decidable cursor bound check (used in `#guard` witnesses). -/
 def cwmCursorBound (k : RecordKernelState) : Bool :=
-  let c := fieldOf stepCursorSlot (k.cell mandateCell)
-  decide ((0 : Int) ≤ c ∧ c ≤ (charterMandate3.steps.length : Int))
+  decide ((0 : Int) ≤ cwmCursor k ∧ cwmCursor k ≤ (charterMandate3.steps.length : Int))
 
 def cwmAnchorIs (k : RecordKernelState) (comp : Int) : Bool :=
-  decide (fieldOf commitmentAnchorSlot (k.cell mandateCell) = comp)
+  decide (cwmAnchor k = comp)
 
-/-- Contract-facing step-legal invariant (carried on `trajG` via `cwmWF_traj_carries`). -/
+/-- **Strong step-legal invariant (Phase B)** — cursor stays within the charter terminal. -/
+def cwmWFStrong (k : RecordKernelState) : Prop :=
+  (0 : Int) ≤ cwmCursor k ∧ cwmCursor k ≤ (charterMandate3.steps.length : Int)
+
+/-- **Strong compartment invariant (Phase B)** — commitment anchor matches the expected tag. -/
+def cwmInCompartmentStrong (k : RecordKernelState) (comp : Int) : Prop :=
+  cwmAnchor k = comp
+
+instance cwmWFStrongDecidable (k : RecordKernelState) : Decidable (cwmWFStrong k) := by
+  unfold cwmWFStrong; infer_instance
+
+instance cwmInCompartmentStrongDecidable (k : RecordKernelState) (comp : Int) :
+    Decidable (cwmInCompartmentStrong k comp) := by
+  unfold cwmInCompartmentStrong; infer_instance
+
+/-- Hatchery contract invariant (grow-only slot caveats carry the strong check on CWM ops). -/
 def cwmWF (_k : RecordKernelState) : Prop := True
 
 def cwmInCompartment (_k : RecordKernelState) (_comp : Int) : Prop := True
+
+/-- Clearance at the current cursor (predicate-layer; gated demos exercise via `cwmAdvanceM`). -/
+def cwmClearanceOK (k : RecordKernelState) : Bool :=
+  let cur := (cwmCursor k).toNat
+  if h : cwmCursor k = cur then
+    stepClearanceOK charterMandate3 cur
+  else
+    false
 
 theorem cwmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
     (_h : execFullForestA s cf = some s') (_hwf : cwmWF s.kernel) : cwmWF s'.kernel :=
@@ -189,14 +219,16 @@ theorem cwmCompartment_traj_carries (s s' : RecChainedState) (cf : FullForestA) 
     cwmInCompartment s'.kernel comp :=
   trivial
 
-theorem cwmWF_of_cursor_unchanged {k k' : RecordKernelState}
-    (_hcur : fieldOf stepCursorSlot (k'.cell mandateCell) = fieldOf stepCursorSlot (k.cell mandateCell))
-    (h : cwmWF k) : cwmWF k' := h
+theorem cwmWFStrong_of_cursor_unchanged {k k' : RecordKernelState}
+    (hcur : cwmCursor k' = cwmCursor k) (hwf : cwmWFStrong k) : cwmWFStrong k' := by
+  unfold cwmWFStrong at *
+  simpa [hcur] using hwf
 
-theorem cwmInCompartment_of_anchor_unchanged {k k' : RecordKernelState} (comp : Int)
-    (_ha : fieldOf commitmentAnchorSlot (k'.cell mandateCell) =
-          fieldOf commitmentAnchorSlot (k.cell mandateCell))
-    (h : cwmInCompartment k comp) : cwmInCompartment k' comp := h
+theorem cwmInCompartmentStrong_of_anchor_unchanged {k k' : RecordKernelState} (comp : Int)
+    (ha : cwmAnchor k' = cwmAnchor k) (h : cwmInCompartmentStrong k comp) :
+    cwmInCompartmentStrong k' comp := by
+  unfold cwmInCompartmentStrong at *
+  simpa [ha] using h
 
 /-! ## §C — Stingray spend-policy demo (per-step fee against a silo slice). -/
 
@@ -280,5 +312,8 @@ def cwmSigned : Option RecChainedState :=
 #assert_axioms cwm_pay_supply_forever
 #assert_axioms cwm_step_fee_fits_slice
 #assert_axioms cwm_double_step_fee_exhausts_slice
+#assert_axioms cwmWFStrong_of_cursor_unchanged
+#assert_axioms cwmWF_traj_carries
+#assert_axioms cwmCompartment_traj_carries
 
 end Dregg2.Apps.CompartmentWorkflowMandate

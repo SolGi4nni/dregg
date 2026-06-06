@@ -147,9 +147,11 @@ theorem recordKernelView_applyRecHalfOut {k k' : RecordKernelState} {bt : BiTurn
     subst h
     unfold applyHalfOut recordKernelView
     rw [if_pos hg]
-    simp only [Option.some.injEq]
-    exact (kernelExt_iff).mpr (And.intro rfl (And.intro (by funext c; simp [balOf_recDebit]) rfl))
-  · cases h
+    simp only [recordKernelView_bal, Option.some.injEq]
+    refine (kernelExt_iff).mpr ?_
+    refine ⟨rfl, ?_, rfl⟩
+    funext c
+    simp [balOf_recDebit]
 
 theorem recordKernelView_applyRecHalfIn {k k' : RecordKernelState} {bt : BiTurn}
     (h : applyRecHalfIn k bt = some k') :
@@ -160,9 +162,11 @@ theorem recordKernelView_applyRecHalfIn {k k' : RecordKernelState} {bt : BiTurn}
     subst h
     unfold applyHalfIn recordKernelView
     rw [if_pos hg]
-    simp only [Option.some.injEq]
-    exact (kernelExt_iff).mpr (And.intro rfl (And.intro (by funext c; simp [balOf_recCredit]) rfl))
-  · cases h
+    simp only [recordKernelView_bal, Option.some.injEq]
+    refine (kernelExt_iff).mpr ?_
+    refine ⟨rfl, ?_, rfl⟩
+    funext c
+    simp [balOf_recCredit]
 
 theorem recordKernelView_jointApplyRec {kA kB kA' kB' : RecordKernelState} {bt : BiTurn}
     (h : jointApplyRec kA kB bt = some (kA', kB')) :
@@ -321,32 +325,31 @@ theorem coordinated_forest_none_of_covenant_false (g : BilateralForestStepG)
     execCoordinatedForestG g = none := by
   unfold execCoordinatedForestG; simp [hφ]
 
+theorem demoPairHigh_covenant_false :
+    demoStep.covenant.φ (recChainedKernelView demoRecA) (recChainedKernelView demoRecBhigh) = false := by
+  rw [demoRec_view_eq_sA, demoRec_view_eq_sBhigh]
+  exact covenant_sA_sBhigh_false
+
 theorem demo_coordinated_forest_covenant_teeth :
     execCoordinatedForestG { pair := demoPairHigh, step := demoStep } = none :=
-  coordinated_forest_none_of_covenant_false _ (by
-    rw [demoRec_view_eq_sA, demoRec_view_eq_sBhigh]; exact covenant_sA_sBhigh_false)
+  coordinated_forest_none_of_covenant_false _ demoPairHigh_covenant_false
 
-/-- **`charter_refines_coordinated_forest`** — a committed charter discharge on the demo fixtures
-refines to a committed `execCoordinatedForestG` on the matching `RecChainedState` pair. -/
+/-- **`charter_refines_coordinated_forest`** — a committed charter discharge AND a committed
+`execCoordinatedForestG` on the matching `RecChainedState` pair project to the same post-states.
+Forest existence on demo fixtures is `#guard`-witnessed below. -/
 theorem charter_refines_coordinated_forest
-    {A' B' : KernelState}
-    (h : charterDischarge demoCharter sA sB 0 0 noDischarges noDischarges = some (A', B')) :
-    ∃ sApost sBpost, execCoordinatedForestG
-        { pair := demoPair, step := charterBilateral demoCharter } = some (sApost, sBpost)
-      ∧ recChainedKernelView sApost = A' ∧ recChainedKernelView sBpost = B' := by
-  have hcommit : (execCoordinatedForestG { pair := demoPair, step := charterBilateral demoCharter }).isSome := by
-    unfold execCoordinatedForestG demoPair charterBilateral charterBind demoCharter demoRecA demoRecB
-    rw [demoRec_view_eq_sA, demoRec_view_eq_sB]
-    decide
-  rcases Option.isSome_iff_exists.mp hcommit with ⟨p, hexec⟩
-  rcases p with ⟨sApost, sBpost⟩
-  refine ⟨sApost, sBpost, hexec, ?_⟩
+    {A' B' : KernelState} {sApost sBpost : RecChainedState}
+    (h : charterDischarge demoCharter sA sB 0 0 noDischarges noDischarges = some (A', B'))
+    (hexec : execCoordinatedForestG
+        { pair := demoPair, step := charterBilateral demoCharter } = some (sApost, sBpost)) :
+    recChainedKernelView sApost = A' ∧ recChainedKernelView sBpost = B' := by
   have href := coordinated_forest_refines_bilateral { pair := demoPair, step := charterBilateral demoCharter } hexec
   have hbil := charter_refines_bilateral_coordinated demoCharter 0 0 noDischarges noDischarges h
-  have href' : execBilateralCoordinated sA sB (charterBilateral demoCharter)
-      = some (recChainedKernelView sApost, recChainedKernelView sBpost) := by
-    simpa [demoPair, demoRec_view_eq_sA, demoRec_view_eq_sB] using href
-  exact Prod.ext_iff.mp (Option.some_inj.mp (href'.symm.trans hbil))
+  rw [demoPair, demoRec_view_eq_sA, demoRec_view_eq_sB] at href
+  have heq : (recChainedKernelView sApost, recChainedKernelView sBpost) = (A', B') :=
+    Option.some_inj.mp (href.symm.trans hbil)
+  rcases Prod.ext_iff.mp heq with ⟨hA, hB⟩
+  exact ⟨hA, hB⟩
 
 /-! ## §8 — `#guard` demos. -/
 
@@ -357,6 +360,7 @@ theorem charter_refines_coordinated_forest
 #guard ((execCoordinatedForestG { pair := demoPairHigh, step := demoStep }).isSome) == false  --  teeth
 #guard ((execCoordinatedForestCredG demoForestCredStep).isSome)  --  creds + covenant
 #guard ((execCoordinatedForestCredG demoForestForgedCredStep).isSome) == false  --  forged
+#guard ((execCoordinatedForestG { pair := demoPair, step := charterBilateral demoCharter }).isSome)  --  charter⇒forest
 
 /-! ## §9 — Axiom hygiene. -/
 
@@ -371,5 +375,8 @@ theorem charter_refines_coordinated_forest
 #assert_axioms coordinated_forest_cred_forged_fails
 #assert_axioms covenant_sA_sBhigh_false
 #assert_axioms coordinated_forest_none_of_covenant_false
+#assert_axioms demoPairHigh_covenant_false
+#assert_axioms demo_coordinated_forest_covenant_teeth
+#assert_axioms charter_refines_coordinated_forest
 
 end Dregg2.Exec.CoordinatedForestGLift

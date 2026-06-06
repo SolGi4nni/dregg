@@ -11,6 +11,7 @@ import Dregg2.Verify.Tactics
 import Dregg2.Apps.NameService
 import Dregg2.Apps.Subscription
 import Dregg2.Apps.ComputeExchangeGated
+import Dregg2.Apps.CompartmentWorkflowMandateGated
 
 namespace Dregg2.Verify
 
@@ -135,6 +136,69 @@ example (s0 : RecChainedState) (sched : SchedG) :
     ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.ComputeExchangeGated.payAsset = cellObsA s0 Dregg2.Apps.ComputeExchangeGated.payAsset :=
   Dregg2.Apps.ComputeExchangeGated.cx_pay_conserved_forever s0 sched
 
+/-! ## §5c — CompartmentWorkflowMandate (CWM): payment conservation on `trajG`. -/
+
+theorem cwm_pay_conserved_foreverG_via_contract (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+      cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset :=
+  asset_conserved_forever_production s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset sched
+
+example (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+      cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset :=
+  cwm_pay_conserved_foreverG_via_contract s0 sched
+
+example (s0 : RecChainedState) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+      cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset :=
+  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_pay_conserved_forever s0 sched
+
+/-! ## §5d — CompartmentWorkflowMandate: `cwm_safety_forever` on `trajG`. -/
+
+theorem cwm_safety_foreverG_via_contract (s0 : RecChainedState) (nul : Nat) (comp : Int)
+    (s : RecChainedState) (hstep : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
+    (hpay : cellObsA s Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+            cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
+    (hrev : nul ∈ s.kernel.revoked)
+    (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp) (sched : SchedG) :
+    ∀ n,
+      Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
+        cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+          cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
+            nul ∈ (trajG s sched n).kernel.revoked ∧
+              Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
+  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched
+
+example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
+    (hstep : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
+    (hpay : cellObsA s Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+            cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
+    (hrev : nul ∈ s.kernel.revoked)
+    (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp)
+    (sched : SchedG) :
+    ∀ n,
+      Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
+        cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+          cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
+            nul ∈ (trajG s sched n).kernel.revoked ∧
+              Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
+  cwm_safety_foreverG_via_contract s0 nul comp s hstep hpay hrev hcomp sched
+
+example (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : RecChainedState)
+    (hstep : Dregg2.Apps.CompartmentWorkflowMandate.cwmWF s.kernel)
+    (hpay : cellObsA s Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+            cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset)
+    (hrev : nul ∈ s.kernel.revoked)
+    (hcomp : Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment s.kernel comp)
+    (sched : SchedG) :
+    ∀ n,
+      Dregg2.Apps.CompartmentWorkflowMandate.cwmWF (trajG s sched n).kernel ∧
+        cellObsA (trajG s sched n) Dregg2.Apps.CompartmentWorkflowMandate.payAsset =
+          cellObsA s0 Dregg2.Apps.CompartmentWorkflowMandate.payAsset ∧
+            nul ∈ (trajG s sched n).kernel.revoked ∧
+              Dregg2.Apps.CompartmentWorkflowMandate.cwmInCompartment (trajG s sched n).kernel comp :=
+  Dregg2.Apps.CompartmentWorkflowMandateGated.cwm_safety_forever s0 nul comp s hstep hpay hrev hcomp sched
+
 /-! ## §6 — Log monotonicity: tactics + contract on `trajG`. -/
 
 theorem logMono_foreverG_via_tactics (s : RecChainedState) (sched : SchedG) :
@@ -178,6 +242,8 @@ example (s : RecChainedState) (sched : SchedG) :
 #assert_axioms nameservice_registration_foreverG_via_contract
 #assert_axioms subscription_wellformed_foreverG_via_contract
 #assert_axioms cx_pay_conserved_foreverG_via_contract
+#assert_axioms cwm_pay_conserved_foreverG_via_contract
+#assert_axioms cwm_safety_foreverG_via_contract
 #assert_axioms logMono_foreverG_via_tactics
 
 end Dregg2.Verify

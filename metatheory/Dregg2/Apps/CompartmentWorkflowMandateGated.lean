@@ -1,9 +1,13 @@
 /-
 # Dregg2.Apps.CompartmentWorkflowMandateGated — compartment workflow mandate on `execFullForestG` / `trajG`.
+
+Phase B: monitor `refreshDelegation` re-up teeth (parent c-list snapshot), strengthened clearance
+predicates on the gated path, and `cwm_safety_forever` wired through Hatchery `composeContracts`.
 -/
 import Dregg2.Exec.GatedForestCfg
 import Dregg2.Exec.CellExecutor
 import Dregg2.Exec.CellReal
+import Dregg2.Authority.Positional
 import Dregg2.Apps.CompartmentWorkflowMandate
 import Dregg2.Verify.Catalog
 import Dregg2.Verify.Contract
@@ -22,9 +26,10 @@ open Dregg2.Exec.FullForest
 open Dregg2.Exec.EffectsState
 open Dregg2.Exec.FullForestAuth
 open Dregg2.Exec.StarbridgeGated
-open Dregg2.Exec.StarbridgeGated
+open Dregg2.Authority (Cap)
 
 abbrev cwmActor : CellId := mandateActor
+abbrev cwmMonitorCell : CellId := 1
 abbrev cwmEmitTopic : Int := 7
 
 def cwmAdvanceNode (cred : Authorization Dg Pf) (target : Int) : DForest :=
@@ -35,6 +40,10 @@ def cwmPhaseNode (cred : Authorization Dg Pf) (cur : Nat) : DForest :=
 
 def cwmEmitNode (cred : Authorization Dg Pf) (data : Int) : DForest :=
   ⟨ mkAuth cred [], .emitEventA cwmActor mandateCell cwmEmitTopic data, [] ⟩
+
+/-- Monitor refresh: self-only `refreshDelegationA` snapshots the parent's CURRENT c-list. -/
+def cwmRefreshNode (cred : Authorization Dg Pf) : DForest :=
+  ⟨ mkAuth cred [], .refreshDelegationA cwmMonitorCell cwmMonitorCell, [] ⟩
 
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
@@ -89,6 +98,62 @@ theorem cwm_illegal_dag_rejected_gated (s : RecChainedState) (target : Int)
     execFullForestG s (cwmAdvanceNode goodCred target) = none := by
   rw [execFullForestG_advanceNode, if_pos hgate]
   exact stateStepGuarded_caveat_violation_fails s stepCursorSlot cwmActor mandateCell target hseq
+
+/-- **`cwm_clearance_violation_rejected_gated` (PROVED)** — insufficient clearance at the current
+cursor is rejected at the predicate layer (`cwmAdvanceM`), independent of the executor gate. -/
+theorem cwm_clearance_violation_rejected_gated (s : CwmRuntime)
+    (hadm : stepAdmissible charterMandate3 s.cursor (completedOf s.cursor) = true)
+    (hcl : stepClearanceOK charterMandate3 s.cursor = false)
+    (hlen : s.cursor < charterMandate3.steps.length) :
+    cwmAdvanceM charterMandate3 s = none :=
+  cwm_clearance_violation_rejected charterMandate3 s hadm hcl hlen
+
+theorem execFullForestG_refreshNode (s : RecChainedState) (cred : Authorization Dg Pf) :
+    execFullForestG s (cwmRefreshNode cred) =
+      execFullAGated s (mkAuth cred []) (.refreshDelegationA cwmMonitorCell cwmMonitorCell) := by
+  rw [cwmRefreshNode, execFullForestG_leaf]
+
+theorem cwm_refresh_forged_rejected (s : RecChainedState) :
+    execFullForestG s (cwmRefreshNode forgedCred) = none := by
+  rw [cwmRefreshNode]
+  exact execFullForestG_unauthorized_fails s (mkAuth forgedCred [])
+    (.refreshDelegationA cwmMonitorCell cwmMonitorCell) [] (gateOK_forged_false s)
+
+theorem cwm_refresh_revoked_rejected (s : RecChainedState) (cred : Authorization Dg Pf)
+    (hrev : s.kernel.revoked.contains (mkAuth cred []).credNul = true) :
+    execFullForestG s (cwmRefreshNode cred) = none := by
+  rw [cwmRefreshNode]
+  exact execFullForestG_unauthorized_fails s (mkAuth cred [])
+    (.refreshDelegationA cwmMonitorCell cwmMonitorCell) [] (gateOK_revoked_fails (mkAuth cred []) s hrev)
+
+theorem cwm_refresh_no_parent_rejected (s : RecChainedState)
+    (h : s.kernel.delegate cwmMonitorCell = none) :
+    execFullForestG s (cwmRefreshNode goodCred) = none := by
+  rw [execFullForestG_refreshNode, execFullAGated]
+  by_cases hg : gateOK (mkAuth goodCred []) s = true
+  · rw [if_pos hg]
+    simpa [execFullA] using refreshDelegationChainA_noParent_rejects s cwmMonitorCell cwmMonitorCell h
+  · rw [if_neg (by simp [hg])]
+
+theorem cwm_refresh_snapshots_parent {s s' : RecChainedState} (p : CellId)
+    (_hgate : gateOK (mkAuth goodCred []) s = true)
+    (hp : s.kernel.delegate cwmMonitorCell = some p)
+    (h : execFullForestG s (cwmRefreshNode goodCred) = some s') :
+    s'.kernel.delegations cwmMonitorCell = s.kernel.caps p := by
+  rw [execFullForestG_refreshNode, execFullAGated] at h
+  rcases (execFullAGated_some_iff s s' (mkAuth goodCred [])
+    (.refreshDelegationA cwmMonitorCell cwmMonitorCell)).mp h with ⟨_, hfa⟩
+  exact refreshDelegationChainA_snapshots_parent (by simpa only [execFullA] using hfa) hp
+
+theorem cwmRefreshNode_delta_zero (cred : Authorization Dg Pf) (b : AssetId) :
+    turnLedgerDeltaAsset ((lowerForestG (cwmRefreshNode cred)).map Prod.snd) b = 0 := by
+  simp [cwmRefreshNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
+
+theorem cwm_refresh_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (b : AssetId)
+    (h : execFullForestG s (cwmRefreshNode cred) = some s') :
+    recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b :=
+  execFullForestG_conserves_per_asset s s' (cwmRefreshNode cred) b h
+    (cwmRefreshNode_delta_zero cred b)
 
 theorem cwmAdvanceNode_delta_zero (cred : Authorization Dg Pf) (target : Int) (b : AssetId) :
     turnLedgerDeltaAsset ((lowerForestG (cwmAdvanceNode cred target)).map Prod.snd) b = 0 := by
@@ -166,13 +231,15 @@ theorem cwm_safety_forever (s0 : RecChainedState) (nul : Nat) (comp : Int) (s : 
 
 def cwmG0 : RecChainedState :=
   { kernel :=
-      { accounts := {0}
+      { accounts := {0, 1}
         cell := fun c =>
           if c = mandateCell then
-            .record [("balance", .int 0), (stepCursorSlot, .int 0),
+            .record [("balance", .int 100), (stepCursorSlot, .int 0),
                      (commitmentAnchorSlot, .int cwmCompartmentTag)]
           else .record [("balance", .int 0)]
-        caps := fun _ => []
+        caps := fun c => if c = cwmActor then [Cap.node cwmMonitorCell, Cap.node 2] else []
+        delegate := fun c => if c = cwmMonitorCell then some cwmActor else none
+        delegations := fun _ => []
         bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0) else 0
         slotCaveats := fun c => if c = mandateCell then mandateCaveats else [] }
     log := [] }
@@ -203,6 +270,16 @@ def cwmGSigned : Option RecChainedState :=
 #guard (cwmGSigned.map (fun s => fieldOf stepCursorSlot (s.kernel.cell mandateCell))) == some 3
 #guard (cwmGSigned.map (fun s => fieldOf commitmentAnchorSlot (s.kernel.cell mandateCell))) == some cwmCompartmentTag
 #guard ((cwmGSigned.map (fun s => recTotalAssetWithEscrow s.kernel payAsset)).getD 0) == 100
+#guard (cwmClearanceOK cwmG0.kernel)
+#guard (cwmWFStrong cwmG0.kernel)
+#guard (cwmInCompartmentStrong cwmG0.kernel cwmCompartmentTag)
+#guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).isSome)
+#guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).map
+        (fun s => (s.kernel.delegations cwmMonitorCell).length)) == some 2
+#guard ((execFullForestG cwmG0 (cwmRefreshNode forgedCred)).isSome) == false
+#guard ((execFullForestG ({ cwmG0 with kernel := { cwmG0.kernel with delegate := fun _ => none } })
+          (cwmRefreshNode goodCred)).isSome) == false
+#guard (cwmAdvanceM clerkMandate3 { cursor := 1, anchor := 42 }).isSome == false
 
 #assert_axioms execFullForestG_leaf
 #assert_axioms cwm_forged_rejected
@@ -211,6 +288,13 @@ def cwmGSigned : Option RecChainedState :=
 #assert_axioms cwm_op_conserves
 #assert_axioms cwm_pay_conserved_forever
 #assert_axioms cwm_revoked_rejected_forever
+#assert_axioms cwm_clearance_violation_rejected_gated
+#assert_axioms execFullForestG_refreshNode
+#assert_axioms cwm_refresh_forged_rejected
+#assert_axioms cwm_refresh_revoked_rejected
+#assert_axioms cwm_refresh_no_parent_rejected
+#assert_axioms cwm_refresh_snapshots_parent
+#assert_axioms cwm_refresh_conserves
 #assert_axioms cwmSafetyContract
 #assert_axioms cwm_safety_forever
 
