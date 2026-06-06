@@ -64,14 +64,14 @@ open Dregg2.Exec.TurnExecutorFull
   (acceptsEffects lcLive lcSealed lcDestroyed setLifecycle parentClist cellSealChainA cellUnsealChainA
    cellDestroyChainA refreshDelegationChainA emitStep execFullA FullActionA QueueTxOpA
    recCDelegate recCDelegateAtten attenuateStepA
-   createCellChainA createCommittedEscrowChainA
+   createCellChainA createEscrowChainA createCommittedEscrowChainA
    noteSpendChainA noteCreateChainA
    bridgeLockChainA bridgeFinalizeChainA bridgeCancelChainA
    createSealPairChainA sealChainA unsealChainA
    swissExportChainA swissEnlivenChainA swissHandoffChainA swissDropChainA
    queueAllocateChainA queueEnqueueChainA queueDequeueChainA
    queueAtomicTxChainA queueAtomicTxA
-   queueResizeChainA pipelineFanoutK
+   queueResizeChainA pipelineFanoutK bridgeAuthOK
    permsField vkField refusalField
    authReceipt escrowReceiptA sealerCap unsealerCap holdsSealCapFor)
 open Dregg2.Exec.EffectsState (stateAuthB stateStep stateStepGuarded cellLive caveatsAdmit writeField)
@@ -668,11 +668,13 @@ theorem handler_refines_execFullA_createCell (s s' : RecChainedState) (actor new
   by_cases hg : createGate s.kernel { actor := actor, newCell := newCell }
   · rw [if_pos hg] at hstep
     simp only [createGate, Bool.and_eq_true, decide_eq_true_eq] at hg
+    simp only [CreateArgs.newCell] at hstep
+    have hk : createCellIntoAsset s.kernel newCell = s'.kernel := Option.some.inj hstep
     refine ⟨{ kernel := s'.kernel,
               log := { actor := actor, src := newCell, dst := newCell, amt := 0 } :: s.log }, ?_, rfl⟩
     show createCellChainA s actor newCell = _
     unfold createCellChainA
-    rw [if_pos ⟨hg.1, hg.2⟩, hstep]
+    rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
 theorem handler_refines_execFullA_createCommittedEscrow (s s' : RecChainedState) (id : Nat)
@@ -691,14 +693,12 @@ theorem handler_refines_execFullA_createCommittedEscrow (s s' : RecChainedState)
   unfold createEscrowStep at hstep
   by_cases hadm : acceptsEffects s.kernel creator
   · rw [if_pos hadm] at hstep
+    have hk : createEscrowKAsset s.kernel id actor creator recipient asset amount = some s'.kernel := hstep
     refine ⟨{ kernel := s'.kernel,
               log := Dregg2.Exec.TurnExecutorFull.escrowReceiptA actor :: s.log }, ?_, rfl⟩
     show createCommittedEscrowChainA s id actor creator recipient asset amount hidingProof = _
-    unfold createCommittedEscrowChainA
-    rw [if_pos hp, hstep]
-    show createEscrowChainA s id actor creator recipient asset amount = _
-    unfold createEscrowChainA
-    rw [hstep]
+    unfold createCommittedEscrowChainA createEscrowChainA
+    rw [if_pos hp, hk]
   · rw [if_neg hadm] at hstep; exact absurd hstep (by simp)
 
 theorem handler_refines_execFullA_noteSpend (s s' : RecChainedState) (nf : Nat) (actor : CellId)
@@ -726,9 +726,10 @@ theorem handler_refines_execFullA_noteCreate (s s' : RecChainedState) (cm : Nat)
   change noteCreateStep s.kernel { actor := actor, cm := cm } = some s'.kernel at hstep
   unfold noteCreateStep at hstep
   simp only [Option.some.injEq] at hstep
-  refine ⟨noteCreateChainA s cm actor, ?_, rfl⟩
+  have hk : noteCreateCommitment s.kernel cm = s'.kernel := hstep
+  refine ⟨noteCreateChainA s cm actor, ?_, hk⟩
   show execFullA s (.noteCreateA cm actor) = _
-  simp only [execFullA, noteCreateChainA, hstep]
+  simp only [execFullA, noteCreateChainA, hk]
 
 theorem handler_refines_execFullA_bridgeLock (s s' : RecChainedState) (id : Nat)
     (actor originator destination : CellId) (asset : AssetId) (amount : ℤ)
@@ -790,8 +791,8 @@ theorem handler_refines_execFullA_pipelinedSend (s s' : RecChainedState) (actor 
   rw [toClosedEffect] at hstep
   change pipelinedSendStep s.kernel { actor := actor } = some s'.kernel at hstep
   unfold pipelinedSendStep at hstep
-  have hk : s.kernel = s'.kernel := by simpa using hstep
-  refine ⟨{ kernel := s'.kernel, log := escrowReceiptA actor :: s.log }, ?_, hk⟩
+  have hk : s.kernel = s'.kernel := Option.some.inj hstep
+  refine ⟨{ kernel := s'.kernel, log := escrowReceiptA actor :: s.log }, ⟨?_, rfl⟩⟩
   simp only [execFullA, hk]
 
 theorem handler_refines_execFullA_dropRef (s s' : RecChainedState) (holder t : CellId)
@@ -892,11 +893,12 @@ theorem handler_refines_execFullA_setPermissions (s s' : RecChainedState) (actor
     simp only [Bool.and_eq_true] at hg
     simp only [Option.some.injEq] at hstep
     have hlive : cellLive s.kernel cell = true := hg.1
+    have hfield : permissionsField = permsField := rfl
     refine ⟨{ kernel := writeField s.kernel permissionsField cell (.int p),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show stateStep s permsField actor cell (.int p) = _
-      unfold stateStep stateAuthB
-      rw [if_pos ⟨hg.2, hmem, hlive⟩]
+    · show Dregg2.Exec.EffectsState.stateStep s permsField actor cell (.int p) = _
+      unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
+      rw [if_pos ⟨hg.2, hmem, hlive⟩, hfield]
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
@@ -907,7 +909,8 @@ theorem handler_refines_execFullA_setVK (s s' : RecChainedState) (actor cell : C
   have hstep := execHandlerOne_kernel (.setVKA actor cell vk) s s' h
   rw [toClosedEffect] at hstep
   change stateWriteStep s.kernel
-    { actor := actor, target := cell, field := vkField, value := vk } = some s'.kernel at hstep
+    { actor := actor, target := cell, field := Dregg2.Exec.Handlers.StateSupply.vkField, value := vk }
+    = some s'.kernel at hstep
   unfold stateWriteStep at hstep
   by_cases hg : acceptsEffects s.kernel cell
       && authorizedB s.kernel.caps { actor := actor, src := cell, dst := cell, amt := 0 }
@@ -915,11 +918,12 @@ theorem handler_refines_execFullA_setVK (s s' : RecChainedState) (actor cell : C
     simp only [Bool.and_eq_true] at hg
     simp only [Option.some.injEq] at hstep
     have hlive : cellLive s.kernel cell = true := hg.1
-    refine ⟨{ kernel := writeField s.kernel vkField cell (.int vk),
+    have hfield : Dregg2.Exec.Handlers.StateSupply.vkField = Dregg2.Exec.TurnExecutorFull.vkField := rfl
+    refine ⟨{ kernel := writeField s.kernel Dregg2.Exec.Handlers.StateSupply.vkField cell (.int vk),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show stateStep s vkField actor cell (.int vk) = _
-      unfold stateStep stateAuthB
-      rw [if_pos ⟨hg.2, hmem, hlive⟩]
+    · show Dregg2.Exec.EffectsState.stateStep s Dregg2.Exec.TurnExecutorFull.vkField actor cell (.int vk) = _
+      unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
+      rw [if_pos ⟨hg.2, hmem, hlive⟩, hfield]
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
@@ -930,7 +934,8 @@ theorem handler_refines_execFullA_refusal (s s' : RecChainedState) (actor cell :
   have hstep := execHandlerOne_kernel (.refusalA actor cell) s s' h
   rw [toClosedEffect] at hstep
   change stateWriteStep s.kernel
-    { actor := actor, target := cell, field := refusalField, value := 1 } = some s'.kernel at hstep
+    { actor := actor, target := cell, field := Dregg2.Exec.Handlers.StateSupply.refusalField, value := 1 }
+    = some s'.kernel at hstep
   unfold stateWriteStep at hstep
   by_cases hg : acceptsEffects s.kernel cell
       && authorizedB s.kernel.caps { actor := actor, src := cell, dst := cell, amt := 0 }
@@ -938,11 +943,13 @@ theorem handler_refines_execFullA_refusal (s s' : RecChainedState) (actor cell :
     simp only [Bool.and_eq_true] at hg
     simp only [Option.some.injEq] at hstep
     have hlive : cellLive s.kernel cell = true := hg.1
-    refine ⟨{ kernel := writeField s.kernel refusalField cell (.int 1),
+    have hfield : Dregg2.Exec.Handlers.StateSupply.refusalField =
+        Dregg2.Exec.TurnExecutorFull.refusalField := rfl
+    refine ⟨{ kernel := writeField s.kernel Dregg2.Exec.Handlers.StateSupply.refusalField cell (.int 1),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show stateStep s refusalField actor cell (.int 1) = _
-      unfold stateStep stateAuthB
-      rw [if_pos ⟨hg.2, hmem, hlive⟩]
+    · show Dregg2.Exec.EffectsState.stateStep s Dregg2.Exec.TurnExecutorFull.refusalField actor cell (.int 1) = _
+      unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
+      rw [if_pos ⟨hg.2, hmem, hlive⟩, hfield]
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
@@ -964,10 +971,10 @@ theorem handler_refines_execFullA_setField (s s' : RecChainedState) (actor cell 
     have hlive : cellLive s.kernel cell = true := hg.1
     refine ⟨{ kernel := writeField s.kernel f cell (.int v),
               log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, ?_⟩
-    · show stateStepGuarded s f actor cell v = _
-      unfold stateStepGuarded
+    · show Dregg2.Exec.EffectsState.stateStepGuarded s f actor cell v = _
+      unfold Dregg2.Exec.EffectsState.stateStepGuarded
       rw [if_pos hcav]
-      unfold stateStep stateAuthB
+      unfold Dregg2.Exec.EffectsState.stateStep Dregg2.Exec.EffectsState.stateAuthB
       rw [if_pos ⟨hg.2, hmem, hlive⟩]
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)

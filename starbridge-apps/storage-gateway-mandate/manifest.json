@@ -1,0 +1,61 @@
+{
+  "id": "storage-gateway-mandate",
+  "name": "Storage Gateway Mandate",
+  "description": "Storage gateway mandate starbridge-app: StorageOp GET/PUT/LIST, prefix authorization, clearance labels, and Stingray volume budget. Maps Lean StorageGatewayMandate theorems to Rust slot caveats and predicate-layer admission checks.",
+  "version": "0.1.0",
+  "factory_vks": [
+    "737461726272696467652d73676d2d6d616e646174652d666163746f72792121"
+  ],
+  "page": "/starbridge-apps/storage-gateway-mandate/pages/index.html",
+  "inspectors": [
+    "dregg-sgm-gateway",
+    "dregg-sgm-storage-form"
+  ],
+  "host_inspectors": [
+    { "id": "gateway", "label": "Storage Gateway", "tag": "dregg-sgm-gateway", "uri_attribute": "uri" },
+    { "id": "storage", "label": "Storage Op", "tag": "dregg-sgm-storage-form", "uri_attribute": "mandate-uri" }
+  ],
+  "host_actions": [
+    { "id": "inspect_gateway", "label": "Inspect gateway", "uri": "dregg://cell/sgm-gateway-default", "kind": "inspect" },
+    { "id": "storage_get", "label": "GET object", "builder": "storage_get", "kind": "turn" },
+    { "id": "storage_put", "label": "PUT object", "builder": "storage_put", "kind": "turn" },
+    { "id": "storage_list", "label": "LIST prefix", "builder": "storage_list", "kind": "turn" },
+    { "id": "init_gateway", "label": "Initialize gateway", "builder": "init_gateway", "kind": "turn" }
+  ],
+  "host_controls": [
+    { "id": "gateway_uri", "label": "Gateway URI", "type": "uri", "default": "dregg://cell/sgm-gateway-default" },
+    { "id": "op", "label": "Storage op", "type": "select", "options": ["GET", "PUT", "LIST"], "default": "GET" },
+    { "id": "key_prefix", "label": "Key prefix", "type": "text", "default": "uploads/" }
+  ],
+  "turn_builders": [
+    "storage_get",
+    "storage_put",
+    "storage_list",
+    "init_gateway"
+  ],
+  "required_apis": [
+    "signTurn",
+    "blake3",
+    "cell.readField",
+    "builders.storageGatewayMandate"
+  ],
+  "slot_layout": {
+    "OBJECT_KEY_SLOT": 0,
+    "LAST_OP_SLOT": 1,
+    "VOLUME_SPENT_SLOT": 2,
+    "COMMITMENT_ANCHOR_SLOT": 3,
+    "VOLUME_CEILING_SLOT": 4,
+    "KEY_PREFIX_HASH_SLOT": 5,
+    "READ_COMPARTMENT_SLOT": 6
+  },
+  "state_constraints": [
+    "Immutable(COMMITMENT_ANCHOR_SLOT)",
+    "Monotonic(VOLUME_SPENT_SLOT)",
+    "FieldLteField(VOLUME_SPENT_SLOT, VOLUME_CEILING_SLOT)"
+  ],
+  "manifest_health": {
+    "status": "ready",
+    "embedded": true,
+    "source_of_truth": "starbridge-apps/storage-gateway-mandate/src/lib.rs"
+  }
+}

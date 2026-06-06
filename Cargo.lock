@@ -3426,9 +3426,11 @@ dependencies = [
  "getrandom 0.3.4",
  "postcard",
  "serde",
+ "starbridge-compartment-workflow-mandate",
  "starbridge-governed-namespace",
  "starbridge-identity",
  "starbridge-nameservice",
+ "starbridge-storage-gateway-mandate",
  "starbridge-subscription",
  "tokio",
  "tracing",
@@ -9770,6 +9772,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-compartment-workflow-mandate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-governed-namespace"
 version = "0.1.0"
 dependencies = [
@@ -9806,6 +9820,18 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-turn",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-storage-gateway-mandate"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
  "dregg-types",
  "serde",
  "serde_json",

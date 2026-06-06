@@ -238,6 +238,12 @@ import Dregg2.Circuit.Inst.dropRefA        -- D5 v2 breadth: dropRefA_full_sound
 import Dregg2.Circuit.Inst.introduceA      -- D5 v2 breadth: introduceA_full_sound ⇒ DelegateSpec (caps)
 import Dregg2.Circuit.Inst.mintA           -- D5 v2 breadth: mintA_full_sound ⇒ MintASpec (bal credit)
 import Dregg2.Circuit.EffectRefinement     -- D5 v2 diamond tower: generic effect2CircuitStep ⟺ apex + emitted ⟺ circuit; mint/burn instances (emitted ⟺ circuit ⟺ spec ⟺ execFullA); mint_supply_delta_descends (l4v payoff)
+import Dregg2.Circuit.Spec.Turn            -- Wave 1 turn spec: turnSpec fold + execFullTurnA_iff_turnSpec + turnSpec_append (associativity)
+import Dregg2.Circuit.ActionDispatch       -- Wave 1 apex dispatcher: fullActionStep (56/56 arms) + fullActionStep_exec_iff + actionTag
+import Dregg2.Circuit.GadgetRefinement      -- Wave 1 gadget bridges: merkle/nonmembership/temporal emitted ⊑ portal; gadget_step auth witness StepRel
+import Dregg2.Circuit.TurnWitness          -- Wave 1 turn witness: StepWitness/TurnWitness + turnWitnessSatisfies + turn_witness_refines_turnCircuit
+import Dregg2.Circuit.TurnRefinement      -- Wave 1 turn refinement: turnCircuitStep ⊑ turnSpec ⊑ execFullTurnA; turn_conservation_descends; TurnStateChain scaffolding
+import Dregg2.Circuit.Spec.exercise        -- Wave 1 exercise composite: re-exports ActionDispatch + execFullA_exerciseA_iff_spec
 import Dregg2.Circuit.Inst.noteCreateA     -- D5 v2 breadth: noteCreateA_full_sound ⇒ NoteCreateASpec (commitments list)
 import Dregg2.Circuit.Inst.noteSpendA      -- D5 v2 breadth: noteSpendA_full_sound ⇒ NoteSpendSpec (nullifiers list)
 import Dregg2.Circuit.Inst.queueAllocateA  -- D5 v2 breadth: queueAllocateA_full_sound ⇒ QueueAllocateSpec (queues list)
@@ -366,6 +372,7 @@ import Dregg2.Verify.LivenessBridge   -- production liveness lift: `EventuallyG`
 import Dregg2.Verify.LivenessContract  -- Hatchery liveness tier: `eventually%` + justness bridge
 import Dregg2.Verify.ChoreographyBridge -- blue ↦ `CellContract.forever`, red ↦ `HyperAdmissible`
 import Dregg2.Verify.JointRegression    -- cross-vat charter regression: joint_charter_commits + joint_forged_cred_rejected + joint_covenant_teeth + joint_cg5_conserved
+import Dregg2.Verify.AppComposition     -- cross-app composed crown: agent_mandate_safety_forever (CWM ∩ SGM ∩ Identity on trajG)
 import Dregg2.Verify.DemoRegressGated   -- H4 gate on production `trajG` (six crowns, catalog + tactics)
 -- ── THE WEB-CITIZEN SURFACE: ProofWidgets driven by REAL Lean terms (no placeholder data — the prime directive). ──
 import Dregg2.Widget.Basic             -- shared Html helpers + the trust-badge classifier: tier read off Lean.collectAxioms (KernelChecked / CarrierBounded / ExtraAxioms) — cannot be hand-faked; 2 by-design demo axioms exhibit the amber carrier-bounded tier

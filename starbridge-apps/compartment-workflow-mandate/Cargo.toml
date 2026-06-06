@@ -1,0 +1,25 @@
+[package]
+name = "starbridge-compartment-workflow-mandate"
+version = "0.1.0"
+edition = "2024"
+description = "Starbridge userspace compartment workflow mandate — DAG step cursor, commitment anchor, clearance labels, and Stingray spend policy composed from dregg-native FactoryDescriptor + SetField/EmitEvent turn builders."
+
+# Scaffold for `metatheory/Dregg2/Apps/CompartmentWorkflowMandate*.lean`.
+# Mirrors `starbridge-apps/nameservice/` shape: FactoryDescriptor, cell-program
+# skeleton, AppCipherclerk turn-builders, StarbridgeAppContext::register.
+# See `src/lib.rs` and README.md for Lean-theorem → Rust admission-check mapping.
+
+[lib]
+name = "starbridge_compartment_workflow_mandate"
+
+[dependencies]
+dregg-app-framework = { path = "../../app-framework" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-types = { path = "../../types" }
+
+blake3 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

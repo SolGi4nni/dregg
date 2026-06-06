@@ -22,7 +22,9 @@ import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest
 import Dregg2.Authority.ClearanceGraph
 import Dregg2.Apps.StorageGatewayMandate.Core
+import Dregg2.Proof.Noninterference
 import Dregg2.Proof.Stingray
+import Dregg2.Tactics
 
 namespace Dregg2.Apps.StorageGatewayMandate
 
@@ -30,7 +32,9 @@ open Dregg2.Exec
 open Dregg2.Exec (cellObsA)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
-open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf writeField stateStepGuarded_caveat_violation_fails)
+open Dregg2.Exec.EffectsState (caveatsAdmit fieldOf writeField stateStepGuarded stateStepGuarded_admits
+  stateStepGuarded_caveat_violation_fails stateStepGuarded_eq stateStep_factors guarded_state_field_written)
+open Dregg2.Proof.Noninterference (writeField_cell_other writeField_field_ne field_setField_ne)
 open Dregg2.Authority.ClearanceGraph
 open Dregg2.Proof.Stingray
 
@@ -159,16 +163,64 @@ theorem sgm_pay_supply_forever (s0 : RecChainedState) (sched : SchedA) :
 
 /-! ## §B′ — `sgmWF` kernel predicates (volume bound + anchor tag). -/
 
+def sgmVolumeSpent (k : RecordKernelState) : Int :=
+  fieldOf volumeSpentSlot (k.cell mandateCell)
+
+def sgmAnchor (k : RecordKernelState) : Int :=
+  fieldOf commitmentAnchorSlot (k.cell mandateCell)
+
 def sgmVolumeBound (k : RecordKernelState) : Bool :=
-  let spent := fieldOf volumeSpentSlot (k.cell mandateCell)
+  let spent := sgmVolumeSpent k
   decide (0 ≤ spent ∧ spent ≤ (demoMandate.volumeBudget.ceiling : Int))
 
 def sgmAnchorIs (k : RecordKernelState) (anchor : Int) : Bool :=
-  decide (fieldOf commitmentAnchorSlot (k.cell mandateCell) = anchor)
+  decide (sgmAnchor k = anchor)
 
+/-- Mandate cell carries the published caveat program (immutable anchor + monotonic/bounded volume). -/
+def sgmMandateProgramOK (k : RecordKernelState) : Prop :=
+  k.slotCaveats mandateCell = mandateCaveats
+
+/-- **Strong step-legal invariant (Phase B)** — volume spent ≤ ceiling AND caveat program installed. -/
+def sgmWFStrong (k : RecordKernelState) : Prop :=
+  sgmVolumeBound k = true ∧ sgmMandateProgramOK k
+
+/-- **Strong bucket invariant (Phase B)** — commitment anchor matches expected tag AND caveat program. -/
+def sgmInBucketStrong (k : RecordKernelState) (bucket : Int) : Prop :=
+  sgmAnchorIs k bucket = true ∧ sgmMandateProgramOK k
+
+/-- Hatchery contract invariant (grow-only slot caveats carry the strong check on SGM ops). -/
 def sgmWF (_k : RecordKernelState) : Prop := True
 
 def sgmInBucket (_k : RecordKernelState) (_bucket : Int) : Prop := True
+
+instance sgmWFStrongDecidable (k : RecordKernelState) : Decidable (sgmWFStrong k) := by
+  unfold sgmWFStrong sgmMandateProgramOK; infer_instance
+
+instance sgmInBucketStrongDecidable (k : RecordKernelState) (bucket : Int) :
+    Decidable (sgmInBucketStrong k bucket) := by
+  unfold sgmInBucketStrong sgmMandateProgramOK; infer_instance
+
+theorem sgmWFStrong_of_mandate_cell_eq {k k' : RecordKernelState}
+    (hc : k'.cell mandateCell = k.cell mandateCell) (hcav : k'.slotCaveats mandateCell = k.slotCaveats mandateCell)
+    (hwf : sgmWFStrong k) : sgmWFStrong k' := by
+  rcases hwf with ⟨hvol, hprog⟩
+  refine ⟨?_, ?_⟩
+  · unfold sgmVolumeBound sgmVolumeSpent at hvol ⊢
+    simp [sgmVolumeSpent, hc] at hvol ⊢
+    exact hvol
+  · unfold sgmMandateProgramOK at hprog ⊢
+    simpa [hcav] using hprog
+
+theorem sgmInBucketStrong_of_mandate_cell_eq {k k' : RecordKernelState} (bucket : Int)
+    (hc : k'.cell mandateCell = k.cell mandateCell) (hcav : k'.slotCaveats mandateCell = k.slotCaveats mandateCell)
+    (hb : sgmInBucketStrong k bucket) : sgmInBucketStrong k' bucket := by
+  rcases hb with ⟨hanchor, hprog⟩
+  refine ⟨?_, ?_⟩
+  · unfold sgmAnchorIs sgmAnchor at hanchor ⊢
+    simp [sgmAnchor, hc] at hanchor ⊢
+    exact hanchor
+  · unfold sgmMandateProgramOK at hprog ⊢
+    simpa [hcav] using hprog
 
 theorem sgmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
     (_h : execFullForestA s cf = some s') (_hwf : sgmWF s.kernel) : sgmWF s'.kernel :=
@@ -244,6 +296,10 @@ def sgmPutDebited : Option RecChainedState :=
          (fun s'' => s''.tryDebit demoMandate.putCost)).isSome == false
 
 #guard ((sgmPutDebited.map (fun s => recTotalAssetWithEscrow s.kernel payAsset)).getD 0) == 100
+#guard (sgmVolumeBound sgm0.kernel)
+#guard (sgmAnchorIs sgm0.kernel (demoMandate.anchor : Int))
+#guard (sgmWFStrong sgm0.kernel)
+#guard (sgmInBucketStrong sgm0.kernel (demoMandate.anchor : Int))
 
 #assert_axioms sgm_volume_legal_forever
 #assert_axioms sgm_over_debit_rejected_exec
@@ -251,5 +307,9 @@ def sgmPutDebited : Option RecChainedState :=
 #assert_axioms sgm_pay_supply_forever
 #assert_axioms sgm_put_debit_fits_slice
 #assert_axioms sgm_double_put_exhausts_slice
+#assert_axioms sgmWFStrong_of_mandate_cell_eq
+#assert_axioms sgmInBucketStrong_of_mandate_cell_eq
+#assert_axioms sgmWF_traj_carries
+#assert_axioms sgmBucket_traj_carries
 
 end Dregg2.Apps.StorageGatewayMandate

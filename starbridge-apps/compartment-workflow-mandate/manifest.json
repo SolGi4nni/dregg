@@ -1,0 +1,54 @@
+{
+  "id": "compartment-workflow-mandate",
+  "name": "Compartment Workflow Mandate",
+  "description": "DAG workflow mandate starbridge-app: step cursor (MonotonicSequence), immutable commitment anchor, clearance-label admission, and Stingray spend-policy demo. Maps Lean CompartmentWorkflowMandate theorems to Rust slot caveats and predicate-layer admission checks.",
+  "version": "0.1.0",
+  "factory_vks": [
+    "737461726272696467652d63776d2d6d616e646174652d666163746f72792121"
+  ],
+  "page": "/starbridge-apps/compartment-workflow-mandate/pages/index.html",
+  "inspectors": [
+    "dregg-cwm-mandate",
+    "dregg-cwm-advance-form"
+  ],
+  "host_inspectors": [
+    { "id": "mandate", "label": "Workflow Mandate", "tag": "dregg-cwm-mandate", "uri_attribute": "uri" },
+    { "id": "advance", "label": "Advance Step", "tag": "dregg-cwm-advance-form", "uri_attribute": "mandate-uri" }
+  ],
+  "host_actions": [
+    { "id": "inspect_mandate", "label": "Inspect mandate", "uri": "dregg://cell/cwm-mandate-default", "kind": "inspect" },
+    { "id": "advance_step", "label": "Advance workflow step", "builder": "advance_step", "kind": "turn" },
+    { "id": "init_mandate", "label": "Initialize mandate", "builder": "init_mandate", "kind": "turn" }
+  ],
+  "host_controls": [
+    { "id": "mandate_uri", "label": "Mandate URI", "type": "uri", "default": "dregg://cell/cwm-mandate-default" },
+    { "id": "phase", "label": "Charter phase", "type": "select", "options": ["review", "redact", "sign"], "default": "review" }
+  ],
+  "turn_builders": [
+    "advance_step",
+    "init_mandate"
+  ],
+  "required_apis": [
+    "signTurn",
+    "blake3",
+    "cell.readField",
+    "builders.compartmentWorkflowMandate"
+  ],
+  "slot_layout": {
+    "STEP_CURSOR_SLOT": 0,
+    "COMMITMENT_ANCHOR_SLOT": 1,
+    "CHARTER_TERMINAL_SLOT": 2,
+    "CLEARANCE_GRAPH_ROOT_SLOT": 3,
+    "SPEND_POLICY_SLOT": 4
+  },
+  "state_constraints": [
+    "Immutable(COMMITMENT_ANCHOR_SLOT)",
+    "MonotonicSequence(STEP_CURSOR_SLOT)",
+    "FieldLteField(STEP_CURSOR_SLOT, CHARTER_TERMINAL_SLOT)"
+  ],
+  "manifest_health": {
+    "status": "ready",
+    "embedded": true,
+    "source_of_truth": "starbridge-apps/compartment-workflow-mandate/src/lib.rs"
+  }
+}
