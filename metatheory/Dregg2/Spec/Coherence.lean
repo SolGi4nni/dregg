@@ -23,6 +23,7 @@ import Dregg2.Spec.Lifecycle
 import Dregg2.Spec.VatBoundary
 import Dregg2.Spec.Choreography
 import Dregg2.Hyperedge
+import Dregg2.Exec.Caps
 import Dregg2.Tactics
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 
@@ -449,5 +450,81 @@ With those merged, `guard_is_authority_conferral` (§1), `conservation_is_hypere
 *identities of shared carriers* rather than bridges
 across re-declared ones — which is exactly the sense in which this module shows the `Spec.*`
 layer is ONE web. -/
+
+/-! ## §8 — NON-VACUITY of the conferral cross-link, at the GENUINE rights lattice.
+
+The §1/§5 theorems (`guard_is_authority_conferral`, `authority_confers_narrows_is_meet`) are
+PARAMETRIC over any `[SemilatticeInf Rights] [OrderTop Rights]`. Instantiated at the trivial
+`Rights = Unit`, the conferral guard admits EVERY same-target child (the `≤` conjunct is `() ≤ ()`,
+always true) — vacuous. Instantiated at the GENUINE executable rights lattice `Exec.ExecAuth =
+Finset Auth` (ordered by `⊆`), the SAME `conferralGuard` genuinely REJECTS an amplifying child:
+`authority_confers_narrows_is_meet`'s `≤` is now a real subset test that can FAIL. This section
+exhibits the tooth, proving the cross-link constrains. -/
+
+section ConferralNonVacuity
+
+open Dregg2.Authority (Auth Label)
+
+/-- The full-authority element of the genuine rights lattice (sanity: `⊤ = univ`). -/
+example : (⊤ : Exec.ExecAuth) = Finset.univ := rfl
+
+/-- A held parent cap to target `7` conferring read-only, over the GENUINE lattice. -/
+def heldReadCap : Cap Label Exec.ExecAuth := ⟨7, {Auth.read}⟩
+/-- A sound attenuated child: same target, empty authority (`∅ ⊆ {read}`). -/
+def soundNarrowChild : Cap Label Exec.ExecAuth := ⟨7, ∅⟩
+/-- An AMPLIFYING child: same target, but read+write (`{read,write} ⊄ {read}`). -/
+def amplifyingChild : Cap Label Exec.ExecAuth := ⟨7, {Auth.read, Auth.write}⟩
+
+/-- **HOLDS (sound attenuation).** `authority_confers_narrows_is_meet` instantiated at the real
+lattice: the sound child's rights are `≤` the parent's. -/
+theorem coherence_sound_narrows :
+    soundNarrowChild.rights ≤ heldReadCap.rights :=
+  authority_confers_narrows_is_meet (CellId := Label) heldReadCap soundNarrowChild
+    ⟨rfl, by decide⟩
+
+/-- **FAILS (the TOOTH).** Over the genuine lattice, the amplifying child does NOT `confers` from
+the parent — `{read,write} ⊄ {read}`. On `Rights = Unit` this is impossible (every same-target
+child confers); here it is a real refutation. This is the vacuity `Unit` could not close. -/
+theorem coherence_amplify_refused :
+    ¬ confers (CellId := Label) heldReadCap amplifyingChild := by
+  rintro ⟨_, hle⟩
+  exact absurd hle (by decide)
+
+-- The conferral predicate (§1's `conferralGuard` body) at the genuine lattice genuinely
+-- discriminates: `true` on the sound attenuation, `false` on the amplifying grant (NOT the
+-- `Unit`-collapse where it would admit everything).
+#guard decide (confers (CellId := Label) heldReadCap soundNarrowChild) = true
+#guard decide (confers (CellId := Label) heldReadCap amplifyingChild) = false
+
+/-- A `Verifiable` oracle on `Unit` carriers, so the `Guard.admits` form of the conferral gate
+computes at the genuine lattice (the witnessed branch is never used — conferral is first-party). -/
+local instance : Dregg2.Laws.Verifiable Unit Unit := ⟨fun _ _ => true⟩
+
+/-- **The guard ADMITS the sound attenuation** at the genuine lattice (`guard_is_authority_conferral`
+forward). -/
+theorem coherence_guard_admits_sound :
+    Guard.admits (conferralGuard (Statement := Unit) heldReadCap) soundNarrowChild (fun _ => ()) = true :=
+  (guard_is_authority_conferral (Statement := Unit) heldReadCap soundNarrowChild (fun _ => ())).mpr
+    ⟨rfl, by decide⟩
+
+/-- **The guard REFUSES the amplifying grant** at the genuine lattice — the gate evaluates to
+`false`, the de-vacuified tooth. (`guard_is_authority_conferral` says `admits = true ↔ confers`;
+`coherence_amplify_refused` denies `confers`, so `admits ≠ true`, i.e. `= false` on a `Bool`.) -/
+theorem coherence_guard_refuses_amplify :
+    Guard.admits (conferralGuard (Statement := Unit) heldReadCap) amplifyingChild (fun _ => ()) = false := by
+  by_contra h
+  have htrue : Guard.admits (conferralGuard (Statement := Unit) heldReadCap) amplifyingChild (fun _ => ()) = true := by
+    cases hb : Guard.admits (conferralGuard (Statement := Unit) heldReadCap) amplifyingChild (fun _ => ()) with
+    | true => rfl
+    | false => exact absurd hb h
+  exact coherence_amplify_refused
+    ((guard_is_authority_conferral (Statement := Unit) heldReadCap amplifyingChild (fun _ => ())).mp htrue)
+
+#assert_axioms coherence_sound_narrows
+#assert_axioms coherence_amplify_refused
+#assert_axioms coherence_guard_admits_sound
+#assert_axioms coherence_guard_refuses_amplify
+
+end ConferralNonVacuity
 
 end Dregg2.Spec

@@ -8,8 +8,13 @@ fallback arm.
 
 Explicit `sorry` portals (no silent fallbacks):
   * macaroon caveat-chain columns
-  * root-compress binding (`preRoot`/`postRoot` ↔ `foldStepRoots`)
   * multi-step wire-alignment glue
+
+DISCHARGED: the root-compress binding (`preRoot`/`postRoot` ↔ `foldStepRoots`) is no longer a `sorry`
+portal — `hole_turn_root_compress_binding` is now the genuine `TurnWitness.authenticTurnRoots`
+predicate (boundary roots = `StateCommit.recStateCommit` of the boundary kernels), and
+`turn_root_binds_post_commitment` makes `turnWitnessSatisfies` load-bearing (the prover-folded
+post-root equals the real post-state commitment; a tampered post-root is rejected).
 
 Incomplete theorems use `sorry` only — never `exact h` pretending circuit = spec.
 -/
@@ -138,5 +143,7 @@ theorem turn_emitted_refines_exec_direct
   ⟨turn_emitted_refines_exec lookup hstep s s' acts w compress stepRoot h,
    turn_root_binds_post_commitment lookup CH RH cmb compressN' compressN s s' acts w
      compress stepRoot t h hroot⟩
+
+#assert_axioms turn_root_binds_post_commitment
 
 end Dregg2.Circuit.TurnCircuitCompose

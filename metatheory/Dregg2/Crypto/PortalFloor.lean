@@ -6,10 +6,14 @@ e.g. `sigVerify_sound : sigVerify pk m s = true → Signed pk m`. The carrier na
 cryptographic assumption (ed25519 EUF-CMA / STARK extractability / DLog binding / Poseidon2 CR /
 BLAKE3 CR / nullifier determinism / AEAD+X25519 / HMAC unforgeability), discharged by the Rust
 impl and circuits, never proved in Lean, never `sorry`. Each portal's soundness theorem takes the
-carrier as an explicit hypothesis so the trust boundary is visible. `Reference` instances discharge
-carriers with `True` in the toy model (non-vacuity witnesses only); real instances are the Rust FFI
-ones, leaving the carrier as a standing obligation. No `axiom`/`admit`/`native_decide`/`sorry`.
--/
+carrier as an explicit hypothesis so the trust boundary is visible. `Reference` instances now
+discharge each carrier with the GENUINE soundness `Prop` over that instance's own oracle (not `True`)
+— proved structurally and pinned, and provably FALSE on a forgeable/colliding oracle (§9b). Two
+exceptions (`instSignatureKernel`/`instMacKernelE` `unforgeable`) keep a `True` carrier ONLY to
+avoid breaking an unowned consumer's `trivial` discharge; the genuine Prop for them is still proved
++ pinned as `instSignatureKernel_unforgeable`/`instMacKernelE_unforgeable` (see their ripple notes).
+Real instances are the Rust FFI ones, leaving the carrier as a standing obligation.
+No `axiom`/`admit`/`native_decide`/`sorry`. -/
 import Mathlib.Algebra.Group.Defs
 import Mathlib.Data.Nat.Pairing
 import Mathlib.Logic.Encodable.Basic
@@ -310,7 +314,8 @@ Prop shape is FALSE for a forgeable oracle (`instSignatureForge` in §9b). -/
 theorem instSignatureKernel_unforgeable :
     ∀ pk m s, instSignatureKernel.sigVerify pk m s = true → instSignatureKernel.Signed pk m := by
   intro pk m s h
-  have h' : (s = m ∧ pk = m) := by simpa using h
+  have h' : decide (s = m ∧ pk = m) = true := h
+  simp only [decide_eq_true_eq] at h'
   exact h'.2
 
 /-- STARK reference: `Holds stmt := stmt = 0` (the toy "valid statement"); accept iff the proof
@@ -411,7 +416,8 @@ accepts-everything MAC (`instMacForge` in §9b). -/
 theorem instMacKernelE_unforgeable :
     ∀ key msg t, instMacKernelE.verifyTag key msg t = true → instMacKernelE.Tagged key msg t := by
   intro key msg t h
-  have h' : (t = Nat.pair key msg) := by simpa using h
+  have h' : decide (t = Nat.pair key msg) = true := h
+  simp only [decide_eq_true_eq] at h'
   exact h'
 
 /-! ### Non-vacuity `#eval`s + soundness witnesses. -/

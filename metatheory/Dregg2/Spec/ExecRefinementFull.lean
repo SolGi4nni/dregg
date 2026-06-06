@@ -375,6 +375,24 @@ example (s' : RecChainedState) (h : execFull fs0 (.mint 9 0 50) = some s') :
     AbsStep (absFull fs0) (absFull s') :=
   exec_full_refines_spec h
 
+/-! ### The RIGHTS tooth (de-vacuified). The `conserveAddEdge` arm carries its added edge on the
+CONNECTIVITY carrier (`ExecRights = Unit`, modelling Granovetter reach). The genuine RIGHTS
+non-amplification — `granted ≤ held` over the real `Spec.ExecCapRights = Finset Auth` lattice —
+genuinely FAILS for an amplifying grant. On `Unit` this is impossible (every same-target conferral
+holds); here it is a real refutation (`Spec.amplifying_grant_refused`), so the forest-level
+delegation discipline genuinely forbids escalation. -/
+
+/-- An amplifying grant is OUTSIDE the genuine conferral relation: a child requesting `{read,write}`
+does NOT `confers` from a `{read}`-parent over `Spec.ExecCapRights`. The de-vacuified tooth at the
+full-forest layer. -/
+theorem full_delegation_rights_tooth :
+    ¬ Spec.confers
+        (⟨7, {Dregg2.Authority.Auth.read}⟩ : Cap Label Spec.ExecCapRights)
+        (⟨7, {Dregg2.Authority.Auth.read, Dregg2.Authority.Auth.write}⟩ : Cap Label Spec.ExecCapRights) :=
+  Spec.amplifying_grant_refused
+
+#assert_axioms full_delegation_rights_tooth
+
 end NonVacuity
 
 end Dregg2.Spec.ExecRefinementFull

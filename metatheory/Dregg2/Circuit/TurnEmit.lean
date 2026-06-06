@@ -47,6 +47,7 @@ import Dregg2.Circuit.Inst.cellSealA
 import Dregg2.Circuit.Inst.cellUnsealA
 import Dregg2.Circuit.Inst.cellDestroyA
 import Dregg2.Circuit.Inst.refreshDelegationA
+import Dregg2.Circuit.WitnessExtract
 import Dregg2.Exec.CircuitEmit
 import Dregg2.Exec.RecordKernel
 
@@ -863,6 +864,144 @@ theorem step_emitted_refines_fullActionStep
       exact refreshDelegationA_emitted_refines_spec S DDgs hDDgs hRestDelegations hLog st ⟨actor, child⟩ st'
         ((refreshDelegationA_emitted_equiv_circuit S DDgs hDDgs st ⟨actor, child⟩ st').mpr hcircuit)
 
+/-! ## §5c — REPRESENTATIVE adversarial-witness EXTRACTION (mint), killing the dead `hEnc`.
+
+`step_emitted_refines_fullActionStep` carries `hEnc` (the whole-trace honest-encoder equation) as a
+DEAD hypothesis, so it proves only "honest-encoded trace ⇒ state". The genuine ZK obligation is an
+EXTRACTOR: an ARBITRARY satisfying trace, pinned by the verifier's public-input check to the committed
+digests, determines the state — with NO whole-trace `hEnc`. We discharge that here for the mint effect
+(the validated reference; the generic machinery in `WitnessExtract` lifts to every v2 effect by the
+same shape, see the design note at the foot).
+
+The witness `a : Assignment` is NOT assumed equal to `encodeE2` over all 72 wires; the adversary keeps
+the un-gated root wires `64/65` and every `w ≥ 72`. What it IS pinned to is `PIBindsDigests` — the six
+digest wires + the guard bit — exactly what a real verifier's boundary/public-input check enforces
+against the committed root (injective by the Poseidon2 CR ground). From that alone the FULL declarative
+`MintASpec` is extracted. -/
+open Dregg2.Circuit.WitnessExtract (PIBindsDigests effect2_extract effect2_extract_emitted
+  effect2_extract_rejects_wrong_component effect2_extract_rejects_frame_tamper
+  effect2_extract_rejects_log_forge)
+open Dregg2.Circuit.Inst.MintA (mintE mintRestFrameDecodes mintGuardDecodes apex_iff_mintASpec)
+open Dregg2.Circuit.Spec.SupplyCreation (MintASpec)
+open Dregg2.Circuit.EffectCommit2 (satisfiedE2 emittedEffect2)
+open Dregg2.Circuit.StateCommit (logHashInjective)
+
+/-- **`mintA_extract`** — the adversarial-witness extractor for mint. An ARBITRARY assignment `a` that
+(1) satisfies the mint effect circuit and (2) is `PIBindsDigests`-pinned (the verifier's public-input
+check binds its six digest wires + guard bit to the committed values for the claimed `(s, args, s')`)
+proves the COMPLETE declarative `MintASpec` — NO dead `hEnc` over the whole trace. This is the genuine
+state-extraction the dead hypothesis was smuggling: the satisfying trace DETERMINES the post-state. -/
+theorem mintA_extract
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
+    (hsat : satisfiedE2 S (mintE D hD) a)
+    (hPI : PIBindsDigests S (mintE D hD) s args s' a) :
+    MintASpec s args.actor args.cell args.a args.amt s' :=
+  (apex_iff_mintASpec D hD s args s').mp
+    (effect2_extract S (mintE D hD) (mintRestFrameDecodes S D hD hRest) hLog (mintGuardDecodes D hD)
+      s args s' a hsat hPI)
+
+/-- **`mintA_extract_emitted`** — the same extractor against the EMITTED (Rust-prover) wire form: a
+satisfying emitted descriptor on an arbitrary PI-bound `a` extracts `MintASpec`. -/
+theorem mintA_extract_emitted
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
+    (hsat : satisfiedEmitted (emittedEffect2 mintAirName (mintE D hD)) a)
+    (hPI : PIBindsDigests S (mintE D hD) s args s' a) :
+    MintASpec s args.actor args.cell args.a args.amt s' :=
+  (apex_iff_mintASpec D hD s args s').mp
+    (effect2_extract_emitted S (mintE D hD) (mintRestFrameDecodes S D hD hRest) hLog
+      (mintGuardDecodes D hD) mintAirName s args s' a hsat hPI)
+
+/-- **`mintA_extract_rejects_wrong_supply`** — ANTI-GHOST tooth: a claimed mint post `s'` whose ledger
+does NOT credit `recBalCredit … amt` (a forged supply) has NO satisfying PI-bound witness. The extractor
+genuinely REJECTS supply forgery — the bind gate + injective `bal` digest make it UNSAT. -/
+theorem mintA_extract_rejects_wrong_supply
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
+    (hPI : PIBindsDigests S (mintE D hD) s args s' a)
+    (htamper : s'.kernel.bal ≠ recBalCredit s.kernel.bal args.cell args.a args.amt) :
+    ¬ satisfiedE2 S (mintE D hD) a :=
+  effect2_extract_rejects_wrong_component S (mintE D hD) s args s' a hPI htamper
+
+/-! ## §5d — `hEnc` MADE LOAD-BEARING in the per-step refinement (no assumed circuit step).
+
+`step_emitted_refines_fullActionStep` (§5b) takes the per-step circuit relation `hcircuit` as a free
+hypothesis and leaves BOTH `h` (`stepEmittedSat`) and `hEnc` (`stepEmittedEncodeAgrees`) dead. The
+deepest soundness content is that `h` and `hEnc` TOGETHER *determine* the circuit step — no circuit
+relation need be assumed. We discharge that as a generic, reusable extractor over the whole v2-effect
+class, then wire it through to `fullActionStep` for `mintA` as the validated reference.
+
+`effect2_step_extracts_circuit`: given the registry resolves the action's AIR name to `emittedEffect2
+name E`, the step witness *satisfies* that descriptor (`h`), and the witness bytes ARE the honest
+encoder for the claimed `(pre, args, post)` (`hEnc`), the v2 circuit relation `satisfiedE2 S E (encodeE2
+…)` HOLDS. `hEnc` is consumed by the `rw` (it rewrites the satisfied bytes onto the honest encoding);
+`h` supplies the satisfied descriptor. Neither is dead. This is the genuine witness-extraction the dead
+hypothesis was smuggling, lifted to a single lemma every v2 arm can call. -/
+
+open Dregg2.Circuit.EffectCommit2 (emitEffect2Faithful)
+open Dregg2.Circuit.EffectRefinement (mintCircuitStep mint_circuit_refines_spec)
+
+theorem effect2_step_extracts_circuit
+    {Args : Type}
+    (S : Surface2) (E : Dregg2.Circuit.EffectCommit2.EffectSpec2 RecChainedState Args) (name : String)
+    (sw : StepWitness) (fa : FullActionA)
+    (pre : RecChainedState) (args : Args) (post : RecChainedState)
+    (st st' : RecChainedState)
+    (hreg : defaultDescriptorLookup (actionAirName fa) = some (emittedEffect2 name E))
+    (h : stepEmittedSat defaultDescriptorLookup sw st st' fa)
+    (hEnc : assignmentOf sw.assignment = encodeE2 S E pre args post) :
+    satisfiedE2 S E (encodeE2 S E pre args post) := by
+  obtain ⟨_htag, d, hlook, hsat⟩ := h
+  have hd : d = emittedEffect2 name E := Option.some.inj (hlook.symm.trans hreg)
+  subst hd
+  rw [hEnc] at hsat
+  exact (emitEffect2Faithful name E _).mpr hsat
+
+/-- **`mint_step_refines_fullActionStep_extracted`** — the §5b headline pattern for `mintA` with the
+circuit step DERIVED from `h` + `hEnc`, NOT assumed. From `stepEmittedSat` (registry-resolved, satisfied)
+plus the encoder-agreement `hEnc`, the FULL `fullActionStep` (= `MintASpec`) is obtained. `hEnc` is
+load-bearing here: drop it and the satisfied bytes are an arbitrary trace, not pinned to `(st, …, st')`.
+This is the dead-`hEnc` kill made real on a concrete arm; `effect2_step_extracts_circuit` lifts the same
+shape to every v2 arm (each supplies its own registry `rfl` and `*_circuit_refines_spec`). -/
+theorem mint_step_refines_fullActionStep_extracted
+    (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (hRest : RestIffNoBal S.RH) (hLog : logHashInjective S.LH)
+    (sw : StepWitness) (st st' : RecChainedState)
+    (actor cell : CellId) (a : AssetId) (amt : ℤ)
+    (h : stepEmittedSat defaultDescriptorLookup sw st st' (.mintA actor cell a amt))
+    (hEnc : assignmentOf sw.assignment
+      = encodeE2 S (mintE D hD) st ⟨actor, cell, a, amt⟩ st') :
+    fullActionStep st (.mintA actor cell a amt) st' := by
+  show MintASpec st actor cell a amt st'
+  exact mint_circuit_refines_spec S D hD hRest hLog st ⟨actor, cell, a, amt⟩ st'
+    (effect2_step_extracts_circuit S (mintE D hD) mintAirName sw (.mintA actor cell a amt)
+      st ⟨actor, cell, a, amt⟩ st' st st' rfl h hEnc)
+
+/-! ### NON-VACUITY of the §5d extractor (anti-vacuous teeth).
+
+Decidable `satisfiedEmitted` so the `#guard`s below are real evaluation, not `rfl` on a trivial Prop. -/
+
+instance (c : Dregg2.Exec.CircuitEmit.EmittedConstraint) (a : Assignment) : Decidable (c.holds a) := by
+  unfold Dregg2.Exec.CircuitEmit.EmittedConstraint.holds; exact inferInstanceAs (Decidable (_ = _))
+instance (d : EmittedDescriptor) (a : Assignment) : Decidable (satisfiedEmitted d a) := by
+  unfold satisfiedEmitted; exact List.decidableBAll _ _
+
+-- TOOTH 1 (conclusion is NON-TRIVIAL): the all-zero witness FAILS `mintEmitted` (mint pins `var 0 = 1`).
+-- So `effect2_step_extracts_circuit`'s conclusion is a real constraint, not `True`; a stripped/forged
+-- witness is genuinely rejected by `satisfiedEmitted`.
+#guard decide (satisfiedEmitted mintEmitted (fun _ => 0)) == false
+-- TOOTH 2 (premise `hreg` is TAMPERABLE): a wrong AIR-name resolves to `none`, so the descriptor-identity
+-- premise FAILS for any tampered name — extraction cannot fire on a mismatched descriptor.
+#guard (defaultDescriptorLookup "dregg-NOT-AN-AIR" == none)
+-- HOLDS witness: the mint action's AIR name resolves to exactly `mintEmitted` (the `rfl` the extractor uses).
+#guard (defaultDescriptorLookup (actionAirName (.mintA 0 1 0 100)) == some mintEmitted)
+
+#assert_axioms effect2_step_extracts_circuit
+#assert_axioms mint_step_refines_fullActionStep_extracted
+
 /-! ## §6 — Demo: mint + burn two-step turn via `defaultDescriptorLookup`. -/
 
 /-- **`turn_emitted_demo_mint_burn`** — the default registry resolves mint and burn AIR identities
@@ -906,4 +1045,8 @@ theorem turn_emitted_demo_mint_burn :
 #assert_axioms turn_emitted_demo_mint_burn
 #assert_axioms turn_emitted_refines_turnSpec
 #assert_axioms turn_emitted_refines_exec
+-- The adversarial-witness extractor (mint reference) — sorry-FREE, kernel-clean.
+#assert_axioms mintA_extract
+#assert_axioms mintA_extract_emitted
+#assert_axioms mintA_extract_rejects_wrong_supply
 end Dregg2.Circuit.TurnEmit

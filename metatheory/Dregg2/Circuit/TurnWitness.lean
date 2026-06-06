@@ -6,6 +6,13 @@ Abstract turn witnesses for the Wave-1 gadget/witness layer: per-action `StepWit
 digest. `turnWitnessSatisfies` folds step witnesses through an abstract `compress` portal (state-root
 chaining); `turn_witness_refines_turnCircuit` lifts per-step declarative satisfaction to `turnSpec`.
 
+§4b makes the turn root AUTHENTIC (no longer decorative): `authenticTurnRoots` binds `preRoot`/
+`postRoot` to `StateCommit.recStateCommit` of the boundary kernels (a genuine binding full-state
+commitment over all 17 fields). `turnWitnessSatisfies_binds_postRoot` makes `turnWitnessSatisfies`
+load-bearing — the prover-folded post-root is forced to equal the real post-state commitment —
+`tampered_postRoot_rejects` is the anti-ghost tooth (a forged post-root has no authentic witness),
+and `authentic_roots_bind_state` is the headline (the published root binds the whole post-state).
+
 Links to `execFullTurnA` via `ActionDispatch.execFullTurnA_iff_turnSpec` and `fullActionStep_exec_iff`.
 
 Wave 7 precursor: `InnerTurnWitness` for exercise inner-fold scaffolding (`inner_turn_witness_refines_spec`

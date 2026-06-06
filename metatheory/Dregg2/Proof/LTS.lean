@@ -157,7 +157,11 @@ The faithful abstract step for a balance transfer is `recAbsStep` (authority fix
 `AuthStep`-firing half of the LTS belongs to an authority-mutating executable kernel, which is
 the named residue. -/
 
-/-- Rights carrier for the obstruction statement (`Unit`-rights, matching `ExecRights`). -/
+/-- Connectivity carrier for the obstruction statement (matching `execGraph`'s `ExecRights`, the
+connectivity skeleton). The obstruction (`transfer_fires_no_authStep`) is a CONNECTIVITY fact —
+it concerns whether an `AuthStep` mutates the graph at all — so it legitimately reads the
+connectivity carrier. The GENUINE RIGHTS non-amplification at this layer is `authStep_rights_tooth`
+below (§5.1), over the real `Spec.ExecCapRights = Finset Auth` lattice. -/
 abbrev ObsRights := ExecRights
 
 /-- **`transfer_fires_no_authStep`** — on the empty graph, no `AuthStep G G` exists: generative
@@ -199,6 +203,39 @@ theorem balance_turn_graph_is_fixed (k k' : RecordKernelState) (turn : Turn)
     (recAbsOf k').authGraph = (recAbsOf k).authGraph := by
   simp only [recAbsOf]
   rw [(recKExec_frame k k' turn h).2]
+
+/-! ## §5.1 — The RIGHTS tooth: an authority step cannot amplify (de-vacuified).
+
+`recAbsStep`/`authAbsStep` carry their authority on the CONNECTIVITY graph (`ExecRights = Unit`),
+where the obstruction above lives. The genuine RIGHTS discipline — an authorized act confers no
+MORE authority than held — lives on the real `Spec.ExecCapRights = Finset Auth` lattice. We expose
+it at the LTS layer so the de-vacuification is visible here too: a `Spec.AuthStep`'s `Endow`/
+`Introduce` constructor carries a `confers source cap` premise whose rights conjunct is a real `⊆`,
+and an amplifying grant is OUTSIDE the relation (`Spec.amplifying_grant_refused`). -/
+
+/-- **`authStep_endow_non_amplifying` (PROVED).** An `Endow`-fired `AuthStep` over the GENUINE
+rights lattice confers a cap whose rights are `≤` the held source's — the real `granted ≤ held`
+(NOT `() ≤ ()`). This is `Spec.Endow.nonAmplifying.2` read at `Rights = Spec.ExecCapRights`. -/
+theorem authStep_endow_non_amplifying
+    {G G' : Spec.Graph Label Spec.ExecCapRights} {parent child : Label}
+    {cap source : Spec.Cap Label Spec.ExecCapRights}
+    (st : Spec.Endow G parent child cap source G') :
+    cap.rights ≤ source.rights :=
+  st.nonAmplifying.2
+
+/-- **`authStep_rights_tooth` (PROVED — NON-VACUITY).** Over the genuine lattice the conferral
+relation an authority step rides genuinely FAILS for an amplifying grant: a child requesting
+`{read,write}` does not `confers` from a `{read}`-parent. On `ExecRights = Unit` this is impossible
+(every same-target conferral holds); here it is a real refutation — reusing the de-vacuified tooth
+`Spec.amplifying_grant_refused`. The `recAbsStep`/`authAbsStep` connectivity layer is paired with
+THIS genuine rights constraint. -/
+theorem authStep_rights_tooth :
+    ¬ Spec.confers (⟨7, {Authority.Auth.read}⟩ : Spec.Cap Label Spec.ExecCapRights)
+                   (⟨7, {Authority.Auth.read, Authority.Auth.write}⟩ : Spec.Cap Label Spec.ExecCapRights) :=
+  Spec.amplifying_grant_refused
+
+#assert_axioms authStep_endow_non_amplifying
+#assert_axioms authStep_rights_tooth
 
 /-! ## §6 — Axiom-hygiene tripwires. -/
 

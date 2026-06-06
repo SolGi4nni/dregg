@@ -36,10 +36,12 @@ import Dregg2.Circuit.Poseidon2Binding
 namespace Dregg2.Circuit.WitnessExtract
 
 open Dregg2.Circuit
+open Dregg2.Circuit.StateCommit (logHashInjective)
 open Dregg2.Circuit.EffectCommit2
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec (RecordKernelState Turn)
 
+set_option autoImplicit false
 set_option linter.unusedVariables false
 
 /-! ## §1 — the public-input binding the verifier enforces on the gate-relevant wires.
@@ -93,8 +95,7 @@ theorem satisfiedE2_of_PIBindsDigests {St Args : Type} (S : Surface2) (E : Effec
   obtain ⟨hguard, hRestPre, hRestPost, hCompPost, hCompExp, hLogPost, hLogExp⟩ := hPI
   unfold satisfiedE2 effectCircuit2
   constructor
-  · intro hsat
-    intro c hc
+  · intro hsat c hc
     rcases List.mem_append.mp hc with hcg | hc3
     · -- guard gate: transport via guardLocal (a agrees with guardEncode on `< guardWidth`,
       -- and encodeE2 agrees with guardEncode there too).
@@ -105,7 +106,6 @@ theorem satisfiedE2_of_PIBindsDigests {St Args : Type} (S : Surface2) (E : Effec
         (E.guardLocal _ _ (fun w hw => encodeE2_agrees_guardEncode S E pre args post w hw)).mpr hge
       exact this c hcg
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hc3
-      have hra := hsat
       rcases hc3 with rfl | rfl | rfl
       · -- cE2RestF
         unfold Constraint.holds cE2RestF
@@ -128,8 +128,7 @@ theorem satisfiedE2_of_PIBindsDigests {St Args : Type} (S : Surface2) (E : Effec
         unfold Constraint.holds cE2Log at this
         simp only [Expr.eval] at this
         rw [hLogPost, hLogExp] at this; exact this
-  · intro hsat
-    intro c hc
+  · intro hsat c hc
     rcases List.mem_append.mp hc with hcg | hc3
     · have hge : satisfied E.guardGates (E.guardEncode pre args post) :=
         (E.guardLocal _ _ (fun w hw => encodeE2_agrees_guardEncode S E pre args post w hw)).mp
@@ -247,6 +246,32 @@ theorem effect2_extract_rejects_log_forge {St Args : Type} (S : Surface2) (E : E
   have hsat' : satisfiedE2 S E (encodeE2 S E pre args post) :=
     (satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat
   exact effectCircuit2_rejects_log_forge S E hLog pre args post htamper hsat'
+
+/-! ## §5b — CONCRETE non-vacuity: the gates genuinely reject. A tampered trace whose component digest
+wire (`68`) disagrees with its expected wire (`69`) FAILS `cE2Bind` — UNSAT — so satisfaction is NOT
+vacuously true; it really pins `compDigPost = compDigExpected`. These are decidable `#guard`s over the
+two gates the extractor's component/log teeth rely on. -/
+
+instance (c : Constraint) (a : Assignment) : Decidable (c.holds a) := by
+  unfold Constraint.holds; exact inferInstanceAs (Decidable (_ = _))
+
+/-- A tampered assignment: every wire `0` EXCEPT the post-component digest wire `68 := 1` (a forged
+component that does not match its expected commitment at wire `69 = 0`). -/
+def tamperedAssignment : Assignment := fun w => if w = vE2CompPost then 1 else 0
+
+/- NON-VACUITY: the bind gate `cE2Bind` (`68 = 69`) is FALSE on the tampered assignment — the forged
+component is rejected. (If satisfaction were vacuous this would be `true`.) -/
+#guard decide (¬ cE2Bind.holds tamperedAssignment)
+
+/- NON-VACUITY: the rest-frame gate `cE2RestF` (`66 = 67`) likewise rejects a tampered rest digest. -/
+#guard decide (¬ cE2RestF.holds (fun w => if w = vE2RestPre then 7 else 0))
+
+/- NON-VACUITY: the log gate `cE2Log` (`70 = 71`) rejects a forged log digest. -/
+#guard decide (¬ cE2Log.holds (fun w => if w = vE2LogPost then 5 else 0))
+
+/- And the gates DO accept the all-equal (honest-shaped) assignment — so they are not vacuously false
+either: the three EQ gates each hold when their two wires agree. -/
+#guard decide (cE2Bind.holds (fun _ => 0) ∧ cE2RestF.holds (fun _ => 0) ∧ cE2Log.holds (fun _ => 0))
 
 /-! ## §6 — axiom-hygiene tripwires. -/
 

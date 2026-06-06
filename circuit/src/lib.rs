@@ -183,6 +183,15 @@ pub mod plonky3_verifier_air;
 #[cfg(feature = "recursion")]
 pub mod plonky3_recursion_impl;
 
+/// LogUp-style range-check lookups for the Lean-emitted descriptor path — the
+/// first concrete efficiency win for the verified extraction circuit. Replaces
+/// the `lean_descriptor_air` bit-decomposition range gates (30 aux columns / 30
+/// booleanity constraints per 30-bit wire) with a shared `[0,256)` byte-table
+/// LogUp bus (4 byte-limb columns per 30-bit wire, table shared across all
+/// wires), proved via `p3-batch-stark`. See module docs.
+#[cfg(feature = "recursion")]
+pub mod lean_lookup_air;
+
 /// Recursive (Golden Vision) compression bridge for `dregg_turn::WitnessedReceipt`
 /// scope-2 replay. See the module docs for the Silver→Golden mapping and
 /// the VK v2 layered encoding of the recursive VK hash.
