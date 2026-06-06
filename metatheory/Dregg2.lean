@@ -238,12 +238,13 @@ import Dregg2.Circuit.Inst.dropRefA        -- D5 v2 breadth: dropRefA_full_sound
 import Dregg2.Circuit.Inst.introduceA      -- D5 v2 breadth: introduceA_full_sound ⇒ DelegateSpec (caps)
 import Dregg2.Circuit.Inst.mintA           -- D5 v2 breadth: mintA_full_sound ⇒ MintASpec (bal credit)
 import Dregg2.Circuit.EffectRefinement     -- D5 v2 diamond tower: generic effect2CircuitStep ⟺ apex + emitted ⟺ circuit; mint/burn instances (emitted ⟺ circuit ⟺ spec ⟺ execFullA); mint_supply_delta_descends (l4v payoff)
+import Dregg2.Circuit.EffectEmittedRefinement -- Wave 2 batch emitted→spec: effect{1,2} emitted_refines_bespoke_spec + per-effect *_emitted_refines_spec diamonds
 import Dregg2.Circuit.Spec.Turn            -- Wave 1 turn spec: turnSpec fold + execFullTurnA_iff_turnSpec + turnSpec_append (associativity)
 import Dregg2.Circuit.ActionDispatch       -- Wave 1 apex dispatcher: fullActionStep (56/56 arms) + fullActionStep_exec_iff + actionTag
 import Dregg2.Circuit.GadgetRefinement      -- Wave 1 gadget bridges: merkle/nonmembership/temporal emitted ⊑ portal; gadget_step auth witness StepRel
 import Dregg2.Circuit.TurnWitness          -- Wave 1 turn witness: StepWitness/TurnWitness + turnWitnessSatisfies + turn_witness_refines_turnCircuit
 import Dregg2.Circuit.EffectEmitRegistry   -- Wave 2 central AIR registry: 53 Inst/commit descriptors + actionAirName (56/56)
-import Dregg2.Circuit.TurnEmit             -- Wave 2 turn emission: registry-backed StepEmittedSat/turnEmittedSat + turn_emitted_refines_turnSpec/exec
+import Dregg2.Circuit.TurnEmit             -- Wave 2 turn emission: registry-backed StepEmittedSat/turnEmittedSat + step_emitted_refines_fullActionStep + turn_emitted_refines_turnSpec/exec
 import Dregg2.Circuit.TurnRefinement      -- Wave 1 turn refinement: turnCircuitStep ⊑ turnSpec ⊑ execFullTurnA; turn_conservation_descends; TurnStateChain scaffolding
 import Dregg2.Circuit.TurnEffectRefinement -- Wave 1 turn effect diamond: fullActionCircuitStep dispatch + fullAction_turn_circuit_refines_spec/exec/conservation
 import Dregg2.Circuit.CoordinatedTurnRefinement -- Wave 1 inter-vat: bilateral/coordinated turn spec + circuit scaffold + charter binding

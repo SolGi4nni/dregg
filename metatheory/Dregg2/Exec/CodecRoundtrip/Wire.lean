@@ -101,8 +101,10 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
             ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
             ++ ('}' :: rest)))))))))))) from by
         show (encodeWTurn ⟨agent, nonce, fee, validUntil, blockHeight, prevHash, root⟩).toList ++ rest = _
-        unfold encodeWTurn encodeBlockHeightW
-        simp only [hblock', if_false (by decide : 0 > 0 = false), String.append_nil, String.toList_append,
+        unfold encodeWTurn
+        have hbh : encodeBlockHeightW blockHeight = "" := by
+          simp [encodeBlockHeightW, hblock']
+        simp only [hbh, String.toList_append, show ("" : String).toList = ([] : List Char) from rfl,
           show ("}":String).toList = ['}'] from by decide,
           show ("\",\"root\":":String).toList = ("\"":String).toList ++ (",\"root\":":String).toList from by decide,
           List.append_assoc, List.cons_append, List.nil_append]]
@@ -122,13 +124,21 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
   rw [parseNat_toString validUntil _ (Or.inr ⟨',', _, by
         rw [show (",\"prev\":\"":String).toList = ',' :: ("\"prev\":\"":String).toList from by decide]; rfl, by decide⟩)]
   simp only [Option.bind_eq_bind, Option.bind]
-  rw [show parseBlockHeightW ((",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
+  have hskip : parseBlockHeightW ((",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
             ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
             ++ ('}' :: rest))))) = some (0, (",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
             ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
-            ++ ('}' :: rest))))) from by
-        rw [show (",\"prev\":\"":String).toList = ',' :: ("\"prev\":\"":String).toList from by decide]
-        simp [parseBlockHeightW, lit]]
+            ++ ('}' :: rest))))) := by
+    dsimp only [parseBlockHeightW, lit]
+    rw [show (",\"block_height\":":String).toList =
+          ',' :: '"' :: 'b' :: 'l' :: 'o' :: 'c' :: 'k' :: '_' :: 'h' :: 'e' :: 'i' :: 'g' :: 'h' :: 't' :: '"' :: ':' :: []
+        from by decide,
+        show (",\"prev\":\"":String).toList =
+          ',' :: '"' :: 'p' :: 'r' :: 'e' :: 'v' :: '"' :: ':' :: '"' :: []
+        from by decide]
+    rw [litGo_cons_match, litGo_cons_match]
+    exact litGo_ne_head 'b' _ 'p' _ (by decide)
+  rw [hskip]
   simp only [Option.bind_eq_bind, Option.bind]
   rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
   rw [parseHex32_toHex32 prevHash _, Nat.mod_eq_of_lt hprev]

@@ -1311,6 +1311,185 @@ mod tests {
         }
     }
 
+    /// Lean `BurnA.burnDescriptorJson` — v2 burn effect circuit (4 gates, 72 wires).
+    const BURN_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-burn-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_emitted_burn_roundtrip() {
+        let desc = parse_descriptor(BURN_DESCRIPTOR_JSON).expect("burn descriptor must parse");
+        assert_eq!(desc.name, "dregg-burn-v2");
+        assert_eq!(desc.trace_width, 72);
+        assert_eq!(desc.constraints.len(), 4);
+
+        let mut good = [0i64; 72];
+        good[0] = 1;
+        good[66] = 50;
+        good[67] = 50;
+        good[68] = 100;
+        good[69] = 100;
+        good[70] = 200;
+        good[71] = 200;
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest burn witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify burn proof");
+
+        // Component forgery: compPost != compExpected breaks the bind gate (68 != 69).
+        let mut forged = good;
+        forged[69] = 101;
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "burn COMPONENT forgery MUST be rejected"
+            ),
+        }
+    }
+
+    /// Lean `Delegate.delegateEmitted` via `emitDescriptorJson` — v2 delegate circuit (4 gates, 72 wires).
+    const DELEGATE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-delegate-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_emitted_delegate_roundtrip() {
+        let desc = parse_descriptor(DELEGATE_DESCRIPTOR_JSON)
+            .expect("delegate descriptor must parse");
+        assert_eq!(desc.name, "dregg-delegate-v2");
+        assert_eq!(desc.trace_width, 72);
+        assert_eq!(desc.constraints.len(), 4);
+
+        let mut good = [0i64; 72];
+        good[0] = 1;
+        good[66] = 50;
+        good[67] = 50;
+        good[68] = 100;
+        good[69] = 100;
+        good[70] = 200;
+        good[71] = 200;
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest delegate witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify delegate proof");
+
+        // Rest-frame forgery: restPost != restPre breaks the rest gate (66 != 67).
+        let mut forged = good;
+        forged[67] = 51;
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "delegate REST forgery MUST be rejected"
+            ),
+        }
+    }
+
+    /// Lean `ExerciseA.exerciseAEmitted` via `emitDescriptorJson` — v1 hold-gate circuit (5 gates, 74 wires).
+    const EXERCISE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-exerciseA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_emitted_exercise_roundtrip() {
+        let desc = parse_descriptor(EXERCISE_DESCRIPTOR_JSON)
+            .expect("exerciseA descriptor must parse");
+        assert_eq!(desc.name, "dregg-exerciseA-v1");
+        assert_eq!(desc.trace_width, 74);
+        assert_eq!(desc.constraints.len(), 5);
+
+        // Guard=1; rest/frame/touched/log digest pairs equal (wires 66/67, 68/69, 70/71, 72/73).
+        let mut good = [0i64; 74];
+        good[0] = 1;
+        good[66] = 50;
+        good[67] = 50;
+        good[68] = 60;
+        good[69] = 60;
+        good[70] = 70;
+        good[71] = 70;
+        good[72] = 200;
+        good[73] = 200;
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest exerciseA witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify exerciseA proof");
+
+        // Log forgery: logPost != logExpected breaks the log gate (72 != 73).
+        let mut forged = good;
+        forged[73] = 201;
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "exerciseA LOG forgery MUST be rejected"
+            ),
+        }
+    }
+
+    /// Lean `CoordinatedTurnEmit.coordinatedTurnDescriptorJson` — bilateral turn circuit (10 gates, 20 wires).
+    const COORDINATED_TURN_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-coordinated-turn-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":4},"rhs":{"t":"var","v":0}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":1}},{"lhs":{"t":"var","v":5},"rhs":{"t":"var","v":2}},{"lhs":{"t":"var","v":6},"rhs":{"t":"var","v":3}},{"lhs":{"t":"var","v":7},"rhs":{"t":"var","v":8}},{"lhs":{"t":"var","v":9},"rhs":{"t":"var","v":10}},{"lhs":{"t":"var","v":11},"rhs":{"t":"var","v":12}},{"lhs":{"t":"var","v":14},"rhs":{"t":"var","v":15}},{"lhs":{"t":"var","v":16},"rhs":{"t":"var","v":17}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}]}"#;
+
+    #[test]
+    fn lean_emitted_coordinated_turn_roundtrip() {
+        let desc = parse_descriptor(COORDINATED_TURN_DESCRIPTOR_JSON)
+            .expect("coordinated-turn descriptor must parse");
+        assert_eq!(desc.name, "dregg-coordinated-turn-v1");
+        assert_eq!(desc.trace_width, 20);
+        assert_eq!(desc.constraints.len(), 10);
+
+        // Wire layout: pub 0..3; legA root/charter/binding 4..6 bound to pub; per-leg EQ pairs 7..19.
+        let good = [
+            100i64, 200, 300, 400, // pub: rootA, rootB, charterHash, bindingHash
+            100, 300, 400,         // legA: legRootA, charterDig, bindingDig
+            50, 50,                // legA rest pre/post
+            60, 60,                // legA frame pre/post
+            70, 70,                // legA moved post/expected
+            200,                   // legB root (bound to pub rootB)
+            80, 80,                // legB rest pre/post
+            90, 90,                // legB frame pre/post
+            100, 100,              // legB moved post/expected
+        ];
+        assert_eq!(good.len(), 20);
+        assert_eq!(good[4], good[0]);
+        assert_eq!(good[13], good[1]);
+        assert_eq!(good[5], good[2]);
+        assert_eq!(good[6], good[3]);
+        assert_eq!(good[7], good[8]);
+        assert_eq!(good[9], good[10]);
+        assert_eq!(good[11], good[12]);
+        assert_eq!(good[14], good[15]);
+        assert_eq!(good[16], good[17]);
+        assert_eq!(good[18], good[19]);
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest coordinated-turn witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify coordinated-turn proof");
+
+        // Frame-reuse forgery on leg B: framePost != framePre (16 != 17).
+        let mut forged = good;
+        forged[17] = 91;
+        assert_eq!(forged[16], forged[17] - 1);
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "coordinated-turn FRAME forgery MUST be rejected"
+            ),
+        }
+    }
+
     /// The parser is faithful to the wire grammar on its own (independent of proving):
     /// round-tripping a hand-built descriptor through Lean-style JSON recovers it, and
     /// the tolerant parser accepts whitespace.

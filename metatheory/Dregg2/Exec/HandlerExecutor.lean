@@ -62,7 +62,8 @@ open Dregg2.Exec
 open Dregg2.Exec.Handler
 open Dregg2.Exec.TurnExecutorFull
   (acceptsEffects lcLive lcSealed lcDestroyed setLifecycle parentClist cellSealChainA cellUnsealChainA
-   cellDestroyChainA refreshDelegationChainA emitStep execFullA FullActionA QueueTxOpA
+   cellDestroyChainA refreshDelegationChainA emitStep execFullA execInnerA exerciseStepA FullActionA
+   QueueTxOpA
    recCDelegate recCDelegateAtten attenuateStepA
    createCellChainA createEscrowChainA createCommittedEscrowChainA
    noteSpendChainA noteCreateChainA
@@ -399,6 +400,13 @@ theorem handler_refines_execFullA_transfer (s s' : RecChainedState) (t : Turn) (
     rw [if_pos hadm, hstep]
   · rw [if_neg hadm] at hstep; exact absurd hstep (by simp)
 
+/-- **`handler_refines_execFullA_balance` — alias of `transfer`.** `balanceA` is the per-asset name for
+the transfer arm; the handler step is definitionally `transferStep`. -/
+theorem handler_refines_execFullA_balance (s s' : RecChainedState) (t : Turn) (a : AssetId)
+    (h : execHandlerOne (.balanceA t a) s = some s') :
+    ∃ s'', execFullA s (.balanceA t a) = some s'' ∧ s''.kernel = s'.kernel :=
+  handler_refines_execFullA_transfer s s' t a h
+
 /-! ### §6.2 — R2: ESCROW RELEASE. `execHandlerOne (.releaseEscrowA id actor)` commits ⇒ `execFullA` commits. -/
 
 /-- **`handler_refines_execFullA_release` — THE R2 STRENGTHENING (PROVED).** Whenever the handler executor
@@ -677,6 +685,48 @@ theorem handler_refines_execFullA_createCell (s s' : RecChainedState) (actor new
     rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
+/-- **`handler_refines_execFullA_spawn` — the born-empty create alias (PROVED).** `toClosedEffect` maps
+`spawnA` onto `spawnH` (= `createCellH`). Refinement is against `createCellA` — the shared executable core
+— not the full `spawnChainA` cap/delegation metadata (`§DEFER`). -/
+theorem handler_refines_execFullA_spawn (s s' : RecChainedState) (actor child target : CellId)
+    (h : execHandlerOne (.spawnA actor child target) s = some s') :
+    ∃ s'', execFullA s (.createCellA actor child) = some s'' ∧ s''.kernel = s'.kernel := by
+  have hstep := execHandlerOne_kernel (.spawnA actor child target) s s' h
+  rw [toClosedEffect] at hstep
+  change createCellStep s.kernel { actor := actor, newCell := child } = some s'.kernel at hstep
+  unfold createCellStep at hstep
+  by_cases hg : createGate s.kernel { actor := actor, newCell := child }
+  · rw [if_pos hg] at hstep
+    simp only [createGate, Bool.and_eq_true, decide_eq_true_eq] at hg
+    have hk : createCellIntoAsset s.kernel child = s'.kernel := Option.some.inj hstep
+    refine ⟨{ kernel := s'.kernel,
+              log := { actor := actor, src := child, dst := child, amt := 0 } :: s.log }, ?_, rfl⟩
+    show createCellChainA s actor child = _
+    unfold createCellChainA
+    rw [if_pos ⟨hg.1, hg.2⟩, hk]
+  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
+/-- **`handler_refines_execFullA_createCellFromFactory` — the born-empty create alias (PROVED).**
+`toClosedEffect` maps `createCellFromFactoryA` onto `createCellFromFactoryH` (= `createCellH`).
+Refinement is against `createCellA` — not the full `createCellFromFactoryChainA` install (`§DEFER`). -/
+theorem handler_refines_execFullA_createCellFromFactory (s s' : RecChainedState) (actor newCell : CellId)
+    (vk : Int) (h : execHandlerOne (.createCellFromFactoryA actor newCell vk) s = some s') :
+    ∃ s'', execFullA s (.createCellA actor newCell) = some s'' ∧ s''.kernel = s'.kernel := by
+  have hstep := execHandlerOne_kernel (.createCellFromFactoryA actor newCell vk) s s' h
+  rw [toClosedEffect] at hstep
+  change createCellStep s.kernel { actor := actor, newCell := newCell } = some s'.kernel at hstep
+  unfold createCellStep at hstep
+  by_cases hg : createGate s.kernel { actor := actor, newCell := newCell }
+  · rw [if_pos hg] at hstep
+    simp only [createGate, Bool.and_eq_true, decide_eq_true_eq] at hg
+    have hk : createCellIntoAsset s.kernel newCell = s'.kernel := Option.some.inj hstep
+    refine ⟨{ kernel := s'.kernel,
+              log := { actor := actor, src := newCell, dst := newCell, amt := 0 } :: s.log }, ?_, rfl⟩
+    show createCellChainA s actor newCell = _
+    unfold createCellChainA
+    rw [if_pos ⟨hg.1, hg.2⟩, hk]
+  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
 theorem handler_refines_execFullA_createCommittedEscrow (s s' : RecChainedState) (id : Nat)
     (actor creator recipient : CellId) (asset : AssetId) (amount : ℤ) (hidingProof : Bool)
     (hp : hidingProof = true)
@@ -877,6 +927,14 @@ theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cel
     · -- kernels agree: both are the `writeField` post-state at the nonce field.
       rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
+/-- **`handler_refines_execFullA_incrementNonce` — alias of `stateWrite`.** `incrementNonceA` routes
+through `incrementNonceEffect` = `stateWriteEffect` at `nonceField`. -/
+theorem handler_refines_execFullA_incrementNonce (s s' : RecChainedState) (actor cell : CellId) (n : Int)
+    (hmem : cell ∈ s.kernel.accounts)
+    (h : execHandlerOne (.incrementNonceA actor cell n) s = some s') :
+    ∃ s'', execFullA s (.incrementNonceA actor cell n) = some s'' ∧ s''.kernel = s'.kernel :=
+  handler_refines_execFullA_stateWrite s s' actor cell n hmem h
 
 theorem handler_refines_execFullA_setPermissions (s s' : RecChainedState) (actor cell : CellId) (p : Int)
     (hmem : cell ∈ s.kernel.accounts)
@@ -1525,6 +1583,46 @@ theorem handler_refines_execFullA_queueAtomicTx_strong (s s' : RecChainedState) 
     ⟨s₁, queueAtomicTxChainA_of_gateFold hg, hk⟩
   exact handler_refines_execFullA_queueAtomicTx s s' actor ops hchain h
 
+/-! ### §6.7 — EXERCISE: inner-turn hypothesis (the `exerciseA` / `execInnerA` bridge).
+
+The handler folds the inner forest through `subTurn` + the R4 facet-mask (`exerciseAdmitB`); `execFullA`
+freezes the kernel at the hold-gate (`exerciseStepA`) then recurses via `execInnerA`. Kernel agreement is
+carried by **`hinner`** — the inner fold from the hold-state reaches the SAME kernel the handler's
+`subTurn` produced (the circuit-layer `innerTurnH` pattern). -/
+
+/-- Post-hold-gate chained state: kernel frozen, authority receipt prepended. -/
+def exerciseHoldState (st : RecChainedState) (actor : CellId) : RecChainedState :=
+  { st with log := authReceipt actor :: st.log }
+
+@[simp] private theorem exerciseHoldState_kernel (st : RecChainedState) (actor : CellId) :
+    (exerciseHoldState st actor).kernel = st.kernel := rfl
+
+/-- **`handler_refines_execFullA_exercise` — PROVED on the inner-turn honest path.** Whenever the handler
+executor commits an exercise AND the inner `FullActionA` fold from the hold-state reaches the SAME
+kernel (`hinner`), `execFullA` ALSO commits the exercise AND produces that kernel. -/
+theorem handler_refines_execFullA_exercise (s s' : RecChainedState) (actor target : CellId)
+    (inner : List FullActionA)
+    (hinner : ∃ s₁, execInnerA (exerciseHoldState s actor) inner = some s₁ ∧
+        s₁.kernel = s'.kernel)
+    (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
+    ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel := by
+  obtain ⟨s₁, hfold, hk⟩ := hinner
+  have hstep := execHandlerOne_kernel (.exerciseA actor target inner) s s' h
+  rw [toClosedEffect] at hstep
+  let innerF := inner.map (fun fa => facetedOf Auth.control (toClosedEffect fa))
+  change exerciseStep s.kernel { actor := actor, target := target, inner := innerF } = some s'.kernel at hstep
+  unfold exerciseStep at hstep
+  by_cases hg : exerciseAdmitB s.kernel { actor := actor, target := target, inner := innerF }
+  · rw [if_pos hg] at hstep
+    have hhold' : (s.kernel.caps actor).any (fun cap => confersEdgeTo target cap) = true := by
+      rw [exerciseAdmitB, holdsEdge, Bool.and_eq_true] at hg
+      exact hg.1
+    have hg' : exerciseStepA s actor target = some (exerciseHoldState s actor) := by
+      simp only [exerciseStepA, hhold', if_pos, exerciseHoldState]
+    refine ⟨s₁, ?_, hk⟩
+    simp only [execFullA, hg', hfold]
+  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
 /-! ## §7 — THE TEETH: R1/R2/R6 holes closed in BOTH executors (parity witnesses).
 
 The payoff. For each hole, a single fixture exhibits the LIVE EXECUTOR `execFullA` accepting the attack
@@ -1602,6 +1700,7 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms execHandlerTurn_head_admitted
 #assert_axioms execHandlerOne_kernel
 #assert_axioms handler_refines_execFullA_transfer
+#assert_axioms handler_refines_execFullA_balance
 #assert_axioms handler_refines_execFullA_release
 #assert_axioms handler_refines_execFullA_mint
 #assert_axioms handler_refines_execFullA_burn
@@ -1615,6 +1714,8 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms handler_refines_execFullA_bridgeMint
 #assert_axioms handler_refines_execFullA_revoke
 #assert_axioms handler_refines_execFullA_createCell
+#assert_axioms handler_refines_execFullA_spawn
+#assert_axioms handler_refines_execFullA_createCellFromFactory
 #assert_axioms handler_refines_execFullA_createCommittedEscrow
 #assert_axioms handler_refines_execFullA_noteSpend
 #assert_axioms handler_refines_execFullA_noteCreate
@@ -1625,6 +1726,7 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms handler_refines_execFullA_dropRef
 #assert_axioms handler_refines_execFullA_revokeDelegation
 #assert_axioms handler_refines_execFullA_stateWrite
+#assert_axioms handler_refines_execFullA_incrementNonce
 #assert_axioms handler_refines_execFullA_setPermissions
 #assert_axioms handler_refines_execFullA_setVK
 #assert_axioms handler_refines_execFullA_refusal
@@ -1654,6 +1756,7 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms handler_refines_execFullA_queueAtomicTx
 #assert_axioms handler_queueAtomicTx_kernel_eq_of_gateFold
 #assert_axioms handler_refines_execFullA_queueAtomicTx_strong
+#assert_axioms handler_refines_execFullA_exercise
 
 /-! ## §DEFER — honest scope of THIS cutover keystone (additive; the call-site switch is mechanical).
 
@@ -1674,11 +1777,13 @@ Deliberately OUT of this file (documented, NOT a silent gap):
     when the chained fold reaches the same kernel (`hchain` — now discharged by
     `handler_refines_execFullA_queueAtomicTx_strong` when the per-op `QueueAtomicTxGateFold` witness
     holds; see `Dregg2.Exec.QueueCutover`).
-    REMAINING: `spawnA` / `createCellFromFactoryA` (handler models born-empty create only; `execFullA`
-    adds cap/factory metadata), `makeSovereignA` (handler field-write stub vs `makeSovereignStep`
-    commitment-rebind), `receiptArchiveA` (handler `receipt_archive` field vs executor `lifecycle`
-    field), `exerciseA` (handler `subTurn` + R4 facet-mask vs `execInnerA` recursion), unconditional
-    queue allocate/enqueue when `actor ≠ cell`.
+    REMAINING: `spawnA` / `createCellFromFactoryA` **full** `spawnChainA`/`createCellFromFactoryChainA`
+    metadata (the born-empty `createCellA` core is now covered by
+    `handler_refines_execFullA_{spawn,createCellFromFactory}`), `makeSovereignA` (handler field-write
+    stub vs `makeSovereignStep` commitment-rebind), `receiptArchiveA` (handler `receipt_archive` field
+    vs executor `lifecycle` field), unconditional queue allocate/enqueue when `actor ≠ cell`. For
+    `exerciseA`, kernel agreement is on the **inner-turn honest path**
+    (`handler_refines_execFullA_exercise` + `hinner`); the R4 facet-mask still narrows handler-commits.
 
   * **The state-write existence-predicate MISMATCH — RESOLVED (R6 closed in the live executor).** The
     bare `EffectsState.stateStep` now ALSO consults lifecycle-LIVENESS (`cellLive`, definitionally
