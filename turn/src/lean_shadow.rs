@@ -176,8 +176,12 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         Effect::EmitEvent { cell, .. } => has(cell),
         Effect::MakeSovereign { cell } => has(cell),
         Effect::RevokeDelegation { child } => has(child),
+        // Note set-transitions: the actor is the action target (already in the id map),
+        // the nullifier/commitment are intrinsic to the effect — always mappable.
+        Effect::NoteSpend { .. } => true,
+        Effect::NoteCreate { .. } => true,
         // IncrementNonce carries no absolute new-nonce on the wire faithfully; excluded.
-        // Everything else (notes/escrows/queues/bridge/seal/captp/factory/…) not yet projected.
+        // Everything else (escrows/queues/bridge/seal/captp/factory/…) not yet projected.
         _ => false,
     }
 }
@@ -297,6 +301,23 @@ fn effect_to_wire(
                 .as_ref()
                 .map(|vk| bytes32_to_nat(&vk.hash) as i128)
                 .unwrap_or(0),
+        },
+        // The verified Lean executor models the privacy note-set transitions
+        // (`Dregg2/Circuit/Inst/noteSpendA.lean` / `noteCreateA.lean` + the
+        // `notespend`/`notecreate` wire arms). The Lean side enforces the
+        // nullifier-set / commitment-set membership transition + anti-double-spend
+        // guard bit; the STARK preimage/Merkle-membership stays the Rust circuit's
+        // job. We carry the 32-byte nullifier / commitment collapsed to its low 64
+        // bits — the same digest-collapse used for fields and vks. This is a
+        // faithful projection of the SET decision (the only thing the executor's
+        // commit-bit depends on), not of the proof bytes.
+        Effect::NoteSpend { nullifier, .. } => WireAction::NoteSpend {
+            nf: bytes32_to_nat(&nullifier.0),
+            actor,
+        },
+        Effect::NoteCreate { commitment, .. } => WireAction::NoteCreate {
+            cm: bytes32_to_nat(&commitment.0),
+            actor,
         },
         Effect::EmitEvent { cell, event } => WireAction::Emit {
             actor,
