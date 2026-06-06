@@ -194,10 +194,34 @@ import Dregg2.Circuit.EffectCommit      -- D5 GENERIC framework: full-state circ
 import Dregg2.Circuit.KeyedCommit       -- D5 v2 carrier (FUNCTION-field shape): keyedDigest + KeyedDigestBindsKeys — the key-polymorphic, state-free lift of StateCommit.frameDigest/FrameDigestBindsCells to ANY LinearOrder key, so `bal` (key CellId×AssetId) + `caps` (key Label) are bound by the SAME proof. #assert_axioms-clean
 import Dregg2.Circuit.ListCommit        -- D5 v2 carrier (the breadth bottleneck-breaker): listDigest + ListDigestBindsList — the list-side-table commitment binding (compressN-inj + injective leaf ⇒ WHOLE post-list pinned, so a drop/reorder/wrong-cons is REJECTED). The ONE new crypto carrier v2 needs; unlocks the ~12 list-changing effects (notes/escrows/queues/seal/swiss/revoked). #assert_axioms-clean
 import Dregg2.Circuit.EffectCommit2      -- D5 v2 GENERIC core (single non-cell component): effect2_circuit_full_sound/_complete + 3 anti-ghost teeth + emission, proved ONCE for an effect touching ONE non-cell component (a function-field via funcComponent/keyedComponent, or a list side-table via listComponent — off ListCommit/KeyedCommit). Generalizes v1's "touched=cell" to "touched=one ActiveComponent"; soundness gets the postClause from active.binds (no funext, no ghost). #assert_axioms-clean
-import Dregg2.Circuit.Inst.burnA         -- D5 v2 breadth: burnA_full_sound ⇒ BurnSpec (bal debit, funcComponent) through the framework
-import Dregg2.Circuit.Inst.bridgeMintA   -- D5 v2 breadth: bridgeMintA_full_sound ⇒ InboundMintSpec (bal credit, funcComponent)
-import Dregg2.Circuit.Inst.balanceA      -- D5 v2 breadth: balanceA_full_sound ⇒ BalanceMovementSpec (per-asset bal transfer, funcComponent)
-import Dregg2.Circuit.Inst.noteCreateA   -- D5 v2 breadth: noteCreateA_full_sound ⇒ NoteCreateASpec (commitments list, listComponent)
+import Dregg2.Circuit.Inst.attenuateA        -- D5 v2 breadth: attenuateA_full_sound ⇒ AttenuateSpec (caps funcComponent)
+import Dregg2.Circuit.Inst.balanceA         -- D5 v2 breadth: balanceA_full_sound ⇒ BalanceMovementSpec (bal funcComponent)
+import Dregg2.Circuit.Inst.bridgeMintA     -- D5 v2 breadth: bridgeMintA_full_sound ⇒ InboundMintSpec (bal credit)
+import Dregg2.Circuit.Inst.burnA           -- D5 v2 breadth: burnA_full_sound ⇒ BurnSpec (bal debit)
+import Dregg2.Circuit.Inst.createSealPairA -- D5 v2 breadth: createSealPairA_full_sound ⇒ CreateSealPairSpec (sealedBoxes list)
+import Dregg2.Circuit.Inst.delegate        -- D5 v2 breadth: delegate_full_sound ⇒ DelegateSpec (caps)
+import Dregg2.Circuit.Inst.delegateAttenA  -- D5 v2 breadth: delegateAttenA_full_sound ⇒ DelegateAttenSpec (caps)
+import Dregg2.Circuit.Inst.dropRefA        -- D5 v2 breadth: dropRefA_full_sound ⇒ RevokeSpec (caps)
+import Dregg2.Circuit.Inst.introduceA      -- D5 v2 breadth: introduceA_full_sound ⇒ DelegateSpec (caps)
+import Dregg2.Circuit.Inst.mintA           -- D5 v2 breadth: mintA_full_sound ⇒ MintASpec (bal credit)
+import Dregg2.Circuit.Inst.noteCreateA     -- D5 v2 breadth: noteCreateA_full_sound ⇒ NoteCreateASpec (commitments list)
+import Dregg2.Circuit.Inst.noteSpendA      -- D5 v2 breadth: noteSpendA_full_sound ⇒ NoteSpendSpec (nullifiers list)
+import Dregg2.Circuit.Inst.queueAllocateA  -- D5 v2 breadth: queueAllocateA_full_sound ⇒ QueueAllocateSpec (queues list)
+import Dregg2.Circuit.Inst.queueResizeA    -- D5 v2 breadth: queueResizeA_full_sound ⇒ QueueResizeSpec (queues list)
+import Dregg2.Circuit.Inst.revoke          -- D5 v2 breadth: revoke_full_sound ⇒ RevokeSpec (caps)
+import Dregg2.Circuit.Inst.revokeDelegationA -- D5 v2 breadth: revokeDelegationA_full_sound ⇒ RevokeSpec (caps)
+import Dregg2.Circuit.Inst.sealA           -- D5 v2 breadth: sealA_full_sound ⇒ SealSpec (sealedBoxes list)
+import Dregg2.Circuit.Inst.swissExportA    -- D5 v2 breadth: swissExportA_full_sound ⇒ ExportSpec (swiss list)
+import Dregg2.Circuit.Inst.transfer        -- D5 v2 breadth: transfer_full_sound ⇒ BalanceMovementSpec (bal funcComponent)
+import Dregg2.Circuit.Inst.unsealA        -- D5 v2 breadth: unsealA_full_sound ⇒ UnsealSpec (sealedBoxes list)
+import Dregg2.Circuit.Inst.validateHandoffA -- D5 v2 breadth: validateHandoffA_full_sound ⇒ DelegateSpec (caps)
+import Dregg2.Circuit.Inst.emitEventA      -- D5 v1 breadth: emitEventA_full_sound ⇒ EmitEventSpec (log-only, touched=∅)
+import Dregg2.Circuit.Inst.incrementNonceA -- D5 v1 breadth: incrementNonceA_full_sound ⇒ IncrementNonceSpec (cell)
+import Dregg2.Circuit.Inst.makeSovereignA -- D5 v1 breadth: makeSovereignA_full_sound ⇒ MakeSovereignSpec (cell rebind)
+import Dregg2.Circuit.Inst.receiptArchiveA -- D5 v1 breadth: receiptArchiveA_full_sound ⇒ ReceiptArchiveSpec (cell audit)
+import Dregg2.Circuit.Inst.refusalA        -- D5 v1 breadth: refusalA_full_sound ⇒ RefusalSpec (cell audit)
+import Dregg2.Circuit.Inst.setPermissionsA -- D5 v1 breadth: setPermissionsA_full_sound ⇒ SetPermissionsSpec (cell)
+import Dregg2.Circuit.Inst.setVKA          -- D5 v1 breadth: setVKA_full_sound ⇒ SetVKSpec (cell)
 import Dregg2.Circuit.EffectInstances2   -- D5 v2 VALIDATION: mintE_full_sound ⇒ MintASpec (bal, funcComponent) + noteSpendE_full_sound ⇒ NoteSpendSpec (nullifiers list, listComponent + growing log), both re-derived THROUGH the v2 framework. Proves v2 works for BOTH non-cell shapes; the TEMPLATE for the ~25 non-cell effects
 import Dregg2.Circuit.EffectInstances   -- D5 framework VALIDATION + templates: transferE/setFieldE re-derive Transfer's & setFieldA's circuit⟺spec THROUGH the generic EffectCommit framework — transferE_full_sound ⇒ TransferSpec, setFieldE_full_sound ⇒ SetFieldSpec (the bespoke specs, from realizable Poseidon-CR portals only). Proves the framework is instantiable + sound; the worked TEMPLATE the remaining ~29 effects copy (~100 lines each). #assert_axioms-clean
 import Dregg2.Circuit.SetFieldCommit    -- D5 breadth (effect #2/31): FULL-STATE circuit⟺spec for setFieldA — setfield_circuit_full_sound (satisfiedSF ⇒ the full SetFieldSpec, frame reconstructed by funext) + completeness + 4 ANTI-GHOST teeth (rejects field-tamper / third-cell / wrong-target / log-forge) + concrete #guard. INJECTIVITY-only portals (compressNInjective/cellLeafInjective/RestHashIffFrame REUSED from StateCommit + logHashInjective NEW for the receipt-chain growth + AccountsWF). Confirms the generic framework shape: {restHash ⊕ frame-sponge ⊕ touched-leaf ⊕ log-hash}
