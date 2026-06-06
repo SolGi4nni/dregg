@@ -12,6 +12,7 @@ ADDITIVE: imports `AccountsCommit`, `BornEmptyCommit`, `EffectCommit5`, `Spec/fa
 import Dregg2.Circuit.AccountsCommit
 import Dregg2.Circuit.BornEmptyCommit
 import Dregg2.Circuit.EffectCommit5
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.Spec.factorycreation
 
@@ -21,6 +22,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.EffectCommit5
 open Dregg2.Circuit.AccountsCommit
@@ -313,6 +315,47 @@ theorem createCellFromFactoryA_full_sound
       s' h
   exact (apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth
       hDAuth s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def createFromFactoryEWire : EffectSpec2Quint RecChainedState CreateFromFactoryArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active3      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active4      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active5      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := createFromFactoryGuardGates
+  guardProp    := createFromFactoryGuardProp
+  guardWidth   := 1
+  guardEncode  := createFromFactoryGuardEncode
+  guardLocal   := createFromFactoryGuardLocal
+  guardWidth_le := by decide
+
+def createCellFromFactoryAAirName : String := "dregg-createCellFromFactoryA-v2"
+
+def createCellFromFactoryAEmitted : EmittedDescriptor := emittedEffect2Quint createCellFromFactoryAAirName createFromFactoryEWire
+
+#guard createCellFromFactoryAEmitted.name == createCellFromFactoryAAirName
 
 #assert_axioms createFromFactoryGuardLocal
 #assert_axioms createFromFactoryGuardDecodes

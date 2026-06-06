@@ -10,6 +10,7 @@ THROUGH the generic dual-component framework.
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/bridgeoutboundlock`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.bridgeoutboundlock
 
 namespace Dregg2.Circuit.Inst.BridgeLockA
@@ -18,6 +19,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.BridgeOutboundLock
@@ -182,6 +184,35 @@ theorem bridgeLockA_full_sound
       (bridgeLockRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (bridgeLockGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_bridgeOutboundLockSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def bridgeLockEWire : EffectSpec2Dual RecChainedState BridgeLockArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := bridgeLockGuardGates
+  guardProp    := bridgeLockGuardProp
+  guardWidth   := 1
+  guardEncode  := bridgeLockGuardEncode
+  guardLocal   := bridgeLockGuardLocal
+  guardWidth_le := by decide
+
+def bridgeLockAAirName : String := "dregg-bridgeLockA-v2"
+
+def bridgeLockAEmitted : EmittedDescriptor := emittedEffect2Dual bridgeLockAAirName bridgeLockEWire
+
+#guard bridgeLockAEmitted.name == bridgeLockAAirName
 
 #assert_axioms bridgeLockGuardLocal
 #assert_axioms bridgeLockGuardDecodes

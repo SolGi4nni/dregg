@@ -7,6 +7,7 @@ THE VALIDATION: `refreshDelegationA_full_sound ⇒ RefreshDelegationSpec` THROUG
 ADDITIVE: imports `EffectCommit2` + `Spec/refreshdelegation`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.refreshdelegation
 
 namespace Dregg2.Circuit.Inst.RefreshDelegationA
@@ -15,6 +16,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.RefreshDelegation
 open Dregg2.Authority (Caps Cap)
 open Dregg2.Exec
@@ -147,6 +149,31 @@ theorem refreshDelegationA_full_sound
       (refreshDelegationRestFrameDecodes S D hD hRest) hLog
       (refreshDelegationGuardDecodes D hD) s args s' h
   exact (apex_iff_refreshDelegationSpec D hD s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def refreshDelegationEWire : EffectSpec2 RecChainedState RefreshDelegationArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := refreshDelegationGuardGates
+  guardProp    := refreshDelegationGuardProp
+  guardWidth   := 1
+  guardEncode  := refreshDelegationGuardEncode
+  guardLocal   := refreshDelegationGuardLocal
+  guardWidth_le := by decide
+
+def refreshDelegationAAirName : String := "dregg-refreshDelegationA-v2"
+
+def refreshDelegationAEmitted : EmittedDescriptor := emittedEffect2 refreshDelegationAAirName refreshDelegationEWire
+
+#guard refreshDelegationAEmitted.name == refreshDelegationAAirName
 
 #assert_axioms refreshDelegationGuardLocal
 #assert_axioms refreshDelegationGuardDecodes

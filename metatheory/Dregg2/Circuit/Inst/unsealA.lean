@@ -43,6 +43,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.sealboxoperations
 
 namespace Dregg2.Circuit.Inst.UnsealA
@@ -51,6 +52,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.SealBoxOperations
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -252,6 +254,30 @@ theorem unsealA_full_sound
     effect2_circuit_full_sound S (unsealE D hD)
       (unsealRestFrameDecodes S D hD hRest) hLog (unsealGuardDecodes D hD) s args s' h
   exact (apex_iff_unsealSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def unsealEWire : EffectSpec2 RecChainedState UnsealArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := unsealGuardGates
+  guardProp    := unsealGuardProp
+  guardWidth   := 1
+  guardEncode  := unsealGuardEncode
+  guardLocal   := unsealGuardLocal
+  guardWidth_le := by decide
+
+def unsealAAirName : String := "dregg-unsealA-v2"
+
+def unsealAEmitted : EmittedDescriptor := emittedEffect2 unsealAAirName unsealEWire
+
+#guard unsealAEmitted.name == unsealAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

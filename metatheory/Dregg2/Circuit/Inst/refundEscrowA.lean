@@ -9,6 +9,7 @@ validator: `refundEscrowA_full_sound ⇒ RefundEscrowSpec` THROUGH the generic d
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/escrowholdingrefund`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.escrowholdingrefund
 
 namespace Dregg2.Circuit.Inst.RefundEscrowA
@@ -17,6 +18,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.EscrowHoldingRefund
@@ -215,6 +217,35 @@ theorem refundEscrowA_full_sound
       (refundEscrowRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (refundEscrowGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_refundEscrowSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def refundEscrowEWire : EffectSpec2Dual RecChainedState RefundEscrowArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := refundEscrowGuardGates
+  guardProp    := refundEscrowGuardProp
+  guardWidth   := 1
+  guardEncode  := refundEscrowGuardEncode
+  guardLocal   := refundEscrowGuardLocal
+  guardWidth_le := by decide
+
+def refundEscrowAAirName : String := "dregg-refundEscrowA-v2"
+
+def refundEscrowAEmitted : EmittedDescriptor := emittedEffect2Dual refundEscrowAAirName refundEscrowEWire
+
+#guard refundEscrowAEmitted.name == refundEscrowAAirName
 
 #assert_axioms refundEscrowGuardLocal
 #assert_axioms refundEscrowGuardDecodes

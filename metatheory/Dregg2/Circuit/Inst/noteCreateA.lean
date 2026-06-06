@@ -29,6 +29,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.notecommitment
 
 namespace Dregg2.Circuit.Inst.NoteCreateA
@@ -37,6 +38,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.NoteCommitment
 open Dregg2.Exec
@@ -235,6 +237,30 @@ theorem noteCreateA_full_sound
 #assert_axioms noteCreateGuardDecodes
 #assert_axioms noteCreateGuardEncodes
 #assert_axioms apex_iff_noteCreateASpec
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def noteCreateEWire : EffectSpec2 RecChainedState NoteCreateArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := noteCreateGuardGates
+  guardProp    := noteCreateGuardProp
+  guardWidth   := 1
+  guardEncode  := noteCreateGuardEncode
+  guardLocal   := noteCreateGuardLocal
+  guardWidth_le := by decide
+
+def noteCreateAAirName : String := "dregg-noteCreateA-v2"
+
+def noteCreateAEmitted : EmittedDescriptor := emittedEffect2 noteCreateAAirName noteCreateEWire
+
+#guard noteCreateAEmitted.name == noteCreateAAirName
+
 #assert_axioms noteCreateA_full_sound
 
 end Dregg2.Circuit.Inst.NoteCreateA

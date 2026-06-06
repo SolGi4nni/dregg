@@ -36,6 +36,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.authorityunattenuated
 
 namespace Dregg2.Circuit.Inst.IntroduceA
@@ -44,6 +45,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.AuthorityUnattenuated
 open Dregg2.Authority (Caps Cap Auth)
 open Dregg2.Exec
@@ -243,6 +245,30 @@ theorem introduceA_full_sound
     effect2_circuit_full_sound S (introduceE D hD)
       (introduceRestFrameDecodes S D hD hRest) hLog (introduceGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def introduceEWire : EffectSpec2 RecChainedState IntroduceArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := introduceGuardGates
+  guardProp    := introduceGuardProp
+  guardWidth   := 1
+  guardEncode  := introduceGuardEncode
+  guardLocal   := introduceGuardLocal
+  guardWidth_le := by decide
+
+def introduceAAirName : String := "dregg-introduceA-v2"
+
+def introduceAEmitted : EmittedDescriptor := emittedEffect2 introduceAAirName introduceEWire
+
+#guard introduceAEmitted.name == introduceAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

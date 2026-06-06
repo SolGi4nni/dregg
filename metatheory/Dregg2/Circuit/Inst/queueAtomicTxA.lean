@@ -10,6 +10,7 @@ touching `queues` + `bal` + `escrows` via the composed sub-ops, then prepends th
 ADDITIVE: imports `EffectCommit3` + `Spec/queueatomictx`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit3
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.queueatomictx
 
 namespace Dregg2.Circuit.Inst.QueueAtomicTxA
@@ -18,6 +19,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit3
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.QueueAtomicTx
@@ -331,6 +333,39 @@ theorem queueAtomicTxA_full_sound
       (atomicTxRestFrameDecodes S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest) hLog
       (atomicTxGuardDecodes D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s' h
   exact (apex_iff_queueAtomicTxSpec D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def queueAtomicTxEWire : EffectSpec2Triple RecChainedState AtomicTxArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active3      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := atomicTxGuardGates
+  guardProp    := atomicTxGuardProp
+  guardWidth   := 1
+  guardEncode  := atomicTxGuardEncode
+  guardLocal   := atomicTxGuardLocal
+  guardWidth_le := by decide
+
+def queueAtomicTxAAirName : String := "dregg-queueAtomicTxA-v2"
+
+def queueAtomicTxAEmitted : EmittedDescriptor := emittedEffect2Triple queueAtomicTxAAirName queueAtomicTxEWire
+
+#guard queueAtomicTxAEmitted.name == queueAtomicTxAAirName
 
 #assert_axioms atomicTxGuardLocal
 #assert_axioms atomicTxGuardProp_iff_atomicTxGuard

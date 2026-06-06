@@ -8,6 +8,7 @@ Touches TWO function-fields: `lifecycle` (flip to `lcDestroyed`) and `deathCert`
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/celllifecycle`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.celllifecycle
 
 namespace Dregg2.Circuit.Inst.CellDestroyA
@@ -16,6 +17,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.Spec.CellLifecycle
 open Dregg2.Exec
@@ -160,6 +162,35 @@ theorem cellDestroyA_full_sound
       (cellDestroyRestFrameDecodes S DLif hDLif DDC hDDC hRest) hLog
       (cellDestroyGuardDecodes DLif hDLif DDC hDDC) s args s' h
   exact (apex_iff_cellDestroySpec DLif hDLif DDC hDDC s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def cellDestroyEWire : EffectSpec2Dual RecChainedState CellDestroyArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := cellDestroyGuardGates
+  guardProp    := cellDestroyGuardProp
+  guardWidth   := 1
+  guardEncode  := cellDestroyGuardEncode
+  guardLocal   := cellDestroyGuardLocal
+  guardWidth_le := by decide
+
+def cellDestroyAAirName : String := "dregg-cellDestroyA-v2"
+
+def cellDestroyAEmitted : EmittedDescriptor := emittedEffect2Dual cellDestroyAAirName cellDestroyEWire
+
+#guard cellDestroyAEmitted.name == cellDestroyAAirName
 
 #assert_axioms cellDestroyGuardLocal
 #assert_axioms cellDestroyGuardDecodes

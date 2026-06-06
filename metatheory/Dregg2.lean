@@ -242,7 +242,8 @@ import Dregg2.Circuit.Spec.Turn            -- Wave 1 turn spec: turnSpec fold + 
 import Dregg2.Circuit.ActionDispatch       -- Wave 1 apex dispatcher: fullActionStep (56/56 arms) + fullActionStep_exec_iff + actionTag
 import Dregg2.Circuit.GadgetRefinement      -- Wave 1 gadget bridges: merkle/nonmembership/temporal emitted ⊑ portal; gadget_step auth witness StepRel
 import Dregg2.Circuit.TurnWitness          -- Wave 1 turn witness: StepWitness/TurnWitness + turnWitnessSatisfies + turn_witness_refines_turnCircuit
-import Dregg2.Circuit.TurnEmit             -- Wave 1 turn emission: actionAirName + StepEmittedSat/turnEmittedSat + turn_emitted_refines_turnSpec/exec; mint+burn demo lookup
+import Dregg2.Circuit.EffectEmitRegistry   -- Wave 2 central AIR registry: 53 Inst/commit descriptors + actionAirName (56/56)
+import Dregg2.Circuit.TurnEmit             -- Wave 2 turn emission: registry-backed StepEmittedSat/turnEmittedSat + turn_emitted_refines_turnSpec/exec
 import Dregg2.Circuit.TurnRefinement      -- Wave 1 turn refinement: turnCircuitStep ⊑ turnSpec ⊑ execFullTurnA; turn_conservation_descends; TurnStateChain scaffolding
 import Dregg2.Circuit.TurnEffectRefinement -- Wave 1 turn effect diamond: fullActionCircuitStep dispatch + fullAction_turn_circuit_refines_spec/exec/conservation
 import Dregg2.Circuit.CoordinatedTurnRefinement -- Wave 1 inter-vat: bilateral/coordinated turn spec + circuit scaffold + charter binding

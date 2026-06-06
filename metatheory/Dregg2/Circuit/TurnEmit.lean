@@ -13,11 +13,9 @@ import Dregg2.Circuit.TurnWitness
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.TurnRefinement
 import Dregg2.Circuit.EffectRefinement
+import Dregg2.Circuit.EffectEmitRegistry
 import Dregg2.Circuit.Inst.mintA
 import Dregg2.Circuit.Inst.burnA
-import Dregg2.Circuit.Transfer
-import Dregg2.Circuit.SetFieldCommit
-import Dregg2.Circuit.CoordinatedTurnEmit
 import Dregg2.Exec.CircuitEmit
 
 namespace Dregg2.Circuit.TurnEmit
@@ -28,11 +26,10 @@ open Dregg2.Circuit.TurnWitness
 open Dregg2.Circuit.ActionDispatch
   (actionTag fullActionStep turnSpec turnSpec_eq_spec execFullTurnA_iff_turnSpec)
 open Dregg2.Circuit.TurnRefinement (turnSpec_of_turnStateChain)
+open Dregg2.Circuit.EffectEmitRegistry
+  (effectEmitRegistry actionAirName unknownAirName actionAirNameCoverage registryCoverage)
 open Dregg2.Circuit.Inst.MintA (mintAirName mintEmitted mintDescriptorJson)
 open Dregg2.Circuit.Inst.BurnA (burnAirName burnEmitted burnDescriptorJson)
-open Dregg2.Circuit.Transfer (transferAirName emittedTransfer transferDescriptorJson)
-open Dregg2.Circuit.SetFieldCommit (setFieldAirName emittedSetField)
-open Dregg2.Circuit.CoordinatedTurnEmit (coordinatedTurnAirName emittedCoordinatedTurn)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.CircuitEmit (EmittedDescriptor satisfiedEmitted emitDescriptorJson)
@@ -45,74 +42,7 @@ instance (c : Constraint) (a : Assignment) : Decidable (c.holds a) := by
 instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) := by
   unfold satisfied; exact List.decidableBAll _ _
 
-/-! ## §1 — `actionAirName`: `FullActionA` → Inst AIR identity. -/
-
-/-- Fallback AIR name for constructors whose per-effect Inst emission is not yet wired. -/
-def unknownAirName : String := "dregg-unknown"
-
-/-- **`actionAirName`** — map each `FullActionA` constructor to its Inst / commit AIR name.
-Mapped arms use real emitted descriptors from Inst / commit modules; the rest default to
-`unknownAirName` until their Inst emission lands (Wave 2+). -/
-def actionAirName : FullActionA → String
-  | .balanceA _ _ => transferAirName
-  | .delegate _ _ _ => unknownAirName       -- caps: Inst emission Wave 2
-  | .revoke _ _ => unknownAirName
-  | .mintA _ _ _ _ => mintAirName
-  | .burnA _ _ _ _ => burnAirName
-  | .setFieldA _ _ _ _ => setFieldAirName
-  | .emitEventA _ _ _ _ => unknownAirName
-  | .incrementNonceA _ _ _ => unknownAirName
-  | .setPermissionsA _ _ _ => unknownAirName
-  | .setVKA _ _ _ => unknownAirName
-  | .introduceA _ _ _ => unknownAirName
-  | .delegateAttenA _ _ _ _ => unknownAirName
-  | .attenuateA _ _ _ => unknownAirName
-  | .dropRefA _ _ => unknownAirName
-  | .revokeDelegationA _ _ => unknownAirName
-  | .validateHandoffA _ _ _ => unknownAirName
-  | .exerciseA _ _ _ => unknownAirName
-  | .createCellA _ _ => unknownAirName
-  | .createCellFromFactoryA _ _ _ => unknownAirName
-  | .spawnA _ _ _ => unknownAirName
-  | .bridgeMintA _ _ _ _ => mintAirName
-  | .createEscrowA _ _ _ _ _ _ => unknownAirName
-  | .releaseEscrowA _ _ => unknownAirName
-  | .refundEscrowA _ _ => unknownAirName
-  | .createObligationA _ _ _ _ _ _ => unknownAirName
-  | .fulfillObligationA _ _ => unknownAirName
-  | .slashObligationA _ _ => unknownAirName
-  | .noteSpendA _ _ => unknownAirName
-  | .noteCreateA _ _ => unknownAirName
-  | .createCommittedEscrowA _ _ _ _ _ _ _ => unknownAirName
-  | .releaseCommittedEscrowA _ _ => unknownAirName
-  | .refundCommittedEscrowA _ _ => unknownAirName
-  | .bridgeLockA _ _ _ _ _ _ => unknownAirName
-  | .bridgeFinalizeA _ _ _ _ => unknownAirName
-  | .bridgeCancelA _ _ => unknownAirName
-  | .sealA _ _ _ => unknownAirName
-  | .unsealA _ _ _ => unknownAirName
-  | .createSealPairA _ _ _ _ => unknownAirName
-  | .makeSovereignA _ _ => unknownAirName
-  | .refusalA _ _ => unknownAirName
-  | .receiptArchiveA _ _ => unknownAirName
-  | .queueAllocateA _ _ _ _ => unknownAirName
-  | .queueEnqueueA _ _ _ _ _ _ _ => unknownAirName
-  | .queueDequeueA _ _ _ _ _ => unknownAirName
-  | .queueResizeA _ _ _ _ => unknownAirName
-  | .queueAtomicTxA _ _ => unknownAirName
-  | .queuePipelineStepA _ _ _ _ => unknownAirName
-  | .pipelinedSendA _ => unknownAirName
-  | .exportSturdyRefA _ _ _ _ _ => unknownAirName
-  | .enlivenRefA _ _ _ _ => unknownAirName
-  | .swissHandoffA _ _ _ _ => unknownAirName
-  | .swissDropA _ _ _ => unknownAirName
-  | .cellSealA _ _ => unknownAirName
-  | .cellUnsealA _ _ => unknownAirName
-  | .cellDestroyA _ _ _ => unknownAirName
-  | .refreshDelegationA _ _ => unknownAirName
-
-/-- Coverage count: every `FullActionA` constructor has an `actionAirName` arm. -/
-def actionAirNameCoverage : Nat := 56
+/-! ## §1 — `actionAirName` + registry (re-exported from `EffectEmitRegistry`). -/
 
 /-! ## §2 — Descriptor lookup + per-step emitted satisfaction. -/
 
@@ -138,33 +68,25 @@ abbrev StepEmittedSat := stepEmittedSat
 emitted satisfaction reduces to tag match + `satisfiedEmitted` on the resolved descriptor. -/
 theorem descriptorLookup_of_actionAirName (lookup : DescriptorLookup) (fa : FullActionA)
     (d : EmittedDescriptor) (hlookup : lookup (actionAirName fa) = some d) :
-    ∀ sw _ _ _, stepEmittedSat lookup sw _ _ fa ↔
+    ∀ sw (st st' : RecChainedState), stepEmittedSat lookup sw st st' fa ↔
       sw.tag = actionTag fa ∧ satisfiedEmitted d (assignmentOf sw.assignment) := by
-  intro sw _ _ _
+  intro sw st st'
   dsimp [stepEmittedSat]
   constructor
   · rintro ⟨htag, d', hfind, hsat⟩
-    have : d' = d := (Option.some.inj (hfind.trans hlookup.symm)).symm
+    have : d' = d := Option.some.inj (hfind.symm.trans hlookup)
     subst this
     exact ⟨htag, hsat⟩
   · rintro ⟨htag, hsat⟩
     exact ⟨htag, d, hlookup, hsat⟩
 
-/-! ## §3 — Default registry (all exported `*AirName`/`*Emitted` pairs). -/
+/-! ## §3 — Default registry (central `EffectEmitRegistry`). -/
 
-/-- **`defaultDescriptorLookup`** — the default AIR-name registry: every effect that exports an
-`*AirName`/`*Emitted` pair from Inst / commit modules (mint, burn, transfer, setField, coordinated).
-Unmapped names return `none` (delegate, noteSpend, createEscrow, … await Wave-2 Inst emission). -/
-def defaultDescriptorLookup : DescriptorLookup := fun name =>
-  if name == mintAirName then some mintEmitted
-  else if name == burnAirName then some burnEmitted
-  else if name == transferAirName then some emittedTransfer
-  else if name == setFieldAirName then some emittedSetField
-  else if name == coordinatedTurnAirName then some emittedCoordinatedTurn
-  else none
+/-- **`defaultDescriptorLookup`** — the Wave-2 central registry (53 Inst/commit AIRs + coordinated). -/
+abbrev defaultDescriptorLookup : DescriptorLookup := effectEmitRegistry
 
-/-- Mint+burn demo lookup (alias of the default registry restricted to supply effects). -/
-def demoMintBurnLookup : DescriptorLookup := defaultDescriptorLookup
+/-- Mint+burn demo lookup (alias of the default registry). -/
+abbrev demoMintBurnLookup : DescriptorLookup := defaultDescriptorLookup
 
 /-! ## §4 — Whole-turn emitted satisfaction (root chain + state chain + per-step emitted). -/
 
@@ -237,21 +159,20 @@ theorem turn_emitted_demo_mint_burn :
 #eval actionAirName (.burnA 0 1 0 50)
 #eval defaultDescriptorLookup mintAirName |>.map (·.name)
 #eval defaultDescriptorLookup burnAirName |>.map (·.name)
-#eval defaultDescriptorLookup transferAirName |>.map (·.name)
-#eval defaultDescriptorLookup setFieldAirName |>.map (·.name)
-#eval defaultDescriptorLookup coordinatedTurnAirName |>.map (·.name)
+#eval defaultDescriptorLookup Dregg2.Circuit.Inst.Delegate.delegateAirName |>.map (·.name)
+#eval defaultDescriptorLookup Dregg2.Circuit.Inst.ExerciseA.exerciseAAirName |>.map (·.name)
 
 #guard (actionAirName (.mintA 0 1 0 100) == mintAirName)
 #guard (actionAirName (.burnA 0 1 0 50) == burnAirName)
-#guard (actionAirName (.balanceA ⟨0, 0, 1, 0⟩ 0) == transferAirName)
-#guard (actionAirName (.setFieldA 0 0 "balance" 0) == setFieldAirName)
+#guard (actionAirName (.balanceA ⟨0, 0, 1, 0⟩ 0) == Dregg2.Circuit.Inst.BalanceA.balanceAAirName)
+#guard (actionAirName (.delegate 0 1 2) == Dregg2.Circuit.Inst.Delegate.delegateAirName)
+#guard (actionAirName (.exerciseA 0 1 []) == Dregg2.Circuit.Inst.ExerciseA.exerciseAAirName)
+#guard (actionAirName (.setFieldA 0 0 "balance" 0) == Dregg2.Circuit.SetFieldCommit.setFieldAirName)
 #guard (actionAirName (.bridgeMintA 0 0 0 0) == mintAirName)
 #guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup mintAirName) == some mintAirName)
 #guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup burnAirName) == some burnAirName)
-#guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup transferAirName) == some transferAirName)
-#guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup setFieldAirName) == some setFieldAirName)
-#guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup coordinatedTurnAirName) ==
-  some coordinatedTurnAirName)
+#guard (Option.map EmittedDescriptor.name (defaultDescriptorLookup Dregg2.Circuit.Inst.Delegate.delegateAirName) ==
+  some Dregg2.Circuit.Inst.Delegate.delegateAirName)
 #guard (Option.map EmittedDescriptor.name (demoMintBurnLookup mintAirName) == some mintAirName)
 #guard (Option.map EmittedDescriptor.name (demoMintBurnLookup burnAirName) == some burnAirName)
 #guard (burnDescriptorJson == emitDescriptorJson burnEmitted)
@@ -259,8 +180,8 @@ theorem turn_emitted_demo_mint_burn :
 #guard mintEmitted.name == mintAirName
 #guard burnEmitted.name == burnAirName
 #guard burnEmitted.traceWidth == 72
-#guard emittedTransfer.name == transferAirName
 #guard (defaultDescriptorLookup unknownAirName == none)
+#guard registryCoverage == 53
 
 #assert_axioms descriptorLookup_of_actionAirName
 #assert_axioms turn_emitted_demo_mint_burn

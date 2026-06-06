@@ -17,6 +17,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.swissdrop
 
 namespace Dregg2.Circuit.Inst.SwissDropA
@@ -25,6 +26,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.SwissDrop
 open Dregg2.Circuit.Spec.SwissFrame
@@ -212,6 +214,30 @@ theorem swissDropA_full_sound
       (dropRestFrameDecodes S LE cN hN hLE hRest) hLog (dropGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_dropSpec LE cN hN hLE s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def swissDropEWire : EffectSpec2 RecChainedState DropArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := dropGuardGates
+  guardProp    := dropGuardProp
+  guardWidth   := 1
+  guardEncode  := dropGuardEncode
+  guardLocal   := dropGuardLocal
+  guardWidth_le := by decide
+
+def swissDropAAirName : String := "dregg-swissDropA-v2"
+
+def swissDropAEmitted : EmittedDescriptor := emittedEffect2 swissDropAAirName swissDropEWire
+
+#guard swissDropAEmitted.name == swissDropAAirName
 
 /-! ## §3 — axiom-hygiene tripwires. -/
 

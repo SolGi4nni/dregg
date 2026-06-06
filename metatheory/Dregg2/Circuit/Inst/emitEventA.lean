@@ -27,12 +27,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.cellstatelog
 
 namespace Dregg2.Circuit.Inst.EmitEventA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.CellStateLog
 open Dregg2.Exec
@@ -186,6 +188,27 @@ theorem emitEventA_full_sound
     effect_circuit_full_sound S emitEventE hN hL hRest hLog emitEventGuardDecodes s args s'
       hwf hwf' h
   exact (apex_iff_emitEventSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def emitEventEWire : EffectSpec RecChainedState EmitEventArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := emitEventGuardGates
+  guardProp    := emitEventGuardProp
+  guardWidth   := 1
+  guardEncode  := emitEventGuardEncode
+  guardLocal   := emitEventGuardLocal
+  guardWidth_le := by decide
+
+def emitEventAAirName : String := "dregg-emitEventA-v1"
+
+def emitEventAEmitted : EmittedDescriptor := emittedEffect emitEventAAirName emitEventEWire
+
+#guard emitEventAEmitted.name == emitEventAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

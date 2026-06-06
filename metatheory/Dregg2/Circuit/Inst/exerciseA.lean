@@ -23,6 +23,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.Spec.exercise
 
@@ -30,6 +31,7 @@ namespace Dregg2.Circuit.Inst.ExerciseA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.ActionDispatch
 open Dregg2.Circuit.Spec.Exercise
@@ -283,6 +285,27 @@ theorem exercise_circuit_refines_exec
   (execFullA_exerciseA_iff_spec pre post args.actor args.target args.inner).mpr
     (exercise_circuit_refines_spec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge
       hwf hhold)
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def exerciseEWire : EffectSpec RecChainedState ExerciseHoldArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := exerciseGuardGates
+  guardProp    := exerciseGuardProp
+  guardWidth   := 1
+  guardEncode  := exerciseGuardEncode
+  guardLocal   := exerciseGuardLocal
+  guardWidth_le := by decide
+
+def exerciseAAirName : String := "dregg-exerciseA-v1"
+
+def exerciseAEmitted : EmittedDescriptor := emittedEffect exerciseAAirName exerciseEWire
+
+#guard exerciseAEmitted.name == exerciseAAirName
 
 /-! ## §3 — axiom-hygiene tripwires. -/
 

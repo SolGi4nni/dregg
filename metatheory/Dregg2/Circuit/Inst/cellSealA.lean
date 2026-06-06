@@ -7,6 +7,7 @@ THE VALIDATION: `cellSealA_full_sound ⇒ CellSealSpec` THROUGH the framework.
 ADDITIVE: imports `EffectCommit2` + `Spec/celllifecycle`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.celllifecycle
 
 namespace Dregg2.Circuit.Inst.CellSealA
@@ -15,6 +16,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.CellLifecycle
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -141,6 +143,31 @@ theorem cellSealA_full_sound
     effect2_circuit_full_sound S (cellSealE D hD)
       (cellSealRestFrameDecodes S D hD hRest) hLog (cellSealGuardDecodes D hD) s args s' h
   exact (apex_iff_cellSealSpec D hD s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def cellSealEWire : EffectSpec2 RecChainedState CellSealArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := cellSealGuardGates
+  guardProp    := cellSealGuardProp
+  guardWidth   := 1
+  guardEncode  := cellSealGuardEncode
+  guardLocal   := cellSealGuardLocal
+  guardWidth_le := by decide
+
+def cellSealAAirName : String := "dregg-cellSealA-v2"
+
+def cellSealAEmitted : EmittedDescriptor := emittedEffect2 cellSealAAirName cellSealEWire
+
+#guard cellSealAEmitted.name == cellSealAAirName
 
 #assert_axioms cellSealGuardLocal
 #assert_axioms cellSealGuardDecodes

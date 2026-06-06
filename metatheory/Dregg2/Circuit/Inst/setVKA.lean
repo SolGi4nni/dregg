@@ -25,12 +25,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.cellstatevk
 
 namespace Dregg2.Circuit.Inst.SetVKA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.CellStateVK
 open Dregg2.Exec
@@ -190,6 +192,27 @@ theorem setVKA_full_sound
   have hapex : setVKE.apex s args s' :=
     effect_circuit_full_sound S setVKE hN hL hRest hLog setVKGuardDecodes s args s' hwf hwf' h
   exact (apex_iff_setVKSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def setVKEWire : EffectSpec RecChainedState SetVKArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := setVKGuardGates
+  guardProp    := setVKGuardProp
+  guardWidth   := 1
+  guardEncode  := setVKGuardEncode
+  guardLocal   := setVKGuardLocal
+  guardWidth_le := by decide
+
+def setVKAAirName : String := "dregg-setVKA-v1"
+
+def setVKAEmitted : EmittedDescriptor := emittedEffect setVKAAirName setVKEWire
+
+#guard setVKAEmitted.name == setVKAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

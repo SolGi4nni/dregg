@@ -9,6 +9,12 @@
 use std::path::Path;
 
 use serde::Serialize;
+use starbridge_compartment_workflow_mandate::CWM_FACTORY_VK;
+use starbridge_governed_namespace::GOVERNANCE_FACTORY_VK;
+use starbridge_identity::ISSUER_FACTORY_VK;
+use starbridge_nameservice::NAME_FACTORY_VK;
+use starbridge_storage_gateway_mandate::SGM_FACTORY_VK;
+use starbridge_subscription::SUBSCRIPTION_FACTORY_VK;
 
 /// A validator entry in the genesis configuration.
 #[derive(Serialize)]
@@ -27,6 +33,19 @@ struct GenesisCell {
     balance: u64,
 }
 
+/// A starbridge factory cell to materialize on node boot.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct StarbridgeGenesisCell {
+    /// Stable devnet label (e.g. `nameservice-registry`).
+    pub label: String,
+    /// Hex-encoded 32-byte factory VK from the starbridge-app crate.
+    pub factory_vk_hex: String,
+    /// Demo agent name whose `agent-<name>.key` owns the minted cell.
+    pub owner_agent: String,
+    /// URI hint used to derive the cell's token domain (e.g. `registry-default`).
+    pub uri_hint: String,
+}
+
 /// The complete genesis configuration.
 #[derive(Serialize)]
 struct GenesisConfig {
@@ -42,6 +61,9 @@ struct GenesisConfig {
     validators: Vec<GenesisValidator>,
     threshold: usize,
     initial_cells: Vec<GenesisCell>,
+    /// Factory cells minted at boot via `starbridge_seed` (devnet only).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    starbridge_cells: Vec<StarbridgeGenesisCell>,
 }
 
 /// Run the genesis configuration generation.
@@ -185,6 +207,8 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         });
     }
 
+    let starbridge_cells = default_starbridge_genesis_cells();
+
     let genesis = GenesisConfig {
         federation_id,
         committee_epoch,
@@ -193,6 +217,7 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         validators: genesis_validators,
         threshold,
         initial_cells,
+        starbridge_cells,
     };
 
     // Write genesis.json.
@@ -235,6 +260,51 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     println!("WARNING: These keys are for devnet use only. Do NOT use in production.");
 }
 
+/// Default starbridge factory cells for devnet composition.
+///
+/// VK bytes are taken from each starbridge-app crate's public constant so
+/// genesis.json stays aligned with the deployed factory descriptors.
+pub fn default_starbridge_genesis_cells() -> Vec<StarbridgeGenesisCell> {
+    vec![
+        StarbridgeGenesisCell {
+            label: "nameservice-registry".into(),
+            factory_vk_hex: hex_encode(&NAME_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "registry-default".into(),
+        },
+        StarbridgeGenesisCell {
+            label: "identity-issuer".into(),
+            factory_vk_hex: hex_encode(&ISSUER_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "issuer-default".into(),
+        },
+        StarbridgeGenesisCell {
+            label: "subscription-topic".into(),
+            factory_vk_hex: hex_encode(&SUBSCRIPTION_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "topic-default".into(),
+        },
+        StarbridgeGenesisCell {
+            label: "governed-namespace-root".into(),
+            factory_vk_hex: hex_encode(&GOVERNANCE_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "namespace-default".into(),
+        },
+        StarbridgeGenesisCell {
+            label: "cwm-mandate".into(),
+            factory_vk_hex: hex_encode(&CWM_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "mandate-default".into(),
+        },
+        StarbridgeGenesisCell {
+            label: "sgm-gateway".into(),
+            factory_vk_hex: hex_encode(&SGM_FACTORY_VK),
+            owner_agent: "alice".into(),
+            uri_hint: "gateway-default".into(),
+        },
+    ]
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -268,5 +338,63 @@ fn write_key_file(output: &Path, name: &str, key_bytes: &[u8; 32]) {
                 std::process::exit(1);
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_starbridge_genesis_cells_has_six_apps_with_alice_owner() {
+        let cells = default_starbridge_genesis_cells();
+        assert_eq!(cells.len(), 6, "devnet genesis must seed all six starbridge apps");
+
+        let labels: Vec<&str> = cells.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"nameservice-registry"));
+        assert!(labels.contains(&"identity-issuer"));
+        assert!(labels.contains(&"subscription-topic"));
+        assert!(labels.contains(&"governed-namespace-root"));
+        assert!(labels.contains(&"cwm-mandate"));
+        assert!(labels.contains(&"sgm-gateway"));
+
+        for cell in &cells {
+            assert_eq!(cell.owner_agent, "alice");
+            assert_eq!(cell.factory_vk_hex.len(), 64, "factory_vk_hex must be 32 bytes");
+            assert!(
+                !cell.uri_hint.is_empty(),
+                "uri_hint must be set for {}",
+                cell.label
+            );
+        }
+
+        assert_eq!(
+            cells[0].factory_vk_hex,
+            hex_encode(&NAME_FACTORY_VK),
+            "nameservice VK must match crate constant"
+        );
+    }
+
+    #[test]
+    fn genesis_config_serializes_starbridge_cells() {
+        let config = GenesisConfig {
+            federation_id: "aa".repeat(32),
+            committee_epoch: 0,
+            epoch_length: 100,
+            checkpoint_interval: 10,
+            validators: vec![],
+            threshold: 1,
+            initial_cells: vec![],
+            starbridge_cells: default_starbridge_genesis_cells(),
+        };
+
+        let json = serde_json::to_value(&config).expect("serialize genesis config");
+        let starbridge = json["starbridge_cells"]
+            .as_array()
+            .expect("starbridge_cells array present");
+        assert_eq!(starbridge.len(), 6);
+        assert_eq!(starbridge[0]["label"], "nameservice-registry");
+        assert_eq!(starbridge[0]["owner_agent"], "alice");
+        assert_eq!(starbridge[0]["uri_hint"], "registry-default");
     }
 }

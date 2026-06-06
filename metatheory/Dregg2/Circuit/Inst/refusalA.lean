@@ -25,12 +25,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.cellstateaudit
 
 namespace Dregg2.Circuit.Inst.RefusalA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.CellStateAudit
 open Dregg2.Exec
@@ -191,6 +193,27 @@ theorem refusalA_full_sound
   have hapex : refusalE.apex s args s' :=
     effect_circuit_full_sound S refusalE hN hL hRest hLog refusalGuardDecodes s args s' hwf hwf' h
   exact (apex_iff_refusalSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def refusalEWire : EffectSpec RecChainedState RefusalArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := refusalGuardGates
+  guardProp    := refusalGuardProp
+  guardWidth   := 1
+  guardEncode  := refusalGuardEncode
+  guardLocal   := refusalGuardLocal
+  guardWidth_le := by decide
+
+def refusalAAirName : String := "dregg-refusalA-v1"
+
+def refusalAEmitted : EmittedDescriptor := emittedEffect refusalAAirName refusalEWire
+
+#guard refusalAEmitted.name == refusalAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

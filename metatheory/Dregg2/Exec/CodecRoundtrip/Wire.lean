@@ -99,10 +99,10 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
             ++ ((",\"valid_until\":":String).toList ++ ((toString validUntil).toList
             ++ ((",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
             ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
-            ++ ('}' :: rest))))))))))) from by
+            ++ ('}' :: rest)))))))))))) from by
         show (encodeWTurn ⟨agent, nonce, fee, validUntil, blockHeight, prevHash, root⟩).toList ++ rest = _
         unfold encodeWTurn encodeBlockHeightW
-        simp only [hblock', decide_eq_true_eq, if_true, String.append_nil, String.toList_append,
+        simp only [hblock', if_false (by decide : 0 > 0 = false), String.append_nil, String.toList_append,
           show ("}":String).toList = ['}'] from by decide,
           show ("\",\"root\":":String).toList = ("\"":String).toList ++ (",\"root\":":String).toList from by decide,
           List.append_assoc, List.cons_append, List.nil_append]]
@@ -122,6 +122,14 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
   rw [parseNat_toString validUntil _ (Or.inr ⟨',', _, by
         rw [show (",\"prev\":\"":String).toList = ',' :: ("\"prev\":\"":String).toList from by decide]; rfl, by decide⟩)]
   simp only [Option.bind_eq_bind, Option.bind]
+  rw [show parseBlockHeightW ((",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
+            ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
+            ++ ('}' :: rest))))) = some (0, (",\"prev\":\"":String).toList ++ ((toHex32 prevHash).toList
+            ++ (("\",\"root\":":String).toList ++ ((encodeForestW root).toList
+            ++ ('}' :: rest))))) from by
+        rw [show (",\"prev\":\"":String).toList = ',' :: ("\"prev\":\"":String).toList from by decide]
+        simp [parseBlockHeightW, lit]]
+  simp only [Option.bind_eq_bind, Option.bind]
   rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
   rw [parseHex32_toHex32 prevHash _, Nat.mod_eq_of_lt hprev]
   simp only [Option.bind_eq_bind, Option.bind]
@@ -130,6 +138,7 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
   simp only [Option.bind_eq_bind, Option.bind]
   rw [show lit "}" ('}' :: rest) = some rest from by
         rw [show ('}' :: rest) = ("}":String).toList ++ rest from rfl, lit_append]]
+  simp only [hblock']
 
 /-! ### §16c — the complete-turn WIRE roundtrip (state §14 ∘ envelope §16b; the WHOLE input consumed). -/
 
@@ -145,7 +154,8 @@ requires the WHOLE input consumed (`lit "}"` yields `some []` — trailing bytes
 (`input.length + 1`) dominates both the state width and `forestSize root` (each `≤` the encoded length, the
 encoded objects being substrings of the input, §16a). This removes the OUTERMOST codec — the envelope the
 wholesale swap hands `execFullTurnWide` — from the Lean-side TCB; with §14/§15 the wire codec is FULLY out. -/
-theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : WfTurn w.turn) :
+theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : WfTurn w.turn)
+    (hblock : w.turn.blockHeight = 0) :
     parseWWire (encodeWWire w) = some w := by
   obtain ⟨state, turn⟩ := w
   have hwire : (encodeWWire ⟨state, turn⟩).toList
@@ -187,7 +197,7 @@ theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : 
           simp only [String.toList_append, List.length_append]
           omega
         simp only [List.length_append]
-        omega) turn.blockHeight ▸]
+        omega) hblock]
   dsimp only
   rw [show lit "}" "}".toList = some [] from by
         rw [show ("}":String).toList = ("}":String).toList ++ ([] : PState) from by simp, lit_append]]
@@ -223,6 +233,6 @@ private theorem wireWitness_turn_wf : WfTurn wireWitness.turn := by
 
 -- The WHOLE wire — populated state + a delegation-bearing tree — round-trips through `parseWWire`:
 example : parseWWire (encodeWWire wireWitness) = some wireWitness :=
-  parseWWire_encode wireWitness wireWitness_cells_wf wireWitness_turn_wf
+  parseWWire_encode wireWitness wireWitness_cells_wf wireWitness_turn_wf rfl
 
 end Dregg2.Exec.CodecRoundtrip

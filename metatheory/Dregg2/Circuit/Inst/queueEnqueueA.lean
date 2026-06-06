@@ -11,6 +11,7 @@ THROUGH the generic triple-component framework.
 ADDITIVE: imports `EffectCommit3` + `Spec/queuefifocore`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit3
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.queuefifocore
 
 namespace Dregg2.Circuit.Inst.QueueEnqueueA
@@ -19,6 +20,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit3
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.QueueFifoCore
@@ -405,6 +407,39 @@ theorem queueEnqueueA_full_sound
       (enqueueRestFrameDecodes S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest) hLog
       (enqueueGuardDecodes D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s' h
   exact (apex_iff_queueEnqueueSpec D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def queueEnqueueEWire : EffectSpec2Triple RecChainedState EnqueueArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active3      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := enqueueGuardGates
+  guardProp    := enqueueGuardProp
+  guardWidth   := 1
+  guardEncode  := enqueueGuardEncode
+  guardLocal   := enqueueGuardLocal
+  guardWidth_le := by decide
+
+def queueEnqueueAAirName : String := "dregg-queueEnqueueA-v2"
+
+def queueEnqueueAEmitted : EmittedDescriptor := emittedEffect2Triple queueEnqueueAAirName queueEnqueueEWire
+
+#guard queueEnqueueAEmitted.name == queueEnqueueAAirName
 
 #assert_axioms enqueueGuardLocal
 #assert_axioms enqueueGuardProp_iff_enqueueGuard

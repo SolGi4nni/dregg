@@ -45,6 +45,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.queuefifocore
 
 namespace Dregg2.Circuit.Inst.QueueResizeA
@@ -53,6 +54,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.QueueFifoCore
 open Dregg2.Exec
@@ -266,6 +268,30 @@ theorem queueResizeA_full_sound
       (resizeRestFrameDecodes S LE cN hN hLE hRest) hLog (resizeGuardDecodes LE cN hN hLE)
       s args s' h
   exact apex_implies_queueResizeSpec LE cN hN hLE s args s' hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def queueResizeEWire : EffectSpec2 RecChainedState ResizeArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := resizeGuardGates
+  guardProp    := resizeGuardProp
+  guardWidth   := 1
+  guardEncode  := resizeGuardEncode
+  guardLocal   := resizeGuardLocal
+  guardWidth_le := by decide
+
+def queueResizeAAirName : String := "dregg-queueResizeA-v2"
+
+def queueResizeAEmitted : EmittedDescriptor := emittedEffect2 queueResizeAAirName queueResizeEWire
+
+#guard queueResizeAEmitted.name == queueResizeAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

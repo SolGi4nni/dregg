@@ -18,6 +18,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.swissenliven
 
 namespace Dregg2.Circuit.Inst.EnlivenRefA
@@ -26,6 +27,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.SwissEnliven
 open Dregg2.Circuit.Spec.SwissFrame
@@ -217,6 +219,30 @@ theorem enlivenRefA_full_sound
       (enlivenRestFrameDecodes S LE cN hN hLE hRest) hLog (enlivenGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_enlivenSpec LE cN hN hLE s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def enlivenEWire : EffectSpec2 RecChainedState EnlivenArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := enlivenGuardGates
+  guardProp    := enlivenGuardProp
+  guardWidth   := 1
+  guardEncode  := enlivenGuardEncode
+  guardLocal   := enlivenGuardLocal
+  guardWidth_le := by decide
+
+def enlivenRefAAirName : String := "dregg-enlivenRefA-v2"
+
+def enlivenRefAEmitted : EmittedDescriptor := emittedEffect2 enlivenRefAAirName enlivenEWire
+
+#guard enlivenRefAEmitted.name == enlivenRefAAirName
 
 /-! ## §3 — axiom-hygiene tripwires. -/
 

@@ -2927,6 +2927,15 @@ structure WTurn where
 def encodeBlockHeightW (bh : Nat) : String :=
   if bh > 0 then ",\"block_height\":" ++ toString bh else ""
 
+/-- Parse the optional `block_height` field (absent ⇒ `0`). -/
+def parseBlockHeightW (cs : PState) : Option (Nat × PState) :=
+  match lit ",\"block_height\":" cs with
+  | some rest =>
+      match parseNat rest with
+      | some p => some p
+      | none   => none
+  | none => some (0, cs)
+
 /-- Encode the Turn ENVELOPE + root tree `{"agent":N,…,"prev":"H64","root":NODE}`. -/
 def encodeWTurn (t : WTurn) : String :=
   "{\"agent\":" ++ toString t.agent
@@ -2947,14 +2956,7 @@ def parseWTurn (fuel : Nat) (cs : PState) : Option (WTurn × PState) := do
   let (fee, r5) ← parseInt r4
   let r6 ← lit ",\"valid_until\":" r5
   let (validUntil, r7) ← parseNat r6
-  -- optional `block_height` (additive; absent ⇒ 0)
-  let (blockHeight, r7b) ←
-    match lit ",\"block_height\":" r7 with
-    | some rest =>
-        match parseNat rest with
-        | some p => some p
-        | none   => none
-    | none => some (0, r7)
+  let (blockHeight, r7b) ← parseBlockHeightW r7
   let r8 ← lit ",\"prev\":\"" r7b
   let (prevHash, r9) ← parseHex32 r8
   let r10 ← lit "\",\"root\":" r9

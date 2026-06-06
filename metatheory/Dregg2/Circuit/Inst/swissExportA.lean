@@ -39,6 +39,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.swissexport
 
 namespace Dregg2.Circuit.Inst.SwissExportA
@@ -47,6 +48,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.SwissExport
 open Dregg2.Authority (Auth)
@@ -247,6 +249,30 @@ theorem swissExportA_full_sound
       (exportRestFrameDecodes S LE cN hN hLE hRest) hLog (exportGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_exportSpec LE cN hN hLE s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def swissExportEWire : EffectSpec2 RecChainedState ExportArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := exportGuardGates
+  guardProp    := exportGuardProp
+  guardWidth   := 1
+  guardEncode  := exportGuardEncode
+  guardLocal   := exportGuardLocal
+  guardWidth_le := by decide
+
+def swissExportAAirName : String := "dregg-swissExportA-v2"
+
+def swissExportAEmitted : EmittedDescriptor := emittedEffect2 swissExportAAirName swissExportEWire
+
+#guard swissExportAEmitted.name == swissExportAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

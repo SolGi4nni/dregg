@@ -36,6 +36,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.balancemovement
 
 namespace Dregg2.Circuit.Inst.Transfer
@@ -44,6 +45,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.BalanceMovement
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -220,6 +222,30 @@ theorem transfer_full_sound
     effect2_circuit_full_sound S (balanceE D hD)
       (balanceRestFrameDecodes S D hD hRest) hLog (balanceGuardDecodes D hD) s args s' h
   exact (apex_iff_balanceMovementSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def balanceEWire : EffectSpec2 RecChainedState BalanceArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := balanceGuardGates
+  guardProp    := balanceGuardProp
+  guardWidth   := 1
+  guardEncode  := balanceGuardEncode
+  guardLocal   := balanceGuardLocal
+  guardWidth_le := by decide
+
+def transferAirName : String := "dregg-transfer-v2"
+
+def transferEmitted : EmittedDescriptor := emittedEffect2 transferAirName balanceEWire
+
+#guard transferEmitted.name == transferAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

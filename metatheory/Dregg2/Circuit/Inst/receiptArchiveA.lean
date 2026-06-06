@@ -19,12 +19,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.cellstateaudit
 
 namespace Dregg2.Circuit.Inst.ReceiptArchiveA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.CellStateAudit
 open Dregg2.Exec
@@ -185,6 +187,27 @@ theorem receiptArchiveA_full_sound
     effect_circuit_full_sound S receiptArchiveE hN hL hRest hLog receiptArchiveGuardDecodes s args s'
       hwf hwf' h
   exact (apex_iff_ReceiptArchiveSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def receiptArchiveEWire : EffectSpec RecChainedState ReceiptArchiveArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := receiptArchiveGuardGates
+  guardProp    := receiptArchiveGuardProp
+  guardWidth   := 1
+  guardEncode  := receiptArchiveGuardEncode
+  guardLocal   := receiptArchiveGuardLocal
+  guardWidth_le := by decide
+
+def receiptArchiveAAirName : String := "dregg-receiptArchiveA-v1"
+
+def receiptArchiveAEmitted : EmittedDescriptor := emittedEffect receiptArchiveAAirName receiptArchiveEWire
+
+#guard receiptArchiveAEmitted.name == receiptArchiveAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

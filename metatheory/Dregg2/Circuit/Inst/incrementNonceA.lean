@@ -19,12 +19,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.cellstatemonotone
 
 namespace Dregg2.Circuit.Inst.IncrementNonceA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.CellStateMonotone
 open Dregg2.Exec
@@ -186,6 +188,27 @@ theorem incrementNonceA_full_sound
     effect_circuit_full_sound S incrementNonceE hN hL hRest hLog incrementNonceGuardDecodes s args s'
       hwf hwf' h
   exact (apex_iff_incrementNonceSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def incrementNonceEWire : EffectSpec RecChainedState IncrementNonceArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := incrementNonceGuardGates
+  guardProp    := incrementNonceGuardProp
+  guardWidth   := 1
+  guardEncode  := incrementNonceGuardEncode
+  guardLocal   := incrementNonceGuardLocal
+  guardWidth_le := by decide
+
+def incrementNonceAAirName : String := "dregg-incrementNonceA-v1"
+
+def incrementNonceAEmitted : EmittedDescriptor := emittedEffect incrementNonceAAirName incrementNonceEWire
+
+#guard incrementNonceAEmitted.name == incrementNonceAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

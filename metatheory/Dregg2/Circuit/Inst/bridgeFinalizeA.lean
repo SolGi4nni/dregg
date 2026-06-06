@@ -11,6 +11,7 @@ THE VALIDATION: `bridgeFinalizeA_full_sound ⇒ BridgeFinalizeSpec` THROUGH `eff
 ADDITIVE: imports `EffectCommit2` + `Spec/bridgeoutboundfinalize`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.bridgeoutboundfinalize
 
 namespace Dregg2.Circuit.Inst.BridgeFinalizeA
@@ -19,6 +20,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.BridgeOutboundFinalize
 open Dregg2.Exec
@@ -209,6 +211,31 @@ theorem bridgeFinalizeA_full_sound
       (bridgeFinalizeRestFrameDecodes S LE cN hN hLE hRest) hLog
       (bridgeFinalizeGuardDecodes LE cN hN hLE) s args s' h
   exact (apex_iff_bridgeFinalizeSpec LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def bridgeFinalizeEWire : EffectSpec2 RecChainedState BridgeFinalizeArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := bridgeFinalizeGuardGates
+  guardProp    := bridgeFinalizeGuardProp
+  guardWidth   := 1
+  guardEncode  := bridgeFinalizeGuardEncode
+  guardLocal   := bridgeFinalizeGuardLocal
+  guardWidth_le := by decide
+
+def bridgeFinalizeAAirName : String := "dregg-bridgeFinalizeA-v2"
+
+def bridgeFinalizeAEmitted : EmittedDescriptor := emittedEffect2 bridgeFinalizeAAirName bridgeFinalizeEWire
+
+#guard bridgeFinalizeAEmitted.name == bridgeFinalizeAAirName
 
 #assert_axioms bridgeFinalizeGuardLocal
 #assert_axioms bridgeFinalizeGuardDecodes

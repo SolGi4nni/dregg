@@ -10,6 +10,7 @@ THROUGH the generic dual-component framework.
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/bridgeoutboundcancel`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.bridgeoutboundcancel
 
 namespace Dregg2.Circuit.Inst.BridgeCancelA
@@ -18,6 +19,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.BridgeOutboundCancel
@@ -213,6 +215,35 @@ theorem bridgeCancelA_full_sound
       (bridgeCancelRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (bridgeCancelGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_bridgeOutboundCancelSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def bridgeCancelEWire : EffectSpec2Dual RecChainedState BridgeCancelArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := bridgeCancelGuardGates
+  guardProp    := bridgeCancelGuardProp
+  guardWidth   := 1
+  guardEncode  := bridgeCancelGuardEncode
+  guardLocal   := bridgeCancelGuardLocal
+  guardWidth_le := by decide
+
+def bridgeCancelAAirName : String := "dregg-bridgeCancelA-v2"
+
+def bridgeCancelAEmitted : EmittedDescriptor := emittedEffect2Dual bridgeCancelAAirName bridgeCancelEWire
+
+#guard bridgeCancelAEmitted.name == bridgeCancelAAirName
 
 #assert_axioms bridgeCancelGuardLocal
 #assert_axioms bridgeCancelGuardDecodes

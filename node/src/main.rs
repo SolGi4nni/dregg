@@ -19,6 +19,7 @@ pub mod metrics;
 pub mod multi_group;
 mod relay_service;
 mod routing_table;
+mod starbridge_seed;
 mod state;
 mod ws;
 
@@ -501,6 +502,23 @@ async fn run_node(
                                 skipped = cell_load.skipped,
                                 invalid = cell_load.invalid,
                                 "processed genesis initial_cells"
+                            );
+                        }
+                        let federation_id = s.federation_id;
+                        let seed_stats = starbridge_seed::seed_starbridge_factory_cells(
+                            &genesis,
+                            &data_path,
+                            &mut s.ledger,
+                            federation_id,
+                        );
+                        if seed_stats.total() > 0 {
+                            info!(
+                                registered = seed_stats.registered_factories,
+                                created = seed_stats.created,
+                                existing = seed_stats.existing,
+                                skipped = seed_stats.skipped,
+                                failed = seed_stats.failed,
+                                "processed genesis starbridge_cells"
                             );
                         }
                         info!(genesis = %genesis_path.display(), "genesis configuration loaded");

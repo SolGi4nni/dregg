@@ -34,6 +34,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.authorityattenuation
 
 namespace Dregg2.Circuit.Inst.DelegateAttenA
@@ -42,6 +43,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.AuthorityAttenuation
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -247,6 +249,30 @@ theorem delegateAttenA_full_sound
     effect2_circuit_full_sound S (delegateAttenE D hD)
       (delAttenRestFrameDecodes S D hD hRest) hLog (delAttenGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateAttenSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def delegateAttenEWire : EffectSpec2 RecChainedState DelegateAttenArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := delAttenGuardGates
+  guardProp    := delAttenGuardProp
+  guardWidth   := 1
+  guardEncode  := delAttenGuardEncode
+  guardLocal   := delAttenGuardLocal
+  guardWidth_le := by decide
+
+def delegateAttenAAirName : String := "dregg-delegateAttenA-v2"
+
+def delegateAttenAEmitted : EmittedDescriptor := emittedEffect2 delegateAttenAAirName delegateAttenEWire
+
+#guard delegateAttenAEmitted.name == delegateAttenAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

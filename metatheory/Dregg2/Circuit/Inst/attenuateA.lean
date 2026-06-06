@@ -31,6 +31,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.authorityattenuation
 
 namespace Dregg2.Circuit.Inst.AttenuateA
@@ -39,6 +40,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.AuthorityAttenuation
 open Dregg2.Authority (Caps Cap Auth Label)
 open Dregg2.Exec
@@ -236,6 +238,30 @@ theorem attenuateA_full_sound
     effect2_circuit_full_sound S (attenuateE D hD)
       (attenuateRestFrameDecodes S D hD hRest) hLog (attenuateGuardDecodes D hD) s args s' h
   exact (apex_iff_attenuateSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def attenuateEWire : EffectSpec2 RecChainedState AttenuateArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := attenuateGuardGates
+  guardProp    := attenuateGuardProp
+  guardWidth   := 1
+  guardEncode  := attenuateGuardEncode
+  guardLocal   := attenuateGuardLocal
+  guardWidth_le := by decide
+
+def attenuateAAirName : String := "dregg-attenuateA-v2"
+
+def attenuateAEmitted : EmittedDescriptor := emittedEffect2 attenuateAAirName attenuateEWire
+
+#guard attenuateAEmitted.name == attenuateAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

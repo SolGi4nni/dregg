@@ -9,6 +9,7 @@ log by `escrowReceiptA actor ::`, and freezes the other 15 kernel fields. This i
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/escrowholdingcreate`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.escrowholdingcreate
 
 namespace Dregg2.Circuit.Inst.CreateEscrowA
@@ -17,6 +18,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.EscrowHoldingCreate
@@ -180,6 +182,35 @@ theorem createEscrowA_full_sound
       (createEscrowRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (createEscrowGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_escrowHoldingCreateSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def createEscrowEWire : EffectSpec2Dual RecChainedState CreateEscrowArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := createEscrowGuardGates
+  guardProp    := createEscrowGuardProp
+  guardWidth   := 1
+  guardEncode  := createEscrowGuardEncode
+  guardLocal   := createEscrowGuardLocal
+  guardWidth_le := by decide
+
+def createEscrowAAirName : String := "dregg-createEscrowA-v2"
+
+def createEscrowAEmitted : EmittedDescriptor := emittedEffect2Dual createEscrowAAirName createEscrowEWire
+
+#guard createEscrowAEmitted.name == createEscrowAAirName
 
 #assert_axioms createEscrowGuardLocal
 #assert_axioms createEscrowGuardDecodes

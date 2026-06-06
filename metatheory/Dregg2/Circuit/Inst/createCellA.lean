@@ -10,6 +10,7 @@ ADDITIVE: imports `AccountsCommit`, `BornEmptyCommit`, `EffectCommit3`, `Spec/ac
 import Dregg2.Circuit.AccountsCommit
 import Dregg2.Circuit.BornEmptyCommit
 import Dregg2.Circuit.EffectCommit3
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.Spec.accountgrowth
 
@@ -19,6 +20,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit3
 open Dregg2.Circuit.AccountsCommit
 open Dregg2.Circuit.BornEmptyCommit
@@ -204,6 +206,39 @@ theorem createCellA_full_sound
       (createCellRestFrameDecodes S LE cN hN hLE DBal hDBal DSide hDSide hRest) hLog
       (createCellGuardDecodes LE cN hN hLE DBal hDBal DSide hDSide) s args s' h
   exact (apex_iff_createCellSpec LE cN hN hLE DBal hDBal DSide hDSide s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def createCellEWire : EffectSpec2Triple RecChainedState CreateCellArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active3      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := createCellGuardGates
+  guardProp    := createCellGuardProp
+  guardWidth   := 1
+  guardEncode  := createCellGuardEncode
+  guardLocal   := createCellGuardLocal
+  guardWidth_le := by decide
+
+def createCellAAirName : String := "dregg-createCellA-v2"
+
+def createCellAEmitted : EmittedDescriptor := emittedEffect2Triple createCellAAirName createCellEWire
+
+#guard createCellAEmitted.name == createCellAAirName
 
 #assert_axioms createCellGuardLocal
 #assert_axioms createCellGuardDecodes

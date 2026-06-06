@@ -18,12 +18,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.sovereigncommitment
 
 namespace Dregg2.Circuit.Inst.MakeSovereignA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.SovereignCommitment
 open Dregg2.Exec
@@ -185,6 +187,27 @@ theorem makeSovereignA_full_sound
     effect_circuit_full_sound S makeSovereignE hN hL hRest hLog makeSovereignGuardDecodes s args s'
       hwf hwf' h
   exact (apex_iff_makeSovereignSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def makeSovereignEWire : EffectSpec RecChainedState MakeSovereignArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := makeSovereignGuardGates
+  guardProp    := makeSovereignGuardProp
+  guardWidth   := 1
+  guardEncode  := makeSovereignGuardEncode
+  guardLocal   := makeSovereignGuardLocal
+  guardWidth_le := by decide
+
+def makeSovereignAAirName : String := "dregg-makeSovereignA-v1"
+
+def makeSovereignAEmitted : EmittedDescriptor := emittedEffect makeSovereignAAirName makeSovereignEWire
+
+#guard makeSovereignAEmitted.name == makeSovereignAAirName
 
 /-! ## §2 — axiom-hygiene tripwires.
 

@@ -10,6 +10,7 @@ the per-asset lock `createGuard`.
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/escrowcommitted`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.escrowcommitted
 
 namespace Dregg2.Circuit.Inst.CreateCommittedEscrowA
@@ -18,6 +19,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.EscrowCommitted
@@ -190,6 +192,35 @@ theorem createCommittedEscrowA_full_sound
       (createCommittedEscrowRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (createCommittedEscrowGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_committedEscrowCreateSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def createCommittedEscrowEWire : EffectSpec2Dual RecChainedState CreateCommittedEscrowArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := createCommittedEscrowGuardGates
+  guardProp    := createCommittedEscrowGuardProp
+  guardWidth   := 1
+  guardEncode  := createCommittedEscrowGuardEncode
+  guardLocal   := createCommittedEscrowGuardLocal
+  guardWidth_le := by decide
+
+def createCommittedEscrowAAirName : String := "dregg-createCommittedEscrowA-v2"
+
+def createCommittedEscrowAEmitted : EmittedDescriptor := emittedEffect2Dual createCommittedEscrowAAirName createCommittedEscrowEWire
+
+#guard createCommittedEscrowAEmitted.name == createCommittedEscrowAAirName
 
 #assert_axioms createCommittedEscrowGuardLocal
 #assert_axioms createCommittedEscrowGuardDecodes

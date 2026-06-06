@@ -35,6 +35,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.authorityunattenuated
 
 namespace Dregg2.Circuit.Inst.ValidateHandoffA
@@ -43,6 +44,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.AuthorityUnattenuated
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -241,6 +243,30 @@ theorem validateHandoffA_full_sound
     effect2_circuit_full_sound S (validateHandoffE D hD)
       (handoffRestFrameDecodes S D hD hRest) hLog (handoffGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def validateHandoffEWire : EffectSpec2 RecChainedState HandoffArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := handoffGuardGates
+  guardProp    := handoffGuardProp
+  guardWidth   := 1
+  guardEncode  := handoffGuardEncode
+  guardLocal   := handoffGuardLocal
+  guardWidth_le := by decide
+
+def validateHandoffAAirName : String := "dregg-validateHandoffA-v2"
+
+def validateHandoffAEmitted : EmittedDescriptor := emittedEffect2 validateHandoffAAirName validateHandoffEWire
+
+#guard validateHandoffAEmitted.name == validateHandoffAAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

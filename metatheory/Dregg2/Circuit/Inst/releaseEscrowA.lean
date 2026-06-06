@@ -9,6 +9,7 @@ validator: `releaseEscrowA_full_sound ⇒ ReleaseEscrowSpec` THROUGH the generic
 ADDITIVE: imports `EffectCommit2Dual` + `Spec/escrowholdingrelease`; edits neither.
 -/
 import Dregg2.Circuit.EffectCommit2Dual
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.escrowholdingrelease
 
 namespace Dregg2.Circuit.Inst.ReleaseEscrowA
@@ -17,6 +18,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.EscrowHoldingRelease
@@ -215,6 +217,35 @@ theorem releaseEscrowA_full_sound
       (releaseEscrowRestFrameDecodes S D hD LE cN hN hLE hRest) hLog
       (releaseEscrowGuardDecodes D hD LE cN hN hLE) s args s' h
   exact (apex_iff_releaseEscrowSpec D hD LE cN hN hLE s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def releaseEscrowEWire : EffectSpec2Dual RecChainedState ReleaseArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := releaseGuardGates
+  guardProp    := releaseGuardProp
+  guardWidth   := 1
+  guardEncode  := releaseGuardEncode
+  guardLocal   := releaseGuardLocal
+  guardWidth_le := by decide
+
+def releaseEscrowAAirName : String := "dregg-releaseEscrowA-v2"
+
+def releaseEscrowAEmitted : EmittedDescriptor := emittedEffect2Dual releaseEscrowAAirName releaseEscrowEWire
+
+#guard releaseEscrowAEmitted.name == releaseEscrowAAirName
 
 #assert_axioms releaseGuardLocal
 #assert_axioms releaseEscrowGuardDecodes

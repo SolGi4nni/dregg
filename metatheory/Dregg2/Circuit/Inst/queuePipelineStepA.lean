@@ -17,6 +17,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.queuepipelinedsend
 import Dregg2.Circuit.Spec.queuepipelinefanout
 
@@ -26,6 +27,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.QueuePipelinedSend (recKernel_ext)
 open Dregg2.Circuit.Spec.QueuePipelineFanout
@@ -270,6 +272,30 @@ theorem queuePipelineStepA_full_sound
       (pipelineRestFrameDecodes S LE cN hN hLE hRest) hLog (pipelineGuardDecodes LE cN hN hLE)
       s args s' h
   exact (apex_iff_queuePipelineFanoutSpec LE cN hN hLE s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def queuePipelineStepEWire : EffectSpec2 RecChainedState PipelineArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := pipelineGuardGates
+  guardProp    := pipelineGuardProp
+  guardWidth   := 1
+  guardEncode  := pipelineGuardEncode
+  guardLocal   := pipelineGuardLocal
+  guardWidth_le := by decide
+
+def queuePipelineStepAAirName : String := "dregg-queuePipelineStepA-v2"
+
+def queuePipelineStepAEmitted : EmittedDescriptor := emittedEffect2 queuePipelineStepAAirName queuePipelineStepEWire
+
+#guard queuePipelineStepAEmitted.name == queuePipelineStepAAirName
 
 /-! ## §3 — axiom-hygiene tripwires. -/
 

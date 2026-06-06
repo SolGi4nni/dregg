@@ -36,6 +36,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit2
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.authorityunattenuated
 
 namespace Dregg2.Circuit.Inst.Delegate
@@ -44,6 +45,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.Spec.AuthorityUnattenuated
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -237,6 +239,30 @@ theorem delegate_full_sound
     effect2_circuit_full_sound S (delegateE D hD)
       (delegateRestFrameDecodes S D hD hRest) hLog (delegateGuardDecodes D hD) s args s' h
   exact (apex_iff_delegateSpec D hD s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def delegateEWire : EffectSpec2 RecChainedState DelegateArgs where
+  view         := chainView
+  active      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := delegateGuardGates
+  guardProp    := delegateGuardProp
+  guardWidth   := 1
+  guardEncode  := delegateGuardEncode
+  guardLocal   := delegateGuardLocal
+  guardWidth_le := by decide
+
+def delegateAirName : String := "dregg-delegate-v2"
+
+def delegateEmitted : EmittedDescriptor := emittedEffect2 delegateAirName delegateEWire
+
+#guard delegateEmitted.name == delegateAirName
 
 /-! ## §3 — axiom-hygiene tripwires.
 

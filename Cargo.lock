@@ -3528,6 +3528,7 @@ dependencies = [
  "dregg-circuit",
  "dregg-commit",
  "dregg-dsl-runtime",
+ "dregg-lean-ffi",
  "dregg-token",
  "dregg-types",
  "ed25519-dalek",

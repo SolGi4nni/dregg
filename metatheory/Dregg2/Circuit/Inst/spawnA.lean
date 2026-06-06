@@ -10,6 +10,7 @@ ADDITIVE: imports `AccountsCommit`, `BornEmptyCommit`, `EffectCommit5`, `Spec/ac
 import Dregg2.Circuit.AccountsCommit
 import Dregg2.Circuit.BornEmptyCommit
 import Dregg2.Circuit.EffectCommit5
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.Spec.accountgrowth
 
@@ -19,6 +20,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.EffectCommit2Dual
 open Dregg2.Circuit.EffectCommit5
 open Dregg2.Circuit.AccountsCommit
@@ -288,6 +290,47 @@ theorem spawnA_full_sound
       (spawnRestFrameDecodes S LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs hRest) hLog
       (spawnGuardDecodes LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs) s args s' h
   exact (apex_iff_spawnSpec LE cN hN hLE DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs s args s').mp hapex
+
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def spawnEWire : EffectSpec2Quint RecChainedState SpawnArgs where
+  view         := chainView
+  active1      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active2      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active3      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active4      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  active5      :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := spawnGuardGates
+  guardProp    := spawnGuardProp
+  guardWidth   := 1
+  guardEncode  := spawnGuardEncode
+  guardLocal   := spawnGuardLocal
+  guardWidth_le := by decide
+
+def spawnAAirName : String := "dregg-spawnA-v2"
+
+def spawnAEmitted : EmittedDescriptor := emittedEffect2Quint spawnAAirName spawnEWire
+
+#guard spawnAEmitted.name == spawnAAirName
 
 #assert_axioms spawnGuardLocal
 #assert_axioms spawnGuardDecodes

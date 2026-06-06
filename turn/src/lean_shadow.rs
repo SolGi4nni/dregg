@@ -79,7 +79,7 @@ pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult) {
             }
             Err(e) => {
                 tracing::warn!(
-                    agent = %turn.agent,
+                    agent = ?turn.agent,
                     error = %e,
                     "lean shadow: marshal/exec failed"
                 );
@@ -223,7 +223,7 @@ fn turn_to_wire_turn(
     root: &CallTree,
     pre: &ShadowPreLedger,
 ) -> Result<dregg_lean_ffi::marshal::WireTurn, String> {
-    use dregg_lean_ffi::marshal::{WireAction, WireAuth, WireTurn, WForest};
+    use dregg_lean_ffi::marshal::{WireAction, WireTurn, WForest};
 
     let agent = *pre
         .id_map
@@ -294,6 +294,7 @@ fn auth_to_wire(auth: &Authorization) -> dregg_lean_ffi::marshal::WireAuth {
     }
 }
 
+#[cfg(feature = "lean-shadow")]
 fn field_index_to_name(index: usize) -> String {
     match index {
         2 => "name".into(),
@@ -305,22 +306,26 @@ fn field_index_to_name(index: usize) -> String {
     }
 }
 
+#[cfg(feature = "lean-shadow")]
 fn field_to_i128(field: &FieldElement) -> i128 {
     let mut bytes = [0u8; 8];
     bytes.copy_from_slice(&field[24..32]);
     u64::from_be_bytes(bytes) as i128
 }
 
+#[cfg(feature = "lean-shadow")]
 fn field_is_zero(field: &FieldElement) -> bool {
     field.iter().all(|&b| b == 0)
 }
 
+#[cfg(feature = "lean-shadow")]
 fn bytes32_to_nat(bytes: &[u8; 32]) -> u64 {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[24..32]);
     u64::from_be_bytes(buf)
 }
 
+#[cfg(feature = "lean-shadow")]
 fn hash_to_nat(hash: [u8; 32]) -> u64 {
     bytes32_to_nat(&hash)
 }

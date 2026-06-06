@@ -22,12 +22,14 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on every keystone.
 -/
 import Dregg2.Circuit.EffectCommit
+import Dregg2.Exec.CircuitEmit
 import Dregg2.Circuit.Spec.queuepipelinedsend
 
 namespace Dregg2.Circuit.Inst.PipelinedSendA
 
 open Dregg2.Circuit
 open Dregg2.Circuit.EffectCommit
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.Spec.QueuePipelinedSend
 open Dregg2.Exec
@@ -175,6 +177,27 @@ theorem pipelinedSendA_full_sound
     effect_circuit_full_sound S pipelinedSendE hN hL hRest hLog pipelinedSendGuardDecodes s args s'
       hwf hwf' h
   exact (apex_iff_pipelinedSendSpec s args s').mp hapex
+
+
+/-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/
+
+def pipelinedSendEWire : EffectSpec RecChainedState PipelinedSendArgs where
+  view         := chainView
+  touched      := fun _ _ => ∅
+  expectedLeaf := fun s _ c => s.kernel.cell c
+  logUpdate    := none
+  guardGates   := pipelinedSendGuardGates
+  guardProp    := pipelinedSendGuardProp
+  guardWidth   := 1
+  guardEncode  := pipelinedSendGuardEncode
+  guardLocal   := pipelinedSendGuardLocal
+  guardWidth_le := by decide
+
+def pipelinedSendAAirName : String := "dregg-pipelinedSendA-v1"
+
+def pipelinedSendAEmitted : EmittedDescriptor := emittedEffect pipelinedSendAAirName pipelinedSendEWire
+
+#guard pipelinedSendAEmitted.name == pipelinedSendAAirName
 
 /-! ## §2 — axiom-hygiene tripwires. -/
 

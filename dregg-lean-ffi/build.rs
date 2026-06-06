@@ -32,6 +32,8 @@ fn lean_sysroot() -> PathBuf {
 }
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(lean_lib_present)");
+
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let lean_archive = crate_dir.join("libdregg_lean.a");
 
