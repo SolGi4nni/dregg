@@ -33,6 +33,7 @@ Rust-native AIR's — the binding "the AIR the backend runs IS the AIR Lean prov
 for". See `dregg-lean-ffi/src/circuit_decode.rs`.
 -/
 import Dregg2.Circuit
+import Dregg2.Circuit.Lookup
 import Dregg2.Crypto.Merkle
 
 namespace Dregg2.Exec.CircuitEmit
@@ -843,5 +844,107 @@ def EmittedConstraintA.toJson : EmittedConstraintA → String
 
 #assert_axioms emitA_faithful
 #assert_axioms merkleC1_position_valid
+
+/-! ## ════════════════════════════════════════════════════════════════════════════════
+## PART IV — RANGE CHECKS on the wire: closing the `ℤ → BabyBear` field-soundness gap.
+## ════════════════════════════════════════════════════════════════════════════════
+
+The Lean circuit is sound over `ℤ` (no overflow). But the Rust ingestion
+(`circuit/src/lean_descriptor_air.rs`) maps `ℤ → BabyBear`, a FINITE field (modulus
+`p = 2³¹ − 2²⁷ + 1 ≈ 2³¹`). Without a range check a "balance" near `p` could WRAP and forge value
+(set a balance to `p + b`, which reduces to `b` in the field but represents a colossal real number).
+`Dregg2.Circuit.Lookup` gives the DENOTATION of the fix — `rangeCheck e k` forces `e ∈ [0, 2^k)`. This
+part carries those range checks ONTO THE WIRE so the Rust AIR can ENFORCE them by bit-decomposition.
+
+The emission is COMPACT: a `RangeSpec` carries `{wire, bits}` — the *bit-width* `k`, NOT the full
+`2^k` table (which is astronomically large). The Rust side reconstructs the range gate as `k` boolean
+aux columns + a recomposition constraint `Σ bᵢ·2ⁱ = wire`. A `RangedDescriptor` bundles an
+`EmittedDescriptor` with its `ranges`, and `emitRangedDescriptorJson` renders the existing descriptor
+JSON EXTENDED with a `"ranges":[{"wire":i,"bits":k},…]` field. This is purely additive:
+`EmittedDescriptor`/`emit`/`emitDescriptorJson` are UNTOUCHED, so every existing def/test/golden holds.
+
+NOTE on choosing `k`: for the gate to BITE over a field of modulus `p`, the bound must satisfy
+`2^k ≤ p` — otherwise every field element already has a `k`-bit decomposition and the range gate is
+VACUOUS. The `Transfer` emitter picks `k = 30` for `BabyBear` (`2³⁰ < p = 2013265921 < 2³¹`). See
+`Dregg2.Circuit.Transfer.balanceRangeBits`. -/
+
+/-- A **range spec** for one wire: the wire (column) index `wire` must lie in `[0, 2^bits)`. The
+bit-width `bits = k` is the COMPACT carrier — the Rust AIR rebuilds the `2^k` range table implicitly
+via a `k`-bit decomposition, never materializing it. The denotation is `Lookup.rangeCheck (.var wire)
+bits` (membership in `[0, 2^bits)`). -/
+structure RangeSpec where
+  /-- The wire (column) index to range-check. -/
+  wire : Nat
+  /-- The bit-width `k`: the wire must be in `[0, 2^k)`. -/
+  bits : Nat
+  deriving Repr, DecidableEq
+
+/-- A **ranged descriptor**: an `EmittedDescriptor` (unchanged) PLUS a list of `RangeSpec` range
+checks. Bundling keeps PART-I `EmittedDescriptor`/`emit`/`emitDescriptorJson` untouched while carrying
+the field-soundness range checks additively. -/
+structure RangedDescriptor where
+  /-- The underlying arithmetic descriptor (the existing wire form). -/
+  base   : EmittedDescriptor
+  /-- The range checks on selected wires (the field-soundness teeth). -/
+  ranges : List RangeSpec
+  deriving Repr, DecidableEq
+
+/-- The DENOTATION of a `RangeSpec` against an assignment: the wire value lies in `[0, 2^bits)`. This
+is exactly `Lookup.rangeCheck (.var wire) bits` holding, lifted to PART-I's `Assignment` model. -/
+def RangeSpec.holds (r : RangeSpec) (a : Assignment) : Prop :=
+  (Dregg2.Circuit.Lookup.rangeCheck (.var r.wire) r.bits).holds a
+
+/-- `RangeSpec.holds` is decidable (membership in the finite range table), so the concrete `#guard`s
+below can `decide` (genuine `decide`, not `native_decide`). -/
+instance (r : RangeSpec) (a : Assignment) : Decidable (r.holds a) := by
+  unfold RangeSpec.holds; exact inferInstance
+
+/-- A `RangedDescriptor` is **satisfied** by an assignment iff the base arithmetic descriptor is
+satisfied AND every range check holds. The conjunction the Rust AIR enforces (gates ∧ bit-decomps). -/
+def satisfiedRanged (d : RangedDescriptor) (a : Assignment) : Prop :=
+  satisfiedEmitted d.base a ∧ ∀ r ∈ d.ranges, r.holds a
+
+/-- A range-free `RangedDescriptor` (`ranges := []`) is satisfied EXACTLY when its base is: the
+extension is conservative over PART I (no range checks ⇒ identical acceptance). -/
+theorem satisfiedRanged_nil (d : EmittedDescriptor) (a : Assignment) :
+    satisfiedRanged ⟨d, []⟩ a ↔ satisfiedEmitted d a := by
+  unfold satisfiedRanged
+  simp
+
+/-! ### Canonical ranged wire rendering: the base JSON EXTENDED with a `"ranges"` field.
+
+The grammar is the PART-I descriptor grammar with one extra top-level key:
+
+    {"name":S,"trace_width":N,"constraints":[…],"ranges":[{"wire":i,"bits":k},…]}
+
+The Rust `parse_descriptor` is extended to read the (optional) `"ranges"` array; absence ⇒ `[]` (so
+the existing goldens, which omit it, parse identically). -/
+
+/-- Render one `RangeSpec` as JSON `{"wire":i,"bits":k}`. -/
+def RangeSpec.toJson (r : RangeSpec) : String :=
+  "{\"wire\":" ++ toString r.wire ++ ",\"bits\":" ++ toString r.bits ++ "}"
+
+/-- Render a list of `RangeSpec`s as a JSON array. -/
+def rangesToJson : List RangeSpec → String
+  | []      => "[]"
+  | r :: rs => "[" ++ r.toJson ++ (rs.foldl (fun acc x => acc ++ "," ++ x.toJson) "") ++ "]"
+
+/-- **`emitRangedDescriptorJson`** — the canonical wire string for a `RangedDescriptor`: the base
+descriptor JSON (via `emitDescriptorJson`) with the closing `}` replaced by `,"ranges":[…]}`. Built
+by splicing rather than re-deriving, so the base bytes are BYTE-IDENTICAL to `emitDescriptorJson` —
+the existing parser/golden are unaffected and the `ranges` field is a pure suffix. -/
+def emitRangedDescriptorJson (d : RangedDescriptor) : String :=
+  "{\"name\":\"" ++ d.base.name ++ "\",\"trace_width\":" ++ toString d.base.traceWidth ++
+  ",\"constraints\":" ++ constraintsToJson d.base.constraints ++
+  ",\"ranges\":" ++ rangesToJson d.ranges ++ "}"
+
+/-! ### Non-vacuity `#guard`s: the range denotation accepts in-range and REJECTS out-of-range / wrap. -/
+
+-- An in-range wire (value 100, k=8 ⇒ [0,256)) — accepted:
+#guard decide ((RangeSpec.mk 0 8).holds (fun v => if v = 0 then 100 else 0))
+-- An out-of-range wire (value 999 ≥ 2^8 = 256) — REJECTED (the field-wrap a range check forbids):
+#guard decide (¬ (RangeSpec.mk 0 8).holds (fun v => if v = 0 then 999 else 0))
+
+#assert_axioms satisfiedRanged_nil
 
 end Dregg2.Exec.CircuitEmit

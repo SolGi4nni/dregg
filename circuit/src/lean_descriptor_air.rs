@@ -153,40 +153,104 @@ impl LeanConstraint {
     }
 }
 
-/// The Rust mirror of Lean's `EmittedDescriptor`: name, trace width, constraints.
+/// The Rust mirror of Lean's `Dregg2.Exec.CircuitEmit.RangeSpec`: a wire that must lie
+/// in `[0, 2^bits)`.
+///
+/// This is the FIELD-SOUNDNESS tooth. The Lean circuit is sound over `ℤ`, but the Rust
+/// ingestion maps `i64 → BabyBear` (modulus `p ≈ 2³¹`). Without a range check, a balance
+/// set near `p` would WRAP and forge value. The AIR enforces `wire ∈ [0, 2^bits)` by
+/// BIT-DECOMPOSITION (`bits` boolean aux columns recomposing to the wire), which is
+/// UNSATISFIABLE on any wrapped value (it has no `bits`-bit preimage). The Lean side emits
+/// only the bit-width `bits`, NOT the `2^bits` table (which is astronomically large).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RangeSpec {
+    /// The wire (column) index in the BASE trace that must be range-checked.
+    pub wire: usize,
+    /// The bit-width `k`: the wire must lie in `[0, 2^k)`.
+    pub bits: usize,
+}
+
+/// The Rust mirror of Lean's `EmittedDescriptor` (+ optional `ranges`): name, trace width,
+/// constraints, and the field-soundness range checks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LeanDescriptor {
     /// AIR identity string (carried for fingerprint/debug; does not affect the math).
     pub name: String,
-    /// Number of distinct wires = trace width (variable index = column index).
+    /// Number of distinct BASE wires = base trace width (variable index = column index).
+    /// The full AIR trace is wider: it appends `Σ ranges.bits` boolean aux columns for the
+    /// bit-decomposition range gates (see `air_width` / `aux_offset`).
     pub trace_width: usize,
     /// The constraint list. Every constraint `lhs = rhs` must hold on each row.
     pub constraints: Vec<LeanConstraint>,
+    /// The range checks (`wire ∈ [0, 2^bits)`), enforced in the AIR by bit-decomposition.
+    /// Empty (the default for descriptors that omit `"ranges"`) ⇒ no range gates, identical
+    /// behaviour to the pre-range-check AIR (so existing goldens are unaffected).
+    pub ranges: Vec<RangeSpec>,
 }
 
 impl LeanDescriptor {
-    /// Build a descriptor.
+    /// Build a descriptor with no range checks (back-compatible constructor).
     pub fn new(name: impl Into<String>, trace_width: usize, constraints: Vec<LeanConstraint>) -> Self {
         LeanDescriptor {
             name: name.into(),
             trace_width,
             constraints,
+            ranges: Vec::new(),
         }
     }
 
+    /// Build a descriptor WITH range checks.
+    pub fn with_ranges(
+        name: impl Into<String>,
+        trace_width: usize,
+        constraints: Vec<LeanConstraint>,
+        ranges: Vec<RangeSpec>,
+    ) -> Self {
+        LeanDescriptor {
+            name: name.into(),
+            trace_width,
+            constraints,
+            ranges,
+        }
+    }
+
+    /// The total number of boolean aux columns the range gates need (`Σ ranges.bits`). These
+    /// are appended AFTER the `trace_width` base columns.
+    fn total_range_bits(&self) -> usize {
+        self.ranges.iter().map(|r| r.bits).sum()
+    }
+
+    /// The FULL AIR trace width: base wires plus all bit-decomposition aux columns.
+    fn air_width(&self) -> usize {
+        self.trace_width + self.total_range_bits()
+    }
+
+    /// The starting aux column index for the `r`-th range check (ranges are laid out in
+    /// order, each consuming `bits` consecutive boolean columns after the base wires).
+    fn aux_offset(&self, range_index: usize) -> usize {
+        self.trace_width
+            + self.ranges[..range_index].iter().map(|r| r.bits).sum::<usize>()
+    }
+
     /// The maximum polynomial degree across all constraints (at least 1, so the
-    /// quotient machinery is well-defined even for a trivial constraint list).
+    /// quotient machinery is well-defined even for a trivial constraint list). The range
+    /// gates add a degree-2 booleanity constraint (`b·(b−1)`) per aux bit, so when any
+    /// range check is present the AIR degree is at least 2.
     fn max_degree(&self) -> usize {
-        self.constraints
+        let arith = self
+            .constraints
             .iter()
             .map(LeanConstraint::degree)
             .max()
             .unwrap_or(1)
-            .max(1)
+            .max(1);
+        // Booleanity `b·(b−1) = 0` is degree 2; recomposition `Σ bᵢ·2ⁱ − wire = 0` is degree 1.
+        let range_deg = if self.ranges.is_empty() { 0 } else { 2 };
+        arith.max(range_deg)
     }
 
-    /// Validate that every variable index is within `trace_width`. Returns the
-    /// offending `(constraint_index, max_var)` on failure.
+    /// Validate that every variable index (in constraints AND range specs) is within
+    /// `trace_width`, and that each range `bits` is sane. Returns a descriptive error.
     fn check_var_bounds(&self) -> Result<(), String> {
         for (ci, c) in self.constraints.iter().enumerate() {
             let mv = c.lhs.max_var().into_iter().chain(c.rhs.max_var()).max();
@@ -197,6 +261,22 @@ impl LeanDescriptor {
                         ci, m, self.trace_width
                     ));
                 }
+            }
+        }
+        for (ri, r) in self.ranges.iter().enumerate() {
+            if r.wire >= self.trace_width {
+                return Err(format!(
+                    "range {} checks column {} but trace_width is {}",
+                    ri, r.wire, self.trace_width
+                ));
+            }
+            // 0 bits = range [0,1) = {0}, valid but degenerate; cap at 63 so `1i64 << bit`
+            // (used in the trace builder) never overflows i64.
+            if r.bits > 63 {
+                return Err(format!(
+                    "range {} on column {} has bits {} > 63 (would overflow i64 weights)",
+                    ri, r.wire, r.bits
+                ));
             }
         }
         Ok(())
@@ -362,6 +442,27 @@ fn parse_constraint(c: &mut JsonCursor) -> Result<LeanConstraint, String> {
     Ok(LeanConstraint::new(lhs, rhs))
 }
 
+/// Parse one range-spec object: `{"wire":i,"bits":k}` (Lean's `RangeSpec.toJson`).
+fn parse_range(c: &mut JsonCursor) -> Result<RangeSpec, String> {
+    c.expect(b'{')?;
+    c.expect_key("wire")?;
+    let wire = c.parse_int()?;
+    if wire < 0 {
+        return Err(format!("negative range wire {wire}"));
+    }
+    c.expect(b',')?;
+    c.expect_key("bits")?;
+    let bits = c.parse_int()?;
+    if bits < 0 {
+        return Err(format!("negative range bits {bits}"));
+    }
+    c.expect(b'}')?;
+    Ok(RangeSpec {
+        wire: wire as usize,
+        bits: bits as usize,
+    })
+}
+
 /// **`parse_descriptor`** — decode a Lean-emitted descriptor string (the output of
 /// `CircuitEmit.emitDescriptorJson` / `Transfer.transferDescriptorJson`) into a
 /// `LeanDescriptor` the generic AIR can prove. This is the wire-decode half of the
@@ -377,6 +478,8 @@ pub fn parse_descriptor(json: &str) -> Result<LeanDescriptor, String> {
     let mut name: Option<String> = None;
     let mut trace_width: Option<usize> = None;
     let mut constraints: Option<Vec<LeanConstraint>> = None;
+    // `ranges` is OPTIONAL (absent ⇒ []), so the existing goldens that omit it parse identically.
+    let mut ranges: Option<Vec<RangeSpec>> = None;
 
     loop {
         // key
@@ -418,6 +521,33 @@ pub fn parse_descriptor(json: &str) -> Result<LeanDescriptor, String> {
                 }
                 constraints = Some(v);
             }
+            "ranges" => {
+                c.expect(b'[')?;
+                let mut v = Vec::new();
+                if c.peek() == Some(b']') {
+                    c.expect(b']')?;
+                } else {
+                    loop {
+                        v.push(parse_range(&mut c)?);
+                        match c.peek() {
+                            Some(b',') => {
+                                c.expect(b',')?;
+                            }
+                            Some(b']') => {
+                                c.expect(b']')?;
+                                break;
+                            }
+                            other => {
+                                return Err(format!(
+                                    "expected ',' or ']' in ranges array, found {:?}",
+                                    other.map(|b| b as char)
+                                ));
+                            }
+                        }
+                    }
+                }
+                ranges = Some(v);
+            }
             other => return Err(format!("unknown top-level key \"{other}\"")),
         }
         match c.peek() {
@@ -440,7 +570,8 @@ pub fn parse_descriptor(json: &str) -> Result<LeanDescriptor, String> {
     let name = name.ok_or("descriptor missing \"name\"")?;
     let trace_width = trace_width.ok_or("descriptor missing \"trace_width\"")?;
     let constraints = constraints.ok_or("descriptor missing \"constraints\"")?;
-    Ok(LeanDescriptor::new(name, trace_width, constraints))
+    let ranges = ranges.unwrap_or_default();
+    Ok(LeanDescriptor::with_ranges(name, trace_width, constraints, ranges))
 }
 
 // ============================================================================
@@ -490,7 +621,8 @@ impl LeanDescriptorAir {
 
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for LeanDescriptorAir {
     fn width(&self) -> usize {
-        self.desc.trace_width
+        // The FULL trace width: base wires + bit-decomposition aux columns for the range gates.
+        self.desc.air_width()
     }
 
     fn num_public_values(&self) -> usize {
@@ -519,6 +651,32 @@ where
             let rhs = c.rhs.eval_expr::<AB>(local);
             builder.assert_zero(lhs - rhs);
         }
+
+        // RANGE GATES (field-soundness). For each range `wire ∈ [0, 2^bits)`, the trace
+        // carries `bits` boolean aux columns (the bit-decomposition of `wire`), laid out at
+        // `[aux_offset(r), aux_offset(r) + bits)`. We enforce:
+        //   (1) BOOLEANITY  per bit `b`:  `b·(b − 1) = 0`  ⇒  every aux cell ∈ {0,1}.
+        //   (2) RECOMPOSITION:  `Σ bᵢ·2ⁱ = local[wire]`  ⇒  `wire` equals its bit-sum.
+        // Together these force `wire ∈ [0, 2^bits)`: any out-of-range / field-WRAPPED value has
+        // no `bits`-bit decomposition whose weighted sum recomposes to it, so the system is
+        // UNSATISFIABLE on a forged wire. (With `2^bits = 2³² > p ≈ 2³¹`, a wrapped balance can
+        // never be recomposed by booleans, closing the `i64 → BabyBear` value-forgery hole.)
+        for (ri, r) in self.desc.ranges.iter().enumerate() {
+            let off = self.desc.aux_offset(ri);
+            // Accumulate `Σ bᵢ·2ⁱ` while doubling the weight each step (no i64 shift overflow).
+            let mut recomposed: AB::Expr = AB::Expr::ZERO;
+            let mut weight: AB::Expr = AB::Expr::ONE;
+            for i in 0..r.bits {
+                let bit: AB::Expr = local[off + i].into();
+                // (1) booleanity: b·(b − 1) = 0.
+                builder.assert_zero(bit.clone() * (bit.clone() - AB::Expr::ONE));
+                // (2) accumulate b·2ⁱ.
+                recomposed = recomposed + bit * weight.clone();
+                weight = weight.clone() + weight; // 2ⁱ → 2ⁱ⁺¹
+            }
+            let wire: AB::Expr = local[r.wire].into();
+            builder.assert_zero(recomposed - wire);
+        }
     }
 }
 
@@ -537,8 +695,21 @@ const MIN_TRACE_HEIGHT: usize = 4;
 /// row, and fail on every copy of a tampered row — so repetition is sound for
 /// this constraint class.
 ///
-/// `assignment` has length `trace_width` (the wire values; `i64` so callers can
-/// pass signed values, reduced into the field here).
+/// `assignment` has length `trace_width` (the BASE wire values; `i64` so callers can
+/// pass signed values, reduced into the field here). The row is EXTENDED with the
+/// bit-decomposition aux columns for every range check, in `ranges` order — exactly the
+/// layout `LeanDescriptorAir::eval` reads (see `aux_offset`).
+///
+/// ## Range aux columns & how out-of-range FAILS
+///
+/// For a range `wire ∈ [0, 2^bits)`, the aux columns are the `bits` LOW bits of the wire's
+/// FIELD representative (`i64_to_babybear(v)`). If the wire is honestly in `[0, 2^bits)`, those
+/// bits recompose to the field value and the AIR's recomposition gate `Σ bᵢ·2ⁱ = wire` holds.
+/// If the wire is out of range (e.g. a field-WRAPPED forgery whose field value `≥ 2^bits`), the
+/// low `bits` bits DROP the high bits, so `Σ bᵢ·2ⁱ ≠ wire` and the recomposition gate is VIOLATED
+/// — the prover panics (debug) / the proof fails to verify (release). Thus no proof exists for an
+/// out-of-range value. (Booleanity always holds since each emitted bit is 0/1 by construction; the
+/// recomposition gate is what rejects the forgery.)
 pub fn build_trace(desc: &LeanDescriptor, assignment: &[i64]) -> RowMajorMatrix<P3BabyBear> {
     assert_eq!(
         assignment.len(),
@@ -549,17 +720,30 @@ pub fn build_trace(desc: &LeanDescriptor, assignment: &[i64]) -> RowMajorMatrix<
     );
 
     let height = MIN_TRACE_HEIGHT; // already a power of two
-    let width = desc.trace_width.max(1);
+    let width = desc.air_width().max(1);
 
-    // The single row, as P3BabyBear.
-    let row: Vec<P3BabyBear> = if desc.trace_width == 0 {
-        // Degenerate: no columns. p3 still needs width >= 1; emit a zero column.
+    // The single row, as P3BabyBear: base wires followed by the range aux (bit) columns.
+    let row: Vec<P3BabyBear> = if desc.air_width() == 0 {
+        // Degenerate: no columns at all. p3 still needs width >= 1; emit a zero column.
         vec![P3BabyBear::ZERO]
     } else {
-        assignment
-            .iter()
-            .map(|&v| to_p3(i64_to_babybear(v)))
-            .collect()
+        let mut row: Vec<P3BabyBear> = Vec::with_capacity(width);
+        // Base wires.
+        for &v in assignment {
+            row.push(to_p3(i64_to_babybear(v)));
+        }
+        // Aux bit columns, one block per range (in order), the low `bits` bits of the
+        // wire's field representative.
+        for r in &desc.ranges {
+            // The field representative of the (possibly wrapped) wire value, in [0, p).
+            let field_val = i64_to_babybear(assignment[r.wire]).as_u32() as u64;
+            for i in 0..r.bits {
+                let bit = (field_val >> i) & 1;
+                row.push(to_p3(BabyBear::new(bit as u32)));
+            }
+        }
+        debug_assert_eq!(row.len(), width, "built row width must equal air_width");
+        row
     };
 
     let mut values = Vec::with_capacity(height * width);
@@ -823,6 +1007,105 @@ mod tests {
                 verify_result.is_err(),
                 "UNAUTHORIZED transfer witness MUST be rejected (authority gate broken), \
                  but a proof verified"
+            ),
+        }
+    }
+
+    /// The EXACT JSON string Lean's `Dregg2.Circuit.Transfer.transferDescriptorRangedJson`
+    /// (`#eval transferDescriptorRangedJson`) emits for the RANGE-CHECKED `emittedTransferRanged`
+    /// circuit: the verified `transferCircuit` PLUS the four balance-wire range checks
+    /// (`vSrcPre/vDstPre/vSrcPost/vDstPost ∈ [0, 2³⁰)`). Copied verbatim from
+    /// `lake build Dregg2.Circuit.Transfer`'s `#eval` output. Identical to
+    /// `TRANSFER_DESCRIPTOR_JSON` except for the appended `"ranges":[…]` field.
+    ///
+    /// k = 30 (NOT 32): BabyBear's modulus is `p = 2³¹ − 2²⁷ + 1 = 2013265921`, with
+    /// `2³⁰ < p < 2³¹`. A `k`-bit range with `2^k > p` is VACUOUS — every field element already
+    /// has a `k`-bit decomposition — so it would reject nothing. `k = 30` is the largest
+    /// power-of-two bound below `p`, making the gate NON-VACUOUS: residues in `[2³⁰, p)` have no
+    /// 30-bit decomposition and are rejected. See `Transfer.balanceRangeBits`.
+    const TRANSFER_DESCRIPTOR_RANGED_JSON: &str = r#"{"name":"dregg-transfer-v1","trace_width":11,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}}],"ranges":[{"wire":0,"bits":30},{"wire":1,"bits":30},{"wire":2,"bits":30},{"wire":3,"bits":30}]}"#;
+
+    /// **THE field-soundness acceptance test.** The RANGE-CHECKED Lean-emitted transfer
+    /// descriptor drives the real Plonky3 prover with bit-decomposition range gates on the four
+    /// balance wires (`[0, 2³⁰)`). An honest in-range witness proves+verifies; a witness whose
+    /// balance is set to a value `≥ 2³⁰` (a value whose field image collides with a small honest
+    /// residue but whose intended over-ℤ meaning exceeds the bound) is REJECTED by the range gate.
+    /// This closes the `i64 → BabyBear` value-forgery hole: over `ℤ` the conservation gate is
+    /// sound, but a wraparound balance smuggles value past it UNLESS the wire is range-bounded.
+    #[test]
+    fn lean_emitted_transfer_field_sound() {
+        // ---- Parse the RANGE-CHECKED descriptor (the EXACT Lean-emitted bytes) ----
+        let desc = parse_descriptor(TRANSFER_DESCRIPTOR_RANGED_JSON)
+            .expect("range-checked transfer descriptor must parse");
+        assert_eq!(desc.name, "dregg-transfer-v1");
+        assert_eq!(desc.trace_width, 11);
+        assert_eq!(desc.constraints.len(), 9);
+        // Four range checks, one per balance wire (0,1,2,3), each 30 bits.
+        assert_eq!(
+            desc.ranges,
+            vec![
+                RangeSpec { wire: 0, bits: 30 },
+                RangeSpec { wire: 1, bits: 30 },
+                RangeSpec { wire: 2, bits: 30 },
+                RangeSpec { wire: 3, bits: 30 },
+            ]
+        );
+        // The full AIR trace is base 11 wires + 4*30 = 120 aux bit columns = 131 columns.
+        assert_eq!(desc.air_width(), 11 + 4 * 30);
+
+        // The bound is non-vacuous: 2^30 < p, so residues in [2^30, p) exist and are rejectable.
+        assert!((1u64 << 30) < BABYBEAR_P as u64, "2^30 must be < p for the gate to bite");
+
+        // ---- Honest in-range witness: kT0/goodTurn/goodPost (all balances small) ----
+        // [srcPre, dstPre, srcPost, dstPost, amt, auth, nonneg, avail, distinct, srcLive, dstLive]
+        let good = [100i64, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1];
+        // All four balances are well within [0, 2^30).
+        for &b in &[good[0], good[1], good[2], good[3]] {
+            assert!((0..(1i64 << 30)).contains(&b));
+        }
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest in-range transfer witness must prove+verify with range gates");
+        verify_descriptor(&desc, &proof)
+            .expect("re-verify of the range-checked satisfying proof must succeed");
+
+        // ---- FORGED witness: a balance OUT OF [0, 2^30) (the wraparound the gate forbids) ----
+        // Set srcPre = 2^30 and srcPost = 2^30 - amt so the arithmetic gates STILL hold in the
+        // field (debit: srcPost = srcPre - amt; conservation: srcPost+dstPost = srcPre+dstPre),
+        // isolating the RANGE gate as the SOLE possible rejector. 2^30 = 1073741824 is a valid
+        // BabyBear element (< p) but lies OUTSIDE [0, 2^30): its 30-bit decomposition (the low 30
+        // bits) recomposes to 0, not 2^30, so the recomposition gate `Σ bᵢ·2ⁱ = srcPre` FAILS.
+        // (This is exactly the wraparound forgery: a colossal real balance whose field image the
+        // over-ℤ-sound conservation gate cannot distinguish from an honest small one.)
+        let two_pow_30: i64 = 1 << 30; // 1073741824: valid field element, but >= 2^30
+        let amt = good[4];
+        let forged_range = [
+            two_pow_30,       // srcPre = 2^30  -> OUT OF [0, 2^30)
+            good[1],          // dstPre  = 5
+            two_pow_30 - amt, // srcPost = 2^30 - 30 (debit holds in-field)
+            good[3],          // dstPost = 35
+            amt,
+            1, 1, 1, 1, 1, 1,
+        ];
+        // Sanity: the ARITHMETIC gates hold for this forgery — only the range gate can reject it.
+        assert_eq!(forged_range[2], forged_range[0] - forged_range[4]); // debit
+        assert_eq!(forged_range[3], forged_range[1] + forged_range[4]); // credit
+        assert_eq!(
+            forged_range[2] + forged_range[3],
+            forged_range[0] + forged_range[1]
+        ); // conservation
+        assert!(forged_range[0] >= (1 << 30)); // but srcPre is OUT of [0, 2^30)
+
+        let tampered = std::panic::catch_unwind(|| {
+            // Debug: prover panics on the violated recomposition gate. Release: verify rejects.
+            let p = prove_descriptor(&desc, &forged_range)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {} // prover panicked on the broken range gate: forgery rejected. Good.
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "OUT-OF-RANGE balance (>= 2^30) MUST be rejected by the bit-decomposition range \
+                 gate, but a proof verified — the field-soundness hole is OPEN"
             ),
         }
     }

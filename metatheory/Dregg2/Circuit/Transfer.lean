@@ -645,6 +645,59 @@ def transferDescriptorJson : String := emitDescriptorJson emittedTransfer
 #guard emittedTransfer.constraints.length == 9
 #guard emittedTransfer.traceWidth == 11
 
+/-! ## §11 — RANGE-CHECKED emission: closing the `ℤ → BabyBear` field-soundness gap.
+
+`transferCircuit` is sound over `ℤ`, but the Rust ingestion maps `ℤ → BabyBear` (modulus
+`p = 2³¹ − 2²⁷ + 1 = 2013265921`, which satisfies `2³⁰ < p < 2³¹`). Without a range check, a balance
+intended (over `ℤ`) to exceed the field would WRAP and forge value (its field image collides with a
+small honest residue, smuggling value past the `ℤ`-sound conservation gate). The fix: range-check the
+four balance wires (`vSrcPre`/`vDstPre`/`vSrcPost`/`vDstPost`) into `[0, 2^k)`.
+
+**The bound `k` must satisfy `2^k ≤ p`, else the gate is VACUOUS over `BabyBear`.** Every field element
+already lies in `[0, p)`, so a `k`-bit decomposition exists for EVERY field value once `2^k > p` (e.g.
+`k = 32 > log₂ p ≈ 30.9`): the range gate would then reject nothing. We therefore pick the largest
+power-of-two bound strictly below `p`: **`balanceRangeBits = 30`** (`2³⁰ = 1073741824 < p`). Then the
+field residues in `[2³⁰, p)` have NO `30`-bit decomposition, so the Rust AIR's bit-recomposition gate
+`Σ bᵢ·2ⁱ = wire` rejects any wire whose value lands there — exactly the wraparound forgeries. (`2³⁰`
+balances suffice for any realistic value; a wider sound range needs a larger field or multi-limb.) -/
+
+/-- The bit-width for the balance range checks: `[0, 2³⁰)`. Chosen with `2³⁰ < p ≈ 2³¹` so the range
+gate is NON-VACUOUS over `BabyBear` (a `k`-bit range with `2^k > p` would accept every field element).
+A wire whose field value lands in `[2³⁰, p)` has no valid `30`-bit decomposition ⇒ the Rust AIR rejects
+it, closing the `ℤ → BabyBear` wraparound hole. -/
+def balanceRangeBits : Nat := 30
+
+/-- The four balance wires range-checked into `[0, 2³²)`: source/dest pre- and post-balances — the
+conserved measure the executor moves. These are exactly the wires a field wraparound could forge. -/
+def transferRanges : List CircuitEmit.RangeSpec :=
+  [ ⟨vSrcPre,  balanceRangeBits⟩
+  , ⟨vDstPre,  balanceRangeBits⟩
+  , ⟨vSrcPost, balanceRangeBits⟩
+  , ⟨vDstPost, balanceRangeBits⟩ ]
+
+/-- **The RANGE-CHECKED emitted transfer descriptor** — `emittedTransfer` bundled with the four
+balance-wire range checks. The Rust AIR enforces the arithmetic gates AND the bit-decomposition range
+gates, closing the field-soundness hole. -/
+def emittedTransferRanged : CircuitEmit.RangedDescriptor :=
+  ⟨emittedTransfer, transferRanges⟩
+
+/-- **`transferDescriptorRangedJson`** — the canonical wire string for the RANGE-CHECKED transfer
+circuit: the `transferDescriptorJson` bytes EXTENDED with a `"ranges":[{"wire":i,"bits":32},…]` field
+on the four balance wires. THIS is the byte string the Rust `lean_descriptor_air::parse_descriptor`
+decoder ingests to drive the Plonky3 prover with field-sound range enforcement. Copy this exact string
+into the Rust `lean_emitted_transfer_field_sound` golden. -/
+def transferDescriptorRangedJson : String :=
+  CircuitEmit.emitRangedDescriptorJson emittedTransferRanged
+
+-- Print the range-checked transfer wire bytes (the golden input for the Rust field-soundness test).
+#eval transferDescriptorRangedJson
+
+-- Sanity: the ranged descriptor carries four range checks (one per balance wire), each 30 bits.
+#guard emittedTransferRanged.ranges.length == 4
+#guard emittedTransferRanged.ranges.all (fun r => r.bits == 30)
+-- ...and the base is byte-identical to the plain transfer descriptor (the ranges are a pure suffix).
+#guard emittedTransferRanged.base == emittedTransfer
+
 /-! ## §10 — Axiom-hygiene tripwires.
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
