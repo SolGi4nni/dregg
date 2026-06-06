@@ -12,11 +12,17 @@ import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest         -- the PROVED tree executor `execFullForestA` (META-FILL A)
 import Dregg2.Exec.FullForestAuth     -- the 10-variant `Authorization` sum (META-FILL D)
+import Dregg2.Exec.Admission           -- `AdmCtx` / `TurnHdr` / `runTurn` prologue
+import Dregg2.Exec.TurnAdmission      -- `runGatedForestTurn` = admission ∘ gated forest (devnet entry)
+import Dregg2.Exec.AdmissionWire      -- write-set extraction + `TurnHdr` builders for the wire
 
 namespace Dregg2.Exec.FFI
 
 open Dregg2.Exec
 open Dregg2.Authority
+open Dregg2.Exec.Admission (AdmCtx)
+open Dregg2.Exec.TurnAdmission (runGatedForestTurn)
+open Dregg2.Exec.AdmissionWire (turnHdrOf prevReceiptOf)
 
 /-- **C entry point — run one transfer, return the conserved total.**
 
@@ -935,11 +941,11 @@ length (which equals the number of committed actions) with `ok:1`. On a turn tha
 (`execFullTurn = none`) we ECHO the UNCHANGED input cells + input caps with `loglen:0` and `ok:0` —
 the rollback is observable: state is exactly the pre-state. On a malformed wire we fail-closed to
 `{"cells":[],"caps":[],"loglen":0,"ok":0}`. -/
--- D1 CONSOLIDATION (one-entry, 2026-06-05): @[export] REMOVED. This is an UNGATED, credential-ERASED
--- turn (deprecated 5-arm FullAction; no Authorization/caveat/revocation gate). It is NO LONGER
--- C-callable — the sole production turn entry is `dregg_exec_full_forest_auth` (the credential-gated
--- `execFullForestG`). The def is retained Lean-side as the ungated-projection reference + codec
--- round-trip witness only.
+-- D1 CONSOLIDATION (one-entry, 2026-06-05): NOT a production entry. This is an UNGATED,
+-- credential-ERASED turn (deprecated 5-arm `FullAction`; no Authorization/caveat/revocation gate).
+-- The sole PRODUCTION turn entry is `dregg_exec_full_forest_auth` (`execFullForestG` + admission).
+-- Re-exported HERE as a TEST-ONLY differential oracle (`full_turn_differential.rs`); prod must NOT call it.
+@[export dregg_exec_full_turn]
 def execFullTurnStep (input : String) : String :=
   match parseFullTurn input with
   | none => encodeFullOut [] [] 0 false
@@ -2572,7 +2578,8 @@ FIFO ring-buffer), `swiss` (the CapTP export/enliven/handoff/GC registry). The g
     STATEW := {"cells":CELLSW,"caps":CAPS,"bal":BAL,"escrows":ESCROWS,
                "nullifiers":NATS,"commitments":NATS,"queues":QUEUES,"swiss":SWISS}
     ESCROWS := [] | [ESC(,ESC)*]
-    ESC     := [id,creator,recipient,amount,resolved,asset,bridge]    (resolved/bridge ∈ {0,1})
+    ESC     := [id,creator,recipient,amount,resolved,asset,bridge,queueDep,queueMsg]
+              (resolved/bridge ∈ {0,1}; queueDep/queueMsg optional `Nat` via `encodeOptNat`)
     NATS    := [] | [N(,N)*]
     QUEUES  := [] | [Q(,Q)*]
     Q       := [id,owner,capacity,[N(,N)*]]                           (buffer = FIFO message hashes)
@@ -2581,13 +2588,32 @@ FIFO ring-buffer), `swiss` (the CapTP export/enliven/handoff/GC registry). The g
 
 reusing `CELLSW` (`§W2`), `CAPS` (the narrow caps codec), `BAL` (`§W2`), `AUTHS` (`§W4`). -/
 
+/-! ### Optional-`Nat` leaf codec (shared by `EscrowRecord.queueDep/queueMsg` and `SwissRecord.cert`). -/
+
+/-- Encode an optional `Nat` as `{"none":0}` / `{"some":N}`. -/
+def encodeOptNat : Option Nat → String
+  | none   => "{\"none\":0}"
+  | some n => "{\"some\":" ++ toString n ++ "}"
+
+/-- Parse an optional `Nat` `{"none":0}` / `{"some":N}` (strict). -/
+def parseOptNat (cs : PState) : Option (Option Nat × PState) :=
+  match lit "{\"none\":0}" cs with
+  | some r => some (none, r)
+  | none =>
+    match lit "{\"some\":" cs with
+    | none => none
+    | some r0 => match parseNat r0 with
+                 | some (n, r1) => (lit "}" r1).map (fun r2 => (some n, r2))
+                 | none => none
+
 /-! ### EscrowRecord codec. -/
 
-/-- Encode one `EscrowRecord` `[id,creator,recipient,amount,resolved,asset,bridge]`. -/
+/-- Encode one `EscrowRecord` `[id,creator,recipient,amount,resolved,asset,bridge,queueDep,queueMsg]`. -/
 def encodeEscrow (e : EscrowRecord) : String :=
   "[" ++ toString e.id ++ "," ++ toString e.creator ++ "," ++ toString e.recipient ++ ","
     ++ toString e.amount ++ "," ++ (if e.resolved then "1" else "0") ++ ","
-    ++ toString e.asset ++ "," ++ (if e.bridge then "1" else "0") ++ "]"
+    ++ toString e.asset ++ "," ++ (if e.bridge then "1" else "0") ++ ","
+    ++ encodeOptNat e.queueDep ++ "," ++ encodeOptNat e.queueMsg ++ "]"
 
 /-- Encode the `ESCROWS` array. -/
 def encodeEscrows : List EscrowRecord → String
@@ -2600,7 +2626,7 @@ def parseFlag (cs : PState) : Option (Bool × PState) :=
   | some (n, r) => if n ≤ 1 then some (n == 1, r) else none
   | none        => none
 
-/-- Parse one `ESC` `[id,creator,recipient,amount,resolved,asset,bridge]`. -/
+/-- Parse one `ESC` `[id,creator,recipient,amount,resolved,asset,bridge,queueDep,queueMsg]`. -/
 def parseEscrow (cs : PState) : Option (EscrowRecord × PState) := do
   let r0 ← lit "[" cs
   let (id, r1) ← parseNat r0
@@ -2612,9 +2638,14 @@ def parseEscrow (cs : PState) : Option (EscrowRecord × PState) := do
   let (asset, r6) ← cN r5
   let r6b ← lit "," r6
   let (bridge, r7) ← parseFlag r6b
-  let r8 ← lit "]" r7
+  let r7b ← lit "," r7
+  let (queueDep, r8) ← parseOptNat r7b
+  let r8b ← lit "," r8
+  let (queueMsg, r9) ← parseOptNat r8b
+  let r10 ← lit "]" r9
   some ({ id := id, creator := creator, recipient := recipient, amount := amount,
-          resolved := resolved, asset := asset, bridge := bridge }, r8)
+          resolved := resolved, asset := asset, bridge := bridge,
+          queueDep := queueDep, queueMsg := queueMsg }, r10)
 
 /-- Parse the `ESCROWS` array `[ESC(,ESC)*]` (or `[]`). -/
 def parseEscrows (cs : PState) : Option (List EscrowRecord × PState) :=
@@ -2719,22 +2750,6 @@ def parseQueues (cs : PState) : Option (List QueueRecord × PState) :=
       loop (cs.length + 1) r0
 
 /-! ### SwissRecord codec (with the optional `cert`). -/
-
-/-- Encode the optional `cert` as `{"none":0}` / `{"some":N}`. -/
-def encodeOptNat : Option Nat → String
-  | none   => "{\"none\":0}"
-  | some n => "{\"some\":" ++ toString n ++ "}"
-
-/-- Parse the optional `cert` `{"none":0}` / `{"some":N}` (strict). -/
-def parseOptNat (cs : PState) : Option (Option Nat × PState) :=
-  match lit "{\"none\":0}" cs with
-  | some r => some (none, r)
-  | none =>
-    match lit "{\"some\":" cs with
-    | none => none
-    | some r0 => match parseNat r0 with
-                 | some (n, r1) => (lit "}" r1).map (fun r2 => (some n, r2))
-                 | none => none
 
 /-- Encode one `SwissRecord` `[swiss,exporter,target,AUTHS,refcount,CERT]`. -/
 def encodeSwiss (e : SwissRecord) : String :=
@@ -2935,6 +2950,15 @@ structure WWire where
   state : WState
   turn  : WTurn
 
+/-- Derive the host `AdmCtx` from the turn envelope until the Rust executor plumbs `self` explicitly.
+`now` is pinned to `validUntil` (non-expired at the boundary); `storedHead` from `prevHash`. -/
+def admCtxOfTurn (t : WTurn) : AdmCtx :=
+  { now := t.validUntil, frozen := [], storedHead := prevReceiptOf t.prevHash, budget := 1000000000 }
+
+/-- Encode the complete-turn INPUT `{"state":STATEW,"turn":TURNW}`. -/
+def encodeWWire (w : WWire) : String :=
+  "{\"state\":" ++ encodeWState w.state ++ ",\"turn\":" ++ encodeWTurn w.turn ++ "}"
+
 /-- Parse the complete-turn WIRE `{"state":STATEW,"turn":TURNW}`. Strict: the WHOLE string must be
 consumed (fail-closed on any deviation OR trailing bytes). -/
 def parseWWire (s : String) : Option WWire :=
@@ -3004,11 +3028,10 @@ def execFullTurnWide (input : String) : String :=
 /-! ### §W7-eval — the COMPLETE-TURN round-trips: a representative committed turn, a rollback, a
 malformed wire, plus a parse round-trip of the whole wire object. -/
 
-/-- A representative WIDE state: cell 0 (bal[asset 0]=100) and cell 1 (bal[asset 0]=5), a caps table,
-and ONE entry in EACH side-table (escrow / nullifier / commitment / queue / swiss) — so the wire
-exercises every side-table, not a stub. -/
+/-- Shared demo pre-state: cell 0 (bal[asset 0]=100, nonce 7) and cell 1 (bal[asset 0]=5), caps,
+and ONE entry in EACH side-table — exercises every side-table, not a stub. -/
 def wideDemoState : WState :=
-  { cells := [(0, .record [("balance", .int 100)]), (1, .record [("balance", .int 5)])]
+  { cells := [(0, .record [("balance", .int 100), ("nonce", .int 7)]), (1, .record [("balance", .int 5)])]
     caps  := [(9, [.node 0])]
     bal   := [(0, 0, 100), (1, 0, 5)]
     escrows := [{ id := 1, creator := 0, recipient := 1, amount := 7, resolved := false }]
@@ -3021,12 +3044,11 @@ def wideDemoState : WState :=
 /-- The Turn envelope whose action-tree root TRANSFERS 30 of asset 0 from cell 0 → cell 1 under a
 signature credential. Actor 0 OWNS cell 0 ⇒ the transfer commits, conserving asset 0 (100+5 = 70+35). -/
 def wideDemoTurn : WTurn :=
-  { agent := 0, nonce := 3, fee := 10, validUntil := 1000, prevHash := 0
+  { agent := 0, nonce := 7, fee := 10, validUntil := 1000, prevHash := 0
     root := ⟨ .signature 7 7, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
 
 /-- The complete-turn WIRE for the demo (state + envelope/tree). -/
-def wideDemoInput : String :=
-  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn wideDemoTurn ++ "}"
+def wideDemoInput : String := encodeWWire { state := wideDemoState, turn := wideDemoTurn }
 
 #guard ((parseWWire wideDemoInput).isSome)  --  true (whole wire parses)
 #eval execFullTurnWide wideDemoInput
@@ -3038,8 +3060,7 @@ def wideRollbackTurn : WTurn :=
   { agent := 0, nonce := 0, fee := 0, validUntil := 0, prevHash := 0
     root := ⟨ .unchecked, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 1000 } 0, [] ⟩ }
 
-#eval execFullTurnWide
-  ("{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn wideRollbackTurn ++ "}")
+#eval execFullTurnWide (encodeWWire { state := wideDemoState, turn := wideRollbackTurn })
 -- Expect ok:0, loglen:0, bal UNCHANGED (cell0 asset0 = 100, cell1 asset0 = 5).
 
 -- Malformed wire ⇒ fail-closed empty state, ok:0.
@@ -3295,8 +3316,11 @@ def execFullForestAuthStep (input : String) : String :=
     let cellIds := w.state.cells.map Prod.fst
     let capLabels := w.state.caps.map Prod.fst
     let balKeys := balKeysOf w.state
+    let ctx := admCtxOfTurn w.turn
+    let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                  w.turn.validUntil w.turn.prevHash
     let gforest : DForest := liftForestG w.turn.root
-    match execFullForestG s0 gforest with
+    match runGatedForestTurn ctx hdr s0 gforest with
     | some s' =>
         encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
     | none =>
@@ -3314,13 +3338,10 @@ escrow (`createEscrowA`) under a genuine `.token 3 3`. Both nodes' credentials p
 COMMITS. -/
 def gatedDemoTurn : WTurn :=
   { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
-    root := ⟨ .signature 7 7, [⟨0, 0, 0, 0⟩], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0,
-              [ ⟨ 9, [.read], .node 0,
-                  ⟨ .token 3 3, [], .createEscrowA 2 0 0 1 0 10, [] ⟩ ⟩ ] ⟩ }
+    root := ⟨ .signature 7 7, [⟨0, 0, 0, 0⟩], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
 
-/-- The complete-turn WIRE for the gated demo (the `§W7` `wideDemoState` + the gated turn). -/
-def gatedDemoInput : String :=
-  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn gatedDemoTurn ++ "}"
+/-- The complete-turn WIRE for the gated demo (the `§W7` `wideDemoState` + `demoCtx` + gated turn). -/
+def gatedDemoInput : String := encodeWWire { state := wideDemoState, turn := gatedDemoTurn }
 
 #guard ((parseWWire gatedDemoInput).isSome)  --  true (whole wire parses)
 -- the GATED export commits (ok:1) — both credentials pass the portal:
@@ -3332,7 +3353,10 @@ def gatedDemoInput : String :=
          let cellIds := w.state.cells.map Prod.fst
          let capLabels := w.state.caps.map Prod.fst
          let balKeys := balKeysOf w.state
-         (match execFullForestG s0 (liftForestG w.turn.root) with
+         let ctx := admCtxOfTurn w.turn
+         let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                       w.turn.validUntil w.turn.prevHash
+         (match runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root) with
           | some s' => encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
           | none    => encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false)
            == execFullForestAuthStep gatedDemoInput
@@ -3341,12 +3365,11 @@ def gatedDemoInput : String :=
 /-- A FORGED-credential gated turn: the SAME transfer but under `.signature 7 8` (proof does NOT echo ⇒ the
 portal REJECTS). The gate fail-closes ⇒ whole-turn rollback. -/
 def forgedGatedTurn : WTurn :=
-  { agent := 0, nonce := 0, fee := 0, validUntil := 0, prevHash := 0
+  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
     root := ⟨ .signature 7 8, [], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
 
-/-- The wire for the forged-credential turn. -/
-def forgedGatedInput : String :=
-  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn forgedGatedTurn ++ "}"
+/-- The wire for the forged-credential turn (admissible prologue, gated body rolls back). -/
+def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := forgedGatedTurn }
 
 -- the FORGED-credential turn ROLLS BACK (ok:0, state echoed unchanged) — the gate has teeth:
 #eval execFullForestAuthStep forgedGatedInput
@@ -3358,6 +3381,42 @@ def forgedGatedInput : String :=
 -- malformed wire ⇒ fail-closed empty state, ok:0:
 #eval execFullForestAuthStep "garbage"
 -- {"state":{"cells":[],...},"loglen":0,"ok":0}
+
+/-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
+
+`runGatedForestTurn` runs `Admission.runTurn` before `execFullForestG`. Inadmissible turns return
+`none` with NO edit (unlike a gated-body rollback, which echoes the unchanged pre-state after a
+committed prologue). These guards mirror `marshal_roundtrip` cases 6–7. -/
+
+/-- Wrong nonce (stored 7, claimed 6) ⇒ inadmissible ⇒ no edit. -/
+def badNonceGatedTurn : WTurn :=
+  { agent := 0, nonce := 6, fee := 5, validUntil := 1000, prevHash := 0
+    root := gatedDemoTurn.root }
+
+/-- Fee exceeds agent balance (200 > 100) ⇒ inadmissible ⇒ no edit. -/
+def overfeeGatedTurn : WTurn :=
+  { agent := 0, nonce := 7, fee := 200, validUntil := 1000, prevHash := 0
+    root := gatedDemoTurn.root }
+
+#guard ((match parseWWire (encodeWWire { state := wideDemoState, turn := badNonceGatedTurn }) with
+         | some w =>
+           let k0 := stateOfWState w.state
+           let s0 : RecChainedState := { kernel := k0, log := [] }
+           let ctx := admCtxOfTurn w.turn
+           let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                         w.turn.validUntil w.turn.prevHash
+           (runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root)).isNone
+         | none => false))  --  true (nonce replay ⇒ inadmissible)
+
+#guard ((match parseWWire (encodeWWire { state := wideDemoState, turn := overfeeGatedTurn }) with
+         | some w =>
+           let k0 := stateOfWState w.state
+           let s0 : RecChainedState := { kernel := k0, log := [] }
+           let ctx := admCtxOfTurn w.turn
+           let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                         w.turn.validUntil w.turn.prevHash
+           (runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root)).isNone
+         | none => false))  --  true (fee > balance ⇒ inadmissible)
 
 /-! ### §WG-eval-caveat — THE CAVEAT TEETH (the violated-caveat rollback contrast).
 
@@ -3377,12 +3436,12 @@ monotone, cell 0, asset 0, min M) HOLDS iff `100 ≥ M`. So `M=0` satisfies (com
 GENUINE-credential transfer (30 of asset 0, cell 0 → cell 1). Same transfer + credential as
 `gatedDemoTurn`'s root; only the caveat varies. -/
 def caveatTurn (t : Nat) (m : Int) : WTurn :=
-  { agent := 0, nonce := 1, fee := 0, validUntil := 1000, prevHash := 0
+  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
     root := ⟨ .signature 7 7, [⟨t, 0, 0, m⟩], .balanceA { actor := 0, src := 0, dst := 1, amt := 30 } 0, [] ⟩ }
 
-/-- The wire for a caveat turn (the `§W7` `wideDemoState` + the parameterized caveat turn). -/
+/-- The wire for a caveat turn (the `§W7` `wideDemoState` + `demoCtx` + parameterized caveat turn). -/
 def caveatInput (t : Nat) (m : Int) : String :=
-  "{\"state\":" ++ encodeWState wideDemoState ++ ",\"turn\":" ++ encodeWTurn (caveatTurn t m) ++ "}"
+  encodeWWire { state := wideDemoState, turn := caveatTurn t m }
 
 /-- The SATISFIED-caveat wire: monotone caveat "cell 0 holds ≥ 0 of asset 0" (true — it holds 100). -/
 def satisfiedCaveatInput : String := caveatInput 0 0

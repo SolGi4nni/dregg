@@ -21,26 +21,20 @@ for `Transfer`, written INDEPENDENTLY of the executor. The `execFullA` arms (`Tu
 
 and on commit produces `{ kernel := createCellIntoAsset kernel newCell, log := creationRow :: log }`.
 
-`createCellIntoAsset` (`RecordKernel.lean:829`) does EXACTLY TWO things to the kernel:
-
-    accounts := insert newCell accounts                       -- the index set GROWS (has teeth)
-    bal      := fun c a => if c = newCell then 0 else bal c a -- the fresh cell's ledger column RESET 0
+`createCellIntoAsset` (`RecordKernel.lean`) grows `accounts` AND resets EVERY per-cell indexed slot at
+`newCell` to born-empty defaults (`bornEmptyCellSlots`: `cell`/`caps`/`delegate`/`delegations`/
+`slotCaveats`/`lifecycle`/`deathCert`/`bal`), closing stale side-table resurrection on id reuse.
 
 — the dregg1-faithful `balance == 0` born-empty cell, conservation-NEUTRAL because the fresh term in
 `recTotalAsset` is exactly `0` (the `bal`-reset is load-bearing: a re-inserted previously-credited id
 would otherwise re-introduce supply).
 
-### FRAME FINDING (reported in frameGaps): `kernel.cell` is UNTOUCHED.
+### Born-empty `cell` (executor + spec aligned).
 
-The prompt's informal post-state says "kernel.cell (newCell born with empty record)". The ACTUAL
-executor `createCellIntoAsset` NEVER writes `kernel.cell` — the born-empty semantics live entirely on
-the per-asset `bal` ledger (`createCellIntoAsset` only edits `accounts` + `bal`). So `cell` is a
-FRAME field here, not a touched one. This is NOT a frame-bug (the executor does not silently mutate
-`cell`); it is a mismatch between the prompt's prose and the real code. The spec below faithfully
-follows the CODE: `cell` is enumerated in the frame and the executor⟺spec proof confirms it. The
-fresh cell's `kernel.cell newCell` therefore reads whatever the pre-state's `cell` map returns at
-`newCell` (the per-asset `bal` is the born-empty measure). The conserved-measure born-empty fact is
-witnessed by `createCellA_fresh_bal_zero`.
+`createCellIntoAsset` calls `bornEmptyCellSlots`, which resets `cell newCell` to `default` together with
+`caps`/`delegate`/`delegations`/`slotCaveats`/`lifecycle`/`deathCert`/`bal`. The declarative
+`bornEmptyAt` predicate in §4 pins this shape; the circuit layer digest-binds the side-table bundle via
+`BornEmptyCommit`.
 
 ## `spawnA` (the MULTI-update variant)
 
@@ -77,6 +71,17 @@ open Dregg2.Authority
 
 set_option linter.dupNamespace false
 
+private theorem recordKernel_eq_of_fields {k k' : RecordKernelState}
+    (haccounts : k.accounts = k'.accounts) (hcell : k.cell = k'.cell) (hcaps : k.caps = k'.caps)
+    (hescrows : k.escrows = k'.escrows) (hnullifiers : k.nullifiers = k'.nullifiers)
+    (hrevoked : k.revoked = k'.revoked) (hcommitments : k.commitments = k'.commitments)
+    (hbal : k.bal = k'.bal) (hqueues : k.queues = k'.queues) (hswiss : k.swiss = k'.swiss)
+    (hslotCaveats : k.slotCaveats = k'.slotCaveats) (hfactories : k.factories = k'.factories)
+    (hlifecycle : k.lifecycle = k'.lifecycle) (hdeathCert : k.deathCert = k'.deathCert)
+    (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)
+    (hsealedBoxes : k.sealedBoxes = k'.sealedBoxes) : k = k' := by
+  cases k; cases k'; simp_all
+
 /-! ## §1 — the admissibility guards, lifted from the CODE. -/
 
 /-- **`createCellAdmit`** — the full admissibility guard `createCellChainA` checks, as a `Prop` (the
@@ -109,19 +114,33 @@ We validate it relationally (the `recTransfer_correct` analog), so the spec's
 `kernel = createCellIntoAsset …` clauses carry real meaning rather than trusting the helper's name. -/
 
 /-- **`createCellIntoAsset_correct`** — the account-growth helper validated DECLARATIVELY: the new id
-IS a live account; its ledger column reads `0` in EVERY asset (born empty); every OTHER account is
-preserved (and stays an account); every OTHER cell's ledger entry is literally untouched. So the
-spec's `accounts`/`bal` clauses genuinely encode growth ∧ born-empty ∧ ledger-frame. -/
+IS a live account; every per-cell indexed slot at `newCell` is born empty; every OTHER cell's slots
+are literally untouched. So the spec's touched clauses genuinely encode growth ∧ born-empty. -/
 theorem createCellIntoAsset_correct (k : RecordKernelState) (newCell : CellId) :
     newCell ∈ (createCellIntoAsset k newCell).accounts
+    ∧ (createCellIntoAsset k newCell).cell newCell = default
+    ∧ (createCellIntoAsset k newCell).caps newCell = []
+    ∧ (createCellIntoAsset k newCell).delegate newCell = none
+    ∧ (createCellIntoAsset k newCell).delegations newCell = []
+    ∧ (createCellIntoAsset k newCell).slotCaveats newCell = []
+    ∧ (createCellIntoAsset k newCell).lifecycle newCell = 0
+    ∧ (createCellIntoAsset k newCell).deathCert newCell = 0
     ∧ (∀ a, (createCellIntoAsset k newCell).bal newCell a = 0)
     ∧ (∀ c, c ∈ k.accounts → c ∈ (createCellIntoAsset k newCell).accounts)
     ∧ (∀ c a, c ≠ newCell → (createCellIntoAsset k newCell).bal c a = k.bal c a) := by
-  refine ⟨?_, ?_, ?_, ?_⟩
+  dsimp [createCellIntoAsset, bornEmptyCellSlots]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact createCellIntoAsset_grows_accounts k newCell
-  · intro a; simp only [createCellIntoAsset, if_pos]
-  · intro c hc; simp only [createCellIntoAsset]; exact Finset.mem_insert_of_mem hc
-  · intro c a hc; simp only [createCellIntoAsset, if_neg hc]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · simp only [if_pos]
+  · intro a; simp only [if_pos]
+  · intro c hc; exact Finset.mem_insert_of_mem hc
+  · intro c a hc; simp only [if_neg hc]
 
 /-! ## §3 — the executor projection: `execFullA` on `createCellA`/`spawnA`.
 
@@ -143,34 +162,32 @@ INDEPENDENTLY of the executor: the guard holds; the post `accounts` is the pre `
 the FRAME FINDING in the module header: the executor never touches `cell`) — are LITERALLY unchanged.
 No frame clause mentions any executor helper. -/
 
+/-- Born-empty per-cell maps at `newCell` (the declarative post-shape of `bornEmptyCellSlots`). -/
+def bornEmptyAt (k : RecordKernelState) (newCell : CellId) (k' : RecordKernelState) : Prop :=
+  (k'.cell = fun c => if c = newCell then default else k.cell c)
+  ∧ (k'.caps = fun l => if l = newCell then [] else k.caps l)
+  ∧ (k'.delegate = fun c => if c = newCell then none else k.delegate c)
+  ∧ (k'.delegations = fun c => if c = newCell then [] else k.delegations c)
+  ∧ (k'.slotCaveats = fun c => if c = newCell then [] else k.slotCaveats c)
+  ∧ (k'.lifecycle = fun c => if c = newCell then 0 else k.lifecycle c)
+  ∧ (k'.deathCert = fun c => if c = newCell then 0 else k.deathCert c)
+  ∧ (k'.bal = fun c a => if c = newCell then 0 else k.bal c a)
+
 /-- **The full-state declarative spec of a committed account-creation (`createCellA`)** — the
-INDEPENDENT reference semantics. The two TOUCHED kernel components are `accounts` (grown by `newCell`)
-and `bal` (the fresh column reset to `0` ∀ asset), written WITHOUT `createCellIntoAsset`; plus the one
-`log` row. The FRAME enumerates the remaining 15 kernel fields (`cell caps escrows nullifiers revoked
-commitments queues swiss slotCaveats factories lifecycle deathCert delegate delegations sealedBoxes`)
-literally unchanged. -/
+INDEPENDENT reference semantics. Touched: `accounts` growth, born-empty per-cell slots at `newCell`,
+and the creation receipt. Global side-tables (`escrows`/`nullifiers`/…) are framed unchanged. -/
 def CreateCellSpec (st : RecChainedState) (actor newCell : CellId) (st' : RecChainedState) : Prop :=
   createCellAdmit st.kernel actor newCell
-  -- the two TOUCHED kernel components (declarative, no helper):
   ∧ st'.kernel.accounts = insert newCell st.kernel.accounts
-  ∧ st'.kernel.bal = (fun c a => if c = newCell then 0 else st.kernel.bal c a)
-  -- the one TOUCHED chain component:
+  ∧ bornEmptyAt st.kernel newCell st'.kernel
   ∧ st'.log = createReceipt actor newCell :: st.log
-  -- THE FRAME: every one of the 15 other kernel fields literally unchanged.
-  ∧ st'.kernel.cell = st.kernel.cell
-  ∧ st'.kernel.caps = st.kernel.caps
   ∧ st'.kernel.escrows = st.kernel.escrows
   ∧ st'.kernel.nullifiers = st.kernel.nullifiers
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
   ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
-  ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
-  ∧ st'.kernel.lifecycle = st.kernel.lifecycle
-  ∧ st'.kernel.deathCert = st.kernel.deathCert
-  ∧ st'.kernel.delegate = st.kernel.delegate
-  ∧ st'.kernel.delegations = st.kernel.delegations
   ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
 
 /-- **`createCellChainA_iff_spec` — CHAINED EXECUTOR ⟺ SPEC (FULL state, both directions).** The
@@ -183,19 +200,24 @@ theorem createCellChainA_iff_spec (st : RecChainedState) (actor newCell : CellId
     (st' : RecChainedState) :
     createCellChainA st actor newCell = some st' ↔ CreateCellSpec st actor newCell st' := by
   unfold createCellChainA createCellIntoAsset CreateCellSpec createCellAdmit createReceipt
+    bornEmptyCellSlots
   by_cases hg : mintAuthorizedB st.kernel.caps actor newCell = true ∧ newCell ∉ st.kernel.accounts
   · rw [if_pos hg]
     constructor
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hacc, hbal, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
-      -- reconstruct st' from the spec: split both records and substitute every field.
+      refine ⟨hg, rfl, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      · dsimp only [bornEmptyAt]
+        refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      · simp only [createReceipt]
+    · rintro ⟨_, hacc, hborn, hlog, h1, h2, h3, h4, h5, h6, h7, h8⟩
       obtain ⟨k', lg'⟩ := st'
       obtain ⟨acc, cl, cp, es, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb⟩ := k'
-      simp only at hacc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
-      subst hacc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      dsimp only [bornEmptyAt] at hborn
+      obtain ⟨hcl, hcp, hdel, hdgs, hsc, hlif, hdc, hbal⟩ := hborn
+      simp only at hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8
+      subst hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8
       rfl
   · rw [if_neg hg]
     constructor
@@ -244,34 +266,32 @@ theorem createCellA_grows_accounts (st : RecChainedState) (actor newCell : CellI
   · intro c hc; rw [hacc]; exact Finset.mem_insert_of_mem hc
 
 /-- **`createCellA_fresh_bal_zero` — the BORN-EMPTY measure.** After a committed `createCellA`, the
-fresh cell's ledger column reads `0` in EVERY asset (the dregg1-faithful `balance == 0`), while every
-OTHER (cell,asset) entry is literally preserved. This is the conserved-measure content of "born
-empty" — it lives on `bal`, NOT on `cell` (see the FRAME FINDING). Derived from the spec's `bal`
-clause. -/
+fresh cell's ledger column reads `0` in EVERY asset, while every OTHER (cell,asset) entry is preserved. -/
 theorem createCellA_fresh_bal_zero (st : RecChainedState) (actor newCell : CellId)
     (st' : RecChainedState) (h : execFullA st (.createCellA actor newCell) = some st') :
     (∀ a, st'.kernel.bal newCell a = 0)
     ∧ (∀ c a, c ≠ newCell → st'.kernel.bal c a = st.kernel.bal c a) := by
-  have hbal : st'.kernel.bal = (fun c a => if c = newCell then 0 else st.kernel.bal c a) :=
-    ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.1
+  have hborn := ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.1
+  obtain ⟨_, _, _, _, _, _, _, hbal⟩ := hborn
   refine ⟨?_, ?_⟩
   · intro a; rw [hbal]; simp only [if_pos]
   · intro c a hc; rw [hbal]; simp only [if_neg hc]
 
-/-- **`createCellA_cell_frame` — the `cell` map is UNTOUCHED (the FRAME FINDING, on the spec).** A
-committed `createCellA` leaves the ENTIRE `kernel.cell` map byte-for-byte unchanged — the executor
-does not write the born cell's record; born-empty lives on `bal`. -/
-theorem createCellA_cell_frame (st : RecChainedState) (actor newCell : CellId)
+/-- **`createCellA_born_empty_cell` — the fresh id's `cell` record is default.** -/
+theorem createCellA_born_empty_cell (st : RecChainedState) (actor newCell : CellId)
     (st' : RecChainedState) (h : execFullA st (.createCellA actor newCell) = some st') :
-    st'.kernel.cell = st.kernel.cell :=
-  ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.2.2.1
+    st'.kernel.cell newCell = default := by
+  have hborn := ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.1
+  obtain ⟨hcl, _⟩ := hborn
+  rw [hcl]; simp only [if_pos]
 
-/-- **`createCellA_caps_frame` — authority Δ = 0.** A committed `createCellA` never edits the cap
-table. -/
-theorem createCellA_caps_frame (st : RecChainedState) (actor newCell : CellId)
+/-- **`createCellA_born_empty_caps` — the fresh id's cap slot is empty.** -/
+theorem createCellA_born_empty_caps (st : RecChainedState) (actor newCell : CellId)
     (st' : RecChainedState) (h : execFullA st (.createCellA actor newCell) = some st') :
-    st'.kernel.caps = st.kernel.caps :=
-  ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.2.2.2.1
+    st'.kernel.caps newCell = [] := by
+  have hborn := ((execCreateCellA_iff_spec st actor newCell st').mp h).2.2.1
+  obtain ⟨_, hcp, _⟩ := hborn
+  rw [hcp]; simp only [if_pos]
 
 /-- **`createCellA_supply_neutral` — CONSERVATION CONTENT: account-growth is supply-NEUTRAL.** A
 committed `createCellA` leaves `recTotalAsset` UNCHANGED for EVERY asset — the index set genuinely
@@ -329,12 +349,11 @@ snapshot initialized. So FIVE kernel components move — `accounts`+`bal` (creat
 `child`) — while the OTHER 12 kernel fields are framed. The spec is factored through the create-leg
 post-state so the touched-component clauses read declaratively. -/
 
-/-- The post `caps` table a committed `spawnA` produces (declarative): the child's slot gains the
-held parent cap prepended; every OTHER slot reads the pre `caps` (the create leg is cap-orthogonal —
-`createCellIntoAsset` touches only `accounts`+`bal`, so its `caps` IS the pre `caps`). -/
+/-- The post `caps` table a committed `spawnA` produces (declarative): the child's slot is a clean
+singleton of the held parent cap (born-empty create leg — no stale `k.caps child` resurrection);
+every OTHER slot reads the pre `caps`. -/
 def spawnCapsMap (k : RecordKernelState) (actor child target : CellId) : CellId → List Cap :=
-  fun l => if l = child then heldCapTo k.caps actor target :: k.caps l
-           else k.caps l
+  fun l => if l = child then [heldCapTo k.caps actor target] else k.caps l
 
 /-- The post `delegate` pointer map a committed `spawnA` produces: child points at the spawner; every
 other pointer is the pre `delegate` (create-leg-orthogonal). -/
@@ -352,25 +371,26 @@ are the create-leg `accounts`/`bal` plus the handoff `caps`/`delegate`/`delegati
 gains the child-creation row; and the OTHER 12 kernel fields are LITERALLY unchanged. -/
 def SpawnSpec (st : RecChainedState) (actor child target : CellId) (st' : RecChainedState) : Prop :=
   spawnAdmit st.kernel actor child target
-  -- the TOUCHED components: create-leg accounts/bal + handoff caps/delegate/delegations.
+  -- create-leg growth + born-empty slots at `child` (except caps/delegate/delegations overwritten below).
   ∧ st'.kernel.accounts = insert child st.kernel.accounts
-  ∧ st'.kernel.bal = (fun c a => if c = child then 0 else st.kernel.bal c a)
+  ∧ (st'.kernel.cell = fun c => if c = child then default else st.kernel.cell c)
+  ∧ (st'.kernel.slotCaveats = fun c => if c = child then [] else st.kernel.slotCaveats c)
+  ∧ (st'.kernel.lifecycle = fun c => if c = child then 0 else st.kernel.lifecycle c)
+  ∧ (st'.kernel.deathCert = fun c => if c = child then 0 else st.kernel.deathCert c)
+  ∧ (st'.kernel.bal = fun c a => if c = child then 0 else st.kernel.bal c a)
+  -- authority handoff at `child` (intentionally NOT empty — copies the held parent cap).
   ∧ st'.kernel.caps = spawnCapsMap st.kernel actor child target
   ∧ st'.kernel.delegate = spawnDelegateMap st.kernel actor child
   ∧ st'.kernel.delegations = spawnDelegationsMap st.kernel actor child
   ∧ st'.log = createReceipt actor child :: st.log
-  -- THE FRAME: every one of the 12 other kernel fields literally unchanged.
-  ∧ st'.kernel.cell = st.kernel.cell
+  -- global side-tables framed.
   ∧ st'.kernel.escrows = st.kernel.escrows
   ∧ st'.kernel.nullifiers = st.kernel.nullifiers
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
   ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
-  ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
-  ∧ st'.kernel.lifecycle = st.kernel.lifecycle
-  ∧ st'.kernel.deathCert = st.kernel.deathCert
   ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
 
 /-- **`spawnChainA_iff_spec` — CHAINED EXECUTOR ⟺ SPEC (FULL state, both directions) for spawn.** The
@@ -385,8 +405,7 @@ theorem spawnChainA_iff_spec (st : RecChainedState) (actor child target : CellId
   by_cases hg : (st.kernel.caps actor).any (fun cap => confersEdgeTo target cap) = true ∧
       target ∈ st.kernel.accounts
   · rw [if_pos hg]
-    -- now expand the inner createCellChainA branch.
-    unfold createCellChainA createCellIntoAsset
+    unfold createCellChainA createCellIntoAsset bornEmptyCellSlots
     by_cases hc : mintAuthorizedB st.kernel.caps actor child = true ∧ child ∉ st.kernel.accounts
     · rw [if_pos hc]
       simp only []
@@ -394,14 +413,24 @@ theorem spawnChainA_iff_spec (st : RecChainedState) (actor child target : CellId
       · intro h
         simp only [Option.some.injEq] at h
         subst h
-        exact ⟨⟨hg.1, hg.2, hc⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-               rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-      · rintro ⟨_, hacc, hbal, hcaps, hdel, hdgs, hlog, h1, h2, h3, h4, h5, h6, h7, h8,
-                h9, h10, h11, h12⟩
+        refine ⟨⟨hg.1, hg.2, hc⟩, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl,
+               rfl, rfl, rfl⟩
+        · funext c; by_cases hc' : c = child <;> simp [hc']
+        · funext c; by_cases hc' : c = child <;> simp [hc']
+        · funext c; by_cases hc' : c = child <;> simp [hc']
+        · funext c; by_cases hc' : c = child <;> simp [hc']
+        · funext c a; by_cases hc' : c = child <;> simp [hc']
+        · funext l; by_cases hl : l = child <;> simp [hl, spawnCapsMap]
+        · funext c; by_cases hc' : c = child <;> simp [hc', spawnDelegateMap]
+        · funext c; by_cases hc' : c = child <;> simp [hc', spawnDelegationsMap]
+        · simp only [createReceipt]
+      · rintro ⟨⟨he, ht, hca⟩, hacc, hcl, hsc, hlif, hdc, hbal, hcaps, hdel, hdgs, hlog, h1, h2,
+                h3, h4, h5, h6, h7, h8⟩
+        simp only [Option.some.injEq]
         obtain ⟨k', lg'⟩ := st'
         obtain ⟨acc, cl, cp, es, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb⟩ := k'
-        simp only at hacc hbal hcaps hdel hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
-        subst hacc hbal hcaps hdel hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+        simp only at hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8
+        subst hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8
         rfl
     · rw [if_neg hc]
       constructor
@@ -446,15 +475,13 @@ theorem spawnA_grows_accounts (st : RecChainedState) (actor child target : CellI
     ((execSpawnA_iff_spec st actor child target st').mp h).2.1
   rw [hacc]; exact Finset.mem_insert_self _ _
 
-/-- **`spawnA_child_cap` — the concrete held parent cap moves to the child.** The child's slot gains
-EXACTLY the spawner's held cap conferring an edge to `target` (the least-amplifying handoff), prepended
-to its create-leg slot. Read off the spec's `caps` clause. -/
+/-- **`spawnA_child_cap` — the concrete held parent cap moves to the child.** The child's slot is a
+clean singleton of the spawner's held cap conferring an edge to `target` (born-empty create leg). -/
 theorem spawnA_child_cap (st : RecChainedState) (actor child target : CellId)
     (st' : RecChainedState) (h : execFullA st (.spawnA actor child target) = some st') :
-    st'.kernel.caps child
-      = heldCapTo st.kernel.caps actor target :: st.kernel.caps child := by
-  have hcaps : st'.kernel.caps = spawnCapsMap st.kernel actor child target :=
-    ((execSpawnA_iff_spec st actor child target st').mp h).2.2.2.1
+    st'.kernel.caps child = [heldCapTo st.kernel.caps actor target] := by
+  rcases (execSpawnA_iff_spec st actor child target st').mp h with
+    ⟨_, _, _, _, _, _, _, hcaps, _, _, _, _, _, _, _, _, _, _⟩
   rw [hcaps]; simp only [spawnCapsMap, if_pos]
 
 /-- **`spawnA_supply_neutral` — account-growth + cap-handoff is supply-NEUTRAL ∀ asset.** Lifts
@@ -540,8 +567,8 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`ad
 #assert_axioms createCellA_fresh
 #assert_axioms createCellA_grows_accounts
 #assert_axioms createCellA_fresh_bal_zero
-#assert_axioms createCellA_cell_frame
-#assert_axioms createCellA_caps_frame
+#assert_axioms createCellA_born_empty_cell
+#assert_axioms createCellA_born_empty_caps
 #assert_axioms createCellA_supply_neutral
 #assert_axioms createCellA_rejects_unauthorized
 #assert_axioms createCellA_rejects_stale

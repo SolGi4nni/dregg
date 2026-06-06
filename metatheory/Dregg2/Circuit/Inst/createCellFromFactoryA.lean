@@ -1,15 +1,17 @@
 /-
-# Dregg2.Circuit.Inst.createCellFromFactoryA — the v2-quad (`EffectCommit4`) VALIDATION for
+# Dregg2.Circuit.Inst.createCellFromFactoryA — the v2-quint (`EffectCommit5`) VALIDATION for
 `createCellFromFactoryA`.
 
 `createCellFromFactoryA` grows `accounts`, resets `bal` at `newCell`, mints `cell` with the factory's
-initial fields + program-VK, installs `slotCaveats` from the factory entry, prepends the creation
-receipt, and freezes the other 13 kernel fields. Guard: ∃ conforming `FactoryEntry` in the registry.
+initial fields + program-VK, installs `slotCaveats` from the factory entry, resets born-empty authority
+slots at `newCell`, prepends the creation receipt, and freezes global side-tables. Guard: ∃ conforming
+`FactoryEntry` in the registry.
 
-ADDITIVE: imports `AccountsCommit`, `EffectCommit4`, `Spec/factorycreation`; edits none.
+ADDITIVE: imports `AccountsCommit`, `BornEmptyCommit`, `EffectCommit5`, `Spec/factorycreation`; edits none.
 -/
 import Dregg2.Circuit.AccountsCommit
-import Dregg2.Circuit.EffectCommit4
+import Dregg2.Circuit.BornEmptyCommit
+import Dregg2.Circuit.EffectCommit5
 import Dregg2.Circuit.ListCommit
 import Dregg2.Circuit.Spec.factorycreation
 
@@ -20,8 +22,9 @@ open Dregg2.Circuit.StateCommit
 open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
 open Dregg2.Circuit.EffectCommit2Dual
-open Dregg2.Circuit.EffectCommit4
+open Dregg2.Circuit.EffectCommit5
 open Dregg2.Circuit.AccountsCommit
+open Dregg2.Circuit.BornEmptyCommit
 open Dregg2.Circuit.ListCommit
 open Dregg2.Circuit.Spec.FactoryCreation
 open Dregg2.Exec
@@ -37,19 +40,16 @@ def cBitGuard : Constraint := { lhs := .var vBitGuard, rhs := .const 1 }
 theorem propBit_eq_one {p : Prop} [Decidable p] : Circuit.propBit p = 1 ↔ p := by
   unfold Circuit.propBit; split <;> simp_all
 
-/-! ## §1 — the `RestIffNoAccountsBalCellSlotCaveats` portal. -/
+/-! ## §1 — the `RestIffNoFactoryTouched` portal. -/
 
-/-- **`RestIffNoAccountsBalCellSlotCaveats RH`** — rest hash binds the 13 non-touched components,
-omitting `accounts` + `bal` + `cell` + `slotCaveats`. -/
-def RestIffNoAccountsBalCellSlotCaveats (RH : RecordKernelState → ℤ) : Prop :=
+/-- **`RestIffNoFactoryTouched RH`** — rest portal for the quint circuit: global side-tables only. -/
+def RestIffNoFactoryTouched (RH : RecordKernelState → ℤ) : Prop :=
   ∀ k k' : RecordKernelState, RH k = RH k' ↔
-    (k'.caps = k.caps ∧ k'.escrows = k.escrows ∧ k'.nullifiers = k.nullifiers
-      ∧ k'.revoked = k.revoked ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues
-      ∧ k'.swiss = k.swiss ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
-      ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
-      ∧ k'.sealedBoxes = k.sealedBoxes)
+    (k'.escrows = k.escrows ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
+      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes)
 
-/-! ## §2 — the `createFromFactoryE` quad instance. -/
+/-! ## §2 — the `createFromFactoryE` quint instance. -/
 
 structure CreateFromFactoryArgs where
   actor    : CellId
@@ -119,13 +119,13 @@ def expectedBal (s : RecChainedState) (args : CreateFromFactoryArgs) : CellId �
 
 def expectedCell (s : RecChainedState) (args : CreateFromFactoryArgs) : CellId → Value :=
   match findFactory s.kernel.factories args.vk.toNat with
-  | some e => factoryPostCell s.kernel.cell args.newCell e
+  | some e => factoryPostCell (factoryBornCell s.kernel args.newCell) args.newCell e
   | none   => s.kernel.cell
 
 def expectedSlotCaveats (s : RecChainedState) (args : CreateFromFactoryArgs) :
     CellId → List SlotCaveat :=
   match findFactory s.kernel.factories args.vk.toNat with
-  | some e => factoryPostCaveats s.kernel.slotCaveats args.newCell e
+  | some e => factoryPostCaveats (factoryBornCaveats s.kernel args.newCell) args.newCell e
   | none   => s.kernel.slotCaveats
 
 def accountsComp (LE : CellId → ℤ) (cN : List ℤ → ℤ)
@@ -145,24 +145,28 @@ def slotCaveatsComp (D : (CellId → List SlotCaveat) → ℤ) (hD : Function.In
     ActiveComponent RecChainedState CreateFromFactoryArgs :=
   funcComponent (β := CellId → List SlotCaveat) (·.slotCaveats) D hD expectedSlotCaveats
 
+def bornEmptyAuthorityComp (D : BornEmptyAuthorityTables → ℤ) (hD : Function.Injective D) :
+    ActiveComponent RecChainedState CreateFromFactoryArgs :=
+  bornEmptyAuthorityComponent (toKernel := chainView.toKernel) (fresh := fun _ args => args.newCell) D hD
+
 def createFromFactoryE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
-    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC) :
-    EffectSpec2Quad RecChainedState CreateFromFactoryArgs where
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth) :
+    EffectSpec2Quint RecChainedState CreateFromFactoryArgs where
   view         := chainView
   active1      := accountsComp LE cN hN hLE
   active2      := balComp DBal hDBal
   active3      := cellComp DCell hDCell
   active4      := slotCaveatsComp DSC hDSC
+  active5      := bornEmptyAuthorityComp DAuth hDAuth
   logUpdate    := some (fun s args => factoryReceipt args.actor args.newCell :: s.log)
   restFrame    := fun k k' =>
-    (k'.caps = k.caps ∧ k'.escrows = k.escrows ∧ k'.nullifiers = k.nullifiers
-      ∧ k'.revoked = k.revoked ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues
-      ∧ k'.swiss = k.swiss ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
-      ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
-      ∧ k'.sealedBoxes = k.sealedBoxes)
+    (k'.escrows = k.escrows ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
+      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes)
   guardGates   := createFromFactoryGuardGates
   guardProp    := createFromFactoryGuardProp
   guardWidth   := 1
@@ -175,8 +179,10 @@ instance createFromFactoryE_guardDecidable (LE : CellId → ℤ) (cN : List ℤ 
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
     (s : RecChainedState) (args : CreateFromFactoryArgs) :
-    Decidable ((createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC).guardProp s args) := by
+    Decidable ((createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth).guardProp
+      s args) := by
   dsimp [createFromFactoryE]; infer_instance
 
 /-! ### §2a — per-effect obligations. -/
@@ -185,10 +191,12 @@ theorem createFromFactoryGuardDecodes (LE : CellId → ℤ) (cN : List ℤ → �
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
-    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC) :
-    GuardDecodes2Quad (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC) := by
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth) :
+    GuardDecodes2Quint (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) := by
   intro s args s' hsat
-  dsimp [createFromFactoryE] at hsat
+  change satisfied createFromFactoryGuardGates (createFromFactoryGuardEncode s args s') at hsat
+  show createFromFactoryGuardProp s args
   have hg := hsat cBitGuard (by simp [createFromFactoryGuardGates])
   simp only [Constraint.holds, cBitGuard, vBitGuard, Expr.eval, createFromFactoryGuardEncode,
     if_pos] at hg
@@ -198,8 +206,9 @@ theorem createFromFactoryGuardEncodes (LE : CellId → ℤ) (cN : List ℤ → �
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
-    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC) :
-    GuardEncodes2Quad (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC) := by
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth) :
+    GuardEncodes2Quint (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) := by
   intro s args s' hg
   dsimp [createFromFactoryE]
   intro c hc
@@ -213,38 +222,68 @@ theorem createFromFactoryRestFrameDecodes (S : Surface2) (LE : CellId → ℤ) (
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
-    (hRest : RestIffNoAccountsBalCellSlotCaveats S.RH) :
-    RestFrameDecodes2Quad S (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC) := by
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
+    (hRest : RestIffNoFactoryTouched S.RH) :
+    RestFrameDecodes2Quint S
+      (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) := by
   intro k k' h
   dsimp [createFromFactoryE]
   exact (hRest k k').mp h
 
-/-! ### §2b — apex ↔ `CreateFromFactorySpec`. -/
+/-! ### §2b — apex ↔ the QUINT-CIRCUIT spec. -/
 
-theorem apex_iff_createFromFactorySpec (LE : CellId → ℤ) (cN : List ℤ → ℤ)
+/-- What the v2-quint circuit pins: factory install + born-empty authority slots at `newCell`. -/
+def CreateFromFactoryCircuitSpec (st : RecChainedState) (actor newCell : CellId) (vk : Int)
+    (st' : RecChainedState) : Prop :=
+  ∃ e : FactoryEntry,
+    factoryAdmit st.kernel actor newCell vk e
+    ∧ st'.kernel.accounts = insert newCell st.kernel.accounts
+    ∧ st'.kernel.bal = (fun c a => if c = newCell then 0 else st.kernel.bal c a)
+    ∧ st'.kernel.cell = factoryPostCell (factoryBornCell st.kernel newCell) newCell e
+    ∧ st'.kernel.slotCaveats = factoryPostCaveats (factoryBornCaveats st.kernel newCell) newCell e
+    ∧ readBornEmptyAuthority st'.kernel = expectedBornEmptyAuthority st.kernel newCell
+    ∧ st'.log = factoryReceipt actor newCell :: st.log
+    ∧ st'.kernel.escrows = st.kernel.escrows
+    ∧ st'.kernel.nullifiers = st.kernel.nullifiers
+    ∧ st'.kernel.revoked = st.kernel.revoked
+    ∧ st'.kernel.commitments = st.kernel.commitments
+    ∧ st'.kernel.queues = st.kernel.queues
+    ∧ st'.kernel.swiss = st.kernel.swiss
+    ∧ st'.kernel.factories = st.kernel.factories
+    ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
+
+theorem CreateFromFactorySpec_implies_circuitSpec (st : RecChainedState) (actor newCell : CellId)
+    (vk : Int) (st' : RecChainedState) (h : CreateFromFactorySpec st actor newCell vk st') :
+    CreateFromFactoryCircuitSpec st actor newCell vk st' := by
+  obtain ⟨e, hadmit, hacc, hbal, hcell, hsc, hlog, hcaps, hlif, hdc, hdel, hdgs, hEsc, hNull, hRev,
+      hCom, hQ, hSw, hFac, hSB⟩ := h
+  refine ⟨e, hadmit, hacc, hbal, hcell, hsc, ?_, hlog, hEsc, hNull, hRev, hCom, hQ, hSw, hFac, hSB⟩
+  exact (bornEmptyAuthority_post_iff st.kernel newCell st'.kernel).mpr
+    ⟨hcaps, hlif, hdc, hdel, hdgs⟩
+
+theorem apex_iff_createFromFactoryCircuitSpec (LE : CellId → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
     (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState) :
-    (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC).apex s args s' ↔
-      CreateFromFactorySpec s args.actor args.newCell args.vk s' := by
-  dsimp only [EffectSpec2Quad.apex, createFromFactoryE, accountsComp, balComp, cellComp,
-    slotCaveatsComp, accountsComponent, funcComponent, chainView, CreateFromFactorySpec,
-    createFromFactoryGuardProp, factoryAdmit, expectedAccounts, expectedBal, expectedCell,
-    expectedSlotCaveats]
+    (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth).apex s args s' ↔
+      CreateFromFactoryCircuitSpec s args.actor args.newCell args.vk s' := by
+  dsimp only [EffectSpec2Quint.apex, createFromFactoryE, accountsComp, balComp, cellComp,
+    slotCaveatsComp, bornEmptyAuthorityComp, accountsComponent, funcComponent,
+    bornEmptyAuthorityComponent, chainView, CreateFromFactoryCircuitSpec, createFromFactoryGuardProp,
+    factoryAdmit, expectedAccounts, expectedBal, expectedCell, expectedSlotCaveats,
+    readBornEmptyAuthority, expectedBornEmptyAuthority]
   constructor
-  · rintro ⟨hex, hacc, hbal, hcell, hsc, hlog, hCaps, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+  · rintro ⟨hex, hacc, hbal, hcell, hsc, hauth, hlog, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hSB⟩
     obtain ⟨e, hadmit⟩ := hex
-    refine ⟨e, hadmit, hacc, hbal, ?_, ?_, hlog, hCaps, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+    refine ⟨e, hadmit, hacc, hbal, ?_, ?_, hauth, hlog, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hSB⟩
     · simpa [expectedCell, hadmit.2.1] using hcell
     · simpa [expectedSlotCaveats, hadmit.2.1] using hsc
-  · rintro ⟨e, hadmit, hacc, hbal, hcell, hsc, hlog, hCaps, hEsc, hNul, hRev, hCom, hQ, hSw, hFac,
-      hLif, hDC, hDel, hDgs, hSB⟩
-    refine ⟨⟨e, hadmit⟩, hacc, hbal, ?_, ?_, hlog, hCaps, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+  · rintro ⟨e, hadmit, hacc, hbal, hcell, hsc, hauth, hlog, hEsc, hNul, hRev, hCom, hQ, hSw, hFac,
+      hSB⟩
+    refine ⟨⟨e, hadmit⟩, hacc, hbal, ?_, ?_, hauth, hlog, hEsc, hNul, hRev, hCom, hQ, hSw, hFac, hSB⟩
     · simpa [expectedCell, hadmit.2.1] using hcell
     · simpa [expectedSlotCaveats, hadmit.2.1] using hsc
 
@@ -256,24 +295,29 @@ theorem createCellFromFactoryA_full_sound
     (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
     (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
     (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
-    (hRest : RestIffNoAccountsBalCellSlotCaveats S.RH) (hLog : logHashInjective S.LH)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
+    (hRest : RestIffNoFactoryTouched S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState)
-    (h : satisfiedE2Quad S (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC)
-        (encodeE2Quad S (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC)
+    (h : satisfiedE2Quint S
+        (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+        (encodeE2Quint S
+          (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
           s args s')) :
-    CreateFromFactorySpec s args.actor args.newCell args.vk s' := by
+    CreateFromFactoryCircuitSpec s args.actor args.newCell args.vk s' := by
   have hapex :=
-    effect2quad_circuit_full_sound S
-      (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC)
-      (createFromFactoryRestFrameDecodes S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC hRest) hLog
-      (createFromFactoryGuardDecodes LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC) s args s' h
-  exact (apex_iff_createFromFactorySpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC s args s').mp
-    hapex
+    effect2quint_circuit_full_sound S
+      (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+      (createFromFactoryRestFrameDecodes S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
+        hRest) hLog
+      (createFromFactoryGuardDecodes LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) s args
+      s' h
+  exact (apex_iff_createFromFactoryCircuitSpec LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth
+      hDAuth s args s').mp hapex
 
 #assert_axioms createFromFactoryGuardLocal
 #assert_axioms createFromFactoryGuardDecodes
 #assert_axioms createFromFactoryGuardEncodes
-#assert_axioms apex_iff_createFromFactorySpec
+#assert_axioms apex_iff_createFromFactoryCircuitSpec
 #assert_axioms createCellFromFactoryA_full_sound
 
 end Dregg2.Circuit.Inst.CreateCellFromFactoryA

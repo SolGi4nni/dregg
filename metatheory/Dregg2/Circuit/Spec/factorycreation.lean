@@ -58,6 +58,17 @@ open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.EffectsState (setField fieldOf)
 open Dregg2.Authority
 
+private theorem recordKernel_eq_of_fields {k k' : RecordKernelState}
+    (haccounts : k.accounts = k'.accounts) (hcell : k.cell = k'.cell) (hcaps : k.caps = k'.caps)
+    (hescrows : k.escrows = k'.escrows) (hnullifiers : k.nullifiers = k'.nullifiers)
+    (hrevoked : k.revoked = k'.revoked) (hcommitments : k.commitments = k'.commitments)
+    (hbal : k.bal = k'.bal) (hqueues : k.queues = k'.queues) (hswiss : k.swiss = k'.swiss)
+    (hslotCaveats : k.slotCaveats = k'.slotCaveats) (hfactories : k.factories = k'.factories)
+    (hlifecycle : k.lifecycle = k'.lifecycle) (hdeathCert : k.deathCert = k'.deathCert)
+    (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)
+    (hsealedBoxes : k.sealedBoxes = k'.sealedBoxes) : k = k' := by
+  cases k; cases k'; simp_all
+
 /-! ## §1 — the admissibility guard, lifted from the CODE.
 
 `createCellFromFactoryChainA` (`TurnExecutorFull.lean:1002`) commits IFF this exact conjunction
@@ -90,6 +101,13 @@ The post-state's `cell` and `slotCaveats` are built by the factory wrapper over 
 fresh-cell `s1` (= `createCellIntoAsset`). We name those two install maps and validate them
 relationally (the minted cell carries the factory fields/VK/caveats; every OTHER cell is preserved)
 so the spec's `cell`/`slotCaveats` clauses carry real meaning rather than trusting the helper. -/
+
+/-- Born-empty `cell`/`slotCaveats` bases at `newCell` (the create leg before factory install). -/
+def factoryBornCell (k : RecordKernelState) (newCell : CellId) : CellId → Value :=
+  fun c => if c = newCell then default else k.cell c
+
+def factoryBornCaveats (k : RecordKernelState) (newCell : CellId) : CellId → List SlotCaveat :=
+  fun c => if c = newCell then [] else k.slotCaveats c
 
 /-- The post-`cell` map: the minted `newCell` carries the factory's initial fields + the program-VK
 slot installed over the born-empty cell `base`; every other cell's record is the base `cell` map.
@@ -162,11 +180,16 @@ def CreateFromFactorySpec (st : RecChainedState) (actor newCell : CellId) (vk : 
     -- the touched components:
     ∧ st'.kernel.accounts = insert newCell st.kernel.accounts
     ∧ st'.kernel.bal = (fun c a => if c = newCell then 0 else st.kernel.bal c a)
-    ∧ st'.kernel.cell = factoryPostCell st.kernel.cell newCell e
-    ∧ st'.kernel.slotCaveats = factoryPostCaveats st.kernel.slotCaveats newCell e
+    ∧ st'.kernel.cell = factoryPostCell (factoryBornCell st.kernel newCell) newCell e
+    ∧ st'.kernel.slotCaveats = factoryPostCaveats (factoryBornCaveats st.kernel newCell) newCell e
     ∧ st'.log = factoryReceipt actor newCell :: st.log
-    -- THE FRAME: every other kernel field literally unchanged (13 fields).
-    ∧ st'.kernel.caps = st.kernel.caps
+    -- born-empty per-cell slots at `newCell` from the create leg (factory install is cell/caveat-only).
+    ∧ (st'.kernel.caps = fun l => if l = newCell then [] else st.kernel.caps l)
+    ∧ (st'.kernel.lifecycle = fun c => if c = newCell then 0 else st.kernel.lifecycle c)
+    ∧ (st'.kernel.deathCert = fun c => if c = newCell then 0 else st.kernel.deathCert c)
+    ∧ (st'.kernel.delegate = fun c => if c = newCell then none else st.kernel.delegate c)
+    ∧ (st'.kernel.delegations = fun c => if c = newCell then [] else st.kernel.delegations c)
+    -- THE FRAME: global side-tables literally unchanged.
     ∧ st'.kernel.escrows = st.kernel.escrows
     ∧ st'.kernel.nullifiers = st.kernel.nullifiers
     ∧ st'.kernel.revoked = st.kernel.revoked
@@ -174,10 +197,6 @@ def CreateFromFactorySpec (st : RecChainedState) (actor newCell : CellId) (vk : 
     ∧ st'.kernel.queues = st.kernel.queues
     ∧ st'.kernel.swiss = st.kernel.swiss
     ∧ st'.kernel.factories = st.kernel.factories
-    ∧ st'.kernel.lifecycle = st.kernel.lifecycle
-    ∧ st'.kernel.deathCert = st.kernel.deathCert
-    ∧ st'.kernel.delegate = st.kernel.delegate
-    ∧ st'.kernel.delegations = st.kernel.delegations
     ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
 
 /-! ### The post-state the executor actually produces, pinned field-by-field.
@@ -196,10 +215,14 @@ theorem createCellFromFactoryChainA_components {s s' : RecChainedState} {actor n
       factoryAdmit s.kernel actor newCell vk e
       ∧ s'.kernel.accounts = insert newCell s.kernel.accounts
       ∧ s'.kernel.bal = (fun c a => if c = newCell then 0 else s.kernel.bal c a)
-      ∧ s'.kernel.cell = factoryPostCell s.kernel.cell newCell e
-      ∧ s'.kernel.slotCaveats = factoryPostCaveats s.kernel.slotCaveats newCell e
+      ∧ s'.kernel.cell = factoryPostCell (factoryBornCell s.kernel newCell) newCell e
+      ∧ s'.kernel.slotCaveats = factoryPostCaveats (factoryBornCaveats s.kernel newCell) newCell e
       ∧ s'.log = factoryReceipt actor newCell :: s.log
-      ∧ s'.kernel.caps = s.kernel.caps
+      ∧ (s'.kernel.caps = fun l => if l = newCell then [] else s.kernel.caps l)
+      ∧ (s'.kernel.lifecycle = fun c => if c = newCell then 0 else s.kernel.lifecycle c)
+      ∧ (s'.kernel.deathCert = fun c => if c = newCell then 0 else s.kernel.deathCert c)
+      ∧ (s'.kernel.delegate = fun c => if c = newCell then none else s.kernel.delegate c)
+      ∧ (s'.kernel.delegations = fun c => if c = newCell then [] else s.kernel.delegations c)
       ∧ s'.kernel.escrows = s.kernel.escrows
       ∧ s'.kernel.nullifiers = s.kernel.nullifiers
       ∧ s'.kernel.revoked = s.kernel.revoked
@@ -207,10 +230,6 @@ theorem createCellFromFactoryChainA_components {s s' : RecChainedState} {actor n
       ∧ s'.kernel.queues = s.kernel.queues
       ∧ s'.kernel.swiss = s.kernel.swiss
       ∧ s'.kernel.factories = s.kernel.factories
-      ∧ s'.kernel.lifecycle = s.kernel.lifecycle
-      ∧ s'.kernel.deathCert = s.kernel.deathCert
-      ∧ s'.kernel.delegate = s.kernel.delegate
-      ∧ s'.kernel.delegations = s.kernel.delegations
       ∧ s'.kernel.sealedBoxes = s.kernel.sealedBoxes := by
   obtain ⟨e, s1, hfind, hconf, hc, hs'⟩ := createCellFromFactoryChainA_factors h
   -- recover the underlying createCell gate conjuncts + the s1 shape:
@@ -223,12 +242,12 @@ theorem createCellFromFactoryChainA_components {s s' : RecChainedState} {actor n
   refine ⟨e, ⟨hvk, hfind, hconf, hauth, hfresh⟩, ?_⟩
   -- substitute s' = factory-install over s1, and s1 = createCellChainA's output over s.
   subst hs' hs1
-  -- every component is now a structure projection of the explicit factory-install record over
-  -- `createCellIntoAsset s.kernel newCell`. `createCellIntoAsset` edits only `accounts`+`bal` (so
-  -- `cell`/`slotCaveats` project through to `s.kernel.cell`/`s.kernel.slotCaveats`, making the
-  -- `factoryPostCell`/`factoryPostCaveats` clauses definitional); the factory wrapper edits only
-  -- `cell`+`slotCaveats`; the receipt is the createCell log head. All 18 components hold by `rfl`.
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, ?_, ?_, ?_, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · funext l; by_cases hl : l = newCell <;> simp [hl, createCellIntoAsset, bornEmptyCellSlots]
+  · funext c; by_cases hc' : c = newCell <;> simp [hc', createCellIntoAsset, bornEmptyCellSlots]
+  · funext c; by_cases hc' : c = newCell <;> simp [hc', createCellIntoAsset, bornEmptyCellSlots]
+  · funext c; by_cases hc' : c = newCell <;> simp [hc', createCellIntoAsset, bornEmptyCellSlots]
+  · funext c; by_cases hc' : c = newCell <;> simp [hc', createCellIntoAsset, bornEmptyCellSlots]
 
 /-- **`createCellFromFactoryChainA_iff_spec` — CHAINED EXECUTOR ⟺ SPEC (FULL state, both
 directions).** The chained record kernel commits a factory creation into `st'` IFF `st'` is EXACTLY
@@ -248,7 +267,7 @@ theorem createCellFromFactoryChainA_iff_spec (st : RecChainedState) (actor newCe
     -- explicit committed output, then prove that output equals `st'` from the 18 spec equations.
     rintro ⟨e, ⟨hvk, hfind, hconf, hauth, hfresh⟩,
             hacc, hbal, hcell, hcav, hlog,
-            hcaps, hesc, hnull, hrev, hcom, hq, hsw, hfac, hlc, hdc, hdel, hdn, hsb⟩
+            hcaps, hlc, hdc, hdel, hdn, hesc, hnull, hrev, hcom, hq, hsw, hfac, hsb⟩
     -- the underlying createCell commits (its gate is the last two guard conjuncts):
     have hc : createCellChainA st actor newCell = some
         { kernel := createCellIntoAsset st.kernel newCell
@@ -273,10 +292,11 @@ theorem createCellFromFactoryChainA_iff_spec (st : RecChainedState) (actor newCe
     -- `slotCaveats` (createCellIntoAsset edits only `accounts`/`bal`), so the executor's `cell`/
     -- `slotCaveats` lambdas ARE `factoryPostCell`/`factoryPostCaveats` definitionally — the `rfl`
     -- after substituting `hcell`/`hcav` closes those.
-    rw [hex]; congr 1
-    obtain ⟨⟨acc, cl, cp, es, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb⟩, lg'⟩ := st'
-    simp only [factoryReceipt] at hacc hbal hcell hcav hlog hcaps hesc hnull hrev hcom hq hsw hfac hlc hdc hdel hdn hsb
-    subst hacc hbal hcell hcav hlog hcaps hesc hnull hrev hcom hq hsw hfac hlc hdc hdel hdn hsb
+    rw [hex]
+    obtain ⟨k', lg'⟩ := st'
+    obtain ⟨acc, cl, cp, es, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb⟩ := k'
+    simp only at hacc hbal hcell hcav hlog hcaps hlc hdc hdel hdn hesc hnull hrev hcom hq hsw hfac hsb
+    subst hacc hbal hcell hcav hlog hcaps hlc hdc hdel hdn hesc hnull hrev hcom hq hsw hfac hsb
     rfl
 
 /-- **`execCreateFromFactoryA_iff_spec` — THE DELIVERABLE: `execFullA`-LEVEL EXECUTOR ⟺ SPEC (FULL
@@ -331,7 +351,7 @@ theorem createFromFactoryA_installs_program (st : RecChainedState) (actor newCel
   obtain ⟨e, ⟨_, hfind, _, _, _⟩, _, _, _, hcav, _⟩ :=
     (execCreateFromFactoryA_iff_spec st actor newCell vk st').mp h
   refine ⟨e, hfind, ?_⟩
-  rw [hcav]; exact (factoryPostCaveats_correct st.kernel.slotCaveats newCell e).1
+  rw [hcav]; simp only [factoryPostCaveats, factoryBornCaveats, if_pos]
 
 /-- **`createFromFactoryA_installs_fields` — the minted cell carries the factory's fields + VK.**
 Derived from the spec's `cell` clause + the declaratively-validated install map: the new cell's
@@ -341,11 +361,11 @@ theorem createFromFactoryA_installs_fields (st : RecChainedState) (actor newCell
     ∃ e, findFactory st.kernel.factories vk.toNat = some e
       ∧ st'.kernel.cell newCell
           = setField factoryVkField
-              (installInitialFields (st.kernel.cell newCell) e.initialFields) (.int e.programVk) := by
+              (installInitialFields default e.initialFields) (.int e.programVk) := by
   obtain ⟨e, ⟨_, hfind, _, _, _⟩, _, _, hcell, _⟩ :=
     (execCreateFromFactoryA_iff_spec st actor newCell vk st').mp h
   refine ⟨e, hfind, ?_⟩
-  rw [hcell]; exact (factoryPostCell_correct st.kernel.cell newCell e).1
+  rw [hcell]; simp only [factoryPostCell, factoryBornCell, if_pos]
 
 /-- **`createFromFactoryA_supply_delta` — CONSERVATION CONTENT: a committed factory creation is
 balance-NEUTRAL on EVERY asset.** The cell is born EMPTY and the field/caveat install is

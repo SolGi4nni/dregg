@@ -23,13 +23,16 @@ The circuit⟺spec direction carries exactly the realizable Poseidon collision-r
 sum-injectivity that the de-portaling removed. No `sorry`/`admit`/`native_decide`/`axiom`.
 -/
 import Dregg2.Circuit.StateCommit
+import Dregg2.Circuit.Lookup
 
 namespace Dregg2.Circuit.Refinement
 
 open Dregg2.Circuit
+open Dregg2.Circuit.Lookup
 open Dregg2.Exec
 open Dregg2.Circuit.Transfer
 open Dregg2.Circuit.StateCommit
+open Dregg2.Exec.CircuitEmit
 
 /-! ## §1 — Relational refinement (the framework). -/
 
@@ -159,9 +162,74 @@ theorem circuit_conserves
   (circuit_refines_spec CH RH cmb compress compressN hCompress hCompressN hLeaf hRest).preserves
     specStep_conserves k t k' ⟨hwf, hwf', hsat⟩
 
+/-! ## §5 — Emitted wire form: the polynomial gates the Rust prover checks. -/
+
+/-- The EMITTED polynomial step (the 12 gates `lean_descriptor_air` enforces — no `StateCommitSat`). -/
+abbrev emittedArithStep : StepRel RecordKernelState Turn RecordKernelState :=
+  fun k t k' => satisfiedEmitted emittedState (encodeS CH RH cmb compress compressN k t k')
+
+/-- **`emitted_equiv_arith`** — the emitted wire form denotes EXACTLY `satisfied stateCircuit` on the
+encoded witness. The Plonky3 prover checks this polynomial layer; `StateCommitSat` is the witness-
+generator's root-binding obligation (opaque hash algebra, discharged by CR portals). -/
+theorem emitted_equiv_arith (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) :
+    emittedArithStep CH RH cmb compress compressN k t k'
+      ↔ satisfied stateCircuit (encodeS CH RH cmb compress compressN k t k') := by
+  unfold emittedArithStep
+  exact (emitStateFaithful (encodeS CH RH cmb compress compressN k t k')).symm
+
+/-- Every full `circuitStep` implies the emitted polynomial step (the root-binding conjunct is extra). -/
+theorem circuitStep_implies_emitted (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (h : circuitStep CH RH cmb compress compressN k t k') :
+    emittedArithStep CH RH cmb compress compressN k t k' := by
+  unfold circuitStep satisfiedS at h
+  obtain ⟨hsc, _⟩ := h
+  exact (emitted_equiv_arith CH RH cmb compress compressN k t k').mpr hsc
+
+/-! ## §6 — Field-sound `CircuitL` layer: lookups refine the polynomial gates. -/
+
+/-- Balance-wire range checks bundled with `stateCircuit` (the semantic `CircuitL` form). -/
+def stateCircuitL : CircuitL :=
+  { gates := stateCircuit
+  , lookups := stateRanges.map (fun r => rangeCheck (.var r.wire) r.bits) }
+
+/-- The field-sound full-state step: `stateCircuit` gates PLUS balance-wire range lookups. -/
+abbrev circuitLArithStep : StepRel RecordKernelState Turn RecordKernelState :=
+  fun k t k' =>
+    stateCircuitL.satisfied (encodeS CH RH cmb compress compressN k t k')
+
+/-- **`circuitL_refines_arith`** — range lookups RESTRICT witnesses: every `CircuitL` step satisfies
+the bare polynomial gates. No field-wraparound forgeries pass the lookup layer. -/
+theorem circuitL_refines_arith (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (h : circuitLArithStep CH RH cmb compress compressN k t k') :
+    satisfied stateCircuit (encodeS CH RH cmb compress compressN k t k') := by
+  unfold circuitLArithStep stateCircuitL CircuitL.satisfied at h
+  obtain ⟨hgates, _⟩ := h
+  exact hgates
+
+/-- **`circuitLArith_refines_emitted`** — the lookup layer refines through to the emitted wire form. -/
+theorem circuitLArith_refines_emitted (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
+    (h : circuitLArithStep CH RH cmb compress compressN k t k') :
+    emittedArithStep CH RH cmb compress compressN k t k' := by
+  exact (emitted_equiv_arith CH RH cmb compress compressN k t k').mpr
+    (circuitL_refines_arith CH RH cmb compress compressN k t k' h)
+
+/-- **`circuitL_refines_spec`** — field-sound polynomial satisfaction + well-formedness ⇒ spec step.
+Needs `StateCommitSat` separately for the full `circuitStep` soundness theorem. -/
+theorem circuitL_refines_spec
+    (hCompress : compressInjective compress) (hCompressN : compressNInjective compressN)
+    (hLeaf : cellLeafInjective CH) (hRest : RestHashIffFrame RH) :
+    Refines
+      (fun k t k' => AccountsWF k ∧ AccountsWF k' ∧
+        circuitLArithStep CH RH cmb compress compressN k t k' ∧
+        StateCommitSat cmb compress (encodeS CH RH cmb compress compressN k t k'))
+      specStep :=
+  fun k t k' ⟨hwf, hwf', hL, hroot⟩ =>
+    circuit_refines_spec CH RH cmb compress compressN hCompress hCompressN hLeaf hRest k t k'
+      ⟨hwf, hwf', ⟨circuitL_refines_arith CH RH cmb compress compressN k t k' hL, hroot⟩⟩
+
 end Circuit
 
-/-! ## §5 — Axiom-hygiene tripwires. -/
+/-! ## §7 — Axiom-hygiene tripwires. -/
 
 #assert_axioms exec_equiv_spec
 #assert_axioms circuit_refines_spec
@@ -169,5 +237,10 @@ end Circuit
 #assert_axioms circuit_refines_exec
 #assert_axioms specStep_conserves
 #assert_axioms circuit_conserves
+#assert_axioms emitted_equiv_arith
+#assert_axioms circuitStep_implies_emitted
+#assert_axioms circuitL_refines_arith
+#assert_axioms circuitLArith_refines_emitted
+#assert_axioms circuitL_refines_spec
 
 end Dregg2.Circuit.Refinement

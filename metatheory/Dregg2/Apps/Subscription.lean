@@ -353,14 +353,19 @@ private theorem queueDequeueRefundK_subWF {k k' : RecordKernelState} {id : Nat} 
   | some kp =>
       obtain ⟨k₁, mh₁⟩ := kp
       rw [hq] at hh; simp only [] at hh
-      split at hh
-      · split at hh
-        · option_inj at hh; obtain ⟨hhk, _⟩ := hh; subst hhk       -- record found ∧ live ⇒ settle
-          -- `settleEscrowRawAsset k₁ … = { k₁ with bal := …, escrows := … }` ⇒ `queues` = `k₁.queues`.
-          refine subWF_of_queues_eq (k := k₁) ?_ (queueDequeueK_subWF hq h)
-          rfl
-        · exact absurd hh (by simp)                                -- target not a live account
-      · exact absurd hh (by simp)                                  -- deposit record absent
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id mh₁
+      · rw [if_pos hbind] at hh
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at hh; exact absurd hh (by simp)
+        | some r =>
+            simp only [hfind] at hh
+            by_cases ha : actor ∈ k₁.accounts
+            · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at hh
+              obtain ⟨hhk, _⟩ := hh; subst hhk
+              refine subWF_of_queues_eq (k := k₁) ?_ (queueDequeueK_subWF hq h)
+              rfl
+            · rw [if_neg ha] at hh; exact absurd hh (by simp)
+      · rw [if_neg hbind] at hh; exact absurd hh (by simp)
 
 /-- WAVE 4: one atomic-batch sub-op preserves `subWF` (the deposit-enqueue / refund-dequeue movers). -/
 private theorem queueTxOpStepA_subWF {s s' : RecChainedState} {op : QueueTxOpA}

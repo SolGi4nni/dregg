@@ -33,6 +33,7 @@ open Dregg2.Circuit.EffectCommit (StateView)
 open Dregg2.Circuit.EffectCommit2
 open Dregg2.Circuit.Spec.SupplyCreation
 open Dregg2.Exec
+open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
 
 set_option linter.dupNamespace false
@@ -199,7 +200,42 @@ theorem mintA_full_sound
       (mintRestFrameDecodes S D hD hRest) hLog (mintGuardDecodes D hD) s args s' h
   exact (apex_iff_mintASpec D hD s args s').mp hapex
 
-/-! ## §2 — axiom-hygiene tripwires.
+/-! ## §2 — EMISSION: production mint circuit on the Lean→Plonky3 wire.
+
+`effectCircuit2` depends only on `guardGates` (not on the digest function `D`), so a wire-only
+`mintEWire` yields the same bytes as any lawful `mintE D hD`. -/
+
+/-- Wire-emission carrier: same guard sub-system as `mintE`, dummy `active` (not read by `effectCircuit2`). -/
+def mintEWire : EffectSpec2 RecChainedState MintArgs where
+  view         := chainView
+  active       :=
+    { digest := fun _ => 0, expected := fun _ _ => 0
+    , postClause := fun _ _ _ => True
+    , binds := fun _ _ _ _ => trivial, encodes := fun _ _ _ _ => rfl }
+  logUpdate    := none
+  restFrame    := fun _ _ => True
+  guardGates   := mintGuardGates
+  guardProp    := mintGuardProp
+  guardWidth   := 1
+  guardEncode  := mintGuardEncode
+  guardLocal   := mintGuardLocal
+  guardWidth_le := by decide
+
+theorem mintEWire_circuit_eq (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D) :
+    effectCircuit2 mintEWire = effectCircuit2 (mintE D hD) := rfl
+
+def mintAirName : String := "dregg-mint-v2"
+
+def mintEmitted : EmittedDescriptor := emittedEffect2 mintAirName mintEWire
+
+/-- Canonical mint wire string — copy into Rust `lean_emitted_mint_roundtrip` golden. -/
+def mintDescriptorJson : String := emitDescriptorJson mintEmitted
+
+#eval mintDescriptorJson
+#guard mintEmitted.constraints.length == 4
+#guard mintEmitted.traceWidth == 72
+
+/-! ## §3 — axiom-hygiene tripwires.
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
 `native_decide`. -/
@@ -209,5 +245,6 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`ad
 #assert_axioms mintGuardEncodes
 #assert_axioms apex_iff_mintASpec
 #assert_axioms mintA_full_sound
+#assert_axioms mintEWire_circuit_eq
 
 end Dregg2.Circuit.Inst.MintA

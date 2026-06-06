@@ -208,25 +208,15 @@ structure DequeueArgs where
   /-- The deposit record id to refund (BINDING-GATED: its `recipient` must equal `actor`). -/
   depId : Nat
 
-/-- Resolve the unresolved deposit record named `depId` (the kernel's own `find?` predicate). The binding
-gate reads the record's `recipient` off THIS lookup, so it is a pure function of `(state, depId)`. -/
-def findDeposit (k : RecordKernelState) (depId : Nat) : Option EscrowRecord :=
-  k.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false))
-
-/-- **The P0-1 BINDING gate.** The named deposit record must be DESTINED to the dequeuer
-(`r.recipient = actor`). If no unresolved record is named, fail-closed. This is the minimal sound
-conjunct: only a deposit parked FOR this owner can be drained by this owner (the fuller per-message
-binding is §DEFER'd). -/
+/-- **The P0-1 BINDING gate** (reuses `RecordKernel.dequeueBindB`). -/
 def dequeueBindB (k : RecordKernelState) (a : DequeueArgs) : Bool :=
-  match findDeposit k a.depId with
-  | some r => decide (r.recipient = a.actor)
-  | none   => false
+  Dregg2.Exec.dequeueBindB k a.actor a.depId
 
 /-- **The P0-1-closing dequeue-refund step.** Commit the kernel `queueDequeueRefundK` (projecting out the
 post-state, dropping the dequeued head) ONLY when the binding gate holds (the named deposit's `recipient`
 is the dequeuer). The bare kernel op (anyone-names-any-deposit) is otherwise unchanged. -/
 def dequeueBindStep (k : RecordKernelState) (a : DequeueArgs) : Option RecordKernelState :=
-  if dequeueBindB k a then
+  if dequeueBindB k a ∧ queueDequeueHeadB k a.id a.actor a.depId then
     (queueDequeueRefundK k a.id a.actor a.depId).map Prod.fst
   else none
 
@@ -238,24 +228,24 @@ def queueDequeueA : EffectHandler DequeueArgs where
   step := dequeueBindStep
   delta := fun _ _ => 0
   auth := dequeueBindB
-  admission := dequeueBindB
+  admission := fun k a => dequeueBindB k a && queueDequeueHeadB k a.id a.actor a.depId
   trace := fun a => { actor := a.actor, src := a.actor, dst := a.actor, amt := 0 }
   auth_gated := by
     intro s a s' h
     unfold dequeueBindStep at h
-    by_cases hg : dequeueBindB s a
-    · exact hg
+    by_cases hg : dequeueBindB s a ∧ queueDequeueHeadB s a.id a.actor a.depId
+    · exact hg.1
     · rw [if_neg hg] at h; exact absurd h (by simp)
   admission_gated := by
     intro s a s' h
     unfold dequeueBindStep at h
-    by_cases hg : dequeueBindB s a
-    · exact hg
+    by_cases hg : dequeueBindB s a ∧ queueDequeueHeadB s a.id a.actor a.depId
+    · simpa using hg
     · rw [if_neg hg] at h; exact absurd h (by simp)
   conserves := by
     intro s a s' h b
     unfold dequeueBindStep at h
-    by_cases hg : dequeueBindB s a
+    by_cases hg : dequeueBindB s a ∧ queueDequeueHeadB s a.id a.actor a.depId
     · rw [if_pos hg] at h
       -- the kernel op committed to `some (k1, mh)`; recover the pair and cite the conservation lemma.
       cases hk : queueDequeueRefundK s a.id a.actor a.depId with
@@ -559,6 +549,13 @@ def qhEnqUnrelated : Option RecordKernelState :=
 #guard ((qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 99) k)).isSome) == false  --  false
 -- §TEETH-2 (HONEST): owner 0 dequeues and names its OWN bound deposit 9 (recipient 0 = actor 0) ⇒ SUCCEEDS.
 #guard ((qhEnqUnrelated.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).isSome)  --  true
+-- §TEETH-2b (P0-1-MSG): two deposits for the SAME owner but DIFFERENT messages — dequeuing the FIFO
+-- head (111) while naming the deposit bound to message 222 (id 99) ⇒ REJECTED.
+def qhEnqTwoMsgs : Option RecordKernelState :=
+  qhEnq.bind (fun k =>
+    enqueueStep k { id := 7, m := 222, sender := 5, owner := 0, depId := 99, dAsset := 0, deposit := 20 })
+#guard ((qhEnqTwoMsgs.bind (fun k => execEffect (dequeueEffect 7 0 99) k)).isSome) == false  --  false
+#guard ((qhEnqTwoMsgs.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).isSome)  --  true (head-bound dep)
 -- §TEETH-3 (CONSERVATION): the honest bound refund conserves the combined per-asset measure.
 #guard ((qhEnq.bind (fun k => execEffect (dequeueEffect 7 0 9) k)).map
         (fun k => recTotalAssetWithEscrow k 0)) == some 100  --  some 100
@@ -622,12 +619,9 @@ fold/conservation helper is pinned directly. A `sorryAx` anywhere fails the pin 
 
 Deliberately OUT of this batch (documented, NOT a silent gap):
 
-  * **Per-MESSAGE deposit binding (the FULLER P0-1 fix).** The minimal sound binding gate here is
-    `r.recipient = actor` — the deposit must be destined to the dequeuer (the queue owner). The FULLER
-    binding would key the deposit to the SPECIFIC dequeued message hash (so a dequeuer cannot refund a
-    deposit parked for a DIFFERENT message in the same queue), but the `QueueRecord` buffer carries only
-    message hashes, not a message→deposit map — that map is the next residual. The `recipient = actor`
-    conjunct already blocks the cross-owner drain (the attack the codex flagged).
+  * **Per-MESSAGE deposit binding (P0-1-full).** CLOSED in `RecordKernel`: queue deposits carry
+    `(queueDep, queueMsg)` on the `EscrowRecord`; `dequeueMsgBindB` requires the named `depId` to match
+    the dequeued FIFO head. `dequeueRecipientBindB` remains the pre-dequeue admission analogue.
 
   * **The receipt-chain metadata rows.** `queueAtomicTxA`/`queuePipelineStepA` register the bare-kernel
     CONSERVATION content (the all-or-nothing fold / the source-dequeue-then-fan-out). The chained

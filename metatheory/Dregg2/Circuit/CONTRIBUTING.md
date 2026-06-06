@@ -227,8 +227,41 @@ quint `64..79` (`80`, `ec2u_lookup`).
 
 `circuit/src/lean_descriptor_air.rs` is a generic Plonky3 AIR that interprets a Lean-emitted
 `EmittedDescriptor` and drives the real `p3-uni-stark` prover. Lean is the verified source-of-truth;
-Plonky3 is the prover. The Lean→JSON→Rust wire is live for `transferCircuit`; emitting full-state
-circuits with Poseidon2 gates is the next step.
+Plonky3 is the prover.
+
+**End-to-end proofs flowing (verified round-trips):**
+
+| Lean circuit | Wire export (`#eval`) | Rust acceptance test |
+|--------------|----------------------|----------------------|
+| `Transfer.transferCircuit` (9 gates) | `transferDescriptorJson` | `lean_emitted_transfer_roundtrip` |
+| `Transfer` + balance range checks | `transferDescriptorRangedJson` | `lean_emitted_transfer_field_sound` |
+| `StateCommit.stateCircuit` (12 gates, full-state) | `stateDescriptorJson` | `lean_emitted_state_roundtrip` |
+| `StateCommit` + balance range checks | `stateDescriptorRangedJson` | `lean_emitted_state_field_sound` |
+| `SetFieldCommit.setFieldCircuit` (8 gates) | `setFieldDescriptorJson` | `lean_emitted_setfield_roundtrip` |
+| `EffectInstances2.mintE` v2 effect (4 gates) | `mintDescriptorJson` | `lean_emitted_mint_roundtrip` |
+
+Run: `cargo test -p dregg-circuit --lib lean_emitted --features plonky3` (fast; ~6 tests).
+
+**Refinement tower** (`Refinement.lean`): `circuit ⊑ spec ⊑ exec` as explicit `Refines`/`Equiv` step-relations;
+`emitted_equiv_arith` links the Plonky3 wire to `satisfied stateCircuit`; `stateCircuitL` + `circuitL_refines_spec`
+add the lookup/range-check layer on top.
+
+**v2 effect diamond** (`EffectRefinement.lean`): generic `effect2CircuitStep ⟺ apex` + `emitted ⟺ circuit` for
+ANY `EffectSpec2`; concrete instances (mint, burn, …) compose with `exec*_iff_spec` for
+`emitted ⟺ circuit ⟺ spec ⟺ execFullA`. Mint payoff: `mint_supply_delta_descends` (supply conservation
+descends from the spec through refinement).
+
+**Four balance wires ≠ booleans.** On `Transfer`/`StateCommit` they are the four **integer** balance
+columns (`vSrcPre`/`vDstPre`/`vSrcPost`/`vDstPost`); `stateRanges` range-checks them into `[0, 2³⁰)` for
+field soundness. The full-state circuit also carries **digest-binding EQ gates** (frame sponge, touched
+cells, log hash) — not a standalone conservation flag. v2 effects (`mintE`, …) use the same digest
+pattern at wires `66..71` (rest / component / log equality); the guard is one `propBit`, but soundness
+pins the **whole** post-state via `effect2_circuit_full_sound`.
+
+**Still open on the swap:** generic `EffectCommit` instances (v1/v2/…) auto-emit via `emittedEffect*`
+but do not yet have per-effect Rust goldens; PART II/III wire forms (`MerkleHash`, `Polynomial`, …)
+need decoder extensions for Poseidon2-in-circuit; gadget envelopes in `CircuitEmitGadgets` need Rust
+AIR wiring.
 
 ## 10. Map of the key files
 

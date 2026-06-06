@@ -224,7 +224,8 @@ theorem queueEnqueueDepositK_commitments {k k' : RecordKernelState} {id m : Nat}
       by_cases hg : 0 ≤ deposit ∧ deposit ≤ k₁.bal sender dAsset ∧ sender ∈ k₁.accounts
           ∧ ¬ (∃ r ∈ k₁.escrows, r.id = depId)
       · rw [if_pos hg, Option.some.injEq] at h; subst h
-        rw [createEscrowRawAsset_commitments]; exact queueEnqueueK_commitments hq
+        rw [show (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m).commitments = k₁.commitments from rfl]
+        exact queueEnqueueK_commitments hq
       · rw [if_neg hg] at h; exact absurd h (by simp)
 
 /-- Queue dequeue (with refund) leaves `commitments` unchanged: the FIFO pop frames it
@@ -240,15 +241,18 @@ theorem queueDequeueRefundK_commitments {k : RecordKernelState} {id : Nat} {acto
       obtain ⟨k₁, m1⟩ := p
       rw [hq] at h; simp only at h
       have hq1 : k₁.commitments = k.commitments := queueDequeueK_commitments hq
-      cases hr : k₁.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false)) with
-      | none => rw [hr] at h; exact absurd h (by simp)
-      | some r =>
-          rw [hr] at h; simp only at h
-          by_cases ha : actor ∈ k₁.accounts
-          · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at h
-            obtain ⟨he, _⟩ := h; subst he
-            rw [settleEscrowRawAsset_commitments]; exact hq1
-          · rw [if_neg ha] at h; exact absurd h (by simp)
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id m1
+      · rw [if_pos hbind] at h
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
+            simp only [hfind] at h
+            by_cases ha : actor ∈ k₁.accounts
+            · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨he, _⟩ := h; subst he
+              rw [settleEscrowRawAsset_commitments]; exact hq1
+            · rw [if_neg ha] at h; exact absurd h (by simp)
+      · rw [if_neg hbind] at h; exact absurd h (by simp)
 
 /-- Queue resize leaves `commitments` unchanged (edits only `queues`). -/
 theorem queueResizeK_commitments {k k' : RecordKernelState} {id newCap : Nat}

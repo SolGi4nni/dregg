@@ -234,6 +234,10 @@ structure EscrowRecord where
   DROPS by the bridged amount (modelled honestly as a no-credit resolve). A bridge CANCEL
   (timeout/failure) refunds the originator (combined conserved, like escrow refund). -/
   bridge    : Bool := false
+  /-- **Queue deposit binding** (P0-1-full). When set, this deposit is tied to a specific FIFO message
+  in queue `queueDep` with hash `queueMsg` — dequeue must pop THAT head and name THIS `depId`. -/
+  queueDep  : Option Nat := none
+  queueMsg  : Option Nat := none
 deriving DecidableEq, Repr
 
 /-! ### The QUEUE side-table: a REAL ring-buffer FIFO automaton (dregg1's `MerkleQueue` / `CapInbox`).
@@ -822,13 +826,26 @@ fresh cell AND resetting its `bal` column to `0` for every asset — so the new 
 previously-credited id) would silently re-introduce supply on insert. Resetting unconditionally defends
 against that (neutrality is PROVED, not assumed). -/
 
-/-- **`createCellIntoAsset` — grow `accounts` by the fresh `newCell` AND reset its per-asset `bal`
-column to `0`.** The per-asset analog of `EffectsSupply.createCellInto`, over the `bal` ledger rather
+/-- Reset every per-cell indexed slot at `newCell` to born-empty defaults (closes stale side-table
+resurrection when minting a fresh id that is not currently live). -/
+def bornEmptyCellSlots (k : RecordKernelState) (newCell : CellId) : RecordKernelState :=
+  { k with
+    cell := fun c => if c = newCell then default else k.cell c
+  , caps := fun l => if l = newCell then [] else k.caps l
+  , delegate := fun c => if c = newCell then none else k.delegate c
+  , delegations := fun c => if c = newCell then [] else k.delegations c
+  , slotCaveats := fun c => if c = newCell then [] else k.slotCaveats c
+  , lifecycle := fun c => if c = newCell then 0 else k.lifecycle c
+  , deathCert := fun c => if c = newCell then 0 else k.deathCert c
+  , bal := fun c a => if c = newCell then 0 else k.bal c a }
+
+/-- **`createCellIntoAsset` — grow `accounts` by the fresh `newCell` AND reset ALL per-cell indexed
+state at `newCell` to born-empty defaults (cell/caps/delegate/delegations/slotCaveats/lifecycle/
+deathCert/bal).** The per-asset analog of `EffectsSupply.createCellInto`, over the `bal` ledger rather
 than the named `balance` field. The fresh cell is born EMPTY in EVERY asset (dregg1-faithful
 `balance == 0`), so it contributes exactly `0` to every `recTotalAsset b`. -/
 def createCellIntoAsset (k : RecordKernelState) (newCell : CellId) : RecordKernelState :=
-  { k with accounts := insert newCell k.accounts
-           bal := fun c a => if c = newCell then 0 else k.bal c a }
+  { bornEmptyCellSlots k newCell with accounts := insert newCell k.accounts }
 
 /-- **`recTotalAsset_insert_fresh` — ACCOUNT-GROWTH IS CONSERVATION-NEUTRAL (PROVED).** Growing
 `accounts` by a FRESH `newCell` while resetting its `bal` column leaves `recTotalAsset k b` UNCHANGED
@@ -842,7 +859,7 @@ so the reset is load-bearing. -/
 theorem recTotalAsset_insert_fresh (k : RecordKernelState) (newCell : CellId) (b : AssetId)
     (hfresh : newCell ∉ k.accounts) :
     recTotalAsset (createCellIntoAsset k newCell) b = recTotalAsset k b := by
-  unfold recTotalAsset createCellIntoAsset
+  unfold recTotalAsset createCellIntoAsset bornEmptyCellSlots
   rw [Finset.sum_insert hfresh]
   -- the fresh cell's reset column is `0` (the structure projection beta-reduces the `if`):
   simp only [if_pos, zero_add]
@@ -859,9 +876,10 @@ theorem createCellIntoAsset_grows_accounts (k : RecordKernelState) (newCell : Ce
     newCell ∈ (createCellIntoAsset k newCell).accounts := by
   unfold createCellIntoAsset; exact Finset.mem_insert_self _ _
 
-/-- **`createCellIntoAsset_caps` — caps framed (PROVED).** Account-growth never edits the cap table. -/
-theorem createCellIntoAsset_caps (k : RecordKernelState) (newCell : CellId) :
-    (createCellIntoAsset k newCell).caps = k.caps := rfl
+/-- **`createCellIntoAsset_born_empty_caps` — the fresh id's cap slot is empty (PROVED).** -/
+theorem createCellIntoAsset_born_empty_caps (k : RecordKernelState) (newCell : CellId) :
+    (createCellIntoAsset k newCell).caps newCell = [] := by
+  dsimp [createCellIntoAsset, bornEmptyCellSlots]; simp only [if_pos]
 
 /-! ## Whole-execution conservation (the userspace-program layer). -/
 
@@ -1473,6 +1491,15 @@ def createEscrowRawAsset (k : RecordKernelState) (id creator recipient : CellId)
   { k with bal := recBalCreditCell k.bal creator asset (-amount)
            escrows := { id := id, creator := creator, recipient := recipient,
                         amount := amount, resolved := false, asset := asset } :: k.escrows }
+
+/-- Park a queue-bound deposit: tags the escrow record with `(queueDep, queueMsg)` so dequeue cannot
+refund a deposit parked for a different message in the same queue. -/
+def createEscrowRawAssetQueue (k : RecordKernelState) (id creator recipient : CellId)
+    (asset : AssetId) (amount : ℤ) (queueId msgHash : Nat) : RecordKernelState :=
+  { k with bal := recBalCreditCell k.bal creator asset (-amount)
+           escrows := { id := id, creator := creator, recipient := recipient,
+                        amount := amount, resolved := false, asset := asset,
+                        queueDep := some queueId, queueMsg := some msgHash } :: k.escrows }
 
 /-- **`settleEscrowRawAsset`** — the per-asset settle (release/refund body): a SINGLE-cell,
 single-asset CREDIT of `amount` to the settlement target at asset `asset` PLUS marking the record
@@ -2239,26 +2266,71 @@ def queueEnqueueDepositK (k : RecordKernelState) (id m : Nat) (sender owner : Ce
   | some k₁ =>
       if 0 ≤ deposit ∧ deposit ≤ k₁.bal sender dAsset ∧ sender ∈ k₁.accounts
           ∧ ¬ (∃ r ∈ k₁.escrows, r.id = depId) then
-        some (createEscrowRawAsset k₁ depId sender owner dAsset deposit)
+        some (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m)
       else none
+
+/-- Look up an unresolved deposit record by `depId` in the global `escrows` table. -/
+def findUnresolvedDeposit (k : RecordKernelState) (depId : Nat) : Option EscrowRecord :=
+  k.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false))
+
+/-- **P0-1 recipient gate.** The named deposit must be DESTINED to the dequeuer. -/
+def dequeueRecipientBindB (k : RecordKernelState) (actor : CellId) (depId : Nat) : Bool :=
+  match findUnresolvedDeposit k depId with
+  | some r => decide (r.recipient = actor)
+  | none   => false
+
+/-- **P0-1-full message gate.** The deposit must be bound to queue `queueId` and the dequeued head
+`msgHash` — closing cross-message drain within the same queue. Unbound escrows (`queueDep = none`)
+fail this gate. -/
+def dequeueMsgBindB (k : RecordKernelState) (actor : CellId) (depId : Nat) (queueId msgHash : Nat) :
+    Bool :=
+  match findUnresolvedDeposit k depId with
+  | some r =>
+      decide (r.recipient = actor)
+        && decide (r.queueDep == some queueId)
+        && decide (r.queueMsg == some msgHash)
+  | none => false
+
+/-- **P0-1 binding gate** (recipient-only; the pre-dequeue admission analogue). -/
+def dequeueBindB (k : RecordKernelState) (actor : CellId) (depId : Nat) : Bool :=
+  dequeueRecipientBindB k actor depId
+
+/-- **`queueDequeueHeadB` — PRE-dequeue P0-1-full gate (devnet atomicity).** Peeks the FIFO head and
+requires the named deposit to bind to `(queueId, msgHash, recipient)` BEFORE any pop runs. The chained
+executor and handler WRAPs cite this gate so a failed binding cannot consume the buffer. -/
+def queueDequeueHeadB (k : RecordKernelState) (id : Nat) (actor : CellId) (depId : Nat) : Bool :=
+  match findQueue k.queues id with
+  | none   => false
+  | some q =>
+      if actor = q.owner then
+        match q.buffer with
+        | []      => false
+        | mh :: _ => dequeueMsgBindB k actor depId id mh
+      else false
 
 /-- **`queueDequeueRefundK`** — REMOVE-FROM-FRONT of queue `id`'s FIFO buffer (the Wave-7 order op,
 gated on `actor = owner`, fail-closed if absent / not-owner / EMPTY) AND REFUND the deposit-record
 `depId` to the dequeuer `actor` (`apply.rs:3483`: the dequeuer reclaims the per-message deposit). The
 refund single-cell CREDITS `actor` at the record's asset and marks the deposit record resolved — value
 RETURNS to the ledger (`recTotalAsset` rises) while the holding-store DROPS (COMBINED conserved),
-EXACTLY like `settleEscrowRawAsset`. Fail-closed if the FIFO gate rejects OR the deposit record is
-absent/already-resolved. Returns the post-state AND the dequeued head message (the FIFO witness). -/
+EXACTLY like `settleEscrowRawAsset`. Fail-closed if the FIFO gate rejects, the deposit record is
+absent/already-resolved, OR the message-binding gate fails. Returns the post-state AND the dequeued
+head message (the FIFO witness).
+
+**NOTE:** production callers (`queueDequeueChainA`, `dequeueBindStep`) also require `queueDequeueHeadB`
+on the pre-state so binding failure cannot pop the head. -/
 def queueDequeueRefundK (k : RecordKernelState) (id : Nat) (actor : CellId) (depId : Nat) :
     Option (RecordKernelState × Nat) :=
   match queueDequeueK k id actor with
   | none          => none
   | some (k₁, mh) =>
-      match k₁.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false)) with
-      | some r => if actor ∈ k₁.accounts then
-                    some (settleEscrowRawAsset k₁ depId actor r.asset r.amount, mh)
-                  else none
-      | none   => none
+      if dequeueMsgBindB k₁ actor depId id mh then
+        match findUnresolvedDeposit k₁ depId with
+        | some r => if actor ∈ k₁.accounts then
+                      some (settleEscrowRawAsset k₁ depId actor r.asset r.amount, mh)
+                    else none
+        | none   => none
+      else none
 
 /-- **`queueEnqueueDepositK_conserves_combined` — THE RESIDUAL CLOSED (PROVED).** A committed
 deposit-enqueue PRESERVES the COMBINED per-asset total `recTotalAssetWithEscrow b` for EVERY asset `b`:
@@ -2282,11 +2354,13 @@ theorem queueEnqueueDepositK_conserves_combined {k k' : RecordKernelState} {id m
         -- bal/escrow-neutral. We inline the combined-conservation of `createEscrowRawAsset` (the gate-free
         -- core of `escrow_create_conserves_combined_per_asset`): the locked asset's bal-debit is offset by
         -- the holding-store rise; every other asset is literally untouched.
-        have hpark : recTotalAssetWithEscrow (createEscrowRawAsset k₁ depId sender owner dAsset deposit) b
+        have hpark : recTotalAssetWithEscrow
+              (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m) b
             = recTotalAssetWithEscrow k₁ b := by
           set newRec : EscrowRecord := { id := depId, creator := sender, recipient := owner,
-                                         amount := deposit, resolved := false, asset := dAsset } with hnewRec
-          unfold recTotalAssetWithEscrow createEscrowRawAsset
+                                         amount := deposit, resolved := false, asset := dAsset,
+                                         queueDep := some id, queueMsg := some m } with hnewRec
+          unfold recTotalAssetWithEscrow createEscrowRawAssetQueue
           have hbal : recTotalAsset { k₁ with bal := recBalCreditCell k₁.bal sender dAsset (-deposit),
                                               escrows := newRec :: k₁.escrows } b
               = recTotalAsset k₁ b + (if b = dAsset then (-deposit) else 0) := by
@@ -2324,7 +2398,8 @@ theorem queueEnqueueDepositK_debits {k k' : RecordKernelState} {id m : Nat}
       · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
         obtain ⟨_, _, hlive, _⟩ := hg
         -- the bare debit at `dAsset`, plus the FIFO step left `recTotalAsset` fixed at every asset.
-        have hbare : recTotalAsset (createEscrowRawAsset k₁ depId sender owner dAsset deposit) dAsset
+        have hbare :
+            recTotalAsset (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m) dAsset
             = recTotalAsset k₁ dAsset - deposit := by
           show (∑ x ∈ k₁.accounts, recBalCreditCell k₁.bal sender dAsset (-deposit) x dAsset) = _
           have := recBalCreditCell_recTotalAsset k₁.accounts k₁.bal sender dAsset (-deposit) hlive dAsset
@@ -2337,6 +2412,55 @@ theorem queueEnqueueDepositK_debits {k k' : RecordKernelState} {id m : Nat}
 committed deposit-dequeue PRESERVES the COMBINED per-asset total `recTotalAssetWithEscrow b` for EVERY
 asset `b`: the FIFO remove is bal/escrow-neutral, and the REFUND is the proven combined-conserving
 escrow-settle (the dequeuer `actor` is the LIVE settlement target — gate-checked). -/
+theorem queueDequeueK_preserves_escrows {k k' : RecordKernelState} {id : Nat} {actor : CellId} {m : Nat}
+    (h : queueDequeueK k id actor = some (k', m)) : k'.escrows = k.escrows := by
+  unfold queueDequeueK at h
+  cases hf : findQueue k.queues id with
+  | none => simp [hf] at h
+  | some q =>
+      simp only [hf] at h
+      by_cases ho : actor = q.owner
+      · rw [if_pos ho] at h
+        cases hd : qbufDequeue q.buffer with
+        | none => simp [hd] at h
+        | some hr =>
+            obtain ⟨hm, rest⟩ := hr
+            rw [hd] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h
+            obtain ⟨hk, _⟩ := h; subst hk; rfl
+      · rw [if_neg ho] at h; exact absurd h (by simp)
+
+theorem dequeueMsgBindB_queueDequeue_unchanged {k k' : RecordKernelState} {id : Nat}
+    {actor : CellId} {depId m : Nat} (h : queueDequeueK k id actor = some (k', m)) :
+    dequeueMsgBindB k' actor depId id m = dequeueMsgBindB k actor depId id m := by
+  unfold dequeueMsgBindB findUnresolvedDeposit
+  simp [queueDequeueK_preserves_escrows h]
+
+theorem queueDequeueRefundK_imp_dequeue {k k' : RecordKernelState} {id : Nat}
+    {actor : CellId} {depId mh : Nat}
+    (h : queueDequeueRefundK k id actor depId = some (k', mh)) :
+    ∃ k₁, queueDequeueK k id actor = some (k₁, mh) := by
+  unfold queueDequeueRefundK at h
+  cases hq : queueDequeueK k id actor with
+  | none => simp [hq] at h
+  | some kr =>
+      obtain ⟨k₁, m⟩ := kr
+      simp only [hq] at h
+      have hmh : m = mh := by
+        by_cases hbind : dequeueMsgBindB k₁ actor depId id m
+        · rw [if_pos hbind] at h
+          cases hfind : findUnresolvedDeposit k₁ depId with
+          | none => simp only [hfind] at h; exact absurd h (by simp)
+          | some r =>
+              simp only [hfind] at h
+              by_cases hlive : actor ∈ k₁.accounts
+              · rw [if_pos hlive] at h
+                simp only [Option.some.injEq, Prod.mk.injEq] at h
+                obtain ⟨_, hm⟩ := h; exact hm
+              · rw [if_neg hlive] at h; exact absurd h (by simp)
+        · rw [if_neg hbind] at h; exact absurd h (by simp)
+      refine ⟨k₁, ?_⟩
+      simpa [hmh] using hq
+
 theorem queueDequeueRefundK_conserves_combined {k k' : RecordKernelState} {id : Nat}
     {actor : CellId} {depId mh : Nat}
     (h : queueDequeueRefundK k id actor depId = some (k', mh)) (b : AssetId) :
@@ -2347,19 +2471,23 @@ theorem queueDequeueRefundK_conserves_combined {k k' : RecordKernelState} {id : 
   | some kr =>
       obtain ⟨k₁, m⟩ := kr
       simp only [hq] at h
-      cases hfind : k₁.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false)) with
-      | none   => simp only [hfind] at h; exact absurd h (by simp)
-      | some r =>
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id m
+      · rw [if_pos hbind] at h
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none   => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
           simp only [hfind] at h
           by_cases hlive : actor ∈ k₁.accounts
           · rw [if_pos hlive] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h
             obtain ⟨hk, _⟩ := h; subst hk
             have hset : recTotalAssetWithEscrow (settleEscrowRawAsset k₁ depId actor r.asset r.amount) b
                 = recTotalAssetWithEscrow k₁ b :=
-              escrow_settle_conserves_combined_per_asset k₁ depId actor r b hlive hfind
+              escrow_settle_conserves_combined_per_asset k₁ depId actor r b hlive
+                (by simpa [findUnresolvedDeposit] using hfind)
             obtain ⟨hbal, hheld⟩ := queueDequeueK_balNeutral hq b
             rw [hset]; simp only [recTotalAssetWithEscrow, hbal, hheld]
           · rw [if_neg hlive] at h; exact absurd h (by simp)
+      · rw [if_neg hbind] at h; exact absurd h (by simp)
 
 /-- **`queueEnqueueDepositK_insufficient_rejects` — PROVED (the DEPOSIT GATE, fail-closed).** An
 enqueue whose `sender` lacks the `deposit` in asset `dAsset` (`deposit > sender's balance`) is REJECTED
@@ -2374,11 +2502,34 @@ theorem queueEnqueueDepositK_insufficient_rejects (k k₁ : RecordKernelState) (
 
 /-- **`queueDequeueRefundK_no_deposit_rejects` — PROVED (fail-closed).** A dequeue whose deposit
 record `depId` is absent/already-resolved is REJECTED even when the FIFO remove would succeed. -/
+theorem dequeueMsgBindB_absent (k : RecordKernelState) (actor : CellId) (depId queueId msgHash : Nat)
+    (habsent : findUnresolvedDeposit k depId = none) :
+    dequeueMsgBindB k actor depId queueId msgHash = false := by
+  unfold dequeueMsgBindB
+  rw [habsent]
+
+/-- **`queueDequeueHeadB_false_rejects` — PROVED (devnet atomicity).** When the peeked FIFO head fails
+the message-binding gate, the pre-dequeue admission gate is false — production wrappers reject before
+`queueDequeueRefundK` runs. -/
+theorem queueDequeueHeadB_false_rejects (k : RecordKernelState) (id : Nat) (actor : CellId)
+    (depId head : Nat) (rest : List Nat) (q : QueueRecord)
+    (hf : findQueue k.queues id = some q) (ho : actor = q.owner) (hb : q.buffer = head :: rest)
+    (hbind : dequeueMsgBindB k actor depId id head = false) :
+    queueDequeueHeadB k id actor depId = false := by
+  unfold queueDequeueHeadB
+  simp only [hf, if_pos ho, hb]
+  exact hbind
+
 theorem queueDequeueRefundK_no_deposit_rejects (k k₁ : RecordKernelState) (id : Nat) (actor : CellId)
     (depId m : Nat) (hq : queueDequeueK k id actor = some (k₁, m))
-    (habsent : k₁.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false)) = none) :
+    (habsent : findUnresolvedDeposit k₁ depId = none) :
     queueDequeueRefundK k id actor depId = none := by
-  simp only [queueDequeueRefundK, hq, habsent]
+  have hbind := dequeueMsgBindB_absent k₁ actor depId id m habsent
+  unfold queueDequeueRefundK
+  rw [hq]
+  by_cases hb : dequeueMsgBindB k₁ actor depId id m
+  · cases hbind ▸ hb
+  · simp [hb]
 
 /-- **`queueEnqueueK_full_rejects` — PROVED (the CAPACITY BOUND, fail-closed).** Enqueue into a FULL
 queue (`buffer.length ≥ capacity`) returns `none`. The bound a flag-only model could not enforce. -/
@@ -2469,6 +2620,10 @@ def kqd0 : RecordKernelState :=
 -- REFUND fail-closed: dequeue with a deposit-record id that was never parked ⇒ none.
 #guard (((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
         (fun k => (queueDequeueRefundK k 7 0 999).map Prod.snd)).isSome) == false  --  false — no such deposit record
+-- ATOMICITY: wrong depId fails the pre-dequeue head gate — buffer stays [111], kernel dequeue not reached.
+#guard (((queueEnqueueDepositK kqd0 7 111 5 0 9 0 30).bind
+        (fun k => (queueDequeueHeadB k 7 0 999 == false) &&
+                  ((findQueue k.queues 7).map (·.buffer)) == some [111]))) == some true  --  some true
 
 #assert_axioms queueEnqueueDepositK_conserves_combined
 #assert_axioms queueEnqueueDepositK_debits

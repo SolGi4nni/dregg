@@ -1110,6 +1110,207 @@ mod tests {
         }
     }
 
+    /// The EXACT JSON string Lean's `Dregg2.Circuit.StateCommit.stateDescriptorJson`
+    /// (`#eval stateDescriptorJson`) emits for the REAL `emittedState` circuit — the verified
+    /// `stateCircuit` (9 transfer gates + 3 frame-forcing EQ gates) serialized via
+    /// `CircuitEmit.emitDescriptorJson`. Copied verbatim from `lake build Dregg2.Circuit.StateCommit`.
+    ///
+    /// Wire layout (StateCommit.lean §1b): 0..10 = Transfer wires; 11=preRoot 12=postRoot
+    /// 13=restDigPre 14=restDigPost 15=frameDigPre 16=frameDigPost 17=movedDigPre
+    /// 18=movedDigPost 19=movedDigExpected. Twelve gates: the nine transfer gates plus
+    /// `restDigPre=restDigPost`, `frameDigPre=frameDigPost`, `movedDigPost=movedDigExpected`.
+    const STATE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-transfer-fullstate-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}]}"#;
+
+    /// THE full-state swap acceptance test: the REAL Lean-emitted `stateCircuit` drives the
+    /// Plonky3 prover. A satisfying conserving-transfer + frame-consistent witness proves+verifies;
+    /// a tampered frame-reuse forgery (third-cell mint) is rejected by the `frameDigPre=frameDigPost`
+    /// gate — the anti-ghost tooth `stateCircuit_rejects_third_cell` certifies in Lean.
+    #[test]
+    fn lean_emitted_state_roundtrip() {
+        let desc = parse_descriptor(STATE_DESCRIPTOR_JSON)
+            .expect("Lean-emitted full-state descriptor must parse");
+        assert_eq!(desc.name, "dregg-transfer-fullstate-v1");
+        assert_eq!(desc.trace_width, 20);
+        assert_eq!(desc.constraints.len(), 12);
+
+        // Honest witness: kT0/goodTurn/goodPost transfer + consistent digests.
+        // Layout: [srcPre,dstPre,srcPost,dstPost,amt, auth..dstLive, preRoot,postRoot,
+        //          restPre,restPost, framePre,framePost, movedPre,movedPost,movedExpected]
+        let good = [
+            100i64, 5, 70, 35, 30, // transfer wires 0..4
+            1, 1, 1, 1, 1, 1,      // guard bits 5..10
+            0, 0,                  // preRoot/postRoot (unconstrained by the 12 gates)
+            1000, 1000,            // restDigPre = restDigPost
+            2000, 2000,            // frameDigPre = frameDigPost
+            0, 3000, 3000,         // movedDigPre (free), movedDigPost = movedDigExpected
+        ];
+        assert_eq!(good.len(), 20);
+        assert_eq!(good[2], good[0] - good[4]);
+        assert_eq!(good[3], good[1] + good[4]);
+        assert_eq!(good[2] + good[3], good[0] + good[1]);
+        assert_eq!(good[13], good[14]);
+        assert_eq!(good[15], good[16]);
+        assert_eq!(good[18], good[19]);
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest full-state witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify full-state proof");
+
+        // Frame-reuse forgery: conserving transfer but frameDigPost != frameDigPre (third-cell mint).
+        let forged_frame = [
+            100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, 0, 0, 1000, 1000, 2000, 2001, 0, 3000, 3000,
+        ];
+        assert_eq!(forged_frame[2] + forged_frame[3], forged_frame[0] + forged_frame[1]);
+        assert_ne!(forged_frame[15], forged_frame[16]);
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged_frame)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "FRAME-REUSE forgery (frameDigPost != frameDigPre) MUST be rejected"
+            ),
+        }
+    }
+
+    /// Range-checked full-state descriptor (balance wires ∈ [0, 2³⁰)).
+    const STATE_DESCRIPTOR_RANGED_JSON: &str = r#"{"name":"dregg-transfer-fullstate-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}],"ranges":[{"wire":0,"bits":30},{"wire":1,"bits":30},{"wire":2,"bits":30},{"wire":3,"bits":30}]}"#;
+
+    #[test]
+    fn lean_emitted_state_field_sound() {
+        let desc = parse_descriptor(STATE_DESCRIPTOR_RANGED_JSON)
+            .expect("range-checked full-state descriptor must parse");
+        assert_eq!(desc.ranges.len(), 4);
+        assert_eq!(desc.air_width(), 20 + 4 * 30);
+
+        let good = [
+            100i64, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, 0, 0, 1000, 1000, 2000, 2000, 0, 3000, 3000,
+        ];
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("in-range full-state witness must prove+verify with range gates");
+        verify_descriptor(&desc, &proof).expect("re-verify range-checked full-state proof");
+
+        let two_pow_30: i64 = 1 << 30;
+        let amt = good[4];
+        let forged_range = [
+            two_pow_30,
+            good[1],
+            two_pow_30 - amt,
+            good[3],
+            amt,
+            1, 1, 1, 1, 1, 1,
+            0, 0,
+            1000, 1000,
+            2000, 2000,
+            0, 3000, 3000,
+        ];
+        assert!(forged_range[0] >= (1 << 30));
+        assert_eq!(forged_range[2], forged_range[0] - forged_range[4]);
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged_range)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "OUT-OF-RANGE balance on full-state circuit MUST be rejected by range gate"
+            ),
+        }
+    }
+
+    /// Lean-emitted `setFieldA` full-state circuit (`SetFieldCommit.setFieldDescriptorJson`).
+    const SETFIELD_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-setfield-fullstate-v1","trace_width":16,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":1},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":3},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"var","v":7}},{"lhs":{"t":"var","v":8},"rhs":{"t":"var","v":9}},{"lhs":{"t":"var","v":11},"rhs":{"t":"var","v":12}},{"lhs":{"t":"var","v":14},"rhs":{"t":"var","v":15}}]}"#;
+
+    #[test]
+    fn lean_emitted_setfield_roundtrip() {
+        let desc = parse_descriptor(SETFIELD_DESCRIPTOR_JSON)
+            .expect("Lean-emitted setField descriptor must parse");
+        assert_eq!(desc.name, "dregg-setfield-fullstate-v1");
+        assert_eq!(desc.trace_width, 16);
+        assert_eq!(desc.constraints.len(), 8);
+
+        // Guard bits = 1; rest/frame/target/log pairs equal (SetFieldCommit wire layout).
+        let good = [
+            1i64, 1, 1, 1, // 0..3: caveat/auth/mem/live
+            100, 101,      // 4..5: preRoot/postRoot (unconstrained)
+            50, 50,        // 6..7: restPre/restPost
+            60, 60,        // 8..9: framePre/framePost
+            70, 70, 70,    // 10..12: targetPre/targetPost/targetExpected (gate: 11=12)
+            90, 91, 91,    // 13..15: logPre/logPost/logExpected (gate: 14=15)
+        ];
+        assert_eq!(good.len(), 16);
+        assert_eq!(good[6], good[7]);
+        assert_eq!(good[8], good[9]);
+        assert_eq!(good[11], good[12]);
+        assert_eq!(good[14], good[15]);
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest setField witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify setField proof");
+
+        // Frame forgery: framePost != framePre.
+        let mut forged = good;
+        forged[9] = 61;
+        assert_ne!(forged[8], forged[9]);
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "setField FRAME forgery MUST be rejected"
+            ),
+        }
+    }
+
+    /// Lean `EffectInstances2.mintDescriptorJson` — the v2 mint effect circuit (4 gates, 72 wires).
+    const MINT_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-mint-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_emitted_mint_roundtrip() {
+        let desc = parse_descriptor(MINT_DESCRIPTOR_JSON).expect("mint descriptor must parse");
+        assert_eq!(desc.name, "dregg-mint-v2");
+        assert_eq!(desc.trace_width, 72);
+        assert_eq!(desc.constraints.len(), 4);
+
+        // Guard=1; rest/frame/component/log digest pairs equal (wires 66/67, 68/69, 70/71).
+        let mut good = [0i64; 72];
+        good[0] = 1;
+        good[66] = 50;
+        good[67] = 50;
+        good[68] = 100;
+        good[69] = 100;
+        good[70] = 200;
+        good[71] = 200;
+
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("honest mint witness must prove+verify");
+        verify_descriptor(&desc, &proof).expect("re-verify mint proof");
+
+        // Log forgery: logPost != logExpected breaks the log gate (70 != 71).
+        let mut forged = good;
+        forged[71] = 201;
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            Err(_) => {}
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "mint LOG forgery MUST be rejected"
+            ),
+        }
+    }
+
     /// The parser is faithful to the wire grammar on its own (independent of proving):
     /// round-tripping a hand-built descriptor through Lean-style JSON recovers it, and
     /// the tolerant parser accepts whitespace.

@@ -169,6 +169,10 @@ pub struct WireEscrow {
     pub resolved: bool,
     pub asset: u64,
     pub bridge: bool,
+    /// `{"none":0}` / `{"some":N}` on the wire (queue dependency id).
+    pub queue_dep: Option<u64>,
+    /// `{"none":0}` / `{"some":N}` on the wire (queue message id).
+    pub queue_msg: Option<u64>,
 }
 
 /// QueueRecord (FFI.lean:2416): `[id,owner,capacity,[msg,...]]`.
@@ -443,6 +447,16 @@ fn push_nat(out: &mut String, n: u64) {
 fn push_int(out: &mut String, i: i128) {
     // decimal, leading '-' if negative — matches Lean `toString : Int -> String`.
     out.push_str(&i.to_string());
+}
+fn encode_opt_nat(out: &mut String, v: Option<u64>) {
+    match v {
+        None => out.push_str("{\"none\":0}"),
+        Some(n) => {
+            out.push_str("{\"some\":");
+            push_nat(out, n);
+            out.push('}');
+        }
+    }
 }
 fn itoa_u64(n: u64) -> String {
     n.to_string()
@@ -1150,7 +1164,7 @@ fn encode_wstate(w: &WireState, out: &mut String) -> Result<(), MarshalError> {
         out.push(']');
     }
     out.push(']');
-    // escrows: [id,creator,recipient,amount,resolved,asset,bridge]
+    // escrows: [id,creator,recipient,amount,resolved,asset,bridge,queueDep,queueMsg]
     out.push_str(",\"escrows\":[");
     for (i, e) in w.escrows.iter().enumerate() {
         if i > 0 {
@@ -1170,6 +1184,10 @@ fn encode_wstate(w: &WireState, out: &mut String) -> Result<(), MarshalError> {
         push_nat(out, e.asset);
         out.push(',');
         out.push(if e.bridge { '1' } else { '0' });
+        out.push(',');
+        encode_opt_nat(out, e.queue_dep);
+        out.push(',');
+        encode_opt_nat(out, e.queue_msg);
         out.push(']');
     }
     out.push(']');
@@ -1525,6 +1543,16 @@ fn parse_cap_list(p: &mut Parser) -> Result<Vec<Cap>, String> {
     Ok(out)
 }
 
+fn parse_opt_nat(p: &mut Parser) -> Result<Option<u64>, String> {
+    if p.try_lit("{\"none\":0}") {
+        return Ok(None);
+    }
+    p.lit("{\"some\":")?;
+    let n = p.nat()?;
+    p.lit("}")?;
+    Ok(Some(n))
+}
+
 fn parse_nats(p: &mut Parser) -> Result<Vec<u64>, String> {
     if p.try_lit("[]") {
         return Ok(vec![]);
@@ -1600,8 +1628,22 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
         let asset = p.nat()?;
         p.lit(",")?;
         let bridge = p.flag()?;
+        p.lit(",")?;
+        let queue_dep = parse_opt_nat(p)?;
+        p.lit(",")?;
+        let queue_msg = parse_opt_nat(p)?;
         p.lit("]")?;
-        Ok(WireEscrow { id, creator, recipient, amount, resolved, asset, bridge })
+        Ok(WireEscrow {
+            id,
+            creator,
+            recipient,
+            amount,
+            resolved,
+            asset,
+            bridge,
+            queue_dep,
+            queue_msg,
+        })
     })
     .map_err(|e| map(e, p))?;
     // nullifiers

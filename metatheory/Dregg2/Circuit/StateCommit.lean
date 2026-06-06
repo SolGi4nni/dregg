@@ -775,6 +775,40 @@ theorem decodeE_emittedState : decodeE emittedState = stateCircuit :=
 #guard emittedState.traceWidth == stateTraceWidth
 #guard emittedState.traceWidth == 20
 
+/-- **`stateDescriptorJson`** — the canonical wire string for the REAL emitted full-state circuit,
+via `CircuitEmit.emitDescriptorJson`. THIS is the byte string the Rust
+`lean_descriptor_air::parse_descriptor` decoder ingests to drive the Plonky3 prover on the genuine
+Lean-derived `stateCircuit` (the 9 transfer gates + 3 frame-forcing EQ gates). Copy this exact string
+into the Rust `lean_emitted_state_roundtrip` golden. -/
+def stateDescriptorJson : String := emitDescriptorJson emittedState
+
+-- Print the full-state wire bytes the Rust decoder parses (the golden input for the Rust round-trip).
+#eval stateDescriptorJson
+
+/-- The four balance wires range-checked into `[0, 2³⁰)` — same field-soundness teeth as
+`Transfer.transferRanges`. -/
+def stateRanges : List RangeSpec :=
+  [ ⟨vSrcPre,  balanceRangeBits⟩
+  , ⟨vDstPre,  balanceRangeBits⟩
+  , ⟨vSrcPost, balanceRangeBits⟩
+  , ⟨vDstPost, balanceRangeBits⟩ ]
+
+/-- **The RANGE-CHECKED emitted full-state descriptor** — `emittedState` bundled with balance-wire
+range checks (closing the `ℤ → BabyBear` wraparound hole on the conserved measure). -/
+def emittedStateRanged : RangedDescriptor := ⟨emittedState, stateRanges⟩
+
+/-- **`stateDescriptorRangedJson`** — the canonical wire string for the RANGE-CHECKED full-state
+circuit: `stateDescriptorJson` extended with `"ranges":[{"wire":i,"bits":30},…]` on the four balance
+wires. Copy into the Rust `lean_emitted_state_field_sound` golden. -/
+def stateDescriptorRangedJson : String := emitRangedDescriptorJson emittedStateRanged
+
+-- Print the range-checked full-state wire bytes (the golden input for the Rust field-soundness test).
+#eval stateDescriptorRangedJson
+
+#guard emittedStateRanged.ranges.length == 4
+#guard emittedStateRanged.ranges.all (fun r => r.bits == 30)
+#guard emittedStateRanged.base == emittedState
+
 /-! ## §10 — Axiom-hygiene tripwires + the assumption ledger.
 
 ASSUMED (carried Prop hypotheses, the STANDARD Poseidon collision-resistance set, ALL realizable

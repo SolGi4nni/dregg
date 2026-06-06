@@ -753,6 +753,13 @@ theorem decodeE_emittedSetField : decodeE emittedSetField = setFieldCircuit :=
 #guard emittedSetField.traceWidth == setFieldTraceWidth
 #guard emittedSetField.traceWidth == 16
 
+/-- **`setFieldDescriptorJson`** — the canonical wire string for the emitted full-state `setFieldA`
+circuit. Copy into the Rust `lean_emitted_setfield_roundtrip` golden. -/
+def setFieldDescriptorJson : String := emitDescriptorJson emittedSetField
+
+-- Print the setField wire bytes the Rust decoder parses.
+#eval setFieldDescriptorJson
+
 /-! ## §10 — Axiom-hygiene tripwires + the assumption ledger.
 
 ASSUMED (carried Prop hypotheses, the STANDARD Poseidon collision-resistance set, ALL realizable

@@ -72,7 +72,13 @@ fn lean_forest_auth(wire: &str) -> String {
 fn wide_demo_state() -> WireState {
     WireState {
         cells: vec![
-            (0, WireValue::Record(vec![("balance".into(), WireValue::Int(100))])),
+            (
+                0,
+                WireValue::Record(vec![
+                    ("balance".into(), WireValue::Int(100)),
+                    ("nonce".into(), WireValue::Int(7)),
+                ]),
+            ),
             (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],
@@ -83,8 +89,10 @@ fn wide_demo_state() -> WireState {
             recipient: 1,
             amount: 7,
             resolved: false,
-            asset: 0,    // wideDemoState omits asset/bridge => they default to 0/false
+            asset: 0,    // wideDemoState omits asset/bridge/queue* => they default to 0/false/none
             bridge: false,
+            queue_dep: None,
+            queue_msg: None,
         }],
         nullifiers: vec![111],
         commitments: vec![222],
@@ -129,7 +137,7 @@ fn gated_demo_turn() -> WireTurn {
 /// (captured from `IO.println (encodeWState wideDemoState ++ encodeWTurn myTurn)` against
 /// metatheory/Dregg2/Exec/FFI.lean). `marshal_turn` must reproduce this BYTE-FOR-BYTE — that
 /// is the Layer-0 byte-equality gate, the strongest possible check short of the live parser.
-const GOLDEN_INPUT: &str = "{\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
+const GOLDEN_INPUT: &str = "{\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0,{\"none\":0},{\"none\":0}]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
 
 /// A forged-credential turn (FFI.lean:3072 `forgedGatedTurn`): the SAME transfer under
 /// `.signature 7 8` (proof does NOT echo the statement ⇒ the §1 portal REJECTS ⇒ rollback).
@@ -147,6 +155,21 @@ fn forged_turn() -> WireTurn {
             children: vec![],
         },
     }
+}
+
+/// Wrong nonce (stored 7, claimed 6) ⇒ `admissible = false` ⇒ `runGatedForestTurn = none`
+/// with NO edit (unlike a body rollback, the prologue never runs).
+fn bad_nonce_turn() -> WireTurn {
+    let mut t = gated_demo_turn();
+    t.nonce = 6;
+    t
+}
+
+/// Fee exceeds agent balance (200 > 100) ⇒ admission leg 5 fails ⇒ inadmissible, no edit.
+fn overfee_turn() -> WireTurn {
+    let mut t = gated_demo_turn();
+    t.fee = 200;
+    t
 }
 
 /// An over-spend turn under `.unchecked` (transfer 1000 > cell0's 100) ⇒ the ledger
@@ -367,6 +390,76 @@ fn main() -> ExitCode {
     }
 
     // ---------------------------------------------------------------------
+    // CASE 6 — ADMISSION: nonce replay ⇒ inadmissible ⇒ ok:0, state unchanged.
+    // ---------------------------------------------------------------------
+    {
+        let state = wide_demo_state();
+        let wire = marshal_turn(&state, &bad_nonce_turn()).expect("marshal bad nonce");
+        let out = lean_forest_auth(&wire);
+        match unmarshal_result(&out) {
+            Ok(res) => {
+                let unchanged = !res.committed
+                    && bal_of(&res.state, 0, 0) == 100
+                    && bal_of(&res.state, 1, 0) == 5
+                    && res.loglen == 0;
+                if unchanged {
+                    println!(
+                        "  [case6] PASS: nonce replay INADMISSIBLE (ok:0), bal unchanged (100/5), loglen=0"
+                    );
+                } else {
+                    println!(
+                        "  [case6] FAIL: expected inadmissible no-edit; got committed={} bal0={} bal1={} loglen={}",
+                        res.committed,
+                        bal_of(&res.state, 0, 0),
+                        bal_of(&res.state, 1, 0),
+                        res.loglen
+                    );
+                    failures += 1;
+                }
+            }
+            Err(e) => {
+                println!("  [case6] FAIL: unmarshal_result errored: {e}");
+                failures += 1;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // CASE 7 — ADMISSION: fee > balance ⇒ inadmissible ⇒ ok:0, state unchanged.
+    // ---------------------------------------------------------------------
+    {
+        let state = wide_demo_state();
+        let wire = marshal_turn(&state, &overfee_turn()).expect("marshal overfee");
+        let out = lean_forest_auth(&wire);
+        match unmarshal_result(&out) {
+            Ok(res) => {
+                let unchanged = !res.committed
+                    && bal_of(&res.state, 0, 0) == 100
+                    && bal_of(&res.state, 1, 0) == 5
+                    && res.loglen == 0;
+                if unchanged {
+                    println!(
+                        "  [case7] PASS: insufficient fee INADMISSIBLE (ok:0), bal unchanged (100/5), loglen=0"
+                    );
+                } else {
+                    println!(
+                        "  [case7] FAIL: expected inadmissible no-edit; got committed={} bal0={} bal1={} loglen={}",
+                        res.committed,
+                        bal_of(&res.state, 0, 0),
+                        bal_of(&res.state, 1, 0),
+                        res.loglen
+                    );
+                    failures += 1;
+                }
+            }
+            Err(e) => {
+                println!("  [case7] FAIL: unmarshal_result errored: {e}");
+                failures += 1;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
     // CASE 5 — T8 honesty: an unrepresentable EFFECT must HARD-ERROR, never
     //          silently drop. (We don't have a Rust `Effect` here; we assert the
     //          error TYPE exists and is constructed where the projection would call
@@ -382,8 +475,8 @@ fn main() -> ExitCode {
     if failures == 0 {
         println!(
             "ALL PASS — the T8/T9 marshaller's wire is BYTE-CORRECT against the live Lean parser \
-             (dregg_exec_full_forest_auth): commit delta conserved, forged+overspend roll back, \
-             malformed wire is distinguished from rejection."
+             (dregg_exec_full_forest_auth): admission+gated commit conserved, \
+             forged/overspend/admission rejections roll back or no-edit, malformed wire distinguished."
         );
         ExitCode::SUCCESS
     } else {

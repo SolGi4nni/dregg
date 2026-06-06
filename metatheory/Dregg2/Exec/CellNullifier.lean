@@ -85,13 +85,18 @@ private theorem queueDequeueRefundK_nullifiers (k : RecordKernelState) (id : Nat
   | some kp =>
       obtain ⟨k₁, mh₁⟩ := kp
       rw [hq] at h; simp only [] at h
-      split at h
-      · split at h
-        · option_inj at h; obtain ⟨h, _⟩ := h; subst h       -- record found ∧ live ⇒ settle
-          show k₁.nullifiers = k.nullifiers
-          exact queueDequeueK_nullifiers k id actor k₁ mh₁ hq
-        · exact absurd h (by simp)                           -- target not a live account
-      · exact absurd h (by simp)                             -- deposit record absent
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id mh₁
+      · rw [if_pos hbind] at h
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
+            simp only [hfind] at h
+            by_cases ha : actor ∈ k₁.accounts
+            · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨he, _⟩ := h; subst he
+              exact queueDequeueK_nullifiers k id actor k₁ mh₁ hq
+            · rw [if_neg ha] at h; exact absurd h (by simp)
+      · rw [if_neg hbind] at h; exact absurd h (by simp)
 
 /-- WAVE 4: one atomic-batch sub-op leaves `nullifiers` untouched (the deposit-park / FIFO frame). -/
 private theorem queueTxOpStepA_nullifiers (s s' : RecChainedState) (op : QueueTxOpA)

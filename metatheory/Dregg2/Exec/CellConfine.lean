@@ -129,12 +129,48 @@ theorem recCRevoke_confine {U : List Auth} {s : RecChainedState} {holder t : Cel
   · subst hl; rw [if_pos rfl]; intro d hd; exact List.mem_of_mem_filter hd
   · rw [if_neg hl]; exact fun d hd => hd
 
-/-- A committed `createCellChainA` FRAMES the cap table (the fresh cell grows `accounts`/resets `bal`,
-never `caps` — `RecordKernel.createCellIntoAsset_caps`). The local caps-frame for createCell/spawn. -/
-theorem createCellChainA_caps_eq {s s' : RecChainedState} {actor newCell : CellId}
-    (h : createCellChainA s actor newCell = some s') : s'.kernel.caps = s.kernel.caps := by
+/-- A committed `createCellChainA` resets the fresh id's cap slot to `[]` and frames every other slot. -/
+theorem createCellChainA_caps_frame {s s' : RecChainedState} {actor newCell : CellId}
+    (h : createCellChainA s actor newCell = some s') :
+    (∀ l, l ≠ newCell → s'.kernel.caps l = s.kernel.caps l)
+    ∧ s'.kernel.caps newCell = [] := by
   obtain ⟨_, _, hs'⟩ := createCellChainA_factors h
-  subst hs'; exact Dregg2.Exec.createCellIntoAsset_caps s.kernel newCell
+  subst hs'
+  dsimp [createCellIntoAsset, bornEmptyCellSlots]
+  constructor
+  · intro l hl; simp only [if_neg hl]
+  · simp only [if_pos]
+
+/-- **`CapsConfined` survives born-empty cap reset** at one fresh label. -/
+theorem CapsConfined.of_fresh_slot {U : List Auth} {caps caps' : Caps} {fresh : Label}
+    (hpre : CapsConfined U caps) (hempty : caps' fresh = [])
+    (hframe : ∀ l, l ≠ fresh → caps' l = caps l) :
+    CapsConfined U caps' := by
+  intro holder cap auth hmem hconf
+  by_cases hh : holder = fresh
+  · subst hh; simpa [hempty] using hmem
+  · exact hpre holder cap auth (by simpa [hframe holder hh] using hmem) hconf
+
+/-- **`CapsConfined.of_fresh_singleton` — install one confined cap at a born-empty fresh slot.** -/
+theorem CapsConfined.of_fresh_singleton {U : List Auth} {caps caps' : Caps} {fresh : Label} {c : Cap}
+    (hpre : CapsConfined U caps) (hempty : caps fresh = [])
+    (hframe : ∀ l, l ≠ fresh → caps' l = caps l) (hsingleton : caps' fresh = [c])
+    (hc : ∀ a ∈ capAuthConferred c, a ∈ U) :
+    CapsConfined U caps' := by
+  intro holder cap auth hmem hconf
+  by_cases hh : holder = fresh
+  · subst hh
+    rw [hsingleton] at hmem
+    rcases List.mem_singleton.mp hmem with rfl
+    exact hc auth hconf
+  · exact hpre holder cap auth (by simpa [hframe holder hh] using hmem) hconf
+
+/-- **`CapsConfined` survives `createCellChainA`.** -/
+theorem CapsConfined.of_createCell {U : List Auth} {s s' : RecChainedState} {actor newCell : CellId}
+    (hpre : CapsConfined U s.kernel.caps) (h : createCellChainA s actor newCell = some s') :
+    CapsConfined U s'.kernel.caps := by
+  have ⟨hframe, hempty⟩ := createCellChainA_caps_frame h
+  exact CapsConfined.of_fresh_slot hpre hempty hframe
 
 /-! ### The kernel-function caps-frame lemmas: every NON-authority kernel transition FRAMES `caps`.
 
@@ -253,7 +289,7 @@ theorem queueEnqueueDepositK_caps {k k' : RecordKernelState} {id m : Nat} {sende
     (h : queueEnqueueDepositK k id m sender owner depId dAsset deposit = some k') :
     k'.caps = k.caps := by
   unfold queueEnqueueDepositK at h
-  -- `queueEnqueueDepositK` = `queueEnqueueK k id m` then (on success) `createEscrowRawAsset`-park.
+  -- `queueEnqueueDepositK` = `queueEnqueueK k id m` then (on success) `createEscrowRawAssetQueue`-park.
   cases hq : queueEnqueueK k id m with
   | none => simp [hq] at h
   | some k₁ =>
@@ -261,7 +297,7 @@ theorem queueEnqueueDepositK_caps {k k' : RecordKernelState} {id m : Nat} {sende
       have hc1 : k₁.caps = k.caps := queueEnqueueK_caps hq
       split at h
       · simp only [Option.some.injEq] at h; subst h
-        show (createEscrowRawAsset k₁ depId sender owner dAsset deposit).caps = k.caps
+        show (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m).caps = k.caps
         exact hc1
       · simp at h
 
@@ -269,7 +305,7 @@ theorem queueDequeueRefundK_caps {k : RecordKernelState} {id : Nat} {actor : Cel
     {p : RecordKernelState × Nat} (h : queueDequeueRefundK k id actor depId = some p) :
     p.1.caps = k.caps := by
   unfold queueDequeueRefundK at h
-  -- `queueDequeueRefundK` = `queueDequeueK k id actor` then (on success) `settleEscrowRawAsset`-refund.
+  -- `queueDequeueRefundK` = `queueDequeueK` then `dequeueMsgBindB` then `settleEscrowRawAsset`-refund.
   cases hq : queueDequeueK k id actor with
   | none => simp [hq] at h
   | some pr =>
@@ -277,13 +313,19 @@ theorem queueDequeueRefundK_caps {k : RecordKernelState} {id : Nat} {actor : Cel
       simp only [hq] at h
       have hc1 : k₁.caps = k.caps := by
         have := queueDequeueK_caps hq; simpa using this
-      split at h
-      · split at h
-        · simp only [Option.some.injEq] at h; subst h
-          show (settleEscrowRawAsset k₁ _ actor _ _).caps = k.caps
-          exact hc1
-        · simp at h
-      · simp at h
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id mh
+      · rw [if_pos hbind] at h
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
+            simp only [hfind] at h
+            by_cases ha : actor ∈ k₁.accounts
+            · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨he, _⟩ := h
+              rw [← he]
+              exact hc1
+            · rw [if_neg ha] at h; exact absurd h (by simp)
+      · rw [if_neg hbind] at h; exact absurd h (by simp)
 
 theorem swissExportK_caps {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
     {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') :
@@ -430,7 +472,7 @@ theorem queueEnqueueDepositK_sealedBoxes {k k' : RecordKernelState} {id m : Nat}
     (h : queueEnqueueDepositK k id m sender owner depId dAsset deposit = some k') :
     k'.sealedBoxes = k.sealedBoxes := by
   unfold queueEnqueueDepositK at h
-  -- `queueEnqueueDepositK` = `queueEnqueueK k id m` then (on success) `createEscrowRawAsset`-park.
+  -- `queueEnqueueDepositK` = `queueEnqueueK k id m` then (on success) `createEscrowRawAssetQueue`-park.
   cases hq : queueEnqueueK k id m with
   | none => simp [hq] at h
   | some k₁ =>
@@ -438,7 +480,7 @@ theorem queueEnqueueDepositK_sealedBoxes {k k' : RecordKernelState} {id m : Nat}
       have hc1 : k₁.sealedBoxes = k.sealedBoxes := queueEnqueueK_sealedBoxes hq
       split at h
       · simp only [Option.some.injEq] at h; subst h
-        show (createEscrowRawAsset k₁ depId sender owner dAsset deposit).sealedBoxes = k.sealedBoxes
+        show (createEscrowRawAssetQueue k₁ depId sender owner dAsset deposit id m).sealedBoxes = k.sealedBoxes
         exact hc1
       · simp at h
 
@@ -446,7 +488,7 @@ theorem queueDequeueRefundK_sealedBoxes {k : RecordKernelState} {id : Nat} {acto
     {p : RecordKernelState × Nat} (h : queueDequeueRefundK k id actor depId = some p) :
     p.1.sealedBoxes = k.sealedBoxes := by
   unfold queueDequeueRefundK at h
-  -- `queueDequeueRefundK` = `queueDequeueK k id actor` then (on success) `settleEscrowRawAsset`-refund.
+  -- `queueDequeueRefundK` = `queueDequeueK` then `dequeueMsgBindB` then `settleEscrowRawAsset`-refund.
   cases hq : queueDequeueK k id actor with
   | none => simp [hq] at h
   | some pr =>
@@ -454,13 +496,19 @@ theorem queueDequeueRefundK_sealedBoxes {k : RecordKernelState} {id : Nat} {acto
       simp only [hq] at h
       have hc1 : k₁.sealedBoxes = k.sealedBoxes := by
         have := queueDequeueK_sealedBoxes hq; simpa using this
-      split at h
-      · split at h
-        · simp only [Option.some.injEq] at h; subst h
-          show (settleEscrowRawAsset k₁ _ actor _ _).sealedBoxes = k.sealedBoxes
-          exact hc1
-        · simp at h
-      · simp at h
+      by_cases hbind : dequeueMsgBindB k₁ actor depId id mh
+      · rw [if_pos hbind] at h
+        cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
+            simp only [hfind] at h
+            by_cases ha : actor ∈ k₁.accounts
+            · rw [if_pos ha, Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨he, _⟩ := h
+              rw [← he]
+              exact hc1
+            · rw [if_neg ha] at h; exact absurd h (by simp)
+      · rw [if_neg hbind] at h; exact absurd h (by simp)
 
 /-! ### WAVE 4 — the new queue-batch / pipeline-step / pipelined-send chained-step `caps` + `sealedBoxes`
 frame helpers (the atomic batch + fan-out edit only `queues`/`escrows`/`bal`, never `caps`/`sealedBoxes`;
@@ -1033,26 +1081,24 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
           exact execInnerA_confine hctrl hgrant hreply s1 s' inner h hpre1 hbox1
   -- ===== supply: createCell FRAMEs caps; spawn copies a held parent cap plus metadata. =====
   | createCellA actor newCell =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      exact createCellChainA_caps_eq (by simpa only [execFullA] using h)
+      exact CapsConfined.of_createCell hpre (by simpa only [execFullA] using h)
   | createCellFromFactoryA actor newCell vk =>
-      -- §MA-factory: the factory install never edits `caps` (frame lemma).
-      refine CapsConfined.of_caps_eq ?_ hpre
-      exact createCellFromFactoryChainA_caps_eq (by simpa only [execFullA] using h)
+      have hcap := createCellFromFactoryChainA_caps_frame (by simpa only [execFullA] using h)
+      exact CapsConfined.of_fresh_slot hpre hcap.2 hcap.1
   | spawnA actor child target =>
       simp only [execFullA] at h
-      obtain ⟨s1, hground, hc1, rfl⟩ := spawnChainA_factors h
-      show CapsConfined U
-        (fun l => if l = child then heldCapTo s.kernel.caps actor target :: s1.kernel.caps l
-                  else s1.kernel.caps l)
-      -- `s1.kernel.caps = s.kernel.caps` (createCell frames caps); then copy the parent's held cap.
-      have hcaps1 : s1.kernel.caps = s.kernel.caps := createCellChainA_caps_eq hc1
-      have hpre1 : CapsConfined U s1.kernel.caps := CapsConfined.of_caps_eq hcaps1 hpre
-      have := CapsConfined.grant (U := U) (caps := s1.kernel.caps) (holder := child)
-        (c := heldCapTo s.kernel.caps actor target) (fun a ha => by
-          exact hpre actor (heldCapTo s.kernel.caps actor target) a
-            (heldCapTo_mem s.kernel.caps actor target hground.1).1 ha) hpre1
-      simpa only [Dregg2.Exec.grant] using this
+      obtain ⟨s1, hground, hc1, hs'⟩ := spawnChainA_factors h
+      subst hs'
+      have hpre1 : CapsConfined U s1.kernel.caps := CapsConfined.of_createCell hpre hc1
+      have hempty : s1.kernel.caps child = [] := (createCellChainA_caps_frame hc1).2
+      have hframe := (createCellChainA_caps_frame hc1).1
+      exact CapsConfined.of_fresh_singleton (caps := s1.kernel.caps)
+        (caps' := fun l => if l = child then [heldCapTo s.kernel.caps actor target] else s.kernel.caps l)
+        (fresh := child) (c := heldCapTo s.kernel.caps actor target) hpre1 hempty
+        (fun l hl => by simp [if_neg hl, hframe l hl])
+        (by simp)
+        (fun a ha => hpre actor (heldCapTo s.kernel.caps actor target) a
+          (heldCapTo_mem s.kernel.caps actor target hground.1).1 ha)
   | bridgeMintA actor cell a value =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA, recCMintAsset] at h

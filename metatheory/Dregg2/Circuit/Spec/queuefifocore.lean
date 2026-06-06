@@ -459,7 +459,7 @@ def QueueEnqueueSpec (st : RecChainedState) (id m : Nat) (actor cell : CellId) (
     ∧ queueEnqueueK st.kernel id m = some k₁
     ∧ 0 ≤ deposit ∧ deposit ≤ k₁.bal actor dAsset ∧ actor ∈ k₁.accounts
     ∧ ¬ (∃ r ∈ k₁.escrows, r.id = depId)
-    ∧ st'.kernel = createEscrowRawAsset k₁ depId actor cell dAsset deposit
+    ∧ st'.kernel = createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m
     ∧ st'.log = enqueueReceipt actor cell deposit :: st.log
 
 /-- **`queueEnqueueChainA_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions)** on the chained
@@ -557,12 +557,14 @@ def dequeueReceipt (actor cell : CellId) (deposit : ℤ) : Turn :=
   { actor := actor, src := cell, dst := actor, amt := deposit }
 
 /-- **The full-state declarative spec of a committed `queueDequeueA`** — the INDEPENDENT reference
-semantics. The guard holds; `queueDequeueRefundK` commits some `(k', m)`; the post kernel is EXACTLY
-`k'` (the composed pop-front + refund); the chained `log` advances by the refund receipt. The whole
-`st'.kernel` is pinned, so a silently mutated field fails the proof. -/
+semantics. The guard holds; `queueDequeueRefundK` commits some `(k', m)` with message-binding
+(`dequeueMsgBindB` inside the kernel op); the post kernel is EXACTLY `k'`; the chained `log` advances
+by the refund receipt. -/
 def QueueDequeueSpec (st : RecChainedState) (id : Nat) (actor cell : CellId) (depId : Nat)
     (deposit : ℤ) (st' : RecChainedState) : Prop :=
   stateAuthB st.kernel.caps actor cell = true ∧ acceptsEffects st.kernel cell = true
+    ∧ dequeueBindB st.kernel actor depId = true
+    ∧ queueDequeueHeadB st.kernel id actor depId = true
     ∧ ∃ k' m, queueDequeueRefundK st.kernel id actor depId = some (k', m)
         ∧ st'.kernel = k'
         ∧ st'.log = dequeueReceipt actor cell deposit :: st.log
@@ -575,14 +577,15 @@ theorem queueDequeueChainA_iff_spec (st : RecChainedState) (id : Nat) (actor cel
       ↔ QueueDequeueSpec st id actor cell depId deposit st' := by
   unfold queueDequeueChainA QueueDequeueSpec
   by_cases hg : stateAuthB st.kernel.caps actor cell = true ∧ acceptsEffects st.kernel cell = true
+      ∧ dequeueBindB st.kernel actor depId = true ∧ queueDequeueHeadB st.kernel id actor depId = true
   · rw [if_pos hg]
-    obtain ⟨hauth, hacc⟩ := hg
+    obtain ⟨hauth, hacc, hbind, hhead⟩ := hg
     cases hk : queueDequeueRefundK st.kernel id actor depId with
     | none =>
         simp only
         constructor
         · intro h; exact absurd h (by simp)
-        · rintro ⟨_, _, k', m, hk', _⟩; exact absurd hk' (by simp)
+        · rintro ⟨_, _, _, _, k', m, hk', _, _⟩; exact absurd hk' (by simp)
     | some kr =>
         obtain ⟨k', m⟩ := kr
         simp only
@@ -590,8 +593,8 @@ theorem queueDequeueChainA_iff_spec (st : RecChainedState) (id : Nat) (actor cel
         · intro h
           simp only [Option.some.injEq] at h
           subst h
-          exact ⟨hauth, hacc, k', m, rfl, rfl, rfl⟩
-        · rintro ⟨_, _, k'', m', hk'', hker, hlog⟩
+          exact ⟨hauth, hacc, hbind, hhead, k', m, rfl, rfl, rfl⟩
+        · rintro ⟨_, _, hbind', hhead', k'', m', hk'', hker, hlog⟩
           simp only [Option.some.injEq, Prod.mk.injEq] at hk''
           obtain ⟨hk1, _⟩ := hk''; subst hk1
           obtain ⟨kk, l'⟩ := st'
@@ -601,7 +604,7 @@ theorem queueDequeueChainA_iff_spec (st : RecChainedState) (id : Nat) (actor cel
   · rw [if_neg hg]
     constructor
     · intro h; exact absurd h (by simp)
-    · rintro ⟨hauth, hacc, _⟩; exact absurd ⟨hauth, hacc⟩ hg
+    · rintro ⟨hauth, hacc, hbind, hhead, _⟩; exact absurd ⟨hauth, hacc, hbind, hhead⟩ hg
 
 /-- **`execFullA_queueDequeueA_iff_spec` — the UNIFIED-ACTION executor corner.** -/
 theorem execFullA_queueDequeueA_iff_spec (st : RecChainedState) (id : Nat) (actor cell : CellId)

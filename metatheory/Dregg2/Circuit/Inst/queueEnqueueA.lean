@@ -105,14 +105,16 @@ def enqueuePostQueues (s : RecChainedState) (args : EnqueueArgs) : List QueueRec
 def enqueuePostBal (s : RecChainedState) (args : EnqueueArgs) : CellId → AssetId → ℤ :=
   match queueEnqueueK s.kernel args.id args.m with
   | some k₁ =>
-      (createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit).bal
+      (createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m).bal
   | none => s.kernel.bal
 
 /-- Canonical post-`escrows` after the composed enqueue+park. -/
 def enqueuePostEscrows (s : RecChainedState) (args : EnqueueArgs) : List EscrowRecord :=
   match queueEnqueueK s.kernel args.id args.m with
   | some k₁ =>
-      (createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit).escrows
+      (createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m).escrows
   | none => s.kernel.escrows
 
 def queuesComponent (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
@@ -229,13 +231,15 @@ theorem enqueuePostQueues_some (s : RecChainedState) (args : EnqueueArgs) (k₁ 
 theorem enqueuePostBal_some (s : RecChainedState) (args : EnqueueArgs) (k₁ : RecordKernelState)
     (hk₁ : queueEnqueueK s.kernel args.id args.m = some k₁) :
     enqueuePostBal s args =
-      (createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit).bal := by
+      (createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m).bal := by
   unfold enqueuePostBal; rw [hk₁]
 
 theorem enqueuePostEscrows_some (s : RecChainedState) (args : EnqueueArgs) (k₁ : RecordKernelState)
     (hk₁ : queueEnqueueK s.kernel args.id args.m = some k₁) :
     enqueuePostEscrows s args =
-      (createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit).escrows := by
+      (createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m).escrows := by
   unfold enqueuePostEscrows; rw [hk₁]
 
 theorem queueEnqueueK_preserves_frame {k k' : RecordKernelState} {id m : Nat}
@@ -255,38 +259,39 @@ theorem queueEnqueueK_preserves_frame {k k' : RecordKernelState} {id m : Nat}
         exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
       · rw [if_neg hc] at h; exact absurd h (by simp)
 
-theorem createEscrowRawAsset_preserves_frame (k₁ : RecordKernelState) (depId : Nat)
-    (actor cell : CellId) (dAsset : AssetId) (deposit : ℤ) :
-    (createEscrowRawAsset k₁ depId actor cell dAsset deposit).accounts = k₁.accounts
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).cell = k₁.cell
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).caps = k₁.caps
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).queues = k₁.queues
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).nullifiers = k₁.nullifiers
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).revoked = k₁.revoked
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).commitments = k₁.commitments
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).swiss = k₁.swiss
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).slotCaveats = k₁.slotCaveats
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).factories = k₁.factories
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).lifecycle = k₁.lifecycle
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).deathCert = k₁.deathCert
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).delegate = k₁.delegate
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).delegations = k₁.delegations
-      ∧ (createEscrowRawAsset k₁ depId actor cell dAsset deposit).sealedBoxes = k₁.sealedBoxes := by
-  dsimp [createEscrowRawAsset]
+theorem createEscrowRawAssetQueue_preserves_frame (k₁ : RecordKernelState) (depId : Nat)
+    (actor cell : CellId) (dAsset : AssetId) (deposit : ℤ) (id m : Nat) :
+    (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).accounts = k₁.accounts
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).cell = k₁.cell
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).caps = k₁.caps
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).queues = k₁.queues
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).nullifiers = k₁.nullifiers
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).revoked = k₁.revoked
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).commitments = k₁.commitments
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).swiss = k₁.swiss
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).slotCaveats = k₁.slotCaveats
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).factories = k₁.factories
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).lifecycle = k₁.lifecycle
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).deathCert = k₁.deathCert
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).delegate = k₁.delegate
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).delegations = k₁.delegations
+      ∧ (createEscrowRawAssetQueue k₁ depId actor cell dAsset deposit id m).sealedBoxes = k₁.sealedBoxes := by
+  dsimp [createEscrowRawAssetQueue]
   exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 theorem enqueue_composed_preserves_frame (k : RecordKernelState) (k₁ : RecordKernelState)
     (args : EnqueueArgs) (hk₁ : queueEnqueueK k args.id args.m = some k₁)
     (k₂ : RecordKernelState)
-    (hk₂ : k₂ = createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit) :
+    (hk₂ : k₂ = createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m) :
     k₂.accounts = k.accounts ∧ k₂.cell = k.cell ∧ k₂.caps = k.caps
       ∧ k₂.nullifiers = k.nullifiers ∧ k₂.revoked = k.revoked ∧ k₂.commitments = k.commitments
       ∧ k₂.swiss = k.swiss ∧ k₂.slotCaveats = k.slotCaveats ∧ k₂.factories = k.factories
       ∧ k₂.lifecycle = k.lifecycle ∧ k₂.deathCert = k.deathCert ∧ k₂.delegate = k.delegate
       ∧ k₂.delegations = k.delegations ∧ k₂.sealedBoxes = k.sealedBoxes := by
   subst hk₂
-  rcases createEscrowRawAsset_preserves_frame k₁ args.depId args.actor args.cell args.dAsset
-      args.deposit with
+  rcases createEscrowRawAssetQueue_preserves_frame k₁ args.depId args.actor args.cell args.dAsset
+      args.deposit args.id args.m with
     ⟨hAcc₂, hCell₂, hCaps₂, hQ₂, hNul₂, hRev₂, hCom₂, hSw₂, hSC₂, hFac₂, hLif₂, hDC₂, hDel₂, hDgs₂, hSB₂⟩
   rcases queueEnqueueK_preserves_frame hk₁ with
     ⟨hAcc₁, hCell₁, hCaps₁, hNul₁, hRev₁, hCom₁, hSw₁, hSC₁, hFac₁, hLif₁, hDC₁, hDel₁, hDgs₁, hSB₁⟩
@@ -294,7 +299,7 @@ theorem enqueue_composed_preserves_frame (k : RecordKernelState) (k₁ : RecordK
     hRev₂.trans hRev₁, hCom₂.trans hCom₁, hSw₂.trans hSw₁, hSC₂.trans hSC₁, hFac₂.trans hFac₁,
     hLif₂.trans hLif₁, hDC₂.trans hDC₁, hDel₂.trans hDel₁, hDgs₂.trans hDgs₁, hSB₂.trans hSB₁⟩
 
-theorem kernel_eq_createEscrowRawAsset_of_components
+theorem kernel_eq_createEscrowRawAssetQueue_of_components
     (s s' : RecChainedState) (args : EnqueueArgs) (k₁ : RecordKernelState)
     (hk₁ : queueEnqueueK s.kernel args.id args.m = some k₁)
     (hq : s'.kernel.queues = enqueuePostQueues s args)
@@ -314,13 +319,14 @@ theorem kernel_eq_createEscrowRawAsset_of_components
     (hDel : s'.kernel.delegate = s.kernel.delegate)
     (hDgs : s'.kernel.delegations = s.kernel.delegations)
     (hSB : s'.kernel.sealedBoxes = s.kernel.sealedBoxes) :
-    s'.kernel = createEscrowRawAsset k₁ args.depId args.actor args.cell args.dAsset args.deposit := by
+    s'.kernel = createEscrowRawAssetQueue k₁ args.depId args.actor args.cell args.dAsset args.deposit
+        args.id args.m := by
   have hkq := enqueuePostQueues_some s args k₁ hk₁
   have hbal' := enqueuePostBal_some s args k₁ hk₁
   have hesc' := enqueuePostEscrows_some s args k₁ hk₁
   have hframe₁ := queueEnqueueK_preserves_frame hk₁
-  have hframe₂ := createEscrowRawAsset_preserves_frame k₁ args.depId args.actor args.cell
-      args.dAsset args.deposit
+  have hframe₂ := createEscrowRawAssetQueue_preserves_frame k₁ args.depId args.actor args.cell
+      args.dAsset args.deposit args.id args.m
   rcases hframe₁ with
     ⟨hAcc₁, hCell₁, hCaps₁, hNul₁, hRev₁, hCom₁, hSw₁, hSC₁, hFac₁, hLif₁, hDC₁, hDel₁, hDgs₁, hSB₁⟩
   rcases hframe₂ with
@@ -359,7 +365,7 @@ theorem apex_iff_queueEnqueueSpec (D : (CellId → AssetId → ℤ) → ℤ) (hD
     rcases enqueueGuardProp_iff_enqueueGuard s args |>.mp hg with
       ⟨hauth, hacc, k₁, hk₁, hd1, hd2, hd3, hd4⟩
     refine ⟨k₁, hauth, hacc, hk₁, hd1, hd2, hd3, hd4, ?_, hlog⟩
-    exact kernel_eq_createEscrowRawAsset_of_components s s' args k₁ hk₁ hq hbal hesc
+    exact kernel_eq_createEscrowRawAssetQueue_of_components s s' args k₁ hk₁ hq hbal hesc
       hAcc hCell hCaps hNul hRev hCom hSw hSC hFac hLif hDC hDel hDgs hSB
   · rintro ⟨k₁, hauth, hacc, hk₁, hd1, hd2, hd3, hd4, hker, hlog⟩
     have hg : enqueueGuardProp s args :=
@@ -371,8 +377,8 @@ theorem apex_iff_queueEnqueueSpec (D : (CellId → AssetId → ℤ) → ℤ) (hD
     have hframe := enqueue_composed_preserves_frame s.kernel k₁ args hk₁ _ hker
     rcases hframe with
       ⟨hAcc, hCell, hCaps, hNul, hRev, hCom, hSw, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
-    rcases createEscrowRawAsset_preserves_frame k₁ args.depId args.actor args.cell args.dAsset
-        args.deposit with ⟨_, _, _, hQ₂, _, _, _, _, _, _, _, _, _, _, _⟩
+    rcases createEscrowRawAssetQueue_preserves_frame k₁ args.depId args.actor args.cell args.dAsset
+        args.deposit args.id args.m with ⟨_, _, _, hQ₂, _, _, _, _, _, _, _, _, _, _, _⟩
     refine ⟨hg, ?_, ?_, ?_, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
     · show s'.kernel.queues = enqueuePostQueues s args

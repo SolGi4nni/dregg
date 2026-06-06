@@ -1874,16 +1874,45 @@ list-open `[` never whnf-reduces a big element term. -/
 private theorem lit_lbrack (rest : PState) : lit "[" ('[' :: rest) = some rest := by
   unfold lit; rw [show ("[":String).toList = ['['] from by decide, litGo_cons_match]; rfl
 
+/-- **The optional-`Nat` leaf** (`parseOptNat ∘ encodeOptNat = id`). Shared by `EscrowRecord` queue
+bindings and `SwissRecord.cert`. -/
+theorem parseOptNat_encode (o : Option Nat) (rest : PState) :
+    parseOptNat ((encodeOptNat o).toList ++ rest) = some (o, rest) := by
+  cases o with
+  | none =>
+      unfold parseOptNat encodeOptNat
+      rw [show (("{\"none\":0}":String).toList ++ rest) = ("{\"none\":0}":String).toList ++ rest from rfl,
+        lit_append]
+  | some n =>
+      unfold parseOptNat encodeOptNat
+      rw [show (("{\"some\":" ++ toString n ++ "}":String).toList ++ rest)
+            = ("{\"some\":":String).toList ++ ((toString n).toList ++ ('}' :: rest)) from by
+          simp only [String.toList_append, show ("}":String).toList = ['}'] from by decide,
+            List.append_assoc, List.cons_append, List.nil_append]]
+      rw [lit_ne_pre "{\"none\":0}" "{\"some\":" _ (by decide) (by decide)]
+      simp only []
+      rw [lit_append]
+      simp only []
+      rw [parseNat_toString n ('}' :: rest) (nd_brace rest)]
+      simp only []
+      rw [show lit "}" ('}' :: rest) = some rest from by
+            rw [show ('}' :: rest) = ("}":String).toList ++ rest from by
+              simp only [show ("}":String).toList = ['}'] from by decide, List.cons_append,
+                List.nil_append]]
+            exact lit_append "}" rest]
+      simp only [Option.map_some]
+
 set_option maxHeartbeats 1000000 in
-/-- **The `ESC` entry roundtrip** — the 7-field record `[id,creator,recipient,amount,resolved,asset,
-bridge]` (flags via §0f's `parseFlag_bool`); self-delimiting, so round-trips for ANY tail. -/
+/-- **The `ESC` entry roundtrip** — the 9-field record `[id,creator,recipient,amount,resolved,asset,
+bridge,queueDep,queueMsg]` (flags via §0f's `parseFlag_bool`; queue fields via `parseOptNat_encode`);
+self-delimiting, so round-trips for ANY tail. -/
 theorem parseEscrow_encode (e : EscrowRecord) (rest : PState) :
     parseEscrow ((encodeEscrow e).toList ++ rest) = some (e, rest) := by
   unfold parseEscrow encodeEscrow
   simp only [String.toList_append, List.append_assoc]
   simp only [lit_append, parseNat_toString _ _ (nd_litComma _), cN_step _ _ (nd_litComma _),
-    cI_step _ _ (nd_litComma _), parseFlag_bool _ _ (nd_litComma _), parseFlag_bool _ _ (nd_litBrack _),
-    Option.bind_eq_bind, Option.bind]
+    cI_step _ _ (nd_litComma _), parseFlag_bool _ _ (nd_litComma _), parseFlag_bool _ _ (nd_litComma _),
+    parseOptNat_encode, Option.bind_eq_bind, Option.bind]
 
 private def encodeEscrowsTail (es : List EscrowRecord) : String :=
   es.foldl (fun acc x => acc ++ "," ++ encodeEscrow x) ""
@@ -1892,7 +1921,8 @@ private def encodeEscrowsTail (es : List EscrowRecord) : String :=
 private theorem encodeEscrow_head (e : EscrowRecord) : ∃ t, (encodeEscrow e).toList = '[' :: t := by
   refine ⟨(toString e.id ++ "," ++ toString e.creator ++ "," ++ toString e.recipient ++ ","
     ++ toString e.amount ++ "," ++ (if e.resolved then "1" else "0") ++ "," ++ toString e.asset ++ ","
-    ++ (if e.bridge then "1" else "0") ++ "]" : String).toList, ?_⟩
+    ++ (if e.bridge then "1" else "0") ++ "," ++ encodeOptNat e.queueDep ++ ","
+    ++ encodeOptNat e.queueMsg ++ "]" : String).toList, ?_⟩
   unfold encodeEscrow
   simp only [String.toList_append, show ("[":String).toList = ['['] from rfl, List.cons_append,
     List.nil_append, List.append_assoc]
@@ -2105,35 +2135,6 @@ and the element `parseSwiss` is a 6-field `do`-block `[swiss,exporter,target,rig
 LAST field `cert` is an OPTIONAL `Nat` (`{"none":0}`/`{"some":N}`, discharged by the `parseOptNat_encode`
 leaf below). The first side-table element combining an AUTHS field AND an Option field. Self-delimiting,
 so it round-trips for ANY tail. -/
-
-/-- **The optional-`cert` leaf** (`parseOptNat ∘ encodeOptNat = id`). The `none` arm is a single literal
-consume; the `some n` arm fails the `{"none":0}` prefix (`lit_ne_pre` over the two concrete tags), opens
-`{"some":`, reads the `Nat` (post-byte `}`, non-digit), then closes `}`. Self-delimiting. -/
-theorem parseOptNat_encode (o : Option Nat) (rest : PState) :
-    parseOptNat ((encodeOptNat o).toList ++ rest) = some (o, rest) := by
-  cases o with
-  | none =>
-      unfold parseOptNat encodeOptNat
-      rw [show (("{\"none\":0}":String).toList ++ rest) = ("{\"none\":0}":String).toList ++ rest from rfl,
-        lit_append]
-  | some n =>
-      unfold parseOptNat encodeOptNat
-      rw [show (("{\"some\":" ++ toString n ++ "}":String).toList ++ rest)
-            = ("{\"some\":":String).toList ++ ((toString n).toList ++ ('}' :: rest)) from by
-          simp only [String.toList_append, show ("}":String).toList = ['}'] from by decide,
-            List.append_assoc, List.cons_append, List.nil_append]]
-      rw [lit_ne_pre "{\"none\":0}" "{\"some\":" _ (by decide) (by decide)]
-      simp only []
-      rw [lit_append]
-      simp only []
-      rw [parseNat_toString n ('}' :: rest) (nd_brace rest)]
-      simp only []
-      rw [show lit "}" ('}' :: rest) = some rest from by
-            rw [show ('}' :: rest) = ("}":String).toList ++ rest from by
-              simp only [show ("}":String).toList = ['}'] from by decide, List.cons_append,
-                List.nil_append]]
-            exact lit_append "}" rest]
-      simp only [Option.map_some]
 
 set_option maxHeartbeats 1000000 in
 /-- **The `SW` entry roundtrip** — the 6-field record `[swiss,exporter,target,rights,refcount,cert]`,
@@ -3886,7 +3887,6 @@ wholesale swap hands `execFullTurnWide` — from the Lean-side TCB; with §14/§
 theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : WfTurn w.turn) :
     parseWWire (encodeWWire w) = some w := by
   obtain ⟨state, turn⟩ := w
-  -- `parseWWire` runs on `(encodeWWire ⟨state,turn⟩).toList` at fuel `len + 1`; expose the field layout.
   have hwire : (encodeWWire ⟨state, turn⟩).toList
       = ("{\"state\":":String).toList ++ ((encodeWState state).toList
           ++ ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))) := by
@@ -3894,36 +3894,27 @@ theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : 
     unfold encodeWWire
     simp only [String.toList_append, List.append_assoc]
   unfold parseWWire
-  -- zeta-reduce the `let cs`/`let fuel` bindings so the input expression is exposed for `rw [hwire]`.
   simp only []
-  -- the outer fuel: the whole-input length + 1, which dominates every inner width.
   set fuel := (encodeWWire ⟨state, turn⟩).toList.length + 1 with hfueldef
-  -- open `{"state":`
   rw [hwire]
   rw [show lit "{\"state\":" (("{\"state\":":String).toList ++ ((encodeWState state).toList
           ++ ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))))
         = some ((encodeWState state).toList ++ ((",\"turn\":":String).toList
             ++ ((encodeWTurn turn).toList ++ "}".toList))) from
         lit_append "{\"state\":" _]
-  -- reduce the `match some _ with | some r0 => …` so `parseWState_encode` can rewrite the exposed input.
   simp only []
-  -- the wide STATE via §14 (outer fuel ≥ encoded width; the rest is `,"turn":TURN}`):
   rw [parseWState_encode state (((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList)))
         hcells fuel (by
         rw [hfueldef, hwire]
         simp only [List.length_append]
         omega)]
-  -- iota-reduce the `match some (state, _) with | some (state, r1) => …` pair-pattern match.
   dsimp only
-  -- `,"turn":` then the envelope via §16b (outer fuel ≥ forestSize root via §16a):
   rw [show lit ",\"turn\":" ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))
         = some ((encodeWTurn turn).toList ++ "}".toList) from lit_append ",\"turn\":" _]
   simp only []
   rw [parseWTurn_encode turn "}".toList hturn fuel (by
-        -- `forestSize turn.root ≤ (encodeForestW turn.root).length ≤ full input length < fuel`.
         have hbridge := forestSize_le_encode turn.root
         rw [hfueldef, hwire]
-        -- the encoded forest is a substring of the envelope, hence of the whole input.
         have hsub : (encodeForestW turn.root).toList.length ≤ (encodeWTurn turn).toList.length := by
           obtain ⟨agent, nonce, fee, validUntil, prevHash, root⟩ := turn
           show (encodeForestW root).toList.length ≤ (encodeWTurn ⟨agent, nonce, fee, validUntil, prevHash, root⟩).toList.length
@@ -3936,7 +3927,6 @@ theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : 
         simp only [List.length_append]
         omega)]
   dsimp only
-  -- the closing `}` must consume the WHOLE remaining input (`some []` ⇒ accept):
   rw [show lit "}" "}".toList = some [] from by
         rw [show ("}":String).toList = ("}":String).toList ++ ([] : PState) from by simp, lit_append]]
 

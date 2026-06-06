@@ -60,9 +60,11 @@ structure DequeueArgs where
 def chainView : StateView RecChainedState :=
   { toKernel := (·.kernel), getLog := (·.log) }
 
-/-- The dequeue guard as a `Prop` — `stateAuthB ∧ acceptsEffects ∧ queueDequeueRefundK` commits. -/
+/-- The dequeue guard — auth ∧ live cell ∧ **P0-1 deposit binding** (`r.recipient = actor`) ∧ kernel commits. -/
 def dequeueGuardProp (s : RecChainedState) (args : DequeueArgs) : Prop :=
   stateAuthB s.kernel.caps args.actor args.cell = true ∧ acceptsEffects s.kernel args.cell = true
+    ∧ dequeueBindB s.kernel args.actor args.depId = true
+    ∧ queueDequeueHeadB s.kernel args.id args.actor args.depId = true
     ∧ match queueDequeueRefundK s.kernel args.id args.actor args.depId with
       | some _ => True
       | none   => False
@@ -265,22 +267,24 @@ theorem queueDequeueRefundK_preserves_frame {k k' : RecordKernelState} {id : Nat
   | none => simp only [hk₁] at h; exact absurd h (by simp)
   | some kr =>
       obtain ⟨k₁, mh⟩ := kr
-      rw [hk₁] at h
-      cases hr : k₁.escrows.find? (fun r => decide (r.id = depId ∧ r.resolved = false)) with
-      | none => simp only [hr] at h; exact absurd h (by simp)
-      | some r =>
-          simp only [hr] at h
-          by_cases hl : actor ∈ k₁.accounts
-          · rw [if_pos hl] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h
-            obtain ⟨hk', _⟩ := h; subst hk'
-            rcases settleEscrowRawAsset_preserves_frame k₁ depId actor r.asset r.amount with
-              ⟨hAcc, hCell, hCaps, hQ, hNul, hRev, hCom, hSw, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
-            rcases queueDequeueK_preserves_frame hk₁ with
-              ⟨hAcc₁, hCell₁, hCaps₁, hNul₁, hRev₁, hCom₁, hSw₁, hSC₁, hFac₁, hLif₁, hDC₁, hDel₁, hDgs₁, hSB₁⟩
-            exact ⟨hAcc.trans hAcc₁, hCell.trans hCell₁, hCaps.trans hCaps₁, hNul.trans hNul₁,
-              hRev.trans hRev₁, hCom.trans hCom₁, hSw.trans hSw₁, hSC.trans hSC₁, hFac.trans hFac₁,
-              hLif.trans hLif₁, hDC.trans hDC₁, hDel.trans hDel₁, hDgs.trans hDgs₁, hSB.trans hSB₁⟩
-          · rw [if_neg hl] at h; exact absurd h (by simp)
+      simp only [hk₁] at h
+      split at h
+      · cases hfind : findUnresolvedDeposit k₁ depId with
+        | none => simp only [hfind] at h; exact absurd h (by simp)
+        | some r =>
+            simp only [hfind] at h
+            split at h
+            · simp only [Option.some.injEq, Prod.mk.injEq] at h
+              obtain ⟨hk', _⟩ := h; subst hk'
+              rcases settleEscrowRawAsset_preserves_frame k₁ depId actor r.asset r.amount with
+                ⟨hAcc, hCell, hCaps, hQ, hNul, hRev, hCom, hSw, hSC, hFac, hLif, hDC, hDel, hDgs, hSB⟩
+              rcases queueDequeueK_preserves_frame hk₁ with
+                ⟨hAcc₁, hCell₁, hCaps₁, hNul₁, hRev₁, hCom₁, hSw₁, hSC₁, hFac₁, hLif₁, hDC₁, hDel₁, hDgs₁, hSB₁⟩
+              exact ⟨hAcc.trans hAcc₁, hCell.trans hCell₁, hCaps.trans hCaps₁, hNul.trans hNul₁,
+                hRev.trans hRev₁, hCom.trans hCom₁, hSw.trans hSw₁, hSC.trans hSC₁, hFac.trans hFac₁,
+                hLif.trans hLif₁, hDC.trans hDC₁, hDel.trans hDel₁, hDgs.trans hDgs₁, hSB.trans hSB₁⟩
+            · exact absurd h (by simp)
+      · exact absurd h (by simp)
 
 theorem kernel_eq_of_components
     (s s' : RecChainedState) (args : DequeueArgs) (k' : RecordKernelState) (m : Nat)
@@ -340,16 +344,16 @@ theorem apex_iff_queueDequeueSpec (D : (CellId → AssetId → ℤ) → ℤ) (hD
   constructor
   · rintro ⟨hg, hq, hbal, hesc, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hSw, hSC, hFac, hLif,
       hDC, hDel, hDgs, hSB⟩
-    obtain ⟨hauth, hacc, hgok⟩ := hg
+    obtain ⟨hauth, hacc, hbind, hhead, hgok⟩ := hg
     cases hk : queueDequeueRefundK s.kernel args.id args.actor args.depId with
     | none => exact absurd hgok (by simp [hk])
     | some kr =>
         obtain ⟨k', m⟩ := kr
-        refine ⟨hauth, hacc, k', m, hk, ?_, hlog⟩
+        refine ⟨hauth, hacc, hbind, hhead, k', m, hk, ?_, hlog⟩
         exact kernel_eq_of_components s s' args k' m hk hq hbal hesc
           hAcc hCell hCaps hNul hRev hCom hSw hSC hFac hLif hDC hDel hDgs hSB
-  · rintro ⟨hauth, hacc, k', m, hk, hker, hlog⟩
-    have hg : dequeueGuardProp s args := ⟨hauth, hacc, by simp [dequeueGuardProp, hk]⟩
+  · rintro ⟨hauth, hacc, hbind, hhead, k', m, hk, hker, hlog⟩
+    have hg : dequeueGuardProp s args := ⟨hauth, hacc, hbind, hhead, by simp [dequeueGuardProp, hk]⟩
     have hkq := dequeuePostQueues_some s args k' m hk
     have hbal' := dequeuePostBal_some s args k' m hk
     have hesc' := dequeuePostEscrows_some s args k' m hk

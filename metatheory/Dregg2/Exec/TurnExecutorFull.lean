@@ -817,11 +817,10 @@ def spawnChainA (s : RecChainedState) (actor child target : CellId) : Option Rec
     | some s1 =>
         some { s1 with kernel :=
           { s1.kernel with caps := fun l =>
-              if l = child then heldCapTo s.kernel.caps actor target :: s1.kernel.caps l
-              else s1.kernel.caps l
-                           delegate := fun c => if c = child then some actor else s1.kernel.delegate c
-                           delegations := fun c => if c = child then s1.kernel.caps actor
-                                                   else s1.kernel.delegations c } }
+              if l = child then [heldCapTo s.kernel.caps actor target] else s.kernel.caps l
+                           delegate := fun c => if c = child then some actor else s.kernel.delegate c
+                           delegations := fun c => if c = child then s.kernel.caps actor
+                                                   else s.kernel.delegations c } }
     | none => none
   else
     none
@@ -836,11 +835,10 @@ theorem spawnChainA_factors {s s' : RecChainedState} {actor child target : CellI
       createCellChainA s actor child = some s1 ∧
       s' = { s1 with kernel :=
         { s1.kernel with caps := fun l =>
-            if l = child then heldCapTo s.kernel.caps actor target :: s1.kernel.caps l
-            else s1.kernel.caps l
-                         delegate := fun c => if c = child then some actor else s1.kernel.delegate c
-                         delegations := fun c => if c = child then s1.kernel.caps actor
-                                                 else s1.kernel.delegations c } } := by
+            if l = child then [heldCapTo s.kernel.caps actor target] else s.kernel.caps l
+                         delegate := fun c => if c = child then some actor else s.kernel.delegate c
+                         delegations := fun c => if c = child then s.kernel.caps actor
+                                                 else s.kernel.delegations c } } := by
   unfold spawnChainA at h
   by_cases hg : (s.kernel.caps actor).any (fun cap => confersEdgeTo target cap) = true ∧
       target ∈ s.kernel.accounts
@@ -897,6 +895,19 @@ theorem createCellChainA_chainlink {s s' : RecChainedState} {actor newCell : Cel
     s'.log = { actor := actor, src := newCell, dst := newCell, amt := 0 } :: s.log := by
   obtain ⟨_, _, hs'⟩ := createCellChainA_factors h; subst hs'; rfl
 
+/-- **`createCellChainA_caps_frame` — PROVED.** A committed creation resets the fresh id's cap slot to
+`[]` and frames every other slot (`bornEmptyCellSlots`). -/
+theorem createCellChainA_caps_frame {s s' : RecChainedState} {actor newCell : CellId}
+    (h : createCellChainA s actor newCell = some s') :
+    (∀ l, l ≠ newCell → s'.kernel.caps l = s.kernel.caps l)
+    ∧ s'.kernel.caps newCell = [] := by
+  obtain ⟨_, _, hs'⟩ := createCellChainA_factors h
+  subst hs'
+  dsimp [createCellIntoAsset, bornEmptyCellSlots]
+  constructor
+  · intro l hl; simp only [if_neg hl]
+  · simp only [if_pos]
+
 /-- The spawn metadata/cap copy is bal-orthogonal — it edits `caps`, parent pointer, and delegation
 snapshot, never `bal`/`accounts` — so the per-asset measure is literally unchanged (PROVED). -/
 theorem spawnGrant_recTotalAsset (k : RecordKernelState) (actor child : CellId) (cap : Cap)
@@ -913,8 +924,8 @@ theorem spawnChainA_neutral {s s' : RecChainedState} {actor child target : CellI
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
   obtain ⟨s1, _, hc, hs'⟩ := spawnChainA_factors h
   subst hs'
-  rw [spawnGrant_recTotalAsset s1.kernel actor child (heldCapTo s.kernel.caps actor target) b]
-  exact createCellChainA_neutral b hc
+  exact (spawnGrant_recTotalAsset s1.kernel actor child (heldCapTo s.kernel.caps actor target) b).trans
+    (createCellChainA_neutral b hc)
 
 /-- **`spawnChainA_authorized` — PROVED.** A committed spawn implies the spawner held creation authority
 over the child. -/
@@ -949,14 +960,9 @@ records its parent (`actor`) and stores a birth snapshot of the parent's current
 theorem spawnChainA_parent_snapshot {s s' : RecChainedState} {actor child target : CellId}
     (h : spawnChainA s actor child target = some s') :
     s'.kernel.delegate child = some actor ∧ s'.kernel.delegations child = s.kernel.caps actor := by
-  obtain ⟨s1, _, hc, hs'⟩ := spawnChainA_factors h
+  obtain ⟨_, _, _, hs'⟩ := spawnChainA_factors h
   subst hs'
-  have hcaps : s1.kernel.caps = s.kernel.caps := by
-    obtain ⟨_, _, hs1⟩ := createCellChainA_factors hc
-    subst hs1
-    rfl
-  simp only [if_true, true_and]
-  rw [hcaps]
+  simp only [if_true, true_and, if_pos]
 
 /-- **`spawnChainA_chainlink` — PROVED.** A committed spawn extends the receipt chain by EXACTLY the
 child's (balance-`0`) creation row (the cap grant edits only `caps`, not the log). -/
@@ -1179,12 +1185,15 @@ theorem createCellFromFactoryChainA_sideTables {s s' : RecChainedState} {actor n
 /-- **`createCellFromFactoryChainA_caps_eq` — PROVED.** A committed factory creation leaves the cap
 table UNTOUCHED: `createCell` edits `accounts`/`bal`, and the field/caveat install edits `cell`/
 `slotCaveats` — never `caps`. The frame the confinement crown (`CellConfine`) reuses. -/
-theorem createCellFromFactoryChainA_caps_eq {s s' : RecChainedState} {actor newCell : CellId}
+theorem createCellFromFactoryChainA_caps_frame {s s' : RecChainedState} {actor newCell : CellId}
     {vk : Int} (h : createCellFromFactoryChainA s actor newCell vk = some s') :
-    s'.kernel.caps = s.kernel.caps := by
+    (∀ l, l ≠ newCell → s'.kernel.caps l = s.kernel.caps l)
+    ∧ s'.kernel.caps newCell = [] := by
   obtain ⟨_, s1, _, _, hc, hs'⟩ := createCellFromFactoryChainA_factors h
-  obtain ⟨_, _, hs1⟩ := createCellChainA_factors hc
-  subst hs' hs1; rfl
+  have hcreate := createCellChainA_caps_frame hc
+  subst hs'
+  -- factory install edits `cell`/`slotCaveats` only — caps are literally the create-leg caps.
+  simpa using hcreate
 
 /-! ### §MA-state — the 5 PURE-STATE (field/log) effects on the per-asset dispatch.
 
@@ -2054,7 +2063,9 @@ RISES, the holding-store DROPS). The dequeued head message is dropped from the c
 surfaces in the kernel transition's `Nat`); the receipt records the deposit refund move. -/
 def queueDequeueChainA (s : RecChainedState) (id : Nat) (actor cell : CellId) (depId : Nat) (deposit : ℤ) :
     Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true then
+  if stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
+      ∧ dequeueBindB s.kernel actor depId = true
+      ∧ queueDequeueHeadB s.kernel id actor depId = true then
     match queueDequeueRefundK s.kernel id actor depId with
     | some (k', _) => some { kernel := k', log := { actor := actor, src := cell, dst := actor, amt := deposit } :: s.log }
     | none         => none
@@ -2088,6 +2099,7 @@ theorem queueDequeueChainA_authorized {s s' : RecChainedState} {id : Nat} {actor
     stateAuthB s.kernel.caps actor cell = true := by
   unfold queueDequeueChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
+      ∧ dequeueBindB s.kernel actor depId = true ∧ queueDequeueHeadB s.kernel id actor depId = true
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
@@ -2132,6 +2144,7 @@ theorem queueDequeueChainA_balNeutral {s s' : RecChainedState} {id : Nat} {actor
     recTotalAssetWithEscrow s'.kernel b = recTotalAssetWithEscrow s.kernel b := by
   unfold queueDequeueChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
+      ∧ dequeueBindB s.kernel actor depId = true ∧ queueDequeueHeadB s.kernel id actor depId = true
   · rw [if_pos hg] at h
     cases hk : queueDequeueRefundK s.kernel id actor depId with
     | none    => rw [hk] at h; exact absurd h (by simp)
@@ -2189,6 +2202,7 @@ theorem queueDequeueChainA_chainlink {s s' : RecChainedState} {id : Nat} {actor 
     s'.log = { actor := actor, src := cell, dst := actor, amt := deposit } :: s.log := by
   unfold queueDequeueChainA at h
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
+      ∧ dequeueBindB s.kernel actor depId = true ∧ queueDequeueHeadB s.kernel id actor depId = true
   · rw [if_pos hg] at h
     cases hk : queueDequeueRefundK s.kernel id actor depId with
     | none    => rw [hk] at h; exact absurd h (by simp)
@@ -5859,7 +5873,7 @@ theorem execFullTurnA_each_attests :
 #assert_axioms createCellFromFactoryChainA_unknown_factory_fails
 #assert_axioms createCellFromFactoryChainA_nonconforming_fails
 #assert_axioms createCellFromFactoryChainA_balance_field_fails
-#assert_axioms createCellFromFactoryChainA_caps_eq
+#assert_axioms createCellFromFactoryChainA_caps_frame
 #assert_axioms createCellFromFactoryChainA_sideTables
 #assert_axioms spawnChainA_factors
 #assert_axioms spawnChainA_neutral
@@ -6619,6 +6633,9 @@ def fmaQ : RecChainedState :=
         cell := fun _ => .record [("balance", .int 0)]
         caps := fun l => if l = 0 then [Cap.node 0, Cap.node 1, Cap.node 2] else []
         bal := fun c a => if c = 0 ∧ a = 0 then 50 else 0
+        escrows :=
+          [ { id := 9, creator := 0, recipient := 0, amount := 0, resolved := false,
+              queueDep := some 10, queueMsg := some 111 } ]
         queues :=
           [ { id := 10, owner := 0, capacity := 3, buffer := [111] }
           , { id := 11, owner := 0, capacity := 3, buffer := [] }
@@ -6628,7 +6645,7 @@ def fmaQ : RecChainedState :=
 -- ★ ATOMIC BATCH — ALL SUCCEED: enqueue 222 into q=10 (deposit 0) THEN dequeue from q=10 (refund 0).
 --   Both sub-ops commit ⇒ the batch COMMITS. (The 222 enqueues to the tail, then the head 111 dequeues.)
 #guard ((queueAtomicTxA fmaQ 0
-        [ .enqueue 10 222 0 0 0 0 0, .dequeue 10 0 0 0 0 ]).isSome)  --  true — all-or-nothing COMMITS
+        [ .enqueue 10 222 0 0 0 0 0, .dequeue 10 0 0 9 0 ]).isSome)  --  true — all-or-nothing COMMITS
 
 -- ★★ ATOMICITY TEETH — ONE FAILING SUB-OP ROLLS BACK ALL: the SAME first enqueue, but the second sub-op
 --   dequeues from a NON-EXISTENT queue id 99 (fail-closed). The WHOLE batch is `none` — the first
@@ -6639,7 +6656,7 @@ def fmaQ : RecChainedState :=
 #guard ((queueAtomicTxA fmaQ 0
         [ .dequeue 99 0 0 0 0, .enqueue 10 222 0 0 0 0 0 ]).isSome) == false  --  false — head failure aborts
 -- ...the all-or-nothing is balance-neutral when it commits (the COMBINED measure is FIXED ∀ asset):
-#guard ((queueAtomicTxA fmaQ 0 [ .enqueue 10 222 0 0 0 0 0, .dequeue 10 0 0 0 0 ]).map
+#guard ((queueAtomicTxA fmaQ 0 [ .enqueue 10 222 0 0 0 0 0, .dequeue 10 0 0 9 0 ]).map
         (fun s => (recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))) == some (50, 0)  --  some (50, 0) — CONSERVED
 
 -- ★ PIPELINE STEP — MOVE SOURCE→SINKS: dequeue the head 111 from source q=10 and fan it out into sinks
