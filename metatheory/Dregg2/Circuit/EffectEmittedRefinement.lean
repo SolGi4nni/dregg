@@ -5,7 +5,7 @@ Extends `EffectRefinement.lean`'s circuit diamonds to the Plonky3 emitted wire l
 effect with `*_circuit_refines_spec`, proves `*_emitted_refines_spec` (emitted ⊑ bespoke spec) via
 the generic `emitted ⟺ circuit` faithfulness lemmas + circuit soundness.
 
-No `sorry`/`admit`/`native_decide`/`axiom`.
+POLICY: no lurking holes — incomplete `*_emitted_refines_spec` use explicit `sorry`.
 -/
 import Dregg2.Circuit.EffectRefinement
 import Dregg2.Circuit.EffectEmitRegistry
@@ -13,6 +13,7 @@ import Dregg2.Circuit.EffectCommit
 import Dregg2.Circuit.EffectCommit2
 import Dregg2.Circuit.EffectCommit2Dual
 import Dregg2.Circuit.EffectCommit3
+import Dregg2.Circuit.EffectCommit4
 import Dregg2.Circuit.EffectCommit5
 import Dregg2.Circuit.SetFieldCommit
 import Dregg2.Circuit.Inst.mintA
@@ -32,6 +33,38 @@ import Dregg2.Circuit.Inst.sealA
 import Dregg2.Circuit.Inst.bridgeLockA
 import Dregg2.Circuit.Inst.queueEnqueueA
 import Dregg2.Circuit.Inst.exerciseA
+import Dregg2.Circuit.Inst.attenuateA
+import Dregg2.Circuit.Inst.emitEventA
+import Dregg2.Circuit.Inst.incrementNonceA
+import Dregg2.Circuit.Inst.setPermissionsA
+import Dregg2.Circuit.Inst.setVKA
+import Dregg2.Circuit.Inst.delegateAttenA
+import Dregg2.Circuit.Inst.introduceA
+import Dregg2.Circuit.Inst.validateHandoffA
+import Dregg2.Circuit.Inst.revokeDelegationA
+import Dregg2.Circuit.Inst.createCellFromFactoryA
+import Dregg2.Circuit.Inst.createCommittedEscrowA
+import Dregg2.Circuit.Inst.bridgeFinalizeA
+import Dregg2.Circuit.Inst.bridgeCancelA
+import Dregg2.Circuit.Inst.unsealA
+import Dregg2.Circuit.Inst.createSealPairA
+import Dregg2.Circuit.Inst.makeSovereignA
+import Dregg2.Circuit.Inst.refusalA
+import Dregg2.Circuit.Inst.receiptArchiveA
+import Dregg2.Circuit.Inst.queueAllocateA
+import Dregg2.Circuit.Inst.queueDequeueA
+import Dregg2.Circuit.Inst.queueResizeA
+import Dregg2.Circuit.Inst.queueAtomicTxA
+import Dregg2.Circuit.Inst.queuePipelineStepA
+import Dregg2.Circuit.Inst.pipelinedSendA
+import Dregg2.Circuit.Inst.swissExportA
+import Dregg2.Circuit.Inst.enlivenRefA
+import Dregg2.Circuit.Inst.swissHandoffA
+import Dregg2.Circuit.Inst.swissDropA
+import Dregg2.Circuit.Inst.cellSealA
+import Dregg2.Circuit.Inst.cellUnsealA
+import Dregg2.Circuit.Inst.cellDestroyA
+import Dregg2.Circuit.Inst.refreshDelegationA
 
 namespace Dregg2.Circuit.EffectEmittedRefinement
 
@@ -41,7 +74,7 @@ open Dregg2.Circuit.EffectRefinement
 open Dregg2.Circuit.EffectCommit
   (emitEffectFaithful emittedEffect encodeE satisfiedE EffectSpec CommitSurface)
 open Dregg2.Circuit.EffectCommit2
-  (emitEffect2Faithful emittedEffect2 encodeE2 EffectSpec2)
+  (emitEffect2Faithful emittedEffect2 encodeE2 EffectSpec2 satisfiedE2)
 open Dregg2.Circuit.EffectCommit2Dual
   (emitEffect2DualFaithful emittedEffect2Dual encodeE2Dual EffectSpec2Dual satisfiedE2Dual)
 open Dregg2.Circuit.EffectCommit3
@@ -692,6 +725,890 @@ theorem exerciseHold_emitted_refines_spec (S : CommitSurface)
     exerciseHoldSpecStep pre args post :=
   exerciseHold_circuit_refines_spec S hN hL hRest hLog pre post args hwf hwf'
     ((exerciseHold_emitted_equiv_circuit S pre args post).mp h)
+
+/-! ## §19 — Batch-2 emitted portals (remaining Inst effects; `sorry` where circuit diamond open). -/
+
+open Dregg2.Circuit.EffectCommit4
+  (emitEffect2QuadFaithful emittedEffect2Quad encodeE2Quad EffectSpec2Quad satisfiedE2Quad)
+open Dregg2.Circuit.Inst.AttenuateA
+  (attenuateE attenuateAAirName AttenuateArgs attenuateA_full_sound)
+open Dregg2.Circuit.Inst.EmitEventA
+  (emitEventE emitEventAAirName EmitEventArgs emitEventA_full_sound)
+open Dregg2.Circuit.Inst.IncrementNonceA
+  (incrementNonceE incrementNonceAAirName IncrementNonceArgs incrementNonceA_full_sound)
+open Dregg2.Circuit.Inst.SetPermissionsA
+  (setPermissionsE setPermissionsAAirName SetPermissionsArgs setPermissionsA_full_sound)
+open Dregg2.Circuit.Inst.SetVKA (setVKE setVKAAirName SetVKArgs setVKA_full_sound)
+open Dregg2.Circuit.Inst.DelegateAttenA
+  (delegateAttenE delegateAttenAAirName DelegateAttenArgs delegateAttenA_full_sound)
+open Dregg2.Circuit.Inst.IntroduceA
+  (introduceE introduceAAirName IntroduceArgs introduceA_full_sound)
+open Dregg2.Circuit.Inst.ValidateHandoffA
+  (validateHandoffE validateHandoffAAirName HandoffArgs validateHandoffA_full_sound)
+open Dregg2.Circuit.Inst.RevokeDelegationA
+  (revokeDelegationE revokeDelegationAAirName revokeDelegationA_full_sound)
+open Dregg2.Circuit.Inst.CreateCellFromFactoryA
+  (createFromFactoryE createCellFromFactoryAAirName CreateFromFactoryArgs)
+open Dregg2.Circuit.Inst.CreateCommittedEscrowA
+  (createCommittedEscrowE createCommittedEscrowAAirName CreateCommittedEscrowArgs
+    createCommittedEscrowA_full_sound)
+open Dregg2.Circuit.Inst.BridgeFinalizeA
+  (bridgeFinalizeE bridgeFinalizeAAirName BridgeFinalizeArgs bridgeFinalizeA_full_sound)
+open Dregg2.Circuit.Inst.BridgeCancelA
+  (bridgeCancelE bridgeCancelAAirName BridgeCancelArgs bridgeCancelA_full_sound)
+open Dregg2.Circuit.Inst.UnsealA (unsealE unsealAAirName UnsealArgs unsealA_full_sound)
+open Dregg2.Circuit.Inst.CreateSealPairA
+  (createSealPairE createSealPairAAirName CreateSealPairArgs createSealPairA_full_sound)
+open Dregg2.Circuit.Inst.MakeSovereignA
+  (makeSovereignE makeSovereignAAirName MakeSovereignArgs makeSovereignA_full_sound)
+open Dregg2.Circuit.Inst.RefusalA (refusalE refusalAAirName RefusalArgs refusalA_full_sound)
+open Dregg2.Circuit.Inst.ReceiptArchiveA
+  (receiptArchiveE receiptArchiveAAirName ReceiptArchiveArgs receiptArchiveA_full_sound)
+open Dregg2.Circuit.Inst.QueueAllocateA
+  (queueAllocateE queueAllocateAAirName AllocateArgs queueAllocateA_full_sound)
+open Dregg2.Circuit.Inst.QueueDequeueA
+  (queueDequeueE queueDequeueAAirName DequeueArgs queueDequeueA_full_sound)
+open Dregg2.Circuit.Inst.QueueResizeA
+  (queueResizeE queueResizeAAirName ResizeArgs queueResizeA_full_sound)
+open Dregg2.Circuit.Inst.QueueAtomicTxA
+  (queueAtomicTxE queueAtomicTxAAirName AtomicTxArgs queueAtomicTxA_full_sound)
+open Dregg2.Circuit.Inst.QueuePipelineStepA
+  (queuePipelineStepE queuePipelineStepAAirName PipelineArgs RestIffNoQueues
+    queuePipelineStepA_full_sound)
+open Dregg2.Circuit.Inst.PipelinedSendA
+  (pipelinedSendE pipelinedSendAAirName PipelinedSendArgs pipelinedSendA_full_sound)
+open Dregg2.Circuit.Inst.SwissExportA
+  (swissExportE swissExportAAirName ExportArgs RestIffNoSwiss swissExportA_full_sound)
+open Dregg2.Circuit.Inst.EnlivenRefA
+  (enlivenE enlivenRefAAirName EnlivenArgs enlivenRefA_full_sound)
+open Dregg2.Circuit.Inst.SwissHandoffA (swissHandoffE swissHandoffAAirName swissHandoffA_full_sound)
+open Dregg2.Circuit.Inst.SwissDropA (swissDropE swissDropAAirName DropArgs swissDropA_full_sound)
+open Dregg2.Circuit.Inst.CellSealA (cellSealE cellSealAAirName CellSealArgs cellSealA_full_sound)
+open Dregg2.Circuit.Inst.CellUnsealA
+  (cellUnsealE cellUnsealAAirName CellUnsealArgs cellUnsealA_full_sound)
+open Dregg2.Circuit.Inst.CellDestroyA
+  (cellDestroyE cellDestroyAAirName CellDestroyArgs RestIffNoLifecycleDeathCert
+    cellDestroyA_full_sound)
+open Dregg2.Circuit.Inst.RefreshDelegationA
+  (refreshDelegationE refreshDelegationAAirName RefreshDelegationArgs RestIffNoDelegations
+    refreshDelegationA_full_sound)
+open Dregg2.Circuit.Spec.AuthorityAttenuation (AttenuateSpec DelegateAttenSpec)
+open Dregg2.Circuit.Spec.CellStateLog (EmitEventSpec)
+open Dregg2.Circuit.Spec.CellStateMonotone (IncrementNonceSpec)
+open Dregg2.Circuit.Spec.CellStatePermissions (SetPermissionsSpec)
+open Dregg2.Circuit.Spec.CellStateVK (SetVKSpec)
+open Dregg2.Circuit.Spec.AuthorityUnattenuated (DelegateSpec)
+open Dregg2.Circuit.Spec.AuthorityRevocation (RevokeSpec)
+open Dregg2.Circuit.Spec.FactoryCreation (CreateFromFactorySpec)
+open Dregg2.Circuit.Spec.EscrowCommitted (CommittedEscrowCreateSpec CommittedEscrowSettleSpec)
+open Dregg2.Exec.TurnExecutorFull (releaseSettleAuthB refundSettleAuthB)
+open Dregg2.Circuit.Spec.BridgeOutboundFinalize (BridgeFinalizeSpec)
+open Dregg2.Circuit.Spec.BridgeOutboundCancel (BridgeOutboundCancelSpec)
+open Dregg2.Circuit.Spec.SealBoxOperations (UnsealSpec)
+open Dregg2.Circuit.Spec.SealPairCreation (CreateSealPairSpec)
+open Dregg2.Circuit.Spec.SovereignCommitment (MakeSovereignSpec)
+open Dregg2.Circuit.Spec.CellStateAudit (RefusalSpec ReceiptArchiveSpec)
+open Dregg2.Circuit.Spec.QueueFifoCore (QueueAllocateSpec QueueResizeSpec QueueDequeueSpec)
+open Dregg2.Circuit.Spec.QueueAtomicTx (QueueAtomicTxSpec)
+open Dregg2.Circuit.Spec.QueuePipelineFanout (QueuePipelineFanoutSpec)
+open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
+open Dregg2.Circuit.Spec.SwissExport (ExportSpec)
+open Dregg2.Circuit.Spec.SwissEnliven (EnlivenSpec)
+open Dregg2.Circuit.Spec.SwissHandoff (HandoffSpec)
+open Dregg2.Circuit.Spec.SwissDrop (DropSpec)
+open Dregg2.Circuit.Spec.CellLifecycle (CellSealSpec CellUnsealSpec CellDestroySpec)
+open Dregg2.Circuit.Spec.RefreshDelegation (RefreshDelegationSpec)
+
+-- Batch-2 effects: emitted portals composed through Inst `*_full_sound` diamonds.
+def attenuateAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : AttenuateArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (attenuateE D hD) attenuateAAirName s args s'
+
+theorem attenuateA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : AttenuateArgs) (s' : RecChainedState) :
+    attenuateAEmittedStep S D hD s args s' ↔ effect2CircuitStep S (attenuateE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (attenuateE D hD) attenuateAAirName s args s'
+
+theorem attenuateA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.AttenuateA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : AttenuateArgs) (s' : RecChainedState)
+    (h : attenuateAEmittedStep S D hD s args s') :
+    AttenuateSpec s args.actor args.idx args.keep s' :=
+  effect2_emitted_refines_bespoke_spec S (attenuateE D hD) attenuateAAirName
+    (fun pre args post => satisfiedE2 S (attenuateE D hD) (encodeE2 S (attenuateE D hD) pre args post))
+    (fun pre args post => AttenuateSpec pre args.actor args.idx args.keep post)
+    (fun pre args post hc => attenuateA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => attenuateA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def emitEventAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : EmitEventArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S emitEventE emitEventAAirName s args s'
+
+theorem emitEventA_emitted_equiv_circuit (S : CommitSurface) (s : RecChainedState) (args : EmitEventArgs)
+    (s' : RecChainedState) :
+    emitEventAEmittedStep S s args s' ↔ effect1CircuitStepLocal S emitEventE s args s' :=
+  effect1_emitted_equiv_circuit_local S emitEventE emitEventAAirName s args s'
+
+theorem emitEventA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : EmitEventArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : emitEventAEmittedStep S s args s') :
+    EmitEventSpec s args.actor args.cell args.topic args.data s' :=
+  emitEventA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S emitEventE emitEventAAirName s args s').mp h)
+
+def incrementNonceAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : IncrementNonceArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S incrementNonceE incrementNonceAAirName s args s'
+
+theorem incrementNonceA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : IncrementNonceArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : incrementNonceAEmittedStep S s args s') :
+    IncrementNonceSpec s args.actor args.cell args.n s' :=
+  incrementNonceA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S incrementNonceE incrementNonceAAirName s args s').mp h)
+
+def setPermissionsAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : SetPermissionsArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S setPermissionsE setPermissionsAAirName s args s'
+
+theorem setPermissionsA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SetPermissionsArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : setPermissionsAEmittedStep S s args s') :
+    SetPermissionsSpec s args.actor args.cell args.p s' :=
+  setPermissionsA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S setPermissionsE setPermissionsAAirName s args s').mp h)
+
+def setVKAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : SetVKArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S setVKE setVKAAirName s args s'
+
+theorem setVKA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SetVKArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : setVKAEmittedStep S s args s') :
+    SetVKSpec s args.actor args.cell args.vk s' :=
+  setVKA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S setVKE setVKAAirName s args s').mp h)
+
+def delegateAttenAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : DelegateAttenArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (delegateAttenE D hD) delegateAttenAAirName s args s'
+
+theorem delegateAttenA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : DelegateAttenArgs) (s' : RecChainedState) :
+    delegateAttenAEmittedStep S D hD s args s' ↔
+      effect2CircuitStep S (delegateAttenE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (delegateAttenE D hD) delegateAttenAAirName s args s'
+
+theorem delegateAttenA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.DelegateAttenA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : DelegateAttenArgs) (s' : RecChainedState)
+    (h : delegateAttenAEmittedStep S D hD s args s') :
+    DelegateAttenSpec s args.del args.recv args.t args.keep s' :=
+  effect2_emitted_refines_bespoke_spec S (delegateAttenE D hD) delegateAttenAAirName
+    (fun pre args post =>
+      satisfiedE2 S (delegateAttenE D hD) (encodeE2 S (delegateAttenE D hD) pre args post))
+    (fun pre args post => DelegateAttenSpec pre args.del args.recv args.t args.keep post)
+    (fun pre args post hc => delegateAttenA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => delegateAttenA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def introduceAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : IntroduceArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (introduceE D hD) introduceAAirName s args s'
+
+theorem introduceA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : IntroduceArgs) (s' : RecChainedState) :
+    introduceAEmittedStep S D hD s args s' ↔ effect2CircuitStep S (introduceE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (introduceE D hD) introduceAAirName s args s'
+
+theorem introduceA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.IntroduceA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : IntroduceArgs) (s' : RecChainedState)
+    (h : introduceAEmittedStep S D hD s args s') :
+    DelegateSpec s args.intro args.recip args.t s' :=
+  effect2_emitted_refines_bespoke_spec S (introduceE D hD) introduceAAirName
+    (fun pre args post =>
+      satisfiedE2 S (introduceE D hD) (encodeE2 S (introduceE D hD) pre args post))
+    (fun pre args post => DelegateSpec pre args.intro args.recip args.t post)
+    (fun pre args post hc => introduceA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => introduceA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def validateHandoffAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : HandoffArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (validateHandoffE D hD) validateHandoffAAirName s args s'
+
+theorem validateHandoffA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : HandoffArgs) (s' : RecChainedState) :
+    validateHandoffAEmittedStep S D hD s args s' ↔
+      effect2CircuitStep S (validateHandoffE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (validateHandoffE D hD) validateHandoffAAirName s args s'
+
+theorem validateHandoffA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.ValidateHandoffA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : HandoffArgs) (s' : RecChainedState)
+    (h : validateHandoffAEmittedStep S D hD s args s') :
+    DelegateSpec s args.intro args.recip args.tgt s' :=
+  effect2_emitted_refines_bespoke_spec S (validateHandoffE D hD) validateHandoffAAirName
+    (fun pre args post =>
+      satisfiedE2 S (validateHandoffE D hD) (encodeE2 S (validateHandoffE D hD) pre args post))
+    (fun pre args post => DelegateSpec pre args.intro args.recip args.tgt post)
+    (fun pre args post hc => validateHandoffA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => validateHandoffA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def revokeDelegationAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.RevokeDelegationA.RevokeArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (revokeDelegationE D hD) revokeDelegationAAirName s args s'
+
+theorem revokeDelegationA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.RevokeDelegationA.RevokeArgs)
+    (s' : RecChainedState) :
+    revokeDelegationAEmittedStep S D hD s args s' ↔
+      effect2CircuitStep S (revokeDelegationE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (revokeDelegationE D hD) revokeDelegationAAirName s args s'
+
+theorem revokeDelegationA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.RevokeDelegationA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.RevokeDelegationA.RevokeArgs) (s' : RecChainedState)
+    (h : revokeDelegationAEmittedStep S D hD s args s') :
+    RevokeSpec s args.holder args.t s' :=
+  effect2_emitted_refines_bespoke_spec S (revokeDelegationE D hD) revokeDelegationAAirName
+    (fun pre args post =>
+      satisfiedE2 S (revokeDelegationE D hD) (encodeE2 S (revokeDelegationE D hD) pre args post))
+    (fun pre args post => RevokeSpec pre args.holder args.t post)
+    (fun pre args post hc => revokeDelegationA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => revokeDelegationA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def createCellFromFactoryAEmittedStep (S : Surface2) (LE : CellId → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
+    (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
+    (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState) : Prop :=
+  effect2quintEmittedStepLocal S
+    (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+    createCellFromFactoryAAirName s args s'
+
+theorem createCellFromFactoryA_emitted_refines_spec (S : Surface2) (LE : CellId → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
+    (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
+    (hRest : Dregg2.Circuit.Inst.CreateCellFromFactoryA.RestIffNoFactoryTouched S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CreateFromFactoryArgs) (s' : RecChainedState)
+    (h : createCellFromFactoryAEmittedStep S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
+      s args s') :
+    CreateFromFactorySpec s args.actor args.newCell args.vk s' := by
+  sorry -- HOLE: createCellFromFactoryA
+
+def createCommittedEscrowAEmittedStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE) (s : RecChainedState) (args : CreateCommittedEscrowArgs)
+    (s' : RecChainedState) : Prop :=
+  effect2dualEmittedStepLocal S (createCommittedEscrowE D hD LE cN hN hLE) createCommittedEscrowAAirName
+    s args s'
+
+theorem createCommittedEscrowA_emitted_equiv_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE) (s : RecChainedState) (args : CreateCommittedEscrowArgs)
+    (s' : RecChainedState) :
+    createCommittedEscrowAEmittedStep S D hD LE cN hN hLE s args s' ↔
+      satisfiedE2Dual S (createCommittedEscrowE D hD LE cN hN hLE)
+        (encodeE2Dual S (createCommittedEscrowE D hD LE cN hN hLE) s args s') :=
+  effect2dual_emitted_equiv_circuit_local S (createCommittedEscrowE D hD LE cN hN hLE)
+    createCommittedEscrowAAirName s args s'
+
+theorem createCommittedEscrowA_emitted_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE) (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CreateCommittedEscrowArgs) (s' : RecChainedState)
+    (h : createCommittedEscrowAEmittedStep S D hD LE cN hN hLE s args s') :
+    CommittedEscrowCreateSpec s args.id args.actor args.creator args.recipient args.asset args.amount
+      args.hidingProof s' :=
+  effect2dual_emitted_refines_bespoke_spec S (createCommittedEscrowE D hD LE cN hN hLE)
+    createCommittedEscrowAAirName
+    (fun pre args post =>
+      satisfiedE2Dual S (createCommittedEscrowE D hD LE cN hN hLE)
+        (encodeE2Dual S (createCommittedEscrowE D hD LE cN hN hLE) pre args post))
+    (fun pre args post =>
+      CommittedEscrowCreateSpec pre args.id args.actor args.creator args.recipient args.asset
+        args.amount args.hidingProof post)
+    (fun pre args post hc =>
+      createCommittedEscrowA_full_sound S D hD LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post =>
+      createCommittedEscrowA_emitted_equiv_circuit S D hD LE cN hN hLE pre args post)
+    s args s' h
+
+/-- HOLE: `releaseCommittedEscrowA` has no Inst emission (`releaseCommittedEscrowAHoleName`). -/
+theorem releaseCommittedEscrowA_emitted_refines_spec (s : RecChainedState) (id : Nat) (actor : CellId)
+    (s' : RecChainedState) :
+    CommittedEscrowSettleSpec s id actor (fun r => r.recipient) releaseSettleAuthB s' := by
+  sorry -- HOLE: releaseCommittedEscrowA
+
+/-- HOLE: `refundCommittedEscrowA` has no Inst emission (`refundCommittedEscrowAHoleName`). -/
+theorem refundCommittedEscrowA_emitted_refines_spec (s : RecChainedState) (id : Nat) (actor : CellId)
+    (s' : RecChainedState) :
+    CommittedEscrowSettleSpec s id actor (fun r => r.creator) refundSettleAuthB s' := by
+  sorry -- HOLE: refundCommittedEscrowA
+
+def bridgeFinalizeAEmittedStep (S : Surface2) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : BridgeFinalizeArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (bridgeFinalizeE LE cN hN hLE) bridgeFinalizeAAirName s args s'
+
+theorem bridgeFinalizeA_emitted_equiv_circuit (S : Surface2) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : BridgeFinalizeArgs) (s' : RecChainedState) :
+    bridgeFinalizeAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (bridgeFinalizeE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (bridgeFinalizeE LE cN hN hLE) bridgeFinalizeAAirName s args s'
+
+theorem bridgeFinalizeA_emitted_refines_spec (S : Surface2) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.BridgeFinalizeA.RestIffNoEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : BridgeFinalizeArgs) (s' : RecChainedState)
+    (h : bridgeFinalizeAEmittedStep S LE cN hN hLE s args s') :
+    BridgeFinalizeSpec s args.id args.actor args.asset args.amount s' :=
+  effect2_emitted_refines_bespoke_spec S (bridgeFinalizeE LE cN hN hLE) bridgeFinalizeAAirName
+    (fun pre args post =>
+      satisfiedE2 S (bridgeFinalizeE LE cN hN hLE)
+        (encodeE2 S (bridgeFinalizeE LE cN hN hLE) pre args post))
+    (fun pre args post => BridgeFinalizeSpec pre args.id args.actor args.asset args.amount post)
+    (fun pre args post hc => bridgeFinalizeA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => bridgeFinalizeA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def bridgeCancelAEmittedStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : BridgeCancelArgs) (s' : RecChainedState) : Prop :=
+  effect2dualEmittedStepLocal S (bridgeCancelE D hD LE cN hN hLE) bridgeCancelAAirName s args s'
+
+theorem bridgeCancelA_emitted_equiv_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE) (s : RecChainedState) (args : BridgeCancelArgs) (s' : RecChainedState) :
+    bridgeCancelAEmittedStep S D hD LE cN hN hLE s args s' ↔
+      satisfiedE2Dual S (bridgeCancelE D hD LE cN hN hLE)
+        (encodeE2Dual S (bridgeCancelE D hD LE cN hN hLE) s args s') :=
+  effect2dual_emitted_equiv_circuit_local S (bridgeCancelE D hD LE cN hN hLE) bridgeCancelAAirName s args s'
+
+theorem bridgeCancelA_emitted_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE) (hRest : RestIffNoBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : BridgeCancelArgs) (s' : RecChainedState)
+    (h : bridgeCancelAEmittedStep S D hD LE cN hN hLE s args s') :
+    BridgeOutboundCancelSpec s args.id args.actor s' :=
+  effect2dual_emitted_refines_bespoke_spec S (bridgeCancelE D hD LE cN hN hLE) bridgeCancelAAirName
+    (fun pre args post =>
+      satisfiedE2Dual S (bridgeCancelE D hD LE cN hN hLE)
+        (encodeE2Dual S (bridgeCancelE D hD LE cN hN hLE) pre args post))
+    (fun pre args post => BridgeOutboundCancelSpec pre args.id args.actor post)
+    (fun pre args post hc =>
+      bridgeCancelA_full_sound S D hD LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => bridgeCancelA_emitted_equiv_circuit S D hD LE cN hN hLE pre args post)
+    s args s' h
+
+def unsealAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : UnsealArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (unsealE D hD) unsealAAirName s args s'
+
+theorem unsealA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : UnsealArgs) (s' : RecChainedState) :
+    unsealAEmittedStep S D hD s args s' ↔ effect2CircuitStep S (unsealE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (unsealE D hD) unsealAAirName s args s'
+
+theorem unsealA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.UnsealA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : UnsealArgs) (s' : RecChainedState)
+    (h : unsealAEmittedStep S D hD s args s') :
+    UnsealSpec s args.pid args.actor args.recipient args.box s' :=
+  effect2_emitted_refines_bespoke_spec S (unsealE D hD) unsealAAirName
+    (fun pre args post => satisfiedE2 S (unsealE D hD) (encodeE2 S (unsealE D hD) pre args post))
+    (fun pre args post => UnsealSpec pre args.pid args.actor args.recipient args.box post)
+    (fun pre args post hc => unsealA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => unsealA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def createSealPairAEmittedStep (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : CreateSealPairArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (createSealPairE D hD) createSealPairAAirName s args s'
+
+theorem createSealPairA_emitted_equiv_circuit (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (s : RecChainedState) (args : CreateSealPairArgs) (s' : RecChainedState) :
+    createSealPairAEmittedStep S D hD s args s' ↔
+      effect2CircuitStep S (createSealPairE D hD) s args s' :=
+  effect2_emitted_equiv_circuit_local S (createSealPairE D hD) createSealPairAAirName s args s'
+
+theorem createSealPairA_emitted_refines_spec (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.CreateSealPairA.RestIffNoCaps S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CreateSealPairArgs) (s' : RecChainedState)
+    (h : createSealPairAEmittedStep S D hD s args s') :
+    CreateSealPairSpec s args.pid args.actor args.sealerHolder args.unsealerHolder s' :=
+  effect2_emitted_refines_bespoke_spec S (createSealPairE D hD) createSealPairAAirName
+    (fun pre args post =>
+      satisfiedE2 S (createSealPairE D hD) (encodeE2 S (createSealPairE D hD) pre args post))
+    (fun pre args post =>
+      CreateSealPairSpec pre args.pid args.actor args.sealerHolder args.unsealerHolder post)
+    (fun pre args post hc => createSealPairA_full_sound S D hD hRest hLog pre args post hc)
+    (fun pre args post => createSealPairA_emitted_equiv_circuit S D hD pre args post)
+    s args s' h
+
+def makeSovereignAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : MakeSovereignArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S makeSovereignE makeSovereignAAirName s args s'
+
+theorem makeSovereignA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : MakeSovereignArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : makeSovereignAEmittedStep S s args s') :
+    MakeSovereignSpec s args.actor args.cell s' :=
+  makeSovereignA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S makeSovereignE makeSovereignAAirName s args s').mp h)
+
+def refusalAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : RefusalArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S refusalE refusalAAirName s args s'
+
+theorem refusalA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RefusalArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : refusalAEmittedStep S s args s') :
+    RefusalSpec s args.actor args.cell s' :=
+  refusalA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S refusalE refusalAAirName s args s').mp h)
+
+def receiptArchiveAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : ReceiptArchiveArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S receiptArchiveE receiptArchiveAAirName s args s'
+
+theorem receiptArchiveA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ReceiptArchiveArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : receiptArchiveAEmittedStep S s args s') :
+    ReceiptArchiveSpec s args.actor args.cell s' :=
+  receiptArchiveA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S receiptArchiveE receiptArchiveAAirName s args s').mp h)
+
+def queueAllocateAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (queueAllocateE LE cN hN hLE) queueAllocateAAirName s args s'
+
+theorem queueAllocateA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState) :
+    queueAllocateAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (queueAllocateE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (queueAllocateE LE cN hN hLE) queueAllocateAAirName s args s'
+
+theorem queueAllocateA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
+    (h : queueAllocateAEmittedStep S LE cN hN hLE s args s') :
+    QueueAllocateSpec s args.id args.actor args.cell args.cap s' :=
+  effect2_emitted_refines_bespoke_spec S (queueAllocateE LE cN hN hLE) queueAllocateAAirName
+    (fun pre args post =>
+      satisfiedE2 S (queueAllocateE LE cN hN hLE)
+        (encodeE2 S (queueAllocateE LE cN hN hLE) pre args post))
+    (fun pre args post => QueueAllocateSpec pre args.id args.actor args.cell args.cap post)
+    (fun pre args post hc => queueAllocateA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => queueAllocateA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def queueDequeueAEmittedStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
+    (LE : EscrowRecord → ℤ) (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState) : Prop :=
+  effect2tripleEmittedStepLocal S
+    (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueDequeueAAirName s args s'
+
+theorem queueDequeueA_emitted_equiv_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState) :
+    queueDequeueAEmittedStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s' ↔
+      satisfiedE2Triple S (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+        (encodeE2Triple S (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s') :=
+  effect2triple_emitted_equiv_circuit_local S
+    (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueDequeueAAirName s args s'
+
+theorem queueDequeueA_emitted_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState)
+    (h : queueDequeueAEmittedStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s') :
+    QueueDequeueSpec s args.id args.actor args.cell args.depId args.deposit s' :=
+  effect2triple_emitted_refines_bespoke_spec S
+    (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueDequeueAAirName
+    (fun pre args post =>
+      satisfiedE2Triple S (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+        (encodeE2Triple S (queueDequeueE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) pre args post))
+    (fun pre args post =>
+      QueueDequeueSpec pre args.id args.actor args.cell args.depId args.deposit post)
+    (fun pre args post hc =>
+      queueDequeueA_full_sound S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest hLog pre args post hc)
+    (fun pre args post =>
+      queueDequeueA_emitted_equiv_circuit S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE pre args post)
+    s args s' h
+
+def queueResizeAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (queueResizeE LE cN hN hLE) queueResizeAAirName s args s'
+
+theorem queueResizeA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) :
+    queueResizeAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (queueResizeE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (queueResizeE LE cN hN hLE) queueResizeAAirName s args s'
+
+theorem queueResizeA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.QueueResizeA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState)
+    (h : queueResizeAEmittedStep S LE cN hN hLE s args s') :
+    QueueResizeSpec s args.id args.newCap args.actor args.cell s' :=
+  effect2_emitted_refines_bespoke_spec S (queueResizeE LE cN hN hLE) queueResizeAAirName
+    (fun pre args post =>
+      satisfiedE2 S (queueResizeE LE cN hN hLE)
+        (encodeE2 S (queueResizeE LE cN hN hLE) pre args post))
+    (fun pre args post => QueueResizeSpec pre args.id args.newCap args.actor args.cell post)
+    (fun pre args post hc => queueResizeA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => queueResizeA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def queueAtomicTxAEmittedStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
+    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
+    (LE : EscrowRecord → ℤ) (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState) : Prop :=
+  effect2tripleEmittedStepLocal S
+    (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueAtomicTxAAirName s args s'
+
+theorem queueAtomicTxA_emitted_equiv_circuit (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState) :
+    queueAtomicTxAEmittedStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s' ↔
+      satisfiedE2Triple S (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+        (encodeE2Triple S (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) s args s') :=
+  effect2triple_emitted_equiv_circuit_local S
+    (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueAtomicTxAAirName s args s'
+
+theorem queueAtomicTxA_emitted_refines_spec (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
+    (hD : Function.Injective D) (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ) (LE : EscrowRecord → ℤ)
+    (cNE : List ℤ → ℤ) (hNE : compressNInjective cNE) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState)
+    (h : queueAtomicTxAEmittedStep S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE s args s') :
+    QueueAtomicTxSpec s args.actor args.ops s' :=
+  effect2triple_emitted_refines_bespoke_spec S
+    (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) queueAtomicTxAAirName
+    (fun pre args post =>
+      satisfiedE2Triple S (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE)
+        (encodeE2Triple S (queueAtomicTxE D hD LQ cNQ hNQ hLQ LE cNE hNE hLE) pre args post))
+    (fun pre args post => QueueAtomicTxSpec pre args.actor args.ops post)
+    (fun pre args post hc =>
+      queueAtomicTxA_full_sound S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE hRest hLog pre args post hc)
+    (fun pre args post =>
+      queueAtomicTxA_emitted_equiv_circuit S D hD LQ cNQ hNQ hLQ LE cNE hNE hLE pre args post)
+    s args s' h
+
+def queuePipelineStepAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName s args s'
+
+theorem queuePipelineStepA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState) :
+    queuePipelineStepAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (queuePipelineStepE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName
+    s args s'
+
+theorem queuePipelineStepA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState)
+    (h : queuePipelineStepAEmittedStep S LE cN hN hLE s args s') :
+    QueuePipelineFanoutSpec s args.srcId args.owner args.sinkCells args.sinkIds s' :=
+  effect2_emitted_refines_bespoke_spec S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName
+    (fun pre args post =>
+      satisfiedE2 S (queuePipelineStepE LE cN hN hLE)
+        (encodeE2 S (queuePipelineStepE LE cN hN hLE) pre args post))
+    (fun pre args post =>
+      QueuePipelineFanoutSpec pre args.srcId args.owner args.sinkCells args.sinkIds post)
+    (fun pre args post hc =>
+      queuePipelineStepA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => queuePipelineStepA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def pipelinedSendAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : PipelinedSendArgs)
+    (s' : RecChainedState) : Prop :=
+  effect1EmittedStepLocal S pipelinedSendE pipelinedSendAAirName s args s'
+
+theorem pipelinedSendA_emitted_refines_spec (S : CommitSurface)
+    (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
+    (hRest : RestHashIffFrame S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : PipelinedSendArgs) (s' : RecChainedState)
+    (hwf : AccountsWF s.kernel) (hwf' : AccountsWF s'.kernel)
+    (h : pipelinedSendAEmittedStep S s args s') :
+    PipelinedSendSpec s args.actor s' :=
+  pipelinedSendA_full_sound S hN hL hRest hLog s args s' hwf hwf'
+    ((effect1_emitted_equiv_circuit_local S pipelinedSendE pipelinedSendAAirName s args s').mp h)
+
+def exportSturdyRefAEmittedStep (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (swissExportE LE cN hN hLE) swissExportAAirName s args s'
+
+theorem exportSturdyRefA_emitted_equiv_circuit (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState) :
+    exportSturdyRefAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (swissExportE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (swissExportE LE cN hN hLE) swissExportAAirName s args s'
+
+theorem exportSturdyRefA_emitted_refines_spec (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState)
+    (h : exportSturdyRefAEmittedStep S LE cN hN hLE s args s') :
+    ExportSpec s args.sw args.actor args.exporter args.target args.rights s' :=
+  effect2_emitted_refines_bespoke_spec S (swissExportE LE cN hN hLE) swissExportAAirName
+    (fun pre args post =>
+      satisfiedE2 S (swissExportE LE cN hN hLE)
+        (encodeE2 S (swissExportE LE cN hN hLE) pre args post))
+    (fun pre args post =>
+      ExportSpec pre args.sw args.actor args.exporter args.target args.rights post)
+    (fun pre args post hc => swissExportA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => exportSturdyRefA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def enlivenRefAEmittedStep (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : EnlivenArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (enlivenE LE cN hN hLE) enlivenRefAAirName s args s'
+
+theorem enlivenRefA_emitted_equiv_circuit (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : EnlivenArgs) (s' : RecChainedState) :
+    enlivenRefAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (enlivenE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (enlivenE LE cN hN hLE) enlivenRefAAirName s args s'
+
+theorem enlivenRefA_emitted_refines_spec (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.EnlivenRefA.RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : EnlivenArgs) (s' : RecChainedState)
+    (h : enlivenRefAEmittedStep S LE cN hN hLE s args s') :
+    EnlivenSpec s args.sw args.actor args.exporter args.claimed s' :=
+  effect2_emitted_refines_bespoke_spec S (enlivenE LE cN hN hLE) enlivenRefAAirName
+    (fun pre args post =>
+      satisfiedE2 S (enlivenE LE cN hN hLE) (encodeE2 S (enlivenE LE cN hN hLE) pre args post))
+    (fun pre args post => EnlivenSpec pre args.sw args.actor args.exporter args.claimed post)
+    (fun pre args post hc => enlivenRefA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => enlivenRefA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def swissHandoffAEmittedStep (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.SwissHandoffA.HandoffArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (swissHandoffE LE cN hN hLE) swissHandoffAAirName s args s'
+
+theorem swissHandoffA_emitted_equiv_circuit (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.SwissHandoffA.HandoffArgs) (s' : RecChainedState) :
+    swissHandoffAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (swissHandoffE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (swissHandoffE LE cN hN hLE) swissHandoffAAirName s args s'
+
+theorem swissHandoffA_emitted_refines_spec (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SwissHandoffA.RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : Dregg2.Circuit.Inst.SwissHandoffA.HandoffArgs) (s' : RecChainedState)
+    (h : swissHandoffAEmittedStep S LE cN hN hLE s args s') :
+    HandoffSpec s args.sw args.certHash args.introducer args.exporter s' :=
+  effect2_emitted_refines_bespoke_spec S (swissHandoffE LE cN hN hLE) swissHandoffAAirName
+    (fun pre args post =>
+      satisfiedE2 S (swissHandoffE LE cN hN hLE)
+        (encodeE2 S (swissHandoffE LE cN hN hLE) pre args post))
+    (fun pre args post =>
+      HandoffSpec pre args.sw args.certHash args.introducer args.exporter post)
+    (fun pre args post hc => swissHandoffA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => swissHandoffA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def swissDropAEmittedStep (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : DropArgs) (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (swissDropE LE cN hN hLE) swissDropAAirName s args s'
+
+theorem swissDropA_emitted_equiv_circuit (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (s : RecChainedState) (args : DropArgs) (s' : RecChainedState) :
+    swissDropAEmittedStep S LE cN hN hLE s args s' ↔
+      effect2CircuitStep S (swissDropE LE cN hN hLE) s args s' :=
+  effect2_emitted_equiv_circuit_local S (swissDropE LE cN hN hLE) swissDropAAirName s args s'
+
+theorem swissDropA_emitted_refines_spec (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SwissDropA.RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : DropArgs) (s' : RecChainedState)
+    (h : swissDropAEmittedStep S LE cN hN hLE s args s') :
+    DropSpec s args.sw args.actor args.exporter s' :=
+  effect2_emitted_refines_bespoke_spec S (swissDropE LE cN hN hLE) swissDropAAirName
+    (fun pre args post =>
+      satisfiedE2 S (swissDropE LE cN hN hLE) (encodeE2 S (swissDropE LE cN hN hLE) pre args post))
+    (fun pre args post => DropSpec pre args.sw args.actor args.exporter post)
+    (fun pre args post hc => swissDropA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
+    (fun pre args post => swissDropA_emitted_equiv_circuit S LE cN hN hLE pre args post)
+    s args s' h
+
+def cellSealAEmittedStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState) (args : CellSealArgs)
+    (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (cellSealE DLife hDLife) cellSealAAirName s args s'
+
+theorem cellSealA_emitted_equiv_circuit (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState) (args : CellSealArgs)
+    (s' : RecChainedState) :
+    cellSealAEmittedStep S DLife hDLife s args s' ↔
+      effect2CircuitStep S (cellSealE DLife hDLife) s args s' :=
+  effect2_emitted_equiv_circuit_local S (cellSealE DLife hDLife) cellSealAAirName s args s'
+
+theorem cellSealA_emitted_refines_spec (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife)
+    (hRest : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CellSealArgs) (s' : RecChainedState)
+    (h : cellSealAEmittedStep S DLife hDLife s args s') :
+    CellSealSpec s args.actor args.cell s' :=
+  effect2_emitted_refines_bespoke_spec S (cellSealE DLife hDLife) cellSealAAirName
+    (fun pre args post =>
+      satisfiedE2 S (cellSealE DLife hDLife) (encodeE2 S (cellSealE DLife hDLife) pre args post))
+    (fun pre args post => CellSealSpec pre args.actor args.cell post)
+    (fun pre args post hc => cellSealA_full_sound S DLife hDLife hRest hLog pre args post hc)
+    (fun pre args post => cellSealA_emitted_equiv_circuit S DLife hDLife pre args post)
+    s args s' h
+
+def cellUnsealAEmittedStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState) (args : CellUnsealArgs)
+    (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (cellUnsealE DLife hDLife) cellUnsealAAirName s args s'
+
+theorem cellUnsealA_emitted_equiv_circuit (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (s : RecChainedState) (args : CellUnsealArgs)
+    (s' : RecChainedState) :
+    cellUnsealAEmittedStep S DLife hDLife s args s' ↔
+      effect2CircuitStep S (cellUnsealE DLife hDLife) s args s' :=
+  effect2_emitted_equiv_circuit_local S (cellUnsealE DLife hDLife) cellUnsealAAirName s args s'
+
+theorem cellUnsealA_emitted_refines_spec (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife)
+    (hRest : Dregg2.Circuit.Inst.CellUnsealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CellUnsealArgs) (s' : RecChainedState)
+    (h : cellUnsealAEmittedStep S DLife hDLife s args s') :
+    CellUnsealSpec s args.actor args.cell s' :=
+  effect2_emitted_refines_bespoke_spec S (cellUnsealE DLife hDLife) cellUnsealAAirName
+    (fun pre args post =>
+      satisfiedE2 S (cellUnsealE DLife hDLife) (encodeE2 S (cellUnsealE DLife hDLife) pre args post))
+    (fun pre args post => CellUnsealSpec pre args.actor args.cell post)
+    (fun pre args post hc => cellUnsealA_full_sound S DLife hDLife hRest hLog pre args post hc)
+    (fun pre args post => cellUnsealA_emitted_equiv_circuit S DLife hDLife pre args post)
+    s args s' h
+
+def cellDestroyAEmittedStep (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (DDeath : (CellId → Nat) → ℤ)
+    (hDDeath : Function.Injective DDeath)
+    (s : RecChainedState) (args : CellDestroyArgs) (s' : RecChainedState) : Prop :=
+  effect2dualEmittedStepLocal S (cellDestroyE DLife hDLife DDeath hDDeath) cellDestroyAAirName s args s'
+
+theorem cellDestroyA_emitted_equiv_circuit (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (DDeath : (CellId → Nat) → ℤ)
+    (hDDeath : Function.Injective DDeath) (s : RecChainedState) (args : CellDestroyArgs)
+    (s' : RecChainedState) :
+    cellDestroyAEmittedStep S DLife hDLife DDeath hDDeath s args s' ↔
+      satisfiedE2Dual S (cellDestroyE DLife hDLife DDeath hDDeath)
+        (encodeE2Dual S (cellDestroyE DLife hDLife DDeath hDDeath) s args s') :=
+  effect2dual_emitted_equiv_circuit_local S (cellDestroyE DLife hDLife DDeath hDDeath) cellDestroyAAirName
+    s args s'
+
+theorem cellDestroyA_emitted_refines_spec (S : Surface2) (DLife : (CellId → Nat) → ℤ)
+    (hDLife : Function.Injective DLife) (DDeath : (CellId → Nat) → ℤ)
+    (hDDeath : Function.Injective DDeath)
+    (hRest : RestIffNoLifecycleDeathCert S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CellDestroyArgs) (s' : RecChainedState)
+    (h : cellDestroyAEmittedStep S DLife hDLife DDeath hDDeath s args s') :
+    CellDestroySpec s args.actor args.cell args.certHash s' :=
+  effect2dual_emitted_refines_bespoke_spec S (cellDestroyE DLife hDLife DDeath hDDeath) cellDestroyAAirName
+    (fun pre args post =>
+      satisfiedE2Dual S (cellDestroyE DLife hDLife DDeath hDDeath)
+        (encodeE2Dual S (cellDestroyE DLife hDLife DDeath hDDeath) pre args post))
+    (fun pre args post => CellDestroySpec pre args.actor args.cell args.certHash post)
+    (fun pre args post hc =>
+      cellDestroyA_full_sound S DLife hDLife DDeath hDDeath hRest hLog pre args post hc)
+    (fun pre args post =>
+      cellDestroyA_emitted_equiv_circuit S DLife hDLife DDeath hDDeath pre args post)
+    s args s' h
+
+def refreshDelegationAEmittedStep (S : Surface2) (DDel : (CellId → List Cap) → ℤ)
+    (hDDel : Function.Injective DDel) (s : RecChainedState) (args : RefreshDelegationArgs)
+    (s' : RecChainedState) : Prop :=
+  effect2EmittedStepLocal S (refreshDelegationE DDel hDDel) refreshDelegationAAirName s args s'
+
+theorem refreshDelegationA_emitted_equiv_circuit (S : Surface2) (DDel : (CellId → List Cap) → ℤ)
+    (hDDel : Function.Injective DDel) (s : RecChainedState) (args : RefreshDelegationArgs)
+    (s' : RecChainedState) :
+    refreshDelegationAEmittedStep S DDel hDDel s args s' ↔
+      effect2CircuitStep S (refreshDelegationE DDel hDDel) s args s' :=
+  effect2_emitted_equiv_circuit_local S (refreshDelegationE DDel hDDel) refreshDelegationAAirName s args s'
+
+theorem refreshDelegationA_emitted_refines_spec (S : Surface2) (DDel : (CellId → List Cap) → ℤ)
+    (hDDel : Function.Injective DDel)
+    (hRest : RestIffNoDelegations S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : RefreshDelegationArgs) (s' : RecChainedState)
+    (h : refreshDelegationAEmittedStep S DDel hDDel s args s') :
+    RefreshDelegationSpec s args.actor args.child s' :=
+  effect2_emitted_refines_bespoke_spec S (refreshDelegationE DDel hDDel) refreshDelegationAAirName
+    (fun pre args post =>
+      satisfiedE2 S (refreshDelegationE DDel hDDel)
+        (encodeE2 S (refreshDelegationE DDel hDDel) pre args post))
+    (fun pre args post => RefreshDelegationSpec pre args.actor args.child post)
+    (fun pre args post hc => refreshDelegationA_full_sound S DDel hDDel hRest hLog pre args post hc)
+    (fun pre args post => refreshDelegationA_emitted_equiv_circuit S DDel hDDel pre args post)
+    s args s' h
 
 /-! ## §18 — Axiom hygiene. -/
 

@@ -67,9 +67,11 @@ def vFrameDigPreB   : Var := 16
 def vFrameDigPostB  : Var := 17
 def vMovedDigPostB    : Var := 18
 def vMovedDigExpectedB : Var := 19
+/-- Witness: covenant φ guard bit (`propBit` of `step.covenant.φ` on the joint pre-snapshot). -/
+def vCovenantGuard   : Var := 20
 
-/-- Coordinated-turn trace width: four public wires + sixteen witness digest columns. -/
-def coordinatedTurnTraceWidth : Nat := 20
+/-- Coordinated-turn trace width: four public wires + sixteen witness digest columns + φ guard. -/
+def coordinatedTurnTraceWidth : Nat := 21
 
 /-! ## §2 — `encodeCoordinatedTurn` — honest witness layout. -/
 
@@ -111,6 +113,8 @@ def encodeCoordinatedTurn
   else if v = vMovedDigPostB  then movedDigest CH compress sB'.kernel.cell step.bt.dstB step.bt.dstB
   else if v = vMovedDigExpectedB then
     movedDigest CH compress (recCredit sB.kernel.cell step.bt.dstB step.bt.amt) step.bt.dstB step.bt.dstB
+  else if v = vCovenantGuard then
+    propBit (step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true)
   else 0
 
 /-! ### Encoder wire lookups (collapse the `if`-cascade at each index). -/
@@ -261,6 +265,16 @@ theorem encCT_vMovedDigExpectedB (pub : CoordinatedPublicInputs) (sA sB : RecCha
     vRestDigPreB, vLegRootB, vMovedDigExpectedA, vMovedDigPostA, vFrameDigPostA, vFrameDigPreA, vRestDigPostA,
     vRestDigPreA, vBindingDig, vCharterDig, vLegRootA, vPubRootA, vPubRootB, vPubCharterHash, vPubBindingHash]
 
+theorem encCT_vCovenantGuard (pub : CoordinatedPublicInputs) (sA sB : RecChainedState)
+    (step : BilateralStep) (sA' sB' : RecChainedState) :
+    encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB'
+      vCovenantGuard =
+        propBit (step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true) := by
+  simp [encodeCoordinatedTurn, vCovenantGuard, vMovedDigExpectedB, vMovedDigPostB, vFrameDigPostB, vFrameDigPreB,
+    vRestDigPostB, vRestDigPreB, vLegRootB, vMovedDigExpectedA, vMovedDigPostA, vFrameDigPostA, vFrameDigPreA,
+    vRestDigPostA, vRestDigPreA, vBindingDig, vCharterDig, vLegRootA, vPubRootA, vPubRootB, vPubCharterHash,
+    vPubBindingHash]
+
 /-! ## §3 — `coordinatedTurnCircuit`: public EQ gates + per-leg frame EQ gates. -/
 
 /-- Public-input binding: leg-`A` root wire equals the published `rootA`. -/
@@ -285,15 +299,18 @@ def cCTBRestFrame : Constraint := { lhs := .var vRestDigPreB, rhs := .var vRestD
 def cCTBFrameReuse : Constraint := { lhs := .var vFrameDigPreB, rhs := .var vFrameDigPostB }
 /-- Leg `B` moved-bind gate. -/
 def cCTBMovedBind : Constraint := { lhs := .var vMovedDigPostB, rhs := .var vMovedDigExpectedB }
+/-- Covenant φ guard gate: `propBit (covenant.φ preA preB) = 1` (scaffold; full polynomial φ deferred). -/
+def cCTCovenantGuard : Constraint := { lhs := .var vCovenantGuard, rhs := .const 1 }
 
-/-- **The coordinated-turn circuit** — four public-input EQ gates plus six per-leg frame EQ gates
-(two legs × the `StateCommit` rest/frame/moved trio). -/
+/-- **The coordinated-turn circuit** — four public-input EQ gates, six per-leg frame EQ gates,
+and the covenant φ guard bit gate. -/
 def coordinatedTurnCircuit : ConstraintSystem :=
   [ cCTPubRootA, cCTPubRootB, cCTPubCharter, cCTPubBinding
   , cCTARestFrame, cCTAFrameReuse, cCTAMovedBind
-  , cCTBRestFrame, cCTBFrameReuse, cCTBMovedBind ]
+  , cCTBRestFrame, cCTBFrameReuse, cCTBMovedBind
+  , cCTCovenantGuard ]
 
-example : coordinatedTurnCircuit.length = 10 := rfl
+example : coordinatedTurnCircuit.length = 11 := rfl
 
 /-! ## §4 — gate ↔ digest lemmas (circuit content under `encodeCoordinatedTurn`). -/
 
@@ -371,6 +388,16 @@ theorem ct_b_movedbind_iff (pub : CoordinatedPublicInputs) (sA sB : RecChainedSt
   unfold Constraint.holds cCTBMovedBind encCT
   simp only [Expr.eval, encCT_vMovedDigPostB, encCT_vMovedDigExpectedB]
 
+theorem ct_covenant_guard_iff (pub : CoordinatedPublicInputs) (sA sB : RecChainedState) (step : BilateralStep)
+    (sA' sB' : RecChainedState) :
+    cCTCovenantGuard.holds (@encCT CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB') ↔
+      step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true := by
+  unfold Constraint.holds cCTCovenantGuard encCT
+  simp only [Expr.eval, encCT_vCovenantGuard, propBit]
+  by_cases hφ : step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true
+  · simp [hφ]
+  · simp [hφ]
+
 /-! ## §5 — circuit ⊑ Prop scaffold bridge + completeness on honest digests. -/
 
 /-- **`coordinated_circuit_step_of_sat`** — polynomial satisfaction on the honest encoder yields the
@@ -383,10 +410,12 @@ theorem coordinated_circuit_step_of_sat
     (hwfA' : AccountsWF sA'.kernel) (hwfB' : AccountsWF sB'.kernel)
     (hOut : applyRecHalfOut sA.kernel step.bt = some sA'.kernel)
     (hIn : applyRecHalfIn sB.kernel step.bt = some sB'.kernel)
-    (hφ : step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true)
     (h : satisfied coordinatedTurnCircuit (@encCT CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB')) :
     coordinatedTurnCircuitStep legRootA legRootB covenantH (fun {bt} bind => bindH bt bind) CH RH compress compressN
       pub sA sB step sA' sB' := by
+  have hφ :=
+    (ct_covenant_guard_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mp
+      (h cCTCovenantGuard (by unfold coordinatedTurnCircuit; simp))
   unfold coordinatedTurnCircuitStep
   refine ⟨hwfA, hwfB, hwfA', hwfB', ?_, ?_, ?_, hφ⟩
   · exact ⟨
@@ -439,12 +468,13 @@ theorem coordinated_circuit_complete_of_digests
         = movedDigest CH compress (recDebit sA.kernel.cell step.bt.srcA step.bt.amt) step.bt.srcA step.bt.srcA)
     (hMovedB :
       movedDigest CH compress sB'.kernel.cell step.bt.dstB step.bt.dstB
-        = movedDigest CH compress (recCredit sB.kernel.cell step.bt.dstB step.bt.amt) step.bt.dstB step.bt.dstB) :
+        = movedDigest CH compress (recCredit sB.kernel.cell step.bt.dstB step.bt.amt) step.bt.dstB step.bt.dstB)
+    (hφ : step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true) :
     satisfied coordinatedTurnCircuit (@encCT CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB') := by
   unfold satisfied coordinatedTurnCircuit
   intro c hc
   simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-  rcases hc with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hc with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact (ct_pub_rootA_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hPub.1.symm
   · exact (ct_pub_rootB_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hPub.2.1.symm
   · exact (ct_pub_charter_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hPub.2.2.1.symm
@@ -455,6 +485,7 @@ theorem coordinated_circuit_complete_of_digests
   · exact (ct_b_restframe_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hRestB
   · exact (ct_b_framereuse_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hFrameB
   · exact (ct_b_movedbind_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hMovedB
+  · exact (ct_covenant_guard_iff CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB').mpr hφ
 
 end Surface
 
@@ -491,7 +522,6 @@ theorem coordinated_emitted_refines_spec
     (hwfA' : AccountsWF sA'.kernel) (hwfB' : AccountsWF sB'.kernel)
     (hOut : applyRecHalfOut sA.kernel step.bt = some sA'.kernel)
     (hIn : applyRecHalfIn sB.kernel step.bt = some sB'.kernel)
-    (hφ : step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true)
     (hPub :
       pub.rootA = legRootA sA.kernel step.bt ∧
         pub.rootB = legRootB sB.kernel step.bt ∧
@@ -504,7 +534,7 @@ theorem coordinated_emitted_refines_spec
   let a := encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub sA sB step sA' sB'
   have hCircuit := (coordinated_emitted_refines_circuit a).mpr hEmit
   have hstep := coordinated_circuit_step_of_sat CH RH compress compressN legRootA legRootB covenantH bindH
-      pub sA sB step sA' sB' hwfA hwfB hwfA' hwfB' hOut hIn hφ hCircuit
+      pub sA sB step sA' sB' hwfA hwfB hwfA' hwfB' hOut hIn hCircuit
   exact coordinated_turn_circuit_refines_spec_honest CH RH compress compressN legRootA legRootB
       covenantH (fun {bt} bind => bindH bt bind) hCompress hCompressN hLeaf hRest
       pub sA sB step sA' sB' hPub hstep
@@ -517,9 +547,9 @@ theorem decodeE_emittedCoordinatedTurn :
 /-- Canonical JSON wire string for the emitted coordinated-turn circuit. -/
 def coordinatedTurnDescriptorJson : String := emitDescriptorJson emittedCoordinatedTurn
 
-#guard emittedCoordinatedTurn.constraints.length == 10
+#guard emittedCoordinatedTurn.constraints.length == 11
 #guard emittedCoordinatedTurn.traceWidth == coordinatedTurnTraceWidth
-#guard emittedCoordinatedTurn.traceWidth == 20
+#guard emittedCoordinatedTurn.traceWidth == 21
 
 /-! ## §7 — Demo `#guard`: honest demo forest step satisfies the emitted circuit. -/
 
@@ -572,10 +602,51 @@ def demoPostB : RecChainedState := demoPostPair.2
 #assert_axioms ct_b_restframe_iff
 #assert_axioms ct_b_framereuse_iff
 #assert_axioms ct_b_movedbind_iff
+#assert_axioms ct_covenant_guard_iff
 #assert_axioms coordinated_circuit_step_of_sat
 #assert_axioms coordinated_circuit_complete_of_digests
 #assert_axioms coordinated_emitted_refines_circuit
 #assert_axioms coordinated_emitted_refines_spec
 #assert_axioms decodeE_emittedCoordinatedTurn
+
+/-! ## §9 — Wave 6 explicit sorry portals + exec bridge (RecordKernelState lift gap). -/
+
+/-- Covenant φ guard as a named Prop (the single `propBit` column is the Wave-6 scaffold). -/
+def coordinatedCovenantGuardHolds (step : BilateralStep) (sA sB : RecChainedState) : Prop :=
+  step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true
+
+/-- HOLE W6: full polynomial encoding of covenant `φ` (beyond the single `propBit` guard column). -/
+theorem hole_coordinated_covenant_guard
+    (step : BilateralStep) (sA sB : RecChainedState) :
+    coordinatedCovenantGuardHolds step sA sB := by
+  sorry
+
+/-- **`coordinated_emitted_refines_execCoordinatedForestG`** — emitted coordinated-turn satisfaction
+on the honest encoder should commit `execCoordinatedForestG`. The `RecordKernelState` lift from
+`CoordinatedForestGLift` is an explicit sorry (Wave 6 `record_kernel_state_lift` front). -/
+theorem coordinated_emitted_refines_execCoordinatedForestG
+    (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
+    (covenantH : CoordinatedCaveat → KernelState → KernelState → ℤ)
+    (bindH : (bt : BiTurn) → SharedBinding bt → ℤ)
+    (g : BilateralForestStepG) {sA' sB' : RecChainedState}
+    (pub : CoordinatedPublicInputs)
+    (hwfA : AccountsWF g.pair.sA.kernel) (hwfB : AccountsWF g.pair.sB.kernel)
+    (hwfA' : AccountsWF sA'.kernel) (hwfB' : AccountsWF sB'.kernel)
+    (hOut : applyRecHalfOut g.pair.sA.kernel g.step.bt = some sA'.kernel)
+    (hIn : applyRecHalfIn g.pair.sB.kernel g.step.bt = some sB'.kernel)
+    (hPub :
+      pub.rootA = legRootA g.pair.sA.kernel g.step.bt ∧
+        pub.rootB = legRootB g.pair.sB.kernel g.step.bt ∧
+        pub.charterHash =
+          covenantH g.step.covenant (recChainedKernelView g.pair.sA) (recChainedKernelView g.pair.sB) ∧
+        pub.bindingHash = bindH g.step.bt g.step.bind)
+    (hEmit : satisfiedEmitted emittedCoordinatedTurn
+        (encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub
+          g.pair.sA g.pair.sB g.step sA' sB'))
+    (_hφpoly : coordinatedCovenantGuardHolds g.step g.pair.sA g.pair.sB) :
+    execCoordinatedForestG g = some (sA', sB') := by
+  sorry
 
 end Dregg2.Circuit.CoordinatedTurnEmit

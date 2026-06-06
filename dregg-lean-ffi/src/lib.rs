@@ -27,6 +27,12 @@ pub fn shadow_exec_full_forest_auth(wire: &str) -> Result<String, String> {
     lean_forest_auth(wire)
 }
 
+/// Handler-cutover shadow path — admission ∘ `execHandlerTurn` on the same wire.
+pub fn shadow_exec_handler_turn(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    lean_handler_turn(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -56,6 +62,11 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        fn dregg_exec_handler_turn_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
     }
 
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
@@ -72,20 +83,18 @@ mod ffi {
         .clone()
     }
 
-    pub fn lean_forest_auth(wire: &str) -> Result<String, String> {
+    fn lean_string_bridge(
+        wire: &str,
+        f: unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> usize,
+        err_label: &str,
+    ) -> Result<String, String> {
         let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
         let mut cap = wire.len() * 2 + 1024;
         loop {
             let mut buf = vec![0u8; cap];
-            let full = unsafe {
-                dregg_exec_full_forest_auth_str(
-                    c_in.as_ptr(),
-                    buf.as_mut_ptr() as *mut c_char,
-                    cap,
-                )
-            };
+            let full = unsafe { f(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap) };
             if full == usize::MAX {
-                return Err("dregg_exec_full_forest_auth_str: unusable output buffer".into());
+                return Err(format!("{err_label}: unusable output buffer"));
             }
             if full < cap {
                 let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
@@ -94,6 +103,14 @@ mod ffi {
             }
             cap = full + 1;
         }
+    }
+
+    pub fn lean_forest_auth(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_exec_full_forest_auth_str, "dregg_exec_full_forest_auth_str")
+    }
+
+    pub fn lean_handler_turn(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_exec_handler_turn_str, "dregg_exec_handler_turn_str")
     }
 }
 
@@ -104,6 +121,10 @@ mod ffi {
     }
 
     pub fn lean_forest_auth(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn lean_handler_turn(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }
@@ -118,4 +139,8 @@ fn ensure_lean_init() -> Result<(), String> {
 
 fn lean_forest_auth(wire: &str) -> Result<String, String> {
     ffi::lean_forest_auth(wire)
+}
+
+fn lean_handler_turn(wire: &str) -> Result<String, String> {
+    ffi::lean_handler_turn(wire)
 }

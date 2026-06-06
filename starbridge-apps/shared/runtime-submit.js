@@ -256,7 +256,8 @@ export function installRealSignTurn() {
     }
   };
 
-  if (!api.subscribeEvents && typeof rt.subscribeEvents === 'function') {
+  const rt = runtime();
+  if (!api.subscribeEvents && rt && typeof rt.subscribeEvents === 'function') {
     api.subscribeEvents = (uri, topic, cb) => rt.subscribeEvents(uri, topic, cb);
   }
 

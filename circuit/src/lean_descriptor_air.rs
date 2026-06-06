@@ -1490,6 +1490,46 @@ mod tests {
         }
     }
 
+    /// Lean `Poseidon2Emit.poseidon2CompressWire` — Wave-4 sponge compress gadget (reuses
+    /// `merkle_hash` + `transition` + two `pi_binding` boundaries; distinct AIR name).
+    const POSEIDON2_COMPRESS_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-poseidon2-compress-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}"#;
+
+    #[test]
+    fn lean_emitted_poseidon2_compress_golden() {
+        // Golden pin: byte-exact match to Lean `#guard poseidon2CompressWire`.
+        assert_eq!(
+            POSEIDON2_COMPRESS_DESCRIPTOR_JSON,
+            r#"{"name":"dregg-poseidon2-compress-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}"#
+        );
+        assert!(POSEIDON2_COMPRESS_DESCRIPTOR_JSON.contains(r#""name":"dregg-poseidon2-compress-v1""#));
+        assert!(POSEIDON2_COMPRESS_DESCRIPTOR_JSON.contains(r#""trace_width":6"#));
+        assert!(POSEIDON2_COMPRESS_DESCRIPTOR_JSON.contains(r#""public_input_count":2"#));
+        // Four structural constraints: merkle_hash, transition, pi_binding_first, pi_binding_last.
+        assert_eq!(
+            POSEIDON2_COMPRESS_DESCRIPTOR_JSON.matches(r#""t":"merkle_hash""#).count(),
+            1
+        );
+        assert_eq!(
+            POSEIDON2_COMPRESS_DESCRIPTOR_JSON.matches(r#""t":"transition""#).count(),
+            1
+        );
+        assert_eq!(
+            POSEIDON2_COMPRESS_DESCRIPTOR_JSON
+                .matches(r#""t":"pi_binding_first""#)
+                .count(),
+            1
+        );
+        assert_eq!(
+            POSEIDON2_COMPRESS_DESCRIPTOR_JSON
+                .matches(r#""t":"pi_binding_last""#)
+                .count(),
+            1
+        );
+        // Constraint *forms* match Merkle membership (only the AIR name differs).
+        let merkle_constraints = r#"{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}"#;
+        assert!(POSEIDON2_COMPRESS_DESCRIPTOR_JSON.contains(merkle_constraints));
+    }
+
     /// The parser is faithful to the wire grammar on its own (independent of proving):
     /// round-tripping a hand-built descriptor through Lean-style JSON recovers it, and
     /// the tolerant parser accepts whitespace.

@@ -8,7 +8,8 @@ chaining); `turn_witness_refines_turnCircuit` lifts per-step declarative satisfa
 
 Links to `execFullTurnA` via `ActionDispatch.execFullTurnA_iff_turnSpec` and `fullActionStep_exec_iff`.
 
-No `sorry`/`admit`/`native_decide`/`axiom`.
+Wave 7 precursor: `InnerTurnWitness` for exercise inner-fold scaffolding (`inner_turn_witness_refines_spec`
+is an explicit `sorry`). Core §1–§4 remain `#assert_axioms`-clean.
 -/
 import Dregg2.Circuit.Refinement
 import Dregg2.Circuit.ActionDispatch
@@ -19,7 +20,7 @@ namespace Dregg2.Circuit.TurnWitness
 open Dregg2.Circuit.Refinement (Refines StepRel)
 open Dregg2.Circuit.ActionDispatch
   (fullActionStep fullActionStep_exec_iff actionTag turnSpec turnSpec_eq_spec
-   execFullTurnA_iff_turnSpec)
+   execFullTurnA_iff_turnSpec exerciseHoldState)
 open Dregg2.Circuit.TurnRefinement (TurnStateChain turnSpec_of_turnStateChain)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -107,6 +108,34 @@ theorem turnWitness_exec_link (s s' : RecChainedState) (acts : List FullActionA)
     (h : turnSpec s acts s') :
     execFullTurnA s acts = some s' :=
   turn_witness_refines_exec s s' acts h
+
+/-! ## §5 — Inner turn witness (exercise `exerciseA` scaffold, Wave 7 precursor). -/
+
+/-- **`InnerTurnWitness`** — bundles the exercise hold-gate step witness with an inner whole-turn
+witness for the nested `List FullActionA` fold (R4 facet-mask arithmetization deferred). -/
+structure InnerTurnWitness where
+  /-- Hold-gate step witness (outer `exerciseA` frame). -/
+  holdStep   : StepWitness
+  /-- Inner turn witness over the nested action list. -/
+  innerTurn  : TurnWitness
+  /-- Inner step count matches the inner turn witness length. -/
+  inner_len  : Nat
+  deriving Repr, DecidableEq
+
+/-- Inner fold satisfaction: hold step tagged as exercise + inner turn root chain. -/
+def innerTurnWitnessSatisfies (compress : ℤ → ℤ → ℤ) (stepRoot : StepWitness → ℤ)
+    (itw : InnerTurnWitness) (innerActs : List FullActionA) : Prop :=
+  itw.inner_len = innerActs.length ∧
+    itw.inner_len = itw.innerTurn.steps.length ∧
+    turnWitnessSatisfies compress stepRoot itw.innerTurn
+
+/-- HOLE W7: inner turn witness soundness — lift inner fold to `turnSpec` under the exercise hold. -/
+theorem inner_turn_witness_refines_spec
+    (pre post : RecChainedState) (actor target : CellId) (inner : List FullActionA)
+    (itw : InnerTurnWitness) (compress : ℤ → ℤ → ℤ) (stepRoot : StepWitness → ℤ)
+    (h : innerTurnWitnessSatisfies compress stepRoot itw inner) :
+    turnSpec (exerciseHoldState pre actor) inner post := by
+  sorry
 
 #assert_axioms turn_witness_refines_turnCircuit
 #assert_axioms turn_witness_refines_exec

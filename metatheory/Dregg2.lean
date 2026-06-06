@@ -242,11 +242,16 @@ import Dregg2.Circuit.EffectEmittedRefinement -- Wave 2 batch emitted→spec: ef
 import Dregg2.Circuit.Spec.Turn            -- Wave 1 turn spec: turnSpec fold + execFullTurnA_iff_turnSpec + turnSpec_append (associativity)
 import Dregg2.Circuit.ActionDispatch       -- Wave 1 apex dispatcher: fullActionStep (56/56 arms) + fullActionStep_exec_iff + actionTag
 import Dregg2.Circuit.GadgetRefinement      -- Wave 1 gadget bridges: merkle/nonmembership/temporal emitted ⊑ portal; gadget_step auth witness StepRel
+import Dregg2.Circuit.Poseidon2Emit         -- Wave 4: in-circuit Poseidon2 sponge compress via emitted `merkle_hash`; poseidon2_emitted_refines_merkle_portal + explicit HOLE sponges
+import Dregg2.Circuit.DigestPortal         -- Wave 4: bridge `cellLeafInjective` → Poseidon2 emit / explicit CR `sorry` portals
 import Dregg2.Circuit.TurnWitness          -- Wave 1 turn witness: StepWitness/TurnWitness + turnWitnessSatisfies + turn_witness_refines_turnCircuit
 import Dregg2.Circuit.EffectEmitRegistry   -- Wave 2 central AIR registry: 53 Inst/commit descriptors + actionAirName (56/56)
 import Dregg2.Circuit.TurnEmit             -- Wave 2 turn emission: registry-backed StepEmittedSat/turnEmittedSat + step_emitted_refines_fullActionStep + turn_emitted_refines_turnSpec/exec
+import Dregg2.Circuit.TurnCircuitCompose   -- Wave 5 whole-turn composition: turnCircuitOfEmitted fold + turn_emitted_refines_exec_direct (sorry: macaroon/root-glue/multi-step)
+import Dregg2.Circuit.TurnAdmission        -- Wave 5 admission gate: turnProofRequired + hole_rust_proof_at_commit (explicit sorry)
 import Dregg2.Circuit.TurnRefinement      -- Wave 1 turn refinement: turnCircuitStep ⊑ turnSpec ⊑ execFullTurnA; turn_conservation_descends; TurnStateChain scaffolding
 import Dregg2.Circuit.TurnEffectRefinement -- Wave 1 turn effect diamond: fullActionCircuitStep dispatch + fullAction_turn_circuit_refines_spec/exec/conservation
+import Dregg2.Circuit.CircuitOpenFronts -- explicit open-front registry (Waves 3–7); no lurking holes
 import Dregg2.Circuit.CoordinatedTurnRefinement -- Wave 1 inter-vat: bilateral/coordinated turn spec + circuit scaffold + charter binding
 import Dregg2.Circuit.CoordinatedTurnEmit      -- Wave 1 inter-vat emission: coordinatedTurnCircuit + emittedCoordinatedTurn + emit faithfulness + spec soundness
 import Dregg2.Circuit.Spec.exercise        -- Wave 1 exercise composite: re-exports ActionDispatch + execFullA_exerciseA_iff_spec

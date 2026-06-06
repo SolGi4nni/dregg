@@ -5,10 +5,8 @@
 // apps per §4.6) accepts `runtime: DreggRuntime` from @dregg/sdk and
 // produces typed TurnSpec / calls runtime methods. See sdk-ts/src/runtime.ts.
 //
-// Today: empty stub. The first concrete builder lands as
-// `./nameservice.js` once the JS surface of
-// `starbridge-apps/nameservice/` is fleshed out. Subsequent apps
-// follow per STARBRIDGE-APPS-PLAN.md §6.
+// Side-effecting imports below register each app's `window.dregg.builders.*`
+// map at module-load time. Policy stays in the Rust crates; JS is the shim.
 //
 // Pattern (matches the Rust `build_register_action` in
 // starbridge-apps/nameservice/src/lib.rs):

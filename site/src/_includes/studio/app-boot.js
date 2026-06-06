@@ -264,6 +264,12 @@ async function boot() {
     appEl.runtime = runtime;
     runtimes.set(appEl, runtime);
     installPreviewBridge(runtime, wasm);
+    try {
+      const { installRealSignTurn } = await import('/starbridge-apps/shared/runtime-submit.js');
+      installRealSignTurn();
+    } catch (e) {
+      console.warn('[starbridge-app] runtime-submit unavailable:', e);
+    }
   }
 
   const first = apps[0];

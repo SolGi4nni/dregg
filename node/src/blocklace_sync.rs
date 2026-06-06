@@ -1468,6 +1468,8 @@ async fn execute_finalized_turn(
         &s,
         crate::executor_setup::BlockHeightMode::Next,
     );
+    let new_height = executor.block_height;
+    let now = executor.current_timestamp;
 
     let exec_result = executor.execute(&signed_turn.turn, &mut s.ledger);
 

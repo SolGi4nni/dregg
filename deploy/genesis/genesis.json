@@ -46,5 +46,43 @@
       "token_id": "0000000000000000000000000000000000000000000000000000000000000000",
       "balance": 10000
     }
+  ],
+  "starbridge_cells": [
+    {
+      "label": "nameservice-registry",
+      "factory_vk_hex": "737461726272696467652d6e616d65736572766963652d666163746f72792121",
+      "owner_agent": "alice",
+      "uri_hint": "registry-default"
+    },
+    {
+      "label": "identity-issuer",
+      "factory_vk_hex": "737461726272696467652d6964656e746974792d6973737565722d6661637421",
+      "owner_agent": "alice",
+      "uri_hint": "issuer-default"
+    },
+    {
+      "label": "subscription-topic",
+      "factory_vk_hex": "737461726272696467652d737562736372697074696f6e2d666163746f727921",
+      "owner_agent": "alice",
+      "uri_hint": "topic-default"
+    },
+    {
+      "label": "governed-namespace-root",
+      "factory_vk_hex": "737461726272696467652d676f7665726e65642d6e616d6573706163652d6661",
+      "owner_agent": "alice",
+      "uri_hint": "namespace-default"
+    },
+    {
+      "label": "cwm-mandate",
+      "factory_vk_hex": "737461726272696467652d63776d2d6d616e646174652d666163746f72792121",
+      "owner_agent": "alice",
+      "uri_hint": "mandate-default"
+    },
+    {
+      "label": "sgm-gateway",
+      "factory_vk_hex": "737461726272696467652d73676d2d6d616e646174652d666163746f72792121",
+      "owner_agent": "alice",
+      "uri_hint": "gateway-default"
+    }
   ]
 }

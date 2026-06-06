@@ -7,7 +7,7 @@ through an abstract root-compress chain (reusing `TurnWitness.foldStepRoots`). S
 per-step emitted→spec refinement (EffectRefinement diamonds where available, or generic circuit step)
 to `turnSpec`, then to `execFullTurnA` via `ActionDispatch.execFullTurnA_iff_turnSpec`.
 
-No `sorry`/`admit`/`native_decide`/`axiom`.
+POLICY: no lurking holes — unproved per-step arms use explicit `sorry` (never silent fallback).
 -/
 import Dregg2.Circuit.TurnWitness
 import Dregg2.Circuit.ActionDispatch
@@ -18,7 +18,37 @@ import Dregg2.Circuit.EffectEmitRegistry
 import Dregg2.Circuit.TurnEffectRefinement
 import Dregg2.Circuit.Inst.mintA
 import Dregg2.Circuit.Inst.burnA
+import Dregg2.Circuit.Inst.attenuateA
+import Dregg2.Circuit.Inst.emitEventA
+import Dregg2.Circuit.Inst.incrementNonceA
+import Dregg2.Circuit.Inst.setPermissionsA
+import Dregg2.Circuit.Inst.setVKA
+import Dregg2.Circuit.Inst.delegateAttenA
+import Dregg2.Circuit.Inst.createCellFromFactoryA
+import Dregg2.Circuit.Inst.createCommittedEscrowA
+import Dregg2.Circuit.Inst.bridgeFinalizeA
+import Dregg2.Circuit.Inst.bridgeCancelA
+import Dregg2.Circuit.Inst.unsealA
+import Dregg2.Circuit.Inst.createSealPairA
+import Dregg2.Circuit.Inst.makeSovereignA
+import Dregg2.Circuit.Inst.refusalA
+import Dregg2.Circuit.Inst.receiptArchiveA
+import Dregg2.Circuit.Inst.queueAllocateA
+import Dregg2.Circuit.Inst.queueDequeueA
+import Dregg2.Circuit.Inst.queueResizeA
+import Dregg2.Circuit.Inst.queueAtomicTxA
+import Dregg2.Circuit.Inst.queuePipelineStepA
+import Dregg2.Circuit.Inst.pipelinedSendA
+import Dregg2.Circuit.Inst.swissExportA
+import Dregg2.Circuit.Inst.enlivenRefA
+import Dregg2.Circuit.Inst.swissHandoffA
+import Dregg2.Circuit.Inst.swissDropA
+import Dregg2.Circuit.Inst.cellSealA
+import Dregg2.Circuit.Inst.cellUnsealA
+import Dregg2.Circuit.Inst.cellDestroyA
+import Dregg2.Circuit.Inst.refreshDelegationA
 import Dregg2.Exec.CircuitEmit
+import Dregg2.Exec.RecordKernel
 
 set_option maxHeartbeats 800000
 
@@ -31,7 +61,8 @@ open Dregg2.Circuit.ActionDispatch
   (actionTag fullActionStep turnSpec turnSpec_eq_spec execFullTurnA_iff_turnSpec)
 open Dregg2.Circuit.TurnRefinement (turnSpec_of_turnStateChain)
 open Dregg2.Circuit.EffectEmitRegistry
-  (effectEmitRegistry actionAirName unknownAirName actionAirNameCoverage registryCoverage)
+  (effectEmitRegistry actionAirName createObligationAHoleName releaseCommittedEscrowAHoleName
+   refundCommittedEscrowAHoleName holeAirNames actionAirNameCoverage registryCoverage)
 open Dregg2.Circuit.Inst.MintA (mintAirName mintEmitted mintDescriptorJson)
 open Dregg2.Circuit.Inst.BurnA (burnAirName burnEmitted burnDescriptorJson)
 open Dregg2.Authority
@@ -46,7 +77,7 @@ open Dregg2.Circuit.EffectInstances (setFieldE)
 open Dregg2.Exec.CircuitEmit (EmittedDescriptor satisfiedEmitted emitDescriptorJson)
 open Dregg2.Circuit.EffectEmittedRefinement
 open Dregg2.Circuit.TurnEffectRefinement
-  (fullActionCircuitStep fullActionCircuitStepInst fullAction_circuit_refines_spec)
+  (fullActionCircuitStep fullActionCircuitStepInst fullAction_circuit_refines_spec hole_circuit_step)
 open Dregg2.Circuit.Inst.SealA (SealArgs)
 open Dregg2.Circuit.Inst.BridgeLockA (BridgeLockArgs)
 open Dregg2.Circuit.Inst.QueueEnqueueA (EnqueueArgs)
@@ -89,6 +120,38 @@ open Dregg2.Circuit.Inst.SpawnA (RestIffNoSpawnTouched)
 open Dregg2.Circuit.Inst.NoteCreateA (RestIffNoCommitments)
 open Dregg2.Circuit.Inst.SealA (RestIffNoSealedBoxes)
 open Dregg2.Circuit.Inst.QueueEnqueueA (RestIffNoQueuesBalEscrows)
+open Dregg2.Circuit.Inst.AttenuateA (attenuateE AttenuateArgs)
+open Dregg2.Circuit.Inst.EmitEventA (emitEventE EmitEventArgs)
+open Dregg2.Circuit.Inst.IncrementNonceA (incrementNonceE incrementNonceAAirName IncrementNonceArgs)
+open Dregg2.Circuit.Inst.SetPermissionsA (setPermissionsE setPermissionsAAirName SetPermissionsArgs)
+open Dregg2.Circuit.Inst.SetVKA (setVKE setVKAAirName SetVKArgs)
+open Dregg2.Circuit.Inst.DelegateAttenA (delegateAttenE DelegateAttenArgs)
+open Dregg2.Circuit.Inst.CreateCellFromFactoryA
+  (createFromFactoryE createCellFromFactoryAAirName CreateFromFactoryArgs RestIffNoFactoryTouched)
+open Dregg2.Circuit.Inst.CreateCommittedEscrowA (createCommittedEscrowE CreateCommittedEscrowArgs)
+open Dregg2.Circuit.Inst.BridgeFinalizeA (bridgeFinalizeE BridgeFinalizeArgs RestIffNoEscrows)
+open Dregg2.Circuit.Inst.BridgeCancelA (bridgeCancelE BridgeCancelArgs)
+open Dregg2.Circuit.Inst.UnsealA (unsealE UnsealArgs)
+open Dregg2.Circuit.Inst.CreateSealPairA (createSealPairE CreateSealPairArgs)
+open Dregg2.Circuit.Inst.MakeSovereignA (makeSovereignE makeSovereignAAirName MakeSovereignArgs)
+open Dregg2.Circuit.Inst.RefusalA (refusalE refusalAAirName RefusalArgs)
+open Dregg2.Circuit.Inst.ReceiptArchiveA (receiptArchiveE receiptArchiveAAirName ReceiptArchiveArgs)
+open Dregg2.Circuit.Inst.QueueAllocateA (queueAllocateE AllocateArgs RestIffNoQueues)
+open Dregg2.Circuit.Inst.QueueDequeueA (queueDequeueE DequeueArgs)
+open Dregg2.Circuit.Inst.QueueResizeA (queueResizeE ResizeArgs)
+open Dregg2.Circuit.Inst.QueueAtomicTxA (queueAtomicTxE AtomicTxArgs)
+open Dregg2.Circuit.Inst.QueuePipelineStepA (queuePipelineStepE PipelineArgs)
+open Dregg2.Circuit.Inst.PipelinedSendA (pipelinedSendE pipelinedSendAAirName PipelinedSendArgs)
+open Dregg2.Circuit.Inst.SwissExportA (swissExportE ExportArgs RestIffNoSwiss)
+open Dregg2.Circuit.Inst.EnlivenRefA (enlivenE EnlivenArgs)
+open Dregg2.Circuit.Inst.SwissHandoffA (swissHandoffE)
+open Dregg2.Circuit.Inst.SwissDropA (swissDropE DropArgs)
+open Dregg2.Circuit.Inst.CellSealA (cellSealE CellSealArgs RestIffNoLifecycle)
+open Dregg2.Circuit.Inst.CellUnsealA (cellUnsealE CellUnsealArgs)
+open Dregg2.Circuit.Inst.CellDestroyA (cellDestroyE CellDestroyArgs RestIffNoLifecycleDeathCert)
+open Dregg2.Circuit.Inst.RefreshDelegationA (refreshDelegationE RefreshDelegationArgs RestIffNoDelegations)
+open Dregg2.Circuit.BornEmptyCommit (BornEmptyAuthorityTables)
+open Dregg2.Exec (findSealedBox)
 
 /-! ## §0 — decidability (for concrete `#guard`s / `#eval`s). -/
 
@@ -212,6 +275,55 @@ private theorem restIffNoCaps_delegate_to_revoke (RH : RecordKernelState → ℤ
   dsimp [Dregg2.Circuit.Inst.Delegate.RestIffNoCaps, Dregg2.Circuit.Inst.Revoke.RestIffNoCaps]
   exact h
 
+private theorem restIffNoCaps_delegate_to_attenuate (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps RH) :
+    Dregg2.Circuit.Inst.AttenuateA.RestIffNoCaps RH := by
+  dsimp [Dregg2.Circuit.Inst.Delegate.RestIffNoCaps, Dregg2.Circuit.Inst.AttenuateA.RestIffNoCaps]
+  exact h
+
+private theorem restIffNoCaps_delegate_to_delegateAtten (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps RH) :
+    Dregg2.Circuit.Inst.DelegateAttenA.RestIffNoCaps RH := by
+  dsimp [Dregg2.Circuit.Inst.Delegate.RestIffNoCaps, Dregg2.Circuit.Inst.DelegateAttenA.RestIffNoCaps]
+  exact h
+
+private theorem restIffNoCaps_delegate_to_unseal (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps RH) :
+    Dregg2.Circuit.Inst.UnsealA.RestIffNoCaps RH := by
+  dsimp [Dregg2.Circuit.Inst.Delegate.RestIffNoCaps, Dregg2.Circuit.Inst.UnsealA.RestIffNoCaps]
+  exact h
+
+private theorem restIffNoCaps_delegate_to_createSealPair (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.Delegate.RestIffNoCaps RH) :
+    Dregg2.Circuit.Inst.CreateSealPairA.RestIffNoCaps RH := by
+  dsimp [Dregg2.Circuit.Inst.Delegate.RestIffNoCaps, Dregg2.Circuit.Inst.CreateSealPairA.RestIffNoCaps]
+  exact h
+
+private theorem restIffNoLifecycle_seal_to_unseal (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle RH) :
+    Dregg2.Circuit.Inst.CellUnsealA.RestIffNoLifecycle RH := by
+  dsimp [Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle,
+    Dregg2.Circuit.Inst.CellUnsealA.RestIffNoLifecycle]
+  exact h
+
+private theorem restIffNoSwiss_export_to_enliven (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss RH) :
+    Dregg2.Circuit.Inst.EnlivenRefA.RestIffNoSwiss RH := by
+  dsimp [Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss, Dregg2.Circuit.Inst.EnlivenRefA.RestIffNoSwiss]
+  exact h
+
+private theorem restIffNoSwiss_export_to_handoff (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss RH) :
+    Dregg2.Circuit.Inst.SwissHandoffA.RestIffNoSwiss RH := by
+  dsimp [Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss, Dregg2.Circuit.Inst.SwissHandoffA.RestIffNoSwiss]
+  exact h
+
+private theorem restIffNoSwiss_export_to_drop (RH : RecordKernelState → ℤ)
+    (h : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss RH) :
+    Dregg2.Circuit.Inst.SwissDropA.RestIffNoSwiss RH := by
+  dsimp [Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss, Dregg2.Circuit.Inst.SwissDropA.RestIffNoSwiss]
+  exact h
+
 /-- **`stepEmittedEncodeAgrees`** — the step witness bytes are the honest encoder for `(st, fa, st')`. -/
 def stepEmittedEncodeAgrees
     (S : Surface2)
@@ -231,6 +343,12 @@ def stepEmittedEncodeAgrees
     (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
     (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
     (DDgs : (CellId → List Cap) → ℤ) (hDDgs : Function.Injective DDgs)
+    (LS : SwissRecord → ℤ) (hLS : listLeafInjective LS)
+    (DLife : (CellId → Nat) → ℤ) (hDLife : Function.Injective DLife)
+    (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
+    (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
     (sw : StepWitness) (st st' : RecChainedState) (fa : FullActionA) : Prop :=
   match fa with
   | .balanceA t a =>
@@ -296,6 +414,88 @@ def stepEmittedEncodeAgrees
           { id, m, actor, cell, depId, dAsset, deposit } st'
   | .setFieldA actor cell f v =>
       assignmentOf sw.assignment = encodeE CS setFieldE st { actor, cell, f, v } st'
+  | .emitEventA actor cell topic data =>
+      assignmentOf sw.assignment = encodeE CS emitEventE st ⟨actor, cell, topic, data⟩ st'
+  | .incrementNonceA actor cell n =>
+      assignmentOf sw.assignment = encodeE CS incrementNonceE st ⟨actor, cell, n⟩ st'
+  | .setPermissionsA actor cell p =>
+      assignmentOf sw.assignment = encodeE CS setPermissionsE st ⟨actor, cell, p⟩ st'
+  | .setVKA actor cell vk =>
+      assignmentOf sw.assignment = encodeE CS setVKE st ⟨actor, cell, vk⟩ st'
+  | .delegateAttenA del rec t keep =>
+      assignmentOf sw.assignment =
+        encodeE2 S (delegateAttenE D_caps hD_caps) st ⟨del, rec, t, keep⟩ st'
+  | .attenuateA actor idx keep =>
+      assignmentOf sw.assignment = encodeE2 S (attenuateE D_caps hD_caps) st ⟨actor, idx, keep⟩ st'
+  | .createCellFromFactoryA actor newCell vk =>
+      assignmentOf sw.assignment =
+        encodeE2Quint S (createFromFactoryE LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+          st ⟨actor, newCell, vk⟩ st'
+  | .createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
+      assignmentOf sw.assignment =
+        encodeE2Dual S (createCommittedEscrowE D_bal hD_bal LE_escrow cN hN hLE_escrow) st
+          ⟨id, actor, creator, recipient, asset, amount, hidingProof⟩ st'
+  | .bridgeFinalizeA id actor asset amount =>
+      assignmentOf sw.assignment =
+        encodeE2 S (bridgeFinalizeE LE_escrow cN hN hLE_escrow) st ⟨id, actor, asset, amount⟩ st'
+  | .bridgeCancelA id actor =>
+      assignmentOf sw.assignment =
+        encodeE2Dual S (bridgeCancelE D_bal hD_bal LE_escrow cN hN hLE_escrow) st ⟨id, actor⟩ st'
+  | .unsealA pid actor recipient =>
+      match findSealedBox st.kernel.sealedBoxes pid with
+      | none => False
+      | some box =>
+          assignmentOf sw.assignment = encodeE2 S (unsealE D_caps hD_caps) st ⟨pid, actor, recipient, box⟩ st'
+  | .createSealPairA pid actor sealerHolder unsealerHolder =>
+      assignmentOf sw.assignment =
+        encodeE2 S (createSealPairE D_caps hD_caps) st ⟨pid, actor, sealerHolder, unsealerHolder⟩ st'
+  | .makeSovereignA actor cell =>
+      assignmentOf sw.assignment = encodeE CS makeSovereignE st ⟨actor, cell⟩ st'
+  | .refusalA actor cell =>
+      assignmentOf sw.assignment = encodeE CS refusalE st ⟨actor, cell⟩ st'
+  | .receiptArchiveA actor cell =>
+      assignmentOf sw.assignment = encodeE CS receiptArchiveE st ⟨actor, cell⟩ st'
+  | .queueAllocateA id actor cell cap =>
+      assignmentOf sw.assignment =
+        encodeE2 S (queueAllocateE LQ cN hN hLQ) st ⟨id, actor, cell, cap⟩ st'
+  | .queueDequeueA id actor cell depId deposit =>
+      assignmentOf sw.assignment =
+        encodeE2Triple S (queueDequeueE D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow) st
+          ⟨id, actor, cell, depId, deposit⟩ st'
+  | .queueResizeA id newCap actor cell =>
+      assignmentOf sw.assignment =
+        encodeE2 S (queueResizeE LQ cN hN hLQ) st ⟨id, newCap, actor, cell⟩ st'
+  | .queueAtomicTxA actor ops =>
+      assignmentOf sw.assignment =
+        encodeE2Triple S (queueAtomicTxE D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow) st
+          ⟨actor, ops⟩ st'
+  | .queuePipelineStepA srcId owner sinkCells sinkIds =>
+      assignmentOf sw.assignment =
+        encodeE2 S (queuePipelineStepE LQ cN hN hLQ) st ⟨srcId, owner, sinkCells, sinkIds⟩ st'
+  | .pipelinedSendA actor =>
+      assignmentOf sw.assignment = encodeE CS pipelinedSendE st ⟨actor⟩ st'
+  | .exportSturdyRefA sw actor exporter target rights =>
+      assignmentOf sw.assignment =
+        encodeE2 S (swissExportE LS cN hN hLS) st ⟨sw, actor, exporter, target, rights⟩ st'
+  | .enlivenRefA sw actor exporter claimed =>
+      assignmentOf sw.assignment =
+        encodeE2 S (enlivenE LS cN hN hLS) st ⟨sw, actor, exporter, claimed⟩ st'
+  | .swissHandoffA sw certHash introducer exporter =>
+      assignmentOf sw.assignment =
+        encodeE2 S (swissHandoffE LS cN hN hLS) st ⟨sw, certHash, introducer, exporter⟩ st'
+  | .swissDropA sw actor exporter =>
+      assignmentOf sw.assignment =
+        encodeE2 S (swissDropE LS cN hN hLS) st ⟨sw, actor, exporter⟩ st'
+  | .cellSealA actor cell =>
+      assignmentOf sw.assignment = encodeE2 S (cellSealE DLife hDLife) st ⟨actor, cell⟩ st'
+  | .cellUnsealA actor cell =>
+      assignmentOf sw.assignment = encodeE2 S (cellUnsealE DLife hDLife) st ⟨actor, cell⟩ st'
+  | .cellDestroyA actor cell certHash =>
+      assignmentOf sw.assignment =
+        encodeE2Dual S (cellDestroyE DLife hDLife DDC hDDC) st ⟨actor, cell, certHash⟩ st'
+  | .refreshDelegationA actor child =>
+      assignmentOf sw.assignment =
+        encodeE2 S (refreshDelegationE DDgs hDDgs) st ⟨actor, child⟩ st'
   | fa' =>
       assignmentOf sw.assignment = assignmentOf sw.assignment ∧ fa' = fa'
 
@@ -322,21 +522,34 @@ theorem step_emitted_refines_fullActionStep
     (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
     (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
     (DDgs : (CellId → List Cap) → ℤ) (hDDgs : Function.Injective DDgs)
+    (LS : SwissRecord → ℤ) (hLS : listLeafInjective LS)
+    (DLife : (CellId → Nat) → ℤ) (hDLife : Function.Injective DLife)
+    (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
+    (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
     (hRestBal : RestIffNoBal S.RH) (hRestAccounts : RestIffNoAccountsBalBorn S.RH)
     (hRestSpawn : RestIffNoSpawnTouched S.RH) (hRestCaps : RestIffNoCaps S.RH)
     (hRestNull : RestIffNoNullifiers S.RH) (hRestEscrow : RestIffNoBalEscrows S.RH)
     (hRestCommitments : RestIffNoCommitments S.RH) (hRestSealed : RestIffNoSealedBoxes S.RH)
     (hRestQueues : RestIffNoQueuesBalEscrows S.RH)
+    (hRestQueuesOnly : RestIffNoQueues S.RH)
+    (hRestFactory : RestIffNoFactoryTouched S.RH) (hRestEscrowsOnly : RestIffNoEscrows S.RH)
+    (hRestSwiss : RestIffNoSwiss S.RH) (hRestLifecycle : RestIffNoLifecycle S.RH)
+    (hRestLifecycleDeathCert : RestIffNoLifecycleDeathCert S.RH)
+    (hRestDelegations : RestIffNoDelegations S.RH)
     (hLog : logHashInjective S.LH)
     (sw : StepWitness) (st st' : RecChainedState) (fa : FullActionA)
     (h : stepEmittedSat defaultDescriptorLookup sw st st' fa)
     (hEnc : stepEmittedEncodeAgrees S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow LE_sealed
       cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide hDSide DLeg hDLeg
-      DCaps hDCaps DDel hDDel DDgs hDDgs sw st st' fa)
+      DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth
+      sw st st' fa)
     (hcircuit :
       fullActionCircuitStepInst S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow LE_sealed cN hN
         hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide hDSide DLeg hDLeg
-        DCaps hDCaps DDel hDDel DDgs hDDgs st fa st') :
+        DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth
+        st fa st') :
     fullActionStep st fa st' := by
   unfold fullActionCircuitStepInst fullActionCircuitStep at hcircuit
   match fa with
@@ -454,11 +667,182 @@ theorem step_emitted_refines_fullActionStep
         hRestQueues hLog st { id, m, actor, cell, depId, dAsset, deposit } st'
         ((queueEnqueue_emitted_equiv_circuit S D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow st
             { id, m, actor, cell, depId, dAsset, deposit } st').mpr hcircuit)
-  | fa' =>
-      exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow LE_sealed
-        cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame hLogCS DBal hDBal
-        DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs hRestBal hRestAccounts hRestSpawn hRestCaps
-        hRestNull hRestEscrow hRestCommitments hRestSealed hRestQueues hLog st fa' st' hcircuit
+  | .emitEventA actor cell topic data =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact emitEventA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, topic, data⟩ st'
+        hwf hwf' ((emitEventA_emitted_equiv_circuit CS st ⟨actor, cell, topic, data⟩ st').mpr hc)
+  | .incrementNonceA actor cell newNonce =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact incrementNonceA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, newNonce⟩ st'
+        hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS incrementNonceE incrementNonceAAirName st
+            ⟨actor, cell, newNonce⟩ st').mpr hc)
+  | .setPermissionsA actor cell perms =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact setPermissionsA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, perms⟩ st'
+        hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS setPermissionsE setPermissionsAAirName st
+            ⟨actor, cell, perms⟩ st').mpr hc)
+  | .setVKA actor cell vk =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact setVKA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell, vk⟩ st' hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS setVKE setVKAAirName st ⟨actor, cell, vk⟩ st').mpr hc)
+  | .delegateAttenA del rec t keep =>
+      simp only [fullActionStep]
+      exact delegateAttenA_emitted_refines_spec S D_caps hD_caps
+        (restIffNoCaps_delegate_to_delegateAtten S.RH hRestCaps) hLog st ⟨del, rec, t, keep⟩ st'
+        ((delegateAttenA_emitted_equiv_circuit S D_caps hD_caps st ⟨del, rec, t, keep⟩ st').mpr hcircuit)
+  | .attenuateA actor idx keep =>
+      simp only [fullActionStep]
+      exact attenuateA_emitted_refines_spec S D_caps hD_caps
+        (restIffNoCaps_delegate_to_attenuate S.RH hRestCaps) hLog st ⟨actor, idx, keep⟩ st'
+        ((attenuateA_emitted_equiv_circuit S D_caps hD_caps st ⟨actor, idx, keep⟩ st').mpr hcircuit)
+  | .exerciseA actor target inner =>
+      simp only [fullActionStep]
+      sorry -- HOLE: exerciseA emitted ⊑ spec (hold-gate only; inner turn not wired)
+  | .createCellFromFactoryA actor newCell vk =>
+      simp only [fullActionStep]
+      exact createCellFromFactoryA_emitted_refines_spec S LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC
+        DAuth hDAuth hRestFactory hLog st ⟨actor, newCell, vk⟩ st'
+        ((effect2quint_emitted_equiv_circuit_local S
+            (createFromFactoryE LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+            createCellFromFactoryAAirName st ⟨actor, newCell, vk⟩ st').mpr hcircuit)
+  | .createObligationA id actor obligor beneficiary asset stake =>
+      simp only [fullActionStep]
+      sorry -- HOLE: createObligationA emitted ⊑ spec (no Inst emission)
+  | .createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
+      simp only [fullActionStep]
+      exact createCommittedEscrowA_emitted_refines_spec S D_bal hD_bal LE_escrow cN hN hLE_escrow hRestEscrow
+        hLog st ⟨id, actor, creator, recipient, asset, amount, hidingProof⟩ st'
+        ((createCommittedEscrowA_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st
+            ⟨id, actor, creator, recipient, asset, amount, hidingProof⟩ st').mpr hcircuit)
+  | .releaseCommittedEscrowA id actor =>
+      simp only [fullActionStep]
+      sorry -- HOLE: releaseCommittedEscrowA emitted ⊑ spec (no Inst emission)
+  | .refundCommittedEscrowA id actor =>
+      simp only [fullActionStep]
+      sorry -- HOLE: refundCommittedEscrowA emitted ⊑ spec (no Inst emission)
+  | .bridgeFinalizeA id actor asset amount =>
+      simp only [fullActionStep]
+      exact bridgeFinalizeA_emitted_refines_spec S LE_escrow cN hN hLE_escrow hRestEscrowsOnly hLog st
+        ⟨id, actor, asset, amount⟩ st'
+        ((bridgeFinalizeA_emitted_equiv_circuit S LE_escrow cN hN hLE_escrow st ⟨id, actor, asset, amount⟩ st')
+          .mpr hcircuit)
+  | .bridgeCancelA id actor =>
+      simp only [fullActionStep]
+      exact bridgeCancelA_emitted_refines_spec S D_bal hD_bal LE_escrow cN hN hLE_escrow hRestEscrow hLog st
+        ⟨id, actor⟩ st'
+        ((bridgeCancelA_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st ⟨id, actor⟩ st')
+          .mpr hcircuit)
+  | .unsealA pid actor recipient =>
+      simp only [fullActionStep, fullActionCircuitStep]
+      cases hbox : findSealedBox st.kernel.sealedBoxes pid with
+      | none => exact absurd hcircuit (by simp [hbox])
+      | some box =>
+          exact unsealA_emitted_refines_spec S D_caps hD_caps (restIffNoCaps_delegate_to_unseal S.RH hRestCaps)
+            hLog st ⟨pid, actor, recipient, box⟩ st'
+            ((unsealA_emitted_equiv_circuit S D_caps hD_caps st ⟨pid, actor, recipient, box⟩ st').mpr
+              (by simpa [hbox] using hcircuit))
+  | .createSealPairA pid actor sealerHolder unsealerHolder =>
+      simp only [fullActionStep]
+      exact createSealPairA_emitted_refines_spec S D_caps hD_caps
+        (restIffNoCaps_delegate_to_createSealPair S.RH hRestCaps) hLog st
+        ⟨pid, actor, sealerHolder, unsealerHolder⟩ st'
+        ((createSealPairA_emitted_equiv_circuit S D_caps hD_caps st
+            ⟨pid, actor, sealerHolder, unsealerHolder⟩ st').mpr hcircuit)
+  | .makeSovereignA actor cell =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact makeSovereignA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS makeSovereignE makeSovereignAAirName st ⟨actor, cell⟩ st').mpr
+          hc)
+  | .refusalA actor cell =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact refusalA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS refusalE refusalAAirName st ⟨actor, cell⟩ st').mpr hc)
+  | .receiptArchiveA actor cell =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact receiptArchiveA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS receiptArchiveE receiptArchiveAAirName st ⟨actor, cell⟩ st')
+          .mpr hc)
+  | .queueAllocateA id actor cell capacity =>
+      simp only [fullActionStep]
+      exact queueAllocateA_emitted_refines_spec S LQ cN hN hLQ hRestQueuesOnly hLog st
+        ⟨id, actor, cell, capacity⟩ st'
+        ((queueAllocateA_emitted_equiv_circuit S LQ cN hN hLQ st ⟨id, actor, cell, capacity⟩ st').mpr hcircuit)
+  | .queueDequeueA id actor cell depId deposit =>
+      simp only [fullActionStep]
+      exact queueDequeueA_emitted_refines_spec S D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow hRestQueues
+        hLog st ⟨id, actor, cell, depId, deposit⟩ st'
+        ((queueDequeueA_emitted_equiv_circuit S D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow st
+            ⟨id, actor, cell, depId, deposit⟩ st').mpr hcircuit)
+  | .queueResizeA id newCap actor cell =>
+      simp only [fullActionStep]
+      exact queueResizeA_emitted_refines_spec S LQ cN hN hLQ hRestQueuesOnly hLog st ⟨id, newCap, actor, cell⟩ st'
+        ((queueResizeA_emitted_equiv_circuit S LQ cN hN hLQ st ⟨id, newCap, actor, cell⟩ st').mpr hcircuit)
+  | .queueAtomicTxA actor ops =>
+      simp only [fullActionStep]
+      exact queueAtomicTxA_emitted_refines_spec S D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow
+        hRestQueues hLog st ⟨actor, ops⟩ st'
+        ((queueAtomicTxA_emitted_equiv_circuit S D_bal hD_bal LQ cNQ hNQ hLQ LE_escrow cN hN hLE_escrow st
+            ⟨actor, ops⟩ st').mpr hcircuit)
+  | .queuePipelineStepA srcId owner sinkCells sinkIds =>
+      simp only [fullActionStep]
+      exact queuePipelineStepA_emitted_refines_spec S LQ cN hN hLQ hRestQueuesOnly hLog st
+        ⟨srcId, owner, sinkCells, sinkIds⟩ st'
+        ((queuePipelineStepA_emitted_equiv_circuit S LQ cN hN hLQ st ⟨srcId, owner, sinkCells, sinkIds⟩ st')
+          .mpr hcircuit)
+  | .pipelinedSendA actor =>
+      simp only [fullActionStep]
+      rcases hcircuit with ⟨hwf, hwf', hc⟩
+      exact pipelinedSendA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor⟩ st' hwf hwf'
+        ((effect1_emitted_equiv_circuit_local CS pipelinedSendE pipelinedSendAAirName st ⟨actor⟩ st').mpr hc)
+  | .exportSturdyRefA sw actor exporter target rights =>
+      simp only [fullActionStep]
+      exact exportSturdyRefA_emitted_refines_spec S LS cN hN hLS hRestSwiss hLog st
+        ⟨sw, actor, exporter, target, rights⟩ st'
+        ((exportSturdyRefA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, actor, exporter, target, rights⟩ st')
+          .mpr hcircuit)
+  | .enlivenRefA sw actor exporter claimed =>
+      simp only [fullActionStep]
+      exact enlivenRefA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_enliven S.RH hRestSwiss) hLog
+        st ⟨sw, actor, exporter, claimed⟩ st'
+        ((enlivenRefA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, actor, exporter, claimed⟩ st').mpr hcircuit)
+  | .swissHandoffA sw certHash introducer exporter =>
+      simp only [fullActionStep]
+      exact swissHandoffA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_handoff S.RH hRestSwiss)
+        hLog st ⟨sw, certHash, introducer, exporter⟩ st'
+        ((swissHandoffA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, certHash, introducer, exporter⟩ st')
+          .mpr hcircuit)
+  | .swissDropA sw actor exporter =>
+      simp only [fullActionStep]
+      exact swissDropA_emitted_refines_spec S LS cN hN hLS (restIffNoSwiss_export_to_drop S.RH hRestSwiss) hLog
+        st ⟨sw, actor, exporter⟩ st'
+        ((swissDropA_emitted_equiv_circuit S LS cN hN hLS st ⟨sw, actor, exporter⟩ st').mpr hcircuit)
+  | .cellSealA actor cell =>
+      simp only [fullActionStep]
+      exact cellSealA_emitted_refines_spec S DLife hDLife hRestLifecycle hLog st ⟨actor, cell⟩ st'
+        ((cellSealA_emitted_equiv_circuit S DLife hDLife st ⟨actor, cell⟩ st').mpr hcircuit)
+  | .cellUnsealA actor cell =>
+      simp only [fullActionStep]
+      exact cellUnsealA_emitted_refines_spec S DLife hDLife (restIffNoLifecycle_seal_to_unseal S.RH hRestLifecycle)
+        hLog st ⟨actor, cell⟩ st'
+        ((cellUnsealA_emitted_equiv_circuit S DLife hDLife st ⟨actor, cell⟩ st').mpr hcircuit)
+  | .cellDestroyA actor cell certHash =>
+      simp only [fullActionStep]
+      exact cellDestroyA_emitted_refines_spec S DLife hDLife DDC hDDC hRestLifecycleDeathCert hLog st
+        ⟨actor, cell, certHash⟩ st'
+        ((cellDestroyA_emitted_equiv_circuit S DLife hDLife DDC hDDC st ⟨actor, cell, certHash⟩ st').mpr hcircuit)
+  | .refreshDelegationA actor child =>
+      simp only [fullActionStep]
+      exact refreshDelegationA_emitted_refines_spec S DDgs hDDgs hRestDelegations hLog st ⟨actor, child⟩ st'
+        ((refreshDelegationA_emitted_equiv_circuit S DDgs hDDgs st ⟨actor, child⟩ st').mpr hcircuit)
 
 /-! ## §6 — Demo: mint + burn two-step turn via `defaultDescriptorLookup`. -/
 
@@ -493,7 +877,10 @@ theorem turn_emitted_demo_mint_burn :
 #guard mintEmitted.name == mintAirName
 #guard burnEmitted.name == burnAirName
 #guard burnEmitted.traceWidth == 72
-#guard (defaultDescriptorLookup unknownAirName == none)
+#guard (defaultDescriptorLookup createObligationAHoleName == none)
+#guard (defaultDescriptorLookup releaseCommittedEscrowAHoleName == none)
+#guard (defaultDescriptorLookup refundCommittedEscrowAHoleName == none)
+#guard (∀ name ∈ holeAirNames, defaultDescriptorLookup name == none)
 #guard registryCoverage == 53
 
 #assert_axioms descriptorLookup_of_actionAirName

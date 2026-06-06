@@ -29,6 +29,11 @@ const KERNEL_WIRE: &str = r#"{"name":"dregg-kernel-step-v1","trace_width":6,"con
 /// constraints and the two `pi_binding_*` boundaries of the Merkle Poseidon2 AIR.
 const MERKLE_WIRE: &str = r#"{"name":"dregg-merkle-poseidon2-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}"#;
 
+/// The GOLDEN Poseidon2 sponge-compress wire (Wave 4), copied verbatim from
+/// `#eval Dregg2.Circuit.Poseidon2Emit.poseidon2CompressWire`. Same constraint
+/// forms as `MERKLE_WIRE`; distinct AIR name for registry lookup.
+const POSEIDON2_COMPRESS_WIRE: &str = r#"{"name":"dregg-poseidon2-compress-v1","trace_width":6,"public_input_count":2,"constraints":[{"t":"merkle_hash","output_col":5,"current_col":0,"sib_cols":[1,2,3],"position_col":4},{"t":"transition","next_col":0,"local_col":5},{"t":"pi_binding_first","col":0,"pi_index":0},{"t":"pi_binding_last","col":5,"pi_index":1}]}"#;
+
 /// The GOLDEN C1 position-validity polynomial wire, copied verbatim from
 /// `#eval Dregg2.Exec.CircuitEmit.merkleC1Poly.toJson`. Expanded form of
 /// `pos*(pos-1)*(pos-2)*(pos-3)` over the position column (col 4); signed
@@ -370,6 +375,44 @@ mod tests {
         let base = fingerprint(&a);
         a.boundary_constraint_count += 1;
         assert_ne!(fingerprint(&a), base);
+    }
+
+    // ---- Poseidon2 sponge-compress (Wave 4) wire ----
+
+    const POSEIDON2_COMPRESS: &str = super::POSEIDON2_COMPRESS_WIRE;
+
+    #[test]
+    fn decodes_poseidon2_compress_wire() {
+        let p = decode_full(POSEIDON2_COMPRESS).expect("poseidon2-compress decode");
+        assert_eq!(p.name, "dregg-poseidon2-compress-v1");
+        assert_eq!(p.trace_width, 6);
+        assert_eq!(p.public_input_count, 2);
+        assert_eq!(p.constraints.len(), 2);
+        assert_eq!(p.boundaries.len(), 2);
+        assert_eq!(
+            p.constraints[0],
+            DecodedConstraintExpr::MerkleHash {
+                output_col: 5,
+                current_col: 0,
+                sib_cols: [1, 2, 3],
+                position_col: 4,
+            }
+        );
+        assert_eq!(
+            p.constraints[1],
+            DecodedConstraintExpr::Transition { next_col: 0, local_col: 5 }
+        );
+    }
+
+    #[test]
+    fn poseidon2_compress_constraints_match_merkle_forms() {
+        let m = decode_full(MERKLE).unwrap();
+        let p = decode_full(POSEIDON2_COMPRESS).unwrap();
+        assert_eq!(p.trace_width, m.trace_width);
+        assert_eq!(p.public_input_count, m.public_input_count);
+        assert_eq!(p.constraints, m.constraints);
+        assert_eq!(p.boundaries, m.boundaries);
+        assert_ne!(p.name, m.name);
     }
 
     #[test]

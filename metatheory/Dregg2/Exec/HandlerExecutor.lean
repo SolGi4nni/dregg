@@ -1011,6 +1011,44 @@ theorem handler_refines_execFullA_refusal (s s' : RecChainedState) (actor cell :
     · rw [← hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
+/-! ### §6.3b — FLAG WRITES deferred: `makeSovereignA` / `receiptArchiveA` field alignment.
+
+The handler routes both through `stateWriteH` at pinned field names (`sovereignField` /
+`receiptArchiveField`). `execFullA` uses DISTINCT semantics: `makeSovereignStep` whole-record
+commitment-rebind (`makeSovereignKernel`) and `stateStep` at `lifecycleField` for receipt archive.
+Kernel agreement on the honest commit path is therefore BLOCKED until a field-alignment lemma bridges
+the representations — tracked as explicit `sorry` portals below (see `Dregg2.Exec.HandlerOpenFronts`). -/
+
+/-- HOLE: handler `sovereignField` stub ⊑ `makeSovereignStep` commitment-rebind (field mismatch). -/
+theorem hole_handler_makeSovereign (s s' : RecChainedState) (actor cell : CellId)
+    (_hmem : cell ∈ s.kernel.accounts)
+    (h : execHandlerOne (.makeSovereignA actor cell) s = some s') :
+    ∃ s'', execFullA s (.makeSovereignA actor cell) = some s'' ∧ s''.kernel = s'.kernel := by
+  sorry
+
+/-- **`handler_refines_execFullA_makeSovereign` — DEFERRED (field mismatch).** Handler commits a
+`sovereignField` write; `execFullA` commits `makeSovereignStep` commitment-rebind. -/
+theorem handler_refines_execFullA_makeSovereign (s s' : RecChainedState) (actor cell : CellId)
+    (hmem : cell ∈ s.kernel.accounts)
+    (h : execHandlerOne (.makeSovereignA actor cell) s = some s') :
+    ∃ s'', execFullA s (.makeSovereignA actor cell) = some s'' ∧ s''.kernel = s'.kernel :=
+  hole_handler_makeSovereign s s' actor cell hmem h
+
+/-- HOLE: handler `receipt_archive` field ⊑ executor `lifecycleField` write (field mismatch). -/
+theorem hole_handler_receiptArchive (s s' : RecChainedState) (actor cell : CellId)
+    (_hmem : cell ∈ s.kernel.accounts)
+    (h : execHandlerOne (.receiptArchiveA actor cell) s = some s') :
+    ∃ s'', execFullA s (.receiptArchiveA actor cell) = some s'' ∧ s''.kernel = s'.kernel := by
+  sorry
+
+/-- **`handler_refines_execFullA_receiptArchive` — DEFERRED (field mismatch).** Handler commits a
+`receipt_archive` field write; `execFullA` commits `stateStep` at `lifecycleField`. -/
+theorem handler_refines_execFullA_receiptArchive (s s' : RecChainedState) (actor cell : CellId)
+    (hmem : cell ∈ s.kernel.accounts)
+    (h : execHandlerOne (.receiptArchiveA actor cell) s = some s') :
+    ∃ s'', execFullA s (.receiptArchiveA actor cell) = some s'' ∧ s''.kernel = s'.kernel :=
+  hole_handler_receiptArchive s s' actor cell hmem h
+
 theorem handler_refines_execFullA_setField (s s' : RecChainedState) (actor cell : CellId)
     (f : FieldName) (v : Int) (hmem : cell ∈ s.kernel.accounts)
     (hcav : caveatsAdmit s.kernel f actor cell v = true)
@@ -1497,6 +1535,14 @@ theorem handler_refines_execFullA_queueEnqueue (s s' : RecChainedState) (id m : 
     unfold queueEnqueueChainA
     rw [if_pos hg', hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
+
+/-- HOLE §6.6 DEFER: when `actor ≠ cell`, handler allocate owner metadata diverges from
+`queueAllocateChainA` — kernel agreement on the unconditional path is unproved. -/
+theorem hole_queue_actor_ne_cell (s s' : RecChainedState) (id : Nat) (actor cell : CellId) (cap : Nat)
+    (_hne : actor ≠ cell)
+    (h : execHandlerOne (.queueAllocateA id actor cell cap) s = some s') :
+    ∃ s'', execFullA s (.queueAllocateA id actor cell cap) = some s'' ∧ s''.kernel = s'.kernel := by
+  sorry
 
 /-- **`handler_refines_execFullA_queueDequeue`** — when the chained writer-ACL + owner-liveness gates
 hold (`hg`), a handler P0-1-closing dequeue refines `queueDequeueChainA` on the same kernel. -/

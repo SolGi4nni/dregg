@@ -323,6 +323,7 @@ if (typeof window !== 'undefined' && window.dreggUi?.register) {
 // for the Apps tab demo in /starbridge/ (reuses platform components).
 // The shared barrel already side-loads it for app pages; we also ensure here.
 import('/starbridge-apps/shared/inspectors/name.js').catch(() => {});
+import('/starbridge-apps/shared/turn-builders/index.js').catch(() => {});
 import('/starbridge-apps/shared/turn-builders/nameservice.js').catch(() => {});
 
 import './inspectors/witnessed-receipt.js';

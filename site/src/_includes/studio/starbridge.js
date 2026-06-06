@@ -487,7 +487,9 @@ function writeUrlState({ at, runtime }) {
       let source = 'missing';
       if (name === 'signTurn' || name === 'signTurnV3') {
         available = !!(api && (api[name] || api.signTurn));
-        source = available ? 'extension' : 'extension required';
+        source = available
+          ? (currentRuntimeId === 'in-memory' ? 'in-memory runtime' : 'extension')
+          : 'extension or in-memory runtime required';
       } else if (name.startsWith('builders.') || name.startsWith('cell.')) {
         available = currentRuntimeId === 'in-memory' || currentRuntimeId === 'extension';
         source = available ? currentRuntimeId : 'host helper required';
@@ -2033,6 +2035,18 @@ function writeUrlState({ at, runtime }) {
       runtime = await entry.factory(opts);
       currentRuntimeId = id;
       app.runtime = runtime;
+      if (id === 'in-memory') {
+        window.__starbridgeAppRuntime = runtime;
+        try {
+          const { installRealSignTurn } = await import('/starbridge-apps/shared/runtime-submit.js');
+          installRealSignTurn();
+        } catch (e) {
+          console.warn('[starbridge] runtime-submit unavailable:', e);
+        }
+        await import('/starbridge-apps/shared/turn-builders/index.js').catch((e) => {
+          console.warn('[starbridge] turn-builders barrel unavailable:', e);
+        });
+      }
       if (simActions) simActions.hidden = !(runtime.caps && runtime.caps.mutate);
       bindObjectTree();
       bindCursor();
