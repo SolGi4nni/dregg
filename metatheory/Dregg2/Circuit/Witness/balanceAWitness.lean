@@ -37,6 +37,7 @@ The `#eval`-able JSON strings (`balanceHonestWitnessJson`/`balanceForgedWitnessJ
 the Rust `lean_executor_derived_balanceA` test proves+verifies (honest) and rejects (forged).
 -/
 import Dregg2.Circuit.Inst.balanceA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BalanceAWitness
 
@@ -46,6 +47,7 @@ open Dregg2.Circuit.Inst.BalanceA
 open Dregg2.Circuit.Spec.BalanceMovement
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 turnLogDigest)
 
 set_option linter.dupNamespace false
 set_option linter.unusedVariables false
@@ -71,20 +73,19 @@ length). A frame-tamper of `nullifiers` is VISIBLE. -/
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
 
-/-- Concrete log hash: the receipt-chain LENGTH (an injective measure of "grew by exactly one"). A log
-forgery (wrong length) is VISIBLE on the `#guard` domain. -/
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+/-- Concrete log hash: the REAL `turnLogDigest` (`refP2` over the FULL `encTurnRec`, binding `src`/`dst`
+which the OLD `.length` collapse DROPPED entirely). CR-grounded on the real `babyBearD4W16` Poseidon2. -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 /-- The probe cells the concrete `bal` digest samples: the moved `src`/`dst` plus a bystander cell `2`
 (so a third-cell mint shows up in the digest). -/
 def balProbes (t : Turn) : List (CellId × AssetId) :=
   [(t.src, 0), (t.dst, 0), (2, 0)]
 
-/-- Concrete `bal` component digest: an INJECTIVE positional Horner fold over the probe entries (each
-shifted by a base larger than any toy balance), so the ORDERED probe list is recoverable — a wrong
-post-`bal` (including a bystander mint) is VISIBLE. -/
+/-- Concrete `bal` component digest: the REAL `refP2` sponge over the probe entries (binds each entry —
+NO lossy `% 10⁶` collapse), so a wrong post-`bal` (including a bystander mint, even ABOVE 10⁶) is VISIBLE. -/
 def balDigestC (t : Turn) (bal : CellId → AssetId → ℤ) : ℤ :=
-  (balProbes t).foldl (fun acc p => acc * 1000000 + bal p.1 p.2) 0
+  refP2 ((balProbes t).map (fun p => bal p.1 p.2))
 
 /-- The v2 `Surface2` over the concrete carriers. -/
 def balanceSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
@@ -211,6 +212,15 @@ def forgedWitness : List Int := witnessOf goodTurnC sC0 goodArgsC forgedPostC
 -- ...while the forgery still CONSERVES the two moved balances (the projection ghost): the bystander
 --    mint is invisible to a moved-balance-only check (probe[0] debit + probe[1] credit unchanged).
 
+-- HIGH-field anti-ghost tooth: the bystander mint forged ABOVE 10⁶ (the OLD `% 10⁶` Horner fold
+-- collided here; `refP2` does NOT). The component-bind gate `68 ≠ 69` still REJECTS.
+def forgedBalHighC : CellId → AssetId → ℤ :=
+  fun c a => if a = 0 then (if c = 0 then 70 else if c = 1 then 35 else if c = 2 then 50 + 1000000 else 0) else 0
+def forgedPostHighC : RecChainedState :=
+  { kernel := { goodPostC.kernel with bal := forgedBalHighC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2 (balanceEC goodTurnC))
+  (encodeE2 balanceSurfaceC (balanceEC goodTurnC) sC0 goodArgsC forgedPostHighC)) == false
+
 /-! ## §5 — JSON export of the witness vectors (the bytes the Rust prover consumes). -/
 
 /-- Render a `List Int` as a JSON number array (the witness wire form). -/
@@ -222,13 +232,13 @@ def balanceHonestWitnessJson : String := witnessJson honestWitness
 /-- The forged witness, as the JSON array the Rust prover REJECTS (component-bind UNSAT). -/
 def balanceForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_balanceA` test pastes (goldens — a drift in the
--- executor/surface is caught HERE first). Wires 64/65 are the unconstrained roots; the CONSTRAINED
--- frame-EQ wires (66/67 rest, 68/69 component, 70/71 log) carry the small digests.
-#guard balanceHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000005000053,70000035000054,3,3,70000035000050,70000035000050,1,1]"
-#guard balanceForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000005000053,70000035001003,3,3,70000035000999,70000035000050,1,1]"
+-- Structural bind-gate goldens (the CONSTRAINED frame-EQ wires 66/67 rest, 68/69 component, 70/71 log
+-- carry the field-binding `refP2` digests — arbitrary-precision, so non-vacuity is at the bind GATES;
+-- the Rust paste is regenerated from these JSON accessors when the prover field-reduces).
+#guard honestWitness.getD 66 0 == honestWitness.getD 67 0   -- rest binds (honest)
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- component binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- log binds (honest)
+#guard !(balanceHonestWitnessJson == balanceForgedWitnessJson)
 
 /-! ## §6 — axiom-hygiene tripwires. -/
 

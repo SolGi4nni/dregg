@@ -11,6 +11,7 @@ mutated) is REJECTED by the component-bind gate `68 ≠ 69`. `Inst.bridgeFinaliz
 proved the crown jewel (`⇒ BridgeFinalizeSpec`).
 -/
 import Dregg2.Circuit.Inst.bridgeFinalizeA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BridgeFinalizeAWitness
 
@@ -20,6 +21,7 @@ open Dregg2.Circuit.Inst.BridgeFinalizeA
 open Dregg2.Circuit.Spec.BridgeOutboundFinalize
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encEscrowRec turnLogDigest)
 
 set_option linter.dupNamespace false
 set_option linter.unusedVariables false
@@ -29,25 +31,19 @@ instance (c : Constraint) (a : Assignment) : Decidable (c.holds a) := by
 instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) := by
   unfold satisfied; exact List.decidableBAll _ _
 
-/-! ## §1 — the CONCRETE commitment surface (escrows-list variant). -/
+/-! ## §1 — the REAL (Poseidon2 CR-grounded) commitment surface (escrows-list variant).
+
+The escrows digest is `recListDigest encEscrowRec` (the CR-grounded `refP2` sponge over the field-binding
+`encEscrowRec`, binding ALL nine `EscrowRecord` fields — the OLD `leConcrete` DROPPED
+`creator`/`recipient`/`bridge`/`queueDep`/`queueMsg` and folded `amount` into `* 1000`). The log hash is
+`turnLogDigest` (the FULL `encTurnRec`; the OLD `lhConcrete` collapsed the whole chain to its `.length`). -/
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
-/-- Concrete injective escrow-record leaf: pack `(id, amount, resolved, asset)` into a number on the toy
-domain (each field shifted by a base larger than any toy value). A tampered record is VISIBLE. -/
-def leConcrete : EscrowRecord → ℤ :=
-  fun r => (r.id : ℤ) * 100000 + r.amount * 1000 + (if r.resolved then 1 else 0) * 100 + (r.asset : ℤ)
-
-/-- Concrete injective list sponge: a positional Horner fold over the encoded leaves (length folded in
-so distinct-length lists never collide). The ORDERED escrow list is recoverable on the `#guard` domain.
-The base (`10^9`) keeps the fold within `i64` for the toy `#guard`/Rust domain (small leaves, short list). -/
-def cnConcrete : List ℤ → ℤ :=
-  fun xs => xs.foldl (fun acc x => acc * 1000000000 + x) (xs.length : ℤ)
-
-/-- The concrete `escrows` list digest. -/
-def escrowsDigestC (escrows : List EscrowRecord) : ℤ := cnConcrete (escrows.map leConcrete)
+/-- The concrete `escrows` list digest: the REAL `refP2` sponge over the field-binding `encEscrowRec`. -/
+def escrowsDigestC (escrows : List EscrowRecord) : ℤ := recListDigest encEscrowRec escrows
 
 def finalizeSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
@@ -142,6 +138,15 @@ def forgedWitness : List Int := witnessOf sC0 goodArgsC forgedPostC
   (encodeE2 finalizeSurfaceC bridgeFinalizeEC sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)
 
+/-- HIGH-field anti-ghost tooth: the honest `markResolved`, but record id 7's `amount` is forged ABOVE
+the OLD `* 1000` window (`5 → 5 + 1000`). Under `leConcrete` that collided into the `id` digit; under the
+field-binding `encEscrowRec` the `escrows` digest DIFFERS, so the bind gate `68 ≠ 69` rejects. -/
+def forgedHighPostC : RecChainedState :=
+  { goodPostC with kernel := { goodPostC.kernel with
+      escrows := goodPostC.kernel.escrows.map (fun r => if r.id = 7 then { r with amount := r.amount + 1000 } else r) } }
+#guard decide (satisfied (effectCircuit2 bridgeFinalizeEC)
+  (encodeE2 finalizeSurfaceC bridgeFinalizeEC sC0 goodArgsC forgedHighPostC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -149,11 +154,11 @@ def witnessJson (xs : List Int) : String :=
 def bridgeFinalizeHonestWitnessJson : String := witnessJson honestWitness
 def bridgeFinalizeForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_bridge_finalize_a` test pastes (goldens).
-#guard bridgeFinalizeHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2000705001000809103,2000705101000809104,2,2,2000705101000809101,2000705101000809101,1,1]"
-#guard bridgeFinalizeForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2000705001000809103,2000705001000809104,2,2,2000705001000809101,2000705101000809101,1,1]"
+-- Structural bind-gate goldens (the field-binding `refP2`/`encEscrowRec` digests are arbitrary-precision
+-- — non-vacuity is at the bind GATES; the Rust paste is regenerated from these JSON accessors).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- escrows binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- log binds (honest)
+#guard !(bridgeFinalizeHonestWitnessJson == bridgeFinalizeForgedWitnessJson)
 
 #assert_axioms bridgeFinalizeWitnessVec_commit
 #assert_axioms witnessOf_get

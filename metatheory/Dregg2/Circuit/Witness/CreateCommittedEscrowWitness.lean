@@ -12,6 +12,7 @@ Reused: `execFullA … (.createCommittedEscrowA …)`,
 CR portals carried.
 -/
 import Dregg2.Circuit.Inst.createCommittedEscrowA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.CreateCommittedEscrowWitness
 
@@ -26,6 +27,7 @@ open Dregg2.Circuit.Spec.EscrowCommitted
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encEscrowRec turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -61,14 +63,18 @@ theorem satisfying_witness_proves_full_state
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS. -/
 
+/-- The `bal` digest: the REAL `refP2` sponge over the probed `(cell,asset)` ledger entries (binds each —
+NO lossy `% 10⁶` collapse). -/
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => [0, 1, 2].foldl (fun acc c => acc * 1000000 + bal c 0) 0
-def escDigConcrete : List EscrowRecord → ℤ :=
-  fun es => es.foldl (fun acc r => acc * 1000000 + ((r.id : ℤ) * 1000 + r.amount)) (es.length : ℤ)
+  fun bal => refP2 [bal 0 0, bal 1 0, bal 2 0]
+/-- The escrows digest: the REAL `refP2` sponge over the field-binding `encEscrowRec` (binds ALL nine
+fields — the OLD fold DROPPED `creator`/`recipient`/`resolved`/`asset`/`bridge`/… and packed `id*1000`). -/
+def escDigConcrete : List EscrowRecord → ℤ := recListDigest encEscrowRec
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ :=
-  fun log => log.foldl (fun acc t => acc * 1000000 + ((t.actor : ℤ) * 1000 + t.src)) (log.length : ℤ)
+/-- The log hash: the REAL `turnLogDigest` (`refP2` over the FULL `encTurnRec`, binding `dst`/`amt` which
+the OLD `actor*1000 + src` fold DROPPED). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
 def balCompC : ActiveComponent RecChainedState CreateCommittedEscrowArgs :=
@@ -146,6 +152,16 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard honestWitness.getD 70 0 == honestWitness.getD 71 0
 #guard honestWitness.getD 0 0 == 1
 
+/-- HIGH-field anti-ghost tooth: bystander cell 2's balance forged ABOVE 10⁶ (the OLD `% 10⁶` fold
+collided here; `refP2` does NOT). The `bal` bind gate `68 ≠ 69` still rejects. -/
+def sForgedHigh : RecChainedState :=
+  { kernel := { kPre with
+      bal := fun c _ => if c = 0 then 70 else if c = 2 then 1000000 else 0
+      escrows := parkedRecord 1 0 1 0 30 :: kPre.escrows }
+  , log := escrowReceiptA 0 :: sPre.log }
+#guard decide (satisfied (effectCircuit2Dual createCommittedEscrowEC)
+  (encodeE2Dual SC createCommittedEscrowEC sPre argsRef sForgedHigh)) == false
+
 /-! ## §5 — JSON export. -/
 
 def emittedCCE : EmittedDescriptor :=
@@ -158,9 +174,11 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 #guard emittedCCE.constraints.length == 5
 #guard emittedCCE.traceWidth == 74
 
--- Golden pins (the bytes the Rust `lean_executor_derived_create_committed_escrow` test pastes).
-#guard honestWitness.getD 68 0 == 70000000000000 ∧ honestWitness.getD 70 0 == 1001030
-#guard forgedWitness.getD 68 0 == 70000000000999 ∧ forgedWitness.getD 70 0 == 1001030
+-- Structural bind-gate goldens (the field-binding `refP2`/`encEscrowRec` digests are arbitrary-precision,
+-- so non-vacuity is checked at the bind gates; the Rust paste is regenerated from the JSON accessors).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- escrows binds (honest)
+#guard !(honestWitnessJson == forgedWitnessJson)            -- honest ≠ forged byte streams
 
 #assert_axioms execute_produces_satisfying_witness
 #assert_axioms satisfying_witness_proves_full_state

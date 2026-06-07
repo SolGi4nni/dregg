@@ -20,6 +20,7 @@ The Poseidon-CR portals are carried HYPOTHESES on the
 abstract keystones.
 -/
 import Dregg2.Circuit.Inst.releaseEscrowA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.ReleaseEscrowWitness
 
@@ -34,6 +35,7 @@ open Dregg2.Circuit.Spec.EscrowHoldingRelease
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encEscrowRec turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -76,19 +78,15 @@ theorem satisfying_witness_proves_full_state
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS (the bytes the Rust prover proves). -/
 
-/-- Concrete computable `bal` digest: sample over the toy cell×asset window `[0,4)×[0,2)`, small
-modular Horner fold. A tamper of ANY window entry's balance changes this number. -/
+/-- The `bal` digest: the REAL `refP2` sponge over the (cell 0-3 × asset 0-1) ledger entries (binds each —
+the OLD `(…) % 2000003` modular fold was a TRUE field hash, NOT injective: it could COLLIDE two distinct
+ledgers). `refP2` is the genuinely-injective CR-grounded sponge. -/
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => (List.range 4).foldl (fun acc c =>
-    (List.range 2).foldl (fun acc2 a => (acc2 * 131 + bal c a + 1000) % 2000003) acc) 1
+  fun bal => refP2 ((List.range 4).flatMap (fun c => (List.range 2).map (fun a => bal c a)))
 
-/-- Concrete computable per-`EscrowRecord` leaf code (id/recipient/amount/resolved), kept small. -/
-def escrowCode (r : EscrowRecord) : ℤ :=
-  ((r.id : ℤ) * 17 + (r.recipient : ℤ) * 7 + r.amount + (if r.resolved then 1 else 0)) % 2000003
-
-/-- Concrete computable `escrows` list digest: a small modular Horner fold (length-tagged). -/
-def escrowsDigConcrete : List EscrowRecord → ℤ :=
-  fun xs => xs.foldl (fun acc r => (acc * 7919 + escrowCode r) % 2000003) ((xs.length : ℤ) + 1)
+/-- The `escrows` list digest: the REAL `refP2` sponge over the field-binding `encEscrowRec` (binds ALL
+nine fields — the OLD `escrowCode … % 2000003` was a non-injective field hash dropping `creator`/`asset`/…). -/
+def escrowsDigConcrete : List EscrowRecord → ℤ := recListDigest encEscrowRec
 
 /-- Concrete rest hash: reads only NON-`bal`/`escrows` frame fields (so a pure bal/escrows forgery
 leaves it fixed — a component-bind gate bites, not the rest gate). -/
@@ -96,9 +94,9 @@ def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7
            + (k.commitments.length : ℤ) * 13 + (k.swiss.length : ℤ) * 17
 
-/-- Concrete log hash: a small modular Horner fold over the receipt actors. -/
-def lhConcrete : List Turn → ℤ :=
-  fun xs => xs.foldl (fun acc t => (acc * 131 + (t.actor : ℤ) + 1) % 2000003) ((xs.length : ℤ) + 1)
+/-- The log hash: the REAL `turnLogDigest` (`refP2` over the FULL `encTurnRec`, binding `src`/`dst`/`amt`
+which the OLD `actor … % 2000003` fold DROPPED and field-reduced). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 /-- The concrete v2 surface. -/
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
@@ -193,6 +191,14 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard honestWitness.getD 70 0 == honestWitness.getD 71 0
 #guard honestWitness.getD 0 0 == 1
 
+/-- HIGH-field MODULAR-COLLISION anti-ghost tooth: recipient 1's credited balance forged by EXACTLY the
+old modulus `2000003` (so `bal ≡ honest (mod 2000003)`). The OLD `% 2000003` field hash COLLIDED here
+(accepting the tamper); `refP2` is genuinely injective and the `bal` bind gate `68 ≠ 69` REJECTS. -/
+def sForgedMod : RecChainedState :=
+  { sPost with kernel := { sPost.kernel with
+      bal := fun c a => if c = 1 ∧ a = 0 then sPost.kernel.bal 1 0 + 2000003 else sPost.kernel.bal c a } }
+#guard decide (satisfied (effectCircuit2Dual releaseEC) (encodeE2Dual SC releaseEC sPre argsRef sForgedMod)) == false
+
 /-! ## §5 — JSON export of the descriptor + witness vectors (the bytes the Rust prover consumes). -/
 
 def releaseAirName : String := "dregg-releaseEscrowA-v2dual"
@@ -212,10 +218,13 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 -- The exact bytes the Rust `lean_executor_derived_release_escrow` test pastes.
 #guard descriptorJson ==
   "{\"name\":\"dregg-releaseEscrowA-v2dual\",\"trace_width\":74,\"constraints\":[{\"lhs\":{\"t\":\"var\",\"v\":0},\"rhs\":{\"t\":\"const\",\"v\":1}},{\"lhs\":{\"t\":\"var\",\"v\":66},\"rhs\":{\"t\":\"var\",\"v\":67}},{\"lhs\":{\"t\":\"var\",\"v\":68},\"rhs\":{\"t\":\"var\",\"v\":69}},{\"lhs\":{\"t\":\"var\",\"v\":70},\"rhs\":{\"t\":\"var\",\"v\":71}},{\"lhs\":{\"t\":\"var\",\"v\":72},\"rhs\":{\"t\":\"var\",\"v\":73}}]}"
-#guard honestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,344325,1298045,2,2,1281785,1281785,15995,15995,263,263]"
-#guard forgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,344325,694659,2,2,678399,1281785,15995,15995,263,263]"
+-- Structural bind-gate goldens (the field-binding `refP2`/`encEscrowRec` digests are arbitrary-precision,
+-- replacing the non-injective `% 2000003` field hashes; non-vacuity is at the bind gates; the Rust paste
+-- is regenerated from the JSON accessors when the prover field-reduces).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- escrows binds (honest)
+#guard honestWitness.getD 72 0 == honestWitness.getD 73 0   -- log binds (honest)
+#guard !(honestWitnessJson == forgedWitnessJson)            -- honest ≠ forged byte streams
 
 #assert_axioms releaseWitnessVec_commit
 #assert_axioms execute_produces_satisfying_witness

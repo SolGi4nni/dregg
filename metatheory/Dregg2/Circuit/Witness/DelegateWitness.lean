@@ -30,6 +30,7 @@ The Poseidon-CR portals are carried HYPOTHESES on the abstract
 keystones (exactly the template).
 -/
 import Dregg2.Circuit.Inst.delegate
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.DelegateWitness
 
@@ -43,6 +44,7 @@ open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Authority (Caps Cap Auth)
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -93,24 +95,28 @@ A CONCRETE, COMPUTABLE commitment surface over a toy domain, exactly the role `c
 `compressNConcrete` play in `TransferWitness`. The witness generator fills the digest columns from this
 surface, so the produced numbers are REAL field values the Rust prover consumes. -/
 
-/-- Concrete computable encoding of a single `Cap` to a SMALL integer (null=0, node t = 10+t,
-endpoint t _ = 500+t), kept tiny so the folded digest fits i64 (the Rust prover takes `&[i64]`).
-Injective enough on the toy domain that a stolen cap shows up. -/
-def capCode : Cap → ℤ
-  | .null         => 0
-  | .node t       => 10 + (t : ℤ)
-  | .endpoint t _ => 500 + (t : ℤ)
+/-- Field-binding `Auth` index (the 7-constructor enum, so the endpoint `rights` list is bound, not
+dropped). -/
+def authCode : Auth → ℤ
+  | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
 
-/-- Concrete computable digest of one cell's cap-list: a positional Horner fold (length folded in first
-so distinct-length lists never collide on the toy domain), small base `1000`. -/
-def capListCode (cs : List Cap) : ℤ :=
-  cs.foldl (fun acc c => acc * 1000 + capCode c) (cs.length : ℤ)
+/-- **Field-binding** `Cap` encoder: a tag + target + the WHOLE `rights` list (length-prefixed). The OLD
+`capCode` collapsed `endpoint t r => 500 + t`, DROPPING `r` entirely (so an attenuation forgery on the
+granted rights was invisible). This binds every field. -/
+def encCap : Cap → List ℤ
+  | .null         => [0]
+  | .node t       => [1, (t : ℤ)]
+  | .endpoint t r => 2 :: (t : ℤ) :: (r.length : ℤ) :: r.map authCode
 
-/-- Concrete computable caps digest over the fixed carrier `[0,1,2]` (the toy cells): a Horner fold of
-each cell's cap-list code, base `1000000` (3 cells ⇒ ≤ ~10^18, fits i64). A tamper of ANY carrier
-cell's caps changes this number. -/
+/-- One cell's cap-list digest: the REAL `refP2` sponge over the field-binding `encCap` (binds the whole
+ordered list INCLUDING the endpoint rights — the OLD `capListCode` `% 1000` Horner dropped them). -/
+def capListCode (cs : List Cap) : ℤ := recListDigest encCap cs
+
+/-- Concrete computable caps digest over the fixed carrier `[0,1,2]`: the REAL `refP2` sponge of each
+cell's cap-list digest. A tamper of ANY carrier cell's caps (including a forged-rights endpoint, EVEN
+above the OLD `% 1000` window) changes this number. -/
 def capsDigConcrete : Caps → ℤ :=
-  fun caps => [0, 1, 2].foldl (fun acc c => acc * 1000000 + capListCode (caps c)) 0
+  fun caps => refP2 ([0, 1, 2].map (fun c => capListCode (caps c)))
 
 /-- Concrete rest hash: a field-count of the non-`caps` components (account cardinality + nullifier
 length) — unchanged by a pure `caps` forgery, so the rest-frame gate is not the one that bites; the
@@ -118,10 +124,9 @@ COMPONENT-bind gate is. -/
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
 
-/-- Concrete log hash: a positional Horner fold over the receipt chain's actors+amounts (so a forged log
-shows up; not needed for the headline anti-ghost but real). -/
-def lhConcrete : List Turn → ℤ :=
-  fun log => log.foldl (fun acc t => acc * 1000000 + ((t.actor : ℤ) * 1000 + t.amt)) (log.length : ℤ)
+/-- Concrete log hash: the REAL `turnLogDigest` (`refP2` over the FULL `encTurnRec`, binding
+`src`/`dst` which the OLD `actor*1000 + amt` fold DROPPED). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 /-- The concrete v2 surface. -/
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
@@ -217,6 +222,15 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard honestWitness.getD 68 0 == honestWitness.getD 69 0      -- honest component binds
 #guard honestWitness.getD 0 0 == 1                              -- guard propBit = 1
 
+-- RIGHTS-ATTENUATION anti-ghost tooth (the forgery class the OLD `capCode` MISSED — it dropped the
+-- endpoint `rights` entirely). Recipient 1's slot is forged to hold an `endpoint 5 [grant]` (an
+-- amplified-authority cap) instead of the honest grant. The OLD `endpoint t _ => 500+t` collapse made
+-- this INVISIBLE; `encCap` binds the whole rights list, so the component-bind gate `68 ≠ 69` REJECTS.
+def sForgedRights : RecChainedState :=
+  { kernel := { kPre with caps := fun c => if c = 1 then [Cap.endpoint 5 [Auth.grant]] else kPre.caps c }
+  , log := authReceipt 0 :: sPre.log }
+#guard decide (satisfied (effectCircuit2 delegateEC) (encodeE2 SC delegateEC sPre argsRef sForgedRights)) == false
+
 /-! ## §5 — JSON export of the descriptor + witness vectors (the bytes the Rust prover consumes). -/
 
 def delegateAirName : String := "dregg-delegate-v2"
@@ -242,9 +256,11 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 -- executor/surface is caught HERE first). The constrained EQ wires (66/67 rest, 68/69 component,
 -- 70/71 log) are small; the root wires 64/65 are unconstrained positional-Horner sums (fit i64).
 #guard descriptorJson == "{\"name\":\"dregg-delegate-v2\",\"trace_width\":72,\"constraints\":[{\"lhs\":{\"t\":\"var\",\"v\":0},\"rhs\":{\"t\":\"const\",\"v\":1}},{\"lhs\":{\"t\":\"var\",\"v\":66},\"rhs\":{\"t\":\"var\",\"v\":67}},{\"lhs\":{\"t\":\"var\",\"v\":68},\"rhs\":{\"t\":\"var\",\"v\":69}},{\"lhs\":{\"t\":\"var\",\"v\":70},\"rhs\":{\"t\":\"var\",\"v\":71}}]}"
-#guard honestWitness.getD 68 0 == 1015001015000000   -- component digest binds (honest)
-#guard forgedWitness.getD 68 0 == 1017019015000000   -- forged component digest differs
-#guard forgedWitness.getD 69 0 == 1015001015000000   -- expected stays the spec grant
+-- Structural component-bind goldens (the field-binding `refP2`/`encCap` digests are arbitrary-precision;
+-- non-vacuity is at the bind gates; the Rust paste is regenerated from the JSON accessors).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0      -- component binds (honest)
+#guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)   -- forged component differs (REJECTED)
+#guard !(honestWitnessJson == forgedWitnessJson)               -- honest ≠ forged byte streams
 
 #assert_axioms delegateWitnessVec_commit
 #assert_axioms execute_produces_satisfying_witness

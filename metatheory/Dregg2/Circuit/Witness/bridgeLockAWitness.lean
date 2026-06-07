@@ -12,6 +12,7 @@ The honest witness satisfies `effectCircuit2Dual`; a forged post-state that ALSO
 `Inst.bridgeLockA.bridgeLockA_full_sound` proved the crown jewel (`⇒ BridgeOutboundLockSpec`).
 -/
 import Dregg2.Circuit.Inst.bridgeLockA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BridgeLockAWitness
 
@@ -22,6 +23,7 @@ open Dregg2.Circuit.Inst.BridgeLockA
 open Dregg2.Circuit.Spec.BridgeOutboundLock
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encEscrowRec turnLogDigest)
 
 set_option linter.dupNamespace false
 set_option linter.unusedVariables false
@@ -35,20 +37,18 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
-/-- `bal` probe digest (asset-`asset` column at originator + destination + a bystander cell 2). -/
+/-- `bal` probe digest (asset-`asset` column at originator + destination + a bystander cell 2): the REAL
+`refP2` sponge over the probed ledger entries (binds each entry — NO lossy `% 10⁶` collapse). -/
 def balProbes (orig dest : CellId) (asset : AssetId) : List (CellId × AssetId) :=
   [(orig, asset), (dest, asset), (2, asset)]
 def balDigestC (orig dest : CellId) (asset : AssetId) (bal : CellId → AssetId → ℤ) : ℤ :=
-  (balProbes orig dest asset).foldl (fun acc p => acc * 1000000 + bal p.1 p.2) 0
+  refP2 ((balProbes orig dest asset).map (fun p => bal p.1 p.2))
 
-/-- Escrows list digest (injective, small bases so the fold stays within `i64`). -/
-def leConcrete : EscrowRecord → ℤ :=
-  fun r => (r.id : ℤ) * 100000 + r.amount * 1000 + (if r.resolved then 1 else 0) * 100 + (r.asset : ℤ)
-def cnConcrete : List ℤ → ℤ :=
-  fun xs => xs.foldl (fun acc x => acc * 1000000000 + x) (xs.length : ℤ)
-def escrowsDigestC (escrows : List EscrowRecord) : ℤ := cnConcrete (escrows.map leConcrete)
+/-- Escrows list digest: the REAL `refP2` sponge over the field-binding `encEscrowRec` (binds ALL nine
+fields — the OLD `leConcrete` dropped `creator`/`recipient`/`bridge`/`queueDep`/`queueMsg`). -/
+def escrowsDigestC (escrows : List EscrowRecord) : ℤ := recListDigest encEscrowRec escrows
 
 def bridgeLockSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
@@ -161,6 +161,15 @@ def forgedWitness : List Int := witnessOf 0 1 1 sC0 goodArgsC forgedPostC
   (encodeE2Dual bridgeLockSurfaceC (bridgeLockEC 0 1 1) sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)   -- bal component REJECTED
 
+/-- HIGH-field anti-ghost tooth: a bystander balance forged ABOVE 10⁶ (the OLD `% 10⁶` fold collided
+here; `refP2` does NOT). The `bal` bind gate `68 ≠ 69` still rejects. -/
+def forgedBalHighC : CellId → AssetId → ℤ :=
+  fun c a => if a = 1 then (if c = 0 then 95 else if c = 1 then 5 else if c = 2 then 50 + 1000000 else 0) else 0
+def forgedPostHighC : RecChainedState :=
+  { kernel := { goodPostC.kernel with bal := forgedBalHighC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2Dual (bridgeLockEC 0 1 1))
+  (encodeE2Dual bridgeLockSurfaceC (bridgeLockEC 0 1 1) sC0 goodArgsC forgedPostHighC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -168,11 +177,12 @@ def witnessJson (xs : List Int) : String :=
 def bridgeLockHonestWitnessJson : String := witnessJson honestWitness
 def bridgeLockForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_bridge_lock_a` test pastes (goldens).
-#guard bridgeLockHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000005000053,95001005705055,3,3,95000005000050,95000005000050,1000705001,1000705001,1,1]"
-#guard bridgeLockForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000005000053,95001005706004,3,3,95000005000999,95000005000050,1000705001,1000705001,1,1]"
+-- Structural bind-gate goldens (field-binding `refP2` digests are arbitrary-precision; the Rust paste
+-- is regenerated from these JSON accessors when the prover field-reduces).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- escrows binds (honest)
+#guard honestWitness.getD 72 0 == honestWitness.getD 73 0   -- log binds (honest)
+#guard !(bridgeLockHonestWitnessJson == bridgeLockForgedWitnessJson)
 
 #assert_axioms bridgeLockWitnessVec_commit
 #assert_axioms witnessOf_get

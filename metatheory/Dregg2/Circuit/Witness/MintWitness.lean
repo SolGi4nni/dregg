@@ -33,6 +33,7 @@ Two halves (both reuse existing machinery, no new portals):
     adversarial test feeds the prover.
 -/
 import Dregg2.Circuit.Inst.mintA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.MintWitness
 
@@ -46,6 +47,7 @@ open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Authority (Cap)
+open Dregg2.Circuit.Poseidon2Surface (refP2 turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -66,11 +68,11 @@ The v2 framework references the rest hash `RH` + log hash `LH` (a `Surface2`) an
 component's digest internally. We fix CONCRETE, COMPUTABLE versions over the tiny `#guard` domain — an
 INJECTIVE positional fold, never a lossy `+` — so the digest columns are real field values. -/
 
-/-- Concrete per-asset-ledger digest: a positional Horner fold over the THREE toy `(cell, asset)`
-entries the test touches — `(0,0)`, `(1,0)`, `(2,0)` — so a forged THIRD ledger entry is visible. An
-INJECTIVE pairing on the toy domain (each entry shifted by a base larger than any toy value). -/
+/-- Concrete per-asset-ledger digest: the REAL `refP2` sponge over the THREE toy `(cell, asset)` entries
+the test touches — `(0,0)`, `(1,0)`, `(2,0)` — so a forged THIRD ledger entry is visible EVEN ABOVE 10⁶
+(the OLD packed `bal*10¹² + bal*10⁶ + bal` truncated/carried across that window; `refP2` does NOT). -/
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => (bal 0 0) * 1000000000000 + (bal 1 0) * 1000000 + (bal 2 0)
+  fun bal => refP2 [bal 0 0, bal 1 0, bal 2 0]
 
 /-- Concrete rest hash: a field-count of the non-`bal` components (account cardinality + the lengths of
 the side-tables) — unchanged by a pure ledger forgery, so the BIND gate (not the rest gate) bites on a
@@ -79,10 +81,10 @@ def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7
             + (k.commitments.length : ℤ) * 11 + (k.escrows.length : ℤ) * 13
 
-/-- Concrete log hash: an INJECTIVE positional Horner fold over the receipt `amt`s (each receipt's
-`amt` shifted by a base; the length folded in so distinct-length logs never collide). -/
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + t.amt) (ts.length : ℤ)
+/-- Concrete log hash: the REAL `turnLogDigest` (`refP2` over the FULL `encTurnRec`, binding
+`actor`/`src`/`dst` which the OLD `amt`-only fold DROPPED). CR-grounded on the real `babyBearD4W16`
+Poseidon2. -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 /-- The concrete v2 surface (rest + log hashes). -/
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
@@ -251,6 +253,14 @@ def forgedWitness : List Int := witnessOf sM0 goodMintArgs forgedThirdLedger
 -- ...while the forgery still keeps the guard bit + log honest (so a guard-only projection would pass):
 #guard forgedWitness.getD 0 0 == 1
 #guard forgedWitness.getD 70 0 == forgedWitness.getD 71 0
+
+-- HIGH-field anti-ghost tooth: the bystander entry `(2,0)` forged ABOVE 10⁶ (the OLD packed
+-- `bal*10¹² + bal*10⁶ + bal` carried/aliased across that window; `refP2` does NOT). Gate `68 ≠ 69`.
+def forgedThirdLedgerHigh : RecChainedState :=
+  { goodMintPost with kernel :=
+      { goodMintPost.kernel with
+        bal := fun c a => if c = 2 ∧ a = 0 then 1000000 else goodMintPost.kernel.bal c a } }
+#guard decide (satisfiedE2 SC mintEConcrete (encodeE2 SC mintEConcrete sM0 goodMintArgs forgedThirdLedgerHigh)) == false
 
 /-! ## §5 — JSON export of the witness vectors (the bytes the Rust prover consumes). -/
 

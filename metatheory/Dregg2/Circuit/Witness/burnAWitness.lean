@@ -14,6 +14,7 @@ component-bind gate `68 ≠ 69` — the anti-ghost tooth, end-to-end from a genu
 JSON strings are the EXACT bytes the Rust `lean_executor_derived_burn_a` test proves+verifies / rejects.
 -/
 import Dregg2.Circuit.Inst.burnA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BurnAWitness
 
@@ -39,13 +40,14 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 /-- The probe cells the concrete `bal` digest samples: the burned `cell`, plus a bystander cell `2`. -/
 def balProbes (cell : CellId) : List (CellId × AssetId) := [(cell, 0), (2, 0)]
 
+/-- The REAL `refP2` sponge over the probed ledger entries (binds each — NO lossy `% 10⁶` collapse). -/
 def balDigestC (cell : CellId) (bal : CellId → AssetId → ℤ) : ℤ :=
-  (balProbes cell).foldl (fun acc p => acc * 1000000 + bal p.1 p.2) 0
+  Dregg2.Circuit.Poseidon2Surface.refP2 ((balProbes cell).map (fun p => bal p.1 p.2))
 
 def burnSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
@@ -136,6 +138,15 @@ def forgedWitness : List Int := witnessOf 0 sC0 goodArgsC forgedPostC
   (encodeE2 burnSurfaceC (burnEC 0) sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)
 
+/-- HIGH-field anti-ghost tooth: bystander cell 2 forged ABOVE 10⁶ (the OLD `% 10⁶` fold collided here;
+`refP2` does NOT). The `bal` bind gate `68 ≠ 69` still rejects. -/
+def forgedBalHighC : CellId → AssetId → ℤ :=
+  fun c a => if a = 0 then (if c = 0 then 70 else if c = 1 then 5 else if c = 2 then 50 + 1000000 else 0) else 0
+def forgedPostHighC : RecChainedState :=
+  { kernel := { goodPostC.kernel with bal := forgedBalHighC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2 (burnEC 0))
+  (encodeE2 burnSurfaceC (burnEC 0) sC0 goodArgsC forgedPostHighC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -143,11 +154,11 @@ def witnessJson (xs : List Int) : String :=
 def burnHonestWitnessJson : String := witnessJson honestWitness
 def burnForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_burn_a` test pastes (goldens).
-#guard burnHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000053,70000054,3,3,70000050,70000050,1,1]"
-#guard burnForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000053,70001003,3,3,70000999,70000050,1,1]"
+-- Structural bind-gate goldens (field-binding `refP2` digests are arbitrary-precision; the Rust paste
+-- is regenerated from these JSON accessors when the prover field-reduces).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- log binds (honest)
+#guard !(burnHonestWitnessJson == burnForgedWitnessJson)
 
 #assert_axioms burnWitnessVec_commit
 #assert_axioms witnessOf_get

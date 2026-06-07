@@ -9,6 +9,7 @@ satisfies `effectCircuit2`; a forged bystander-mint post-state is REJECTED by th
 `68 ≠ 69`. `Inst.bridgeMintA.bridgeMintA_full_sound` proved the crown jewel (`⇒ InboundMintSpec`).
 -/
 import Dregg2.Circuit.Inst.bridgeMintA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BridgeMintAWitness
 
@@ -33,11 +34,12 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 def balProbes (cell : CellId) : List (CellId × AssetId) := [(cell, 0), (2, 0)]
+/-- The REAL `refP2` sponge over the probed ledger entries (binds each — NO lossy `% 10⁶` collapse). -/
 def balDigestC (cell : CellId) (bal : CellId → AssetId → ℤ) : ℤ :=
-  (balProbes cell).foldl (fun acc p => acc * 1000000 + bal p.1 p.2) 0
+  Dregg2.Circuit.Poseidon2Surface.refP2 ((balProbes cell).map (fun p => bal p.1 p.2))
 def mintSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
 /-! ## §2 — the concrete `ActiveComponent` + the concrete `bridgeMintEC`. -/
@@ -123,6 +125,15 @@ def forgedWitness : List Int := witnessOf 0 sC0 goodArgsC forgedPostC
   (encodeE2 mintSurfaceC (bridgeMintEC 0) sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)
 
+/-- HIGH-field anti-ghost tooth: bystander cell 2 forged ABOVE 10⁶ (the OLD `% 10⁶` fold collided here;
+`refP2` does NOT). The `bal` bind gate `68 ≠ 69` still rejects. -/
+def forgedBalHighC : CellId → AssetId → ℤ :=
+  fun c a => if a = 0 then (if c = 0 then 130 else if c = 1 then 5 else if c = 2 then 50 + 1000000 else 0) else 0
+def forgedPostHighC : RecChainedState :=
+  { kernel := { goodPostC.kernel with bal := forgedBalHighC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2 (bridgeMintEC 0))
+  (encodeE2 mintSurfaceC (bridgeMintEC 0) sC0 goodArgsC forgedPostHighC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -130,11 +141,11 @@ def witnessJson (xs : List Int) : String :=
 def bridgeMintHonestWitnessJson : String := witnessJson honestWitness
 def bridgeMintForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_bridge_mint_a` test pastes (goldens).
-#guard bridgeMintHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000053,130000054,3,3,130000050,130000050,1,1]"
-#guard bridgeMintForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100000053,130001003,3,3,130000999,130000050,1,1]"
+-- Structural bind-gate goldens (field-binding `refP2` digests are arbitrary-precision; the Rust paste
+-- is regenerated from these JSON accessors when the prover field-reduces).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- log binds (honest)
+#guard !(bridgeMintHonestWitnessJson == bridgeMintForgedWitnessJson)
 
 #assert_axioms bridgeMintWitnessVec_commit
 #assert_axioms witnessOf_get

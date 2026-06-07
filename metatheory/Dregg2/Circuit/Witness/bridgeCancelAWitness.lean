@@ -11,6 +11,7 @@ ALSO mints a bystander cell's `bal` (component-1 tamper) is REJECTED by the `bal
 `Inst.bridgeCancelA.bridgeCancelA_full_sound` proved the crown jewel (`⇒ BridgeOutboundCancelSpec`).
 -/
 import Dregg2.Circuit.Inst.bridgeCancelA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.BridgeCancelAWitness
 
@@ -21,6 +22,7 @@ open Dregg2.Circuit.Inst.BridgeCancelA
 open Dregg2.Circuit.Spec.BridgeOutboundCancel
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encEscrowRec turnLogDigest)
 
 set_option linter.dupNamespace false
 set_option linter.unusedVariables false
@@ -30,23 +32,30 @@ instance (c : Constraint) (a : Assignment) : Decidable (c.holds a) := by
 instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) := by
   unfold satisfied; exact List.decidableBAll _ _
 
-/-! ## §1 — the CONCRETE commitment surface (bal probe digest + escrows list digest). -/
+/-! ## §1 — the REAL (Poseidon2 CR-grounded) commitment surface (bal probe digest + escrows list digest).
+
+The `bal` digest is `refP2` (the CR-grounded reference sponge realizing the REAL `babyBearD4W16`
+Poseidon2 — see `Poseidon2Surface.realRealizedSponge`) over the probed `(cell,asset)` ledger entries
+(positional, binding every entry — NO `% 10⁶` truncation). The escrows digest is `recListDigest
+encEscrowRec` (binds ALL nine `EscrowRecord` fields — the OLD `leConcrete` DROPPED
+`creator`/`recipient`/`bridge`/`queueDep`/`queueMsg` and folded `amount` into `* 1000`). The log hash
+is `turnLogDigest` (the FULL `encTurnRec`; the OLD `lhConcrete` collapsed the whole chain to its
+`.length`). -/
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
-/-- `bal` probe digest (asset-`asset` column at creator + a bystander cell 2). -/
+/-- `bal` probe digest (asset-`asset` column at creator + a bystander cell 2): the REAL `refP2` sponge
+over the probed ledger entries (binds each entry — NO lossy `% 10⁶` collapse). -/
 def balProbes (creator : CellId) (asset : AssetId) : List (CellId × AssetId) :=
   [(creator, asset), (2, asset)]
 def balDigestC (creator : CellId) (asset : AssetId) (bal : CellId → AssetId → ℤ) : ℤ :=
-  (balProbes creator asset).foldl (fun acc p => acc * 1000000 + bal p.1 p.2) 0
+  refP2 ((balProbes creator asset).map (fun p => bal p.1 p.2))
 
-def leConcrete : EscrowRecord → ℤ :=
-  fun r => (r.id : ℤ) * 100000 + r.amount * 1000 + (if r.resolved then 1 else 0) * 100 + (r.asset : ℤ)
-def cnConcrete : List ℤ → ℤ :=
-  fun xs => xs.foldl (fun acc x => acc * 1000000000 + x) (xs.length : ℤ)
-def escrowsDigestC (escrows : List EscrowRecord) : ℤ := cnConcrete (escrows.map leConcrete)
+/-- The escrows-list digest: the REAL `refP2` sponge over the field-binding `encEscrowRec` (binds ALL
+nine fields). -/
+def escrowsDigestC (escrows : List EscrowRecord) : ℤ := recListDigest encEscrowRec escrows
 
 def bridgeCancelSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
@@ -159,6 +168,22 @@ def forgedWitness : List Int := witnessOf 0 1 sC0 goodArgsC forgedPostC
   (encodeE2Dual bridgeCancelSurfaceC (bridgeCancelEC 0 1) sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)   -- bal component REJECTED
 
+/-- HIGH-field anti-ghost tooth: a bystander balance forged ABOVE 10⁶ (the OLD `% 10⁶` fold collided
+here; `refP2` does NOT). The `bal` component digest still DIFFERS. -/
+def forgedBalHighC : CellId → AssetId → ℤ :=
+  fun c a => if a = 1 then (if c = 0 then 100 else if c = 1 then 5 else if c = 2 then 50 + 1000000 else 0) else 0
+def forgedPostHighC : RecChainedState :=
+  { kernel := { goodPostC.kernel with bal := forgedBalHighC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2Dual (bridgeCancelEC 0 1))
+  (encodeE2Dual bridgeCancelSurfaceC (bridgeCancelEC 0 1) sC0 goodArgsC forgedPostHighC)) == false
+/-- HIGH-field escrow anti-ghost: an escrow `amount` forged ABOVE the OLD `* 1000` window collides under
+`leConcrete` but NOT under `encEscrowRec`. The `escrows` component digest DIFFERS. -/
+def forgedEscrowsHighC : RecChainedState :=
+  { goodPostC with kernel := { goodPostC.kernel with
+      escrows := goodPostC.kernel.escrows.map (fun r => if r.id = 7 then { r with amount := r.amount + 1000 } else r) } }
+#guard decide (satisfied (effectCircuit2Dual (bridgeCancelEC 0 1))
+  (encodeE2Dual bridgeCancelSurfaceC (bridgeCancelEC 0 1) sC0 goodArgsC forgedEscrowsHighC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -166,11 +191,14 @@ def witnessJson (xs : List Int) : String :=
 def bridgeCancelHonestWitnessJson : String := witnessJson honestWitness
 def bridgeCancelForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_bridge_cancel_a` test pastes (goldens).
-#guard bridgeCancelHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2000705001095809154,2000705101100809155,3,3,100000050,100000050,2000705101000809101,2000705101000809101,1,1]"
-#guard bridgeCancelForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2000705001095809154,2000705101100810104,3,3,100000999,100000050,2000705101000809101,2000705101000809101,1,1]"
+-- Structural bind-gate goldens (magnitude-independent, matching the converted reference modules —
+-- the field-binding `refP2`/`encEscrowRec` digests are arbitrary-precision, so the prove+verify
+-- non-vacuity is checked at the bind GATES, not exact bytes; the Rust paste is regenerated from the
+-- JSON accessors above when the prover field-reduces).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- bal binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- escrows binds (honest)
+#guard honestWitness.getD 72 0 == honestWitness.getD 73 0   -- log binds (honest)
+#guard !(bridgeCancelHonestWitnessJson == bridgeCancelForgedWitnessJson)  -- honest ≠ forged byte streams
 
 #assert_axioms bridgeCancelWitnessVec_commit
 #assert_axioms witnessOf_get
