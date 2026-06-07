@@ -2023,6 +2023,30 @@ mod tests {
         v2_beachhead(BRIDGE_MINT_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-bridgeFinalizeA-v2`: bridge-outbound no-credit RESOLVE (touched =
+    /// `escrows`, a `listComponent`). The forged post-state leaves the finalized
+    /// record id 7 UNresolved (a double-finalize laundering); the component-bind
+    /// gate `68 = 69` breaks. Goldens pinned by Lean's
+    /// `Dregg2.Circuit.Witness.BridgeFinalizeAWitness`.
+    const BRIDGE_FINALIZE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-bridgeFinalizeA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_bridge_finalize_a() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 2000705001000809103, 2000705101000809104, 2, 2,
+            2000705101000809101, 2000705101000809101, 1, 1,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 2000705001000809103, 2000705001000809104, 2, 2,
+            2000705001000809101, 2000705101000809101, 1, 1,
+        ];
+        v2_beachhead(BRIDGE_FINALIZE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
     /// `dregg-delegate-v2`: the Granovetter unattenuated held-cap copy (touched =
     /// `kernel.caps`, a `funcComponent`). Honest: delegator 0 (holding `node 5`)
     /// grants recipient 1 the held cap to target 5. The forged post-state has
@@ -2094,6 +2118,29 @@ mod tests {
             0, 0, 0, 0, 1000003, 1000004, 3, 3, 1, 0, 1000000, 1000000,
         ];
         v2_beachhead(CELLUNSEAL_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-createSealPairA-v2`: the gated double c-list grant installing a
+    /// sealer/unsealer keypair (touched = `kernel.caps`, a `funcComponent`). Honest:
+    /// actor 0 (self-authority over sealerHolder 0) installs `sealerCap 7` at 0 and
+    /// `unsealerCap 7` at 1. The forged post-state has a THIRD holder (cell 2) steal
+    /// a `node 9` cap; the component-bind gate `68 = 69` breaks. Goldens pinned by
+    /// `Dregg2.Circuit.Witness.CreateSealPairWitness.{descriptorJson, *WitnessJson}`.
+    const CREATESEALPAIR_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-createSealPairA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_create_seal_pair() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 3, 1507001508000003, 3, 3, 1507001507000000, 1507001507000000, 1000000, 1000000,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 3, 1507001508001022, 3, 3, 1507001507001019, 1507001507000000, 1000000, 1000000,
+        ];
+        v2_beachhead(CREATESEALPAIR_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
     // ========================================================================
@@ -2456,5 +2503,28 @@ mod tests {
             0, 0, 0, 0, 1672998, 1455690, 2, 2, 1455425, 1519029, 263, 263,
         ];
         v2_beachhead(VALIDATE_HANDOFF_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-swissExportA-v2`: mint a CapTP sturdy ref (touched = `kernel.swiss`, a `listComponent`,
+    /// FULL list equality). Honest: actor 0 self-exports sw 7 → target 1 (refcount 1). The forged
+    /// post-state inserts the record with a double-counted `refcount := 2`; the component-bind gate
+    /// `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SwissExportWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    const SWISS_EXPORT_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-swissExportA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_swiss_export() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 4, 17139, 2, 2, 16874, 16874, 263, 263,
+        ];
+        // Forged: the inserted record carries refcount 2 (double-counted); wire 68 differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 4, 17252, 2, 2, 16987, 16874, 263, 263,
+        ];
+        v2_beachhead(SWISS_EXPORT_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 }
