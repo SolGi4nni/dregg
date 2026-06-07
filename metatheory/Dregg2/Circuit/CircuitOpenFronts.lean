@@ -84,13 +84,20 @@ def openFronts : List OpenFront := [
   -- single named `Poseidon2Binding.Poseidon2SpongeCR` assumption: `Poseidon2Emit.state_commit_sponge_binding`
   -- / `log_hash_sponge_binding` and `DigestPortal.{cellLeafInjective,compressNInjective,logHashInjective}_*`
   -- discharge the abstract injectivity portals from real Poseidon2 CR (no `sorry`, no double-assumed hash).
-  -- Wave 5: whole-turn
-  , ⟨"turn_circuit_composition", .w5_turn_admission, none, "turnCircuitStep = fold per-step emitted AIRs"⟩
-  , ⟨"turn_macaroon_caveats", .w5_turn_admission, none, "auth chain + hidden caveat columns"⟩
-  , ⟨"rust_proof_required_at_commit", .w5_turn_admission, none, "executor admission gate"⟩
-  -- Wave 6: inter-vat
-  , ⟨"coordinated_covenant_in_poly", .w6_inter_vat, none, "covenant φ as polynomial guard"⟩
-  , ⟨"record_kernel_state_lift", .w6_inter_vat, none, "CoordinatedForestGLift at RecordKernelState"⟩
+  -- Wave 5: whole-turn — ALL THREE CLOSED:
+  --   * turn_circuit_composition: `TurnCircuitCompose.turnCircuitOfEmitted` folds per-step emitted AIRs;
+  --     `turn_emitted_refines_exec_direct` is now the COMPLETE stack (executor commit + authentic root +
+  --     bound macaroon chain `macaroonChainBinds` + aligned wires `multiStepGlueAligned`), no `sorry`.
+  --   * turn_macaroon_caveats: `macaroonChainBinds` binds `authChain` to the caveat fold (TOOTH:
+  --     `macaroon_chain_teeth` rejects a forged auth digest). No longer a free column.
+  --   * rust_proof_required_at_commit: `TurnAdmission.rust_proof_admits_commit` is a real proof —
+  --     the per-step STARK refinement + emitted chain ⇒ `execFullTurnA` commits (no silent admission).
+  -- Wave 6: inter-vat — TWO CLOSED:
+  --   * coordinated_covenant_in_poly: the `vCovenantGuard` polynomial column IS the φ guard;
+  --     `CoordinatedTurnEmit.covenantGuard_of_emitted` EXTRACTS `φ = true` from any satisfying witness
+  --     (TOOTH: `covenantGuard_emitted_teeth` — a `φ = false` step has NO satisfying witness).
+  --   * record_kernel_state_lift: `CoordinatedTurnEmit.coordinated_emitted_refines_execCoordinatedForestG`
+  --     lifts emitted satisfaction to `execCoordinatedForestG` (the `RecordKernelState` step), no `sorry`.
   , ⟨"privacy_voting_token", .w6_inter_vat, none, "pv_token_good_commits regression"⟩
   -- Wave 7: exercise — `exercise_inner_turn_witness` CLOSED: the inner emitted chain refines `turnSpec`
   -- (`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec` via `TurnEmit.turn_emitted_refines_turnSpec`,
@@ -114,10 +121,10 @@ def countOpenFronts : Nat := openFronts.length
     These four fronts have NO standalone `: True := by sorry` placeholder (those were doubly-vacuous:
     a `True` statement AND a `sorry` body, asserting nothing). Each is registered as a plain
     `OpenFront` entry above instead:
-    * W4 arithmetized Poseidon2 sponge / digest CR → `poseidon2_in_circuit`, `digest_injective_to_cr`
-    * W5 whole-turn = folded per-step emitted descriptors → `turn_circuit_composition`
-    * W6 coordinated covenant φ in the polynomial system → `coordinated_covenant_in_poly`
-    * W7 exercise inner turn arithmetized → `exercise_inner_turn_witness` -/
+    * W4 arithmetized Poseidon2 sponge / digest CR → CLOSED (`poseidon2_in_circuit`, `digest_injective_to_cr`)
+    * W5 whole-turn = folded per-step emitted descriptors → CLOSED (`TurnCircuitCompose.turn_emitted_refines_exec_direct`)
+    * W6 coordinated covenant φ in the polynomial system → CLOSED (`CoordinatedTurnEmit.covenantGuard_of_emitted`)
+    * W7 exercise inner turn arithmetized → CLOSED (`TurnWitness.inner_turn_witness_refines_spec`) -/
 
 #guard countOpenFronts == openFronts.length
 

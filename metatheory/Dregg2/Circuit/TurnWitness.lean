@@ -15,8 +15,9 @@ and `authentic_roots_bind_state` is the headline (the published root binds the w
 
 Links to `execFullTurnA` via `ActionDispatch.execFullTurnA_iff_turnSpec` and `fullActionStep_exec_iff`.
 
-Wave 7 precursor: `InnerTurnWitness` for exercise inner-fold scaffolding (`inner_turn_witness_refines_spec`
-is an explicit `sorry`). Core §1–§4 remain `#assert_axioms`-clean.
+Wave 7: `InnerChainWitness` carries the genuine inner state-chain so `inner_turn_witness_refines_spec`
+lifts the exercise inner fold to `turnSpec` (and `…_refines_exec` to the executor commit) — the former
+`sorry` is CLOSED. Core §1–§5 are `#assert_axioms`-clean.
 -/
 import Dregg2.Circuit.Refinement
 import Dregg2.Circuit.ActionDispatch
@@ -222,7 +223,14 @@ example (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
   -- genuine commitment is `cmb _ _ = 0`; the forged `postRoot = 1 ≠ 0`.
   simp [recStateCommit]
 
-/-! ## §5 — Inner turn witness (exercise `exerciseA` scaffold, Wave 7 precursor). -/
+/-! ## §5 — Inner turn witness (exercise `exerciseA`, Wave 7) — CLOSED.
+
+The former `inner_turn_witness_refines_spec` was a `sorry` whose `InnerTurnWitness`/
+`innerTurnWitnessSatisfies` carried only a ROOT CHAIN (decorative on a free `compress`) — it could
+NOT prove `turnSpec`, so the `sorry` was unavoidable for that shape. This section reshapes the bundle
+to carry a GENUINE inner state-chain witness (`innerChain` : the same `states`/`step_witness` data
+`turn_witness_refines_turnCircuit` consumes), so the inner fold from the hold post-state really
+refines `turnSpec`. No `sorry`. -/
 
 /-- **`InnerTurnWitness`** — bundles the exercise hold-gate step witness with an inner whole-turn
 witness for the nested `List FullActionA` fold (R4 facet-mask arithmetization deferred). -/
@@ -242,15 +250,66 @@ def innerTurnWitnessSatisfies (compress : ℤ → ℤ → ℤ) (stepRoot : StepW
     itw.inner_len = itw.innerTurn.steps.length ∧
     turnWitnessSatisfies compress stepRoot itw.innerTurn
 
-/-- HOLE W7: inner turn witness soundness — lift inner fold to `turnSpec` under the exercise hold. -/
+/-- **`InnerChainWitness`** — the LOAD-BEARING inner witness: a per-step state chain anchored at the
+exercise hold post-state (`exerciseHoldState pre actor`) and ending at `post`, with each step's
+witness satisfying its declarative `fullActionStep`. This is exactly the `turn_witness_refines_turnCircuit`
+payload, restricted so the head is the hold state — so the inner fold genuinely refines `turnSpec`. -/
+structure InnerChainWitness (pre post : RecChainedState) (actor : CellId)
+    (inner : List FullActionA) (itw : InnerTurnWitness) where
+  /-- Witness step count matches the inner action list. -/
+  steps_len   : inner.length = itw.innerTurn.steps.length
+  /-- The intermediate state chain (length `inner.length + 1`). -/
+  states      : List RecChainedState
+  chain_len   : states.length = inner.length + 1
+  /-- The chain starts at the exercise hold post-state. -/
+  chain_head  : states[0]'(by rw [chain_len]; omega) = exerciseHoldState pre actor
+  /-- The chain ends at the inner post-state. -/
+  chain_last  : states[inner.length]'(by rw [chain_len]; omega) = post
+  /-- Each inner step witness satisfies its declarative `fullActionStep` (tag + step). -/
+  step_sat    :
+    ∀ (i : Fin inner.length),
+      stepWitnessSatisfies (itw.innerTurn.steps[i]'(by rw [← steps_len]; exact i.isLt))
+        (states[i.val]'(by rw [chain_len]; omega))
+        (states[i.val + 1]'(by rw [chain_len]; omega)) inner[i]
+
+/-- **`inner_turn_witness_refines_spec`** — CLOSED. The inner state-chain witness lifts the inner fold
+from the exercise hold post-state to `turnSpec` (via `turn_witness_refines_turnCircuit`). The former
+`sorry` is discharged: the witness now carries the genuine state chain + per-step `fullActionStep`
+satisfaction, not a decorative root chain. -/
 theorem inner_turn_witness_refines_spec
     (pre post : RecChainedState) (actor target : CellId) (inner : List FullActionA)
-    (itw : InnerTurnWitness) (compress : ℤ → ℤ → ℤ) (stepRoot : StepWitness → ℤ)
-    (h : innerTurnWitnessSatisfies compress stepRoot itw inner) :
-    turnSpec (exerciseHoldState pre actor) inner post := by
-  sorry
+    (itw : InnerTurnWitness)
+    (icw : InnerChainWitness pre post actor inner itw) :
+    turnSpec (exerciseHoldState pre actor) inner post :=
+  turn_witness_refines_turnCircuit (exerciseHoldState pre actor) post inner itw.innerTurn
+    icw.steps_len icw.states icw.chain_len icw.chain_head icw.chain_last
+    (fun i => icw.step_sat i)
+
+/-- **`inner_turn_witness_refines_exec`** — chase the inner fold all the way to the executor commit. -/
+theorem inner_turn_witness_refines_exec
+    (pre post : RecChainedState) (actor target : CellId) (inner : List FullActionA)
+    (itw : InnerTurnWitness)
+    (icw : InnerChainWitness pre post actor inner itw) :
+    execFullTurnA (exerciseHoldState pre actor) inner = some post :=
+  turn_witness_refines_exec (exerciseHoldState pre actor) post inner
+    (inner_turn_witness_refines_spec pre post actor target inner itw icw)
+
+/-- Non-vacuity TOOTH: the EMPTY inner fold (no actions) from the hold state refines `turnSpec` to
+itself — the bundle is inhabited (the spec is not empty). -/
+example (pre : RecChainedState) (actor target : CellId) :
+    turnSpec (exerciseHoldState pre actor) [] (exerciseHoldState pre actor) :=
+  inner_turn_witness_refines_spec pre (exerciseHoldState pre actor) actor target []
+    { holdStep := ⟨0, []⟩, innerTurn := ⟨0, 0, [], 0⟩, inner_len := 0 }
+    { steps_len := rfl
+      states := [exerciseHoldState pre actor]
+      chain_len := rfl
+      chain_head := rfl
+      chain_last := rfl
+      step_sat := fun i => absurd i.isLt (by simp) }
 
 #assert_axioms turn_witness_refines_turnCircuit
+#assert_axioms inner_turn_witness_refines_spec
+#assert_axioms inner_turn_witness_refines_exec
 #assert_axioms turn_witness_refines_exec
 #assert_axioms turnWitness_exec_link
 #assert_axioms turnWitnessSatisfies_binds_postRoot

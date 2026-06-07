@@ -609,21 +609,77 @@ def demoPostB : RecChainedState := demoPostPair.2
 #assert_axioms coordinated_emitted_refines_spec
 #assert_axioms decodeE_emittedCoordinatedTurn
 
-/-! ## §9 — Wave 6 explicit sorry portals + exec bridge (RecordKernelState lift gap). -/
+/-! ## §9 — Wave 6 covenant-guard predicate + exec bridge (RecordKernelState lift CLOSED).
 
-/-- Covenant φ guard as a named Prop (the single `propBit` column is the Wave-6 scaffold). -/
+The two former Wave-6 portals (`hole_coordinated_covenant_guard` + `coordinated_emitted_refines_execCoordinatedForestG`'s
+`sorry`) are now genuine proofs:
+
+  * `coordinatedCovenantGuardHolds` is the covenant-`φ` guard as a named `Prop` (the single
+    `vCovenantGuard` column). The former `hole_coordinated_covenant_guard : ∀ step sA sB, …guard…`
+    was an UNPROVABLE universal (the covenant need NOT hold on an arbitrary triple) — it has been
+    DELETED, not weakened. Instead `covenantGuard_of_emitted` EXTRACTS the guard from the satisfying
+    witness: the `vCovenantGuard` polynomial column forces `φ = true` (anti-vacuity — a triple where
+    `φ = false` has NO satisfying witness, see `covenantGuard_emitted_teeth`).
+  * `coordinated_emitted_refines_execCoordinatedForestG` lifts to `execCoordinatedForestG` (the
+    `RecordKernelState` step), consuming the extracted guard + the half-edge applies + the per-leg
+    log-frame (the honest forest leaves receipt logs untouched). No `sorry`. -/
+
+/-- Covenant φ guard as a named Prop (the single `vCovenantGuard` column). -/
 def coordinatedCovenantGuardHolds (step : BilateralStep) (sA sB : RecChainedState) : Prop :=
   step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = true
 
-/-- HOLE W6: full polynomial encoding of covenant `φ` (beyond the single `propBit` guard column). -/
-theorem hole_coordinated_covenant_guard
-    (step : BilateralStep) (sA sB : RecChainedState) :
+/-- **`covenantGuard_of_emitted`** — EXTRACT the covenant guard from the satisfying witness. The
+`vCovenantGuard` polynomial column constrains its wire to `propBit (φ …)` and gates it `= 1`, so any
+satisfying assignment (on the honest encoder) forces `φ = true`. This replaces the former
+unprovable `hole_coordinated_covenant_guard` universal: the guard is a CONSEQUENCE of satisfaction,
+not an assumed fact. -/
+theorem covenantGuard_of_emitted
+    (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
+    (covenantH : CoordinatedCaveat → KernelState → KernelState → ℤ)
+    (bindH : (bt : BiTurn) → SharedBinding bt → ℤ)
+    (pub : CoordinatedPublicInputs) (sA sB : RecChainedState) (step : BilateralStep)
+    (sA' sB' : RecChainedState)
+    (hEmit : satisfiedEmitted emittedCoordinatedTurn
+        (encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub
+          sA sB step sA' sB')) :
     coordinatedCovenantGuardHolds step sA sB := by
-  sorry
+  have hCircuit :=
+    (coordinated_emitted_refines_circuit
+      (encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub
+        sA sB step sA' sB')).mpr hEmit
+  -- the `cCTCovenantGuard` gate is satisfied; its `iff` lemma yields `φ = true`.
+  exact (ct_covenant_guard_iff CH RH compress compressN legRootA legRootB covenantH bindH
+      pub sA sB step sA' sB').mp
+    (hCircuit cCTCovenantGuard (by unfold coordinatedTurnCircuit; simp))
+
+/-- **`covenantGuard_emitted_teeth`** — ANTI-VACUITY tooth. A step whose covenant `φ` is FALSE on the
+joint pre-snapshot has NO satisfying witness on the honest encoder: the `vCovenantGuard` gate
+rejects it. (Contrapositive of `covenantGuard_of_emitted`.) -/
+theorem covenantGuard_emitted_teeth
+    (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
+    (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
+    (legRootA legRootB : RecordKernelState → BiTurn → ℤ)
+    (covenantH : CoordinatedCaveat → KernelState → KernelState → ℤ)
+    (bindH : (bt : BiTurn) → SharedBinding bt → ℤ)
+    (pub : CoordinatedPublicInputs) (sA sB : RecChainedState) (step : BilateralStep)
+    (sA' sB' : RecChainedState)
+    (hφfalse : step.covenant.φ (recChainedKernelView sA) (recChainedKernelView sB) = false) :
+    ¬ satisfiedEmitted emittedCoordinatedTurn
+        (encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub
+          sA sB step sA' sB') := by
+  intro hEmit
+  have hguard : coordinatedCovenantGuardHolds step sA sB :=
+    covenantGuard_of_emitted CH RH compress compressN legRootA legRootB covenantH bindH
+      pub sA sB step sA' sB' hEmit
+  rw [coordinatedCovenantGuardHolds, hφfalse] at hguard
+  exact Bool.noConfusion hguard
 
 /-- **`coordinated_emitted_refines_execCoordinatedForestG`** — emitted coordinated-turn satisfaction
-on the honest encoder should commit `execCoordinatedForestG`. The `RecordKernelState` lift from
-`CoordinatedForestGLift` is an explicit sorry (Wave 6 `record_kernel_state_lift` front). -/
+on the honest encoder COMMITS `execCoordinatedForestG` (the `RecordKernelState` step). The covenant
+guard is EXTRACTED from the witness (`covenantGuard_of_emitted`), the half-edge applies are supplied,
+and the per-leg logs are framed (the honest forest does not splice receipt logs). No `sorry`. -/
 theorem coordinated_emitted_refines_execCoordinatedForestG
     (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
     (compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
@@ -632,21 +688,24 @@ theorem coordinated_emitted_refines_execCoordinatedForestG
     (bindH : (bt : BiTurn) → SharedBinding bt → ℤ)
     (g : BilateralForestStepG) {sA' sB' : RecChainedState}
     (pub : CoordinatedPublicInputs)
-    (hwfA : AccountsWF g.pair.sA.kernel) (hwfB : AccountsWF g.pair.sB.kernel)
-    (hwfA' : AccountsWF sA'.kernel) (hwfB' : AccountsWF sB'.kernel)
     (hOut : applyRecHalfOut g.pair.sA.kernel g.step.bt = some sA'.kernel)
     (hIn : applyRecHalfIn g.pair.sB.kernel g.step.bt = some sB'.kernel)
-    (hPub :
-      pub.rootA = legRootA g.pair.sA.kernel g.step.bt ∧
-        pub.rootB = legRootB g.pair.sB.kernel g.step.bt ∧
-        pub.charterHash =
-          covenantH g.step.covenant (recChainedKernelView g.pair.sA) (recChainedKernelView g.pair.sB) ∧
-        pub.bindingHash = bindH g.step.bt g.step.bind)
+    (hLogA : sA'.log = g.pair.sA.log) (hLogB : sB'.log = g.pair.sB.log)
     (hEmit : satisfiedEmitted emittedCoordinatedTurn
         (encodeCoordinatedTurn CH RH compress compressN legRootA legRootB covenantH bindH pub
-          g.pair.sA g.pair.sB g.step sA' sB'))
-    (_hφpoly : coordinatedCovenantGuardHolds g.step g.pair.sA g.pair.sB) :
+          g.pair.sA g.pair.sB g.step sA' sB')) :
     execCoordinatedForestG g = some (sA', sB') := by
-  sorry
+  have hφ : g.step.covenant.φ (recChainedKernelView g.pair.sA) (recChainedKernelView g.pair.sB) = true :=
+    covenantGuard_of_emitted CH RH compress compressN legRootA legRootB covenantH bindH
+      pub g.pair.sA g.pair.sB g.step sA' sB' hEmit
+  unfold execCoordinatedForestG jointApplyRec
+  rw [if_pos hφ, hOut, hIn]
+  -- the committed pair is `({kernel := sA'.kernel, log := sA.log}, {kernel := sB'.kernel, log := sB.log})`;
+  -- frame the logs back to the witnessed post-states (logs are unchanged by the honest forest).
+  rw [← hLogA, ← hLogB]
+
+#assert_axioms covenantGuard_of_emitted
+#assert_axioms covenantGuard_emitted_teeth
+#assert_axioms coordinated_emitted_refines_execCoordinatedForestG
 
 end Dregg2.Circuit.CoordinatedTurnEmit

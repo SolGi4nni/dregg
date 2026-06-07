@@ -253,6 +253,7 @@ import Dregg2.Circuit.TurnAdmission        -- Wave 5 admission gate: turnProofRe
 import Dregg2.Circuit.TurnRefinement      -- Wave 1 turn refinement: turnCircuitStep ⊑ turnSpec ⊑ execFullTurnA; turn_conservation_descends; TurnStateChain scaffolding
 import Dregg2.Circuit.TurnEffectRefinement -- Wave 1 turn effect diamond: fullActionCircuitStep dispatch + fullAction_turn_circuit_refines_spec/exec/conservation
 import Dregg2.Circuit.CircuitOpenFronts -- explicit open-front registry (Waves 3–7); no lurking holes
+import Dregg2.Exec.HandlerOpenFronts    -- explicit HANDLER-executor open-front registry (Wave 6/7); now in default build so CI catches the countOpenFronts drift + portal re-exports
 import Dregg2.Circuit.CoordinatedTurnRefinement -- Wave 1 inter-vat: bilateral/coordinated turn spec + circuit scaffold + charter binding
 import Dregg2.Circuit.CoordinatedTurnEmit      -- Wave 1 inter-vat emission: coordinatedTurnCircuit + emittedCoordinatedTurn + emit faithfulness + spec soundness
 import Dregg2.Circuit.Spec.exercise        -- Wave 1 exercise composite: re-exports ActionDispatch + execFullA_exerciseA_iff_spec
