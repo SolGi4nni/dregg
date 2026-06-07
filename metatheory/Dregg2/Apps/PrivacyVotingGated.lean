@@ -85,10 +85,14 @@ open Dregg2.Authority.CaveatChain
 open Dregg2.Authority.CaveatChain.Demo
 
 /-- Pin the toy `MacKernel` at the starbridge `Tag`/`Bytes` carriers so `#guard`/`decide` can reduce
-`chainGateG` (the Demo namespace's instance is not otherwise visible to evaluation here). -/
+`chainGateG` (the Demo namespace's instance is not otherwise visible to evaluation here).
+DEVACUIFIED in lockstep with `CaveatChain.Demo.honestMacKernel`: `Tagged`/`verifyTag_sound` are the
+EUF-CMA carrier shape over the toy recompute-compare oracle, NOT `True`. -/
 instance pvMacKernel : MacKernel (Key Tg) Bt Tg where
   mac k m := 31 * k + 7 * m + 1
-  unforgeable := True
+  Tagged k m t := t = 31 * k + 7 * m + 1
+  unforgeable := ∀ k m t, decide (31 * k + 7 * m + 1 = t) = true → t = 31 * k + 7 * m + 1
+  verifyTag_sound := by intro hunf k m t h; exact hunf k m t h
 
 /-! ## §1 — The private-vote DOMAIN at the Demo carriers (the ballot cell, the per-voter nullifier slots).
 

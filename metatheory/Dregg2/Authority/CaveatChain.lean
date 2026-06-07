@@ -57,19 +57,43 @@ Abstract; the only thing the chain semantics needs is that distinct caveats enco
 to be hashed — collision-freedom of `encode∘C` is folded into the `mac` portal's unforgeability. -/
 variable {Bytes : Type}
 
-/-- **`MacKernel`** — the §8 keyed-hash portal. `mac key bytes` is HMAC-SHA256 (`macaroon.rs`'s
-`crypto::hmac_sha256`). Uninterpreted (like `Dregg2.Crypto.CryptoKernel.hash`); its security is the
-`unforgeable` Prop-carrier, the obligation the Rust HMAC discharges, never a Lean law. -/
-class MacKernel (Key Bytes Tag : Type) where
+/-- **`MacKernel`** — the §8 keyed-hash portal (companion to `Dregg2.Crypto.PortalFloor.MacKernelE`,
+in the SAME EUF-CMA discipline used there for ed25519/Poseidon2/HMAC: a runnable oracle plus a
+`Prop` carrier plus a `*_sound` field that UNPACKS the carrier into a usable conclusion).
+
+`mac key bytes` is HMAC-SHA256 (`crypto::hmac_sha256`), uninterpreted (like
+`CryptoKernel.hash`). Its security is the **`unforgeable`** Prop-carrier — the genuine
+EUF-CMA assumption the Rust HMAC discharges, never a Lean law.
+
+CRUCIALLY (the de-vacuification): `unforgeable` is NOT a bare `True`-fillable label. It is welded to
+the accept/reject semantics by `verifyTag_sound`, the field that turns the carrier into a REDUCTION:
+an accepting MAC tag (`verifyTag key msg t = true`) proves the abstract `Tagged key msg t` relation
+("`t` is a GENUINE MAC of `msg` under `key`, producible only by a holder of `key`"). Because every
+integrity theorem below routes through `verifyTag_sound`, a collapsing/forgeable instance — for
+which `unforgeable` is provably FALSE (`Demo.collapseMacKernel`) — REFUTES the assumption rather
+than discharging it for free. The carrier is load-bearing: strip the oracle's soundness and the
+chain-unforgeability theorem becomes unprovable. -/
+class MacKernel (Key Bytes Tag : Type) [DecidableEq Tag] where
   /-- HMAC-SHA256: `mac key msg` (`crypto::hmac_sha256(key, msg)`). -/
   mac : Key → Bytes → Tag
-  /-- **CARRIER — keyed-hash unforgeability** (`Prop`, the correct KIND of assumption, exactly as
-  `CryptoKernel.collisionHard` is a `Prop`). Informally: "no PPT adversary, lacking `key`, produces
-  any `(msg, t)` with `mac key msg = t`." We expose it as the precise *reduction premise* the
-  integrity proofs consume: a function turning any forged-but-accepted chain into a witnessed MAC
-  collision (defined precisely once the chain type is in scope, below). It is `True`-dischargeable
-  only by the toy reference kernel; the real kernel leaves it as the standing §8 obligation. -/
+  /-- The abstract **"`t` is a genuine MAC of `msg` under `key`"** relation: producible only by a
+  holder of `key` (`macaroon.rs:117`, "the root key must be kept secret"). The §8 oracle's
+  soundness target; never given an equational definition here. -/
+  Tagged : Key → Bytes → Tag → Prop
+  /-- **CARRIER — keyed-hash EUF-CMA unforgeability** (`Prop`, the correct KIND of assumption, exactly
+  as `MacKernelE.unforgeable`/`CryptoKernel.collisionHard` are `Prop`s). Informally: "no PPT
+  adversary, lacking `key`, produces any `(msg, t)` accepted by `verifyTag` that is not `Tagged`."
+  Discharged (assumed) by the real HMAC, provably FALSE on a forgeable instance. -/
   unforgeable : Prop
+  /-- The §8 **recompute-and-compare oracle**: accept iff `t` equals the freshly-MAC'd tag
+  (`mac key msg == t`, the constant-time compare `macaroon.rs:257`). Runnable; soundness is
+  `unforgeable`. -/
+  verifyTag : Key → Bytes → Tag → Bool := fun key msg t => decide (mac key msg = t)
+  /-- The **unforgeability carrier UNPACKED** (the reduction premise the integrity proofs consume):
+  given `unforgeable`, an accepting tag proves the genuine-MAC relation. This is the field that makes
+  `unforgeable` load-bearing — a forgeable oracle cannot supply it with a sound `Tagged`. -/
+  verifyTag_sound : unforgeable →
+    ∀ (key : Key) (msg : Bytes) (t : Tag), verifyTag key msg t = true → Tagged key msg t
 
 variable [MacKernel (Key Tag) Bytes Tag]
 
@@ -322,17 +346,87 @@ theorem removal_breaks_tail
   rw [hst, hchild] at hwt
   rw [hwt, hreplay_stripped]
 
+/-! ## (b′) GENUINE chain unforgeability — CONDITIONAL on the §8 `unforgeable` carrier (the de-vacuification).
+
+The theorems above (`integrity_tail_binds`, `forgery_requires_mac_query`, `removal_breaks_tail`) are
+the STRUCTURAL face: they reduce a forgery to a MAC collision but never consume the crypto assumption,
+so they hold even for the toy collapsing `mac`. That structural face alone is the trap the old
+`unforgeable := True` papered over — "a forged chain implies a collision" is vacuously satisfiable when
+collisions are abundant.
+
+This section closes the gap: it CONSUMES `MacKernel.unforgeable` via `verifyTag_sound` and concludes
+the abstract `Tagged` relation — "the stored tail is a GENUINE MAC, producible only by a holder of the
+chaining key". Because the toy collapsing kernel makes `unforgeable` FALSE (`Demo.collapse_not_unforgeable`),
+the assumption is LOAD-BEARING here, not free. -/
+
+/-- **`lastStepKey c`** — the chaining key fed to the final HMAC step: the fold tag of all links but the
+last (i.e. the prior running tail). For an honest chain this equals `Tᵢ₋₁` in `Tᵢ = mac Tᵢ₋₁ encode(Cᵢ)`. -/
+def lastStepKey (c : Chain Ctx Gateway (Key Tag) Bytes Tag) : Key Tag :=
+  foldTag (seedTag c.root c.nonce) c.links.dropLast
+
+/-- **`replay_split_last`** — replaying a NON-EMPTY chain factors as one final HMAC step over the
+fold of the prefix: `replayTag c = mac (lastStepKey c) (lastLink).encoded`. The defining recurrence of
+the running tag, isolated at the tail. -/
+theorem replay_split_last (c : Chain Ctx Gateway (Key Tag) Bytes Tag)
+    (last : Link Ctx Gateway Bytes) (h : c.links = c.links.dropLast ++ [last]) :
+    replayTag c = mac (lastStepKey c) last.encoded := by
+  unfold replayTag lastStepKey
+  conv_lhs => rw [h]
+  rw [foldTag, List.foldl_append]
+  rfl
+
+/-- **`verify_accepts_lastTag`** — a verifying non-empty chain's stored tail is ACCEPTED by the §8
+recompute-and-compare oracle at the final step, **provided** the kernel's `verifyTag` is the canonical
+recompute-compare (the class default, satisfied by every honest instance and by the toy `Demo` kernel).
+This is the bridge from the chain verifier (`Chain.verify`, replay-and-compare on the WHOLE chain) to
+the per-step MAC oracle (`verifyTag`, which `verifyTag_sound` reduces). -/
+theorem verify_accepts_lastTag (c : Chain Ctx Gateway (Key Tag) Bytes Tag)
+    (last : Link Ctx Gateway Bytes) (hsplit : c.links = c.links.dropLast ++ [last])
+    (hcanon : ∀ (k : Key Tag) (m : Bytes) (t : Tag), verifyTag k m t = decide (mac k m = t))
+    (hverif : c.verify = true) :
+    verifyTag (lastStepKey c) last.encoded c.tail = true := by
+  have hwt : c.wellTagged := (verify_iff_wellTagged c).mp hverif
+  unfold Chain.wellTagged at hwt
+  rw [hcanon, decide_eq_true_eq, ← replay_split_last c last hsplit, ← hwt]
+
+/-- **`chain_unforgeable`** — THE de-vacuified theorem. Given the §8 EUF-CMA carrier `unforgeable`,
+the stored tail of any VERIFYING non-empty chain is a GENUINE MAC of the last caveat's encoding under
+the prior running tag: `Tagged (lastStepKey c) last.encoded c.tail`. An adversary therefore could not
+have fabricated a verifying chain's tail without a legitimate MAC step over the (chained) key — which,
+lacking the key, EUF-CMA forbids. This is the reduction "forge a verifying chain ⇒ break HMAC"; HMAC
+security stays the §8 portal (`unforgeable`), never proved in Lean.
+
+NON-VACUITY: discharged by the toy kernel via `Demo.collapse`-FALSE refutation (the carrier is FALSE
+there, so this theorem genuinely depends on a sound `mac`); positively witnessed at the honest toy
+kernel by `Demo.honest_tail_tagged`. -/
+theorem chain_unforgeable (hunf : MacKernel.unforgeable (Key := Key Tag) (Bytes := Bytes) (Tag := Tag))
+    (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (last : Link Ctx Gateway Bytes)
+    (hsplit : c.links = c.links.dropLast ++ [last])
+    (hcanon : ∀ (k : Key Tag) (m : Bytes) (t : Tag), verifyTag k m t = decide (mac k m = t))
+    (hverif : c.verify = true) :
+    Tagged (lastStepKey c) last.encoded c.tail :=
+  verifyTag_sound hunf (lastStepKey c) last.encoded c.tail
+    (verify_accepts_lastTag c last hsplit hcanon hverif)
+
 /-! ## It runs (`#eval`) — a toy `MacKernel` over `Nat` exhibiting build/verify and a forgery rejection. -/
 
 namespace Demo
 
 /-- A toy keyed hash over `Nat`: `mac k m = 31*k + 7*m + 1` (a TEST stand-in for HMAC; injective in
 each argument, enough to demonstrate the chain mechanics — NOT collision-resistant, NOT the real
-crypto). The reference kernel's `unforgeable` carrier is `True` (toy-discharged), exactly as
-`CryptoKernel.Reference.collisionHard := True`. -/
-instance : MacKernel Nat Nat Nat where
+crypto).
+
+DEVACUIFIED (mirroring `PortalFloor.Reference.instMacKernelE`): `Tagged k m t := t = mac k m` (a tag
+is genuine iff it equals the recomputed MAC), `verifyTag` is the canonical recompute-and-compare, and
+`unforgeable` is the GENUINE EUF-CMA-shaped Prop over THIS oracle — `∀ k m t, decide (mac k m = t) =
+true → t = mac k m` — NOT `True`. It is PROVED (`honest_unforgeable`) and is provably FALSE for the
+collapsing kernel below (`collapse_not_unforgeable`), so it is load-bearing. -/
+instance honestMacKernel : MacKernel Nat Nat Nat where
   mac k m := 31 * k + 7 * m + 1
-  unforgeable := True
+  Tagged k m t := t = 31 * k + 7 * m + 1
+  unforgeable := ∀ k m t, decide (31 * k + 7 * m + 1 = t) = true → t = 31 * k + 7 * m + 1
+  verifyTag_sound := by
+    intro hunf k m t h; exact hunf k m t h
 
 /-- A toy request context: a block height (matching `Authority/Caveat.lean`'s `Height`). -/
 abbrev H := Nat
@@ -366,6 +460,67 @@ def forgedTampered : Chain H Unit Nat Nat Nat :=
   { windowed with links := [{ caveat := .local (fun _ => true), encoded := 999 }] ++ windowed.links.tail }
 
 #guard forgedTampered.verify == false    -- replayed tail diverges from stored tail
+
+/-! ### Non-vacuity for `chain_unforgeable`: a POSITIVE genuine-MAC witness + a NEGATIVE collapse tooth. -/
+
+/-- The honest toy kernel's `unforgeable` carrier HOLDS — PROVED, not `True`. The recompute-compare
+oracle is sound: an accepting tag equals the recomputed MAC. -/
+theorem honest_unforgeable : honestMacKernel.unforgeable := by
+  intro k m t h
+  have : (31 * k + 7 * m + 1 = t) := of_decide_eq_true h
+  exact this.symm
+
+/-- The last caveat of `windowed` (`encoded := 200`), exhibiting the `dropLast ++ [last]` split. It is
+DEFINITIONALLY the second appended link, so the split holds by `rfl`. -/
+def windowedLast : Link H Unit Nat := { caveat := .local (fun h => decide (h ≤ 200)), encoded := 200 }
+
+/-- `windowed.links = windowed.links.dropLast ++ [windowedLast]` — the non-empty split obligation.
+`windowed.links` is the concrete two-element list `[c₁, windowedLast]`, so it reduces by `rfl`. -/
+theorem windowed_split : windowed.links = windowed.links.dropLast ++ [windowedLast] := rfl
+
+/-- The canonical recompute-compare obligation for the honest kernel (its `verifyTag` is the default). -/
+theorem honest_canon :
+    ∀ k m t, honestMacKernel.verifyTag k m t = decide (honestMacKernel.mac k m = t) := by
+  intro k m t; rfl
+
+/-- **POSITIVE WITNESS** — `chain_unforgeable` discharged at the honest kernel: the verifying
+`windowed` chain's tail is a GENUINE MAC of its last caveat's encoding under the prior running tag.
+The crypto conclusion (`Tagged …`) is reached through `verifyTag_sound` consuming `honest_unforgeable`
+— so the theorem is NON-VACUOUS, not a tautology. -/
+theorem honest_tail_tagged :
+    honestMacKernel.Tagged (lastStepKey windowed) windowedLast.encoded windowed.tail :=
+  chain_unforgeable (Tag := Nat) (Bytes := Nat) honest_unforgeable windowed windowedLast
+    windowed_split honest_canon (by decide)
+
+/-- **NEGATIVE TOOTH** — a COLLAPSING keyed hash (`mac _ _ := 0`, every tag accepted, no genuine MAC):
+the exact structure the old `unforgeable := True` would have papered over. `Tagged _ _ _ := False`,
+`verifyTag _ _ _ := true`, so `unforgeable` is `∀ …, (true = true) → False`. -/
+@[reducible] def collapseMacKernel : MacKernel Nat Nat Nat where
+  mac _ _ := 0
+  Tagged _ _ _ := False
+  verifyTag _ _ _ := true
+  unforgeable := ∀ _k _m _t : Nat, (true : Bool) = true → (False : Prop)
+  verifyTag_sound := fun h => h
+
+/-- **REFUTATION** — the collapsing kernel's `unforgeable` carrier is FALSE: it accepts a tag that is
+not `Tagged`. This proves `MacKernel.unforgeable` is LOAD-BEARING in `chain_unforgeable`: a forgeable
+`mac` cannot supply the premise, so the chain-unforgeability conclusion genuinely depends on a sound
+HMAC — exactly what `unforgeable := True` silently forfeited. -/
+theorem collapse_not_unforgeable : ¬ collapseMacKernel.unforgeable := by
+  intro h; exact h 0 0 0 rfl
+
+/-- Under the collapsing kernel a FORGED tail is ACCEPTED by the per-step oracle yet is NOT a genuine
+MAC — `chain_unforgeable` would (correctly) be UNREACHABLE here because its `unforgeable` premise is
+false. This is the adversarial witness: stripping `mac`'s soundness breaks chain unforgeability. -/
+theorem collapse_accepts_forgery :
+    collapseMacKernel.verifyTag 0 0 12345 = true ∧ ¬ collapseMacKernel.Tagged 0 0 12345 :=
+  ⟨rfl, id⟩
+
+/-! ### Axiom hygiene: the de-vacuified crypto reduction rests only on `{propext, Classical.choice,
+Quot.sound}` PLUS the explicit `unforgeable` HYPOTHESIS — the named MAC assumption is a hypothesis, NOT
+an axiom. (`#assert_namespace_axioms Dregg2.Authority.CaveatChain` in `Dregg2/Claims.lean` pins the
+whole namespace; the line below is the standard-library `#print axioms` echo, no extra import.) -/
+#print axioms chain_unforgeable
 
 end Demo
 
