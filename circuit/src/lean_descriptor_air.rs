@@ -795,6 +795,38 @@ pub fn prove_and_verify_descriptor(
 }
 
 // ============================================================================
+// PART 5 — The verifiable-execution beachhead: a public execute→prove→verify path.
+// ============================================================================
+
+/// The Lean-emitted full-state transfer circuit (`Dregg2.Circuit.StateCommit.stateDescriptorJson`):
+/// the 9 transfer gates + 3 frame-forcing EQ gates over `RecordKernelState`, 20 wires. This is the
+/// SOUND full-state circuit (`transfer_circuit_full_sound ⇒ TransferSpec`, the 18-field declarative
+/// post-state spec) — NOT the two-balance projection. The witness's digest columns are filled by the
+/// Lean witness generator `transferWitnessVec` (which runs the real executor `recKExec`).
+pub const STATE_DESCRIPTOR_JSON_FULLSTATE: &str = r#"{"name":"dregg-transfer-fullstate-v1","trace_width":20,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}}]}"#;
+
+/// **`prove_executor_derived_transfer` — the demonstrable `execute_and_prove(transfer)` path.**
+///
+/// Takes a witness vector PRODUCED BY THE LEAN EXECUTOR (`Dregg2.Circuit.TransferWitness.
+/// transferWitnessVec k t`, which runs `recKExec k t` and lays out the full-state assignment with the
+/// concrete commitment-surface digest columns), parses the Lean-emitted full-state circuit, proves it
+/// with the real Plonky3 prover, and verifies — returning the accepted `DreggProof`. A tampered /
+/// forged witness (e.g. a third-cell-mint post-state) yields a non-equal frame-reuse digest pair, so
+/// the prover/verifier REJECTS it (`Err`). This is the `execute → prove → verify → accept` gate for
+/// ONE effect over the real executor state, the validated reference the other effects swarm from.
+pub fn prove_executor_derived_transfer(witness: &[i64]) -> Result<DreggProof, String> {
+    let desc = parse_descriptor(STATE_DESCRIPTOR_JSON_FULLSTATE)?;
+    if witness.len() != desc.trace_width {
+        return Err(format!(
+            "executor witness length {} != full-state trace_width {}",
+            witness.len(),
+            desc.trace_width
+        ));
+    }
+    prove_and_verify_descriptor(&desc, witness)
+}
+
+// ============================================================================
 // Test descriptor: the `transferCircuit` shape (hardcoded mirror of Lean)
 // ============================================================================
 
@@ -1574,5 +1606,112 @@ mod tests {
         let desc = transfer_test_descriptor();
         // conservation is degree 1 (only adds), bit gates degree 1 (var = const).
         assert_eq!(desc.max_degree(), 1);
+    }
+
+    // ========================================================================
+    // THE VERIFIABLE-EXECUTION BEACHHEAD: execute → witness → prove → verify.
+    //
+    // Unlike `lean_emitted_state_roundtrip` (whose digest columns are hand-picked
+    // magic numbers), the witness vectors HERE are computed BY THE LEAN EXECUTOR:
+    // `Dregg2.Circuit.TransferWitness.transferWitnessVec kS0 goodTurnS` runs the real
+    // record-cell executor (`recKExec`) and lays out the full-state witness with every
+    // digest column filled by the concrete commitment surface (`compressNConcrete`/
+    // `cmbConcrete`/…). These are the EXACT bytes Lean's `#guard honestWitnessJson ==`
+    // / `forgedWitnessJson ==` goldens pin — copied verbatim. So this test proves the
+    // SAME state transition the executor computed, end-to-end through the real Plonky3
+    // prover, and demonstrates the anti-ghost rejection on a REAL forged post-state
+    // (mint bystander cell 2: 50 → 999), not a hand-bumped digest.
+    // ========================================================================
+
+    /// The EXECUTOR-DERIVED honest witness for `kS0`/`goodTurnS` — the satisfying
+    /// assignment Lean's `transferWitnessVec kS0 goodTurnS` produces (the executor
+    /// committed `recKExec kS0 goodTurnS = some goodPostS`; the digest columns are the
+    /// concrete-surface commitments of the REAL post-state). Wires 11/12 are the
+    /// full-state ROOT commitments (large positional-Horner numbers, UNCONSTRAINED by
+    /// the 12 gates — they reduce mod the BabyBear field harmlessly); the CONSTRAINED
+    /// frame-EQ wires (13/14, 15/16, 18/19) are small and equal.
+    const EXEC_HONEST_WITNESS: [i64; 20] = [
+        100, 5, 70, 35, 30, // 0..4  transfer wires (src/dst pre/post + amt)
+        1, 1, 1, 1, 1, 1, // 5..10 guard bits
+        1000150000005000003, // 11 preRoot  (unconstrained)
+        1000120000035000003, // 12 postRoot (unconstrained)
+        3, 3, // 13/14 restDigPre = restDigPost   (rhConcrete = card + nullifiers.len)
+        1000050, 1000050, // 15/16 frameDigPre = frameDigPost (untouched cell 2 sponge)
+        100000005, // 17 movedDigPre (unconstrained)
+        70000035, 70000035, // 18/19 movedDigPost = movedDigExpected (debit/credit leaves)
+    ];
+
+    /// The EXECUTOR-DERIVED FORGED witness — `transferWitnessVec` over the SAME pre/turn
+    /// but the REAL `forgedThirdCell` post-state (bystander cell 2 minted 50 → 999). The
+    /// only changed digest columns vs the honest witness are the post-root (12) and the
+    /// frame-reuse post digest (16: 1000050 → 1000999): the minted cell perturbs the
+    /// untouched-cell sponge. The frame-reuse gate `15 = 16` therefore FAILS — a REAL
+    /// UNSAT — while the two MOVED balances still conserve (so the projection circuit
+    /// would have passed it; the full-state circuit does not).
+    const EXEC_FORGED_WITNESS: [i64; 20] = [
+        100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, //
+        1000150000005000003, // 11 preRoot
+        1001069000035000003, // 12 postRoot (now binds the minted cell)
+        3, 3, // 13/14 rest still equal
+        1000050, 1000999, // 15/16 frameDigPre != frameDigPost  ← the forgery shows up here
+        100000005, 70000035, 70000035, // 17/18/19
+    ];
+
+    /// **THE BEACHHEAD TEST: execute → prove → verify, on the EXECUTOR-DERIVED witness.**
+    /// The honest witness (computed by `transferWitnessVec` running the real executor)
+    /// proves+verifies through the real Plonky3 prover on the Lean-emitted full-state
+    /// circuit; the forged witness (the REAL third-cell-mint post-state) is REJECTED by
+    /// the frame-reuse gate. This is the anti-ghost tooth `stateCircuit_rejects_third_cell`
+    /// realized end-to-end through the prover, on a genuine forged state.
+    #[test]
+    fn lean_executor_derived_transfer() {
+        let desc = parse_descriptor(STATE_DESCRIPTOR_JSON)
+            .expect("Lean-emitted full-state descriptor must parse");
+        assert_eq!(desc.trace_width, 20);
+        assert_eq!(desc.constraints.len(), 12);
+
+        // The executor-derived honest witness must satisfy the gates (mirror of Lean's
+        // `#guard decide (satisfiedC (encodeSC kS0 goodTurnS goodPostS))`).
+        let good = EXEC_HONEST_WITNESS;
+        assert_eq!(good[2], good[0] - good[4], "debit");
+        assert_eq!(good[3], good[1] + good[4], "credit");
+        assert_eq!(good[2] + good[3], good[0] + good[1], "conserve");
+        assert_eq!(good[13], good[14], "rest frame");
+        assert_eq!(good[15], good[16], "untouched-cell frame");
+        assert_eq!(good[18], good[19], "moved-cell bind");
+
+        // EXECUTE → PROVE → VERIFY: the executor-derived witness proves+verifies.
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("the EXECUTOR-DERIVED transfer witness must prove+verify");
+        verify_descriptor(&desc, &proof)
+            .expect("re-verify of the executor-derived full-state proof must succeed");
+
+        // ANTI-GHOST: the REAL forged post-state (third-cell mint) is rejected. The two
+        // moved balances still conserve, but the frame-reuse digest gate (15 = 16) fails.
+        let forged = EXEC_FORGED_WITNESS;
+        assert_eq!(
+            forged[2] + forged[3],
+            forged[0] + forged[1],
+            "the forgery STILL conserves the two moved balances (the projection ghost)"
+        );
+        assert_ne!(
+            forged[15], forged[16],
+            "but the untouched-cell frame digest changed: the minted bystander shows up"
+        );
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            // Prover panicked on the broken frame-reuse gate: forgery rejected (real UNSAT).
+            Err(_) => {}
+            // Prover produced a proof: verification MUST reject it.
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "THIRD-CELL-MINT forgery (real executor-derived witness) MUST be rejected by \
+                 the frame-reuse gate, but a proof verified — the anti-ghost tooth failed"
+            ),
+        }
     }
 }
