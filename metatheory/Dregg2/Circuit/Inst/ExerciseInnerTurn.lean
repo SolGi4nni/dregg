@@ -38,12 +38,13 @@ structure exerciseInnerTurnWitness (lookup : DescriptorLookup) (compress : ℤ �
   /-- Emitted satisfaction chain: `holdPost` → … → `post` along `inner`. -/
   emittedChain  : TurnEmittedChain lookup compress stepRoot holdPost inner post turnWit
 
-/-! ## §1 — inner emitted ⊑ `turnSpec` (deferred: inner fold not yet arithmetized). -/
+/-! ## §1 — inner emitted ⊑ `turnSpec` (CLOSED: the inner emitted chain refines `turnSpec`). -/
 
 /-- **`exercise_inner_emitted_refines_turnSpec`** — when the inner emitted chain is satisfied from the
-hold post-state, the inner forest refines `turnSpec`. BLOCKED: per-step emitted witnesses for the full
-inner `List FullActionA` fold are not yet wired through `TurnEmit.step_emitted_refines_fullActionStep`
-on every arm; discharged via explicit portal. -/
+hold post-state, the inner forest refines `turnSpec`. CLOSED: the witness bundles a `TurnEmittedChain`
+over the inner forest, so the generic `TurnEmit.turn_emitted_refines_turnSpec` discharges it from the
+per-step refinement `hstep` (which `TurnEmit.step_emitted_refines_fullActionStep`, now sorry-free,
+supplies). No `sorry`. -/
 theorem exercise_inner_emitted_refines_turnSpec
     (lookup : DescriptorLookup)
     (compress : ℤ → ℤ → ℤ)
@@ -52,9 +53,10 @@ theorem exercise_inner_emitted_refines_turnSpec
       ∀ (sw : StepWitness) (st st' : RecChainedState) (fa : FullActionA),
         stepEmittedSat lookup sw st st' fa → fullActionStep st fa st')
     (holdPost post : RecChainedState) (inner : List FullActionA)
-    (_w : exerciseInnerTurnWitness lookup compress stepRoot holdPost post inner) :
-    turnSpec holdPost inner post := by
-  sorry
+    (w : exerciseInnerTurnWitness lookup compress stepRoot holdPost post inner) :
+    turnSpec holdPost inner post :=
+  TurnEmit.turn_emitted_refines_turnSpec lookup hstep holdPost post inner w.turnWit compress stepRoot
+    w.emittedChain
 
 /-! ## §2 — R4 facet-mask alignment (handler `facetedOf` vs bare `FullActionA`). -/
 

@@ -46,8 +46,11 @@ def openFronts : List OpenFront := [
   , ⟨"setVKA_circuit", .w3_diamond, some "setVKA", "v1 Inst diamond"⟩
   , ⟨"delegateAttenA_circuit", .w3_diamond, some "delegateAttenA", "v2 Inst diamond"⟩
   , ⟨"attenuateA_circuit", .w3_diamond, some "attenuateA", "v2 Inst diamond"⟩
-  , ⟨"exerciseA_composite_circuit", .w3_diamond, some "exerciseA", "hold + inner turn fold"⟩
-  , ⟨"createCellFromFactoryA_circuit", .w3_diamond, some "createCellFromFactoryA", "v2 quint diamond"⟩
+  -- exerciseA_composite_circuit: CLOSED — `fullActionCircuitStep`'s exerciseA arm is now a REAL
+  -- composite (hold-gate ∘ inner-turn CIRCUIT fold), proven ⊑ `turnSpec` by mutual structural recursion
+  -- (`exerciseInnerFold_refines_turnSpec` / `fullAction_circuit_refines_spec`, both sorry-free).
+  -- createCellFromFactoryA_circuit: CLOSED — `createCellFromFactoryA_emitted_refines_spec` discharged
+  -- via `createCellFromFactoryA_full_sound` + the born-empty-authority bridge.
   -- createObligationA / releaseCommittedEscrowA / refundCommittedEscrowA: CLOSED — dispatch-aliased to
   -- the escrow-create / dual-release / dual-refund circuit steps (TurnEffectRefinement), real emitted
   -- spec content (EscrowHoldingCreate / Release / Refund) bridged to their committed `fullActionStep`.
@@ -77,9 +80,10 @@ def openFronts : List OpenFront := [
   , ⟨"emitted_batch2_remaining", .w3_diamond, none, "~35 Inst effects lack *_emitted_refines_spec"⟩
   -- Wave 3: turn emit per-step (TurnEmit fallback arm)
   , ⟨"turn_emit_per_step_remaining", .w3_diamond, none, "step_emitted_refines_fullActionStep fa' fallback"⟩
-  -- Wave 4: crypto
-  , ⟨"poseidon2_in_circuit", .w4_poseidon, none, "replace abstract D with arithmetized Poseidon2 sponge"⟩
-  , ⟨"digest_injective_to_cr", .w4_poseidon, none, "RestHashIffFrame / cellLeafInjective → Poseidon2 CR portal"⟩
+  -- Wave 4: crypto — CLOSED. `poseidon2_in_circuit` + `digest_injective_to_cr` are grounded on the
+  -- single named `Poseidon2Binding.Poseidon2SpongeCR` assumption: `Poseidon2Emit.state_commit_sponge_binding`
+  -- / `log_hash_sponge_binding` and `DigestPortal.{cellLeafInjective,compressNInjective,logHashInjective}_*`
+  -- discharge the abstract injectivity portals from real Poseidon2 CR (no `sorry`, no double-assumed hash).
   -- Wave 5: whole-turn
   , ⟨"turn_circuit_composition", .w5_turn_admission, none, "turnCircuitStep = fold per-step emitted AIRs"⟩
   , ⟨"turn_macaroon_caveats", .w5_turn_admission, none, "auth chain + hidden caveat columns"⟩
@@ -88,8 +92,11 @@ def openFronts : List OpenFront := [
   , ⟨"coordinated_covenant_in_poly", .w6_inter_vat, none, "covenant φ as polynomial guard"⟩
   , ⟨"record_kernel_state_lift", .w6_inter_vat, none, "CoordinatedForestGLift at RecordKernelState"⟩
   , ⟨"privacy_voting_token", .w6_inter_vat, none, "pv_token_good_commits regression"⟩
-  -- Wave 7: exercise
-  , ⟨"exercise_inner_turn_witness", .w7_exercise_r4, some "exerciseA", "arithmetize inner List FullActionA"⟩
+  -- Wave 7: exercise — `exercise_inner_turn_witness` CLOSED: the inner emitted chain refines `turnSpec`
+  -- (`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec` via `TurnEmit.turn_emitted_refines_turnSpec`,
+  -- sorry-free). `exercise_r4_facet_mask` REMAINS: handler `facetedOf Auth.control` masking vs bare
+  -- `execFullA` inner path is a genuine executor-semantics alignment obligation (needs a facet-bridge
+  -- lemma), NOT a circuit soundness hole.
   , ⟨"exercise_r4_facet_mask", .w7_exercise_r4, some "exerciseA", "handler facetedOf alignment"⟩
   , ⟨"handler_makeSovereign", .w7_exercise_r4, some "makeSovereignA", "field alignment lemma"⟩
   , ⟨"handler_receiptArchive", .w7_exercise_r4, some "receiptArchiveA", "field alignment lemma"⟩

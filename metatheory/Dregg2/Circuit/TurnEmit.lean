@@ -512,12 +512,12 @@ def stepEmittedEncodeAgrees
 encoder refines to `fullActionStep` for every effect with an emitted diamond; other arms defer to
 the circuit dispatch (`fullAction_circuit_refines_spec`).
 
-HONEST CAVEAT (two conditionalities — this is NOT whole-turn adversarial soundness):
+HONEST CAVEAT (this is NOT whole-turn adversarial soundness):
 
-1. **Sorry-bearing.** Four effect arms are open holes (explicit `sorry`):
-   `exerciseA`, `createObligationA`, `releaseCommittedEscrowA`, `refundCommittedEscrowA`.
-   This theorem therefore depends on `sorry` and is NOT `#assert_axioms`-pinned. Treat the
-   four arms above (and the lemmas they would need) as a registered open front, not as proved.
+1. **All arms CLOSED (no `sorry`).** The four arms that were once open holes — `exerciseA`,
+   `createObligationA`, `releaseCommittedEscrowA`, `refundCommittedEscrowA` — now discharge through
+   `fullAction_circuit_refines_spec` (itself sorry-free; the `exerciseA` inner-turn fold is a REAL
+   composite circuit step). No effect arm depends on `sorry`.
 
 2. **Honest-trace only (dead `hEnc`).** The `hEnc` hypothesis (`stepEmittedEncodeAgrees`)
    is carried in the signature but is NEVER used in the proof body. Consequently this proves
@@ -724,9 +724,16 @@ theorem step_emitted_refines_fullActionStep
         (restIffNoCaps_delegate_to_attenuate S.RH hRestCaps) hLog st ⟨actor, idx, keep⟩ st'
         ((attenuateA_emitted_equiv_circuit S D_caps hD_caps st ⟨actor, idx, keep⟩ st').mpr hcircuit)
   | .exerciseA actor target inner =>
-      simp only [fullActionStep]
-      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
-      sorry -- HOLE: exerciseA emitted ⊑ spec (hold-gate only; inner turn not wired)
+      -- CLOSED: the `fullActionCircuitStep` exerciseA arm is now a REAL composite (hold-gate ∘ inner
+      -- CIRCUIT fold); `fullAction_circuit_refines_spec` (sorry-free) discharges circuit ⊑ spec, and
+      -- `hcircuit` is exactly that circuit acceptance.
+      exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+        DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+        hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+        hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog st (.exerciseA actor target inner)
+        st' hcircuit
   | .createCellFromFactoryA actor newCell vk =>
       simp only [fullActionStep]
       exact createCellFromFactoryA_emitted_refines_spec S LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC
@@ -735,9 +742,15 @@ theorem step_emitted_refines_fullActionStep
             (createFromFactoryE LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
             createCellFromFactoryAAirName st ⟨actor, newCell, vk⟩ st').mpr hcircuit)
   | .createObligationA id actor obligor beneficiary asset stake =>
-      simp only [fullActionStep]
-      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
-      sorry -- HOLE: createObligationA emitted ⊑ spec (no Inst emission)
+      -- CLOSED: dispatch-aliased to the escrow-create circuit step in `fullActionCircuitStep`;
+      -- `fullAction_circuit_refines_spec` (sorry-free) discharges it from `hcircuit`.
+      exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+        DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+        hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+        hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog st
+        (.createObligationA id actor obligor beneficiary asset stake) st' hcircuit
   | .createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
       simp only [fullActionStep]
       exact createCommittedEscrowA_emitted_refines_spec S D_bal hD_bal LE_escrow cN hN hLE_escrow hRestEscrow
@@ -745,13 +758,25 @@ theorem step_emitted_refines_fullActionStep
         ((createCommittedEscrowA_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st
             ⟨id, actor, creator, recipient, asset, amount, hidingProof⟩ st').mpr hcircuit)
   | .releaseCommittedEscrowA id actor =>
-      simp only [fullActionStep]
-      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
-      sorry -- HOLE: releaseCommittedEscrowA emitted ⊑ spec (no Inst emission)
+      -- CLOSED: dispatch-aliased to the dual release circuit step; `fullAction_circuit_refines_spec`
+      -- (sorry-free) discharges it from `hcircuit`.
+      exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+        DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+        hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+        hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog st
+        (.releaseCommittedEscrowA id actor) st' hcircuit
   | .refundCommittedEscrowA id actor =>
-      simp only [fullActionStep]
-      -- NOTE: sorry-bearing; registered open front, NOT #assert_axioms-pinned
-      sorry -- HOLE: refundCommittedEscrowA emitted ⊑ spec (no Inst emission)
+      -- CLOSED: dispatch-aliased to the dual refund circuit step; `fullAction_circuit_refines_spec`
+      -- (sorry-free) discharges it from `hcircuit`.
+      exact fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+        DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+        hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+        hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog st
+        (.refundCommittedEscrowA id actor) st' hcircuit
   | .bridgeFinalizeA id actor asset amount =>
       simp only [fullActionStep]
       exact bridgeFinalizeA_emitted_refines_spec S LE_escrow cN hN hLE_escrow hRestEscrowsOnly hLog st

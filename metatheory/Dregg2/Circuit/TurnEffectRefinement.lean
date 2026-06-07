@@ -23,7 +23,8 @@ set_option maxHeartbeats 800000
 namespace Dregg2.Circuit.TurnEffectRefinement
 
 open Dregg2.Circuit.Refinement (Refines StepRel)
-open Dregg2.Circuit.ActionDispatch (fullActionStep fullActionStep_exec_iff turnSpec)
+open Dregg2.Circuit.ActionDispatch (fullActionStep fullActionStep_exec_iff turnSpec
+  exerciseGuard exerciseHoldState)
 open Dregg2.Circuit.TurnRefinement
   (turnCircuitStep turnSpecStep turnExecStep
    turn_circuit_refines_spec_of_steps turn_circuit_refines_exec_of_steps
@@ -123,19 +124,12 @@ section HolePortals
 
 variable {st st' : RecChainedState}
 
-/-- HOLE: generic unmapped circuit step ⊑ `fullActionStep`. -/
+/-- Generic unmapped circuit step ⊑ `fullActionStep` (kept for the `hole_circuit_step` re-export;
+the `exerciseA` arm that once used this is now a REAL composite step — see
+`fullAction_circuit_refines_spec` / `exerciseInnerFold_refines_turnSpec`). -/
 theorem hole_fullAction_circuit_refines_spec_fallback
     (fa : FullActionA) (h : hole_circuit_step st fa st') : fullActionStep st fa st' := by
   simpa [hole_circuit_step] using h
-
-/-- HOLE: `exerciseA` inner-turn fold not yet arithmetized in circuit. The hold-gate is closeable but
-    the inner `List FullActionA` fold needs a per-step recursive witness (Wave 7
-    `exercise_inner_turn_witness` / `exercise_r4_facet_mask`) — the single remaining open front here. -/
-theorem hole_exerciseA_circuit_refines_spec
-    (actor target : CellId) (inner : List FullActionA)
-    (h : hole_circuit_step st (.exerciseA actor target inner) st') :
-    fullActionStep st (.exerciseA actor target inner) st' := by
-  sorry -- HOLE: exerciseA inner-turn facets
 
 end HolePortals
 
@@ -363,8 +357,26 @@ def fullActionCircuitStep
       -- dispatch-ALIASED to `refundEscrowChainA` (`TurnExecutorFull.lean:3703`); reuses the dual
       -- refund circuit step. Emitted content is `RefundEscrowSpec` = `CommittedEscrowSettleSpec … creator …`.
       refundEscrowCircuitStep S D_bal hD_bal LE_escrow cN hN hLE_escrow st ⟨id, actor⟩ st'
-  | fa' =>
-      hole_circuit_step st fa' st'
+  | .exerciseA actor target inner =>
+      -- **REAL composite circuit step** (was a `hole_circuit_step` spec-fallback): the hold-gate
+      -- (`exerciseGuard`) AND a genuine INNER-TURN CIRCUIT FOLD that recursively threads
+      -- `fullActionCircuitStep` over `inner` from the hold post-state. This is NOT the declarative
+      -- `turnSpec` — every inner action is itself a circuit step; soundness (`⊑ turnSpec`) is then a
+      -- real induction (`exerciseInnerFold_refines_turnSpec`) reusing the per-effect arms.
+      exerciseGuard st actor target ∧
+      exerciseInnerFold (exerciseHoldState st actor) inner st'
+where
+  /-- **`exerciseInnerFold`** — the inner-turn CIRCUIT fold for `exerciseA`: thread
+  `fullActionCircuitStep` (the SAME per-effect dispatch) left-to-right over the inner forest.
+  Mutually recursive with `fullActionCircuitStep`; each inner action is structurally smaller than
+  the enclosing `.exerciseA`, so the well-founded recursion is automatic. -/
+  exerciseInnerFold (s : RecChainedState) : List FullActionA → RecChainedState → Prop
+    | [], s' => s = s'
+    | a :: rest, s' =>
+        ∃ s1, fullActionCircuitStep S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow LE_sealed
+                cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide hDSide
+                DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell
+                DSC hDSC DAuth hDAuth s a s1 ∧ exerciseInnerFold s1 rest s'
 
 /-- Encoder-instantiated circuit step (abbrev keeps turn-level statement types small). -/
 abbrev fullActionCircuitStepInst
@@ -428,13 +440,17 @@ private theorem refundEscrowSpec_to_committed (s : RecChainedState) (id : Nat) (
   exact (Dregg2.Circuit.Spec.EscrowCommitted.execFullA_refundCommittedEscrowA_iff_spec s id actor s').mp
     hchain
 
-/-- **`fullAction_circuit_refines_spec`** — per-action SOUNDNESS: circuit ⊑ `fullActionStep`.
-
-CONDITIONAL: ONE effect arm (`exerciseA`, the inner-turn fold — Wave 7 `exercise_inner_turn_witness`)
-remains an open front (sorry-bearing downstream); this theorem transitively depends on `sorry` and is
-NOT `#assert_axioms`-certified. Not whole-action adversarial soundness. The `createObligationA`,
-`releaseCommittedEscrowA`, `refundCommittedEscrowA` arms are now CLOSED via their dispatch-alias
-circuit steps (escrow-create / dual release / dual refund). -/
+/-! **`fullAction_circuit_refines_spec`** + **`exerciseInnerFold_refines_turnSpec`** — per-action
+SOUNDNESS (circuit ⊑ `fullActionStep`) together with the exerciseA inner-turn fold's soundness
+(inner CIRCUIT fold ⊑ `turnSpec`), proven by MUTUAL STRUCTURAL RECURSION: the per-action proof matches
+on `fa` and, on the `.exerciseA actor target inner` arm, calls the inner-fold proof on `inner` (a
+direct structural child); the inner-fold proof matches on `inner` and, on `a :: rest`, calls the
+per-action proof on the head `a` (a direct structural child) and recurses on `rest`. This is the
+genuine lift — the exerciseA arm is CLOSED with a REAL composite circuit step (hold-gate ∘ inner-turn
+CIRCUIT fold), NOT a spec-fallback. The `createObligationA`, `releaseCommittedEscrowA`,
+`refundCommittedEscrowA` arms are CLOSED via their dispatch-alias circuit steps. -/
+mutual
+/-- Per-action SOUNDNESS: circuit ⊑ `fullActionStep`; exerciseA via the mutual inner-fold helper. -/
 theorem fullAction_circuit_refines_spec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -559,8 +575,28 @@ theorem fullAction_circuit_refines_spec
       exact revoke_circuit_refines_spec S D_caps hD_caps (restIffNoCaps_delegate_to_revoke S.RH hRestCaps)
         hLog st _ st' h
   | .exerciseA actor target inner =>
-      simp only [fullActionStep, hole_circuit_step, fullActionCircuitStep]
-      exact hole_exerciseA_circuit_refines_spec actor target inner h
+      -- **REAL** exerciseA soundness: hold-gate passes through; the inner CIRCUIT fold
+      -- (`exerciseInnerFold`) refines the declarative `turnSpec` via `exerciseInnerFold_refines_turnSpec`,
+      -- which inducts on `inner` reusing the per-action refinement supplied here as `hper`. The `hper`
+      -- it consumes is built by THIS theorem recursively (each inner action is structurally smaller than
+      -- the enclosing `.exerciseA`). No `sorry`, no spec-fallback.
+      simp only [fullActionStep]
+      have hexpand : exerciseGuard st actor target ∧
+          fullActionCircuitStep.exerciseInnerFold S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+            LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide
+            hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell
+            DSC hDSC DAuth hDAuth (exerciseHoldState st actor) inner st' := h
+      obtain ⟨hg, hfold⟩ := hexpand
+      refine ⟨hg, ?_⟩
+      -- The inner CIRCUIT fold ⊑ `turnSpec` by the MUTUAL helper on `inner` (a structural child of
+      -- `.exerciseA actor target inner`); the helper in turn calls THIS theorem per inner action.
+      exact exerciseInnerFold_refines_turnSpec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+        hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+        DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+        hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+        hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog (exerciseHoldState st actor)
+        inner st' hfold
   | .createCellFromFactoryA actor newCell vk =>
       simp only [fullActionStep]
       exact createCellFromFactory_circuit_refines_spec S LE_cell cN hN hLE_cell DBal hDBal DCell hDCell DSC hDSC
@@ -697,12 +733,96 @@ theorem fullAction_circuit_refines_spec
       simp only [fullActionStep]
       exact refreshDelegation_circuit_refines_spec S DDgs hDDgs hRestDelegations hLog st _ st' h
 
+/-- **`exerciseInnerFold_refines_turnSpec`** — the exerciseA inner CIRCUIT fold refines the declarative
+`turnSpec`, by STRUCTURAL recursion on `inner` (mutual with `fullAction_circuit_refines_spec`): nil is
+the identity; cons consumes one circuit step via the per-action refinement on the head `a` (a structural
+child) then recurses on `rest`. NOT a spec-fallback — every inner action is a genuine circuit step. -/
+theorem exerciseInnerFold_refines_turnSpec
+    (S : Surface2)
+    (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
+    (D_caps : Caps → ℤ) (hD_caps : Function.Injective D_caps)
+    (LE_cell : CellId → ℤ) (LE_null : Nat → ℤ) (LE_escrow : EscrowRecord → ℤ)
+    (LE_sealed : SealedBoxRecord → ℤ)
+    (cN : List ℤ → ℤ) (hN : compressNInjective cN)
+    (hLE_cell : listLeafInjective LE_cell) (hLE_null : listLeafInjective LE_null)
+    (hLE_escrow : listLeafInjective LE_escrow) (hLE_sealed : listLeafInjective LE_sealed)
+    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
+    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
+    (CS : CommitSurface)
+    (hCSN : compressNInjective CS.compressN) (hCSL : cellLeafInjective CS.CH)
+    (hRestFrame : RestHashIffFrame CS.RH) (hLogCS : logHashInjective CS.LH)
+    (DBal : (CellId → AssetId → ℤ) → ℤ) (hDBal : Function.Injective DBal)
+    (DSide : BornEmptySideTables → ℤ) (hDSide : Function.Injective DSide)
+    (DLeg : SpawnCreateLeg → ℤ) (hDLeg : Function.Injective DLeg)
+    (DCaps : Caps → ℤ) (hDCaps : Function.Injective DCaps)
+    (DDel : (CellId → Option CellId) → ℤ) (hDDel : Function.Injective DDel)
+    (DDgs : (CellId → List Cap) → ℤ) (hDDgs : Function.Injective DDgs)
+    (LS : SwissRecord → ℤ) (hLS : listLeafInjective LS)
+    (DLife : (CellId → Nat) → ℤ) (hDLife : Function.Injective DLife)
+    (DDC : (CellId → Nat) → ℤ) (hDDC : Function.Injective DDC)
+    (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective DCell)
+    (DSC : (CellId → List SlotCaveat) → ℤ) (hDSC : Function.Injective DSC)
+    (DAuth : BornEmptyAuthorityTables → ℤ) (hDAuth : Function.Injective DAuth)
+    (hRestBal : RestIffNoBal S.RH) (hRestAccounts : RestIffNoAccountsBalBorn S.RH)
+    (hRestSpawn : RestIffNoSpawnTouched S.RH) (hRestCaps : RestIffNoCaps S.RH)
+    (hRestNull : RestIffNoNullifiers S.RH) (hRestEscrow : RestIffNoBalEscrows S.RH)
+    (hRestCommitments : RestIffNoCommitments S.RH) (hRestSealed : RestIffNoSealedBoxes S.RH)
+    (hRestQueues : RestIffNoQueuesBalEscrows S.RH)
+    (hRestQueuesOnly : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH)
+    (hRestFactory : RestIffNoFactoryTouched S.RH) (hRestEscrowsOnly : RestIffNoEscrows S.RH)
+    (hRestSwiss : RestIffNoSwiss S.RH) (hRestLifecycle : RestIffNoLifecycle S.RH)
+    (hRestLifecycleDeathCert : RestIffNoLifecycleDeathCert S.RH)
+    (hRestDelegations : RestIffNoDelegations S.RH)
+    (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (inner : List FullActionA) (s' : RecChainedState)
+    (h : fullActionCircuitStep.exerciseInnerFold S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+        LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide hDSide
+        DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell DSC hDSC
+        DAuth hDAuth s inner s') :
+    turnSpec s inner s' := by
+  match inner with
+  | [] =>
+      simp only [fullActionCircuitStep.exerciseInnerFold] at h
+      simp only [turnSpec, h]
+  | a :: rest =>
+      rw [show fullActionCircuitStep.exerciseInnerFold S D_bal hD_bal D_caps hD_caps LE_cell LE_null
+            LE_escrow LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal
+            hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC
+            hDDC DCell hDCell DSC hDSC DAuth hDAuth s (a :: rest) s'
+          = (∃ s1, fullActionCircuitStep S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+              LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide
+              hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell
+              hDCell DSC hDSC DAuth hDAuth s a s1 ∧
+              fullActionCircuitStep.exerciseInnerFold S D_bal hD_bal D_caps hD_caps LE_cell LE_null
+                LE_escrow LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal
+                hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC
+                hDDC DCell hDCell DSC hDSC DAuth hDAuth s1 rest s') from rfl] at h
+      obtain ⟨s1, hstep, htail⟩ := h
+      -- per-step: the head circuit step ⊑ `fullActionStep` (mutual call on the structural child `a`).
+      have hhead : fullActionStep s a s1 :=
+        fullAction_circuit_refines_spec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow LE_sealed
+          cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame hLogCS DBal
+          hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC
+          DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+          hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+          hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog s a s1 hstep
+      have htailSpec : turnSpec s1 rest s' :=
+        exerciseInnerFold_refines_turnSpec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
+          LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS hCSN hCSL hRestFrame
+          hLogCS DBal hDBal DSide hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife
+          DDC hDDC DCell hDCell DSC hDSC DAuth hDAuth hRestBal hRestAccounts hRestSpawn hRestCaps hRestNull
+          hRestEscrow hRestCommitments hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly
+          hRestSwiss hRestLifecycle hRestLifecycleDeathCert hRestDelegations hLog s1 rest s' htail
+      exact ⟨s1, hhead, htailSpec⟩
+end
+
 /-! ## §2 — Turn-level diamond (compose generic `TurnRefinement` lemmas). -/
 
 /-- **`fullAction_turn_circuit_refines_spec`** — turn circuit ⊑ `turnSpec fullActionStep`.
 
-CONDITIONAL: depends on `fullAction_circuit_refines_spec`, so it transitively depends on `sorry`
-(the `exerciseA` inner-turn fold) and is NOT `#assert_axioms`-certified. Not whole-turn adversarial soundness. -/
+Rests on `fullAction_circuit_refines_spec` (now `sorry`-free; the `exerciseA` inner-turn fold is a REAL
+composite circuit step via `exerciseInnerFold_refines_turnSpec`). Per-action soundness, lifted to the
+turn fold; not whole-turn adversarial soundness (kernel-axiom hygiene tracked separately). -/
 theorem fullAction_turn_circuit_refines_spec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -761,8 +881,9 @@ theorem fullAction_turn_circuit_refines_spec
 
 /-- **`fullAction_turn_circuit_refines_exec`** — full diamond: turn circuit ⊑ `execFullTurnA`.
 
-CONDITIONAL: depends on `fullAction_circuit_refines_spec`, so it transitively depends on `sorry`
-(the `exerciseA` inner-turn fold) and is NOT `#assert_axioms`-certified. Not whole-turn adversarial soundness. -/
+Rests on `fullAction_circuit_refines_spec` (now `sorry`-free; the `exerciseA` inner-turn fold is a REAL
+composite circuit step via `exerciseInnerFold_refines_turnSpec`). Per-action soundness, lifted to the
+turn fold; not whole-turn adversarial soundness (kernel-axiom hygiene tracked separately). -/
 theorem fullAction_turn_circuit_refines_exec
     (S : Surface2)
     (D_bal : (CellId → AssetId → ℤ) → ℤ) (hD_bal : Function.Injective D_bal)
@@ -873,5 +994,12 @@ theorem fullAction_turn_conservation_descends
       hRestSealed hRestQueues hRestQueuesOnly hRestFactory hRestEscrowsOnly hRestSwiss hRestLifecycle
       hRestLifecycleDeathCert hRestDelegations hLog s s' acts hc)
     hzero
+
+/-! ## §3 — axiom-hygiene tripwires: the (formerly `sorry`-bearing) exerciseA tower is kernel-clean.
+The exerciseA inner-turn arm is now a REAL composite circuit step; these pins certify the per-action
+refinement and its mutual inner-fold helper rest on exactly `{propext, Classical.choice, Quot.sound}`
+(no `sorryAx`). A regression that re-introduces a hole into the exerciseA arm trips the build here. -/
+#assert_axioms fullAction_circuit_refines_spec
+#assert_axioms exerciseInnerFold_refines_turnSpec
 
 end Dregg2.Circuit.TurnEffectRefinement

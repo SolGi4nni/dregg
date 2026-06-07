@@ -748,7 +748,8 @@ open Dregg2.Circuit.Inst.ValidateHandoffA
 open Dregg2.Circuit.Inst.RevokeDelegationA
   (revokeDelegationE revokeDelegationAAirName revokeDelegationA_full_sound)
 open Dregg2.Circuit.Inst.CreateCellFromFactoryA
-  (createFromFactoryE createCellFromFactoryAAirName CreateFromFactoryArgs)
+  (createFromFactoryE createCellFromFactoryAAirName CreateFromFactoryArgs
+    createCellFromFactoryA_full_sound CreateFromFactoryCircuitSpec)
 open Dregg2.Circuit.Inst.CreateCommittedEscrowA
   (createCommittedEscrowE createCommittedEscrowAAirName CreateCommittedEscrowArgs
     createCommittedEscrowA_full_sound)
@@ -1017,7 +1018,26 @@ theorem createCellFromFactoryA_emitted_refines_spec (S : Surface2) (LE : CellId 
     (h : createCellFromFactoryAEmittedStep S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
       s args s') :
     CreateFromFactorySpec s args.actor args.newCell args.vk s' := by
-  sorry -- HOLE: createCellFromFactoryA
+  -- emitted ↔ satisfiedE2Quint (faithful decode), then the validated `full_sound` apex spec, then the
+  -- born-empty-authority bridge back to the declarative `CreateFromFactorySpec`. No `sorry`.
+  have hsat :
+      satisfiedE2Quint S
+        (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+        (encodeE2Quint S
+          (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth) s args s') :=
+    (effect2quint_emitted_equiv_circuit_local S
+      (createFromFactoryE LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth)
+      createCellFromFactoryAAirName s args s').mp h
+  have hapex : CreateFromFactoryCircuitSpec s args.actor args.newCell args.vk s' :=
+    createCellFromFactoryA_full_sound S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC DAuth hDAuth
+      hRest hLog s args s' hsat
+  -- reverse born-empty-authority bridge (apex circuit spec ⟹ declarative spec).
+  obtain ⟨e, hadmit, hacc, hbal, hcell, hsc, hauth, hlog, hEsc, hNull, hRev, hCom, hQ, hSw, hFac, hSB⟩ :=
+    hapex
+  obtain ⟨hcaps, hlif, hdc, hdel, hdgs⟩ :=
+    (bornEmptyAuthority_post_iff s.kernel args.newCell s'.kernel).mp hauth
+  exact ⟨e, hadmit, hacc, hbal, hcell, hsc, hlog, hcaps, hlif, hdc, hdel, hdgs, hEsc, hNull, hRev, hCom,
+    hQ, hSw, hFac, hSB⟩
 
 def createCommittedEscrowAEmittedStep (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ)
     (hD : Function.Injective D) (LE : EscrowRecord → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)
@@ -1630,5 +1650,7 @@ theorem refreshDelegationA_emitted_refines_spec (S : Surface2) (DDel : (CellId �
 #assert_axioms queueEnqueue_emitted_refines_spec
 #assert_axioms setField_emitted_refines_spec
 #assert_axioms exerciseHold_emitted_refines_spec
+-- Formerly `sorry`-bearing; now PROVED via `createCellFromFactoryA_full_sound` + born-empty-authority bridge.
+#assert_axioms createCellFromFactoryA_emitted_refines_spec
 
 end Dregg2.Circuit.EffectEmittedRefinement
