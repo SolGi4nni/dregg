@@ -15,6 +15,7 @@ The reference pre-state is the executor's own `facS` fixture (vk 42 → `subFact
 CR portals carried.
 -/
 import Dregg2.Circuit.Inst.createCellFromFactoryA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.CreateCellFromFactoryWitness
 
@@ -31,6 +32,7 @@ open Dregg2.Circuit.Spec.FactoryCreation
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest turnLogDigest)
 open Dregg2.Authority (Cap)
 
 set_option linter.dupNamespace false
@@ -84,22 +86,51 @@ theorem satisfying_witness_proves_full_state
 /-- A fixed carrier for the per-cell folds: {0, 5} (the existing cell + the fresh factory cell). -/
 def carrier : List CellId := [0, 5]
 
+/-- Bind a `FieldName` (a `String`) as a length-prefixed list of its codepoints. -/
+def encStr (s : String) : List ℤ := (s.length : ℤ) :: s.toList.map (fun c => (c.toNat : ℤ))
+
+/-- **Field-binding** `Value` encoder (fuel-bounded for the demo's bounded value shapes): tag + payload,
+recursing into `record` fields with their names. The OLD `cellDigConcrete` read ONLY `balOf` (the balance
+scalar), so a Value with the same balance but a DIFFERENT field/shape COLLIDED. This binds the structure. -/
+def encValue : Nat → Value → List ℤ
+  | _,     .int n    => [0, n]
+  | _,     .dig n    => [1, (n : ℤ)]
+  | _,     .sym n    => [2, (n : ℤ)]
+  | 0,     .record _  => [3, -1]   -- fuel exhausted: an explicit DISTINCT sentinel (demo records are shallow)
+  | f + 1, .record fs =>
+      3 :: (fs.length : ℤ) :: fs.flatMap (fun (nm, v) => encStr nm ++ encValue f v)
+
+/-- Field-binding `SlotCaveat` encoder: tag + the WHOLE field name + any scalars/sets (the OLD
+`(sc c).length` bound ONLY the COUNT of caveats, so a tampered caveat with the same count was invisible). -/
+def encSlotCaveat : SlotCaveat → List ℤ
+  | .immutable f          => 0 :: encStr f
+  | .monotonicSeq f       => 1 :: encStr f
+  | .monotonic f          => 2 :: encStr f
+  | .writeOnce f          => 3 :: encStr f
+  | .senderAuthorized f a => 4 :: (encStr f ++ ((a.length : ℤ) :: a.map (fun c => (c : ℤ))))
+  | .boundedBy f lo hi    => 5 :: (encStr f ++ [lo, hi])
+
 def accDigConcrete : Finset CellId → ℤ :=
-  fun s => (s.sort (· ≤ ·)).foldl (fun acc c => acc * 1000 + (c : ℤ)) (s.card : ℤ)
+  fun s => refP2 ((s.card : ℤ) :: (s.sort (· ≤ ·)).map (fun c => (c : ℤ)))
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => carrier.foldl (fun acc c => acc * 1000000 + bal c 0) 0
+  fun bal => refP2 (carrier.map (fun c => bal c 0))
+/-- The cell-value digest: the REAL `refP2` sponge over the FULL `encValue` of each carrier cell (binds the
+whole Value, not just `balOf`). -/
 def cellDigConcrete : (CellId → Value) → ℤ :=
-  fun cell => carrier.foldl (fun acc c => acc * 1000000 + balOf (cell c)) 0
+  fun cell => refP2 (carrier.map (fun c => recListDigest (encValue 8) [cell c]))
+/-- The slot-caveats digest: the REAL `refP2` sponge over the FULL field-binding `encSlotCaveat` of each
+carrier cell's caveat list (binds WHICH caveats, not just their count). -/
 def scDigConcrete : (CellId → List SlotCaveat) → ℤ :=
-  fun sc => carrier.foldl (fun acc c => acc * 1000 + ((sc c).length : ℤ)) 0
+  fun sc => refP2 (carrier.map (fun c => recListDigest encSlotCaveat (sc c)))
+/-- The born-empty authority digest: the REAL `refP2` sponge over each cell's `[lifecycle, deathCert]`
+(binds BOTH separately — the OLD `lifecycle + 1000·deathCert` packing aliased when `lifecycle ≥ 1000`). -/
 def authDigConcrete : BornEmptyAuthorityTables → ℤ :=
-  fun tbl => carrier.foldl
-    (fun acc c => acc * 1000000 + ((tbl.lifecycle c : ℤ) + 1000 * (tbl.deathCert c : ℤ))) 0
+  fun tbl => refP2 (carrier.flatMap (fun c => [(tbl.lifecycle c : ℤ), (tbl.deathCert c : ℤ)]))
 
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.nullifiers.length : ℤ) + (k.commitments.length : ℤ)
-def lhConcrete : List Turn → ℤ :=
-  fun log => log.foldl (fun acc t => acc * 1000000 + ((t.actor : ℤ) * 1000 + t.src)) (log.length : ℤ)
+/-- The log hash: the REAL `turnLogDigest` (binds `dst`/`amt` the OLD `actor*1000 + src` fold dropped). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
 def accCompC : ActiveComponent RecChainedState CreateFromFactoryArgs :=
@@ -180,6 +211,15 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard forgedWitness.getD 72 0 == forgedWitness.getD 73 0      -- forgery preserves cell comp3
 #guard honestWitness.getD 0 0 == 1                              -- guard
 
+-- SLOT-CAVEAT anti-ghost tooth (the class the OLD `(sc c).length` MISSED — it bound ONLY the caveat
+-- COUNT). The honest fresh cell 5 is born with no caveats; the forged post adds a `boundedBy "balance"
+-- 0 1000000` caveat (same COUNT-delta a different caveat would show, but a DISTINCT caveat). `encSlotCaveat`
+-- binds WHICH caveat, so the slotCaveats comp4 bind gate `74 ≠ 75` REJECTS.
+def sForgedCaveat : RecChainedState :=
+  { sPost with kernel := { sPost.kernel with
+      slotCaveats := fun c => if c = 5 then [SlotCaveat.boundedBy "balance" 0 1000000] else sPost.kernel.slotCaveats c } }
+#guard decide (satisfied (effectCircuit2Quint createFromFactoryEC) (encodeE2Quint SC createFromFactoryEC sPre argsRef sForgedCaveat)) == false
+
 /-! ## §5 — JSON export. -/
 
 def emittedCFF : EmittedDescriptor := emittedEffect2Quint "dregg-createCellFromFactoryA-v2" createFromFactoryEC
@@ -191,9 +231,11 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 #guard emittedCFF.constraints.length == 8   -- guard bit + rest + 5 component binds + log
 #guard emittedCFF.traceWidth == 80
 
--- Golden pins (the bytes the Rust `lean_executor_derived_create_cell_from_factory` test pastes).
-#guard honestWitness.getD 70 0 == 0 ∧ honestWitness.getD 71 0 == 0
-#guard forgedWitness.getD 70 0 == 999000000 ∧ forgedWitness.getD 71 0 == 0
+-- Structural component-bind goldens (the field-binding `refP2`/`encValue`/`encSlotCaveat` digests are
+-- arbitrary-precision; non-vacuity is at the bind gates; the Rust paste is regenerated from JSON).
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0      -- bal comp2 binds (honest)
+#guard !(forgedWitness.getD 70 0 == forgedWitness.getD 71 0)   -- forged bal comp2 differs (REJECTED)
+#guard !(honestWitnessJson == forgedWitnessJson)               -- honest ≠ forged byte streams
 
 #assert_axioms execute_produces_satisfying_witness
 #assert_axioms satisfying_witness_proves_full_state

@@ -12,6 +12,7 @@ privilege escalation the attenuation never authorized) is REJECTED by the compon
 `Inst.attenuateA.attenuateA_full_sound` proved the crown jewel (`⇒ AttenuateSpec`).
 -/
 import Dregg2.Circuit.Inst.attenuateA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.AttenuateAWitness
 
@@ -21,6 +22,7 @@ open Dregg2.Circuit.Inst.AttenuateA
 open Dregg2.Authority (Caps Cap Auth)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest turnLogDigest)
 
 set_option linter.dupNamespace false
 set_option linter.unusedVariables false
@@ -34,26 +36,31 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 
 def rhConcrete2 : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
-def lhConcrete : List Turn → ℤ := fun l => (l.length : ℤ)
+/-- The log hash: the REAL `turnLogDigest` (binds the WHOLE receipt chain; the OLD `.length` collapse
+dropped its entire content). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
-/-- Concrete injective Cap leaf: tag-encode `null`/`node`/`endpoint` (each shifted by a base larger than
-any toy target/rights count). A tampered cap is VISIBLE. -/
-def capLeaf : Cap → ℤ
-  | .null            => 0
-  | .node t          => 100 + (t : ℤ)
-  | .endpoint t r    => 5000 + (t : ℤ) * 10 + (r.length : ℤ)
+/-- Field-binding `Auth` index (so endpoint `rights` are bound, not collapsed to `.length`). -/
+def authCode : Auth → ℤ
+  | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
+/-- **Field-binding** `Cap` encoder: tag + target + the WHOLE rights list. The OLD `capLeaf` reduced
+`endpoint t r => 5000 + t*10 + r.length`, dropping WHICH rights (only their COUNT) — fatal for an
+ATTENUATION effect, where the precise narrowed rights ARE the soundness content. -/
+def encCap : Cap → List ℤ
+  | .null            => [0]
+  | .node t          => [1, (t : ℤ)]
+  | .endpoint t r    => 2 :: (t : ℤ) :: (r.length : ℤ) :: r.map authCode
 
-/-- Concrete injective slot encoder: a positional Horner fold over a label's cap list. (Small bases keep
-the outer digest within `i64` for the toy `#guard`/Rust domain — short cap lists, small targets.) -/
-def slotEnc (cs : List Cap) : ℤ := cs.foldl (fun acc c => acc * 10000 + capLeaf c) (cs.length : ℤ)
+/-- One label's slot digest: the REAL `refP2` sponge over the field-binding `encCap`. -/
+def slotEnc (cs : List Cap) : ℤ := recListDigest encCap cs
 
 /-- The probe labels the concrete `caps` digest samples: the acting label `actor`, plus a bystander
 label `1` (so a privilege escalation to a third holder shows up). -/
 def capsProbes (actor : CellId) : List CellId := [actor, 1]
 
-/-- Concrete `caps` function digest: an injective positional Horner fold over the probe labels' slots. -/
+/-- Concrete `caps` function digest: the REAL `refP2` sponge over the probe labels' slot digests. -/
 def capsDigestC (actor : CellId) (caps : Caps) : ℤ :=
-  (capsProbes actor).foldl (fun acc l => acc * 100000000 + slotEnc (caps l)) 0
+  refP2 ((capsProbes actor).map (fun l => slotEnc (caps l)))
 
 def attenuateSurfaceC : Surface2 := { RH := rhConcrete2, LH := lhConcrete }
 
@@ -144,6 +151,19 @@ def forgedWitness : List Int := witnessOf 0 sC0 goodArgsC forgedPostC
   (encodeE2 attenuateSurfaceC (attenuateEC 0) sC0 goodArgsC forgedPostC)) == false
 #guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)
 
+-- RIGHTS-AMPLIFICATION anti-ghost tooth (THE headline for attenuation — the class the OLD rights-COUNT
+-- `capLeaf` MISSED). The honest narrowing keeps `[read]`, but the acting label 0's narrowed cap is
+-- forged to `endpoint 9 [read, grant]` — an EXTRA `grant` right (same rights-list LENGTH bucket the OLD
+-- `r.length` could NOT distinguish from a 2-right keep). `encCap` binds WHICH rights, so the
+-- component-bind gate `68 ≠ 69` REJECTS — the surface ENFORCES attenuation.
+def forgedAmplifyCapsC : Caps :=
+  fun x => if x = 0 then [Cap.node 5, Cap.endpoint 9 [Auth.read, Auth.grant]]
+           else goodPostC.kernel.caps x
+def forgedAmplifyPostC : RecChainedState :=
+  { kernel := { goodPostC.kernel with caps := forgedAmplifyCapsC }, log := goodPostC.log }
+#guard decide (satisfied (effectCircuit2 (attenuateEC 0))
+  (encodeE2 attenuateSurfaceC (attenuateEC 0) sC0 goodArgsC forgedAmplifyPostC)) == false
+
 /-! ## §5 — JSON export. -/
 
 def witnessJson (xs : List Int) : String :=
@@ -151,11 +171,11 @@ def witnessJson (xs : List Int) : String :=
 def attenuateHonestWitnessJson : String := witnessJson honestWitness
 def attenuateForgedWitnessJson : String := witnessJson forgedWitness
 
--- The EXACT bytes the Rust `lean_executor_derived_attenuate_a` test pastes (goldens).
-#guard attenuateHonestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,20105010900000002,20105010900000003,2,2,20105010900000000,20105010900000000,1,1]"
-#guard attenuateForgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,20105010900000002,20105010900010112,2,2,20105010900010109,20105010900000000,1,1]"
+-- Structural component-bind goldens (the field-binding `refP2`/`encCap` digests are arbitrary-precision;
+-- non-vacuity is at the bind gates; the Rust paste is regenerated from the JSON accessors).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0   -- caps binds (honest)
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0   -- log binds (honest)
+#guard !(attenuateHonestWitnessJson == attenuateForgedWitnessJson)
 
 #assert_axioms attenuateWitnessVec_commit
 #assert_axioms witnessOf_get

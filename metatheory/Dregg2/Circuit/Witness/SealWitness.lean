@@ -14,6 +14,7 @@ witness JSON. The anti-ghost forgery: the prepended box binds a DIFFERENT payloa
 CR portals carried HYPOTHESES on the abstract keystones.
 -/
 import Dregg2.Circuit.Inst.sealA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.SealWitness
 
@@ -28,6 +29,7 @@ open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Authority (Cap Auth)
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -59,24 +61,31 @@ theorem satisfying_witness_proves_full_state
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS. -/
 
-def capCode : Cap → ℤ
-  | .null         => 1
-  | .node t       => 101 + (t : ℤ) * 3
-  | .endpoint t r => 11 + (t : ℤ) * 3 + (r.length : ℤ)
+/-- Field-binding `Auth` index. -/
+def authCode : Auth → ℤ
+  | .read => 0 | .write => 1 | .grant => 2 | .call => 3 | .reply => 4 | .reset => 5 | .control => 6
+/-- **Field-binding** `Cap` encoder (binds the SEALED payload's full rights — the OLD `capCode` reduced
+`endpoint`'s rights to their `.length`, so the sealed payload's authority was under-bound). -/
+def encCap : Cap → List ℤ
+  | .null         => [0]
+  | .node t       => [1, (t : ℤ)]
+  | .endpoint t r => 2 :: (t : ℤ) :: (r.length : ℤ) :: r.map authCode
 
-/-- Concrete computable per-`SealedBoxRecord` leaf code (all three fields folded, mod a small prime). -/
-def boxCode (b : SealedBoxRecord) : ℤ :=
-  ((b.pairId : ℤ) * 101 + (b.sealer : ℤ) * 103 + capCode b.payload * 107) % 2000003
+/-- **Field-binding** `SealedBoxRecord` encoder: `pairId, sealer` then the WHOLE payload cap. The OLD
+`boxCode … % 2000003` was a NON-injective field hash that folded the payload through the rights-dropping
+`capCode`. -/
+def encBox (b : SealedBoxRecord) : List ℤ := (b.pairId : ℤ) :: (b.sealer : ℤ) :: encCap b.payload
 
-def boxDigConcrete : List SealedBoxRecord → ℤ :=
-  fun bs => bs.foldl (fun acc b => (acc * 7919 + boxCode b) % 2000003) ((bs.length : ℤ) + 1)
+/-- The sealed-boxes list digest: the REAL `refP2` sponge over the field-binding `encBox`. -/
+def boxDigConcrete : List SealedBoxRecord → ℤ := recListDigest encBox
 
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7
            + (k.commitments.length : ℤ) * 13 + (k.caps 0).length * 17
 
-def lhConcrete : List Turn → ℤ :=
-  fun xs => xs.foldl (fun acc t => (acc * 131 + (t.actor : ℤ) + 1) % 2000003) ((xs.length : ℤ) + 1)
+/-- The log hash: the REAL `turnLogDigest` (binds `src`/`dst`/`amt` the OLD `actor % 2000003` fold
+DROPPED and field-reduced). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
@@ -153,6 +162,17 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard forgedWitness.getD 66 0 == forgedWitness.getD 67 0
 #guard forgedWitness.getD 70 0 == forgedWitness.getD 71 0
 
+-- PAYLOAD-RIGHTS anti-ghost tooth: the prepended box binds a SEALED payload forged to
+-- `endpoint 9 [grant]` (an amplified-authority cap) instead of the honest `node 9`. The OLD `boxCode`
+-- folded the payload through the rights-dropping `capCode % 2000003`, so the sealed authority was
+-- under-bound; `encBox`/`encCap` bind the full payload rights, so the component-bind gate `68 ≠ 69`
+-- REJECTS — sealing a wrong-authority cap is caught.
+def sForgedRights : RecChainedState :=
+  { sPost with kernel := { sPost.kernel with
+      sealedBoxes := { pairId := 5, sealer := 0, payload := Cap.endpoint 9 [Auth.grant] }
+        :: kPre.sealedBoxes } }
+#guard decide (satisfied (effectCircuit2 sealEC) (encodeE2 SC sealEC sPre argsRef sForgedRights)) == false
+
 /-! ## §5 — JSON export. -/
 
 def sealAirName : String := "dregg-sealA-v2"
@@ -166,13 +186,11 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 #guard emittedSeal.traceWidth == 72
 #guard descriptorJson ==
   "{\"name\":\"dregg-sealA-v2\",\"trace_width\":72,\"constraints\":[{\"lhs\":{\"t\":\"var\",\"v\":0},\"rhs\":{\"t\":\"const\",\"v\":1}},{\"lhs\":{\"t\":\"var\",\"v\":66},\"rhs\":{\"t\":\"var\",\"v\":67}},{\"lhs\":{\"t\":\"var\",\"v\":68},\"rhs\":{\"t\":\"var\",\"v\":69}},{\"lhs\":{\"t\":\"var\",\"v\":70},\"rhs\":{\"t\":\"var\",\"v\":71}}]}"
-#guard honestWitness.getD 68 0 == 30039   -- component digest binds (sealed node 9)
-#guard forgedWitness.getD 68 0 == 40632    -- forged component digest differs (substituted node 42)
-#guard forgedWitness.getD 69 0 == 30039    -- expected stays the spec box prepend
-#guard honestWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,38,30338,36,36,30039,30039,263,263]"
-#guard forgedWitnessJson ==
-  "[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,38,40931,36,36,40632,30039,263,263]"
+-- Structural component-bind goldens (the field-binding `refP2`/`encBox` digests replace the non-injective
+-- `% 2000003` field hash; non-vacuity is at the bind gates; the Rust paste is regenerated from JSON).
+#guard honestWitness.getD 68 0 == honestWitness.getD 69 0      -- component binds (honest)
+#guard !(forgedWitness.getD 68 0 == forgedWitness.getD 69 0)   -- forged component differs (REJECTED)
+#guard !(honestWitnessJson == forgedWitnessJson)               -- honest ≠ forged byte streams
 
 #assert_axioms sealWitnessVec_commit
 #assert_axioms execute_produces_satisfying_witness

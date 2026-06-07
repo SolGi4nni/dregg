@@ -12,6 +12,7 @@ Reused (not re-proved): `execFullA … (.createCellA …)`,
 CR portals carried.
 -/
 import Dregg2.Circuit.Inst.createCellA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.CreateCellWitness
 
@@ -28,6 +29,7 @@ open Dregg2.Circuit.Spec.AccountGrowth
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 turnLogDigest)
 open Dregg2.Authority (Cap)
 
 set_option linter.dupNamespace false
@@ -65,24 +67,25 @@ theorem satisfying_witness_proves_full_state
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS. -/
 
-/-- Concrete accounts digest: a Horner fold over the sorted Finset elements (length folded in). -/
+/-- Concrete accounts digest: the REAL `refP2` sponge over the sorted Finset elements length-prefixed (the
+OLD `% 1000` Horner truncated cell ids ≥ 1000). -/
 def accDigConcrete : Finset CellId → ℤ :=
-  fun s => (s.sort (· ≤ ·)).foldl (fun acc c => acc * 1000 + (c : ℤ)) (s.card : ℤ)
+  fun s => refP2 ((s.card : ℤ) :: (s.sort (· ≤ ·)).map (fun c => (c : ℤ)))
 
-/-- Concrete bal digest over carrier {0,1,2,3} × asset 0. -/
+/-- Concrete bal digest over carrier {0,1,2,3} × asset 0: the REAL `refP2` sponge (NO `% 10⁵` truncation). -/
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => [0, 1, 2, 3].foldl (fun acc c => acc * 100000 + bal c 0) 0
+  fun bal => refP2 [bal 0 0, bal 1 0, bal 2 0, bal 3 0]
 
-/-- Concrete born-empty side digest: a fold over carrier {0,1,2,3} of each cell's
-(lifecycle + 1000·deathCert) — computable + sensitive to a born-empty tamper. -/
+/-- Concrete born-empty side digest: the REAL `refP2` sponge over each cell's `[lifecycle, deathCert]`
+(binds BOTH fields separately — the OLD `lifecycle + 1000·deathCert` packing aliased when `lifecycle ≥
+1000`). -/
 def sideDigConcrete : BornEmptySideTables → ℤ :=
-  fun st => [0, 1, 2, 3].foldl
-    (fun acc c => acc * 1000000 + ((st.lifecycle c : ℤ) + 1000 * (st.deathCert c : ℤ))) 0
+  fun st => refP2 ([0, 1, 2, 3].flatMap (fun c => [(st.lifecycle c : ℤ), (st.deathCert c : ℤ)]))
 
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.nullifiers.length : ℤ) + (k.commitments.length : ℤ)
-def lhConcrete : List Turn → ℤ :=
-  fun log => log.foldl (fun acc t => acc * 1000000 + ((t.actor : ℤ) * 1000 + t.src)) (log.length : ℤ)
+/-- The log hash: the REAL `turnLogDigest` (binds `dst`/`amt` the OLD `actor*1000 + src` fold dropped). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
 def accCompC : ActiveComponent RecChainedState CreateCellArgs :=
@@ -161,6 +164,15 @@ def forgedWitness : List Int := witnessOf sPre argsRef sForged
 #guard forgedWitness.getD 68 0 == forgedWitness.getD 69 0      -- forgery preserves accounts comp1
 #guard honestWitness.getD 0 0 == 1                              -- guard
 
+-- HIGH-field anti-ghost tooth: bystander cell 2's bal forged ABOVE 10⁵ (the OLD `% 10⁵` Horner collided
+-- here; `refP2` does NOT). The comp2-bal bind gate `70 ≠ 71` still REJECTS.
+def sForgedHigh : RecChainedState :=
+  { kernel := { (bornEmptyCellSlots kPre 3) with
+      accounts := insert 3 kPre.accounts
+      bal := fun c a => if c = 3 then 0 else if c = 2 then 100000 else kPre.bal c a }
+  , log := createReceipt 0 3 :: sPre.log }
+#guard decide (satisfied (effectCircuit2Triple createCellEC) (encodeE2Triple SC createCellEC sPre argsRef sForgedHigh)) == false
+
 /-! ## §5 — JSON export. -/
 
 def emittedCC : EmittedDescriptor := emittedEffect2Triple "dregg-createCellA-v2" createCellEC
@@ -172,9 +184,11 @@ def forgedWitnessJson : String := witnessJson forgedWitness
 #guard emittedCC.constraints.length == 6
 #guard emittedCC.traceWidth == 76
 
--- Golden pins (the bytes the Rust `lean_executor_derived_create_cell` test pastes).
-#guard honestWitness.getD 70 0 == 50000000000000000 ∧ honestWitness.getD 71 0 == 50000000000000000
-#guard forgedWitness.getD 70 0 == 50000000099900000 ∧ forgedWitness.getD 71 0 == 50000000000000000
+-- Structural component-bind goldens (the field-binding `refP2` digests are arbitrary-precision; non-vacuity
+-- is at the bind gates; the Rust paste is regenerated from the JSON accessors).
+#guard honestWitness.getD 70 0 == honestWitness.getD 71 0      -- bal comp2 binds (honest)
+#guard !(forgedWitness.getD 70 0 == forgedWitness.getD 71 0)   -- forged bal comp2 differs (REJECTED)
+#guard !(honestWitnessJson == forgedWitnessJson)               -- honest ≠ forged byte streams
 
 #assert_axioms execute_produces_satisfying_witness
 #assert_axioms satisfying_witness_proves_full_state

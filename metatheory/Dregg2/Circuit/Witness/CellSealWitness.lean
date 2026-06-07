@@ -14,6 +14,7 @@ Poseidon-CR portals carried on the abstract keystones.
 -/
 import Dregg2.Circuit.Inst.cellSealA
 import Dregg2.Circuit.Inst.cellUnsealA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.CellSealWitness
 
@@ -25,6 +26,7 @@ open Dregg2.Circuit.Spec.CellLifecycle
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
 open Dregg2.Exec.TurnExecutorFull
+open Dregg2.Circuit.Poseidon2Surface (refP2 turnLogDigest)
 
 set_option linter.dupNamespace false
 
@@ -74,19 +76,18 @@ end Abstract
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS. -/
 
-/-- Concrete computable lifecycle digest over the fixed carrier `[0,1,2]`: a Horner fold of each cell's
-lifecycle Nat (base `1000`, length-1 carrier folded so a third cell's flip shows up). Small ⇒ fits i64. -/
+/-- Concrete computable lifecycle digest over the fixed carrier `[0,1,2]`: the REAL `refP2` sponge of each
+cell's lifecycle Nat (binds each — the OLD `% 1000` Horner truncated lifecycle values ≥ 1000). -/
 def lifeDigConcrete : (CellId → Nat) → ℤ :=
-  fun lc => [0, 1, 2].foldl (fun acc c => acc * 1000 + (lc c : ℤ)) 0
+  fun lc => refP2 [(lc 0 : ℤ), (lc 1 : ℤ), (lc 2 : ℤ)]
 
 /-- Concrete rest hash (field-count of non-`lifecycle` components — unchanged by a pure lifecycle
 forgery, so the COMPONENT-bind gate is the one that bites). -/
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
 
-/-- Concrete log hash (Horner fold over the receipt chain's actors+srcs). -/
-def lhConcrete : List Turn → ℤ :=
-  fun log => log.foldl (fun acc t => acc * 1000000 + ((t.actor : ℤ) * 1000 + t.src)) (log.length : ℤ)
+/-- Concrete log hash: the REAL `turnLogDigest` (binds `dst`/`amt` the OLD `actor*1000 + src` fold dropped). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
@@ -229,11 +230,13 @@ def unsealForgedWitnessJson : String := witnessJson unsealForgedWitness
 #guard sealEmitted.constraints.length == 4
 #guard sealEmitted.traceWidth == 72
 
--- Golden pins (the exact bytes the Rust `lean_executor_derived_cell_seal`/`_unseal` tests paste).
-#guard sealHonestWitness.getD 68 0 == 1000000 ∧ sealHonestWitness.getD 69 0 == 1000000
-#guard sealForgedWitness.getD 68 0 == 1000001 ∧ sealForgedWitness.getD 69 0 == 1000000
-#guard unsealHonestWitness.getD 68 0 == 0 ∧ unsealHonestWitness.getD 69 0 == 0
-#guard unsealForgedWitness.getD 68 0 == 1 ∧ unsealForgedWitness.getD 69 0 == 0
+-- Structural component-bind goldens (the field-binding `refP2` lifecycle digest is arbitrary-precision
+-- — non-vacuity is at the bind gates; the Rust paste is regenerated from the JSON accessors).
+#guard sealHonestWitness.getD 68 0 == sealHonestWitness.getD 69 0      -- seal component binds (honest)
+#guard !(sealForgedWitness.getD 68 0 == sealForgedWitness.getD 69 0)   -- seal forged differs (REJECTED)
+#guard unsealHonestWitness.getD 68 0 == unsealHonestWitness.getD 69 0  -- unseal component binds (honest)
+#guard !(unsealForgedWitness.getD 68 0 == unsealForgedWitness.getD 69 0) -- unseal forged differs (REJECTED)
+#guard !(sealHonestWitnessJson == sealForgedWitnessJson)
 
 #assert_axioms seal_satisfying_witness_proves_full_state
 #assert_axioms unseal_satisfying_witness_proves_full_state
