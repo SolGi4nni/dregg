@@ -2317,6 +2317,33 @@ mod tests {
         v2_beachhead(CREATECELL_DESCRIPTOR_JSON, 76, &honest, &forged, 70, 71);
     }
 
+    /// `dregg-createCellFromFactoryA-v2` (QUINT, width 80, 8 gates): grow `accounts`,
+    /// reset `bal` at `newCell`, mint `cell` from the factory's initial fields,
+    /// install `slotCaveats`, reset born-empty authority slots. comp1 = `accounts`
+    /// (68/69), comp2 = `bal` (70/71), comp3 = `cell` (72/73), comp4 = `slotCaveats`
+    /// (74/75), comp5 = born-empty authority (76/77). Honest: actor 0 (holds `node 5`)
+    /// creates cell 5 from the registered factory (vk 42 → `subFactory`). The forged
+    /// post-state ALSO mints the EXISTING cell 0's bal 0 → 999; the comp2-bal gate
+    /// `70 = 71` breaks. Goldens pinned by
+    /// `Dregg2.Circuit.Witness.CreateCellFromFactoryWitness.{descriptorJson, *WitnessJson}`.
+    const CREATECELLFROMFACTORY_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-createCellFromFactoryA-v2","trace_width":80,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}},{"lhs":{"t":"var","v":74},"rhs":{"t":"var","v":75}},{"lhs":{"t":"var","v":76},"rhs":{"t":"var","v":77}},{"lhs":{"t":"var","v":78},"rhs":{"t":"var","v":79}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_create_cell_from_factory() {
+        let honest: [i64; 80] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1000, 3000012, 0, 0, 2000005, 2000005, 0, 0, 0, 0, 2, 2, 0, 0, 1000005, 1000005,
+        ];
+        let forged: [i64; 80] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1000, 1002000012, 0, 0, 2000005, 2000005, 999000000, 0, 0, 0, 2, 2, 0, 0,
+            1000005, 1000005,
+        ];
+        v2_beachhead(CREATECELLFROMFACTORY_DESCRIPTOR_JSON, 80, &honest, &forged, 70, 71);
+    }
+
     // ========================================================================
     // The v1 verifiable-execution beachhead tests (the CELL/LOG effect family,
     // `EffectCommit`). Each emits the SAME 74-wire, 5-gate full-state circuit:
