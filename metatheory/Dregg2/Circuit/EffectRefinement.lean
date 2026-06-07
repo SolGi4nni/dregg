@@ -1182,11 +1182,12 @@ theorem exercise_composite_circuit_refines_spec (S : CommitSurface)
     (pre post : RecChainedState) (args : ExerciseFullArgs)
     (innerTurnH : Prop) (hinner : innerTurnH)
     (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hfacet : innerFacetsAdmittedA pre args.actor args.target args.inner = true)
     (hwf : AccountsWF pre.kernel)
     (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
         (exerciseHoldState pre args.actor)) :
     exerciseSpecStep pre post args :=
-  exercise_circuit_refines_spec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hwf hhold
+  exercise_circuit_refines_spec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hfacet hwf hhold
 
 theorem exercise_composite_circuit_refines_exec (S : CommitSurface)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
@@ -1194,11 +1195,12 @@ theorem exercise_composite_circuit_refines_exec (S : CommitSurface)
     (pre post : RecChainedState) (args : ExerciseFullArgs)
     (innerTurnH : Prop) (hinner : innerTurnH)
     (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hfacet : innerFacetsAdmittedA pre args.actor args.target args.inner = true)
     (hwf : AccountsWF pre.kernel)
     (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
         (exerciseHoldState pre args.actor)) :
     exerciseExecStep pre post args :=
-  exercise_circuit_refines_exec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hwf hhold
+  exercise_circuit_refines_exec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge hfacet hwf hhold
 
 #assert_axioms exerciseHold_exec_equiv_spec_step
 #assert_axioms exerciseHold_circuit_refines_spec

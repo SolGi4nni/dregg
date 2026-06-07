@@ -51,6 +51,7 @@ Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone
 `#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handlers.Authority`.
 -/
 import Dregg2.Exec.Handler
+import Dregg2.Exec.CapTP
 
 namespace Dregg2.Exec.Handlers.Authority
 
@@ -303,6 +304,42 @@ def validateHandoffEffect (introducer recipient target : CellId) : ClosedEffect 
     args := { delegator := introducer, recipient := recipient, target := target, keep := allAuths },
     handler := validateHandoffH }
 
+/-! ### §CERT — the REAL CapTP certificate attenuation (no longer `keep := allAuths`).
+
+dregg1's `validate_handoff` does NOT confer the introducer's full held rights — it confers the
+`HandoffCertificate.permissions` mask (`Exec.CapTP.HandoffCert.granted`), which the introducer's signed
+certificate names. We wire that mask in as the delegation `keep`: the recipient receives the held cap
+ATTENUATED to the cert's allowed effects, NOT `allAuths`. `granted ⊆ held` is the certificate's
+non-amplification clause (`HandoffValid.nonAmplifying`), discharged for ANY `keep` by
+`delegateAttenH_non_amplifying`. The cert mask is the rights the cert's `granted` cap confers
+(`Dregg2.Authority.capAuthConferred cert.granted`). -/
+
+/-- The cert's allowed-effect mask: the rights the certificate's `granted` cap names (the
+`HandoffCertificate.permissions`). `HandoffCert`'s `Cap` is the abstract `Spec.Cap` with a `rights`
+field, so the mask is exactly `cert.granted.rights`. -/
+def certMask (cert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth)) : List Auth :=
+  cert.granted.rights
+
+/-- **Build a closed validate-handoff effect from the REAL certificate** (tag `2`). The recipient
+receives the held cap ATTENUATED to the certificate's allowed-effect mask (`certMask cert`), the
+faithful CapTP `permissions` — NOT the blanket `allAuths`. This is the cert-attenuated handoff the
+`§DEFER` carried open. -/
+def validateHandoffCertEffect (cert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth))
+    (target : CellId) : ClosedEffect :=
+  { tag := 2, Args := DelegateArgs,
+    args := { delegator := cert.introducer, recipient := cert.recipient, target := target,
+              keep := certMask cert },
+    handler := validateHandoffH }
+
+/-- **`validateHandoffCert_non_amplifying` — PROVED.** A cert-attenuated handoff confers the recipient
+REAL rights `⊆` the introducer's held cap to `target`: the cert mask cannot amplify (`granted ⊆ held`,
+`HandoffValid.nonAmplifying`), discharged off `delegateAttenH_non_amplifying` for the cert's `keep`. -/
+theorem validateHandoffCert_non_amplifying (k : RecordKernelState)
+    (cert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth)) (target : CellId) :
+    confRights (attenuate (certMask cert) (heldCapTo k.caps cert.introducer target))
+      ≤ confRights (heldCapTo k.caps cert.introducer target) :=
+  recKDelegateAtten_non_amplifying k.caps cert.introducer target (certMask cert)
+
 /-- Build a closed attenuated-delegate effect (tag `3`; explicit narrower `keep`). -/
 def delegateAttenEffect (delegator recipient target : CellId) (keep : List Auth) : ClosedEffect :=
   { tag := 3, Args := DelegateArgs,
@@ -365,6 +402,34 @@ def as0 : RecordKernelState :=
 -- §TEETH-7 (attenuate is TOTAL + self-limiting): cell 0 narrows its OWN idx-1 cap (endpoint 9) to `[]`
 -- — always commits; the actor's own authority shrinks (write dropped).
 #guard ((execEffect (attenuateEffect 0 1 []) as0).map (fun k => k.caps 0)) == some [Cap.node 7, Cap.endpoint 9 []]  -- some [Cap.node 7, Cap.endpoint 9 []]   (idx-1 narrowed in place)
+-- §CERT-TEETH (the REAL CapTP certificate attenuation BITES). A fixture where cell 0 holds
+--   `endpoint 9 [read,write]` to target 9; a certificate granting only `endpoint 9 [read]` hands off the
+--   READ-ONLY view — the recipient receives `[read]`, NOT the full `[read,write]` and NOT `allAuths`.
+def asCert : RecordKernelState :=
+  { accounts := {0, 1}
+    cell := fun _ => default
+    caps := fun c => if c = 0 then [Cap.endpoint 9 [Auth.read, Auth.write]] else []
+    bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
+
+/-- A read-only handoff certificate: introducer 0 hands target-9 to recipient 1, granting only `read`.
+`HandoffCert`'s caps are the abstract `Spec.Cap = ⟨target, rights⟩`. -/
+def readOnlyCert : Dregg2.Exec.CapTP.HandoffCert CellId (List Auth) :=
+  { introducer := 0, recipient := 1,
+    held := ⟨9, [Auth.read, Auth.write]⟩, granted := ⟨9, [Auth.read]⟩ }
+
+-- the cert mask is exactly the certificate's `granted` rights — `[read]`, NOT `allAuths`:
+#guard (certMask readOnlyCert == [Auth.read])
+-- the recipient receives the held cap ATTENUATED to the cert mask: `[read]` (WRITE DROPPED) — the real
+-- CapTP `permissions`, strictly narrower than the held `[read,write]` and than the old `allAuths` path:
+#guard ((execEffect (validateHandoffCertEffect readOnlyCert 9) asCert).map (fun k => k.caps 1))
+        == some [Cap.endpoint 9 [Auth.read]]  -- write DROPPED by the cert mask (granted ⊊ held)
+-- ...whereas the OLD `keep := allAuths` path would have conferred the FULL held `[read,write]` — the
+-- cert mask is what makes the handoff faithfully narrowing:
+#guard ((execEffect (validateHandoffEffect 0 1 9) asCert).map (fun k => k.caps 1))
+        == some [Cap.endpoint 9 [Auth.read, Auth.write]]  -- allAuths = identity-on-rights (the looser path)
+-- the cert handoff is still authority-gated: an introducer holding NO edge to the target is REJECTED.
+#guard ((execEffect (validateHandoffCertEffect { readOnlyCert with introducer := 1 } 9) asCert).isSome) == false
+
 -- §TEETH-8 (CONSERVATION): a within-rights delegation leaves the combined per-asset measure UNCHANGED.
 #guard ((execEffect (delegateEffect 0 1 7) as0).map
         (fun k => (recTotalAssetWithEscrow as0 0, recTotalAssetWithEscrow k 0))) == some (100, 100)  --  some (100, 100)
@@ -391,6 +456,7 @@ self-limiting keystones are pinned directly. -/
 #assert_axioms introduceH
 #assert_axioms validateHandoffH
 #assert_axioms delegateAttenH_non_amplifying
+#assert_axioms validateHandoffCert_non_amplifying
 #assert_axioms revokeH
 #assert_axioms dropRefH
 #assert_axioms revokeDelegationH
@@ -402,14 +468,20 @@ self-limiting keystones are pinned directly. -/
 
 Deliberately OUT of this batch (documented, NOT a silent gap):
 
-  * **The full-authority `keep := allAuths` choice.** `delegateA`/`introduceA`/`validateHandoffA`
-    delegate the held cap with NO rights narrowing (`attenuate allAuths c = c` on the rights list).
-    This is the MAXIMAL in-rights delegation — and still provably `⊆` held
-    (`delegateAttenH_non_amplifying`), so it is non-amplifying. A caller wanting a strictly narrower
-    grant uses `delegateAttenEffect` with an explicit `keep` (the §TEETH-4 path). The richer
-    `ValidateHandoff` certificate's allowed-effect mask (a `granted ⊆ held` check carried in
-    `Exec.CapTP.HandoffCert`) is the next batch's concern — here the three-field skeleton proves the
-    introduce + non-amplification, exactly as `TurnExecutorFull`'s `validateHandoffA` arm does.
+  * **The full-authority `keep := allAuths` choice** (for `delegateA`/`introduceA` — and the bare
+    `validateHandoffEffect`). These delegate the held cap with NO rights narrowing (`attenuate allAuths
+    c = c` on the rights list): the MAXIMAL in-rights delegation — still provably `⊆` held
+    (`delegateAttenH_non_amplifying`), so non-amplifying. A caller wanting a strictly narrower grant uses
+    `delegateAttenEffect` with an explicit `keep` (the §TEETH-4 path).
+
+  * **CLOSED — the REAL CapTP certificate attenuation** (§CERT). `validateHandoffCertEffect` takes the
+    `Exec.CapTP.HandoffCert` and uses the certificate's allowed-effect mask `certMask cert` (the rights
+    its `granted` cap confers — the `HandoffCertificate.permissions`) as the delegation `keep`. The
+    recipient receives the held cap ATTENUATED to the cert mask (§CERT-TEETH: a read-only cert hands off
+    `[read]`, NOT the held `[read,write]` nor `allAuths`), and `validateHandoffCert_non_amplifying`
+    proves `granted ⊆ held` (`HandoffValid.nonAmplifying`). The remaining model extension is carrying
+    the cert's rights on `FullActionA.validateHandoffA` itself (it currently takes only `intro rec t`),
+    at which point the executor dispatch routes to `validateHandoffCertEffect`.
 
   * **`attenuateA` slot-index bounds.** `attenuateSlotF` uses `List.modify`, which is a no-op when
     `idx` is out of range (the attenuation is then the identity — still narrower-or-equal, so still

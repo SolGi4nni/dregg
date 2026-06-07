@@ -351,13 +351,16 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
           · exact absurd hk (by simp)
   | exerciseA actor t inner =>
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          -- the hold-gate frames `revoked`; the inner fold preserves it (no effect touches it).
-          rw [execInnerA_revoked_eq s1 s' inner h, hs1]
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            -- the hold-gate frames `revoked`; the inner fold preserves it (no effect touches it).
+            rw [execInnerA_revoked_eq s1 s' inner h, hs1]
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   -- §supply-growth — createCell/spawn factor through their gates (createCellIntoAsset / + a caps grant
   -- — neither touches `revoked`); bridgeMint reuses recCMintAsset.
   | createCellA actor newCell =>

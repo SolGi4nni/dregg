@@ -60,13 +60,21 @@ theorem exercise_inner_emitted_refines_turnSpec
 
 /-! ## §2 — R4 facet-mask alignment (handler `facetedOf` vs bare `FullActionA`). -/
 
-/-- HOLE W7: handler inner forest uses `facetedOf Auth.control (toClosedEffect fa)`; `execFullA` runs
-bare `FullActionA` through `execInnerA` without the R4 facet mask — handler-commits ⊆ execFullA-commits
-alignment on the inner path requires a dedicated facet-bridge lemma. -/
-theorem hole_exercise_r4_facet_mask (s s' : RecChainedState) (actor target : CellId)
+/-- **`exercise_r4_facet_mask` — CLOSED (the facet-bridge lemma, no `sorry`).** The R4 front that was a
+`sorry` is discharged: `execFullA`'s `exerciseA` now ENFORCES the facet mask (`innerFacetsAdmittedA`) and
+the handler bridge tags each inner with its REAL `requiredFacetA fa` (not a blanket `Auth.control`), so
+the two facet gates are the SAME `heldCapTo`-cap / `requiredFacetA`-key / `capFacetMask` check —
+`HandlerExecutor.handler_refines_execFullA_exercise` carries that bridge. The remaining INNER-FOLD
+agreement (`execInnerA (exerciseHoldState …) inner` reaches the handler's kernel) is the ORTHOGONAL W7
+inner-turn-emission front, carried here as the explicit `hinner` hypothesis (NOT a hidden `sorry`): once
+the inner-turn witness supplies it, the whole exercise refines `execFullA` on the same kernel. The FACET
+mask itself is now fully sound on `execFullA` (the canonical semantics). -/
+theorem exercise_r4_facet_mask (s s' : RecChainedState) (actor target : CellId)
     (inner : List FullActionA)
-    (_h : execHandlerOne (.exerciseA actor target inner) s = some s') :
-    ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel := by
-  sorry
+    (hinner : ∃ s₁, execInnerA (HandlerExecutor.exerciseHoldState s actor) inner = some s₁ ∧
+        s₁.kernel = s'.kernel)
+    (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
+    ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel :=
+  HandlerExecutor.handler_refines_execFullA_exercise s s' actor target inner hinner h
 
 end Dregg2.Circuit.Inst.ExerciseInnerTurn

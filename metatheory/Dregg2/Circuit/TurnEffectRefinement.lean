@@ -363,6 +363,7 @@ def fullActionCircuitStep
       -- `fullActionCircuitStep` over `inner` from the hold post-state. This is NOT the declarative
       -- `turnSpec` — every inner action is itself a circuit step; soundness (`⊑ turnSpec`) is then a
       -- real induction (`exerciseInnerFold_refines_turnSpec`) reusing the per-effect arms.
+      innerFacetsAdmittedA st actor target inner = true ∧
       exerciseGuard st actor target ∧
       exerciseInnerFold (exerciseHoldState st actor) inner st'
 where
@@ -581,13 +582,13 @@ theorem fullAction_circuit_refines_spec
       -- it consumes is built by THIS theorem recursively (each inner action is structurally smaller than
       -- the enclosing `.exerciseA`). No `sorry`, no spec-fallback.
       simp only [fullActionStep]
-      have hexpand : exerciseGuard st actor target ∧
+      have hexpand : innerFacetsAdmittedA st actor target inner = true ∧ exerciseGuard st actor target ∧
           fullActionCircuitStep.exerciseInnerFold S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow
             LE_sealed cN hN hLE_cell hLE_null hLE_escrow hLE_sealed LQ cNQ hNQ hLQ CS DBal hDBal DSide
             hDSide DLeg hDLeg DCaps hDCaps DDel hDDel DDgs hDDgs LS hLS DLife hDLife DDC hDDC DCell hDCell
             DSC hDSC DAuth hDAuth (exerciseHoldState st actor) inner st' := h
-      obtain ⟨hg, hfold⟩ := hexpand
-      refine ⟨hg, ?_⟩
+      obtain ⟨hfacet, hg, hfold⟩ := hexpand
+      refine ⟨hfacet, hg, ?_⟩
       -- The inner CIRCUIT fold ⊑ `turnSpec` by the MUTUAL helper on `inner` (a structural child of
       -- `.exerciseA actor target inner`); the helper in turn calls THIS theorem per inner action.
       exact exerciseInnerFold_refines_turnSpec S D_bal hD_bal D_caps hD_caps LE_cell LE_null LE_escrow

@@ -251,6 +251,7 @@ mutual
     | .validateHandoffA intro rec t =>
         DelegateSpec st intro rec t st'
     | .exerciseA actor target inner =>
+        innerFacetsAdmittedA st actor target inner = true ∧
         exerciseGuard st actor target ∧
         turnSpec (exerciseHoldState st actor) inner st'
     | .createCellA actor newCell =>
@@ -360,6 +361,7 @@ the hold post-state (auth receipt prepended, kernel frozen). Definitionally the 
 `fullActionStep`. -/
 def ExerciseSpec (st : RecChainedState) (actor target : CellId) (inner : List FullActionA)
     (st' : RecChainedState) : Prop :=
+  innerFacetsAdmittedA st actor target inner = true ∧
   exerciseGuard st actor target ∧
   turnSpec (exerciseHoldState st actor) inner st'
 
@@ -480,22 +482,27 @@ mutual
       simp only [fullActionStep, ExerciseSpec, execFullA]
       constructor
       · intro h
-        cases hg : exerciseStepA st actor target with
-        | none =>
-            rw [hg] at h
-            exact absurd h (by simp)
-        | some st1 =>
-            obtain ⟨hguard, hst1⟩ := exerciseStepA_iff_holdSpec st st1 actor target |>.mp hg
-            have hinner : execInnerA st1 inner = some st' := by simpa [hg] using h
-            refine And.intro hguard ?_
-            rw [← hst1]
-            exact (execInnerA_iff_turnSpec st1 st' inner).mp hinner
+        by_cases hf : innerFacetsAdmittedA st actor target inner = true
+        · rw [if_pos hf] at h
+          cases hg : exerciseStepA st actor target with
+          | none =>
+              rw [hg] at h
+              exact absurd h (by simp)
+          | some st1 =>
+              obtain ⟨hguard, hst1⟩ := exerciseStepA_iff_holdSpec st st1 actor target |>.mp hg
+              have hinner : execInnerA st1 inner = some st' := by simpa [hg] using h
+              refine And.intro hf (And.intro hguard ?_)
+              rw [← hst1]
+              exact (execInnerA_iff_turnSpec st1 st' inner).mp hinner
+        · rw [if_neg hf] at h; exact absurd h (by simp)
       · intro h
-        have hguard : exerciseGuard st actor target := h.1
-        have hinner : turnSpec (exerciseHoldState st actor) inner st' := h.2
+        have hf : innerFacetsAdmittedA st actor target inner = true := h.1
+        have hguard : exerciseGuard st actor target := h.2.1
+        have hinner : turnSpec (exerciseHoldState st actor) inner st' := h.2.2
         have hg : exerciseStepA st actor target = some (exerciseHoldState st actor) :=
           (exerciseStepA_iff_holdSpec st (exerciseHoldState st actor) actor target).mpr
             ⟨hguard, rfl⟩
+        rw [if_pos hf]
         simpa [hg, exerciseHoldState, Option.bind_eq_some_iff] using
           (execInnerA_iff_turnSpec (exerciseHoldState st actor) st' inner).mpr hinner
     | .createCellA actor newCell => by
@@ -635,22 +642,27 @@ theorem execFullA_exerciseA_iff_spec (st st' : RecChainedState) (actor target : 
   simp only [ExerciseSpec, execFullA]
   constructor
   · intro h
-    cases hg : exerciseStepA st actor target with
-    | none =>
-        rw [hg] at h
-        exact absurd h (by simp)
-    | some st1 =>
-        obtain ⟨hguard, hst1⟩ := exerciseStepA_iff_holdSpec st st1 actor target |>.mp hg
-        have hinner : execInnerA st1 inner = some st' := by simpa [hg] using h
-        refine And.intro hguard ?_
-        rw [← hst1]
-        exact (execInnerA_iff_turnSpec st1 st' inner).mp hinner
+    by_cases hf : innerFacetsAdmittedA st actor target inner = true
+    · rw [if_pos hf] at h
+      cases hg : exerciseStepA st actor target with
+      | none =>
+          rw [hg] at h
+          exact absurd h (by simp)
+      | some st1 =>
+          obtain ⟨hguard, hst1⟩ := exerciseStepA_iff_holdSpec st st1 actor target |>.mp hg
+          have hinner : execInnerA st1 inner = some st' := by simpa [hg] using h
+          refine And.intro hf (And.intro hguard ?_)
+          rw [← hst1]
+          exact (execInnerA_iff_turnSpec st1 st' inner).mp hinner
+    · rw [if_neg hf] at h; exact absurd h (by simp)
   · intro h
-    have hguard : exerciseGuard st actor target := h.1
-    have hinner : turnSpec (exerciseHoldState st actor) inner st' := h.2
+    have hf : innerFacetsAdmittedA st actor target inner = true := h.1
+    have hguard : exerciseGuard st actor target := h.2.1
+    have hinner : turnSpec (exerciseHoldState st actor) inner st' := h.2.2
     have hg : exerciseStepA st actor target = some (exerciseHoldState st actor) :=
       (exerciseStepA_iff_holdSpec st (exerciseHoldState st actor) actor target).mpr
         ⟨hguard, rfl⟩
+    rw [if_pos hf]
     simpa [hg, exerciseHoldState, Option.bind_eq_some_iff] using
       (execInnerA_iff_turnSpec (exerciseHoldState st actor) st' inner).mpr hinner
 
@@ -675,7 +687,7 @@ theorem exerciseSpec_ledger_per_asset (st st' : RecChainedState) (actor target :
     (inner : List FullActionA) (b : AssetId) (h : ExerciseSpec st actor target inner st') :
     recTotalAssetWithEscrow st'.kernel b =
       recTotalAssetWithEscrow st.kernel b + turnLedgerDeltaAsset inner b := by
-  rcases h with ⟨_, hinner⟩
+  rcases h with ⟨_, _, hinner⟩
   have hledger :=
     turnSpec_ledger_per_asset (exerciseHoldState st actor) st' inner b hinner
   simpa [exerciseHoldState_kernel] using hledger

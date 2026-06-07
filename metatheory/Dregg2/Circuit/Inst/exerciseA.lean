@@ -257,6 +257,7 @@ theorem exercise_circuit_refines_spec
     (innerTurnH : Prop)
     (hinner : innerTurnH)
     (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hfacet : innerFacetsAdmittedA pre args.actor args.target args.inner = true)
     (hwf : AccountsWF pre.kernel)
     (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
         (exerciseHoldState pre args.actor)) :
@@ -266,7 +267,7 @@ theorem exercise_circuit_refines_spec
       ⟨args.actor, args.target⟩ hwf
       (exerciseHoldState_accountsWF pre args.actor hwf) hhold
   rcases hholdSpec with ⟨hguard, _⟩
-  exact ⟨hguard, hinnerBridge.mp hinner⟩
+  exact ⟨hfacet, hguard, hinnerBridge.mp hinner⟩
 
 /-- **`exercise_circuit_refines_exec`** — COMPOSITE SOUNDNESS: hold circuit + inner-turn hypothesis
 ⊑ `execFullA` on `.exerciseA`, via `execFullA_exerciseA_iff_spec`. -/
@@ -278,13 +279,14 @@ theorem exercise_circuit_refines_exec
     (innerTurnH : Prop)
     (hinner : innerTurnH)
     (hinnerBridge : innerTurnH ↔ turnSpec (exerciseHoldState pre args.actor) args.inner post)
+    (hfacet : innerFacetsAdmittedA pre args.actor args.target args.inner = true)
     (hwf : AccountsWF pre.kernel)
     (hhold : exerciseHoldCircuitStep S pre ⟨args.actor, args.target⟩
         (exerciseHoldState pre args.actor)) :
     execFullA pre (.exerciseA args.actor args.target args.inner) = some post :=
   (execFullA_exerciseA_iff_spec pre post args.actor args.target args.inner).mpr
     (exercise_circuit_refines_spec S hN hL hRest hLog pre post args innerTurnH hinner hinnerBridge
-      hwf hhold)
+      hfacet hwf hhold)
 
 
 /-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/

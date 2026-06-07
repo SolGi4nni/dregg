@@ -193,9 +193,13 @@ def toClosedEffect : FullActionA → ClosedEffect
   | .dropRefA holder t               => dropRefEffect holder t
   | .revokeDelegationA holder t      => revokeDelegationEffect holder t
   | .validateHandoffA intro rec t    => validateHandoffEffect intro rec t
-  -- §exercise (recursive) — the inner FullActionA forest folds onto its handlers via closedToSub
+  -- §exercise (recursive) — the inner FullActionA forest folds onto its handlers via closedToSub. Each
+  -- inner effect is tagged with its REAL required facet (`requiredFacetA fa`), NOT a blanket
+  -- `Auth.control` — so the handler's R4 facet mask AGREES with `execFullA`'s `innerFacetsAdmittedA`
+  -- (the canonical semantics), no weaker.
   | .exerciseA actor t inner         =>
-      exerciseEffect actor t (inner.map (fun fa => facetedOf Auth.control (toClosedEffect fa)))
+      exerciseEffect actor t
+        (inner.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa)))
   -- §supply / account growth
   | .createCellA actor newCell       => createCellEffect actor newCell
   | .createCellFromFactoryA actor newCell _vk => createCellFromFactoryEffect actor newCell
@@ -1706,18 +1710,36 @@ theorem handler_refines_execFullA_exercise (s s' : RecChainedState) (actor targe
   obtain ⟨s₁, hfold, hk⟩ := hinner
   have hstep := execHandlerOne_kernel (.exerciseA actor target inner) s s' h
   rw [toClosedEffect] at hstep
-  let innerF := inner.map (fun fa => facetedOf Auth.control (toClosedEffect fa))
+  -- the bridge now tags each inner with its REAL `requiredFacetA` (matching `execFullA`'s gate), not a
+  -- blanket `Auth.control`.
+  let innerF := inner.map (fun fa => facetedOf (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa))
   change exerciseStep s.kernel { actor := actor, target := target, inner := innerF } = some s'.kernel at hstep
   unfold exerciseStep at hstep
   by_cases hg : exerciseAdmitB s.kernel { actor := actor, target := target, inner := innerF }
   · rw [if_pos hg] at hstep
-    have hhold' : (s.kernel.caps actor).any (fun cap => confersEdgeTo target cap) = true := by
-      rw [exerciseAdmitB, holdsEdge, Bool.and_eq_true] at hg
-      exact hg.1
+    rw [exerciseAdmitB, holdsEdge, Bool.and_eq_true] at hg
+    obtain ⟨hhold', hadmit⟩ := hg
     have hg' : exerciseStepA s actor target = some (exerciseHoldState s actor) := by
       simp only [exerciseStepA, hhold', if_pos, exerciseHoldState]
+    -- THE FACET BRIDGE: the handler's `forestAdmitted (exercisedCap) innerF` IS `execFullA`'s
+    -- `innerFacetsAdmittedA s actor target inner` — same `heldCapTo` cap, same `requiredFacetA` keys,
+    -- same per-cap mask (`capFacetMask = capFacetMaskA`, proved by `rfl`). So the R4 gate passes.
+    have hfacet : Dregg2.Exec.TurnExecutorFull.innerFacetsAdmittedA s actor target inner = true := by
+      have hmaskeq : Handlers.Exercise.capFacetMask (Dregg2.Exec.heldCapTo s.kernel.caps actor target)
+          = Dregg2.Exec.TurnExecutorFull.capFacetMaskA (Dregg2.Exec.heldCapTo s.kernel.caps actor target) := by
+        cases Dregg2.Exec.heldCapTo s.kernel.caps actor target <;> rfl
+      simp only [Dregg2.Exec.TurnExecutorFull.innerFacetsAdmittedA,
+        Dregg2.Exec.TurnExecutorFull.innerFacetAdmittedA, List.all_eq_true]
+      intro fa hfa
+      -- pull the per-inner admission out of the handler's `forestAdmitted`.
+      simp only [Handlers.Exercise.forestAdmitted, Handlers.Exercise.exercisedCap,
+        Handlers.Exercise.innerEffects, List.all_eq_true] at hadmit
+      have := hadmit (Handlers.Exercise.facetedOf
+        (Dregg2.Exec.TurnExecutorFull.requiredFacetA fa) (toClosedEffect fa)) (by
+          simp only [innerF, List.mem_map]; exact ⟨fa, hfa, rfl⟩)
+      simpa only [Handlers.Exercise.facetAdmitted, Handlers.Exercise.facetedOf, hmaskeq] using this
     refine ⟨s₁, ?_, hk⟩
-    simp only [execFullA, hg', hfold]
+    simp only [execFullA, if_pos hfacet, hg', hfold]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
 /-! ## §7 — THE TEETH: R1/R2/R6 holes closed in BOTH executors (parity witnesses).

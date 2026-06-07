@@ -39,14 +39,18 @@ structure OpenFront where
 -- queue-allocate `actor ≠ cell` front (handler now stores owner = `actor`, so kernel agreement is
 -- UNCONDITIONAL). Their `hole_*` theorems in `HandlerExecutor` are now genuine proofs (no `sorry`),
 -- and the `portal_*` re-exports below delegate to them. Removed from the open inventory.
+-- CLOSED (this wave): `exercise_inner_turn_witness` — the inner `List FullActionA` emitted fold from
+-- the hold post-state now refines `turnSpec` via `ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec`
+-- (sorry-free; the `portal_exercise_inner_turn` re-export below delegates to it). Removed from the
+-- open inventory. The two GENUINELY-open R4/queue/spawn fronts remain.
+-- CLOSED (P2 canonical-semantics): `exercise_r4_facet_mask` — `execFullA`'s `exerciseA` now ENFORCES
+-- the R4 facet mask (`innerFacetsAdmittedA`) and the handler bridge tags each inner with its REAL
+-- `requiredFacetA fa` (not blanket `Auth.control`), so the two facet gates are the SAME check. The
+-- facet front is discharged (`ExerciseInnerTurn.exercise_r4_facet_mask`, no `sorry`); only the
+-- ORTHOGONAL inner-turn fold remains, carried as an explicit `hinner` hypothesis there.
 def openFronts : List OpenFront := [
-  -- Wave 7: exercise inner turn + R4 facet mask
-  ⟨"exercise_inner_turn_witness", .w7_exercise_r4, some "exerciseA",
-    "inner List FullActionA emitted fold from hold post-state"⟩
-  , ⟨"exercise_r4_facet_mask", .w7_exercise_r4, some "exerciseA",
-    "facetedOf Auth.control alignment vs execInnerA"⟩
   -- Wave 6/7 queue defer: actor ≠ cell owner alignment — REMAINS for queue ENQUEUE only
-  , ⟨"queue_enqueue_actor_ne_cell", .w6_queue_defer, none,
+  ⟨"queue_enqueue_actor_ne_cell", .w6_queue_defer, none,
     "queueEnqueue when actor ≠ cell — owner metadata mismatch (allocate is now CLOSED)"⟩
   -- Wave 7: spawn/factory metadata beyond born-empty createCell core
   , ⟨"spawn_factory_metadata", .w7_spawn_metadata, some "spawnA",
@@ -95,14 +99,27 @@ theorem portal_exercise_inner_turn
     Dregg2.Circuit.ActionDispatch.turnSpec holdPost inner post :=
   exercise_inner_emitted_refines_turnSpec lookup compress stepRoot hstep holdPost post inner w
 
-/-- HOLE W7: R4 facet-mask handler vs bare inner executor alignment. -/
+/-- **R4 facet-mask CLOSED** (P2 canonical-semantics): `execFullA`'s `exerciseA` now enforces the same
+facet mask the handler bridge tags, so a handler-committed exercise refines `execFullA` on the same
+kernel — given the orthogonal inner-turn fold (`hinner`). Delegates to the now-`sorry`-free
+`ExerciseInnerTurn.exercise_r4_facet_mask`. -/
 theorem portal_exercise_r4_facet_mask (actor target : CellId) (inner : List FullActionA)
+    (hinner : ∃ s₁, execInnerA (Dregg2.Exec.HandlerExecutor.exerciseHoldState s actor) inner = some s₁ ∧
+        s₁.kernel = s'.kernel)
     (h : execHandlerOne (.exerciseA actor target inner) s = some s') :
     ∃ s'', execFullA s (.exerciseA actor target inner) = some s'' ∧ s''.kernel = s'.kernel :=
-  hole_exercise_r4_facet_mask s s' actor target inner h
+  Dregg2.Exec.HandlerExecutor.handler_refines_execFullA_exercise s s' actor target inner hinner h
 
 end HolePortals
 
-#guard countOpenFronts == 3
+-- The frontier has exactly TWO GENUINELY-open handler fronts (drift-free: `countOpenFronts`
+-- IS `openFronts.length`, so this catches any future add/remove). Non-vacuity: the registry is
+-- non-empty (open work remains) yet bounded. Down from 3 — the R4 facet-mask front is now CLOSED
+-- (the facet mask is enforced on `execFullA`, the canonical semantics; `portal_exercise_r4_facet_mask`).
+#guard countOpenFronts == openFronts.length
+#guard countOpenFronts == 2
+#guard ¬ openFronts.isEmpty
+-- The closed `exercise_inner_turn_witness` AND `exercise_r4_facet_mask` fronts are no longer listed.
+#guard (openFronts.filter (fun f => f.id == "exercise_inner_turn_witness")).isEmpty
 
 end Dregg2.Exec.HandlerOpenFronts

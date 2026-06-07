@@ -433,13 +433,16 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
       | some k' => commit_subst h hk; exact subset_of_commitments_eq (recKDelegate_commitments hk)
   | exerciseA actor t inner =>
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          have hk : s1.kernel.commitments = s.kernel.commitments := by rw [hs1]
-          exact hk ▸ execInnerA_commitments_grow s1 s' inner h
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            have hk : s1.kernel.commitments = s.kernel.commitments := by rw [hs1]
+            exact hk ▸ execInnerA_commitments_grow s1 s' inner h
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   | createCellA actor newCell =>
       simp only [execFullA] at h
       obtain ⟨_, _, hs'⟩ := createCellChainA_factors h; subst hs'

@@ -1052,17 +1052,20 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
       -- exercise's hold-gate READS the c-list (caps framed); then the inner fold RECURSES, preserving
       -- confinement at each step (mutual `execInnerA_confine`, with the SAME `control ∈ U` ceiling).
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          have hpre1 : CapsConfined U s1.kernel.caps :=
-            CapsConfined.of_caps_eq (by rw [hs1]) hpre
-          -- exercise reads the c-list + appends a receipt; `sealedBoxes` is framed (`s1.kernel = {s with log}`).
-          have hbox1 : ∀ box ∈ s1.kernel.sealedBoxes, ∀ a ∈ capAuthConferred box.payload, a ∈ U := by
-            rw [hs1]; exact hboxes
-          exact execInnerA_confine hctrl hgrant hreply s1 s' inner h hpre1 hbox1
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            have hpre1 : CapsConfined U s1.kernel.caps :=
+              CapsConfined.of_caps_eq (by rw [hs1]) hpre
+            -- exercise reads the c-list + appends a receipt; `sealedBoxes` is framed (`s1.kernel = {s with log}`).
+            have hbox1 : ∀ box ∈ s1.kernel.sealedBoxes, ∀ a ∈ capAuthConferred box.payload, a ∈ U := by
+              rw [hs1]; exact hboxes
+            exact execInnerA_confine hctrl hgrant hreply s1 s' inner h hpre1 hbox1
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   -- ===== supply: createCell FRAMEs caps; spawn copies a held parent cap plus metadata. =====
   | createCellA actor newCell =>
       exact CapsConfined.of_createCell hpre (by simpa only [execFullA] using h)
@@ -1338,16 +1341,19 @@ theorem execFullA_boxesConfine {U : List Auth} (hctrl : Auth.control ∈ U)
   by_cases hex : ∃ a t inner, fa = .exerciseA a t inner
   · obtain ⟨actor, t, inner, rfl⟩ := hex
     simp only [execFullA] at h
-    cases hg : exerciseStepA s actor t with
-    | none => rw [hg] at h; exact absurd h (by simp)
-    | some s1 =>
-        rw [hg] at h
-        obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-        -- exercise reads the c-list (caps + boxes framed); then the inner fold preserves box-confinement.
-        have hpre1 : CapsConfined U s1.kernel.caps := CapsConfined.of_caps_eq (by rw [hs1]) hpre
-        have hbox1 : ∀ box ∈ s1.kernel.sealedBoxes, ∀ a ∈ capAuthConferred box.payload, a ∈ U := by
-          rw [hs1]; exact hboxes
-        exact execInnerA_boxesConfine hctrl hgrant hreply s1 s' inner h hpre1 hbox1
+    by_cases hf : innerFacetsAdmittedA s actor t inner = true
+    · rw [if_pos hf] at h
+      cases hg : exerciseStepA s actor t with
+      | none => rw [hg] at h; exact absurd h (by simp)
+      | some s1 =>
+          rw [hg] at h
+          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+          -- exercise reads the c-list (caps + boxes framed); then the inner fold preserves box-confinement.
+          have hpre1 : CapsConfined U s1.kernel.caps := CapsConfined.of_caps_eq (by rw [hs1]) hpre
+          have hbox1 : ∀ box ∈ s1.kernel.sealedBoxes, ∀ a ∈ capAuthConferred box.payload, a ∈ U := by
+            rw [hs1]; exact hboxes
+          exact execInnerA_boxesConfine hctrl hgrant hreply s1 s' inner h hpre1 hbox1
+    · rw [if_neg hf] at h; exact absurd h (by simp)
   · rcases execFullA_sealedBoxes_frame_or_sealCons s s' fa h
         (by rintro a t inner rfl; exact hex ⟨a, t, inner, rfl⟩)
       with hframe | ⟨pid, actor, payload, hfa, hbox, hheld⟩

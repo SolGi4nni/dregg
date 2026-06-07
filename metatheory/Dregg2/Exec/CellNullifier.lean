@@ -318,14 +318,17 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
           exact hn ▸ List.Subset.refl _
   | exerciseA actor t inner =>
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          -- the hold-gate leaves the kernel (hence `nullifiers`) UNCHANGED; the inner fold only GROWS it.
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          have hk : s1.kernel.nullifiers = s.kernel.nullifiers := by rw [hs1]
-          exact hk ▸ execInnerA_nullifiers_grow s1 s' inner h
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            -- the hold-gate leaves the kernel (hence `nullifiers`) UNCHANGED; the inner fold only GROWS it.
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            have hk : s1.kernel.nullifiers = s.kernel.nullifiers := by rw [hs1]
+            exact hk ▸ execInnerA_nullifiers_grow s1 s' inner h
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   -- §supply-growth — createCell/spawn factor through their gates (kernel = createCellIntoAsset / + a
   -- caps grant — neither touches `nullifiers`); bridgeMint reuses recCMintAsset.
   | createCellA actor newCell =>

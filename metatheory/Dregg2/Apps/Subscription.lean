@@ -538,14 +538,17 @@ theorem execFullA_subWF_preserved (s s' : RecChainedState) (fa : FullActionA)
           · exact absurd hk (by simp)
   | exerciseA actor t inner =>
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          -- the hold-gate frames `queues`; the inner fold preserves `subWF` step-by-step.
-          have hwf1 : subWF s1.kernel := subWF_of_queues_eq (k := s.kernel) (by rw [hs1]) hwf
-          exact execInnerA_subWF_preserved s1 s' inner h hwf1
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            -- the hold-gate frames `queues`; the inner fold preserves `subWF` step-by-step.
+            have hwf1 : subWF s1.kernel := subWF_of_queues_eq (k := s.kernel) (by rw [hs1]) hwf
+            exact execInnerA_subWF_preserved s1 s' inner h hwf1
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   -- §supply-growth — createCell/spawn factor through their gates (createCellIntoAsset / + caps grant —
   -- neither touches `queues`); bridgeMint reuses recCMintAsset.
   | createCellA actor newCell =>

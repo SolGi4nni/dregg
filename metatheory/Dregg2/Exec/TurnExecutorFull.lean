@@ -3627,6 +3627,105 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   | .cellDestroyA _ _ _,           _ => 0
   | .refreshDelegationA _ _,       _ => 0
 
+/-! ### §R4 — the EXECUTABLE facet classifier + cap-mask gate for `exerciseA`.
+
+dregg1's `apply_exercise_via_capability` (`apply.rs:2455`) does NOT merely hold-gate: each inner effect
+must lie in the held cap's `allowed_effects` FACET MASK (the `read`/`write`/`grant`/`call`/… authority
+the cap actually confers). The hold-gate (`confersEdgeTo`) checks *connectivity*; R4 checks the *facet*.
+The two are distinct — a `endpoint t [read]` cap (read-only) connects to `t` (so the hold-gate could
+pass via a sibling `write` cap) yet must REJECT a `write`/`grant`-facet inner effect. Here we make
+`execFullA`'s `exerciseA` ENFORCE the mask (it was hold-gate-only), so `execFullA` is the canonical
+semantics the handler agrees with — no weaker. -/
+
+/-- **The facet an inner effect EXERCISES** (the R4 mask key, dregg1 `Effect::required_facet`). Mutating
+effects (transfer/mint/burn/state-write/escrow/bridge/queue/note/seal/lifecycle/supply) demand `write`;
+authority-granting effects (delegate/introduce/attenuate/dropRef/revoke/validateHandoff/swiss-export)
+demand `grant`; a NESTED exercise demands the privileged `control`. A `read`-only cap admits NONE of
+these (every dregg2 effect mutates or grants) — the faithful contrast the §TEETH exercise. -/
+def requiredFacetA : FullActionA → Authority.Auth
+  -- value movement + every cell/ledger mutation ⇒ write
+  | .balanceA _ _            => Authority.Auth.write
+  | .mintA _ _ _ _           => Authority.Auth.write
+  | .burnA _ _ _ _           => Authority.Auth.write
+  | .setFieldA _ _ _ _       => Authority.Auth.write
+  | .emitEventA _ _ _ _      => Authority.Auth.write
+  | .incrementNonceA _ _ _   => Authority.Auth.write
+  | .setPermissionsA _ _ _   => Authority.Auth.write
+  | .setVKA _ _ _            => Authority.Auth.write
+  | .createCellA _ _         => Authority.Auth.write
+  | .createCellFromFactoryA _ _ _ => Authority.Auth.write
+  | .spawnA _ _ _            => Authority.Auth.write
+  | .bridgeMintA _ _ _ _     => Authority.Auth.write
+  | .createEscrowA _ _ _ _ _ _ => Authority.Auth.write
+  | .releaseEscrowA _ _      => Authority.Auth.write
+  | .refundEscrowA _ _       => Authority.Auth.write
+  | .createObligationA _ _ _ _ _ _ => Authority.Auth.write
+  | .fulfillObligationA _ _  => Authority.Auth.write
+  | .slashObligationA _ _    => Authority.Auth.write
+  | .noteSpendA _ _          => Authority.Auth.write
+  | .noteCreateA _ _         => Authority.Auth.write
+  | .createCommittedEscrowA _ _ _ _ _ _ _ => Authority.Auth.write
+  | .releaseCommittedEscrowA _ _ => Authority.Auth.write
+  | .refundCommittedEscrowA _ _  => Authority.Auth.write
+  | .bridgeLockA _ _ _ _ _ _ => Authority.Auth.write
+  | .bridgeFinalizeA _ _ _ _ => Authority.Auth.write
+  | .bridgeCancelA _ _       => Authority.Auth.write
+  | .sealA _ _ _             => Authority.Auth.write
+  | .unsealA _ _ _           => Authority.Auth.write
+  | .createSealPairA _ _ _ _ => Authority.Auth.write
+  | .makeSovereignA _ _      => Authority.Auth.write
+  | .refusalA _ _            => Authority.Auth.write
+  | .receiptArchiveA _ _     => Authority.Auth.write
+  | .queueAllocateA _ _ _ _  => Authority.Auth.write
+  | .queueEnqueueA _ _ _ _ _ _ _ => Authority.Auth.write
+  | .queueDequeueA _ _ _ _   => Authority.Auth.write
+  | .queueResizeA _ _ _ _    => Authority.Auth.write
+  | .queueAtomicTxA _ _      => Authority.Auth.write
+  | .queuePipelineStepA _ _ _ _ => Authority.Auth.write
+  | .pipelinedSendA _        => Authority.Auth.write
+  | .cellSealA _ _           => Authority.Auth.write
+  | .cellUnsealA _ _         => Authority.Auth.write
+  | .cellDestroyA _ _ _      => Authority.Auth.write
+  -- authority-conferring effects ⇒ grant (they mint/move CAPABILITY, not cell state)
+  | .delegate _ _ _          => Authority.Auth.grant
+  | .revoke _ _              => Authority.Auth.grant
+  | .introduceA _ _ _        => Authority.Auth.grant
+  | .delegateAttenA _ _ _ _  => Authority.Auth.grant
+  | .attenuateA _ _ _        => Authority.Auth.grant
+  | .dropRefA _ _            => Authority.Auth.grant
+  | .revokeDelegationA _ _   => Authority.Auth.grant
+  | .validateHandoffA _ _ _  => Authority.Auth.grant
+  | .refreshDelegationA _ _  => Authority.Auth.grant
+  | .exportSturdyRefA _ _ _ _ _ => Authority.Auth.grant
+  | .enlivenRefA _ _ _ _     => Authority.Auth.grant
+  | .swissHandoffA _ _ _ _   => Authority.Auth.grant
+  | .swissDropA _ _ _        => Authority.Auth.grant
+  -- a NESTED exercise re-enters the privileged path ⇒ control
+  | .exerciseA _ _ _         => Authority.Auth.control
+
+/-- **The R4 facet mask of a held cap** (its `allowed_effects`): a `node` cap is the PRIVILEGED full
+facet (every `Auth`); an `endpoint` cap confers EXACTLY its carried `rights`; `null` confers nothing.
+This is `Handlers.Exercise.capFacetMask` re-stated executor-side (no import cycle). -/
+def capFacetMaskA : Cap → List Authority.Auth
+  | .null            => []
+  | .endpoint _ r    => r
+  | .node _          => [Authority.Auth.read, Authority.Auth.write, Authority.Auth.grant,
+                         Authority.Auth.call, Authority.Auth.reply, Authority.Auth.reset,
+                         Authority.Auth.control]
+
+/-- **R4 — is `fa`'s required facet admitted by the held cap's mask?** The held cap is `heldCapTo`
+(the SAME `find? confersEdgeTo`-then-`getD null` lookup the handler's `exercisedCap` uses — so the
+executor and handler facet gates are DEFINITIONALLY the same). Fail-closed: a `null` held cap (no edge)
+has empty mask ⇒ admits nothing. -/
+def innerFacetAdmittedA (s : RecChainedState) (actor target : CellId) (fa : FullActionA) : Bool :=
+  (capFacetMaskA (heldCapTo s.kernel.caps actor target)).contains (requiredFacetA fa)
+
+/-- **The whole inner forest is R4-admitted** iff EVERY inner effect's required facet lies in the held
+cap's mask. The gate `execFullA`'s `exerciseA` checks BEFORE recursing — the missing piece that made the
+old `exerciseA` hold-gate-only. -/
+def innerFacetsAdmittedA (s : RecChainedState) (actor target : CellId) (inner : List FullActionA) : Bool :=
+  inner.all (fun fa => innerFacetAdmittedA s actor target fa)
+
 mutual
 /-- **The per-asset full executor.** Dispatch each kind to its chained per-asset primitive. ONE
 executor over the per-asset op-set; the asset-typed analog of `execFull`. The 5 pure-state effects
@@ -3666,9 +3765,13 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   -- folds `apply_effect(inner, …, &cap_target, …)`). Fail-closed: no held edge ⇒ `exerciseStepA = none`;
   -- any inner effect fails ⇒ the fold is `none` ⇒ the whole exercise rejects. No more SHADOW.
   | .exerciseA actor t inner         =>
-      match exerciseStepA s actor t with
-      | some s' => execInnerA s' inner
-      | none    => none
+      -- R4: hold-gate (`exerciseStepA`) AND the held cap's FACET MASK admits every inner effect
+      -- (`innerFacetsAdmittedA`), THEN recurse. Fail-closed on either gate.
+      if innerFacetsAdmittedA s actor t inner = true then
+        match exerciseStepA s actor t with
+        | some s' => execInnerA s' inner
+        | none    => none
+      else none
   -- §MA-supply: createCell/spawn route to the account-growth chained steps (born EMPTY); bridgeMint
   -- reuses the per-asset mint `recCMintAsset` verbatim (the §8 portal hypothesis is carried on the
   -- conservation keystone, not checked here).
@@ -3923,17 +4026,20 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
             simp only [recTotalAssetWithEscrow, recTotalAsset, escrowHeldAsset]; ring
           · rw [if_neg hg] at hd; exact absurd hd (by simp)
   | exerciseA actor t inner =>
-      -- the hold-gate is bal-neutral (the c-list is read, not edited); the move is whatever `inner`
-      -- moves, read off the mutual `execInnerA_ledger_per_asset` (the per-asset sum of inner deltas).
+      -- R4 facet gate first, then the hold-gate is bal-neutral (the c-list is read, not edited); the move
+      -- is whatever `inner` moves, read off the mutual `execInnerA_ledger_per_asset`.
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          -- `s1 = { s with log := … }` ⇒ `s1.kernel = s.kernel`: the move is exactly the inner sum.
-          have hinner := execInnerA_ledger_per_asset s1 s' inner b h
-          rw [hinner, hs1]
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            -- `s1 = { s with log := … }` ⇒ `s1.kernel = s.kernel`: the move is exactly the inner sum.
+            have hinner := execInnerA_ledger_per_asset s1 s' inner b h
+            rw [hinner, hs1]
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   | createCellA actor newCell =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       -- combined = recTotalAsset (escrows unchanged by the fresh-cell insert) + neutral recTotalAsset.
@@ -4673,15 +4779,18 @@ theorem execFullA_log_suffix (s s' : RecChainedState) (fa : FullActionA)
     (h : execFullA s fa = some s') : s.log <:+ s'.log := by
   by_cases hex : ∃ a t inner, fa = .exerciseA a t inner
   · obtain ⟨a, t, inner, rfl⟩ := hex
-    -- exercise: the hold-gate prepends `authReceipt a`, then the inner fold extends further.
+    -- exercise: the R4 gate, then the hold-gate prepends `authReceipt a`, then the inner fold extends.
     simp only [execFullA] at h
-    cases hg : exerciseStepA s a t with
-    | none => rw [hg] at h; exact absurd h (by simp)
-    | some s1 =>
-        rw [hg] at h
-        obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-        have hstep : s.log <:+ s1.log := by rw [hs1]; exact List.suffix_cons _ _
-        exact hstep.trans (execInnerA_log_suffix s1 s' inner h)
+    by_cases hf : innerFacetsAdmittedA s a t inner = true
+    · rw [if_pos hf] at h
+      cases hg : exerciseStepA s a t with
+      | none => rw [hg] at h; exact absurd h (by simp)
+      | some s1 =>
+          rw [hg] at h
+          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+          have hstep : s.log <:+ s1.log := by rw [hs1]; exact List.suffix_cons _ _
+          exact hstep.trans (execInnerA_log_suffix s1 s' inner h)
+    · rw [if_neg hf] at h; exact absurd h (by simp)
   · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
     · -- §MA-queue-batch (WAVE 4): the atomic batch folds its sub-ops then prepends the commit row —
       -- append-only (the fold's suffix-extension carried by `queueAtomicTxA_chainlink`).
@@ -4716,20 +4825,23 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
   refine ⟨execFullA_log_suffix s s' fa h, ?_⟩
   by_cases hex : ∃ a t inner, fa = .exerciseA a t inner
   · obtain ⟨a, t, inner, rfl⟩ := hex
-    -- exercise: `authReceipt a = fullReceiptA (exerciseA …)` is appended by the hold-gate, then the
-    -- inner fold (a suffix-extension) keeps it present.
+    -- exercise: `authReceipt a = fullReceiptA (exerciseA …)` is appended by the hold-gate (after the R4
+    -- gate), then the inner fold (a suffix-extension) keeps it present.
     simp only [execFullA] at h
-    cases hg : exerciseStepA s a t with
-    | none => rw [hg] at h; exact absurd h (by simp)
-    | some s1 =>
-        rw [hg] at h
-        obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-        -- `fullReceiptA` of an exercise is `authReceipt a` — state-INDEPENDENT, so the goal's
-        -- `fullReceiptA s (.exerciseA …)` is defeq to `fullReceiptA s1 (.exerciseA …)`.
-        show fullReceiptA s (.exerciseA a t inner) ∈ s'.log
-        have hmem : fullReceiptA s (.exerciseA a t inner) ∈ s1.log := by
-          rw [hs1]; exact List.mem_cons_self
-        exact (execInnerA_log_suffix s1 s' inner h).mem hmem
+    by_cases hf : innerFacetsAdmittedA s a t inner = true
+    · rw [if_pos hf] at h
+      cases hg : exerciseStepA s a t with
+      | none => rw [hg] at h; exact absurd h (by simp)
+      | some s1 =>
+          rw [hg] at h
+          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+          -- `fullReceiptA` of an exercise is `authReceipt a` — state-INDEPENDENT, so the goal's
+          -- `fullReceiptA s (.exerciseA …)` is defeq to `fullReceiptA s1 (.exerciseA …)`.
+          show fullReceiptA s (.exerciseA a t inner) ∈ s'.log
+          have hmem : fullReceiptA s (.exerciseA a t inner) ∈ s1.log := by
+            rw [hs1]; exact List.mem_cons_self
+          exact (execInnerA_log_suffix s1 s' inner h).mem hmem
+    · rw [if_neg hf] at h; exact absurd h (by simp)
   · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
     · -- §MA-queue-batch (WAVE 4): the batch-commit row IS `fullReceiptA (queueAtomicTxA …)`, recorded.
       obtain ⟨actor, ops, rfl⟩ := hbatch
@@ -4747,14 +4859,17 @@ theorem execFullA_obsadvance (s s' : RecChainedState) (fa : FullActionA)
   by_cases hex : ∃ a t inner, fa = .exerciseA a t inner
   · obtain ⟨a, t, inner, rfl⟩ := hex
     simp only [execFullA] at h
-    cases hg : exerciseStepA s a t with
-    | none => rw [hg] at h; exact absurd h (by simp)
-    | some s1 =>
-        rw [hg] at h
-        obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-        have h1 : s.log.length < s1.log.length := by
-          rw [hs1, List.length_cons]; exact Nat.lt_succ_self _
-        exact Nat.lt_of_lt_of_le h1 (execInnerA_log_suffix s1 s' inner h).length_le
+    by_cases hf : innerFacetsAdmittedA s a t inner = true
+    · rw [if_pos hf] at h
+      cases hg : exerciseStepA s a t with
+      | none => rw [hg] at h; exact absurd h (by simp)
+      | some s1 =>
+          rw [hg] at h
+          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+          have h1 : s.log.length < s1.log.length := by
+            rw [hs1, List.length_cons]; exact Nat.lt_succ_self _
+          exact Nat.lt_of_lt_of_le h1 (execInnerA_log_suffix s1 s' inner h).length_le
+    · rw [if_neg hf] at h; exact absurd h (by simp)
   · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
     · -- §MA-queue-batch (WAVE 4): the batch grows by ≥ 1 row (the commit row over the fold's suffix).
       obtain ⟨actor, ops, rfl⟩ := hbatch
@@ -5355,11 +5470,14 @@ theorem execFullA_exerciseA_authorized (s s' : RecChainedState) (actor t : CellI
     (h : execFullA s (.exerciseA actor t inner) = some s') :
     Dregg2.Spec.execGraph s.kernel.caps actor (⟨t, ()⟩ : Dregg2.Spec.Cap Label Dregg2.Spec.ExecRights) := by
   simp only [execFullA] at h
-  cases hg : exerciseStepA s actor t with
-  | none => rw [hg] at h; exact absurd h (by simp)
-  | some s1 =>
-      obtain ⟨hgg, _⟩ := exerciseStepA_factors hg
-      rw [execGraph_eq_any]; exact hgg
+  by_cases hf : innerFacetsAdmittedA s actor t inner = true
+  · rw [if_pos hf] at h
+    cases hg : exerciseStepA s actor t with
+    | none => rw [hg] at h; exact absurd h (by simp)
+    | some s1 =>
+        obtain ⟨hgg, _⟩ := exerciseStepA_factors hg
+        rw [execGraph_eq_any]; exact hgg
+  · rw [if_neg hf] at h; exact absurd h (by simp)
 
 /-- **`execFullA_exerciseA_recurses` — PROVED (the DE-SHADOW witness).** A committed exercise actually
 RAN its inner effects: there is a gate-state `s1` (the hold-gate's result) from which the inner fold
@@ -5369,9 +5487,12 @@ theorem execFullA_exerciseA_recurses (s s' : RecChainedState) (actor t : CellId)
     (h : execFullA s (.exerciseA actor t inner) = some s') :
     ∃ s1, exerciseStepA s actor t = some s1 ∧ execInnerA s1 inner = some s' := by
   simp only [execFullA] at h
-  cases hg : exerciseStepA s actor t with
-  | none => rw [hg] at h; exact absurd h (by simp)
-  | some s1 => rw [hg] at h; exact ⟨s1, rfl, h⟩
+  by_cases hf : innerFacetsAdmittedA s actor t inner = true
+  · rw [if_pos hf] at h
+    cases hg : exerciseStepA s actor t with
+    | none => rw [hg] at h; exact absurd h (by simp)
+    | some s1 => rw [hg] at h; exact ⟨s1, rfl, h⟩
+  · rw [if_neg hf] at h; exact absurd h (by simp)
 
 /-! ### §MA-escrow authority/membership obligations — the create-side carries the REAL `authorizedB`
 creator gate (over the debited cell); noteSpend/noteCreate carry the genuine SET-membership witness. -/
@@ -6439,6 +6560,22 @@ example : ¬ IsNonAmplifyingF (Cap.endpoint 9 [Auth.read, Auth.write]) (Cap.node
 #guard ((execFullA fmaA (.exerciseA 0 7 [])).isSome)  --  true (empty inner: pure hold-check)
 #guard (((execFullA fmaA (.exerciseA 0 7 [])).map (fun s => s.log.length)).getD 0) == 1  --  1 (only the exercise receipt)
 #guard ((execFullA fmaA (.exerciseA 5 7 [.emitEventA 0 7 99 1])).isSome) == false  --  false (FAIL-CLOSED: no held edge)
+
+-- ★★ R4 FACET-MASK TEETH (the canonical-semantics gate BITES). Actor 0 holds `endpoint 9 [read,write]`
+--    toward target 9 (its mask is exactly [read,write]) and the privileged `node 7` toward 7 (full mask).
+--    The facet of the inner effect — not mere connectivity — decides admission:
+#guard (requiredFacetA (.emitEventA 0 9 99 1) == Auth.write)   -- a state write demands `write`
+#guard (requiredFacetA (.delegate 0 1 7) == Auth.grant)        -- an authority grant demands `grant`
+#guard (capFacetMaskA (heldCapTo fmaA.kernel.caps 0 9) == [Auth.read, Auth.write])  -- endpoint 9's mask
+#guard (capFacetMaskA (heldCapTo fmaA.kernel.caps 0 7) == [Auth.read, Auth.write, Auth.grant, Auth.call, Auth.reply, Auth.reset, Auth.control])  -- node 7 = full
+-- the [read,write] mask ADMITS a write-facet inner effect (gate passes; the inner emit then runs):
+#guard (innerFacetsAdmittedA fmaA 0 9 [.emitEventA 0 9 99 1])  --  true
+-- ...but REJECTS a grant-facet inner effect — `grant ∉ [read,write]` — so the WHOLE exercise is `none`
+--    EVEN THOUGH actor 0 holds connectivity to 9 (connectivity ≠ facet — the R4 distinction):
+#guard (innerFacetsAdmittedA fmaA 0 9 [.delegate 0 1 7]) == false  --  false
+#guard ((execFullA fmaA (.exerciseA 0 9 [.delegate 0 1 7])).isSome) == false  --  false (R4 REJECTS the grant)
+-- the privileged `node 7` cap (full mask) ADMITS the grant-facet inner effect (control over 7):
+#guard (innerFacetsAdmittedA fmaA 0 7 [.delegate 0 1 7])  --  true (node mask contains grant)
 
 -- A MIXED authority turn: introduce (adds edge) + attenuate (narrows) + exercise (RUNS inner emit) +
 --   revoke-delegation (removes) — ALL balance-neutral ⇒ (105, 7) preserved across the turn:

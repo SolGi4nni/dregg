@@ -408,14 +408,17 @@ theorem execFullA_progLive_preserved (s s' : RecChainedState) (fa : FullActionA)
           rw [hn]; exact ⟨hlive, hprog⟩
   | exerciseA actor t inner =>
       simp only [execFullA] at h
-      cases hg : exerciseStepA s actor t with
-      | none => rw [hg] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hg] at h
-          obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
-          have hlive1 : c ∈ s1.kernel.accounts := by rw [hs1]; exact hlive
-          have hprog1 : s1.kernel.slotCaveats c = cav := by rw [hs1]; exact hprog
-          exact execInnerA_progLive_preserved s1 s' inner c cav h hlive1 hprog1
+      by_cases hf : innerFacetsAdmittedA s actor t inner = true
+      · rw [if_pos hf] at h
+        cases hg : exerciseStepA s actor t with
+        | none => rw [hg] at h; exact absurd h (by simp)
+        | some s1 =>
+            rw [hg] at h
+            obtain ⟨_, hs1⟩ := exerciseStepA_factors hg
+            have hlive1 : c ∈ s1.kernel.accounts := by rw [hs1]; exact hlive
+            have hprog1 : s1.kernel.slotCaveats c = cav := by rw [hs1]; exact hprog
+            exact execInnerA_progLive_preserved s1 s' inner c cav h hlive1 hprog1
+      · rw [if_neg hf] at h; exact absurd h (by simp)
   | createCellA actor newCell =>
       obtain ⟨_, hfresh, hs'⟩ := createCellChainA_factors (by simpa only [execFullA] using h)
       have hne : c ≠ newCell := fun heq => hfresh (heq ▸ hlive)
