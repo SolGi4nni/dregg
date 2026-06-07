@@ -1754,6 +1754,158 @@ mod tests {
     }
 
     // ========================================================================
+    // THE WHOLE-TURN beachhead: compose per-effect proofs into ONE authenticated
+    // full-turn proof for a chained transfer FOREST.
+    //
+    // A turn is a CHAIN of effects. The Lean `Dregg2.Circuit.TurnTransferWitness`
+    // module composes TWO per-step `stateCircuit` blocks (the second offset by 20)
+    // into one width-44 circuit, PLUS the gates the single-effect circuit was
+    // MISSING: root-binding gates (force the formerly-free root wires 11/12 and
+    // 31/32 to equal the concrete combiner `cmbConcrete(compressConcrete frame
+    // moved) rest` of the step's digest children — a tampered post-root ⇒ UNSAT)
+    // and chain gates (the post-state of step 0 IS the pre-state of step 1, via the
+    // turn-independent full-cell sponge `allCellDig` carried on both sides + the
+    // rest digest). `turnTransferWitnessVec kS0 [ta, tb]` runs the REAL chained
+    // executor (`chainKernels` over `recKExec`) and lays out the satisfying
+    // whole-turn witness. The forged variant mints a bystander cell 0 in the FINAL
+    // post-state `k₂` — the second step's frame-reuse gate (35 = 36) breaks, a real
+    // UNSAT for the WHOLE turn.
+    // ========================================================================
+
+    /// The Lean-emitted whole-turn circuit (`Dregg2.Circuit.TurnTransferWitness.
+    /// turnStateDescriptorJson`): two transfer full-state blocks (step 1 offset 20),
+    /// the two root-binding gates per step (closing the 11/12 root caveat), and the
+    /// two chain gates (the shared kernel `k₁` flows through). 44 wires, 30 gates.
+    const TURN_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-transfer-turn-v1","trace_width":44,"constraints":[{"lhs":{"t":"var","v":5},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":6},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":7},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":8},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":9},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":10},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":2},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":4}}}},{"lhs":{"t":"var","v":3},"rhs":{"t":"add","l":{"t":"var","v":1},"r":{"t":"var","v":4}}},{"lhs":{"t":"add","l":{"t":"var","v":2},"r":{"t":"var","v":3}},"rhs":{"t":"add","l":{"t":"var","v":0},"r":{"t":"var","v":1}}},{"lhs":{"t":"var","v":13},"rhs":{"t":"var","v":14}},{"lhs":{"t":"var","v":15},"rhs":{"t":"var","v":16}},{"lhs":{"t":"var","v":18},"rhs":{"t":"var","v":19}},{"lhs":{"t":"var","v":25},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":26},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":27},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":28},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":29},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":30},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":22},"rhs":{"t":"add","l":{"t":"var","v":20},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":24}}}},{"lhs":{"t":"var","v":23},"rhs":{"t":"add","l":{"t":"var","v":21},"r":{"t":"var","v":24}}},{"lhs":{"t":"add","l":{"t":"var","v":22},"r":{"t":"var","v":23}},"rhs":{"t":"add","l":{"t":"var","v":20},"r":{"t":"var","v":21}}},{"lhs":{"t":"var","v":33},"rhs":{"t":"var","v":34}},{"lhs":{"t":"var","v":35},"rhs":{"t":"var","v":36}},{"lhs":{"t":"var","v":38},"rhs":{"t":"var","v":39}},{"lhs":{"t":"var","v":11},"rhs":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"mul","l":{"t":"var","v":15},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":17}},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":13}}},{"lhs":{"t":"var","v":12},"rhs":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"mul","l":{"t":"var","v":16},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":18}},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":14}}},{"lhs":{"t":"var","v":31},"rhs":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"mul","l":{"t":"var","v":35},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":37}},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":33}}},{"lhs":{"t":"var","v":32},"rhs":{"t":"add","l":{"t":"mul","l":{"t":"add","l":{"t":"mul","l":{"t":"var","v":36},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":38}},"r":{"t":"const","v":1000000}},"r":{"t":"var","v":34}}},{"lhs":{"t":"var","v":41},"rhs":{"t":"var","v":42}},{"lhs":{"t":"var","v":14},"rhs":{"t":"var","v":33}}]}"#;
+
+    /// The EXECUTOR-DERIVED honest WHOLE-TURN witness (Lean `turnHonestWitnessJson`):
+    /// `turnTransferWitnessVec kS0 [ta, tb]` ran the real chained executor
+    /// (`recKExec kS0 ta = some k₁`, `recKExec k₁ tb = some k₂`). Layout: step-0
+    /// block (0..19), step-1 block (20..39), then the four turn-independent
+    /// full-cell chain digests (40: allCellDig k₀, 41: allCellDig k₁, 42:
+    /// allCellDig k₁, 43: allCellDig k₂). The chain gate `41 = 42` holds (the shared
+    /// kernel k₁ flows through); the root-binding gates pin 11/12 and 31/32.
+    const TURN_HONEST_WITNESS: [i64; 44] = [
+        // step 0: actor 0 transfers 30 from cell 0 → cell 1
+        100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, //
+        1000150000005000003, // 11 preRoot  (NOW constrained = combine(15,17,13))
+        1000120000035000003, // 12 postRoot (NOW constrained = combine(16,18,14))
+        3, 3, 1000050, 1000050, 100000005, 70000035, 70000035, // 13..19
+        // step 1: actor 1 transfers 10 from cell 1 → cell 2
+        35, 50, 25, 60, 10, 1, 1, 1, 1, 1, 1, //
+        1000105000050000003, // 31 preRoot  (constrained = combine(35,37,33))
+        1000095000060000003, // 32 postRoot (constrained = combine(36,38,34))
+        3, 3, 1000070, 1000070, 35000050, 25000060, 25000060, // 33..39
+        // chain digests (turn-independent full-cell sponge)
+        3000100000005000050, // 40 allCellDig k₀
+        3000070000035000050, // 41 allCellDig k₁ (step-0 post)
+        3000070000035000050, // 42 allCellDig k₁ (step-1 pre)  → 41 = 42 chain gate
+        3000070000025000060, // 43 allCellDig k₂
+    ];
+
+    /// The EXECUTOR-DERIVED FORGED WHOLE-TURN witness (Lean `turnForgedWitnessJson`):
+    /// the SAME chain, but step 1's FINAL post-state mints a bystander cell 0
+    /// (50→... — value forged into a third cell of the final state). The two MOVED
+    /// balances of step 1 still conserve, but the second step's frame-reuse digest
+    /// gate (35 = 36) breaks (`1000070 != 1000999`): a REAL UNSAT for the WHOLE turn.
+    const TURN_FORGED_WITNESS: [i64; 44] = [
+        100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, //
+        1000150000005000003, 1000120000035000003, 3, 3, 1000050, 1000050, 100000005, 70000035,
+        70000035, //
+        35, 50, 25, 60, 10, 1, 1, 1, 1, 1, 1, //
+        1000105000050000003, //
+        1001024000060000003, // 32 forged postRoot (binds the minted cell 0)
+        3, 3, 1000070, //
+        1000999, // 36 frameDigPost != frameDigPre (35): the minted bystander shows up
+        35000050, 25000060, 25000060, //
+        3000100000005000050, 3000070000035000050, 3000070000035000050,
+        3000999000025000060, // 43 forged final full-cell digest
+    ];
+
+    /// **THE WHOLE-TURN BEACHHEAD: execute the chain → prove → verify, ONE STARK
+    /// proof for the whole transfer-forest turn.** The honest whole-turn witness
+    /// (computed by `turnTransferWitnessVec` running the real chained executor)
+    /// proves+verifies through the real Plonky3 prover on the Lean-emitted composed
+    /// turn circuit — ONE proof binding BOTH effects + their root chain. The forged
+    /// witness (the REAL final-state third-cell mint) is REJECTED by the second
+    /// step's frame-reuse gate — the anti-ghost tooth realized end-to-end over the
+    /// WHOLE TURN, on a genuine forged state.
+    #[test]
+    fn lean_executor_derived_turn() {
+        let desc = parse_descriptor(TURN_DESCRIPTOR_JSON)
+            .expect("Lean-emitted whole-turn descriptor must parse");
+        assert_eq!(desc.name, "dregg-transfer-turn-v1");
+        assert_eq!(desc.trace_width, 44);
+        assert_eq!(desc.constraints.len(), 30);
+
+        // The executor-derived honest whole-turn witness must satisfy the gates
+        // (mirror of Lean's `#guard decide (satisfied turnStateCircuit …)`).
+        let good = TURN_HONEST_WITNESS;
+        // step 0 transfer relations:
+        assert_eq!(good[2], good[0] - good[4], "step0 debit");
+        assert_eq!(good[3], good[1] + good[4], "step0 credit");
+        assert_eq!(good[13], good[14], "step0 rest frame");
+        assert_eq!(good[15], good[16], "step0 untouched frame");
+        assert_eq!(good[18], good[19], "step0 moved bind");
+        // step 1 transfer relations (offset 20):
+        assert_eq!(good[22], good[20] - good[24], "step1 debit");
+        assert_eq!(good[23], good[21] + good[24], "step1 credit");
+        assert_eq!(good[33], good[34], "step1 rest frame");
+        assert_eq!(good[35], good[36], "step1 untouched frame");
+        assert_eq!(good[38], good[39], "step1 moved bind");
+        // ROOT-BINDING (the closed caveat): preRoot/postRoot = combine(frame,moved,rest).
+        const M: i64 = 1_000_000;
+        assert_eq!(
+            good[11],
+            (good[15] * M + good[17]) * M + good[13],
+            "step0 preRoot bound to its digest children"
+        );
+        assert_eq!(
+            good[32],
+            (good[36] * M + good[38]) * M + good[34],
+            "step1 postRoot bound to its digest children"
+        );
+        // CHAIN: step-0 post full-cell digest = step-1 pre full-cell digest.
+        assert_eq!(good[41], good[42], "the shared kernel k₁ flows through the turn");
+        assert_eq!(good[14], good[33], "rest digest chains across the boundary");
+
+        // EXECUTE THE CHAIN → PROVE → VERIFY: ONE STARK proof for the whole turn.
+        let proof = prove_and_verify_descriptor(&desc, &good)
+            .expect("the EXECUTOR-DERIVED whole-turn witness must prove+verify (one proof)");
+        verify_descriptor(&desc, &proof)
+            .expect("re-verify of the executor-derived whole-turn proof must succeed");
+
+        // ANTI-GHOST: the REAL forged FINAL post-state (third-cell mint in k₂) is
+        // rejected. Step 1's two moved balances still conserve, but the frame-reuse
+        // digest gate (35 = 36) fails — a real UNSAT over the WHOLE turn.
+        let forged = TURN_FORGED_WITNESS;
+        assert_eq!(
+            forged[22] + forged[23],
+            forged[20] + forged[21],
+            "the forgery STILL conserves step 1's two moved balances (the projection ghost)"
+        );
+        assert_ne!(
+            forged[35], forged[36],
+            "but the step-1 untouched-cell frame digest changed: the minted bystander shows up"
+        );
+
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, &forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            // Prover panicked on the broken step-1 frame-reuse gate: forgery rejected.
+            Err(_) => {}
+            // Prover produced a proof: verification MUST reject it.
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "WHOLE-TURN final-state third-cell-mint forgery MUST be rejected by the \
+                 step-1 frame-reuse gate, but a proof verified — the anti-ghost tooth failed"
+            ),
+        }
+    }
+
+    // ========================================================================
     // The v2 verifiable-execution beachhead tests (the non-cell effect family).
     //
     // Each test pastes the EXACT executor-derived witness bytes the Lean
@@ -1829,6 +1981,55 @@ mod tests {
             0, 0, 0, 0, 100000005000053, 70000035001003, 3, 3, 70000035000999, 70000035000050, 1, 1,
         ];
         v2_beachhead(BALANCEA_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-burn-v2`: per-asset supply destruction (touched = `bal`). The forged
+    /// post-state mints bystander cell 2 (50 → 999); the component-bind gate `68 = 69`
+    /// breaks. Goldens pinned by Lean's `Dregg2.Circuit.Witness.BurnAWitness`.
+    /// (Reuses the existing `BURN_DESCRIPTOR_JSON` const from the roundtrip test.)
+    #[test]
+    fn lean_executor_derived_burn_a() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000053, 70000054, 3, 3, 70000050, 70000050, 1, 1,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000053, 70001003, 3, 3, 70000999, 70000050, 1, 1,
+        ];
+        v2_beachhead(BURN_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-delegate-v2`: the Granovetter unattenuated held-cap copy (touched =
+    /// `kernel.caps`, a `funcComponent`). Honest: delegator 0 (holding `node 5`)
+    /// grants recipient 1 the held cap to target 5. The forged post-state has
+    /// recipient 1 STEAL an extra `node 9` cap on top of the honest grant; the
+    /// component-bind gate `68 = 69` breaks (the rest frame + guard stay honest, so
+    /// a projection circuit would have passed it). Goldens pinned by Lean's
+    /// `Dregg2.Circuit.Witness.DelegateWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    /// (Reuses `DELEGATE_DESCRIPTOR_JSON` — the SAME Lean-emitted v2 circuit the
+    /// hand-picked `lean_emitted_delegate_roundtrip` parses; the witness HERE is
+    /// executor-derived, not hand-picked.)
+    #[test]
+    fn lean_executor_derived_delegate() {
+        // Lean `DelegateWitness.honestWitnessJson` golden (recCDelegate post-state).
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1015001016000003, 3, 3, 1015001015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        // Lean `DelegateWitness.forgedWitnessJson` golden (recipient steals `node 9`):
+        // wire 68 (component-post digest) changes; 68 != 69.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1017019016000003, 3, 3, 1017019015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        v2_beachhead(DELEGATE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
     // ========================================================================
@@ -1924,5 +2125,101 @@ mod tests {
                 ("minted bystander cell", &forged_cell, 68, 69),
             ],
         );
+    }
+
+    /// `dregg-incrementNonceA-v1` (cell-touching monotone): actor 0 bumps cell 0's
+    /// nonce to 7. Forgeries: (F1) minted bystander cell 2 (50 → 999) ⇒ frame-reuse
+    /// gate `68=69` breaks; (F2) tampered receipt row ⇒ log-bind gate `72=73` breaks.
+    /// (A wrong-nonce forgery is invisible to the balance-only toy leaf hash; the
+    /// nonce soundness rides the abstract `cellLeafInjective` portal — see the Lean
+    /// `IncrementNonceWitness` ANTI-GHOST NOTE.)
+    const INCREMENT_NONCE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-incrementNonceA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_increment_nonce() {
+        // Lean `IncrementNonceWitness.honestWitnessJson`.
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000050, 1000100, 1000100, 1000000, 1000000,
+        ];
+        // `forgedCellWitnessJson` (minted bystander cell 2): wire 68 != 69.
+        let forged_cell: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000999, 1000100, 1000100, 1000000, 1000000,
+        ];
+        // `forgedLogWitnessJson` (tampered receipt row): wire 72 != 73.
+        let forged_log: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000050, 1000100, 1000100, 1009000, 1000000,
+        ];
+        v1_beachhead(
+            INCREMENT_NONCE_DESCRIPTOR_JSON,
+            &honest,
+            &[
+                ("minted bystander cell", &forged_cell, 68, 69),
+                ("tampered receipt row", &forged_log, 72, 73),
+            ],
+        );
+    }
+
+    /// `dregg-refusalA-v1`: the cell-state-audit refusal-slot write (v1 framework, width
+    /// 74, 5 gates). Forged post-state mints bystander cell 2 (50 → 999): the frame-reuse
+    /// gate `68 = 69` breaks while the refusal write + receipt log stay honest.
+    const REFUSALA_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-refusalA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_refusal() {
+        // Lean `RefusalWitness.honestWitnessJson` golden.
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000050, 1000100, 1000100, 1000000, 1000000,
+        ];
+        // `forgedCellWitnessJson` (minted bystander cell 2): wire 69 changes (68 != 69).
+        let forged_cell: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000999, 1000100, 1000100, 1000000, 1000000,
+        ];
+        v1_beachhead(
+            REFUSALA_DESCRIPTOR_JSON,
+            &honest,
+            &[("minted bystander cell", &forged_cell, 68, 69)],
+        );
+    }
+
+    // ========================================================================
+    // Batch B6: ten more v2/v5 effects on the verifiable-execution beachhead.
+    // Each pastes the EXACT executor-derived witness bytes the Lean
+    // `Dregg2.Circuit.Witness.<Effect>Witness` goldens pin, the Lean-emitted v2
+    // descriptor (4 gates, width 72), proves+verifies the honest witness, and
+    // asserts the REAL forged post-state breaks the component-bind gate `68=69`.
+    // ========================================================================
+
+    /// `dregg-revokeDelegationA-v2`: the cap-graph `removeEdge` (touched = `kernel.caps`,
+    /// a `funcComponent`). Honest: holder 0 (holding `[node 5, node 7]`) revokes the
+    /// `node 5` cap conferring an edge to target 5, leaving `[node 7]`. The forged
+    /// post-state FAILS to revoke (keeps `node 5`): the component-bind gate `68 = 69`
+    /// breaks while the rest frame + log stay honest. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.RevokeDelegationWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    const REVOKE_DELEGATION_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-revokeDelegationA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_revoke_delegation() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 501156, 1170813, 2, 2, 1170548, 1170548, 263, 263,
+        ];
+        // Forged: holder 0 keeps the un-revoked `node 5` cap; wire 68 (post caps digest) differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 501156, 501418, 2, 2, 501153, 1170548, 263, 263,
+        ];
+        v2_beachhead(REVOKE_DELEGATION_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 }
