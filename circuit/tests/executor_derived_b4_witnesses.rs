@@ -263,3 +263,32 @@ fn b4_executor_derived_queue_atomic_tx() {
         "queueAtomicTxA",
     );
 }
+
+// ===========================================================================
+// pipelinedSendA — v1 (`Dregg2.Circuit.Witness.PipelinedSendWitness`).
+// 74 wires, 5 gates (rest 66/67; frame-reuse 68/69; touched 70/71; log 72/73). Kernel frozen,
+// touched set = ∅. Forgery: bystander cell 2 minted 50 → 999 (tampered frozen frame) ⇒ frame
+// gate (68 ≠ 69) — the "pale ghost" the projection circuit would miss.
+// ===========================================================================
+
+const PIPELINEDSEND_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-pipelinedSendA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+const PIPELINEDSEND_HONEST: [i64; 74] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    980000348000459, 980000349000459, 3, 3, 3000100000005000050, 3000100000005000050, 0, 0, 1000000, 1000000,
+];
+
+const PIPELINEDSEND_FORGED: [i64; 74] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    980000348000459, 1929006043009000, 3, 3, 3000100000005000050, 3000100000005000999, 0, 0, 1000000, 1000000,
+];
+
+#[test]
+fn b4_executor_derived_pipelined_send() {
+    check_honest_proves_and_forged_rejects(
+        PIPELINEDSEND_DESCRIPTOR_JSON, 74, 5, &PIPELINEDSEND_HONEST, &PIPELINEDSEND_FORGED, 68, 69,
+        "pipelinedSendA",
+    );
+}
