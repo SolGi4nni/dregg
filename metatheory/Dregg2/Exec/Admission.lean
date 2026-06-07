@@ -51,6 +51,11 @@ structure AdmCtx where
   frozen      : List CellId
   storedHead  : Option Nat
   budget      : Nat
+  /-- The proposer cell credited 50% of the fee (`self.proposer_cell`); `none` ⇒ that share is burned
+  (`distribute_fee_shares`'s "missing cell => burned"). -/
+  proposer    : Option CellId := none
+  /-- The treasury cell credited 30% of the fee (`self.treasury_cell`); `none` ⇒ that share is burned. -/
+  treasury    : Option CellId := none
 deriving Repr
 
 /-- The clock dimension used for `validUntil` expiry: prefer `blockHeight` when wired, else `now`. -/
@@ -253,6 +258,112 @@ theorem commitPrologue_accounts (s : RecChainedState) (agent : CellId) (fee : In
 /-- The prologue appends no receipt: it edits state but leaves the receipt chain to the body. -/
 theorem commitPrologue_log (s : RecChainedState) (agent : CellId) (fee : Int) :
     (commitPrologue s agent fee).log = s.log := rfl
+
+/-! ## §4b — `distributeFee`: the faithful fee distribution (A2 — conservation-modulo-burn).
+
+`execute.rs::distribute_fee_shares`: after the body, the fee debited from the agent in PHASE 1 is
+distributed — **50% to the proposer, 30% to the treasury, the remaining ~20% BURNED** (and a `none`
+recipient cell ALSO burns its share). So conservation is NOT broken silently: it is
+conservation-MODULO-BURN. The agent loses `fee`; proposer/treasury gain `fee/2`/`fee*3/10`; exactly
+`feeBurned fee = fee − fee/2 − fee*3/10` leaves the supply (the protocol-intended sink). We implement
+the credits and PROVE the corrected invariant explicitly.
+
+`Int`-typed `fee` (balances are signed); the shares use integer division, matching `u64` `/`. -/
+
+/-- The proposer's share: `fee / 2` (50%), `Int` division (truncated, matching Rust `u64 /`). -/
+def proposerShare (fee : Int) : Int := fee / 2
+
+/-- The treasury's share: `fee * 3 / 10` (30%), `Int` division. -/
+def treasuryShare (fee : Int) : Int := fee * 3 / 10
+
+/-- The BURNED share: the residue `fee − proposerShare − treasuryShare` (≈ 20%, the protocol sink).
+A `none` proposer/treasury also routes its share here (the "missing cell => burned" branch). -/
+def feeBurned (fee : Int) : Int := fee - proposerShare fee - treasuryShare fee
+
+/-- Credit `amt` to cell `c`'s balance (the `set_balance(balance() + amt)` of `distribute_fee_shares`).
+Edits ONLY cell `c`; every other cell + side-table is untouched. -/
+def creditCell (s : RecChainedState) (c : CellId) (amt : Int) : RecChainedState :=
+  { s with kernel := { s.kernel with
+      cell := fun x => if x = c then setBalance (s.kernel.cell c) (balOf (s.kernel.cell c) + amt)
+                       else s.kernel.cell x } }
+
+theorem creditCell_balance (s : RecChainedState) (c : CellId) (amt : Int) :
+    balOf ((creditCell s c amt).kernel.cell c) = balOf (s.kernel.cell c) + amt := by
+  simp only [creditCell, if_true]; rw [setBalance_balOf]
+
+theorem creditCell_frame (s : RecChainedState) (c : CellId) (amt : Int) (x : CellId) (hx : x ≠ c) :
+    (creditCell s c amt).kernel.cell x = s.kernel.cell x := by
+  simp only [creditCell]; rw [if_neg hx]
+
+theorem creditCell_accounts (s : RecChainedState) (c : CellId) (amt : Int) :
+    (creditCell s c amt).kernel.accounts = s.kernel.accounts := rfl
+
+/-- Optionally credit a recipient: `some c ⇒ credit c amt`; `none ⇒ NO credit` (share burned). -/
+def creditOpt (s : RecChainedState) (rcpt : Option CellId) (amt : Int) : RecChainedState :=
+  match rcpt with | some c => creditCell s c amt | none => s
+
+/-- **`distributeFee`** — the post-body fee distribution: credit the proposer `fee/2`, the treasury
+`fee*3/10`, leaving `feeBurned fee` removed from supply. A `none` recipient burns its share. -/
+def distributeFee (ctx : AdmCtx) (s : RecChainedState) (fee : Int) : RecChainedState :=
+  creditOpt (creditOpt s ctx.proposer (proposerShare fee)) ctx.treasury (treasuryShare fee)
+
+/-! ### §4b.2 — The conservation-modulo-burn invariant (PROVED, non-vacuous).
+
+We track the conserved measure over the {agent, proposer, treasury} triple across the FULL prologue
+(fee-debit) + distribution. With the three cells DISTINCT, the post-turn sum equals the pre-turn sum
+MINUS exactly `feeBurned fee` — the burn is accounted for, NOT silently lost. -/
+
+/-- The combined balance of the three fee-relevant cells (the conserved measure A2 reasons over). -/
+def feeTriSum (s : RecChainedState) (agent p t : CellId) : Int :=
+  balOf (s.kernel.cell agent) + balOf (s.kernel.cell p) + balOf (s.kernel.cell t)
+
+/-- **`fee_conservation_modulo_burn` — THE A2 KEYSTONE (PROVED).** Across `commitPrologue` (agent
+−= fee) THEN `distributeFee` (proposer += fee/2, treasury += fee*3/10), over THREE DISTINCT cells, the
+triple's total drops by EXACTLY `feeBurned fee`. The fee is conserved modulo the protocol burn — no
+silent loss. (`agent ≠ p`, `agent ≠ t`, `p ≠ t`; `ctx.proposer = some p`, `ctx.treasury = some t`.) -/
+theorem fee_conservation_modulo_burn (ctx : AdmCtx) (s : RecChainedState)
+    (agent p t : CellId) (fee : Int)
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t)
+    (hap : agent ≠ p) (hat : agent ≠ t) (hpt : p ≠ t) :
+    feeTriSum (distributeFee ctx (commitPrologue s agent fee) fee) agent p t
+      = feeTriSum s agent p t - feeBurned fee := by
+  -- Unfold the distribution to the two sequential credits on p (fee/2) then t (fee*3/10).
+  simp only [distributeFee, creditOpt, hp, ht, feeTriSum]
+  -- agent balance after prologue: −fee; untouched by the two credits (both ≠ agent).
+  have hagent : balOf ((creditCell (creditCell (commitPrologue s agent fee) p (proposerShare fee))
+        t (treasuryShare fee)).kernel.cell agent) = balOf (s.kernel.cell agent) - fee := by
+    rw [creditCell_frame _ _ _ _ hat, creditCell_frame _ _ _ _ hap,
+        commitPrologue_balance]
+  -- proposer balance: +fee/2; the prologue (on agent) and the t-credit don't touch p.
+  have hprop : balOf ((creditCell (creditCell (commitPrologue s agent fee) p (proposerShare fee))
+        t (treasuryShare fee)).kernel.cell p) = balOf (s.kernel.cell p) + proposerShare fee := by
+    rw [creditCell_frame _ _ _ _ hpt, creditCell_balance, commitPrologue_frame _ _ _ _ (Ne.symm hap)]
+  -- treasury balance: +fee*3/10; the prologue (on agent) doesn't touch t.
+  have htreas : balOf ((creditCell (creditCell (commitPrologue s agent fee) p (proposerShare fee))
+        t (treasuryShare fee)).kernel.cell t) = balOf (s.kernel.cell t) + treasuryShare fee := by
+    rw [creditCell_balance, creditCell_frame _ _ _ _ (Ne.symm hpt),
+        commitPrologue_frame _ _ _ _ (Ne.symm hat)]
+  rw [hagent, hprop, htreas, feeBurned]; ring
+
+/-- The distribution touches NO cell outside {proposer, treasury}: a bystander cell `x` (distinct from
+both recipients) is unchanged. The fee distribution is local to the three fee cells. -/
+theorem distributeFee_frame (ctx : AdmCtx) (s : RecChainedState) (fee : Int) (p t x : CellId)
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hxp : x ≠ p) (hxt : x ≠ t) :
+    (distributeFee ctx s fee).kernel.cell x = s.kernel.cell x := by
+  simp only [distributeFee, creditOpt, hp, ht]
+  rw [creditCell_frame _ _ _ _ hxt, creditCell_frame _ _ _ _ hxp]
+
+/-- The distribution preserves the account set (it reprices existing cells only). -/
+theorem distributeFee_accounts (ctx : AdmCtx) (s : RecChainedState) (fee : Int) :
+    (distributeFee ctx s fee).kernel.accounts = s.kernel.accounts := by
+  simp only [distributeFee, creditOpt]
+  cases ctx.proposer <;> cases ctx.treasury <;> simp [creditCell_accounts]
+
+#assert_axioms creditCell_balance
+#assert_axioms creditCell_frame
+#assert_axioms fee_conservation_modulo_burn
+#assert_axioms distributeFee_frame
+#assert_axioms distributeFee_accounts
 
 /-! ## §5 — `runTurn`: admissible-gate ∘ committed-prologue ∘ rollback-able body.
 
@@ -516,5 +627,43 @@ def ah0 : TurnHdr :=
 
 -- An inadmissible turn is rejected with NO state edit (the agent is never charged):
 #guard ((runTurn ac0 { ah0 with nonce := 99 } as0 (fun _ => none)).isSome) == false  --  false
+
+/-! ### §10b — A2 non-vacuity: the fee distribution conserves MODULO BURN.
+
+Pre-state with agent 7 (bal 100), proposer 20 (bal 0), treasury 30 (bal 0). fee = 10 ⇒ proposer +5,
+treasury +3, burned 2. The triple's total drops by EXACTLY 2 (the burn) — not 10 (silent loss). -/
+
+/-- Pre-state: agent 7 (bal 100), proposer 20 (bal 0), treasury 30 (bal 0) — three distinct cells. -/
+def feeState : RecChainedState :=
+  { kernel := { accounts := {7, 20, 30}, caps := fun _ => [],
+                cell := fun c => if c = 7 then .record [("balance", .int 100), ("nonce", .int 3)]
+                                 else .record [("balance", .int 0)] },
+    log := [] }
+
+/-- Host context routing the fee to proposer 20 + treasury 30. -/
+def feeCtx : AdmCtx :=
+  { now := 50, frozen := [], storedHead := some 42, budget := 1000, proposer := some 20, treasury := some 30 }
+
+-- The shares of fee 10: proposer 5, treasury 3, burned 2 (5 + 3 + 2 = 10):
+#guard (proposerShare 10 == 5)
+#guard (treasuryShare 10 == 3)
+#guard (feeBurned 10 == 2)
+-- Agent 7: 100 − 10 = 90 after prologue+distribute; proposer 20: 0 + 5; treasury 30: 0 + 3:
+#guard (balOf ((distributeFee feeCtx (commitPrologue feeState 7 10) 10).kernel.cell 7) == 90)
+#guard (balOf ((distributeFee feeCtx (commitPrologue feeState 7 10) 10).kernel.cell 20) == 5)
+#guard (balOf ((distributeFee feeCtx (commitPrologue feeState 7 10) 10).kernel.cell 30) == 3)
+-- THE A2 TEETH: the triple total drops by EXACTLY the burn (2), NOT the whole fee (10 = silent loss):
+#guard (feeTriSum (distributeFee feeCtx (commitPrologue feeState 7 10) 10) 7 20 30
+        == feeTriSum feeState 7 20 30 - 2)  --  100 → 98 (−2 = burn, conserved modulo burn)
+#guard (feeTriSum feeState 7 20 30 == 100)            --  before
+#guard (feeTriSum (distributeFee feeCtx (commitPrologue feeState 7 10) 10) 7 20 30 == 98)  --  after
+-- TAMPER guard: the WRONG invariant (claiming the whole fee is conserved, drop 0) is FALSE — the burn
+-- is real, not silently zero. (If `feeBurned` were 0 the prologue would silently lose 10.)
+#guard ((feeTriSum (distributeFee feeCtx (commitPrologue feeState 7 10) 10) 7 20 30
+        == feeTriSum feeState 7 20 30) == false)  --  false: NOT fully conserved (10 ≠ 0 burn)
+#guard ((feeTriSum (distributeFee feeCtx (commitPrologue feeState 7 10) 10) 7 20 30
+        == feeTriSum feeState 7 20 30 - 10) == false)  --  false: NOT fully BURNED either (burn is 2, not 10)
+-- A bystander cell (cell 1 ∉ {20,30}) is untouched by the distribution:
+#guard (balOf ((distributeFee feeCtx (commitPrologue feeState 7 10) 10).kernel.cell 1) == 0)
 
 end Dregg2.Exec.Admission
