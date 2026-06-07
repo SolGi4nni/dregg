@@ -2,13 +2,30 @@ chapter AFP
 
 session Dregg2_UC = "Sigma_Commit_Crypto" +
   description "
-    Cross-system transport of the dregg2 UC-relevant commitment definitions into a real
-    game-based / UC framework (CryptHOL + Sigma_Commit_Crypto).  Defines the ideal
-    commitment functionality F_com and proves the dregg2 Pedersen commitment realizes it:
-    correctness + perfect hiding + binding-reduces-to-DLog (negligible under DLog hardness).
+    Cross-system transport of the dregg2 UC-relevant cryptography into a real game-based / UC
+    framework (CryptHOL + Sigma_Commit_Crypto + Game_Based_Crypto).
+
+    Dregg2_FCom      — F_com: the dregg2 Pedersen commitment realizes the ideal commitment
+                       functionality: correctness + perfect hiding + binding-reduces-to-DLog
+                       (negligible under DLog hardness).  Discharges the Lean `binding`/`unlinkable`
+                       carriers (Primitives.lean / PortalFloor.lean §3).
+    Dregg2_Carriers  — the OTHER §8 portal carriers as real game-based assumptions: ed25519/HMAC
+                       `unforgeable` via the AFP signature game (suf_cma, negligible advantage),
+                       and Poseidon2/BLAKE3 `collisionHard` via a game-based CR experiment.  Each
+                       with inhabitation + refutation non-vacuity witnesses (PortalFloor.lean §1/§4/
+                       §5/§8).
+    Dregg2_FDregg    — the WHOLE-PROTOCOL UC scaffold: the ideal functionality F_dregg (a
+                       capability-ledger: authorized transitions, conservation, no-amplification),
+                       its perfect/structural safety fragment PROVED, and the realizes-relation
+                       Dregg2RealizesFDregg stated in the Constructive_Cryptography advantage shape
+                       with the computational reduction honestly OPEN (carried as a hypothesis).
   "
-  options [timeout = 1200]
+  options [timeout = 1800]
   sessions
     "Sigma_Commit_Crypto"
+    "Game_Based_Crypto"
+    "CryptHOL"
   theories
     Dregg2_FCom
+    Dregg2_Carriers
+    Dregg2_FDregg
