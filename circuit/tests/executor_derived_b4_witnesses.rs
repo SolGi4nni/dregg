@@ -147,3 +147,30 @@ fn b4_executor_derived_note_spend() {
         NOTESPEND_DESCRIPTOR_JSON, 72, 4, &NOTESPEND_HONEST, &NOTESPEND_FORGED, 68, 69, "noteSpendA",
     );
 }
+
+// ===========================================================================
+// queueAllocateA — v2 (`Dregg2.Circuit.Witness.QueueAllocateWitness`).
+// Forgery: bystander queue (id 5) capacity 4 → 999 (tampered side-table) ⇒ bind gate (68 ≠ 69).
+// ===========================================================================
+
+const QUEUEALLOCATE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queueAllocateA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+const QUEUEALLOCATE_HONEST: [i64; 72] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1000000000501004002, 2501004000901008002, 2, 2, 2501004000900008000, 2501004000900008000, 1000000, 1000000,
+];
+
+const QUEUEALLOCATE_FORGED: [i64; 72] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1000000000501004002, 2501999000901008002, 2, 2, 2501999000900008000, 2501004000900008000, 1000000, 1000000,
+];
+
+#[test]
+fn b4_executor_derived_queue_allocate() {
+    check_honest_proves_and_forged_rejects(
+        QUEUEALLOCATE_DESCRIPTOR_JSON, 72, 4, &QUEUEALLOCATE_HONEST, &QUEUEALLOCATE_FORGED, 68, 69,
+        "queueAllocateA",
+    );
+}
