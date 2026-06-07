@@ -2696,6 +2696,57 @@ mod tests {
         v2_beachhead(SWISS_DROP_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-setPermissionsA-v1`: the cell-permissions-slot write (v1 framework, width 74, 5 gates).
+    /// Honest: actor 0 = cell 0 (self-owned, Live) sets its permissions slot. The forged post-state
+    /// mints bystander cell 2 (50 → 999): the frame-reuse gate `68 = 69` breaks while the touched
+    /// write + log stay honest. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SetPermissionsWitness.{honest,forgedCell}WitnessJson`.
+    const SET_PERMISSIONS_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-setPermissionsA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_set_permissions() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000050, 1000100, 1000100, 1000000, 1000000,
+        ];
+        let forged_cell: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000999, 1000100, 1000100, 1000000, 1000000,
+        ];
+        v1_beachhead(
+            SET_PERMISSIONS_DESCRIPTOR_JSON,
+            &honest,
+            &[("minted bystander cell", &forged_cell, 68, 69)],
+        );
+    }
+
+    /// `dregg-setVKA-v1`: the cell-verifying-key-slot write (v1 framework, width 74, 5 gates). Honest:
+    /// actor 0 = cell 0 sets its vk slot. The forged post-state mints bystander cell 2; the frame-reuse
+    /// gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SetVKWitness.{honest,forgedCell}WitnessJson`.
+    const SET_VK_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-setVKA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_set_vk() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000050, 1000100, 1000100, 1000000, 1000000,
+        ];
+        let forged_cell: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 2000005000050, 2000005000999, 1000100, 1000100, 1000000, 1000000,
+        ];
+        v1_beachhead(
+            SET_VK_DESCRIPTOR_JSON,
+            &honest,
+            &[("minted bystander cell", &forged_cell, 68, 69)],
+        );
+    }
+
     // ========================================================================
     // Batch B3 (escrow + queue families): two v2-DUAL effects (width 74, 5 gates:
     // guard, rest 66/67, bind1 68/69, bind2 70/71, log 72/73) and two v2 queue-list
@@ -2795,6 +2846,79 @@ mod tests {
             0, 0, 0, 0, 395231, 195352, 3, 3, 195086, 1557154, 263, 263,
         ];
         v2_beachhead(QUEUE_PIPELINE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-delegateAttenA-v2`: the GATED, ATTENUATED authority grant (touched =
+    /// `kernel.caps`). Honest: delegator 0 (holding `node 5`) attenuated-grants
+    /// recipient 1 the held cap to target 5 (keep = [write]). Forged: recipient 1
+    /// STEALS an extra `node 9` cap on top of the grant; the component-bind gate
+    /// `68 = 69` breaks (rest frame + guard stay honest). Goldens from Lean
+    /// `Dregg2.Circuit.Witness.DelegateAttenWitness.{honest,forged}WitnessJson`.
+    const DELEGATE_ATTEN_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-delegateAttenA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_delegate_atten() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1015001016000003, 3, 3, 1015001015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        // Forged: recipient steals `node 9`; wire 68 (component-post digest) differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1017019016000003, 3, 3, 1017019015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        v2_beachhead(DELEGATE_ATTEN_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-dropRefA-v2`: the CapTP GC drop (UNCONDITIONAL cap-graph removeEdge,
+    /// touched = `kernel.caps`). Honest: holder 0 (`[node 5, node 7]`) drops the ref
+    /// to target 5 → `[node 7]`. Forged: the post `caps` FAIL to drop (holder keeps
+    /// `node 5`); the component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.DropRefWitness.{honest,forged}WitnessJson`.
+    const DROP_REF_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-dropRefA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_drop_ref() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 501156, 1170813, 2, 2, 1170548, 1170548, 263, 263,
+        ];
+        // Forged: post caps un-revoked (holder keeps node 5); wire 68 differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 501156, 501418, 2, 2, 501153, 1170548, 263, 263,
+        ];
+        v2_beachhead(DROP_REF_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-introduceA-v2`: the authority-INTRODUCE (unattenuated held-cap copy,
+    /// touched = `kernel.caps`). Honest: introducer 0 (`node 5`) introduces recipient
+    /// 1 to target 5. Forged: recipient 1 STEALS an extra `node 9` cap; the
+    /// component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.IntroduceWitness.{honest,forged}WitnessJson`.
+    const INTRODUCE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-introduceA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_introduce() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1015001016000003, 3, 3, 1015001015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1015000000000003, 1017019016000003, 3, 3, 1017019015000000, 1015001015000000,
+            1000000, 1000000,
+        ];
+        v2_beachhead(INTRODUCE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
 }
