@@ -608,6 +608,20 @@ impl WitnessedProofVerifier {
     }
 }
 
+/// **Public differential hook** for [`check_settlement_conservation`].
+///
+/// Exposes the engine's structural ring-conservation decision (no phantom
+/// value / per-asset balance / cycle closure) so the
+/// `tests/ring_settlement_differential.rs` harness can PIN it against the
+/// verified executor's per-asset conservation+atomicity semantics (the Lean
+/// `Dregg2.Intent.Ring.settleRing_conserves` / `settleRing_atomic` keystones).
+/// Returns `Ok(())` iff the Rust engine would accept the ring as conserving.
+/// This is the same accept/reject the verified `recKExecAsset` fold must
+/// reproduce — the differential asserts they agree over a ring corpus.
+pub fn ring_conservation_decision(solution: &[RingTrade]) -> Result<(), String> {
+    check_settlement_conservation(solution).map_err(|e| e.to_string())
+}
+
 /// Verify that a slice of ring trades conserves value.
 ///
 /// A ring trade is a **cycle** of transfers. Soundly enforceable structural
