@@ -609,6 +609,7 @@ fn effect_to_wire(
     eff: &Effect,
     pre: &ShadowPreLedger,
     fresh_seq: &mut u64,
+    agent: &CellId,
 ) -> Option<WireAction> {
     let id_map = &pre.id_map;
     let id = |c: &CellId| id_map.get(c).copied();
@@ -692,14 +693,22 @@ fn effect_to_wire(
         //
         // IncrementNonce: dregg1 bumps the cell nonce by 1 (`apply.rs` IncrementNonce). The
         // verified `.incrementNonceA` routes to the authority-gated `stateStep` (`stateAuthB ∧
-        // target∈accounts ∧ cellLive`), which SETS the nonce field to the carried value — so we
-        // carry the post-increment value (`pre_nonce + 1`). The commit-bit depends only on the
-        // gate (ownership/c-list authority + liveness), which matches apply.rs for a self-owned
-        // live cell; the exact value is ledger-faithful too.
+        // target∈accounts ∧ cellLive`), which SETS the nonce field to the carried value.
+        //
+        // PROLOGUE-TICK INTERACTION (real swap-gap found by the producer differential, fixed
+        // here): the turn PROLOGUE — run by BOTH executors and NEVER rolled back — already ticks
+        // the AGENT's nonce by 1 (Rust `execute.rs` PHASE 1; the verified `admissible`/prologue
+        // does the same). So when the incremented `cell` IS the agent, its post-state nonce is
+        // `pre_nonce + 2` (prologue tick + the effect's increment); for any OTHER cell the
+        // prologue did not touch it, so the post-state nonce is `pre_nonce + 1`. Carrying a flat
+        // `pre_nonce + 1` for a self-increment CLOBBERS the prologue tick — the differential caught
+        // exactly this (`rust=2 lean=1`). We add the prologue tick iff `cell == agent`.
         Effect::IncrementNonce { cell } => WireAction::IncNonce {
             actor,
             cell: id(cell)?,
-            new_nonce: (pre_nonce_of(pre, cell) as i128) + 1,
+            new_nonce: (pre_nonce_of(pre, cell) as i128)
+                + 1
+                + if cell == agent { 1 } else { 0 },
         },
         // Refusal: the proof-of-non-action bumps the target cell's nonce + records the refusal
         // (dregg1 `apply.rs` Refusal). `.refusalA` routes to `stateStep` on the refusal field
@@ -1077,7 +1086,7 @@ fn flatten_forest_actions_full(
     // cell/queue gets a distinct never-snapshotted wire Nat (no cross-effect id collision).
     let mut fresh_seq: u64 = 0;
     for root in &turn.call_forest.roots {
-        flatten_tree_full(root, pre, &mut out, &mut fresh_seq)?;
+        flatten_tree_full(root, pre, &mut out, &mut fresh_seq, &turn.agent)?;
     }
     if out.is_empty() {
         return None;
@@ -1091,18 +1100,19 @@ fn flatten_tree_full(
     pre: &ShadowPreLedger,
     out: &mut Vec<FullMapped>,
     fresh_seq: &mut u64,
+    agent: &CellId,
 ) -> Option<()> {
     let actor = *pre.id_map.get(&tree.action.target)?;
     let wire_auth = auth_to_wire(&tree.action.authorization);
     for eff in &tree.action.effects {
-        let action = effect_to_wire(actor, eff, pre, fresh_seq)?;
+        let action = effect_to_wire(actor, eff, pre, fresh_seq, agent)?;
         out.push(FullMapped {
             action,
             wire_auth: wire_auth.clone(),
         });
     }
     for child in &tree.children {
-        flatten_tree_full(child, pre, out, fresh_seq)?;
+        flatten_tree_full(child, pre, out, fresh_seq, agent)?;
     }
     Some(())
 }

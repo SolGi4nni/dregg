@@ -26,14 +26,46 @@
 //!
 //! # Root computation (deliberately Rust-side)
 //!
-//! Lean produces the STATE; the EXISTING Rust hashing (`Ledger::root` / `hash_cell`) computes the
-//! commitment. We do NOT ask Lean to compute the root — root-scheme unification is a separate later
-//! task. Here: Lean produces the cells, Rust hashes them.
+//! Lean produces the STATE; the EXISTING Rust hashing (`Ledger::root` / `hash_cell` =
+//! `compute_canonical_state_commitment`) computes the commitment. We do NOT ask Lean to compute the
+//! root — root-scheme unification is a separate later task. Here: Lean produces the cells, Rust
+//! hashes them.
+//!
+//! # What the cell commitment binds — and the wire-model swap-gaps it reveals
+//!
+//! `compute_canonical_state_commitment` hashes, per cell:
+//! `(balance, nonce, fields[0..8], permissions, verification_key, cap_root, lifecycle, program)`.
+//! So for the Lean-produced ledger's `.root()` to equal the Rust-produced one, the reconstitution
+//! must install the post-state of EVERY one of those that an effect can touch. The verified
+//! `WireState` carries enough to reconstitute:
+//!   * `balance` (via the per-asset `bal` side-table) — Transfer / Burn;
+//!   * `nonce`, `fields[0..8]` (the cell record) — SetField / IncrementNonce;
+//!   * `cap_root` (via the `caps` side-table → [`rebuild_capabilities`]) — best-effort, lossy.
+//!
+//! The `WireState` does NOT carry, and the reconstitution therefore CANNOT reproduce against a
+//! mutated Rust post-state (these are genuine SWAP-GAPS, surfaced by the differential, NOT hidden):
+//!   * **`lifecycle`** — the wire cell record has no lifecycle field. CellSeal / CellUnseal /
+//!     CellDestroy mutate `lifecycle` in Rust → `.root()` diverges. The reconstitution carries the
+//!     template lifecycle FORWARD (unchanged), so the divergence is exact and detectable.
+//!   * **`permissions`** — the wire `setperms` arm carries a collapsed scalar; the produced
+//!     `WireState` does not echo the full `Permissions` struct, so SetPermissions diverges.
+//!   * **`verification_key`** — likewise, `setvk` carries a collapsed scalar.
+//!   * **cap fidelity** — the wire `caps` model is `(target[, rights])` per edge; the Rust
+//!     `cap_root` hashes `(target, slot, permissions, breadstuff, expires_at, allowed_effects)`, so
+//!     a real GrantCapability's `cap_root` diverges (see [`rebuild_capabilities`]).
+//!
+//! Off-cell-commitment side-tables — escrows, queues, swiss, nullifiers, commitments — do NOT feed
+//! `cell::Ledger::root()` at all (the Rust `TurnExecutor` keeps them OUTSIDE the `Ledger`), so an
+//! escrow/queue/note effect's cell-ledger reconstitution agrees on `.root()` as long as it leaves
+//! the touched CELLS' commitment fields unchanged — which they do (those effects are bal/structural,
+//! not cell-scalar). The differential exercises a representative turn per family to pin exactly
+//! which families round-trip and which are gaps.
 
 use std::collections::HashMap;
 
+use dregg_cell::permissions::AuthRequired;
 use dregg_cell::{Cell, CellId, Ledger};
-use dregg_lean_ffi::marshal::{WireState, WireValue};
+use dregg_lean_ffi::marshal::{Cap, WireState, WireValue};
 
 use crate::executor::TurnExecutor;
 use crate::lean_shadow::{self, ShadowHostCtx};
@@ -123,6 +155,49 @@ fn invert_id_map(id_map: &HashMap<CellId, u64>) -> HashMap<u64, CellId> {
     id_map.iter().map(|(cid, nat)| (*nat, *cid)).collect()
 }
 
+/// Rebuild a cell's `CapabilitySet` from the verified executor's produced `caps` side-table edges.
+///
+/// The wire `caps` carries, per holder, a list of `Cap` (`Null` / `Node(target)` /
+/// `Endpoint(target, rights)`). The verified kernel's delegate/revoke effects mutate THIS table
+/// (an edge is the holder's authority over `target`); to install the produced cap post-state we
+/// rebuild the cell's c-list from the produced edges, resolving each `target` wire Nat back to a
+/// real `CellId` via the inverse id map.
+///
+/// # The cap-fidelity swap-gap (surfaced, never papered)
+///
+/// The Rust `cap_root` (which feeds `Ledger::root()`) hashes the FULL `CapabilityRef`
+/// — `(target, slot, permissions, breadstuff, expires_at, allowed_effects)`. The wire `caps`
+/// model carries ONLY `(target[, rights])` per edge; it drops the per-cap `slot` numbering,
+/// `breadstuff`, `expires_at`, and `allowed_effects`. So a rebuilt cap set canonically hashes to
+/// the SAME `cap_root` as the Rust one ONLY when the Rust caps are all bare `node`-shaped edges
+/// with `AuthRequired::None`, no breadstuff/expiry/facet, AND the slot numbering coincides
+/// (slot = insertion order). For a real `GrantCapability` (which grants `cap.permissions` at a
+/// FRESH slot, possibly with a breadstuff) the rebuilt `cap_root` DIVERGES — a genuine swap-gap
+/// (the wire cap model is lossier than the cell commitment), surfaced by the differential, never
+/// hidden. `node`/`endpoint` rights both map to `AuthRequired::None` (full authority); the wire
+/// `Auth` rights list does not map onto the `AuthRequired` lattice (another characterised gap).
+///
+/// An edge whose `target` wire Nat has no inverse (an above-snapshot fresh id) is reported.
+fn rebuild_capabilities(
+    edges: &[Cap],
+    inv_id_map: &HashMap<u64, CellId>,
+) -> Result<dregg_cell::capability::CapabilitySet, ExtractError> {
+    let mut set = dregg_cell::capability::CapabilitySet::new();
+    for cap in edges {
+        let target_nat = match cap {
+            Cap::Null => continue,
+            Cap::Node(t) => *t,
+            Cap::Endpoint(t, _rights) => *t,
+        };
+        let target = *inv_id_map
+            .get(&target_nat)
+            .ok_or(ExtractError::UnknownCellNat(target_nat))?;
+        // Bare full-authority edge: the most the wire `caps` model carries.
+        set.grant(target, AuthRequired::None);
+    }
+    Ok(set)
+}
+
 /// THE EXTRACTOR. Reconstitute a `cell::Ledger` from a verified-executor-produced `WireState`.
 ///
 /// `inv_id_map` inverts the pre-state Nat labelling; `template` is the pre-state ledger whose cells
@@ -152,6 +227,15 @@ pub fn wire_state_to_ledger(
         .filter(|(_, asset, _)| *asset == 0)
         .map(|(cell, _, amt)| (*cell, *amt))
         .collect();
+
+    // The produced CAPS side-table, keyed by holder Nat. The verified delegate/revoke effects
+    // mutate this table; we install the rebuilt c-list onto every holder cell so the produced cap
+    // post-state (→ each cell's `cap_root` → the merkle root) is reconstituted, not dropped. (See
+    // `rebuild_capabilities` for the cap-fidelity swap-gap this surfaces.)
+    let mut caps_by_holder: HashMap<u64, &Vec<Cap>> = HashMap::new();
+    for (holder, edges) in &ws.caps {
+        caps_by_holder.insert(*holder, edges);
+    }
 
     for (nat, value) in &ws.cells {
         let cell_id = *inv_id_map
@@ -186,6 +270,35 @@ pub fn wire_state_to_ledger(
             }
         }
 
+        // Install the produced c-list (cap_root → merkle root). A produced cell with NO `caps`
+        // entry is taken to hold the EMPTY c-list (the kernel's `capsOfState` only carries a
+        // holder when it has edges), so we rebuild from the (possibly empty) wire edge list.
+        let empty: Vec<Cap> = Vec::new();
+        let edges = caps_by_holder.get(nat).copied().unwrap_or(&empty);
+        cell.capabilities = rebuild_capabilities(edges, inv_id_map)?;
+
+        out_cells.insert(cell_id, cell);
+    }
+
+    // A holder that appears ONLY in the `caps` table (its scalar cell state was unchanged, so the
+    // kernel did not re-emit it under `cells`) still had its c-list edited — install it onto the
+    // template cell so the produced cap post-state is not silently dropped.
+    for (holder_nat, edges) in &ws.caps {
+        if produced_ids
+            .iter()
+            .any(|cid| inv_id_map.get(holder_nat) == Some(cid))
+        {
+            continue; // already handled in the cells loop
+        }
+        let Some(&cell_id) = inv_id_map.get(holder_nat) else {
+            return Err(ExtractError::UnknownCellNat(*holder_nat));
+        };
+        let mut cell = template
+            .get(&cell_id)
+            .cloned()
+            .ok_or(ExtractError::NoTemplateCell { nat: *holder_nat, cell: cell_id })?;
+        cell.capabilities = rebuild_capabilities(edges, inv_id_map)?;
+        produced_ids.insert(cell_id);
         out_cells.insert(cell_id, cell);
     }
 
