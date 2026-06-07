@@ -44,13 +44,16 @@ allocate / enqueue / dequeue). For each effect we:
 `releaseStep`, `refundStep` — the actor-gated R2 steps) and the kernel queue ops.
 -/
 import Dregg2.Exec.Handlers.Escrow
+import Dregg2.Exec.Handlers.StateSupply
+import Dregg2.Exec.Handlers.Authority
 
 namespace Dregg2.Spec.FunctionalRefinement
 
 open Dregg2.Authority Dregg2.Execution
 open Dregg2.Exec
 open Dregg2.Exec.Handlers.Escrow
-open Dregg2.Exec.TurnExecutorFull (acceptsEffects)
+open Dregg2.Exec.TurnExecutorFull
+  (acceptsEffects recKMintAsset recKBurnAsset recBalCredit attenuateSlotF)
 
 /-! ## §0 — The independent intent-level vocabulary.
 
@@ -479,5 +482,403 @@ def fxLocked : RecordKernelState := escrowCreateSpec fx caCreate
 #assert_axioms queueEnqueue_antighost
 #assert_axioms queueDequeue_triangle
 #assert_axioms queueDequeue_antighost
+
+/-! ## §6 — THIRD FAMILY: VALUE SUPPLY (mint / burn) — the per-asset supply triangle.
+
+The supply ops (`Handlers.StateSupply.mintStep`/`burnStep`) move the ONE quantity that legitimately
+changes the conserved per-asset measure. We give each an INDEPENDENT intent spec over the `bal`
+ledger (the asset-`a` column of cell `c` rises/falls by `amt`, every OTHER (cell, asset) pair
+literally untouched — `intentCredit`/`intentDebit`, the SAME intent oracles §0 wrote from protocol
+intent) and prove the triangle + anti-ghost tooth. A wrong amount / wrong asset / wrong holder is
+REJECTED — the supply move is pinned to the unique intent post-state.
+
+The executor commits via the kernel op `recBalCredit cell a (±amt)`; our spec commits via the
+independent `intentCredit`/`intentDebit cell a amt`. They are EQUAL (`intentCredit_eq_balCredit`),
+proving the executor moves the INTENDED column — it would be FALSE if it credited the wrong cell,
+the wrong asset, or the wrong sign. -/
+
+open Dregg2.Exec.Handlers.StateSupply (SupplyArgs mintStep burnStep)
+
+/-- The executor's per-asset single-cell move `recBalCredit` coincides pointwise with the intent
+oracle `intentCredit` (both add a signed delta to ONE (cell, asset) column). An independent-function
+equality bridging the SPEC (intent) and the EXECUTOR (kernel op) — it would be FALSE if the executor
+spilled the credit onto another column. -/
+theorem intentCredit_eq_balCredit (bal : CellId → AssetId → ℤ) (c : CellId) (a : AssetId) (amt : ℤ) :
+    intentCredit bal c a amt = recBalCredit bal c a amt := by
+  funext x b; unfold intentCredit recBalCredit
+  by_cases h : x = c ∧ b = a
+  · simp only [if_pos h]
+  · simp only [if_neg h]
+
+/-- The intent DEBIT coincides with the executor's `recBalCredit … (-amt)` (the burn move): both
+subtract `amt` from ONE (cell, asset) column. The burn-side bridge (the `recKBurnAsset` op commits
+`recBalCredit … (-amt)`, distinct from `RecordKernel.recBalCreditCell` used by `intentDebit_eq_credit`). -/
+theorem intentDebit_eq_balCredit (bal : CellId → AssetId → ℤ) (c : CellId) (a : AssetId) (amt : ℤ) :
+    intentDebit bal c a amt = recBalCredit bal c a (-amt) := by
+  funext x b; unfold intentDebit recBalCredit
+  by_cases h : x = c ∧ b = a
+  · simp only [if_pos h]; ring
+  · simp only [if_neg h]
+
+/-- **`mintSpec` — the INDEPENDENT declarative post-state of a per-asset mint.** Cell `a.cell`'s
+asset-`a.asset` column rises by `a.amt` (`intentCredit`); EVERYTHING ELSE (accounts, caps, escrows,
+nullifiers, every other (cell, asset) column) untouched. Written from supply intent ("coin `amt`
+of `asset` into `cell`"), NOT from `recKMintAsset`. -/
+def mintSpec (k : RecordKernelState) (a : SupplyArgs) : RecordKernelState :=
+  { k with bal := intentCredit k.bal a.cell a.asset a.amt }
+
+/-- **`burnSpec` — the INDEPENDENT declarative post-state of a per-asset burn.** The dual: cell
+`a.cell`'s asset-`a.asset` column FALLS by `a.amt` (`intentDebit`); all else fixed. Written from
+intent ("annihilate `amt` of `asset` from `cell`"). -/
+def burnSpec (k : RecordKernelState) (a : SupplyArgs) : RecordKernelState :=
+  { k with bal := intentDebit k.bal a.cell a.asset a.amt }
+
+/-- The mint gate (intent-level precondition), re-expressed as the conjunction the executor checks:
+the target cell is Live (`acceptsEffects`), the actor holds PRIVILEGED mint authority (a `node`/
+`control` cap — not bare ownership), the amount is non-negative, and the cell is a live account. -/
+def mintGate (k : RecordKernelState) (a : SupplyArgs) : Prop :=
+  acceptsEffects k a.cell = true ∧
+  mintAuthorizedB k.caps a.actor a.cell = true ∧ 0 ≤ a.amt ∧ a.cell ∈ k.accounts
+
+/-- The burn gate: the mint gate PLUS availability in the burned asset's column (you cannot burn
+more than the cell holds). -/
+def burnGate (k : RecordKernelState) (a : SupplyArgs) : Prop :=
+  acceptsEffects k a.cell = true ∧
+  mintAuthorizedB k.caps a.actor a.cell = true ∧ 0 ≤ a.amt ∧ a.amt ≤ k.bal a.cell a.asset ∧
+  a.cell ∈ k.accounts
+
+/-- **THE MINT TRIANGLE (PROVED, FULL BICONDITIONAL).** `mintStep k a = some k'` IFF the mint gate
+holds AND `k' = mintSpec k a`. The `→` is output-uniqueness (a commit pins the unique intent
+post-state — the credit lands on EXACTLY cell `a.cell`'s asset `a.asset` column, by EXACTLY `+a.amt`,
+strictly stronger than `recTotalAsset += amt`); the `←` is completeness (the gate suffices). -/
+theorem mint_triangle (k k' : RecordKernelState) (a : SupplyArgs) :
+    mintStep k a = some k' ↔ (mintGate k a ∧ k' = mintSpec k a) := by
+  unfold mintStep recKMintAsset mintGate mintSpec
+  constructor
+  · intro h
+    by_cases hadm : acceptsEffects k a.cell = true
+    · rw [if_pos hadm] at h
+      by_cases hg : mintAuthorizedB k.caps a.actor a.cell = true ∧ 0 ≤ a.amt ∧ a.cell ∈ k.accounts
+      · rw [if_pos hg] at h; simp only [Option.some.injEq] at h
+        obtain ⟨hauth, hamt, hacc⟩ := hg
+        refine ⟨⟨hadm, hauth, hamt, hacc⟩, ?_⟩
+        rw [← h, intentCredit_eq_balCredit]
+      · rw [if_neg hg] at h; exact absurd h (by simp)
+    · rw [if_neg hadm] at h; exact absurd h (by simp)
+  · rintro ⟨⟨hadm, hauth, hamt, hacc⟩, hk⟩
+    rw [if_pos hadm, if_pos ⟨hauth, hamt, hacc⟩, hk, intentCredit_eq_balCredit]
+
+/-- **ANTI-GHOST TOOTH (mint, PROVED).** Any candidate `k'' ≠ mintSpec k a` is REJECTED — a mint
+that credited a WRONG amount, the WRONG asset, the WRONG cell, or touched a 2nd column cannot come
+out of `mintStep`. The supply move is pinned to the unique intent post-state. -/
+theorem mint_antighost (k k'' : RecordKernelState) (a : SupplyArgs)
+    (hne : k'' ≠ mintSpec k a) : mintStep k a ≠ some k'' := by
+  intro h
+  exact hne ((mint_triangle k k'' a).mp h).2
+
+/-- **THE BURN TRIANGLE (PROVED, FULL BICONDITIONAL).** `burnStep k a = some k'` IFF the burn gate
+(incl. availability in the burned asset) holds AND `k' = burnSpec k a`. The `→` pins the unique
+intent post-state (the DEBIT lands on EXACTLY cell `a.cell`'s asset `a.asset` column, by EXACTLY
+`-a.amt`); the `←` is completeness. -/
+theorem burn_triangle (k k' : RecordKernelState) (a : SupplyArgs) :
+    burnStep k a = some k' ↔ (burnGate k a ∧ k' = burnSpec k a) := by
+  unfold burnStep recKBurnAsset burnGate burnSpec
+  constructor
+  · intro h
+    by_cases hadm : acceptsEffects k a.cell = true
+    · rw [if_pos hadm] at h
+      by_cases hg : mintAuthorizedB k.caps a.actor a.cell = true ∧ 0 ≤ a.amt
+          ∧ a.amt ≤ k.bal a.cell a.asset ∧ a.cell ∈ k.accounts
+      · rw [if_pos hg] at h; simp only [Option.some.injEq] at h
+        obtain ⟨hauth, hamt, havail, hacc⟩ := hg
+        refine ⟨⟨hadm, hauth, hamt, havail, hacc⟩, ?_⟩
+        rw [← h, intentDebit_eq_balCredit]
+      · rw [if_neg hg] at h; exact absurd h (by simp)
+    · rw [if_neg hadm] at h; exact absurd h (by simp)
+  · rintro ⟨⟨hadm, hauth, hamt, havail, hacc⟩, hk⟩
+    rw [if_pos hadm, if_pos ⟨hauth, hamt, havail, hacc⟩, hk, intentDebit_eq_balCredit]
+
+/-- **ANTI-GHOST TOOTH (burn, PROVED).** Any candidate `k'' ≠ burnSpec k a` is REJECTED. -/
+theorem burn_antighost (k k'' : RecordKernelState) (a : SupplyArgs)
+    (hne : k'' ≠ burnSpec k a) : burnStep k a ≠ some k'' := by
+  intro h
+  exact hne ((burn_triangle k k'' a).mp h).2
+
+/-! ## §7 — FOURTH FAMILY: AUTHORITY (delegate / attenuate / revoke) — the cap-table triangle.
+
+The cap-graph ops (`Handlers.Authority.delegateAttenStep`/`attenuateStep`/`revokeStep`) move the
+`caps` side-table. We give each an INDEPENDENT intent spec over the cap function and prove the
+triangle + anti-ghost tooth, pinning the EXACT resulting cap set (non-amplification is proven
+ELSEWHERE — `delegateAttenH_non_amplifying`; here we pin the WHOLE cap function so an over-broad or
+wrong-target cap edge is excluded as a ghost). Delegate is gated (Granovetter premise ⇒ a full
+biconditional); attenuate/revoke are TOTAL (always commit ⇒ the load-bearing `→` output-uniqueness
+direction is the whole content, the gate being trivially `true`). -/
+
+open Dregg2.Exec.Handlers.Authority
+  (DelegateArgs AttenuateArgs RevokeArgs delegateAttenStep attenuateStep revokeStep delegateGateB
+   allAuths)
+
+/-- **`delegateSpec` — the INDEPENDENT declarative post-state of an attenuated delegation.** The
+recipient's slot GAINS exactly the delegator's held cap to `target`, attenuated to `keep`
+(`grant … (attenuate keep (heldCapTo …))`); EVERYTHING ELSE (every other cell's slot, balances,
+escrows) untouched. Written from intent ("hand `recipient` a `keep`-narrowed copy of the cap I hold
+to `target`"). The cap installed is `attenuate keep (heldCapTo …)` — the SAME shape the executor's
+`recKDelegateAtten` commits, which the triangle proves it realizes. -/
+def delegateSpec (k : RecordKernelState) (a : DelegateArgs) : RecordKernelState :=
+  { k with caps := grant k.caps a.recipient (attenuate a.keep (heldCapTo k.caps a.delegator a.target)) }
+
+/-- **THE DELEGATE TRIANGLE (PROVED, FULL BICONDITIONAL).** `delegateAttenStep k a = some k'` IFF the
+Granovetter connectivity premise holds (`delegateGateB` — the delegator already holds a cap conferring
+an edge to `target`) AND `k' = delegateSpec k a`. The `→` pins the UNIQUE resulting cap function (the
+recipient gains EXACTLY the attenuated held cap, and NO other slot changes — an over-broad grant, a
+grant to the wrong recipient, or a fresh manufactured cap is excluded); the `←` is completeness. -/
+theorem delegate_triangle (k k' : RecordKernelState) (a : DelegateArgs) :
+    delegateAttenStep k a = some k' ↔ (delegateGateB k a = true ∧ k' = delegateSpec k a) := by
+  unfold delegateAttenStep recKDelegateAtten delegateGateB delegateSpec
+  constructor
+  · intro h
+    by_cases hg : (k.caps a.delegator).any (fun cap => confersEdgeTo a.target cap) = true
+    · rw [if_pos hg] at h; simp only [Option.some.injEq] at h
+      exact ⟨hg, h.symm⟩
+    · rw [if_neg hg] at h; exact absurd h (by simp)
+  · rintro ⟨hg, hk⟩; rw [if_pos hg, hk]
+
+/-- **ANTI-GHOST TOOTH (delegate, PROVED).** Any candidate `k'' ≠ delegateSpec k a` is REJECTED — the
+delegation commits EXACTLY the attenuated-held-cap grant; an over-broad cap edge, a grant to the wrong
+target/recipient, or a touched 2nd slot cannot come out of `delegateAttenStep`. -/
+theorem delegate_antighost (k k'' : RecordKernelState) (a : DelegateArgs)
+    (hne : k'' ≠ delegateSpec k a) : delegateAttenStep k a ≠ some k'' := by
+  intro h
+  exact hne ((delegate_triangle k k'' a).mp h).2
+
+/-- **`attenuateSpec` — the INDEPENDENT declarative post-state of an in-place self-attenuation.** The
+actor's OWN slot has its `idx`-th cap narrowed to `keep` (`attenuateSlotF` = `modify idx (attenuate
+keep)` on the actor's slot only); EVERYTHING ELSE untouched. Written from intent ("narrow my own
+idx-th held cap to `keep`"). -/
+def attenuateSpec (k : RecordKernelState) (a : AttenuateArgs) : RecordKernelState :=
+  { k with caps := attenuateSlotF k.caps a.actor a.idx a.keep }
+
+/-- **THE ATTENUATE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `attenuateStep` ALWAYS commits
+(self-attenuation cannot fail — at worst the identity, still narrower-or-equal), so the gate is
+trivially `true`; the load-bearing content is the `↔`: `attenuateStep k a = some k'` IFF
+`k' = attenuateSpec k a`. The output is the UNIQUE intent post-state (the actor's own `idx`-th cap
+narrowed in place, NO other slot/cell touched). -/
+theorem attenuate_triangle (k k' : RecordKernelState) (a : AttenuateArgs) :
+    attenuateStep k a = some k' ↔ k' = attenuateSpec k a := by
+  unfold attenuateStep attenuateSpec
+  constructor
+  · intro h; simp only [Option.some.injEq] at h; exact h.symm
+  · intro hk; rw [hk]
+
+/-- **ANTI-GHOST TOOTH (attenuate, PROVED).** Any candidate `k'' ≠ attenuateSpec k a` is REJECTED —
+the only thing `attenuateStep` ever commits is the in-place narrowing of the actor's `idx`-th cap; a
+ghost that widened the cap, narrowed the WRONG slot, or touched another cell is excluded. -/
+theorem attenuate_antighost (k k'' : RecordKernelState) (a : AttenuateArgs)
+    (hne : k'' ≠ attenuateSpec k a) : attenuateStep k a ≠ some k'' := by
+  intro h
+  exact hne ((attenuate_triangle k k'' a).mp h)
+
+/-- **`revokeTargetCaps` — the INDEPENDENT intent cap-function after a revocation.** The holder's slot
+DROPS every cap conferring an edge to `target` (keep only the caps that do NOT confer such an edge);
+every OTHER cell's slot is literally unchanged. Written from intent ("the holder loses its reach to
+`target`, nothing else"), as a plain `Caps` function — NOT a call to `recKRevokeTarget`. The triangle
+proves the executor's filter realizes exactly this. -/
+def revokeTargetCaps (k : RecordKernelState) (a : RevokeArgs) : Caps :=
+  fun l => if l = a.holder then (k.caps l).filter (fun cap => ¬ confersEdgeTo a.target cap)
+           else k.caps l
+
+/-- **`revokeSpec` — the INDEPENDENT declarative post-state of a revocation.** The `caps` function is
+`revokeTargetCaps` (the holder's `target`-conferring caps filtered out); all else fixed. -/
+def revokeSpec (k : RecordKernelState) (a : RevokeArgs) : RecordKernelState :=
+  { k with caps := revokeTargetCaps k a }
+
+/-- The executor's `recKRevokeTarget` realizes the INTENT revoke post-state `revokeSpec`. An
+independent-function equality: the executor filters the holder's slot by `¬ confersEdgeTo target`; the
+spec (`revokeTargetCaps`) does the same, written from intent. EQUAL — proving the revoke removes
+EXACTLY the `target`-conferring caps from EXACTLY the holder's slot (it would be FALSE if it filtered
+the wrong slot, the wrong target, or removed extra caps). -/
+theorem recKRevokeTarget_eq_spec (k : RecordKernelState) (a : RevokeArgs) :
+    recKRevokeTarget k a.holder a.target = revokeSpec k a := by
+  unfold recKRevokeTarget revokeSpec revokeTargetCaps; rfl
+
+/-- **THE REVOKE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `revokeStep` ALWAYS commits
+(revocation cannot fail — at worst the identity), so the gate is trivially `true`; the load-bearing
+content is the `↔`: `revokeStep k a = some k'` IFF `k' = revokeSpec k a`. The output is the UNIQUE
+intent post-state (the holder's `target`-conferring caps filtered out, NO other slot touched). -/
+theorem revoke_triangle (k k' : RecordKernelState) (a : RevokeArgs) :
+    revokeStep k a = some k' ↔ k' = revokeSpec k a := by
+  unfold revokeStep
+  constructor
+  · intro h; simp only [Option.some.injEq] at h
+    rw [← h, recKRevokeTarget_eq_spec]
+  · intro hk; rw [hk, recKRevokeTarget_eq_spec]
+
+/-- **ANTI-GHOST TOOTH (revoke, PROVED).** Any candidate `k'' ≠ revokeSpec k a` is REJECTED — the
+revoke commits EXACTLY the filtered cap function; a ghost that KEPT a `target`-conferring cap (an
+incomplete revoke), filtered the WRONG holder, or dropped extra caps is excluded. -/
+theorem revoke_antighost (k k'' : RecordKernelState) (a : RevokeArgs)
+    (hne : k'' ≠ revokeSpec k a) : revokeStep k a ≠ some k'' := by
+  intro h
+  exact hne ((revoke_triangle k k'' a).mp h)
+
+/-! ## §8 — FIFTH FAMILY: SHIELDED NOTES (noteCreate / noteSpend) — the commitment/nullifier triangle.
+
+The shielded-note ops (`RecordKernel.noteCreateCommitment`/`noteSpendNullifier`) move the off-ledger
+commitment SET (grow-only) and nullifier SET (grow-only WITH double-spend rejection). We give each an
+INDEPENDENT intent spec over those sets and prove the triangle + anti-ghost tooth. noteCreate is
+TOTAL (a fresh commitment never conflicts ⇒ the `↔` output-uniqueness is the content); noteSpend is
+GATED on freshness (the nullifier must be absent ⇒ a full biconditional, and the anti-ghost tooth
+pins the no-double-spend discipline). -/
+
+/-- **`noteCreateSpec` — the INDEPENDENT declarative post-state of a noteCreate.** The commitment
+SET gains `cm` at the front; EVERYTHING ELSE (bal, nullifiers, escrows, caps) untouched (bal-NEUTRAL:
+the note's hidden value is behind the §8 CryptoPortal). Written from intent ("park a fresh Pedersen
+commitment"), NOT from `noteCreateCommitment`. -/
+def noteCreateSpec (k : RecordKernelState) (cm : Nat) : RecordKernelState :=
+  { k with commitments := cm :: k.commitments }
+
+/-- **THE NOTE-CREATE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `noteCreateCommitment` ALWAYS
+commits (a fresh commitment cannot conflict — the grow-only dual of the nullifier set), so the content
+is the `↔`: `noteCreateCommitment k cm = k'` IFF `k' = noteCreateSpec k cm`. The output is the UNIQUE
+intent post-state (the commitment set grows by EXACTLY `cm`, nothing else moves). -/
+theorem noteCreate_triangle (k k' : RecordKernelState) (cm : Nat) :
+    noteCreateCommitment k cm = k' ↔ k' = noteCreateSpec k cm := by
+  unfold noteCreateCommitment noteCreateSpec
+  constructor
+  · intro h; exact h.symm
+  · intro hk; rw [hk]
+
+/-- **ANTI-GHOST TOOTH (noteCreate, PROVED).** Any candidate `k'' ≠ noteCreateSpec k cm` is REJECTED —
+noteCreate commits EXACTLY the front-insert of `cm`; a ghost that inserted the WRONG commitment, moved
+`bal`/`nullifiers`/`escrows`, or dropped an existing commitment is excluded. -/
+theorem noteCreate_antighost (k k'' : RecordKernelState) (cm : Nat)
+    (hne : k'' ≠ noteCreateSpec k cm) : noteCreateCommitment k cm ≠ k'' := by
+  intro h
+  exact hne ((noteCreate_triangle k k'' cm).mp h)
+
+/-- **`noteSpendSpec` — the INDEPENDENT declarative post-state of a noteSpend.** The nullifier SET
+gains `nf` at the front (marking the note SPENT); EVERYTHING ELSE untouched. Written from intent
+("burn the note by recording its nullifier"). The GATE is freshness — `nf ∉ k.nullifiers` (no
+double-spend); the spec is only reached when the gate holds. -/
+def noteSpendSpec (k : RecordKernelState) (nf : Nat) : RecordKernelState :=
+  { k with nullifiers := nf :: k.nullifiers }
+
+/-- **THE NOTE-SPEND TRIANGLE (PROVED, FULL BICONDITIONAL).** `noteSpendNullifier k nf = some k'` IFF
+the nullifier is FRESH (`nf ∉ k.nullifiers` — the no-double-spend gate) AND `k' = noteSpendSpec k nf`.
+The `→` pins the UNIQUE intent post-state (the nullifier set grows by EXACTLY `nf`) AND surfaces the
+freshness gate; the `←` is completeness (a fresh nullifier commits its spend). -/
+theorem noteSpend_triangle (k k' : RecordKernelState) (nf : Nat) :
+    noteSpendNullifier k nf = some k' ↔ (nf ∉ k.nullifiers ∧ k' = noteSpendSpec k nf) := by
+  unfold noteSpendNullifier noteSpendSpec
+  constructor
+  · intro h
+    by_cases hin : nf ∈ k.nullifiers
+    · rw [if_pos hin] at h; exact absurd h (by simp)
+    · rw [if_neg hin] at h; simp only [Option.some.injEq] at h; exact ⟨hin, h.symm⟩
+  · rintro ⟨hin, hk⟩; rw [if_neg hin, hk]
+
+/-- **ANTI-GHOST TOOTH (noteSpend, PROVED — the no-double-spend tooth).** Two faces:
+  * a candidate `k'' ≠ noteSpendSpec k nf` is REJECTED (output-uniqueness — the spend records EXACTLY
+    `nf`, nothing else), AND
+  * if `nf` is ALREADY spent (`nf ∈ k.nullifiers`), NO commit is possible at all (double-spend is
+    fail-closed — `noteSpendNullifier k nf = none`).
+The second face is the load-bearing anti-replay: a double-spend candidate is excluded. -/
+theorem noteSpend_antighost (k k'' : RecordKernelState) (nf : Nat)
+    (hne : k'' ≠ noteSpendSpec k nf) : noteSpendNullifier k nf ≠ some k'' := by
+  intro h
+  exact hne ((noteSpend_triangle k k'' nf).mp h).2
+
+/-- **NO DOUBLE-SPEND (PROVED, the anti-ghost's second face).** An already-spent nullifier cannot be
+spent again — `noteSpendNullifier` fails-closed `none`. So NO post-state (ghost or not) commits a
+double-spend. -/
+theorem noteSpend_double_spend_rejected (k k'' : RecordKernelState) (nf : Nat)
+    (hspent : nf ∈ k.nullifiers) : noteSpendNullifier k nf ≠ some k'' := by
+  rw [note_no_double_spend k nf hspent]; simp
+
+/-! ## §9 — NON-VACUITY TEETH (`#guard`) for the three new families. -/
+
+/-- Value/note fixture: cells 0,1 are accounts; cell 0 holds 100 of asset 0; cell 0 holds the
+PRIVILEGED `node 0` mint cap; all Live. -/
+def vfx : RecordKernelState :=
+  { accounts := {0, 1}
+    cell := fun _ => .record [("balance", .int 0)]
+    caps := fun c => if c = 0 then [Dregg2.Authority.Cap.node 0] else []
+    bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
+
+/-- A mint of 25 of asset 0 into cell 0 (privileged actor 0). -/
+def aMint : SupplyArgs := { actor := 0, cell := 0, asset := 0, amt := 25 }
+/-- A burn of 40 of asset 0 from cell 0. -/
+def aBurn : SupplyArgs := { actor := 0, cell := 0, asset := 0, amt := 40 }
+
+-- MINT commits and the supply MOVED: asset-0 column of cell 0 rises 100 → 125 (the spec's credit).
+#guard (mintStep vfx aMint).isSome
+#guard ((mintStep vfx aMint).map (fun k => k.bal 0 0)) == some 125
+-- ...and asset 1 (a DIFFERENT asset) is UNTOUCHED (the per-asset discipline the spec pins).
+#guard ((mintStep vfx aMint).map (fun k => k.bal 0 1)) == some 0
+-- MINT anti-ghost (CONCRETE): the spec output's bal 0 0 (125) differs OBSERVABLY from a ghost that
+-- left the column at 100 — so by `mint_antighost` such a ghost is refused.
+#guard ((vfx.bal 0 0, (mintSpec vfx aMint).bal 0 0) == (100, 125))
+-- UNAUTHORIZED mint (actor 1 holds no node cap) is REJECTED (the privileged gate bites).
+#guard ((mintStep vfx { aMint with actor := 1 }).isSome) == false
+-- BURN commits and the supply FELL: 100 → 60.
+#guard ((burnStep vfx aBurn).map (fun k => k.bal 0 0)) == some 60
+-- BURN over-spend (burn 200 > 100 held) is REJECTED (availability gate).
+#guard ((burnStep vfx { aBurn with amt := 200 }).isSome) == false
+
+/-- Authority fixture: cell 0 holds a `node 7` cap (edge to 7) + `endpoint 9 [write]`; cell 1 holds
+nothing. -/
+def afx : RecordKernelState :=
+  { accounts := {0, 1}
+    cell := fun _ => .record [("balance", .int 0)]
+    caps := fun c => if c = 0 then [Dregg2.Authority.Cap.node 7, Dregg2.Authority.Cap.endpoint 9 [Auth.write]] else []
+    bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
+
+/-- A full-authority delegation of the edge-to-7 from delegator 0 to recipient 1. -/
+def aDel : DelegateArgs := { delegator := 0, recipient := 1, target := 7, keep := allAuths }
+
+-- DELEGATE commits (delegator 0 holds the edge) and recipient 1 GAINS exactly the held cap to 7.
+#guard (delegateAttenStep afx aDel).isSome
+#guard ((delegateAttenStep afx aDel).map (fun k => k.caps 1)) == some [Dregg2.Authority.Cap.node 7]
+-- DELEGATE by a delegator WITHOUT the edge (cell 1 holds nothing) is REJECTED (Granovetter premise).
+#guard ((delegateAttenStep afx { aDel with delegator := 1 }).isSome) == false
+-- REVOKE is TOTAL: cell 0 revokes its edge to 7 — the `node 7` cap is filtered out (only endpoint-9 left).
+#guard ((revokeStep afx { holder := 0, target := 7 }).map (fun k => k.caps 0))
+        == some [Dregg2.Authority.Cap.endpoint 9 [Auth.write]]
+-- REVOKE leaves OTHER slots (cell 1) untouched (the spec pins the holder-only filter).
+#guard ((revokeStep afx { holder := 0, target := 7 }).map (fun k => k.caps 1))
+        == some ([] : List Dregg2.Authority.Cap)
+-- ATTENUATE is TOTAL: cell 0 narrows its idx-1 cap (endpoint 9) to `[]` — write DROPPED, in place.
+#guard ((attenuateStep afx { actor := 0, idx := 1, keep := [] }).map (fun k => k.caps 0))
+        == some [Dregg2.Authority.Cap.node 7, Dregg2.Authority.Cap.endpoint 9 []]
+
+-- NOTE-CREATE grows the commitment set by exactly the fresh commitment 42 (front-insert).
+#guard ((noteCreateCommitment vfx 42).commitments) == [42]
+#guard ((noteCreateCommitment (noteCreateCommitment vfx 42) 43).commitments) == [43, 42]
+-- NOTE-SPEND of a FRESH nullifier 5 commits and records it; a SECOND spend of 5 is REJECTED (no double-spend).
+#guard (noteSpendNullifier vfx 5).isSome
+#guard ((noteSpendNullifier vfx 5).bind (fun k => noteSpendNullifier k 5)).isNone
+-- the recorded nullifier IS 5 (the spend's set move is real).
+#guard ((noteSpendNullifier vfx 5).map (fun k => k.nullifiers)) == some [5]
+
+/-! ## §10 — Axiom-hygiene pins for the three new families. -/
+
+#assert_axioms intentCredit_eq_balCredit
+#assert_axioms intentDebit_eq_balCredit
+#assert_axioms mint_triangle
+#assert_axioms mint_antighost
+#assert_axioms burn_triangle
+#assert_axioms burn_antighost
+#assert_axioms delegate_triangle
+#assert_axioms delegate_antighost
+#assert_axioms attenuate_triangle
+#assert_axioms attenuate_antighost
+#assert_axioms recKRevokeTarget_eq_spec
+#assert_axioms revoke_triangle
+#assert_axioms revoke_antighost
+#assert_axioms noteCreate_triangle
+#assert_axioms noteCreate_antighost
+#assert_axioms noteSpend_triangle
+#assert_axioms noteSpend_antighost
+#assert_axioms noteSpend_double_spend_rejected
 
 end Dregg2.Spec.FunctionalRefinement
