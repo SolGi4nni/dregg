@@ -1738,7 +1738,8 @@ def encodeActionW : FullActionA → String
         ++ toString beneficiary ++ "," ++ toString a ++ "," ++ toString stake ++ "]}"
   | .fulfillObligationA id actor => "{\"fobl\":[" ++ toString id ++ "," ++ toString actor ++ "]}"
   | .slashObligationA id actor => "{\"sobl\":[" ++ toString id ++ "," ++ toString actor ++ "]}"
-  | .noteSpendA nf actor => "{\"nspend\":[" ++ toString nf ++ "," ++ toString actor ++ "]}"
+  | .noteSpendA nf actor spendProof => "{\"nspend\":[" ++ toString nf ++ "," ++ toString actor ++ ","
+                                          ++ (if spendProof then "1" else "0") ++ "]}"
   | .noteCreateA cm actor => "{\"ncreate\":[" ++ toString cm ++ "," ++ toString actor ++ "]}"
   | .createCommittedEscrowA id actor creator recipient a amount hidingProof =>
       "{\"ccesc\":[" ++ toString id ++ "," ++ toString actor ++ "," ++ toString creator ++ ","
@@ -2048,8 +2049,11 @@ def parseActionWFuel (fuel : Nat) (cs : PState) : Option (FullActionA × PState)
   | none =>
   match lit "{\"nspend\":[" cs with
   | some r0 => do
-      let (nf, r1) ← parseNat r0; let (actor, r2) ← cN r1; let r3 ← lit "]}" r2
-      some (.noteSpendA nf actor, r3)
+      let (nf, r1) ← parseNat r0; let (actor, r2) ← cN r1
+      -- the 3rd field: the §8 note-spending-proof witness, a strict `0`/`1` flag (≤ 1 ⇒ fail-closed).
+      let (sp, r3) ← cN r2; let r4 ← lit "]}" r3
+      if sp ≤ 1 then some (.noteSpendA nf actor (sp == 1), r4)
+      else none
   | none =>
   match lit "{\"ncreate\":[" cs with
   | some r0 => do
@@ -2278,7 +2282,7 @@ def allActions : List FullActionA :=
   , .createObligationA 68 69 70 71 72 (-73)
   , .fulfillObligationA 200 201
   , .slashObligationA 202 203
-  , .noteSpendA 74 75
+  , .noteSpendA 74 75 true
   , .noteCreateA 76 77
   , .createCommittedEscrowA 78 79 80 81 82 (-83) true
   , .releaseCommittedEscrowA 84 85

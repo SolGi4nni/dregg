@@ -520,17 +520,20 @@ theorem execFullA_progLive_preserved (s s' : RecChainedState) (fa : FullActionA)
           · exact absurd hk (by simp)
         · exact absurd hk (by simp)
       rw [hn]; exact ⟨hlive, hprog⟩
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' =>
-          commit_subst h hk
-          have hn : k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } := by
-            unfold noteSpendNullifier at hk; split at hk
-            · exact absurd hk (by simp)
-            · injection hk with hk; exact hk.symm
-          rw [hn]; exact ⟨hlive, hprog⟩
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' =>
+            commit_subst h hk
+            have hn : k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } := by
+              unfold noteSpendNullifier at hk; split at hk
+              · exact absurd hk (by simp)
+              · injection hk with hk; exact hk.symm
+            rw [hn]; exact ⟨hlive, hprog⟩
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA] at h
       option_inj at h; subst h

@@ -116,7 +116,7 @@ def actionAirName : FullActionA → String
   | .createObligationA _ _ _ _ _ _ => createObligationAHoleName
   | .fulfillObligationA _ _ => Dregg2.Circuit.Inst.RefundEscrowA.refundEscrowAAirName
   | .slashObligationA _ _ => Dregg2.Circuit.Inst.ReleaseEscrowA.releaseEscrowAAirName
-  | .noteSpendA _ _ => Dregg2.Circuit.Inst.NoteSpendA.noteSpendAAirName
+  | .noteSpendA _ _ _ => Dregg2.Circuit.Inst.NoteSpendA.noteSpendAAirName
   | .noteCreateA _ _ => Dregg2.Circuit.Inst.NoteCreateA.noteCreateAAirName
   | .createCommittedEscrowA _ _ _ _ _ _ _ => Dregg2.Circuit.Inst.CreateCommittedEscrowA.createCommittedEscrowAAirName
   | .releaseCommittedEscrowA _ _ => releaseCommittedEscrowAHoleName

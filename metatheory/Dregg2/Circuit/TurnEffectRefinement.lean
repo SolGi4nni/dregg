@@ -241,8 +241,8 @@ def fullActionCircuitStep
   | .createEscrowA id actor creator recipient asset amount =>
       createEscrowCircuitStep S D_bal hD_bal LE_escrow cN hN hLE_escrow
         st ⟨id, actor, creator, recipient, asset, amount⟩ st'
-  | .noteSpendA nf actor =>
-      noteSpendCircuitStep S LE_null cN hN hLE_null st ⟨nf, actor⟩ st'
+  | .noteSpendA nf actor spendProof =>
+      noteSpendCircuitStep S LE_null cN hN hLE_null st ⟨nf, actor, spendProof⟩ st'
   | .noteCreateA cm actor =>
       noteCreateCircuitStep S LE_null cN hN hLE_null st ⟨cm, actor⟩ st'
   | .releaseEscrowA id actor =>
@@ -529,7 +529,7 @@ theorem fullAction_circuit_refines_spec
       simp only [fullActionStep]
       exact createEscrow_circuit_refines_spec S D_bal hD_bal LE_escrow cN hN hLE_escrow hRestEscrow hLog
         st _ st' h
-  | .noteSpendA nf actor =>
+  | .noteSpendA nf actor spendProof =>
       simp only [fullActionStep]
       exact noteSpend_circuit_refines_spec S LE_null cN hN hLE_null hRestNull hLog st _ st' h
   | .noteCreateA cm actor =>

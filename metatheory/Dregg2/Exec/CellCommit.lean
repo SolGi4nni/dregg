@@ -486,11 +486,14 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
   | slashObligationA id actor =>
       obtain ⟨_, ⟨k', hk, h'⟩⟩ := releaseEscrowChainA_factors id actor (by simpa only [execFullA] using h)
       subst h'; exact subset_of_commitments_eq (releaseEscrowKAsset_commitments hk)
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' => commit_subst h hk; exact subset_of_commitments_eq (noteSpendNullifier_commitments hk)
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' => commit_subst h hk; exact subset_of_commitments_eq (noteSpendNullifier_commitments hk)
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       -- THE grow arm: noteCreate conses `cm` onto `commitments` (`noteCreateCommitment`).
       simp only [execFullA, noteCreateChainA, Option.some.injEq] at h; subst h

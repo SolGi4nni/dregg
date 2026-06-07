@@ -157,7 +157,7 @@ def actionTag : FullActionA → Nat
   | .createObligationA _ _ _ _ _ _ => 24
   | .fulfillObligationA _ _ => 25
   | .slashObligationA _ _ => 26
-  | .noteSpendA _ _ => 27
+  | .noteSpendA _ _ _ => 27
   | .noteCreateA _ _ => 28
   | .createCommittedEscrowA _ _ _ _ _ _ _ => 29
   | .releaseCommittedEscrowA _ _ => 30
@@ -274,8 +274,8 @@ mutual
         RefundEscrowSpec st id actor st'
     | .slashObligationA id actor =>
         ReleaseEscrowSpec st id actor st'
-    | .noteSpendA nf actor =>
-        NoteSpendSpec st nf actor st'
+    | .noteSpendA nf actor spendProof =>
+        NoteSpendSpec st nf actor spendProof st'
     | .noteCreateA cm actor =>
         NoteCreateASpec st cm actor st'
     | .createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
@@ -535,9 +535,9 @@ mutual
     | .slashObligationA id actor => by
       simp only [fullActionStep, execFullA]
       exact execFullA_slashObligation_iff_spec st id actor st'
-    | .noteSpendA nf actor => by
+    | .noteSpendA nf actor spendProof => by
       simp only [fullActionStep, execFullA]
-      exact execFullA_noteSpend_iff_spec st nf actor st'
+      exact execFullA_noteSpend_iff_spec st nf actor spendProof st'
     | .noteCreateA cm actor => by
       simp only [fullActionStep, execFullA]
       exact execNoteCreateA_iff_spec st cm actor st'

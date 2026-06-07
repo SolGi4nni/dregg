@@ -640,16 +640,19 @@ theorem execFullA_subWF_preserved (s s' : RecChainedState) (fa : FullActionA)
         · exact absurd hk (by simp)
       · exact absurd hk (by simp)
   -- §note — spend grows `nullifiers`, create grows `commitments` — `queues` untouched in both.
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' =>
-          commit_subst h hk
-          refine subWF_of_queues_eq (k := s.kernel) ?_ hwf
-          unfold noteSpendNullifier at hk; split at hk
-          · exact absurd hk (by simp)
-          · injection hk with hk; subst hk; rfl
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' =>
+            commit_subst h hk
+            refine subWF_of_queues_eq (k := s.kernel) ?_ hwf
+            unfold noteSpendNullifier at hk; split at hk
+            · exact absurd hk (by simp)
+            · injection hk with hk; subst hk; rfl
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA] at h
       option_inj at h; subst h

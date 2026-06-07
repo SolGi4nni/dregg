@@ -82,31 +82,37 @@ fails-closed on a nullifier already in the spent set: the effect-layer entry inh
 double-spend gate. (`noteSpendChainA` matches on `noteSpendNullifier`; the `none` branch propagates
 to a `none` result — the turn is rejected, no receipt is appended.) -/
 theorem chainNoteSpend_no_double_spend (s : RecChainedState) (nf : Nat) (actor : CellId)
-    (h : nf ∈ s.kernel.nullifiers) :
-    noteSpendChainA s nf actor = none := by
+    (spendProof : Bool) (h : nf ∈ s.kernel.nullifiers) :
+    noteSpendChainA s nf actor spendProof = none := by
   unfold noteSpendChainA
-  rw [note_no_double_spend s.kernel nf h]
+  by_cases hp : spendProof = true
+  · rw [if_pos hp, note_no_double_spend s.kernel nf h]
+  · rw [if_neg hp]
 
 /-- A committed chained spend inserts `nf` into the resulting state's nullifier set (the chained
 analog of `note_spend_inserts`: the receipt row never touches `nullifiers`, only the kernel does). -/
 theorem chainNoteSpend_inserts {s s' : RecChainedState} {nf : Nat} {actor : CellId}
-    (h : noteSpendChainA s nf actor = some s') : nf ∈ s'.kernel.nullifiers := by
+    {spendProof : Bool} (h : noteSpendChainA s nf actor spendProof = some s') :
+    nf ∈ s'.kernel.nullifiers := by
   unfold noteSpendChainA at h
-  cases hk : noteSpendNullifier s.kernel nf with
-  | none => rw [hk] at h; exact absurd h (by simp)
-  | some k' =>
-    rw [hk] at h
-    simp only [Option.some.injEq] at h
-    subst h
-    exact note_spend_inserts hk
+  by_cases hp : spendProof = true
+  · rw [if_pos hp] at h
+    cases hk : noteSpendNullifier s.kernel nf with
+    | none => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+      rw [hk] at h
+      simp only [Option.some.injEq] at h
+      subst h
+      exact note_spend_inserts hk
+  · rw [if_neg hp] at h; exact absurd h (by simp)
 
 /-- **`chainNoteSpend_then_reject` — PROVED (the composed one-step replay barrier).** After a
 committed chained `NoteSpend` of `nf`, a SECOND chained spend of the SAME `nf` on the resulting
 state fails-closed. Replay across two effect-layer steps is impossible. -/
 theorem chainNoteSpend_then_reject {s s' : RecChainedState} {nf : Nat} {actor actor' : CellId}
-    (h : noteSpendChainA s nf actor = some s') :
-    noteSpendChainA s' nf actor' = none :=
-  chainNoteSpend_no_double_spend s' nf actor' (chainNoteSpend_inserts h)
+    {spendProof spendProof' : Bool} (h : noteSpendChainA s nf actor spendProof = some s') :
+    noteSpendChainA s' nf actor' spendProof' = none :=
+  chainNoteSpend_no_double_spend s' nf actor' spendProof' (chainNoteSpend_inserts h)
 
 /-! ### Monotonicity: a spent nullifier never leaves the set (no resurrection). -/
 
@@ -115,55 +121,59 @@ nullifier set: every previously-spent `nf'` is still present afterward. (The cha
 `cons` onto `nullifiers`; nothing is ever removed.) This is the structural reason a spent note can
 never be resurrected. -/
 theorem nullifier_set_monotone {s s' : RecChainedState} {nf nf' : Nat} {actor : CellId}
-    (h : noteSpendChainA s nf actor = some s')
+    {spendProof : Bool} (h : noteSpendChainA s nf actor spendProof = some s')
     (hmem : nf' ∈ s.kernel.nullifiers) : nf' ∈ s'.kernel.nullifiers := by
   unfold noteSpendChainA at h
-  cases hk : noteSpendNullifier s.kernel nf with
-  | none => rw [hk] at h; exact absurd h (by simp)
-  | some k' =>
-    rw [hk] at h
-    simp only [Option.some.injEq] at h
-    subst h
-    -- `noteSpendNullifier` on the success branch does `nullifiers := nf :: …`; `nf'` survives.
-    unfold noteSpendNullifier at hk
-    by_cases hin : nf ∈ s.kernel.nullifiers
-    · rw [if_pos hin] at hk; exact absurd hk (by simp)
-    · rw [if_neg hin] at hk
-      simp only [Option.some.injEq] at hk
-      subst hk
-      exact List.mem_cons_of_mem _ hmem
+  by_cases hp : spendProof = true
+  · rw [if_pos hp] at h
+    cases hk : noteSpendNullifier s.kernel nf with
+    | none => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+      rw [hk] at h
+      simp only [Option.some.injEq] at h
+      subst h
+      -- `noteSpendNullifier` on the success branch does `nullifiers := nf :: …`; `nf'` survives.
+      unfold noteSpendNullifier at hk
+      by_cases hin : nf ∈ s.kernel.nullifiers
+      · rw [if_pos hin] at hk; exact absurd hk (by simp)
+      · rw [if_neg hin] at hk
+        simp only [Option.some.injEq] at hk
+        subst hk
+        exact List.mem_cons_of_mem _ hmem
+  · rw [if_neg hp] at h; exact absurd h (by simp)
 
 /-- **`nullifier_persists` — PROVED.** A nullifier spent BEFORE a (possibly unrelated) committed
 chained spend is STILL rejected on the resulting state — combine monotonicity with the gate. The
 anti-replay is permanent: once spent, forever rejected, regardless of intervening spends. -/
 theorem nullifier_persists {s s' : RecChainedState} {nf nf' : Nat} {actor actor' : CellId}
-    (h : noteSpendChainA s nf actor = some s')
+    {spendProof spendProof' : Bool} (h : noteSpendChainA s nf actor spendProof = some s')
     (hmem : nf' ∈ s.kernel.nullifiers) :
-    noteSpendChainA s' nf' actor' = none :=
-  chainNoteSpend_no_double_spend s' nf' actor' (nullifier_set_monotone h hmem)
+    noteSpendChainA s' nf' actor' spendProof' = none :=
+  chainNoteSpend_no_double_spend s' nf' actor' spendProof' (nullifier_set_monotone h hmem)
 
 /-! ### Whole-sequence anti-replay: a list of spends never re-spends. -/
 
 /-- Run a LIST of chained note-spends, short-circuiting to `none` on the first rejection (the
 fold-`bind` over `noteSpendChainA`). This is the effect-layer shape of a multi-`NoteSpend` turn. -/
-def noteSpendSeq (s : RecChainedState) (actor : CellId) : List Nat → Option RecChainedState
+def noteSpendSeq (s : RecChainedState) (actor : CellId) (spendProof : Bool) :
+    List Nat → Option RecChainedState
   | []          => some s
   | nf :: rest  =>
-    match noteSpendChainA s nf actor with
-    | some s' => noteSpendSeq s' actor rest
+    match noteSpendChainA s nf actor spendProof with
+    | some s' => noteSpendSeq s' actor spendProof rest
     | none    => none
 
 /-- **`seq_preserves_spent` — PROVED.** Any committed spend SEQUENCE preserves every
 already-spent nullifier (membership is monotone along the whole fold). -/
-theorem seq_preserves_spent {actor : CellId} :
+theorem seq_preserves_spent {actor : CellId} {spendProof : Bool} :
     ∀ (nfs : List Nat) {s s' : RecChainedState} {nf' : Nat},
-      noteSpendSeq s actor nfs = some s' → nf' ∈ s.kernel.nullifiers →
+      noteSpendSeq s actor spendProof nfs = some s' → nf' ∈ s.kernel.nullifiers →
       nf' ∈ s'.kernel.nullifiers
   | [],         s, s', nf', h, hmem => by
       unfold noteSpendSeq at h; simp only [Option.some.injEq] at h; subst h; exact hmem
   | nf :: rest, s, s', nf', h, hmem => by
       unfold noteSpendSeq at h
-      cases hstep : noteSpendChainA s nf actor with
+      cases hstep : noteSpendChainA s nf actor spendProof with
       | none    => rw [hstep] at h; exact absurd h (by simp)
       | some s1 =>
         rw [hstep] at h
@@ -173,11 +183,11 @@ theorem seq_preserves_spent {actor : CellId} :
 spent before a spend SEQUENCE, then no matter what the sequence does, `nf'` remains in the spent
 set afterward — so a later spend of `nf'` is rejected. A multi-`NoteSpend` turn forest cannot
 double-spend a previously-recorded note. -/
-theorem seq_no_respend {actor actor' : CellId} (nfs : List Nat)
+theorem seq_no_respend {actor actor' : CellId} {spendProof spendProof' : Bool} (nfs : List Nat)
     {s s' : RecChainedState} {nf' : Nat}
-    (h : noteSpendSeq s actor nfs = some s') (hmem : nf' ∈ s.kernel.nullifiers) :
-    noteSpendChainA s' nf' actor' = none :=
-  chainNoteSpend_no_double_spend s' nf' actor' (seq_preserves_spent nfs h hmem)
+    (h : noteSpendSeq s actor spendProof nfs = some s') (hmem : nf' ∈ s.kernel.nullifiers) :
+    noteSpendChainA s' nf' actor' spendProof' = none :=
+  chainNoteSpend_no_double_spend s' nf' actor' spendProof' (seq_preserves_spent nfs h hmem)
 
 /-! ## §2 — STEALTH FRESHNESS ⇒ UNLINKABILITY (EIP-5564 / Monero), crypto as NAMED hypotheses.
 
@@ -263,18 +273,21 @@ theorem stealth_unlinkable_via_graphKernel [GraphPrivacyKernel]
 
 /-! ## §3 — `#guard` witnesses (non-vacuity; the discipline EVALUATES correctly). -/
 
--- (1) Nullifier discipline: a fresh spend commits; a repeated spend on the SAME nf fails-closed.
-#guard ((noteSpendChainA ⟨res0, []⟩ 7 0).map (fun s => s.kernel.nullifiers)) == some [7]  -- some [7]
-#guard (((noteSpendChainA ⟨res0, []⟩ 7 0).bind
-          (fun s => noteSpendChainA s 7 0)).isSome) == false  -- false: replay rejected
+-- (1) Nullifier discipline: a fresh spend (valid §8 proof) commits; a repeated spend on the SAME nf
+-- fails-closed.
+#guard ((noteSpendChainA ⟨res0, []⟩ 7 0 true).map (fun s => s.kernel.nullifiers)) == some [7]  -- some [7]
+#guard (((noteSpendChainA ⟨res0, []⟩ 7 0 true).bind
+          (fun s => noteSpendChainA s 7 0 true)).isSome) == false  -- false: replay rejected
+-- NOTE-PROOF TEETH: a fresh spend with an INVALID §8 proof (false) is rejected fail-closed.
+#guard ((noteSpendChainA ⟨res0, []⟩ 7 0 false).isSome) == false  -- false: missing/invalid proof rejected
 
--- A whole sequence of DISTINCT nfs commits (no rejection); the spent set accumulates all of them.
-#guard ((noteSpendSeq ⟨res0, []⟩ 0 [3, 5, 8]).map (fun s => s.kernel.nullifiers))
+-- A whole sequence of DISTINCT nfs (valid proof) commits (no rejection); the spent set accumulates all.
+#guard ((noteSpendSeq ⟨res0, []⟩ 0 true [3, 5, 8]).map (fun s => s.kernel.nullifiers))
         == some [8, 5, 3]  -- some [8, 5, 3]
 -- A sequence that REPEATS a nullifier fails-closed (the second `3` is a double-spend).
-#guard ((noteSpendSeq ⟨res0, []⟩ 0 [3, 5, 3]).isSome) == false  -- false: in-sequence replay rejected
+#guard ((noteSpendSeq ⟨res0, []⟩ 0 true [3, 5, 3]).isSome) == false  -- false: in-sequence replay rejected
 -- A nullifier present BEFORE the sequence stays rejected if it reappears in it.
-#guard ((noteSpendSeq ⟨{ res0 with nullifiers := [9] }, []⟩ 0 [1, 9]).isSome) == false  -- false
+#guard ((noteSpendSeq ⟨{ res0 with nullifiers := [9] }, []⟩ 0 true [1, 9]).isSome) == false  -- false
 
 -- (2) Stealth: over the `Reference` CryptoKernel, distinct one-time pubkeys ⇒ distinct verify keys.
 -- `Reference.verify stmt proof := decide (stmt = proof)`; a credential keyed on otp=1 vs otp=2,

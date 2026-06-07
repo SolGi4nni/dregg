@@ -761,13 +761,16 @@ theorem execFullA_sealedBoxes_frame (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, ⟨k', hk, hs'⟩⟩ := releaseEscrowChainA_factors id actor (by simpa only [execFullA] using h)
       subst hs'
       exact releaseEscrowKAsset_sealedBoxes hk
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
-                   unfold noteSpendNullifier at hk; split at hk <;> [exact absurd hk (by simp); skip]
-                   simp only [Option.some.injEq] at hk; subst hk; rfl
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
+                     unfold noteSpendNullifier at hk; split at hk <;> [exact absurd hk (by simp); skip]
+                     simp only [Option.some.injEq] at hk; subst hk; rfl
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA, noteCreateCommitment, Option.some.injEq] at h; subst h; rfl
   | createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
@@ -1127,12 +1130,15 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
       obtain ⟨_, ⟨k', hk, hs'⟩⟩ := releaseEscrowChainA_factors id actor (by simpa only [execFullA] using h)
       subst hs'
       exact releaseEscrowKAsset_caps hk
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact noteSpendNullifier_caps hk
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact noteSpendNullifier_caps hk
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA, noteCreateChainA] at h; option_inj at h; rcases h with ⟨rfl⟩; rfl

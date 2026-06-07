@@ -2159,12 +2159,54 @@ commits at the ledger layer (a fresh commitment cannot conflict). -/
 def noteCreateChainA (s : RecChainedState) (cm : Nat) (actor : CellId) : RecChainedState :=
   { kernel := noteCreateCommitment s.kernel cm, log := escrowReceiptA actor :: s.log }
 
-/-- **Chained note-spend** — the ledger-side double-spend gate (`noteSpendNullifier`, fail-closed on a
-repeated nullifier). The §8 STARK spending proof is the THEOREM-level portal. -/
-def noteSpendChainA (s : RecChainedState) (nf : Nat) (actor : CellId) : Option RecChainedState :=
-  match noteSpendNullifier s.kernel nf with
-  | some k' => some { kernel := k', log := escrowReceiptA actor :: s.log }
-  | none    => none
+/-- **Chained note-spend — the HONEST §8 spending-proof gate + ledger anti-replay.** Two fail-closed
+gates, in dregg1's order (`apply_note_spend`, `apply.rs:889,941`):
+
+1. `spendProof : Bool` — the EXECUTABLE boolean shadow of the §8 STARK note-spending proof
+   (`verifier.verify(spending_proof, "note-spend", "note-tree", public_inputs)`, `apply.rs:926`). It
+   proves the spender knows the note's opening, the nullifier is correctly derived, and the note
+   commitment exists in the note tree at the given root. **FAIL-CLOSED if `spendProof = false`** —
+   exactly the "NoteSpend spending proof verification failed" / "missing spending proof" rejection
+   the Rust marshaller saw but the proof-less projection could not (the `NoteSpend` divergence the
+   ledger characterised). Welding it here CAPTURES note-proof verification IN the verified executor
+   (smaller TCB): the §8 STARK extractability is the named carrier (`PrivacyKernel.noteSpend_sound`),
+   the executor's gate is the boolean shadow that fail-closes on a missing/invalid proof.
+2. `noteSpendNullifier` — the ledger-side double-spend gate (fail-closed on a repeated nullifier).
+
+The two gates compose: a spend commits ONLY when BOTH the spending proof verified AND the nullifier is
+fresh. This mirrors the committed-escrow `hidingProof` pattern (`createCommittedEscrowChainA`) — an
+executable §8-portal witness, fail-closed, with a rejection tooth. -/
+def noteSpendChainA (s : RecChainedState) (nf : Nat) (actor : CellId)
+    (spendProof : Bool) : Option RecChainedState :=
+  if spendProof = true then
+    match noteSpendNullifier s.kernel nf with
+    | some k' => some { kernel := k', log := escrowReceiptA actor :: s.log }
+    | none    => none
+  else none
+
+/-- **`noteSpendChainA_fails_without_proof` — PROVED (THE NOTE-PROOF TEETH).** No note-spend commits
+without the §8 spending proof (`spendProof = false` ⇒ `none`). This is exactly the rejection
+`apply.rs:929` produces ("NoteSpend spending proof verification failed") that the proof-less
+projection could not see — now CAPTURED in the verified executor. A NoteSpend with an invalid proof
+is REJECTED in Lean. -/
+theorem noteSpendChainA_fails_without_proof {s : RecChainedState} {nf : Nat} {actor : CellId}
+    {spendProof : Bool} (hp : spendProof = false) :
+    noteSpendChainA s nf actor spendProof = none := by
+  simp only [noteSpendChainA, hp, if_neg (by decide : ¬ (false = true))]
+
+/-- **`noteSpendChainA_requires_proof` — PROVED.** A committed note-spend IMPLIES the §8 spending
+proof verified (`spendProof = true`) AND the nullifier was fresh — the conjunction the bare
+nullifier-only chain lacked its first (proof) half of. -/
+theorem noteSpendChainA_requires_proof {s s' : RecChainedState} {nf : Nat} {actor : CellId}
+    {spendProof : Bool} (h : noteSpendChainA s nf actor spendProof = some s') :
+    spendProof = true ∧ nf ∉ s.kernel.nullifiers := by
+  unfold noteSpendChainA noteSpendNullifier at h
+  by_cases hp : spendProof = true
+  · rw [if_pos hp] at h
+    by_cases hin : nf ∈ s.kernel.nullifiers
+    · rw [if_pos hin] at h; exact absurd h (by simp)
+    · exact ⟨hp, hin⟩
+  · rw [if_neg hp] at h; exact absurd h (by simp)
 
 /-! ### §MA-queue — the REAL ring-buffer FIFO queue effects (Wave-7 de-THIN). The chained wrappers over
 `RecordKernel`'s `queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK`, EACH composed with a
@@ -3340,10 +3382,13 @@ inductive FullActionA where
   record's asset + mark resolved) — combined per-asset CONSERVING. Routes to `releaseEscrowChainA`.
   DISTINCT from `releaseEscrowA` by the post-deadline slash gate (vs. escrow's condition-met release). -/
   | slashObligationA  (id : Nat) (actor : CellId)
-  /-- `NoteSpend { nullifier }` (dregg1 `apply_note_spend`): the nullifier-SET insert with double-spend
-  rejection (the ledger anti-replay gate). The §8 STARK spending proof is the THEOREM-level portal.
-  bal-NEUTRAL. -/
-  | noteSpendA      (nf : Nat) (actor : CellId)
+  /-- `NoteSpend { nullifier, spending_proof }` (dregg1 `apply_note_spend`): the nullifier-SET insert
+  with double-spend rejection (the ledger anti-replay gate), GATED on the §8 STARK spending proof. The
+  `spendProof : Bool` is the EXECUTABLE boolean shadow of `verifier.verify(spending_proof, "note-spend",
+  …)` (`apply.rs:926`) — FAIL-CLOSED if `spendProof = false` (a missing/invalid proof is REJECTED in the
+  verified executor, the `NoteSpend` divergence the marshaller saw). The §8 STARK extractability is the
+  named carrier (`PrivacyKernel.noteSpend_sound`); the executor enforces the boolean shadow. bal-NEUTRAL. -/
+  | noteSpendA      (nf : Nat) (actor : CellId) (spendProof : Bool)
   /-- `NoteCreate { commitment }` (dregg1 `apply_note_create`): the grow-only commitment-SET insert (the
   dual of noteSpend). The §8 range proof is the THEOREM-level portal. bal-NEUTRAL. -/
   | noteCreateA     (cm : Nat) (actor : CellId)
@@ -3582,7 +3627,7 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   -- (≈ escrow release): both SETTLE the parked record back onto the ledger, COMBINED per-asset conserving.
   | .fulfillObligationA _ _,      _ => 0
   | .slashObligationA _ _,        _ => 0
-  | .noteSpendA _ _,              _ => 0
+  | .noteSpendA _ _ _,            _ => 0
   | .noteCreateA _ _,             _ => 0
   | .createCommittedEscrowA _ _ _ _ _ _ _, _ => 0
   | .releaseCommittedEscrowA _ _, _ => 0
@@ -3662,7 +3707,7 @@ def requiredFacetA : FullActionA → Authority.Auth
   | .createObligationA _ _ _ _ _ _ => Authority.Auth.write
   | .fulfillObligationA _ _  => Authority.Auth.write
   | .slashObligationA _ _    => Authority.Auth.write
-  | .noteSpendA _ _          => Authority.Auth.write
+  | .noteSpendA _ _ _        => Authority.Auth.write
   | .noteCreateA _ _         => Authority.Auth.write
   | .createCommittedEscrowA _ _ _ _ _ _ _ => Authority.Auth.write
   | .releaseCommittedEscrowA _ _ => Authority.Auth.write
@@ -3798,7 +3843,7 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   -- exactly the per-asset escrow RELEASE (`apply.rs:1656` credits `record.beneficiary`). The
   -- post-deadline gate is the §8/theorem-layer carrier.
   | .slashObligationA id actor        => releaseEscrowChainA s id actor
-  | .noteSpendA nf actor              => noteSpendChainA s nf actor
+  | .noteSpendA nf actor spendProof   => noteSpendChainA s nf actor spendProof
   | .noteCreateA cm actor             => some (noteCreateChainA s cm actor)
   -- WAVE 4 HONESTY: committed-escrow create routes to the §8 hiding-portal-GATED chained step — NOT
   -- silently `createEscrowChainA`. FAIL-CLOSED if `hidingProof = false` (the privacy boundary plain
@@ -4131,20 +4176,23 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
             show recTotalAssetWithEscrow k' b = _ + 0
             rw [releaseEscrowKAsset_conserves_combined_per_asset b hk]; ring
       · rw [if_neg hg] at h; exact absurd h (by simp)
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       simp only [noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' =>
-          rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-          -- noteSpend grows ONLY `nullifiers` — `bal` and `escrows` fixed.
-          show recTotalAsset k' b + escrowHeldAsset k' b = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
-          rw [show k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } from by
-                unfold noteSpendNullifier at hk; split at hk
-                · exact absurd hk (by simp)
-                · simpa only [Option.some.injEq] using hk.symm]
-          simp only [recTotalAsset, escrowHeldAsset]; ring
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' =>
+            rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+            -- noteSpend grows ONLY `nullifiers` — `bal` and `escrows` fixed.
+            show recTotalAsset k' b + escrowHeldAsset k' b = recTotalAsset s.kernel b + escrowHeldAsset s.kernel b + 0
+            rw [show k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } from by
+                  unfold noteSpendNullifier at hk; split at hk
+                  · exact absurd hk (by simp)
+                  · simpa only [Option.some.injEq] using hk.symm]
+            simp only [recTotalAsset, escrowHeldAsset]; ring
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       simp only [execFullA, ledgerDeltaAsset, Option.some.injEq] at h ⊢
       subst h
@@ -4464,7 +4512,7 @@ def fullReceiptA (s : RecChainedState) : FullActionA → Turn
   | .createObligationA _ actor _ _ _ _ => escrowReceiptA actor
   | .fulfillObligationA _ actor      => escrowReceiptA actor
   | .slashObligationA _ actor        => escrowReceiptA actor
-  | .noteSpendA _ actor              => escrowReceiptA actor
+  | .noteSpendA _ actor _            => escrowReceiptA actor
   | .noteCreateA _ actor             => escrowReceiptA actor
   | .createCommittedEscrowA _ actor _ _ _ _ _ => escrowReceiptA actor
   | .releaseCommittedEscrowA _ actor => escrowReceiptA actor
@@ -4655,11 +4703,14 @@ theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
         | none => rw [hk] at h; exact absurd h (by simp)
         | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
       · rw [if_neg hg] at h; exact absurd h (by simp)
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA, fullReceiptA] at h ⊢
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA, fullReceiptA, Option.some.injEq] at h ⊢
       subst h; rfl
@@ -5521,13 +5572,17 @@ theorem execFullA_createObligationA_authorized (s s' : RecChainedState) (id : Na
 /-- **`execFullA_noteSpendA_inserts` — PROVED.** A committed noteSpend inserts `nf` into the nullifier
 SET (so a subsequent spend of `nf` fails-closed — the anti-replay teeth). -/
 theorem execFullA_noteSpendA_inserts (s s' : RecChainedState) (nf : Nat) (actor : CellId)
-    (h : execFullA s (.noteSpendA nf actor) = some s') : nf ∈ s'.kernel.nullifiers := by
+    (spendProof : Bool) (h : execFullA s (.noteSpendA nf actor spendProof) = some s') :
+    nf ∈ s'.kernel.nullifiers := by
   simp only [execFullA, noteSpendChainA] at h
-  cases hk : noteSpendNullifier s.kernel nf with
-  | none => rw [hk] at h; exact absurd h (by simp)
-  | some k' =>
-      rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-      exact note_spend_inserts hk
+  by_cases hp : spendProof = true
+  · rw [if_pos hp] at h
+    cases hk : noteSpendNullifier s.kernel nf with
+    | none => rw [hk] at h; exact absurd h (by simp)
+    | some k' =>
+        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
+        exact note_spend_inserts hk
+  · rw [if_neg hp] at h; exact absurd h (by simp)
 
 /-- **`execFullA_noteCreateA_inserts` — PROVED.** A committed noteCreate inserts `cm` into the grow-only
 commitment SET. -/
@@ -5751,7 +5806,7 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
    | .slashObligationA id actor =>
        releaseSettleAuthB s.kernel id actor = true ∧
        effectLinearity .slashObligation = LinearityClass.Conservative
-   | .noteSpendA nf _ =>
+   | .noteSpendA nf _ _ =>
        -- anti-replay: the spent nullifier is now IN the set (a subsequent spend fails-closed).
        nf ∈ s'.kernel.nullifiers ∧ effectLinearity .noteSpend = LinearityClass.Conservative
    | .noteCreateA cm _ =>
@@ -5970,7 +6025,7 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
       exact ⟨execFullA_refundEscrowA_authorized s s' id actor h, rfl⟩
   | slashObligationA id actor =>
       exact ⟨execFullA_releaseEscrowA_authorized s s' id actor h, rfl⟩
-  | noteSpendA nf actor => exact ⟨execFullA_noteSpendA_inserts s s' nf actor h, rfl⟩
+  | noteSpendA nf actor spendProof => exact ⟨execFullA_noteSpendA_inserts s s' nf actor spendProof h, rfl⟩
   | noteCreateA cm actor => exact ⟨execFullA_noteCreateA_inserts s s' cm actor h, rfl⟩
   | createCommittedEscrowA id actor creator recipient asset amount hidingProof =>
       -- WAVE 4 HONESTY: discharge the §8 hiding-portal witness ∧ the `authorizedB` creator gate ∧ coloring.
@@ -6701,11 +6756,16 @@ round-trip; double-spend fail-closed. -/
        (execFullA fmaSup (.createEscrowA 9 9 0 1 1 5)).isSome)) == (false, true)  --  (false, true) — DISTINGUISHED
 -- ★ NOTE CREATE→SPEND round-trip: create grows commitments (42), spend grows nullifiers (77) — distinct sets;
 --   the executed dispatch is bal-NEUTRAL (combined fixed):
-#guard (((execFullA fmaSup (.noteCreateA 42 9)).bind (fun s => execFullA s (.noteSpendA 77 9))).map
+#guard (((execFullA fmaSup (.noteCreateA 42 9)).bind (fun s => execFullA s (.noteSpendA 77 9 true))).map
         (fun s => (s.kernel.commitments.contains 42, s.kernel.nullifiers.contains 77,
                    recTotalAssetWithEscrow s.kernel 0, recTotalAssetWithEscrow s.kernel 1))) == some (true, true, 105, 7)  --  some (true, true, 105, 7)
--- ★ DOUBLE-SPEND fail-closed: spending nullifier 77 twice on the executed dispatch REJECTS:
-#guard (((execFullA fmaSup (.noteSpendA 77 9)).bind (fun s => execFullA s (.noteSpendA 77 9))).isSome) == false  --  false
+-- ★ DOUBLE-SPEND fail-closed: spending nullifier 77 twice (valid proof) on the executed dispatch REJECTS:
+#guard (((execFullA fmaSup (.noteSpendA 77 9 true)).bind (fun s => execFullA s (.noteSpendA 77 9 true))).isSome) == false  --  false
+-- ★ NOTE-PROOF TEETH: a single spend with an INVALID spending proof (`spendProof = false`) REJECTS
+--   (the `apply.rs:929` "spending proof verification failed" rejection now CAPTURED in the executor),
+--   while the SAME spend with a valid proof COMMITS — the gate is load-bearing, not vacuous:
+#guard ((execFullA fmaSup (.noteSpendA 77 9 false)).isSome) == false  --  false (invalid proof REJECTED)
+#guard ((execFullA fmaSup (.noteSpendA 77 9 true)).isSome) == true    --  true  (valid proof COMMITS)
 
 /-! ### §MA-bridge #eval (Wave-5 PHASE-BRIDGE) — the cross-chain bridge lock/finalize/cancel on the
 executed dispatch over the SHARED escrow holding-store. LOCK conserves the COMBINED measure (debit + park

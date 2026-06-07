@@ -54,6 +54,7 @@ def isSimpleArm : TurnExecutorFull.FullActionA → Bool
   -- WAVE-4 non-simple arms: a `0`/`1` BOOL flag (parsed under an `if hp ≤ 1` gate), and the two
   -- LIST-bearing batch arms (a `QueueTxOpA` array / two `Nat` arrays) — closed separately below.
   | .createCommittedEscrowA .. => false  -- carries the `hidingProof` flag; see `parseActionW_committedescrow`.
+  | .noteSpendA ..             => false  -- carries the §8 `spendProof` flag; see `parseActionW_notespend`.
   | .queueAtomicTxA ..         => false  -- carries the `OPS` `QueueTxOpA` array; see `parseActionW_qatomic`.
   | .queuePipelineStepA ..     => false  -- carries two `NATSW` arrays; see `parseActionW_qpipe`.
   | _             => true
@@ -188,6 +189,45 @@ example : parseActionW ((encodeActionW (.createCommittedEscrowA 1 2 3 4 5 9 true
 example : parseActionW ((encodeActionW (.createCommittedEscrowA 1 2 3 4 5 9 false)).toList ++ ['x'])
             = some (.createCommittedEscrowA 1 2 3 4 5 9 false, ['x']) :=
   parseActionW_committedescrow 1 2 3 4 5 9 false ['x']
+
+set_option maxHeartbeats 1000000 in
+/-- **The WAVE-NOTESPEND `noteSpendA` arm** — proved SEPARATELY because its 3rd field is the §8
+`spendProof` BOOL, encoded as a `0`/`1` flag and parsed under the `if sp ≤ 1` gate (which the generic
+`action_arm` `simp` cannot reduce). Mirrors `parseActionW_committedescrow`: case-split on `spendProof`;
+`true` encodes `1` (`1 ≤ 1`, `1 == 1`), `false` encodes `0` (`0 ≤ 1`, `0 == 1 = false`) — the flag is
+REAL on the wire, so a NoteSpend's proof bit survives the codec round-trip (removing it from the TCB). -/
+theorem parseActionW_notespend (nf : Nat) (actor : CellId) (spendProof : Bool) (rest : PState) :
+    parseActionW ((encodeActionW (.noteSpendA nf actor spendProof)).toList ++ rest)
+      = some (.noteSpendA nf actor spendProof, rest) := by
+  unfold parseActionW parseActionWFuel
+  cases spendProof with
+  | true =>
+      simp only [encodeActionW, if_true]
+      rw [show ("1":String) = toString (1:Nat) from by decide]
+      simp only [String.toList_append, List.append_assoc]
+      skip_to_arm
+      simp only [lit_append, parseNat_toString _ _ (nd_litComma _),
+        cN_step _ _ (nd_litComma _), cN_step _ _ (nd_litClose _),
+        Option.bind_eq_bind, Option.bind,
+        show ((1:Nat) ≤ 1) = True from by simp, if_true, beq_self_eq_true]
+  | false =>
+      simp only [encodeActionW, Bool.false_eq_true, if_false]
+      rw [show ("0":String) = toString (0:Nat) from by decide]
+      simp only [String.toList_append, List.append_assoc]
+      skip_to_arm
+      simp only [lit_append, parseNat_toString _ _ (nd_litComma _),
+        cN_step _ _ (nd_litComma _), cN_step _ _ (nd_litClose _),
+        Option.bind_eq_bind, Option.bind,
+        show ((0:Nat) ≤ 1) = True from by simp, if_true, show ((0:Nat) == 1) = false from by decide]
+
+-- A note-spend effect (the `spendProof = true` portal-discharged variant) round-trips:
+example : parseActionW ((encodeActionW (.noteSpendA 74 75 true)).toList ++ ['x'])
+            = some (.noteSpendA 74 75 true, ['x']) :=
+  parseActionW_notespend 74 75 true ['x']
+-- ...and the `spendProof = false` variant too (the §8 proof flag is REAL, not erased):
+example : parseActionW ((encodeActionW (.noteSpendA 74 75 false)).toList ++ ['x'])
+            = some (.noteSpendA 74 75 false, ['x']) :=
+  parseActionW_notespend 74 75 false ['x']
 
 /-! ### §7-WAVE4-LIST — the `queuePipelineStepA` (two `NATSW` arrays) and `queueAtomicTxA` (a `QueueTxOpA`
 array) arms. The list-roundtrip infrastructure mirrors §9's `parseNats`/§10's `parseBal` length-fuel loops
@@ -534,6 +574,8 @@ theorem parseActionW_any (act : TurnExecutorFull.FullActionA) (rest : PState) (h
   -- WAVE-4 non-simple arms (the `hidingProof` flag + the two list-bearing batch arms):
   | createCommittedEscrowA id actor creator recipient a amount hp =>
       exact parseActionW_committedescrow id actor creator recipient a amount hp rest
+  | noteSpendA nf actor spendProof =>     -- WAVE-NOTESPEND: the §8 `spendProof` flag arm.
+      exact parseActionW_notespend nf actor spendProof rest
   | queueAtomicTxA actor ops => exact parseActionW_qatomic actor ops rest
   | queuePipelineStepA srcId owner sinkCells sinkIds =>
       exact parseActionW_qpipe srcId owner sinkCells sinkIds rest

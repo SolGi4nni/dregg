@@ -89,12 +89,12 @@ def witnessOf (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState
   (List.range noteSpendEConcrete.traceWidth).map (fun w => encodeE2 SC noteSpendEConcrete s args s' w)
 
 def noteSpendWitnessVec (s : RecChainedState) (args : NoteSpendArgs) : List Int :=
-  match execFullA s (.noteSpendA args.nf args.actor) with
+  match execFullA s (.noteSpendA args.nf args.actor args.spendProof) with
   | some s' => witnessOf s args s'
   | none    => witnessOf s args s
 
 theorem noteSpendWitnessVec_commit {s s' : RecChainedState} {args : NoteSpendArgs}
-    (h : execFullA s (.noteSpendA args.nf args.actor) = some s') :
+    (h : execFullA s (.noteSpendA args.nf args.actor args.spendProof) = some s') :
     noteSpendWitnessVec s args = witnessOf s args s' := by
   unfold noteSpendWitnessVec; rw [h]
 
@@ -112,7 +112,7 @@ variable (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
 theorem execute_produces_satisfying_witness
     (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState)
-    (hspec : NoteSpendSpec s args.nf args.actor s') :
+    (hspec : NoteSpendSpec s args.nf args.actor args.spendProof s') :
     satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s') := by
   refine effect2_circuit_full_complete S (noteSpendE LE cN hN hLE)
     (fun k k' h => (hRest k k').mpr h) (noteSpendGuardEncodes LE cN hN hLE) s args s' ?_
@@ -122,7 +122,7 @@ theorem satisfying_witness_proves_full_state
     (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState)
     (h : satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s')) :
-    NoteSpendSpec s args.nf args.actor s' :=
+    NoteSpendSpec s args.nf args.actor args.spendProof s' :=
   noteSpendA_full_sound S LE cN hN hLE hRest hLog s args s' h
 
 /-! ## §4 — THE EXECUTOR-DERIVED CONCRETE WITNESS. -/
@@ -137,11 +137,11 @@ def kS0 : RecordKernelState :=
 
 def sS0 : RecChainedState := { kernel := kS0, log := [] }
 
-/-- The good note-spend args: actor 0 spends fresh nullifier 77. -/
-def goodNSArgs : NoteSpendArgs := { nf := 77, actor := 0 }
+/-- The good note-spend args: actor 0 spends fresh nullifier 77 with a VALID §8 spending proof. -/
+def goodNSArgs : NoteSpendArgs := { nf := 77, actor := 0, spendProof := true }
 
 def goodNSPost : RecChainedState :=
-  (execFullA sS0 (.noteSpendA goodNSArgs.nf goodNSArgs.actor)).getD sS0
+  (execFullA sS0 (.noteSpendA goodNSArgs.nf goodNSArgs.actor goodNSArgs.spendProof)).getD sS0
 
 /-- **THE FORGERY:** the spent nullifier is honest (77 prepended) but a BYSTANDER nullifier is dropped
 (22 silently removed) — a double-spend laundering. The BIND digest gate catches the forged set. -/

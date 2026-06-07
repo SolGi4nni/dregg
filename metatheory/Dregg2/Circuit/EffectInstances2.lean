@@ -254,12 +254,13 @@ structure NoteSpendArgs where
   nf    : Nat
   actor : CellId
 
-/-- The note-spend guard as a `Prop` (the spec's `noteSpendGuard`). -/
+/-- The note-spend guard as a `Prop` (the spec's `noteSpendGuard`; the §8 spending-proof witness pinned
+`true` — the circuit AIR models the committed-case set-transition, the STARK proof being a separate AIR). -/
 def noteSpendGuardProp (s : RecChainedState) (args : NoteSpendArgs) : Prop :=
-  noteSpendGuard s args.nf
+  noteSpendGuard s args.nf true
 
 instance (s : RecChainedState) (args : NoteSpendArgs) : Decidable (noteSpendGuardProp s args) := by
-  unfold noteSpendGuardProp noteSpendGuard; exact inferInstanceAs (Decidable (¬ _))
+  unfold noteSpendGuardProp noteSpendGuard; exact inferInstanceAs (Decidable (_ ∧ ¬ _))
 
 /-- The note-spend guard's witness generator: the single `propBit` column at wire `0`. -/
 def noteSpendGuardEncode (s : RecChainedState) (args : NoteSpendArgs) (_s' : RecChainedState) :
@@ -348,12 +349,12 @@ non-`nullifiers` frame clauses in `NoteSpendSpec`'s order. -/
 theorem apex_iff_noteSpendSpec (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState) :
-    (noteSpendE LE cN hN hLE).apex s args s' ↔ NoteSpendSpec s args.nf args.actor s' := by
+    (noteSpendE LE cN hN hLE).apex s args s' ↔ NoteSpendSpec s args.nf args.actor true s' := by
   show (noteSpendGuardProp s args
         ∧ s'.kernel.nullifiers = args.nf :: s.kernel.nullifiers
         ∧ s'.log = noteSpendReceipt args.actor :: s.log
         ∧ ((noteSpendE LE cN hN hLE).restFrame s.kernel s'.kernel))
-       ↔ NoteSpendSpec s args.nf args.actor s'
+       ↔ NoteSpendSpec s args.nf args.actor true s'
   unfold NoteSpendSpec noteSpendGuardProp noteSpendE
   constructor
   · rintro ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hEsc, hBal, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
@@ -378,7 +379,7 @@ theorem noteSpendE_full_sound
     (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState)
     (h : satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s')) :
-    NoteSpendSpec s args.nf args.actor s' := by
+    NoteSpendSpec s args.nf args.actor true s' := by
   have hapex : (noteSpendE LE cN hN hLE).apex s args s' :=
     effect2_circuit_full_sound S (noteSpendE LE cN hN hLE)
       (noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog (noteSpendGuardDecodes LE cN hN hLE)

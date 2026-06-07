@@ -214,7 +214,7 @@ def toClosedEffect : FullActionA → ClosedEffect
       createEscrowEffect id actor obligor beneficiary asset stake
   | .fulfillObligationA id actor      => refundEscrowEffect actor id
   | .slashObligationA id actor        => releaseEscrowEffect actor id
-  | .noteSpendA nf actor              => noteSpendEffect actor nf
+  | .noteSpendA nf actor _spendProof  => noteSpendEffect actor nf
   | .noteCreateA cm actor             => noteCreateEffect actor cm
   | .createCommittedEscrowA id actor creator recipient asset amount _hidingProof =>
       createEscrowEffect id actor creator recipient asset amount
@@ -755,10 +755,14 @@ theorem handler_refines_execFullA_createCommittedEscrow (s s' : RecChainedState)
     rw [if_pos hp, hk]
   · rw [if_neg hadm] at hstep; exact absurd hstep (by simp)
 
+/-- The handler models the LEDGER-side note-spend step (the nullifier set-transition; the §8 STARK
+spending proof is the crypto-portal face the handler does not re-run). Once the executor's §8
+proof-gate is DISCHARGED (`spendProof = true`), the gated `execFullA` reduces to that same ledger
+step — so the refinement holds exactly under a verified spending proof, the faithful condition. -/
 theorem handler_refines_execFullA_noteSpend (s s' : RecChainedState) (nf : Nat) (actor : CellId)
-    (h : execHandlerOne (.noteSpendA nf actor) s = some s') :
-    ∃ s'', execFullA s (.noteSpendA nf actor) = some s'' ∧ s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.noteSpendA nf actor) s s' h
+    (h : execHandlerOne (.noteSpendA nf actor true) s = some s') :
+    ∃ s'', execFullA s (.noteSpendA nf actor true) = some s'' ∧ s''.kernel = s'.kernel := by
+  have hstep := execHandlerOne_kernel (.noteSpendA nf actor true) s s' h
   rw [toClosedEffect] at hstep
   change noteSpendStep s.kernel { actor := actor, nf := nf } = some s'.kernel at hstep
   unfold noteSpendStep at hstep
@@ -768,9 +772,9 @@ theorem handler_refines_execFullA_noteSpend (s s' : RecChainedState) (nf : Nat) 
       rw [hk] at hstep
       simp only [Option.some.injEq] at hstep
       refine ⟨{ kernel := s'.kernel, log := escrowReceiptA actor :: s.log }, ?_, rfl⟩
-      show noteSpendChainA s nf actor = _
+      show noteSpendChainA s nf actor true = _
       unfold noteSpendChainA
-      rw [hk, hstep]
+      rw [if_pos rfl, hk, hstep]
 
 theorem handler_refines_execFullA_noteCreate (s s' : RecChainedState) (cm : Nat) (actor : CellId)
     (h : execHandlerOne (.noteCreateA cm actor) s = some s') :

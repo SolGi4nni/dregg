@@ -580,10 +580,10 @@ theorem delegate_circuit_refines_exec (S : Surface2) (D : Caps → ℤ) (hD : Fu
 /-! ## §9 — NoteSpendA diamond (circuit ⟺ NoteSpendSpec ⟺ execFullA). -/
 
 def noteSpendExecStep (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState) : Prop :=
-  execFullA s (.noteSpendA args.nf args.actor) = some s'
+  execFullA s (.noteSpendA args.nf args.actor args.spendProof) = some s'
 
 def noteSpendSpecStep (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState) : Prop :=
-  NoteSpendSpec s args.nf args.actor s'
+  NoteSpendSpec s args.nf args.actor args.spendProof s'
 
 def noteSpendCircuitStep (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
@@ -597,7 +597,7 @@ theorem noteSpendRestFrameEncodes (S : Surface2) (LE : Nat → ℤ) (cN : List �
 
 theorem noteSpend_exec_equiv_spec (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState) :
     noteSpendExecStep s args s' ↔ noteSpendSpecStep s args s' :=
-  execFullA_noteSpend_iff_spec s args.nf args.actor s'
+  execFullA_noteSpend_iff_spec s args.nf args.actor args.spendProof s'
 
 theorem noteSpend_circuit_refines_spec (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)

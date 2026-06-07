@@ -453,16 +453,19 @@ theorem execFullA_revoked_eq (s s' : RecChainedState) (fa : FullActionA)
       · exact absurd hk (by simp)
   -- §NOTE-SPEND — grows `nullifiers` (a DIFFERENT registry), `revoked` UNTOUCHED. This is the arm that
   -- moves the nullifier set in `CellNullifier`; here it frames the credential-revocation registry.
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' =>
-          commit_subst h hk
-          show k'.revoked = s.kernel.revoked
-          unfold noteSpendNullifier at hk; split at hk
-          · exact absurd hk (by simp)
-          · injection hk with hk; subst hk; rfl
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' =>
+            commit_subst h hk
+            show k'.revoked = s.kernel.revoked
+            unfold noteSpendNullifier at hk; split at hk
+            · exact absurd hk (by simp)
+            · injection hk with hk; subst hk; rfl
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   -- §NOTE-CREATE — grows `commitments` (a DIFFERENT set), `revoked` untouched (always-commit).
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA, noteCreateCommitment, Option.some.injEq] at h; subst h; rfl

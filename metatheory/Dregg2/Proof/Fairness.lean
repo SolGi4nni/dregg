@@ -165,7 +165,7 @@ def affectedOf : FullActionA → List CellId
   | .releaseCommittedEscrowA _ actor => [actor]
   | .refundCommittedEscrowA _ actor => [actor]
   -- notes (nullifier / commitment SETS): the spending/creating `actor`.
-  | .noteSpendA _ actor        => [actor]
+  | .noteSpendA _ actor _      => [actor]
   | .noteCreateA _ actor       => [actor]
   -- bridge lock/finalize/cancel.
   | .bridgeLockA _ actor originator destination _ _ => [actor, originator, destination]

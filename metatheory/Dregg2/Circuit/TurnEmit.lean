@@ -386,9 +386,9 @@ def stepEmittedEncodeAgrees
       assignmentOf sw.assignment =
         encodeE2Dual S (createEscrowE D_bal hD_bal LE_escrow cN hN hLE_escrow) st
           ⟨id, actor, creator, recipient, asset, amount⟩ st'
-  | .noteSpendA nf actor =>
+  | .noteSpendA nf actor spendProof =>
       assignmentOf sw.assignment =
-        encodeE2 S (noteSpendE LE_null cN hN hLE_null) st ⟨nf, actor⟩ st'
+        encodeE2 S (noteSpendE LE_null cN hN hLE_null) st ⟨nf, actor, spendProof⟩ st'
   | .noteCreateA cm actor =>
       assignmentOf sw.assignment =
         encodeE2 S (noteCreateE LE_null cN hN hLE_null) st ⟨cm, actor⟩ st'
@@ -621,10 +621,10 @@ theorem step_emitted_refines_fullActionStep
         ⟨id, actor, creator, recipient, asset, amount⟩ st'
         ((createEscrow_emitted_equiv_circuit S D_bal hD_bal LE_escrow cN hN hLE_escrow st
             ⟨id, actor, creator, recipient, asset, amount⟩ st').mpr hcircuit)
-  | .noteSpendA nf actor =>
+  | .noteSpendA nf actor spendProof =>
       simp only [fullActionStep]
-      exact noteSpend_emitted_refines_spec S LE_null cN hN hLE_null hRestNull hLog st ⟨nf, actor⟩ st'
-        ((noteSpend_emitted_equiv_circuit S LE_null cN hN hLE_null st ⟨nf, actor⟩ st').mpr hcircuit)
+      exact noteSpend_emitted_refines_spec S LE_null cN hN hLE_null hRestNull hLog st ⟨nf, actor, spendProof⟩ st'
+        ((noteSpend_emitted_equiv_circuit S LE_null cN hN hLE_null st ⟨nf, actor, spendProof⟩ st').mpr hcircuit)
   | .noteCreateA cm actor =>
       simp only [fullActionStep]
       exact noteCreate_emitted_refines_spec S LE_null cN hN hLE_null hRestCommitments hLog st ⟨cm, actor⟩ st'

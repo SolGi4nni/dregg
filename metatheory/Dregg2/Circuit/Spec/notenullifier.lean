@@ -70,8 +70,8 @@ nullifier has NOT already been spent. Unlike `Transfer.admitGuard` (a six-way co
 authority/non-negativity/availability/…), `noteSpendGuard` is the single anti-replay conjunct —
 the §8 STARK spending proof is the theorem-layer portal, not a ledger gate. Stated INDEPENDENTLY of
 the executor. -/
-def noteSpendGuard (st : RecChainedState) (nf : Nat) : Prop :=
-  nf ∉ st.kernel.nullifiers
+def noteSpendGuard (st : RecChainedState) (nf : Nat) (spendProof : Bool) : Prop :=
+  spendProof = true ∧ nf ∉ st.kernel.nullifiers
 
 /-! ## §2 — the receipt the executor appends (the touched log post-image).
 
@@ -111,7 +111,7 @@ nullifier-set + log + frame clauses genuinely encode the helper's behaviour. Onl
 committed (`nf ∉ nullifiers`) case, since that is the post-state the spec characterizes. -/
 theorem noteSpendChainA_correct (st : RecChainedState) (nf : Nat) (actor : CellId)
     (hfresh : nf ∉ st.kernel.nullifiers) :
-    ∃ st', noteSpendChainA st nf actor = some st'
+    ∃ st', noteSpendChainA st nf actor true = some st'
       ∧ st'.kernel.nullifiers = nf :: st.kernel.nullifiers
       ∧ st'.log = noteSpendReceipt actor :: st.log
       ∧ st'.kernel.accounts = st.kernel.accounts
@@ -133,7 +133,8 @@ theorem noteSpendChainA_correct (st : RecChainedState) (nf : Nat) (actor : CellI
   refine ⟨{ kernel := { st.kernel with nullifiers := nf :: st.kernel.nullifiers },
             log := noteSpendReceipt actor :: st.log }, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
             ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-  · simp only [noteSpendChainA, noteSpendNullifier, noteSpendReceipt, if_neg hfresh]
+  · simp only [noteSpendChainA, noteSpendNullifier, noteSpendReceipt, if_true,
+      if_neg hfresh]
   all_goals rfl
 
 /-! ## §5 — the FULL-STATE declarative spec of a committed `noteSpendA` (the INDEPENDENT reference).
@@ -144,9 +145,9 @@ post-state's `nullifiers` is exactly `nf` consed onto the old set; the post-stat
 the receipt consed onto the old log (the TWO TOUCHED components); and EVERY one of the 16 OTHER
 `RecordKernelState` components is LITERALLY unchanged (the FRAME — missing any one reintroduces a
 ghost). -/
-def NoteSpendSpec (st : RecChainedState) (nf : Nat) (actor : CellId)
+def NoteSpendSpec (st : RecChainedState) (nf : Nat) (actor : CellId) (spendProof : Bool)
     (st' : RecChainedState) : Prop :=
-  noteSpendGuard st nf
+  noteSpendGuard st nf spendProof
   -- the TOUCHED component #1: the nullifier set grows by exactly `nf` (head-consed).
   ∧ st'.kernel.nullifiers = nf :: st.kernel.nullifiers
   -- the TOUCHED component #2: the receipt chain grows by exactly the note-spend receipt.
@@ -179,55 +180,61 @@ log are checked, so had the executor silently mutated `bal`/`caps`/`escrows`/any
 the corresponding frame clause would make this proof FAIL. The `←` reconstructs the committed state
 from the spec. This is the executor corner of the `note-nullifier` spec⟺executor square. -/
 theorem execFullA_noteSpend_iff_spec (st : RecChainedState) (nf : Nat) (actor : CellId)
-    (st' : RecChainedState) :
-    execFullA st (.noteSpendA nf actor) = some st'
-      ↔ NoteSpendSpec st nf actor st' := by
+    (spendProof : Bool) (st' : RecChainedState) :
+    execFullA st (.noteSpendA nf actor spendProof) = some st'
+      ↔ NoteSpendSpec st nf actor spendProof st' := by
   unfold execFullA NoteSpendSpec noteSpendGuard
-  -- collapse the executor arm to the `noteSpendNullifier` membership test.
+  -- collapse the executor arm to the §8 proof gate ∧ the `noteSpendNullifier` membership test.
   simp only [noteSpendChainA, noteSpendNullifier, noteSpendReceipt]
-  by_cases hfresh : nf ∈ st.kernel.nullifiers
-  · -- DOUBLE-SPEND: the guard fails, the executor returns `none`, the spec is unsatisfiable.
-    rw [if_pos hfresh]
+  by_cases hproof : spendProof = true
+  · rw [if_pos hproof]
+    by_cases hfresh : nf ∈ st.kernel.nullifiers
+    · -- DOUBLE-SPEND: the guard fails, the executor returns `none`, the spec is unsatisfiable.
+      rw [if_pos hfresh]
+      constructor
+      · intro h; exact absurd h (by simp)
+      · rintro ⟨⟨_, hg⟩, _⟩; exact absurd hfresh hg
+    · -- FRESH nullifier (proof verified): the executor commits; validate against the full spec.
+      rw [if_neg hfresh]
+      constructor
+      · intro h
+        simp only [Option.some.injEq] at h
+        subst h
+        exact ⟨⟨hproof, hfresh⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+          rfl, rfl, rfl, rfl⟩
+      · rintro ⟨_, hnull, hlog, h1, h2, h3, h4, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+          h17⟩
+        -- rebuild `st'` from the nullifier post-image + log post-image + the 16 frame equalities.
+        have hk : st'.kernel = { st.kernel with nullifiers := nf :: st.kernel.nullifiers } := by
+          apply recKernel_ext
+          · simpa using h1
+          · simpa using h2
+          · simpa using h3
+          · simpa using h4
+          · simpa using hnull
+          · simpa using h6
+          · simpa using h7
+          · simpa using h8
+          · simpa using h9
+          · simpa using h10
+          · simpa using h11
+          · simpa using h12
+          · simpa using h13
+          · simpa using h14
+          · simpa using h15
+          · simpa using h16
+          · simpa using h17
+        cases st' with
+        | mk k' lg' =>
+          simp only at hk hlog
+          subst hk hlog
+          rfl
+  · -- §8 PROOF FAILED (`spendProof = false`): the executor fail-closes (`none`), and the spec is
+    -- unsatisfiable (its guard REQUIRES `spendProof = true`). The note-proof teeth, in the iff.
+    rw [if_neg hproof]
     constructor
     · intro h; exact absurd h (by simp)
-    · rintro ⟨hg, _⟩; exact absurd hfresh hg
-  · -- FRESH nullifier: the executor commits; validate it against the full spec, both ways.
-    rw [if_neg hfresh]
-    constructor
-    · intro h
-      simp only [Option.some.injEq] at h
-      subst h
-      -- the committed post-state is `{ kernel := { st.kernel with nullifiers := nf :: … },
-      --   log := escrowReceiptA actor :: st.log }`; read every component off it.
-      exact ⟨hfresh, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-        rfl, rfl⟩
-    · rintro ⟨_, hnull, hlog, h1, h2, h3, h4, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
-        h17⟩
-      -- rebuild `st'` from the nullifier post-image + log post-image + the 16 frame equalities.
-      have hk : st'.kernel = { st.kernel with nullifiers := nf :: st.kernel.nullifiers } := by
-        apply recKernel_ext
-        · simpa using h1
-        · simpa using h2
-        · simpa using h3
-        · simpa using h4
-        · simpa using hnull
-        · simpa using h6
-        · simpa using h7
-        · simpa using h8
-        · simpa using h9
-        · simpa using h10
-        · simpa using h11
-        · simpa using h12
-        · simpa using h13
-        · simpa using h14
-        · simpa using h15
-        · simpa using h16
-        · simpa using h17
-      cases st' with
-      | mk k' lg' =>
-        simp only at hk hlog
-        subst hk hlog
-        rfl
+    · rintro ⟨⟨hp, _⟩, _⟩; exact absurd hp hproof
 
 /-! ## §7 — corollaries: the domain facts a committed note-spend produces (executor side).
 
@@ -238,42 +245,52 @@ kernel field. These are the `note-nullifier` analogs of `recKExec_src_debit`/`re
 /-- A committed `noteSpendA` conses EXACTLY `nf` onto the nullifier set (anti-replay teeth: the spent
 set strictly grows by the consumed nullifier). -/
 theorem execFullA_noteSpend_nullifiers {st st' : RecChainedState} {nf : Nat} {actor : CellId}
-    (h : execFullA st (.noteSpendA nf actor) = some st') :
+    {spendProof : Bool} (h : execFullA st (.noteSpendA nf actor spendProof) = some st') :
     st'.kernel.nullifiers = nf :: st.kernel.nullifiers :=
-  ((execFullA_noteSpend_iff_spec st nf actor st').mp h).2.1
+  ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).2.1
 
 /-- A committed `noteSpendA` prepends EXACTLY the note-spend receipt to the log (the observation clock
 ticks by exactly one audited row). -/
 theorem execFullA_noteSpend_log {st st' : RecChainedState} {nf : Nat} {actor : CellId}
-    (h : execFullA st (.noteSpendA nf actor) = some st') :
+    {spendProof : Bool} (h : execFullA st (.noteSpendA nf actor spendProof) = some st') :
     st'.log = noteSpendReceipt actor :: st.log :=
-  ((execFullA_noteSpend_iff_spec st nf actor st').mp h).2.2.1
+  ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).2.2.1
 
 /-- A committed `noteSpendA` consumes a FRESH nullifier — `nf` was NOT already in the spent set (the
 guard projection). The post-state membership `nf ∈ st'.kernel.nullifiers` follows from
 `execFullA_noteSpend_nullifiers`; THIS records the pre-state freshness the gate enforced. -/
 theorem execFullA_noteSpend_fresh {st st' : RecChainedState} {nf : Nat} {actor : CellId}
-    (h : execFullA st (.noteSpendA nf actor) = some st') :
+    {spendProof : Bool} (h : execFullA st (.noteSpendA nf actor spendProof) = some st') :
     nf ∉ st.kernel.nullifiers :=
-  ((execFullA_noteSpend_iff_spec st nf actor st').mp h).1
+  ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).1.2
+
+/-- A committed `noteSpendA` carried a VERIFIED §8 spending proof — `spendProof = true` (the new
+proof-gate projection; a missing/invalid proof would have fail-closed). -/
+theorem execFullA_noteSpend_proof {st st' : RecChainedState} {nf : Nat} {actor : CellId}
+    {spendProof : Bool} (h : execFullA st (.noteSpendA nf actor spendProof) = some st') :
+    spendProof = true :=
+  ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).1.1
 
 /-- A committed `noteSpendA` leaves the per-asset balance ledger `bal` UNCHANGED — note effects move
 the nullifier SET, never balance (the conservation-neutrality of the family, read off the frame). -/
 theorem execFullA_noteSpend_bal_frame {st st' : RecChainedState} {nf : Nat} {actor : CellId}
-    (h : execFullA st (.noteSpendA nf actor) = some st') :
+    {spendProof : Bool} (h : execFullA st (.noteSpendA nf actor spendProof) = some st') :
     st'.kernel.bal = st.kernel.bal :=
-  ((execFullA_noteSpend_iff_spec st nf actor st').mp h).2.2.2.2.2.2.2.2.2.1
+  ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).2.2.2.2.2.2.2.2.2.1
 
-/-- The executor COMMITS a `noteSpendA` IFF the nullifier is fresh (the guard projection of the
-spec ↔). The fail-closed double-spend gate, as a commitment criterion. -/
-theorem execFullA_noteSpend_commits_iff (st : RecChainedState) (nf : Nat) (actor : CellId) :
-    (∃ st', execFullA st (.noteSpendA nf actor) = some st') ↔ noteSpendGuard st nf := by
+/-- The executor COMMITS a `noteSpendA` IFF the §8 spending proof verified AND the nullifier is fresh
+(the guard projection of the spec ↔). The fail-closed proof + double-spend gate, as a commitment
+criterion. -/
+theorem execFullA_noteSpend_commits_iff (st : RecChainedState) (nf : Nat) (actor : CellId)
+    (spendProof : Bool) :
+    (∃ st', execFullA st (.noteSpendA nf actor spendProof) = some st')
+      ↔ noteSpendGuard st nf spendProof := by
   constructor
   · rintro ⟨st', h⟩
-    exact ((execFullA_noteSpend_iff_spec st nf actor st').mp h).1
-  · intro hg
+    exact ((execFullA_noteSpend_iff_spec st nf actor spendProof st').mp h).1
+  · rintro ⟨hp, hg⟩
     obtain ⟨st', h, _⟩ := noteSpendChainA_correct st nf actor hg
-    exact ⟨st', by unfold execFullA; exact h⟩
+    refine ⟨st', by unfold execFullA; rw [hp]; exact h⟩
 
 /-! ## §8 — NON-VACUITY: the executor REJECTS a double-spend (fail-closed).
 
@@ -285,17 +302,38 @@ anti-replay gate having teeth — the real double-spend prevention (a SET, not a
 spent (`nf ∈ nullifiers`) is REJECTED by the executor (`= none`). The anti-replay gate is genuinely a
 gate — no nullifier can be spent twice. -/
 theorem execFullA_noteSpend_rejects_double (st : RecChainedState) (nf : Nat) (actor : CellId)
-    (hspent : nf ∈ st.kernel.nullifiers) :
-    execFullA st (.noteSpendA nf actor) = none := by
+    (spendProof : Bool) (hspent : nf ∈ st.kernel.nullifiers) :
+    execFullA st (.noteSpendA nf actor spendProof) = none := by
   unfold execFullA
-  simp only [noteSpendChainA, noteSpendNullifier, if_pos hspent]
+  simp only [noteSpendChainA, noteSpendNullifier]
+  by_cases hp : spendProof = true
+  · rw [if_pos hp, if_pos hspent]
+  · rw [if_neg hp]
+
+/-- **`execFullA_noteSpend_rejects_no_proof` — PROVED (THE NOTE-PROOF TEETH, executor side).** A
+`noteSpendA` carrying an INVALID/missing §8 spending proof (`spendProof = false`) is REJECTED by the
+executor (`= none`), EVEN ON A FRESH nullifier — the proof gate fail-closes BEFORE the ledger insert.
+This is the `apply.rs:929` "spending proof verification failed" rejection now CAPTURED in the verified
+executor: the proof-less projection's drift is closed. -/
+theorem execFullA_noteSpend_rejects_no_proof (st : RecChainedState) (nf : Nat) (actor : CellId)
+    (hp : spendProof = false) :
+    execFullA st (.noteSpendA nf actor spendProof) = none := by
+  unfold execFullA
+  simp only [noteSpendChainA, hp, if_neg (by decide : ¬ (false = true))]
 
 /-- The spec is itself UNSATISFIABLE on an already-spent nullifier (the guard conjunct fails) — so
 the ↔ is not vacuously true on double-spend inputs. -/
 theorem noteSpendSpec_false_on_double (st : RecChainedState) (nf : Nat) (actor : CellId)
-    (st' : RecChainedState) (hspent : nf ∈ st.kernel.nullifiers) :
-    ¬ NoteSpendSpec st nf actor st' := by
-  intro h; exact h.1 hspent
+    (spendProof : Bool) (st' : RecChainedState) (hspent : nf ∈ st.kernel.nullifiers) :
+    ¬ NoteSpendSpec st nf actor spendProof st' := by
+  intro h; exact h.1.2 hspent
+
+/-- The spec is UNSATISFIABLE without the §8 proof (`spendProof = false`) — the proof teeth, in the
+spec. So the ↔ is not vacuously true on proof-less inputs either. -/
+theorem noteSpendSpec_false_without_proof (st : RecChainedState) (nf : Nat) (actor : CellId)
+    (st' : RecChainedState) (hp : spendProof = false) :
+    ¬ NoteSpendSpec st nf actor spendProof st' := by
+  intro h; rw [hp] at h; exact absurd h.1.1 (by decide)
 
 /-! ## §9 — concrete `#guard` witnesses: a fresh spend commits; a repeat spend is rejected. -/
 
@@ -304,18 +342,21 @@ def st0 : RecChainedState :=
   { kernel := { accounts := {0, 1}, cell := fun _ => .record [], caps := fun _ => [] }
     log    := [] }
 
--- A fresh spend (nf = 77 ∉ []) commits:
-#guard (execFullA st0 (.noteSpendA 77 0)).isSome  -- true
+-- A fresh spend (nf = 77 ∉ []) with a VALID §8 spending proof commits:
+#guard (execFullA st0 (.noteSpendA 77 0 true)).isSome  -- true
 -- ...its committed nullifier set is exactly [77] (the consumed nullifier, head-consed onto []):
-#guard ((execFullA st0 (.noteSpendA 77 0)).map (fun s => s.kernel.nullifiers)) == some [77]  -- true
+#guard ((execFullA st0 (.noteSpendA 77 0 true)).map (fun s => s.kernel.nullifiers)) == some [77]  -- true
 -- ...its committed log has length 1 (exactly one receipt prepended onto the empty log):
-#guard ((execFullA st0 (.noteSpendA 77 0)).map (fun s => s.log.length)) == some 1  -- true
+#guard ((execFullA st0 (.noteSpendA 77 0 true)).map (fun s => s.log.length)) == some 1  -- true
 -- ...and the prepended receipt row carries (actor=0, src=actor=0, dst=actor=0, amt=0):
-#guard ((execFullA st0 (.noteSpendA 77 0)).bind (fun s => s.log.head?)).map
+#guard ((execFullA st0 (.noteSpendA 77 0 true)).bind (fun s => s.log.head?)).map
         (fun r => (r.actor, r.src, r.dst, r.amt)) == some (0, 0, 0, (0 : Int))  -- true
 -- A REPEAT spend of the same nullifier into the already-spent state is REJECTED (fail-closed):
-#guard (((execFullA st0 (.noteSpendA 77 0)).bind
-          (fun s => execFullA s (.noteSpendA 77 0))).isNone)  -- true
+#guard (((execFullA st0 (.noteSpendA 77 0 true)).bind
+          (fun s => execFullA s (.noteSpendA 77 0 true))).isNone)  -- true
+-- NOTE-PROOF TEETH: a fresh spend with an INVALID §8 spending proof (`spendProof = false`) is REJECTED
+-- (the proof gate fail-closes before the ledger insert — the captured `apply.rs:929` rejection):
+#guard (execFullA st0 (.noteSpendA 77 0 false)).isNone  -- true
 
 /-! ## §10 — axiom-hygiene tripwires.
 
@@ -328,9 +369,12 @@ Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`ad
 #assert_axioms execFullA_noteSpend_nullifiers
 #assert_axioms execFullA_noteSpend_log
 #assert_axioms execFullA_noteSpend_fresh
+#assert_axioms execFullA_noteSpend_proof
 #assert_axioms execFullA_noteSpend_bal_frame
 #assert_axioms execFullA_noteSpend_commits_iff
 #assert_axioms execFullA_noteSpend_rejects_double
+#assert_axioms execFullA_noteSpend_rejects_no_proof
 #assert_axioms noteSpendSpec_false_on_double
+#assert_axioms noteSpendSpec_false_without_proof
 
 end Dregg2.Circuit.Spec.NoteNullifier

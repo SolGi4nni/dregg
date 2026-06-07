@@ -63,7 +63,7 @@ def actionWriteSet : FullActionA → List CellId
   | .createObligationA _ _ obligor _ _ _ => [obligor]
   | .fulfillObligationA _ actor => [actor]
   | .slashObligationA _ actor => [actor]
-  | .noteSpendA _ actor   => [actor]
+  | .noteSpendA _ actor _ => [actor]
   | .noteCreateA _ actor  => [actor]
   | .createCommittedEscrowA _ _ creator _ _ _ _ => [creator]
   | .releaseCommittedEscrowA _ actor => [actor]

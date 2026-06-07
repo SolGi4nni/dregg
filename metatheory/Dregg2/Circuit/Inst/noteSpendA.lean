@@ -75,21 +75,29 @@ theorem propBit_eq_one {p : Prop} [Decidable p] : Circuit.propBit p = 1 ↔ p :=
 The rest-frame portal is the REUSED `EffectCommit2.RestIffNoNullifiers` (already present in the framework
 for exactly this effect); we do NOT add a new `RestIffNo*`. -/
 
-/-- The note-spend effect arguments: the consumed nullifier and the acting principal. -/
+/-- The note-spend effect arguments: the consumed nullifier, the acting principal, and the §8
+spending-proof witness bit (`spendProof`). The proof bit is a circuit GUARD input, exactly as
+committed-escrow carries `hidingProof` — a fail-closed §8-portal shadow, so the circuit constrains
+the proof gate the same way the executor does. -/
 structure NoteSpendArgs where
-  nf    : Nat
-  actor : CellId
+  nf         : Nat
+  actor      : CellId
+  spendProof : Bool
 
 /-- The `StateView` for the chained executor: read the kernel and its receipt log. -/
 def chainView : StateView RecChainedState :=
   { toKernel := (·.kernel), getLog := (·.log) }
 
-/-- The note-spend guard as a `Prop` (the spec's fail-closed anti-replay `noteSpendGuard`). -/
+/-- The note-spend guard as a `Prop` (the spec's fail-closed anti-replay `noteSpendGuard`). The §8
+spending-proof witness is pinned `true` here: the circuit AIR models the COMMITTED-case nullifier
+set-transition (a satisfying note-spend witness is one whose §8 STARK spending proof — a SEPARATE AIR,
+`note_spending_air.rs` — already verified), so the circuit corner of the triangle concludes the
+`spendProof = true` branch of `NoteSpendSpec`. -/
 def noteSpendGuardProp (s : RecChainedState) (args : NoteSpendArgs) : Prop :=
-  noteSpendGuard s args.nf
+  noteSpendGuard s args.nf args.spendProof
 
 instance (s : RecChainedState) (args : NoteSpendArgs) : Decidable (noteSpendGuardProp s args) := by
-  unfold noteSpendGuardProp noteSpendGuard; exact inferInstanceAs (Decidable (_ ∉ _))
+  unfold noteSpendGuardProp noteSpendGuard; exact inferInstanceAs (Decidable (_ ∧ _ ∉ _))
 
 /-- The note-spend guard's witness generator: the single `propBit` column at wire `0`. -/
 def noteSpendGuardEncode (s : RecChainedState) (args : NoteSpendArgs) (_s' : RecChainedState) :
@@ -188,12 +196,12 @@ non-`nullifiers` frame clauses (re-associated into `NoteSpendSpec`'s order). -/
 theorem apex_iff_noteSpendSpec (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState) :
-    (noteSpendE LE cN hN hLE).apex s args s' ↔ NoteSpendSpec s args.nf args.actor s' := by
+    (noteSpendE LE cN hN hLE).apex s args s' ↔ NoteSpendSpec s args.nf args.actor args.spendProof s' := by
   show (noteSpendGuardProp s args
         ∧ s'.kernel.nullifiers = args.nf :: s.kernel.nullifiers
         ∧ s'.log = noteSpendReceipt args.actor :: s.log
         ∧ ((noteSpendE LE cN hN hLE).restFrame s.kernel s'.kernel))
-       ↔ NoteSpendSpec s args.nf args.actor s'
+       ↔ NoteSpendSpec s args.nf args.actor args.spendProof s'
   unfold NoteSpendSpec noteSpendGuardProp noteSpendE
   constructor
   · rintro ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hEsc, hBal, hRev, hCom, hQ, hSw, hSC, hFac, hLif,
@@ -221,7 +229,7 @@ theorem noteSpendA_full_sound
     (hRest : RestIffNoNullifiers S.RH) (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : NoteSpendArgs) (s' : RecChainedState)
     (h : satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s')) :
-    NoteSpendSpec s args.nf args.actor s' := by
+    NoteSpendSpec s args.nf args.actor args.spendProof s' := by
   have hapex : (noteSpendE LE cN hN hLE).apex s args s' :=
     effect2_circuit_full_sound S (noteSpendE LE cN hN hLE)
       (noteSpendRestFrameDecodes S LE cN hN hLE hRest) hLog (noteSpendGuardDecodes LE cN hN hLE)

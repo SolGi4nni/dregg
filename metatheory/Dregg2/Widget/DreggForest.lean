@@ -114,7 +114,7 @@ def ctorName : FullActionA → String
   | .createObligationA _ _ _ _ _ _ => "createObligationA"
   | .fulfillObligationA _ _    => "fulfillObligationA"
   | .slashObligationA _ _      => "slashObligationA"
-  | .noteSpendA _ _            => "noteSpendA"
+  | .noteSpendA _ _ _          => "noteSpendA"
   | .noteCreateA _ _           => "noteCreateA"
   | .createCommittedEscrowA _ _ _ _ _ _ _ => "createCommittedEscrowA"
   | .releaseCommittedEscrowA _ _ => "releaseCommittedEscrowA"

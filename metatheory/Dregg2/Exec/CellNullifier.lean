@@ -438,19 +438,22 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
       exact hn ▸ List.Subset.refl _
   -- §NOTE-SPEND — THE GROWER. `noteSpendNullifier` conses `nf` onto `nullifiers`, so the OLD set is a
   -- subset of the new (`List.subset_cons_self`). This is the ONE arm that moves the measured set.
-  | noteSpendA nf actor =>
+  | noteSpendA nf actor spendProof =>
       simp only [execFullA, noteSpendChainA] at h
-      cases hk : noteSpendNullifier s.kernel nf with
-      | none => rw [hk] at h; exact absurd h (by simp)
-      | some k' =>
-          commit_subst h hk
-          show s.kernel.nullifiers ⊆ k'.nullifiers
-          -- k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } (the GROWER) ⇒ old ⊆ new.
-          rw [show k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } from by
-                unfold noteSpendNullifier at hk; split at hk
-                · exact absurd hk (by simp)
-                · injection hk with hk; exact hk.symm]
-          exact List.subset_cons_self _ _
+      by_cases hp : spendProof = true
+      · rw [if_pos hp] at h
+        cases hk : noteSpendNullifier s.kernel nf with
+        | none => rw [hk] at h; exact absurd h (by simp)
+        | some k' =>
+            commit_subst h hk
+            show s.kernel.nullifiers ⊆ k'.nullifiers
+            -- k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } (the GROWER) ⇒ old ⊆ new.
+            rw [show k' = { s.kernel with nullifiers := nf :: s.kernel.nullifiers } from by
+                  unfold noteSpendNullifier at hk; split at hk
+                  · exact absurd hk (by simp)
+                  · injection hk with hk; exact hk.symm]
+            exact List.subset_cons_self _ _
+      · rw [if_neg hp] at h; exact absurd h (by simp)
   -- §NOTE-CREATE — grows `commitments` (a DIFFERENT set), `nullifiers` untouched (always-commit).
   | noteCreateA cm actor =>
       simp only [execFullA, noteCreateChainA] at h
@@ -807,7 +810,7 @@ grow-only invariant bounds a quantity that actually moves. -/
 
 /-- A committed noteSpend turn: actor 0 spends nullifier 77 — the single `noteSpendA`, no children.
 The kernel-side double-spend gate admits a fresh `77` and records it. -/
-def spendCF : FullForestA := ⟨.noteSpendA 77 0, []⟩
+def spendCF : FullForestA := ⟨.noteSpendA 77 0 true, []⟩
 
 #guard ((execFullForestA fma0 spendCF).map (fun s' => s'.kernel.nullifiers)) == some [77]  --  some [77] (grew from [])
 #guard (fma0.kernel.nullifiers) == []  --  []   (BEFORE — strictly fewer)
