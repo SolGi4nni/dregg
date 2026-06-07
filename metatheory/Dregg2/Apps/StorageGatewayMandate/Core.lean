@@ -367,6 +367,82 @@ def demoGetReq : StorageRequest :=
            (fun s' => s'.tryDebit demoMandate.putCost)).bind
           (fun s'' => s''.tryDebit demoMandate.putCost)).isSome == false
 
+/-! ## §C — DIFFERENTIAL CORPUS (mirror-drift tooth for `starbridge-storage-gateway-mandate`).
+
+`starbridge-apps/storage-gateway-mandate/src/lib.rs::sgm_admit` is a HAND-PORT of `sgmAdmitM`
+(op-allowlist ∧ prefix-on-PUT ∧ clearance-on-GET ∧ volume-debit). A hand port can SILENTLY
+DRIFT — e.g. dropping the GET-clearance leg, or flipping the debit `≤` to `<` — and the proven
+`sgmAdmitM` theorems would never notice the Rust copy diverged.
+
+`sgmDiffCorpus` enumerates a fixed grid of `(mandate, request, spent)` and emits, per row, the
+admission DECISION as `(admitted, newSpent)` — `newSpent = 0` when rejected. The Rust test
+`starbridge-apps/storage-gateway-mandate/tests/sgm_lean_differential.rs` enumerates the IDENTICAL
+grid through `sgm_admit` and asserts the SAME vector. Drift on either side fails:
+  * Rust `sgm_admit` changes  → Rust vector ≠ `SGM_LEAN_DECISIONS` literal  → test FAIL;
+  * Lean `sgmAdmitM` changes   → this `#guard` trips at Lean build, forcing a re-pin that
+    re-exposes any Rust drift.
+
+Grid (matches the Rust corpus order):
+  mandates = [demo (PUT/GET/LIST, clearance✓), guest (clearance✗), putOnly]
+  requests = [PUT uploads/a (cost 5), PUT secret/a (bad prefix), GET uploads/a (cost 1),
+              LIST x (cost 2)]
+  spents   = [0, 4, 8, 10]   (against ceiling 10)
+The runtime state's ceiling is fixed at 10 (the demo `volumeBudget.ceiling`). -/
+
+/-- A runtime at `spent` with the demo ceiling 10. -/
+def sgmRtAt (spent : Nat) : SgmRuntime := { volume := { ceiling := 10, spent := spent }, anchor := 42 }
+
+def sgmDiffMandates : List StorageMandate := [demoMandate, guestMandate, putOnlyMandate]
+
+def sgmDiffReqs : List StorageRequest :=
+  [ { op := .PUT,  key := "uploads/a" }
+  , { op := .PUT,  key := "secret/a" }
+  , { op := .GET,  key := "uploads/a" }
+  , { op := .LIST, key := "x" } ]
+
+def sgmDiffSpents : List Nat := [0, 4, 8, 10]
+
+/-- Per-row decision: `(admitted, newSpent)`; `newSpent = 0` on reject. Row-major over
+mandates × reqs × spents (3 × 4 × 4 = 48 rows). -/
+def sgmDiffCorpus : List (Bool × Nat) :=
+  sgmDiffMandates.flatMap fun m =>
+    sgmDiffReqs.flatMap fun req =>
+      sgmDiffSpents.map fun sp =>
+        match sgmAdmitM m (sgmRtAt sp) req with
+        | some s' => (true, s'.volume.spent)
+        | none    => (false, 0)
+
+-- PINNED: the 48-row decision vector. The Rust differential test pins the identical literal.
+-- A drift in `sgmAdmitM` (or `sgm_admit`) breaks one of the two pins.
+#guard sgmDiffCorpus ==
+  [ -- demoMandate (allows PUT/GET/LIST, prefix uploads/, clearance✓; costs put5 get1 list2)
+    -- PUT uploads/a (cost 5): admit while spent+5 ≤ 10
+    (true, 5), (true, 9), (false, 0), (false, 0),
+    -- PUT secret/a (bad prefix): always reject
+    (false, 0), (false, 0), (false, 0), (false, 0),
+    -- GET uploads/a (cost 1, clearance✓): admit while spent+1 ≤ 10
+    (true, 1), (true, 5), (true, 9), (false, 0),
+    -- LIST x (cost 2): admit while spent+2 ≤ 10
+    (true, 2), (true, 6), (true, 10), (false, 0),
+    -- guestMandate (clearance✗ — GET rejected; PUT/LIST unaffected)
+    -- PUT uploads/a (cost 5)
+    (true, 5), (true, 9), (false, 0), (false, 0),
+    -- PUT secret/a (bad prefix)
+    (false, 0), (false, 0), (false, 0), (false, 0),
+    -- GET uploads/a (NO clearance): always reject
+    (false, 0), (false, 0), (false, 0), (false, 0),
+    -- LIST x (cost 2)
+    (true, 2), (true, 6), (true, 10), (false, 0),
+    -- putOnlyMandate (allows ONLY PUT — GET/LIST not in allowlist → rejected)
+    -- PUT uploads/a (cost 5)
+    (true, 5), (true, 9), (false, 0), (false, 0),
+    -- PUT secret/a (bad prefix)
+    (false, 0), (false, 0), (false, 0), (false, 0),
+    -- GET uploads/a (op not allowed): always reject
+    (false, 0), (false, 0), (false, 0), (false, 0),
+    -- LIST x (op not allowed): always reject
+    (false, 0), (false, 0), (false, 0), (false, 0) ]
+
 #assert_axioms tryDebit_preserves_spent_le
 #assert_axioms sgm_op_not_allowed_rejected
 #assert_axioms sgm_prefix_violation_rejected

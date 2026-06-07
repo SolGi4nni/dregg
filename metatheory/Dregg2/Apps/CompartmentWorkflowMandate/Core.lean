@@ -286,6 +286,39 @@ def demoKernel : KernelState :=
 #guard stepClearanceOK clerkMandate3 1 == false
 #guard (cwmAdvanceM charterMandate3 { cursor := 0, anchor := 42 }).map (·.cursor) == some 1
 
+/-! ## DIFFERENTIAL CORPUS (mirror-drift tooth for `starbridge-compartment-workflow-mandate`).
+
+`starbridge-apps/compartment-workflow-mandate/src/lib.rs::cwm_advance_admits` is a HAND-PORT of
+`cwmAdvanceM` (DAG-prerequisite ∧ per-step clearance ∧ cursor < terminal). A hand port can
+SILENTLY DRIFT — drop the clearance leg (letting a clerk sign), or admit past the terminal — and
+the proven `cwmAdvanceM` / `cwmAdvanceAdmits_iff` theorems would never notice.
+
+`cwmDiffCorpus` enumerates `(mandate, cursor)` and emits the advance DECISION as
+`(admitted, newCursor)` (`newCursor = 0` on reject). The Rust test
+`compartment-workflow-mandate/tests/cwm_lean_differential.rs` enumerates the IDENTICAL grid
+through `cwm_advance_admits` and asserts the SAME vector. Drift on either side fails.
+
+Grid: mandates = [charterMandate3 (officer: clears all 3), clerkMandate3 (clerk: clears only
+review/step 0)]; cursors = [0, 1, 2, 3] (terminal = 3). -/
+
+def cwmDiffMandates : List WorkflowMandate := [charterMandate3, clerkMandate3]
+def cwmDiffCursors : List Nat := [0, 1, 2, 3]
+
+/-- Per-row `(admitted, newCursor)`; `newCursor = 0` on reject. Row-major over mandates × cursors. -/
+def cwmDiffCorpus : List (Bool × Nat) :=
+  cwmDiffMandates.flatMap fun m =>
+    cwmDiffCursors.map fun c =>
+      match cwmAdvanceM m { cursor := c, anchor := 42 } with
+      | some s' => (true, s'.cursor)
+      | none    => (false, 0)
+
+-- PINNED: the 8-row decision vector. The Rust differential test pins the identical literal.
+#guard cwmDiffCorpus ==
+  [ -- charterMandate3 (officer clears review/redact/sign): linear DAG advances 0→1→2→3, then stops
+    (true, 1), (true, 2), (true, 3), (false, 0),
+    -- clerkMandate3 (clerk clears ONLY review): step 0 admits; step 1 (redact) lacks clearance → stop
+    (true, 1), (false, 0), (false, 0), (false, 0) ]
+
 #assert_axioms stepAdmissible_false_of_incomplete
 #assert_axioms dagLegal_nil
 #assert_axioms stepCompleted_true_of_mem

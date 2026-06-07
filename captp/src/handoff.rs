@@ -61,6 +61,16 @@ pub enum HandoffError {
     /// begets connectivity): `granted ⊄ held`. Mirrors the Lean
     /// `Exec/CapTP.lean::handoff_non_amplifying` spec (`granted ≤ held`).
     Amplification,
+    /// The certificate's claimed `target_cell` does not match the cell the
+    /// swiss entry actually points to (`held.cell_id`). A handoff must re-share
+    /// the SAME target the introducer holds — it cannot redirect a swiss entry
+    /// registered for cell X to confer access to a different cell Y. Enforces
+    /// the Lean `Exec/CapTP.lean::handoff_same_target` spec
+    /// (`granted.target = held.target`): without this check, the granted
+    /// `cell_id` is the cert's (introducer-asserted) claim, so a forged cert
+    /// could name an arbitrary target and the non-amplification check (over
+    /// rights, not target) would not catch it.
+    TargetMismatch,
 }
 
 impl std::fmt::Display for HandoffError {
@@ -89,6 +99,10 @@ impl std::fmt::Display for HandoffError {
             HandoffError::Amplification => write!(
                 f,
                 "handoff amplifies authority: granted permissions exceed introducer's held swiss entry"
+            ),
+            HandoffError::TargetMismatch => write!(
+                f,
+                "handoff target mismatch: certificate target_cell differs from the swiss entry's cell"
             ),
         }
     }
@@ -438,6 +452,17 @@ pub fn validate_handoff(
             crate::sturdy::EnlivenError::Expired => HandoffError::Expired,
             crate::sturdy::EnlivenError::ExhaustedUses => HandoffError::MaxUsesExhausted,
         })?;
+
+    // 5b. Target binding (Lean `handoff_same_target`): the cell the recipient is
+    //     introduced to MUST be the cell the swiss entry actually points to. The
+    //     certificate's `target_cell` is introducer-asserted; the swiss entry's
+    //     `cell_id` is the target federation's authoritative record. Without this,
+    //     a forged cert could name an arbitrary `target_cell` (and we'd hand the
+    //     recipient a routing token for it), because the §6 non-amplification check
+    //     compares RIGHTS, not target. Bind them: granted.target == held.target.
+    if cert.target_cell != held.cell_id {
+        return Err(HandoffError::TargetMismatch);
+    }
 
     // 6. Non-amplification (Granovetter): granted ⊆ held.
     //
@@ -895,6 +920,43 @@ mod tests {
         let known = vec![intro_fed];
         let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(result.unwrap_err(), HandoffError::Amplification);
+    }
+
+    #[test]
+    fn target_mismatch_rejected() {
+        // The introducer registers a swiss entry for cell X, but mints a certificate
+        // claiming a DIFFERENT target cell Y. A forged/redirected cert must NOT confer
+        // access to Y off an entry registered for X (Lean `handoff_same_target`).
+        let (intro_sk, intro_pk, intro_fed) = setup_introducer();
+        let (recip_sk, recip_pk) = setup_recipient();
+        let target_fed = FederationId([0xDD; 32]);
+        let registered_cell = CellId([0x11; 32]); // X: what the swiss entry points to
+        let claimed_cell = CellId([0x22; 32]); // Y: what the cert claims
+
+        let mut swiss_table = SwissTable::new();
+        let swiss = swiss_table.export(registered_cell, AuthRequired::Signature, 100, None);
+
+        // Cert names Y, not X.
+        let cert = HandoffCertificate::create(
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            claimed_cell,
+            recip_pk.0,
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
+        );
+        let presentation = HandoffPresentation::create(cert, &recip_sk);
+        let known = vec![intro_fed];
+        let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
+        assert_eq!(
+            result.unwrap_err(),
+            HandoffError::TargetMismatch,
+            "a cert claiming a target cell other than the swiss entry's cell must be rejected"
+        );
     }
 
     #[test]

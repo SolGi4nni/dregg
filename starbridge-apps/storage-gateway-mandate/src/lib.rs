@@ -16,10 +16,15 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
-    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
+
+// Re-export the field primitives so differential tests (and downstream callers) can build the
+// same `FieldElement` corpus the admission predicates consume, without depending directly on
+// `dregg-app-framework`.
+pub use dregg_app_framework::{FieldElement, field_from_bytes};
 
 // =============================================================================
 // Storage domain (VFS ops)
