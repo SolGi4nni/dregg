@@ -75,6 +75,14 @@ clear_on_drop = { version = "0.2", features = ["no_cc"] }
 # uses inline x86_64 / aarch64 AES intrinsics unless the `portable` feature is
 # enabled. The wasm32 target has neither, so we force `portable` here.
 lockstitch = { version = "0.29", features = ["portable"] }
+# Indirect dep via `dregg-token`'s `biscuit` feature (enabled by `dregg-turn`
+# and `dregg-sdk` for the on-critical-path `Authorization::Token` verification).
+# biscuit-auth's wasm32 `Instant` shim uses `performance_now()` + `TryInto`,
+# both of which are only declared behind its own `wasm` feature — without it the
+# crate fails to compile for wasm32. We force the feature here so unification
+# applies it to the transitively-pulled copy. wasm-only: native already builds.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+biscuit-auth = { version = "6.0.0", features = ["wasm"] }
 
 [dependencies.web-sys]
 version = "0.3"

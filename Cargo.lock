@@ -769,6 +769,7 @@ dependencies = [
  "sha2 0.9.9",
  "thiserror 1.0.69",
  "time",
+ "wasm-bindgen",
  "zeroize",
 ]
 
@@ -2734,6 +2735,7 @@ dependencies = [
 name = "dregg-wasm"
 version = "0.1.0"
 dependencies = [
+ "biscuit-auth",
  "blake3",
  "bs58",
  "clear_on_drop",

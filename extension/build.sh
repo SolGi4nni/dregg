@@ -49,6 +49,31 @@ build_wasm() {
     --no-typescript \
     --omit-default-module-path
 
+  # ----- Inline JS snippets into the no-modules glue --------------------------
+  # When a wasm dependency carries an `#[wasm_bindgen(inline_js = ...)]` shim
+  # (e.g. biscuit-auth's `performance_now`), wasm-bindgen's `no-modules` target
+  # emits a `require("./snippets/.../inline0.js")` call. `require` does not exist
+  # in a browser extension service worker / classic worker, so the glue would
+  # throw at load. We rewrite each such `require(...)` to inline the snippet's
+  # exported functions directly, then delete the now-unreferenced snippets dir.
+  # This keeps the extension a flat, self-contained bundle (glue + .wasm only).
+  if [ -d "$SCRIPT_DIR/snippets" ]; then
+    echo "  Inlining wasm-bindgen JS snippets (no-modules service-worker compat)..."
+    node "$SCRIPT_DIR/inline-snippets.mjs" "$SCRIPT_DIR/dregg_wasm.js" "$SCRIPT_DIR/snippets"
+    rm -rf "$SCRIPT_DIR/snippets"
+  fi
+
+  # ----- Optimize the wasm blob ----------------------------------------------
+  # `no-modules` does not run wasm-opt the way `wasm-pack` does, leaving an
+  # ~8MB unoptimized blob. Shrink it (~5MB) if wasm-opt is available.
+  if command -v wasm-opt >/dev/null 2>&1; then
+    echo "  Optimizing dregg_wasm_bg.wasm with wasm-opt -O..."
+    wasm-opt -O "$SCRIPT_DIR/dregg_wasm_bg.wasm" -o "$SCRIPT_DIR/dregg_wasm_bg.wasm.opt" \
+      && mv "$SCRIPT_DIR/dregg_wasm_bg.wasm.opt" "$SCRIPT_DIR/dregg_wasm_bg.wasm"
+  else
+    echo "  (wasm-opt not on PATH — shipping unoptimized blob)"
+  fi
+
   if [ -f "$SCRIPT_DIR/dregg_wasm_bg.wasm" ] && [ -f "$SCRIPT_DIR/dregg_wasm.js" ]; then
     WASM_SIZE=$(wc -c < "$SCRIPT_DIR/dregg_wasm_bg.wasm" | tr -d ' ')
     echo "  WASM output:"

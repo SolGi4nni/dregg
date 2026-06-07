@@ -719,6 +719,53 @@ let wasm_bindgen = (function(exports) {
     exports.create_bearer_cap_proof = create_bearer_cap_proof;
 
     /**
+     * Build a canonical `Authorization::CapTpDelivered` envelope, postcard-encode
+     * it, and return the bytes.
+     *
+     * This is the substrate behind the extension's
+     * `dregg.createCapTpDeliveredAuth(...)` surface (STARBRIDGE-PLAN §4.3 Task #28
+     * item 7). A starbridge-app performing a three-party CapTP handoff (Alice→Bob→Carol)
+     * builds the recipient-side authorization client-side from:
+     * - `handoff_cert_b58`: the introducer-signed `HandoffCertificate` as either the
+     *   compact `dregg-handoff:<base58>` string or a bare base58 of its postcard bytes.
+     * - `introducer_pk_hex`: 32-byte introducer public key (verifies
+     *   `handoff_cert.introducer_signature`).
+     * - `sender_pk_hex`: 32-byte recipient/sender public key (must equal
+     *   `handoff_cert.recipient_pk`).
+     * - `sender_sig_hex`: 64-byte Ed25519 signature by `sender_pk` over the
+     *   `captp_delivered_signing_message`.
+     *
+     * The signature itself is produced upstream (by the recipient's cipherclerk over
+     * `Authorization::captp_delivered_signing_message[_for_federation]`); this
+     * constructor only assembles the canonical variant and serializes it. The
+     * executor's `verify_captp_delivered` performs the real verification at apply time.
+     *
+     * Returns JSON: `{ "auth_bytes": <Uint8Array>, "recipient_pk": "<hex>",
+     * "introducer_federation": "<hex>" }`.
+     * @param {string} handoff_cert_b58
+     * @param {string} introducer_pk_hex
+     * @param {string} sender_pk_hex
+     * @param {string} sender_sig_hex
+     * @returns {any}
+     */
+    function create_captp_delivered_auth(handoff_cert_b58, introducer_pk_hex, sender_pk_hex, sender_sig_hex) {
+        const ptr0 = passStringToWasm0(handoff_cert_b58, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(introducer_pk_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(sender_pk_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(sender_sig_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.create_captp_delivered_auth(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.create_captp_delivered_auth = create_captp_delivered_auth;
+
+    /**
      * Create a cell in the runtime via a real `Effect::CreateCell` turn issued
      * by the genesis agent (agent 0). Requires at least one agent to exist as
      * the signer — if there are none, returns an error.
@@ -920,10 +967,18 @@ let wasm_bindgen = (function(exports) {
     exports.create_stealth_address = create_stealth_address;
 
     /**
-     * Create a Pedersen-style value commitment.
+     * Create a **real** Pedersen value commitment over the Ristretto group.
      *
-     * Uses BLAKE3-based commitment: C = H(value || blinding).
-     * Returns JSON: { commitment: Vec<u8>, blinding: Vec<u8> }
+     * `commitment = amount * V + scalar(blinding) * R`, where `V`/`R` are the
+     * canonical `dregg_cell` value/randomness generators and the 32 blinding bytes
+     * are reduced mod the group order into a `Scalar`. The returned `commitment`
+     * is the 32-byte compressed Ristretto encoding — the exact bytes that
+     * `verify_conservation_proof` / `prove_conservation` consume and that
+     * `ValueCommitment::to_bytes` produces. This replaces the previous BLAKE3
+     * hash placeholder, which was NOT a real curve point and was incompatible with
+     * the homomorphic conservation verifier.
+     *
+     * Returns JSON: { commitment: Vec<u8> (32-byte compressed Ristretto), blinding: Vec<u8> }
      * @param {bigint} amount
      * @param {Uint8Array} blinding
      * @returns {any}
@@ -938,6 +993,49 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.create_value_commitment = create_value_commitment;
+
+    /**
+     * Compute the canonical custom signing message a `commit_table_update` action
+     * (with the given effects) binds to. Returns lowercase hex. Committee members
+     * sign these exact bytes via `sign_custom_commit`.
+     * @param {number} handle
+     * @param {number} agent_index
+     * @param {string} target_cell_id_hex
+     * @param {string} method
+     * @param {string} actions_json
+     * @param {string} vk_hash_hex
+     * @param {string} committee_commitment_hex
+     * @returns {string}
+     */
+    function custom_commit_signing_message(handle, agent_index, target_cell_id_hex, method, actions_json, vk_hash_hex, committee_commitment_hex) {
+        let deferred7_0;
+        let deferred7_1;
+        try {
+            const ptr0 = passStringToWasm0(target_cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(actions_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ptr3 = passStringToWasm0(vk_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len3 = WASM_VECTOR_LEN;
+            const ptr4 = passStringToWasm0(committee_commitment_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len4 = WASM_VECTOR_LEN;
+            const ret = wasm.custom_commit_signing_message(handle, agent_index, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+            var ptr6 = ret[0];
+            var len6 = ret[1];
+            if (ret[3]) {
+                ptr6 = 0; len6 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred7_0 = ptr6;
+            deferred7_1 = len6;
+            return getStringFromWasm0(ptr6, len6);
+        } finally {
+            wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
+        }
+    }
+    exports.custom_commit_signing_message = custom_commit_signing_message;
 
     /**
      * Postcard-decode a `PeerStateTransition` and return its fields as a
@@ -1147,6 +1245,71 @@ let wasm_bindgen = (function(exports) {
     exports.evaluate_datalog = evaluate_datalog;
 
     /**
+     * Execute a real signed multi-agent app turn: `agent_index` signs, the action
+     * targets `target_cell_id_hex` with method `method`, carrying the effects in
+     * `actions_json` (same shape as `execute_turn`, now including `emit_event`).
+     * @param {number} handle
+     * @param {number} agent_index
+     * @param {string} target_cell_id_hex
+     * @param {string} method
+     * @param {string} actions_json
+     * @param {bigint} fee
+     * @returns {any}
+     */
+    function execute_app_turn(handle, agent_index, target_cell_id_hex, method, actions_json, fee) {
+        const ptr0 = passStringToWasm0(target_cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(actions_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.execute_app_turn(handle, agent_index, ptr0, len0, ptr1, len1, ptr2, len2, fee);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.execute_app_turn = execute_app_turn;
+
+    /**
+     * Execute a real `Authorization::Custom` commit turn. `proof_hex` is the
+     * concatenation of `threshold` 96-byte `(pubkey ‖ sig)` records (hex) produced
+     * by `sign_custom_commit`. The turn is accepted only if the registered
+     * threshold verifier validates the signatures over the canonical message and
+     * the cell-program's `MonotonicSequence(version)` caveat accepts the +1 bump.
+     * @param {number} handle
+     * @param {number} agent_index
+     * @param {string} target_cell_id_hex
+     * @param {string} method
+     * @param {string} actions_json
+     * @param {string} vk_hash_hex
+     * @param {string} committee_commitment_hex
+     * @param {string} proof_hex
+     * @param {bigint} fee
+     * @returns {any}
+     */
+    function execute_custom_auth_turn(handle, agent_index, target_cell_id_hex, method, actions_json, vk_hash_hex, committee_commitment_hex, proof_hex, fee) {
+        const ptr0 = passStringToWasm0(target_cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(actions_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(vk_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(committee_commitment_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passStringToWasm0(proof_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ret = wasm.execute_custom_auth_turn(handle, agent_index, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, fee);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.execute_custom_auth_turn = execute_custom_auth_turn;
+
+    /**
      * Build and execute a turn for an agent.
      *
      * `actions_json` is a JSON array of action descriptors:
@@ -1304,9 +1467,19 @@ let wasm_bindgen = (function(exports) {
     exports.generate_predicate_proof = generate_predicate_proof;
 
     /**
-     * Generate a range proof for a committed value.
+     * Generate a **real** Bulletproof range proof that a committed value is in
+     * `[0, 2^64)`.
      *
-     * Returns JSON: { proof: Vec<u8>, proof_size_bytes: usize }
+     * This builds the canonical Pedersen commitment `value*V + scalar(blinding)*R`
+     * over Ristretto and a real `bulletproofs::RangeProof` (curve25519-dalek,
+     * runs natively on wasm32). The `_commitment` argument is ignored — the
+     * commitment is recomputed from `(amount, blinding)` so the returned
+     * `commitment` is guaranteed to match the proof. Feed `commitment` +
+     * `range_proof` straight to [`verify_range_proof`].
+     *
+     * Returns JSON: `{ commitment: Vec<u8> (32B), range_proof: Vec<u8> (~672B),
+     * proof_size_bytes: usize }`. (`proof` is kept as an alias of `range_proof`
+     * for callers that read the old field name.)
      * @param {bigint} amount
      * @param {Uint8Array} blinding
      * @param {Uint8Array} _commitment
@@ -1357,6 +1530,72 @@ let wasm_bindgen = (function(exports) {
         return v2;
     }
     exports.generate_sse_tokens = generate_sse_tokens;
+
+    /**
+     * Get the receipt chain filtered to a single agent.
+     *
+     * The wasm sim runtime applies turns through one shared `TurnExecutor` and
+     * records receipts in `DreggRuntime::receipts` (the cipherclerk's own
+     * `receipt_chain()` is not threaded in the sim path). Each `TurnReceipt`
+     * carries its `agent: CellId`, so we filter the global chain by the agent's
+     * cell id — the honest per-agent view. Same `ReceiptView` shape as
+     * `get_receipt_chain`, minus the per-action/proof expansion (the inspector
+     * drills into individual receipts via `<dregg-receipt uri="...">`).
+     * @param {number} handle
+     * @param {number} agent_index
+     * @returns {any}
+     */
+    function get_agent_receipts(handle, agent_index) {
+        const ret = wasm.get_agent_receipts(handle, agent_index);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.get_agent_receipts = get_agent_receipts;
+
+    /**
+     * Get an agent's stealth meta-address — the view and spend PUBLIC keys only.
+     *
+     * Sourced from `AgentCipherclerk::stealth_meta_address()`
+     * (`StealthMetaAddress { spend_pubkey, view_pubkey }`). The corresponding
+     * PRIVATE keys (`view_private_key` / `spend_private_key`) are NEVER surfaced —
+     * they stay inside the cipherclerk's `StealthKeys`. Publishing the meta-address
+     * is the intended use: senders derive unlinkable one-time addresses from it.
+     * @param {number} handle
+     * @param {number} agent_index
+     * @returns {any}
+     */
+    function get_agent_stealth_keys(handle, agent_index) {
+        const ret = wasm.get_agent_stealth_keys(handle, agent_index);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.get_agent_stealth_keys = get_agent_stealth_keys;
+
+    /**
+     * List the macaroon-backed `HeldToken`s held by an agent's cipherclerk
+     * (`AgentCipherclerk::tokens()`). Distinct from the intent-matcher
+     * `HeldCapability` list surfaced by `get_capability_tree`.
+     *
+     * Returns a JSON array of token summaries. No `root_key` / `issuer_key` is
+     * surfaced (those are `#[serde(skip)]` and zeroed on drop in the SDK); only the
+     * public-facing macaroon fields plus the capability flags (`can_mint`,
+     * `can_prove`, `verified`) are exposed.
+     * @param {number} handle
+     * @param {number} agent_index
+     * @returns {any}
+     */
+    function get_agent_tokens(handle, agent_index) {
+        const ret = wasm.get_agent_tokens(handle, agent_index);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.get_agent_tokens = get_agent_tokens;
 
     /**
      * Get all cells in the ledger.
@@ -1490,9 +1729,15 @@ let wasm_bindgen = (function(exports) {
     exports.get_merkle_tree_viz = get_merkle_tree_viz;
 
     /**
-     * List notes (commitments) for an agent. Returns array of {commitment, value, asset_type, spent}.
-     * Stub for now (always []); real tracking of held notes across create/spend awaits
-     * SimAgent.held_notes field + updates in runtime.rs (Wave 3 note inspector + §5.1 gaps).
+     * List notes for an agent. Returns array of
+     * `{commitment, value, asset_type, spent, nullifier}`.
+     *
+     * Reads the agent's real `held_notes` index (#45): every note minted via
+     * `create_note` is recorded there (and marked spent — with its revealed
+     * nullifier — once `spend_note` runs). `commitment` / `value` / `asset_type`
+     * are derived from the canonical `dregg_cell::Note`, so the `<dregg-note>`
+     * inspector and `dregg://note/<commitment>` URI lookups resolve real data
+     * rather than the prior always-empty stub. `nullifier` is `null` until spent.
      * @param {number} handle
      * @param {number} agent_index
      * @returns {any}
@@ -1641,6 +1886,59 @@ let wasm_bindgen = (function(exports) {
     exports.grant_capability = grant_capability;
 
     /**
+     * Grant the acting agent's cell a capability to reach `target_cell_id_hex`.
+     * Required before a non-owner agent can drive a turn against an app cell.
+     * @param {number} handle
+     * @param {number} agent_index
+     * @param {string} target_cell_id_hex
+     * @returns {any}
+     */
+    function grant_reach_capability(handle, agent_index, target_cell_id_hex) {
+        const ptr0 = passStringToWasm0(target_cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.grant_reach_capability(handle, agent_index, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.grant_reach_capability = grant_reach_capability;
+
+    /**
+     * Install a canonical starbridge-app cell-program + initial state on a cell.
+     *
+     * `program_kind`:
+     *   - `"subscription"` — installs `subscription_program` (CapInbox shape).
+     *     `owner_pk_hash_hex` seeds slot 5; `capacity` seeds slot 2.
+     *   - `"governed-namespace"` — installs `governance_program`.
+     *     `committee_root_hex` seeds slot 2; `threshold` seeds slot 3;
+     *     `initial_route_table_root_hex` seeds slot 0.
+     *
+     * Permissions are opened so multi-agent turns apply; the slot-caveat
+     * cell-program is the load-bearing enforcement (mirrors the apps' executor
+     * integration-test harness exactly).
+     * @param {number} handle
+     * @param {string} cell_id_hex
+     * @param {string} program_kind
+     * @param {string} config_json
+     * @returns {any}
+     */
+    function install_app_program(handle, cell_id_hex, program_kind, config_json) {
+        const ptr0 = passStringToWasm0(cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(program_kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.install_app_program(handle, ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.install_app_program = install_app_program;
+
+    /**
      * Check if a revocation channel is active.
      * @param {number} handle
      * @param {string} channel_id_hex
@@ -1658,8 +1956,16 @@ let wasm_bindgen = (function(exports) {
     exports.is_channel_active = is_channel_active;
 
     /**
-     * Stub for factory descriptor listing (deploy already exists; this closes the read path for <dregg-factory-descriptor>).
-     * Returns the Vks + basic metadata of deployed factories in the executor.
+     * List every factory deployed in the runtime's executor (read path for
+     * `<dregg-factory-descriptor>`).
+     *
+     * Walks the canonical `executor.factory_registry` (`FactoryRegistry::descriptors`)
+     * and surfaces each deployed `FactoryDescriptor`'s real metadata: its VK, the
+     * counts of state/field constraints and allowed capability templates, default
+     * cell mode, optional child program VK, and creation budget. The runtime's
+     * default test-cipherclerk factory is flagged so the inspector can distinguish
+     * it. This replaces the prior coarse stub that hardcoded `has_state_constraints:
+     * false` and only ever returned the default VK.
      * @param {number} handle
      * @returns {any}
      */
@@ -1911,6 +2217,48 @@ let wasm_bindgen = (function(exports) {
     exports.prove_anonymous_membership = prove_anonymous_membership;
 
     /**
+     * Produce (and cache) a REAL Stage 7-γ.2 cross-cell bilateral *aggregate*
+     * proof — the GOLDEN tier — over a canonical two-cell transfer scenario, and
+     * return its summary (including the matched outgoing/incoming transfer roots).
+     *
+     * This is NOT a tier flip on a single-turn EffectVM proof. It runs the
+     * canonical γ.2 aggregator
+     * (`dregg_turn::aggregate_bilateral_prover::prove_aggregated_bundle`) over two
+     * per-cell `WitnessedReceipt`s — alice's OUTGOING transfer + bob's INCOMING
+     * transfer, both projected from the SAME canonical Turn's bilateral schedule —
+     * emitting a real outer STARK over `BilateralAggregationAir`. The bundle is
+     * then self-verified (`verify_aggregated_bundle`: real outer-STARK
+     * verification + Turn-derived cross-cell schedule re-check) BEFORE the record
+     * is cached, so a returned result is a genuinely sound cross-cell aggregate —
+     * never a faked tier.
+     *
+     * PERFORMANCE: like `prove_turn`, proving is expensive in wasm and is NOT run
+     * at boot. The Proofs section calls this lazily; it is idempotent (re-proving
+     * once cached is a cheap no-op).
+     *
+     * Returns
+     * `{ kind, proof_size_bytes, n_cells, bilateral_consistent, roots_matched,
+     *    outgoing_transfer_root, incoming_transfer_root, shared_transfer_id,
+     *    sender_cell, receiver_cell, amount }`. `roots_matched == true` is the
+     * headline GOLDEN signal: the aggregate self-verified (`bilateral_consistent`
+     * + the Turn-derived schedule re-check inside `verify_aggregated_bundle`) and
+     * both transfer roots are present (non-zero). The outgoing/incoming roots are
+     * domain-separated and so intentionally NOT byte-equal; the cross-cell binding
+     * is the `shared_transfer_id` both sides fold over, attested by the verified
+     * aggregate.
+     * @param {number} handle
+     * @returns {any}
+     */
+    function prove_bilateral_aggregate(handle) {
+        const ret = wasm.prove_bilateral_aggregate(handle);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.prove_bilateral_aggregate = prove_bilateral_aggregate;
+
+    /**
      * Prove that a private value meets a committed threshold (value >= threshold)
      * without revealing either value to third parties.
      *
@@ -1933,6 +2281,107 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.prove_committed_threshold = prove_committed_threshold;
+
+    /**
+     * Produce a **real** conservation proof for a balanced transaction.
+     *
+     * Given inputs and outputs (each `{ value, blinding_hex }`) plus a `message_hex`
+     * binding context, this builds the real Ristretto `ValueCommitment`s, computes
+     * the excess blinding `Σ input_blindings − Σ output_blindings` internally, and
+     * produces the canonical `dregg_cell::ConservationProof` (Schnorr excess
+     * signature). All the curve25519-dalek work happens inside `dregg_cell`
+     * (`prove_conservation_bytes`); this binding only marshals bytes.
+     *
+     * The returned shape is EXACTLY what `verify_conservation_proof` parses:
+     * ```json
+     * {
+     *   "input_commitments":  ["<hex32>", ...],
+     *   "output_commitments": ["<hex32>", ...],
+     *   "proof": { "excess_commitment": "<hex32>",
+     *              "nonce_commitment":  "<hex32>",
+     *              "response":          "<hex32>" },
+     *   "message_hex": "<hex>"
+     * }
+     * ```
+     *
+     * Soundness note: this binding now produces the FULL conservation proof —
+     * the Schnorr excess relation (value balance) AND one real Bulletproof range
+     * proof per output (`[0, 2^64)`). The returned `output_range_proofs` are
+     * hex-encoded serialized `bulletproofs::RangeProof`s. When fed back to
+     * `verify_conservation_proof`, a `valid: true` with `range_proofs_checked:
+     * true` means both "the excess balances" AND "every output is a non-negative
+     * 64-bit value" — i.e. the negative-value (mod-order wrap) inflation attack is
+     * ruled out. The Bulletproofs verifier runs natively on wasm32 (bulletproofs
+     * v5 over curve25519-dalek compiles to wasm32-unknown-unknown).
+     * @param {string} inputs_json
+     * @param {string} outputs_json
+     * @param {string} message_hex
+     * @returns {any}
+     */
+    function prove_conservation(inputs_json, outputs_json, message_hex) {
+        const ptr0 = passStringToWasm0(inputs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(outputs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(message_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.prove_conservation(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.prove_conservation = prove_conservation;
+
+    /**
+     * Generate (and cache) a REAL EffectVM STARK proof for a committed turn,
+     * identified by its `turn_hash` (hex32).
+     *
+     * This drives the canonical Effect VM prove path
+     * (`generate_effect_vm_trace` → `stark::prove` → `stark::verify`), the same
+     * pipeline `circuit/tests/integration_effect_vm_prove_verify.rs` exercises.
+     * The proof is self-verified before being cached, so once this returns Ok the
+     * turn's `get_receipt_chain` entry carries a real `proof_view` (Silver tier).
+     *
+     * PERFORMANCE: STARK proving is expensive in wasm, so this is NOT run on the
+     * commit path or at boot. The `<dregg-proof>` inspector calls it lazily on
+     * first view; it is idempotent (re-proving a cached turn is a cheap no-op),
+     * so repeated inspector renders cost nothing after the first.
+     *
+     * Returns `{ kind, proof_size_bytes, trace_rows, net_delta }` describing the
+     * generated (or already-cached) proof.
+     * @param {number} handle
+     * @param {string} turn_hash_hex
+     * @returns {any}
+     */
+    function prove_turn(handle, turn_hash_hex) {
+        const ptr0 = passStringToWasm0(turn_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.prove_turn(handle, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.prove_turn = prove_turn;
+
+    /**
+     * Read a single 32-byte cell slot as lowercase hex (or `null` if absent).
+     * @param {number} handle
+     * @param {string} cell_id_hex
+     * @param {number} index
+     * @returns {any}
+     */
+    function read_cell_field(handle, cell_id_hex, index) {
+        const ptr0 = passStringToWasm0(cell_id_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.read_cell_field(handle, ptr0, len0, index);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.read_cell_field = read_cell_field;
 
     /**
      * Register (or record) a federation in the runtime's known set (sim).
@@ -1984,6 +2433,30 @@ let wasm_bindgen = (function(exports) {
     exports.register_peer = register_peer;
 
     /**
+     * Register a real Ed25519 threshold verifier under `vk_hash_hex` for the
+     * governed-namespace `commit_table_update` flow. `committee_pubkeys_json` is a
+     * JSON array of 64-char hex public keys; `threshold` is the count of distinct
+     * valid committee signatures required.
+     * @param {number} handle
+     * @param {string} vk_hash_hex
+     * @param {string} committee_pubkeys_json
+     * @param {number} threshold
+     * @returns {any}
+     */
+    function register_threshold_verifier(handle, vk_hash_hex, committee_pubkeys_json, threshold) {
+        const ptr0 = passStringToWasm0(vk_hash_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(committee_pubkeys_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.register_threshold_verifier(handle, ptr0, len0, ptr1, len1, threshold);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.register_threshold_verifier = register_threshold_verifier;
+
+    /**
      * Revoke a capability by slot.
      * @param {number} handle
      * @param {number} agent_index
@@ -1998,6 +2471,36 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.revoke_capability = revoke_capability;
+
+    /**
+     * Canonical route-table commitment for a governed-namespace route table.
+     * `routes_json` is a JSON array of `[path, handler]` pairs. Returns the BLAKE3
+     * commitment hex — the value that becomes slot 0 after a successful commit.
+     * Uses `dregg_dfa::RouteTableBuilder` + `RouteTable::commitment` (canonical).
+     * @param {string} routes_json
+     * @returns {string}
+     */
+    function route_table_commitment(routes_json) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(routes_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.route_table_commitment(ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.route_table_commitment = route_table_commitment;
 
     /**
      * Scan a batch of stealth announcements for notes addressed to us.
@@ -2124,6 +2627,38 @@ let wasm_bindgen = (function(exports) {
     exports.seal_intent_body = seal_intent_body;
 
     /**
+     * Sign the given canonical message (hex) with `signer_agent_index`'s
+     * cipherclerk, returning a 96-byte `(pubkey ‖ sig)` record as hex. Concatenate
+     * `threshold` such records (hex) to form the proof for
+     * `execute_custom_auth_turn`.
+     * @param {number} handle
+     * @param {number} signer_agent_index
+     * @param {string} message_hex
+     * @returns {string}
+     */
+    function sign_custom_commit(handle, signer_agent_index, message_hex) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(message_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.sign_custom_commit(handle, signer_agent_index, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    exports.sign_custom_commit = sign_custom_commit;
+
+    /**
      * Sign an arbitrary message with a 32-byte Ed25519 secret-key seed.
      *
      * Returns the 64-byte Ed25519 signature. The extension background uses this
@@ -2153,6 +2688,62 @@ let wasm_bindgen = (function(exports) {
         return v3;
     }
     exports.sign_message = sign_message;
+
+    /**
+     * Sign a pre-built, encoded `Turn` via the canonical v3 signing path.
+     *
+     * This is the substrate behind the extension's `dregg.signTurnV3(turnBytes)`
+     * surface (STARBRIDGE-PLAN §4.3 Task #28 item 5). starbridge-apps turn-builders
+     * produce raw `Turn` bytes whose actions carry `Authorization::Unchecked`; this
+     * function walks the call forest and replaces every `Unchecked` action with a
+     * real Ed25519 signature using `AgentCipherclerk::sign_action` — the exact same
+     * canonical path `DreggRuntime::execute_turn_for_agent` uses (`sign_call_forest`
+     * → `cipherclerk.sign_action` → `TurnExecutor::compute_signing_message`). No
+     * hand-rolled cryptography; the v3 signing message format is whatever the SDK's
+     * `compute_signing_message` produces today.
+     *
+     * # Encoding contract (honest substrate note)
+     *
+     * The task spec named postcard, but `dregg_turn::Turn` carries
+     * `#[serde(skip_serializing_if = ...)]` fields and postcard is NOT
+     * self-describing, so `postcard::to_allocvec(&turn)` → `postcard::from_bytes::<Turn>`
+     * does NOT round-trip (it fails "Hit the end of buffer"). This is a pre-existing
+     * substrate asymmetry, verified directly against the `turn` crate. To stay usable
+     * without faking anything, this signer accepts the turn bytes as **either**
+     * postcard or self-describing JSON, tries postcard first and falls back to JSON,
+     * and returns the signed turn in **both** encodings so the caller can pick the
+     * one its downstream consumer accepts. JSON is the reliable round-trip form until
+     * the substrate adds a postcard-safe wire encoding for `Turn`.
+     *
+     * Arguments (all from the extension's cipherclerk context):
+     * - `turn_bytes`: encoded `Turn` (postcard or JSON) with Unchecked actions.
+     * - `sender_privkey`: 32-byte Ed25519 seed (the cipherclerk's secret key).
+     * - `federation_id`: 32-byte federation id the signing message binds against
+     *   (all-zeros for devnet/sim genesis; the node's `local_federation_id`).
+     *
+     * Returns JSON: `{ turn_id, turn_bytes (postcard), turn_bytes_json (JSON),
+     * encoding ("postcard"|"json"; the encoding the INPUT was decoded as),
+     * signer_pubkey }`. Actions already carrying a non-`Unchecked` authorization are
+     * left intact (pre-signed / pre-proven actions are preserved).
+     * @param {Uint8Array} turn_bytes
+     * @param {Uint8Array} sender_privkey
+     * @param {Uint8Array} federation_id
+     * @returns {any}
+     */
+    function sign_turn_v3(turn_bytes, sender_privkey, federation_id) {
+        const ptr0 = passArray8ToWasm0(turn_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(sender_privkey, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(federation_id, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sign_turn_v3(ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.sign_turn_v3 = sign_turn_v3;
 
     /**
      * Drive a single consensus round on the federation without submitting new
@@ -2268,31 +2859,34 @@ let wasm_bindgen = (function(exports) {
      * Returns the plaintext JSON string.
      * @param {Uint8Array} ciphertext
      * @param {Uint8Array} ephemeral_pubkey
+     * @param {Uint8Array} nonce
      * @param {Uint8Array} privkey
      * @returns {string}
      */
-    function unseal_intent_body(ciphertext, ephemeral_pubkey, privkey) {
-        let deferred5_0;
-        let deferred5_1;
+    function unseal_intent_body(ciphertext, ephemeral_pubkey, nonce, privkey) {
+        let deferred6_0;
+        let deferred6_1;
         try {
             const ptr0 = passArray8ToWasm0(ciphertext, wasm.__wbindgen_malloc);
             const len0 = WASM_VECTOR_LEN;
             const ptr1 = passArray8ToWasm0(ephemeral_pubkey, wasm.__wbindgen_malloc);
             const len1 = WASM_VECTOR_LEN;
-            const ptr2 = passArray8ToWasm0(privkey, wasm.__wbindgen_malloc);
+            const ptr2 = passArray8ToWasm0(nonce, wasm.__wbindgen_malloc);
             const len2 = WASM_VECTOR_LEN;
-            const ret = wasm.unseal_intent_body(ptr0, len0, ptr1, len1, ptr2, len2);
-            var ptr4 = ret[0];
-            var len4 = ret[1];
+            const ptr3 = passArray8ToWasm0(privkey, wasm.__wbindgen_malloc);
+            const len3 = WASM_VECTOR_LEN;
+            const ret = wasm.unseal_intent_body(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+            var ptr5 = ret[0];
+            var len5 = ret[1];
             if (ret[3]) {
-                ptr4 = 0; len4 = 0;
+                ptr5 = 0; len5 = 0;
                 throw takeFromExternrefTable0(ret[2]);
             }
-            deferred5_0 = ptr4;
-            deferred5_1 = len4;
-            return getStringFromWasm0(ptr4, len4);
+            deferred6_0 = ptr5;
+            deferred6_1 = len5;
+            return getStringFromWasm0(ptr5, len5);
         } finally {
-            wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+            wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
         }
     }
     exports.unseal_intent_body = unseal_intent_body;
@@ -2380,23 +2974,76 @@ let wasm_bindgen = (function(exports) {
     exports.verify_committed_threshold = verify_committed_threshold;
 
     /**
-     * Verify a conservation proof (sum of inputs == sum of outputs).
+     * Verify a conservation proof (sum of inputs == sum of outputs) using the
+     * canonical Pedersen/Ristretto homomorphic check from
+     * `dregg_cell::value_commitment`.
      *
-     * `input_commitments_json`: JSON array of hex-encoded 32-byte commitments
-     * `output_commitments_json`: same format
-     * `excess_signature_hex`: the Schnorr excess signature binding inputs to outputs
+     * This is the SAME primitive the executor uses for committed-value turns
+     * (`verify_conservation` — a Schnorr signature proving the excess
+     * `Σ inputs − Σ outputs` is a commitment to *zero value*, i.e. the values
+     * balance and no inflation occurred).
      *
-     * Returns JSON: { valid: bool }
+     * # Arguments
+     *
+     * - `input_commitments_json`: JSON array of hex-encoded 32-byte **compressed
+     *   Ristretto** value commitments (as produced by
+     *   `ValueCommitment::to_bytes` / the SDK committed-turn builder).
+     * - `output_commitments_json`: same format, for the created notes.
+     * - `proof_json`: JSON object `{ excess_commitment, nonce_commitment,
+     *   response }`, each a hex-encoded 32 bytes — the canonical
+     *   `dregg_cell::ConservationProof` (Schnorr excess signature). This is the
+     *   `conservation` field of the SDK's `FullConservationProof`.
+     * - `message_hex`: hex-encoded binding context (e.g. the turn hash). Pass an
+     *   empty string for an unbound proof. MUST match the message the prover
+     *   signed or verification fails closed.
+     *
+     * - `output_range_proofs_json` (OPTIONAL): pass `null`/`undefined` to verify
+     *   the Schnorr excess relation only (`range_proofs_checked: false`). Pass a
+     *   JSON array of hex-encoded serialized Bulletproof range proofs (one per
+     *   output, same order as `output_commitments`, exactly as produced by
+     *   `prove_conservation`'s `output_range_proofs`) to additionally verify that
+     *   every output is a non-negative 64-bit value. When present and valid,
+     *   `range_proofs_checked` is `true`.
+     *
+     * # Soundness / fail-closed
+     *
+     * When `output_range_proofs_json` is provided, this binding verifies the FULL
+     * conservation proof: the Schnorr excess relation (value balance) AND a real
+     * per-output Bulletproof range proof (`[0, 2^64)`), via
+     * `dregg_cell::value_commitment::verify_full_conservation_bytes`. A `valid:
+     * true` with `range_proofs_checked: true` therefore rules out the
+     * negative-value (mod-order wrap) inflation attack. The Bulletproofs verifier
+     * runs natively on wasm32 (bulletproofs v5 over curve25519-dalek).
+     *
+     * When omitted, it verifies ONLY the Schnorr excess relation and surfaces
+     * `range_proofs_checked: false` — `valid: true` then means "the excess
+     * balances", not "every output is non-negative".
+     *
+     * Any malformed point, non-canonical scalar, message mismatch, wrong range
+     * proof count, malformed/out-of-range Bulletproof, or unbalanced excess yields
+     * `valid: false` with a precise `error` (never a thrown JsError).
+     *
+     * Returns JSON: `{ valid, range_proofs_checked, input_count, output_count,
+     * error }`.
      * @param {string} input_commitments_json
      * @param {string} output_commitments_json
+     * @param {string} proof_json
+     * @param {string} message_hex
+     * @param {string | null} [output_range_proofs_json]
      * @returns {any}
      */
-    function verify_conservation_proof(input_commitments_json, output_commitments_json) {
+    function verify_conservation_proof(input_commitments_json, output_commitments_json, proof_json, message_hex, output_range_proofs_json) {
         const ptr0 = passStringToWasm0(input_commitments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(output_commitments_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.verify_conservation_proof(ptr0, len0, ptr1, len1);
+        const ptr2 = passStringToWasm0(proof_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(message_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(output_range_proofs_json) ? 0 : passStringToWasm0(output_range_proofs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.verify_conservation_proof(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -2498,6 +3145,31 @@ let wasm_bindgen = (function(exports) {
     exports.verify_provenance = verify_provenance;
 
     /**
+     * Verify a **real** Bulletproof range proof against a Pedersen commitment.
+     *
+     * `commitment`: 32-byte compressed Ristretto commitment (as produced by
+     * `generate_range_proof` / `create_value_commitment`). `range_proof`: the
+     * serialized Bulletproof bytes. Returns `{ valid: bool, error: string | null }`.
+     * Fails closed (valid:false) on a non-point commitment or a malformed /
+     * out-of-range proof — never throws for a verification failure.
+     * @param {Uint8Array} commitment
+     * @param {Uint8Array} range_proof
+     * @returns {any}
+     */
+    function verify_range_proof(commitment, range_proof) {
+        const ptr0 = passArray8ToWasm0(commitment, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(range_proof, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.verify_range_proof(ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.verify_range_proof = verify_range_proof;
+
+    /**
      * Verify a macaroon token against a request.
      *
      * Returns JSON: { "allowed": bool, "policy": "...", "error": null | "..." }
@@ -2523,6 +3195,10 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.verify_token = verify_token;
+    const import1 = { performance_now: function() {
+  return performance.now();
+} };
+
     function __wbg_get_imports() {
         const import0 = {
             __proto__: null,
@@ -2711,6 +3387,7 @@ let wasm_bindgen = (function(exports) {
         return {
             __proto__: null,
             "./dregg_wasm_bg.js": import0,
+            "./snippets/biscuit-auth-314ca57174ae0e6d/inline0.js": import1,
         };
     }
 
