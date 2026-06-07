@@ -470,6 +470,126 @@ fn internal_linear_layer_expr<AB: AirBuilder>(
 }
 
 // ============================================================================
+// Reusable Poseidon2 permutation gadget (real p3 arithmetization)
+// ============================================================================
+
+/// Number of aux columns one Poseidon2 permutation consumes in a trace row:
+/// `(1 + TOTAL_ROUNDS) * 16`. Exposed so callers (e.g. the DSL p3 AIR) can size
+/// their trace and slot per-hash aux blocks.
+pub const POSEIDON2_PERM_AUX_COLS: usize = POSEIDON2_AUX_COLS; // 352
+
+/// The Poseidon2 permutation width (16).
+pub const POSEIDON2_WIDTH: usize = WIDTH;
+
+/// Emit the real Poseidon2-permutation constraints (round-by-round, the SAME
+/// arithmetization `P3MerklePoseidon2Air` uses) for an input `state`, binding
+/// each round's output to the `aux` witness columns (length must be
+/// [`POSEIDON2_PERM_AUX_COLS`]). Returns the permutation output state[0] as an
+/// `AB::Expr` (the hash digest for a sponge with rate ≥ 1).
+///
+/// `aux[j]` for the first block is the post-initial-linear-layer state; the
+/// remaining `TOTAL_ROUNDS` blocks of 16 are the per-round outputs. This is the
+/// genuine in-circuit Poseidon2 — NOT a concrete recompute — so the resulting
+/// digest constraint is algebraically enforced by the audited p3 verifier.
+pub fn poseidon2_permute_expr<AB: AirBuilder>(
+    builder: &mut AB,
+    mut state: [AB::Expr; WIDTH],
+    aux: &[AB::Var],
+) -> AB::Expr
+where
+    AB::F: PrimeField32,
+{
+    assert_eq!(
+        aux.len(),
+        POSEIDON2_AUX_COLS,
+        "poseidon2_permute_expr: aux must be {POSEIDON2_AUX_COLS} columns"
+    );
+    let rc = &*P3_ROUND_CONSTANTS;
+    let diag = &*P3_INTERNAL_DIAG;
+
+    let mut off = 0usize;
+
+    // Initial linear layer.
+    external_linear_layer_expr::<AB>(&mut state);
+    for j in 0..WIDTH {
+        let a: AB::Expr = aux[off + j].into();
+        builder.assert_eq(state[j].clone(), a.clone());
+        state[j] = a;
+    }
+    off += ROUND_COLS;
+
+    // First half external rounds.
+    for round in 0..HALF_EXTERNAL {
+        for j in 0..WIDTH {
+            let rc_f = AB::F::from_u32(rc[round][j].as_canonical_u32());
+            state[j] = state[j].clone() + rc_f;
+        }
+        for j in 0..WIDTH {
+            state[j] = state[j].clone().exp_const_u64::<7>();
+        }
+        external_linear_layer_expr::<AB>(&mut state);
+        for j in 0..WIDTH {
+            let a: AB::Expr = aux[off + j].into();
+            builder.assert_eq(state[j].clone(), a.clone());
+            state[j] = a;
+        }
+        off += ROUND_COLS;
+    }
+
+    // Internal rounds.
+    for round in 0..INTERNAL_ROUNDS {
+        let rc_idx = HALF_EXTERNAL + round;
+        let rc0_f = AB::F::from_u32(rc[rc_idx][0].as_canonical_u32());
+        state[0] = state[0].clone() + rc0_f;
+        state[0] = state[0].clone().exp_const_u64::<7>();
+        internal_linear_layer_expr::<AB>(&mut state, diag);
+        for j in 0..WIDTH {
+            let a: AB::Expr = aux[off + j].into();
+            builder.assert_eq(state[j].clone(), a.clone());
+            state[j] = a;
+        }
+        off += ROUND_COLS;
+    }
+
+    // Second half external rounds.
+    for round in 0..HALF_EXTERNAL {
+        let rc_idx = HALF_EXTERNAL + INTERNAL_ROUNDS + round;
+        for j in 0..WIDTH {
+            let rc_f = AB::F::from_u32(rc[rc_idx][j].as_canonical_u32());
+            state[j] = state[j].clone() + rc_f;
+        }
+        for j in 0..WIDTH {
+            state[j] = state[j].clone().exp_const_u64::<7>();
+        }
+        external_linear_layer_expr::<AB>(&mut state);
+        for j in 0..WIDTH {
+            let a: AB::Expr = aux[off + j].into();
+            builder.assert_eq(state[j].clone(), a.clone());
+            state[j] = a;
+        }
+        off += ROUND_COLS;
+    }
+
+    state[0].clone()
+}
+
+/// Compute the full intermediate-state aux block (length
+/// [`POSEIDON2_PERM_AUX_COLS`]) for a concrete input `state`, matching exactly
+/// what [`poseidon2_permute_expr`] constrains. Witness generators call this to
+/// fill the per-hash aux columns.
+pub fn poseidon2_permute_aux_witness(input: [BabyBear; WIDTH]) -> Vec<BabyBear> {
+    let round_states = poseidon2_trace(&input);
+    let mut out = Vec::with_capacity(POSEIDON2_AUX_COLS);
+    for round_idx in 0..=TOTAL_ROUNDS {
+        for j in 0..WIDTH {
+            out.push(round_states[round_idx][j]);
+        }
+    }
+    debug_assert_eq!(out.len(), POSEIDON2_AUX_COLS);
+    out
+}
+
+// ============================================================================
 // Trace generation for the sound Poseidon2 AIR
 // ============================================================================
 

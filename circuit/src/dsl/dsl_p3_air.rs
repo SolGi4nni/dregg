@@ -68,9 +68,14 @@ use p3_batch_stark::{BatchProof, ProverData, StarkInstance, prove_batch, verify_
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 
+use p3_field::PrimeField32;
+
 use crate::dsl::circuit::{BoundaryDef, BoundaryRow, ConstraintExpr, DslCircuit};
 use crate::field::BabyBear;
-use crate::plonky3_prover::{DreggStarkConfig, create_config, to_p3};
+use crate::plonky3_prover::{
+    DreggStarkConfig, POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, create_config,
+    poseidon2_permute_aux_witness, poseidon2_permute_expr, to_p3,
+};
 
 /// The DSL-circuit p3 proof: a `p3-batch-stark` batch proof over the production
 /// `DreggStarkConfig` (the audited Plonky3 verifier).
@@ -82,18 +87,25 @@ pub type DslP3Proof = BatchProof<DreggStarkConfig>;
 #[derive(Clone, Debug)]
 pub struct DslP3Air {
     descriptor: crate::dsl::circuit::CircuitDescriptor,
+    /// Base trace width (descriptor columns) without Poseidon2 aux blocks.
+    base_width: usize,
+    /// FULL trace width = base_width + num_hashes * POSEIDON2_PERM_AUX_COLS.
+    full_width: usize,
 }
 
 impl DslP3Air {
-    /// Build a p3 AIR from a `DslCircuit`. Fails if the descriptor carries a
-    /// non-algebraic (`Hash*`/`MerkleHash`/`Lookup`) constraint, which has no
-    /// symbolic form (see module docs).
+    /// Build a p3 AIR from a `DslCircuit`. Fails if the descriptor carries an
+    /// unsupported form (`Hash` sponge / `MerkleHash` / `Lookup`); algebraic
+    /// forms and `Hash2to1`/`Hash4to1` (via the real Poseidon2 gadget) are
+    /// supported (see module docs).
     pub fn try_from_dsl(dsl: &DslCircuit) -> Result<Self, DslP3Error> {
         for (i, c) in dsl.descriptor.constraints.iter().enumerate() {
             check_algebraic(c, i)?;
         }
         Ok(Self {
             descriptor: dsl.descriptor.clone(),
+            base_width: dsl.descriptor.trace_width,
+            full_width: air_width(dsl),
         })
     }
 }
@@ -125,7 +137,11 @@ impl core::fmt::Display for DslP3Error {
 
 impl std::error::Error for DslP3Error {}
 
-/// Recursively confirm a constraint is purely algebraic (translatable).
+/// Confirm a constraint is supported by this p3 AIR. Pure-algebraic forms and
+/// the Poseidon2 hash forms (`Hash`/`Hash2to1`/`Hash4to1`/`MerkleHash`) are
+/// supported (hashes via the real in-circuit `poseidon2_permute_expr` gadget).
+/// `Lookup` still requires the LogUp bus (`lean_lookup_air`) and is surfaced as
+/// an error rather than silently dropped.
 fn check_algebraic(c: &ConstraintExpr, index: usize) -> Result<(), DslP3Error> {
     match c {
         ConstraintExpr::Equality { .. }
@@ -135,31 +151,101 @@ fn check_algebraic(c: &ConstraintExpr, index: usize) -> Result<(), DslP3Error> {
         | ConstraintExpr::Transition { .. }
         | ConstraintExpr::Polynomial { .. }
         | ConstraintExpr::ConditionalNonzero { .. }
-        | ConstraintExpr::AtLeastOne { .. } => Ok(()),
+        | ConstraintExpr::AtLeastOne { .. }
+        | ConstraintExpr::Hash2to1 { .. }
+        | ConstraintExpr::Hash4to1 { .. } => Ok(()),
         ConstraintExpr::Gated { inner, .. }
         | ConstraintExpr::InvertedGated { inner, .. }
         | ConstraintExpr::Squared { inner } => check_algebraic(inner, index),
         ConstraintExpr::Hash { .. } => Err(DslP3Error::NonAlgebraicConstraint {
             index,
-            form: "Hash",
-        }),
-        ConstraintExpr::Hash2to1 { .. } => Err(DslP3Error::NonAlgebraicConstraint {
-            index,
-            form: "Hash2to1",
-        }),
-        ConstraintExpr::Hash4to1 { .. } => Err(DslP3Error::NonAlgebraicConstraint {
-            index,
-            form: "Hash4to1",
+            form: "Hash (sponge; route through P3MerklePoseidon2Air)",
         }),
         ConstraintExpr::MerkleHash { .. } => Err(DslP3Error::NonAlgebraicConstraint {
             index,
-            form: "MerkleHash",
+            form: "MerkleHash (use P3MerklePoseidon2Air for position-indexed Merkle hashing)",
         }),
         ConstraintExpr::Lookup { .. } => Err(DslP3Error::NonAlgebraicConstraint {
             index,
-            form: "Lookup",
+            form: "Lookup (route through the LogUp bus / lean_lookup_air)",
         }),
     }
+}
+
+/// Whether a constraint is a Poseidon2 hash form needing one permutation aux
+/// block (Hash2to1 / Hash4to1 — the node-hashing forms).
+fn is_hash(c: &ConstraintExpr) -> bool {
+    matches!(
+        c,
+        ConstraintExpr::Hash2to1 { .. } | ConstraintExpr::Hash4to1 { .. }
+    )
+}
+
+/// Number of Poseidon2 hash constraints in a descriptor (= number of aux blocks).
+fn hash_count(dsl: &DslCircuit) -> usize {
+    dsl.descriptor.constraints.iter().filter(|c| is_hash(c)).count()
+}
+
+/// The FULL p3 trace width: base columns + one Poseidon2 aux block per hash.
+fn air_width(dsl: &DslCircuit) -> usize {
+    dsl.descriptor.trace_width + hash_count(dsl) * POSEIDON2_PERM_AUX_COLS
+}
+
+/// Build the 16-wide Poseidon2 input state (as `AB::Expr`) for a hash form,
+/// matching the concrete `hash_2_to_1` / `hash_4_to_1` / `hash_fact` input-state
+/// construction (arity/domain tags at the documented capacity slots).
+fn hash_input_state<AB: AirBuilder>(
+    c: &ConstraintExpr,
+    local: &[AB::Var],
+) -> [AB::Expr; POSEIDON2_WIDTH] {
+    let mut st: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
+    match c {
+        ConstraintExpr::Hash2to1 { input_col_a, input_col_b, .. } => {
+            st[0] = local[*input_col_a].into();
+            st[1] = local[*input_col_b].into();
+            st[4] = AB::Expr::from_u64(2); // arity tag (matches hash_2_to_1)
+        }
+        ConstraintExpr::Hash4to1 { input_cols, .. } => {
+            st[0] = local[input_cols[0]].into();
+            st[1] = local[input_cols[1]].into();
+            st[2] = local[input_cols[2]].into();
+            st[3] = local[input_cols[3]].into();
+            st[4] = AB::Expr::from_u64(4); // arity tag (matches hash_4_to_1)
+        }
+        _ => unreachable!("hash_input_state only called on Hash2to1/Hash4to1"),
+    }
+    st
+}
+
+/// The output column a hash form binds its digest to.
+fn hash_output_col(c: &ConstraintExpr) -> usize {
+    match c {
+        ConstraintExpr::Hash2to1 { output_col, .. }
+        | ConstraintExpr::Hash4to1 { output_col, .. } => *output_col,
+        _ => unreachable!("hash_output_col only called on Hash2to1/Hash4to1"),
+    }
+}
+
+/// The concrete 16-wide Poseidon2 input state for witness generation, matching
+/// [`hash_input_state`].
+fn hash_input_state_concrete(c: &ConstraintExpr, row: &[BabyBear]) -> [BabyBear; POSEIDON2_WIDTH] {
+    let mut st = [BabyBear::ZERO; POSEIDON2_WIDTH];
+    match c {
+        ConstraintExpr::Hash2to1 { input_col_a, input_col_b, .. } => {
+            st[0] = row[*input_col_a];
+            st[1] = row[*input_col_b];
+            st[4] = BabyBear::new(2);
+        }
+        ConstraintExpr::Hash4to1 { input_cols, .. } => {
+            st[0] = row[input_cols[0]];
+            st[1] = row[input_cols[1]];
+            st[2] = row[input_cols[2]];
+            st[3] = row[input_cols[3]];
+            st[4] = BabyBear::new(4);
+        }
+        _ => unreachable!(),
+    }
+    st
 }
 
 /// Symbolically evaluate an algebraic constraint to an `AB::Expr`, mirroring
@@ -239,7 +325,7 @@ fn lift<AB: AirBuilder>(v: BabyBear) -> AB::Expr {
 
 impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for DslP3Air {
     fn width(&self) -> usize {
-        self.descriptor.trace_width
+        self.full_width
     }
 
     fn num_public_values(&self) -> usize {
@@ -247,7 +333,10 @@ impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for DslP3Air {
     }
 }
 
-impl<AB: AirBuilder> Air<AB> for DslP3Air {
+impl<AB: AirBuilder> Air<AB> for DslP3Air
+where
+    AB::F: PrimeField32,
+{
     fn eval(&self, builder: &mut AB) {
         let (local, next, public_values): (Vec<AB::Var>, Vec<AB::Var>, Vec<AB::Expr>) = {
             let main = builder.main();
@@ -258,7 +347,10 @@ impl<AB: AirBuilder> Air<AB> for DslP3Air {
             (local, next, public_values)
         };
 
-        // ---- transition / per-row constraints ----
+        // ---- transition / per-row / hash constraints ----
+        // Hash forms (Hash2to1/Hash4to1) consume a Poseidon2 aux block each, laid
+        // out after the base columns in declaration order.
+        let mut hash_block = 0usize;
         for c in &self.descriptor.constraints {
             match c {
                 // PiBinding as a row-constraint binds local[col] to a public
@@ -267,6 +359,18 @@ impl<AB: AirBuilder> Air<AB> for DslP3Air {
                     let lv: AB::Expr = local[*col].into();
                     let pv: AB::Expr = public_values[*pi_index].clone();
                     builder.assert_zero(lv - pv);
+                }
+                // Poseidon2 hash: real in-circuit permutation against this hash's
+                // aux block; digest bound to the output column.
+                c if is_hash(c) => {
+                    let base = self.base_width + hash_block * POSEIDON2_PERM_AUX_COLS;
+                    let aux: Vec<AB::Var> =
+                        local[base..base + POSEIDON2_PERM_AUX_COLS].to_vec();
+                    let input = hash_input_state::<AB>(c, &local);
+                    let digest = poseidon2_permute_expr::<AB>(builder, input, &aux);
+                    let out: AB::Expr = local[hash_output_col(c)].into();
+                    builder.assert_eq(digest, out);
+                    hash_block += 1;
                 }
                 // Any constraint that references `next` must be gated to
                 // skip the wrap-around at the last row.
@@ -377,7 +481,10 @@ pub fn prove_dsl_p3(
     assert_no_interior_boundary(dsl)?;
 
     let config = create_config();
-    let matrix = to_matrix(trace);
+    // Extend each base trace row with the Poseidon2 aux blocks the hash
+    // constraints' in-circuit permutation reads.
+    let full_trace = extend_trace_with_hash_aux(dsl, trace);
+    let matrix = to_matrix(&full_trace);
     let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
 
     let instances = vec![StarkInstance {
@@ -424,6 +531,33 @@ pub fn verify_dsl_p3(
     verify_batch(&config, &airs, proof, &pvs, &common).map_err(|e| DslP3Error::VerificationFailed {
         reason: format!("{e:?}"),
     })
+}
+
+/// Extend each base-width trace row with the Poseidon2 intermediate-state aux
+/// columns the hash constraints' in-circuit permutation gadget reads, in the
+/// same declaration order `eval` consumes them. A descriptor with no hashes
+/// returns the trace unchanged.
+fn extend_trace_with_hash_aux(dsl: &DslCircuit, trace: &[Vec<BabyBear>]) -> Vec<Vec<BabyBear>> {
+    let hashes: Vec<&ConstraintExpr> = dsl
+        .descriptor
+        .constraints
+        .iter()
+        .filter(|c| is_hash(c))
+        .collect();
+    if hashes.is_empty() {
+        return trace.to_vec();
+    }
+    trace
+        .iter()
+        .map(|row| {
+            let mut full = row.clone();
+            for c in &hashes {
+                let input = hash_input_state_concrete(c, row);
+                full.extend(poseidon2_permute_aux_witness(input));
+            }
+            full
+        })
+        .collect()
 }
 
 /// Convert a `Vec<Vec<BabyBear>>` trace to a p3 `RowMajorMatrix`.
@@ -565,15 +699,22 @@ mod tests {
         assert!(res.is_err(), "trace violating y=2x must not produce a verifying p3 proof");
     }
 
-    /// A descriptor with a hash constraint is rejected up front (no silent
-    /// soundness downgrade).
+    /// REAL Poseidon2 in-circuit hashing through the audited p3 verifier: a
+    /// `Hash2to1` constraint (`out == Poseidon2(a,b)`) proves+verifies, and a
+    /// forged digest is REJECTED by the genuine permutation constraints.
     #[test]
-    fn hash_descriptor_rejected_not_silently_dropped() {
+    fn hash2to1_real_poseidon2_round_trips_through_p3() {
+        use crate::poseidon2::hash_2_to_1;
+
         let desc = CircuitDescriptor {
-            name: "dsl_p3_hash".to_string(),
-            trace_width: 3,
-            max_degree: 1,
-            columns: vec![],
+            name: "dsl_p3_hash2to1".to_string(),
+            trace_width: 3, // [a, b, out]
+            max_degree: 7,  // Poseidon2 S-box
+            columns: vec![
+                ColumnDef { name: "a".into(), index: 0, kind: ColumnKind::Value },
+                ColumnDef { name: "b".into(), index: 1, kind: ColumnKind::Value },
+                ColumnDef { name: "out".into(), index: 2, kind: ColumnKind::Hash },
+            ],
             constraints: vec![ConstraintExpr::Hash2to1 {
                 output_col: 2,
                 input_col_a: 0,
@@ -584,9 +725,49 @@ mod tests {
             lookup_tables: vec![],
         };
         let dsl = DslCircuit::new(desc);
+
+        let a = BabyBear::new(111);
+        let b = BabyBear::new(222);
+        let out = hash_2_to_1(a, b);
+        // 4 rows (power-of-two), all the same honest hash.
+        let trace = vec![vec![a, b, out]; 4];
+        let proof = prove_dsl_p3(&dsl, &trace, &[])
+            .expect("honest Poseidon2 hash must prove+verify through audited p3");
+        verify_dsl_p3(&dsl, &proof, &[]).expect("audited p3 verify accepts the honest hash");
+
+        // Forge the digest: claim a wrong `out`. The in-circuit permutation
+        // constraints must make this UNSAT (prove self-verifies → error).
+        let forged = vec![vec![a, b, out + BabyBear::new(1)]; 4];
+        let res = prove_dsl_p3(&dsl, &forged, &[]);
+        assert!(
+            res.is_err(),
+            "a forged Poseidon2 digest MUST be rejected by the in-circuit permutation constraints"
+        );
+    }
+
+    /// `MerkleHash` (position-indexed) is not handled here — it routes to
+    /// `P3MerklePoseidon2Air`. Confirm it is surfaced, not silently dropped.
+    #[test]
+    fn merklehash_surfaced_not_silently_dropped() {
+        let desc = CircuitDescriptor {
+            name: "dsl_p3_merkle".to_string(),
+            trace_width: 6,
+            max_degree: 7,
+            columns: vec![],
+            constraints: vec![ConstraintExpr::MerkleHash {
+                output_col: 5,
+                current_col: 0,
+                sib_cols: [1, 2, 3],
+                position_col: 4,
+            }],
+            boundaries: vec![],
+            public_input_count: 0,
+            lookup_tables: vec![],
+        };
+        let dsl = DslCircuit::new(desc);
         match DslP3Air::try_from_dsl(&dsl) {
-            Err(DslP3Error::NonAlgebraicConstraint { form: "Hash2to1", .. }) => {}
-            other => panic!("expected Hash2to1 rejection, got {other:?}"),
+            Err(DslP3Error::NonAlgebraicConstraint { .. }) => {}
+            other => panic!("expected MerkleHash to be surfaced, got {other:?}"),
         }
     }
 }
