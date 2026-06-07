@@ -44,6 +44,128 @@ def runHandlerTurn (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
     (acts : List FullActionA) : Option RecChainedState :=
   runTurn ctx h s (fun s₁ => execHandlerTurn acts s₁)
 
+/-! ## §STATUS — the THREE-WAY turn outcome (boundary-P1 bug 2).
+
+`runTurn`/`runGatedForestTurn` return `Option RecChainedState`, and the C export collapsed BOTH
+`some (commitPrologue …)` (admission passed but the BODY FAILED — e.g. a forged credential rolled the
+forest back, only the never-rolled-back fee/nonce prologue survives) AND `some s'` (body genuinely
+committed) to the SAME `ok:1`. A forged-credential turn therefore reported `ok:1` and was treated as a
+committed/accepted turn by the node — taking the attacker's word that the body succeeded.
+
+`TurnStatus` distinguishes the three real outcomes so the C boundary can report `BodyCommitted` ONLY
+when the forest body actually committed. A `PrologueCommittedBodyFailed` result charges the fee
+(anti-spam) but the turn is REJECTED — it must NOT be treated as an accepted turn. -/
+
+/-- The three-way result of a turn: the body genuinely committed, the body failed but the prologue
+(fee/nonce) was committed (anti-spam, NOT an accepted turn), or admission rejected it (no edit). -/
+inductive TurnStatus
+  /-- Admission failed: rejected with NO state edit. -/
+  | rejected
+  /-- Admission passed, the prologue (fee debit + nonce tick) was committed and is never rolled
+  back, but the BODY FAILED (a forged credential / failed effect / violated caveat rolled the forest
+  back). The fee may be charged as anti-spam, but **the turn is REJECTED** — not an accepted turn. -/
+  | prologueCommittedBodyFailed
+  /-- Admission passed AND the body committed: the turn is genuinely ACCEPTED. -/
+  | bodyCommitted
+deriving Repr, DecidableEq
+
+/-- The status-bearing turn executor: like `runTurn` but the result records WHICH of the three
+outcomes occurred. The body-success arm yields `bodyCommitted`; the body-failure arm yields
+`prologueCommittedBodyFailed` (with the prologue state, never rolled back); inadmissible yields
+`rejected` (no state). -/
+def runTurnStatus (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState) : TurnStatus × Option RecChainedState :=
+  if admissible ctx h s = true then
+    let s₁ := commitPrologue s h.agent h.fee
+    match body s₁ with
+    | some s' => (TurnStatus.bodyCommitted, some s')
+    | none    => (TurnStatus.prologueCommittedBodyFailed, some s₁)
+  else
+    (TurnStatus.rejected, none)
+
+/-- `runTurnStatus`'s state projection agrees with `runTurn` exactly: the status is the NEW
+information, the state is unchanged. -/
+theorem runTurnStatus_state (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState) :
+    (runTurnStatus ctx h s body).2 = runTurn ctx h s body := by
+  unfold runTurnStatus runTurn
+  by_cases hadm : admissible ctx h s = true
+  · simp only [if_pos hadm]; cases body (commitPrologue s h.agent h.fee) <;> rfl
+  · simp only [if_neg hadm]
+
+/-- **THE KEY BOUNDARY THEOREM (bug 2).** The status is `bodyCommitted` IFF admission passed AND the
+body returned `some`. So a turn whose body FAILS (forged credential, violated caveat, failed effect)
+is NEVER `bodyCommitted` — the C boundary cannot be tricked into reporting acceptance. -/
+theorem runTurnStatus_bodyCommitted_iff (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState) :
+    (runTurnStatus ctx h s body).1 = TurnStatus.bodyCommitted
+      ↔ admissible ctx h s = true ∧ (body (commitPrologue s h.agent h.fee)).isSome := by
+  unfold runTurnStatus
+  by_cases hadm : admissible ctx h s = true
+  · simp only [if_pos hadm, hadm, true_and]
+    cases hb : body (commitPrologue s h.agent h.fee) <;> simp [hb]
+  · simp only [if_neg hadm]
+    constructor
+    · intro h'; cases h'
+    · intro ⟨hc, _⟩; exact absurd hc hadm
+
+/-- **bug-2 corollary: a failing body is NOT `bodyCommitted`.** If the body fails, the status is
+`prologueCommittedBodyFailed` — the fee/nonce prologue survives (anti-spam) but the turn is rejected. -/
+theorem runTurnStatus_failed_body (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState)
+    (hadm : admissible ctx h s = true)
+    (hbody : body (commitPrologue s h.agent h.fee) = none) :
+    (runTurnStatus ctx h s body).1 = TurnStatus.prologueCommittedBodyFailed := by
+  unfold runTurnStatus; simp only [if_pos hadm, hbody]
+
+/-- A failing body is, in particular, NOT `bodyCommitted` (the contrapositive the boundary relies on). -/
+theorem runTurnStatus_failed_body_not_committed (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState)
+    (hadm : admissible ctx h s = true)
+    (hbody : body (commitPrologue s h.agent h.fee) = none) :
+    (runTurnStatus ctx h s body).1 ≠ TurnStatus.bodyCommitted := by
+  rw [runTurnStatus_failed_body ctx h s body hadm hbody]; decide
+
+/-- An inadmissible turn's status is `rejected` (no state edit). -/
+theorem runTurnStatus_rejected (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (body : RecChainedState → Option RecChainedState)
+    (hbad : admissible ctx h s = false) :
+    (runTurnStatus ctx h s body).1 = TurnStatus.rejected ∧ (runTurnStatus ctx h s body).2 = none := by
+  unfold runTurnStatus; simp only [hbad]; exact ⟨rfl, rfl⟩
+
+#assert_axioms runTurnStatus_state
+#assert_axioms runTurnStatus_bodyCommitted_iff
+#assert_axioms runTurnStatus_failed_body
+#assert_axioms runTurnStatus_failed_body_not_committed
+#assert_axioms runTurnStatus_rejected
+
+/-- **Status-bearing gated forest turn** (the production path with three-way outcome). The body is
+the gated forest THEN fee distribution; the status records whether that body committed. -/
+def runGatedForestTurnStatus (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (forest : DForest) : TurnStatus × Option RecChainedState :=
+  runTurnStatus ctx h s (fun s₁ => (execFullForestG s₁ forest).map (fun s₂ => distributeFee ctx s₂ h.fee))
+
+/-- The status-bearing variant projects to `runGatedForestTurn` on the state. -/
+theorem runGatedForestTurnStatus_state (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
+    (forest : DForest) :
+    (runGatedForestTurnStatus ctx h s forest).2 = runGatedForestTurn ctx h s forest :=
+  runTurnStatus_state ctx h s _
+
+/-- **bug-2 production corollary: a turn whose GATED FOREST BODY fails (e.g. a forged credential
+rolls the forest back) is NOT `bodyCommitted`.** The prologue fee/nonce survive (anti-spam) but the
+status is `prologueCommittedBodyFailed` — the node must NOT treat it as an accepted turn. -/
+theorem runGatedForestTurnStatus_forged_not_committed (ctx : AdmCtx) (h : TurnHdr)
+    (s : RecChainedState) (forest : DForest)
+    (hadm : admissible ctx h s = true)
+    (hbody : execFullForestG (commitPrologue s h.agent h.fee) forest = none) :
+    (runGatedForestTurnStatus ctx h s forest).1 = TurnStatus.prologueCommittedBodyFailed := by
+  unfold runGatedForestTurnStatus
+  refine runTurnStatus_failed_body ctx h s _ hadm ?_
+  simp [hbody]
+
+#assert_axioms runGatedForestTurnStatus_state
+#assert_axioms runGatedForestTurnStatus_forged_not_committed
+
 /-- The composed body: gated forest THEN (on commit) fee distribution. -/
 private def gfBody (ctx : AdmCtx) (h : TurnHdr) (forest : DForest) :
     RecChainedState → Option RecChainedState :=

@@ -166,37 +166,95 @@ theorem parseWTurn_encode (t : WTurn) (rest : PState) (hwf : WfTurn t) (fuel : N
 
 /-! ### §16c — the complete-turn WIRE roundtrip (state §14 ∘ envelope §16b; the WHOLE input consumed). -/
 
-/-- The complete-turn wire ENCODER (the inline `{"state":STATEW,"turn":TURNW}` the C entry point reads —
-matching `wideDemoInput`/`execFullTurnWide`'s input shape). -/
+/-- The complete-turn wire ENCODER (the inline `{"host":HOST,"state":STATEW,"turn":TURNW}` the C entry
+point reads — matching `wideDemoInput`/`execFullForestAuthStep`'s input shape, host-prefixed for the
+boundary-P1 bug-1 NODE-fed admission seam). -/
 def encodeWWire (w : WWire) : String :=
-  "{\"state\":" ++ encodeWState w.state ++ ",\"turn\":" ++ encodeWTurn w.turn ++ "}"
+  "{\"host\":" ++ encodeWHostCtx w.host ++ ",\"state\":" ++ encodeWState w.state
+    ++ ",\"turn\":" ++ encodeWTurn w.turn ++ "}"
 
 set_option maxHeartbeats 1000000 in
+/-! ### §16b-host — the HOST-CONTEXT roundtrip (`parseWHostCtx ∘ encodeWHostCtx = id`), the
+boundary-P1 (bug 1) NODE-fed admission seam prepended to the wire. Five `Nat` fields in a fixed
+`do`-block; each `parseNat` is fed a `,`/`}` non-digit follower. -/
+
+/-- **The HOST-CONTEXT roundtrip**: `parseWHostCtx ∘ encodeWHostCtx = id` on any trailing `rest`. -/
+theorem parseWHostCtx_encode (hc : WHostCtx) (rest : PState) :
+    parseWHostCtx ((encodeWHostCtx hc).toList ++ rest) = some (hc, rest) := by
+  obtain ⟨now, blockHeight, frozen, storedHead, budget⟩ := hc
+  unfold parseWHostCtx
+  -- Rebracket the encoder's `++` chain into the right-associated field sequence the parser consumes,
+  -- keeping each `,"field":` literal as one chunk (so `lit_append` consumes it directly).
+  rw [show (encodeWHostCtx ⟨now, blockHeight, frozen, storedHead, budget⟩).toList ++ rest
+        = ("{\"now\":":String).toList ++ ((toString now).toList
+            ++ ((",\"block_height\":":String).toList ++ ((toString blockHeight).toList
+            ++ ((",\"frozen\":":String).toList ++ ((encodeNatsW frozen).toList
+            ++ ((",\"stored_head\":":String).toList ++ ((toString storedHead).toList
+            ++ ((",\"budget\":":String).toList ++ ((toString budget).toList
+            ++ ('}' :: rest)))))))))) from by
+        show (encodeWHostCtx ⟨now, blockHeight, frozen, storedHead, budget⟩).toList ++ rest = _
+        unfold encodeWHostCtx
+        simp only [String.toList_append, List.append_assoc,
+          show ("}":String).toList = ['}'] from by decide, List.cons_append, List.nil_append]]
+  rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
+  -- now (followed by `,` of ",\"block_height\":")
+  rw [parseNat_toString now _ (Or.inr ⟨',', _, by
+        rw [show (",\"block_height\":":String).toList = ',' :: ("\"block_height\":":String).toList from by decide]; rfl, by decide⟩)]
+  simp only [Option.bind_eq_bind, Option.bind]
+  rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
+  -- block_height (followed by `,` of ",\"frozen\":")
+  rw [parseNat_toString blockHeight _ (Or.inr ⟨',', _, by
+        rw [show (",\"frozen\":":String).toList = ',' :: ("\"frozen\":":String).toList from by decide]; rfl, by decide⟩)]
+  simp only [Option.bind_eq_bind, Option.bind]
+  rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
+  -- frozen (NATSW array)
+  rw [parseNatsW_encode frozen _]; simp only [Option.bind_eq_bind, Option.bind]
+  rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
+  -- stored_head (followed by `,` of ",\"budget\":")
+  rw [parseNat_toString storedHead _ (Or.inr ⟨',', _, by
+        rw [show (",\"budget\":":String).toList = ',' :: ("\"budget\":":String).toList from by decide]; rfl, by decide⟩)]
+  simp only [Option.bind_eq_bind, Option.bind]
+  rw [lit_append]; simp only [Option.bind_eq_bind, Option.bind]
+  -- budget (followed by the closing `}`)
+  rw [parseNat_toString budget _ (Or.inr ⟨'}', rest, rfl, by decide⟩)]
+  simp only [Option.bind_eq_bind, Option.bind]
+  rw [show lit "}" ('}' :: rest) = some rest from by
+        rw [show ('}' :: rest) = ("}":String).toList ++ rest from rfl, lit_append]]
+
 /-- **FILL J production (the OUTERMOST WIRE): the complete-turn wire roundtrip**
-(`parseWWire ∘ encodeWWire = id`). Composes the §14 wide-state decoder with the §16b envelope, then
-requires the WHOLE input consumed (`lit "}"` yields `some []` — trailing bytes fail-closed). The fuel
-(`input.length + 1`) dominates both the state width and `forestSize root` (each `≤` the encoded length, the
-encoded objects being substrings of the input, §16a). This removes the OUTERMOST codec — the envelope the
-wholesale swap hands `execFullTurnWide` — from the Lean-side TCB; with §14/§15 the wire codec is FULLY out. -/
+(`parseWWire ∘ encodeWWire = id`). Composes the §16b-host context decoder, the §14 wide-state decoder
+and the §16b envelope, then requires the WHOLE input consumed (`lit "}"` yields `some []` — trailing
+bytes fail-closed). The fuel (`input.length + 1`) dominates both the state width and `forestSize root`.
+This removes the OUTERMOST codec — the host-fed envelope the wholesale swap hands the C entry — from
+the Lean-side TCB; with §14/§15/§16b-host the wire codec is FULLY out. -/
 theorem parseWWire_encode (w : WWire) (hcells : WfCells w.state.cells) (hturn : WfTurn w.turn)
     (hblock : w.turn.blockHeight = 0) :
     parseWWire (encodeWWire w) = some w := by
-  obtain ⟨state, turn⟩ := w
-  have hwire : (encodeWWire ⟨state, turn⟩).toList
-      = ("{\"state\":":String).toList ++ ((encodeWState state).toList
-          ++ ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))) := by
-    show (encodeWWire ⟨state, turn⟩).toList = _
+  obtain ⟨host, state, turn⟩ := w
+  have hwire : (encodeWWire ⟨host, state, turn⟩).toList
+      = ("{\"host\":":String).toList ++ ((encodeWHostCtx host).toList
+          ++ ((",\"state\":":String).toList ++ ((encodeWState state).toList
+          ++ ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))))) := by
+    show (encodeWWire ⟨host, state, turn⟩).toList = _
     unfold encodeWWire
     simp only [String.toList_append, List.append_assoc]
   unfold parseWWire
   simp only []
-  set fuel := (encodeWWire ⟨state, turn⟩).toList.length + 1 with hfueldef
+  set fuel := (encodeWWire ⟨host, state, turn⟩).toList.length + 1 with hfueldef
   rw [hwire]
-  rw [show lit "{\"state\":" (("{\"state\":":String).toList ++ ((encodeWState state).toList
+  -- {"host": then the host context
+  rw [show lit "{\"host\":" (("{\"host\":":String).toList ++ _)
+        = some ((encodeWHostCtx host).toList ++ ((",\"state\":":String).toList
+            ++ ((encodeWState state).toList ++ ((",\"turn\":":String).toList
+            ++ ((encodeWTurn turn).toList ++ "}".toList))))) from lit_append "{\"host\":" _]
+  simp only []
+  rw [parseWHostCtx_encode host _]
+  simp only []
+  -- ,"state": then the wide state
+  rw [show lit ",\"state\":" ((",\"state\":":String).toList ++ ((encodeWState state).toList
           ++ ((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList))))
         = some ((encodeWState state).toList ++ ((",\"turn\":":String).toList
-            ++ ((encodeWTurn turn).toList ++ "}".toList))) from
-        lit_append "{\"state\":" _]
+            ++ ((encodeWTurn turn).toList ++ "}".toList))) from lit_append ",\"state\":" _]
   simp only []
   rw [parseWState_encode state (((",\"turn\":":String).toList ++ ((encodeWTurn turn).toList ++ "}".toList)))
         hcells fuel (by

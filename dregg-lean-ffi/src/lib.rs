@@ -7,12 +7,36 @@
 #[path = "marshal.rs"]
 pub mod marshal;
 
+pub use marshal::TurnStatus;
+
 /// Decoded Lean gated-forest verdict (T9 output envelope).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShadowVerdict {
+    /// `true` ONLY when the gated forest BODY committed (`status == BodyCommitted`). A
+    /// prologue-only result (forged credential / violated caveat / failed effect → the fee was
+    /// charged as anti-spam but the body rolled back) is `committed == false` — the turn is
+    /// REJECTED, NOT accepted (boundary-P1 bug 2).
     pub committed: bool,
     pub loglen: u64,
+    /// The three-way status (boundary-P1 bug 2). `None` only for the legacy no-`status` wire.
+    pub status: Option<TurnStatus>,
     pub divergence_note: Option<String>,
+}
+
+impl ShadowVerdict {
+    /// Whether the prologue (fee/nonce) was committed but the BODY FAILED — the fee was charged
+    /// as anti-spam but the turn is REJECTED (must NOT be treated as accepted).
+    pub fn prologue_only(&self) -> bool {
+        self.status == Some(TurnStatus::PrologueCommittedBodyFailed)
+    }
+    /// Whether the body genuinely committed (the turn is ACCEPTED).
+    pub fn body_committed(&self) -> bool {
+        // Fall back to `committed` for the legacy no-`status` wire.
+        match self.status {
+            Some(s) => s == TurnStatus::BodyCommitted,
+            None => self.committed,
+        }
+    }
 }
 
 /// Whether the Lean static archive was linked and runtime init succeeded.
@@ -41,8 +65,15 @@ pub fn shadow_exec_handler_turn(wire: &str) -> Result<String, String> {
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
         Ok(r) => Ok(ShadowVerdict {
-            committed: r.committed,
+            // `committed` is the body-committed bit (status:2). The Lean export's `ok` already
+            // narrows to BodyCommitted, but we recompute from `status` when present so a
+            // prologue-only result (status:1) is NEVER reported as committed.
+            committed: match r.status {
+                Some(s) => s == TurnStatus::BodyCommitted,
+                None => r.committed,
+            },
             loglen: r.loglen,
+            status: r.status,
             divergence_note: None,
         }),
         Err(e) => Err(e.to_string()),

@@ -1718,11 +1718,21 @@ async fn execute_finalized_turn(
             );
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            // boundary-P1 (bug 2): a turn whose ADMISSION PROLOGUE committed (fee debited + nonce
+            // ticked, anti-DoS, never rolled back) but whose BODY then FAILED lands HERE — it is
+            // `Rejected`, NOT `Committed`. Only the `Committed` arm above appends the receipt,
+            // resolves pending turns, and proves; this arm does none of those, so a
+            // prologue-committed-body-failed turn is NEVER treated as an accepted/committed turn
+            // (the fee was charged purely as anti-spam). This mirrors the Lean export's three-way
+            // status: `PrologueCommittedBodyFailed` (status:1, ok:0) maps to this rejection, while
+            // `BodyCommitted` (status:2, ok:1) maps to the `Committed` arm. The verified Lean
+            // shadow (`decode_shadow_verdict`) reports `committed` ONLY for `BodyCommitted`, so the
+            // RUST↔LEAN divergence check agrees with this acceptance gate.
             warn!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
                 reason = %reason,
-                "finalized turn rejected"
+                "finalized turn rejected (prologue fee may have been charged as anti-spam; turn NOT accepted)"
             );
         }
         dregg_turn::TurnResult::Expired => {

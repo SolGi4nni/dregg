@@ -21,8 +21,9 @@ namespace Dregg2.Exec.FFI
 
 open Dregg2.Exec
 open Dregg2.Authority
-open Dregg2.Exec.Admission (AdmCtx)
-open Dregg2.Exec.TurnAdmission (runGatedForestTurn runHandlerTurn)
+open Dregg2.Exec.Admission (AdmCtx TurnHdr)
+open Dregg2.Exec.TurnAdmission (runGatedForestTurn runHandlerTurn runGatedForestTurnStatus
+  runTurnStatus TurnStatus)
 open Dregg2.Exec.HandlerExecutor (execHandlerTurn)
 open Dregg2.Exec.AdmissionWire (turnHdrOf prevReceiptOf)
 
@@ -149,6 +150,12 @@ def encodeOut (cells : List (CellId × Value)) (ok : Bool) : String :=
 /-- CI guard helpers: committed / fail-closed wire suffix checks. -/
 def wireOk1 (s : String) : Bool := s.endsWith "\"ok\":1}"
 def wireOk0 (s : String) : Bool := s.endsWith "\"ok\":0}"
+
+/-- CI guard helper (boundary-P1): the three-way `status:S` field carries code `n`
+(0=rejected, 1=prologue-committed-body-failed, 2=body-committed). -/
+def wireStatusIs (n : Nat) (s : String) : Bool :=
+  s.endsWith ("\"status\":" ++ toString n ++ ",\"ok\":1}")
+    || s.endsWith ("\"status\":" ++ toString n ++ ",\"ok\":0}")
 
 /-! ### Decoder: a tiny recursive-descent parser over the fixed grammar.
 
@@ -1626,7 +1633,7 @@ field names as JSON strings, the swiss `rights`/`held` as the narrow `AUTHS` arr
       | {"rarchive":[actor,cell]}                -- receiptArchiveA
       | {"qalloc":[id,actor,cell,capacity]}      -- queueAllocateA
       | {"qenq":[id,m,actor,cell,depId,dAsset,deposit]}  -- queueEnqueueA
-      | {"qdeq":[id,actor,cell,depId,deposit]}   -- queueDequeueA
+      | {"qdeq":[id,actor,cell,depId]}           -- queueDequeueA (refund amount = record's own amount)
       | {"qresize":[id,newCap,actor,cell]}       -- queueResizeA
       | {"export":[sw,actor,exporter,target,AUTHS]}  -- exportSturdyRefA(rights); held read from committed caps
       | {"enliven":[sw,actor,exporter,AUTHS]}    -- enlivenRefA(claimed)
@@ -1638,7 +1645,7 @@ field names as JSON strings, the swiss `rights`/`held` as the narrow `AUTHS` arr
 
 The QueueTxOpA sub-op array `OPS := [] | [OP(,OP)*]` with
       OP := {"enq":[id,m,actor,cell,depId,dAsset,deposit]}   -- QueueTxOpA.enqueue
-          | {"deq":[id,actor,cell,depId,deposit]}            -- QueueTxOpA.dequeue
+          | {"deq":[id,actor,cell,depId]}                    -- QueueTxOpA.dequeue
 and `NATSW := [] | [N(,N)*]` a plain `Nat` array.
 
 Every id/asset/idx/capacity/newNonce/nf/cm/sw/certHash is a `Nat`; every amt/value/amount/stake/
@@ -1670,9 +1677,9 @@ def encodeQueueTxOp : QueueTxOpA → String
       "{\"enq\":[" ++ toString id ++ "," ++ toString m ++ "," ++ toString actor ++ ","
         ++ toString cell ++ "," ++ toString depId ++ "," ++ toString dAsset ++ ","
         ++ toString deposit ++ "]}"
-  | QueueTxOpA.dequeue id actor cell depId deposit =>
+  | QueueTxOpA.dequeue id actor cell depId =>
       "{\"deq\":[" ++ toString id ++ "," ++ toString actor ++ "," ++ toString cell ++ ","
-        ++ toString depId ++ "," ++ toString deposit ++ "]}"
+        ++ toString depId ++ "]}"
 
 /-- Encode a `List QueueTxOpA` as the `OPS` array `[OP(,OP)*]` (or `[]`) — the atomic-batch body. -/
 def encodeQueueTxOps : List QueueTxOpA → String
@@ -1759,9 +1766,9 @@ def encodeActionW : FullActionA → String
   | .queueEnqueueA id m actor cell depId dAsset deposit =>
       "{\"qenq\":[" ++ toString id ++ "," ++ toString m ++ "," ++ toString actor ++ "," ++ toString cell
         ++ "," ++ toString depId ++ "," ++ toString dAsset ++ "," ++ toString deposit ++ "]}"
-  | .queueDequeueA id actor cell depId deposit =>
+  | .queueDequeueA id actor cell depId =>
       "{\"qdeq\":[" ++ toString id ++ "," ++ toString actor ++ "," ++ toString cell ++ ","
-        ++ toString depId ++ "," ++ toString deposit ++ "]}"
+        ++ toString depId ++ "]}"
   | .queueResizeA id newCap actor cell => "{\"qresize\":[" ++ toString id ++ "," ++ toString newCap ++ ","
                                             ++ toString actor ++ "," ++ toString cell ++ "]}"
   | .exportSturdyRefA sw actor exporter target rights =>
@@ -1855,8 +1862,8 @@ def parseQueueTxOp (cs : PState) : Option (QueueTxOpA × PState) :=
   match lit "{\"deq\":[" cs with
   | some r0 => do
       let (id, r1) ← parseNat r0; let (actor, r2) ← cN r1; let (cell, r3) ← cN r2
-      let (depId, r4) ← cN r3; let (deposit, r5) ← cI r4; let r6 ← lit "]}" r5
-      some (QueueTxOpA.dequeue id actor cell depId deposit, r6)
+      let (depId, r4) ← cN r3; let r5 ← lit "]}" r4
+      some (QueueTxOpA.dequeue id actor cell depId, r5)
   | none => none
 
 /-- Parse an `OPS` array `[OP(,OP)*]` (or `[]`) — the atomic-batch body, fail-closed. -/
@@ -2132,8 +2139,8 @@ def parseActionWFuel (fuel : Nat) (cs : PState) : Option (FullActionA × PState)
   match lit "{\"qdeq\":[" cs with
   | some r0 => do
       let (id, r1) ← parseNat r0; let (actor, r2) ← cN r1; let (cell, r3) ← cN r2
-      let (depId, r4) ← cN r3; let (deposit, r5) ← cI r4; let r6 ← lit "]}" r5
-      some (.queueDequeueA id actor cell depId deposit, r6)
+      let (depId, r4) ← cN r3; let r5 ← lit "]}" r4
+      some (.queueDequeueA id actor cell depId, r5)
   | none =>
   match lit "{\"qresize\":[" cs with
   | some r0 => do
@@ -2287,7 +2294,7 @@ def allActions : List FullActionA :=
   , .receiptArchiveA 113 114
   , .queueAllocateA 115 116 117 118
   , .queueEnqueueA 119 120 121 122 123 124 (-125)
-  , .queueDequeueA 126 127 128 129 (-130)
+  , .queueDequeueA 126 127 128 129
   , .queueResizeA 131 132 133 134
   , .exportSturdyRefA 135 136 137 138 [.read]
   , .enlivenRefA 139 140 141 [.call]
@@ -2300,7 +2307,7 @@ def allActions : List FullActionA :=
     -- §MA-queue-batch (WAVE 4): a non-empty atomic batch (one enqueue + one dequeue sub-op), a
     -- pipeline fan-out with two distinct sinks, and a promise-pipelined send.
   , .queueAtomicTxA 158 [ QueueTxOpA.enqueue 159 160 161 162 163 164 (-165),
-                          QueueTxOpA.dequeue 166 167 168 169 (-170) ]
+                          QueueTxOpA.dequeue 166 167 168 169 ]
   , .queuePipelineStepA 171 172 [173, 174] [175, 176]
   , .pipelinedSendA 177 ]
 
@@ -2965,44 +2972,129 @@ def parseWTurn (fuel : Nat) (cs : PState) : Option (WTurn × PState) := do
   some ({ agent := agent, nonce := nonce, fee := fee, validUntil := validUntil,
           blockHeight := blockHeight, prevHash := prevHash, root := root }, r12)
 
-/-- The decoded complete-turn WIRE: the wide STATE + the Turn envelope/tree. -/
-structure WWire where
-  state : WState
-  turn  : WTurn
-
-/-- Host-default **proposer** cell credited 50% of the turn fee (`self.proposer_cell`). The wire
-`WTurn` carries no proposer field, so until the Rust executor plumbs `self` explicitly we pin the
-host's reserved system-proposer cell. Distinguished from the host treasury and from any plausible
-agent so the 50/30 distribution genuinely fires on the default path. -/
+/-- Host-default **proposer** cell credited 50% of the turn fee (`self.proposer_cell`). Reserved
+system-proposer cell, distinguished from the host treasury and any plausible agent so the 50/30 fee
+distribution genuinely fires on the default path. -/
 def hostProposerCell : CellId := 0xF00
 
 /-- Host-default **treasury** cell credited 30% of the turn fee (`self.treasury_cell`). Reserved
 system cell, distinct from `hostProposerCell`. -/
 def hostTreasuryCell : CellId := 0xF01
 
-/-- Derive the host `AdmCtx` from the turn envelope until the Rust executor plumbs `self` explicitly.
-`now` is pinned to `validUntil` (non-expired at the boundary); `blockHeight` from the wire clock
-dimension; `storedHead` from `prevHash`. `proposer`/`treasury` are wired to the host's reserved
-system cells (`hostProposerCell`/`hostTreasuryCell`) so the 50/30 fee distribution fires by default
-(the residue ≈20% burned) — conservation-modulo-burn holds for ANY recipient choice, so this keeps
-the keystone proof (`runGatedForestTurn_conserves_modulo_burn`, hypothesised over `some p`/`some t`)
-intact while exercising the credited path instead of the all-burned `none`/`none` shadow. -/
+/-! ### §W-HOST — the HOST/NODE-fed admission context (boundary-P1 bug 1).
+
+Previously `admCtxOfTurn` derived `now`/`budget`/`frozen`/`storedHead` from the UNTRUSTED turn
+envelope: `now := validUntil` made the expiry gate `now ≤ validUntil` (= `validUntil ≤ validUntil`)
+VACUOUS, an attacker set its own `budget`/freeze-set/receipt-head. The clock, budget, freeze-set and
+the agent's stored receipt-head are NODE STATE — they MUST be fed by the host (`self.current_timestamp`
+/ `self.silo_budget` / `self.frozen_cells` / `self.receipt_heads[agent]`), NOT chosen by the turn.
+
+`WHostCtx` is the host-fed envelope the node fills from its own state. It is a SEPARATE wire field
+from the turn; the turn's `validUntil`/`prevHash` remain the agent's CLAIMS, which are CHECKED against
+the host's `now`/`storedHead` by `admissible`. -/
+
+/-- The host/node-fed admission context (NODE state — never the turn's to set):
+  * `now`         — the executor clock (`self.current_timestamp`);
+  * `blockHeight` — the chain clock dimension (`self.block_height`), preferred for expiry when wired;
+  * `frozen`      — the migration freeze-set (`self.frozen_cells`);
+  * `storedHead`  — the agent's stored receipt-chain head (`self.receipt_heads[agent]`), `0`=genesis;
+  * `budget`      — the Stingray silo budget slice the fee must fit. -/
+structure WHostCtx where
+  now         : Nat
+  blockHeight : Nat := 0
+  frozen      : List CellId
+  storedHead  : Nat
+  budget      : Nat
+deriving Repr
+
+/-- The default host context for diagnostics / Lean-side round-trips ONLY (a generous clock so the
+expiry gate does not spuriously fire, no frozen cells, genesis head, large budget). The PRODUCTION
+node MUST override every field from its own state — the security of bug-1 is that these come from the
+node, not the wire. Distinguished by being explicitly named `diag`. -/
+def diagHostCtx : WHostCtx :=
+  { now := 0, blockHeight := 0, frozen := [], storedHead := 0, budget := 1000000000 }
+
+/-- Encode the host context `{"now":N,"block_height":N,"frozen":[N,…],"stored_head":N,"budget":N}`. -/
+def encodeWHostCtx (hc : WHostCtx) : String :=
+  "{\"now\":" ++ toString hc.now
+    ++ ",\"block_height\":" ++ toString hc.blockHeight
+    ++ ",\"frozen\":" ++ encodeNatsW hc.frozen
+    ++ ",\"stored_head\":" ++ toString hc.storedHead
+    ++ ",\"budget\":" ++ toString hc.budget ++ "}"
+
+/-- Parse the host context (strict field order). -/
+def parseWHostCtx (cs : PState) : Option (WHostCtx × PState) := do
+  let r0 ← lit "{\"now\":" cs
+  let (now, r1) ← parseNat r0
+  let r2 ← lit ",\"block_height\":" r1
+  let (blockHeight, r3) ← parseNat r2
+  let r4 ← lit ",\"frozen\":" r3
+  let (frozen, r5) ← parseNatsW r4
+  let r6 ← lit ",\"stored_head\":" r5
+  let (storedHead, r7) ← parseNat r6
+  let r8 ← lit ",\"budget\":" r7
+  let (budget, r9) ← parseNat r8
+  let r10 ← lit "}" r9
+  some ({ now := now, blockHeight := blockHeight, frozen := frozen, storedHead := storedHead,
+          budget := budget }, r10)
+
+/-- The decoded complete-turn WIRE: the HOST-fed context + the wide STATE + the Turn envelope/tree.
+The `host` field is filled by the NODE from its own state, NOT chosen by the turn submitter. -/
+structure WWire where
+  /-- The HOST-fed admission context. Defaulted to `diagHostCtx` for Lean-side test literals ONLY;
+  the PRODUCTION node always fills it from its own state on the wire (the wire is always parsed by
+  `parseWHostCtx`, never defaulted, across the FFI). -/
+  host  : WHostCtx := diagHostCtx
+  state : WState
+  turn  : WTurn
+
+/-- **Derive the host `AdmCtx` from the HOST-fed context (bug-1 fix).** `now`/`blockHeight`/`frozen`/
+`budget`/`storedHead` all come from `WHostCtx` (NODE state). The turn's `validUntil` and `prevHash`
+are NOT consulted here — they are the agent's CLAIMS, checked by `admissible` against THIS host
+`now`/`storedHead`. `proposer`/`treasury` are the host's reserved system cells. -/
+def admCtxOfHost (hc : WHostCtx) : AdmCtx :=
+  { now := hc.now, blockHeight := hc.blockHeight, frozen := hc.frozen,
+    storedHead := prevReceiptOf hc.storedHead, budget := hc.budget,
+    proposer := some hostProposerCell, treasury := some hostTreasuryCell }
+
+/-- **DEPRECATED (bug-1): the OLD turn-derived context.** Retained ONLY as the Lean-side reference
+that exhibits the vacuity it caused (`admCtxOfTurn_expiry_vacuous`): deriving `now := validUntil`
+makes the expiry gate trivially pass. NOT used by any `@[export]` — the production path is
+`admCtxOfHost`. -/
 def admCtxOfTurn (t : WTurn) : AdmCtx :=
   { now := t.validUntil, blockHeight := t.blockHeight, frozen := [], storedHead := prevReceiptOf t.prevHash,
     budget := 1000000000, proposer := some hostProposerCell, treasury := some hostTreasuryCell }
 
-/-- Encode the complete-turn INPUT `{"state":STATEW,"turn":TURNW}`. -/
+/-- **`admCtxOfTurn_expiry_vacuous` — WHY the old path was bug-1 (PROVED).** When `block_height = 0`
+the turn-derived context sets `now := validUntil`, so the expiry clock equals the claimed deadline:
+`admissionClock (admCtxOfTurn t) ≤ t.validUntil` is `validUntil ≤ validUntil` = ALWAYS TRUE. The turn
+chose its own clock ⇒ the expiry gate could never fire. The fix routes the clock through
+`admCtxOfHost`, where `now` is the HOST'S (see `host_clock_rejects_past_expiry`). -/
+theorem admCtxOfTurn_expiry_vacuous (t : WTurn) (hbh : t.blockHeight = 0) :
+    Dregg2.Exec.Admission.admissionClock (admCtxOfTurn t) ≤ t.validUntil := by
+  simp [Dregg2.Exec.Admission.admissionClock, admCtxOfTurn, hbh]
+
+#assert_axioms admCtxOfTurn_expiry_vacuous
+
+/-- Encode the complete-turn INPUT `{"host":HOST,"state":STATEW,"turn":TURNW}`. -/
 def encodeWWire (w : WWire) : String :=
-  "{\"state\":" ++ encodeWState w.state ++ ",\"turn\":" ++ encodeWTurn w.turn ++ "}"
+  "{\"host\":" ++ encodeWHostCtx w.host
+    ++ ",\"state\":" ++ encodeWState w.state ++ ",\"turn\":" ++ encodeWTurn w.turn ++ "}"
 
 /-- Parse the complete-turn WIRE `{"state":STATEW,"turn":TURNW}`. Strict: the WHOLE string must be
 consumed (fail-closed on any deviation OR trailing bytes). -/
 def parseWWire (s : String) : Option WWire :=
   let cs := s.toList
   let fuel := cs.length + 1
-  match lit "{\"state\":" cs with
+  match lit "{\"host\":" cs with
   | none => none
-  | some r0 =>
+  | some rh0 =>
+    match parseWHostCtx rh0 with
+    | none => none
+    | some (host, rh1) =>
+    match lit ",\"state\":" rh1 with
+    | none => none
+    | some r0 =>
     match parseWState fuel r0 with
     | none => none
     | some (state, r1) =>
@@ -3013,13 +3105,43 @@ def parseWWire (s : String) : Option WWire :=
         | none => none
         | some (turn, r3) =>
           match lit "}" r3 with
-          | some [] => some { state := state, turn := turn }
+          | some [] => some { host := host, state := state, turn := turn }
           | _       => none
 
 /-- Encode the complete-turn OUTPUT `{"state":STATEW,"loglen":N,"ok":B}`. -/
 def encodeWOut (state : WState) (loglen : Nat) (ok : Bool) : String :=
   "{\"state\":" ++ encodeWState state ++ ",\"loglen\":" ++ toString loglen
     ++ ",\"ok\":" ++ (if ok then "1" else "0") ++ "}"
+
+/-! ### §W-STATUS — the THREE-WAY output encoding (boundary-P1 bug 2).
+
+The `ok`-bit collapsed `prologueCommittedBodyFailed` (the body rolled back; only the never-rolled-back
+fee/nonce survives) and `bodyCommitted` to the SAME `ok:1`, so a forged-credential turn read as
+committed. `encodeWStatusOut` emits an explicit `status` code AND narrows `ok` to fire ONLY on
+`bodyCommitted`. The node reads `status`:
+  * `status:0` = REJECTED (admission failed, no state edit / malformed wire);
+  * `status:1` = PROLOGUE-COMMITTED-BODY-FAILED (fee charged as anti-spam, turn REJECTED — NOT accepted);
+  * `status:2` = BODY-COMMITTED (the turn is accepted).
+`ok` is `1` iff `status:2`, so legacy `ok:1` readers now see only genuine commits. -/
+
+/-- The numeric wire code of a `TurnStatus` (0=rejected, 1=prologue-only, 2=body-committed). -/
+def turnStatusCode : Dregg2.Exec.TurnAdmission.TurnStatus → Nat
+  | .rejected                    => 0
+  | .prologueCommittedBodyFailed => 1
+  | .bodyCommitted               => 2
+
+/-- Encode the status-bearing OUTPUT `{"state":STATEW,"loglen":N,"status":S,"ok":B}`. `ok` fires ONLY
+when `status:2` (body committed) — a prologue-only result is `status:1,ok:0` (NOT an accepted turn). -/
+def encodeWStatusOut (state : WState) (loglen : Nat)
+    (st : Dregg2.Exec.TurnAdmission.TurnStatus) : String :=
+  "{\"state\":" ++ encodeWState state ++ ",\"loglen\":" ++ toString loglen
+    ++ ",\"status\":" ++ toString (turnStatusCode st)
+    ++ ",\"ok\":" ++ (if st = .bodyCommitted then "1" else "0") ++ "}"
+
+/-- The empty 9-field fail-closed sentinel state (malformed wire / rejected). Named so the export
+sites pass it as a single token (avoids the column-sensitive multi-line structure literal). -/
+def emptyWState : WState :=
+  { cells := [], caps := [], bal := [], escrows := [], nullifiers := [], commitments := [], queues := [], swiss := [] }
 
 /-- The per-asset `bal` keys observed in the input (so the post-state `bal` is read back at the SAME
 keys, positionally). The decoded `bal` entries' `(cell,asset)` pairs. -/
@@ -3353,26 +3475,31 @@ and `ok:0` — the rollback is observable. On a malformed wire we fail-closed to
 -- the credential is UNAVOIDABLE — no ungated/auth-erasing turn export remains. The other turn defs
 -- (`execFullTurnStep`/`execFullTurnWide`) are de-exported Lean-side references; the `dregg_kernel_*` /
 -- `dregg_record_*` exports are TEST-ONLY differential oracles (single steps, not turns).
+-- boundary-P1 (bugs 1+2): the admission context is HOST-FED (`admCtxOfHost w.host`, NODE state — the
+-- turn no longer sets its own clock/budget/freeze/head), and the result is the THREE-WAY status
+-- (`encodeWStatusOut`) — `ok:1`/`status:2` fires ONLY when the gated forest BODY actually committed.
+-- A forged-credential turn rolls the body back ⇒ `status:1` (prologue charged as anti-spam, turn
+-- REJECTED), never `ok:1`.
 @[export dregg_exec_full_forest_auth]
 def execFullForestAuthStep (input : String) : String :=
   match parseWWire input with
-  | none => encodeWOut { cells := [], caps := [], bal := [], escrows := [], nullifiers := [],
-                         commitments := [], queues := [], swiss := [] } 0 false
+  | none => encodeWStatusOut emptyWState 0 TurnStatus.rejected
   | some w =>
     let k0 := stateOfWState w.state
     let s0 : RecChainedState := { kernel := k0, log := [] }
     let cellIds := w.state.cells.map Prod.fst
     let capLabels := w.state.caps.map Prod.fst
     let balKeys := balKeysOf w.state
-    let ctx := admCtxOfTurn w.turn
+    let ctx := admCtxOfHost w.host
     let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
                   w.turn.validUntil w.turn.prevHash
     let gforest : DForest := liftForestG w.turn.root
-    match runGatedForestTurn ctx hdr s0 gforest with
+    let (st, res) := runGatedForestTurnStatus ctx hdr s0 gforest
+    match res with
     | some s' =>
-        encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
+        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st
     | none =>
-        encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false
+        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st
 
 /-! ### §WG-eval — the GATED export round-trips, AND matches `execFullForestG` run directly.
 
@@ -3394,19 +3521,20 @@ def gatedDemoInput : String := encodeWWire { state := wideDemoState, turn := gat
 #guard ((parseWWire gatedDemoInput).isSome)  --  true (whole wire parses)
 -- the GATED export commits (ok:1) — both credentials pass the portal:
 #guard (wireOk1 (execFullForestAuthStep gatedDemoInput))
--- ...and its output MATCHES running `execFullForestG` directly on the lifted tree + re-encoding:
+-- ...and its output MATCHES running `runGatedForestTurnStatus` (host-fed ctx) directly + re-encoding:
 #guard ((match parseWWire gatedDemoInput with
        | some w =>
          let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
          let cellIds := w.state.cells.map Prod.fst
          let capLabels := w.state.caps.map Prod.fst
          let balKeys := balKeysOf w.state
-         let ctx := admCtxOfTurn w.turn
+         let ctx := admCtxOfHost w.host
          let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
                        w.turn.validUntil w.turn.prevHash
-         (match runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root) with
-          | some s' => encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
-          | none    => encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false)
+         let (st, res) := runGatedForestTurnStatus ctx hdr s0 (liftForestG w.turn.root)
+         (match res with
+          | some s' => encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st
+          | none    => encodeWStatusOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st)
            == execFullForestAuthStep gatedDemoInput
        | none => false))  --  true (export = direct run)
 
@@ -3438,16 +3566,23 @@ def forgedGatedTurn : WTurn :=
 /-- The wire for the forged-credential turn (admissible prologue, gated body rolls back). -/
 def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := forgedGatedTurn }
 
--- the FORGED-credential turn aborts the forest body (loglen:0; admission fee/nonce still apply):
-#guard (wireOk1 (execFullForestAuthStep forgedGatedInput))
+-- ★ BUG-2 TOOTH ★ the FORGED-credential turn is NO LONGER `ok:1`. The gated forest body rolls back
+-- (forged WHO ⇒ `execFullForestG = none`); the admission prologue is committed (fee/nonce) as
+-- anti-spam, so the status is `1` (prologue-committed-body-failed) and `ok:0` — the turn is REJECTED,
+-- never reported as committed. (Previously this `#guard` asserted `wireOk1` — that WAS the bug.)
+#guard (wireOk0 (execFullForestAuthStep forgedGatedInput))
+#guard (wireStatusIs 1 (execFullForestAuthStep forgedGatedInput))  --  prologue-committed-body-failed
+-- the GENUINE-credential turn, by contrast, IS `status:2`/`ok:1` (body genuinely commits):
+#guard (wireOk1 (execFullForestAuthStep gatedDemoInput))
+#guard (wireStatusIs 2 (execFullForestAuthStep gatedDemoInput))  --  body-committed
 -- ...whereas the UNGATED §W7 export would COMMIT the very same transfer (the credential is dead there):
 #guard (wireOk1 (execFullTurnWide forgedGatedInput))
 -- the WHO leg is exactly the wire-carried credential: genuine ⇒ portal true, forged ⇒ portal false:
 #guard (portalVerify (liftAuthW (.signature 7 7 : AuthW)))  --  true  (genuine echoes)
 #guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
--- malformed wire ⇒ fail-closed empty state, ok:0:
+-- malformed wire ⇒ fail-closed empty state, status:0 (rejected), ok:0:
 #guard (execFullForestAuthStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
 /-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
 
@@ -3519,12 +3654,15 @@ EVEN THOUGH its bound (≥ 0) trivially holds. -/
 def coordinatedCaveatInput : String := caveatInput 3 0
 
 -- THE TEETH (same wire path, only the caveat threshold differs):
--- SATISFIED caveat ⇒ COMMITS (ok:1, bal cell0 asset0 = 70, cell1 asset0 = 35):
+-- SATISFIED caveat ⇒ COMMITS (status:2/ok:1, bal cell0 asset0 = 70, cell1 asset0 = 35):
 #guard (wireOk1 (execFullForestAuthStep satisfiedCaveatInput))
--- VIOLATED caveat ⇒ forest body aborts (loglen:0; bal cell0 = 100, cell1 = 5 unchanged):
-#guard (wireOk1 (execFullForestAuthStep violatedCaveatInput))
--- COORDINATED (cross-cell) caveat ⇒ forest body aborts (loglen:0) — routed to CrossCaveat:
-#guard (wireOk1 (execFullForestAuthStep coordinatedCaveatInput))
+#guard (wireStatusIs 2 (execFullForestAuthStep satisfiedCaveatInput))  --  body-committed
+-- VIOLATED caveat ⇒ forest body aborts ⇒ status:1/ok:0 (prologue charged, turn REJECTED — bug-2 tooth):
+#guard (wireOk0 (execFullForestAuthStep violatedCaveatInput))
+#guard (wireStatusIs 1 (execFullForestAuthStep violatedCaveatInput))  --  prologue-committed-body-failed
+-- COORDINATED (cross-cell) caveat ⇒ forest body aborts ⇒ status:1/ok:0 — routed to CrossCaveat:
+#guard (wireOk0 (execFullForestAuthStep coordinatedCaveatInput))
+#guard (wireStatusIs 1 (execFullForestAuthStep coordinatedCaveatInput))
 -- the contrast is EXACTLY the caveat leg: satisfied ⇒ discharges, violated ⇒ fail-closes, on the SAME pre-state:
 #guard ((match parseWWire satisfiedCaveatInput with
        | some w => caveatsDischarged (liftForestG w.turn.root).auth
@@ -3682,114 +3820,99 @@ instances pull `Classical.choice`/`Quot.sound`; a `sorryAx` would FAIL the asser
 #assert_axioms caveat_teeth_same_wire
 #assert_axioms caveat_teeth_coordinated
 
-/-! # §WH — the HANDLER-CUTOVER complete-turn export `dregg_exec_handler_turn`.
+/-! # §WH — the HANDLER-CUTOVER complete-turn step (DIAGNOSTIC, NOT a node-callable ABI).
 
-Mirrors `dregg_exec_full_forest_auth` on the SAME `{"state":STATEW,"turn":TURNW}` wire, but the body
-runs the proved handler-registry executor `execHandlerTurn` over the flat pre-order action list
-`lowerForestA (eraseAuth root)` — NOT the per-node gated tree `execFullForestG`. The admission
-prologue (`runHandlerTurn` = `Admission.runTurn` ∘ `execHandlerTurn`) still fires (fee/nonce/replay/
-expiry/budget), so inadmissible turns are rejected with no edit; a body abort still commits the
-prologue. The per-node credential/caveat gate is intentionally ABSENT on this path — it is the
-soundness-strengthening cutover entry (handler algebra closes holes `execFullA` admits). -/
+★ BUG-3 FENCE ★ This path runs `execHandlerTurn` over `lowerForestA (eraseAuth root)` — it ERASES the
+per-node `Authorization` credential (`eraseAuth`), so it is an UNGATED auth-bypass. It is NOT a
+production entry: the `@[export dregg_exec_handler_turn]` has been REMOVED, so the symbol is absent
+from `libdregg_lean.a`. `build.rs`'s `archive_exports` probe therefore leaves `dregg_handler_present`
+UNSET ⇒ the C shim's `dregg_exec_handler_turn_str` is `#ifdef`'d out ⇒ Rust's `lean_handler_turn`
+fail-closes with "not exported". The SOLE node-callable production turn ABI is
+`dregg_exec_full_forest_auth` (host-fed admission + per-node credential gate + three-way status).
 
-/-- **C entry point — marshal the COMPLETE TURN, run admission ∘ `execHandlerTurn`, marshal back.**
+`execHandlerTurnStep` is retained Lean-side ONLY as a diagnostic / differential reference for the
+handler-algebra cutover study — it carries NO `@[export]` and must NEVER be wired to the node. -/
 
-Identical wire to `dregg_exec_full_forest_auth`, but the EXECUTED body is `execHandlerTurn` over the
-lowered action list. ALL-OR-NOTHING at the handler level: on a committed turn we emit the post-state
-with `ok:1`; on an inadmissible turn or a handler-aborted body after prologue we echo the observable
-rollback state with `ok:0` (inadmissible) or `ok:1` with prologue edits (body abort, matching
-`runGatedForestTurn` discipline). Malformed wire ⇒ fail-closed empty state, `ok:0`. -/
-@[export dregg_exec_handler_turn]
+/-- **DIAGNOSTIC reference (NOT exported) — admission ∘ `execHandlerTurn` over the lowered list.**
+
+This erases the per-node credential (`eraseAuth`), so it is an UNGATED auth-bypass; it carries no
+`@[export]` (bug-3 fence). Kept Lean-side for the handler-cutover differential study only. -/
 def execHandlerTurnStep (input : String) : String :=
   match parseWWire input with
-  | none => encodeWOut { cells := [], caps := [], bal := [], escrows := [], nullifiers := [],
-                         commitments := [], queues := [], swiss := [] } 0 false
+  | none => encodeWStatusOut emptyWState 0 TurnStatus.rejected
   | some w =>
     let k0 := stateOfWState w.state
     let s0 : RecChainedState := { kernel := k0, log := [] }
     let cellIds := w.state.cells.map Prod.fst
     let capLabels := w.state.caps.map Prod.fst
     let balKeys := balKeysOf w.state
-    let ctx := admCtxOfTurn w.turn
+    let ctx := admCtxOfHost w.host
     let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
                   w.turn.validUntil w.turn.prevHash
     let acts := lowerForestA (eraseAuth w.turn.root)
-    match runHandlerTurn ctx hdr s0 acts with
+    let (st, res) := runTurnStatus ctx hdr s0 (fun s₁ => execHandlerTurn acts s₁)
+    match res with
     | some s' =>
-        encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
+        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length st
     | none =>
-        encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false
+        encodeWStatusOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 st
 
-/-! ### §WH-eval — the handler export round-trips and matches `runHandlerTurn` run directly. -/
+/-! ### §WH-eval — the diagnostic handler step round-trips (NOT exported; host-fed ctx). -/
 
--- the handler export commits the gated-demo transfer (no per-node credential gate on the body):
+-- the handler step commits the gated-demo transfer (no per-node credential gate on the body):
 #guard (wireOk1 (execHandlerTurnStep gatedDemoInput))
--- ...and its output MATCHES running `runHandlerTurn` directly on the lowered action list:
-#guard ((match parseWWire gatedDemoInput with
-       | some w =>
-         let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
-         let cellIds := w.state.cells.map Prod.fst
-         let capLabels := w.state.caps.map Prod.fst
-         let balKeys := balKeysOf w.state
-         let ctx := admCtxOfTurn w.turn
-         let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
-                       w.turn.validUntil w.turn.prevHash
-         let acts := lowerForestA (eraseAuth w.turn.root)
-         (match runHandlerTurn ctx hdr s0 acts with
-          | some s' => encodeWOut (wstateOfState cellIds capLabels balKeys s'.kernel) s'.log.length true
-          | none    => encodeWOut (wstateOfState cellIds capLabels balKeys s0.kernel) 0 false)
-           == execHandlerTurnStep gatedDemoInput
-       | none => false))  --  true (export = direct run)
+#guard (wireStatusIs 2 (execHandlerTurnStep gatedDemoInput))  --  body-committed
 
--- the FORGED-credential turn COMMITS under the handler path (credential is not consulted on the body):
-#guard (wireOk1 (execHandlerTurnStep forgedGatedInput))
--- ...whereas the GATED forest export rolls the body back (the WHO leg fires):
-#guard (wireOk1 (execFullForestAuthStep forgedGatedInput))
-
--- malformed wire ⇒ fail-closed empty state, ok:0:
+-- malformed wire ⇒ fail-closed empty state, status:0/ok:0:
 #guard (execHandlerTurnStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
-/-! ### §WH-eval-admission — the admission prologue has teeth over the handler export. -/
+/-! ### §WG-eval-hostexpiry — ★ BUG-1 TOOTH ★ host-fed clock REJECTS a past-expiry turn.
 
-#guard ((match parseWWire (encodeWWire { state := wideDemoState, turn := badNonceGatedTurn }) with
-         | some w =>
-           let k0 := stateOfWState w.state
-           let s0 : RecChainedState := { kernel := k0, log := [] }
-           let ctx := admCtxOfTurn w.turn
-           let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
-                         w.turn.validUntil w.turn.prevHash
-           let acts := lowerForestA (eraseAuth w.turn.root)
-           (runHandlerTurn ctx hdr s0 acts).isNone
-         | none => false))  --  true (nonce replay ⇒ inadmissible)
+The expiry gate is NO LONGER vacuous: the host supplies `now`, checked against the turn's CLAIMED
+`valid_until`. The SAME genuine turn (`gatedDemoTurn`, `valid_until = 1000`) over a host whose clock
+is AFTER expiry (`now = 2000`) is REJECTED (status:0, no edit), while over a host clock BEFORE expiry
+(`now = 0`) it COMMITS — the ONLY difference is the HOST-fed `now`, which the turn cannot set. -/
 
-/-! ### §WH-eval-block_height — the optional clock dimension threads through admission. -/
+/-- The genuine demo turn over a host whose clock is PAST the turn's claimed `valid_until` (1000). -/
+def expiredHostInput : String :=
+  encodeWWire { host := { diagHostCtx with now := 2000 }, state := wideDemoState, turn := gatedDemoTurn }
+/-- The SAME turn over a host whose clock is BEFORE expiry. -/
+def liveHostInput : String :=
+  encodeWWire { host := { diagHostCtx with now := 0 }, state := wideDemoState, turn := gatedDemoTurn }
 
-/-- A turn with `block_height` wired below `valid_until` (admissible at the boundary). -/
-def blockHeightDemoTurn : WTurn :=
-  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, blockHeight := 500, prevHash := 0
-    root := gatedDemoTurn.root }
+-- host clock 2000 > claimed valid_until 1000 ⇒ REJECTED (status:0, no state edit): the gate has TEETH:
+#guard (wireOk0 (execFullForestAuthStep expiredHostInput))
+#guard (wireStatusIs 0 (execFullForestAuthStep expiredHostInput))  --  rejected (no edit)
+-- the IDENTICAL turn over a host clock 0 ≤ 1000 COMMITS — the discriminator is the HOST `now`:
+#guard (wireOk1 (execFullForestAuthStep liveHostInput))
+#guard (wireStatusIs 2 (execFullForestAuthStep liveHostInput))  --  body-committed
 
-def blockHeightDemoInput : String :=
-  encodeWWire { state := wideDemoState, turn := blockHeightDemoTurn }
+/-- **`host_clock_rejects_past_expiry` — THE BUG-1 THEOREM (PROVED, non-vacuous).** Over the SAME
+header (claimed `validUntil = some 1000`), an admission context whose host clock is PAST expiry
+(`now = 2000`, no block-height) makes the turn INADMISSIBLE, while a context whose clock is before
+expiry (`now = 0`) leaves the expiry gate passable. The clock is the HOST'S — the turn cannot make
+its own expiry vacuous. -/
+theorem host_clock_rejects_past_expiry (h : TurnHdr) (s : RecChainedState)
+    (hvu : h.validUntil = some 1000) :
+    Dregg2.Exec.Admission.admissible
+      { now := 2000, blockHeight := 0, frozen := [], storedHead := h.prevReceipt, budget := 1000000000 }
+      h s = false := by
+  apply Dregg2.Exec.Admission.admissible_rejects_expired _ _ _ 1000 hvu
+  simp [Dregg2.Exec.Admission.admissionClock]
 
-#guard ((parseWWire blockHeightDemoInput).map (·.turn.blockHeight)) == some 500  --  parses block_height
-#guard (wireOk1 (execHandlerTurnStep blockHeightDemoInput))  --  commits with wired clock
+#assert_axioms host_clock_rejects_past_expiry
 
-/-- A turn whose wired `block_height` exceeds `valid_until` ⇒ inadmissible ⇒ no edit. -/
-def expiredBlockHeightTurn : WTurn :=
-  { agent := 0, nonce := 7, fee := 5, validUntil := 100, blockHeight := 500, prevHash := 0
-    root := gatedDemoTurn.root }
+/-- **`host_budget_rejects_overbudget` — bug-1 budget TOOTH (PROVED).** A turn whose fee exceeds the
+HOST-fed silo budget is inadmissible — the budget is the host's, not the turn's. -/
+theorem host_budget_rejects_overbudget (h : TurnHdr) (s : RecChainedState)
+    (hfee : h.fee = 100) :
+    Dregg2.Exec.Admission.admissible
+      { now := 0, blockHeight := 0, frozen := [], storedHead := h.prevReceipt, budget := 50 }
+      h s = false := by
+  apply Dregg2.Exec.Admission.admissible_rejects_over_budget
+  simp [hfee]
 
-#guard ((match parseWWire (encodeWWire { state := wideDemoState, turn := expiredBlockHeightTurn }) with
-         | some w =>
-           let k0 := stateOfWState w.state
-           let s0 : RecChainedState := { kernel := k0, log := [] }
-           let ctx := admCtxOfTurn w.turn
-           let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
-                         w.turn.validUntil w.turn.prevHash
-           let acts := lowerForestA (eraseAuth w.turn.root)
-           (runHandlerTurn ctx hdr s0 acts).isNone
-         | none => false))  --  true (block_height 500 > valid_until 100 ⇒ expired)
+#assert_axioms host_budget_rejects_overbudget
 
 #assert_axioms execHandlerTurnStep

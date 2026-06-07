@@ -142,7 +142,7 @@ fn gated_demo_turn() -> WireTurn {
 /// (captured from `IO.println (encodeWState wideDemoState ++ encodeWTurn myTurn)` against
 /// metatheory/Dregg2/Exec/FFI.lean). `marshal_turn` must reproduce this BYTE-FOR-BYTE — that
 /// is the Layer-0 byte-equality gate, the strongest possible check short of the live parser.
-const GOLDEN_INPUT: &str = "{\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0,{\"none\":0},{\"none\":0}]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
+const GOLDEN_INPUT: &str = "{\"host\":{\"now\":0,\"block_height\":0,\"frozen\":[],\"stored_head\":0,\"budget\":1000000000},\"state\":{\"cells\":[[0,{\"rec\":[[\"balance\",{\"int\":100}],[\"nonce\",{\"int\":7}]]}],[1,{\"rec\":[[\"balance\",{\"int\":5}]]}]],\"caps\":[[9,[{\"node\":0}]]],\"bal\":[[0,0,100],[1,0,5]],\"escrows\":[[1,0,1,7,0,0,0,{\"none\":0},{\"none\":0}]],\"nullifiers\":[111],\"commitments\":[222],\"queues\":[[1,0,4,[333,444]]],\"swiss\":[[5,0,1,[0,1],1,{\"some\":99}]],\"revoked\":[]},\"turn\":{\"agent\":0,\"nonce\":7,\"fee\":5,\"valid_until\":1000,\"prev\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"root\":{\"auth\":{\"sig\":[\"0000000000000000000000000000000000000000000000000000000000000007\",7]},\"caveats\":[[0,0,0,0]],\"action\":{\"bal\":[0,0,1,30,0]},\"children\":[]}}}";
 
 /// A forged-credential turn (FFI.lean:3072 `forgedGatedTurn`): the SAME transfer under
 /// `.signature 7 8` (proof does NOT echo the statement ⇒ the §1 portal REJECTS ⇒ rollback).
@@ -374,8 +374,9 @@ fn main() -> ExitCode {
     {
         let state = wide_demo_state();
         let good = marshal_turn(&state, &gated_demo_turn()).expect("marshal good");
-        // `{"state":...` -> `{ "state":...`  — a single injected space breaks lit "{\"state\":".
-        let mutated = good.replacen("{\"state\"", "{ \"state\"", 1);
+        // `{"host":...` -> `{ "host":...`  — a single injected space breaks the kernel's very
+        // first `lit "{\"host\":"` (the host context is the new leading wire field, bug 1).
+        let mutated = good.replacen("{\"host\"", "{ \"host\"", 1);
         assert_ne!(mutated, good, "mutation must change the wire");
         let out = lean_forest_auth(&mutated);
         match unmarshal_result(&out) {
