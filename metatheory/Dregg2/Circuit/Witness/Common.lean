@@ -44,22 +44,29 @@ instance (c : Constraint) (a : Assignment) : Decidable (c.holds a) := by
 instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) := by
   unfold satisfied; exact List.decidableBAll _ _
 
-/-! ## §1 — the concrete log hash + the concrete `CommitSurface`. -/
+/-! ## §1 — the concrete log hash + the concrete `CommitSurface`.
+
+NOTE: this shared v1 surface's `lhConcrete` ALREADY binds `(actor,src,dst,amt)` of each receipt (it
+does NOT drop `src`/`dst`, unlike the per-effect toy logs the real-surface migration replaced), and its
+sponge `compressN`/`cmb`/`CH` are the injective `StateCommit` primitives. It is therefore a genuine
+binding commitment, not a field-dropping toy. The CR-grounded `Poseidon2Surface.refP2` migration is
+applied to the genuinely-lossy per-effect surfaces (the queue/note family); grounding THIS shared
+surface on `refP2` is a follow-up (it would re-pin the 8 v1 goldens + their Rust tests). -/
 
 /-- **`lhConcrete`** — the concrete receipt-chain hash: an INJECTIVE positional Horner fold over the
 `(actor,src,dst,amt)` of each receipt row (each row shifted by a base larger than any toy row field),
-with the length folded in so distinct-length chains never collide. The log analog of
-`StateCommit.compressNConcrete` — a genuine binding commitment to the receipt list (NOT a lossy sum),
-so the log-bind gate genuinely catches a forged receipt. -/
+with the length folded in so distinct-length chains never collide. A genuine binding commitment to the
+receipt list (NOT a lossy sum, and it does NOT drop `src`/`dst`), so the log-bind gate genuinely catches
+a forged receipt. -/
 def lhConcrete : List Turn → ℤ :=
   fun ts => ts.foldl (fun acc t =>
     acc * 1000000 + (t.actor : ℤ) * 1000 + (t.src : ℤ) * 100 + (t.dst : ℤ) * 10 + t.amt)
     (ts.length : ℤ)
 
-/-- **`SConc`** — the concrete commitment surface for the witness generators: the `StateCommit` toy
-primitives plus `lhConcrete`. Every digest column the witness lays out is a REAL field number under
-this surface (the Rust prover consumes them), and every primitive is injective on the toy domain (so
-the anti-ghost `#guard`s genuinely fire on a binding commitment). -/
+/-- **`SConc`** — the concrete commitment surface for the witness generators: the `StateCommit`
+injective primitives plus `lhConcrete`. Every digest column the witness lays out is a REAL field number
+under this surface (the Rust prover consumes them), and every primitive is injective on the toy domain
+(so the anti-ghost `#guard`s genuinely fire on a binding commitment). -/
 def SConc : CommitSurface :=
   { CH := chConcrete, RH := rhConcrete, cmb := cmbConcrete
     compressN := compressNConcrete, LH := lhConcrete }

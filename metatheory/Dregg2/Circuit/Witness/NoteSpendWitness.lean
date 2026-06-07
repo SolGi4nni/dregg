@@ -12,6 +12,7 @@ Reuses (not re-proved): `Inst.NoteSpendA.noteSpendA_full_sound`, `effect2_circui
 `{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Circuit.Inst.noteSpendA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.NoteSpendWitness
 
@@ -49,9 +50,9 @@ def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.commitments.length : ℤ) * 7
             + (k.escrows.length : ℤ) * 13 + (k.queues.length : ℤ) * 17
 
-/-- Concrete log hash: INJECTIVE positional Horner fold over the receipts. -/
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+/-- Concrete log hash: the REAL `Poseidon2Surface.refP2` sponge over the FULL `encTurnRec` (binds
+`src`/`dst`, which the OLD `lhConcrete` DROPPED). CR-grounded on the real `babyBearD4W16` Poseidon2. -/
+def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 

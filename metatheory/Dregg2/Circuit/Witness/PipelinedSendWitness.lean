@@ -13,6 +13,7 @@ Reuses (not re-proved): `Inst.PipelinedSendA.pipelinedSendA_full_sound`, `effect
 `{propext, Classical.choice, Quot.sound}` on the keystones.
 -/
 import Dregg2.Circuit.Inst.pipelinedSendA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.PipelinedSendWitness
 
@@ -58,14 +59,14 @@ within `i64` for the Rust prover. The root wires are UNCONSTRAINED by `effectCir
 `LH` DIRECTLY (not through `cmb`), so they are unaffected. -/
 def cmbConcrete : ℤ → ℤ → ℤ := fun a b => (a * 1000003 + b) % 2000000000000000000
 
-/-- Concrete sponge: an INJECTIVE positional Horner fold (each leaf shifted by a base larger than any
-toy leaf; the length folded in so distinct-length lists never collide). -/
-def compressNConcrete : List ℤ → ℤ :=
-  fun xs => xs.foldl (fun acc x => acc * 1000000 + x) (xs.length : ℤ)
+/-- Concrete sponge: the REAL `Poseidon2Surface.refP2` (the CR-grounded reference sponge realizing the
+REAL `babyBearD4W16` Poseidon2 via `Poseidon2Surface.realRealizedSponge`; the load-bearing list-hash, a
+genuine binding commitment proved injective on the bounded demo domain by `refP2_injOn`). -/
+def compressNConcrete : List ℤ → ℤ := Dregg2.Circuit.Poseidon2Surface.refP2
 
-/-- Concrete log hash: an INJECTIVE positional Horner fold over the receipts. -/
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+/-- Concrete log hash: the REAL `Poseidon2Surface.refP2` sponge over the FULL `encTurnRec` (binds
+`src`/`dst`, which the OLD `lhConcrete` DROPPED). -/
+def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 def SC : CommitSurface :=
   { CH := chConcrete, RH := rhConcrete, cmb := cmbConcrete, compressN := compressNConcrete,

@@ -13,6 +13,7 @@ No `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` whitelists exactly
 `{propext, Classical.choice, Quot.sound}` on the keystones.
 -/
 import Dregg2.Circuit.Inst.noteCreateA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.NoteCreateWitness
 
@@ -52,9 +53,10 @@ def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7
             + (k.escrows.length : ℤ) * 13 + (k.queues.length : ℤ) * 17
 
-/-- Concrete log hash: an INJECTIVE positional Horner fold over the receipt actors. -/
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+/-- Concrete log hash: the REAL `Poseidon2Surface.refP2` sponge over the FULL `encTurnRec` (binds
+`src`/`dst`, which the OLD `lhConcrete` DROPPED — `acc*10⁶ + actor + amt`). CR-grounded on the real
+`babyBearD4W16` Poseidon2 via `Poseidon2Surface.realRealizedSponge`. -/
+def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 

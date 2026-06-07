@@ -3003,6 +3003,41 @@ mod tests {
         v2_beachhead(QUEUE_PIPELINE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-queueEnqueueA-v2` (TRIPLE, width 76): enqueue a message + debit a deposit +
+    /// park an escrow (touched = `queues` + `bal` + `escrows`). THIS test runs over the
+    /// REAL (Poseidon2 CR-grounded) commitment surface — every digest column is
+    /// `Dregg2.Circuit.Poseidon2Surface.refP2` (the CR-grounded reference sponge realizing
+    /// the REAL `babyBearD4W16` p3-poseidon2-circuit-air Poseidon2, see
+    /// `Poseidon2Surface.realRealizedSponge`) over the FIELD-BINDING encoders
+    /// (`encQueueRec`/`encEscrowRec`/`encTurnRec`). The OLD surface DROPPED fields
+    /// (`capacity % 1000`, `src`/`dst` in the log); this binds them all. Forged post: the
+    /// parked escrow's `amount` is tampered (30 → 999); the escrow component-bind gate
+    /// `72 = 73` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.QueueEnqueueWitness.{honest,forged}WitnessJson`.
+    const QUEUE_ENQUEUE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queueEnqueueA-v2","trace_width":76,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}},{"lhs":{"t":"var","v":74},"rhs":{"t":"var","v":75}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_queue_enqueue_real_surface() {
+        // Lean `QueueEnqueueWitness.honestWitnessJson` golden (REAL refP2-grounded surface).
+        let honest: [i64; 76] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1000000000600004111, 2000000001271005240, 2, 2, 1000000000500004908,
+            1000000000500004908, 70000000, 70000000, 1000000000700000300, 1000000000700000300,
+            1000030, 1000030,
+        ];
+        // Lean `QueueEnqueueWitness.forgedWitnessJson` golden (escrow amount 30 → 999):
+        // the escrow component-bind gate 72 = 73 breaks (queues + bal stay honest).
+        let forged: [i64; 76] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 1000000000600004111, 2000000001271014930, 2, 2, 1000000000500004908,
+            1000000000500004908, 70000000, 70000000, 1000000000700009990, 1000000000700000300,
+            1000030, 1000030,
+        ];
+        v2_beachhead(QUEUE_ENQUEUE_DESCRIPTOR_JSON, 76, &honest, &forged, 72, 73);
+    }
+
     /// `dregg-delegateAttenA-v2`: the GATED, ATTENUATED authority grant (touched =
     /// `kernel.caps`). Honest: delegator 0 (holding `node 5`) attenuated-grants
     /// recipient 1 the held cap to target 5 (keep = [write]). Forged: recipient 1

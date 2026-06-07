@@ -10,6 +10,7 @@ Reuses (not re-proved): `Inst.QueueAtomicTxA.queueAtomicTxA_full_sound`,
 `effect2triple_circuit_full_complete`, `encodeE2Triple`. No `sorry`/`admit`/`axiom`/`native_decide`.
 -/
 import Dregg2.Circuit.Inst.queueAtomicTxA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.QueueAtomicTxWitness
 
@@ -37,34 +38,24 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 instance {St Args : Type} (S : Surface2) (E : EffectSpec2Triple St Args) (a : Assignment) :
     Decidable (satisfiedE2Triple S E a) := by unfold satisfiedE2Triple; infer_instance
 
-/-! ## §1 — the CONCRETE commitment surface (within `i64` on the toy domain). -/
+/-! ## §1 — the REAL (Poseidon2 CR-grounded) commitment surface.
 
-def qrecLeaf : QueueRecord → ℤ :=
-  fun q => (q.id : ℤ) * 100000000 + (q.owner : ℤ) * 1000000 + ((q.capacity : ℤ) % 1000) * 1000
-            + (qbufFold q.buffer % 1000)
-where
-  qbufFold : List Nat → ℤ := fun b => b.foldl (fun acc x => acc * 100 + (x : ℤ)) (b.length : ℤ)
+Every component digest is now `Poseidon2Surface.refP2` (the CR-grounded reference sponge realizing the
+REAL `babyBearD4W16` Poseidon2) over FIELD-BINDING encoders. The OLD toy folds dropped fields
+(`capacity % 1000`, `amount % 1000`, `src`/`dst` in the log); these bind every field. -/
 
-def qDigConcrete : List QueueRecord → ℤ :=
-  fun xs => (xs.length : ℤ) * 1000000000000000000
-    + (xs.zipIdx.foldl (fun acc p => acc + (qrecLeaf p.1 % 1000000000) * (1000000000 ^ p.2)) 0)
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encQueueRec encEscrowRec turnLogDigest)
+
+def qDigConcrete : List QueueRecord → ℤ := recListDigest encQueueRec
+def eDigConcrete : List EscrowRecord → ℤ := recListDigest encEscrowRec
 
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => (bal 0 0) * 1000000 + (bal 1 0) * 1000 + (bal 0 1)
-
-def erecLeaf : EscrowRecord → ℤ :=
-  fun r => (r.id : ℤ) * 100000000 + (r.creator : ℤ) * 1000000 + (r.recipient : ℤ) * 10000
-            + ((r.amount % 1000) * 10) + (if r.resolved then 1 else 0)
-
-def eDigConcrete : List EscrowRecord → ℤ :=
-  fun xs => (xs.length : ℤ) * 1000000000000000000
-    + (xs.zipIdx.foldl (fun acc p => acc + (erecLeaf p.1 % 1000000000) * (1000000000 ^ p.2)) 0)
+  fun bal => refP2 [bal 0 0, bal 1 0, bal 0 1]
 
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7 + (k.commitments.length : ℤ) * 11
 
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 

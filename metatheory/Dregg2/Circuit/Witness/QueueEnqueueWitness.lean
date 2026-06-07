@@ -12,6 +12,7 @@ Reuses (not re-proved): `Inst.QueueEnqueueA.queueEnqueueA_full_sound`,
 `effect2triple_circuit_full_complete`, `encodeE2Triple`. No `sorry`/`admit`/`axiom`/`native_decide`.
 -/
 import Dregg2.Circuit.Inst.queueEnqueueA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.QueueEnqueueWitness
 
@@ -39,37 +40,34 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 instance {St Args : Type} (S : Surface2) (E : EffectSpec2Triple St Args) (a : Assignment) :
     Decidable (satisfiedE2Triple S E a) := by unfold satisfiedE2Triple; infer_instance
 
-/-! ## §1 — the CONCRETE commitment surface (small enough to stay within `i64`). -/
+/-! ## §1 — the REAL (Poseidon2 CR-grounded) commitment surface.
 
-def qrecLeaf : QueueRecord → ℤ :=
-  fun q => (q.id : ℤ) * 100000000 + (q.owner : ℤ) * 1000000 + ((q.capacity : ℤ) % 1000) * 1000
-            + (qbufFold q.buffer % 1000)
-where
-  qbufFold : List Nat → ℤ := fun b => b.foldl (fun acc x => acc * 100 + (x : ℤ)) (b.length : ℤ)
+Every component digest is now `Poseidon2Surface.refP2` (the CR-grounded reference sponge, realizing the
+REAL `babyBearD4W16` Poseidon2 — see `Poseidon2Surface.realRealizedSponge`) over FIELD-BINDING encoders
+(`recListDigest encQueueRec`/`encEscrowRec`, `turnLogDigest`). The OLD toy folds dropped fields
+(`capacity % 1000`, `src`/`dst` in the log); these bind every field. The `balDigConcrete` ledger digest
+is the `refP2` sponge of the demo's `(cell,asset)` entries (positional, injective on the demo domain).
+`rhConcrete` is the rest-frame count (unchanged — the rest-frame gate is not the one that bites here). -/
 
-/-- Concrete queue-list digest: position-weighted base-10^9 fold, kept within `i64` on the toy domain. -/
-def qDigConcrete : List QueueRecord → ℤ :=
-  fun xs => (xs.length : ℤ) * 1000000000000000000
-    + (xs.zipIdx.foldl (fun acc p => acc + (qrecLeaf p.1 % 1000000000) * (1000000000 ^ p.2)) 0)
+open Dregg2.Circuit.Poseidon2Surface (refP2 recListDigest encQueueRec encEscrowRec turnLogDigest)
 
-/-- Concrete per-asset-ledger digest: positional fold over the toy (cell,asset) entries the test uses. -/
+/-- The queue-list digest: the REAL `refP2` sponge over the field-binding `encQueueRec` (NO `% 1000`). -/
+def qDigConcrete : List QueueRecord → ℤ := recListDigest encQueueRec
+
+/-- The escrow-list digest: the REAL `refP2` sponge over the field-binding `encEscrowRec` (all 9 fields). -/
+def eDigConcrete : List EscrowRecord → ℤ := recListDigest encEscrowRec
+
+/-- The per-asset-ledger digest: the REAL `refP2` sponge over the demo's `(cell,asset)` ledger entries
+(positional, binding each entry — NO lossy collapse). -/
 def balDigConcrete : (CellId → AssetId → ℤ) → ℤ :=
-  fun bal => (bal 0 0) * 1000000 + (bal 1 0) * 1000 + (bal 0 1)
-
-def erecLeaf : EscrowRecord → ℤ :=
-  fun r => (r.id : ℤ) * 100000000 + (r.creator : ℤ) * 1000000 + (r.recipient : ℤ) * 10000
-            + ((r.amount % 1000) * 10) + (if r.resolved then 1 else 0)
-
-/-- Concrete escrow-list digest: position-weighted base-10^9 fold, within `i64` on the toy domain. -/
-def eDigConcrete : List EscrowRecord → ℤ :=
-  fun xs => (xs.length : ℤ) * 1000000000000000000
-    + (xs.zipIdx.foldl (fun acc p => acc + (erecLeaf p.1 % 1000000000) * (1000000000 ^ p.2)) 0)
+  fun bal => refP2 [bal 0 0, bal 1 0, bal 0 1]
 
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7 + (k.commitments.length : ℤ) * 11
 
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+/-- The receipt-chain log hash: the REAL `refP2` sponge over the FULL `encTurnRec` (binds `src`/`dst`,
+which the old `lhConcrete` DROPPED). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 

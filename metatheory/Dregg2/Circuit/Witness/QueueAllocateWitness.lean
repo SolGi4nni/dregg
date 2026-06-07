@@ -12,6 +12,7 @@ Reuses (not re-proved): `Inst.QueueAllocateA.queueAllocateA_full_sound`,
 `#assert_axioms` whitelists exactly `{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Circuit.Inst.queueAllocateA
+import Dregg2.Circuit.Poseidon2Surface
 
 namespace Dregg2.Circuit.Witness.QueueAllocateWitness
 
@@ -38,32 +39,24 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 instance {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args) (a : Assignment) :
     Decidable (satisfiedE2 S E a) := by unfold satisfiedE2; infer_instance
 
-/-! ## §1 — the CONCRETE commitment surface. -/
+/-! ## §1 — the REAL (Poseidon2 CR-grounded) commitment surface.
 
-/-- A concrete per-`QueueRecord` leaf: an INJECTIVE positional pairing of id/owner/capacity/buffer-len.
-On the toy domain each field is < 100 (ids/owners small, cap stored mod 1000), so the four 2-to-3-digit
-positions never carry — leaf < 10^9. -/
-def qrecLeaf : QueueRecord → ℤ :=
-  fun q => (q.id : ℤ) * 100000000 + (q.owner : ℤ) * 1000000 + ((q.capacity : ℤ) % 1000) * 1000
-            + ((q.buffer.length : ℤ) % 1000)
+The queue-list digest is now `Poseidon2Surface.refP2` (the CR-grounded reference sponge realizing the
+REAL `babyBearD4W16` Poseidon2) over the FIELD-BINDING `encQueueRec` (which binds the WHOLE buffer, not
+just `buffer.length % 1000`, and `capacity` in full). The log hash binds `src`/`dst` (the old
+`lhConcrete` dropped them). -/
 
-/-- Concrete queue-list digest: INJECTIVE position-weighted SUM over the `queues` list — leaf `i` is
-multiplied by `(10^9)^i` (a base-10^9 positional fold; leaves are < 10^9 on the toy domain and the list
-is short, so distinct lists never collide). Stays within `i64` for the small `#guard` domain (≤ 2
-records ⇒ ≤ ~9·10^17 < 9.2·10^18), so the Rust prover ingests it without overflow; a drop/reorder/tamper
-of any record changes the value. -/
-def qDigConcrete : List QueueRecord → ℤ :=
-  fun xs => (xs.length : ℤ) * 1000000000000000000
-    + (xs.zipIdx.foldl (fun acc p => acc + qrecLeaf p.1 * (1000000000 ^ p.2)) 0)
+open Dregg2.Circuit.Poseidon2Surface (recListDigest encQueueRec turnLogDigest)
+
+def qDigConcrete : List QueueRecord → ℤ := recListDigest encQueueRec
 
 /-- Concrete rest hash: a field-count of the non-`queues` components. -/
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ) * 7
             + (k.commitments.length : ℤ) * 11 + (k.escrows.length : ℤ) * 13
 
-/-- Concrete log hash: INJECTIVE positional Horner fold over the receipts. -/
-def lhConcrete : List Turn → ℤ :=
-  fun ts => ts.foldl (fun acc t => acc * 1000000 + (t.actor : ℤ) + t.amt) (ts.length : ℤ)
+/-- Concrete log hash: the REAL `refP2` sponge over the FULL `encTurnRec` (binds `src`/`dst`). -/
+def lhConcrete : List Turn → ℤ := turnLogDigest
 
 def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 
