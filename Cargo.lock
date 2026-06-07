@@ -3175,6 +3175,7 @@ dependencies = [
  "dregg-dsl-runtime",
  "dregg-federation",
  "dregg-intent",
+ "dregg-lean-ffi",
  "dregg-macaroon",
  "dregg-net",
  "dregg-persist",

@@ -1525,7 +1525,61 @@ async fn execute_finalized_turn(
         None
     };
 
-    let exec_result = executor.execute(&signed_turn.turn, &mut s.ledger);
+    // THE SWAP — producer mode (authority inversion). When `lean_producer_enabled` is set
+    // (`DREGG_LEAN_PRODUCER=1`), the VERIFIED Lean executor is the authoritative state PRODUCER:
+    // `produce_via_lean` reconstitutes the committed ledger from the Lean FFI's post-state and
+    // demotes the Rust `TurnExecutor` to a parallel differential cross-check, returning the Rust
+    // `TurnResult` (so the receipt / proving / attestation machinery below is unchanged) together
+    // with a differential outcome. A divergence is a real soundness finding — surfaced loudly,
+    // never reconciled. When the flag is OFF, this is exactly the legacy Rust-producer path.
+    let exec_result = if s.lean_producer_enabled {
+        let agent = signed_turn.turn.agent;
+        let (rust_result, outcome) =
+            dregg_turn::lean_apply::produce_via_lean(&executor, &signed_turn.turn, &mut s.ledger);
+        match &outcome {
+            dregg_turn::lean_apply::ProducerOutcome::LeanProduced {
+                committed,
+                agree,
+                lean_root,
+                rust_root,
+                rust_committed,
+            } => {
+                if *agree {
+                    info!(
+                        target: "dregg::lean_shadow::producer",
+                        agent = ?agent,
+                        committed = *committed,
+                        "THE SWAP producer mode: verified Lean executor PRODUCED the committed \
+                         state; Rust differential AGREES"
+                    );
+                } else {
+                    error!(
+                        target: "dregg::lean_shadow::producer",
+                        agent = ?agent,
+                        lean_committed = *committed,
+                        rust_committed = *rust_committed,
+                        lean_root = %dregg_types::hex_encode(lean_root),
+                        rust_root = %dregg_types::hex_encode(rust_root),
+                        "THE SWAP producer DIVERGENCE: verified Lean producer and Rust differential \
+                         disagree on the committed state — REAL soundness finding (Lean output \
+                         committed; investigate)"
+                    );
+                }
+            }
+            dregg_turn::lean_apply::ProducerOutcome::Fallback { reason } => {
+                warn!(
+                    target: "dregg::lean_shadow::producer",
+                    agent = ?agent,
+                    reason = %reason,
+                    "THE SWAP producer mode: turn not eligible for the verified producer — fell \
+                     back to the Rust producer for this turn"
+                );
+            }
+        }
+        rust_result
+    } else {
+        executor.execute(&signed_turn.turn, &mut s.ledger)
+    };
 
     match exec_result {
         dregg_turn::TurnResult::Committed { receipt, .. } => {

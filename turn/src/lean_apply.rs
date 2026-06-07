@@ -35,8 +35,10 @@ use std::collections::HashMap;
 use dregg_cell::{Cell, CellId, Ledger};
 use dregg_lean_ffi::marshal::{WireState, WireValue};
 
+use crate::executor::TurnExecutor;
 use crate::lean_shadow::{self, ShadowHostCtx};
 use crate::turn::Turn;
+use crate::TurnResult;
 
 /// Why a `WireState` could not be fully reconstituted into a `Ledger`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,4 +231,108 @@ pub fn execute_via_lean(
     let inv = invert_id_map(&pre.id_map);
     let ledger = wire_state_to_ledger(&shadow_state.state, &inv, pre_ledger)?;
     Ok((ledger, shadow_state.verdict.committed))
+}
+
+/// Which executor produced the committed state, plus the verified-vs-Rust differential, for one
+/// producer-mode commit.
+#[derive(Debug, Clone)]
+pub enum ProducerOutcome {
+    /// The VERIFIED Lean executor PRODUCED the committed state (it was installed into `ledger`).
+    /// `committed` is the Lean commit bit; `lean_root` / `rust_root` are the two producers'
+    /// post-state roots and `agree` is whether the commit bits AND roots matched. A `false` `agree`
+    /// is a REAL runtime differential finding — surfaced by the caller, never papered over.
+    LeanProduced {
+        committed: bool,
+        agree: bool,
+        lean_root: [u8; 32],
+        rust_root: [u8; 32],
+        rust_committed: bool,
+    },
+    /// The turn was NOT eligible for the verified producer (its forest has an effect with no wire
+    /// arm). Producer mode fell back to the Rust producer for THIS turn; `ledger` already carries
+    /// the Rust post-state. `reason` says why the verified producer was skipped.
+    Fallback { reason: ExtractError },
+}
+
+impl ProducerOutcome {
+    /// `true` iff the verified producer ran AND its post-state diverged from the Rust differential.
+    pub fn diverged(&self) -> bool {
+        matches!(self, ProducerOutcome::LeanProduced { agree: false, .. })
+    }
+}
+
+/// PRODUCER MODE (THE SWAP authority inversion). Make the VERIFIED Lean executor the authoritative
+/// state PRODUCER for one finalized turn while keeping the receipt/proving machinery on the Rust
+/// path, and run the Rust `TurnExecutor` as a demoted DIFFERENTIAL cross-check.
+///
+/// Mechanics — both producers run, on a SHARED admission decision:
+///   1. Build the host admission ctx from `executor` (clock / freeze-set / chain-head / budget) —
+///      the SAME ctx the Rust executor would build, so neither producer sees a different admission.
+///   2. VERIFIED PRODUCER: drive the turn through the Lean FFI, reconstitute the post-state ledger.
+///   3. RUST PRODUCER/RECEIPT: run `executor.execute(turn, ledger)` — this both mutates `ledger`
+///      (producing the Rust post-state) AND yields the `TurnResult` (receipt / events) the caller
+///      still needs. We snapshot the Rust post-state root for the differential.
+///   4. INSTALL the verified post-state: overwrite `ledger` with the Lean-produced ledger, so the
+///      COMMITTED state (and its merkle root) is the verified executor's output, not Rust's.
+///   5. Return the Rust `TurnResult` (so receipt-chain append / proving / root attestation are
+///      unchanged) AND a [`ProducerOutcome`] carrying the differential.
+///
+/// On INELIGIBILITY (an effect with no wire arm) the verified producer is skipped, `ledger` carries
+/// the Rust post-state untouched, and [`ProducerOutcome::Fallback`] is returned — the safe behaviour
+/// for a turn the wire model cannot yet represent.
+///
+/// IMPORTANT: a divergence ([`ProducerOutcome::diverged`]) is a real finding. This helper does NOT
+/// reconcile it — it installs the VERIFIED post-state regardless (the verified executor is the
+/// authority in producer mode) and reports the divergence for the caller to surface loudly.
+pub fn produce_via_lean(
+    executor: &TurnExecutor,
+    turn: &Turn,
+    ledger: &mut Ledger,
+) -> (TurnResult, ProducerOutcome) {
+    // Eligibility gate: if the verified producer cannot represent this turn, fall back to the Rust
+    // producer entirely (it mutates `ledger` and yields the receipt as today).
+    if !lean_shadow::forest_is_marshallable(turn) {
+        let result = executor.execute(turn, ledger);
+        return (result, ProducerOutcome::Fallback { reason: ExtractError::Ineligible });
+    }
+
+    let host = executor.build_shadow_host_ctx(turn, ledger);
+
+    // VERIFIED PRODUCER: drive the turn through the Lean FFI and reconstitute the post-state from
+    // the CURRENT pre-state (before the Rust executor mutates `ledger`).
+    let lean = match execute_via_lean(turn, ledger, &host) {
+        Ok(pair) => Some(pair),
+        // A reconstitution error (e.g. a marshaller gap the eligibility gate did not catch) is a
+        // real finding, but we must still commit SOME state — fall back to the Rust producer.
+        Err(e) => {
+            let result = executor.execute(turn, ledger);
+            return (result, ProducerOutcome::Fallback { reason: e });
+        }
+    };
+    let (mut lean_ledger, lean_committed) = lean.unwrap();
+    let lean_root = lean_ledger.root();
+
+    // RUST PRODUCER + RECEIPT: run the Rust executor in place — it mutates `ledger` to the Rust
+    // post-state and yields the `TurnResult` (receipt/events) the commit path still consumes.
+    let rust_result = executor.execute(turn, ledger);
+    let rust_committed = matches!(rust_result, TurnResult::Committed { .. });
+    let rust_root = ledger.root();
+
+    let agree = lean_committed == rust_committed && lean_root == rust_root;
+
+    // INSTALL THE VERIFIED POST-STATE: the COMMITTED ledger is now the verified executor's output.
+    // On a Lean rejection the reconstituted ledger equals the pre-state, so this matches a verified
+    // no-commit.
+    *ledger = lean_ledger;
+
+    (
+        rust_result,
+        ProducerOutcome::LeanProduced {
+            committed: lean_committed,
+            agree,
+            lean_root,
+            rust_root,
+            rust_committed,
+        },
+    )
 }

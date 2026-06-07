@@ -176,6 +176,18 @@ impl TurnExecutor {
     ///                      `prev` against it;
     ///   * `budget`       — the Stingray silo budget slice (`self.budget_gate.remaining()`), the
     ///                      verified Budget leg's `fee ≤ budget` bound.
+    /// Build the NODE-fed shadow admission context from this executor's own state. Public so the
+    /// node's PRODUCER MODE (`lean_apply::produce_via_lean`) can drive the verified Lean executor
+    /// with EXACTLY the same admission context the Rust executor uses — the two producers must see
+    /// the same clock / freeze-set / chain-head / budget, or the differential is meaningless.
+    pub fn build_shadow_host_ctx(
+        &self,
+        turn: &Turn,
+        ledger: &Ledger,
+    ) -> crate::lean_shadow::ShadowHostCtx {
+        self.shadow_host_ctx(turn, ledger)
+    }
+
     fn shadow_host_ctx(
         &self,
         turn: &Turn,

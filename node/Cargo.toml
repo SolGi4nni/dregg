@@ -73,6 +73,9 @@ http-body-util = "0.1"
 x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 dregg-verifier = { path = "../verifier" }
+# THE SWAP producer-mode test gates on `lean_available()` (self-skips when the Lean archive is
+# absent). The `lean-lib` feature matches the `dregg-turn` `lean-shadow` dep the node already uses.
+dregg-lean-ffi = { path = "../dregg-lean-ffi", features = ["lean-lib"] }
 
 [[bin]]
 name = "dregg-node"

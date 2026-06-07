@@ -27,6 +27,17 @@ use dregg_turn::WitnessedReceipt;
 use crate::gossip::GossipHandle;
 use crate::routing_table::RoutingTable;
 
+/// THE SWAP — read the producer-mode opt-in from the environment. `DREGG_LEAN_PRODUCER=1` (or
+/// `true`) makes the verified Lean executor the authoritative state producer on the commit path,
+/// with the Rust executor demoted to a differential cross-check. Any other value (or unset) keeps
+/// the legacy Rust-producer path, so the devnet default is unchanged.
+pub fn lean_producer_env_enabled() -> bool {
+    matches!(
+        std::env::var("DREGG_LEAN_PRODUCER").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
+
 // =============================================================================
 // Events (broadcast to WebSocket clients)
 // =============================================================================
@@ -153,6 +164,17 @@ pub struct NodeStateInner {
     /// proven" claim TRUE for the running node. Default `false` because full
     /// proving per turn is on the hot path; the devnet enables it.
     pub full_turn_proving_enabled: bool,
+    /// THE SWAP — producer mode (authority inversion). When true, the commit path
+    /// ([`crate::blocklace_sync::execute_finalized_turn`]) makes the VERIFIED Lean executor the
+    /// authoritative state PRODUCER (`dregg_turn::lean_apply::produce_via_lean`): the committed
+    /// ledger is reconstituted from the Lean FFI's post-state, and the legacy Rust
+    /// `dregg_turn::TurnExecutor` is demoted to a parallel runtime DIFFERENTIAL cross-check (its
+    /// post-state root is compared against the Lean-produced root; a divergence is logged loudly as
+    /// a real soundness finding, never reconciled). Default `false` — the devnet/legacy default is
+    /// UNCHANGED (Rust produces). Opt in via the `DREGG_LEAN_PRODUCER=1` env var (read at state
+    /// construction) or by setting this field. Ineligible turns (an effect with no wire arm) fall
+    /// back to the Rust producer for that turn.
+    pub lean_producer_enabled: bool,
     /// Cached PIR intent index. Invalidated on intent pool mutations.
     /// Avoids O(n) rebuild on every PIR request (prevents CPU DoS).
     pub pir_index_cache: Option<dregg_intent::pir::IntentIndex>,
@@ -582,6 +604,7 @@ impl NodeState {
                 checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 full_turn_proving_enabled: false,
+                lean_producer_enabled: lean_producer_env_enabled(),
                 pir_index_cache: None,
                 discharge_gateway: None,
                 program_registry: ProgramRegistry::new(),
@@ -675,6 +698,7 @@ impl NodeState {
                 checkpoint_interval: dregg_federation::DEFAULT_CHECKPOINT_INTERVAL,
                 prove_transitions: false,
                 full_turn_proving_enabled: false,
+                lean_producer_enabled: lean_producer_env_enabled(),
                 pir_index_cache: None,
                 discharge_gateway: None,
                 program_registry: ProgramRegistry::new(),
