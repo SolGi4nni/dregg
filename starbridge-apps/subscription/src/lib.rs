@@ -154,9 +154,9 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
-    CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
-    canonical_program_vk, hex_encode_32, symbol,
+    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
+    FieldConstraint, FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint,
+    TransitionCase, TransitionGuard, canonical_program_vk, hex_encode_32, symbol,
 };
 use dregg_cell::program::SimpleStateConstraint;
 
@@ -819,6 +819,26 @@ pub fn build_bounty_state_publish_action(
 // =============================================================================
 // StarbridgeAppContext mount
 // =============================================================================
+
+/// The canonical web-constants module — the single source of truth the
+/// `pages/constants.generated.js` is rendered from (slot layout + the four
+/// subscription event topics + the factory-vk hex).
+pub fn web_constants() -> ConstantsModule {
+    ConstantsModule::new("subscription")
+        .slot("SEQ_HEAD_SLOT", SEQ_HEAD_SLOT as u64)
+        .slot("SEQ_TAIL_SLOT", SEQ_TAIL_SLOT as u64)
+        .slot("CAPACITY_SLOT", CAPACITY_SLOT as u64)
+        .slot("PUBLISHERS_ROOT_SLOT", PUBLISHERS_ROOT_SLOT as u64)
+        .slot("CONSUMERS_ROOT_SLOT", CONSUMERS_ROOT_SLOT as u64)
+        .slot("OWNER_PK_HASH_SLOT", OWNER_PK_HASH_SLOT as u64)
+        .slot("MESSAGE_ROOT_SLOT", MESSAGE_ROOT_SLOT as u64)
+        .slot("LATEST_PAYLOAD_SLOT", LATEST_PAYLOAD_SLOT as u64)
+        .string("FACTORY_VK_HEX", hex_encode_32(&SUBSCRIPTION_FACTORY_VK))
+        .topic("PUBLISHED", "subscription-published")
+        .topic("CONSUMED", "subscription-consumed")
+        .topic("PUBLISHER_GRANTED", "subscription-publisher-granted")
+        .topic("CONSUMER_GRANTED", "subscription-consumer-granted")
+}
 
 /// Register this starbridge-app on a [`StarbridgeAppContext`].
 ///

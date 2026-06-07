@@ -72,9 +72,9 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
-    CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk,
-    field_from_u64, hex_encode_32, symbol,
+    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
+    FieldConstraint, FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint,
+    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
 
 pub use dregg_credentials::{
@@ -507,6 +507,24 @@ pub fn build_verify_presentation_action(
 // =============================================================================
 // StarbridgeAppContext mount
 // =============================================================================
+
+/// The canonical web-constants module — the single source of truth the
+/// `pages/constants.generated.js` is rendered from. The two presentation-verify
+/// topics (`presentation-accepted` / `presentation-rejected`) are NOT included:
+/// they are JS-only display events the in-browser verifier emits, with no Rust
+/// counterpart (verification is a read path). The three issuer-lifecycle topics
+/// here are exactly the `symbol("…")` strings the Rust builders emit.
+pub fn web_constants() -> ConstantsModule {
+    ConstantsModule::new("identity")
+        .slot("SCHEMA_COMMITMENT_SLOT", SCHEMA_COMMITMENT_SLOT as u64)
+        .slot("ISSUANCE_COUNTER_SLOT", ISSUANCE_COUNTER_SLOT as u64)
+        .slot("REVOCATION_ROOT_SLOT", REVOCATION_ROOT_SLOT as u64)
+        .slot("ISSUER_AUTH_ROOT_SLOT", ISSUER_AUTH_ROOT_SLOT as u64)
+        .string("FACTORY_VK_HEX", hex_encode_32(&ISSUER_FACTORY_VK))
+        .topic("ISSUED", "credential-issued")
+        .topic("REVOKED", "credential-revoked")
+        .topic("PRESENTED", "credential-presented")
+}
 
 /// Register the identity starbridge-app on a [`StarbridgeAppContext`].
 ///

@@ -161,10 +161,10 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, Authorization, AuthorizedSet, CapTarget, CapTemplate,
-    CellId, CellMode, CellProgram, ChildVkStrategy, Effect, Event, FactoryDescriptor,
-    FieldConstraint, FieldElement, InputRef, InspectorDescriptor, StarbridgeAppContext,
-    StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate, WitnessedPredicateKind,
-    field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event,
+    FactoryDescriptor, FieldConstraint, FieldElement, InputRef, InspectorDescriptor,
+    StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate,
+    WitnessedPredicateKind, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use dregg_turn::action::WitnessBlob;
@@ -1009,6 +1009,41 @@ pub struct DispatchOutcome {
 // =============================================================================
 // StarbridgeAppContext mount
 // =============================================================================
+
+/// The canonical web-constants module — the single source of truth the
+/// `pages/constants.generated.js` is rendered from.
+///
+/// IMPORTANT: this fixes a latent drift bug. The hand-written JS previously
+/// emitted `namespace-proposal-submitted` / `namespace-vote-cast` /
+/// `namespace-table-committed` / `namespace-service-registered`, but the Rust
+/// builders (and thus the executor's receipts) emit `proposal-opened` /
+/// `vote-cast` / `table-committed` / `service-registered`. An inspector or
+/// indexer keyed to the JS names would never match real events. The generated
+/// module carries the EXACT `symbol("…")` topics the Rust side emits, and the
+/// pages now import them, so the two can no longer disagree. The method symbols
+/// (already matching) are carried too so the JS builders dispatch the right
+/// `MethodIs`-guarded cases.
+pub fn web_constants() -> ConstantsModule {
+    ConstantsModule::new("governed-namespace")
+        .slot("ROUTE_TABLE_ROOT_SLOT", ROUTE_TABLE_ROOT_SLOT as u64)
+        .slot("VERSION_SLOT", VERSION_SLOT as u64)
+        .slot("GOVERNANCE_COMMITTEE_ROOT_SLOT", GOVERNANCE_COMMITTEE_ROOT_SLOT as u64)
+        .slot("THRESHOLD_SLOT", THRESHOLD_SLOT as u64)
+        .slot("DISPUTE_WINDOW_HEIGHT_SLOT", DISPUTE_WINDOW_HEIGHT_SLOT as u64)
+        .slot("PENDING_PROPOSAL_ROOT_SLOT", PENDING_PROPOSAL_ROOT_SLOT as u64)
+        .string("FACTORY_VK_HEX", hex_encode_32(&GOVERNANCE_FACTORY_VK))
+        // Method names (the executor's `MethodIs` guards key off these).
+        .string("METHOD_PROPOSE", "propose_table_update")
+        .string("METHOD_VOTE", "vote_on_proposal")
+        .string("METHOD_COMMIT", "commit_table_update")
+        .string("METHOD_REGISTER", "register_service")
+        // Event topics — the EXACT strings the Rust builders emit (was the
+        // drift bug: JS used `namespace-*` aliases that never matched).
+        .topic("PROPOSED", "proposal-opened")
+        .topic("VOTED", "vote-cast")
+        .topic("COMMITTED", "table-committed")
+        .topic("SERVICE_BOUND", "service-registered")
+}
 
 /// Register the governed-namespace starbridge-app on a
 /// [`StarbridgeAppContext`].

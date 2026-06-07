@@ -19,7 +19,7 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint,
+    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, FieldConstraint,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
     canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
@@ -331,6 +331,21 @@ pub fn build_init_mandate_action(
 // =============================================================================
 // StarbridgeAppContext mount
 // =============================================================================
+
+/// The canonical web-constants module — the single source of truth the
+/// `pages/constants.generated.js` is rendered from (slot layout + the two
+/// workflow event topics + the factory-vk hex).
+pub fn web_constants() -> ConstantsModule {
+    ConstantsModule::new("compartment-workflow-mandate")
+        .slot("STEP_CURSOR_SLOT", STEP_CURSOR_SLOT as u64)
+        .slot("COMMITMENT_ANCHOR_SLOT", COMMITMENT_ANCHOR_SLOT as u64)
+        .slot("CHARTER_TERMINAL_SLOT", CHARTER_TERMINAL_SLOT as u64)
+        .slot("CLEARANCE_GRAPH_ROOT_SLOT", CLEARANCE_GRAPH_ROOT_SLOT as u64)
+        .slot("SPEND_POLICY_SLOT", SPEND_POLICY_SLOT as u64)
+        .string("FACTORY_VK_HEX", hex_encode_32(&CWM_FACTORY_VK))
+        .topic("INITIALIZED", "workflow-mandate-initialized")
+        .topic("STEP_ADVANCED", "workflow-step-advanced")
+}
 
 /// Register the compartment-workflow-mandate starbridge-app on a shared context.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {

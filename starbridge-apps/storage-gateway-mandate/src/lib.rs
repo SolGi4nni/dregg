@@ -16,7 +16,7 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint,
+    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, FieldConstraint,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
     canonical_program_vk, field_from_u64, hex_encode_32, symbol,
 };
@@ -444,6 +444,23 @@ pub fn build_init_gateway_action(
 // =============================================================================
 // StarbridgeAppContext mount
 // =============================================================================
+
+/// The canonical web-constants module — the single source of truth the
+/// `pages/constants.generated.js` is rendered from (slot layout + the two
+/// storage event topics + the factory-vk hex).
+pub fn web_constants() -> ConstantsModule {
+    ConstantsModule::new("storage-gateway-mandate")
+        .slot("OBJECT_KEY_SLOT", OBJECT_KEY_SLOT as u64)
+        .slot("LAST_OP_SLOT", LAST_OP_SLOT as u64)
+        .slot("VOLUME_SPENT_SLOT", VOLUME_SPENT_SLOT as u64)
+        .slot("COMMITMENT_ANCHOR_SLOT", COMMITMENT_ANCHOR_SLOT as u64)
+        .slot("VOLUME_CEILING_SLOT", VOLUME_CEILING_SLOT as u64)
+        .slot("KEY_PREFIX_HASH_SLOT", KEY_PREFIX_HASH_SLOT as u64)
+        .slot("READ_COMPARTMENT_SLOT", READ_COMPARTMENT_SLOT as u64)
+        .string("FACTORY_VK_HEX", hex_encode_32(&SGM_FACTORY_VK))
+        .topic("INITIALIZED", "storage-gateway-initialized")
+        .topic("OP", "storage-op")
+}
 
 /// Register the storage-gateway-mandate starbridge-app on a shared context.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
