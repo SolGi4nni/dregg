@@ -3215,9 +3215,12 @@ post-state at the input's orderings with `ok:1`; on a tree that aborts on ANY ga
 action (`execFullForestG = none`) we ECHO the UNCHANGED input state with `loglen:0` and `ok:0` — the rollback
 is observable. On a malformed wire we fail-closed to an empty state with `ok:0`. -/
 
-open Dregg2.Exec.FullForestAuth (Authorization execFullForestG GatedCaveat portalVerify caveatsDischarged)
+open Dregg2.Exec.FullForestAuth (Authorization execFullForestG GatedCaveat portalVerify caveatsDischarged
+  credentialValidG capAuthorityG)
 open Dregg2.Exec.StarbridgeGated (Dg Pf St Wt DNodeAuth DForest DChild mkAuth)
 open Dregg2.Exec.StarbridgeGated
+open Dregg2.Exec.AuthModes (AuthMode)
+open Dregg2.Spec (Guard)
 
 /-! ## §WG1 — lift the wire credential `Authorization Nat Nat → Authorization Int Int`.
 
@@ -3283,23 +3286,38 @@ longer admit-by-construction. The action/children are the SAME structural data (
 equals `eraseAuth` of the wire node, so the executed COMMIT run agrees with `§W7` exactly WHEN every
 credential AND caveat passes). -/
 
-/-- Build the gated `NodeAuth` from a lifted credential + lifted caveats: the WHO is the credential; the
-CAVEATS are the transported within-cell discharge leg; the WHAT (`.unchecked (Guard.all [])`) is pinned
-to admit. The gate is `credentialValid ∧ capAuthorityG ∧ caveatsDischarged`, with the caveat leg now
-fed the wire-carried caveats. (`Demo.mkAuth cred cavs` is exactly this decoration.) -/
-def mkGAuth (cred : Authorization Dg Pf) (cavs : List GatedCaveat) : DNodeAuth := mkAuth cred cavs
+/-- The ROOT node decoration: the WHO is the lifted credential, the CAVEATS are the transported
+within-cell discharge leg, and the WHAT is the admitting `.unchecked (Guard.all [])` — the agent acts on
+its OWN authority (no delegation edge points INTO the root). (`StarbridgeGated.mkAuth cred cavs`.) -/
+def mkGAuthRoot (cred : Authorization Dg Pf) (cavs : List GatedCaveat) : DNodeAuth := mkAuth cred cavs
+
+/-- A CHILD node decoration whose WHAT leg gates on its incoming delegation edge's `keep`/`parentCap`:
+`capAuthorityG = decide (keep.toFinset ≤ confRights parentCap)` over `ExecAuth` (A1 — the real
+`granted ≤ held` attenuation; an amplifying edge fail-closes). The WHO/caveats are the wire-carried
+legs. (`StarbridgeGated.mkAuthCap cred cavs holder keep parentCap`.) -/
+def mkGAuthEdge (cred : Authorization Dg Pf) (cavs : List GatedCaveat)
+    (holder : Label) (keep : List Auth) (parentCap : Cap) : DNodeAuth :=
+  mkAuthCap cred cavs holder keep parentCap
 
 mutual
-/-- Lift a wire `WForest` to a gated `Demo.DForest`: decorate the node with the lifted credential AND
-the lifted caveats (`mkGAuth (liftAuthW auth) (liftCaveatsW caveats)`), keep the structural action, lift
-the children. -/
-def liftForestG : WForest → DForest
-  | ⟨na, cavs, a, kids⟩ => ⟨mkGAuth (liftAuthW na) (liftCaveatsW cavs), a, liftChildrenG kids⟩
-/-- Lift a wire child-edge list to gated `Demo.DChild` edges (the delegation data is UNCHANGED). -/
+/-- Lift a wire `WForest` to a gated `Demo.DForest` as a delegated CHILD subtree: the node's WHAT leg
+gates on the incoming edge's `holder`/`keep`/`parentCap`; its own children gate on THEIR edges. -/
+def liftForestGChild (holder : Label) (keep : List Auth) (parentCap : Cap) : WForest → DForest
+  | ⟨na, cavs, a, kids⟩ =>
+      ⟨mkGAuthEdge (liftAuthW na) (liftCaveatsW cavs) holder keep parentCap, a, liftChildrenG kids⟩
+/-- Lift a wire child-edge list to gated `Demo.DChild` edges. The delegation data (`holder`/`keep`/
+`parentCap`) is UNCHANGED structurally, AND it now ALSO drives the child node's WHAT leg
+(`mkGAuthEdge`): an amplifying edge (`keep ⊄ parentCap.rights`) fail-closes the gate (A1). -/
 def liftChildrenG : List WChild → List DChild
   | []                      => []
-  | ⟨h, k, pc, sub⟩ :: rest => (⟨h, k, pc, liftForestG sub⟩ : DChild) :: liftChildrenG rest
+  | ⟨h, k, pc, sub⟩ :: rest =>
+      (⟨h, k, pc, liftForestGChild h k pc sub⟩ : DChild) :: liftChildrenG rest
 end
+
+/-- Lift a wire `WForest` to a gated `Demo.DForest` (the ROOT entry): the root carries the agent's own
+authority (`.unchecked`); every CHILD gates on its delegation edge (`liftChildrenG`). -/
+def liftForestG : WForest → DForest
+  | ⟨na, cavs, a, kids⟩ => ⟨mkGAuthRoot (liftAuthW na) (liftCaveatsW cavs), a, liftChildrenG kids⟩
 
 /-! ## §WG3 — the GATED complete-turn export. -/
 
@@ -3519,6 +3537,99 @@ theorem caveat_teeth_coordinated :
     caveatsDischarged (liftForestG (caveatTurn 3 0).root).auth cavePre = false := by
   rfl
 
+/-! ### §WG-eval-capauth — THE CAP-AUTHORITY (WHAT-leg) TEETH (the amplifying-delegation rollback).
+
+This closes A1: the cap-attenuation theory (`authModeAdmits`'s `granted ≤ held`) is now LOAD-BEARING
+over `dregg_exec_full_forest_auth`. A turn DELEGATES to a child carrying an attenuation `keep` and a
+`parentCap`; the child node's WHAT leg gates `keep.toFinset ≤ confRights parentCap` over the REAL
+`ExecAuth = Finset Auth` lattice. A NON-amplifying edge (`keep ⊆ parentCap.rights`) COMMITS; an
+AMPLIFYING edge (`keep ⊄ parentCap.rights`) makes `capAuthorityG` FALSE on the CHILD node ⇒ the gate
+fail-closes ⇒ the whole turn ROLLS BACK. The ONLY difference between the two wires is the child edge's
+`keep` set, so this is the same-wire contrast proving the WHAT leg has teeth (previously every node
+pinned `.unchecked`, admitting BOTH). -/
+
+/-- The delegation pre-state: `wideDemoState` PLUS cell 0 holding `.endpoint 1 [read, write]` (the cap
+the root, acting on cell 0, hands off to the child). This makes the EXECUTED delegation handoff
+(`delegateAttenA`) succeed on the non-amplifying edge — so the body genuinely COMMITS the child rather
+than aborting on a missing-cap install (which would mask the WHAT-leg contrast). -/
+def delegState : WState :=
+  { wideDemoState with caps := [(0, [.endpoint 1 [.read, .write], .node 0]), (9, [.node 0])] }
+
+/-- A delegating turn: root emits on cell 0 (its target = the delegator) under a genuine credential,
+with ONE child delegated to holder 1, attenuation `keep`, over `parentCap` (target cell 1), whose
+sub-node runs a balance-neutral `emitEvent` on cell 1. The child node's WHAT leg gates
+`keep ⊆ parentCap.rights`. -/
+def delegTurn (keep : List Auth) (parentCap : Cap) : WTurn :=
+  { agent := 0, nonce := 7, fee := 5, validUntil := 1000, prevHash := 0
+    root := ⟨ .signature 7 7, [], .emitEventA 0 0 0 0
+            , [⟨1, keep, parentCap, ⟨ .signature 7 7, [], .emitEventA 1 1 0 0, [] ⟩⟩] ⟩ }
+
+/-- The wire for a delegating turn (over `delegState`, where cell 0 holds the delegated cap). -/
+def delegInput (keep : List Auth) (parentCap : Cap) : String :=
+  encodeWWire { state := delegState, turn := delegTurn keep parentCap }
+
+/-- NON-amplifying edge: `keep = [read]` ⊆ parent rights `[read, write]` ⇒ the child WHAT leg admits. -/
+def okDelegInput : String := delegInput [Auth.read] (.endpoint 1 [Auth.read, Auth.write])
+/-- AMPLIFYING edge: `keep = [read, write]` ⊄ parent rights `[read]` ⇒ the child WHAT leg REJECTS. -/
+def amplifyDelegInput : String := delegInput [Auth.read, Auth.write] (.endpoint 1 [Auth.read])
+
+/-- The gated body delta over the export's exact pipeline: run `runGatedForestTurn` (admission ∘
+`execFullForestG`) on the lifted tree and read the receipt-log length. The admission prologue appends
+NO receipt, so on a body that fully commits (root transfer + child emit) the log GROWS, whereas a body
+aborted by the gate leaves only the prologue (log length 0) — `loglen` is the observable teeth. -/
+def delegBodyLoglen (input : String) : Option Nat :=
+  match parseWWire input with
+  | some w =>
+      let s0 : RecChainedState := { kernel := stateOfWState w.state, log := [] }
+      let ctx := admCtxOfTurn w.turn
+      let hdr := turnHdrOf w.turn.agent (eraseAuth w.turn.root) w.turn.nonce w.turn.fee
+                    w.turn.validUntil w.turn.prevHash
+      (runGatedForestTurn ctx hdr s0 (liftForestG w.turn.root)).map (fun s' => s'.log.length)
+  | none => none
+
+-- THE TEETH (same wire path, only the child edge's `keep`/`parentCap` rights differ):
+-- NON-amplifying delegation ⇒ the BODY COMMITS (root emit + delegation handoff + child emit ⇒ 3 receipts):
+#guard (delegBodyLoglen okDelegInput == some 3)
+-- AMPLIFYING delegation ⇒ the child WHAT leg fail-closes ⇒ whole forest body ABORTS (only the
+-- never-rolled-back prologue survives, which appends NO receipt ⇒ loglen 0):
+#guard (delegBodyLoglen amplifyDelegInput == some 0)
+-- the contrast is EXACTLY the WHAT leg on the CHILD node (read off the lifted tree's child auth):
+#guard ((match parseWWire okDelegInput with
+       | some w => match (liftForestG w.turn.root).children with
+                   | ⟨_,_,_,sub⟩ :: _ => capAuthorityG sub.auth
+                   | [] => false
+       | none => false))  --  true  (non-amplifying ⇒ WHAT admits)
+#guard ((match parseWWire amplifyDelegInput with
+       | some w => match (liftForestG w.turn.root).children with
+                   | ⟨_,_,_,sub⟩ :: _ => capAuthorityG sub.auth
+                   | [] => false
+       | none => false)) == false  --  false (amplifying ⇒ WHAT fail-closes)
+-- the WHO leg passes for BOTH (genuine credential) — the ONLY discriminator is the WHAT leg:
+#guard ((match parseWWire amplifyDelegInput with
+       | some w => match (liftForestG w.turn.root).children with
+                   | ⟨_,_,_,sub⟩ :: _ => credentialValidG sub.auth
+                   | [] => false
+       | none => false))  --  true (genuine credential; the cap leg is the load-bearing teeth)
+
+/-- **`capauth_teeth_same_wire` — THE A1 SOUNDNESS-GAP-CLOSED THEOREM (PROVED, non-vacuous).** Over the
+SAME wire path and credential, the lifted tree's CHILD node's WHAT leg ADMITS the non-amplifying edge
+(`[read] ⊆ {read, write}`) and REJECTS the amplifying one (`{read, write} ⊄ {read}`). The ONLY difference
+is the child edge's `keep`/`parentCap` rights. This proves `capAuthorityG` CONSULTS the transported
+delegation rights (NO LONGER admit-by-construction): an amplifying delegation makes the gate fail-closed
+over `ExecAuth`. The export's all-or-nothing rollback rides exactly this contrast. -/
+theorem capauth_teeth_same_wire :
+    capAuthorityG (match (liftForestG (delegTurn [Auth.read]
+        (.endpoint 1 [Auth.read, Auth.write])).root).children with
+      | ⟨_,_,_,sub⟩ :: _ => sub.auth | [] => (liftForestG (delegTurn [] .null).root).auth) = true
+    ∧
+    capAuthorityG (match (liftForestG (delegTurn [Auth.read, Auth.write]
+        (.endpoint 1 [Auth.read])).root).children with
+      | ⟨_,_,_,sub⟩ :: _ => sub.auth | [] => (liftForestG (delegTurn [] .null).root).auth) = false := by
+  refine ⟨?_, ?_⟩ <;>
+    (simp only [delegTurn, liftForestG, liftChildrenG, liftForestGChild, mkGAuthEdge, mkAuthCap,
+      capModeOfEdge, capAuthorityG, baseCapCtx, confRights, capTargetOf, AuthModes.authModeAdmits]
+     decide)
+
 /-! ## §WG4 — keystone axiom-hygiene pins (the FILL X no-`sorryAx` guard).
 
 The gated export and its lifts must carry NO silent `sorry`. Pinned to the three standard kernel axioms
@@ -3528,7 +3639,8 @@ instances pull `Classical.choice`/`Quot.sound`; a `sorryAx` would FAIL the asser
 #assert_axioms execFullForestAuthStep
 #assert_axioms liftAuthW
 #assert_axioms liftForestG
-#assert_axioms mkGAuth
+#assert_axioms mkGAuthEdge
+#assert_axioms capauth_teeth_same_wire
 #assert_axioms parseCaveatW
 #assert_axioms parseCaveatsW
 #assert_axioms encodeCaveatsW
