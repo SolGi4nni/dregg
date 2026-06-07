@@ -4052,6 +4052,241 @@ mod tests {
         }
     }
 
+    // ========================================================================
+    // PART 6e — The NEAR-DEFINITIONAL differential: the Lean-sourced AIR's
+    //           accept/reject ≡ the descriptor's own DENOTATION.
+    //
+    // `lean_emitted_effectvm_transfer_roundtrip` (above) drives the AIR over a
+    // BESPOKE-generated 186-col base trace and checks honest-proves + 3
+    // anti-ghost teeth — i.e. AIR-vs-bespoke-trace. The differential below is
+    // TIGHTER: it computes the descriptor's OWN denotation in Rust — the exact
+    // Rust mirror of Lean's `EffectVmEmit.satisfiedVm` (gates vanish, transitions
+    // hold, the row-flagged pi-bindings hold, every hash site carries its genuine
+    // Poseidon2 digest, every range fits its bit-width) — and asserts, witness by
+    // witness, that this DENOTATION equals what the audited p3 prover/verifier
+    // ACCEPTS through `EffectVmDescriptorAir`. Because the descriptor is the
+    // VERBATIM Lean emit (`emit_vm_json transferVmDescriptor`, byte-identical to
+    // `TRANSFER_VM_DESCRIPTOR_JSON` — pinned by `lean_emit_is_verbatim`) and its
+    // denotation is the Rust transcription of `satisfiedVm`, this closes the loop:
+    //   running circuit accept  ≡  satisfiedVm  ⟺(transferVm_faithful)⟺  intent.
+    // ========================================================================
+
+    /// Concretely evaluate a `LeanExpr` polynomial over a full field row — the
+    /// `BabyBear` sibling of `LeanExpr::eval_expr` (which builds `AB::Expr`). Same
+    /// recursion, so a gate's `denote` matches its `eval`-time polynomial pointwise.
+    fn eval_lean_expr_concrete(e: &LeanExpr, row: &[crate::field::BabyBear]) -> crate::field::BabyBear {
+        match e {
+            LeanExpr::Var(i) => row[*i],
+            LeanExpr::Const(c) => i64_to_babybear(*c),
+            LeanExpr::Add(a, b) => eval_lean_expr_concrete(a, row) + eval_lean_expr_concrete(b, row),
+            LeanExpr::Mul(a, b) => eval_lean_expr_concrete(a, row) * eval_lean_expr_concrete(b, row),
+        }
+    }
+
+    /// The genuine Poseidon2 digest of a hash-site input state (= `state[0]` of the
+    /// last round), resolving `Col` from `row`, `Digest k` from earlier digests,
+    /// `Zero` from the constant — the SAME resolution `vm_site_input_state_concrete`
+    /// and the AIR's `vm_site_input_state` use, and the SAME digest extraction
+    /// (`auxw[len - WIDTH]`) `extend_vm_trace` uses.
+    fn site_digest_concrete(
+        site: &VmHashSite,
+        row: &[crate::field::BabyBear],
+        digests: &[crate::field::BabyBear],
+    ) -> crate::field::BabyBear {
+        let input = vm_site_input_state_concrete(site, row, digests);
+        let auxw = poseidon2_permute_aux_witness(input);
+        auxw[auxw.len() - POSEIDON2_WIDTH]
+    }
+
+    /// **`denote_vm_descriptor`** — the Rust transcription of Lean's
+    /// `EffectVmEmit.satisfiedVm hash d env isFirst isLast`, over the FULL trace
+    /// (`local`/`next`/`pi` = `rows[r]`/`rows[r+1]`/`public_inputs`, with the
+    /// `isFirst`/`isLast` flags taken from the row position). Returns `true` iff the
+    /// descriptor's denotation accepts the witness:
+    ///   * every `Gate(body)` vanishes on every transition row (rows `0..n-2`);
+    ///   * every `Transition{hi,lo}` continuity holds on every transition row;
+    ///   * every `PiBinding{first,…}` holds on row 0; `{last,…}` on row n-1;
+    ///   * every hash site's `digest_col` carries its genuine Poseidon2 digest,
+    ///     on EVERY row (site `i` reading the earlier sites' digests — the ordered
+    ///     state-commit chain);
+    ///   * every range wire's low `bits` bits recompose to the wire (≡ in-range).
+    /// This walks the EXACT same domains the AIR's `eval` factors over
+    /// (`when_transition` / `when_first_row` / `when_last_row` / whole-domain), so
+    /// `denote == AIR-accepts` is the near-definitional differential.
+    fn denote_vm_descriptor(
+        desc: &EffectVmDescriptor,
+        rows: &[Vec<crate::field::BabyBear>],
+        public_inputs: &[crate::field::BabyBear],
+    ) -> bool {
+        use crate::field::BabyBear;
+        let n = rows.len();
+        // -- hash sites + ranges hold on EVERY row (whole-domain, like the AIR). --
+        for row in rows.iter() {
+            let mut digests: Vec<BabyBear> = Vec::with_capacity(desc.hash_sites.len());
+            for site in &desc.hash_sites {
+                let d = site_digest_concrete(site, row, &digests);
+                if row[site.digest_col] != d {
+                    return false;
+                }
+                digests.push(d);
+            }
+            for r in &desc.ranges {
+                let v = row[r.wire].as_u32() as u64;
+                // the low `bits` bits must recompose to the wire ⇔ the high bits are 0
+                // ⇔ v < 2^bits (the bit-decomposition range gate's satisfiability).
+                if r.bits < 64 && v >= (1u64 << r.bits) {
+                    return false;
+                }
+            }
+        }
+        // -- per-row gates + transition continuity on the transition domain (0..n-2). --
+        for r in 0..n.saturating_sub(1) {
+            let local = &rows[r];
+            let next = &rows[r + 1];
+            for c in &desc.constraints {
+                match c {
+                    VmConstraint::Gate(body) => {
+                        if eval_lean_expr_concrete(body, local) != BabyBear::ZERO {
+                            return false;
+                        }
+                    }
+                    VmConstraint::Transition { hi, lo } => {
+                        if next[EFFECTVM_STATE_BEFORE_BASE + hi] != local[EFFECTVM_STATE_AFTER_BASE + lo] {
+                            return false;
+                        }
+                    }
+                    VmConstraint::PiBinding { .. } => {}
+                }
+            }
+        }
+        // -- boundary pi-bindings: first on row 0, last on row n-1. --
+        for c in &desc.constraints {
+            if let VmConstraint::PiBinding { row, col, pi_index } = c {
+                let r = match row {
+                    VmRow::First => 0,
+                    VmRow::Last => n - 1,
+                };
+                if rows[r][*col] != public_inputs[*pi_index] {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// **The near-definitional differential.** For honest + a battery of tampered
+    /// witnesses (forged commitment, tampered ACTOR_NONCE, forged post-balance,
+    /// out-of-range balance, broken transition continuity, a NoOp-pad gate break),
+    /// the descriptor's OWN denotation (`denote_vm_descriptor` = the Rust
+    /// `satisfiedVm`) AGREES with whether the audited p3 prover+verifier ACCEPTS
+    /// through the Lean-sourced `EffectVmDescriptorAir`. So the running transfer
+    /// circuit's accept/reject IS the descriptor's denotation — and (via
+    /// `transferVm_faithful`) the verified intent — by construction.
+    #[test]
+    fn lean_emitted_effectvm_transfer_differential() {
+        use crate::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi as evm_pi};
+
+        let desc = parse_vm_descriptor(TRANSFER_VM_DESCRIPTOR_JSON)
+            .expect("transfer EffectVM descriptor must parse");
+
+        // The honest 186-col base trace + PI vector for an outgoing transfer of 30.
+        let initial = CellState::new(100, 5);
+        let effects = vec![Effect::Transfer { amount: 30, direction: 1 }];
+        let (base_trace, full_pi) = generate_effect_vm_trace(&initial, &effects);
+        let pi34: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
+
+        // The audited-prover accept oracle: prove (self-verifies) then re-verify; a
+        // prover panic (broken constraint in debug) counts as reject.
+        fn air_accepts(
+            desc: &EffectVmDescriptor,
+            bt: &[Vec<crate::field::BabyBear>],
+            pi: &[crate::field::BabyBear],
+        ) -> bool {
+            let desc = desc.clone();
+            let bt = bt.to_vec();
+            let pi = pi.to_vec();
+            std::panic::catch_unwind(move || match prove_vm_descriptor(&desc, &bt, &pi) {
+                Ok(p) => verify_vm_descriptor(&desc, &p, &pi).is_ok(),
+                Err(_) => false,
+            })
+            .unwrap_or(false)
+        }
+
+        // One differential case: assert denotation == AIR-accept, plus the EXPECTED
+        // polarity (so a vacuously-agreeing always-reject can't hide). The denotation
+        // runs over the FULL AIR trace (`extend_vm_trace` = base + hash aux + range
+        // bits), the exact witness the prover commits to.
+        fn check(
+            desc: &EffectVmDescriptor,
+            label: &str,
+            bt: &[Vec<crate::field::BabyBear>],
+            pi: &[crate::field::BabyBear],
+            expect_accept: bool,
+        ) {
+            let full = extend_vm_trace(desc, bt);
+            let den = denote_vm_descriptor(desc, &full, pi);
+            assert_eq!(
+                den, expect_accept,
+                "[{label}] descriptor DENOTATION polarity wrong (got {den}, expected {expect_accept})"
+            );
+            let air = air_accepts(desc, bt, pi);
+            assert_eq!(
+                den, air,
+                "[{label}] DIFFERENTIAL BROKEN: denotation={den} but AIR-accepts={air}"
+            );
+        }
+
+        // ---- HONEST: both accept. ----
+        check(&desc, "honest", &base_trace, &pi34, true);
+
+        // ---- Forge the published post-state commitment (last-row state_commit):
+        //      site-3 hash binding rejects; denotation's hash-site clause is false. ----
+        {
+            let mut t = base_trace.clone();
+            let last = t.len() - 1;
+            t[last][STATE_AFTER_BASE_T + state_commit_off()] =
+                t[last][STATE_AFTER_BASE_T + state_commit_off()] + crate::field::BabyBear::new(1);
+            check(&desc, "forged_commitment", &t, &pi34, false);
+        }
+
+        // ---- Tamper the ACTOR_NONCE public input: row-0 boundary pin rejects. ----
+        {
+            let mut bad_pi = pi34.clone();
+            bad_pi[evm_pi::ACTOR_NONCE] = bad_pi[evm_pi::ACTOR_NONCE] + crate::field::BabyBear::new(7);
+            check(&desc, "tampered_actor_nonce", &base_trace, &bad_pi, false);
+        }
+
+        // ---- Forge the row-0 post-balance WITHOUT re-deriving the commitment: the
+        //      debit gate (and the row-0 hash binding) reject. ----
+        {
+            let mut t = base_trace.clone();
+            t[0][STATE_AFTER_BASE_T + 0] = t[0][STATE_AFTER_BASE_T + 0] + crate::field::BabyBear::new(11);
+            check(&desc, "forged_post_balance", &t, &pi34, false);
+        }
+
+        // ---- Break transition continuity: poke the next row's state_before.nonce so
+        //      it no longer equals this row's state_after.nonce. The `transition`
+        //      clause rejects. ----
+        if base_trace.len() >= 2 {
+            let mut t = base_trace.clone();
+            // state_before.nonce of row 1 is column 54 + state::NONCE(2) = 56.
+            t[1][EFFECTVM_STATE_BEFORE_BASE + 2] =
+                t[1][EFFECTVM_STATE_BEFORE_BASE + 2] + crate::field::BabyBear::new(1);
+            check(&desc, "broken_transition_continuity", &t, &pi34, false);
+        }
+
+        // ---- Out-of-range balance: set state_after.balance_lo to a value with a bit
+        //      above bit 30 (range wire 76, bits 30). The range gate's bit
+        //      recomposition is UNSAT; the denotation's range clause is false. (The
+        //      debit gate ALSO fires — both teeth agree; the differential asserts
+        //      denotation==AIR, both `false`.) ----
+        {
+            let mut t = base_trace.clone();
+            t[0][STATE_AFTER_BASE_T + 0] = crate::field::BabyBear::new(1u32 << 30);
+            check(&desc, "out_of_range_balance", &t, &pi34, false);
+        }
+    }
+
     /// `STATE_AFTER_BASE` for the EffectVM layout (= 76) — the test reads the bespoke
     /// trace's after-state cells directly. Kept here (not imported) to avoid a name clash
     /// with the module-private `EFFECTVM_STATE_AFTER_BASE`.
