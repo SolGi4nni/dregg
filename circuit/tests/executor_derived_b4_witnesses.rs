@@ -121,3 +121,29 @@ fn b4_executor_derived_note_create() {
         NOTECREATE_DESCRIPTOR_JSON, 72, 4, &NOTECREATE_HONEST, &NOTECREATE_FORGED, 68, 69, "noteCreateA",
     );
 }
+
+// ===========================================================================
+// noteSpendA — v2 (`Dregg2.Circuit.Witness.NoteSpendWitness`).
+// Forgery: bystander nullifier 22 silently dropped (double-spend laundering) ⇒ bind gate (68 ≠ 69).
+// ===========================================================================
+
+const NOTESPEND_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-noteSpendA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+const NOTESPEND_HONEST: [i64; 72] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    2000011000024, 3000077000012000024, 2, 2, 3000077000011000022, 3000077000011000022, 1000000, 1000000,
+];
+
+const NOTESPEND_FORGED: [i64; 72] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    2000011000024, 2000078000013, 2, 2, 2000077000011, 3000077000011000022, 1000000, 1000000,
+];
+
+#[test]
+fn b4_executor_derived_note_spend() {
+    check_honest_proves_and_forged_rejects(
+        NOTESPEND_DESCRIPTOR_JSON, 72, 4, &NOTESPEND_HONEST, &NOTESPEND_FORGED, 68, 69, "noteSpendA",
+    );
+}
