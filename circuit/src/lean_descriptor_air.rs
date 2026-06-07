@@ -2072,6 +2072,29 @@ mod tests {
         v2_beachhead(ATTENUATE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-cellDestroyA-v2`: the v2-DUAL cell DESTROY (touched = `lifecycle` AND
+    /// `deathCert`, both `funcComponent`s; `trace_width = 74`, FIVE gates). Honest:
+    /// cell 0 → Destroyed, death-cert 77 bound at cell 0. The forged post-state ALSO
+    /// destroys bystander cell 1 (a collateral kill); the component-1 (`lifecycle`)
+    /// bind gate `68 = 69` breaks. Goldens pinned by Lean's
+    /// `Dregg2.Circuit.Witness.CellDestroyAWitness`.
+    const CELL_DESTROY_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-cellDestroyA-v2","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_cell_destroy_a() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 2, 80000003, 2, 2, 3000000, 3000000, 77000000, 77000000, 1, 1,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 2, 80000006, 2, 2, 3000003, 3000000, 77000000, 77000000, 1, 1,
+        ];
+        v2_beachhead(CELL_DESTROY_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
+    }
+
     /// `dregg-delegate-v2`: the Granovetter unattenuated held-cap copy (touched =
     /// `kernel.caps`, a `funcComponent`). Honest: delegator 0 (holding `node 5`)
     /// grants recipient 1 the held cap to target 5. The forged post-state has
@@ -2192,6 +2215,31 @@ mod tests {
             1001030, 1000000, 1000000,
         ];
         v2_beachhead(CREATEESCROW_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-createCommittedEscrowA-v2` (DUAL, width 74, 5 gates): the committed/
+    /// hidden escrow create (DEBIT `bal` + PREPEND `EscrowRecord`, gated additionally
+    /// on `hidingProof = true`). Honest/forged identical in shape to `createEscrowA`
+    /// (the extra gate is the hiding proof, not a wire); the forged 3rd-cell bal mint
+    /// breaks comp1-bal `68 = 69`. Goldens pinned by
+    /// `Dregg2.Circuit.Witness.CreateCommittedEscrowWitness.{descriptorJson, *WitnessJson}`.
+    const CREATECOMMITTEDESCROW_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-createCommittedEscrowA-v2","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_create_committed_escrow() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000000000003, 70000002001033, 3, 3, 70000000000000, 70000000000000, 1001030,
+            1001030, 1000000, 1000000,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000000000003, 70000002002032, 3, 3, 70000000000999, 70000000000000, 1001030,
+            1001030, 1000000, 1000000,
+        ];
+        v2_beachhead(CREATECOMMITTEDESCROW_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
     }
 
     // ========================================================================
@@ -2623,6 +2671,29 @@ mod tests {
             0, 0, 0, 0, 38, 40931, 36, 36, 40632, 30039, 263, 263,
         ];
         v2_beachhead(SEALA_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-swissDropA-v2`: the CapTP sturdy-ref DROP/GC (touched = `kernel.swiss`, a
+    /// `listComponent`). Honest: actor 0 drops one live ref to sw 7, decrementing its refcount from
+    /// 2 to 1. The forged post-state keeps the refcount at 2 (a phantom live ref); the component-bind
+    /// gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SwissDropWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    const SWISS_DROP_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-swissDropA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_swiss_drop() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16990, 17139, 2, 2, 16874, 16874, 263, 263,
+        ];
+        // Forged: refcount not decremented (stays 2); wire 68 differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16990, 17252, 2, 2, 16987, 16874, 263, 263,
+        ];
+        v2_beachhead(SWISS_DROP_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
     // ========================================================================
