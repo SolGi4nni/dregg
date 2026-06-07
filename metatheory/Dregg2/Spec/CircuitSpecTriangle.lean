@@ -82,6 +82,10 @@ import Dregg2.Circuit.Inst.setVKA
 import Dregg2.Circuit.Inst.incrementNonceA
 import Dregg2.Circuit.Inst.noteCreateA
 import Dregg2.Circuit.Inst.noteSpendA
+import Dregg2.Circuit.Inst.queueAllocateA
+import Dregg2.Circuit.Inst.cellSealA
+import Dregg2.Circuit.Inst.swissExportA
+import Dregg2.Circuit.Inst.sealA
 import Dregg2.Spec.FunctionalRefinement
 
 namespace Dregg2.Spec.CircuitSpecTriangle
@@ -898,6 +902,152 @@ theorem noteSpend_circuit_rejects_wrong_nullifiers
     ¬ satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s') :=
   fun h => hwrong (noteSpend_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
 
+/-! ## §9 — THE QUEUE-ALLOCATE FAMILY: circuit pins the INTENT fresh-queue (FR `queueAllocateSpec`).
+
+`queueAllocate` PREPENDS a fresh empty queue record onto `queues`. `FunctionalRefinement` carries the
+INTENT `queueAllocateSpec` (prepend `{id, owner, capacity, buffer := []}`). The circuit spec's queues
+clause is `freshQueue id actor cap :: queues` — definitionally that intent record. We pin the circuit
+to the intent fresh-queue. -/
+
+open Dregg2.Circuit.Inst.QueueAllocateA (AllocateArgs queueAllocateE queueAllocateA_full_sound)
+open Dregg2.Circuit.Spec.QueueFifoCore (QueueAllocateSpec freshQueue)
+
+/-- **`intentQueueAllocate queues id owner cap`** — the INTENT queues-table of an allocate: a fresh
+empty queue `{id, owner, capacity := cap, buffer := []}` is PREPENDED; the rest preserved. The SAME
+record `FunctionalRefinement.queueAllocateSpec` prepends. -/
+def intentQueueAllocate (queues : List QueueRecord) (id : Nat) (owner : CellId) (cap : Nat) :
+    List QueueRecord :=
+  { id := id, owner := owner, capacity := cap, buffer := [] } :: queues
+
+/-- **`freshQueue_eq_intent` (PROVED).** The circuit's `freshQueue` IS the intent fresh-queue record. -/
+theorem freshQueue_eq_intent (id : Nat) (owner : CellId) (cap : Nat) :
+    freshQueue id owner cap = { id := id, owner := owner, capacity := cap, buffer := [] } := rfl
+
+/-- **QUEUE-ALLOCATE circuit pins the intent fresh-queue.** A verifying `queueAllocateE` witness forces
+the post-`queues` to be EXACTLY `intentQueueAllocate … id actor cap`. -/
+theorem queueAllocate_circuit_pins_intent
+    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
+    (h : satisfiedE2 S (queueAllocateE LE cN hN hLE) (encodeE2 S (queueAllocateE LE cN hN hLE) s args s')) :
+    s'.kernel.queues = intentQueueAllocate s.kernel.queues args.id args.actor args.cap := by
+  have hspec : QueueAllocateSpec s args.id args.actor args.cell args.cap s' :=
+    queueAllocateA_full_sound S LE cN hN hLE hRest hLog s args s' h
+  rw [hspec.2.1]; rfl
+
+/-- **QUEUE-ALLOCATE circuit anti-ghost.** -/
+theorem queueAllocate_circuit_rejects_wrong_queues
+    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
+    (hwrong : s'.kernel.queues ≠ intentQueueAllocate s.kernel.queues args.id args.actor args.cap) :
+    ¬ satisfiedE2 S (queueAllocateE LE cN hN hLE) (encodeE2 S (queueAllocateE LE cN hN hLE) s args s') :=
+  fun h => hwrong (queueAllocate_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
+
+/-! ## §10 — THE CELL-SEAL (lifecycle) FAMILY: a NEW intent functional spec + circuit pinning.
+
+`cellSeal` writes the cell's lifecycle marker to the SEALED state (the `sealLifecycleMap` write). We
+pin the circuit to that validated lifecycle map (the intent "mark THIS cell sealed, no other cell's
+lifecycle changes"). -/
+
+open Dregg2.Circuit.Inst.CellSealA (CellSealArgs cellSealE cellSealA_full_sound)
+open Dregg2.Circuit.Spec.CellLifecycle (CellSealSpec sealLifecycleMap)
+
+/-- **CELL-SEAL circuit pins the intent lifecycle write.** A verifying `cellSealE` witness forces the
+post-`lifecycle` map to be EXACTLY `sealLifecycleMap … cell` (cell `cell` marked sealed, every other
+cell's lifecycle untouched). -/
+theorem cellSeal_circuit_pins_intent
+    (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CellSealArgs) (s' : RecChainedState)
+    (h : satisfiedE2 S (cellSealE D hD) (encodeE2 S (cellSealE D hD) s args s')) :
+    s'.kernel.lifecycle = sealLifecycleMap s.kernel args.cell := by
+  have hspec : CellSealSpec s args.actor args.cell s' :=
+    cellSealA_full_sound S D hD hRest hLog s args s' h
+  exact hspec.2.1
+
+/-- **CELL-SEAL circuit anti-ghost.** -/
+theorem cellSeal_circuit_rejects_wrong_lifecycle
+    (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)
+    (hRest : Dregg2.Circuit.Inst.CellSealA.RestIffNoLifecycle S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : CellSealArgs) (s' : RecChainedState)
+    (hwrong : s'.kernel.lifecycle ≠ sealLifecycleMap s.kernel args.cell) :
+    ¬ satisfiedE2 S (cellSealE D hD) (encodeE2 S (cellSealE D hD) s args s') :=
+  fun h => hwrong (cellSeal_circuit_pins_intent S D hD hRest hLog s args s' h)
+
+/-! ## §11 — THE SWISS-EXPORT FAMILY: a NEW intent functional spec + circuit pinning.
+
+`swissExport` PREPENDS a fresh sturdy-ref export record onto `swiss`. We build the intent oracle
+`intentSwissExport` (prepend the export record; touch nothing else) and pin the circuit to it. -/
+
+open Dregg2.Circuit.Inst.SwissExportA (ExportArgs swissExportE swissExportA_full_sound)
+open Dregg2.Circuit.Spec.SwissExport (ExportSpec exportRecord)
+
+/-- **`intentSwissExport swiss sw exporter target rights`** — the INTENT swiss-table of an export: the
+fresh export record (`exportRecord`, validated by `exportRecord_correct`) is PREPENDED; the rest
+preserved. -/
+def intentSwissExport (swiss : List SwissRecord) (sw : Nat) (exporter target : CellId)
+    (rights : List Auth) : List SwissRecord :=
+  exportRecord sw exporter target rights :: swiss
+
+/-- **SWISS-EXPORT circuit pins the intent export-prepend.** A verifying `swissExportE` witness forces
+the post-`swiss` to be EXACTLY `intentSwissExport … sw exporter target rights`. -/
+theorem swissExport_circuit_pins_intent
+    (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState)
+    (h : satisfiedE2 S (swissExportE LE cN hN hLE) (encodeE2 S (swissExportE LE cN hN hLE) s args s')) :
+    s'.kernel.swiss = intentSwissExport s.kernel.swiss args.sw args.exporter args.target args.rights := by
+  have hspec : ExportSpec s args.sw args.actor args.exporter args.target args.rights s' :=
+    swissExportA_full_sound S LE cN hN hLE hRest hLog s args s' h
+  exact hspec.2.1
+
+/-- **SWISS-EXPORT circuit anti-ghost.** -/
+theorem swissExport_circuit_rejects_wrong_swiss
+    (S : Surface2) (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState)
+    (hwrong : s'.kernel.swiss ≠ intentSwissExport s.kernel.swiss args.sw args.exporter args.target args.rights) :
+    ¬ satisfiedE2 S (swissExportE LE cN hN hLE) (encodeE2 S (swissExportE LE cN hN hLE) s args s') :=
+  fun h => hwrong (swissExport_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
+
+/-! ## §12 — THE SEAL (sealedBoxes) FAMILY: a NEW intent functional spec + circuit pinning.
+
+`seal` PREPENDS a sealed-box record (holding a sealed `payload` cap) onto `sealedBoxes`. We pin the
+circuit to the validated `sealedBoxPrepend` (the intent "seal THIS payload into a fresh box, touch
+nothing else"). -/
+
+open Dregg2.Circuit.Inst.SealA (SealArgs sealE sealA_full_sound)
+open Dregg2.Circuit.Spec.SealBoxOperations (SealSpec sealedBoxPrepend)
+
+/-- **SEAL circuit pins the intent sealed-box prepend.** A verifying `sealE` witness forces the
+post-`sealedBoxes` to be EXACTLY `sealedBoxPrepend … pid actor payload` (the fresh sealed box
+prepended, the rest preserved). -/
+theorem seal_circuit_pins_intent
+    (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SealA.RestIffNoSealedBoxes S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState)
+    (h : satisfiedE2 S (sealE LE cN hN hLE) (encodeE2 S (sealE LE cN hN hLE) s args s')) :
+    s'.kernel.sealedBoxes = sealedBoxPrepend s.kernel.sealedBoxes args.pid args.actor args.payload := by
+  have hspec : SealSpec s args.pid args.actor args.payload s' :=
+    sealA_full_sound S LE cN hN hLE hRest hLog s args s' h
+  exact hspec.2.1
+
+/-- **SEAL circuit anti-ghost.** -/
+theorem seal_circuit_rejects_wrong_sealedBoxes
+    (S : Surface2) (LE : SealedBoxRecord → ℤ) (cN : List ℤ → ℤ)
+    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
+    (hRest : Dregg2.Circuit.Inst.SealA.RestIffNoSealedBoxes S.RH) (hLog : logHashInjective S.LH)
+    (s : RecChainedState) (args : SealArgs) (s' : RecChainedState)
+    (hwrong : s'.kernel.sealedBoxes ≠ sealedBoxPrepend s.kernel.sealedBoxes args.pid args.actor args.payload) :
+    ¬ satisfiedE2 S (sealE LE cN hN hLE) (encodeE2 S (sealE LE cN hN hLE) s args s') :=
+  fun h => hwrong (seal_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
+
 /-! ## §4 — axiom-hygiene tripwires. Every triangle corner rests only on the kernel axioms +
 the §8 carried CR set (no `sorry`/`axiom`/`native_decide`). -/
 
@@ -945,5 +1095,14 @@ the §8 carried CR set (no `sorry`/`axiom`/`native_decide`). -/
 #assert_axioms noteCreate_circuit_rejects_wrong_commitments
 #assert_axioms noteSpend_circuit_pins_intent
 #assert_axioms noteSpend_circuit_rejects_wrong_nullifiers
+#assert_axioms freshQueue_eq_intent
+#assert_axioms queueAllocate_circuit_pins_intent
+#assert_axioms queueAllocate_circuit_rejects_wrong_queues
+#assert_axioms cellSeal_circuit_pins_intent
+#assert_axioms cellSeal_circuit_rejects_wrong_lifecycle
+#assert_axioms swissExport_circuit_pins_intent
+#assert_axioms swissExport_circuit_rejects_wrong_swiss
+#assert_axioms seal_circuit_pins_intent
+#assert_axioms seal_circuit_rejects_wrong_sealedBoxes
 
 end Dregg2.Spec.CircuitSpecTriangle
