@@ -33,6 +33,7 @@ separation *parameter*, never an `axiom`/`admit`/`sorry`-alias.
 -/
 import Dregg2.Laws
 import Dregg2.Tactics
+import Dregg2.Privacy
 import Metatheory.ConstructiveKnowledge
 import Mathlib.Order.Lattice
 import Mathlib.Order.BoundedOrder.Basic
@@ -373,6 +374,107 @@ theorem embeddings_agree_at_extremes :
 #assert_axioms dregg2ToDial_orderEmbedding
 #assert_axioms dial_unifies_single_and_multi_party
 #assert_axioms embeddings_agree_at_extremes
+
+/-! # §4b. The REAL Dregg2 disclosure mode embeds into the dial.
+
+The §3–§4 embeddings unify two *invented* mode enums (`Svenvs`, `Dregg2Mode`). The audit's
+fix (3) asks for the dial to touch a **real** Dregg2 disclosure type, not same-file toys. The
+genuine disclosure mode dregg2 ships is `Dregg2.Privacy.Visibility` (`pub`/`priv`) — the
+per-field schema marker whose `Privacy.field_projection_hides_private` law is the real
+selective-disclosure keystone: a `priv` field is *withheld* (the dial floor — the verifier
+learns nothing of it), a `pub` field is *revealed* (the dial top — cleartext). We give
+`Visibility` its genuine 2-point disclosure order and embed it into the dial, so the dial is
+the common refinement of svenvs's lone judge AND the REAL dregg2 field-visibility mode. -/
+
+open Dregg2.Privacy (Visibility) in
+/-- Disclosure rank of the real `Privacy.Visibility`: `priv` (withheld) below `pub`
+(revealed). This is "how much the verifier learns" on the real schema marker. -/
+def visRank : Visibility → Nat
+  | Visibility.priv => 0
+  | Visibility.pub  => 1
+
+open Dregg2.Privacy (Visibility) in
+theorem visRank_injective : Function.Injective visRank := by
+  intro a b h; cases a <;> cases b <;> simp_all [visRank]
+
+open Dregg2.Privacy (Visibility) in
+/-- **The real `Privacy.Visibility` IS a 2-point disclosure chain** — `priv ≤ pub`, PROVED.
+Lifted from `Nat` along the injective `visRank`; the order is the *meaning* (revealed is
+higher). This is a genuine `LinearOrder` on the real dregg2 type, not an invented enum. -/
+scoped instance : LinearOrder Visibility := LinearOrder.lift' visRank visRank_injective
+
+open Dregg2.Privacy (Visibility) in
+theorem vis_le_iff_rank {a b : Visibility} : a ≤ b ↔ visRank a ≤ visRank b := Iff.rfl
+
+open Dregg2.Privacy (Visibility) in
+/-- **Real `Privacy.Visibility` ↪ dial.** `priv ↦ acceptanceOnly` (the ZK floor: the field is
+withheld, the verifier learns only acceptance), `pub ↦ fullDisclosure` (cleartext). The real
+field-visibility mode reads the dial's two extremes — exactly svenvs's lone-judge channel, but
+now the REAL dregg2 disclosure type. -/
+def visToDial : Visibility → Dial
+  | Visibility.priv => Dial.acceptanceOnly
+  | Visibility.pub  => Dial.fullDisclosure
+
+open Dregg2.Privacy (Visibility) in
+/-- **The real-mode embedding is a strictly-monotone order-embedding — PROVED, kernel-clean.**
+`a ≤ b ↔ visToDial a ≤ visToDial b`: the real `Privacy.Visibility` disclosure order is
+faithfully the dial restricted to its two extremes. -/
+theorem visToDial_orderEmbedding (a b : Visibility) :
+    a ≤ b ↔ visToDial a ≤ visToDial b := by
+  cases a <;> cases b <;>
+    simp only [visToDial, vis_le_iff_rank, Dial.le_iff_rank, visRank, Dial.rank] <;> decide
+
+open Dregg2.Privacy (Visibility) in
+/-- **Real `Privacy.Visibility` embedding, packaged as a Mathlib `OrderEmbedding`.** -/
+def visEmb : Visibility ↪o Dial where
+  toFun := visToDial
+  inj' := by intro a b h; cases a <;> cases b <;> simp_all [visToDial]
+  map_rel_iff' := by intro a b; exact (visToDial_orderEmbedding a b).symm
+
+open Dregg2.Privacy (Visibility) in
+/-- **`dial_unifies_svenvs_and_real_dregg2` — THE inverted keystone, PROVED, kernel-clean.**
+The single-party two-point svenvs channel AND the **REAL** `Dregg2.Privacy.Visibility`
+field-disclosure mode are BOTH monotone order-embeddings into the one `Dial`, and BOTH
+preserve the acceptance-invariant of any disclosure schedule (routed through the verify seam,
+§2). Unlike `dial_unifies_single_and_multi_party` (which unified two same-file toys), this
+unifies svenvs's judge with a **load-bearing dregg2 type** — the dial now touches real
+selective-disclosure, not an invented enum. -/
+theorem dial_unifies_svenvs_and_real_dregg2
+    {I P W : Type u} [Preorder I] [Verifiable P W] (S : DiscloseAt I P W) :
+    (∀ a b : Svenvs, a ≤ b ↔ svenvsToDial a ≤ svenvsToDial b) ∧
+    (∀ a b : Visibility, a ≤ b ↔ visToDial a ≤ visToDial b) ∧
+    PreservesAcceptance svenvsToDial S ∧
+    PreservesAcceptance visToDial S :=
+  ⟨svenvsToDial_orderEmbedding, visToDial_orderEmbedding,
+   preservesAcceptance_of_embed svenvsToDial S,
+   preservesAcceptance_of_embed visToDial S⟩
+
+open Dregg2.Privacy (Visibility) in
+/-- **The toy and the real mode agree at the floor — PROVED, kernel-clean.** svenvs's
+`nonDisclose`, dregg2's toy `fullyPrivate`, AND the real `Privacy.Visibility.priv` all map to
+the dial floor `acceptanceOnly`; svenvs's `disclose`, the toy `trusted`, and the real `pub`
+all map to `fullDisclosure`. So the real field-visibility mode names the *same* dial notches
+the toys did — the toy was a faithful stand-in, now grounded in the real type. -/
+theorem real_mode_agrees_with_toys_at_extremes :
+    (visToDial Visibility.priv = svenvsToDial Svenvs.nonDisclose ∧
+     visToDial Visibility.priv = dregg2ToDial Dregg2Mode.fullyPrivate) ∧
+    (visToDial Visibility.pub = svenvsToDial Svenvs.disclose ∧
+     visToDial Visibility.pub = dregg2ToDial Dregg2Mode.trusted) :=
+  ⟨⟨rfl, rfl⟩, ⟨rfl, rfl⟩⟩
+
+open Dregg2.Privacy (Visibility) in
+/-- **The dial floor IS the real-mode `priv` (field withheld) — PROVED, kernel-clean.** The
+zero-knowledge bottom of the dial is exactly where the real `Privacy.Visibility.priv` lands,
+and the real `field_projection_hides_private` law says a `priv` field is withheld from the
+public projection. So "the dial floor discloses nothing" is, on the real type, "the projection
+hides the private field" — the dial's epistemic floor is the real selective-disclosure floor. -/
+theorem real_priv_is_dial_bot : visToDial Visibility.priv = (⊥ : Dial) := rfl
+
+#assert_axioms visRank_injective
+#assert_axioms visToDial_orderEmbedding
+#assert_axioms dial_unifies_svenvs_and_real_dregg2
+#assert_axioms real_mode_agrees_with_toys_at_extremes
+#assert_axioms real_priv_is_dial_bot
 
 /-! # §5. Single ⊕ multi-party as one — party-count agnosticism
 

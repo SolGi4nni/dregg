@@ -44,6 +44,7 @@ pinned with `#assert_axioms` (kernel-clean: only `propext`/`Classical.choice`/`Q
 -/
 import Metatheory.ConstructiveKnowledge
 import Metatheory.EpistemicDial
+import Dregg2.Privacy
 import Dregg2.Tactics
 
 -- The module namespace `Metatheory.Open.PerfectZK` and the central structure `PerfectZK`
@@ -305,6 +306,114 @@ end Teeth
 #assert_axioms Teeth.otp_distinct_witnesses_same_view
 #assert_axioms Teeth.leaky_view_indep_FAILS
 #assert_axioms Teeth.leaky_no_simulator
+
+/-! # §3b. A REAL Dregg2 instance — the field-tier selective-disclosure projection.
+
+The §3 instances (`otp` over `Unit`/`Bool`) are *toys*. The audit's fix asks the perfect-ZK
+structure to carry a genuine `Dregg2` verifier fragment. Dregg2 ships exactly such a
+perfectly-hiding map: the **field-tier projection** `Dregg2.Privacy.project`, whose real
+keystone `Dregg2.Privacy.field_projection_hides_private` proves the public view is *independent
+of* the private fields' values — information-theoretic selective disclosure, the tier-1 privacy
+law of `dregg2.md §6a`.
+
+We instantiate `PerfectZK` over it WITHOUT inventing a simulator: the statement is the
+public-field assignment, the witness is the private-field assignment, the real **view** is the
+projection of the assembled state, and the **simulator** is the projection of the statement
+ALONE (witness-free) — and `view = sim` is *exactly* `field_projection_hides_private`, the real
+Dregg2 theorem. So `PerfectZK.view_indep_of_witness` for this instance is a corollary of a
+load-bearing dregg2 law, not a toy `rfl`. -/
+
+namespace FieldTier
+
+open Dregg2.Privacy
+
+variable {Name V : Type u}
+
+/-- **Assemble a full cell state** from the public part `s` (the statement) and the private
+part `w` (the witness), under the schema mask `vis`: public fields take their value from `s`,
+private fields from `w`. The verifier's real view is the projection of this assembled state. -/
+def assemble (vis : FieldVisibility Name) (s w : State Name V) : State Name V :=
+  fun n => match vis n with
+    | Visibility.pub  => s n
+    | Visibility.priv => w n
+
+/-- The assembled state **agrees with the statement on every public field** — by construction,
+public coordinates are copied from `s`. This is the hypothesis `field_projection_hides_private`
+consumes. -/
+theorem assemble_pub_eq (vis : FieldVisibility Name) (s w : State Name V)
+    (n : Name) (h : vis n = Visibility.pub) : assemble vis s w n = s n := by
+  unfold assemble; rw [h]
+
+/-- **The real field-tier `PerfectZK`.** Over a fixed schema mask `vis`:
+
+* statement `S := State Name V` — the public-field assignment;
+* witness `W := State Name V` — the private-field assignment (the secret);
+* view `V := Obs Name V` — the schema-public observation;
+* `view s w := Privacy.project (assemble vis s w) vis` — the REAL verifier view: project the
+  assembled state through the genuine `Dregg2.Privacy.project`;
+* `sim s := Privacy.project s vis` — the witness-free simulator: project the statement alone;
+* `hperf` — discharged by **`Dregg2.Privacy.field_projection_hides_private`**: the assembled
+  state and the statement agree on every public field, so their projections are equal. This is
+  the real selective-disclosure theorem, not a fabricated equality. -/
+def fieldZK (vis : FieldVisibility Name) : PerfectZK where
+  S := State Name V
+  W := State Name V
+  V := Obs Name V
+  view s w := project (assemble vis s w) vis
+  sim s := project s vis
+  hperf s w :=
+    field_projection_hides_private vis (assemble vis s w) s
+      (fun n h => assemble_pub_eq vis s w n h)
+
+/-- **The real instance's witness-independence IS `field_projection_hides_private` — PROVED,
+kernel-clean.** For the field-tier `PerfectZK`, any two private witnesses `w₁ w₂` (any two
+private-field assignments) yield the *same* public view: the verifier provably learns nothing
+about the private fields. This is `PerfectZK.view_indep_of_witness` discharged by the real
+dregg2 selective-disclosure law — a genuine Dregg2 verifier fragment carrying the abstract
+structure, not the `Unit`/`Bool` toy. -/
+theorem fieldZK_view_indep (vis : FieldVisibility Name) (s w₁ w₂ : State Name V) :
+    (fieldZK vis).view s w₁ = (fieldZK vis).view s w₂ :=
+  (fieldZK vis).view_indep_of_witness s w₁ w₂
+
+/-- **The real view factors through the statement — PROVED, kernel-clean.** The field-tier
+view is a function of the public statement alone (the witness-free `sim = project · vis`); the
+private fields are projected away entirely. `PerfectZK.view_factors_through_statement` on the
+real instance. -/
+theorem fieldZK_factors (vis : FieldVisibility Name) :
+    ∃ g : State Name V → Obs Name V,
+      ∀ (s w : State Name V), (fieldZK vis).view s w = g s :=
+  (fieldZK vis).view_factors_through_statement
+
+/-! ### Non-vacuity of the REAL instance: a `priv` field genuinely hides a differing witness. -/
+
+/-- **The real instance has teeth (information genuinely hidden) — PROVED, kernel-clean.**
+With a field name `n` marked `priv` and two DIFFERING private values `a ≠ b`, the two assembled
+states genuinely disagree at `n` (`assemble … (update s n a) n = a ≠ b = assemble … (update s n
+b) n`), YET their views coincide — the projection drops the private coordinate. So the hiding
+is real content: the underlying witnessed states differ at the private field, but the verifier's
+view cannot tell. This is the dual of `leaky_no_simulator` (there NO simulator existed); here a
+genuine simulator (the real `project`) makes the differing-witness views identical. -/
+theorem fieldZK_hides_differing_private
+    [DecidableEq Name] (n : Name) (a b : V) (hab : a ≠ b) (s : State Name V)
+    (vis : FieldVisibility Name) (hpriv : vis n = Visibility.priv) :
+    -- the assembled states genuinely differ at the private field `n`...
+    assemble vis s (Function.update s n a) n
+        ≠ assemble vis s (Function.update s n b) n ∧
+    -- ...yet the verifier's views are identical (the private coordinate is dropped).
+    (fieldZK vis).view s (Function.update s n a)
+      = (fieldZK vis).view s (Function.update s n b) := by
+  refine ⟨?_, fieldZK_view_indep vis s (Function.update s n a) (Function.update s n b)⟩
+  -- both sides reduce, via the private arm of `assemble`, to the updated witness at `n`,
+  -- i.e. `a` and `b`, which differ by hypothesis.
+  simp only [assemble, hpriv, Function.update_self]
+  exact hab
+
+end FieldTier
+
+#assert_axioms FieldTier.fieldZK
+#assert_axioms FieldTier.fieldZK_view_indep
+#assert_axioms FieldTier.fieldZK_factors
+#assert_axioms FieldTier.fieldZK_hides_differing_private
 
 /-! # RESIDUAL — what stays an explicit parameter (NOT closed here).
 

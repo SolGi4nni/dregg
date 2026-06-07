@@ -21,8 +21,31 @@ condition are both proved (uniqueness by induction on the input word), dischargi
 No new axioms: `#assert_axioms nuF_exists` (and the keystone lemmas) pins the result to the
 kernel's own primitives. We do NOT weaken `IsFinalCell`; this closes the repo's actual
 `Metatheory.IsFinalCell` for the repo's actual `Metatheory.Cell`.
+
+## §4 — CONSUMING `νF` from the REAL cell (`Dregg2.Boundary.TurnCoalg`).
+
+The §1–§3 result proves `νF` *exists* but, by itself, leaves it orphaned: nothing in
+`Dregg2/` mentions `nuF`. §4 closes that gap. The real cell system is a
+`Dregg2.Boundary.TurnCoalg` (carrier `Carrier`, structure map `step : Carrier → F …`),
+whose behaviour functor `Boundary.F Obs Adm X = Obs × (Adm → X)` is *definitionally* the
+`Metatheory.Fobj` this module's `Cell`/`νF` are built over. We:
+
+  * reinterpret a real `TurnCoalg` as a `Metatheory.Cell` (`cellOfTurnCoalg`, a definitional
+    repackage — no data is invented);
+  * exhibit its **anamorphism into `νF`** (`Boundary.anaInto`, the unfold the real cell did
+    not have before): every real cell state `x` maps to the Moore behaviour `w ↦ obs (run x
+    w)`;
+  * state **no-drift as agreement-with-νF** (`Boundary.no_drift_into_nuF`): ANY two coalgebra
+    morphisms from the real cell into `νF` have equal carrier maps — the real cell's behaviour
+    is *canonically determined* by the final coalgebra, so two observers that both unfold it
+    into `νF` cannot disagree. This is the coinduction principle (`IsFinalCell.uniq`) applied
+    to the concrete `Dregg2` cell, the load-bearing consumption the audit's fix (4) names.
+
+So `νF` is no longer proven-then-orphaned: the concrete turn system unfolds INTO it and
+inherits its uniqueness.
 -/
 import Metatheory.Categorical
+import Dregg2.Boundary
 
 namespace Metatheory.Open.FinalCoalgebra
 
@@ -153,5 +176,72 @@ theorem nuF_exists : ∃ νF : Cell Obs Adm, IsFinalCell νF :=
 #assert_axioms nuF_isFinal
 #assert_axioms coalgHom_eq_anaMap
 #assert_axioms anaHom
+
+/-! ## §4 — `νF` consumed by the REAL cell `Dregg2.Boundary.TurnCoalg`.
+
+The behaviour functor of the real cell, `Dregg2.Boundary.F Obs Adm X = Obs × (Adm → X)`, is
+**definitionally** the `Metatheory.Fobj Obs Adm X` this module's `Cell`/`νF` ride. So a real
+`TurnCoalg` repackages to a `Cell` with no invented data, its anamorphism into `νF` is the
+unfold the concrete cell previously lacked, and the final coalgebra's uniqueness becomes a
+no-drift statement ABOUT the real turn system. -/
+
+section RealCell
+
+open Dregg2.Boundary
+
+variable {Obs Adm : Type u}
+
+/-- **Reinterpret a real cell `T : TurnCoalg Obs Adm` as a `Metatheory.Cell`.** A definitional
+repackage: `T.Carrier` is the carrier and `T.step` is the coalgebra structure map (recall
+`Boundary.F Obs Adm X = Obs × (Adm → X) = Fobj Obs Adm X` on the nose). No data is invented —
+this is the same coalgebra wearing the categorical layer's name. -/
+def cellOfTurnCoalg (T : TurnCoalg Obs Adm) : Cell Obs Adm where
+  V := T.Carrier
+  str := T.step
+
+@[simp] theorem cellOfTurnCoalg_obs (T : TurnCoalg Obs Adm) (x : T.Carrier) :
+    (cellOfTurnCoalg T).obs x = T.obs x := rfl
+
+@[simp] theorem cellOfTurnCoalg_next (T : TurnCoalg Obs Adm) (x : T.Carrier) (a : Adm) :
+    (cellOfTurnCoalg T).next x a = T.next x a := rfl
+
+/-- **The real cell's anamorphism into `νF` — the unfold the concrete turn system gains.**
+Every state `x` of the real `TurnCoalg` `T` unfolds to the Moore behaviour
+`w ↦ T.obs (run x w)`: "what this cell observes after replaying the admissible-turn word `w`".
+This is a genuine coalgebra morphism `cellOfTurnCoalg T ⟶ νF` (the §1 `anaHom` at the
+repackaged cell). Before §4, no map from a `Dregg2` cell into `νF` existed; this exhibits it. -/
+def Boundary.anaInto (T : TurnCoalg Obs Adm) : CoalgHom (cellOfTurnCoalg T) (nuF Obs Adm) :=
+  anaHom (cellOfTurnCoalg T)
+
+/-- The anamorphism's carrier map, spelled on the real cell: state `x` ↦ its Moore behaviour. -/
+theorem Boundary.anaInto_map (T : TurnCoalg Obs Adm) (x : T.Carrier) (w : List Adm) :
+    (Boundary.anaInto T).f x w = T.obs (run (cellOfTurnCoalg T) x w) := rfl
+
+/-- **`Boundary.no_drift_into_nuF` — no-drift as agreement-with-`νF`, PROVED, kernel-clean.**
+ANY two coalgebra morphisms from the real cell `T` into the final coalgebra `νF` have *equal*
+carrier maps. The real turn system's behaviour is therefore **canonically determined** by
+`νF`: two observers that each unfold the concrete cell into the final coalgebra cannot drift
+apart — they compute the same Moore behaviour. This is `IsFinalCell.uniq` (the coinduction
+principle) applied to the concrete `Dregg2.Boundary.TurnCoalg`, the load-bearing consumption
+of the §1–§3 existence result. -/
+theorem Boundary.no_drift_into_nuF (T : TurnCoalg Obs Adm)
+    (g h : CoalgHom (cellOfTurnCoalg T) (nuF Obs Adm)) : g.f = h.f :=
+  nuF_isFinal.uniq g h
+
+/-- **Every real-cell unfold into `νF` IS the canonical anamorphism — PROVED, kernel-clean.**
+The sharper form: any coalgebra morphism `g` from the real cell into `νF` equals the
+anamorphism `anaMap`, hence `g.f x w = T.obs (run x w)`. So the final coalgebra does not just
+*forbid* drift, it *pins* the real cell's behaviour to one explicit Moore unfold. -/
+theorem Boundary.unfold_is_canonical (T : TurnCoalg Obs Adm)
+    (g : CoalgHom (cellOfTurnCoalg T) (nuF Obs Adm)) :
+    g.f = anaMap (cellOfTurnCoalg T) :=
+  coalgHom_eq_anaMap (cellOfTurnCoalg T) g
+
+end RealCell
+
+#assert_axioms cellOfTurnCoalg
+#assert_axioms Boundary.anaInto
+#assert_axioms Boundary.no_drift_into_nuF
+#assert_axioms Boundary.unfold_is_canonical
 
 end Metatheory.Open.FinalCoalgebra

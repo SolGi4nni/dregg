@@ -69,6 +69,7 @@ ZERO `sorry`/`admit`/`axiom`/`native_decide`. Each keystone is pinned `#assert_a
 `lake env lean Metatheory/Open/PerfectUC.lean`; NOT part of the `Dregg2` root.
 -/
 import Metatheory.EpistemicConsensus
+import Dregg2.Privacy
 
 namespace Metatheory.Open.PerfectUC
 
@@ -403,6 +404,90 @@ end Bridge
 #assert_axioms Bridge.idContext_id
 #assert_axioms Bridge.static_is_degenerate_context
 #assert_axioms Bridge.reproves_static_compose
+
+/-! # §6. A REAL Dregg2 ideal functionality — the field-tier disclosure as a UC `System`.
+
+The §4 teeth use `Nat`/`Bool` toys; §5's `verifiedSys` already rides the real `Frame.verified`.
+This section grounds perfect-UC in the **selective-disclosure ideal functionality** of real
+dregg2: an environment supplies a full cell state, and the system's view is the schema-public
+projection `Dregg2.Privacy.project` — the genuine tier-1 privacy primitive. We show two
+*different protocol realizations* of this ideal that compute the same public view (one reads the
+state directly, one re-assembles it through the disclosure mask) **perfectly realize** each
+other (`⊑`), and that the realization SURVIVES a genuinely-interposing context — perfect-UC
+composition doing real work over a real dregg2 disclosure functionality, not a toy. -/
+
+namespace Disclosure
+
+open Dregg2.Privacy
+
+variable {Name V : Type}
+
+/-- The environment a disclosure functionality faces: a full cell state. -/
+abbrev Env (Name V : Type) := State Name V
+
+/-- The **ideal selective-disclosure functionality** at schema mask `vis`: its view of any
+environment (= any full state `s`) is the schema-public projection `project s vis` — the real
+dregg2 tier-1 disclosure map. This is the UC "ideal" `F`. -/
+def idealF (vis : FieldVisibility Name) : System (Env Name V) (Obs Name V) where
+  beh := fun s => project s vis
+
+/-- A **protocol realization** `realπ` that recomputes the public view by FIRST blanking every
+private field to a default `d`, THEN projecting. A genuinely different computation from `idealF`
+(it overwrites the private coordinates) that nonetheless yields the same observation — the
+private values never reach the public view. This is a real "protocol vs ideal" pair, not
+`z+0` vs `z`. -/
+def realπ (vis : FieldVisibility Name) (d : V) : System (Env Name V) (Obs Name V) where
+  beh := fun s => project (fun n => match vis n with
+                                    | Visibility.pub  => s n
+                                    | Visibility.priv => d) vis
+
+/-- **`realπ` perfectly realizes `idealF` — PROVED, kernel-clean.** Every environment's view of
+the blank-then-project protocol equals its view of the ideal direct projection: the two states
+agree on every PUBLIC field (private fields are projected away either way), so
+`Dregg2.Privacy.field_projection_hides_private` forces equal projections. A genuine `π ⊑ F` over
+a REAL dregg2 disclosure functionality. -/
+theorem realπ_realizes_idealF (vis : FieldVisibility Name) (d : V) :
+    realπ vis d ⊑ idealF vis := by
+  intro s
+  show project (fun n => match vis n with
+                          | Visibility.pub  => s n
+                          | Visibility.priv => d) vis = project s vis
+  apply field_projection_hides_private
+  intro n hpub
+  rw [hpub]
+
+/-- **The realization survives a genuinely-interposing context — PROVED, kernel-clean.** For ANY
+context `ρ` (e.g. one that rewrites the environment and post-processes the public observation),
+`ρ ▷ realπ ⊑ ρ ▷ idealF`: the perfect realization of the real dregg2 disclosure functionality is
+carried through black-box composition by `perfectUC_composition`. The computational
+indistinguishability that would close the remaining gap stays the explicit RESIDUAL parameter. -/
+theorem realπ_realizes_through_context
+    {Z' View' : Type} (vis : FieldVisibility Name) (d : V)
+    (ρ : Context (Env Name V) (Obs Name V) Z' View') :
+    (ρ ▷ realπ vis d) ⊑ (ρ ▷ idealF vis) :=
+  perfectUC_composition ρ (realπ_realizes_idealF vis d)
+
+/-- **`⊑` genuinely REJECTS a leaky protocol — PROVED, kernel-clean (teeth).** A protocol
+`leakyπ` whose view is the IDENTITY on the state (leaking even private fields) does NOT perfectly
+realize the ideal whenever some private field actually differs from the projected `none`: there
+is an environment distinguishing them. So `⊑` over the real functionality is a genuine two-sided
+constraint — it accepts the hiding `realπ` and rejects the leaky one. -/
+theorem leaky_fails_to_realize
+    [DecidableEq Name] (n : Name) (vis : FieldVisibility Name)
+    (hpriv : vis n = Visibility.priv) (v : V) :
+    ¬ (⟨fun s => fun m => some (s m)⟩ : System (Env Name V) (Obs Name V)) ⊑ idealF vis := by
+  intro h
+  -- at the environment `fun _ => v`, the leaky view at `n` is `some v`, the ideal is `none`.
+  have hb : (fun m => some ((fun (_ : Name) => v) m)) = project (fun _ => v) vis := h (fun _ => v)
+  have hn := congrFun hb n
+  simp only [project, hpriv] at hn
+  exact Option.some_ne_none v hn
+
+end Disclosure
+
+#assert_axioms Disclosure.realπ_realizes_idealF
+#assert_axioms Disclosure.realπ_realizes_through_context
+#assert_axioms Disclosure.leaky_fails_to_realize
 
 /-! # Coda
 
