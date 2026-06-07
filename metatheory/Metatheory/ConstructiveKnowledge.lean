@@ -415,21 +415,33 @@ non-trivial knowledge is impossible; to "copy" real authority you must mint it (
 privileged, disclosed generator — `§3`), never derive it by an ordinary inference. This is
 linear/substructural logic appearing as a *security* law (no inflation of authority).
 
-Reuses `Dregg2.Core.withholding_no_free_copy`; named here in the knowledge vocabulary.
+**Derived THROUGH the general no-clone**, not a verbatim renaming. The knowledge-named law
+now flows `general ⇒ knowledge-concrete`: it applies `Dregg2.Core.noClone_of_invariant_tensor`
+— the `Obj`-polymorphic, category-free linearity core — to the knowledge measure
+(`cons.count`), the knowledge tensor (`cons.tensor`, its additivity), and the invariance
+datum (an ordinary inference does not change the count, `conservation_ordinary`). The same
+general lemma governs the categorical `Σ : C ⥤ Discrete M` view
+(`Metatheory.Categorical.no_free_copy`) and the operational view
+(`Dregg2.Core.withholding_no_free_copy`); this epistemic statement is a THIRD instantiation,
+not a re-narration of either.
 
 NOTE: like `find_realizes`, this is a REST-ON-A-PRIMITIVE keystone, not a PROVED-clean one:
 the *logical* content (`count A = count A + count A ⟹ count A = 0` by cancellation +
-`tensor_add`) is fully proved, but it consumes the conservation balance
-`Dregg2.Core.conservation_step` — a deliberate `sorry`'d primitive (Law 1, the operational
-model's obligation). Hence deliberately NOT `#assert_axioms`'d. The honest reading: *given*
-that ordinary turns conserve, knowledge of a non-empty resource cannot be freely copied. -/
+`tensor_add`) is fully proved in the general lemma, but the invariance datum consumes the
+conservation balance `Dregg2.Core.conservation_step` — a typeclass-field obligation (Law 1,
+the operational model's obligation, discharged in `Exec.StepComplete`). Hence the
+[`ConservesStep`] hypothesis is explicit and this is deliberately NOT `#assert_axioms`'d in
+isolation. The honest reading: *given* that ordinary turns conserve, knowledge of a
+non-empty resource cannot be freely copied. -/
 theorem knowledge_no_free_copy
     {M : Type u} [AddCommMonoid M] [IsCancelAdd M]
-    (cons : Dregg2.Core.Conservation M) (A : Dregg2.Core.Cell)
+    (cons : Dregg2.Core.Conservation M) [Dregg2.Core.ConservesStep cons]
+    (A : Dregg2.Core.Cell)
     (copy : Dregg2.Core.Turn A (cons.tensor A A))
     (hcopy : copy.tag = Dregg2.Core.TurnTag.ordinary) :
     cons.count A = 0 :=
-  Dregg2.Core.withholding_no_free_copy cons A copy hcopy
+  Dregg2.Core.noClone_of_invariant_tensor cons.count cons.tensor cons.tensor_add A
+    (Dregg2.Core.conservation_ordinary cons copy hcopy)
 
 /-! # Coda
 

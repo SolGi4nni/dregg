@@ -186,6 +186,30 @@ theorem burn_delta
   rw [h, cons.burn_pure, add_zero] at hs
   exact hs
 
+/-- **General no-clone (the linearity core), abstraction-level — PROVED, kernel-clean.**
+
+The pure-algebra heart of "no free copy", stated over an *arbitrary* object type `Obj`
+with ANY monoid-valued measure `count`, ANY `tensor`, the additivity law
+`count (tensor A B) = count A + count B`, and a *single invariance datum*
+`count A = count (tensor A A)` (the statement that a conserving copy `A ↦ A ⊗ A` does not
+move the measure). Cancellation then forces `count A = 0`.
+
+This is the **single general theorem both downstream views are corollaries of**:
+- the *operational* `Conservation`/`ConservesStep` view supplies `hinv` from
+  `conservation_ordinary` (`withholding_no_free_copy`, just below);
+- the *categorical* `Σ : C ⥤ Discrete M` view supplies `hinv` from `Σ.map copy`'s
+  `Discrete.eq_of_hom` (`Metatheory.Categorical.no_free_copy`, derived FROM this).
+
+It needs no category theory, no `Conservation` structure, no `MonoidalCategory` — only the
+monoid + cancellation + the two algebraic facts. That minimality is exactly why it can
+*govern* both concrete instances rather than parallel them. -/
+theorem noClone_of_invariant_tensor {M : Type u} [AddCommMonoid M] [IsCancelAdd M]
+    {Obj : Type*} (count : Obj → M) (tensor : Obj → Obj → Obj)
+    (tensor_add : ∀ A B, count (tensor A B) = count A + count B)
+    (A : Obj) (hinv : count A = count (tensor A A)) : count A = 0 := by
+  rw [tensor_add A A] at hinv
+  exact left_eq_add.mp hinv
+
 /-- **No free copy (the linearity / "withholding" law) — PROVED.** A comonoid copy map
 `Δ : A ⟶ A ⊗ A` that is *conservation-respecting* (an `ordinary` turn — one that neither
 mints nor burns) would force `count A = count A + count A` (by `conservation_ordinary` into
@@ -203,13 +227,12 @@ fungible resource *count* rather than *saturate*. `ℕ` (the canonical resource 
 theorem withholding_no_free_copy {M : Type u} [AddCommMonoid M] [IsCancelAdd M]
     (cons : Conservation M) [ConservesStep cons] (A : Cell)
     (copy : Turn A (cons.tensor A A)) (hcopy : copy.tag = TurnTag.ordinary) :
-    cons.count A = 0 := by
-  -- ordinary copy preserves the measure: count A = count (tensor A A)
-  have hpres : cons.count A = cons.count (cons.tensor A A) :=
-    conservation_ordinary cons copy hcopy
-  -- tensor_add unfolds the target: count (tensor A A) = count A + count A
-  rw [cons.tensor_add A A] at hpres
-  -- count A = count A + count A  ⟹  count A = 0  by cancellation
-  exact left_eq_add.mp hpres
+    cons.count A = 0 :=
+  -- A COROLLARY of the general `noClone_of_invariant_tensor`: the operational view supplies
+  -- the additivity field (`cons.tensor_add`) and the invariance datum (an ordinary —
+  -- conserving — copy turn preserves the measure, via `conservation_ordinary`). The
+  -- cancellation argument lives once, in the general theorem.
+  noClone_of_invariant_tensor cons.count cons.tensor cons.tensor_add A
+    (conservation_ordinary cons copy hcopy)
 
 end Dregg2.Core

@@ -93,13 +93,17 @@ rather than `ComonObj` because `Mathlib.CategoryTheory.Monoidal.Comon_` is not i
 lib's pinned mathlib slice; the argument needs only `Σ.map copy`.) -/
 theorem no_free_copy [IsCancelAdd M]
     (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] (A : C) (copy : A ⟶ A ⊗ A) :
-    measure Sig A = 0 := by
-  -- the copy map, mapped through `Sig`, is invariant: `Σ̃ A = Σ̃ (A ⊗ A)`.
-  have hinv : measure Sig A = measure Sig (A ⊗ A) := measure_invariant Sig copy
-  -- additivity unfolds the target: `Σ̃ (A ⊗ A) = Σ̃ A + Σ̃ A`.
-  rw [measure_tensor Sig A A] at hinv
-  -- `Σ̃ A = Σ̃ A + Σ̃ A` ⟹ `Σ̃ A = 0` by left-cancellation.
-  exact left_eq_add.mp hinv
+    measure Sig A = 0 :=
+  -- A COROLLARY of the SAME general theorem the operational view uses,
+  -- `Dregg2.Core.noClone_of_invariant_tensor`. The categorical view supplies:
+  --   • `count := measure Sig`, `tensor := (· ⊗ ·)`;
+  --   • additivity `measure_tensor Sig` (the lax tensorator, read via `Discrete.eq_of_hom`);
+  --   • the invariance datum `measure_invariant Sig copy` (`Σ.map copy`, read the same way).
+  -- The cancellation argument is NOT re-done here; it lives once, in the general theorem.
+  -- This is the inversion: both the functor view and the `Conservation` view are now
+  -- corollaries of one `Obj`-polymorphic no-clone lemma rather than parallel proofs.
+  Dregg2.Core.noClone_of_invariant_tensor (measure Sig) (· ⊗ ·)
+    (measure_tensor Sig) A (measure_invariant Sig copy)
 
 /-! ### §1(a): conservation is substructurality (the absence of a natural Δ).
 
@@ -142,6 +146,42 @@ theorem conservation_core_derived (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal] :
     (measure Sig (𝟙_ C) = 0) ∧
       (∀ A B : C, measure Sig (A ⊗ B) = measure Sig A + measure Sig B) :=
   ⟨measure_unit Sig, measure_tensor Sig⟩
+
+/-! ### §1 inversion: the categorical view and the operational `Conservation` view are now
+ONE theorem at two instantiations.
+
+`no_free_copy` (this section, functor view) and `Dregg2.Core.withholding_no_free_copy`
+(operational view) are **both** corollaries of `Dregg2.Core.noClone_of_invariant_tensor`.
+We make that explicit: starting from a *real* `Dregg2.Core.Conservation M` (with the
+operational `ConservesStep` discharged), the no-clone law for an ordinary copy turn is the
+SAME general lemma the functor `Σ` route uses — only the `count`/`tensor`/invariance data
+differ. The general theorem governs both; neither is a parallel re-proof. -/
+
+/-- **The operational no-clone, re-derived inside Categorical from the SAME general lemma.**
+Takes the real `Dregg2.Core.Conservation` and `ConservesStep`, and produces `count A = 0` for
+an ordinary copy turn by applying `Dregg2.Core.noClone_of_invariant_tensor` — exactly the
+lemma `no_free_copy` (functor view) applies. This witnesses, *at the metatheory level*, that
+the abstract no-clone is the common parent of the categorical and operational facts (it is
+definitionally `Dregg2.Core.withholding_no_free_copy`). -/
+theorem operational_no_free_copy_via_general
+    {M' : Type u} [AddCommMonoid M'] [IsCancelAdd M']
+    (cons : Dregg2.Core.Conservation M') [Dregg2.Core.ConservesStep cons]
+    (A : Dregg2.Core.Cell) (copy : Dregg2.Core.Turn A (cons.tensor A A))
+    (hcopy : copy.tag = Dregg2.Core.TurnTag.ordinary) :
+    cons.count A = 0 :=
+  Dregg2.Core.noClone_of_invariant_tensor cons.count cons.tensor cons.tensor_add A
+    (Dregg2.Core.conservation_ordinary cons copy hcopy)
+
+/-- The categorical and operational no-clone are the SAME general theorem: this `rfl`-level
+agreement certifies that `operational_no_free_copy_via_general` is *definitionally* the real
+`Dregg2.Core.withholding_no_free_copy`, not a look-alike. The inversion is structural. -/
+theorem operational_no_free_copy_is_withholding
+    {M' : Type u} [AddCommMonoid M'] [IsCancelAdd M']
+    (cons : Dregg2.Core.Conservation M') [Dregg2.Core.ConservesStep cons]
+    (A : Dregg2.Core.Cell) (copy : Dregg2.Core.Turn A (cons.tensor A A))
+    (hcopy : copy.tag = Dregg2.Core.TurnTag.ordinary) :
+    operational_no_free_copy_via_general cons A copy hcopy
+      = Dregg2.Core.withholding_no_free_copy cons A copy hcopy := rfl
 
 end Conservation
 
@@ -211,6 +251,65 @@ theorem seam_roundtrip (s : Supply) (d : Demand)
   (S.adj s d).mp h
 
 end Seam
+
+/-! ### §2 bridge: the abstract `Seam` is the REAL `Predicate ⊣ Witness` of `Dregg2.Laws`.
+
+Previously the `Seam` structure was never instantiated — decorative. Here we build the ONE
+`Seam` value from the real verifier: `Dregg2.Laws.predicate_witness_galois` is the formal-
+concept (Birkhoff) polarity of the actual `Discharged` relation `Verify p w = true`. So
+`realizes`/`verifies` are the real predicate/witness polars, and every `seam_*` lemma above
+becomes a theorem *about the running verifier*, not an abstract toy. -/
+
+section RealSeam
+
+open Dregg2.Laws OrderDual Set
+
+variable {P : Type u} {W : Type u} [Verifiable P W]
+
+/-- **The real verify/find seam, as a `Seam` value.** Demand = a witness-set in the
+specificity (dual) order `(Set W)ᵒᵈ`; Supply = a predicate-set `Set P` under entailment.
+`realizes A = {w | every predicate in A is discharged by w}` (the upper polar);
+`verifies B = {p | every witness in B discharges p}` (the lower polar); the adjunction is
+the proved `predicate_witness_galois`. This is the single instance the audit asked for —
+the abstract `Seam` now has a real-Dregg2 inhabitant. -/
+def predicateWitnessSeam : Seam (Demand := (Set W)ᵒᵈ) (Supply := Set P) where
+  realizes := fun A : Set P => toDual {w : W | ∀ p ∈ A, Discharged p w}
+  verifies := fun B : (Set W)ᵒᵈ => {p : P | ∀ w ∈ ofDual B, Discharged p w}
+  adj := predicate_witness_galois
+
+/-- The real seam's left adjoint is *definitionally* the `Dregg2.Laws.predicate_witness_galois`
+upper polar — the `Seam` packaging adds no content, it just names the real connection. -/
+theorem predicateWitnessSeam_realizes (A : Set P) :
+    (predicateWitnessSeam (P := P) (W := W)).realizes A
+      = toDual {w : W | ∀ p ∈ A, Discharged p w} := rfl
+
+/-- **Attenuation of the real verifier is monotone** — a corollary of the *general*
+`seam_attenuate_monotone` applied to the real `predicateWitnessSeam`: weakening the demanded
+witness-set can only weaken the predicate-set that verifies it. The general adjunction law
+now governs the concrete verifier. -/
+theorem real_verify_attenuate_monotone :
+    Monotone (predicateWitnessSeam (P := P) (W := W)).verifies :=
+  seam_attenuate_monotone predicateWitnessSeam
+
+/-- **The real verification closure is idempotent** — `seam_closure_idem` at the real seam:
+re-deriving witnesses from a predicate-set and back stabilises after one round. -/
+theorem real_verify_closure_idem (s : Set P) :
+    (predicateWitnessSeam (P := P) (W := W)).verifies
+        ((predicateWitnessSeam (P := P) (W := W)).realizes
+          ((predicateWitnessSeam (P := P) (W := W)).verifies
+            ((predicateWitnessSeam (P := P) (W := W)).realizes s)))
+      = (predicateWitnessSeam (P := P) (W := W)).verifies
+          ((predicateWitnessSeam (P := P) (W := W)).realizes s) :=
+  seam_closure_idem predicateWitnessSeam s
+
+/-- **The real seam round-trip (unit)**: a predicate-set is below the witnesses it realizes,
+re-verified — `seam_unit` at the real verifier. -/
+theorem real_verify_unit (s : Set P) :
+    s ≤ (predicateWitnessSeam (P := P) (W := W)).verifies
+          ((predicateWitnessSeam (P := P) (W := W)).realizes s) :=
+  seam_unit predicateWitnessSeam s
+
+end RealSeam
 
 /-! # §4. Ordering / finality, derived as a bounded lattice.
 
@@ -660,6 +759,7 @@ end Boundary
 #assert_axioms measure_invariant
 #assert_axioms no_free_copy
 #assert_axioms conservation_core_derived
+#assert_axioms operational_no_free_copy_via_general
 
 -- §2 the verify/find seam, derived from the Galois connection:
 #assert_axioms seam_attenuate_monotone
@@ -668,6 +768,13 @@ end Boundary
 #assert_axioms seam_counit
 #assert_axioms seam_closure_idem
 #assert_axioms seam_roundtrip
+
+-- §2 bridge: the abstract `Seam` instantiated by the REAL `Predicate ⊣ Witness` verifier.
+-- These pin that the real-verifier corollaries inherit no axioms beyond the kernel three.
+#assert_axioms predicateWitnessSeam_realizes
+#assert_axioms real_verify_attenuate_monotone
+#assert_axioms real_verify_closure_idem
+#assert_axioms real_verify_unit
 
 -- §3 the cell coalgebra & the hyperedge pullback (universal properties):
 #assert_axioms Fmap_id
@@ -701,10 +808,17 @@ end Boundary
 
 `Dregg2.Core.Conservation` postulates `unit_zero`/`tensor_add` as *fields*; here
 (`measure_unit`/`measure_tensor`) they are **theorems** about a lax monoidal functor
-`Σ : C ⥤ Discrete M`, and `withholding_no_free_copy` has a **categorical proof**
-(`no_free_copy`) from *(comonoid copy map) + (cancellative discrete target)*. `Dregg2.Laws`
-constructs the `Predicate ⊣ Witness` connection; here its operational laws (attenuation,
-round-trips, closure) are **consequences** of the seam's defining `GaloisConnection`.
+`Σ : C ⥤ Discrete M`. **The inversion is now load-bearing:** `no_free_copy` (functor view)
+and `Dregg2.Core.withholding_no_free_copy` (operational view) are BOTH corollaries of the
+single `Obj`-polymorphic lemma `Dregg2.Core.noClone_of_invariant_tensor` — the cancellation
+argument lives once, the two concrete facts are instantiations, not parallel proofs
+(`operational_no_free_copy_via_general` exhibits the operational one inside this file, and
+`operational_no_free_copy_is_withholding` certifies it is *definitionally* the real Dregg2
+theorem). `Dregg2.Laws` constructs the `Predicate ⊣ Witness` connection; the abstract `Seam`
+is now **instantiated by it** (`predicateWitnessSeam`, built from `predicate_witness_galois`),
+so its operational laws (attenuation, round-trips, closure) are **consequences** of the seam's
+defining `GaloisConnection` *applied to the real verifier* (`real_verify_*`), not an
+uninstantiated structure.
 `Dregg2.Boundary` gives a structure map; here the cell is an `F`-coalgebra and the hyperedge
 a **pullback** — now also a **wide pullback** for N participants (`wideJointTurn_universal`/
 `wideJointTurn_mediator_unique`) — with the binding's universal property PROVED and only the

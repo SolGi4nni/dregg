@@ -43,6 +43,7 @@ a returns-7 plugin cannot). -/
 #assert_axioms Dregg2.Core.conservation_ordinary
 #assert_axioms Dregg2.Core.mint_delta
 #assert_axioms Dregg2.Core.burn_delta
+#assert_axioms Dregg2.Core.noClone_of_invariant_tensor
 #assert_axioms Dregg2.Core.withholding_no_free_copy
 #assert_axioms Dregg2.Laws.search_sound
 #assert_axioms Dregg2.Authority.goodSoundMatcher
