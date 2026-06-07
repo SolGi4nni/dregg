@@ -12,7 +12,7 @@
 // Toolchain paths are discovered from `lake env` (LEAN_SYSROOT) with a fallback to the
 // pinned elan toolchain, so this stays robust to elan being on PATH.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Locate the project's `metatheory` Lean directory relative to this crate, so
@@ -55,6 +55,301 @@ fn lean_sysroot() -> Option<PathBuf> {
     None
 }
 
+/// Flatten an IR-relative `.c` path into the splice object name the archive uses, matching the
+/// shell script: `Dregg2/Exec/FFI.c` → `Dregg2_Exec_FFI.o` (path separators → `_`). Keeping the
+/// exact same naming is what lets us REPLACE (not duplicate) the old Dregg2 members on re-splice.
+fn splice_obj_name(ir_root: &Path, c: &Path) -> String {
+    let rel = c.strip_prefix(ir_root).unwrap_or(c);
+    let stem = rel.with_extension("");
+    let mut name: String = stem
+        .components()
+        .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("_");
+    name.push_str(".o");
+    name
+}
+
+/// `true` iff `target` is missing or older than `src` (the "recompile this" predicate — mirrors the
+/// script's `[ ! -f "$out" ] || [ "$c" -nt "$out" ]`). Treats unreadable mtimes as "stale" so we
+/// fail toward recompiling rather than shipping a stale object.
+fn newer_than(src: &Path, target: &Path) -> bool {
+    let Ok(target_meta) = std::fs::metadata(target) else {
+        return true;
+    };
+    let (Ok(src_m), Ok(tgt_m)) = (
+        std::fs::metadata(src).and_then(|m| m.modified()),
+        target_meta.modified(),
+    ) else {
+        return true;
+    };
+    src_m > tgt_m
+}
+
+/// Recursively collect every regular file under `dir` (used to emit `rerun-if-changed` for the
+/// whole Lean `Dregg2` source tree, so a no-op cargo build truly skips the closure rebuild).
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+/// Produce / refresh `libdregg_lean.a` next to build.rs by (1) `lake build`-ing the FFI module's
+/// `:c` facet, (2) `leanc -c`-compiling each freshly-emitted `Dregg2/**/*.c` whose `.c` is newer
+/// than its cached `.o`, and (3) splicing ONLY those `Dregg2_*.o` back into the existing archive —
+/// preserving the ~5600 expensive mathlib/batteries/aesop dependency objects untouched.
+///
+/// Incremental + cached: `lake` is itself incremental, the `leanc` step is guarded on
+/// `.c`-newer-than-`.o`, and the (relatively expensive) `ar` extract/repack only runs when at least
+/// one Dregg2 object actually changed or the archive lacks Dregg2 members. `rerun-if-changed` is
+/// emitted by the caller for the source tree + toolchain marker, so a genuine no-op cargo build does
+/// not even re-enter this function.
+fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &Path) {
+    // (1) Refresh the Lean `:c` facets. `lake build` is incremental; building the FFI module pulls
+    // in (and emits `:c` for) its whole Dregg2 transitive closure.
+    let inc = sysroot.join("include");
+    let ir_root = meta.join(".lake/build/ir");
+    let dregg2_ir = ir_root.join("Dregg2");
+
+    let lake_status = Command::new("lake")
+        .args(["build", "Dregg2.Exec.FFI"])
+        .current_dir(meta)
+        .status();
+    match lake_status {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            println!(
+                "cargo:warning=dregg-lean-ffi: `lake build Dregg2.Exec.FFI` exited {s} — using \
+                 whatever `:c` facets already exist; the spliced archive may be stale."
+            );
+        }
+        Err(e) => {
+            println!(
+                "cargo:warning=dregg-lean-ffi: could not run `lake build` ({e}) — is elan/lake on \
+                 PATH? Falling back to the existing archive (if any)."
+            );
+            return;
+        }
+    }
+
+    // The `:c` facet must have landed for us to compile anything.
+    if !dregg2_ir.exists() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: no `:c` IR at {} after `lake build` — cannot compile the \
+             Dregg2 native objects. Run `lake build Dregg2.Exec.FFI` in metatheory and re-check.",
+            dregg2_ir.display()
+        );
+        return;
+    }
+
+    // Persistent object cache (so the `.c`-newer-than-`.o` guard survives across cargo builds).
+    let obj_dir = out_dir.join("dregg2_closure_objs");
+    if let Err(e) = std::fs::create_dir_all(&obj_dir) {
+        println!("cargo:warning=dregg-lean-ffi: cannot create {} ({e})", obj_dir.display());
+        return;
+    }
+
+    // (2) Compile each Dregg2 `.c` newer than its cached `.o`, in parallel up to the CPU count.
+    let mut c_files = Vec::new();
+    collect_files(&dregg2_ir, &mut c_files);
+    c_files.retain(|p| p.extension().map(|e| e == "c").unwrap_or(false));
+    c_files.sort();
+
+    // The exact set of object names we expect from the CURRENT source. Used to (a) drive the
+    // splice and (b) prune STALE cached objects whose `.c` was deleted/renamed — otherwise a
+    // removed module's old `Dregg2_*.o` would keep getting spliced back in (dangling/duplicate
+    // symbols). We treat such a prune as a change so the splice picks up the removal.
+    let expected: std::collections::HashSet<String> =
+        c_files.iter().map(|c| splice_obj_name(&ir_root, c)).collect();
+    let mut pruned = false;
+    if let Ok(entries) = std::fs::read_dir(&obj_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("Dregg2_") && name.ends_with(".o") && !expected.contains(&name) {
+                let _ = std::fs::remove_file(entry.path());
+                pruned = true;
+            }
+        }
+    }
+
+    let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for c in &c_files {
+        let obj = obj_dir.join(splice_obj_name(&ir_root, c));
+        if newer_than(c, &obj) {
+            jobs.push((c.clone(), obj));
+        }
+    }
+
+    let recompiled = !jobs.is_empty() || pruned;
+    if !jobs.is_empty() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: compiling {} changed Dregg2 C facet(s) via leanc …",
+            jobs.len()
+        );
+        let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1);
+        let failed = std::sync::atomic::AtomicBool::new(false);
+        let jobs_ref = &jobs;
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..ncpu {
+                scope.spawn(|| loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some((c, obj)) = jobs_ref.get(i) else { break };
+                    let status = Command::new("lake")
+                        .args(["env", "leanc", "-c", "-I"])
+                        .arg(&inc)
+                        .arg(c)
+                        .arg("-o")
+                        .arg(obj)
+                        .current_dir(meta)
+                        .status();
+                    let ok = matches!(status, Ok(s) if s.success());
+                    if !ok {
+                        // Drop a stale/partial object so the next build retries this `.c`.
+                        let _ = std::fs::remove_file(obj);
+                        failed.store(true, std::sync::atomic::Ordering::SeqCst);
+                        println!("cargo:warning=dregg-lean-ffi: leanc failed on {}", c.display());
+                    }
+                });
+            }
+        });
+        if failed.load(std::sync::atomic::Ordering::SeqCst) {
+            println!(
+                "cargo:warning=dregg-lean-ffi: at least one Dregg2 C facet failed to compile — \
+                 NOT re-splicing the archive (it keeps its previous, consistent contents)."
+            );
+            return;
+        }
+    }
+
+    // (3) Splice. Only pay the extract/repack cost when something actually changed, or when the
+    // archive is missing Dregg2 members entirely (e.g. a freshly-seeded dependency-only base).
+    let needs_splice = recompiled || !archive_has_dregg2(archive);
+    if !needs_splice {
+        return;
+    }
+
+    if !archive.exists() {
+        println!(
+            "cargo:warning=dregg-lean-ffi: base archive {} is ABSENT — it must hold the ~5600 \
+             precompiled mathlib/batteries/aesop dependency objects, which are EXPENSIVE to \
+             regenerate. Seed it once via `dregg-lean-ffi/scripts/seed-dregg2-closure.sh` (a full \
+             `lake build` + leanc of the whole transitive `:c` closure), then rebuild. Building \
+             marshal-only for now.",
+            archive.display()
+        );
+        return;
+    }
+
+    if let Err(e) = splice_objects(archive, &obj_dir, out_dir) {
+        println!(
+            "cargo:warning=dregg-lean-ffi: archive splice failed ({e}) — the archive was left \
+             unchanged; a previous-but-consistent build will be linked."
+        );
+    }
+}
+
+/// Whether the archive already contains any `Dregg2_*.o` member (via `ar t`). Used to force a
+/// splice when the base archive is dependency-closure-only.
+fn archive_has_dregg2(archive: &Path) -> bool {
+    let Ok(out) = Command::new("ar").arg("t").arg(archive).output() else {
+        return false;
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|l| l.trim().starts_with("Dregg2_") && l.trim().ends_with(".o"))
+}
+
+/// Splice the freshly-built `Dregg2_*.o` into `archive`, preserving every non-Dregg2 dependency
+/// object. Mirrors the shell script: extract → drop old `Dregg2_*.o` → drop in the new ones →
+/// `ar rcs` + `ranlib`. Works in a scratch dir under `OUT_DIR` (writable, target-local).
+fn splice_objects(archive: &Path, obj_dir: &Path, out_dir: &Path) -> std::io::Result<()> {
+    let work = out_dir.join("dregg2_splice_work");
+    if work.exists() {
+        std::fs::remove_dir_all(&work)?;
+    }
+    std::fs::create_dir_all(&work)?;
+
+    // Extract the existing archive (all ~6100 members) into the scratch dir.
+    let extract = Command::new("ar")
+        .arg("x")
+        .arg(archive)
+        .current_dir(&work)
+        .status()?;
+    if !extract.success() {
+        return Err(std::io::Error::other(format!("`ar x` exited {extract}")));
+    }
+
+    // Replace the Dregg2 members: remove the extracted old ones, copy in the freshly compiled ones.
+    for entry in std::fs::read_dir(&work)?.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("Dregg2_") && name.ends_with(".o") {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    let mut dregg2_count = 0usize;
+    for entry in std::fs::read_dir(obj_dir)?.flatten() {
+        let name = entry.file_name();
+        let name_s = name.to_string_lossy();
+        if name_s.starts_with("Dregg2_") && name_s.ends_with(".o") {
+            std::fs::copy(entry.path(), work.join(&name))?;
+            dregg2_count += 1;
+        }
+    }
+
+    // Repack into a fresh archive next to build.rs, then atomically swap it into place. `ar rcs`
+    // over the entire member set (Dregg2 + preserved dependency closure) followed by `ranlib`
+    // rebuilds the symbol index. We pass the member list explicitly to keep ordering deterministic.
+    let members: Vec<PathBuf> = std::fs::read_dir(&work)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|e| e == "o").unwrap_or(false))
+        .collect();
+    if members.is_empty() {
+        return Err(std::io::Error::other("no .o members after extract — refusing to repack"));
+    }
+
+    let tmp_archive = out_dir.join("libdregg_lean.a.new");
+    let _ = std::fs::remove_file(&tmp_archive);
+    // `ar rcs <out> *.o` — build with relative paths from `work` to keep member names clean.
+    let rel_members: Vec<String> = members
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    let rcs = Command::new("ar")
+        .arg("rcs")
+        .arg(&tmp_archive)
+        .args(&rel_members)
+        .current_dir(&work)
+        .status()?;
+    if !rcs.success() {
+        return Err(std::io::Error::other(format!("`ar rcs` exited {rcs}")));
+    }
+    let ranlib = Command::new("ranlib").arg(&tmp_archive).status();
+    // ranlib is advisory: `ar s`/`rcs` already wrote a symbol table on most toolchains. Only warn.
+    if !matches!(ranlib, Ok(s) if s.success()) {
+        println!("cargo:warning=dregg-lean-ffi: ranlib on the new archive did not succeed (continuing).");
+    }
+
+    std::fs::rename(&tmp_archive, archive)?;
+    let _ = std::fs::remove_dir_all(&work);
+    println!(
+        "cargo:warning=dregg-lean-ffi: spliced {dregg2_count} Dregg2 objects into {} ({} total members).",
+        archive.display(),
+        rel_members.len()
+    );
+    Ok(())
+}
+
 /// Probe the archive for an exported symbol via `nm`, so the C shim only declares string
 /// bridges whose underlying Lean `@[export]` actually exists in THIS archive. A stale
 /// archive missing a later export (e.g. `dregg_exec_handler_turn`) would otherwise leave a
@@ -84,12 +379,48 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/lean_init.c");
-    println!("cargo:rerun-if-changed=libdregg_lean.a");
+
+    // Resolve the toolchain + metatheory location up front so we can both (a) refresh the archive
+    // from the Lean source when it changed and (b) drive the link below. `lean_sysroot()` honours
+    // `DREGG_LEAN_SYSROOT`; `metatheory_dir()` honours `DREGG_METATHEORY_DIR`.
+    let sysroot_opt = lean_sysroot();
+    let meta_opt = metatheory_dir();
+
+    // ── PRODUCE / REFRESH the archive from the Lean source (the linchpin). We watch the whole
+    // `metatheory/Dregg2` source tree + the toolchain marker; when any of those change, build.rs
+    // reruns and `build_dregg2_archive` does the incremental `lake build` → `leanc -c` → `ar`
+    // splice. A genuine no-op cargo build does NOT rerun build.rs (no watched file changed), so the
+    // ~6000-object closure is never needlessly regenerated. We deliberately do NOT
+    // `rerun-if-changed=libdregg_lean.a`: that file is our OWN output (we rewrite it here), and
+    // watching it would force a perpetual rebuild loop.
+    if let Some(meta) = &meta_opt {
+        let mut watched = Vec::new();
+        collect_files(&meta.join("Dregg2"), &mut watched);
+        for f in &watched {
+            println!("cargo:rerun-if-changed={}", f.display());
+        }
+        println!("cargo:rerun-if-changed={}", meta.join("lean-toolchain").display());
+
+        match &sysroot_opt {
+            Some(sysroot) => build_dregg2_archive(meta, sysroot, &lean_archive, &out_dir),
+            None => println!(
+                "cargo:warning=dregg-lean-ffi: cannot resolve the Lean sysroot (no \
+                 DREGG_LEAN_SYSROOT and `lake env` failed) — skipping the archive refresh; the \
+                 existing archive (if any) is used as-is."
+            ),
+        }
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: metatheory/ not found (set DREGG_METATHEORY_DIR) — \
+             cannot refresh libdregg_lean.a from Lean source; using the existing archive if present."
+        );
+    }
 
     if !lean_archive.exists() {
         println!(
             "cargo:warning=dregg-lean-ffi: libdregg_lean.a absent — building marshal-only; \
-             lean_available() will be false. Build via scripts/rebuild-dregg2-closure.sh."
+             lean_available() will be false. Build via scripts/seed-dregg2-closure.sh (one-time \
+             closure seed), after which `cargo build` keeps it fresh automatically."
         );
         return;
     }
@@ -98,7 +429,7 @@ fn main() {
     // archive requires the Lean runtime/stdlib from the toolchain. If we cannot find it, we must
     // NOT advertise `lean_lib_present` (that cfg drives `lean_available()` and the FFI link), or
     // the build would either fail to link or falsely claim the Lean kernel is available.
-    let Some(sysroot) = lean_sysroot() else {
+    let Some(sysroot) = sysroot_opt else {
         println!(
             "cargo:warning=dregg-lean-ffi: libdregg_lean.a present but could not resolve the Lean \
              sysroot (no DREGG_LEAN_SYSROOT and `lake env` failed) — building marshal-only. \
