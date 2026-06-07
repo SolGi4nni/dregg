@@ -865,6 +865,752 @@ pub fn prove_executor_derived_v2(descriptor_json: &str, witness: &[i64]) -> Resu
 }
 
 // ============================================================================
+// PART 6 — The EffectVM-shaped descriptor (Lean `EffectVmEmit.emitVmJson`).
+//
+// PARTs 1–5 ingest the SINGLE-ROW per-gate descriptor (`emitDescriptorJson`).
+// This part ingests the richer EffectVM descriptor Lean emits via
+// `Dregg2.Circuit.Emit.EffectVmEmit.emitVmJson`: the four EffectVM constraint
+// FORMS (`gate` / `transition` / `boundary` / `pi_binding`) and the ordered
+// Poseidon2 `hash_sites`, over the real 186-column layout. The resulting
+// `EffectVmDescriptorAir` is a MULTI-ROW p3 AIR (it reads `next`, the public
+// values, and the `when_first/last_row` selectors) whose `eval` enforces
+// EXACTLY the constraint set the descriptor names — so the running circuit IS
+// the Lean-verified one (`Dregg2.Circuit.Emit.EffectVmEmitTransfer.
+// transferVm_faithful` + `transferVmDescriptor_pins_intent`) by construction.
+//
+// The descriptor is the SOURCE. This interpreter just evaluates it. The
+// hash-site arithmetization reuses the SAME `poseidon2_permute_expr` gadget the
+// hand-coded `EffectVmP3Air` uses, with a witness generator that walks the
+// emitted site order — so the state-commit chain (the anti-ghost tooth that
+// pins the whole post-state) holds through this Lean-sourced path identically.
+//
+// SCOPE: this is purely additive. `effect_vm_p3_full_air.rs` and the bespoke
+// `effect_vm/` are untouched and remain load-bearing for proof_forest / IVC.
+// ============================================================================
+
+use p3_batch_stark::{BatchProof, ProverData, StarkInstance, prove_batch, verify_batch};
+use crate::field::BabyBear as DreggBabyBear;
+use crate::plonky3_prover::{
+    DreggStarkConfig, POSEIDON2_PERM_AUX_COLS, POSEIDON2_WIDTH, poseidon2_permute_aux_witness,
+    poseidon2_permute_expr,
+};
+
+/// A boundary-row tag (`when_first_row` / `when_last_row`), mirroring Lean's `VmRow`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmRow {
+    /// The first trace row (`when_first_row`).
+    First,
+    /// The last trace row (`when_last_row`).
+    Last,
+}
+
+/// The four EffectVM constraint FORMS — the Rust mirror of Lean's
+/// `Dregg2.Circuit.Emit.EffectVmEmit.VmConstraint`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VmConstraint {
+    /// Per-row gate `body == 0` on the transition domain (rows `0..n-2`), term-for-term
+    /// a `tb.assert_zero(body)` in `EffectVmP3Air::eval`. The selector multiplier is baked
+    /// into the emitted `body` (the transfer descriptor emits transfer-row-specialized
+    /// bodies that also vanish on NoOp pad rows).
+    Gate(LeanExpr),
+    /// Transition continuity `next.state_before[hi] == this.state_after[lo]` over the row
+    /// window (rows `0..n-2`).
+    Transition { hi: usize, lo: usize },
+    /// Boundary PI binding `local[col] == public_values[pi_index]` guarded by the row tag
+    /// (`when_first_row` / `when_last_row`).
+    PiBinding { row: VmRow, col: usize, pi_index: usize },
+}
+
+/// A hash-site input slot — the Rust mirror of Lean's `HashInput`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HashInput {
+    /// Read trace column `c` of the current row.
+    Col(usize),
+    /// Read the resolved digest of an EARLIER site (0-based index into the site order).
+    Digest(usize),
+    /// The field constant zero.
+    Zero,
+}
+
+/// A Poseidon2 hash site — the Rust mirror of Lean's `VmHashSite`. The site's digest is
+/// bound to `digest_col`; its `arity` inputs are absorbed into Poseidon2 rate positions
+/// `0..arity` (position 4 carries the arity capacity tag, matching `site_input_state`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VmHashSite {
+    /// The trace column the site's digest is bound to (`local[digest_col] == digest`).
+    pub digest_col: usize,
+    /// The arity (2 or 4): how many of `inputs` are absorbed; also the capacity tag.
+    pub arity: usize,
+    /// The absorbed inputs, in order (length == `arity`).
+    pub inputs: Vec<HashInput>,
+}
+
+/// The Rust mirror of Lean's `EffectVmDescriptor` (decoded from `emitVmJson`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectVmDescriptor {
+    /// AIR identity string.
+    pub name: String,
+    /// The BASE trace width (= the real 186-column EffectVM layout for transfer).
+    pub trace_width: usize,
+    /// The number of public-input slots the PI bindings may reference.
+    pub public_input_count: usize,
+    /// The constraint list (gate / transition / pi_binding forms).
+    pub constraints: Vec<VmConstraint>,
+    /// The ordered Poseidon2 hash sites (site `i` ↔ aux block `i`).
+    pub hash_sites: Vec<VmHashSite>,
+    /// The balance-limb range checks (`wire ∈ [0, 2^bits)`), enforced by bit-decomposition.
+    pub ranges: Vec<RangeSpec>,
+}
+
+impl EffectVmDescriptor {
+    /// The aux columns one hash site consumes (`POSEIDON2_PERM_AUX_COLS` = 352).
+    const SITE_AUX_COLS: usize = POSEIDON2_PERM_AUX_COLS;
+
+    /// Total bit-decomposition aux columns for all range checks.
+    fn total_range_bits(&self) -> usize {
+        self.ranges.iter().map(|r| r.bits).sum()
+    }
+
+    /// The FULL AIR trace width: base wires + one Poseidon2 aux block per hash site +
+    /// the range bit-decomposition aux columns (in that fixed order). The hash aux blocks
+    /// come FIRST after the base wires (matching `EffectVmP3Air`'s layout
+    /// `EFFECT_VM_WIDTH + i*POSEIDON2_PERM_AUX_COLS`), then the range bits.
+    fn air_width(&self) -> usize {
+        self.trace_width
+            + self.hash_sites.len() * Self::SITE_AUX_COLS
+            + self.total_range_bits()
+    }
+
+    /// The base column index of hash-site `i`'s Poseidon2 aux block.
+    fn site_aux_base(&self, i: usize) -> usize {
+        self.trace_width + i * Self::SITE_AUX_COLS
+    }
+
+    /// The base column of the `r`-th range check's bit-decomposition block (after all
+    /// hash aux blocks).
+    fn range_aux_offset(&self, range_index: usize) -> usize {
+        self.trace_width
+            + self.hash_sites.len() * Self::SITE_AUX_COLS
+            + self.ranges[..range_index].iter().map(|r| r.bits).sum::<usize>()
+    }
+
+    /// Validate column / PI indices are within bounds.
+    fn check_bounds(&self) -> Result<(), String> {
+        for (ci, c) in self.constraints.iter().enumerate() {
+            match c {
+                VmConstraint::Gate(body) => {
+                    if let Some(m) = body.max_var() {
+                        if m >= self.trace_width {
+                            return Err(format!(
+                                "gate {} references column {} >= trace_width {}",
+                                ci, m, self.trace_width
+                            ));
+                        }
+                    }
+                }
+                VmConstraint::Transition { hi, lo } => {
+                    if EFFECTVM_STATE_BEFORE_BASE + hi >= self.trace_width
+                        || EFFECTVM_STATE_AFTER_BASE + lo >= self.trace_width
+                    {
+                        return Err(format!("transition {} out of bounds", ci));
+                    }
+                }
+                VmConstraint::PiBinding { col, pi_index, .. } => {
+                    if *col >= self.trace_width {
+                        return Err(format!("pi_binding {} col {} out of bounds", ci, col));
+                    }
+                    if *pi_index >= self.public_input_count {
+                        return Err(format!(
+                            "pi_binding {} pi_index {} >= public_input_count {}",
+                            ci, pi_index, self.public_input_count
+                        ));
+                    }
+                }
+            }
+        }
+        for (si, s) in self.hash_sites.iter().enumerate() {
+            if s.digest_col >= self.trace_width {
+                return Err(format!("hash site {} digest_col out of bounds", si));
+            }
+            if s.inputs.len() != s.arity {
+                return Err(format!(
+                    "hash site {} arity {} != inputs len {}",
+                    si, s.arity, s.inputs.len()
+                ));
+            }
+            for inp in &s.inputs {
+                match inp {
+                    HashInput::Col(c) if *c >= self.trace_width => {
+                        return Err(format!("hash site {} col input {} out of bounds", si, c));
+                    }
+                    HashInput::Digest(k) if *k >= si => {
+                        return Err(format!(
+                            "hash site {} references digest {} not strictly earlier",
+                            si, k
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (ri, r) in self.ranges.iter().enumerate() {
+            if r.wire >= self.trace_width {
+                return Err(format!("range {} wire {} out of bounds", ri, r.wire));
+            }
+            if r.bits > 63 {
+                return Err(format!("range {} bits {} > 63", ri, r.bits));
+            }
+        }
+        Ok(())
+    }
+}
+
+// The EffectVM layout offsets (the Rust mirror of Lean's `EffectVmEmit` §0 — kept here so
+// the interpreter can decode `transition` forms into absolute columns without depending on
+// `effect_vm/columns.rs`, which the bespoke air owns). These match `columns.rs` exactly.
+const EFFECTVM_NUM_EFFECTS: usize = 54;
+const EFFECTVM_STATE_SIZE: usize = 14;
+const EFFECTVM_STATE_BEFORE_BASE: usize = EFFECTVM_NUM_EFFECTS; // 54
+const EFFECTVM_STATE_AFTER_BASE: usize = EFFECTVM_NUM_EFFECTS + EFFECTVM_STATE_SIZE + 8; // 76
+
+// ----------------------------------------------------------------------------
+// PART 6b — JSON decode for the EffectVM grammar (`emitVmJson`).
+//
+//   {"name":S,"trace_width":N,"public_input_count":N,"constraints":[<c>,…],
+//    "hash_sites":[<s>,…],"ranges":[<r>,…]}
+//   <c> = {"t":"gate","body":<expr>}
+//       | {"t":"transition","hi":i,"lo":i}
+//       | {"t":"pi_binding","row":"first"|"last","col":i,"pi_index":i}
+//   <s> = {"digest_col":i,"arity":i,"inputs":[<inp>,…]}
+//   <inp> = {"t":"col","c":i} | {"t":"digest","k":i} | {"t":"zero"}
+//   <r> = {"wire":i,"bits":i}
+// ----------------------------------------------------------------------------
+
+fn parse_hash_input(c: &mut JsonCursor) -> Result<HashInput, String> {
+    c.expect(b'{')?;
+    c.expect_key("t")?;
+    let tag = c.parse_string()?;
+    let out = match tag.as_str() {
+        "col" => {
+            c.expect(b',')?;
+            c.expect_key("c")?;
+            let v = c.parse_int()?;
+            if v < 0 {
+                return Err(format!("negative hash-input col {v}"));
+            }
+            HashInput::Col(v as usize)
+        }
+        "digest" => {
+            c.expect(b',')?;
+            c.expect_key("k")?;
+            let v = c.parse_int()?;
+            if v < 0 {
+                return Err(format!("negative hash-input digest {v}"));
+            }
+            HashInput::Digest(v as usize)
+        }
+        "zero" => HashInput::Zero,
+        other => return Err(format!("unknown hash-input tag \"{other}\"")),
+    };
+    c.expect(b'}')?;
+    Ok(out)
+}
+
+fn parse_hash_site(c: &mut JsonCursor) -> Result<VmHashSite, String> {
+    c.expect(b'{')?;
+    c.expect_key("digest_col")?;
+    let digest_col = c.parse_int()?;
+    if digest_col < 0 {
+        return Err(format!("negative digest_col {digest_col}"));
+    }
+    c.expect(b',')?;
+    c.expect_key("arity")?;
+    let arity = c.parse_int()?;
+    if !(arity == 2 || arity == 4) {
+        return Err(format!("hash site arity {arity} must be 2 or 4"));
+    }
+    c.expect(b',')?;
+    c.expect_key("inputs")?;
+    c.expect(b'[')?;
+    let mut inputs = Vec::new();
+    if c.peek() == Some(b']') {
+        c.expect(b']')?;
+    } else {
+        loop {
+            inputs.push(parse_hash_input(c)?);
+            match c.peek() {
+                Some(b',') => {
+                    c.expect(b',')?;
+                }
+                Some(b']') => {
+                    c.expect(b']')?;
+                    break;
+                }
+                other => {
+                    return Err(format!(
+                        "expected ',' or ']' in inputs, found {:?}",
+                        other.map(|b| b as char)
+                    ));
+                }
+            }
+        }
+    }
+    c.expect(b'}')?;
+    Ok(VmHashSite {
+        digest_col: digest_col as usize,
+        arity: arity as usize,
+        inputs,
+    })
+}
+
+fn parse_vm_constraint(c: &mut JsonCursor) -> Result<VmConstraint, String> {
+    c.expect(b'{')?;
+    c.expect_key("t")?;
+    let tag = c.parse_string()?;
+    let out = match tag.as_str() {
+        "gate" => {
+            c.expect(b',')?;
+            c.expect_key("body")?;
+            VmConstraint::Gate(parse_expr(c)?)
+        }
+        "transition" => {
+            c.expect(b',')?;
+            c.expect_key("hi")?;
+            let hi = c.parse_int()?;
+            c.expect(b',')?;
+            c.expect_key("lo")?;
+            let lo = c.parse_int()?;
+            if hi < 0 || lo < 0 {
+                return Err("negative transition index".to_string());
+            }
+            VmConstraint::Transition {
+                hi: hi as usize,
+                lo: lo as usize,
+            }
+        }
+        "pi_binding" => {
+            c.expect(b',')?;
+            c.expect_key("row")?;
+            let row_s = c.parse_string()?;
+            let row = match row_s.as_str() {
+                "first" => VmRow::First,
+                "last" => VmRow::Last,
+                other => return Err(format!("unknown pi_binding row \"{other}\"")),
+            };
+            c.expect(b',')?;
+            c.expect_key("col")?;
+            let col = c.parse_int()?;
+            c.expect(b',')?;
+            c.expect_key("pi_index")?;
+            let pi_index = c.parse_int()?;
+            if col < 0 || pi_index < 0 {
+                return Err("negative pi_binding index".to_string());
+            }
+            VmConstraint::PiBinding {
+                row,
+                col: col as usize,
+                pi_index: pi_index as usize,
+            }
+        }
+        other => return Err(format!("unknown vm-constraint tag \"{other}\"")),
+    };
+    c.expect(b'}')?;
+    Ok(out)
+}
+
+/// **`parse_vm_descriptor`** — decode a Lean `emitVmJson` string into an
+/// `EffectVmDescriptor`. The wire-decode half of the EffectVM swap.
+pub fn parse_vm_descriptor(json: &str) -> Result<EffectVmDescriptor, String> {
+    let mut c = JsonCursor::new(json);
+    c.expect(b'{')?;
+
+    let mut name: Option<String> = None;
+    let mut trace_width: Option<usize> = None;
+    let mut public_input_count: Option<usize> = None;
+    let mut constraints: Option<Vec<VmConstraint>> = None;
+    let mut hash_sites: Option<Vec<VmHashSite>> = None;
+    let mut ranges: Option<Vec<RangeSpec>> = None;
+
+    // A small array helper for the three array-valued keys.
+    fn parse_array<T>(
+        c: &mut JsonCursor,
+        mut item: impl FnMut(&mut JsonCursor) -> Result<T, String>,
+    ) -> Result<Vec<T>, String> {
+        c.expect(b'[')?;
+        let mut v = Vec::new();
+        if c.peek() == Some(b']') {
+            c.expect(b']')?;
+            return Ok(v);
+        }
+        loop {
+            v.push(item(c)?);
+            match c.peek() {
+                Some(b',') => {
+                    c.expect(b',')?;
+                }
+                Some(b']') => {
+                    c.expect(b']')?;
+                    break;
+                }
+                other => {
+                    return Err(format!(
+                        "expected ',' or ']' in array, found {:?}",
+                        other.map(|b| b as char)
+                    ));
+                }
+            }
+        }
+        Ok(v)
+    }
+
+    loop {
+        let key = c.parse_string()?;
+        c.expect(b':')?;
+        match key.as_str() {
+            "name" => name = Some(c.parse_string()?),
+            "trace_width" => {
+                let n = c.parse_int()?;
+                if n < 0 {
+                    return Err(format!("negative trace_width {n}"));
+                }
+                trace_width = Some(n as usize);
+            }
+            "public_input_count" => {
+                let n = c.parse_int()?;
+                if n < 0 {
+                    return Err(format!("negative public_input_count {n}"));
+                }
+                public_input_count = Some(n as usize);
+            }
+            "constraints" => constraints = Some(parse_array(&mut c, parse_vm_constraint)?),
+            "hash_sites" => hash_sites = Some(parse_array(&mut c, parse_hash_site)?),
+            "ranges" => ranges = Some(parse_array(&mut c, parse_range)?),
+            other => return Err(format!("unknown top-level key \"{other}\"")),
+        }
+        match c.peek() {
+            Some(b',') => {
+                c.expect(b',')?;
+            }
+            Some(b'}') => {
+                c.expect(b'}')?;
+                break;
+            }
+            other => {
+                return Err(format!(
+                    "expected ',' or '}}' in descriptor, found {:?}",
+                    other.map(|b| b as char)
+                ));
+            }
+        }
+    }
+
+    Ok(EffectVmDescriptor {
+        name: name.ok_or("vm descriptor missing \"name\"")?,
+        trace_width: trace_width.ok_or("vm descriptor missing \"trace_width\"")?,
+        public_input_count: public_input_count
+            .ok_or("vm descriptor missing \"public_input_count\"")?,
+        constraints: constraints.ok_or("vm descriptor missing \"constraints\"")?,
+        hash_sites: hash_sites.unwrap_or_default(),
+        ranges: ranges.unwrap_or_default(),
+    })
+}
+
+// ----------------------------------------------------------------------------
+// PART 6c — The multi-row EffectVM AIR.
+// ----------------------------------------------------------------------------
+
+/// Build the 16-wide Poseidon2 input state (as `AB::Expr`) for `site`, resolving `Col` from
+/// `local`, `Digest` from already-computed `digests`, `Zero` from the constant. Position 4
+/// carries the arity capacity tag — IDENTICAL to `effect_vm_p3_full_air::site_input_state`.
+fn vm_site_input_state<AB: AirBuilder>(
+    site: &VmHashSite,
+    local: &[AB::Var],
+    digests: &[AB::Expr],
+) -> [AB::Expr; POSEIDON2_WIDTH]
+where
+    AB::F: PrimeField32,
+{
+    let mut st: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
+    for (i, inp) in site.inputs.iter().enumerate() {
+        st[i] = match inp {
+            HashInput::Col(c) => local[*c].into(),
+            HashInput::Digest(k) => digests[*k].clone(),
+            HashInput::Zero => AB::Expr::ZERO,
+        };
+    }
+    st[4] = AB::Expr::from_u64(site.arity as u64);
+    st
+}
+
+/// Concrete sibling of [`vm_site_input_state`] for witness generation.
+fn vm_site_input_state_concrete(
+    site: &VmHashSite,
+    row: &[DreggBabyBear],
+    digests: &[DreggBabyBear],
+) -> [DreggBabyBear; POSEIDON2_WIDTH] {
+    let mut st = [DreggBabyBear::ZERO; POSEIDON2_WIDTH];
+    for (i, inp) in site.inputs.iter().enumerate() {
+        st[i] = match inp {
+            HashInput::Col(c) => row[*c],
+            HashInput::Digest(k) => digests[*k],
+            HashInput::Zero => DreggBabyBear::ZERO,
+        };
+    }
+    st[4] = DreggBabyBear::new(site.arity as u32);
+    st
+}
+
+/// The MULTI-ROW Plonky3 AIR that interprets an `EffectVmDescriptor` at `eval`-time.
+///
+/// Unlike [`LeanDescriptorAir`] (single-row per-gate), this AIR reads the `next` row, the
+/// public values, and the `when_first/last_row` selectors, so it enforces the FULL EffectVM
+/// constraint set the descriptor names. The domain choices mirror `EffectVmP3Air` exactly:
+/// `gate` + `transition` forms on the transition domain (`when_transition`, rows `0..n-2`);
+/// the hash-site digest bindings on the WHOLE domain (so the LAST row's state-commit is
+/// pinned to the genuine digest — the anti-ghost tooth); `pi_binding` forms on the
+/// `when_first_row` / `when_last_row` boundary.
+#[derive(Clone)]
+pub struct EffectVmDescriptorAir {
+    /// The descriptor whose constraints this AIR enforces.
+    pub desc: EffectVmDescriptor,
+}
+
+impl EffectVmDescriptorAir {
+    /// Wrap a descriptor as an AIR.
+    pub fn new(desc: EffectVmDescriptor) -> Self {
+        EffectVmDescriptorAir { desc }
+    }
+}
+
+impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for EffectVmDescriptorAir {
+    fn width(&self) -> usize {
+        self.desc.air_width()
+    }
+    fn num_public_values(&self) -> usize {
+        self.desc.public_input_count
+    }
+    fn main_next_row_columns(&self) -> Vec<usize> {
+        // Transition continuity reads next.state_before for the referenced state columns.
+        let mut cols: Vec<usize> = self
+            .desc
+            .constraints
+            .iter()
+            .filter_map(|c| match c {
+                VmConstraint::Transition { hi, .. } => Some(EFFECTVM_STATE_BEFORE_BASE + hi),
+                _ => None,
+            })
+            .collect();
+        cols.sort_unstable();
+        cols.dedup();
+        cols
+    }
+    fn max_constraint_degree(&self) -> Option<usize> {
+        // The Poseidon2 S-box is degree 7; the round constraints dominate every gate.
+        Some(7)
+    }
+}
+
+impl<AB: AirBuilder> Air<AB> for EffectVmDescriptorAir
+where
+    AB::F: PrimeField32,
+{
+    fn eval(&self, builder: &mut AB) {
+        let (local, next): (Vec<AB::Var>, Vec<AB::Var>) = {
+            let main = builder.main();
+            (main.current_slice().to_vec(), main.next_slice().to_vec())
+        };
+        let pv: Vec<AB::Expr> = builder.public_values().iter().map(|&v| v.into()).collect();
+
+        // -- Hash sites: emit the real Poseidon2 permutation for every site (on the WHOLE
+        //    domain, like EffectVmP3Air), binding each digest to its `digest_col`. Site i's
+        //    aux block lives at `site_aux_base(i)`; `digests[k]` is available to later sites. --
+        let mut digests: Vec<AB::Expr> = Vec::with_capacity(self.desc.hash_sites.len());
+        for (i, site) in self.desc.hash_sites.iter().enumerate() {
+            let base = self.desc.site_aux_base(i);
+            let aux: Vec<AB::Var> = local[base..base + POSEIDON2_PERM_AUX_COLS].to_vec();
+            let input = vm_site_input_state::<AB>(site, &local, &digests);
+            let d = poseidon2_permute_expr::<AB>(builder, input, &aux);
+            // The site's digest column equals the genuine permutation output. This is the
+            // GROUP-4 state-commit binding (site 3 binds `state_after.state_commit`); it holds
+            // on EVERY row, so the last row's published commitment is forced genuine.
+            builder.assert_zero(local[site.digest_col].into() - d.clone());
+            digests.push(d);
+        }
+
+        // -- Boundary PI bindings (when_first_row / when_last_row). --
+        {
+            let mut fb = builder.when_first_row();
+            for c in &self.desc.constraints {
+                if let VmConstraint::PiBinding {
+                    row: VmRow::First,
+                    col,
+                    pi_index,
+                } = c
+                {
+                    fb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                }
+            }
+        }
+        {
+            let mut lb = builder.when_last_row();
+            for c in &self.desc.constraints {
+                if let VmConstraint::PiBinding {
+                    row: VmRow::Last,
+                    col,
+                    pi_index,
+                } = c
+                {
+                    lb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                }
+            }
+        }
+
+        // -- Per-row gates + transition continuity on the transition domain (rows 0..n-2),
+        //    mirroring EffectVmP3Air's `when_transition` factoring. --
+        {
+            let mut tb = builder.when_transition();
+            for c in &self.desc.constraints {
+                match c {
+                    VmConstraint::Gate(body) => {
+                        tb.assert_zero(body.eval_expr::<AB>(&local));
+                    }
+                    VmConstraint::Transition { hi, lo } => {
+                        let n: AB::Expr = next[EFFECTVM_STATE_BEFORE_BASE + hi].into();
+                        let l: AB::Expr = local[EFFECTVM_STATE_AFTER_BASE + lo].into();
+                        tb.assert_zero(n - l);
+                    }
+                    VmConstraint::PiBinding { .. } => {}
+                }
+            }
+        }
+
+        // -- Range gates (field-soundness bit-decomposition), identical machinery to
+        //    `LeanDescriptorAir`, on the WHOLE domain. --
+        for (ri, r) in self.desc.ranges.iter().enumerate() {
+            let off = self.desc.range_aux_offset(ri);
+            let mut recomposed: AB::Expr = AB::Expr::ZERO;
+            let mut weight: AB::Expr = AB::Expr::ONE;
+            for i in 0..r.bits {
+                let bit: AB::Expr = local[off + i].into();
+                builder.assert_zero(bit.clone() * (bit.clone() - AB::Expr::ONE));
+                recomposed = recomposed + bit * weight.clone();
+                weight = weight.clone() + weight;
+            }
+            let wire: AB::Expr = local[r.wire].into();
+            builder.assert_zero(recomposed - wire);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// PART 6d — Witness extension + prove/verify for the EffectVM descriptor AIR.
+// ----------------------------------------------------------------------------
+
+/// Extend a BASE EffectVM trace (width `desc.trace_width`) into the FULL AIR trace by
+/// appending, per row, one Poseidon2 aux block per emitted hash site (in the descriptor's
+/// site order — the SAME order the AIR's `eval` walks), then the range bit-decomposition
+/// columns. The digest each site binds is the LAST round's `state[0]`, pushed so later
+/// sites can read it — the faithful mirror of `extend_trace_with_hashes`.
+///
+/// IMPORTANT: the digest columns (`site.digest_col`, e.g. `state_after.state_commit` and the
+/// `STATE_INTER*` aux cells) in the BASE trace must ALREADY carry the genuine digests (the
+/// bespoke `generate_effect_vm_trace` fills them); this extender computes the round witnesses
+/// and the recomposition bits, NOT the digest cells.
+fn extend_vm_trace(desc: &EffectVmDescriptor, base_trace: &[Vec<DreggBabyBear>]) -> Vec<Vec<DreggBabyBear>> {
+    base_trace
+        .iter()
+        .map(|row| {
+            let mut full = row.clone();
+            // Hash-site aux blocks (site order).
+            let mut site_digests: Vec<DreggBabyBear> = Vec::with_capacity(desc.hash_sites.len());
+            for site in &desc.hash_sites {
+                let input = vm_site_input_state_concrete(site, row, &site_digests);
+                let auxw = poseidon2_permute_aux_witness(input);
+                let digest = auxw[auxw.len() - POSEIDON2_WIDTH];
+                site_digests.push(digest);
+                full.extend(auxw);
+            }
+            // Range bit-decomposition columns (the low `bits` bits of each wire's field rep).
+            for r in &desc.ranges {
+                let field_val = row[r.wire].as_u32() as u64;
+                for i in 0..r.bits {
+                    let bit = (field_val >> i) & 1;
+                    full.push(DreggBabyBear::new(bit as u32));
+                }
+            }
+            full
+        })
+        .collect()
+}
+
+fn vm_to_matrix(trace: &[Vec<DreggBabyBear>]) -> RowMajorMatrix<P3BabyBear> {
+    let width = trace[0].len();
+    let values: Vec<P3BabyBear> = trace
+        .iter()
+        .flat_map(|row| row.iter().map(|&v| to_p3(v)))
+        .collect();
+    RowMajorMatrix::new(values, width)
+}
+
+/// **`prove_vm_descriptor`** — prove a BASE EffectVM trace + public inputs through the
+/// AUDITED Plonky3 batch-stark prover with the Lean-descriptor-sourced `EffectVmDescriptorAir`.
+/// The proof self-verifies before return, so a returned `Ok` is a proof the audited verifier
+/// accepts. A trace that breaks any descriptor constraint (a forged post-state, a tampered
+/// ACTOR_NONCE, an out-of-range balance) makes the prover fail (panic in debug / unverifiable
+/// proof in release) — the anti-ghost teeth hold through this Lean-sourced path.
+pub fn prove_vm_descriptor(
+    desc: &EffectVmDescriptor,
+    base_trace: &[Vec<DreggBabyBear>],
+    public_inputs: &[DreggBabyBear],
+) -> Result<BatchProof<DreggStarkConfig>, String> {
+    desc.check_bounds()?;
+    assert!(!base_trace.is_empty(), "base trace must be non-empty");
+    assert_eq!(
+        base_trace[0].len(),
+        desc.trace_width,
+        "base row width {} must equal descriptor trace_width {}",
+        base_trace[0].len(),
+        desc.trace_width
+    );
+    let air = EffectVmDescriptorAir::new(desc.clone());
+    let config = create_config();
+    let full_trace = extend_vm_trace(desc, base_trace);
+    let matrix = vm_to_matrix(&full_trace);
+    let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
+
+    let instances = vec![StarkInstance {
+        air: &air,
+        trace: &matrix,
+        public_values: pis.clone(),
+    }];
+    let prover_data = ProverData::from_instances(&config, &instances);
+    let common = &prover_data.common;
+    let proof = prove_batch(&config, &instances, &prover_data);
+
+    let airs = vec![air];
+    let pvs = vec![pis];
+    verify_batch(&config, &airs, &proof, &pvs, common)
+        .map_err(|e| format!("EffectVmDescriptorAir self-verify failed: {e:?}"))?;
+    Ok(proof)
+}
+
+/// Verify an EffectVM-descriptor proof through the AUDITED Plonky3 batch-stark verifier.
+pub fn verify_vm_descriptor(
+    desc: &EffectVmDescriptor,
+    proof: &BatchProof<DreggStarkConfig>,
+    public_inputs: &[DreggBabyBear],
+) -> Result<(), String> {
+    let air = EffectVmDescriptorAir::new(desc.clone());
+    let config = create_config();
+    let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
+    let airs = vec![air];
+    let pvs = vec![pis];
+    let common = ProverData::from_airs_and_degrees(&config, &airs, &proof.degree_bits).common;
+    verify_batch(&config, &airs, proof, &pvs, &common)
+        .map_err(|e| format!("EffectVmDescriptorAir verification failed: {e:?}"))
+}
+
+// ============================================================================
 // Test descriptor: the `transferCircuit` shape (hardcoded mirror of Lean)
 // ============================================================================
 
@@ -3134,4 +3880,184 @@ mod tests {
         v2_beachhead(ENLIVEN_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    // ========================================================================
+    // PART 6 TESTS — the EffectVM-descriptor multi-row AIR (Lean `emitVmJson`).
+    // ========================================================================
+
+    /// The EXACT bytes Lean's `Dregg2.Circuit.Emit.EffectVmEmit.emitVmJson
+    /// transferVmDescriptor` prints (`#eval IO.println (emitVmJson
+    /// transferVmDescriptor)`). The concrete 186-column EffectVM transfer circuit:
+    /// 14 transfer-row gates + 14 transition-continuity + 7 boundary PI pins, the 4
+    /// ordered GROUP-4 H4 state-commit hash sites, and the 2 balance-limb range checks.
+    /// Copied verbatim from the Lean toolchain output.
+    const TRANSFER_VM_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-effectvm-transfer-v1","trace_width":186,"public_input_count":34,"constraints":[{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":76},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":54}}},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":68}},"r":{"t":"mul","l":{"t":"const","v":2},"r":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"var","v":68}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":77},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":55}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":69},"r":{"t":"add","l":{"t":"var","v":69},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"add","l":{"t":"add","l":{"t":"var","v":78},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":56}}},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":87},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":65}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":89},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":67}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":79},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":57}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":80},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":58}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":81},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":59}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":82},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":60}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":83},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":61}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":84},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":62}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":85},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":63}}}},{"t":"gate","body":{"t":"add","l":{"t":"var","v":86},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":64}}}},{"t":"transition","hi":0,"lo":0},{"t":"transition","hi":1,"lo":1},{"t":"transition","hi":2,"lo":2},{"t":"transition","hi":3,"lo":3},{"t":"transition","hi":4,"lo":4},{"t":"transition","hi":5,"lo":5},{"t":"transition","hi":6,"lo":6},{"t":"transition","hi":7,"lo":7},{"t":"transition","hi":8,"lo":8},{"t":"transition","hi":9,"lo":9},{"t":"transition","hi":10,"lo":10},{"t":"transition","hi":11,"lo":11},{"t":"transition","hi":12,"lo":12},{"t":"transition","hi":13,"lo":13},{"t":"pi_binding","row":"first","col":56,"pi_index":33},{"t":"pi_binding","row":"first","col":54,"pi_index":12},{"t":"pi_binding","row":"first","col":55,"pi_index":13},{"t":"pi_binding","row":"first","col":66,"pi_index":0},{"t":"pi_binding","row":"last","col":88,"pi_index":4},{"t":"pi_binding","row":"last","col":76,"pi_index":14},{"t":"pi_binding","row":"last","col":77,"pi_index":15}],"hash_sites":[{"digest_col":98,"arity":4,"inputs":[{"t":"col","c":76},{"t":"col","c":77},{"t":"col","c":78},{"t":"col","c":79}]},{"digest_col":99,"arity":4,"inputs":[{"t":"col","c":80},{"t":"col","c":81},{"t":"col","c":82},{"t":"col","c":83}]},{"digest_col":100,"arity":4,"inputs":[{"t":"col","c":84},{"t":"col","c":85},{"t":"col","c":86},{"t":"col","c":87}]},{"digest_col":88,"arity":4,"inputs":[{"t":"digest","k":0},{"t":"digest","k":1},{"t":"digest","k":2},{"t":"zero"}]}],"ranges":[{"wire":76,"bits":30},{"wire":77,"bits":30}]}"#;
+
+    /// The parser faithfully decodes the EffectVM grammar: the 35 constraints split
+    /// 14 gates / 14 transitions / 7 pi-bindings, the 4 ordered hash sites (site 3
+    /// reads sites 0/1/2's digests), and the 2 range checks.
+    #[test]
+    fn parse_vm_descriptor_transfer() {
+        let d = parse_vm_descriptor(TRANSFER_VM_DESCRIPTOR_JSON)
+            .expect("Lean-emitted EffectVM transfer descriptor must parse");
+        assert_eq!(d.name, "dregg-effectvm-transfer-v1");
+        assert_eq!(d.trace_width, 186);
+        assert_eq!(d.public_input_count, 34);
+        assert_eq!(d.constraints.len(), 14 + 14 + 7);
+        assert_eq!(d.hash_sites.len(), 4);
+        assert_eq!(d.ranges.len(), 2);
+
+        let gates = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint::Gate(_)))
+            .count();
+        let transitions = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint::Transition { .. }))
+            .count();
+        let pis = d
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint::PiBinding { .. }))
+            .count();
+        assert_eq!((gates, transitions, pis), (14, 14, 7));
+
+        // The actor-nonce pin (the #49 anti-ghost tooth): state_before.nonce (col 56)
+        // == PI[ACTOR_NONCE] (index 33), on the first row.
+        assert!(d.constraints.contains(&VmConstraint::PiBinding {
+            row: VmRow::First,
+            col: 56,
+            pi_index: 33,
+        }));
+        // The published-commitment pin: state_after.state_commit (col 88) == PI[NEW_COMMIT]
+        // (index 4), on the last row.
+        assert!(d.constraints.contains(&VmConstraint::PiBinding {
+            row: VmRow::Last,
+            col: 88,
+            pi_index: 4,
+        }));
+
+        // Site 3 (the root H4) binds state_after.state_commit (col 88) and reads the three
+        // earlier sites' digests — the ordered state-commit chain.
+        let s3 = &d.hash_sites[3];
+        assert_eq!(s3.digest_col, 88);
+        assert_eq!(
+            s3.inputs,
+            vec![
+                HashInput::Digest(0),
+                HashInput::Digest(1),
+                HashInput::Digest(2),
+                HashInput::Zero
+            ]
+        );
+        // The full air width = 186 base + 4 sites * 352 + 2 ranges * 30 bits.
+        assert_eq!(d.air_width(), 186 + 4 * 352 + 2 * 30);
+    }
+
+    /// THE EffectVM swap acceptance test: the REAL Lean-emitted transfer EffectVM
+    /// descriptor drives the audited p3-batch-stark prover over the SAME base trace the
+    /// running prover uses (`generate_effect_vm_trace` — the bespoke 186-column EffectVM
+    /// witness). An honest transfer turn proves+verifies; a forged post-state and a
+    /// tampered ACTOR_NONCE are REJECTED. So the running circuit (this Lean-descriptor AIR)
+    /// IS the verified one (`transferVm_faithful` / `transferVmDescriptor_pins_intent`).
+    #[test]
+    fn lean_emitted_effectvm_transfer_roundtrip() {
+        use crate::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi as evm_pi};
+
+        let desc = parse_vm_descriptor(TRANSFER_VM_DESCRIPTOR_JSON)
+            .expect("transfer EffectVM descriptor must parse");
+
+        // ---- Honest transfer: cell with balance 100, nonce 5, outgoing transfer of 30. ----
+        // `generate_effect_vm_trace` builds the genuine 186-col base trace (transfer row 0,
+        // NoOp pad rows) and the 201-entry PI vector. We truncate the PI vector to the 34
+        // slots the descriptor pins (indices 0..33 are unchanged by truncation).
+        let initial = CellState::new(100, 5);
+        let effects = vec![Effect::Transfer {
+            amount: 30,
+            direction: 1, // outgoing (debit)
+        }];
+        let (base_trace, full_pi) = generate_effect_vm_trace(&initial, &effects);
+        assert_eq!(base_trace[0].len(), desc.trace_width, "base trace is 186-col");
+        let pi34: Vec<crate::field::BabyBear> = full_pi[..desc.public_input_count].to_vec();
+
+        // The honest turn proves + verifies through the Lean-descriptor-sourced AIR.
+        let proof = prove_vm_descriptor(&desc, &base_trace, &pi34)
+            .expect("honest transfer must prove+verify through the Lean EffectVM descriptor AIR");
+        verify_vm_descriptor(&desc, &proof, &pi34)
+            .expect("re-verify of the honest EffectVM transfer proof must succeed");
+
+        // ---- ANTI-GHOST 1: forge the published post-state commitment (last-row
+        //      state_after.state_commit). The GROUP-4 hash binding recomputes the genuine
+        //      digest from the after-state cells, so a forged commitment cell != digest is
+        //      UNSAT (the `local[88] == H4(...)` site-3 binding rejects it). ----
+        {
+            let mut forged = base_trace.clone();
+            let last = forged.len() - 1;
+            let honest_commit = forged[last][STATE_AFTER_BASE_T + state_commit_off()];
+            forged[last][STATE_AFTER_BASE_T + state_commit_off()] = honest_commit
+                + crate::field::BabyBear::new(1);
+            let rejected = std::panic::catch_unwind(|| {
+                let p = prove_vm_descriptor(&desc, &forged, &pi34)?;
+                verify_vm_descriptor(&desc, &p, &pi34)
+            });
+            match rejected {
+                Err(_) => {} // prover panicked on the broken hash-binding gate: rejected
+                Ok(r) => assert!(
+                    r.is_err(),
+                    "FORGED last-row state_commit MUST be rejected by the GROUP-4 hash binding"
+                ),
+            }
+        }
+
+        // ---- ANTI-GHOST 2: tamper the ACTOR_NONCE public input. The honest base trace's
+        //      row-0 state_before.nonce is 5; the descriptor's first-row pin
+        //      `state_before.nonce == PI[ACTOR_NONCE]` forces PI[33] = 5. A verifier supplying
+        //      a different ACTOR_NONCE makes the boundary pin UNSAT (#49 nonce-invisibility
+        //      tooth). ----
+        {
+            let mut bad_pi = pi34.clone();
+            bad_pi[evm_pi::ACTOR_NONCE] = bad_pi[evm_pi::ACTOR_NONCE] + crate::field::BabyBear::new(7);
+            // The honest trace + tampered PI: the row-0 nonce pin can no longer hold.
+            let rejected = std::panic::catch_unwind(|| {
+                let p = prove_vm_descriptor(&desc, &base_trace, &bad_pi)?;
+                verify_vm_descriptor(&desc, &p, &bad_pi)
+            });
+            match rejected {
+                Err(_) => {}
+                Ok(r) => assert!(
+                    r.is_err(),
+                    "TAMPERED ACTOR_NONCE MUST be rejected by the row-0 boundary pin"
+                ),
+            }
+        }
+
+        // ---- ANTI-GHOST 3: forge the row-0 post-balance (state_after.balance_lo) WITHOUT
+        //      re-deriving the commitment. The debit gate `new_bal_lo == old - amount` breaks. ----
+        {
+            let mut forged = base_trace.clone();
+            let honest_bal = forged[0][STATE_AFTER_BASE_T + 0]; // balance_lo offset 0
+            forged[0][STATE_AFTER_BASE_T + 0] = honest_bal + crate::field::BabyBear::new(11);
+            let rejected = std::panic::catch_unwind(|| {
+                let p = prove_vm_descriptor(&desc, &forged, &pi34)?;
+                verify_vm_descriptor(&desc, &p, &pi34)
+            });
+            match rejected {
+                Err(_) => {}
+                Ok(r) => assert!(
+                    r.is_err(),
+                    "FORGED row-0 post-balance MUST be rejected by the debit gate"
+                ),
+            }
+        }
+    }
+
+    /// `STATE_AFTER_BASE` for the EffectVM layout (= 76) — the test reads the bespoke
+    /// trace's after-state cells directly. Kept here (not imported) to avoid a name clash
+    /// with the module-private `EFFECTVM_STATE_AFTER_BASE`.
+    const STATE_AFTER_BASE_T: usize = 76;
+    /// `state::STATE_COMMIT` offset within a state block (= 12).
+    fn state_commit_off() -> usize {
+        12
+    }
 }
