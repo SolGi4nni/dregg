@@ -2047,6 +2047,31 @@ mod tests {
         v2_beachhead(BRIDGE_FINALIZE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-attenuateA-v2`: TOTAL authority self-narrowing (touched = `caps`, a
+    /// `funcComponent`). Honest: label 0 narrows its idx-1 `node 9` cap to `[read]`.
+    /// The forged post-state ALSO grants bystander label 1 a STOLEN `node 9` cap (a
+    /// privilege escalation the attenuation never authorized); the component-bind gate
+    /// `68 = 69` breaks. Goldens pinned by Lean's
+    /// `Dregg2.Circuit.Witness.AttenuateAWitness`.
+    const ATTENUATE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-attenuateA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_attenuate_a() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 20105010900000002, 20105010900000003, 2, 2,
+            20105010900000000, 20105010900000000, 1, 1,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 20105010900000002, 20105010900010112, 2, 2,
+            20105010900010109, 20105010900000000, 1, 1,
+        ];
+        v2_beachhead(ATTENUATE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
     /// `dregg-delegate-v2`: the Granovetter unattenuated held-cap copy (touched =
     /// `kernel.caps`, a `funcComponent`). Honest: delegator 0 (holding `node 5`)
     /// grants recipient 1 the held cap to target 5. The forged post-state has
@@ -2141,6 +2166,32 @@ mod tests {
             0, 0, 0, 0, 3, 1507001508001022, 3, 3, 1507001507001019, 1507001507000000, 1000000, 1000000,
         ];
         v2_beachhead(CREATESEALPAIR_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-createEscrowA-v2` (DUAL-component, width 74, 5 gates): DEBIT `bal` at
+    /// `(creator,asset)` AND PREPEND an unresolved `EscrowRecord` onto `escrows`.
+    /// Honest: actor/creator 0 (self-authority, bal[0][0]=100) locks 30 of asset 0
+    /// for recipient 1. The forged post-state ALSO mints a THIRD cell (2)'s bal
+    /// 0 → 999; the comp1-bal gate `68 = 69` breaks (the escrow comp2 `70 = 71` + log
+    /// stay honest). Goldens pinned by
+    /// `Dregg2.Circuit.Witness.CreateEscrowWitness.{descriptorJson, *WitnessJson}`.
+    const CREATEESCROW_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-createEscrowA-v2","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_create_escrow() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000000000003, 70000002001033, 3, 3, 70000000000000, 70000000000000, 1001030,
+            1001030, 1000000, 1000000,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000000000003, 70000002002032, 3, 3, 70000000000999, 70000000000000, 1001030,
+            1001030, 1000000, 1000000,
+        ];
+        v2_beachhead(CREATEESCROW_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
     }
 
     // ========================================================================
@@ -2526,5 +2577,51 @@ mod tests {
             0, 0, 0, 0, 4, 17252, 2, 2, 16987, 16874, 263, 263,
         ];
         v2_beachhead(SWISS_EXPORT_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-swissHandoffA-v2`: the 3-vat handoff cert-bind (touched = `kernel.swiss`, a
+    /// `listComponent`). Honest: introducer 0 binds cert 99 to the existing sw-7 entry and bumps its
+    /// refcount to 2. The forged post-state bumps the refcount but does NOT bind the cert (cert stays
+    /// `none`); the component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SwissHandoffWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    const SWISS_HANDOFF_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-swissHandoffA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_swiss_handoff() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16877, 29952, 2, 2, 29687, 29687, 263, 263,
+        ];
+        // Forged: the cert is NOT bound (cert stays none); wire 68 differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16877, 17252, 2, 2, 16987, 29687, 263, 263,
+        ];
+        v2_beachhead(SWISS_HANDOFF_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-sealA-v2`: the seal-box constructor (touched = `kernel.sealedBoxes`, a `listComponent`).
+    /// Honest: actor 0 (holding the sealer cap for pid 5 + the payload `node 9`) seals `node 9` under
+    /// pair 5. The forged post-state binds a SUBSTITUTED payload `node 42` in the box; the
+    /// component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.SealWitness.{descriptorJson, honest/forgedWitnessJson}`.
+    const SEALA_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-sealA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_seal() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 38, 30338, 36, 36, 30039, 30039, 263, 263,
+        ];
+        // Forged: the box binds a substituted payload (node 42 not node 9); wire 68 differs.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 38, 40931, 36, 36, 40632, 30039, 263, 263,
+        ];
+        v2_beachhead(SEALA_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
 }
