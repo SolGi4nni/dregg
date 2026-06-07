@@ -2624,4 +2624,106 @@ mod tests {
         ];
         v2_beachhead(SEALA_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
     }
+
+    // ========================================================================
+    // Batch B3 (escrow + queue families): two v2-DUAL effects (width 74, 5 gates:
+    // guard, rest 66/67, bind1 68/69, bind2 70/71, log 72/73) and two v2 queue-list
+    // effects (width 72, 4 gates). Each pastes the EXACT executor-derived witness
+    // bytes the Lean `Dregg2.Circuit.Witness.<Effect>` goldens pin, proves+verifies
+    // the honest witness through the real Plonky3 prover, and asserts the REAL
+    // forged post-state breaks a component-bind gate.
+    // ========================================================================
+
+    /// `dregg-releaseEscrowA-v2dual`: dual-component escrow settle (credit `bal` at the
+    /// recipient + mark `escrows` resolved). Forged post mints the recipient credit (999,
+    /// not the parked 30): the comp1-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.ReleaseEscrowWitness.{honest,forged}WitnessJson`.
+    const RELEASE_ESCROW_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-releaseEscrowA-v2dual","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_release_escrow() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 344325, 1298045, 2, 2, 1281785, 1281785, 15995, 15995, 263, 263,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 344325, 694659, 2, 2, 678399, 1281785, 15995, 15995, 263, 263,
+        ];
+        v1_beachhead(
+            RELEASE_ESCROW_DESCRIPTOR_JSON,
+            &honest,
+            &[("minted recipient credit", &forged, 68, 69)],
+        );
+    }
+
+    /// `dregg-refundEscrowA-v2dual`: dual-component escrow refund (credit `bal` at the CREATOR
+    /// + mark `escrows` resolved). Forged post mints the creator credit (999, not 30): the
+    /// comp1-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.RefundEscrowWitness.{honest,forged}WitnessJson`.
+    const REFUND_ESCROW_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-refundEscrowA-v2dual","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_refund_escrow() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 344325, 595622, 2, 2, 579362, 579362, 15995, 15995, 263, 263,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 344325, 1904010, 2, 2, 1887750, 579362, 15995, 15995, 263, 263,
+        ];
+        v1_beachhead(
+            REFUND_ESCROW_DESCRIPTOR_JSON,
+            &honest,
+            &[("minted creator credit", &forged, 68, 69)],
+        );
+    }
+
+    /// `dregg-queueResizeA-v2`: balance-neutral FIFO queue re-cap (touched = `kernel.queues`,
+    /// a `listComponent`). Forged post TAMPERS the buffer (a message dropped on the re-cap):
+    /// the component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.QueueResizeWitness.{honest,forged}WitnessJson`.
+    const QUEUE_RESIZE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queueResizeA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_queue_resize() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16037, 16308, 1, 1, 16044, 16044, 263, 263,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 16037, 16237, 1, 1, 15973, 16044, 263, 263,
+        ];
+        v2_beachhead(QUEUE_RESIZE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-queuePipelineStepA-v2`: message-routing fan-out (touched = `kernel.queues`, a
+    /// `listComponent`). Forged post DROPS the routed message (sink 11 stays empty): the
+    /// component-bind gate `68 = 69` breaks. Goldens from Lean
+    /// `Dregg2.Circuit.Witness.QueuePipelineStepWitness.{honest,forged}WitnessJson`.
+    const QUEUE_PIPELINE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queuePipelineStepA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_queue_pipeline_step() {
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 395231, 1557420, 3, 3, 1557154, 1557154, 263, 263,
+        ];
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 395231, 195352, 3, 3, 195086, 1557154, 263, 263,
+        ];
+        v2_beachhead(QUEUE_PIPELINE_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
 }
