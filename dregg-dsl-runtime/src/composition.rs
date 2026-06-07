@@ -272,13 +272,29 @@ impl StarkAir for ComposedDslCircuit {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComposedProof {
     /// The main STARK proof over the composed trace.
-    pub main_proof: StarkProof,
+    ///
+    /// NOTE: when [`Self::main_proof_p3`] is present, the main proof was
+    /// generated and is verified through the AUDITED `p3-batch-stark` verifier;
+    /// this bespoke-`stark` `main_proof` is then absent (`None`) and the p3
+    /// proof is the one on the verification path. See
+    /// `dregg_sdk::full_turn_proof`. Legacy (non-full-turn) composition paths
+    /// still populate `Some(..)`.
+    #[serde(default)]
+    pub main_proof: Option<StarkProof>,
     /// The sub-proofs that were verified during composition.
     pub sub_proofs: Vec<AttachedSubProof>,
     /// Public inputs for the composed circuit.
     pub public_inputs: Vec<BabyBear>,
     /// The composed circuit's VK hash (for registry lookup).
     pub composed_vk_hash: [u8; 32],
+    /// When present: the postcard-serialized `p3-batch-stark` proof of the
+    /// composed business-logic descriptor, generated + verified by the AUDITED
+    /// Plonky3 verifier. The full-turn prover/verifier (`dregg_sdk`) populate
+    /// and check THIS instead of `main_proof` (the bespoke `stark` verifier has
+    /// no terminal low-degree test). Defaulted to `None` so legacy
+    /// `ComposedProof` constructors are unaffected.
+    #[serde(default)]
+    pub main_proof_p3: Option<Vec<u8>>,
 }
 
 /// An attached sub-proof with its verification data.
@@ -802,10 +818,28 @@ pub fn verify_composed_full(
     proof: &ComposedProof,
     registry: &dyn Fn(&[u8; 32]) -> Option<CircuitDescriptor>,
 ) -> ComposedVerification {
-    // 1. Verify main proof
+    // 1. Verify main proof. A `None` bespoke main proof means the proof carries
+    //    an AUDITED p3 main proof instead (`main_proof_p3`); such proofs are
+    //    verified by the p3 path (`dregg_sdk::verify_full_turn`), not here, so
+    //    we skip the bespoke check rather than reject. Legacy composed proofs
+    //    still carry `Some(..)` and are checked here.
     let circuit = ComposedDslCircuit::new(descriptor.clone());
-    if let Err(e) = stark::verify(&circuit, &proof.main_proof, &proof.public_inputs) {
-        return ComposedVerification::MainProofInvalid(e);
+    match &proof.main_proof {
+        Some(mp) => {
+            if let Err(e) = stark::verify(&circuit, mp, &proof.public_inputs) {
+                return ComposedVerification::MainProofInvalid(e);
+            }
+        }
+        None => {
+            if proof.main_proof_p3.is_none() {
+                return ComposedVerification::MainProofInvalid(
+                    "composed proof has neither a bespoke main_proof nor an audited \
+                     main_proof_p3"
+                        .to_string(),
+                );
+            }
+            // p3 main proof is verified by the p3 full-turn verifier.
+        }
     }
 
     // 2. Verify each sub-proof

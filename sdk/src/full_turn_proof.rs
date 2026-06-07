@@ -46,13 +46,15 @@ use dregg_circuit::dsl::membership::{generate_merkle_poseidon2_trace, prove_memb
 use dregg_circuit::dsl::revocation::{
     DslRevocationTree, non_revocation_circuit_descriptor, prove_non_revocation_dsl,
 };
-use dregg_circuit::effect_vm::{self, CellState, EffectVmAir, generate_effect_vm_trace};
+use dregg_circuit::dsl::dsl_p3_air::{prove_dsl_p3, verify_dsl_p3};
+use dregg_circuit::effect_vm::{self, CellState, generate_effect_vm_trace};
+use dregg_circuit::effect_vm_p3_full_air::{
+    EffectVmP3Proof, prove_effect_vm_p3, verify_effect_vm_p3,
+};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::stark;
-use dregg_dsl_runtime::composition::{
-    AttachedSubProof, ComposedProof, compose_aggregate, compute_proof_hash, generate_and_trace,
-};
-use dregg_dsl_runtime::{CircuitDescriptor, ComposedCircuitDescriptor, ComposedDslCircuit};
+use dregg_dsl_runtime::composition::{AttachedSubProof, ComposedProof, compose_aggregate};
+use dregg_dsl_runtime::{CircuitDescriptor, ComposedCircuitDescriptor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SdkError;
@@ -250,9 +252,18 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // ========================================================================
     let (effect_trace, effect_pi) =
         generate_effect_vm_trace(&witness.initial_cell_state, &witness.effects);
-    let effect_air = EffectVmAir::new(effect_trace.len());
-    let effect_proof = stark::prove(&effect_air, &effect_trace, &effect_pi);
-    let effect_proof_bytes = stark::proof_to_bytes(&effect_proof);
+    // AUDITED PATH: the Effect VM state transition is proven through the real
+    // Plonky3 verifier (`p3-batch-stark`) with REAL in-circuit Poseidon2 for
+    // every state-commitment / cap-root hash — NOT the bespoke `stark` (whose
+    // FRI has no terminal low-degree test). The proof self-verifies before
+    // return, so the post-state commitment is genuinely bound: a forged
+    // NEW_COMMIT makes the audited verifier reject (see
+    // `effect_vm_p3_full_air` anti-ghost tests).
+    let effect_proof = prove_effect_vm_p3(&effect_trace, &effect_pi)
+        .map_err(|e| SdkError::InvalidWitness(format!("effect-vm p3 proof failed: {e}")))?;
+    let effect_proof_bytes = postcard::to_allocvec(&effect_proof).map_err(|e| {
+        SdkError::InvalidWitness(format!("effect-vm p3 proof serialize failed: {e}"))
+    })?;
 
     components.has_state_transition = true;
     all_public_inputs.extend_from_slice(&effect_pi);
@@ -368,24 +379,27 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     }
 
     // ========================================================================
-    // 6. Compose all sub-proofs into one
+    // 6. Compose all sub-proofs into one (AUDITED p3 main proof)
     // ========================================================================
     let composed_descriptor = build_full_turn_descriptor(&components);
-    let composed_circuit = ComposedDslCircuit::new(composed_descriptor.clone());
-    let _total_width = composed_circuit.total_width();
 
-    // Build the composition trace: one row with all merged PIs as column values,
-    // plus VK hashes and proof hashes in the binding regions.
-    let sub_proof_hashes: Vec<BabyBear> = sub_proofs
-        .iter()
-        .map(|sp| compute_proof_hash(&sp.proof_bytes))
-        .collect();
-
-    let (comp_trace, comp_pi) =
-        generate_and_trace(&composed_descriptor, &all_public_inputs, &sub_proof_hashes);
-
-    // Generate the main STARK proof over the composition trace.
-    let main_proof = stark::prove(&composed_circuit, &comp_trace, &comp_pi);
+    // The composition main proof binds the merged public inputs through the
+    // AUDITED Plonky3 verifier. We prove a minimal PI-binding circuit whose
+    // public inputs ARE `all_public_inputs` (each pinned to a trace column on
+    // every row) — this carries the merged-PI commitment on the audited path,
+    // replacing the bespoke-`stark` composition main proof. It is NOT the
+    // anti-ghost tooth: the load-bearing post-state binding lives in the
+    // EffectVM sub-proof (also p3) and is re-checked directly in
+    // `verify_full_turn`. Each attached sub-proof is independently re-verified
+    // in `verify_full_turn`, superseding the bespoke valid-flag binding the old
+    // `ComposedDslCircuit` main proof carried.
+    let (main_circuit, main_trace, main_pi) =
+        build_pi_binding_p3(&all_public_inputs);
+    let main_proof_p3_proof = prove_dsl_p3(&main_circuit, &main_trace, &main_pi)
+        .map_err(|e| SdkError::InvalidWitness(format!("composition p3 main proof failed: {e}")))?;
+    let main_proof_p3_bytes = postcard::to_allocvec(&main_proof_p3_proof)
+        .map_err(|e| SdkError::InvalidWitness(format!("composition p3 serialize failed: {e}")))?;
+    let comp_pi = main_pi.clone();
 
     // Compute composed VK hash.
     let composed_vk_bytes = {
@@ -394,10 +408,11 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     };
 
     let composed = ComposedProof {
-        main_proof,
+        main_proof: None,
         sub_proofs,
         public_inputs: comp_pi,
         composed_vk_hash: composed_vk_bytes,
+        main_proof_p3: Some(main_proof_p3_bytes),
     };
 
     // Serialize the full proof for wire transmission.
@@ -432,41 +447,70 @@ pub fn verify_full_turn(
     expected_new_commit: BabyBear,
 ) -> Result<(), FullTurnVerifyError> {
     // 1. Rebuild the composed circuit descriptor from the component flags.
-    let composed_descriptor = build_full_turn_descriptor(&proof.components);
-    let composed_circuit = ComposedDslCircuit::new(composed_descriptor.clone());
+    let _composed_descriptor = build_full_turn_descriptor(&proof.components);
 
-    // 2. Verify the main STARK proof.
-    stark::verify(
-        &composed_circuit,
-        &proof.composed.main_proof,
-        &proof.composed.public_inputs,
-    )
-    .map_err(|e| FullTurnVerifyError::MainProofInvalid(e))?;
+    // 2. Verify the main proof through the AUDITED Plonky3 verifier. The main
+    //    proof is the PI-binding circuit (see `build_pi_binding_p3`); it pins
+    //    the merged public-input vector on the audited path.
+    let main_p3_bytes = proof.composed.main_proof_p3.as_ref().ok_or_else(|| {
+        FullTurnVerifyError::MainProofInvalid(
+            "full-turn proof is missing the audited p3 main proof".into(),
+        )
+    })?;
+    let main_p3: dregg_circuit::dsl::dsl_p3_air::DslP3Proof =
+        postcard::from_bytes(main_p3_bytes).map_err(|e| {
+            FullTurnVerifyError::MainProofInvalid(format!("p3 main proof deserialize: {e}"))
+        })?;
+    let (main_circuit, _t, main_pi) = build_pi_binding_p3(&proof.composed.public_inputs);
+    verify_dsl_p3(&main_circuit, &main_p3, &main_pi)
+        .map_err(|e| FullTurnVerifyError::MainProofInvalid(format!("{e}")))?;
 
     // 3. Verify each attached sub-proof cryptographically.
     for (i, attached) in proof.composed.sub_proofs.iter().enumerate() {
-        let sub_proof = stark::proof_from_bytes(&attached.proof_bytes).map_err(|e| {
-            FullTurnVerifyError::SubProofDeserialize {
-                index: i,
-                reason: e,
-            }
-        })?;
-
-        // Dispatch verification to the correct circuit based on label.
-        let verify_result = match attached.label.as_str() {
+        // Dispatch verification to the correct verifier based on label.
+        let verify_result: Result<(), String> = match attached.label.as_str() {
+            // EFFECT VM: AUDITED p3 verifier (the load-bearing post-state
+            // binding). The proof bytes are a postcard-serialized
+            // `EffectVmP3Proof` (p3-batch-stark BatchProof).
             "effect-vm" => {
-                let air = EffectVmAir::new(sub_proof.trace_len);
-                stark::verify(&air, &sub_proof, &attached.sub_public_inputs)
+                let p3: EffectVmP3Proof =
+                    postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
+                        FullTurnVerifyError::SubProofDeserialize {
+                            index: i,
+                            reason: format!("effect-vm p3 deserialize: {e}"),
+                        }
+                    })?;
+                verify_effect_vm_p3(&p3, &attached.sub_public_inputs).map_err(|e| format!("{e}"))
             }
+            // NOTE (named gap): authorization / membership / non-revocation
+            // sub-proofs are still verified by the bespoke `stark` verifier.
+            // Their DSL circuits contain non-algebraic forms (MerkleHash /
+            // Lookup / Hash sponge) that `prove_dsl_p3` / `verify_dsl_p3`
+            // reject, so porting them requires the arithmetized p3 AIRs
+            // (lean_lookup_air / P3MerklePoseidon2Air). These sub-proofs are
+            // NOT exercised by the node commit path (`prove_turn_self_sovereign`
+            // omits them); migrating them is tracked as follow-up.
             "authorization" => {
+                let sub_proof =
+                    stark::proof_from_bytes(&attached.proof_bytes).map_err(|e| {
+                        FullTurnVerifyError::SubProofDeserialize { index: i, reason: e }
+                    })?;
                 let circuit = dregg_circuit::dsl::derivation::derivation_dsl_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
             "membership" => {
+                let sub_proof =
+                    stark::proof_from_bytes(&attached.proof_bytes).map_err(|e| {
+                        FullTurnVerifyError::SubProofDeserialize { index: i, reason: e }
+                    })?;
                 let circuit = dregg_circuit::dsl::descriptors::merkle_poseidon2_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
             "non-revocation" => {
+                let sub_proof =
+                    stark::proof_from_bytes(&attached.proof_bytes).map_err(|e| {
+                        FullTurnVerifyError::SubProofDeserialize { index: i, reason: e }
+                    })?;
                 let circuit = dregg_circuit::dsl::revocation::non_revocation_dsl_circuit();
                 stark::verify(&circuit, &sub_proof, &attached.sub_public_inputs)
             }
@@ -717,6 +761,63 @@ fn compute_vk_hash_bytes(descriptor: &CircuitDescriptor) -> [u8; 32] {
     *blake3::hash(&serialized).as_bytes()
 }
 
+/// Build the minimal PI-binding DSL circuit + trace for the AUDITED composition
+/// main proof: `public_input_count = pis.len()`, with a `PiBinding{col=j,
+/// pi_index=j}` per public input. The trace is `MIN_ROWS` identical rows whose
+/// column `j` equals `pis[j]`, so every `PiBinding` holds on every row. The
+/// audited p3 verifier then binds the entire merged-PI vector; a forged PI
+/// makes verification fail. This is a pure-algebraic descriptor (no hash /
+/// merkle / lookup), so `prove_dsl_p3` accepts it.
+fn build_pi_binding_p3(
+    pis: &[BabyBear],
+) -> (
+    dregg_circuit::dsl::circuit::DslCircuit,
+    Vec<Vec<BabyBear>>,
+    Vec<BabyBear>,
+) {
+    use dregg_circuit::dsl::circuit::{
+        ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
+    };
+
+    const MIN_ROWS: usize = 4; // power-of-two; matches the DSL p3 reference traces.
+    let n = pis.len();
+
+    let columns: Vec<ColumnDef> = (0..n)
+        .map(|j| ColumnDef {
+            name: format!("pi_{j}"),
+            index: j,
+            kind: ColumnKind::Value,
+        })
+        .collect();
+    let constraints: Vec<ConstraintExpr> = (0..n)
+        .map(|j| ConstraintExpr::PiBinding {
+            col: j,
+            pi_index: j,
+        })
+        .collect();
+
+    let descriptor = CircuitDescriptor {
+        name: "dregg-full-turn-pi-binding-v1".into(),
+        trace_width: n.max(1),
+        max_degree: 1,
+        columns,
+        constraints,
+        boundaries: vec![],
+        public_input_count: n,
+        lookup_tables: vec![],
+    };
+
+    // Trace: MIN_ROWS identical rows = the PI vector (width n, or 1 if n == 0).
+    let row: Vec<BabyBear> = if n == 0 {
+        vec![BabyBear::ZERO]
+    } else {
+        pis.to_vec()
+    };
+    let trace = vec![row; MIN_ROWS];
+
+    (DslCircuit::new(descriptor), trace, pis.to_vec())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -829,5 +930,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// ANTI-GHOST on the AUDITED p3 verifier (the migration's load-bearing
+    /// property). Forge the EffectVM sub-proof's published post-state
+    /// commitment in a finished `FullTurnProof`: the proof's `NEW_COMMIT`
+    /// public input no longer matches the proof's witness, so the new p3
+    /// EffectVM verifier (`verify_effect_vm_p3`, invoked inside
+    /// `verify_full_turn`) MUST reject — a forged post-state cannot pass.
+    ///
+    /// We forge by tampering BOTH the published `sub_public_inputs[NEW_COMMIT]`
+    /// (so the verifier sees the forged value) and verifying against that same
+    /// forged commitment as the caller's expectation — defeating the simple PI
+    /// equality check, leaving ONLY the in-circuit boundary binding to catch
+    /// it. The audited p3 verifier rejects because the proof's bound trace
+    /// commitment is the honest one, not the forged PI.
+    #[test]
+    fn verify_rejects_forged_post_state_on_audited_p3() {
+        use dregg_circuit::effect_vm::pi as vmpi;
+
+        let initial = CellState::new(1000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let turn_hash = [0x5Au8; 32];
+
+        let mut proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
+            .expect("honest proof should generate");
+
+        // Honest commitments (what the proof legitimately attests).
+        let old_commit = initial.state_commitment;
+        let mut expected_final = initial.clone();
+        expected_final.balance = 900;
+        expected_final.nonce = 1;
+        expected_final.refresh_commitment();
+        let honest_new_commit = expected_final.state_commitment;
+        let forged_new_commit = honest_new_commit + BabyBear::new(1);
+
+        // Tamper the published EffectVM post-state commitment in the wire proof.
+        let eff = proof
+            .composed
+            .sub_proofs
+            .iter_mut()
+            .find(|sp| sp.label == "effect-vm")
+            .expect("effect-vm sub-proof present");
+        eff.sub_public_inputs[vmpi::NEW_COMMIT] = forged_new_commit;
+
+        // Verify against the FORGED commitment (so the surface-level PI equality
+        // check would PASS). Only the audited in-circuit boundary binding stands
+        // between the forgery and acceptance — and it MUST reject.
+        let result = verify_full_turn(&proof, old_commit, forged_new_commit);
+        assert!(
+            result.is_err(),
+            "SOUNDNESS: a forged post-state commitment MUST be rejected by the \
+             audited p3 EffectVM verifier (got Ok — the migration is unsound!)"
+        );
     }
 }
