@@ -37,6 +37,8 @@ Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Predicate
 import Dregg2.Authority.Credential
+import Mathlib.Tactic.Linarith   -- `linarith` (was transitive via CryptoKernel's `Mathlib.Tactic`,
+                                  -- now imported explicitly after the FFI-closure import trim)
 
 namespace Dregg2.Time.Frame
 

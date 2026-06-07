@@ -265,6 +265,13 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // matching `.c` from the Lean source/dependency IR trees, splice them in, and repeat until the
     // archive is self-contained (or no resolvable `.c` remains — which we surface loudly).
     complete_initializer_closure(meta, sysroot, archive, out_dir);
+
+    // (5) Reachability GC. Closure-completion makes the archive self-LINKING, but the base still
+    // carries every dependency object it was ever seeded with — including the mathlib CategoryTheory/
+    // Tactic objects the import-trimmed FFI closure no longer references. Drop every member NOT
+    // reachable, by symbol, from the `dregg_*` exports. This is the durable payoff of the import-graph
+    // split: without it the next splice would re-bloat the archive back to its seeded size.
+    gc_unreachable_members(archive, out_dir);
 }
 
 /// Discover every `.lake/build/ir` directory that can supply a `.c` for the dependency closure:
@@ -498,6 +505,151 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
     println!(
         "cargo:warning=dregg-lean-ffi: closure completion hit the 16-pass bound — archive may \
          still have undefined initializers. Consider re-seeding the closure."
+    );
+}
+
+/// **Archive reachability GC — the import-graph-trim payoff made durable.**
+///
+/// After the splice + closure-completion the archive self-links, but it still carries every
+/// dependency object the BASE archive was ever seeded with — including the thousands of mathlib
+/// `CategoryTheory`/`Tactic` objects that the (now import-trimmed) FFI closure no longer references.
+/// Lean runs an `initialize_` per ARCHIVED module at boot, so those dead members are not just dead
+/// weight — they inflate the linked binary and the wasm executor. `-Oz`/`--gc-sections` cannot strip
+/// them (each module's initializer is reachable from its own object's ctor), so we garbage-collect at
+/// the ARCHIVE level: keep only members reachable, by symbol, from the `dregg_*` FFI exports.
+///
+/// Reachability is exact and conservative: a member is kept iff it is the export-defining root, or it
+/// defines a symbol that some kept member leaves undefined (`U`). Toolchain-supplied symbols (resolved
+/// by the final Rust link against the sysroot `Init`/`Std`/`Lean`/`Lake` static libs) need no archive
+/// member, so members that ONLY serve them drop out. If `nm` is unavailable or the computed reachable
+/// set looks implausibly small (a parse failure), we SKIP the GC and keep the (correct, larger) archive
+/// — never risk a broken link to save bytes.
+fn gc_unreachable_members(archive: &Path, out_dir: &Path) {
+    let Ok(out) = Command::new("nm").arg("-A").arg(archive).output() else {
+        return;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    use std::collections::{HashMap, HashSet};
+    // member -> (defined syms, undefined syms);  symbol -> members defining it.
+    let mut undef: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut sym_def_in: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut members: HashSet<String> = HashSet::new();
+    let mut roots: HashSet<String> = HashSet::new();
+    for line in text.lines() {
+        // `nm -A` location-prefixed forms (see `members_defining_project_initializers`):
+        //   macOS/llvm: `<archive>:<member.o>: <addr> T _sym`  /  `<archive>:<member.o>:    U _sym`
+        //   GNU:        `<archive>[<member.o>]: <addr> T _sym`
+        let Some((prefix, rest)) = line.split_once(": ") else { continue };
+        let prefix = prefix.trim_end_matches(']');
+        let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
+        if !member.ends_with(".o") {
+            continue;
+        }
+        let toks: Vec<&str> = rest.split_whitespace().collect();
+        let (ty, sym) = match toks.as_slice() {
+            [ty, sym] if ty.len() == 1 => (*ty, *sym),
+            [_addr, ty, sym] if ty.len() == 1 => (*ty, *sym),
+            _ => continue,
+        };
+        members.insert(member.to_string());
+        if ty == "U" || ty == "u" {
+            undef.entry(member.to_string()).or_default().insert(sym.to_string());
+        } else {
+            sym_def_in.entry(sym.to_string()).or_default().insert(member.to_string());
+            // Root: any member defining a `_dregg_*` FFI export (the C-ABI entry points).
+            if sym.trim_start_matches('_').starts_with("dregg_") {
+                roots.insert(member.to_string());
+            }
+        }
+    }
+    if members.is_empty() || roots.is_empty() {
+        // Parse failure or no exports found — do not risk a destructive GC.
+        return;
+    }
+    // BFS: keep a member, then chase each of its undefined symbols to the member(s) defining them.
+    let mut reach: HashSet<String> = HashSet::new();
+    let mut queue: Vec<String> = roots.iter().cloned().collect();
+    while let Some(member) = queue.pop() {
+        if !reach.insert(member.clone()) {
+            continue;
+        }
+        if let Some(us) = undef.get(&member) {
+            for u in us {
+                if let Some(defs) = sym_def_in.get(u) {
+                    for dm in defs {
+                        if !reach.contains(dm) {
+                            queue.push(dm.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let unreachable = members.len().saturating_sub(reach.len());
+    if unreachable == 0 {
+        return; // already minimal.
+    }
+    // Sanity floor: the FFI closure genuinely needs hundreds of dependency members; if the reachable
+    // set collapsed below a plausible floor the `nm` parse misfired — keep the larger, correct archive.
+    if reach.len() < 200 {
+        println!(
+            "cargo:warning=dregg-lean-ffi: archive GC computed only {} reachable members (< floor) — \
+             skipping the prune to avoid a destructive parse error.",
+            reach.len()
+        );
+        return;
+    }
+    // Repack keeping only reachable members. Extract to scratch, delete the unreachable, `ar rcs`.
+    let work = out_dir.join("dregg2_gc_work");
+    if work.exists() {
+        let _ = std::fs::remove_dir_all(&work);
+    }
+    if std::fs::create_dir_all(&work).is_err() {
+        return;
+    }
+    if !matches!(Command::new("ar").arg("x").arg(archive).current_dir(&work).status(), Ok(s) if s.success())
+    {
+        return;
+    }
+    let mut kept: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&work) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".o") {
+                continue;
+            }
+            if reach.contains(&name) {
+                kept.push(name);
+            } else {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    if kept.is_empty() {
+        return;
+    }
+    kept.sort();
+    let tmp = out_dir.join("libdregg_lean.a.gc");
+    let _ = std::fs::remove_file(&tmp);
+    if !matches!(
+        Command::new("ar").arg("rcs").arg(&tmp).args(&kept).current_dir(&work).status(),
+        Ok(s) if s.success()
+    ) {
+        return;
+    }
+    let _ = Command::new("ranlib").arg(&tmp).status();
+    if std::fs::rename(&tmp, archive).is_err() {
+        // Cross-device rename fallback: copy.
+        if std::fs::copy(&tmp, archive).is_ok() {
+            let _ = std::fs::remove_file(&tmp);
+        } else {
+            return;
+        }
+    }
+    println!(
+        "cargo:warning=dregg-lean-ffi: archive GC pruned {unreachable} unreachable dependency \
+         object(s) (kept {} reachable from the `dregg_*` exports).",
+        kept.len()
     );
 }
 

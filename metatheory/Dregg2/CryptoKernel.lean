@@ -15,8 +15,16 @@ Two realizations of the same interface:
 This module is the portal; everything cryptographic in the metatheory routes through it.
 (Network/clock/randomness for consensus are a sibling `World` oracle.)
 -/
-import Mathlib.Tactic
+-- Runtime-import discipline (FFI closure trim): `CryptoKernel` is on the compiled FFI path
+-- (`FFI → FullForestAuth → CryptoKernel`). It uses only `ring` (`commit_hom`) plus
+-- `exact_mod_cast` (`refHash_inj`, which lives in Lean core via `import Lean`/`Dregg2.Tactics`),
+-- so we import the single minimal tactic module `Mathlib.Tactic.Ring` rather than the whole
+-- `Mathlib.Tactic` blob — the latter drags the entire mathlib tactic+CategoryTheory framework
+-- (≈6900 modules) into the executor's `initialize_` closure (every imported module runs an
+-- `initialize_` at boot, so DCE cannot strip it; the import GRAPH is the cause of the 287MB archive).
+import Mathlib.Tactic.Ring
 import Mathlib.Logic.Encodable.Basic
+import Mathlib.Logic.Equiv.List   -- `Encodable (List ℕ)` for `refHash` (was transitive via `Mathlib.Tactic`)
 import Dregg2.Laws
 import Dregg2.Authority.Positional
 
