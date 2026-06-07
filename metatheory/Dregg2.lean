@@ -471,3 +471,5 @@ import Dregg2.Widget.CapabilityGraph   -- the Granovetter capability graph (Inte
 import Dregg2.Widget.DreggForest       -- the call-forest (GraphDisplay) off a real FullForestA value; nodes = effects, edges = delegation
 import Dregg2.Widget.ContractView      -- a verified guarantee rendered as a card: the invariant + the forever theorem's collectAxioms trust tier
 import Dregg2.Widget.VerifiedTurn       -- the execute→prove→verify→anti-ghost pipeline off the REAL TransferWitness: 20-wire executor-derived assignment, stateCircuit verdict, forged-bystander rejection at the frame-reuse gate
+import Dregg2.Spec.FunctionalRefinement -- corner (a): intent functional specs (mintSpec/escrowCreateSpec/...) + executor⟺spec triangles + anti-ghost
+import Dregg2.Spec.CircuitSpecTriangle  -- CROWN JEWEL corner (b): circuit⟺intent-spec — a verifying ZK witness pins the EXACT intent ledger move (mint/transfer/escrow-create); anti-ghost = wrong-output UNSAT; amplification template pin_intent_of_bridge
