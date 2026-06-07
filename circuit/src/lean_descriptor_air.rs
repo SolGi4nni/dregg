@@ -2095,6 +2095,30 @@ mod tests {
         v2_beachhead(CELL_DESTROY_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
     }
 
+    /// `dregg-bridgeLockA-v2`: the v2-DUAL bridge-OUTBOUND LOCK (touched = `bal` debit
+    /// AND `escrows` park; `trace_width = 74`, FIVE gates). Honest: originator 0 debited
+    /// 5 of asset 1, a parked bridge record id 7 prepended. The forged post-state ALSO
+    /// mints bystander cell 2 (50 → 999); the component-1 (`bal`) bind gate `68 = 69`
+    /// breaks. Goldens pinned by Lean's `Dregg2.Circuit.Witness.BridgeLockAWitness`.
+    const BRIDGE_LOCK_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-bridgeLockA-v2","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_bridge_lock_a() {
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000005000053, 95001005705055, 3, 3, 95000005000050, 95000005000050,
+            1000705001, 1000705001, 1, 1,
+        ];
+        let forged: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000005000053, 95001005706004, 3, 3, 95000005000999, 95000005000050,
+            1000705001, 1000705001, 1, 1,
+        ];
+        v2_beachhead(BRIDGE_LOCK_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
+    }
+
     /// `dregg-delegate-v2`: the Granovetter unattenuated held-cap copy (touched =
     /// `kernel.caps`, a `funcComponent`). Honest: delegator 0 (holding `node 5`)
     /// grants recipient 1 the held cap to target 5. The forged post-state has
@@ -2240,6 +2264,32 @@ mod tests {
             1001030, 1000000, 1000000,
         ];
         v2_beachhead(CREATECOMMITTEDESCROW_DESCRIPTOR_JSON, 74, &honest, &forged, 68, 69);
+    }
+
+    /// `dregg-createCellA-v2` (TRIPLE, width 76, 6 gates): grow `accounts`, reset
+    /// every per-cell indexed slot at `newCell` to born-empty, prepend the creation
+    /// receipt. comp1 = `accounts` (68/69), comp2 = `bal` (70/71), comp3 = born-empty
+    /// side tables (72/73). Honest: actor 0 (holds `node 3`) creates fresh cell 3.
+    /// The forged post-state ALSO mints a THIRD cell (2)'s bal 0 → 999; the comp2-bal
+    /// gate `70 = 71` breaks (accounts comp1 + born-empty comp3 stay honest). Goldens
+    /// pinned by `Dregg2.Circuit.Witness.CreateCellWitness.{descriptorJson, *WitnessJson}`.
+    const CREATECELL_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-createCellA-v2","trace_width":76,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}},{"lhs":{"t":"var","v":74},"rhs":{"t":"var","v":75}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_create_cell() {
+        let honest: [i64; 76] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 50000003000001002, 50004000002002006, 0, 0, 4000001002003, 4000001002003,
+            50000000000000000, 50000000000000000, 0, 0, 1000003, 1000003,
+        ];
+        let forged: [i64; 76] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 50000003000001002, 50004000101902006, 0, 0, 4000001002003, 4000001002003,
+            50000000099900000, 50000000000000000, 0, 0, 1000003, 1000003,
+        ];
+        v2_beachhead(CREATECELL_DESCRIPTOR_JSON, 76, &honest, &forged, 70, 71);
     }
 
     // ========================================================================
