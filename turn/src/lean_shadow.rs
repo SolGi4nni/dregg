@@ -381,8 +381,21 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // the nullifier/commitment are intrinsic to the effect — always mappable.
         Effect::NoteSpend { .. } => true,
         Effect::NoteCreate { .. } => true,
-        // IncrementNonce carries no absolute new-nonce on the wire faithfully; excluded.
-        // Everything else (escrows/queues/bridge/seal/captp/factory/…) not yet projected.
+        // ─── Widened GAP effects (MUST mirror effect_to_wire's supported set) ────────
+        Effect::IncrementNonce { cell } => has(cell),
+        Effect::Refusal { cell, .. } => has(cell),
+        // ReceiptArchive / RefreshDelegation target the action's own cell (always in the map).
+        Effect::ReceiptArchive { .. } => true,
+        Effect::RefreshDelegation => true,
+        Effect::CellSeal { target, .. } => has(target),
+        Effect::CellUnseal { target } => has(target),
+        Effect::CellDestroy { target, .. } => has(target),
+        // Burn: ONLY the canonical balance slot (`slot == 0`) is modelled; other slots are
+        // left unmapped (skip the turn rather than mis-encode).
+        Effect::Burn { target, slot: 0, .. } => has(target),
+        Effect::RevokeCapability { cell, .. } => has(cell),
+        // Everything else (escrows/queues/bridge/seal-pairs/captp/factory/grant/introduce/…)
+        // not yet projected.
         _ => false,
     }
 }
@@ -433,6 +446,13 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         } => vec![*introducer, *recipient, *target],
         Effect::RevokeDelegation { child } => vec![*child],
         Effect::MakeSovereign { cell } => vec![*cell],
+        // Widened GAP effects — register their referenced cells so a Nat is assigned.
+        Effect::Refusal { cell, .. } => vec![*cell],
+        Effect::CellSeal { target, .. } => vec![*target],
+        Effect::CellUnseal { target } => vec![*target],
+        Effect::CellDestroy { target, .. } => vec![*target],
+        Effect::Burn { target, .. } => vec![*target],
+        Effect::RevokeCapability { cell, .. } => vec![*cell],
         _ => vec![],
     }
 }
@@ -467,8 +487,9 @@ fn build_pre_ledger(turn: &Turn, ledger: &Ledger) -> ShadowPreLedger {
 fn effect_to_wire(
     actor: u64,
     eff: &Effect,
-    id_map: &HashMap<CellId, u64>,
+    pre: &ShadowPreLedger,
 ) -> Option<WireAction> {
+    let id_map = &pre.id_map;
     let id = |c: &CellId| id_map.get(c).copied();
     Some(match eff {
         Effect::SetField { cell, index, value } => WireAction::SetField {
@@ -534,11 +555,93 @@ fn effect_to_wire(
             holder: actor,
             target: id(child)?,
         },
-        // Everything else (notes, escrows, queues, bridge, seal, captp, factory, …) is
-        // not yet projected here. Returning None marks the turn ineligible rather than
-        // silently dropping the effect.
+        // ─── Widened GAP effects (the swap surface) ──────────────────────────────────
+        //
+        // IncrementNonce: dregg1 bumps the cell nonce by 1 (`apply.rs` IncrementNonce). The
+        // verified `.incrementNonceA` routes to the authority-gated `stateStep` (`stateAuthB ∧
+        // target∈accounts ∧ cellLive`), which SETS the nonce field to the carried value — so we
+        // carry the post-increment value (`pre_nonce + 1`). The commit-bit depends only on the
+        // gate (ownership/c-list authority + liveness), which matches apply.rs for a self-owned
+        // live cell; the exact value is ledger-faithful too.
+        Effect::IncrementNonce { cell } => WireAction::IncNonce {
+            actor,
+            cell: id(cell)?,
+            new_nonce: (pre_nonce_of(pre, cell) as i128) + 1,
+        },
+        // Refusal: the proof-of-non-action bumps the target cell's nonce + records the refusal
+        // (dregg1 `apply.rs` Refusal). `.refusalA` routes to `stateStep` on the refusal field
+        // (authority-gated, same gate as IncrementNonce) — a self-owned live cell commits.
+        Effect::Refusal { cell, .. } => WireAction::Refusal {
+            actor,
+            cell: id(cell)?,
+        },
+        // ReceiptArchive: declares the cell's receipt-prefix archived; `.receiptArchiveA` routes
+        // to `stateStep` on the lifecycle field (authority-gated). The action target IS the
+        // archived cell (its `checkpoint.cell_id` must equal `action.target`).
+        Effect::ReceiptArchive { .. } => WireAction::ReceiptArchive {
+            actor,
+            cell: actor,
+        },
+        // CellSeal / CellUnseal: the lifecycle state machine. `.cellSealA`/`.cellUnsealA` gate on
+        // `stateAuthB ∧ acceptsEffects`/`== Sealed` — a self-owned live cell SEALS; only a sealed
+        // cell UNSEALS. The target IS the sealed cell (`target` must equal `action.target`).
+        Effect::CellSeal { target, .. } => WireAction::CellSeal {
+            actor,
+            cell: id(target)?,
+        },
+        Effect::CellUnseal { target } => WireAction::CellUnseal {
+            actor,
+            cell: id(target)?,
+        },
+        // CellDestroy: any non-terminal → Destroyed, binding the death-certificate hash.
+        // `.cellDestroyA` gates on `stateAuthB ∧ lifecycle != Destroyed`. The death-cert hash is
+        // carried collapsed to its low 64 bits (the gate's commit-bit reads the lifecycle, not
+        // the hash bytes; the hash is bound into the post-state faithfully).
+        Effect::CellDestroy { target, certificate } => WireAction::CellDestroy {
+            actor,
+            cell: id(target)?,
+            cert_hash: bytes32_to_nat(&certificate.certificate_hash()),
+        },
+        // Burn: dregg1 reduces a cell's balance with no destination credit (provable supply
+        // reduction). `.burnA` routes to the PRIVILEGED `recKBurnAsset` (`mintAuthorizedB ∧
+        // 0≤amt ∧ amt≤bal ∧ cell∈accounts`). Only the canonical balance slot (`slot == 0`) is
+        // modelled (Silver-Vision rejects other slots); a non-zero slot is left UNMAPPED so the
+        // turn is skipped rather than mis-encoded. NOTE: the verified kernel requires an explicit
+        // mint/burn CAP (`node`/`control`-endpoint) on the cell — bare ownership does NOT suffice
+        // — so a cell whose marshalled c-list lacks that cap correctly FAILS the Lean gate (the
+        // genuine, non-vacuous authority test). This is a real model difference from apply.rs
+        // (ownership-suffices) for cells without the cap; it is recorded by the ledger, not hidden.
+        Effect::Burn { target, slot: 0, amount } => WireAction::Burn {
+            actor,
+            cell: id(target)?,
+            asset: 0,
+            amt: *amount as i128,
+        },
+        // RevokeCapability: dregg1 drops a c-list slot. `.revoke` routes to `recCRevoke`
+        // (TOTAL — always commits, the revocation registry edit). The `t` is the revoked
+        // target/slot; we carry the slot index.
+        Effect::RevokeCapability { cell, slot } => WireAction::Revoke {
+            holder: id(cell)?,
+            t: *slot as u64,
+        },
+        // RefreshDelegation: the child refreshes its delegation snapshot from its parent
+        // (self-refresh — the actor IS the child). `.refreshDelegationA` routes to the chained
+        // refresh step. The action target is the refreshing child cell.
+        Effect::RefreshDelegation => WireAction::RefreshDelegation {
+            actor,
+            child: actor,
+        },
+        // Everything else (escrows, queues, bridge, seal-pairs, captp swiss, factory,
+        // grant-capability, introduce, …) is not yet projected here. Returning None marks
+        // the turn ineligible rather than silently dropping the effect.
         _ => return None,
     })
+}
+
+/// The pre-state nonce of a cell in the snapshot (0 if absent — a fresh cell's nonce).
+#[cfg(feature = "lean-shadow")]
+fn pre_nonce_of(pre: &ShadowPreLedger, cell: &CellId) -> u64 {
+    pre.cells.get(cell).map(|c| c.state.nonce()).unwrap_or(0)
 }
 
 #[cfg(feature = "lean-shadow")]
@@ -546,11 +649,25 @@ use dregg_lean_ffi::marshal::WireAction;
 
 #[cfg(feature = "lean-shadow")]
 fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, block_height: u64) -> Result<bool, String> {
-    use dregg_lean_ffi::marshal::marshal_turn;
+    use dregg_lean_ffi::marshal::marshal_turn_hosted;
 
     let wire_state = ledger_to_wire_state(pre)?;
     let wire_turn = turn_to_wire_turn(turn, pre, block_height)?;
-    let wire = marshal_turn(&wire_state, &wire_turn).map_err(|e| e.to_string())?;
+    // boundary-P1 (bug 1): the admission context is HOST/NODE-fed, NOT taken from the turn.
+    // The shadow executor's `block_height` is the chain clock; the agent cannot set its own
+    // clock/budget/freeze-set/head. (The shadow runs WITH the agent's claimed `valid_until`
+    // and `prev` IN the turn, which the host clock/head then CHECK.) `frozen` is empty in the
+    // shadow snapshot and `stored_head`/`budget` default to genesis / a generous slice — the
+    // production node overrides these from `self.frozen_cells` / `self.receipt_heads[agent]` /
+    // `self.silo_budget` when the full admission seam is plumbed.
+    let host = dregg_lean_ffi::marshal::WireHostCtx {
+        now: block_height,
+        block_height,
+        frozen: vec![],
+        stored_head: 0,
+        budget: 1_000_000_000,
+    };
+    let wire = marshal_turn_hosted(&host, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
     if std::env::var("DREGG_LEAN_SHADOW_DEBUG").as_deref() == Ok("1") {
         eprintln!("[shadow wire IN ] {wire}");
     }
@@ -566,8 +683,11 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, block_height: u64) -> Result<b
 fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal::WireState, String> {
     use dregg_lean_ffi::marshal::{WireState, WireValue};
 
+    use dregg_lean_ffi::marshal::Cap;
+
     let mut cells = Vec::new();
     let mut bal = Vec::new();
+    let mut caps: Vec<(u64, Vec<Cap>)> = Vec::new();
 
     let mut sorted: Vec<_> = pre.id_map.iter().collect();
     sorted.sort_by_key(|(_, nat)| *nat);
@@ -596,11 +716,29 @@ fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal
         }
         cells.push((*nat, WireValue::Record(fields)));
         bal.push((*nat, 0, cell.state.balance() as i128));
+
+        // Carry the cell's REAL c-list (`capabilities`) as wire `caps` so the verified
+        // kernel's authority gates (`authorizedB` / `mintAuthorizedB`) read the actual
+        // edges the actor holds — NOT a fabricated table. Each `CapabilityRef { target, … }`
+        // is an edge to `target`; we project it to `Cap::Node(target_id)` (the `node` cap the
+        // Lean gate reads as full authority over the target). An edge whose target is not in
+        // the turn's id map is dropped (it cannot be referenced by any wire action), keeping
+        // the table closed. An empty c-list (the corpus default) yields no entry — so a
+        // cap-PRIVILEGED effect (Burn/RevokeCapability) correctly FAILS the Lean gate, which
+        // is the genuine, non-vacuous test of the authority leg.
+        let edges: Vec<Cap> = cell
+            .capabilities
+            .iter()
+            .filter_map(|cref| id_map_lookup(pre, &cref.target).map(Cap::Node))
+            .collect();
+        if !edges.is_empty() {
+            caps.push((*nat, edges));
+        }
     }
 
     Ok(WireState {
         cells,
-        caps: vec![],
+        caps,
         bal,
         escrows: vec![],
         nullifiers: vec![],
@@ -609,6 +747,12 @@ fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal
         swiss: vec![],
         revoked: vec![],
     })
+}
+
+/// Look up a `CellId`'s wire Nat in the snapshot's id map (for c-list edge projection).
+#[cfg(feature = "lean-shadow")]
+fn id_map_lookup(pre: &ShadowPreLedger, c: &CellId) -> Option<u64> {
+    pre.id_map.get(c).copied()
 }
 
 #[cfg(feature = "lean-shadow")]
@@ -635,7 +779,7 @@ fn turn_to_wire_turn(
         .unwrap_or_default();
 
     // The WHOLE forest, pre-order, as (wire action, originating credential) pairs.
-    let mapped = flatten_forest_actions_full(turn, &pre.id_map)
+    let mapped = flatten_forest_actions_full(turn, pre)
         .ok_or_else(|| "shadow: forest not fully marshallable".to_string())?;
 
     let mut iter = mapped.into_iter();
@@ -688,11 +832,11 @@ struct FullMapped {
 #[cfg(feature = "lean-shadow")]
 fn flatten_forest_actions_full(
     turn: &Turn,
-    id_map: &HashMap<CellId, u64>,
+    pre: &ShadowPreLedger,
 ) -> Option<Vec<FullMapped>> {
     let mut out = Vec::new();
     for root in &turn.call_forest.roots {
-        flatten_tree_full(root, id_map, &mut out)?;
+        flatten_tree_full(root, pre, &mut out)?;
     }
     if out.is_empty() {
         return None;
@@ -703,20 +847,20 @@ fn flatten_forest_actions_full(
 #[cfg(feature = "lean-shadow")]
 fn flatten_tree_full(
     tree: &CallTree,
-    id_map: &HashMap<CellId, u64>,
+    pre: &ShadowPreLedger,
     out: &mut Vec<FullMapped>,
 ) -> Option<()> {
-    let actor = *id_map.get(&tree.action.target)?;
+    let actor = *pre.id_map.get(&tree.action.target)?;
     let wire_auth = auth_to_wire(&tree.action.authorization);
     for eff in &tree.action.effects {
-        let action = effect_to_wire(actor, eff, id_map)?;
+        let action = effect_to_wire(actor, eff, pre)?;
         out.push(FullMapped {
             action,
             wire_auth: wire_auth.clone(),
         });
     }
     for child in &tree.children {
-        flatten_tree_full(child, id_map, out)?;
+        flatten_tree_full(child, pre, out)?;
     }
     Some(())
 }
@@ -733,7 +877,22 @@ fn auth_to_wire(auth: &Authorization) -> dregg_lean_ffi::marshal::WireAuth {
             pubkey: digest_from_halves(pk, sig),
             sig: bytes32_to_nat(sig),
         },
-        Authorization::Unchecked => WireAuth::Unchecked,
+        // dregg1's `Unchecked` means "no signature presented; authority is decided by the
+        // c-list / ownership, NOT a credential" — apply.rs admits it when the cell's
+        // permission tier is `None` (open) or the actor owns/holds a cap on the target. The
+        // verified gated kernel's `portalVerify .unchecked = false` is a FAIL-CLOSED §8 anchor
+        // (a turn carrying NO credential cannot pass the WHO leg), so marshalling `Unchecked`
+        // to the Lean `.unchecked` would roll EVERY such turn back at the gate — diverging from
+        // apply.rs on every authority-by-ownership move (the marshaller-faithfulness gap the
+        // ledger records). The faithful projection is the `.breadstuff` credential: it passes
+        // the WHO leg (`portalVerify .breadstuff = true`, "pure c-list read; the WHAT leg
+        // gates") and DEFERS the real authority decision to `execFullA`'s `authorizedB`
+        // (actor owns `src`, or holds a `node`/`write`-endpoint cap) — exactly the
+        // ownership/c-list check apply.rs runs for an `Unchecked` move. So an authorized
+        // ownership move COMMITS in both; an unauthorized one (`actor ≠ src`, no cap) or an
+        // overspend still FAILS inside `recKExecAsset` (body rolls back ⇒ `ok:0`), matching
+        // apply.rs's rejection — the gap closes WITHOUT weakening either gate.
+        Authorization::Unchecked => WireAuth::Breadstuff { token: 0 },
         Authorization::Breadstuff(token) => WireAuth::Breadstuff {
             token: bytes32_to_nat(token),
         },

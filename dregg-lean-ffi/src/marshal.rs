@@ -525,18 +525,75 @@ pub struct WireTurn {
 // T8 ENCODE — marshal_turn(state, turn) -> the input wire String.
 // ===================================================================
 
-/// The full input wire `{"state":STATEW,"turn":TURNW}`.
-///
-/// `state` is the executor's PRE-state (the P0-unsourced left half — see module doc); the
-/// caller must supply a `WireState` snapshot. `turn` is the wire-level envelope+tree.
-pub fn marshal_turn(state: &WireState, turn: &WireTurn) -> Result<String, MarshalError> {
-    let mut s = String::with_capacity(512);
-    s.push_str("{\"state\":");
+/// The HOST/NODE-fed admission context (boundary-P1 bug 1). The NODE fills these from its own
+/// state (`self.current_timestamp` / `self.block_height` / `self.frozen_cells` /
+/// `self.receipt_heads[agent]` / `self.silo_budget`) — they are NOT chosen by the turn. The
+/// verified Lean export derives its `AdmCtx` from THIS context (`admCtxOfHost`), never from the
+/// turn envelope, so an attacker can no longer set its own clock / budget / freeze-set / head.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WireHostCtx {
+    /// The executor's current clock (`self.current_timestamp`); checked against the turn's
+    /// CLAIMED `valid_until`.
+    pub now: u64,
+    /// The chain clock dimension (`self.block_height`); preferred over `now` for expiry when > 0.
+    pub block_height: u64,
+    /// The migration freeze-set (`self.frozen_cells`), as wire cell ids.
+    pub frozen: Vec<u64>,
+    /// The agent's stored receipt-chain head (`self.receipt_heads[agent]`); `0` = genesis.
+    pub stored_head: u64,
+    /// The Stingray silo budget slice the fee must fit (`self.silo_budget`).
+    pub budget: u64,
+}
+
+impl WireHostCtx {
+    /// A diagnostic host context (clock 0 ⇒ no spurious expiry, no frozen cells, genesis head,
+    /// large budget) for round-trips/tests. The PRODUCTION node MUST override every field from
+    /// its own state — the security of bug-1 is that these come from the node, not the wire.
+    pub fn diag() -> Self {
+        WireHostCtx { now: 0, block_height: 0, frozen: vec![], stored_head: 0, budget: 1_000_000_000 }
+    }
+}
+
+/// Encode the host context `{"now":N,"block_height":N,"frozen":[N,…],"stored_head":N,"budget":N}`
+/// (mirrors FFI.lean `encodeWHostCtx`, BYTE-EXACT).
+fn encode_whostctx(hc: &WireHostCtx, out: &mut String) {
+    out.push_str("{\"now\":");
+    push_nat(out, hc.now);
+    out.push_str(",\"block_height\":");
+    push_nat(out, hc.block_height);
+    out.push_str(",\"frozen\":");
+    encode_nats_w(&hc.frozen, out);
+    out.push_str(",\"stored_head\":");
+    push_nat(out, hc.stored_head);
+    out.push_str(",\"budget\":");
+    push_nat(out, hc.budget);
+    out.push('}');
+}
+
+/// The full input wire `{"host":HOST,"state":STATEW,"turn":TURNW}` (boundary-P1: the host
+/// context is the NODE-fed admission seam — bug 1). The verified export reads `host` for its
+/// clock/budget/freeze/head and the turn's `valid_until`/`prev` only as agent CLAIMS.
+pub fn marshal_turn_hosted(
+    host: &WireHostCtx,
+    state: &WireState,
+    turn: &WireTurn,
+) -> Result<String, MarshalError> {
+    let mut s = String::with_capacity(576);
+    s.push_str("{\"host\":");
+    encode_whostctx(host, &mut s);
+    s.push_str(",\"state\":");
     encode_wstate(state, &mut s)?;
     s.push_str(",\"turn\":");
     encode_wturn(turn, &mut s)?;
     s.push('}');
     Ok(s)
+}
+
+/// Back-compat wrapper: marshal with the DIAGNOSTIC host context. The production node must use
+/// [`marshal_turn_hosted`] with its own [`WireHostCtx`]; this default is for round-trips/tests
+/// where the host clock must not spuriously expire the demo turns.
+pub fn marshal_turn(state: &WireState, turn: &WireTurn) -> Result<String, MarshalError> {
+    marshal_turn_hosted(&WireHostCtx::diag(), state, turn)
 }
 
 /// Build a minimal gated turn with `action` as the root, compatible with `wide_demo_state`.
@@ -1711,16 +1768,39 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
 // string must be consumed). Maps the empty-state sentinel to MalformedWireSentinel.
 // ===================================================================
 
-/// The decoded turn result `{"state":STATEW,"loglen":N,"ok":B}`.
+/// The three-way turn status the boundary-P1 (bug 2) status-bearing export emits.
+///
+/// The legacy `{"state":…,"loglen":N,"ok":B}` shape collapsed
+/// `PrologueCommittedBodyFailed` (the gated forest body rolled back — e.g. a forged /
+/// `unchecked` credential, an overspend, a violated caveat — only the never-rolled-back
+/// fee/nonce prologue survives) and `BodyCommitted` to the SAME `ok:1`. The status-bearing
+/// export (`encodeWStatusOut`, FFI.lean §W-STATUS) emits an explicit `status` code and
+/// narrows `ok` to fire ONLY on `BodyCommitted`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStatus {
+    /// Admission failed (bad nonce/fee/expiry) or the wire was malformed: NO state edit.
+    Rejected,
+    /// Admission passed, the prologue (fee debit + nonce tick) committed and is never rolled
+    /// back, but the BODY FAILED. The fee is charged as anti-spam, but the turn is REJECTED.
+    PrologueCommittedBodyFailed,
+    /// Admission passed AND the gated forest body committed: the turn is genuinely ACCEPTED.
+    BodyCommitted,
+}
+
+/// The decoded turn result `{"state":STATEW,"loglen":N,"status":S,"ok":B}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnResult {
-    /// `ok == 1`: the turn COMMITTED. `ok == 0` with a non-empty state: legitimate ROLLBACK
-    /// (state echoed unchanged). `ok == 0` with the empty sentinel is reported as an Err.
+    /// `ok == 1`: the turn's BODY COMMITTED (`status:2`). `ok == 0` with a non-empty state:
+    /// legitimate ROLLBACK (admission rejected `status:0`, or prologue-only `status:1` —
+    /// state echoed unchanged). `ok == 0` with the empty sentinel is reported as an Err.
     pub committed: bool,
     /// The post-state (commit) OR the echoed pre-state (rollback).
     pub state: WireState,
     /// Receipt-log length; 0 on rollback.
     pub loglen: u64,
+    /// The three-way status. `None` when the (legacy, no-`status`) wire shape was decoded;
+    /// `Some(_)` when the status-bearing export emitted an explicit `status` code.
+    pub status: Option<TurnStatus>,
 }
 
 pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
@@ -1729,6 +1809,26 @@ pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
     let state = parse_wstate(&mut p)?;
     p.lit(",\"loglen\":").map_err(|e| p.err(e))?;
     let loglen = p.nat().map_err(|e| p.err(e))?;
+    // The status-bearing export (boundary-P1 bug 2) inserts `,"status":S` between `loglen`
+    // and `ok`; the legacy export omits it. Accept BOTH shapes (the field is optional and
+    // forward-compatible) so a freshly-built status-emitting Lean lib AND an older lib both
+    // decode. `ok` remains the load-bearing commit bit (it fires only on `status:2`).
+    let status = if p.try_lit(",\"status\":") {
+        let code = p.nat().map_err(|e| p.err(e))?;
+        Some(match code {
+            0 => TurnStatus::Rejected,
+            1 => TurnStatus::PrologueCommittedBodyFailed,
+            2 => TurnStatus::BodyCommitted,
+            other => {
+                return Err(UnmarshalError::OutputParse {
+                    at: p.pos(),
+                    why: format!("status code {other} out of range (0..2)"),
+                });
+            }
+        })
+    } else {
+        None
+    };
     p.lit(",\"ok\":").map_err(|e| p.err(e))?;
     let ok = p.flag().map_err(|e| p.err(e))?;
     p.lit("}").map_err(|e| p.err(e))?;
@@ -1740,7 +1840,7 @@ pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
     if !ok && state.is_empty_sentinel() {
         return Err(UnmarshalError::MalformedWireSentinel);
     }
-    Ok(TurnResult { committed: ok, state, loglen })
+    Ok(TurnResult { committed: ok, state, loglen, status })
 }
 
 // ---- the strict recursive-descent parser (mirrors FFI.lean lit/parseInt/parseNat) ----
@@ -1769,6 +1869,10 @@ impl<'a> Parser<'a> {
     /// Try to consume a literal; return whether it matched (no error on miss). For dispatch.
     fn try_lit(&mut self, lit: &str) -> bool {
         self.lit(lit).is_ok()
+    }
+    /// The current byte offset (for error reporting on a partially-consumed input).
+    fn pos(&self) -> usize {
+        self.i
     }
     fn peek(&self) -> Option<u8> {
         self.s.get(self.i).copied()

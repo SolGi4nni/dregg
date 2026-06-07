@@ -117,6 +117,16 @@ struct CorpusCase {
     ledger: Ledger,
 }
 
+/// Grant cell `holder` a capability targeting ITSELF (a self `node`-equivalent c-list edge).
+/// The shadow marshaller projects every `CapabilityRef` to `Cap::Node(target)`, so this gives
+/// the holder the mint/burn authority the verified kernel requires (`mintAuthorizedB`).
+fn grant_self_cap(ledger: &mut Ledger, holder: CellId) {
+    let cell = ledger.get_mut(&holder).expect("holder cell present");
+    cell.capabilities
+        .grant(holder, AuthRequired::None)
+        .expect("grant self cap");
+}
+
 fn two_cell_ledger(bal_a: u64, bal_b: u64) -> (Ledger, CellId, CellId) {
     let a = make_open_cell(1, bal_a);
     let b = make_open_cell(2, bal_b);
@@ -206,7 +216,20 @@ fn build_corpus() -> Vec<CorpusCase> {
 
     // ---- Effects WITHOUT a Lean wire model yet (expected: GAP) ----
     case!("IncrementNonce", 100, 100, |a, _b| vec![Effect::IncrementNonce { cell: a }]);
+    // Burn on an OWNED, OPEN, cap-LESS cell: apply.rs commits (ownership suffices), the verified
+    // `.burnA` REJECTS (it requires an explicit `node`/`control` mint-cap — bare ownership is
+    // deliberately insufficient). A characterised, SAFE-direction model difference (allowlisted).
     case!("Burn", 100, 100, |a, _b| vec![Effect::Burn { target: a, slot: 0, amount: 10 }]);
+    // Burn TOOTH: the SAME burn on a cell that HOLDS a `node` cap on itself. The c-list edge is
+    // marshalled to `Cap::Node(self)`, which `mintAuthorizedB` reads as burn-authority, so the
+    // verified `.burnA` now COMMITS — matching apply.rs. This proves the Lean burn gate is
+    // GENUINELY gated (not vacuously-false): empty c-list ⇒ reject, self-node-cap ⇒ commit.
+    {
+        let (mut ledger, ida, _idb) = two_cell_ledger(100, 100);
+        grant_self_cap(&mut ledger, ida);
+        let turn = corpus_turn(ida, 0, vec![Effect::Burn { target: ida, slot: 0, amount: 10 }]);
+        cases.push(CorpusCase { label: "Burn/with-cap", turn, ledger });
+    }
     case!("CellSeal", 100, 100, |a, _b| vec![Effect::CellSeal { target: a, reason: [9u8; 32] }]);
     case!("GrantCapability", 100, 100, |a, b| {
         // CapabilityRef shape varies; use the queue-allocate effect as a stand-in entry that
@@ -376,14 +399,32 @@ fn rust_lean_divergence_finder() {
     //   (a) the harness not running both executors at all (no comparable cases when shadow on), or
     //   (b) a known-AGREEING effect flipping to DIVERGE (a real new drift on a path we trust).
     //
-    // KNOWN-DRIFT allowlist (documented in the ledger): under the lean_shadow marshaller the
-    // turn auth is `Unchecked` with an EMPTY caps table, so the Lean per-asset executor treats
-    // a balance/note transfer as a NO-OP commit (loglen 0, no state change) — it neither
-    // applies nor rejects it — whereas apply.rs APPLIES it (Transfer) or REJECTS on a
-    // precondition the projection drops (overspend availability; NoteSpend null note_tree_root).
-    // These are MARSHALLER-faithfulness gaps (the shadow wire under-specifies auth/caps +
-    // drops note_tree_root), NOT verified-kernel logic bugs. See the ledger's "Findings".
-    let known_drift: &[&str] = &["Transfer", "NoteSpend"];
+    // KNOWN-DRIFT allowlist (documented in the ledger). Each entry is a CHARACTERISED drift,
+    // not a hidden bug:
+    //
+    //   * `NoteSpend` — MARSHALLER-faithfulness gap. The `notespend` wire arm carries ONLY
+    //     the nullifier (the SET-transition the executor's commit-bit depends on); it DROPS
+    //     the `note_tree_root` + `spending_proof`. apply.rs rejects this corpus note for a
+    //     "missing spending proof" precondition the projection cannot see, while the verified
+    //     note-set executor commits the (genuine) nullifier insertion. Closing it needs the
+    //     proof/root carried on the wire — the STARK membership stays the circuit's job.
+    //
+    //   * `Burn` — a genuine, SAFE-DIRECTION MODEL DIFFERENCE (the verified kernel is
+    //     STRICTER). The verified `.burnA` requires `mintAuthorizedB` — an explicit `node` /
+    //     `control`-endpoint CAP on the burned cell (mint/burn is privileged; bare ownership
+    //     is deliberately NOT sufficient, `Generators.lean:31`). The corpus cell has an EMPTY
+    //     c-list, so the verified gate correctly FAILS (lean=false) while apply.rs commits the
+    //     burn on the owned open cell (rust=true). This is NOT a marshaller under-spec — the
+    //     real (empty) c-list IS marshalled; it is the verified kernel refusing an
+    //     under-authorised burn apply.rs allows. The divergence is on the SAFE side (the
+    //     verified executor rejects what apply.rs accepts), and it surfaces a swap-relevant
+    //     authority-model tightening, so it is recorded — not hidden.
+    //
+    // The OLD `Transfer` overspend drift is now RESOLVED (not on the list): the status-bearing
+    // export reports the body-failure as `ok:0` and the `Unchecked → Breadstuff` projection
+    // passes the WHO leg so authority is decided by `authorizedB` — overspend now correctly
+    // rolls back in BOTH executors (4/4 AGREE).
+    let known_drift: &[&str] = &["NoteSpend", "Burn"];
     let unexpected: Vec<(&String, &EffectStat)> = per_effect
         .iter()
         .filter(|(k, s)| s.diverge > 0 && !known_drift.contains(&k.as_str()))
@@ -407,6 +448,41 @@ fn rust_lean_divergence_finder() {
             per_effect.get("SetField").map(|s| s.agree > 0).unwrap_or(false),
             "regression: SetField no longer AGREES between apply.rs and the Lean executor \
              (this is the load-bearing modelled-and-applied path)."
+        );
+        // TOOTH (the status-export + `Unchecked → Breadstuff` fix): EVERY Transfer corpus case
+        // — the two authorised moves AND the two OVERSPENDS — must now AGREE (4 agree, 0
+        // diverge). This is the non-vacuity proof of the fix: the overspends are rejected by
+        // the verified executor (`recKExecAsset`'s `amt ≤ bal` gate ⇒ body fails ⇒ the
+        // status-bearing export reports `ok:0`), matching apply.rs's `InsufficientBalance`.
+        // Before the fix the marshaller sent `Unchecked` (fail-closed at the gate) and the
+        // export collapsed the prologue-only commit to `ok:1`, so all four Transfers diverged.
+        let (t_agree, t_diverge) = per_effect
+            .get("Transfer")
+            .map(|s| (s.agree, s.diverge))
+            .unwrap_or((0, 0));
+        assert!(
+            t_agree == 4 && t_diverge == 0,
+            "regression: Transfer no longer AGREES on all 4 corpus cases (incl. both \
+             overspends) — got agree={t_agree} diverge={t_diverge}. The status-export / \
+             Breadstuff authority fix that makes the verified executor REJECT an overspend \
+             (ok:0) has regressed."
+        );
+        // BURN-GATE NON-VACUITY TOOTH: the verified `.burnA` requires an explicit mint/burn
+        // CAP. The corpus exercises BOTH sides — the cap-LESS `Burn` (verified REJECTS ⇒
+        // diverges from apply.rs's ownership-suffices commit) AND `Burn/with-cap` (a self
+        // `node` cap ⇒ verified COMMITS ⇒ agrees). So the gate must show ≥1 agree AND ≥1
+        // diverge; if it were vacuously-false it would never agree, if vacuously-true it
+        // would never diverge. This pins the gate as genuinely two-sided.
+        let (b_agree, b_diverge) = per_effect
+            .get("Burn")
+            .map(|s| (s.agree, s.diverge))
+            .unwrap_or((0, 0));
+        assert!(
+            b_agree >= 1 && b_diverge >= 1,
+            "Burn-gate non-vacuity TOOTH failed — got agree={b_agree} diverge={b_diverge}. \
+             The verified burn-authority gate must COMMIT with a mint-cap (Burn/with-cap) and \
+             REJECT without one (Burn); a gate that only ever agrees or only ever diverges is \
+             vacuous."
         );
     }
 
@@ -485,28 +561,42 @@ fn write_ledger_markdown(
         "\n## Findings (characterised drift)\n\n\
          The agreement comparison is COMMIT-BIT-ONLY (the shadow compares whether both \
          executors commit/roll back, not the full post-state). With that lens:\n\n\
-         1. **Modelled & agreeing**: `SetField`, `SetPermissions`, `SetVerificationKey`, \
-         `EmitEvent`, `MakeSovereign`, `NoteCreate`, and authorised `Transfer` (e.g. 30/100) — \
-         apply.rs and the verified Lean executor agree on the commit decision. \
-         The handler-audit suspects (`MakeSovereign`/`receiptArchive`/`queueAllocate`): \
-         `MakeSovereign` is now MODELLED and AGREES; `ReceiptArchive`/`QueueAllocate` remain \
-         GAP (no Lean wire projection yet — not a divergence).\n\n\
-         2. **Known drift (allowlisted)** — `Transfer` overspend & `NoteSpend`: the \
-         `lean_shadow` marshaller emits the turn under `Unchecked` auth with an EMPTY caps \
-         table and DROPS the `note_tree_root`. Consequence: the Lean per-asset executor \
-         commits these as a **NO-OP** (loglen 0, no state change — it neither applies nor \
-         rejects), while apply.rs either REJECTS on a precondition the projection cannot see \
-         (overspend availability; NoteSpend null `note_tree_root`) or APPLIES the move. These \
-         are **MARSHALLER-faithfulness gaps** (the shadow wire under-specifies auth/caps and \
-         drops note fields), not verified-kernel logic bugs. To close them: marshal the real \
-         credential + caps so the Lean per-asset gate is genuinely exercised, and carry the \
-         note_tree_root in the `notespend` wire arm. Until then they are recorded, not failed.\n\n\
-         3. **GAP (no Lean model yet)** — `IncrementNonce`, `Burn`, `CellSeal`, `QueueAllocate`, \
-         and the ~35 other effects: not projected to the Lean wire, so the turn is INELIGIBLE \
-         for shadow. This is the remaining SWAP surface — what still needs a Lean model + wire \
-         arm before the full cutover. The 9 currently-modelled effects are: SetField, Transfer, \
-         SetPermissions, SetVerificationKey, EmitEvent, MakeSovereign, RevokeDelegation, \
-         NoteSpend, NoteCreate.\n\n\
+         1. **Modelled & agreeing** — `SetField`, `SetPermissions`, `SetVerificationKey`, \
+         `EmitEvent`, `MakeSovereign`, `NoteCreate`, `IncrementNonce`, `CellSeal`, the authorised \
+         `Burn/with-cap`, AND **all four `Transfer` cases incl. both overspends** — apply.rs and \
+         the verified Lean executor agree on the commit decision.\n\n\
+         2. **Transfer overspend — RESOLVED (was the headline drift).** Two fixes closed it: \
+         (a) the `@[export]` now uses the STATUS-bearing `runGatedForestTurnStatus` and reports \
+         `ok:1` ONLY when the gated forest BODY commits — a prologue-only result (fee/nonce \
+         charged, body rolled back) is `status:1, ok:0`, so an overspend is no longer laundered \
+         to `ok:1`; (b) the marshaller projects dregg1 `Unchecked` to the `.breadstuff` \
+         credential (`portalVerify .breadstuff = true`, 'the WHAT leg gates') instead of \
+         `.unchecked` (which fail-closes the WHO leg), so authority is decided by `authorizedB` \
+         (ownership / c-list) exactly as apply.rs does. Result: the authorised transfer COMMITS \
+         and the overspend ROLLS BACK in BOTH executors. The decoder also parses the new \
+         `status` field (forward-compatible with the legacy no-status shape).\n\n\
+         3. **Known drift (allowlisted), characterised:**\n\
+         &nbsp;&nbsp;• `NoteSpend` — MARSHALLER-faithfulness gap: the `notespend` wire arm \
+         carries only the nullifier (the SET-transition the commit-bit depends on) and DROPS the \
+         `note_tree_root` + `spending_proof`, so apply.rs rejects for a missing-proof precondition \
+         the projection cannot see while the verified note-set executor commits the nullifier \
+         insertion. Closing it needs the proof/root on the wire (STARK membership stays the \
+         circuit's job).\n\
+         &nbsp;&nbsp;• `Burn` — a SAFE-DIRECTION MODEL DIFFERENCE (the verified kernel is \
+         STRICTER): `.burnA` requires an explicit `node`/`control` mint-cap, while apply.rs \
+         permits a burn on an owned open cell. The REAL (empty) c-list IS marshalled — this is \
+         NOT a marshaller under-spec — so the verified gate correctly REJECTS the under-authorised \
+         burn. The `Burn/with-cap` corpus case (a self `node` cap ⇒ verified COMMITS) is the \
+         NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.\n\n\
+         4. **GAP (no Lean model yet)** — `QueueAllocate` and the remaining queue/escrow/bridge/ \
+         seal-pair/captp-swiss/factory/grant/introduce effects: not yet projected to the Lean \
+         wire, so the turn is INELIGIBLE for shadow. This is the remaining SWAP surface. The \
+         currently-modelled effects (15+) are: SetField, Transfer, SetPermissions, \
+         SetVerificationKey, EmitEvent, MakeSovereign, RevokeDelegation, NoteSpend, NoteCreate, \
+         IncrementNonce, Refusal, ReceiptArchive, CellSeal, CellUnseal, CellDestroy, Burn, \
+         RevokeCapability, RefreshDelegation. The marshaller also now carries the cell's REAL \
+         c-list (`capabilities`) as wire `caps`, so the verified authority gates \
+         (`authorizedB`/`mintAuthorizedB`) read the actual edges the actor holds.\n\n\
          ## How to run\n\n```\nDREGG_LEAN_SHADOW=1 cargo test -p dregg-turn \
          --features lean-shadow --test rust_lean_divergence_finder -- --nocapture\n```\n\n\
          Requires `dregg-lean-ffi/libdregg_lean.a` (the compiled Lean closure) present + the \
