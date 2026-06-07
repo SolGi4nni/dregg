@@ -1376,12 +1376,12 @@ where
         // `generate_effect_vm_trace` fill `state_after[STATE_COMMIT]` (and the
         // STATE_INTER aux cells) with the refreshed commitment on EVERY row,
         // including NoOp padding rows, so this holds for the honest witness.
-        builder.when_transition().assert_zero(sa(state::STATE_COMMIT) - digests[hs::STATE_COMMIT].clone());
+        builder.assert_zero(sa(state::STATE_COMMIT) - digests[hs::STATE_COMMIT].clone());
         // The intermediate aux columns must equal their hashes (binds inter1..3),
         // also on every row.
-        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER1) - digests[0].clone());
-        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER2) - digests[1].clone());
-        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER3) - digests[2].clone());
+        builder.assert_zero(aux(aux_off::STATE_INTER1) - digests[0].clone());
+        builder.assert_zero(aux(aux_off::STATE_INTER2) - digests[1].clone());
+        builder.assert_zero(aux(aux_off::STATE_INTER3) - digests[2].clone());
 
         // ====================================================================
         // BOUNDARY constraints (mirror EffectVmAir::boundary_constraints).
