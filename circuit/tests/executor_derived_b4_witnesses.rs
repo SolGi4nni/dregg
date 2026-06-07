@@ -233,3 +233,33 @@ fn b4_executor_derived_queue_dequeue() {
         "queueDequeueA",
     );
 }
+
+// ===========================================================================
+// queueAtomicTxA — v3 / triple (`Dregg2.Circuit.Witness.QueueAtomicTxWitness`).
+// 76 wires, 6 gates. Batch = one enqueue op. Forgery: enqueued buffer gets a bystander message
+// appended (tampered FIFO) ⇒ queues bind gate (68 ≠ 69).
+// ===========================================================================
+
+const QUEUEATOMICTX_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queueAtomicTxA-v2","trace_width":76,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}},{"lhs":{"t":"var","v":74},"rhs":{"t":"var","v":75}}]}"#;
+
+const QUEUEATOMICTX_HONEST: [i64; 76] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1000000000600004111, 2000002001270005240, 2, 2, 1000000000500004908, 1000000000500004908,
+    70000000, 70000000, 1000000000700000300, 1000000000700000300, 2000000000030, 2000000000030,
+];
+
+const QUEUEATOMICTX_FORGED: [i64; 76] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1000000000600004111, 2000002001270004909, 2, 2, 1000000000500004577, 1000000000500004908,
+    70000000, 70000000, 1000000000700000300, 1000000000700000300, 2000000000030, 2000000000030,
+];
+
+#[test]
+fn b4_executor_derived_queue_atomic_tx() {
+    check_honest_proves_and_forged_rejects(
+        QUEUEATOMICTX_DESCRIPTOR_JSON, 76, 6, &QUEUEATOMICTX_HONEST, &QUEUEATOMICTX_FORGED, 68, 69,
+        "queueAtomicTxA",
+    );
+}
