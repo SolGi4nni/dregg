@@ -150,10 +150,153 @@ pub struct ReceiptInfo {
 #[derive(Deserialize)]
 pub struct SubmitTurnRequest {
     /// Hex-encoded 32-byte CellId.
+    ///
+    /// NOTE: this is advisory only. The node derives the real agent cell from
+    /// its own cipherclerk pubkey (confused-deputy hardening, F-P1-3) and signs
+    /// the turn as itself. The body value is parsed for validation/error
+    /// reporting but never trusted as the signer.
     pub agent: String,
     pub nonce: u64,
     pub fee: u64,
     pub memo: Option<String>,
+    /// The turn's actions — each becomes a root in the call forest, signed by
+    /// the node operator's cipherclerk and routed through consensus.
+    ///
+    /// Historically this field did not exist and the handler built an empty
+    /// `CallForest`, so every operator-signed turn was rejected by the executor
+    /// ("call forest is empty") and nothing ever replicated. A request with no
+    /// actions still round-trips (it produces an empty no-op turn that the
+    /// executor rejects honestly) but real flows MUST carry at least one action.
+    #[serde(default)]
+    pub actions: Vec<TurnActionSpec>,
+}
+
+/// One action in a `SubmitTurnRequest`. The operator's cipherclerk signs each
+/// action over its canonical bytes (`AgentCipherclerk::make_action`), so the
+/// resulting `Authorization::Signature` authenticates the operator as the
+/// caller for every effect in the action.
+#[derive(Deserialize)]
+pub struct TurnActionSpec {
+    /// Hex-encoded 32-byte target cell id. Defaults to the operator's own
+    /// agent cell when omitted (the common "act on my own cell" case).
+    #[serde(default)]
+    pub target: Option<String>,
+    /// Method name (hashed to a `Symbol`). Defaults to `"submit"`.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// The effects this action applies.
+    pub effects: Vec<TurnEffectSpec>,
+}
+
+/// A JSON-friendly projection of the on-chain `Effect` enum, covering the
+/// effect kinds that a thin HTTP client needs to drive app flows: state
+/// writes, value transfers, nonce bumps, and event emission. Richer effects
+/// (notes, capability grants, factory births) go through the typed
+/// `/turns/submit` signed-envelope path with an SDK-built `SignedTurn`.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TurnEffectSpec {
+    /// Write a 32-byte field element into a cell's state slot.
+    SetField {
+        /// Hex cell id. Defaults to the action's target.
+        #[serde(default)]
+        cell: Option<String>,
+        index: usize,
+        /// Hex-encoded value: a full 64-char hex field element, or a shorter
+        /// hex/decimal scalar that is left-padded into a little-endian u64.
+        value: String,
+    },
+    /// Transfer computrons between cells.
+    Transfer {
+        /// Hex cell id. Defaults to the action's target.
+        #[serde(default)]
+        from: Option<String>,
+        to: String,
+        amount: u64,
+    },
+    /// Emit an event (topic + data) from a cell.
+    EmitEvent {
+        /// Hex cell id. Defaults to the action's target.
+        #[serde(default)]
+        cell: Option<String>,
+        topic: String,
+        /// Event data words, each a hex/decimal scalar.
+        #[serde(default)]
+        data: Vec<String>,
+    },
+    /// Increment a cell's nonce by 1.
+    IncrementNonce {
+        /// Hex cell id. Defaults to the action's target.
+        #[serde(default)]
+        cell: Option<String>,
+    },
+}
+
+/// Parse a value string into a 32-byte field element.
+///
+/// Accepts either a full 64-char hex field element (used verbatim) or a
+/// shorter hex (`0x…`) / decimal scalar, which is encoded little-endian into
+/// the low 8 bytes. This mirrors the wasm runtime's `value_hex` convention so
+/// the HTTP path and the in-browser preview agree on encoding.
+fn parse_field_element(s: &str) -> Result<[u8; 32], String> {
+    let t = s.trim();
+    if t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let bytes = hex_decode(t).map_err(|_| format!("invalid hex field element: {s}"))?;
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        return Ok(out);
+    }
+    let scalar = if let Some(hex) = t.strip_prefix("0x") {
+        u64::from_str_radix(hex, 16).map_err(|_| format!("invalid hex scalar: {s}"))?
+    } else {
+        t.parse::<u64>().map_err(|_| format!("invalid scalar: {s}"))?
+    };
+    let mut out = [0u8; 32];
+    out[..8].copy_from_slice(&scalar.to_le_bytes());
+    Ok(out)
+}
+
+fn parse_cell_id(s: &str) -> Result<CellId, String> {
+    let bytes: [u8; 32] = hex_decode(s).map_err(|_| format!("invalid cell id: {s}"))?;
+    Ok(CellId(bytes))
+}
+
+/// Convert a `TurnEffectSpec` into an on-chain `Effect`, resolving cell
+/// defaults against the action's target.
+fn build_effect(spec: TurnEffectSpec, default_cell: CellId) -> Result<dregg_turn::Effect, String> {
+    use dregg_turn::Effect;
+    let resolve = |opt: Option<String>| -> Result<CellId, String> {
+        match opt {
+            Some(h) => parse_cell_id(&h),
+            None => Ok(default_cell),
+        }
+    };
+    Ok(match spec {
+        TurnEffectSpec::SetField { cell, index, value } => Effect::SetField {
+            cell: resolve(cell)?,
+            index,
+            value: parse_field_element(&value)?,
+        },
+        TurnEffectSpec::Transfer { from, to, amount } => Effect::Transfer {
+            from: resolve(from)?,
+            to: parse_cell_id(&to)?,
+            amount,
+        },
+        TurnEffectSpec::EmitEvent { cell, topic, data } => {
+            let words: Result<Vec<[u8; 32]>, String> =
+                data.iter().map(|w| parse_field_element(w)).collect();
+            Effect::EmitEvent {
+                cell: resolve(cell)?,
+                event: dregg_turn::action::Event::new(
+                    dregg_turn::action::symbol(&topic),
+                    words?,
+                ),
+            }
+        }
+        TurnEffectSpec::IncrementNonce { cell } => Effect::IncrementNonce {
+            cell: resolve(cell)?,
+        },
+    })
 }
 
 #[derive(Serialize)]
@@ -1817,6 +1960,20 @@ fn build_http_witnessed_receipt(
     ))
 }
 
+/// Build a 200-with-error `SubmitTurnResponse` for a malformed action/effect
+/// spec. Returns `Ok(...)` so the body carries the diagnostic rather than an
+/// opaque 4xx status (matching the rest of this handler's error reporting).
+fn submit_turn_bad_request(err: String) -> Result<Json<SubmitTurnResponse>, StatusCode> {
+    Ok(Json(SubmitTurnResponse {
+        accepted: false,
+        turn_hash: None,
+        proof_status: ActivityProofStatus::NotCommitted,
+        has_witness: false,
+        witness_count: 0,
+        error: Some(err),
+    }))
+}
+
 #[tracing::instrument(skip_all, fields(agent = %req.agent))]
 async fn post_submit_turn(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
@@ -1846,15 +2003,56 @@ async fn post_submit_turn(
     let _body_agent = hex_decode(&req.agent).map_err(|_| StatusCode::BAD_REQUEST)?;
     let default_token_id = *blake3::hash(b"default").as_bytes();
     let agent_bytes = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &default_token_id).0;
+    let agent_cell = CellId(agent_bytes);
     let agent = hex_encode(&agent_bytes);
     let previous_receipt_hash = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
+
+    // Build the call forest from the request's actions. Each action is signed
+    // by the operator's cipherclerk over its canonical bytes
+    // (`Authorization::Signature`), so every effect is authenticated to the
+    // operator as caller. Cell/value defaults resolve against the action's
+    // target (which itself defaults to the operator's own agent cell).
+    //
+    // This closes the historical blocker where the handler built an empty
+    // `CallForest` and the executor rejected every turn ("call forest is
+    // empty") so no operator turn ever replicated.
+    let federation_id = s.federation_id;
+    let mut actions = Vec::with_capacity(req.actions.len());
+    for action_spec in req.actions {
+        let target = match action_spec.target {
+            Some(ref h) => match parse_cell_id(h) {
+                Ok(c) => c,
+                Err(err) => return submit_turn_bad_request(err),
+            },
+            None => agent_cell,
+        };
+        let method = action_spec.method.unwrap_or_else(|| "submit".to_string());
+        let mut effects = Vec::with_capacity(action_spec.effects.len());
+        for effect_spec in action_spec.effects {
+            match build_effect(effect_spec, target) {
+                Ok(effect) => effects.push(effect),
+                Err(err) => return submit_turn_bad_request(err),
+            }
+        }
+        // `make_action` produces a real per-action ed25519 signature.
+        actions.push(s.cclerk.make_action(target, &method, effects, &federation_id));
+    }
+
+    let call_forest = {
+        let mut forest = CallForest::new();
+        for action in actions {
+            forest.add_root(action);
+        }
+        forest
+    };
+
     let turn = Turn {
-        agent: CellId(agent_bytes),
+        agent: agent_cell,
         nonce: req.nonce,
         fee: req.fee,
         memo: req.memo,
         valid_until: None,
-        call_forest: CallForest::new(),
+        call_forest,
         depends_on: vec![],
         previous_receipt_hash,
         conservation_proof: None,
@@ -4865,10 +5063,28 @@ async fn get_blocklace_checkpoint(
 // Faucet
 // =============================================================================
 
-/// Well-known faucet cell public key (all 0x01 bytes — deterministic for devnet).
-const FAUCET_PUBLIC_KEY: [u8; 32] = [0x01; 32];
-/// Well-known faucet cell token ID (all zeros — default token domain).
+/// Faucet cell token ID (all zeros — the genesis default token domain; see
+/// `node/src/genesis.rs::write_genesis` which mints the faucet supply under
+/// `default_token_id = [0u8; 32]`).
 const FAUCET_TOKEN_ID: [u8; 32] = [0x00; 32];
+
+/// The faucet's deterministic Ed25519 signing key.
+///
+/// Derived identically to `genesis.rs` (`blake3::derive_key(
+/// "dregg-devnet-faucet-key-v1", b"genesis")`) so the runtime faucet endpoint
+/// controls the *same* cell that holds the genesis supply and can produce a
+/// REAL signed Transfer turn from it — rather than the previous disconnected
+/// `[0x01; 32]` placeholder whose `apply_delta` mutated only this node's local
+/// ledger and never replicated.
+fn faucet_signing_key() -> ed25519_dalek::SigningKey {
+    let secret = blake3::derive_key("dregg-devnet-faucet-key-v1", b"genesis");
+    ed25519_dalek::SigningKey::from_bytes(&secret)
+}
+
+/// The faucet cell's public key (matches the genesis-minted faucet cell).
+fn faucet_public_key() -> [u8; 32] {
+    faucet_signing_key().verifying_key().to_bytes()
+}
 
 #[derive(Deserialize)]
 pub struct FaucetRequest {
@@ -4996,10 +5212,13 @@ async fn post_faucet(
     let mut s = state.write().await;
 
     // Ensure the faucet cell exists in the ledger (create on first use).
-    let faucet_cell_id = dregg_cell::CellId::derive_raw(&FAUCET_PUBLIC_KEY, &FAUCET_TOKEN_ID);
+    // Uses the genesis-derived faucet key so this is the SAME cell genesis
+    // mints the supply into; on a genesis node it already exists.
+    let faucet_pubkey = faucet_public_key();
+    let faucet_cell_id = dregg_cell::CellId::derive_raw(&faucet_pubkey, &FAUCET_TOKEN_ID);
     if s.ledger.get(&faucet_cell_id).is_none() {
         let faucet_cell =
-            dregg_cell::Cell::with_balance(FAUCET_PUBLIC_KEY, FAUCET_TOKEN_ID, 100_000);
+            dregg_cell::Cell::with_balance(faucet_pubkey, FAUCET_TOKEN_ID, 1_000_000);
         let _ = s.ledger.insert_cell(faucet_cell);
     }
 
@@ -5037,15 +5256,51 @@ async fn post_faucet(
         }));
     }
 
-    // Apply the transfer.
-    let delta = dregg_cell::LedgerDelta {
-        created: Vec::new(),
-        updated: Vec::new(),
-        computron_transfers: vec![(faucet_cell_id, recipient_cell_id, req.amount)],
+    // Build a REAL faucet-signed Transfer turn and run it through the
+    // executor, then gossip + submit to the blocklace — the same consensus
+    // path committed operator turns use. This replaces the old direct
+    // `ledger.apply_delta` write, which mutated only this node's local ledger
+    // and never replicated (so a peer never saw the faucet grant).
+    let faucet_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(
+        zeroize::Zeroizing::new(faucet_signing_key().to_bytes()),
+    );
+    let transfer = dregg_turn::Effect::Transfer {
+        from: faucet_cell_id,
+        to: recipient_cell_id,
+        amount: req.amount,
     };
+    let action =
+        faucet_cclerk.make_action(faucet_cell_id, "faucet_transfer", vec![transfer], &s.federation_id);
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(action);
+    let faucet_turn = Turn {
+        agent: faucet_cell_id,
+        nonce: 0,
+        fee: 0,
+        memo: Some(format!("faucet_transfer:{}", req.amount)),
+        valid_until: None,
+        call_forest,
+        depends_on: vec![],
+        previous_receipt_hash: None,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
+        effect_binding_proofs: Vec::new(),
+        cross_effect_dependencies: Vec::new(),
+        effect_witness_index_map: Vec::new(),
+    };
+    let signed = faucet_cclerk.sign_turn(&faucet_turn);
+    let turn_hash_bytes = faucet_turn.hash();
 
-    match s.ledger.apply_delta(&delta) {
-        Ok(()) => {
+    let executor = crate::executor_setup::new_submit_executor(&s);
+    let exec_result = executor.execute(&faucet_turn, &mut s.ledger);
+
+    match exec_result {
+        dregg_turn::TurnResult::Committed { .. } => {
+            crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
             push_committed_event(
                 &mut s,
                 tx_hash.clone(),
@@ -5054,6 +5309,23 @@ async fn post_faucet(
                 ActivityProofStatus::NotRequired,
             );
 
+            // Replicate through gossip + blocklace consensus.
+            let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
+            drop(s);
+
+            let turn_data_for_gossip = turn_data.clone();
+            if let Some(gossip) = state.gossip().await {
+                tokio::spawn(async move {
+                    gossip.gossip_turn(turn_hash_bytes, turn_data_for_gossip).await;
+                });
+            }
+            if let Some(blocklace) = state.blocklace().await {
+                let state_for_blocklace = state.clone();
+                tokio::spawn(async move {
+                    blocklace.submit_turn(&state_for_blocklace, turn_data).await;
+                });
+            }
+
             Ok(Json(FaucetResponse {
                 success: true,
                 tx_hash: Some(tx_hash),
@@ -5061,11 +5333,17 @@ async fn post_faucet(
                 error: None,
             }))
         }
-        Err(e) => Ok(Json(FaucetResponse {
+        dregg_turn::TurnResult::Rejected { reason, .. } => Ok(Json(FaucetResponse {
             success: false,
             tx_hash: None,
             amount: 0,
-            error: Some(format!("transfer failed: {e}")),
+            error: Some(format!("transfer rejected: {reason}")),
+        })),
+        _ => Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            amount: 0,
+            error: Some("faucet transfer did not commit".to_string()),
         })),
     }
 }
@@ -6824,5 +7102,182 @@ mod tests {
             "signature": "00".repeat(64),
         });
         assert!(serde_json::from_value::<CreateFromFactoryRequest>(bad).is_err());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Turn-entry fix: /api/turns/submit now carries a real call forest.
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// A `SubmitTurnRequest` with no `actions` field still deserializes (the
+    /// field defaults to empty) for backward compatibility.
+    #[test]
+    fn submit_turn_request_actions_field_defaults_empty() {
+        let legacy = serde_json::json!({
+            "agent": "11".repeat(32),
+            "nonce": 0,
+            "fee": 1000,
+        });
+        let req: SubmitTurnRequest =
+            serde_json::from_value(legacy).expect("legacy request must still parse");
+        assert!(
+            req.actions.is_empty(),
+            "absent actions field defaults to empty"
+        );
+    }
+
+    /// The action/effect JSON shape parses and resolves defaults correctly.
+    #[test]
+    fn submit_turn_request_parses_actions_with_effects() {
+        let body = serde_json::json!({
+            "agent": "11".repeat(32),
+            "nonce": 3,
+            "fee": 500,
+            "memo": "register name",
+            "actions": [{
+                "method": "register_name",
+                "effects": [
+                    { "kind": "set_field", "index": 2, "value": "00".repeat(32) },
+                    { "kind": "emit_event", "topic": "name-registered", "data": ["7"] },
+                    { "kind": "increment_nonce" }
+                ]
+            }]
+        });
+        let req: SubmitTurnRequest = serde_json::from_value(body).expect("actions must parse");
+        assert_eq!(req.actions.len(), 1);
+        assert_eq!(req.actions[0].effects.len(), 3);
+    }
+
+    /// `parse_field_element` accepts both a full hex field element and a
+    /// short decimal/hex scalar (little-endian into the low 8 bytes).
+    #[test]
+    fn parse_field_element_handles_hex_and_scalar() {
+        let full = parse_field_element(&"ab".repeat(32)).unwrap();
+        assert_eq!(full, [0xab; 32]);
+
+        let dec = parse_field_element("42").unwrap();
+        assert_eq!(u64::from_le_bytes(dec[..8].try_into().unwrap()), 42);
+        assert!(dec[8..].iter().all(|b| *b == 0));
+
+        let hex = parse_field_element("0xff").unwrap();
+        assert_eq!(u64::from_le_bytes(hex[..8].try_into().unwrap()), 255);
+
+        assert!(parse_field_element("not-a-number").is_err());
+    }
+
+    /// `build_effect` maps each spec variant to the right `Effect`, resolving
+    /// the cell default against the action target.
+    #[test]
+    fn build_effect_resolves_cell_defaults() {
+        let target = CellId([0x42; 32]);
+        let other = CellId([0x99; 32]);
+
+        let set = build_effect(
+            TurnEffectSpec::SetField {
+                cell: None,
+                index: 4,
+                value: "9".to_string(),
+            },
+            target,
+        )
+        .unwrap();
+        match set {
+            dregg_turn::Effect::SetField { cell, index, value } => {
+                assert_eq!(cell, target, "absent cell defaults to action target");
+                assert_eq!(index, 4);
+                assert_eq!(u64::from_le_bytes(value[..8].try_into().unwrap()), 9);
+            }
+            other => panic!("expected SetField, got {other:?}"),
+        }
+
+        let xfer = build_effect(
+            TurnEffectSpec::Transfer {
+                from: None,
+                to: hex_encode(&other.0),
+                amount: 100,
+            },
+            target,
+        )
+        .unwrap();
+        match xfer {
+            dregg_turn::Effect::Transfer { from, to, amount } => {
+                assert_eq!(from, target);
+                assert_eq!(to, other);
+                assert_eq!(amount, 100);
+            }
+            other => panic!("expected Transfer, got {other:?}"),
+        }
+    }
+
+    /// End-to-end: a turn built from a `SubmitTurnRequest`'s actions produces
+    /// a NON-EMPTY call forest that the canonical executor commits — the
+    /// regression guard for the historical "call forest is empty" blocker.
+    #[test]
+    fn turn_from_submit_request_actions_executes_and_commits() {
+        // Operator cell with permissive permissions (its own cell).
+        let public_key = [0x55; 32];
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let agent = dregg_cell::CellId::derive_raw(&public_key, &token_id);
+        let mut ledger = dregg_cell::Ledger::new();
+        let mut cell = dregg_cell::Cell::with_balance(public_key, token_id, 10_000);
+        cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        ledger.insert_cell(cell).expect("insert agent cell");
+
+        // Build a real action via the same primitive the handler uses.
+        let cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
+            *blake3::hash(b"operator-key").as_bytes(),
+        ));
+        let effect = build_effect(
+            TurnEffectSpec::SetField {
+                cell: None,
+                index: 2,
+                value: "00".repeat(32),
+            },
+            agent,
+        )
+        .unwrap();
+        let action = cclerk.make_action(agent, "submit", vec![effect], &[7u8; 32]);
+        let mut forest = CallForest::new();
+        forest.add_root(action);
+        assert_eq!(
+            forest.action_count(),
+            1,
+            "the call forest must NOT be empty (the historical blocker)"
+        );
+
+        let turn = Turn {
+            agent,
+            nonce: 0,
+            fee: 1_000,
+            memo: Some("turn-entry e2e".to_string()),
+            valid_until: None,
+            call_forest: forest,
+            depends_on: vec![],
+            previous_receipt_hash: None,
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+
+        let executor = dregg_turn::TurnExecutor::new(ComputronCosts::default());
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            matches!(result, dregg_turn::TurnResult::Committed { .. }),
+            "a turn with a real action must commit, not be rejected as empty"
+        );
     }
 }
