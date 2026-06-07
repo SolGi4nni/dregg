@@ -54,6 +54,47 @@ starbridge-apps/
 └── ... (future starbridge-apps land here per STARBRIDGE-APPS-PLAN.md §6)
 ```
 
+## App inventory (honest status)
+
+Six apps are **real, fully-implemented** — each is a Rust crate
+(`src/lib.rs` with `FactoryDescriptor`s + signed turn-builders), a
+`pages/` web surface (inspectors + turn-builders + an `index.html`
+fragment), a README, and a passing test suite. Their core flows run
+end-to-end in-process against the framework's `EmbeddedExecutor` (the
+canonical `TurnExecutor`), with the capability/mandate/slot-caveat gates
+firing:
+
+| App | Core flow (all gated, all tested) |
+|---|---|
+| `nameservice` | register → resolve / set-target → renew → transfer → revoke (WriteOnce / Monotonic slot caveats) |
+| `identity` | issue credential → present (selective disclosure) → verify → revoke |
+| `subscription` | grant publisher/consumer → publish → consume (bounded ring buffer) |
+| `governed-namespace` | propose table update → vote (threshold) → commit → register service |
+| `compartment-workflow-mandate` | init mandate → advance step (clearance-graph + spend-policy admission) |
+| `storage-gateway-mandate` | init gateway → GET / PUT / LIST (volume-ceiling mandate) |
+
+Four entries are **roadmap stubs**, not apps: `bounty-board`,
+`compute-exchange`, `gallery`, `privacy-voting`. Each is a single
+`manifest.json` with `"status": "unported"` and `"runtime_mode":
+"legacy-http"`, pointing at its still-running legacy implementation under
+`../apps/<name>/` (its `porting_target` is the starbridge-app to build).
+They are deliberately *not* faked into half-working crates — porting one
+follows the nameservice exemplar (the documented paint-by-numbers
+template) and is tracked work, not shipped work.
+
+### Anti-drift: generated JS constants
+
+Every real app's web surface consumes a `pages/constants.generated.js`
+rendered from the Rust source of truth (`web_constants()` in each
+`src/lib.rs`, via `dregg_app_framework::ConstantsModule`). The pages
+*import* slot indices / event topics / method names from it rather than
+re-declaring the literals, so the JS can no longer drift from the slot
+layout and event vocabulary the executor enforces. Regenerate with the
+app's `constants_generator` example; a `constants_js_drift` test fails if
+the committed file is stale. (This already caught and fixed a real bug:
+governed-namespace's hand-written event topics never matched the
+executor's emitted topics.)
+
 ## How a starbridge-app crate plugs in
 
 Each Rust crate exports two things:
