@@ -86,27 +86,33 @@ subsection\<open>Non-vacuity: the carrier is NOT \<open>True\<close>\<close>
 text\<open>Lower witness — a perfectly unforgeable scheme.  We work INSIDE the @{locale suf_cma} locale so
 that @{const suf_cma.advantage\<^sub>1} and @{const suf_cma.dregg2_unforgeable} are in scope with their
 locale fixes.  Under the assumption that the verifier rejects EVERY signature
-(@{term "verify = (\<lambda>_ _ _ _. False)"}), the SUF-CMA game can never return \<open>True\<close>: the game returns
-@{term "verify \<eta> vkey m sig \<and> _"} which is always @{term False}.  Hence advantage is identically 0.\<close>
+(@{term "verify = (\<lambda>_ _ _ _. False)"}), the SUF-CMA game can never return \<open>True\<close>: the game's
+returned bool is a conjunction whose first conjunct is the verifier verdict @{term "verify \<eta>"},
+which is always @{term False}.  Hence advantage is identically 0.\<close>
 
 lemma (in suf_cma) reject_all_advantage_zero:
   assumes vf: "\<And>\<eta> vk m sig. verify \<eta> vk m sig = False"
   shows "advantage\<^sub>1 \<A> \<eta> = 0"
 proof -
-  have "suf_cma\<^sub>1 \<A> \<eta> = do {
-          ((m, sig), \<sigma>) \<leftarrow> exec_gpv (oracle\<^sub>1 \<eta>) (\<A> \<eta>) None;
-          return_spmf False }"
-    unfolding suf_cma\<^sub>1_def by (intro bind_spmf_cong refl) (simp add: vf split: option.split)
+  \<comment> \<open>The game's returned bool is identically false when the verifier rejects everything: the Some
+      branch is a conjunction whose first conjunct is the verifier verdict (killed by vf), the
+      None branch is false already.  We rewrite the whole game to a constant-false map over the
+      adversary execution; the bind is over the pair produced by exec_gpv, so we split it.\<close>
+  have "suf_cma\<^sub>1 \<A> \<eta>
+          = map_spmf (\<lambda>_. False) (exec_gpv (oracle\<^sub>1 \<eta>) (\<A> \<eta>) None)"
+    unfolding suf_cma\<^sub>1_def map_spmf_conv_bind_spmf
+    by (intro bind_spmf_cong[OF refl])
+       (clarsimp split: option.split simp add: vf split_beta)
   hence "spmf (suf_cma\<^sub>1 \<A> \<eta>) True
            = spmf (map_spmf (\<lambda>_. False) (exec_gpv (oracle\<^sub>1 \<eta>) (\<A> \<eta>) None)) True"
-    by (simp add: map_spmf_conv_bind_spmf split_def)
+    by simp
   also have "\<dots> = 0" by (simp add: spmf_map vimage_def)
   finally show ?thesis by (simp add: advantage\<^sub>1_def)
 qed
 
 text\<open>NON-VACUITY (the carrier is a genuine proposition).  The reject-all scheme satisfies the
 dregg2 unforgeability carrier (advantage \<open>0\<close> is negligible at every adversary), so the carrier is
-INHABITED — there is a scheme making @{const dregg2_unforgeable} true.  Together with
+INHABITED — there is a scheme making @{const suf_cma.dregg2_unforgeable} true.  Together with
 @{thm not_negligible_1} (a constant-1 advantage is NOT negligible) this shows the carrier is a
 non-trivial property: true for secure schemes, refutable for a scheme whose forgery advantage is
 \<open>1\<close> (the game-based analogue of `instSignatureForge_not_unforgeable`, PortalFloor.lean:479).\<close>
@@ -160,9 +166,15 @@ lemma cr_advantage_nonneg: "cr_advantage \<A> \<eta> \<ge> 0"
 
 text\<open>The dregg2 `collisionHard` carrier: every adversary's collision advantage is negligible.  This
 is the game-based meaning of the Lean `collisionHard : Prop`; the Lean `noCollision` field is its
-perfect (advantage-0) shadow.\<close>
+perfect (advantage-0) shadow.  We use a @{command definition} (not an abbreviation) so that, when
+referenced qualified as @{text "dregg2_hash.secure_cr hash"} outside the locale, it is a stable
+constant carrying the @{term hash} parameter explicitly.  The body mentions @{term hash} directly
+(via a @{const cr_game}-shaped digest comparison guarded by @{term True}) so that BOTH phantom types
+@{typ 'inp} and @{typ 'dig} are pinned by the @{term hash} parameter's signature — otherwise @{typ 'dig}
+would not appear (the adversary type @{typ "('inp,'dig) cr_adversary"} expands away @{typ 'dig}) and the
+exported constant would carry a spurious @{typ "'dig itself"} argument.\<close>
 definition secure_cr :: bool where
-  "secure_cr \<longleftrightarrow> (\<forall>\<A>. negligible (cr_advantage \<A>))"
+  "secure_cr \<longleftrightarrow> (hash = hash) \<and> (\<forall>\<A>. negligible (cr_advantage \<A>))"
 
 end
 
@@ -171,7 +183,7 @@ subsection\<open>Perfect fragment: an injective hash has advantage \<open>0\<clo
 text\<open>If the hash is injective at every security parameter (the idealisation PortalFloor's REFERENCE
 instances satisfy — @{text "Nat.pair"}, @{text "Encodable.encode"}; PortalFloor.lean:352, 365), then
 NO pair can both differ and collide, so the game always returns \<open>False\<close>: advantage identically 0,
-hence negligible, and @{const dregg2_hash.secure_cr} HOLDS.  This is the exact CryptHOL analogue of
+hence negligible, and \<open>dregg2_hash.secure_cr\<close> HOLDS.  This is the exact CryptHOL analogue of
 the Lean perfect carriers `instPoseidon2Kernel_collisionHard` (PortalFloor.lean:357) and
 `instBlake3Kernel_collisionHard` (PortalFloor.lean:369).\<close>
 
@@ -192,7 +204,7 @@ theorem (in dregg2_hash) injective_secure_cr:
   assumes inj: "\<And>\<eta> x y. hash \<eta> x = hash \<eta> y \<Longrightarrow> x = y"
   shows secure_cr
   unfolding secure_cr_def
-proof (intro allI)
+proof (intro conjI allI refl)
   fix \<A>
   have "cr_advantage \<A> = (\<lambda>\<eta>. 0)"
     by (rule ext) (rule injective_cr_advantage_zero[OF inj])
@@ -204,7 +216,7 @@ subsection\<open>Non-vacuity: a collapsing hash FAILS CR (advantage \<open>1\<cl
 text\<open>The other half of non-vacuity.  Take the constant hash @{term "\<lambda>_ _. c"} (every input maps to
 \<open>c\<close>) and the adversary that always outputs a FIXED distinct pair @{term "(a, b)"}, @{term "a \<noteq> b"}.
 The game returns \<open>True\<close> with probability 1, so the advantage is constantly 1 — NOT negligible.  Hence
-the carrier @{const dregg2_hash.secure_cr} is genuinely refutable on a colliding hash, mirroring the
+the carrier \<open>dregg2_hash.secure_cr\<close> is genuinely refutable on a colliding hash, mirroring the
 Lean refutation `instPoseidon2Collide_not_collisionHard` (PortalFloor.lean:519).\<close>
 
 lemma collapsing_cr_advantage_one:
@@ -221,14 +233,14 @@ qed
 theorem collapsing_not_secure_cr:
   fixes c :: 'dig and a b :: 'inp
   assumes ab: "a \<noteq> b"
-  shows "\<not> dregg2_hash.secure_cr (\<lambda>_ _. c :: 'dig)"
+  shows "\<not> dregg2_hash.secure_cr ((\<lambda>_ _. c) :: security \<Rightarrow> 'inp \<Rightarrow> 'dig)"
 proof
-  interpret H: dregg2_hash "\<lambda>_ _. c" .
+  interpret H: dregg2_hash "(\<lambda>_ _. c) :: security \<Rightarrow> 'inp \<Rightarrow> 'dig" .
   assume "H.secure_cr"
   hence "negligible (H.cr_advantage (\<lambda>_. return_spmf (a, b)))"
     by (simp add: H.secure_cr_def)
   moreover have "H.cr_advantage (\<lambda>_. return_spmf (a, b)) = (\<lambda>_. 1)"
-    using collapsing_cr_advantage_one[OF ab] by (simp add: fun_eq_iff)
+    by (rule ext) (rule collapsing_cr_advantage_one[OF ab])
   ultimately show False using not_negligible_1 by simp
 qed
 
@@ -239,10 +251,10 @@ text\<open>The two carrier families closed here in REAL game form:
 
   \<^item> ed25519 / HMAC `unforgeable`  =  @{const suf_cma.dregg2_unforgeable}
        =  \<open>\<forall>\<A>. negligible (advantage\<^sub>1 \<A>)\<close>   [AFP @{locale suf_cma}]
-     non-vacuous: @{thm dregg2_unforgeable_nonvacuous} (true for reject-all) +
+     non-vacuous: @{thm suf_cma.dregg2_unforgeable_nonvacuous} (true for reject-all) +
                   @{thm forgeable_advantage_not_negligible} (false for advantage 1).
 
-  \<^item> Poseidon2 / BLAKE3 `collisionHard`  =  @{const dregg2_hash.secure_cr}
+  \<^item> Poseidon2 / BLAKE3 `collisionHard`  =  \<open>dregg2_hash.secure_cr\<close>
        =  \<open>\<forall>\<A>. negligible (cr_advantage \<A>)\<close>
      perfect fragment proved: @{thm dregg2_hash.injective_secure_cr};
      non-vacuous: refuted on a collapsing hash @{thm collapsing_not_secure_cr}.

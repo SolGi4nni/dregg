@@ -53,8 +53,10 @@ capability with an attenuation order (\<open>\<le>\<close>: a derived cap is bel
 universe.  This is the minimal structure the dregg2 kernel's conservation + no-amplify +
 anti-double-spend invariants live on.\<close>
 
+text\<open>NB: the supply field is named \<open>tot_supply\<close> (not \<open>supply\<close>): @{command supply} is a reserved
+Isar proof command, so a record field named \<open>supply\<close> breaks the outer parser.\<close>
 record ('v, 'cap, 'null) fstate =
-  supply     :: 'v                  \<comment> \<open>total conserved value\<close>
+  tot_supply :: 'v                  \<comment> \<open>total conserved value\<close>
   caps       :: "'cap set"          \<comment> \<open>authority currently held (a downward-closed bundle)\<close>
   nullifiers :: "'null set"         \<comment> \<open>spent tags (anti-double-spend)\<close>
 
@@ -80,8 +82,8 @@ definition Authorized :: "('v, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'nul
 
 text\<open>CONSERVES — supply after = supply before (a transfer nets to zero; @{typ 'v} is additive).\<close>
 definition Conserves ::
-  "('v::comm_monoid_add, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) fstate \<Rightarrow> bool" where
-  "Conserves s s' \<longleftrightarrow> supply s' = supply s"
+  "('v, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) fstate \<Rightarrow> bool" where
+  "Conserves s s' \<longleftrightarrow> tot_supply s' = tot_supply s"
 
 text\<open>NO-AMPLIFY — the installed (derived) cap is below the invoked one in the attenuation order.\<close>
 definition NoAmplify :: "('v, 'cap, 'null) feffect \<Rightarrow> bool" where
@@ -95,7 +97,7 @@ derived cap installed, the nullifier marked spent.  By CONSTRUCTION the ideal fu
 take such steps — this is what makes it ideal.\<close>
 
 definition fdregg_step ::
-  "('v::comm_monoid_add, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) feffect
+  "('v, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) feffect
      \<Rightarrow> ('v, 'cap, 'null) fstate \<Rightarrow> bool" where
   "fdregg_step s e s' \<longleftrightarrow>
      Authorized s e \<and> NoAmplify e \<and>
@@ -139,13 +141,13 @@ show supply is conserved along ANY run, and the nullifier set only grows (monoto
 un-spend).  These are the whole-protocol ideal-world safety guarantees an environment relies on.\<close>
 
 inductive fdregg_run ::
-  "('v::comm_monoid_add, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) fstate \<Rightarrow> bool" where
+  "('v, 'cap, 'null) fstate \<Rightarrow> ('v, 'cap, 'null) fstate \<Rightarrow> bool" where
   refl: "fdregg_run s s"
 | step: "fdregg_step s e s' \<Longrightarrow> fdregg_run s' s'' \<Longrightarrow> fdregg_run s s''"
 
 theorem fdregg_run_conserves:
   assumes "fdregg_run s s'"
-  shows "supply s' = supply s"
+  shows "tot_supply s' = tot_supply s"
   using assms
   by (induction rule: fdregg_run.induct)
      (auto dest!: fdregg_conserves simp add: Conserves_def)
@@ -179,32 +181,33 @@ definition demo_admissible ::
 
 lemma fdregg_inhabited:
   "fdregg_step (\<le>) demo_admissible
-     \<lparr> supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>
+     \<lparr> tot_supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>
      \<lparr> use_cap = 5, give_cap = 3, vdelta = 0, spend = 99 \<rparr>
-     \<lparr> supply = 10, caps = {3, 5}, nullifiers = {99} \<rparr>"
+     \<lparr> tot_supply = 10, caps = {3, 5}, nullifiers = {99} \<rparr>"
   by (simp add: fdregg_step_def Authorized_def NoAmplify_def demo_admissible_def insert_commute)
 
 text\<open>And a two-step RUN whose supply is conserved end-to-end (the run-safety theorem on a witness).\<close>
 lemma fdregg_run_inhabited:
   "fdregg_run (\<le>) demo_admissible
-     \<lparr> supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>
-     \<lparr> supply = 10, caps = {3, 5}, nullifiers = {99} \<rparr>"
+     \<lparr> tot_supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>
+     \<lparr> tot_supply = 10, caps = {3, 5}, nullifiers = {99} \<rparr>"
   by (rule fdregg_run.step[OF fdregg_inhabited fdregg_run.refl])
 
 lemma fdregg_run_inhabited_conserves:
-  "supply \<lparr> supply = (10::int), caps = {3::nat, 5}, nullifiers = {99::nat} \<rparr>
-     = supply \<lparr> supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>"
-  using fdregg_run_conserves[OF fdregg_run_inhabited] .
+  "tot_supply \<lparr> tot_supply = (10::int), caps = {3::nat, 5}, nullifiers = {99::nat} \<rparr>
+     = tot_supply \<lparr> tot_supply = (10::int), caps = {5::nat}, nullifiers = {} \<rparr>"
+  using fdregg_run_conserves[OF fdregg_run_inhabited] by simp
 
 
 section\<open>The UC realization scaffold (the honest OPEN crown)\<close>
 
 text\<open>The realizes-relation: the running dregg2 protocol UC-emulates F_dregg.  We phrase it in the
-@{const Constructive_Cryptography.advantage} idiom of the AFP UC framework: there exists a simulator
-\<open>sim\<close> such that no efficient distinguisher tells the real protocol apart from \<open>sim ∘ F_dregg\<close> with
-non-negligible advantage.  We keep the resource/converter types abstract (the dregg2 protocol is not
-yet packaged as a CryptHOL resource), so this is the STATEMENT SHAPE, parametrised by the advantage
-function — exactly the Canetti-dynamic-UC residue `UCBridge.lean` carries.\<close>
+distinguishing-advantage idiom of the AFP constructive-cryptography UC framework: there exists a
+simulator \<open>sim\<close> such that no efficient distinguisher tells the real protocol apart from
+\<open>sim \<circ> F_dregg\<close> with non-negligible advantage.  We keep the resource/converter types abstract (the
+dregg2 protocol is not yet packaged as a CryptHOL resource), so this is the STATEMENT SHAPE,
+parametrised by the advantage function — exactly the Canetti-dynamic-UC residue `UCBridge.lean`
+carries.\<close>
 
 locale dregg2_uc =
   fixes real_protocol :: "security \<Rightarrow> 'res"   \<comment> \<open>the dregg2 running protocol (abstract resource)\<close>
@@ -256,11 +259,16 @@ that @{const dregg2_uc.Dregg2RealizesFDregg} is satisfiable — the locale is no
 relation is not vacuously empty.  (The REAL instance — the dregg2 protocol as a CryptHOL resource with
 a non-trivial simulator and the hybrid reduction — is the open work.)\<close>
 
+text\<open>We fix the abstract types concretely (resource @{typ unit}, distinguisher @{typ unit}) so the
+interpreted constant @{text trivial_uc.Dregg2RealizesFDregg} is a plain @{typ bool}, not a phantom
+@{typ "'dist itself \<Rightarrow> bool"}.\<close>
 interpretation trivial_uc:
-  dregg2_uc "\<lambda>_. ()" "\<lambda>_. ()" "\<lambda>_ r. r" "\<lambda>_ _ _. (0::real)" .
+  dregg2_uc "\<lambda>_. ()" "\<lambda>_. ()" "\<lambda>_ r. r"
+            "(\<lambda>_ _ _. 0) :: unit \<Rightarrow> unit \<Rightarrow> unit \<Rightarrow> real" .
 
 lemma trivial_uc_realizes: "trivial_uc.Dregg2RealizesFDregg"
-  by (simp add: trivial_uc.Dregg2RealizesFDregg_def)
+  unfolding trivial_uc.Dregg2RealizesFDregg_def
+  by (intro allI) (simp add: negligible_K0)
 
 
 section\<open>Scaffold summary (machine-side trust seam, whole protocol)\<close>
