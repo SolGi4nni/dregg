@@ -109,6 +109,7 @@ def encSlotCaveat : SlotCaveat → List ℤ
   | .writeOnce f          => 3 :: encStr f
   | .senderAuthorized f a => 4 :: (encStr f ++ ((a.length : ℤ) :: a.map (fun c => (c : ℤ))))
   | .boundedBy f lo hi    => 5 :: (encStr f ++ [lo, hi])
+  | .admitTable f ts      => 6 :: (encStr f ++ ((ts.length : ℤ) :: ts.flatMap (fun p => [p.1, p.2])))
 
 def accDigConcrete : Finset CellId → ℤ :=
   fun s => refP2 ((s.card : ℤ) :: (s.sort (· ≤ ·)).map (fun c => (c : ℤ)))

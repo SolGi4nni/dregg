@@ -98,6 +98,17 @@ inductive SlotCaveat where
   /-- `BoundedBy`/`FieldDeltaInRange` range family (`:489`/`:636`, eval `:1424`): the new value must
   lie in `[lo, hi]` (a bounded-growth / windowed slot). -/
   | boundedBy        (field : FieldName) (lo hi : Int)
+  /-- **`admitTable { index, transitions }`** — the EXECUTABLE realization of an arbitrary per-slot
+  admission predicate the six prior caveats CANNOT express (op-allowlist, prefix-on-PUT,
+  GET-clearance, DAG-prereqs, per-step-clearance). dregg1's general `RecordProgram::Cases`
+  (`cell/src/program.rs`) lets a factory bind a finite *decision table* of admitted `(old, new)`
+  scalar transitions on a slot; the executor admits a write iff its `(old, new)` is in the table —
+  fail-closed otherwise. A mandate computes this table ONCE (from its clearance graph / DAG / op
+  allowlist) and bakes it into the cell's program, so the SAME admission the off-line predicate
+  decides is now decided BY THE EXECUTOR on every `SetField`. This is what makes `cwmAdvanceM` /
+  `sgmAdmitM` load-bearing: a no-clearance step / out-of-DAG advance is simply NOT in the table, so
+  the executor rejects it (where a `monotonicSeq`/`boundedBy` caveat would wrongly admit). -/
+  | admitTable       (field : FieldName) (transitions : List (Int × Int))
   deriving Repr, DecidableEq
 
 /-- The field a `SlotCaveat` guards. -/
@@ -108,6 +119,7 @@ def SlotCaveat.field : SlotCaveat → FieldName
   | .writeOnce f          => f
   | .senderAuthorized f _ => f
   | .boundedBy f _ _      => f
+  | .admitTable f _       => f
 
 /-- **`SlotCaveat.eval cav actor old new`** — does writing `new` to the caveat's slot (whose
 committed value is `old`, the actor being `actor`) SATISFY the caveat? Decidable, computable,
@@ -121,6 +133,7 @@ def SlotCaveat.eval : SlotCaveat → CellId → Int → Int → Bool
   | .writeOnce _,             _,     old, new => decide (old = 0) || decide (new = old)
   | .senderAuthorized _ auth, actor, _,   _   => auth.contains actor
   | .boundedBy _ lo hi,       _,     _,   new => decide (lo ≤ new) && decide (new ≤ hi)
+  | .admitTable _ table,      _,     old, new => table.contains (old, new)
 
 /-- **`SlotCaveat.bornFresh cav new`** — does the caveat ADMIT a value `new` as a FRESH cell's genesis
 state (dregg1's `None` / genesis arm, `cell/src/program.rs:1331`: a transition caveat permits the
@@ -135,6 +148,7 @@ def SlotCaveat.bornFresh : SlotCaveat → Int → Bool
   | .writeOnce _,        _   => true
   | .senderAuthorized _ _, _ => true                                    -- sender check is a turn-time gate, not genesis
   | .boundedBy _ lo hi,  new => decide (lo ≤ new) && decide (new ≤ hi)  -- value-range STILL binds at birth
+  | .admitTable _ _,     _   => true                                    -- a TRANSITION table: first write permitted (genesis)
 
 /-! ### The FACTORY DESCRIPTOR — a published contract that mints conforming, caveat-bound cells.
 

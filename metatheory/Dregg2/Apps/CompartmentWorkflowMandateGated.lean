@@ -108,6 +108,86 @@ theorem cwm_clearance_violation_rejected_gated (s : CwmRuntime)
     cwmAdvanceM charterMandate3 s = none :=
   cwm_clearance_violation_rejected charterMandate3 s hadm hcl hlen
 
+/-! ### §commit-iff — the gated executor COMMITS a `c → c+1` advance IFF `cwmAdvanceM` admits.
+
+The output-side value frame: on a mandate cell whose program is `mandateCaveats` (carrying the
+admit-table), at committed cursor `c < steps.length`, the GATED executor commits a `c → c+1` advance
+to some new state IFF the gate passes AND `cwmAdvanceM` admits at `c` — i.e. the ONLY reachable
+cursor transitions are the admitted ones. The negative tooth (`cwm_outofclearance_rejected`) exhibits
+a concrete out-of-clearance state where the executor returns `none` where today's weaker
+`monotonicSeq` caveat would WRONGLY commit. -/
+
+/-- **`cwm_commit_iff_admit_gated` — PROVED (output-side COMMIT-IFF-ADMIT).** On a mandate cell at
+committed cursor `c < steps.length` carrying the admit-table program, with the credential gate
+passing (`hg`) and the executor's authority/liveness gate passing (`hauth`, the per-cell `stateStep`
+obligation independent of admission), the GATED executor COMMITS the `c → c+1` advance IFF
+`cwmAdvanceM` admits at cursor `c`. This pins that the ONLY reachable cursor transition out of `c` is
+the admitted one — output-side, not merely `admits old new`. -/
+theorem cwm_commit_iff_admit_gated (s : RecChainedState)
+    (hprog : s.kernel.slotCaveats mandateCell = mandateCaveats) (c : Nat)
+    (hcur : fieldOf stepCursorSlot (s.kernel.cell mandateCell) = (c : Int))
+    (hc : c < charterMandate3.steps.length)
+    (hg : gateOK (mkAuth goodCred []) s = true)
+    (hauth : stateAuthB s.kernel.caps cwmActor mandateCell = true ∧ mandateCell ∈ s.kernel.accounts
+              ∧ cellLive s.kernel mandateCell = true) :
+    (∃ s', execFullForestG s (cwmAdvanceNode goodCred ((c + 1 : Nat) : Int)) = some s')
+      ↔ (cwmAdvanceM charterMandate3 { cursor := c, anchor := 0 }).isSome = true := by
+  rw [execFullForestG_advanceNode, if_pos hg]
+  constructor
+  · rintro ⟨s', hs'⟩
+    have hadm := stateStepGuarded_admits hs'
+    exact (cwm_commit_iff_admit s.kernel hprog cwmActor c hcur hc).mp hadm
+  · intro hadm
+    have hcav : caveatsAdmit s.kernel stepCursorSlot cwmActor mandateCell ((c + 1 : Nat) : Int) = true :=
+      (cwm_commit_iff_admit s.kernel hprog cwmActor c hcur hc).mpr hadm
+    refine ⟨{ kernel := writeField s.kernel stepCursorSlot mandateCell (.int ((c + 1 : Nat) : Int)),
+              log := { actor := cwmActor, src := mandateCell, dst := mandateCell, amt := 0 } :: s.log }, ?_⟩
+    unfold stateStepGuarded
+    rw [if_pos hcav]
+    unfold stateStep
+    rw [if_pos hauth]
+
+/-! ### §negative-tooth — a clerk advancing OUT OF CLEARANCE is rejected by the EXECUTOR.
+
+`clerkCwmG0` installs the charter program on a cell at cursor 1 but with the CLERK actor (who clears
+only `review`, not `redact`). `cwmAdvanceM clerkMandate3 {cursor:=1}` rejects (no `redact` clearance);
+correspondingly the EXECUTOR rejects the `1 → 2` advance because `(1,2) ∉ cwmAdmitTable clerkMandate3`.
+This is the load-bearing tooth: where the old `.monotonicSeq` caveat WRONGLY admitted `1 → 2` (it IS
+`+1`), the admit-table caveat REJECTS it. -/
+
+/-- Charter program built from the CLERK mandate (admits only `(0,1)`): an out-of-clearance program. -/
+def clerkCaveats : List SlotCaveat :=
+  [ .immutable commitmentAnchorSlot, .admitTable stepCursorSlot (cwmAdmitTable clerkMandate3) ]
+
+/-- Genesis cell at cursor 1 carrying the CLERK (out-of-clearance) program. -/
+def clerkCwmG1 : RecChainedState :=
+  { kernel :=
+      { accounts := {0, 1}
+        cell := fun c =>
+          if c = mandateCell then
+            .record [("balance", .int 100), (stepCursorSlot, .int 1),
+                     (commitmentAnchorSlot, .int cwmCompartmentTag)]
+          else .record [("balance", .int 0)]
+        caps := fun c => if c = cwmActor then [Cap.node cwmMonitorCell, Cap.node 2] else []
+        delegate := fun c => if c = cwmMonitorCell then some cwmActor else none
+        delegations := fun _ => []
+        bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0) else 0
+        slotCaveats := fun c => if c = mandateCell then clerkCaveats else [] }
+    log := [] }
+
+/-- **`cwm_outofclearance_rejected` — PROVED (THE NEGATIVE TOOTH).** A clerk holding only `review`
+clearance CANNOT advance the cursor `1 → 2` (the `redact` step): the executor returns `none`, because
+`(1,2)` is NOT in the clerk's admit-table. This is exactly the transition `cwmAdvanceM clerkMandate3
+{cursor:=1}` rejects — now ENFORCED BY THE EXECUTOR (where `.monotonicSeq` would wrongly admit). -/
+theorem cwm_outofclearance_rejected :
+    execFullForestG clerkCwmG1 (cwmAdvanceNode goodCred 2) = none := by
+  rw [execFullForestG_advanceNode]
+  by_cases hg : gateOK (mkAuth goodCred []) clerkCwmG1 = true
+  · rw [if_pos hg]
+    have hcav : caveatsAdmit clerkCwmG1.kernel stepCursorSlot cwmActor mandateCell 2 = false := by decide
+    exact stateStepGuarded_caveat_violation_fails clerkCwmG1 stepCursorSlot cwmActor mandateCell 2 hcav
+  · rw [if_neg (by simp [hg])]
+
 theorem execFullForestG_refreshNode (s : RecChainedState) (cred : Authorization Dg Pf) :
     execFullForestG s (cwmRefreshNode cred) =
       execFullAGated s (mkAuth cred []) (.refreshDelegationA cwmMonitorCell cwmMonitorCell) := by
@@ -281,7 +361,18 @@ def cwmGSigned : Option RecChainedState :=
           (cwmRefreshNode goodCred)).isSome) == false
 #guard (cwmAdvanceM clerkMandate3 { cursor := 1, anchor := 42 }).isSome == false
 
+-- COMMIT-IFF-ADMIT negative tooth: the clerk (review-only clearance) cannot advance 1 → 2 — the
+-- EXECUTOR rejects it (where the old `.monotonicSeq` caveat wrongly admitted, since 1 → 2 IS `+1`).
+#guard ((execFullForestG clerkCwmG1 (cwmAdvanceNode goodCred 2)).isSome) == false
+#guard (cwmAdmitTable clerkMandate3) == [(0, 1)]
+#guard (cwmAdmitTable charterMandate3) == [(0, 1), (1, 2), (2, 3)]
+#guard (caveatsAdmit clerkCwmG1.kernel stepCursorSlot cwmActor mandateCell 2) == false
+-- the officer charter cell at cursor 1 DOES admit 1 → 2 (officer clears redact)
+#guard (caveatsAdmit cwmG0.kernel stepCursorSlot cwmActor mandateCell 1) == true
+
 #assert_axioms execFullForestG_leaf
+#assert_axioms cwm_commit_iff_admit_gated
+#assert_axioms cwm_outofclearance_rejected
 #assert_axioms cwm_forged_rejected
 #assert_axioms cwm_revoked_rejected
 #assert_axioms cwm_illegal_dag_rejected_gated

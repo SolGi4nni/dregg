@@ -126,6 +126,49 @@ def sgmAdmitM (m : StorageMandate) (s : SgmRuntime) (req : StorageRequest) : Opt
   else
     none
 
+/-! ## The EXECUTOR ADMIT TABLE — `sgmAdmitM`'s op-leg baked into a decision table.
+
+The executor sees only a scalar write of the op code to `last_op`. We bake the op-allowlist ∧
+GET-clearance leg of `sgmAdmitM` into a finite `(old, new)` decision table: an op code `n` is an
+admitted `new` value iff its op is allowed AND (if it is GET, clearance holds). The cell's program
+carries an `.admitTable lastOpSlot` with THIS table, so a no-clearance GET (or a disallowed op) is
+NOT in the table and the executor rejects the `last_op` write — internalizing the off-line
+op-allowlist ∧ clearance admission. (Prefix-on-PUT is over the key STRING, not a scalar, so it stays
+a predicate-layer obligation; volume is the separate `boundedBy`/`monotonic` leg.) -/
+
+/-- The op-leg of `sgmAdmitM`: op allowed AND (GET ⇒ clearance). The part the executor can decide off
+the scalar op code (prefix/volume are the other legs). -/
+def sgmOpAdmitted (m : StorageMandate) (op : StorageOp) : Bool :=
+  opAllowed m op && (match op with | .GET => getClearanceOK m | _ => true)
+
+/-- The `(old, new)` decision table baked from `sgmAdmitM`'s op-leg: for every admitted op, the pair
+`(_, op.toInt)` for any prior op code `old ∈ {0,1,2}` (a `last_op` rewrite from any recorded op). -/
+def sgmOpAdmitTable (m : StorageMandate) : List (Int × Int) :=
+  ([(-1 : Int), 0, 1, 2]).flatMap fun old =>
+    ([StorageOp.GET, StorageOp.PUT, StorageOp.LIST]).filterMap fun op =>
+      if sgmOpAdmitted m op then some (old, op.toInt) else none
+
+/-- **`sgmOpAdmitTable_mem_iff` — PROVED.** The table contains `(old, op.toInt)` (for a valid prior op
+code `old ∈ {-1,0,1,2}`) iff the op is admitted by `sgmAdmitM`'s op-leg. -/
+theorem sgmOpAdmitTable_mem_iff (m : StorageMandate) (old : Int) (op : StorageOp)
+    (hold : old ∈ [(-1 : Int), 0, 1, 2]) :
+    (old, op.toInt) ∈ sgmOpAdmitTable m ↔ sgmOpAdmitted m op = true := by
+  unfold sgmOpAdmitTable
+  rw [List.mem_flatMap]
+  constructor
+  · rintro ⟨o, _, ho⟩
+    rw [List.mem_filterMap] at ho
+    obtain ⟨op', _, hop'⟩ := ho
+    by_cases had : sgmOpAdmitted m op'
+    · rw [if_pos had] at hop'
+      simp only [Option.some.injEq, Prod.mk.injEq] at hop'
+      obtain ⟨_, hcode⟩ := hop'
+      have : op' = op := by cases op <;> cases op' <;> simp_all [StorageOp.toInt]
+      subst this; exact had
+    · rw [if_neg had] at hop'; exact absurd hop' (by simp)
+  · intro had
+    exact ⟨old, hold, by rw [List.mem_filterMap]; exact ⟨op, by cases op <;> simp, by rw [if_pos had]⟩⟩
+
 /-! ## One-step lemmas. -/
 
 theorem tryDebit_preserves_spent_le (s s' : Slice) (cost : Nat) (hwf : s.spent ≤ s.ceiling)
@@ -330,5 +373,6 @@ def demoGetReq : StorageRequest :=
 #assert_axioms sgm_clearance_fail_rejected
 #assert_axioms sgm_over_debit_rejected
 #assert_axioms sgmAdmitM_preserves_WF
+#assert_axioms sgmOpAdmitTable_mem_iff
 
 end Dregg2.Apps.StorageGatewayMandate

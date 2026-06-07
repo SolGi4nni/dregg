@@ -44,10 +44,17 @@ abbrev mandateActor : CellId := 0
 abbrev payAsset : AssetId := 0
 abbrev sgmEmitTopic : Int := 9
 
+/-- **The mandate's published per-slot program — NOW with the op admission table baked in.** Keeps
+the immutable `commitment_anchor` + monotonic/bounded `volume_spent` legs, and ADDS an `.admitTable
+lastOpSlot (sgmOpAdmitTable demoMandate)`: the executor now enforces the op-allowlist ∧ GET-clearance
+leg of `sgmAdmitM` inline on every `last_op` write. A disallowed op or a no-clearance GET is absent
+from the table, so the executor rejects it (where no prior caveat could express op-allowlist or
+clearance). Prefix-on-PUT stays a predicate obligation (key is a string, not a scalar). -/
 def mandateCaveats : List SlotCaveat :=
   [ .immutable commitmentAnchorSlot
   , .monotonic volumeSpentSlot
-  , .boundedBy volumeSpentSlot 0 (demoMandate.volumeBudget.ceiling : Int) ]
+  , .boundedBy volumeSpentSlot 0 (demoMandate.volumeBudget.ceiling : Int)
+  , .admitTable lastOpSlot (sgmOpAdmitTable demoMandate) ]
 
 /-- Write the object key field on the mandate cell. -/
 def sgmExecSetKey (actor : CellId) (key : Int) : FullForestA :=
@@ -114,6 +121,38 @@ theorem sgm_over_debit_rejected_exec (s : RecChainedState) (actor : CellId) (new
   have hnone := stateStepGuarded_caveat_violation_fails s volumeSpentSlot actor mandateCell newSpent hbound
   rw [execFullForestA_eq_execFullTurnA]
   simp only [sgmExecDebitVolume, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
+
+/-! ### §B.admit — the EXECUTOR's `caveatsAdmit` over the op slot IS `sgmAdmitM`'s op-leg.
+
+With `mandateCaveats` now carrying `.admitTable lastOpSlot (sgmOpAdmitTable demoMandate)`, the
+executor's `caveatsAdmit` on a `last_op` write reduces EXACTLY to `sgmOpAdmitTable`-membership, which
+is EXACTLY `sgmAdmitM`'s op-allowlist ∧ GET-clearance leg. The inline internalization of the op
+admission. -/
+
+/-- **`sgm_caveatsAdmit_op_eq_table` — PROVED.** On a cell carrying `mandateCaveats`, the executor's
+`caveatsAdmit` on a `last_op` write is exactly `sgmOpAdmitTable`-membership of `(old, newOp)`. -/
+theorem sgm_caveatsAdmit_op_eq_table (k : RecordKernelState)
+    (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (newOp : Int) :
+    caveatsAdmit k lastOpSlot actor mandateCell newOp
+      = (sgmOpAdmitTable demoMandate).contains (fieldOf lastOpSlot (k.cell mandateCell), newOp) := by
+  unfold caveatsAdmit
+  rw [hprog]
+  have hf : (mandateCaveats.filter (fun cav => cav.field == lastOpSlot))
+      = [.admitTable lastOpSlot (sgmOpAdmitTable demoMandate)] := by decide
+  rw [hf]
+  simp only [List.all_cons, List.all_nil, Bool.and_true, SlotCaveat.eval]
+
+/-- **`sgm_commit_iff_op_admit` — PROVED (the COMMIT-IFF-ADMIT op-leg, predicate↔executor).** On a
+mandate cell whose committed `last_op` is a valid prior op code `old ∈ {-1,0,1,2}`, the executor's
+caveat gate on writing op `op` ADMITS iff `sgmAdmitM`'s op-leg admits `op` (op allowed ∧ GET ⇒
+clearance). The off-line op admission and the running executor decide the SAME ops. -/
+theorem sgm_commit_iff_op_admit (k : RecordKernelState)
+    (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (op : StorageOp)
+    (hold : fieldOf lastOpSlot (k.cell mandateCell) ∈ [(-1 : Int), 0, 1, 2]) :
+    caveatsAdmit k lastOpSlot actor mandateCell op.toInt = true
+      ↔ sgmOpAdmitted demoMandate op = true := by
+  rw [sgm_caveatsAdmit_op_eq_table k hprog, List.contains_iff_mem,
+      sgmOpAdmitTable_mem_iff demoMandate _ op hold]
 
 theorem sgmExecSetKey_delta_zero (actor : CellId) (key : Int) (b : AssetId) :
     turnLedgerDeltaAsset (lowerForestA (sgmExecSetKey actor key)) b = 0 := by
@@ -999,6 +1038,8 @@ def sgmPutDebited : Option RecChainedState :=
 #assert_axioms execFullForestA_progLive_preserved
 #assert_axioms sgm_volume_legal_forever
 #assert_axioms sgm_over_debit_rejected_exec
+#assert_axioms sgm_caveatsAdmit_op_eq_table
+#assert_axioms sgm_commit_iff_op_admit
 #assert_axioms sgm_chain_conserves
 #assert_axioms sgm_pay_supply_forever
 #assert_axioms sgm_put_debit_fits_slice

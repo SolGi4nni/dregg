@@ -44,9 +44,16 @@ open Dregg2.Proof.Stingray
 abbrev mandateActor : CellId := 0
 abbrev payAsset : AssetId := 0
 
+/-- **The mandate's published per-slot program — NOW with the admission table baked in.** The
+`commitment_anchor` stays immutable; the `step_cursor` slot now carries the `.admitTable` of
+`cwmAdvanceM`'s admitted `(cursor, cursor+1)` transitions (`cwmAdmitTable charterMandate3`) — so the
+executor enforces the FULL DAG-prerequisite ∧ per-step-clearance admission inline, not just the
+weaker monotonic-`+1`/bounded shape. A no-clearance / out-of-DAG advance is simply absent from the
+table and the executor rejects it. The admit-table SUBSUMES the old `.monotonicSeq`/`.boundedBy`
+caveats for this charter (the table holds only consecutive in-bounds `+1` pairs). -/
 def mandateCaveats : List SlotCaveat :=
-  [ .immutable commitmentAnchorSlot, .monotonicSeq stepCursorSlot,
-    .boundedBy stepCursorSlot 0 (charterMandate3.steps.length : Int) ]
+  [ .immutable commitmentAnchorSlot,
+    .admitTable stepCursorSlot (cwmAdmitTable charterMandate3) ]
 
 /-- Advance the mandate step cursor on the REAL executor (`setFieldA`). -/
 def cwmExecAdvance (actor : CellId) (target : Int) : FullForestA :=
@@ -142,6 +149,42 @@ theorem cwm_illegal_dag_rejected_exec (s : RecChainedState) (actor : CellId) (ta
   have hnone := stateStepGuarded_caveat_violation_fails s stepCursorSlot actor mandateCell target hseq
   rw [execFullForestA_eq_execFullTurnA]
   simp only [cwmExecAdvance, lowerForestA, lowerChildrenA, execFullTurnA, execFullA, hnone]
+
+/-! ### §B.admit — the EXECUTOR's `caveatsAdmit` over the strengthened program IS `cwmAdvanceM`.
+
+With `mandateCaveats` now carrying `.admitTable stepCursorSlot (cwmAdmitTable charterMandate3)`, the
+executor's `caveatsAdmit` on a `step_cursor` write reduces EXACTLY to table membership, which is
+EXACTLY `cwmAdvanceM`'s admission at the committed cursor. This is the inline internalization: the
+running admission and the off-line predicate decide the SAME thing. -/
+
+/-- The committed cursor read off the mandate cell, as a `Nat`. -/
+def cwmCursorNat (k : RecordKernelState) : Nat := (fieldOf stepCursorSlot (k.cell mandateCell)).toNat
+
+/-- **`cwm_caveatsAdmit_eq_table` — PROVED.** On a cell carrying `mandateCaveats`, the executor's
+`caveatsAdmit` on a `step_cursor` write is exactly `cwmAdmitTable`-membership of `(old, new)`. -/
+theorem cwm_caveatsAdmit_eq_table (k : RecordKernelState)
+    (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (new : Int) :
+    caveatsAdmit k stepCursorSlot actor mandateCell new
+      = (cwmAdmitTable charterMandate3).contains (fieldOf stepCursorSlot (k.cell mandateCell), new) := by
+  unfold caveatsAdmit
+  rw [hprog]
+  have hf : (mandateCaveats.filter (fun cav => cav.field == stepCursorSlot))
+      = [.admitTable stepCursorSlot (cwmAdmitTable charterMandate3)] := by decide
+  rw [hf]
+  simp only [List.all_cons, List.all_nil, Bool.and_true, SlotCaveat.eval]
+
+/-- **`cwm_commit_iff_admit` — PROVED (the COMMIT-IFF-ADMIT value frame, predicate↔executor).** On a
+mandate cell whose committed cursor is `c` (`< steps.length`), the executor's caveat gate on a
+`c → c+1` write COMMITS (admits) IFF `cwmAdvanceM` admits at cursor `c`. The off-line admission
+predicate and the running executor decide the SAME transitions. -/
+theorem cwm_commit_iff_admit (k : RecordKernelState)
+    (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (c : Nat)
+    (hcur : fieldOf stepCursorSlot (k.cell mandateCell) = (c : Int)) (hc : c < charterMandate3.steps.length) :
+    caveatsAdmit k stepCursorSlot actor mandateCell ((c + 1 : Nat) : Int) = true
+      ↔ (cwmAdvanceM charterMandate3 { cursor := c, anchor := 0 }).isSome = true := by
+  rw [cwm_caveatsAdmit_eq_table k hprog, hcur, List.contains_iff_mem,
+      cwmAdmitTable_mem_iff charterMandate3 c hc]
+  exact cwmAdvanceAdmits_iff charterMandate3 { cursor := c, anchor := 0 }
 
 theorem cwmExecAdvance_delta_zero (actor : CellId) (target : Int) (b : AssetId) :
     turnLedgerDeltaAsset (lowerForestA (cwmExecAdvance actor target)) b = 0 := by
@@ -331,6 +374,8 @@ def cwmSigned : Option RecChainedState :=
 
 #assert_axioms cwm_illegal_dag_rejected
 #assert_axioms cwm_clearance_violation_rejected
+#assert_axioms cwm_caveatsAdmit_eq_table
+#assert_axioms cwm_commit_iff_admit
 #assert_axioms cwmAdvanceM_preserves_WF
 #assert_axioms cwmStep_preserves_WF
 #assert_axioms cwm_step_legal_forever

@@ -214,6 +214,54 @@ def cwmAdvanceM (m : WorkflowMandate) (s : CwmRuntime) : Option CwmRuntime :=
   else
     none
 
+/-! ## The EXECUTOR ADMIT TABLE — `cwmAdvanceM` baked into a decision table the executor checks.
+
+`cwmAdvanceM` decides DAG-prerequisites ∧ per-step-clearance off the cursor, but the executor only
+sees a scalar `(old, new)` field write on `step_cursor`. We bake `cwmAdvanceM`'s decision into a
+finite `(old, new)` decision table: for every cursor value `c` the charter admits an advance at, the
+table holds `(c, c+1)`. The cell's program carries an `.admitTable stepCursorSlot` with THIS table, so
+the executor admits a `c → c+1` write iff `cwmAdvanceM` admits at cursor `c` — and a no-clearance /
+out-of-DAG advance (NOT in the table) is rejected BY THE EXECUTOR. -/
+
+/-- Whether the charter admits an advance at cursor `c` (the predicate `cwmAdvanceM` decides). -/
+def cwmAdvanceAdmits (m : WorkflowMandate) (c : Nat) : Bool :=
+  decide (c < m.steps.length) && stepAdmissible m c (completedOf c) && stepClearanceOK m c
+
+/-- The `(old, new)` decision table baked from `cwmAdvanceM`: `(c, c+1)` for every admitted cursor `c`
+in `0..steps.length`. The executor admits a cursor write iff its `(old, new)` is in this list. -/
+def cwmAdmitTable (m : WorkflowMandate) : List (Int × Int) :=
+  (List.range (m.steps.length + 1)).filterMap fun c =>
+    if cwmAdvanceAdmits m c then some ((c : Int), ((c + 1 : Nat) : Int)) else none
+
+/-- **`cwmAdvanceAdmits_iff` — PROVED.** The baked predicate is EXACTLY `cwmAdvanceM`'s success at
+cursor `c` (the off-line predicate and the table-source decision agree). -/
+theorem cwmAdvanceAdmits_iff (m : WorkflowMandate) (s : CwmRuntime) :
+    cwmAdvanceAdmits m s.cursor = true ↔ (cwmAdvanceM m s).isSome = true := by
+  unfold cwmAdvanceAdmits cwmAdvanceM
+  by_cases hlen : s.cursor < m.steps.length
+  · simp only [hlen, decide_true, Bool.true_and, ↓reduceIte]
+    cases hadm : stepAdmissible m s.cursor (completedOf s.cursor) <;>
+      cases hcl : stepClearanceOK m s.cursor <;> simp
+  · simp only [hlen, decide_false, Bool.false_and, ↓reduceIte, Option.isSome_none]
+
+/-- **`cwmAdmitTable_mem_iff` — PROVED.** The table contains `(c, c+1)` (as `Int`s) iff the charter
+admits an advance at cursor `c`. The bridge from table membership to the predicate decision. -/
+theorem cwmAdmitTable_mem_iff (m : WorkflowMandate) (c : Nat) (hc : c < m.steps.length) :
+    ((c : Int), ((c + 1 : Nat) : Int)) ∈ cwmAdmitTable m ↔ cwmAdvanceAdmits m c = true := by
+  unfold cwmAdmitTable
+  rw [List.mem_filterMap]
+  constructor
+  · rintro ⟨a, _, ha⟩
+    by_cases had : cwmAdvanceAdmits m a
+    · rw [if_pos had] at ha
+      simp only [Option.some.injEq, Prod.mk.injEq] at ha
+      obtain ⟨hac, _⟩ := ha
+      have : a = c := by exact_mod_cast hac
+      subst this; exact had
+    · rw [if_neg had] at ha; exact absurd ha (by simp)
+  · intro had
+    exact ⟨c, by simp only [List.mem_range]; omega, by rw [if_pos had]⟩
+
 inductive CwmPhase | review | redact | sign
   deriving Repr, DecidableEq
 
@@ -241,5 +289,7 @@ def demoKernel : KernelState :=
 #assert_axioms stepAdmissible_false_of_incomplete
 #assert_axioms dagLegal_nil
 #assert_axioms stepCompleted_true_of_mem
+#assert_axioms cwmAdvanceAdmits_iff
+#assert_axioms cwmAdmitTable_mem_iff
 
 end Dregg2.Apps.CompartmentWorkflowMandate

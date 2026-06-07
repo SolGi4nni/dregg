@@ -85,6 +85,86 @@ theorem sgm_over_debit_rejected_gated (s : RecChainedState) (newSpent : Int)
   rw [sgmDebitVolumeNode, execFullForestG_leaf, execFullAGated, if_pos hgate]
   exact stateStepGuarded_caveat_violation_fails s volumeSpentSlot sgmActor mandateCell newSpent hbound
 
+/-! ### §commit-iff — the gated executor COMMITS a `last_op` write IFF `sgmAdmitM`'s op-leg admits.
+
+The output-side value frame for the op leg: on a mandate cell carrying `mandateCaveats`, with valid
+prior op code, the GATED executor commits a `last_op := op` write IFF the gate passes AND the op is
+admitted by `sgmAdmitM`'s op-allowlist ∧ GET-clearance leg. The negative tooth
+(`sgm_guest_get_rejected`) exhibits a concrete guest (no-clearance) state where a GET write is
+rejected by the executor. -/
+
+theorem execFullForestG_setOpNode (s : RecChainedState) (cred : Authorization Dg Pf) (op : Int) :
+    execFullForestG s (sgmSetOpNode cred op)
+      = (if gateOK (mkAuth cred []) s = true
+         then stateStepGuarded s lastOpSlot sgmActor mandateCell op
+         else none) := by
+  rw [sgmSetOpNode, execFullForestG_leaf, execFullAGated]
+  rfl
+
+/-- **`sgm_commit_iff_op_admit_gated` — PROVED (output-side COMMIT-IFF-ADMIT, op leg).** On a mandate
+cell carrying the op admit-table, with the credential gate (`hg`) and the executor's authority/liveness
+gate (`hauth`) passing, the gated executor COMMITS a `last_op := op.toInt` write IFF `sgmAdmitM`'s op
+leg admits `op`. Pins that the ONLY committable ops are the admitted ones. -/
+theorem sgm_commit_iff_op_admit_gated (s : RecChainedState)
+    (hprog : s.kernel.slotCaveats mandateCell = mandateCaveats) (op : StorageOp)
+    (hold : fieldOf lastOpSlot (s.kernel.cell mandateCell) ∈ [(-1 : Int), 0, 1, 2])
+    (hg : gateOK (mkAuth goodCred []) s = true)
+    (hauth : stateAuthB s.kernel.caps sgmActor mandateCell = true ∧ mandateCell ∈ s.kernel.accounts
+              ∧ cellLive s.kernel mandateCell = true) :
+    (∃ s', execFullForestG s (sgmSetOpNode goodCred op.toInt) = some s')
+      ↔ sgmOpAdmitted demoMandate op = true := by
+  rw [execFullForestG_setOpNode, if_pos hg]
+  constructor
+  · rintro ⟨s', hs'⟩
+    have hadm := stateStepGuarded_admits hs'
+    exact (sgm_commit_iff_op_admit s.kernel hprog sgmActor op hold).mp hadm
+  · intro hadm
+    have hcav : caveatsAdmit s.kernel lastOpSlot sgmActor mandateCell op.toInt = true :=
+      (sgm_commit_iff_op_admit s.kernel hprog sgmActor op hold).mpr hadm
+    refine ⟨{ kernel := writeField s.kernel lastOpSlot mandateCell (.int op.toInt),
+              log := { actor := sgmActor, src := mandateCell, dst := mandateCell, amt := 0 } :: s.log }, ?_⟩
+    unfold stateStepGuarded
+    rw [if_pos hcav]
+    unfold stateStep
+    rw [if_pos hauth]
+
+/-! ### §negative-tooth — a GUEST writing op GET (no clearance) is rejected by the EXECUTOR. -/
+
+/-- Guest-clearance program: the op admit-table built from `guestMandate` (no GET clearance) — admits
+PUT/LIST but NOT GET. -/
+def guestCaveats : List SlotCaveat :=
+  [ .immutable commitmentAnchorSlot
+  , .monotonic volumeSpentSlot
+  , .boundedBy volumeSpentSlot 0 (demoMandate.volumeBudget.ceiling : Int)
+  , .admitTable lastOpSlot (sgmOpAdmitTable guestMandate) ]
+
+/-- Genesis cell carrying the GUEST (no-GET-clearance) op program. -/
+def guestSgmG0 : RecChainedState :=
+  { kernel :=
+      { accounts := {0}
+        cell := fun c =>
+          if c = mandateCell then
+            .record [("balance", .int 0), (objectKeySlot, .int 0), (lastOpSlot, .int (-1)),
+                     (volumeSpentSlot, .int 0), (commitmentAnchorSlot, .int demoMandate.anchor)]
+          else .record [("balance", .int 0)]
+        caps := fun _ => []
+        bal := fun c a => if c = 0 then (if a = 0 then 100 else if a = 1 then 7 else 0) else 0
+        slotCaveats := fun c => if c = mandateCell then guestCaveats else [] }
+    log := [] }
+
+/-- **`sgm_guest_get_rejected` — PROVED (THE NEGATIVE TOOTH).** A guest lacking GET clearance CANNOT
+record a GET op (`last_op := 0`): the executor returns `none`, because `(_, 0)` is NOT in the guest's
+op admit-table. This is exactly the request `sgmAdmitM guestMandate _ {op := GET}` rejects — now
+ENFORCED BY THE EXECUTOR (where no prior caveat could express clearance). -/
+theorem sgm_guest_get_rejected :
+    execFullForestG guestSgmG0 (sgmSetOpNode goodCred (StorageOp.GET.toInt)) = none := by
+  rw [execFullForestG_setOpNode]
+  by_cases hg : gateOK (mkAuth goodCred []) guestSgmG0 = true
+  · rw [if_pos hg]
+    have hcav : caveatsAdmit guestSgmG0.kernel lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt) = false := by decide
+    exact stateStepGuarded_caveat_violation_fails guestSgmG0 lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt) hcav
+  · rw [if_neg (by simp [hg])]
+
 theorem sgmSetKeyNode_delta_zero (cred : Authorization Dg Pf) (key : Int) (b : AssetId) :
     turnLedgerDeltaAsset ((lowerForestG (sgmSetKeyNode cred key)).map Prod.snd) b = 0 := by
   simp [sgmSetKeyNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
@@ -197,6 +277,19 @@ def sgmGPutEmit : Option RecChainedState :=
 #guard (sgmAnchorIs sgmG0.kernel (demoMandate.anchor : Int))
 #guard ((sgmGPutEmit.map (fun s => recTotalAssetWithEscrow s.kernel payAsset)).getD 0) == 100
 
+-- COMMIT-IFF-ADMIT negative tooth: a guest lacking GET clearance cannot record a GET op — the
+-- EXECUTOR rejects the `last_op := 0` write (where no prior caveat could express clearance).
+#guard ((execFullForestG guestSgmG0 (sgmSetOpNode goodCred (StorageOp.GET.toInt))).isSome) == false
+#guard (caveatsAdmit guestSgmG0.kernel lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt)) == false
+-- the demo (writer-clearance) cell DOES admit the GET op
+#guard (caveatsAdmit sgmG0.kernel lastOpSlot sgmActor mandateCell (StorageOp.GET.toInt)) == true
+#guard (sgmOpAdmitted demoMandate StorageOp.GET) == true
+#guard (sgmOpAdmitted guestMandate StorageOp.GET) == false
+#guard (sgmOpAdmitted demoMandate StorageOp.PUT) == true
+
+#assert_axioms execFullForestG_setOpNode
+#assert_axioms sgm_commit_iff_op_admit_gated
+#assert_axioms sgm_guest_get_rejected
 #assert_axioms execFullForestG_leaf
 #assert_axioms sgm_forged_rejected
 #assert_axioms sgm_revoked_rejected
