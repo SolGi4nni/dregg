@@ -827,6 +827,44 @@ pub fn prove_executor_derived_transfer(witness: &[i64]) -> Result<DreggProof, St
 }
 
 // ============================================================================
+// PART 5b — The v2 verifiable-execution beachhead: `execute → prove → verify` for the
+//           NON-CELL effect family (`EffectCommit2`/`EffectCommit2Dual`).
+// ============================================================================
+//
+// Every `EffectCommit2` effect (`balanceA`/`burnA`/`bridgeFinalizeA`/`bridgeMintA`/`attenuateA`/…)
+// emits the SAME wire descriptor shape — `Dregg2.Circuit.EffectCommit2.effectCircuit2 E`,
+// `trace_width = 72`, four gates: `var 0 = 1` (guard bit), `66 = 67` (rest-frame), `68 = 69`
+// (component-bind), `70 = 71` (log-bind). Only the AIR `name` differs per effect. The
+// `EffectCommit2Dual` effects (`bridgeLockA`/`bridgeCancelA`/`cellDestroyA`) emit `trace_width = 74`
+// with a fifth gate (`66=67`, `68=69`, `70=71` component pair 2, `72=73` log).
+//
+// The Lean witness generators (`Dregg2.Circuit.Witness.<effect>Witness.<effect>WitnessVec`) RUN the
+// real executor and lay the satisfying full-state assignment out as a flat `&[i64]`, every digest
+// column filled by a concrete commitment surface. The honest witness proves+verifies; a forged
+// post-state (a tampered third cell / bystander mint / wrong post-component) breaks ONE EQ gate, a
+// REAL UNSAT — the anti-ghost tooth realized end-to-end through the prover.
+
+/// **`prove_executor_derived_v2` — the demonstrable `execute_and_prove(<v2 effect>)` path.**
+///
+/// Takes a witness vector PRODUCED BY THE LEAN EXECUTOR (`<effect>WitnessVec`, which runs the real
+/// chained executor and lays out the full-state assignment with concrete-surface digest columns),
+/// parses the Lean-emitted full-state circuit JSON, proves it with the real Plonky3 prover, and
+/// verifies — returning the accepted `DreggProof`. A forged witness yields a non-equal EQ-gate pair,
+/// so the prover/verifier REJECTS it (`Err`). The `execute → prove → verify → accept` gate for the
+/// non-cell effect family, sharing the validated transfer reference's machinery.
+pub fn prove_executor_derived_v2(descriptor_json: &str, witness: &[i64]) -> Result<DreggProof, String> {
+    let desc = parse_descriptor(descriptor_json)?;
+    if witness.len() != desc.trace_width {
+        return Err(format!(
+            "executor witness length {} != full-state trace_width {}",
+            witness.len(),
+            desc.trace_width
+        ));
+    }
+    prove_and_verify_descriptor(&desc, witness)
+}
+
+// ============================================================================
 // Test descriptor: the `transferCircuit` shape (hardcoded mirror of Lean)
 // ============================================================================
 
@@ -1713,5 +1751,178 @@ mod tests {
                  the frame-reuse gate, but a proof verified — the anti-ghost tooth failed"
             ),
         }
+    }
+
+    // ========================================================================
+    // The v2 verifiable-execution beachhead tests (the non-cell effect family).
+    //
+    // Each test pastes the EXACT executor-derived witness bytes the Lean
+    // `Dregg2.Circuit.Witness.<effect>Witness` goldens pin
+    // (`<effect>HonestWitnessJson` / `<effect>ForgedWitnessJson`) and the
+    // Lean-emitted descriptor (`<effect>DescriptorJson`), proves+verifies the
+    // honest witness through the real Plonky3 prover, and asserts the forged
+    // witness (a REAL tampered post-state) is REJECTED by a broken EQ gate.
+    // ========================================================================
+
+    /// Shared driver: prove+verify the honest v2 witness; assert the forged one
+    /// is rejected (a real UNSAT on a broken EQ gate). `bind_pre`/`bind_post` are
+    /// the wire indices of the gate the forgery breaks (for the documentation
+    /// assert that the pair genuinely differs in the forged witness).
+    fn v2_beachhead(
+        desc_json: &str,
+        expected_width: usize,
+        honest: &[i64],
+        forged: &[i64],
+        broken_lo: usize,
+        broken_hi: usize,
+    ) {
+        let desc = parse_descriptor(desc_json).expect("v2 descriptor must parse");
+        assert_eq!(desc.trace_width, expected_width, "v2 trace width");
+        assert_eq!(honest.len(), expected_width, "honest witness width");
+        assert_eq!(forged.len(), expected_width, "forged witness width");
+
+        // EXECUTE → PROVE → VERIFY: the executor-derived honest witness proves+verifies.
+        let proof = prove_executor_derived_v2(desc_json, honest)
+            .expect("the EXECUTOR-DERIVED v2 witness must prove+verify");
+        verify_descriptor(&desc, &proof)
+            .expect("re-verify of the executor-derived v2 proof must succeed");
+
+        // ANTI-GHOST: the forged post-state breaks ONE EQ gate (a real UNSAT).
+        assert_ne!(
+            forged[broken_lo], forged[broken_hi],
+            "the forged witness MUST break the EQ gate {} = {} (the tampered component shows up)",
+            broken_lo, broken_hi
+        );
+        let tampered = std::panic::catch_unwind(|| {
+            let p = prove_descriptor(&desc, forged)?;
+            verify_descriptor(&desc, &p)
+        });
+        match tampered {
+            // Prover panicked on the broken EQ gate: forgery rejected (real UNSAT).
+            Err(_) => {}
+            // Prover produced a proof: verification MUST reject it.
+            Ok(verify_result) => assert!(
+                verify_result.is_err(),
+                "the v2 forgery (real executor-derived witness) MUST be rejected by the \
+                 broken EQ gate, but a proof verified — the anti-ghost tooth failed"
+            ),
+        }
+    }
+
+    /// `dregg-balanceA-v2`: per-asset value movement (touched = `bal`). The forged
+    /// post-state mints bystander cell 2's asset-0 balance 50 → 999; the
+    /// component-bind gate `68 = 69` breaks (the moved balances still conserve).
+    const BALANCEA_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-balanceA-v2","trace_width":72,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_balance_a() {
+        // Lean `balanceHonestWitnessJson` golden.
+        let honest: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000005000053, 70000035000054, 3, 3, 70000035000050, 70000035000050, 1, 1,
+        ];
+        // Lean `balanceForgedWitnessJson` golden (cell 2 minted 50 → 999): wire 68 changes.
+        let forged: [i64; 72] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 100000005000053, 70000035001003, 3, 3, 70000035000999, 70000035000050, 1, 1,
+        ];
+        v2_beachhead(BALANCEA_DESCRIPTOR_JSON, 72, &honest, &forged, 68, 69);
+    }
+
+    // ========================================================================
+    // The v1 verifiable-execution beachhead tests (the CELL/LOG effect family,
+    // `EffectCommit`). Each emits the SAME 74-wire, 5-gate full-state circuit:
+    // guard bit (`var 0 = 1`) + four frame-forcing EQ gates `66=67` (rest),
+    // `68=69` (frame), `70=71` (touched), `72=73` (log). Only the AIR name differs.
+    //
+    // The witness bytes are pasted verbatim from the Lean goldens
+    // `Dregg2.Circuit.Witness.<Effect>Witness.{honestWitnessJson, forged…Json}`
+    // (computed by `<effect>WitnessVec`, which runs the real chained executor
+    // `execFullA` and lays out the full-state assignment with concrete-surface
+    // digest columns; the unconstrained roots 64/65 are zeroed for i64-safety).
+    // ========================================================================
+
+    /// Shared v1 driver: prove+verify the honest 74-wire witness through the real
+    /// Plonky3 prover; assert EACH forged witness is rejected (a real UNSAT on the
+    /// named broken EQ gate). `forgeries` pairs a label with `(witness, broken_lo,
+    /// broken_hi)` — the EQ gate the forged post-state breaks.
+    fn v1_beachhead(
+        desc_json: &str,
+        honest: &[i64],
+        forgeries: &[(&str, &[i64], usize, usize)],
+    ) {
+        let desc = parse_descriptor(desc_json).expect("v1 descriptor must parse");
+        assert_eq!(desc.trace_width, 74, "v1 trace width");
+        assert_eq!(desc.constraints.len(), 5, "v1 gate count");
+        assert_eq!(honest.len(), 74, "honest witness width");
+        // The honest witness satisfies every gate.
+        assert_eq!(honest[0], 1, "guard bit");
+        assert_eq!(honest[66], honest[67], "rest frame");
+        assert_eq!(honest[68], honest[69], "frame reuse");
+        assert_eq!(honest[70], honest[71], "touched bind");
+        assert_eq!(honest[72], honest[73], "log bind");
+
+        // EXECUTE → PROVE → VERIFY: the executor-derived honest witness proves+verifies.
+        let proof = prove_executor_derived_v2(desc_json, honest)
+            .expect("the EXECUTOR-DERIVED v1 witness must prove+verify");
+        verify_descriptor(&desc, &proof)
+            .expect("re-verify of the executor-derived v1 proof must succeed");
+
+        // ANTI-GHOST: each REAL forged post-state breaks ONE EQ gate (a real UNSAT).
+        for (label, forged, lo, hi) in forgeries {
+            assert_eq!(forged.len(), 74, "forged witness width [{label}]");
+            assert_ne!(
+                forged[*lo], forged[*hi],
+                "forgery [{label}] MUST break the EQ gate {lo} = {hi}"
+            );
+            let tampered = std::panic::catch_unwind(|| {
+                let p = prove_descriptor(&desc, forged)?;
+                verify_descriptor(&desc, &p)
+            });
+            match tampered {
+                Err(_) => {} // prover panicked on the broken gate: forgery rejected (real UNSAT)
+                Ok(verify_result) => assert!(
+                    verify_result.is_err(),
+                    "v1 forgery [{label}] MUST be rejected by the broken EQ gate, but a proof verified"
+                ),
+            }
+        }
+    }
+
+    /// `dregg-emitEventA-v1` (log-only): honest emit on cell 0. Forgeries: (F1) a
+    /// tampered receipt row (actor 9 not 0) ⇒ log-bind gate `72=73` breaks; (F2) a
+    /// minted bystander cell 2 (50 → 999) ⇒ frame-reuse gate `68=69` breaks.
+    const EMITEVENT_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-emitEventA-v1","trace_width":74,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}}]}"#;
+
+    #[test]
+    fn lean_executor_derived_emit_event() {
+        // Lean `EmitEventWitness.honestWitnessJson`.
+        let honest: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 3000100000005000050, 3000100000005000050, 0, 0, 1000000, 1000000,
+        ];
+        // `forgedLogWitnessJson` (tampered receipt row): wire 72 != 73.
+        let forged_log: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 3000100000005000050, 3000100000005000050, 0, 0, 1009000, 1000000,
+        ];
+        // `forgedCellWitnessJson` (minted bystander cell 2): wire 68 != 69.
+        let forged_cell: [i64; 74] = [
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 3, 3, 3000100000005000050, 3000100000005000999, 0, 0, 1000000, 1000000,
+        ];
+        v1_beachhead(
+            EMITEVENT_DESCRIPTOR_JSON,
+            &honest,
+            &[
+                ("tampered receipt row", &forged_log, 72, 73),
+                ("minted bystander cell", &forged_cell, 68, 69),
+            ],
+        );
     }
 }
