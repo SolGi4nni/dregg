@@ -111,6 +111,7 @@ export type MessageType =
   | "dregg:subscribe"
   // Popup-only cipherclerk operations
   | "dregg:getState"
+  | "dregg:getLog"
   | "dregg:lock"
   | "dregg:unlock"
   | "dregg:getCapabilities"
@@ -279,6 +280,10 @@ export interface CipherclerkState {
   needsPassphraseSetup: boolean;
   hasStealthKeys: boolean;
   stealthNotesCount: number;
+  /** Whether the WASM cryptographic module finished loading successfully. */
+  wasmReady: boolean;
+  /** Load error message if the WASM module failed to initialize, else null. */
+  wasmError: string | null;
 }
 
 /** Internal full cipherclerk state (in-memory). */

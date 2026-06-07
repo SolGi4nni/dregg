@@ -1661,6 +1661,80 @@ function listIntents(filter?: { kind?: string }): Array<{ id: string; kind: stri
   return results;
 }
 
+async function fulfillIntent(intentId: string, tokenId: string | null): Promise<{
+  fulfilled?: boolean;
+  intentId?: string;
+  tokenId?: string;
+  nodeResult?: unknown;
+  error?: string;
+}> {
+  const cc = await loadState();
+  if (cc.locked) return { error: "Cipherclerk is locked" };
+
+  const entry = intentPool.get(intentId);
+  if (!entry) return { error: "Intent not found in local pool" };
+  const intent = entry.intent;
+
+  if (intent.expiry <= Date.now()) {
+    intentPool.delete(intentId);
+    return { error: "Intent has expired" };
+  }
+
+  // Resolve the fulfilling token: explicit id if given, else auto-match.
+  let matchingToken: CapabilityToken | undefined;
+  if (tokenId) {
+    matchingToken = cc.tokens.find(t => t.id === tokenId);
+    if (!matchingToken) return { error: `Token "${tokenId}" not found in cipherclerk` };
+  } else {
+    const matchResult = matchIntentLocally(intent, cc.tokens, Date.now());
+    if (!matchResult) return { error: "No matching token found for this intent" };
+    matchingToken = cc.tokens.find(t => t.id === matchResult.tokenId);
+    if (!matchingToken) return { error: "Matched token no longer available" };
+  }
+
+  const confirmed = await showIntentConfirmation("fulfillIntent", intent.matcher, {
+    intentId,
+    tokenId: matchingToken.id,
+    intentKind: intent.kind,
+  });
+  if (!confirmed) return { error: "User denied intent fulfillment" };
+
+  const fulfillmentPayload = {
+    intent_id: intentId,
+    fulfiller_token: {
+      id: matchingToken.id,
+      actions: matchingToken.actions,
+      resource: matchingToken.resource || "*",
+      expiry: matchingToken.expiry || null,
+    },
+    fulfiller_public_key: cc.publicKey,
+    timestamp: Date.now(),
+  };
+
+  const resp = await nodeRequest<unknown>(nodeConfig, "/intents/fulfill", {
+    method: "POST",
+    body: JSON.stringify(fulfillmentPayload),
+  });
+  if (!resp.ok) return { error: `Node rejected fulfillment: ${resp.error}` };
+
+  cc.log.push({
+    action: "fulfillIntent",
+    resource: intent.matcher?.resourcePattern || "*",
+    allowed: true,
+    timestamp: Date.now(),
+    mode: "trusted",
+    intentId,
+    tokenId: matchingToken.id,
+  });
+  await saveState();
+  intentPool.delete(intentId);
+
+  notifySubscribers("intentFulfilled", { intentId, tokenId: matchingToken.id, result: resp.data });
+  pushActivity("turn_lifecycle", { phase: "intent_fulfilled", intent_id: intentId, token_id: matchingToken.id }, { source: "cclerk" });
+
+  return { fulfilled: true, intentId, tokenId: matchingToken.id, nodeResult: resp.data };
+}
+
 function gcIntentPool(): void {
   const now = Date.now();
   for (const [id, { intent }] of intentPool) {
@@ -2087,7 +2161,25 @@ async function getCipherclerkState(): Promise<CipherclerkState> {
     needsPassphraseSetup: cc.needsPassphraseSetup || false,
     hasStealthKeys: cc.stealthMeta !== null && cc.stealthMeta !== undefined,
     stealthNotesCount: (cc.stealthNotes || []).length,
+    wasmReady: wasmLoaded,
+    wasmError: wasmLoadError,
   };
+}
+
+/**
+ * Return the most recent cipherclerk activity-log entries for the popup.
+ *
+ * The log lives in the in-memory (decrypted) cipherclerk state, NOT in a
+ * plaintext `chrome.storage.local` key — `saveState()` removes the legacy
+ * plaintext `dregg_cipherclerk` key after migration, so reading storage
+ * directly always yields an empty log. The popup must fetch it through this
+ * message instead. Returns `[]` while the cipherclerk is locked.
+ */
+async function getLog(limit = 20): Promise<LogEntry[]> {
+  const cc = await loadState();
+  if (cc.locked) return [];
+  const log = cc.log || [];
+  return log.slice(-limit).reverse();
 }
 
 async function getCapabilities(): Promise<string[]> {
@@ -2191,7 +2283,7 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
-  "dregg:unlock", "dregg:lock", "dregg:getCapabilities", "dregg:listIntents",
+  "dregg:unlock", "dregg:lock", "dregg:getLog", "dregg:getCapabilities", "dregg:listIntents",
   "dregg:offerCapability", "dregg:fulfillIntent", "dregg:getFulfillableIntents",
   "dregg:revoke", "dregg:getState", "dregg:getFederation", "dregg:refreshDiscovery",
   "dregg:setPassphrase", "dregg:getMnemonic", "dregg:recover",
@@ -2237,6 +2329,11 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
 
     case "dregg:getState":
       return { id: message.id, result: await getCipherclerkState() };
+
+    case "dregg:getLog": {
+      if (!isExtensionPopup(sender)) return { id: message.id, error: "Only available from extension popup." };
+      return { id: message.id, result: await getLog() };
+    }
 
     case "dregg:lock": {
       await lockCipherclerk();
@@ -2431,8 +2528,9 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: listIntents(message.filter as { kind?: string } | undefined) };
 
     case "dregg:fulfillIntent": {
-      // Simplified: delegate to postIntent-like pattern; full implementation in legacy
-      return { id: message.id, result: { error: "Not yet migrated to TypeScript" } };
+      const result = await fulfillIntent(message.intentId as string, (message.tokenId as string) || null);
+      resetLockTimer();
+      return { id: message.id, result };
     }
 
     case "dregg:getFulfillableIntents": {

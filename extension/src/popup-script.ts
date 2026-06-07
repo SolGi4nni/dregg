@@ -11,6 +11,7 @@ import type { CipherclerkState, OriginPermissionDisplay } from "./types";
 
 const statusDot = document.getElementById("statusDot")!;
 const statusText = document.getElementById("statusText")!;
+const wasmError = document.getElementById("wasmError") as HTMLElement;
 const tokenCount = document.getElementById("tokenCount")!;
 const chainLength = document.getElementById("chainLength")!;
 const logContainer = document.getElementById("logContainer")!;
@@ -59,6 +60,20 @@ async function refresh(): Promise<void> {
   const state = await sendMessage<CipherclerkState>("dregg:getState");
   if (!state) return;
 
+  // Surface WASM load failures: every signing / proof / key-derivation
+  // operation depends on the WASM crypto module, so make the failure visible
+  // rather than letting the user hit cryptic per-operation errors.
+  if (wasmError) {
+    if (state.wasmReady === false) {
+      wasmError.textContent = state.wasmError
+        ? `Cryptographic module failed to load: ${state.wasmError}. Cipherclerk operations requiring proofs or key derivation are unavailable.`
+        : "Cryptographic module failed to load. Cipherclerk operations requiring proof generation or key derivation are unavailable. Ensure your browser supports WebAssembly.";
+      wasmError.style.display = "block";
+    } else {
+      wasmError.style.display = "none";
+    }
+  }
+
   if (state.locked) {
     statusDot.classList.add("locked");
     statusText.textContent = "Locked";
@@ -99,13 +114,16 @@ interface LogEntryDisplay {
 }
 
 async function loadLog(): Promise<void> {
-  const stored = await chrome.storage.local.get("dregg_cipherclerk");
-  const cc = stored["dregg_cipherclerk"] as { log?: LogEntryDisplay[] } | undefined;
-  if (!cc || !cc.log || cc.log.length === 0) {
+  // The activity log lives in the encrypted, in-memory cipherclerk state — the
+  // plaintext `dregg_cipherclerk` storage key is removed after migration, so it
+  // must be fetched via the background `dregg:getLog` message (returns [] while
+  // locked). `getLog` already returns newest-first.
+  const log = await sendMessage<LogEntryDisplay[]>("dregg:getLog");
+  if (!log || log.length === 0) {
     logContainer.innerHTML = '<div class="empty">No recent authorizations</div>';
     return;
   }
-  const entries = cc.log.slice(-5).reverse();
+  const entries = log.slice(0, 5);
   logContainer.innerHTML = entries.map(entry => {
     const time = new Date(entry.timestamp).toLocaleTimeString();
     const icon = entry.allowed ? "&#x2713;" : "&#x2717;";
@@ -137,6 +155,7 @@ lockBtn.addEventListener("click", async () => {
     await sendMessage("dregg:lock");
   }
   await refresh();
+  await loadLog();
 });
 
 // ---------------------------------------------------------------------------

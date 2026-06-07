@@ -153,9 +153,9 @@ package_extension() {
   mkdir -p "$DIST_DIR"
 
   # Base files to include in every package.
-  # P2-1: ship only the TS-compiled dist/ scripts for background/content/page/popup,
-  # not the legacy root .js files. Static popup HTML + their dedicated JS still ship
-  # from the root (they're not TS-built today).
+  # P2-1: ship only the TS-compiled dist/ scripts for background/content/page/popup.
+  # Static popup HTML + their dedicated JS still ship from the root (they're not
+  # TS-built today).
   local BASE_FILES=(
     dist/background.js
     dist/content.js
