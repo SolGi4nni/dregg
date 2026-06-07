@@ -204,3 +204,32 @@ fn b4_executor_derived_queue_enqueue() {
         "queueEnqueueA",
     );
 }
+
+// ===========================================================================
+// queueDequeueA — v3 / triple (`Dregg2.Circuit.Witness.QueueDequeueWitness`).
+// 76 wires, 6 gates. Forgery: refund ledger 100 → 999 (tampered bal) ⇒ bal bind gate (70 ≠ 71).
+// ===========================================================================
+
+const QUEUEDEQUEUE_DESCRIPTOR_JSON: &str = r#"{"name":"dregg-queueDequeueA-v2","trace_width":76,"constraints":[{"lhs":{"t":"var","v":0},"rhs":{"t":"const","v":1}},{"lhs":{"t":"var","v":66},"rhs":{"t":"var","v":67}},{"lhs":{"t":"var","v":68},"rhs":{"t":"var","v":69}},{"lhs":{"t":"var","v":70},"rhs":{"t":"var","v":71}},{"lhs":{"t":"var","v":72},"rhs":{"t":"var","v":73}},{"lhs":{"t":"var","v":74},"rhs":{"t":"var","v":75}}]}"#;
+
+const QUEUEDEQUEUE_HONEST: [i64; 76] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    2000000001270004490, 2000000001301004333, 2, 2, 1000000000500004000, 1000000000500004000,
+    100000000, 100000000, 1000000000700000301, 1000000000700000301, 1000030, 1000030,
+];
+
+const QUEUEDEQUEUE_FORGED: [i64; 76] = [
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    2000000001270004490, 2000000002200004333, 2, 2, 1000000000500004000, 1000000000500004000,
+    999000000, 100000000, 1000000000700000301, 1000000000700000301, 1000030, 1000030,
+];
+
+#[test]
+fn b4_executor_derived_queue_dequeue() {
+    check_honest_proves_and_forged_rejects(
+        QUEUEDEQUEUE_DESCRIPTOR_JSON, 76, 6, &QUEUEDEQUEUE_HONEST, &QUEUEDEQUEUE_FORGED, 70, 71,
+        "queueDequeueA",
+    );
+}
