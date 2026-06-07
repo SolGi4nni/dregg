@@ -66,6 +66,15 @@ pub fn configure_turn_executor(
     executor.set_block_height(height);
 }
 
+/// The node's OWN agent cell — `derive_raw(cipherclerk pubkey, blake3("default"))`. This is the
+/// agent whose receipt chain the cipherclerk maintains authoritatively (the source of the
+/// host-fed `stored_head` for the boundary-P1 admission shadow). Mirrors the derivation in
+/// `api.rs` (the submit path), centralised so the blocklace-finalized path agrees.
+pub fn local_agent_cell(s: &NodeStateInner) -> dregg_cell::CellId {
+    let default_token_id = *blake3::hash(b"default").as_bytes();
+    dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &default_token_id)
+}
+
 /// Build a fresh executor configured for turn submission (height = attested + 1).
 pub fn new_submit_executor(s: &NodeStateInner) -> TurnExecutor {
     let mut executor = TurnExecutor::new(dregg_turn::ComputronCosts::default());

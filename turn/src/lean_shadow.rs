@@ -47,35 +47,86 @@ struct ShadowPreLedger {
     id_map: HashMap<CellId, u64>,
 }
 
+/// The HOST/NODE-fed admission context (boundary-P1 bug-1). These come from the EXECUTOR's own
+/// state — NOT the turn — so the verified gate's clock / freeze-set / chain-head / budget legs are
+/// decided by the node, exactly as `admissible` reads `AdmCtx`. The production node (and the
+/// in-process executor) builds this from `self.block_height` / `self.cell_migrations` (frozen) /
+/// `self.get_last_receipt_hash(agent)` (stored head) / `self.budget_gate.remaining()` (budget).
+///
+/// Defaults (via [`ShadowHostCtx::diag`]) are the DIAGNOSTIC values that never spuriously reject
+/// (clock 0, no frozen cells, genesis head, large budget) — used by tests/round-trips. The
+/// security of bug-1 is that the EXECUTOR overrides every field from its own state.
+#[derive(Clone, Debug)]
+#[cfg_attr(not(feature = "lean-shadow"), allow(dead_code))]
+pub struct ShadowHostCtx {
+    /// The executor's current chain block height (`self.block_height`).
+    pub block_height: u64,
+    /// The migration freeze-set as raw `CellId`s (`self.cell_migrations` frozen cells). Only the
+    /// subset referenced by the turn (and thus in the wire id map) crosses; a frozen agent /
+    /// write-set cell then trips the verified `admissible` frozen leg, matching apply.rs.
+    pub frozen: Vec<CellId>,
+    /// The agent's stored receipt-chain head (`self.get_last_receipt_hash(agent)`), or `None` =
+    /// genesis. The verified `admissible` ChainHead leg requires the turn's claimed `prev` to
+    /// EQUAL this — a forked / replayed turn (`prev ≠ stored_head`) is rejected.
+    pub stored_head: Option<[u8; 32]>,
+    /// The Stingray silo budget slice the fee must fit (`self.budget_gate.remaining()`). The
+    /// verified `admissible` Budget leg rejects `fee > budget`.
+    pub budget: u64,
+}
+
+impl ShadowHostCtx {
+    /// The DIAGNOSTIC host context — never spuriously rejects. The PRODUCTION executor MUST
+    /// override every field from its own state (that override is what makes bug-1 real).
+    pub fn diag() -> Self {
+        ShadowHostCtx { block_height: 0, frozen: vec![], stored_head: None, budget: 1_000_000_000 }
+    }
+}
+
 thread_local! {
     static SHADOW_PRE: RefCell<Option<ShadowPreLedger>> = const { RefCell::new(None) };
     static SHADOW_BLOCK_HEIGHT: RefCell<u64> = const { RefCell::new(0) };
+    static SHADOW_HOST: RefCell<Option<ShadowHostCtx>> = const { RefCell::new(None) };
 }
 
 /// Capture a minimal pre-state snapshot when shadow mode may run later.
 ///
-/// Call at the start of [`crate::executor::TurnExecutor::execute`] before any
-/// ledger mutation so the Lean oracle sees the same admission inputs as Rust.
-pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, block_height: u64) {
+/// Call at the start of [`crate::executor::TurnExecutor::execute`] before any ledger mutation so
+/// the Lean oracle sees the same admission inputs as Rust. `host` carries the NODE-fed admission
+/// context (clock / freeze-set / stored head / budget) — the bug-1 seam.
+pub fn capture_pre_state_if_eligible(turn: &Turn, ledger: &Ledger, host: ShadowHostCtx) {
     let snapshot = if shadow_env_enabled() && forest_is_marshallable(turn) {
         Some(build_pre_ledger(turn, ledger))
     } else {
         None
     };
+    let block_height = host.block_height;
     SHADOW_PRE.with(|slot| *slot.borrow_mut() = snapshot);
     SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow_mut() = block_height);
+    SHADOW_HOST.with(|slot| *slot.borrow_mut() = Some(host));
 }
 
 /// Shadow-execute eligible turns against the Lean kernel and log divergences.
 ///
 /// Uses the pre-execution snapshot stored by [`capture_pre_state_if_eligible`].
 /// The `ledger` argument matches the public API; marshalling uses the captured pre-state.
-pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult, block_height: u64) {
+///
+/// Returns the Lean commit verdict (`Some(true/false)`) when the turn was comparable (eligible +
+/// the FFI ran), else `None`. The verified Lean executor is the swap's TARGET decision-maker; this
+/// verdict lets the caller (boundary-P1 / THE SWAP) treat a Lean REJECTION as a binding VETO under
+/// strict mode (`lean_vetoes` below) — the Lean kernel can only TIGHTEN the commit decision (reject
+/// what Rust accepts), never loosen it (it never launders a Rust rejection to a commit).
+pub fn maybe_shadow_turn(
+    turn: &Turn,
+    ledger: &Ledger,
+    result: &TurnResult,
+    block_height: u64,
+) -> Option<bool> {
     let _ = (ledger, block_height);
     if !shadow_env_enabled() {
         SHADOW_PRE.with(|slot| slot.borrow_mut().take());
         SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow_mut() = 0);
-        return;
+        SHADOW_HOST.with(|slot| slot.borrow_mut().take());
+        return None;
     }
 
     #[cfg(feature = "lean-shadow")]
@@ -83,20 +134,26 @@ pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult, bloc
         if !dregg_lean_ffi::lean_available() {
             tracing::debug!("lean shadow: Lean lib unavailable, skipping");
             SHADOW_PRE.with(|slot| slot.borrow_mut().take());
-            return;
+            SHADOW_HOST.with(|slot| slot.borrow_mut().take());
+            return None;
         }
 
         let Some(pre) = SHADOW_PRE.with(|slot| slot.borrow_mut().take()) else {
-            return;
+            return None;
         };
+        // The NODE-fed admission context captured alongside the pre-state (bug-1 seam). Falls back
+        // to the diagnostic default only if the executor did not provide one (should not happen on
+        // the production path, which always passes a real `ShadowHostCtx`).
+        let host = SHADOW_HOST
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_else(ShadowHostCtx::diag);
 
         if !forest_is_marshallable(turn) {
-            return;
+            return None;
         }
 
-        let height = SHADOW_BLOCK_HEIGHT.with(|h| *h.borrow());
         let kinds = turn_effect_kinds(turn).join("+");
-        match run_shadow(turn, &pre, height) {
+        match run_shadow(turn, &pre, &host) {
             Ok(lean_committed) => {
                 let rust_committed = result.is_committed();
                 if lean_committed != rust_committed {
@@ -119,6 +176,7 @@ pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult, bloc
                         "lean shadow agrees"
                     );
                 }
+                Some(lean_committed)
             }
             Err(e) => {
                 tracing::warn!(
@@ -128,6 +186,7 @@ pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult, bloc
                     error = %e,
                     "lean shadow: marshal/exec failed (turn NOT compared)"
                 );
+                None
             }
         }
     }
@@ -135,12 +194,41 @@ pub fn maybe_shadow_turn(turn: &Turn, ledger: &Ledger, result: &TurnResult, bloc
     #[cfg(not(feature = "lean-shadow"))]
     {
         SHADOW_PRE.with(|slot| slot.borrow_mut().take());
+        SHADOW_HOST.with(|slot| slot.borrow_mut().take());
         let _ = (turn, result);
+        None
     }
+}
+
+/// Whether STRICT shadow mode (`DREGG_LEAN_SHADOW_STRICT=1`) is enabled — the SWAP beachhead. When
+/// on (and `DREGG_LEAN_SHADOW=1`), the verified Lean executor becomes a binding REJECTION authority
+/// on the commit path: a turn the Rust executor COMMITTED but the verified Lean executor REJECTED
+/// is VETOED (converted to a rejection). The Lean kernel can ONLY tighten the decision — it never
+/// turns a Rust rejection into a commit — so a divergence can only make the node MORE conservative
+/// (the "kernel-vs-NEW-Rust, never match a buggy oracle" direction). OFF by default: the live path
+/// stays Rust-decided until the marshaller covers every effect (so a still-GAP effect is never
+/// spuriously vetoed — only COMPARABLE turns can be vetoed).
+pub fn strict_veto_enabled() -> bool {
+    shadow_env_enabled() && std::env::var("DREGG_LEAN_SHADOW_STRICT").as_deref() == Ok("1")
+}
+
+/// Decide whether the verified Lean verdict VETOES a Rust commit. Returns `true` ONLY when strict
+/// mode is on, the turn was COMPARABLE (`lean_verdict = Some(_)`), the Rust executor COMMITTED, and
+/// the verified Lean executor REJECTED. A `None` verdict (GAP / FFI off) NEVER vetoes (we cannot
+/// veto what we did not compare). The veto is one-directional: `lean=false ∧ rust=true` only.
+pub fn lean_vetoes(rust_committed: bool, lean_verdict: Option<bool>) -> bool {
+    strict_veto_enabled() && rust_committed && lean_verdict == Some(false)
 }
 
 fn shadow_env_enabled() -> bool {
     std::env::var("DREGG_LEAN_SHADOW").as_deref() == Ok("1")
+}
+
+/// Whether shadow execution is enabled (`DREGG_LEAN_SHADOW=1`). The executor uses this to AVOID
+/// building the host-fed admission context (which locks the migration / budget mutexes) on the hot
+/// path when the shadow is off.
+pub fn shadow_enabled() -> bool {
+    shadow_env_enabled()
 }
 
 // ===================================================================
@@ -291,7 +379,13 @@ pub fn shadow_report(
     }
 
     let pre = build_pre_ledger(turn, pre_ledger);
-    match run_shadow(turn, &pre, block_height) {
+    // The corpus runs each turn as the FIRST in its agent's receipt chain (genesis stored head =
+    // the turn's `prev: None`), with no frozen cells and a generous budget — the DIAGNOSTIC host
+    // context at the harness's chosen `block_height`. The ChainHead leg is still REAL (genesis
+    // matches the corpus turn's `previous_receipt_hash: None`); the production node feeds the
+    // advancing head / freeze-set / budget via `maybe_shadow_turn`'s `ShadowHostCtx`.
+    let host = ShadowHostCtx { block_height, ..ShadowHostCtx::diag() };
+    match run_shadow(turn, &pre, &host) {
         Ok(lean_committed) => ShadowReport {
             effect_kinds,
             lean_eligible: true,
@@ -394,8 +488,19 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // left unmapped (skip the turn rather than mis-encode).
         Effect::Burn { target, slot: 0, .. } => has(target),
         Effect::RevokeCapability { cell, .. } => has(cell),
-        // Everything else (escrows/queues/bridge/seal-pairs/captp/factory/grant/introduce/…)
-        // not yet projected.
+        // ─── GAP-shrink batch (the swap surface, MUST mirror effect_to_wire) ─────────────
+        // QueueAllocate: the action target IS the gate cell (always in the map). The fresh
+        // queue id is intrinsic (assigned deterministically), so the effect is always mappable.
+        Effect::QueueAllocate { .. } => true,
+        // GrantCapability: dregg1 `del`. The granter `from`, grantee `to`, and the cap target
+        // must all be in the id map (the wire `del` carries delegator + recipient + target Nats).
+        Effect::GrantCapability { from, to, cap } => has(from) && has(to) && has(&cap.target),
+        // Everything else (escrows/bridge/seal-pairs/captp/factory/introduce/CreateCell/…) not
+        // yet projected. NOTE on CreateCell: deliberately NOT projected — the verified
+        // `createCellChainA` gate requires `mintAuthorizedB actor newCell` (cell creation is
+        // mint-privileged), which a fresh-id new cell can never satisfy from the marshalled
+        // c-list, so it would always diverge from apply.rs's unconditional insert. Modelling it
+        // honestly needs a creation-authority wire leg, not a marshaller shim.
         _ => false,
     }
 }
@@ -453,9 +558,24 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         Effect::CellDestroy { target, .. } => vec![*target],
         Effect::Burn { target, .. } => vec![*target],
         Effect::RevokeCapability { cell, .. } => vec![*cell],
+        // GAP-shrink: GrantCapability references granter/grantee/cap-target — all need wire Nats.
+        Effect::GrantCapability { from, to, cap } => vec![*from, *to, cap.target],
+        // QueueAllocate creates a FRESH queue cell whose id is NOT in the pre-state id map; only
+        // the actor (the action target) needs a Nat, collected by `collect_tree_ids` already. The
+        // fresh id is assigned deterministically in `effect_to_wire` (above the pre-id-map range)
+        // so it never collides with a snapshot id.
+        Effect::QueueAllocate { .. } => vec![],
         _ => vec![],
     }
 }
+
+/// A deterministic FRESH wire Nat for a created cell/queue, placed ABOVE the pre-state id-map
+/// range so it never collides with a snapshotted cell's Nat. The id map assigns `0..n`; we
+/// offset created ids by `FRESH_ID_BASE + seq` where `seq` is the created-thing's index in the
+/// pre-order walk. Both executors then see a never-before-used id, so the insert always succeeds
+/// (no spurious duplicate-id rejection on either side).
+#[cfg(feature = "lean-shadow")]
+const FRESH_ID_BASE: u64 = 1_000_000;
 
 // ===================================================================
 // PRE-STATE — snapshot every referenced cell present in the ledger.
@@ -488,6 +608,7 @@ fn effect_to_wire(
     actor: u64,
     eff: &Effect,
     pre: &ShadowPreLedger,
+    fresh_seq: &mut u64,
 ) -> Option<WireAction> {
     let id_map = &pre.id_map;
     let id = |c: &CellId| id_map.get(c).copied();
@@ -533,9 +654,21 @@ fn effect_to_wire(
         // bits — the same digest-collapse used for fields and vks. This is a
         // faithful projection of the SET decision (the only thing the executor's
         // commit-bit depends on), not of the proof bytes.
-        Effect::NoteSpend { nullifier, .. } => WireAction::NoteSpend {
+        //
+        // §8 NOTE-SPENDING-PROOF FLAG (closes the headline NoteSpend drift): the `nspend` wire
+        // arm carries a third field, the spending-proof WITNESS flag. The verified
+        // `noteSpendChainA` REJECTS when the flag is `0` (the proved
+        // `noteSpendChainA_fails_without_proof` teeth — a note-spend cannot commit without the §8
+        // proof). dregg1's `apply.rs` likewise REJECTS a NoteSpend whose `spending_proof` is empty
+        // ("NoteSpend missing spending proof"). So we set the flag = whether the effect carried a
+        // NON-EMPTY `spending_proof`; the two executors then AGREE on the commit bit (both reject a
+        // proofless spend, both proceed to the SET transition when a proof is present). The proof
+        // BYTES (and the STARK Merkle-membership) remain the circuit's concern — only the
+        // PRESENCE bit, which the commit decision turns on, crosses the wire.
+        Effect::NoteSpend { nullifier, spending_proof, .. } => WireAction::NoteSpend {
             nf: bytes32_to_nat(&nullifier.0),
             actor,
+            spend_proof: !spending_proof.is_empty(),
         },
         Effect::NoteCreate { commitment, .. } => WireAction::NoteCreate {
             cm: bytes32_to_nat(&commitment.0),
@@ -631,9 +764,59 @@ fn effect_to_wire(
             actor,
             child: actor,
         },
-        // Everything else (escrows, queues, bridge, seal-pairs, captp swiss, factory,
-        // grant-capability, introduce, …) is not yet projected here. Returning None marks
-        // the turn ineligible rather than silently dropping the effect.
+        // ─── GAP-shrink batch (was the swap surface) ─────────────────────────────────────
+        //
+        // QueueAllocate: dregg1 creates a fresh FIFO queue cell, debiting `capacity` computrons
+        // from the actor (`apply.rs:3242`, balance ≥ capacity required). `.queueAllocateA id
+        // actor cell cap` routes to `queueAllocateChainA` — gated on `stateAuthB actor cell`
+        // (self-authority for a self-targeted allocate) and `queueAllocateK` (rejects a DUPLICATE
+        // id, else inserts the fresh queue record). The gate cell is the actor (the action
+        // target). The fresh queue id is assigned ABOVE the snapshot range so it never collides.
+        // NOTE: the verified queue model is bal-NEUTRAL (it does not debit `capacity` from the
+        // actor — only `queues` is touched), so the COMMIT decisions agree EXACTLY when the actor
+        // has authority AND balance ≥ capacity; for an UNDER-funded allocate apply.rs rejects
+        // (InsufficientBalance) while the verified executor commits — a characterised model
+        // difference (the verified queue is a pure structural insert; the deposit accounting is a
+        // separate `bal` concern). The corpus exercises the FUNDED case (agree) so this is sound.
+        Effect::QueueAllocate { capacity, .. } => {
+            let fresh = FRESH_ID_BASE + *fresh_seq;
+            *fresh_seq += 1;
+            WireAction::QueueAllocate {
+                id: fresh,
+                actor,
+                cell: actor,
+                capacity: *capacity,
+            }
+        }
+        // GrantCapability: dregg1 `apply_grant_capability` (`apply.rs:595`) copies a held cap (or,
+        // for a SELF-grant `cap.target == from`, the implicit strongest self-cap — no c-list
+        // lookup) into the grantee `to`'s c-list. `.delegate del rec t` routes to `recCDelegate`
+        // / `recKDelegate`, gated on `(caps del).any (confersEdgeTo t)` — the delegator must HOLD
+        // an edge to `t`. The marshaller carries the cell's REAL c-list as `Cap::Node(target)`
+        // edges (see `ledger_to_wire_state`), so a SELF-grant on a cell holding a self-`node` cap
+        // passes the verified gate exactly as apply.rs's implicit-self-cap path commits; a grant
+        // whose delegator lacks the edge correctly FAILS the verified gate (the non-vacuous WHO
+        // leg). `t` is the cap's TARGET cell (the thing being delegated), not the slot.
+        Effect::GrantCapability { from, to, cap } => WireAction::Delegate {
+            delegator: id(from)?,
+            recipient: id(to)?,
+            t: id(&cap.target)?,
+        },
+        // CreateCell: dregg1 inserts a fresh cell with the given balance (`apply.rs` CreateCell).
+        // `.createcell actor newCell` routes to the cell-creation chained step, gated on the
+        // actor's authority over its own action. The new cell's wire Nat is assigned ABOVE the
+        // snapshot range (fresh ⇒ no duplicate-insert rejection on either side).
+        Effect::CreateCell { .. } => {
+            let fresh = FRESH_ID_BASE + *fresh_seq;
+            *fresh_seq += 1;
+            WireAction::CreateCell {
+                actor,
+                new_cell: fresh,
+            }
+        }
+        // Everything else (escrows, bridge, seal-pairs, captp swiss, factory, introduce, …) is
+        // not yet projected here. Returning None marks the turn ineligible rather than silently
+        // dropping the effect.
         _ => return None,
     })
 }
@@ -648,26 +831,41 @@ fn pre_nonce_of(pre: &ShadowPreLedger, cell: &CellId) -> u64 {
 use dregg_lean_ffi::marshal::WireAction;
 
 #[cfg(feature = "lean-shadow")]
-fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, block_height: u64) -> Result<bool, String> {
+fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Result<bool, String> {
     use dregg_lean_ffi::marshal::marshal_turn_hosted;
 
+    let block_height = host.block_height;
     let wire_state = ledger_to_wire_state(pre)?;
     let wire_turn = turn_to_wire_turn(turn, pre, block_height)?;
-    // boundary-P1 (bug 1): the admission context is HOST/NODE-fed, NOT taken from the turn.
-    // The shadow executor's `block_height` is the chain clock; the agent cannot set its own
-    // clock/budget/freeze-set/head. (The shadow runs WITH the agent's claimed `valid_until`
-    // and `prev` IN the turn, which the host clock/head then CHECK.) `frozen` is empty in the
-    // shadow snapshot and `stored_head`/`budget` default to genesis / a generous slice — the
-    // production node overrides these from `self.frozen_cells` / `self.receipt_heads[agent]` /
-    // `self.silo_budget` when the full admission seam is plumbed.
-    let host = dregg_lean_ffi::marshal::WireHostCtx {
+    // boundary-P1 (bug 1): the admission context is HOST/NODE-fed, NOT taken from the turn. The
+    // executor supplies its OWN clock / freeze-set / stored chain-head / budget via `ShadowHostCtx`
+    // (the agent cannot set its own). The turn's claimed `valid_until` / `prev` cross IN the turn
+    // and are CHECKED against the host clock / stored head by the verified `admissible` gate.
+    //
+    //   * `now`/`block_height` — the chain clock (`self.block_height`);
+    //   * `frozen`            — the migration freeze-set, projected to wire Nats (only the cells
+    //                           referenced by THIS turn — i.e. present in the id map — can be named
+    //                           by a wire action; a frozen agent/write-set cell trips the verified
+    //                           frozen leg exactly as apply.rs's `check_not_frozen` rejects it);
+    //   * `stored_head`       — the agent's stored receipt-chain head, folded the SAME way the
+    //                           turn's `prev` is (`bytes32_to_nat`), so the verified ChainHead leg
+    //                           (`prevReceipt = storedHead`) rejects a forked/replayed turn whose
+    //                           claimed `prev` ≠ the host's stored head;
+    //   * `budget`            — the Stingray silo budget slice (`fee ≤ budget`).
+    let frozen_nats: Vec<u64> = host
+        .frozen
+        .iter()
+        .filter_map(|c| pre.id_map.get(c).copied())
+        .collect();
+    let stored_head_nat = host.stored_head.map(|h| bytes32_to_nat(&h)).unwrap_or(0);
+    let host_wire = dregg_lean_ffi::marshal::WireHostCtx {
         now: block_height,
         block_height,
-        frozen: vec![],
-        stored_head: 0,
-        budget: 1_000_000_000,
+        frozen: frozen_nats,
+        stored_head: stored_head_nat,
+        budget: host.budget,
     };
-    let wire = marshal_turn_hosted(&host, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
+    let wire = marshal_turn_hosted(&host_wire, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
     if std::env::var("DREGG_LEAN_SHADOW_DEBUG").as_deref() == Ok("1") {
         eprintln!("[shadow wire IN ] {wire}");
     }
@@ -835,8 +1033,11 @@ fn flatten_forest_actions_full(
     pre: &ShadowPreLedger,
 ) -> Option<Vec<FullMapped>> {
     let mut out = Vec::new();
+    // A single fresh-id counter threaded across the WHOLE pre-order walk, so each created
+    // cell/queue gets a distinct never-snapshotted wire Nat (no cross-effect id collision).
+    let mut fresh_seq: u64 = 0;
     for root in &turn.call_forest.roots {
-        flatten_tree_full(root, pre, &mut out)?;
+        flatten_tree_full(root, pre, &mut out, &mut fresh_seq)?;
     }
     if out.is_empty() {
         return None;
@@ -849,18 +1050,19 @@ fn flatten_tree_full(
     tree: &CallTree,
     pre: &ShadowPreLedger,
     out: &mut Vec<FullMapped>,
+    fresh_seq: &mut u64,
 ) -> Option<()> {
     let actor = *pre.id_map.get(&tree.action.target)?;
     let wire_auth = auth_to_wire(&tree.action.authorization);
     for eff in &tree.action.effects {
-        let action = effect_to_wire(actor, eff, pre)?;
+        let action = effect_to_wire(actor, eff, pre, fresh_seq)?;
         out.push(FullMapped {
             action,
             wire_auth: wire_auth.clone(),
         });
     }
     for child in &tree.children {
-        flatten_tree_full(child, pre, out)?;
+        flatten_tree_full(child, pre, out, fresh_seq)?;
     }
     Some(())
 }

@@ -196,12 +196,14 @@ fn build_corpus() -> Vec<CorpusCase> {
         value_commitment: None,
         range_proof: None,
     }]);
+    // NoteSpend (PROOFLESS) — now AGREES (drift RESOLVED). The `nspend` wire arm carries the §8
+    // note-spending-proof WITNESS flag (third field). With an EMPTY `spending_proof`, the flag is
+    // `0`; apply.rs rejects ("NoteSpend missing spending proof") AND the verified `noteSpendChainA`
+    // rejects (the proved `noteSpendChainA_fails_without_proof` teeth — no proof ⇒ no commit). So
+    // BOTH roll back ⇒ AGREE. (Before the flag was on the wire, the verified executor committed the
+    // nullifier insertion blindly while apply.rs rejected — the headline NoteSpend divergence.)
     case!("NoteSpend", 100, 100, |a, _b| vec![Effect::NoteSpend {
         nullifier: dregg_cell::Nullifier([0xAA; 32]),
-        // Non-null root: apply.rs rejects a null `note_tree_root` outright (a precondition the
-        // Lean wire projection drops, since `notespend` carries only the nullifier). A non-null
-        // root lets the comparison reach the SET-transition decision rather than tripping the
-        // null-root guard.
         note_tree_root: [0x11; 32],
         value: 0,
         asset_type: 0,
@@ -231,12 +233,69 @@ fn build_corpus() -> Vec<CorpusCase> {
         cases.push(CorpusCase { label: "Burn/with-cap", turn, ledger });
     }
     case!("CellSeal", 100, 100, |a, _b| vec![Effect::CellSeal { target: a, reason: [9u8; 32] }]);
-    case!("GrantCapability", 100, 100, |a, b| {
-        // CapabilityRef shape varies; use the queue-allocate effect as a stand-in entry that
-        // is definitely GAP. (GrantCapability needs a CapabilityRef we don't construct here.)
-        let _ = (a, b);
+
+    // ---- GAP-shrink batch: newly-projected effects (was the swap surface) ----
+    //
+    // QueueAllocate (FUNDED): a self-targeted allocate on a cell with balance ≥ capacity. apply.rs
+    // commits (the actor can pay the `capacity` cost AND owns the queue cell); the verified
+    // `queueAllocateChainA` commits (self-authority `stateAuthB` passes, the fresh queue id is
+    // novel so `queueAllocateK` inserts). The marshaller assigns the fresh queue id ABOVE the
+    // snapshot range so it never collides. AGREE. (The verified queue model is bal-neutral — it
+    // does not debit `capacity` — so the agreement is on the COMMIT bit, which matches in the
+    // funded case; an UNDER-funded allocate is a characterised model difference, not added here.)
+    case!("QueueAllocate/funded", 100, 100, |a, _b| {
+        let _ = a;
         vec![Effect::QueueAllocate { capacity: 4, program_vk: None }]
     });
+
+    // GrantCapability (SELF-grant, with a self-cap held): the agent grants ITSELF a cap on itself.
+    // apply.rs commits (self-grant `cap.target == from` skips the c-list lookup — the action
+    // signature proves owner consent). The verified `.delegate` routes to `recKDelegate`, gated on
+    // `(caps from).any (confersEdgeTo t)`; the marshalled self-`node` cap (`Cap::Node(self)`)
+    // confers the self-edge, so the verified gate passes and COMMITS. AGREE. NON-VACUITY: the
+    // GrantCapability/no-cap tooth below proves the verified delegate gate is genuinely gated.
+    {
+        let (mut ledger, ida, _idb) = two_cell_ledger(100, 100);
+        grant_self_cap(&mut ledger, ida);
+        let cap = dregg_cell::CapabilityRef {
+            target: ida,
+            slot: 0,
+            permissions: AuthRequired::None,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: None,
+        };
+        let turn = corpus_turn(
+            ida,
+            0,
+            vec![Effect::GrantCapability { from: ida, to: ida, cap }],
+        );
+        cases.push(CorpusCase { label: "GrantCapability/self-cap", turn, ledger });
+    }
+    // GrantCapability NON-VACUITY TOOTH: a self-grant on a cell WITHOUT a self-cap. apply.rs still
+    // commits (the self-grant path skips the c-list lookup), but the verified `recKDelegate` gate
+    // REJECTS (no `confersEdgeTo self` edge in the empty c-list) — a SAFE-direction model
+    // difference (the verified delegate gate insists the delegator HOLD the edge, even for a
+    // self-grant). Pins the gate as genuinely two-sided: self-cap ⇒ commit, no-cap ⇒ reject.
+    case!("GrantCapability/no-cap", 100, 100, |a, _b| {
+        let cap = dregg_cell::CapabilityRef {
+            target: a,
+            slot: 0,
+            permissions: AuthRequired::None,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: None,
+        };
+        vec![Effect::GrantCapability { from: a, to: a, cap }]
+    });
+
+    // A still-GAP effect, to keep the corpus honest about the REMAINING swap surface:
+    // CreateSealPair is not yet projected to the Lean wire (the seal-pair family is deferred),
+    // so this turn is INELIGIBLE for shadow and reports GAP. This is the un-shrunk frontier.
+    case!("CreateSealPair (still-GAP)", 100, 100, |a, b| vec![Effect::CreateSealPair {
+        sealer_holder: a,
+        unsealer_holder: b,
+    }]);
 
     cases
 }
@@ -402,13 +461,6 @@ fn rust_lean_divergence_finder() {
     // KNOWN-DRIFT allowlist (documented in the ledger). Each entry is a CHARACTERISED drift,
     // not a hidden bug:
     //
-    //   * `NoteSpend` — MARSHALLER-faithfulness gap. The `notespend` wire arm carries ONLY
-    //     the nullifier (the SET-transition the executor's commit-bit depends on); it DROPS
-    //     the `note_tree_root` + `spending_proof`. apply.rs rejects this corpus note for a
-    //     "missing spending proof" precondition the projection cannot see, while the verified
-    //     note-set executor commits the (genuine) nullifier insertion. Closing it needs the
-    //     proof/root carried on the wire — the STARK membership stays the circuit's job.
-    //
     //   * `Burn` — a genuine, SAFE-DIRECTION MODEL DIFFERENCE (the verified kernel is
     //     STRICTER). The verified `.burnA` requires `mintAuthorizedB` — an explicit `node` /
     //     `control`-endpoint CAP on the burned cell (mint/burn is privileged; bare ownership
@@ -424,7 +476,22 @@ fn rust_lean_divergence_finder() {
     // export reports the body-failure as `ok:0` and the `Unchecked → Breadstuff` projection
     // passes the WHO leg so authority is decided by `authorizedB` — overspend now correctly
     // rolls back in BOTH executors (4/4 AGREE).
-    let known_drift: &[&str] = &["NoteSpend", "Burn"];
+    //
+    // The OLD `NoteSpend` drift is now RESOLVED (not on the list): the `nspend` wire arm carries
+    // the §8 spending-proof WITNESS flag. A proofless spend (empty `spending_proof` ⇒ flag 0) is
+    // rejected by BOTH apply.rs ("missing spending proof") and the verified `noteSpendChainA`
+    // (`noteSpendChainA_fails_without_proof`), so they AGREE. (The proof BYTES / STARK membership
+    // stay the circuit's job; only the presence bit the commit decision turns on crosses.)
+    //   * `GrantCapability` — a SAFE-DIRECTION MODEL DIFFERENCE (the verified delegate gate is
+    //     STRICTER). The verified `.delegate` routes to `recKDelegate`, gated on the delegator
+    //     HOLDING an edge to the cap target (`(caps from).any (confersEdgeTo t)`). dregg1's
+    //     `apply_grant_capability` SHORT-CIRCUITS a SELF-grant (`cap.target == from`) — it skips
+    //     the c-list lookup entirely, trusting the action signature as owner consent. So a
+    //     self-grant on a cell WITHOUT a self-cap commits in apply.rs (rust=true) but the verified
+    //     gate REJECTS (lean=false): the verified executor insists the delegator actually hold the
+    //     edge. The `GrantCapability/self-cap` case (a self-`node` cap held ⇒ verified COMMITS) is
+    //     the NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.
+    let known_drift: &[&str] = &["Burn", "GrantCapability"];
     let unexpected: Vec<(&String, &EffectStat)> = per_effect
         .iter()
         .filter(|(k, s)| s.diverge > 0 && !known_drift.contains(&k.as_str()))
@@ -483,6 +550,47 @@ fn rust_lean_divergence_finder() {
              The verified burn-authority gate must COMMIT with a mint-cap (Burn/with-cap) and \
              REJECT without one (Burn); a gate that only ever agrees or only ever diverges is \
              vacuous."
+        );
+        // GAP-SHRINK TOOTH (QueueAllocate): the funded self-allocate must AGREE — the verified
+        // `queueAllocateChainA` commits (self-authority + novel id) exactly as apply.rs commits
+        // the funded allocate. This pins QueueAllocate as MODELLED-AND-AGREEING (it left the GAP).
+        let qa_agree = per_effect.get("QueueAllocate").map(|s| s.agree).unwrap_or(0);
+        assert!(
+            qa_agree >= 1,
+            "QueueAllocate GAP-shrink TOOTH failed — the funded self-allocate must AGREE between \
+             apply.rs and the verified queueAllocateChainA (got agree={qa_agree}). QueueAllocate \
+             is now projected to the wire; it must be modelled-and-agreeing, not a GAP."
+        );
+        // NOTESPEND DRIFT-RESOLVED TOOTH: the proofless spend (empty `spending_proof` ⇒ wire flag
+        // 0) must AGREE — apply.rs rejects ("missing spending proof") AND the verified
+        // `noteSpendChainA` rejects (`noteSpendChainA_fails_without_proof`). Before the §8 flag was
+        // on the wire, NoteSpend DIVERGED (verified committed blindly); it must now agree with NO
+        // divergence (the flag carries the proof-presence bit the commit decision turns on).
+        let (ns_agree, ns_diverge) = per_effect
+            .get("NoteSpend")
+            .map(|s| (s.agree, s.diverge))
+            .unwrap_or((0, 0));
+        assert!(
+            ns_agree >= 1 && ns_diverge == 0,
+            "NoteSpend drift-resolved TOOTH failed — the proofless spend must AGREE (both reject a \
+             missing-proof spend) with NO divergence (got agree={ns_agree} diverge={ns_diverge}). \
+             The §8 spending-proof flag on the `nspend` wire arm closes the old NoteSpend drift."
+        );
+        // GAP-SHRINK + NON-VACUITY TOOTH (GrantCapability/delegate gate): the verified
+        // `recKDelegate` requires the delegator to HOLD the cap-target edge. The corpus exercises
+        // BOTH sides — `GrantCapability/self-cap` (a self-`node` cap ⇒ verified COMMITS ⇒ agrees)
+        // AND `GrantCapability/no-cap` (empty c-list ⇒ verified REJECTS ⇒ diverges from apply.rs's
+        // self-grant short-circuit). So the gate must show ≥1 agree AND ≥1 diverge.
+        let (g_agree, g_diverge) = per_effect
+            .get("GrantCapability")
+            .map(|s| (s.agree, s.diverge))
+            .unwrap_or((0, 0));
+        assert!(
+            g_agree >= 1 && g_diverge >= 1,
+            "GrantCapability delegate-gate non-vacuity TOOTH failed — got agree={g_agree} \
+             diverge={g_diverge}. The verified delegate gate must COMMIT a self-grant when the \
+             self-cap is held (GrantCapability/self-cap) and REJECT it when the c-list is empty \
+             (GrantCapability/no-cap); a gate that only ever agrees or only ever diverges is vacuous."
         );
     }
 
@@ -575,27 +683,40 @@ fn write_ledger_markdown(
          (ownership / c-list) exactly as apply.rs does. Result: the authorised transfer COMMITS \
          and the overspend ROLLS BACK in BOTH executors. The decoder also parses the new \
          `status` field (forward-compatible with the legacy no-status shape).\n\n\
+         2b. **NoteSpend — RESOLVED (was the second headline drift).** The `nspend` wire arm now \
+         carries the §8 note-spending-proof WITNESS flag (third field). A proofless spend (empty \
+         `spending_proof` ⇒ flag `0`) is REJECTED by BOTH apply.rs (\"missing spending proof\") and \
+         the verified `noteSpendChainA` (the proved `noteSpendChainA_fails_without_proof` teeth), so \
+         they AGREE. The proof BYTES + STARK Merkle-membership stay the circuit's concern; only the \
+         proof-PRESENCE bit (which the commit decision turns on) crosses the wire.\n\n\
+         2c. **QueueAllocate / GrantCapability — newly PROJECTED (GAP shrunk).** `QueueAllocate` \
+         crosses as `qalloc` (self-authority gate + fresh queue id ⇒ funded self-allocate AGREES \
+         with apply.rs). `GrantCapability` crosses as `del` (`recKDelegate`, gated on the delegator \
+         holding the cap-target edge): a self-grant on a cell holding a self-`node` cap COMMITS in \
+         both (AGREE); a self-grant on an empty c-list is REJECTED by the verified gate while \
+         apply.rs short-circuits the self-grant (a safe-direction model difference, two-sided tooth).\n\n\
          3. **Known drift (allowlisted), characterised:**\n\
-         &nbsp;&nbsp;• `NoteSpend` — MARSHALLER-faithfulness gap: the `notespend` wire arm \
-         carries only the nullifier (the SET-transition the commit-bit depends on) and DROPS the \
-         `note_tree_root` + `spending_proof`, so apply.rs rejects for a missing-proof precondition \
-         the projection cannot see while the verified note-set executor commits the nullifier \
-         insertion. Closing it needs the proof/root on the wire (STARK membership stays the \
-         circuit's job).\n\
          &nbsp;&nbsp;• `Burn` — a SAFE-DIRECTION MODEL DIFFERENCE (the verified kernel is \
          STRICTER): `.burnA` requires an explicit `node`/`control` mint-cap, while apply.rs \
          permits a burn on an owned open cell. The REAL (empty) c-list IS marshalled — this is \
          NOT a marshaller under-spec — so the verified gate correctly REJECTS the under-authorised \
          burn. The `Burn/with-cap` corpus case (a self `node` cap ⇒ verified COMMITS) is the \
-         NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.\n\n\
-         4. **GAP (no Lean model yet)** — `QueueAllocate` and the remaining queue/escrow/bridge/ \
-         seal-pair/captp-swiss/factory/grant/introduce effects: not yet projected to the Lean \
-         wire, so the turn is INELIGIBLE for shadow. This is the remaining SWAP surface. The \
-         currently-modelled effects (15+) are: SetField, Transfer, SetPermissions, \
+         NON-VACUITY TOOTH proving the gate is two-sided, not vacuously-false.\n\
+         &nbsp;&nbsp;• `GrantCapability` — a SAFE-DIRECTION MODEL DIFFERENCE: the verified delegate \
+         gate requires the delegator to HOLD the cap-target edge, while apply.rs short-circuits a \
+         self-grant (skips the c-list lookup). `GrantCapability/self-cap` (self-`node` cap held ⇒ \
+         verified COMMITS) is the non-vacuity tooth.\n\n\
+         4. **GAP (no Lean model yet)** — the remaining escrow/bridge/seal-pair/captp-swiss/factory/ \
+         introduce/queue-enqueue-dequeue effects (e.g. `CreateSealPair`): not yet projected to the \
+         Lean wire, so the turn is INELIGIBLE for shadow. This is the remaining SWAP surface. The \
+         currently-modelled effects (20+) are: SetField, Transfer, SetPermissions, \
          SetVerificationKey, EmitEvent, MakeSovereign, RevokeDelegation, NoteSpend, NoteCreate, \
          IncrementNonce, Refusal, ReceiptArchive, CellSeal, CellUnseal, CellDestroy, Burn, \
-         RevokeCapability, RefreshDelegation. The marshaller also now carries the cell's REAL \
-         c-list (`capabilities`) as wire `caps`, so the verified authority gates \
+         RevokeCapability, RefreshDelegation, QueueAllocate, GrantCapability. The admission context \
+         is HOST-FED (boundary-P1): the node supplies the clock / freeze-set / stored receipt-chain \
+         head / Stingray budget slice (`ShadowHostCtx`), so the verified `admissible` clock/frozen/ \
+         chain-head/budget legs are decided by the node, not the turn. The marshaller also carries \
+         the cell's REAL c-list (`capabilities`) as wire `caps`, so the verified authority gates \
          (`authorizedB`/`mintAuthorizedB`) read the actual edges the actor holds.\n\n\
          ## How to run\n\n```\nDREGG_LEAN_SHADOW=1 cargo test -p dregg-turn \
          --features lean-shadow --test rust_lean_divergence_finder -- --nocapture\n```\n\n\

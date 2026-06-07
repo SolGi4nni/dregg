@@ -1468,6 +1468,47 @@ async fn execute_finalized_turn(
         &s,
         crate::executor_setup::BlockHeightMode::Next,
     );
+
+    // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
+    // verified Lean shadow's clock / chain-head / budget legs are decided by THIS node's own state
+    // (not the turn). `TurnExecutor::execute` reads these (`get_last_receipt_hash` / `budget_gate`
+    // / `cell_migrations`) to build the `ShadowHostCtx`; without seeding they default to genesis /
+    // no-gate (the diagnostic stub). Production overrides:
+    //   * stored receipt-chain HEAD — the node's authoritative head for the agent. For this node's
+    //     own agent it is the cipherclerk receipt chain's last receipt; the verified ChainHead leg
+    //     then checks the turn's claimed `prev` against it (a forked turn whose `prev` ≠ the node's
+    //     stored head is rejected). (Federated turns from OTHER agents carry their head in the
+    //     bundle the node already validated upstream; we seed the local-agent head here, the case
+    //     the node maintains independently.)
+    //   * silo BUDGET slice — the agent's Stingray bounded-counter remaining slice for this silo;
+    //     the verified Budget leg rejects `fee > budget`.
+    {
+        let agent = signed_turn.turn.agent;
+        if let Some(head) = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()) {
+            // The local node's authoritative chain head (independent of the turn's claim).
+            if agent == crate::executor_setup::local_agent_cell(&s) {
+                executor.set_last_receipt_hash(agent, head);
+            }
+        }
+        if let Some(remaining) = s
+            .budget_coordinators
+            .get(&agent)
+            .and_then(|c| c.remaining(&s.silo_id))
+        {
+            // A gate whose remaining slice = the agent's bounded-counter remaining for THIS silo.
+            // The gate's numeric silo tag is a stable u32 fingerprint of the node's SiloId (only an
+            // identifier; the load-bearing value is the slice ceiling the verified Budget leg reads).
+            let silo_tag = u32::from_le_bytes([
+                s.silo_id[0],
+                s.silo_id[1],
+                s.silo_id[2],
+                s.silo_id[3],
+            ]);
+            let slice = dregg_turn::BudgetSlice::new(remaining);
+            executor.set_budget_gate(dregg_turn::BudgetGate::new(silo_tag, slice));
+        }
+    }
+
     let new_height = executor.block_height;
     let now = executor.current_timestamp;
 

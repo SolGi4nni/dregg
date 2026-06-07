@@ -34,6 +34,66 @@ fn is_zero_hash(bytes: &[u8; 32]) -> bool {
     bytes.iter().all(|b| *b == 0)
 }
 
+/// Walk a call tree pre-order, collecting every `CellId` it references (action target + each
+/// effect's referenced cells). Used to build the shadow's NODE-fed freeze-set (only referenced
+/// cells can be named by a wire action, so only they can be frozen-checked). Mirrors the cell
+/// collection in `lean_shadow::collect_tree_ids` (kept local to avoid widening that module's API).
+fn collect_referenced_cells(
+    tree: &crate::forest::CallTree,
+    out: &mut std::collections::BTreeSet<CellId>,
+) {
+    use crate::action::Effect;
+    out.insert(tree.action.target);
+    for eff in &tree.action.effects {
+        match eff {
+            Effect::SetField { cell, .. }
+            | Effect::IncrementNonce { cell }
+            | Effect::SetPermissions { cell, .. }
+            | Effect::SetVerificationKey { cell, .. }
+            | Effect::EmitEvent { cell, .. }
+            | Effect::MakeSovereign { cell }
+            | Effect::Refusal { cell, .. }
+            | Effect::RevokeCapability { cell, .. } => {
+                out.insert(*cell);
+            }
+            Effect::Transfer { from, to, .. } => {
+                out.insert(*from);
+                out.insert(*to);
+            }
+            Effect::GrantCapability { from, to, cap } => {
+                out.insert(*from);
+                out.insert(*to);
+                out.insert(cap.target);
+            }
+            Effect::RevokeDelegation { child } => {
+                out.insert(*child);
+            }
+            Effect::CellSeal { target, .. }
+            | Effect::CellUnseal { target }
+            | Effect::CellDestroy { target, .. }
+            | Effect::Burn { target, .. } => {
+                out.insert(*target);
+            }
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target,
+                ..
+            } => {
+                out.insert(*introducer);
+                out.insert(*recipient);
+                out.insert(*target);
+            }
+            // Effects whose write set is intrinsic (notes/queues/escrows/etc.) or self-targeted
+            // reference no additional pre-existing cell beyond the action target collected above.
+            _ => {}
+        }
+    }
+    for child in &tree.children {
+        collect_referenced_cells(child, out);
+    }
+}
+
 impl TurnExecutor {
     /// Execute a turn against a ledger, returning the result.
     ///
@@ -52,10 +112,114 @@ impl TurnExecutor {
     /// Future: once Effect VM covers all effect types, every turn will carry a STARK proof,
     /// making this function a thin verify-and-commit wrapper (trustless).
     pub fn execute(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
-        crate::lean_shadow::capture_pre_state_if_eligible(turn, ledger, self.block_height);
+        // boundary-P1 (bug 1): build the NODE-fed admission context from the executor's OWN state
+        // (NOT the turn) — the chain clock, the migration freeze-set, the agent's stored
+        // receipt-chain head, and the Stingray budget slice. The verified Lean gate derives its
+        // `AdmCtx` from THIS (`admCtxOfHost`), so the shadow's clock/frozen/chain-head/budget legs
+        // are decided by the node exactly as the real `apply.rs` admission decides them.
+        let host = if crate::lean_shadow::shadow_enabled() {
+            self.shadow_host_ctx(turn, ledger)
+        } else {
+            // Shadow off: skip the migration / budget mutex locks on the hot path. The diagnostic
+            // ctx is never consumed (capture is a no-op when shadow is disabled).
+            crate::lean_shadow::ShadowHostCtx::diag()
+        };
+        crate::lean_shadow::capture_pre_state_if_eligible(turn, ledger, host);
+
+        // THE SWAP beachhead (part d): under strict mode the verified Lean executor is a binding
+        // REJECTION authority. Snapshot the FULL pre-state ledger BEFORE the Rust commit so a Lean
+        // VETO can restore it (a verified rejection = NO state edit). Off the strict path this is
+        // never taken (clone avoided on the hot path).
+        let veto_snapshot: Option<Ledger> = if crate::lean_shadow::strict_veto_enabled() {
+            Some(ledger.clone())
+        } else {
+            None
+        };
+
         let result = self.execute_without_shadow(turn, ledger);
-        crate::lean_shadow::maybe_shadow_turn(turn, ledger, &result, self.block_height);
+        let lean_verdict =
+            crate::lean_shadow::maybe_shadow_turn(turn, ledger, &result, self.block_height);
+
+        // When the verified Lean executor REJECTED a turn the Rust executor COMMITTED, the Lean
+        // verdict VETOES the commit — the verified kernel can only TIGHTEN the decision
+        // (kernel-vs-NEW-Rust; never matching a buggy oracle, never laundering a Rust rejection to a
+        // commit). Restoring the pre-state snapshot leaves the ledger EXACTLY as a verified
+        // rejection would (no state edit).
+        if crate::lean_shadow::lean_vetoes(result.is_committed(), lean_verdict) {
+            if let Some(pre) = veto_snapshot {
+                tracing::warn!(
+                    target: "dregg::lean_shadow::veto",
+                    agent = ?turn.agent,
+                    "THE SWAP veto: verified Lean executor REJECTED a Rust-committed turn — rolling \
+                     back (the verified kernel is the authoritative rejection gate under strict mode)"
+                );
+                *ledger = pre;
+                return TurnResult::Rejected {
+                    reason: TurnError::LeanShadowVeto,
+                    at_action: vec![],
+                };
+            }
+        }
         result
+    }
+
+    /// Build the HOST-fed shadow admission context (boundary-P1 bug 1) from the executor's own
+    /// state. Cheap (only runs the shadow when `DREGG_LEAN_SHADOW=1`, but always built so the
+    /// non-shadow path is identical and the seam is exercised by the differential harness).
+    ///
+    ///   * `block_height` — the chain clock (`self.block_height`);
+    ///   * `frozen`       — the cells frozen for migration (`self.cell_migrations`), the subset of
+    ///                      the turn's referenced cells that are frozen (a frozen agent / write-set
+    ///                      cell is what the verified `admissible` frozen leg rejects);
+    ///   * `stored_head`  — the agent's stored receipt-chain head (`self.get_last_receipt_hash`),
+    ///                      `None` = genesis; the verified ChainHead leg checks the turn's claimed
+    ///                      `prev` against it;
+    ///   * `budget`       — the Stingray silo budget slice (`self.budget_gate.remaining()`), the
+    ///                      verified Budget leg's `fee ≤ budget` bound.
+    fn shadow_host_ctx(
+        &self,
+        turn: &Turn,
+        ledger: &Ledger,
+    ) -> crate::lean_shadow::ShadowHostCtx {
+        use std::collections::BTreeSet;
+
+        // Collect the cells this turn references (agent + every action target + effect cell), then
+        // keep only those the migration manager reports frozen. Only referenced cells can be named
+        // by a wire action, so only they can be projected to wire Nats by the shadow.
+        let mut referenced: BTreeSet<CellId> = BTreeSet::new();
+        referenced.insert(turn.agent);
+        for root in &turn.call_forest.roots {
+            collect_referenced_cells(root, &mut referenced);
+        }
+        let frozen: Vec<CellId> = {
+            let mgr = self.cell_migrations.lock().unwrap();
+            referenced
+                .into_iter()
+                .filter(|c| {
+                    // A referenced cell that is BOTH still in the ledger AND frozen is the
+                    // admission-relevant case; an absent cell cannot be a write-set target.
+                    let _ = ledger;
+                    mgr.is_frozen(c)
+                })
+                .collect()
+        };
+
+        let stored_head = self.get_last_receipt_hash(&turn.agent);
+
+        // The remaining silo budget slice the fee must fit. No gate ⇒ the diagnostic large slice
+        // (the executor imposes no budget bound, so neither should the shadow).
+        let budget = self
+            .budget_gate
+            .as_ref()
+            .map(|g| g.lock().unwrap().slice.remaining())
+            .unwrap_or(1_000_000_000);
+
+        crate::lean_shadow::ShadowHostCtx {
+            block_height: self.block_height,
+            frozen,
+            stored_head,
+            budget,
+        }
     }
 
     fn execute_without_shadow(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {

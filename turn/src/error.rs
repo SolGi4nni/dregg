@@ -59,6 +59,13 @@ pub enum TurnError {
     /// The call forest is empty (no actions to execute).
     EmptyForest,
 
+    /// THE SWAP strict mode (`DREGG_LEAN_SHADOW_STRICT=1`): the verified Lean executor REJECTED a
+    /// turn the Rust executor committed. The verified kernel is the authoritative rejection gate —
+    /// it can only TIGHTEN the decision (never launder a Rust rejection to a commit) — so its veto
+    /// rolls the commit back. A turn carrying this reason was accepted by the legacy Rust executor
+    /// but the verified kernel refused it (e.g. an under-authorised burn / delegate).
+    LeanShadowVeto,
+
     /// Transfer destination cell not found.
     TransferDestNotFound { id: CellId },
 
@@ -438,6 +445,13 @@ impl core::fmt::Display for TurnError {
             }
             TurnError::EmptyForest => {
                 write!(f, "call forest is empty")
+            }
+            TurnError::LeanShadowVeto => {
+                write!(
+                    f,
+                    "verified Lean executor vetoed the commit (THE SWAP strict mode): the legacy \
+                     Rust executor accepted this turn but the verified kernel rejected it"
+                )
             }
             TurnError::TransferDestNotFound { id } => {
                 write!(f, "transfer destination not found: {id}")

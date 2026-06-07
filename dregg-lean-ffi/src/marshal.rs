@@ -346,13 +346,14 @@ pub enum QueueTxOp {
         d_asset: u64,
         deposit: i128,
     },
-    /// {"deq":[id,actor,cell,depId,deposit]}
+    /// {"deq":[id,actor,cell,depId]} — the refund amount is the deposit RECORD's OWN amount, NOT
+    /// a caller-supplied value (P2 canonical-semantics; the verified `queueDequeueA` reads the
+    /// record). The `deposit` field was REMOVED from the wire grammar to match.
     Dequeue {
         id: u64,
         actor: u64,
         cell: u64,
         dep_id: u64,
-        deposit: i128,
     },
 }
 
@@ -412,8 +413,11 @@ pub enum WireAction {
     FulfillObligation { id: u64, actor: u64 },
     /// {"sobl":[id,actor]}
     SlashObligation { id: u64, actor: u64 },
-    /// {"nspend":[nf,actor]}
-    NoteSpend { nf: u64, actor: u64 },
+    /// {"nspend":[nf,actor,sp]} — `sp` is the §8 note-spending-proof witness flag (0/1; the Lean
+    /// parser fail-closes on `sp ≤ 1` and `noteSpendChainA` REJECTS when `sp = 0`, the proved
+    /// `noteSpendChainA_fails_without_proof` teeth). The marshaller sets `sp = 1` iff the dregg1
+    /// effect carried a non-empty `spending_proof`.
+    NoteSpend { nf: u64, actor: u64, spend_proof: bool },
     /// {"ncreate":[cm,actor]}
     NoteCreate { cm: u64, actor: u64 },
     /// {"ccesc":[id,actor,creator,recipient,asset,amount,hidingProof]}  (amount SIGNED; hidingProof 0/1)
@@ -452,8 +456,10 @@ pub enum WireAction {
     QueueAllocate { id: u64, actor: u64, cell: u64, capacity: u64 },
     /// {"qenq":[id,m,actor,cell,depId,dAsset,deposit]}  (deposit SIGNED)
     QueueEnqueue { id: u64, m: u64, actor: u64, cell: u64, dep_id: u64, d_asset: u64, deposit: i128 },
-    /// {"qdeq":[id,actor,cell,depId,deposit]}  (deposit SIGNED)
-    QueueDequeue { id: u64, actor: u64, cell: u64, dep_id: u64, deposit: i128 },
+    /// {"qdeq":[id,actor,cell,depId]} — the refund amount is the deposit RECORD's OWN amount (P2
+    /// canonical-semantics; the verified `queueDequeueA` reads the record, not a caller value), so
+    /// the `deposit` field was REMOVED from the wire grammar.
+    QueueDequeue { id: u64, actor: u64, cell: u64, dep_id: u64 },
     /// {"qresize":[id,newCap,actor,cell]}
     QueueResize { id: u64, new_cap: u64, actor: u64, cell: u64 },
     /// {"export":[sw,actor,exporter,target,AUTHS]}
@@ -909,7 +915,7 @@ fn encode_queue_tx_op(op: &QueueTxOp, out: &mut String) {
             push_int(out, *deposit);
             out.push_str("]}");
         }
-        QueueTxOp::Dequeue { id, actor, cell, dep_id, deposit } => {
+        QueueTxOp::Dequeue { id, actor, cell, dep_id } => {
             out.push_str("{\"deq\":[");
             for (i, n) in [*id, *actor, *cell, *dep_id].iter().enumerate() {
                 if i > 0 {
@@ -917,8 +923,6 @@ fn encode_queue_tx_op(op: &QueueTxOp, out: &mut String) {
                 }
                 push_nat(out, *n);
             }
-            out.push(',');
-            push_int(out, *deposit);
             out.push_str("]}");
         }
     }
@@ -1176,7 +1180,15 @@ fn encode_action(a: &WireAction, out: &mut String) {
         }
         WireAction::FulfillObligation { id, actor } => emit_id_actor("fobl", *id, *actor, out),
         WireAction::SlashObligation { id, actor } => emit_id_actor("sobl", *id, *actor, out),
-        WireAction::NoteSpend { nf, actor } => emit_id_actor("nspend", *nf, *actor, out),
+        WireAction::NoteSpend { nf, actor, spend_proof } => {
+            out.push_str("{\"nspend\":[");
+            push_nat(out, *nf);
+            out.push(',');
+            push_nat(out, *actor);
+            out.push(',');
+            out.push(if *spend_proof { '1' } else { '0' });
+            out.push_str("]}");
+        }
         WireAction::NoteCreate { cm, actor } => emit_id_actor("ncreate", *cm, *actor, out),
         WireAction::CreateCommittedEscrow {
             id,
@@ -1281,7 +1293,7 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *deposit);
             out.push_str("]}");
         }
-        WireAction::QueueDequeue { id, actor, cell, dep_id, deposit } => {
+        WireAction::QueueDequeue { id, actor, cell, dep_id } => {
             out.push_str("{\"qdeq\":[");
             for (i, n) in [*id, *actor, *cell, *dep_id].iter().enumerate() {
                 if i > 0 {
@@ -1289,8 +1301,6 @@ fn encode_action(a: &WireAction, out: &mut String) {
                 }
                 push_nat(out, *n);
             }
-            out.push(',');
-            push_int(out, *deposit);
             out.push_str("]}");
         }
         WireAction::QueueResize { id, new_cap, actor, cell } => {
@@ -1651,7 +1661,7 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
         },
         WireAction::FulfillObligation { id: 200, actor: 201 },
         WireAction::SlashObligation { id: 202, actor: 203 },
-        WireAction::NoteSpend { nf: 74, actor: 75 },
+        WireAction::NoteSpend { nf: 74, actor: 75, spend_proof: true },
         WireAction::NoteCreate { cm: 76, actor: 77 },
         WireAction::CreateCommittedEscrow {
             id: 78,
@@ -1704,7 +1714,6 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
             actor: 127,
             cell: 128,
             dep_id: 129,
-            deposit: -130,
         },
         WireAction::QueueResize { id: 131, new_cap: 132, actor: 133, cell: 134 },
         WireAction::ExportSturdyRef {
@@ -1748,7 +1757,6 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
                     actor: 167,
                     cell: 168,
                     dep_id: 169,
-                    deposit: -170,
                 },
             ],
         },
