@@ -32,8 +32,7 @@ This file adds the adversary/honesty model as an explicit structure (`BFTModel`)
 OPEN (O2 residual): a from-scratch proof that a `GSTRound` eventually obtains (pacemaker /
 view-synchrony); see the `OPEN` block in §4. This is left as a named obstruction, not a sorry.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. All adversary assumptions are structure fields.
-Keystones are `#assert_axioms`-clean.
+All adversary assumptions are structure fields.
 -/
 import Mathlib.Tactic
 import Dregg2.World

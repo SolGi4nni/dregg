@@ -48,8 +48,7 @@ map the `QueueRecord` buffer does not carry. The conservation lemma is UNCONDITI
 committing, so the binding wrap composes for free (it only narrows WHICH deposit may be drained; the
 value-conservation math is the kernel's, cited verbatim). `delta = 0`.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(a `sorryAx` fails the pin and the build). `#eval`-verified TEETH: the P0-1 attack (a dequeuer refunding
+`#eval`-verified TEETH: the P0-1 attack (a dequeuer refunding
 an UNRELATED deposit, recipient ≠ actor) returns `none`; the actor's own bound deposit returns `some`.
 Standalone: `lake build Dregg2.Exec.Handlers.Queue`.
 -/

@@ -24,8 +24,6 @@ What is proved (the load-bearing five):
   5. The tiered caveat (§5): a computable `DriftTier` tag + `TieredCaveat` carrying the
      tier-appropriate proof. The tier is a checked witness, never a search.
 
-Zero sorry/admit/native_decide/axiom. Every keystone is `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Tactics
 import Dregg2.Confluence
@@ -351,7 +349,7 @@ def lkΔ : VersionCell := fun _ => 7
 
 end Evals
 
-/-! ## §7. Axiom-hygiene pins (`#assert_axioms`) — every keystone is sorry-free.
+/-! ## §7. Axiom-hygiene pins (`#assert_axioms`).
 
 Each pin elaborates to an error if the keystone depends on any axiom outside
 `{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). -/

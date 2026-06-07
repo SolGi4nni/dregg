@@ -58,8 +58,7 @@ runs, and the combined per-asset measure moves by EXACTLY the SUM of the survivi
 exercise of a transfer + a mint sub-forest sums `0 + amt`). The hold-gate REJECTS an actor with no edge
 to the target.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(a `sorryAx` fails the pin AND the build). Pure, computable, `#eval`-able. Verified standalone:
+Pure, computable, `#eval`-able. Verified standalone:
 `lake build Dregg2.Exec.Handlers.Exercise`.
 -/
 import Dregg2.Exec.Handler

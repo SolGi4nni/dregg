@@ -60,9 +60,6 @@ at the conservative screen.
     across satellites. (Said plainly, as `right-of-way-response.md` §"Honest caveats" asks.)
   * Swarm liveness / round-cap convergence is NOT modelled here (it lives in the orchestrator
     round-cap, not a theorem).
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Every keystone is `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Laws
 import Dregg2.Authority.Intent
@@ -508,10 +505,9 @@ theorem physReferee_accepts_clear :
 
 /-! ## 8. Axiom-hygiene — every keystone pinned to the three standard kernel axioms.
 
-A `sorryAx` here would mean a silent `sorry` leaked into a "the referee is a theorem"
-keystone. None do. The §9 physics screen enters via the `Verifiable` instance over the REAL
+The §9 physics screen enters via the `Verifiable` instance over the REAL
 `OrbitalScreen.screen` (a concrete `def`, axiom-clean), so the upgraded `referee_sound_physics`
-is `#assert_axioms`-clean too — the real physics adds no axioms. -/
+pins to the same three axioms — the real physics adds none. -/
 
 #assert_axioms referee_sound
 #assert_axioms garbage_rejected

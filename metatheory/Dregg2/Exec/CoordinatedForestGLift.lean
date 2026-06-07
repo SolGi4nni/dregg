@@ -12,8 +12,6 @@ per-leg).
   * intra-cell `.coordinated` on one snapshot still fail-closes (`coordinated_intra_gate_failclosed`);
   * bilateral coordinated discharge refines `CoordinatedForestGate.execBilateralCoordinated`;
   * charter commits refine coordinated-forest commits (`charter_refines_coordinated_forest`).
-
-Discipline: no `sorry`/`admit`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
 import Dregg2.Exec.CoordinatedForestGate
 import Dregg2.Exec.JointCharterBridge

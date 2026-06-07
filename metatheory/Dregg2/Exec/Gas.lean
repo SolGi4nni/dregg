@@ -22,7 +22,7 @@ liveness bound and REMOVES no safety.
     action against the remaining budget BEFORE it commits, and returning the leftover gas. Any
     over-budget action aborts the WHOLE turn to `none` (all-or-nothing, mirroring `execFullTurn`).
 
-THEOREMS (no `sorry`/`axiom`/`admit`/`native_decide`):
+THEOREMS:
   * `gas_monotone`              — a committed metered run leaves remaining gas `= budget − totalCost`
                                   (non-increasing; consumed = Σ over the executed actions).
   * `gas_exhaustion_fails_closed` — `totalCost acts > budget ⇒ execGas = none` (and the caller's
@@ -38,8 +38,7 @@ THEOREMS (no `sorry`/`axiom`/`admit`/`native_decide`):
   * `gas_preserves_attests`     — every action of a committed metered run attests `fullActionInv`
                                   (delegates to `execFullTurn_each_attests`) — gas removes no safety.
 
-Discipline (REORIENT §6): no `axiom`/`admit`/`native_decide`/`sorry`/`@[implemented_by]`.
-`#assert_axioms` on every keystone. Pure, computable, `#eval`-able. Reuses `TurnExecutorFull`; edits
+No `@[implemented_by]`. Pure, computable, `#eval`-able. Reuses `TurnExecutorFull`; edits
 nothing. Verified standalone: `lake env lean Dregg2/Exec/Gas.lean`.
 -/
 import Dregg2.Exec.TurnExecutorFull

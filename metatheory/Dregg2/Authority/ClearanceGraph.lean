@@ -6,7 +6,7 @@ Phase A foundation for `Apps/CompartmentWorkflowMandate`: a finite clearance gra
 and transitivity. An actor holding labels `L` may read a compartment label `ℓ` when some
 `a ∈ L` dominates `ℓ`; conjunctive clearance checks every required label.
 
-Pure, computable, `#eval`-able. No `sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Tactics
 

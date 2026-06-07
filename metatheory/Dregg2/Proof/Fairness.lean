@@ -82,8 +82,7 @@ commit-vs-commit witness) and `JustLTSC.commits_stable` (the carried universal f
    escrow TEMPLATE form (swap `Pgoal`/`muGoal` for the holding-store to read off `Eventually (refunded
    loser)`); `refundDemo` is its inhabited witness.
 
-No `sorry`/`admit`/`axiom`/`native_decide`. Keystones `#assert_axioms`-pinned to `{propext,
-Classical.choice, Quot.sound}`. Mirrors `Temporal.lean`/`CellReal.lean` opens.
+Mirrors `Temporal.lean`/`CellReal.lean` opens.
 -/
 import Dregg2.Proof.Temporal
 import Mathlib.Data.Finset.Lattice.Basic

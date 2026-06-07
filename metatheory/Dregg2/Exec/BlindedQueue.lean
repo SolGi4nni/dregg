@@ -30,7 +30,7 @@ Parametric over `[CryptoKernel Digest Proof]`, so every theorem holds for *any* 
 (the abstract proving instance) AND for the Rust FFI one (the running instance). The `#eval`
 demos run against the `Reference` kernel in `CryptoKernel.lean`.
 
-Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Exec.NullifierCell
 import Dregg2.CryptoKernel

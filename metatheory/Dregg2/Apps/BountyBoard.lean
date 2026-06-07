@@ -17,7 +17,7 @@ This is the ungated cell-program dual of `BountyBoardGated` (which runs the SAME
     PARKED record (`release_only_parked` analogue).
 
 Templates: `Apps/AtomicSwap.lean` (REAL-kernel escrow composition), `Apps/BountyBoardGated.lean` (the
-domain ops and `#guard` witnesses). Zero `sorry`/`admit`/`native_decide`/`axiom`.
+domain ops and `#guard` witnesses).
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.TurnExecutorFull

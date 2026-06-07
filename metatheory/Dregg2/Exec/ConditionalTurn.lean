@@ -48,8 +48,7 @@ slot environment filling on producer-commit is the handler's `commit` arm resumi
 exactly once (`Await.commit_resumes_once`). We make that bridge explicit in `awaitEdge_is_await`
 below: every dependency edge denotes an `Await.AwaitCore` whose promise is the producer slot.
 
-Discipline (REORIENT §6): NO `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms` on every
-keystone (whitelist {propext, Classical.choice, Quot.sound}). Pure, computable, `#eval`-able. Reuses
+Pure, computable, `#eval`-able. Reuses
 `TurnExecutorFull` (`execFullTurn`/`execFullTurn_conserves`/`turnLedgerDelta`) and `Await`; edits no
 existing file. The GENERAL νF / coinductive-DAG termination of an *unbounded* topo-sort is noted as
 an honest `-- OPEN:` comment (NOT a `sorry`): we prove the finite acyclic case (the real one) via a

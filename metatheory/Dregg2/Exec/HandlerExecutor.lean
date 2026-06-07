@@ -41,8 +41,7 @@ The five deliverables:
      `#eval`-verified: `execFullA = some` (the live hole) vs `execHandlerTurn = none` (the algebra closes
      it). The cutover STRICTLY improves soundness.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only; no `maxHeartbeats`. The conservation
-keystone REUSES `turn_conserves` (generic) — it is NEVER re-derived. `#assert_axioms`-pinned. Verified
+The conservation keystone REUSES `turn_conserves` (generic) — it is NEVER re-derived. Verified
 standalone: `lake build Dregg2.Exec.HandlerExecutor`.
 -/
 import Dregg2.Exec.Handlers.StateSupply
@@ -1027,7 +1026,7 @@ The handlers are now SEMANTICALLY ALIGNED to `execFullA`:
 * `receiptArchiveA` routes through `receiptArchiveEffect` at the `"lifecycle"` field (`receiptArchiveField`
   is now `"lifecycle"`) — the SAME slot `execFullA`'s `stateStep s lifecycleField actor cell (.int 1)`
   writes, NOT the old `"receipt_archive"` flag.
-Both kernel-agreement obligations are now GENUINELY DISCHARGED (no `sorry`): the handler commit produces
+Both kernel-agreement obligations are GENUINELY DISCHARGED: the handler commit produces
 EXACTLY the `execFullA` post-kernel. -/
 
 /-- **`handler_refines_execFullA_makeSovereign` — CLOSED.** A committed handler make-sovereign commits
@@ -1591,8 +1590,8 @@ theorem handler_refines_execFullA_queueEnqueue (s s' : RecChainedState) (id m : 
     rw [if_pos hg', hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-- **`hole_queue_actor_ne_cell` — CLOSED.** Formerly a `sorry` for `actor ≠ cell` (the owner
-metadata diverged: handler stored owner = `cell`, `execFullA` stored owner = `actor`). The handler is
+/-- **`hole_queue_actor_ne_cell`.** The `actor ≠ cell` case (the owner
+metadata once diverged: handler stored owner = `cell`, `execFullA` stored owner = `actor`). The handler is
 now ALIGNED to store owner = `actor`, so kernel agreement holds UNCONDITIONALLY — the `actor ≠ cell`
 case is just the general `handler_refines_execFullA_queueAllocate` (the `_hne` hypothesis is no longer
 needed). -/

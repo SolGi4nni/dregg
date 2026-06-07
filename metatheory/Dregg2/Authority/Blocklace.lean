@@ -20,7 +20,7 @@ Literature anchor: Almog–Lewis–Naor–Shapiro, *"The Blocklace: A Byzantine-
 obligations discharged by the circuit + Rust cascade, never Lean theorems (same status as `CDT.CapHash`).
 Every theorem below is a semantic DAG/order fact that does not depend on any property of hashing or signing.
 
-Pure, computable, `#eval`-able. No `axiom`/`sorry`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.CDT
 import Dregg2.Finality
@@ -442,7 +442,7 @@ theorem demo_detect :
     Equivocator demoLace 9 ∧ f1 ≠ f2 ∧ ¬ precedes demoLace f1 f2 ∧ ¬ precedes demoLace f2 f1 :=
   equivocation_detectable demo_equivocation
 
-/-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
+/-! ### Keystones — `#assert_axioms`-clean. -/
 #print axioms equivocation_detectable
 #print axioms honest_no_equivocation
 #print axioms cdt_is_blocklace

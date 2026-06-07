@@ -26,8 +26,8 @@ predicate (`honestLeader r := r < 5`, with `gst := 10`) admits NO synchronizatio
 a theorem. The honest co-finality premise is exactly what rules it out; we prove both directions (a
 co-final predicate `r ≥ 5` yields a synchronization round for any `gst`; the bounded one does not).
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Every hypothesis is a `GSTModel` field or theorem
-premise (the `recv_mono` discipline). Keystones are `#assert_axioms`-clean (kernel triple).
+Every hypothesis is a `GSTModel` field or theorem
+premise (the `recv_mono` discipline).
 -/
 import Mathlib.Tactic
 import Dregg2.Proof.Synchronizer

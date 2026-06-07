@@ -10,7 +10,7 @@ Lean-vs-Rust mismatch: `execFullTurnG s [] = some s` (the verified fold admits t
 whereas dregg1 rejects it (`execute.rs:56`, `TurnError::EmptyForest`). `admissible` requires a
 non-empty forest, fail-closed.
 
-Headline theorems (no `sorry`/`axiom`/`admit`/`native_decide`):
+Headline theorems:
   * admission rejection theorems — each gate rejects the violating case.
   * `prologue_survives_failed_body` — on a failed body the fee is still debited and the nonce still
     ticks; `replay_closed_after_failed_body` and `fee_spent_after_failed_body` follow.

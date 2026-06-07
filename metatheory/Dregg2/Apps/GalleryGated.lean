@@ -45,7 +45,7 @@ Plus a concrete artwork-cell state (`gal0`/`galFresh`/`galRevoked`) whose `#guar
 over a FRESH item COMMITS, a re-mint over a bound item ⇒ `none`, a forged credential ⇒ `none`, a
 revoked credential ⇒ `none`, and a transfer COMMITS (the gate + the caveat are REAL, not vacuous).
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Does NOT touch `FullForestAuth.lean` nor `Dregg2.lean`.
+Does NOT touch `FullForestAuth.lean` nor `Dregg2.lean`.
 Reuses ONLY the proved gated-executor keystones + the proved `stateStepGuarded` fail-closed teeth.
 -/
 import Dregg2.Exec.GatedForestCfg

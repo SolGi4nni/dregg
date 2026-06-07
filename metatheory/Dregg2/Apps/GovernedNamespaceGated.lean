@@ -53,7 +53,7 @@ Plus a concrete governed-namespace cell state (`gn0`) whose `#guard`s show a GOO
 COMMITS, a forged credential gives `none`, and each constitutional caveat bites (committee/threshold
 rewrite, version skip, window shrink) — the gate + the caveats are REAL, not vacuous.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Does NOT touch `FullForestAuth.lean` nor `Dregg2.lean`.
+Does NOT touch `FullForestAuth.lean` nor `Dregg2.lean`.
 Reuses ONLY the proved gated-executor keystones + the proved `stateStepGuarded` fail-closed teeth.
 -/
 import Dregg2.Exec.GatedForestCfg

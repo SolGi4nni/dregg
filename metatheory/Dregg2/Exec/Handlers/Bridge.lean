@@ -45,8 +45,7 @@ EVAL-VERIFIED (`§TEETH`): bridgeFinalize on a Live bridge record DROPS the comb
 `amount` (the new total < the old); the `bridgeAuthOK` creator-only gate REJECTS a non-creator finalize
 /cancel; lock/cancel are combined-conserving; a mismatched-`(asset, amount)` finalize is fail-closed.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(a `sorryAx` fails the pin and the build). Pure, computable, `#eval`-able. Verified standalone:
+Pure, computable, `#eval`-able. Verified standalone:
 `lake build Dregg2.Exec.Handlers.Bridge`.
 -/
 import Dregg2.Exec.Handler

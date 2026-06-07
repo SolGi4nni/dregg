@@ -58,8 +58,7 @@ that a deposit-discipline (or a quota/clocking countermeasure) would have to clo
 dressed as `True`: every positive law has a non-vacuity witness, and every negative law is a proved
 refutation with an explicit distinguishing pair.
 
-Pure; spec-first. No `sorry`/`axiom`/`admit`/`native_decide`. `#assert_axioms` pins every keystone to
-`{propext, Classical.choice, Quot.sound}`.
+Pure; spec-first.
 -/
 import Dregg2.Exec.Kernel
 import Dregg2.Tactics

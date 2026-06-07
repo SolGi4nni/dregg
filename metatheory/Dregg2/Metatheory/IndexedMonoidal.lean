@@ -44,8 +44,7 @@ This module makes that precise:
     category `∫F` has a genuine non-identity morphism whose base leg is `lo ⟶ hi` and whose fibre leg
     is a real `Discrete` tensor map.
 
-DISCIPLINE: NO `sorry`/`axiom`/`admit`/`native_decide`. Keystones are `#assert_axioms`-pinned to the
-kernel triple `{propext, Classical.choice, Quot.sound}`. The teeth are concrete discriminating models.
+The teeth are concrete discriminating models.
 -/
 import Dregg2.Intent.Resource
 import Dregg2.Tactics

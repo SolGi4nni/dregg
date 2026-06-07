@@ -11,7 +11,7 @@ only these theorems, pinning the decoder as the genuine left-inverse of the enco
 
 ## Honest receipt — PROVED vs DEFERRED.
 
-**PROVED (all sorry-free, `#assert_axioms`-pinned):**
+**PROVED:**
   * §0 — every leaf: `lit`, `parseInt`/`parseNat`, `parseStr` (escape-free), `ofHex32 ∘ toHex32`
     (lossless on the full 256-bit range), `parseFlag`, the `Auth` tag, dispatch fail-closure lemmas;
   * §1–§3 — `Value`/`FIELDS` scalar leaf, per-asset `BAL` ledger entry, headline `fillJ_*` facts;
@@ -55,8 +55,7 @@ namespace Dregg2.Exec.CodecRoundtrip
 /-! ## §4 — axiom hygiene (the FILL-J no-`sorryAx` pins).
 
 Every keystone is `#assert_axioms`-pinned to the standard kernel triple `{propext, Classical.choice,
-Quot.sound}` — a `sorryAx` ANYWHERE in their dependency closure FAILS the build (the strongest
-zero-sorry guarantee on the codec roundtrip). -/
+Quot.sound}`. -/
 
 #assert_axioms ofHex32_toHex32
 #assert_axioms parseDig_encDig

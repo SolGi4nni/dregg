@@ -48,8 +48,7 @@ is NEVER reached: `¬ Temporal.Eventually Pgoal fma0 badSched`. Yet `badSched` i
 schedule justness REJECTS (`Fairness.badSched_not_just`). So the unrestricted `∀ sched, Eventually`
 is FALSE while `AF_just` holds — the just-path restriction is the whole point, machine-checked.
 
-Pure; spec-first; NO `sorry`/`admit`/`axiom`/`native_decide`. Keystones `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`. Only ADDS; imports `CTL` and `Fairness` unchanged.
+Pure; spec-first. Only ADDS; imports `CTL` and `Fairness` unchanged.
 -/
 import Dregg2.Proof.CTL
 import Dregg2.Proof.Fairness

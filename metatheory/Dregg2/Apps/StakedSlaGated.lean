@@ -51,7 +51,7 @@ POST commits and parks, a FULFIL returns the stake, a SLASH pays the live benefi
 ⇒ `none`, a revoked credential ⇒ `none`, slashing to a SEALED beneficiary ⇒ `none`, and the lifecycle
 CONSERVES.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. NEW file only — does NOT touch any existing app,
+NEW file only — does NOT touch any existing app,
 `FullForestAuth.lean`, `TurnExecutorFull.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor
 keystones + the proved obligation/escrow combined-conservation/liveness teeth.
 -/

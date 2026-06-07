@@ -30,7 +30,7 @@ through `Quot.lift`/`Quot.sound` against `Types.coendRel_iff`. Both round-trips 
 categorical `Iso` in `Type u` (`collapseIso`) and the underlying `Equiv` (`collapseEquiv`).
 
 Restricted to `[SmallCategory R]` (the auction's `DemoRes` is small) so the coend universes pin cleanly.
-Pure; no `axiom`/`sorry`/`admit`/`native_decide`.
+Pure.
 -/
 import Mathlib.CategoryTheory.Limits.Types.End
 import Mathlib.CategoryTheory.Functor.Currying

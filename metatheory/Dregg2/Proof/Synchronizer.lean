@@ -54,7 +54,7 @@ the *operational* `World.rand` byte-stream needs is the one remaining sharp `OPE
     expected-linear claim): `E[views] = 1/h` ⟿ `expected_views_eq`, via mathlib's
     `tsum_coe_mul_geometric_of_norm_lt_one`.
 
-**Rails.** No `axiom`/`admit`/`native_decide`/`sorry`. The honest fraction `h > 2/3` and the GST
+The honest fraction `h > 2/3` and the GST
 bound enter as explicit structure fields / theorem hypotheses (the `recv_mono` discipline).
 Keystones are `#assert_axioms`-clean. Non-vacuity is witnessed at `h = 2/3` (boundary) and a
 concrete `h = 3/4` rotation. Verified with `lake env lean Dregg2/Proof/Synchronizer.lean`.

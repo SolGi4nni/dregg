@@ -50,7 +50,7 @@ flagged the same gap for `◇`. We ship the safety fragment (model-safe, compose
 log / revocation invariants) and the branching-separation teeth (fully sound), and gate the
 fairness-dependent liveness theorems behind that decision.
 
-Pure; spec-first; `#assert_axioms` pins every keystone. No `sorry`/`axiom`/`admit`/`native_decide`.
+Pure; spec-first.
 The two genuinely-classical duals (`EX_AX_dual`, `EF_EG_dual`, which use `compl_compl`) are pinned
 in the classical-aware list, exactly as `Temporal.not_always_iff_eventually_not` is.
 -/

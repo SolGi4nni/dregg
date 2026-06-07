@@ -46,9 +46,7 @@ on the primitives those modules already ship:
       advantage bound stays the named §8 carrier (`Crypto.Primitives.unlinkable` /
       `GraphPrivacyKernel`), NOT claimed here.
 
-Style: spec-first, kernel-clean (axioms ⊆ {propext, Classical.choice, Quot.sound}), `#guard`
-witnesses (never `#eval`-comments), `#assert_axioms` on every keystone. NO new axioms / `sorry` /
-`native_decide`.
+Style: spec-first, `#guard` witnesses (never `#eval`-comments).
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForestAuth

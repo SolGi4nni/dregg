@@ -30,7 +30,7 @@ and the two endpoints of a transferability dial:
 (`DVKernel`) of opaque oracles + named laws — never faked as proved in Lean. `verifyFor`, `simulate`,
 and the law `simulate_indistinguishable` are §8 obligations the deniable-auth scheme discharges.
 
-Proved here (no `sorry`/`axiom`/`native_decide`):
+Proved here:
 * `public_is_transferable` / `public_convinces_any_third_party` — public mode is non-repudiable;
 * `designated_not_transferable` — designated mode has a verifier it does NOT convince;
 * `designated_is_deniable` — the simulator repudiation;

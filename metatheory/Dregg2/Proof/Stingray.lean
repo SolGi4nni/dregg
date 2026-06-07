@@ -18,7 +18,7 @@ Faithfulness anchors: `Slice` mirrors `BudgetSlice { ceiling, spent }`; `Slice.r
 Also proves the no-Byzantine soundness floor (`stingray_f0_ceiling_eq_balance`), the safe in-
 budget fragment (`inbudget_both_commit_schedule_agnostic`), and bridges to `Confluence.IConfluent`.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. The adversary's scheduling choice is explicit data
+The adversary's scheduling choice is explicit data
 (`SDraw`, `runDraws`); the impossibility is a proved `¬ ∃`. Read-only consumer of `Confluence`.
 
 GOSSIP RESIDUE (named, NOT built): the per-epoch `StingrayCounter::rebalance` reconciliation

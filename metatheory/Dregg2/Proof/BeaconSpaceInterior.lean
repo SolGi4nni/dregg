@@ -13,8 +13,7 @@ the measurable box `(↑Finset.Ico b (b+N)).pi (fun _ => {false})`; the infinite
 Capstone: `beaconSpace_interior_nonvacuous` — `2/3 < h < 1`, real `indep_block`, constructive
 hit-index, and full `synchronizer_round_obtains_over_beacon`, all from the interior beacon.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. `Classical.choice` enters via mathlib's `infinitePi`
-(on the standard kernel whitelist).
+`Classical.choice` enters via mathlib's `infinitePi` (on the standard kernel whitelist).
 -/
 import Dregg2.Proof.BeaconSpace
 import Mathlib.Probability.ProductMeasure

@@ -74,9 +74,9 @@ What remains **idealized** (named `OPEN`s below, never `sorry`/`axiom`):
     re-proved here — `cordial_agreement` concerns *which leader anchors*, the load-bearing
     safety question, not the within-segment tie-break.
 
-**Rails.** No `sorry`/`admit`/`axiom`/`native_decide`. Every adversary assumption is a
-structure field or theorem hypothesis (the `BFT.BFTModel` discipline). Keystones are
-`#assert_axioms`-clean. Verified with `lake env lean Dregg2/Proof/CordialMiners.lean`.
+Every adversary assumption is a
+structure field or theorem hypothesis (the `BFT.BFTModel` discipline).
+Verified with `lake env lean Dregg2/Proof/CordialMiners.lean`.
 -/
 import Mathlib.Tactic
 import Dregg2.Proof.BFT

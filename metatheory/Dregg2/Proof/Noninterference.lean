@@ -42,8 +42,7 @@ load-bearing TEETH (`makeSovereign_leaks`): it proves `lowEq` is not vacuous and
 genuinely EXCLUDES declassifiers — the boundary between noninterfering effects and declassifiers is
 real and proved.
 
-Pure; spec-first; `#assert_axioms` pins every keystone to `{propext, Classical.choice, Quot.sound}`.
-No `sorry`/`axiom`/`admit`/`native_decide`. §8 crypto (`stateCommitment` collision-resistance) is
+Pure; spec-first. §8 crypto (`stateCommitment` collision-resistance) is
 NOT a Lean law here — the leak teeth ride a *closed-term* commitment inequality (`decide`), not a
 general injectivity claim.
 -/

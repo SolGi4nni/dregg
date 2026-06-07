@@ -47,8 +47,7 @@ This is a temporal logic of *state* predicates over a *fixed* trajectory family.
 * **past/until operators** (`U`, `S`, `◯`-with-content) — we give `Next` (one-step `◯`) and
   prove `□P → ◯P`-style unfoldings, but a full `U`-calculus is future work.
 
-Pure; spec-first; `#assert_axioms` pins every keystone kernel-axiom-clean (no `sorry`/
-`axiom`/`admit`/`native_decide`). Mirrors `CellReal.lean`'s opens.
+Pure; spec-first. Mirrors `CellReal.lean`'s opens.
 -/
 import Dregg2.Exec.CellCarry
 

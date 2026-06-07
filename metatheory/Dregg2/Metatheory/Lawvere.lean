@@ -54,8 +54,7 @@ TEETH (why Part B is genuinely DIFFERENT from the clean Part-A triple):
     binary meets there. So the clean `kernImage` triple of Part A does NOT lift to the Byzantine
     fibre: that triple was special to the *function/quotient* (equivalence) structure.
 
-DISCIPLINE: NO `sorry`/`axiom`/`admit`/`native_decide`. Every keystone is `#assert_axioms`-pinned
-to the kernel triple `{propext, Classical.choice, Quot.sound}`. The teeth are concrete (`Fin`)
+The teeth are concrete (`Fin`)
 DISCRIMINATING models, so nothing is vacuous.
 -/
 import Metatheory.EpistemicConsensus

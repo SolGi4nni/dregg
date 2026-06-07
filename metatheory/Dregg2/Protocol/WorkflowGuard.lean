@@ -17,7 +17,7 @@ This module re-founds those guarantees on the abstract `Spec.Guard` law: each ga
 `workflow_step_admits_iff_guards` ties the whole step to the conjunction (`Guard.all`) of the three
 gates: the step commits exactly when the abstract Guard web admits it.
 
-Faithful `↔`s with real content; every keystone `#assert_axioms`-clean; no `sorry`/`admit`.
+Faithful `↔`s with real content.
 -/
 import Dregg2.Protocol.Workflow
 import Dregg2.Spec.Guard

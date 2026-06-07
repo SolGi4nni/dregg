@@ -48,8 +48,7 @@ Status (which emit is green + the Rust-decoder additions each needs):
     the first/last boundary; the table membership is the `Lookup` constraint (already in the Rust
     `ConstraintExpr::Lookup`), `δ` being its membership predicate.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Bridges `#assert_axioms`-pinned. Golden wire bytes via
-`#guard`.
+Golden wire bytes via `#guard`.
 -/
 import Dregg2.Exec.CircuitEmit
 import Dregg2.Crypto.Temporal

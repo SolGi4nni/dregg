@@ -24,7 +24,7 @@ This module:
 skew `δ` physically bounds the real drift; signatures are unforgeable. They enter ONLY where a
 physical-time/causal conclusion is drawn (the bridge), gated as `FrameHonesty` + `WaitCausality`.
 
-Pure, computable, `#eval`-able. No `axiom`/`sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Time.Causal
 import Dregg2.Time.Frame
@@ -373,7 +373,7 @@ theorem demo_bridge_fires :
 #guard (decide (Dregg2.Authority.Blocklace.g0.id ∈ Dregg2.Authority.Blocklace.g1.preds))  -- true
 #guard (registryVerify (fun _ => none : Registry Nat Nat) .temporal 0 0 == false)        -- false (frame fails closed)
 
-/-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
+/-! ### Keystones — `#assert_axioms`-clean. -/
 
 #assert_axioms causalAfter_no_frame_dependency
 #assert_axioms frameWithin_has_frame_dependency

@@ -14,7 +14,7 @@ Two design differences from seL4:
   is a remote, topology-bounded hop. n=1 collapses it to a local immediate walk (the single-machine
   principle: honest distributed bounds parametrized by topology depth).
 
-Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. Pure, `#eval`-able.
+Pure, `#eval`-able.
 -/
 import Dregg2.Authority.Positional
 

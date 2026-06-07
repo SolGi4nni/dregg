@@ -52,7 +52,7 @@ Plus a concrete funded bridge state (`br0`) whose `#guard`s witness the whole li
 a funded LOCK commits and parks, a FINALIZE burns the bridged value (combined drops), a CANCEL returns
 it, a forged credential ⇒ `none`, a revoked credential ⇒ `none`, a STRANGER-finalize ⇒ `none`.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. NEW file only — does NOT touch any existing app,
+NEW file only — does NOT touch any existing app,
 `FullForestAuth.lean`, `TurnExecutorFull.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor
 keystones + the proved bridge ledger/authority teeth.
 -/

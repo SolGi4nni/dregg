@@ -31,8 +31,6 @@ What is proved (`#assert_axioms`-clean):
 Honest scope: this is the atomic bridge (one maneuver edge, one flow). The general multi-edge case
 (Σ over a whole avoidance round = total divergence over a multi-edge cut) is flagged OPEN below.
 Fuel is a sink in the OS; this is not a constellation-wide fuel-conservation claim.
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
 import Dregg2.Exec.JointCell
 import Dregg2.Apps.WhoYields

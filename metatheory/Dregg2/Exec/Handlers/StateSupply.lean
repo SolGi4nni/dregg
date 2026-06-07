@@ -34,8 +34,7 @@ EVAL-VERIFIED (the gate's teeth — `§TEETH`): a mint/write into a SEALED cell 
 LIVE cell returns `some`; and a mint into a Live cell RAISES the combined per-asset measure by exactly
 `+amt` (the `delta ≠ 0` milestone, evaluated).
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/`eval-only`. Every keystone `#assert_axioms`-pinned
-(rests only on the kernel triple). Pure, computable, `#eval`-able. Verified standalone:
+Pure, computable, `#eval`-able. Verified standalone:
 `lake build Dregg2.Exec.Handlers.StateSupply`.
 -/
 import Dregg2.Exec.Handler

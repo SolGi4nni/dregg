@@ -17,7 +17,7 @@ Lifts `ContendedCrossCell`'s finite two-turn dichotomy to an infinite adversaria
     coinduction cannot thread per-step commutation rewrites under its recursive occurrence; Paco
     does, sound by `commClo_compatible`.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Deps: `Dregg2.Boundary`, `Dregg2.Confluence`,
+Deps: `Dregg2.Boundary`, `Dregg2.Confluence`,
 `Dregg2.Paco` (MIT, ported). The CG-5 / binding stays a hypothesis. Every keystone
 `#assert_axioms`-clean.
 -/

@@ -52,8 +52,7 @@ is NOT stubbed and NOT `sorry`'d — it is stated as a carried-hypothesis interf
 (`UserspaceDominatesKernel` + `escrow_refinement_sound`) whose precise model-shape is OPEN-flagged for
 ember (see §5). Everything else ships green around it.
 
-Built per the architect's PHASE-4 BUILD SPEC. Pure; no `axiom`/`sorry`/`admit`/`native_decide`. Every
-keystone is `#assert_axioms`-pinned to `{propext, Classical.choice, Quot.sound}`.
+Built per the architect's PHASE-4 BUILD SPEC. Pure.
 -/
 import Dregg2.Intent.Kernel
 import Dregg2.Proof.Fairness
@@ -577,9 +576,8 @@ theorem escrow_refinement_reflexive {offered : DreggResources} (e : EscrowWitnes
 
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 
-`#assert_axioms` walks each keystone and errors if any escapes `{propext, Classical.choice, Quot.sound}` —
-a `sorryAx` anywhere would fail the build. No `sorry`/`admit`/`axiom`/`native_decide` leaked into the
-decision-free core (the (a) obligation is a carried hypothesis, NOT an axiom). -/
+`#assert_axioms` walks each keystone and errors if any escapes `{propext, Classical.choice, Quot.sound}`.
+The (a) obligation is a carried hypothesis, NOT an axiom. -/
 
 #assert_axioms winning_discharges
 #assert_axioms met_iff_frontrunExcluded

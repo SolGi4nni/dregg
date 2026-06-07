@@ -47,7 +47,7 @@ FAITHFULLY MODELED (the protocol logic, grounded above):
     we prove the protocol's acceptance predicate is exactly the conjunction above, and that the
     teeth bite, GIVEN the keyed hash is a function and unseal inverts seal.
 
-DISCIPLINE: no `sorry`/`admit`/`axiom`/`native_decide`. Pure, computable, `#eval`-able.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Caveat
 

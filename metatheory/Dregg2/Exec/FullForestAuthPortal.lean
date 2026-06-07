@@ -43,8 +43,7 @@ Each per-variant security theorem takes the relevant carrier as an EXPLICIT hypo
 gate-DISCIPLINE (fail-closed on a forged/revoked credential) is proved; the oracle BINDS is the
 circuit's job (the carrier).
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Keystones `#assert_axioms`-pinned. Reuses
-`FullForestAuth` (D), `PortalFloor` (E); EDITS NEITHER.
+Reuses `FullForestAuth` (D), `PortalFloor` (E); EDITS NEITHER.
 -/
 import Dregg2.Exec.FullForestAuth
 import Dregg2.Crypto.PortalFloor

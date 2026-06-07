@@ -19,7 +19,7 @@ HONEST scope: we model field-add and field-rename, the two migrations that arise
 Arbitrary schema rewriting is not attempted; `applyMigration` is a fail-soft gate that commits only
 when the result checks conforming AND balance-preserving, else falls back to identity.
 
-Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Exec.Program
 import Dregg2.Exec.RecordKernel

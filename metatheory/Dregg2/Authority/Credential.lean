@@ -19,7 +19,7 @@ Load-bearing content:
 §8 boundary: the attestation's signature/STARK soundness is the `CryptoKernel.verify` oracle — never
 a Lean law. This module proves the issue/present/verify/revoke discipline; the circuits prove the oracle binds.
 
-Pure, computable, `#eval`-able. No `axiom`/`admit`/`native_decide`/`sorry`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.CryptoKernel
 import Dregg2.Exec.NullifierCell

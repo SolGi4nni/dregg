@@ -136,7 +136,7 @@ distinct-voter count meets the lifted `½(n+f)` quorum) inhabits the BFT/quorum 
 tier of the `Finality` lattice: its carried `Tier` is exactly `Tier.bft`. This is the
 portal join — the `World` notion "a quorum of votes was received" and the `Finality` notion
 "committed at the τ-BFT tier" *coincide* on a `NetCell`. Proved from the `tier_sound` field
-+ the classifier definition; no sorry, kernel-clean. -/
++ the classifier definition. -/
 theorem quorum_reaches_bft_tier (c : NetCell) (h : c.IsBftFinal) :
     c.tier = Finality.Tier.bft :=
   (c.tier_eq_bft_iff).mpr h
@@ -189,8 +189,7 @@ downgrades along its finalization-event run. We model the cell's commit history 
 `Execution.Run Finality.finalitySystem` over the carried `Tier` (each event may only
 keep-or-strengthen the tier, per `finalitySystem.Step = (· ≤ ·)`); the endpoint tier is no
 weaker than the start tier. A thin relay of `Finality.no_downgrade` (equivalently
-`World.world_no_downgrade`) onto the `NetCell` tier. Kernel-clean (rides a `sorry`-free
-lemma). -/
+`World.world_no_downgrade`) onto the `NetCell` tier. -/
 theorem net_no_downgrade {t₀ t : Finality.Tier}
     (hrun : Execution.Run Finality.finalitySystem t₀ t) : t₀ ≤ t :=
   Finality.no_downgrade hrun

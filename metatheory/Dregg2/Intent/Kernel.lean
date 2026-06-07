@@ -16,7 +16,7 @@ EXACT, so a true cross-asset bid (offer gold, want art) is NOT directly fillable
 offer-generated conversions (Phase 4). Here we exhibit (a) a well-formed bid intent, (b) the keystone
 transferred to a same-allocation settle, (c) the cross-asset bid's boundary teeth (needs the market).
 
-Pure; no `axiom`/`sorry`/`admit`/`native_decide`.
+Pure.
 -/
 import Dregg2.Intent.Core
 import Dregg2.Intent.Match
@@ -113,8 +113,7 @@ def settleRoute : Match settleIntent.offered settleReceipt.outcome :=
 /-! ### Axiom hygiene — pin EVERY Phase-2 intent theorem to the three kernel axioms.
 
 One line, run at the end of the `Intent.*` stack: walks every theorem under `Dregg2.Intent` (Resource,
-Core, Match, Kernel) and errors if any escapes `{propext, Classical.choice, Quot.sound}` — a `sorryAx`
-anywhere would fail the build. No `sorry`/`admit`/`native_decide` leaked into any keystone. -/
+Core, Match, Kernel) and errors if any escapes `{propext, Classical.choice, Quot.sound}`. -/
 #assert_namespace_axioms Dregg2.Intent
 
 end Dregg2.Intent

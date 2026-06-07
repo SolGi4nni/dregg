@@ -26,12 +26,11 @@ This module WELDS the gap via the Pedersen / range-proof portal (`Dregg2.Crypto.
       - `noteCreateBound_no_double_create` is NOT claimed (creation is grow-only by design); the
         binding + range + conservation are the value-side weld.
 
-The only crypto residue is the Pedersen `binding` carrier (commitment-eq ⇒ amount-eq, a DLog `Prop`,
-NEVER a `sorry`); the homomorphism + range algebra is unconditional. Additive: edits NOTHING in the
+The only crypto residue is the Pedersen `binding` carrier (commitment-eq ⇒ amount-eq, a DLog `Prop`);
+the homomorphism + range algebra is unconditional. Additive: edits NOTHING in the
 hot core; lifts `noteCreateCommitment` + the Pedersen portal.
 
-Style: kernel-clean (axioms ⊆ {propext, Classical.choice, Quot.sound}), `#guard` witnesses,
-`#assert_axioms` on every keystone. NO new axioms / `sorry` / `native_decide`.
+Style: `#guard` witnesses.
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.RecordCircuit

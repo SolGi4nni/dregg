@@ -14,8 +14,7 @@ granting any held concrete cap that confers an edge to `t` IS `addEdge … ⟨t,
 `t`-conferring caps IS `removeEdge … ⟨t,()⟩` — i.e. `Spec.Introduce.result` / `Spec.Revoke.result`
 verbatim, without upgrading concrete endpoint rights into control.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Reuses `Exec/Caps.lean`, `Spec.Authority`, and
-`Spec.ExecRefinement.execGraph`.
+Reuses `Exec/Caps.lean`, `Spec.Authority`, and `Spec.ExecRefinement.execGraph`.
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.Caps

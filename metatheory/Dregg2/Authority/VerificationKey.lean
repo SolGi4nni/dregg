@@ -360,9 +360,9 @@ def badVkTurn : ProofTurn D P := { claimedVk := demoVk + 1, proof := 5 }
 end Demos
 
 /-!
-## Honest status
+## Status
 
-PROVED (no `sorry`, no `axiom`, no `native_decide`):
+PROVED:
   `vk_determines_components` (given the §8 `VkInjective` hypothesis), `proof_binds_current_vk`,
   `mismatched_vk_rejected`, `provedState_reset_on_unproven`, `provedState_set_on_proven`,
   `editUnproven_preserves_vk`, `derived_vk_reproducible`, `derived_vk_deterministic`,
@@ -373,7 +373,7 @@ PROVED (no `sorry`, no `axiom`, no `native_decide`):
     `Prop`, surfaced as a hypothesis, never an axiom.
   * `CryptoKernel.verify` soundness/extractability — that a proof "really verifies" against the VK;
     the opaque §8 oracle, called by `admitProof` but never reasoned-into.
-There are NO `-- OPEN:` `sorry`s in this module: every stated theorem is the structural-binding
+Every stated theorem is the structural-binding
 discipline, which is fully provable; the only un-provable facts are the two §8 obligations above,
 which are (correctly) hypotheses/oracles rather than weakened-and-closed theorems.
 -/

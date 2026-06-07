@@ -49,9 +49,9 @@ CROSS-TARGET subtree (a child acting on a DIFFERENT cell) is the cross-cell axis
 NOT re-proven and NOT baked into this executor. Bearer-bypass (a cap presented WITHOUT a delegation
 edge) is scoped OUT for v1 — every node here runs under its own `execFullA` authority gate.
 
-Discipline: delegated caps NEVER amplify (`derive_no_amplify`, reused, never faked). Conservation is
-PER-ASSET (`execFullTurnA_ledger_per_asset`, reused). No `axiom`/`admit`/`native_decide`/`sorry`.
-Keystones `#assert_axioms`-pinned. Reuses `TurnExecutorFull`/`Caps`; edits none (the §MB additions to
+Delegated caps NEVER amplify (`derive_no_amplify`, reused, never faked). Conservation is
+PER-ASSET (`execFullTurnA_ledger_per_asset`, reused).
+Reuses `TurnExecutorFull`/`Caps`; edits none (the §MB additions to
 `TurnExecutorFull` are its own region).
 -/
 import Dregg2.Exec.TurnExecutorFull

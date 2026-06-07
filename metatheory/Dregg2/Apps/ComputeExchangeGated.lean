@@ -49,7 +49,7 @@ Plus a concrete funded market state (`mkt0`) whose `#guard`s show: a funded ORDE
 a SETTLE pays the live provider, a REFUND returns to the buyer, a forged credential ⇒ `none`, a revoked
 credential ⇒ `none`, settling to a SEALED provider ⇒ `none`, and the whole lifecycle CONSERVES.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. NEW file only — does NOT touch any existing app,
+NEW file only — does NOT touch any existing app,
 `FullForestAuth.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor keystones + the proved
 escrow combined-conservation/liveness teeth.
 

@@ -23,8 +23,6 @@ maneuver step = screening window `[0,T]`; chaining is out of scope.
 has oscillatory terms over long horizons. The affine screen is exact for the affine model;
 `coarseClear` is sound for any speed-bounded trajectory. A curvature-aware bound is the next
 refinement and is flagged OPEN below.
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
 import Mathlib.Tactic
 import Dregg2.Tactics

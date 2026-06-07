@@ -43,8 +43,7 @@ EVAL-VERIFIED (`§TEETH`):
   * export AMPLIFICATION (rights ⊄ committed-held) ⇒ `none`; a subset export ⇒ `some`; enliven/handoff/
     drop fail-closed on an absent swiss number; drop GCs at refcount 0.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(a `sorryAx` fails the pin and the build). Pure, computable, `#eval`-able. Verified standalone:
+Pure, computable, `#eval`-able. Verified standalone:
 `lake build Dregg2.Exec.Handlers.Seal`.
 -/
 import Dregg2.Exec.Handler

@@ -44,8 +44,7 @@ exactly its sound obligations, with conservation tracked EXACTLY — `0` for bal
 for mint/burn — via the `ledgerDelta` book-keeping, the executable shadow of dregg1's per-domain
 `excess`.)
 
-Discipline (REORIENT §6): no `axiom`/`admit`/`native_decide`/`sorry`. `#assert_axioms` on every
-keystone. Pure, computable, `#eval`-able. Reuses `TurnExecutor`/`AuthTurn`/`Generators`/
+Pure, computable, `#eval`-able. Reuses `TurnExecutor`/`AuthTurn`/`Generators`/
 `CatalogEffects`/`RecordKernel`; edits none. Verified standalone:
 `lake env lean Dregg2/Exec/TurnExecutorFull.lean`.
 -/

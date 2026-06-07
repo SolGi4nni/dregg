@@ -52,7 +52,7 @@ parameter (the `World`/gossip layer supplies it); Lean assumes only `delay m m =
 of propagation — that a revocation issued at `m` actually reaches `n` within `delay m n` — is the
 honest hypothesis `Propagates` made explicit and witnessed, not smuggled.
 
-Pure, computable, `#eval`/`#guard`-able. No `axiom`/`sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`/`#guard`-able.
 -/
 import Dregg2.Authority.Credential
 

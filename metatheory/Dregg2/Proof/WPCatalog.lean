@@ -24,9 +24,7 @@ yields the capstone — `inv` holds along EVERY run of the cell.
 ## The automation honesty rail (`Conserve.lean` / `Catalog.lean` template)
 `vcg_discharge` is fail-loud: the real work is wrapped in `first | <real>; done | fail "…"`, the
 `done` is load-bearing (no half-open VC may masquerade as progress), and it is negative-tested with
-`fail_if_success` (it provably cannot fake-close). The capstone + key lemmas are `#assert_axioms`-pinned.
-
-No `axiom`/`admit`/`native_decide`/`sorry`.
+`fail_if_success` (it provably cannot fake-close).
 -/
 import Dregg2.Proof.WP
 import Dregg2.DSL

@@ -3259,7 +3259,7 @@ def wideRoundtripState : WState :=
 The wide codec is TCB (cross-validated, not yet proved — FILL J adds the round-trip theorem). But the
 EXECUTED object under it — `execFullTurnWide`, which runs the PROVED `execFullForestA` over the decoded
 tree — and the load-bearing structural projections (`eraseAuth`: WForest → the proved `FullForestA`;
-`stateOfWState`: the decoded state → `RecordKernelState`) must carry NO silent `sorry`. We pin them to
+`stateOfWState`: the decoded state → `RecordKernelState`) are pinned to
 the three standard kernel axioms `{propext, Classical.choice, Quot.sound}` (mathlib's `Finset`/`toFinset`
 pull in `Classical.choice`/`Quot.sound`; a `sorryAx` here would FAIL the build). -/
 
@@ -3805,11 +3805,11 @@ theorem capauth_teeth_same_wire :
       capModeOfEdge, capAuthorityG, baseCapCtx, confRights, capTargetOf, AuthModes.authModeAdmits]
      decide)
 
-/-! ## §WG4 — keystone axiom-hygiene pins (the FILL X no-`sorryAx` guard).
+/-! ## §WG4 — keystone axiom-hygiene pins.
 
-The gated export and its lifts must carry NO silent `sorry`. Pinned to the three standard kernel axioms
+The gated export and its lifts are pinned to the three standard kernel axioms
 `{propext, Classical.choice, Quot.sound}` (the `Finset`/`toFinset` in `stateOfWState` + the Demo carrier
-instances pull `Classical.choice`/`Quot.sound`; a `sorryAx` would FAIL the assert). -/
+instances pull `Classical.choice`/`Quot.sound`). -/
 
 #assert_axioms execFullForestAuthStep
 #assert_axioms liftAuthW

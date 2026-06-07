@@ -22,8 +22,7 @@ the predicate AIR absorbs). BLAKE3's collision/preimage resistance is assumed at
 OPEN: the Rust `bytes == bytes` differential is the ultimate byte-fidelity certification; the
 `#eval`s here confirm each separator literal equals `ascii "dregg-…"` of the dregg1 domain string.
 
-No `sorry`/`admit`/`native_decide`/`axiom`; keystones `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`. Reuses only byte primitives defined here.
+Reuses only byte primitives defined here.
 -/
 import Dregg2.Tactics
 

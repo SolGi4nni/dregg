@@ -31,9 +31,6 @@ What is a portal / out of scope: the §8 crypto (BLAKE3 name hash; Pedersen comm
 `noteCreate`). We model `nameCommit` as an injective `Nat`-encoding, prove the registry discipline
 (publish-once, never-deleted), not the hash's collision-resistance itself. Expiry/rent and the
 credential-gated attested tier are out of scope.
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Every keystone is `#assert_axioms`-pinned to
-`{propext, Classical.choice, Quot.sound}`.
 -/
 import Dregg2.Exec.CellCommit
 import Mathlib.Data.Nat.Pairing

@@ -62,7 +62,7 @@ Plus a concrete ballot-cell state (`ballot0`) whose `#guard`s show a GOOD first 
 credential gives `none`, a revoked voter gives `none`, and a double-vote gives `none` — every theorem
 witnessed REAL, not vacuous.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Does NOT touch `MultisigVote.lean`, `PrivacyTheorems.lean`,
+Does NOT touch `MultisigVote.lean`, `PrivacyTheorems.lean`,
 `FullForestAuth.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor keystones
 (`gateOK_revoked_fails`, `execFullForestG_unauthorized_fails`, `execFullForestG_conserves_per_asset`)
 and the proved `stateStepGuarded` fail-closed caveat teeth.

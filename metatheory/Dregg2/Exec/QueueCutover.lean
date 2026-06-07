@@ -6,7 +6,7 @@ fold `queueAtomicTxChainA` (in `TurnExecutorFull`). When the per-op chained gate
 of the fold, the two folds agree on the resulting kernel — discharging the `hchain` hypothesis in
 `handler_refines_execFullA_queueAtomicTx`.
 
-Discipline: no `sorry`/`admit`/`axiom`. Standalone: `lake build Dregg2.Exec.QueueCutover`.
+Standalone: `lake build Dregg2.Exec.QueueCutover`.
 -/
 import Dregg2.Exec.Handlers.Queue
 import Dregg2.Exec.TurnExecutorFull

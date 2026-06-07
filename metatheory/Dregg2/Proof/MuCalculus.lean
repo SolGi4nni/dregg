@@ -48,7 +48,7 @@ the μ-formula `μx. {1} ∨ ◇x` (= `EF {1}`) CONTAINS the root `0`, while the
 De Morgan dual `EF P = (AG Pᶜ)ᶜ` made concrete on the witness, and it is FALSE if either fixpoint
 collapsed to the other. Decidable, finite, refutation-proved.
 
-Pure; spec-first; `#assert_axioms` pins every keystone. No `sorry`/`axiom`/`admit`/`native_decide`.
+Pure; spec-first.
 -/
 import Dregg2.Proof.CTL
 import Mathlib.Order.FixedPoints

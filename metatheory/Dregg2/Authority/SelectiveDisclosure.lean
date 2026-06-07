@@ -24,8 +24,7 @@ ring-blinding is the §8 oracle (`CryptoKernel.verify`). This module proves the
 information-theoretic core (perfect view-collapse on the modelled transcript); it does NOT
 claim the computational property.
 
-No `sorry`/`admit`/`axiom`/`native_decide` (kernel-clean: axioms ⊆
-{propext, Classical.choice, Quot.sound}); statements are never weakened to close them.
+Statements are never weakened to close them.
 -/
 import Dregg2.Privacy
 
@@ -344,9 +343,7 @@ example (cred17 : Credential 1) (h : cred17.attr 0 = 17)
 
 end Reference
 
--- TRIPWIRES: the disclosure / predicate-soundness / unlinkability laws are
--- kernel-clean (axioms ⊆ {propext, Classical.choice, Quot.sound}) — no `sorry`/
--- `axiom`/`native_decide` leaked. The residual *computational* binding/hiding of the
+-- The residual *computational* binding/hiding of the
 -- real STARK / Poseidon2-commitment / per-show ring-blinding is the §8 portal
 -- (`CryptoKernel.verify`, `bridge/src/present.rs:269-308`), NEVER an axiom here.
 #assert_axioms presentation_hides_undisclosed

@@ -30,7 +30,7 @@ integrity theorems are stated relative to it: we do NOT prove HMAC secure; we pr
 Builds on `Dregg2.Authority.Caveat` (reusing its `Caveat`/`Token.admits` narrowing layer); a verified
 chain yields a `Ctx → Bool` admit-gate (`verifiedChainGate`).
 
-Pure, computable, `#eval`-able. No `sorry`/`admit`/`axiom`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Caveat
 

@@ -34,8 +34,7 @@ headline guarantees:
     id or an unlocked swap credits nobody (`settle_wrong_id_no_delivery`, `settle_unlocked_no_delivery`).
 
 Built on the REAL `RecordKernelState` primitives (`bal` per-asset ledger + `escrows` holding-store),
-NOT `DemoRes`. Pure, computable, `#eval`-able. No `sorry`/`admit`/`axiom`/`native_decide`. Every
-keystone is `#assert_axioms`-pinned to `{propext, Classical.choice, Quot.sound}`.
+NOT `DemoRes`. Pure, computable, `#eval`-able.
 -/
 import Dregg2.Exec.RecordKernel
 
@@ -486,8 +485,7 @@ theorem settle_unlocked_no_delivery : settleSwap swap0 fundedIds = none := by de
 /-! ## 9. Axiom hygiene — every keystone pinned to the standard kernel triple.
 
 `#assert_axioms` walks each keystone and errors if any escapes `{propext, Classical.choice,
-Quot.sound}` — a `sorryAx` anywhere would fail the build. No `sorry`/`admit`/`axiom`/`native_decide`
-leaked. -/
+Quot.sound}`. -/
 
 #assert_axioms runSwap_none_rolls_back
 #assert_axioms runSwap_some_commits

@@ -28,7 +28,7 @@ The deliverables (`PHASE-VCG-WP §1,§2,§3,§4,§6`):
   + single-ledger `sumEqualsAcross` conservation. The cross-vat conservation fragment is left a
   documented honest-OPEN (hypothesis-routed, never derived — the inviolable rule).
 
-Pure; `#assert_axioms` pins every keystone kernel-axiom-clean (no `sorry`/`axiom`/`admit`).
+Pure.
 -/
 import Dregg2.Exec.RecordCellLive
 import Dregg2.Boundary

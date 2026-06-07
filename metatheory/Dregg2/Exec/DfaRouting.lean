@@ -28,7 +28,7 @@ constitutionally-bound table is the authorization context. We model the per-hop 
 a **guarded route** is one whose every hop `admits` under `Guard` — you cannot route *past* an
 unauthorized hop (`route_authorization`).
 
-## What is proven (all `#assert_axioms`-clean, NO `sorry`/`axiom`/`native_decide`)
+## What is proven
 
   * `routed_message_followed_accepting_route` — **delivery soundness**: a `Delivery` (a message
     that arrived) carries, by construction, a proof that its route is an accepting run

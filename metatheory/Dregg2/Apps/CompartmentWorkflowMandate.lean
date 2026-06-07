@@ -18,8 +18,7 @@ Load-bearing guarantees (ungated crown):
     `livingCellA_carries` / `cellObsA_next`).
   * **SPEND POLICY DEMO** — Stingray `Slice` models per-step fee debits (`charterMandate3.spendPolicy`).
 
-Templates: `Apps/ComputeExchange.lean`, `Apps/Subscription.lean`, `Apps/Identity.lean`. Zero
-`sorry`/`admit`/`axiom`.
+Templates: `Apps/ComputeExchange.lean`, `Apps/Subscription.lean`, `Apps/Identity.lean`.
 -/
 import Dregg2.Exec.CellCarry
 import Dregg2.Exec.TurnExecutorFull

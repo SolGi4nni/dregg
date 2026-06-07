@@ -27,7 +27,7 @@ simultaneity surface; a causal model has no global order to capture).
 clock, no authority, no skew. It is the partial order itself. (Hash-injectivity / signature seams
 are inherited from `Blocklace`, but no theorem here touches them: every result is a pure order fact.)
 
-Pure, computable, `#eval`-able. No `axiom`/`sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Blocklace
 
@@ -173,7 +173,7 @@ theorem demo_frontrun_caught : ¬ frontrunExcluded demoLace f1 f2 :=
 -- Anti-frontrunning reads the SAME bit: fill `g1` saw reveal `g0` ⇔ the ack edge is present.
 #guard (decide (g0.id ∈ g1.preds))                                   -- true  (frontrunExcluded holds)
 
-/-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
+/-! ### Keystones — `#assert_axioms`-clean. -/
 
 #assert_axioms causalAfter_mono
 #assert_axioms causalAfter_trans

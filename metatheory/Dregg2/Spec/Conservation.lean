@@ -55,9 +55,8 @@ this module makes faithful in the factored middle layer:
     `-- OPEN:` below. The Lean law assumes well-formed openings; the range proof is the
     circuit obligation that makes the assumption sound.
 
-Discipline: abstract value types (no `Nat`-for-semantics — `Bal` is an `AddCommMonoid`
-param); exhaustive classifiers (no default arm); `#assert_axioms` on the clean keystones;
-no `axiom`/`admit`/`native_decide`/sorry-alias. Imports ONLY existing built modules.
+Abstract value types (no `Nat`-for-semantics — `Bal` is an `AddCommMonoid`
+param); exhaustive classifiers (no default arm). Imports ONLY existing built modules.
 -/
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Algebra.Group.Hom.Defs

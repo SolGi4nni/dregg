@@ -12,7 +12,7 @@ This is the ungated cell-program dual of `ComputeExchangeGated`. Load-bearing gu
   * **LIVENESS (D3)** — settle to a non-live provider fail-closes.
   * **AUTHORITY (honest scope)** — self-authorized escrow ops (`actor = buyer`).
 
-Templates: `Apps/BountyBoard.lean`, `Apps/ComputeExchangeGated.lean`. Zero `sorry`/`admit`/`axiom`.
+Templates: `Apps/BountyBoard.lean`, `Apps/ComputeExchangeGated.lean`.
 
 ## App-level semantics (the Hatchery payoff)
 

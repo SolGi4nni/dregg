@@ -54,9 +54,8 @@ attestation ride the N-ary `ForestLTS` square. The BILATERAL (2-cell) case
 falls out as the `Fin 2` slice, with the bilateral `halves_sum_zero` the binding. The
 Granovetter no-amplify law is fully general over the tree (arbitrary depth/branching), structural.
 
-Discipline: the cross-cell Σ=0 is a HYPOTHESIS (the inviolable rule). Delegated caps NEVER amplify
-(`derive_no_amplify`, reused). No `axiom`/`admit`/`native_decide`/`sorry`. Keystones
-`#assert_axioms`-pinned. Verified standalone with `lake env lean Dregg2/Exec/CrossCellForest.lean`.
+The cross-cell Σ=0 is a HYPOTHESIS (the inviolable rule). Delegated caps NEVER amplify
+(`derive_no_amplify`, reused). Verified standalone with `lake env lean Dregg2/Exec/CrossCellForest.lean`.
 Reuses `Proof.ForestLTS` / `Exec.JointCell` / `Exec.Caps`; edits NONE.
 -/
 import Dregg2.Proof.ForestLTS

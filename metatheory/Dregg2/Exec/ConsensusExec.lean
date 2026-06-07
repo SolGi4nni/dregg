@@ -65,11 +65,9 @@ never Lean-proved crypto) ↦ **fold `recCexec`** over the decoded turns from a 
   (`n > 3f`, `≤ f` Byzantine ratifiers, honest-one-ratification) — carried by `cordial_agreement`'s
   hypotheses, restated here so the fault bound is visible at the bridge.
 
-## Rails
-
-No `sorry`/`admit`/`axiom`/`native_decide`. Every adversary assumption is a structure field or a
-theorem hypothesis. The keystones are `#assert_axioms`-clean (they ride only the `sorry`-free
-`recCexec_attests`/`recChained_run_conserves`/`cordial_*` lemmas). Verified with
+Every adversary assumption is a structure field or a
+theorem hypothesis. The keystones ride only the
+`recCexec_attests`/`recChained_run_conserves`/`cordial_*` lemmas. Verified with
 `lake env lean Dregg2/Exec/ConsensusExec.lean`.
 -/
 import Dregg2.Exec.RecordKernel

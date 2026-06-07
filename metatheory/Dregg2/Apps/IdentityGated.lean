@@ -19,7 +19,7 @@ credential-gated op; a revoked credential's op fails-closed (`execFullForestG_un
                               is rejected, ∀ state — a revoked credential can never act.
   3. `id_op_conserves`      — a committed identity op moves NO asset's supply (per-asset Δ = 0).
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Does NOT touch `Identity.lean`, `FullForestAuth.lean`,
+Does NOT touch `Identity.lean`, `FullForestAuth.lean`,
 nor `Dregg2.lean`. Reuses ONLY the proved gated-executor keystones (`gateOK_revoked_fails`,
 `execFullForestG_unauthorized_fails`, `execFullForestG_conserves_per_asset`).
 -/

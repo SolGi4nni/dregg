@@ -52,8 +52,8 @@ frontier is a named, type-checked object rather than prose.
      is a `Prop`-valued *named statement*, accompanied by the honest note that its from-scratch
      proof is the view-synchrony argument off the safety critical path.
 
-**Rails.** No `sorry`/`admit`/`axiom`/`native_decide`. Every adversary/dissemination assumption is a
-`structure` field or theorem hypothesis. Keystones are `#assert_axioms`-clean. Builds on the
+Every adversary/dissemination assumption is a
+`structure` field or theorem hypothesis. Builds on the
 existing modules by `import` only; defines nothing already taken (`xleq`/`xsort`/… are new names in
 `namespace`s under `Dregg2.Proof.CordialMiners`).
 -/

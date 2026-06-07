@@ -55,10 +55,9 @@ reflection of tensor-non-finality: per-cell-conserving ∧ per-cell-conserving i
 than (in fact incompatible with) the genuine cross-cell move; the cross-cell conserved measure is
 a NEW conjunct (the joint sum + the half-edge binding), not the conjunction of the per-cell ones.
 
-## Discipline
-No `axiom`/`admit`/`native_decide`/`sorry`. The CG-2 identity binding enters only as an explicit
-hypothesis (`SharedBinding`), never derived from per-cell soundness. `#assert_axioms` on every
-closed keystone. Read-only consumer of `Exec.JointCell`, `Exec.Kernel`, `Spec.ExecRefinement`.
+The CG-2 identity binding enters only as an explicit
+hypothesis (`SharedBinding`), never derived from per-cell soundness. Read-only consumer of
+`Exec.JointCell`, `Exec.Kernel`, `Spec.ExecRefinement`.
 -/
 import Dregg2.Exec.JointCell
 import Dregg2.Spec.ExecRefinement

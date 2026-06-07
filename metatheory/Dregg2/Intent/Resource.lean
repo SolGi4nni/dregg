@@ -25,7 +25,7 @@ This module: the `ResourceTheory` name (an SMC, with the linearity note), the co
 auction carrier) exhibiting the relation's TEETH (an unequal want is unfillable). Conservation as a
 monotone (a monoid-hom invariant) is Phase 3; the rich↔thin split is the home of that work.
 
-Pure; no `axiom`/`sorry`/`admit`/`native_decide`.
+Pure.
 -/
 import Mathlib.CategoryTheory.Monoidal.Braided.Basic
 import Mathlib.CategoryTheory.Monoidal.Discrete

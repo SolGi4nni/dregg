@@ -20,7 +20,7 @@ names: **transfer** (`concreteTransfer` ⟹ `recTransfer`) and **setField** (`co
 
 `CellId = Label = Nat` carries `LawfulBEq` + `LawfulHashable`, so `Std.HashMap.getD_insert`'s
 `if k == a then …` collapses to the abstract `if c = src then …` cleanly — the representation does NOT
-fight the refinement. NO `sorry`/`admit`/`axiom`/`native_decide` — real squares, real transfer.
+fight the refinement. Real squares, real transfer.
 
 Imports `Exec.RecordKernel` (the abstract spec) and `Exec.EffectsState` (for `setField`/`writeField`).
 -/
@@ -145,7 +145,7 @@ def concreteWriteField (cs : ConcreteKernelState) (f : FieldName) (target : Cell
     ConcreteKernelState :=
   { cs with cellMap := cs.cellMap.insert target (setField f (cs.cellMap.getD target default) v) }
 
-/-! ## §4 — THE COMMUTING SQUARES (the refinement proofs, no `sorry`).
+/-! ## §4 — THE COMMUTING SQUARES (the refinement proofs).
 
 `toAbstract (concreteOp cs …) = abstractOp (toAbstract cs) …`. Both sides are `RecordKernelState`s; we
 peel to the only changed field (`cell`) and prove the two lookup-functions agree pointwise via `funext`

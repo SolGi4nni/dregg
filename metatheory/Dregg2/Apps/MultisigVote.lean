@@ -31,9 +31,7 @@ four end-user guarantees:
     cast votes (`votes_reach_quorum`, a decide witness on a real-kernel fixture).
 
 TEETH (decide on a concrete fixture): a sub-threshold proposal does NOT pass; a double-voter is
-counted once; an outsider is rejected; the cap-bearer is admitted. Runs on real kernel state. No
-`sorry`/`admit`/`axiom`/`native_decide`. Every keystone is `#assert_axioms`-pinned to `{propext,
-Classical.choice, Quot.sound}`.
+counted once; an outsider is rejected; the cap-bearer is admitted. Runs on real kernel state.
 -/
 import Dregg2.Exec.RecordKernel
 

@@ -4,8 +4,6 @@
 Links the mandate cell's `commitment_anchor` to the `CrossVatCharter` covenant pattern: the anchor
 tags the compartment commitment on the A-leg record kernel, and a committed charter discharge on
 the projected `KernelState` view refines to a coordinated-forest step that preserves the anchor.
-
-Discipline: no `sorry`/`admit`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
 import Dregg2.Apps.CompartmentWorkflowMandateGated
 import Dregg2.Exec.JointCharterBridge

@@ -37,8 +37,7 @@ DEFERRED (out of this slice, by design — see `§DEFER`): the recursive sub-eff
 authority (`Spec.Guard` — Bool gates suffice for v1); the full 56-effect migration (the next workflow
 scales THIS algebra onto the real op-set).
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`. Every keystone `#assert_axioms`-pinned. Pure,
-computable, `#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handler`.
+Pure, computable, `#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handler`.
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.TurnExecutorFull

@@ -14,7 +14,7 @@ THIS module is the *catalog*: the standard CRDTs each realized as a concrete
 (the three CRDT merge laws — `sup_assoc` / `sup_comm` / `sup_idem` — come FREE
 from `SemilatticeSup`; `sup_le_sup` gives monotone-invariant closure; `Pi` /
 `Prod` / `Finset` semilattices give the structural lifts), so this module adds NO
-new dependency and contains ZERO sorry/admit/native_decide/axiom.
+new dependency.
 
 The catalog (each is a `MergeState` instance + a classified keystone invariant):
   1. `GCounter ι` (= `ι → ℕ`, Pi ∘ ℕ-max) — grow-only lower bound IS I-confluent.
@@ -563,7 +563,7 @@ def lwwB : LWW ℕ ℕ := ⟨5, 1⟩
 
 end Evals
 
-/-! ## §9. Axiom-hygiene pins (`#assert_axioms`) — every keystone is sorry-free.
+/-! ## §9. Axiom-hygiene pins (`#assert_axioms`).
 
 Each pin elaborates to an error if the keystone depends on any axiom outside
 `{propext, Classical.choice, Quot.sound}` (notably `sorryAx`). -/

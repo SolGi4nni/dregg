@@ -55,8 +55,6 @@ theorem (WL-discrete ⟹ rigid role assignment), exactly as graphplay's `wlStabl
 states it — we do NOT claim the converse. For the orbital demo this is the right direction: a
 scenario WL-separates ⟹ who-yields is forced; if it does not, negotiation is required (and that
 *requirement* is itself a theorem here).
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
 -/
 import Mathlib.Data.List.Sort
 import Mathlib.Data.Fintype.Card

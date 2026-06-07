@@ -27,8 +27,7 @@ dataflow coordinate. The four faces of `Dregg2.Await` are recovered as projectio
 `zkpromise`/`promiseGraph` = the dataflow projection.
 
 Abstract carriers throughout: `Gateway` is the third-party identity; `Height` is an
-abstract linear order, never `Nat`-for-semantics. All keystones are axiom-clean
-(`#assert_axioms`); the module is `sorry`-free.
+abstract linear order, never `Nat`-for-semantics.
 -/
 import Dregg2.Spec.Guard
 import Dregg2.Await
@@ -466,8 +465,7 @@ end Conditional
 
 /-! ## §8 — Axiom-hygiene tripwires.
 
-Pin every keystone to the three standard kernel axioms (no `sorryAx`). The module is
-`sorry`-free. -/
+Pin every keystone to the three standard kernel axioms. -/
 
 #assert_axioms Conditional.PromiseGraph.pipeline_topological
 #assert_axioms Conditional.conditional_is_temporal_guard

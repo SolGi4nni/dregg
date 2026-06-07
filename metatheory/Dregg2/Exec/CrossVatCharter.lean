@@ -13,7 +13,7 @@ This is the executable glue between `Exec.VatBoundary` (cross-vat token discharg
 `Exec.CrossCaveat` (the no-TOCTOU cross-cell read). Charters are the reusable template Apps should
 copy: covenant ∧ biscuits ∧ bilateral commit.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`. Crypto soundness stays in §8 carriers.
+Crypto soundness stays in §8 carriers.
 -/
 import Dregg2.Exec.VatBoundary
 import Dregg2.Exec.CoordinatedCaveat

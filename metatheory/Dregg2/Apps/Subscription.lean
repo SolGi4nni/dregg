@@ -47,8 +47,7 @@ carried by the REAL `execFullForestA` living cell, against any adversary, foreve
 
 Templates: `Apps/RightOfWay.lean` (the self-contained automaton + teeth), `Exec/CellNullifier.lean`
 (the per-effect kernel FRAME routed through `livingCellA_carries`). Reuses `Exec/CellCarry`'s crown +
-`RecordKernel`'s queue transitions; edits nothing. Zero `sorry`/`admit`/`native_decide`/`axiom`; every
-keystone `#assert_axioms`-pinned to `{propext, Classical.choice, Quot.sound}`.
+`RecordKernel`'s queue transitions; edits nothing.
 -/
 import Dregg2.Exec.CellCarry
 

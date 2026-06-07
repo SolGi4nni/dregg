@@ -17,8 +17,7 @@ Headline guarantees (kernel-native, no §8 credential leg):
 
 The executed dual of `MultisigVote`'s nullifier-set discipline is the SLOT caveat: the ballot cell's
 per-voter `WriteOnce` field IS the on-chain spent-mark. Templates: `Apps/PrivacyVotingGated.lean`
-(domain + caveats), `Apps/GovernedNamespace.lean` (ungated `setFieldA` shape). Zero
-`sorry`/`admit`/`native_decide`/`axiom`.
+(domain + caveats), `Apps/GovernedNamespace.lean` (ungated `setFieldA` shape).
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest

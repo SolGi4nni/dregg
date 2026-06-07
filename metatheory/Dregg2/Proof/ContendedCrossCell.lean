@@ -5,7 +5,7 @@ This module makes PRECISE the named final research residual gestured at by
 `CrossCellLTS.lean §10 -- OPEN`: *interleaved / overlapping hyperedges under an adversarial
 scheduler*, where two cross-cell turns contend for the SAME cell, and the question is whether
 an atomic + live + partition-tolerant commit is possible. The design predicts a DICHOTOMY,
-and we PROVE both poles (no `axiom`/`admit`/`native_decide`/`sorry`):
+and we PROVE both poles:
 
   * **Safe fragment (PROVED, `contended_commits_confluent`).** If the two contending
     cross-cell turns are I-CONFLUENT on the shared cell's invariant — operationally: they
@@ -34,8 +34,8 @@ bilateral kernel `Exec.JointCell` (decidable, `#eval`-able) so every witness is 
 and we bridge the classifier to `Confluence.IConfluent` so the dichotomy is the SAME third
 judgement the rest of the metatheory uses.
 
-Discipline: no `axiom`/`admit`/`native_decide`/`sorry`. The scheduler, adversary, and partition
-are explicit hypotheses/data. `#assert_axioms` on every keystone. Read-only consumer of
+The scheduler, adversary, and partition
+are explicit hypotheses/data. Read-only consumer of
 `Exec.JointCell`, `Exec.Kernel`, `Confluence`.
 -/
 import Dregg2.Exec.JointCell

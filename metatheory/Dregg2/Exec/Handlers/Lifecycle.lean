@@ -10,8 +10,7 @@ names (`"lifecycle"`, `"delegation_refresh"`, `"event"`) — marshalling-shaped 
 component. THIS batch RE-FOUNDs the real kernel steps at the handler layer so the algebra agrees with
 `execFullA` AND the circuit specs (`Spec/celllifecycle`, `Spec/refreshdelegation`, `Spec/cellstatelog`).
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`. `#assert_axioms`-pinned. Verified standalone:
-`lake build Dregg2.Exec.Handlers.Lifecycle`.
+Verified standalone: `lake build Dregg2.Exec.Handlers.Lifecycle`.
 -/
 import Dregg2.Exec.Handler
 

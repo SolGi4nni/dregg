@@ -16,7 +16,7 @@ Headline guarantees (kernel-native, no §8 credential leg):
   * **NON-VACUITY** — concrete `gn0` state with `#guard` witnesses mirroring the gated app.
 
 Templates: `Apps/GovernedNamespaceGated.lean` (domain + caveats), `Apps/NameService.lean` (cell-program
-shape). Zero `sorry`/`admit`/`native_decide`/`axiom`.
+shape).
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest

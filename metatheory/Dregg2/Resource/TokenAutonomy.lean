@@ -46,8 +46,7 @@ cancellative — pure ℤ payment — it DOES retract into ℤ (identity). The c
 not a blanket "always mint your own": it cleanly separates payment (cancellative,
 substitutable) from privacy/authority (idempotent, autonomous).
 
-Pure Lean + mathlib + the `Resource.lean` citation. Zero `sorry`/`admit`/`native_decide`
-/`axiom`; keystones pinned with `#assert_axioms`.
+Pure Lean + mathlib + the `Resource.lean` citation.
 -/
 import Mathlib.Algebra.Group.Defs
 import Mathlib.Algebra.Group.Hom.Defs

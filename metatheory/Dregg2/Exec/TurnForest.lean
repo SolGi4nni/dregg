@@ -44,8 +44,7 @@ are a well-founded pair over the tree's `sizeOf`). Non-vacuity (`#eval`): a conc
 a parent delegating an attenuated cap to a child, committing — and a child attempting to EXCEED the
 delegated caps, rejected (fail-closed).
 
-Discipline: delegated caps NEVER amplify (`derive_no_amplify`, reused, never faked). No
-`axiom`/`admit`/`native_decide`/`sorry`. Keystones `#assert_axioms`-pinned. Verified standalone with
+Delegated caps NEVER amplify (`derive_no_amplify`, reused, never faked). Verified standalone with
 `lake env lean Dregg2/Exec/TurnForest.lean`. Reuses RecordKernel/Caps/TurnExecutor; edits none.
 -/
 import Dregg2.Exec.TurnExecutor

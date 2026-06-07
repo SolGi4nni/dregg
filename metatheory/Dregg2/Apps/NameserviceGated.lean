@@ -43,7 +43,7 @@ violating write — so the app invariants are enforced BY THE EXECUTOR, not mere
 Plus a concrete registry-cell state (`reg0`) whose `#guard`s show a GOOD register COMMITS, a forged
 credential gives `none`, and a squat gives `none` (the gate + the caveat are REAL, not vacuous).
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Does NOT touch `NameService.lean`, `FullForestAuth.lean`,
+Does NOT touch `NameService.lean`, `FullForestAuth.lean`,
 nor `Dregg2.lean`. Reuses ONLY the proved gated-executor keystones + the proved `stateStepGuarded`
 fail-closed teeth.
 -/

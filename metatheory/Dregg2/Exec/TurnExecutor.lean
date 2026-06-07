@@ -41,8 +41,7 @@ multi-`Action` turn, generalizing `recCexec_attests` from one op to the Action l
                               preserved end-to-end;
   * `execTurn_unauthorized_fails` — fail-closed: any unauthorized action ⇒ the whole turn rejects.
 
-Discipline: step-complete BY CONSTRUCTION — `fullStepInv` is NEVER weakened. No
-`axiom`/`admit`/`native_decide`/`sorry`. Keystones `#assert_axioms`-pinned. Verified standalone
+Step-complete BY CONSTRUCTION — `fullStepInv` is NEVER weakened. Verified standalone
 with `lake env lean Dregg2/Exec/TurnExecutor.lean`. Reuses RecordKernel/Caps/Catalog*; edits none.
 -/
 import Dregg2.Exec.RecordKernel

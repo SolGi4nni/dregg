@@ -43,10 +43,8 @@ soundness theorem proved for every mode (`*_sound`). The verify seam
 handoff law (`Spec.handoff_is_introduce`/`handoff_non_amplifying`) are REUSED, never
 reinvented.
 
-## Discipline
-
-NO `sorry`/`admit`/`axiom`/`native_decide`. The only kernel axioms are the standard
-three (`propext`, `Classical.choice`, `Quot.sound`); pinned with `#assert_axioms`.
+The only kernel axioms are the standard
+three (`propext`, `Classical.choice`, `Quot.sound`).
 Pure, `#eval`-able. ONE namespace. Creates only NEW names.
 -/
 import Dregg2.Spec.Guard

@@ -13,8 +13,6 @@ This module makes the relationships explicit and load-bearing:
     STRICTER — stripping biscuits cannot invalidate a charter commit);
   * the charter's `bt` inherits the proved **cross-forest Σ=0** binding (`halves_sum_zero`);
   * the three layers share one **covenant teeth** story (violated `φ` ⇒ fail-closed everywhere).
-
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`. Keystones `#assert_axioms`-pinned.
 -/
 import Dregg2.Exec.CrossVatCharter
 import Dregg2.Exec.CoordinatedForestGate

@@ -29,8 +29,7 @@ The faithful `gc.rs` correspondence (the lease IS the idle window):
     and lease-expiry is the ONLY sound trigger.
 
 This module REUSES `Liveness`/`Exec.CellLiveness` and `Exec.CapTP.ImportHandle` directly; it
-invents no new verify side, no new decision procedure, and adds no `axiom`/`admit`/
-`native_decide`/`sorry`. Keystones pinned with `#assert_axioms`.
+invents no new verify side and no new decision procedure.
 -/
 import Dregg2.Liveness
 import Dregg2.Exec.CellLiveness

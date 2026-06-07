@@ -18,7 +18,7 @@ executor (not merely carried); the op conserves every asset.
                                 Sequence caveat fail-closes inside the gated executor), with a genuine credential.
   3. `sub_op_conserves`       — a committed consume moves NO asset's supply (per-asset Δ = 0).
 
-Mirrors the green `NameserviceGated`/`IdentityGated` template. Zero sorry/admit/native_decide/axiom.
+Mirrors the green `NameserviceGated`/`IdentityGated` template.
 
 ## App-level semantics (Hatchery bridge — §4b)
 

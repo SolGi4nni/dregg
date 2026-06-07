@@ -46,9 +46,7 @@ EVAL-VERIFIED (`§TEETH`): a delegation whose delegator lacks connectivity to th
 provably subset-held; a revoke/attenuate/dropRef ALWAYS succeeds (`some`) and only shrinks the actor's
 reach; and every authority effect leaves the combined per-asset measure UNCHANGED.
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(rests only on the kernel triple — a `sorryAx` fails the pin and the build). Pure, computable,
-`#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handlers.Authority`.
+Pure, computable, `#eval`-able. Verified standalone: `lake build Dregg2.Exec.Handlers.Authority`.
 -/
 import Dregg2.Exec.Handler
 import Dregg2.Exec.CapTP

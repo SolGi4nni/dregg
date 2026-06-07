@@ -23,7 +23,7 @@ Two faces, both proved:
 Teeth (non-vacuous): an **amplifying** block (claims a right its parent lacks) is rejected; a **forged**
 block (signature does not verify under the parent's key) is rejected; a forged root is rejected.
 
-Pure, computable, `#eval`-able. No `axiom`/`sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Positional
 import Dregg2.Tactics

@@ -5,7 +5,7 @@ A compartment-aware workflow mandate: each step names a clearance compartment an
 prerequisites; execution order must respect the DAG; step completion is tracked via dedicated
 tracker cells in `KernelState.accounts`.
 
-Pure, computable, `#eval`-able. No `sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.ClearanceGraph
 import Dregg2.Exec.Kernel

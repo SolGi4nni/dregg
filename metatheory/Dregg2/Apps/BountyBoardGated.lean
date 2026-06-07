@@ -52,7 +52,7 @@ PARKS the reward (poster's ledger drops, combined measure fixed); a claim CREDIT
 REFUNDS the poster; a forged credential ⇒ `none`; a revoked credential ⇒ `none`; a claim to a SEALED
 claimant ⇒ `none`. So every theorem is witnessed REAL, not vacuous.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. NEW file only — does NOT touch `AtomicSwap.lean`,
+NEW file only — does NOT touch `AtomicSwap.lean`,
 `NameserviceGated.lean`, `FullForestAuth.lean`, nor `Dregg2.lean`. Reuses ONLY the proved gated-executor
 keystones + the proved kernel escrow conservation/liveness teeth. `#assert_axioms`-pinned to
 `{propext, Classical.choice, Quot.sound}`.

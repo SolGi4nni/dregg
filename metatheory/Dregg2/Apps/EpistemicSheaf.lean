@@ -31,8 +31,6 @@ a sound H¹ obstruction detector" (SHEAF-OF-VERIFIERS §3). We use the content a
 them `H⁰`/`H¹` as objects. Calling this "cohomology" would let vocabulary stand in for an absent
 coboundary — exactly what SHEAF-OF-VERIFIERS refuses, and so do we.
 
-Zero `sorry`/`admit`/`native_decide`/`axiom`. Keystones `#assert_axioms`-pinned.
-
 NOTE ON SOURCING. The epistemic frame (`Frame`, `DistKnows`, `verified`, and the keystones) is
 ported from `Metatheory/EpistemicConsensus.lean` (which formalizes Goubault–Kniazev–Ledent–
 Rajsbaum, arXiv:2311.01351). Ported rather than imported to keep this module buildable under any

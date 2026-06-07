@@ -4,8 +4,6 @@
 First Apps witness for **coordinated** cross-cell caveats: the `covenantCoord` + `goodBi` demo through
 `CoordinatedForestGate` at the joint `KernelState` layer, plus the cross-vat **charter** from
 `CrossVatCharter` (biscuits + covenant + bilateral commit).
-
-Zero `sorry`/`admit`/`native_decide`/`axiom`.
 -/
 import Dregg2.Exec.CoordinatedForestGate
 import Dregg2.Exec.CrossVatCharter

@@ -62,7 +62,7 @@ gives no projection iso). Commutativity is real content where it IS used — `Co
 its `IsCommMonObj.mul_comm` carries real content (`a * b` and `b * a` are computed and distinct off the
 diagonal). NOTE: the lax monad `escrowMonad_isMonoidal` itself needs no commutativity (see above).
 
-Pure; no `axiom`/`sorry`/`admit`/`native_decide`. §8 carriers: none (this layer is mathlib-internal
+§8 carriers: none (this layer is mathlib-internal
 category theory; the only hypotheses are `MonObj`/`IsCommMonObj` typeclass carriers, never faked laws).
 -/
 import Mathlib.CategoryTheory.Monoidal.Center

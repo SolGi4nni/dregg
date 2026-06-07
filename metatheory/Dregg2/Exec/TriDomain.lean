@@ -63,9 +63,8 @@ violation even when balance alone checks out — and the authority measure is no
     authority measure UNCHANGED, metadata advances.
   * **Monotonic (metadata, all kinds)** ⇒ the metadata measure strictly advances and NEVER retreats.
 
-## Discipline (REORIENT §6)
-No `axiom`/`admit`/`native_decide`/`sorry`. `#assert_axioms` on every keystone. Pure, computable,
-`#eval`-able non-vacuity. Reuses `TurnExecutorFull` / `AuthTurn` / `Spec.Conservation`; edits nothing.
+Pure, computable, `#eval`-able non-vacuity.
+Reuses `TurnExecutorFull` / `AuthTurn` / `Spec.Conservation`; edits nothing.
 Verified standalone: `lake env lean Dregg2/Exec/TriDomain.lean`.
 -/
 import Dregg2.Exec.TurnExecutorFull

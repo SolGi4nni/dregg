@@ -15,8 +15,7 @@ concurrent debits each preserve the bound yet jointly overdraw. The discriminati
 Reuses `Privacy.Nullifier` and `Confluence`'s `IConfluent`/`Tier1Eligible`/`MergeState`.
 
 Crypto-soundness of `nullifierOf` (PRF/extractability) is a circuit obligation (`Privacy.lean`
-§8 caveat), not touched here. This module is pure, decidable, computable Lean — no
-`axiom`/`admit`/`native_decide`/`sorry`.
+§8 caveat), not touched here. This module is pure, decidable, computable Lean.
 -/
 import Dregg2.Privacy
 import Dregg2.Confluence

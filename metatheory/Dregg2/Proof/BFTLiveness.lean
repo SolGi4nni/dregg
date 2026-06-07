@@ -24,8 +24,7 @@ deterministic oracle to the Bernoulli-per-view law the measure carries) — an i
 not a sorry. `honest_le_delivered` and `honest_quorum` are carried as fields exactly as
 `World.recv_mono` and `World.gst_liveness` are, never as axioms.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. All assumptions are `Pacemaker` fields.
-Keystones are `#assert_axioms`-clean.
+All assumptions are `Pacemaker` fields.
 -/
 import Mathlib.Tactic
 import Dregg2.World

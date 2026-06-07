@@ -17,8 +17,7 @@ The key obstruction is documented as `transfer_fires_no_authStep`: a balance tra
 effect is the identity, and no no-op `AuthStep` exists, so the `AuthStep`-firing abstract step is
 the correct model for authority turns — not balance turns.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Read-only consumer of `RecordKernel`,
-`ExecRefinement`, `Authority`.
+Read-only consumer of `RecordKernel`, `ExecRefinement`, `Authority`.
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.AuthTurn

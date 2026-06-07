@@ -33,7 +33,7 @@ taken as a hypothesis at every point a *physical-time* conclusion is drawn. Acce
 the in-TCB verifier emits) needs no honesty; only the leap from "accepted" to "real time is bounded"
 does — and that leap is gated on the carrier.
 
-Pure, computable, `#eval`-able. No `axiom`/`sorry`/`admit`/`native_decide`.
+Pure, computable, `#eval`-able.
 -/
 import Dregg2.Authority.Predicate
 import Dregg2.Authority.Credential
@@ -324,7 +324,7 @@ theorem demo_frameWithin_fails_no_authority :
 
 end Demo
 
-/-! ### Keystones — `#assert_axioms`-clean (no `sorry`/`axiom`/`native_decide`). -/
+/-! ### Keystones — `#assert_axioms`-clean. -/
 
 #assert_axioms frameWithin_sound
 #assert_axioms frame_adversarial_cannot_forge

@@ -3,7 +3,7 @@
 
 A storage-gateway mandate models a content-addressed object store: bucket/prefix labels, GET/PUT/LIST
 ops, a Stingray `Slice` volume budget, and compartment clearance for reads. Pure, computable,
-`#eval`-able. No `sorry`/`admit`/`native_decide`.
+`#eval`-able.
 -/
 import Dregg2.Authority.ClearanceGraph
 import Dregg2.Exec.Kernel

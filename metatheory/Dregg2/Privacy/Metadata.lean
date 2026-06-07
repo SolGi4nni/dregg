@@ -49,7 +49,7 @@ HONESTLY: this k is the payload-anonymity within a fixed metadata bucket; ACROSS
 (different partner sets/slots) the observer partitions the corpus and the anonymity collapses to
 the bucket — `metadata_partitions_anonymity` proves the bucket is an upper bound on what hides.
 
-No `sorry`/`axiom`; every spec carries a non-vacuity witness (`Reference`). The residual
+Every spec carries a non-vacuity witness (`Reference`). The residual
 *computational* hiding of the commitment itself is the §8 portal carried by `PrivacyKernel` /
 `Crypto.Primitives` — NOT re-litigated here; this module is purely the metadata-boundary map.
 -/

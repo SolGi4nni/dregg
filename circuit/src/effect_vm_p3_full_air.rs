@@ -26,6 +26,18 @@
 //! pins (`EffectVmAir::boundary_constraints`) become `when_first_row()` /
 //! `when_last_row()` `assert_zero`.
 //!
+//! EXCEPTION (anti-ghost, intentional): the GROUP-4 post-state-commitment
+//! integrity binding (`STATE_COMMIT == genuine Poseidon2 digest of the
+//! after-state`) is emitted on the WHOLE domain via the unfiltered `builder`,
+//! NOT `when_transition`, so it covers the LAST row (n-1) too. The last row's
+//! STATE_COMMIT is the published commitment; if this binding were skipped there
+//! (as a careless `when_transition` mirror would), it would be pinned ONLY to
+//! the attacker-chosen `NEW_COMMIT` public input — an arbitrary post-state
+//! commitment could be forged and the audited verifier would accept. The hash
+//! sites' `poseidon2_permute_expr` round constraints are likewise unfiltered
+//! (emitted in the digest loop via `builder`), so the full digest dependency
+//! chain is last-row-sound. See `forged_last_row_state_commit_trace_cell_*`.
+//!
 //! ### The hash sites — REAL in-circuit Poseidon2 (the soundness upgrade)
 //!
 //! The bespoke evaluator computes `hash_2_to_1` / `hash_4_to_1` CONCRETELY on
@@ -1313,13 +1325,6 @@ where
         // ===== Nonce increment: new_nonce == old_nonce + (1 - s_noop) =====
         tb.assert_zero(new_nonce - old_nonce - (one.clone() - s_noop.clone()));
 
-        // ===== GROUP 4: state-commit integrity (hash sites 0..3) =====
-        tb.assert_zero(sa(state::STATE_COMMIT) - digests[hs::STATE_COMMIT].clone());
-        // The intermediate aux columns must equal their hashes (binds inter1..3).
-        tb.assert_zero(aux(aux_off::STATE_INTER1) - digests[0].clone());
-        tb.assert_zero(aux(aux_off::STATE_INTER2) - digests[1].clone());
-        tb.assert_zero(aux(aux_off::STATE_INTER3) - digests[2].clone());
-
         // ===== GROUP 5: net_delta sign boolean =====
         {
             let delta_sign = aux(3);
@@ -1347,6 +1352,36 @@ where
             let this_s_custom = lc(sel::CUSTOM);
             tb.assert_zero(next_acc - this_acc - this_s_custom);
         }
+
+        // ===== GROUP 4: state-commit integrity (hash sites 0..3) =====
+        //
+        // ANTI-GHOST, ALL-ROWS (incl. the LAST row). This binding is the entire
+        // reason this AIR exists: the published post-state commitment MUST equal
+        // the genuine Poseidon2 digest of the genuine final state. It is emitted
+        // on the WHOLE domain via the unfiltered `builder` (NOT `when_transition`)
+        // so the last row (row n-1) is covered. Were it under `when_transition`,
+        // the last row's STATE_COMMIT column would be pinned ONLY by the boundary
+        // `STATE_COMMIT == NEW_COMMIT` (line below) to the attacker-chosen public
+        // input, fully decoupled from the executed effects' hash — an arbitrary
+        // post-state commitment could be forged. The full digest dependency chain
+        // (state_commit = H4(inter1,inter2,inter3,0); inter1..3 = H4 of the
+        // after-state cells) is already enforced on ALL rows because the
+        // `poseidon2_permute_expr` round constraints for sites 0..3 are emitted
+        // via `builder` (see the digest loop above), not `tb`. So pinning
+        // `sa(STATE_COMMIT) == digests[STATE_COMMIT]` here on every row forces the
+        // last-row STATE_COMMIT to the genuine digest; combined with the last-row
+        // boundary `STATE_COMMIT == NEW_COMMIT`, NEW_COMMIT is forced genuine.
+        //
+        // Honest-prover soundness on every row: `extend_trace_with_hashes` /
+        // `generate_effect_vm_trace` fill `state_after[STATE_COMMIT]` (and the
+        // STATE_INTER aux cells) with the refreshed commitment on EVERY row,
+        // including NoOp padding rows, so this holds for the honest witness.
+        builder.when_transition().assert_zero(sa(state::STATE_COMMIT) - digests[hs::STATE_COMMIT].clone());
+        // The intermediate aux columns must equal their hashes (binds inter1..3),
+        // also on every row.
+        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER1) - digests[0].clone());
+        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER2) - digests[1].clone());
+        builder.when_transition().assert_zero(aux(aux_off::STATE_INTER3) - digests[2].clone());
 
         // ====================================================================
         // BOUNDARY constraints (mirror EffectVmAir::boundary_constraints).
@@ -1512,6 +1547,89 @@ mod tests {
         assert!(
             res.is_err(),
             "forged NEW_COMMIT MUST be rejected by the audited p3 verifier"
+        );
+    }
+
+    /// Control: a NON-last-row STATE_COMMIT trace-cell forgery (row 0's
+    /// after-state commit cell decoupled from its genuine digest) MUST be
+    /// rejected. This was already covered by the transition-domain GROUP-4
+    /// binding; the fix keeps it covered (the all-rows binding subsumes it).
+    #[test]
+    fn forged_non_last_row_state_commit_trace_cell_rejected_by_audited_p3() {
+        let initial = CellState::new(1000, 0);
+        // Two effects so row 0 is a real, non-last row.
+        let effects = vec![
+            VmEffect::Transfer { amount: 100, direction: 1 },
+            VmEffect::Transfer { amount: 50, direction: 0 },
+        ];
+        let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
+        assert!(trace.len() >= 2, "need a non-last row to forge");
+
+        let mut forged_trace = trace.clone();
+        let honest_commit = forged_trace[0][STATE_AFTER_BASE + state::STATE_COMMIT];
+        forged_trace[0][STATE_AFTER_BASE + state::STATE_COMMIT] =
+            honest_commit + BabyBear::new(1);
+
+        let outcome = std::panic::catch_unwind(|| {
+            prove_effect_vm_p3(&forged_trace, &pis)
+                .and_then(|p| verify_effect_vm_p3(&p, &pis))
+        });
+        let accepted = matches!(outcome, Ok(Ok(())));
+        assert!(
+            !accepted,
+            "FORGED non-last-row STATE_COMMIT trace cell MUST be rejected"
+        );
+    }
+
+    /// THE LAST-ROW ANTI-GHOST TOOTH (the GROUP-4 hole this fix closes): an
+    /// adversary forges BOTH the last row's `STATE_AFTER.STATE_COMMIT` trace
+    /// cell AND the matching `pis[NEW_COMMIT]` to an arbitrary value
+    /// (honest + 1), trying to publish a post-state commitment decoupled from
+    /// the genuine Poseidon2 hash of the executed effects. Before the fix, the
+    /// last-row STATE_COMMIT integrity binding was under `when_transition()`
+    /// and so was NOT enforced on row n-1 — the only last-row constraint pinned
+    /// STATE_COMMIT to the attacker-chosen NEW_COMMIT, and this forgery
+    /// VERIFIED. With the fix (GROUP-4 binding emitted on ALL rows via the
+    /// unfiltered builder), `digests[STATE_COMMIT]` is recomputed from the
+    /// genuine after-state cells (STATE_COMMIT is NOT a hash input), so the
+    /// forged STATE_COMMIT cell cannot equal the genuine digest and
+    /// proving-or-verifying MUST FAIL.
+    #[test]
+    fn forged_last_row_state_commit_trace_cell_rejected_by_audited_p3() {
+        let initial = CellState::new(1000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
+
+        // Sanity: the honest version proves+verifies.
+        let honest = prove_effect_vm_p3(&trace, &pis).expect("honest proof");
+        verify_effect_vm_p3(&honest, &pis).expect("honest verify");
+
+        // Forge BOTH the last-row trace STATE_COMMIT cell AND the NEW_COMMIT PI
+        // to (honest + 1), keeping them mutually consistent so the last-row
+        // boundary `STATE_COMMIT == NEW_COMMIT` is satisfied. The ONLY thing
+        // that can now reject this is the all-rows GROUP-4 genuine-digest bind.
+        let last = trace.len() - 1;
+        let mut forged_trace = trace.clone();
+        let honest_commit = forged_trace[last][STATE_AFTER_BASE + state::STATE_COMMIT];
+        forged_trace[last][STATE_AFTER_BASE + state::STATE_COMMIT] =
+            honest_commit + BabyBear::new(1);
+
+        let mut forged_pis = pis.clone();
+        forged_pis[pi::NEW_COMMIT] = forged_pis[pi::NEW_COMMIT] + BabyBear::new(1);
+
+        // The prover self-verifies before returning; with the fix it must be
+        // unable to satisfy the constraints (panic inside prove) OR the verify
+        // step rejects. Either way the forgery must NOT yield an accepted proof.
+        let outcome = std::panic::catch_unwind(|| {
+            prove_effect_vm_p3(&forged_trace, &forged_pis)
+                .and_then(|p| verify_effect_vm_p3(&p, &forged_pis))
+        });
+        let accepted = matches!(outcome, Ok(Ok(())));
+        assert!(
+            !accepted,
+            "FORGED last-row STATE_COMMIT (trace cell + NEW_COMMIT PI) MUST be \
+             rejected by the audited p3 verifier — the GROUP-4 anti-ghost hole \
+             is NOT closed"
         );
     }
 

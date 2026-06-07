@@ -15,7 +15,7 @@ Load-bearing guarantees (ungated crown):
   * **CONSERVATION** — mandate metadata writes are balance-neutral (`sgm_pay_supply_forever` via
     `livingCellA_carries` / `cellObsA_next`).
 
-Templates: `Apps/CompartmentWorkflowMandate.lean`. Zero `sorry`/`admit`/`axiom`.
+Templates: `Apps/CompartmentWorkflowMandate.lean`.
 -/
 import Dregg2.Exec.CellCarry
 import Dregg2.Exec.TurnExecutorFull

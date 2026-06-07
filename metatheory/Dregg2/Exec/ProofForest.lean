@@ -23,8 +23,6 @@ packaged into `ProofForest.attested` — the cryptographic obligation, discharge
 `verify_effect_vm`. PROVED (fully in Lean, axiom-clean): that linked per-step soundness composes
 to whole-forest `StepInv`.
 
-No `axiom`/`admit`/`native_decide`/`sorry`. Keystones `#assert_axioms`-pinned.
-
 -- OPEN: the cross-cell proof-forest — where edges cross cells and the link is the CG-5 N-ary
 --   `Σδ = 0` shared-binding — is the natural next slice, packaging `CrossCellForest.lean`'s
 --   `crossForest_attests`. The `δ` surface is already on `ProofNode`; the cross-cell `Linked`

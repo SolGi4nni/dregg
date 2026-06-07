@@ -15,7 +15,6 @@ Headline guarantees (kernel-native, no §8 credential leg):
   * **NON-VACUITY** — concrete `gal0`/`galFresh` states with `#guard` witnesses mirroring the gated app.
 
 Templates: `Apps/GalleryGated.lean` (domain + caveats), `Apps/GovernedNamespace.lean` (ungated shape).
-Zero `sorry`/`admit`/`native_decide`/`axiom`.
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.FullForest

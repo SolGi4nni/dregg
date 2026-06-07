@@ -46,9 +46,8 @@ The within-cell no-TOCTOU is AUTOMATIC: `execFullAGated` reads `gateOK na s` on 
 runs `execFullA s a` against — one indivisible node step (`gatedNode_check_eq_use`), the executed
 analog of `CrossCaveat.caveated_check_eq_use`.
 
-Discipline: NO `axiom`/`admit`/`native_decide`/`sorry`. The `AuthPortal.soundness` CARRIER is a Prop
-FIELD (the §8 discipline), NOT an axiom. Keystones `#assert_axioms`-pinned to `{propext,
-Classical.choice, Quot.sound}`. Reuses `FullForest`/`AuthModes`/`Credential`/`CaveatChain`/
+The `AuthPortal.soundness` CARRIER is a Prop
+FIELD (the §8 discipline), NOT an axiom. Reuses `FullForest`/`AuthModes`/`Credential`/`CaveatChain`/
 `DriftStable`/`ThirdPartyDischarge`/`CrossCaveat`/`CryptoKernel`; EDITS NONE. ONE namespace.
 -/
 import Dregg2.Exec.FullForest

@@ -43,8 +43,6 @@ We carry it as the discharge of a `Spec.Guard`, exactly as `Spec.VatBoundary` an
 `Spec.Await` do. The distributed-GC liveness of exported caps (`gc.rs`) is genuinely OPEN
 (it relates to `Exec.CellLiveness`'s cross-vat-cycle impossibility) and is left as a
 documented `-- OPEN:`, NOT a `sorry`/`axiom`.
-
-No `axiom`/`admit`/`native_decide`/`sorry`. Keystones pinned with `#assert_axioms`.
 -/
 import Dregg2.Spec.Authority
 import Dregg2.Spec.VatBoundary

@@ -45,7 +45,7 @@ The plan (the standard refinement square — *abstract* commutes ⟹ *concrete* 
      `Converts offered wanted`, so the hole is unpluggable. The toy's discrete category and the real
      per-asset ledger AGREE on what conserves — genuine discrimination, not a vacuous pass.
 
-Pure; no `axiom`/`sorry`/`admit`/`native_decide`. Keystones `#assert_axioms`-pinned to the kernel triple.
+Pure.
 -/
 import Dregg2.Intent.Kernel
 import Dregg2.Exec.RecordKernel

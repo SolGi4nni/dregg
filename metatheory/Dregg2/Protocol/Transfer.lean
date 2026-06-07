@@ -72,7 +72,7 @@ def bob : Acct := ⟨5⟩
 #guard ((acctCoalg.next alice (.credit 7)).bal == 107)   -- 107  (the coalgebra steps as codata)
 #guard ((acctCoalg.next alice (.debit 40)).bal == 60)    -- 60
 
-/-! ## And it is PROVED (no `sorry`). -/
+/-! ## And it is PROVED. -/
 
 /-- **Conservation — Law 1, proved by computation:** total supply is invariant across any
 committed transfer (the concrete instance of `Core.conservation_ordinary` / the JointTurn

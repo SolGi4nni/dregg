@@ -9,7 +9,6 @@ Closes the N-ary forward-simulation square `forestAbsStep_forward` with the CG-5
 (`Σ_{i∈univ} δ i = 0`) as an explicit HYPOTHESIS, never derived. The bilateral
 `CrossCellLTS.crossAbsStep` is the `ι = Fin 2` slice (`forestAbsStep_two_refines_crossAbs`).
 
-No `axiom`/`admit`/`native_decide`/`sorry`. `#assert_axioms` on every keystone.
 Read-only consumer of `Exec.JointCell`, `Exec.Kernel`, `Spec.ExecRefinement`, `Hyperedge`,
 `Proof.CrossCellLTS`.
 -/

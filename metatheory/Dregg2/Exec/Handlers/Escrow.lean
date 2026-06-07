@@ -35,8 +35,7 @@ Handlers registered:
   * `noteSpendA` — the double-spend gate (step `noteSpendNullifier`; a replayed nullifier is rejected).
   * `noteCreateA` — the grow-only fresh-commitment insert (total, `delta = 0`, self-limiting freshness).
 
-Discipline: no `sorry`/`admit`/`axiom`/`native_decide`/eval-only. Every keystone `#assert_axioms`-pinned
-(a `sorryAx` fails the pin and the build). `#eval`-verified TEETH: the R2 attack (unauthorized settle)
+`#eval`-verified TEETH: the R2 attack (unauthorized settle)
 returns `none`; the authorized creator/recipient returns `some`. Standalone: `lake build
 Dregg2.Exec.Handlers.Escrow`.
 -/

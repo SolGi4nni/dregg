@@ -24,7 +24,7 @@ double-fulfill).
 
 Built per the spec's guidance: define `Intent` + `fulfill`, get one concrete fulfillment running, prove
 the discharge for the bilateral case. The full unit/counit adjunction laws are proved later as the
-auction needs them. Pure; no `axiom`/`sorry`/`admit`/`native_decide`.
+auction needs them. Pure.
 -/
 import Dregg2.Intent.Resource
 import Dregg2.Time.Deadline
