@@ -946,4 +946,76 @@ def emitRangedDescriptorJson (d : RangedDescriptor) : String :=
 
 #assert_axioms satisfiedRanged_nil
 
+/-! ## ════════════════════════════════════════════════════════════════════════════════
+## PART IV — Verifier backing: the emitted hash forms are now AUDITED-p3 algebraic.
+## ════════════════════════════════════════════════════════════════════════════════
+
+PART II/III noted the `Hash*` forms as *opaque/non-polynomial* — in the previous Rust backend
+the digest was a CONCRETE Poseidon2 recompute "checked" only at trace rows, and the whole circuit
+verified through the hand-rolled `crate::stark` FRI (whose terminal low-degree test is effectively
+absent and whose trace columns are never low-degree-tested). That made the hash binding a §8
+ASSUMPTION (the verifier had to be trusted), not a constraint.
+
+That has CHANGED in the Rust backend (`circuit/src/dsl/dsl_p3_air.rs` +
+`circuit/src/plonky3_prover.rs::poseidon2_permute_expr`): `Hash2to1` / `Hash4to1` now denote a
+GENUINE in-circuit Poseidon2 permutation — round-by-round S-box (`x^7`) + external/internal linear
+layers, each round bound to witness aux columns — proved+verified through the **audited
+`p3-batch-stark`** prover/verifier. A forged digest is UNSAT (the permutation constraints reject it).
+
+This part records that semantics so Lean's circuit-soundness story is faithful to what the backend
+now enforces: the hash digest is an ALGEBRAIC equality `out = Poseidon2(inputs)` whose acceptance is
+a constraint, not a trusted oracle. We model the binding abstractly over a `compress`-style function
+(as PART II does for the Merkle gadget) and pin that the emitted-form denotation is exactly
+"the output column equals the permutation of the inputs". -/
+
+namespace HashBacking
+
+/-- The two node-hashing forms the audited-p3 DSL AIR arithmetizes in-circuit. `arity` is the
+domain-separation tag the concrete `hash_2_to_1`/`hash_4_to_1` place at capacity slot 4 (2 resp. 4),
+and which `hash_input_state` mirrors. -/
+inductive HashForm where
+  | hash2to1 (outputCol inputColA inputColB : Nat)
+  | hash4to1 (outputCol : Nat) (inputCols : List Nat)
+  deriving Repr, DecidableEq
+
+/-- Abstract Poseidon2 permutation-digest over a row of field values (the `perm` argument stands
+for `poseidon2_permute_expr`'s denotation: digest = state[0] after the full permutation of the
+arity-tagged input state). Soundness here = the digest column equals `perm inputs`; this is an
+EQUALITY constraint the audited verifier enforces (NOT a trusted recompute). -/
+def HashForm.holds (perm : List Int → Int) (row : Assignment) : HashForm → Prop
+  | .hash2to1 o a b   => row o = perm [row a, row b]
+  | .hash4to1 o cols  => row o = perm (cols.map row)
+
+/-- The binding is DECIDABLE given a concrete `perm` and row — i.e. the verifier's acceptance of
+the hash form is a checkable algebraic predicate, exactly as on the audited p3 path. -/
+instance (perm : List Int → Int) (row : Assignment) (h : HashForm) :
+    Decidable (h.holds perm row) := by
+  cases h <;> · unfold HashForm.holds; exact decEq _ _
+
+/-- **Anti-ghost tooth, abstractly**: a forged digest (`out ≠ perm inputs`) does NOT satisfy the
+hash form. This is the Lean-side witness that the in-circuit permutation REJECTS a tampered digest,
+mirroring `hash2to1_real_poseidon2_round_trips_through_p3`'s forged-reject assertion. -/
+theorem forged_digest_rejected (perm : List Int → Int) (row : Assignment)
+    (o a b : Nat) (h : row o ≠ perm [row a, row b]) :
+    ¬ (HashForm.hash2to1 o a b).holds perm row := by
+  unfold HashForm.holds; exact h
+
+/-- And an honest digest is accepted. -/
+theorem honest_digest_accepted (perm : List Int → Int) (row : Assignment)
+    (o a b : Nat) (h : row o = perm [row a, row b]) :
+    (HashForm.hash2to1 o a b).holds perm row := by
+  unfold HashForm.holds; exact h
+
+-- Non-vacuity: with the identity-sum stand-in perm, a matching row is accepted and a
+-- mismatched (forged) row is rejected.
+private def sumPerm : List Int → Int := fun xs => xs.foldl (· + ·) 0
+#guard decide ((HashForm.hash2to1 2 0 1).holds sumPerm
+  (fun i => if i = 0 then 3 else if i = 1 then 4 else 7))      -- 7 = 3+4 ✓
+#guard decide (¬ (HashForm.hash2to1 2 0 1).holds sumPerm
+  (fun i => if i = 0 then 3 else if i = 1 then 4 else 99))     -- 99 ≠ 7 — forged ✗
+
+#assert_axioms forged_digest_rejected
+
+end HashBacking
+
 end Dregg2.Exec.CircuitEmit
