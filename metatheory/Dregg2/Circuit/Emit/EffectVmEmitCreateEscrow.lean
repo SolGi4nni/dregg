@@ -40,6 +40,7 @@ NONE of the escrows list. So the IR as it stands CANNOT bind the escrows prepend
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.escrowholdingcreate
 import Dregg2.Exec.SystemRoots
@@ -774,5 +775,180 @@ theorem badEscrowRootRow_rejected :
 #assert_axioms createEscrowFull_sound
 #assert_axioms goodEscrowRootRow_realizes
 #assert_axioms badEscrowRootRow_rejected
+
+/-! ## §H — CLASS-A PROMOTION: the GENUINE in-row escrow-root RECOMPUTE (kills the opaque step).
+
+§A–§G bound the escrows root by an ADDITIVE OPAQUE STEP (`gEscrowRootUpdate`: `sys_digest_after =
+sys_digest_before + step_param`, `step_param` a FREE param). That is class C: a hostile prover picks ANY
+step, so the root is *asserted*, not *recomputed* (the coverage ledger's createEscrow C-downgrade).
+
+This section PROMOTES createEscrow to class A by REPLACING the opaque step with the genuine in-row
+recompute from `EffectVmEmitEscrowRoot`: two hash-sites force
+
+    record_leaf = hash[ id, creator, recipient, amount, asset, resolved ]      -- amount = param.AMOUNT
+    sys_digest_after = hash[ record_leaf, sys_digest_before ]                    -- prepend-accumulator
+
+so the new root is a DETERMINISTIC FUNCTION of (the bound record content, the old root) — FORCED, not
+asserted. The `amount` input is the SAME `param.AMOUNT` column that drives the balance debit, so the
+parked record's amount IS the debited amount (no skew). The new-root carrier is absorbed into
+`state_commit` (the GROUP-4 site 3′, REUSED from §A), so under `Poseidon2SpongeCR` tampering ANY
+parked-record field or the old root provably MOVES `state_commit` ⇒ UNSAT. The §1–§10 whole-cell
+soundness + universe-A connector are UNCHANGED (strictly additive). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
+  (escrowRecomputeSites escrowRootHolds escrowRootAdvance_forced escrowRoot_binds_record
+   escrowRoot_amount_bound leafOf advanceOf)
+
+/-- **`createEscrowVmDescriptorGenuine`** — the CLASS-A createEscrow circuit: the §2 per-row gates (debit +
+frame freeze) — NO opaque root gate — with the GROUP-4 commitment sites EXTENDED by the genuine recompute
+sites (`escrowRecomputeSites`: leaf, then advance). The new-root carrier is forced by the bound record +
+old root, then absorbed into `state_commit` via `siteEscrowRoot`. -/
+def createEscrowVmDescriptorGenuine : EffectVmDescriptor :=
+  { name := createEscrowVmAirName ++ "-genuine-rootbound"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := createEscrowRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+  , hashSites := escrowRecomputeSites ++ createEscrowRootHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-- The genuine descriptor's hash-site walk decomposes into the recompute sites (first) THEN the
+commitment sites. We extract the recompute-holds predicate + the commitment-binds predicate from one
+`siteHoldsAll` over the concatenation. -/
+theorem genuine_sites_split (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env (escrowRecomputeSites ++ createEscrowRootHashSites)) :
+    escrowRootHolds hash env := by
+  -- the recompute sites (leaf, advance) read only `.col` inputs (no cross-site `digest k`), so their
+  -- satisfaction is independent of the accumulator prefix — they hold as a standalone `siteHoldsAll`.
+  unfold escrowRootHolds escrowRecomputeSites
+  unfold escrowRecomputeSites at h
+  unfold siteHoldsAll at h ⊢
+  simp only [List.cons_append, List.nil_append, siteHoldsAll.go,
+    EffectVmEmitEscrowRoot.siteEscrowLeaf, EffectVmEmitEscrowRoot.siteEscrowRootAdvance,
+    VmHashSite.resolvedInputs, HashInput.resolve, List.map_cons, List.map_nil] at h ⊢
+  exact ⟨h.1, h.2.1, trivial⟩
+
+/-- **`createEscrowGenuine_root_forced`** — satisfying the genuine descriptor FORCES the new escrow root to
+be the genuine recompute `hash[ hash[record], old_root ]` of the BOUND record content + old root. No free
+step survives: the root is recomputed, not asserted. -/
+theorem createEscrowGenuine_root_forced (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hsat : satisfiedVm hash createEscrowVmDescriptorGenuine env true true) :
+    env.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER
+      = advanceOf hash
+          (leafOf hash (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ID))
+            (env.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR))
+            (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT))
+            (env.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT))
+            (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET))
+            (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
+          (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE) :=
+  escrowRootAdvance_forced hash env (genuine_sites_split hash env hsat.2)
+
+/-- **`createEscrowGenuine_sound` — THE CLASS-A SOUNDNESS.** Satisfying the genuine descriptor under
+`RowEncodesCreate` forces (a) the structured per-cell `CellCreateSpec` (debit + frame freeze — §7's
+content, the gates are unchanged), (b) the GENUINE escrow-root recompute (the new root IS
+`hash[hash[record], old]`, FORCED), AND (c) publishes `post.commit = PI[NEW_COMMIT]`. This is the
+whole-transition class-A statement: the moved balance + the genuinely-recomputed side-table root + the
+published commitment, all from one descriptor. -/
+theorem createEscrowGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (p : CreateParams)
+    (henc : RowEncodesCreate env pre p post)
+    (hsat : satisfiedVm hash createEscrowVmDescriptorGenuine env true true) :
+    CellCreateSpec pre p post
+      ∧ env.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER
+          = advanceOf hash
+              (leafOf hash (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ID))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
+              (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
+      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, hsites⟩ := hsat
+  -- (a) the per-row gates force CellCreateSpec (gates identical to §7)
+  have hgates' : ∀ c ∈ createEscrowRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ createEscrowVmDescriptorGenuine.constraints := by
+      unfold createEscrowVmDescriptorGenuine
+      simp only [List.mem_append]; exact Or.inl (Or.inl (Or.inl hc))
+    have := hcs c hmem
+    unfold createEscrowRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using this
+  have hint := (createEscrowVm_faithful env).mp hgates'
+  refine ⟨intent_to_cellCreateSpec env pre post p henc hint, ?_, ?_⟩
+  · exact createEscrowGenuine_root_forced hash env ⟨hcs, hsites⟩
+  · -- (c) the published commitment (boundaryLastPins, identical to §7)
+    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+      intro c hc
+      have hmem : c ∈ createEscrowVmDescriptorGenuine.constraints := by
+        unfold createEscrowVmDescriptorGenuine
+        simp only [List.mem_append]; exact Or.inr hc
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+    have hpin := (boundaryLast_pins env hlast).1
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+    rw [← hsaC]; exact hpin
+
+/-- **`createEscrowGenuine_binds_record` — THE CLASS-A ANTI-GHOST.** Two rows satisfying the genuine
+descriptor whose recomputed new-root carriers are EQUAL share the OLD root AND every bound parked-record
+field (id/creator/recipient/amount/asset/resolved). Since the new root is absorbed into `state_commit`,
+two rows publishing the same commitment cannot differ in any parked-record field — a dropped/forged
+escrow (skewed amount, swapped recipient, …) provably MOVES the root ⇒ MOVES `state_commit` ⇒ UNSAT. -/
+theorem createEscrowGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash createEscrowVmDescriptorGenuine e₁ true true)
+    (hsat₂ : satisfiedVm hash createEscrowVmDescriptorGenuine e₂ true true)
+    (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
+    e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.ID) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.ID)
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR)
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT)
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT)
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET)
+    ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED) :=
+  escrowRoot_binds_record hash hCR e₁ e₂
+    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+
+/-- **`createEscrowGenuine_amount_bound`** — the load-bearing corollary: two genuine rows with the same
+new root have the SAME parked amount. Combined with the `gBalLoDebit` gate (post-`bal_lo` = pre − amount),
+the parked record's amount IS the debited amount, bound by the commitment. The conservation leg and the
+side-table content are now ONE bound transition. -/
+theorem createEscrowGenuine_amount_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash createEscrowVmDescriptorGenuine e₁ true true)
+    (hsat₂ : satisfiedVm hash createEscrowVmDescriptorGenuine e₂ true true)
+    (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
+    e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
+  escrowRoot_amount_bound hash hCR e₁ e₂
+    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+
+/-! ### §H NON-VACUITY: the genuine recompute is inhabited (shared `goodEscrowRow_recomputes`), and a
+skewed amount is unforgeable (shared `tampered_amount_moves_root`). Both are PROVED in
+`EffectVmEmitEscrowRoot` over a concrete injective sponge, so the genuine recompute fires on an honest
+trace and a forged parked-amount yields a DIFFERENT root. We re-export the witness here for this file's
+class-A claim. -/
+
+/-- The genuine descriptor's recompute is INHABITED — the shared module's concrete witness
+`goodEscrowRow_recomputes` satisfies exactly `createEscrowVmDescriptorGenuine.hashSites`' recompute prefix. -/
+theorem createEscrowGenuine_recompute_nonvacuous :
+    escrowRootHolds EffectVmEmitEscrowRoot.cN EffectVmEmitEscrowRoot.goodEscrowRow :=
+  EffectVmEmitEscrowRoot.goodEscrowRow_recomputes
+
+-- The two genuine recompute sites are present (leaf + advance) plus the 4 commitment sites = 6.
+#guard createEscrowVmDescriptorGenuine.hashSites.length == 2 + 4
+#guard createEscrowVmDescriptorGenuine.constraints.length == 13 + 14 + 4 + 3
+#guard createEscrowVmDescriptorGenuine.traceWidth == 186
+
+#assert_axioms genuine_sites_split
+#assert_axioms createEscrowGenuine_root_forced
+#assert_axioms createEscrowGenuine_sound
+#assert_axioms createEscrowGenuine_binds_record
+#assert_axioms createEscrowGenuine_amount_bound
 
 end Dregg2.Circuit.Emit.EffectVmEmitCreateEscrow
