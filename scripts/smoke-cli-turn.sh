@@ -120,10 +120,14 @@ pass "verified-execution surface reported honestly"
 # ── Unlock + read operator identity ─────────────────────────────────────────
 echo ""
 echo "=== unlocking cipherclerk ==="
-curl -fsS -H 'Content-Type: application/json' \
-  -d "{\"passphrase\":\"$PASSPHRASE\"}" "$NODE_URL/cipherclerk/unlock" >/dev/null \
+UNLOCK_JSON="$(curl -fsS -H 'Content-Type: application/json' \
+  -d "{\"passphrase\":\"$PASSPHRASE\"}" "$NODE_URL/cipherclerk/unlock")" \
   || fail "unlock request failed"
-pass "cipherclerk unlocked"
+# The bearer token authorizes the node's protected endpoints (turn submission).
+API_TOKEN="$(echo "$UNLOCK_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("bearer_token") or "")')"
+[ -n "$API_TOKEN" ] || fail "unlock did not return a bearer_token"
+export DREGG_API_TOKEN="$API_TOKEN"
+pass "cipherclerk unlocked (bearer token acquired)"
 
 # The node tells us its operator identity directly (no client-side derive_raw).
 IDENT_JSON="$("$DREGG_CLI" node identity)"
@@ -134,38 +138,42 @@ AGENT_CELL="$(echo "$IDENT_JSON" | python3 -c 'import sys,json; print(json.load(
 echo "operator pubkey:  $PUBKEY"
 echo "operator cell:    $AGENT_CELL"
 
-# ── Faucet the operator cell (also MINTS it into the ledger) ────────────────
-# The faucet's public_key path verifies recipient == derive_raw(public_key, …)
-# and creates the canonical hosted cell, funding it. This is what materializes
-# the operator's own agent cell so the executor's "agent cell exists" gate passes.
+# ── Fund the operator cell via the faucet ───────────────────────────────────
+# The faucet's public_key path verifies recipient == derive_raw(public_key, …),
+# creates the canonical hosted cell, and transfers computrons into it. The
+# operator's own turn pays a fee (the executor's budget cap), so the cell needs
+# a balance to cover it.
 echo ""
-echo "=== minting + funding operator cell via faucet ==="
+echo "=== funding operator cell via faucet (amount=2000) ==="
 FAUCET_JSON="$(curl -fsS -H 'Content-Type: application/json' \
-  -d "{\"recipient\":\"$AGENT_CELL\",\"amount\":1000,\"public_key\":\"$PUBKEY\"}" \
+  -d "{\"recipient\":\"$AGENT_CELL\",\"amount\":2000,\"public_key\":\"$PUBKEY\"}" \
   "$NODE_URL/api/faucet" || true)"
 echo "faucet response: ${FAUCET_JSON:-<none>}"
 echo "$FAUCET_JSON" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 if not d.get("success"):
-    sys.stderr.write("faucet did not succeed: %s\n" % json.dumps(d))
+    sys.stderr.write("faucet funding did not succeed: %s\n" % json.dumps(d))
     sys.exit(2)
 ' || fail "faucet funding of the operator cell failed"
-pass "operator cell minted + funded"
+pass "operator cell funded"
 
-# Confirm the cell is now materialized with a balance.
+# Confirm the cell now exists in the ledger with a balance.
 "$DREGG_CLI" node identity | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 bal = d.get("agent_balance")
-assert bal is not None and bal >= 0, "operator cell not materialized after faucet"
-print("operator balance after faucet: %s" % bal)
-' || fail "operator cell not materialized after faucet"
+assert bal is not None and bal > 0, "operator cell not funded after faucet (balance=%r)" % bal
+print("operator cell funded; balance=%s nonce=%s" % (bal, d.get("agent_nonce")))
+' || fail "operator cell not funded after faucet"
 
 # ── Drive a real turn through the CLI ───────────────────────────────────────
 echo ""
 echo "=== dregg turn quick set-field (through the CLI) ==="
-SUBMIT_JSON="$("$DREGG_CLI" turn quick set-field --index 3 --value 7 --fee 0)" \
+# `--fee` belongs to the `quick` parent (before the effect subcommand). It is
+# the executor's computron-budget cap; a generous fee (covered by the funded
+# balance) keeps the turn under budget.
+SUBMIT_JSON="$("$DREGG_CLI" turn quick --fee 1000 set-field --index 3 --value 7)" \
   || fail "CLI turn submit failed to execute"
 echo "$SUBMIT_JSON" | python3 -m json.tool 2>/dev/null || echo "$SUBMIT_JSON"
 

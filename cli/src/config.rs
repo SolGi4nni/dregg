@@ -16,6 +16,12 @@ pub struct Config {
 pub struct NodeConfig {
     #[serde(default = "default_node_url")]
     pub url: String,
+    /// Bearer token for the node's protected endpoints (turn submission, cap
+    /// ops, etc.). Obtained from `POST /cipherclerk/unlock` (`bearer_token`).
+    /// Sent as `Authorization: Bearer <token>`. Optional — public reads
+    /// (status, identity, producer, cells) work without it.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +42,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             url: default_node_url(),
+            token: None,
         }
     }
 }
@@ -129,6 +136,7 @@ pub fn set_value(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error
 
     match key {
         "node.url" => cfg.node.url = value.to_string(),
+        "node.token" => cfg.node.token = Some(value.to_string()),
         "output.format" => {
             if !["color", "plain", "json"].contains(&value) {
                 return Err(format!("Invalid format '{}'. Use: color, plain, json", value).into());
@@ -140,7 +148,7 @@ pub fn set_value(key: &str, value: &str) -> Result<(), Box<dyn std::error::Error
             // by any CLI command; all cipherclerk ops proxy through the node). It is
             // no longer accepted to avoid user confusion.
             return Err(format!(
-                "Unknown config key '{}'. Valid keys: node.url, output.format",
+                "Unknown config key '{}'. Valid keys: node.url, node.token, output.format",
                 key
             )
             .into());

@@ -5421,10 +5421,20 @@ async fn post_faucet(
         faucet_cclerk.make_action(faucet_cell_id, "faucet_transfer", vec![transfer], &s.federation_id);
     let mut call_forest = CallForest::new();
     call_forest.add_root(action);
-    let faucet_turn = Turn {
+    // The executor's budget gate caps computrons at `turn.fee` (`estimated >
+    // fee` → BudgetExceeded). A fee of 0 made every amount>0 faucet transfer
+    // reject ("budget exceeded: limit=0, used=100"); the faucet cell holds the
+    // genesis supply, so it covers a real fee. Size the fee to the estimated
+    // cost so the gate passes deterministically.
+    let faucet_nonce = s
+        .ledger
+        .get(&faucet_cell_id)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
+    let mut faucet_turn = Turn {
         agent: faucet_cell_id,
-        nonce: 0,
-        fee: 0,
+        nonce: faucet_nonce,
+        fee: 0, // sized to the estimated cost below so the budget gate passes
         memo: Some(format!("faucet_transfer:{}", req.amount)),
         valid_until: None,
         call_forest,
@@ -5440,10 +5450,15 @@ async fn post_faucet(
         cross_effect_dependencies: Vec::new(),
         effect_witness_index_map: Vec::new(),
     };
+
+    let executor = crate::executor_setup::new_submit_executor(&s);
+    // Size the fee (= computron budget cap) to the estimated cost so the budget
+    // gate passes; the faucet cell holds the genesis supply and covers it.
+    faucet_turn.fee = executor.estimate_cost(&faucet_turn);
+
     let signed = faucet_cclerk.sign_turn(&faucet_turn);
     let turn_hash_bytes = faucet_turn.hash();
 
-    let executor = crate::executor_setup::new_submit_executor(&s);
     let exec_result = executor.execute(&faucet_turn, &mut s.ledger);
 
     match exec_result {

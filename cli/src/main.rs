@@ -49,6 +49,11 @@ struct Cli {
     #[arg(long, global = true, env = "DREGG_OUTPUT")]
     output: Option<String>,
 
+    /// Bearer token for the node's protected endpoints (turn submit, cap ops).
+    /// Get it from `POST /cipherclerk/unlock` (the `bearer_token` field).
+    #[arg(long, global = true, env = "DREGG_API_TOKEN")]
+    token: Option<String>,
+
     /// Path to config file (default: ~/.dregg/config.toml).
     #[arg(long, global = true, env = "DREGG_CONFIG")]
     config: Option<String>,
@@ -175,6 +180,9 @@ async fn main() {
     if let Some(fmt) = &cli.output {
         cfg.output.format = fmt.clone();
     }
+    if let Some(tok) = &cli.token {
+        cfg.node.token = Some(tok.clone());
+    }
 
     let ctx = output::Context::new(&cfg);
 
@@ -253,6 +261,14 @@ fn run_config(
             ctx.header("Configuration");
             ctx.kv("Path", &path.display().to_string());
             ctx.kv("Node URL", &cfg.node.url);
+            ctx.kv(
+                "Bearer token",
+                if cfg.node.token.as_deref().unwrap_or("").is_empty() {
+                    "(none — public reads only)"
+                } else {
+                    "(set)"
+                },
+            );
             ctx.kv("Output format", &cfg.output.format);
             Ok(())
         }

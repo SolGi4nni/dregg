@@ -27,6 +27,16 @@ pub fn api_url(cfg: &Config, path: &str) -> String {
     format!("{base}{path}")
 }
 
+/// Attach the configured bearer token to a request, if present. The node's
+/// protected endpoints (turn submission, cap ops) require `Authorization:
+/// Bearer <token>`; public reads work without it.
+fn with_auth(builder: reqwest::RequestBuilder, cfg: &Config) -> reqwest::RequestBuilder {
+    match &cfg.node.token {
+        Some(t) if !t.is_empty() => builder.bearer_auth(t),
+        _ => builder,
+    }
+}
+
 /// Convenience: GET request to the node, returning JSON value.
 pub async fn get_json(
     cfg: &Config,
@@ -34,11 +44,11 @@ pub async fn get_json(
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let client = http_client();
     let url = api_url(cfg, path);
-    let resp = client.get(&url).send().await?;
+    let resp = with_auth(client.get(&url), cfg).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {status}: {body}").into());
+        return Err(format!("HTTP {status}: {body}{}", auth_hint(status, cfg)).into());
     }
     let json = resp.json::<serde_json::Value>().await?;
     Ok(json)
@@ -52,17 +62,29 @@ pub async fn post_json(
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let client = http_client();
     let url = api_url(cfg, path);
-    let resp = client.post(&url).json(body).send().await?;
+    let resp = with_auth(client.post(&url).json(body), cfg).send().await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let hint = if status == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
             " (422: JSON shape mismatch — CLI now emits current node/api.rs request structs; was skew on cell_id/agent/bearer_proof)"
         } else {
-            ""
+            auth_hint(status, cfg)
         };
         return Err(format!("HTTP {status}: {text}{hint}").into());
     }
     let json = resp.json::<serde_json::Value>().await?;
     Ok(json)
+}
+
+/// Helpful hint when a protected endpoint rejects an unauthenticated request.
+fn auth_hint(status: reqwest::StatusCode, cfg: &Config) -> &'static str {
+    if (status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN)
+        && cfg.node.token.as_deref().unwrap_or("").is_empty()
+    {
+        " (this endpoint requires a bearer token — unlock the node and pass --token <bearer_token> \
+         from /cipherclerk/unlock, set DREGG_API_TOKEN, or `dregg config set node.token <t>`)"
+    } else {
+        ""
+    }
 }
