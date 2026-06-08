@@ -88,12 +88,26 @@ bar, a doc that names a theorem which does not exist is "vapor," and vapor is br
   the refcount-positivity teeth genuinely bite. Only the *unification* is missing.
 - **Fix:** as above. **SAFE-TO-FIX-NOW** (GC file unowned).
 
-### MID-2 — `concreteTransferAsset` refinement square (the real fix behind F2)
+### MID-2 — `concreteTransferAsset` refinement square (the real fix behind F2) — **RESOLVED**
 - **What:** the per-asset concrete op + square + corollary (see F2).
 - **Why MID:** the abstract per-asset keystone is fully proven; only the concrete *mirror*
-  is absent, so node-grade execution cannot yet *carry* per-asset conservation — but the
-  guarantee is not false, just not refined down. **SAFE-TO-FIX-NOW** (`ConcreteKernel.lean`
-  unowned; pending task #14).
+  was absent, so node-grade execution could not yet *carry* per-asset conservation — but the
+  guarantee was not false, just not refined down.
+- **FIX LANDED** (`Dregg2/Exec/ConcreteKernel.lean` §5b/§5c): `concreteTransferAsset`
+  (the `balMap : Std.HashMap (CellId × AssetId) ℤ`-backed, fail-closed twin of the abstract
+  `recKExecAsset`, RecordKernel.lean:756) + the `Option`-level commuting square
+  `toAbstract_concreteTransferAsset` (gate matches via `toAbstract_caps/accounts/bal`; ledger
+  half `toAbstract_balMap_transferAsset` collapses the product-key `getD_insert`s to the
+  abstract `recTransferBal`) + the PROOF-TRANSFER corollary
+  `concreteTransferAsset_conserves_per_asset` carrying `recTotalAsset _ b` FOR EVERY asset `b`
+  down through the square from the abstract keystone `recKExecAsset_conserves_per_asset`
+  (RecordKernel.lean:801), with ZERO HashMap reasoning redone. Plus
+  `concreteTransferAsset_no_cross_asset_leak` (cross-asset non-laundering at node grade).
+  Build green (919 jobs); all four new theorems `#assert_axioms`-clean
+  (`{propext, Classical.choice, Quot.sound}`, no `sorryAx`). Non-vacuity witnessed BOTH ways
+  in §6b (`demoAssetCS`/`demoAssetTurn`): a genuine commit moving asset 0 (100→70, 5→35) with
+  asset 1 untouched, AND two fail-closed rejects (over-amount ⇒ `none`, unauthorized actor ⇒
+  `none`). Task #14.
 
 ### MID-3 — ConsentLace "equivocation repels settlement" is a weaker lookalike
 - **Claims:** `Exec/CapTPConsentLace.lean:333-339` `equivocating_party_blocks_settlement` —

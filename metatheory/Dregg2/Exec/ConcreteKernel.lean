@@ -18,13 +18,15 @@ the square — the abstract reasoning is never redone. We validate that on the t
 names: **transfer** (`concreteTransfer` ⟹ `recTransfer`) and **setField** (`concreteWriteField` ⟹
 `writeField`), then DERIVE the concrete conservation corollary from the abstract keystone + the square.
 
-HONESTY / SCOPE: the conservation corollary derived here (`concreteTransfer_conserves`) transfers
-the AGGREGATE `recTotal` keystone only. The genuine multi-asset keystone
-`recKExecAsset_conserves_per_asset` (over `recKExecAsset`, the PER-ASSET conserved measure that is
-the real one — never one aggregate scalar) has NO concrete refinement square at this layer:
-`concreteTransferAsset` refining `recKExecAsset` is NOT YET DEFINED. So the per-asset guarantee is
-proven abstractly but does NOT yet carry to the node-grade concrete state. See
-`docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-2 for the OPEN fix (concrete per-asset op + square).
+SCOPE: §5 transfers the AGGREGATE `recTotal` keystone (`concreteTransfer_conserves`). §5b/§5c then
+CLOSE the real fix (F2 / MID-2): the genuine multi-asset keystone `recKExecAsset_conserves_per_asset`
+(over `recKExecAsset`, the PER-ASSET conserved measure — never one aggregate scalar) now HAS a concrete
+refinement square at this layer. `concreteTransferAsset` (the `balMap`-backed, fail-closed twin of
+`recKExecAsset`) refines it via the `Option`-level square `toAbstract_concreteTransferAsset`, and
+`concreteTransferAsset_conserves_per_asset` carries `recTotalAsset _ b` conservation FOR EVERY asset
+`b` down to the node-grade state THROUGH the square — plus the cross-asset non-laundering tooth
+(`concreteTransferAsset_no_cross_asset_leak`). The per-asset guarantee no longer stops at the abstract
+layer. See `docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-2 (now RESOLVED).
 
 `CellId = Label = Nat` carries `LawfulBEq` + `LawfulHashable`, so `Std.HashMap.getD_insert`'s
 `if k == a then …` collapses to the abstract `if c = src then …` cleanly — the representation does NOT
@@ -255,6 +257,147 @@ theorem concreteWriteField_balOf_unchanged (cs : ConcreteKernelState) (f : Field
   · subst h; rw [if_pos rfl]; exact setField_balOf f _ v hf
   · rw [if_neg h]
 
+/-! ## §5b — THE PER-ASSET REFINEMENT (the F2 / MID-2 deliverable).
+
+§5 transferred only the AGGREGATE scalar `recTotal`. The MEMORY-warned trap ("conservation is NOT
+correctness — a per-asset / full-state property must be PROVEN, never an aggregate scalar standing
+in") is closed HERE: we refine the genuine multi-asset conserved family `recTotalAsset _ a` (over
+EVERY asset `a`) down to the node-grade `balMap`-backed state, and carry the abstract keystone
+`recKExecAsset_conserves_per_asset` (RecordKernel.lean:801) THROUGH a real commuting square.
+
+The concrete op mirrors `recKExecAsset` (RecordKernel.lean:756) EXACTLY — same fail-closed gate
+(`authorizedB` over `src`, non-negative amount, amount available IN THAT ASSET, `src ≠ dst`, both
+live), returning `Option`. On commit it does TWO `balMap` inserts: debit `(src, a)`, credit
+`(dst, a)`. The square is over `Option`: `(concreteTransferAsset cs turn a).map toAbstract
+= recKExecAsset (toAbstract cs) turn a`. The gate matches because `toAbstract` is the identity on
+`caps`/`accounts` and `(toAbstract cs).bal turn.src a = cs.balMap.getD (turn.src, a) 0` by
+`toAbstract_bal` — so the concrete availability check reads the SAME number the abstract gate reads.
+The product key `(CellId × AssetId) = (Nat × Nat)` carries `LawfulBEq`+`LawfulHashable`, so
+`getD_insert`'s `(k == a)` collapses to abstract `=` exactly as the scalar `cell` square did. -/
+
+/-- The CONCRETE per-asset transition over the efficient `balMap`, the node-grade twin of
+`recKExecAsset`. Fail-closed with the IDENTICAL gate; reads the available balance from the concrete
+ledger (`balMap.getD (turn.src, a) 0`, which abstracts to `(toAbstract cs).bal turn.src a`). On
+commit: debit `(src, a)` and credit `(dst, a)` with two `Std.HashMap` inserts in the `a` column —
+NO closure growth, only the moved asset's two cells touched. -/
+def concreteTransferAsset (cs : ConcreteKernelState) (turn : Turn) (a : AssetId) :
+    Option ConcreteKernelState :=
+  if authorizedB cs.caps turn = true ∧ 0 ≤ turn.amt
+      ∧ turn.amt ≤ cs.balMap.getD (turn.src, a) 0
+      ∧ turn.src ≠ turn.dst ∧ turn.src ∈ cs.accounts ∧ turn.dst ∈ cs.accounts then
+    let oldSrc := cs.balMap.getD (turn.src, a) 0
+    let oldDst := cs.balMap.getD (turn.dst, a) 0
+    some { cs with
+      balMap := (cs.balMap.insert (turn.src, a) (oldSrc - turn.amt)).insert
+                  (turn.dst, a) (oldDst + turn.amt) }
+  else
+    none
+
+/-- The `balMap`-update half of the square, isolated: abstracting the two-insert ledger update equals
+the abstract `recTransferBal` over the abstracted `bal`. Pointwise over the product key `(c, b)`, the
+two `getD_insert`s collapse (Nat × Nat is `LawfulBEq`) to the abstract `if b = a then (if c = src …)`,
+reconciled by `src ≠ dst`. This is the per-asset analog of the `cell`-field collapse inside
+`toAbstract_concreteTransfer`. -/
+theorem toAbstract_balMap_transferAsset (cs : ConcreteKernelState) (turn : Turn) (a : AssetId)
+    (hne : turn.src ≠ turn.dst) :
+    (fun (c : CellId) (b : AssetId) =>
+        ((cs.balMap.insert (turn.src, a) (cs.balMap.getD (turn.src, a) 0 - turn.amt)).insert
+            (turn.dst, a) (cs.balMap.getD (turn.dst, a) 0 + turn.amt)).getD (c, b) 0)
+      = recTransferBal (fun c b => cs.balMap.getD (c, b) 0) turn.src turn.dst a turn.amt := by
+  funext c b
+  rw [Std.HashMap.getD_insert, Std.HashMap.getD_insert]
+  unfold recTransferBal
+  -- The product `==` against `(c,b)` factors into its two component `==`s (`Nat × Nat` is `LawfulBEq`).
+  -- Push that decomposition through; both `if`-guards then become pure component-equality `Bool`s.
+  -- Decompose each concrete `(key == (c,b))` guard into its component `=`s. Both sides now carry
+  -- `if`s: LHS the two insert-key guards (`dst = c ∧ a = b`, `src = c ∧ a = b`), RHS the abstract
+  -- `recTransferBal` guards (`b = a`, `c = src`, `c = dst`). We case on the asset column then the cell
+  -- and discharge BOTH sides' guards from the SAME component equalities.
+  simp only [Prod.mk.injEq, beq_iff_eq]
+  by_cases hb : b = a
+  · subst hb
+    -- moved asset's column: RHS `if b = b` true; LHS guards keep their `a = b`(=`rfl`) component.
+    rw [if_pos rfl]
+    by_cases hsrc : c = turn.src
+    · subst hsrc
+      -- src cell: LHS dst-guard false (dst ≠ src), src-guard true; RHS `if src = src` true.
+      rw [if_neg (by rintro ⟨h, _⟩; exact hne h.symm), if_pos ⟨rfl, rfl⟩, if_pos rfl]
+    · by_cases hdst : c = turn.dst
+      · subst hdst
+        -- dst cell: LHS dst-guard true; RHS `if dst = src` false then `if dst = dst` true.
+        rw [if_pos ⟨rfl, rfl⟩, if_neg (Ne.symm hne), if_pos rfl]
+      · -- third cell: LHS both guards false; RHS both abstract guards false.
+        rw [if_neg (by rintro ⟨h, _⟩; exact hdst h.symm),
+            if_neg (by rintro ⟨h, _⟩; exact hsrc h.symm), if_neg hsrc, if_neg hdst]
+  · -- different asset column `b ≠ a`: RHS `if b = a` false; LHS both guards false (asset component).
+    rw [if_neg (by rintro ⟨_, h⟩; exact hb h.symm),
+        if_neg (by rintro ⟨_, h⟩; exact hb h.symm), if_neg hb]
+
+/-- **THE PER-ASSET TRANSFER SQUARE — PROVED.** The `Option`-level commuting square: abstracting the
+concrete per-asset op equals the abstract `recKExecAsset`. Both the GATE and the COMMIT branch
+correspond — the gate because `toAbstract` is the identity on `caps`/`accounts` and `toAbstract_bal`
+bridges the availability read; the commit because `toAbstract_balMap_transferAsset` is the ledger
+half. This is the per-asset analog of `toAbstract_concreteTransfer`, now over the genuine
+multi-asset conserved measure. -/
+theorem toAbstract_concreteTransferAsset (cs : ConcreteKernelState) (turn : Turn) (a : AssetId) :
+    (concreteTransferAsset cs turn a).map toAbstract
+      = recKExecAsset (toAbstract cs) turn a := by
+  unfold concreteTransferAsset recKExecAsset
+  -- the abstract gate's reads rewrite to the concrete state's structural fields.
+  simp only [toAbstract_caps, toAbstract_accounts, toAbstract_bal]
+  by_cases hg : authorizedB cs.caps turn = true ∧ 0 ≤ turn.amt
+      ∧ turn.amt ≤ cs.balMap.getD (turn.src, a) 0
+      ∧ turn.src ≠ turn.dst ∧ turn.src ∈ cs.accounts ∧ turn.dst ∈ cs.accounts
+  · rw [if_pos hg, if_pos hg]
+    obtain ⟨_, _, _, hne, _, _⟩ := hg
+    -- both sides are `some _`; reduce to the `bal` field and apply the ledger square.
+    simp only [Option.map_some]
+    congr 1
+    -- peel `toAbstract { cs with balMap := … }` to its fields; only `bal` differs, and it is EXACTLY
+    -- the ledger square. The other ~17 fields ride through `toAbstract` / `{ … with … }` by `rfl`.
+    apply RecordKernelState.ext <;> try rfl
+    -- the `bal` field goal: the abstracted updated ledger = `recTransferBal` over the abstracted `bal`.
+    exact toAbstract_balMap_transferAsset cs turn a hne
+  · rw [if_neg hg, if_neg hg, Option.map_none]
+
+/-! ## §5c — PER-ASSET PROOF TRANSFER: the conserved family carries to the node-grade state.
+
+The deliverable. We do NOT redo any per-asset conservation reasoning over HashMaps — we INVOKE the
+abstract keystone `recKExecAsset_conserves_per_asset` and REWRITE along the §5b square. Every asset's
+total supply (`recTotalAsset _ b`, for EVERY `b`) is preserved by a committed concrete per-asset
+transfer, AND a transfer of asset `a` cannot change asset `b ≠ a`'s supply (the cross-asset
+non-laundering tooth) — both lifted from the abstract layer through the square, with zero new math. -/
+
+/-- The per-asset conserved family read off the CONCRETE state (its abstraction's per-asset total). -/
+def concreteTotalAsset (cs : ConcreteKernelState) (a : AssetId) : ℤ :=
+  recTotalAsset (toAbstract cs) a
+
+/-- **PER-ASSET PROOF TRANSFER — PROVED FROM THE SQUARE.** A committed concrete per-asset transfer
+preserves the (abstracted) total supply of EVERY asset `b`. The proof: extract the abstract commit
+from the `Option`-square (`toAbstract_concreteTransferAsset`), then hand the goal verbatim to the
+abstract keystone `recKExecAsset_conserves_per_asset` — NO HashMap reasoning, NO per-asset cancellation
+redone. THIS is genuine l4v data refinement: the per-asset measure, not an aggregate scalar, carried
+to node-grade state by the commuting square. -/
+theorem concreteTransferAsset_conserves_per_asset (cs cs' : ConcreteKernelState) (turn : Turn)
+    (a : AssetId) (h : concreteTransferAsset cs turn a = some cs') (b : AssetId) :
+    concreteTotalAsset cs' b = concreteTotalAsset cs b := by
+  unfold concreteTotalAsset
+  -- the abstracted concrete commit IS an abstract commit (the SQUARE), so the abstract keystone fires.
+  have hsq : recKExecAsset (toAbstract cs) turn a = some (toAbstract cs') := by
+    rw [← toAbstract_concreteTransferAsset, h, Option.map_some]
+  exact recKExecAsset_conserves_per_asset (toAbstract cs) (toAbstract cs') turn a hsq b
+
+/-- **CROSS-ASSET NON-LAUNDERING, carried to node-grade — PROVED.** A committed concrete transfer of
+asset `a` CANNOT change asset `b ≠ a`'s total supply on the `balMap`-backed state. This is exactly the
+property an AGGREGATE scalar cannot enforce (it would accept minting B while burning an equal A): the
+per-asset refinement makes that laundering unrepresentable as a single concrete transfer. Derived
+straight from the per-asset transfer above (the `b ≠ a` hypothesis is the honest documentation of WHICH
+column is untouched; the conservation itself holds for every `b`). -/
+theorem concreteTransferAsset_no_cross_asset_leak (cs cs' : ConcreteKernelState) (turn : Turn)
+    (a b : AssetId) (h : concreteTransferAsset cs turn a = some cs') (_hb : b ≠ a) :
+    concreteTotalAsset cs' b = concreteTotalAsset cs b :=
+  concreteTransferAsset_conserves_per_asset cs cs' turn a h b
+
 /-! ## §6 — EFFICIENCY SHAPE: O(1)-ish concrete lookups/updates (the win is real).
 
 These `#guard`s confirm the concrete ops are persistent-map ops (insert/lookup) — not closure growth.
@@ -291,6 +434,43 @@ def demoStream (n : Nat) (cs : ConcreteKernelState) : ConcreteKernelState :=
 #guard fieldOf "owner" ((toAbstract (concreteWriteField demoCS "owner" 0 (.int 7))).cell 0) == 7
 #guard balOf ((toAbstract (concreteWriteField demoCS "owner" 0 (.int 7))).cell 0) == 100
 
+/-! ### §6b — PER-ASSET concrete transfer: NON-VACUITY (the gate fires BOTH ways).
+
+A multi-asset starter `balMap`: cell 0 holds 100 of asset 0 and 7 of asset 1; cell 1 holds 5 of
+asset 0. `actor = src = 0` ⇒ `authorizedB` passes via the `actor == src` disjunct (no caps needed).
+We exhibit (a) a COMMIT that genuinely moves asset 0 (witnessing the gate TRUE + the ledger update),
+(b) the cross-asset column (asset 1) literally UNCHANGED by that asset-0 transfer, and (c) a
+fail-closed REJECT (`amt` exceeds the asset's available balance) witnessing the gate FALSE — so the
+per-asset op is non-vacuous on both branches. -/
+
+def demoAssetCS : ConcreteKernelState where
+  accounts := {0, 1}
+  cellMap  := ∅
+  caps     := default
+  balMap   := (∅ : Std.HashMap (CellId × AssetId) ℤ).insert (0, 0) 100
+                |>.insert (1, 0) 5 |>.insert (0, 1) 7
+
+/-- A turn moving 30 of (the default) asset 0 from cell 0 to cell 1, actor = src = 0 (self-authorized). -/
+def demoAssetTurn : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
+
+-- (a) COMMIT: the gate is TRUE, so the op returns `some`, and asset-0 balances move 100→70, 5→35.
+#guard (concreteTransferAsset demoAssetCS demoAssetTurn 0).isSome == true
+#guard (match concreteTransferAsset demoAssetCS demoAssetTurn 0 with
+        | some cs' => cs'.balMap.getD (0, 0) 0 == 70 && cs'.balMap.getD (1, 0) 0 == 35
+        | none => false)
+
+-- (b) CROSS-ASSET untouched: asset 1's column (cell 0 = 7) is literally unchanged by the asset-0 move.
+#guard (match concreteTransferAsset demoAssetCS demoAssetTurn 0 with
+        | some cs' => cs'.balMap.getD (0, 1) 0 == 7
+        | none => false)
+
+-- (c) FAIL-CLOSED (gate FALSE — non-vacuity on the rejecting branch): moving 999 of asset 0 exceeds
+-- cell 0's available 100, so the op returns `none`. The gate is a real predicate, not `True`.
+#guard (concreteTransferAsset demoAssetCS { demoAssetTurn with amt := 999 } 0).isNone == true
+
+-- And an UNAUTHORIZED actor (actor 9 ≠ src 0, no caps) is also rejected — fail-closed authority.
+#guard (concreteTransferAsset demoAssetCS { demoAssetTurn with actor := 9 } 0).isNone == true
+
 /-! ## §7 — AXIOM CLEANLINESS: the refinement rests only on `propext`/`Classical.choice`/`Quot.sound`.
 
 No `sorryAx` — the squares and the proof-transfer corollary are genuine (the prompt's hard gate). -/
@@ -299,5 +479,9 @@ No `sorryAx` — the squares and the proof-transfer corollary are genuine (the p
 #print axioms toAbstract_concreteWriteField
 #print axioms concreteTransfer_conserves
 #print axioms concreteWriteField_balOf_unchanged
+#print axioms toAbstract_balMap_transferAsset
+#print axioms toAbstract_concreteTransferAsset
+#print axioms concreteTransferAsset_conserves_per_asset
+#print axioms concreteTransferAsset_no_cross_asset_leak
 
 end Dregg2.Exec
