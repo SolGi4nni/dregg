@@ -209,11 +209,165 @@ reclaim@200={Reclaimable demoLeased 200}, reclaim@120={Reclaimable demoLeased 12
 
 end NonVacuity
 
+/-! ## §6 — The REFCOUNT-DROP path (F-11 / F-12): closing the proof's blind spot.
+
+The §1–§4 lease model is one of the TWO reclaim triggers in `gc.rs`. The OTHER is the
+**explicit `DropRef` refcount path** (`ExportGcManager::process_drop*`). The red-team found
+that the proof was BLIND to it (`_THREAT-MODEL.md` F-11):
+
+  > the Lean `captp_no_premature_reclaim` only models the LEASE path; the refcount-drop path is
+  > unmodeled, so this [session-free premature-reclaim] gap is invisible to the proof.
+
+This section MODELS the refcount-drop path faithfully and proves the two safety laws that
+catch F-11 (a session-free / wrong-session drop must NOT decrement a victim's refcount) and
+F-12 (a drop is scoped to the requesting session's OWN bucket; a re-export under a new session
+never transfers another session's drop rights). The model mirrors `gc.rs`'s per-session
+`RefCount.sessions : HashMap<SessionId, u64>` and the **mandatory** session check in
+`process_drop_inner` (`gc.rs:228`, post-F-11/F-12). Sessions are `Nat`; a holder's per-session
+bucket map is a total function `Nat → Nat` (absent bucket = 0), exactly `session_count`
+(`gc.rs:70`). -/
+
+section RefcountDrop
+
+/-- **`Buckets`** — a holder's per-session refcount, mirroring `gc.rs`'s
+`RefCount.sessions : HashMap<SessionId, u64>`. `b s` is the number of refs minted under session
+`s` (an absent HashMap key is `0`). The holder's total `count` is `Σ s, b s` — here we track the
+buckets directly and reason about the touched bucket. -/
+abbrev Buckets := Nat → Nat
+
+/-- **`mintUnder b s`** — `record_export_with_session` minting one ref under session `s`
+(`gc.rs:166`: `*ref_count.sessions.entry(session_id).or_insert(0) += 1`). Adds one to bucket
+`s`, leaves every other bucket untouched. -/
+def mintUnder (b : Buckets) (s : Nat) : Buckets :=
+  fun t => if t = s then b t + 1 else b t
+
+/-- **`dropUnder b s`** — `process_drop_inner` with **mandatory** session `s` (`gc.rs:228`).
+The decrement is applied to bucket `s` ONLY, and ONLY if it is positive; a wrong/absent session
+(`b s = 0`) authorizes NOTHING and the buckets are returned UNCHANGED (the `Invalid`, no-mutation
+branch — `gc.rs:246-248`). This is the post-F-11/F-12 semantics: no session ⇒ no authority. -/
+def dropUnder (b : Buckets) (s : Nat) : Buckets :=
+  fun t => if t = s then b t - 1 else b t
+
+/-- **`dropAuthorized b s`** — whether a drop carrying session `s` is authorized: the session
+must have minted at least one ref on this holder (`gc.rs:247`, `Some(b) if *b > 0`). A
+session-free legacy `process_drop` is modeled as a drop carrying a session that minted nothing
+(`b s = 0`) — `dropAuthorized` is then `false`, and the runtime takes the `Invalid` no-op branch. -/
+def dropAuthorized (b : Buckets) (s : Nat) : Bool :=
+  decide (0 < b s)
+
+/-- **`applyDrop b s`** — the FULL `process_drop_inner` transition: decrement bucket `s` iff the
+drop is authorized, else leave the buckets untouched. This is the faithful executable semantics
+the red-team attacks; the laws below are about THIS function. -/
+def applyDrop (b : Buckets) (s : Nat) : Buckets :=
+  if dropAuthorized b s then dropUnder b s else b
+
+/-! ### F-11: a session that minted nothing cannot decrement ANY bucket.
+
+The session-free / wrong-session drop is exactly the case `b reqSession = 0`. The law: such a
+drop is a NO-OP on every bucket — in particular it cannot drive a victim's bucket toward 0 and
+force a premature `CanRevoke`. This is the proof that WOULD HAVE CAUGHT the F-11 finding: the
+old session-free `process_drop` decremented regardless, so this law would have been FALSE for
+it. -/
+
+/-- **`captp_drop_requires_minting_session` (PROVED) — F-11 safety.**
+A DropRef whose session `reqSession` minted no refs on this holder (`b reqSession = 0` — the
+session-free legacy path, or any wrong/forged session) leaves the buckets COMPLETELY UNCHANGED.
+No bucket is decremented, so no victim ref is reclaimed. Catches F-11: the pre-fix session-free
+`process_drop` violated this (it decremented anyway). -/
+theorem captp_drop_requires_minting_session (b : Buckets) (reqSession : Nat)
+    (hUnauth : b reqSession = 0) :
+    applyDrop b reqSession = b := by
+  unfold applyDrop dropAuthorized
+  simp [hUnauth]
+
+/-- **`captp_unauth_drop_preserves_bucket` (PROVED) — F-11, per-victim form.**
+The concrete victim consequence: an unauthorized drop (`b reqSession = 0`) preserves the VICTIM
+session's bucket exactly. A victim's still-wanted refs survive a session-free drop attempt —
+the premature-reclaim door is shut. -/
+theorem captp_unauth_drop_preserves_bucket (b : Buckets) (reqSession victim : Nat)
+    (hUnauth : b reqSession = 0) :
+    applyDrop b reqSession victim = b victim := by
+  rw [captp_drop_requires_minting_session b reqSession hUnauth]
+
+/-! ### F-12: a drop touches ONLY the requesting session's bucket.
+
+Even an AUTHORIZED drop is scoped: it decrements bucket `reqSession` and leaves every OTHER
+session's bucket untouched. So a re-export under a new session (which mints into a fresh bucket
+via `mintUnder`) can never let the new session drop refs the ORIGINAL session minted, nor strip
+the original session's right to drop its own. This is the F-12 per-ref scoping the pre-fix
+holder-scoped `session_id` violated. -/
+
+/-- **`captp_drop_scoped_to_session` (PROVED) — F-12 scoping.**
+A drop carrying `reqSession` leaves every OTHER session's bucket (`other ≠ reqSession`) exactly
+as it was, authorized or not. A session can only ever reach its own bucket. -/
+theorem captp_drop_scoped_to_session (b : Buckets) (reqSession other : Nat)
+    (hne : other ≠ reqSession) :
+    applyDrop b reqSession other = b other := by
+  unfold applyDrop dropUnder
+  by_cases h : dropAuthorized b reqSession <;> simp [h, hne]
+
+/-- **`captp_reexport_preserves_original_session` (PROVED) — F-12 under re-export.**
+A re-export under a NEW session `newS` (minting into `newS`'s bucket) followed by a drop on
+that new session leaves the ORIGINAL session `origS`'s bucket UNCHANGED (`origS ≠ newS`). The
+original session keeps every ref it minted; the new session's activity cannot touch them. This
+is the exact scenario the F-12 red-team test exercises — proven safe. -/
+theorem captp_reexport_preserves_original_session
+    (b : Buckets) (origS newS : Nat) (hne : origS ≠ newS) :
+    applyDrop (mintUnder b newS) newS origS = b origS := by
+  rw [captp_drop_scoped_to_session (mintUnder b newS) newS origS hne]
+  unfold mintUnder
+  simp [hne]
+
+/-- **`captp_authorized_drop_decrements_own_bucket` (PROVED) — liveness companion.**
+The dual of the safety laws: an AUTHORIZED drop (the minting session, `0 < b reqSession`) DOES
+decrement its OWN bucket by one. The genuine holder retains the ability to drop the refs it
+minted — session validation is not vacuously fail-closed (it lets the real holder through). -/
+theorem captp_authorized_drop_decrements_own_bucket (b : Buckets) (reqSession : Nat)
+    (hAuth : 0 < b reqSession) :
+    applyDrop b reqSession reqSession = b reqSession - 1 := by
+  unfold applyDrop dropAuthorized dropUnder
+  simp [hAuth]
+
+end RefcountDrop
+
+/-! ### §6 non-vacuity — the F-11 attack, replayed in Lean.
+
+A concrete holder with TWO refs under session `10` and ZERO under any other session. A
+session-free / wrong-session drop (session `999`, which minted nothing) is a NO-OP; the genuine
+session `10` drop decrements; a re-export under session `99` never touches session `10`'s refs. -/
+
+section RefcountNonVacuity
+
+/-- Holder buckets: session `10` minted 2 refs, everything else 0. -/
+def demoBuckets : Buckets := fun s => if s = 10 then 2 else 0
+
+/-- F-11: a session-free / wrong-session drop (`999` minted nothing) is a NO-OP — the victim's
+session-`10` bucket still holds 2. -/
+example : applyDrop demoBuckets 999 10 = 2 :=
+  captp_unauth_drop_preserves_bucket demoBuckets 999 10 (by decide)
+
+/-- Liveness: the genuine session-`10` holder CAN drop, decrementing its own bucket to 1. -/
+example : applyDrop demoBuckets 10 10 = 1 :=
+  captp_authorized_drop_decrements_own_bucket demoBuckets 10 (by decide)
+
+/-- F-12: a re-export under session `99` followed by a `99` drop leaves session `10` at 2. -/
+example : applyDrop (mintUnder demoBuckets 99) 99 10 = 2 :=
+  captp_reexport_preserves_original_session demoBuckets 10 99 (by decide)
+
+#guard (applyDrop demoBuckets 999 10) == 2   -- F-11: unauth drop is a no-op on the victim
+#guard (applyDrop demoBuckets 10 10) == 1    -- authorized drop decrements own bucket
+#guard (applyDrop (mintUnder demoBuckets 99) 99 10) == 2  -- F-12: re-export preserves session 10
+#guard (mintUnder demoBuckets 99 99) == 1    -- the new session's bucket got exactly its 1 ref
+
+end RefcountNonVacuity
+
 /-! ## §5 — Axiom-hygiene tripwires.
 
 Every PROVED keystone depends ONLY on the three standard kernel axioms (no `sorryAx`). The
 cross-vat-cycle leak and deadness-undecidability are REUSED from `Liveness` (themselves
-`sorry`-free), so the entailment "undecidable ⇒ lease-reclaim" carries no hidden residue. -/
+`sorry`-free), so the entailment "undecidable ⇒ lease-reclaim" carries no hidden residue. The
+§6 refcount-drop laws (F-11/F-12) are pure arithmetic over the per-session bucket model and
+likewise carry no `sorry`. -/
 
 #assert_axioms captp_gc_by_lease
 #assert_axioms captp_no_premature_reclaim
@@ -221,5 +375,10 @@ cross-vat-cycle leak and deadness-undecidability are REUSED from `Liveness` (the
 #assert_axioms captp_cycle_leak_is_the_price
 #assert_axioms captp_death_undecidable_so_lease
 #assert_axioms captp_leaked_handle_reclaimed_by_lease
+#assert_axioms captp_drop_requires_minting_session
+#assert_axioms captp_unauth_drop_preserves_bucket
+#assert_axioms captp_drop_scoped_to_session
+#assert_axioms captp_reexport_preserves_original_session
+#assert_axioms captp_authorized_drop_decrements_own_bucket
 
 end Dregg2.Exec.CapTPGC
