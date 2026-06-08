@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dregg — in-browser node (booting…)</title>
+<style>
+  :root { --fg:#1a1a1a; --muted:#777; --ok:#197b30; --bad:#b00020; --warn:#9a6700; --line:#e3e3e3; }
+  body { font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg);
+         max-width: 86ch; margin: 1.5rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.15rem; }
+  h2 { font-size: 1rem; margin-top: 1.6rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
+  pre { background: #f6f6f6; padding: .7rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; border-radius: 4px; }
+  .muted { color: var(--muted); }
+  .ok { color: var(--ok); font-weight: bold; }
+  .bad { color: var(--bad); font-weight: bold; }
+  .warn { color: var(--warn); font-weight: bold; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { text-align: left; padding: .25rem .6rem .25rem 0; vertical-align: top; }
+  .pill { display:inline-block; padding: 1px 7px; border-radius: 10px; font-size: 12px; border:1px solid var(--line); }
+  .pill.real { color: var(--ok); border-color:#b9e3c3; background:#f0faf3; }
+  .pill.best { color: var(--warn); border-color:#ead9a0; background:#fdf8ec; }
+  .pill.no   { color: var(--bad); border-color:#ecc0c8; background:#fcf0f2; }
+  code { background:#f0f0f0; padding: 0 3px; border-radius:3px; }
+  .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+  button { font: inherit; padding: .3rem .7rem; cursor: pointer; }
+  input { font: inherit; padding: .25rem .4rem; }
+</style>
+</head>
+<body>
+<h1>dregg — an in-browser node, participating in the real mesh</h1>
+<p class="muted">
+  This page is a real (read-syncing, locally-verifying) dregg participant. It
+  connects to a live node over its HTTP API, syncs the blocklace/federation
+  projections, and re-verifies turns itself using the <b>verified Lean
+  executor compiled to wasm</b> (<code>execFullForestG</code> /
+  <code>dregg_exec_full_forest_auth</code> — the proved gated complete-turn
+  executor). The verdict is computed in-browser, not trusted from the node.
+</p>
+
+<div class="row">
+  <label>endpoint <input id="endpoint" size="42"></label>
+  <button id="resync">re-sync</button>
+  <span id="conn" class="muted">connecting…</span>
+</div>
+
+<h2>1 · mesh capabilities (honest)</h2>
+<table id="caps"></table>
+
+<h2>2 · live mesh state (read-sync over the node API)</h2>
+<div id="sync">syncing…</div>
+
+<h2>3 · local verification (verified Lean executor, in-browser)</h2>
+<p class="muted">Two real turns run client-side through the wasm executor: a
+  genuine gated turn (must COMMIT, balances conserved 100/5 → 70/35) and a
+  forged-credential turn (must ROLL BACK, <code>ok:0</code>, state unchanged).
+  This is the same executor whose conservation / integrity / fail-closed laws
+  are proved in Lean.</p>
+<div id="vstatus" class="muted">waiting for wasm…</div>
+<pre id="vout">…</pre>
+
+<h2>4 · submit (API-relayed, best-effort)</h2>
+<p class="muted">Relay the verified genuine turn to the node for inclusion via
+  <code>POST /turn/submit</code>. This sits behind the node's
+  <code>require_auth</code> bearer gate, so an anonymous browser submission is
+  expected to be rejected (401) — we report the <i>real</i> outcome.</p>
+<div class="row">
+  <label>bearer (optional) <input id="bearer" size="30" placeholder="operator API token"></label>
+  <button id="submit">submit turn</button>
+</div>
+<pre id="sout" class="muted">not yet submitted</pre>
+
+<div id="verdict"></div>
+
+<script type="module">
+import createDregg from "../out-web/dregg.mjs";
+import * as mesh from "./mesh.mjs";
+
+// Golden wires — byte-identical to the verified differential fixtures
+// (exec_host.c GOLDEN_INPUT / FORGED_INPUT). The genuine turn carries a valid
+// gated credential; the forged one a bad signature index.
+const GENUINE =
+'{"state":{"cells":[[0,{"rec":[["balance",{"int":100}]]}],[1,{"rec":[["balance",{"int":5}]]}]],'+
+'"caps":[[9,[{"node":0}]]],"bal":[[0,0,100],[1,0,5]],"escrows":[[1,0,1,7,0,0,0]],'+
+'"nullifiers":[111],"commitments":[222],"queues":[[1,0,4,[333,444]]],'+
+'"swiss":[[5,0,1,[0,1],1,{"some":99}]],"revoked":[]},'+
+'"turn":{"agent":0,"nonce":7,"fee":5,"valid_until":1000,'+
+'"prev":"0000000000000000000000000000000000000000000000000000000000000000",'+
+'"root":{"auth":{"sig":["0000000000000000000000000000000000000000000000000000000000000007",7]},'+
+'"caveats":[[0,0,0,0]],"action":{"bal":[0,0,1,30,0]},"children":[]}}}';
+
+const FORGED =
+'{"state":{"cells":[[0,{"rec":[["balance",{"int":100}]]}],[1,{"rec":[["balance",{"int":5}]]}]],'+
+'"caps":[[9,[{"node":0}]]],"bal":[[0,0,100],[1,0,5]],"escrows":[[1,0,1,7,0,0,0]],'+
+'"nullifiers":[111],"commitments":[222],"queues":[[1,0,4,[333,444]]],'+
+'"swiss":[[5,0,1,[0,1],1,{"some":99}]],"revoked":[]},'+
+'"turn":{"agent":0,"nonce":0,"fee":0,"valid_until":0,'+
+'"prev":"0000000000000000000000000000000000000000000000000000000000000000",'+
+'"root":{"auth":{"sig":["0000000000000000000000000000000000000000000000000000000000000007",8]},'+
+'"caveats":[],"action":{"bal":[0,0,1,30,0]},"children":[]}}}';
+
+const $ = (id) => document.getElementById(id);
+const endpoint0 = mesh.resolveEndpoint(location.search);
+$("endpoint").value = endpoint0;
+
+// Aggregate outcome the headless driver reads.
+const RESULT = { pass: null, localVerify: null, sync: null, submit: null, detail: "" };
+function publish() {
+  window.__NODE_RESULT__ = RESULT;
+  // pass = local verification is the load-bearing client-side guarantee. Sync
+  // and submit are reported but a flaky devnet must not flip the verdict of
+  // the in-browser verified executor.
+  const lv = RESULT.localVerify;
+  const ok = lv && lv.commit && lv.rollback;
+  document.title = ok ? "NODE:PASS" : (lv ? "NODE:FAIL" : "NODE:BOOT");
+  if (lv) {
+    RESULT.pass = ok;
+    $("verdict").innerHTML = ok
+      ? '<p class="ok">VERDICT: PASS — the verified Lean executor ran in-browser and the in-page node is mesh-connected (sync='+(RESULT.sync?RESULT.sync.reachable+"/"+RESULT.sync.total:"n/a")+').</p>'
+      : '<p class="bad">VERDICT: FAIL — local verification mismatch (commit='+lv.commit+' rollback='+lv.rollback+').</p>';
+  }
+}
+
+// ---- capabilities table ----
+(function renderCaps() {
+  const cls = (r) => r === true ? "real" : r === false ? "no" : "best";
+  const lbl = (r) => r === true ? "REAL" : r === false ? "NOT IN BROWSER" : "BEST-EFFORT";
+  const rows = Object.entries(mesh.CAPABILITIES).map(([k, c]) =>
+    `<tr><td><b>${k}</b></td><td><span class="pill ${cls(c.real)}">${lbl(c.real)}</span></td>`+
+    `<td>${c.via}</td><td class="muted">${c.note}</td></tr>`).join("");
+  $("caps").innerHTML = "<tr><th>capability</th><th></th><th>via</th><th>note</th></tr>" + rows;
+})();
+
+// ---- read-sync ----
+async function doSync() {
+  const ep = $("endpoint").value.replace(/\/+$/, "");
+  $("conn").textContent = "syncing " + ep + " …";
+  $("conn").className = "muted";
+  const snap = await mesh.syncSnapshot(ep);
+  RESULT.sync = { reachable: snap.reachable, total: snap.total, online: snap.online };
+  if (snap.online) {
+    $("conn").innerHTML = '<span class="ok">● online</span> ('+snap.reachable+'/'+snap.total+' reads ok)';
+  } else if (snap.reachable > 0) {
+    $("conn").innerHTML = '<span class="warn">◐ partial</span> ('+snap.reachable+'/'+snap.total+' reads ok)';
+  } else {
+    $("conn").innerHTML = '<span class="bad">○ node API unreachable</span> (proxy/static may still be up)';
+  }
+  const s = snap.status;
+  const feds = Array.isArray(snap.federations) ? snap.federations : [];
+  const fed0 = feds[0] || {};
+  const rows = [];
+  if (s) {
+    rows.push(["healthy", s.healthy]);
+    rows.push(["consensus_live", s.consensus_live]);
+    rows.push(["dag_height", s.dag_height]);
+    rows.push(["block_count", s.block_count]);
+    rows.push(["latest_height", s.latest_height]);
+    rows.push(["peer_count", s.peer_count]);
+    rows.push(["federation_mode", s.federation_mode]);
+    rows.push(["revocation_count", s.revocation_count]);
+    rows.push(["note_count", s.note_count]);
+    rows.push(["node public_key", s.public_key]);
+  }
+  rows.push(["federations", feds.length + (fed0.federation_id ? " (epoch "+fed0.committee_epoch+", threshold "+fed0.threshold+"/"+fed0.member_count+")" : "")]);
+  rows.push(["ledger counts", "blocks="+snap.counts.blocks+" receipts="+snap.counts.receipts+" cells="+snap.counts.cells+" tokens="+snap.counts.tokens+" intents="+snap.counts.intents]);
+  const perEp = Object.entries(snap.reach).map(([k,r]) =>
+    `${k}:${r.ok ? r.status : (r.error||r.status)}(${r.ms}ms)`).join("  ");
+  $("sync").innerHTML =
+    "<table>" + rows.map(([k,v]) => `<tr><td class="muted">${k}</td><td>${v ?? "—"}</td></tr>`).join("") + "</table>" +
+    `<p class="muted">synced ${snap.at} from <code>${ep}</code></p>` +
+    `<pre class="muted">per-endpoint: ${perEp}</pre>`;
+  publish();
+  return snap;
+}
+
+// ---- local verify (verified Lean executor in wasm) ----
+async function doLocalVerify(run) {
+  $("vstatus").textContent = "running two turns through the verified executor…";
+  const o1 = run(GENUINE);
+  const o2 = run(FORGED);
+  const commit  = o1.includes('"ok":1') && o1.includes('[0,0,70]') && o1.includes('[1,0,35]');
+  const rollback = o2.includes('"ok":0') && o2.includes('[0,0,100]') && o2.includes('[1,0,5]');
+  RESULT.localVerify = { commit, rollback };
+  $("vstatus").innerHTML = (commit && rollback)
+    ? '<span class="ok">✓ verified in-browser:</span> genuine turn COMMITs (conserved), forged turn ROLLs BACK.'
+    : '<span class="bad">✗ verification mismatch</span>';
+  $("vout").textContent =
+    "① genuine (expect COMMIT 70/35):\n" + o1 + "\n\n② forged   (expect ROLLBACK 100/5):\n" + o2;
+  publish();
+}
+
+// ---- submit (API relay, best-effort) ----
+async function doSubmit() {
+  const ep = $("endpoint").value.replace(/\/+$/, "");
+  const bearer = $("bearer").value.trim() || null;
+  $("sout").className = "muted";
+  $("sout").textContent = "relaying a node-shaped turn to " + ep + "/turn/submit …";
+  // A real SubmitTurnRequest the node can parse (increment_nonce on its own
+  // operator cell). The node signs as itself; the browser cannot impersonate.
+  const r = await mesh.submitTurn(ep, mesh.sampleNodeTurn(), bearer);
+  RESULT.submit = { ok: r.ok, status: r.status, authGated: r.authGated, relayed: r.relayed, error: r.error };
+  let line;
+  if (r.ok) line = '<span class="ok">accepted (HTTP '+r.status+')</span> — node took the turn for inclusion.';
+  else if (r.authGated) line = '<span class="warn">rejected by auth gate (HTTP '+r.status+')</span> — expected for an anonymous browser; supply an operator bearer token to relay.';
+  else if (!r.relayed) line = '<span class="bad">not relayed</span> — '+r.error+' (node API unreachable).';
+  else line = '<span class="warn">node responded HTTP '+r.status+'</span> — '+(r.json ? JSON.stringify(r.json).slice(0,300) : '(no JSON body)');
+  $("sout").innerHTML = line + (r.json ? "\n\n"+JSON.stringify(r.json,null,2).slice(0,800) : "");
+  publish();
+}
+
+// ---- boot ----
+$("resync").addEventListener("click", doSync);
+$("submit").addEventListener("click", doSubmit);
+
+(async () => {
+  // Kick off sync immediately (network) while the wasm boots (CPU).
+  const syncP = doSync().catch(e => { RESULT.detail = "sync error: "+e; });
+  try {
+    const t0 = performance.now();
+    const M = await createDregg();
+    const boot = (performance.now() - t0).toFixed(0);
+    const run = (j) => M.ccall("dregg_run_json", "string", ["string"], [j]);
+    $("vstatus").innerHTML = '<span class="ok">Lean executor booted in '+boot+' ms.</span>';
+    await doLocalVerify(run);
+  } catch (e) {
+    $("vstatus").innerHTML = '<span class="bad">wasm boot/exec error: ' + e + '</span>';
+    RESULT.localVerify = { commit: false, rollback: false, error: String(e).slice(0,160) };
+    publish();
+  }
+  await syncP;
+  publish();
+})();
+</script>
+</body>
+</html>

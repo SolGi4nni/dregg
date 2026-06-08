@@ -1,3 +1,54 @@
+# In-browser dregg node — real mesh participant (`node.html`)
+
+`node.html` + `mesh.mjs` + `drive-node-headless.mjs` turn the executor POC
+into a **real in-browser participant on the live mesh**. The page:
+
+1. **read-syncs** live mesh state from a node over its HTTP API
+   (`/status`, `/api/federations`, `/api/blocks`, `/api/receipts`,
+   `/api/cells`, `/api/tokens`, `/api/intents`) — the blocklace / federation /
+   ledger projections (real DAG height, block count, consensus liveness,
+   federation roots);
+2. **locally verifies** two turns itself with the wasm-compiled verified Lean
+   executor (`execFullForestG` / `dregg_exec_full_forest_auth`) — the verdict
+   is computed client-side, not trusted from the node;
+3. **relays a node-shaped turn** (`POST /turn/submit`, the real
+   `SubmitTurnRequest` shape) and reports the honest outcome.
+
+```
+node web/spike/poc/drive-node-headless.mjs [endpoint]   # default: live devnet
+```
+
+Drives real headless Chrome over CDP (no puppeteer/npm). The page fetches the
+node **cross-origin**; the node's `/api/*` responses carry permissive CORS, so
+this is a genuine browser→node interaction. Observed against a healthy node:
+
+```
+[node] connection   : ● online (7/7 reads ok)
+[node] local-verify : ✓ genuine turn COMMITs (conserved), forged turn ROLLs BACK.
+[node] mesh sync    : {"reachable":7,"total":7,"online":true}
+[node] submit       : rejected by auth gate (HTTP 403) — expected for an anonymous
+                      browser; supply an operator bearer token to relay.
+[node] verdict      : PASS (verified executor ran in-browser)
+```
+
+## What is REAL vs what is NOT (honest capability matrix)
+
+| capability | status | via | note |
+|---|---|---|---|
+| **read-sync** | REAL | node HTTP API (`/status`, `/api/*`) | blocklace/federation/ledger projections, polled; works cross-origin |
+| **local-verify** | REAL | wasm `execFullForestG` | the proved gated complete-turn executor, run client-side |
+| **submit** | best-effort (gated) | `POST /turn/submit` | node parses the well-formed turn then gates inclusion on operator auth: **403** (locked cipherclerk) / **401** (devnet `require_auth` bearer). An anonymous browser cannot make a turn COMMIT — by design. |
+| **full gossip** | NOT in browser | libp2p/QUIC blocklace gossip | no browser transport binding; the page participates via the API relay, **not** by joining the gossip mesh directly. |
+
+The load-bearing in-browser guarantee is **local-verify**: it runs fully
+client-side and is resilient to a flaky/unreachable node (the live devnet
+backend was observed timing out while its static/proxy front stayed up; the
+page reports `○ node API unreachable` and still PASSes local verification).
+
+`?endpoint=https://node.example` selects the node (devnet is the default).
+
+---
+
 # POC — the REAL verified Lean executor runs in a browser
 
 `index.html` + `drive-headless.mjs` prove that `execFullForestG`
