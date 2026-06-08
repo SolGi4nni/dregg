@@ -18,6 +18,14 @@ the square — the abstract reasoning is never redone. We validate that on the t
 names: **transfer** (`concreteTransfer` ⟹ `recTransfer`) and **setField** (`concreteWriteField` ⟹
 `writeField`), then DERIVE the concrete conservation corollary from the abstract keystone + the square.
 
+HONESTY / SCOPE: the conservation corollary derived here (`concreteTransfer_conserves`) transfers
+the AGGREGATE `recTotal` keystone only. The genuine multi-asset keystone
+`recKExecAsset_conserves_per_asset` (over `recKExecAsset`, the PER-ASSET conserved measure that is
+the real one — never one aggregate scalar) has NO concrete refinement square at this layer:
+`concreteTransferAsset` refining `recKExecAsset` is NOT YET DEFINED. So the per-asset guarantee is
+proven abstractly but does NOT yet carry to the node-grade concrete state. See
+`docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-2 for the OPEN fix (concrete per-asset op + square).
+
 `CellId = Label = Nat` carries `LawfulBEq` + `LawfulHashable`, so `Std.HashMap.getD_insert`'s
 `if k == a then …` collapses to the abstract `if c = src then …` cleanly — the representation does NOT
 fight the refinement. Real squares, real transfer.

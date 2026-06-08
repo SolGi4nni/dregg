@@ -27,8 +27,12 @@ scales-to-zero special case, NOT the target):
   `total_refs` UNCHANGED, while the honest holder on the correct session CAN decrement its own ref.
 
 The connection to the verified executor: §1 is stated directly over `execFullA … (.swissDropA …)`
-and `swissDropK`; §2's table is the abstraction of the *per-holder* refcounts whose SUM is the
-swiss entry's `refcount` field, and `gcDropTotal` is shown to track that field's decrement.
+and `swissDropK`. §2's table MODELS the *per-holder* session refcounts of `gc.rs`. HONESTY: §1
+and §2 are at present TWO INDEPENDENTLY-SOUND models that are NOT YET BRIDGED — there is no
+theorem proving that §2's per-holder SUM equals §1's swiss-entry `refcount` field, nor a
+`gcDropTotal`-tracks-decrement lemma (no such def exists). The intended bridge
+(`swissEntry.refcount = Σ_{holders} holder.total_refs`, plus decrement-tracking) is OPEN; see
+`docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-1. Both halves bite on their own model.
 
 The Rust differential corpus (`gcDifferentialCorpus`) mirrors the four `gc.rs` session tests:
 `export_drop_rejected_from_wrong_session`, `export_session_superseded_by_reexport`,
