@@ -1006,8 +1006,17 @@ pub struct PendingAttestedRoot {
 }
 
 impl CapTpState {
-    /// Create a new empty CapTP state.
-    pub fn new() -> Self {
+    /// Create a new empty CapTP state bound to this node's `local_federation`.
+    ///
+    /// F-10: the `local_federation` id (the node's own federation identity) is
+    /// MANDATORY. The internal [`CrossFedPipelineBridge`] is constructed via
+    /// [`CrossFedPipelineBridge::with_local_federation`], so every outbound
+    /// pipelined message stamps a CONCRETE sender — never the `[0;32]`
+    /// placeholder. There is no unbound default that can ship: a bridge with an
+    /// unset sender would leave a pipelined call's `authorization` bound to an
+    /// anonymous originator, letting a relay/bridge replay it under no sender
+    /// (`finding_pipeline_bridge_ships_unbound_sender`).
+    pub fn new(local_federation: [u8; 32]) -> Self {
         Self {
             sessions: HashMap::new(),
             swiss_table: SwissTable::new(),
@@ -1016,7 +1025,9 @@ impl CapTpState {
             current_height: 0,
             next_session_epoch: 1,
             pending_captp_turns: Vec::new(),
-            pipeline_bridge: CrossFedPipelineBridge::new(),
+            pipeline_bridge: CrossFedPipelineBridge::with_local_federation(FederationId(
+                local_federation,
+            )),
             seen_handoff_nonces: HashSet::new(),
             outstanding_peer_promises: HashMap::new(),
             pending_broken_promises: Vec::new(),
@@ -1219,11 +1230,10 @@ impl CapTpState {
     }
 }
 
-impl Default for CapTpState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// F-10: deliberately NO `Default for CapTpState`. A defaulted state would
+// construct its pipeline bridge with an unset (`[0;32]`) local federation —
+// exactly the unbound-sender placeholder this finding closes. Callers MUST
+// supply the node's real federation id via `CapTpState::new(local_federation)`.
 
 /// A TCP server representing one silo in the federation.
 ///
@@ -1347,7 +1357,7 @@ impl SiloServer {
             revocation_nonces: Arc::new(Mutex::new(NonceCache::new(nonce_cap))),
             active_connections: Arc::new(AtomicUsize::new(0)),
             tls_acceptor,
-            captp_state: Arc::new(RwLock::new(CapTpState::new())),
+            captp_state: Arc::new(RwLock::new(CapTpState::new(node_id))),
             participant_source: None,
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
@@ -1381,7 +1391,7 @@ impl SiloServer {
             revocation_nonces: Arc::new(Mutex::new(NonceCache::new(nonce_cap))),
             active_connections: Arc::new(AtomicUsize::new(0)),
             tls_acceptor,
-            captp_state: Arc::new(RwLock::new(CapTpState::new())),
+            captp_state: Arc::new(RwLock::new(CapTpState::new(node_id))),
             participant_source: None,
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
@@ -2817,12 +2827,23 @@ impl SiloServer {
                             error: None,
                         })
                     }
-                    Err(e) => Some(WireMessage::EnlivenResponse {
-                        success: false,
-                        cell_id: None,
-                        permissions_tag: 0,
-                        error: Some(e.to_string()),
-                    }),
+                    Err(e) => {
+                        // F-3: collapse the EnlivenError taxonomy to a single
+                        // opaque message at the network boundary. `e.to_string()`
+                        // would distinguish NotFound (absent) from Expired /
+                        // ExhaustedUses (present-but-dead) — a membership oracle on
+                        // the secret-keyed swiss table. Keep the taxonomy local
+                        // (debug log only); expose only "denied" to the remote.
+                        tracing::debug!(swiss_enliven_denied = ?e, "enliven rejected (opaque to peer)");
+                        Some(WireMessage::EnlivenResponse {
+                            success: false,
+                            cell_id: None,
+                            permissions_tag: 0,
+                            error: Some(
+                                dregg_captp::sturdy::EnlivenError::opaque_message().to_string(),
+                            ),
+                        })
+                    }
                 }
             }
 
@@ -3833,7 +3854,7 @@ mod tests {
     fn captp_process_introduction_exports_registers_gc() {
         use dregg_captp::DropResult;
 
-        let mut captp = CapTpState::new();
+        let mut captp = CapTpState::new([0xAB; 32]);
         captp.current_height = 50;
 
         let target_cell = dregg_types::CellId([0x11; 32]);
@@ -3868,16 +3889,18 @@ mod tests {
         assert_eq!(entry.holders[&recipient_federation].count, 1);
         assert_eq!(entry.holders[&recipient_federation].last_activity, 50);
 
-        // Simulate DropRef from recipient's federation -> cleans up
+        // Simulate DropRef from recipient's federation -> cleans up.
+        // The introduction export was minted under session 0 (no active session in
+        // this test), so the DropRef presents session 0 (F-11: session mandatory).
         let result = captp
             .export_gc
-            .process_drop(target_cell, recipient_federation);
+            .process_drop_with_session(target_cell, recipient_federation, 0);
         assert_eq!(result, DropResult::CanRevoke);
     }
 
     #[test]
     fn captp_process_introduction_exports_skips_unknown_federation() {
-        let mut captp = CapTpState::new();
+        let mut captp = CapTpState::new([0xAB; 32]);
         captp.current_height = 10;
 
         let target_cell = dregg_types::CellId([0x33; 32]);

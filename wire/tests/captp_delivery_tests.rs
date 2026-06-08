@@ -89,7 +89,7 @@ fn pipelined_msg_routes_to_bridge_and_resolves() {
 /// `CapTpState::on_peer_disconnect` breaks promises and emits notifications.
 #[test]
 fn peer_disconnect_breaks_outstanding_promises() {
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
 
     // Establish a CapSession for the peer.
     let epoch = state.allocate_epoch();
@@ -204,7 +204,7 @@ fn handoff_replay_rejected_by_seen_nonce_registry() {
     let (bob_sk, bob_pk) = generate_keypair();
     let target_cell = cell(0x42);
 
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     state.known_federations.push(alice_fed);
     state.current_height = 100;
 

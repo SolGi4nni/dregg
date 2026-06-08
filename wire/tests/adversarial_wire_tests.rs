@@ -64,7 +64,7 @@ fn cell(byte: u8) -> CellId {
 /// Construct a default CapTpState pre-populated with a CapSession for `peer`
 /// at the given epoch. Returns the configured state.
 fn state_with_session(peer: FederationId, epoch: u64) -> CapTpState {
-    let mut s = CapTpState::new();
+    let mut s = CapTpState::new([0xAB; 32]);
     s.sessions
         .insert(peer, CapSession::with_epoch(peer.0, epoch));
     s
@@ -163,7 +163,7 @@ fn handoff_replay_nonce_blocks_second_presentation_max_uses_none() {
     let (bob_sk, bob_pk) = generate_keypair();
     let target_cell = cell(0x42);
 
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     state.known_federations.push(alice_fed);
     state.current_height = 100;
 
@@ -297,7 +297,7 @@ fn disconnect_populates_pending_broken_promises_queue() {
     // layer just *logged* them. Now they must surface on the new
     // `pending_broken_promises` queue so the node tick can deliver them
     // as `WireMessage::PromiseBroken`.
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     let epoch = state.allocate_epoch();
     let peer = fed(0xBB);
     state
@@ -344,7 +344,7 @@ fn disconnect_populates_pending_broken_promises_queue() {
 
 #[test]
 fn attested_root_push_from_unknown_federation_is_dropped() {
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     // No known_federations registered.
 
     // Simulate the wire handler's gate: a push from a stranger MUST NOT
@@ -368,7 +368,7 @@ fn attested_root_push_from_unknown_federation_is_dropped() {
 fn attested_root_push_from_known_federation_is_enqueued() {
     use dregg_wire::server::PendingAttestedRoot;
 
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     let peer = FederationId([0xAB; 32]);
     state.known_federations.push(peer);
 
@@ -474,7 +474,7 @@ fn outstanding_peer_promises_seeds_the_cascade() {
     // The wire handler MUST register `result_promise_id` against the peer
     // when it accepts a PipelinedMsg, so the disconnect cascade can break
     // it. Verify the data shape this protocol step depends on.
-    let mut state = CapTpState::new();
+    let mut state = CapTpState::new([0xAB; 32]);
     let epoch = state.allocate_epoch();
     let peer = fed(0xCC);
     state
