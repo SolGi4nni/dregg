@@ -6857,6 +6857,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "starbridge-agent-provenance"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-bounty-board"
 version = "0.1.0"
 dependencies = [
@@ -6937,6 +6950,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-sealed-auction"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-intent",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-storage-gateway-mandate"
 version = "0.1.0"
 dependencies = [
@@ -6950,6 +6975,18 @@ dependencies = [
 
 [[package]]
 name = "starbridge-subscription"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-tool-access-delegation"
 version = "0.1.0"
 dependencies = [
  "blake3",
