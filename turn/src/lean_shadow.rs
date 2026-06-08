@@ -633,6 +633,42 @@ pub(crate) fn forest_is_marshallable(turn: &Turn) -> bool {
     ok && any
 }
 
+/// THE COVERED SET for the DEFAULT-ON verified producer. A turn is covered iff it marshals AND
+/// EVERY effect it carries is in [`producer_root_agreeing_effects`] — the swap-safe subset where the
+/// Lean-reconstituted `.root()` provably EQUALS the legacy Rust executor's (pinned positive teeth in
+/// `lean_state_producer_widen` + `lean_state_producer_coverage`).
+///
+/// This is the STRICTER gate the producer-mode commit path uses to decide whether to INSTALL the
+/// verified post-state. `forest_is_marshallable` (the producer merely RUNS) is a SUPERSET: it admits
+/// the 10 characterized root-GAP effects (SetPermissions / SetVerificationKey / MakeSovereign /
+/// Refusal / ReceiptArchive / CellSeal / CellUnseal / CellDestroy / GrantCapability /
+/// AttenuateCapability) whose Lean-reconstituted root provably DIVERGES from Rust because the wire
+/// model is lossier than the cell commitment. Installing a Lean-produced root for one of those on
+/// the live commit path would commit state that DISAGREES with every other node's Rust root (and the
+/// proving machinery) — a silent divergence. So the default-on producer covers ONLY the root-agreeing
+/// set; a turn touching ANY root-gap (or unmappable) effect falls back to the Rust producer with a
+/// logged warning, NEVER a silent commit of divergent state.
+///
+/// Decided identically in both builds; empty forests are uncovered (same as `forest_is_marshallable`).
+pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
+    if !forest_is_marshallable(turn) {
+        return false;
+    }
+    turn_effect_kinds(turn)
+        .iter()
+        .all(|k| producer_root_agrees_kind(k))
+}
+
+/// The FIRST effect kind in `turn` that is a characterized root-GAP (mappable but not root-agreeing)
+/// — i.e. the effect that pushed the turn out of the default-on covered set. `None` if every effect
+/// is root-agreeing (or the turn is unmappable for some other reason). Used by `produce_via_lean` to
+/// name the precise gap in its Rust-fallback reason, so the fallback is never a silent skip.
+pub fn first_root_gap_kind(turn: &Turn) -> Option<&'static str> {
+    turn_effect_kinds(turn)
+        .into_iter()
+        .find(|k| producer_covers_kind(k) && !producer_root_agrees_kind(k))
+}
+
 fn tree_is_marshallable(tree: &CallTree, id_map: &HashMap<CellId, u64>, any: &mut bool) -> bool {
     if !id_map.contains_key(&tree.action.target) {
         return false;

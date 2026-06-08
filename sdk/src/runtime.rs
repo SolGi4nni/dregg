@@ -21,11 +21,11 @@ use dregg_types::PublicKey;
 use crate::cipherclerk::{AgentCipherclerk, HeldToken};
 use crate::error::SdkError;
 
-/// THE SWAP — read the producer-mode opt-in from the environment.
-/// `DREGG_LEAN_PRODUCER=1` (or `true`/`TRUE`) makes the VERIFIED Lean executor the authoritative
-/// state producer on this runtime's execute paths, with the Rust `TurnExecutor` demoted to a
-/// parallel differential cross-check. Any other value (or unset) keeps the legacy Rust-producer
-/// path, so every existing SDK consumer is byte-for-byte unchanged by default.
+/// THE SWAP (FLIPPED DEFAULT) — the VERIFIED Lean executor is the authoritative state producer on
+/// this runtime's execute paths BY DEFAULT (for the swap-safe covered set), with the Rust
+/// `TurnExecutor` demoted to a parallel differential cross-check. Reads an opt-OUT:
+/// `DREGG_LEAN_PRODUCER=0` (or `false`/`off`/`no`) falls back to the legacy Rust-producer path; any
+/// other value (or unset) keeps the verified producer ON.
 ///
 /// Mirrors `dregg_node::state::lean_producer_env_enabled` so the node and the SDK read the SAME
 /// switch. When the crate is built WITHOUT the `lean-producer` feature this always returns `false`
@@ -33,9 +33,10 @@ use crate::error::SdkError;
 pub fn lean_producer_env_enabled() -> bool {
     #[cfg(feature = "lean-producer")]
     {
-        matches!(
+        !matches!(
             std::env::var("DREGG_LEAN_PRODUCER").ok().as_deref(),
-            Some("1") | Some("true") | Some("TRUE")
+            Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") | Some("no")
+                | Some("NO")
         )
     }
     #[cfg(not(feature = "lean-producer"))]
@@ -165,10 +166,12 @@ pub struct AgentRuntime {
     /// [`Self::execute_turn`] make the VERIFIED Lean executor the authoritative state PRODUCER
     /// (`dregg_turn::lean_apply::produce_via_lean`): the committed ledger is reconstituted from the
     /// Lean FFI's post-state, and the Rust [`TurnExecutor`] is demoted to a parallel runtime
-    /// DIFFERENTIAL cross-check (a divergence is logged loudly as a real soundness finding, never
-    /// reconciled). Default mirrors `DREGG_LEAN_PRODUCER` (off unless the env opt-in is set);
-    /// `false` is the legacy Rust-producer path, byte-for-byte unchanged. Only ever `true` when the
-    /// crate is built with the `lean-producer` feature; an unlinked archive self-falls-back per turn.
+    /// DIFFERENTIAL cross-check (a divergence is logged loudly as a real soundness finding). The
+    /// verified producer installs its state only for the swap-safe covered set; a root-gap or
+    /// unmappable effect falls back to Rust for that turn. Default mirrors `DREGG_LEAN_PRODUCER`
+    /// (ON unless `DREGG_LEAN_PRODUCER=0`); `false` is the legacy Rust-producer path. Only ever
+    /// `true` when the crate is built with the `lean-producer` feature; an unlinked archive
+    /// self-falls-back per turn.
     lean_producer_enabled: bool,
 }
 
@@ -345,7 +348,7 @@ impl AgentRuntime {
     /// When enabled, [`Self::execute`] / [`Self::execute_turn`] route the committed state through
     /// the VERIFIED Lean executor (`dregg_turn::lean_apply::produce_via_lean`) and demote the Rust
     /// `TurnExecutor` to a logged differential. The constructors default this to
-    /// [`lean_producer_env_enabled`] (the `DREGG_LEAN_PRODUCER` env opt-in); use this to set it
+    /// [`lean_producer_env_enabled`] (ON unless `DREGG_LEAN_PRODUCER=0`); use this to set it
     /// explicitly (e.g. an app that wires the producer path from its own config field rather than
     /// the env var).
     ///
@@ -416,8 +419,26 @@ impl AgentRuntime {
                             target: "dregg::sdk::lean_producer",
                             agent = ?turn.agent,
                             reason = %reason,
-                            "THE SWAP producer mode (SDK): turn not eligible for the verified \
-                             producer — fell back to the Rust producer for this turn"
+                            "THE SWAP producer mode (SDK): turn outside the swap-safe covered set \
+                             — fell back to the Rust producer for this turn (no silent divergence)"
+                        );
+                    }
+                    ProducerOutcome::CoveredDivergence {
+                        lean_committed,
+                        rust_committed,
+                        lean_root,
+                        rust_root,
+                    } => {
+                        tracing::error!(
+                            target: "dregg::sdk::lean_producer",
+                            agent = ?turn.agent,
+                            lean_committed = *lean_committed,
+                            rust_committed = *rust_committed,
+                            lean_root = ?lean_root,
+                            rust_root = ?rust_root,
+                            "THE SWAP producer COVERED-SET DIVERGENCE (SDK): a turn classified \
+                             swap-safe diverged — REAL soundness finding. Kept the Rust post-state; \
+                             did NOT commit the divergent Lean state"
                         );
                     }
                 }

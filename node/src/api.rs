@@ -84,10 +84,11 @@ pub struct StatusResponse {
     /// THE SWAP — honest verified-execution surface. The authoritative state
     /// producer on the commit path:
     ///   * `"lean"`  — the VERIFIED Lean executor produces the committed state
-    ///     for eligible turns (`DREGG_LEAN_PRODUCER=1`); the Rust executor is a
-    ///     logged differential cross-check.
+    ///     for swap-safe (root-agreeing) turns (the DEFAULT; opt out with
+    ///     `DREGG_LEAN_PRODUCER=0`); the Rust executor is a logged differential
+    ///     cross-check.
     ///   * `"rust"`  — the legacy Rust executor produces (Lean runs at most as a
-    ///     veto-only shadow). This is the unchanged devnet default.
+    ///     veto-only shadow). Reached only via `DREGG_LEAN_PRODUCER=0`.
     pub state_producer: String,
     /// Whether the verified Lean producer is enabled (mirrors `state_producer ==
     /// "lean"`). Convenience boolean for clients.
@@ -96,9 +97,10 @@ pub struct StatusResponse {
     /// committed turn on the commit path (the "every transition is proven"
     /// claim). When `false`, only activity proofs are produced on submission.
     pub full_turn_proving: bool,
-    /// Number of effect KINDS the verified producer covers (defaults to Lean
-    /// for). A turn touching only these effects runs on the verified producer;
-    /// a turn touching any other effect falls back to Rust for that turn. See
+    /// Number of SWAP-SAFE (root-agreeing) effect KINDS for which the verified
+    /// producer INSTALLS its post-state. A turn touching only these effects is
+    /// produced by the verified Lean executor; a turn touching any root-gap or
+    /// unmappable effect falls back to Rust for that turn. See
     /// `GET /api/node/producer` for the full per-effect breakdown.
     pub producer_covered_effects: usize,
 }
@@ -112,7 +114,8 @@ pub struct StatusResponse {
 pub struct ProducerStatusResponse {
     /// `"lean"` or `"rust"` — the authoritative state producer on the commit path.
     pub state_producer: String,
-    /// Whether the verified Lean producer is enabled (`DREGG_LEAN_PRODUCER=1`).
+    /// Whether the verified Lean producer is enabled (default ON; opt out with
+    /// `DREGG_LEAN_PRODUCER=0`).
     pub lean_producer_enabled: bool,
     /// Whether a full-turn STARK proof is generated + verified per committed turn.
     pub full_turn_proving: bool,

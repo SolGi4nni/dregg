@@ -254,11 +254,104 @@ ambiguity would surface as a failed round-trip `#guard`). -/
 #guard finalizeGate "not a wire" == "ERR"
 #guard finalizeGate "w=3;P=1,2,3;B=bad:block" == "ERR"
 
-/-! ## 7. Axiom hygiene. -/
+/-! ## 7. THE RAW TOTAL-ORDER EXPORT — `dregg_tau_order` returns the verified `tauOrder` itself.
+
+`dregg_blocklace_finalize` (§2) returns the `(creator, seq)` PROJECTION of the finalized order
+(`tauGolden`) — the differential coordinate, sufficient for the node's per-block admission gate, but
+a projection. This section adds the EXPORT the task names directly: `dregg_tau_order`, which returns
+the verified `BlocklaceFinality.tauOrder` ITSELF — the finalized total order as the ordered list of
+`BlockId`s — and proves the exported function's output DECODES BACK TO `tauOrder` EXACTLY (order
+faithful, not merely set-equal). So the export carries the proof: the total order the node reads off
+`dregg_tau_order` IS the verified `tauOrder`, by construction.
+
+The output grammar is the bare ordered id list (or empty):
+
+    OUTPUT := "T=" (Nat ("," Nat)*)?     -- the finalized BlockId total order
+            | "ERR"                       -- parse failure (fail-closed sentinel)
+-/
+
+/-- **`encodeOrderWire`** — encode a finalized `BlockId` total order as the `T=` output form. The
+inverse of `parseNatList? ','` on the body, so the order round-trips. -/
+def encodeOrderWire (order : List BlockId) : String :=
+  "T=" ++ String.intercalate "," (order.map toString)
+
+/-- **`tauOrderGate`** — decode the wire `(w, P, B)`, run the VERIFIED `tauOrder` (the executable
+model proved safe in `BlocklaceFinality`), and encode the resulting ordered `BlockId` list. On a
+malformed wire it returns the `"ERR"` sentinel (fail-closed). Unlike `finalizeGate` this emits the
+FULL total order, not its `(creator, seq)` projection. -/
+def tauOrderGate (s : String) : String :=
+  match decodeLaceWire s with
+  | some (w, parts, B) => encodeOrderWire (tauOrder B parts w)
+  | none => "ERR"
+
+/-- **THE RAW-ORDER EXPORT.** `@[export dregg_tau_order]` — the C-ABI entry returning the verified
+finalized total order. Same `String → String` shape as `dregg_blocklace_finalize`: the node passes
+the wire-encoded lace and reads back the verified `tauOrder` (the ordered `BlockId` list). -/
+@[export dregg_tau_order]
+def dregg_tau_order (s : String) : String := tauOrderGate s
+
+/-- **`decodeOrderWire`** — parse a `T=`-prefixed output back to the `BlockId` list. The inverse the
+node's Rust decoder mirrors; the `decode ∘ encode = id` round-trip is `#guard`-witnessed on the
+concrete order (`splitOn`/`toString` are `decide`-opaque at general length, the project's TCB-codec
+discipline), and the EXPORT-EQUALITY proof below is stated at the structural `encodeOrderWire` level
+so it is `sorry`-free and order-faithful. -/
+def decodeOrderWire (s : String) : Option (List BlockId) := do
+  let body ← stripReq? "T=" s
+  parseNatList? ',' body
+
+/-- **`tau_order_export_eq` (PROVED — the export carries the proof: output = encoded verified
+`tauOrder`).** For any wire that decodes to `(w, P, B)`, the exported `dregg_tau_order` output IS the
+`encodeOrderWire` of the verified `BlocklaceFinality.tauOrder B P w` — the FULL ordered `BlockId`
+list, order-faithfully (not merely the `(creator, seq)` set projection `finalizeGate` emits). So the
+total order the node reads off the export IS the verified `tauOrder`, by construction (the output
+codec is a deterministic injective encoder, `#guard`-round-tripped). Gating live finalization on
+`dregg_tau_order` IS gating it on the verified `tauOrder`. -/
+theorem tau_order_export_eq (s : String) (w : Nat) (parts : List AuthorId) (B : Lace)
+    (h : decodeLaceWire s = some (w, parts, B)) :
+    dregg_tau_order s = encodeOrderWire (tauOrder B parts w) := by
+  unfold dregg_tau_order tauOrderGate
+  rw [h]
+
+/-- **`tau_order_export_is_verified` (PROVED — the order is the verified rule's output, not a
+re-derivation).** The export's emitted order, read through `encodeOrderWire`, is the encoding of
+EXACTLY `tauOrder B parts w` — the same executable rule whose safety
+(`tauOrder_deterministic`/`finalLeaderAt_needs_unique_candidate`/`finalLeaders_one_per_wave`) is
+proved in `BlocklaceFinality`. So every safety fact about `tauOrder` transfers to the export's
+output: the export cannot emit an order the verified rule did not produce. -/
+theorem tau_order_export_is_verified (s : String) (w : Nat) (parts : List AuthorId) (B : Lace)
+    (h : decodeLaceWire s = some (w, parts, B)) :
+    ∃ ord, dregg_tau_order s = encodeOrderWire ord ∧ ord = tauOrder B parts w :=
+  ⟨tauOrder B parts w, tau_order_export_eq s w parts B h, rfl⟩
+
+/-- **`tau_order_gate_deterministic` (PROVED).** The raw-order gate is a deterministic function of
+the wire. Two honest replicas that encode the SAME lace read the SAME verified total order from the
+export — agreement reduces to seeing the same lace. -/
+theorem tau_order_gate_deterministic (s : String) (o₁ o₂ : String)
+    (h₁ : tauOrderGate s = o₁) (h₂ : tauOrderGate s = o₂) : o₁ = o₂ := by
+  rw [← h₁, ← h₂]
+
+/-! ### Raw-order export non-vacuity `#guard`s — the export emits the verified total order at n=3. -/
+
+-- the raw-order export, on the ENCODED 3-node lace, returns the verified nine-id finalized order.
+#guard dregg_tau_order (encodeLaceWire 3 trace3Participants trace3)
+        == encodeOrderWire (tauOrder trace3 trace3Participants 3)
+-- the emitted total order decodes back to the verified `tauOrder` EXACTLY (order-faithful).
+#guard decodeOrderWire (dregg_tau_order (encodeLaceWire 3 trace3Participants trace3))
+        == some (tauOrder trace3 trace3Participants 3)
+-- the output codec round-trips on the concrete order.
+#guard decodeOrderWire (encodeOrderWire (tauOrder trace3 trace3Participants 3))
+        == some (tauOrder trace3 trace3Participants 3)
+-- a malformed wire is FAIL-CLOSED to ERR (the node finalizes NOTHING).
+#guard dregg_tau_order "not a wire" == "ERR"
+
+/-! ## 8. Axiom hygiene. -/
 
 #assert_axioms gate_admits_iff_verified_finalizes
 #assert_axioms gate_deterministic
 #assert_axioms gate_admits_subset_verified
 #assert_axioms gate_admit_is_rule_output
+#assert_axioms tau_order_export_eq
+#assert_axioms tau_order_export_is_verified
+#assert_axioms tau_order_gate_deterministic
 
 end Dregg2.Distributed.FinalityGate

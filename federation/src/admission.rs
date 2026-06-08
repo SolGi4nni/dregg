@@ -294,13 +294,107 @@ impl AdmissionRegistry {
         self.vouched_by(strand) >= self.vouch_threshold
     }
 
-    /// **THE HYBRID ADMISSION GATE.** A strand is admitted iff it is a seed, OR it is bonded (stake
-    /// path), OR it is vouched to threshold by rooted members (vouch path).
+    /// The PURE-RUST hybrid admission gate — the DIFFERENTIAL SIBLING of the verified Lean rule.
     ///
     /// `admitted = is_seed ∨ vouched_to_threshold ∨ has_valid_bond` — the exact Lean
-    /// `StrandAdmission.admitted`.
-    pub fn admitted(&self, strand: &StrandId) -> bool {
+    /// `StrandAdmission.admitted`. This is `dreggrs`'s Rust heritage gate: it is kept as the
+    /// differential reference (Lean == Rust on the same registry) and as the fallback when the Lean
+    /// archive is not linked. [`Self::admitted`] prefers the VERIFIED Lean export when available.
+    pub fn admitted_rust(&self, strand: &StrandId) -> bool {
         self.is_seed(strand) || self.vouched_to_threshold(strand) || self.has_valid_bond(strand)
+    }
+
+    /// **THE HYBRID ADMISSION GATE (F-4).** A strand is admitted iff it is a seed, OR it is bonded
+    /// (stake path), OR it is vouched to threshold by rooted members (vouch path).
+    ///
+    /// When built with `--features lean-admission` AND the Lean archive exports `dregg_strand_admit`,
+    /// this routes the verdict through the VERIFIED Lean rule
+    /// `Dregg2.Distributed.StrandAdmission.admitted` (the `dregg_strand_admit` export): the F-4 gate
+    /// the federation runs IS the verified gate, carried by the Lean theorem `strand_admit_eq_admitted`
+    /// (the export's `"1"`/`"0"` is definitionally the verified `admitted`). When the archive is
+    /// absent (marshal-only / wasm build) it FAILS BACK to the pure-Rust [`Self::admitted_rust`] — so
+    /// the gate is never broken, only un-verified. The Rust path remains the differential sibling.
+    pub fn admitted(&self, strand: &StrandId) -> bool {
+        #[cfg(feature = "lean-admission")]
+        {
+            if let Some(verdict) = self.lean_admitted(strand) {
+                return verdict;
+            }
+            // archive missing the export ⇒ fall through to the Rust gate (never break the live path).
+        }
+        self.admitted_rust(strand)
+    }
+
+    /// Query the VERIFIED Lean strand-admission gate for `strand`. Interns the registry's `[u8;32]`
+    /// pubkeys to the small `AuthorId` indices the Lean wire uses (the same interning discipline the
+    /// finality gate applies), builds the wire `StrandAdmission.encodeAdmitWire` mirrors, calls the
+    /// `dregg_strand_admit` export, and decodes the `"1"`/`"0"` verdict. Returns `None` when the
+    /// archive lacks the export (so [`Self::admitted`] falls back to the Rust gate); a malformed wire
+    /// (`ERR`) decodes fail-closed to `Some(false)` — the verified rule's "not admitted".
+    #[cfg(feature = "lean-admission")]
+    fn lean_admitted(&self, strand: &StrandId) -> Option<bool> {
+        if !dregg_lean_ffi::strand_admit_available() {
+            return None;
+        }
+        // Intern every pubkey that appears (seeds, vouchers, candidates, bond owners, the query) to a
+        // stable, injective small index — the abstract `AuthorId` the Lean rule reasons over.
+        let mut ids: std::collections::HashMap<[u8; 32], u64> = std::collections::HashMap::new();
+        let intern = |pk: &[u8; 32], ids: &mut std::collections::HashMap<[u8; 32], u64>| -> u64 {
+            let next = ids.len() as u64;
+            *ids.entry(*pk).or_insert(next)
+        };
+        // Seeds first (deterministic order), then vouchers/candidates, then bond owners, then query —
+        // the exact set the wire carries; interning is by first appearance, injective by construction.
+        let seeds: Vec<u64> = self
+            .seeds
+            .iter()
+            .map(|s| intern(s, &mut ids))
+            .collect();
+        let vouches: Vec<(u64, u64)> = self
+            .vouches
+            .iter()
+            .filter(|v| v.verify_sig())
+            .map(|v| {
+                let vc = intern(v.voucher.as_bytes(), &mut ids);
+                let cn = intern(v.candidate.as_bytes(), &mut ids);
+                (vc, cn)
+            })
+            .collect();
+        let bonds: Vec<(u64, u64)> = self
+            .bonds
+            .iter()
+            .filter(|b| b.verify_sig())
+            .map(|b| {
+                let ow = intern(b.owner.as_bytes(), &mut ids);
+                (ow, b.amount)
+            })
+            .collect();
+        let q = intern(strand.as_bytes(), &mut ids);
+
+        let join_pairs = |ps: &[(u64, u64)]| -> String {
+            ps.iter()
+                .map(|(a, b)| format!("{a}:{b}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let wire = format!(
+            "N={n};m={m};S={s};V={v};Bo={bo};q={q}",
+            n = self.vouch_threshold,
+            m = self.min_bond,
+            s = seeds
+                .iter()
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+            v = join_pairs(&vouches),
+            bo = join_pairs(&bonds),
+            q = q,
+        );
+
+        match dregg_lean_ffi::verified_admits(&wire) {
+            Ok(b) => Some(b), // the verified verdict (ERR ⇒ fail-closed false inside verified_admits).
+            Err(_) => None,   // archive lacks the export ⇒ fall back to the Rust gate.
+        }
     }
 
     /// **SLASH** `strand`'s bond on a valid equivocation proof: remove all of its bonds (burning the
@@ -591,5 +685,43 @@ mod tests {
         };
         assert_eq!(reg.slash(&ev), Some(100));
         assert!(!reg.admitted(&four)); // = Lean `admitted (slash fedDemo 4).1 4 == false`
+    }
+
+    /// THE LIVE F-4 LEAN-BACKED GATE DIFFERENTIAL — when the verified Lean archive is linked
+    /// (`--features lean-admission` + the `dregg_strand_admit` export present), the Lean-backed
+    /// `admitted` AGREES with the pure-Rust `admitted_rust` on every strand role of the `fedDemo`
+    /// fixture. This is the runtime proof that routing the gate through the verified rule is
+    /// transparent for the modelled cases — `admitted` IS `admitted_rust` IS the verified Lean
+    /// `StrandAdmission.admitted`. Self-skips when the archive lacks the export (then `admitted`
+    /// already falls back to `admitted_rust`, so they are trivially equal).
+    #[cfg(feature = "lean-admission")]
+    #[test]
+    fn lean_backed_gate_agrees_with_rust_gate() {
+        let (sk_s1, s1) = generate_keypair();
+        let (sk_s2, s2) = generate_keypair();
+        let mut reg = AdmissionRegistry::new([s1, s2], 2, 100);
+        let (_, three) = generate_keypair(); // vouched by both seeds
+        let (sk_four, four) = generate_keypair(); // bonded at floor
+        let (sk_five, five) = generate_keypair(); // bonded below floor
+        let (_, six) = generate_keypair(); // fresh Sybil
+        reg.add_vouch(Vouch::create(&sk_s1, three));
+        reg.add_vouch(Vouch::create(&sk_s2, three));
+        reg.add_bond(Bond::post(&sk_four, 100));
+        reg.add_bond(Bond::post(&sk_five, 50));
+
+        if !dregg_lean_ffi::strand_admit_available() {
+            eprintln!("SKIP: Lean strand-admit export not linked — admitted() == admitted_rust()");
+        }
+        for s in [&s1, &s2, &three, &four, &five, &six] {
+            assert_eq!(
+                reg.admitted(s),
+                reg.admitted_rust(s),
+                "Lean-backed admitted() must agree with the Rust differential sibling"
+            );
+        }
+        // And the verdicts are the F-4 expected ones (= Lean `fedDemo`).
+        assert!(reg.admitted(&s1) && reg.admitted(&s2));
+        assert!(reg.admitted(&three) && reg.admitted(&four));
+        assert!(!reg.admitted(&five) && !reg.admitted(&six));
     }
 }

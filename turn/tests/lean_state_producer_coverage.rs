@@ -428,3 +428,222 @@ fn refusal_is_an_audit_field_swap_gap() {
     }
     assert!(lean_shadow::producer_root_gap_effects().contains(&"Refusal"));
 }
+
+#[test]
+fn attenuate_capability_is_a_cap_fidelity_swap_gap() {
+    if skip_no_lean() {
+        return;
+    }
+    // AttenuateCapability narrows a HELD c-list slot in place: dregg1's `apply.rs` rewrites the
+    // held `CapabilityRef`'s `permissions` (`AuthRequired`) to a strictly narrower value (and may
+    // bind a finite expiry), changing that cell's `cap_root` → `.root()`. The wire `caps` model
+    // carries only bare `Cap::Node(target)` edges (no per-cap `AuthRequired`/expiry), and the
+    // verified `attenuate` is a NO-OP on a `node` cap (it only filters `.endpoint` rights). So the
+    // Lean-reconstituted c-list keeps the unchanged `node` edge (`AuthRequired::None`), hashing to a
+    // DIFFERENT `cap_root` than Rust's narrowed cap. Same cap-fidelity gap class as GrantCapability;
+    // asserted as a SPECIFIC divergence (a negative tooth), characterized, never a silent pass.
+    let mut a = make_open_cell(1, 100);
+    let a_id = a.id();
+    // Seed a HELD cap on A over a target cell B with a NON-None permission, so the in-place narrowing
+    // genuinely rewrites the cap_root (and the wire's bare-`node` reconstruction cannot coincide).
+    let b = make_open_cell(2, 5);
+    let b_id = b.id();
+    let slot = a
+        .capabilities
+        .grant(b_id, AuthRequired::Signature)
+        .expect("seed a held cap to attenuate");
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+    pre.insert_cell(b).unwrap();
+
+    // Narrow the held cap from Signature → None (a monotone narrowing apply.rs accepts).
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::AttenuateCapability {
+            cell: a_id,
+            slot,
+            narrower_permissions: AuthRequired::None,
+            narrower_effects: None,
+            narrower_expiry: None,
+        },
+    );
+
+    // Confirm Rust really narrowed the held cap (so the gap is genuinely about cap fidelity).
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut rust_ledger = pre.clone();
+    if executor.execute(&turn, &mut rust_ledger).is_committed() {
+        let a_caps = &rust_ledger.get(&a_id).unwrap().capabilities;
+        assert!(
+            a_caps.iter().any(|c| c.target == b_id && c.permissions == AuthRequired::None),
+            "Rust must have narrowed A's held cap over B to None"
+        );
+    }
+
+    match diff(pre, turn, &[a_id, b_id]) {
+        Ok(()) => panic!(
+            "AttenuateCapability unexpectedly round-tripped — the cap-fidelity swap-gap may have \
+             closed (the wire caps model would now carry per-cap AuthRequired/expiry)"
+        ),
+        Err(why) => assert!(
+            why.contains("cap_root divergence")
+                || why.contains("ROOT divergence")
+                || why.contains("commit-bit divergence"),
+            "AttenuateCapability swap-gap should be a cap_root/root/commit-bit divergence, got: {why}"
+        ),
+    }
+    assert!(lean_shadow::producer_root_gap_effects().contains(&"AttenuateCapability"));
+}
+
+// =====================================================================================
+// THE FLIPPED DEFAULT — `produce_via_lean` as the DEFAULT-ON commit-path producer.
+// These pin the SAFETY of the flip: on the covered (root-agreeing) set the verified
+// executor's state is ACTUALLY INSTALLED (Lean produces) AND agrees with Rust; on a
+// root-gap effect the producer falls back to Rust and does NOT commit a divergent root
+// (no silent divergence); the covered-set gate is decided by `forest_is_root_agreeing`.
+// =====================================================================================
+
+/// The covered-set predicate is purely a Rust decision (no Lean link needed): a Transfer turn is
+/// covered (root-agreeing), a SetPermissions turn is NOT (a characterized root-gap).
+#[test]
+fn forest_is_root_agreeing_covers_transfer_not_setpermissions() {
+    let a = make_open_cell(1, 100);
+    let a_id = a.id();
+    let b = make_open_cell(2, 0);
+    let b_id = b.id();
+
+    let transfer = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::Transfer { from: a_id, to: b_id, amount: 10 },
+    );
+    assert!(
+        lean_shadow::forest_is_root_agreeing(&transfer),
+        "a Transfer turn must be in the swap-safe covered set"
+    );
+    assert!(lean_shadow::first_root_gap_kind(&transfer).is_none());
+
+    let mut new_perms = open_permissions();
+    new_perms.set_state = AuthRequired::Signature;
+    let setperms = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::SetPermissions { cell: a_id, new_permissions: new_perms },
+    );
+    assert!(
+        !lean_shadow::forest_is_root_agreeing(&setperms),
+        "a SetPermissions turn touches a root-gap effect — must NOT be covered"
+    );
+    assert_eq!(
+        lean_shadow::first_root_gap_kind(&setperms),
+        Some("SetPermissions"),
+        "the fallback reason must name the offending root-gap kind"
+    );
+}
+
+/// On a COVERED (root-agreeing) Transfer turn, `produce_via_lean` actually makes the verified Lean
+/// executor the PRODUCER: the post-state ledger it leaves behind is the Lean-reconstituted one, the
+/// outcome is `LeanProduced { agree: true }`, and the committed root equals BOTH producers' root.
+#[test]
+fn produce_via_lean_installs_verified_state_on_covered_transfer() {
+    if skip_no_lean() {
+        return;
+    }
+    use dregg_turn::lean_apply::{produce_via_lean, ProducerOutcome};
+
+    let a = make_open_cell(1, 100);
+    let a_id = a.id();
+    let b = make_open_cell(2, 0);
+    let b_id = b.id();
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+    pre.insert_cell(b).unwrap();
+
+    // Independent Rust-only run to know the expected committed post-state.
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::Transfer { from: a_id, to: b_id, amount: 10 },
+    );
+    let mut rust_only = pre.clone();
+    assert!(executor.execute(&turn, &mut rust_only).is_committed(), "Rust Transfer commits");
+    let expected_root = rust_only.root();
+
+    // Producer mode: this is the live commit-path call.
+    let executor2 = TurnExecutor::new(ComputronCosts::zero());
+    let mut ledger = pre.clone();
+    let (result, outcome) = produce_via_lean(&executor2, &turn, &mut ledger);
+    assert!(result.is_committed(), "producer-mode Transfer commits");
+
+    match outcome {
+        ProducerOutcome::LeanProduced { agree, lean_root, rust_root, .. } => {
+            assert!(agree, "covered Transfer must agree (Lean root == Rust root)");
+            assert_eq!(lean_root, rust_root, "the two producers' roots must be equal");
+        }
+        other => panic!("covered Transfer must produce LeanProduced, got {other:?}"),
+    }
+
+    // The COMMITTED ledger is the Lean-produced one — and it equals the Rust post-state (the swap).
+    assert_eq!(ledger.root(), expected_root, "the committed root must be the verified-producer root");
+    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 90);
+    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), 10);
+}
+
+/// On a ROOT-GAP turn (SetPermissions), `produce_via_lean` falls back to the Rust producer for that
+/// turn: the outcome is `Fallback { RootGap }`, the committed ledger is the RUST post-state (the new
+/// permissions are applied), and NO divergent Lean root is committed. This is the "no silent
+/// divergence" guarantee that makes the default-on flip safe.
+#[test]
+fn produce_via_lean_falls_back_on_root_gap_setpermissions() {
+    if skip_no_lean() {
+        return;
+    }
+    use dregg_turn::lean_apply::{produce_via_lean, ExtractError, ProducerOutcome};
+
+    let a = make_open_cell(1, 100);
+    let a_id = a.id();
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+
+    let mut new_perms = open_permissions();
+    new_perms.set_state = AuthRequired::Signature;
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::SetPermissions { cell: a_id, new_permissions: new_perms },
+    );
+
+    // Expected Rust post-state.
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut rust_only = pre.clone();
+    let rust_committed = executor.execute(&turn, &mut rust_only).is_committed();
+    let expected_root = rust_only.root();
+
+    let executor2 = TurnExecutor::new(ComputronCosts::zero());
+    let mut ledger = pre.clone();
+    let (result, outcome) = produce_via_lean(&executor2, &turn, &mut ledger);
+    assert_eq!(result.is_committed(), rust_committed, "producer-mode result matches Rust");
+
+    match outcome {
+        ProducerOutcome::Fallback { reason: ExtractError::RootGap { kind } } => {
+            assert_eq!(kind, "SetPermissions", "fallback must name the root-gap kind");
+        }
+        other => panic!("a root-gap turn must fall back with RootGap, got {other:?}"),
+    }
+
+    // The committed ledger is the RUST post-state (no divergent Lean root committed).
+    assert_eq!(ledger.root(), expected_root, "root-gap turn must commit the Rust post-state");
+    if rust_committed {
+        assert_eq!(
+            ledger.get(&a_id).unwrap().permissions.set_state,
+            AuthRequired::Signature,
+            "the Rust producer's new permissions must be the committed state"
+        );
+    }
+}

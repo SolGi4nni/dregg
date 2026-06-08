@@ -65,33 +65,42 @@ pub struct VerifiedFinality {
     creator_ids: HashMap<[u8; 32], u64>,
 }
 
+/// The wire-encoded lace + the interning tables the finality gates share. Produced once by
+/// [`VerifiedFinality::build_wire`] and consumed by both the `(creator, seq)`-projection gate
+/// (`compute`) and the RAW total-order gate (`compute_order`), so the two read the EXACT same wire.
+struct LaceWire {
+    /// The `"w=<W>;P=<...>;B=<...>"` wire the Lean rule consumes (the grammar `encodeLaceWire` mirrors).
+    wire: String,
+    /// creator pubkey -> the small `AuthorId` (participant index) used on the wire.
+    creator_ids: HashMap<[u8; 32], u64>,
+    /// the interned Lean `BlockId` (a `u64` index) -> the node's real `BlockId`. The inverse of the
+    /// interning the wire uses, so the RAW-order export's `u64` ids map back to node blocks.
+    id_to_block: HashMap<u64, BlockId>,
+}
+
 impl VerifiedFinality {
-    /// Run the VERIFIED Lean finalization rule over the lace and participants. Returns `Ok(Some(_))`
-    /// with the verified finalized set when the Lean gate ran and produced a non-`ERR` order;
-    /// `Ok(None)` when the gate is unavailable/`ERR` (the caller fails open); `Err` is never produced
-    /// (errors collapse to `None` so the caller has one fail-open branch).
-    pub fn compute(lace: &Blocklace, participants: &[[u8; 32]]) -> Option<VerifiedFinality> {
-        // Intern creators to the participant index (matches the round-robin `participants[w % n]`
-        // leader selection in BOTH `tau` and the Lean `waveLeader`). Non-participant creators (a
-        // peer not in the constitution) get an index past the participant range — they can never be
-        // a leader but their blocks still appear in coverage; we keep the index stable + injective.
+    /// Build the wire + interning tables ONCE — shared by `compute` (projection) and `compute_order`
+    /// (raw total order), so both gates hand the verified rule byte-identical input. Interns creators
+    /// to the participant index (the round-robin `participants[w % n]` leader, matching BOTH `tau` and
+    /// the Lean `waveLeader`) and block ids to first-seen order over the SAME `(seq, creator)` sort
+    /// `tau` uses (so the wire's `BlockId`s are a faithful relabeling of the lace).
+    fn build_wire(lace: &Blocklace, participants: &[[u8; 32]]) -> LaceWire {
         let mut creator_ids: HashMap<[u8; 32], u64> = HashMap::new();
         for (i, p) in participants.iter().enumerate() {
             creator_ids.entry(*p).or_insert(i as u64);
         }
         let mut next_extra = participants.len() as u64;
 
-        // Stable block-id interning (first-seen order over the SAME (seq, creator) sort `tau` uses,
-        // so the Lean wire's `BlockId`s are a faithful relabeling of the lace).
         let mut blocks: Vec<(&BlockId, &Block)> = lace.iter().collect();
         blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
 
         let mut id_ids: HashMap<BlockId, u64> = HashMap::new();
+        let mut id_to_block: HashMap<u64, BlockId> = HashMap::new();
         for (i, (id, _)) in blocks.iter().enumerate() {
             id_ids.insert(**id, i as u64);
+            id_to_block.insert(i as u64, **id);
         }
 
-        // Build the wire: w=<W>;P=<p0>,...;B=<id>:<creator>:<seq>:<preds>|...
         let participants_wire: Vec<String> =
             (0..participants.len()).map(|i| i.to_string()).collect();
 
@@ -122,6 +131,43 @@ impl VerifiedFinality {
             P = participants_wire.join(","),
             B = block_wires.join("|")
         );
+        LaceWire {
+            wire,
+            creator_ids,
+            id_to_block,
+        }
+    }
+
+    /// Run the VERIFIED Lean RAW TOTAL-ORDER rule (`dregg_tau_order`, the export proved
+    /// order-faithfully equal to `BlocklaceFinality.tauOrder` by `tau_order_export_eq`) over the lace
+    /// and return the finalized total order as node `BlockId`s, in the verified order. `None` when the
+    /// raw-order export is unavailable (stale archive) or the wire returns `ERR` (the caller falls back
+    /// to the Rust `tau` order). Unlike [`Self::compute`] (the `(creator, seq)`-set projection used for
+    /// per-block admission), this is the FULL ordered id list — the verified `tauOrder` itself.
+    pub fn compute_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Option<Vec<BlockId>> {
+        let LaceWire {
+            wire, id_to_block, ..
+        } = Self::build_wire(lace, participants);
+        // The raw-order export returns the verified `tauOrder` as the interned-`u64` id list. Map each
+        // back to the node's `BlockId`; an id the wire never interned (impossible for a well-formed
+        // `tauOrder`, which only emits present ids) is dropped fail-safe.
+        let order = dregg_lean_ffi::verified_tau_order(&wire).ok()?;
+        Some(
+            order
+                .into_iter()
+                .filter_map(|u| id_to_block.get(&u).copied())
+                .collect(),
+        )
+    }
+
+    /// Run the VERIFIED Lean finalization rule over the lace and participants. Returns `Ok(Some(_))`
+    /// with the verified finalized set when the Lean gate ran and produced a non-`ERR` order;
+    /// `Ok(None)` when the gate is unavailable/`ERR` (the caller fails open); `Err` is never produced
+    /// (errors collapse to `None` so the caller has one fail-open branch).
+    pub fn compute(lace: &Blocklace, participants: &[[u8; 32]]) -> Option<VerifiedFinality> {
+        let LaceWire {
+            wire, creator_ids, ..
+        } = Self::build_wire(lace, participants);
 
         // Call the verified Lean rule. On any error (archive missing the export, init failure) or the
         // `ERR` sentinel, return None so the caller fails open with a warning.
@@ -291,6 +337,76 @@ mod tests {
         for (cid, seq) in &verified {
             let creator = participants[*cid as usize];
             assert!(vf.admits(&creator, *seq), "gate must admit a verified-finalized block");
+        }
+    }
+
+    /// THE RAW-ORDER GATE DIFFERENTIAL — `VerifiedFinality::compute_order` (the verified Lean
+    /// `BlocklaceFinality.tauOrder` via the NEW `dregg_tau_order` export, proved order-faithfully
+    /// equal to `tauOrder` by `tau_order_export_eq`) returns the FULL finalized TOTAL ORDER as node
+    /// `BlockId`s. On the 3-node lace this is the nine-block order whose `(creator, seq)` projection
+    /// is exactly the projection gate's finalized SET — so the raw-order export and the projection
+    /// export agree, and the order is a permutation-free superset relationship: every block the
+    /// projection finalizes appears in the raw order, IN the verified sequence.
+    ///
+    /// Self-skips when the archive lacks the raw-order export (a stale/marshal-only build).
+    #[test]
+    fn raw_order_export_agrees_with_projection_three_node() {
+        if !dregg_lean_ffi::tau_order_available() {
+            eprintln!("SKIP: Lean raw tau-order export not linked (tau_order_available()==false)");
+            return;
+        }
+
+        let keys = [key(1), key(2), key(3)];
+        let participants: Vec<[u8; 32]> =
+            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let mut lace = Blocklace::new(keys[0].clone(), 3);
+
+        let mut r1_ids = Vec::new();
+        for (i, k) in keys.iter().enumerate() {
+            let b = Block::new(k, 0, Payload::Turn(vec![i as u8]), vec![]);
+            r1_ids.push(b.id());
+            lace.receive_block(b).expect("genesis insert");
+        }
+        let mut round_prev: Vec<BlockId> = r1_ids;
+        for round in 1u64..=2 {
+            let mut this_round = Vec::new();
+            for (i, k) in keys.iter().enumerate() {
+                let b = Block::new(
+                    k,
+                    round,
+                    Payload::Turn(vec![(round * 10) as u8 + i as u8]),
+                    round_prev.clone(),
+                );
+                this_round.push(b.id());
+                lace.receive_block(b).expect("round insert");
+            }
+            round_prev = this_round;
+        }
+
+        // The verified RAW total order (node BlockIds), via the new export.
+        let order = VerifiedFinality::compute_order(&lace, &participants)
+            .expect("raw-order gate ran (archive present + wire non-ERR)");
+        assert_eq!(order.len(), 9, "3-node lace finalizes a nine-block total order");
+
+        // Its (creator, seq) projection must EQUAL the projection gate's finalized set — the two
+        // verified exports are consistent (one is the order, the other its set projection).
+        let vf = VerifiedFinality::compute(&lace, &participants).expect("projection gate ran");
+        let order_cs: std::collections::HashSet<(u64, u64)> = order
+            .iter()
+            .filter_map(|id| lace.get(id))
+            .map(|b| {
+                let cid = participants.iter().position(|p| p == &b.creator).unwrap() as u64;
+                (cid, b.seq)
+            })
+            .collect();
+        assert_eq!(
+            order_cs, vf.finalized,
+            "the raw tau-order export's (creator,seq) projection must equal the projection gate's set"
+        );
+        // Every block in the verified order is admitted by the projection gate (consistency both ways).
+        for id in &order {
+            let b = lace.get(id).expect("ordered id is present");
+            assert!(vf.admits(&b.creator, b.seq), "ordered block must be projection-admitted");
         }
     }
 }

@@ -27,14 +27,19 @@ use dregg_turn::WitnessedReceipt;
 use crate::gossip::GossipHandle;
 use crate::routing_table::RoutingTable;
 
-/// THE SWAP — read the producer-mode opt-in from the environment. `DREGG_LEAN_PRODUCER=1` (or
-/// `true`) makes the verified Lean executor the authoritative state producer on the commit path,
-/// with the Rust executor demoted to a differential cross-check. Any other value (or unset) keeps
-/// the legacy Rust-producer path, so the devnet default is unchanged.
+/// THE SWAP (FLIPPED DEFAULT) — the verified Lean executor is now the authoritative state producer
+/// on the commit path BY DEFAULT, with the legacy Rust executor demoted to a differential
+/// cross-check. The producer installs the verified post-state only for the swap-safe COVERED set
+/// (`lean_shadow::forest_is_root_agreeing` — every effect root-agreeing); a turn touching a
+/// characterized root-gap or unmappable effect falls back to Rust for that turn with a logged
+/// reason (no silent divergence).
+///
+/// This reads an opt-OUT: set `DREGG_LEAN_PRODUCER=0` (or `false`/`off`/`no`) to fall back to the
+/// legacy Rust-producer path entirely. Any other value (or unset) keeps the verified producer ON.
 pub fn lean_producer_env_enabled() -> bool {
-    matches!(
+    !matches!(
         std::env::var("DREGG_LEAN_PRODUCER").ok().as_deref(),
-        Some("1") | Some("true") | Some("TRUE")
+        Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") | Some("no") | Some("NO")
     )
 }
 
@@ -189,10 +194,11 @@ pub struct NodeStateInner {
     /// ledger is reconstituted from the Lean FFI's post-state, and the legacy Rust
     /// `dregg_turn::TurnExecutor` is demoted to a parallel runtime DIFFERENTIAL cross-check (its
     /// post-state root is compared against the Lean-produced root; a divergence is logged loudly as
-    /// a real soundness finding, never reconciled). Default `false` — the devnet/legacy default is
-    /// UNCHANGED (Rust produces). Opt in via the `DREGG_LEAN_PRODUCER=1` env var (read at state
-    /// construction) or by setting this field. Ineligible turns (an effect with no wire arm) fall
-    /// back to the Rust producer for that turn.
+    /// a real soundness finding). Default `true` — THE SWAP: the verified Lean executor produces the
+    /// committed state by default for the swap-safe COVERED set. Opt OUT via `DREGG_LEAN_PRODUCER=0`
+    /// (read at state construction) or by clearing this field. A turn touching a characterized
+    /// root-gap effect (root provably diverges) or an unmappable effect falls back to the Rust
+    /// producer for that turn, with a logged reason — never a silent commit of divergent state.
     pub lean_producer_enabled: bool,
     /// MCP per-tool capability enforcement. When `true`, the `tools/call`
     /// surface REQUIRES a covering `Authorization::Token` for every call (a

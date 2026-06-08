@@ -95,7 +95,7 @@ structure AdmissionState where
   minBond : Nat
   vouches : List Vouch
   bonds   : List Bond
-  deriving Inhabited
+  deriving Inhabited, DecidableEq
 
 /-! ## 2. The admission predicate — admitted = seed ∨ vouchedToThreshold ∨ bonded.
 
@@ -466,7 +466,183 @@ at the bond floor and a below-floor bond is rejected; (iv) a fresh Sybil keypair
 normally. So the safety theorems constrain a REAL, non-trivial admission rule, and F-4 (unlimited
 free Sybil strands) is DEFENDED both at the gate and at finality. -/
 
-/-! ## 7. Axiom hygiene — the hybrid admission gate + its F-4 teeth are kernel-clean. -/
+/-! ## 7. THE LIVE ADMISSION GATE — an `@[export]`ed wire surface the NODE actually calls.
+
+`§1–6` give the verified, EXECUTABLE hybrid gate (`admitted`, all pure `Bool` computation — no
+`noncomputable`/`Classical` in the runtime path: `isSeed`/`hasValidBond`/`vouchedToThreshold` are
+`List.any`/`List.length` folds, fully reducible). But — exactly the F-4 dark-mirror trap the SWAP
+warns about — a verified gate that lives only BESIDE the running node is the weaker spec. This
+section is the load-bearing wire: it exposes the verified `admitted` predicate as a wire-in/wire-out
+`@[export] dregg_strand_admit` (the template is `FinalityGate.dregg_blocklace_finalize` /
+`Exec.FFI.dregg_exec_full_forest_auth`), so the federation's Rust admission gate
+(`federation/src/admission.rs::AdmissionRegistry::admitted`) computes the F-4 verdict FROM the
+verified Lean rule itself — `dreggrs`'s Rust `admitted` stays as the DIFFERENTIAL sibling
+(Lean == Rust on the same registry), not the decider.
+
+The wire codec is self-contained, compact, whitespace-free, FAIL-CLOSED (any malformed field ⇒ the
+`ERR` sentinel, which the Rust caller treats as "NOT admitted" — fail-closed, never fail-open). It is
+decode∘encode round-trip-correct on the concrete `fedDemo` registry (`#guard`), so the Rust encoder
+and this Lean decoder share one grammar. We prove the export EQUALS the verified `admitted` rule
+(`strand_admit_eq_admitted`), so the export carries the proof — the F-4 gate the node runs IS the
+verified gate, by construction.
+
+```
+INPUT  := "N=" Nat ";m=" Nat ";S=" NATLIST ";V=" VOUCHLIST ";Bo=" BONDLIST ";q=" Nat
+NATLIST   := ε | Nat ("," Nat)*                       -- seeds
+VOUCHLIST := ε | VOUCH ("," VOUCH)*                   -- vouches
+VOUCH     := Nat ":" Nat                              -- voucher : candidate
+BONDLIST  := ε | BOND ("," BOND)*                     -- bonds
+BOND      := Nat ":" Nat                              -- owner : amount
+OUTPUT := "1" (admitted) | "0" (NOT admitted) | "ERR" (malformed wire ⇒ fail-closed NOT admitted)
+```
+-/
+
+/-- Parse a `Nat` strictly: non-empty, all-ASCII-digits. Fail-closed. -/
+def parseNat? (s : String) : Option Nat :=
+  if s.isEmpty then none else
+    if s.all (fun c => c.isDigit) then s.toNat? else none
+
+/-- Parse a possibly-empty `sep`-separated list of `Nat`s. Fail-closed: one malformed element fails
+the whole parse. -/
+def parseNatList? (sep : Char) (s : String) : Option (List Nat) :=
+  if s.isEmpty then some []
+  else (s.splitOn (String.singleton sep)).foldr
+        (fun part acc => match acc, parseNat? part with
+          | some xs, some n => some (n :: xs)
+          | _, _ => none)
+        (some [])
+
+/-- Parse one `A:B` pair into a `(Nat × Nat)`. Fail-closed. -/
+def parsePair? (s : String) : Option (Nat × Nat) :=
+  match s.splitOn ":" with
+  | [a, b] => match parseNat? a, parseNat? b with
+              | some x, some y => some (x, y)
+              | _, _ => none
+  | _ => none
+
+/-- Parse a possibly-empty `,`-separated list of `A:B` pairs. Fail-closed. -/
+def parsePairList? (s : String) : Option (List (Nat × Nat)) :=
+  if s.isEmpty then some []
+  else (s.splitOn ",").foldr
+        (fun part acc => match acc, parsePair? part with
+          | some ps, some p => some (p :: ps)
+          | _, _ => none)
+        (some [])
+
+/-- Strip a required `prefix`, returning the remainder, or `none` if absent. -/
+def stripReq? (pfx s : String) : Option String :=
+  if s.startsWith pfx then some (String.ofList (s.toList.drop pfx.length)) else none
+
+/-- **`decodeAdmitWire`** — parse the full `INPUT` grammar into `(AdmissionState, queried strand)`.
+Fail-closed on any deviation. -/
+def decodeAdmitWire (s : String) : Option (AdmissionState × AuthorId) := do
+  let rest ← stripReq? "N=" s
+  match rest.splitOn ";" with
+  | [nS, mSeg, sSeg, vSeg, boSeg, qSeg] =>
+      let n ← parseNat? nS
+      let mS ← stripReq? "m=" mSeg
+      let sS ← stripReq? "S=" sSeg
+      let vS ← stripReq? "V=" vSeg
+      let boS ← stripReq? "Bo=" boSeg
+      let qS ← stripReq? "q=" qSeg
+      let minB ← parseNat? mS
+      let seeds ← parseNatList? ',' sS
+      let vouchPairs ← parsePairList? vS
+      let bondPairs ← parsePairList? boS
+      let q ← parseNat? qS
+      let fed : AdmissionState :=
+        { seeds := seeds, N := n, minBond := minB
+          vouches := vouchPairs.map (fun p => ⟨p.1, p.2⟩)
+          bonds := bondPairs.map (fun p => ⟨p.1, p.2⟩) }
+      some (fed, q)
+  | _ => none
+
+/-- **`admitGate`** — THE GATE BODY. Decode the wire, run the VERIFIED `admitted` predicate, encode
+the verdict (`"1"` admitted / `"0"` not). On a malformed wire return `"ERR"` — the Rust caller treats
+`ERR` as "NOT admitted" (fail-closed). This is the verified hybrid stake-OR-vouch Sybil gate exposed
+as a string function the linked Lean archive runs at the federation's admission point. -/
+def admitGate (s : String) : String :=
+  match decodeAdmitWire s with
+  | some (fed, q) => if admitted fed q then "1" else "0"
+  | none => "ERR"
+
+/-- **THE EXPORT.** `@[export dregg_strand_admit]` — the C-ABI entry the node/federation FFI bridge
+(`dregg-lean-ffi/src/distributed_ffi.rs`) calls. Same `String → String` shape as
+`dregg_blocklace_finalize` / `dregg_exec_full_forest_auth`: the caller passes the wire-encoded
+`(registry, strand)` and reads back the verified admission verdict. -/
+@[export dregg_strand_admit]
+def dregg_strand_admit (s : String) : String := admitGate s
+
+/-- **`encodeAdmitWire`** — encode an `(AdmissionState, strand)` query as the `INPUT` grammar. The
+inverse the Rust encoder mirrors; `decodeAdmitWire ∘ encodeAdmitWire = id` on the concrete registry
+(`#guard` below), so the two sides share one grammar. -/
+def encodeAdmitWire (fed : AdmissionState) (q : AuthorId) : String :=
+  "N=" ++ toString fed.N ++
+  ";m=" ++ toString fed.minBond ++
+  ";S=" ++ String.intercalate "," (fed.seeds.map toString) ++
+  ";V=" ++ String.intercalate "," (fed.vouches.map (fun v => toString v.voucher ++ ":" ++ toString v.candidate)) ++
+  ";Bo=" ++ String.intercalate "," (fed.bonds.map (fun b => toString b.owner ++ ":" ++ toString b.amount)) ++
+  ";q=" ++ toString q
+
+/-- **`strand_admit_eq_admitted` (PROVED — the export carries the proof).** For any wire that decodes
+to `(fed, q)`, the exported `dregg_strand_admit` returns `"1"` iff the VERIFIED `admitted fed q` holds
+(and `"0"` iff it does not). So the F-4 verdict the node reads off the export is DEFINITIONALLY the
+verified hybrid-gate verdict — `dregg_strand_admit` is the verified `admitted`, marshalled. Gating
+live admission on this export IS gating it on `StrandAdmission.admitted`. -/
+theorem strand_admit_eq_admitted (s : String) (fed : AdmissionState) (q : AuthorId)
+    (h : decodeAdmitWire s = some (fed, q)) :
+    dregg_strand_admit s = (if admitted fed q then "1" else "0") := by
+  unfold dregg_strand_admit admitGate
+  rw [h]
+
+/-- **`strand_admit_admits_iff` (PROVED).** Read as a Boolean: the export emits `"1"` exactly when the
+verified rule admits. The clean live-path predicate the federation calls. -/
+theorem strand_admit_admits_iff (s : String) (fed : AdmissionState) (q : AuthorId)
+    (h : decodeAdmitWire s = some (fed, q)) :
+    (dregg_strand_admit s = "1") ↔ admitted fed q = true := by
+  rw [strand_admit_eq_admitted s fed q h]
+  by_cases hadm : admitted fed q
+  · simp [hadm]
+  · simp only [hadm]
+    constructor
+    · intro hc; exact absurd hc (by decide)
+    · intro hc; exact absurd hc (by simp)
+
+/-- **`admit_gate_deterministic` (PROVED).** The gate is a deterministic function of the wire: two
+honest replicas that encode the SAME registry+strand get the SAME verdict — agreement reduces to
+seeing the same registry, through the exported gate the node actually calls. -/
+theorem admit_gate_deterministic (s : String) (o₁ o₂ : String)
+    (h₁ : admitGate s = o₁) (h₂ : admitGate s = o₂) : o₁ = o₂ := by
+  rw [← h₁, ← h₂]
+
+/-! ### LIVE-GATE non-vacuity `#guard`s — the export reproduces the verified verdict on the wire.
+
+On the concrete `fedDemo` registry (seeds {1,2}, N=2, minBond=100), the exported gate AGREES with the
+verified `admitted` on every strand role: seeds + the vouched strand 3 + the bonded strand 4 ADMIT
+(`"1"`); the below-floor strand 5, the fresh Sybil 6, and the ring-attack strand 7 are REJECTED
+(`"0"`). The wire round-trips, and a malformed wire is fail-closed to `ERR`. A false `#guard` is a
+BUILD ERROR — the project's sanctioned non-vacuity tooth; this is the runtime face of the F-4
+closure, the `(registry, strand) → verdict` differential the Rust `admission.rs` reproduces. -/
+
+-- the export ADMITS the seeds + vouched + bonded strands (verified `admitted` = true).
+#guard admitGate (encodeAdmitWire fedDemo 1) == "1"
+#guard admitGate (encodeAdmitWire fedDemo 2) == "1"
+#guard admitGate (encodeAdmitWire fedDemo 3) == "1"  -- vouch path
+#guard admitGate (encodeAdmitWire fedDemo 4) == "1"  -- stake path
+-- the export REJECTS the below-floor bond, the fresh Sybil, and the ring-attack candidate.
+#guard admitGate (encodeAdmitWire fedDemo 5) == "0"  -- 50 < 100 floor
+#guard admitGate (encodeAdmitWire fedDemo 6) == "0"  -- fresh Sybil (F-4)
+#guard admitGate (encodeAdmitWire fedDemo 7) == "0"  -- ring attack (unrooted voucher)
+-- the wire codec round-trips on the concrete registry (Rust-encoder ⟷ Lean-decoder shared grammar).
+#guard decodeAdmitWire (encodeAdmitWire fedDemo 6) == some (fedDemo, 6)
+-- the export equals the verified `admitted` verdict at each strand (the differential, on the wire).
+#guard ([1,2,3,4,5,6,7].all (fun q =>
+          (admitGate (encodeAdmitWire fedDemo q) == "1") == admitted fedDemo q))
+-- a malformed wire is FAIL-CLOSED to ERR (the federation treats ERR as NOT admitted).
+#guard admitGate "not a wire" == "ERR"
+#guard admitGate "N=2;m=100;S=1,2;V=bad:vouch:extra;Bo=;q=6" == "ERR"
+
+/-! ## 8. Axiom hygiene — the hybrid admission gate + its F-4 teeth are kernel-clean. -/
 
 #assert_axioms unadmitted_strand_no_final_leader
 #assert_axioms gated_leader_is_admitted
@@ -484,5 +660,8 @@ free Sybil strands) is DEFENDED both at the gate and at finality. -/
 #assert_axioms bonded_admits
 #assert_axioms seed_admits
 #assert_axioms admitted_iff
+#assert_axioms strand_admit_eq_admitted
+#assert_axioms strand_admit_admits_iff
+#assert_axioms admit_gate_deterministic
 
 end Dregg2.Distributed.StrandAdmission

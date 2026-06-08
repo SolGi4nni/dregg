@@ -90,6 +90,11 @@ pub enum ExtractError {
     /// The turn's forest was not fully marshallable (some effect has no wire arm), so there is no
     /// verified post-state to install.
     Ineligible,
+    /// The turn IS marshallable (the producer could run) but touches a characterized root-GAP
+    /// effect whose Lean-reconstituted root provably DIVERGES from Rust (the wire model is lossier
+    /// than the cell commitment). Outside the default-on COVERED set; falls back to Rust. `kind` is
+    /// the first offending effect kind, so the fallback names exactly which gap blocked it.
+    RootGap { kind: &'static str },
 }
 
 impl std::fmt::Display for ExtractError {
@@ -107,6 +112,14 @@ impl std::fmt::Display for ExtractError {
             ExtractError::Ffi(e) => write!(f, "lean FFI / decode failed: {e}"),
             ExtractError::Ineligible => {
                 write!(f, "turn forest not fully marshallable — no verified post-state to install")
+            }
+            ExtractError::RootGap { kind } => {
+                write!(
+                    f,
+                    "turn touches the characterized root-gap effect `{kind}` (Lean-reconstituted \
+                     root provably diverges from Rust) — outside the swap-safe covered set, fell \
+                     back to the Rust producer"
+                )
             }
         }
     }
@@ -361,16 +374,35 @@ pub enum ProducerOutcome {
         rust_root: [u8; 32],
         rust_committed: bool,
     },
-    /// The turn was NOT eligible for the verified producer (its forest has an effect with no wire
-    /// arm). Producer mode fell back to the Rust producer for THIS turn; `ledger` already carries
-    /// the Rust post-state. `reason` says why the verified producer was skipped.
+    /// The turn was NOT in the COVERED set for the default-on verified producer (either its forest
+    /// has an effect with no wire arm, or it touches a characterized root-GAP effect whose
+    /// Lean-reconstituted root provably diverges from Rust). Producer mode fell back to the Rust
+    /// producer for THIS turn; `ledger` already carries the Rust post-state. `reason` says why the
+    /// verified producer was skipped (so the fallback is never silent).
     Fallback { reason: ExtractError },
+    /// The turn WAS in the covered (root-agreeing) set, the verified producer ran, but its
+    /// post-state UNEXPECTEDLY diverged from the Rust differential. This is a REAL soundness finding
+    /// (the swap-safe coverage classification was wrong for this turn). We do NOT commit the
+    /// divergent Lean state — `ledger` carries the RUST post-state (the conservative choice that
+    /// keeps the node consistent with the rest of the chain) — and surface the divergence loudly.
+    CoveredDivergence {
+        lean_committed: bool,
+        rust_committed: bool,
+        lean_root: [u8; 32],
+        rust_root: [u8; 32],
+    },
 }
 
 impl ProducerOutcome {
-    /// `true` iff the verified producer ran AND its post-state diverged from the Rust differential.
+    /// `true` iff the verified producer ran AND its post-state diverged from the Rust differential
+    /// (either an installed divergence — should not happen on the covered path — or a covered-set
+    /// divergence that triggered the conservative Rust fallback).
     pub fn diverged(&self) -> bool {
-        matches!(self, ProducerOutcome::LeanProduced { agree: false, .. })
+        matches!(
+            self,
+            ProducerOutcome::LeanProduced { agree: false, .. }
+                | ProducerOutcome::CoveredDivergence { .. }
+        )
     }
 }
 
@@ -390,23 +422,41 @@ impl ProducerOutcome {
 ///   5. Return the Rust `TurnResult` (so receipt-chain append / proving / root attestation are
 ///      unchanged) AND a [`ProducerOutcome`] carrying the differential.
 ///
-/// On INELIGIBILITY (an effect with no wire arm) the verified producer is skipped, `ledger` carries
-/// the Rust post-state untouched, and [`ProducerOutcome::Fallback`] is returned — the safe behaviour
-/// for a turn the wire model cannot yet represent.
+/// COVERAGE GATE (THE SWAP, default-on). The verified producer INSTALLS its post-state only for a
+/// turn in the COVERED set — [`lean_shadow::forest_is_root_agreeing`], i.e. marshallable AND every
+/// effect is in the swap-safe `producer_root_agreeing_effects` set, where the Lean-reconstituted
+/// `.root()` provably EQUALS Rust's (pinned by the `lean_state_producer_*` differentials). A turn
+/// touching ANY characterized root-GAP effect (SetPermissions / MakeSovereign / cap-fidelity / …) or
+/// any unmappable effect falls back to the Rust producer with [`ProducerOutcome::Fallback`] and a
+/// precise reason — so the live commit path NEVER installs a Lean root known to disagree with the
+/// rest of the chain. This is what makes the default-on flip safe: "Lean produces, Rust verifies,
+/// they agree" is a genuine runtime INVARIANT on the covered path, not a divergence committed anyway.
 ///
-/// IMPORTANT: a divergence ([`ProducerOutcome::diverged`]) is a real finding. This helper does NOT
-/// reconcile it — it installs the VERIFIED post-state regardless (the verified executor is the
-/// authority in producer mode) and reports the divergence for the caller to surface loudly.
+/// On a covered turn whose Lean post-state UNEXPECTEDLY diverges from the Rust differential
+/// (a misclassification — should never happen given the differential teeth), we do NOT commit the
+/// divergent Lean state: `ledger` keeps the RUST post-state (the conservative, chain-consistent
+/// choice) and [`ProducerOutcome::CoveredDivergence`] is returned for the caller to surface loudly.
 pub fn produce_via_lean(
     executor: &TurnExecutor,
     turn: &Turn,
     ledger: &mut Ledger,
 ) -> (TurnResult, ProducerOutcome) {
-    // Eligibility gate: if the verified producer cannot represent this turn, fall back to the Rust
-    // producer entirely (it mutates `ledger` and yields the receipt as today).
-    if !lean_shadow::forest_is_marshallable(turn) {
+    // COVERAGE GATE: install the verified post-state ONLY for the root-agreeing (swap-safe) set. A
+    // turn that is unmappable OR touches a characterized root-gap effect falls back to the Rust
+    // producer entirely (it mutates `ledger` and yields the receipt as today), with a precise reason
+    // — never a silent commit of a divergent Lean root.
+    if !lean_shadow::forest_is_root_agreeing(turn) {
         let result = executor.execute(turn, ledger);
-        return (result, ProducerOutcome::Fallback { reason: ExtractError::Ineligible });
+        let reason = if lean_shadow::forest_is_marshallable(turn) {
+            // Marshallable but NOT root-agreeing ⇒ a characterized root-GAP effect. Name the first
+            // offending kind so the fallback is honest about WHICH gap blocked the producer.
+            ExtractError::RootGap {
+                kind: lean_shadow::first_root_gap_kind(turn).unwrap_or("unknown"),
+            }
+        } else {
+            ExtractError::Ineligible
+        };
+        return (result, ProducerOutcome::Fallback { reason });
     }
 
     let host = executor.build_shadow_host_ctx(turn, ledger);
@@ -433,19 +483,33 @@ pub fn produce_via_lean(
 
     let agree = lean_committed == rust_committed && lean_root == rust_root;
 
-    // INSTALL THE VERIFIED POST-STATE: the COMMITTED ledger is now the verified executor's output.
-    // On a Lean rejection the reconstituted ledger equals the pre-state, so this matches a verified
-    // no-commit.
-    *ledger = lean_ledger;
-
-    (
-        rust_result,
-        ProducerOutcome::LeanProduced {
-            committed: lean_committed,
-            agree,
-            lean_root,
-            rust_root,
-            rust_committed,
-        },
-    )
+    if agree {
+        // INSTALL THE VERIFIED POST-STATE: on the covered (root-agreeing) path the Lean root EQUALS
+        // the Rust root, so the COMMITTED ledger is now the verified executor's output — the SWAP.
+        // On a Lean rejection the reconstituted ledger equals the pre-state, matching a no-commit.
+        *ledger = lean_ledger;
+        (
+            rust_result,
+            ProducerOutcome::LeanProduced {
+                committed: lean_committed,
+                agree: true,
+                lean_root,
+                rust_root,
+                rust_committed,
+            },
+        )
+    } else {
+        // COVERED-SET DIVERGENCE: a turn the coverage classification deemed swap-safe nevertheless
+        // diverged. This is a real soundness finding. Do NOT commit the divergent Lean state — keep
+        // the Rust post-state already in `ledger` (chain-consistent) and surface the divergence.
+        (
+            rust_result,
+            ProducerOutcome::CoveredDivergence {
+                lean_committed,
+                rust_committed,
+                lean_root,
+                rust_root,
+            },
+        )
+    }
 }
