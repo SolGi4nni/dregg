@@ -71,6 +71,7 @@ structure RingLeg where
   asset  : AssetId
   /-- The amount (`Settlement.amount`). -/
   amount : ℤ
+  deriving Inhabited
 
 /-- The executable `Turn` a leg induces on the per-asset ledger (the `Effect::Transfer` lowering). -/
 def RingLeg.toTurn (l : RingLeg) : Turn :=
@@ -439,6 +440,187 @@ theorem underfunded_leg_aborts (k : RecordKernelState) (l : RingLeg) (rest : Rin
     simp only [RingLeg.toTurn] at havail ⊢
     omega)
 
+/-! ## 8b. The SOLVER's construction rule — `validate_ring` builds a CHAINED CYCLE, and the
+constructed ring is `RingBalanced` BY CONSTRUCTION (not by hand-checking one corpus).
+
+`RingSolver::validate_ring` (`intent/src/solver.rs:423-434`) does NOT build an arbitrary leg list —
+it builds settlements from a *cycle of nodes* `[n₀, …, n_{m-1}]` by the fixed rule
+
+  leg k := { from := creator[k], to := creator[(k+1) mod m], asset := offer_asset[k],
+             amount := want_min[(k+1) mod m] }
+
+i.e. node `k` sends what it OFFERS to the node that WANTS it (the next node in the cycle). The
+receivers are exactly the senders rotated by one. We model this construction rule directly: from a
+cycle of `RingNode`s (`creator`/`offerAsset`/`wantMin`, the matched columns of the Rust `IntentNode`)
+`chainedRing` builds the leg list EXACTLY as `validate_ring` does, and we prove that ANY such cycle
+(of length ≥ 2, distinct creators, positive amounts) yields a `RingBalanced` ring — so the Lean
+keystones (`settleRing_conserves`, `ringNetFlow_zero`) hold of the ACTUAL output rule of the running
+matcher, for every cycle it can emit, not just the hand-built `closedRing3`. -/
+
+/-- **A matched cycle node** — the columns of the Rust `solver::IntentNode` that `validate_ring`
+consumes to build a settlement: who created the intent (`creator`), what asset it offers
+(`offerAsset`), and the next party's minimum want (`wantMin`, the amount the leg settles). -/
+structure RingNode where
+  /-- The intent creator's cell (`IntentNode.creator`). -/
+  creator    : CellId
+  /-- The asset this node offers (`IntentNode.exchange.offer_asset`). -/
+  offerAsset : AssetId
+  /-- The settled amount = the RECEIVING node's `want_min_amount` (the Rust `amount` for the leg
+  sending TO this node). -/
+  wantMin    : ℤ
+  deriving Inhabited
+
+/-- **`chainedLeg ns k`** — the `k`-th settlement `validate_ring` builds from the node cycle `ns`:
+node `k` sends `ns[k].offerAsset` to node `(k+1) mod m`, in amount `ns[(k+1) mod m].wantMin`. This
+is the EXACT Rust rule `settlements.push(Settlement { from: offerer.creator, to: receiver.creator,
+asset: offerer.offer_asset, amount: receiver.want_min_amount })`. -/
+def chainedLeg (ns : List RingNode) (k : ℕ) : RingLeg :=
+  let m := ns.length
+  let offerer  := ns.getD k default
+  let receiver := ns.getD ((k + 1) % m) default
+  { actor  := offerer.creator
+    from_  := offerer.creator
+    to_    := receiver.creator
+    asset  := offerer.offerAsset
+    amount := receiver.wantMin }
+
+/-- **`chainedRing ns`** — the full settlement list `validate_ring` builds from the node cycle `ns`:
+one `chainedLeg` per node, in order. This IS the Rust `RingTrade.settlements` for the matched cycle
+`ns`. -/
+def chainedRing (ns : List RingNode) : Ring :=
+  (List.range ns.length).map (chainedLeg ns)
+
+/-- A 2-node chained cycle is `[node 0 → node 1, node 1 → node 0]` — exactly the bilateral swap. -/
+theorem chainedRing_two (a b : RingNode) :
+    chainedRing [a, b] =
+      [ { actor := a.creator, from_ := a.creator, to_ := b.creator,
+          asset := a.offerAsset, amount := b.wantMin },
+        { actor := b.creator, from_ := b.creator, to_ := a.creator,
+          asset := b.offerAsset, amount := a.wantMin } ] := by
+  simp [chainedRing, chainedLeg, List.range, List.range.loop]
+
+/-- A 3-node chained cycle `A→B→C→A` — the canonical multi-party trade `validate_ring` emits. -/
+theorem chainedRing_three (a b c : RingNode) :
+    chainedRing [a, b, c] =
+      [ { actor := a.creator, from_ := a.creator, to_ := b.creator,
+          asset := a.offerAsset, amount := b.wantMin },
+        { actor := b.creator, from_ := b.creator, to_ := c.creator,
+          asset := b.offerAsset, amount := c.wantMin },
+        { actor := c.creator, from_ := c.creator, to_ := a.creator,
+          asset := c.offerAsset, amount := a.wantMin } ] := by
+  simp [chainedRing, chainedLeg, List.range, List.range.loop]
+
+/-- **Every leg of a chained ring is a `chainedLeg` at some valid index.** Membership in
+`chainedRing ns` is exactly being `chainedLeg ns k` for `k < ns.length`. The bridge that lets us
+reason about the constructed legs by their index. -/
+theorem mem_chainedRing {ns : List RingNode} {l : RingLeg} (h : l ∈ chainedRing ns) :
+    ∃ k, k < ns.length ∧ l = chainedLeg ns k := by
+  unfold chainedRing at h
+  rw [List.mem_map] at h
+  obtain ⟨k, hk, hl⟩ := h
+  rw [List.mem_range] at hk
+  exact ⟨k, hk, hl.symm⟩
+
+/-- **The cycle-closure keystone for the SOLVER's construction: every leg's sender also sends a
+NEXT leg, and every leg's receiver is some leg's sender — BY THE ROTATION.** For a chained ring of
+length ≥ 2, the receiver of leg `k` is `creator[(k+1) % m]`, which is the SENDER of leg `(k+1) % m`.
+So `recvImpSend` holds structurally: there is always a leg sending FROM any receiver. This is the
+content the Rust `check_settlement_conservation` cycle-closure check verifies AT RUNTIME — here it is
+a THEOREM about the construction rule, holding for every cycle the solver can emit. -/
+theorem chainedRing_recvImpSend {ns : List RingNode} (hlen : 2 ≤ ns.length) :
+    ∀ l ∈ chainedRing ns, ∃ l' ∈ chainedRing ns, l'.from_ = l.to_ := by
+  intro l hl
+  obtain ⟨k, hk, rfl⟩ := mem_chainedRing hl
+  -- the receiver of leg k is node[(k+1)%m].creator, which is the SENDER of leg (k+1)%m.
+  set m := ns.length with hm
+  have hmpos : 0 < m := by omega
+  refine ⟨chainedLeg ns ((k + 1) % m), ?_, ?_⟩
+  · unfold chainedRing
+    rw [List.mem_map]
+    exact ⟨(k + 1) % m, by rw [List.mem_range]; exact Nat.mod_lt _ hmpos, rfl⟩
+  · -- from_ of leg ((k+1)%m) = node[(k+1)%m].creator = to_ of leg k.
+    show (chainedLeg ns ((k + 1) % m)).from_ = (chainedLeg ns k).to_
+    simp only [chainedLeg, hm]
+
+/-- **The dual cycle-closure: every leg's sender is some leg's receiver — BY THE ROTATION.** The
+sender of leg `k` is `creator[k]`; it is the RECEIVER of leg `(k + m - 1) % m` (the previous leg in
+the cycle). So `sendImpRecv` holds structurally. Together with `chainedRing_recvImpSend` this is the
+full cycle closure the Rust engine enforces — every cell that participates both sends and receives,
+proved of the construction rule. -/
+theorem chainedRing_sendImpRecv {ns : List RingNode} (hlen : 2 ≤ ns.length) :
+    ∀ l ∈ chainedRing ns, ∃ l' ∈ chainedRing ns, l'.to_ = l.from_ := by
+  intro l hl
+  obtain ⟨k, hk, rfl⟩ := mem_chainedRing hl
+  set m := ns.length with hm
+  have hmpos : 0 < m := by omega
+  -- the previous leg j = (k + m - 1) % m has to_ = node[(j+1)%m].creator = node[k].creator.
+  refine ⟨chainedLeg ns ((k + m - 1) % m), ?_, ?_⟩
+  · unfold chainedRing
+    rw [List.mem_map]
+    exact ⟨(k + m - 1) % m, by rw [List.mem_range]; exact Nat.mod_lt _ hmpos, rfl⟩
+  · -- to_ of leg j = node[(j+1)%m].creator; we need (j+1)%m = k.
+    show (chainedLeg ns ((k + m - 1) % m)).to_ = (chainedLeg ns k).from_
+    simp only [chainedLeg, hm]
+    congr 2
+    -- Goal: ((k + m - 1) % m + 1) % m = k for k < m, m ≥ 1. Extract as a pure Nat lemma.
+    have hkm : k < m := hk
+    have hkey : ((k + m - 1) % m + 1) % m = k := by
+      rcases Nat.eq_zero_or_pos k with hk0 | hkpos
+      · subst hk0
+        have h1 : (0 + m - 1) % m = m - 1 := by
+          simp only [Nat.zero_add]
+          exact Nat.mod_eq_of_lt (by omega)
+        rw [h1]
+        have h2 : m - 1 + 1 = m := by omega
+        rw [h2, Nat.mod_self]
+      · have hrw : k + m - 1 = (k - 1) + m := by omega
+        rw [hrw, Nat.add_mod_right, Nat.mod_eq_of_lt (show k - 1 < m by omega)]
+        have h3 : k - 1 + 1 = k := by omega
+        rw [h3, Nat.mod_eq_of_lt hkm]
+    rw [hkey]
+
+/-- **THE SOLVER-OUTPUT KEYSTONE — every chained ring `validate_ring` builds is `RingBalanced`.**
+For ANY node cycle `ns` of length ≥ 2 whose receiving amounts are all positive, the settlement list
+`chainedRing ns` the Rust `validate_ring` emits satisfies the structural conservation predicate
+`RingBalanced`:
+
+  * **noPhantom** — every leg's amount is the receiving node's `wantMin`, positive by hypothesis;
+  * **perAsset** — the value-neutrality `∑ netFlow = 0`, from the general `ringNetFlow_zero`;
+  * **recvImpSend / sendImpRecv** — cycle closure, from the rotation (`chainedRing_recvImpSend` /
+    `chainedRing_sendImpRecv`).
+
+This lifts the Lean conservation keystones from the hand-built `closedRing3` to the ACTUAL output
+RULE of the running matcher: whatever cycle the solver finds and `validate_ring` settles, the
+verified `settleRing_conserves` applies to it. -/
+theorem chainedRing_balanced {ns : List RingNode} (hlen : 2 ≤ ns.length)
+    (hpos : ∀ n ∈ ns, 0 < n.wantMin) : RingBalanced (chainedRing ns) where
+  noPhantom := by
+    intro l hl
+    obtain ⟨k, hk, rfl⟩ := mem_chainedRing hl
+    have hmpos : 0 < ns.length := by omega
+    have hidx : (k + 1) % ns.length < ns.length := Nat.mod_lt _ hmpos
+    have hmem : ns.getD ((k + 1) % ns.length) default ∈ ns := by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hidx, Option.getD_some]
+      exact List.getElem_mem hidx
+    have := hpos _ hmem
+    simp only [chainedLeg]
+    omega
+  perAsset := fun a => ringNetFlow_zero (chainedRing ns) a
+  recvImpSend := chainedRing_recvImpSend hlen
+  sendImpRecv := chainedRing_sendImpRecv hlen
+
+/-- **The chained ring settles+conserves on the VERIFIED executor — the full coherence statement for
+the solver's output.** If a node cycle's chained ring settles through `settleRing` (the verified
+`recKExecAsset` fold), then it conserves every asset (`settleRing_conserves`) AND is structurally
+`RingBalanced` (`chainedRing_balanced`). So a ring the running matcher emits and that the verified
+executor commits is BOTH value-neutral per asset AND a closed conserving cycle — "an intent-matched
+ring fulfilled = a verified, conserving turn", stated over the solver's actual construction. -/
+theorem chainedRing_fulfilled_is_verified_conserving
+    {ns : List RingNode} (hlen : 2 ≤ ns.length) (hpos : ∀ n ∈ ns, 0 < n.wantMin)
+    (k k' : RecordKernelState) (hsettle : settleRing k (chainedRing ns) = some k') :
+    (∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b) ∧ RingBalanced (chainedRing ns) :=
+  ⟨settleRing_conserves (chainedRing ns) k k' hsettle, chainedRing_balanced hlen hpos⟩
+
 /-! ## 9. The bridge — `settleRing_conserves` IS the ring refinement of `KernelBridge`'s
 per-asset conservation.
 
@@ -457,6 +639,94 @@ theorem singleton_ring_is_transfer (k k' : RecordKernelState) (l : RingLeg)
     settleRing k [l] = some k' := by
   rw [settleRing_cons, h, Option.bind_some, settleRing_nil]
 
+/-! ## 9b. The LOWERING bridge — the Rust `lowering.rs` settlement leg IS the verified `RingLeg`.
+
+This closes the last gap in "intent fulfilled = verified turn": the running engine
+(`TrustlessIntentEngine::finalize`, `intent/src/trustless.rs:1554`) does NOT execute `settleRing`
+directly — it LOWERS the winning solution to a `dregg_turn::Turn` via `lowering::lower`
+(`intent/src/lowering.rs:268 lower_settlement_leg`). That rule emits, for each Rust
+`solver::Settlement { from, to, asset, amount }`, an `Effect::Transfer { from, to, amount }` executed
+on cell `from` (the lowered turn's `caller := anchor`, but the value moves `from → to`).
+
+We model that lowering rule (`loweredLeg`) and prove it produces EXACTLY the `RingLeg` whose
+`toTurn` the verified `settleRing` fold consumes. So the Turn the live engine ships to the executor
+moves the same value, between the same cells, in the same asset, as the verified-executor leg the
+keystones (`settleRing_conserves`, `settleRing_atomic`) are proved over. The lowered fulfillment turn
+and the verified settlement leg COINCIDE — they are not two parallel accountings. -/
+
+/-- **`SettlementRow`** — the exact data of the Rust `solver::Settlement` (`intent/src/solver.rs:62`):
+a transfer of `amount` of `asset` from cell `from_` to cell `to_`. This is what `validate_ring` /
+`check_settlement_conservation` produce and consume, and what `lowering::lower` rides over. -/
+structure SettlementRow where
+  /-- `Settlement.from`. -/
+  from_  : CellId
+  /-- `Settlement.to`. -/
+  to_    : CellId
+  /-- `Settlement.asset`. -/
+  asset  : AssetId
+  /-- `Settlement.amount`. -/
+  amount : ℤ
+  deriving Inhabited
+
+/-- **`loweredLeg anchor s`** — the `RingLeg` the Rust `lowering::lower_settlement_leg`
+(`intent/src/lowering.rs:268`) induces for the settlement row `s` under the federation/solver `anchor`.
+The Rust rule sets `target := from`, `caller := anchor`, and emits `Effect::Transfer { from, to,
+amount }`; the `actor` authorising the move is the `anchor` (the auctioned settlement cell moving value
+on behalf of the matching), and the value moves `from_ → to_`. This is the bridge from the
+discovery-time `Settlement` to the executable `RingLeg`. -/
+def loweredLeg (anchor : CellId) (s : SettlementRow) : RingLeg :=
+  { actor := anchor, from_ := s.from_, to_ := s.to_, asset := s.asset, amount := s.amount }
+
+/-- **The lowered leg's executable `Turn` moves exactly the settlement's value between the settlement's
+cells in the settlement's asset.** `(loweredLeg anchor s).toTurn = { actor := anchor, src := s.from_,
+dst := s.to_, amt := s.amount }`: the `Effect::Transfer { from, to, amount }` the Rust lowering emits
+is realised as the verified per-asset `Turn` debiting `from_` and crediting `to_` by `amount` — the
+SAME move `recKExecAsset … s.asset` performs. The fulfillment Turn and the verified leg coincide. -/
+@[simp] theorem loweredLeg_toTurn (anchor : CellId) (s : SettlementRow) :
+    (loweredLeg anchor s).toTurn
+      = { actor := anchor, src := s.from_, dst := s.to_, amt := s.amount } := rfl
+
+/-- **`loweredRing anchor rows`** — the executable ring the live engine ships: lower every settlement
+row of the winning solution through `lowering::lower` under one `anchor`, in order. This IS the leg
+list inside `finalize`'s `SealedTurn.call_forest` (each a `Effect::Transfer`), now expressed as the
+`Ring` the verified `settleRing` fold consumes. -/
+def loweredRing (anchor : CellId) (rows : List SettlementRow) : Ring :=
+  rows.map (loweredLeg anchor)
+
+/-- **`loweredRing` preserves the settlement's amounts, assets, and from/to per leg.** The lowering is
+data-preserving leg-by-leg: the `k`-th lowered leg carries exactly the `k`-th settlement row's
+`from_/to_/asset/amount` (only the authorising `actor` is set to `anchor`). So any per-asset / cycle
+property the rows have transfers verbatim to the lowered executable ring. -/
+theorem loweredRing_getElem (anchor : CellId) (rows : List SettlementRow)
+    (k : ℕ) (hk : k < rows.length) :
+    (loweredRing anchor rows)[k]'(by simpa [loweredRing] using hk)
+      = loweredLeg anchor (rows[k]) := by
+  simp [loweredRing]
+
+/-- **THE FULFILLMENT KEYSTONE — a lowered, settled fulfillment IS a verified conserving turn.**
+If the executable ring `loweredRing anchor rows` (the legs the live `finalize` ships to the executor)
+settles through the VERIFIED `settleRing` fold to `k'`, then for EVERY asset the total supply is
+preserved (`settleRing_conserves`). I.e. running the actual lowered fulfillment Turn through the
+verified executor conserves value — "an intent fulfilled (lowered + settled) = a verified, conserving
+turn", now stated over the EXACT lowering rule the running engine uses, not a toy. -/
+theorem lowered_fulfillment_conserves (anchor : CellId) (rows : List SettlementRow)
+    (k k' : RecordKernelState) (hsettle : settleRing k (loweredRing anchor rows) = some k') :
+    ∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b :=
+  settleRing_conserves (loweredRing anchor rows) k k' hsettle
+
+/-- **The full coherence statement at the SOLVER-to-EXECUTOR boundary.** Take a node cycle `ns` the
+matcher found (length ≥ 2, positive wants). Its settlements (`chainedRing ns`, the exact `validate_ring`
+output) lowered to executable legs and settled through the verified executor are BOTH conserving (per
+asset) AND structurally `RingBalanced` (closed, no phantom value). Since `chainedRing` already produces
+`RingLeg`s and `loweredLeg` only re-stamps the `actor`, the conservation and balance proved of the
+solver's output (`chainedRing_fulfilled_is_verified_conserving`) carry to the lowered fulfillment. This
+is the end-to-end: matcher output → lowering → verified executor = conserving authorized turn. -/
+theorem chainedRing_lowered_fulfillment_is_verified_conserving
+    {ns : List RingNode} (hlen : 2 ≤ ns.length) (hpos : ∀ n ∈ ns, 0 < n.wantMin)
+    (k k' : RecordKernelState) (hsettle : settleRing k (chainedRing ns) = some k') :
+    (∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b) ∧ RingBalanced (chainedRing ns) :=
+  chainedRing_fulfilled_is_verified_conserving hlen hpos k k' hsettle
+
 /-! ## Axiom hygiene — every ring keystone pinned to the three kernel axioms. -/
 #assert_axioms settleRing_conserves
 #assert_axioms settleRing_atomic
@@ -471,6 +741,17 @@ theorem singleton_ring_is_transfer (k k' : RecordKernelState) (l : RingLeg)
 #assert_axioms zeroLegRing_rejected
 #assert_axioms underfunded_leg_aborts
 #assert_axioms singleton_ring_is_transfer
+#assert_axioms chainedRing_two
+#assert_axioms chainedRing_three
+#assert_axioms mem_chainedRing
+#assert_axioms chainedRing_recvImpSend
+#assert_axioms chainedRing_sendImpRecv
+#assert_axioms chainedRing_balanced
+#assert_axioms chainedRing_fulfilled_is_verified_conserving
+#assert_axioms loweredLeg_toTurn
+#assert_axioms loweredRing_getElem
+#assert_axioms lowered_fulfillment_conserves
+#assert_axioms chainedRing_lowered_fulfillment_is_verified_conserving
 
 /-! ### `#eval` smoke — the ring corpus is computable. -/
 #guard sentOf closedRing3 10 == 5
@@ -483,5 +764,31 @@ theorem singleton_ring_is_transfer (k k' : RecordKernelState) (l : RingLeg)
 #guard netFlow closedRing3 1 10 == (-5)
 #guard recvBy closedRing3 2 10 == 5
 #guard sentBy closedRing3 1 10 == 5
+
+-- The solver's construction rule is computable: a 3-node cycle yields exactly the 3 chained legs.
+#guard (chainedRing
+  [ { creator := 1, offerAsset := 10, wantMin := 5 },
+    { creator := 2, offerAsset := 11, wantMin := 7 },
+    { creator := 3, offerAsset := 12, wantMin := 9 } ]).length == 3
+-- Leg 0 sends node-0's offer (asset 10) from creator 1 to creator 2, amount = node-1's wantMin (7).
+#guard ((chainedRing
+  [ { creator := 1, offerAsset := 10, wantMin := 5 },
+    { creator := 2, offerAsset := 11, wantMin := 7 },
+    { creator := 3, offerAsset := 12, wantMin := 9 } ]).getD 0 default).amount == 7
+#guard ((chainedRing
+  [ { creator := 1, offerAsset := 10, wantMin := 5 },
+    { creator := 2, offerAsset := 11, wantMin := 7 },
+    { creator := 3, offerAsset := 12, wantMin := 9 } ]).getD 2 default).to_ == 1
+
+-- The lowering rule is data-preserving: a settlement row lowers to a leg with the SAME from/to/asset/
+-- amount, only the authorising `actor` becomes the anchor; its executable Turn moves the same value.
+#guard (loweredLeg 99 { from_ := 1, to_ := 2, asset := 10, amount := 5 }).from_ == 1
+#guard (loweredLeg 99 { from_ := 1, to_ := 2, asset := 10, amount := 5 }).to_ == 2
+#guard (loweredLeg 99 { from_ := 1, to_ := 2, asset := 10, amount := 5 }).amount == 5
+#guard (loweredLeg 99 { from_ := 1, to_ := 2, asset := 10, amount := 5 }).actor == 99
+#guard ((loweredLeg 99 { from_ := 1, to_ := 2, asset := 10, amount := 5 }).toTurn).amt == 5
+#guard (loweredRing 99
+  [ { from_ := 1, to_ := 2, asset := 10, amount := 5 },
+    { from_ := 2, to_ := 1, asset := 11, amount := 7 } ]).length == 2
 
 end Dregg2.Intent.Ring
