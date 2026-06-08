@@ -26,7 +26,6 @@
 
 use std::collections::HashMap;
 
-use dregg_cell::lifecycle::CellLifecycle;
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::state::FieldElement;
 use dregg_cell::{Cell, CellId, Ledger, NoteCommitment, Permissions, VerificationKey};
@@ -255,17 +254,62 @@ fn emit_event_root_agrees() {
 }
 
 #[test]
-fn revoke_delegation_root_agrees() {
+fn revoke_delegation_is_an_epoch_swap_gap() {
     if skip_no_lean() {
         return;
     }
-    // RevokeDelegation on a child with no delegation snapshot is a no-op on the commitment fields
-    // the wire carries; `.revokeDelegationA` routes to a total registry edit. Both commit; the
-    // reconstituted ledger agrees.
-    let (pre, a_id) = one_open_cell();
-    let turn = single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: a_id });
-    diff(pre, turn, &[a_id]).expect("RevokeDelegation must round-trip");
-    assert!(lean_shadow::producer_root_agreeing_effects().contains(&"RevokeDelegation"));
+    // A COMMITTING RevokeDelegation bumps the PARENT cell's `delegation_epoch` (apply.rs
+    // `apply_revoke_delegation` → `bump_delegation_epoch`), and `delegation_epoch` is folded into
+    // `compute_canonical_state_commitment` (commitment.rs hashes `state.delegation_epoch`). The wire
+    // `WState` cell record carries NO `delegation_epoch` field, and the verified `revokeDelegationA`
+    // edits only the `caps` edge set (no epoch counter), so the Lean reconstitution keeps the
+    // parent's pre-state epoch → `.root()` diverges. A characterized swap-gap (the delegation-epoch
+    // commitment field is not carried on the wire), asserted as a SPECIFIC divergence, never a
+    // silent pass.
+    //
+    // Set up a real parent(A)→child(B) delegation so the revoke COMMITS in Rust (a self-revoke with
+    // no delegation present is `DelegationDenied`, which has no commit to diff).
+    let mut a = make_open_cell(1, 100);
+    let a_id = a.id();
+    let mut b = make_open_cell(2, 5);
+    let b_id = b.id();
+    // B is delegated to A: set B.delegate = A so `apply_revoke_delegation` finds the edge to remove.
+    b.delegate = Some(a_id);
+    // Give A a non-zero starting epoch so the bump is observable (not strictly required).
+    a.state.set_delegation_epoch(3);
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+    pre.insert_cell(b).unwrap();
+
+    // Confirm Rust really commits AND bumps A's delegation_epoch (so the gap is genuinely about the
+    // epoch commitment field).
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+    let mut rust_ledger = pre.clone();
+    let res = executor.execute(
+        &single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: b_id }),
+        &mut rust_ledger,
+    );
+    assert!(res.is_committed(), "Rust RevokeDelegation must commit on a real parent→child edge: {res:?}");
+    assert_eq!(
+        rust_ledger.get(&a_id).unwrap().state.delegation_epoch(),
+        4,
+        "Rust must have bumped the parent's delegation_epoch (3 -> 4)"
+    );
+
+    let turn = single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: b_id });
+    match diff(pre, turn, &[a_id, b_id]) {
+        Ok(()) => panic!(
+            "RevokeDelegation unexpectedly round-tripped — the delegation-epoch swap-gap may have \
+             closed (the wire WState would now carry the per-cell delegation_epoch and Lean would \
+             model the epoch bump); re-classify into producer_root_agreeing_effects"
+        ),
+        Err(why) => assert!(
+            why.contains("ROOT divergence") || why.contains("commit-bit divergence"),
+            "RevokeDelegation swap-gap should be a ROOT/commit-bit divergence (the parent's bumped \
+             delegation_epoch is absent from the wire), got: {why}"
+        ),
+    }
+    assert!(lean_shadow::producer_root_gap_effects().contains(&"RevokeDelegation"));
 }
 
 #[test]
@@ -286,6 +330,8 @@ fn note_create_root_agrees() {
             value: 0,
             asset_type: 0,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         },
     );
     diff(pre, turn, &[a_id]).expect("NoteCreate must round-trip (note set is off the cell root)");
@@ -382,9 +428,19 @@ fn make_sovereign_is_a_structural_swap_gap() {
             "MakeSovereign unexpectedly round-tripped — the structural swap-gap may have closed \
              (the wire state would now model the sovereign-removal transition)"
         ),
+        // The gap surfaces one of three ways depending on how the verified kernel re-emits the
+        // now-sovereign cell: a presence/root divergence (the reconstitution keeps the cell Rust
+        // removed), OR a reconstitution ERROR (`sov` emits a cell record without a proper Int
+        // `nonce`/`balance`, so the extractor fail-closes rather than coerce — the honest "the wire
+        // model cannot reproduce the sovereign transition" outcome). All three are the SAME gap:
+        // the wire state model has no "cell removed to sovereign" transition.
         Err(why) => assert!(
-            why.contains("presence divergence") || why.contains("ROOT divergence"),
-            "MakeSovereign swap-gap should be a presence/root divergence, got: {why}"
+            why.contains("presence divergence")
+                || why.contains("ROOT divergence")
+                || why.contains("non-Int")
+                || why.contains("state-producer path errored"),
+            "MakeSovereign swap-gap should be a presence/root divergence or a reconstitution error \
+             (the sovereign-removal transition is unmodelled on the wire), got: {why}"
         ),
     }
     assert!(lean_shadow::producer_root_gap_effects().contains(&"MakeSovereign"));
@@ -422,8 +478,13 @@ fn refusal_is_an_audit_field_swap_gap() {
             )
         }
         Err(why) => assert!(
-            why.contains("field[") || why.contains("ROOT divergence") || why.contains("commit-bit"),
-            "Refusal swap-gap should be a field[4]/root/commit-bit divergence, got: {why}"
+            why.contains("field[")
+                || why.contains("ROOT divergence")
+                || why.contains("commit-bit")
+                || why.contains("nonce divergence"),
+            "Refusal swap-gap should be a field[4]/nonce/root/commit-bit divergence (Rust writes the \
+             audit-field commitment AND bumps the target nonce, which the wire `refusal` arm does \
+             not reproduce identically), got: {why}"
         ),
     }
     assert!(lean_shadow::producer_root_gap_effects().contains(&"Refusal"));
@@ -444,19 +505,23 @@ fn attenuate_capability_is_a_cap_fidelity_swap_gap() {
     // asserted as a SPECIFIC divergence (a negative tooth), characterized, never a silent pass.
     let mut a = make_open_cell(1, 100);
     let a_id = a.id();
-    // Seed a HELD cap on A over a target cell B with a NON-None permission, so the in-place narrowing
-    // genuinely rewrites the cap_root (and the wire's bare-`node` reconstruction cannot coincide).
+    // Seed a HELD cap on A over a target cell B with the WIDEST permission (`None`), so an in-place
+    // narrowing to a STRICTLY narrower `AuthRequired` is what apply.rs accepts as monotone
+    // (`narrower.is_narrower_or_equal(old)`: `Signature.is_narrower_or_equal(None)` is true; the
+    // reverse `None.is_narrower_or_equal(Signature)` is FALSE — None is the least restrictive).
     let b = make_open_cell(2, 5);
     let b_id = b.id();
     let slot = a
         .capabilities
-        .grant(b_id, AuthRequired::Signature)
+        .grant(b_id, AuthRequired::None)
         .expect("seed a held cap to attenuate");
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
     pre.insert_cell(b).unwrap();
 
-    // Narrow the held cap from Signature → None (a monotone narrowing apply.rs accepts).
+    // Narrow the held cap from None → Signature (a monotone narrowing apply.rs accepts), which
+    // rewrites that cell's `cap_root`. The wire `caps` model carries only a bare `Cap::Node` edge,
+    // so the Lean reconstitution keeps `AuthRequired::None` → cap_root diverges.
     let turn = single_effect_turn(
         a_id,
         a_id,
@@ -464,7 +529,7 @@ fn attenuate_capability_is_a_cap_fidelity_swap_gap() {
         Effect::AttenuateCapability {
             cell: a_id,
             slot,
-            narrower_permissions: AuthRequired::None,
+            narrower_permissions: AuthRequired::Signature,
             narrower_effects: None,
             narrower_expiry: None,
         },
@@ -473,11 +538,15 @@ fn attenuate_capability_is_a_cap_fidelity_swap_gap() {
     // Confirm Rust really narrowed the held cap (so the gap is genuinely about cap fidelity).
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
-    if executor.execute(&turn, &mut rust_ledger).is_committed() {
+    assert!(
+        executor.execute(&turn, &mut rust_ledger).is_committed(),
+        "Rust AttenuateCapability (None -> Signature) must commit as a monotone narrowing"
+    );
+    {
         let a_caps = &rust_ledger.get(&a_id).unwrap().capabilities;
         assert!(
-            a_caps.iter().any(|c| c.target == b_id && c.permissions == AuthRequired::None),
-            "Rust must have narrowed A's held cap over B to None"
+            a_caps.iter().any(|c| c.target == b_id && c.permissions == AuthRequired::Signature),
+            "Rust must have narrowed A's held cap over B to Signature"
         );
     }
 

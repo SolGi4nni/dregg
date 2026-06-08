@@ -183,8 +183,21 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
         }
         ProducerOutcome::Fallback { reason } => {
             panic!(
-                "turn was NOT eligible for the verified producer (a marshaller gap): {reason}; \
-                 cannot run the node producer-mode test"
+                "turn was NOT eligible for the verified producer (outside the swap-safe covered \
+                 set): {reason}; cannot run the node producer-mode test on a covered effect"
+            );
+        }
+        ProducerOutcome::CoveredDivergence {
+            lean_committed,
+            rust_committed,
+            lean_root,
+            rust_root,
+        } => {
+            panic!(
+                "COVERED-SET DIVERGENCE: a turn classified swap-safe diverged at runtime \
+                 (lean_committed={lean_committed} rust_committed={rust_committed} \
+                 lean_root={lean_root:?} rust_root={rust_root:?}) — a real soundness finding \
+                 (coverage misclassification)"
             );
         }
     }

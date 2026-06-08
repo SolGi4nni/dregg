@@ -12,8 +12,23 @@ Ground truth: dregg2 Lean is the source of truth (verified, kernel-clean — the
 `#assert_namespace_axioms` whitelisting only `{propext, Classical.choice,
 Quot.sound}`). The Rust types are hand-written, unverified duplicates that dregg2
 *replaces*. The cutover ("THE SWAP") routes the running executor through the Lean
-via `dregg_exec_full_forest_auth`; today the Lean runs only as a SHADOW
-(`turn/src/lean_shadow.rs`, gated on `DREGG_LEAN_SHADOW=1`).
+via `dregg_exec_full_forest_auth`.
+
+> **STATUS UPDATE (see `_SWAP-COMPLETE-STATUS.md`): the SWAP is REALIZED at the
+> producer for the swap-safe covered set.** The node commit path
+> (`node/src/blocklace_sync.rs:1846`) routes through
+> `dregg_turn::lean_apply::produce_via_lean` by DEFAULT
+> (`DREGG_LEAN_PRODUCER`, opt-OUT). For 10/56 effect kinds (SetField, Transfer,
+> EmitEvent, NoteSpend, NoteCreate, IncrementNonce, RefreshDelegation, Burn,
+> RevokeCapability, QueueAllocate) the verified Lean executor PRODUCES the
+> committed `cell::Ledger` (`wire_state_to_ledger` reconstitutes it from the
+> `WireState`) and the Rust `TurnExecutor` is demoted to a differential. The
+> residual (11 root-gap effects that fall back to Rust + 35 unmapped effects) is
+> named in `_SWAP-COMPLETE-STATUS.md` §3. The U5 item below is therefore
+> PARTIALLY DONE (covered-set authoritative); §U1–§U4 remain the path to the
+> full flip. The OLD "Lean runs only as a passive `DREGG_LEAN_SHADOW=1` shadow"
+> framing is superseded — the shadow/`decode_shadow_verdict` path is now only the
+> `DREGG_LEAN_PRODUCER=0` fallback.
 
 > The Lean is the ORACLE; the Rust is the subject-under-test. Never the reverse.
 
@@ -64,10 +79,16 @@ then make the Lean verdict authoritative (the SWAP).
   (`permissions_to_i128`), once the Lean models structured perms on the wire.
 - **U4 — collapse the two Rust `CellProgram`s** (`cell/src/program.rs:53` and
   `circuit/src/dsl/circuit.rs:947`) and bridge to `CellProgram.lean`.
-- **U5 — THE SWAP.** Once U1–U4 land and the shadow diff is clean across a real
-  workload, flip `lean_shadow` from shadow-compare to authoritative: the Lean
-  verdict (`dregg_exec_full_forest_auth`) becomes the commit decision and the
-  Rust `TurnExecutor` is retired. Tracked in `SUCCESSOR-ROADMAP.md`.
+- **U5 — THE SWAP. PARTIALLY DONE (covered-set authoritative).** The flip from
+  shadow-compare to authoritative is LANDED for the 10 root-agreeing effects: the
+  Lean executor (`dregg_exec_full_forest_auth`) PRODUCES the committed state and
+  the Rust `TurnExecutor` is demoted to a differential
+  (`turn/src/lean_apply.rs::produce_via_lean`, default-on via
+  `DREGG_LEAN_PRODUCER`). Full retirement of the Rust `TurnExecutor` still needs
+  U1 (project the 35 unmapped effects), the root-gap closures (widen `WState` to
+  carry lifecycle/Permissions/VK/cap/`delegation_epoch`), and root-scheme
+  unification. See `_SWAP-COMPLETE-STATUS.md` for the realized boundary + the
+  precise residual; `SUCCESSOR-ROADMAP.md` for the remaining path.
 
 ---
 

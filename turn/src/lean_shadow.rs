@@ -360,6 +360,7 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
         "RevokeCapability",
         "QueueAllocate",
         "GrantCapability",
+        "AttenuateCapability",
     ]
 }
 
@@ -379,7 +380,6 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
         "SetField",
         "Transfer",
         "EmitEvent",
-        "RevokeDelegation",
         "NoteSpend",
         "NoteCreate",
         "IncrementNonce",
@@ -407,6 +407,13 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
 ///     wire state model has no sovereign-removal transition, so the reconstitution keeps the cell.
 ///   * `Refusal`/`ReceiptArchive` — Rust writes an audit-field / lifecycle-Archived commitment the
 ///     wire `refusal`/`rarchive` arms do not reproduce byte-for-byte.
+///   * `RevokeDelegation` — a COMMITTING revoke bumps the PARENT cell's `delegation_epoch`, which is
+///     folded into `compute_canonical_state_commitment` (commitment.rs hashes `state.delegation_epoch`).
+///     The wire `WState` cell record carries no `delegation_epoch` field, and the verified
+///     `revokeDelegationA` edits only the `caps` edge set (no epoch counter), so the reconstitution
+///     keeps the parent's pre-state epoch → `.root()` diverges. (The no-op self-revoke that Rust
+///     REJECTS trivially agrees, but a real commit diverges — so the effect is a gap.) Closing this
+///     needs the Lean kernel to model the per-cell delegation epoch and carry it on the wire.
 pub fn producer_root_gap_effects() -> &'static [&'static str] {
     &[
         "SetPermissions",
@@ -418,6 +425,12 @@ pub fn producer_root_gap_effects() -> &'static [&'static str] {
         "CellUnseal",
         "CellDestroy",
         "GrantCapability",
+        "RevokeDelegation",
+        // AttenuateCapability narrows a held `CapabilityRef`'s `AuthRequired`/expiry in Rust (→
+        // `cap_root` changes); the wire `caps` model carries only `Cap::Node` edges and Lean's
+        // `attenuate` is a no-op on a `node` cap, so the reconstruction keeps the edge unchanged →
+        // `cap_root` diverges. Same cap-fidelity gap class as GrantCapability.
+        "AttenuateCapability",
     ]
 }
 
@@ -713,6 +726,15 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // left unmapped (skip the turn rather than mis-encode).
         Effect::Burn { target, slot: 0, .. } => has(target),
         Effect::RevokeCapability { cell, .. } => has(cell),
+        // AttenuateCapability: dregg1 narrows a HELD c-list slot in place (apply.rs requires
+        // `cell == actor`). The verified `attenuateStepA actor idx keep` narrows the actor's own
+        // `idx`-th held cap (a TOTAL self-narrowing — always commits, `List.modify` is a no-op for an
+        // out-of-range slot). The action target is the actor's own cell; we require it in the id map.
+        // NOTE: this is a cap-fidelity ROOT-GAP (the wire `caps` model carries `Cap::Node` edges, so
+        // Lean's `attenuate` — which only filters `.endpoint` rights — is a no-op, while Rust narrows
+        // the held `CapabilityRef`'s `AuthRequired`/expiry → `cap_root` diverges). Mappable (producer
+        // RUNS) but characterized as a gap by the coverage differential, never a silent pass.
+        Effect::AttenuateCapability { cell, .. } => has(cell),
         // ─── GAP-shrink batch (the swap surface, MUST mirror effect_to_wire) ─────────────
         // QueueAllocate: the action target IS the gate cell (always in the map). The fresh
         // queue id is intrinsic (assigned deterministically), so the effect is always mappable.
@@ -783,6 +805,8 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         Effect::CellDestroy { target, .. } => vec![*target],
         Effect::Burn { target, .. } => vec![*target],
         Effect::RevokeCapability { cell, .. } => vec![*cell],
+        // AttenuateCapability narrows the actor's OWN held slot (`cell == actor`); register the cell.
+        Effect::AttenuateCapability { cell, .. } => vec![*cell],
         // GAP-shrink: GrantCapability references granter/grantee/cap-target — all need wire Nats.
         Effect::GrantCapability { from, to, cap } => vec![*from, *to, cap.target],
         // QueueAllocate creates a FRESH queue cell whose id is NOT in the pre-state id map; only
@@ -990,6 +1014,22 @@ fn effect_to_wire(
         Effect::RevokeCapability { cell, slot } => WireAction::Revoke {
             holder: id(cell)?,
             t: *slot as u64,
+        },
+        // AttenuateCapability: dregg1 narrows a HELD c-list slot in place (`apply.rs` requires
+        // `cell == actor`). `.attenuateA actor idx keep` routes to `attenuateStepA`, narrowing the
+        // actor's own `idx`-th held cap (a TOTAL self-narrowing — always commits). The wire `atten`
+        // arm carries `(actor, idx, keep)`; the `keep` rights-subset has NO faithful image of the
+        // Rust `narrower_permissions: AuthRequired` (the `AuthRequired` lattice does not map onto the
+        // wire `Auth` rights list), AND the marshalled c-list edges are bare `Cap::Node` (which Lean's
+        // `attenuate` leaves UNCHANGED — it only filters `.endpoint` rights). So we carry `keep = []`:
+        // the Lean post-state is the unchanged Node cap regardless. This makes AttenuateCapability a
+        // characterized cap-fidelity ROOT-GAP (Rust narrows the held `CapabilityRef` → `cap_root`
+        // changes; the Lean reconstruction keeps the Node edge → `cap_root` diverges), pinned by the
+        // coverage differential's negative tooth — the producer RUNS, the divergence is named.
+        Effect::AttenuateCapability { cell, slot, .. } => WireAction::Attenuate {
+            actor: id(cell)?,
+            idx: *slot as u64,
+            keep: vec![],
         },
         // RefreshDelegation: the child refreshes its delegation snapshot from its parent
         // (self-refresh — the actor IS the child). `.refreshDelegationA` routes to the chained
@@ -1572,8 +1612,8 @@ mod producer_coverage_tests {
             assert!(seen.insert(*name), "duplicate effect in coverage list: {name}");
             assert!(producer_covers_kind(name), "producer_covers_kind disagrees for {name}");
         }
-        // Twenty effect kinds are projected to the wire today (mirrors effect_is_mappable).
-        assert_eq!(covered.len(), 20, "producer coverage count changed — update the report and confirm effect_is_mappable agrees");
+        // Twenty-one effect kinds are projected to the wire today (mirrors effect_is_mappable).
+        assert_eq!(covered.len(), 21, "producer coverage count changed — update the report and confirm effect_is_mappable agrees");
     }
 
     /// Every covered effect must appear in the full enumeration, and the
