@@ -181,6 +181,20 @@ pub const MESSAGE_ROOT_SLOT: u8 = 6;
 /// Slot 7 — `latest_payload_hash`. The most recently published payload hash.
 pub const LATEST_PAYLOAD_SLOT: u8 = 7;
 
+/// **Record-layer Stage 0 (`_RECORD-LAYER-UPGRADE.md` §E).** Subscription is the
+/// 8/8-full app — slots 0..7 are all assigned above, so it has historically had
+/// to fold *unbounded* message state into the slot-6 `message_root` workaround
+/// by hand. The committed user-field MAP (`CellState::fields_root` /
+/// `fields_map`) frees it: keys `>= STATE_SLOTS` (8) live in the map, committed
+/// by `fields_root`, with a membership read-back.
+///
+/// This is the FIRST overflow field on the map: a per-subscription
+/// `subscriber_count` that the 8-slot cell had no room for. It demonstrates the
+/// end-to-end path (write → root update → committed read-back) on the app the
+/// 8-cap actually blocked. Reserved low keys are `0..7`; this is the first
+/// user-map key.
+pub const SUBSCRIBER_COUNT_KEY: u64 = 8;
+
 fn u64_field(value: u64) -> FieldElement {
     let mut out = [0u8; 32];
     out[24..32].copy_from_slice(&value.to_be_bytes());
@@ -707,6 +721,35 @@ pub fn build_grant_consumer_action(
 }
 
 // =============================================================================
+// Record-layer Stage 0: the committed user-field MAP (the unbounded-fields win)
+// =============================================================================
+
+/// Write the `subscriber_count` overflow field (user-map key 8) into a
+/// subscription cell's committed field-map, recomputing `fields_root`.
+///
+/// `_RECORD-LAYER-UPGRADE.md` §E.3: subscription is 8/8-full, so this field has
+/// nowhere to live in the fixed `fields[0..7]`. The committed map carries it for
+/// keys `>= STATE_SLOTS`. After the write, `fields_root` commits the value, and
+/// [`read_subscriber_count`] proves the read-back is committed.
+pub fn write_subscriber_count(state: &mut dregg_cell::CellState, count: u64) -> bool {
+    let mut value = [0u8; 32];
+    value[24..32].copy_from_slice(&count.to_be_bytes());
+    state.set_field_ext(SUBSCRIBER_COUNT_KEY, value)
+}
+
+/// Read the `subscriber_count` overflow field back **with a membership proof**:
+/// returns `Some(count)` iff the value is genuinely committed by the cell's
+/// `fields_root` (`CellState::fields_root_membership`), else `None`. This is the
+/// end-to-end demonstration that the map field round-trips through the committed
+/// root, not just an off-cell side store.
+pub fn read_subscriber_count(state: &dregg_cell::CellState) -> Option<u64> {
+    let value = state.fields_root_membership(SUBSCRIBER_COUNT_KEY)?;
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&value[24..32]);
+    Some(u64::from_be_bytes(bytes))
+}
+
+// =============================================================================
 // Cross-app composition: bounty-state notifications
 // =============================================================================
 //
@@ -833,6 +876,8 @@ pub fn web_constants() -> ConstantsModule {
         .slot("OWNER_PK_HASH_SLOT", OWNER_PK_HASH_SLOT as u64)
         .slot("MESSAGE_ROOT_SLOT", MESSAGE_ROOT_SLOT as u64)
         .slot("LATEST_PAYLOAD_SLOT", LATEST_PAYLOAD_SLOT as u64)
+        // Record-layer Stage 0: first user-map key (>= STATE_SLOTS).
+        .slot("SUBSCRIBER_COUNT_KEY", SUBSCRIBER_COUNT_KEY)
         .string("FACTORY_VK_HEX", hex_encode_32(&SUBSCRIPTION_FACTORY_VK))
         .topic("PUBLISHED", "subscription-published")
         .topic("CONSUMED", "subscription-consumed")
@@ -921,6 +966,56 @@ mod tests {
 
     fn blake3_field(bytes: &[u8]) -> FieldElement {
         *blake3::hash(bytes).as_bytes()
+    }
+
+    // ─── Record-layer Stage 0: committed user-field MAP (end-to-end) ─────
+
+    /// The 8/8-full subscription cell gains an unbounded overflow field
+    /// (`subscriber_count`, user-map key 8) via the committed `fields_root`.
+    /// END-TO-END: write -> root update -> committed membership read-back.
+    #[test]
+    fn subscriber_count_overflow_field_roundtrips_through_fields_root() {
+        let mut state = dregg_cell::CellState::new(0);
+        // Empty map => fixed empty-map constant (legacy backward-compat).
+        assert_eq!(state.fields_root, dregg_cell::empty_fields_root());
+        assert_eq!(read_subscriber_count(&state), None, "absent before write");
+
+        // Write the overflow field (key 8) — the 8 fixed slots are untouched.
+        assert!(write_subscriber_count(&mut state, 1234));
+        assert_ne!(
+            state.fields_root,
+            dregg_cell::empty_fields_root(),
+            "the committed root must move once the map carries a value"
+        );
+
+        // Committed read-back: the value is genuinely committed by fields_root.
+        assert_eq!(
+            read_subscriber_count(&state),
+            Some(1234),
+            "membership read-back must return the committed value"
+        );
+
+        // The fixed slots 0..7 are all still zero — the map did not steal a slot.
+        for i in 0..dregg_cell::STATE_SLOTS {
+            assert_eq!(*state.get_field(i).unwrap(), [0u8; 32]);
+        }
+    }
+
+    /// ANTI-VACUITY (negative witness): a tampered committed root rejects the
+    /// read-back — the membership proof is load-bearing, not a `:= 0` stub.
+    #[test]
+    fn subscriber_count_membership_rejects_tampered_root() {
+        let mut state = dregg_cell::CellState::new(0);
+        write_subscriber_count(&mut state, 1234);
+        assert_eq!(read_subscriber_count(&state), Some(1234));
+
+        // Tamper the stored root so it no longer matches the map's digest.
+        state.fields_root = [0xAAu8; 32];
+        assert_eq!(
+            read_subscriber_count(&state),
+            None,
+            "a root that does not commit the map must reject the read-back"
+        );
     }
 
     // ─── FactoryDescriptor tests ────────────────────────────────────────

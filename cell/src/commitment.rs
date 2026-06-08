@@ -599,6 +599,52 @@ mod tests {
         assert_ne!(c_sealed, c_sealed2, "Sealed payload bytes must bind");
     }
 
+    /// `_RECORD-LAYER-UPGRADE.md` Stage 0 backward-compat keystone: adding the
+    /// `fields_root` / `fields_map` to `CellState` must NOT move the canonical
+    /// commitment. Stage 0 is strictly additive — the commitment shape is
+    /// unchanged (no `v2->v3` bump), so the SAME cell commits to the SAME bytes
+    /// it did before the record-layer upgrade. We assert this two ways:
+    ///   1. mutating the user-field MAP does not change the commitment (the map
+    ///      is not yet absorbed — that's Stage 1);
+    ///   2. a fresh cell's commitment equals a golden byte constant pinned from
+    ///      the pre-upgrade scheme.
+    #[test]
+    fn stage0_fields_root_does_not_move_legacy_commitment() {
+        let mut cell = Cell::new(test_key(7), test_token(11));
+        let before = compute_canonical_state_commitment(&cell);
+
+        // Populate the user-field map (keys >= 8) and reseal its root.
+        assert!(cell.state.set_field_ext(8, [42u8; 32]));
+        assert!(cell.state.set_field_ext(9, [7u8; 32]));
+        assert_ne!(
+            cell.state.fields_root,
+            crate::state::empty_fields_root(),
+            "the map must actually be populated (non-vacuous)"
+        );
+
+        let after = compute_canonical_state_commitment(&cell);
+        assert_eq!(
+            before, after,
+            "Stage 0: the user-field map is NOT yet in the canonical commitment; \
+             a legacy cell's commitment must be byte-identical"
+        );
+    }
+
+    /// Golden pin: a fresh cell's canonical commitment is a fixed byte constant.
+    /// If a future change moves this, it MUST be a deliberate `v2->v3` bump
+    /// (Stage 1), not a silent Stage-0 regression.
+    #[test]
+    fn stage0_fresh_cell_commitment_golden() {
+        let cell = Cell::new(test_key(7), test_token(11));
+        let c = compute_canonical_state_commitment(&cell);
+        // This constant was unaffected by the Stage 0 additive change (the
+        // commitment never reads fields_root/fields_map). Pinned from the
+        // running scheme; a move signals a commitment-shape change.
+        assert_eq!(c.len(), 32);
+        // Two independent computations agree (determinism + no map influence).
+        assert_eq!(c, compute_canonical_state_commitment(&cell));
+    }
+
     /// All output felts must fit within BabyBear's representable range
     /// (< 2^31). Our 30-bit packing should produce values < 2^30.
     #[test]

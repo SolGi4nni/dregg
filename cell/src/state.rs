@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// A generic 32-byte field element.
 /// Could represent a BabyBear element, a BLAKE3 hash, a scalar, etc.
@@ -82,6 +83,68 @@ pub struct CellState {
     /// and `Effect::DropRef` in Stage 7.
     #[serde(default)]
     pub refcount_table_root: [u8; 32],
+    /// `_RECORD-LAYER-UPGRADE.md` §B (Stage 0): the committed root of the
+    /// **user-field MAP** — an unbounded `key → FieldElement` accumulator over
+    /// keys `>= STATE_SLOTS` (8). The hybrid unsqueeze of the 8-fixed-slot
+    /// cell: keys `0..7` stay in `fields[]` (existing access byte-identical);
+    /// keys `>= 8` live in [`fields_map`] and are committed here.
+    ///
+    /// `fields_root` is the **committed** root (the on-cell/in-circuit
+    /// witness); [`fields_map`] is the prover-side store whose digest this is.
+    /// Initialised to [`empty_fields_root`] — the digest of the empty map — so
+    /// a legacy cell (no map entries) carries the FIXED empty-map constant and
+    /// its canonical commitment is unchanged when this is later folded in
+    /// (Stage 1). `#[serde(default)]` keeps every existing serialized cell
+    /// deserializing (the additive pattern already used for
+    /// `swiss_table_root`/`refcount_table_root`).
+    ///
+    /// Stage 0 is strictly additive: this is NOT yet absorbed into
+    /// `compute_canonical_state_commitment` (that is Stage 1, with a `v2->v3`
+    /// bump). It is present, load-bearing for the map read/write path, and
+    /// recomputed on every map write.
+    #[serde(default = "empty_fields_root")]
+    pub fields_root: [u8; 32],
+    /// `_RECORD-LAYER-UPGRADE.md` §B.3: the **prover-side witness** store for
+    /// the user-field map — the actual `key (>= 8) -> value` entries whose
+    /// digest is [`fields_root`]. Not itself committed (its digest is).
+    /// `BTreeMap` for a canonical (sorted-key) iteration order so the digest is
+    /// deterministic. `#[serde(default)]` ⇒ old cells deserialize with an empty
+    /// map.
+    #[serde(default)]
+    pub fields_map: BTreeMap<u64, FieldElement>,
+}
+
+/// Domain-separation context for the user-field-map keyed digest
+/// ([`CellState::fields_root`]). Distinct from the canonical-state-commitment
+/// context so a map root can never be confused with a full-cell commitment.
+pub const FIELDS_ROOT_CONTEXT: &str = "dregg-cell:fields-root v1";
+
+/// The digest of the **empty** user-field map — the fixed `fields_root`
+/// constant a legacy (no-overflow) cell carries. Because every legacy cell has
+/// the same empty map, this constant is cell-independent: folding it into the
+/// canonical commitment is a no-op for legacy cells (the Stage 0 backward-compat
+/// keystone, mirrored in Lean by `FieldsMap.fieldsRoot_empty_legacy`).
+pub fn empty_fields_root() -> [u8; 32] {
+    compute_fields_root(&BTreeMap::new())
+}
+
+/// Compute the keyed digest committing a user-field map.
+///
+/// The Rust shadow of the Lean `FieldsMap.fieldsRoot`
+/// (`ListCommit.listDigest` over the user tail): a length-seeded BLAKE3 sponge
+/// over the canonically-ordered `(key, value)` leaves. `BTreeMap` iteration is
+/// already sorted by key, so the digest is order-canonical and injective enough
+/// that two distinct maps cannot share a root (the anti-vacuity guarantee — a
+/// `:= 0` stub is forbidden). An empty map yields the fixed [`empty_fields_root`].
+pub fn compute_fields_root(map: &BTreeMap<u64, FieldElement>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(FIELDS_ROOT_CONTEXT);
+    // Length prefix (seed): pins the entry count so a drop is rejected.
+    hasher.update(&(map.len() as u64).to_le_bytes());
+    for (key, value) in map.iter() {
+        hasher.update(&key.to_le_bytes());
+        hasher.update(value);
+    }
+    *hasher.finalize().as_bytes()
 }
 
 /// The public view of a field — either the actual value (if public) or its commitment hash.
@@ -230,6 +293,9 @@ impl CellState {
             // Stage 1 CapTP-prep: empty-tree sentinels.
             swiss_table_root: [0u8; 32],
             refcount_table_root: [0u8; 32],
+            // Record-layer Stage 0: empty user-field map.
+            fields_root: empty_fields_root(),
+            fields_map: BTreeMap::new(),
         }
     }
 
@@ -320,6 +386,68 @@ impl CellState {
         }
     }
 
+    // ───────────────────────────────────────────────────────────────────────
+    // `_RECORD-LAYER-UPGRADE.md` §B.3 — the committed user-field MAP (Stage 0).
+    //
+    // The hybrid read/write: keys `< STATE_SLOTS` (8) hit the existing fixed
+    // `fields[]` array (byte-identical to before); keys `>= STATE_SLOTS` hit the
+    // committed map. These are NEW methods — every existing `get_field`/
+    // `set_field` call (which takes a `usize` slot index) is untouched.
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// Read a field by its **unbounded key**. Keys `< STATE_SLOTS` read the
+    /// fixed cell `fields[key]`; keys `>= STATE_SLOTS` read the committed map
+    /// (returning `None` if the key is absent — the negative membership case).
+    ///
+    /// The Rust shadow of the Lean `FieldsMap.tailLookup` / `Value.scalar`
+    /// uniform name-keyed read.
+    pub fn get_field_ext(&self, key: u64) -> Option<FieldElement> {
+        if (key as usize) < STATE_SLOTS {
+            Some(self.fields[key as usize])
+        } else {
+            self.fields_map.get(&key).copied()
+        }
+    }
+
+    /// Write a field by its **unbounded key**. Keys `< STATE_SLOTS` write the
+    /// fixed cell (delegating to [`set_field`](Self::set_field), so stale-
+    /// commitment invalidation is preserved); keys `>= STATE_SLOTS` insert into
+    /// the committed map and recompute [`fields_root`](Self::fields_root).
+    /// Returns `true` on success.
+    pub fn set_field_ext(&mut self, key: u64, value: FieldElement) -> bool {
+        if (key as usize) < STATE_SLOTS {
+            self.set_field(key as usize, value)
+        } else {
+            self.fields_map.insert(key, value);
+            self.fields_root = compute_fields_root(&self.fields_map);
+            true
+        }
+    }
+
+    /// Recompute and store `fields_root` from the current `fields_map`. Idempotent;
+    /// callers that mutate `fields_map` out-of-band must call this to re-seal the
+    /// root (the normal [`set_field_ext`](Self::set_field_ext) path does it
+    /// automatically).
+    pub fn reseal_fields_root(&mut self) {
+        self.fields_root = compute_fields_root(&self.fields_map);
+    }
+
+    /// **Membership witness** for a committed user-map key: returns the value
+    /// `Some(v)` iff `key` is present in the map AND the recomputed root over
+    /// the current map equals the stored `fields_root` (i.e. the value `v` is
+    /// genuinely committed by `fields_root`). This is the end-to-end read-back
+    /// the subscription app uses: a read proves the value is committed.
+    ///
+    /// The Rust shadow of the Lean `FieldsMap.fieldsRoot_membership` read law.
+    pub fn fields_root_membership(&self, key: u64) -> Option<FieldElement> {
+        let v = self.fields_map.get(&key).copied()?;
+        if compute_fields_root(&self.fields_map) == self.fields_root {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
     /// Increment the nonce by 1, returning `true` on success and `false` on
     /// overflow.
     ///
@@ -378,5 +506,127 @@ impl CellState {
 impl Default for CellState {
     fn default() -> Self {
         Self::new(0)
+    }
+}
+
+#[cfg(test)]
+mod fields_map_tests {
+    //! `_RECORD-LAYER-UPGRADE.md` Stage 0: the committed user-field MAP. The
+    //! Rust shadow of `Dregg2/Exec/FieldsMap.lean`'s pos/neg vacuity guard.
+
+    use super::*;
+
+    fn fe(byte: u8) -> FieldElement {
+        let mut f = [0u8; 32];
+        f[31] = byte;
+        f
+    }
+
+    /// A fresh cell has the FIXED empty-map root (legacy backward-compat
+    /// constant) and an empty map.
+    #[test]
+    fn fresh_cell_has_empty_fields_root() {
+        let s = CellState::new(0);
+        assert!(s.fields_map.is_empty());
+        assert_eq!(
+            s.fields_root,
+            empty_fields_root(),
+            "a no-overflow cell carries the fixed empty-map constant"
+        );
+    }
+
+    /// POSITIVE membership: a written key `>= 8` reads back exactly its value,
+    /// and the membership witness confirms it is committed by `fields_root`.
+    #[test]
+    fn map_field_write_then_membership_readback() {
+        let mut s = CellState::new(0);
+        assert!(s.set_field_ext(8, fe(42)));
+        assert!(s.set_field_ext(9, fe(7)));
+        assert_eq!(s.get_field_ext(8), Some(fe(42)));
+        assert_eq!(s.get_field_ext(9), Some(fe(7)));
+        // The committed read-back: value is genuinely committed by fields_root.
+        assert_eq!(s.fields_root_membership(8), Some(fe(42)));
+        assert_eq!(s.fields_root_membership(9), Some(fe(7)));
+    }
+
+    /// NEGATIVE membership: an absent key reads `None` (the tail does not commit
+    /// it) — the anti-vacuity negative witness.
+    #[test]
+    fn absent_map_field_reads_none() {
+        let mut s = CellState::new(0);
+        s.set_field_ext(8, fe(42));
+        assert_eq!(s.get_field_ext(10), None);
+        assert_eq!(s.fields_root_membership(10), None);
+    }
+
+    /// Keys `< 8` fall through to the fixed array (existing access unchanged):
+    /// `set_field_ext`/`get_field_ext` on a low key mirror `set_field`/`get_field`.
+    #[test]
+    fn low_keys_hit_the_fixed_array() {
+        let mut s = CellState::new(0);
+        assert!(s.set_field_ext(3, fe(99)));
+        assert_eq!(s.fields[3], fe(99));
+        assert_eq!(s.get_field_ext(3), Some(fe(99)));
+        // The map and its root are untouched by a low-key write.
+        assert!(s.fields_map.is_empty());
+        assert_eq!(s.fields_root, empty_fields_root());
+    }
+
+    /// ANTI-VACUITY: a map with data has a root DIFFERENT from the empty
+    /// constant, and a tampered value FLIPS the root (the digest genuinely
+    /// commits the map — a `:= 0` stub is forbidden).
+    #[test]
+    fn fields_root_is_not_vacuous() {
+        let mut s = CellState::new(0);
+        s.set_field_ext(8, fe(42));
+        assert_ne!(
+            s.fields_root,
+            empty_fields_root(),
+            "a populated map must not collapse to the empty constant"
+        );
+        let root_before = s.fields_root;
+        // Tamper the value at the same key.
+        s.set_field_ext(8, fe(43));
+        assert_ne!(root_before, s.fields_root, "tampering a value must flip the root");
+        // Distinct maps cannot share a root: a drop also flips it.
+        s.set_field_ext(9, fe(1));
+        let two_entries = s.fields_root;
+        s.fields_map.remove(&9);
+        s.reseal_fields_root();
+        assert_ne!(two_entries, s.fields_root, "dropping an entry must flip the root");
+    }
+
+    /// `fields_root` is deterministic and order-canonical (BTreeMap key order):
+    /// inserting the same entries in a different order yields the same root.
+    #[test]
+    fn fields_root_is_order_canonical() {
+        let mut a = CellState::new(0);
+        a.set_field_ext(8, fe(1));
+        a.set_field_ext(9, fe(2));
+        let mut b = CellState::new(0);
+        b.set_field_ext(9, fe(2));
+        b.set_field_ext(8, fe(1));
+        assert_eq!(a.fields_root, b.fields_root);
+    }
+
+    /// An existing serialized cell (no `fields_root`/`fields_map`) deserializes
+    /// unchanged: the `#[serde(default)]` fields populate to the empty map.
+    #[test]
+    fn legacy_serialized_cell_deserializes() {
+        // A JSON blob with the pre-Stage-0 field set only (no fields_root /
+        // fields_map). Deserialization must succeed and default the new fields.
+        // Built by serializing a fresh cell, then stripping the new keys — so
+        // the blob is exactly a pre-upgrade serialized cell.
+        let fresh = CellState::new(100);
+        let mut blob = serde_json::to_value(&fresh).expect("serialize");
+        let obj = blob.as_object_mut().unwrap();
+        obj.remove("fields_root");
+        obj.remove("fields_map");
+        obj.insert("nonce".into(), serde_json::json!(5));
+        let s: CellState = serde_json::from_value(blob).expect("legacy cell deserializes");
+        assert_eq!(s.nonce(), 5);
+        assert_eq!(s.balance(), 100);
+        assert!(s.fields_map.is_empty());
+        assert_eq!(s.fields_root, empty_fields_root());
     }
 }
