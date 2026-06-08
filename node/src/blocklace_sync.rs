@@ -541,36 +541,107 @@ impl BlocklaceHandle {
             all_blocks.sort_by_key(|(seq, _)| *seq);
             all_blocks.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
         } else {
-            // Multi-party: run the full Cordial Miners tau ordering.
-            // We build an ordering-compatible blocklace and maintain a mapping
-            // between the two BlockId types (they use different hash schemes).
+            // Multi-party: produce the finalized total order from the VERIFIED LEAN RULE.
+            //
+            // STRONG BAR (the node IMPLEMENTS consensus via the verified kernel, not a model+gate):
+            // the AUTHORITATIVE order is `BlocklaceFinality.tauOrder` itself, computed by the
+            // `@[export] dregg_tau_order` the node CALLS through
+            // `crate::finality_gate::VerifiedFinality::compute_order` (FFI →
+            // `dregg_lean_ffi::verified_tau_order`). The Lean theorem `tau_order_export_eq` proves the
+            // export's output decodes back to `tauOrder` EXACTLY (order-faithful), so the order the
+            // node finalizes over IS the verified rule's, by construction — not a Rust order the Lean
+            // model merely vetoes.
+            //
+            // DIFFERENTIAL: the Rust `dregg_blocklace::ordering::tau` (dreggrs) is still run, but as a
+            // DIFFERENTIAL SIBLING — we assert agreement with the Lean order and log LOUDLY on any
+            // divergence (the verified Lean order WINS; the Rust order is never authoritative when the
+            // export is live). This is the Lean==Rust differential ON THE LIVE PATH, the same posture
+            // the executor uses (verified producer + Rust differential), not a beside-the-node test.
+            //
+            // FAIL-SAFE: when the verified archive lacks `dregg_tau_order` (stale/marshal-only build)
+            // or the wire returns ERR, `compute_order` is `None` and we fall back to the Rust `tau`
+            // order with a loud warning — the live path is never broken, only un-verified for that poll.
             let (ordering_lace, id_map) = build_ordering_blocklace(&lace);
-            let raw_order = tau(&ordering_lace, &participants);
-            // Map ordering BlockIds back to finality BlockIds.
-            raw_order
+            let rust_order: Vec<BlockId> = tau(&ordering_lace, &participants)
                 .into_iter()
                 .filter_map(|ordering_id| id_map.get(&ordering_id).copied())
-                .collect::<Vec<_>>()
+                .collect();
+
+            let order_gate_armed = crate::finality_gate::finality_gate_enabled();
+            match if order_gate_armed {
+                crate::finality_gate::VerifiedFinality::compute_order(&lace, &participants)
+            } else {
+                None
+            } {
+                Some(lean_order) => {
+                    // DIFFERENTIAL: assert the verified Lean order and the Rust `tau` order AGREE.
+                    // The two id schemes differ (blake3 vs interned `Nat`), so we compare on the
+                    // content-identical `(creator, seq)` coordinate — the level at which the Rust↔Lean
+                    // differential is sound (the named OPEN-CM-XSORT residual only reorders within a
+                    // round-cohort, so we compare the finalized MULTISET of `(creator, seq)` and the
+                    // length, the exact differential the Lean `tauGolden` `#guard`s pin).
+                    let coord = |ids: &[BlockId]| -> Vec<(u64, [u8; 32])> {
+                        let mut v: Vec<(u64, [u8; 32])> = ids
+                            .iter()
+                            .filter_map(|id| lace.get(id).map(|b| (b.seq, b.creator)))
+                            .collect();
+                        v.sort_unstable();
+                        v
+                    };
+                    if coord(&lean_order) != coord(&rust_order) {
+                        warn!(
+                            lean_len = lean_order.len(),
+                            rust_len = rust_order.len(),
+                            "consensus DIFFERENTIAL DIVERGENCE: the verified Lean `dregg_tau_order` \
+                             and the Rust `ordering::tau` finalized DIFFERENT (creator, seq) sets — \
+                             the VERIFIED Lean order is AUTHORITATIVE (Rust is the differential \
+                             sibling). This is a Rust-side bug or a stale archive; investigate."
+                        );
+                    } else {
+                        debug!(
+                            finalized = lean_order.len(),
+                            "consensus order: verified Lean `dregg_tau_order` is authoritative; \
+                             Rust `ordering::tau` differential AGREES"
+                        );
+                    }
+                    // The VERIFIED Lean order is the one we finalize over.
+                    lean_order
+                }
+                None => {
+                    if order_gate_armed {
+                        warn!(
+                            "verified consensus order UNAVAILABLE (Lean archive missing \
+                             `dregg_tau_order` or wire returned ERR) — FALLING BACK to the Rust \
+                             `ordering::tau` order for this poll. Rebuild the node with the verified \
+                             archive (it splices Dregg2.Distributed.FinalityGate) to make the verified \
+                             rule authoritative."
+                        );
+                    }
+                    rust_order
+                }
+            }
         };
 
-        // ── VERIFIED FINALITY GATE (multi-party only) ───────────────────────────────────────────
-        // Convert "agreement-checked" into "Lean-gated": compute the finalized order FROM the
-        // verified Lean rule (`BlocklaceFinality.tauOrder` via the `dregg_blocklace_finalize` FFI
-        // export) and admit a block to the executor ONLY when the verified rule also finalizes it
-        // (compared on the `(creator, seq)` coordinate, content-identical across the blake3 `BlockId`
-        // here vs. the abstract `Nat` id in Lean). The Lean theorem `gate_admits_iff_verified_finalizes`
-        // proves admission ⟺ membership in the verified `tauGolden` order, so this gates the live
-        // commit on the verified rule by construction.
+        // ── VERIFIED FINALITY GATE (multi-party only) — SECONDARY CONSISTENCY BELT ──────────────────
+        // With `ordered` now PRODUCED by the verified Lean `dregg_tau_order` (above; the authoritative
+        // path), this projection gate is a belt-and-suspenders consistency check: it independently
+        // re-runs the verified `dregg_blocklace_finalize` export (the `(creator, seq)` projection of the
+        // SAME `BlocklaceFinality.tauOrder`) and admits a block to the executor ONLY when that
+        // projection also finalizes it. Because the order is already Lean-authoritative, every block in
+        // `ordered` IS in the verified `tauGolden` order, so the gate admits them all — it now defends
+        // against a corrupted `ordered` (e.g. a future fail-open Rust fallback that diverged) by
+        // STOPPING the committed prefix at any block the verified projection does not finalize. The
+        // Lean theorem `gate_admits_iff_verified_finalizes` proves admission ⟺ membership in `tauGolden`.
         //
         // FLAG: default ON (`DREGG_FINALITY_GATE`); solo (n=1) does not run `tau` and is
         // scales-to-zero, so the gate applies to the n>1 path that matters.
         //
         // FAIL-OPEN: when the verified archive lacks the export (stale build) or the wire returns
         // ERR, `compute` is `None` and the gate is a no-op with a loud warning — the live path is
-        // never broken. When it IS armed and the verified rule excludes a block the Rust `tau`
-        // ordered, we STOP the committed prefix BEFORE that block (we do NOT advance `executed_up_to`
-        // past it), so it is re-evaluated on a later poll once the lace has grown enough for the
-        // verified rule to finalize it — preserving liveness (tau's finalized prefix is monotone).
+        // never broken. When it IS armed and the verified projection excludes a block, we STOP the
+        // committed prefix BEFORE that block (we do NOT advance `executed_up_to` past it), so it is
+        // re-evaluated on a later poll once the lace has grown enough — preserving liveness (tau's
+        // finalized prefix is monotone).
         let gate_armed =
             participants.len() > 1 && crate::finality_gate::finality_gate_enabled();
         let verified = if gate_armed {
