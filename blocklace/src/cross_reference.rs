@@ -281,12 +281,17 @@ mod tests {
     use super::*;
     use crate::ordering::OrderingConfig;
 
-    fn make_key(id: u8) -> NodeKey {
-        [id; 32]
+    fn signing_for(id: u8) -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[id; 32])
     }
 
+    fn make_key(id: u8) -> NodeKey {
+        signing_for(id).verifying_key().to_bytes()
+    }
+
+    /// A *signed* block authored by `creator` (verified `insert` accepts it).
     fn make_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
-        Block::new(make_key(creator), seq, preds, payload.to_vec())
+        Block::new_signed(&signing_for(creator), seq, preds, payload.to_vec())
     }
 
     // ─── Test 1: Block with cross-reference correctly identified ────────────
@@ -353,12 +358,12 @@ mod tests {
         let group = ReferenceGroup::new(vec![make_key(1), make_key(2), make_key(3)], 10);
 
         // Insert an external block from creator 10.
-        let ext_block = Block::new(make_key(10), 0, vec![], b"external-data".to_vec());
+        let ext_block = make_block(10, 0, vec![], b"external-data");
         let ext_id = ext_block.id();
         node.blocklace_mut().insert(ext_block.clone()).unwrap();
 
         // Create a member block that references the external block.
-        let member_block = Block::new(key_a, 0, vec![ext_id], b"refs-external".to_vec());
+        let member_block = make_block(1, 0, vec![ext_id], b"refs-external");
         node.blocklace_mut().insert(member_block.clone()).unwrap();
 
         // The push should include the external block for causal closure.

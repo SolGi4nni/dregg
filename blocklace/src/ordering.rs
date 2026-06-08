@@ -908,7 +908,7 @@ mod tests {
                 let payload = vec![round as u8, i as u8];
                 let block = make_block(participant, seq, preds.clone(), payload);
                 let id = block.id();
-                bl.insert(block).unwrap();
+                bl.insert_unverified(block).unwrap();
                 round_blocks.push(id);
             }
             blocks_by_round.push(round_blocks);
@@ -1055,22 +1055,22 @@ mod tests {
         let b2_id = b2.id();
         let b3 = make_block(make_key(3), 0, vec![], vec![4]);
         let b3_id = b3.id();
-        bl.insert(b1a).unwrap();
-        bl.insert(b1b).unwrap();
-        bl.insert(b2).unwrap();
-        bl.insert(b3).unwrap();
+        bl.insert_unverified(b1a).unwrap();
+        bl.insert_unverified(b1b).unwrap();
+        bl.insert_unverified(b2).unwrap();
+        bl.insert_unverified(b3).unwrap();
 
         let preds_r2 = vec![b1a_id, b1b_id, b2_id, b3_id];
         let r2_2 = make_block(make_key(2), 1, preds_r2.clone(), vec![6]);
         let r2_3 = make_block(make_key(3), 1, preds_r2.clone(), vec![7]);
         let r2_2_id = r2_2.id();
         let r2_3_id = r2_3.id();
-        bl.insert(r2_2).unwrap();
-        bl.insert(r2_3).unwrap();
+        bl.insert_unverified(r2_2).unwrap();
+        bl.insert_unverified(r2_3).unwrap();
 
         let preds_r3 = vec![r2_2_id, r2_3_id];
-        bl.insert(make_block(make_key(2), 2, preds_r3.clone(), vec![9])).unwrap();
-        bl.insert(make_block(make_key(3), 2, preds_r3.clone(), vec![10])).unwrap();
+        bl.insert_unverified(make_block(make_key(2), 2, preds_r3.clone(), vec![9])).unwrap();
+        bl.insert_unverified(make_block(make_key(3), 2, preds_r3.clone(), vec![10])).unwrap();
 
         let result = tau(&bl, &participants);
         // Agreeing with the Lean model: the equivocator (creator 1) contributes NO finalized block.
@@ -1100,10 +1100,10 @@ mod tests {
         let b3 = make_block(make_key(3), 0, vec![], vec![4]);
         let b3_id = b3.id();
 
-        bl.insert(b1a).unwrap();
-        bl.insert(b1b).unwrap();
-        bl.insert(b2).unwrap();
-        bl.insert(b3).unwrap();
+        bl.insert_unverified(b1a).unwrap();
+        bl.insert_unverified(b1b).unwrap();
+        bl.insert_unverified(b2).unwrap();
+        bl.insert_unverified(b3).unwrap();
 
         // Round 2: all see both equivocating blocks.
         let preds_r2 = vec![b1a_id, b1b_id, b2_id, b3_id];
@@ -1113,18 +1113,18 @@ mod tests {
         let r2_1_id = r2_1.id();
         let r2_2_id = r2_2.id();
         let r2_3_id = r2_3.id();
-        bl.insert(r2_1).unwrap();
-        bl.insert(r2_2).unwrap();
-        bl.insert(r2_3).unwrap();
+        bl.insert_unverified(r2_1).unwrap();
+        bl.insert_unverified(r2_2).unwrap();
+        bl.insert_unverified(r2_3).unwrap();
 
         // Round 3.
         let preds_r3 = vec![r2_1_id, r2_2_id, r2_3_id];
         let r3_1 = make_block(make_key(1), 3, preds_r3.clone(), vec![8]);
         let r3_2 = make_block(make_key(2), 2, preds_r3.clone(), vec![9]);
         let r3_3 = make_block(make_key(3), 2, preds_r3.clone(), vec![10]);
-        bl.insert(r3_1).unwrap();
-        bl.insert(r3_2).unwrap();
-        bl.insert(r3_3).unwrap();
+        bl.insert_unverified(r3_1).unwrap();
+        bl.insert_unverified(r3_2).unwrap();
+        bl.insert_unverified(r3_3).unwrap();
 
         let result = tau(&bl, &participants);
 
@@ -1197,8 +1197,8 @@ mod tests {
         let b3 = make_block(make_key(3), 0, vec![], vec![2]);
         let b2_id = b2.id();
         let b3_id = b3.id();
-        bl.insert(b2).unwrap();
-        bl.insert(b3).unwrap();
+        bl.insert_unverified(b2).unwrap();
+        bl.insert_unverified(b3).unwrap();
 
         // Round 2.
         let preds = vec![b2_id, b3_id];
@@ -1206,15 +1206,15 @@ mod tests {
         let r2_3 = make_block(make_key(3), 1, preds.clone(), vec![4]);
         let r2_2_id = r2_2.id();
         let r2_3_id = r2_3.id();
-        bl.insert(r2_2).unwrap();
-        bl.insert(r2_3).unwrap();
+        bl.insert_unverified(r2_2).unwrap();
+        bl.insert_unverified(r2_3).unwrap();
 
         // Round 3.
         let preds3 = vec![r2_2_id, r2_3_id];
         let r3_2 = make_block(make_key(2), 2, preds3.clone(), vec![5]);
         let r3_3 = make_block(make_key(3), 2, preds3.clone(), vec![6]);
-        bl.insert(r3_2).unwrap();
-        bl.insert(r3_3).unwrap();
+        bl.insert_unverified(r3_2).unwrap();
+        bl.insert_unverified(r3_3).unwrap();
 
         let result = tau(&bl, &participants);
         assert!(
@@ -1242,7 +1242,7 @@ mod tests {
                 let payload = vec![round as u8, i as u8];
                 let block = make_block(participant, seq, prev_round_blocks.clone(), payload);
                 let id = block.id();
-                bl.insert(block).unwrap();
+                bl.insert_unverified(block).unwrap();
                 current_round_blocks.push(id);
             }
             prev_round_blocks = current_round_blocks;
@@ -1316,14 +1316,14 @@ mod tests {
         let b1 = make_block(make_key(2), 0, vec![], vec![]);
         let c1 = make_block(make_key(3), 0, vec![], vec![]);
 
-        bl.insert(a1).unwrap();
-        bl.insert(b1).unwrap();
-        bl.insert(c1).unwrap();
+        bl.insert_unverified(a1).unwrap();
+        bl.insert_unverified(b1).unwrap();
+        bl.insert_unverified(c1).unwrap();
 
         // Lazy block only references one predecessor.
         let lazy = make_block(make_key(1), 1, vec![a1_id], vec![]);
         let lazy_id = lazy.id();
-        bl.insert(lazy).unwrap();
+        bl.insert_unverified(lazy).unwrap();
 
         // 1/3 is not > 2/3, so not cordial.
         assert!(!is_cordial(&bl, &lazy_id, &participants));
@@ -1342,9 +1342,9 @@ mod tests {
         let b1_id = b1.id();
         let c1 = make_block(make_key(3), 0, vec![], vec![4, 5]);
         let c1_id = c1.id();
-        bl.insert(a1).unwrap();
-        bl.insert(b1).unwrap();
-        bl.insert(c1).unwrap();
+        bl.insert_unverified(a1).unwrap();
+        bl.insert_unverified(b1).unwrap();
+        bl.insert_unverified(c1).unwrap();
 
         // Round 2.
         let preds2 = vec![a1_id, b1_id, c1_id];
@@ -1354,18 +1354,18 @@ mod tests {
         let b2_id = b2.id();
         let c2 = make_block(make_key(3), 1, preds2.clone(), vec![8]);
         let c2_id = c2.id();
-        bl.insert(a2).unwrap();
-        bl.insert(b2).unwrap();
-        bl.insert(c2).unwrap();
+        bl.insert_unverified(a2).unwrap();
+        bl.insert_unverified(b2).unwrap();
+        bl.insert_unverified(c2).unwrap();
 
         // Round 3.
         let preds3 = vec![a2_id, b2_id, c2_id];
         let a3 = make_block(make_key(1), 2, preds3.clone(), vec![9]);
         let b3 = make_block(make_key(2), 2, preds3.clone(), vec![10]);
         let c3 = make_block(make_key(3), 2, preds3.clone(), vec![11]);
-        bl.insert(a3).unwrap();
-        bl.insert(b3).unwrap();
-        bl.insert(c3).unwrap();
+        bl.insert_unverified(a3).unwrap();
+        bl.insert_unverified(b3).unwrap();
+        bl.insert_unverified(c3).unwrap();
 
         let turns = finalized_turns(&bl, &participants);
 
@@ -1412,7 +1412,7 @@ mod tests {
                 let payload = vec![round as u8, i as u8];
                 let block = make_block(participant, seq, preds.clone(), payload);
                 let id = block.id();
-                bl.insert(block).unwrap();
+                bl.insert_unverified(block).unwrap();
                 round_blocks.push(id);
             }
 
@@ -1422,7 +1422,7 @@ mod tests {
                 let payload = vec![0xFF, round as u8, j as u8];
                 let ext_block = make_block(ext, seq, preds.clone(), payload);
                 let ext_id = ext_block.id();
-                bl.insert(ext_block).unwrap();
+                bl.insert_unverified(ext_block).unwrap();
                 external_ids.push(ext_id);
             }
 
@@ -1632,7 +1632,7 @@ mod tests {
         for seq in 0..10u64 {
             let ext_block = make_block(ext_key, seq, ext_prev.clone(), vec![0xEE, seq as u8]);
             ext_tip = ext_block.id();
-            bl.insert(ext_block).unwrap();
+            bl.insert_unverified(ext_block).unwrap();
             ext_prev = vec![ext_tip];
         }
 
@@ -1643,7 +1643,7 @@ mod tests {
         for (i, &participant) in members.iter().enumerate() {
             let block = make_block(participant, 0, vec![], vec![1, i as u8]);
             let id = block.id();
-            bl.insert(block).unwrap();
+            bl.insert_unverified(block).unwrap();
             round_blocks.push(id);
         }
         member_blocks_by_round.push(round_blocks);
@@ -1655,7 +1655,7 @@ mod tests {
             preds.push(ext_tip); // Reference external deep chain
             let block = make_block(participant, 1, preds, vec![2, i as u8]);
             let id = block.id();
-            bl.insert(block).unwrap();
+            bl.insert_unverified(block).unwrap();
             round_blocks.push(id);
         }
         member_blocks_by_round.push(round_blocks);
@@ -1666,7 +1666,7 @@ mod tests {
             let preds = member_blocks_by_round[1].clone();
             let block = make_block(participant, 2, preds, vec![3, i as u8]);
             let id = block.id();
-            bl.insert(block).unwrap();
+            bl.insert_unverified(block).unwrap();
             round_blocks.push(id);
         }
         member_blocks_by_round.push(round_blocks);

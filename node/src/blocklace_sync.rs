@@ -596,10 +596,16 @@ fn build_ordering_blocklace(
             Payload::MembershipVote { .. } => vec![0x04],
             Payload::Data(data) => data.clone(),
         };
+        // These are unsigned mirror skeletons of already-authenticated finality
+        // blocks, rebuilt purely to run `ordering::tau` — the unsigned ORDERING
+        // PROJECTION path (`insert_unverified`), which enforces only causal
+        // closure. Feed-integrity (signatures/seq/equivocation) was already
+        // discharged on the source `finality_lace`; verified `insert` would
+        // (correctly) reject these unsigned skeletons.
         let ordering_block =
             dregg_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
         let ordering_id = ordering_block.id();
-        let _ = ordering_lace.insert(ordering_block);
+        let _ = ordering_lace.insert_unverified(ordering_block);
 
         // Record the bidirectional mapping.
         finality_to_ordering.insert(*finality_id, ordering_id);

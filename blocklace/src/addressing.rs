@@ -538,16 +538,16 @@ mod tests {
         // Insert some blocks with low sequence numbers.
         let b1 = crate::Block::new(make_key(1), 0, vec![], vec![1]);
         let b1_id = b1.id();
-        blocklace.insert(b1).unwrap();
+        blocklace.insert_unverified(b1).unwrap();
 
         let b2 = crate::Block::new(make_key(2), 0, vec![], vec![2]);
         let b2_id = b2.id();
-        blocklace.insert(b2).unwrap();
+        blocklace.insert_unverified(b2).unwrap();
 
         // Insert a block with high sequence (above checkpoint height).
         let b3 = crate::Block::new(make_key(1), 100, vec![b1_id], vec![3]);
         let b3_id = b3.id();
-        blocklace.insert(b3).unwrap();
+        blocklace.insert_unverified(b3).unwrap();
 
         assert_eq!(blocklace.len(), 3);
 
@@ -648,11 +648,11 @@ mod tests {
         // Strand 2 produces some blocks.
         let b1 = crate::Block::new(make_key(2), 0, vec![], b"before-migration".to_vec());
         let b1_id = b1.id();
-        blocklace.insert(b1).unwrap();
+        blocklace.insert_unverified(b1).unwrap();
 
         let b2 = crate::Block::new(make_key(2), 1, vec![b1_id], b"also-before".to_vec());
         let b2_id = b2.id();
-        blocklace.insert(b2).unwrap();
+        blocklace.insert_unverified(b2).unwrap();
 
         // Perform migration (group changes, not the DAG).
         let mut source =

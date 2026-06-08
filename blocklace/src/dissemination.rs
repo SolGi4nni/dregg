@@ -22,6 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use crate::ordering::ReferenceGroup;
@@ -552,6 +553,12 @@ pub struct Disseminator {
     peer_knowledge: PeerKnowledge,
     /// Our identity (public key).
     self_key: NodeKey,
+    /// Our Ed25519 signing key, present when this disseminator AUTHORS blocks
+    /// (`create_block`). Authored blocks must be signed so peers' verified
+    /// `Blocklace::insert` accepts them. `None` for a projection/peer-tracking
+    /// disseminator that never authors (it can still receive signed blocks from
+    /// the wire and run dissemination over them).
+    signing_key: Option<SigningKey>,
     /// Blocks we've received but can't insert yet (missing predecessors).
     /// Maps block_id -> (block, missing_predecessor_ids).
     pending: HashMap<BlockId, (Block, HashSet<BlockId>)>,
@@ -564,11 +571,34 @@ pub struct Disseminator {
 
 impl Disseminator {
     /// Create a new disseminator for the given node identity.
+    ///
+    /// No signing key: this disseminator tracks peers and runs dissemination
+    /// over received (already-signed) blocks, but cannot AUTHOR signed blocks.
+    /// Use [`Disseminator::with_signing_key`] for an authoring node.
     pub fn new(self_key: NodeKey) -> Self {
         Self {
             blocklace: Blocklace::new(),
             peer_knowledge: PeerKnowledge::new(),
             self_key,
+            signing_key: None,
+            pending: HashMap::new(),
+            subscription: None,
+            interest_discovery: None,
+        }
+    }
+
+    /// Create an AUTHORING disseminator that holds its Ed25519 signing key.
+    ///
+    /// `self_key` is derived from the key's public half, so `create_block` signs
+    /// each authored block under this identity — producing blocks that peers'
+    /// verified [`Blocklace::insert`] accepts.
+    pub fn with_signing_key(signing_key: SigningKey) -> Self {
+        let self_key = signing_key.verifying_key().to_bytes();
+        Self {
+            blocklace: Blocklace::new(),
+            peer_knowledge: PeerKnowledge::new(),
+            self_key,
+            signing_key: Some(signing_key),
             pending: HashMap::new(),
             subscription: None,
             interest_discovery: None,
@@ -581,6 +611,7 @@ impl Disseminator {
             blocklace,
             peer_knowledge: PeerKnowledge::new(),
             self_key,
+            signing_key: None,
             pending: HashMap::new(),
             subscription: None,
             interest_discovery: None,
@@ -593,6 +624,7 @@ impl Disseminator {
             blocklace: Blocklace::new(),
             peer_knowledge: PeerKnowledge::new(),
             self_key,
+            signing_key: None,
             pending: HashMap::new(),
             subscription: Some(subscription),
             interest_discovery: None,
@@ -639,11 +671,36 @@ impl Disseminator {
         &self.self_key
     }
 
+    /// Provide (or replace) this disseminator's authoring signing key.
+    ///
+    /// Rebinds `self_key` to the key's public half so subsequent `create_block`
+    /// calls author signed blocks under that identity.
+    pub fn set_signing_key(&mut self, signing_key: SigningKey) {
+        self.self_key = signing_key.verifying_key().to_bytes();
+        self.signing_key = Some(signing_key);
+    }
+
     /// Create a new block and insert it into our local blocklace.
     ///
     /// The block's predecessors are the current frontier of the blocklace
-    /// (all current tip blocks). Returns the block for broadcasting.
+    /// (all current tip blocks). The block is **Ed25519-signed** with this
+    /// disseminator's signing key so that peers' verified
+    /// [`Blocklace::insert`] accepts it.
+    ///
+    /// Returns the signed block for broadcasting.
+    ///
+    /// # Panics
+    ///
+    /// Panics if this disseminator has no signing key (constructed via
+    /// [`Disseminator::new`] / [`Disseminator::with_blocklace`] without a later
+    /// [`Disseminator::set_signing_key`]). An authoring node MUST hold its key;
+    /// authoring an unsigned block would be silently rejected on insert.
     pub fn create_block(&mut self, payload: Vec<u8>) -> Block {
+        let signing_key = self
+            .signing_key
+            .as_ref()
+            .expect("create_block requires a signing key (use with_signing_key/set_signing_key)");
+
         let sequence = self
             .blocklace
             .tip_for(&self.self_key)
@@ -653,7 +710,7 @@ impl Disseminator {
 
         let predecessors: Vec<BlockId> = self.blocklace.frontier().iter().copied().collect();
 
-        let block = Block::new(self.self_key, sequence, predecessors, payload);
+        let block = Block::new_signed(signing_key, sequence, predecessors, payload);
         let _ = self.blocklace.insert(block.clone());
         block
     }
@@ -826,12 +883,35 @@ impl Disseminator {
                 self.try_flush_pending();
                 Ok(id)
             }
-            Err(missing) => {
-                // Buffer the block until predecessors arrive.
-                self.pending
-                    .insert(block_id, (block, missing.iter().copied().collect()));
-                Err(missing)
-            }
+            Err(err) => match err.missing_predecessors() {
+                // Closure failure: buffer the block until predecessors arrive.
+                Some(missing) => {
+                    let missing: Vec<BlockId> = missing.to_vec();
+                    self.pending
+                        .insert(block_id, (block, missing.iter().copied().collect()));
+                    Err(missing)
+                }
+                // Feed-integrity rejection (unsigned / bad signature / seq
+                // regression / equivocation): DO NOT buffer — a forged or
+                // forking block must not be retried into the live view.
+                //
+                // BUT equivocation is special: `insert` *retains* the
+                // conflicting block inside the lace as detectable, slashable
+                // evidence (it does not buffer or overwrite). Equivocation
+                // evidence MUST propagate (every honest peer needs to see both
+                // forks to attribute the equivocator), so if the block landed
+                // in the lace we report it as received-for-evidence (`Ok`).
+                // Unsigned / bad-signature / seq-regression are NOT retained —
+                // those are true, non-buffered rejections.
+                None => {
+                    if self.blocklace.contains(&block_id) {
+                        // Equivocation evidence retained: propagate it onward.
+                        Ok(block_id)
+                    } else {
+                        Err(Vec::new())
+                    }
+                }
+            },
         }
     }
 
@@ -1135,12 +1215,26 @@ pub fn chunk_delta_group(delta: DeltaGroup, max_per_chunk: usize) -> Vec<DeltaGr
 mod tests {
     use super::*;
 
-    fn make_key(id: u8) -> NodeKey {
-        [id; 32]
+    /// Deterministic Ed25519 signing key for a creator byte (`id` ↔ key).
+    fn signing_for(id: u8) -> SigningKey {
+        SigningKey::from_bytes(&[id; 32])
     }
 
+    /// The public key (NodeKey) of `signing_for(id)` — the identity a block
+    /// authored by `id` carries as its `creator`, and the disseminator's
+    /// `self_key`. Keeps the `id` ↔ key correspondence the tests rely on.
+    fn make_key(id: u8) -> NodeKey {
+        signing_for(id).verifying_key().to_bytes()
+    }
+
+    /// A *signed* block authored by `creator` (so verified `insert` accepts it).
     fn make_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
-        Block::new(make_key(creator), seq, preds, payload.to_vec())
+        Block::new_signed(&signing_for(creator), seq, preds, payload.to_vec())
+    }
+
+    /// An authoring disseminator for identity `id` (holds the signing key).
+    fn make_disseminator(id: u8) -> Disseminator {
+        Disseminator::with_signing_key(signing_for(id))
     }
 
     // ─── Two nodes converge ──────────────────────────────────────────────────
@@ -1150,8 +1244,8 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // Node A creates some blocks.
         let b1 = node_a.create_block(b"block-1".to_vec());
@@ -1192,9 +1286,9 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
-        let mut node_c = Disseminator::new(key_c);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
+        let mut node_c = make_disseminator(3);
 
         // A creates blocks.
         node_a.create_block(b"from-a-1".to_vec());
@@ -1230,7 +1324,7 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_b = make_disseminator(2);
 
         // Create a genesis block from A.
         let b1 = make_block(1, 0, vec![], b"genesis");
@@ -1249,7 +1343,7 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_b = make_disseminator(2);
 
         // Insert genesis first so b2 can reference it.
         let b1 = make_block(1, 0, vec![], b"first");
@@ -1321,8 +1415,8 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // A creates a chain: b1 -> b2 -> b3.
         let b1 = node_a.create_block(b"one".to_vec());
@@ -1373,8 +1467,8 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // A creates blocks.
         node_a.create_block(b"a1".to_vec());
@@ -1410,21 +1504,29 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // Create two conflicting blocks from the same creator at the same
         // sequence (equivocation). Both should be propagated as evidence.
         let equivocator_key = make_key(99);
-        let b1 = Block::new(equivocator_key, 0, vec![], b"version-A".to_vec());
-        let b2 = Block::new(equivocator_key, 0, vec![], b"version-B".to_vec());
+        let b1 = make_block(99, 0, vec![], b"version-A");
+        let b2 = make_block(99, 0, vec![], b"version-B");
 
         // Both are valid blocks (different payload -> different ID).
         assert_ne!(b1.id(), b2.id());
 
-        // A has both equivocating blocks.
+        // A has both equivocating blocks: the first inserts cleanly; the second
+        // is detected as a fork and RETAINED as evidence (insert returns
+        // `Err(Equivocation)` but the block stays in the lace, not overwritten).
         node_a.blocklace_mut().insert(b1.clone()).unwrap();
-        node_a.blocklace_mut().insert(b2.clone()).unwrap();
+        match node_a.blocklace_mut().insert(b2.clone()) {
+            Err(crate::InsertError::Equivocation(_)) => {}
+            other => panic!("expected Equivocation on fork, got {other:?}"),
+        }
+        // Both forks are retained for evidence (the heart of detect-not-lose).
+        assert!(node_a.blocklace().contains(&b1.id()));
+        assert!(node_a.blocklace().contains(&b2.id()));
 
         // A sends delta to B.
         let delta = node_a.blocks_to_send(&key_b);
@@ -1446,8 +1548,8 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // Both create blocks independently (partitioned).
         node_a.create_block(b"a-during-partition-1".to_vec());
@@ -1492,8 +1594,8 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_a = make_disseminator(1);
+        let mut node_b = make_disseminator(2);
 
         // A creates blocks.
         node_a.create_block(b"x".to_vec());
@@ -1527,7 +1629,7 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
+        let mut node_a = make_disseminator(1);
 
         // Create a chain of blocks.
         node_a.create_block(b"1".to_vec());
@@ -1556,7 +1658,7 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_b = Disseminator::new(key_b);
+        let mut node_b = make_disseminator(2);
 
         // Create blocks in order on A's side.
         let b1 = make_block(1, 0, vec![], b"first");
@@ -1635,7 +1737,7 @@ mod tests {
     #[test]
     fn chunk_delta_group_single_chunk_when_small() {
         let key_a = make_key(1);
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Create 5 blocks (less than any reasonable chunk size).
         for i in 0..5 {
@@ -1653,7 +1755,7 @@ mod tests {
     #[test]
     fn chunk_delta_group_splits_into_multiple() {
         let key_a = make_key(1);
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Create 10 blocks.
         for i in 0..10 {
@@ -1675,7 +1777,7 @@ mod tests {
     #[test]
     fn chunk_delta_group_each_chunk_causally_closed() {
         let key_a = make_key(1);
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Create a chain of blocks.
         for i in 0..9 {
@@ -1697,7 +1799,7 @@ mod tests {
     fn blocks_to_send_chunked_matches_full_delta() {
         let key_a = make_key(1);
         let key_b = make_key(2);
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         for i in 0..7 {
             node.create_block(format!("block-{i}").into_bytes());
@@ -1721,7 +1823,7 @@ mod tests {
     #[test]
     fn blocks_since_returns_new_blocks_only() {
         let key_a = make_key(1);
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Create initial blocks.
         node.create_block(b"first".to_vec());
@@ -1754,11 +1856,11 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node_a = Disseminator::new(key_a);
+        let mut node_a = make_disseminator(1);
 
         // A has blocks from strands B and C.
-        let b1 = Block::new(key_b, 0, vec![], b"from-b".to_vec());
-        let c1 = Block::new(key_c, 0, vec![], b"from-c".to_vec());
+        let b1 = make_block(2, 0, vec![], b"from-b");
+        let c1 = make_block(3, 0, vec![], b"from-c");
         node_a.blocklace_mut().insert(b1.clone()).unwrap();
         node_a.blocklace_mut().insert(c1.clone()).unwrap();
 
@@ -1781,15 +1883,15 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // C creates a genesis block.
-        let c1 = Block::new(key_c, 0, vec![], b"from-c".to_vec());
+        let c1 = make_block(3, 0, vec![], b"from-c");
         let c1_id = c1.id();
         node.blocklace_mut().insert(c1.clone()).unwrap();
 
         // B creates a block that references C's block.
-        let b1 = Block::new(key_b, 0, vec![c1_id], b"from-b-refs-c".to_vec());
+        let b1 = make_block(2, 0, vec![c1_id], b"from-b-refs-c");
         node.blocklace_mut().insert(b1.clone()).unwrap();
 
         // Peer D subscribes only to strand B.
@@ -1818,11 +1920,11 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node_a = Disseminator::new(key_a);
+        let mut node_a = make_disseminator(1);
 
         // A has blocks from multiple strands.
-        let b1 = Block::new(key_b, 0, vec![], b"from-b".to_vec());
-        let c1 = Block::new(key_c, 0, vec![], b"from-c".to_vec());
+        let b1 = make_block(2, 0, vec![], b"from-b");
+        let c1 = make_block(3, 0, vec![], b"from-c");
         node_a.blocklace_mut().insert(b1.clone()).unwrap();
         node_a.blocklace_mut().insert(c1.clone()).unwrap();
 
@@ -1860,12 +1962,12 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Node has blocks from B, C, and itself.
-        let b1 = Block::new(key_b, 0, vec![], b"from-b".to_vec());
-        let c1 = Block::new(key_c, 0, vec![], b"from-c".to_vec());
-        let a1 = Block::new(key_a, 0, vec![], b"from-a".to_vec());
+        let b1 = make_block(2, 0, vec![], b"from-b");
+        let c1 = make_block(3, 0, vec![], b"from-c");
+        let a1 = make_block(1, 0, vec![], b"from-a");
         node.blocklace_mut().insert(b1.clone()).unwrap();
         node.blocklace_mut().insert(c1.clone()).unwrap();
         node.blocklace_mut().insert(a1.clone()).unwrap();
@@ -1931,18 +2033,18 @@ mod tests {
         let key_b = make_key(2);
         let key_c = make_key(3);
 
-        let mut node = Disseminator::new(key_a);
+        let mut node = make_disseminator(1);
 
         // Build a chain: c1 (by C) -> b1 (by B, refs c1) -> b2 (by B, refs b1)
-        let c1 = Block::new(key_c, 0, vec![], b"c-genesis".to_vec());
+        let c1 = make_block(3, 0, vec![], b"c-genesis");
         let c1_id = c1.id();
         node.blocklace_mut().insert(c1.clone()).unwrap();
 
-        let b1 = Block::new(key_b, 0, vec![c1_id], b"b-first".to_vec());
+        let b1 = make_block(2, 0, vec![c1_id], b"b-first");
         let b1_id = b1.id();
         node.blocklace_mut().insert(b1.clone()).unwrap();
 
-        let b2 = Block::new(key_b, 1, vec![b1_id], b"b-second".to_vec());
+        let b2 = make_block(2, 1, vec![b1_id], b"b-second");
         node.blocklace_mut().insert(b2.clone()).unwrap();
 
         // Peer D subscribes only to B.
@@ -1974,7 +2076,7 @@ mod tests {
         let key_a = make_key(1);
         let key_b = make_key(2);
 
-        let mut node_a = Disseminator::new(key_a);
+        let mut node_a = make_disseminator(1);
 
         // B sends an Advertise message.
         let sub = Subscription::from_strands(&[make_key(10), make_key(11)]);

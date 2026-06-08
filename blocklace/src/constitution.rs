@@ -2035,7 +2035,7 @@ mod tests {
             for (i, &p) in participants.iter().enumerate() {
                 let block =
                     crate::Block::new(p, round - 1, preds.clone(), vec![round as u8, i as u8]);
-                let id = bl.insert(block).unwrap();
+                let id = bl.insert_unverified(block).unwrap();
                 round_blocks.push(id);
             }
             blocks_by_round.push(round_blocks);
@@ -2121,7 +2121,7 @@ mod tests {
             for (i, &p) in all_participants.iter().enumerate() {
                 let block =
                     crate::Block::new(p, round - 1, preds.clone(), vec![round as u8, i as u8]);
-                let id = bl.insert(block).unwrap();
+                let id = bl.insert_unverified(block).unwrap();
                 round_blocks.push(id);
             }
             blocks_by_round.push(round_blocks);

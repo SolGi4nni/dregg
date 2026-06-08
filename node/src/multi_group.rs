@@ -40,7 +40,8 @@ use dregg_blocklace::constitution::GovernedReferenceGroup;
 use dregg_blocklace::cross_reference::{BlockPayload, CrossRefPolicy, DagDeliveredProof};
 use dregg_blocklace::dissemination::{Disseminator, Subscription};
 use dregg_blocklace::ordering::{OrderingConfig, tau_unified};
-use dregg_blocklace::{Block, BlockId, Blocklace, NodeKey};
+use dregg_blocklace::{Block, BlockId, Blocklace, InsertError, NodeKey};
+use ed25519_dalek::SigningKey;
 use tracing::{debug, info};
 
 // =============================================================================
@@ -63,6 +64,11 @@ pub struct MultiGroupNode {
     orderings: HashMap<GroupId, Vec<BlockId>>,
     /// This node's identity key.
     node_key: NodeKey,
+    /// This node's Ed25519 signing key, present when it AUTHORS blocks
+    /// (cross-group proof forwarding / `create_block`). Authored blocks must be
+    /// signed so the feed-integrity `Blocklace::insert` accepts them. `None`
+    /// for a view-only node that never authors.
+    signing_key: Option<SigningKey>,
     /// The disseminator for interest-based push.
     disseminator: Disseminator,
     /// Cross-reference policy per group.
@@ -93,6 +99,9 @@ pub struct PendingProofForward {
 
 impl MultiGroupNode {
     /// Create a new multi-group node with the given identity.
+    ///
+    /// View-only: no signing key, so it cannot AUTHOR signed blocks. Use
+    /// [`MultiGroupNode::with_signing_key`] for an authoring node.
     pub fn new(node_key: NodeKey) -> Self {
         let disseminator = Disseminator::new(node_key);
         Self {
@@ -101,6 +110,28 @@ impl MultiGroupNode {
             blocklace: Blocklace::new(),
             orderings: HashMap::new(),
             node_key,
+            signing_key: None,
+            disseminator,
+            cross_ref_policies: HashMap::new(),
+            ordering_config: OrderingConfig::default(),
+        }
+    }
+
+    /// Create an AUTHORING multi-group node holding its Ed25519 signing key.
+    ///
+    /// `node_key` is derived from the key's public half; authored blocks
+    /// (cross-group proofs / `create_block`) are signed under this identity so
+    /// peers' verified `Blocklace::insert` accepts them.
+    pub fn with_signing_key(signing_key: SigningKey) -> Self {
+        let node_key = signing_key.verifying_key().to_bytes();
+        let disseminator = Disseminator::with_signing_key(signing_key.clone());
+        Self {
+            groups: Vec::new(),
+            group_ids: Vec::new(),
+            blocklace: Blocklace::new(),
+            orderings: HashMap::new(),
+            node_key,
+            signing_key: Some(signing_key),
             disseminator,
             cross_ref_policies: HashMap::new(),
             ordering_config: OrderingConfig::default(),
@@ -116,6 +147,7 @@ impl MultiGroupNode {
             blocklace,
             orderings: HashMap::new(),
             node_key,
+            signing_key: None,
             disseminator,
             cross_ref_policies: HashMap::new(),
             ordering_config: OrderingConfig::default(),
@@ -316,13 +348,23 @@ impl MultiGroupNode {
             .map(|b| b.sequence + 1)
             .unwrap_or(0);
 
-        // Create and insert the block.
-        let block = Block::new(self.node_key, sequence, predecessors, payload_bytes);
+        // Create and Ed25519-sign the block (an authored block must be signed
+        // so the feed-integrity `insert` accepts it).
+        let signing_key = self
+            .signing_key
+            .as_ref()
+            .ok_or(ProofForwardError::NoSigningKey)?;
+        let block = Block::new_signed(signing_key, sequence, predecessors, payload_bytes);
         let block_id = block.id();
 
         self.blocklace
             .insert(block.clone())
-            .map_err(|missing| ProofForwardError::MissingPredecessors(missing))?;
+            .map_err(|err| match err {
+                InsertError::MissingPredecessors(missing) => {
+                    ProofForwardError::MissingPredecessors(missing)
+                }
+                other => ProofForwardError::FeedIntegrity(other),
+            })?;
 
         // Also insert into the disseminator's blocklace.
         let _ = self.disseminator.blocklace_mut().insert(block);
@@ -438,8 +480,25 @@ impl MultiGroupNode {
     pub fn receive_block(&mut self, from: &NodeKey, block: Block) -> Result<BlockId, Vec<BlockId>> {
         let block_id = block.id();
 
-        // Insert into the shared blocklace.
-        self.blocklace.insert(block.clone())?;
+        // Insert into the shared blocklace (feed-integrity write path).
+        match self.blocklace.insert(block.clone()) {
+            Ok(_) => {}
+            Err(InsertError::MissingPredecessors(missing)) => {
+                // Causal-closure failure: report missing predecessors so the
+                // caller can buffer/pull them (the old contract).
+                return Err(missing);
+            }
+            Err(_) => {
+                // Feed-integrity rejection (unsigned / bad signature / seq
+                // regression / equivocation). Equivocation evidence is RETAINED
+                // by `insert` (not overwritten); for anything else the block is
+                // not admitted. Propagate evidence onward but report non-success
+                // for true rejections.
+                if !self.blocklace.contains(&block_id) {
+                    return Err(Vec::new());
+                }
+            }
+        }
 
         // Also track in the disseminator for peer knowledge.
         let _ = self.disseminator.received_from(from, block);
@@ -496,6 +555,11 @@ pub enum ProofForwardError {
     MissingPredecessors(Vec<BlockId>),
     /// Serialization of the proof payload failed.
     SerializationFailed(String),
+    /// This node has no signing key, so it cannot author the proof block.
+    NoSigningKey,
+    /// Feed-integrity rejection on insert (bad signature / seq regression /
+    /// equivocation). The block was not admitted as a valid strand extension.
+    FeedIntegrity(InsertError),
 }
 
 impl std::fmt::Display for ProofForwardError {
@@ -510,6 +574,8 @@ impl std::fmt::Display for ProofForwardError {
                 write!(f, "missing {} predecessors", ids.len())
             }
             Self::SerializationFailed(e) => write!(f, "serialization failed: {e}"),
+            Self::NoSigningKey => write!(f, "no signing key: cannot author proof block"),
+            Self::FeedIntegrity(e) => write!(f, "feed-integrity rejection: {e}"),
         }
     }
 }
@@ -525,13 +591,30 @@ mod tests {
     use super::*;
     use dregg_blocklace::cross_reference::CrossRefPolicy;
 
+    /// Deterministic Ed25519 signing key for a creator byte (`id` ↔ key).
+    fn signing_for(id: u8) -> SigningKey {
+        SigningKey::from_bytes(&[id; 32])
+    }
+
+    /// The public key (NodeKey) of `signing_for(id)` — the identity used both as
+    /// a participant id and as a block `creator`, keeping the `id` ↔ key map.
     fn make_key(id: u8) -> NodeKey {
-        [id; 32]
+        signing_for(id).verifying_key().to_bytes()
+    }
+
+    /// An AUTHORING node for identity `id` (holds the signing key).
+    fn make_node(id: u8) -> MultiGroupNode {
+        MultiGroupNode::with_signing_key(signing_for(id))
+    }
+
+    /// A *signed* block authored by `creator` (verified `insert` accepts it).
+    fn signed_block(creator: u8, seq: u64, preds: Vec<BlockId>, payload: &[u8]) -> Block {
+        Block::new_signed(&signing_for(creator), seq, preds, payload.to_vec())
     }
 
     #[test]
     fn multi_group_node_creation() {
-        let node = MultiGroupNode::new(make_key(1));
+        let node = make_node(1);
         assert_eq!(node.group_count(), 0);
         assert_eq!(*node.node_key(), make_key(1));
         assert!(node.blocklace().is_empty());
@@ -539,7 +622,7 @@ mod tests {
 
     #[test]
     fn join_and_leave_groups() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         // Join group A.
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
@@ -573,7 +656,7 @@ mod tests {
 
     #[test]
     fn combined_subscription_covers_all_groups() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
         let group_b = GovernedReferenceGroup::open(vec![make_key(1), make_key(4), make_key(5)], 10);
@@ -598,7 +681,7 @@ mod tests {
 
     #[test]
     fn forward_proof_between_groups() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
         let group_b = GovernedReferenceGroup::open(vec![make_key(1), make_key(4), make_key(5)], 10);
@@ -614,9 +697,9 @@ mod tests {
         });
 
         // Create a source block in the blocklace.
-        let source_block = Block::new(make_key(2), 0, vec![], b"source-proof".to_vec());
+        let source_block = signed_block(2, 0, vec![], b"source-proof");
         let source_id = source_block.id();
-        node.blocklace_mut().insert(source_block).unwrap();
+        node.blocklace_mut().insert_unverified(source_block).unwrap();
 
         // Forward a proof from group A to group B.
         let proof = DagDeliveredProof {
@@ -655,7 +738,7 @@ mod tests {
 
     #[test]
     fn forward_proof_policy_denied() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
 
@@ -675,9 +758,9 @@ mod tests {
         });
 
         // Create a source block.
-        let source_block = Block::new(make_key(2), 0, vec![], b"source".to_vec());
+        let source_block = signed_block(2, 0, vec![], b"source");
         let source_id = source_block.id();
-        node.blocklace_mut().insert(source_block).unwrap();
+        node.blocklace_mut().insert_unverified(source_block).unwrap();
 
         let forward = PendingProofForward {
             proof: DagDeliveredProof {
@@ -696,7 +779,7 @@ mod tests {
 
     #[test]
     fn forward_proof_not_in_destination() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
         node.join_group(GroupJoinConfig {
@@ -705,9 +788,9 @@ mod tests {
         });
 
         // Create a source block.
-        let source_block = Block::new(make_key(2), 0, vec![], b"source".to_vec());
+        let source_block = signed_block(2, 0, vec![], b"source");
         let source_id = source_block.id();
-        node.blocklace_mut().insert(source_block).unwrap();
+        node.blocklace_mut().insert_unverified(source_block).unwrap();
 
         // Try to forward to a group we're not in.
         let fake_group_id = [0xFF; 32];
@@ -728,9 +811,9 @@ mod tests {
 
     #[test]
     fn receive_block_updates_both_blocklace_and_disseminator() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
-        let block = Block::new(make_key(2), 0, vec![], b"hello".to_vec());
+        let block = signed_block(2, 0, vec![], b"hello");
         let block_id = block.id();
 
         let result = node.receive_block(&make_key(2), block);
@@ -742,7 +825,7 @@ mod tests {
 
     #[test]
     fn recompute_orderings_multiple_groups() {
-        let mut node = MultiGroupNode::new(make_key(1));
+        let mut node = make_node(1);
 
         let group_a = GovernedReferenceGroup::open(vec![make_key(1), make_key(2), make_key(3)], 10);
         let group_a_id = group_a.group.compute_id();
@@ -753,21 +836,21 @@ mod tests {
         });
 
         // Insert blocks from all group A members (round 1).
-        let b1 = Block::new(make_key(1), 0, vec![], b"m1-r1".to_vec());
-        let b1_id = node.blocklace_mut().insert(b1).unwrap();
-        let b2 = Block::new(make_key(2), 0, vec![], b"m2-r1".to_vec());
-        let b2_id = node.blocklace_mut().insert(b2).unwrap();
-        let b3 = Block::new(make_key(3), 0, vec![], b"m3-r1".to_vec());
-        let b3_id = node.blocklace_mut().insert(b3).unwrap();
+        let b1 = signed_block(1, 0, vec![], b"m1-r1");
+        let b1_id = node.blocklace_mut().insert_unverified(b1).unwrap();
+        let b2 = signed_block(2, 0, vec![], b"m2-r1");
+        let b2_id = node.blocklace_mut().insert_unverified(b2).unwrap();
+        let b3 = signed_block(3, 0, vec![], b"m3-r1");
+        let b3_id = node.blocklace_mut().insert_unverified(b3).unwrap();
 
         // Round 2: all reference previous.
         let preds = vec![b1_id, b2_id, b3_id];
-        let r2_1 = Block::new(make_key(1), 1, preds.clone(), b"m1-r2".to_vec());
-        node.blocklace_mut().insert(r2_1).unwrap();
-        let r2_2 = Block::new(make_key(2), 1, preds.clone(), b"m2-r2".to_vec());
-        node.blocklace_mut().insert(r2_2).unwrap();
-        let r2_3 = Block::new(make_key(3), 1, preds.clone(), b"m3-r2".to_vec());
-        node.blocklace_mut().insert(r2_3).unwrap();
+        let r2_1 = signed_block(1, 1, preds.clone(), b"m1-r2");
+        node.blocklace_mut().insert_unverified(r2_1).unwrap();
+        let r2_2 = signed_block(2, 1, preds.clone(), b"m2-r2");
+        node.blocklace_mut().insert_unverified(r2_2).unwrap();
+        let r2_3 = signed_block(3, 1, preds.clone(), b"m3-r2");
+        node.blocklace_mut().insert_unverified(r2_3).unwrap();
 
         // Recompute orderings.
         node.recompute_orderings();
