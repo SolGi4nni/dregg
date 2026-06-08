@@ -13,6 +13,11 @@ description = "Federation node daemon — hosts an agent cipherclerk, participat
 dregg-types = { path = "../types" }
 dregg-cell = { path = "../cell" }
 dregg-turn = { path = "../turn", features = ["lean-shadow"] }
+# The verified FINALITY GATE (`finality_gate.rs`) calls the Lean-exported `dregg_blocklace_finalize`
+# directly. `dregg-turn`'s `lean-shadow` feature already links `dregg-lean-ffi` into the node's
+# production binary, so this regular-dependency entry adds NO new linkage — it only makes the FFI
+# symbols nameable from the node's own code (the gate path). Same path + features as the dev-dep below.
+dregg-lean-ffi = { path = "../dregg-lean-ffi", features = ["lean-lib"] }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }
 dregg-persist = { path = "../persist" }
 dregg-federation = { path = "../federation" }
@@ -76,9 +81,9 @@ http-body-util = "0.1"
 x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 dregg-verifier = { path = "../verifier" }
-# THE SWAP producer-mode test gates on `lean_available()` (self-skips when the Lean archive is
-# absent). The `lean-lib` feature matches the `dregg-turn` `lean-shadow` dep the node already uses.
-dregg-lean-ffi = { path = "../dregg-lean-ffi", features = ["lean-lib"] }
+# `dregg-lean-ffi` is now a regular dependency above (the verified finality gate calls it from
+# production code); tests that need it (`lean_producer_mode.rs`, the finality-gate differential)
+# inherit it from there — no separate dev-dependency entry required.
 
 [[bin]]
 name = "dregg-node"

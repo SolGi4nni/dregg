@@ -843,6 +843,7 @@ fn archive_exports(archive: &std::path::Path, symbol: &str) -> bool {
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(lean_lib_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
 
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
@@ -928,6 +929,22 @@ fn main() {
         );
     }
 
+    // The verified FINALITY GATE export (`dregg_blocklace_finalize`) lives in
+    // `Dregg2.Distributed.FinalityGate`, a module OUTSIDE the FFI module's import closure. The
+    // archive splice compiles every `Dregg2/**/*.c` present in the IR tree, so once the module has
+    // been `lake build`- t its object is spliced in and this symbol appears. Until then (e.g. a
+    // stale archive) we compile the bridge out and the node falls back to the un-gated path.
+    let finalize_gate_present = archive_exports(&lean_archive, "dregg_blocklace_finalize");
+    if finalize_gate_present {
+        println!("cargo:rustc-cfg=dregg_finalize_gate_present");
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_blocklace_finalize` — \
+             the verified finality-gate bridge is compiled out (executor gate unaffected). \
+             Rebuild the archive (it splices Dregg2.Distributed.FinalityGate) to enable the gate."
+        );
+    }
+
     // Compile the C init shim (it uses the `static inline` runtime helpers from
     // <lean/lean.h>, which have no linkable symbol and so must be used from C).
     //
@@ -943,6 +960,9 @@ fn main() {
     shim.file("src/lean_init.c").include(&lean_include);
     if handler_present {
         shim.define("DREGG_HANDLER_TURN", None);
+    }
+    if finalize_gate_present {
+        shim.define("DREGG_FINALIZE_GATE", None);
     }
     // We drive the link with `rustc-link-lib` / `rustc-link-search` directives, NOT
     // `rustc-link-arg`. WHY: with the package's `links = "dregg_lean"` key, build-script

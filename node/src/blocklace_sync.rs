@@ -446,6 +446,39 @@ impl BlocklaceHandle {
                 .collect::<Vec<_>>()
         };
 
+        // ── VERIFIED FINALITY GATE (multi-party only) ───────────────────────────────────────────
+        // Convert "agreement-checked" into "Lean-gated": compute the finalized order FROM the
+        // verified Lean rule (`BlocklaceFinality.tauOrder` via the `dregg_blocklace_finalize` FFI
+        // export) and admit a block to the executor ONLY when the verified rule also finalizes it
+        // (compared on the `(creator, seq)` coordinate, content-identical across the blake3 `BlockId`
+        // here vs. the abstract `Nat` id in Lean). The Lean theorem `gate_admits_iff_verified_finalizes`
+        // proves admission ⟺ membership in the verified `tauGolden` order, so this gates the live
+        // commit on the verified rule by construction.
+        //
+        // FLAG: default ON (`DREGG_FINALITY_GATE`); solo (n=1) does not run `tau` and is
+        // scales-to-zero, so the gate applies to the n>1 path that matters.
+        //
+        // FAIL-OPEN: when the verified archive lacks the export (stale build) or the wire returns
+        // ERR, `compute` is `None` and the gate is a no-op with a loud warning — the live path is
+        // never broken. When it IS armed and the verified rule excludes a block the Rust `tau`
+        // ordered, we STOP the committed prefix BEFORE that block (we do NOT advance `executed_up_to`
+        // past it), so it is re-evaluated on a later poll once the lace has grown enough for the
+        // verified rule to finalize it — preserving liveness (tau's finalized prefix is monotone).
+        let gate_armed =
+            participants.len() > 1 && crate::finality_gate::finality_gate_enabled();
+        let verified = if gate_armed {
+            crate::finality_gate::VerifiedFinality::compute(&lace, &participants)
+        } else {
+            None
+        };
+        if gate_armed && verified.is_none() {
+            warn!(
+                "verified finality gate UNAVAILABLE (Lean archive missing `dregg_blocklace_finalize` \
+                 or wire returned ERR) — FAILING OPEN to the un-gated tau order. Rebuild the node \
+                 with the verified archive (it splices Dregg2.Distributed.FinalityGate) to arm the gate."
+            );
+        }
+
         // Skip already-executed blocks.
         if ordered.len() <= *executed_up_to {
             return vec![];
@@ -453,9 +486,36 @@ impl BlocklaceHandle {
 
         let new_blocks = &ordered[*executed_up_to..];
         let mut finalized = Vec::new();
+        // The number of `new_blocks` we COMMIT this poll. With the gate armed, the committed prefix
+        // STOPS at the first actionable block the verified rule does not finalize (so refused blocks
+        // are retried later); without the gate it is all of `new_blocks` (legacy behaviour).
+        let mut committed_count = new_blocks.len();
 
-        for block_id in new_blocks {
+        for (offset, block_id) in new_blocks.iter().enumerate() {
             if let Some(block) = lace.get(block_id) {
+                // GATE: REFUSE any actionable block the verified rule did not finalize. Ack/Data are
+                // not consensus-actionable (skipped below regardless), so a heartbeat the rule does
+                // not "finalize" never trips the gate.
+                if let Some(vf) = verified.as_ref() {
+                    let actionable = matches!(
+                        &block.payload,
+                        Payload::Turn(_)
+                            | Payload::TurnBundle(_)
+                            | Payload::MembershipVote { .. }
+                            | Payload::Checkpoint { .. }
+                    );
+                    if actionable && !vf.admits(&block.creator, block.seq) {
+                        warn!(
+                            block_id = %block_id,
+                            seq = block.seq,
+                            "verified finality gate REFUSED a block the Rust tau ordered but the \
+                             verified rule did NOT finalize — STOPPING the committed prefix here \
+                             (will re-evaluate on a later poll; verified rule wins)"
+                        );
+                        committed_count = offset;
+                        break;
+                    }
+                }
                 match &block.payload {
                     Payload::Turn(data) => {
                         finalized.push(FinalizedBlock::Turn {
@@ -491,7 +551,9 @@ impl BlocklaceHandle {
             }
         }
 
-        *executed_up_to = ordered.len();
+        // Advance the high-water mark by the committed prefix only. Without the gate (or a fully
+        // admitted batch) this is `ordered.len()`, exactly the legacy behaviour.
+        *executed_up_to += committed_count;
         finalized
     }
 

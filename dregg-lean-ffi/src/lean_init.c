@@ -47,6 +47,23 @@ extern lean_object *dregg_exec_full_forest_auth(lean_object *input);
 extern lean_object *dregg_exec_handler_turn(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED FINALITY GATE
+ * (`Dregg2.Distributed.FinalityGate.finalizeGate`): decodes a wire-encoded
+ * (wavelength, participants, lace), runs the VERIFIED `BlocklaceFinality.tauOrder` rule, and
+ * re-encodes the finalized `(creator, seq)` order (or the `ERR` sentinel on a malformed wire). The
+ * node calls this at the live commit point to compute finality FROM the verified rule, then admits a
+ * turn to the executor ONLY when the verified rule finalizes it ("agreement-checked" -> "Lean-gated").
+ *
+ * GATED on DREGG_FINALIZE_GATE: this export lives in a module NOT in the FFI module's import closure,
+ * so (a) build.rs probes the archive and only `#define`s DREGG_FINALIZE_GATE when the symbol is
+ * present, and (b) `dregg_ffi_init` must ALSO run the module's own initializer (it is not reached by
+ * `initialize_Dregg2_Dregg2_Exec_FFI`). When absent, the bridge is compiled out and the node falls
+ * back to the un-gated path with a loud warning. */
+#ifdef DREGG_FINALIZE_GATE
+extern lean_object *initialize_Dregg2_Dregg2_Distributed_FinalityGate(uint8_t builtin);
+extern lean_object *dregg_blocklace_finalize(lean_object *input);
+#endif
+
 /* Returns 0 on success, 1 if module initialization reported an IO error. */
 int dregg_ffi_init(void) {
     lean_initialize_runtime_module();
@@ -57,6 +74,18 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(res);
+#ifdef DREGG_FINALIZE_GATE
+    /* The finality-gate module is OUTSIDE the FFI closure, so its initializer is not run above.
+     * Initialize it explicitly so `dregg_blocklace_finalize` is callable. Its own dependency
+     * closure (Blocklace/ConsensusExec) is re-entrant-safe under Lean's init guards. */
+    lean_object *gres = initialize_Dregg2_Dregg2_Distributed_FinalityGate(1);
+    if (!lean_io_result_is_ok(gres)) {
+        lean_io_result_show_error(gres);
+        lean_dec_ref(gres);
+        return 1;
+    }
+    lean_dec_ref(gres);
+#endif
     lean_io_mark_end_initialization();
     return 0;
 }
@@ -169,3 +198,25 @@ size_t dregg_exec_handler_turn_str(const char *in_utf8, char *out, size_t out_ca
     return full;
 }
 #endif /* DREGG_HANDLER_TURN */
+
+/* dregg_blocklace_finalize_str — the C string bridge over the Lean `String -> String` VERIFIED
+ * FINALITY GATE export. Identical marshalling discipline as the bridges above; it drives
+ * `dregg_blocklace_finalize`, whose input wire is `"w=<W>;P=<participants>;B=<blocks>"` and whose
+ * output is `"F=<creator>:<seq>,..."` (the verified finalized order) or `"ERR"` (fail-closed on a
+ * malformed wire). Same return contract (full byte length; (size_t)-1 only on an unusable buffer). */
+#ifdef DREGG_FINALIZE_GATE
+size_t dregg_blocklace_finalize_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_blocklace_finalize(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif /* DREGG_FINALIZE_GATE */

@@ -61,6 +61,26 @@ pub fn shadow_exec_handler_turn(wire: &str) -> Result<String, String> {
     lean_handler_turn(wire)
 }
 
+/// Whether the linked archive exports the verified finality-gate
+/// (`dregg_blocklace_finalize`). When false, the node cannot Lean-gate finality and falls back to
+/// the un-gated path. Distinct from [`lean_available`] (which is about the executor exports): a
+/// stale archive can have the executor but lack the finality gate.
+pub fn finality_gate_available() -> bool {
+    ffi::finality_gate_present() && lean_init_once().is_ok()
+}
+
+/// Verified FINALITY GATE — run the verified `BlocklaceFinality.tauOrder` rule over a wire-encoded
+/// `(wavelength, participants, lace)` and return the verified finalized `(creator, seq)` order
+/// (`"F=<c>:<s>,..."`) or `"ERR"` (fail-closed on a malformed wire).
+///
+/// The node calls this at the live commit point: it computes finality FROM the verified rule and
+/// admits a turn to the executor ONLY when the verified rule finalizes it. The wire grammar mirrors
+/// `Dregg2.Distributed.FinalityGate.encodeLaceWire` byte-for-byte (`finality_gate` module).
+pub fn shadow_blocklace_finalize(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    lean_blocklace_finalize(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -146,6 +166,12 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_finalize_gate_present)]
+        fn dregg_blocklace_finalize_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
     }
 
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
@@ -197,6 +223,26 @@ mod ffi {
     pub fn lean_handler_turn(_wire: &str) -> Result<String, String> {
         Err("dregg_exec_handler_turn not exported by the linked archive (rebuild to enable)".into())
     }
+
+    #[cfg(dregg_finalize_gate_present)]
+    pub fn finality_gate_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_finalize_gate_present))]
+    pub fn finality_gate_present() -> bool {
+        false
+    }
+
+    #[cfg(dregg_finalize_gate_present)]
+    pub fn lean_blocklace_finalize(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_blocklace_finalize_str, "dregg_blocklace_finalize_str")
+    }
+
+    #[cfg(not(dregg_finalize_gate_present))]
+    pub fn lean_blocklace_finalize(_wire: &str) -> Result<String, String> {
+        Err("dregg_blocklace_finalize not exported by the linked archive (rebuild to enable)".into())
+    }
 }
 
 #[cfg(not(lean_lib_present))]
@@ -210,6 +256,14 @@ mod ffi {
     }
 
     pub fn lean_handler_turn(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn finality_gate_present() -> bool {
+        false
+    }
+
+    pub fn lean_blocklace_finalize(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }
@@ -228,4 +282,8 @@ fn lean_forest_auth(wire: &str) -> Result<String, String> {
 
 fn lean_handler_turn(wire: &str) -> Result<String, String> {
     ffi::lean_handler_turn(wire)
+}
+
+fn lean_blocklace_finalize(wire: &str) -> Result<String, String> {
+    ffi::lean_blocklace_finalize(wire)
 }
