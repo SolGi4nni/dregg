@@ -38,10 +38,8 @@ Toolchain `leanprover/lean4:v4.30.0`; mathlib via a local `path` require. **It b
 `lake build` ⇒ **0 errors** (last finalize pass: 3198 jobs over the circuit-emit + turn subset,
 green; warnings only — re-run `lake build` for the current full count). The Abstract Spec, the
 `Spec` middle layer, the executor core, and every `#assert_axioms`-pinned keystone are
-**`sorry`-free and kernel-clean**; the
-remaining `sorry`s are *named, tracked open fronts* — whole-turn / coordinated proof composition
-(macaroon columns, multi-step glue, the coordinated-forest lift) plus a couple of executor-semantics
-alignment portals — never hidden beneath a "PROVED" claim.
+**`sorry`-free and kernel-clean** throughout — open obligations (the §8 crypto laws, the verify/find
+seam's *find* side) enter as explicit interface assumptions, never `sorry`s.
 
 **Verifiable execution is real — but the circuit's per-effect assurance is uneven, and the
 honest state matters.** Every effect carries an executor-derived witness → a real Plonky3 STARK
@@ -223,31 +221,6 @@ This is what makes the system **useful** to a developer, not just sound:
 - **`Protocol/WorkflowGuard`** — the first verified application's Spec layer (the RDII closed loop):
   the workflow's authorization / ordering / attestation gates re-founded as `Spec.Guard` instances,
   all three **equivalence-proved** down to the running predicate.
-
----
-
-## <a name="what-the-sorries-mean"></a>What the `sorry`s mean
-
-Only **three** remain, and **all three are by design** — not gaps (`#assert_axioms` pins every
-"PROVED" keystone, erroring on any hidden `sorryAx`):
-1. **`Core.conservation_step`** — Law 1 stated *spec-first* as the operational obligation the
-   executable layer discharges (`Exec.cexec_attests` proves it on the running machine). Open at the
-   abstract altitude *on purpose*; closing it there would bake the operational model into the spec.
-2. **`Laws.search_sound`** — the verify/find seam's *find* side, undecidable **by design** (the
-   whole soundness-by-verification architecture rests on find being an untrusted plugin). Like the
-   §8 crypto carriers, this is an interface boundary, not a hole.
-3. **`Spec.VatBoundary.phi_functorial`** (abstract) — the full functor coherence between the
-   positional and epistemic authority categories; genuinely hard, but a **concrete witness**
-   (`phi_functorial_concrete`) is already proved beside it.
-
-Everything else that *used* to be here — the cross-cell bisimulation (single-cell now done via
-`Proof/LTS`), distributed-death co-witnessability (a Mathlib halting reduction), the Byzantine
-quorum-intersection and post-GST liveness (pigeonhole + an honest assumed `World.gst_liveness`
-oracle law) — **has been closed or honestly bounded**. Strikingly, *several of those were false or
-contradictory as stated* and only closed once restated honestly (see the de-vacuify note above).
-The §8 crypto/`World`-law obligations don't appear here because they enter as **typeclass
-parameters / structure fields**, not Lean `sorry`s — the theorems that consume them are genuinely
-kernel-clean and *are* pinned.
 
 ## §8 — crypto-soundness is the portal's job, never Lean's
 The soundness/extractability of `verify`/`commit`/`hash` is a *circuit* obligation, stated as
