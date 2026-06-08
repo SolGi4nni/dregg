@@ -209,8 +209,13 @@ impl PersistentStore {
                 .unwrap_or_default(),
         };
 
-        let blocklace = Blocklace::from_checkpoint(&checkpoint, signing_key, quorum_threshold)
-            .map_err(|e| StoreError::Integrity(e))?;
+        // Local-disk provenance: this checkpoint was written by THIS node and its
+        // integrity is the persistence layer's responsibility, so we use the
+        // trusted (no-reauth) loader. A network/peer-supplied checkpoint must
+        // instead use the authenticating `Blocklace::from_checkpoint`.
+        let blocklace =
+            Blocklace::from_checkpoint_trusted(&checkpoint, signing_key, quorum_threshold)
+                .map_err(|e| StoreError::Integrity(e))?;
 
         Ok(Some((blocklace, executed_up_to)))
     }

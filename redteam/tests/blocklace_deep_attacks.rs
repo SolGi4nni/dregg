@@ -13,9 +13,12 @@
 //!  - an adversary exploiting *reception ordering* (does detection depend on the
 //!    order blocks arrive? a sound detector must catch the fork regardless),
 //!  - a Byzantine creator who forks inside a single `merge` *delta*,
-//!  - an attacker supplying an *untrusted checkpoint* (the code documents that
-//!    `from_checkpoint` does NOT re-verify signatures — we demonstrate the
-//!    forged-block injection that this enables, as a precise FINDING).
+//!  - an attacker supplying an *untrusted checkpoint*: the recovery path
+//!    (`from_checkpoint`) now AUTHENTICATES every block (signature + closure +
+//!    equivocation) exactly like the hardened `receive_block` insert, so a
+//!    forged/unsigned or non-closed checkpoint is REJECTED (CHECKPOINT-AUTH,
+//!    DEEP 5/6 — flipped to DEFENDED). A genuine honest checkpoint still
+//!    restores (DEEP 5c).
 
 use dregg_blocklace::finality::{
     Block, BlockError, Blocklace, BlockId, CheckpointData, MembershipAction, Payload,
@@ -206,17 +209,21 @@ fn deep_fork_within_single_merge_delta_is_flagged() {
 }
 
 // ===========================================================================
-// DEEP ATTACK 5 — FINDING: from_checkpoint() trusts forged blocks.
+// DEEP ATTACK 5 — CHECKPOINT-AUTH: from_checkpoint() must AUTHENTICATE blocks.
 //
-// finality.rs::from_checkpoint documents: "blocks are NOT re-verified against
-// signatures." We construct a checkpoint containing a block whose `creator` is
-// a victim's key but whose signature is GARBAGE (no private key used), and show
-// it is admitted into the restored blocklace and queryable as a real block.
+// WAS A FINDING (A1-class recovery-path bypass): finality.rs::from_checkpoint
+// documented "blocks are NOT re-verified against signatures", so a peer-supplied
+// checkpoint containing a block whose `creator` is a victim's key but whose
+// signature is GARBAGE sailed into the restored DAG unverified.
 //
-// This is a precise operational gap, NOT a break of the receive_block path: the
-// `from_checkpoint` doc-comment says to use it "only for trusted checkpoint
-// sources." We assert the bad outcome so it is LOGGED, and flag that any
-// network/peer-supplied checkpoint path is an unauthenticated-block injection.
+// FIX (CLOSED): `from_checkpoint` now re-verifies every block's Ed25519
+// signature on the recovery path, exactly as the hardened `receive_block`
+// insert does. A forged/unsigned block is REJECTED — restore fails rather than
+// admitting it. (The no-reauth verbatim path survives only as the explicitly-
+// named `from_checkpoint_trusted`, for already-authenticated local-disk data.)
+//
+// This test is FLIPPED to DEFENDED: a checkpoint carrying a forged block makes
+// `from_checkpoint` return Err, and the forged block is NEVER present.
 // ===========================================================================
 
 #[test]
@@ -247,7 +254,7 @@ fn finding_from_checkpoint_admits_forged_unsigned_blocks() {
         );
     }
 
-    // But via an untrusted checkpoint, it sails in unverified.
+    // The fix: the authenticating checkpoint loader REJECTS the forged block.
     let checkpoint = CheckpointData {
         blocks: vec![forged.to_bytes()],
         tips: Default::default(),
@@ -255,40 +262,53 @@ fn finding_from_checkpoint_admits_forged_unsigned_blocks() {
         ordered_block_ids: vec![],
         attested_block_ids: vec![],
     };
-    let restored =
-        Blocklace::from_checkpoint(&checkpoint, dalek_key(23), 1).expect("restore ok");
-
-    let forged_id = forged.id();
-    // FINDING: the forged, never-signed block is present in the restored lace.
+    let restore = Blocklace::from_checkpoint(&checkpoint, dalek_key(23), 1);
     assert!(
-        restored.contains(&forged_id),
-        "if this is now false, from_checkpoint started verifying signatures (fix landed)"
+        restore.is_err(),
+        "DEFENDED REGRESSION: from_checkpoint must reject a checkpoint carrying a \
+         forged/unsigned block — it admitted one"
     );
-    let got = restored.get(&forged_id).expect("forged block present");
-    assert_eq!(got.creator, victim_pk);
+
+    // And nothing leaked: even if one inspected a (would-be) restored lace, the
+    // forged block must never be present. The trusted loader is the ONLY path
+    // that would admit it, and it is explicitly named for local-disk-only use.
+    let forged_id = forged.id();
+    let restored_unsafe =
+        Blocklace::from_checkpoint_trusted(&checkpoint, dalek_key(23), 1).expect("trusted ok");
+    assert!(
+        restored_unsafe.contains(&forged_id),
+        "sanity: the explicitly-trusted loader still does NOT authenticate (by design)"
+    );
+
     eprintln!(
-        "[BL DEEP 5 / FINDING] from_checkpoint admits forged unsigned blocks (creator={:02x}{:02x}..): BROKEN if checkpoint source is untrusted",
-        victim_pk[0], victim_pk[1]
+        "[BL DEEP 5 / CHECKPOINT-AUTH] from_checkpoint REJECTS forged unsigned blocks (err={:?}): DEFENDED",
+        restore.err()
     );
 }
 
 // ===========================================================================
-// DEEP ATTACK 6 — checkpoint can also smuggle a CAUSAL CYCLE / dangling pred.
+// DEEP ATTACK 6 — CHECKPOINT-AUTH: from_checkpoint() must enforce CLOSURE.
 //
-// from_checkpoint skips closure checks ("order doesn't matter since we skip
-// closure checks"). We inject a block whose predecessor is a non-existent id.
-// The receive path would reject with MissingPredecessor; the checkpoint path
-// admits it. We log this as the closure-bypass companion to FINDING 5.
+// WAS A FINDING: from_checkpoint skipped closure checks ("order doesn't matter
+// since we skip closure checks"), so a checkpoint could smuggle a block whose
+// predecessor is a non-existent id — a non-closed / fabricated-causal-history
+// view. The receive path rejects this with MissingPredecessor; the old
+// checkpoint path admitted it.
+//
+// FIX (CLOSED): `from_checkpoint` now inserts in topological order and REJECTS
+// a checkpoint that is not causally closed (a dangling predecessor). FLIPPED to
+// DEFENDED: restore returns Err for a dangling-predecessor checkpoint.
 // ===========================================================================
 
 #[test]
 fn finding_from_checkpoint_admits_dangling_predecessor() {
     let me = dalek_key(24);
-    // A block whose predecessor id is pure fiction (never received).
+    // A block whose predecessor id is pure fiction (never received). It is a
+    // VALIDLY-SIGNED block (so the rejection is closure, not signature).
     let phantom = BlockId([0x77; 32]);
     let dangling = Block::new(&me, 1, Payload::Data(vec![9]), vec![phantom]);
 
-    // Authenticated path: MissingPredecessor.
+    // Authenticated receive path: MissingPredecessor.
     {
         let mut honest = Blocklace::new_simple(dalek_key(25));
         let r = honest.receive_block(dangling.clone());
@@ -298,7 +318,7 @@ fn finding_from_checkpoint_admits_dangling_predecessor() {
         );
     }
 
-    // Checkpoint path: admitted with no closure check.
+    // The fix: the authenticating checkpoint loader REJECTS the non-closed view.
     let checkpoint = CheckpointData {
         blocks: vec![dangling.to_bytes()],
         tips: Default::default(),
@@ -306,18 +326,56 @@ fn finding_from_checkpoint_admits_dangling_predecessor() {
         ordered_block_ids: vec![],
         attested_block_ids: vec![],
     };
-    let restored =
-        Blocklace::from_checkpoint(&checkpoint, dalek_key(26), 1).expect("restore ok");
+    let restore = Blocklace::from_checkpoint(&checkpoint, dalek_key(26), 1);
     assert!(
-        restored.contains(&dangling.id()),
-        "if false, from_checkpoint started enforcing closure (fix landed)"
+        restore.is_err(),
+        "DEFENDED REGRESSION: from_checkpoint must reject a non-closed checkpoint \
+         (dangling predecessor) — it admitted one"
     );
-    // The phantom predecessor is genuinely absent: a non-closed view.
     assert!(
-        !restored.contains(&phantom),
-        "phantom predecessor should not exist; the restored view is non-closed"
+        restore.as_ref().err().is_some_and(|e| e.contains("causally closed")),
+        "rejection must be the closure error, got: {:?}",
+        restore.err()
     );
-    eprintln!("[BL DEEP 6 / FINDING] from_checkpoint admits dangling-predecessor (non-closed view): BROKEN if checkpoint source is untrusted");
+    eprintln!("[BL DEEP 6 / CHECKPOINT-AUTH] from_checkpoint REJECTS dangling-predecessor (non-closed) checkpoint: DEFENDED");
+}
+
+// ===========================================================================
+// DEEP 5c — CHECKPOINT-AUTH liveness: an HONEST checkpoint still restores.
+//
+// The authentication must not be fail-closed against legitimate recovery: a
+// checkpoint built from a real, closed, signed chain restores cleanly with all
+// blocks present and the creator's tip intact.
+// ===========================================================================
+
+#[test]
+fn honest_checkpoint_still_restores_after_auth_hardening() {
+    let me = dalek_key(27);
+    // Build a genuine 3-block chain in a source lace.
+    let mut source = Blocklace::new_simple(me.clone());
+    let b0 = Block::new(&me, 0, Payload::Ack, vec![]);
+    source.receive_block(b0.clone()).unwrap();
+    let b1 = Block::new(&me, 1, Payload::Data(vec![1]), vec![b0.id()]);
+    source.receive_block(b1.clone()).unwrap();
+    let b2 = Block::new(&me, 2, Payload::Data(vec![2]), vec![b1.id()]);
+    source.receive_block(b2.clone()).unwrap();
+
+    // Snapshot it and restore through the AUTHENTICATING loader.
+    let checkpoint = source.checkpoint();
+    let restored = Blocklace::from_checkpoint(&checkpoint, me.clone(), 1)
+        .expect("an honest, closed, signed checkpoint must restore through from_checkpoint");
+
+    // All three blocks present; closure preserved; tip is the real seq-2 head.
+    assert!(restored.contains(&b0.id()));
+    assert!(restored.contains(&b1.id()));
+    assert!(restored.contains(&b2.id()));
+    assert!(!restored.is_equivocator(&me.verifying_key().to_bytes()));
+    assert_eq!(
+        restored.tips().get(&me.verifying_key().to_bytes()),
+        Some(&b2.id()),
+        "restored tip must be the authenticated seq-2 head"
+    );
+    eprintln!("[BL DEEP 5c / CHECKPOINT-AUTH] honest checkpoint restores cleanly: LIVE");
 }
 
 // ===========================================================================

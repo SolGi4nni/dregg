@@ -3042,6 +3042,14 @@ pub async fn bootstrap_from_checkpoint(
         }
     };
 
+    // Peer-supplied checkpoint: the only integrity check above is a self-asserted
+    // blake3 hash the SAME peer also provided, so it authenticates nothing about
+    // the blocks' provenance. We therefore restore via the AUTHENTICATING loader
+    // (`from_checkpoint`), which re-verifies every block's Ed25519 signature,
+    // enforces causal closure (rejecting dangling predecessors), and detects
+    // equivocation — exactly the hardened `receive_block` checks, on the recovery
+    // path. A forged/unsigned block in a malicious peer's checkpoint is rejected
+    // here rather than sailing into the restored DAG (the A1-class bug this closes).
     let blocklace = match dregg_blocklace::finality::Blocklace::from_checkpoint(
         &checkpoint_data,
         self_key,

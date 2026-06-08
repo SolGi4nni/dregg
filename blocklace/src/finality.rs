@@ -1052,11 +1052,34 @@ impl Blocklace {
         }
     }
 
-    /// Restore a blocklace from a checkpoint.
+    /// Restore a blocklace from a checkpoint, **authenticating every block** on
+    /// the recovery path exactly as the hardened `receive_block` insert does.
     ///
-    /// This trusts the checkpoint data (blocks are NOT re-verified against
-    /// signatures). Use only for trusted checkpoint sources (e.g., local disk,
-    /// or after verifying the checkpoint's own signature/hash).
+    /// This is the default loader and the one any **untrusted / peer-supplied**
+    /// checkpoint MUST use (e.g. `bootstrap_from_checkpoint`). A checkpoint is
+    /// just a bag of serialized blocks; without re-authentication it is an
+    /// A1-class recovery-path bypass — a peer could ship a checkpoint containing
+    /// a forged block (a block claiming a victim's `creator` with a junk
+    /// signature, or one whose predecessor is fiction) and have it sail into the
+    /// restored DAG unverified. Here we close that door:
+    ///
+    /// 1. **Signature** — every block's Ed25519 signature is verified against its
+    ///    declared `creator` (rejecting forged/unsigned blocks). Same check as
+    ///    `receive_block` step "Verify signature".
+    /// 2. **Sequence/closure** — blocks are inserted in topological order; a
+    ///    block whose predecessor is absent from the checkpoint (a *dangling*
+    ///    predecessor / non-closed view) is rejected. Same check as
+    ///    `receive_block` step "Check closure".
+    /// 3. **Equivocation** — a same-creator incomparable pair smuggled through
+    ///    the checkpoint is detected, the creator recorded as an equivocator, and
+    ///    its tip withheld. Same check as `receive_block` step "equivocation".
+    ///
+    /// `tips`, `equivocators`, and the ordering frontier are then **derived from
+    /// the authenticated blocks** rather than copied verbatim from the (untrusted)
+    /// checkpoint metadata — a malicious checkpoint cannot assert a tip/ordering
+    /// it did not earn. The self-asserted `equivocators` set is folded in as a
+    /// lower bound (a checkpoint may declare *more* equivocators than the local
+    /// re-derivation observes; it may never *hide* one we detected).
     pub fn from_checkpoint(
         checkpoint: &CheckpointData,
         self_key: SigningKey,
@@ -1064,7 +1087,141 @@ impl Blocklace {
     ) -> Result<Self, String> {
         let mut lace = Self::new(self_key, quorum_threshold);
 
-        // Restore blocks (order doesn't matter since we skip closure checks).
+        // Deserialize all blocks up front (so we can topo-sort by closure).
+        let mut pending: Vec<Block> = Vec::with_capacity(checkpoint.blocks.len());
+        for block_bytes in &checkpoint.blocks {
+            let block = Block::from_bytes(block_bytes)
+                .ok_or_else(|| "failed to deserialize block from checkpoint".to_string())?;
+            pending.push(block);
+        }
+
+        // (1) Authenticate every block's signature BEFORE it can enter the DAG.
+        // A forged/unsigned block claiming a victim creator is rejected here,
+        // exactly as the live receive path would reject it.
+        for block in &pending {
+            block.verify_signature().map_err(|e| {
+                format!(
+                    "checkpoint block failed signature authentication: {e:?} \
+                     (creator={:02x}{:02x}.., seq={})",
+                    block.creator[0], block.creator[1], block.seq
+                )
+            })?;
+        }
+
+        // (2)+(3) Insert in topological (closure-respecting) order, rejecting a
+        // dangling predecessor and detecting equivocation as we go. We loop,
+        // admitting every block whose predecessors are all already present, until
+        // either everything is placed or a round makes no progress (⇒ a dangling
+        // predecessor, i.e. a non-closed checkpoint — rejected).
+        let mut remaining = pending;
+        while !remaining.is_empty() {
+            let mut progressed = false;
+            let mut still_pending: Vec<Block> = Vec::with_capacity(remaining.len());
+
+            for block in remaining.into_iter() {
+                let id = block.id();
+                if lace.blocks.contains_key(&id) {
+                    // Duplicate within the checkpoint — idempotent, drop it.
+                    progressed = true;
+                    continue;
+                }
+                let closed = block
+                    .predecessors
+                    .iter()
+                    .all(|pred| lace.blocks.contains_key(pred));
+                if !closed {
+                    still_pending.push(block);
+                    continue;
+                }
+
+                // Closure satisfied: run the same equivocation gate as
+                // receive_block, then insert.
+                if let Some(_proof) = lace.detect_equivocation(&block) {
+                    lace.equivocators.insert(block.creator);
+                    lace.tips.remove(&block.creator);
+                    lace.blocks.insert(id, block);
+                } else {
+                    if !lace.equivocators.contains(&block.creator) {
+                        let should_update_tip = match lace.tips.get(&block.creator) {
+                            Some(tip_id) => lace.blocks[tip_id].seq < block.seq,
+                            None => true,
+                        };
+                        if should_update_tip {
+                            lace.tips.insert(block.creator, id);
+                        }
+                    }
+                    if block.payload == Payload::Ack {
+                        for pred in &block.predecessors {
+                            lace.finality.record_ack(*pred, block.creator);
+                        }
+                    }
+                    lace.blocks.insert(id, block);
+                }
+                progressed = true;
+            }
+
+            if !progressed {
+                // No block in this round could be placed ⇒ at least one has a
+                // predecessor that exists nowhere in the checkpoint: a dangling
+                // predecessor / non-closed view. Reject the whole checkpoint
+                // (the live receive path returns MissingPredecessor here).
+                let example = still_pending
+                    .first()
+                    .map(|b| format!("creator={:02x}{:02x}.., seq={}", b.creator[0], b.creator[1], b.seq))
+                    .unwrap_or_default();
+                return Err(format!(
+                    "checkpoint is not causally closed: {} block(s) have a dangling \
+                     predecessor (first: {example})",
+                    still_pending.len()
+                ));
+            }
+            remaining = still_pending;
+        }
+
+        // Fold the checkpoint's self-asserted equivocators in as a LOWER bound:
+        // a checkpoint may name more equivocators than we re-derived (e.g. ones
+        // whose evidence blocks were pruned), but it can never hide one we
+        // detected above. We never trust it to UN-flag a creator.
+        for e in &checkpoint.equivocators {
+            if lace.equivocators.insert(*e) {
+                // Newly-named equivocator: withhold its tip too.
+                lace.tips.remove(e);
+            }
+        }
+
+        // Restore ordering state (finality frontier). These are block-id sets
+        // over the now-authenticated `blocks`; an id naming a block we did not
+        // admit is simply inert (no unverified block backs it).
+        lace.finality.ordering.ordered = checkpoint.ordered_block_ids.clone();
+        lace.finality.ordering.attested = checkpoint.attested_block_ids.iter().copied().collect();
+
+        // Derive self_seq from our own (authenticated) tip.
+        let self_creator = lace.self_creator();
+        if let Some(tip_id) = lace.tips.get(&self_creator) {
+            if let Some(tip_block) = lace.blocks.get(tip_id) {
+                lace.self_seq = tip_block.seq;
+            }
+        }
+
+        Ok(lace)
+    }
+
+    /// Restore a blocklace from a checkpoint **without** re-authenticating blocks.
+    ///
+    /// This trusts the checkpoint data verbatim (blocks are NOT re-verified
+    /// against signatures, closure is NOT enforced, tips/equivocators are copied
+    /// as-is). Use ONLY for a checkpoint whose provenance is already established
+    /// to be honest — e.g. one this node itself wrote to local disk and whose
+    /// integrity is covered by the persistence layer. NEVER call this on a
+    /// peer-supplied / network-fetched checkpoint: route those through
+    /// [`Self::from_checkpoint`], which authenticates every block.
+    pub fn from_checkpoint_trusted(
+        checkpoint: &CheckpointData,
+        self_key: SigningKey,
+        quorum_threshold: usize,
+    ) -> Result<Self, String> {
+        let mut lace = Self::new(self_key, quorum_threshold);
+
         for block_bytes in &checkpoint.blocks {
             let block = Block::from_bytes(block_bytes)
                 .ok_or_else(|| "failed to deserialize block from checkpoint".to_string())?;
@@ -1072,17 +1229,11 @@ impl Blocklace {
             lace.blocks.insert(id, block);
         }
 
-        // Restore tips.
         lace.tips = checkpoint.tips.clone();
-
-        // Restore equivocators.
         lace.equivocators = checkpoint.equivocators.iter().copied().collect();
-
-        // Restore ordering state.
         lace.finality.ordering.ordered = checkpoint.ordered_block_ids.clone();
         lace.finality.ordering.attested = checkpoint.attested_block_ids.iter().copied().collect();
 
-        // Restore self_seq from our own tip.
         let self_creator = lace.self_creator();
         if let Some(tip_id) = lace.tips.get(&self_creator) {
             if let Some(tip_block) = lace.blocks.get(tip_id) {
