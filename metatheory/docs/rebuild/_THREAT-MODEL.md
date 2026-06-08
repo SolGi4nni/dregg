@@ -129,32 +129,27 @@ on the running Rust, not just in Lean.** Crypto is real `ed25519_dalek`
 (`types/src/lib.rs:62-90`), not a spike.
 
 **Operational gaps (FINDINGS).**
-- **F-2 (FINDING — `redteam`-proven, fix belongs in `captp/src/handoff.rs`):**
-  `validate_handoff` **enlivens the swiss entry (step 5, `handoff.rs:448`) BEFORE
-  the non-amplification check (step 6, `handoff.rs:467-499`)**. `enliven` bumps
-  `use_count`. So an attacker who knows a swiss number and presents an
-  *amplifying* cert — which will be *rejected for amplification* — still consumes
-  a use of the introducer's swiss budget. Against a `max_uses:Some(1)` (one-shot
-  handoff) entry, the attacker exhausts the single use and the **legitimate
-  recipient's later valid handoff is denied with `MaxUsesExhausted`**: a
-  resource-griefing / capability-denial vector. Reproduced by
-  `finding_amplifying_handoff_consumes_a_use_on_rejection`. The Lean spec models
-  `validate_handoff` as a pure accept/reject `Prop` and never sees this side
-  effect — a clean "Lean proves the decision, Rust mutates state on the reject
-  path" gap. *Fix: re-order so amplification/target checks run against a
-  read-only `peek` and `enliven` (the use-consuming mutation) happens only on the
-  success path; or rate-limit failed presentations per swiss.*
-- **F-3 (FINDING — info leak, `redteam`-proven):** `EnlivenError` distinguishes
-  `NotFound` vs `Expired` vs `ExhaustedUses` (`sturdy.rs:18-24`). A prober who
-  guesses a 32-byte value learns whether it is a *known-but-dead* swiss number
-  (`Expired`/`ExhaustedUses`) vs *absent* (`NotFound`) — a membership oracle on
-  the secret-keyed table. With 256-bit secrets this is not a practical
-  confinement break, but it is a real information leak a constant
-  `EnlivenError::Denied` would not give, and it interacts badly with F-2 (an
-  attacker can confirm a swiss exists before griefing it). Reproduced by
-  `finding_enliven_error_taxonomy_is_a_membership_oracle`. *Fix: collapse the
-  externally-visible error to a single opaque "denied" at the network boundary;
-  keep the taxonomy only for local diagnostics.*
+- **F-2 (CLOSED — `redteam`-DEFENDED, `captp/src/handoff.rs`):** *Was:*
+  `validate_handoff` enlivened the swiss entry BEFORE the non-amplification check,
+  so a rejected amplifying presentation still bumped `use_count` and could exhaust
+  a one-shot handoff, griefing the legitimate recipient. *Fix:* `validate_handoff`
+  now reads the held authority with the new **read-only `SwissTable::check`**
+  (`sturdy.rs`) and consumes a use via `enliven` ONLY on the success path
+  (`handoff.rs` §7), AFTER every rejecting check (target binding, amplification)
+  has passed. A rejected presentation leaves `use_count` untouched. The red-team
+  test `finding_amplifying_handoff_consumes_a_use_on_rejection` is **flipped to
+  DEFENDED**: after a rejected amplifying attempt the one-shot swiss is intact and
+  the honest handoff SUCCEEDS (and consumes exactly the one legitimate use).
+- **F-3 (CLOSED — `redteam`-DEFENDED, `captp/src/sturdy.rs` + `wire/src/server.rs`):**
+  *Was:* `EnlivenError` distinguished `NotFound` (absent) vs `Expired`/`ExhaustedUses`
+  (present-but-dead) at the network boundary (`server.rs` echoed `e.to_string()`),
+  a membership oracle on the secret-keyed table. *Fix:* added
+  `EnlivenError::opaque_message()` (== `"denied"`); the wire `EnlivenResponse` error
+  path now emits that single opaque message and logs the taxonomy only locally
+  (`tracing::debug!`). The red-team test
+  `finding_enliven_error_taxonomy_is_a_membership_oracle` is **flipped to DEFENDED**:
+  it now asserts the BOUNDARY representation a remote sees is IDENTICAL across
+  present-but-dead vs absent (no "found"/"expired"/"exhausted" tell).
 
 ### A3 — Byzantine peer / strand
 
@@ -284,13 +279,19 @@ primitives. Tests: `wrong_key_decryption_fails`, `tampered_ciphertext_fails`.
   direction: recipient-anonymous addressing (per-epoch tags / fuzzy message
   detection / PIR-style retrieval — the node already ships a `/pir/*` surface,
   `api.rs:1423`, which is the right primitive to extend here).*
-- **F-10 (LOGGED — `_CAPTP-ORIENTATION.md §C.6`):** the cross-fed pipeline bridge
-  uses `local_federation_placeholder()=[0;32]` and an ID-equality convention, so
-  the pipelined `authorization` field's binding to a real sender is **not
-  enforced at the bridge layer** — a relay/bridge could replay a pipelined call
-  under an unset sender. The Lean `pipelining_preserves_seam` proves the
-  *authorization survives resolution*, but says nothing about the bridge's
-  sender-binding. *Logged; fix in `captp/src/pipeline.rs` (CapTP-owned).*
+- **F-10 (CLOSED — `redteam`-DEFENDED, `captp/src/pipeline.rs` + `wire/src/server.rs`):**
+  *Was:* the cross-fed pipeline bridge defaulted to a `[0;32]` sender placeholder
+  (`CrossFedPipelineBridge::new()` / `Default`), so a pipelined send's `authorization`
+  was bound to an anonymous originator — a relay/bridge could replay it under an
+  unset sender. *Fix:* `CapTpState::new(local_federation)` is now **mandatory** (no
+  unbound default; the `Default for CapTpState` impl was REMOVED) and constructs the
+  bridge via `CrossFedPipelineBridge::with_local_federation(node_id)`. Every
+  production outbound pipelined message therefore stamps the node's REAL federation
+  id as `sender`. The bare `new()`/`[0;32]` path survives only as a test convenience.
+  New red-team test `finding_pipeline_bridge_ships_unbound_sender` (DEFENDED) asserts
+  the production `CapTpState` bridge stamps the real sender (not `[0;32]`) on outbound
+  messages, and `configured_bridge_binds_sender_through_chain` asserts every chain leg
+  binds it.
 
 ---
 
@@ -342,15 +343,15 @@ small N (L4).
 | Swiss confinement (B1) | unreachable w/o secret | 258 guesses rejected; real CSPRNG | **HOLDS** (evidence) |
 | Handoff unforgeability (B2) | no key ⇒ no accept | tamper + interception + untrusted all rejected; real ed25519 | **HOLDS** (evidence) |
 | Handoff non-amplification (B3) | granted ≤ held (vs swiss entry) | both lattice + mask amplifications rejected | **HOLDS** (evidence) |
-| Handoff reject is side-effect-free | pure decision `Prop` | **enlivens before amplification check** | **GAP — F-2** |
+| Handoff reject is side-effect-free | pure decision `Prop` | read-only `check`; enliven only on success | **HOLDS — F-2 CLOSED** |
 | GC no-premature-reclaim (B4, lease) | lease only reclaims expired | (lease path proven) | holds for lease path |
 | GC session-Byzantine resistance | wrong session can't drop | session path: rejected | **HOLDS** for session path |
-| GC drop authentication | (unmodeled) | **legacy `process_drop` skips session check** | **GAP — F-11** |
+| GC drop authentication | **§6 refcount-drop modeled** (`captp_drop_requires_minting_session`) | legacy `process_drop` fail-closed (`#[deprecated]`, returns `Invalid`) | **HOLDS — F-11 CLOSED (+ proof extended)** |
 | GC session granularity | (n/a) | **holder-scoped, re-export rewrites all refs' session** | **GAP — F-12** |
 | Equivocation detection | detectable + evict | self-fork detected; forgery rejected | **HOLDS** (evidence) |
 | Honest-creator non-framing | author honest ⇒ no equiv | malleability framing **fails** (dalek-v2 strict) | **HOLDS** (evidence, beyond proof) |
 | Forward secrecy (B6) | ephemeral-key idealized | real x25519+HKDF+ChaCha20Poly1305 | **HOLDS** (primitives vetted) |
-| Pipelining ≠ bypass (B5) | auth survives resolution | (proven); bridge sender-binding unset | **GAP — F-10** |
+| Pipelining ≠ bypass (B5) | auth survives resolution | bridge binds real sender (mandatory `CapTpState::new(fed)`) | **HOLDS — F-10 CLOSED** |
 | Metadata unlinkability | **no theorem** | leaks L1–L8 | **OPEN (research)** |
 
 The two NEW GC findings (F-11, F-12) are the GC analogues of F-2 and F-3:
@@ -363,10 +364,18 @@ The two NEW GC findings (F-11, F-12) are the GC analogues of F-2 and F-3:
   capability**, exactly what the session-Byzantine defense
   (`process_drop_with_session`) exists to prevent. The defense is opt-in; the
   open door is the default-named method. Reproduced by
-  `finding_legacy_process_drop_bypasses_session_byzantine_defense`. The Lean
-  `captp_no_premature_reclaim` only models the **lease** path; the refcount-drop
-  path is unmodeled, so this gap is invisible to the proof. *Fix: make session
-  validation mandatory (drop or `#[deprecated]`-and-deny the session-free entry).*
+  `finding_legacy_process_drop_bypasses_session_byzantine_defense`.
+  **CLOSED:** (a) `process_drop` is now `#[deprecated]` and **fail-closed** — it
+  performs NO mutation and always returns `DropResult::Invalid`; the per-session
+  bucket model (`RefCount.sessions`) makes session validation mandatory in
+  `process_drop_inner`. The red-team test is **flipped to DEFENDED**. (b) The Lean
+  blind spot is closed too: `Exec/CapTPGC.lean` §6 now MODELS the refcount-drop
+  path (per-session `Buckets`, `applyDrop`) and proves
+  `captp_drop_requires_minting_session` (an unauthorized/session-free drop is a
+  total NO-OP on the buckets — the law the pre-fix code VIOLATED) plus
+  `captp_drop_scoped_to_session` / `captp_reexport_preserves_original_session`
+  (F-12 per-ref scoping) and `captp_authorized_drop_decrements_own_bucket` (the
+  genuine holder still gets through). `#assert_axioms`-clean, no `sorry`.
 - **F-12 (FINDING — `redteam`-proven, design subtlety):** `session_id` is stored
   **per-(cell, federation) holder, not per-ref** (`gc.rs:129-139`). A re-export to
   the same federation on a new session **overwrites the session id of ALL that
@@ -454,11 +463,11 @@ Live devnet `POST /turn/submit` → **405** (mutation disabled on the deployment
 
 | ID | Class | Severity | Where | Owner | Fix |
 |----|-------|----------|-------|-------|-----|
-| F-2 | grief / DoS | MED | `captp/src/handoff.rs` enliven-before-amplify | CapTP | peek for checks; enliven only on success |
-| F-3 | info leak | LOW | `captp/src/sturdy.rs` EnlivenError taxonomy | CapTP | opaque error at boundary |
-| F-11 | premature reclaim | HIGH | `captp/src/gc.rs::process_drop` session-free | CapTP | make session mandatory |
-| F-12 | GC session granularity | MED | `captp/src/gc.rs` holder-scoped session | CapTP | per-ref session scope |
-| F-10 | pipeline sender-binding | MED | `captp/src/pipeline.rs` bridge placeholder | CapTP | bind real sender |
+| F-2 | grief / DoS | MED | `captp/src/handoff.rs` enliven-before-amplify | CapTP | **CLOSED** — read-only `check`; enliven only on success (redteam DEFENDED) |
+| F-3 | info leak | LOW | `captp/src/sturdy.rs` EnlivenError taxonomy | CapTP | **CLOSED** — opaque `"denied"` at boundary (redteam DEFENDED) |
+| F-11 | premature reclaim | HIGH | `captp/src/gc.rs::process_drop` session-free | CapTP | **CLOSED** — `#[deprecated]` fail-closed + Lean §6 refcount-drop proof (redteam DEFENDED) |
+| F-12 | GC session granularity | MED | `captp/src/gc.rs` holder-scoped session | CapTP | **CLOSED** — per-ref session buckets + Lean scoping proof (redteam DEFENDED) |
+| F-10 | pipeline sender-binding | MED | `captp/src/pipeline.rs` bridge placeholder | CapTP | **CLOSED** — mandatory `CapTpState::new(fed)` binds real sender (redteam DEFENDED) |
 | F-1 | rate-limit bypass | MED | `node/src/api.rs` per-IP behind proxy | SWAP/node | trust forwarded-for |
 | F-8 / L1 | metadata leak | MED | `node/src/api.rs` `/status` | SWAP/node | auth-gate detail |
 | F-9 / L2 | recipient leak | MED | `captp/src/store_forward.rs` cleartext dest | CapTP | anon addressing / PIR |
