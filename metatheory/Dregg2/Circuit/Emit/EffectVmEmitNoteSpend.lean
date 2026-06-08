@@ -60,6 +60,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notenullifier
+import Dregg2.Exec.SystemRoots
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 
@@ -515,6 +516,289 @@ theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badSp
     state.NONCE, param.NOTE_VALUE_LO]
   norm_num
 
+/-! ## §A — STAGE-3 AMPLIFICATION: bind the `nullifiers` side-table ROOT into the descriptor.
+
+Record-layer STAGE 3 (`Exec.SystemRoots`, `6aa29e996`) homed each side-table root in the dedicated
+`system_roots` sub-block, committed by `systemRootsDigest` into ONE carrier
+(`aux_off_sys.SYSTEM_ROOTS_DIGEST`). For `noteSpend` the relevant root is `state.systemRoot.NULLIFIER`
+(the `nullifiers` accumulator). BEFORE this stage the nullifier-set insert `nf :: nullifiers` was the
+§11 finding-#1 OUT-OF-IR flag — there was no column to bind it. NOW there is. This section AMPLIFIES the
+descriptor to FULL: a per-row root-UPDATE gate binds the `nullifiers`-accumulator step into the row, the
+after-`SYSTEM_ROOTS_DIGEST` carrier is absorbed into `state_commit` by the GROUP-4 extension, and the
+anti-ghost tooth is re-proved over the now-bound root, CONNECTED to
+`Exec.SystemRoots.cellCommitS_binds_systemRoots`. The whole-cell FREEZE + universe-A connectors of
+§4–§11 are UNCHANGED (strictly additive).
+
+HONESTY (finding #2 still stands): binding the nullifier-set DIGEST closes finding #1 (the insert is
+bound into `state_commit`), but it does NOT by itself enforce NO-DOUBLE-SPEND. Freshness
+(`nf ∉ nullifiers`) is a NON-MEMBERSHIP assertion the per-row digest gate cannot make: even with the
+root bound, a sorted-set / Merkle non-membership gate-kind is still required (the IR lacks it). We keep
+`noteSpend_no_double_spend_is_turn_property` and state the precise boundary in §D. -/
+
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest systemRootsDigest_binds_pointwise N_SYSTEM_ROOTS rootList)
+
+/-- The committed `system_roots` digest carrier of the AFTER state (the kernel side-table digest the
+GROUP-4 extension absorbs into `state_commit`). This is the IR's `aux_off_sys.SYSTEM_ROOTS_DIGEST`. -/
+def SYS_DIG_AFTER : Nat := aux_off_sys.SYSTEM_ROOTS_DIGEST
+
+/-- The committed `system_roots` digest carrier of the BEFORE state (the pre-image of the accumulator
+step). One aux column past the after-carrier, DISTINCT from every claimed aux slot, so it never aliases.
+The per-effect root-update gate reads `sb`-digest here and writes `sa`-digest at `SYS_DIG_AFTER`. -/
+def SYS_DIG_BEFORE : Nat := aux_off_sys.SYSTEM_ROOTS_DIGEST + 1
+
+/-- The `nullifiers`-accumulator STEP param: the field-element delta the consumed `nf` contributes to
+the `nullifiers` side-table digest. The trace generator lays it at `param2` (param0 = nullifier `nf`,
+param1 = value; param2 = the digest step the prover computed from `nf :: nullifiers`). -/
+def NULLIFIER_ROOT_STEP_PARAM : Nat := 2
+
+/-- The accumulator-step expression (param column 2). -/
+def ePrmNullifierStep : EmittedExpr := .var (prmCol NULLIFIER_ROOT_STEP_PARAM)
+
+/-! ## §B — the root-UPDATE gate + the digest-absorbing GROUP-4 extension site. -/
+
+/-- Root-update gate body: `sa_digest − sb_digest − step` (so `sa_digest = sb_digest + step`). Reads
+the before/after `system_roots` digest carriers and the `param2` accumulator step. -/
+def gNullifierRootUpdate : EmittedExpr :=
+  eSub (eSub (.var SYS_DIG_AFTER) (.var SYS_DIG_BEFORE)) ePrmNullifierStep
+
+/-- Site 3′: `state_commit = H4(inter1, inter2, inter3, sys_digest_after)` — the GROUP-4 extension that
+absorbs the `system_roots` digest carrier into the published commitment (replacing transfer's spare
+`.zero`). This is the column that makes the `nullifiers` root BINDABLE. -/
+def siteNullifierRoot : VmHashSite :=
+  { digestCol := saCol state.STATE_COMMIT
+  , inputs := [ .digest 0, .digest 1, .digest 2, .col SYS_DIG_AFTER ]
+  , arity := 4 }
+
+/-- The amplified GROUP-4 hash sites: transfer's three inner sites + the digest-absorbing site 3′. -/
+def noteSpendRootHashSites : List VmHashSite :=
+  [ EffectVmEmitTransfer.site0, EffectVmEmitTransfer.site1
+  , EffectVmEmitTransfer.site2, siteNullifierRoot ]
+
+/-- **`noteSpendRootHash_binds`** — under the amplified sites, the published `state_commit` is the
+genuine 4-level digest of the after-state WITH the `system_roots` digest carrier in the 4th slot. -/
+theorem noteSpendRootHash_binds (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env noteSpendRootHashSites) :
+    env.loc (saCol state.STATE_COMMIT)
+      = hash [ hash [ env.loc (saCol state.BALANCE_LO), env.loc (saCol state.BALANCE_HI)
+                    , env.loc (saCol state.NONCE), env.loc (saCol (state.FIELD_BASE + 0)) ]
+             , hash [ env.loc (saCol (state.FIELD_BASE + 1)), env.loc (saCol (state.FIELD_BASE + 2))
+                    , env.loc (saCol (state.FIELD_BASE + 3)), env.loc (saCol (state.FIELD_BASE + 4)) ]
+             , hash [ env.loc (saCol (state.FIELD_BASE + 5)), env.loc (saCol (state.FIELD_BASE + 6))
+                    , env.loc (saCol (state.FIELD_BASE + 7)), env.loc (saCol state.CAP_ROOT) ]
+             , env.loc SYS_DIG_AFTER ] := by
+  unfold siteHoldsAll noteSpendRootHashSites at h
+  simp only [siteHoldsAll.go, EffectVmEmitTransfer.site0, EffectVmEmitTransfer.site1,
+    EffectVmEmitTransfer.site2, siteNullifierRoot, VmHashSite.resolvedInputs, HashInput.resolve,
+    List.map_cons, List.map_nil, List.getD] at h
+  obtain ⟨_, _, _, h3, _⟩ := h
+  rw [h3]; rfl
+
+/-! ## §C — FAITHFULNESS of the root-update gate + ANTI-GHOST over the bound digest. -/
+
+/-- **`NoteSpendRootIntent env`** — the intended `nullifiers`-root move on the row: the `system_roots`
+digest ADVANCES by the `param2` accumulator step (`sa_digest = sb_digest + step`). This is the per-row
+projection of the membership update `nullifiers := nf :: nullifiers` onto its committed digest. -/
+def NoteSpendRootIntent (env : VmRowEnv) : Prop :=
+  env.loc SYS_DIG_AFTER = env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)
+
+/-- **`noteSpendRoot_gate_faithful`.** The root-update gate holds IFF the digest advances by the
+accumulator step — the gate pins EXACTLY the `nullifiers`-root update. -/
+theorem noteSpendRoot_gate_faithful (env : VmRowEnv) :
+    (VmConstraint.gate gNullifierRootUpdate).holdsVm env false false ↔ NoteSpendRootIntent env := by
+  simp only [VmConstraint.holdsVm, gNullifierRootUpdate, ePrmNullifierStep, eSub, EmittedExpr.eval,
+    NoteSpendRootIntent]
+  constructor
+  · intro h; linarith
+  · intro h; rw [h]; ring
+
+/-- **Anti-ghost (root tamper).** A row whose after-digest is NOT the advanced accumulator
+(`sb_digest + step`) is rejected by `gNullifierRootUpdate` — a dropped/forged `nullifiers` update is
+UNSAT (an attacker omitting `nf` to enable a later double-spend MOVES the digest, breaking the gate). -/
+theorem noteSpendRoot_rejects_wrong_root (env : VmRowEnv)
+    (hwrong : env.loc SYS_DIG_AFTER ≠ env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)) :
+    ¬ (VmConstraint.gate gNullifierRootUpdate).holdsVm env false false := by
+  intro h; exact hwrong ((noteSpendRoot_gate_faithful env).mp h)
+
+/-! ## §D — the AMPLIFIED descriptor + the side-table-root anti-ghost tooth (connected to `SystemRoots`). -/
+
+/-- **`noteSpendVmDescriptorFull`** — the AMPLIFIED noteSpend circuit: the §2 whole-cell freeze gates
+PLUS the `nullifiers`-root-update gate, with the digest-absorbing GROUP-4 sites. Strictly additive over
+`noteSpendVmDescriptor` (one extra gate, the spare site-3 slot filled). -/
+def noteSpendVmDescriptorFull : EffectVmDescriptor :=
+  { name := noteSpendVmAirName ++ "-rootbound"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := (noteSpendRowGates ++ [.gate gNullifierRootUpdate])
+                     ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+  , hashSites := noteSpendRootHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-- The amplified descriptor still forces the §2 whole-cell FREEZE (generalised over the boundary flags;
+the freeze gates are per-row `.gate`s whose `holdsVm` ignores `isFirst`/`isLast`). -/
+theorem noteSpendFull_forces_freeze (env : VmRowEnv) (hrow : IsNoteSpendRow env) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteSpendVmDescriptorFull.constraints, c.holdsVm env b1 b2) :
+    NoteSpendRowIntent env := by
+  apply (noteSpendVm_faithful env hrow).mp
+  intro c hc
+  have hmem : c ∈ noteSpendVmDescriptorFull.constraints := by
+    unfold noteSpendVmDescriptorFull
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+  have := hgates c hmem
+  unfold noteSpendRowGates gFieldPassAll at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+    List.mem_range] at hc
+  rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+    simpa only [VmConstraint.holdsVm] using this
+
+/-- The amplified descriptor forces the `nullifiers`-ROOT update (the new content STAGE 3 buys). -/
+theorem noteSpendFull_forces_root (env : VmRowEnv) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteSpendVmDescriptorFull.constraints, c.holdsVm env b1 b2) :
+    NoteSpendRootIntent env := by
+  apply (noteSpendRoot_gate_faithful env).mp
+  have hmem : (VmConstraint.gate gNullifierRootUpdate) ∈ noteSpendVmDescriptorFull.constraints := by
+    unfold noteSpendVmDescriptorFull
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inr (by simp))))
+  have := hgates _ hmem
+  simpa only [VmConstraint.holdsVm] using this
+
+/-- **`noteSpendFull_commit_binds_sysdigest` — the digest is now bound into `state_commit`.** Two rows
+satisfying the amplified hash-sites that publish the SAME `state_commit` have the SAME absorbed
+`system_roots` digest. So a prover CANNOT keep `state_commit` while tampering the side-table digest —
+finding #1 (the nullifier insert out-of-IR) is CLOSED. -/
+theorem noteSpendFull_commit_binds_sysdigest (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ noteSpendRootHashSites)
+    (hs₂ : siteHoldsAll hash e₂ noteSpendRootHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    e₁.loc SYS_DIG_AFTER = e₂.loc SYS_DIG_AFTER := by
+  rw [noteSpendRootHash_binds hash e₁ hs₁, noteSpendRootHash_binds hash e₂ hs₂] at hcommit
+  have houter := hCR _ _ hcommit
+  rw [List.cons.injEq, List.cons.injEq, List.cons.injEq, List.cons.injEq] at houter
+  exact houter.2.2.2.1
+
+/-- **`noteSpendFull_binds_nullifiers_root` — CONNECTED to `Exec.SystemRoots`.** Two amplified rows
+that publish the same `state_commit` AND whose after-digest carrier IS the `systemRootsDigest` of their
+respective `system_roots` sub-blocks have the SAME `nullifiers` side-table root (and every other). The
+chain: equal commitment ⇒ equal digest carrier ⇒ equal side-table roots pointwise. Tampering ONLY the
+`nullifiers` root (omitting `nf`) provably MOVES `state_commit` ⇒ UNSAT. -/
+theorem noteSpendFull_binds_nullifiers_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hs₁ : siteHoldsAll hash e₁ noteSpendRootHashSites)
+    (hs₂ : siteHoldsAll hash e₂ noteSpendRootHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT))
+    (hd₁ : e₁.loc SYS_DIG_AFTER = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc SYS_DIG_AFTER = systemRootsDigest hash sr₂)
+    (i : Fin N_SYSTEM_ROOTS) :
+    sr₁ i = sr₂ i := by
+  have hdig : systemRootsDigest hash sr₁ = systemRootsDigest hash sr₂ := by
+    rw [← hd₁, ← hd₂]
+    exact noteSpendFull_commit_binds_sysdigest hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact systemRootsDigest_binds_pointwise hash hCR sr₁ sr₂ hdig i
+
+/-! ## §E — CONNECTOR to universe-A `noteSpendDescriptor_full_sound` over the root-bound descriptor. -/
+
+/-- **`noteSpendFull_sound` — the amplified full soundness.** A row satisfying the AMPLIFIED descriptor,
+under `RowEncodesSpend`, forces the structured `CellSpendSpec` freeze AND the `nullifiers`-root advance
+AND publishes the post-commit — §7 lifted onto the root-bound descriptor. -/
+theorem noteSpendFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsNoteSpendRow env)
+    (pre post : CellState) (value : ℤ)
+    (henc : RowEncodesSpend env pre value post)
+    (hsat : satisfiedVm hash noteSpendVmDescriptorFull env true true) :
+    CellSpendSpec pre value post
+      ∧ NoteSpendRootIntent env
+      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, hsites⟩ := hsat
+  have hfreeze := noteSpendFull_forces_freeze env hrow true true hcs
+  have hroot := noteSpendFull_forces_root env true true hcs
+  refine ⟨intent_to_cellSpendSpec env pre post value henc hfreeze, hroot, ?_⟩
+  have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+    intro c hc
+    have hmem : c ∈ noteSpendVmDescriptorFull.constraints := by
+      unfold noteSpendVmDescriptorFull
+      simp only [List.mem_append]; exact Or.inr hc
+    have hh := hcs c hmem
+    unfold boundaryLastPins at hc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with rfl | rfl | rfl <;>
+      · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+  have hpin := (boundaryLast_pins env hlast).1
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+  rw [← hsaC]; exact hpin
+
+/-! ## §F — the no-DOUBLE-SPEND boundary AFTER amplification (finding #2, NOT closed by the root).
+
+The root binding closes finding #1: `nf :: nullifiers` is now committed (its digest is bound into
+`state_commit`, anti-ghost-proved above). But it does NOT enforce FRESHNESS. Even with the digest bound,
+the gate `gNullifierRootUpdate` only asserts the digest ADVANCED by `step`; it cannot witness that `nf`
+was NOT already a member of the accumulated set. That is a NON-MEMBERSHIP / sorted-insert assertion the
+4-arity Poseidon2 hash-site IR has no gate-kind for. We RESTATE the boundary precisely. -/
+
+/-- **`noteSpend_freshness_still_needs_nonmembership` — finding #2 after amplification.** The universe-A
+freshness guard (`nf ∉ st.nullifiers`) — the headline anti-replay property — is STILL a property of the
+whole accumulated nullifier SET, NOT of the per-row digest-advance gate. The root binding commits the
+post-set; it does not prove `nf` was absent from the pre-set. So `noteSpendVmDescriptorFull` enforces
+the insert is COMMITTED but NOT that it is FRESH: a sorted-set / Merkle NON-membership gate-kind is
+still required (the IR lacks it). We extract the guard from the spec to name the boundary exactly. -/
+theorem noteSpend_freshness_still_needs_nonmembership (st st' : RecChainedState)
+    (nf : Nat) (actor : CellId) (spendProof : Bool)
+    (hspec : NoteSpendSpec st nf actor spendProof st') :
+    nf ∉ st.kernel.nullifiers :=
+  hspec.1.2
+
+/-! ## §G — RECONCILIATION onto the runtime trace-generator layout (the cutover discipline, `3aaf0772d`). -/
+
+-- The amplified descriptor reads the kernel digest carrier (aux 96), not a user field.
+#guard SYS_DIG_AFTER == aux_off_sys.SYSTEM_ROOTS_DIGEST
+#guard SYS_DIG_AFTER == 96
+-- The before-carrier is DISTINCT from every claimed aux slot (state-inters + after-digest).
+#guard [auxCol aux_off.STATE_INTER1, auxCol aux_off.STATE_INTER2, auxCol aux_off.STATE_INTER3,
+        SYS_DIG_AFTER, SYS_DIG_BEFORE].dedup.length == 5
+-- The accumulator-step param is param2 (param0 = nf, param1 = value), in-range of the 8 param cols.
+#guard NULLIFIER_ROOT_STEP_PARAM == 2
+#guard NULLIFIER_ROOT_STEP_PARAM < NUM_PARAMS
+-- The amplified descriptor has the extra root-update gate (14 row gates now) + the 4 amplified sites.
+#guard noteSpendVmDescriptorFull.constraints.length == 14 + 14 + 4 + 3
+#guard noteSpendVmDescriptorFull.hashSites.length == 4
+
+/-! ## §H — NON-VACUITY of the amplification: a concrete root-advancing row + a forged one. -/
+
+/-- A concrete root-update row: `sys_digest 1000 → 1099` (advance by step `99` = the consumed `nf`'s
+digest contribution). -/
+def goodNullRow : VmRowEnv where
+  loc := fun v =>
+    if v = SYS_DIG_BEFORE then 1000
+    else if v = SYS_DIG_AFTER then 1099
+    else if v = prmCol NULLIFIER_ROOT_STEP_PARAM then 99
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+/-- **NON-VACUITY (witness TRUE).** `goodNullRow` REALIZES the `nullifiers`-root advance:
+`1099 = 1000 + 99`. -/
+theorem goodNullRow_realizes : NoteSpendRootIntent goodNullRow := by
+  unfold NoteSpendRootIntent goodNullRow
+  simp only [SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, NULLIFIER_ROOT_STEP_PARAM,
+    aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
+  norm_num
+
+/-- A FORGED root row: the after-digest is `9999` (NOT the advance `1099`) — a dropped/forged
+`nullifiers` update (an attacker omitting `nf` to enable a double-spend). -/
+def badNullRow : VmRowEnv where
+  loc := fun v => if v = SYS_DIG_AFTER then 9999 else goodNullRow.loc v
+  nxt := goodNullRow.nxt
+  pub := goodNullRow.pub
+
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badNullRow`'s after-digest is NOT the
+advance, so `gNullifierRootUpdate` REJECTS it — the bound root has teeth. -/
+theorem badNullRow_rejected : ¬ (VmConstraint.gate gNullifierRootUpdate).holdsVm badNullRow false false := by
+  apply noteSpendRoot_rejects_wrong_root
+  simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, NULLIFIER_ROOT_STEP_PARAM,
+    aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
+  norm_num
+
 /-! ## §13 — Axiom-hygiene pins. -/
 
 #guard noteSpendVmDescriptor.constraints.length == 13 + 14 + 4 + 3
@@ -535,5 +819,18 @@ theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badSp
 #assert_axioms goodSpendRow_isRow
 #assert_axioms goodSpendRow_realizes_intent
 #assert_axioms badSpendRow_rejected
+
+-- STAGE-3 amplification (the bound `nullifiers` side-table root):
+#assert_axioms noteSpendRootHash_binds
+#assert_axioms noteSpendRoot_gate_faithful
+#assert_axioms noteSpendRoot_rejects_wrong_root
+#assert_axioms noteSpendFull_forces_freeze
+#assert_axioms noteSpendFull_forces_root
+#assert_axioms noteSpendFull_commit_binds_sysdigest
+#assert_axioms noteSpendFull_binds_nullifiers_root
+#assert_axioms noteSpendFull_sound
+#assert_axioms noteSpend_freshness_still_needs_nonmembership
+#assert_axioms goodNullRow_realizes
+#assert_axioms badNullRow_rejected
 
 end Dregg2.Circuit.Emit.EffectVmEmitNoteSpend

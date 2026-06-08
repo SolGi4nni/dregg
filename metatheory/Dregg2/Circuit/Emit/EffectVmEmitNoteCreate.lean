@@ -51,6 +51,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notecommitment
+import Dregg2.Exec.SystemRoots
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
 
@@ -500,6 +501,291 @@ theorem badNoteRow_rejected : ¬ (VmConstraint.gate gBalLoDebit).holdsVm badNote
     state.NONCE, param.NOTE_VALUE_LO]
   norm_num
 
+/-! ## §A — STAGE-3 AMPLIFICATION: bind the `commitments` side-table ROOT into the descriptor.
+
+Record-layer STAGE 3 (`Exec.SystemRoots`, `6aa29e996`) gave each side-table its OWN kernel-owned root
+column in the dedicated `system_roots` sub-block, committed by `systemRootsDigest` into ONE carrier
+(`aux_off_sys.SYSTEM_ROOTS_DIGEST`). For `noteCreate` the relevant root is `state.systemRoot.COMMIT`
+(the `commitments` accumulator). BEFORE this stage the commitment-set insert `cm :: commitments` was
+the §11 OUT-OF-IR flag — there was no column to bind it. NOW there is. This section AMPLIFIES the
+descriptor to FULL: a per-row root-UPDATE gate binds the `commitments`-accumulator step into the row,
+the after-`SYSTEM_ROOTS_DIGEST` carrier is absorbed into `state_commit` by the GROUP-4 extension
+(site 3's previously-spare `.zero` slot — `_IR-EXTENSION-DESIGN.md:158-162`), and the anti-ghost tooth
+is re-proved over the now-bound root, CONNECTED to `Exec.SystemRoots.cellCommitS_binds_systemRoots`
+(equal commitment ⇒ equal digest ⇒ equal `commitments` root). The whole-cell FREEZE + universe-A
+connector of §4–§11 are UNCHANGED (strictly additive). -/
+
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest systemRootsDigest_binds_pointwise N_SYSTEM_ROOTS rootList)
+
+/-- The committed `system_roots` digest carrier of the AFTER state (the kernel side-table digest the
+GROUP-4 extension absorbs into `state_commit`). This is the IR's `aux_off_sys.SYSTEM_ROOTS_DIGEST`. -/
+def SYS_DIG_AFTER : Nat := aux_off_sys.SYSTEM_ROOTS_DIGEST
+
+/-- The committed `system_roots` digest carrier of the BEFORE state (the pre-image of the accumulator
+step). One aux column past the after-carrier, DISTINCT from every claimed aux slot (state-inters at
+8/9/10, balance-bit block, the after-digest at 96), so it never aliases. The per-effect root-update
+gate reads `sb`-digest here and writes `sa`-digest at `SYS_DIG_AFTER`. -/
+def SYS_DIG_BEFORE : Nat := aux_off_sys.SYSTEM_ROOTS_DIGEST + 1
+
+/-- The `commitments`-accumulator STEP param: the field-element delta the published `cm` contributes to
+the `commitments` side-table digest (`systemRootsDigest` over the sub-block before vs after). The
+trace generator lays it at `param2` (param0 = commitment `cm`, param1 = value; param2 = the digest
+step the prover computed from the membership update `cm :: commitments`). -/
+def COMMIT_ROOT_STEP_PARAM : Nat := 2
+
+/-- The accumulator-step expression (param column 2). -/
+def ePrmCommitStep : EmittedExpr := .var (prmCol COMMIT_ROOT_STEP_PARAM)
+
+/-! ## §B — the root-UPDATE gate + the digest-absorbing GROUP-4 extension site.
+
+The per-row gate `gCommitRootUpdate` pins `sa_digest = sb_digest + step`: the `commitments` side-table
+digest ADVANCES by the accumulator step the appended `cm` contributes (the runtime hand-AIR's
+note-create arm computes exactly this digest delta and writes the new `systemRootsDigest` carrier). The
+extended hash-site list `noteCreateRootHashSites` re-uses transfer's sites 0/1/2 and REPLACES site 3's
+spare `.zero` 4th input with the after-digest carrier, so `state_commit` now absorbs the side-table
+digest — the GROUP-4 extension. -/
+
+/-- Root-update gate body: `sa_digest − sb_digest − step` (so `sa_digest = sb_digest + step`). Reads
+the before/after `system_roots` digest carriers and the `param2` accumulator step. -/
+def gCommitRootUpdate : EmittedExpr :=
+  eSub (eSub (.var SYS_DIG_AFTER) (.var SYS_DIG_BEFORE)) ePrmCommitStep
+
+/-- Site 3′: `state_commit = H4(inter1, inter2, inter3, sys_digest_after)` — the GROUP-4 extension that
+absorbs the `system_roots` digest carrier into the published commitment (replacing transfer's spare
+`.zero`). This is the column that makes the `commitments` root BINDABLE. -/
+def siteCommitRoot : VmHashSite :=
+  { digestCol := saCol state.STATE_COMMIT
+  , inputs := [ .digest 0, .digest 1, .digest 2, .col SYS_DIG_AFTER ]
+  , arity := 4 }
+
+/-- The amplified GROUP-4 hash sites: transfer's three inner sites + the digest-absorbing site 3′. -/
+def noteCreateRootHashSites : List VmHashSite :=
+  [ EffectVmEmitTransfer.site0, EffectVmEmitTransfer.site1
+  , EffectVmEmitTransfer.site2, siteCommitRoot ]
+
+/-- **`noteCreateRootHash_binds`** — under the amplified sites, the published `state_commit` is the
+genuine 4-level digest of the after-state WITH the `system_roots` digest carrier in the 4th slot. The
+site order is load-bearing (site 3′ reads sites 0/1/2 + the digest column). -/
+theorem noteCreateRootHash_binds (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env noteCreateRootHashSites) :
+    env.loc (saCol state.STATE_COMMIT)
+      = hash [ hash [ env.loc (saCol state.BALANCE_LO), env.loc (saCol state.BALANCE_HI)
+                    , env.loc (saCol state.NONCE), env.loc (saCol (state.FIELD_BASE + 0)) ]
+             , hash [ env.loc (saCol (state.FIELD_BASE + 1)), env.loc (saCol (state.FIELD_BASE + 2))
+                    , env.loc (saCol (state.FIELD_BASE + 3)), env.loc (saCol (state.FIELD_BASE + 4)) ]
+             , hash [ env.loc (saCol (state.FIELD_BASE + 5)), env.loc (saCol (state.FIELD_BASE + 6))
+                    , env.loc (saCol (state.FIELD_BASE + 7)), env.loc (saCol state.CAP_ROOT) ]
+             , env.loc SYS_DIG_AFTER ] := by
+  unfold siteHoldsAll noteCreateRootHashSites at h
+  simp only [siteHoldsAll.go, EffectVmEmitTransfer.site0, EffectVmEmitTransfer.site1,
+    EffectVmEmitTransfer.site2, siteCommitRoot, VmHashSite.resolvedInputs, HashInput.resolve,
+    List.map_cons, List.map_nil, List.getD] at h
+  obtain ⟨_, _, _, h3, _⟩ := h
+  rw [h3]; rfl
+
+/-! ## §C — FAITHFULNESS of the root-update gate + ANTI-GHOST over the bound digest. -/
+
+/-- **`NoteCreateRootIntent env`** — the intended `commitments`-root move on the row: the `system_roots`
+digest ADVANCES by the `param2` accumulator step (`sa_digest = sb_digest + step`). This is the per-row
+projection of the membership update `commitments := cm :: commitments` onto its committed digest. -/
+def NoteCreateRootIntent (env : VmRowEnv) : Prop :=
+  env.loc SYS_DIG_AFTER = env.loc SYS_DIG_BEFORE + env.loc (prmCol COMMIT_ROOT_STEP_PARAM)
+
+/-- **`noteCreateRoot_gate_faithful`.** The root-update gate holds IFF the digest advances by the
+accumulator step — the gate pins EXACTLY the `commitments`-root update. -/
+theorem noteCreateRoot_gate_faithful (env : VmRowEnv) :
+    (VmConstraint.gate gCommitRootUpdate).holdsVm env false false ↔ NoteCreateRootIntent env := by
+  simp only [VmConstraint.holdsVm, gCommitRootUpdate, ePrmCommitStep, eSub, EmittedExpr.eval,
+    NoteCreateRootIntent]
+  constructor
+  · intro h; linarith
+  · intro h; rw [h]; ring
+
+/-- **Anti-ghost (root tamper).** A row whose after-digest is NOT the advanced accumulator
+(`sb_digest + step`) is rejected by `gCommitRootUpdate` — a dropped/forged `commitments` update is
+UNSAT. -/
+theorem noteCreateRoot_rejects_wrong_root (env : VmRowEnv)
+    (hwrong : env.loc SYS_DIG_AFTER ≠ env.loc SYS_DIG_BEFORE + env.loc (prmCol COMMIT_ROOT_STEP_PARAM)) :
+    ¬ (VmConstraint.gate gCommitRootUpdate).holdsVm env false false := by
+  intro h; exact hwrong ((noteCreateRoot_gate_faithful env).mp h)
+
+/-! ## §D — the AMPLIFIED descriptor + the side-table-root anti-ghost tooth (connected to `SystemRoots`). -/
+
+/-- **`noteCreateVmDescriptorFull`** — the AMPLIFIED noteCreate circuit: the §2 whole-cell freeze gates
+PLUS the `commitments`-root-update gate, with the digest-absorbing GROUP-4 sites. The runtime trace
+now writes the advanced `system_roots` digest and binds it into `state_commit`. Strictly additive over
+`noteCreateVmDescriptor` (one extra gate, the spare site-3 slot filled). -/
+def noteCreateVmDescriptorFull : EffectVmDescriptor :=
+  { name := noteCreateVmAirName ++ "-rootbound"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := (noteCreateRowGates ++ [.gate gCommitRootUpdate])
+                     ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+  , hashSites := noteCreateRootHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-- The amplified descriptor still forces the §2 whole-cell FREEZE (the root-update gate is additive and
+the freeze gates are a sublist of its constraints). Generalised over the boundary flags — the freeze
+gates are per-row `.gate`s, whose `holdsVm` ignores `isFirst`/`isLast`. -/
+theorem noteCreateFull_forces_freeze (env : VmRowEnv) (hrow : IsNoteCreateRow env) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteCreateVmDescriptorFull.constraints, c.holdsVm env b1 b2) :
+    NoteCreateRowIntent env := by
+  apply (noteCreateVm_faithful env hrow).mp
+  intro c hc
+  have hmem : c ∈ noteCreateVmDescriptorFull.constraints := by
+    unfold noteCreateVmDescriptorFull
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+  have := hgates c hmem
+  -- `c` is a per-row `.gate` (a member of `noteCreateRowGates`), so `holdsVm` ignores the flags.
+  unfold noteCreateRowGates gFieldPassAll at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+    List.mem_range] at hc
+  rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+    simpa only [VmConstraint.holdsVm] using this
+
+/-- The amplified descriptor forces the `commitments`-ROOT update (the new content STAGE 3 buys).
+Generalised over the boundary flags (the root gate is a per-row `.gate`). -/
+theorem noteCreateFull_forces_root (env : VmRowEnv) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteCreateVmDescriptorFull.constraints, c.holdsVm env b1 b2) :
+    NoteCreateRootIntent env := by
+  apply (noteCreateRoot_gate_faithful env).mp
+  have hmem : (VmConstraint.gate gCommitRootUpdate) ∈ noteCreateVmDescriptorFull.constraints := by
+    unfold noteCreateVmDescriptorFull
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inr (by simp))))
+  have := hgates _ hmem
+  simpa only [VmConstraint.holdsVm] using this
+
+/-- **`noteCreateFull_commit_binds_sysdigest` — the digest is now bound into `state_commit`.** Two
+rows satisfying the amplified hash-sites that publish the SAME `state_commit` have the SAME absorbed
+`system_roots` digest. Off `Poseidon2SpongeCR`: the outer sponge binds its 4-list, whose 4th slot is
+the after-digest carrier. So a prover CANNOT keep `state_commit` while tampering the side-table digest
+— the §11 OUT-OF-IR flag is CLOSED. -/
+theorem noteCreateFull_commit_binds_sysdigest (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
+    (hs₂ : siteHoldsAll hash e₂ noteCreateRootHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    e₁.loc SYS_DIG_AFTER = e₂.loc SYS_DIG_AFTER := by
+  rw [noteCreateRootHash_binds hash e₁ hs₁, noteCreateRootHash_binds hash e₂ hs₂] at hcommit
+  have houter := hCR _ _ hcommit
+  rw [List.cons.injEq, List.cons.injEq, List.cons.injEq, List.cons.injEq] at houter
+  exact houter.2.2.2.1
+
+/-- **`noteCreateFull_binds_commitments_root` — CONNECTED to `Exec.SystemRoots`.** Two amplified rows
+that publish the same `state_commit` AND whose after-digest carrier IS the `systemRootsDigest` of their
+respective `system_roots` sub-blocks have the SAME `commitments` side-table root (and every other). The
+chain: equal commitment ⇒ equal digest carrier (`noteCreateFull_commit_binds_sysdigest`) ⇒ equal
+side-table roots pointwise (`Exec.SystemRoots.systemRootsDigest_binds_pointwise`). Tampering ONLY the
+`commitments` root (omitting `cm`) provably MOVES `state_commit` ⇒ UNSAT. -/
+theorem noteCreateFull_binds_commitments_root (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hs₁ : siteHoldsAll hash e₁ noteCreateRootHashSites)
+    (hs₂ : siteHoldsAll hash e₂ noteCreateRootHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT))
+    (hd₁ : e₁.loc SYS_DIG_AFTER = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc SYS_DIG_AFTER = systemRootsDigest hash sr₂)
+    (i : Fin N_SYSTEM_ROOTS) :
+    sr₁ i = sr₂ i := by
+  have hdig : systemRootsDigest hash sr₁ = systemRootsDigest hash sr₂ := by
+    rw [← hd₁, ← hd₂]
+    exact noteCreateFull_commit_binds_sysdigest hash hCR e₁ e₂ hs₁ hs₂ hcommit
+  exact systemRootsDigest_binds_pointwise hash hCR sr₁ sr₂ hdig i
+
+/-! ## §E — CONNECTOR to universe-A `noteCreateDescriptor_full_sound`: the amplified descriptor STILL
+carries the whole-cell freeze + post-commit publication (now over the root-bound commitment). -/
+
+/-- **`noteCreateFull_sound` — the amplified full soundness.** A row satisfying the AMPLIFIED descriptor
+(gates + root-update + amplified sites), under `RowEncodesNote`, forces the structured `CellNoteSpec`
+freeze AND the `commitments`-root advance AND publishes the post-commit — the §7 universe-A connector
+lifted onto the root-bound descriptor. -/
+theorem noteCreateFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsNoteCreateRow env)
+    (pre post : CellState) (value : ℤ)
+    (henc : RowEncodesNote env pre value post)
+    (hsat : satisfiedVm hash noteCreateVmDescriptorFull env true true) :
+    CellNoteSpec pre value post
+      ∧ NoteCreateRootIntent env
+      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, hsites⟩ := hsat
+  have hfreeze := noteCreateFull_forces_freeze env hrow true true hcs
+  have hroot := noteCreateFull_forces_root env true true hcs
+  refine ⟨intent_to_cellNoteSpec env pre post value henc hfreeze, hroot, ?_⟩
+  -- the post-commit publication is the last-row PI pin (unchanged from §7).
+  have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+    intro c hc
+    have hmem : c ∈ noteCreateVmDescriptorFull.constraints := by
+      unfold noteCreateVmDescriptorFull
+      simp only [List.mem_append]; exact Or.inr hc
+    have hh := hcs c hmem
+    unfold boundaryLastPins at hc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with rfl | rfl | rfl <;>
+      · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+  have hpin := (boundaryLast_pins env hlast).1
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+  rw [← hsaC]; exact hpin
+
+/-! ## §F — RECONCILIATION onto the runtime trace-generator layout (the cutover discipline, `3aaf0772d`).
+
+The validated runtime hand-AIR + `generate_effect_vm_trace` (after STAGE 3) lay the `system_roots`
+digest carrier exactly where this descriptor reads it: the after-`SYSTEM_ROOTS_DIGEST` carrier (aux 96,
+the kernel side-table digest), and the note-create arm computes the advanced digest from the
+`commitments := cm :: commitments` update. So on the HONEST trace `gCommitRootUpdate` holds (the runtime
+writes `sa_digest = sb_digest + step`) and `siteCommitRoot` holds (the runtime binds the carrier into
+`state_commit`): the descriptor AGREES with the hand-AIR. We pin the layout agreement as `#guard`s so a
+column drift breaks the build. -/
+
+-- The amplified descriptor reads the kernel digest carrier (aux 96), not a user field.
+#guard SYS_DIG_AFTER == aux_off_sys.SYSTEM_ROOTS_DIGEST
+#guard SYS_DIG_AFTER == 96
+-- The before-carrier is DISTINCT from every claimed aux slot (state-inters + after-digest).
+#guard [auxCol aux_off.STATE_INTER1, auxCol aux_off.STATE_INTER2, auxCol aux_off.STATE_INTER3,
+        SYS_DIG_AFTER, SYS_DIG_BEFORE].dedup.length == 5
+-- The accumulator-step param is param2 (param0 = cm, param1 = value), in-range of the 8 param cols.
+#guard COMMIT_ROOT_STEP_PARAM == 2
+#guard COMMIT_ROOT_STEP_PARAM < NUM_PARAMS
+-- The amplified descriptor has the extra root-update gate (14 row gates now) + the 4 amplified sites.
+#guard noteCreateVmDescriptorFull.constraints.length == 14 + 14 + 4 + 3
+#guard noteCreateVmDescriptorFull.hashSites.length == 4
+
+/-! ## §G — NON-VACUITY of the amplification: a concrete root-advancing row + a forged one. -/
+
+/-- A concrete root-update row: `sys_digest 1000 → 1042` (advance by step `42` = the appended `cm`'s
+digest contribution). -/
+def goodRootRow : VmRowEnv where
+  loc := fun v =>
+    if v = SYS_DIG_BEFORE then 1000
+    else if v = SYS_DIG_AFTER then 1042
+    else if v = prmCol COMMIT_ROOT_STEP_PARAM then 42
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+/-- **NON-VACUITY (witness TRUE).** `goodRootRow` REALIZES the `commitments`-root advance:
+`1042 = 1000 + 42`. -/
+theorem goodRootRow_realizes : NoteCreateRootIntent goodRootRow := by
+  unfold NoteCreateRootIntent goodRootRow
+  simp only [SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, COMMIT_ROOT_STEP_PARAM, aux_off_sys.SYSTEM_ROOTS_DIGEST,
+    PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
+  norm_num
+
+/-- A FORGED root row: the after-digest is `9999` (NOT the advance `1042`) — a dropped/forged
+`commitments` update. -/
+def badRootRow : VmRowEnv where
+  loc := fun v => if v = SYS_DIG_AFTER then 9999 else goodRootRow.loc v
+  nxt := goodRootRow.nxt
+  pub := goodRootRow.pub
+
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badRootRow`'s after-digest is NOT the
+advance, so `gCommitRootUpdate` REJECTS it — the bound root has teeth. -/
+theorem badRootRow_rejected : ¬ (VmConstraint.gate gCommitRootUpdate).holdsVm badRootRow false false := by
+  apply noteCreateRoot_rejects_wrong_root
+  simp only [badRootRow, goodRootRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, COMMIT_ROOT_STEP_PARAM,
+    aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
+  norm_num
+
 /-! ## §13 — Axiom-hygiene pins. -/
 
 #guard noteCreateVmDescriptor.constraints.length == 13 + 14 + 4 + 3
@@ -519,5 +805,17 @@ theorem badNoteRow_rejected : ¬ (VmConstraint.gate gBalLoDebit).holdsVm badNote
 #assert_axioms goodNoteRow_isRow
 #assert_axioms goodNoteRow_realizes_intent
 #assert_axioms badNoteRow_rejected
+
+-- STAGE-3 amplification (the bound `commitments` side-table root):
+#assert_axioms noteCreateRootHash_binds
+#assert_axioms noteCreateRoot_gate_faithful
+#assert_axioms noteCreateRoot_rejects_wrong_root
+#assert_axioms noteCreateFull_forces_freeze
+#assert_axioms noteCreateFull_forces_root
+#assert_axioms noteCreateFull_commit_binds_sysdigest
+#assert_axioms noteCreateFull_binds_commitments_root
+#assert_axioms noteCreateFull_sound
+#assert_axioms goodRootRow_realizes
+#assert_axioms badRootRow_rejected
 
 end Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
