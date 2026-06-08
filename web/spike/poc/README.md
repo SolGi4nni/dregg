@@ -47,6 +47,21 @@ page reports `○ node API unreachable` and still PASSes local verification).
 
 `?endpoint=https://node.example` selects the node (devnet is the default).
 
+### Known devnet CORS limitation (real, measured)
+
+Cross-origin **read-sync was verified end-to-end against a local node**
+(`http://127.0.0.1:8420`, 7/7 reads ok). Against the **deployed devnet**
+(`devnet.dregg.fg-goose.online`) the browser reads currently fail with
+`TypeError: Failed to fetch` because the response carries **duplicate
+`Access-Control-Allow-Origin` headers** — one `*` from the fronting proxy and
+one origin-echo from the node's own CORS middleware. Browsers reject duplicate
+ACAO as a CORS violation. This is a devnet *proxy* misconfiguration (the proxy
+and the node should not both emit CORS), not a limitation of the in-browser
+node — the page reports it honestly as `○ node API unreachable`. Fix belongs in
+the devnet deploy (`docker/Caddyfile` / `site-nginx.conf` or the node's
+`--cors-origin` so only one layer sets the header). Until then, point the page
+at a node that sets CORS exactly once (e.g. a direct local node).
+
 ---
 
 # POC — the REAL verified Lean executor runs in a browser
