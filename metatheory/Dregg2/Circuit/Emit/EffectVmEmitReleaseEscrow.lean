@@ -44,6 +44,7 @@ resolve into `state_commit`.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.escrowholdingrelease
 import Dregg2.Exec.SystemRoots
@@ -739,5 +740,109 @@ theorem badEscrowRootRow_rejected :
 #assert_axioms releaseEscrowFull_sound
 #assert_axioms goodEscrowRootRow_realizes
 #assert_axioms badEscrowRootRow_rejected
+
+/-! ## §H — CLASS-A PROMOTION: the GENUINE in-row escrow-root RECOMPUTE (kills the opaque step).
+
+§A–§G bound the escrows root by the ADDITIVE OPAQUE STEP `gEscrowRootUpdate`. This section PROMOTES
+releaseEscrow to class A via the genuine in-row recompute from `EffectVmEmitEscrowRoot`: the released
+record's leaf is recomputed `hash[id,creator,recipient,amount,asset,resolved]` (resolved = 1 on release;
+amount = the SAME `param.AMOUNT` driving the recipient credit), then `new_root = hash[record_leaf,
+old_root]` — FORCED, not a free step. The released amount IS the parked record's amount, bound into
+`state_commit`. The §1–§10 credit + frame soundness are UNCHANGED. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
+  (escrowRecomputeSites escrowRootHolds escrowRootAdvance_forced escrowRoot_binds_record
+   escrowRoot_amount_bound leafOf advanceOf)
+
+/-- **`releaseEscrowVmDescriptorGenuine`** — the CLASS-A releaseEscrow circuit: §2 per-row gates (credit +
+frame freeze), NO opaque root gate, genuine recompute sites prepended to the GROUP-4 commitment sites. -/
+def releaseEscrowVmDescriptorGenuine : EffectVmDescriptor :=
+  { name := releaseEscrowVmAirName ++ "-genuine-rootbound"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := releaseEscrowRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+  , hashSites := escrowRecomputeSites ++ releaseEscrowRootHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+theorem genuine_sites_split (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env (escrowRecomputeSites ++ releaseEscrowRootHashSites)) :
+    escrowRootHolds hash env := by
+  unfold escrowRootHolds escrowRecomputeSites
+  unfold escrowRecomputeSites at h
+  unfold siteHoldsAll at h ⊢
+  simp only [List.cons_append, List.nil_append, siteHoldsAll.go,
+    EffectVmEmitEscrowRoot.siteEscrowLeaf, EffectVmEmitEscrowRoot.siteEscrowRootAdvance,
+    VmHashSite.resolvedInputs, HashInput.resolve, List.map_cons, List.map_nil] at h ⊢
+  exact ⟨h.1, h.2.1, trivial⟩
+
+/-- **`releaseEscrowGenuine_sound` — THE CLASS-A SOUNDNESS.** The genuine descriptor forces the per-cell
+`CellReleaseSpec` (credit + frame freeze), the GENUINE escrow-root recompute (root FORCED), AND the commit. -/
+theorem releaseEscrowGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (p : ReleaseParams)
+    (henc : RowEncodesRelease env pre p post)
+    (hsat : satisfiedVm hash releaseEscrowVmDescriptorGenuine env true true) :
+    CellReleaseSpec pre p post
+      ∧ env.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER
+          = advanceOf hash
+              (leafOf hash (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ID))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
+              (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
+      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, hsites⟩ := hsat
+  have hgates' : ∀ c ∈ releaseEscrowRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ releaseEscrowVmDescriptorGenuine.constraints := by
+      unfold releaseEscrowVmDescriptorGenuine
+      simp only [List.mem_append]; exact Or.inl (Or.inl (Or.inl hc))
+    have := hcs c hmem
+    unfold releaseEscrowRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using this
+  have hint := (releaseEscrowVm_faithful env).mp hgates'
+  refine ⟨intent_to_cellReleaseSpec env pre post p henc hint, ?_, ?_⟩
+  · exact escrowRootAdvance_forced hash env (genuine_sites_split hash env hsites)
+  · have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+      intro c hc
+      have hmem : c ∈ releaseEscrowVmDescriptorGenuine.constraints := by
+        unfold releaseEscrowVmDescriptorGenuine
+        simp only [List.mem_append]; exact Or.inr hc
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+    have hpin := (boundaryLast_pins env hlast).1
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+    rw [← hsaC]; exact hpin
+
+/-- **`releaseEscrowGenuine_binds_record` — THE CLASS-A ANTI-GHOST.** Two genuine rows with the same
+recomputed new root have the SAME released amount (and every record field) — a forged release moves the
+root ⇒ moves `state_commit` ⇒ UNSAT. -/
+theorem releaseEscrowGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash releaseEscrowVmDescriptorGenuine e₁ true true)
+    (hsat₂ : satisfiedVm hash releaseEscrowVmDescriptorGenuine e₂ true true)
+    (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
+    e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
+  escrowRoot_amount_bound hash hCR e₁ e₂
+    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+
+theorem releaseEscrowGenuine_recompute_nonvacuous :
+    escrowRootHolds EffectVmEmitEscrowRoot.cN EffectVmEmitEscrowRoot.goodEscrowRow :=
+  EffectVmEmitEscrowRoot.goodEscrowRow_recomputes
+
+#guard releaseEscrowVmDescriptorGenuine.hashSites.length == 2 + 4
+#guard releaseEscrowVmDescriptorGenuine.constraints.length == 13 + 14 + 4 + 3
+#guard releaseEscrowVmDescriptorGenuine.traceWidth == 186
+
+#assert_axioms genuine_sites_split
+#assert_axioms releaseEscrowGenuine_sound
+#assert_axioms releaseEscrowGenuine_binds_record
 
 end Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrow
