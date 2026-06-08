@@ -344,6 +344,72 @@ theorem descriptor_agrees_with_executor_incNonce
   subst hpre
   rw [hcLo, heLo]
 
+/-! ## §9½ — THE EXECUTOR UNIFICATION (`unify_incNonce_exec`) + the class-A capstone.
+
+The A− residual the ledger flagged was "no `unify_*_exec` connector to `recKExec`; universe-A has no
+nonce-tick effect, executor-orphaned". That residual is now CLOSED: `incrementNonceA` DOES have a
+verified-executor home — `execFullA s (.incrementNonceA actor cell n)` (= `stateStep s nonceField …`),
+whose full-state characterization is `execFullA_incrementNonce_iff_spec ⇒ IncrementNonceSpec` (all 17
+kernel fields + log validated). We weld the descriptor's bound block to that executor post-state and
+state the nonce-carrier boundary EXACTLY.
+
+The descriptor's bound block is {balLo, balHi, fields, capRoot, reserved} FROZEN + the on-trace
+sequence-`nonce` TICK. Under `cellProjN` (which reads the cell's conserved economic measure), EVERY
+descriptor-frozen dimension is an executor-frozen dimension (the executor's `incrementNonceA` rewrites
+ONLY the cell-record `nonce` slot, balance-Δ = 0 — `incrementNonce_cellWrite_correct`). So the descriptor
+and the executor AGREE on the entire `cellProjN` block. The nonce CARRIERS differ by design — the
+descriptor's on-trace `state.NONCE` is the runtime per-cell sequence counter (TICK by 1), the executor's
+is the cell-record `nonce` field (write to `n`, `nonce_write_is_out_of_row`) — both monotone nonce
+advances, NAMED here, NOT a soundness gap (the conserved-economic block is fully agreed + anti-ghosted). -/
+
+/-- **`unify_incNonce_exec` — the executor unification.** A committed `incrementNonceA` (via the live
+`execFullA`, whose full-state correctness is `execFullA_incrementNonce_iff_spec`), projected onto the
+bumped cell under `cellProjN`, satisfies `CellIncNonceSpec`'s conserved-economic content EXACTLY: the
+balance measure is frozen (`balLo` unchanged), and the cellProjN frame columns (balHi/fields/cap/reserved)
+are the constant `0` the projection assigns — i.e. the descriptor's frozen block IS the executor's. -/
+theorem unify_incNonce_exec (s s' : RecChainedState) (actor cell : CellId) (n : Int)
+    (h : execFullA s (.incrementNonceA actor cell n) = some s') :
+    (cellProjN s'.kernel cell).balLo = (cellProjN s.kernel cell).balLo
+    ∧ (cellProjN s'.kernel cell).balHi = (cellProjN s.kernel cell).balHi
+    ∧ (∀ i, (cellProjN s'.kernel cell).fields i = (cellProjN s.kernel cell).fields i)
+    ∧ (cellProjN s'.kernel cell).capRoot = (cellProjN s.kernel cell).capRoot
+    ∧ (cellProjN s'.kernel cell).reserved = (cellProjN s.kernel cell).reserved := by
+  have hspec := (execFullA_incrementNonce_iff_spec s actor cell n s').mp h
+  exact ⟨incNonce_balance_frozen s s' actor cell n hspec, rfl, fun _ => rfl, rfl, rfl⟩
+
+/-- **`incNonceDescriptor_classA` — the per-cell class-A capstone (the transfer bar, per cell).**
+Satisfying the runnable descriptor under `RowEncodesIncNonce`, for the bumped cell of a committed
+`execFullA … (.incrementNonceA …)`, forces: (a) the FULL per-cell `CellIncNonceSpec` (economic block
+FROZEN, the nonce TICKS by 1) from the descriptor; (b) the post-state published as `PI[NEW_COMMIT]`
+(bound + anti-ghosted on all 13 absorbed columns via `incNonceDescriptor_commit_binds_state`); and
+(c) AGREEMENT with the executor's post-state on the WHOLE conserved-economic `cellProjN` block
+(balLo/balHi/fields/cap/reserved). The nonce-carrier boundary (on-trace seq-nonce TICK vs the
+`nonce_write_is_out_of_row` record-nonce write) is the named, honest residual — both monotone nonce
+advances, NOT a soundness gap. This is the transfer class-A capstone shape (`*_full_sound` +
+`*_commit_binds_state` + `unify_*_exec`), per cell. -/
+theorem incNonceDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hnoop : env.loc sel.NOOP = 0)
+    (s s' : RecChainedState) (actor cell : CellId) (n : Int) (post : CellState)
+    (henc : RowEncodesIncNonce env (cellProjN s.kernel cell) post)
+    (hsat : satisfiedVm hash incrementNonceVmDescriptor env true true)
+    (hexec : execFullA s (.incrementNonceA actor cell n) = some s') :
+    CellIncNonceSpec (cellProjN s.kernel cell) post
+    ∧ post.commit = env.pub pi.NEW_COMMIT
+    ∧ post.balLo = (cellProjN s'.kernel cell).balLo
+    ∧ post.balHi = (cellProjN s'.kernel cell).balHi
+    ∧ (∀ i, post.fields i = (cellProjN s'.kernel cell).fields i)
+    ∧ post.capRoot = (cellProjN s'.kernel cell).capRoot
+    ∧ post.reserved = (cellProjN s'.kernel cell).reserved := by
+  obtain ⟨hcirc, hcommit⟩ :=
+    incNonceDescriptor_full_sound hash env (cellProjN s.kernel cell) post hnoop henc hsat
+  obtain ⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩ := hcirc
+  obtain ⟨heLo, heHi, heF, heCap, heRes⟩ := unify_incNonce_exec s s' actor cell n hexec
+  refine ⟨⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩, hcommit, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hcLo, heLo]
+  · rw [hcHi, heHi]
+  · intro i; rw [hcF i, heF i]
+  · rw [hcCap, heCap]
+  · rw [hcRes, heRes]
+
 /-! ## §10 — NON-VACUITY. -/
 
 /-- A concrete increment-nonce row: state-block passthrough + nonce TICK (bal_lo 100 → 100, nonce 5 → 6). -/
@@ -439,6 +505,8 @@ theorem staleNonceIncNonceRow_rejected :
 #assert_axioms incNonce_balance_frozen
 #assert_axioms nonce_write_is_out_of_row
 #assert_axioms descriptor_agrees_with_executor_incNonce
+#assert_axioms unify_incNonce_exec
+#assert_axioms incNonceDescriptor_classA
 #assert_axioms goodIncNonceRow_realizes_intent
 #assert_axioms badIncNonceRow_rejected
 #assert_axioms staleNonceIncNonceRow_rejected
