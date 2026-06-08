@@ -180,6 +180,7 @@ def transferVmDescriptor : EffectVmDescriptor :=
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
   , constraints := transferRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates sel.TRANSFER
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
@@ -433,7 +434,7 @@ theorem transferVmDescriptor_pins_intent (hash : List ℤ → ℤ) (env : VmRowE
     apply hcs
     unfold transferVmDescriptor
     simp only [List.mem_append]
-    exact Or.inl (Or.inl (Or.inl hc))
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
   -- the per-row gates' `holdsVm` is flag-independent (gate clause ignores isFirst/isLast).
   have hgates' : ∀ c ∈ transferRowGates, c.holdsVm env false false := by
     intro c hc
@@ -451,7 +452,7 @@ theorem transferVmDescriptor_pins_intent (hash : List ℤ → ℤ) (env : VmRowE
     have hmem : c ∈ transferVmDescriptor.constraints := by
       unfold transferVmDescriptor
       simp only [List.mem_append]
-      exact Or.inr hc
+      exact Or.inl (Or.inr hc)
     have hh := hcs c hmem
     -- boundaryLastPins are `.piBinding .last …`; holdsVm under (true,true) ⟹ under (false,true).
     unfold boundaryLastPins at hc
@@ -543,7 +544,7 @@ theorem badRow_rejected : ¬ (VmConstraint.gate gBalLo).holdsVm badRow false fal
 
 /-! ## §12 — Axiom-hygiene pins (the honesty tripwire). -/
 
-#guard transferVmDescriptor.constraints.length == 14 + 14 + 4 + 3  -- gates+transitions+4first+3last
+#guard transferVmDescriptor.constraints.length == 14 + 14 + 4 + 3 + 1  -- gates+transitions+4first+3last+selectorGate
 #guard transferVmDescriptor.hashSites.length == 4
 #guard transferVmDescriptor.ranges.length == 2
 #guard transferVmDescriptor.traceWidth == 186

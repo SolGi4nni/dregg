@@ -347,6 +347,80 @@ def satisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
   (∀ c ∈ d.constraints, c.holdsVm env isFirst isLast) ∧ siteHoldsAll hash env d.hashSites
 
+/-! ## §6½ — The SELECTOR-BINDING tooth (`selectorGate`).
+
+The cutover verify path (`sdk/full_turn_proof.rs`) verifies an effect-vm descriptor sub-proof
+against the descriptor for the EFFECT's selector. Before this tooth, all cutover descriptors
+shared the same extended-AIR width / FRI shape and carried NO constraint reading the selector
+columns, so a proof produced under selector `S` could re-verify under a DIFFERENT selector `S'`'s
+descriptor AIR (the `full_turn_proof.rs` SOUNDNESS NOTE: "a frozen-frame / economic proof can
+verify under several of these AIRs"). The post-state commitment was still pinned, but the proof
+was NOT bound to ITS effect selector.
+
+`selectorGate s` closes that: the per-row body `(1 - sel[NOOP]) · (1 - sel[s])` is asserted ZERO
+on the transition domain (rows `0..n-2`, the `tb.assert_zero` the Rust `Gate` form enforces). On a
+NoOp PAD row `sel[NOOP] = 1`, so the first factor is `0` and the body vanishes (pads never carry an
+effect selector). On the single ACTIVE effect row `sel[NOOP] = 0`, so the body forces
+`(1 - sel[s]) = 0`, i.e. `sel[s] = 1` — the descriptor's OWN selector column must be set. A trace
+generated for a DIFFERENT effect `s'` has `sel[s] = 0` on its active row (the runtime sets exactly
+one selector per row), so `(1 - 0)·(1 - 0) = 1 ≠ 0` and the descriptor for `s` REJECTS it. So a
+descriptor proof now BINDS to its effect selector: descriptor-`s` accepts only `s`-traces.
+
+It is a strict ADD: on every honest `s`-trace (active row has `sel[s] = 1`, pads have
+`sel[NOOP] = 1`) the gate already holds, so the existing per-effect faithfulness / anti-ghost
+theorems are unaffected; the gate ONLY removes the cross-selector replay. -/
+
+/-- The selector-binding gate body for selector `s`: `(1 - sel[NOOP]) · (1 - sel[s])`. -/
+def selectorGateBody (s : Nat) : EmittedExpr :=
+  .mul
+    (.add (.const 1) (.mul (.const (-1)) (.var sel.NOOP)))
+    (.add (.const 1) (.mul (.const (-1)) (.var s)))
+
+/-- The selector-binding constraint for selector `s` (a per-row `Gate`). -/
+def selectorGate (s : Nat) : VmConstraint := .gate (selectorGateBody s)
+
+/-- The selector-binding gate, as a one-element constraint list (the descriptor segment). -/
+def selectorGates (s : Nat) : List VmConstraint := [selectorGate s]
+
+/-- **The selector-binding gate's denotation.** On a row, `selectorGate s` holds iff the row is a
+NoOp pad (`sel[NOOP] = 1`) OR carries selector `s` (`sel[s] = 1`). In particular, on a NON-pad row
+(`sel[NOOP] = 0`) it forces `sel[s] = 1`. -/
+theorem selectorGate_holds_iff (s : Nat) (env : VmRowEnv) (isFirst isLast : Bool) :
+    (selectorGate s).holdsVm env isFirst isLast
+      ↔ env.loc sel.NOOP = 1 ∨ env.loc s = 1 := by
+  simp only [selectorGate, selectorGateBody, VmConstraint.holdsVm, EmittedExpr.eval]
+  constructor
+  · intro h
+    rcases mul_eq_zero.mp h with h1 | h2
+    · exact Or.inl (by linarith)
+    · exact Or.inr (by linarith)
+  · rintro (h | h) <;> rw [h] <;> ring
+
+/-- **Selector-binding rejection.** On a NON-pad row (`sel[NOOP] = 0`) whose own selector column is
+NOT set (`sel[s] ≠ 1`), `selectorGate s` REJECTS — the cross-selector replay tooth. A trace for a
+different effect `s'` (which sets `sel[s'] = 1`, `sel[s] = 0`) is rejected by descriptor `s`. -/
+theorem selectorGate_rejects_wrong_selector (s : Nat) (env : VmRowEnv) (isFirst isLast : Bool)
+    (hpad : env.loc sel.NOOP = 0) (hwrong : env.loc s ≠ 1) :
+    ¬ (selectorGate s).holdsVm env isFirst isLast := by
+  intro h
+  rcases (selectorGate_holds_iff s env isFirst isLast).mp h with h1 | h2
+  · rw [hpad] at h1; exact absurd h1 (by norm_num)
+  · exact hwrong h2
+
+/-- **Selector-binding acceptance (the honest leg).** On a row carrying selector `s`
+(`sel[s] = 1`), `selectorGate s` holds — every honest `s`-trace passes the tooth. -/
+theorem selectorGate_holds_of_active (s : Nat) (env : VmRowEnv) (isFirst isLast : Bool)
+    (hactive : env.loc s = 1) :
+    (selectorGate s).holdsVm env isFirst isLast :=
+  (selectorGate_holds_iff s env isFirst isLast).mpr (Or.inr hactive)
+
+/-- **Selector-binding acceptance (the pad leg).** On a NoOp pad row (`sel[NOOP] = 1`),
+`selectorGate s` holds — pad rows pass the tooth for every `s`. -/
+theorem selectorGate_holds_of_pad (s : Nat) (env : VmRowEnv) (isFirst isLast : Bool)
+    (hpad : env.loc sel.NOOP = 1) :
+    (selectorGate s).holdsVm env isFirst isLast :=
+  (selectorGate_holds_iff s env isFirst isLast).mpr (Or.inl hpad)
+
 /-! ## §7 — Wire rendering (the canonical JSON the Rust decoder ingests).
 
 A deterministic renderer for the EffectVM forms, mirroring the `lean_descriptor_air` grammar

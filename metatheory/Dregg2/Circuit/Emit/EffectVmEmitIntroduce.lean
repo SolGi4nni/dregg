@@ -1,42 +1,33 @@
 /-
-# Dregg2.Circuit.Emit.EffectVmEmitIntroduce — the AUTHORITY-INTRODUCE effect `introduceA`,
-  CONNECTED to the runnable EffectVM `cap_root` column descriptor + the validated universe-A
-  `introduceA_full_sound`.
+# Dregg2.Circuit.Emit.EffectVmEmitIntroduce — the AUTHORITY-INTRODUCE effect `introduceA`'s EffectVM-row
+  circuit, EMITTED, RECONCILED onto the RUNNING hand-AIR's columns (cutover convention) and GRADUATED into
+  the descriptor cutover (v2).
 
-## ONE circuit — `introduceA` is a `cap_root` COLUMN MOVE (the same runnable row as `attenuateA`)
+## THE RUNTIME GROUND TRUTH (the cutover-faithful reconciliation, v2)
 
-`introduceA` (`Inst/introduceA.lean`) is a `caps`-touching v2 instance: it touches the `caps` table as a
-WHOLE-FUNCTION injective digest, predicted post value `recDelegateCaps caps intro recip t` (the
-introducer GRANTS its held `t`-conferring cap to the recipient — definitionally the `delegate` grant;
-`introduceA` is the introduce-arm of the same authority-unattenuated family, `execFullA_introduceA_eq`),
-freezes the other 16 kernel fields, GATED by `delegateGuard` (the introducer holds a `t`-conferring cap).
-Its validation `introduceA_full_sound ⇒ DelegateSpec s intro recip t s'` is DONE.
+The running prover runs `introduce` (selector 35) as a member of the **Stage-3 passthrough batch**
+(`air.rs:983-1018`, `trace.rs:625`): the trace arm parks `intro_hash[0]` into `params[0]` and does
+`new_state.nonce += 1` — it does NOT move `cap_root` on the row. Every economic state-block column
+(balance limbs, `cap_root`, all 8 fields, reserved) is FROZEN by the passthrough batch; the GLOBAL nonce
+gate ticks the nonce by 1. The cap-table grant LIVES OFF-TRACE (bound via `compute_effects_hash`).
 
-On the running EffectVM row layout it is EXACTLY the cap-graph row `attenuateA` emits — a `cap_root`
-COLUMN MOVE to the post cap-table digest, every other state column frozen, the moved post-state bound
-into `state_commit` under Poseidon2 CR. This module REUSES the validated `EffectVmEmitAttenuateA`
-cap-root-move descriptor (ONE circuit) and adds the `introduceA` CONNECTOR.
+So the cutover-faithful row is the FROZEN-FRAME + NONCE-TICK shape (the cellDestroy gauntlet). The PRE-v2
+descriptor REUSED the `attenuateA` cap-root-MOVE descriptor that the runtime hand-AIR does NOT enforce on
+an introduce row (it FREEZES `cap_root`); that descriptor "passed" the honest trace only by fixture
+accident (`cap_root = param2 = 0`) and froze the nonce. This v2 emits the runtime passthrough + nonce
+TICK directly, and binds the cap-table grant OFF-row via the universe-A connector (§9).
 
-## The CONNECTOR — `capRootProj` to `introduceA_full_sound`
+## What the EffectVM row CAN pin (honest)
 
-`unify_introduce`: when `DelegateSpec` holds for the introduce args (so
-`k'.caps = recDelegateCaps k.caps intro recip t`), the projected post-`cap_root` `D k'.caps` is EXACTLY
-`D (recDelegateCaps k.caps intro recip t)` — the column move the descriptor pins. So the runnable
-`cap_root` transition IS universe-A's validated `caps`-digest transition; not a fourth spec.
+  * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
+  * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## HONEST BOUNDARY (precise)
+## What the EffectVM row CANNOT enforce (the honest boundary — the cap-table grant is OFF-ROW)
 
-  * **IR GAP — needs IR extension: cap-root hash-site** (inherited). The `cap_root` column is the SCALAR
-    digest of the cap-table FUNCTION; the IR cannot re-derive it IN-circuit from the cap-table rows. The
-    cap-table-is-genuinely-Merkled binding lives in `Function.Injective D` (carried, realizable), the
-    SAME bar `introduceA_full_sound` uses. We connect through `capRootProj`.
-
-  * **The Granovetter GUARD (`delegateGuard`) is NOT a `cap_root` ROW gate.** It is enforced by
-    `introduceA_full_sound`'s `propBit (delegateGuard)` column, NOT by the cap-root-move row gates this
-    module reuses. `unify_introduce_via_full_sound` carries it through the hypothesis; the runnable row
-    pins only the MOVE. Flagged, not papered.
-
-  * PER-CELL / PER-ROW; `state.RESERVED` not commitment-bound (inherited findings).
+  * the `caps := recDelegateCaps caps intro recip t` grant + the Granovetter `delegateGuard` — the
+    `cap_root` is the SCALAR digest of the cap-table FUNCTION; the runtime hand-AIR FREEZES the on-row
+    `cap_root` column and binds the actual grant via `effects_hash` OFF the per-row state block. The grant
+    SOUNDNESS lives in universe-A's `introduceA_full_sound` / `Function.Injective D` (cited via §connector).
 
 ## Honesty
 
@@ -44,18 +35,22 @@ cap-root-move descriptor (ONE circuit) and adds the `introduceA` CONNECTOR.
 cap-table digest ONLY as `Function.Injective D`. No `sorry`/`:= True`/`native_decide`/rfl-bridge.
 Imports read-only.
 -/
-import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
+import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.introduceA
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitIntroduce
 
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
-open Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
-  (attenuateVmDescriptor gCapMove AttenRowIntent CapCellSpec capRootProj
-   attenuateVm_faithful attenuateVm_rejects_wrong_capRoot attenuateDescriptor_full_sound
-   CapRowEncodes)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer
+  (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
+   transitionAll boundaryFirstPins boundaryLastPins
+   transferHashSites boundaryLast_pins)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Authority (Caps Cap)
@@ -67,59 +62,268 @@ open Dregg2.Circuit.Spec.AuthorityUnattenuated (DelegateSpec recDelegateCaps)
 set_option linter.unusedVariables false
 set_option autoImplicit false
 
-/-! ## §1 — The runnable descriptor IS the reused cap-root-move circuit. -/
+/-! ## §0 — the `introduce` selector column (runtime `sel::INTRODUCE = 35`). -/
 
-/-- **`introduceVmDescriptor`** — the runnable `introduceA` circuit: definitionally the validated
-cap-root-move descriptor. The effect-specific content is the post `cap_root` digest VALUE (§3). -/
-def introduceVmDescriptor : EffectVmDescriptor := attenuateVmDescriptor
+/-- The `introduce` selector column index (runtime `sel::INTRODUCE = 35`). -/
+def SEL_INTRODUCE : Nat := 35
 
-/-- The runnable `introduceA` row pins EXACTLY the cap-graph intent — the validated faithfulness. -/
+/-- The introduce row: `s_introduce = 1`, `s_noop = 0` (load-bearing for the nonce TICK gate). -/
+def IsIntroduceRow (env : VmRowEnv) : Prop :=
+  env.loc SEL_INTRODUCE = 1 ∧ env.loc sel.NOOP = 0
+
+/-! ## §1 — the per-row gate bodies (RUNTIME-RECONCILED: state-block passthrough + nonce TICK). -/
+
+/-- Balance-lo FREEZE body (introduce moves no value; runtime passthrough batch). -/
+def gBalLoFreeze : EmittedExpr := eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
+
+/-- The per-row gates: whole state block PASSTHROUGH (incl. `cap_root`) + nonce TICK (`gNonce`). -/
+def introduceRowGates : List VmConstraint :=
+  [ .gate gBalLoFreeze, .gate gBalHi, .gate gNonce
+  , .gate gCapPass, .gate gResPass ] ++ gFieldPassAll
+
+/-! ## §2 — the emitted descriptor (v2 = runtime-reconciled, last-row PI pins). -/
+
+def introduceVmAirName : String := "dregg-effectvm-introduce-v2"
+
+def introduceHashSites : List VmHashSite := transferHashSites
+
+/-- **`introduceVmDescriptor`** — the `introduceA` EffectVM-row circuit, RECONCILED onto the runtime
+hand-AIR: the per-row passthrough gates with the nonce TICK ++ transition continuity ++ the 7 boundary PI
+pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range checks. -/
+def introduceVmDescriptor : EffectVmDescriptor :=
+  { name := introduceVmAirName
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := introduceRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates 35
+  , hashSites := introduceHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-! ## §3 — the ROW INTENT: state-block passthrough + nonce TICK (runtime-faithful). -/
+
+/-- **`IntroduceRowIntent env`** — every economic state-block column UNCHANGED (incl. `cap_root`) EXCEPT
+the nonce, which TICKS by 1 (on a non-NoOp row `s_noop = 0`). The cap-table grant is out-of-row. -/
+def IntroduceRowIntent (env : VmRowEnv) : Prop :=
+  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
+  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
+  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
+  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+
+/-! ## §4 — FAITHFULNESS. -/
+
 theorem introduceVm_faithful (env : VmRowEnv) :
-    (∀ c ∈ Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.attenuateRowGates, c.holdsVm env false false)
-      ↔ AttenRowIntent env :=
-  attenuateVm_faithful env
+    (∀ c ∈ introduceRowGates, c.holdsVm env false false) ↔ IntroduceRowIntent env := by
+  unfold introduceRowGates gFieldPassAll IntroduceRowIntent
+  constructor
+  · intro h
+    have hLo := h (.gate gBalLoFreeze) (by simp)
+    have hHi := h (.gate gBalHi) (by simp)
+    have hNon := h (.gate gNonce) (by simp)
+    have hCap := h (.gate gCapPass) (by simp)
+    have hRes := h (.gate gResPass) (by simp)
+    have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldPass i)) := by
+      intro i hi
+      apply h
+      simp only [List.mem_append, List.mem_map, List.mem_range]
+      exact Or.inr ⟨i, hi, rfl⟩
+    simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass,
+      eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
+      by linarith [hRes], ?_⟩
+    intro i hi
+    have := hFld i hi
+    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
+    linarith
+  · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+      rw [hNon]; ring
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+    · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [hFld i hi]; ring
 
-/-- **Anti-ghost.** An `introduceA` row whose post-`cap_root` ≠ the supplied digest fails the MOVE gate
-(UNSAT). -/
-theorem introduceVm_rejects_wrong_capRoot (env : VmRowEnv)
-    (hwrong : env.loc (saCol state.CAP_ROOT)
-      ≠ env.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.paramA.CAP_DIGEST_NEW)) :
-    ¬ (VmConstraint.gate gCapMove).holdsVm env false false :=
-  attenuateVm_rejects_wrong_capRoot env hwrong
+/-! ## §5 — ANTI-GHOST. -/
 
-/-! ## §2 — The structured per-cell soundness (reused). -/
+theorem introduceVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ IntroduceRowIntent env) :
+    ¬ (∀ c ∈ introduceRowGates, c.holdsVm env false false) :=
+  fun h => hwrong ((introduceVm_faithful env).mp h)
 
-/-- **`introduceDescriptor_full_sound`** — satisfying the runnable row's gates under the cap-row decoding
-forces the structured per-cell `CapCellSpec` — the validated `attenuateDescriptor_full_sound`. -/
-theorem introduceDescriptor_full_sound (env : VmRowEnv) (pre post : CellState) (capDigestNew : ℤ)
-    (henc : CapRowEncodes env pre post capDigestNew)
-    (hgates : ∀ c ∈ Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.attenuateRowGates,
-        c.holdsVm env false false) :
-    CapCellSpec pre post capDigestNew :=
-  attenuateDescriptor_full_sound env pre post capDigestNew henc hgates
+/-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate. -/
+theorem introduceVm_rejects_moved_balance (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
+    ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
 
-/-! ## §3 — THE CONNECTOR — `capRootProj` to universe-A's `introduceA_full_sound`. -/
+/-- **Anti-ghost (cap-root tamper on row).** A row whose post-`cap_root` ≠ pre-`cap_root` fails the freeze
+gate — the runtime row freezes `cap_root` (the grant rides effects_hash); no on-row cap move is allowed. -/
+theorem introduceVm_rejects_moved_capRoot (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
+    ¬ (VmConstraint.gate gCapPass).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
 
-/-- The predicted post cap-digest the descriptor's `param.CAP_DIGEST_NEW` carries for `introduceA`: `D`
-of the post cap-table `recDelegateCaps caps intro recip t` (the introducer's grant of its held cap). -/
+/-- **Anti-ghost (nonce tamper).** A row whose nonce does NOT tick by 1 fails the reconciled `gNonce`
+tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. -/
+theorem introduceVm_rejects_nonce_freeze (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)) :
+    ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
+
+/-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
+
+theorem introduceVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hs₁ : siteHoldsAll hash e₁ introduceHashSites)
+    (hs₂ : siteHoldsAll hash e₂ introduceHashSites)
+    (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
+    absorbedCols e₁ = absorbedCols e₂ :=
+  absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
+
+/-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
+
+/-- `RowEncodesIntroduce env pre post` ties the row's state-block columns to a `(pre, post)` transition. -/
+def RowEncodesIntroduce (env : VmRowEnv) (pre post : CellState) : Prop :=
+  env.loc (sbCol state.BALANCE_LO) = pre.balLo
+  ∧ env.loc (sbCol state.BALANCE_HI) = pre.balHi
+  ∧ env.loc (sbCol state.NONCE) = pre.nonce
+  ∧ (∀ i : Fin 8, env.loc (sbCol (state.FIELD_BASE + i.val)) = pre.fields i)
+  ∧ env.loc (sbCol state.CAP_ROOT) = pre.capRoot
+  ∧ env.loc (sbCol state.RESERVED) = pre.reserved
+  ∧ env.loc (sbCol state.STATE_COMMIT) = pre.commit
+  ∧ env.loc (saCol state.BALANCE_LO) = post.balLo
+  ∧ env.loc (saCol state.BALANCE_HI) = post.balHi
+  ∧ env.loc (saCol state.NONCE) = post.nonce
+  ∧ (∀ i : Fin 8, env.loc (saCol (state.FIELD_BASE + i.val)) = post.fields i)
+  ∧ env.loc (saCol state.CAP_ROOT) = post.capRoot
+  ∧ env.loc (saCol state.RESERVED) = post.reserved
+  ∧ env.loc (saCol state.STATE_COMMIT) = post.commit
+  ∧ env.pub pi.OLD_COMMIT = pre.commit
+  ∧ env.pub pi.NEW_COMMIT = post.commit
+
+/-- **`IntroduceCellSpec pre post`** — the per-cell FULL-state introduce row spec: economic block (incl.
+`capRoot`) FROZEN; the nonce TICKS by 1. (The cap-table grant is off-row.) -/
+def IntroduceCellSpec (pre post : CellState) : Prop :=
+  post.balLo = pre.balLo
+  ∧ post.balHi = pre.balHi
+  ∧ post.nonce = pre.nonce + 1
+  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
+  ∧ post.capRoot = pre.capRoot
+  ∧ post.reserved = pre.reserved
+
+theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0)
+    (henc : RowEncodesIntroduce env pre post) (hint : IntroduceRowIntent env) :
+    IntroduceCellSpec pre post := by
+  obtain ⟨hsbLo, hsbHi, hsbN, hsbF, hsbCap, hsbRes, hsbC,
+          hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
+  obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [← hsaLo, ← hsbLo]; exact hbal
+  · rw [← hsaHi, ← hsbHi]; exact hbhi
+  · rw [← hsaN, ← hsbN, hnon, hnoop]; ring
+  · intro i
+    have := hfld i.val i.isLt
+    rw [← hsaF i, ← hsbF i]; exact this
+  · rw [← hsaCap, ← hsbCap]; exact hcap
+  · rw [← hsaRes, ← hsbRes]; exact hres
+
+/-! ## §8 — the full descriptor soundness + the commitment binding. -/
+
+theorem introduceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (hnoop : env.loc sel.NOOP = 0)
+    (henc : RowEncodesIntroduce env pre post)
+    (hsat : satisfiedVm hash introduceVmDescriptor env true true) :
+    IntroduceCellSpec pre post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, _⟩ := hsat
+  have hgates' : ∀ c ∈ introduceRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ introduceVmDescriptor.constraints := by
+      unfold introduceVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+    have := hcs c hmem
+    unfold introduceRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using this
+  have hint := (introduceVm_faithful env).mp hgates'
+  refine ⟨intent_to_cellSpec env pre post hnoop henc hint, ?_⟩
+  have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+    intro c hc
+    have hmem : c ∈ introduceVmDescriptor.constraints := by
+      unfold introduceVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inr hc)
+    have hh := hcs c hmem
+    unfold boundaryLastPins at hc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with rfl | rfl | rfl <;>
+      · simp only [VmConstraint.holdsVm] at hh ⊢
+        exact hh
+  have hpin := (boundaryLast_pins env hlast).1
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+  rw [← hsaC]; exact hpin
+
+theorem introduceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash introduceVmDescriptor e₁ true true)
+    (hsat₂ : satisfiedVm hash introduceVmDescriptor e₂ true true)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
+    absorbedCols e₁ = absorbedCols e₂ := by
+  have hs₁ : siteHoldsAll hash e₁ introduceHashSites := hsat₁.2
+  have hs₂ : siteHoldsAll hash e₂ introduceHashSites := hsat₂.2
+  have hc : ∀ (e : VmRowEnv), satisfiedVm hash introduceVmDescriptor e true true →
+      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+    intro e hsat
+    obtain ⟨hcs, _⟩ := hsat
+    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
+      intro c hc
+      have hmem : c ∈ introduceVmDescriptor.constraints := by
+        unfold introduceVmDescriptor
+        simp only [List.mem_append]
+        exact Or.inl (Or.inr hc)
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢
+          exact hh
+    exact (boundaryLast_pins e hlast).1
+  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
+    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+  exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
+
+/-! ## §9 — THE CONNECTOR — the cap-table grant (OFF-ROW), via `introduceA_full_sound`. -/
+
+/-- The cap-table digest projection (the whole-function injective digest `D`). -/
+def capRootProj (D : Caps → ℤ) (k : RecordKernelState) : ℤ := D k.caps
+
+/-- The predicted post cap-digest for `introduceA`: `D` of `recDelegateCaps caps intro recip t`. -/
 def introduceCapDigestNew (D : Caps → ℤ) (s : RecChainedState) (args : IntroduceArgs) : ℤ :=
   D (recDelegateCaps s.kernel.caps args.intro args.recip args.t)
 
-/-- **`unify_introduce` — THE CONNECTOR.** When `DelegateSpec` holds for the introduce args, the projected
-post-`cap_root` is EXACTLY the introduce cap-digest `introduceCapDigestNew D s args` — the column move the
-runnable descriptor pins. -/
+/-- **`unify_introduce` — THE OFF-ROW CONNECTOR.** When `DelegateSpec` holds for the introduce args, the
+projected post cap-digest is EXACTLY the introduce cap-digest. This is the effect's actual semantic
+content, enforced OFF the per-row state block (the runtime binds it via `effects_hash`). -/
 theorem unify_introduce (D : Caps → ℤ) (s : RecChainedState) (args : IntroduceArgs) (s' : RecChainedState)
     (hspec : DelegateSpec s args.intro args.recip args.t s') :
     capRootProj D s'.kernel = introduceCapDigestNew D s args := by
-  -- DelegateSpec's `caps` clause: `s'.kernel.caps = recDelegateCaps s.kernel.caps intro recip t`.
   obtain ⟨_hguard, hcaps, _⟩ := hspec
   show D s'.kernel.caps = D (recDelegateCaps s.kernel.caps args.intro args.recip args.t)
   rw [hcaps]
 
-/-- **`unify_introduce_via_full_sound` — inherits the VALIDATED guarantee.** Chaining
-`introduceA_full_sound` (the Granovetter GUARD enforced by `propBit (delegateGuard)`, ⟹ `DelegateSpec`)
-with `unify_introduce`: a satisfying universe-A witness forces the projected post-`cap_root` to the
-introduce cap-digest — the EXACT column the runnable descriptor's `param.CAP_DIGEST_NEW` carries. -/
+/-- **`unify_introduce_via_full_sound` — inherits the VALIDATED guarantee (off-row cap-table grant).** -/
 theorem unify_introduce_via_full_sound
     (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)
     (hRest : Dregg2.Circuit.Inst.IntroduceA.RestIffNoCaps S.RH)
@@ -129,26 +333,103 @@ theorem unify_introduce_via_full_sound
     capRootProj D s'.kernel = introduceCapDigestNew D s args :=
   unify_introduce D s args s' (introduceA_full_sound S D hD hRest hLog s args s' h)
 
-/-! ## §4 — NON-VACUITY (the reused row's witnesses fire). -/
+/-! ## §10 — NON-VACUITY. -/
 
-open Dregg2.Circuit.Emit.EffectVmEmitAttenuateA (capGoodRow capBadRow capGoodRow_realizes_intent capBadRow_rejected)
+/-- A concrete introduce row: state-block passthrough + nonce TICK (bal_lo 100 → 100, nonce 5 → 6). -/
+def goodIntroduceRow : VmRowEnv where
+  loc := fun v =>
+    if v = SEL_INTRODUCE then 1
+    else if v = sbCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 100
+    else if v = sbCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
 
-/-- **NON-VACUITY (witness TRUE).** The good cap-root row realizes the intent — the runnable `introduceA`
-descriptor's intent side is inhabited. -/
-theorem introduceGoodRow_realizes_intent : AttenRowIntent capGoodRow := capGoodRow_realizes_intent
+theorem goodIntroduceRow_noop : goodIntroduceRow.loc sel.NOOP = 0 := by
+  show goodIntroduceRow.loc 0 = 0
+  simp only [goodIntroduceRow, SEL_INTRODUCE, sbCol, saCol, STATE_BEFORE_BASE,
+    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+  norm_num
 
-/-- **NON-VACUITY (witness FALSE / anti-ghost).** The forged cap-root row is REJECTED — a concrete UNSAT. -/
-theorem introduceBadRow_rejected : ¬ (VmConstraint.gate gCapMove).holdsVm capBadRow false false :=
-  capBadRow_rejected
+/-- **NON-VACUITY (witness TRUE).** `goodIntroduceRow` REALIZES the runtime introduce intent. -/
+theorem goodIntroduceRow_realizes_intent : IntroduceRowIntent goodIntroduceRow := by
+  unfold IntroduceRowIntent
+  have hnoop : goodIntroduceRow.loc sel.NOOP = 0 := goodIntroduceRow_noop
+  refine ⟨rfl, rfl, ?_, rfl, rfl, ?_⟩
+  · rw [hnoop]
+    show goodIntroduceRow.loc (saCol state.NONCE) = goodIntroduceRow.loc (sbCol state.NONCE) + (1 - 0)
+    simp only [goodIntroduceRow, SEL_INTRODUCE, sbCol, saCol, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE]
+    norm_num
+  · intro i hi
+    show goodIntroduceRow.loc (saCol (state.FIELD_BASE + i)) = goodIntroduceRow.loc (sbCol (state.FIELD_BASE + i))
+    simp only [goodIntroduceRow, SEL_INTRODUCE, sbCol, saCol, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, state.FIELD_BASE]
+    have e1 : (76 + (3 + i) = 35) = False := eq_false (by omega)
+    have e2 : (76 + (3 + i) = 54 + 0) = False := eq_false (by omega)
+    have e3 : (76 + (3 + i) = 76 + 0) = False := eq_false (by omega)
+    have e4 : (76 + (3 + i) = 54 + 2) = False := eq_false (by omega)
+    have e5 : (76 + (3 + i) = 76 + 2) = False := eq_false (by omega)
+    have f1 : (54 + (3 + i) = 35) = False := eq_false (by omega)
+    have f2 : (54 + (3 + i) = 54 + 0) = False := eq_false (by omega)
+    have f3 : (54 + (3 + i) = 76 + 0) = False := eq_false (by omega)
+    have f4 : (54 + (3 + i) = 54 + 2) = False := eq_false (by omega)
+    have f5 : (54 + (3 + i) = 76 + 2) = False := eq_false (by omega)
+    simp only [e1, e2, e3, e4, e5, f1, f2, f3, f4, f5, if_false]
 
-/-! ## §5 — Axiom-hygiene tripwires. -/
+/-- A FORGED introduce row: `goodIntroduceRow` with the post-`bal_lo` minted to `999`. -/
+def badIntroduceRow : VmRowEnv where
+  loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodIntroduceRow.loc v
+  nxt := goodIntroduceRow.nxt
+  pub := goodIntroduceRow.pub
+
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badIntroduceRow`'s post-`bal_lo` is forged, so
+`gBalLoFreeze` REJECTS it. -/
+theorem badIntroduceRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badIntroduceRow false false := by
+  apply introduceVm_rejects_moved_balance
+  simp only [badIntroduceRow, goodIntroduceRow, sbCol, saCol, SEL_INTRODUCE, STATE_BEFORE_BASE,
+    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+    state.NONCE]
+  norm_num
+
+/-- A FROZEN-NONCE introduce row: `goodIntroduceRow` with the post-nonce held at `5`. -/
+def staleNonceIntroduceRow : VmRowEnv where
+  loc := fun v => if v = saCol state.NONCE then 5 else goodIntroduceRow.loc v
+  nxt := goodIntroduceRow.nxt
+  pub := goodIntroduceRow.pub
+
+/-- **NON-VACUITY (cutover witness FALSE).** A frozen-nonce row is now correctly UNSAT under the
+reconciled `gNonce` tick gate. -/
+theorem staleNonceIntroduceRow_rejected :
+    ¬ (VmConstraint.gate gNonce).holdsVm staleNonceIntroduceRow false false := by
+  apply introduceVm_rejects_nonce_freeze
+  simp only [staleNonceIntroduceRow, goodIntroduceRow, sel.NOOP, sbCol, saCol, SEL_INTRODUCE,
+    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+    state.BALANCE_LO, state.NONCE]
+  norm_num
+
+/-! ## §11 — Axiom-hygiene tripwires. -/
+
+#guard introduceVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
+#guard introduceVmDescriptor.hashSites.length == 4
+#guard introduceVmDescriptor.traceWidth == 186
 
 #assert_axioms introduceVm_faithful
-#assert_axioms introduceVm_rejects_wrong_capRoot
+#assert_axioms introduceVm_rejects_wrong_output
+#assert_axioms introduceVm_rejects_moved_balance
+#assert_axioms introduceVm_rejects_moved_capRoot
+#assert_axioms introduceVm_rejects_nonce_freeze
+#assert_axioms intent_to_cellSpec
 #assert_axioms introduceDescriptor_full_sound
+#assert_axioms introduceDescriptor_commit_binds_state
 #assert_axioms unify_introduce
 #assert_axioms unify_introduce_via_full_sound
-#assert_axioms introduceGoodRow_realizes_intent
-#assert_axioms introduceBadRow_rejected
+#assert_axioms goodIntroduceRow_realizes_intent
+#assert_axioms badIntroduceRow_rejected
+#assert_axioms staleNonceIntroduceRow_rejected
 
 end Dregg2.Circuit.Emit.EffectVmEmitIntroduce

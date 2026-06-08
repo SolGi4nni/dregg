@@ -1,54 +1,40 @@
 /-
 # Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend — the apply-time-neutral clock tick `pipelinedSendA`,
-  EMITTED onto the runnable EffectVM row as a FULL state-block FREEZE, with the supported per-row
-  faithfulness + anti-ghost commitment tooth + the connector to universe-A `pipelinedSendA_full_sound`,
-  and a PRECISE, LOUD flag of the one IR-blocked part (the off-block log-receipt).
+  EMITTED onto the runnable EffectVM row, RECONCILED onto the RUNNING hand-AIR's columns (cutover
+  convention) and GRADUATED into the descriptor cutover (v2).
 
-## The supported part vs where the per-row IR STOPS
+## THE RUNTIME GROUND TRUTH (the cutover-faithful reconciliation, v2)
 
-`pipelinedSendA actor` is TOTAL (no fail-closed guard) and LOG-ONLY: it prepends one NEUTRAL receipt
-to the log and LITERALLY FREEZES the ENTIRE kernel — ALL 17 `RecordKernelState` fields unchanged
-(`PipelinedSendSpec`: `st'.log = pipelinedSendReceipt actor :: st.log` ∧ all 17 kernel fields frozen).
-Validation `pipelinedSendA_full_sound ⇒ PipelinedSendSpec` is DONE (`Inst/pipelinedSendA.lean`).
+The running prover runs `pipelinedSend` (selector 36) as a member of the **Stage-3 passthrough batch**
+(`air.rs:983-1018`): every economic state-block column UNCHANGED (`new_bal_lo == old_bal_lo`, `bal_hi`,
+`cap_root`, `fields[0..7]` frozen) and the GLOBAL nonce gate TICKS the nonce by 1 on this non-NoOp row.
+The variant `send_hash[0]` is parked into `params[0]` and binds via `compute_effects_hash`.
 
-This is the CLEANEST swiss-family effect for the per-row IR: the kernel is FROZEN, so at the row level
-the supported part is a FULL STATE-BLOCK FREEZE — every one of the 14 state columns (balance limbs,
-nonce, 8 fields, `cap_root`/`swiss_root`, reserved, `state_commit`) has `after = before`. The EffectVM
-row layout expresses this TOTALLY (no digest move, no guard, no list structure to express). The
-published `state_commit` is the genuine digest of the (unchanged) after-state, bound under Poseidon2 CR
-exactly as the keystone binds it. `pipelinedSendVmDescriptor` emits the full-freeze gate set + GROUP-4
-commitment.
+So the cutover-faithful row is the FROZEN-FRAME + NONCE-TICK shape (the cellDestroy gauntlet). The PRE-v2
+descriptor FROZE the nonce (`gNonceFix`) and carried only `boundaryFirstPins` — so (a) the honest TICKED
+trace was UNSAT and (b) the forged-`FINAL_BAL_LO` anti-ghost tooth did not bite. This v2 swaps the
+nonce-freeze gate to the runtime TICK gate `gNonce` and appends `boundaryLastPins`, so the descriptor
+AGREES with the hand-AIR on the honest witness AND both anti-ghost teeth bite.
 
-## The CONNECTOR — to universe-A's `pipelinedSendA_full_sound`
+## What the EffectVM row CAN pin (honest)
 
-Since `PipelinedSendSpec` freezes ALL 17 kernel fields, EVERY projection of the post-kernel equals the
-projection of the pre-kernel. `unify_pipelinedSend` shows the swiss-table digest (and, by the same
-argument, the cap-table digest and the balance) are FROZEN across a committed `pipelinedSendA` — i.e.
-the runnable row's FREEZE intent IS universe-A's whole-kernel freeze, projected to the columns. Not a
-fourth spec.
+  * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
+  * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## ===================  IR-BLOCKED — the precise ask  ===================
+## What the EffectVM row CANNOT enforce (the honest boundary — the off-block log-receipt)
 
-  * **IR GAP — the off-block log-receipt (`st'.log = pipelinedSendReceipt actor :: st.log`).** The
-    pipelinedSend's ONLY state change is the LOG — and the EffectVM row's 14-column state block has NO
-    log column (the log is a SEPARATE `RecChainedState` component, committed by universe-A's
-    `logHashInjective LH` portal, not by the per-row state block). So the descriptor pins the KERNEL
-    freeze (the whole state block) + the commitment binding, but does NOT carry the log-receipt prepend
-    in-circuit; that lives in universe-A's `pipelinedSendA_full_sound` (carried). ASK: a `VmConstraint`
-    log-receipt form (a dedicated log-digest column with `new_log_root = H(receipt, old_log_root)`)
-    would internalize the log update; until then the receipt prepend is enforced only out-of-band. NOTE
-    this gap is BENIGN for the freeze content — the kernel-freeze (the soundness-load-bearing part:
-    "nothing in the kernel moved") IS fully in-circuit; only the additive log-receipt is off-block.
-
-  * PER-CELL / PER-ROW; `state.RESERVED` absorbed nowhere (inherited keystone finding) — but here
-    `reserved` is FROZEN by its passthrough gate, the same as every other column.
+  * `pipelinedSendA`'s ONLY universe-A state change is the additive `authReceipt`/neutral log-receipt
+    prepend (`st'.log = pipelinedSendReceipt actor :: st.log`); the EffectVM row has NO log column. The
+    receipt advance lives in universe-A's `logHashInjective` portal (`pipelinedSendA_full_sound`'s `hLog`),
+    NOT in the per-row state block — the kernel-freeze (the soundness-load-bearing "nothing in the kernel
+    moved") IS in-circuit; only the additive log-receipt is off-block.
 
 ## Honesty
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR
-hash`; the kernel-field projections enter ONLY as abstract functions of the frozen post-kernel. No
-`sorry`/`:= True`/`native_decide`/`rfl`-bridge. Imports read-only.
+hash`. No `sorry`/`:= True`/`native_decide`/`rfl`-bridge. Imports read-only.
 -/
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.pipelinedSendA
@@ -58,8 +44,10 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
-  (eSB eSA ePrm eSub eSelNoop site0 site1 transitionAll boundaryFirstPins)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+  (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
+   transitionAll boundaryFirstPins boundaryLastPins
+   transferHashSites boundaryLast_pins)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective cellLeafInjective RestHashIffFrame AccountsWF)
 open Dregg2.Circuit.EffectCommit (CommitSurface satisfiedE encodeE)
@@ -70,216 +58,129 @@ open Dregg2.Exec.TurnExecutorFull
 set_option linter.unusedVariables false
 set_option autoImplicit false
 
-/-! ## §0 — Selector offset. The pipelined-send tick has its own per-effect selector. -/
+/-! ## §0 — the `pipelinedSend` selector column (runtime `sel::PIPELINED_SEND = 36`). -/
 
-namespace selPS
-/-- The `pipelinedSendA` effect selector column. -/
-def PIPELINED_SEND : Nat := 7
-end selPS
+/-- The pipelined-send selector column index (runtime `sel::PIPELINED_SEND = 36`). -/
+def SEL_PIPELINED_SEND : Nat := 36
 
-/-- The `pipelinedSendA` selector as an expression. -/
-def eSelPipelinedSend : EmittedExpr := .var selPS.PIPELINED_SEND
+/-- The pipelined-send row: `s_pipelinedSend = 1`, `s_noop = 0` (load-bearing for the nonce TICK gate). -/
+def IsPipelinedSendRow (env : VmRowEnv) : Prop :=
+  env.loc SEL_PIPELINED_SEND = 1 ∧ env.loc sel.NOOP = 0
 
-/-! ## §1 — The pipelined-send row gates (the SUPPORTED part: a FULL state-block FREEZE). -/
+/-! ## §1 — the per-row gate bodies (RUNTIME-RECONCILED: state-block passthrough + nonce TICK). -/
 
-/-- Balance-lo freeze body. -/
-def gBalLoFix : EmittedExpr := eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
-/-- Balance-hi freeze body. -/
-def gBalHiFix : EmittedExpr := eSub (eSA state.BALANCE_HI) (eSB state.BALANCE_HI)
-/-- Nonce freeze body. -/
-def gNonceFix : EmittedExpr := eSub (eSA state.NONCE) (eSB state.NONCE)
-/-- Cap-root (swiss_root) freeze body. -/
-def gCapFix : EmittedExpr := eSub (eSA state.CAP_ROOT) (eSB state.CAP_ROOT)
-/-- Reserved freeze body. -/
-def gResFix : EmittedExpr := eSub (eSA state.RESERVED) (eSB state.RESERVED)
-/-- Field-`i` freeze body. -/
-def gFieldFix (i : Nat) : EmittedExpr :=
-  eSub (eSA (state.FIELD_BASE + i)) (eSB (state.FIELD_BASE + i))
-/-- The eight field-freeze gates. -/
-def gFieldFixAll : List VmConstraint :=
-  (List.range 8).map (fun i => VmConstraint.gate (gFieldFix i))
+/-- Balance-lo FREEZE body (apply-time-neutral; runtime passthrough batch). -/
+def gBalLoFreeze : EmittedExpr := eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
 
-/-! ## §2 — The emitted descriptor. -/
-
-/-- The `pipelinedSendA` AIR identity. -/
-def pipelinedSendVmAirName : String := "dregg-effectvm-pipelinedSendA-v1"
-
-/-- The pipelined-send per-row gates: the FULL state-block FREEZE (every data column `after =
-before`). -/
+/-- The per-row gates: whole state block PASSTHROUGH + nonce TICK (`gNonce`, runtime convention). -/
 def pipelinedSendRowGates : List VmConstraint :=
-  [ .gate gBalLoFix, .gate gBalHiFix, .gate gNonceFix, .gate gCapFix, .gate gResFix ] ++ gFieldFixAll
+  [ .gate gBalLoFreeze, .gate gBalHi, .gate gNonce
+  , .gate gCapPass, .gate gResPass ] ++ gFieldPassAll
 
-/-- The ordered GROUP-4 hash sites (identical chain to the transfer keystone; binds the unchanged
-after-state into `state_commit`). -/
-def pipelinedSendHashSites : List VmHashSite :=
-  [site0, site1, Dregg2.Circuit.Emit.EffectVmEmitTransfer.site2,
-   Dregg2.Circuit.Emit.EffectVmEmitTransfer.site3]
+/-! ## §2 — the emitted descriptor (v2 = runtime-reconciled, last-row PI pins). -/
 
-/-- **`pipelinedSendVmDescriptor`** — the `pipelinedSendA` SUPPORTED concrete circuit: the FULL
-state-block freeze gates ++ transition continuity ++ row-0 boundary pins, with the 4 GROUP-4 hash
-sites. The log-receipt prepend is IR-BLOCKED (header), NOT in this descriptor. -/
+def pipelinedSendVmAirName : String := "dregg-effectvm-pipelinedSendA-v2"
+
+def pipelinedSendHashSites : List VmHashSite := transferHashSites
+
+/-- **`pipelinedSendVmDescriptor`** — the `pipelinedSendA` EffectVM-row circuit, RECONCILED onto the
+runtime hand-AIR: the per-row passthrough gates with the nonce TICK ++ transition continuity ++ the 7
+boundary PI pins, the 4 ordered GROUP-4 hash sites and the 2 balance-limb range checks. The log-receipt
+prepend is IR-BLOCKED (header), NOT in this descriptor. -/
 def pipelinedSendVmDescriptor : EffectVmDescriptor :=
   { name := pipelinedSendVmAirName
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
-  , constraints := pipelinedSendRowGates ++ transitionAll ++ boundaryFirstPins
+  , constraints := pipelinedSendRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates 36
   , hashSites := pipelinedSendHashSites
-  , ranges := [] }
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
-/-! ## §3 — The pipelined-send ROW INTENT (the SUPPORTED faithfulness target: a full freeze). -/
+/-! ## §3 — the ROW INTENT: state-block passthrough + nonce TICK (runtime-faithful). -/
 
-/-- **`PipelinedSendRowIntent env`** — the FULL state-block freeze: every data column frozen. -/
+/-- **`PipelinedSendRowIntent env`** — every economic state-block column UNCHANGED EXCEPT the nonce,
+which TICKS by 1 (on a non-NoOp row `s_noop = 0`). The log-receipt is out-of-row. -/
 def PipelinedSendRowIntent (env : VmRowEnv) : Prop :=
   env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
   ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
   ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
   ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
   ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
-/-- The row is a pipelined-send row: `s_pipelinedSend = 1`, `s_noop = 0`. -/
-def IsPipelinedSendRow (env : VmRowEnv) : Prop :=
-  env.loc selPS.PIPELINED_SEND = 1 ∧ env.loc sel.NOOP = 0
-
 /-! ## §4 — FAITHFULNESS. -/
 
-/-- **`pipelinedSendRowGates_holds_iff`** — on a pipelined-send row, the gates all hold IFF
-`PipelinedSendRowIntent` holds (the full freeze). -/
-theorem pipelinedSendRowGates_holds_iff (env : VmRowEnv) :
+theorem pipelinedSendVm_faithful (env : VmRowEnv) :
     (∀ c ∈ pipelinedSendRowGates, c.holdsVm env false false) ↔ PipelinedSendRowIntent env := by
-  unfold pipelinedSendRowGates gFieldFixAll PipelinedSendRowIntent
+  unfold pipelinedSendRowGates gFieldPassAll PipelinedSendRowIntent
   constructor
   · intro h
-    have hLo := h (.gate gBalLoFix) (by simp)
-    have hHi := h (.gate gBalHiFix) (by simp)
-    have hNon := h (.gate gNonceFix) (by simp)
-    have hCap := h (.gate gCapFix) (by simp)
-    have hRes := h (.gate gResFix) (by simp)
-    have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldFix i)) := by
+    have hLo := h (.gate gBalLoFreeze) (by simp)
+    have hHi := h (.gate gBalHi) (by simp)
+    have hNon := h (.gate gNonce) (by simp)
+    have hCap := h (.gate gCapPass) (by simp)
+    have hRes := h (.gate gResPass) (by simp)
+    have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldPass i)) := by
       intro i hi
       apply h
       simp only [List.mem_append, List.mem_map, List.mem_range]
       exact Or.inr ⟨i, hi, rfl⟩
-    simp only [VmConstraint.holdsVm, gBalLoFix, gBalHiFix, gNonceFix, gCapFix, gResFix,
-      eSA, eSB, eSub, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass,
+      eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
     refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
       by linarith [hRes], ?_⟩
     intro i hi
     have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
+    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
     linarith
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hHi]; ring
-    · simp only [VmConstraint.holdsVm, gNonceFix, eSA, eSB, eSub, EmittedExpr.eval]
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
       rw [hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hRes]; ring
-    · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+    · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hFld i hi]; ring
 
-/-- **`pipelinedSendVm_faithful` — THE supported deliverable.** -/
-theorem pipelinedSendVm_faithful (env : VmRowEnv) :
-    (∀ c ∈ pipelinedSendRowGates, c.holdsVm env false false) ↔ PipelinedSendRowIntent env :=
-  pipelinedSendRowGates_holds_iff env
+/-! ## §5 — ANTI-GHOST. -/
 
-/-! ## §5 — ANTI-GHOST (per-row): any state-column MOVE fails the freeze. -/
-
-/-- **Anti-ghost (cap_root/swiss_root tamper).** A row whose post-`cap_root` is NOT its pre-`cap_root`
-fails the `gCapFix` freeze gate (UNSAT) — a pipelined-send may not move the swiss/cap digest. -/
-theorem pipelinedSendVm_rejects_moved_capRoot (env : VmRowEnv)
-    (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
-    ¬ (VmConstraint.gate gCapFix).holdsVm env false false := by
-  simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h
-  apply hwrong
-  linarith
-
-/-- **Anti-ghost (balance tamper).** A row whose post-`bal_lo` is NOT its pre-`bal_lo` fails the
-`gBalLoFix` freeze gate — a pipelined-send is balance-neutral. -/
-theorem pipelinedSendVm_rejects_moved_balance (env : VmRowEnv)
-    (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
-    ¬ (VmConstraint.gate gBalLoFix).holdsVm env false false := by
-  simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h
-  apply hwrong
-  linarith
-
-/-- **Anti-ghost (general).** A row whose post-state is NOT the full freeze does NOT satisfy the per-row
-gates. -/
 theorem pipelinedSendVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ PipelinedSendRowIntent env) :
     ¬ (∀ c ∈ pipelinedSendRowGates, c.holdsVm env false false) :=
   fun h => hwrong ((pipelinedSendVm_faithful env).mp h)
 
-/-! ## §6 — The structured per-cell soundness: the post `CellState` EQUALS the pre `CellState`. -/
+/-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate — a
+pipelined-send is balance-neutral. -/
+theorem pipelinedSendVm_rejects_moved_balance (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
+    ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
 
-/-- **`RowEncodes env pre post`** — the row decodes to `(pre, post)` cell states (no params). -/
-def RowEncodes (env : VmRowEnv) (pre post : CellState) : Prop :=
-  env.loc (sbCol state.BALANCE_LO) = pre.balLo
-  ∧ env.loc (sbCol state.BALANCE_HI) = pre.balHi
-  ∧ env.loc (sbCol state.NONCE) = pre.nonce
-  ∧ (∀ i : Fin 8, env.loc (sbCol (state.FIELD_BASE + i.val)) = pre.fields i)
-  ∧ env.loc (sbCol state.CAP_ROOT) = pre.capRoot
-  ∧ env.loc (sbCol state.RESERVED) = pre.reserved
-  ∧ env.loc (saCol state.BALANCE_LO) = post.balLo
-  ∧ env.loc (saCol state.BALANCE_HI) = post.balHi
-  ∧ env.loc (saCol state.NONCE) = post.nonce
-  ∧ (∀ i : Fin 8, env.loc (saCol (state.FIELD_BASE + i.val)) = post.fields i)
-  ∧ env.loc (saCol state.CAP_ROOT) = post.capRoot
-  ∧ env.loc (saCol state.RESERVED) = post.reserved
+/-- **Anti-ghost (cap_root/swiss_root tamper).** A row whose post-`cap_root` ≠ pre-`cap_root` fails the
+freeze gate — a pipelined-send may not move the swiss/cap digest. -/
+theorem pipelinedSendVm_rejects_moved_capRoot (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
+    ¬ (VmConstraint.gate gCapPass).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
 
-/-- The per-cell freeze spec: the post-state's data columns are ALL equal to the pre-state's. -/
-def CellFreezeSpec (pre post : CellState) : Prop :=
-  post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
-  ∧ post.capRoot = pre.capRoot
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.reserved = pre.reserved
+/-- **Anti-ghost (nonce tamper).** A row whose nonce does NOT tick by 1 fails the reconciled `gNonce`
+tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. -/
+theorem pipelinedSendVm_rejects_nonce_freeze (env : VmRowEnv)
+    (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)) :
+    ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+  intro h; apply hwrong; linarith
 
-/-- Under `RowEncodes`, `PipelinedSendRowIntent` IS the structured per-cell `CellFreezeSpec`. -/
-theorem intent_to_cellFreezeSpec (env : VmRowEnv) (pre post : CellState)
-    (henc : RowEncodes env pre post) (hint : PipelinedSendRowIntent env) :
-    CellFreezeSpec pre post := by
-  obtain ⟨hsbLo, hsbHi, hsbN, hsbF, hsbCap, hsbRes,
-          hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes⟩ := henc
-  obtain ⟨hlo, hhi, hnon, hcap, hres, hfld⟩ := hint
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [← hsaLo, ← hsbLo]; exact hlo
-  · rw [← hsaHi, ← hsbHi]; exact hhi
-  · rw [← hsaN, ← hsbN]; exact hnon
-  · rw [← hsaCap, ← hsbCap]; exact hcap
-  · intro i; rw [← hsaF i, ← hsbF i]; exact hfld i.val i.isLt
-  · rw [← hsaRes, ← hsbRes]; exact hres
+/-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
-/-- **`pipelinedSendDescriptor_full_sound` — the structured soundness (supported part).** Satisfying the
-per-row gates under `RowEncodes` forces the structured per-cell `CellFreezeSpec` (the whole cell state
-frozen). -/
-theorem pipelinedSendDescriptor_full_sound (env : VmRowEnv) (pre post : CellState)
-    (henc : RowEncodes env pre post)
-    (hgates : ∀ c ∈ pipelinedSendRowGates, c.holdsVm env false false) :
-    CellFreezeSpec pre post :=
-  intent_to_cellFreezeSpec env pre post henc ((pipelinedSendVm_faithful env).mp hgates)
-
-/-! ## §7 — THE ANTI-GHOST COMMITMENT TOOTH. -/
-
-open Dregg2.Circuit.Emit.EffectVmEmitTransfer (transferHashSites)
-open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
-  (absorbedCols absorbed_determined_by_commit)
-
-/-- `pipelinedSendHashSites` is DEFINITIONALLY the transfer keystone's `transferHashSites`. -/
 theorem pipelinedSendHashSites_eq : pipelinedSendHashSites = transferHashSites := rfl
 
-/-- **`pipelinedSendDescriptor_commit_binds_state` — the whole-state tooth.** Two pipelined-send rows
-that satisfy the hash-sites and publish equal `state_commit`s have identical absorbed columns. -/
-theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+theorem pipelinedSendVm_commit_binds_block (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites)
     (hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites)
@@ -288,12 +189,123 @@ theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hC
   rw [pipelinedSendHashSites_eq] at hs₁ hs₂
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
-/-! ## §8 — THE CONNECTOR — to universe-A's `pipelinedSendA_full_sound`.
+/-! ## §7 — the structured per-cell spec (REUSING `CellState`): passthrough + nonce tick. -/
 
-`PipelinedSendSpec` freezes ALL 17 kernel fields, so EVERY projection of the post-kernel equals the
-projection of the pre-kernel. We exhibit the swiss-table digest (and by the same argument any
-projection) FROZEN across a committed `pipelinedSendA` — the runnable row's freeze IS universe-A's
-whole-kernel freeze, projected. -/
+/-- `RowEncodesSend env pre post` ties the row's state-block columns to a `(pre, post)` transition. -/
+def RowEncodesSend (env : VmRowEnv) (pre post : CellState) : Prop :=
+  env.loc (sbCol state.BALANCE_LO) = pre.balLo
+  ∧ env.loc (sbCol state.BALANCE_HI) = pre.balHi
+  ∧ env.loc (sbCol state.NONCE) = pre.nonce
+  ∧ (∀ i : Fin 8, env.loc (sbCol (state.FIELD_BASE + i.val)) = pre.fields i)
+  ∧ env.loc (sbCol state.CAP_ROOT) = pre.capRoot
+  ∧ env.loc (sbCol state.RESERVED) = pre.reserved
+  ∧ env.loc (sbCol state.STATE_COMMIT) = pre.commit
+  ∧ env.loc (saCol state.BALANCE_LO) = post.balLo
+  ∧ env.loc (saCol state.BALANCE_HI) = post.balHi
+  ∧ env.loc (saCol state.NONCE) = post.nonce
+  ∧ (∀ i : Fin 8, env.loc (saCol (state.FIELD_BASE + i.val)) = post.fields i)
+  ∧ env.loc (saCol state.CAP_ROOT) = post.capRoot
+  ∧ env.loc (saCol state.RESERVED) = post.reserved
+  ∧ env.loc (saCol state.STATE_COMMIT) = post.commit
+  ∧ env.pub pi.OLD_COMMIT = pre.commit
+  ∧ env.pub pi.NEW_COMMIT = post.commit
+
+/-- **`CellSendSpec pre post`** — the per-cell FULL-state pipelined-send row spec: economic block FROZEN;
+the nonce TICKS by 1. (The log-receipt prepend is off-row.) -/
+def CellSendSpec (pre post : CellState) : Prop :=
+  post.balLo = pre.balLo
+  ∧ post.balHi = pre.balHi
+  ∧ post.nonce = pre.nonce + 1
+  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
+  ∧ post.capRoot = pre.capRoot
+  ∧ post.reserved = pre.reserved
+
+theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0)
+    (henc : RowEncodesSend env pre post) (hint : PipelinedSendRowIntent env) :
+    CellSendSpec pre post := by
+  obtain ⟨hsbLo, hsbHi, hsbN, hsbF, hsbCap, hsbRes, hsbC,
+          hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
+  obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [← hsaLo, ← hsbLo]; exact hbal
+  · rw [← hsaHi, ← hsbHi]; exact hbhi
+  · rw [← hsaN, ← hsbN, hnon, hnoop]; ring
+  · intro i
+    have := hfld i.val i.isLt
+    rw [← hsaF i, ← hsbF i]; exact this
+  · rw [← hsaCap, ← hsbCap]; exact hcap
+  · rw [← hsaRes, ← hsbRes]; exact hres
+
+/-! ## §8 — the full descriptor soundness + the commitment binding. -/
+
+theorem pipelinedSendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (hnoop : env.loc sel.NOOP = 0)
+    (henc : RowEncodesSend env pre post)
+    (hsat : satisfiedVm hash pipelinedSendVmDescriptor env true true) :
+    CellSendSpec pre post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, _⟩ := hsat
+  have hgates' : ∀ c ∈ pipelinedSendRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ pipelinedSendVmDescriptor.constraints := by
+      unfold pipelinedSendVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+    have := hcs c hmem
+    unfold pipelinedSendRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using this
+  have hint := (pipelinedSendVm_faithful env).mp hgates'
+  refine ⟨intent_to_cellSpec env pre post hnoop henc hint, ?_⟩
+  have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+    intro c hc
+    have hmem : c ∈ pipelinedSendVmDescriptor.constraints := by
+      unfold pipelinedSendVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inr hc)
+    have hh := hcs c hmem
+    unfold boundaryLastPins at hc
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+    rcases hc with rfl | rfl | rfl <;>
+      · simp only [VmConstraint.holdsVm] at hh ⊢
+        exact hh
+  have hpin := (boundaryLast_pins env hlast).1
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+  rw [← hsaC]; exact hpin
+
+theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash pipelinedSendVmDescriptor e₁ true true)
+    (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptor e₂ true true)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
+    absorbedCols e₁ = absorbedCols e₂ := by
+  have hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites := hsat₁.2
+  have hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites := hsat₂.2
+  have hc : ∀ (e : VmRowEnv), satisfiedVm hash pipelinedSendVmDescriptor e true true →
+      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+    intro e hsat
+    obtain ⟨hcs, _⟩ := hsat
+    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
+      intro c hc
+      have hmem : c ∈ pipelinedSendVmDescriptor.constraints := by
+        unfold pipelinedSendVmDescriptor
+        simp only [List.mem_append]
+        exact Or.inl (Or.inr hc)
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢
+          exact hh
+    exact (boundaryLast_pins e hlast).1
+  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
+    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+  exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
+
+/-! ## §9 — THE CONNECTOR — to universe-A's `pipelinedSendA_full_sound` (whole-kernel freeze). -/
 
 open Dregg2.Circuit.Inst.PipelinedSendA (PipelinedSendArgs)
 open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
@@ -302,23 +314,17 @@ open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
 def swissRootProj (D : List SwissRecord → ℤ) (k : RecordKernelState) : ℤ := D k.swiss
 
 /-- **`unify_pipelinedSend` — THE CONNECTOR (swiss leg).** When universe-A's `PipelinedSendSpec` holds,
-`s'.kernel.swiss = s.kernel.swiss` (the swiss-freeze clause), so the projected `swiss_root` is FROZEN:
-`swissRootProj D s'.kernel = swissRootProj D s.kernel`. The runnable row's freeze IS universe-A's
-whole-kernel freeze, projected to the swiss-digest column. -/
+`s'.kernel.swiss = s.kernel.swiss` (the swiss-freeze clause), so the projected `swiss_root` is FROZEN.
+The runnable row's freeze IS universe-A's whole-kernel freeze, projected to the swiss-digest column. -/
 theorem unify_pipelinedSend (D : List SwissRecord → ℤ)
     (s : RecChainedState) (actor : CellId) (s' : RecChainedState)
     (hspec : PipelinedSendSpec s actor s') :
     swissRootProj D s'.kernel = swissRootProj D s.kernel := by
-  -- PipelinedSendSpec's `swiss` clause is `s'.kernel.swiss = s.kernel.swiss`.
   obtain ⟨_, _, _, _, _, _, _, _, _, _, hSw, _⟩ := hspec
   show D s'.kernel.swiss = D s.kernel.swiss
   rw [hSw]
 
-/-- **`unify_pipelinedSend_via_full_sound` — the runnable freeze inherits the VALIDATED guarantee.**
-A satisfying universe-A `pipelinedSendA_full_sound` witness ⟹ `PipelinedSendSpec` ⟹ the projected
-`swiss_root` is FROZEN. So the runnable freeze is universe-A's validated whole-kernel freeze, not a
-fourth spec. (The additive log-receipt stays enforced ONLY inside the full_sound — IR-BLOCKED at the
-row, header.) -/
+/-- **`unify_pipelinedSend_via_full_sound` — the runnable freeze inherits the VALIDATED guarantee.** -/
 theorem unify_pipelinedSend_via_full_sound
     (S : CommitSurface) (D : List SwissRecord → ℤ)
     (hN : compressNInjective S.compressN) (hL : cellLeafInjective S.CH)
@@ -331,92 +337,103 @@ theorem unify_pipelinedSend_via_full_sound
   unify_pipelinedSend D s args.actor s'
     (Dregg2.Circuit.Inst.PipelinedSendA.pipelinedSendA_full_sound S hN hL hRest hLog s args s' hwf hwf' h)
 
-/-! ## §9 — NON-VACUITY. -/
+/-! ## §10 — NON-VACUITY. -/
 
-/-- A concrete pipelined-send row: every column frozen (pre = post = 0 everywhere; the selector hot). -/
-def freezeRow : VmRowEnv where
-  loc := fun v => if v = selPS.PIPELINED_SEND then 1 else 0
+/-- A concrete pipelined-send row: state-block passthrough + nonce TICK (bal_lo 100 → 100, nonce 5 → 6). -/
+def goodSendRow : VmRowEnv where
+  loc := fun v =>
+    if v = SEL_PIPELINED_SEND then 1
+    else if v = sbCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 100
+    else if v = sbCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else 0
   nxt := fun _ => 0
   pub := fun _ => 0
 
-/-- `freezeRow` is a genuine pipelined-send row. -/
-theorem freezeRow_isPipelinedSendRow : IsPipelinedSendRow freezeRow := by
-  unfold IsPipelinedSendRow freezeRow
-  constructor <;> norm_num [selPS.PIPELINED_SEND, sel.NOOP]
+theorem goodSendRow_noop : goodSendRow.loc sel.NOOP = 0 := by
+  show goodSendRow.loc 0 = 0
+  simp only [goodSendRow, SEL_PIPELINED_SEND, sbCol, saCol, STATE_BEFORE_BASE,
+    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+  norm_num
 
-/-- **NON-VACUITY (witness TRUE).** `freezeRow` REALIZES the full-freeze intent: every `after` column
-equals its `before` column (both `0`, since no state column is named). -/
-theorem freezeRow_realizes_intent : PipelinedSendRowIntent freezeRow := by
-  -- every state column index ≠ selPS.PIPELINED_SEND (= 7); a state column's after/before both hit the
-  -- `else 0` branch. State columns are ≥ 54 (STATE_BEFORE_BASE), so all ≠ 7.
-  have hcol : ∀ col : Nat, col ≠ selPS.PIPELINED_SEND → freezeRow.loc col = 0 := by
-    intro col hc
-    show (if col = selPS.PIPELINED_SEND then (1:ℤ) else 0) = 0
-    rw [if_neg hc]
-  have hsb : ∀ off : Nat, (sbCol off ≠ selPS.PIPELINED_SEND) := by
-    intro off
-    unfold sbCol STATE_BEFORE_BASE NUM_EFFECTS selPS.PIPELINED_SEND; omega
-  have hsa : ∀ off : Nat, (saCol off ≠ selPS.PIPELINED_SEND) := by
-    intro off
-    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
-      selPS.PIPELINED_SEND; omega
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [hcol _ (hsa _), hcol _ (hsb _)]
-  · rw [hcol _ (hsa _), hcol _ (hsb _)]
-  · rw [hcol _ (hsa _), hcol _ (hsb _)]
-  · rw [hcol _ (hsa _), hcol _ (hsb _)]
-  · rw [hcol _ (hsa _), hcol _ (hsb _)]
-  · intro i hi; rw [hcol _ (hsa _), hcol _ (hsb _)]
+/-- **NON-VACUITY (witness TRUE).** `goodSendRow` REALIZES the runtime pipelined-send intent. -/
+theorem goodSendRow_realizes_intent : PipelinedSendRowIntent goodSendRow := by
+  unfold PipelinedSendRowIntent
+  have hnoop : goodSendRow.loc sel.NOOP = 0 := goodSendRow_noop
+  refine ⟨rfl, rfl, ?_, rfl, rfl, ?_⟩
+  · rw [hnoop]
+    show goodSendRow.loc (saCol state.NONCE) = goodSendRow.loc (sbCol state.NONCE) + (1 - 0)
+    simp only [goodSendRow, SEL_PIPELINED_SEND, sbCol, saCol, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE]
+    norm_num
+  · intro i hi
+    show goodSendRow.loc (saCol (state.FIELD_BASE + i)) = goodSendRow.loc (sbCol (state.FIELD_BASE + i))
+    simp only [goodSendRow, SEL_PIPELINED_SEND, sbCol, saCol, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, state.FIELD_BASE]
+    have e1 : (76 + (3 + i) = 36) = False := eq_false (by omega)
+    have e2 : (76 + (3 + i) = 54 + 0) = False := eq_false (by omega)
+    have e3 : (76 + (3 + i) = 76 + 0) = False := eq_false (by omega)
+    have e4 : (76 + (3 + i) = 54 + 2) = False := eq_false (by omega)
+    have e5 : (76 + (3 + i) = 76 + 2) = False := eq_false (by omega)
+    have f1 : (54 + (3 + i) = 36) = False := eq_false (by omega)
+    have f2 : (54 + (3 + i) = 54 + 0) = False := eq_false (by omega)
+    have f3 : (54 + (3 + i) = 76 + 0) = False := eq_false (by omega)
+    have f4 : (54 + (3 + i) = 54 + 2) = False := eq_false (by omega)
+    have f5 : (54 + (3 + i) = 76 + 2) = False := eq_false (by omega)
+    simp only [e1, e2, e3, e4, e5, f1, f2, f3, f4, f5, if_false]
 
-/-- A forged pipelined-send row: `freezeRow` with post-`cap_root` moved to `999` (≠ its frozen pre
-`0`). -/
-def movedRow : VmRowEnv where
-  loc := fun v => if v = saCol state.CAP_ROOT then 999 else freezeRow.loc v
-  nxt := freezeRow.nxt
-  pub := freezeRow.pub
+/-- A FORGED pipelined-send row: `goodSendRow` with the post-`bal_lo` minted to `999`. -/
+def badSendRow : VmRowEnv where
+  loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodSendRow.loc v
+  nxt := goodSendRow.nxt
+  pub := goodSendRow.pub
 
-/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `movedRow` moves the `cap_root`/`swiss_root`
-column (`0 → 999`), so the `gCapFix` freeze gate REJECTS it — a concrete UNSAT (a pipelined-send may
-not move any kernel digest). -/
-theorem movedRow_rejected : ¬ (VmConstraint.gate gCapFix).holdsVm movedRow false false := by
-  apply pipelinedSendVm_rejects_moved_capRoot
-  -- post cap_root = 999 (overwrite); pre cap_root: sbCol CAP_ROOT (=65) ≠ saCol CAP_ROOT (=87) and
-  -- ≠ selPS (=7), so it is `else 0`. 999 ≠ 0.
-  have hsbcap : sbCol state.CAP_ROOT = 65 := by
-    unfold sbCol STATE_BEFORE_BASE NUM_EFFECTS state.CAP_ROOT; rfl
-  have hsacap : saCol state.CAP_ROOT = 87 := by
-    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
-      state.CAP_ROOT; rfl
-  have rsa : movedRow.loc (saCol state.CAP_ROOT) = 999 := by
-    show (if saCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ) else freezeRow.loc (saCol state.CAP_ROOT)) = 999
-    rw [if_pos rfl]
-  have rsb : movedRow.loc (sbCol state.CAP_ROOT) = 0 := by
-    show (if sbCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ) else freezeRow.loc (sbCol state.CAP_ROOT)) = 0
-    have hne : ¬ (sbCol state.CAP_ROOT = saCol state.CAP_ROOT) := by rw [hsbcap, hsacap]; decide
-    rw [if_neg hne]
-    show (if sbCol state.CAP_ROOT = selPS.PIPELINED_SEND then (1:ℤ) else 0) = 0
-    have hne2 : ¬ (sbCol state.CAP_ROOT = selPS.PIPELINED_SEND) := by
-      rw [hsbcap]; unfold selPS.PIPELINED_SEND; decide
-    rw [if_neg hne2]
-  rw [rsa, rsb]; decide
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badSendRow`'s post-`bal_lo` is forged, so
+`gBalLoFreeze` REJECTS it. -/
+theorem badSendRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badSendRow false false := by
+  apply pipelinedSendVm_rejects_moved_balance
+  simp only [badSendRow, goodSendRow, sbCol, saCol, SEL_PIPELINED_SEND, STATE_BEFORE_BASE,
+    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+    state.NONCE]
+  norm_num
 
-/-! ## §10 — Axiom-hygiene tripwires. -/
+/-- A FROZEN-NONCE pipelined-send row: `goodSendRow` with the post-nonce held at `5`. -/
+def staleNonceSendRow : VmRowEnv where
+  loc := fun v => if v = saCol state.NONCE then 5 else goodSendRow.loc v
+  nxt := goodSendRow.nxt
+  pub := goodSendRow.pub
 
-#guard pipelinedSendVmDescriptor.constraints.length == 13 + 14 + 4
+/-- **NON-VACUITY (cutover witness FALSE).** A frozen-nonce row is now correctly UNSAT under the
+reconciled `gNonce` tick gate. -/
+theorem staleNonceSendRow_rejected :
+    ¬ (VmConstraint.gate gNonce).holdsVm staleNonceSendRow false false := by
+  apply pipelinedSendVm_rejects_nonce_freeze
+  simp only [staleNonceSendRow, goodSendRow, sel.NOOP, sbCol, saCol, SEL_PIPELINED_SEND,
+    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+    state.BALANCE_LO, state.NONCE]
+  norm_num
+
+/-! ## §11 — Axiom-hygiene tripwires. -/
+
+#guard pipelinedSendVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard pipelinedSendVmDescriptor.hashSites.length == 4
 #guard pipelinedSendVmDescriptor.traceWidth == 186
 
-#assert_axioms pipelinedSendRowGates_holds_iff
 #assert_axioms pipelinedSendVm_faithful
-#assert_axioms pipelinedSendVm_rejects_moved_capRoot
-#assert_axioms pipelinedSendVm_rejects_moved_balance
 #assert_axioms pipelinedSendVm_rejects_wrong_output
-#assert_axioms intent_to_cellFreezeSpec
+#assert_axioms pipelinedSendVm_rejects_moved_balance
+#assert_axioms pipelinedSendVm_rejects_moved_capRoot
+#assert_axioms pipelinedSendVm_rejects_nonce_freeze
+#assert_axioms intent_to_cellSpec
 #assert_axioms pipelinedSendDescriptor_full_sound
 #assert_axioms pipelinedSendDescriptor_commit_binds_state
 #assert_axioms unify_pipelinedSend
 #assert_axioms unify_pipelinedSend_via_full_sound
-#assert_axioms freezeRow_realizes_intent
-#assert_axioms movedRow_rejected
+#assert_axioms goodSendRow_realizes_intent
+#assert_axioms badSendRow_rejected
+#assert_axioms staleNonceSendRow_rejected
 
 end Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend

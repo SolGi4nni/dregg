@@ -72,7 +72,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gNonce gCapPass site0 site1 site2 site3 transitionAll boundaryFirstPins
-   transferHashSites)
+   boundaryLastPins transferHashSites)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -99,8 +99,11 @@ set_option autoImplicit false
 
 namespace selR
 /-- The `refreshDelegationA` effect selector column (the running prover's per-effect selector,
-`columns.rs::sel::REFRESH_DELEGATION`). -/
-def REFRESH : Nat := 3
+`columns.rs::sel::REFRESH_DELEGATION`). The runtime trace (`effect_vm/trace.rs`,
+`Effect::RefreshDelegation => sel::REFRESH_DELEGATION`) sets column **29**; the prior `3` was a
+stale GRANT_CAP collision that never bit because no constraint read the selector. The
+selector-binding tooth (`selectorGates`) now DOES, so this MUST be the runtime index. -/
+def REFRESH : Nat := 29
 end selR
 
 /-! ## §1 — The frame-freeze + nonce-TICK row gates (the runtime passthrough convention).
@@ -137,7 +140,7 @@ def refreshRowGates : List VmConstraint :=
 /-! ## §2 — The emitted descriptor. -/
 
 /-- The `refreshDelegationA` AIR identity. -/
-def refreshVmAirName : String := "dregg-effectvm-refreshDelegation-v1"
+def refreshVmAirName : String := "dregg-effectvm-refreshDelegation-v2"
 
 /-- **`refreshVmDescriptor`** — the runnable `refreshDelegationA` PASSTHROUGH+NONCE-TICK row: every
 EffectVM state column frozen, the runtime nonce ticked, ++ transition continuity ++ the row-0 boundary
@@ -147,9 +150,10 @@ def refreshVmDescriptor : EffectVmDescriptor :=
   { name := refreshVmAirName
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
-  , constraints := refreshRowGates ++ transitionAll ++ boundaryFirstPins
+  , constraints := refreshRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates selR.REFRESH
   , hashSites := transferHashSites
-  , ranges := [] }
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
 /-! ## §3 — The frame-freeze + nonce-TICK ROW INTENT + faithfulness. -/
 
@@ -422,7 +426,7 @@ def refreshGoodRow : VmRowEnv where
 Helper to read the concrete row without `if`-branch gymnastics. -/
 private theorem goodRow_loc_eval (v : Nat) :
     refreshGoodRow.loc v
-      = (if v = 3 then 1 else if v = 65 then 9 else if v = 87 then 9
+      = (if v = 29 then 1 else if v = 65 then 9 else if v = 87 then 9
          else if v = 56 then 5 else if v = 78 then 6 else 0) := rfl
 
 /-- `refreshGoodRow` is a refresh row (`s_refresh = 1`, `s_noop = 0`). -/
@@ -468,18 +472,18 @@ theorem refreshGoodRow_realizes_intent : RefreshRowIntent refreshGoodRow := by
       simp only [sbCol, STATE_BEFORE_BASE, NUM_EFFECTS, state.FIELD_BASE]; omega
     show refreshGoodRow.loc (saCol (state.FIELD_BASE + i)) = refreshGoodRow.loc (sbCol (state.FIELD_BASE + i))
     rw [hsa, hsb, goodRow_loc_eval, goodRow_loc_eval]
-    have ha3 : ¬ (79 + i = 3) := by omega
+    have ha29 : ¬ (79 + i = 29) := by omega
     have ha65 : ¬ (79 + i = 65) := by omega
     have ha87 : ¬ (79 + i = 87) := by omega
     have ha56 : ¬ (79 + i = 56) := by omega
     have ha78 : ¬ (79 + i = 78) := by omega
-    have hb3 : ¬ (57 + i = 3) := by omega
+    have hb29 : ¬ (57 + i = 29) := by omega
     have hb65 : ¬ (57 + i = 65) := by omega
     have hb87 : ¬ (57 + i = 87) := by omega
     have hb56 : ¬ (57 + i = 56) := by omega
     have hb78 : ¬ (57 + i = 78) := by omega
-    rw [if_neg ha3, if_neg ha65, if_neg ha87, if_neg ha56, if_neg ha78,
-        if_neg hb3, if_neg hb65, if_neg hb87, if_neg hb56, if_neg hb78]
+    rw [if_neg ha29, if_neg ha65, if_neg ha87, if_neg ha56, if_neg ha78,
+        if_neg hb29, if_neg hb65, if_neg hb87, if_neg hb56, if_neg hb78]
 
 /-- A forged refresh row: `refreshGoodRow` with the post-`cap_root` MOVED to `999 ≠ 9` (refresh must
 freeze `cap_root`). -/
@@ -539,7 +543,7 @@ theorem delegRoot_same_commits_equal :
 
 /-! ## §12 — Axiom-hygiene tripwires. -/
 
-#guard refreshVmDescriptor.constraints.length == 13 + 14 + 4  -- 13 freeze/tick gates + 14 transitions + 4 first
+#guard refreshVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1  -- 13 freeze/tick gates + 14 transitions + 4 first + 3 last + selectorGate
 #guard refreshVmDescriptor.hashSites.length == 4
 #guard refreshVmDescriptor.traceWidth == 186
 

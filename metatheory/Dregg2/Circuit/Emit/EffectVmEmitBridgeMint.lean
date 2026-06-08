@@ -116,6 +116,7 @@ def bridgeMintVmDescriptor : EffectVmDescriptor :=
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
   , constraints := bridgeMintRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates 40
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
@@ -247,14 +248,14 @@ theorem bridgeMintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
   have hgates : ∀ c ∈ bridgeMintRowGates, c.holdsVm env true true := by
     intro c hc; apply hcs
     unfold bridgeMintVmDescriptor; simp only [List.mem_append]
-    exact Or.inl (Or.inl (Or.inl hc))
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
   have hgates' := bridgeMintRowGates_flag_indep env true true hgates
   have hint := (bridgeMintVm_faithful env hrow).mp hgates'
   refine ⟨intent_to_cellSpec env pre post value henc hint, ?_⟩
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
     have hmem : c ∈ bridgeMintVmDescriptor.constraints := by
-      unfold bridgeMintVmDescriptor; simp only [List.mem_append]; exact Or.inr hc
+      unfold bridgeMintVmDescriptor; simp only [List.mem_append]; exact Or.inl (Or.inr hc)
     have hh := hcs c hmem
     unfold boundaryLastPins at hc
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -412,7 +413,7 @@ theorem badBridgeMintRow_rejected :
 
 /-! ## §9 — Axiom-hygiene tripwires. -/
 
-#guard bridgeMintVmDescriptor.constraints.length == 13 + 14 + 4 + 3
+#guard bridgeMintVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard bridgeMintVmDescriptor.hashSites.length == 4
 #guard bridgeMintVmDescriptor.traceWidth == 186
 

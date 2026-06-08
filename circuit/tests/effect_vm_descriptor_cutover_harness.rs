@@ -22,13 +22,20 @@
 //!
 //! ## What this validated (real Plonky3 output)
 //!
-//! * **GRADUATED (7 selectors AGREE + prove+verify+anti-ghost):** `transfer` (1, the beachhead),
+//! * **GRADUATED (20 selectors AGREE + prove+verify+anti-ghost):** `transfer` (1, the beachhead),
 //!   the FULL-ECONOMIC effects `note_spend` (4), `note_create` (5), `bridge_mint` (40), `burn` (46)
-//!   (reconciled onto the runtime balance-column + nonce-tick convention), and the FROZEN-FRAME
-//!   nonce-tick effects `create_seal_pair` (28) and `bridge_finalize` (41) (their Lean emit modules
-//!   tick the runtime nonce via `gNonce`; the committed descriptor JSON was re-emitted to match).
-//!   Each: descriptor interpreter AND hand-AIR both prove+verify the honest witness, agree on accept,
-//!   and both reject the forged-balance + forged-state-commit tampers.
+//!   (reconciled onto the runtime balance-column + nonce-tick convention), the FROZEN-FRAME nonce-tick
+//!   effects `create_seal_pair` (28) and `bridge_finalize` (41), and — via the NONCE-TICK-PATCH
+//!   graduation (`frozen_frame_nonce_tick_effects_graduated_into_cutover`) — the 13 reconciled
+//!   passthrough+tick effects `set_permissions` (26), `set_verification_key` (27), `refresh_delegation`
+//!   (29), `revoke_delegation` (30), `exercise_via_capability` (34), `introduce` (35), `pipelined_send`
+//!   (36), `cell_destroy` (47), `cell_seal` (49), `refusal` (52), `increment_nonce` (53) (their Lean
+//!   emit modules now tick the runtime nonce via `gNonce` AND carry the `boundaryLastPins` last-row
+//!   balance PI binding; the committed descriptor JSON was re-emitted to match). Each: descriptor
+//!   interpreter AND hand-AIR both prove+verify the honest witness, agree on accept, and both reject the
+//!   forged-balance + forged-state-commit tampers. (revoke/introduce were re-pointed off the `attenuateA`
+//!   cap-root-MOVE descriptor — wrong for them since the runtime FREEZES `cap_root` — onto their own
+//!   frozen-frame+tick descriptor; the cap-table move is bound OFF-row via the universe-A connector.)
 //!
 //! * **The remaining selectors DIVERGE / are unconstructible.** `enumerate_all_descriptor_divergences`
 //!   maps the full set; `pinpoint_divergence_per_selector` reports the FIRST failing constraint per
@@ -946,4 +953,179 @@ fn nonce_tick_patch_graduates_the_13() {
     for (s, why) in &still_blocked {
         eprintln!("  sel {s:>2}  {why}");
     }
+}
+
+/// GRADUATED FROZEN-FRAME + NONCE-TICK EFFECTS — the full graduation, on the REAL committed descriptors
+/// (NOT the in-memory patch of `nonce_tick_patch_graduates_the_13`). Each of the 11 passthrough+tick
+/// effects the PoC surfaced now carries a RE-EMITTED Lean descriptor that ticks the runtime nonce via
+/// `gNonce` AND binds the last-row balance PIs (`boundaryLastPins`) — so the committed JSON in the
+/// registry decides IDENTICALLY to the hand-AIR on the real witness. This proves+verifies through BOTH
+/// the descriptor interpreter and the hand-AIR over the SAME honest witness, asserts they AGREE on
+/// accept, and asserts BOTH reject the forged-balance + forged-state-commit tampers — exactly the
+/// beachhead `transfer` / economic / frozen-frame gauntlet. With `create_seal_pair` (28) and
+/// `bridge_finalize` (41) already graduated, this completes the 13 and lifts the cutover to 20/56.
+#[test]
+fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
+    use dregg_circuit::effect_vm::columns::sel;
+    // The 11 newly-graduated selectors (28 + 41 graduate in their own test). Each must (a) build its
+    // honest witness, (b) prove+verify through the descriptor interpreter AND the hand-AIR, (c) AGREE on
+    // accept, and (d) BOTH reject the forged-balance + forged-state-commit tampers.
+    let selectors: &[usize] = &[
+        sel::SET_PERMISSIONS,         // 26
+        sel::SET_VERIFICATION_KEY,    // 27
+        sel::REFRESH_DELEGATION,      // 29
+        sel::REVOKE_DELEGATION,       // 30
+        sel::EXERCISE_VIA_CAPABILITY, // 34
+        sel::INTRODUCE,               // 35
+        sel::PIPELINED_SEND,          // 36
+        sel::CELL_DESTROY,            // 47
+        sel::CELL_SEAL,               // 49
+        sel::REFUSAL,                 // 52
+        sel::INCREMENT_NONCE,         // 53
+    ];
+
+    let mut graduated = 0usize;
+    for &s in selectors {
+        let (st, effects) = honest_case_for_selector(s)
+            .unwrap_or_else(|| panic!("[sel {s}] no honest single-effect constructor"));
+        let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
+        assert_eq!(base_trace[0].len(), 186, "[sel {s}] canonical 186-col layout");
+        let json = descriptor_for_selector(s)
+            .unwrap_or_else(|| panic!("[sel {s}] no descriptor registered"));
+        let name = descriptor_name_for_selector(s).unwrap();
+        let desc = parse_vm_descriptor(json).expect("descriptor parses");
+        let dpis = &pis[..desc.public_input_count];
+
+        // (1) DESCRIPTOR INTERPRETER — prove + independent verify, real Plonky3.
+        let desc_proof = prove_vm_descriptor(&desc, &base_trace, dpis).unwrap_or_else(|e| {
+            panic!("[sel {s} {name}] descriptor failed to PROVE the honest witness: {e}")
+        });
+        verify_vm_descriptor(&desc, &desc_proof, dpis)
+            .unwrap_or_else(|e| panic!("[sel {s} {name}] descriptor proof failed independent verify: {e}"));
+
+        // (2) HAND-AIR — prove + independent verify, same witness.
+        let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
+            .unwrap_or_else(|e| panic!("[sel {s} {name}] hand-AIR failed to prove honest witness: {e:?}"));
+        verify_effect_vm_p3(&hand_proof, &pis)
+            .unwrap_or_else(|e| panic!("[sel {s} {name}] hand-AIR proof failed verify: {e:?}"));
+
+        // (3) THE DIFFERENTIAL — both accept the SAME honest witness.
+        let hand_accepts = p3_air_accepts(&base_trace, &pis);
+        let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
+        assert!(hand_accepts, "[sel {s} {name}] hand-AIR rejected a witness it just PROVED");
+        assert!(desc_accepts, "[sel {s} {name}] descriptor rejected a witness it just PROVED");
+        assert_eq!(hand_accepts, desc_accepts, "[sel {s} {name}] DIFFERENTIAL DISAGREEMENT");
+
+        // (4a) ANTI-GHOST — forged FINAL_BAL_LO is UNSAT for BOTH (the last-row balance PI tooth bites).
+        {
+            let mut forged = pis.clone();
+            forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
+            let fdpis = &forged[..desc.public_input_count];
+            assert!(!p3_air_accepts(&base_trace, &forged), "[sel {s} {name}] hand-AIR took forged bal");
+            assert!(
+                !descriptor_air_accepts(&desc, &base_trace, fdpis),
+                "[sel {s} {name}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO (anti-ghost WEAK)"
+            );
+            assert!(
+                prove_vm_descriptor(&desc, &base_trace, fdpis).is_err(),
+                "[sel {s} {name}] descriptor PROVED a forged FINAL_BAL_LO"
+            );
+        }
+        // (4b) ANTI-GHOST — mutated last-row state-commit cell is UNSAT for the descriptor.
+        {
+            let mut t = base_trace.clone();
+            let last = t.len() - 1;
+            t[last][STATE_AFTER_BASE + state::STATE_COMMIT] =
+                t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
+            assert!(
+                !descriptor_air_accepts(&desc, &t, dpis),
+                "[sel {s} {name}] descriptor took a forged last-row state-commit cell"
+            );
+            assert!(
+                prove_vm_descriptor(&desc, &t, dpis).is_err(),
+                "[sel {s} {name}] descriptor PROVED a forged state-commit cell"
+            );
+        }
+
+        eprintln!(
+            "[sel {s:>2} {name}] GRADUATED: descriptor + hand-AIR both prove+verify the honest witness, \
+             agree on accept, and both reject the forged-balance + forged-state-commit tampers."
+        );
+        graduated += 1;
+    }
+    assert_eq!(graduated, 11, "all 11 frozen-frame nonce-tick effects must graduate");
+}
+
+/// THE SELECTOR-BINDING TOOTH (closes the `sdk/full_turn_proof.rs` SOUNDNESS NOTE). Each cutover
+/// descriptor now carries the Lean `selectorGate s` (`(1 - sel[NOOP]) · (1 - sel[s]) = 0`), which
+/// forces the descriptor's OWN selector column on the active row. So a proof produced for effect `s`
+/// must be REJECTED by every OTHER cutover descriptor's verifier (its active row carries `sel[s']=0`
+/// for the wrong selector `s'`, violating `s'`'s selector gate). This is the cross-AIR distinctness
+/// the prior note flagged as OPEN — now CLOSED and validated on real Plonky3.
+///
+/// We take the `transfer` honest witness, PROVE it through the transfer descriptor (selector 1), then
+/// feed that proof to EVERY OTHER cutover descriptor's verifier and assert each REJECTS. We also
+/// assert the symmetric direction: a `burn` proof (selector 46) is rejected by the transfer verifier.
+/// Together: descriptor-`s` verifies a proof IFF that proof's committed trace carries selector `s`.
+#[test]
+fn descriptor_proof_binds_to_its_selector() {
+    use dregg_circuit::effect_vm::columns::sel;
+
+    // The cutover-ready selectors the verify path tries (mirror of `full_turn_proof::CUTOVER_READY`).
+    let cutover: &[usize] = &[
+        sel::TRANSFER, sel::NOTE_SPEND, sel::NOTE_CREATE, sel::BRIDGE_MINT, sel::BURN,
+        sel::CREATE_SEAL_PAIR, sel::BRIDGE_FINALIZE, sel::CELL_SEAL, sel::CELL_DESTROY, sel::REFUSAL,
+        sel::SET_VERIFICATION_KEY, sel::SET_PERMISSIONS, sel::EXERCISE_VIA_CAPABILITY,
+        sel::PIPELINED_SEND, sel::INCREMENT_NONCE, sel::REFRESH_DELEGATION, sel::REVOKE_DELEGATION,
+        sel::INTRODUCE,
+    ];
+
+    // Prove the transfer honest witness under the transfer descriptor (selector 1).
+    let st = CellState::new(100_000, 0);
+    let effects = vec![Effect::Transfer { amount: 50, direction: 1 }];
+    let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
+    let tdesc = parse_vm_descriptor(descriptor_for_selector(sel::TRANSFER).unwrap()).unwrap();
+    let tdpis = &pis[..tdesc.public_input_count];
+    let tproof = prove_vm_descriptor(&tdesc, &base_trace, tdpis)
+        .expect("transfer descriptor proves the honest transfer witness");
+    // Sanity: the transfer descriptor accepts its own proof.
+    verify_vm_descriptor(&tdesc, &tproof, tdpis)
+        .expect("transfer descriptor verifies its OWN proof (selector 1 gate holds)");
+
+    // The transfer proof must be REJECTED by every OTHER cutover descriptor's verifier.
+    let mut rejected = 0usize;
+    for &s in cutover {
+        if s == sel::TRANSFER {
+            continue;
+        }
+        let odesc = parse_vm_descriptor(descriptor_for_selector(s).unwrap()).unwrap();
+        // Slice the PI to the wrong descriptor's prefix (what the verify path does).
+        let odpis = &pis[..odesc.public_input_count.min(pis.len())];
+        let res = verify_vm_descriptor(&odesc, &tproof, odpis);
+        assert!(
+            res.is_err(),
+            "[sel {s} {}] verified a TRANSFER proof — selector binding FAILED (cross-AIR replay)",
+            odesc.name
+        );
+        rejected += 1;
+    }
+    eprintln!(
+        "SELECTOR-BINDING: a transfer (sel 1) descriptor proof is REJECTED by all {rejected} other \
+         cutover descriptor verifiers — the cross-selector replay hole is CLOSED."
+    );
+
+    // Symmetric direction: a burn proof (selector 46) is rejected by the transfer verifier.
+    let bst = CellState::new(100_000, 0);
+    let beff = vec![Effect::Burn { target_hash: BabyBear::new(0xB0B), amount_lo: BabyBear::new(75), amount_full: 75 }];
+    let (bt, bpis) = generate_effect_vm_trace(&bst, &beff);
+    let bdesc = parse_vm_descriptor(descriptor_for_selector(sel::BURN).unwrap()).unwrap();
+    let bdpis = &bpis[..bdesc.public_input_count];
+    let bproof = prove_vm_descriptor(&bdesc, &bt, bdpis).expect("burn descriptor proves honest burn");
+    verify_vm_descriptor(&bdesc, &bproof, bdpis).expect("burn descriptor verifies its OWN proof");
+    let t_on_burn = &bpis[..tdesc.public_input_count.min(bpis.len())];
+    assert!(
+        verify_vm_descriptor(&tdesc, &bproof, t_on_burn).is_err(),
+        "transfer descriptor verified a BURN proof — selector binding FAILED"
+    );
+    eprintln!("SELECTOR-BINDING: a burn (sel 46) proof is REJECTED by the transfer verifier. Bidirectional binding confirmed.");
 }

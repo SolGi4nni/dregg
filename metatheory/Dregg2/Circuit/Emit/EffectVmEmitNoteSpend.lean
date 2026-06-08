@@ -131,6 +131,7 @@ def noteSpendVmDescriptor : EffectVmDescriptor :=
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
   , constraints := noteSpendRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates 4
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
@@ -290,7 +291,7 @@ theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
     have hmem : c ∈ noteSpendVmDescriptor.constraints := by
       unfold noteSpendVmDescriptor
       simp only [List.mem_append]
-      exact Or.inl (Or.inl (Or.inl hc))
+      exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
     have := hcs c hmem
     unfold noteSpendRowGates gFieldPassAll at hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
@@ -304,7 +305,7 @@ theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
     have hmem : c ∈ noteSpendVmDescriptor.constraints := by
       unfold noteSpendVmDescriptor
       simp only [List.mem_append]
-      exact Or.inr hc
+      exact Or.inl (Or.inr hc)
     have hh := hcs c hmem
     unfold boundaryLastPins at hc
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -337,7 +338,7 @@ theorem noteSpendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : 
       have hmem : c ∈ noteSpendVmDescriptor.constraints := by
         unfold noteSpendVmDescriptor
         simp only [List.mem_append]
-        exact Or.inr hc
+        exact Or.inl (Or.inr hc)
       have hh := hcs c hmem
       unfold boundaryLastPins at hc
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -801,7 +802,7 @@ theorem badNullRow_rejected : ¬ (VmConstraint.gate gNullifierRootUpdate).holdsV
 
 /-! ## §13 — Axiom-hygiene pins. -/
 
-#guard noteSpendVmDescriptor.constraints.length == 13 + 14 + 4 + 3
+#guard noteSpendVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard noteSpendVmDescriptor.hashSites.length == 4
 #guard noteSpendVmDescriptor.traceWidth == 186
 

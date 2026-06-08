@@ -166,6 +166,7 @@ def burnVmDescriptor : EffectVmDescriptor :=
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
   , constraints := burnRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates selB.BURN
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
@@ -334,7 +335,7 @@ theorem burnDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hr
   have hgates : ∀ c ∈ burnRowGates, c.holdsVm env true true := by
     intro c hc; apply hcs
     unfold burnVmDescriptor; simp only [List.mem_append]
-    exact Or.inl (Or.inl (Or.inl hc))
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
   have hgates' := burnRowGates_flag_indep env true true hgates
   have hint := (burnVm_faithful env hrow).mp hgates'
   refine ⟨intent_to_cellSpec env pre post amt henc hint, ?_⟩
@@ -342,7 +343,7 @@ theorem burnDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hr
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
     have hmem : c ∈ burnVmDescriptor.constraints := by
-      unfold burnVmDescriptor; simp only [List.mem_append]; exact Or.inr hc
+      unfold burnVmDescriptor; simp only [List.mem_append]; exact Or.inl (Or.inr hc)
     have hh := hcs c hmem
     unfold boundaryLastPins at hc
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -542,7 +543,7 @@ theorem badBurnRow_rejected : ¬ (VmConstraint.gate gBalLoDebit).holdsVm badBurn
 
 /-! ## §9 — Axiom-hygiene tripwires. -/
 
-#guard burnVmDescriptor.constraints.length == 13 + 14 + 4 + 3  -- gates(5+8) + transitions + 4 + 3
+#guard burnVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1  -- gates(5+8) + transitions + 4 + 3 + selectorGate
 #guard burnVmDescriptor.hashSites.length == 4
 #guard burnVmDescriptor.traceWidth == 186
 

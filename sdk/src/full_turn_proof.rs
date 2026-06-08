@@ -272,7 +272,11 @@ fn descriptor_prover_enabled() -> bool {
 /// cutover-ready (descriptor ⟺ hand-AIR proven IDENTICAL on the real witness + anti-ghost):
 /// `Transfer` (1) plus the reconciled full-economic effects `NoteSpend` (4), `NoteCreate`
 /// (5), `BridgeMint` (40), `Burn` (46), plus the nonce-tick-reconciled frozen-frame effects
-/// `CreateSealPair` (28) and `BridgeFinalize` (41).
+/// `CreateSealPair` (28), `BridgeFinalize` (41), and the passthrough+tick+last-row-PI
+/// frozen-frame effects `SetPermissions` (26), `SetVerificationKey` (27), `ExerciseViaCapability`
+/// (34), `PipelinedSend` (36), `CellDestroy` (47), `CellSeal` (49), `Refusal` (52),
+/// `IncrementNonce` (53), and the cap/delegation passthrough effects `RefreshDelegation` (29),
+/// `RevokeDelegation` (30), `Introduce` (35) (whose cap-table moves are bound OFF-row).
 fn cutover_ready_selector(effects: &[VmEffectKind]) -> Option<usize> {
     if effects.len() != 1 {
         return None;
@@ -290,24 +294,76 @@ fn cutover_ready_selector(effects: &[VmEffectKind]) -> Option<usize> {
         // `bridge_finalize_and_seal_pair_graduated_into_cutover`.
         VmEffectKind::CreateSealPair { .. } => Some(sel::CREATE_SEAL_PAIR),
         VmEffectKind::BridgeFinalize { .. } => Some(sel::BRIDGE_FINALIZE),
+        // GRADUATED (nonce-tick + last-row PI pins, v2): the frozen-block lifecycle/flag effects
+        // `CellSeal` (49), `CellDestroy` (47), `Refusal` (52). Their Lean descriptors were
+        // reconciled onto the runtime Stage-3 passthrough batch (whole economic block frozen, nonce
+        // ticks via `gNonce`) AND grown the `boundaryLastPins` last-row balance PI binding, so the
+        // descriptor body is now STRUCTURALLY IDENTICAL to the validated `createsealpair-v2` and
+        // decides identically to the hand-AIR on the real witness (honest accept + forged-balance /
+        // forged-state-commit reject). Their per-cell full-semantics economic-freeze ⟺ executor
+        // agreement is `descriptor_agrees_with_executor_{seal,destroy,refusal}`; the lifecycle /
+        // audit-slot write is the proven OFF-ROW side-table leg (`*_offrow_unenforced`).
+        VmEffectKind::CellSeal { .. } => Some(sel::CELL_SEAL),
+        VmEffectKind::CellDestroy { .. } => Some(sel::CELL_DESTROY),
+        VmEffectKind::Refusal { .. } => Some(sel::REFUSAL),
+        // GRADUATED (already in the passthrough+tick+last-row-PI form): `SetVerificationKey` (27).
+        // Its Lean descriptor (`setVKDescriptor_full_sound` + `descriptor_agrees_with_executor_setVK`
+        // + `vk_write_is_out_of_row`) was already reconciled onto the runtime Stage-3 passthrough
+        // batch (whole economic block frozen, nonce ticks, last-row balance PI pins). The runtime
+        // trace anchors `vk_hash[0]` in `params[0]` and ticks the nonce (trace.rs `SetVerificationKey`
+        // arm), exactly what the descriptor decides — it was simply never wired here. The VK write is
+        // the proven OFF-ROW record-field leg.
+        VmEffectKind::SetVerificationKey { .. } => Some(sel::SET_VERIFICATION_KEY),
+        // GRADUATED (passthrough+tick+last-row PI pins, v2): `SetPermissions` (26), `ExerciseViaCapability`
+        // (34), `PipelinedSend` (36). Their Lean descriptors were reconciled onto the runtime Stage-3
+        // passthrough batch (whole economic block frozen, nonce ticks, last-row balance PI pins) — body
+        // STRUCTURALLY IDENTICAL to `createsealpair-v2` — but the committed JSON had not been re-emitted.
+        // The runtime trace for each anchors `hash[0]` in `params[0]` and ticks the nonce (trace.rs); the
+        // permissions/VK/exercise/send hash write is the proven OFF-ROW record-field / fold leg.
+        VmEffectKind::SetPermissions { .. } => Some(sel::SET_PERMISSIONS),
+        VmEffectKind::ExerciseViaCapability { .. } => Some(sel::EXERCISE_VIA_CAPABILITY),
+        VmEffectKind::PipelinedSend { .. } => Some(sel::PIPELINED_SEND),
+        // GRADUATED (passthrough+tick+last-row PI pins, v2): the explicit nonce-bump `IncrementNonce`
+        // (53). Its Lean descriptor ticks the nonce via `gNonce` with the rest of the block frozen and
+        // the last-row balance PI pins; body STRUCTURALLY IDENTICAL to `createsealpair-v2`. The runtime
+        // trace just does `new_state.nonce += 1` (trace.rs `IncrementNonce` arm).
+        VmEffectKind::IncrementNonce => Some(sel::INCREMENT_NONCE),
+        // GRADUATED (passthrough+tick+last-row PI pins, v2): the cap/delegation passthrough effects
+        // `RefreshDelegation` (29), `RevokeDelegation` (30), `Introduce` (35). The runtime hand-AIR runs
+        // ALL THREE as Stage-3 STATE-PASSTHROUGH rows (`air.rs:983-1018`): the whole economic block —
+        // including `cap_root` — is FROZEN, and the GLOBAL nonce gate ticks. RevokeDelegation/Introduce
+        // were PRE-v2 pointed at the `attenuateA` cap-root-MOVE descriptor (wrong: the runtime FREEZES
+        // `cap_root`; the cap-table move rides `effects_hash` OFF-row); their v2 Lean modules now emit the
+        // runtime frozen-frame + nonce-TICK directly with `boundaryLastPins`. RefreshDelegation already
+        // ticked but its committed JSON lacked the last-row balance PI (anti-ghost WEAK) — v2 added it.
+        // The cap-table edge removal / grant / deleg-snapshot are the proven OFF-ROW connectors
+        // (`unify_revoke`/`unify_introduce`/`unify_refresh_via_full_sound`).
+        VmEffectKind::RefreshDelegation => Some(sel::REFRESH_DELEGATION),
+        VmEffectKind::RevokeDelegation { .. } => Some(sel::REVOKE_DELEGATION),
+        VmEffectKind::Introduce { .. } => Some(sel::INTRODUCE),
         _ => None,
     }
 }
 
 /// All selectors a cutover-ready descriptor proof may bind, for the verify path (which does
-/// not carry the effect kind). The verifier tries each in turn and accepts on the first that
-/// verifies the proof.
+/// not carry the effect kind). The verifier reconstructs each cutover descriptor AIR and checks
+/// the proof against it; a sound proof verifies under EXACTLY ONE — its OWN effect selector.
 ///
-/// SOUNDNESS NOTE (empirically observed; `circuit/tests/effect_vm_descriptor_cutover_harness.rs`
-/// `repro`-class probes): these descriptors share the SAME extended-AIR width / FRI shape, and a
-/// proof produced under one is NOT guaranteed to be rejected by the others' verifiers — a
-/// frozen-frame / economic proof can verify under several of these AIRs. That does NOT break the
-/// cutover's load-bearing binding: the post-state commitment is pinned by the GROUP-4 state-commit
-/// hash sites (shared across these descriptors) AND re-checked directly against the caller's
-/// `expected_new_commit` in `verify_full_turn` (the OLD_COMMIT/NEW_COMMIT PI equality), so a proof
-/// accepted "under the wrong selector" still attests the SAME committed post-state. The cross-AIR
-/// distinctness needed for full descriptor-identity binding is the open per-effect PI-binding work
-/// (see the harness anti-ghost classification); it is not relied upon here.
+/// SELECTOR BINDING (closed; was the prior SOUNDNESS NOTE). Every cutover descriptor now carries a
+/// SELECTOR-BINDING GATE, emitted verified-by-construction from the Lean
+/// `Dregg2.Circuit.Emit.EffectVmEmit.selectorGate s` (proved in `selectorGate_holds_iff` /
+/// `selectorGate_rejects_wrong_selector`): the per-row body `(1 - sel[NOOP]) · (1 - sel[s])`
+/// vanishes on NoOp pad rows AND forces the descriptor's OWN selector column `sel[s] = 1` on the
+/// single active row. Because the runtime trace sets EXACTLY ONE selector per row
+/// (`effect_vm/trace.rs`), a proof whose committed trace carries effect `s'` (`sel[s'] = 1`,
+/// `sel[s] = 0`) VIOLATES descriptor-`s`'s selector gate on its active row, so the audited p3
+/// verifier for descriptor `s` REJECTS it. The cross-AIR replay the prior note flagged (a
+/// frozen-frame / economic proof verifying under several AIRs) is therefore CLOSED: descriptor-`s`
+/// verifies a proof iff that proof's committed trace carries selector `s`. The harness
+/// `descriptor_proof_binds_to_its_selector` validates this on real Plonky3 (a `transfer` proof is
+/// REJECTED by every OTHER cutover descriptor's verifier). The post-state-commitment binding (the
+/// GROUP-4 hash sites + the `expected_new_commit` PI equality in `verify_full_turn`) is unchanged
+/// and remains the second, independent tooth.
 const CUTOVER_READY_SELECTORS: &[usize] = &[
     sel::TRANSFER,
     sel::NOTE_SPEND,
@@ -316,6 +372,17 @@ const CUTOVER_READY_SELECTORS: &[usize] = &[
     sel::BURN,
     sel::CREATE_SEAL_PAIR,
     sel::BRIDGE_FINALIZE,
+    sel::CELL_SEAL,
+    sel::CELL_DESTROY,
+    sel::REFUSAL,
+    sel::SET_VERIFICATION_KEY,
+    sel::SET_PERMISSIONS,
+    sel::EXERCISE_VIA_CAPABILITY,
+    sel::PIPELINED_SEND,
+    sel::INCREMENT_NONCE,
+    sel::REFRESH_DELEGATION,
+    sel::REVOKE_DELEGATION,
+    sel::INTRODUCE,
 ];
 
 /// Prove the Effect-VM state transition, routing through the Lean descriptor interpreter
@@ -362,17 +429,40 @@ fn verify_effect_vm_proof_with_cutover(
     public_inputs: &[BabyBear],
 ) -> Result<(), String> {
     if descriptor_prover_enabled() {
+        // SELECTOR-BOUND verify: reconstruct each cutover descriptor AIR and check the proof
+        // against it. Each descriptor now carries the Lean `selectorGate s` tooth, so a sound
+        // descriptor proof verifies under EXACTLY ONE — its own effect selector. We record WHICH
+        // selectors accept: zero ⇒ not a descriptor proof (fall back to the hand-AIR); exactly one
+        // ⇒ the proof is BOUND to that effect selector (accept); more than one ⇒ the selector
+        // binding is ambiguous (must not happen with the gate in place) ⇒ REJECT rather than accept
+        // "under the wrong selector".
+        let mut bound: Vec<usize> = Vec::new();
         for &s in CUTOVER_READY_SELECTORS {
             if let Some(json) = descriptor_for_selector(s) {
                 if let Ok(desc) = parse_vm_descriptor(json) {
                     if public_inputs.len() >= desc.public_input_count {
                         let dpis = &public_inputs[..desc.public_input_count];
                         if verify_vm_descriptor(&desc, proof, dpis).is_ok() {
-                            return Ok(());
+                            bound.push(s);
                         }
                     }
                 }
             }
+        }
+        match bound.as_slice() {
+            // Bound to exactly its own effect selector — the selector-binding tooth held.
+            [_only] => return Ok(()),
+            // The selector binding is ambiguous: the gate should make at most one descriptor
+            // accept. Reject rather than launder a wrong-selector acceptance.
+            multi if multi.len() > 1 => {
+                return Err(format!(
+                    "effect-vm descriptor proof verified under MULTIPLE cutover selectors {multi:?} \
+                     — selector binding ambiguous, rejecting"
+                ));
+            }
+            // Zero descriptor verifiers accepted: this is a hand-AIR proof (or a non-cutover
+            // shape). Fall through to the hand-AIR verifier below.
+            _ => {}
         }
     }
     verify_effect_vm_p3(proof, public_inputs).map_err(|e| format!("{e}"))

@@ -129,6 +129,7 @@ def noteCreateVmDescriptor : EffectVmDescriptor :=
   , traceWidth := EFFECT_VM_WIDTH
   , piCount := 34
   , constraints := noteCreateRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates 5
   , hashSites := transferHashSites
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
@@ -288,7 +289,7 @@ theorem noteCreateDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
     have hmem : c ∈ noteCreateVmDescriptor.constraints := by
       unfold noteCreateVmDescriptor
       simp only [List.mem_append]
-      exact Or.inl (Or.inl (Or.inl hc))
+      exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
     have := hcs c hmem
     unfold noteCreateRowGates gFieldPassAll at hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
@@ -302,7 +303,7 @@ theorem noteCreateDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
     have hmem : c ∈ noteCreateVmDescriptor.constraints := by
       unfold noteCreateVmDescriptor
       simp only [List.mem_append]
-      exact Or.inr hc
+      exact Or.inl (Or.inr hc)
     have hh := hcs c hmem
     unfold boundaryLastPins at hc
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -335,7 +336,7 @@ theorem noteCreateDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR :
       have hmem : c ∈ noteCreateVmDescriptor.constraints := by
         unfold noteCreateVmDescriptor
         simp only [List.mem_append]
-        exact Or.inr hc
+        exact Or.inl (Or.inr hc)
       have hh := hcs c hmem
       unfold boundaryLastPins at hc
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
@@ -788,7 +789,7 @@ theorem badRootRow_rejected : ¬ (VmConstraint.gate gCommitRootUpdate).holdsVm b
 
 /-! ## §13 — Axiom-hygiene pins. -/
 
-#guard noteCreateVmDescriptor.constraints.length == 13 + 14 + 4 + 3
+#guard noteCreateVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard noteCreateVmDescriptor.hashSites.length == 4
 #guard noteCreateVmDescriptor.traceWidth == 186
 

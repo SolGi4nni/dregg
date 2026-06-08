@@ -20,20 +20,24 @@
 //!
 //! ## Coverage (HONEST)
 //!
-//! 45 UNIQUE descriptors are registered (the Lean emit produces 49 entries; the
-//! `attenuateA` cap-root-move object is SHARED by 5 emit entries —
-//! attenuate / delegate / delegateAtten / introduce / revoke — collapsing to one
-//! JSON, so 49 → 45 distinct bodies. Of those 5, four bind a Rust selector
-//! (ATTENUATE_CAPABILITY=48, REVOKE_DELEGATION=30, INTRODUCE=35, GRANT_CAP=3 via
-//! delegate); delegateAtten has no distinct selector. The 45th is the RECORD-LAYER
-//! STAGE 2 `record` descriptor — transfer + `fields_root`-absorbing GROUP-4, name-only.).
+//! 47 UNIQUE descriptors are registered. The `attenuateA` cap-root-move object is
+//! now SHARED by only 3 emit entries — attenuate / delegate / delegateAtten —
+//! since the CUTOVER NONCE-TICK RECONCILE gave `revokeDelegation` (sel 30) and
+//! `introduce` (sel 35) their OWN frozen-frame + nonce-TICK descriptors
+//! (`revokeDelegation-v2` / `introduce-v2`): the runtime hand-AIR runs them as
+//! state-PASSTHROUGH rows (it FREEZES `cap_root`; the cap-table move rides
+//! `effects_hash` OFF-row), so the prior `attenuateA` cap-MOVE descriptor was wrong
+//! for them (it "passed" only by the cap_root=param2=0 fixture accident). The
+//! cap-table semantics are bound OFF-row via each module's universe-A connector.
+//! Of the `attenuateA` users, two bind a Rust selector (ATTENUATE_CAPABILITY=48,
+//! GRANT_CAP=3 via delegate); delegateAtten has no distinct selector.
 //!
 //!   * `SELECTOR_DESCRIPTORS`: 44 of the 54 EffectVM selectors carry a descriptor
 //!     (the 10 others — NOOP, SET_FIELD, the obligation family, CUSTOM, SLASH,
 //!     REVOKE_CAPABILITY, the committed-escrow release/refund, CELL_UNSEAL — have
-//!     no emit module yet). Four selectors (3/30/35/48 cap moves) point at the
-//!     shared `attenuateA` JSON, so the 44 selector rows reference 41 distinct
-//!     descriptor names.
+//!     no emit module yet). Two selectors (3/48 cap moves) point at the shared
+//!     `attenuateA` JSON, so the 44 selector rows reference 43 distinct descriptor
+//!     names.
 //!
 //!   * `NAME_ONLY_DESCRIPTORS`: 3 verified descriptors (`mint`, `swissDropA`,
 //!     `swissHandoffA`) whose effect has NO dedicated Rust selector in the current
@@ -77,17 +81,22 @@ pub const DREGG_EFFECTVM_BRIDGECANCEL_V1_FP: &str = "acfb87fed619fef91f7f0cc3cc0
 // `EffectVmEmitBridgeFinalize` ticks the runtime nonce (`gNonce`). The prior JSON body froze the
 // nonce (made the honest trace UNSAT). Name unchanged (`-v1`); body + fingerprint updated.
 pub const DREGG_EFFECTVM_BRIDGEFINALIZE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-bridgefinalize-v1.json");
-pub const DREGG_EFFECTVM_BRIDGEFINALIZE_V1_FP: &str = "28dbdb4b3198918a2d69a1f71bb56b9782b4bbf961d994b0dbd46ab4c52f64d6";
+pub const DREGG_EFFECTVM_BRIDGEFINALIZE_V1_FP: &str = "646486490a468ef57d77146591e2ed6d88f2a557b81636fb623627e82b599306";
 pub const DREGG_EFFECTVM_BRIDGELOCK_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-bridgelock-v1.json");
 pub const DREGG_EFFECTVM_BRIDGELOCK_V1_FP: &str = "16d0afc4afd206d4c9fd91c1f4d4b84ef688518b5bdee851460f6f1736432b74";
 pub const DREGG_EFFECTVM_BRIDGEMINT_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-bridgemint-v1.json");
-pub const DREGG_EFFECTVM_BRIDGEMINT_V1_FP: &str = "c49c554468f407514da267a424a50a49eb364f865890a0a914e84ffc2cb3da98";
+pub const DREGG_EFFECTVM_BRIDGEMINT_V1_FP: &str = "fce2cb4ce9685f8b322a075ded2896d5c39378242d2e8da0e7f8650d0cf35872";
 pub const DREGG_EFFECTVM_BURN_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-burn-v1.json");
-pub const DREGG_EFFECTVM_BURN_V1_FP: &str = "751b85ca151cd012a47a0fdae5724a73bc624de8f8264f5a91499afdd063ef73";
-pub const DREGG_EFFECTVM_CELLDESTROY_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-celldestroy-v1.json");
-pub const DREGG_EFFECTVM_CELLDESTROY_V1_FP: &str = "f95bd1662312d140f407b57b84594711424564a0196b912bab5b5f42c67322e5";
-pub const DREGG_EFFECTVM_CELLSEAL_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-cellseal-v1.json");
-pub const DREGG_EFFECTVM_CELLSEAL_V1_FP: &str = "394bcc2954fad884bf7d0bd2b181ba1e0eedf2ab94213dcf05f3b5cf34fa24f3";
+pub const DREGG_EFFECTVM_BURN_V1_FP: &str = "3c49af13cae8285f136b8cdf06632a76bd2f5c0c3a156eba3275254d3fbd5d50";
+// GRADUATED (nonce-tick reconcile, v2): frozen-balance + ticked-nonce effect; the Lean descriptor
+// now ticks the runtime nonce (`gNonce`) AND carries the full last-row balance PI binding
+// (`boundaryLastPins`), so the descriptor decides IDENTICALLY to the hand-AIR on the real witness
+// (honest accept + forged-balance/forged-state-commit reject). Body STRUCTURALLY IDENTICAL to the
+// validated `createsealpair-v2` (only the `name` differs). Name bumped `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_CELLDESTROY_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-celldestroy-v2.json");
+pub const DREGG_EFFECTVM_CELLDESTROY_V2_FP: &str = "9630d7317d3f21c659e6b8566f97e63ef2c3b71869d99b7bddb2f85431558f65";
+pub const DREGG_EFFECTVM_CELLSEAL_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-cellseal-v2.json");
+pub const DREGG_EFFECTVM_CELLSEAL_V2_FP: &str = "a3809a09772bf80225b4f35050e9dc861c1d53b0db3f13b06fb6cd7d622e9b91";
 pub const DREGG_EFFECTVM_CREATECELL_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-createcell-v1.json");
 pub const DREGG_EFFECTVM_CREATECELL_V1_FP: &str = "6748d54ecad55f8190ff064c97766845297d9dfe7a2244089fe69a7a2a7fcfa3";
 pub const DREGG_EFFECTVM_CREATECELLFROMFACTORY_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-createcellfromfactory-v1.json");
@@ -101,27 +110,37 @@ pub const DREGG_EFFECTVM_CREATEESCROW_V1_FP: &str = "41198cc4252aa87c0a104722b5a
 // `-v1` JSON froze the nonce (the `exec_nonce_is_frozen_not_ticked` cutover bug) and made the
 // honest trace UNSAT under the descriptor.
 pub const DREGG_EFFECTVM_CREATESEALPAIR_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-createsealpair-v2.json");
-pub const DREGG_EFFECTVM_CREATESEALPAIR_V2_FP: &str = "9bcd6405fc00862e6a9ac881fd2c82df2a28747aa3c95311e86f8aea1d0f2e28";
+pub const DREGG_EFFECTVM_CREATESEALPAIR_V2_FP: &str = "641929a552046fd6ea2455b10ea4c4e0d11d7709a237252dfcd9187bf119f1b7";
 pub const DREGG_EFFECTVM_DROPREFA_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-dropRefA-v2.json");
 pub const DREGG_EFFECTVM_DROPREFA_V2_FP: &str = "3daa5525aa9a4accef64e8cdbec2a13ed85cb7f7fe2abe9468acb19ce64b8c32";
 pub const DREGG_EFFECTVM_EMITEVENT_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-emitEvent-v1.json");
 pub const DREGG_EFFECTVM_EMITEVENT_V1_FP: &str = "1ed2b76564fc123f7968cfb75d8a89f85485585cabecd389ce4948dd2def6480";
 pub const DREGG_EFFECTVM_ENLIVENREFA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-enlivenRefA-v1.json");
 pub const DREGG_EFFECTVM_ENLIVENREFA_V1_FP: &str = "61920ca6cce36632eddffcf03f16c5a82cd1dd6c62e17bcef38f6b21854da6cc";
-pub const DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-exerciseA-holdlayer-v1.json");
-pub const DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_FP: &str = "8827b8c614a3441641306518c9d7931553fa3271cfc2e237b45c9f42656f44c9";
-pub const DREGG_EFFECTVM_INCREMENTNONCE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-incrementNonce-v1.json");
-pub const DREGG_EFFECTVM_INCREMENTNONCE_V1_FP: &str = "ac9be8f6cb9399b8055e628681ac0807eabef09f3f83be639d48d879b95c024c";
+// GRADUATED (nonce-tick + last-row PI pins, v2): the Lean emit module was reconciled onto the runtime
+// Stage-3 passthrough batch (whole economic block frozen, nonce ticks via `gNonce`) AND grew the
+// `boundaryLastPins` last-row balance PI binding. Body STRUCTURALLY IDENTICAL to the validated
+// `createsealpair-v2`; the JSON had not been re-emitted. Name `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-exerciseA-holdlayer-v2.json");
+pub const DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_FP: &str = "0a01f957422c4ef75200ac138a6ccf3ac31ed6574adce88f377935e7a6f6a367";
+// GRADUATED (nonce-tick + last-row PI pins, v2): the explicit nonce-only effect. The Lean module was
+// reconciled to the runtime TICK (`new_state.nonce += 1`) via `gNonce` and grew `boundaryLastPins`,
+// dropping the prior param-bound nonce gate; body STRUCTURALLY IDENTICAL to `createsealpair-v2`. The
+// committed JSON was the stale param-bound v1. Name `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_INCREMENTNONCE_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-incrementNonce-v2.json");
+pub const DREGG_EFFECTVM_INCREMENTNONCE_V2_FP: &str = "85ca061301a6a634367313ec2f6e15ae52dcf2ebba24b8b7d8613fccb693190b";
 pub const DREGG_EFFECTVM_MAKESOVEREIGN_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-makesovereign-v1.json");
 pub const DREGG_EFFECTVM_MAKESOVEREIGN_V1_FP: &str = "9175f5d2a84f5d689ad8cfe70bf95f1fb881ea10fe25c00a83405a823b13f68a";
 pub const DREGG_EFFECTVM_MINT_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-mint-v1.json");
 pub const DREGG_EFFECTVM_MINT_V1_FP: &str = "afbf531ac2c17447f90764960691587f86b0b18ecd06d5425ed8e6ef1cfd2935";
 pub const DREGG_EFFECTVM_NOTECREATE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-notecreate-v1.json");
-pub const DREGG_EFFECTVM_NOTECREATE_V1_FP: &str = "41585c14f140bfb95d5ff161110f6272457539aeb65e9fb445ada905e7e1d86b";
+pub const DREGG_EFFECTVM_NOTECREATE_V1_FP: &str = "19661ef5e692151e3a29515f85decbc6219f8a04812993294ba5cbb353acef66";
 pub const DREGG_EFFECTVM_NOTESPEND_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-notespend-v1.json");
-pub const DREGG_EFFECTVM_NOTESPEND_V1_FP: &str = "2daf34a3629dff25cb7c0b3666ed597a57c6e79580710b340ee0413155662192";
-pub const DREGG_EFFECTVM_PIPELINEDSENDA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-pipelinedSendA-v1.json");
-pub const DREGG_EFFECTVM_PIPELINEDSENDA_V1_FP: &str = "4aa4bf366a3d79e0bff91a9e11afc8327fd2cf0327b7a1e897fad5f69fb077b1";
+pub const DREGG_EFFECTVM_NOTESPEND_V1_FP: &str = "68f057ead33d6a66fe778eb8c2659e5d98d81ea0259cbb5a2c755caf24aa0cdb";
+// GRADUATED (nonce-tick + last-row PI pins, v2): see exercise note. Body STRUCTURALLY IDENTICAL to
+// `createsealpair-v2`. Name `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_PIPELINEDSENDA_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-pipelinedSendA-v2.json");
+pub const DREGG_EFFECTVM_PIPELINEDSENDA_V2_FP: &str = "56083a4facb4ff4f08f8eec97d369e0a0f24bb178414f45b168b70bd2a6817af";
 pub const DREGG_EFFECTVM_QUEUEALLOCATE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-queueallocate-v1.json");
 pub const DREGG_EFFECTVM_QUEUEALLOCATE_V1_FP: &str = "f02e678678ff4de0390b974badf5028f1406dfc0656edbe23d67b55a86696fed";
 pub const DREGG_EFFECTVM_QUEUEATOMICTX_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-queueatomictx-v1.json");
@@ -136,20 +155,39 @@ pub const DREGG_EFFECTVM_QUEUERESIZE_V1_JSON: &str = include_str!("../descriptor
 pub const DREGG_EFFECTVM_QUEUERESIZE_V1_FP: &str = "706bfc6e1050fddf124e7acbedb46d29cf9cea1daa54d167bd8923fba661a6a2";
 pub const DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-receiptArchiveA-v1.json");
 pub const DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_FP: &str = "f79fdc4aa4bda0a1801c0808ad83391fa320c8aa5497bfac11e425050eaaf1d5";
-pub const DREGG_EFFECTVM_REFRESHDELEGATION_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-refreshDelegation-v1.json");
-pub const DREGG_EFFECTVM_REFRESHDELEGATION_V1_FP: &str = "27900800c094428e50714eca5a9e22780eae6f340a70b71346c5d57f859bde2b";
+// GRADUATED (nonce-tick + last-row PI pins, v2): refreshDelegation already ticked the runtime nonce
+// (`gNonce`) but the committed JSON carried only `boundaryFirstPins` (anti-ghost WEAK: the forged
+// last-row balance tooth did not bite). The Lean module grew `boundaryLastPins` + the 2 balance ranges.
+// Name `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_REFRESHDELEGATION_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-refreshDelegation-v2.json");
+pub const DREGG_EFFECTVM_REFRESHDELEGATION_V2_FP: &str = "ad6b56c715fd9d4dd269ea5739281a60011aa4da967af865cd147f06a8c08be5";
+// GRADUATED (nonce-tick + last-row PI pins, v2): revokeDelegation was PRE-v2 pointed at the
+// `attenuateA` cap-root-MOVE descriptor, which the runtime hand-AIR does NOT enforce on a revoke row
+// (it FREEZES `cap_root`); it "passed" only by fixture accident (cap_root = param2 = 0). The v2 Lean
+// module emits the runtime frozen-frame + nonce-TICK directly; the cap-table edge removal is bound
+// OFF-row via the universe-A connector. Body STRUCTURALLY IDENTICAL to `createsealpair-v2`.
+pub const DREGG_EFFECTVM_REVOKEDELEGATION_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-revokeDelegation-v2.json");
+pub const DREGG_EFFECTVM_REVOKEDELEGATION_V2_FP: &str = "854fd94989861477bba0c811fe895ade347a22f88ce66c7ae074a173f223343a";
+// GRADUATED (nonce-tick + last-row PI pins, v2): introduce, same reconcile as revokeDelegation (was
+// PRE-v2 pointed at `attenuateA`). The cap-table grant is bound OFF-row via the universe-A connector.
+pub const DREGG_EFFECTVM_INTRODUCE_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-introduce-v2.json");
+pub const DREGG_EFFECTVM_INTRODUCE_V2_FP: &str = "e1050c3cd4b2456190ba2ebf2868771de31d143c3e9a4da8786a43e6df94d89f";
 pub const DREGG_EFFECTVM_REFUNDESCROW_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-refundescrow-v1.json");
 pub const DREGG_EFFECTVM_REFUNDESCROW_V1_FP: &str = "370d7c3874235c88b7162d1386fa36067a7516c3ae95b31d34fa7aeec31f4162";
-pub const DREGG_EFFECTVM_REFUSAL_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-refusal-v1.json");
-pub const DREGG_EFFECTVM_REFUSAL_V1_FP: &str = "f341dd5e974fad51c9863e1046096d435fd01986d265dd7f710c2cd2c2f282e0";
+// GRADUATED (nonce-tick reconcile, v2): see celldestroy/cellseal note. Body STRUCTURALLY IDENTICAL
+// to `createsealpair-v2`. Name bumped `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_REFUSAL_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-refusal-v2.json");
+pub const DREGG_EFFECTVM_REFUSAL_V2_FP: &str = "519d878769bf55262470e89d55b1a846e4db0c015b2e8bbbdcd1796c0fa699c8";
 pub const DREGG_EFFECTVM_RELEASEESCROW_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-releaseescrow-v1.json");
 pub const DREGG_EFFECTVM_RELEASEESCROW_V1_FP: &str = "6f0795ddbcafd92c396a5e577f9734eb74aff5f72be631375a84869595177bc8";
 pub const DREGG_EFFECTVM_SEAL_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-seal-v1.json");
 pub const DREGG_EFFECTVM_SEAL_V1_FP: &str = "6f1ffd64fa01eae2db238e525663ceb65dbd2293507d5af1cc63f6fc2911da81";
-pub const DREGG_EFFECTVM_SETPERMISSIONSA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-setPermissionsA-v1.json");
-pub const DREGG_EFFECTVM_SETPERMISSIONSA_V1_FP: &str = "ab3072cedfec483c3a3e458ceaa81c1b9f3e03344d357c3de6e7f8e761c2eb9a";
-pub const DREGG_EFFECTVM_SETVK_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-setVK-v1.json");
-pub const DREGG_EFFECTVM_SETVK_V1_FP: &str = "239fe90207670f2de4a5b2b1abdccd1680cd73cc3caad872d75a242715f726ca";
+// GRADUATED (nonce-tick + last-row PI pins, v2): see exercise note. Body STRUCTURALLY IDENTICAL to
+// `createsealpair-v2`. Name `-v1`→`-v2`; FP updated.
+pub const DREGG_EFFECTVM_SETPERMISSIONSA_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-setPermissionsA-v2.json");
+pub const DREGG_EFFECTVM_SETPERMISSIONSA_V2_FP: &str = "f988c68ab91e611e5c5d8190396c85dfdcdf9c14703172fb3218dc140571a4e9";
+pub const DREGG_EFFECTVM_SETVK_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-setVK-v2.json");
+pub const DREGG_EFFECTVM_SETVK_V2_FP: &str = "baf0e80f132bfa9ed8e0a6f210655052472df520d8d76c23873ec1561d660628";
 pub const DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_JSON: &str = include_str!("../descriptors/dregg-effectvm-spawnA-v2quint-childcell.json");
 pub const DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_FP: &str = "81b11945d4c56422bcfc06e2eda41d5c88b13f54535d72bbd5799d9506445a65";
 pub const DREGG_EFFECTVM_SWISSDROPA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-swissDropA-v1.json");
@@ -159,7 +197,7 @@ pub const DREGG_EFFECTVM_SWISSEXPORTA_V1_FP: &str = "5fe467e4bc9f4b33536beced2a1
 pub const DREGG_EFFECTVM_SWISSHANDOFFA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-swissHandoffA-v1.json");
 pub const DREGG_EFFECTVM_SWISSHANDOFFA_V1_FP: &str = "6703274e8ef64e24afbf67093175472cb8bc1266ee6f5a7678848fecc4e45b34";
 pub const DREGG_EFFECTVM_TRANSFER_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-transfer-v1.json");
-pub const DREGG_EFFECTVM_TRANSFER_V1_FP: &str = "5825427a34cf86919694a630df94c01e9f98cb2d11531f1d98a7e339394df700";
+pub const DREGG_EFFECTVM_TRANSFER_V1_FP: &str = "34ce263778bbbd209abe2e8a44af4ff492e2570f5aab55362c5fd219184b66df";
 // RECORD-LAYER STAGE 2 (`_RECORD-LAYER-UPGRADE.md` §B.5/§E Stage 2): the transfer descriptor with
 // GROUP-4 site 3's previously-spare 4th input ({"t":"zero"}) replaced by the `fields_root` carrier
 // cell (col 89 = state_after.FIELDS_ROOT = the RESERVED slot), absorbing the user-field-map root into
@@ -194,17 +232,17 @@ pub const SELECTOR_DESCRIPTORS: &[(usize, &str, &str, &str)] = &[
     (22, "dregg-effectvm-queueatomictx-v1", DREGG_EFFECTVM_QUEUEATOMICTX_V1_JSON, DREGG_EFFECTVM_QUEUEATOMICTX_V1_FP), // ATOMIC_QUEUE_TX: queueAtomicVmDescriptor
     (23, "dregg-effectvm-queuepipelinestep-v1", DREGG_EFFECTVM_QUEUEPIPELINESTEP_V1_JSON, DREGG_EFFECTVM_QUEUEPIPELINESTEP_V1_FP), // PIPELINE_STEP: queuePipelineVmDescriptor
     (25, "dregg-effectvm-emitEvent-v1", DREGG_EFFECTVM_EMITEVENT_V1_JSON, DREGG_EFFECTVM_EMITEVENT_V1_FP), // EMIT_EVENT: emitEventVmDescriptor
-    (26, "dregg-effectvm-setPermissionsA-v1", DREGG_EFFECTVM_SETPERMISSIONSA_V1_JSON, DREGG_EFFECTVM_SETPERMISSIONSA_V1_FP), // SET_PERMISSIONS: setPermsVmDescriptor
-    (27, "dregg-effectvm-setVK-v1", DREGG_EFFECTVM_SETVK_V1_JSON, DREGG_EFFECTVM_SETVK_V1_FP), // SET_VERIFICATION_KEY: setVKVmDescriptor
+    (26, "dregg-effectvm-setPermissionsA-v2", DREGG_EFFECTVM_SETPERMISSIONSA_V2_JSON, DREGG_EFFECTVM_SETPERMISSIONSA_V2_FP), // SET_PERMISSIONS: setPermsVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
+    (27, "dregg-effectvm-setVK-v2", DREGG_EFFECTVM_SETVK_V2_JSON, DREGG_EFFECTVM_SETVK_V2_FP), // SET_VERIFICATION_KEY: setVKVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
     (28, "dregg-effectvm-createsealpair-v2", DREGG_EFFECTVM_CREATESEALPAIR_V2_JSON, DREGG_EFFECTVM_CREATESEALPAIR_V2_FP), // CREATE_SEAL_PAIR: createSealPairVmDescriptor (GRADUATED: nonce-tick)
-    (29, "dregg-effectvm-refreshDelegation-v1", DREGG_EFFECTVM_REFRESHDELEGATION_V1_JSON, DREGG_EFFECTVM_REFRESHDELEGATION_V1_FP), // REFRESH_DELEGATION: refreshVmDescriptor
-    (30, "dregg-effectvm-attenuateA-v1", DREGG_EFFECTVM_ATTENUATEA_V1_JSON, DREGG_EFFECTVM_ATTENUATEA_V1_FP), // REVOKE_DELEGATION: revokeVmDescriptor (cap-root move)
+    (29, "dregg-effectvm-refreshDelegation-v2", DREGG_EFFECTVM_REFRESHDELEGATION_V2_JSON, DREGG_EFFECTVM_REFRESHDELEGATION_V2_FP), // REFRESH_DELEGATION: refreshVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
+    (30, "dregg-effectvm-revokeDelegation-v2", DREGG_EFFECTVM_REVOKEDELEGATION_V2_JSON, DREGG_EFFECTVM_REVOKEDELEGATION_V2_FP), // REVOKE_DELEGATION: revokeVmDescriptor (GRADUATED: frozen-frame + nonce-tick; cap-table move OFF-row)
     (31, "dregg-effectvm-createcell-v1", DREGG_EFFECTVM_CREATECELL_V1_JSON, DREGG_EFFECTVM_CREATECELL_V1_FP), // CREATE_CELL: createCellVmDescriptor
     (32, "dregg-effectvm-spawnA-v2quint-childcell", DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_JSON, DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_FP), // SPAWN_WITH_DELEGATION: spawnVmDescriptor
     (33, "dregg-effectvm-bridgecancel-v1", DREGG_EFFECTVM_BRIDGECANCEL_V1_JSON, DREGG_EFFECTVM_BRIDGECANCEL_V1_FP), // BRIDGE_CANCEL: bridgeCancelVmDescriptor
-    (34, "dregg-effectvm-exerciseA-holdlayer-v1", DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_JSON, DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_FP), // EXERCISE_VIA_CAPABILITY: exerciseVmDescriptor
-    (35, "dregg-effectvm-attenuateA-v1", DREGG_EFFECTVM_ATTENUATEA_V1_JSON, DREGG_EFFECTVM_ATTENUATEA_V1_FP), // INTRODUCE: introduceVmDescriptor (cap-root move)
-    (36, "dregg-effectvm-pipelinedSendA-v1", DREGG_EFFECTVM_PIPELINEDSENDA_V1_JSON, DREGG_EFFECTVM_PIPELINEDSENDA_V1_FP), // PIPELINED_SEND: pipelinedSendVmDescriptor
+    (34, "dregg-effectvm-exerciseA-holdlayer-v2", DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_JSON, DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_FP), // EXERCISE_VIA_CAPABILITY: exerciseVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
+    (35, "dregg-effectvm-introduce-v2", DREGG_EFFECTVM_INTRODUCE_V2_JSON, DREGG_EFFECTVM_INTRODUCE_V2_FP), // INTRODUCE: introduceVmDescriptor (GRADUATED: frozen-frame + nonce-tick; cap-table grant OFF-row)
+    (36, "dregg-effectvm-pipelinedSendA-v2", DREGG_EFFECTVM_PIPELINEDSENDA_V2_JSON, DREGG_EFFECTVM_PIPELINEDSENDA_V2_FP), // PIPELINED_SEND: pipelinedSendVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
     (37, "dregg-effectvm-createescrow-v1", DREGG_EFFECTVM_CREATEESCROW_V1_JSON, DREGG_EFFECTVM_CREATEESCROW_V1_FP), // CREATE_ESCROW: createEscrowVmDescriptor
     (38, "dregg-effectvm-bridgelock-v1", DREGG_EFFECTVM_BRIDGELOCK_V1_JSON, DREGG_EFFECTVM_BRIDGELOCK_V1_FP), // BRIDGE_LOCK: bridgeLockVmDescriptor
     (39, "dregg-effectvm-createcommittedescrow-v1", DREGG_EFFECTVM_CREATECOMMITTEDESCROW_V1_JSON, DREGG_EFFECTVM_CREATECOMMITTEDESCROW_V1_FP), // CREATE_COMMITTED_ESCROW: escrowCreateVmDescriptor
@@ -213,12 +251,12 @@ pub const SELECTOR_DESCRIPTORS: &[(usize, &str, &str, &str)] = &[
     (42, "dregg-effectvm-releaseescrow-v1", DREGG_EFFECTVM_RELEASEESCROW_V1_JSON, DREGG_EFFECTVM_RELEASEESCROW_V1_FP), // RELEASE_ESCROW: releaseEscrowVmDescriptor
     (43, "dregg-effectvm-refundescrow-v1", DREGG_EFFECTVM_REFUNDESCROW_V1_JSON, DREGG_EFFECTVM_REFUNDESCROW_V1_FP), // REFUND_ESCROW: refundEscrowVmDescriptor
     (46, "dregg-effectvm-burn-v1", DREGG_EFFECTVM_BURN_V1_JSON, DREGG_EFFECTVM_BURN_V1_FP), // BURN: burnVmDescriptor
-    (47, "dregg-effectvm-celldestroy-v1", DREGG_EFFECTVM_CELLDESTROY_V1_JSON, DREGG_EFFECTVM_CELLDESTROY_V1_FP), // CELL_DESTROY: cellDestroyVmDescriptor
+    (47, "dregg-effectvm-celldestroy-v2", DREGG_EFFECTVM_CELLDESTROY_V2_JSON, DREGG_EFFECTVM_CELLDESTROY_V2_FP), // CELL_DESTROY: cellDestroyVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
     (48, "dregg-effectvm-attenuateA-v1", DREGG_EFFECTVM_ATTENUATEA_V1_JSON, DREGG_EFFECTVM_ATTENUATEA_V1_FP), // ATTENUATE_CAPABILITY: attenuateVmDescriptor (canonical cap-root move)
-    (49, "dregg-effectvm-cellseal-v1", DREGG_EFFECTVM_CELLSEAL_V1_JSON, DREGG_EFFECTVM_CELLSEAL_V1_FP), // CELL_SEAL: cellSealVmDescriptor
+    (49, "dregg-effectvm-cellseal-v2", DREGG_EFFECTVM_CELLSEAL_V2_JSON, DREGG_EFFECTVM_CELLSEAL_V2_FP), // CELL_SEAL: cellSealVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
     (51, "dregg-effectvm-receiptArchiveA-v1", DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_JSON, DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_FP), // RECEIPT_ARCHIVE: receiptArchiveVmDescriptor
-    (52, "dregg-effectvm-refusal-v1", DREGG_EFFECTVM_REFUSAL_V1_JSON, DREGG_EFFECTVM_REFUSAL_V1_FP), // REFUSAL: refusalVmDescriptor
-    (53, "dregg-effectvm-incrementNonce-v1", DREGG_EFFECTVM_INCREMENTNONCE_V1_JSON, DREGG_EFFECTVM_INCREMENTNONCE_V1_FP), // INCREMENT_NONCE: incrementNonceVmDescriptor
+    (52, "dregg-effectvm-refusal-v2", DREGG_EFFECTVM_REFUSAL_V2_JSON, DREGG_EFFECTVM_REFUSAL_V2_FP), // REFUSAL: refusalVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
+    (53, "dregg-effectvm-incrementNonce-v2", DREGG_EFFECTVM_INCREMENTNONCE_V2_JSON, DREGG_EFFECTVM_INCREMENTNONCE_V2_FP), // INCREMENT_NONCE: incrementNonceVmDescriptor (GRADUATED: nonce-tick + last-row PI pins)
 ];
 
 // ==== name-only descriptors (verified, but no dedicated Rust selector slot yet) ====
@@ -236,8 +274,8 @@ pub const ALL_DESCRIPTORS: &[(&str, &str, &str)] = &[
     ("dregg-effectvm-bridgelock-v1", DREGG_EFFECTVM_BRIDGELOCK_V1_JSON, DREGG_EFFECTVM_BRIDGELOCK_V1_FP),
     ("dregg-effectvm-bridgemint-v1", DREGG_EFFECTVM_BRIDGEMINT_V1_JSON, DREGG_EFFECTVM_BRIDGEMINT_V1_FP),
     ("dregg-effectvm-burn-v1", DREGG_EFFECTVM_BURN_V1_JSON, DREGG_EFFECTVM_BURN_V1_FP),
-    ("dregg-effectvm-celldestroy-v1", DREGG_EFFECTVM_CELLDESTROY_V1_JSON, DREGG_EFFECTVM_CELLDESTROY_V1_FP),
-    ("dregg-effectvm-cellseal-v1", DREGG_EFFECTVM_CELLSEAL_V1_JSON, DREGG_EFFECTVM_CELLSEAL_V1_FP),
+    ("dregg-effectvm-celldestroy-v2", DREGG_EFFECTVM_CELLDESTROY_V2_JSON, DREGG_EFFECTVM_CELLDESTROY_V2_FP),
+    ("dregg-effectvm-cellseal-v2", DREGG_EFFECTVM_CELLSEAL_V2_JSON, DREGG_EFFECTVM_CELLSEAL_V2_FP),
     ("dregg-effectvm-createcell-v1", DREGG_EFFECTVM_CREATECELL_V1_JSON, DREGG_EFFECTVM_CREATECELL_V1_FP),
     ("dregg-effectvm-createcellfromfactory-v1", DREGG_EFFECTVM_CREATECELLFROMFACTORY_V1_JSON, DREGG_EFFECTVM_CREATECELLFROMFACTORY_V1_FP),
     ("dregg-effectvm-createcommittedescrow-v1", DREGG_EFFECTVM_CREATECOMMITTEDESCROW_V1_JSON, DREGG_EFFECTVM_CREATECOMMITTEDESCROW_V1_FP),
@@ -246,27 +284,29 @@ pub const ALL_DESCRIPTORS: &[(&str, &str, &str)] = &[
     ("dregg-effectvm-dropRefA-v2", DREGG_EFFECTVM_DROPREFA_V2_JSON, DREGG_EFFECTVM_DROPREFA_V2_FP),
     ("dregg-effectvm-emitEvent-v1", DREGG_EFFECTVM_EMITEVENT_V1_JSON, DREGG_EFFECTVM_EMITEVENT_V1_FP),
     ("dregg-effectvm-enlivenRefA-v1", DREGG_EFFECTVM_ENLIVENREFA_V1_JSON, DREGG_EFFECTVM_ENLIVENREFA_V1_FP),
-    ("dregg-effectvm-exerciseA-holdlayer-v1", DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_JSON, DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V1_FP),
-    ("dregg-effectvm-incrementNonce-v1", DREGG_EFFECTVM_INCREMENTNONCE_V1_JSON, DREGG_EFFECTVM_INCREMENTNONCE_V1_FP),
+    ("dregg-effectvm-exerciseA-holdlayer-v2", DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_JSON, DREGG_EFFECTVM_EXERCISEA_HOLDLAYER_V2_FP),
+    ("dregg-effectvm-incrementNonce-v2", DREGG_EFFECTVM_INCREMENTNONCE_V2_JSON, DREGG_EFFECTVM_INCREMENTNONCE_V2_FP),
     ("dregg-effectvm-makesovereign-v1", DREGG_EFFECTVM_MAKESOVEREIGN_V1_JSON, DREGG_EFFECTVM_MAKESOVEREIGN_V1_FP),
     ("dregg-effectvm-mint-v1", DREGG_EFFECTVM_MINT_V1_JSON, DREGG_EFFECTVM_MINT_V1_FP),
     ("dregg-effectvm-notecreate-v1", DREGG_EFFECTVM_NOTECREATE_V1_JSON, DREGG_EFFECTVM_NOTECREATE_V1_FP),
     ("dregg-effectvm-notespend-v1", DREGG_EFFECTVM_NOTESPEND_V1_JSON, DREGG_EFFECTVM_NOTESPEND_V1_FP),
-    ("dregg-effectvm-pipelinedSendA-v1", DREGG_EFFECTVM_PIPELINEDSENDA_V1_JSON, DREGG_EFFECTVM_PIPELINEDSENDA_V1_FP),
+    ("dregg-effectvm-pipelinedSendA-v2", DREGG_EFFECTVM_PIPELINEDSENDA_V2_JSON, DREGG_EFFECTVM_PIPELINEDSENDA_V2_FP),
     ("dregg-effectvm-queueallocate-v1", DREGG_EFFECTVM_QUEUEALLOCATE_V1_JSON, DREGG_EFFECTVM_QUEUEALLOCATE_V1_FP),
     ("dregg-effectvm-queueatomictx-v1", DREGG_EFFECTVM_QUEUEATOMICTX_V1_JSON, DREGG_EFFECTVM_QUEUEATOMICTX_V1_FP),
     ("dregg-effectvm-queuedequeue-v1", DREGG_EFFECTVM_QUEUEDEQUEUE_V1_JSON, DREGG_EFFECTVM_QUEUEDEQUEUE_V1_FP),
     ("dregg-effectvm-queueenqueue-v1", DREGG_EFFECTVM_QUEUEENQUEUE_V1_JSON, DREGG_EFFECTVM_QUEUEENQUEUE_V1_FP),
     ("dregg-effectvm-queuepipelinestep-v1", DREGG_EFFECTVM_QUEUEPIPELINESTEP_V1_JSON, DREGG_EFFECTVM_QUEUEPIPELINESTEP_V1_FP),
     ("dregg-effectvm-queueresize-v1", DREGG_EFFECTVM_QUEUERESIZE_V1_JSON, DREGG_EFFECTVM_QUEUERESIZE_V1_FP),
+    ("dregg-effectvm-introduce-v2", DREGG_EFFECTVM_INTRODUCE_V2_JSON, DREGG_EFFECTVM_INTRODUCE_V2_FP),
     ("dregg-effectvm-receiptArchiveA-v1", DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_JSON, DREGG_EFFECTVM_RECEIPTARCHIVEA_V1_FP),
-    ("dregg-effectvm-refreshDelegation-v1", DREGG_EFFECTVM_REFRESHDELEGATION_V1_JSON, DREGG_EFFECTVM_REFRESHDELEGATION_V1_FP),
+    ("dregg-effectvm-refreshDelegation-v2", DREGG_EFFECTVM_REFRESHDELEGATION_V2_JSON, DREGG_EFFECTVM_REFRESHDELEGATION_V2_FP),
     ("dregg-effectvm-refundescrow-v1", DREGG_EFFECTVM_REFUNDESCROW_V1_JSON, DREGG_EFFECTVM_REFUNDESCROW_V1_FP),
-    ("dregg-effectvm-refusal-v1", DREGG_EFFECTVM_REFUSAL_V1_JSON, DREGG_EFFECTVM_REFUSAL_V1_FP),
+    ("dregg-effectvm-refusal-v2", DREGG_EFFECTVM_REFUSAL_V2_JSON, DREGG_EFFECTVM_REFUSAL_V2_FP),
+    ("dregg-effectvm-revokeDelegation-v2", DREGG_EFFECTVM_REVOKEDELEGATION_V2_JSON, DREGG_EFFECTVM_REVOKEDELEGATION_V2_FP),
     ("dregg-effectvm-releaseescrow-v1", DREGG_EFFECTVM_RELEASEESCROW_V1_JSON, DREGG_EFFECTVM_RELEASEESCROW_V1_FP),
     ("dregg-effectvm-seal-v1", DREGG_EFFECTVM_SEAL_V1_JSON, DREGG_EFFECTVM_SEAL_V1_FP),
-    ("dregg-effectvm-setPermissionsA-v1", DREGG_EFFECTVM_SETPERMISSIONSA_V1_JSON, DREGG_EFFECTVM_SETPERMISSIONSA_V1_FP),
-    ("dregg-effectvm-setVK-v1", DREGG_EFFECTVM_SETVK_V1_JSON, DREGG_EFFECTVM_SETVK_V1_FP),
+    ("dregg-effectvm-setPermissionsA-v2", DREGG_EFFECTVM_SETPERMISSIONSA_V2_JSON, DREGG_EFFECTVM_SETPERMISSIONSA_V2_FP),
+    ("dregg-effectvm-setVK-v2", DREGG_EFFECTVM_SETVK_V2_JSON, DREGG_EFFECTVM_SETVK_V2_FP),
     ("dregg-effectvm-spawnA-v2quint-childcell", DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_JSON, DREGG_EFFECTVM_SPAWNA_V2QUINT_CHILDCELL_FP),
     ("dregg-effectvm-swissDropA-v1", DREGG_EFFECTVM_SWISSDROPA_V1_JSON, DREGG_EFFECTVM_SWISSDROPA_V1_FP),
     ("dregg-effectvm-swissExportA-v1", DREGG_EFFECTVM_SWISSEXPORTA_V1_JSON, DREGG_EFFECTVM_SWISSEXPORTA_V1_FP),
@@ -424,7 +464,7 @@ mod tests {
     /// stale committed JSON, fails here.
     #[test]
     fn all_descriptors_parse_and_match_fingerprint() {
-        assert_eq!(ALL_DESCRIPTORS.len(), 45, "expected 45 unique descriptors");
+        assert_eq!(ALL_DESCRIPTORS.len(), 47, "expected 47 unique descriptors");
         for (name, json, fp) in ALL_DESCRIPTORS {
             // (a) fingerprint binding
             let got = sha256_hex(json.as_bytes());
