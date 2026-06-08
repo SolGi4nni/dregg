@@ -44,6 +44,11 @@ pub mod error;
 pub mod format;
 #[cfg(feature = "crypto")]
 pub mod macaroon;
+/// Differential: the verified Lean `Dregg2.Authority.MacaroonDischarge` model ⟺ this crate's real
+/// third-party discharge binding (`bind_discharge`/`verify_discharge`): replay agreement, the
+/// unbound-rejected fail-closed tooth, and no-cross-root-replay. Test-only.
+#[cfg(all(test, feature = "crypto"))]
+mod discharge_diff;
 pub mod resource;
 
 // Re-export primary types at crate root.
