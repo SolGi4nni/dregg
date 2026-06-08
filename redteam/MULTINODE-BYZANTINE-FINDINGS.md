@@ -19,7 +19,7 @@ FINDING; a real attack that fails is EVIDENCE the property holds operationally.
 
 | # | Finding | Severity | Status |
 |---|---|---|---|
-| **F-DOS-1** | A turn submission that reaches execution **wedges the entire solo node** — one tokio worker spins at 99.9% CPU in STARK proving while the runtime (block production, HTTP, gossip) is frozen behind the state-write lock. Observed live: the public devnet stopped producing blocks for **5+ minutes** and served 0 bytes until a `systemctl restart`. Reachable via the **authenticated** submit path (writes require the bearer token; the public edge 405s) — not an anonymous DoS, but a real availability break on the normal submit path. | **HIGH (liveness)** | **REAL BREAK** — root cause = task #109 (proving on the request path). Logged, not fixed (owned by SWAP/node). Devnet restored. |
+| **F-DOS-1** | A turn submission that reaches execution **wedges the entire solo node** — one tokio worker spins at 99.9% CPU in STARK proving while the runtime (block production, HTTP, gossip) is frozen behind the state-write lock. Observed live: the public devnet stopped producing blocks for **5+ minutes** and served 0 bytes until a `systemctl restart`. Reachable via the **authenticated** submit path (writes require the bearer token; the public edge 405s) — not an anonymous DoS, but a real availability break on the normal submit path. | **HIGH (liveness)** | **CLOSED** — proving moved OFF the request path (commit revalidates the witness FRI-free under the lock, then proves async; `node/src/prove_pool.rs`, `api.rs::revalidate_http_witness`/`enqueue_async_proof`, task #109/#116). Defended by `node/tests/f_dos_1_request_path_liveness.rs` (OLD path starves the producer for the whole ~750 ms proof; NEW path commits Tentative in single-digit ms, producer stays live throughout, proof attaches async; a tampered witness is rejected BEFORE commit). before→after: **node-wedges-5min → node-stays-live-and-commits-in-ms**. |
 | **F-EDGE-1** | The public reverse proxy (Caddy) serves the static SPA for all write routes → `POST /turn/submit`, `/turns/submit`, `/cipherclerk/mint` all return `405 Allow: GET, HEAD`. The privileged write API is **not publicly reachable**; the submit path is loopback-only. | INFO (posture) | Defense-in-depth, but the public devnet **cannot accept turns over HTTPS**. |
 | A1–A9 | Blocklace/finality Byzantine invariants (equivocation detection, tip withdrawal, forged-sig rejection, replay idempotence, partition heal, flood resistance, double-spend race, eclipse, seq-rollback) | — | **HELD** — 9/9 operational evidence (see Part A). |
 | B-auth | Unauthenticated writes rejected at `require_auth` (401, constant-time bearer compare); forged/garbage signed-turn envelopes rejected (`400` / `accepted:false`); input validators reject non-hex/oversized; no 5xx/traversal/leak on garbage. | — | **HELD** — Part B. |
@@ -121,16 +121,39 @@ persists, state recovered cleanly (`dag_height 48263 → 48504` across the
 session, heartbeat resumed, threads idle). The devnet was restored before this
 report; verified `healthy:true, consensus_live:true`.
 
-**Fix (logged — owned by node/SWAP, NOT edited here):**
-1. Execute the turn under the lock (fast), but move **proving off the critical
-   path**: spawn it on `tokio::task::spawn_blocking` / a dedicated rayon pool,
-   return `Tentative` immediately, attach the proof when ready (the receipt
-   already carries a `finality` field — `Tentative` is already set for solo).
-2. Never hold `state.write()` across an `.await` on a CPU-bound proof.
-3. Add a per-IP concurrency cap + a hard proving-time budget so one submit can't
-   monopolize a worker.
-4. (Hardening) run the prover on a bounded threadpool sized < runtime workers so
-   proving can never consume every worker.
+**Fix — LANDED (CLOSED).** Proving is off the request path. The commit handlers
+(`api.rs::post_submit_turn` / `post_submit_signed_turn` / the conditional + faucet
+paths) now, while holding `state.write()`, run only a **FRI-free DIRECT witness
+revalidation** (`revalidate_http_witness` → `bespoke_air_accepts`, sub-millisecond
+per `circuit/tests/turn_revalidation_vs_prove.rs`), commit `Tentative`, DROP the
+lock, and hand the witness to an **async STARK prove pool** (`node/src/prove_pool.rs`
+— a bounded `spawn_blocking` worker set, `DREGG_PROVE_WORKERS` default 2 < runtime
+workers, `DREGG_PROVE_QUEUE_DEPTH` 256, over-full ⇒ drop the *attestation* job, never
+the commit). The proof attaches to the receipt asynchronously (Proven) and the raw
+turn is gossiped immediately so consensus ordering is not delayed.
+
+1. ✅ Execute + revalidate under the lock (fast); proving on `spawn_blocking` off
+   the lock; `Tentative` returned immediately, proof attached when ready.
+2. ✅ `state.write()` is never held across the CPU-bound proof.
+3. (Hardening, partial) bounded prove queue + worker count caps per-node proving
+   load; a per-IP submit concurrency cap is the remaining hardening item.
+4. ✅ The prover runs on a bounded threadpool sized < runtime workers
+   (`DEFAULT_PROVE_WORKERS = 2`), so proving can never consume every worker.
+
+**Soundness (preserved).** The fast commit is sound because the witness is
+DIRECTLY CHECKED, not trusted: `bespoke_air_accepts` re-evaluates every AIR
+constraint (the exact predicate the audited verifier enforces) and a trace that
+fails any constraint is rejected BEFORE the receipt is kept
+(`http_witness_revalidation_rejects_tampered_trace` +
+`f_dos_1_new_path_rejects_tampered_witness_before_commit`). Proofs are *additive
+attestation* (the STARK is the layer light-clients / cross-trust peers consume),
+not a per-step commit gate.
+
+**Defence test.** `node/tests/f_dos_1_request_path_liveness.rs` reproduces the
+wedge on the OLD path (prove under the lock → the block producer is STARVED for
+the whole proof) and confirms the NEW path (Tentative commit in single-digit ms,
+producer keeps producing blocks throughout, async STARK proof attaches later),
+plus a 16-submit burst that does not wedge the producer.
 
 ### F-EDGE-1 (INFO) — write API not publicly reachable; SPA shadows POST
 
@@ -202,20 +225,26 @@ the signer's own default cell.
 | Ed25519 feed authenticity | `StrandIntegrity` sig seam | `verify_signature` (ed25519_dalek) | **MATCH** (Part A: forged-sig rejected) |
 | Monotone sequence (no rollback) | `StrandIntegrity.seq_monotone` | `insert` `SeqRegression` | **MATCH** (Part A) |
 | Authority / confined writes | Authorization model | `require_auth` 401 + agent-binding | **MATCH** (Part B) |
-| **Liveness under load** | (not modeled — the Lean is safety) | **BREAKS** (F-DOS-1: proving starves the runtime) | **DIVERGENCE** — the safety proofs say nothing about availability; the running node has a real liveness break. |
+| **Liveness under load** | (not modeled — the Lean is safety) | **HELD** (F-DOS-1 CLOSED: proving is async off the lock; commit revalidates fast) | **MATCH** (was a DIVERGENCE; closed by moving proving off the request path — `node/tests/f_dos_1_request_path_liveness.rs`). |
 
-The honest gap: the distributed Lean theory is about **safety** (agreement,
-integrity, no-double-spend). It is **silent on liveness/availability**, and the
-running node has a concrete liveness break (F-DOS-1) that no safety proof would
-catch. Safety held under every Byzantine attack; availability did not.
+The honest gap (now closed for F-DOS-1): the distributed Lean theory is about
+**safety** (agreement, integrity, no-double-spend) and is silent on
+liveness/availability. The running node HAD a concrete liveness break (F-DOS-1)
+that no safety proof would catch — it is now **CLOSED** in the running Rust by
+moving proving off the request path (commit revalidates the witness FRI-free,
+proves async), defended operationally by `f_dos_1_request_path_liveness.rs`.
+Safety held under every Byzantine attack; availability now holds too.
 
 ---
 
 ## Prioritized fix list
 
-1. **F-DOS-1 (HIGH).** Move proving off the request path; never hold
-   `state.write()` across a CPU-bound `.await`; per-IP submit concurrency cap +
-   proving budget; bounded prover threadpool. (task #109)
+1. **F-DOS-1 (HIGH) — CLOSED.** Proving moved off the request path; commit
+   revalidates the witness FRI-free under the lock then proves async on a bounded
+   `spawn_blocking` pool; `state.write()` is never held across a CPU-bound proof.
+   (task #109/#116; `node/src/prove_pool.rs` + `api.rs::revalidate_http_witness`;
+   defended by `node/tests/f_dos_1_request_path_liveness.rs`.) Remaining hardening:
+   per-IP submit concurrency cap.
 2. **F-EDGE-1 (decision).** Decide + document the public submit posture: either
    expose an authenticated `/turns/submit` through Caddy or label the public
    endpoint read-only (and route demos through loopback/SSH).
@@ -226,6 +255,13 @@ catch. Safety held under every Byzantine attack; availability did not.
 ## Reproduce
 
 ```
+# F-DOS-1 defence (CLOSED): OLD-path wedge reproduction + NEW-path liveness/soundness
+# (runs the real STARK prover; ignored by default):
+cargo test -p dregg-node --test f_dos_1_request_path_liveness -- --nocapture --ignored
+# the soundness tooth (tamper rejected before commit) runs without --ignored:
+cargo test -p dregg-node --test f_dos_1_request_path_liveness \
+  f_dos_1_new_path_rejects_tampered_witness_before_commit
+
 # Part A (no network, in-process):
 cargo test -p dregg-redteam --test multinode_byzantine_chaos -- --nocapture
 

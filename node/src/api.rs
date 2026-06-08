@@ -5054,12 +5054,13 @@ async fn post_atomic_vote(
         // archive is absent it falls back to `rust_decision`. The `receive_vote` side-effects (vote
         // recording, state transition) already happened — we only re-decide the *verdict*.
         let wire = active.coordinator.decision_wire();
+        let rust_had_no_decision = rust_decision.is_none();
         let rust_inner = rust_decision.unwrap_or(dregg_coord::Decision::Pending);
         let gated = crate::coord_gate::authoritative_decision(rust_inner, wire.as_deref());
         // Preserve "no terminal decision yet" semantics: a Pending gated verdict with no Rust
         // decision stays `None` (the coordinator has not transitioned).
-        match (rust_decision, gated) {
-            (None, dregg_coord::Decision::Pending) => None,
+        match (rust_had_no_decision, gated) {
+            (true, dregg_coord::Decision::Pending) => None,
             (_, g) => Some(g),
         }
     };

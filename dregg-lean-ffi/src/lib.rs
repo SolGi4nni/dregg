@@ -13,8 +13,11 @@ pub mod marshal;
 pub mod distributed_ffi;
 
 pub use distributed_ffi::{
-    decode_tau_order, shadow_strand_admit, shadow_tau_order, strand_admit_available,
-    tau_order_available, verified_admits, verified_tau_order,
+    Decision2pc, decode_tau_order, distributed_exports_available, shadow_captp_pipeline_resolve,
+    shadow_captp_process_drop, shadow_captp_validate_handoff, shadow_coord_2pc_decide,
+    shadow_coord_causal_order, shadow_coord_shared_budget, shadow_strand_admit, shadow_tau_order,
+    strand_admit_available, tau_order_available, verified_2pc_decide, verified_admits,
+    verified_handoff_non_amplifying, verified_happened_before, verified_tau_order,
 };
 pub use marshal::{TurnStatus, WireState};
 
