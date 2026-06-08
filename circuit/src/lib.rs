@@ -165,6 +165,10 @@ pub mod presentation;
 #[allow(deprecated)]
 pub mod committed_threshold;
 pub mod effect_vm;
+/// The Lean-emitted EffectVM descriptor registry: every verified-by-construction
+/// `EffectVmDescriptor` JSON, keyed by selector index, with an anti-drift
+/// fingerprint guard. Foundation for the EffectVM circuit cutover.
+pub mod effect_vm_descriptors;
 #[allow(deprecated)]
 pub mod garbled;
 pub mod native_signature;
