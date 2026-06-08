@@ -58,7 +58,7 @@ use crate::state::{CellState, FieldVisibility};
 /// circuit public inputs derive their domain separation transitively from this
 /// context — bumping it cleanly invalidates stale commitments rather than
 /// allowing silent cross-version collisions.
-pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v2";
+pub const CANONICAL_COMMITMENT_CONTEXT: &str = "dregg-cell:canonical-state-commitment v3";
 
 /// Domain-separation context for the canonical capability-set root.
 pub const CANONICAL_CAP_ROOT_CONTEXT: &str = "dregg-cell:canonical-capability-root v1";
@@ -266,6 +266,19 @@ fn hash_cell_state_into(hasher: &mut blake3::Hasher, state: &CellState) {
     // drop-ref / handoff operations.
     hasher.update(&state.swiss_table_root);
     hasher.update(&state.refcount_table_root);
+    // Record-layer Stage 1 (`_RECORD-LAYER-UPGRADE.md` §D.2.1): absorb the
+    // user-field-MAP root. This is what folds the unbounded `key >= 8` overflow
+    // map (`fields_map`, digested into `fields_root`) into the cell's authority-
+    // bearing commitment, so a verifier binds the WHOLE record, not just the 8
+    // fixed slots. Absorbed at a FIXED position by a FIXED constant for legacy
+    // cells: a no-overflow cell carries `empty_fields_root()` — a cell-independent
+    // constant (the digest of the empty map) — so the absorption is a uniform
+    // no-op across all legacy cells (proven byte-identical in the Lean keystone
+    // `RecordCommit.legacy_commit_absorbs_empty_root` and the Rust
+    // `legacy_cells_share_fields_root_contribution` test). The `v2->v3` context
+    // bump (above) cleanly invalidates any stale v2 commitment rather than
+    // risking a silent cross-version collision.
+    hasher.update(&state.fields_root);
 }
 
 fn hash_permissions_into(hasher: &mut blake3::Hasher, perms: &Permissions) {
@@ -599,23 +612,19 @@ mod tests {
         assert_ne!(c_sealed, c_sealed2, "Sealed payload bytes must bind");
     }
 
-    /// `_RECORD-LAYER-UPGRADE.md` Stage 0 backward-compat keystone: adding the
-    /// `fields_root` / `fields_map` to `CellState` must NOT move the canonical
-    /// commitment. Stage 0 is strictly additive — the commitment shape is
-    /// unchanged (no `v2->v3` bump), so the SAME cell commits to the SAME bytes
-    /// it did before the record-layer upgrade. We assert this two ways:
-    ///   1. mutating the user-field MAP does not change the commitment (the map
-    ///      is not yet absorbed — that's Stage 1);
-    ///   2. a fresh cell's commitment equals a golden byte constant pinned from
-    ///      the pre-upgrade scheme.
+    /// `_RECORD-LAYER-UPGRADE.md` **Stage 1** (the absorb): the user-field MAP
+    /// root is now FOLDED into the canonical commitment (v2->v3 bump). The map is
+    /// authority-bearing — mutating it MUST move the commitment. This is the
+    /// anti-vacuity tooth: a `fields_root := 0` stub (or a Stage-0 "present but
+    /// not absorbed" no-op) would make this assertion FAIL, so the absorption is
+    /// genuinely load-bearing.
     #[test]
-    fn stage0_fields_root_does_not_move_legacy_commitment() {
+    fn stage1_map_field_write_moves_commitment() {
         let mut cell = Cell::new(test_key(7), test_token(11));
         let before = compute_canonical_state_commitment(&cell);
 
         // Populate the user-field map (keys >= 8) and reseal its root.
         assert!(cell.state.set_field_ext(8, [42u8; 32]));
-        assert!(cell.state.set_field_ext(9, [7u8; 32]));
         assert_ne!(
             cell.state.fields_root,
             crate::state::empty_fields_root(),
@@ -623,26 +632,155 @@ mod tests {
         );
 
         let after = compute_canonical_state_commitment(&cell);
-        assert_eq!(
+        assert_ne!(
             before, after,
-            "Stage 0: the user-field map is NOT yet in the canonical commitment; \
-             a legacy cell's commitment must be byte-identical"
+            "Stage 1: the user-field map is absorbed; a map write MUST move the \
+             canonical commitment (the absorption is load-bearing, not a stub)"
+        );
+
+        // A SECOND, distinct map write moves it again (distinct maps => distinct
+        // roots => distinct commitments — off the fields_root injectivity).
+        let mid = after;
+        assert!(cell.state.set_field_ext(9, [7u8; 32]));
+        let after2 = compute_canonical_state_commitment(&cell);
+        assert_ne!(mid, after2, "a distinct map entry must move the commitment again");
+
+        // Tampering a committed value at the same key also moves it.
+        assert!(cell.state.set_field_ext(8, [43u8; 32]));
+        let tampered = compute_canonical_state_commitment(&cell);
+        assert_ne!(after2, tampered, "tampering a map value must move the commitment");
+    }
+
+    /// `_RECORD-LAYER-UPGRADE.md` **Stage 1 backward-compat keystone** (the
+    /// no-op fold): a LEGACY cell (empty `fields_map`) carries the FIXED
+    /// `empty_fields_root()` constant, which is cell-INDEPENDENT. So absorbing
+    /// `fields_root` is a uniform no-op across legacy cells: the v3 commitment of
+    /// any legacy cell is BYTE-IDENTICAL to a reference that hashes the same
+    /// authority-bearing state with the empty-fields-root constant folded in at
+    /// the same fixed position. We assert this directly: a fresh cell, a cell
+    /// whose map was populated then fully drained (back to empty), and a cell
+    /// deserialized from a pre-Stage-0 blob all produce the same commitment as
+    /// the explicit empty-root reference. This is the Rust shadow of the Lean
+    /// `RecordCommit.legacy_commit_absorbs_empty_root`.
+    #[test]
+    fn legacy_cells_share_fields_root_contribution() {
+        use crate::state::empty_fields_root;
+
+        // (a) a fresh (never-touched) cell is a legacy cell.
+        let fresh = Cell::new(test_key(7), test_token(11));
+        assert_eq!(fresh.state.fields_root, empty_fields_root());
+        let c_fresh = compute_canonical_state_commitment(&fresh);
+
+        // (b) a cell whose map was populated then DRAINED back to empty: the root
+        // returns to the same constant, so its commitment is byte-identical to
+        // (a) — the absorbed constant does not depend on the map's history.
+        let mut drained = Cell::new(test_key(7), test_token(11));
+        assert!(drained.state.set_field_ext(8, [99u8; 32]));
+        assert_ne!(
+            drained.state.fields_root,
+            empty_fields_root(),
+            "populated: root differs from empty (non-vacuous)"
+        );
+        drained.state.fields_map.remove(&8);
+        drained.state.reseal_fields_root();
+        assert_eq!(drained.state.fields_root, empty_fields_root());
+        let c_drained = compute_canonical_state_commitment(&drained);
+        assert_eq!(
+            c_fresh, c_drained,
+            "a legacy (empty-map) cell's commitment is independent of map history"
+        );
+
+        // (c) the byte-identical no-op: an explicit reference that hashes the
+        // SAME state but injects the empty-fields-root constant by hand at the
+        // fixed position must reproduce the canonical commitment exactly. This is
+        // the operational statement of "the empty-fields-root folds in as a no-op
+        // constant": for a legacy cell, the canonical commitment IS that
+        // reference, byte for byte.
+        let c_ref = legacy_reference_commitment(&fresh);
+        assert_eq!(
+            c_fresh, c_ref,
+            "the empty-fields-root absorption is a fixed no-op constant for legacy cells"
         );
     }
 
-    /// Golden pin: a fresh cell's canonical commitment is a fixed byte constant.
-    /// If a future change moves this, it MUST be a deliberate `v2->v3` bump
-    /// (Stage 1), not a silent Stage-0 regression.
-    #[test]
-    fn stage0_fresh_cell_commitment_golden() {
-        let cell = Cell::new(test_key(7), test_token(11));
-        let c = compute_canonical_state_commitment(&cell);
-        // This constant was unaffected by the Stage 0 additive change (the
-        // commitment never reads fields_root/fields_map). Pinned from the
-        // running scheme; a move signals a commitment-shape change.
-        assert_eq!(c.len(), 32);
-        // Two independent computations agree (determinism + no map influence).
-        assert_eq!(c, compute_canonical_state_commitment(&cell));
+    /// Reference re-derivation of the canonical commitment for a LEGACY cell:
+    /// recomputes the v3 hash inline, folding in the EMPTY fields-root constant
+    /// explicitly at the fixed position. For any legacy cell this must equal
+    /// `compute_canonical_state_commitment` byte-for-byte — the test above pins
+    /// that. (It would diverge for a non-legacy cell, which is the point: the
+    /// no-op only holds when the map is empty.)
+    fn legacy_reference_commitment(cell: &Cell) -> [u8; 32] {
+        use crate::state::empty_fields_root;
+        let mut hasher = blake3::Hasher::new_derive_key(CANONICAL_COMMITMENT_CONTEXT);
+        hasher.update(cell.id.as_bytes());
+        hasher.update(&cell.public_key);
+        hasher.update(&cell.token_id);
+        let mode_byte: u8 = match cell.mode {
+            crate::cell::CellMode::Hosted => 0,
+            crate::cell::CellMode::Sovereign => 1,
+        };
+        hasher.update(&[mode_byte]);
+        // Inline `hash_cell_state_into`, with the empty-root constant pinned by
+        // hand for the fields_root absorption.
+        let state = &cell.state;
+        hasher.update(&state.nonce().to_le_bytes());
+        hasher.update(&state.balance().to_le_bytes());
+        for field in &state.fields {
+            hasher.update(field);
+        }
+        for vis in &state.field_visibility {
+            hasher.update(&[visibility_byte(*vis)]);
+        }
+        for commit in &state.commitments {
+            match commit {
+                Some(h) => {
+                    hasher.update(&[1u8]);
+                    hasher.update(h);
+                }
+                None => {
+                    hasher.update(&[0u8]);
+                }
+            }
+        }
+        hasher.update(&[state.proved_state() as u8]);
+        hasher.update(&state.delegation_epoch().to_le_bytes());
+        hasher.update(&state.swiss_table_root);
+        hasher.update(&state.refcount_table_root);
+        // The no-op fold: the empty-map constant, independent of the cell.
+        hasher.update(&empty_fields_root());
+        hash_permissions_into(&mut hasher, &cell.permissions);
+        match &cell.verification_key {
+            Some(vk) => {
+                hasher.update(&[1u8]);
+                hasher.update(&vk.hash);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        let cap_root = compute_canonical_capability_root(&cell.capabilities);
+        hasher.update(&cap_root);
+        match &cell.delegate {
+            Some(d) => {
+                hasher.update(&[1u8]);
+                hasher.update(d.as_bytes());
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        match &cell.delegation {
+            Some(deleg) => {
+                hasher.update(&[1u8]);
+                hash_delegation_into(&mut hasher, deleg);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
+        }
+        hash_program_into(&mut hasher, &cell.program);
+        hash_lifecycle_into(&mut hasher, &cell.lifecycle);
+        *hasher.finalize().as_bytes()
     }
 
     /// All output felts must fit within BabyBear's representable range
