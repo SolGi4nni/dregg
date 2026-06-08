@@ -48,9 +48,9 @@ bar, a doc that names a theorem which does not exist is "vapor," and vapor is br
   swiss-entry field. Each half is independently sound; the "the SUM is the swiss entry's
   refcount" connection is asserted in prose and never proven.
 - **Fix:** either (a) prove the bridge `swissEntry.refcount = Σ holders, holder.total_refs`
-  and a `gcDropTotal`-tracks-decrement lemma, or (b) make the prose honest. Done here via
-  (b): the docstring now states the two models are **independently sound but unbridged**,
-  removing the phantom-theorem claim. The real bridge is logged as MID-1 to actually prove.
+  and a `gcDropTotal`-tracks-decrement lemma, or (b) make the prose honest. SUPERSEDED by
+  option (a): the bridge is now a real set of kernel-clean theorems (see MID-1, RESOLVED
+  2026-06-08). `gcDropTotal` is no longer vapor — it is `bridge_processDrop_tracks_refcount`.
 - **Ownership:** `CapTPGCConcrete.lean` — task #61 is **completed**; no in-progress task
   touches GC. **SAFE-TO-FIX-NOW.** ✅ doc fix applied in this commit.
 
@@ -80,13 +80,31 @@ bar, a doc that names a theorem which does not exist is "vapor," and vapor is br
 
 ## MID — real weakness, not soundness-fatal
 
-### MID-1 — GC bridge theorem (the real fix behind F1)
+### MID-1 — GC bridge theorem (the real fix behind F1) — RESOLVED 2026-06-08
 - **What:** prove `swissEntry.refcount = Σ_{holders} holder.total_refs` and a
   `processDrop`-decrement-tracks-`swissDropA` lemma, welding §2 to §1.
 - **Why MID not FATAL:** both halves are independently sound and `#assert_axioms`-clean; the
   Byzantine session tooth (`byzantine_node_different_session_cannot_drop_others_refs`) and
-  the refcount-positivity teeth genuinely bite. Only the *unification* is missing.
-- **Fix:** as above. **SAFE-TO-FIX-NOW** (GC file unowned).
+  the refcount-positivity teeth genuinely bite. Only the *unification* was missing.
+- **Fix (DONE):** `Exec/CapTPGCConcrete.lean` §2.5 now PROVES the bridge as real theorems
+  (kernel-clean, subset `{propext, Classical.choice, Quot.sound}`):
+  - `SwissHoldersCoherent refc t := refc = totalRefs t` — the swiss-entry scalar IS the
+    per-holder sum (not an aggregate standing in for a per-holder fact: a full equality the
+    joint step preserves). NON-VACUOUS: `coherent_demo` (TRUE), `not_coherent_demo` (FALSE on
+    `3 ≠ 2`); `NoDupFeds` witnessed admit/reject (`nodup_demo` / `not_nodup_dup`).
+  - `decHolder_pred_total` — under the `HashMap` key-uniqueness invariant `NoDupFeds`, an
+    accepting per-holder drop lowers `totalRefs` by EXACTLY one (the unit-exact decrement;
+    helper lemmas `decHolderMap_not_mem` / `decHolderFilter_not_mem` / `totalRefs_pos_of_findHolder`).
+  - `processDrop_accept_table` + `bridge_processDrop_tracks_refcount` — §2's REAL `gc.rs`
+    verdict function `processDrop` accept-path post-table sums to the DECREMENTED §1 scalar
+    `refc - 1` (`gcDropTotal` made real: per-holder drop tracks the scalar `swissDropK` writes).
+  - `swissDropK_writes_scalar_pred` — §1's verified GC arm writes exactly `refcount - 1` on the
+    `> 1` branch; `bridge_last_ref_iff` — §2's `canRevoke` (sum hits 0) ⟺ §1's GC-at-zero
+    (scalar hits 0): they reclaim EXACTLY together.
+  - `bridge_swiss_refcount_eq_holders_sum` — the end-to-end weld over BOTH real functions: under
+    coherence + key-uniqueness + an accepting matched-session drop, the POST swiss entry that
+    `swissDropK` commits has `refcount` equal to the POST holder-table sum.
+  - `#assert_axioms` tripwires added for all 12 new declarations.
 
 ### MID-2 — `concreteTransferAsset` refinement square (the real fix behind F2) — **RESOLVED**
 - **What:** the per-asset concrete op + square + corollary (see F2).

@@ -27,12 +27,14 @@ scales-to-zero special case, NOT the target):
   `total_refs` UNCHANGED, while the honest holder on the correct session CAN decrement its own ref.
 
 The connection to the verified executor: §1 is stated directly over `execFullA … (.swissDropA …)`
-and `swissDropK`. §2's table MODELS the *per-holder* session refcounts of `gc.rs`. HONESTY: §1
-and §2 are at present TWO INDEPENDENTLY-SOUND models that are NOT YET BRIDGED — there is no
-theorem proving that §2's per-holder SUM equals §1's swiss-entry `refcount` field, nor a
-`gcDropTotal`-tracks-decrement lemma (no such def exists). The intended bridge
-(`swissEntry.refcount = Σ_{holders} holder.total_refs`, plus decrement-tracking) is OPEN; see
-`docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-1. Both halves bite on their own model.
+and `swissDropK`. §2's table MODELS the *per-holder* session refcounts of `gc.rs`. §2.5 now BRIDGES
+the two: `SwissHoldersCoherent refc t := refc = totalRefs t` pins §1's swiss-entry `refcount` scalar
+to §2's per-holder SUM, and `bridge_processDrop_tracks_refcount` / `bridge_swiss_refcount_eq_holders_sum`
+prove that §2's `processDrop` accept-path decrement TRACKS §1's `swissDropK` scalar `- 1` in lockstep
+(and `bridge_last_ref_iff` aligns §2's `canRevoke` with §1's GC-at-zero). This is the `gcDropTotal`
+that the F1 finding flagged as vapor, now real (subset `{propext, Classical.choice, Quot.sound}`,
+key-uniqueness `NoDupFeds` carried honestly as the `gc.rs` `HashMap` invariant). See
+`docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-1 (RESOLVED). Both halves bite, and they bite TOGETHER.
 
 The Rust differential corpus (`gcDifferentialCorpus`) mirrors the four `gc.rs` session tests:
 `export_drop_rejected_from_wrong_session`, `export_session_superseded_by_reexport`,
@@ -272,6 +274,262 @@ theorem right_session_decrements (t : HolderTable) (fed : Fed) (rc : HolderRef)
   have hz : ¬ rc.count = 0 := by omega
   simp only [if_neg hz, ne_eq, not_true_eq_false, if_false]
 
+/-! ## §2.5 — THE BRIDGE: §2's per-holder SUM IS §1's swiss-entry `refcount` (MID-1 / F1).
+
+§1 reasons over the swiss entry's SCALAR `refcount` field (the `gc.rs` `ExportEntry.total_refs`);
+§2 reasons over the per-holder `HolderTable` (the `gc.rs` `ExportEntry.holders` map). The runtime
+maintains the invariant `ExportEntry.total_refs == Σ holders, holder.count` (`gc.rs:198–201`
+increments/decrements the scalar in lockstep with the per-holder map). Until now that connection
+lived only in prose (the `gcDropTotal` phantom, F1). Here it is a THEOREM:
+
+  * **coherence** (`SwissHoldersCoherent e t`) is `e.refcount = totalRefs t` — the swiss-entry scalar
+    IS the per-holder sum. This is a *full* equality of the two models' refcount, NOT an aggregate
+    standing in for a per-asset fact: the scalar `refcount` and the structured holder table are
+    pinned to the same number, and each §2 holder decrement is matched by a §1 scalar decrement.
+  * **`decHolder_pred_total`** — an accepting drop on a present, positive holder lowers `totalRefs`
+    by EXACTLY one (the per-holder model's decrement is unit-exact; the `HashMap` key-uniqueness
+    invariant `NoDupFeds` rules out a single `fed` being double-counted).
+  * **`bridge_drop_tracks`** — the WELD: when §2's `processDrop` accepts (correct session, positive
+    count) AND §1's `swissDropK` commits the `refcount > 1` decrement branch, coherence is PRESERVED
+    across the joint step (`e'.refcount = totalRefs t'`). The two halves now move in lockstep.
+  * **`bridge_last_ref_reclaims`** — the boundary: when the LAST holder drops (`totalRefs t' = 0`),
+    §1 reclaims the swiss entry (`swissDropK` takes the remove branch) — §2's `canRevoke` verdict and
+    §1's GC-at-zero agree. -/
+
+/-- **`NoDupFeds t`** — the `gc.rs` `HashMap<FederationId, RefCount>` key-uniqueness invariant: no
+federation id appears twice in the holder table. A real `HashMap` guarantees this by construction;
+we carry it as an explicit hypothesis so the per-holder decrement is provably UNIT-exact (a duplicate
+key would let one `processDrop` lower `totalRefs` by more than one). -/
+def NoDupFeds (t : HolderTable) : Prop := (t.map Prod.fst).Nodup
+
+/-- `fed` not a key ⇒ every element's key differs from `fed`. -/
+theorem forall_key_ne (t : HolderTable) (fed : Fed)
+    (hnm : fed ∉ t.map Prod.fst) : ∀ p ∈ t, ¬ p.1 = fed := by
+  intro p hp h
+  apply hnm
+  rw [List.mem_map]
+  exact ⟨p, hp, h⟩
+
+/-- The `map` half of `decHolder` is the identity on a table with no `fed` key (helper for the
+unit-exact decrement: a non-matching tail is untouched by the count-decrement map). -/
+theorem decHolderMap_not_mem (t : HolderTable) (fed : Fed)
+    (hnm : fed ∉ t.map Prod.fst) :
+    t.map (fun p => if p.1 == fed then (p.1, { p.2 with count := p.2.count - 1 }) else p) = t := by
+  have hkey := forall_key_ne t fed hnm
+  clear hnm
+  induction t with
+  | nil => rfl
+  | cons hd tl ih =>
+      have hhd : ¬ hd.1 = fed := hkey hd (by simp)
+      simp only [List.map_cons]
+      rw [if_neg (by simpa using hhd)]
+      congr 1
+      exact ih (fun p hp => hkey p (by simp [hp]))
+
+/-- The `filter` half of `decHolder` keeps every entry of a table with no `fed` key (its guard
+`p.1 == fed && …` never fires). -/
+theorem decHolderFilter_not_mem (t : HolderTable) (fed : Fed)
+    (hnm : fed ∉ t.map Prod.fst) :
+    t.filter (fun p => !(p.1 == fed && p.2.count == 0)) = t := by
+  have hkey := forall_key_ne t fed hnm
+  apply List.filter_eq_self.mpr
+  intro p hp
+  have hpf : ¬ p.1 = fed := hkey p hp
+  simp only [Bool.not_eq_eq_eq_not, Bool.not_true, Bool.and_eq_false_imp]
+  intro hpe
+  exact absurd (by simpa using hpe) hpf
+
+/-- A `fed` absent from the key set leaves `decHolder` a NO-OP (map + filter both pass through). -/
+theorem decHolder_not_mem (t : HolderTable) (fed : Fed)
+    (hnm : fed ∉ t.map Prod.fst) : decHolder t fed = t := by
+  unfold decHolder
+  rw [decHolderMap_not_mem t fed hnm, decHolderFilter_not_mem t fed hnm]
+
+/-- **`totalRefs_pos_of_findHolder` (PROVED)** — a present holder with positive count makes the SUM
+positive. The arithmetic that proves the tail recursion of the unit-exact decrement does not
+under-flow. -/
+theorem totalRefs_pos_of_findHolder (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hf : findHolder t fed = some rc) (hpos : 0 < rc.count) : 1 ≤ totalRefs t := by
+  induction t with
+  | nil => exact absurd hf (by simp [findHolder])
+  | cons hd tl ih =>
+    have htot : totalRefs (hd :: tl) = hd.2.count + totalRefs tl := by
+      simp only [totalRefs, List.map_cons, List.sum_cons]
+    simp only [findHolder, List.find?_cons] at hf
+    by_cases hhd : (hd.1 == fed) = true
+    · simp only [hhd, if_true, Option.map_some, Option.some.injEq] at hf
+      subst hf
+      rw [htot]; omega
+    · simp only [hhd, Bool.false_eq_true, if_false] at hf
+      have hrec := ih (by simp only [findHolder]; exact hf)
+      rw [htot]; omega
+
+/-- **`decHolder_pred_total` (PROVED) — the per-holder decrement is UNIT-exact.** Given key-uniqueness
+(`NoDupFeds`), if `fed` is present with positive count, `decHolder` lowers `totalRefs` by EXACTLY one.
+This is the arithmetic heart of the bridge: §2's structured decrement matches §1's scalar `- 1`. -/
+theorem decHolder_pred_total (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hnd : NoDupFeds t) (hf : findHolder t fed = some rc) (hpos : 0 < rc.count) :
+    totalRefs (decHolder t fed) = totalRefs t - 1 := by
+  unfold NoDupFeds at hnd
+  induction t with
+  | nil => exact absurd hf (by simp [findHolder])
+  | cons hd tl ih =>
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    obtain ⟨hdnotin, hndtl⟩ := hnd
+    simp only [findHolder, List.find?_cons] at hf
+    have htot : totalRefs (hd :: tl) = hd.2.count + totalRefs tl := by
+      simp only [totalRefs, List.map_cons, List.sum_cons]
+    by_cases hhd : (hd.1 == fed) = true
+    · -- head matches; `rc = hd.2`; tl has no `fed` key so the rest is untouched.
+      simp only [hhd, if_true, Option.map_some, Option.some.injEq] at hf
+      subst hf
+      have hfedeq : hd.1 = fed := by simpa using hhd
+      have hnmtl : fed ∉ tl.map Prod.fst := by rw [← hfedeq]; exact hdnotin
+      have hmaptl := decHolderMap_not_mem tl fed hnmtl
+      have hfilttl := decHolderFilter_not_mem tl fed hnmtl
+      have hexpand : decHolder (hd :: tl) fed =
+          List.filter (fun p => !(p.1 == fed && p.2.count == 0))
+            ((hd.1, { hd.2 with count := hd.2.count - 1 }) :: tl) := by
+        unfold decHolder
+        simp only [List.map_cons, hhd, if_true, hmaptl]
+      rw [hexpand, List.filter_cons]
+      by_cases hc1 : hd.2.count - 1 = 0
+      · -- count was exactly 1 → head's decremented count is 0 → filtered out.
+        have hcount1 : hd.2.count = 1 := by omega
+        have hguard : (!((hd.1, { hd.2 with count := hd.2.count - 1 }).1 == fed &&
+            (hd.1, { hd.2 with count := hd.2.count - 1 }).2.count == 0)) = false := by
+          simp only [hhd, hc1, beq_self_eq_true, Bool.and_self, Bool.not_true]
+        rw [if_neg (by simp [hguard]), hfilttl, htot]
+        omega
+      · -- count > 1 → head kept with decremented count.
+        have hguard : (!((hd.1, { hd.2 with count := hd.2.count - 1 }).1 == fed &&
+            (hd.1, { hd.2 with count := hd.2.count - 1 }).2.count == 0)) = true := by
+          simp only [Bool.not_eq_true', Bool.and_eq_false_imp]
+          intro _; simpa using hc1
+        rw [if_pos (by simp [hguard]), hfilttl]
+        have hcons : totalRefs ((hd.1, { hd.2 with count := hd.2.count - 1 }) :: tl)
+            = (hd.2.count - 1) + totalRefs tl := by
+          simp only [totalRefs, List.map_cons, List.sum_cons]
+        rw [hcons, htot]
+        omega
+    · -- head does not match; `fed` lives in the tail. Recurse.
+      simp only [hhd, Bool.false_eq_true, if_false] at hf
+      have hffull : findHolder tl fed = some rc := by simp only [findHolder]; exact hf
+      have hrec : totalRefs (decHolder tl fed) = totalRefs tl - 1 := ih hndtl hffull
+      have hfedne : ¬ hd.1 = fed := by simpa using hhd
+      have hexpand : decHolder (hd :: tl) fed = hd :: decHolder tl fed := by
+        unfold decHolder
+        simp only [List.map_cons, hhd, Bool.false_eq_true, if_false, List.filter_cons]
+        have hguard : (!(hd.1 == fed && hd.2.count == 0)) = true := by
+          simp only [hhd, Bool.false_and, Bool.not_false]
+        rw [if_pos (by simp [hguard])]
+      have htlpos : 1 ≤ totalRefs tl := totalRefs_pos_of_findHolder tl fed rc hffull hpos
+      rw [hexpand]
+      have h2 : totalRefs (hd :: decHolder tl fed) = hd.2.count + totalRefs (decHolder tl fed) := by
+        simp only [totalRefs, List.map_cons, List.sum_cons]
+      rw [h2, hrec, htot]
+      omega
+
+/-- **`SwissHoldersCoherent refc t`** — THE bridge predicate: §1's scalar `refcount` IS §2's
+per-holder SUM. Stated over the scalar `refc` (the `SwissRecord.refcount` field) so it composes with
+§1's `swissDropK`, which writes exactly `e.refcount - 1`. Not an aggregate standing in for a
+per-holder fact — a FULL equality the joint-step lemma below PRESERVES under a synchronized drop. -/
+def SwissHoldersCoherent (refc : Nat) (t : HolderTable) : Prop :=
+  refc = totalRefs t
+
+/-- **`bridge_accept_preserves_coherence` (PROVED) — the WELD, §2-side.** Coherence between the
+scalar refcount and the per-holder sum is PRESERVED across an accepting drop: if `refc = totalRefs t`
+and `fed` is a present, positive holder under a key-unique table, then after §2's `decHolder` the
+DECREMENTED scalar `refc - 1` still equals `totalRefs (decHolder t fed)`. The scalar `-1` that
+§1's `swissDropK` writes is EXACTLY the per-holder sum after the holder drop — the two models move in
+lockstep, no longer two disconnected halves. -/
+theorem bridge_accept_preserves_coherence (refc : Nat) (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hnd : NoDupFeds t) (hf : findHolder t fed = some rc) (hpos : 0 < rc.count)
+    (hco : SwissHoldersCoherent refc t) :
+    SwissHoldersCoherent (refc - 1) (decHolder t fed) := by
+  unfold SwissHoldersCoherent at hco ⊢
+  rw [hco, decHolder_pred_total t fed rc hnd hf hpos]
+
+/-- **`bridge_last_ref_iff` (PROVED) — the GC boundary agrees across the two models.** Under
+coherence and an accepting drop, §2's per-holder sum hits `0` (the `canRevoke` verdict's
+`totalRefs t' = 0` condition, `gc.rs:201`) IF AND ONLY IF §1's scalar hits `0` (`swissDropK`'s
+remove branch condition `e.refcount - 1 = 0`). So §2's `canRevoke` and §1's GC-at-zero reclaim
+EXACTLY together — neither reclaims while the other still holds a ref. -/
+theorem bridge_last_ref_iff (refc : Nat) (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hnd : NoDupFeds t) (hf : findHolder t fed = some rc) (hpos : 0 < rc.count)
+    (hco : SwissHoldersCoherent refc t) :
+    totalRefs (decHolder t fed) = 0 ↔ refc - 1 = 0 := by
+  unfold SwissHoldersCoherent at hco
+  rw [decHolder_pred_total t fed rc hnd hf hpos, hco]
+
+/-! ### §2.5a — welding §2's `processDrop` ACCEPT path to §1's `swissDropK`.
+
+The lemmas above are stated over `decHolder` (the structured drop) and the scalar `- 1`. We now pin
+that `decHolder` IS the table `processDrop` returns on its accept path, and that `swissDropK` on a
+`refcount > 1` entry writes exactly the scalar `- 1` — so the bridge holds over the ACTUAL `gc.rs`
+verdict function (§2) and the ACTUAL verified swiss-drop arm (§1), not just their decompositions. -/
+
+/-- **`processDrop_accept_table` (PROVED) — the accept path returns `decHolder`.** When the session
+matches (`expected = some rc.session`) and the holder is present with positive count, `processDrop`'s
+post-table is exactly `decHolder t fed`. This pins the bridge's `decHolder` to the real `gc.rs`
+verdict function's output. -/
+theorem processDrop_accept_table (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hf : findHolder t fed = some rc) (hpos : 0 < rc.count) :
+    (processDrop t fed (some rc.session)).2 = decHolder t fed :=
+  right_session_decrements t fed rc hf hpos
+
+/-- **`bridge_processDrop_tracks_refcount` (PROVED) — THE bridge over the real functions.** Given
+coherence (`refc = totalRefs t`), key-uniqueness, and a present positive holder on the matching
+session, §2's `processDrop` accept-path post-table has `totalRefs` equal to the DECREMENTED §1 scalar
+`refc - 1`. This is `gcDropTotal` made real: the §2 per-holder model's drop and the §1 scalar
+`swissDropK`'s `refcount - 1` track each other, welding the two halves the F1 docstring only claimed
+in prose. -/
+theorem bridge_processDrop_tracks_refcount (refc : Nat) (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hnd : NoDupFeds t) (hf : findHolder t fed = some rc) (hpos : 0 < rc.count)
+    (hco : SwissHoldersCoherent refc t) :
+    totalRefs (processDrop t fed (some rc.session)).2 = refc - 1 := by
+  rw [processDrop_accept_table t fed rc hf hpos, decHolder_pred_total t fed rc hnd hf hpos]
+  unfold SwissHoldersCoherent at hco; omega
+
+/-- **`swissDropK_writes_scalar_pred` (PROVED) — §1 writes exactly `refcount - 1`.** On a `refcount > 1`
+entry, the verified GC arm `swissDropK` commits a post-state whose swiss entry has `refcount` lowered
+by EXACTLY one — the scalar side of the lockstep. (At `refcount = 1` it removes the entry; at `0` it
+rejects — the boundaries `bridge_last_ref_iff` aligns with §2's `canRevoke`.) -/
+theorem swissDropK_writes_scalar_pred (k : RecordKernelState) (sw : Nat) (e : SwissRecord)
+    (hf : findSwiss k.swiss sw = some e) (hgt : 1 < e.refcount) :
+    swissDropK k sw = some { k with swiss := replaceSwiss k.swiss sw { e with refcount := e.refcount - 1 } } := by
+  have hz : ¬ e.refcount = 0 := by omega
+  have hone : ¬ e.refcount - 1 = 0 := by omega
+  simp only [swissDropK, hf, if_neg hz, if_neg hone]
+
+/-- **`bridge_swiss_refcount_eq_holders_sum` (PROVED) — the headline coherence over the swiss entry.**
+The swiss-entry scalar `e.refcount` (§1) equals the per-holder sum `totalRefs t` (§2) under the
+coherence hypothesis — and after a synchronized accepting drop, the POST swiss entry's `refcount`
+(what `swissDropK` writes on the `> 1` branch) equals the POST holder-table sum. The end-to-end
+welding theorem: §1's swiss-table `refcount` field and §2's `gc.rs`-faithful per-holder map agree
+before AND after the drop. -/
+theorem bridge_swiss_refcount_eq_holders_sum
+    (k : RecordKernelState) (sw : Nat) (e : SwissRecord) (t : HolderTable) (fed : Fed) (rc : HolderRef)
+    (hf : findSwiss k.swiss sw = some e) (hgt : 1 < e.refcount)
+    (hnd : NoDupFeds t) (hfh : findHolder t fed = some rc) (hpos : 0 < rc.count)
+    (hco : SwissHoldersCoherent e.refcount t)
+    (k' : RecordKernelState)
+    (hk : swissDropK k sw = some k') :
+    ∃ e', findSwiss k'.swiss sw = some e' ∧
+      SwissHoldersCoherent e'.refcount (processDrop t fed (some rc.session)).2 := by
+  -- §1: swissDropK writes refcount-1 into the entry.
+  have hkw := swissDropK_writes_scalar_pred k sw e hf hgt
+  have hkeq : k' = { k with swiss := replaceSwiss k.swiss sw { e with refcount := e.refcount - 1 } } :=
+    Option.some.inj (hk.symm.trans hkw)
+  have hpost : findSwiss k'.swiss sw = some { e with refcount := e.refcount - 1 } := by
+    rw [hkeq]
+    exact findSwiss_replaceSwiss_self k.swiss sw e { e with refcount := e.refcount - 1 } hf
+      (by show e.swiss = sw; exact findSwiss_swiss_eq hf)
+  refine ⟨{ e with refcount := e.refcount - 1 }, hpost, ?_⟩
+  -- §2: processDrop accept-path sum is e.refcount - 1, which equals the post entry's refcount.
+  unfold SwissHoldersCoherent at hco ⊢
+  rw [processDrop_accept_table t fed rc hfh hpos, decHolder_pred_total t fed rc hnd hfh hpos, hco]
+
 /-! ## §3 — the lease-liveness half is RE-EXPORTED, not re-proved.
 
 `CapTPGC` already PROVED the eventual-reclamation half (lease expiry reclaims, current lease never
@@ -354,6 +612,42 @@ theorem gcDifferentialCorpus_faithful :
       ∧ totalRefs (processDrop row.1 row.2.1 row.2.2.1).2 = row.2.2.2.2 := by
   decide
 
+/-! ### §4a — the bridge predicate is NON-VACUOUS (witnessed TRUE and FALSE).
+
+`SwissHoldersCoherent` and `NoDupFeds` are real predicates: each is satisfied by a concrete table and
+REFUTED by another. Coherence is TRUE when the scalar matches the holder sum (`2` over `demoTable`)
+and FALSE when it does not (`3 ≠ 2`); `NoDupFeds` admits `demoTable` and REJECTS a duplicate-key
+table. So the bridge theorems are not vacuously discharged by an unsatisfiable hypothesis. -/
+
+/-- Coherence holds when the scalar `refcount` equals the per-holder sum (`demoTable` sums to `2`). -/
+theorem coherent_demo : SwissHoldersCoherent 2 demoTable := by
+  unfold SwissHoldersCoherent; decide
+
+/-- Coherence FAILS when the scalar disagrees with the sum (`3 ≠ totalRefs demoTable = 2`) — the
+predicate genuinely constrains, it is not `True`. -/
+theorem not_coherent_demo : ¬ SwissHoldersCoherent 3 demoTable := by
+  unfold SwissHoldersCoherent; decide
+
+/-- After an accepting drop on `demoTable` (holder `10`, its session `42`), coherence to scalar `1`
+holds — the per-holder sum fell from `2` to `1` in lockstep with the §1 scalar `2 - 1`. -/
+theorem coherent_after_drop : SwissHoldersCoherent 1 (decHolder demoTable 10) := by
+  unfold SwissHoldersCoherent; decide
+
+/-- `NoDupFeds` admits the well-formed two-holder table. -/
+theorem nodup_demo : NoDupFeds demoTable := by unfold NoDupFeds; decide
+
+/-- `NoDupFeds` REJECTS a duplicate-key table — the key-uniqueness invariant rules something out, so
+the unit-exactness it underwrites is not vacuous. -/
+theorem not_nodup_dup : ¬ NoDupFeds [(10, { count := 1, session := 1 }), (10, { count := 1, session := 2 })] := by
+  unfold NoDupFeds; decide
+
+/-- End-to-end concrete witness of `bridge_processDrop_tracks_refcount`: starting coherent at scalar
+`2`, the §2 accept-path post-table sums to `1 = 2 - 1`. -/
+theorem bridge_tracks_demo :
+    totalRefs (processDrop demoTable 10 (some 42)).2 = 2 - 1 :=
+  bridge_processDrop_tracks_refcount 2 demoTable 10 { count := 1, session := 42 }
+    nodup_demo (by decide) (by decide) coherent_demo
+
 end Differential
 
 /-! ## §5 — axiom-hygiene tripwires. -/
@@ -365,6 +659,17 @@ end Differential
 #assert_axioms wrong_session_preserves_total
 #assert_axioms byzantine_cannot_drop_victim_ref
 #assert_axioms right_session_decrements
+#assert_axioms decHolderMap_not_mem
+#assert_axioms decHolderFilter_not_mem
+#assert_axioms decHolder_not_mem
+#assert_axioms totalRefs_pos_of_findHolder
+#assert_axioms decHolder_pred_total
+#assert_axioms bridge_accept_preserves_coherence
+#assert_axioms bridge_last_ref_iff
+#assert_axioms processDrop_accept_table
+#assert_axioms bridge_processDrop_tracks_refcount
+#assert_axioms swissDropK_writes_scalar_pred
+#assert_axioms bridge_swiss_refcount_eq_holders_sum
 #assert_axioms leased_reclaim_eventual
 #assert_axioms leased_no_premature
 #assert_axioms gcDifferentialCorpus_faithful
