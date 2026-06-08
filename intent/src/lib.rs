@@ -61,6 +61,7 @@
 //!
 //! This IS the progressive disclosure story applied to discovery.
 
+pub mod agent_mandate;
 pub mod bond;
 pub mod commit_reveal_fulfillment;
 pub mod cross_fed;
