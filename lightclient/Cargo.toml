@@ -1,0 +1,21 @@
+[package]
+name = "dregg-lightclient"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Whole-history light client: verify ONE succinct IVC aggregate (WholeChainProof) and obtain the AggregateAttests verdict — re-witnessing nothing. The Rust embodiment of Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history."
+
+[dependencies]
+# The recursion feature is in dregg-circuit's default set (carries ivc_turn_chain +
+# verify_turn_chain_recursive + WholeChainProof).
+dregg-circuit = { path = "../circuit" }
+
+[features]
+# `recursion` forwards to dregg-circuit's recursion feature (which is in its default set) and gates
+# the whole-history light client. On by default so `cargo build -p dregg-lightclient` carries it.
+default = ["recursion"]
+recursion = ["dregg-circuit/recursion"]
