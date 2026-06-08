@@ -1,10 +1,28 @@
-# Circuit Assurance — Per-Effect HONEST Ledger
+# Circuit Assurance — Per-Effect HONEST Ledger (FINALIZED)
 
-**Date:** 2026-06-08 · read-only audit · author: per-effect circuit-assurance review.
+**Date:** 2026-06-08 · FINALIZED after the deep-verify phase · author: per-effect circuit-assurance review.
 
 This is the truth about how verified the **emitted EffectVM circuit** (`Dregg2/Circuit/Emit/*`)
 actually is, per effect. It is NOT a completion count. Differential agreement is NOT counted as
 proof. The economic/frame leg is NOT counted as full verification.
+
+**Finalization pass (2026-06-08):** every cited theorem below was re-read at its `file:line` and
+every class was re-confirmed against the code (not against any prior summary). `#print axioms` re-run
+on the keystone + representatives: `transferDescriptor_full_sound`,
+`transferDescriptor_commit_binds_state`, `tampered_rejected`, `noteSpendDescriptor_full_sound`,
+`noteSpend_no_double_spend_is_turn_property` all depend on exactly `{propext, Classical.choice,
+Quot.sound}` (the last is `{propext, Quot.sound}`). The full owned surface — all 54 `EffectVmEmit*`
+modules + `EmitAllJson` + `EmitGraduate` + `Dregg2.Circuit.TurnEmit` +
+`Dregg2.Circuit.CoordinatedTurnEmit` — builds GREEN: **`lake build` completed successfully, 3198 jobs,
+0 errors** (warnings only). Two stale-by-drift build breaks were found+fixed during this pass (neither a
+soundness regression): (i) `EffectVmEmitRecordRoot.lean:319` `#guard` hardcoded the transfer
+descriptor's constraint count as `14+14+4+3 = 35`, but the selector-binding `sel[S]=1` tooth (task #74)
+added one gate ⇒ now `36 = 14+14+4+3+1` (the `recordVmDescriptor_constraints_eq` `rfl` theorem still
+holds — record inherits transfer's constraints exactly); (ii) `EmitAllJson.lean` listed the four
+root-parameterized queue descriptors (`queueAllocate`/`queueDequeue`/`queueEnqueue`/`queueResize`) as
+bare values, but they are now `ℤ → EffectVmDescriptor` functions of the OPAQUE side-table parameter —
+instantiated at the canonical `0` (the descriptor shape is independent of that scalar; it is exactly the
+class-C queue gap). No hand-AIR touched; no graduate-and-delete.
 
 ## The bar (l4v REAL, ember-corrected)
 
@@ -60,7 +78,8 @@ deployed row does not carry. Those are **class C**, not A.
 
 Every effect below is `#assert_axioms`-clean (⊆ {`propext`, `Classical.choice`, `Quot.sound`}); no
 `sorry`, no `:= True`, no `native_decide` (verified: the only textual matches are header comments
-asserting their absence). Build green (`lake build` of the touched Emit modules: 2991 jobs, warnings only).
+asserting their absence). Build green (`lake build` of the touched Emit + turn modules: **3198 jobs,
+0 errors**, warnings only — re-run on this finalization pass).
 
 ---
 
@@ -136,6 +155,27 @@ asserting their absence). Build green (`lake build` of the touched Emit modules:
 ---
 
 ## SUMMARY COUNT (ruthless)
+
+### THE HONEST FRACTION (the number ember asked for)
+
+> **1 / 56** effects has a genuine **from-scratch full-semantics circuit proof connected to the verified
+> executor** — i.e. `satisfiedVm <descriptor> ⟹ FULL per-cell post-state (every touched field
+> moved-or-frozen) + anti-ghost commitment on ALL of it + unification to `recKExec``. That effect is
+> **transfer** (`transferDescriptor_full_sound` + `transferDescriptor_commit_binds_state` +
+> `tampered_rejected` + `unify_debit_exec`/`unify_credit_exec`). Its universe-A source `balanceA` is the
+> same proof viewed at universe A, so counting it as a second genuine full-state row gives **2 / 56** at
+> most — but it is NOT a distinct circuit. **The honest, conservative number is ONE genuinely-verified
+> effect circuit.**
+>
+> This fraction deliberately does **NOT** count: (a) the 4 **A−** effects (mint/burn/incrementNonce/
+> queueEnqueue) — each binds+anti-ghosts its moved column and unifies to the executor, but each has ONE
+> named residual (opaque supply total / no nonce-tick executor effect / opaque queue-root recompute) and
+> so is *one identifiable step* from A, not at A; (b) **differential agreement** (`descriptor == hand-AIR`)
+> — that is a cross-check, present as an *additional* tooth on some effects, never as a substitute for a
+> from-scratch proof (class B is therefore empty); (c) the **economic / frozen-frame leg** — binding the
+> conserved balance + frozen frame is conservation, and *conservation is NOT correctness*: it does not
+> bind the cap-table mutation / nullifier insert / note insert / escrow resolve / seal write / etc. that
+> IS the effect. So "X/56 = 1" is the truth about how verified the circuit ACTUALLY is, effect by effect.
 
 | Class | Count | Effects |
 |-------|------:|---------|

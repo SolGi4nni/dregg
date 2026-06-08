@@ -316,7 +316,10 @@ theorem goodRow_fieldsRoot_zero : goodRow.loc (saCol state.FIELDS_ROOT) = 0 := b
 #guard recordHashSites.length == 4
 #guard recordVmDescriptor.traceWidth == 186
 #guard recordVmDescriptor.hashSites.length == 4
-#guard recordVmDescriptor.constraints.length == 14 + 14 + 4 + 3
+-- 14 per-row gates + 14 transitions + 4 boundary-first + 3 boundary-last + 1 selector-binding
+-- `sel[S]=1` tooth (task #74, added to `transferVmDescriptor` after this guard was first written;
+-- inherited verbatim by `recordVmDescriptor` per `recordVmDescriptor_constraints_eq`). = 36.
+#guard recordVmDescriptor.constraints.length == 14 + 14 + 4 + 3 + 1
 -- The record site 3 absorbs the FIELDS_ROOT cell (col 87), NOT the literal zero:
 #guard recordSite3.inputs == [HashInput.digest 0, HashInput.digest 1, HashInput.digest 2,
                               HashInput.col (saCol state.FIELDS_ROOT)]

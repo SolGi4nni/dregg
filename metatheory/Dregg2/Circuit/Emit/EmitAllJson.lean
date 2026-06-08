@@ -104,12 +104,17 @@ def allEntries : List Entry :=
   , ⟨"noteCreateVmDescriptor",          EffectVmEmitNoteCreate.noteCreateVmDescriptor⟩
   , ⟨"noteSpendVmDescriptor",           EffectVmEmitNoteSpend.noteSpendVmDescriptor⟩
   , ⟨"pipelinedSendVmDescriptor",       EffectVmEmitPipelinedSend.pipelinedSendVmDescriptor⟩
-  , ⟨"queueAllocateVmDescriptor",       EffectVmEmitQueueAllocate.queueAllocateVmDescriptor⟩
+    -- The four root-parameterized queue descriptors are functions of an OPAQUE side-table
+    -- parameter (the `newRoot`/`emptyRoot`/`resizeCost` the row asserts but does NOT recompute —
+    -- exactly the class-C queue gap in the assurance ledger). The emitted descriptor SHAPE is
+    -- independent of that scalar (it enters only as one gate constant), so we serialize the
+    -- canonical instance at `0`.
+  , ⟨"queueAllocateVmDescriptor",       EffectVmEmitQueueAllocate.queueAllocateVmDescriptor 0⟩
   , ⟨"queueAtomicVmDescriptor",         EffectVmEmitQueueAtomicTx.queueAtomicVmDescriptor⟩
-  , ⟨"queueDequeueVmDescriptor",        EffectVmEmitQueueDequeue.queueDequeueVmDescriptor⟩
-  , ⟨"queueEnqueueVmDescriptor",        EffectVmEmitQueueEnqueue.queueEnqueueVmDescriptor⟩
+  , ⟨"queueDequeueVmDescriptor",        EffectVmEmitQueueDequeue.queueDequeueVmDescriptor 0⟩
+  , ⟨"queueEnqueueVmDescriptor",        EffectVmEmitQueueEnqueue.queueEnqueueVmDescriptor 0⟩
   , ⟨"queuePipelineVmDescriptor",       EffectVmEmitQueuePipelineStep.queuePipelineVmDescriptor⟩
-  , ⟨"queueResizeVmDescriptor",         EffectVmEmitQueueResize.queueResizeVmDescriptor⟩
+  , ⟨"queueResizeVmDescriptor",         EffectVmEmitQueueResize.queueResizeVmDescriptor 0⟩
   , ⟨"receiptArchiveVmDescriptor",      EffectVmEmitReceiptArchive.receiptArchiveVmDescriptor⟩
   , ⟨"refreshVmDescriptor",             EffectVmEmitRefreshDelegation.refreshVmDescriptor⟩
   , ⟨"refundEscrowVmDescriptor",        EffectVmEmitRefundEscrow.refundEscrowVmDescriptor⟩
