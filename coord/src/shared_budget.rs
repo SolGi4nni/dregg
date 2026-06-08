@@ -557,23 +557,36 @@ impl SharedResourceBudget {
         self.state = ResourceState::Rebalancing;
         self.resolutions.clear();
 
-        let mut remaining_balance = self.total_balance;
+        // Collect the tau-ordered (block, debit-amount) pairs — exactly the debit stream the verified
+        // Lean `SharedBudgetDynamics.resolveOrdered` (`dregg_coord_shared_budget`) folds.
+        let ordered_debits: Vec<(BlocBlockId, ResourceAmount)> = ordered_blocks
+            .iter()
+            .filter_map(|block_id| {
+                blocklace
+                    .get(block_id)
+                    .and_then(|block| extract_debit_for_resource(block, resource_id))
+                    .map(|amount| (*block_id, amount))
+            })
+            .collect();
 
-        for block_id in ordered_blocks {
-            if let Some(block) = blocklace.get(block_id) {
-                if let Some(amount) = extract_debit_for_resource(block, resource_id) {
-                    if amount <= remaining_balance {
-                        // Accept this debit (it came first in tau order).
-                        remaining_balance -= amount;
-                        self.resolutions
-                            .insert(*block_id, DebitResolution::Accepted);
-                    } else {
-                        // Reject this debit (insufficient balance after earlier debits).
-                        self.resolutions
-                            .insert(*block_id, DebitResolution::Rejected);
-                    }
-                }
-            }
+        // STRONG-FORM swap: get the per-debit accept/reject verdicts + remaining balance from the
+        // VERIFIED Lean tau-resolution gate when linked (`--features lean-gate`,
+        // `dregg_coord_shared_budget` = `SharedBudgetDynamics.resolveOrdered`), which carries
+        // `resolveOrdered_accepted_le_balance` (Σ accepted ≤ balance). The native first-wins fold
+        // [`resolve_ordered_native`] is the DIFFERENTIAL sibling and the fallback.
+        let amounts: Vec<ResourceAmount> = ordered_debits.iter().map(|(_, a)| *a).collect();
+        let (verdicts, remaining_balance) = verified_resolve_ordering(self.total_balance, &amounts)
+            .unwrap_or_else(|| resolve_ordered_native(self.total_balance, &amounts));
+
+        for ((block_id, _amount), accepted) in ordered_debits.iter().zip(verdicts.iter()) {
+            self.resolutions.insert(
+                *block_id,
+                if *accepted {
+                    DebitResolution::Accepted
+                } else {
+                    DebitResolution::Rejected
+                },
+            );
         }
 
         // Update the total balance to reflect accepted debits.
@@ -778,6 +791,92 @@ const DEBIT_PAYLOAD_MIN_SIZE: usize = 1 + 32 + 8;
 ///
 /// Returns `Some(amount)` if the block's payload is a Turn containing a debit
 /// for the given resource_id. Returns `None` otherwise.
+/// The NATIVE Rust tau-resolution fold (the differential sibling of the verified Lean
+/// `SharedBudgetDynamics.resolveOrdered`). Fold the tau-ordered `amounts` through `balance`: accept
+/// iff `amount ≤ remaining`, subtract on accept, reject otherwise (first-come-wins). Returns the
+/// per-debit accept verdicts (in order) and the final remaining balance — byte-for-byte the gate's
+/// semantics, kept distinct so it can be cross-checked against the Lean verdict.
+fn resolve_ordered_native(balance: ResourceAmount, amounts: &[ResourceAmount]) -> (Vec<bool>, ResourceAmount) {
+    let mut remaining = balance;
+    let mut verdicts = Vec::with_capacity(amounts.len());
+    for &amount in amounts {
+        if amount <= remaining {
+            remaining -= amount;
+            verdicts.push(true);
+        } else {
+            verdicts.push(false);
+        }
+    }
+    (verdicts, remaining)
+}
+
+/// Decide the tau-resolution verdicts via the VERIFIED Lean export `dregg_coord_shared_budget`
+/// (= `Dregg2.Coord.SharedBudgetDynamics.resolveOrdered`). Returns `Some((verdicts, remaining))` when
+/// the gate ran, or `None` when the verified gate is unavailable (feature off / archive lacks the
+/// export) so the caller falls back to [`resolve_ordered_native`]. The wire is
+/// `"B=<balance>;D=<amt,amt,...>"`; the gate replies `"R=<v,v,...>;b=<remaining>;a=<accepted>"`
+/// (v: 1=accepted 0=rejected). Carries `resolveOrdered_accepted_le_balance` (Σ accepted ≤ balance) by
+/// construction. Built `--features lean-gate`; a stub returning `None` otherwise.
+#[cfg(feature = "lean-gate")]
+fn verified_resolve_ordering(
+    balance: ResourceAmount,
+    amounts: &[ResourceAmount],
+) -> Option<(Vec<bool>, ResourceAmount)> {
+    if !dregg_lean_ffi::distributed_exports_available() {
+        return None;
+    }
+    let amt_str = amounts
+        .iter()
+        .map(|a| a.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let wire = format!("B={balance};D={amt_str}");
+    let out = dregg_lean_ffi::shadow_coord_shared_budget(&wire).ok()?;
+    parse_budget_reply(&out, amounts.len())
+}
+
+/// Stub when the `lean-gate` feature is off: the verified gate is unavailable, so
+/// [`resolve_ordered_native`] decides. Referenced unconditionally in `resolve_with_ordering`.
+#[cfg(not(feature = "lean-gate"))]
+fn verified_resolve_ordering(
+    _balance: ResourceAmount,
+    _amounts: &[ResourceAmount],
+) -> Option<(Vec<bool>, ResourceAmount)> {
+    None
+}
+
+/// Parse the `dregg_coord_shared_budget` reply `"R=<v,v,...>;b=<remaining>;a=<accepted>"` into
+/// `(per-debit accept verdicts, remaining balance)`. Returns `None` on the `"ERR"` sentinel or any
+/// malformed body / verdict-count mismatch (fail-closed — the caller then uses the native fold).
+#[cfg(feature = "lean-gate")]
+fn parse_budget_reply(out: &str, expected: usize) -> Option<(Vec<bool>, ResourceAmount)> {
+    // Sections: "R=<verdicts>", "b=<remaining>", "a=<accepted>".
+    let mut parts = out.split(';');
+    let r_seg = parts.next()?.strip_prefix("R=")?;
+    let b_seg = parts.next()?.strip_prefix("b=")?;
+    let _a_seg = parts.next()?.strip_prefix("a=")?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let verdicts: Vec<bool> = if r_seg.is_empty() {
+        Vec::new()
+    } else {
+        r_seg
+            .split(',')
+            .map(|v| match v {
+                "1" => Some(true),
+                "0" => Some(false),
+                _ => None,
+            })
+            .collect::<Option<Vec<bool>>>()?
+    };
+    if verdicts.len() != expected {
+        return None;
+    }
+    let remaining = b_seg.parse::<ResourceAmount>().ok()?;
+    Some((verdicts, remaining))
+}
+
 pub fn extract_debit_for_resource(block: &BlocBlock, resource_id: &[u8; 32]) -> Option<u64> {
     match &block.payload {
         Payload::Turn(data) | Payload::Data(data) => {

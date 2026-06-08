@@ -260,6 +260,36 @@ pub enum Decision {
     Pending,
 }
 
+/// Decide the 2PC verdict via the VERIFIED Lean export `dregg_coord_2pc_decide`
+/// (= `Dregg2.Coord.TwoPhaseCommit.evaluate`). Returns `Some(decision)` when the gate ran, or `None`
+/// when the verified gate is unavailable (feature off / archive lacks the export) so the caller falls
+/// back to the native Rust `evaluate_votes_native`. The wire is
+/// `"y=<yes>;n=<no>;N=<participants>;t=<threshold>"`; the gate returns `Decision2pc` which we map onto
+/// this crate's `Decision`. Built `--features lean-gate`; a stub returning `None` otherwise so the
+/// crate has no hard dependency on the Lean archive.
+#[cfg(feature = "lean-gate")]
+fn verified_decision(yes: usize, no: usize, n: usize, threshold: usize) -> Option<Decision> {
+    if !dregg_lean_ffi::distributed_exports_available() {
+        return None;
+    }
+    let wire = format!("y={yes};n={no};N={n};t={threshold}");
+    match dregg_lean_ffi::verified_2pc_decide(&wire) {
+        Ok(dregg_lean_ffi::Decision2pc::Commit) => Some(Decision::Commit),
+        Ok(dregg_lean_ffi::Decision2pc::Abort) => Some(Decision::Abort),
+        Ok(dregg_lean_ffi::Decision2pc::Pending) => Some(Decision::Pending),
+        // FFI / wire error ⇒ fall back to the native Rust (never break the live coordinator path).
+        Err(_) => None,
+    }
+}
+
+/// Stub when the `lean-gate` feature is off: the verified gate is unavailable, so the native Rust
+/// `evaluate_votes_native` decides. The helper is referenced unconditionally in `evaluate_votes`,
+/// so it must exist in both feature configurations.
+#[cfg(not(feature = "lean-gate"))]
+fn verified_decision(_yes: usize, _no: usize, _n: usize, _threshold: usize) -> Option<Decision> {
+    None
+}
+
 // ─── Messages ──────────────────────────────────────────────────────────────────
 
 /// Message sent by the coordinator to propose an atomic turn.
@@ -758,7 +788,26 @@ impl Coordinator {
     }
 
     /// Evaluate the current votes to determine if a decision can be made.
+    ///
+    /// STRONG-FORM swap: when the verified Lean 2PC gate is linked (`--features lean-gate`,
+    /// `Dregg2.Exec.DistributedExports::dregg_coord_2pc_decide` = `TwoPhaseCommit.evaluate`), the
+    /// AUTHORITATIVE verdict comes from the verified Lean — so the coordinator inherits
+    /// `evaluate_not_commit_and_abort` (no conflicting Commit+Abort) and `commit_needs_threshold` by
+    /// construction. The native Rust [`Self::evaluate_votes_native`] stays as the DIFFERENTIAL sibling
+    /// and the fallback when the archive is not linked / the gate is unavailable.
     fn evaluate_votes(&self) -> Decision {
+        if let Some((yes, no, n, thr)) = self.current_tally() {
+            if let Some(d) = verified_decision(yes, no, n, thr) {
+                return d;
+            }
+        }
+        self.evaluate_votes_native()
+    }
+
+    /// The NATIVE Rust 2PC decision (the differential sibling of the verified Lean gate). Byte-for-byte
+    /// `TwoPhaseCommit.evaluate`: `if yes ≥ threshold Commit else if no > n − threshold Abort else
+    /// Pending`. Kept as a distinct method so it can be cross-checked against the Lean verdict.
+    fn evaluate_votes_native(&self) -> Decision {
         let (forest, votes) = match &self.state {
             CoordinatorState::Proposing { forest, votes, .. } => (forest, votes),
             _ => return Decision::Pending,

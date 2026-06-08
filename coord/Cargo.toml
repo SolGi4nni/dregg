@@ -18,5 +18,18 @@ blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 
+# Optional: route the coordinator's 2PC / causal-order / shared-budget decisions through the VERIFIED
+# Lean exports (`Dregg2.Exec.DistributedExports`: `dregg_coord_2pc_decide` = `TwoPhaseCommit.evaluate`,
+# `dregg_coord_causal_order` = `CausalOrder.happenedBefore`, `dregg_coord_shared_budget` =
+# `SharedBudgetDynamics.resolveOrdered`). Enabled by the node (which already links `dregg-lean-ffi`
+# with the Lean archive); off by default so this crate has NO hard dependency on the Lean archive.
+dregg-lean-ffi = { path = "../dregg-lean-ffi", optional = true }
+
+[features]
+# Gate the coordinator's decisions on the verified Lean exports. With the archive linked, the
+# 2PC / causal-order / shared-budget verdicts are decided BY the verified rule; without it (the bare
+# crate) the native Rust decides. Either way the native Rust runs as the DIFFERENTIAL sibling.
+lean-gate = ["dep:dregg-lean-ffi", "dregg-lean-ffi/lean-lib"]
+
 [lints]
 workspace = true

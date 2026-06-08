@@ -22,6 +22,84 @@ use serde::{Deserialize, Serialize};
 
 use crate::{FederationId, StrandId};
 
+/// Decide a `process_drop` verdict (StillHeld / CanRevoke / Invalid) via the VERIFIED Lean export
+/// `dregg_captp_process_drop` (= `Dregg2.Exec.CapTPGCConcrete.processDrop`). Returns `Some(verdict)`
+/// when the gate ran, or `None` when it is unavailable (feature off / archive lacks the export) so the
+/// caller falls back to the native Rust mutation's own verdict.
+///
+/// The cell's holder-table is interned to the gate's wire `"H=<fed:count:s=n+...|...>;f=<fed>;s=<s>"`,
+/// mapping each 32-byte `FederationId` to a small index and reusing each `SessionId` u64 directly
+/// (the Lean gate compares fed/session by identity, so any injective interning preserves the verdict).
+/// Built `--features lean-gate`; a stub returning `None` otherwise.
+#[cfg(feature = "lean-gate")]
+fn verified_drop_verdict(
+    entry: Option<&ExportEntry>,
+    from_federation: FederationId,
+    session: SessionId,
+) -> Option<DropResult> {
+    if !dregg_lean_ffi::distributed_exports_available() {
+        return None;
+    }
+    // No export entry for the cell ⇒ the gate would see an empty holder-table; the queried fed is
+    // absent ⇒ Invalid (matches the native `exports.get(&cell_id) == None` reject).
+    let entry = match entry {
+        Some(e) => e,
+        None => return Some(DropResult::Invalid),
+    };
+
+    // Intern federations to small ids; the queried fed gets its own id (added if absent so the gate
+    // sees an absent-holder Invalid rather than a parse failure).
+    let mut fed_ids: HashMap<[u8; 32], usize> = HashMap::new();
+    for fed in entry.holders.keys() {
+        let next = fed_ids.len();
+        fed_ids.entry(fed.0).or_insert(next);
+    }
+    let q_fed = {
+        let next = fed_ids.len();
+        *fed_ids.entry(from_federation.0).or_insert(next)
+    };
+
+    let holders_wire: Vec<String> = entry
+        .holders
+        .iter()
+        .map(|(fed, rc)| {
+            let id = fed_ids[&fed.0];
+            let buckets: String = {
+                let mut bs: Vec<(SessionId, u64)> =
+                    rc.sessions.iter().map(|(s, n)| (*s, *n)).collect();
+                bs.sort_unstable();
+                bs.iter()
+                    .map(|(s, n)| format!("{s}={n}"))
+                    .collect::<Vec<_>>()
+                    .join("+")
+            };
+            format!("{id}:{}:{buckets}", rc.count)
+        })
+        .collect();
+    let wire = format!("H={};f={q_fed};s={session}", holders_wire.join("|"));
+
+    let out = dregg_lean_ffi::shadow_captp_process_drop(&wire).ok()?;
+    // Reply: "S=<tag>;t=<postTotal>" — tag 0=stillHeld 1=canRevoke 2=invalid; "ERR" ⇒ fail-closed.
+    let tag_seg = out.split(';').next()?.strip_prefix("S=")?;
+    match tag_seg {
+        "0" => Some(DropResult::StillHeld),
+        "1" => Some(DropResult::CanRevoke),
+        // tag 2 (invalid) or any unexpected reply ⇒ fail-closed Invalid.
+        _ => Some(DropResult::Invalid),
+    }
+}
+
+/// Stub when the `lean-gate` feature is off: the verified gate is unavailable, so the native Rust
+/// mutation's verdict decides. Referenced unconditionally in `process_drop_inner`.
+#[cfg(not(feature = "lean-gate"))]
+fn verified_drop_verdict(
+    _entry: Option<&ExportEntry>,
+    _from_federation: FederationId,
+    _session: SessionId,
+) -> Option<DropResult> {
+    None
+}
+
 // =============================================================================
 // Export-side GC
 // =============================================================================
@@ -231,6 +309,21 @@ impl ExportGcManager {
         from_federation: FederationId,
         session: SessionId,
     ) -> DropResult {
+        // STRONG-FORM swap: when the verified Lean GC gate is linked (`--features lean-gate`,
+        // `Dregg2.Exec.DistributedExports::dregg_captp_process_drop` =
+        // `CapTPGCConcrete.processDrop`), the AUTHORITATIVE verdict (StillHeld / CanRevoke / Invalid)
+        // comes from the verified Lean — so the F-11/F-12 session-refcount logic is decided BY the
+        // verified rule. The native Rust mutation below stays as the DIFFERENTIAL sibling and applies
+        // the state change EXACTLY when the gate's verdict is not Invalid (an Invalid drop mutates
+        // nothing, matching `processDrop`'s no-mutation-on-invalid contract). When the gate is
+        // unavailable, the native mutation decides (its return value is the verdict).
+        let verified = verified_drop_verdict(self.exports.get(&cell_id), from_federation, session);
+
+        // If the verified gate ran and says Invalid, fail-closed WITHOUT mutating (the F-11 reject).
+        if matches!(verified, Some(DropResult::Invalid)) {
+            return DropResult::Invalid;
+        }
+
         let entry = match self.exports.get_mut(&cell_id) {
             Some(e) => e,
             None => return DropResult::Invalid,
@@ -260,11 +353,16 @@ impl ExportGcManager {
             entry.holders.remove(&from_federation);
         }
 
-        if entry.total_refs == 0 {
+        let native = if entry.total_refs == 0 {
             DropResult::CanRevoke
         } else {
             DropResult::StillHeld
-        }
+        };
+
+        // The verified gate (when available) is AUTHORITATIVE for the verdict; the native mutation
+        // above is the differential. They agree by construction (`captp_process_drop_eq`); on the
+        // off chance the gate errored mid-run we keep the native verdict.
+        verified.unwrap_or(native)
     }
 
     /// Find exports that haven't been accessed in `max_idle_blocks` blocks.

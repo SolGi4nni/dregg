@@ -41,6 +41,62 @@ use serde::{Deserialize, Serialize};
 // Pipeline sessions are bilateral (strand-to-strand), not group-wide.
 use crate::FederationId;
 
+/// Reorder a drained message vector to the FIFO order the VERIFIED Lean pipeline gate dictates
+/// (`Dregg2.Exec.DistributedExports::dregg_captp_pipeline_resolve` = `CapTPPipeline.Registry` FIFO
+/// resolve/break, carrying `pipeline_fulfill_drains_fifo` / `pipeline_break_drains_nothing`). Each
+/// message is labelled by its current index (`0..n-1`, already FIFO insertion order); the gate is
+/// queried with `"Q=<0,1,...,n-1>;e=<f|b>"` and replies `"D=<drained indices>;q=<post-count>"`. On a
+/// fulfill the verified drain is the queue unchanged (indices in order); on a break it is empty. We
+/// reassemble the messages in the gate's verified index order. When the gate is unavailable (feature
+/// off / archive lacks the export / a malformed reply), the native FIFO `drained` is returned as-is.
+#[cfg(feature = "lean-gate")]
+fn verified_drain_reorder(drained: Vec<PipelinedMessage>, fulfill: bool) -> Vec<PipelinedMessage> {
+    if !dregg_lean_ffi::distributed_exports_available() {
+        return drained;
+    }
+    let n = drained.len();
+    let labels = (0..n).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    let event = if fulfill { "f" } else { "b" };
+    let wire = format!("Q={labels};e={event}");
+    let out = match dregg_lean_ffi::shadow_captp_pipeline_resolve(&wire) {
+        Ok(o) => o,
+        Err(_) => return drained, // FFI error ⇒ keep the native FIFO drain.
+    };
+    // Reply: "D=<idx,idx,...>;q=<post-count>". Parse the drained index order; fail-closed to native.
+    let d_seg = match out.split(';').next().and_then(|s| s.strip_prefix("D=")) {
+        Some(s) => s,
+        None => return drained,
+    };
+    let order: Vec<usize> = if d_seg.is_empty() {
+        Vec::new()
+    } else {
+        match d_seg.split(',').map(|p| p.parse::<usize>()).collect::<Result<Vec<_>, _>>() {
+            Ok(v) => v,
+            Err(_) => return drained,
+        }
+    };
+    // The verified order must be a permutation-subset of valid indices; otherwise keep native.
+    if order.iter().any(|&i| i >= n) {
+        return drained;
+    }
+    // Reassemble in the verified drained order (move each message out by index).
+    let mut slots: Vec<Option<PipelinedMessage>> = drained.into_iter().map(Some).collect();
+    let mut reordered = Vec::with_capacity(order.len());
+    for &i in &order {
+        if let Some(msg) = slots[i].take() {
+            reordered.push(msg);
+        }
+    }
+    reordered
+}
+
+/// Stub when the `lean-gate` feature is off: the verified gate is unavailable, so the native FIFO
+/// drain order is kept. Referenced unconditionally in `resolve_promise`.
+#[cfg(not(feature = "lean-gate"))]
+fn verified_drain_reorder(drained: Vec<PipelinedMessage>, _fulfill: bool) -> Vec<PipelinedMessage> {
+    drained
+}
+
 // =============================================================================
 // Core types
 // =============================================================================
@@ -211,8 +267,17 @@ impl PipelineRegistry {
             *state = PipelinePromiseState::Fulfilled { resolved_cell };
         }
 
-        // Drain queued messages.
-        self.queued.remove(&promise_id).unwrap_or_default()
+        // Drain queued messages (the native FIFO drain — the differential sibling).
+        let drained = self.queued.remove(&promise_id).unwrap_or_default();
+
+        // STRONG-FORM swap: the VERIFIED Lean pipeline gate (`--features lean-gate`,
+        // `Dregg2.Exec.DistributedExports::dregg_captp_pipeline_resolve` =
+        // `CapTPPipeline.Registry` FIFO resolve, carrying `pipeline_fulfill_drains_fifo`) is
+        // AUTHORITATIVE for the drain ORDER: on a fulfill it returns the queue indices in FIFO order
+        // (`pipelineDrain` returns the queue unchanged). We reorder the drained messages to that
+        // verified index order. When the gate is unavailable the native FIFO `drained` is returned
+        // as-is.
+        verified_drain_reorder(drained, /* fulfill = */ true)
     }
 
     /// Break a promise — mark it broken and propagate failure to all waiting
