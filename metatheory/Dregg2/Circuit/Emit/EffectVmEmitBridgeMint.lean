@@ -411,7 +411,46 @@ theorem badBridgeMintRow_rejected :
     state.BALANCE_LO, state.NONCE, param.BRIDGE_MINT_VALUE_LO]
   norm_num
 
+/-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar).
+
+bridgeMint's whole per-cell transition is the `bal_lo` CREDIT + the frozen frame — every state-block
+column moved-or-frozen, ALL 13 absorbed into `state_commit` (anti-ghosted), and unified to the verified
+executor via `execFullA … (.bridgeMintA …) = some s'` (which dispatches to `recCMintAsset`). The capstone
+bundles the corners into ONE class-A statement, the transfer bar per cell.
+
+The bridge CryptoPortal proof (the inbound-value attestation) is NOT re-derived in this single-row AIR;
+it is enforced by `execFullA`'s ADMISSION — the `= some s'` hypothesis is exactly "the bridge-mint arm
+committed", which carries the portal proof (the conservation keystone). So the capstone's executor-commit
+hypothesis CARRIES the proof gate; the per-cell credit transition is fully bound + anti-ghosted +
+executor-unified. The remaining off-row content (the bridge proof's in-circuit internalization, the
+global supply total) is turn/portal-level — cited, not a per-cell state-block gap. -/
+
+/-- **`bridgeMintDescriptor_classA` — the per-cell class-A capstone.** Satisfying the runnable descriptor
+on a bridge-mint row, for the credited `(cell, asset)` entry of a committed `execFullA … (.bridgeMintA …)`
+(which carries the bridge portal proof), forces the FULL per-cell `CellBridgeMintSpec` (bal_lo credited by
+`value`, frame frozen), the published commit, AND agreement with the executor's per-cell post-state on the
+bal/frame clauses. -/
+theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (value : ℤ) (post : CellState)
+    (henc : RowEncodes env (cellProjA s.kernel cell a) value post)
+    (hsat : satisfiedVm hash bridgeMintVmDescriptor env true true)
+    (hexec : execFullA s (.bridgeMintA actor cell a value) = some s') :
+    CellBridgeMintSpec (cellProjA s.kernel cell a) value post
+    ∧ post.commit = env.pub pi.NEW_COMMIT
+    ∧ post.balLo = (cellProjA s'.kernel cell a).balLo
+    ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
+    ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
+    ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
+    ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
+  obtain ⟨hspec, hcommit⟩ :=
+    bridgeMintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post value henc hsat
+  obtain ⟨hLo, hHi, hF, hCap, hRes⟩ :=
+    descriptor_agrees_with_executor hash env hrow s s' actor cell a value post henc hsat hexec
+  exact ⟨hspec, hcommit, hLo, hHi, hF, hCap, hRes⟩
+
 /-! ## §9 — Axiom-hygiene tripwires. -/
+
+#assert_axioms bridgeMintDescriptor_classA
 
 #guard bridgeMintVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard bridgeMintVmDescriptor.hashSites.length == 4

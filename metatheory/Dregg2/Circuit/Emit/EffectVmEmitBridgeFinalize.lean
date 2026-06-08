@@ -56,6 +56,7 @@ Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.bridgeoutboundfinalize
 import Dregg2.Exec.SystemRoots
@@ -589,5 +590,104 @@ theorem escrowRoot_nonvacuous (others : SysRoots) :
 #assert_axioms goodFinalizeRow_realizes_intent
 #assert_axioms badFinalizeRow_rejected
 #assert_axioms escrowRoot_nonvacuous
+
+/-! ## §H — CLASS-A PROMOTION: the GENUINE in-row bridge-escrow-root RECOMPUTE.
+
+The prior amplification proved the bridge escrow root was NOT in the deployed descriptor commit. This
+section PROMOTES bridgeFinalize to class A by binding it genuinely via the shared `EffectVmEmitEscrowRoot`
+recompute: the FINALIZED outbound-bridge record's leaf is recomputed in-row
+`hash[id,creator,recipient,amount,asset,resolved]` (resolved = 1 on finalize; amount = the bridged
+amount at `param.AMOUNT`), then `new_root = hash[record_leaf, old_root]` — FORCED, not asserted. So the
+finalized record's content (amount/recipient/…) is bound by the recomputed root. The §1–§10 frame
+soundness are UNCHANGED. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
+  (escrowRecomputeSites escrowRootHolds escrowRootAdvance_forced escrowRoot_binds_record
+   escrowRoot_amount_bound leafOf advanceOf)
+
+/-- **`bridgeFinalizeVmDescriptorGenuine`** — the CLASS-A bridgeFinalize circuit: §2 per-row gates (nonce
+tick + frame freeze) with the genuine recompute sites prepended to the GROUP-4 sites. -/
+def bridgeFinalizeVmDescriptorGenuine : EffectVmDescriptor :=
+  { name := bridgeFinalizeVmAirName ++ "-genuine-rootbound"
+  , traceWidth := EFFECT_VM_WIDTH
+  , piCount := 34
+  , constraints := bridgeFinalizeRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+  , hashSites := escrowRecomputeSites ++ transferHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+theorem genuine_sites_split (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (h : siteHoldsAll hash env (escrowRecomputeSites ++ transferHashSites)) :
+    escrowRootHolds hash env := by
+  unfold escrowRootHolds escrowRecomputeSites
+  unfold escrowRecomputeSites at h
+  unfold siteHoldsAll at h ⊢
+  simp only [List.cons_append, List.nil_append, siteHoldsAll.go,
+    EffectVmEmitEscrowRoot.siteEscrowLeaf, EffectVmEmitEscrowRoot.siteEscrowRootAdvance,
+    VmHashSite.resolvedInputs, HashInput.resolve, List.map_cons, List.map_nil] at h ⊢
+  exact ⟨h.1, h.2.1, trivial⟩
+
+/-- **`bridgeFinalizeGenuine_sound` — THE CLASS-A SOUNDNESS.** The genuine descriptor forces the per-cell
+`CellFinalizeSpec` (frame freeze + nonce tick), the GENUINE bridge-escrow-root recompute (root FORCED),
+AND the published commit. -/
+theorem bridgeFinalizeGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeFinalizeRow env)
+    (pre post : CellState)
+    (henc : RowEncodesFinalize env pre post)
+    (hsat : satisfiedVm hash bridgeFinalizeVmDescriptorGenuine env true true) :
+    CellFinalizeSpec pre post
+      ∧ env.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER
+          = advanceOf hash
+              (leafOf hash (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ID))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.CREATOR))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RECIPIENT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET))
+                (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
+              (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
+      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+  obtain ⟨hcs, hsites⟩ := hsat
+  have hgates : ∀ c ∈ bridgeFinalizeRowGates, c.holdsVm env true true := by
+    intro c hc; apply hcs
+    unfold bridgeFinalizeVmDescriptorGenuine
+    simp only [List.mem_append]; exact Or.inl (Or.inl (Or.inl hc))
+  have hgates' := bridgeFinalizeRowGates_flag_indep env true true hgates
+  have hint := (bridgeFinalizeVm_faithful env hrow).mp hgates'
+  refine ⟨intent_to_cellFinalizeSpec env pre post henc hint, ?_, ?_⟩
+  · exact escrowRootAdvance_forced hash env (genuine_sites_split hash env hsites)
+  · have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
+      intro c hc
+      have hmem : c ∈ bridgeFinalizeVmDescriptorGenuine.constraints := by
+        unfold bridgeFinalizeVmDescriptorGenuine
+        simp only [List.mem_append]; exact Or.inr hc
+      have hh := hcs c hmem
+      unfold boundaryLastPins at hc
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl | rfl <;>
+        · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+    have hpin := (boundaryLast_pins env hlast).1
+    obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+    rw [← hsaC]; exact hpin
+
+/-- **`bridgeFinalizeGenuine_binds_record` — THE CLASS-A ANTI-GHOST.** Two genuine rows with the same
+recomputed new root have the SAME finalized amount (and every record field) — a forged finalize moves the
+root ⇒ moves `state_commit` ⇒ UNSAT. -/
+theorem bridgeFinalizeGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv)
+    (hsat₁ : satisfiedVm hash bridgeFinalizeVmDescriptorGenuine e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeFinalizeVmDescriptorGenuine e₂ true true)
+    (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
+    e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
+  escrowRoot_amount_bound hash hCR e₁ e₂
+    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+
+theorem bridgeFinalizeGenuine_recompute_nonvacuous :
+    escrowRootHolds EffectVmEmitEscrowRoot.cN EffectVmEmitEscrowRoot.goodEscrowRow :=
+  EffectVmEmitEscrowRoot.goodEscrowRow_recomputes
+
+#guard bridgeFinalizeVmDescriptorGenuine.hashSites.length == 2 + 4
+#guard bridgeFinalizeVmDescriptorGenuine.traceWidth == 186
+
+#assert_axioms genuine_sites_split
+#assert_axioms bridgeFinalizeGenuine_sound
+#assert_axioms bridgeFinalizeGenuine_binds_record
 
 end Dregg2.Circuit.Emit.EffectVmEmitBridgeFinalize
