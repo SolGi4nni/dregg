@@ -94,7 +94,9 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA ePrm eSub eSelNoop site0 site1 transitionAll boundaryFirstPins)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.EffectCommit2 (Surface2 satisfiedE2 encodeE2 logHashInjective)
+open Dregg2.Circuit.EffectCommit2 (Surface2 satisfiedE2 encodeE2)
+open Dregg2.Circuit.StateCommit (logHashInjective compressNInjective)
+open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
@@ -420,8 +422,8 @@ row, header.) -/
 theorem unify_swissExport_via_full_sound
     (S : Surface2) (D : List SwissRecord → ℤ)
     (LE : SwissRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : Dregg2.Circuit.ListCommit.compressNInjective cN)
-    (hLE : Dregg2.Circuit.ListCommit.listLeafInjective LE)
+    (hN : compressNInjective cN)
+    (hLE : listLeafInjective LE)
     (hRest : Dregg2.Circuit.Inst.SwissExportA.RestIffNoSwiss S.RH)
     (hLog : logHashInjective S.LH)
     (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState)
@@ -458,14 +460,37 @@ theorem swissGoodRow_isSwissExportRow : IsSwissExportRow swissGoodRow := by
 /-- **NON-VACUITY (witness TRUE).** `swissGoodRow` REALIZES the swiss-export intent: post `swiss_root =
 77` = the param digest, balance/nonce/reserved/fields frozen at `0`. -/
 theorem swissGoodRow_realizes_intent : SwissExportRowIntent swissGoodRow := by
-  unfold SwissExportRowIntent swissGoodRow
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · simp only [saCol, prmCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS,
-      STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
+  -- column indices: sel 3, sbCol CAP_ROOT 65, saCol CAP_ROOT 87, prmCol SWISS_DIGEST_NEW 70.
+  have hsa  : saCol state.CAP_ROOT = 87 := by
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.CAP_ROOT; rfl
+  have hprm : prmCol paramSE.SWISS_DIGEST_NEW = 70 := by
+    unfold prmCol PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE paramSE.SWISS_DIGEST_NEW; rfl
+  -- a clean reader: `swissGoodRow.loc 87 = 77` (post swiss_root) and `swissGoodRow.loc 70 = 77` (param).
+  have rsa : swissGoodRow.loc (saCol state.CAP_ROOT) = 77 := by
+    rw [hsa]
+    show (if (87:Nat) = selSE.SWISS_EXPORT then (1:ℤ)
+      else if (87:Nat) = sbCol state.CAP_ROOT then 11
+      else if (87:Nat) = saCol state.CAP_ROOT then 77
+      else if (87:Nat) = prmCol paramSE.SWISS_DIGEST_NEW then 77 else 0) = 77
+    rw [hsa]; norm_num [selSE.SWISS_EXPORT, sbCol, prmCol, STATE_BEFORE_BASE, PARAM_BASE,
+      NUM_EFFECTS, STATE_SIZE, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
+  have rprm : swissGoodRow.loc (prmCol paramSE.SWISS_DIGEST_NEW) = 77 := by
+    rw [hprm]
+    show (if (70:Nat) = selSE.SWISS_EXPORT then (1:ℤ)
+      else if (70:Nat) = sbCol state.CAP_ROOT then 11
+      else if (70:Nat) = saCol state.CAP_ROOT then 77
+      else if (70:Nat) = prmCol paramSE.SWISS_DIGEST_NEW then 77 else 0) = 77
+    rw [hprm]; norm_num [selSE.SWISS_EXPORT, sbCol, saCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
+  refine ⟨by rw [rsa, rprm], ?_, ?_, ?_, ?_, ?_⟩
+  -- the four scalar freezes: post columns (bal_lo 76, bal_hi 77, nonce 78, reserved 89) and the
+  -- pre columns are all unnamed in `swissGoodRow` ⇒ both sides `else 0`.
   all_goals
     simp only [saCol, sbCol, prmCol, selSE.SWISS_EXPORT, STATE_AFTER_BASE, STATE_BEFORE_BASE,
       PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, state.BALANCE_LO,
-      state.BALANCE_HI, state.NONCE, state.RESERVED, state.FIELD_BASE, paramSE.SWISS_DIGEST_NEW]
+      state.BALANCE_HI, state.NONCE, state.RESERVED, state.FIELD_BASE, paramSE.SWISS_DIGEST_NEW,
+      swissGoodRow]
   · norm_num
   · norm_num
   · norm_num
@@ -491,22 +516,27 @@ def swissBadRow : VmRowEnv where
 param digest, so the `gSwissMove` gate REJECTS it — a concrete UNSAT. -/
 theorem swissBadRow_rejected : ¬ (VmConstraint.gate gSwissMove).holdsVm swissBadRow false false := by
   apply swissExportVm_rejects_wrong_swissRoot
-  show (if saCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ) else swissGoodRow.loc _)
-      ≠ swissBadRow.loc (prmCol paramSE.SWISS_DIGEST_NEW)
-  rw [if_pos rfl]
-  show (999:ℤ) ≠ (if saCol state.CAP_ROOT = prmCol paramSE.SWISS_DIGEST_NEW then (999:ℤ)
-    else swissGoodRow.loc (prmCol paramSE.SWISS_DIGEST_NEW))
-  have hne : ¬ (saCol state.CAP_ROOT = prmCol paramSE.SWISS_DIGEST_NEW) := by
-    simp only [saCol, prmCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS,
-      STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
-  rw [if_neg hne]
-  show (999:ℤ) ≠ swissGoodRow.loc (prmCol paramSE.SWISS_DIGEST_NEW)
-  show (999:ℤ) ≠ (if prmCol paramSE.SWISS_DIGEST_NEW = selSE.SWISS_EXPORT then (1:ℤ)
-    else if prmCol paramSE.SWISS_DIGEST_NEW = sbCol state.CAP_ROOT then 11
-    else if prmCol paramSE.SWISS_DIGEST_NEW = saCol state.CAP_ROOT then 77
-    else if prmCol paramSE.SWISS_DIGEST_NEW = prmCol paramSE.SWISS_DIGEST_NEW then 77 else 0)
-  norm_num [prmCol, saCol, sbCol, selSE.SWISS_EXPORT, STATE_AFTER_BASE, STATE_BEFORE_BASE, PARAM_BASE,
-    NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
+  -- post `swiss_root` = 999 (overwrite), param digest = 77; 999 ≠ 77.
+  have hsa  : saCol state.CAP_ROOT = 87 := by
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.CAP_ROOT; rfl
+  have hprm : prmCol paramSE.SWISS_DIGEST_NEW = 70 := by
+    unfold prmCol PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE paramSE.SWISS_DIGEST_NEW; rfl
+  have rsa : swissBadRow.loc (saCol state.CAP_ROOT) = 999 := by
+    show (if saCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ) else swissGoodRow.loc (saCol state.CAP_ROOT)) = 999
+    rw [if_pos rfl]
+  have rprm : swissBadRow.loc (prmCol paramSE.SWISS_DIGEST_NEW) = 77 := by
+    show (if prmCol paramSE.SWISS_DIGEST_NEW = saCol state.CAP_ROOT then (999:ℤ)
+      else swissGoodRow.loc (prmCol paramSE.SWISS_DIGEST_NEW)) = 77
+    have hne : ¬ (prmCol paramSE.SWISS_DIGEST_NEW = saCol state.CAP_ROOT) := by rw [hsa, hprm]; decide
+    rw [if_neg hne, hprm]
+    show (if (70:Nat) = selSE.SWISS_EXPORT then (1:ℤ)
+      else if (70:Nat) = sbCol state.CAP_ROOT then 11
+      else if (70:Nat) = saCol state.CAP_ROOT then 77
+      else if (70:Nat) = prmCol paramSE.SWISS_DIGEST_NEW then 77 else 0) = 77
+    rw [hprm]; norm_num [selSE.SWISS_EXPORT, sbCol, saCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramSE.SWISS_DIGEST_NEW]
+  rw [rsa, rprm]; decide
 
 /-! ## §10 — Axiom-hygiene tripwires (the honesty tripwire). -/
 
