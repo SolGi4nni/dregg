@@ -37,6 +37,7 @@ pub mod factory;
 pub mod id;
 pub mod ledger;
 pub mod lifecycle;
+pub mod migration;
 pub mod note;
 #[cfg(feature = "crypto")]
 pub mod note_bridge;

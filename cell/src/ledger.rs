@@ -315,6 +315,10 @@ pub struct Ledger {
     /// previous value (paranoia against any future commitment-collision
     /// path). Persisted alongside the sovereign commitment for the cell.
     sovereign_witness_sequence: HashMap<CellId, u64>,
+    /// In-flight migration locks: a cell PREPAREd for relocation but not yet COMMITted. While a
+    /// lock is present the cell is quiescent (rejects effects) and the local node retains the
+    /// voucher it will COMMIT against. See [`crate::migration`].
+    migration_locks: HashMap<CellId, crate::migration::MigrationLock>,
 }
 
 impl Ledger {
@@ -330,6 +334,7 @@ impl Ledger {
             dirty: false,
             witness_subscribers: HashMap::new(),
             sovereign_witness_sequence: HashMap::new(),
+            migration_locks: HashMap::new(),
         }
     }
 
@@ -1132,6 +1137,156 @@ impl Ledger {
     /// Check whether a cell has an active ephemeral sovereign registration.
     pub fn is_sovereign_registered(&self, id: &CellId) -> bool {
         self.sovereign_registrations.contains_key(id)
+    }
+
+    // =========================================================================
+    // Atomic cross-federation cell migration (two-step handoff). See
+    // `crate::migration` for the protocol description and the no-double-existence
+    // / authority-conservation guarantees.
+    // =========================================================================
+
+    /// Whether a cell is currently locked for an in-flight migration (PREPAREd, not yet COMMITted).
+    /// A locked cell is quiescent: the executor must reject effects targeting it.
+    pub fn is_migration_locked(&self, id: &CellId) -> bool {
+        self.migration_locks.contains_key(id)
+    }
+
+    /// The voucher of an in-flight migration for `id`, if any.
+    pub fn migration_voucher_for(&self, id: &CellId) -> Option<&crate::migration::MigrationVoucher> {
+        self.migration_locks.get(id).map(|l| &l.voucher)
+    }
+
+    /// **PREPARE** (source side). Lock a hosted cell for relocation to federation `to` in
+    /// `target_mode`, minting the [`crate::migration::MigrationVoucher`] the destination will accept.
+    /// The cell remains in the ledger (still `Live` in history) but becomes quiescent — a lock is
+    /// recorded so the executor rejects further effects until COMMIT.
+    ///
+    /// Re-preparing a cell that is already locked, terminal, or not present is rejected — so a cell
+    /// can be in flight to at most one destination at a time (a precondition of no-double-existence).
+    pub fn migrate_prepare(
+        &mut self,
+        id: &CellId,
+        from: crate::migration::FederationId,
+        to: crate::migration::FederationId,
+        target_mode: crate::cell::CellMode,
+        prepared_at: u64,
+    ) -> Result<crate::migration::MigrationVoucher, crate::migration::MigrationError> {
+        if self.migration_locks.contains_key(id) {
+            return Err(crate::migration::MigrationError::NotMigratable);
+        }
+        let cell = self
+            .cells
+            .get(id)
+            .ok_or(crate::migration::MigrationError::SourceNotFound(*id))?;
+        let voucher = cell.migration_voucher(from, to, target_mode, prepared_at)?;
+        self.migration_locks.insert(
+            *id,
+            crate::migration::MigrationLock {
+                voucher: voucher.clone(),
+            },
+        );
+        Ok(voucher)
+    }
+
+    /// **ACCEPT** (destination side). Install a migrating cell into *this* ledger under the
+    /// authority of `voucher`, taking custody. Returns the receipt the source consumes at COMMIT.
+    ///
+    /// Rejects:
+    /// * a destination that already holds the cell ([`crate::migration::MigrationError::DestinationOccupied`])
+    ///   — the core no-double-existence gate;
+    /// * a voucher addressed to a different federation than `this_federation`
+    ///   ([`crate::migration::MigrationError::WrongDestination`]);
+    /// * a `cell` whose canonical commitment differs from the voucher's bound `state_commitment`
+    ///   ([`crate::migration::MigrationError::StateMismatch`]) — authority cannot be inflated en
+    ///   route;
+    /// * a `cell` whose id does not match the voucher or whose identity integrity is broken.
+    ///
+    /// On success the cell is installed `Live` with `mode = voucher.target_mode`. (For a Sovereign
+    /// target only the commitment is registered; the full state is not retained.)
+    pub fn migrate_accept(
+        &mut self,
+        voucher: &crate::migration::MigrationVoucher,
+        cell: Cell,
+        this_federation: crate::migration::FederationId,
+        accepted_at: u64,
+    ) -> Result<crate::migration::MigrationReceipt, crate::migration::MigrationError> {
+        use crate::cell::CellMode;
+        use crate::migration::{MigrationError, MigrationReceipt};
+
+        if voucher.to != this_federation {
+            return Err(MigrationError::WrongDestination);
+        }
+        if cell.id() != voucher.cell_id {
+            return Err(MigrationError::StateMismatch);
+        }
+        if !cell.verify_id_integrity() {
+            return Err(MigrationError::IdentityBroken(cell.id()));
+        }
+        if cell.state_commitment() != voucher.state_commitment {
+            return Err(MigrationError::StateMismatch);
+        }
+        // No-double-existence: refuse if the destination already holds this cell in ANY custody
+        // table (hosted, sovereign-commitment, or sovereign-registration).
+        let id = cell.id();
+        if self.cells.contains_key(&id)
+            || self.sovereign_commitments.contains_key(&id)
+            || self.sovereign_registrations.contains_key(&id)
+        {
+            return Err(MigrationError::DestinationOccupied(id));
+        }
+
+        // Install the cell at the destination in the requested mode.
+        match voucher.target_mode {
+            CellMode::Hosted => {
+                let mut installed = cell;
+                installed.mode = CellMode::Hosted;
+                installed.lifecycle = crate::lifecycle::CellLifecycle::Live;
+                self.cells.insert(id, installed);
+                self.dirty = true;
+            }
+            CellMode::Sovereign => {
+                // Sovereign target: register only the commitment.
+                self.sovereign_commitments
+                    .insert(id, voucher.state_commitment);
+            }
+        }
+
+        Ok(MigrationReceipt {
+            cell_id: id,
+            voucher_hash: voucher.voucher_hash(),
+            accepted_by: this_federation,
+            accepted_at,
+        })
+    }
+
+    /// **COMMIT** (source side). Consume a destination [`crate::migration::MigrationReceipt`] and
+    /// finalize the relocation: the source cell is tombstoned to
+    /// [`crate::lifecycle::CellLifecycle::Migrated`] (terminal — it can never accept effects again
+    /// or be re-migrated) and the in-flight lock is cleared. After COMMIT the destination's copy is
+    /// the unique live home.
+    ///
+    /// Rejects a receipt that does not match the in-flight voucher
+    /// ([`crate::migration::MigrationError::ReceiptMismatch`]) and a cell with no migration in
+    /// flight.
+    pub fn migrate_commit(
+        &mut self,
+        id: &CellId,
+        receipt: &crate::migration::MigrationReceipt,
+    ) -> Result<(), crate::migration::MigrationError> {
+        use crate::migration::MigrationError;
+        let lock = self
+            .migration_locks
+            .get(id)
+            .ok_or(MigrationError::ReceiptMismatch)?;
+        let voucher = lock.voucher.clone();
+        let cell = self
+            .cells
+            .get_mut(id)
+            .ok_or(MigrationError::SourceNotFound(*id))?;
+        cell.migrate_commit(&voucher, receipt)?;
+        self.migration_locks.remove(id);
+        self.dirty = true;
+        Ok(())
     }
 
     // =========================================================================
