@@ -22,14 +22,28 @@ import '../_includes/studio/context.js';
 import '../_includes/studio/inspectors.js';
 
 const NODE_URL_KEY = 'dregg_node_url';
-const DEFAULT_NODE_URL = 'http://localhost:8420';
+const DEFAULT_NODE_URL = 'http://localhost:8420'; // local-dev fallback
 const AUTO_REFRESH_KEY = 'dregg_auto_refresh';
 
 // ---------------------------------------------------------------------------
 // Node URL config (localStorage).
 // ---------------------------------------------------------------------------
+// When the explorer is served from a real (non-localhost) host — e.g. the devnet
+// behind Caddy at devnet.dregg.fg-goose.online — default to that SAME ORIGIN.
+// Same-origin avoids mixed-content (the old http://localhost default is blocked
+// from an https page) and CORS; Caddy fronts /status, /api/*, /ws on that origin.
+// Local dev (file:// or a localhost host) still falls back to localhost:8420,
+// and an explicit user setting in localStorage always wins.
+function defaultNodeUrl() {
+  try {
+    const { protocol, hostname, origin } = window.location;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+    if ((protocol === 'http:' || protocol === 'https:') && !isLocal) return origin;
+  } catch (_) { /* non-browser context */ }
+  return DEFAULT_NODE_URL;
+}
 export function getNodeUrl() {
-  return localStorage.getItem(NODE_URL_KEY) || DEFAULT_NODE_URL;
+  return localStorage.getItem(NODE_URL_KEY) || defaultNodeUrl();
 }
 export function setNodeUrl(url) {
   localStorage.setItem(NODE_URL_KEY, String(url || '').trim());
