@@ -1,0 +1,20 @@
+{
+  "id": "sealed-auction",
+  "name": "Sealed-Intent Multi-Agent Coordination",
+  "description": "Sealed-bid commit-reveal coordination among AI agents: agents COMMIT sealed (hashed) bids for an award (a compute slot / task assignment) before a REVEAL phase, so no agent can peek at or front-run another's bid. The winning bid SETTLES atomically through the verified per-asset executor (dregg-intent::verified_settle, the Rust mirror of the Lean Ring.settleRing / SealedAuction.settle). Guarantees proved in metatheory/Dregg2/Intent/SealedAuction.lean: a commitment opens to exactly its bid (no late-switching, under collision-resistance), no reveal before the commit phase closes, a non-committed party cannot settle, and the award is atomic and value-neutral.",
+  "version": "0.1.0",
+  "status": "starbridge",
+  "crate": "starbridge-sealed-auction",
+  "runtime_mode": "starbridge-native",
+  "caddy_prefix": "/sealed-auction",
+  "factory_vks": [],
+  "page": null,
+  "inspectors": ["auction"],
+  "turn_builders": ["commit_bid", "reveal_bid", "settle_award"],
+  "required_apis": ["/turn/submit"],
+  "lean_module": "Dregg2.Intent.SealedAuction",
+  "manifest_health": {
+    "status": "starbridge-native",
+    "verified_settlement": "dregg-intent::verified_settle::settle_ring_verified"
+  }
+}

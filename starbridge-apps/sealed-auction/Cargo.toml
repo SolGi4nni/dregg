@@ -1,0 +1,29 @@
+[package]
+name = "starbridge-sealed-auction"
+version = "0.1.0"
+edition = "2024"
+description = "Starbridge userspace app #2 — sealed-intent multi-agent coordination. Agents COMMIT sealed (hashed) bids before a REVEAL phase, so no agent can peek at or front-run another's bid; the winning bid SETTLES atomically through the verified per-asset executor (dregg-intent::verified_settle, the Rust mirror of the Lean `Ring.settleRing`/`SealedAuction.settle`). Mirrors `metatheory/Dregg2/Intent/SealedAuction.lean`."
+
+# The commit-reveal lifecycle and its guarantees are PROVED in Lean
+# (`metatheory/Dregg2/Intent/SealedAuction.lean`):
+#   - reveal_binds_committed  — a sealed commitment opens to EXACTLY its bid (CR),
+#                               so no agent can peek then switch their bid.
+#   - reveal_requires_reveal_phase — no reveal binds before the commit phase closes.
+#   - uncommitted_cannot_open/win  — a non-committed party can never settle.
+#   - settle_atomic / settle_conserves — the award is all-or-nothing and
+#                               value-neutral (reuses the verified `settleRing`).
+# This crate is the executable surface: it runs the SAME state machine and
+# settles the award by folding the award ring through the verified executor
+# (`dregg-intent::verified_settle::settle_ring_verified`), NOT a Rust-only path.
+
+[dependencies]
+dregg-intent = { path = "../../intent" }
+dregg-cell = { path = "../../cell", default-features = false }
+dregg-types = { path = "../../types" }
+
+blake3 = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
