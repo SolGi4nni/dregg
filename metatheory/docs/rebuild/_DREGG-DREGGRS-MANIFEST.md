@@ -55,6 +55,7 @@ executable layer; the Lean model is the truth they are checked against.
 | `dfa` | `Exec/DfaRouting` + `Crypto/Dfa`. |
 | `bridge` | `Crypto/Bridge` + `Exec/JointCharterBridge`. |
 | `storage` | `Exec/{BlindedQueue,QueueCutover,PubSubTopic}` + `Apps/StorageGatewayMandate`. |
+| `directory` | `Distributed/DirectoryLaws` (register/lookup/revoke monotone laws — `revoke_is_final` tombstone, CAS-conflict reject — + §7b `GovDir` governance commit-swap binding). FRINGE-SWEEP moved this OUT of B.2: it is load-bearing for `governed-namespace`, not a pure primitive. Differential `directory/src/directory_diff.rs` (in-flight). |
 
 ### B.2 Pure infra / crypto-primitive / tooling (no protocol semantics to verify)
 
@@ -63,9 +64,8 @@ executable layer; the Lean model is the truth they are checked against.
 | `hints` | BLS12-381 + KZG weighted threshold signatures — a crypto primitive. **Exception:** its *aggregation scheme* is a named Port residual (federation BLS QC), but the curve/pairing math is a primitive. |
 | `secrets`, `tokenizer`, `trace`, `audit`, `observability`, `types` | Key custody / text / tracing / metrics / id types. |
 | `rbg`, `dregg-storage-templates` | Userspace VFS + templates composed over verified primitives. |
-| `directory` | Named-capability lookup primitive (small bind/resolve laws = a P3 optional Port residual). |
-| `net` | QUIC transport + Plumtree gossip. The causal-ORDER invariant is dregg (the lace = the causal DAG); the gossip *delivery* layer is dreggrs infra (node-infra owns sync/gossip). |
-| `tests`, `protocol-tests`, `teasting` | Test harnesses. |
+| `net` | QUIC transport + Plumtree gossip. The causal-ORDER invariant is dregg (the lace = the causal DAG, `net/src/causal.rs:13` re-exports `dregg_types::CausalDag` modeled by `Coord/CausalOrder`); the gossip *delivery* layer is dreggrs infra (node-infra owns sync/gossip). |
+| `tests`, `protocol-tests`, `teasting`, `perf`, `redteam` | Test / benchmark / fuzz harnesses (FRINGE-SWEEP: `perf` + `redteam` newly censused — pure measurement/adversarial tooling, no protocol semantics; the targets they exercise are verified elsewhere). |
 
 ---
 
@@ -93,28 +93,33 @@ load-bearing semantics live only in its Rust. The precise residual:
    `rebalance_conserves_on_exact`. Differential `coord/src/coord_diff.rs::stingray_cert_reconcile_diff` (6
    tests) drives the GENUINE `StingrayCounter` with REAL Ed25519 certificates. `#assert_axioms`-clean.
 3. **`federation` BLS quorum-cert aggregation** (`threshold.rs`/`receipt.rs` over `hints` KZG) +
-   **checkpoint-prune safety** (`checkpoint.rs`). **JUSTIFIED RESIDUAL (crypto-primitive):** the BLS
-   threshold-*signature* aggregation reduces to a named crypto hyp (BLS12-381 pairing / KZG, the curve math
-   in `hints` — an imported primitive, NOT dregg protocol semantics, like the Ed25519/Poseidon floors).
-   The prune-safety half is a `BlocklaceFinality`+`CrashRecovery` corollary (a checkpoint below a finalized
-   height is discardable) — reachable, low marginal value, P3.
-4. **`directory` bind/resolve monotone laws** — **JUSTIFIED RESIDUAL (low-LB primitive):** a CRDT-flavored
-   key→cap map with a monotone per-entry `version` counter (`directory.rs:43`). It is a lookup primitive
-   over caps that are ALREADY verified by `Authority/*`; the monotone/last-writer shape is reachable via
-   `Confluence/CRDT`. Correctness of the running system does not hinge on a directory-specific theorem.
-5. **`net` Plumtree gossip convergence** — **JUSTIFIED RESIDUAL (infra, other lane):** the causal-ORDER
-   invariant (the lace = the causal DAG) IS dregg-covered; the raw eager/lazy push-dedup is *delivery*, not
-   protocol truth, and its convergence obligation is `Distributed/CatchupConverges` (node-infra lane).
+   **checkpoint-prune safety** (`checkpoint.rs`). **✅ DONE (FRINGE-SWEEP correction — was mislabelled a
+   residual):** `Distributed/BlsQuorumCert.lean` (committed `0c9aea2cc`) + `Distributed/CheckpointPrune.lean`
+   (committed `056ae36a3`) model both, with wired Rust differentials (`federation/src/bls_quorum_diff.rs`,
+   `federation/src/checkpoint_prune_diff.rs`). The only residual is the BLS12-381 *pairing math* — an
+   imported crypto primitive carried as a named hyp (same class as Ed25519/Poseidon), NOT a coverage gap.
+4. **✅ DONE (closing) — `directory` register/lookup/revoke + governance swap.** The earlier "JUSTIFIED
+   RESIDUAL (low-LB), reachable via `Confluence/CRDT`" was a **HAND-WAVE** (FRINGE-SWEEP correction): that
+   module proves a *generic* CRDT join, not the directory's four-op discipline, and `directory` IS
+   load-bearing (consumed by `governed-namespace`). Now `Distributed/DirectoryLaws.lean` models the REAL
+   `directory.rs` semantics (`revoke_is_final` tombstone, CAS-conflict reject, version-monotone, exact
+   expiry) **+ §7b `GovDir` commit-swap commitment binding**. Differential `directory/src/directory_diff.rs`
+   in-flight.
+5. **`net` Plumtree gossip convergence** — **JUSTIFIED RESIDUAL (infra, other lane), VERIFIED:** the
+   causal-ORDER invariant (the lace = the causal DAG) IS dregg-covered — `net/src/causal.rs:13` re-exports
+   `dregg_types::CausalDag`, modeled by `Coord/CausalOrder` + `coord_diff.rs`. The raw eager/lazy push-dedup
+   is *delivery*, not protocol truth, and its convergence obligation is `Distributed/CatchupConverges`.
 
 **Non-this-agent, larger:** THE SWAP (`turn`/`cell` executor cutover) — a rewrite tracked by #24/#33, not a
 modeling gap. The Exec/* / Circuit/* / Intent/* / Authority/* lanes are independently progressing.
 
-**Silver "FULLY DONE" status for this manifest (FINAL):** items 1–2 (the genuinely-uncovered load-bearing
-*protocol* semantics — threshold decryption + Stingray cross-epoch reconciliation) are CLOSED with meaningful
-Lean + REAL-crypto differentials. Items 3–5 are now precisely JUSTIFIED RESIDUALS: 3 = a BLS crypto-primitive
-hyp (same class as Ed25519/Poseidon — imported, not dregg semantics) + a low-value finality corollary; 4 = a
-low-LB lookup primitive over already-verified caps; 5 = gossip *delivery* infra whose protocol-truth
-(causal order + catchup convergence) is already dregg-covered. The remaining true Rust-only "source of truth"
-is therefore the §B.2 primitives (curve/pairing math, key custody) — the justified crypto/OS-primitive
-residual — plus THE SWAP (`turn`/`cell`, a rewrite not a coverage gap). **No load-bearing dregg PROTOCOL
-semantic lives only in Rust at the end of this campaign.**
+**Silver "FULLY DONE" status for this manifest (FINAL, post-FRINGE-SWEEP):** items 1–4 — the genuinely
+load-bearing *protocol* semantics (threshold decryption, Stingray cross-epoch reconciliation, BLS QC +
+checkpoint-prune, directory register/revoke/governance-swap) — are ALL CLOSED with meaningful Lean + a
+differential; #3 and #4 were previously MISLABELLED (a residual that was actually done, and a hand-waved
+deflection) and the FRINGE-SWEEP corrected both. #5 net-gossip-*delivery* is the only legitimate infra
+residual, its protocol-truth already dregg-covered. The newly-censused fringe crates `perf`/`redteam` are
+pure measurement/fuzz tooling (N/A). The remaining true Rust-only "source of truth" is the §B.2 primitives
+(curve/pairing math, key custody) — the justified crypto/OS-primitive residual — plus THE SWAP (`turn`/`cell`,
+a rewrite not a coverage gap). **No load-bearing dregg PROTOCOL semantic lives only in Rust at the end of
+this campaign.**

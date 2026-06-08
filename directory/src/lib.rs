@@ -57,6 +57,9 @@ mod dfa_routed;
 mod directory;
 mod meta;
 
+#[cfg(test)]
+mod directory_diff;
+
 pub use dfa_routed::{DfaRoutedDirectory, RouteTable, RouteTableId, TableSwapError};
 pub use directory::{
     Directory, DirectoryEntry, DirectoryError, DiscoveryFilter, EntryKind, InMemoryDirectory,

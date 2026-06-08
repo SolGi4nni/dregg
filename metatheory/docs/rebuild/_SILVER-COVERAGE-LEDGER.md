@@ -6,7 +6,9 @@
 Silver = *every Rust semantic / functionality / fringe is modeled+implemented in Lean, callable*.
 **FULLY DONE** = zero load-bearing semantics living ONLY in Rust at the end (or a precise, justified residual).
 
-This ledger classifies **every** top-level workspace crate (53 members). For each: LOC (src only),
+This ledger classifies **every** top-level workspace crate (65 `cargo metadata` packages; the "53"
+in earlier revisions UNDERCOUNTED — it omitted `perf`, `redteam`, `sdk-consensus-demo`, `lightclient`,
+and 3 of the 11 `starbridge-apps`. The FRINGE-SWEEP census below closes that gap). For each: LOC (src only),
 purpose, EFFECT-level vs PROTOCOL-level, whether its semantics are **modeled+verified in Lean now**, the
 runtime path (`dregg`=routes through the verified Lean kernel via `dregg-lean-ffi`; `dreggrs`=self-contained
 Rust heritage), whether it is **load-bearing**, and **port priority** for the Silver Port phase.
@@ -84,7 +86,7 @@ Rust** via a differential or FFI (not prose). Anything else is marked GAP honest
 | `audit` | 2415 | Audit-log primitives. | N/A. | dreggrs | infra |
 | `bridge` | 10839 | Cross-chain / observation bridge (Midnight etc.). | PARTIAL — `Crypto/Bridge` + `Exec/JointCharterBridge`; on-chain bridge gate covered. | dreggrs | YES |
 | `dfa` | 2540 | DFA routing engine (promoted from rbg). | FULL — `Exec/DfaRouting` + `Crypto/Dfa`. | dreggrs | YES |
-| `directory` | 1117 | Canonical named-capability directory (bind/resolve/unbind/list), meta-directory, DFA-routed. | GAP (small) — the directory is a CRDT-flavored key→cap map; the **monotone/last-writer semantics** are reachable via `Confluence/CRDT` but no directory-specific model exists. Low LB (a lookup primitive over already-verified caps). | dreggrs | low | **P3 (this agent, optional)** — small; bind/resolve laws. |
+| `directory` | 1117 | Canonical named-capability directory (bind/resolve/unbind/list), meta-directory, DFA-routed governance swap. Consumed by `starbridge-governed-namespace` (a real app) ⇒ **load-bearing**, NOT "low-LB" as earlier claimed. | FULL (closing) — `Distributed/DirectoryLaws` models the REAL `directory.rs` `register`/`lookup`/`revoke` (CAS-conflict reject, idempotent re-bind, **`revoke_is_final`** monotone tombstone, version monotonicity, exact expiry gate) + **§7b `GovDir` governance commit-swap** (`commit_swap_requires_matching_commitment` / mismatch-preserves-active — `dfa_routed.rs`, the load-bearing authority property `governed-namespace` relies on). The earlier "reachable via `Confluence/CRDT`" was a HAND-WAVE (that module proves a *generic* CRDT join, not register/lookup/revoke). Differential `directory/src/directory_diff.rs` (P3, in-flight). | dreggrs | **YES** | done (model) / P3 (differential). |
 | `rbg` | 3663 | Robigalia-inspired userspace VFS (Volume/Blob/Directory, factories). | N/A (userspace composition over verified primitives). | dreggrs | low |
 | `types` | 1792 | Core id types (CellId, FederationId). | N/A. | both | infra |
 | `tokenizer` | 1342 | Token text tokenizer. | N/A. | dreggrs | infra |
@@ -93,6 +95,10 @@ Rust** via a differential or FFI (not prose). Anything else is marked GAP honest
 | `preflight` | 6373 | Preflight checks / dry-run. | N/A (tooling; consumes Lean FFI for shadow). | dregg | infra |
 | `protocol-tests` | 3961 | Cross-crate protocol integration tests. | N/A (test harness). | both | infra |
 | `tests` | 20203 | Workspace integration tests. | N/A. | both | infra |
+| `perf` | 809 | **FRINGE-SWEEP (was uncensused).** Benchmark/measurement harness (`turn_proof` criterion bench, `perf-report`/`orchestration_demo` bins). | N/A (measurement tooling; consumes circuit/sdk/turn, has no protocol semantics of its own). | dreggrs | infra |
+| `redteam` | 62 | **FRINGE-SWEEP (was uncensused).** Adversarial/fuzz harness root (proptest wire/codec/marshaller/executor fuzz in `tests/`; lib is a 62-line attack-surface façade over captp/blocklace/cell/turn/wire). | N/A (test-infra; the *targets* it fuzzes are verified elsewhere). | dreggrs | infra |
+| `lightclient` | — | **FRINGE-SWEEP (was uncensused).** Succinct light-client verify path. | (gold lane — not this agent; Lean `gold` owns it). | dregg | YES |
+| `sdk-consensus-demo` | — | **FRINGE-SWEEP (was uncensused).** Consensus demo binary under `demo/sdk-consensus`. | N/A (demo). | dregg | app |
 
 ## 7. SDK / node / client / app surfaces (consume the kernel)
 
@@ -136,30 +142,48 @@ semantics are SMALL and named precisely:
    with REAL Ed25519 certificates and asserts every error tag + outcome + post-state agrees.
    `#assert_axioms`-clean (only `CertUnforgeable` named).
 
-3. **`federation` BLS quorum-certificate aggregation** (`threshold.rs`/`receipt.rs` over `hints` KZG) and
-   **checkpoint-prune safety** (`checkpoint.rs`). **JUSTIFIED RESIDUAL (crypto-primitive).** The
-   threshold-*signature* aggregation reduces to a named crypto hyp (BLS12-381 pairing / KZG — the curve math
-   in `hints`, an imported primitive of the SAME class as the Ed25519/Poseidon floors, NOT dregg protocol
-   semantics). The prune-safety half is a `BlocklaceFinality`+`CrashRecovery` corollary (a checkpoint below a
-   finalized height is discardable) — reachable, low marginal value. **P3.**
+3. **✅ DONE — `federation` BLS quorum-certificate aggregation + checkpoint-prune safety.** This was
+   *labelled* a "JUSTIFIED RESIDUAL" but the FRINGE-SWEEP found it is **actually CLOSED** (task #92):
+   `Dregg2/Distributed/BlsQuorumCert.lean` (420 lines, committed `0c9aea2cc`) proves, under `f=⌊n/3⌋`,
+   `quorum_has_honest_signer` / `two_quorums_share_honest_member` / `no_equivocating_qcs` on top of the
+   named `Crypto/BlsThreshold` SNARK/pairing primitive; `Dregg2/Distributed/CheckpointPrune.lean` (464
+   lines, committed `056ae36a3`) proves `prune_preserves_finalized_prefix` /
+   `recovered_converges_to_unpruned` relative to the named `CheckpointAttested` BLS portal. BOTH have
+   wired Rust differentials (`federation/src/bls_quorum_diff.rs` driving the REAL `hints` weighted
+   aggregate; `federation/src/checkpoint_prune_diff.rs` against `config.rs::RetentionPolicy`). The only
+   residual is the BLS12-381 *pairing math* itself — an imported crypto primitive (same class as
+   Ed25519/Poseidon), correctly carried as a named hypothesis, NOT a coverage gap.
 
-4. **`directory` bind/resolve monotone laws** — **JUSTIFIED RESIDUAL (low-LB primitive).** A CRDT-flavored
-   key→cap map with a monotone per-entry `version` counter (`directory.rs:43`); a lookup primitive over caps
-   ALREADY verified by `Authority/*`. The monotone/last-writer shape is reachable via `Confluence/CRDT`;
-   no directory-specific theorem is load-bearing for system correctness. **P3 optional.**
+4. **✅ DONE (closing) — `directory` bind/resolve/unbind + governance swap.** The earlier "JUSTIFIED
+   RESIDUAL (low-LB), reachable via `Confluence/CRDT`" was a **HAND-WAVE** (FRINGE-SWEEP correction):
+   `Confluence/CRDT` proves a *generic* G-Set/LWW merge, NOT the directory's four-op discipline, and
+   `directory` is consumed by `starbridge-governed-namespace` (a real app) ⇒ load-bearing. Now
+   `Dregg2/Distributed/DirectoryLaws.lean` models the REAL `directory.rs` `register`/`lookup`/`revoke`
+   (CAS-conflict reject, idempotent re-bind, version-monotone, exact expiry, KEYSTONE `revoke_is_final`
+   monotone tombstone) **+ §7b `GovDir` governance commit-swap** (`commit_swap_requires_matching_commitment`
+   / mismatch-preserves-active, the `dfa_routed.rs::commit_swap` authority gate `governed-namespace`
+   relies on). Differential `directory/src/directory_diff.rs` (P3, in-flight). **No longer a deflection.**
 
-5. **`net` Plumtree gossip convergence** — **JUSTIFIED RESIDUAL (infra, other lane).** The *delivery* layer
-   (eager/lazy push dedup) is not protocol truth; the causal-ORDER invariant (lace = causal DAG) IS covered,
-   and the convergence obligation is `Distributed/CatchupConverges` (node-infra's lane). **P3, infra.**
+5. **`net` Plumtree gossip convergence** — **JUSTIFIED RESIDUAL (infra, other lane), VERIFIED.** The
+   FRINGE-SWEEP confirmed `net::causal` genuinely RE-EXPORTS `dregg_types::CausalDag` (`net/src/causal.rs:13`),
+   the EXACT structure modeled by `Coord/CausalOrder` (strict-partial-order proofs + `coord_diff.rs`
+   differential). So the causal-ORDER invariant IS dregg-covered. The *delivery* layer (eager/lazy push
+   dedup) is not protocol truth; its convergence obligation is `Distributed/CatchupConverges` (node-infra
+   lane). **P3, infra — legitimately residual.**
 
 Everything else load-bearing is either (a) already FULL with a differential/FFI, or (b) in another
 workflow's lane (Exec/* SWAP, Circuit/* cutover, Intent/* solver, Authority/* — all actively progressing).
+**captp** was FRINGE-SWEEP-verified NON-dark: `handoff.rs` cites the Lean specs inline and 6 replayed
+differential test files exist (`captp/tests/*_differential.rs`, incl. `pipeline_registry_differential.rs`);
+the Pipeline/StoreForward "dark mirrors" are closed (tasks #107/#108).
 
-**Silver verdict (FINAL):** the genuinely-uncovered load-bearing *protocol* semantics — #1 threshold
-decryption and #2 Stingray cross-epoch reconciliation — are now BOTH CLOSED with meaningful Lean +
-REAL-crypto differentials. Items #3–5 are precisely JUSTIFIED RESIDUALS: a BLS crypto-primitive hyp + a
-finality corollary (#3), a low-LB lookup primitive (#4), and gossip-*delivery* infra whose protocol-truth is
-already covered (#5). **No load-bearing dregg PROTOCOL semantic lives only in Rust.** The remaining true
-Rust-only "source of truth" is the §6 imported primitives (curve/pairing math, key custody) — the justified
-crypto/OS-primitive residual — plus **THE SWAP** (turn/cell executor cutover, a large rewrite tracked by
-#24/#33, not a coverage gap).
+**Silver verdict (FINAL, post-FRINGE-SWEEP):** every genuinely-uncovered load-bearing *protocol* semantic
+is CLOSED with meaningful Lean + a (real-crypto or executable) differential: #1 threshold decryption, #2
+Stingray cross-epoch reconciliation, #3 BLS QC + checkpoint-prune (was mislabelled residual — ACTUALLY
+DONE), #4 directory register/revoke/governance-swap (was a hand-waved deflection — NOW modeled). #5
+net-gossip-*delivery* is the only legitimate infra residual, and its protocol-truth (causal order +
+catchup convergence) is already dregg-covered. **No load-bearing dregg PROTOCOL semantic lives only in
+Rust.** The remaining true Rust-only "source of truth" is the §6 imported primitives (curve/pairing math,
+key custody) — the justified crypto/OS-primitive residual — plus **THE SWAP** (turn/cell executor cutover,
+a large rewrite tracked by #24/#33, not a coverage gap). The §6 `perf`/`redteam` fringe crates (newly
+censused) are pure measurement/fuzz tooling — N/A by construction.
