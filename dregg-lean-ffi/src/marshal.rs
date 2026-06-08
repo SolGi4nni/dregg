@@ -244,6 +244,14 @@ pub struct WireState {
     /// The revocation registry (hole #3 / #139) — the committed revoked-credential
     /// nullifier set the gate reads. LAST on the wire (additive); defaults empty.
     pub revoked: Vec<u64>,
+    /// The PER-CELL LIFECYCLE side-table: `(cell, discriminant)` pairs (`0`=Live, `1`=Sealed,
+    /// `3`=Destroyed). The cell COMMITMENT folds the lifecycle in, so the verified executor must
+    /// ECHO this so the Lean-reconstituted `.root()` matches Rust on CellSeal/Unseal/Destroy.
+    /// Additive; defaults empty (a Live cell carries no entry). Mirrors `FFI.lean WState.lifecycle`.
+    pub lifecycle: Vec<(u64, u64)>,
+    /// The PER-CELL DEATH-CERTIFICATE side-table: `(cell, certHash)` pairs a `cellDestroy` binds.
+    /// Additive; defaults empty. Mirrors `FFI.lean WState.deathCert`.
+    pub death_cert: Vec<(u64, u64)>,
 }
 
 impl WireState {
@@ -260,6 +268,8 @@ impl WireState {
             && self.queues.is_empty()
             && self.swiss.is_empty()
             && self.revoked.is_empty()
+            && self.lifecycle.is_empty()
+            && self.death_cert.is_empty()
     }
 }
 
@@ -1589,15 +1599,38 @@ fn encode_wstate(w: &WireState, out: &mut String) -> Result<(), MarshalError> {
         out.push(']');
     }
     out.push(']');
-    // revoked (the NEW 9th field; FFI.lean:2570)
+    // revoked (the 9th field; FFI.lean:2570)
     out.push_str(",\"revoked\":");
     encode_nats(&w.revoked, out);
+    // lifecycle (10th, per-cell `[cell,val]` side-table — FFI.lean WState.lifecycle)
+    out.push_str(",\"lifecycle\":");
+    encode_cell_nats(&w.lifecycle, out);
+    // deathCert (11th, per-cell `[cell,val]` side-table — FFI.lean WState.deathCert)
+    out.push_str(",\"deathCert\":");
+    encode_cell_nats(&w.death_cert, out);
     out.push('}');
     Ok(())
 }
 
 fn encode_nats(ns: &[u64], out: &mut String) {
     encode_nats_w(ns, out);
+}
+
+/// Encode a per-cell `Nat` side-table as `[[cell,val],…]` (or `[]`) — mirrors FFI.lean
+/// `encodeCellNats` BYTE-EXACT.
+fn encode_cell_nats(entries: &[(u64, u64)], out: &mut String) {
+    out.push('[');
+    for (i, (cell, v)) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push('[');
+        push_nat(out, *cell);
+        out.push(',');
+        push_nat(out, *v);
+        out.push(']');
+    }
+    out.push(']');
 }
 
 /// ONE representative per Lean `allActions` arm (FFI.lean:2242-2301) — the 56-arm demo set.
@@ -2251,9 +2284,15 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
         Ok(WireSwiss { swiss, exporter, target, rights, refcount, cert })
     })
     .map_err(|e| map(e, p))?;
-    // revoked (the NEW 9th field)
+    // revoked (the 9th field)
     p.lit(",\"revoked\":").map_err(|e| p.err(e))?;
     let revoked = parse_nats(p).map_err(|e| map(e, p))?;
+    // lifecycle (10th, per-cell `[cell,val]` side-table)
+    p.lit(",\"lifecycle\":").map_err(|e| p.err(e))?;
+    let lifecycle = parse_cell_nats(p).map_err(|e| map(e, p))?;
+    // deathCert (11th, per-cell `[cell,val]` side-table)
+    p.lit(",\"deathCert\":").map_err(|e| p.err(e))?;
+    let death_cert = parse_cell_nats(p).map_err(|e| map(e, p))?;
     // close
     p.lit("}").map_err(|e| p.err(e))?;
     Ok(WireState {
@@ -2266,6 +2305,20 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
         queues,
         swiss,
         revoked,
+        lifecycle,
+        death_cert,
+    })
+}
+
+/// Parse a per-cell `Nat` side-table `[[cell,val],…]` (or `[]`) — mirrors FFI.lean `parseCellNats`.
+fn parse_cell_nats(p: &mut Parser) -> Result<Vec<(u64, u64)>, String> {
+    parse_list(p, |p| {
+        p.lit("[")?;
+        let cell = p.nat()?;
+        p.lit(",")?;
+        let v = p.nat()?;
+        p.lit("]")?;
+        Ok((cell, v))
     })
 }
 

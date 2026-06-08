@@ -1200,6 +1200,11 @@ fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal
     let mut cells = Vec::new();
     let mut bal = Vec::new();
     let mut caps: Vec<(u64, Vec<Cap>)> = Vec::new();
+    // The PER-CELL lifecycle/death-cert side-tables the cell commitment folds in (the
+    // CellSeal/Unseal/Destroy root-gap close): carry the pre-state discriminant + bound cert hash
+    // so the verified executor's post-state lifecycle reconstitutes onto the Rust cell.
+    let mut lifecycle: Vec<(u64, u64)> = Vec::new();
+    let mut death_cert: Vec<(u64, u64)> = Vec::new();
 
     let mut sorted: Vec<_> = pre.id_map.iter().collect();
     sorted.sort_by_key(|(_, nat)| *nat);
@@ -1246,6 +1251,20 @@ fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal
         if !edges.is_empty() {
             caps.push((*nat, edges));
         }
+
+        // Per-cell lifecycle discriminant (0=Live, 1=Sealed, 3=Destroyed); a Live cell carries no
+        // entry (the wire stays minimal, matching the kernel's `cellNatsOfFun` drop-zero filter).
+        let lc_disc = lifecycle_discriminant(&cell.lifecycle);
+        if lc_disc != 0 {
+            lifecycle.push((*nat, lc_disc));
+        }
+        if let dregg_cell::lifecycle::CellLifecycle::Destroyed {
+            death_certificate_hash,
+            ..
+        } = &cell.lifecycle
+        {
+            death_cert.push((*nat, low_u64_be(death_certificate_hash)));
+        }
     }
 
     Ok(WireState {
@@ -1258,7 +1277,32 @@ fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal
         queues: vec![],
         swiss: vec![],
         revoked: vec![],
+        lifecycle,
+        death_cert,
     })
+}
+
+/// The kernel-model lifecycle discriminant for a Rust `CellLifecycle` (mirrors
+/// `CellLifecycle::discriminant`: 0=Live, 1=Sealed, 3=Destroyed; the kernel models only these three
+/// Wave-3 states, so Migrated(2)/Archived(4) fall back as their own discriminant).
+#[cfg(feature = "lean-shadow")]
+fn lifecycle_discriminant(lc: &dregg_cell::lifecycle::CellLifecycle) -> u64 {
+    use dregg_cell::lifecycle::CellLifecycle;
+    match lc {
+        CellLifecycle::Live => 0,
+        CellLifecycle::Sealed { .. } => 1,
+        CellLifecycle::Migrated { .. } => 2,
+        CellLifecycle::Destroyed { .. } => 3,
+        CellLifecycle::Archived { .. } => 4,
+    }
+}
+
+/// The low 64 bits (big-endian) of a 32-byte digest — the kernel models hashes as `Nat` and the wire
+/// carries the low `u64` for the death-cert table (the high 192 bits are the residual hash-fidelity
+/// gap the kernel's `Nat` payload model does not yet carry).
+#[cfg(feature = "lean-shadow")]
+fn low_u64_be(h: &[u8; 32]) -> u64 {
+    u64::from_be_bytes(h[24..32].try_into().unwrap())
 }
 
 /// Look up a `CellId`'s wire Nat in the snapshot's id map (for c-list edge projection).

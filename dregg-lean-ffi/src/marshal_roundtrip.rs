@@ -110,6 +110,8 @@ fn wide_demo_state() -> WireState {
             cert: Some(99),
         }],
         revoked: vec![], // wideDemoState omits `revoked` => defaults empty
+        lifecycle: vec![], // wideDemoState omits lifecycle => defaults empty (all Live)
+        death_cert: vec![],
     }
 }
 

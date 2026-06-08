@@ -2717,6 +2717,75 @@ def parseNats (cs : PState) : Option (List Nat × PState) :=
                       | none => none
       loop (cs.length + 1) r0
 
+/-! ### Per-cell `Nat` side-table codec (`[[cell,val],…]`).
+
+The wide STATE carries, beside the function-valued `cell`/`caps`/`bal`, a family of **per-cell `Nat`
+side-tables** the cell COMMITMENT folds in but which are NOT cell-`Value` record fields: the
+`lifecycle` discriminant (`0`/`1`/`3`) and the `deathCert` hash. dregg1's
+`compute_canonical_state_commitment` (`cell/src/commitment.rs`) binds the cell's `lifecycle`
+payload, so for the Lean-reconstituted `.root()` to MATCH the Rust one the verified executor must
+ECHO these tables on the wire (they default empty — a Live, never-destroyed cell carries no entry —
+exactly as the `revoked`/`nullifiers` tables were added). Each entry is `[cell,val]`. -/
+
+/-- Encode a per-cell `Nat` side-table as `[[cell,val],…]` (or `[]`). -/
+def encodeCellNats : List (CellId × Nat) → String
+  | []      => "[]"
+  | e :: es =>
+      let one := fun (p : CellId × Nat) => "[" ++ toString p.1 ++ "," ++ toString p.2 ++ "]"
+      "[" ++ one e ++ (es.foldl (fun acc p => acc ++ "," ++ one p) "") ++ "]"
+
+/-- Parse one `[cell,val]` per-cell-Nat entry. -/
+def parseCellNatEntry (cs : PState) : Option ((CellId × Nat) × PState) :=
+  match lit "[" cs with
+  | none => none
+  | some r1 =>
+    match parseNat r1 with
+    | none => none
+    | some (cell, r2) =>
+      match lit "," r2 with
+      | none => none
+      | some r3 =>
+        match parseNat r3 with
+        | none => none
+        | some (v, r4) => (lit "]" r4).map (fun r5 => ((cell, v), r5))
+
+/-- Parse a per-cell-Nat side-table `[[cell,val],…]` (or `[]`). -/
+def parseCellNats (cs : PState) : Option (List (CellId × Nat) × PState) :=
+  match lit "[]" cs with
+  | some rest => some ([], rest)
+  | none =>
+    match lit "[" cs with
+    | none => none
+    | some r0 =>
+      let rec loop (fuel : Nat) (cs : PState) : Option (List (CellId × Nat) × PState) :=
+        match fuel with
+        | 0 => none
+        | fuel + 1 =>
+          match parseCellNatEntry cs with
+          | none => none
+          | some (e, r1) =>
+            match lit "," r1 with
+            | some r2 => match loop fuel r2 with
+                         | some (rest, r3) => some (e :: rest, r3)
+                         | none => none
+            | none => match lit "]" r1 with
+                      | some r3 => some ([e], r3)
+                      | none => none
+      loop (cs.length + 1) r0
+
+/-- Read a per-cell `Nat` side-table BACK out of a `CellId → Nat` kernel function at the listed cell
+ids, dropping the `0`-default entries so a Live/never-destroyed cell contributes nothing (the
+wire stays minimal + the round-trip with an all-default kernel is `[]`). -/
+def cellNatsOfFun (cellIds : List CellId) (f : CellId → Nat) : List (CellId × Nat) :=
+  (cellIds.map (fun c => (c, f c))).filter (fun p => p.2 != 0)
+
+/-- Reconstruct a `CellId → Nat` kernel function from a decoded per-cell-Nat side-table (listed
+entry, else `0`). The inverse of `cellNatsOfFun` on the listed support. -/
+def funOfCellNats (entries : List (CellId × Nat)) : CellId → Nat :=
+  fun c => match entries.find? (fun p => p.1 == c) with
+           | some p => p.2
+           | none   => 0
+
 /-! ### QueueRecord codec. -/
 
 /-- Encode one `QueueRecord` `[id,owner,capacity,buffer]`. -/
@@ -2830,6 +2899,17 @@ structure WState where
   /-- The kernel-state REVOCATION REGISTRY (hole #3 / `#139`): the committed revoked-credential
   nullifier set the gate reads. Last on the wire (additive); DEFAULTS EMPTY. -/
   revoked     : List Nat := []
+  /-- The PER-CELL LIFECYCLE side-table (`0`=Live, `1`=Sealed, `3`=Destroyed; the kernel's
+  `lifecycle : CellId → Nat`). The cell COMMITMENT folds the lifecycle in
+  (`compute_canonical_state_commitment` hashes `cell.lifecycle`), so this MUST cross the wire for the
+  Lean-reconstituted `.root()` to match Rust on a CellSeal/Unseal/Destroy. Additive; DEFAULTS EMPTY
+  (a Live cell carries no entry). -/
+  lifecycle   : List (CellId × Nat) := []
+  /-- The PER-CELL DEATH-CERTIFICATE side-table (the kernel's `deathCert : CellId → Nat`): the
+  disclosed death-certificate hash a `cellDestroy` binds into the cell's FINAL state. The commitment
+  binds the death-cert payload of a Destroyed cell, so it too crosses the wire. Additive; DEFAULTS
+  EMPTY. -/
+  deathCert   : List (CellId × Nat) := []
 
 /-- Reconstruct a `RecordKernelState` from a decoded `WState`. `accounts` is exactly the listed cell
 ids; `cell`/`caps`/`bal` are the "listed slot, else default" reconstructions; the five side-tables are
@@ -2846,9 +2926,11 @@ def stateOfWState (w : WState) : RecordKernelState :=
     commitments := w.commitments
     queues := w.queues
     swiss := w.swiss
-    revoked := w.revoked }
+    revoked := w.revoked
+    lifecycle := funOfCellNats w.lifecycle
+    deathCert := funOfCellNats w.deathCert }
 
-/-- Encode a `WState` to the wide STATE JSON (all nine fields, in a fixed order). -/
+/-- Encode a `WState` to the wide STATE JSON (eleven fields, in a fixed order). -/
 def encodeWState (w : WState) : String :=
   "{\"cells\":" ++ encodeCellsW w.cells
     ++ ",\"caps\":" ++ encodeCapsEntries w.caps
@@ -2858,7 +2940,9 @@ def encodeWState (w : WState) : String :=
     ++ ",\"commitments\":" ++ encodeNats w.commitments
     ++ ",\"queues\":" ++ encodeQueues w.queues
     ++ ",\"swiss\":" ++ encodeSwissTable w.swiss
-    ++ ",\"revoked\":" ++ encodeNats w.revoked ++ "}"
+    ++ ",\"revoked\":" ++ encodeNats w.revoked
+    ++ ",\"lifecycle\":" ++ encodeCellNats w.lifecycle
+    ++ ",\"deathCert\":" ++ encodeCellNats w.deathCert ++ "}"
 
 /-- Parse the wide STATE `{"cells":…,"caps":…,"bal":…,"escrows":…,"nullifiers":…,
 "commitments":…,"queues":…,"swiss":…}`. Strict on field ORDER and the closing `}`; the caller
@@ -2882,9 +2966,14 @@ def parseWState (fuel : Nat) (cs : PState) : Option (WState × PState) := do
   let (swiss, r15) ← parseSwissTable r14
   let r16 ← lit ",\"revoked\":" r15
   let (revoked, r17) ← parseNats r16
-  let r18 ← lit "}" r17
+  let r18 ← lit ",\"lifecycle\":" r17
+  let (lifecycle, r19) ← parseCellNats r18
+  let r20 ← lit ",\"deathCert\":" r19
+  let (deathCert, r21) ← parseCellNats r20
+  let r22 ← lit "}" r21
   some ({ cells := cells, caps := caps, bal := bal, escrows := escrows, nullifiers := nullifiers,
-          commitments := commitments, queues := queues, swiss := swiss, revoked := revoked }, r18)
+          commitments := commitments, queues := queues, swiss := swiss, revoked := revoked,
+          lifecycle := lifecycle, deathCert := deathCert }, r22)
 
 /-- Read a `WState` BACK OUT of a `RecordKernelState`, at the SAME cell-id / label order the input
 listed (so the wire is positionally deterministic for the Rust reference). `cellIds`/`capLabels`/
@@ -2899,7 +2988,9 @@ def wstateOfState (cellIds : List CellId) (capLabels : List CellId)
     commitments := k.commitments
     queues := k.queues
     swiss := k.swiss
-    revoked := k.revoked }
+    revoked := k.revoked
+    lifecycle := cellNatsOfFun cellIds k.lifecycle
+    deathCert := cellNatsOfFun cellIds k.deathCert }
 
 /-! ## §W7 — the Turn ENVELOPE + the COMPLETE-TURN export `dregg_exec_full_turn_wide`.
 
@@ -3227,7 +3318,7 @@ def wideRollbackTurn : WTurn :=
 
 -- Malformed wire ⇒ fail-closed empty state, ok:0.
 #guard (execFullTurnWide "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"ok\":0}")
 
 /-- A heterogeneous state for the full round-trip guard (every side-table NON-empty + populated). -/
 def wideRoundtripState : WState :=
@@ -3240,7 +3331,10 @@ def wideRoundtripState : WState :=
     commitments := [333]
     queues := [{ id := 1, owner := 0, capacity := 8, buffer := [5, 6, 7] }]
     swiss := [{ swiss := 5, exporter := 0, target := 1, rights := [.grant], refcount := 2,
-                cert := none }] }
+                cert := none }]
+    lifecycle := [(0, Dregg2.Exec.TurnExecutorFull.lcSealed),
+                  (1, Dregg2.Exec.TurnExecutorFull.lcDestroyed)]
+    deathCert := [(1, 4242)] }
 
 -- A WState round-trip THROUGH the wire (every side-table survives):
 #guard ((match parseWState ((encodeWState wideRoundtripState).toList.length + 1)
@@ -3253,6 +3347,23 @@ def wideRoundtripState : WState :=
        | some w => encodeWState w.state == encodeWState wideDemoState
                    && encodeWTurn w.turn == encodeWTurn wideDemoTurn
        | none => false))  --  true (envelope + state round-trip)
+
+-- NON-VACUITY TOOTH: the per-cell `lifecycle`/`deathCert` side-tables SURVIVE the wire round-trip
+-- (a Sealed cell 0 + a Destroyed cell 1 bearing a death-cert), reconstructed verbatim from the
+-- decoded WState. A dropped table would FAIL this (the decoded function would read `0` everywhere).
+#guard ((match parseWState ((encodeWState wideRoundtripState).toList.length + 1)
+                          (encodeWState wideRoundtripState).toList with
+       | some (w', []) =>
+           (stateOfWState w').lifecycle 0 == Dregg2.Exec.TurnExecutorFull.lcSealed
+           && (stateOfWState w').lifecycle 1 == Dregg2.Exec.TurnExecutorFull.lcDestroyed
+           && (stateOfWState w').lifecycle 2 == Dregg2.Exec.TurnExecutorFull.lcLive  -- absent ⇒ Live
+           && (stateOfWState w').deathCert 1 == 4242
+       | _ => false))  --  true (lifecycle + deathCert cross the wire faithfully)
+
+#assert_axioms encodeCellNats
+#assert_axioms parseCellNats
+#assert_axioms cellNatsOfFun
+#assert_axioms funOfCellNats
 
 /-! ## §W8 — keystone axiom-hygiene pins (the FILL I no-`sorryAx` guard).
 
@@ -3586,7 +3697,7 @@ def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := f
 #guard (portalVerify (liftAuthW (.signature 7 8 : AuthW))) == false  --  false (forged ⇒ rollback)
 -- malformed wire ⇒ fail-closed empty state, status:0 (rejected), ok:0:
 #guard (execFullForestAuthStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
 /-! ### §WG-eval-admission — the ADMISSION prologue has teeth over the export.
 
@@ -3869,7 +3980,7 @@ def execHandlerTurnStep (input : String) : String :=
 
 -- malformed wire ⇒ fail-closed empty state, status:0/ok:0:
 #guard (execHandlerTurnStep "garbage" ==
-  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
+  "{\"state\":{\"cells\":[],\"caps\":[],\"bal\":[],\"escrows\":[],\"nullifiers\":[],\"commitments\":[],\"queues\":[],\"swiss\":[],\"revoked\":[],\"lifecycle\":[],\"deathCert\":[]},\"loglen\":0,\"status\":0,\"ok\":0}")
 
 /-! ### §WG-eval-hostexpiry — ★ BUG-1 TOOTH ★ host-fed clock REJECTS a past-expiry turn.
 
