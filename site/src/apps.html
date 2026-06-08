@@ -5,206 +5,170 @@
   <div class="page-header">
     <h1>Applications</h1>
     <p>
-      A growing catalog of apps built on the <code>dregg</code> runtime &mdash; each exercises a
-      different slice of the stack: private DeFi, anonymous credentials, federated
-      compute markets, governance, namespacing. All generate real STARK proofs.
-      All are runnable from the repo. Maturity varies; treat the list as a working
-      surface, not a product showcase.
+      Eight applications run on the <code>dregg</code> runtime today. Each is a real Rust crate
+      (<code>src/lib.rs</code> with <code>FactoryDescriptor</code>s and signed turn-builders), a
+      README, and a passing test suite. Their core flows run end-to-end against the canonical
+      <code>TurnExecutor</code> with the capability, mandate, and slot-caveat gates firing.
+    </p>
+    <p>
+      The defining property: <strong>none of these adds a domain-specific effect</strong>. There is
+      no <code>Effect::CastVote</code> or <code>Effect::ClaimBounty</code>. Every rule is a generic
+      dregg-native <em>StateConstraint</em> — <code>WriteOnce</code>, <code>Monotonic</code>,
+      <code>StrictMonotonic</code>, <code>FieldLteField</code>, <code>Immutable</code> — minted onto
+      a factory-born cell at birth. The executor enforces them on every turn; the app does no
+      bookkeeping of its own. To <em>walk</em> any app — slots, caveats, turns, and a live try-it —
+      open the <a href="/usecases.html">use-case explorer</a>.
     </p>
   </div>
 
   <section class="section section--compact">
-    <span class="section__label">DeFi Suite</span>
-    <h2 class="section__title">Decentralized finance, privately</h2>
+    <span class="section__label">Directory &amp; identity</span>
+    <h2 class="section__title">Names and credentials</h2>
     <div class="app-grid">
-      <div class="app-card">
-        <p class="app-card__port">:3050</p>
-        <p class="app-card__title">Stablecoin (CDP)</p>
-        <p class="app-card__desc">Collateralized debt positions with ZK liquidation proofs. Oracle price feeds attested via Ed25519. Minimum collateralization ratio enforced in-circuit by a 14-column STARK.</p>
+      <a class="app-card app-card--link" href="/usecases.html#nameservice">
+        <p class="app-card__port">starbridge-apps/nameservice</p>
+        <p class="app-card__title">Nameservice</p>
+        <p class="app-card__desc">A federation name directory. <code>register → set-target → renew → transfer → revoke</code>. The name hash is WriteOnce (a name binds once), expiry is Monotonic (renewal only extends), and the revoked flag is WriteOnce (revocation is final).</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">STARK</span>
-          <span class="app-card__tag">oracle</span>
-          <span class="app-card__tag">CellProgram</span>
+          <span class="app-card__tag">WriteOnce</span>
+          <span class="app-card__tag">Monotonic</span>
+          <span class="app-card__tag">factory-born</span>
         </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">:3051</p>
-        <p class="app-card__title">AMM</p>
-        <p class="app-card__desc">Constant-product market maker with x*y=k invariant proven in a 29-column STARK. LP tokens via the note model. Multi-hop routing with slippage range checks.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">STARK</span>
-          <span class="app-card__tag">notes</span>
-          <span class="app-card__tag">routing</span>
-        </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">:3053</p>
-        <p class="app-card__title">Orderbook</p>
-        <p class="app-card__desc">Price-time priority matching with proof of fairness. Dark pool mode with Pedersen-committed amounts. Commit-reveal prevents frontrunning. Pre-trade escrow via TurnComposer.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">MatchProof</span>
-          <span class="app-card__tag">commit-reveal</span>
-          <span class="app-card__tag">dark pool</span>
-        </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">—</p>
-        <p class="app-card__title">Lending</p>
-        <p class="app-card__desc">Utilization-based interest rates with compound interest proven iteratively. Health factor constraints in-circuit. Liquidation with bonus, all atomically settled.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">health factor</span>
-          <span class="app-card__tag">interest circuit</span>
-          <span class="app-card__tag">liquidation</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section section--compact">
-    <span class="section__label">Identity & Privacy</span>
-    <h2 class="section__title">Who you are is yours to prove</h2>
-    <div class="app-grid">
-      <div class="app-card">
-        <p class="app-card__port">:3052</p>
+      </a>
+      <a class="app-card app-card--link" href="/usecases.html#identity">
+        <p class="app-card__port">starbridge-apps/identity</p>
         <p class="app-card__title">Identity</p>
-        <p class="app-card__desc">Issue, present, and revoke verifiable credentials. Selective disclosure proves "age >= 18" without revealing exact age. Anonymous presentations via BlindedMerkle ring membership.</p>
+        <p class="app-card__desc">Issue credentials, present with selective disclosure, verify, revoke. The schema commitment is Immutable, issuance is a MonotonicSequence, the revocation root only grows, and only the authorized issuer (a public-root sender check) may write.</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">predicate proofs</span>
-          <span class="app-card__tag">ring membership</span>
+          <span class="app-card__tag">selective disclosure</span>
+          <span class="app-card__tag">SenderAuthorized</span>
           <span class="app-card__tag">revocation</span>
         </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">:3000</p>
-        <p class="app-card__title">Gallery</p>
-        <p class="app-card__desc">Privacy-preserving art auctions: sealed-bid, Vickrey, Dutch, and fully private modes. Garbled circuits + oblivious transfer for bid comparison. Provenance as capability chains.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">garbled circuits</span>
-          <span class="app-card__tag">OT</span>
-          <span class="app-card__tag">provenance</span>
-        </div>
-      </div>
+      </a>
     </div>
   </section>
 
   <section class="section section--compact">
-    <span class="section__label">Infrastructure</span>
-    <h2 class="section__title">Markets, namespaces, and coordination</h2>
+    <span class="section__label">Coordination &amp; markets</span>
+    <h2 class="section__title">Pub-sub, voting, bounties</h2>
     <div class="app-grid">
-      <div class="app-card">
-        <p class="app-card__port">:3002</p>
-        <p class="app-card__title">Compute Exchange</p>
-        <p class="app-card__desc">GPU marketplace with SLA bonds and qualification proofs. Optimistic settlement with dispute windows. Provider reputation via STARK delivery proofs.</p>
+      <a class="app-card app-card--link" href="/usecases.html#subscription">
+        <p class="app-card__port">starbridge-apps/subscription</p>
+        <p class="app-card__title">Subscription</p>
+        <p class="app-card__desc">A capability-gated bounded ring buffer. Grant publisher / consumer caps, publish, consume. Capacity and owner are Immutable; <code>tail ≤ head</code> always holds; publish advances the head as a monotone sequence, consume advances the tail.</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">delivery proofs</span>
-          <span class="app-card__tag">dual escrow</span>
-          <span class="app-card__tag">SLA</span>
+          <span class="app-card__tag">ring buffer</span>
+          <span class="app-card__tag">FieldLteField</span>
+          <span class="app-card__tag">pub/sub</span>
         </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">:3001</p>
+      </a>
+      <a class="app-card app-card--link" href="/usecases.html#privacy-voting">
+        <p class="app-card__port">starbridge-apps/privacy-voting</p>
+        <p class="app-card__title">Privacy Voting</p>
+        <p class="app-card__desc">Factory-born poll and ballot cells. The question hash is WriteOnce, tallies are Monotonic (a vote can never be erased by rewriting a tally downward), and each ballot's vote slot is WriteOnce — one vote per ballot, rejected by the executor on a second attempt.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">one-vote-per-cell</span>
+          <span class="app-card__tag">Monotonic tally</span>
+          <span class="app-card__tag">blinded ballot</span>
+        </div>
+      </a>
+      <a class="app-card app-card--link" href="/usecases.html#bounty-board">
+        <p class="app-card__port">starbridge-apps/bounty-board</p>
         <p class="app-card__title">Bounty Board</p>
-        <p class="app-card__desc">Federated anonymous bounties. Workers claim, deliver, and get paid without issuers learning their identity. Standing proofs via IVC chains. Poseidon2-blinded commitments.</p>
+        <p class="app-card__desc">A substrate-enforced state machine: <code>OPEN(1) → CLAIMED(2) → SUBMITTED(3) → PAID(4)</code>. State is StrictMonotonic (no re-entry, no rewind); title and reward are WriteOnce; the claimant hash is WriteOnce, so the first claimer wins.</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">IVC</span>
-          <span class="app-card__tag">Poseidon2</span>
-          <span class="app-card__tag">anonymous</span>
+          <span class="app-card__tag">StrictMonotonic</span>
+          <span class="app-card__tag">first-claimer-wins</span>
+          <span class="app-card__tag">state machine</span>
         </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">:3003</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="section section--compact">
+    <span class="section__label">Governance &amp; mandates</span>
+    <h2 class="section__title">Route tables and bounded authority</h2>
+    <div class="app-grid">
+      <a class="app-card app-card--link" href="/usecases.html#governed-namespace">
+        <p class="app-card__port">starbridge-apps/governed-namespace</p>
         <p class="app-card__title">Governed Namespace</p>
-        <p class="app-card__desc">DAO-controlled capability registry and service mesh. DFA routing compiled to prefix-trie state machines. Constitutional amendments via threshold voting on route tables.</p>
+        <p class="app-card__desc">A DAO-controlled route table and service mesh. <code>propose → vote (threshold) → commit → register</code>. The governance committee root and threshold are Immutable; the table version is Monotonic; committing a table update advances the version as a monotone sequence.</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">DFA routing</span>
-          <span class="app-card__tag">governance</span>
+          <span class="app-card__tag">threshold vote</span>
+          <span class="app-card__tag">route table</span>
           <span class="app-card__tag">service mesh</span>
         </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">—</p>
-        <p class="app-card__title">Nameservice</p>
-        <p class="app-card__desc">Hierarchical names with rent-based anti-squatting. Sub-delegation (*.alice.*). Cross-federation resolution via CapTP. Reverse WHOIS capability.</p>
+      </a>
+      <a class="app-card app-card--link" href="/usecases.html#compartment-workflow-mandate">
+        <p class="app-card__port">starbridge-apps/compartment-workflow-mandate</p>
+        <p class="app-card__title">Workflow Mandate</p>
+        <p class="app-card__desc">A DAG workflow under a bounded mandate. The step cursor is a MonotonicSequence that may never pass the charter terminal (<code>cursor ≤ terminal</code>); the commitment anchor is Immutable. Maps the Lean <code>CompartmentWorkflowMandate</code> theorems to Rust slot caveats and predicate-layer admission (clearance graph + spend policy).</p>
         <div class="app-card__tags">
-          <span class="app-card__tag">petnames</span>
-          <span class="app-card__tag">cross-fed</span>
-          <span class="app-card__tag">delegation</span>
+          <span class="app-card__tag">clearance graph</span>
+          <span class="app-card__tag">spend policy</span>
+          <span class="app-card__tag">Lean-mapped</span>
         </div>
-      </div>
+      </a>
+      <a class="app-card app-card--link" href="/usecases.html#storage-gateway-mandate">
+        <p class="app-card__port">starbridge-apps/storage-gateway-mandate</p>
+        <p class="app-card__title">Storage Gateway Mandate</p>
+        <p class="app-card__desc">A storage gateway under a volume ceiling. <code>GET / PUT / LIST</code> with prefix authorization and clearance labels; volume spent is Monotonic and may never exceed the ceiling (<code>spent ≤ ceiling</code>). Maps the Lean <code>StorageGatewayMandate</code> theorems to Rust caveats.</p>
+        <div class="app-card__tags">
+          <span class="app-card__tag">volume ceiling</span>
+          <span class="app-card__tag">prefix auth</span>
+          <span class="app-card__tag">Lean-mapped</span>
+        </div>
+      </a>
     </div>
   </section>
 
   <section class="section section--compact">
-    <span class="section__label">Governance &amp; Coordination</span>
-    <h2 class="section__title">Collective decisions, privately</h2>
-    <div class="app-grid">
-      <div class="app-card">
-        <p class="app-card__port">&mdash;</p>
-        <p class="app-card__title">DAO Treasury</p>
-        <p class="app-card__desc">Multi-party treasury with threshold proposal execution and STARK-attested quorum. Spending is a turn against the treasury cell; the proof binds vote tally to action.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">treasury</span>
-          <span class="app-card__tag">threshold</span>
-          <span class="app-card__tag">quorum proofs</span>
-        </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">&mdash;</p>
-        <p class="app-card__title">Privacy Voting</p>
-        <p class="app-card__desc">Anonymous voting with nullifier-protected ballots and tally proofs. Each ballot proves &ldquo;I am an eligible voter and have not voted yet&rdquo; without revealing identity.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">nullifiers</span>
-          <span class="app-card__tag">tally proofs</span>
-          <span class="app-card__tag">ring membership</span>
-        </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">&mdash;</p>
-        <p class="app-card__title">Prediction Market</p>
-        <p class="app-card__desc">Outcome-conditional shares with LMSR pricing. Settlement uses oracle attestations; payouts are STARK-verified against the recorded outcome.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">LMSR</span>
-          <span class="app-card__tag">oracle</span>
-          <span class="app-card__tag">settlement</span>
-        </div>
-      </div>
-      <div class="app-card">
-        <p class="app-card__port">&mdash;</p>
-        <p class="app-card__title">Subscription</p>
-        <p class="app-card__desc">Recurring capability rentals: a provider issues attenuated time-bounded caps that auto-renew until cancelled. Programmable queues validate renewals before the provider sees them.</p>
-        <div class="app-card__tags">
-          <span class="app-card__tag">recurring</span>
-          <span class="app-card__tag">TTL caps</span>
-          <span class="app-card__tag">programmable queues</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section section--compact">
-    <span class="section__label">Try them</span>
-    <h2 class="section__title">Run the examples</h2>
-    <p style="color: var(--fg-dim); margin-bottom: var(--s5);">
-      Every app has runnable examples. Here are a few to get started:
+    <span class="section__label">Roadmap</span>
+    <h2 class="section__title">Not yet ported</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      Two entries are honest roadmap stubs, not apps. Each is a single <code>manifest.json</code>
+      with <code>"status": "unported"</code> pointing at its still-running legacy implementation
+      under <code>apps/</code>. They are deliberately not faked into half-working crates; porting one
+      follows the nameservice exemplar.
     </p>
-    <pre><code class="language-bash"># Stablecoin CDP lifecycle
-cargo run -p dregg-stablecoin --example demo
+    <div class="app-grid">
+      <div class="app-card app-card--stub">
+        <p class="app-card__port">unported</p>
+        <p class="app-card__title">Compute Exchange</p>
+        <p class="app-card__desc">A marketplace for compute resources (qualification proofs, auction, capability-gated access). Legacy HTTP implementation lives under <code>apps/compute-exchange/</code>; the starbridge-app port is tracked work.</p>
+      </div>
+      <div class="app-card app-card--stub">
+        <p class="app-card__port">unported</p>
+        <p class="app-card__title">Gallery</p>
+        <p class="app-card__desc">Privacy-preserving art auctions (sealed-bid / Vickrey / Dutch). Legacy implementation under <code>apps/gallery/</code>; not yet rebuilt from dregg-native primitives.</p>
+      </div>
+    </div>
+  </section>
 
-# AMM swap with STARK proof
-cargo run -p dregg-amm --example swap_demo
+  <section class="section section--compact">
+    <span class="section__label">Run them</span>
+    <h2 class="section__title">From the repo or the browser</h2>
+    <p style="color: var(--fg-dim); margin-bottom: var(--s4);">
+      The devnet node seeds one of each factory-born app at genesis
+      (<code>node/src/starbridge_seed.rs</code>), and the CLI drives them live. A rejected second
+      claim or a shrinking tally is the caveat biting on the verified commit path — not a string
+      compare in the app.
+    </p>
+    <pre><code class="language-bash"># Privacy voting, live against a node
+dregg voting open  --question "ship the gallery port?"
+dregg voting tally --poll &lt;id&gt; --choice yes
+dregg voting close --poll &lt;id&gt;
+dregg voting show  --poll &lt;id&gt;
 
-# Identity selective disclosure
-cargo run -p dregg-identity --example kyc_demo
-
-# Orderbook trading
-cargo run -p dregg-orderbook --example trading_demo
-
-# Full gallery auction
-cargo run -p dregg-gallery --example devnet_gallery</code></pre>
+# Bounty board lifecycle (first-claimer-wins)
+dregg bounty post   --title "port gallery" --reward 500
+dregg bounty claim  --bounty &lt;id&gt;
+dregg bounty submit --bounty &lt;id&gt; --uri ipfs://...
+dregg bounty payout --bounty &lt;id&gt;</code></pre>
     <p style="margin-top: var(--s4);">
-      See <code>apps/*/examples/</code> and <code>demo-agent/examples/</code> for the full catalog.
-      The Discord bot (<code>apps/discord-bot</code>) also exposes 30+ slash commands for
-      interacting with the devnet.
+      Or open the <a href="/usecases.html">use-case explorer</a> to walk each app's slots and
+      caveats and try its turns against a node, no build required. Each app's web surface and tests
+      live under <code>starbridge-apps/&lt;name&gt;/</code>.
     </p>
   </section>
 
