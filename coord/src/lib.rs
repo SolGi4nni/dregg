@@ -70,6 +70,7 @@ pub mod budget;
 pub mod causal;
 pub mod error;
 pub mod serde_sig;
+pub mod shared_budget;
 
 #[cfg(test)]
 mod tests;
@@ -78,6 +79,12 @@ mod tests;
 // coordinated turn) ⟺ the real `atomic` 2PC + the `shared_budget` non-overspend gate.
 #[cfg(test)]
 mod entangled_diff;
+
+// Differential: the verified Lean `Dregg2/Coord/*` models (the genuinely-uncovered coordination
+// semantics) ⟺ the real `causal::CausalDag` happened-before DAG, `atomic::evaluate_votes` 2PC
+// decision machine, and `shared_budget::SharedResourceBudget::resolve_with_ordering` tau-resolution.
+#[cfg(test)]
+mod coord_diff;
 
 // Re-exports for convenience.
 pub use atomic::{
