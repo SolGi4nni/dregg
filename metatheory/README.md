@@ -13,29 +13,96 @@ wrongly collapsing into one name:
 
 They interact — the verification *discharges* the metatheory's obligations against a real
 system — but they are **not the same thing**, and the library was renamed `Metatheory → Dregg2`
-to stop hiding that. (See [`docs/rebuild/REORIENT.md`](../docs/rebuild/REORIENT.md) for the
-fuller orientation; note it predates the rename and the `Spec` layer.)
+to stop hiding that.
 
 A capability here is **constructive knowledge**: to *hold* one is to be able to *exhibit a
 witness that verifies* — never merely to assert. Everything below is a projection of that.
 
+> ## 🧭 New here? Start with the navigation layer.
+>
+> The tree is large (70+ Rust crates, hundreds of Lean modules, dozens of ledgers). Three docs
+> exist so you don't have to grep blind:
+>
+> - **[`docs/NAVIGATION.md`](docs/NAVIGATION.md)** — the *where-is-X* map: every subsystem
+>   (executor, circuit-emit, distributed/consensus, authority/caveats, intent/agents, crypto,
+>   apps, node, the Rust crates) → its directory, entry-point files, and key theorems.
+> - **[`docs/rebuild/_INDEX.md`](docs/rebuild/_INDEX.md)** — a one-line index of every design /
+>   ledger / orientation doc under `docs/rebuild/`, with a *what it covers + is it current* tag.
+> - **[`docs/guides/`](docs/guides/)** — readable orientations for the four highest-value
+>   subsystems: the [executor & effect model](docs/guides/executor.md), the
+>   [circuit / descriptor / assurance story](docs/guides/circuit.md), the
+>   [distributed / SSB-federation model](docs/guides/distributed.md), and the
+>   [authority / capability / caveat model](docs/guides/authority.md).
+
 Toolchain `leanprover/lean4:v4.30.0`; mathlib via a local `path` require. **It builds**:
-`lake build` ⇒ **3804 jobs, 0 errors**. The Abstract Spec, the `Spec` middle layer, the executor
-core, and every `#assert_axioms`-pinned keystone are **`sorry`-free and kernel-clean**; the
+`lake build` ⇒ **0 errors** (last finalize pass: 3198 jobs over the circuit-emit + turn subset,
+green; warnings only — re-run `lake build` for the current full count). The Abstract Spec, the
+`Spec` middle layer, the executor core, and every `#assert_axioms`-pinned keystone are
+**`sorry`-free and kernel-clean**; the
 remaining `sorry`s are *named, tracked open fronts* — whole-turn / coordinated proof composition
 (macaroon columns, multi-step glue, the coordinated-forest lift) plus a couple of executor-semantics
 alignment portals — never hidden beneath a "PROVED" claim.
 
-**New since the last writing — verifiable execution is real.** ~49 effects now carry an
-executor-derived witness → a real Plonky3 STARK `prove`/`verify` with forged-state rejection
-(`Dregg2/Circuit/Witness/*`, the anti-ghost tooth makes tampering any kernel field UNSAT); whole-turn
-proofs bind a turn's effects to **one authenticated state root** (per cell); the node commit path
-proves every finalized turn under `--prove-turns`; and the l4v **data refinement**
-(`Exec/ConcreteKernel`, HashMap-backed) is *proved* to transfer the abstract soundness to an efficient
-runtime. The honest frontier is now at the **executable boundary** (the FFI admission context must be
-host-fed, not taken from the untrusted turn envelope; the success-bit must distinguish a committed
-body from a fee-only prologue; one ungated handler export must be fenced) and **the swap** (making the
-verified executor *be* the runtime). These are tracked, not hidden — see `docs/rebuild/`.
+**Verifiable execution is real — but the circuit's per-effect assurance is uneven, and the
+honest state matters.** Every effect carries an executor-derived witness → a real Plonky3 STARK
+`prove`/`verify` with forged-state rejection (`Dregg2/Circuit/Emit/*` + `Circuit/Witness/*`,
+the anti-ghost tooth makes tampering any of the descriptor's **13 absorbed state-block columns**
+UNSAT). But assurance is **not uniform**, and the count is *not* a completion count
+([`docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md)
+is the finalized per-effect ledger):
+
+- **`transfer` is the genuine class-A keystone** — `satisfiedVm transferDescriptor ⟹` the full
+  per-cell post-state, every touched column anti-ghosted, welded to the verified executor
+  `recKExec` (`Circuit/Emit/EffectVmEmitTransferSound.transferDescriptor_full_sound`).
+- **~12 of ~56 effects** now meet that from-scratch class-A bar: transfer + the **economic
+  family** (mint, burn, the escrow/bridge-escrow family — promoted by `EffectVmEmitEscrowRoot`'s
+  *genuine in-row* root recompute that replaced the old opaque additive step).
+- **The other ~40 are class C (economic/frame-leg-only)**: the descriptor binds + anti-ghosts the
+  *frozen frame* and a balance/nonce leg, **but the field/side-table that IS the effect** —
+  cap-table mutation, nullifier insert, note-commitment insert, seal write, cell-table insert —
+  **is not bound by the deployed row's `state_commit`** (it rides `params`/`effects_hash`/a
+  separate record-layer root). *Conservation ≠ correctness.* The per-effect files **prove** these
+  gaps (`*_out_of_row`, `*_is_turn_property`) rather than papering them.
+
+Whole-turn proofs bind a turn's effects to **one authenticated state root** (per cell); the node
+commit path proves every finalized turn under `--prove-turns`; and the l4v **data refinement**
+(`Exec/ConcreteKernel`, HashMap-backed) is *proved* to transfer the abstract soundness to an
+efficient runtime. The honest frontier is the **executable boundary** (FFI admission context
+host-fed; success-bit distinguishes a committed body from a fee-only prologue; one ungated handler
+export fenced), **the class-C circuit gaps above**, and **the swap** (making the verified executor
+*be* the runtime). All tracked, not hidden — see `docs/rebuild/`.
+
+**Distributed protocols are now verified, not just modeled.** The federation is *Secure-Scuttlebutt-
+on-crack* — a **blocklace** (block-DAG-lace) where each author's blocks form a **strand** (an SSB
+feed). The live Rust consensus engine (`blocklace/`, Cordial-Miners-style DAG + Stingray budget) is
+now pinned by an executable Lean model + golden differential (`Dregg2/Distributed/*`,
+`Dregg2/Coord/*`, `Dregg2/Proof/{CordialMiners,Stingray,BFT}*`): blocklace finality
+(`BlocklaceFinality.finalLeaders_one_per_wave`), strand integrity / fork-freedom
+(`StrandIntegrity.forkFree_iff_seqMonotone`), CRDT lace-merge as a semilattice join
+(`LaceMerge.{laceIds_mergeLace,merge_comm,merge_assoc,merge_idem}`), membership safety, CapTP
+handoff-unforgeability + leased GC (`Exec/CapTP{HandoffSound,GC,ConsentLace}`), cross-cell atomic
+joint turns (`Distributed/EntangledJoint.jointApplyAll_atomic`), threshold decryption, and
+**cell migration across federations conserving balance+caps** (`CellMigration.handoff_conserves_*`).
+See [`docs/guides/distributed.md`](docs/guides/distributed.md).
+
+**The dregg / dreggrs split.** Per the corrected SWAP framing
+([`docs/rebuild/_DREGG-DREGGRS-MANIFEST.md`](docs/rebuild/_DREGG-DREGGRS-MANIFEST.md)):
+**dregg** = the Lean-primary truth (`Dregg2/*` is the source of semantics; the Rust is bridge /
+shadow / client, routing through the kernel via `dregg-lean-ffi`). **dreggrs** = the Rust heritage,
+backburner — self-contained engines that a Lean model + differential now pins (kept as fast
+verified shadows: `blocklace`, `coord`, `federation`, `captp`, `macaroon`, …) plus pure
+infra/crypto-primitives (`hints`, `secrets`, `net`, …). The boundary is *where the source of truth
+lives*, not Rust-vs-Lean.
+
+**The tier ladder** (assurance grades, low→high): **silver** = every Rust semantic is modeled +
+implemented in Lean and callable (a faithful model + differential/FFI, per
+[`_SILVER-COVERAGE-LEDGER.md`](docs/rebuild/_SILVER-COVERAGE-LEDGER.md)); **gold** = fully
+recursive / succinct proofs (proof *trees* aggregated to O(1)-verify, the
+[Titanium light-client target](docs/rebuild/TITANIUM-PHASE.md)); **diamond** = the full algebraic
+constraint / folded-DAG endgame. ("magnesium" appears informally between silver and gold for the
+genuinely-recomputed-but-not-yet-deployed descriptor cohort.) These are *visions/targets*, not all
+reached — silver is the active campaign and is FULLY DONE for protocol semantics; gold/diamond are
+forward.
 
 The discipline that got us here is the same **de-vacuify** one: a read-only audit + reconcile-build
 pass repeatedly found that "deep" `sorry`s were in fact
