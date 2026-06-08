@@ -4,11 +4,12 @@ in its OWN disjoint module (the per-effect-farm vehicle, off the Argus cornersto
 attenuate is where capability NON-AMPLIFICATION (`granted.rights ≤ held.rights`) must be enforced.
 
 `Argus/Stmt.lean` laid the cornerstone (`interp (transferStmt …) = recKExec`): the executor IS the
-meaning of the IR term, by construction. It also built `checkLe (a b : RecordKernelState → Int)`, the
-LATTICE/COMPARISON gate — a pure domain-restrictor that commits IFF `a k ≤ b k` (the in-band foundation
-of non-amplification). This module welds the cap-graph ATTENUATE effect onto an Argus term that
-INTERNALIZES non-amplification in-band via `checkLe`, and binds it against the audited GENUINE class-A
-cap-root descriptor.
+meaning of the IR term, by construction. It also built `checkSubset (a b : RecordKernelState → ExecAuth)`,
+the FINITE-LATTICE gate — a pure domain-restrictor that commits IFF `a k ⊆ b k` over the genuine
+`ExecAuth = Finset Auth` order (the FULL in-band realization of non-amplification, superseding the
+cardinality-only `checkLe (… → Int)`). This module welds the cap-graph ATTENUATE effect onto an Argus
+term that INTERNALIZES the FULL `granted.rights ⊆ held.rights` non-amplification in-band via `checkSubset`,
+and binds it against the audited GENUINE class-A cap-root descriptor.
 
 ## The executor target — the kernel ATTENUATE step (faithful, named, not re-invented)
 
@@ -24,42 +25,32 @@ descriptor's `unify_attenuate` already targets (`EffectVmEmitAttenuateA §8`). T
 `keep`; a `node`/`null` cap is unchanged. So the conferred-rights of the result are a genuine SUBLIST
 (hence ⊆) of the parent's (`attenuate_subset`) — the real `is_attenuation`, NOT a `()≤()` collapse.
 
-## ⚑ THE RIGHTS-LATTICE FINDING (reported precisely — `checkLe` needs a richer primitive)
+## ⚑ THE RIGHTS-LATTICE FINDING — RESOLVED (`checkSubset`, the finite-lattice primitive, now in the IR)
 
 The non-amplification order is `confRights granted ≤ confRights held` over `ExecAuth := Finset Auth`
 ordered by `⊆` (`Exec/Caps.lean:57-66`), a SUBSET relation over the 7-atom powerset of
 `Auth = {read,write,grant,call,reply,reset,control}` (`Authority/Positional.lean:37`). This is a PARTIAL
-order: `{read}` and `{write}` are INCOMPARABLE. `checkLe (a b : RecordKernelState → Int)` compares two
-SCALAR `Int` read-outs with the TOTAL order `a k ≤ b k`. There is NO order-embedding of `(Finset Auth, ⊆)`
-into `(Int, ≤)`: any bitmask encoding makes `Int ≤` DISAGREE with `⊆` (e.g. `{write}` = bit 2² = 2 and
-`{read}` = bit 2⁰ = 1 give `1 ≤ 2`, yet `{read} ⊄ {write}`). So `checkLe` CANNOT express the full subset
-gate. **FINDING (file:line): the full in-band non-amplification gate over the rights lattice needs a
-richer comparison primitive — a `RecStmt.checkSubset (a b : RecordKernelState → Finset Auth)` (or any
-finite-lattice `≤` domain-restrictor) — because the rights carrier is `Finset Auth` ordered by `⊆`
-(`Dregg2/Exec/Caps.lean:57` `ExecAuth`, `:66` `confRights`), NOT an `Int` scalar. `RecStmt.checkLe`
-(`Dregg2/Circuit/Argus/Stmt.lean:76`) only restricts on `Int ≤`.**
+order: `{read}` and `{write}` are INCOMPARABLE. The PRIOR weld gated on `checkLe (a b : … → Int)`, which
+compares two SCALAR `Int` read-outs with the TOTAL order `a k ≤ b k` — and there is NO order-embedding of
+`(Finset Auth, ⊆)` into `(Int, ≤)`: any bitmask encoding makes `Int ≤` DISAGREE with `⊆` (e.g. `{write}` =
+bit 2² = 2 and `{read}` = bit 2⁰ = 1 give `1 ≤ 2`, yet `{read} ⊄ {write}`). So `checkLe` could carry only
+the rights-CARDINALITY shadow (`granted ⊆ held ⟹ |granted| ≤ |held|`), NECESSARY but NOT SUFFICIENT for
+the subset (`checkLe_card_necessary_not_sufficient`, retained below: two equal-cardinality rights sets can
+be non-subset / incomparable). **RESOLUTION: `Argus/Stmt.lean` now provides `RecStmt.checkSubset (a b :
+RecordKernelState → ExecAuth)` — the domain-restrictor over the genuine `Finset Auth` `⊆` (= `≤`) order
+(`Auth` has `DecidableEq`, so the gate is computable). This module's `attenuateStmt` GATES ON IT: the term
+is `seq (checkSubset (granted.rights) (held.rights)) (setCaps …)`, so the FULL `granted.rights ⊆
+held.rights` non-amplification is now enforced IN-BAND — rejecting BOTH a strict superset AND an
+incomparable pair (`checkSubset_rejects_overbroad_grant` / `checkSubset_rejects_incomparable_grant`, §6).
+The cardinality gap is closed.**
 
-## What `checkLe` CAN faithfully carry in-band — the rights-CARDINALITY scalar shadow (and its bound)
+## HOW NON-AMPLIFICATION IS WITNESSED IN-BAND — the three legs, stated precisely (leg 1 now FULL subset)
 
-A genuine SCALAR consequence of subset that `checkLe`'s `Int ≤` CAN express is the rights-CARDINALITY:
-`granted ⊆ held ⟹ |granted| ≤ |held|`. The attenuate move only ever drops rights, so the granted cap's
-conferred-rights COUNT is `≤` the held cap's, for EVERY cap shape (the `endpoint` filter shrinks the
-list — `List.length_filter_le`; `node`/`null` are unchanged). So the term carries
-`checkLe (|granted rights|) (|held rights|)` as the in-band non-amplification SCALAR tooth: it REJECTS
-(fails closed) any move whose installed cap would carry MORE rights than the parent (gross amplification),
-and it ADMITS every genuine attenuation. We are PRECISE that this is NECESSARY but NOT SUFFICIENT for the
-full subset order (`checkLe_card_necessary_not_sufficient`, pinned below: two equal-cardinality rights
-sets can be NON-subset). The full subset is what the executor's `attenuate` STRUCTURALLY guarantees
-(`attenuate_subset`, a proven `⊆`) and what the descriptor's bound `RIGHTS` digest pins (below). The
-cardinality `checkLe` is the strongest in-band scalar gate the EXISTING `checkLe` primitive supports; the
-finding above is the IR extension that would internalize the full subset.
-
-## HOW NON-AMPLIFICATION IS WITNESSED IN-BAND — the three legs, stated precisely
-
-  1. **`checkLe` in the term (in-band, executor-side scalar):** the term is
-     `seq (checkLe |granted| |held|) (setCaps <install attenuated slot>)`. The `checkLe` gate is the
-     in-band non-amplification SCALAR check: it admits IFF the installed cap's rights-COUNT `≤` the
-     parent's. It REJECTS gross widening (more rights than the parent), proven two-valued below.
+  1. **`checkSubset` in the term (in-band, executor-side, FULL subset):** the term is
+     `seq (checkSubset (granted.rights) (held.rights)) (setCaps <install attenuated slot>)`. The
+     `checkSubset` gate is the in-band non-amplification check over the GENUINE rights lattice: it admits
+     IFF the installed cap's conferred-rights SET is `⊆` the parent's. It REJECTS a superset AND an
+     incomparable pair, proven two-valued below — the FULL order, not the cardinality shadow.
   2. **the descriptor binds WHICH rights were installed (circuit-side):** `attenuateGenuine_sound` forces
      `post.capRoot = hash[ hash[holder,target,RIGHTS,op], pre.capRoot ]` — the GENUINE in-row cap-root
      recompute (NOT an opaque parameter), and `attenuateGenuine_binds_edge` anti-ghosts the `RIGHTS`
@@ -68,12 +59,13 @@ finding above is the IR extension that would internalize the full subset.
      digest landed in the cap table.
   3. **the executor STRUCTURALLY attenuates (the full subset):** `attenuate keep c` filters the rights,
      so `confRights (attenuate keep c) ≤ confRights c` over the genuine `Finset Auth ⊆` order
-     (`attenuate_subset` / `attenuate_confRights_le`) — the FULL subset, beyond what `checkLe` scalars.
+     (`attenuate_subset` / `attenuate_confRights_le`) — the FULL subset, which is exactly why the in-band
+     `checkSubset` gate (leg 1) admits on every genuine attenuation (`grantedRightsSet_le_held`).
 
-Together: the descriptor pins WHICH rights digest was installed (leg 2); the in-term `checkLe` proves the
-installed rights don't grow in CARDINALITY in-band (leg 1); and the executor's `attenuate` structurally
-guarantees the FULL subset (leg 3). The honest gap between leg-1's cardinality and the full subset is the
-reported `checkLe` finding — the IR primitive that would close it in-band.
+Together: the descriptor pins WHICH rights digest was installed (leg 2); the in-term `checkSubset` proves
+the installed rights SET is `⊆` the parent's IN-BAND, the FULL order (leg 1); and the executor's
+`attenuate` structurally produces that same subset (leg 3). Leg 1 and leg 3 now state the SAME full
+subset — the prior cardinality/subset gap is closed.
 
 ## HONEST SURFACE — exactly the cap-family per-cell weld surface (do NOT over-read)
 
@@ -94,9 +86,9 @@ carries. Cross-row composition is the turn layer (`TurnEmit`), cited not claimed
 `#assert_axioms` on both welds ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY via
 the named `Poseidon2SpongeCR` hypothesis (inside the cited anti-ghost `attenuateGenuine_binds_edge`, not
 the welds here). No `sorry`, no `:= True`, no `native_decide`, no `rfl`-posing-as-bridge. Non-vacuity:
-`checkLe` REJECTS an over-broad grant (granted-count > held-count ⇒ `none`) and ADMITS a genuine
-attenuation; the genuine descriptor is the non-trivial class-A circuit, not the placeholder. This module
-OWNS only itself; every import is read-only.
+`checkSubset` REJECTS an over-broad grant (rights SET ⊄ parent ⇒ `none`) AND an INCOMPARABLE pair (the
+gain over `checkLe`), and ADMITS a genuine attenuation; the genuine descriptor is the non-trivial class-A
+circuit, not the placeholder. This module OWNS only itself; every import is read-only.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
@@ -110,7 +102,7 @@ open Dregg2.Authority (Auth Cap Caps capAuthConferred)
 -- (exactly as `Argus/Compile.lean` and the sibling `Effects/*` modules open them).
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Argus
-  (RecStmt interp interp_checkLe checkLe_admits_iff kC)
+  (RecStmt interp interp_checkLe checkLe_admits_iff interp_checkSubset checkSubset_admits_iff kC)
 -- The kernel-level ATTENUATE step + its slot-narrowing primitive (the refinement target).
 open Dregg2.Exec.TurnExecutorFull (attenuateSlotF)
 open Dregg2.Exec.Handlers.Authority (attenuateStep AttenuateArgs)
@@ -162,71 +154,111 @@ theorem grantedRightsCard_le_held (actor : CellId) (idx : Nat) (keep : List Auth
     | null => simp [attenuate, capAuthConferred]
   exact_mod_cast hlen
 
-/-! ## §1 — THE IR TERM: the in-band non-amplification `checkLe` gate, then the cap-table install.
+/-! ### §0′ — the FULL rights-SET read-outs (the genuine `Finset Auth` non-amplification carrier).
 
-`attenuateStmt = seq (checkLe |granted| |held|) (setCaps <attenuateSlotF install>)`. The leading
-`checkLe` is the in-band non-amplification SCALAR gate (the installed cap's rights-count must not exceed
-the parent's); the `setCaps` is the EXACT executor cap-table write (`attenuateSlotF k.caps actor idx
-keep`). This INTERNALIZES non-amplification in the term — the whole point of the crown weld. -/
+The cardinality read-outs above are the SCALAR shadow `checkLe` carries; the FULL non-amplification gate
+reads the genuine rights LATTICE element `confRights c = (capAuthConferred c).toFinset : ExecAuth`
+(`Exec/Caps.lean:66`), ordered by `⊆`. These two read-outs are the conferred-rights SETS of the held
+(parent) cap and of its `keep`-attenuation — the values the FULL `granted.rights ⊆ held.rights` gate
+(`checkSubset`) compares. -/
 
-/-- **The attenuate effect as an Argus IR term.** Gate on the in-band non-amplification check
-(granted-rights-count ≤ held-rights-count, via `checkLe`), then install the in-place narrowed actor slot
-(`attenuateSlotF` — the EXACT executor cap-table write). The `checkLe` leg is the in-band scalar shadow
-of `granted.rights ≤ held.rights`; the `setCaps` leg is the verified executor move. -/
+/-- The HELD-rights SET read-out (the parent cap's conferred rights as a `Finset Auth` lattice element).
+The authority the attenuation must not exceed, now in its genuine `⊆`-ordered carrier (not a scalar). -/
+def heldRightsSet (actor : CellId) (idx : Nat) : RecordKernelState → ExecAuth :=
+  fun k => confRights (heldCapAt actor idx k)
+
+/-- The GRANTED-rights SET read-out (the attenuated cap's conferred rights as a `Finset Auth`). The value
+the attenuate move would install — its rights SET must be `⊆` the parent's (full non-amplification). -/
+def grantedRightsSet (actor : CellId) (idx : Nat) (keep : List Auth) : RecordKernelState → ExecAuth :=
+  fun k => confRights (attenuate keep (heldCapAt actor idx k))
+
+/-- **`grantedRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation (PROVED).**
+The attenuated cap's conferred-rights SET is `⊆` (= `≤`) the parent's, over the genuine `ExecAuth =
+Finset Auth` order — directly `attenuate_confRights_le` (the executor's `attenuate` STRUCTURALLY narrows,
+`attenuate_subset` lifted to `Finset`). So the `checkSubset` non-amplification gate (granted ⊆ held)
+commits on every genuine attenuate: fail-closed, never fail-stuck. This is the FULL subset, NOT the
+cardinality shadow `grantedRightsCard_le_held` carries — the gain the `checkSubset` upgrade buys. -/
+theorem grantedRightsSet_le_held (actor : CellId) (idx : Nat) (keep : List Auth)
+    (k : RecordKernelState) :
+    grantedRightsSet actor idx keep k ≤ heldRightsSet actor idx k :=
+  attenuate_confRights_le keep (heldCapAt actor idx k)
+
+/-! ## §1 — THE IR TERM: the in-band FULL-SUBSET non-amplification `checkSubset` gate, then the install.
+
+`attenuateStmt = seq (checkSubset (granted.rights) (held.rights)) (setCaps <attenuateSlotF install>)`.
+The leading `checkSubset` is the in-band non-amplification gate over the GENUINE rights lattice
+(`ExecAuth = Finset Auth`, ordered by `⊆`): the installed cap's conferred-rights SET must be `⊆` the
+parent's. This is the FULL `granted.rights ⊆ held.rights` rule INTERNALIZED in the term — not merely its
+cardinality shadow (the `checkLe` of the prior weld, which `checkLe_card_necessary_not_sufficient`
+showed could not reject an incomparable pair). The `setCaps` is the EXACT executor cap-table write
+(`attenuateSlotF k.caps actor idx keep`). This is the whole point of the crown weld: the FULL
+non-amplification order is now an in-band IR gate. -/
+
+/-- **The attenuate effect as an Argus IR term (FULL in-band non-amplification).** Gate on the genuine
+subset check `granted.rights ⊆ held.rights` over `ExecAuth = Finset Auth` (via `checkSubset`), then
+install the in-place narrowed actor slot (`attenuateSlotF` — the EXACT executor cap-table write). The
+`checkSubset` leg is the in-band realization of the FULL `granted.rights ⊆ held.rights` partial order
+(rejecting BOTH a superset AND an incomparable pair — the thing the prior `checkLe` cardinality gate
+could not); the `setCaps` leg is the verified executor move. -/
 def attenuateStmt (actor : CellId) (idx : Nat) (keep : List Auth) : RecStmt :=
   RecStmt.seq
-    (RecStmt.checkLe (grantedRightsCard actor idx keep) (heldRightsCard actor idx))
+    (RecStmt.checkSubset (grantedRightsSet actor idx keep) (heldRightsSet actor idx))
     (RecStmt.setCaps (fun k => attenuateSlotF k.caps actor idx keep))
 
 /-! ## §2 — THE CORNERSTONE: `interp` of the attenuate term IS the kernel ATTENUATE step.
 
-The SAME shape as the transfer/escrow cornerstones, with the leading gate being the `checkLe`
-non-amplification domain-restrictor instead of a `guard`. Because a genuine attenuation NEVER amplifies
-(`grantedRightsCard_le_held`), the `checkLe` gate ALWAYS fires (`some k`), so the `bind` runs the
+The SAME shape as the transfer/escrow cornerstones, with the leading gate being the `checkSubset` FULL
+non-amplification domain-restrictor instead of a `guard`. Because a genuine attenuation NEVER amplifies —
+the executor's `attenuate` STRUCTURALLY produces a subset (`grantedRightsSet_le_held`, i.e.
+`attenuate_confRights_le`) — the `checkSubset` gate ALWAYS fires (`some k`), so the `bind` runs the
 `setCaps` install — which is exactly `attenuateStep`'s `some { k with caps := attenuateSlotF … }`. The
-executor IS the meaning of the term, INCLUDING that the in-term `checkLe` gate matches the executor's
-(always-admitting) attenuation discipline. -/
+executor IS the meaning of the term, INCLUDING that the in-term FULL-subset `checkSubset` gate matches
+the executor's (always-admitting) attenuation discipline. The full subset is now enforced IN-BAND. -/
 
 /-- **The cornerstone (crown).** `interp` of the attenuate term IS the kernel ATTENUATE step
 `attenuateStep` — the same partial function, by construction, exactly as the transfer/mint/burn/escrow
-cornerstones. The in-term `checkLe` non-amplification gate is shown to MATCH the executor: it admits on
-every genuine attenuation (`grantedRightsCard_le_held`), so the term commits exactly when (always)
-`attenuateStep` does, installing the SAME `attenuateSlotF` cap table. -/
+cornerstones. The in-term FULL `checkSubset` non-amplification gate is shown to MATCH the executor: it
+admits on every genuine attenuation (`grantedRightsSet_le_held` — the genuine `granted.rights ⊆
+held.rights`, via `attenuate_subset`/`attenuate_confRights_le`), so the term commits exactly when
+(always) `attenuateStep` does, installing the SAME `attenuateSlotF` cap table. -/
 theorem interp_attenuateStmt_eq_attenuateStep (actor : CellId) (idx : Nat) (keep : List Auth)
     (k : RecordKernelState) :
     interp (attenuateStmt actor idx keep) k = attenuateStep k ⟨actor, idx, keep⟩ := by
   simp only [attenuateStmt, interp, Option.bind]
-  -- the in-band non-amplification `checkLe` admits (granted-count ≤ held-count) on every attenuation.
-  rw [if_pos (grantedRightsCard_le_held actor idx keep k)]
+  -- the in-band FULL non-amplification `checkSubset` admits (granted.rights ⊆ held.rights) on every
+  -- attenuation — the executor's `attenuate` structurally narrows the rights set.
+  rw [if_pos (grantedRightsSet_le_held actor idx keep k)]
   -- the `setCaps` install IS `attenuateStep`'s `some { k with caps := attenuateSlotF … }`.
   rfl
 
 #assert_axioms interp_attenuateStmt_eq_attenuateStep
 
-/-! ## §3 — the `checkLe` non-amplification gate is GENUINELY TWO-VALUED (the in-band tooth, with its
-honest bound).
+/-! ## §3 — the `checkSubset` non-amplification gate is GENUINELY TWO-VALUED over the FULL subset order
+(the in-band tooth, now closing the cardinality gap).
 
-The gate is worthless if it admitted everything. It does not: `checkLe` REJECTS (fails closed) any move
-whose installed cap would carry MORE rights than the parent (`checkLe_admits_iff`, the §L keystone). And
-we are PRECISE about its strength: rights-cardinality `≤` is NECESSARY for subset but NOT SUFFICIENT —
-two equal-cardinality rights sets can be non-subset — which is exactly the `checkLe` finding (the IR
-needs a `checkSubset` to close the in-band gap). -/
+The gate is worthless if it admitted everything. It does not: `checkSubset` REJECTS (fails closed) any
+move whose installed cap's rights SET is NOT `⊆` the parent's (`checkSubset_admits_iff`, the §L′
+keystone) — and crucially that rejection covers an INCOMPARABLE pair, not just a strict superset. This is
+the FULL `granted.rights ⊆ held.rights` enforced in-band, closing the gap the prior `checkLe` cardinality
+gate left open (`checkLe_card_necessary_not_sufficient`, retained below as the precise record of WHY the
+upgrade was needed). -/
 
-/-- **`attenuateStmt_admits_iff` — the in-band gate is exactly the non-amplification SCALAR check.**
-The attenuate term COMMITS (its `checkLe` leg admits) IFF the installed cap's rights-count `≤` the
-parent's. So the in-band gate genuinely REJECTS (fails closed) a move that would grow the rights count
-(gross amplification): two-valued, non-vacuous. -/
+/-- **`attenuateStmt_admits_iff` — the in-band gate is exactly the FULL non-amplification SUBSET check.**
+The attenuate term COMMITS (its `checkSubset` leg admits) IFF the installed cap's conferred-rights SET is
+`⊆` the parent's, over the genuine `ExecAuth = Finset Auth` order. So the in-band gate genuinely REJECTS
+(fails closed) a move that is NOT a subset — a strict superset OR an incomparable pair: two-valued,
+non-vacuous, and the FULL partial order (not the cardinality shadow). -/
 theorem attenuateStmt_admits_iff (actor : CellId) (idx : Nat) (keep : List Auth)
     (k : RecordKernelState) :
     (interp (attenuateStmt actor idx keep) k).isSome = true ↔
-      grantedRightsCard actor idx keep k ≤ heldRightsCard actor idx k := by
-  -- the `checkLe` leg gates the whole term: if it rejects, the `bind` short-circuits to `none`; if it
-  -- admits, the `setCaps` install always commits (`some`). So the term is `some` iff the gate admits.
+      grantedRightsSet actor idx keep k ≤ heldRightsSet actor idx k := by
+  -- the `checkSubset` leg gates the whole term: if it rejects, the `bind` short-circuits to `none`; if
+  -- it admits, the `setCaps` install always commits (`some`). So the term is `some` iff the gate admits.
   constructor
   · intro hsome
     by_contra hgt
-    -- if the gate rejected, the leading `checkLe` is `none`, so the whole term is `none` — contradiction.
-    rw [attenuateStmt, interp, interp_checkLe, if_neg hgt] at hsome
+    -- if the gate rejected, the leading `checkSubset` is `none`, so the whole term is `none`.
+    rw [attenuateStmt, interp, interp_checkSubset, if_neg hgt] at hsome
     simp at hsome
   · intro hle
     rw [interp_attenuateStmt_eq_attenuateStep]
@@ -323,13 +355,15 @@ the cap-root is genuinely recomputed from the bound cap-edge mutation + the old 
 
 PRECISELY (do NOT over-read): the descriptor PINS *which* cap-edge digest (holder/target/RIGHTS/op) landed
 in `cap_root` and binds it into `state_commit` (`attenuateGenuine_binds_edge`, cited: a tampered `RIGHTS`
-digest moves `cap_root` ⇒ UNSAT) — that is leg 2 of non-amplification. The IN-BAND `checkLe` of the term
-(leg 1) proves the installed rights don't grow in CARDINALITY; the executor's `attenuate` (leg 3,
-`attenuate_subset`) gives the FULL subset. The descriptor does NOT itself re-derive the subset order
-(that is the reported `checkLe`/`checkSubset` IR gap); it binds WHICH rights, and the in-band `checkLe` +
-the executor's structural attenuation supply the non-amplification. The executor produces the real `Caps`
-FUNCTION; the circuit produces the genuine recompute of its `cap_root` DIGEST (the digest-not-function
-boundary, faithful, stated). -/
+digest moves `cap_root` ⇒ UNSAT) — that is leg 2 of non-amplification. The IN-BAND `checkSubset` of the
+term (leg 1) now proves the installed rights SET is `⊆` the parent's — the FULL `granted.rights ⊆
+held.rights` order (the cardinality gap of the prior `checkLe` weld is CLOSED in-band); the executor's
+`attenuate` (leg 3, `attenuate_subset`/`attenuate_confRights_le`) STRUCTURALLY produces that same subset,
+which is exactly why the `checkSubset` gate always admits a genuine attenuation. The descriptor itself
+does NOT re-derive the subset order (it binds WHICH rights digest landed); the FULL non-amplification is
+supplied by the in-band `checkSubset` gate + the executor's structural attenuation — both now the genuine
+subset, not a scalar shadow. The executor produces the real `Caps` FUNCTION; the circuit produces the
+genuine recompute of its `cap_root` DIGEST (the digest-not-function boundary, faithful, stated). -/
 theorem attenuate_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv)
     (k k' : RecordKernelState) (actor : CellId) (idx : Nat) (keep : List Auth)
@@ -356,13 +390,14 @@ theorem attenuate_compile_sound
 
 #assert_axioms attenuate_compile_sound
 
-/-! ## §6 — NON-VACUITY: the genuine descriptor is the real class-A circuit; the in-band `checkLe`
-genuinely admits a valid attenuation and REJECTS an over-broad grant.
+/-! ## §6 — NON-VACUITY: the genuine descriptor is the real class-A circuit; the in-band `checkSubset`
+genuinely admits a valid attenuation and REJECTS a non-subset — INCLUDING an incomparable pair.
 
 The weld would be worthless if (a) the descriptor were the inert placeholder, or (b) the in-band gate
 admitted everything. Neither: the genuine descriptor carries 12 frame gates + the cap-root recompute (the
-opaque `gCapMove` is GONE), and the `checkLe` gate is two-valued (admits a real narrowing of a 2-rights
-cap to 1; rejects a synthetic widening). -/
+opaque `gCapMove` is GONE), and the `checkSubset` gate is two-valued over the FULL subset order (admits a
+real narrowing of a 2-rights cap to 1; rejects a synthetic widening AND — the gain over the prior `checkLe`
+cardinality gate — rejects an INCOMPARABLE pair). -/
 
 /-- A concrete kernel state: actor `0` holds one `endpoint 9 [read, write]` cap (2 conferred rights), on
 the §C two-cell `kC` base. The slot `attenuateSlotF 0 0` narrows. -/
@@ -370,22 +405,34 @@ def kAtten : RecordKernelState :=
   { kC with caps := fun l => if l = 0 then [Cap.endpoint 9 [Auth.read, Auth.write]] else [] }
 
 /-- **NON-VACUITY (witness TRUE — the in-band gate ADMITS a genuine attenuation).** Narrowing actor `0`'s
-held `[read, write]` cap (2 rights) to `[read]` (1 right) has granted-count `1 ≤ 2 =` held-count, so the
-`checkLe` non-amplification gate COMMITS and the term installs the narrowed slot (`isSome`). -/
+held `[read, write]` cap (rights `{read,write}`) to `[read]` (rights `{read}`) has granted-set `{read} ⊆
+{read,write} =` held-set, so the `checkSubset` FULL non-amplification gate COMMITS and the term installs
+the narrowed slot (`isSome`). -/
 theorem attenuateStmt_admits_valid :
     (interp (attenuateStmt 0 0 [Auth.read]) kAtten).isSome = true := by
   rw [attenuateStmt_admits_iff]
-  -- granted-rights-count (1) ≤ held-rights-count (2) on `kAtten`.
+  -- granted-rights-set ({read}) ⊆ held-rights-set ({read,write}) on `kAtten`.
   decide
 
-/-- **NON-VACUITY (witness FALSE / the in-band anti-amplification tooth).** A synthetic move whose
-installed cap would carry MORE rights than the parent (granted-count `3 >` held-count `1`) is REJECTED by
-the `checkLe` gate (`interp = none`) — the in-band non-amplification check genuinely fails closed on
-amplification. (We exhibit the rejection directly on `checkLe`, the term's gating leg, with an explicit
-over-broad granted-vs-held pair `3 > 1`.) -/
-theorem checkLe_rejects_overbroad_grant :
-    interp (RecStmt.checkLe (fun _ => (3 : Int)) (fun _ => (1 : Int))) kC = none := by
-  rw [interp_checkLe]; norm_num
+/-- **NON-VACUITY (witness FALSE / the in-band anti-amplification tooth — superset).** A synthetic move
+whose installed cap's rights SET is a strict SUPERSET of the parent's (`{read,write} ⊄ {read}`) is
+REJECTED by the `checkSubset` gate (`interp = none`) — the in-band FULL non-amplification check fails
+closed on amplification. (We exhibit the rejection directly on `checkSubset`, the term's gating leg, with
+an explicit over-broad granted-vs-held pair.) -/
+theorem checkSubset_rejects_overbroad_grant :
+    interp (RecStmt.checkSubset (fun _ => ({Auth.read, Auth.write} : Finset Auth))
+              (fun _ => ({Auth.read} : Finset Auth))) kC = none := by
+  rw [interp_checkSubset]; decide
+
+/-- **⚑ NON-VACUITY (the GAIN over `checkLe` — the in-band gate rejects an INCOMPARABLE pair).** The
+thing the prior cardinality `checkLe` could NEVER do (`checkLe_card_necessary_not_sufficient`): a move
+granting `{write}` against a parent holding only `{read}` (EQUAL cardinality `1`, but NEITHER a subset of
+the other) is REJECTED by `checkSubset` (`interp = none`). This is the FULL `granted.rights ⊆ held.rights`
+partial order enforced in-band — the crown upgrade, demonstrated on the actual gating leg of the term. -/
+theorem checkSubset_rejects_incomparable_grant :
+    interp (RecStmt.checkSubset (fun _ => ({Auth.write} : Finset Auth))
+              (fun _ => ({Auth.read} : Finset Auth))) kC = none := by
+  rw [interp_checkSubset]; decide
 
 /-- **NON-VACUITY (the descriptor is the genuine class-A circuit, not the placeholder).** The genuine
 attenuate descriptor carries 12 frame-freeze gates + 14 transition + 4 boundary = 30 constraints, and 6
@@ -397,7 +444,8 @@ theorem attenuateVmDescriptorGenuine_nontrivial :
   refine ⟨by decide, by decide⟩
 
 #assert_axioms attenuateStmt_admits_valid
-#assert_axioms checkLe_rejects_overbroad_grant
+#assert_axioms checkSubset_rejects_overbroad_grant
+#assert_axioms checkSubset_rejects_incomparable_grant
 #assert_axioms attenuateVmDescriptorGenuine_nontrivial
 
 end Dregg2.Circuit.Argus.Effects.Attenuate

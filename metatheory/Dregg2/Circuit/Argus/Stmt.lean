@@ -29,7 +29,7 @@ open Dregg2.Exec
 -- side-table write-primitives below can name them. NOTE (the autobind lesson): `Caps` would
 -- otherwise bind as a fresh universe variable in a constructor signature, so we keep this open in
 -- scope rather than leaving the identifier free.
-open Dregg2.Authority (Caps Cap)
+open Dregg2.Authority (Caps Cap Auth)
 -- The verified SUPPLY executors `recKMint`/`recKBurn` (and their single-cell credit `recCreditCell`)
 -- live in `Dregg2.Exec.TurnExecutorFull`; §M refines the mint/burn IR terms against them verbatim.
 open Dregg2.Exec.TurnExecutorFull (recKMint recKBurn recCreditCell)
@@ -74,6 +74,15 @@ inductive RecStmt where
   -- (`granted.rights ≤ held.rights`): a measured `≤` check, expressed as a guard over two state
   -- read-outs, that rejects (fails closed) when the ordering is violated.
   | checkLe        (a b : RecordKernelState → Int)
+  -- §B′ — the FINITE-LATTICE subset gate (the FULL non-amplification primitive). `checkLe` compares
+  -- two SCALAR `Int` read-outs with a TOTAL order, which is NECESSARY-but-NOT-SUFFICIENT for the cap
+  -- rights order: cap rights live in `ExecAuth = Finset Auth` ordered by `⊆` (`Exec/Caps.lean:57`,
+  -- `confRights`), a PARTIAL order where `{read}` and `{write}` are INCOMPARABLE. `checkSubset` is the
+  -- domain-restrictor over THAT order: commit iff `a k ≤ b k` (the genuine `⊆` on `Finset Auth`),
+  -- mutate nothing. It is the in-band shape of the FULL `granted.rights ⊆ held.rights` gate — it
+  -- rejects (fails closed) BOTH a strict superset AND an incomparable pair, the thing `checkLe`'s
+  -- cardinality scalar could never express (`checkLe_card_necessary_not_sufficient`).
+  | checkSubset    (a b : RecordKernelState → ExecAuth)
   | seq      (s t : RecStmt)
 
 /-- **`interp`** — the executable interpretation, i.e. the reference executor.
@@ -104,6 +113,10 @@ def interp : RecStmt → RecordKernelState → Option RecordKernelState
   -- §B — the lattice gate: a pure domain-restrictor (returns `k` unchanged on admit, `none` on
   -- reject). The in-band non-amplification check `granted ≤ held`.
   | .checkLe a b,      k => if a k ≤ b k then some k else none
+  -- §B′ — the finite-lattice subset gate: the SAME pure-domain-restrictor shape, but over the genuine
+  -- `Finset Auth` `⊆` (= `≤`) partial order. Commits (returns `k` unchanged) iff `a k ⊆ b k`; rejects
+  -- (`none`) on a strict superset OR an incomparable pair. The FULL in-band non-amplification check.
+  | .checkSubset a b,  k => if a k ≤ b k then some k else none
   | .seq s t,        k => (interp s k).bind (interp t)
 
 /-- The transfer admissibility gate as a `Bool` — exactly `recKExec`'s `if`. -/
@@ -291,6 +304,84 @@ theorem checkLe_admits_iff (a b : RecordKernelState → Int) (k : RecordKernelSt
 #assert_axioms interp_checkLe
 #assert_axioms checkLe_commit_unchanged
 #assert_axioms checkLe_admits_iff
+
+/-! ## §L′ — the FINITE-LATTICE subset gate `checkSubset` is the FULL non-amplification primitive.
+
+`checkLe` (§L) restricts on a TOTAL order over `Int` scalars, which — for the capability rights order —
+is only the cardinality SHADOW: `granted ⊆ held ⟹ |granted| ≤ |held|`, but `|granted| ≤ |held|` does
+NOT recover `granted ⊆ held` (two equal-cardinality rights sets can be incomparable, e.g. `{read}` vs
+`{write}`). The genuine non-amplification carrier is `ExecAuth = Finset Auth` (`Exec/Caps.lean:57`,
+`confRights`), ordered by `⊆` (= `≤`), a PARTIAL order. `checkSubset a b` is the domain-restrictor over
+THAT order: it commits IFF `a k ≤ b k` (the genuine `Finset Auth` `⊆`), leaving `k` UNCHANGED on admit
+exactly like `checkLe`/`guard` (mutates nothing — composes before any effect body for free), and — the
+load-bearing gain — it REJECTS (fails closed) BOTH a strict superset AND an INCOMPARABLE pair. This is
+the in-band shape of the FULL `granted.rights ⊆ held.rights` gate, the thing `checkLe` could never
+express (`checkLe_card_necessary_not_sufficient` in the attenuate weld). The `Finset Auth` order is
+decidable (`Auth` has `DecidableEq`), so the `if a k ≤ b k` is a genuine computable domain restriction. -/
+
+/-- **`interp_checkSubset` — PROVED.** `checkSubset` commits iff `a k ≤ b k` over the genuine
+`ExecAuth = Finset Auth` `⊆` order and returns `k` unchanged on admit; the in-band FULL
+`granted.rights ⊆ held.rights` non-amplification gate (not the cardinality shadow `checkLe` carries). -/
+@[simp] theorem interp_checkSubset (a b : RecordKernelState → ExecAuth) (k : RecordKernelState) :
+    interp (RecStmt.checkSubset a b) k = if a k ≤ b k then some k else none := rfl
+
+/-- **`checkSubset_commit_unchanged` — PROVED (never mutates).** When `checkSubset` commits, the
+post-state IS the input — a pure domain restrictor, exactly like `checkLe` (the full subset gate adds an
+admission side-condition over the rights lattice and changes nothing), so every executor keystone of the
+gated body lifts through it for free. -/
+theorem checkSubset_commit_unchanged {a b : RecordKernelState → ExecAuth} {k k' : RecordKernelState}
+    (h : interp (RecStmt.checkSubset a b) k = some k') : k' = k := by
+  rw [interp_checkSubset] at h
+  by_cases hle : a k ≤ b k
+  · rw [if_pos hle] at h; exact (Option.some.injEq _ _ ▸ h).symm
+  · rw [if_neg hle] at h; exact absurd h (by simp)
+
+/-- **`checkSubset_admits_iff` — PROVED.** `checkSubset` admits (is `some`) IFF the genuine subset order
+holds — so it REJECTS (fails closed) on `¬ (a k ⊆ b k)`, which covers BOTH a strict superset AND an
+incomparable pair (the partial-order reject the scalar `checkLe` cannot make): non-vacuous, two-valued. -/
+theorem checkSubset_admits_iff (a b : RecordKernelState → ExecAuth) (k : RecordKernelState) :
+    (interp (RecStmt.checkSubset a b) k).isSome = true ↔ a k ≤ b k := by
+  rw [interp_checkSubset]
+  by_cases hle : a k ≤ b k <;> simp [hle]
+
+/-- A two-cell kernel for the §L′ non-vacuity witnesses (cell `0` Live; the rights read-outs below are
+CONSTANT functions of `k`, so the base state only has to exist). -/
+def kSub : RecordKernelState :=
+  { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)], caps := fun _ => [] }
+
+-- `checkSubset` is GENUINELY a partial-order decider, three-way non-vacuous on CONSTANT rights read-outs:
+-- ADMITS a real subset ({read} ⊆ {read,write}); REJECTS a strict superset ({read,write} ⊄ {read});
+-- and — the thing `checkLe` could NEVER do — REJECTS an INCOMPARABLE pair ({read} vs {write}).
+#guard ((interp (RecStmt.checkSubset (fun _ => ({Auth.read} : Finset Auth))
+                  (fun _ => ({Auth.read, Auth.write} : Finset Auth))) kSub).isSome)             -- admit ⊆
+#guard ((interp (RecStmt.checkSubset (fun _ => ({Auth.read, Auth.write} : Finset Auth))
+                  (fun _ => ({Auth.read} : Finset Auth))) kSub).isNone)                          -- reject ⊋
+#guard ((interp (RecStmt.checkSubset (fun _ => ({Auth.read} : Finset Auth))
+                  (fun _ => ({Auth.write} : Finset Auth))) kSub).isNone)                         -- reject ∥
+
+/-- **`checkSubset_decides_partial_order` — PROVED (the primitive captures the PARTIAL order faithfully).**
+`checkSubset` admits a genuine subset, rejects a strict superset, AND — the load-bearing case `checkLe`'s
+total `Int ≤` could never express — REJECTS an INCOMPARABLE pair (`{read}` vs `{write}`, neither ⊆ the
+other). So the gate decides exactly `granted.rights ⊆ held.rights` over `Finset Auth`, the full
+non-amplification order, not a scalar shadow of it. -/
+theorem checkSubset_decides_partial_order :
+    -- ADMITS a genuine subset …
+    (interp (RecStmt.checkSubset (fun _ => ({Auth.read} : Finset Auth))
+              (fun _ => ({Auth.read, Auth.write} : Finset Auth))) kSub).isSome = true
+    -- … REJECTS a strict superset …
+    ∧ (interp (RecStmt.checkSubset (fun _ => ({Auth.read, Auth.write} : Finset Auth))
+                (fun _ => ({Auth.read} : Finset Auth))) kSub) = none
+    -- … and REJECTS an INCOMPARABLE pair (the partial-order tooth `checkLe` cannot make), BOTH ways.
+    ∧ (interp (RecStmt.checkSubset (fun _ => ({Auth.read} : Finset Auth))
+                (fun _ => ({Auth.write} : Finset Auth))) kSub) = none
+    ∧ (interp (RecStmt.checkSubset (fun _ => ({Auth.write} : Finset Auth))
+                (fun _ => ({Auth.read} : Finset Auth))) kSub) = none := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> (rw [interp_checkSubset]) <;> decide
+
+#assert_axioms interp_checkSubset
+#assert_axioms checkSubset_commit_unchanged
+#assert_axioms checkSubset_admits_iff
+#assert_axioms checkSubset_decides_partial_order
 
 /-! ## §C — the component writes do exactly what they say (frame + non-vacuity).
 
