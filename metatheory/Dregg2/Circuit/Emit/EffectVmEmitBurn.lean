@@ -541,7 +541,43 @@ theorem badBurnRow_rejected : ¬ (VmConstraint.gate gBalLoDebit).holdsVm badBurn
     state.NONCE, param.BURN_AMOUNT_LO]
   norm_num
 
+/-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar exactly).
+
+burn's whole per-cell transition is the `bal_lo` DEBIT + the frozen frame — every state-block column
+moved-or-frozen, ALL 13 absorbed into `state_commit` (anti-ghosted via the keystone), unified to the
+verified executor (`recCBurnAsset`). This capstone bundles the corners into ONE class-A statement, the
+shape transfer has. The ONE residual — the *global supply total* — is a CROSS-CELL / TURN-LEVEL
+accumulator (burn changes total supply, carried by no single cell), the exact analogue of transfer's
+two-sided conservation the keystone assigns to the turn layer. So burn meets the per-cell class-A bar;
+the supply-total invariant is a turn property (cited). NOTE: the per-cell agreement here is the 5-clause
+(bal/frame) one — burn TICKS the nonce on the row but `recCBurnAsset` freezes the projected entry's
+nonce (the named `exec_nonce_is_frozen_not_ticked` divergence, off-universe-A like transfer's nonce). -/
+
+/-- **`burnDescriptor_classA` — the per-cell class-A capstone.** Satisfying the runnable descriptor on a
+burn row, for the burned `(cell, asset)` entry of a committed `recCBurnAsset`, forces the FULL per-cell
+`CellBurnSpec` (bal_lo debited by `amt`, frame frozen), the published commit, AND agreement with the
+executor's per-cell post-state on the bal/frame clauses. -/
+theorem burnDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBurnRow env)
+    (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
+    (henc : RowEncodes env (cellProjA s.kernel cell a) amt post)
+    (hsat : satisfiedVm hash burnVmDescriptor env true true)
+    (hexec : recCBurnAsset s actor cell a amt = some s') :
+    CellBurnSpec (cellProjA s.kernel cell a) amt post
+    ∧ post.commit = env.pub pi.NEW_COMMIT
+    ∧ post.balLo = (cellProjA s'.kernel cell a).balLo
+    ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
+    ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
+    ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
+    ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
+  obtain ⟨hspec, hcommit⟩ :=
+    burnDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post amt henc hsat
+  obtain ⟨hLo, hHi, hF, hCap, hRes⟩ :=
+    descriptor_agrees_with_executor hash env hrow s s' actor cell a amt post henc hsat hexec
+  exact ⟨hspec, hcommit, hLo, hHi, hF, hCap, hRes⟩
+
 /-! ## §9 — Axiom-hygiene tripwires. -/
+
+#assert_axioms burnDescriptor_classA
 
 #guard burnVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1  -- gates(5+8) + transitions + 4 + 3 + selectorGate
 #guard burnVmDescriptor.hashSites.length == 4

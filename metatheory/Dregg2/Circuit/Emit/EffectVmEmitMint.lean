@@ -371,7 +371,49 @@ theorem badMintRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badMin
     state.NONCE, param.AMOUNT]
   norm_num
 
+/-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar exactly).
+
+mint's whole per-cell transition is the `bal_lo` CREDIT + the frozen frame — every state-block column
+moved-or-frozen, ALL 13 absorbed into `state_commit` (anti-ghosted via the transfer keystone), and
+unified to the verified executor (`recCMintAsset`). This capstone bundles the three corners into ONE
+class-A statement (full per-cell post-state from the descriptor + anti-ghost on all of it + executor
+agreement), exactly the shape `transferDescriptor_full_sound` + `…_commit_binds_state` +
+`unify_*_exec` give for transfer.
+
+The ONE residual — the *global supply total* — is NOT a per-cell state-block column; it is a
+CROSS-CELL / TURN-LEVEL accumulator (mint by definition changes the total supply, which no single cell
+carries). This is the EXACT analogue of transfer's two-sided conservation (sender-debit ⟺
+receiver-credit), which the keystone's HONEST BOUNDARY assigns to the turn-composition layer, NOT the
+per-row theorem. So mint meets the per-cell class-A bar transfer set; the supply-total invariant is a
+turn property (cited, not papered), not a per-cell gap. -/
+
+/-- **`mintDescriptor_classA` — the per-cell class-A capstone.** Satisfying the runnable descriptor under
+`RowEncodes`, for the minted `(cell, asset)` entry of a committed `recCMintAsset`, forces: (a) the FULL
+per-cell `CellMintSpec` (bal_lo credited by `amt`, the WHOLE frame frozen); (b) the post-state published
+as `PI[NEW_COMMIT]`; and (c) AGREEMENT with the executor's per-cell post-state on every clause. The
+anti-ghost (`mintDescriptor_commit_binds_state`) covers all 13 absorbed columns. This is the transfer
+class-A bar, per cell. -/
+theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ) (post : CellState)
+    (henc : RowEncodes env (cellProjA s.kernel cell a) amt post)
+    (hsat : satisfiedVm hash mintVmDescriptor env true true)
+    (hexec : recCMintAsset s actor cell a amt = some s') :
+    CellMintSpec (cellProjA s.kernel cell a) amt post
+    ∧ post.commit = env.pub pi.NEW_COMMIT
+    ∧ post.balLo = (cellProjA s'.kernel cell a).balLo
+    ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
+    ∧ post.nonce = (cellProjA s'.kernel cell a).nonce
+    ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
+    ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
+    ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
+  obtain ⟨hspec, hcommit⟩ := mintDescriptor_full_sound hash env (cellProjA s.kernel cell a) post amt henc hsat
+  obtain ⟨hLo, hHi, hN, hF, hCap, hRes⟩ :=
+    descriptor_agrees_with_executor hash env s s' actor cell a amt post henc hsat hexec
+  exact ⟨hspec, hcommit, hLo, hHi, hN, hF, hCap, hRes⟩
+
 /-! ## §9 — Axiom-hygiene tripwires. -/
+
+#assert_axioms mintDescriptor_classA
 
 #guard mintVmDescriptor.constraints.length == 13 + 14 + 4 + 3
 #guard mintVmDescriptor.hashSites.length == 4
