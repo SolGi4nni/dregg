@@ -259,8 +259,34 @@ function writeArtifactsManifest() {
   writeDist('artifacts-manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+// Anti-drift gate: the generated ontology / predicate / submit-schema catalogs
+// must match their verified sources before we ship them. We run the generator
+// in --check mode; a stale catalog fails the build with a clear regenerate
+// hint, so the Studio surfaces can never silently drift from the Lean kernel /
+// cell evaluator / node API. Skippable via SKIP_CATALOG_DRIFT_CHECK=1 for
+// environments where the source tree isn't present (e.g. a dist-only deploy).
+function checkCatalogDrift() {
+  if (process.env.SKIP_CATALOG_DRIFT_CHECK === '1') {
+    console.log('  (skipping ontology drift check — SKIP_CATALOG_DRIFT_CHECK=1)\n');
+    return;
+  }
+  const gen = path.join(__dirname, 'tools', 'gen-ontology-catalog.js');
+  if (!fs.existsSync(gen)) return; // generator absent (dist-only tree)
+  const { execFileSync } = require('child_process');
+  try {
+    execFileSync(process.execPath, [gen, '--check'], { stdio: 'inherit' });
+  } catch (e) {
+    console.error('\nBuild aborted: generated catalogs are stale. ' +
+      'Run `node site/tools/gen-ontology-catalog.js` and rebuild.');
+    process.exit(1);
+  }
+}
+
 function build() {
   console.log('Building Dragon\'s Egg site...\n');
+
+  // Fail fast if the generated Studio catalogs have drifted from source.
+  checkCatalogDrift();
 
   // Clean dist
   if (fs.existsSync(DIST)) {

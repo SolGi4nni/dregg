@@ -1,349 +1,172 @@
 <layout src="_layouts/default.html">
-<title>Studio — dregg</title>
+<title>Studio — dregg IDE</title>
 
 <style>
-  .studio { max-width: 1200px; margin: 0 auto; padding: var(--s4); }
-  .studio__intro { color: var(--fg-dim); margin-bottom: var(--s4); }
-  .studio__grid { display: grid; grid-template-columns: 260px 1fr; gap: var(--s4); align-items: start; }
-  .studio__controls { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); background: var(--bg-raised, #121b16); border: 1px solid var(--line, #2a302d); border-radius: 8px; }
-  .studio__controls button { padding: 8px 12px; font: inherit; cursor: pointer; background: var(--bg, #0a0f0d); color: var(--fg, #e4ddd0); border: 1px solid var(--line, #2a302d); border-radius: 6px; }
-  .studio__controls button:hover { border-color: var(--accent, #5b8a5a); }
-  .studio__controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .studio__controls hr { border: 0; border-top: 1px solid var(--line, #2a302d); margin: 4px 0; }
-  .studio__controls label { font-size: 0.85rem; color: var(--fg-dim, #8a948f); display: block; }
-  .studio__status { padding: var(--s2) var(--s3); margin-bottom: var(--s3); background: var(--bg-raised); border-left: 3px solid var(--accent, #5b8a5a); border-radius: 4px; font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
-  .studio__status[data-state="err"] { border-left-color: #d4685c; }
+  .ide { max-width: 1180px; margin: 0 auto; padding: var(--s4); }
+  .ide__intro { color: var(--fg-dim); line-height: 1.6; margin-bottom: var(--s3); }
+  .ide__intro code { color: var(--fg); }
 
-  /* Inspector chrome (tiny v0; will move to vizzer.css after Phase 0) */
-  .dregg-inspector { font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
-  .dregg-inspector--cell { padding: var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: 6px; margin-bottom: var(--s3); }
-  .dregg-inspector--cell header { display: flex; gap: 8px; align-items: baseline; margin-bottom: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
-  .dregg-inspector--cell .dregg-inspector__kind { padding: 2px 8px; background: var(--accent, #5b8a5a); color: #0a0f0d; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  .dregg-inspector--cell .dregg-inspector__id { color: var(--fg-dim); word-break: break-all; }
-  .dregg-inspector__kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; margin: 0; }
-  .dregg-inspector__kv dt { color: var(--fg-dim); }
-  .dregg-inspector__kv dd { margin: 0; word-break: break-all; }
-  .dregg-inspector__kv code { font-size: 0.8rem; word-break: break-all; }
-  .dregg-inspector--compact { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised); border-radius: 4px; }
-  .dregg-inspector--cell-list ul { list-style: none; padding: 0; margin: var(--s2) 0 0; display: flex; flex-direction: column; gap: 6px; }
-  .dregg-inspector--cell-list header { color: var(--fg-dim); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
-  .dregg-inspector--cell-list li { display: block; }
-  .dregg-inspector--empty { color: var(--fg-dim); padding: var(--s3); border: 1px dashed var(--line); border-radius: 6px; }
-  .dregg-inspector--err { color: #d4685c; padding: var(--s2) var(--s3); border: 1px solid #d4685c; border-radius: 4px; }
+  /* Guided first-run banner (dismissable, progressive disclosure) */
+  .ide__guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3);
+    margin: var(--s3) 0 var(--s4); }
+  .ide__guide-card { border: 1px solid var(--line); border-left: 3px solid var(--accent, #5b8a5a);
+    border-radius: 8px; padding: var(--s3); background: var(--bg-raised); }
+  .ide__guide-card h3 { margin: 0 0 4px; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
+  .ide__guide-card .ide__guide-n { display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 50%; background: var(--accent, #5b8a5a); color: var(--bg);
+    font-size: 0.78rem; font-family: var(--font-mono, monospace); }
+  .ide__guide-card p { margin: 0; font-size: 0.82rem; color: var(--fg-dim); line-height: 1.5; }
+  .ide__guide-card p code { color: var(--fg); }
+
+  /* Tabs for the three authoring surfaces (progressive disclosure: one at a time) */
+  .ide__tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: var(--s4); flex-wrap: wrap; }
+  .ide__tab { padding: 9px 16px; font: inherit; font-size: 0.86rem; cursor: pointer; background: none;
+    color: var(--fg-dim); border: 0; border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 8px; }
+  .ide__tab:hover { color: var(--fg); }
+  .ide__tab.is-on { color: var(--fg); border-bottom-color: var(--accent, #5b8a5a); }
+  .ide__tab small { color: var(--fg-dim); font-weight: normal; font-size: 0.74rem; }
+
+  .ide__panel { display: none; }
+  .ide__panel.is-on { display: block; }
+  .ide__panel-lede { color: var(--fg-dim); font-size: 0.88rem; line-height: 1.55; margin: 0 0 var(--s3); }
+  .ide__panel-lede code { color: var(--fg); }
+  .ide__host { border: 1px solid var(--line); border-radius: 8px; padding: var(--s3); background: var(--bg); }
+
+  .ide__provenance { font-size: 0.78rem; color: var(--fg-dim); margin-top: var(--s4);
+    padding-top: var(--s3); border-top: 1px solid var(--line); line-height: 1.6; }
+  .ide__provenance code { color: var(--fg); }
+  .dregg-inspector--err { color: #d4685c; padding: 8px 12px; border: 1px solid #d4685c; border-radius: 4px; }
 </style>
 
-<main class="studio">
+<main class="ide">
   <header>
-    <h1>Studio <span style="color:var(--fg-dim);font-size:0.6em;font-weight:normal;">[ Phase 0 spike ]</span></h1>
-    <p class="studio__intro">
-      Vertical slice of the Studio runtime substrate (see
-      <code>site/STUDIO.md</code>). One inspector (<code>&lt;dregg-cell&gt;</code>),
-      one runtime (in-browser sim), live state that reacts to mutations.
-      Open browser devtools to watch the <code>InMemoryRuntime</code> drive
-      the wasm <code>DreggRuntime</code>.
+    <h1>Studio</h1>
+    <p class="ide__intro">
+      A guided IDE for authoring dregg <strong>turns</strong>, <strong>predicates</strong>, and
+      <strong>cell programs</strong> from the system's own vocabulary. Pick effects and constraints
+      from the catalog, compose with guided forms (not raw JSON), see live validation and a local
+      simulation, then submit a real turn to a node. Everything here is generated
+      <em>directly from the verified source</em> — the effect set from the Lean kernel
+      (<code>FullActionA</code>), the predicate language from the cell evaluator
+      (<code>cell/src/program.rs</code>), the submit shapes from the node API
+      (<code>node/src/api.rs</code>) — so it cannot drift from the running system.
     </p>
   </header>
 
-  <div id="status" class="studio__status">Loading…</div>
-
-  <dregg-app id="app">
-    <div class="studio__grid">
-      <aside class="studio__controls">
-        <label>actions</label>
-        <button id="btn-create-alice">Create agent: Alice (5000)</button>
-        <button id="btn-create-bob">Create agent: Bob (0)</button>
-        <button id="btn-mint" disabled>Mint token for Alice (dns/read)</button>
-        <button id="btn-transfer" disabled>Try transfer 100: Alice → Bob</button>
-        <hr>
-        <label>introspection</label>
-        <button id="btn-advance">Advance height +1</button>
-        <button id="btn-dump">console.log full state</button>
-        <hr>
-        <label>state</label>
-        <div style="font-size:0.85rem;color:var(--fg-dim);">
-          version: <span id="state-version">0</span><br>
-          height:  <span id="state-height">0</span>
-        </div>
-      </aside>
-
-      <section>
-        <h2 style="margin-top:0;">Cells in this runtime</h2>
-        <dregg-cell-list></dregg-cell-list>
-
-        <h2 style="margin-top:var(--s4);">Last turn result</h2>
-        <pre id="turn-result" class="dregg-inspector dregg-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.85rem;color:var(--fg-dim);">no turn submitted yet</pre>
-
-        <h2 style="margin-top:var(--s4);">Peer exchange (Discord-paste UX)</h2>
-        <p style="color:var(--fg-dim);font-size:0.85rem;">
-          Drives <code>dregg_cell::PeerExchange</code> directly. Use two browser
-          tabs (or two Studios in one tab) — copy a transition from one side,
-          paste into the other. The bytes are postcard-encoded
-          <code>PeerStateTransition</code>s, base64-wrapped for paste safety.
-        </p>
-        <div class="studio__controls" style="max-width:none;">
-          <label>my latest transition</label>
-          <button id="btn-px-copy" disabled>Copy my latest transition (Alice → bytes)</button>
-          <textarea id="px-mine" rows="3" readonly style="font-family:var(--mono,monospace);font-size:0.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px;word-break:break-all;"></textarea>
-          <dregg-peer-transition id="px-mine-inspector" style="display:block;margin-top:4px;"></dregg-peer-transition>
-
-          <hr>
-          <label>paste peer transition</label>
-          <textarea id="px-paste" rows="3" placeholder="paste base64 here" style="font-family:var(--mono,monospace);font-size:0.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px;word-break:break-all;"></textarea>
-          <dregg-peer-transition id="px-paste-inspector" style="display:block;margin-top:4px;"></dregg-peer-transition>
-          <button id="btn-px-paste" disabled>Bob: register Alice + verify pasted transition</button>
-
-          <hr>
-          <label>peer-view (Bob's view of Alice)</label>
-          <pre id="px-view" class="dregg-inspector dregg-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.8rem;color:var(--fg-dim);">no peer registered yet</pre>
-        </div>
-
-        <h2 style="margin-top:var(--s4);">Spike findings</h2>
-        <ul style="font-size:0.9rem;color:var(--fg-dim);line-height:1.6;">
-          <li><strong>Runtime substrate works.</strong> wasm <code>DreggRuntime</code> creates cells, accepts turns, reports state. Signals propagate mutations to <code>&lt;dregg-cell&gt;</code> live.</li>
-          <li><strong>Transfers commit.</strong> The sim runtime signs turns internally via <code>AgentCipherclerk::sign_action</code>. The transfer button declares <code>excess=500</code> to satisfy the conservation law (fee burn), so transfers now <strong>commit</strong> rather than reject.</li>
-          <li><strong>Read paths fully exercised.</strong> <code>get_all_cells</code>, <code>get_cell_state</code>, version-based invalidation all work.</li>
-          <li><strong>Token mint works.</strong> <code>agent_mint_token</code> attaches a held capability without needing a turn — minted tokens accumulate on the agent record (visible only via state dump for now; needs a <code>&lt;dregg-capability&gt;</code> inspector).</li>
-          <li><strong>Next:</strong> JS-side signing (Ed25519 on the agent's private key), or a wasm-side helper that signs internally using the deterministic sim keys.</li>
-        </ul>
-      </section>
+  <!-- Guided first-run: the four-step flow, shown once (dismiss persists). -->
+  <section class="ide__guide" id="ide-guide">
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">1</span> Compose</h3>
+      <p>Pick an effect from the catalog and fill its typed fields. Stack effects into a turn — no JSON by hand.</p>
     </div>
-  </dregg-app>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">2</span> Validate</h3>
+      <p>Each field is checked against the node's real submit schema. The flow won't advance until your turn is valid.</p>
+    </div>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">3</span> Simulate</h3>
+      <p>See the (old&nbsp;&rarr;&nbsp;new) state diff for the parts modeled locally — and an honest <em>"needs executor"</em> label for the rest.</p>
+    </div>
+    <div class="ide__guide-card">
+      <h3><span class="ide__guide-n">4</span> Submit</h3>
+      <p>Send the turn to a live node and read its real accept/reject verdict. <a href="#" id="ide-guide-dismiss">Got it — hide this.</a></p>
+    </div>
+  </section>
+
+  <nav class="ide__tabs" role="tablist">
+    <button class="ide__tab is-on" data-panel="compose" role="tab">Compose a turn <small>build &amp; submit</small></button>
+    <button class="ide__tab" data-panel="predicates" role="tab">Cell programs &amp; predicates <small>guard logic</small></button>
+    <button class="ide__tab" data-panel="catalog" role="tab">Effect catalog <small>reference</small></button>
+  </nav>
+
+  <section class="ide__panel is-on" id="panel-compose" role="tabpanel">
+    <p class="ide__panel-lede">
+      Compose a turn from the thin-HTTP effect kinds the node accepts directly
+      (<code>set_field</code>, <code>transfer</code>, <code>emit_event</code>,
+      <code>increment_nonce</code>), validate it, simulate the field-write fragment,
+      and submit it to a node. The remaining ~52 ontology effects go through the
+      typed SDK signed-envelope path — browse them under <strong>Effect catalog</strong>.
+    </p>
+    <div class="ide__host">
+      <dregg-turn-composer></dregg-turn-composer>
+    </div>
+  </section>
+
+  <section class="ide__panel" id="panel-predicates" role="tabpanel">
+    <p class="ide__panel-lede">
+      A cell guards its own state with a <code>CellProgram</code> built from
+      <code>StateConstraint</code> predicates. The <strong>Language reference</strong>
+      tab lists every constraint, the program kinds, and the transition guards; the
+      <strong>Compose &amp; test</strong> tab lets you stack constraints over an
+      (old&nbsp;&rarr;&nbsp;new) state and watch them accept or reject — evaluated against
+      a faithful mirror of the executor's field-comparison semantics (witness/proof
+      constraints are honestly labeled "needs executor").
+    </p>
+    <div class="ide__host">
+      <dregg-predicate-explorer></dregg-predicate-explorer>
+    </div>
+  </section>
+
+  <section class="ide__panel" id="panel-catalog" role="tabpanel">
+    <p class="ide__panel-lede">
+      Every <code>FullActionA</code> effect variant: its wire mnemonic, typed
+      arguments, one-line semantics, and the <code>Authority.Auth</code> facet it
+      requires. Search and filter by category to find the effect you need.
+    </p>
+    <div class="ide__host">
+      <dregg-ontology></dregg-ontology>
+    </div>
+  </section>
+
+  <div class="ide__provenance">
+    <strong>Provenance.</strong> Effect catalog &amp; turn composer &larr;
+    <code>metatheory/Dregg2/Exec/TurnExecutorFull.lean</code> (<code>FullActionA</code>,
+    <code>requiredFacetA</code>) + <code>Dregg2/Exec/FFI.lean</code>. Submit shapes &larr;
+    <code>node/src/api.rs</code> (<code>TurnEffectSpec</code> — the JSON
+    <code>/api/turns/submit</code> deserializes). Predicate language &larr;
+    <code>cell/src/program.rs</code>, cross-checked against <code>wasm/src/bindings.rs</code>.
+    Regenerate with <code>node site/tools/gen-ontology-catalog.js</code>; a drift check
+    (<code>--check</code>) fails the build if any catalog is stale. The compose / validate /
+    simulate steps need no node; only <strong>submit</strong> touches the network.
+  </div>
 </main>
 
-<script type="module" src="/_includes/runtime-bootstrap.js"></script>
 <script type="module">
-  // Wait for the bootstrap to fire dreggUi:ready, then init wasm and the runtime.
-  function ready() {
-    return new Promise(resolve => {
-      if (window.dreggUi) return resolve(window.dreggUi);
-      window.addEventListener('dreggUi:ready', e => resolve(e.detail), { once: true });
+  // Importing the inspectors barrel registers <dregg-turn-composer>,
+  // <dregg-predicate-explorer> and <dregg-ontology> (plus the rest of the studio
+  // vocabulary). These three authoring surfaces fetch their generated JSON
+  // catalogs and run locally — no wasm / node required to compose, validate, and
+  // simulate; only the composer's "submit" step calls a node.
+  import('/_includes/studio/inspectors.js').catch((e) => {
+    console.error('[studio] failed to load inspectors barrel', e);
+    document.querySelectorAll('.ide__host').forEach((h) => {
+      h.innerHTML =
+        '<div class="dregg-inspector--err">Could not load the studio inspector ' +
+        'bundle. Rebuild the site (<code>node site/build.js</code>).</div>';
     });
+  });
+
+  // Tab switching (progressive disclosure: one surface at a time).
+  const tabs = document.querySelectorAll('.ide__tab');
+  const panels = document.querySelectorAll('.ide__panel');
+  function show(name) {
+    tabs.forEach((t) => t.classList.toggle('is-on', t.dataset.panel === name));
+    panels.forEach((p) => p.classList.toggle('is-on', p.id === `panel-${name}`));
+    try { history.replaceState(null, '', '#' + name); } catch {}
   }
+  tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.panel)));
+  const initial = (location.hash || '').replace('#', '');
+  if (['compose', 'predicates', 'catalog'].includes(initial)) show(initial);
 
-  const status = document.getElementById('status');
-  function setStatus(text, state) {
-    status.textContent = text;
-    if (state) status.dataset.state = state; else delete status.dataset.state;
-  }
-
-  (async () => {
-    try {
-      setStatus('Loading Preact + signals…');
-      const api = await ready();
-
-      setStatus('Loading wasm runtime…');
-      const wasmMod = await import('/pkg/dregg_wasm.js');
-      await wasmMod.default();
-
-      setStatus('Creating in-memory runtime…');
-      const { createInMemoryRuntime } = await import('/_includes/studio/runtime-in-memory.js');
-      const runtime = await createInMemoryRuntime({ wasm: wasmMod, signals: api });
-
-      // Inspector custom elements register on import (barrel includes all Wave 2 inspectors).
-      await import('/_includes/studio/inspectors.js');
-
-      // Attach to context provider.
-      const app = document.getElementById('app');
-      app.runtime = runtime;
-
-      setStatus(`ready — sim runtime handle ${runtime._handle}`);
-
-      // Live status bindings
-      api.effect(() => {
-        document.getElementById('state-version').textContent = String(runtime.version.value);
-        document.getElementById('state-height').textContent = String(runtime.cursor.value);
-      });
-
-      // Wire controls
-      let alice = null;
-      let bob = null;
-      const mintBtn = document.getElementById('btn-mint');
-      const transferBtn = document.getElementById('btn-transfer');
-      const turnResult = document.getElementById('turn-result');
-
-      function showResult(label, value) {
-        turnResult.textContent = `${label}\n${JSON.stringify(value, null, 2)}`;
-      }
-
-      document.getElementById('btn-create-alice').addEventListener('click', async () => {
-        alice = await runtime.createAgent('alice', 5000);
-        console.log('[studio] alice:', alice);
-        mintBtn.disabled = false;
-        if (alice && bob) transferBtn.disabled = false;
-      });
-      document.getElementById('btn-create-bob').addEventListener('click', async () => {
-        bob = await runtime.createAgent('bob', 0);
-        console.log('[studio] bob:', bob);
-        if (alice && bob) transferBtn.disabled = false;
-      });
-      document.getElementById('btn-mint').addEventListener('click', async () => {
-        const result = await runtime.mintToken(alice.agent_index, 'dns', ['read'], 0);
-        console.log('[studio] mint result:', JSON.stringify(result));
-        showResult('agent_mint_token (succeeds — no signing required)', result);
-        api.toast('Token minted for Alice');
-      });
-      document.getElementById('btn-transfer').addEventListener('click', async () => {
-        // Fee is the per-turn computron budget AND is deducted from balance.
-        // Transfer 100 tokens; declare excess=500 so the conservation law
-        // accounts for both the transfer amount and the fee burn.
-        // (excess=500 tells the executor 500 units are intentionally consumed
-        // as the fee, satisfying the "excess not zero at turn end" check.)
-        const result = await runtime.executeTurn(
-          alice.agent_index,
-          [{ type: 'transfer', to: bob.cell_id, amount: 100, excess: 500 }],
-          500,
-        );
-        console.log('[studio] turn result:', JSON.stringify(result));
-        showResult('execute_turn (transfer)', result);
-        api.toast(`Transfer ${result.status}`, result.status === 'committed' ? 'info' : 'err');
-      });
-      document.getElementById('btn-advance').addEventListener('click', async () => {
-        await runtime.advanceHeight(1);
-        api.toast('Advanced 1 block');
-      });
-      document.getElementById('btn-dump').addEventListener('click', () => {
-        console.group('Runtime state dump');
-        console.log('caps:', runtime.caps);
-        console.log('source:', runtime.source);
-        console.log('cells:', runtime.listCells().value);
-        console.log('version:', runtime.version.value);
-        console.log('cursor:', runtime.cursor.value);
-        console.groupEnd();
-      });
-
-      // --- Peer exchange UX --------------------------------------------------
-      // The "Discord paste" surface: Alice exports a signed transition; Bob
-      // pastes the base64 and verifies it through `dregg_cell::PeerExchange`.
-      // Single-tab demo: Alice and Bob are both in this runtime — for real
-      // two-tab cooperation they'd be in distinct DreggRuntime handles.
-      const pxCopyBtn = document.getElementById('btn-px-copy');
-      const pxPasteBtn = document.getElementById('btn-px-paste');
-      const pxMine = document.getElementById('px-mine');
-      const pxPaste = document.getElementById('px-paste');
-      const pxView = document.getElementById('px-view');
-      const pxMineInspector = document.getElementById('px-mine-inspector');
-      const pxPasteInspector = document.getElementById('px-paste-inspector');
-
-      // Hand the runtime to the inspector elements so they can reach _wasm.
-      // The elements walk up the DOM for a .runtime property — set it on app.
-      // (app.runtime is already set above; these refs are just for clarity.)
-
-      function b64encode(bytes) {
-        let s = '';
-        for (const b of bytes) s += String.fromCharCode(b);
-        return btoa(s);
-      }
-      function b64decode(str) {
-        const bin = atob(str.trim());
-        const out = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-        return out;
-      }
-
-      // Enable px buttons once we have both Alice and Bob.
-      function maybeEnablePx() {
-        if (alice && bob) {
-          pxCopyBtn.disabled = false;
-          pxPasteBtn.disabled = false;
-        }
-      }
-      // Hook in to the existing create-agent paths.
-      document.getElementById('btn-create-alice').addEventListener('click', maybeEnablePx);
-      document.getElementById('btn-create-bob').addEventListener('click', maybeEnablePx);
-
-      // Track Alice's last-known commitment locally so the next transition's
-      // old_commitment matches her current state. This is a JS-side cursor,
-      // not protocol state — PeerExchange itself doesn't track the sender's
-      // own commitment (it tracks the receiver's view of the sender).
-      let aliceLastCommit = null;
-      let bobRegisteredAlice = false;
-
-      pxCopyBtn.addEventListener('click', async () => {
-        try {
-          // Alice's current commitment is the cell's post-state.
-          const aliceCellState = runtime.getCell(alice.cell_id).value;
-          const currentCommit = aliceCellState?.state_commitment;
-          if (!currentCommit) throw new Error('alice cell has no state_commitment');
-          // If we've never sent before, the "old" commitment is the current
-          // commitment (no state change since the last paste). For a real
-          // transition the caller would run a turn that changes Alice's
-          // state and produce a new commitment; for the spike we use the
-          // current commitment for both old + new and use a synthetic
-          // effects hash so the demo can round-trip without a state diff.
-          const oldCommit = aliceLastCommit || currentCommit;
-          const newCommit = currentCommit;
-          // Deterministic synthetic effects hash so repeated clicks produce
-          // different signatures (the sequence counter inside PeerExchange
-          // already increments).
-          const seq = Date.now().toString(16).padStart(16, '0');
-          const effectsHash = ('a'.repeat(48) + seq).slice(0, 64);
-
-          const bytes = await runtime.createPeerTransition(
-            alice.agent_index, oldCommit, newCommit, effectsHash,
-          );
-          aliceLastCommit = newCommit;
-          const b64 = b64encode(bytes);
-          pxMine.value = b64;
-          pxMineInspector.setAttribute('bytes', b64);
-          api.toast(`signed transition (${bytes.length} B → ${b64.length} chars b64)`);
-        } catch (e) {
-          api.toast('createPeerTransition failed: ' + (e?.message || e), 'err');
-          console.error(e);
-        }
-      });
-
-      // Live decode as user types/pastes into the paste textarea.
-      pxPaste.addEventListener('input', () => {
-        const b64 = pxPaste.value.trim();
-        if (b64) {
-          pxPasteInspector.setAttribute('bytes', b64);
-        } else {
-          pxPasteInspector.removeAttribute('bytes');
-        }
-      });
-
-      pxPasteBtn.addEventListener('click', async () => {
-        try {
-          const b64 = pxPaste.value.trim();
-          if (!b64) throw new Error('paste box is empty');
-          const bytes = b64decode(b64);
-          // Lazy-register Alice as Bob's peer on first paste. Initial
-          // commitment is Alice's current state commitment (the
-          // "introduction" the two parties agree on out-of-band).
-          if (!bobRegisteredAlice) {
-            const aliceCellState = runtime.getCell(alice.cell_id).value;
-            const aliceCommit = aliceCellState?.state_commitment;
-            const alicePubkey = runtime.getPeerPubkey(alice.agent_index).public_key;
-            // The initial commitment must match the FIRST transition's
-            // old_commitment — that's `aliceLastCommit` minus one step,
-            // i.e. the commitment at the moment Alice signed the first
-            // transition. We track it as `aliceLastCommit`'s initial value
-            // (current commitment before any send).
-            const initialCommit = aliceLastCommit && aliceLastCommit !== aliceCommit
-              ? aliceLastCommit
-              : aliceCommit;
-            // For our spike Alice always signs (old=current, new=current)
-            // so the initial commitment is just current.
-            await runtime.registerPeer(
-              bob.agent_index, alice.cell_id, alicePubkey, aliceCommit,
-            );
-            bobRegisteredAlice = true;
-          }
-          const alicePubkey = runtime.getPeerPubkey(alice.agent_index).public_key;
-          const view = await runtime.verifyPeerTransition(bob.agent_index, bytes, alicePubkey);
-          pxView.textContent = JSON.stringify(view, null, 2);
-          api.toast(`verified — seq=${view.last_sequence}`);
-        } catch (e) {
-          pxView.textContent = 'verify failed: ' + (e?.message || e);
-          api.toast('verifyPeerTransition failed: ' + (e?.message || e), 'err');
-          console.error(e);
-        }
-      });
-    } catch (e) {
-      setStatus('boot failed: ' + (e?.message || e), 'err');
-      console.error(e);
-    }
-  })();
+  // Guided first-run banner: dismiss persists in localStorage.
+  const guide = document.getElementById('ide-guide');
+  const GUIDE_KEY = 'dregg_studio_guide_dismissed';
+  try { if (localStorage.getItem(GUIDE_KEY) === '1' && guide) guide.style.display = 'none'; } catch {}
+  document.getElementById('ide-guide-dismiss')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (guide) guide.style.display = 'none';
+    try { localStorage.setItem(GUIDE_KEY, '1'); } catch {}
+  });
 </script>
 
 </layout>

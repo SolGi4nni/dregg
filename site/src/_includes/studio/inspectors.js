@@ -369,3 +369,11 @@ import './inspectors/ontology.js';
 // and lets the user compose + test predicates against a faithful JS mirror of
 // the field-comparison fragment of the executor's evaluator.
 import './inspectors/predicate-explorer.js';
+
+// <dregg-turn-composer> — the authoring IDE core: a guided
+// compose → validate → simulate → submit flow that builds a real turn from the
+// catalogued effect vocabulary (no raw JSON), validates field shapes against
+// the generated submit schema (node/src/api.rs TurnEffectSpec), simulates the
+// field-write fragment locally with honest "needs executor" labels, and submits
+// to a live node's /api/turns/submit.
+import './inspectors/turn-composer.js';

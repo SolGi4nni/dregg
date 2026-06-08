@@ -46,6 +46,14 @@ const F_PROGRAM = path.join(REPO_ROOT, 'cell', 'src', 'program.rs');
 const F_VIEW = path.join(REPO_ROOT, 'wasm', 'src', 'bindings.rs');
 const OUT_PRED = path.join(SITE_DIR, 'src', '_includes', 'studio', 'predicate-catalog.generated.json');
 
+// The node's thin-HTTP turn-submit schema — the ACTUAL JSON shape the live node
+// accepts at POST /api/turns/submit. This is the source of truth for the
+// Studio's "submit to a node" forms, so the composer cannot send a body the
+// node would reject as malformed. Parsed from the `TurnEffectSpec` enum (and the
+// `TurnActionSpec` / `SubmitTurnRequest` wrappers) in `node/src/api.rs`.
+const F_NODE_API = path.join(REPO_ROOT, 'node', 'src', 'api.rs');
+const OUT_SUBMIT = path.join(SITE_DIR, 'src', '_includes', 'studio', 'submit-schema.generated.json');
+
 function read(p) {
   if (!fs.existsSync(p)) {
     console.error(`gen-ontology-catalog: missing source ${p}`);
@@ -478,6 +486,152 @@ function buildPredicate() {
   };
 }
 
+// ===========================================================================
+// NODE TURN-SUBMIT SCHEMA.
+//
+// The Studio's submit step POSTs to the live node's POST /api/turns/submit. The
+// node accepts a `SubmitTurnRequest { agent, nonce, fee, memo, actions }` whose
+// `actions` are `TurnActionSpec { target?, method?, effects }` and whose effects
+// are the `TurnEffectSpec` enum — a deliberately small JSON projection of the
+// on-chain `Effect` (only the kinds a thin HTTP client needs: state writes,
+// transfers, nonce bumps, events). The richer ~52 effects in the ontology go
+// through the typed SDK signed-envelope path, NOT this HTTP form.
+//
+// We parse `TurnEffectSpec` straight from `node/src/api.rs` so the composer's
+// node-submit forms cannot drift from the body the node actually deserializes.
+// Each variant carries: its serde `kind` tag (snake_case), the per-field
+// {name, type, optional, doc}, and the verified-Lean effect ctor it maps to.
+// ===========================================================================
+
+/** snake_case a Rust PascalCase ident, matching `#[serde(rename_all="snake_case")]`. */
+function snakeCase(s) {
+  return s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2').toLowerCase();
+}
+
+/** Map a Rust field type to a compact, browser-facing JSON-value label. */
+function normalizeSubmitType(t) {
+  const inner = t.replace(/^Option<(.+)>$/, '$1').trim();
+  const base = inner
+    .replace(/^Vec<[^>]+>$/, 'string[]')
+    .replace(/\bString\b/g, 'hex/scalar string')
+    .replace(/\bu64\b/g, 'u64')
+    .replace(/\busize\b/g, 'usize');
+  return base.trim();
+}
+
+/**
+ * Parse a `#[serde(tag="kind", rename_all="snake_case")] enum TurnEffectSpec`.
+ * Returns one record per variant: { kind, variant, doc, fields:[{name,type,optional,doc}] }.
+ * Field-level `#[serde(default)]` ⇒ optional. `Option<…>` is also optional.
+ */
+function parseSubmitEffects(src) {
+  const block = sliceEnum(src, 'TurnEffectSpec');
+  const lines = block.split('\n');
+  const variants = [];
+  let docBuf = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('///')) { docBuf.push(line); i++; continue; }
+    if (trimmed.startsWith('#')) { docBuf = []; i++; continue; } // variant-level attr
+    if (!trimmed) { i++; continue; }
+
+    // Variant head `Name {`
+    const vm = trimmed.match(/^([A-Z][A-Za-z0-9]*)\s*\{/);
+    if (!vm) { docBuf = []; i++; continue; }
+    const variant = vm[1];
+    const vdoc = firstDocSentence(collectDoc(docBuf));
+    docBuf = [];
+
+    // Walk the struct body until the matching closing brace at depth 0.
+    const fields = [];
+    let pendingDefault = false;
+    let fdoc = [];
+    i++;
+    let depth = 1;
+    for (; i < lines.length; i++) {
+      const fl = lines[i].trim();
+      if (fl === '}' || fl === '},') { depth--; if (depth === 0) { i++; break; } continue; }
+      if (fl.startsWith('///')) { fdoc.push(lines[i]); continue; }
+      if (/#\[serde\([^)]*\bdefault\b/.test(fl)) { pendingDefault = true; continue; }
+      if (fl.startsWith('#')) { continue; } // other attrs
+      const fm = fl.match(/^([a-z_][A-Za-z0-9_]*)\s*:\s*([^,]+),?$/);
+      if (fm) {
+        const type = fm[2].trim();
+        fields.push({
+          name: fm[1],
+          type: normalizeSubmitType(type),
+          optional: pendingDefault || /^Option</.test(type),
+          doc: firstDocSentence(collectDoc(fdoc)),
+        });
+        pendingDefault = false;
+        fdoc = [];
+      }
+    }
+    variants.push({ kind: snakeCase(variant), variant, doc: vdoc, fields });
+  }
+  return variants;
+}
+
+// Map each submit `kind` to the verified-Lean effect ctor it materializes into
+// (api.rs `build_effect`: SetField→SetField, Transfer→Transfer, …; the on-chain
+// Effect ctors correspond to FullActionA `setFieldA` / `balanceA` / `emitEventA`
+// / `incrementNonceA`). Kept as a tiny stable map and CROSS-CHECKED below so a
+// new submit variant without a known ctor is reported, not silently dropped.
+const SUBMIT_KIND_TO_CTOR = {
+  set_field: 'setFieldA',
+  transfer: 'balanceA',
+  emit_event: 'emitEventA',
+  increment_nonce: 'incrementNonceA',
+};
+
+function buildSubmit(effects) {
+  const api = read(F_NODE_API);
+  const variants = parseSubmitEffects(api);
+  const ctorByName = new Map(effects.map((e) => [e.ctor, e]));
+  const submittable = variants.map((v) => {
+    const ctor = SUBMIT_KIND_TO_CTOR[v.kind] || null;
+    const cat = ctor ? ctorByName.get(ctor) : null;
+    return {
+      kind: v.kind,
+      variant: v.variant,
+      semantics: v.doc,
+      fields: v.fields,
+      ctor,
+      category: cat ? cat.category : null,
+      facet: cat ? cat.facet : null,
+    };
+  });
+  const missingCtor = submittable.filter((s) => !s.ctor).map((s) => s.kind);
+  return {
+    schema: 'dregg-submit-schema-v1',
+    generated_from: [
+      'node/src/api.rs (TurnEffectSpec enum — the JSON projection POST /api/turns/submit deserializes)',
+    ],
+    note:
+      'AUTOGENERATED by site/tools/gen-ontology-catalog.js from the node HTTP ' +
+      'API source. This is the EXACT effect-JSON the live node accepts on the ' +
+      'thin-HTTP submit path; the richer ontology effects go through the typed ' +
+      'SDK signed-envelope path. Do not edit by hand — regenerate.',
+    endpoint: '/api/turns/submit',
+    request_shape: {
+      agent: 'hex CellId (advisory; node derives + signs as itself)',
+      nonce: 'u64',
+      fee: 'u64',
+      memo: 'string?',
+      actions: '[{ target?: hex CellId, method?: string, effects: TurnEffect[] }]',
+    },
+    auth: 'Bearer token from POST /cipherclerk/unlock (loopback may be allowed before a passphrase is set)',
+    effect_count: submittable.length,
+    coverage: {
+      submittable_of_ontology: submittable.filter((s) => s.ctor).length,
+      missing_ctor: missingCtor,
+    },
+    effects: submittable,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Build the catalog.
 // ---------------------------------------------------------------------------
@@ -572,9 +726,20 @@ function main() {
   if (pcov.extra_in_view.length)
     process.stderr.write(`  ⚠ view variants with NO canonical enum: ${pcov.extra_in_view.join(', ')}\n`);
 
+  // --- Node turn-submit schema (node/src/api.rs TurnEffectSpec) -----------
+  const submit = buildSubmit(catalog.effects);
+  const submitText = render(submit);
+  const scov = submit.coverage;
+  process.stderr.write(
+    `  submit schema: ${submit.effect_count} effect kinds on ${submit.endpoint} · ` +
+      `mapped-to-ontology ${scov.submittable_of_ontology}/${submit.effect_count}\n`
+  );
+  if (scov.missing_ctor.length)
+    process.stderr.write(`  ⚠ submit kinds with NO ontology ctor: ${scov.missing_ctor.join(', ')}\n`);
+
   if (check) {
     let stale = false;
-    for (const [file, want] of [[OUT, text], [OUT_PRED, predText]]) {
+    for (const [file, want] of [[OUT, text], [OUT_PRED, predText], [OUT_SUBMIT, submitText]]) {
       const actual = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       if (actual !== want) {
         console.error(
@@ -585,7 +750,7 @@ function main() {
       }
     }
     if (stale) process.exit(1);
-    process.stderr.write('  drift check: OK (both catalogs match source)\n');
+    process.stderr.write('  drift check: OK (all catalogs match source)\n');
     return;
   }
 
@@ -593,6 +758,8 @@ function main() {
   process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT)}\n`);
   fs.writeFileSync(OUT_PRED, predText);
   process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT_PRED)}\n`);
+  fs.writeFileSync(OUT_SUBMIT, submitText);
+  process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT_SUBMIT)}\n`);
 }
 
 main();

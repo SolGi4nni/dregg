@@ -99,11 +99,20 @@
       "semantics": "Conjunction — match if every child matches."
     }
   ],
-  "constraint_count": 29,
+  "constraint_count": 37,
   "coverage": {
     "constraints_in_view": 29,
     "locally_evaluable": 15,
-    "missing_from_view": [],
+    "missing_from_view": [
+      "MemberOf",
+      "PrefixOf",
+      "InRangeTwoSided",
+      "DeltaBounded",
+      "AffineLe",
+      "AffineEq",
+      "Reachable",
+      "AllOf"
+    ],
     "extra_in_view": []
   },
   "constraints": [
@@ -529,6 +538,138 @@
       ],
       "semantics": "**Categorical dual of : proof of non-holding / non-membership.** A *renunciation* slot caveat — the action's sender must verifiably *NOT* be in the `set`'s sorted Merkle leaf set.",
       "in_view": true,
+      "locally_evaluable": false
+    },
+    {
+      "name": "MemberOf",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "set",
+          "type": "Vec<u64>"
+        }
+      ],
+      "semantics": "**Value allowlist:** `new[index]` must be one of `set` (the one-sided value membership the pair-table `AllowedTransitions` cannot express).",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "PrefixOf",
+      "fields": [
+        {
+          "name": "seg_indices",
+          "type": "Vec<u8>"
+        },
+        {
+          "name": "prefix",
+          "type": "Vec<u64>"
+        }
+      ],
+      "semantics": "**Namespace / path prefix containment:** the ordered scalar path read from `seg_indices` (each a slot read as big-endian u64) must START WITH `prefix`.",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "InRangeTwoSided",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "lo",
+          "type": "u64"
+        },
+        {
+          "name": "hi",
+          "type": "u64"
+        }
+      ],
+      "semantics": "**Two-sided absolute band:** `lo <= new[index] <= hi` (the ABSOLUTE counterpart to the RELATIVE `FieldDeltaInRange`).",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "DeltaBounded",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "d",
+          "type": "u64"
+        }
+      ],
+      "semantics": "**Real two-sided delta:** `|new[index] - old[index]| <= d` (symmetric; the legacy delta variants are one-sided or relative-range).",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "AffineLe",
+      "fields": [
+        {
+          "name": "terms",
+          "type": "Vec<(i64, u8)>"
+        },
+        {
+          "name": "c",
+          "type": "i64"
+        }
+      ],
+      "semantics": "**Affine inequality:** `Σ kᵢ·new[fᵢ] <= c` over named slots (`terms : Vec<(i64 coefficient, u8 slot)>`).",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "AffineEq",
+      "fields": [
+        {
+          "name": "terms",
+          "type": "Vec<(i64, u8)>"
+        },
+        {
+          "name": "c",
+          "type": "i64"
+        }
+      ],
+      "semantics": "**Affine equation:** `Σ kᵢ·new[fᵢ] = c`.",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "Reachable",
+      "fields": [
+        {
+          "name": "from_index",
+          "type": "u8"
+        },
+        {
+          "name": "to_label",
+          "type": "u64"
+        },
+        {
+          "name": "edges",
+          "type": "Vec<(u64, u64)>"
+        }
+      ],
+      "semantics": "**DAG reachability / prerequisite:** the label read from `new[from_index]` must reach `to_label` in the reachability `edges` (reflexive-transitive closure).",
+      "in_view": false,
+      "locally_evaluable": false
+    },
+    {
+      "name": "AllOf",
+      "fields": [
+        {
+          "name": "variants",
+          "type": "Vec<SimpleStateConstraint>"
+        }
+      ],
+      "semantics": "**n-ary conjunction** over `SimpleStateConstraint`s — the `allOf` the legacy 2-level grammar lacked (it had only single-level `AnyOf`).",
+      "in_view": false,
       "locally_evaluable": false
     },
     {
