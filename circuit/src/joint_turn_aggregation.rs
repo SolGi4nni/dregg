@@ -102,6 +102,113 @@ pub fn verify_participant_pub(p: &JointParticipant) -> Result<(), String> {
     verify_participant(p)
 }
 
+// ============================================================================
+// DESCRIPTOR-BACKED PARTICIPANT — the ONE-circuit cutover of the joint-turn seam.
+// ============================================================================
+//
+// `verify_participant` above is the LEGACY per-cell soundness seam: it verifies a
+// bespoke-`stark` `EffectVmAir` proof. The ONE-circuit migration re-points the
+// joint-turn consumer's per-cell admission onto the verified-by-construction Lean
+// DESCRIPTOR INTERPRETER for the GRADUATED single-effect selectors. A descriptor
+// participant carries an `EffectVmP3Proof` (the SAME wire type the SDK production
+// prove-path emits), verified SELECTOR-BOUND through the descriptor verifier (the
+// Lean `selectorGate s` tooth makes a sound proof verify under EXACTLY ONE
+// selector — the differential harness's `descriptor_proof_binds_to_its_selector`).
+// The CG-2 shared-turn-id binding and the bundle-digest aggregation are UNCHANGED
+// (they read the same PI projections), so the cross-cell tooth holds identically;
+// only the per-cell crypto seam swaps from the hand-AIR to the descriptor circuit.
+// The bespoke `verify_participant` is RETAINED as the transitional guard.
+
+/// A single cell's whole-turn DESCRIPTOR-INTERPRETER proof as a joint-turn
+/// participant. The proof is an `EffectVmP3Proof` (audited p3 batch-stark, the
+/// production cutover wire type); the PI projections the aggregator reads
+/// ([`pi::TURN_HASH_BASE`], [`pi::NEW_COMMIT_BASE`]) are identical to
+/// [`JointParticipant`]'s.
+pub struct DescriptorParticipant {
+    /// The per-cell whole-turn descriptor-interpreter proof.
+    pub proof: crate::effect_vm_p3_full_air::EffectVmP3Proof,
+    /// The full EffectVM public-input vector this proof attests.
+    pub public_inputs: Vec<BabyBear>,
+}
+
+impl DescriptorParticipant {
+    /// The shared turn identity this participant claims (`TURN_HASH` position 0).
+    pub fn shared_turn_id(&self) -> BabyBear {
+        self.public_inputs[pi::TURN_HASH_BASE]
+    }
+
+    /// This cell's post-state commitment (`NEW_COMMIT` position 0).
+    pub fn cell_commit(&self) -> BabyBear {
+        self.public_inputs[pi::NEW_COMMIT_BASE]
+    }
+}
+
+/// Verify one descriptor participant's per-cell proof SELECTOR-BOUND through the
+/// descriptor interpreter (the cutover replacement for [`verify_participant`]). A
+/// sound descriptor proof verifies under EXACTLY ONE cutover selector — its own
+/// effect; zero (not a graduated descriptor proof) or multiple (ambiguous, must not
+/// happen with the gate in place) are rejected. Returns the bound selector.
+pub fn verify_descriptor_participant(p: &DescriptorParticipant) -> Result<usize, String> {
+    use crate::effect_vm_descriptors::descriptor_for_selector;
+    use crate::lean_descriptor_air::{parse_vm_descriptor, verify_vm_descriptor};
+
+    let mut bound: Vec<usize> = Vec::new();
+    for &s in crate::proof_forest::CUTOVER_READY_SELECTORS {
+        if let Some(json) = descriptor_for_selector(s) {
+            if let Ok(desc) = parse_vm_descriptor(json) {
+                if p.public_inputs.len() >= desc.public_input_count {
+                    let dpis = &p.public_inputs[..desc.public_input_count];
+                    if verify_vm_descriptor(&desc, &p.proof, dpis).is_ok() {
+                        bound.push(s);
+                    }
+                }
+            }
+        }
+    }
+    match bound.as_slice() {
+        [only] => Ok(*only),
+        [] => Err("descriptor participant verified under NO cutover selector".into()),
+        multi => Err(format!(
+            "descriptor participant verified under MULTIPLE cutover selectors {multi:?} — ambiguous"
+        )),
+    }
+}
+
+/// CG-2 host check + per-cell descriptor soundness over descriptor participants —
+/// the cutover analogue of the precondition gate in [`prove_joint_turn`]. Verifies
+/// (1) `>= 2` participants, (2) each per-cell proof verifies selector-bound through
+/// the descriptor interpreter, (3) all participants agree on the shared turn id.
+/// Returns the agreed shared turn id. (The aggregation trace/proof is shape-identical
+/// to the Silver path and is produced from the same PI projections.)
+pub fn check_descriptor_joint_preconditions(
+    participants: &[DescriptorParticipant],
+) -> Result<BabyBear, JointAggError> {
+    if participants.len() < 2 {
+        return Err(JointAggError::TooFewParticipants {
+            count: participants.len(),
+        });
+    }
+    for (i, p) in participants.iter().enumerate() {
+        verify_descriptor_participant(p).map_err(|e| {
+            JointAggError::ParticipantProofInvalid {
+                index: i,
+                reason: e,
+            }
+        })?;
+    }
+    let shared_tid = participants[0].shared_turn_id();
+    for (i, p) in participants.iter().enumerate() {
+        if p.shared_turn_id() != shared_tid {
+            return Err(JointAggError::SharedTurnIdMismatch {
+                index: i,
+                expected: shared_tid.0,
+                found: p.shared_turn_id().0,
+            });
+        }
+    }
+    Ok(shared_tid)
+}
+
 impl JointParticipant {
     /// The shared turn identity this participant claims (`TURN_HASH` position 0).
     /// Every participant of one joint turn MUST agree on this value — the
@@ -812,6 +919,53 @@ mod tests {
             "tampered-turn-id trace must be rejected under the aggregation AIR's CG-2 constraint \
              — the prover refuses it (debug) or the verifier rejects the forged proof (release)"
         );
+    }
+
+    /// (DESCRIPTOR CUTOVER) POSITIVE + TEETH: build two descriptor-interpreter
+    /// participants that AGREE on the shared turn id, confirm the descriptor
+    /// per-cell soundness + CG-2 host gate accepts them; then a third that DISAGREES
+    /// is rejected at the shared-turn-id binding — the cross-cell tooth holds on the
+    /// descriptor path exactly as on the bespoke path.
+    #[test]
+    fn descriptor_participants_cg2_binding_holds() {
+        use crate::effect_vm_descriptors::descriptor_for_selector;
+        use crate::effect_vm::columns::sel;
+        use crate::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
+
+        let make = |balance: u64, nonce: u32, turn_id: u32| -> DescriptorParticipant {
+            let state = CellState::new(balance, nonce);
+            let effects = vec![Effect::Transfer { amount: 5, direction: 1 }];
+            let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+            public_inputs[pi::TURN_HASH_BASE] = BabyBear::new(turn_id);
+            let json = descriptor_for_selector(sel::TRANSFER).unwrap();
+            let desc = parse_vm_descriptor(json).unwrap();
+            let dpis = &public_inputs[..desc.public_input_count];
+            let proof = prove_vm_descriptor(&desc, &trace, dpis)
+                .expect("descriptor proves the honest transfer participant");
+            DescriptorParticipant { proof, public_inputs }
+        };
+
+        let p0 = make(100, 0, 0xABCD);
+        let p1 = make(200, 7, 0xABCD);
+        // Each verifies selector-bound to TRANSFER.
+        assert_eq!(verify_descriptor_participant(&p0).unwrap(), sel::TRANSFER);
+        assert_eq!(verify_descriptor_participant(&p1).unwrap(), sel::TRANSFER);
+        // Agreeing pair passes the descriptor CG-2 gate.
+        let tid = check_descriptor_joint_preconditions(&[p0, p1])
+            .expect("agreeing descriptor participants must pass CG-2");
+        assert_eq!(tid, BabyBear::new(0xABCD));
+
+        // Disagreeing turn id is rejected at the binding (the cross-cell tooth).
+        let q0 = make(100, 0, 0xABCD);
+        let q1 = make(200, 7, 0x1234);
+        match check_descriptor_joint_preconditions(&[q0, q1]) {
+            Err(JointAggError::SharedTurnIdMismatch { index, expected, found }) => {
+                assert_eq!(index, 1);
+                assert_eq!(expected, 0xABCD);
+                assert_eq!(found, 0x1234);
+            }
+            other => panic!("expected SharedTurnIdMismatch on descriptor path, got {other:?}"),
+        }
     }
 
     /// (3) NEGATIVE: a single participant is not a joint turn.

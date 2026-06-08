@@ -724,8 +724,11 @@ mod tests {
         // than the aspirational 2^15 one — silently relaxing to "always passes"
         // would hide a real circuit-size regression, and asserting the unmet
         // 2^15 target would be a false claim. The stark-in-pickles wrap is an
-        // off-live-path backend (the node authorizes turns via
-        // stark::try_prove(EffectVmAir), not via Pickles wrapping), so this
+        // off-live-path backend: the node authorizes turns via the AUDITED p3
+        // path (`dregg_sdk::prove_turn_self_sovereign` → `prove_effect_vm_p3` /
+        // the Lean DESCRIPTOR INTERPRETER under `DREGG_DESCRIPTOR_PROVER`), NOT
+        // via Pickles wrapping or the bespoke `stark::try_prove(EffectVmAir)`
+        // (which now survives only on the MCP `attach_proof` affordance). So this
         // size overage does not affect production soundness; it does mean the
         // 80-query wrap would require a 2^16 Kimchi domain until the verifier
         // circuit is shrunk back under 2^15.
