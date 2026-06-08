@@ -361,6 +361,14 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
         "QueueAllocate",
         "GrantCapability",
         "AttenuateCapability",
+        // §SIDE-TABLE families: the off-cell-merkle-root holding-store effects. Create debits a
+        // `bal` (reconstitutes) + parks an off-root record; the cell commitment is otherwise
+        // untouched, so these are root-AGREEING (see `producer_root_agreeing_effects`). The settle
+        // effects reference an existing record (exercised via a create+settle forest).
+        "CreateEscrow",
+        "ReleaseEscrow",
+        "RefundEscrow",
+        "CreateObligation",
     ]
 }
 
@@ -387,6 +395,20 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
         "Burn",
         "RevokeCapability",
         "QueueAllocate",
+        // §SIDE-TABLE holding-store families — the off-cell-merkle-root escrow/obligation effects.
+        // `apply_create_escrow`/`apply_create_obligation` debit ONE cell's `balance` (which the `bal`
+        // side-table carries → reconstitutes) and park the value in the off-root `escrows`/
+        // `obligations` store; the verified `createEscrowKAsset` (and the `createObligationA`
+        // dispatch-alias) do the SAME single-cell `bal` debit + record insert, gated on the same
+        // transfer-authority + balance + account + id-uniqueness legs. Only the CREATE effects are
+        // root-AGREEING here: the side-table records never feed `cell::Ledger::root()`, so the
+        // reconstituted `.root()` AGREES with Rust (only the `bal` debit changes, and it
+        // reconstitutes). The SETTLE effects (release/refund) are characterized root/commit-bit gaps:
+        // Rust gates release on a condition PROOF and refund on a PAST timeout, neither expressible
+        // within a single create+settle forest at one block height, and the verified settle-auth gate
+        // differs — see `producer_root_gap_effects`.
+        "CreateEscrow",
+        "CreateObligation",
     ]
 }
 
@@ -431,6 +453,17 @@ pub fn producer_root_gap_effects() -> &'static [&'static str] {
         // `attenuate` is a no-op on a `node` cap, so the reconstruction keeps the edge unchanged →
         // `cap_root` diverges. Same cap-fidelity gap class as GrantCapability.
         "AttenuateCapability",
+        // §SIDE-TABLE settle effects: the producer RUNS but the COMMIT-BIT diverges. Rust gates
+        // `ReleaseEscrow` on a satisfied condition (ZK proof / all-signers / predicate) and
+        // `RefundEscrow` on a PAST timeout (`block_height > timeout_height`); the verified
+        // `releaseEscrowChainA`/`refundEscrowChainA` gate only on settle-actor authority over the
+        // recipient/creator + record-present-and-unresolved. With no condition proof / before the
+        // timeout the two executors disagree on whether the settle commits — a characterized
+        // commit-bit gap (the condition/timeout crypto-&-clock legs are the §8 portal the wire model
+        // does not carry), surfaced by the differential, never a silent pass. Closing this needs the
+        // condition-proof / timeout legs modelled in the verified settle gate.
+        "ReleaseEscrow",
+        "RefundEscrow",
     ]
 }
 
@@ -742,6 +775,30 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // GrantCapability: dregg1 `del`. The granter `from`, grantee `to`, and the cap target
         // must all be in the id map (the wire `del` carries delegator + recipient + target Nats).
         Effect::GrantCapability { from, to, cap } => has(from) && has(to) && has(&cap.target),
+        // ─── §SIDE-TABLE families (the holding-store batch — MUST mirror effect_to_wire) ────────
+        // ESCROW (root-AGREEING). `apply_create_escrow` debits the creator's `balance` and parks the
+        // value in the off-cell-merkle-root `escrows` store; the verified `createEscrowKAsset` does
+        // the SAME single-cell `bal` debit (recDebit) + record insert, gated on the same `authorizedB`
+        // transfer leg + balance + account + id-uniqueness. The debit reconstitutes via the `bal`
+        // side-table and the record is off-root, so the reconstituted `.root()` AGREES with Rust.
+        Effect::CreateEscrow { cell, recipient, escrow_id, .. } => {
+            has(cell) && has(recipient) && !escrow_id.iter().all(|&b| b == 0)
+        }
+        // release/refund settle effects look the record up by id (off-root) and single-cell CREDIT
+        // the recipient/creator (`recCredit` ⟺ `set_balance(old + amount)`). Mappable when the id is
+        // non-null; the credited cell is read from the record (no extra cells to name).
+        Effect::ReleaseEscrow { escrow_id, .. } => !escrow_id.iter().all(|&b| b == 0),
+        Effect::RefundEscrow { escrow_id } => !escrow_id.iter().all(|&b| b == 0),
+        // OBLIGATION CREATE (root-AGREEING). `apply_create_obligation` debits the obligor
+        // (action target) `balance` + inserts an off-root `ObligationRecord`; the verified
+        // `createObligationA` dispatch-aliases to `createEscrowChainA` (the SAME single-cell debit +
+        // record insert). A create-only obligation turn therefore round-trips: only `bal` changes
+        // (reconstitutes) and the record is off-root. The settle effects (fulfill/slash) reference
+        // the Rust-DERIVED obligation id, which the wire-id collapse cannot reproduce, so they are
+        // characterized root-gaps (record-lookup divergence), not mapped here.
+        Effect::CreateObligation { beneficiary, stake, stake_amount, .. } => {
+            has(beneficiary) && !stake.0.iter().all(|&b| b == 0) && *stake_amount > 0
+        }
         // Everything else (escrows/bridge/seal-pairs/captp/factory/introduce/CreateCell/…) not
         // yet projected. NOTE on CreateCell: deliberately NOT projected — the verified
         // `createCellChainA` gate requires `mintAuthorizedB actor newCell` (cell creation is
@@ -809,6 +866,20 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         Effect::AttenuateCapability { cell, .. } => vec![*cell],
         // GAP-shrink: GrantCapability references granter/grantee/cap-target — all need wire Nats.
         Effect::GrantCapability { from, to, cap } => vec![*from, *to, cap.target],
+        // ─── §SIDE-TABLE families (escrow/obligation/committed-escrow) ───────────────────────
+        // The off-cell-merkle-root holding-store effects: the cells whose `balance` the
+        // create debits / the settle credits need wire Nats (the side-table record itself is
+        // off-root, so only the touched cells must be named).
+        Effect::CreateEscrow { cell, recipient, .. } => vec![*cell, *recipient],
+        // Settle effects (release/refund/fulfill/slash) carry only an id; the credited cell is
+        // read from the record, so the actor (action target) — already collected — suffices.
+        Effect::ReleaseEscrow { .. } => vec![],
+        Effect::RefundEscrow { .. } => vec![],
+        Effect::CreateObligation { beneficiary, .. } => vec![*beneficiary],
+        Effect::FulfillObligation { .. } => vec![],
+        Effect::SlashObligation { .. } => vec![],
+        Effect::ReleaseCommittedEscrow { recipient, .. } => vec![*recipient],
+        Effect::RefundCommittedEscrow { creator, .. } => vec![*creator],
         // QueueAllocate creates a FRESH queue cell whose id is NOT in the pre-state id map; only
         // the actor (the action target) needs a Nat, collected by `collect_tree_ids` already. The
         // fresh id is assigned deterministically in `effect_to_wire` (above the pre-id-map range)
@@ -1076,6 +1147,51 @@ fn effect_to_wire(
             recipient: id(to)?,
             t: id(&cap.target)?,
         },
+        // ─── §SIDE-TABLE families (the holding-store batch) ────────────────────────────────
+        //
+        // ESCROW create: dregg1 `apply_create_escrow` (`apply.rs:1674`) debits the creator's
+        // `balance` by `amount` and parks an unresolved record in the off-root `escrows` store.
+        // `.createEscrowA id actor creator recipient asset amount` routes to `createEscrowChainA` →
+        // `createEscrowKAsset`, gated on the SAME `authorizedB {actor,creator,recipient,amount}`
+        // transfer-authority leg + `0≤amount≤bal creator` + `creator∈accounts` + id-uniqueness. The
+        // wire `id` is the escrow_id collapsed to its low 64 bits (the create+settle pair carries the
+        // SAME explicit `escrow_id`, so the collapsed wire ids coincide across a forest). asset 0.
+        Effect::CreateEscrow { cell, recipient, amount, escrow_id, .. } => WireAction::CreateEscrow {
+            id: bytes32_to_nat(escrow_id),
+            actor,
+            creator: id(cell)?,
+            recipient: id(recipient)?,
+            asset: 0,
+            amount: *amount as i128,
+        },
+        // ESCROW release/refund: look the record up by id, single-cell CREDIT the recipient/creator
+        // (`recCredit` ⟺ `set_balance(old + amount)`), mark resolved. The credited cell is read from
+        // the record (off-root), so only the id + actor cross the wire.
+        Effect::ReleaseEscrow { escrow_id, .. } => WireAction::ReleaseEscrow {
+            id: bytes32_to_nat(escrow_id),
+            actor,
+        },
+        Effect::RefundEscrow { escrow_id } => WireAction::RefundEscrow {
+            id: bytes32_to_nat(escrow_id),
+            actor,
+        },
+        // OBLIGATION create: dregg1 `apply_create_obligation` debits the OBLIGOR (= action target)
+        // `balance` by `stake_amount` + inserts an off-root `ObligationRecord`. `.createObligationA id
+        // actor obligor beneficiary asset stake` dispatch-aliases to `createEscrowChainA` (the SAME
+        // single-cell debit + record insert). The obligor IS the action target (`actor`); the
+        // beneficiary is the record's `recipient`. The wire `id` is the STAKE commitment collapsed —
+        // a fresh-enough id for the create gate's uniqueness leg (the settle effects, which reference
+        // the Rust-derived obligation id, are characterized root-gaps, not routed here).
+        Effect::CreateObligation { beneficiary, stake, stake_amount, .. } => {
+            WireAction::CreateObligation {
+                id: bytes32_to_nat(&stake.0),
+                actor,
+                obligor: actor,
+                beneficiary: id(beneficiary)?,
+                asset: 0,
+                stake: *stake_amount as i128,
+            }
+        }
         // CreateCell: dregg1 inserts a fresh cell with the given balance (`apply.rs` CreateCell).
         // `.createcell actor newCell` routes to the cell-creation chained step, gated on the
         // actor's authority over its own action. The new cell's wire Nat is assigned ABOVE the
@@ -1088,9 +1204,13 @@ fn effect_to_wire(
                 new_cell: fresh,
             }
         }
-        // Everything else (escrows, bridge, seal-pairs, captp swiss, factory, introduce, …) is
-        // not yet projected here. Returning None marks the turn ineligible rather than silently
-        // dropping the effect.
+        // Everything else (bridge, seal-pairs, captp swiss, factory, introduce, …) is not yet
+        // projected here. Returning None marks the turn ineligible rather than silently dropping the
+        // effect. NOTE on BridgeLock: dregg1's `apply_bridge_lock` is NOTE-based (it parks a
+        // `pending_bridge` keyed by nullifier and does NOT debit any cell — the value already left via a
+        // note-spend), while the verified `bridgeLockKAsset` DEBITS the originator's `bal`. That is a
+        // genuine MODEL divergence (Rust note-bridge vs Lean bal-bridge), so BridgeLock is deliberately
+        // NOT projected here — it would diverge on the originator's balance, not round-trip.
         _ => return None,
     })
 }

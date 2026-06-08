@@ -36,8 +36,8 @@ use dregg_turn::lean_shadow::{
 };
 use dregg_turn::action::{Event, RefusalReason};
 use dregg_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
-    turn::Turn,
+    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, ProofCondition,
+    TurnExecutor, turn::Turn,
 };
 
 fn open_permissions() -> Permissions {
@@ -715,4 +715,139 @@ fn produce_via_lean_falls_back_on_root_gap_setpermissions() {
             "the Rust producer's new permissions must be the committed state"
         );
     }
+}
+
+// =====================================================================================
+// §SIDE-TABLE holding-store families (escrow / obligation) — the off-cell-merkle-root
+// CREATE effects ROUND-TRIP (only a `bal` debit changes + an off-root record is parked);
+// the SETTLE effects (release/refund) are characterized commit-bit gaps (Rust gates on a
+// condition proof / past timeout the verified settle gate does not model).
+// =====================================================================================
+
+fn two_open_cells() -> (Ledger, CellId, CellId) {
+    let a = make_open_cell(1, 100);
+    let b = make_open_cell(2, 5);
+    let a_id = a.id();
+    let b_id = b.id();
+    let mut pre = Ledger::new();
+    pre.insert_cell(a).unwrap();
+    pre.insert_cell(b).unwrap();
+    (pre, a_id, b_id)
+}
+
+#[test]
+fn create_escrow_root_agrees() {
+    if skip_no_lean() {
+        return;
+    }
+    // `apply_create_escrow` debits the creator (A)'s `balance` by `amount` and parks an unresolved
+    // `EscrowRecord` in the off-cell-merkle-root `escrows` store. The verified `createEscrowKAsset`
+    // does the SAME single-cell `bal` debit (`recDebit`) + record insert, gated on the same
+    // `authorizedB` transfer-authority leg + `0≤amount≤bal A` + `A∈accounts` + id-uniqueness. Only
+    // the `bal` (which the wire `bal` side-table carries → reconstitutes) changes on the cell
+    // commitment; the escrow record never feeds `cell::Ledger::root()`. So both producers commit and
+    // the reconstituted ledger AGREES on full cell state + cap_root + `.root()`.
+    let (pre, a_id, b_id) = two_open_cells();
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::CreateEscrow {
+            cell: a_id,
+            recipient: b_id,
+            amount: 30,
+            condition: dregg_turn::escrow::EscrowCondition::SignedByAll { signers: vec![] },
+            timeout_height: 500,
+            escrow_id: [7u8; 32],
+        },
+    );
+    diff(pre, turn, &[a_id, b_id])
+        .expect("CreateEscrow must round-trip (bal debit reconstitutes; record is off-root)");
+    assert!(lean_shadow::producer_root_agreeing_effects().contains(&"CreateEscrow"));
+}
+
+#[test]
+fn create_obligation_root_agrees() {
+    if skip_no_lean() {
+        return;
+    }
+    // `apply_create_obligation` debits the obligor (= action target A)'s `balance` by `stake_amount`
+    // and parks an off-root `ObligationRecord`. The verified `createObligationA` dispatch-aliases to
+    // `createEscrowChainA` (the SAME single-cell debit + record insert). Only the `bal` changes on
+    // the cell commitment; the obligation record is off-root. So the reconstituted ledger AGREES.
+    let (pre, a_id, b_id) = two_open_cells();
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::CreateObligation {
+            beneficiary: b_id,
+            condition: ProofCondition::HashPreimage { hash: [4u8; 32] },
+            deadline_height: 500,
+            stake: NoteCommitment([9u8; 32]),
+            stake_amount: 20,
+        },
+    );
+    diff(pre, turn, &[a_id, b_id])
+        .expect("CreateObligation must round-trip (stake debit reconstitutes; record off-root)");
+    assert!(lean_shadow::producer_root_agreeing_effects().contains(&"CreateObligation"));
+}
+
+#[test]
+fn release_escrow_is_a_condition_gate_gap() {
+    if skip_no_lean() {
+        return;
+    }
+    // A standalone `ReleaseEscrow` references a record absent from both fresh executors' stores, so
+    // Rust REJECTS (escrow not found) while the verified `releaseEscrowChainA` ALSO finds no record
+    // and rejects — but the differential's `diff` requires BOTH to COMMIT, so this surfaces as a
+    // commit-bit gap (the settle's record-lookup + condition-proof legs are not exercisable as a
+    // standalone covered turn). Pinned as a characterized commit-bit gap: the producer RUNS, the
+    // divergence (Rust did not commit) is NAMED, never a silent pass. Closing this needs the
+    // condition-proof leg modelled so a create+release can be covered as one verified turn.
+    let (pre, a_id, _b_id) = two_open_cells();
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::ReleaseEscrow { escrow_id: [7u8; 32], proof: None },
+    );
+    match diff(pre, turn, &[a_id]) {
+        Ok(()) => panic!(
+            "ReleaseEscrow unexpectedly round-tripped — the condition-gate gap may have closed; \
+             re-classify into producer_root_agreeing_effects"
+        ),
+        Err(why) => assert!(
+            why.contains("did not commit") || why.contains("commit-bit divergence"),
+            "ReleaseEscrow gap should be a commit-bit/no-commit divergence (no record / condition \
+             proof), got: {why}"
+        ),
+    }
+    assert!(lean_shadow::producer_root_gap_effects().contains(&"ReleaseEscrow"));
+}
+
+#[test]
+fn refund_escrow_is_a_timeout_gate_gap() {
+    if skip_no_lean() {
+        return;
+    }
+    // A standalone `RefundEscrow` references no record (fresh stores) AND Rust gates refund on a PAST
+    // timeout (`block_height > timeout_height`, impossible at the genesis block height the create
+    // demanded be in the future). Both legs make Rust reject; the differential requires BOTH commit,
+    // so this is a characterized commit-bit gap (the past-timeout clock leg is not modelled in the
+    // verified settle gate). Producer RUNS, divergence NAMED.
+    let (pre, a_id, _b_id) = two_open_cells();
+    let turn =
+        single_effect_turn(a_id, a_id, 0, Effect::RefundEscrow { escrow_id: [7u8; 32] });
+    match diff(pre, turn, &[a_id]) {
+        Ok(()) => panic!(
+            "RefundEscrow unexpectedly round-tripped — the timeout-gate gap may have closed"
+        ),
+        Err(why) => assert!(
+            why.contains("did not commit") || why.contains("commit-bit divergence"),
+            "RefundEscrow gap should be a commit-bit/no-commit divergence (no record / past-timeout \
+             clock leg), got: {why}"
+        ),
+    }
+    assert!(lean_shadow::producer_root_gap_effects().contains(&"RefundEscrow"));
 }
