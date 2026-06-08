@@ -410,6 +410,77 @@ pub struct HandoffAcceptance {
 /// On success, enlivens the swiss entry and returns a `HandoffAcceptance` with
 /// a routing token for ongoing access. The returned `permissions`/
 /// `allowed_effects` are the certificate's granted (attenuated) authority.
+/// The wire tag of an `AuthRequired` for the verified Lean handoff gate (mirrors
+/// `cell/src/permissions.rs::AuthRequired` constructor order, which the Lean `AuthReq` shares):
+/// `0=None 1=Signature 2=Proof 3=Either 4=Impossible 5+(vk_hash digest)=Custom`. The `Custom`
+/// vk_hash is folded to a small `u64` (the Lean rule compares Custom only for tag equality, so any
+/// injective fold of the 32 bytes preserves the verdict; we use the first 8 bytes as a `u64`).
+fn auth_required_tag(a: &AuthRequired) -> u64 {
+    match a {
+        AuthRequired::None => 0,
+        AuthRequired::Signature => 1,
+        AuthRequired::Proof => 2,
+        AuthRequired::Either => 3,
+        AuthRequired::Impossible => 4,
+        AuthRequired::Custom { vk_hash } => {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&vk_hash[..8]);
+            5u64.saturating_add(u64::from_le_bytes(b))
+        }
+    }
+}
+
+/// The effect-mask wire field for the verified Lean handoff gate: `None` (unrestricted) ⇒ `"x"`,
+/// a concrete mask ⇒ its decimal value.
+fn effect_mask_field(m: Option<EffectMask>) -> String {
+    match m {
+        None => "x".to_string(),
+        Some(mask) => mask.to_string(),
+    }
+}
+
+/// Decide the §6 non-amplification verdict via the VERIFIED Lean export
+/// `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`). Returns
+/// `Some(true)` (non-amplifying) / `Some(false)` (amplifies) when the gate ran, or `None` when the
+/// verified gate is unavailable (feature off / archive lacks the export) so the caller falls back to
+/// the Rust lattice. Built `--features lean-gate`; a stub returning `None` otherwise so the crate has
+/// no hard dependency on the Lean archive.
+#[cfg(feature = "lean-gate")]
+fn verified_non_amplifying(
+    granted_perm: &AuthRequired,
+    held_perm: &AuthRequired,
+    granted_eff: Option<EffectMask>,
+    held_eff: Option<EffectMask>,
+) -> Option<bool> {
+    if !dregg_lean_ffi::distributed_exports_available() {
+        return None;
+    }
+    let wire = format!(
+        "h={};g={};he={};ge={}",
+        auth_required_tag(held_perm),
+        auth_required_tag(granted_perm),
+        effect_mask_field(held_eff),
+        effect_mask_field(granted_eff),
+    );
+    match dregg_lean_ffi::verified_handoff_non_amplifying(&wire) {
+        Ok(verdict) => Some(verdict),
+        // FFI / wire error ⇒ fall back to the Rust lattice (never break the live handoff path).
+        Err(_) => None,
+    }
+}
+
+/// Stub when the `lean-gate` feature is off: the verified gate is unavailable, so the Rust lattice
+/// decides (the helper is referenced unconditionally in `validate_handoff`, so it must exist).
+#[cfg(not(feature = "lean-gate"))]
+fn verified_non_amplifying(
+    _granted_perm: &AuthRequired,
+    _held_perm: &AuthRequired,
+    _granted_eff: Option<EffectMask>,
+    _held_eff: Option<EffectMask>,
+) -> Option<bool> {
+    None
+}
+
 pub fn validate_handoff(
     presentation: &HandoffPresentation,
     introducer_pk: &PublicKey,
@@ -475,37 +546,32 @@ pub fn validate_handoff(
         return Err(HandoffError::TargetMismatch);
     }
 
-    // 6. Non-amplification (Granovetter): granted ⊆ held.
+    // 6. Non-amplification (Granovetter): granted ⊆ held — on BOTH the permission lattice and the
+    //    effect-mask facet.
     //
-    //    a) Permission lattice: the granted `AuthRequired` must be narrower
-    //       than or equal to the held `AuthRequired`. `is_narrower_or_equal`
-    //       is the rights-lattice ⊆ check (Impossible ≤ Proof/Signature ≤
-    //       Either ≤ None; Custom comparable only to identical Custom). A
-    //       handoff that loosens the requirement (e.g. held `Signature` but
-    //       granted `None`) amplifies authority and is rejected.
-    if !cert.permissions.is_narrower_or_equal(&held.permissions) {
-        return Err(HandoffError::Amplification);
-    }
-
-    //    b) Effect facet mask: the granted effect mask must be a bitwise
-    //       subset of the held effect mask. `None` means "unrestricted" (all
-    //       effects the cell itself permits). A granted `None` is therefore
-    //       only non-amplifying when the held mask is also `None`; any
-    //       concrete held mask is narrower than unrestricted, so granting
-    //       unrestricted over a restricted hold is amplification. When both
-    //       are concrete, `is_facet_attenuation(held, granted)` requires every
-    //       granted bit to be present in held.
-    let amplifies_effects = match (cert.allowed_effects, held.allowed_effects) {
-        // held unrestricted: any granted mask attenuates (or equals) it.
-        (_, None) => false,
-        // held restricted, granted unrestricted: amplification.
-        (None, Some(_)) => true,
-        // both restricted: granted must be a subset of held.
-        (Some(granted_mask), Some(held_mask)) => {
-            !dregg_cell::is_facet_attenuation(held_mask, granted_mask)
-        }
-    };
-    if amplifies_effects {
+    //    STRONG-FORM SWAP: when built `--features lean-gate`, this verdict is decided BY the VERIFIED
+    //    Lean export `dregg_captp_validate_handoff` (= `Dregg2.Exec.CapTPConcrete.handoffNonAmplifyingC`,
+    //    proved equal to the export by `captp_validate_handoff_eq`); the Rust lattice below is then the
+    //    DIFFERENTIAL sibling. Without the feature (or when the archive lacks the export) the Rust
+    //    lattice decides. Either way the decision is fail-CLOSED on amplification.
+    //
+    //    a) Permission lattice: the granted `AuthRequired` must be narrower-than-or-equal to the held
+    //       `AuthRequired` (Impossible ≤ Proof/Signature ≤ Either ≤ None; Custom comparable only to an
+    //       identical Custom). b) Effect facet mask: a `None` held mask is unrestricted (any granted
+    //       mask attenuates it); a concrete held mask requires the granted mask be a bitwise subset.
+    let rust_non_amplifying = cert.permissions.is_narrower_or_equal(&held.permissions)
+        && match (cert.allowed_effects, held.allowed_effects) {
+            (_, None) => true,                       // held unrestricted: granted always attenuates
+            (None, Some(_)) => false,                // held restricted, granted unrestricted: amplify
+            (Some(granted_mask), Some(held_mask)) => {
+                dregg_cell::is_facet_attenuation(held_mask, granted_mask)
+            }
+        };
+    // The AUTHORITATIVE verdict: the verified Lean gate when linked, else the Rust lattice.
+    let non_amplifying =
+        verified_non_amplifying(&cert.permissions, &held.permissions, cert.allowed_effects, held.allowed_effects)
+            .unwrap_or(rust_non_amplifying);
+    if !non_amplifying {
         return Err(HandoffError::Amplification);
     }
 

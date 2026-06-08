@@ -35,7 +35,9 @@ dregg-net = { path = "../net" }
 dregg-blocklace = { path = "../blocklace" }
 dregg-storage = { path = "../storage" }
 dregg-storage-templates = { path = "../dregg-storage-templates" }
-dregg-captp = { path = "../captp" }
+# `lean-gate`: route captp's §6 handoff non-amplification verdict through the VERIFIED Lean export
+# (`dregg_captp_validate_handoff`); the node already links `dregg-lean-ffi` with the Lean archive.
+dregg-captp = { path = "../captp", features = ["lean-gate"] }
 dregg-app-framework = { path = "../app-framework" }
 dregg-credentials = { path = "../credentials" }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }

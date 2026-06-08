@@ -19,8 +19,20 @@ hkdf = "0.12"
 sha2 = { workspace = true }
 zeroize = { workspace = true }
 
+# Optional: route the §6 non-amplification verdict of `validate_handoff` through the VERIFIED Lean
+# export (`dregg_captp_validate_handoff` = `handoffNonAmplifyingC`), keeping the Rust lattice as the
+# differential sibling. Enabled by the node (which already links `dregg-lean-ffi` with the Lean
+# archive); off by default so the low-level crate stays lean and the Lean archive is not pulled into
+# every consumer.
+dregg-lean-ffi = { path = "../dregg-lean-ffi", optional = true }
+
 [dev-dependencies]
 serde_json = "1"
+
+[features]
+# Gate the verified handoff non-amplification leg on the Lean export. With the archive linked, the
+# §6 verdict is decided BY the verified rule; without it, the Rust lattice decides (differential).
+lean-gate = ["dep:dregg-lean-ffi", "dregg-lean-ffi/lean-lib"]
 
 [lints]
 workspace = true
