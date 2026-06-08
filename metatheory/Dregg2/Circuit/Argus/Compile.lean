@@ -56,15 +56,25 @@ agreement the reused theorem proves. Imports are read-only; this file owns only 
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitTransferUnify
+import Dregg2.Circuit.Emit.EffectVmEmitMint
+import Dregg2.Circuit.Emit.EffectVmEmitBurn
 
 namespace Dregg2.Circuit.Argus
 
 open Dregg2.Exec
+-- The verified record-cell SUPPLY executors (and the single-cell credit they share) — the targets the
+-- `mint`/`burn` cornerstones (`interp_mintStmt_eq_recKMint` / `…_recKBurn`) refine the IR terms to.
+open Dregg2.Exec.TurnExecutorFull (recKMint recKBurn recCreditCell)
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer (transferVmDescriptor IsTransferRow)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState RowEncodes)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferUnify
-  (cellProj debitParams descriptor_agrees_with_executor_debit)
+  (cellProj nonceOf setBalance_nonceOf debitParams descriptor_agrees_with_executor_debit)
+-- The class-A mint/burn runnable descriptors + their per-cell full-state soundness (§M targets). Opened
+-- WITHOUT their `RowEncodes`/`CellState`/`cellProjA` (those collide with the transfer-keystone names
+-- already open above); those are named with their full path at use sites.
+open Dregg2.Circuit.Emit.EffectVmEmitMint (mintVmDescriptor mintDescriptor_full_sound)
+open Dregg2.Circuit.Emit.EffectVmEmitBurn (burnVmDescriptor burnDescriptor_full_sound IsBurnRow)
 
 /-! ## §1 — The placeholder descriptor for terms whose circuit is not (yet) emitted.
 
@@ -180,5 +190,278 @@ theorem compile_transferStmt_nontrivial (turn : Turn) :
   exact absurd this (by decide)
 
 #assert_axioms compile_transferStmt_nontrivial
+
+/-! ## §M — GENERALIZING THE WELD TEMPLATE TO THREE CLASS-A EFFECTS (mint, burn).
+
+The transfer weld (§3) validated the template for ONE effect. This section validates that it is
+MECHANICAL across class-A effects by replaying it for `mint` and `burn` — the two privileged-supply
+effects whose runnable descriptors (`mintVmDescriptor`/`burnVmDescriptor`) and per-cell full-state
+soundness (`mintDescriptor_full_sound`/`burnDescriptor_full_sound`) already exist and are audited
+(`EffectVmEmitMint`/`EffectVmEmitBurn`), and whose IR cornerstones (`interp_mintStmt_eq_recKMint` /
+`interp_burnStmt_eq_recKBurn`, `Stmt.lean §M`) already refine the terms to the verified record-cell
+supply executors `recKMint`/`recKBurn`.
+
+### A REAL INTERFACE FINDING — the structural `compile` cannot separate three same-shaped effects.
+
+`transferStmt`, `mintStmt`, and `burnStmt` are ALL `RecStmt.seq (.guard _) (.setCell _ _)`: a gate,
+then a `setCell` move (`Stmt.lean:119/191/198`). So the structural arm
+`.seq (.guard _) (.setCell _ _) => transferVmDescriptor` of `compile` (§2) ALREADY matches the mint and
+burn terms — `compile (mintStmt …)` and `compile (burnStmt …)` BOTH reduce to `transferVmDescriptor`
+(verified: both hold by `rfl`). A pure structural `RecStmt → EffectVmDescriptor` cannot map them to
+three distinct descriptors, because the three terms differ ONLY in their `guard` predicate and the
+`setCell` leaf — opaque closures a `match` cannot branch on (mint vs burn differ solely by `+amt`
+vs `+(-amt)` inside the leaf, indistinguishable for symbolic `amt`). This is faithful to the running
+prover, which does NOT dispatch on raw statement shape either: `generate_effect_vm_trace` switches on a
+per-effect SELECTOR (`sel.NOOP`/`selM.MINT`/`selB.BURN`, `columns.rs`). So the honest generalization
+keys the compiler on the EFFECT, not the term shape.
+
+`compileE : ArgusEffect → EffectVmDescriptor` is that effect-keyed compiler: it returns the audited
+runnable descriptor for each effect tag, so `compileE .mint`/`.burn`/`.transfer` reduce DEFINITIONALLY
+(`compile_mintStmt`/`compile_burnStmt`/`compileE_transfer`, by `rfl`) to the exact circuits the prover
+runs. The structural `compile`/`transfer_compile_sound` above are LEFT INTACT as the transfer
+beachhead; `compileE` is the per-effect-farm vehicle that scales to all class-A effects without the
+collision. -/
+
+/-- The class-A effect tags `compileE` dispatches on (the Lean image of the running prover's per-effect
+selector). `other` is every constructor with no runnable descriptor emitted yet. -/
+inductive ArgusEffect where
+  | transfer
+  | mint
+  | burn
+  | other
+
+/-- **`compileE`** — the EFFECT-keyed circuit interpretation (the honest generalization of `compile`
+past the transfer beachhead). Each tag maps to its audited runnable descriptor; `other` maps to the
+`skipDescriptor` placeholder. Unlike the structural `compile`, this separates the three same-shaped
+supply/transfer effects (which a `RecStmt`-structural match provably cannot — see §M header). -/
+def compileE : ArgusEffect → EffectVmDescriptor
+  | .transfer => transferVmDescriptor
+  | .mint     => mintVmDescriptor
+  | .burn     => burnVmDescriptor
+  | .other    => skipDescriptor
+
+/-- **`compile_mintStmt` — `compileE .mint` IS the audited runnable mint descriptor.** Definitional: the
+mint tag maps to `mintVmDescriptor`, the descriptor the Rust prover runs for the supply-mint effect (the
+`compileE` analog of `compile_transferStmt`). -/
+theorem compile_mintStmt : compileE .mint = mintVmDescriptor := rfl
+
+/-- **`compile_burnStmt` — `compileE .burn` IS the audited runnable burn descriptor.** Definitional. -/
+theorem compile_burnStmt : compileE .burn = burnVmDescriptor := rfl
+
+/-- `compileE .transfer` IS the audited runnable transfer descriptor — the §3 beachhead, re-exposed on
+the effect-keyed compiler (so all three class-A effects sit on the SAME `compileE` surface). -/
+theorem compileE_transfer : compileE .transfer = transferVmDescriptor := rfl
+
+#assert_axioms compile_mintStmt
+#assert_axioms compile_burnStmt
+#assert_axioms compileE_transfer
+
+/-! ### §M.1 — The EXECUTOR-side per-cell projections of `recKMint`/`recKBurn`.
+
+The transfer weld routed its executor side through `EffectVmEmitTransferUnify`'s
+`descriptor_agrees_with_executor_debit`, whose unification (`unify_debit`) projects `recKExec` onto one
+cell via `cellProj`. There is NO such pre-built unify lemma for the RECORD-CELL supply executors
+`recKMint`/`recKBurn` (the existing `EffectVmEmitMint/Burn.descriptor_agrees_with_executor` theorems
+unify against the per-ASSET ledger executors `recCMintAsset`/`recCBurnAsset` over `cellProjA`, a DIFFERENT
+executor + projection than the `recKMint`/`recKBurn` the IR cornerstone produces). So we supply the two
+missing projection facts here — the `recKMint`/`recKBurn` analogs of `proj_src_balLo`/`proj_nonce_frozen`
+— reusing the SAME `cellProj` the transfer weld uses (it reads `balOf`/`nonceOf` of the cell record,
+exactly the measure `recCreditCell`/`setBalance` move/freeze). This is the only genuine interface
+difference from transfer, adapted faithfully. -/
+
+/-- **`recKMint_proj_balLo`.** A committed record mint credits the affected cell's projected balance by
+exactly `amt` (`cellProj`'s `balLo` reads `balOf`, the measure `recCreditCell` moves). -/
+theorem recKMint_proj_balLo {k k' : RecordKernelState} {actor cell : CellId} {amt : ℤ}
+    (h : recKMint k actor cell amt = some k') :
+    (cellProj k' cell).balLo = (cellProj k cell).balLo + amt := by
+  unfold recKMint at h
+  by_cases hg : mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ amt ∧ cell ∈ k.accounts
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    show balOf (recCreditCell k.cell cell amt cell) = balOf (k.cell cell) + amt
+    unfold recCreditCell; rw [if_pos rfl, setBalance_balOf]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`recKMint_proj_nonce`.** A committed record mint FREEZES the affected cell's projected nonce
+(`recCreditCell` rewrites only the `balance` field; `setBalance_nonceOf` leaves the `nonce` field
+untouched). This is why mint has NO nonce-tick divergence — the descriptor freezes too. -/
+theorem recKMint_proj_nonce {k k' : RecordKernelState} {actor cell : CellId} {amt : ℤ}
+    (h : recKMint k actor cell amt = some k') :
+    (cellProj k' cell).nonce = (cellProj k cell).nonce := by
+  unfold recKMint at h
+  by_cases hg : mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ amt ∧ cell ∈ k.accounts
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    show nonceOf (recCreditCell k.cell cell amt cell) = nonceOf (k.cell cell)
+    unfold recCreditCell; rw [if_pos rfl, setBalance_nonceOf]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`recKBurn_proj_balLo`.** A committed record burn DEBITS the affected cell's projected balance by
+exactly `amt` (`recCreditCell … (-amt)`). -/
+theorem recKBurn_proj_balLo {k k' : RecordKernelState} {actor cell : CellId} {amt : ℤ}
+    (h : recKBurn k actor cell amt = some k') :
+    (cellProj k' cell).balLo = (cellProj k cell).balLo - amt := by
+  unfold recKBurn at h
+  by_cases hg : mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ amt
+      ∧ amt ≤ balOf (k.cell cell) ∧ cell ∈ k.accounts
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    show balOf (recCreditCell k.cell cell (-amt) cell) = balOf (k.cell cell) - amt
+    unfold recCreditCell; rw [if_pos rfl, setBalance_balOf]; ring
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`recKBurn_proj_nonce`.** A committed record burn FREEZES the affected cell's projected nonce
+(`setBalance` touches only `balance`). The executor-side input to burn's nonce-tick divergence (the
+descriptor TICKS, the executor FREEZES — carried explicitly in `burn_compile_sound`). -/
+theorem recKBurn_proj_nonce {k k' : RecordKernelState} {actor cell : CellId} {amt : ℤ}
+    (h : recKBurn k actor cell amt = some k') :
+    (cellProj k' cell).nonce = (cellProj k cell).nonce := by
+  unfold recKBurn at h
+  by_cases hg : mintAuthorizedB k.caps actor cell = true ∧ 0 ≤ amt
+      ∧ amt ≤ balOf (k.cell cell) ∧ cell ∈ k.accounts
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    show nonceOf (recCreditCell k.cell cell (-amt) cell) = nonceOf (k.cell cell)
+    unfold recCreditCell; rw [if_pos rfl, setBalance_nonceOf]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+#assert_axioms recKMint_proj_balLo
+#assert_axioms recKMint_proj_nonce
+#assert_axioms recKBurn_proj_balLo
+#assert_axioms recKBurn_proj_nonce
+
+/-! ### §M.2 — THE WELDS: a satisfying witness of `compileE .mint`/`.burn` agrees, per cell, with the
+post-state the IR term's executor interpretation produces.
+
+The SAME shape as `transfer_compile_sound`: route the circuit side through `compile_mintStmt`/
+`compile_burnStmt` + the audited `…Descriptor_full_sound`, and the executor side through the cornerstone
+`interp_mintStmt_eq_recKMint` / `interp_burnStmt_eq_recKBurn` + the §M.1 projections. The honest surface
+is PER-CELL (`cellProj` of the affected cell), exactly as transfer (the descriptors are single-row AIRs;
+the global supply total is the TURN-COMPOSITION layer, cited by the Emit modules' §8½ — NOT a per-cell
+gap). Mint MATCHES on the nonce (descriptor freezes, executor freezes — no divergence); burn carries the
+nonce-tick divergence as a final conjunct (descriptor ticks, executor freezes — `Burn` §7, like
+transfer). -/
+
+/-- **`mint_compile_sound` — the welded soundness (mint slice).**
+
+Suppose, for the Argus mint term `mintStmt actor cell amt`:
+  * the circuit `compileE .mint` (= `mintVmDescriptor`) is SATISFIED by `(env, true, true)` under the
+    abstract Poseidon carrier `hash`, and its `RowEncodes` decoding NAMES the post-state record `post`
+    over the affected cell's projection `cellProj k cell` (`henc`);
+  * the IR term's EXECUTOR interpretation COMMITS: `interp (mintStmt actor cell amt) k = some k'`.
+
+Then the circuit's pinned post-state `post` AGREES with the executor's post-cell projection
+`cellProj k' cell` on the conserved balance (credited by `amt`) AND the WHOLE frame (balHi, the 8
+fields, cap_root, reserved each frozen) AND the nonce — mint has NO divergence (both the descriptor and
+`recKMint` freeze the cell nonce, `Mint` §HONEST-BOUNDARY). So the circuit the prover runs for mint pins
+the per-cell state the IR term's executor produces. -/
+theorem mint_compile_sound
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
+    (henc : Dregg2.Circuit.Emit.EffectVmEmitMint.RowEncodes env (cellProj k cell) amt post)
+    (hsat : satisfiedVm hash (compileE .mint) env true true)
+    (hexec : interp (mintStmt actor cell amt) k = some k') :
+    post.balLo = (cellProj k' cell).balLo
+    ∧ post.balHi = (cellProj k' cell).balHi
+    ∧ (∀ i, post.fields i = (cellProj k' cell).fields i)
+    ∧ post.capRoot = (cellProj k' cell).capRoot
+    ∧ post.reserved = (cellProj k' cell).reserved
+    -- mint MATCHES on the nonce (no transfer-style divergence): both freeze the cell nonce.
+    ∧ post.nonce = (cellProj k' cell).nonce := by
+  -- circuit side: `compileE .mint` IS `mintVmDescriptor`, so the audited soundness forces `CellMintSpec`.
+  rw [compile_mintStmt] at hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := (mintDescriptor_full_sound hash env (cellProj k cell)
+    post amt henc hsat).1
+  -- executor side: the cornerstone turns the IR term's `interp` into the verified `recKMint`.
+  rw [interp_mintStmt_eq_recKMint] at hexec
+  have heLo := recKMint_proj_balLo hexec
+  have heN := recKMint_proj_nonce hexec
+  -- the frozen-frame clauses agree because BOTH `cellProj k cell` and `cellProj k' cell` project the
+  -- non-balance limbs to `0` (definitional `rfl`), so `hc_ : post.X = (cellProj k cell).X` chains to
+  -- `(cellProj k' cell).X` by `rfl`.
+  refine ⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl, ?_⟩
+  · rw [hcLo, heLo]                       -- balLo: pre + amt (circuit) = pre + amt (executor)
+  · rw [hcN, heN]                         -- nonce: post = pre.nonce (freeze) = (cellProj k' cell).nonce
+
+/-- **`burn_compile_sound` — the welded soundness (burn slice).**
+
+Suppose, for the Argus burn term `burnStmt actor cell amt`:
+  * the circuit `compileE .burn` (= `burnVmDescriptor`) is SATISFIED on a genuine burn row (`hrow`) by
+    `(env, true, true)` under `hash`, and its `RowEncodes` decoding NAMES `post` over `cellProj k cell`;
+  * the IR term's executor COMMITS: `interp (burnStmt actor cell amt) k = some k'`.
+
+Then `post` AGREES with the executor's post-cell `cellProj k' cell` on the conserved balance (DEBITED by
+`amt`) and the whole frame (balHi/8 fields/cap_root/reserved each frozen); and the ONE divergence — the
+descriptor TICKS the cell nonce while `recKBurn` FREEZES it (`Burn` §7, identical to transfer's §2) — is
+reported as the final conjunct. So the burn circuit the prover runs pins the per-cell state the IR term's
+executor produces, modulo the carried nonce-tick. -/
+theorem burn_compile_sound
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBurnRow env)
+    (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
+    (henc : Dregg2.Circuit.Emit.EffectVmEmitBurn.RowEncodes env (cellProj k cell) amt post)
+    (hsat : satisfiedVm hash (compileE .burn) env true true)
+    (hexec : interp (burnStmt actor cell amt) k = some k') :
+    ( post.balLo = (cellProj k' cell).balLo
+      ∧ post.balHi = (cellProj k' cell).balHi
+      ∧ (∀ i, post.fields i = (cellProj k' cell).fields i)
+      ∧ post.capRoot = (cellProj k' cell).capRoot
+      ∧ post.reserved = (cellProj k' cell).reserved )
+    -- … and the ONE divergence: descriptor TICKS the cell nonce, executor FREEZES it (Burn §7).
+    ∧ ( post.nonce = (cellProj k cell).nonce + 1
+        ∧ (cellProj k' cell).nonce = (cellProj k cell).nonce ) := by
+  -- circuit side: `compileE .burn` IS `burnVmDescriptor`; the audited soundness forces `CellBurnSpec`.
+  rw [compile_burnStmt] at hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ :=
+    (burnDescriptor_full_sound hash env hrow (cellProj k cell) post amt henc hsat).1
+  -- executor side: the cornerstone turns the IR term's `interp` into the verified `recKBurn`.
+  rw [interp_burnStmt_eq_recKBurn] at hexec
+  have heLo := recKBurn_proj_balLo hexec
+  have heN := recKBurn_proj_nonce hexec
+  -- frozen frame: both projections send the non-balance limbs to `0`, so each `hc_` chains by `rfl`.
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, ?_, ?_⟩
+  · rw [hcLo, heLo]                       -- balLo: pre − amt (circuit) = pre − amt (executor)
+  · rw [hcN]                              -- the descriptor TICKS the nonce (post = pre.nonce + 1)
+  · exact heN                             -- the executor FREEZES the nonce
+
+#assert_axioms mint_compile_sound
+#assert_axioms burn_compile_sound
+
+/-! ### §M.3 — NON-VACUITY: `compileE` does NOT collapse mint/burn to the empty placeholder.
+
+As with transfer (§4), the welds would be worthless if `compileE .mint`/`.burn` were the inert
+`skipDescriptor`. They are not: each is the full runnable descriptor (mint: 13+14+4+3 = 34 constraints,
+4 hash sites, 2 ranges; burn: + the selector gate = 35), none of which `skipDescriptor` has. So
+`mint_compile_sound`/`burn_compile_sound` are about REAL circuits. -/
+
+/-- The compiled mint/burn circuits are the NON-trivial runnable descriptors, not the empty placeholder
+(mint carries 34 constraints / 4 hash sites / 2 ranges; burn 35 / 4 / 2; `skipDescriptor` has 0 / 0 / 0).
+So the §M.2 welds are statements about genuine circuits, not the vacuous placeholder. -/
+theorem compileE_mint_burn_nontrivial :
+    (compileE .mint).constraints.length = 34
+    ∧ (compileE .mint).hashSites.length = 4
+    ∧ (compileE .burn).constraints.length = 35
+    ∧ (compileE .burn).hashSites.length = 4
+    ∧ (compileE .mint).constraints ≠ skipDescriptor.constraints
+    ∧ (compileE .burn).constraints ≠ skipDescriptor.constraints := by
+  refine ⟨by decide, by decide, by decide, by decide, ?_, ?_⟩
+  · intro h
+    have : (mintVmDescriptor.constraints).length = (skipDescriptor.constraints).length := by
+      rw [show mintVmDescriptor.constraints = skipDescriptor.constraints from h]
+    simp only [skipDescriptor, List.length_nil] at this
+    exact absurd this (by decide)
+  · intro h
+    have : (burnVmDescriptor.constraints).length = (skipDescriptor.constraints).length := by
+      rw [show burnVmDescriptor.constraints = skipDescriptor.constraints from h]
+    simp only [skipDescriptor, List.length_nil] at this
+    exact absurd this (by decide)
+
+#assert_axioms compileE_mint_burn_nontrivial
+
+/-- **The structural-collision finding, as a theorem (§M header).** The structural `compile` maps BOTH
+the mint and burn IR terms to `transferVmDescriptor` — it CANNOT separate the three same-shaped effects
+(`.seq (.guard _) (.setCell _ _)`). This is exactly why the effect-keyed `compileE` (not structural
+`compile`) is the faithful generalization. Pinned so the finding cannot silently regress. -/
+theorem compile_collapses_mint_burn_to_transfer (actor cell : CellId) (amt : ℤ) :
+    compile (mintStmt actor cell amt) = transferVmDescriptor
+    ∧ compile (burnStmt actor cell amt) = transferVmDescriptor :=
+  ⟨rfl, rfl⟩
+
+#assert_axioms compile_collapses_mint_burn_to_transfer
 
 end Dregg2.Circuit.Argus
