@@ -24,15 +24,20 @@ fn introducer() -> (SigningKey, FederationId) {
 }
 
 // ===========================================================================
-// DEEP ATTACK 1 — FINDING: nonce replay is NOT prevented by validate_handoff.
+// DEEP ATTACK 1 — DEFENDED (CAPTP-DEEP-1 CLOSED): nonce replay IS now prevented.
 //
-// The cert carries a `nonce` and the error taxonomy has `ReplayDetected`, but
-// `validate_handoff` consults NO nonce registry. With an unlimited-use swiss
-// entry (max_uses = None), the SAME presentation validates again and again.
-// The "swiss numbers are pre-registered, preventing replay after revocation"
-// doc claim only bounds replay via swiss max_uses / revoke — the cert nonce
-// itself is decorative at this layer. We present the IDENTICAL presentation
-// twice and assert BOTH succeed → replayable.
+// The cert carries a 32-byte `nonce` and the taxonomy has `ReplayDetected`.
+// `validate_handoff` now consults the target `SwissTable`'s seen-nonce registry
+// and consumes each cert nonce at most once — INDEPENDENTLY of the swiss entry's
+// `max_uses`. So even with an unlimited-use ("durable handoff") swiss entry, the
+// SAME presentation (same nonce) is accepted exactly ONCE; every replay is
+// rejected `ReplayDetected`. (Was: BROKEN — the nonce was decorative; only swiss
+// max_uses / revoke bounded replay, so a captured cert against an unlimited swiss
+// replayed forever.)
+//
+// This was the CAPTP-DEEP-1 FINDING (asserting 3 accepts on one nonce). It is now
+// FLIPPED to assert the DEFENDED outcome: the first present succeeds, the next two
+// replays fail with ReplayDetected, and the swiss entry is NOT over-consumed.
 // ===========================================================================
 
 #[test]
@@ -44,7 +49,8 @@ fn finding_handoff_nonce_replay_is_not_prevented() {
     let target_fed = FederationId([0xDD; 32]);
 
     let mut table = SwissTable::new();
-    // Unlimited uses (max_uses = None) — the common "durable handoff" case.
+    // Unlimited uses (max_uses = None) — the common "durable handoff" case, the
+    // worst case for the OLD behavior (nothing bounded replay).
     let swiss = table.export(target_cell, AuthRequired::Signature, 100, None);
 
     let cert = HandoffCertificate::create(
@@ -53,21 +59,50 @@ fn finding_handoff_nonce_replay_is_not_prevented() {
     );
     let pres = HandoffPresentation::create(cert, &recip_sk);
 
-    // First presentation: accepted.
+    // First presentation: accepted (and consumes the cert nonce).
     let r1 = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 150);
     assert!(r1.is_ok(), "first presentation should validate");
 
-    // EXACT SAME presentation (same nonce) replayed: still accepted.
+    // EXACT SAME presentation (same nonce) replayed: now REJECTED as a replay.
     let r2 = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 151);
     let r3 = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 152);
 
-    // FINDING: the identical cert/nonce validated 3x. ReplayDetected never fires.
-    assert!(
-        r2.is_ok() && r3.is_ok(),
-        "if these now fail, a nonce registry was wired into validate_handoff (fix landed)"
+    // DEFENDED: the identical cert/nonce is rejected on every replay; the nonce
+    // is consume-once regardless of the unlimited swiss budget.
+    assert_eq!(
+        r2.err(),
+        Some(HandoffError::ReplayDetected),
+        "CAPTP-DEEP-1 regressed: a replayed handoff nonce was accepted again"
     );
+    assert_eq!(
+        r3.err(),
+        Some(HandoffError::ReplayDetected),
+        "CAPTP-DEEP-1 regressed: a replayed handoff nonce was accepted again"
+    );
+
+    // And the replays did NOT over-consume the swiss entry: exactly one use was
+    // spent (by the single accepted presentation), the replays burned nothing.
+    assert_eq!(
+        table.peek(&swiss).expect("swiss entry survives").use_count,
+        1,
+        "a rejected replay must not advance the swiss use budget"
+    );
+
+    // A DISTINCT certificate (fresh nonce) for the same swiss still works — the
+    // defense rejects replays, not legitimate re-handoffs.
+    let cert2 = HandoffCertificate::create(
+        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
+        AuthRequired::Signature, None, None, None, swiss,
+    );
+    let pres2 = HandoffPresentation::create(cert2, &recip_sk);
+    let r4 = validate_handoff(&pres2, &intro_pk, &mut table, &[intro_fed], 153);
+    assert!(
+        r4.is_ok(),
+        "a fresh-nonce certificate for the same swiss must still validate"
+    );
+
     eprintln!(
-        "[CAPTP DEEP 1 / FINDING] handoff nonce replay NOT prevented (3 accepts on one nonce); only swiss max_uses bounds replay: BROKEN (DoS/over-grant if swiss is unlimited-use)"
+        "[CAPTP DEEP 1 / DEFENDED] handoff nonce replay PREVENTED (replay -> ReplayDetected; nonce consume-once independent of swiss max_uses): CAPTP-DEEP-1 closed"
     );
 }
 

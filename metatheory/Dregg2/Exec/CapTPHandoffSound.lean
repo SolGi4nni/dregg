@@ -497,6 +497,105 @@ example :
 
 end NonVacuity
 
+/-! ## §6b — Replay tooth (CAPTP-DEEP-1): a cert nonce is consume-once, INDEPENDENTLY of the
+swiss `max_uses`.
+
+The §3 gate `validateHandoff2` was BLIND to replay: it has no notion of an already-consumed
+certificate, so the same validated presentation re-validates forever (the Rust finding
+`finding_handoff_nonce_replay_is_not_prevented` — a durable/unlimited swiss entry let one captured
+certificate replay without bound; the `nonce` field and the `ReplayDetected` variant were
+decorative). The fix in `captp/src/{sturdy,handoff}.rs` adds a target-side seen-nonce registry
+(`SwissTable::handoff_nonce_seen` / `register_handoff_nonce`) and rejects a presentation whose
+nonce was already consumed (`HandoffError::ReplayDetected`), consuming the nonce on the success
+path. This section models that tooth and proves it CATCHES the replay the old gate missed.
+
+`SeenNonces` is the target federation's consumed-nonce set (the `HashSet<[u8;32]>` in `SwissTable`),
+modeled as a `List Nat` membership. `validateHandoff2R` is the replay-aware gate: all six §3 checks
+AND the nonce not-yet-seen. `consumeNonce` mirrors `register_handoff_nonce` on the success path. -/
+
+/-- The target's consumed handoff-nonce set (mirror of `SwissTable.seen_handoff_nonces`). -/
+abbrev SeenNonces := List Nat
+
+/-- `seenNonce seen c` — has this certificate's nonce already been consumed?
+Mirrors `SwissTable::handoff_nonce_seen(&cert.nonce)`. -/
+def seenNonce (seen : SeenNonces) (c : HandoffCert2) : Bool := seen.contains c.nonce
+
+/-- `consumeNonce seen c` — register the cert's nonce as consumed (success path).
+Mirrors `SwissTable::register_handoff_nonce(cert.nonce)`. -/
+def consumeNonce (seen : SeenNonces) (c : HandoffCert2) : SeenNonces := c.nonce :: seen
+
+/-- **`validateHandoff2R K c env seen`** — the REPLAY-AWARE 6+1-check gate. It runs the full §3
+gate AND requires the nonce to be unconsumed. EXACT mirror of the hardened `validate_handoff`
+(checks 1–6 then the §6c replay check `if swiss_table.handoff_nonce_seen(&cert.nonce) { Err }`). -/
+def validateHandoff2R (K : SignatureKernel PubKey Msg Sig) (c : HandoffCert2)
+    (env : HandoffEnv) (seen : SeenNonces) : Bool :=
+  validateHandoff2 K c env && !seenNonce seen c
+
+/-- **`validateHandoff2R_implies_base`** — the replay-aware gate refines §3: anything it accepts,
+the base gate also accepts (the replay check is an ADDED rejection, never a new acceptance). -/
+theorem validateHandoff2R_implies_base {K : SignatureKernel PubKey Msg Sig}
+    {c : HandoffCert2} {env : HandoffEnv} {seen : SeenNonces}
+    (h : validateHandoff2R K c env seen = true) : validateHandoff2 K c env = true := by
+  simp only [validateHandoff2R, Bool.and_eq_true] at h; exact h.1
+
+/-- **`validateHandoff2R_fresh_nonce`** — a validated replay-aware presentation had an UNCONSUMED
+nonce (the §6c precondition). -/
+theorem validateHandoff2R_fresh_nonce {K : SignatureKernel PubKey Msg Sig}
+    {c : HandoffCert2} {env : HandoffEnv} {seen : SeenNonces}
+    (h : validateHandoff2R K c env seen = true) : seenNonce seen c = false := by
+  simp only [validateHandoff2R, Bool.and_eq_true, Bool.not_eq_true'] at h; exact h.2
+
+/-- **`replay_rejected` — THE TOOTH (CAPTP-DEEP-1).** Once a certificate's nonce has been
+consumed (it is in `seen`), the replay-aware gate REJECTS any presentation of that certificate —
+regardless of how perfect its signatures, trust, expiry, target binding, non-amplification, OR
+how unlimited the swiss `max_uses`. This is precisely the property the OLD `validateHandoff2`
+could not express; the replayed presentation is now `false`. -/
+theorem replay_rejected {K : SignatureKernel PubKey Msg Sig}
+    (c : HandoffCert2) (env : HandoffEnv) (seen : SeenNonces)
+    (hseen : seenNonce seen c = true) :
+    validateHandoff2R K c env seen = false := by
+  simp only [validateHandoff2R, hseen, Bool.not_true, Bool.and_false]
+
+/-- **`consume_then_replay_rejected` — the consume-once end-to-end law.** A FIRST presentation
+that validates (`validateHandoff2R … seen = true`) consumes the nonce (`consumeNonce`); the
+IMMEDIATE replay against the updated seen-set is then REJECTED. This is the Lean analogue of the
+red-team `finding_handoff_nonce_replay_is_not_prevented` DEFENDED assertion: present-once-succeeds,
+present-again-fails. -/
+theorem consume_then_replay_rejected {K : SignatureKernel PubKey Msg Sig}
+    (c : HandoffCert2) (env : HandoffEnv) (seen : SeenNonces)
+    (hfirst : validateHandoff2R K c env seen = true) :
+    validateHandoff2R K c env (consumeNonce seen c) = false := by
+  -- After consuming, the nonce is seen, so `replay_rejected` fires.
+  refine replay_rejected c env (consumeNonce seen c) ?_
+  simp only [seenNonce, consumeNonce, List.contains_cons, beq_self_eq_true, Bool.true_or]
+
+/-- **`fresh_nonce_still_validates` — the defense is precise (not a blanket deny).** A DISTINCT
+certificate `c'` whose nonce is NOT in `seen` still validates whenever the base gate accepts it —
+the replay tooth rejects only re-presented (already-consumed) nonces, never a legitimate fresh
+handoff. (Lean analogue of the red-team test's "a fresh-nonce certificate for the same swiss must
+still validate".) -/
+theorem fresh_nonce_still_validates {K : SignatureKernel PubKey Msg Sig}
+    (c' : HandoffCert2) (env : HandoffEnv) (seen : SeenNonces)
+    (hbase : validateHandoff2 K c' env = true) (hfresh : seenNonce seen c' = false) :
+    validateHandoff2R K c' env seen = true := by
+  simp only [validateHandoff2R, hbase, hfresh, Bool.not_false, Bool.and_true]
+
+/-! ### §6b-nv — Non-vacuity of the replay tooth on the reference carrier. -/
+
+section ReplayNonVacuity
+
+open Dregg2.Crypto.PortalFloor.Reference (instSignatureKernel)
+
+/-- First presentation of `goodCert` against an EMPTY seen-set validates (replay-aware). -/
+example : validateHandoff2R instSignatureKernel goodCert goodEnv [] = true := by native_decide
+
+/-- The IMMEDIATE replay (after consuming `goodCert`'s nonce) is REJECTED — the tooth fires. -/
+example :
+    validateHandoff2R instSignatureKernel goodCert goodEnv (consumeNonce [] goodCert) = false := by
+  native_decide
+
+end ReplayNonVacuity
+
 /-! ## §7 — Axiom-hygiene tripwires.
 
 Every PROVED theorem depends ONLY on the three standard kernel axioms (whitelist
@@ -512,5 +611,10 @@ NOT in the asserted set; the soundness theorems below are all `decide`/term-mode
 #assert_axioms handoff_unforgeable
 #assert_axioms adversary_cannot_forge_at_n_gt_1
 #assert_axioms forged_handoff_installs_nothing
+#assert_axioms validateHandoff2R_implies_base
+#assert_axioms validateHandoff2R_fresh_nonce
+#assert_axioms replay_rejected
+#assert_axioms consume_then_replay_rejected
+#assert_axioms fresh_nonce_still_validates
 
 end Dregg2.Exec.CapTPHandoffSound

@@ -509,6 +509,19 @@ pub fn validate_handoff(
         return Err(HandoffError::Amplification);
     }
 
+    // 6c. REPLAY (CAPTP-DEEP-1): the certificate's 32-byte `nonce` may be
+    //     consumed at most once at this target, INDEPENDENTLY of the swiss
+    //     entry's `max_uses`. Without this, a durable (unlimited-use) swiss entry
+    //     let one captured certificate be re-presented forever (the `nonce` field
+    //     and the `ReplayDetected` variant were decorative). We consult the
+    //     target's seen-nonce registry BEFORE consuming a use, so a replay neither
+    //     advances the swiss budget nor mints a second routing token. The nonce is
+    //     registered on the success path below (after enliven), so a presentation
+    //     that is rejected for a LATER reason cannot poison a still-unused nonce.
+    if swiss_table.handoff_nonce_seen(&cert.nonce) {
+        return Err(HandoffError::ReplayDetected);
+    }
+
     // 7. SUCCESS PATH — only now consume a use (F-2). Every rejecting check above
     //    ran against the read-only `check`; the presentation is fully validated,
     //    so enliven (bumping `use_count`) is correct here. Because all rejecting
@@ -524,6 +537,13 @@ pub fn validate_handoff(
             crate::sturdy::EnlivenError::Expired => HandoffError::Expired,
             crate::sturdy::EnlivenError::ExhaustedUses => HandoffError::MaxUsesExhausted,
         })?;
+
+    // 7b. CONSUME the nonce: this accepted presentation has now used the
+    //     certificate. Any subsequent presentation of the same nonce is a replay
+    //     and is rejected at §6c above. `register_handoff_nonce` returns false if
+    //     it was somehow already present (it cannot be here — §6c just checked),
+    //     so we ignore the bool; the insert is idempotent and fail-closed.
+    let _ = swiss_table.register_handoff_nonce(cert.nonce);
 
     // Generate a routing token for the recipient
     let mut routing_token = [0u8; 32];
@@ -714,13 +734,29 @@ mod tests {
 
         let known = vec![intro_fed];
 
-        // First presentation succeeds
-        let presentation1 = HandoffPresentation::create(cert.clone(), &recip_sk);
+        // First presentation succeeds.
+        let presentation1 = HandoffPresentation::create(cert, &recip_sk);
         let result = validate_handoff(&presentation1, &intro_pk, &mut swiss_table, &known, 150);
         assert!(result.is_ok());
 
-        // Second presentation fails (swiss exhausted)
-        let presentation2 = HandoffPresentation::create(cert, &recip_sk);
+        // Second presentation with a DISTINCT certificate (fresh nonce, so it is
+        // NOT caught by replay-detection) against the SAME one-shot swiss entry:
+        // it fails because the swiss `max_uses` budget is exhausted. (Replaying the
+        // identical cert would instead be caught earlier as `ReplayDetected`; this
+        // test isolates the swiss-exhaustion path with a fresh nonce.)
+        let cert2 = HandoffCertificate::create(
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            AuthRequired::Signature,
+            None,
+            None,
+            Some(1),
+            swiss,
+        );
+        let presentation2 = HandoffPresentation::create(cert2, &recip_sk);
         let result = validate_handoff(&presentation2, &intro_pk, &mut swiss_table, &known, 151);
         assert_eq!(result.unwrap_err(), HandoffError::MaxUsesExhausted);
     }

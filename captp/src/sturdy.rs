@@ -95,6 +95,16 @@ pub struct SwissEntry {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SwissTable {
     entries: HashMap<[u8; 32], SwissEntry>,
+    /// Handoff-certificate nonces this target has already consumed. Each
+    /// `HandoffCertificate` carries a 32-byte random `nonce`; a presentation is
+    /// accepted at most once per nonce. The first ACCEPTED presentation of a
+    /// nonce registers it here; any later presentation of the SAME nonce is a
+    /// replay and is rejected (`HandoffError::ReplayDetected`). This bounds
+    /// replay by the *certificate*, independently of the swiss entry's
+    /// `max_uses` — so a durable (unlimited-use) swiss entry is no longer
+    /// replayable by re-presenting one captured certificate (CAPTP-DEEP-1).
+    #[serde(default)]
+    seen_handoff_nonces: std::collections::HashSet<[u8; 32]>,
 }
 
 impl SwissTable {
@@ -102,7 +112,24 @@ impl SwissTable {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            seen_handoff_nonces: std::collections::HashSet::new(),
         }
+    }
+
+    /// Has this handoff-certificate nonce already been consumed by an accepted
+    /// presentation? (Read-only; does not register.)
+    pub fn handoff_nonce_seen(&self, nonce: &[u8; 32]) -> bool {
+        self.seen_handoff_nonces.contains(nonce)
+    }
+
+    /// Register a handoff-certificate nonce as consumed, returning `true` if it
+    /// was newly registered and `false` if it had already been seen (a replay).
+    ///
+    /// Fail-closed semantics for the caller: a `false` return MUST be treated as
+    /// a rejection. This is the consume-once tooth that makes the certificate
+    /// `nonce` load-bearing rather than decorative (CAPTP-DEEP-1).
+    pub fn register_handoff_nonce(&mut self, nonce: [u8; 32]) -> bool {
+        self.seen_handoff_nonces.insert(nonce)
     }
 
     /// Export a cell as a sturdy reference, generating a new swiss number.
