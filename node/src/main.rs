@@ -163,6 +163,13 @@ enum Command {
         /// (locked down to localhost + extensions). Not needed when the site
         /// and node are served same-origin behind one reverse proxy (see
         /// deploy/aws/caddy/Caddyfile).
+        ///
+        /// F-1 (rate-limit proxy bypass): when the node runs behind a reverse
+        /// proxy, set `DREGG_TRUSTED_PROXIES` (comma-separated proxy IPs) so the
+        /// per-client rate limiter keys on the real `X-Forwarded-For` client IP
+        /// instead of collapsing every request into one global bucket. The
+        /// header is honored ONLY from these trusted peers; a directly-exposed
+        /// node should leave it unset (default) so XFF is never believed.
         #[arg(long = "cors-origin", value_delimiter = ',')]
         cors_origins: Vec<String>,
     },

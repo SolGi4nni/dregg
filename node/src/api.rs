@@ -68,8 +68,17 @@ pub struct StatusResponse {
     /// Whether a blocklace consensus handle is attached (consensus task is
     /// running). One of the inputs to `healthy`.
     pub consensus_live: bool,
-    pub revocation_count: u64,
-    pub note_count: u64,
+    /// F-8: aggregate private-activity counters (count of revoked credentials /
+    /// shielded notes). These leak the *volume* of private activity to any
+    /// unauthenticated scraper, so they are OMITTED from the public `/status`
+    /// response by default (`serde` skips `None`). An operator who wants them on
+    /// the wire opts in explicitly via `DREGG_STATUS_EXPOSE_COUNTS=1` (e.g. for a
+    /// trusted internal dashboard behind auth). Default: `None` → field absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revocation_count: Option<u64>,
+    /// F-8: see `revocation_count`. Omitted by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_count: Option<u64>,
     pub federation_mode: String,
     pub public_key: String,
     /// THE SWAP — honest verified-execution surface. The authoritative state
@@ -1101,6 +1110,100 @@ pub struct EvaluateProposalResponse {
 // Rate Limiting (P1 Fix 4)
 // =============================================================================
 
+/// Trusted reverse-proxy front-ends (F-1).
+///
+/// When the node sits behind a reverse proxy (the devnet's nginx/Caddy), every
+/// request arrives from the proxy's socket IP, so a per-socket-IP rate limiter
+/// collapses into a single global bucket (trivial DoS of honest clients) and
+/// gives a NATed/proxied/IP-rotating attacker no per-client cost. The proxy
+/// instead conveys the real client address in `X-Forwarded-For`.
+///
+/// This set lists the socket IPs we trust to have set `X-Forwarded-For`
+/// truthfully. Only when the *direct peer* is in this set do we believe the
+/// header — otherwise an unproxied attacker could spoof an arbitrary client IP
+/// (and thus a fresh, unlimited bucket) by sending the header themselves.
+///
+/// Populated from `DREGG_TRUSTED_PROXIES` (comma-separated IPs) at router
+/// construction. Empty = no proxy trusted = key purely on the socket IP (the
+/// safe default for a directly-exposed node).
+#[derive(Clone, Default)]
+pub struct TrustedProxies {
+    set: Arc<HashSet<IpAddr>>,
+}
+
+impl TrustedProxies {
+    /// Build from an iterator of textual IPs (invalid entries are skipped).
+    pub fn from_strings<I: IntoIterator<Item = String>>(iter: I) -> Self {
+        let set: HashSet<IpAddr> = iter
+            .into_iter()
+            .filter_map(|s| s.trim().parse::<IpAddr>().ok())
+            .collect();
+        Self { set: Arc::new(set) }
+    }
+
+    /// Build from the `DREGG_TRUSTED_PROXIES` env var (comma-separated).
+    pub fn from_env() -> Self {
+        match std::env::var("DREGG_TRUSTED_PROXIES") {
+            Ok(v) if !v.trim().is_empty() => {
+                Self::from_strings(v.split(',').map(|s| s.to_string()))
+            }
+            _ => Self::default(),
+        }
+    }
+
+    fn contains(&self, ip: &IpAddr) -> bool {
+        self.set.contains(ip)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.set.is_empty()
+    }
+}
+
+/// Resolve the rate-limiting key (real client IP) for a request (F-1).
+///
+/// * If the direct peer (`socket_ip`) is NOT a trusted proxy, we use the socket
+///   IP verbatim — a direct attacker cannot grant itself a different bucket by
+///   sending `X-Forwarded-For`, because we ignore the header from untrusted
+///   peers.
+/// * If the direct peer IS a trusted proxy, we walk `X-Forwarded-For` from the
+///   right (proxy-appended, least-spoofable end) and return the FIRST address
+///   that is not itself a trusted proxy — i.e. the real external client. This
+///   defeats a client that pre-seeds the header with spoofed left-hand entries.
+///
+/// Returns `None` only when the header is malformed/empty behind a trusted
+/// proxy, in which case the caller falls back to the socket IP (the proxy's),
+/// degrading to the conservative global-bucket behavior rather than fail-open.
+pub fn resolve_client_ip(
+    socket_ip: IpAddr,
+    forwarded_for: Option<&str>,
+    trusted: &TrustedProxies,
+) -> IpAddr {
+    // Untrusted direct peer, or no proxies configured: never believe XFF.
+    if trusted.is_empty() || !trusted.contains(&socket_ip) {
+        return socket_ip;
+    }
+
+    // The peer is a trusted proxy. X-Forwarded-For is "client, proxy1, proxy2, …"
+    // where each hop APPENDS the address it received from. Walking from the
+    // right, skip addresses that are themselves trusted proxies; the first
+    // non-trusted address is the genuine external client. A client that spoofs
+    // leading entries cannot move this rightmost-untrusted boundary.
+    if let Some(xff) = forwarded_for {
+        for hop in xff.split(',').rev() {
+            if let Ok(ip) = hop.trim().parse::<IpAddr>() {
+                if !trusted.contains(&ip) {
+                    return ip;
+                }
+            }
+        }
+    }
+
+    // Trusted proxy but no usable forwarded client: fall back to the proxy IP
+    // (conservative shared bucket) rather than fail-open with a fresh bucket.
+    socket_ip
+}
+
 /// Simple in-memory rate limiter: max attempts per window.
 #[derive(Clone)]
 struct RateLimiter {
@@ -1108,6 +1211,8 @@ struct RateLimiter {
     state: Arc<Mutex<HashMap<IpAddr, (u32, Instant)>>>,
     max_attempts: u32,
     window_secs: u64,
+    /// Trusted reverse-proxy front-ends whose `X-Forwarded-For` we honor (F-1).
+    trusted_proxies: TrustedProxies,
 }
 
 /// Default maximum turns per minute per connection (configurable).
@@ -1115,10 +1220,15 @@ pub const DEFAULT_TURN_RATE_LIMIT: u32 = 60;
 
 impl RateLimiter {
     fn new(max_attempts: u32, window_secs: u64) -> Self {
+        Self::with_proxies(max_attempts, window_secs, TrustedProxies::from_env())
+    }
+
+    fn with_proxies(max_attempts: u32, window_secs: u64, trusted_proxies: TrustedProxies) -> Self {
         let limiter = Self {
             state: Arc::new(Mutex::new(HashMap::new())),
             max_attempts,
             window_secs,
+            trusted_proxies,
         };
 
         // Spawn a background task that prunes stale entries every 60 seconds
@@ -1153,6 +1263,24 @@ impl RateLimiter {
 
         entry.0 += 1;
         entry.0 <= self.max_attempts
+    }
+
+    /// Resolve the per-client rate-limiting key for an incoming request, honoring
+    /// `X-Forwarded-For` ONLY when the direct peer is a configured trusted proxy
+    /// (F-1). This is the entry point every rate-limited handler should use so
+    /// that, behind the devnet's reverse proxy, the limiter keys on the real
+    /// external client instead of degenerating into one global bucket.
+    fn client_ip(&self, socket_ip: IpAddr, headers: &axum::http::HeaderMap) -> IpAddr {
+        let xff = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok());
+        resolve_client_ip(socket_ip, xff, &self.trusted_proxies)
+    }
+
+    /// Convenience: resolve the client IP and apply the limiter in one call.
+    async fn check_request(&self, socket_ip: IpAddr, headers: &axum::http::HeaderMap) -> bool {
+        let key = self.client_ip(socket_ip, headers);
+        self.check(key).await
     }
 }
 
@@ -1436,8 +1564,8 @@ pub fn router_with_cors(
             "/cipherclerk/unlock",
             post({
                 let limiter = passphrase_limiter.clone();
-                move |connect_info, state, body| {
-                    post_cclerk_unlock(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_cclerk_unlock(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1445,8 +1573,8 @@ pub fn router_with_cors(
             "/cipherclerk/set-passphrase",
             post({
                 let limiter = passphrase_limiter.clone();
-                move |connect_info, state, body| {
-                    post_set_passphrase(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_set_passphrase(connect_info, headers, state, body, limiter)
                 }
             }),
         );
@@ -1486,8 +1614,8 @@ pub fn router_with_cors(
             "/turn/submit",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1502,8 +1630,8 @@ pub fn router_with_cors(
             "/turns/submit-encrypted",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_encrypted_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_encrypted_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1511,8 +1639,8 @@ pub fn router_with_cors(
             "/turns/submit",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_signed_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_signed_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1560,8 +1688,8 @@ pub fn router_with_cors(
             "/api/turns/submit",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1570,8 +1698,8 @@ pub fn router_with_cors(
             "/api/turns/submit-signed",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_signed_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_signed_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1579,8 +1707,8 @@ pub fn router_with_cors(
             "/api/turns/submit-encrypted",
             post({
                 let limiter = turn_limiter.clone();
-                move |connect_info, state, body| {
-                    post_submit_encrypted_turn(connect_info, state, body, limiter)
+                move |connect_info, headers, state, body| {
+                    post_submit_encrypted_turn(connect_info, headers, state, body, limiter)
                 }
             }),
         )
@@ -1618,6 +1746,15 @@ pub fn router_with_cors(
 /// (at least one real signed block produced). We surface `dag_height`
 /// (real blocklace tip) alongside `latest_height` (attested-root / turn height)
 /// so the distinction is explicit on the wire.
+/// F-8: whether the public `/status` is allowed to disclose the aggregate
+/// private-activity counters (`note_count` / `revocation_count`). Off unless the
+/// operator opts in with `DREGG_STATUS_EXPOSE_COUNTS=1`.
+fn status_exposes_private_counts() -> bool {
+    std::env::var("DREGG_STATUS_EXPOSE_COUNTS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // Read the real blocklace DAG state first (separate lock).
     let blocklace = state.blocklace().await;
@@ -1638,8 +1775,22 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
         .flatten()
         .map(|r| r.height)
         .unwrap_or(0);
-    let revocation_count = s.store.revocation_count().unwrap_or(0);
-    let note_count = s.store.note_count().unwrap_or(0);
+    // F-8: only surface the aggregate private-activity counters when an operator
+    // has explicitly opted in (`DREGG_STATUS_EXPOSE_COUNTS=1`). Otherwise the
+    // public, unauthenticated `/status` MUST NOT disclose how many credentials
+    // have been revoked or how many shielded notes exist — those are a private-
+    // activity-volume oracle. Default = omitted.
+    let expose_counts = status_exposes_private_counts();
+    let revocation_count = if expose_counts {
+        Some(s.store.revocation_count().unwrap_or(0))
+    } else {
+        None
+    };
+    let note_count = if expose_counts {
+        Some(s.store.note_count().unwrap_or(0))
+    } else {
+        None
+    };
     let peer_count = s.peers.len();
 
     let federation_mode = if s.solo_consensus.as_ref().is_some_and(|s| s.is_solo) {
@@ -1656,8 +1807,11 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     let lean_producer = s.lean_producer_enabled;
     let full_turn_proving = s.full_turn_proving_enabled;
     let state_producer = if lean_producer { "lean" } else { "rust" }.to_string();
+    // The DEFAULT-ON producer INSTALLS verified state only for the swap-safe (root-agreeing) set;
+    // report that, not the wider "merely mappable" surface, so the status is honest about what the
+    // verified executor actually commits.
     let producer_covered_effects =
-        dregg_turn::lean_shadow::producer_covered_effects().len();
+        dregg_turn::lean_shadow::producer_root_agreeing_effects().len();
 
     Json(StatusResponse {
         healthy,
@@ -1706,14 +1860,18 @@ async fn get_producer_status(State(state): State<NodeState>) -> Json<ProducerSta
 
     let summary = if lean_producer_enabled {
         format!(
-            "Verified Lean executor is the authoritative state producer for turns touching only \
-             the {} mappable effect kinds; turns touching any of the {} uncovered kinds fall back \
-             to the Rust producer for that turn (Rust runs as a logged differential cross-check). \
-             Of the mappable kinds, {} are SWAP-SAFE (Lean-produced root provably == Rust) and {} \
-             are characterized root-GAPS (producer runs + installs verified state, divergence \
-             logged). Full-turn STARK proving: {}.",
-            covered.len(),
+            "THE SWAP (default on): the VERIFIED Lean executor is the authoritative state producer \
+             and INSTALLS its post-state for turns touching only the {} SWAP-SAFE (root-agreeing) \
+             effect kinds, where the Lean-produced root provably == Rust. The legacy Rust executor \
+             runs as a logged differential cross-check. A turn touching any of the {} characterized \
+             root-GAP kinds (root provably diverges) or any of the {} unmappable kinds falls back \
+             to the Rust producer FOR THAT TURN with a logged reason — never a silent commit of \
+             divergent state. Of the {} mappable kinds, {} are swap-safe and {} are root-gaps. \
+             Opt out with DREGG_LEAN_PRODUCER=0. Full-turn STARK proving: {}.",
+            root_agreeing.len(),
+            root_gaps.len(),
             uncovered.len(),
+            covered.len(),
             root_agreeing.len(),
             root_gaps.len(),
             if full_turn_proving { "ON" } else { "off" }
@@ -1721,9 +1879,9 @@ async fn get_producer_status(State(state): State<NodeState>) -> Json<ProducerSta
     } else {
         format!(
             "Legacy Rust executor is the authoritative state producer (verified Lean producer \
-             OFF — set DREGG_LEAN_PRODUCER=1 to enable it for the {} covered effect kinds). \
-             Full-turn STARK proving: {}.",
-            covered.len(),
+             OFF via DREGG_LEAN_PRODUCER=0 — unset it to re-enable the default SWAP for the {} \
+             swap-safe effect kinds). Full-turn STARK proving: {}.",
+            root_agreeing.len(),
             if full_turn_proving { "ON" } else { "off" }
         )
     };
@@ -2158,12 +2316,14 @@ fn submit_turn_bad_request(err: String) -> Result<Json<SubmitTurnResponse>, Stat
 #[tracing::instrument(skip_all, fields(agent = %req.agent))]
 async fn post_submit_turn(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     Json(req): Json<SubmitTurnRequest>,
     limiter: RateLimiter,
 ) -> Result<Json<SubmitTurnResponse>, StatusCode> {
-    // Per-connection rate limit: max DEFAULT_TURN_RATE_LIMIT turns per minute.
-    if !limiter.check(addr.ip()).await {
+    // Per-client rate limit (F-1): keys on the real client IP, consulting
+    // X-Forwarded-For only when the direct peer is a configured trusted proxy.
+    if !limiter.check_request(addr.ip(), &headers).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -2447,11 +2607,13 @@ async fn post_submit_turn(
 /// the node to execute, gossip, and order them without re-signing as the node.
 async fn post_submit_signed_turn(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     body: axum::body::Bytes,
     limiter: RateLimiter,
 ) -> Result<Json<SubmitSignedTurnResponse>, StatusCode> {
-    if !limiter.check(addr.ip()).await {
+    // F-1: per-real-client rate limit (XFF-aware behind a trusted proxy).
+    if !limiter.check_request(addr.ip(), &headers).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -2866,13 +3028,14 @@ async fn get_turn_encryption_key(
 ///   metadata bit disclosed; it does not leak inner-turn content.
 async fn post_submit_encrypted_turn(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     body: axum::body::Bytes,
     limiter: RateLimiter,
 ) -> Result<Json<SubmitEncryptedTurnResponse>, StatusCode> {
     // Reuse the cleartext-turn rate limiter — encrypted turns shouldn't
-    // get a privacy-flavored quota bypass.
-    if !limiter.check(addr.ip()).await {
+    // get a privacy-flavored quota bypass. F-1: XFF-aware client keying.
+    if !limiter.check_request(addr.ip(), &headers).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -3155,12 +3318,13 @@ fn hash_passphrase(passphrase: &str) -> (String, [u8; 32]) {
 /// P1 Fix 4: Rate-limited passphrase unlock endpoint.
 async fn post_cclerk_unlock(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     Json(req): Json<UnlockRequest>,
     limiter: RateLimiter,
 ) -> Result<Json<UnlockResponse>, StatusCode> {
-    // Rate limit check.
-    if !limiter.check(addr.ip()).await {
+    // Rate limit check (F-1: per-real-client, XFF-aware behind trusted proxy).
+    if !limiter.check_request(addr.ip(), &headers).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -3232,12 +3396,13 @@ fn api_bearer_token(bearer_seed: [u8; 32]) -> String {
 /// P1 Fix 4: Rate-limited set-passphrase endpoint.
 async fn post_set_passphrase(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     State(state): State<NodeState>,
     Json(req): Json<SetPassphraseRequest>,
     limiter: RateLimiter,
 ) -> Result<Json<SetPassphraseResponse>, StatusCode> {
-    // Rate limit check.
-    if !limiter.check(addr.ip()).await {
+    // Rate limit check (F-1: per-real-client, XFF-aware behind trusted proxy).
+    if !limiter.check_request(addr.ip(), &headers).await {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -7513,5 +7678,225 @@ mod tests {
             matches!(result, dregg_turn::TurnResult::Committed { .. }),
             "a turn with a real action must commit, not be rejected as empty"
         );
+    }
+
+    // ======================================================================
+    // RED-TEAM: F-1 (rate-limit proxy bypass) + F-8 (status metadata leak).
+    //
+    // Each test below is an ATTACK. Before the fix it asserted the BAD
+    // outcome (the bypass / the leak succeeds = FINDING). It now asserts the
+    // attack FAILS = DEFENDED. A regression that reopens the hole flips the
+    // assertion and fails the build.
+    // ======================================================================
+
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn ip(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::new(a, b, c, d))
+    }
+
+    /// Serializes the two `DREGG_STATUS_EXPOSE_COUNTS`-sensitive tests so they
+    /// don't race on the shared process env when run in parallel.
+    static F8_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // ---- F-1: rate-limit proxy bypass ------------------------------------
+
+    /// ATTACK (F-1, core): behind a reverse proxy, every request shares the
+    /// proxy's socket IP. The limiter MUST instead key on the real client IP
+    /// from `X-Forwarded-For` — otherwise all clients collapse into one global
+    /// bucket (DoS of honest clients) and a single client cannot be isolated.
+    ///
+    /// DEFENDED: with the proxy trusted, two distinct forwarded clients arriving
+    /// on the SAME proxy socket resolve to DIFFERENT rate-limit keys.
+    #[test]
+    fn f1_proxied_clients_get_distinct_buckets_defended() {
+        let proxy = ip(10, 0, 0, 1);
+        let trusted = TrustedProxies::from_strings([proxy.to_string()]);
+
+        let alice = resolve_client_ip(proxy, Some("203.0.113.7"), &trusted);
+        let bob = resolve_client_ip(proxy, Some("198.51.100.9"), &trusted);
+
+        // FINDING (pre-fix) would have keyed both on `proxy` → equal → one bucket.
+        assert_eq!(alice, ip(203, 0, 113, 7));
+        assert_eq!(bob, ip(198, 51, 100, 9));
+        assert_ne!(
+            alice, bob,
+            "F-1 regressed: proxied clients collapsed into one rate-limit bucket"
+        );
+        // And neither is the proxy's own socket IP (the global-bucket failure mode).
+        assert_ne!(alice, proxy);
+        assert_ne!(bob, proxy);
+        eprintln!("[API ATTACK / F-1] proxied clients keyed per-real-IP: DEFENDED");
+    }
+
+    /// ATTACK (F-1, spoof): an UNTRUSTED direct attacker sets its own
+    /// `X-Forwarded-For` trying to (a) impersonate another client or (b) mint a
+    /// fresh unlimited bucket per request by rotating the header value.
+    ///
+    /// DEFENDED: because the direct peer is NOT a trusted proxy, the header is
+    /// ignored and the key stays pinned to the attacker's real socket IP — so
+    /// the attacker cannot escape its own bucket no matter what it forges.
+    #[test]
+    fn f1_untrusted_xff_spoof_is_ignored_defended() {
+        let attacker = ip(192, 0, 2, 66);
+        // No proxy is trusted (direct exposure) OR the attacker is not in the set.
+        let none_trusted = TrustedProxies::default();
+        let some_trusted = TrustedProxies::from_strings([ip(10, 0, 0, 1).to_string()]);
+
+        for trusted in [&none_trusted, &some_trusted] {
+            // Spoof a "fresh" client IP each call — must NOT change the key.
+            let k1 = resolve_client_ip(attacker, Some("1.2.3.4"), trusted);
+            let k2 = resolve_client_ip(attacker, Some("5.6.7.8"), trusted);
+            let k3 = resolve_client_ip(attacker, Some("9.9.9.9, 8.8.8.8"), trusted);
+            assert_eq!(k1, attacker, "F-1 regressed: untrusted XFF spoof moved the key");
+            assert_eq!(k2, attacker, "F-1 regressed: rotating XFF minted a fresh bucket");
+            assert_eq!(k3, attacker, "F-1 regressed: untrusted multi-hop XFF honored");
+        }
+        eprintln!("[API ATTACK / F-1] untrusted X-Forwarded-For spoof ignored: DEFENDED");
+    }
+
+    /// ATTACK (F-1, prepend spoof): even a client legitimately BEHIND a trusted
+    /// proxy can prepend bogus left-hand `X-Forwarded-For` entries (the client-
+    /// controlled portion). A naive "take the FIRST/leftmost entry" resolver
+    /// would hand the attacker an arbitrary spoofed key (fresh bucket / framing
+    /// a victim IP).
+    ///
+    /// DEFENDED: the resolver walks from the RIGHT (proxy-appended, trustworthy
+    /// end) past trusted hops to the first untrusted address — the spoofed
+    /// left-hand entries are inert.
+    #[test]
+    fn f1_xff_left_prepend_spoof_is_inert_defended() {
+        let proxy = ip(10, 0, 0, 1);
+        let trusted = TrustedProxies::from_strings([proxy.to_string()]);
+        // Real client = 203.0.113.7; attacker prepended two fake hops.
+        let xff = "66.66.66.66, 77.77.77.77, 203.0.113.7";
+        let key = resolve_client_ip(proxy, Some(xff), &trusted);
+        assert_eq!(
+            key,
+            ip(203, 0, 113, 7),
+            "F-1 regressed: leftmost XFF prepend spoof was honored over the real client"
+        );
+        assert_ne!(key, ip(66, 66, 66, 66));
+        eprintln!("[API ATTACK / F-1] leftmost XFF prepend spoof inert: DEFENDED");
+    }
+
+    /// ATTACK (F-1, end-to-end): drive the REAL limiter through `check_request`
+    /// — exhaust one proxied client's quota, then assert a DIFFERENT proxied
+    /// client (same proxy socket) is still admitted (no shared global bucket).
+    #[tokio::test]
+    async fn f1_real_limiter_isolates_proxied_clients_defended() {
+        let proxy = ip(10, 0, 0, 1);
+        let limiter = RateLimiter::with_proxies(
+            3,
+            60,
+            TrustedProxies::from_strings([proxy.to_string()]),
+        );
+
+        let mut alice_hdr = axum::http::HeaderMap::new();
+        alice_hdr.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+        let mut bob_hdr = axum::http::HeaderMap::new();
+        bob_hdr.insert("x-forwarded-for", "198.51.100.9".parse().unwrap());
+
+        // Drain Alice's quota (3 allowed, 4th denied).
+        assert!(limiter.check_request(proxy, &alice_hdr).await);
+        assert!(limiter.check_request(proxy, &alice_hdr).await);
+        assert!(limiter.check_request(proxy, &alice_hdr).await);
+        assert!(
+            !limiter.check_request(proxy, &alice_hdr).await,
+            "Alice should be rate-limited after her own quota"
+        );
+
+        // FINDING (pre-fix): Bob shares the proxy bucket → already throttled.
+        // DEFENDED: Bob has his own bucket and is admitted.
+        assert!(
+            limiter.check_request(proxy, &bob_hdr).await,
+            "F-1 regressed: a second proxied client was throttled by another's quota (shared global bucket)"
+        );
+        eprintln!("[API ATTACK / F-1] real limiter isolates proxied clients: DEFENDED");
+    }
+
+    // ---- F-8: /status private-activity metadata leak ---------------------
+
+    /// ATTACK (F-8): scrape the public, unauthenticated `GET /status` and read
+    /// the aggregate private-activity counters (`note_count` /
+    /// `revocation_count`) — a private-activity-VOLUME oracle.
+    ///
+    /// DEFENDED: by default those fields are ABSENT from the response, while the
+    /// coarse public liveness signal (`healthy` / `consensus_live` / `dag_height`)
+    /// is still present.
+    #[tokio::test]
+    async fn f8_status_does_not_leak_private_counts_defended() {
+        let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Ensure the opt-in is OFF for this test regardless of ambient env.
+        // SAFETY: test-local env scrub, serialized by F8_ENV_LOCK.
+        unsafe { std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS"); }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+
+        // FINDING (pre-fix): both counters present on the wire.
+        assert!(
+            json.get("note_count").is_none(),
+            "F-8 regressed: /status leaks note_count (private-activity volume): {json}"
+        );
+        assert!(
+            json.get("revocation_count").is_none(),
+            "F-8 regressed: /status leaks revocation_count (private-activity volume): {json}"
+        );
+        // The coarse public liveness signal must still be present.
+        assert!(json.get("healthy").is_some(), "/status must still report liveness");
+        assert!(json.get("consensus_live").is_some());
+        eprintln!("[API ATTACK / F-8] /status withholds private-activity counters: DEFENDED");
+    }
+
+    /// CONTROL (F-8): when an operator EXPLICITLY opts in
+    /// (`DREGG_STATUS_EXPOSE_COUNTS=1`, e.g. a trusted internal dashboard), the
+    /// counters reappear — proving the default-off is a real, reversible gate
+    /// (the test is non-vacuous: the same code path produces both outcomes).
+    #[tokio::test]
+    async fn f8_opt_in_re_exposes_counts_control() {
+        let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::set_var("DREGG_STATUS_EXPOSE_COUNTS", "1"); }
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let state = NodeState::new(tmp.path(), vec![]).expect("node state");
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let app = router(state, false, recorder.handle());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let body = response.into_body().collect().await.expect("body").to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
+
+        assert!(
+            json.get("note_count").is_some() && json.get("revocation_count").is_some(),
+            "opt-in must re-expose the counters (gate is real, not a no-op): {json}"
+        );
+
+        // Restore the default-off posture for any later test.
+        unsafe { std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS"); }
+        eprintln!("[API CONTROL / F-8] opt-in re-exposes counters (gate is non-vacuous)");
     }
 }

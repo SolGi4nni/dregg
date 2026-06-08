@@ -95,15 +95,25 @@ operator's signature.
   mutation surface is the faucet only (§A5). This is safe-by-disablement, not
   safe-by-design: a multi-tenant deployment that re-enables submit inherits the
   "everything is the operator" model.
-- **F-1 (LOGGED, owned elsewhere — `node/src/api.rs`):** the per-IP
-  `RateLimiter` (`api.rs:1096-1147`) keys on `ConnectInfo` socket IP and does
-  **not** consult `X-Forwarded-For`. Behind the devnet's nginx reverse proxy
-  every request shares the proxy's socket IP, so the 60/min turn limit is either
-  (a) a *global* limit (all clients share one bucket → trivial DoS of honest
-  clients) or (b) bypassed if the proxy forwards the real IP only in a header
-  the limiter ignores. Either way the limiter's per-client intent does not hold
-  behind the deployed proxy. *Fix belongs in `node/src/api.rs` (SWAP-owned): key
-  on a trusted forwarded-for when behind a known proxy.*
+- **F-1 (CLOSED — `node/src/api.rs`):** previously the per-IP `RateLimiter`
+  keyed on the `ConnectInfo` socket IP and ignored `X-Forwarded-For`, so behind
+  the devnet reverse proxy every request shared the proxy's socket IP — the
+  60/min turn limit degenerated into one *global* bucket (DoS of honest clients)
+  with no real per-client cost for a NATed/proxied/IP-rotating attacker.
+  **Fix:** `resolve_client_ip(socket_ip, xff, trusted)` resolves the real client
+  IP — it honors `X-Forwarded-For` **only** when the direct peer is a configured
+  trusted proxy (`DREGG_TRUSTED_PROXIES`, comma-separated), and then walks the
+  header from the **right** (proxy-appended, least-spoofable end) to the first
+  non-trusted hop, so a client that prepends bogus left-hand entries cannot move
+  the key. An untrusted direct attacker's `X-Forwarded-For` is ignored entirely
+  (it stays pinned to the real socket IP), so it cannot mint a fresh unlimited
+  bucket by rotating the header. Every rate-limited handler now routes through
+  `RateLimiter::check_request(socket_ip, &headers)`. **Redteam DEFENDED:** the
+  `f1_*` attack tests in `node/src/api.rs` drive the real resolver + limiter
+  (`f1_proxied_clients_get_distinct_buckets_defended`,
+  `f1_untrusted_xff_spoof_is_ignored_defended`,
+  `f1_xff_left_prepend_spoof_is_inert_defended`,
+  `f1_real_limiter_isolates_proxied_clients_defended`).
 
 ### A2 — Malicious agent holding a capability
 
@@ -243,16 +253,32 @@ effort (liveness only); adversary can delay/drop, not read/forge" — signed
 envelopes + hash check (`_FEDERATION-SSB-ORIENTATION.md:145`).
 
 **Operational gaps / leaks (this is mostly an info-flow story — see §3).**
-- **F-8 (FINDING — live, reproducible):** `GET /status` on the live devnet
-  discloses, unauthenticated: the node's **Ed25519 public key**
-  (`9b3512552d16…aba9fa`), exact **`dag_height`/`block_count`** (~45,292 and
-  climbing), `federation_mode`, `note_count`, `revocation_count`, `peer_count`,
-  `consensus_live`. The DAG grows by heartbeat ~1/sec, so **`dag_height` is a
-  wall-clock / node-uptime oracle** (sample twice, diff = elapsed seconds since
-  genesis). `note_count`/`revocation_count` leak aggregate private-activity
-  volume. This is a metadata leak, not a safety break, but it is live and
-  trivially scraped. *Fix (node-owned): gate `/status` detail behind auth; expose
-  only a coarse liveness bit unauthenticated.*
+- **F-8 (CLOSED — `node/src/api.rs`):** `GET /status` previously disclosed,
+  unauthenticated, the aggregate private-activity counters `note_count` and
+  `revocation_count` (volume of shielded notes / revoked credentials) alongside
+  identity + liveness fields. The private counters are the sensitive part: they
+  are a private-activity-VOLUME oracle. **Fix:** `revocation_count`/`note_count`
+  are now `Option<u64>` on `StatusResponse` and `#[serde(skip_serializing_if =
+  "Option::is_none")]`; `get_status` populates them **only** when the operator
+  explicitly opts in via `DREGG_STATUS_EXPOSE_COUNTS=1` (e.g. a trusted internal
+  dashboard behind auth). Default = the fields are **absent** from the public
+  wire, while the coarse liveness signal (`healthy`/`consensus_live`/
+  `dag_height`) is retained. **Redteam DEFENDED:** in-crate
+  `f8_status_does_not_leak_private_counts_defended` drives the REAL router via
+  `oneshot` and asserts both counters are absent; `f8_opt_in_re_exposes_counts_control`
+  proves the gate is non-vacuous (opt-in re-exposes them); network-gated
+  `devnet_status_withholds_private_counts_f8` (redteam crate) scrapes the live
+  origin. *Residual (separately tracked, by-design): the Ed25519 pubkey + DAG
+  height are deliberately public consensus/identity signals; the `dag_height`
+  uptime-oracle aspect is an L1 metadata-privacy item, not part of F-8's
+  private-counter leak.*
+
+  *(No Lean proof-gap to extend for F-1/F-8: both live entirely in the HTTP
+  transport boundary — per-IP throttling and `/status` JSON field selection —
+  which is outside the verified protocol/executor tower. The Lean `RateLimit`
+  predicate models a protocol-level per-window **cell-state** counter, a
+  distinct concept. The closure is Rust fix + redteam DEFENDED, the correct bar
+  for a transport-layer finding.)*
 
 ### A6 — Malicious relay (store-and-forward)
 
@@ -483,8 +509,8 @@ Live devnet `POST /turn/submit` → **405** (mutation disabled on the deployment
 | F-11 | premature reclaim | HIGH | `captp/src/gc.rs::process_drop` session-free | CapTP | **CLOSED** — `#[deprecated]` fail-closed + Lean `CapTPGCConcrete.f11_session_free_drop_denied` (refcount-drop path; redteam DEFENDED) |
 | F-12 | GC session granularity | MED | `captp/src/gc.rs` holder-scoped session | CapTP | **CLOSED** — per-ref session buckets + Lean scoping proof (redteam DEFENDED) |
 | F-10 | pipeline sender-binding | MED | `captp/src/pipeline.rs` bridge placeholder | CapTP | **CLOSED** — mandatory `CapTpState::new(fed)` binds real sender (redteam DEFENDED) |
-| F-1 | rate-limit bypass | MED | `node/src/api.rs` per-IP behind proxy | SWAP/node | trust forwarded-for |
-| F-8 / L1 | metadata leak | MED | `node/src/api.rs` `/status` | SWAP/node | auth-gate detail |
+| F-1 | rate-limit bypass | MED | `node/src/api.rs` per-IP behind proxy | node | **CLOSED** — `resolve_client_ip` keys on `X-Forwarded-For` only from a `DREGG_TRUSTED_PROXIES` peer (rightmost-untrusted hop); untrusted XFF ignored (redteam DEFENDED: `f1_*` in `node/src/api.rs`) |
+| F-8 / L1 | metadata leak | MED | `node/src/api.rs` `/status` | node | **CLOSED** — `note_count`/`revocation_count` omitted from public `/status` by default (`serde` skip), opt-in `DREGG_STATUS_EXPOSE_COUNTS=1` for trusted dashboards; coarse liveness retained (redteam DEFENDED: `f8_*` + `devnet_status_withholds_private_counts_f8`) |
 | F-9 / L2 | recipient leak | MED | `captp/src/store_forward.rs` cleartext dest | CapTP | anon addressing / PIR |
 | F-4 | Sybil/admission | DESIGN | strands have no admission cost | federation | stake / follow-graph |
 | F-5 / L4 | eclipse / no anon at small N | HIGH@smallN | `net/src/gossip.rs` stem<5 | net | anchor peers |
