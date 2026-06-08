@@ -153,7 +153,10 @@ impl std::error::Error for ThresholdDecryptError {}
 // =============================================================================
 
 /// GF(256) arithmetic using the AES irreducible polynomial x^8 + x^4 + x^3 + x + 1.
-mod gf256 {
+///
+/// `pub(crate)` so the Lean differential (`threshold_decrypt_diff`) can pin its `gf256Mul`/`gf256Inv`
+/// transcription against THESE running functions rather than a copy.
+pub(crate) mod gf256 {
     /// Multiply two elements in GF(256).
     pub fn mul(a: u8, b: u8) -> u8 {
         let mut result: u8 = 0;
@@ -205,7 +208,10 @@ mod gf256 {
 }
 
 /// Split a single byte secret into n shares with threshold t using Shamir's scheme over GF(256).
-fn shamir_split_byte(secret: u8, t: u8, n: u8, entropy: &[u8]) -> Vec<u8> {
+///
+/// `pub(crate)` so the Lean differential can drive the full split→reconstruct arc against the running
+/// scheme.
+pub(crate) fn shamir_split_byte(secret: u8, t: u8, n: u8, entropy: &[u8]) -> Vec<u8> {
     // Generate t-1 random coefficients for the polynomial.
     // The polynomial is: f(x) = secret + a1*x + a2*x^2 + ... + a_{t-1}*x^{t-1}
     let mut coeffs = vec![secret];
@@ -229,7 +235,10 @@ fn shamir_split_byte(secret: u8, t: u8, n: u8, entropy: &[u8]) -> Vec<u8> {
 }
 
 /// Reconstruct a single byte from t shares using Lagrange interpolation over GF(256).
-fn shamir_reconstruct_byte(shares: &[(u8, u8)]) -> u8 {
+///
+/// `pub(crate)` so the Lean differential can pin its `reconstructByte` transcription against this
+/// running interpolation.
+pub(crate) fn shamir_reconstruct_byte(shares: &[(u8, u8)]) -> u8 {
     // shares is [(x_i, y_i)] where x_i are the evaluation points (1-based indices)
     let mut secret = 0u8;
     let t = shares.len();

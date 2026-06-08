@@ -70,6 +70,10 @@ pub mod revocation;
 pub mod solo;
 pub mod threshold;
 pub mod threshold_decrypt;
+/// Differential: the verified Lean `Dregg2.Distributed.ThresholdDecrypt` model ⟺ this crate's real
+/// `threshold_decrypt` (GF(256) field, Shamir/Lagrange reconstruction, the combine gate). Test-only.
+#[cfg(test)]
+mod threshold_decrypt_diff;
 #[cfg(feature = "runtime")]
 pub mod transport;
 pub mod types;
