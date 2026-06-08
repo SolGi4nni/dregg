@@ -100,6 +100,11 @@ def encValue : Nat → Value → List ℤ
   | f + 1, .record fs =>
       3 :: (fs.length : ℤ) :: fs.flatMap (fun (nm, v) => encStr nm ++ encValue f v)
 
+/-- Field-binding encoder for a clearance `Label` (`id n` ↦ `[0, n]`; `named s` ↦ `1 :: encStr s`). -/
+def encLabel : Dregg2.Authority.ClearanceGraph.Label → List ℤ
+  | .id n    => [0, (n : ℤ)]
+  | .named s => 1 :: encStr s
+
 /-- Field-binding `SlotCaveat` encoder: tag + the WHOLE field name + any scalars/sets (the OLD
 `(sc c).length` bound ONLY the COUNT of caveats, so a tampered caveat with the same count was invisible). -/
 def encSlotCaveat : SlotCaveat → List ℤ
@@ -110,6 +115,10 @@ def encSlotCaveat : SlotCaveat → List ℤ
   | .senderAuthorized f a => 4 :: (encStr f ++ ((a.length : ℤ) :: a.map (fun c => (c : ℤ))))
   | .boundedBy f lo hi    => 5 :: (encStr f ++ [lo, hi])
   | .admitTable f ts      => 6 :: (encStr f ++ ((ts.length : ℤ) :: ts.flatMap (fun p => [p.1, p.2])))
+  | .clearanceGe f g ac box => 7 :: (encStr f
+        ++ ((g.edges.length : ℤ) :: g.edges.flatMap (fun e => encLabel e.1 ++ encLabel e.2))
+        ++ ((ac.length : ℤ) :: ac.flatMap (fun p => [(p.1 : ℤ), p.2]))
+        ++ encLabel box)
 
 def accDigConcrete : Finset CellId → ℤ :=
   fun s => refP2 ((s.card : ℤ) :: (s.sort (· ≤ ·)).map (fun c => (c : ℤ)))

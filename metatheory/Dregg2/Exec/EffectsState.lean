@@ -854,4 +854,65 @@ def ssCav : RecChainedState :=
 #guard ((stateStepGuarded ssCav "seq" 0 0 6).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved)
 #guard ((stateStepGuarded ssCav "seq" 0 0 6).map (fun s => fieldOf "seq" (s.kernel.cell 0))) == some 6  --  some 6
 
+/-! ## §11.SGM — A REAL SGM CLEARANCE MANDATE, enforced INLINE by the live `setFieldA` leg.
+
+The de-stodgify beachhead (design D0): the orphaned-but-proved `ClearanceGraph.dominatesD` lattice
+is now wired into the executor-enforced `SlotCaveat` surface (`SlotCaveat.clearanceGe`). A cell slot
+`secret` is bound with a clearance mandate: it may be written ONLY by an actor whose clearance label
+DOMINATES the slot's sensitivity `mid` in a three-level ladder `top ⊐ mid ⊐ low`. The published
+clearance table is `actor 0 ↦ top(3)`, `actor 1 ↦ mid(2)`, `actor 2 ↦ low(1)`. Because `setFieldA`
+routes through `stateStepGuarded`→`caveatsAdmit`→`SlotCaveat.eval`, an under-cleared actor's write is
+REJECTED BY THE VERIFIED EXECUTOR — not by an out-of-band app mandate. This is ember's named blocked
+policy ("a write to slot `s` is admitted only if `actor`'s clearance dominates `s`'s sensitivity"),
+now enforceable inline. -/
+
+/-- The three-level clearance ladder `top(3) ⊐ mid(2) ⊐ low(1)`. -/
+def sgmLadder : Dregg2.Authority.ClearanceGraph.ClearanceGraph :=
+  { edges := [ (.id 3, .id 2), (.id 2, .id 1) ] }
+
+/-- The published actor→clearance table: actor 0 = top, 1 = mid, 2 = low. -/
+def sgmClearances : List (CellId × Int) := [(0, 3), (1, 2), (2, 1)]
+
+/-- A chained state whose cell 0's `secret` slot carries an SGM clearance mandate (sensitivity
+`mid`). All four writing actors hold AUTHORITY over cell 0 (actor 0 by ownership; actors 1, 2, 9 by
+a `node 0` cap) so the AUTHORITY gate passes for all of them — leaving the CLEARANCE caveat as the
+sole discriminator. That is the point: the verified executor admits the write iff the actor's
+clearance dominates the slot's sensitivity, regardless of whether they could otherwise touch the
+cell. (Cells 0 and 1 only; total balance = 100 + 5 = 105.) -/
+def ssSGM : RecChainedState :=
+  { kernel :=
+      { accounts := {0, 1, 2, 9}
+        cell := fun c => if c = 0 then .record [("balance", .int 100), ("secret", .int 0)]
+                         else if c = 1 then .record [("balance", .int 5)]
+                         else .record [("balance", .int 0)]
+        caps := fun a => if a = 1 ∨ a = 2 ∨ a = 9 then [Dregg2.Authority.Cap.node 0] else []
+        slotCaveats := fun c => if c = 0 then
+            [ .clearanceGe "secret" sgmLadder sgmClearances (.id 2) ]
+          else [] }
+    log := [] }
+
+-- ADMITTED: actor 0 (clearance top=3, owns cell 0) writes `secret` — top dominates mid (edge).
+#guard ((stateStepGuarded ssSGM "secret" 0 0 42).isSome)  --  true
+-- ADMITTED: actor 1 (clearance mid=2, holds node-cap on 0) — reflexive dominance (mid dominates mid).
+#guard ((stateStepGuarded ssSGM "secret" 1 0 42).isSome)  --  true
+-- REJECTED: actor 2 (clearance low=1, holds node-cap on 0) — low does NOT dominate mid. FAIL-CLOSED.
+#guard ((stateStepGuarded ssSGM "secret" 2 0 42).isSome) == false  --  false (under-cleared, but authorized)
+-- REJECTED: actor 9 (holds node-cap on 0 but ABSENT from the clearance table) — fail-closed.
+#guard ((stateStepGuarded ssSGM "secret" 9 0 42).isSome) == false  --  false (no clearance, but authorized)
+-- The ADMITTED clearance write conserves balance and reads back the value (the lifted keystones).
+#guard ((stateStepGuarded ssSGM "secret" 0 0 42).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved)
+#guard ((stateStepGuarded ssSGM "secret" 0 0 42).map (fun s => fieldOf "secret" (s.kernel.cell 0))) == some 42  --  some 42
+
+/-- **Non-vacuity at the theorem layer (the executor genuinely rejects the under-cleared write).** An
+under-cleared actor's clearance write FAILS CLOSED via `stateStepGuarded_caveat_violation_fails` — the
+caveat gate rejected it, so the live `setFieldA` leg does not commit. -/
+example : stateStepGuarded ssSGM "secret" 2 0 42 = none :=
+  stateStepGuarded_caveat_violation_fails ssSGM "secret" 2 0 42 (by decide)
+
+/-- **Non-vacuity: the ADMITTED clearance write was genuinely caveat-clean** (`stateStepGuarded_admits`
+witnesses `caveatsAdmit` held — the clearance mandate was satisfied, not bypassed). -/
+example (s' : RecChainedState) (h : stateStepGuarded ssSGM "secret" 0 0 42 = some s') :
+    caveatsAdmit ssSGM.kernel "secret" 0 0 42 = true :=
+  stateStepGuarded_admits h
+
 end Dregg2.Exec.EffectsState

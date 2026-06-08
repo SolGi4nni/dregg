@@ -32,6 +32,7 @@ import Dregg2.Exec.Program
 namespace Dregg2.Exec
 
 open Dregg2.Authority Dregg2.Execution
+open Dregg2.Authority.ClearanceGraph (ClearanceGraph dominatesD)
 open scoped BigOperators
 
 /-! ## The record cell-state and its `balance`-field measure. -/
@@ -109,6 +110,18 @@ inductive SlotCaveat where
   `sgmAdmitM` load-bearing: a no-clearance step / out-of-DAG advance is simply NOT in the table, so
   the executor rejects it (where a `monotonicSeq`/`boundedBy` caveat would wrongly admit). -/
   | admitTable       (field : FieldName) (transitions : List (Int × Int))
+  /-- **`clearanceGe { field, g, actorClearances, box }`** — the SGM clearance mandate, now
+  enforceable INLINE by the live executor (not precomputed into an `admitTable`). A write to this
+  slot is admitted iff the writing `actor`'s clearance label — looked up in the published
+  `actorClearances : List (CellId × Int)` table, as a numeric `Label.id` — DOMINATES the slot's
+  sensitivity label `box` in the clearance graph `g` (`ClearanceGraph.dominatesD`, the
+  proved-sound primitive `Authority/ClearanceGraph.lean:53,92`). Fail-closed: an actor absent from
+  the clearance table cannot write. This wires the orphaned-but-proved lattice into the
+  executor-enforced caveat surface that `stateStepGuarded`/`setFieldA` consults — so an
+  under-cleared actor's write is rejected BY THE EXECUTOR, not merely by an app mandate. -/
+  | clearanceGe      (field : FieldName) (g : ClearanceGraph)
+                     (actorClearances : List (CellId × Int))
+                     (box : Dregg2.Authority.ClearanceGraph.Label)
   deriving Repr, DecidableEq
 
 /-- The field a `SlotCaveat` guards. -/
@@ -120,6 +133,7 @@ def SlotCaveat.field : SlotCaveat → FieldName
   | .senderAuthorized f _ => f
   | .boundedBy f _ _      => f
   | .admitTable f _       => f
+  | .clearanceGe f _ _ _  => f
 
 /-- **`SlotCaveat.eval cav actor old new`** — does writing `new` to the caveat's slot (whose
 committed value is `old`, the actor being `actor`) SATISFY the caveat? Decidable, computable,
@@ -134,6 +148,10 @@ def SlotCaveat.eval : SlotCaveat → CellId → Int → Int → Bool
   | .senderAuthorized _ auth, actor, _,   _   => auth.contains actor
   | .boundedBy _ lo hi,       _,     _,   new => decide (lo ≤ new) && decide (new ≤ hi)
   | .admitTable _ table,      _,     old, new => table.contains (old, new)
+  | .clearanceGe _ g ac box,  actor, _,   _   =>
+      match (ac.find? (fun p => p.1 == actor)).map (·.2) with
+      | some lvl => dominatesD g (.id lvl.toNat) box   -- actor's clearance dominates the slot's sensitivity
+      | none     => false                                   -- actor absent from the clearance table ⇒ fail-closed
 
 /-- **`SlotCaveat.bornFresh cav new`** — does the caveat ADMIT a value `new` as a FRESH cell's genesis
 state (dregg1's `None` / genesis arm, `cell/src/program.rs:1331`: a transition caveat permits the
@@ -149,6 +167,7 @@ def SlotCaveat.bornFresh : SlotCaveat → Int → Bool
   | .senderAuthorized _ _, _ => true                                    -- sender check is a turn-time gate, not genesis
   | .boundedBy _ lo hi,  new => decide (lo ≤ new) && decide (new ≤ hi)  -- value-range STILL binds at birth
   | .admitTable _ _,     _   => true                                    -- a TRANSITION table: first write permitted (genesis)
+  | .clearanceGe _ _ _ _, _  => true                                    -- actor-clearance is a turn-time gate, not a genesis-value constraint
 
 /-! ### The FACTORY DESCRIPTOR — a published contract that mints conforming, caveat-bound cells.
 
