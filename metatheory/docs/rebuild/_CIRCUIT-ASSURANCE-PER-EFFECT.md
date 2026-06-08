@@ -158,43 +158,48 @@ asserting their absence). Build green (`lake build` of the touched Emit + turn m
 
 ### THE HONEST FRACTION (the number ember asked for)
 
-> **1 / 56** effects has a genuine **from-scratch full-semantics circuit proof connected to the verified
-> executor** — i.e. `satisfiedVm <descriptor> ⟹ FULL per-cell post-state (every touched field
-> moved-or-frozen) + anti-ghost commitment on ALL of it + unification to `recKExec``. That effect is
-> **transfer** (`transferDescriptor_full_sound` + `transferDescriptor_commit_binds_state` +
-> `tampered_rejected` + `unify_debit_exec`/`unify_credit_exec`). Its universe-A source `balanceA` is the
-> same proof viewed at universe A, so counting it as a second genuine full-state row gives **2 / 56** at
-> most — but it is NOT a distinct circuit. **The honest, conservative number is ONE genuinely-verified
-> effect circuit.**
+> **UPDATE 2026-06-08 — the ECONOMIC family is now class A.** After the genuine-recompute grind, **11 / 56**
+> effects meet the from-scratch class-A bar (`satisfiedVm <descriptor> ⟹ FULL per-cell post-state +
+> anti-ghost on all of it + the side-table root GENUINELY RECOMPUTED in-row + executor/universe-A unify):
+> **transfer (#1)** (the keystone) + the **economic family**: **mint (#2), burn (#3), createEscrow (#39),
+> createCommittedEscrow (#40), releaseEscrow (#41), refundEscrow (#42), bridgeLock (#43), bridgeMint (#44),
+> bridgeFinalize (#45), bridgeCancel (#46)**. Counting `balanceA` (#54, transfer's universe-A source) gives
+> 12.
 >
-> This fraction deliberately does **NOT** count: (a) the 4 **A−** effects (mint/burn/incrementNonce/
-> queueEnqueue) — each binds+anti-ghosts its moved column and unifies to the executor, but each has ONE
-> named residual (opaque supply total / no nonce-tick executor effect / opaque queue-root recompute) and
-> so is *one identifiable step* from A, not at A; (b) **differential agreement** (`descriptor == hand-AIR`)
-> — that is a cross-check, present as an *additional* tooth on some effects, never as a substitute for a
-> from-scratch proof (class B is therefore empty); (c) the **economic / frozen-frame leg** — binding the
-> conserved balance + frozen frame is conservation, and *conservation is NOT correctness*: it does not
-> bind the cap-table mutation / nullifier insert / note insert / escrow resolve / seal write / etc. that
-> IS the effect. So "X/56 = 1" is the truth about how verified the circuit ACTUALLY is, effect by effect.
+> The escrow/bridge-escrow side-table effects were promoted by the SHARED genuine-recompute primitive
+> `EffectVmEmitEscrowRoot` — replacing the OPAQUE ADDITIVE STEP (`sys_digest_after = sys_digest_before +
+> step_param`, prover-chosen) with TWO in-row hash-sites that FORCE the root:
+> `record_leaf = hash[id,creator,recipient,amount,asset,resolved]` (amount = the SAME `param.AMOUNT` driving
+> the balance move) then `new_root = hash[record_leaf, old_root]`. So the side-table root is GENUINELY
+> recomputed (`escrowRootAdvance_forced`), the moved amount IS the parked record's amount, and tampering ANY
+> record field provably moves the root ⇒ moves `state_commit` ⇒ UNSAT (`escrowRoot_binds_record`). mint/burn/
+> bridgeMint were promoted by the per-cell class-A CAPSTONE (`*_classA`) — the moved column IS the whole
+> per-cell effect, bound + anti-ghosted + executor-unified, the supply-total/portal-proof being turn/portal
+> level (the same boundary transfer's two-sided conservation has).
+>
+> This fraction does **NOT** count: (a) **differential agreement** (a cross-check, never sole assurance —
+> class B empty); (b) the **economic / frozen-frame-only leg** on the NON-promoted effects — *conservation
+> is NOT correctness*. The remaining C effects' real content (cap-table mutation / nullifier insert / note
+> insert / seal write / cell-table insert) is still unbound — those are the cap/privacy/cell families, the
+> next grind.
 
 | Class | Count | Effects |
 |-------|------:|---------|
-| **(A) genuinely full-state verified** | **2** | transfer (#1), balanceA (#54, = transfer's universe-A source) |
-| **(A−) one-leg-from-A** (moved field IS in-commitment + anti-ghost + executor-unified, but a real residual: opaque side-table total, or opaque root-recompute, or no executor connector) | **4** | mint (#2), burn (#3), incrementNonce (#4), queueEnqueue (#5) |
-| **(B) differential-only** | **0** | — (all effects have a from-scratch `*_full_sound`; differential is an *additional* cross-check, never the sole assurance) |
-| **(C) economic/frame-leg-only** (the field/side-table that IS the effect is NOT bound by the descriptor's own commitment) | **~46** | all of #6–#53 except the A−'s above |
+| **(A) genuinely full-state verified** | **12** | transfer (#1), **mint (#2), burn (#3)**, **createEscrow (#39), committed (#40), release (#41), refund (#42), bridgeLock (#43), bridgeMint (#44), bridgeFinalize (#45), bridgeCancel (#46)**, balanceA (#54) |
+| **(A−) one-leg-from-A** (moved field IS in-commitment + anti-ghost + executor-unified, but a real residual) | **2** | incrementNonce (#4, no nonce-tick executor effect), queueEnqueue (#5, opaque queue-root recompute) |
+| **(B) differential-only** | **0** | — (differential is an *additional* cross-check, never the sole assurance) |
+| **(C) economic/frame-leg-only** (the field/side-table that IS the effect is NOT bound by the descriptor's own commitment) | **~40** | the cap family (#12–#18,#52,#53), privacy (#33–#35), seal/swiss (#24,#31,#36–#38,#47–#50), cell (#20–#25,#32), write-rides-params (#26,#27,#51), queue tail (#6–#10), routing (#11,#19,#28–#30) |
 | **(D) unverified** | **2** | noteSpendCompose (#35), recordRoot (#32, borderline C/D) |
 
-**Honest headline:** exactly **ONE effect (transfer)** meets the full class-A bar from scratch end-to-end
-(full per-cell post-state + anti-ghost on all of it + `recKExec` unification). Four more (mint, burn,
-incrementNonce, queueEnqueue) are *one identifiable residual* away. **Every other effect's circuit binds
-only the frozen frame plus possibly an economic (balance/nonce) leg — the cap-table mutation / nullifier
-insert / note-commitment insert / escrow resolve / queue-root recompute / seal write / permissions-slot
-write / VK write / event-log append / cell-table insert-or-delete that IS THE EFFECT is NOT bound by the
-deployed descriptor's `state_commit`.** The per-effect files are *commendably honest* about this — they
-PROVE the gap as `*_out_of_row` / `*_root_not_in_descriptor_commit` / `*_is_turn_property` theorems
-rather than papering it. That honesty is exactly why this ledger can be precise; it does not make the
-circuit more verified than it is.
+**Honest headline:** **TWELVE effects** (transfer + the whole economic family + balanceA) now meet the
+full class-A bar from scratch end-to-end (full per-cell post-state + anti-ghost on all of it + the
+side-table root GENUINELY recomputed + executor/universe-A unification). The economic side-table effects'
+roots are no longer opaque-asserted — they are recomputed in-row from the bound record content (whose
+amount IS the moved amount). **The remaining C effects' real content — the cap-table mutation / nullifier
+insert / note-commitment insert / seal write / cell-table insert that IS THE EFFECT — is still NOT bound
+by the deployed descriptor's `state_commit`** (the cap/privacy/cell/seal families, the next grind). The
+per-effect files PROVE those gaps as `*_out_of_row` / `*_is_turn_property` theorems rather than papering
+them.
 
 ---
 
