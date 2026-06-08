@@ -52,37 +52,50 @@ divergent Lean root.
 
 ---
 
-## 2. The honest fraction: Lean is the runtime producer for 10 / 56 effects
+## 2. The honest fraction: Lean is the runtime producer for 12 / 56 effects
 
 The wire grammar (`FullActionA` / `WireAction`) has **56 arms**. The producer
 classification (`turn/src/lean_shadow.rs`) partitions the surface it touches:
 
-- **AUTHORITATIVE (Lean produces the committed state) — 10 / 56.**
+- **AUTHORITATIVE (Lean produces the committed state) — 12 / 56.**
   `producer_root_agreeing_effects()`: **SetField, Transfer, EmitEvent, NoteSpend,
   NoteCreate, IncrementNonce, RefreshDelegation, Burn, RevokeCapability,
-  QueueAllocate.** For a turn whose effects are ALL in this set, the
-  Lean-reconstituted ledger provably AGREES with the legacy Rust executor on full
-  cell state + `cap_root` + `.root()`, pinned per effect by the
-  `lean_state_producer_coverage` + `lean_state_producer_widen` differentials. The
-  verified executor's output IS the committed state.
+  QueueAllocate, CreateEscrow, CreateObligation.** For a turn whose effects are
+  ALL in this set, the Lean-reconstituted ledger provably AGREES with the legacy
+  Rust executor on full cell state + `cap_root` + `.root()`, pinned per effect by
+  the `lean_state_producer_coverage` + `lean_state_producer_widen` +
+  `lean_state_producer_sidetable` differentials. The verified executor's output IS
+  the committed state. **(This drive added the off-cell-merkle-root holding-store
+  CREATE families: `apply_create_escrow`/`apply_create_obligation` debit ONE cell's
+  `balance` — carried by the `bal` side-table → reconstitutes — and park the value
+  in the off-root `escrows`/`obligations` store; the verified `createEscrowKAsset`
+  / `createObligationA`-dispatch-alias do the SAME single-cell debit + record
+  insert, on the same `authorizedB` + balance + account + id-uniqueness legs, so
+  the reconstituted `.root()` agrees.)**
 
-- **DIFFERENTIAL-ONLY (Lean runs, root diverges, falls back to Rust) — 11 / 56.**
+- **DIFFERENTIAL-ONLY (Lean runs, root diverges, falls back to Rust) — 13 / 56.**
   `producer_root_gap_effects()`: **SetPermissions, SetVerificationKey,
   MakeSovereign, Refusal, ReceiptArchive, CellSeal, CellUnseal, CellDestroy,
-  GrantCapability, AttenuateCapability, RevokeDelegation.** The producer RUNS (so
-  the differential still cross-checks the commit bit), but the
-  Lean-reconstituted `.root()` provably DIVERGES because the wire model is
-  lossier than the cell commitment. Each is pinned by a NEGATIVE-tooth
-  differential that asserts the SPECIFIC divergence — characterized, never a
-  silent pass. On the live path these fall back to the Rust producer.
+  GrantCapability, AttenuateCapability, RevokeDelegation, ReleaseEscrow,
+  RefundEscrow.** The producer RUNS (so the differential still cross-checks the
+  commit bit), but the Lean-reconstituted `.root()` (or the commit bit) provably
+  DIVERGES because the wire model is lossier than the cell commitment OR a gate
+  leg is unmodelled. Each is pinned by a NEGATIVE-tooth differential that asserts
+  the SPECIFIC divergence — characterized, never a silent pass. On the live path
+  these fall back to the Rust producer. **(This drive added the escrow SETTLE
+  effects: Rust gates `ReleaseEscrow` on a satisfied condition PROOF and
+  `RefundEscrow` on a PAST timeout, neither expressible in a single covered turn at
+  one block height, and the verified settle-auth gate differs — a characterized
+  commit-bit gap.)**
 
-- **RUST-PRODUCED (no wire projection yet) — the remaining 35 / 56.**
-  escrow / obligation / bridge / seal-pair / captp-swiss / factory / introduce /
-  exercise / queue-enqueue-dequeue / etc. `forest_is_marshallable` returns false,
-  so the producer is ineligible and the turn commits the Rust post-state.
+- **RUST-PRODUCED (no wire projection yet) — the remaining 31 / 56.**
+  obligation-settle (fulfill/slash, derived-id) / committed-escrow / bridge /
+  seal-pair / captp-swiss / factory / introduce / exercise / queue-enqueue-dequeue
+  / etc. `forest_is_marshallable` returns false, so the producer is ineligible and
+  the turn commits the Rust post-state.
 
-So: **10 effect kinds are Lean-authoritative at the producer; the residual is the
-46 named above (11 run as differential + fall back to Rust; 35 are still
+So: **12 effect kinds are Lean-authoritative at the producer; the residual is the
+44 named above (13 run as differential + fall back to Rust; 31 are still
 Rust-produced because they have no wire projection).**
 
 ---
@@ -99,19 +112,22 @@ Rust-produced because they have no wire projection).**
 | `Refusal` / `ReceiptArchive` | Rust writes an audit-field / lifecycle-Archived commitment (field[4] Poseidon-ish digest + a 2nd nonce bump) the wire `refusal`/`rarchive` arms do not reproduce byte-for-byte. |
 | `CellSeal` / `CellUnseal` / `CellDestroy` | the wire `WState` cell record has no `lifecycle` field; the commitment binds the lifecycle PAYLOAD (reason hash, sealed/destroyed-at height, death cert). Closing needs the Lean kernel to model the lifecycle payload, not just a codec field. |
 | `GrantCapability` / `AttenuateCapability` | the wire `caps` model carries `(target[,rights])` per edge; the Rust `cap_root` binds `(target, slot, permissions, breadstuff, expires_at, allowed_effects)`. A real grant/attenuate rewrites `cap_root`; the bare-`node` reconstruction cannot coincide. |
-| `RevokeDelegation` | **(reclassified this drive — a latent misclassification fixed.)** A COMMITTING revoke bumps the PARENT cell's `delegation_epoch`, which `compute_canonical_state_commitment` folds in (`commitment.rs` hashes `state.delegation_epoch`). The wire `WState` cell record has no `delegation_epoch` field, and the verified `revokeDelegationA` edits only the `caps` edge set, so the reconstitution keeps the parent's pre-state epoch → `.root()` diverges. (The no-op self-revoke that Rust REJECTS trivially "agrees", which is how the prior fixture masked the gap — but a real commit diverges.) Closing needs the Lean kernel to model the per-cell delegation epoch and carry it on the wire. |
+| `RevokeDelegation` | **(reclassified — a latent misclassification fixed.)** A COMMITTING revoke bumps the PARENT cell's `delegation_epoch`, which `compute_canonical_state_commitment` folds in (`commitment.rs` hashes `state.delegation_epoch`). The wire `WState` cell record has no `delegation_epoch` field, and the verified `revokeDelegationA` edits only the `caps` edge set, so the reconstitution keeps the parent's pre-state epoch → `.root()` diverges. (The no-op self-revoke that Rust REJECTS trivially "agrees", which is how the prior fixture masked the gap — but a real commit diverges.) Closing needs the Lean kernel to model the per-cell delegation epoch and carry it on the wire. |
+| `ReleaseEscrow` / `RefundEscrow` | **(NEW this drive — the escrow SETTLE leg.)** Rust gates release on a satisfied condition (ZK proof / all-signers / predicate) and refund on a PAST timeout (`block_height > timeout_height`); the verified `releaseEscrowChainA`/`refundEscrowChainA` gate only on settle-actor authority over the recipient/creator + record-present-and-unresolved. With no condition proof / before the timeout the two executors disagree on whether the settle commits — a characterized commit-bit gap (the condition-proof / timeout-clock legs are the §8 portal the wire model does not carry). The single-cell CREDIT itself is `bal`-faithful; closing needs those gate legs modelled. |
 
-### 3b. The 35 unmappable effects (no wire projection)
+### 3b. The 31 unmappable effects (no wire projection)
 
-escrow create/release/refund, committed-escrow, obligation create/fulfill/slash,
-bridge lock/finalize/cancel/mint, seal/unseal/create-seal-pair, export/enliven/
-swiss-handoff/swiss-drop, create-cell/create-cell-from-factory/spawn, introduce/
-validate-handoff/delegate/delegate-atten/attenuate/drop-ref, exercise,
-queue-enqueue/dequeue/resize/atomic-tx/pipeline-step, pipelined-send,
-bridge-mint. The Lean kernel + wire codec already SUPPORT these (52 verified
+committed-escrow, obligation fulfill/slash (the Rust-DERIVED obligation id the
+wire-id collapse cannot reproduce), bridge lock/finalize/cancel/mint, seal/unseal/
+create-seal-pair, export/enliven/swiss-handoff/swiss-drop, create-cell/
+create-cell-from-factory/spawn, introduce/validate-handoff/delegate/delegate-atten/
+attenuate/drop-ref, exercise, queue-enqueue/dequeue/resize/atomic-tx/pipeline-step,
+pipelined-send. The Lean kernel + wire codec already SUPPORT these (52 verified
 `Inst/*` circuits + 56 `WireAction` arms round-trip-tested); the missing piece is
 the Rust→wire **projection** in `turn/src/lean_shadow.rs::effect_to_wire`
-(`forest_is_marshallable`). Each added projection = another effect family
+(`forest_is_marshallable`). **This drive landed the escrow/obligation CREATE
+projection (now Lean-PRODUCED) + the escrow SETTLE projection (characterized gap).**
+Each added projection = another effect family
 validated against, then produced by, the verified Lean.
 
 ---
@@ -154,6 +170,19 @@ All run locally with the linked `libdregg_lean.a` (`lean-shadow` feature +
 - **`turn/tests/lean_state_producer_widen.rs` — 7 / 7 pass.** Transfer / SetField
   / Burn / IncrementNonce / empty-revoke / two-effect-forest round-trip; cell-seal
   / cell-destroy / grant-capability assert their lifecycle/cap-fidelity gap.
+- **`turn/tests/lean_state_producer_sidetable.rs` (NEW) +
+  `lean_state_producer_coverage.rs` (extended this drive).** The off-cell-merkle-root
+  holding-store CREATE families: `create_escrow_root_agrees` /
+  `create_obligation_root_agrees` assert the verified producer's reconstituted
+  ledger AGREES with Rust on full state + cap_root + `.root()` (the locker's `bal`
+  debit reconstitutes; the escrow/obligation record is off-root). The SETTLE leg
+  is pinned as a gap: `release_escrow_is_a_condition_gate_gap` /
+  `refund_escrow_is_a_timeout_gate_gap` assert the SPECIFIC commit-bit divergence.
+  NOTE: a concurrent in-session `build.rs` archive-GC race over-pruned the local
+  `libdregg_lean.a` (native mathlib members dropped → non-self-linking); these
+  differentials re-run green after a FULL closure re-seed (every dependency-package
+  emitted `.c` archived; a `DREGG_LEAN_FFI_NO_ARCHIVE_GC=1` build.rs escape hatch
+  keeps the restored archive from being re-pruned).
 - **`node/tests/lean_producer_mode.rs` — 2 / 2 pass.** Drives the EXACT helper the
   node commit site calls (`produce_via_lean`) on a Transfer and a SetField turn;
   asserts (1) `ProducerOutcome::LeanProduced`, (2) the COMMITTED (Lean-installed)

@@ -286,7 +286,22 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // Tactic objects the import-trimmed FFI closure no longer references. Drop every member NOT
     // reachable, by symbol, from the `dregg_*` exports. This is the durable payoff of the import-graph
     // split: without it the next splice would re-bloat the archive back to its seeded size.
-    gc_unreachable_members(archive, out_dir);
+    //
+    // ESCAPE HATCH (`DREGG_LEAN_FFI_NO_ARCHIVE_GC=1`): the GC's symbol-reachability BFS chases only
+    // UNDEFINED-symbol edges, so if the closure-completion pass (step 4) seeded an archive whose
+    // dependency members reference mathlib FUNCTION symbols that no kept member leaves UNDEFINED (e.g.
+    // after a hand re-seed of the FULL dependency closure), the GC can drop the very mathlib members
+    // those functions need — leaving `_lp_mathlib_*` unresolved at the final Rust link. When a FULL
+    // archive was just restored out-of-band, set this to keep EVERY member (correct, larger) rather
+    // than risk the destructive prune. Off by default (the GC stays the steady-state size payoff).
+    if std::env::var("DREGG_LEAN_FFI_NO_ARCHIVE_GC").as_deref() == Ok("1") {
+        println!(
+            "cargo:warning=dregg-lean-ffi: DREGG_LEAN_FFI_NO_ARCHIVE_GC=1 — skipping archive \
+             reachability GC, keeping every member (full self-linking archive)."
+        );
+    } else {
+        gc_unreachable_members(archive, out_dir);
+    }
 }
 
 /// Discover every `.lake/build/ir` directory that can supply a `.c` for the dependency closure:
