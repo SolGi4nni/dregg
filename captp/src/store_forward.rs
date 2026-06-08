@@ -148,56 +148,146 @@ pub enum SendResult {
 // =============================================================================
 // Encryption primitives
 // =============================================================================
+//
+// Real, vetted AEAD stack (replaces the prior BLAKE3-XOR keystream spike):
+//
+//   X25519 ECDH  (x25519-dalek, constant-time Montgomery ladder)
+//     -> HKDF-SHA256 extract+expand  (hkdf + sha2, RFC 5869)
+//        -> ChaCha20-Poly1305 AEAD  (chacha20poly1305, RFC 8439)
+//
+// Sender-anonymous, forward-secret box: each message uses a *fresh* ephemeral
+// X25519 keypair, so the relay (which holds only ciphertext + ephemeral public
+// key) cannot read, forge, or tamper with messages — it can only delay or drop.
+// Compromise of a long-term destination secret does not retroactively expose
+// past traffic beyond the messages still derivable from that one static key;
+// the ephemeral-static design gives recipient forward secrecy against ephemeral
+// compromise and unlinkable sender anonymity.
+//
+// # Key derivation transcript binding
+//
+// The HKDF `info` string binds the derived key to the full handshake transcript
+// (domain tag || ephemeral_pk || dest_pk). The ephemeral and destination public
+// keys are *also* fed as ChaCha20-Poly1305 associated data, so a relay cannot
+// splice a ciphertext onto a different ephemeral key or re-address it to another
+// recipient without the AEAD tag failing.
+//
+// # Nonce
+//
+// A fixed all-zero 96-bit nonce is used. This is safe — and standard for
+// ephemeral-static ECIES-style boxes — because the AEAD key is derived from a
+// *unique* per-message ephemeral keypair, so no (key, nonce) pair is ever reused.
 
-/// Encrypt a payload for a specific destination using X25519 + BLAKE3 + ChaCha20-Poly1305.
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, Nonce};
+use hkdf::Hkdf;
+use sha2::Sha256;
+use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroize;
+
+/// ChaCha20-Poly1305 authentication tag length (RFC 8439).
+const POLY1305_TAG_LEN: usize = 16;
+
+/// HKDF domain-separation / version tag. Bump on any wire-format change.
+const HKDF_DOMAIN: &[u8] = b"dregg-store-forward-v2-x25519-hkdf-sha256-chacha20poly1305";
+
+/// Derive the per-message AEAD key from the DH shared secret, binding it to the
+/// full handshake transcript via HKDF-SHA256 (RFC 5869).
 ///
-/// Returns `(ciphertext, ephemeral_public_key)`. The ciphertext includes the
-/// 16-byte Poly1305 authentication tag appended.
+/// `salt` and `info` carry the domain tag and both public keys so the derived
+/// key is unique to this (ephemeral, destination) pair and version.
+fn derive_aead_key(shared_secret: &[u8; 32], ephemeral_pk: &[u8; 32], dest_pk: &[u8; 32]) -> [u8; 32] {
+    // Salt = domain tag (RFC 5869 allows a fixed non-secret salt).
+    let hk = Hkdf::<Sha256>::new(Some(HKDF_DOMAIN), shared_secret);
+
+    // info = domain || ephemeral_pk || dest_pk  (transcript binding).
+    let mut info = Vec::with_capacity(HKDF_DOMAIN.len() + 64);
+    info.extend_from_slice(HKDF_DOMAIN);
+    info.extend_from_slice(ephemeral_pk);
+    info.extend_from_slice(dest_pk);
+
+    let mut key = [0u8; 32];
+    hk.expand(&info, &mut key)
+        .expect("HKDF-SHA256 expand of 32 bytes never fails");
+    key
+}
+
+/// Associated data bound into the AEAD tag: both public keys. A relay cannot
+/// re-address or splice the ciphertext onto another ephemeral key without the
+/// Poly1305 tag failing.
+fn aead_associated_data(ephemeral_pk: &[u8; 32], dest_pk: &[u8; 32]) -> [u8; 64] {
+    let mut ad = [0u8; 64];
+    ad[..32].copy_from_slice(ephemeral_pk);
+    ad[32..].copy_from_slice(dest_pk);
+    ad
+}
+
+/// Encrypt a payload for a specific destination using X25519 -> HKDF-SHA256 ->
+/// ChaCha20-Poly1305.
+///
+/// Returns `(ephemeral_public_key, ciphertext)`. The ciphertext is the
+/// ChaCha20-Poly1305 output with the 16-byte Poly1305 tag appended.
+///
+/// The `_our_identity_secret` parameter is retained for API compatibility but is
+/// intentionally unused: store-and-forward boxes are *sender-anonymous* (a fresh
+/// ephemeral key per message), which is the correct privacy posture for relayed
+/// traffic — the relay learns nothing about the sender.
 ///
 /// # Algorithm
 ///
-/// 1. Generate an ephemeral X25519 keypair.
-/// 2. Compute shared secret: `shared = x25519(ephemeral_secret, dest_pk)`.
-/// 3. Derive symmetric key: `key = BLAKE3(domain || shared)` (32 bytes, truncated to 32).
-/// 4. Encrypt with ChaCha20-Poly1305 using a zero nonce (safe because key is unique
-///    per ephemeral keypair).
-/// 5. Return `(ciphertext || tag, ephemeral_public_key)`.
+/// 1. Generate a fresh ephemeral X25519 keypair `(e, E = e·B)`.
+/// 2. DH shared secret `s = e · dest_pk`.
+/// 3. `key = HKDF-SHA256(salt=domain, ikm=s, info=domain||E||dest_pk)`.
+/// 4. `ct = ChaCha20Poly1305(key, nonce=0, ad=E||dest_pk).encrypt(payload)`.
+/// 5. Return `(E, ct||tag)`.
 pub fn encrypt_for_destination(
     payload: &[u8],
     dest_pk: &[u8; 32],
     _our_identity_secret: &[u8; 32],
 ) -> ([u8; 32], Vec<u8>) {
-    // Step 1: Generate ephemeral X25519 keypair
-    let mut ephemeral_secret = [0u8; 32];
-    getrandom::fill(&mut ephemeral_secret).expect("getrandom failed");
+    // Step 1: fresh ephemeral X25519 keypair (StaticSecret so we can zeroize it;
+    // it is used exactly once and dropped, so it is still ephemeral in effect).
+    let mut eph_bytes = [0u8; 32];
+    getrandom::fill(&mut eph_bytes).expect("getrandom failed");
+    let ephemeral_secret = StaticSecret::from(eph_bytes);
+    eph_bytes.zeroize();
+    let ephemeral_public = PublicKey::from(&ephemeral_secret);
+    let ephemeral_pk: [u8; 32] = *ephemeral_public.as_bytes();
 
-    // Clamp the scalar for X25519 (standard practice)
-    ephemeral_secret[0] &= 248;
-    ephemeral_secret[31] &= 127;
-    ephemeral_secret[31] |= 64;
+    // Step 2: DH shared secret = ephemeral_secret · dest_pk.
+    let dest_public = PublicKey::from(*dest_pk);
+    let shared = ephemeral_secret.diffie_hellman(&dest_public);
+    let shared_bytes: [u8; 32] = *shared.as_bytes();
 
-    // Compute ephemeral public key: ephemeral_secret * basepoint
-    let ephemeral_pk = x25519_scalar_mult_base(&ephemeral_secret);
+    // Step 3: HKDF-SHA256 -> AEAD key, transcript-bound.
+    let mut key = derive_aead_key(&shared_bytes, &ephemeral_pk, dest_pk);
 
-    // Step 2: DH shared secret = ephemeral_secret * dest_pk
-    let shared_secret = x25519_scalar_mult(&ephemeral_secret, dest_pk);
+    // Step 4: ChaCha20-Poly1305 with a zero nonce (unique key per message).
+    let cipher = ChaCha20Poly1305::new((&key).into());
+    let nonce = Nonce::default(); // 96-bit all-zero
+    let ad = aead_associated_data(&ephemeral_pk, dest_pk);
+    let ciphertext = cipher
+        .encrypt(&nonce, Payload { msg: payload, aad: &ad })
+        .expect("ChaCha20-Poly1305 encryption never fails");
 
-    // Step 3: Derive symmetric key via BLAKE3
-    let key = derive_symmetric_key(&shared_secret);
-
-    // Step 4: ChaCha20-Poly1305 encrypt
-    let ciphertext = chacha20poly1305_encrypt(&key, payload);
+    key.zeroize();
 
     (ephemeral_pk, ciphertext)
 }
 
-/// Decrypt a message using our X25519 secret key and the sender's ephemeral public key.
+/// Decrypt a message using our X25519 secret key and the sender's ephemeral
+/// public key.
+///
+/// `our_secret` is our raw (un-clamped) 32-byte X25519 secret; `x25519-dalek`
+/// performs clamping internally.
 ///
 /// # Algorithm
 ///
-/// 1. Compute shared secret: `shared = x25519(our_secret, sender_ephemeral_pk)`.
-/// 2. Derive symmetric key: `key = BLAKE3(domain || shared)`.
-/// 3. Decrypt with ChaCha20-Poly1305 using zero nonce.
+/// 1. DH shared secret `s = our_secret · sender_ephemeral_pk`.
+/// 2. `key = HKDF-SHA256(salt=domain, ikm=s, info=domain||E||our_pk)`.
+/// 3. `ChaCha20Poly1305(key, nonce=0, ad=E||our_pk).decrypt(ciphertext)`.
+///
+/// Returns [`DecryptError::DecryptionFailed`] on any AEAD failure (wrong key,
+/// tampered ciphertext/AD, or wrong nonce).
 pub fn decrypt_from_sender(
     ciphertext: &[u8],
     sender_ephemeral_pk: &[u8; 32],
@@ -207,438 +297,53 @@ pub fn decrypt_from_sender(
         return Err(DecryptError::CiphertextTooShort);
     }
 
-    // Clamp our secret for X25519
-    let mut clamped_secret = *our_secret;
-    clamped_secret[0] &= 248;
-    clamped_secret[31] &= 127;
-    clamped_secret[31] |= 64;
+    // Our static keypair: derive our public key so the transcript binding (info +
+    // associated data) matches what the sender computed against `dest_pk`.
+    let our_static = StaticSecret::from(*our_secret);
+    let our_public = PublicKey::from(&our_static);
+    let our_pk: [u8; 32] = *our_public.as_bytes();
 
-    // DH: shared_secret = our_secret * sender_ephemeral_pk
-    let shared_secret = x25519_scalar_mult(&clamped_secret, sender_ephemeral_pk);
+    // Step 1: DH shared secret.
+    let sender_eph_public = PublicKey::from(*sender_ephemeral_pk);
+    let shared = our_static.diffie_hellman(&sender_eph_public);
+    let shared_bytes: [u8; 32] = *shared.as_bytes();
 
-    // Check for all-zero shared secret (indicates invalid point)
-    if shared_secret == [0u8; 32] {
+    // Reject contributory-behaviour low-order points (all-zero shared secret).
+    // x25519-dalek does not reject these at the API level; an all-zero shared
+    // secret means the sender used a low-order ephemeral point.
+    if !shared.was_contributory() {
         return Err(DecryptError::InvalidEphemeralKey);
     }
 
-    // Derive symmetric key
-    let key = derive_symmetric_key(&shared_secret);
+    // Step 2: HKDF-SHA256 -> AEAD key (bound to our own public key as recipient).
+    let mut key = derive_aead_key(&shared_bytes, sender_ephemeral_pk, &our_pk);
 
-    // Decrypt
-    chacha20poly1305_decrypt(&key, ciphertext)
+    // Step 3: ChaCha20-Poly1305 decrypt + verify.
+    let cipher = ChaCha20Poly1305::new((&key).into());
+    let nonce = Nonce::default();
+    let ad = aead_associated_data(sender_ephemeral_pk, &our_pk);
+    let result = cipher
+        .decrypt(&nonce, Payload { msg: ciphertext, aad: &ad })
+        .map_err(|_| DecryptError::DecryptionFailed);
+
+    key.zeroize();
+    result
 }
 
-/// Poly1305 authentication tag length (we use 16 bytes of the BLAKE3 MAC as the tag).
-const POLY1305_TAG_LEN: usize = 16;
-
-/// Derive a 32-byte symmetric key from a DH shared secret using BLAKE3.
-fn derive_symmetric_key(shared_secret: &[u8; 32]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-store-forward-v1-key");
-    hasher.update(shared_secret);
-    *hasher.finalize().as_bytes()
-}
-
-// =============================================================================
-// Minimal X25519 implementation (field arithmetic over Curve25519)
-// =============================================================================
-//
-// This is a minimal, constant-time(ish) X25519 scalar multiplication using the
-// Montgomery ladder over GF(2^255-19). For production use this should be replaced
-// by a vetted library (x25519-dalek, etc.), but we implement it here to avoid
-// adding a dependency for the initial spike.
-
-/// The prime 2^255 - 19 (little-endian limbs, 5x51-bit representation would be
-/// better for constant-time, but we use a 32-byte representation for clarity).
-const CURVE25519_A24: u64 = 121666; // (A-2)/4 where A=486662
-
-/// X25519 scalar multiplication with a given point (variable base).
-fn x25519_scalar_mult(scalar: &[u8; 32], point: &[u8; 32]) -> [u8; 32] {
-    // Montgomery ladder implementation
-    let mut k = *scalar;
-    // Clamp
-    k[0] &= 248;
-    k[31] &= 127;
-    k[31] |= 64;
-
-    let u = decode_u_coordinate(point);
-
-    // Montgomery ladder
-    let x_1 = u;
-    let mut x_2 = Fe::one();
-    let mut z_2 = Fe::zero();
-    let mut x_3 = u;
-    let mut z_3 = Fe::one();
-    let mut swap: u8 = 0;
-
-    for pos in (0..255).rev() {
-        let byte_idx = pos / 8;
-        let bit_idx = pos % 8;
-        let k_t = (k[byte_idx] >> bit_idx) & 1;
-
-        swap ^= k_t;
-        Fe::cswap(&mut x_2, &mut x_3, swap);
-        Fe::cswap(&mut z_2, &mut z_3, swap);
-        swap = k_t;
-
-        let a = x_2.add(&z_2);
-        let aa = a.square();
-        let b = x_2.sub(&z_2);
-        let bb = b.square();
-        let e = aa.sub(&bb);
-        let c = x_3.add(&z_3);
-        let d = x_3.sub(&z_3);
-        let da = d.mul(&a);
-        let cb = c.mul(&b);
-        x_3 = da.add(&cb).square();
-        z_3 = x_1.mul(&da.sub(&cb).square());
-        x_2 = aa.mul(&bb);
-        z_2 = e.mul(&aa.add(&Fe::from_u64(CURVE25519_A24).mul(&e)));
-    }
-
-    Fe::cswap(&mut x_2, &mut x_3, swap);
-    Fe::cswap(&mut z_2, &mut z_3, swap);
-
-    let result = x_2.mul(&z_2.invert());
-    encode_u_coordinate(&result)
-}
-
-/// X25519 scalar multiplication with the basepoint (9).
-fn x25519_scalar_mult_base(scalar: &[u8; 32]) -> [u8; 32] {
-    let mut basepoint = [0u8; 32];
-    basepoint[0] = 9;
-    x25519_scalar_mult(scalar, &basepoint)
-}
-
-/// Generate an X25519 keypair (secret, public) using a random secret key.
+/// Generate an X25519 keypair `(secret, public)` for use with
+/// [`encrypt_for_destination`] / [`decrypt_from_sender`].
 ///
-/// The secret key is clamped per the X25519 specification and the public key
-/// is computed as `secret * basepoint`. This is suitable for use with
-/// [`encrypt_for_destination`] and [`decrypt_from_sender`].
+/// The returned secret is the raw 32-byte scalar; clamping is performed
+/// internally by `x25519-dalek` on use. The public key is `secret · B`.
 pub fn generate_x25519_keypair() -> ([u8; 32], [u8; 32]) {
-    let mut secret = [0u8; 32];
-    getrandom::fill(&mut secret).expect("getrandom failed");
-    secret[0] &= 248;
-    secret[31] &= 127;
-    secret[31] |= 64;
-    let public = x25519_scalar_mult_base(&secret);
-    (secret, public)
-}
-
-// =============================================================================
-// Field element arithmetic for GF(2^255 - 19)
-// =============================================================================
-//
-// 5-limb, 51-bit representation for reasonable performance.
-
-const LIMB_BITS: u64 = 51;
-const LIMB_MASK: u64 = (1u64 << LIMB_BITS) - 1;
-
-/// A field element in GF(2^255-19), represented as 5 limbs of 51 bits each.
-#[derive(Clone, Copy)]
-struct Fe([u64; 5]);
-
-impl Fe {
-    fn zero() -> Self {
-        Fe([0; 5])
-    }
-
-    fn one() -> Self {
-        Fe([1, 0, 0, 0, 0])
-    }
-
-    fn from_u64(v: u64) -> Self {
-        Fe([v & LIMB_MASK, v >> LIMB_BITS, 0, 0, 0])
-    }
-
-    fn add(&self, other: &Fe) -> Fe {
-        Fe([
-            self.0[0] + other.0[0],
-            self.0[1] + other.0[1],
-            self.0[2] + other.0[2],
-            self.0[3] + other.0[3],
-            self.0[4] + other.0[4],
-        ])
-    }
-
-    fn sub(&self, other: &Fe) -> Fe {
-        // Add 2*p to avoid underflow before subtracting
-        // 2p in limbs: each limb gets 2*(2^51-1) for the lower 4, and 2*(2^51-19) adj.
-        // Simpler: add a large multiple of p.
-        // p = 2^255-19, in 51-bit limbs: [0x7FFFFFFFFFFED, 0x7FFFFFFFFFFFF, ...]
-        // We add 4p to ensure no underflow with typical intermediate values.
-        const P_TIMES_4: [u64; 5] = [
-            4 * 0x7FFFFFFFFFFED,
-            4 * 0x7FFFFFFFFFFFF,
-            4 * 0x7FFFFFFFFFFFF,
-            4 * 0x7FFFFFFFFFFFF,
-            4 * 0x7FFFFFFFFFFFF,
-        ];
-        Fe([
-            (self.0[0] + P_TIMES_4[0]) - other.0[0],
-            (self.0[1] + P_TIMES_4[1]) - other.0[1],
-            (self.0[2] + P_TIMES_4[2]) - other.0[2],
-            (self.0[3] + P_TIMES_4[3]) - other.0[3],
-            (self.0[4] + P_TIMES_4[4]) - other.0[4],
-        ])
-    }
-
-    fn reduce(&self) -> Fe {
-        let mut c = self.0;
-        for i in 0..4 {
-            let carry = c[i] >> LIMB_BITS;
-            c[i] &= LIMB_MASK;
-            c[i + 1] += carry;
-        }
-        let carry = c[4] >> LIMB_BITS;
-        c[4] &= LIMB_MASK;
-        c[0] += carry * 19;
-        // Second pass
-        for i in 0..4 {
-            let carry = c[i] >> LIMB_BITS;
-            c[i] &= LIMB_MASK;
-            c[i + 1] += carry;
-        }
-        let carry = c[4] >> LIMB_BITS;
-        c[4] &= LIMB_MASK;
-        c[0] += carry * 19;
-        Fe(c)
-    }
-
-    fn mul(&self, other: &Fe) -> Fe {
-        let a = self.reduce();
-        let b = other.reduce();
-
-        // Schoolbook multiplication with 128-bit intermediates
-        let mut t = [0u128; 5];
-        for i in 0..5 {
-            for j in 0..5 {
-                let idx = i + j;
-                let product = a.0[i] as u128 * b.0[j] as u128;
-                if idx < 5 {
-                    t[idx] += product;
-                } else {
-                    // Reduce: x^5 = 19 in this representation
-                    t[idx - 5] += product * 19;
-                }
-            }
-        }
-
-        // Carry and reduce to 51-bit limbs
-        let mut c = [0u64; 5];
-        let mut carry = 0u128;
-        for i in 0..5 {
-            let sum = t[i] + carry;
-            c[i] = (sum as u64) & LIMB_MASK;
-            carry = sum >> LIMB_BITS;
-        }
-        c[0] += (carry as u64) * 19;
-
-        Fe(c).reduce()
-    }
-
-    fn square(&self) -> Fe {
-        self.mul(self)
-    }
-
-    /// Compute self^(2^n) by repeated squaring n times.
-    fn pow2n(&self, n: usize) -> Fe {
-        let mut r = *self;
-        for _ in 0..n {
-            r = r.square();
-        }
-        r
-    }
-
-    /// Modular inverse via Fermat's little theorem: a^(p-2) mod p.
-    /// p-2 = 2^255 - 21
-    fn invert(&self) -> Fe {
-        // Use the addition chain for p-2 = 2^255 - 21
-        let z2 = self.square(); // z^2
-        let z9 = z2.pow2n(2).mul(self); // z^9 (approx, using shortcut)
-        let z11 = z9.mul(&z2); // z^11
-
-        // Build up using repeated squaring chains
-        // This is the standard addition chain for 2^255-21
-        let t = z11.square().mul(&z9); // z^(2*11 + 9) = z^31
-        let z_2_5 = t; // z^(2^5 - 1)
-
-        let z_2_10 = z_2_5.pow2n(5).mul(&z_2_5);
-        let z_2_20 = z_2_10.pow2n(10).mul(&z_2_10);
-        let z_2_40 = z_2_20.pow2n(20).mul(&z_2_20);
-        let z_2_50 = z_2_40.pow2n(10).mul(&z_2_10);
-        let z_2_100 = z_2_50.pow2n(50).mul(&z_2_50);
-        let z_2_200 = z_2_100.pow2n(100).mul(&z_2_100);
-        let z_2_250 = z_2_200.pow2n(50).mul(&z_2_50);
-        let z_2_255_m_5 = z_2_250.pow2n(5);
-        z_2_255_m_5.mul(&z11) // z^(2^255-21) = z^(p-2)
-    }
-
-    /// Conditional swap: swap a and b if flag is 1, no-op if flag is 0.
-    fn cswap(a: &mut Fe, b: &mut Fe, flag: u8) {
-        let mask = (-(flag as i64)) as u64;
-        for i in 0..5 {
-            let t = mask & (a.0[i] ^ b.0[i]);
-            a.0[i] ^= t;
-            b.0[i] ^= t;
-        }
-    }
-}
-
-/// Decode a 32-byte little-endian u-coordinate into a field element.
-fn decode_u_coordinate(bytes: &[u8; 32]) -> Fe {
-    // Mask the high bit (u-coordinate is 255 bits)
-    let mut b = *bytes;
-    b[31] &= 127;
-
-    // Pack into 5 limbs of 51 bits
-    let mut limbs = [0u64; 5];
-    // Each limb spans ~6.4 bytes. We extract 51 bits at a time.
-    let mut bit_offset = 0u32;
-    for limb in &mut limbs {
-        let byte_idx = (bit_offset / 8) as usize;
-        let bit_shift = bit_offset % 8;
-
-        // Read 8 bytes starting at byte_idx (with bounds check)
-        let mut buf = [0u8; 8];
-        for i in 0..8 {
-            if byte_idx + i < 32 {
-                buf[i] = b[byte_idx + i];
-            }
-        }
-        let val = u64::from_le_bytes(buf);
-        *limb = (val >> bit_shift) & LIMB_MASK;
-        bit_offset += 51;
-    }
-
-    Fe(limbs)
-}
-
-/// Encode a field element back to a 32-byte little-endian u-coordinate.
-fn encode_u_coordinate(fe: &Fe) -> [u8; 32] {
-    let f = fe.reduce().reduce(); // Fully reduce
-
-    // Final canonical reduction: if f >= p, subtract p
-    // p = 2^255-19, in limbs: [0x7FFFFFFFFFFED, 0x7FFFFFFFFFFFF, 0x7FFFFFFFFFFFF, 0x7FFFFFFFFFFFF, 0x7FFFFFFFFFFFF]
-    let mut h = f.0;
-
-    // Propagate carries one more time
-    for i in 0..4 {
-        let carry = h[i] >> LIMB_BITS;
-        h[i] &= LIMB_MASK;
-        h[i + 1] += carry;
-    }
-    let carry = h[4] >> LIMB_BITS;
-    h[4] &= LIMB_MASK;
-    h[0] += carry * 19;
-    let carry = h[0] >> LIMB_BITS;
-    h[0] &= LIMB_MASK;
-    h[1] += carry;
-
-    // Pack 51-bit limbs into 32 bytes
-    let mut out = [0u8; 32];
-    let mut bit_offset = 0u32;
-    for limb in &h {
-        let byte_idx = (bit_offset / 8) as usize;
-        let bit_shift = bit_offset % 8;
-
-        // Read current 8 bytes, OR in our limb, write back
-        let mut buf = [0u8; 8];
-        for i in 0..8 {
-            if byte_idx + i < 32 {
-                buf[i] = out[byte_idx + i];
-            }
-        }
-        let mut val = u64::from_le_bytes(buf);
-        val |= limb << bit_shift;
-        let new_bytes = val.to_le_bytes();
-        for i in 0..8 {
-            if byte_idx + i < 32 {
-                out[byte_idx + i] = new_bytes[i];
-            }
-        }
-        bit_offset += 51;
-    }
-
-    out
-}
-
-// =============================================================================
-// Minimal ChaCha20-Poly1305 AEAD
-// =============================================================================
-//
-// Again, a minimal implementation for the spike. In production, use the `chacha20poly1305` crate.
-
-/// ChaCha20-Poly1305 encrypt with a zero nonce (safe because key is unique per message).
-fn chacha20poly1305_encrypt(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
-    // Use BLAKE3 in keyed mode to derive a stream cipher and MAC.
-    // This is NOT standard ChaCha20-Poly1305 but provides equivalent security
-    // properties for our use case (unique key per message, no nonce reuse possible).
-    //
-    // We use: ciphertext = plaintext XOR BLAKE3_stream(key, counter)
-    //         tag = BLAKE3_MAC(key, ciphertext)
-
-    let mut ciphertext = Vec::with_capacity(plaintext.len() + POLY1305_TAG_LEN);
-
-    // Encrypt: XOR with BLAKE3-derived keystream
-    let mut block_counter = 0u64;
-    for chunk in plaintext.chunks(32) {
-        let mut stream_input = Vec::with_capacity(40);
-        stream_input.extend_from_slice(key);
-        stream_input.extend_from_slice(&block_counter.to_le_bytes());
-        let keystream = blake3::keyed_hash(key, &block_counter.to_le_bytes());
-        let ks_bytes = keystream.as_bytes();
-        for (i, &byte) in chunk.iter().enumerate() {
-            ciphertext.push(byte ^ ks_bytes[i]);
-        }
-        block_counter += 1;
-    }
-
-    // Compute authentication tag over the ciphertext
-    let tag = blake3::keyed_hash(key, &ciphertext);
-    ciphertext.extend_from_slice(&tag.as_bytes()[..POLY1305_TAG_LEN]);
-
-    ciphertext
-}
-
-/// ChaCha20-Poly1305 decrypt (matching the encrypt above).
-fn chacha20poly1305_decrypt(
-    key: &[u8; 32],
-    ciphertext_with_tag: &[u8],
-) -> Result<Vec<u8>, DecryptError> {
-    if ciphertext_with_tag.len() < POLY1305_TAG_LEN {
-        return Err(DecryptError::CiphertextTooShort);
-    }
-
-    let tag_offset = ciphertext_with_tag.len() - POLY1305_TAG_LEN;
-    let ciphertext = &ciphertext_with_tag[..tag_offset];
-    let provided_tag = &ciphertext_with_tag[tag_offset..];
-
-    // Verify tag
-    let computed_tag = blake3::keyed_hash(key, ciphertext);
-    let computed_tag_bytes = &computed_tag.as_bytes()[..POLY1305_TAG_LEN];
-
-    // Constant-time comparison
-    let mut diff = 0u8;
-    for i in 0..POLY1305_TAG_LEN {
-        diff |= computed_tag_bytes[i] ^ provided_tag[i];
-    }
-    if diff != 0 {
-        return Err(DecryptError::DecryptionFailed);
-    }
-
-    // Decrypt: XOR with same BLAKE3-derived keystream
-    let mut plaintext = Vec::with_capacity(ciphertext.len());
-    let mut block_counter = 0u64;
-    for chunk in ciphertext.chunks(32) {
-        let keystream = blake3::keyed_hash(key, &block_counter.to_le_bytes());
-        let ks_bytes = keystream.as_bytes();
-        for (i, &byte) in chunk.iter().enumerate() {
-            plaintext.push(byte ^ ks_bytes[i]);
-        }
-        block_counter += 1;
-    }
-
-    Ok(plaintext)
+    let mut secret_bytes = [0u8; 32];
+    getrandom::fill(&mut secret_bytes).expect("getrandom failed");
+    let secret = StaticSecret::from(secret_bytes);
+    let public = PublicKey::from(&secret);
+    let pk = *public.as_bytes();
+    let sk = secret.to_bytes();
+    secret_bytes.zeroize();
+    (sk, pk)
 }
 
 // =============================================================================
@@ -1062,14 +767,7 @@ mod tests {
 
     /// Generate a test X25519 keypair (secret, public).
     fn test_x25519_keypair() -> ([u8; 32], [u8; 32]) {
-        let mut secret = [0u8; 32];
-        getrandom::fill(&mut secret).expect("getrandom failed");
-        // Clamp
-        secret[0] &= 248;
-        secret[31] &= 127;
-        secret[31] |= 64;
-        let public = x25519_scalar_mult_base(&secret);
-        (secret, public)
+        generate_x25519_keypair()
     }
 
     // --- Relay tests ---
@@ -1303,6 +1001,101 @@ mod tests {
 
         let result = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret);
         assert!(matches!(result, Err(DecryptError::DecryptionFailed)));
+    }
+
+    #[test]
+    fn tampered_tag_fails() {
+        let (bob_secret, bob_public) = test_x25519_keypair();
+        let (alice_secret, _) = test_x25519_keypair();
+
+        let plaintext = b"integrity-protected";
+        let (ephemeral_pk, mut ciphertext) =
+            encrypt_for_destination(plaintext, &bob_public, &alice_secret);
+
+        // Flip a bit in the Poly1305 tag (last 16 bytes).
+        let last = ciphertext.len() - 1;
+        ciphertext[last] ^= 0x01;
+
+        let result = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret);
+        assert!(matches!(result, Err(DecryptError::DecryptionFailed)));
+    }
+
+    #[test]
+    fn readdressed_ephemeral_key_rejected() {
+        // A relay must not be able to swap the advertised ephemeral public key:
+        // it is bound into both the HKDF transcript and the AEAD associated data.
+        let (bob_secret, bob_public) = test_x25519_keypair();
+        let (alice_secret, _) = test_x25519_keypair();
+
+        let plaintext = b"do not re-address";
+        let (_ephemeral_pk, ciphertext) =
+            encrypt_for_destination(plaintext, &bob_public, &alice_secret);
+
+        // Present a *different* (valid) ephemeral key alongside the real ciphertext.
+        let (_attacker_secret, attacker_eph) = test_x25519_keypair();
+        let result = decrypt_from_sender(&ciphertext, &attacker_eph, &bob_secret);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn relay_sees_only_ciphertext() {
+        // What a relay actually holds is a QueuedMessage: destination + opaque
+        // ciphertext + ephemeral pk + routing metadata. It never holds a key
+        // capable of decryption, and the plaintext must not appear in the box.
+        let (bob_secret, bob_public) = test_x25519_keypair();
+        let (alice_secret, _) = test_x25519_keypair();
+
+        let plaintext = b"PLAINTEXT-NEEDLE-capability-grant";
+        let mut client = StoreForwardClient::new(fed_alice(), vec![]);
+        let msg = client.prepare_message(
+            fed_bob(),
+            plaintext,
+            &bob_public,
+            &alice_secret,
+            MessagePriority::Normal,
+            100,
+            10,
+        );
+
+        // The relay's stored bytes must not contain the plaintext anywhere.
+        let needle = b"PLAINTEXT-NEEDLE";
+        assert!(
+            !msg.encrypted_payload
+                .windows(needle.len())
+                .any(|w| w == needle),
+            "plaintext leaked into the relay-visible ciphertext"
+        );
+
+        // The relay has no secret key; it can only move opaque bytes. Confirm the
+        // ciphertext is genuinely opaque to anyone without bob's secret: a fresh
+        // (relay-style) keypair cannot decrypt.
+        let (relay_secret, _relay_public) = test_x25519_keypair();
+        assert!(
+            decrypt_from_sender(&msg.encrypted_payload, &msg.sender_ephemeral_pk, &relay_secret)
+                .is_err(),
+            "a party without bob's secret could decrypt"
+        );
+
+        // The legitimate recipient still recovers the plaintext.
+        let recovered =
+            decrypt_from_sender(&msg.encrypted_payload, &msg.sender_ephemeral_pk, &bob_secret)
+                .unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn fresh_ephemeral_key_per_message() {
+        // Forward secrecy / unlinkability: each message uses a distinct ephemeral
+        // public key, and the same plaintext encrypts to distinct ciphertexts.
+        let (_bob_secret, bob_public) = test_x25519_keypair();
+        let (alice_secret, _) = test_x25519_keypair();
+
+        let plaintext = b"same plaintext twice";
+        let (eph1, ct1) = encrypt_for_destination(plaintext, &bob_public, &alice_secret);
+        let (eph2, ct2) = encrypt_for_destination(plaintext, &bob_public, &alice_secret);
+
+        assert_ne!(eph1, eph2, "ephemeral keys must be fresh per message");
+        assert_ne!(ct1, ct2, "ciphertexts must not be identical (no nonce reuse leak)");
     }
 
     // --- Client tests ---
