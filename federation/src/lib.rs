@@ -62,6 +62,11 @@
 pub mod checkpoint;
 pub mod cross_fed_bundle;
 pub mod epoch;
+/// Differential: the verified Lean `Dregg2.Distributed.EpochReconfig` model ⟺ this crate's real
+/// `epoch` reconfiguration (quorum threshold, the member-set transform, and the no-safety-gap
+/// `verify_epoch_transition` gate with its negative witnesses). Test-only.
+#[cfg(test)]
+mod epoch_diff;
 pub mod federation;
 pub mod identity;
 pub mod node;
