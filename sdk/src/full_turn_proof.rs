@@ -248,16 +248,16 @@ fn effect_vm_circuit_descriptor() -> CircuitDescriptor {
 // proof is the SAME wire type (`BatchProof<DreggStarkConfig>` = `EffectVmP3Proof`), so
 // the composed proof + verifier are unchanged.
 //
-// CONSERVATIVE SCOPE (cutover beachhead): the descriptor path is taken ONLY for a
-// single-effect turn whose effect maps to a descriptor that is VALIDATED cutover-ready
-// — currently `Transfer` (selector 1), the effect the differential harness
-// (`circuit/tests/effect_vm_descriptor_cutover_harness.rs`) proves the interpreter
+// CONSERVATIVE SCOPE (cutover beachhead → economic effects): the descriptor path is taken
+// ONLY for a single-effect turn whose effect maps to a descriptor that is VALIDATED
+// cutover-ready by the differential harness
+// (`circuit/tests/effect_vm_descriptor_cutover_harness.rs`), which proves the interpreter
 // decides IDENTICALLY to the hand-AIR over the real witness (honest accept + anti-ghost
-// reject). Every other shape (multi-effect turns, burn/note/etc.) FALLS BACK to the
-// hand-AIR — burn/note have a known column-mapping divergence (asserted in that
-// harness's `column_divergence_blockers`) and stay on the hand-AIR until the layout is
-// reconciled. So flipping the flag NEVER changes the proven semantics; it only swaps the
-// prover for the one validated effect.
+// reject). The validated set is now `Transfer` (1) PLUS the reconciled FULL-ECONOMIC
+// effects `Burn` (46), `NoteCreate` (5), `NoteSpend` (4), `BridgeMint` (40) — all graduated
+// by `economic_effects_graduated_into_cutover`. Every other shape (multi-effect turns, the
+// IR-blocked side-table effects) FALLS BACK to the hand-AIR. So flipping the flag NEVER
+// changes the proven semantics; it only swaps the prover for the validated effects.
 
 /// Is the descriptor-interpreter cutover prover enabled (`DREGG_DESCRIPTOR_PROVER=1`)?
 fn descriptor_prover_enabled() -> bool {
@@ -266,17 +266,29 @@ fn descriptor_prover_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// The selector for a turn that is a SINGLE cutover-ready effect, or `None`. Conservative:
-/// only `Transfer` (selector 1) is validated cutover-ready, so only it qualifies.
+/// The selector for a turn that is a SINGLE cutover-ready effect, or `None`. Validated
+/// cutover-ready (descriptor ⟺ hand-AIR proven IDENTICAL on the real witness + anti-ghost):
+/// `Transfer` (1) plus the reconciled full-economic effects `NoteSpend` (4), `NoteCreate`
+/// (5), `BridgeMint` (40), `Burn` (46).
 fn cutover_ready_selector(effects: &[VmEffectKind]) -> Option<usize> {
     if effects.len() != 1 {
         return None;
     }
     match &effects[0] {
         VmEffectKind::Transfer { .. } => Some(sel::TRANSFER),
+        VmEffectKind::NoteSpend { .. } => Some(sel::NOTE_SPEND),
+        VmEffectKind::NoteCreate { .. } => Some(sel::NOTE_CREATE),
+        VmEffectKind::BridgeMint { .. } => Some(sel::BRIDGE_MINT),
+        VmEffectKind::Burn { .. } => Some(sel::BURN),
         _ => None,
     }
 }
+
+/// All selectors a cutover-ready descriptor proof may bind, for the verify path (which does
+/// not carry the effect kind). The structurally-distinct descriptor gates mean a proof made
+/// under one selector's descriptor will not verify under another's, so trying each is sound.
+const CUTOVER_READY_SELECTORS: &[usize] =
+    &[sel::TRANSFER, sel::NOTE_SPEND, sel::NOTE_CREATE, sel::BRIDGE_MINT, sel::BURN];
 
 /// Prove the Effect-VM state transition, routing through the Lean descriptor interpreter
 /// when the cutover flag is set AND the turn is a validated cutover-ready single effect;
@@ -322,12 +334,14 @@ fn verify_effect_vm_proof_with_cutover(
     public_inputs: &[BabyBear],
 ) -> Result<(), String> {
     if descriptor_prover_enabled() {
-        if let Some(json) = descriptor_for_selector(sel::TRANSFER) {
-            if let Ok(desc) = parse_vm_descriptor(json) {
-                if public_inputs.len() >= desc.public_input_count {
-                    let dpis = &public_inputs[..desc.public_input_count];
-                    if verify_vm_descriptor(&desc, proof, dpis).is_ok() {
-                        return Ok(());
+        for &s in CUTOVER_READY_SELECTORS {
+            if let Some(json) = descriptor_for_selector(s) {
+                if let Ok(desc) = parse_vm_descriptor(json) {
+                    if public_inputs.len() >= desc.public_input_count {
+                        let dpis = &public_inputs[..desc.public_input_count];
+                        if verify_vm_descriptor(&desc, proof, dpis).is_ok() {
+                            return Ok(());
+                        }
                     }
                 }
             }

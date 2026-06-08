@@ -9,19 +9,21 @@ TOTALLY NEUTRAL — it is balance-neutral (`execFullA_noteSpend_bal_frame`) and 
 kernel fields. Its GUARD is the §8 spending proof (`spendProof = true`) ∧ the DOUBLE-SPEND gate
 (`nf ∉ nullifiers`).
 
-## THE KEY STRUCTURAL FACT (and the honest IR boundary)
+## RECONCILED ONTO THE RUNTIME (cutover): TRANSPARENT CREDIT + nonce TICK
 
-A noteSpend touches NEITHER the per-asset `bal` ledger NOR any per-cell state-block column. The ONLY
-state it mutates is the `nullifiers` SET — a set the EffectVM 14-column state block has NO column for,
-and the GROUP-4 hash-sites absorb NONE of. So, projected onto ONE EffectVM cell's state block, a
-noteSpend is a PURE FREEZE: every state-block column (balance limbs, nonce, the 8 fields, cap_root,
-reserved) is UNCHANGED (`state_after = state_before`), and the published `state_commit` is the genuine
-digest of the FROZEN after-state.
+This descriptor is RECONCILED onto the validated runtime hand-AIR + `generate_effect_vm_trace`, which
+model a noteSpend as a TRANSPARENT CREDIT: the consumed shielded note's `value` (read from `param1`)
+RETURNS to the transparent `bal_lo` pool (`new_bal_lo = old_bal_lo + value`), the runtime nonce TICKS by
+one, and bal_hi / cap_root / reserved / the 8 fields are FROZEN; the post-state binds into `state_commit`
+via the SAME GROUP-4 chain as transfer. So `noteSpendVmDescriptor` and the hand-AIR AGREE on the honest
+trace (the cutover differential passes), and any wrong-credit / wrong-nonce / mutated-frame row is UNSAT.
 
-What the IR DOES support is exactly this FREEZE + the commitment binding of the frozen block: the
-descriptor pins `state_after = state_before` per column and binds the (unchanged) after-state into
-`state_commit` via the SAME GROUP-4 chain as transfer. This is the conservation / balance-neutrality
-tooth — genuine (a row claiming a noteSpend but mutating any cell is UNSAT).
+## THE DEEPER DIVERGENCE (reported §10, NOT papered): runtime CREDIT vs universe-A balance-NEUTRAL
+
+Universe-A's `NoteSpendSpec` models the spend as BALANCE-NEUTRAL nullifier accumulation (`bal' = bal`) —
+a DIFFERENT shielding convention. The runtime credit and the universe-A neutral convention are
+reconcilable ONLY for a zero-value note (`runtime_credit_vs_univA_neutral_divergence`): a genuine semantic
+modeling gap, NOT a column index. We surface it as a theorem rather than unifying.
 
 ## THE IR-EXTENSION FLAG #1 — the nullifier-set insert (the LOAD-BEARING leg, out-of-IR)
 
@@ -64,7 +66,7 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
-  (eSB eSA eSub gBalHi gCapPass gResPass gFieldPass gFieldPassAll
+  (eSB eSA ePrm eSub eSelNoop gNonce gBalHi gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
    transferHashSites transferHash_binds boundaryLast_pins)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
@@ -76,29 +78,48 @@ set_option linter.unusedVariables false
 
 /-! ## §0 — The noteSpend selector. -/
 
-/-- The note-nullifier-spend selector column index. -/
-def SEL_NOTE_SPEND : Nat := 5
+/-- The note-nullifier-spend selector column index (`sel::NOTE_SPEND`). -/
+def SEL_NOTE_SPEND : Nat := 4
 
 /-- The spend row is a noteSpend row: `s_note_spend = 1`, `s_noop = 0`. -/
 def IsNoteSpendRow (env : VmRowEnv) : Prop :=
   env.loc SEL_NOTE_SPEND = 1 ∧ env.loc sel.NOOP = 0
 
-/-! ## §1 — The per-row gate bodies (WHOLE state-block FREEZE). -/
+/-! ### NoteSpend value column (the running trace generator's convention).
 
-/-- Balance-lo FREEZE body: `new_bal_lo − old_bal_lo` (balance-neutral — the spend moves no value). -/
-def gBalLoFreeze : EmittedExpr := eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
+`generate_effect_vm_trace`'s `Effect::NoteSpend` arm lays `param0 = nullifier`, `param1 = value_lo`
+(the spent note value), and CREDITS the cell's transparent balance by that value
+(`new_state.balance += value`); the hand-AIR's note-spend gate reads `prm(1)` (= `note_val_lo`) and
+asserts `new_bal_lo = old_bal_lo + value`. The descriptor MUST match: a CREDIT into the transparent pool
+from the consumed shielded note, read from `param1`. (See §9 divergence: universe-A's `NoteSpendSpec`
+models the spend as balance-NEUTRAL nullifier accumulation — a DIFFERENT shielding convention.) -/
+namespace param
+/-- NoteSpend value lives at param column 1 (`columns.rs::param::NOTE_VALUE_LO`). -/
+def NOTE_VALUE_LO : Nat := 1
+end param
 
-/-- Nonce-FREEZE body: `new_nonce − old_nonce` (the spend leaves the nonce untouched). -/
-def gNonceFreeze : EmittedExpr := eSub (eSA state.NONCE) (eSB state.NONCE)
+/-- NoteSpend value as an expression (param column 1). -/
+def ePrmNoteValue : EmittedExpr := .var (prmCol param.NOTE_VALUE_LO)
+
+/-! ## §1 — The per-row gate bodies (transparent CREDIT + nonce TICK + frame freeze). -/
+
+/-- Balance-lo CREDIT body: `new_bal_lo − old_bal_lo − value` (so `new = old + value`), reading the note
+value from `param1` (the trace-generator + hand-AIR convention). -/
+def gBalLoCredit : EmittedExpr :=
+  .add (eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)) (.mul (.const (-1)) ePrmNoteValue)
+
+/-- Nonce TICK body (the running prover's global non-NoOp invariant): reused from the transfer template
+(`gNonce`). On a noteSpend row `s_noop = 0`, so the nonce ticks by one. -/
+def gNonceTick : EmittedExpr := gNonce
 
 /-! ## §2 — The emitted descriptor. -/
 
 /-- The note-nullifier-spend AIR identity. -/
 def noteSpendVmAirName : String := "dregg-effectvm-notespend-v1"
 
-/-- The per-row gates: WHOLE state block frozen. -/
+/-- The per-row gates: bal_lo CREDIT, bal_hi freeze, nonce TICK, cap/reserved freeze, 8 fields freeze. -/
 def noteSpendRowGates : List VmConstraint :=
-  [ .gate gBalLoFreeze, .gate gBalHi, .gate gNonceFreeze
+  [ .gate gBalLoCredit, .gate gBalHi, .gate gNonceTick
   , .gate gCapPass, .gate gResPass ] ++ gFieldPassAll
 
 /-- **`noteSpendVmDescriptor`** — the noteSpend effect's concrete EffectVM circuit: the per-row
@@ -114,28 +135,33 @@ def noteSpendVmDescriptor : EffectVmDescriptor :=
 
 /-! ## §3 — The ROW INTENT (the independent faithfulness target): the WHOLE state block frozen. -/
 
-/-- **`NoteSpendRowIntent env`** — the intended noteSpend move on the row `env.loc`: every state-block
-column UNCHANGED. The nullifier-set insert + no-double-spend gate are out-of-row (the §IR flags). -/
+/-- **`NoteSpendRowIntent env`** — the intended noteSpend move on the row `env.loc`: the transparent
+`bal_lo` is CREDITED by the `param1` value (the consumed shielded note returns value to the transparent
+pool), the runtime nonce TICKS by one, and balHi/cap/reserved/8 fields are FROZEN. The nullifier-set
+insert + no-double-spend gate are out-of-row (the §IR flags). -/
 def NoteSpendRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
+  env.loc (saCol state.BALANCE_LO)
+      = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO)
   ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
+  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
   ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
   ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
   ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
-/-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the freeze intent. -/
+/-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the credit/tick intent. -/
 
 /-- **`noteSpendVm_faithful`.** On a noteSpend row, the emitted descriptor's per-row gates all hold
-IFF `NoteSpendRowIntent` holds — the gates pin EXACTLY the whole-block freeze. -/
-theorem noteSpendVm_faithful (env : VmRowEnv) :
+IFF `NoteSpendRowIntent` holds — the gates pin EXACTLY the transparent credit + nonce tick + frame freeze
+the runtime hand-AIR enforces. -/
+theorem noteSpendVm_faithful (env : VmRowEnv) (hrow : IsNoteSpendRow env) :
     (∀ c ∈ noteSpendRowGates, c.holdsVm env false false) ↔ NoteSpendRowIntent env := by
+  obtain ⟨_hsNS, hsN⟩ := hrow
   unfold noteSpendRowGates gFieldPassAll NoteSpendRowIntent
   constructor
   · intro h
-    have hLo := h (.gate gBalLoFreeze) (by simp)
+    have hLo := h (.gate gBalLoCredit) (by simp)
     have hHi := h (.gate gBalHi) (by simp)
-    have hNon := h (.gate gNonceFreeze) (by simp)
+    have hNon := h (.gate gNonceTick) (by simp)
     have hCap := h (.gate gCapPass) (by simp)
     have hRes := h (.gate gResPass) (by simp)
     have hFld : ∀ i, i < 8 → VmConstraint.holdsVm env false false (.gate (gFieldPass i)) := by
@@ -143,8 +169,9 @@ theorem noteSpendVm_faithful (env : VmRowEnv) :
       apply h
       simp only [List.mem_append, List.mem_map, List.mem_range]
       exact Or.inr ⟨i, hi, rfl⟩
-    simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonceFreeze, gCapPass, gResPass,
-      eSA, eSB, eSub, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    simp only [VmConstraint.holdsVm, gBalLoCredit, gBalHi, gNonceTick, gNonce, gCapPass, gResPass,
+      ePrmNoteValue, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    rw [hsN] at hNon
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
     · linarith [hLo]
     · linarith [hHi]
@@ -159,12 +186,12 @@ theorem noteSpendVm_faithful (env : VmRowEnv) :
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+    · simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hLo]; ring
     · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hHi]; ring
-    · simp only [VmConstraint.holdsVm, gNonceFreeze, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hNon]; ring
+    · simp only [VmConstraint.holdsVm, gNonceTick, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
+      rw [hsN, hNon]; ring
     · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hCap]; ring
     · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
@@ -172,29 +199,31 @@ theorem noteSpendVm_faithful (env : VmRowEnv) :
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hFld i hi]; ring
 
-/-! ## §5 — ANTI-GHOST: a row that MUTATES any state-block cell on a noteSpend is rejected. -/
+/-! ## §5 — ANTI-GHOST: a row whose post-`bal_lo` is NOT the credit on a noteSpend is rejected. -/
 
-/-- **Anti-ghost (general).** A noteSpend row whose state block is NOT frozen does NOT satisfy the
-per-row gates — the conservation tooth. -/
-theorem noteSpendVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ NoteSpendRowIntent env) :
+/-- **Anti-ghost (general).** A noteSpend row that does NOT realize the credit/tick intent does NOT
+satisfy the per-row gates. -/
+theorem noteSpendVm_rejects_wrong_output (env : VmRowEnv) (hrow : IsNoteSpendRow env)
+    (hwrong : ¬ NoteSpendRowIntent env) :
     ¬ (∀ c ∈ noteSpendRowGates, c.holdsVm env false false) :=
-  fun h => hwrong ((noteSpendVm_faithful env).mp h)
+  fun h => hwrong ((noteSpendVm_faithful env hrow).mp h)
 
-/-- **Anti-ghost (balance tamper).** A noteSpend row whose post-`bal_lo` is NOT the pre-`bal_lo`
-(value forged on a balance-neutral effect) has no satisfying gate set — `gBalLoFreeze` rejects it. -/
+/-- **Anti-ghost (balance tamper).** A noteSpend row whose post-`bal_lo` is NOT the credit
+`old + value` has no satisfying gate set — `gBalLoCredit` rejects it (UNSAT). -/
 theorem noteSpendVm_rejects_balance_mint (env : VmRowEnv)
-    (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
-    ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
-  simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+    (hwrong : env.loc (saCol state.BALANCE_LO)
+      ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO)) :
+    ¬ (VmConstraint.gate gBalLoCredit).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
   intro h
   apply hwrong
   linarith [h]
 
 /-! ## §6 — The structured per-cell spec (REUSING `CellState`): the FROZEN cell. -/
 
-/-- `RowEncodesSpend env pre post` ties the row's state-block columns to a `(pre, post)` cell
-transition (no params — a noteSpend carries the nullifier off-block). -/
-def RowEncodesSpend (env : VmRowEnv) (pre post : CellState) : Prop :=
+/-- `RowEncodesSpend env pre value post` ties the row's state-block columns + the `param1` value to a
+`(pre, value, post)` cell transition. -/
+def RowEncodesSpend (env : VmRowEnv) (pre : CellState) (value : ℤ) (post : CellState) : Prop :=
   env.loc (sbCol state.BALANCE_LO) = pre.balLo
   ∧ env.loc (sbCol state.BALANCE_HI) = pre.balHi
   ∧ env.loc (sbCol state.NONCE) = pre.nonce
@@ -202,6 +231,7 @@ def RowEncodesSpend (env : VmRowEnv) (pre post : CellState) : Prop :=
   ∧ env.loc (sbCol state.CAP_ROOT) = pre.capRoot
   ∧ env.loc (sbCol state.RESERVED) = pre.reserved
   ∧ env.loc (sbCol state.STATE_COMMIT) = pre.commit
+  ∧ env.loc (prmCol param.NOTE_VALUE_LO) = value
   ∧ env.loc (saCol state.BALANCE_LO) = post.balLo
   ∧ env.loc (saCol state.BALANCE_HI) = post.balHi
   ∧ env.loc (saCol state.NONCE) = post.nonce
@@ -212,26 +242,29 @@ def RowEncodesSpend (env : VmRowEnv) (pre post : CellState) : Prop :=
   ∧ env.pub pi.OLD_COMMIT = pre.commit
   ∧ env.pub pi.NEW_COMMIT = post.commit
 
-/-- **`CellSpendSpec pre post`** — the per-cell FULL-state noteSpend spec: the WHOLE cell state is
-FROZEN. This is the EffectVM-row projection of `NoteSpendSpec`'s balance-neutrality + per-cell frame
-freeze (the nullifier-set insert + no-double-spend are off-block — the §IR flags). -/
-def CellSpendSpec (pre post : CellState) : Prop :=
-  post.balLo = pre.balLo
+/-- **`CellSpendSpec pre value post`** — the per-cell FULL-state noteSpend spec (the RUNTIME image): the
+transparent `balLo` is CREDITED by `value`, balHi/8-fields/cap/reserved frozen, nonce TICKED by one. This
+is the EffectVM-row projection of the validated runtime hand-AIR's note-spend transition. See §9 for the
+universe-A divergence (balance-NEUTRAL convention). -/
+def CellSpendSpec (pre : CellState) (value : ℤ) (post : CellState) : Prop :=
+  post.balLo = pre.balLo + value
   ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
+  ∧ post.nonce = pre.nonce + 1
   ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
   ∧ post.capRoot = pre.capRoot
   ∧ post.reserved = pre.reserved
 
 /-- Decode lemma: under `RowEncodesSpend`, `NoteSpendRowIntent` IS the structured `CellSpendSpec`. -/
-theorem intent_to_cellSpendSpec (env : VmRowEnv) (pre post : CellState)
-    (henc : RowEncodesSpend env pre post) (hint : NoteSpendRowIntent env) :
-    CellSpendSpec pre post := by
-  obtain ⟨hsbLo, hsbHi, hsbN, hsbF, hsbCap, hsbRes, hsbC,
+theorem intent_to_cellSpendSpec (env : VmRowEnv) (pre post : CellState) (value : ℤ)
+    (henc : RowEncodesSpend env pre value post) (hint : NoteSpendRowIntent env) :
+    CellSpendSpec pre value post := by
+  obtain ⟨hsbLo, hsbHi, hsbN, hsbF, hsbCap, hsbRes, hsbC, hpVal,
           hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
   obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [← hsaLo, ← hsbLo]; exact hbal
+  · have : post.balLo = pre.balLo + env.loc (prmCol param.NOTE_VALUE_LO) := by
+      rw [← hsaLo, ← hsbLo]; exact hbal
+    rw [this, hpVal]
   · rw [← hsaHi, ← hsbHi]; exact hbhi
   · rw [← hsaN, ← hsbN]; exact hnon
   · intro i
@@ -245,11 +278,11 @@ theorem intent_to_cellSpendSpec (env : VmRowEnv) (pre post : CellState)
 /-- **`noteSpendDescriptor_full_sound`** — satisfying the WHOLE runnable descriptor, under
 `RowEncodesSpend`, forces the structured per-cell FREEZE `CellSpendSpec` AND publishes the post-commit
 as `PI[NEW_COMMIT]`. -/
-theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
-    (pre post : CellState)
-    (henc : RowEncodesSpend env pre post)
+theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsNoteSpendRow env)
+    (pre post : CellState) (value : ℤ)
+    (henc : RowEncodesSpend env pre value post)
     (hsat : satisfiedVm hash noteSpendVmDescriptor env true true) :
-    CellSpendSpec pre post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+    CellSpendSpec pre value post ∧ post.commit = env.pub pi.NEW_COMMIT := by
   obtain ⟨hcs, _⟩ := hsat
   have hgates' : ∀ c ∈ noteSpendRowGates, c.holdsVm env false false := by
     intro c hc
@@ -263,8 +296,8 @@ theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using this
-  have hint := (noteSpendVm_faithful env).mp hgates'
-  refine ⟨intent_to_cellSpendSpec env pre post henc hint, ?_⟩
+  have hint := (noteSpendVm_faithful env hrow).mp hgates'
+  refine ⟨intent_to_cellSpendSpec env pre post value henc hint, ?_⟩
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
     have hmem : c ∈ noteSpendVmDescriptor.constraints := by
@@ -278,7 +311,7 @@ theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
       · simp only [VmConstraint.holdsVm] at hh ⊢
         exact hh
   have hpin := (boundaryLast_pins env hlast).1
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
   rw [← hsaC]; exact hpin
 
 /-! ## §8 — The anti-ghost commitment tooth (REUSED; hash sites identical to transfer's). -/
@@ -338,50 +371,50 @@ def cellProjSpend (bal : CellId → AssetId → ℤ) (c : CellId) (asset : Asset
   reserved := 0
   commit   := 0
 
-/-- **`unify_spend_freeze`** — ANY cell's projected `(c, asset)` ledger entry, across a committed
-`NoteSpendSpec` post-state, satisfies the keystone's `CellSpendSpec` EXACTLY: `balLo` FROZEN
-(`bal' = bal`, balance-neutral); balHi/nonce/fields/capRoot/reserved frozen. So `CellSpendSpec` IS
-`NoteSpendSpec`'s per-cell frame image — NOT a fourth spec. -/
-theorem unify_spend_freeze (st st' : RecChainedState) (nf : Nat) (actor c : CellId)
-    (asset : AssetId) (spendProof : Bool)
-    (hspec : NoteSpendSpec st nf actor spendProof st') :
-    CellSpendSpec (cellProjSpend st.kernel.bal c asset) (cellProjSpend st'.kernel.bal c asset) := by
-  refine ⟨?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩
+/-- **`univA_spend_is_balance_neutral` — the universe-A side of the divergence.** A committed
+`NoteSpendSpec` FREEZES the per-asset ledger `bal` (`bal' = bal`, the 10th conjunct); the projected
+entry's `balLo` is unchanged. So universe-A's noteSpend moves NO transparent value — the opposite of the
+runtime credit. -/
+theorem univA_spend_is_balance_neutral (st st' : RecChainedState) (nf : Nat) (actor c : CellId)
+    (asset : AssetId) (spendProof : Bool) (hspec : NoteSpendSpec st nf actor spendProof st') :
+    (cellProjSpend st'.kernel.bal c asset).balLo = (cellProjSpend st.kernel.bal c asset).balLo := by
   show st'.kernel.bal c asset = st.kernel.bal c asset
   -- NoteSpendSpec: guard ∧ nullifiers ∧ log ∧ accounts ∧ cell ∧ caps ∧ escrows ∧ revoked ∧
   --               commitments ∧ bal ∧ … — `bal` is the 10th conjunct.
   obtain ⟨_, _, _, _, _, _, _, _, _, hbal, _⟩ := hspec
   rw [hbal]
 
-/-! ## §10 — THE per-cell circuit⟺executor AGREEMENT (the payoff). -/
+/-! ## §10 — THE DEEPER DIVERGENCE (reported, NOT papered): runtime CREDIT vs universe-A balance-NEUTRAL.
 
-/-- **`descriptor_agrees_with_executor_spend`** — a satisfying run of the runnable descriptor encoding
-ANY cell of a committed noteSpend agrees with the executor's per-cell post-state: the descriptor's
-pinned (frozen) post-state equals the executor's frozen cell on every state-block column. The
-nullifier-set insert + no-double-spend are out-of-IR (reported as the §IR flags). -/
-theorem descriptor_agrees_with_executor_spend
-    (hash : List ℤ → ℤ) (env : VmRowEnv)
+The validated RUNTIME hand-AIR + `generate_effect_vm_trace` model a noteSpend as a TRANSPARENT CREDIT
+(`new_bal_lo = old_bal_lo + value`): the consumed shielded note returns value to the transparent pool.
+`noteSpendVmDescriptor` now faithfully describes that (so the cutover differential AGREES). Universe-A's
+`NoteSpendSpec` instead is BALANCE-NEUTRAL (`bal' = bal`) — a DIFFERENT shielding convention. The two
+agree only at `value = 0`. We surface this as a divergence theorem; the nullifier-set insert +
+no-double-spend legs (§11) are universe-A properties unaffected by which balance convention is canonical. -/
+
+/-- **`runtime_credit_vs_univA_neutral_divergence` — THE DEEPER DIVERGENCE, named precisely.** A
+descriptor-satisfying noteSpend row (the RUNTIME image) CREDITS the cell's `balLo` by `value`
+(`post.balLo = pre.balLo + value`, from `CellSpendSpec`), whereas the committed universe-A spec FREEZES
+the projected entry's `balLo`. For these to AGREE on the post-balance we would need `pre.balLo + value =
+pre.balLo`, i.e. `value = 0`. So the runtime credit and the universe-A balance-neutral convention are
+reconcilable ONLY for a zero-value note — a genuine semantic modeling gap (a shielding convention
+difference), NOT a column index. Reported, not forced. -/
+theorem runtime_credit_vs_univA_neutral_divergence
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsNoteSpendRow env)
     (st st' : RecChainedState) (nf : Nat) (actor c : CellId) (asset : AssetId) (spendProof : Bool)
-    (pre post : CellState)
-    (hpre : pre = cellProjSpend st.kernel.bal c asset)
-    (henc : RowEncodesSpend env pre post)
+    (post : CellState) (value : ℤ)
+    (henc : RowEncodesSpend env (cellProjSpend st.kernel.bal c asset) value post)
     (hsat : satisfiedVm hash noteSpendVmDescriptor env true true)
-    (hspec : NoteSpendSpec st nf actor spendProof st') :
-    post.balLo = (cellProjSpend st'.kernel.bal c asset).balLo
-    ∧ post.balHi = (cellProjSpend st'.kernel.bal c asset).balHi
-    ∧ (∀ i, post.fields i = (cellProjSpend st'.kernel.bal c asset).fields i)
-    ∧ post.capRoot = (cellProjSpend st'.kernel.bal c asset).capRoot
-    ∧ post.reserved = (cellProjSpend st'.kernel.bal c asset).reserved := by
-  obtain ⟨hcirc, _⟩ := noteSpendDescriptor_full_sound hash env pre post henc hsat
-  obtain ⟨hcLo, hcHi, _, hcF, hcCap, hcRes⟩ := hcirc
-  obtain ⟨heLo, heHi, _, heF, heCap, heRes⟩ := unify_spend_freeze st st' nf actor c asset spendProof hspec
-  subst hpre
-  refine ⟨?_, ?_, ?_, ?_, ?_⟩
-  · rw [hcLo, heLo]
-  · rw [hcHi, heHi]
-  · intro i; rw [hcF i, heF i]
-  · rw [hcCap, heCap]
-  · rw [hcRes, heRes]
+    (hspec : NoteSpendSpec st nf actor spendProof st')
+    (hagree : post.balLo = (cellProjSpend st'.kernel.bal c asset).balLo) :
+    value = 0 := by
+  obtain ⟨hcirc, _⟩ :=
+    noteSpendDescriptor_full_sound hash env hrow (cellProjSpend st.kernel.bal c asset) post value henc hsat
+  have hcredit : post.balLo = (cellProjSpend st.kernel.bal c asset).balLo + value := hcirc.1
+  have hneutral := univA_spend_is_balance_neutral st st' nf actor c asset spendProof hspec
+  rw [hagree, hneutral] at hcredit
+  linarith
 
 /-! ## §11 — THE SET-INSERT + NO-DOUBLE-SPEND legs the per-row circuit does NOT enforce (honest).
 
@@ -421,59 +454,65 @@ theorem noteSpend_proof_gate_is_out_of_row (st st' : RecChainedState) (nf : Nat)
     spendProof = true :=
   hspec.1.1
 
-/-! ## §12 — NON-VACUITY: a concrete frozen noteSpend row realizes the intent; a minting one rejected. -/
+/-! ## §12 — NON-VACUITY: a concrete noteSpend row realizes the credit/tick intent; a wrong one rejected. -/
 
-/-- A concrete noteSpend row: every state-block column frozen (bal_lo 100 → 100, nonce 5 → 5, frame 0). -/
+/-- A concrete noteSpend row: `bal_lo 100 → 130` (credit `value = 30` from `param1`), nonce 5 → 6 (TICK),
+frame fixed at 0. -/
 def goodSpendRow : VmRowEnv where
   loc := fun v =>
     if v = SEL_NOTE_SPEND then 1
     else if v = sbCol state.BALANCE_LO then 100
-    else if v = saCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 130
     else if v = sbCol state.NONCE then 5
-    else if v = saCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else if v = prmCol param.NOTE_VALUE_LO then 30
     else 0
   nxt := fun _ => 0
   pub := fun _ => 0
 
-/-- **NON-VACUITY (witness TRUE).** `goodSpendRow` REALIZES the noteSpend freeze intent: every
-state-block column unchanged. -/
+/-- `goodSpendRow` is a genuine noteSpend row (`s_note_spend = 1`, `s_noop = 0`). -/
+theorem goodSpendRow_isRow : IsNoteSpendRow goodSpendRow := by
+  unfold IsNoteSpendRow goodSpendRow
+  refine ⟨by norm_num [SEL_NOTE_SPEND], ?_⟩
+  norm_num [sel.NOOP, SEL_NOTE_SPEND, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+    PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, param.NOTE_VALUE_LO]
+
+/-- **NON-VACUITY (witness TRUE).** `goodSpendRow` REALIZES the noteSpend credit/tick intent:
+`bal_lo 100 → 130 = 100 + 30`, nonce `5 → 6`, frame fixed. -/
 theorem goodSpendRow_realizes_intent : NoteSpendRowIntent goodSpendRow := by
   unfold NoteSpendRowIntent goodSpendRow
-  simp only [sbCol, saCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
+  simp only [sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
     NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI, state.NONCE,
-    state.CAP_ROOT, state.RESERVED, state.FIELD_BASE]
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rfl
-  · rfl
-  · rfl
-  · rfl
-  · rfl
-  · intro i hi
-    have e1 : (76 + (3 + i) = 5) = False := by simp; omega
-    have e2 : (76 + (3 + i) = 54) = False := by simp; omega
-    have e3 : (76 + (3 + i) = 76) = False := by simp
-    have e4 : (76 + (3 + i) = 56) = False := by simp; omega
-    have e5 : (76 + (3 + i) = 78) = False := by simp; omega
-    have f1 : (54 + (3 + i) = 5) = False := by simp; omega
-    have f2 : (54 + (3 + i) = 54) = False := by simp
-    have f3 : (54 + (3 + i) = 76) = False := by simp; omega
-    have f4 : (54 + (3 + i) = 56) = False := by simp; omega
-    have f5 : (54 + (3 + i) = 78) = False := by simp; omega
-    simp only [e1, e2, e3, e4, e5, f1, f2, f3, f4, f5, if_false]
+    state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, param.NOTE_VALUE_LO]
+  refine ⟨by norm_num, rfl, by norm_num, rfl, rfl, ?_⟩
+  intro i hi
+  have e1 : (76 + (3 + i) = 4) = False := by simp; omega
+  have e2 : (76 + (3 + i) = 54) = False := by simp; omega
+  have e3 : (76 + (3 + i) = 76) = False := by simp
+  have e4 : (76 + (3 + i) = 56) = False := by simp; omega
+  have e5 : (76 + (3 + i) = 78) = False := by simp; omega
+  have e6 : (76 + (3 + i) = 69) = False := by simp; omega
+  have f1 : (54 + (3 + i) = 4) = False := by simp; omega
+  have f2 : (54 + (3 + i) = 54) = False := by simp
+  have f3 : (54 + (3 + i) = 76) = False := by simp; omega
+  have f4 : (54 + (3 + i) = 56) = False := by simp; omega
+  have f5 : (54 + (3 + i) = 78) = False := by simp; omega
+  have f6 : (54 + (3 + i) = 69) = False := by simp; omega
+  simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
 
-/-- A FORGED noteSpend row: `goodSpendRow` with the post-`bal_lo` minted to `999`. -/
+/-- A FORGED noteSpend row: `goodSpendRow` with the post-`bal_lo` set to `999` (NOT the credit `130`). -/
 def badSpendRow : VmRowEnv where
   loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodSpendRow.loc v
   nxt := goodSpendRow.nxt
   pub := goodSpendRow.pub
 
-/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badSpendRow`'s post-`bal_lo` is NOT frozen
-(forged mint), so `gBalLoFreeze` REJECTS it — a concrete UNSAT (conservation has teeth). -/
-theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badSpendRow false false := by
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badSpendRow`'s post-`bal_lo` is NOT the credit
+`130`, so `gBalLoCredit` REJECTS it — a concrete UNSAT (the credit has teeth). -/
+theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badSpendRow false false := by
   apply noteSpendVm_rejects_balance_mint
-  simp only [badSpendRow, goodSpendRow, sbCol, saCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
+  simp only [badSpendRow, goodSpendRow, sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
     STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE]
+    state.NONCE, param.NOTE_VALUE_LO]
   norm_num
 
 /-! ## §13 — Axiom-hygiene pins. -/
@@ -488,11 +527,12 @@ theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badSp
 #assert_axioms intent_to_cellSpendSpec
 #assert_axioms noteSpendDescriptor_full_sound
 #assert_axioms noteSpendDescriptor_commit_binds_state
-#assert_axioms unify_spend_freeze
-#assert_axioms descriptor_agrees_with_executor_spend
+#assert_axioms univA_spend_is_balance_neutral
+#assert_axioms runtime_credit_vs_univA_neutral_divergence
 #assert_axioms noteSpend_nullifier_insert_is_out_of_row
 #assert_axioms noteSpend_no_double_spend_is_turn_property
 #assert_axioms noteSpend_proof_gate_is_out_of_row
+#assert_axioms goodSpendRow_isRow
 #assert_axioms goodSpendRow_realizes_intent
 #assert_axioms badSpendRow_rejected
 

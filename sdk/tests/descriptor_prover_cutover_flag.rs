@@ -13,6 +13,7 @@
 //! (`circuit/tests/effect_vm_descriptor_cutover_harness.rs`).
 
 use dregg_circuit::effect_vm::{CellState, Effect as VmEffect};
+use dregg_circuit::field::BabyBear;
 use dregg_sdk::full_turn_proof::{prove_turn_self_sovereign, verify_full_turn};
 
 /// The flagged production swap: a transfer turn, proven+verified through the descriptor
@@ -49,6 +50,45 @@ fn cutover_flag_routes_transfer_through_descriptor_and_still_verifies() {
     }
 
     verify_result.expect("descriptor-prover transfer proof must verify through the descriptor arm");
+}
+
+/// The flagged production swap, GRADUATED ECONOMIC effect: a single `Burn` turn, proven +
+/// verified through the descriptor interpreter end-to-end. Exercises the widened
+/// `cutover_ready_selector` (Burn = selector 46) and the widened verify arm.
+#[test]
+fn cutover_flag_routes_burn_through_descriptor_and_still_verifies() {
+    let initial = CellState::new(1000, 0);
+    let effects = vec![VmEffect::Burn {
+        target_hash: BabyBear::new(0xB0B),
+        amount_lo: BabyBear::new(100),
+        amount_full: 100,
+    }];
+    let turn_hash = [0xCDu8; 32];
+
+    // SAFETY: own-process test binary; no other thread reads/writes this env var.
+    unsafe {
+        std::env::set_var("DREGG_DESCRIPTOR_PROVER", "1");
+    }
+
+    let proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
+        .expect("descriptor-prover burn proof should generate");
+    assert!(proof.components.has_state_transition);
+
+    let old_commit = initial.state_commitment;
+    let mut expected_final = initial.clone();
+    expected_final.balance = 900; // burn debits 100
+    expected_final.nonce = 1; // non-NoOp row ticks the nonce
+    expected_final.refresh_commitment();
+    let new_commit = expected_final.state_commitment;
+
+    let verify_result = verify_full_turn(&proof, old_commit, new_commit);
+
+    // SAFETY: own-process test binary.
+    unsafe {
+        std::env::remove_var("DREGG_DESCRIPTOR_PROVER");
+    }
+
+    verify_result.expect("descriptor-prover burn proof must verify through the descriptor arm");
 }
 
 /// Control: with the flag UNSET (default), the SAME transfer turn proves through the
