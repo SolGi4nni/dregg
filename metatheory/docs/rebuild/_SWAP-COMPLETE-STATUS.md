@@ -181,6 +181,32 @@ differential PROVES Lean == Rust, full-state, not prose). It is NOT a full swap:
    teaching the Lean kernel to model them — then re-classify each from
    `producer_root_gap_effects` into `producer_root_agreeing_effects` (its
    negative-tooth test will FAIL, forcing the promotion).
+
+   **PROGRESS (this drive — the shared wire prerequisite is LANDED).** The wide
+   `WState` codec now carries two per-cell `Nat` side-tables — `lifecycle`
+   (discriminant `0`/`1`/`3`) and `deathCert` — on BOTH sides of the seam:
+   `FFI.lean` (`WState.lifecycle/deathCert` + `encodeCellNats`/`parseCellNats` +
+   `cellNatsOfFun`/`funOfCellNats`, threaded through
+   `encodeWState`/`parseWState`/`wstateOfState`/`stateOfWState`, additive and
+   default-empty exactly as `revoked` was, with a non-vacuity `#guard` that a
+   Sealed+Destroyed pair SURVIVES the round-trip and `#assert_axioms` on all four
+   new fns) and `marshal.rs` (`WireState.lifecycle/death_cert` mirror +
+   `encode_cell_nats`/`parse_cell_nats`, byte-exact; the malformed-wire sentinels
+   bumped to 11 fields). `ledger_to_wire_state` projects the pre-state cell's
+   lifecycle discriminant + bound death-cert. Codec round-trips green Lean
+   (`#guard`) + Rust (golden); the 12 coverage + 7 widen differentials still pass
+   (no regression). This is the per-cell-commitment-field carrier EVERY
+   lifecycle-class close needs. **Residual to flip the teeth:** model the full
+   lifecycle PAYLOAD as 256-bit digests in the kernel (`reason_hash`/`sealed_at`
+   for Sealed, `death_certificate_hash`/`destroyed_at` for Destroyed) + carry
+   them on the `cseal`/`cdestroy` INPUT arms, then reconstitute the typed Rust
+   `CellLifecycle` byte-identically; analogously, per-cell `delegationEpoch`
+   (a faithful `u64`→`Nat`, reusing this same `cellNats` carrier) + the child
+   `delegation`-clear for `RevokeDelegation`; full `Permissions`/`VK` structs for
+   `SetPermissions`/`SetVerificationKey`; full `CapabilityRef` for
+   `GrantCapability`/`AttenuateCapability`. Each is a kernel-semantics change, not
+   just a codec field — so each negative tooth stays RED (correctly) until its
+   payload is modelled.
 3. **Unify the root scheme** so Lean computes the commitment too (today Lean
    produces the cells; the existing Rust `Ledger::root` hashes them — see
    `lean_apply.rs` §"Root computation").
