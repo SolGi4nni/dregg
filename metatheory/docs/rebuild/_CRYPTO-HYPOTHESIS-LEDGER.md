@@ -156,6 +156,51 @@ binding is CR; the AUTHENTICITY of the handoff (who may hand off) is the ed25519
 **Verdict:** CapTP handoff signature-soundness is DISCHARGEABLE to IRREDUCIBLE PRIMITIVE #1 (ed25519
 EUF-CMA), consumed as an explicit carrier, never faked.
 
+### §2a — The ed25519 EUF-CMA reduction made EXPLICIT (`Dregg2/Crypto/Ed25519Reduction.lean`)
+
+`PortalFloor §1` unpacks the carrier in the SOUNDNESS direction (`accept ⇒ Signed`). This pass closes
+the OTHER half — the explicit *reduction* the bar demands: **protocol-forgery ⇒ signature-forgery**.
+The EUF-CMA game is named as a first-class predicate so a protocol break PRODUCES a concrete
+cryptographic break (not just "carrier ⇒ safe").
+
+- **IRREDUCIBLE PRIMITIVE.** `Ed25519EufCma K := ∀ pk m s, ¬ SigForgery K pk m s`, where
+  `SigForgery K pk m s := K.sigVerify pk m s = true ∧ ¬ K.Signed pk m` (`Ed25519Reduction.lean §1`).
+  This is the EUF-CMA assumption stated as the negation of the adversary's win condition — primitive #1
+  (Edwards-curve / Curve25519 DLog), named honestly. `eufCma_iff_sound` proves it is DEFINITIONALLY the
+  same content as `sigVerify_sound` (no new assumption — a sharper FRAMING), and `eufCma_of_unforgeable`
+  lets any consumer holding `K.unforgeable` obtain it.
+
+- **REAL REDUCTION (proven, no fresh axiom).** ONE reduction shape covers all THREE ed25519-backed
+  call paths the auditor named — `protocol_forgery_to_sig_forgery` (`§6`) + the per-surface forms:
+  | Surface | Path | Reduction theorem |
+  |---------|------|-------------------|
+  | handoff unforgeability | `Exec/CapTPHandoffSound.validateHandoff2` §1 leg | `handoff_forgery_to_sig_forgery` (`§3`) |
+  | blocklace insert (A1) | `finality.rs` insert-time `verify_block_signature` | `block_forgery_to_sig_forgery` (`§4`) |
+  | agent `Authorization` | `FullForestAuthPortal` `.signature`/`.bearer`/`.stealth` arm | `auth_forgery_to_sig_forgery` (`§5`) |
+
+  Each takes a SUCCESSFUL protocol forgery (validating handoff / inserted block / authorized turn whose
+  key never signed) and constructs an explicit `SigForgery` — hence a break of `Ed25519EufCma`.
+  `eufCma_repels_all_surfaces` (`§6`) is the contrapositive: under the named primitive, NONE of the
+  three surfaces admits a forgery. This is what newly TIES the blocklace `signed : Bool` carrier
+  (previously an uninterpreted §8 obligation, `Blocklace.lean:19`) to primitive #1 — the
+  byzantine-repelling DAG facts assumed honest signatures; this reduction is WHY that assumption is
+  sound (an impersonating block ⇒ an ed25519 forgery).
+
+- **Non-vacuity teeth (BOTH directions, `§7`).** On the honest reference oracle `ref_eufCma` HOLDS
+  (so the soundness keystones fire — `ref_no_forged_handoff`). On the forgeable accept-everything
+  oracle (`PortalFloor.instSignatureForge`), `forge_not_eufCma` proves `Ed25519EufCma` is FALSE AND
+  `forge_{handoff,block,auth}_forgery` exhibit CONCRETE protocol forgeries on each surface — strip the
+  carrier and the protocol concretely breaks, proving the reduction is not a vacuous relabel.
+
+All keystones `#print axioms`-clean: `protocol_forgery_to_sig_forgery` / `eufCma_repels_all_surfaces`
+/ the three per-surface reductions / `forge_*` depend on NO axioms; `eufCma_of_unforgeable` /
+`ref_eufCma` ⊆ `{propext, Classical.choice, Quot.sound}`. No `sorry` / `:= True` / `native_decide`.
+
+**Distinction (the bar's ask):** `Ed25519EufCma` is an IRREDUCIBLE PRIMITIVE (curve assumption, named
+not faked). `protocol_forgery_to_sig_forgery` is a REAL REDUCTION (a proof transporting protocol
+acceptance into a fresh signature forgery), not a relabel — it introduces no axiom and is refuted on
+the broken oracle.
+
 ---
 
 ## §3 — Macaroon / credential HMAC (DISCHARGEABLE to primitive #8, HMAC unforgeability)
