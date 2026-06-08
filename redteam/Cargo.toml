@@ -10,9 +10,20 @@ dregg-captp = { path = "../captp" }
 dregg-blocklace = { path = "../blocklace" }
 dregg-cell = { path = "../cell" }
 dregg-types = { path = "../types" }
+dregg-turn = { path = "../turn" }
+dregg-wire = { path = "../wire" }
 ed25519-dalek = { version = "2", features = ["std", "zeroize"] }
 getrandom = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
 
 [dev-dependencies]
+# The wire/codec/marshaller/executor fuzz + property-test harnesses (tests/) drive
+# proptest-generated adversarial inputs against the running Rust. dregg-lean-ffi is a
+# dev-dependency so the marshaller fuzz can attack `unmarshal_result` / `marshal_turn`
+# without pulling the Lean static lib into the (lib-only) build graph.
+proptest = { workspace = true }
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# net's PeerScoreboard exposes the eclipse-resistant eager-selection surface
+# (incl. anchor pinning) that the F-5 / L4 anti-eclipse attack test drives.
+dregg-net = { path = "../net" }

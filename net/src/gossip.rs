@@ -98,22 +98,85 @@ const STEM_PROBABILITY: f64 = 0.9;
 /// Prevents message loss if the stem path hits a dead or unresponsive node.
 const STEM_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Below this peer count, a *fully random* Dandelion++ stem provides little
+/// anonymity (the path tends to cycle back to the originator or visit every
+/// peer). Historically the stem was simply DISABLED here (immediate fluff),
+/// which exposes the transaction origin directly to every mesh peer — the worst
+/// outcome precisely when the network is smallest and most eclipse-prone
+/// (F-5 / L4). Instead we now route the first hop through a **trusted anchor
+/// peer** so the origin is still not the direct broadcaster (see [`StemPlan`]).
+const SMALL_NETWORK_THRESHOLD: usize = 5;
+
 /// Compute the effective stem probability based on the current peer count.
 ///
-/// In very small networks (< 5 peers), Dandelion++ stem phase provides no
-/// meaningful anonymity (the stem path will cycle back to the originator or
-/// visit all peers). In these cases, we disable or reduce the stem phase.
-///
-/// - peer_count < 5: stem disabled (immediate fluff) — no anonymity possible
+/// - peer_count < 5: minimal continuation (anchor carries the first hop, then
+///   it fluffs) — see [`StemPlan::plan`]; we no longer return 0.0 / immediate
+///   self-fluff, which would strip origin anonymity entirely.
 /// - peer_count 5..10: reduced stem (0.5) — partial anonymity, ~2 hops
 /// - peer_count >= 10: full Dandelion++ (0.9) — ~10 expected hops
 fn effective_stem_probability(peer_count: usize) -> f64 {
-    if peer_count < 5 {
-        0.0 // Disable stem entirely — useless in tiny networks
+    if peer_count < SMALL_NETWORK_THRESHOLD {
+        0.0 // continuation prob at a relay; the FIRST hop is still an anchor stem
     } else if peer_count < 10 {
         0.5 // Reduced stem — provides some privacy without excessive hops
     } else {
         STEM_PROBABILITY // Full Dandelion++ (0.9)
+    }
+}
+
+/// How the originator should disseminate a freshly-published message, decided by
+/// the network size and the set of available **anchor** (trusted-bootstrap)
+/// peers. This is the F-5 / L4 anti-eclipse + small-N origin-anonymity policy,
+/// factored into a pure function so it is directly testable.
+///
+/// The key property (the one the red-team test pins): **the originator never
+/// fluffs a message directly to the mesh while an anchor relay is available.**
+/// Direct self-fluff is what leaks tx-origin to every peer; routing the first
+/// hop through a trusted anchor keeps the origin one hop removed even in a tiny
+/// network, and prefers a peer the adversary cannot have injected (eclipse
+/// resistance) over an attacker-supplied random peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StemPlan {
+    /// Forward in stem to a chosen first-hop relay. `via_anchor` records whether
+    /// that relay is a trusted anchor (the eclipse/anonymity-preferred case).
+    StemTo { via_anchor: bool },
+    /// No relay available at all (truly solo / no peers): fall back to local-only
+    /// fluff. With zero peers there is no one to leak the origin TO, so this is
+    /// the only case where direct dissemination is acceptable.
+    FluffNoPeers,
+}
+
+impl StemPlan {
+    /// Decide the dissemination plan.
+    ///
+    /// - `peer_count`: total peers in the topic.
+    /// - `anchors_available`: at least one trusted anchor peer is connected.
+    /// - `any_peer_available`: at least one peer (anchor or not) is connected.
+    ///
+    /// Policy:
+    ///  * No peers at all  -> `FluffNoPeers` (nothing to leak to).
+    ///  * Small network (< threshold): if an anchor is available, stem THROUGH
+    ///    the anchor (`via_anchor = true`) so the origin is not the direct
+    ///    broadcaster — preserving origin anonymity exactly where the old code
+    ///    set it to zero. If no anchor is available we still stem to a random
+    ///    peer (`via_anchor = false`) rather than self-fluff: one hop of cover is
+    ///    strictly better than broadcasting from the origin.
+    ///  * Larger network: normal stem; prefer an anchor as the first hop when one
+    ///    exists (anchors are eclipse-hardened entry points), else a random peer.
+    pub(crate) fn plan(
+        peer_count: usize,
+        anchors_available: bool,
+        any_peer_available: bool,
+    ) -> StemPlan {
+        let _ = peer_count; // policy is now uniform: never self-fluff with peers present
+        if !any_peer_available {
+            return StemPlan::FluffNoPeers;
+        }
+        // With at least one peer present we ALWAYS keep the origin one hop
+        // removed. Prefer a trusted anchor relay when available.
+        StemPlan::StemTo {
+            via_anchor: anchors_available,
+        }
     }
 }
 
@@ -352,6 +415,13 @@ struct GossipState {
     /// Per-transport-peer reputation, driving eclipse-resistant eager selection
     /// and Byzantine-peer penalization. See [`crate::peer_score`].
     scoreboard: PeerScoreboard,
+    /// **Anchor peers** (F-5 / L4): operator-trusted bootstrap contact points.
+    /// These resist eclipse — they are never removed from the scoreboard on a
+    /// transient connection death (an eclipse adversary cannot starve a trusted
+    /// anchor out of the candidate set) — and they are the preferred first
+    /// Dandelion++ stem hop, so the origin stays one hop removed even when the
+    /// network is too small for a random stem to provide cover.
+    anchors: HashSet<SocketAddr>,
 }
 
 impl GossipState {
@@ -388,7 +458,12 @@ impl GossipState {
             return;
         };
         let candidates = topic_state.all_peers();
-        let eager = self.scoreboard.select_eager(&candidates, eager_degree);
+        // Anchor-aware, eclipse-resistant selection: trusted anchors are pinned
+        // into the eager set first so a Sybil flood cannot capture the spanning
+        // tree (F-5 / L4), then the rest is score-ranked + diversity-bounded.
+        let eager =
+            self.scoreboard
+                .select_eager_with_anchors(&candidates, &self.anchors, eager_degree);
         let eager_set: HashSet<SocketAddr> = eager.into_iter().collect();
         if let Some(topic_state) = self.topics.get_mut(&topic_id) {
             for (addr, st) in topic_state.peer_states.iter_mut() {
@@ -719,6 +794,7 @@ impl GossipNetwork {
             message_cache_order: VecDeque::new(),
             stem_messages: HashMap::new(),
             scoreboard: PeerScoreboard::new(),
+            anchors: HashSet::new(),
         }));
 
         let signing_key = Arc::new(signing_key);
@@ -864,9 +940,16 @@ impl GossipNetwork {
             }
             for &addr in bootstrap_peers {
                 state.scoreboard.observe(addr);
+                // The operator-supplied bootstrap peers are our TRUSTED ANCHORS
+                // (F-5 / L4): the eclipse-resistance + small-N origin-anonymity
+                // backbone. Record them so they are pinned into the eager set,
+                // preferred as the first stem hop, and exempt from score-erosion
+                // graylisting (so an eclipse adversary cannot starve them out).
+                state.anchors.insert(addr);
+                state.scoreboard.mark_anchor(addr);
             }
             // Eclipse-resistant (re)classification: pick eager relays by
-            // reputation + address diversity rather than connect order.
+            // reputation + address diversity, pinning trusted anchors first.
             state.reclassify_eager(topic_id, DEFAULT_EAGER_DEGREE);
         }
 
@@ -898,8 +981,16 @@ impl GossipNetwork {
     /// Publish a message to a gossip topic.
     ///
     /// Messages always enter the Dandelion++ stem phase first: they are forwarded
-    /// to exactly one random peer (hiding the origin). The stem relay chain
+    /// to exactly one peer (hiding the origin). The stem relay chain
     /// probabilistically transitions to fluff (normal Plumtree broadcast).
+    ///
+    /// **Small-network origin anonymity (F-5 / L4):** unlike the old code, which
+    /// set the stem probability to zero below 5 peers and *self-fluffed* —
+    /// broadcasting straight from the origin and exposing the transaction origin
+    /// to every mesh peer — we now keep the origin one hop removed whenever any
+    /// peer is present, **preferring a trusted anchor peer as the first stem
+    /// hop** ([`StemPlan`]). Only a truly peerless node disseminates locally
+    /// (there is then no one to leak the origin to).
     pub async fn publish(
         &self,
         topic: &TopicHandle,
@@ -908,9 +999,8 @@ impl GossipNetwork {
         let encoded = message.encode_raw();
         let msg_hash = *blake3::hash(&encoded).as_bytes();
 
-        // Pick a random peer for the stem relay.
-        // Use adaptive stem probability: in small networks (< 5 peers), skip
-        // stem entirely and go straight to fluff (no anonymity benefit from stem).
+        // Choose the first-hop stem relay per the anti-eclipse / small-N
+        // origin-anonymity policy, preferring a trusted anchor peer.
         let stem_target = {
             let mut state = self.state.write().await;
             state.seen.insert(msg_hash);
@@ -923,35 +1013,46 @@ impl GossipNetwork {
                 },
             );
 
-            let peer_count = state.peers.len();
-            let stem_prob = effective_stem_probability(peer_count);
-
-            // If stem is disabled for this network size, skip directly to fluff.
-            if stem_prob == 0.0 {
-                None
-            } else {
-                // Track this message in the stem set for timeout failsafe
-                state.stem_messages.insert(
-                    msg_hash,
-                    StemEntry {
-                        topic_id: topic.topic_id,
-                        msg_hash,
-                        payload: encoded.clone(),
-                        entered_stem_at: Instant::now(),
-                    },
-                );
-
-                // Select one random peer from all peers in this topic
-                if let Some(topic_state) = state.topics.get(&topic.topic_id) {
-                    let all_peers = topic_state.all_peers();
-                    if all_peers.is_empty() {
-                        None
-                    } else {
-                        let mut rng = rand::rng();
-                        Some(*all_peers.choose(&mut rng).unwrap())
+            // Gather this topic's peers, partitioned into anchors vs the rest.
+            let (anchor_peers, other_peers): (Vec<SocketAddr>, Vec<SocketAddr>) =
+                match state.topics.get(&topic.topic_id) {
+                    Some(topic_state) => {
+                        let all = topic_state.all_peers();
+                        let anchors = &state.anchors;
+                        all.into_iter().partition(|a| anchors.contains(a))
                     }
-                } else {
-                    None
+                    None => (Vec::new(), Vec::new()),
+                };
+            let any_peer_available = !anchor_peers.is_empty() || !other_peers.is_empty();
+            let plan = StemPlan::plan(
+                state.peers.len(),
+                !anchor_peers.is_empty(),
+                any_peer_available,
+            );
+
+            match plan {
+                StemPlan::FluffNoPeers => None,
+                StemPlan::StemTo { via_anchor } => {
+                    // Track this message in the stem set for timeout failsafe.
+                    state.stem_messages.insert(
+                        msg_hash,
+                        StemEntry {
+                            topic_id: topic.topic_id,
+                            msg_hash,
+                            payload: encoded.clone(),
+                            entered_stem_at: Instant::now(),
+                        },
+                    );
+                    let mut rng = rand::rng();
+                    // Prefer a trusted anchor as the relay (eclipse-resistant
+                    // entry point); fall back to a random non-anchor peer.
+                    if via_anchor && !anchor_peers.is_empty() {
+                        anchor_peers.choose(&mut rng).copied()
+                    } else if !other_peers.is_empty() {
+                        other_peers.choose(&mut rng).copied()
+                    } else {
+                        anchor_peers.choose(&mut rng).copied()
+                    }
                 }
             }
         };
@@ -1229,16 +1330,30 @@ impl GossipNetwork {
             let mut state_w = state.write().await;
             for addr in &dead_peers {
                 state_w.peers.remove(addr);
-                // A peer whose connection died is penalized (mild — may be a
-                // transient outage) and dropped from the scoreboard so it does
-                // not linger as an eager candidate.
-                state_w.scoreboard.penalize(*addr, Penalty::InvalidMessage);
-                state_w.scoreboard.remove(addr);
-                warn!("Removed dead peer connection: {addr}");
+                let is_anchor = state_w.anchors.contains(addr);
+                if is_anchor {
+                    // ANCHOR (F-5 / L4): a trusted bootstrap peer's connection
+                    // died — likely transient. Penalize mildly but KEEP it in the
+                    // scoreboard and topic peer set as a (re-dialable) candidate.
+                    // An eclipse adversary must not be able to starve a trusted
+                    // anchor out of the candidate set by inducing flaps.
+                    state_w.scoreboard.penalize(*addr, Penalty::InvalidMessage);
+                    warn!("Anchor peer connection dropped (retained as candidate): {addr}");
+                } else {
+                    // A non-anchor peer whose connection died is penalized (mild)
+                    // and dropped from the scoreboard so it does not linger as an
+                    // eager candidate.
+                    state_w.scoreboard.penalize(*addr, Penalty::InvalidMessage);
+                    state_w.scoreboard.remove(addr);
+                    warn!("Removed dead peer connection: {addr}");
+                }
             }
+            let anchors_snapshot = state_w.anchors.clone();
             for topic_state in state_w.topics.values_mut() {
                 for addr in &dead_peers {
-                    topic_state.peer_states.remove(addr);
+                    if !anchors_snapshot.contains(addr) {
+                        topic_state.peer_states.remove(addr);
+                    }
                 }
             }
             // A dead eager peer just left a hole in the spanning tree — recompute
@@ -2605,6 +2720,7 @@ mod tests {
             message_cache_order: VecDeque::new(),
             stem_messages: HashMap::new(),
             scoreboard: PeerScoreboard::new(),
+            anchors: HashSet::new(),
         };
 
         // Add a topic with 5 peers (3 eager, 2 lazy)
@@ -2710,6 +2826,7 @@ mod tests {
             message_cache_order: VecDeque::new(),
             stem_messages: HashMap::new(),
             scoreboard: PeerScoreboard::new(),
+            anchors: HashSet::new(),
         };
 
         // 3 eager + 2 lazy peers
@@ -2764,12 +2881,129 @@ mod tests {
 
     #[test]
     fn adaptive_stem_probability_tiny_network() {
-        // Networks with < 5 peers get no stem (useless, just adds latency)
+        // In a tiny network the per-relay CONTINUATION probability is 0 (a random
+        // multi-hop stem buys nothing) — but this no longer means "self-fluff at
+        // the origin": the FIRST hop is still routed through a peer (preferring a
+        // trusted anchor) by `StemPlan`. See `stem_plan_*` tests below.
         assert_eq!(effective_stem_probability(0), 0.0);
         assert_eq!(effective_stem_probability(1), 0.0);
         assert_eq!(effective_stem_probability(2), 0.0);
         assert_eq!(effective_stem_probability(3), 0.0);
         assert_eq!(effective_stem_probability(4), 0.0);
+    }
+
+    // ─── F-5 / L4: small-N origin anonymity + anchor anti-eclipse ────────────
+
+    /// THE F-5 invariant at the origin: with peers present, the originator NEVER
+    /// self-fluffs (broadcasts directly), regardless of network size — it always
+    /// keeps the origin one hop removed. The OLD code returned an immediate-fluff
+    /// (zero-stem) plan below 5 peers, exposing tx-origin to the whole mesh; this
+    /// asserts that regression cannot recur.
+    #[test]
+    fn stem_plan_origin_never_self_fluffs_with_peers_present() {
+        for peer_count in 0..12usize {
+            if peer_count == 0 {
+                // No peers at all: local-only fluff is the only option (nobody to
+                // leak the origin to).
+                assert_eq!(
+                    StemPlan::plan(0, false, false),
+                    StemPlan::FluffNoPeers,
+                    "a peerless node may disseminate locally"
+                );
+                continue;
+            }
+            // With ANY peer present (anchor or not) we must stem, not self-fluff.
+            let with_anchor = StemPlan::plan(peer_count, true, true);
+            let without_anchor = StemPlan::plan(peer_count, false, true);
+            assert_eq!(
+                with_anchor,
+                StemPlan::StemTo { via_anchor: true },
+                "F-5 REGRESSION @ {peer_count} peers: must stem via the trusted anchor, not self-fluff"
+            );
+            assert_eq!(
+                without_anchor,
+                StemPlan::StemTo { via_anchor: false },
+                "F-5 REGRESSION @ {peer_count} peers: must stem to a peer (one hop of cover), not self-fluff"
+            );
+        }
+    }
+
+    /// Small-N specifically (the historically-broken regime, peer_count < 5): an
+    /// anchor relay is available ⇒ the plan stems THROUGH the anchor.
+    #[test]
+    fn stem_plan_small_network_prefers_anchor_relay() {
+        for peer_count in 1..SMALL_NETWORK_THRESHOLD {
+            assert_eq!(
+                StemPlan::plan(peer_count, true, true),
+                StemPlan::StemTo { via_anchor: true },
+                "small-N ({peer_count}) with an anchor must route the first hop through it"
+            );
+        }
+    }
+
+    /// THE anti-eclipse invariant: a trusted anchor is always pinned into the
+    /// eager set ahead of a Sybil flood. An attacker controls many high-score
+    /// peers (all in one /16); the node has ONE trusted anchor. The anchor MUST
+    /// be eager even though the attacker outscores and outnumbers it.
+    #[test]
+    fn anchor_pinned_into_eager_set_against_sybil_flood() {
+        use crate::peer_score::PeerScoreboard;
+        use std::collections::HashSet;
+        use std::net::SocketAddr;
+
+        let mk = |s: &str| -> SocketAddr { s.parse().unwrap() };
+        let mut sb = PeerScoreboard::new();
+
+        // 50 attacker Sybils in 10.0/16, all max reputation.
+        let mut all: Vec<SocketAddr> = Vec::new();
+        for i in 0..50u16 {
+            let a = mk(&format!("10.0.{}.{}:9000", (i >> 8) as u8, (i & 0xff) as u8));
+            for _ in 0..30 {
+                sb.reward_fresh_delivery(a);
+            }
+            all.push(a);
+        }
+        // One trusted anchor in a different subnet, only modest reputation.
+        let anchor = mk("203.0.113.7:9000");
+        sb.observe(anchor);
+        all.push(anchor);
+
+        let mut anchors = HashSet::new();
+        anchors.insert(anchor);
+
+        let eager = sb.select_eager_with_anchors(&all, &anchors, 3);
+        assert!(
+            eager.contains(&anchor),
+            "ECLIPSE REGRESSION: trusted anchor was NOT pinned into the eager set \
+             despite a Sybil flood (eager set: {eager:?})"
+        );
+    }
+
+    /// A trusted anchor that PROVES Byzantine (graylisted) is NOT pinned — trust
+    /// is not a license to equivocate.
+    #[test]
+    fn graylisted_anchor_is_not_pinned() {
+        use crate::peer_score::{Penalty, PeerScoreboard};
+        use std::collections::HashSet;
+        use std::net::SocketAddr;
+
+        let mk = |s: &str| -> SocketAddr { s.parse().unwrap() };
+        let mut sb = PeerScoreboard::new();
+        let anchor = mk("203.0.113.7:9000");
+        let honest = mk("198.51.100.4:9000");
+        sb.observe(honest);
+        // The anchor relays a proven equivocation ⇒ graylisted.
+        sb.penalize(anchor, Penalty::EquivocationRelay);
+
+        let mut anchors = HashSet::new();
+        anchors.insert(anchor);
+
+        let eager = sb.select_eager_with_anchors(&[anchor, honest], &anchors, 3);
+        assert!(
+            !eager.contains(&anchor),
+            "a graylisted (proven-Byzantine) anchor must NOT be pinned eager"
+        );
+        assert!(eager.contains(&honest));
     }
 
     #[test]

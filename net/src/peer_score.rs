@@ -119,6 +119,13 @@ pub struct PeerScore {
     pub fresh_deliveries: u64,
     /// When we last observed activity from this peer (for liveness / decay).
     pub last_seen: Instant,
+    /// **Anchor** (F-5 / L4): an operator-configured, trusted bootstrap peer.
+    /// An anchor is graylisted ONLY by the categorical equivocation hard-fault —
+    /// transient/reputation erosion (a few dropped connections, the
+    /// `InvalidMessage` flaps an eclipse adversary can induce) does NOT graylist
+    /// it. This is the eclipse-by-attrition defense: an adversary must not be
+    /// able to starve a trusted anchor out of the eager set by inducing flaps.
+    pub is_anchor: bool,
 }
 
 impl PeerScore {
@@ -128,14 +135,23 @@ impl PeerScore {
             equivocations: 0,
             fresh_deliveries: 0,
             last_seen: Instant::now(),
+            is_anchor: false,
         }
     }
 
-    /// A peer is *graylisted* if it has relayed a proven equivocation OR its
-    /// reputation has fallen to/under the graylist threshold. Graylisted peers
-    /// are never placed in the eager set and are dialed last.
+    /// A peer is *graylisted* if it has relayed a proven equivocation OR
+    /// (for a NON-anchor) its reputation has fallen to/under the graylist
+    /// threshold. A trusted anchor is never graylisted by mere score erosion —
+    /// only by the categorical equivocation fault (trust is not a license to
+    /// equivocate, but transient flakiness must not evict it: F-5 / L4).
     pub fn is_graylisted(&self) -> bool {
-        self.equivocations > 0 || self.score <= GRAYLIST_THRESHOLD
+        if self.equivocations > 0 {
+            return true;
+        }
+        if self.is_anchor {
+            return false;
+        }
+        self.score <= GRAYLIST_THRESHOLD
     }
 }
 
@@ -187,6 +203,14 @@ impl PeerScoreboard {
     /// [`INITIAL_SCORE`].
     pub fn observe(&mut self, addr: SocketAddr) {
         self.peers.entry(addr).or_default().last_seen = Instant::now();
+    }
+
+    /// Mark `addr` as a **trusted anchor** (F-5 / L4): an operator-configured
+    /// bootstrap peer that is exempt from score-erosion graylisting (but NOT
+    /// from the categorical equivocation fault). Idempotent; creates the record
+    /// if absent.
+    pub fn mark_anchor(&mut self, addr: SocketAddr) {
+        self.peers.entry(addr).or_default().is_anchor = true;
     }
 
     /// Reward a peer for delivering a *fresh* (first-seen) message eagerly.
@@ -263,6 +287,66 @@ impl PeerScoreboard {
     ///    the remaining non-graylisted candidates in score order — availability
     ///    must not be sacrificed when honest diversity is simply unavailable.
     ///
+    /// Eclipse-resistant eager selection that **pins trusted anchor peers** to
+    /// the eager set first (F-5 / L4).
+    ///
+    /// Anchors are the operator-configured bootstrap contact points — relays an
+    /// injected/Sybil peer cannot impersonate. Any candidate that is also a
+    /// (non-graylisted) anchor is admitted to the eager set before the
+    /// reputation/diversity pass runs, up to `eager_degree`. This guarantees a
+    /// node always relays through at least its trusted anchors, so an adversary
+    /// who floods many high-reputation Sybil connections still cannot fully
+    /// capture the spanning tree: the anchor slots are reserved. The remaining
+    /// slots are filled by the standard eclipse-resistant [`Self::select_eager`]
+    /// (score-ranked, address-diversity-bounded). A graylisted anchor (one that
+    /// proved Byzantine) is NOT pinned — trust is not a license to equivocate.
+    pub fn select_eager_with_anchors(
+        &self,
+        candidates: &[SocketAddr],
+        anchors: &std::collections::HashSet<SocketAddr>,
+        eager_degree: usize,
+    ) -> Vec<SocketAddr> {
+        if eager_degree == 0 || candidates.is_empty() {
+            return Vec::new();
+        }
+
+        // (A) Pin connected, non-graylisted anchors first (deterministic order).
+        let mut chosen: Vec<SocketAddr> = Vec::with_capacity(eager_degree);
+        let mut anchor_candidates: Vec<SocketAddr> = candidates
+            .iter()
+            .filter(|a| anchors.contains(a) && !self.is_graylisted(a))
+            .copied()
+            .collect();
+        anchor_candidates.sort_by(|a, b| addr_sort_key(a).cmp(&addr_sort_key(b)));
+        for a in anchor_candidates {
+            if chosen.len() == eager_degree {
+                break;
+            }
+            if !chosen.contains(&a) {
+                chosen.push(a);
+            }
+        }
+        if chosen.len() >= eager_degree {
+            return chosen;
+        }
+
+        // (B) Fill remaining slots with the standard eclipse-resistant pass over
+        // the non-anchor candidates.
+        let rest: Vec<SocketAddr> = candidates
+            .iter()
+            .filter(|a| !chosen.contains(a))
+            .copied()
+            .collect();
+        let fill = self.select_eager(&rest, eager_degree - chosen.len());
+        for a in fill {
+            if chosen.len() == eager_degree {
+                break;
+            }
+            chosen.push(a);
+        }
+        chosen
+    }
+
     /// Returns the chosen eager addresses (length `<= eager_degree`).
     pub fn select_eager(&self, candidates: &[SocketAddr], eager_degree: usize) -> Vec<SocketAddr> {
         if eager_degree == 0 || candidates.is_empty() {

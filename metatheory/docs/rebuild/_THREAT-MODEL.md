@@ -206,13 +206,29 @@ suite**, because it depends on a crypto-library version detail, not a proof.
   catches *equivocation*, not *identity inflation*. *Logged; no quick fix —
   needs a real admission design (stake / proof-of-personhood / follow-graph
   scoping).*
-- **F-5 (FINDING — eclipse, partial mitigation):** Dandelion++ stem is
-  **disabled below 5 peers** (`net/src/gossip.rs:107` — "peer_count < 5: stem
-  disabled, no anonymity possible"). The live devnet is solo (peer_count 0), so
-  a nascent small network has *zero* transaction-origin anonymity and is most
-  eclipse-vulnerable exactly when it is smallest. Peer scoring exists
-  (`net/src/peer_score.rs`, `Penalty`) but does not substitute for a diverse
-  peer-selection / anchor-peer anti-eclipse policy at small N. *Logged.*
+- **F-5 / L4 (CLOSED — `redteam`-DEFENDED, `net/src/{gossip,peer_score}.rs`):**
+  *Was:* Dandelion++ stem was **disabled below 5 peers** (immediate self-fluff —
+  the origin broadcast directly, zero tx-origin anonymity) and there was no
+  anchor-peer anti-eclipse policy, so a nascent small network was most
+  eclipse-vulnerable and origin-exposed exactly when smallest. *Fix:* (a)
+  **anchor peers** — the operator-configured bootstrap peers are recorded as
+  trusted anchors (`GossipState.anchors`, `PeerScore.is_anchor`); they are
+  **pinned into the eager set ahead of any Sybil flood**
+  (`PeerScoreboard::select_eager_with_anchors`), **retained (not removed) on a
+  transient connection death**, and **exempt from score-erosion graylisting**
+  (only the categorical equivocation hard-fault graylists an anchor) — so an
+  eclipse adversary can neither capture the spanning tree nor starve a trusted
+  anchor out by inducing flaps. (b) **small-N origin anonymity** — the publish
+  path (`StemPlan::plan`) now keeps the origin **one hop removed whenever any
+  peer is present**, *preferring a trusted anchor as the first stem hop* rather
+  than self-fluffing; only a truly peerless node disseminates locally (nobody to
+  leak to). The red-team tests are **DEFENDED**:
+  `attack_sybil_flood_cannot_evict_trusted_anchor_from_eager_set`,
+  `attack_anchor_flap_does_not_starve_it_from_eager_set`,
+  `attack_byzantine_anchor_is_not_pinned` (`redteam/tests/net_eclipse_attacks.rs`)
+  + net-internal `gossip::tests::stem_plan_origin_never_self_fluffs_with_peers_present`.
+  A graylisted (proven-Byzantine) anchor is NOT pinned — trust is not a license
+  to equivocate.
 
 ### A4 — Malicious validator
 
@@ -334,7 +350,7 @@ following are concrete leaks, ranked.
 | **L1 — node identity + uptime + activity volume** | `GET /status` (live) | anyone, unauth | MED (deanon + recon) | F-8, live |
 | **L2 — recipient set of store-forward** | `BlocklaceEnvelope.destination` cleartext | relay + any DAG observer | MED | F-9, by-design |
 | **L3 — cell-graph / capability-graph topology** | who-introduces-whom edges in handoff/introduce; routing-table entries (`node/src/routing_table.rs`); the cap DAG | any node holding the blocks | MED | by-design (only-connectivity-begets-connectivity is *observable*) |
-| **L4 — transaction-origin (no anonymity at small N)** | Dandelion++ stem disabled < 5 peers | on-path / mesh peer | HIGH at small N | F-5 |
+| **L4 — transaction-origin (no anonymity at small N)** | ~~Dandelion++ stem disabled < 5 peers~~ → origin kept one hop removed via anchor stem | on-path / mesh peer | HIGH at small N | **F-5 CLOSED** |
 | **L5 — timing / ordering side channel** | block `seq`, causal_sequence, DAG arrival times; turn-execution duration metrics (`record_turn_execution_duration`, `api.rs:2263`) | mesh peer / metrics scraper | LOW–MED | logged |
 | **L6 — swiss membership oracle** | `EnlivenError` taxonomy | a prober with a guessed value | LOW (256-bit secret) | F-3 |
 | **L7 — shielded vs transparent is itself a label** | the choice to use a note vs a transparent transfer is visible in the effect type | any DAG observer | MED | by-design |
@@ -513,15 +529,16 @@ Live devnet `POST /turn/submit` → **405** (mutation disabled on the deployment
 | F-8 / L1 | metadata leak | MED | `node/src/api.rs` `/status` | node | **CLOSED** — `note_count`/`revocation_count` omitted from public `/status` by default (`serde` skip), opt-in `DREGG_STATUS_EXPOSE_COUNTS=1` for trusted dashboards; coarse liveness retained (redteam DEFENDED: `f8_*` + `devnet_status_withholds_private_counts_f8`) |
 | F-9 / L2 | recipient leak | MED | `captp/src/store_forward.rs` cleartext dest | CapTP | anon addressing / PIR |
 | F-4 | Sybil/admission | DESIGN | strands have no admission cost | federation | stake / follow-graph |
-| F-5 / L4 | eclipse / no anon at small N | HIGH@smallN | `net/src/gossip.rs` stem<5 | net | anchor peers |
+| F-5 / L4 | eclipse / no anon at small N | HIGH@smallN | `net/src/{gossip,peer_score}.rs` | net | **CLOSED** — anchor peers pinned eager + flap-exempt + anchor stem hop (`StemPlan`); origin never self-fluffs with peers present (redteam DEFENDED: `net_eclipse_attacks.rs` + `stem_plan_*`) |
+| CHECKPOINT-AUTH | A1-class recovery-path bypass | HIGH | `blocklace/src/finality.rs::from_checkpoint` | blocklace | **CLOSED** — `from_checkpoint` re-verifies sig+closure+equivocation like the hardened insert; verbatim path is now the explicit `from_checkpoint_trusted` (local-disk only); peer `bootstrap_from_checkpoint` routes through the authenticating loader (redteam DEFENDED: `blocklace_deep_attacks.rs` DEEP 5/6/5c) |
 | F-6 | validator chaos untested | OPEN | consensus (solo devnet) | chaos | n≥4 committee attack |
 | F-7 | finalized-equivocator / partial-replication | OPEN | finality | research | slashing + safety proof |
 | L3/L5/L7/L8 | topology / timing / shielding-label | by-design | gossip + cap-graph | research | metadata-privacy pillar |
 
 **Chaos-phase priorities (ranked):** F-6 (stand up a Byzantine committee — the
-biggest *unverified-operationally* surface), F-11 (premature-reclaim is HIGH and
-already has a reproducer to turn into a fuzz target), F-5 (eclipse at small N),
-then the metadata-privacy research pillar (L1–L8).
+biggest *unverified-operationally* surface), then the metadata-privacy research
+pillar (L1–L8). (F-5 eclipse-at-small-N and the CHECKPOINT-AUTH recovery-path
+bypass are now CLOSED + red-team DEFENDED.)
 
 **What the red team could NOT break (operational evidence the property holds on
 the running system, not just in Lean):** swiss confinement, handoff
