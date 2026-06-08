@@ -19,6 +19,7 @@ pub mod status;
 pub mod transfer;
 
 // ─── CapTP integration commands ─────────────────────────────────────────────
+pub mod bounty;
 pub mod captp;
 pub mod dashboard;
 pub mod federation;

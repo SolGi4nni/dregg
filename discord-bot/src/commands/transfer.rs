@@ -187,9 +187,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         Err(e) => {
             let embed = embeds::error_embed(
                 "Transfer Failed",
-                &format!(
-                    "Devnet rejected the transfer: {e}\n\nThe devnet may be offline, or you may have insufficient balance."
-                ),
+                &e.user_message("submit the transfer"),
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))

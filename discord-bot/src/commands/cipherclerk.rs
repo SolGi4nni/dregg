@@ -159,12 +159,14 @@ async fn handle_balance(ctx: &Context, command: &CommandInteraction, state: &Bot
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed(
-                "Devnet Offline",
-                &format!(
-                    "Could not query balance: {e}\n\nDevnet may be temporarily offline, try again later."
-                ),
-            );
+            // A 404 here means the cell hasn't been materialized on-chain yet
+            // (no faucet/transfer has touched it); user_message surfaces the
+            // "/faucet first" hint. Other codes get their own guidance.
+            let title = match &e {
+                crate::devnet::DevnetError::Status { code: 404, .. } => "No On-Chain Balance Yet",
+                _ => "Balance Unavailable",
+            };
+            let embed = embeds::error_embed(title, &e.user_message("query your balance"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

@@ -108,7 +108,7 @@ pub async fn handle_faucet(ctx: &Context, command: &CommandInteraction, state: &
         Err(e) => {
             let embed = embeds::error_embed(
                 "Faucet Error",
-                &format!("Could not claim from faucet: {e}\n\nDevnet may be temporarily offline."),
+                &e.user_message("request faucet tokens"),
             );
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))

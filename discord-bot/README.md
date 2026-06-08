@@ -64,6 +64,17 @@ needs its real public key (`/api/faucet` with `public_key`), which
 - **Governance** (apps/governed-namespace): `/gov-propose | vote |
   status | routes`
 - **Names** (apps/nameservice): `/name-register | resolve | whois`
+- **Bounty board** (starbridge-apps/bounty-board): `/bounty post | claim |
+  submit | payout | status` — drives the bounty lifecycle on a factory-born
+  bounty cell. Each write is a canonical Ed25519-signed app `Action`
+  (`build_post_action`/`build_claim_action`/`build_submit_action`/
+  `build_payout_action`) submitted through the signed-turn path. The
+  OPEN→CLAIMED→SUBMITTED→PAID state machine is enforced **on-chain** by the
+  cell's program (strictly monotone `STATE`), so double-claim / double-payout
+  are rejected by the executor. The bounty cell is supplied by the caller
+  (born via the Starbridge seed or `/dregg`). `status` reports the cell's real
+  on-chain balance/nonce/provenance; per-slot lifecycle state is not exposed
+  by the public read API, so it is not fabricated.
 - **Federation**: `/setup-federation`, `/link-cipherclerk`, `/unlink-cipherclerk`
 
 External `/link-cipherclerk` records are pending until ownership is proven.
@@ -93,8 +104,34 @@ Environment variables (see `src/config.rs`):
 | `DISCORD_TOKEN`  | yes      | Discord bot token                            |
 | `DISCORD_APP_ID` | yes      | Discord application id (u64)                 |
 | `BOT_SECRET`     | yes      | 64 hex chars (32 bytes) — master key seed    |
-| `DEVNET_URL`     | no       | defaults to `https://devnet.dregg.fg-goose.online` |
+| `DEVNET_URL`     | no       | node base URL; defaults to `https://devnet.dregg.fg-goose.online` |
 | `DATABASE_URL`   | no       | defaults to `sqlite:bot.db`                  |
+| `DEVNET_API_TOKEN` | no     | operator bearer token; sent on every node call. Needed when the node gates writes behind `require_auth`. |
+| `FEDERATION_ID`  | no       | 64 hex chars; the executor signing domain. On a **solo** node this MUST be `blake3(node_pubkey)` or transfers fail (see preflight below). |
+
+### Startup preflight
+
+On boot the bot probes the node's `/status` and logs an operator-facing
+summary, catching the two failure modes that otherwise surface as cryptic
+per-command errors:
+
+- **node unreachable** — the bot still boots and retries per command, but logs
+  a clear warning with the reason (timeout / connection refused / HTTP code)
+  and the configured `DEVNET_URL`.
+- **`FEDERATION_ID` mismatch** — on a solo node the executor signs under
+  `blake3(node_pubkey)`. The preflight computes the expected value from the
+  node's reported `public_key` and **warns loudly** if the bot's
+  `FEDERATION_ID` differs, printing the exact value to set. (A mismatch makes
+  every transfer fail with "Ed25519 signature verification failed".)
+
+### Error UX
+
+Live-node failures are classified into actionable messages instead of raw
+node bodies (`devnet::DevnetError::user_message`): HTTP 401/403 → "not
+authorized, set `DEVNET_API_TOKEN`"; 404 on a balance → "no on-chain balance
+yet, try `/faucet`"; 429 → "rate limited, wait and retry"; 5xx → "node-side
+fault"; timeouts/connect-refused → "node busy / offline". The raw status +
+body is still preserved in logs via `Display`.
 
 ## Build
 

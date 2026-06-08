@@ -90,6 +90,7 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     "handoff",
     "handoff-redeem",
     "intent",
+    "bounty",
 ];
 
 #[cfg(test)]
@@ -183,6 +184,8 @@ impl EventHandler for Handler {
             commands::handoff::register(),
             commands::handoff::register_redeem(),
             commands::intent::register(),
+            // ─── Bounty board (starbridge-bounty-board) ─────────────────────
+            commands::bounty::register(),
         ];
         debug_assert_eq!(commands.len(), REGISTERED_COMMAND_NAMES.len());
 
@@ -269,6 +272,7 @@ impl EventHandler for Handler {
                     commands::handoff::handle_redeem(&ctx, &command, &self.state).await
                 }
                 "intent" => commands::intent::handle(&ctx, &command, &self.state).await,
+                "bounty" => commands::bounty::handle(&ctx, &command, &self.state).await,
                 _ => {
                     tracing::warn!("Unknown command: {name}");
                 }
@@ -362,6 +366,48 @@ async fn main() {
     // Create devnet client.
     let devnet = DevnetClient::new(&config.devnet_url);
     info!("Devnet client configured for {}", config.devnet_url);
+
+    // Startup preflight: probe the node and catch the two most common
+    // misconfigurations BEFORE users hit them as cryptic command failures.
+    //   1. node unreachable   -> warn (bot still boots; recovers when node up)
+    //   2. FEDERATION_ID wrong -> on a SOLO node the executor signs under
+    //      blake3(node_pubkey); if the bot's FEDERATION_ID doesn't match,
+    //      EVERY transfer is rejected with "Ed25519 signature verification
+    //      failed". We compute the expected value and warn on mismatch.
+    {
+        let pf = devnet.preflight().await;
+        if pf.reachable {
+            info!(
+                "node OK: mode={} consensus_live={} dag_height={} height={}",
+                pf.federation_mode, pf.consensus_live, pf.dag_height, pf.latest_height
+            );
+            if pf.federation_mode == "solo" && !pf.public_key.is_empty() {
+                if let Ok(pk) = hex::decode(&pf.public_key) {
+                    let expected = *blake3::hash(&pk).as_bytes();
+                    if expected != federation_id_bytes {
+                        warn!(
+                            "FEDERATION_ID mismatch: this is a SOLO node whose executor signs \
+                             under blake3(node_pubkey)={}, but the bot's FEDERATION_ID is {}. \
+                             Transfers WILL fail with 'Ed25519 signature verification failed'. \
+                             Set FEDERATION_ID={} to match.",
+                            hex::encode(expected),
+                            hex::encode(federation_id_bytes),
+                            hex::encode(expected),
+                        );
+                    } else {
+                        info!("FEDERATION_ID matches the solo node's executor signing domain");
+                    }
+                }
+            }
+        } else {
+            warn!(
+                "node at {} is unreachable at startup ({}). The bot will boot and \
+                 retry per-command; check the node and DEVNET_URL.",
+                config.devnet_url,
+                pf.error.as_deref().unwrap_or("unknown error"),
+            );
+        }
+    }
 
     // Build presence tracker.
     let presence = Mutex::new(PresenceTracker::new(config.bot_secret));

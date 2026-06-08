@@ -231,7 +231,8 @@ pub async fn handle_propose(ctx: &Context, command: &CommandInteraction, state: 
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Node Unreachable", &e.to_string());
+            let embed =
+                embeds::error_embed("Proposal Failed", &e.user_message("submit the proposal"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -348,7 +349,7 @@ pub async fn handle_vote(ctx: &Context, command: &CommandInteraction, state: &Bo
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed("Node Unreachable", &e.to_string());
+            let embed = embeds::error_embed("Vote Failed", &e.user_message("cast your vote"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

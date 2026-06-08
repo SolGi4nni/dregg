@@ -332,6 +332,32 @@ struct NodeStatusResponse {
     #[serde(default)]
     note_count: u64,
     federation_mode: String,
+    #[serde(default)]
+    dag_height: u64,
+    #[serde(default)]
+    consensus_live: bool,
+    #[serde(default)]
+    public_key: String,
+}
+
+/// A compact, operator-facing summary of a node's identity + liveness, used by
+/// the startup preflight to catch the two most common misconfigurations early:
+/// an unreachable `DEVNET_URL` and a `FEDERATION_ID` that won't match the
+/// node's executor signing domain (which silently breaks every transfer).
+#[derive(Debug, Clone)]
+pub struct NodePreflight {
+    pub reachable: bool,
+    pub healthy: bool,
+    pub consensus_live: bool,
+    pub federation_mode: String,
+    pub dag_height: u64,
+    pub latest_height: u64,
+    /// The node operator's public key (hex). On a SOLO node the executor's
+    /// federation-id signing domain is `blake3(public_key)`, so this is what
+    /// the bot's `FEDERATION_ID` must be derived from for transfers to verify.
+    pub public_key: String,
+    /// If unreachable, why (timeout / connect refused / HTTP error).
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -356,8 +382,99 @@ pub struct DevnetMetrics {
 #[derive(Debug)]
 pub enum DevnetError {
     Http(reqwest::Error),
+    /// A non-success HTTP response, carrying the status code and the node's
+    /// response body. Prefer this over `Api` for live-node calls so
+    /// [`DevnetError::user_message`] can classify the failure (auth gate, rate
+    /// limit, node down, …) into actionable guidance for the user.
+    Status { code: u16, body: String },
+    /// An opaque, already-formatted error string (decode failures, app-level
+    /// rejections from a JSON `success:false` body, etc).
     Api(String),
     Unsupported(&'static str),
+}
+
+impl DevnetError {
+    /// Build a `Status` error from a non-success response, draining its body.
+    /// Truncates the body so a giant HTML error page can't blow up a Discord
+    /// embed.
+    pub async fn from_response(resp: reqwest::Response) -> Self {
+        let code = resp.status().as_u16();
+        let mut body = resp.text().await.unwrap_or_default();
+        // Collapse whitespace + cap length; node JSON/text errors are short,
+        // but a misrouted request can return a full HTML page.
+        body = body.trim().chars().take(400).collect();
+        DevnetError::Status { code, body }
+    }
+
+    /// Render an actionable, user-facing message for a Discord embed. `action`
+    /// is a short verb phrase describing what the user was doing
+    /// (e.g. "submit the transfer", "request faucet tokens") so the guidance
+    /// reads naturally. This never leaks a raw HTML body or a bare status line.
+    pub fn user_message(&self, action: &str) -> String {
+        match self {
+            DevnetError::Http(e) => {
+                if e.is_timeout() {
+                    format!("The node didn't respond in time while trying to {action}. The devnet may be busy — try again in a moment.")
+                } else if e.is_connect() {
+                    format!("Couldn't reach the node to {action}. The devnet may be offline; check `/status`.")
+                } else {
+                    format!("Network error while trying to {action}: {e}")
+                }
+            }
+            DevnetError::Status { code, body } => {
+                let hint = body_hint(body);
+                match *code {
+                    400 | 422 => format!(
+                        "The node rejected the request to {action} (HTTP {code}).{hint} This usually means a malformed turn or a value the executor wouldn't accept."
+                    ),
+                    401 | 403 => format!(
+                        "Not authorized to {action} (HTTP {code}).{hint} This node gates writes behind an operator token — set `DEVNET_API_TOKEN` for the bot, or use a node that accepts public turns."
+                    ),
+                    404 => format!(
+                        "The node has no record for this {action} request (HTTP 404).{hint} The cell/turn/name may not exist yet — try `/faucet` to materialize your cell first."
+                    ),
+                    409 => format!(
+                        "Conflict while trying to {action} (HTTP 409).{hint} Someone may have taken this name, or your nonce is stale — try again."
+                    ),
+                    429 => format!(
+                        "Rate limited while trying to {action} (HTTP 429). The node caps turns per minute — wait a bit and retry."
+                    ),
+                    500..=599 => format!(
+                        "The node hit an internal error trying to {action} (HTTP {code}).{hint} This is a node-side fault, not your input — try again or check `/status`."
+                    ),
+                    _ => format!("The node returned HTTP {code} while trying to {action}.{hint}"),
+                }
+            }
+            DevnetError::Api(msg) => {
+                // App-level rejection (e.g. faucet success:false, insufficient
+                // balance surfaced by the executor). Surface it but framed.
+                let m = msg.trim();
+                if m.is_empty() {
+                    format!("The node rejected the request to {action} without a reason.")
+                } else if m.to_lowercase().contains("insufficient")
+                    || m.to_lowercase().contains("balance")
+                {
+                    format!("Couldn't {action}: {m}. Top up with `/faucet`.")
+                } else {
+                    format!("Couldn't {action}: {m}")
+                }
+            }
+            DevnetError::Unsupported(msg) => format!(
+                "That isn't available on this node yet ({msg})."
+            ),
+        }
+    }
+}
+
+/// Extract a short, human-useful fragment from a node error body for inlining
+/// into a user message — skips empty/HTML bodies.
+fn body_hint(body: &str) -> String {
+    let b = body.trim();
+    if b.is_empty() || b.starts_with('<') {
+        String::new()
+    } else {
+        format!(" Node said: \"{}\".", b.chars().take(160).collect::<String>())
+    }
 }
 
 impl From<reqwest::Error> for DevnetError {
@@ -370,6 +487,13 @@ impl std::fmt::Display for DevnetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DevnetError::Http(e) => write!(f, "HTTP error: {e}"),
+            DevnetError::Status { code, body } => {
+                if body.is_empty() {
+                    write!(f, "HTTP {code}")
+                } else {
+                    write!(f, "HTTP {code}: {body}")
+                }
+            }
             DevnetError::Api(msg) => write!(f, "API error: {msg}"),
             DevnetError::Unsupported(msg) => write!(f, "Unsupported by current devnet API: {msg}"),
         }
@@ -422,8 +546,7 @@ impl DevnetClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            let msg = resp.text().await.unwrap_or_default();
-            return Err(DevnetError::Api(msg));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -518,7 +641,7 @@ impl DevnetClient {
         let url = format!("{}/api/cell/{cell_id}", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let value: serde_json::Value = resp.json().await?;
         Ok(value.get("nonce").and_then(|v| v.as_u64()).unwrap_or(0))
@@ -534,7 +657,7 @@ impl DevnetClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let events: Vec<CommittedEventWire> = resp.json().await?;
         Ok(events_response_from_committed(events, since_height))
@@ -545,7 +668,7 @@ impl DevnetClient {
         let url = format!("{}/api/cell/{cell_id}", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -555,7 +678,7 @@ impl DevnetClient {
         let url = format!("{}/api/receipts", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let receipts: Vec<ReceiptInfo> = resp.json().await?;
         let receipt = receipts
@@ -594,7 +717,7 @@ impl DevnetClient {
         let url = format!("{}/api/blocks", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let blocks: Vec<AttestedRootInfo> = resp.json().await?;
         let block = blocks
@@ -739,7 +862,7 @@ impl DevnetClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let committed: Vec<CommittedEventWire> = resp.json().await?;
         let mut events = committed_events_to_recent(committed);
@@ -783,7 +906,7 @@ impl DevnetClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -808,7 +931,7 @@ impl DevnetClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -830,8 +953,7 @@ impl DevnetClient {
         });
         let resp = self.client.post(&url).json(&body).send().await?;
         if !resp.status().is_success() {
-            let msg = resp.text().await.unwrap_or_default();
-            return Err(DevnetError::Api(msg));
+            return Err(DevnetError::from_response(resp).await);
         }
         let result: FaucetResponse = resp.json().await?;
         if !result.success {
@@ -849,7 +971,7 @@ impl DevnetClient {
         let url = format!("{}/api/cell/{cell_id}", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         let cell: CellDetails = resp.json().await?;
         Ok(cell.balance)
@@ -876,8 +998,7 @@ impl DevnetClient {
         });
         let resp = self.client.post(&url).json(&body).send().await?;
         if !resp.status().is_success() {
-            let msg = resp.text().await.unwrap_or_default();
-            return Err(DevnetError::Api(msg));
+            return Err(DevnetError::from_response(resp).await);
         }
         let result: serde_json::Value = resp.json().await?;
         Ok(result["tx_hash"].as_str().unwrap_or("unknown").to_string())
@@ -892,8 +1013,7 @@ impl DevnetClient {
         });
         let resp = self.client.post(&url).json(&body).send().await?;
         if !resp.status().is_success() {
-            let msg = resp.text().await.unwrap_or_default();
-            return Err(DevnetError::Api(msg));
+            return Err(DevnetError::from_response(resp).await);
         }
         let result: FaucetResponse = resp.json().await?;
         if !result.success {
@@ -1009,9 +1129,38 @@ impl DevnetClient {
         let url = format!("{}/status", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
+    }
+
+    /// Probe the node's `/status` for an operator-facing startup summary. Never
+    /// errors out of the call: an unreachable node yields `reachable:false`
+    /// with the reason, so the bot can warn loudly but still boot (and recover
+    /// once the node comes back).
+    pub async fn preflight(&self) -> NodePreflight {
+        match self.node_status().await {
+            Ok(s) => NodePreflight {
+                reachable: true,
+                healthy: s.healthy,
+                consensus_live: s.consensus_live,
+                federation_mode: s.federation_mode,
+                dag_height: s.dag_height,
+                latest_height: s.latest_height,
+                public_key: s.public_key,
+                error: None,
+            },
+            Err(e) => NodePreflight {
+                reachable: false,
+                healthy: false,
+                consensus_live: false,
+                federation_mode: String::new(),
+                dag_height: 0,
+                latest_height: 0,
+                public_key: String::new(),
+                error: Some(e.to_string()),
+            },
+        }
     }
 
     /// The node's current block height (used as the validity-window reference
@@ -1056,7 +1205,7 @@ impl DevnetClient {
         let url = format!("{}/api/receipts", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -1065,7 +1214,7 @@ impl DevnetClient {
         let url = format!("{}/api/blocks", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -1074,7 +1223,7 @@ impl DevnetClient {
         let url = format!("{}/api/cells", self.base_url);
         let resp = self.client.get(&url).send().await?;
         if !resp.status().is_success() {
-            return Err(DevnetError::Api(format!("status {}", resp.status())));
+            return Err(DevnetError::from_response(resp).await);
         }
         Ok(resp.json().await?)
     }
@@ -1110,13 +1259,63 @@ mod tests {
             "peer_count": 0,
             "latest_height": 12,
             "federation_mode": "solo",
-            "public_key": "ignored"
+            "dag_height": 30400,
+            "consensus_live": true,
+            "public_key": "9b3512552d162619121bc0fa308b21fee8bc5a34f85fc2d785769d2e82aba9fa"
         }))
         .expect("node /status response should deserialize");
 
         assert!(status.healthy);
         assert_eq!(status.latest_height, 12);
         assert_eq!(status.federation_mode, "solo");
+        // The preflight-relevant fields must round-trip from the real /status.
+        assert_eq!(status.dag_height, 30400);
+        assert!(status.consensus_live);
+        assert_eq!(status.public_key.len(), 64);
+    }
+
+    #[test]
+    fn user_message_classifies_http_status() {
+        let auth = DevnetError::Status { code: 403, body: String::new() };
+        let m = auth.user_message("submit the transfer");
+        assert!(m.contains("Not authorized"), "got: {m}");
+        assert!(m.contains("DEVNET_API_TOKEN"), "should hint the token: {m}");
+
+        let rate = DevnetError::Status { code: 429, body: String::new() };
+        assert!(rate.user_message("request faucet tokens").contains("Rate limited"));
+
+        let nf = DevnetError::Status { code: 404, body: String::new() };
+        assert!(nf.user_message("query your balance").contains("/faucet"));
+
+        let server = DevnetError::Status { code: 503, body: String::new() };
+        assert!(server.user_message("cast your vote").contains("node-side fault"));
+    }
+
+    #[test]
+    fn user_message_does_not_leak_html_body() {
+        // A misrouted request can return a full HTML page; the hint must skip it.
+        let html = DevnetError::Status {
+            code: 400,
+            body: "<!doctype html><html>big error page</html>".to_string(),
+        };
+        let m = html.user_message("submit the transfer");
+        assert!(!m.contains("<html>"), "HTML body must not leak: {m}");
+        assert!(!m.contains("doctype"), "HTML body must not leak: {m}");
+
+        // A short JSON-ish error IS surfaced as a quoted hint.
+        let short = DevnetError::Status {
+            code: 400,
+            body: "nonce too low".to_string(),
+        };
+        assert!(short.user_message("submit the transfer").contains("nonce too low"));
+    }
+
+    #[test]
+    fn user_message_surfaces_insufficient_balance() {
+        let e = DevnetError::Api("insufficient balance: have 3, need 10".to_string());
+        let m = e.user_message("submit the transfer");
+        assert!(m.contains("insufficient"), "got: {m}");
+        assert!(m.contains("/faucet"), "should suggest topping up: {m}");
     }
 
     #[test]

@@ -41,6 +41,7 @@ dregg-turn = { path = "../turn" }
 starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
 starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
 starbridge-identity = { path = "../starbridge-apps/identity" }
+starbridge-bounty-board = { path = "../starbridge-apps/bounty-board" }
 dregg-dfa = { path = "../dfa" }
 # CapTP integration — the bot is a dregg capability peer.
 dregg-captp = { path = "../captp" }
