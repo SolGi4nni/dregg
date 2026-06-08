@@ -74,6 +74,11 @@ pub mod serde_sig;
 #[cfg(test)]
 mod tests;
 
+// Differential: the verified Lean `Dregg2/Distributed/EntangledJoint.lean` model (N-cell atomic
+// coordinated turn) ⟺ the real `atomic` 2PC + the `shared_budget` non-overspend gate.
+#[cfg(test)]
+mod entangled_diff;
+
 // Re-exports for convenience.
 pub use atomic::{
     AbortMessage, AtomicForest, CommitMessage, Coordinator, CoordinatorState, Decision,
