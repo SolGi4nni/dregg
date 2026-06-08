@@ -2207,6 +2207,7 @@ dependencies = [
  "dregg-cell",
  "dregg-commit",
  "dregg-hints",
+ "dregg-lean-ffi",
  "dregg-turn",
  "dregg-types",
  "ed25519-dalek",
@@ -2406,7 +2407,10 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "dregg-circuit",
+ "dregg-intent",
  "dregg-sdk",
+ "dregg-token",
+ "dregg-turn",
  "postcard",
  "serde",
 ]
@@ -2494,10 +2498,15 @@ dependencies = [
  "dregg-blocklace",
  "dregg-captp",
  "dregg-cell",
+ "dregg-lean-ffi",
+ "dregg-net",
+ "dregg-turn",
  "dregg-types",
+ "dregg-wire",
  "ed25519-dalek",
  "getrandom 0.3.4",
  "postcard",
+ "proptest",
 ]
 
 [[package]]

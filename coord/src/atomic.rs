@@ -778,6 +778,33 @@ impl Coordinator {
         }
     }
 
+    /// The current vote tally `(yes, no, participants, threshold)` while Proposing, or `None` in a
+    /// terminal/idle state.
+    ///
+    /// This is the SAFETY content of `evaluate_votes` (pure counting). It is exposed so the node can
+    /// build the wire for the VERIFIED Lean 2PC gate (`Dregg2.Exec.DistributedExports`'s
+    /// `dregg_coord_2pc_decide` = `TwoPhaseCommit.evaluate`). The node makes the Lean gate the
+    /// AUTHORITATIVE decider and keeps this Rust `evaluate_votes` as the DIFFERENTIAL sibling.
+    pub fn current_tally(&self) -> Option<(usize, usize, usize, usize)> {
+        match &self.state {
+            CoordinatorState::Proposing { forest, votes, .. } => {
+                let yes = votes.values().filter(|v| v.is_yes()).count();
+                let no = votes.values().filter(|v| v.is_no()).count();
+                Some((yes, no, forest.participants.len(), self.threshold))
+            }
+            _ => None,
+        }
+    }
+
+    /// Encode the current tally as the `dregg_coord_2pc_decide` wire
+    /// (`"y=<yes>;n=<no>;N=<participants>;t=<threshold>"`), or `None` if not Proposing. The verified
+    /// Lean gate decodes this to a `TwoPhaseCommit.Tally` and returns the verdict that
+    /// `coord_2pc_decide_eq` proves equal to `TwoPhaseCommit.evaluate`.
+    pub fn decision_wire(&self) -> Option<String> {
+        self.current_tally()
+            .map(|(yes, no, n, thr)| format!("y={yes};n={no};N={n};t={thr}"))
+    }
+
     /// Compute a unique proposal ID.
     fn compute_proposal_id(&self, forest: &AtomicForest) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();

@@ -219,6 +219,226 @@ mod ffi_tau {
     }
 }
 
+// =============================================================================
+// dregg_captp_* / dregg_coord_* — the VERIFIED CapTP + COORDINATION decision exports
+// (`Dregg2.Exec.DistributedExports`). The captp/coord runtime invokes these so it computes its
+// verdict FROM the verified Lean rule itself (dreggrs Rust → differential sibling).
+// =============================================================================
+
+/// Whether the linked archive exports the verified CapTP+coord decision gates
+/// (`dregg_captp_validate_handoff` and its five siblings — all in one module, present/absent
+/// together). When false the captp/coord runtime cannot Lean-back its decisions and falls back to
+/// the native Rust gates.
+pub fn distributed_exports_available() -> bool {
+    ffi_dist::distributed_exports_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED §6 non-amplification gate `@[export] dregg_captp_validate_handoff` (the PROVED
+/// `handoffNonAmplifyingC`, carried by `captp_validate_handoff_eq`) over a wire-encoded
+/// `(heldPerm, grantedPerm, heldEff, grantedEff)` and return the raw verdict (`"1"` non-amplifying /
+/// `"0"` amplifying / `"ERR"`). Requires [`distributed_exports_available`].
+pub fn shadow_captp_validate_handoff(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_captp_validate_handoff(wire)
+}
+
+/// The end-to-end verified handoff non-amplification query: run the gate and decode to a Boolean,
+/// FAILING CLOSED (AMPLIFIES — reject) on any FFI error / `ERR` / `"0"`. Returns `Ok(true)` only when
+/// the verified rule says the handoff is non-amplifying (granted ⊆ held); `Err` only when the archive
+/// lacks the export (so the caller can fall back to the Rust gate, distinguishing "archive missing"
+/// from "rule says amplifies").
+pub fn verified_handoff_non_amplifying(wire: &str) -> Result<bool, String> {
+    let out = shadow_captp_validate_handoff(wire)?;
+    Ok(out == "1")
+}
+
+/// Run the VERIFIED GC session-refcount gate `@[export] dregg_captp_process_drop` (the PROVED
+/// `CapTPGCConcrete.processDrop`, carried by `captp_process_drop_eq`) over a wire-encoded
+/// `(holder-table, fed, session)` and return the raw verdict wire (`"S=<tag>;t=<postTotal>"` —
+/// tag 0=stillHeld 1=canRevoke 2=invalid — or `"ERR"` fail-closed). Requires
+/// [`distributed_exports_available`].
+pub fn shadow_captp_process_drop(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_captp_process_drop(wire)
+}
+
+/// Run the VERIFIED promise-pipelining resolve/break gate `@[export] dregg_captp_pipeline_resolve`
+/// (the PROVED FIFO drain, carried by `captp_pipeline_resolve_eq`) over a wire-encoded
+/// `(queue, event)` and return the raw verdict wire (`"D=<drained>;q=<postCount>"` or `"ERR"`).
+/// Requires [`distributed_exports_available`].
+pub fn shadow_captp_pipeline_resolve(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_captp_pipeline_resolve(wire)
+}
+
+/// Run the VERIFIED 2PC coordinator gate `@[export] dregg_coord_2pc_decide` (the PROVED
+/// `TwoPhaseCommit.evaluate`, carried by `coord_2pc_decide_eq`) over a wire-encoded
+/// `(yes, no, n, threshold)` tally and return the raw decision tag (`"0"`=Commit `"1"`=Abort
+/// `"2"`=Pending; malformed ⇒ `"2"` fail-safe). Requires [`distributed_exports_available`].
+pub fn shadow_coord_2pc_decide(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_coord_2pc_decide(wire)
+}
+
+/// The end-to-end verified 2PC decision: run the gate and decode the decision tag to a `Decision2pc`,
+/// FAILING SAFE (Pending) on any FFI error / `ERR`. The verified `evaluate` never yields a conflicting
+/// Commit+Abort (`evaluate_not_commit_and_abort`), so gating the coordinator on this is gating it on
+/// the 2PC agreement safety by construction.
+pub fn verified_2pc_decide(wire: &str) -> Result<Decision2pc, String> {
+    let out = shadow_coord_2pc_decide(wire)?;
+    Ok(match out.as_str() {
+        "0" => Decision2pc::Commit,
+        "1" => Decision2pc::Abort,
+        _ => Decision2pc::Pending,
+    })
+}
+
+/// The 2PC decision a verified verdict decodes to (mirrors `coord::atomic::Decision`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision2pc {
+    Commit,
+    Abort,
+    Pending,
+}
+
+/// Run the VERIFIED causal-order gate `@[export] dregg_coord_causal_order` (the decidable
+/// `CausalOrder` happened-before, carried by `coord_causal_order_eq`) over a wire-encoded
+/// `(dag, a, b)` and return the raw verdict (`"1"` a-happened-before-b / `"0"` not; malformed ⇒
+/// `"0"` fail-closed). Requires [`distributed_exports_available`].
+pub fn shadow_coord_causal_order(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_coord_causal_order(wire)
+}
+
+/// The end-to-end verified happened-before query: run the gate and decode to a Boolean, FAILING
+/// CLOSED (no causal edge) on any FFI error / `ERR` / `"0"`.
+pub fn verified_happened_before(wire: &str) -> Result<bool, String> {
+    let out = shadow_coord_causal_order(wire)?;
+    Ok(out == "1")
+}
+
+/// Run the VERIFIED shared-budget tau-resolution gate `@[export] dregg_coord_shared_budget` (the
+/// PROVED `SharedBudgetDynamics.resolveOrdered`, carried by `coord_shared_budget_eq`) over a
+/// wire-encoded `(balance, tau-ordered-amounts)` and return the raw verdict wire
+/// (`"R=<verdicts>;b=<remaining>;a=<accepted>"` or `"ERR"`). Requires [`distributed_exports_available`].
+pub fn shadow_coord_shared_budget(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi_dist::lean_coord_shared_budget(wire)
+}
+
+#[cfg(all(lean_lib_present, dregg_distributed_exports_present))]
+mod ffi_dist {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+
+    extern "C" {
+        fn dregg_captp_validate_handoff_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        fn dregg_captp_process_drop_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        fn dregg_captp_pipeline_resolve_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        fn dregg_coord_2pc_decide_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        fn dregg_coord_causal_order_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        fn dregg_coord_shared_budget_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+    }
+
+    pub fn distributed_exports_present() -> bool {
+        true
+    }
+
+    /// Drive a `*_str` bridge over a wire string with the standard grow-on-truncation loop.
+    fn run(
+        f: unsafe extern "C" fn(*const c_char, *mut c_char, usize) -> usize,
+        wire: &str,
+        name: &str,
+    ) -> Result<String, String> {
+        let c_in = CString::new(wire).map_err(|e| format!("wire has interior NUL: {e}"))?;
+        let mut cap = wire.len() * 2 + 256;
+        loop {
+            let mut buf = vec![0u8; cap];
+            let full = unsafe { f(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap) };
+            if full == usize::MAX {
+                return Err(format!("{name}: unusable output buffer"));
+            }
+            if full < cap {
+                let nul = buf.iter().position(|&b| b == 0).unwrap_or(full);
+                return String::from_utf8(buf[..nul].to_vec())
+                    .map_err(|e| format!("result not UTF-8: {e}"));
+            }
+            cap = full + 1;
+        }
+    }
+
+    pub fn lean_captp_validate_handoff(wire: &str) -> Result<String, String> {
+        run(dregg_captp_validate_handoff_str, wire, "dregg_captp_validate_handoff_str")
+    }
+    pub fn lean_captp_process_drop(wire: &str) -> Result<String, String> {
+        run(dregg_captp_process_drop_str, wire, "dregg_captp_process_drop_str")
+    }
+    pub fn lean_captp_pipeline_resolve(wire: &str) -> Result<String, String> {
+        run(dregg_captp_pipeline_resolve_str, wire, "dregg_captp_pipeline_resolve_str")
+    }
+    pub fn lean_coord_2pc_decide(wire: &str) -> Result<String, String> {
+        run(dregg_coord_2pc_decide_str, wire, "dregg_coord_2pc_decide_str")
+    }
+    pub fn lean_coord_causal_order(wire: &str) -> Result<String, String> {
+        run(dregg_coord_causal_order_str, wire, "dregg_coord_causal_order_str")
+    }
+    pub fn lean_coord_shared_budget(wire: &str) -> Result<String, String> {
+        run(dregg_coord_shared_budget_str, wire, "dregg_coord_shared_budget_str")
+    }
+}
+
+#[cfg(not(all(lean_lib_present, dregg_distributed_exports_present)))]
+mod ffi_dist {
+    pub fn distributed_exports_present() -> bool {
+        false
+    }
+    fn unavailable(name: &str) -> Result<String, String> {
+        Err(format!("{name} not exported by the linked archive (rebuild to enable)"))
+    }
+    pub fn lean_captp_validate_handoff(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_captp_validate_handoff")
+    }
+    pub fn lean_captp_process_drop(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_captp_process_drop")
+    }
+    pub fn lean_captp_pipeline_resolve(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_captp_pipeline_resolve")
+    }
+    pub fn lean_coord_2pc_decide(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_coord_2pc_decide")
+    }
+    pub fn lean_coord_causal_order(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_coord_causal_order")
+    }
+    pub fn lean_coord_shared_budget(_wire: &str) -> Result<String, String> {
+        unavailable("dregg_coord_shared_budget")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +519,70 @@ mod tests {
         assert!(!admit(5), "fresh Sybil rejected (F-4)");
         // malformed wire ⇒ ERR ⇒ fail-closed NOT admitted.
         assert!(!verified_admits("not a wire").expect("gate ran on garbage (returns ERR)"));
+    }
+
+    /// THE LIVE CapTP+coord DECISION DIFFERENTIAL — the six verified `dregg_captp_*`/`dregg_coord_*`
+    /// gates reproduce the verdicts the Lean `#guard`s pin. This is the runtime face of the STRONG-FORM
+    /// swap: the SAME verified rules the captp/coord runtime invokes produce exactly these verdicts.
+    /// Self-skips when the archive lacks the exports.
+    #[test]
+    fn verified_distributed_gates_match_guards() {
+        if !distributed_exports_available() {
+            eprintln!(
+                "SKIP: Lean distributed exports not linked (distributed_exports_available()==false)"
+            );
+            return;
+        }
+
+        // §1 handoff non-amplification: held=signature granted=signature, unrestricted ⇒ "1".
+        assert!(verified_handoff_non_amplifying("h=1;g=1;he=x;ge=x").expect("handoff gate ran"));
+        // held=signature granted=none (loosens) ⇒ AMPLIFIES.
+        assert!(!verified_handoff_non_amplifying("h=1;g=0;he=x;ge=x").expect("ran"));
+        // held mask 6, granted 2 ⊆ 6 ⇒ "1"; granted 1 (not ⊆) ⇒ amplifies.
+        assert!(verified_handoff_non_amplifying("h=0;g=0;he=6;ge=2").expect("ran"));
+        assert!(!verified_handoff_non_amplifying("h=0;g=0;he=6;ge=1").expect("ran"));
+        // malformed ⇒ fail-closed (amplifies — reject).
+        assert!(!verified_handoff_non_amplifying("garbage").expect("ran"));
+
+        // §2 GC process_drop on the demoTable: byzantine session 99 vs fed 10 ⇒ invalid, total 2.
+        let demo = "H=10:1:42=1|20:1:99=1";
+        assert_eq!(
+            shadow_captp_process_drop(&format!("{demo};f=10;s=99")).expect("drop gate ran"),
+            "S=2;t=2"
+        );
+        // honest fed 10 on its session 42 ⇒ stillHeld, total 1.
+        assert_eq!(
+            shadow_captp_process_drop(&format!("{demo};f=10;s=42")).expect("ran"),
+            "S=0;t=1"
+        );
+
+        // §3 pipeline resolve: fulfill drains FIFO [100,101]; break drains nothing.
+        assert_eq!(
+            shadow_captp_pipeline_resolve("Q=100,101;e=f").expect("pipeline gate ran"),
+            "D=100,101;q=0"
+        );
+        assert_eq!(shadow_captp_pipeline_resolve("Q=100,101;e=b").expect("ran"), "D=;q=0");
+
+        // §4 2PC decide: 3-of-3 all yes ⇒ Commit; 2 yes 1 no ⇒ Abort; 2 yes 0 no ⇒ Pending.
+        assert_eq!(verified_2pc_decide("y=3;n=0;N=3;t=3").expect("2pc gate ran"), Decision2pc::Commit);
+        assert_eq!(verified_2pc_decide("y=2;n=1;N=3;t=3").expect("ran"), Decision2pc::Abort);
+        assert_eq!(verified_2pc_decide("y=2;n=0;N=3;t=3").expect("ran"), Decision2pc::Pending);
+        // malformed ⇒ fail-safe Pending.
+        assert_eq!(verified_2pc_decide("garbage").expect("ran"), Decision2pc::Pending);
+
+        // §5 causal order on chain 1→2→3: 1 happened-before 3 (transitive); 3 NOT before 1.
+        let chain = "G=1:|2:1|3:2";
+        assert!(verified_happened_before(&format!("{chain};a=1;b=3")).expect("causal gate ran"));
+        assert!(!verified_happened_before(&format!("{chain};a=3;b=1")).expect("ran"));
+        // self is not before self (irreflexive).
+        assert!(!verified_happened_before(&format!("{chain};a=2;b=2")).expect("ran"));
+
+        // §6 shared budget tau-resolution: pool 1000, debits [400,400,400] ⇒ A,B accept C reject.
+        assert_eq!(
+            shadow_coord_shared_budget("B=1000;D=400,400,400").expect("budget gate ran"),
+            "R=1,1,0;b=200;a=800"
+        );
+        // a single over-budget debit is rejected, balance untouched.
+        assert_eq!(shadow_coord_shared_budget("B=100;D=200").expect("ran"), "R=0;b=100;a=0");
     }
 }

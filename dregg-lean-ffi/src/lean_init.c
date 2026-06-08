@@ -84,6 +84,30 @@ extern lean_object *initialize_Dregg2_Dregg2_Distributed_StrandAdmission(uint8_t
 extern lean_object *dregg_strand_admit(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED CapTP + COORDINATION decision gates
+ * (`Dregg2.Exec.DistributedExports`): six wire-in/wire-out exports the captp/coord runtime invokes
+ * so it computes its verdict FROM the verified Lean rule itself (dreggrs Rust → differential):
+ *   dregg_captp_validate_handoff — §6 non-amplification (handoffNonAmplifyingC granted⊆held);
+ *   dregg_captp_process_drop     — GC session-refcount verdict (CapTPGCConcrete.processDrop);
+ *   dregg_captp_pipeline_resolve — promise-pipelining FIFO resolve/break drain;
+ *   dregg_coord_2pc_decide       — 2PC evaluate_votes (TwoPhaseCommit.evaluate);
+ *   dregg_coord_causal_order     — causal-DAG happened_before (CausalOrder via decidable hbBool);
+ *   dregg_coord_shared_budget    — shared-budget tau-resolution (SharedBudgetDynamics.resolveOrdered).
+ *
+ * GATED on DREGG_DISTRIBUTED_EXPORTS: this module is OUTSIDE the FFI module's import closure, so
+ * (a) build.rs probes the archive and only `#define`s it when `dregg_captp_validate_handoff` is
+ * present, and (b) `dregg_ffi_init` must ALSO run the module's own initializer. When absent the
+ * bridges are compiled out and the captp/coord runtime falls back to its native Rust gates. */
+#ifdef DREGG_DISTRIBUTED_EXPORTS
+extern lean_object *initialize_Dregg2_Dregg2_Exec_DistributedExports(uint8_t builtin);
+extern lean_object *dregg_captp_validate_handoff(lean_object *input);
+extern lean_object *dregg_captp_process_drop(lean_object *input);
+extern lean_object *dregg_captp_pipeline_resolve(lean_object *input);
+extern lean_object *dregg_coord_2pc_decide(lean_object *input);
+extern lean_object *dregg_coord_causal_order(lean_object *input);
+extern lean_object *dregg_coord_shared_budget(lean_object *input);
+#endif
+
 /* Returns 0 on success, 1 if module initialization reported an IO error. */
 int dregg_ffi_init(void) {
     lean_initialize_runtime_module();
@@ -117,6 +141,19 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(ares);
+#endif
+#ifdef DREGG_DISTRIBUTED_EXPORTS
+    /* The CapTP+coord distributed-exports module is also OUTSIDE the FFI closure; initialize it
+     * explicitly so the six `dregg_captp_*` / `dregg_coord_*` exports are callable. Its dependency
+     * closure (CapTPConcrete/CapTPGCConcrete/CapTPPipeline/Coord.*) is re-entrant-safe under Lean's
+     * init guards. */
+    lean_object *dres = initialize_Dregg2_Dregg2_Exec_DistributedExports(1);
+    if (!lean_io_result_is_ok(dres)) {
+        lean_io_result_show_error(dres);
+        lean_dec_ref(dres);
+        return 1;
+    }
+    lean_dec_ref(dres);
 #endif
     lean_io_mark_end_initialization();
     return 0;
@@ -297,3 +334,101 @@ size_t dregg_strand_admit_str(const char *in_utf8, char *out, size_t out_cap) {
     return full;
 }
 #endif /* DREGG_STRAND_ADMIT */
+
+/* dregg_captp_validate_handoff_str / dregg_captp_process_drop_str / dregg_captp_pipeline_resolve_str
+ * / dregg_coord_2pc_decide_str / dregg_coord_causal_order_str / dregg_coord_shared_budget_str — the
+ * six C string bridges over the VERIFIED CapTP+coord decision exports. Identical marshalling
+ * discipline as the bridges above; each drives its `dregg_captp_*` / `dregg_coord_*` Lean export over
+ * the compact wire grammar documented in `Dregg2.Exec.DistributedExports`. Same return contract (full
+ * byte length; (size_t)-1 only on an unusable buffer). Gated on DREGG_DISTRIBUTED_EXPORTS. */
+#ifdef DREGG_DISTRIBUTED_EXPORTS
+size_t dregg_captp_validate_handoff_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_captp_validate_handoff(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+size_t dregg_captp_process_drop_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_captp_process_drop(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+size_t dregg_captp_pipeline_resolve_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_captp_pipeline_resolve(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+size_t dregg_coord_2pc_decide_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_coord_2pc_decide(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+size_t dregg_coord_causal_order_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_coord_causal_order(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+
+size_t dregg_coord_shared_budget_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_coord_shared_budget(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif /* DREGG_DISTRIBUTED_EXPORTS */

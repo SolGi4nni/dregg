@@ -119,16 +119,31 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     let ir_root = meta.join(".lake/build/ir");
     let dregg2_ir = ir_root.join("Dregg2");
 
+    // We build `Dregg2.Exec.FFI` (the executor exports) PLUS the verified-gate modules that live
+    // OUTSIDE its import closure — `Dregg2.Distributed.{FinalityGate,StrandAdmission}` and
+    // `Dregg2.Exec.DistributedExports` (the CapTP+coord decision gates). The splice compiles every
+    // `Dregg2/**/*.c` present in the IR tree, so each of these must be `lake build`-t for its `.c` to
+    // exist and be spliced in. Building them explicitly here (rather than relying on a prior full
+    // `lake build` of the root) is what lets a FRESH lane (e.g. a persvati build dir with no warm
+    // `.lake`) still emit and splice the gate exports. Each is incremental: an already-built module is
+    // a no-op. A failure on one is non-fatal — we splice whatever `:c` facets exist.
+    let lake_targets = [
+        "Dregg2.Exec.FFI",
+        "Dregg2.Distributed.FinalityGate",
+        "Dregg2.Distributed.StrandAdmission",
+        "Dregg2.Exec.DistributedExports",
+    ];
     let lake_status = Command::new("lake")
-        .args(["build", "Dregg2.Exec.FFI"])
+        .arg("build")
+        .args(lake_targets)
         .current_dir(meta)
         .status();
     match lake_status {
         Ok(s) if s.success() => {}
         Ok(s) => {
             println!(
-                "cargo:warning=dregg-lean-ffi: `lake build Dregg2.Exec.FFI` exited {s} — using \
-                 whatever `:c` facets already exist; the spliced archive may be stale."
+                "cargo:warning=dregg-lean-ffi: `lake build` of the FFI + gate modules exited {s} — \
+                 using whatever `:c` facets already exist; the spliced archive may be stale."
             );
         }
         Err(e) => {
@@ -845,6 +860,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_handler_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_finalize_gate_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_strand_admit_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_distributed_exports_present)");
 
     let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
@@ -964,6 +980,26 @@ fn main() {
         );
     }
 
+    // The verified CapTP+coord DISTRIBUTED-EXPORTS module (`dregg_captp_validate_handoff` and its five
+    // siblings) lives in `Dregg2.Exec.DistributedExports`, also OUTSIDE the FFI module's import
+    // closure. Same splice/probe discipline: once the module is `lake build`-t its object is spliced
+    // in (the self-linking closure follows the C shim's `initialize_…_DistributedExports` ref) and the
+    // symbols appear; until then we compile the six bridges out and the captp/coord runtime falls back
+    // to its native Rust gates. We probe a single representative export — they are all defined in the
+    // same module, so they are present/absent together.
+    let distributed_exports_present =
+        archive_exports(&lean_archive, "dregg_captp_validate_handoff");
+    if distributed_exports_present {
+        println!("cargo:rustc-cfg=dregg_distributed_exports_present");
+    } else {
+        println!(
+            "cargo:warning=dregg-lean-ffi: libdregg_lean.a lacks `dregg_captp_validate_handoff` — \
+             the verified CapTP+coord decision bridges are compiled out (captp/coord fall back to \
+             native Rust gates). Rebuild the archive (it splices Dregg2.Exec.DistributedExports) to \
+             enable the Lean-backed handoff / GC-drop / pipeline / 2PC / causal / shared-budget gates."
+        );
+    }
+
     // Compile the C init shim (it uses the `static inline` runtime helpers from
     // <lean/lean.h>, which have no linkable symbol and so must be used from C).
     //
@@ -985,6 +1021,9 @@ fn main() {
     }
     if strand_admit_present {
         shim.define("DREGG_STRAND_ADMIT", None);
+    }
+    if distributed_exports_present {
+        shim.define("DREGG_DISTRIBUTED_EXPORTS", None);
     }
     // We drive the link with `rustc-link-lib` / `rustc-link-search` directives, NOT
     // `rustc-link-arg`. WHY: with the package's `links = "dregg_lean"` key, build-script

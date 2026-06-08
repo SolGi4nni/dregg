@@ -42,3 +42,4 @@ libdregg_lean.a*
 # Starbridge Lean-as-web-citizen workspace: 3.7GB lean4-src checkout + WASM
 # build spikes; a build/scratch area, never committed.
 web/
+/target-swaplane
