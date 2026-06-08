@@ -1041,6 +1041,41 @@ pub fn prove_turn_self_sovereign(
     prove_full_turn(&witness)
 }
 
+/// FRI-free DIRECT witness revalidation for a self-sovereign turn (F-DOS-1).
+///
+/// Re-executes the turn from `initial_state` to regenerate the Effect-VM trace,
+/// then checks that EVERY AIR constraint vanishes via the circuit's FRI-free
+/// `bespoke_air_accepts` — the exact predicate the audited verifier accepts, but
+/// WITHOUT generating a STARK proof. Per the bench
+/// (`circuit/tests/turn_revalidation_vs_prove.rs`) this is ~0.98 ms vs the
+/// prover's ~749 ms (≈765x), so a commit path can revalidate the witness inline
+/// — soundly, since the witness is CHECKED not trusted — and defer the succinct
+/// STARK attestation to an async prover off any hot lock.
+///
+/// Returns the proven post-state commitment (the boundary public input the
+/// prover would bind) on accept, or `Err(())` if the regenerated witness fails
+/// any constraint (the turn must then be rejected, NOT committed).
+pub fn revalidate_turn_self_sovereign(
+    initial_state: &CellState,
+    effects: &[effect_vm::Effect],
+) -> Result<BabyBear, ()> {
+    // Fixed, distinct, non-zero probe alphas: several independent alphas make
+    // the alpha-fold a faithful AND of the individual gates (one unlucky alpha
+    // could spuriously cancel a non-trivial gate; k alphas drive the
+    // false-accept probability to ~(#gates/|F|)^k ≈ 0).
+    const ALPHAS: [u32; 4] = [0x1234_5678, 0x9abc_def1, 0x2468_ace0, 0x7777_7777];
+    let alphas: Vec<BabyBear> = ALPHAS.iter().map(|&a| BabyBear::new(a)).collect();
+
+    let (trace, mut pis) = effect_vm::generate_effect_vm_trace(initial_state, effects);
+    pis[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = BabyBear::ONE;
+
+    if dregg_circuit::effect_vm_p3_full_air::bespoke_air_accepts(&trace, &pis, &alphas) {
+        Ok(pis[dregg_circuit::effect_vm::pi::NEW_COMMIT])
+    } else {
+        Err(())
+    }
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================

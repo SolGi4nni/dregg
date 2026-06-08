@@ -60,6 +60,32 @@ pub fn record_proof_verification_duration(seconds: f64) {
     histogram!("dregg_proof_verification_duration_seconds").record(seconds);
 }
 
+// ─── Async prove pool (F-DOS-1: proving OFF the commit/request path) ──────────
+
+/// An async proof-attestation job completed (proof attached to a committed
+/// receipt off the request path).
+pub fn inc_async_proofs_completed() {
+    counter!("dregg_async_proofs_total", "result" => "completed").increment(1);
+}
+
+/// An async proof job failed (proving error / panic). The receipt stays
+/// committed-but-unattested; this is a liveness degradation of the attestation
+/// layer, never a safety problem (the commit was witness-revalidated).
+pub fn inc_async_proofs_failed() {
+    counter!("dregg_async_proofs_total", "result" => "failed").increment(1);
+}
+
+/// An async proof job was dropped because the bounded queue was full (back-
+/// pressure under a proving flood — bounds CPU/memory instead of wedging).
+pub fn inc_async_proofs_dropped() {
+    counter!("dregg_async_proofs_total", "result" => "dropped").increment(1);
+}
+
+/// Record wall-clock duration of an async proof generation (off the lock).
+pub fn record_async_proof_duration(seconds: f64) {
+    histogram!("dregg_async_proof_duration_seconds").record(seconds);
+}
+
 // ─── Gauges ──────────────────────────────────────────────────────────────────
 
 /// Set the current peer count.

@@ -2229,9 +2229,30 @@ fn push_committed_event(
     });
 }
 
+/// Outcome of the FRI-free witness revalidation on the HTTP commit path.
+///
+/// F-DOS-1: the commit path no longer GENERATES a STARK proof inline (that ran
+/// the ~750 ms prover under the global state-write lock and wedged the node).
+/// Instead it DIRECTLY revalidates the witness — re-derives the Effect-VM trace
+/// from the actor's pre-state and checks every AIR constraint via the FRI-free
+/// `bespoke_air_accepts` (sub-millisecond, the exact predicate the audited
+/// verifier enforces). Soundness is preserved because the witness is CHECKED,
+/// not trusted: a trace that does not satisfy the constraints is rejected here,
+/// before the receipt is kept. The succinct STARK proof — the attestation layer
+/// for light-clients / cross-trust peers — is generated asynchronously off the
+/// lock by the prove pool and attached when it lands.
 enum HttpWitnessOutcome {
-    Proved(dregg_turn::WitnessedReceipt),
+    /// Witness revalidated: trace + public inputs carried for the async prove
+    /// pool to attest off the lock.
+    Revalidated(RevalidatedWitness),
+    /// No Effect-VM-bearing effects in this turn (nothing to attest).
     NotRequired,
+}
+
+/// A directly-revalidated witness ready to hand to the async prove pool.
+struct RevalidatedWitness {
+    trace: Vec<Vec<dregg_circuit::BabyBear>>,
+    public_inputs: Vec<dregg_circuit::BabyBear>,
 }
 
 fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::effect_vm::Effect> {
@@ -2261,9 +2282,35 @@ fn http_project_effects(effects: &[&dregg_turn::Effect]) -> Vec<dregg_circuit::e
     vm_effects
 }
 
-fn build_http_witnessed_receipt(
+/// Probe alphas for the FRI-free multi-alpha constraint fold. Several
+/// independent alphas make the alpha-fold a faithful AND of the individual
+/// gates (a single unlucky alpha could spuriously cancel a non-trivial gate;
+/// k alphas drive the false-accept probability to ~(#gates/|F|)^k ≈ 0). These
+/// are fixed, non-zero, and distinct — the same shape the circuit's own
+/// `bespoke_air_accepts` differential corpus uses.
+fn revalidation_alphas() -> [dregg_circuit::BabyBear; 4] {
+    [
+        dregg_circuit::BabyBear::new(0x1234_5678),
+        dregg_circuit::BabyBear::new(0x9abc_def1),
+        dregg_circuit::BabyBear::new(0x2468_ace0),
+        dregg_circuit::BabyBear::new(0x7777_7777),
+    ]
+}
+
+/// FRI-free DIRECT revalidation of the HTTP commit-path witness (F-DOS-1).
+///
+/// Re-derives the Effect-VM trace from the actor's pre-state and checks that it
+/// satisfies EVERY AIR constraint via `bespoke_air_accepts` (the FRI-free
+/// predicate the audited verifier enforces, sub-millisecond per the bench in
+/// `circuit/tests/turn_revalidation_vs_prove.rs`). NO STARK proof is generated
+/// here — that runs asynchronously off the lock. Returns the revalidated trace
+/// + public inputs so the async prove pool can attest them.
+///
+/// Soundness: the witness is CHECKED, not trusted. A trace that fails any
+/// constraint returns `Err` and the commit is rejected before the receipt is
+/// kept. The async proof never gates the commit; it only enriches the receipt.
+fn revalidate_http_witness(
     turn: &Turn,
-    receipt: dregg_turn::TurnReceipt,
     pre_ledger: &dregg_cell::Ledger,
 ) -> Result<HttpWitnessOutcome, String> {
     let effects = turn.call_forest.total_effects();
@@ -2286,20 +2333,58 @@ fn build_http_witnessed_receipt(
         dregg_circuit::effect_vm::generate_effect_vm_trace(&initial_state, &vm_effects);
     public_inputs[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
 
-    let air = dregg_circuit::effect_vm::EffectVmAir::new(trace.len());
-    let proof = dregg_circuit::stark::try_prove(&air, &trace, &public_inputs)
-        .map_err(|err| format!("Effect VM proof generation failed: {err}"))?;
-    let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
-    let public_inputs_u32: Vec<u32> = public_inputs.iter().map(|f| f.as_u32()).collect();
+    // DIRECT witness check — FRI-free, no proving. This is the load-bearing
+    // soundness step on the commit path: the trace must satisfy every AIR
+    // constraint (the exact predicate the audited verifier accepts) or the
+    // commit is rejected.
+    let accepted = dregg_circuit::effect_vm_p3_full_air::bespoke_air_accepts(
+        &trace,
+        &public_inputs,
+        &revalidation_alphas(),
+    );
+    if !accepted {
+        return Err(
+            "Effect VM witness failed direct constraint revalidation (rejected before commit)"
+                .to_string(),
+        );
+    }
 
-    Ok(HttpWitnessOutcome::Proved(
-        dregg_turn::WitnessedReceipt::from_components(
+    Ok(HttpWitnessOutcome::Revalidated(RevalidatedWitness {
+        trace,
+        public_inputs,
+    }))
+}
+
+/// Hand a revalidated witness to the async prove pool (off the state-write
+/// lock), marking the receipt as proof-pending. If the pool is absent (should
+/// not happen on the running node) or its queue is full, the receipt stays
+/// committed-but-unattested — sound, since the witness was already checked.
+async fn enqueue_async_proof(
+    state: &NodeState,
+    revalidated: RevalidatedWitness,
+    receipt: dregg_turn::TurnReceipt,
+    receipt_hash: [u8; 32],
+    turn_hash_hex: String,
+) {
+    if let Some(pool) = state.prove_pool().await {
+        let job = crate::prove_pool::ProveJob {
+            trace: revalidated.trace,
+            public_inputs: revalidated.public_inputs,
             receipt,
-            proof_bytes,
-            public_inputs_u32,
-            Some(trace.as_slice()),
-        ),
-    ))
+            receipt_hash,
+            turn_hash_hex,
+        };
+        if pool.enqueue(job) {
+            let mut s = state.write().await;
+            s.mark_proof_pending(receipt_hash);
+        }
+    } else {
+        tracing::warn!(
+            turn_hash = %turn_hash_hex,
+            "no async prove pool installed; committed receipt left unattested (witness was \
+             revalidated inline, so commit is sound)"
+        );
+    }
 }
 
 /// Build a 200-with-error `SubmitTurnResponse` for a malformed action/effect
@@ -2465,25 +2550,32 @@ async fn post_submit_turn(
                 }
             }
 
-            let witness_outcome =
-                match build_http_witnessed_receipt(&turn, receipt.clone(), &pre_ledger) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        s.ledger = pre_ledger;
-                        crate::metrics::inc_turns_executed("rejected");
-                        drop(s);
-                        return Ok(Json(SubmitTurnResponse {
-                            accepted: false,
-                            turn_hash: Some(turn_hash),
-                            proof_status: ActivityProofStatus::ProofGenerationFailed,
-                            has_witness: false,
-                            witness_count: 0,
-                            error: Some(err),
-                        }));
-                    }
-                };
+            // F-DOS-1: FRI-free DIRECT witness revalidation under the lock (no
+            // STARK proving here — that would pin a worker ~750 ms under the
+            // global state-write lock). The witness is CHECKED, not trusted: a
+            // trace that fails any AIR constraint is rejected before the receipt
+            // is kept. The succinct proof is generated asynchronously off the
+            // lock by the prove pool below.
+            let witness_outcome = match revalidate_http_witness(&turn, &pre_ledger) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    s.ledger = pre_ledger;
+                    crate::metrics::inc_turns_executed("rejected");
+                    drop(s);
+                    return Ok(Json(SubmitTurnResponse {
+                        accepted: false,
+                        turn_hash: Some(turn_hash),
+                        proof_status: ActivityProofStatus::ProofGenerationFailed,
+                        has_witness: false,
+                        witness_count: 0,
+                        error: Some(err),
+                    }));
+                }
+            };
+            // The receipt is committed; its attestation is pending if there is a
+            // witness to prove (ProofPending), else NotRequired.
             let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Proved(_) => ActivityProofStatus::Proved,
+                HttpWitnessOutcome::Revalidated(_) => ActivityProofStatus::ProofPending,
                 HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
             };
 
@@ -2500,19 +2592,14 @@ async fn post_submit_turn(
                 }));
             }
             let receipt_hash = receipt.receipt_hash();
-            // Capture the per-cell WitnessedReceipt artifact bytes BEFORE the
-            // WR is moved into local state, so we can gossip them in the
-            // TurnArtifactBundle (real distributed witness path). Encoding the
-            // receipt + WRs here is what lets a peer's
-            // `materialize_blocklace_artifacts` receive genuine witnesses
-            // instead of the raw `Payload::Turn` bytes that left this path dead.
-            let mut bundle_witnessed: Vec<Vec<u8>> = Vec::new();
-            if let HttpWitnessOutcome::Proved(witnessed) = witness_outcome {
-                if let Ok(artifact) = witnessed.to_artifact_bytes() {
-                    bundle_witnessed.push(artifact);
-                }
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            // The async prove pool attaches the WitnessedReceipt (and gossips its
+            // artifact) off the lock when proving completes; the raw turn block
+            // is gossiped immediately below so consensus ordering is not delayed.
+            let pending_proof = match witness_outcome {
+                HttpWitnessOutcome::Revalidated(revalidated) => Some(revalidated),
+                HttpWitnessOutcome::NotRequired => None,
+            };
+            let bundle_witnessed: Vec<Vec<u8>> = Vec::new();
             let receipt_artifact = postcard::to_stdvec(&receipt).ok();
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
 
@@ -2528,6 +2615,19 @@ async fn post_submit_turn(
             let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
 
             drop(s);
+
+            // F-DOS-1: hand proving to the async pool OFF the lock. Returns a
+            // fast ack (ProofPending) without waiting for the ~750 ms prover.
+            if let Some(revalidated) = pending_proof {
+                enqueue_async_proof(
+                    &state,
+                    revalidated,
+                    receipt.clone(),
+                    receipt_hash,
+                    turn_hash.clone(),
+                )
+                .await;
+            }
 
             // Emit receipt event to WebSocket subscribers.
             state.emit(crate::state::NodeEvent::Receipt {
@@ -2706,27 +2806,28 @@ async fn post_submit_signed_turn(
                 }
             }
 
-            let witness_outcome =
-                match build_http_witnessed_receipt(&signed.turn, receipt.clone(), &pre_ledger) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        s.ledger = pre_ledger;
-                        crate::metrics::inc_turns_executed("rejected");
-                        drop(s);
-                        return Ok(Json(SubmitSignedTurnResponse {
-                            accepted: false,
-                            turn_hash: Some(turn_hash),
-                            signer: Some(signer),
-                            action_count,
-                            proof_status: ActivityProofStatus::ProofGenerationFailed,
-                            has_witness: false,
-                            witness_count: 0,
-                            error: Some(err),
-                        }));
-                    }
-                };
+            // F-DOS-1: FRI-free DIRECT witness revalidation under the lock; the
+            // STARK proof is generated asynchronously off the lock.
+            let witness_outcome = match revalidate_http_witness(&signed.turn, &pre_ledger) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    s.ledger = pre_ledger;
+                    crate::metrics::inc_turns_executed("rejected");
+                    drop(s);
+                    return Ok(Json(SubmitSignedTurnResponse {
+                        accepted: false,
+                        turn_hash: Some(turn_hash),
+                        signer: Some(signer),
+                        action_count,
+                        proof_status: ActivityProofStatus::ProofGenerationFailed,
+                        has_witness: false,
+                        witness_count: 0,
+                        error: Some(err),
+                    }));
+                }
+            };
             let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Proved(_) => ActivityProofStatus::Proved,
+                HttpWitnessOutcome::Revalidated(_) => ActivityProofStatus::ProofPending,
                 HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
             };
 
@@ -2745,15 +2846,12 @@ async fn post_submit_signed_turn(
                 }));
             }
             let receipt_hash = receipt.receipt_hash();
-            // Capture WitnessedReceipt artifact bytes for the distributed
-            // witness path before the WR is moved into local state.
-            let mut bundle_witnessed: Vec<Vec<u8>> = Vec::new();
-            if let HttpWitnessOutcome::Proved(witnessed) = witness_outcome {
-                if let Ok(artifact) = witnessed.to_artifact_bytes() {
-                    bundle_witnessed.push(artifact);
-                }
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            // The async prove pool attaches the WitnessedReceipt off the lock.
+            let pending_proof = match witness_outcome {
+                HttpWitnessOutcome::Revalidated(revalidated) => Some(revalidated),
+                HttpWitnessOutcome::NotRequired => None,
+            };
+            let bundle_witnessed: Vec<Vec<u8>> = Vec::new();
             let receipt_artifact = postcard::to_stdvec(&receipt).ok();
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
 
@@ -2769,6 +2867,18 @@ async fn post_submit_signed_turn(
                 .expect("SignedTurn serialization after successful decode");
 
             drop(s);
+
+            // F-DOS-1: prove off the lock; fast ProofPending ack.
+            if let Some(revalidated) = pending_proof {
+                enqueue_async_proof(
+                    &state,
+                    revalidated,
+                    receipt.clone(),
+                    receipt_hash,
+                    turn_hash.clone(),
+                )
+                .await;
+            }
 
             state.emit(crate::state::NodeEvent::Receipt {
                 hash: turn_hash.clone(),
@@ -3113,26 +3223,26 @@ async fn post_submit_encrypted_turn(
             let turn_hash = hex_encode(&turn_hash_bytes);
             let agent = hex_encode(&receipt.agent.0);
             let was_encrypted = receipt.was_encrypted;
-            let witness_outcome =
-                match build_http_witnessed_receipt(&cleartext_turn, receipt.clone(), &pre_ledger) {
-                    Ok(outcome) => outcome,
-                    Err(err) => {
-                        s.ledger = pre_ledger;
-                        crate::metrics::inc_turns_executed("rejected");
-                        drop(s);
-                        return Ok(Json(SubmitEncryptedTurnResponse {
-                            accepted: false,
-                            turn_hash: Some(turn_hash),
-                            was_encrypted: false,
-                            proof_status: ActivityProofStatus::ProofGenerationFailed,
-                            has_witness: false,
-                            witness_count: 0,
-                            error: Some(err),
-                        }));
-                    }
-                };
+            // F-DOS-1: FRI-free DIRECT witness revalidation; prove async.
+            let witness_outcome = match revalidate_http_witness(&cleartext_turn, &pre_ledger) {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    s.ledger = pre_ledger;
+                    crate::metrics::inc_turns_executed("rejected");
+                    drop(s);
+                    return Ok(Json(SubmitEncryptedTurnResponse {
+                        accepted: false,
+                        turn_hash: Some(turn_hash),
+                        was_encrypted: false,
+                        proof_status: ActivityProofStatus::ProofGenerationFailed,
+                        has_witness: false,
+                        witness_count: 0,
+                        error: Some(err),
+                    }));
+                }
+            };
             let proof_status = match &witness_outcome {
-                HttpWitnessOutcome::Proved(_) => ActivityProofStatus::Proved,
+                HttpWitnessOutcome::Revalidated(_) => ActivityProofStatus::ProofPending,
                 HttpWitnessOutcome::NotRequired => ActivityProofStatus::NotRequired,
             };
 
@@ -3150,9 +3260,10 @@ async fn post_submit_encrypted_turn(
                 }));
             }
             let receipt_hash = receipt.receipt_hash();
-            if let HttpWitnessOutcome::Proved(witnessed) = witness_outcome {
-                s.push_witnessed_receipt(receipt_hash, witnessed);
-            }
+            let pending_proof = match witness_outcome {
+                HttpWitnessOutcome::Revalidated(revalidated) => Some(revalidated),
+                HttpWitnessOutcome::NotRequired => None,
+            };
             let witness_count = s.witnessed_receipt_count(&receipt_hash);
 
             push_committed_event(
@@ -3164,6 +3275,18 @@ async fn post_submit_encrypted_turn(
             );
 
             drop(s);
+
+            // F-DOS-1: prove off the lock.
+            if let Some(revalidated) = pending_proof {
+                enqueue_async_proof(
+                    &state,
+                    revalidated,
+                    receipt.clone(),
+                    receipt_hash,
+                    turn_hash.clone(),
+                )
+                .await;
+            }
 
             // Emit receipt event (same surface as cleartext-turn commits).
             state.emit(crate::state::NodeEvent::Receipt {
@@ -4913,7 +5036,7 @@ async fn post_atomic_vote(
                 }));
             }
         };
-        match active.coordinator.receive_vote(voter, vote) {
+        let rust_decision = match active.coordinator.receive_vote(voter, vote) {
             Ok(maybe_decision) => maybe_decision,
             Err(e) => {
                 return Ok(Json(AtomicVoteResponse {
@@ -4922,6 +5045,22 @@ async fn post_atomic_vote(
                     error: Some(format!("{e}")),
                 }));
             }
+        };
+        // STRONG-FORM SWAP: make the VERIFIED Lean 2PC gate (`dregg_coord_2pc_decide` =
+        // `TwoPhaseCommit.evaluate`) the AUTHORITATIVE Commit/Abort/Pending verdict, with the Rust
+        // `Coordinator::evaluate_votes` (the `rust_decision` above) demoted to the differential
+        // sibling. The coordinator exposes its tally as the gate's wire; `coord_gate` runs the
+        // verified rule, compares, and returns the verified verdict (logging on drift). When the Lean
+        // archive is absent it falls back to `rust_decision`. The `receive_vote` side-effects (vote
+        // recording, state transition) already happened — we only re-decide the *verdict*.
+        let wire = active.coordinator.decision_wire();
+        let rust_inner = rust_decision.unwrap_or(dregg_coord::Decision::Pending);
+        let gated = crate::coord_gate::authoritative_decision(rust_inner, wire.as_deref());
+        // Preserve "no terminal decision yet" semantics: a Pending gated verdict with no Rust
+        // decision stays `None` (the coordinator has not transitioned).
+        match (rust_decision, gated) {
+            (None, dregg_coord::Decision::Pending) => None,
+            (_, g) => Some(g),
         }
     };
 
@@ -7078,16 +7217,75 @@ mod tests {
         let executor = dregg_turn::TurnExecutor::new(ComputronCosts::default());
         let (_, receipt, _) = executor.execute(&turn, &mut ledger).unwrap_committed();
 
-        let outcome = build_http_witnessed_receipt(&turn, receipt.clone(), &pre_ledger)
-            .expect("projectable HTTP turn should build a witnessed receipt");
-        let HttpWitnessOutcome::Proved(witnessed) = outcome else {
+        // F-DOS-1: the commit path now DIRECTLY revalidates the witness
+        // (FRI-free, no proving) and hands the trace to the async pool. Assert
+        // the revalidation accepts and yields a trace the async prover can attest
+        // into a receipt-binding WitnessedReceipt.
+        let outcome = revalidate_http_witness(&turn, &pre_ledger)
+            .expect("projectable HTTP turn should pass direct witness revalidation");
+        let HttpWitnessOutcome::Revalidated(revalidated) = outcome else {
             panic!("projectable HTTP turn must not be reported as proof-not-required");
         };
+
+        // The async pool path: prove the revalidated witness and confirm the
+        // resulting WitnessedReceipt binds the same receipt + retains replay
+        // material, exactly as the old inline path produced.
+        let air = dregg_circuit::effect_vm::EffectVmAir::new(revalidated.trace.len());
+        let proof =
+            dregg_circuit::stark::try_prove(&air, &revalidated.trace, &revalidated.public_inputs)
+                .expect("revalidated witness must prove");
+        let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
+        let public_inputs_u32: Vec<u32> =
+            revalidated.public_inputs.iter().map(|f| f.as_u32()).collect();
+        let witnessed = dregg_turn::WitnessedReceipt::from_components(
+            receipt.clone(),
+            proof_bytes,
+            public_inputs_u32,
+            Some(revalidated.trace.as_slice()),
+        );
 
         assert_eq!(witnessed.receipt.receipt_hash(), receipt.receipt_hash());
         assert!(
             witnessed.witness_bundle.is_some(),
             "HTTP witnessed receipt must retain replay material for receipt APIs"
+        );
+    }
+
+    /// F-DOS-1 anti-trust tooth: a TAMPERED witness (a trace cell decoupled
+    /// from the honest execution) MUST be REJECTED by the direct FRI-free
+    /// revalidation. This is what preserves soundness when proving moves async —
+    /// the commit path checks the witness, it does not trust it. We exercise the
+    /// `bespoke_air_accepts` predicate the revalidation uses directly, since
+    /// `revalidate_http_witness` regenerates the (honest) trace from pre-state.
+    #[test]
+    fn http_witness_revalidation_rejects_tampered_trace() {
+        use dregg_circuit::effect_vm::{CellState, Effect as VmEffect, generate_effect_vm_trace};
+        let initial = CellState::new(10_000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let (mut trace, mut pis) = generate_effect_vm_trace(&initial, &effects);
+        pis[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
+
+        // Honest witness is accepted.
+        assert!(
+            dregg_circuit::effect_vm_p3_full_air::bespoke_air_accepts(
+                &trace,
+                &pis,
+                &revalidation_alphas()
+            ),
+            "honest witness must revalidate"
+        );
+
+        // Tamper a non-trivial interior trace cell (row 0, col 0). The forged
+        // trace no longer satisfies the AIR constraints.
+        trace[0][0] = trace[0][0] + dregg_circuit::BabyBear::new(1);
+        assert!(
+            !dregg_circuit::effect_vm_p3_full_air::bespoke_air_accepts(
+                &trace,
+                &pis,
+                &revalidation_alphas()
+            ),
+            "F-DOS-1: tampered witness MUST be rejected by direct revalidation \
+             (soundness is preserved because the witness is CHECKED, not trusted)"
         );
     }
 
@@ -7119,7 +7317,8 @@ mod tests {
             ..Default::default()
         };
 
-        let outcome = build_http_witnessed_receipt(&turn, receipt, &dregg_cell::Ledger::new())
+        let _ = receipt; // empty-effect turn carries no witness to revalidate
+        let outcome = revalidate_http_witness(&turn, &dregg_cell::Ledger::new())
             .expect("empty-effect HTTP turn should not require witness generation");
         assert!(
             matches!(outcome, HttpWitnessOutcome::NotRequired),

@@ -94,6 +94,12 @@ pub struct NodeState {
     events_tx: broadcast::Sender<NodeEvent>,
     /// Optional gossip handle (set after federation sync starts).
     gossip: Arc<RwLock<Option<GossipHandle>>>,
+    /// Async STARK prove pool (F-DOS-1: proving runs OFF the commit/request
+    /// path). `None` until [`Self::set_prove_pool`] is called at startup. When
+    /// present, the submit/commit handlers FRI-free-revalidate the witness
+    /// inline (sound, sub-ms) and hand full STARK proving to this pool instead
+    /// of running it under the global state-write lock.
+    prove_pool: Arc<RwLock<Option<crate::prove_pool::ProvePool>>>,
 }
 
 /// The inner mutable state of the node.
@@ -311,6 +317,17 @@ pub struct NodeStateInner {
     pub witnessed_receipts: HashMap<[u8; 32], Vec<WitnessedReceipt>>,
     witnessed_receipt_order: VecDeque<[u8; 32]>,
 
+    /// Receipt hashes whose state is COMMITTED but whose async STARK
+    /// attestation has not landed yet (F-DOS-1: proving runs off the commit
+    /// path). The commit handler inserts the receipt hash here when it hands a
+    /// proving job to the async pool; the pool's worker removes it via
+    /// [`Self::clear_proof_pending`] once the proof is attached. A receipt that
+    /// is pending here is fully committed and was witness-revalidated inline —
+    /// only its succinct attestation is in flight. Bounded by
+    /// [`MAX_WITNESSED_RECEIPTS`] insertion order to cap memory under a flood.
+    proof_pending: HashSet<[u8; 32]>,
+    proof_pending_order: VecDeque<[u8; 32]>,
+
     /// Solo consensus state: nullifier log, height tracking, auto-upgrade detection.
     /// `Some(_)` when this node was configured as solo (committee of one)
     /// at startup. Per FEDERATION-UNIFICATION-DESIGN.md §5, "solo" is no
@@ -425,6 +442,13 @@ pub enum ActivityStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ActivityProofStatus {
     Proved,
+    /// The turn is COMMITTED and was witness-revalidated inline (sound), but its
+    /// succinct STARK attestation is being generated asynchronously off the
+    /// commit path (F-DOS-1). The receipt is final/Tentative as usual; only the
+    /// proof artifact is in flight and will be attached when the prove pool
+    /// finishes. Light-clients/cross-trust peers poll the witnessed-receipt
+    /// endpoint until the attestation lands.
+    ProofPending,
     NotRequired,
     MissingPreState,
     ProofGenerationFailed,
@@ -734,11 +758,14 @@ impl NodeState {
                 event_log: VecDeque::new(),
                 witnessed_receipts,
                 witnessed_receipt_order,
+                proof_pending: HashSet::new(),
+                proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
                 blocklace_handle: None,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
+            prove_pool: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -835,11 +862,14 @@ impl NodeState {
                 event_log: VecDeque::new(),
                 witnessed_receipts,
                 witnessed_receipt_order,
+                proof_pending: HashSet::new(),
+                proof_pending_order: VecDeque::new(),
                 solo_consensus: None,
                 blocklace_handle: None,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
+            prove_pool: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -885,6 +915,23 @@ impl NodeState {
     pub async fn gossip(&self) -> Option<GossipHandle> {
         let g = self.gossip.read().await;
         g.clone()
+    }
+
+    /// Install the async STARK prove pool (F-DOS-1). Called once at startup
+    /// AFTER the `NodeState` exists, because the pool's workers capture the same
+    /// `NodeState` to write completed proofs back (the gossip-handle chicken-and-
+    /// egg pattern). Once set, the submit/commit handlers offload proving here.
+    pub async fn set_prove_pool(&self, pool: crate::prove_pool::ProvePool) {
+        let mut p = self.prove_pool.write().await;
+        *p = Some(pool);
+    }
+
+    /// Get a clone of the async prove-pool handle, if installed. When `None`,
+    /// callers fall back to inline proving (the legacy path) — but the running
+    /// node always installs it at startup, so the commit path stays off the lock.
+    pub async fn prove_pool(&self) -> Option<crate::prove_pool::ProvePool> {
+        let p = self.prove_pool.read().await;
+        p.clone()
     }
 
     /// Set the blocklace consensus handle.
@@ -1007,6 +1054,31 @@ impl NodeStateInner {
             .get(receipt_hash)
             .map(Vec::len)
             .unwrap_or(0)
+    }
+
+    /// Mark a committed receipt as awaiting its async STARK attestation
+    /// (F-DOS-1). Called by the commit handler right after it hands a proving
+    /// job to the async pool. Insertion-order bounded by `MAX_WITNESSED_RECEIPTS`
+    /// so a proving flood cannot grow this set without bound.
+    pub fn mark_proof_pending(&mut self, receipt_hash: [u8; 32]) {
+        if self.proof_pending.insert(receipt_hash) {
+            self.proof_pending_order.push_back(receipt_hash);
+            while self.proof_pending_order.len() > MAX_WITNESSED_RECEIPTS {
+                if let Some(oldest) = self.proof_pending_order.pop_front() {
+                    self.proof_pending.remove(&oldest);
+                }
+            }
+        }
+    }
+
+    /// Clear the pending-proof marker once the async pool attaches the proof.
+    pub fn clear_proof_pending(&mut self, receipt_hash: &[u8; 32]) {
+        self.proof_pending.remove(receipt_hash);
+    }
+
+    /// Whether a committed receipt's async attestation is still in flight.
+    pub fn is_proof_pending(&self, receipt_hash: &[u8; 32]) -> bool {
+        self.proof_pending.contains(receipt_hash)
     }
 
     /// Remove proposals older than `PROPOSAL_EXPIRY_SECS`.

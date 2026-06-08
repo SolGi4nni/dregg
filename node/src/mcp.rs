@@ -392,6 +392,17 @@ fn require_effect_cells_for_commit(
     Ok(())
 }
 
+/// F-DOS-1 scoping note: this proves synchronously (the demo/CLI proof-return
+/// contract — `effect_vm_proof_hex` is forwarded into the replay chain). Unlike
+/// the public HTTP submit path (`api.rs`, which now revalidates inline + proves
+/// async off the state-write lock), the MCP surface is **stdio-only, single-user
+/// CLI** (`dregg-node mcp` reads JSON-RPC from stdin — see module docs + `main.rs`
+/// `run_mcp`). There is no concurrent remote client to starve and no remote
+/// attacker, so the F-DOS-1 vector (a submitted turn pins a worker under the
+/// global lock while OTHER clients freeze) does not apply here. Converting this
+/// to async would break the synchronous proof return the demos depend on, so the
+/// proof stays inline — but it is NOT on a remote request path. The DoS fix lives
+/// where the DoS lives: the HTTP submit/commit handlers.
 fn require_effect_vm_proof(
     initial_balance: u64,
     initial_nonce: u64,

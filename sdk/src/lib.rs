@@ -204,7 +204,8 @@ pub use privacy::{
 // Re-export full turn proof composition API.
 pub use full_turn_proof::{
     FullTurnProof, FullTurnVerifyError, FullTurnWitness, TurnProofComponents, prove_full_turn,
-    prove_turn_self_sovereign, prove_turn_with_auth, verify_full_turn,
+    prove_turn_self_sovereign, prove_turn_with_auth, revalidate_turn_self_sovereign,
+    verify_full_turn,
 };
 
 // Re-export discharge gateway client functions.

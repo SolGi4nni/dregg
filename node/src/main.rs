@@ -9,6 +9,7 @@
 mod api;
 mod blocklace_sync;
 mod catchup;
+mod coord_gate;
 mod finality_gate;
 pub mod config;
 // The old `bridge` module is removed. Cross-group communication now happens
@@ -19,6 +20,7 @@ pub mod gossip;
 mod mcp;
 pub mod metrics;
 pub mod multi_group;
+mod prove_pool;
 mod relay_service;
 mod routing_table;
 mod executor_setup;
@@ -465,6 +467,14 @@ async fn run_node(
         }
     };
 
+    // F-DOS-1: start the async STARK prove pool so the submit/commit handlers
+    // offload full proving OFF the global state-write lock (they revalidate the
+    // witness inline — FRI-free, sub-ms — and return a fast Tentative ack).
+    {
+        let pool = prove_pool::ProvePool::spawn(node_state.clone());
+        node_state.set_prove_pool(pool).await;
+    }
+
     // Load genesis.json if present in the data directory.
     let genesis_path = data_path.join("genesis.json");
     if genesis_path.exists() {
@@ -878,6 +888,13 @@ async fn run_mcp(data_dir: &str, peers: Vec<String>) {
             std::process::exit(1);
         }
     };
+
+    // F-DOS-1: async prove pool here too, so the MCP tool commit paths offload
+    // proving off the write lock rather than blocking inline.
+    {
+        let pool = prove_pool::ProvePool::spawn(node_state.clone());
+        node_state.set_prove_pool(pool).await;
+    }
 
     // MCP stdio mode runs as a single-user CLI — no remote attacker scenario
     // applies. Start the cipherclerk unlocked so the tools can proceed without an
