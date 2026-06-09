@@ -1139,11 +1139,17 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
         }
 
-        // -- NoteCreate: balance debit --
+        // -- NoteCreate: balance-NEUTRAL --
         // param0 = commitment, param1 = value_lo, param2 = value_hi
-        // new_bal_lo = old_bal_lo - value_lo
-        let nc_val_lo = p1;
-        let c_nc_bal = s_notecreate * (new_bal_lo - old_bal_lo + nc_val_lo);
+        // The note value is hidden in the commitment and is NEVER moved on the
+        // transparent ledger (the shielding convention the executor uses:
+        // `apply_note_create` records the commitment and does not touch balance).
+        // So `bal_lo` is FROZEN: new_bal_lo = old_bal_lo. This matches the verified
+        // Lean descriptor (`EffectVmEmitNoteCreate.gBalLoFreeze` / `CellNoteSpec`,
+        // balance-neutral) and universe-A's `noteCreateA_bal_neutral`. (A prior
+        // version debited `value_lo`, which diverged from the executor; closed.)
+        // (`p1` = value_lo is still bound into the commitment cross-binding elsewhere.)
+        let c_nc_bal = s_notecreate * (new_bal_lo - old_bal_lo);
         combined = combined + alpha_pow * c_nc_bal;
         alpha_pow = alpha_pow * alpha;
         let c_nc_hi = s_notecreate * (new_bal_hi - old_bal_hi);

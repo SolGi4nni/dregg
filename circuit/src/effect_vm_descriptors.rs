@@ -134,7 +134,7 @@ pub const DREGG_EFFECTVM_MAKESOVEREIGN_V1_FP: &str = "9175f5d2a84f5d689ad8cfe70b
 pub const DREGG_EFFECTVM_MINT_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-mint-v1.json");
 pub const DREGG_EFFECTVM_MINT_V1_FP: &str = "afbf531ac2c17447f90764960691587f86b0b18ecd06d5425ed8e6ef1cfd2935";
 pub const DREGG_EFFECTVM_NOTECREATE_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-notecreate-v1.json");
-pub const DREGG_EFFECTVM_NOTECREATE_V1_FP: &str = "19661ef5e692151e3a29515f85decbc6219f8a04812993294ba5cbb353acef66";
+pub const DREGG_EFFECTVM_NOTECREATE_V1_FP: &str = "d323c2f0602c55bea80576e2d8d78c6f06eebd445dafd1345a68a2077e63f98d";
 pub const DREGG_EFFECTVM_NOTESPEND_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-notespend-v1.json");
 pub const DREGG_EFFECTVM_NOTESPEND_V1_FP: &str = "68f057ead33d6a66fe778eb8c2659e5d98d81ea0259cbb5a2c755caf24aa0cdb";
 // GRADUATED (nonce-tick + last-row PI pins, v2): see exercise note. Body STRUCTURALLY IDENTICAL to

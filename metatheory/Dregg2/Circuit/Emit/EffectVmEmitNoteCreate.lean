@@ -8,23 +8,28 @@ onto the `commitments` SET, advances the chained `log` by `escrowReceiptA actor 
 TOTALLY NEUTRAL — it is balance-neutral (`noteCreateA_bal_neutral`) and FREEZES all 16 other kernel
 fields. `noteCreate` is the APPEND-ONLY dual of `noteSpend`: NO guard at all (always commits).
 
-## RECONCILED ONTO THE RUNTIME (cutover): TRANSPARENT DEBIT + nonce TICK
+## BALANCE-NEUTRAL (the shielding convention the executor + Rust apply already use)
 
-This descriptor is RECONCILED onto the validated runtime hand-AIR + `generate_effect_vm_trace`, which
-model a noteCreate as a TRANSPARENT DEBIT: the published `value` (read from `param1`, the trace
-convention) LEAVES the transparent `bal_lo` pool (`new_bal_lo = old_bal_lo − value`), the runtime nonce
-TICKS by one (the per-cell sequence counter, as on every non-NoOp row), and bal_hi / cap_root / reserved
-/ the 8 fields are FROZEN; the post-state binds into `state_commit` via the SAME GROUP-4 chain as
-transfer. So `noteCreateVmDescriptor` and the hand-AIR AGREE on the honest trace (the cutover
-differential passes), and any wrong-debit / wrong-nonce / mutated-frame row is UNSAT.
+This descriptor is RECONCILED onto the runtime so that the per-cell row is **BALANCE-NEUTRAL**: a
+`noteCreate` PUBLISHES a commitment into the off-ledger note SET and moves NO transparent value, so the
+`bal_lo` limb is FROZEN (`new_bal_lo = old_bal_lo`), the runtime nonce TICKS by one (the per-cell
+sequence counter, as on every non-NoOp row), and bal_hi / cap_root / reserved / the 8 fields are
+FROZEN; the post-state binds into `state_commit` via the SAME GROUP-4 chain as transfer. This is EXACTLY
+the convention the verified executor uses (`apply_note_create`, `turn/src/executor/apply.rs:988`, which
+records the commitment in the journal and NEVER touches the cell balance) and universe-A's
+`NoteCreateASpec` (`noteCreateA_bal_neutral : bal' = bal`). So `noteCreateVmDescriptor` AGREES with the
+executor and universe-A on the per-cell balance with NO divergence, and any forged on-trace balance
+move (a smuggled debit/credit) is UNSAT (the `gBalLoFreeze` gate rejects it).
 
-## THE DEEPER DIVERGENCE (reported §9, NOT papered): runtime DEBIT vs universe-A balance-NEUTRAL
+## THE CLOSED DIVERGENCE (formerly §9): runtime debit vs universe-A balance-NEUTRAL — now AGREEMENT
 
-Universe-A's `NoteCreateASpec` models the publish as BALANCE-NEUTRAL commitment accumulation
-(`noteCreateA_bal_neutral : bal' = bal`) — a DIFFERENT shielding convention (value hidden in the
-commitment, never moved on the transparent ledger). The runtime debit and the universe-A neutral
-convention are reconcilable ONLY for a zero-value note (`runtime_debit_vs_univA_neutral_divergence`):
-a genuine semantic modeling gap, NOT a column index. We surface it as a theorem rather than unifying.
+A PRIOR version of this descriptor modeled the publish as a TRANSPARENT DEBIT (`new_bal_lo =
+old_bal_lo − value`), reconciled onto the OLD `generate_effect_vm_trace` note arm. That carried a real
+semantic gap from universe-A's balance-neutral shielding convention — they agreed only at `value = 0`.
+The Rust circuit (`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`) and this descriptor are now
+BOTH balance-neutral, matching the executor: the value lives hidden in the commitment, never on the
+transparent ledger. §9 below is now an AGREEMENT theorem (`noteCreate_balance_neutral_matches_univA`),
+not a divergence: the EffectVM descriptor and universe-A AGREE on the frozen balance for EVERY note.
 
 ## THE IR-EXTENSION FLAG (the commitment-set insert — the LOAD-BEARING leg, out-of-IR)
 
@@ -80,31 +85,31 @@ def IsNoteCreateRow (env : VmRowEnv) : Prop :=
 /-! ### NoteCreate value column (the running trace generator's convention).
 
 `generate_effect_vm_trace`'s `Effect::NoteCreate` arm lays `param0 = commitment`, `param1 = value_lo`
-(the note value), and DEBITS the cell's transparent balance by that value (`new_state.balance -= value`);
-the hand-AIR's note-create gate reads `prm(1)` (= `nc_val_lo`) and asserts `new_bal_lo = old_bal_lo −
-value`. The descriptor MUST match the runtime: a transparent DEBIT into the shielded note, read from
-`param1`. (See the §9 divergence finding: universe-A's `NoteCreateASpec` models the publish as
-balance-NEUTRAL commitment accumulation, a DIFFERENT shielding convention than the runtime's transparent
-debit — reported, not papered.) -/
+(the note value). The value is HIDDEN inside the published commitment; it is NEVER moved on the
+transparent `bal_lo` ledger (the shielding convention). The param column is still laid (the
+commitment-root amplification §A–§G reads the published commitment), but the BALANCE gate FREEZES
+`bal_lo` — it does not read the value. This matches the verified executor (`apply_note_create`, which
+records the commitment and never touches balance) and universe-A's balance-neutral `NoteCreateASpec`. -/
 namespace param
-/-- NoteCreate value lives at param column 1 (`columns.rs::param::NOTE_VALUE_LO`). -/
+/-- NoteCreate value lives at param column 1 (`columns.rs::param::NOTE_VALUE_LO`); carried for the
+commitment binding, NOT moved on the transparent ledger. -/
 def NOTE_VALUE_LO : Nat := 1
 end param
 
-/-- NoteCreate value as an expression (param column 1). -/
+/-- NoteCreate value as an expression (param column 1) — bound into the commitment, not the ledger. -/
 def ePrmNoteValue : EmittedExpr := .var (prmCol param.NOTE_VALUE_LO)
 
-/-! ## §1 — The per-row gate bodies (transparent DEBIT + nonce TICK + frame freeze).
+/-! ## §1 — The per-row gate bodies (BALANCE-NEUTRAL + nonce TICK + frame freeze).
 
-A noteCreate DEBITS the transparent `bal_lo` by `value` (the value leaves the transparent pool into the
-shielded note), TICKS the runtime nonce (as every non-NoOp EffectVM row does), and FREEZES the rest of
-the block. bal_hi / cap_root / reserved / the 8 fields freeze bodies are REUSED from the transfer
-template (identical polynomials). -/
+A noteCreate is BALANCE-NEUTRAL: it publishes a commitment into the off-ledger note set and moves NO
+transparent value, so the `bal_lo` limb is FROZEN. It TICKS the runtime nonce (as every non-NoOp
+EffectVM row does), and FREEZES the rest of the block. bal_hi / cap_root / reserved / the 8 fields
+freeze bodies are REUSED from the transfer template (identical polynomials). -/
 
-/-- Balance-lo DEBIT body: `new_bal_lo − old_bal_lo + value` (so `new = old − value`), reading the note
-value from `param1` (the trace-generator + hand-AIR convention). -/
-def gBalLoDebit : EmittedExpr :=
-  .add (eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)) ePrmNoteValue
+/-- Balance-lo FREEZE body: `new_bal_lo − old_bal_lo` (the publish moves no transparent value; the
+note value is hidden in the commitment, never on the ledger). The balance-neutral convention. -/
+def gBalLoFreeze : EmittedExpr :=
+  eSub (eSA state.BALANCE_LO) (eSB state.BALANCE_LO)
 
 /-- Nonce TICK body (the running prover's global non-NoOp invariant): reused from the transfer template
 (`gNonce`). On a noteCreate row `s_noop = 0`, so the nonce ticks by one. -/
@@ -115,9 +120,10 @@ def gNonceTick : EmittedExpr := gNonce
 /-- The note-commitment-publish AIR identity. -/
 def noteCreateVmAirName : String := "dregg-effectvm-notecreate-v1"
 
-/-- The per-row gates: bal_lo DEBIT, bal_hi freeze, nonce TICK, cap/reserved freeze, 8 fields freeze. -/
+/-- The per-row gates: bal_lo FREEZE (balance-neutral), bal_hi freeze, nonce TICK, cap/reserved freeze,
+8 fields freeze. -/
 def noteCreateRowGates : List VmConstraint :=
-  [ .gate gBalLoDebit, .gate gBalHi, .gate gNonceTick
+  [ .gate gBalLoFreeze, .gate gBalHi, .gate gNonceTick
   , .gate gCapPass, .gate gResPass ] ++ gFieldPassAll
 
 /-- **`noteCreateVmDescriptor`** — the noteCreate effect's concrete EffectVM circuit: the per-row
@@ -136,12 +142,11 @@ def noteCreateVmDescriptor : EffectVmDescriptor :=
 /-! ## §3 — The ROW INTENT (the independent faithfulness target): the WHOLE state block frozen. -/
 
 /-- **`NoteCreateRowIntent env`** — the intended noteCreate move on the row `env.loc`: the transparent
-`bal_lo` is DEBITED by the `param1` value (the value leaves the transparent pool into the shielded note),
-the runtime nonce TICKS by one, and balHi/cap/reserved/8 fields are FROZEN. The actual commitment-set
-insert is out-of-row (the §IR flag). -/
+`bal_lo` is FROZEN (balance-neutral — the note value is hidden in the commitment, never moved on the
+ledger), the runtime nonce TICKS by one, and balHi/cap/reserved/8 fields are FROZEN. The actual
+commitment-set insert is bound by the §A–§G commitment-root amplification. -/
 def NoteCreateRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO)
-      = env.loc (sbCol state.BALANCE_LO) - env.loc (prmCol param.NOTE_VALUE_LO)
+  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
   ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
   ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
   ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
@@ -151,15 +156,15 @@ def NoteCreateRowIntent (env : VmRowEnv) : Prop :=
 /-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the debit/tick intent. -/
 
 /-- **`noteCreateVm_faithful`.** On a noteCreate row, the emitted descriptor's per-row gates all hold
-IFF `NoteCreateRowIntent` holds — the gates pin EXACTLY the transparent debit + nonce tick + frame freeze
-that the runtime hand-AIR enforces. -/
+IFF `NoteCreateRowIntent` holds — the gates pin EXACTLY the balance-neutral freeze + nonce tick + frame
+freeze that the runtime hand-AIR enforces. -/
 theorem noteCreateVm_faithful (env : VmRowEnv) (hrow : IsNoteCreateRow env) :
     (∀ c ∈ noteCreateRowGates, c.holdsVm env false false) ↔ NoteCreateRowIntent env := by
   obtain ⟨_hsNC, hsN⟩ := hrow
   unfold noteCreateRowGates gFieldPassAll NoteCreateRowIntent
   constructor
   · intro h
-    have hLo := h (.gate gBalLoDebit) (by simp)
+    have hLo := h (.gate gBalLoFreeze) (by simp)
     have hHi := h (.gate gBalHi) (by simp)
     have hNon := h (.gate gNonceTick) (by simp)
     have hCap := h (.gate gCapPass) (by simp)
@@ -169,8 +174,8 @@ theorem noteCreateVm_faithful (env : VmRowEnv) (hrow : IsNoteCreateRow env) :
       apply h
       simp only [List.mem_append, List.mem_map, List.mem_range]
       exact Or.inr ⟨i, hi, rfl⟩
-    simp only [VmConstraint.holdsVm, gBalLoDebit, gBalHi, gNonceTick, gNonce, gCapPass, gResPass,
-      ePrmNoteValue, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
+    simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonceTick, gNonce, gCapPass, gResPass,
+      eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
     rw [hsN] at hNon
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
     · linarith [hLo]
@@ -186,7 +191,7 @@ theorem noteCreateVm_faithful (env : VmRowEnv) (hrow : IsNoteCreateRow env) :
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoDebit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hLo]; ring
     · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hHi]; ring
@@ -199,22 +204,22 @@ theorem noteCreateVm_faithful (env : VmRowEnv) (hrow : IsNoteCreateRow env) :
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
       rw [hFld i hi]; ring
 
-/-! ## §5 — ANTI-GHOST: a row whose post-`bal_lo` is NOT the debit on a noteCreate is rejected. -/
+/-! ## §5 — ANTI-GHOST: a row whose post-`bal_lo` is NOT frozen on a noteCreate is rejected. -/
 
-/-- **Anti-ghost (general).** A noteCreate row that does NOT realize the debit/tick intent does NOT
+/-- **Anti-ghost (general).** A noteCreate row that does NOT realize the freeze/tick intent does NOT
 satisfy the per-row gates. -/
 theorem noteCreateVm_rejects_wrong_output (env : VmRowEnv) (hrow : IsNoteCreateRow env)
     (hwrong : ¬ NoteCreateRowIntent env) :
     ¬ (∀ c ∈ noteCreateRowGates, c.holdsVm env false false) :=
   fun h => hwrong ((noteCreateVm_faithful env hrow).mp h)
 
-/-- **Anti-ghost (balance tamper).** A noteCreate row whose post-`bal_lo` is NOT the debit
-`old − value` has no satisfying gate set — `gBalLoDebit` alone rejects it (UNSAT). -/
+/-- **Anti-ghost (balance tamper).** A noteCreate row whose post-`bal_lo` is NOT the FROZEN value (a
+smuggled on-trace credit/debit — noteCreate is balance-neutral) has no satisfying gate set —
+`gBalLoFreeze` alone rejects it (UNSAT). The value lives in the commitment, never on the ledger. -/
 theorem noteCreateVm_rejects_balance_mint (env : VmRowEnv)
-    (hwrong : env.loc (saCol state.BALANCE_LO)
-      ≠ env.loc (sbCol state.BALANCE_LO) - env.loc (prmCol param.NOTE_VALUE_LO)) :
-    ¬ (VmConstraint.gate gBalLoDebit).holdsVm env false false := by
-  simp only [VmConstraint.holdsVm, gBalLoDebit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
+    (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
+    ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
+  simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
   intro h
   apply hwrong
   linarith [h]
@@ -242,12 +247,14 @@ def RowEncodesNote (env : VmRowEnv) (pre : CellState) (value : ℤ) (post : Cell
   ∧ env.pub pi.OLD_COMMIT = pre.commit
   ∧ env.pub pi.NEW_COMMIT = post.commit
 
-/-- **`CellNoteSpec pre value post`** — the per-cell FULL-state noteCreate spec (the RUNTIME image): the
-transparent `balLo` is DEBITED by `value`, balHi/8-fields/cap/reserved frozen, nonce TICKED by one. This
-is the EffectVM-row projection of the validated runtime hand-AIR's note-create transition (a transparent
-debit into the shielded note). See §9 for the universe-A divergence (balance-NEUTRAL convention). -/
+/-- **`CellNoteSpec pre value post`** — the per-cell FULL-state noteCreate spec (the BALANCE-NEUTRAL
+image): the transparent `balLo` is FROZEN (the note value is hidden in the commitment, never moved on
+the ledger), balHi/8-fields/cap/reserved frozen, nonce TICKED by one. This is the EffectVM-row
+projection of the executor's balance-neutral note-create transition — matching universe-A's
+`NoteCreateASpec` (`noteCreateA_bal_neutral`), with NO divergence. The `value` argument is carried
+(bound into the commitment via §A–§G) but does NOT move `balLo`. -/
 def CellNoteSpec (pre : CellState) (value : ℤ) (post : CellState) : Prop :=
-  post.balLo = pre.balLo - value
+  post.balLo = pre.balLo
   ∧ post.balHi = pre.balHi
   ∧ post.nonce = pre.nonce + 1
   ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
@@ -262,9 +269,7 @@ theorem intent_to_cellNoteSpec (env : VmRowEnv) (pre post : CellState) (value : 
           hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
   obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · have : post.balLo = pre.balLo - env.loc (prmCol param.NOTE_VALUE_LO) := by
-      rw [← hsaLo, ← hsbLo]; exact hbal
-    rw [this, hpVal]
+  · rw [← hsaLo, ← hsbLo]; exact hbal
   · rw [← hsaHi, ← hsbHi]; exact hbhi
   · rw [← hsaN, ← hsbN]; exact hnon
   · intro i
@@ -348,17 +353,17 @@ theorem noteCreateDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR :
     rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
-/-! ## §9 — THE DEEPER DIVERGENCE (reported, NOT papered): runtime DEBIT vs universe-A balance-NEUTRAL.
+/-! ## §9 — THE CLOSED DIVERGENCE — now AGREEMENT: EffectVM balance-NEUTRAL == universe-A balance-NEUTRAL.
 
-The validated RUNTIME hand-AIR + `generate_effect_vm_trace` model a noteCreate as a TRANSPARENT DEBIT:
-the published `value` LEAVES the transparent `bal_lo` pool (`new_bal_lo = old_bal_lo − value`). This is
-what `noteCreateVmDescriptor` now faithfully describes (so the cutover differential AGREES with the
-hand-AIR). Universe-A's `NoteCreateASpec`, by contrast, models the publish as BALANCE-NEUTRAL commitment
-accumulation (`noteCreateA_bal_neutral : bal' = bal`) — a DIFFERENT shielding convention (the value is
-hidden in the commitment, never moved on the transparent ledger). These two are NOT the same per-cell
-transition: they agree only at `value = 0`. We surface this as `runtime_debit_vs_univA_neutral_divergence`
-rather than pretending the descriptor unifies with `NoteCreateASpec`. The commitment-set insert (§11) and
-its no-double-check leg are universe-A properties unaffected by which balance convention is canonical. -/
+A PRIOR version modeled noteCreate as a TRANSPARENT DEBIT (`new_bal_lo = old_bal_lo − value`),
+reconciled onto the OLD `generate_effect_vm_trace` note arm — which carried a genuine gap from
+universe-A's balance-neutral shielding convention (`noteCreateA_bal_neutral : bal' = bal`), reconcilable
+only at `value = 0`. That divergence is now CLOSED at the source: `noteCreateVmDescriptor` FREEZES
+`bal_lo` (balance-neutral), and the Rust circuit (`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`)
+is fixed to match. So the EffectVM descriptor and universe-A BOTH freeze the per-cell balance — they
+AGREE for EVERY note, not just `value = 0`. We surface that as `noteCreate_balance_neutral_matches_univA`
+(an AGREEMENT theorem, no divergence conjunct). The commitment-set insert (§11) and its no-double-check
+leg are universe-A properties unaffected by the (now-unified) balance convention. -/
 
 open Dregg2.Exec (RecChainedState RecordKernelState CellId AssetId)
 open Dregg2.Circuit.Spec.NoteCommitment
@@ -376,9 +381,9 @@ def cellProjNote (bal : CellId → AssetId → ℤ) (c : CellId) (asset : AssetI
   reserved := 0
   commit   := 0
 
-/-- **`univA_note_is_balance_neutral` — the universe-A side of the divergence.** A committed
-`NoteCreateASpec` FREEZES the per-asset ledger `bal` (`bal' = bal`); the projected entry's `balLo` is
-unchanged. So universe-A's noteCreate moves NO transparent value — the opposite of the runtime debit. -/
+/-- **`univA_note_is_balance_neutral` — the universe-A side.** A committed `NoteCreateASpec` FREEZES the
+per-asset ledger `bal` (`bal' = bal`); the projected entry's `balLo` is unchanged. universe-A's
+noteCreate moves NO transparent value — the SAME balance-neutral convention the descriptor now uses. -/
 theorem univA_note_is_balance_neutral (st st' : RecChainedState) (cm : Nat) (actor c : CellId)
     (asset : AssetId) (hspec : NoteCreateASpec st cm actor st') :
     (cellProjNote st'.kernel.bal c asset).balLo = (cellProjNote st.kernel.bal c asset).balLo := by
@@ -386,29 +391,27 @@ theorem univA_note_is_balance_neutral (st st' : RecChainedState) (cm : Nat) (act
   obtain ⟨_, _, _, _, _, _, _, _, _, hbal, _⟩ := hspec
   rw [hbal]
 
-/-- **`runtime_debit_vs_univA_neutral_divergence` — THE DEEPER DIVERGENCE, named precisely.** A
-descriptor-satisfying noteCreate row (the RUNTIME image) DEBITS the cell's `balLo` by `value`
-(`post.balLo = pre.balLo − value`, from `CellNoteSpec`), whereas the committed universe-A spec FREEZES
-the projected entry's `balLo`. For these to AGREE on the post-balance we would need
-`pre.balLo − value = pre.balLo`, i.e. `value = 0`. So the runtime debit and the universe-A balance-neutral
-convention are reconcilable ONLY for a zero-value note — a genuine SEMANTIC modeling gap (a shielding
-convention difference), NOT a column index. Reported, not forced. -/
-theorem runtime_debit_vs_univA_neutral_divergence
+/-- **`noteCreate_balance_neutral_matches_univA` — THE CLOSED DIVERGENCE, now AGREEMENT.** A
+descriptor-satisfying noteCreate row (the EffectVM image) FREEZES the cell's `balLo`
+(`post.balLo = pre.balLo`, from the balance-neutral `CellNoteSpec`), and the committed universe-A spec
+ALSO freezes the projected entry's `balLo`. So the EffectVM descriptor's on-trace post-balance EQUALS
+universe-A's post-balance for EVERY note (no `value = 0` side-condition) — the shielding-convention
+divergence is CLOSED, the two surfaces agree by construction (the note value lives in the commitment,
+never on the transparent ledger, in BOTH). -/
+theorem noteCreate_balance_neutral_matches_univA
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsNoteCreateRow env)
     (st st' : RecChainedState) (cm : Nat) (actor c : CellId) (asset : AssetId)
     (post : CellState) (value : ℤ)
     (henc : RowEncodesNote env (cellProjNote st.kernel.bal c asset) value post)
     (hsat : satisfiedVm hash noteCreateVmDescriptor env true true)
-    (hspec : NoteCreateASpec st cm actor st')
-    (hagree : post.balLo = (cellProjNote st'.kernel.bal c asset).balLo) :
-    value = 0 := by
+    (hspec : NoteCreateASpec st cm actor st') :
+    post.balLo = (cellProjNote st'.kernel.bal c asset).balLo := by
   obtain ⟨hcirc, _⟩ :=
     noteCreateDescriptor_full_sound hash env hrow (cellProjNote st.kernel.bal c asset) post value henc hsat
-  have hdebit : post.balLo = (cellProjNote st.kernel.bal c asset).balLo - value := hcirc.1
+  have hfreeze : post.balLo = (cellProjNote st.kernel.bal c asset).balLo := hcirc.1
   have hneutral := univA_note_is_balance_neutral st st' cm actor c asset hspec
-  -- post.balLo = pre.balLo - value  AND  post.balLo = pre'.balLo = pre.balLo  ⟹  value = 0
-  rw [hagree, hneutral] at hdebit
-  linarith
+  -- descriptor freezes: post.balLo = pre.balLo; universe-A freezes: pre'.balLo = pre.balLo. Agree.
+  rw [hfreeze, hneutral]
 
 /-! ## §11 — THE COMMITMENT-SET INSERT leg the per-row circuit does NOT enforce (honest, LOAD-BEARING).
 
@@ -441,15 +444,15 @@ theorem note_append_only_is_out_of_row (st st' : RecChainedState) (cm : Nat) (ac
   rw [note_insert_is_out_of_row st st' cm actor hspec]
   exact List.mem_cons_of_mem _ hx
 
-/-! ## §12 — NON-VACUITY: a concrete noteCreate row realizes the debit/tick intent; a wrong one rejected. -/
+/-! ## §12 — NON-VACUITY: a concrete noteCreate row realizes the freeze/tick intent; a wrong one rejected. -/
 
-/-- A concrete noteCreate row: `bal_lo 100 → 70` (debit `value = 30` from `param1`), nonce 5 → 6 (TICK),
-frame fixed at 0. -/
+/-- A concrete noteCreate row: `bal_lo 100 → 100` (FROZEN — balance-neutral), nonce 5 → 6 (TICK),
+frame fixed at 0. The note value (`param1 = 30`) is carried but does NOT move the ledger. -/
 def goodNoteRow : VmRowEnv where
   loc := fun v =>
     if v = SEL_NOTE_CREATE then 1
     else if v = sbCol state.BALANCE_LO then 100
-    else if v = saCol state.BALANCE_LO then 70
+    else if v = saCol state.BALANCE_LO then 100
     else if v = sbCol state.NONCE then 5
     else if v = saCol state.NONCE then 6
     else if v = prmCol param.NOTE_VALUE_LO then 30
@@ -464,14 +467,14 @@ theorem goodNoteRow_isRow : IsNoteCreateRow goodNoteRow := by
   norm_num [sel.NOOP, SEL_NOTE_CREATE, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
     PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, param.NOTE_VALUE_LO]
 
-/-- **NON-VACUITY (witness TRUE).** `goodNoteRow` REALIZES the noteCreate debit/tick intent:
-`bal_lo 100 → 70 = 100 − 30`, nonce `5 → 6`, frame fixed. -/
+/-- **NON-VACUITY (witness TRUE).** `goodNoteRow` REALIZES the noteCreate freeze/tick intent:
+`bal_lo 100 → 100` (frozen — balance-neutral), nonce `5 → 6`, frame fixed. -/
 theorem goodNoteRow_realizes_intent : NoteCreateRowIntent goodNoteRow := by
   unfold NoteCreateRowIntent goodNoteRow
   simp only [sbCol, saCol, prmCol, SEL_NOTE_CREATE, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
     NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI, state.NONCE,
     state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, param.NOTE_VALUE_LO]
-  refine ⟨by norm_num, rfl, by norm_num, rfl, rfl, ?_⟩
+  refine ⟨rfl, rfl, by norm_num, rfl, rfl, ?_⟩
   intro i hi
   have e1 : (76 + (3 + i) = 5) = False := by simp; omega
   have e2 : (76 + (3 + i) = 54) = False := by simp; omega
@@ -487,15 +490,17 @@ theorem goodNoteRow_realizes_intent : NoteCreateRowIntent goodNoteRow := by
   have f6 : (54 + (3 + i) = 69) = False := by simp; omega
   simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
 
-/-- A FORGED noteCreate row: `goodNoteRow` with the post-`bal_lo` set to `999` (NOT the debit `70`). -/
+/-- A FORGED noteCreate row: `goodNoteRow` with the post-`bal_lo` set to `999` (NOT the frozen `100` —
+a smuggled on-trace credit). -/
 def badNoteRow : VmRowEnv where
   loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodNoteRow.loc v
   nxt := goodNoteRow.nxt
   pub := goodNoteRow.pub
 
-/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badNoteRow`'s post-`bal_lo` is NOT the debit
-`70`, so the `gBalLoDebit` gate REJECTS it — a concrete UNSAT (the debit has teeth). -/
-theorem badNoteRow_rejected : ¬ (VmConstraint.gate gBalLoDebit).holdsVm badNoteRow false false := by
+/-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badNoteRow`'s post-`bal_lo` is NOT the
+FROZEN `100` (a smuggled on-trace credit), so the `gBalLoFreeze` gate REJECTS it — a concrete UNSAT
+(balance-neutrality has teeth). -/
+theorem badNoteRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badNoteRow false false := by
   apply noteCreateVm_rejects_balance_mint
   simp only [badNoteRow, goodNoteRow, sbCol, saCol, prmCol, SEL_NOTE_CREATE, STATE_BEFORE_BASE,
     STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
@@ -800,7 +805,7 @@ theorem badRootRow_rejected : ¬ (VmConstraint.gate gCommitRootUpdate).holdsVm b
 #assert_axioms noteCreateDescriptor_full_sound
 #assert_axioms noteCreateDescriptor_commit_binds_state
 #assert_axioms univA_note_is_balance_neutral
-#assert_axioms runtime_debit_vs_univA_neutral_divergence
+#assert_axioms noteCreate_balance_neutral_matches_univA
 #assert_axioms note_insert_is_out_of_row
 #assert_axioms note_append_only_is_out_of_row
 #assert_axioms goodNoteRow_isRow

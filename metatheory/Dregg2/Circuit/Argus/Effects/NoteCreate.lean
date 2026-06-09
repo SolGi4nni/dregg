@@ -25,12 +25,13 @@ ONE component write, no gate.
 `noteCreate` carries TWO circuit universes, and the choice of which to weld against is load-bearing:
 
   * The EFFECTVM per-row descriptor (`Emit/EffectVmEmitNoteCreate.lean`, `noteCreateVmDescriptor`) models
-    the publish — RECONCILED onto the validated runtime hand-AIR — as a TRANSPARENT DEBIT + nonce TICK:
-    `new_bal_lo = old_bal_lo − value`, the nonce ticks, the frame freezes. That descriptor's OWN module
-    REPORTS (not papers) that this DIVERGES from the universe-A balance-neutral convention — they agree
-    ONLY at `value = 0` (`EffectVmEmitNoteCreate.runtime_debit_vs_univA_neutral_divergence`). Welding the
-    IR term (whose executor is balance-NEUTRAL) against THAT debit descriptor would inherit a real
-    semantic gap on every nonzero note.
+    the publish — RECONCILED onto the runtime hand-AIR — as BALANCE-NEUTRAL + nonce TICK:
+    `new_bal_lo = old_bal_lo` (the note value is hidden in the commitment, never moved on the transparent
+    ledger), the nonce ticks, the frame freezes. A PRIOR version modeled it as a transparent debit
+    (`new_bal_lo = old_bal_lo − value`), which diverged from the universe-A balance-neutral convention;
+    that divergence is now CLOSED at the source (the EffectVM descriptor + the Rust circuit AIR/trace are
+    balance-neutral, matching the executor), so the EffectVM descriptor AGREES with the IR term's
+    balance-neutral executor for EVERY note (`EffectVmEmitNoteCreate.noteCreate_balance_neutral_matches_univA`).
 
   * The v2 `Surface2` / `EffectCommit2` descriptor (`Inst/noteCreateA.lean`) is the GENUINE standalone
     full-state crown jewel: `noteCreateE` (the `EffectSpec2` whose touched component is the WHOLE
@@ -44,10 +45,10 @@ ONE component write, no gate.
 
 So this module welds against the v2 `Surface2` descriptor (the BalanceA surface) — strictly stronger
 than a per-cell EffectVM weld AND divergence-free, because that descriptor binds the whole-state
-full-list digest and shares the executor's balance-neutral convention. The runtime-debit-vs-universe-A
-gap is REAL, but it is a property of the OTHER (EffectVM) descriptor, not of the surface this weld pins;
-we carry it as an explicit reported divergence theorem (`noteCreate_effectvm_vs_argus_divergence`) so the
-choice is honest and the gap is named, not hidden.
+full-list digest and shares the executor's balance-neutral convention. The EffectVM descriptor is NOW
+ALSO balance-neutral, so the two surfaces AGREE: §6 (`noteCreate_effectvm_agrees_argus`) proves the
+EffectVM descriptor's per-cell post-balance EQUALS the IR term's executor's, for every note — the
+formerly-carried divergence is CLOSED, not relabeled.
 
 This module is therefore HONEST in both directions:
 
@@ -171,13 +172,13 @@ theorem interp_noteCreateStmt_chained
 agrees with the FULL post-state the IR term's executor interpretation produces.
 
 This welds against noteCreate's GENUINE standalone descriptor `noteCreateCircuit S … (noteCreateE …)`
-(the v2 `Surface2` circuit whose soundness is `noteCreateA_full_sound`), NOT the EffectVM debit
-descriptor — see the descriptor surface investigation in this file's header. The executor side is routed
+(the v2 `Surface2` circuit whose soundness is `noteCreateA_full_sound`), the whole-state full-list-digest
+surface — see the descriptor surface investigation in this file's header. The executor side is routed
 through §3 (`interp` ⟹ `execFullA`) and the independent `execNoteCreateA_iff_spec` (executor ⟺
 `NoteCreateASpec`); the circuit side is the audited `noteCreateA_full_sound` (circuit ⟹ `NoteCreateASpec`).
 Both name the SAME `NoteCreateASpec`, so they PROVABLY agree on the WHOLE 17-field state + the log —
 strictly stronger than a per-cell weld, and DIVERGENCE-FREE (this descriptor shares the executor's
-balance-neutral convention; the EffectVM debit gap is the OTHER descriptor's, carried in §6). -/
+balance-neutral convention; the EffectVM descriptor is now ALSO balance-neutral and AGREES — §6). -/
 
 /-- The Argus circuit interpretation of a `noteCreate` term: noteCreate's OWN audited standalone v2
 `Surface2` circuit step — the full-state arithmetization `satisfiedE2 S (noteCreateE LE cN hN hLE)
@@ -185,7 +186,7 @@ balance-neutral convention; the EffectVM debit gap is the OTHER descriptor's, ca
 `EffectRefinement` hub's `effect2CircuitStep S (noteCreateE …) st ⟨cm,actor⟩ st'`, inlined here so this
 module's v2-import surface is only `Inst.noteCreateA`). Its soundness `noteCreateA_full_sound` pins the
 complete `NoteCreateASpec`. The `noteCreate`-keyed analog of `balanceACircuit`, in the descriptor
-universe where noteCreate carries its OWN genuine full-state circuit (NOT EffectVM-debit-inherited). -/
+universe where noteCreate carries its OWN genuine full-state circuit (the whole-state full-list digest). -/
 def noteCreateCircuit (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
     (st : RecChainedState) (cm : Nat) (actor : CellId) (st' : RecChainedState) : Prop :=
@@ -222,8 +223,8 @@ and the IR term AGREE on the WHOLE 17-field RecordKernelState (`commitments` pre
 other field — INCLUDING `bal`, balance-NEUTRAL — frozen) AND the receipt log AND the trivial guard — the
 full `NoteCreateASpec`, not a per-cell projection. So the circuit the prover runs for noteCreate pins the
 complete state the IR term's executor produces. NO nonce-tick / collapsed-field divergence enters this
-surface (the v2 descriptor is balance-neutral, matching the executor); the EffectVM-debit divergence is a
-property of the OTHER descriptor, carried separately in §6. -/
+surface (the v2 descriptor is balance-neutral, matching the executor); the EffectVM descriptor is now
+ALSO balance-neutral and AGREES with this surface (§6). -/
 theorem noteCreate_compile_sound
     (S : Surface2) (LE : Nat → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLE : listLeafInjective LE)
@@ -285,8 +286,8 @@ theorem noteCreateStmt_grows :
 
 /-- **NON-VACUITY (BALANCE NEUTRALITY — the conservation punchline).** The committed publish leaves the
 per-asset ledger entry `(0, 0)` UNTOUCHED at `30` — noteCreate moves NO transparent value (it grows only
-`commitments`, never `bal`). This is the load-bearing distinction from the EffectVM debit descriptor
-(§6), proved on the term. -/
+`commitments`, never `bal`). The balance-neutral convention BOTH the v2 surface and the (now-fixed)
+EffectVM descriptor share (§6), proved on the term. -/
 theorem noteCreateStmt_bal_neutral :
     (interp (noteCreateStmt 42) kN0).map (fun k => k.bal 0 0) = some 30 := by
   rw [interp_noteCreateStmt_eq_noteCreateCommitment]
@@ -309,45 +310,38 @@ theorem noteCreateStmt_append_only :
 #assert_axioms noteCreateStmt_bal_neutral
 #assert_axioms noteCreateStmt_append_only
 
-/-! ## §6 — THE REPORTED DIVERGENCE (honest, NOT papered): the EffectVM-debit descriptor vs this weld's
-balance-neutral surface.
+/-! ## §6 — THE CLOSED DIVERGENCE — now AGREEMENT: the EffectVM descriptor matches this balance-neutral weld.
 
 This weld (§4) is against the v2 `Surface2` descriptor, which shares the executor's balance-NEUTRAL
-convention — so its conclusion has NO divergence. But the OTHER (EffectVM per-row) descriptor
-`EffectVmEmitNoteCreate.noteCreateVmDescriptor` models the publish as a TRANSPARENT DEBIT
-(`post.balLo = pre.balLo − value`, a transparent value LEAVES the pool into the shielded note) and TICKS
-the runtime nonce. That descriptor's OWN module already proves these two conventions reconcile ONLY at
-`value = 0` (`runtime_debit_vs_univA_neutral_divergence`). We re-state the BALANCE half here, against the
-IR term's executor, so the divergence is named at the Argus layer too: the IR term's executor FREEZES the
-`bal` ledger (balance-neutral), whereas the EffectVM descriptor DEBITS it by `value`. So a weld of the IR
-term against the EffectVM descriptor (rather than the v2 `Surface2` one chosen here) would carry exactly
-this `value`-debit divergence on every nonzero note — the reason this module welds against the v2 surface.
-This is a genuine SEMANTIC modeling gap (a shielding-convention difference), NOT a column index. Reported,
-not forced. -/
+convention. The OTHER (EffectVM per-row) descriptor `EffectVmEmitNoteCreate.noteCreateVmDescriptor` was
+FIXED (this campaign) to ALSO be balance-neutral (`post.balLo = pre.balLo`; the formerly-carried
+transparent-debit divergence is closed at the source — the Rust circuit AIR/trace are balance-neutral
+too, matching the executor). So both surfaces now agree: we PROVE, at the Argus layer, that the EffectVM
+descriptor's per-cell post-balance EQUALS the IR term's executor's post-balance, for EVERY note (no
+`value = 0` side-condition). The divergence is CLOSED, not relabeled. -/
 
-/-- **`noteCreate_effectvm_vs_argus_divergence` — THE DIVERGENCE, named at the Argus layer.** The Argus
-IR term's executor is BALANCE-NEUTRAL: on a committed publish the post-state's per-asset ledger entry
-`(c, asset)` equals the pre-state's (the `commitments` insert moves no transparent value, from
-`noteCreateA_bal_neutral`). The EffectVM per-row descriptor models the SAME publish as a transparent
-DEBIT of `value` (`CellNoteSpec`'s `post.balLo = pre.balLo − value`). For the IR term's executor post-
-balance to AGREE with the EffectVM descriptor's debited post-balance we would need `bal − value = bal`,
-i.e. `value = 0`. So the two surfaces reconcile ONLY for a zero-value note — exactly the gap
-`EffectVmEmitNoteCreate.runtime_debit_vs_univA_neutral_divergence` reports, surfaced here for the Argus
-term. (This is WHY §4 welds against the v2 `Surface2` descriptor, which shares the executor's neutral
-convention and so is divergence-free.) -/
-theorem noteCreate_effectvm_vs_argus_divergence
-    (st st' : RecChainedState) (cm : Nat) (actor c : CellId) (asset : AssetId) (value : ℤ)
+/-- **`noteCreate_effectvm_agrees_argus` — the CLOSED divergence, now AGREEMENT at the Argus layer.** The
+Argus IR term's executor is BALANCE-NEUTRAL: on a committed publish the post-state's per-asset ledger
+entry `(c, asset)` equals the pre-state's (`noteCreateA_bal_neutral`). The EffectVM per-row descriptor is
+NOW ALSO balance-neutral: its post-balance for this entry is the FROZEN `effPost` with `effPost = pre`
+(after the fix — `CellNoteSpec`'s `post.balLo = pre.balLo`). So the EffectVM descriptor's post-balance
+EQUALS the IR term's executor's post-balance — they AGREE for every note, the shielding-convention
+divergence is CLOSED. We take the EffectVM post-balance `effPost` as an explicit parameter together with
+the descriptor's freeze fact `heff : effPost = st.kernel.bal c asset`, and conclude it coincides with the
+executor's actual post-balance `st'.kernel.bal c asset`. -/
+theorem noteCreate_effectvm_agrees_argus
+    (st st' : RecChainedState) (cm : Nat) (actor c : CellId) (asset : AssetId) (effPost : ℤ)
     (hexec : execFullA st (.noteCreateA cm actor) = some st')
-    -- the EffectVM descriptor's per-cell post-balance for this entry (a transparent debit by `value`):
-    (heffectvm : st'.kernel.bal c asset = st.kernel.bal c asset - value) :
-    value = 0 := by
+    -- the EffectVM descriptor FREEZES the entry (balance-neutral): its post-balance is the pre-balance.
+    (heff : effPost = st.kernel.bal c asset) :
+    -- AGREEMENT: the EffectVM post-balance EQUALS the IR term's executor post-balance — no divergence.
+    effPost = st'.kernel.bal c asset := by
   -- the IR term's executor freezes the ledger (balance-neutral) ⇒ the entry is unchanged …
   have hneutral : st'.kernel.bal = st.kernel.bal := noteCreateA_bal_neutral st cm actor st' hexec
   have hentry : st'.kernel.bal c asset = st.kernel.bal c asset := by rw [hneutral]
-  -- … but the EffectVM convention debits it by `value`: `bal = bal − value` ⇒ `value = 0`.
-  rw [hentry] at heffectvm
-  linarith
+  -- … and the EffectVM descriptor's freeze is the SAME unchanged entry — they agree, no divergence.
+  rw [heff, hentry]
 
-#assert_axioms noteCreate_effectvm_vs_argus_divergence
+#assert_axioms noteCreate_effectvm_agrees_argus
 
 end Dregg2.Circuit.Argus.Effects.NoteCreate

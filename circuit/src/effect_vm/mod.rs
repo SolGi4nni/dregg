@@ -11,7 +11,8 @@
 //! - SetField (2): Update a custom field slot.
 //! - GrantCapability (3): Add capability to c-list (capability_root update).
 //! - NoteSpend (4): Spend a note (nullifier reveal, balance credit).
-//! - NoteCreate (5): Create a note (commitment creation, balance debit).
+//! - NoteCreate (5): Create a note (commitment creation, BALANCE-NEUTRAL — the
+//!   note value lives in the commitment, never on the transparent ledger).
 //! - CreateObligation (6): Lock stake from balance as a bonded obligation.
 //! - FulfillObligation (7): Return locked stake on successful fulfillment.
 //! - Custom (8): CellProgram dispatch — state flows unchanged, domain constraints
@@ -79,7 +80,8 @@
 //!    - SetField: one field updated, others unchanged
 //!    - GrantCap: capability_root = hash(old_root, new_entry)
 //!    - NoteSpend: nullifier valid, balance increases
-//!    - NoteCreate: commitment valid, balance decreases
+//!    - NoteCreate: commitment valid, balance UNCHANGED (balance-neutral; the
+//!      value is hidden in the commitment, never moved on the transparent ledger)
 //!    - CreateObligation: balance decreases by stake_amount
 //!    - FulfillObligation: balance increases by stake_return
 //!    - Custom: state unchanged (domain constraints proven externally)

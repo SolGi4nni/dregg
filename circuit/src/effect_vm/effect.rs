@@ -147,7 +147,9 @@ pub enum Effect {
     /// 32-byte widening: full 32-byte hash → 8 BabyBear limbs (see
     /// [`Effect::GrantCapability`]); AIR anchors limb[0] into `params[0]`.
     PipelinedSend { send_hash: [BabyBear; 8] },
-    /// CreateEscrow: actor's balance debits by `amount_lo`. Mirrors NoteCreate.
+    /// CreateEscrow: actor's balance debits by `amount_lo` (a transparent debit
+    /// into the escrow; NOT balance-neutral — contrast NoteCreate, which hides its
+    /// value in a commitment and is balance-neutral).
     /// `escrow_hash` = BLAKE3(recipient ‖ condition) binds the escrow target.
     ///
     /// 30-bit-trunc fix (CAVEAT-LAYER-COVERAGE.md §6.5): `amount_full` carries
@@ -164,7 +166,9 @@ pub enum Effect {
         /// absent from the trace. Multiple emissions sum (wrap-add).
         amount_full: u64,
     },
-    /// BridgeLock: actor's balance debits by `value_lo`. Mirrors NoteCreate.
+    /// BridgeLock: actor's balance debits by `value_lo` (a transparent debit into
+    /// the locked bridge; NOT balance-neutral — contrast NoteCreate, which hides its
+    /// value in a commitment and is balance-neutral).
     /// `lock_hash` = BLAKE3(nullifier ‖ destination ‖ asset_type) binds the lock.
     ///
     /// 30-bit-trunc fix (CAVEAT-LAYER-COVERAGE.md §6.5): `value_full` carries

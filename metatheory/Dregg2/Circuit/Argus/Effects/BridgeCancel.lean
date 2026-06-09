@@ -33,13 +33,13 @@ takes the full `k` and may run the `find?` inside its closure.
 refund's authority is not in `refundEscrowKAsset`. The IR `RecStmt` is a pure state-transformer, so
 `bridgeCancelKAsset` is the faithful refinement target, the bridge twin of `refundEscrowKAsset`.)
 
-The CIRCUIT side is genuinely DIFFERENT from refund, and the honest reason this module exists. The
-audited bridgeCancel descriptor (`EffectVmEmitBridgeCancel`) was RECONCILED onto the running hand-AIR
-trace layout (commit 3aaf0772d's notes pattern): on the cancel row the runtime performs **NO on-trace
-balance move** (the refund credit binds OFF-trace via the `effects_hash` accumulator — the bridge state
-"lives off-trace"), so the descriptor **FREEZES `bal_lo`** on the per-cell row, and the global nonce gate
-**TICKS** the nonce. This is the OPPOSITE of refund's descriptor (which credits `bal_lo` on-trace and
-freezes the nonce). The weld below is HONEST about that boundary — see HONEST SURFACE.
+The CIRCUIT side is the SAME on-trace-credit shape as refund (the bridge-settle twin). The audited
+bridgeCancel descriptor (`EffectVmEmitBridgeCancel`) CREDITS the refund on the per-cell row: the parked
+bridge value returns to the locker, so the descriptor raises `bal_lo` by `+param::AMOUNT`, and the global
+nonce gate **TICKS** the nonce. A PRIOR version FROZE `bal_lo` on-trace (treating the refund as off-trace,
+reconciled to the executor's credit only at `amount = 0`); that divergence is now CLOSED — the descriptor
+credits on-trace, matching the executor's `+r.amount` refund for EVERY amount. The weld below proves the
+per-cell agreement on the REFUNDED cell directly (credit = credit) — see HONEST SURFACE.
 
 ## What this module proves (the two task theorems, on the bridge-settle shape)
 
@@ -47,33 +47,33 @@ freezes the nonce). The weld below is HONEST about that boundary — see HONEST 
      bridgeCancel IR term is, on the nose, the verified kernel step `bridgeCancelKAsset`.
   2. `bridgeCancel_compile_sound` — the weld: a satisfying witness of the AUDITED class-A genuine
      descriptor `bridgeCancelVmDescriptorGenuine` (`EffectVmEmitBridgeCancel §H`) agrees, per cell, with
-     the post-state the IR term's executor produces ON A BYSTANDER CELL (where both freeze), AND forces
-     the genuine bridge-escrow-root recompute; the refunded-cell on-trace-freeze-vs-executor-credit
-     divergence is REPORTED, not papered (`bridgeCancel_refunded_cell_divergence`).
+     the post-state the IR term's executor produces ON THE REFUNDED CELL `(r.creator, r.asset)` (both
+     CREDIT by `+r.amount`), AND forces the genuine bridge-escrow-root recompute; the formerly-carried
+     refunded-cell freeze-vs-credit divergence is CLOSED (`bridgeCancel_refunded_cell_agrees`).
 
 ## HONEST SURFACE (precise — do NOT over-read)
 
 The honest boundary is the bridge-settle reconciliation the Emit module establishes (§9–§11), routed
 through the IR cornerstone:
 
-  * **conserved leg (per-cell, BYSTANDER):** the descriptor FREEZES every conserved cell column on-trace
-    (the refund credit binds off-trace). A BYSTANDER cell `c`/`asset` — one the cancel's executor frame
-    leaves untouched (captured by `hframe : k'.bal c asset = k.bal c asset`) — is genuinely frozen by
-    BOTH the descriptor (`CellCancelSpec`'s bal-freeze) and the executor's frame, so they AGREE on balLo
-    + the whole non-nonce frame (balHi/fields/capRoot/reserved). This is the SURFACE
-    `EffectVmEmitBridgeCancel.descriptor_agrees_with_executor_cancel_frame` proves, now welded to the IR
-    term. The cross-cell combined-per-asset conservation (ledger credit ⊕ holding-store drop) is the
-    executor's keystone (`bridge_cancel_conserves_combined_per_asset`), cited there — NOT re-claimed.
+  * **conserved leg (per-cell, REFUNDED — AGREEMENT):** the descriptor CREDITS `bal_lo` on-trace by
+    `+param::AMOUNT` (the parked value returns to the locker). At the REFUNDED `(r.creator, r.asset)`
+    cell, with the row's amount the record's `r.amount`, the descriptor's credited post-balance EQUALS
+    the executor's `+r.amount` refund — they AGREE on balLo + the whole non-nonce frame
+    (balHi/fields/capRoot/reserved). This is the SURFACE
+    `EffectVmEmitBridgeCancel.descriptor_agrees_with_executor_refund` proves, now welded to the IR term.
+    The cross-cell combined-per-asset conservation (ledger credit ⊕ holding-store drop) is the executor's
+    keystone (`bridge_cancel_conserves_combined_per_asset`), cited there — NOT re-claimed.
   * **the per-effect nonce is RECONCILED at the turn level (NOT a carried divergence):** the descriptor
     TICKS the cell nonce while the executor's per-cell projection freezes it at `0`. `bridgeCancel_compile
     _sound` bundles the two facts as a `NonceReconciled`, and `Argus.Nonce.perEffect_nonce_reconciles_to
     _turn` (`bridgeCancel_compile_sound_nonce_is_turn_tick`) proves the row's `+1` is exactly the turn
     PROLOGUE's single tick over the frozen body. The divergence is CLOSED, not carried.
-  * **the REFUNDED-cell credit divergence is REAL and reported:** at the refunded `(r.creator, r.asset)`
-    the descriptor FREEZES `bal_lo` on-trace while the executor CREDITS it by `+r.amount`; they reconcile
-    ONLY at `r.amount = 0`. We surface this precisely (`bridgeCancel_refunded_cell_divergence`) — the
-    bridge twin of the Emit module's `runtime_frozen_vs_univA_credit_divergence`. The refund credit lives
-    off the per-cell row (the `effects_hash` accumulator), reported not papered.
+  * **the REFUNDED-cell credit is AGREEMENT (formerly the carried divergence):** at the refunded
+    `(r.creator, r.asset)` the descriptor CREDITS `bal_lo` on-trace by `+param::AMOUNT` AND the executor
+    CREDITS it by `+r.amount`; with the row's amount the record's amount they coincide for EVERY amount.
+    We surface this precisely (`bridgeCancel_refunded_cell_agrees`) — the bridge twin of the Emit module's
+    `runtime_credit_matches_univA`. The refund credit is bound ON the per-cell row, divergence-free.
   * **side-table leg (the resolved record):** the circuit FORCES the new escrow-list root to be the
     genuine in-row recompute `hash[ hash[id,creator,recipient,amount,asset,resolved], old_root ]` of the
     bound record + old root (`bridgeCancelGenuine_sound`'s clause (b)), absorbed into `state_commit`. So
@@ -81,12 +81,11 @@ through the IR cornerstone:
     commitment (`bridgeCancelGenuine_binds_record`, cited). The weld EXPOSES this genuine-recompute
     clause as a conjunct so the side-table binding is part of the welded statement, not a side remark.
 
-  What this does NOT claim: it does not assert the descriptor credits the refunded cell `bal_lo`
-  on-trace (it freezes it — the credit is off-trace), and it does not assert the circuit row's
-  `escrows`-list state EQUALS the executor's `markResolved k.escrows id` as a LIST (the EffectVM row
-  carries a DIGEST, not the list — the `SystemRoots` digest connector). The executor produces the real
-  list (the cornerstone + `markResolved`); the circuit produces the genuine root of it. That is the
-  faithful digest-not-list, on-trace-vs-off-trace boundary, stated, not hidden.
+  What this does NOT claim: it does not assert the circuit row's `escrows`-list state EQUALS the
+  executor's `markResolved k.escrows id` as a LIST (the EffectVM row carries a DIGEST, not the list — the
+  `SystemRoots` digest connector). The executor produces the real list (the cornerstone + `markResolved`);
+  the circuit produces the genuine root of it. That is the faithful digest-not-list boundary, stated, not
+  hidden.
 
 ## Honesty
 
@@ -289,18 +288,17 @@ theorem bridgeCancelStmt_rejects_nonbridge :
 #assert_axioms bridgeCancelStmt_rejects_missing
 #assert_axioms bridgeCancelStmt_rejects_nonbridge
 
-/-! ## §4 — THE WELD: the audited class-A genuine descriptor agrees, per BYSTANDER cell, with the IR
-term's executor interpretation — AND forces the genuine `escrows`-root recompute; the refunded-cell
-on-trace-freeze-vs-executor-credit divergence is REPORTED (not papered), and the per-effect nonce-tick is
-RECONCILED to the turn's one prologue tick (`NonceReconciled`, NOT carried).
+/-! ## §4 — THE WELD: the audited class-A genuine descriptor agrees, per REFUNDED cell, with the IR
+term's executor interpretation — AND forces the genuine `escrows`-root recompute; the refund credit is an
+AGREEMENT (credit = credit, divergence-free), and the per-effect nonce-tick is RECONCILED to the turn's
+one prologue tick (`NonceReconciled`, NOT carried).
 
-The SAME shape as the refundEscrow weld (`Effects/RefundEscrow.lean §4`), reconciled onto the bridge
-descriptor's RUNTIME convention: route the circuit side through the audited `bridgeCancelGenuine_sound`
-(`EffectVmEmitBridgeCancel §H`) and the executor side through the §2 cornerstone + the per-cell BYSTANDER
-frame projection `bridgeCancelKAsset_proj_frame`. Unlike refund (descriptor credits the cell on-trace,
-matching the executor's credit on that cell), bridgeCancel FREEZES the cell on-trace (the refund binds
-off-trace), so the on-trace agreement is on a BYSTANDER cell where BOTH freeze; the refunded cell is the
-reported divergence. -/
+The SAME shape as the refundEscrow weld (`Effects/RefundEscrow.lean §4`): route the circuit side through
+the audited `bridgeCancelGenuine_sound` (`EffectVmEmitBridgeCancel §H`) and the executor side through the
+§2 cornerstone + the per-cell REFUNDED credit projection `bridgeCancelKAsset_proj_credit`. Like refund,
+the descriptor CREDITS the cell on-trace by `+param::AMOUNT`, matching the executor's `+r.amount` refund
+on the refunded cell `(r.creator, r.asset)` — so the on-trace agreement is on the REFUNDED cell directly,
+divergence-free. -/
 
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
@@ -317,7 +315,7 @@ the circuit interpretation of the bridgeCancel term is, on the nose, the descrip
 for the bridge-cancel settle. -/
 
 /-- The circuit interpretation of the bridgeCancel IR term: the audited class-A genuine descriptor
-(genuine in-row bridge-escrow-root recompute + per-cell freeze/tick + commitment). -/
+(genuine in-row bridge-escrow-root recompute + per-cell refund-credit/nonce-tick + commitment). -/
 def compileBridgeCancel : EffectVmDescriptor := bridgeCancelVmDescriptorGenuine
 
 /-- **`compileBridgeCancel_eq` — `compileBridgeCancel` IS the audited runnable bridge-cancel descriptor.**
@@ -326,44 +324,54 @@ theorem compileBridgeCancel_eq : compileBridgeCancel = bridgeCancelVmDescriptorG
 
 #assert_axioms compileBridgeCancel_eq
 
-/-! ### §4.1 — the EXECUTOR-side per-cell BYSTANDER-frame projection of the kernel step
-`bridgeCancelKAsset`. The cornerstone refines the IR term to `bridgeCancelKAsset`. Its on-trace agreement
-is on a BYSTANDER cell `c`/`asset` — one the cancel leaves untouched. We prove: a committed cancel
-FREEZES the projected `(c, asset)` ledger entry of any cell whose `bal` entry it does not move. The
-descriptor freezes too (its `CellCancelSpec` bal-freeze), so they agree there. The frozen frame
-(balHi/fields/capRoot/reserved) is `0 = 0` on both projections (definitional). -/
+/-! ### §4.1 — the EXECUTOR-side per-cell REFUNDED-CELL credit projection of the kernel step
+`bridgeCancelKAsset`. The cornerstone refines the IR term to `bridgeCancelKAsset`, which CREDITS the
+refunded cell `(r.creator, r.asset)` by `+r.amount` (the parked value returns to the locker). The
+descriptor now CREDITS too (its `CellCancelSpec` bal-credit by `param::AMOUNT`), so they AGREE on the
+refunded cell. We prove the executor-side credit leg: a committed cancel raises the projected `(r.creator,
+r.asset)` entry by `+r.amount`. (The frozen frame balHi/fields/capRoot/reserved is `0 = 0`.) -/
 
-/-- **`bridgeCancelKAsset_proj_frame`.** A committed kernel bridge-cancel FREEZES the projected
-`(c, asset)` ledger entry of a BYSTANDER cell — any `(c, asset)` whose raw entry it leaves unchanged
-(`hframe`). The per-cell BYSTANDER leg the weld pins (the descriptor freezes on-trace, so they agree). -/
-theorem bridgeCancelKAsset_proj_frame {k k' : RecordKernelState} {id : Nat} {c : CellId}
-    {asset : AssetId} (_h : bridgeCancelKAsset k id = some k')
-    (hframe : k'.bal c asset = k.bal c asset) :
-    (cellProjCancel k'.bal c asset).balLo = (cellProjCancel k.bal c asset).balLo := by
-  show k'.bal c asset = k.bal c asset
-  exact hframe
+/-- **`bridgeCancelKAsset_proj_credit`.** A committed kernel bridge-cancel CREDITS the projected
+`(r.creator, r.asset)` ledger entry by `+r.amount` (`r` the found parked record). The per-cell REFUNDED
+leg the weld pins (the descriptor credits on-trace by the same amount, so they agree). -/
+theorem bridgeCancelKAsset_proj_credit {k k' : RecordKernelState} {id : Nat} {r : EscrowRecord}
+    (h : bridgeCancelKAsset k id = some k')
+    (hr : k.escrows.find? (matchPred id) = some r) :
+    (cellProjCancel k'.bal r.creator r.asset).balLo
+      = (cellProjCancel k.bal r.creator r.asset).balLo + r.amount := by
+  -- decode the kernel step on the found record `r`: a committed cancel credits `(r.creator, r.asset)`.
+  have hr' : k.escrows.find? (fun r => decide (r.id = id ∧ r.resolved = false)) = some r := by
+    simpa only [matchPred] using hr
+  simp only [bridgeCancelKAsset, hr'] at h
+  by_cases hg : r.bridge = true ∧ r.creator ∈ k.accounts ∧ cellLifecycleLive k r.creator = true
+  · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h
+    show recBalCreditCell k.bal r.creator r.asset r.amount r.creator r.asset
+      = k.bal r.creator r.asset + r.amount
+    unfold recBalCreditCell; rw [if_pos ⟨rfl, rfl⟩]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
 
-#assert_axioms bridgeCancelKAsset_proj_frame
+#assert_axioms bridgeCancelKAsset_proj_credit
 
 /-! ### §4.2 — THE WELD. -/
 
 /-- **`bridgeCancel_compile_sound` — the welded soundness (bridgeCancel slice, the bridge-settle
-side-table effect).**
+side-table effect), on the REFUNDED cell, divergence-free.**
 
-Suppose, for the Argus bridgeCancel term `bridgeCancelStmt id`, a BYSTANDER cell `c`/`asset` (one the
-cancel's executor frame leaves untouched, `hframe`), and a genuine bridge-cancel row (`hrow`):
+Suppose, for the Argus bridgeCancel term `bridgeCancelStmt id`, the REFUNDED cell `(r.creator, r.asset)`
+of the found parked record `r` (`hr`), a genuine bridge-cancel row (`hrow`) whose refund amount column
+carries the record's amount (`hamt : amount = r.amount`):
   * the circuit `compileBridgeCancel` (= the audited class-A `bridgeCancelVmDescriptorGenuine`) is
     SATISFIED by `(env, true, true)` under the abstract Poseidon carrier `hash`, and its `RowEncodesCancel`
-    decoding NAMES the post-state record `post` over the bystander cell's projection
-    `cellProjCancel k.bal c asset` (`henc`; the cancel takes no on-trace move param);
+    decoding NAMES the post-state record `post` over the refunded cell's projection
+    `cellProjCancel k.bal r.creator r.asset` with refund `amount` (`henc`);
   * the IR term's EXECUTOR interpretation COMMITS: `interp (bridgeCancelStmt id) k = some k'` (`hexec`).
 
 Then:
-  * **conserved leg (per-cell, BYSTANDER):** the circuit's pinned post-state `post` AGREES with the
-    executor's FROZEN bystander projection `cellProjCancel k'.bal c asset` — the conserved `balLo`
-    (FROZEN: the refund credit is off-trace, and `c` is a bystander) AND the whole non-nonce frame
-    (balHi/fields/capRoot/reserved). The descriptor freezes `bal_lo` on-trace, matching the executor's
-    frame on `c`.
+  * **conserved leg (per-cell, REFUNDED — AGREEMENT, no divergence):** the circuit's pinned post-state
+    `post` AGREES with the executor's CREDITED refunded projection `cellProjCancel k'.bal r.creator
+    r.asset` — the conserved `balLo` (CREDITED by `+r.amount` on BOTH sides) AND the whole non-nonce frame
+    (balHi/fields/capRoot/reserved). The descriptor credits `bal_lo` on-trace by the same amount the
+    executor refunds. The formerly-carried freeze-vs-credit divergence is CLOSED.
   * **the per-effect nonce, RECONCILED to the turn (NOT carried):** the descriptor TICKS the cell nonce
     while the executor's per-cell projection freezes it at `0` — bundled as a `NonceReconciled` and
     discharged to the turn PROLOGUE's single tick (`bridgeCancel_compile_sound_nonce_is_turn_tick`), so the
@@ -373,29 +381,28 @@ Then:
     old root — the digest the executor's `escrows := markResolved k.escrows id` resolve commits to
     (absorbed into `state_commit`, so the resolved record is bound; see `bridgeCancelGenuine_binds_record`).
 
-So the class-A circuit the prover runs for bridgeCancel pins the per-cell bystander-frozen state the IR
-term's executor produces AND genuinely recomputes the bound `escrows` side-table root. (The REFUNDED cell
-`(r.creator, r.asset)` is the reported on-trace-freeze-vs-executor-credit divergence — see
-`bridgeCancel_refunded_cell_divergence`; the refund binds off the per-cell row.) -/
+So the class-A circuit the prover runs for bridgeCancel pins the per-cell REFUNDED-credited state the IR
+term's executor produces (credit = credit, divergence-free) AND genuinely recomputes the bound `escrows`
+side-table root. -/
 theorem bridgeCancel_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeCancelRow env)
-    (k k' : RecordKernelState) (id : Nat) (c : CellId) (asset : AssetId)
+    (k k' : RecordKernelState) (id : Nat) (r : EscrowRecord) (amount : ℤ)
     (post : CellState)
-    (hframe : k'.bal c asset = k.bal c asset)
-    (henc : RowEncodesCancel env (cellProjCancel k.bal c asset) post)
+    (hr : k.escrows.find? (matchPred id) = some r) (hamt : amount = r.amount)
+    (henc : RowEncodesCancel env (cellProjCancel k.bal r.creator r.asset) amount post)
     (hsat : satisfiedVm hash compileBridgeCancel env true true)
     (hexec : interp (bridgeCancelStmt id) k = some k') :
-    -- conserved leg (BYSTANDER): the frozen bystander cell's projection agrees on balLo + the whole
-    -- non-nonce frozen frame …
-    ( post.balLo = (cellProjCancel k'.bal c asset).balLo
-      ∧ post.balHi = (cellProjCancel k'.bal c asset).balHi
-      ∧ (∀ i, post.fields i = (cellProjCancel k'.bal c asset).fields i)
-      ∧ post.capRoot = (cellProjCancel k'.bal c asset).capRoot
-      ∧ post.reserved = (cellProjCancel k'.bal c asset).reserved )
+    -- conserved leg (REFUNDED, AGREEMENT): the credited refunded cell's projection agrees on balLo
+    -- (credit = credit) + the whole non-nonce frame …
+    ( post.balLo = (cellProjCancel k'.bal r.creator r.asset).balLo
+      ∧ post.balHi = (cellProjCancel k'.bal r.creator r.asset).balHi
+      ∧ (∀ i, post.fields i = (cellProjCancel k'.bal r.creator r.asset).fields i)
+      ∧ post.capRoot = (cellProjCancel k'.bal r.creator r.asset).capRoot
+      ∧ post.reserved = (cellProjCancel k'.bal r.creator r.asset).reserved )
     -- … the per-effect nonce RECONCILED (descriptor ticks; executor projection freezes at 0), NOT a
     --   carried divergence — the turn PROLOGUE's single tick is the net …
-    ∧ NonceReconciled (cellProjCancel k.bal c asset).nonce post.nonce
-        (cellProjCancel k'.bal c asset).nonce
+    ∧ NonceReconciled (cellProjCancel k.bal r.creator r.asset).nonce post.nonce
+        (cellProjCancel k'.bal r.creator r.asset).nonce
     -- … and the SIDE-TABLE leg: the circuit FORCES the genuine escrow-list-root recompute (the bound
     -- resolved record + old root), absorbed into `state_commit`.
     ∧ ( env.loc Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.SYS_DIG_AFTER
@@ -409,24 +416,25 @@ theorem bridgeCancel_compile_sound
                 (env.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.ep.RESOLVED)))
               (env.loc Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.SYS_DIG_BEFORE) ) := by
   -- circuit side: `compileBridgeCancel` IS the genuine descriptor; the audited class-A soundness forces
-  -- the per-cell `CellCancelSpec` (bal-freeze + nonce-tick) + the genuine root recompute.
+  -- the per-cell `CellCancelSpec` (bal-CREDIT by `amount` + nonce-tick) + the genuine root recompute.
   rw [compileBridgeCancel_eq] at hsat
   obtain ⟨hcs, hroot, _hcommit⟩ :=
-    bridgeCancelGenuine_sound hash env hrow (cellProjCancel k.bal c asset) post henc hsat
+    bridgeCancelGenuine_sound hash env hrow (cellProjCancel k.bal r.creator r.asset) post amount henc hsat
   obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hcs
   -- executor side: the §2 cornerstone turns the IR term's `interp` into the verified kernel step
-  -- `bridgeCancelKAsset`; its BYSTANDER projection freezes the projected balLo (the frozen limbs are
-  -- `0 = 0`, and `cellProjCancel … .nonce = 0` on both sides).
+  -- `bridgeCancelKAsset`; its REFUNDED projection CREDITS the projected balLo by `+r.amount` (the frozen
+  -- limbs are `0 = 0`, and `cellProjCancel … .nonce = 0` on both sides).
   rw [interp_bridgeCancelStmt_eq_bridgeCancelKAsset] at hexec
-  have heLo := bridgeCancelKAsset_proj_frame hexec hframe
+  have heCredit := bridgeCancelKAsset_proj_credit hexec hr
   -- the descriptor tick (`hcN`, post.nonce = pre.nonce + 1) + the executor freeze (`rfl`: `cellProjCancel`
   -- zeroes both nonces) ARE `NonceReconciled`'s two clauses.
   refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩,
     ⟨?_, rfl⟩, hroot⟩
-  · -- balLo: circuit pins post = pre.balLo (freeze); executor freezes the bystander entry (= pre.balLo).
-    rw [hcLo, heLo]
-  · -- the descriptor TICKS the cell nonce: post.nonce = (cellProjCancel k.bal c asset).nonce + 1.
-    have hpreN : (cellProjCancel k.bal c asset).nonce = 0 := rfl
+  · -- balLo AGREEMENT: circuit pins post = pre.balLo + amount (credit); executor credits the refunded
+    -- entry by +r.amount; with `amount = r.amount` the two coincide.
+    rw [hcLo, heCredit, hamt]
+  · -- the descriptor TICKS the cell nonce: post.nonce = (cellProjCancel k.bal r.creator r.asset).nonce + 1.
+    have hpreN : (cellProjCancel k.bal r.creator r.asset).nonce = 0 := rfl
     rw [hcN, hpreN]
 
 #assert_axioms bridgeCancel_compile_sound
@@ -438,45 +446,45 @@ contribution), the prologue ticks once, and the descriptor's per-effect post non
 prologue tick. So bridgeCancel's row `+1` is the turn's one tick — the divergence is CLOSED. -/
 theorem bridgeCancel_compile_sound_nonce_is_turn_tick
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeCancelRow env)
-    (k k' : RecordKernelState) (id : Nat) (c : CellId) (asset : AssetId) (post : CellState)
-    (hframe : k'.bal c asset = k.bal c asset)
-    (henc : RowEncodesCancel env (cellProjCancel k.bal c asset) post)
+    (k k' : RecordKernelState) (id : Nat) (r : EscrowRecord) (amount : ℤ) (post : CellState)
+    (hr : k.escrows.find? (matchPred id) = some r) (hamt : amount = r.amount)
+    (henc : RowEncodesCancel env (cellProjCancel k.bal r.creator r.asset) amount post)
     (hsat : satisfiedVm hash compileBridgeCancel env true true)
     (hexec : interp (bridgeCancelStmt id) k = some k')
     (s : RecChainedState) (fee : Int)
-    (hpre  : (cellProjCancel k.bal c asset).nonce
-               = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c))
-    (hexecAgent : (cellProjCancel k'.bal c asset).nonce
-                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c)) :
+    (hpre  : (cellProjCancel k.bal r.creator r.asset).nonce
+               = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell r.creator))
+    (hexecAgent : (cellProjCancel k'.bal r.creator r.asset).nonce
+                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell r.creator)) :
     Dregg2.Exec.EffectTransfer.nonceOf
-        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
-      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c) + 1
+        ((Dregg2.Exec.Admission.commitPrologue s r.creator fee).kernel.cell r.creator)
+      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell r.creator) + 1
     ∧ post.nonce = Dregg2.Exec.EffectTransfer.nonceOf
-        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
-    ∧ post.nonce = (cellProjCancel k'.bal c asset).nonce + 1 := by
-  have hr : NonceReconciled (cellProjCancel k.bal c asset).nonce post.nonce
-              (cellProjCancel k'.bal c asset).nonce :=
-    (bridgeCancel_compile_sound hash env hrow k k' id c asset post hframe henc hsat hexec).2.1
+        ((Dregg2.Exec.Admission.commitPrologue s r.creator fee).kernel.cell r.creator)
+    ∧ post.nonce = (cellProjCancel k'.bal r.creator r.asset).nonce + 1 := by
+  have hrec : NonceReconciled (cellProjCancel k.bal r.creator r.asset).nonce post.nonce
+              (cellProjCancel k'.bal r.creator r.asset).nonce :=
+    (bridgeCancel_compile_sound hash env hrow k k' id r amount post hr hamt henc hsat hexec).2.1
   obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
-    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hr s c fee hexecAgent hpre
+    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hrec s r.creator fee hexecAgent hpre
   exact ⟨htick, hmatch, hresid⟩
 
 #assert_axioms bridgeCancel_compile_sound_nonce_is_turn_tick
 
-/-! ### §4.3 — the REPORTED divergence (refunded cell) + non-vacuity of the genuine descriptor.
+/-! ### §4.3 — the REFUNDED-cell AGREEMENT (formerly the carried divergence) + non-vacuity.
 
-The weld above is on a BYSTANDER cell (where both freeze). At the REFUNDED `(r.creator, r.asset)` the
-descriptor's on-trace freeze and the executor's `+r.amount` credit DIVERGE — they reconcile only at
-`r.amount = 0`. We surface this precisely (the bridge twin of the Emit module's
-`runtime_frozen_vs_univA_credit_divergence`) so the boundary is reported, not papered. -/
+The weld above is now on the REFUNDED `(r.creator, r.asset)` cell, where the descriptor CREDITS `bal_lo`
+by `+amount` (matching the executor's `+r.amount`). We surface the executor side precisely as the
+agreement leg (the bridge twin of the Emit module's `runtime_credit_matches_univA`): the formerly-carried
+freeze-vs-credit divergence is CLOSED — the descriptor credits on-trace what the executor refunds. -/
 
-/-- **`bridgeCancel_refunded_cell_divergence` — the on-trace-vs-off-trace refund gap, named precisely.**
+/-- **`bridgeCancel_refunded_cell_agrees` — the refund credit AGREEMENT, named precisely.**
 A committed bridge-cancel CREDITS the found record's `(r.creator, r.asset)` entry by `+r.amount` on the
-executor side, whereas the descriptor FREEZES `bal_lo` on-trace (the refund credit binds off the per-cell
-row, via `effects_hash`). We expose BOTH: the executor's post-projection at the refunded cell is
-`pre + r.amount`, while the descriptor's on-trace post would be the frozen `pre`. They reconcile ONLY at
-`r.amount = 0` — the refund credit lives off-trace, reported not papered. -/
-theorem bridgeCancel_refunded_cell_divergence {k k' : RecordKernelState} {id : Nat} {r : EscrowRecord}
+executor side, and the descriptor now ALSO credits `bal_lo` on-trace by `+param::AMOUNT = +r.amount`. We
+expose the executor side: its post-projection at the refunded cell is `pre + r.amount` — EXACTLY what the
+descriptor's on-trace credit produces (`bridgeCancel_compile_sound`'s balLo conjunct). The refund credit
+is bound ON the per-cell row; the divergence is CLOSED, agreeing for every `r.amount`. -/
+theorem bridgeCancel_refunded_cell_agrees {k k' : RecordKernelState} {id : Nat} {r : EscrowRecord}
     (h : interp (bridgeCancelStmt id) k = some k')
     (hr : k.escrows.find? (matchPred id) = some r) :
     (cellProjCancel k'.bal r.creator r.asset).balLo
@@ -492,7 +500,7 @@ theorem bridgeCancel_refunded_cell_divergence {k k' : RecordKernelState} {id : N
     unfold recBalCreditCell; rw [if_pos ⟨rfl, rfl⟩]
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-#assert_axioms bridgeCancel_refunded_cell_divergence
+#assert_axioms bridgeCancel_refunded_cell_agrees
 
 /-- The compiled bridgeCancel circuit is the NON-trivial class-A genuine descriptor: it carries the
 13+14+4+3 = 34 constraints / 2+4 = 6 hash-sites / 2 range checks of the audited

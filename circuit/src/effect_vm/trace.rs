@@ -296,15 +296,12 @@ pub fn generate_effect_vm_trace_ext(
                         running_balance = running_balance.saturating_add(*amount);
                     }
                 }
-                Effect::NoteCreate { value, .. } => {
-                    assert!(
-                        *value <= running_balance,
-                        "NoteCreate underflow: value {} > running balance {} \
-                         (executor rejects; STARK constraint would wrap in BabyBear)",
-                        value,
-                        running_balance
-                    );
-                    running_balance -= value;
+                Effect::NoteCreate { .. } => {
+                    // BALANCE-NEUTRAL: a NoteCreate moves NO transparent value (the
+                    // note value lives in the commitment, never on the ledger), so it
+                    // cannot underflow the running balance and does not decrement it.
+                    // Matches the verified executor (`apply_note_create`) + Lean
+                    // descriptor (`EffectVmEmitNoteCreate`, balance-neutral).
                 }
                 Effect::CreateObligation { stake_amount, .. } => {
                     assert!(
@@ -703,8 +700,13 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + param::NOTE_VALUE_LO] = val_lo;
                 row[PARAM_BASE + param::NOTE_VALUE_HI] = val_hi;
 
-                new_state.balance = new_state.balance.saturating_sub(*value);
-                net_delta -= *value as i64;
+                // BALANCE-NEUTRAL: the note value is hidden in the commitment and is
+                // NEVER moved on the transparent ledger (the shielding convention; the
+                // executor `apply_note_create` records the commitment and does not touch
+                // balance). So the balance is FROZEN and `net_delta` is unchanged. This
+                // matches the verified Lean descriptor (`EffectVmEmitNoteCreate`,
+                // balance-neutral `gBalLoFreeze`/`CellNoteSpec`). (A prior version
+                // subtracted `value`, which diverged from the executor; closed.)
                 new_state.nonce += 1;
             }
             Effect::CreateObligation {

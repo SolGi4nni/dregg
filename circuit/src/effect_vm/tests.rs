@@ -448,9 +448,12 @@ fn test_note_spend_and_create() {
         result.err()
     );
 
-    // Net delta: +500 - 200 = +300.
+    // Net delta: +500 (NoteSpend credit) + 0 (NoteCreate is BALANCE-NEUTRAL — the
+    // note value lives in the commitment, never on the transparent ledger; matches
+    // the executor `apply_note_create` + the verified Lean descriptor). A prior
+    // version debited NoteCreate's 200, giving +300; the divergence is now closed.
     let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, 300);
+    assert_eq!(delta, 500);
 }
 
 /// D5 (NoteSpend nullifier cross-binding, approach A) — POSITIVE.
