@@ -88,8 +88,17 @@ enum Command {
         /// committed turn produces a real full-turn STARK proof and acceptance
         /// is gated on the proof verifying (verify→accept). This is what makes
         /// the public "every state transition is proven" claim TRUE for the
-        /// running node. Off by default (full proving is on the hot path); the
-        /// devnet enables it. Can also be enabled via `DREGG_PROVE_TURNS=1`.
+        /// running node. A SPEND turn additionally carries a FRESHNESS-bound
+        /// non-revocation leg (no-double-spend bindings (a)+(b) fire via
+        /// `verify_full_turn_bound`). Off by default (full proving is on the hot
+        /// path); the devnet enables it. Can also be enabled via
+        /// `DREGG_PROVE_TURNS=1`.
+        ///
+        /// AUDIT-GRADE DEVNET: a preproduction node "worthy of audit" MUST run
+        /// with `--prove-turns` (or `DREGG_PROVE_TURNS=1`) so committed turns are
+        /// proven and a light client can fetch them via
+        /// `GET /api/turn/{hash}/proof` and re-verify (spend turns against the
+        /// canonical revocation root).
         #[arg(long)]
         prove_turns: bool,
 

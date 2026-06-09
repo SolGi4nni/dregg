@@ -1535,6 +1535,7 @@ pub fn router_with_cors(
         .route("/api/tokens", get(get_tokens))
         .route("/api/receipts", get(get_receipts))
         .route("/api/receipts/{hash}/witnesses", get(get_receipt_witnesses))
+        .route("/api/turn/{hash}/proof", get(get_turn_proof))
         .route("/api/starbridge/receipts", get(get_starbridge_receipts))
         .route("/api/starbridge/events", get(get_starbridge_events))
         .route("/api/starbridge/turns", get(get_starbridge_turns))
@@ -2064,6 +2065,42 @@ async fn get_receipt_witnesses(
         "witness_artifacts": witness_artifacts,
         "witnessed_receipts": witnessed,
     })))
+}
+
+/// Serve the persisted full-turn STARK proof for a committed turn so a light
+/// client can fetch and independently verify it.
+///
+/// The proof bytes are persisted by the commit path under
+/// `full_turn_proof:{turn_hash}` (see
+/// [`crate::turn_proving::turn_proof_config_key`]). A spend turn's proof carries
+/// the FRESHNESS-bound non-revocation leg; a light client re-verifying it MUST
+/// pass `expected_revocation_root` = the canonical revocation root derived from
+/// the node's authoritative spent-nullifier set (served via
+/// `nullifier_set_root` on the checkpoint endpoints) into
+/// `dregg_sdk::verify_full_turn_bound`.
+///
+/// Returns the hex-encoded proof bytes plus the turn hash. 404 if no proof was
+/// persisted for that turn (e.g. proving disabled, or the turn carried no
+/// verified proof).
+async fn get_turn_proof(
+    AxumPath(hash): AxumPath<String>,
+    State(state): State<NodeState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Accept the turn hash as hex (32 bytes). Normalise to the lowercase form the
+    // commit path keys with.
+    let bytes = hex_decode(&hash).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let turn_hash_hex = hex_encode(&bytes);
+    let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
+    let s = state.read().await;
+    match s.store.get_config(&key) {
+        Ok(Some(proof_bytes)) => Ok(Json(serde_json::json!({
+            "turn_hash": turn_hash_hex,
+            "proof_len": proof_bytes.len(),
+            "proof_hex": hex_encode_var(&proof_bytes),
+        }))),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn get_starbridge_receipts(

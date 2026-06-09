@@ -1905,6 +1905,20 @@ async fn execute_finalized_turn(
         None
     };
 
+    // FRESHNESS path: capture the node's CANONICAL spent-nullifier set BEFORE this
+    // turn's spend is recorded. A `NoteSpend` turn is proven against THIS set
+    // (freshness = "not yet spent"); recording this turn's nullifier first would
+    // make its own freshness proof impossible. Empty/Err is fine — a turn with no
+    // spend never enters the freshness path.
+    let full_turn_previously_spent: Vec<[u8; 32]> = if s.full_turn_proving_enabled {
+        s.store
+            .load_all_nullifiers()
+            .map(|ns| ns.into_iter().map(|n| n.0).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
     // THE SWAP — producer mode (authority inversion), now the DEFAULT. When `lean_producer_enabled`
     // is set (default ON unless `DREGG_LEAN_PRODUCER=0`), the VERIFIED Lean executor is the
     // authoritative state PRODUCER for the swap-safe COVERED set: `produce_via_lean` reconstitutes
@@ -2014,6 +2028,29 @@ async fn execute_finalized_turn(
                 }
             }
 
+            // FRESHNESS: record this turn's spent note nullifiers into the node's
+            // CANONICAL persisted nullifier set, so subsequent turns' freshness
+            // proofs are bound against an up-to-date set (and double-spends are
+            // rejected). This is the authoritative set
+            // `turn_proving::prove_and_verify_finalized_turn_freshness` derives its
+            // sorted-Merkle canonical revocation root from. Done AFTER capturing
+            // `full_turn_previously_spent` above (this turn's own freshness is
+            // proven against the pre-this-turn set).
+            {
+                let spent: Vec<dregg_turn::Effect> = signed_turn
+                    .turn
+                    .call_forest
+                    .total_effects()
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                for nf in crate::turn_proving::spent_nullifiers(&spent) {
+                    if let Err(e) = s.store.store_nullifier(&dregg_cell::note::Nullifier(nf)) {
+                        warn!(error = %e, "failed to persist spent note nullifier");
+                    }
+                }
+            }
+
             // Append receipt to cipherclerk. Strict mode: divergence between
             // the local executor and the cipherclerk's chain is a serious
             // bug (the receipt came from our own executor), so we expect.
@@ -2032,6 +2069,19 @@ async fn execute_finalized_turn(
             // proof does not verify is logged as a serious soundness event and
             // its proof is NOT attached. The proof bytes are persisted keyed by
             // turn hash so any peer / operator can fetch the attached proof.
+            //
+            // ROUTING BY CELL TYPE: a turn that SPENDS a note (carries a
+            // `NoteSpend`) is routed through the FRESHNESS path
+            // (`prove_and_verify_finalized_turn_freshness`), which attaches a
+            // non-revocation sub-proof and gates acceptance on
+            // `verify_full_turn_bound` with the canonical revocation root pinned —
+            // so the no-double-spend bindings (a)+(b) FIRE. A non-spend turn stays
+            // on the self-sovereign Effect-VM path (the correct trust model for an
+            // owner-authorized turn). The AUTHORITY (capability) leg is NOT wired:
+            // the executor does not retain the consumed-capability witness and the
+            // circuit binds the whole-state commitment, not `capability_root` — a
+            // genuine authorization witness is not reconstructible post-hoc (see
+            // turn_proving.rs module doc / commit message).
             let full_turn_proof_attached: Option<Vec<u8>> =
                 if let Some((pre_balance, pre_nonce)) = full_turn_pre_state {
                     let effects: Vec<dregg_turn::Effect> = signed_turn
@@ -2041,13 +2091,34 @@ async fn execute_finalized_turn(
                         .into_iter()
                         .cloned()
                         .collect();
-                    match crate::turn_proving::prove_and_verify_finalized_turn(
-                        &signed_turn.turn.agent,
-                        pre_balance,
-                        pre_nonce,
-                        &effects,
-                        computed_hash,
-                    ) {
+                    let spent_nullifiers =
+                        crate::turn_proving::spent_nullifiers(&effects);
+                    let proving_result = match spent_nullifiers.first() {
+                        Some(spent_nullifier) => {
+                            // SPEND turn → freshness path (bound verify).
+                            crate::turn_proving::prove_and_verify_finalized_turn_freshness(
+                                &signed_turn.turn.agent,
+                                pre_balance,
+                                pre_nonce,
+                                &effects,
+                                computed_hash,
+                                spent_nullifier,
+                                &full_turn_previously_spent,
+                            )
+                        }
+                        None => {
+                            // Non-spend turn → self-sovereign Effect-VM path.
+                            crate::turn_proving::prove_and_verify_finalized_turn(
+                                &signed_turn.turn.agent,
+                                pre_balance,
+                                pre_nonce,
+                                &effects,
+                                computed_hash,
+                            )
+                        }
+                    };
+                    let is_spend = !spent_nullifiers.is_empty();
+                    match proving_result {
                         Ok(proven) => {
                             let proof_bytes = proven.proof_bytes().to_vec();
                             let key = crate::turn_proving::turn_proof_config_key(&turn_hash_hex);
@@ -2061,9 +2132,32 @@ async fn execute_finalized_turn(
                                 proof_bytes = proof_bytes.len(),
                                 old_commit = ?proven.old_commit,
                                 new_commit = ?proven.new_commit,
-                                "full-turn proof generated and verified (commit path)"
+                                spend = is_spend,
+                                freshness_bound = is_spend,
+                                "full-turn proof generated and verified (commit path); \
+                                 spend turns are FRESHNESS-bound to the canonical revocation root"
                             );
                             Some(proof_bytes)
+                        }
+                        Err(crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
+                            have,
+                            max,
+                        }) => {
+                            // KNOWN LIMITATION (not a soundness failure): the canonical
+                            // nullifier set outgrew the fixed-depth non-revocation circuit.
+                            // We do not silently truncate the set (that could hide a
+                            // double-spend), so the spend turn carries no freshness-bound
+                            // proof until a depth-parameterized non-revocation AIR lands.
+                            warn!(
+                                turn_hash = %turn_hash_hex,
+                                block_id = %block_id,
+                                have,
+                                max,
+                                "spend turn NOT freshness-proven: canonical nullifier set exceeds \
+                                 the non-revocation circuit capacity (needs a deeper AIR); turn \
+                                 committed without a freshness-bound proof"
+                            );
+                            None
                         }
                         Err(e) => {
                             // SOUNDNESS: a committed turn whose full-turn proof
@@ -2073,6 +2167,7 @@ async fn execute_finalized_turn(
                                 turn_hash = %turn_hash_hex,
                                 block_id = %block_id,
                                 error = %e,
+                                spend = is_spend,
                                 "full-turn proof generation/verification FAILED; \
                                  turn committed but carries NO verified proof"
                             );
