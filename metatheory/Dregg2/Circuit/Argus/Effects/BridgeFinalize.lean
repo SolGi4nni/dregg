@@ -75,9 +75,11 @@ Identical digest-not-list boundary to the release/refund welds, on the no-credit
     `bridgeFinalizeRawAsset` leaves `bal` untouched), for ANY cell `c`/`asset` — the no-credit-outflow
     freeze (the value left the per-cell ledger at LOCK time). `cellProjFinalize` projects ONLY the
     `(c, asset)` ledger entry into `balLo` (every other limb is `0`, FROZEN). The frozen frame
-    (balHi/fields/capRoot/reserved) agrees. The ONE divergence — the descriptor TICKS the cell nonce
-    while the executor FREEZES it (`EffectVmEmitBridgeFinalize §7/§9`) — is carried as the final
-    conjunct, exactly as the transfer/burn welds. The cross-cell COMBINED-per-asset DROP (the bridged
+    (balHi/fields/capRoot/reserved) agrees. The per-effect nonce is RECONCILED — the descriptor TICKS the
+    cell nonce while the executor FREEZES it (`EffectVmEmitBridgeFinalize §7/§9`), bundled as a
+    `NonceReconciled` and discharged to the turn PROLOGUE's single tick
+    (`bridgeFinalize_compile_sound_nonce_is_turn_tick`), NOT a carried divergence. The cross-cell
+    COMBINED-per-asset DROP (the bridged
     outflow) is the executor's keystone (`bridgeFinalizeKAsset_moves_combined_per_asset`), cited there —
     NOT re-claimed here.
   * **side-table leg (the resolved record):** the circuit FORCES the new escrow-list root to be the
@@ -105,12 +107,13 @@ genuine root recompute the reused theorem proves. Imports are read-only; this fi
 edits no other Argus module.
 -/
 import Dregg2.Circuit.Argus.Stmt
+import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Emit.EffectVmEmitBridgeFinalize
 
 namespace Dregg2.Circuit.Argus.Effects.BridgeFinalize
 
 open Dregg2.Exec
-open Dregg2.Circuit.Argus (RecStmt interp)
+open Dregg2.Circuit.Argus (RecStmt interp NonceReconciled)
 open Dregg2.Exec (RecordKernelState EscrowRecord CellId AssetId
   bridgeFinalizeKAsset bridgeFinalizeRawAsset markResolved)
 
@@ -292,7 +295,8 @@ executor interpretation — AND forces the genuine `escrows`-root recompute.
 The SAME shape as the release/refund welds: route the circuit side through the audited
 `bridgeFinalizeGenuine_sound` (`EffectVmEmitBridgeFinalize §H`) and the executor side through the
 cornerstone above + the per-cell projection `bridgeFinalizeKAsset_proj` — except the conserved leg is a
-FREEZE (no credit), and the nonce-tick DIVERGENCE is carried (descriptor TICKS, executor FREEZES). -/
+FREEZE (no credit), and the nonce-tick is RECONCILED to the turn (descriptor TICKS, executor FREEZES;
+`NonceReconciled` discharged to the prologue's single tick — NOT a carried divergence). -/
 
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
@@ -380,7 +384,8 @@ Then:
     `bridgeFinalizeGenuine_binds_record`).
 
 So the class-A circuit the prover runs for bridgeFinalize pins the per-cell FROZEN state the IR term's
-executor produces (modulo the carried nonce-tick) AND genuinely recomputes the bound `escrows`
+executor produces (the nonce reconciled to the turn's one prologue tick) AND genuinely recomputes the
+bound `escrows`
 side-table root — the template generalizes to the no-credit OUTFLOW settle leg. -/
 theorem bridgeFinalize_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeFinalizeRow env)
@@ -395,9 +400,10 @@ theorem bridgeFinalize_compile_sound
       ∧ (∀ i, post.fields i = (cellProjFinalize k'.bal c cellAsset).fields i)
       ∧ post.capRoot = (cellProjFinalize k'.bal c cellAsset).capRoot
       ∧ post.reserved = (cellProjFinalize k'.bal c cellAsset).reserved )
-    -- … and the ONE divergence: the descriptor TICKS the cell nonce, the executor FREEZES it.
-    ∧ ( post.nonce = (cellProjFinalize k.bal c cellAsset).nonce + 1
-        ∧ (cellProjFinalize k'.bal c cellAsset).nonce = (cellProjFinalize k.bal c cellAsset).nonce )
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): the descriptor TICKS the cell nonce,
+    --   the executor FREEZES it; the turn PROLOGUE's single tick is the net.
+    ∧ NonceReconciled (cellProjFinalize k.bal c cellAsset).nonce post.nonce
+        (cellProjFinalize k'.bal c cellAsset).nonce
     -- … and the SIDE-TABLE leg: the circuit FORCES the genuine escrow-list-root recompute (the bound
     -- resolved record + old root), absorbed into `state_commit`.
     ∧ ( env.loc Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.SYS_DIG_AFTER
@@ -420,16 +426,47 @@ theorem bridgeFinalize_compile_sound
   -- `bridgeFinalizeKAsset`; its per-cell projection FREEZES the balLo (the frozen limbs are `0 = 0`).
   rw [interp_bridgeFinalizeStmt_eq_bridgeFinalizeKAsset] at hexec
   have heFrozen := bridgeFinalizeKAsset_proj_bal_frozen c cellAsset hexec
+  -- the descriptor tick `hcN` (post = pre.nonce + 1) + the executor freeze (`rfl`: `cellProjFinalize`
+  -- zeroes both nonces) ARE `NonceReconciled`'s two clauses.
   refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩,
-    ⟨?_, ?_⟩, hroot⟩
+    ⟨hcN, rfl⟩, hroot⟩
   -- balLo: circuit pins post = pre (FROZEN); executor freezes the projected entry ⇒ post = k'-projection.
   · rw [hcLo, heFrozen]
-  -- nonce TICK (circuit): post = pre.nonce + 1 (the `cellProjFinalize` pre-nonce is `0`).
-  · exact hcN
-  -- nonce FREEZE (executor): the projected post-nonce equals the projected pre-nonce (both `0`).
-  · rfl
 
 #assert_axioms bridgeFinalize_compile_sound
+
+/-- **`bridgeFinalize_compile_sound_nonce_is_turn_tick` — the close, applied to bridgeFinalize.** The
+`NonceReconciled` that `bridgeFinalize_compile_sound` yields, composed with a turn prologue over the
+frozen cell `c` (read as the turn's agent), gives the whole-turn ONE-tick law: the body freezes (zero
+contribution), the prologue ticks once, and the descriptor's per-effect post nonce EQUALS that single
+prologue tick. So bridgeFinalize's row `+1` is the turn's one tick — the divergence is CLOSED. -/
+theorem bridgeFinalize_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeFinalizeRow env)
+    (k k' : RecordKernelState) (id : Nat) (asset : AssetId) (amount : ℤ)
+    (c : CellId) (cellAsset : AssetId) (post : CellState)
+    (henc : RowEncodesFinalize env (cellProjFinalize k.bal c cellAsset) post)
+    (hsat : satisfiedVm hash compileBridgeFinalize env true true)
+    (hexec : interp (bridgeFinalizeStmt id asset amount) k = some k')
+    (s : RecChainedState) (fee : Int)
+    (hpre  : (cellProjFinalize k.bal c cellAsset).nonce
+               = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c))
+    (hexecAgent : (cellProjFinalize k'.bal c cellAsset).nonce
+                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c)) :
+    Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
+      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c) + 1
+    ∧ post.nonce = Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
+    ∧ post.nonce = (cellProjFinalize k'.bal c cellAsset).nonce + 1 := by
+  have hr : NonceReconciled (cellProjFinalize k.bal c cellAsset).nonce post.nonce
+              (cellProjFinalize k'.bal c cellAsset).nonce :=
+    (bridgeFinalize_compile_sound hash env hrow k k' id asset amount c cellAsset post
+      henc hsat hexec).2.1
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hr s c fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms bridgeFinalize_compile_sound_nonce_is_turn_tick
 
 /-! ### §4.3 — NON-VACUITY: `compileBridgeFinalize` is the genuine class-A descriptor, not a placeholder.
 

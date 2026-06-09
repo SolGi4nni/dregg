@@ -64,9 +64,11 @@ through the IR cornerstone:
     `EffectVmEmitBridgeCancel.descriptor_agrees_with_executor_cancel_frame` proves, now welded to the IR
     term. The cross-cell combined-per-asset conservation (ledger credit ⊕ holding-store drop) is the
     executor's keystone (`bridge_cancel_conserves_combined_per_asset`), cited there — NOT re-claimed.
-  * **the nonce-TICK divergence is REAL and carried (not papered):** the descriptor TICKS the cell nonce
-    while the executor's per-cell projection freezes it at `0`. `bridgeCancel_compile_sound` exposes this
-    as an explicit conjunct, identical to the form `descriptor_agrees_with_executor_cancel_frame` carries.
+  * **the per-effect nonce is RECONCILED at the turn level (NOT a carried divergence):** the descriptor
+    TICKS the cell nonce while the executor's per-cell projection freezes it at `0`. `bridgeCancel_compile
+    _sound` bundles the two facts as a `NonceReconciled`, and `Argus.Nonce.perEffect_nonce_reconciles_to
+    _turn` (`bridgeCancel_compile_sound_nonce_is_turn_tick`) proves the row's `+1` is exactly the turn
+    PROLOGUE's single tick over the frozen body. The divergence is CLOSED, not carried.
   * **the REFUNDED-cell credit divergence is REAL and reported:** at the refunded `(r.creator, r.asset)`
     the descriptor FREEZES `bal_lo` on-trace while the executor CREDITS it by `+r.amount`; they reconcile
     ONLY at `r.amount = 0`. We surface this precisely (`bridgeCancel_refunded_cell_divergence`) — the
@@ -93,12 +95,13 @@ vacuity, no weakening-that-just-typechecks. Imports are read-only; this file own
 no other Argus module.
 -/
 import Dregg2.Circuit.Argus.Stmt
+import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Emit.EffectVmEmitBridgeCancel
 
 namespace Dregg2.Circuit.Argus.Effects.BridgeCancel
 
 open Dregg2.Exec
-open Dregg2.Circuit.Argus (RecStmt interp)
+open Dregg2.Circuit.Argus (RecStmt interp NonceReconciled)
 open Dregg2.Exec (RecordKernelState EscrowRecord CellId AssetId
   bridgeCancelKAsset settleEscrowRawAsset markResolved recBalCreditCell cellLifecycleLive)
 
@@ -288,7 +291,8 @@ theorem bridgeCancelStmt_rejects_nonbridge :
 
 /-! ## §4 — THE WELD: the audited class-A genuine descriptor agrees, per BYSTANDER cell, with the IR
 term's executor interpretation — AND forces the genuine `escrows`-root recompute; the refunded-cell
-on-trace-freeze-vs-executor-credit divergence (and the nonce-tick) are REPORTED, not papered.
+on-trace-freeze-vs-executor-credit divergence is REPORTED (not papered), and the per-effect nonce-tick is
+RECONCILED to the turn's one prologue tick (`NonceReconciled`, NOT carried).
 
 The SAME shape as the refundEscrow weld (`Effects/RefundEscrow.lean §4`), reconciled onto the bridge
 descriptor's RUNTIME convention: route the circuit side through the audited `bridgeCancelGenuine_sound`
@@ -360,9 +364,10 @@ Then:
     (FROZEN: the refund credit is off-trace, and `c` is a bystander) AND the whole non-nonce frame
     (balHi/fields/capRoot/reserved). The descriptor freezes `bal_lo` on-trace, matching the executor's
     frame on `c`.
-  * **the nonce-TICK divergence (carried, not papered):** the descriptor TICKS the cell nonce while the
-    executor's per-cell projection freezes it at `0` — reported as the final state conjunct, exactly as
-    `descriptor_agrees_with_executor_cancel_frame` carries it.
+  * **the per-effect nonce, RECONCILED to the turn (NOT carried):** the descriptor TICKS the cell nonce
+    while the executor's per-cell projection freezes it at `0` — bundled as a `NonceReconciled` and
+    discharged to the turn PROLOGUE's single tick (`bridgeCancel_compile_sound_nonce_is_turn_tick`), so the
+    row's `+1` is the turn's one tick, not a per-effect double-count.
   * **side-table leg:** the circuit FORCES the new escrow-list root carrier to be the genuine in-row
     recompute `hash[ hash[id,creator,recipient,amount,asset,resolved], old_root ]` of the bound record +
     old root — the digest the executor's `escrows := markResolved k.escrows id` resolve commits to
@@ -387,9 +392,10 @@ theorem bridgeCancel_compile_sound
       ∧ (∀ i, post.fields i = (cellProjCancel k'.bal c asset).fields i)
       ∧ post.capRoot = (cellProjCancel k'.bal c asset).capRoot
       ∧ post.reserved = (cellProjCancel k'.bal c asset).reserved )
-    -- … the nonce-TICK divergence (descriptor ticks; executor projection freezes at 0), carried …
-    ∧ ( post.nonce = (cellProjCancel k.bal c asset).nonce + 1
-        ∧ (cellProjCancel k'.bal c asset).nonce = (cellProjCancel k.bal c asset).nonce )
+    -- … the per-effect nonce RECONCILED (descriptor ticks; executor projection freezes at 0), NOT a
+    --   carried divergence — the turn PROLOGUE's single tick is the net …
+    ∧ NonceReconciled (cellProjCancel k.bal c asset).nonce post.nonce
+        (cellProjCancel k'.bal c asset).nonce
     -- … and the SIDE-TABLE leg: the circuit FORCES the genuine escrow-list-root recompute (the bound
     -- resolved record + old root), absorbed into `state_commit`.
     ∧ ( env.loc Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.SYS_DIG_AFTER
@@ -413,17 +419,49 @@ theorem bridgeCancel_compile_sound
   -- `0 = 0`, and `cellProjCancel … .nonce = 0` on both sides).
   rw [interp_bridgeCancelStmt_eq_bridgeCancelKAsset] at hexec
   have heLo := bridgeCancelKAsset_proj_frame hexec hframe
-  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, ⟨?_, ?_⟩,
-    hroot⟩
+  -- the descriptor tick (`hcN`, post.nonce = pre.nonce + 1) + the executor freeze (`rfl`: `cellProjCancel`
+  -- zeroes both nonces) ARE `NonceReconciled`'s two clauses.
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩,
+    ⟨?_, rfl⟩, hroot⟩
   · -- balLo: circuit pins post = pre.balLo (freeze); executor freezes the bystander entry (= pre.balLo).
     rw [hcLo, heLo]
   · -- the descriptor TICKS the cell nonce: post.nonce = (cellProjCancel k.bal c asset).nonce + 1.
     have hpreN : (cellProjCancel k.bal c asset).nonce = 0 := rfl
     rw [hcN, hpreN]
-  · -- the executor's per-cell projection FREEZES the nonce (both projections send nonce to 0).
-    rfl
 
 #assert_axioms bridgeCancel_compile_sound
+
+/-- **`bridgeCancel_compile_sound_nonce_is_turn_tick` — the close, applied to bridgeCancel.** The
+`NonceReconciled` that `bridgeCancel_compile_sound` yields, composed with a turn prologue over the
+bystander cell `c` (read as the turn's agent), gives the whole-turn ONE-tick law: the body freezes (zero
+contribution), the prologue ticks once, and the descriptor's per-effect post nonce EQUALS that single
+prologue tick. So bridgeCancel's row `+1` is the turn's one tick — the divergence is CLOSED. -/
+theorem bridgeCancel_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeCancelRow env)
+    (k k' : RecordKernelState) (id : Nat) (c : CellId) (asset : AssetId) (post : CellState)
+    (hframe : k'.bal c asset = k.bal c asset)
+    (henc : RowEncodesCancel env (cellProjCancel k.bal c asset) post)
+    (hsat : satisfiedVm hash compileBridgeCancel env true true)
+    (hexec : interp (bridgeCancelStmt id) k = some k')
+    (s : RecChainedState) (fee : Int)
+    (hpre  : (cellProjCancel k.bal c asset).nonce
+               = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c))
+    (hexecAgent : (cellProjCancel k'.bal c asset).nonce
+                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c)) :
+    Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
+      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell c) + 1
+    ∧ post.nonce = Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s c fee).kernel.cell c)
+    ∧ post.nonce = (cellProjCancel k'.bal c asset).nonce + 1 := by
+  have hr : NonceReconciled (cellProjCancel k.bal c asset).nonce post.nonce
+              (cellProjCancel k'.bal c asset).nonce :=
+    (bridgeCancel_compile_sound hash env hrow k k' id c asset post hframe henc hsat hexec).2.1
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hr s c fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms bridgeCancel_compile_sound_nonce_is_turn_tick
 
 /-! ### §4.3 — the REPORTED divergence (refunded cell) + non-vacuity of the genuine descriptor.
 

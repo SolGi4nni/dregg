@@ -43,7 +43,7 @@ is BOUND, not papered (`bridgeLockGenuine_binds_record`, `:729`: a forged/droppe
 commitment ⇒ UNSAT). We weld DIRECTLY against this descriptor (no central `compileE` needed), as the
 committed/refund sibling modules do.
 
-## HONEST SURFACE — exactly createEscrow's weld surface PLUS the carried nonce-tick (do NOT over-read)
+## HONEST SURFACE — exactly createEscrow's weld surface PLUS the turn-reconciled nonce-tick (do NOT over-read)
 
 The weld concludes the SAME per-cell + side-table legs the plain-createEscrow weld concludes, PLUS the
 ONE divergence that transfer/burn carry (and createEscrow did not):
@@ -58,12 +58,13 @@ ONE divergence that transfer/burn carry (and createEscrow did not):
     recompute of the bound parked-record content + the old root, absorbed into `state_commit`, so the
     parked bridge record (id/creator/recipient/amount/asset/resolved) is bound. The weld EXPOSES this
     genuine-recompute clause as a conjunct so the side-table binding is part of the welded statement.
-  * **the ONE divergence (nonce-tick), CARRIED — as transfer/burn carry it (NOT papered):** the descriptor
+  * **the per-effect nonce, RECONCILED at the turn level (NOT a carried divergence):** the descriptor
     TICKS the cell nonce (`CellLockSpec`: `post.nonce = pre.nonce + 1`, the runtime sequence counter),
-    while the executor's `cellProjLock` ledger image FREEZES it (`= pre.nonce`). Both facts are exposed as
-    the final conjunct, identical to the form `EffectVmEmitBridgeLockA.descriptor_agrees_with_executor_lock`
-    and the Argus transfer weld already prove. createEscrow had NO such divergence (it froze on both
-    sides); bridgeLock's descriptor ticks, so the gap is real and stated.
+    while the executor's `cellProjLock` ledger image FREEZES it (`= pre.nonce`). Both facts are bundled as
+    a `NonceReconciled` final conjunct, and `Argus.Nonce.perEffect_nonce_reconciles_to_turn`
+    (`bridgeLock_compile_sound_nonce_is_turn_tick`) proves the row's `+1` is exactly the turn PROLOGUE's
+    single tick over the frozen body. So the per-effect tick is NOT a second tick — it is the turn's one
+    tick, located in the prologue. The divergence is CLOSED, not carried.
 
 What this does NOT claim: it does not assert the circuit row's `escrows`-list state EQUALS the executor's
 `bridgeRecord :: k.escrows` as a LIST (the EffectVM row carries a DIGEST, not the list — they agree only
@@ -78,6 +79,7 @@ no `:= True`, no weakening-that-just-typechecks, no `native_decide`. This module
 import is read-only and no other Argus file is edited.
 -/
 import Dregg2.Circuit.Argus.Stmt
+import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Emit.EffectVmEmitBridgeLockA
 
 namespace Dregg2.Circuit.Argus.Effects.BridgeLock
@@ -89,7 +91,7 @@ open Dregg2.Exec.TurnExecutorFull (bridgeLockChainA escrowReceiptA)
 -- `VmRowEnv` / `satisfiedVm` / `prmCol` are the unqualified EffectVM IR names (exactly as `Argus/Compile.lean`
 -- opens them) — without this they resolve only to the fully-qualified path.
 open Dregg2.Circuit.Emit.EffectVmEmit
-open Dregg2.Circuit.Argus (RecStmt interp kC)
+open Dregg2.Circuit.Argus (RecStmt interp kC NonceReconciled)
 open Dregg2.Exec (RecordKernelState RecChainedState EscrowRecord CellId AssetId
   bridgeLockKAsset createBridgeRawAsset recBalCreditCell cellLifecycleLive)
 -- The class-A bridgeLock genuine descriptor + its soundness + the per-cell lock spec / projection / decode.
@@ -237,7 +239,7 @@ theorem bridgeLockKAsset_proj_balLo {k k' : RecordKernelState} {id : Nat}
 
 /-! ## §4 — THE WELD: a satisfying witness of `bridgeLockVmDescriptorGenuine` agrees, per cell, with the
 post-state the IR term's executor interpretation produces — AND forces the genuine side-table root — with
-the ONE nonce-tick divergence CARRIED.
+the per-effect nonce-tick RECONCILED to the turn's one prologue tick (`NonceReconciled`, NOT carried).
 
 Welded DIRECTLY against the audited class-A descriptor `bridgeLockVmDescriptorGenuine` (no central
 `compileE`), as the committed/refund sibling modules do. Circuit side: `bridgeLockGenuine_sound`; executor
@@ -263,11 +265,14 @@ Then:
     bound parked bridge record + old root — the digest the executor's `bridgeRecord :: k.escrows` prepend
     commits to (absorbed into `state_commit`; a forged/dropped lock MOVES the commitment, see
     `bridgeLockGenuine_binds_record`).
-  * **the ONE divergence (CARRIED, as transfer/burn carry it):** the descriptor TICKS the cell nonce
-    (`post.nonce = (cellProjLock k.bal originator asset).nonce + 1`, the runtime sequence counter) while
-    the executor's ledger image FREEZES it (`(cellProjLock k'.bal originator asset).nonce
-    = (cellProjLock k.bal originator asset).nonce`). Both facts are reported as the final conjunct — NOT
-    papered. (createEscrow had no such divergence; bridgeLock's descriptor ticks.)
+  * **the per-effect nonce, RECONCILED at the turn level (NOT a carried divergence):** the descriptor
+    TICKS the cell nonce (`post.nonce = (cellProjLock k.bal originator asset).nonce + 1`, the runtime
+    sequence counter) while the executor's ledger image FREEZES it (`(cellProjLock k'.bal originator
+    asset).nonce = (cellProjLock k.bal originator asset).nonce`). Both facts are bundled as a
+    `NonceReconciled` final conjunct, and `bridgeLock_compile_sound_nonce_is_turn_tick` discharges the
+    row's `+1` to the turn PROLOGUE's single tick over the frozen body — so it is the turn's one tick,
+    NOT a per-effect double-count. (createEscrow's descriptor froze; bridgeLock's ticks, but the tick is
+    the prologue's, located there.)
 
 So the class-A circuit the prover runs for bridgeLock pins the per-cell debited state the IR term's
 executor produces AND genuinely recomputes the bound `escrows` side-table root, modulo the carried
@@ -298,10 +303,11 @@ theorem bridgeLock_compile_sound
                 (env.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.ep.ASSET))
                 (env.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.ep.RESOLVED)))
               (env.loc Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot.SYS_DIG_BEFORE) )
-    -- … and the ONE divergence: the descriptor TICKS the cell nonce, the executor FREEZES it (carried).
-    ∧ ( post.nonce = (cellProjLock k.bal originator asset).nonce + 1
-        ∧ (cellProjLock k'.bal originator asset).nonce
-            = (cellProjLock k.bal originator asset).nonce ) := by
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): the descriptor TICKS the cell nonce,
+    --   the executor FREEZES it; the turn PROLOGUE's single tick is the net (`bridgeLock_compile_sound
+    --   _nonce_is_turn_tick`).
+    ∧ NonceReconciled (cellProjLock k.bal originator asset).nonce post.nonce
+        (cellProjLock k'.bal originator asset).nonce := by
   -- circuit side: the audited class-A soundness forces the per-cell `CellLockSpec` + the genuine root.
   obtain ⟨hcs, hroot, _hcommit⟩ :=
     bridgeLockGenuine_sound hash env hrow (cellProjLock k.bal originator asset) post ⟨amount⟩ henc hsat
@@ -310,16 +316,48 @@ theorem bridgeLock_compile_sound
   -- `bridgeLockKAsset`; its per-cell projection gives the debited balLo (the frozen limbs are `0=0`).
   rw [interp_bridgeLockStmt_eq_bridgeLockKAsset] at hexec
   have heLo := bridgeLockKAsset_proj_balLo hexec
+  -- the descriptor tick `hcN` (post = pre.nonce + 1) + the executor freeze (`rfl`: `cellProjLock` zeroes
+  -- both nonces) ARE `NonceReconciled`'s two clauses.
   refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩,
-          hroot, ?_, ?_⟩
+          hroot, hcN, rfl⟩
   · -- balLo: circuit pins post = pre − amount; executor debits the projected entry by amount.
     rw [hcLo, heLo]
-  · -- the descriptor TICKS the cell nonce (post = pre.nonce + 1) — `cellProjLock k …` projects nonce `0`.
-    exact hcN
-  · -- the executor FREEZES the cell nonce: `cellProjLock` sends nonce to `0` on both sides (definitional).
-    rfl
 
 #assert_axioms bridgeLock_compile_sound
+
+/-- **`bridgeLock_compile_sound_nonce_is_turn_tick` — the close, applied to bridgeLock.** The
+`NonceReconciled` that `bridgeLock_compile_sound` yields, composed with a turn prologue over the debited
+originator cell (read as the turn's agent), gives the whole-turn ONE-tick law: the body freezes (zero
+contribution), the prologue ticks once, and the descriptor's per-effect post nonce EQUALS that single
+prologue tick. So bridgeLock's row `+1` is the turn's one tick — the divergence is CLOSED. -/
+theorem bridgeLock_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeLockRow env)
+    (k k' : RecordKernelState) (id : Nat) (actor originator destination : CellId)
+    (asset : AssetId) (amount : ℤ)
+    (post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (henc : RowEncodesLock env (cellProjLock k.bal originator asset) ⟨amount⟩ post)
+    (hsat : satisfiedVm hash bridgeLockVmDescriptorGenuine env true true)
+    (hexec : interp (bridgeLockStmt id actor originator destination asset amount) k = some k')
+    (s : RecChainedState) (fee : Int)
+    (hpre  : (cellProjLock k.bal originator asset).nonce
+               = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell originator))
+    (hexecAgent : (cellProjLock k'.bal originator asset).nonce
+                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell originator)) :
+    Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s originator fee).kernel.cell originator)
+      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell originator) + 1
+    ∧ post.nonce = Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s originator fee).kernel.cell originator)
+    ∧ post.nonce = (cellProjLock k'.bal originator asset).nonce + 1 := by
+  have hr : NonceReconciled (cellProjLock k.bal originator asset).nonce post.nonce
+              (cellProjLock k'.bal originator asset).nonce :=
+    (bridgeLock_compile_sound hash env hrow k k' id actor originator destination asset amount
+      post henc hsat hexec).2.2
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hr s originator fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms bridgeLock_compile_sound_nonce_is_turn_tick
 
 /-! ## §5 — NON-VACUITY: the bridge term genuinely parks (and the D3 liveness gate genuinely rejects).
 

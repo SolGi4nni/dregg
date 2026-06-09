@@ -30,7 +30,9 @@ descriptor's connector (`EffectVmEmitBridgeMint §7`, `cellProjA`) projects.
      kernel image, `recCMintAsset`).
   2. `bridgeMint_compile_sound` — the weld: a satisfying witness of the AUDITED descriptor
      `bridgeMintVmDescriptor` (`EffectVmEmitBridgeMint`) agrees, per cell, with the post-state the IR
-     term's executor produces, with the documented nonce-tick divergence carried explicitly.
+     term's executor produces, with the per-effect nonce RECONCILED at the turn level (a `NonceReconciled`
+     the turn PROLOGUE's single tick discharges — `bridgeMint_compile_sound_nonce_is_turn_tick`), NOT a
+     carried divergence.
 
 ## HONEST SURFACE (precise — do NOT over-read)
 
@@ -65,12 +67,13 @@ descriptor soundness proves. Imports are read-only; this file owns only itself a
 module.
 -/
 import Dregg2.Circuit.Argus.Stmt
+import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Emit.EffectVmEmitBridgeMint
 
 namespace Dregg2.Circuit.Argus.Effects.BridgeMint
 
 open Dregg2.Exec
-open Dregg2.Circuit.Argus (RecStmt interp)
+open Dregg2.Circuit.Argus (RecStmt interp NonceReconciled)
 open Dregg2.Exec (RecordKernelState CellId AssetId mintAuthorizedB)
 -- The per-asset privileged supply kernel step the bridgeMint arm refines to (`recKMintAsset`) + its
 -- ledger-credit helper (`recBalCredit`) live in `TurnExecutorFull`. `mintAuthorizedB` is the
@@ -185,9 +188,10 @@ The SAME shape as the mint/burn welds (`Argus/Compile.lean §M.2`): route the ci
 audited `bridgeMintDescriptor_full_sound` (`EffectVmEmitBridgeMint §5`, which forces `CellBridgeMintSpec`)
 and the executor side through the §2 cornerstone + a per-(cell,asset) projection of `recKMintAsset` onto
 the descriptor's own `cellProjA`. The honest surface is PER-CELL (`cellProjA` of the credited
-`(cell, asset)` entry), exactly as the descriptor's `§7` connector. The nonce-tick divergence (descriptor
-ticks the row nonce; the ledger image freezes — and `cellProjA` zeroes both) is carried as a final
-conjunct, like burn/transfer. We weld DIRECTLY against the descriptor's full-state soundness
+`(cell, asset)` entry), exactly as the descriptor's `§7` connector. The per-effect nonce-tick (descriptor
+ticks the row nonce; the ledger image freezes — and `cellProjA` zeroes both) is RECONCILED to the turn's
+one prologue tick (`NonceReconciled`, NOT a carried divergence), like burn/transfer. We weld DIRECTLY
+against the descriptor's full-state soundness
 (`bridgeMintDescriptor_full_sound`), the per-effect-farm vehicle, exactly as mint/burn weld against
 `mintDescriptor_full_sound`/`burnDescriptor_full_sound`. -/
 
@@ -262,7 +266,8 @@ conjunct.
 The bridge CryptoPortal proof (the inbound-value attestation) is NOT internalized in this single-row AIR;
 it is the executor-admission hypothesis the `= some k'` carries (the conservation keystone) — the
 unmodelled boundary the descriptor flags, stated not hidden. So the bridge-mint circuit the prover runs
-pins the per-(cell,asset) credited state the IR term's executor produces, modulo the carried nonce-tick. -/
+pins the per-(cell,asset) credited state the IR term's executor produces, with the nonce reconciled to the
+turn's one prologue tick (NOT a carried divergence). -/
 theorem bridgeMint_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
     (k k' : RecordKernelState) (actor cell : CellId) (a : AssetId) (value : ℤ) (post : CellState)
@@ -275,10 +280,10 @@ theorem bridgeMint_compile_sound
       ∧ (∀ i, post.fields i = (cellProjA k' cell a).fields i)
       ∧ post.capRoot = (cellProjA k' cell a).capRoot
       ∧ post.reserved = (cellProjA k' cell a).reserved )
-    -- … and the ONE divergence: descriptor TICKS the row nonce, the ledger executor FREEZES it
-    -- (`cellProjA` zeroes both, so the descriptor pins `0 + 1 = 1` against the executor's frozen `0`).
-    ∧ ( post.nonce = (cellProjA k cell a).nonce + 1
-        ∧ (cellProjA k' cell a).nonce = (cellProjA k cell a).nonce ) := by
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): descriptor TICKS the row nonce, the
+    --   ledger executor FREEZES it; `Argus.Nonce.perEffect_nonce_reconciles_to_turn` proves this IS the
+    --   turn's single PROLOGUE tick over the frozen body (`cellProjA` zeroes both, so the row pins `1`).
+    ∧ NonceReconciled (cellProjA k cell a).nonce post.nonce (cellProjA k' cell a).nonce := by
   -- circuit side: `compileBridgeMint` IS `bridgeMintVmDescriptor`; the audited soundness forces
   -- `CellBridgeMintSpec` (balLo credited by `value`, frame frozen, nonce ticked).
   rw [compileBridgeMint_eq] at hsat
@@ -289,14 +294,41 @@ theorem bridgeMint_compile_sound
   rw [interp_bridgeMintStmt_eq_recKMintAsset] at hexec
   have heLo := recKMintAsset_proj_balLo hexec
   -- the frozen-frame clauses agree because BOTH `cellProjA k cell a` and `cellProjA k' cell a` project the
-  -- non-balance limbs to `0` (definitional `rfl`), so each `hc_ : post.X = (cellProjA k cell a).X` chains
-  -- to `(cellProjA k' cell a).X` by `rfl`.
-  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, ?_, ?_⟩
+  -- non-balance limbs to `0` (definitional `rfl`). The descriptor tick `hcN` + the executor freeze (`rfl`:
+  -- `cellProjA` zeroes both nonces) ARE `NonceReconciled`'s two clauses.
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, hcN, rfl⟩
   · rw [hcLo, heLo]                       -- balLo: pre + value (circuit) = pre + value (executor)
-  · exact hcN                            -- nonce: descriptor TICKS (post = (cellProjA k cell a).nonce + 1)
-  · rfl                                   -- the ledger executor FREEZES the projected nonce (0 = 0)
 
 #assert_axioms bridgeMint_compile_sound
+
+/-- **`bridgeMint_compile_sound_nonce_is_turn_tick` — the close, applied to bridgeMint.** The
+`NonceReconciled` that `bridgeMint_compile_sound` yields, composed with a turn prologue over the credited
+cell (read as the turn's agent), gives the whole-turn ONE-tick law: the ledger body freezes (zero
+contribution), the prologue ticks once, and the descriptor's per-effect post nonce EQUALS that single
+prologue tick. So the bridge-mint row's `+1` is the turn's one tick — the divergence is CLOSED. -/
+theorem bridgeMint_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (k k' : RecordKernelState) (actor cell : CellId) (a : AssetId) (value : ℤ) (post : CellState)
+    (henc : RowEncodes env (cellProjA k cell a) value post)
+    (hsat : satisfiedVm hash compileBridgeMint env true true)
+    (hexec : interp (bridgeMintStmt actor cell a value) k = some k')
+    (s : RecChainedState) (fee : Int)
+    (hpre  : (cellProjA k cell a).nonce  = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell cell))
+    (hexecAgent : (cellProjA k' cell a).nonce
+                    = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell cell)) :
+    Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s cell fee).kernel.cell cell)
+      = Dregg2.Exec.EffectTransfer.nonceOf (s.kernel.cell cell) + 1
+    ∧ post.nonce = Dregg2.Exec.EffectTransfer.nonceOf
+        ((Dregg2.Exec.Admission.commitPrologue s cell fee).kernel.cell cell)
+    ∧ post.nonce = (cellProjA k' cell a).nonce + 1 := by
+  have hr : NonceReconciled (cellProjA k cell a).nonce post.nonce (cellProjA k' cell a).nonce :=
+    (bridgeMint_compile_sound hash env hrow k k' actor cell a value post henc hsat hexec).2
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    Dregg2.Circuit.Argus.perEffect_nonce_reconciles_to_turn hr s cell fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms bridgeMint_compile_sound_nonce_is_turn_tick
 
 /-! ### §4.3 — NON-VACUITY: `compileBridgeMint` is the genuine runnable descriptor, not a placeholder.
 

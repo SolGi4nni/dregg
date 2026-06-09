@@ -19,8 +19,10 @@ The transfer circuit and its full soundness already EXIST and are audited:
     move, balHi/8-fields/cap_root/reserved each frozen, nonce ticked) + the published commitment.
   * `EffectVmEmitTransferUnify.descriptor_agrees_with_executor_debit` — that descriptor's pinned
     post-state AGREES with the real executor `recKExec k t = some k'` on the SRC cell's projection
-    (`cellProj`), per-cell, with the ONE documented nonce-tick divergence carried as a separate
-    conjunct (the executor FREEZES the cell nonce; the EffectVM row TICKS it — `Unify` §2).
+    (`cellProj`), per-cell, with the nonce-tick reported as a separate conjunct (the executor FREEZES the
+    cell nonce; the EffectVM row TICKS it — `Unify` §2). At the ARGUS turn level (this file + `Nonce.lean`)
+    those two facts are CLOSED, not carried: `transfer_compile_sound` bundles them as a `NonceReconciled`
+    that `perEffect_nonce_reconciles_to_turn` shows IS the turn PROLOGUE's single tick over the frozen body.
 
 `compile` returns exactly that runnable descriptor for the transfer term (`compile_transferStmt`),
 and `transfer_compile_sound` WELDS the existing agreement theorem to the Argus IR term by routing
@@ -39,9 +41,12 @@ interpretations, provably aligned.
     we CITE it and do not claim it here. The credit leg is the symmetric `cellProj k' t.dst`
     statement (`EffectVmEmitTransferUnify.unify_credit`), available by the same route.
 
-  * The NONCE-TICK divergence is REAL and carried (not papered): the circuit ticks the cell nonce, the
-    executor freezes it. `transfer_compile_sound` exposes both facts as a final conjunct, identical to
-    the form `descriptor_agrees_with_executor_debit` already proves.
+  * The per-effect nonce is RECONCILED at the turn level (NOT carried as a divergence). The circuit row
+    ticks the cell nonce; the executor body FREEZES it. `transfer_compile_sound` concludes a
+    `Argus.NonceReconciled` (the two facts `descriptor_agrees_with_executor_debit` proves, bundled), and
+    `Argus.Nonce.perEffect_nonce_reconciles_to_turn` proves that this composes with the turn PROLOGUE's
+    single tick (`commitPrologue`) to the whole-turn ONE-tick law: the row's `+1` IS the prologue's tick
+    over the frozen body, not a per-effect double-count. The divergence is closed, not papered.
 
   * `compile` is TOTAL. Non-transfer-shaped terms map to a trivial empty descriptor (`skipDescriptor`,
     satisfied by everything — the honest meaning of "no circuit emitted yet"); only the transfer slice
@@ -55,6 +60,7 @@ interpretations, provably aligned.
 agreement the reused theorem proves. Imports are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Stmt
+import Dregg2.Circuit.Argus.Nonce
 import Dregg2.Circuit.Emit.EffectVmEmitTransferUnify
 import Dregg2.Circuit.Emit.EffectVmEmitMint
 import Dregg2.Circuit.Emit.EffectVmEmitBurn
@@ -71,6 +77,8 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer (transferVmDescriptor IsTransferRo
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState RowEncodes)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferUnify
   (cellProj nonceOf setBalance_nonceOf debitParams descriptor_agrees_with_executor_debit)
+-- The turn PROLOGUE (where the nonce ticks ONCE), for the per-effect nonce reconciliation (§3a/§M.2).
+open Dregg2.Exec.Admission (commitPrologue)
 -- The class-A mint/burn runnable descriptors + their per-cell full-state soundness (§M targets). Opened
 -- WITHOUT their `RowEncodes`/`CellState`/`cellProjA` (those collide with the transfer-keystone names
 -- already open above); those are named with their full path at use sites.
@@ -124,8 +132,9 @@ This is the Argus payoff for transfer: ONE term `transferStmt turn`, TWO interpr
 `transferVmDescriptor`) — that PROVABLY agree. The executor side is routed through
 `interp_transferStmt_eq_recKExec` (so the hypothesis `interp (transferStmt turn) k = some k'`
 becomes the `recKExec k turn = some k'` that the reused `…_agrees_with_executor_debit` consumes);
-the circuit side is the audited full per-cell soundness. The nonce-tick divergence is carried in
-the final conjunct exactly as the reused theorem proves it (executor freezes, circuit ticks). -/
+the circuit side is the audited full per-cell soundness. The per-effect nonce is RECONCILED at the turn
+level (`Argus.NonceReconciled` — see §3a), not carried as a divergence: row ticks, body freezes, and the
+turn prologue's single tick is the net (`Argus.Nonce.perEffect_nonce_reconciles_to_turn`). -/
 
 /-- **`transfer_compile_sound` — the welded soundness (transfer slice).**
 
@@ -137,9 +146,12 @@ Suppose, for the Argus transfer term `transferStmt turn`:
 
 Then the circuit's pinned post-state record `post` AGREES with the executor's SRC post-cell
 projection `cellProj k' turn.src` on the conserved balance and the WHOLE frame (balHi, all 8 fields,
-cap_root, reserved each frozen); and the ONE documented divergence — the circuit TICKS the cell
-nonce while the executor FREEZES it (`Unify` §2) — is reported as the final conjunct. So the circuit
-the prover runs for transfer pins the per-cell state the IR term's executor produces. -/
+cap_root, reserved each frozen); and the per-effect nonce is RECONCILED — `NonceReconciled` bundles the
+two facts (the circuit row TICKS the cell nonce; the executor body FREEZES it) as a turn-level
+reconciliation, NOT a divergence: `transfer_compile_sound_nonce_is_turn_tick` proves the row's `+1` is
+exactly the turn PROLOGUE's single tick over the frozen body. So the circuit the prover runs for transfer
+pins the per-cell state the IR term's executor produces, and the nonce ticks once PER TURN (in the
+prologue), not per effect. -/
 theorem transfer_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv)
     (k k' : RecordKernelState) (turn : Turn) (post : CellState)
@@ -153,18 +165,51 @@ theorem transfer_compile_sound
       ∧ (∀ i, post.fields i = (cellProj k' turn.src).fields i)
       ∧ post.capRoot = (cellProj k' turn.src).capRoot
       ∧ post.reserved = (cellProj k' turn.src).reserved )
-    -- … and the ONE divergence: circuit TICKS the cell nonce, executor FREEZES it (Unify §2).
-    ∧ ( post.nonce = (cellProj k turn.src).nonce + 1
-        ∧ (cellProj k' turn.src).nonce = (cellProj k turn.src).nonce ) := by
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): the row ticks, the body freezes, and
+    --   `Argus.Nonce.perEffect_nonce_reconciles_to_turn` proves this IS the turn's single prologue tick.
+    ∧ NonceReconciled (cellProj k turn.src).nonce post.nonce (cellProj k' turn.src).nonce := by
   -- circuit side: `compile (transferStmt turn)` IS `transferVmDescriptor`, so the satisfaction
   -- hypothesis is over the audited runnable descriptor.
   rw [compile_transferStmt] at hsat
   -- executor side: the cornerstone turns the IR term's `interp` into the verified `recKExec`.
   rw [interp_transferStmt_eq_recKExec] at hexec
-  -- the reused per-cell circuit⟺executor agreement, with everything now over the right surfaces.
-  exact descriptor_agrees_with_executor_debit hash env k k' turn post henc hrow hsat hexec
+  -- the reused per-cell circuit⟺executor agreement, with everything now over the right surfaces; its
+  -- two nonce facts (tick + freeze) ARE `NonceReconciled`'s two clauses.
+  obtain ⟨hframe, hTick, hFreeze⟩ :=
+    descriptor_agrees_with_executor_debit hash env k k' turn post henc hrow hsat hexec
+  exact ⟨hframe, ⟨hTick, hFreeze⟩⟩
 
 #assert_axioms transfer_compile_sound
+
+/-- **`transfer_compile_sound_nonce_is_turn_tick` — the close, applied to transfer.** The `NonceReconciled`
+that `transfer_compile_sound` yields, composed with a turn prologue over the SRC cell (read as the turn's
+agent), gives the whole-turn ONE-tick law: the body's contribution is ZERO (the executor freezes), the
+prologue's is the unique `+1`, and the descriptor's per-effect post nonce EQUALS that single prologue tick
+(`npost = nexec + 1`, the residual the old "divergence" pointed at, now located in the prologue). So the
+transfer row's `+1` is the turn's one tick — the divergence is CLOSED. -/
+theorem transfer_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (turn : Turn) (post : CellState)
+    (henc : RowEncodes env (cellProj k turn.src) (debitParams turn) post)
+    (hrow : IsTransferRow env)
+    (hsat : satisfiedVm hash (compile (transferStmt turn)) env true true)
+    (hexec : interp (transferStmt turn) k = some k')
+    (s : Dregg2.Exec.RecChainedState) (fee : Int)
+    -- the SRC cell, read as the turn's agent, carries the projected pre-nonce / executor freeze (the
+    -- weld's facts lifted onto the turn's agent cell — `cellProj`'s nonce read IS `nonceOf`):
+    (hpre  : (cellProj k turn.src).nonce  = nonceOf (s.kernel.cell turn.src))
+    (hexecAgent : (cellProj k' turn.src).nonce = nonceOf (s.kernel.cell turn.src)) :
+    nonceOf ((commitPrologue s turn.src fee).kernel.cell turn.src)
+        = nonceOf (s.kernel.cell turn.src) + 1
+    ∧ post.nonce = nonceOf ((commitPrologue s turn.src fee).kernel.cell turn.src)
+    ∧ post.nonce = (cellProj k' turn.src).nonce + 1 := by
+  have hr : NonceReconciled (cellProj k turn.src).nonce post.nonce (cellProj k' turn.src).nonce :=
+    (transfer_compile_sound hash env k k' turn post henc hrow hsat hexec).2
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    perEffect_nonce_reconciles_to_turn hr s turn.src fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms transfer_compile_sound_nonce_is_turn_tick
 
 /-! ## §4 — NON-VACUITY: `compile` does NOT collapse the transfer term to the empty placeholder.
 
@@ -337,9 +382,10 @@ The SAME shape as `transfer_compile_sound`: route the circuit side through `comp
 `interp_mintStmt_eq_recKMint` / `interp_burnStmt_eq_recKBurn` + the §M.1 projections. The honest surface
 is PER-CELL (`cellProj` of the affected cell), exactly as transfer (the descriptors are single-row AIRs;
 the global supply total is the TURN-COMPOSITION layer, cited by the Emit modules' §8½ — NOT a per-cell
-gap). Mint MATCHES on the nonce (descriptor freezes, executor freezes — no divergence); burn carries the
-nonce-tick divergence as a final conjunct (descriptor ticks, executor freezes — `Burn` §7, like
-transfer). -/
+gap). Mint MATCHES on the nonce (descriptor freezes, executor freezes — no divergence); burn RECONCILES
+the nonce at the turn level (descriptor ticks, executor freezes — `Burn` §7, like transfer), bundled as a
+`NonceReconciled` whose `+1` is the turn PROLOGUE's single tick (`burn_compile_sound_nonce_is_turn_tick`),
+NOT a carried divergence. -/
 
 /-- **`mint_compile_sound` — the welded soundness (mint slice).**
 
@@ -390,10 +436,11 @@ Suppose, for the Argus burn term `burnStmt actor cell amt`:
   * the IR term's executor COMMITS: `interp (burnStmt actor cell amt) k = some k'`.
 
 Then `post` AGREES with the executor's post-cell `cellProj k' cell` on the conserved balance (DEBITED by
-`amt`) and the whole frame (balHi/8 fields/cap_root/reserved each frozen); and the ONE divergence — the
-descriptor TICKS the cell nonce while `recKBurn` FREEZES it (`Burn` §7, identical to transfer's §2) — is
-reported as the final conjunct. So the burn circuit the prover runs pins the per-cell state the IR term's
-executor produces, modulo the carried nonce-tick. -/
+`amt`) and the whole frame (balHi/8 fields/cap_root/reserved each frozen); and the per-effect nonce is
+RECONCILED — `NonceReconciled` bundles the two facts (the descriptor TICKS the cell nonce; `recKBurn`
+FREEZES it, `Burn` §7), and the turn prologue's single tick is the net (`burn_compile_sound_nonce_is_turn
+_tick`). So the burn circuit the prover runs pins the per-cell state the IR term's executor produces, and
+the nonce ticks once PER TURN (in the prologue), not per effect. -/
 theorem burn_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBurnRow env)
     (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
@@ -405,9 +452,9 @@ theorem burn_compile_sound
       ∧ (∀ i, post.fields i = (cellProj k' cell).fields i)
       ∧ post.capRoot = (cellProj k' cell).capRoot
       ∧ post.reserved = (cellProj k' cell).reserved )
-    -- … and the ONE divergence: descriptor TICKS the cell nonce, executor FREEZES it (Burn §7).
-    ∧ ( post.nonce = (cellProj k cell).nonce + 1
-        ∧ (cellProj k' cell).nonce = (cellProj k cell).nonce ) := by
+    -- … and the per-effect nonce is RECONCILED (NOT a divergence): descriptor ticks, executor freezes,
+    --   net = the turn's single prologue tick (`Argus.Nonce.perEffect_nonce_reconciles_to_turn`).
+    ∧ NonceReconciled (cellProj k cell).nonce post.nonce (cellProj k' cell).nonce := by
   -- circuit side: `compileE .burn` IS `burnVmDescriptor`; the audited soundness forces `CellBurnSpec`.
   rw [compile_burnStmt] at hsat
   obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ :=
@@ -416,14 +463,38 @@ theorem burn_compile_sound
   rw [interp_burnStmt_eq_recKBurn] at hexec
   have heLo := recKBurn_proj_balLo hexec
   have heN := recKBurn_proj_nonce hexec
-  -- frozen frame: both projections send the non-balance limbs to `0`, so each `hc_` chains by `rfl`.
-  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, ?_, ?_⟩
+  -- frozen frame: both projections send the non-balance limbs to `0`, so each `hc_` chains by `rfl`. The
+  -- descriptor tick `hcN` + executor freeze `heN` ARE `NonceReconciled`'s two clauses.
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl⟩, hcN, heN⟩
   · rw [hcLo, heLo]                       -- balLo: pre − amt (circuit) = pre − amt (executor)
-  · rw [hcN]                              -- the descriptor TICKS the nonce (post = pre.nonce + 1)
-  · exact heN                             -- the executor FREEZES the nonce
 
 #assert_axioms mint_compile_sound
 #assert_axioms burn_compile_sound
+
+/-- **`burn_compile_sound_nonce_is_turn_tick` — the close, applied to burn.** The `NonceReconciled` that
+`burn_compile_sound` yields, composed with a turn prologue over the burned cell (read as the turn's agent),
+gives the whole-turn ONE-tick law: the body freezes (zero contribution), the prologue ticks once, and the
+descriptor's per-effect post nonce EQUALS that single prologue tick. So burn's row `+1` is the turn's one
+tick — the divergence is CLOSED, identically to transfer. -/
+theorem burn_compile_sound_nonce_is_turn_tick
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBurnRow env)
+    (k k' : RecordKernelState) (actor cell : CellId) (amt : ℤ) (post : CellState)
+    (henc : Dregg2.Circuit.Emit.EffectVmEmitBurn.RowEncodes env (cellProj k cell) amt post)
+    (hsat : satisfiedVm hash (compileE .burn) env true true)
+    (hexec : interp (burnStmt actor cell amt) k = some k')
+    (s : Dregg2.Exec.RecChainedState) (fee : Int)
+    (hpre  : (cellProj k cell).nonce  = nonceOf (s.kernel.cell cell))
+    (hexecAgent : (cellProj k' cell).nonce = nonceOf (s.kernel.cell cell)) :
+    nonceOf ((commitPrologue s cell fee).kernel.cell cell) = nonceOf (s.kernel.cell cell) + 1
+    ∧ post.nonce = nonceOf ((commitPrologue s cell fee).kernel.cell cell)
+    ∧ post.nonce = (cellProj k' cell).nonce + 1 := by
+  have hr : NonceReconciled (cellProj k cell).nonce post.nonce (cellProj k' cell).nonce :=
+    (burn_compile_sound hash env hrow k k' actor cell amt post henc hsat hexec).2
+  obtain ⟨_hzero, htick, hmatch, hresid⟩ :=
+    perEffect_nonce_reconciles_to_turn hr s cell fee hexecAgent hpre
+  exact ⟨htick, hmatch, hresid⟩
+
+#assert_axioms burn_compile_sound_nonce_is_turn_tick
 
 /-! ### §M.3 — NON-VACUITY: `compileE` does NOT collapse mint/burn to the empty placeholder.
 
