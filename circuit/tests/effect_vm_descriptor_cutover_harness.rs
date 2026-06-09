@@ -749,6 +749,17 @@ fn pinpoint_divergence_per_selector() {
                         }
                     }
                 }
+                VmConstraint::Boundary { row, body } => {
+                    use dregg_circuit::lean_descriptor_air::VmRow;
+                    let r = match row {
+                        VmRow::First => 0,
+                        VmRow::Last => n - 1,
+                    };
+                    let v = eval_lean_expr(body, &base_trace[r]);
+                    if v != 0 {
+                        fails.push(format!("boundary#{ci} {:?} row{r} body={v}", row));
+                    }
+                }
                 VmConstraint::PiBinding { row, col, pi_index } => {
                     use dregg_circuit::lean_descriptor_air::VmRow;
                     let r = match row {

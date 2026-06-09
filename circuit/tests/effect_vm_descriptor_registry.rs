@@ -23,7 +23,7 @@ use dregg_circuit::lean_descriptor_air::parse_vm_descriptor;
 /// EffectVM interpreter, and the parsed `name` round-trips the registry key.
 #[test]
 fn every_registered_descriptor_parses() {
-    assert_eq!(ALL_DESCRIPTORS.len(), 45, "expected 45 unique descriptors");
+    assert_eq!(ALL_DESCRIPTORS.len(), 47, "expected 47 unique descriptors");
     for (name, json, fp) in ALL_DESCRIPTORS {
         let by_name = descriptor_for_name(name).expect("name must resolve");
         assert_eq!(*json, by_name, "{name}: descriptor_for_name mismatch");
@@ -53,13 +53,13 @@ fn selector_lookup_drives_the_dispatcher() {
         parse_vm_descriptor(json)
             .unwrap_or_else(|e| panic!("selector {s} ({name}) failed to parse: {e}"));
     }
-    // 44 selectors carry a descriptor; 4 of them (GRANT_CAP / REVOKE_DELEGATION /
-    // INTRODUCE / ATTENUATE_CAPABILITY) share the one `attenuateA` cap-move JSON, so
-    // the 44 selector rows reference 41 distinct descriptor names.
+    // 44 selectors carry a descriptor; a few share one JSON (e.g. GRANT_CAP /
+    // REVOKE_DELEGATION / INTRODUCE / ATTENUATE_CAPABILITY all map to the `attenuateA`
+    // cap-move JSON), so the 44 selector rows reference 43 distinct descriptor names.
     assert_eq!(SELECTOR_DESCRIPTORS.len(), 44);
     let distinct_names: std::collections::BTreeSet<&str> =
         SELECTOR_DESCRIPTORS.iter().map(|(_, n, _, _)| *n).collect();
-    assert_eq!(distinct_names.len(), 41);
+    assert_eq!(distinct_names.len(), 43);
 
     // The transfer beachhead: selector 1 → the verified transfer descriptor.
     assert_eq!(
@@ -70,13 +70,22 @@ fn selector_lookup_drives_the_dispatcher() {
     assert_eq!(descriptor_for_selector(sel::NOOP), None);
     assert_eq!(descriptor_for_selector(sel::SET_FIELD), None);
 
-    // The shared cap-root-move object: ATTENUATE_CAPABILITY, REVOKE_DELEGATION,
-    // INTRODUCE, and GRANT_CAP (delegate) all dispatch to the SAME verified JSON.
+    // The shared cap-root-move object: ATTENUATE_CAPABILITY and GRANT_CAP (the
+    // unattenuated cap-root grant = the attenuate template) dispatch to the SAME verified
+    // JSON. (REVOKE_DELEGATION and INTRODUCE were graduated onto their OWN frozen-frame +
+    // nonce-tick descriptors — `revokeDelegation-v2` / `introduce-v2` — with the cap-table
+    // move/grant bound OFF-row, so they no longer share the attenuate JSON.)
     let att = descriptor_for_selector(sel::ATTENUATE_CAPABILITY);
     assert!(att.is_some());
-    assert_eq!(descriptor_for_selector(sel::REVOKE_DELEGATION), att);
-    assert_eq!(descriptor_for_selector(sel::INTRODUCE), att);
     assert_eq!(descriptor_for_selector(sel::GRANT_CAP), att);
+    assert_eq!(
+        descriptor_name_for_selector(sel::REVOKE_DELEGATION),
+        Some("dregg-effectvm-revokeDelegation-v2")
+    );
+    assert_eq!(
+        descriptor_name_for_selector(sel::INTRODUCE),
+        Some("dregg-effectvm-introduce-v2")
+    );
 }
 
 /// The 3 name-only descriptors (`mint`, `swissDropA`, `swissHandoffA`) are real,

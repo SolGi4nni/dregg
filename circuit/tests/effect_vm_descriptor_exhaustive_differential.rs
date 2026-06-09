@@ -38,7 +38,8 @@
 //! ONE descriptor shape. The deeper edge is the INTERPRETER itself: does
 //! `EffectVmDescriptorAir::eval` realize `decideVm` for ANY descriptor the IR can
 //! name? This file generates random descriptors covering EVERY arm of the Rust
-//! `VmConstraint` enum (`Gate` / `Transition` / `PiBinding{First}` /
+//! `VmConstraint` enum (`Gate` / `Transition` / `Boundary{First}` /
+//! `Boundary{Last}` / `PiBinding{First}` /
 //! `PiBinding{Last}`), every `LeanExpr` form (`Var` / `Const` / `Add` / `Mul`,
 //! nested), every `VmHashSite` input form (`Col` / `Digest` / `Zero`, arity 2 and
 //! 4, ordered digest chains), and `RangeSpec` (in- and out-of-range), over random
@@ -55,12 +56,13 @@
 //! coverage of every IR form), NOT a Lean-kernel PROOF that the Rust `eval`
 //! equals `decideVm` for all inputs — that would require extracting/modelling the
 //! p3 `eval` in Lean (out of scope; the Rust AIR is the un-verified leaf by
-//! design, per `InterpCore.lean` §5). It also inherits R1 from `InterpCore`: the
-//! Rust `VmConstraint` enum has NO `Boundary` variant, so `.boundary`-form
-//! constraints are not generated here (they are currently un-emitted by every
-//! descriptor; `decideConstraints_no_boundary_agrees` makes that vacuity precise
-//! in Lean). The generator therefore covers exactly the IR fragment the running
-//! interpreter can represent — which is the whole emitted corpus.
+//! design, per `InterpCore.lean` §5). R1 from `InterpCore` is now CLOSED: the Rust
+//! `VmConstraint` enum has a `Boundary { row, body }` variant realizing Lean's
+//! `VmConstraint.boundary` (a `when_first_row`/`when_last_row`-guarded `assert_zero`
+//! of the body polynomial), and this generator NOW emits `Boundary{First}` and
+//! `Boundary{Last}` forms — accept-leg (body vanishes on the boundary row) and
+//! reject-leg (a perturbed boundary cell), both decided identically by the AIR and
+//! the reference. The generator therefore covers the WHOLE representable IR.
 
 use dregg_circuit::lean_descriptor_air::{
     descriptor_air_accepts, EffectVmDescriptor, HashInput, LeanExpr, RangeSpec, VmConstraint,
@@ -255,22 +257,37 @@ fn oracle_decide_vm(
                         return false;
                     }
                 }
-                VmConstraint::PiBinding { .. } => {}
+                // Boundary + PI-binding fire only on the first/last row (below).
+                VmConstraint::Boundary { .. } | VmConstraint::PiBinding { .. } => {}
             }
         }
     }
 
-    // -- boundary pi-bindings: First on row 0, Last on row n-1 (the AIR's
-    //    `when_first_row` / `when_last_row`). --
+    // -- boundary forms: First on row 0, Last on row n-1 (the AIR's `when_first_row`
+    //    / `when_last_row`). Both the polynomial-vanishing `Boundary` (R1) and the
+    //    `PiBinding` are guarded `isFirst/isLast → P`, mirroring Lean
+    //    `VmConstraint.holdsVm .boundary/.piBinding`. --
     for c in &desc.constraints {
-        if let VmConstraint::PiBinding { row, col, pi_index } = c {
-            let r = match row {
-                VmRow::First => 0,
-                VmRow::Last => n - 1,
-            };
-            if rows[r][*col] != public_inputs[*pi_index] {
-                return false;
+        match c {
+            VmConstraint::PiBinding { row, col, pi_index } => {
+                let r = match row {
+                    VmRow::First => 0,
+                    VmRow::Last => n - 1,
+                };
+                if rows[r][*col] != public_inputs[*pi_index] {
+                    return false;
+                }
             }
+            VmConstraint::Boundary { row, body } => {
+                let r = match row {
+                    VmRow::First => 0,
+                    VmRow::Last => n - 1,
+                };
+                if eval_expr_concrete(body, &rows[r]) != BabyBear::ZERO {
+                    return false;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -295,6 +312,8 @@ fn oracle_decide_vm(
 struct Coverage {
     gate: usize,
     transition: usize,
+    boundary_first: usize,
+    boundary_last: usize,
     pi_first: usize,
     pi_last: usize,
     expr_var: usize,
@@ -313,6 +332,7 @@ struct Coverage {
     // which clause each injected reject broke (so every reject path is exercised).
     viol_gate: usize,
     viol_transition: usize,
+    viol_boundary: usize,
     viol_pi: usize,
     viol_site: usize,
     viol_range: usize,
@@ -490,6 +510,44 @@ fn gen_case(rng: &mut Rng, target_accept: bool, cov: &mut Coverage) -> Case {
         pi_index: pi_last_k,
     });
 
+    // ---- (4b) boundary forms (R1): an equality polynomial `col[i] - col[j]` that must
+    //      VANISH on the boundary row (`when_first_row` / `when_last_row`). We force
+    //      `col[i] == col[j]` on the boundary row using a DISJOINT cell pair in the AUX
+    //      region [100,104) — touched by NO other clause: the transition step reads
+    //      `state_after [76,90)` (sources) and writes `state_before [54,68)`; eq-gate pairs
+    //      are param [68,76); range wires are [2,5); digest cols are [120,..). So a boundary
+    //      break perturbs ONLY the boundary clause (modulo a hash site reading the cell as a
+    //      Col input, which we re-plant for). One First and one Last boundary so both row
+    //      tags are covered; the (row, i, j) triples are recorded so a reject can break
+    //      exactly one boundary. --
+    let mut boundary_specs: Vec<(VmRow, usize, usize)> = Vec::new();
+    for (bi, brow) in [VmRow::First, VmRow::Last].into_iter().enumerate() {
+        // disjoint AUX pair per boundary: [100,102) for First, [102,104) for Last.
+        let i = 100 + 2 * bi;
+        let j = 101 + 2 * bi;
+        let brow_idx = match brow {
+            VmRow::First => 0,
+            VmRow::Last => n_rows - 1,
+        };
+        base[brow_idx][j] = base[brow_idx][i]; // force the body to vanish on the boundary row
+        match brow {
+            VmRow::First => cov.boundary_first += 1,
+            VmRow::Last => cov.boundary_last += 1,
+        }
+        cov.expr_var += 2;
+        cov.expr_add += 1;
+        cov.expr_mul += 1;
+        cov.expr_const += 1;
+        boundary_specs.push((brow, i, j));
+        constraints.push(VmConstraint::Boundary {
+            row: brow,
+            body: LeanExpr::Add(
+                Box::new(LeanExpr::Var(i)),
+                Box::new(neg(LeanExpr::Var(j))),
+            ),
+        });
+    }
+
     // ---- (5) hash sites: 0..2 ordered sites; genuine digest planted below. The
     //      digest columns live in [120, 120+n_sites). A site's `Col` input must NOT
     //      read any digest column (else the site is self-referential: planting its
@@ -604,6 +662,7 @@ fn gen_case(rng: &mut Rng, target_accept: bool, cov: &mut Coverage) -> Case {
         if !ranges.is_empty() {
             kinds.push(5);
         }
+        kinds.push(6); // boundary forms are always present (one First + one Last)
         let viol = kinds[rng.below(kinds.len())];
         match viol {
             0 => {
@@ -671,6 +730,27 @@ fn gen_case(rng: &mut Rng, target_accept: bool, cov: &mut Coverage) -> Case {
                     digests.push(genuine);
                 }
                 cov.viol_range += 1;
+            }
+            6 => {
+                // break a boundary (R1): bump col[i] on the boundary row so `col[i]-col[j]`
+                // no longer vanishes there. The body is checked ONLY on the boundary row
+                // (when_first_row / when_last_row), so this fires exactly the boundary
+                // clause — the anti-vacuity tooth that the running AIR REJECTS a
+                // boundary-violating witness.
+                let (brow, i, _j) = boundary_specs[rng.below(boundary_specs.len())];
+                let brow_idx = match brow {
+                    VmRow::First => 0,
+                    VmRow::Last => n_rows - 1,
+                };
+                base[brow_idx][i] = base[brow_idx][i] + BabyBear::new(1);
+                // re-plant that row's site digests (the bumped AUX cell could feed a site).
+                let mut digests: Vec<BabyBear> = Vec::with_capacity(hash_sites.len());
+                for site in &hash_sites {
+                    let genuine = site_digest(site, &base[brow_idx], &digests);
+                    base[brow_idx][site.digest_col] = genuine;
+                    digests.push(genuine);
+                }
+                cov.viol_boundary += 1;
             }
             _ => unreachable!(),
         }
@@ -786,6 +866,8 @@ fn exhaustive_descriptor_air_decides_decide_vm() {
     let missing: Vec<(&str, usize)> = [
         ("constraint:Gate", cov.gate),
         ("constraint:Transition", cov.transition),
+        ("constraint:Boundary{First}", cov.boundary_first),
+        ("constraint:Boundary{Last}", cov.boundary_last),
         ("constraint:PiBinding{First}", cov.pi_first),
         ("constraint:PiBinding{Last}", cov.pi_last),
         ("expr:Var", cov.expr_var),
@@ -806,6 +888,7 @@ fn exhaustive_descriptor_air_decides_decide_vm() {
         // one easy clause).
         ("reject-via:gate", cov.viol_gate),
         ("reject-via:transition", cov.viol_transition),
+        ("reject-via:boundary", cov.viol_boundary),
         ("reject-via:pi", cov.viol_pi),
         ("reject-via:hash-site", cov.viol_site),
         ("reject-via:range", cov.viol_range),

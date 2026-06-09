@@ -904,8 +904,9 @@ pub enum VmRow {
     Last,
 }
 
-/// The four EffectVM constraint FORMS — the Rust mirror of Lean's
-/// `Dregg2.Circuit.Emit.EffectVmEmit.VmConstraint`.
+/// The EffectVM constraint FORMS — the Rust mirror of Lean's
+/// `Dregg2.Circuit.Emit.EffectVmEmit.VmConstraint` (all four constructors, case-complete
+/// against Lean `VmConstraint.holdsVm` / the verified `InterpCore.decideConstraint`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VmConstraint {
     /// Per-row gate `body == 0` on the transition domain (rows `0..n-2`), term-for-term
@@ -916,6 +917,14 @@ pub enum VmConstraint {
     /// Transition continuity `next.state_before[hi] == this.state_after[lo]` over the row
     /// window (rows `0..n-2`).
     Transition { hi: usize, lo: usize },
+    /// Boundary polynomial vanishing, GUARDED by the row tag (`when_first_row` /
+    /// `when_last_row`): `body == 0` WHEN the row is first/last. The Rust mirror of Lean's
+    /// `VmConstraint.boundary (row) (body)`, whose denotation
+    /// (`VmConstraint.holdsVm .boundary .first b = isFirst → b.eval loc = 0`, resp. `.last`)
+    /// is a guarded `assert_zero`. This is `R1` from `InterpCore.lean` §6, now REALIZED: a
+    /// `.boundary`-emitting descriptor is enforced by the running AIR exactly as the verified
+    /// reference `InterpCore.decideConstraint .boundary` decides it.
+    Boundary { row: VmRow, body: LeanExpr },
     /// Boundary PI binding `local[col] == public_values[pi_index]` guarded by the row tag
     /// (`when_first_row` / `when_last_row`).
     PiBinding { row: VmRow, col: usize, pi_index: usize },
@@ -1013,6 +1022,16 @@ impl EffectVmDescriptor {
                         || EFFECTVM_STATE_AFTER_BASE + lo >= self.trace_width
                     {
                         return Err(format!("transition {} out of bounds", ci));
+                    }
+                }
+                VmConstraint::Boundary { body, .. } => {
+                    if let Some(m) = body.max_var() {
+                        if m >= self.trace_width {
+                            return Err(format!(
+                                "boundary {} references column {} >= trace_width {}",
+                                ci, m, self.trace_width
+                            ));
+                        }
                     }
                 }
                 VmConstraint::PiBinding { col, pi_index, .. } => {
@@ -1186,6 +1205,23 @@ fn parse_vm_constraint(c: &mut JsonCursor) -> Result<VmConstraint, String> {
             VmConstraint::Transition {
                 hi: hi as usize,
                 lo: lo as usize,
+            }
+        }
+        "boundary" => {
+            // Lean `VmConstraint.toJson .boundary`: {"t":"boundary","row":"first"|"last","body":<expr>}
+            c.expect(b',')?;
+            c.expect_key("row")?;
+            let row_s = c.parse_string()?;
+            let row = match row_s.as_str() {
+                "first" => VmRow::First,
+                "last" => VmRow::Last,
+                other => return Err(format!("unknown boundary row \"{other}\"")),
+            };
+            c.expect(b',')?;
+            c.expect_key("body")?;
+            VmConstraint::Boundary {
+                row,
+                body: parse_expr(c)?,
             }
         }
         "pi_binding" => {
@@ -1366,9 +1402,38 @@ fn vm_site_input_state_concrete(
 /// public values, and the `when_first/last_row` selectors, so it enforces the FULL EffectVM
 /// constraint set the descriptor names. The domain choices mirror `EffectVmP3Air` exactly:
 /// `gate` + `transition` forms on the transition domain (`when_transition`, rows `0..n-2`);
-/// the hash-site digest bindings on the WHOLE domain (so the LAST row's state-commit is
-/// pinned to the genuine digest — the anti-ghost tooth); `pi_binding` forms on the
-/// `when_first_row` / `when_last_row` boundary.
+/// the hash-site digest bindings + range gates on the WHOLE domain (so the LAST row's
+/// state-commit is pinned to the genuine digest — the anti-ghost tooth); `boundary` and
+/// `pi_binding` forms on the `when_first_row` / `when_last_row` boundary.
+///
+/// ## R2 — the multi-row ⟺ single-window correspondence (InterpCore.lean §6).
+///
+/// Lean's `satisfiedVm hash d env isFirst isLast` is a SINGLE row-window denotation: it carries
+/// `gate`/`transition` UNGUARDED and `boundary`/`pi_binding` as `isFirst/isLast →`, plus
+/// `siteHoldsAll` and the per-`r` range conjunct. This multi-row AIR realizes it by quantifying
+/// over the wrap-around domain `r ∈ [0, n)`, instantiating the row window at each `r` exactly as
+/// the audited p3 verifier (`check_all_constraints`) sets the selectors:
+/// `isFirst = (r == 0)`, `isLast = (r == n−1)`, `is_transition = (r != n−1)`, `next = rows[(r+1) mod n]`.
+/// The form-by-form correspondence (which rows each constraint fires on) is:
+///
+///   * `Gate(body)` / `Transition{hi,lo}` — fire on `when_transition` (rows `0..n−2`), i.e. every
+///     window with `isLast = false`. Per such window this is `decideConstraint .gate/.transition`
+///     UNGUARDED (the form Lean carries unguarded); the last row is excluded so the wrap-around
+///     `next = rows[0]` is never read by a `Transition`, matching Lean's intra-window `nxt`.
+///   * `Boundary{First}` / `PiBinding{First}` — fire on `when_first_row` (row `0` only), i.e. the
+///     unique window with `isFirst = true`. This is exactly `decideConstraint .boundary .first` /
+///     `.piBinding .first`, whose guard `isFirst → P` is non-vacuous only there.
+///   * `Boundary{Last}` / `PiBinding{Last}` — fire on `when_last_row` (row `n−1` only), the unique
+///     window with `isLast = true`; `decideConstraint .boundary .last` / `.piBinding .last`.
+///   * hash sites + ranges — bound on EVERY row (whole domain). `satisfiedVm`'s `siteHoldsAll` /
+///     range conjuncts are window-independent (they read only `env.loc`), so the per-window reading
+///     is the same predicate on each row; enforcing on all rows is the conjunction over windows.
+///
+/// So `descriptor_air_accepts(d, trace, pi)` ⟺ `∀ r ∈ [0,n). decideVm hash d (window r) (r==0) (r==n−1)`
+/// — the cross-row conjunction of the verified single-window reference. The class-A per-effect
+/// theorems consume the single window; the multi-row quantifier is the residual this AIR adds, and
+/// `tests/effect_vm_descriptor_exhaustive_differential.rs` discharges the equality over a generated
+/// corpus covering every constraint form (incl. `Boundary{First,Last}`) and both polarities.
 #[derive(Clone)]
 pub struct EffectVmDescriptorAir {
     /// The descriptor whose constraints this AIR enforces.
@@ -1437,30 +1502,49 @@ where
             digests.push(d);
         }
 
-        // -- Boundary PI bindings (when_first_row / when_last_row). --
+        // -- Boundary forms (when_first_row / when_last_row): PI bindings AND boundary
+        //    polynomial-vanishing gates, each GUARDED by the row tag. This realizes Lean's
+        //    `VmConstraint.boundary .first/.last b` (R1): `b.eval loc = 0` asserted only on
+        //    the boundary row, exactly the `isFirst/isLast → b.eval loc = 0` denotation. --
         {
             let mut fb = builder.when_first_row();
             for c in &self.desc.constraints {
-                if let VmConstraint::PiBinding {
-                    row: VmRow::First,
-                    col,
-                    pi_index,
-                } = c
-                {
-                    fb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                match c {
+                    VmConstraint::PiBinding {
+                        row: VmRow::First,
+                        col,
+                        pi_index,
+                    } => {
+                        fb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                    }
+                    VmConstraint::Boundary {
+                        row: VmRow::First,
+                        body,
+                    } => {
+                        fb.assert_zero(body.eval_expr::<AB>(&local));
+                    }
+                    _ => {}
                 }
             }
         }
         {
             let mut lb = builder.when_last_row();
             for c in &self.desc.constraints {
-                if let VmConstraint::PiBinding {
-                    row: VmRow::Last,
-                    col,
-                    pi_index,
-                } = c
-                {
-                    lb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                match c {
+                    VmConstraint::PiBinding {
+                        row: VmRow::Last,
+                        col,
+                        pi_index,
+                    } => {
+                        lb.assert_zero(local[*col].into() - pv[*pi_index].clone());
+                    }
+                    VmConstraint::Boundary {
+                        row: VmRow::Last,
+                        body,
+                    } => {
+                        lb.assert_zero(body.eval_expr::<AB>(&local));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1479,7 +1563,10 @@ where
                         let l: AB::Expr = local[EFFECTVM_STATE_AFTER_BASE + lo].into();
                         tb.assert_zero(n - l);
                     }
-                    VmConstraint::PiBinding { .. } => {}
+                    // Boundary + PI-binding forms fire on the first/last row only (handled
+                    // in the when_first_row / when_last_row blocks above), never on the
+                    // transition domain — matching Lean's `isFirst/isLast`-guarded denotation.
+                    VmConstraint::Boundary { .. } | VmConstraint::PiBinding { .. } => {}
                 }
             }
         }
@@ -4194,20 +4281,34 @@ mod tests {
                             return false;
                         }
                     }
-                    VmConstraint::PiBinding { .. } => {}
+                    // Boundary + PI-binding fire only on the first/last row (below).
+                    VmConstraint::Boundary { .. } | VmConstraint::PiBinding { .. } => {}
                 }
             }
         }
-        // -- boundary pi-bindings: first on row 0, last on row n-1. --
+        // -- boundary forms: first on row 0, last on row n-1. Both the polynomial
+        //    `Boundary` (R1) and the `PiBinding` are guarded isFirst/isLast. --
         for c in &desc.constraints {
-            if let VmConstraint::PiBinding { row, col, pi_index } = c {
-                let r = match row {
-                    VmRow::First => 0,
-                    VmRow::Last => n - 1,
-                };
-                if rows[r][*col] != public_inputs[*pi_index] {
-                    return false;
+            match c {
+                VmConstraint::PiBinding { row, col, pi_index } => {
+                    let r = match row {
+                        VmRow::First => 0,
+                        VmRow::Last => n - 1,
+                    };
+                    if rows[r][*col] != public_inputs[*pi_index] {
+                        return false;
+                    }
                 }
+                VmConstraint::Boundary { row, body } => {
+                    let r = match row {
+                        VmRow::First => 0,
+                        VmRow::Last => n - 1,
+                    };
+                    if eval_lean_expr_concrete(body, &rows[r]) != BabyBear::ZERO {
+                        return false;
+                    }
+                }
+                _ => {}
             }
         }
         true
@@ -4324,6 +4425,124 @@ mod tests {
             t[0][STATE_AFTER_BASE_T + 0] = crate::field::BabyBear::new(1u32 << 30);
             check(&desc, "out_of_range_balance", &t, &pi34, false);
         }
+    }
+
+    /// **R1 — the Boundary form is REALIZED, through the real Plonky3 prover.** Lean's
+    /// `VmConstraint.boundary (row) (body)` (`EffectVmEmit.lean`) means "`body` vanishes WHEN
+    /// the row is first/last" — `holdsVm .boundary .first b = isFirst → b.eval loc = 0`. The
+    /// Rust `VmConstraint::Boundary { row, body }` now realizes it via a `when_first_row` /
+    /// `when_last_row` guarded `assert_zero(body)`. This test PROVES the realization is sound
+    /// AND non-vacuous: on a synthetic descriptor whose ONLY constraint is a `Boundary{First}`
+    /// body `col[a] - col[b]`,
+    ///   * an honest trace with `col[a]==col[b]` ON ROW 0 proves+verifies through the audited
+    ///     batch-stark prover; and
+    ///   * a trace that breaks the equality ON ROW 0 (the boundary row) is REJECTED (UNSAT) —
+    ///     the adversarial tooth; while
+    ///   * a trace that breaks it on a NON-boundary row but holds on row 0 is ACCEPTED (the
+    ///     guard `isFirst →` is vacuous off the boundary, exactly the Lean denotation).
+    /// The AIR-vs-denotation differential is asserted on every leg, so the running circuit's
+    /// accept/reject IS `decideConstraint .boundary`.
+    #[test]
+    fn boundary_form_realized_both_polarities() {
+        use crate::field::BabyBear;
+        // Two dedicated AUX cells for the boundary equality body `col[A] - col[B]`, away from
+        // every layout block the bare descriptor otherwise reads.
+        const A: usize = 100;
+        const B: usize = 101;
+        let body = LeanExpr::Add(
+            Box::new(LeanExpr::Var(A)),
+            Box::new(LeanExpr::Mul(Box::new(LeanExpr::Const(-1)), Box::new(LeanExpr::Var(B)))),
+        );
+        let desc = EffectVmDescriptor {
+            name: "dregg-boundary-r1-test-v0".to_string(),
+            // the real 186-column EffectVM layout, so cols A=100/B=101 are valid wires.
+            trace_width: 186,
+            public_input_count: 0,
+            constraints: vec![VmConstraint::Boundary { row: VmRow::First, body }],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+
+        // Build a 2-row trace; set row 0's (A,B) per the args, row 1 arbitrary.
+        let mk = |r0a: u32, r0b: u32, r1a: u32, r1b: u32| -> Vec<Vec<BabyBear>> {
+            let mut row0 = vec![BabyBear::ZERO; desc.trace_width];
+            let mut row1 = vec![BabyBear::ZERO; desc.trace_width];
+            row0[A] = BabyBear::new(r0a);
+            row0[B] = BabyBear::new(r0b);
+            row1[A] = BabyBear::new(r1a);
+            row1[B] = BabyBear::new(r1b);
+            vec![row0, row1]
+        };
+
+        // The audited-prover accept oracle (prove self-verifies; a debug panic = reject).
+        let air_accepts = |bt: &[Vec<BabyBear>]| -> bool {
+            let desc = desc.clone();
+            let bt = bt.to_vec();
+            std::panic::catch_unwind(move || match prove_vm_descriptor(&desc, &bt, &[]) {
+                Ok(p) => verify_vm_descriptor(&desc, &p, &[]).is_ok(),
+                Err(_) => false,
+            })
+            .unwrap_or(false)
+        };
+
+        // (1) honest: col[A]==col[B] on row 0 ⇒ ACCEPT (both AIR and denotation).
+        let honest = mk(42, 42, 7, 9);
+        assert!(denote_vm_descriptor(&desc, &honest, &[]), "denotation must accept honest boundary");
+        assert!(air_accepts(&honest), "AIR must PROVE+VERIFY the honest boundary witness");
+
+        // (2) ADVERSARIAL: col[A] != col[B] ON ROW 0 (the boundary) ⇒ REJECT (UNSAT). This is
+        //     the anti-vacuity tooth: the running circuit rejects a boundary-violating witness.
+        let broken_on_boundary = mk(42, 43, 7, 7);
+        assert!(
+            !denote_vm_descriptor(&desc, &broken_on_boundary, &[]),
+            "denotation must REJECT a boundary broken on row 0"
+        );
+        assert!(
+            !air_accepts(&broken_on_boundary),
+            "AIR must REJECT (UNSAT) a witness whose Boundary{{First}} body is non-zero on row 0"
+        );
+
+        // (3) the GUARD is real: break the body on row 1 (NOT a boundary row) but hold on row 0
+        //     ⇒ ACCEPT (the `isFirst →` guard is vacuous off row 0, matching Lean's denotation).
+        let broken_off_boundary = mk(42, 42, 7, 9);
+        assert!(
+            denote_vm_descriptor(&desc, &broken_off_boundary, &[]),
+            "denotation must ACCEPT a body that holds on row 0 but not row 1 (guard is isFirst-only)"
+        );
+        assert!(
+            air_accepts(&broken_off_boundary),
+            "AIR must ACCEPT a Boundary{{First}} that holds on row 0 regardless of row 1"
+        );
+    }
+
+    /// The Boundary form survives the JSON wire round-trip (Lean `VmConstraint.toJson .boundary`
+    /// ⟶ Rust `parse_vm_descriptor`), for both row tags. Pins R1's DECODE half: a
+    /// `.boundary`-emitting descriptor is no longer rejected by the parser.
+    #[test]
+    fn boundary_form_decodes_from_lean_json() {
+        // Exactly the bytes Lean `emitVmJson` produces for two boundary constraints
+        // (first: body `var 100`; last: body `var 101 + (-1)*var 102`), plus an empty
+        // hash_sites / ranges. Matches `VmConstraint.toJson .boundary` =
+        // {"t":"boundary","row":"first"|"last","body":<expr>}.
+        let json = r#"{"name":"dregg-boundary-decode-v0","trace_width":186,"public_input_count":0,"constraints":[{"t":"boundary","row":"first","body":{"t":"var","v":100}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":101},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":102}}}}],"hash_sites":[],"ranges":[]}"#;
+        let desc = parse_vm_descriptor(json).expect("a .boundary-emitting descriptor must DECODE");
+        assert_eq!(desc.constraints.len(), 2);
+        assert_eq!(
+            desc.constraints[0],
+            VmConstraint::Boundary { row: VmRow::First, body: LeanExpr::Var(100) }
+        );
+        assert_eq!(
+            desc.constraints[1],
+            VmConstraint::Boundary {
+                row: VmRow::Last,
+                body: LeanExpr::add(
+                    LeanExpr::Var(101),
+                    LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(102))
+                ),
+            }
+        );
+        // And it passes bounds-checking (the col indices are < trace_width).
+        assert!(desc.check_bounds().is_ok());
     }
 
     /// `STATE_AFTER_BASE` for the EffectVM layout (= 76) — the test reads the bespoke
