@@ -367,6 +367,33 @@ impl CanonicalCapTree {
             new_root: cur,
         })
     }
+
+    /// Build a **Phase B2 delegation** witness: membership-open the GRANTER's
+    /// held leaf at `held_key` (its `slot_hash`) in THIS tree (the granter's
+    /// c-list), carrying the `granted` leaf that lands in the RECIPIENT's
+    /// c-list. Unlike [`Self::attenuation_witness`], the granted leaf has its
+    /// OWN `slot_hash` (the recipient's new slot) and `breadstuff`, and the
+    /// granter's tree is UNCHANGED by the delegation — so `new_root ==
+    /// old_root` (the granter row's cap_root passes through). Returns `None`
+    /// if no leaf with `held_key` is present (a fabricated held leaf has no
+    /// authenticated position).
+    pub fn delegation_witness(
+        &self,
+        held_key: BabyBear,
+        granted: CapLeaf,
+    ) -> Option<CapAttenuationWitness> {
+        let pos = self.position_of(held_key)?;
+        let held = self.sorted_leaves[pos];
+        let (siblings, directions) = self.prove_membership(pos)?;
+        Some(CapAttenuationWitness {
+            held,
+            granted,
+            siblings,
+            directions,
+            old_root: self.root(),
+            new_root: self.root(),
+        })
+    }
 }
 
 /// Compute the canonical capability root over a set of leaves at the canonical

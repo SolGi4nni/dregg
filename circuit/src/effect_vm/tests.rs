@@ -163,6 +163,7 @@ fn test_multi_effect_turn() {
         },
         Effect::GrantCapability {
             cap_entry: w8(0xCAFE),
+            phase_b: None,
         },
     ];
 
@@ -831,7 +832,7 @@ fn test_stage3_multi_variant_compose() {
     let state = make_initial_state(10_000);
     let effects = vec![
         // Cap-root transition variants:
-        Effect::GrantCapability { cap_entry: w8(1) },
+        Effect::GrantCapability { cap_entry: w8(1), phase_b: None },
         Effect::RevokeCapability { slot_hash: w8(2) },
         // Stateless side-effects (passthrough):
         Effect::EmitEvent {
@@ -1074,6 +1075,7 @@ fn test_single_row_constraint_eval() {
             100,
             Effect::GrantCapability {
                 cap_entry: w8(0x1234),
+                phase_b: None,
             },
             "GrantCapability",
         ),
@@ -1110,6 +1112,7 @@ fn test_four_effect_stark_roundtrip() {
         },
         Effect::GrantCapability {
             cap_entry: w8(0xABCD),
+            phase_b: None,
         },
         Effect::Transfer {
             amount: 200,
@@ -1194,6 +1197,7 @@ fn test_integration_real_multi_effect_turn() {
         },
         Effect::GrantCapability {
             cap_entry: w8(0xCAFEBABE),
+            phase_b: None,
         },
         Effect::CreateObligation {
             stake_amount: 500,
@@ -1600,9 +1604,11 @@ fn test_integration_8_effect_sovereign_turn() {
         },
         Effect::GrantCapability {
             cap_entry: w8(0x1111),
+            phase_b: None,
         },
         Effect::GrantCapability {
             cap_entry: w8(0x2222),
+            phase_b: None,
         },
         Effect::CreateObligation {
             stake_amount: 1000,
@@ -1675,6 +1681,7 @@ fn test_commitment_chain_continuity() {
         ],
         vec![Effect::GrantCapability {
             cap_entry: w8(0xFACE),
+            phase_b: None,
         }],
     ];
 
@@ -1706,7 +1713,7 @@ fn test_commitment_chain_continuity() {
                     current_state.nonce += 1;
                     current_state.refresh_commitment();
                 }
-                Effect::GrantCapability { cap_entry } => {
+                Effect::GrantCapability { cap_entry, .. } => {
                     // 32-byte widening: cap_root advance uses limb[0] (matches
                     // the trace generator + AIR).
                     current_state.capability_root =
@@ -1853,6 +1860,7 @@ fn test_proof_size_measurement() {
         },
         Effect::GrantCapability {
             cap_entry: w8(0xBEEF),
+            phase_b: None,
         },
         Effect::Transfer {
             amount: 100,

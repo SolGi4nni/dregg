@@ -103,9 +103,11 @@ fn grant_capability_effects_hash_binds_full_32_bytes() {
 
     let eff_a = vec![VmEffect::GrantCapability {
         cap_entry: dregg_circuit::effect_vm::bytes32_to_8_limbs(&a),
+        phase_b: None,
     }];
     let eff_b = vec![VmEffect::GrantCapability {
         cap_entry: dregg_circuit::effect_vm::bytes32_to_8_limbs(&b),
+        phase_b: None,
     }];
 
     let (lo_a, _) = compute_effects_hash(&eff_a);

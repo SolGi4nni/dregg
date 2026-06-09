@@ -531,14 +531,34 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.fields[idx.min(7)] = *value;
                 new_state.nonce += 1;
             }
-            Effect::GrantCapability { cap_entry } => {
+            Effect::GrantCapability { cap_entry, phase_b } => {
                 // 32-byte widening: anchor limb[0] into params[0]; the AIR's
                 // cap_root advance uses limb[0]. The full 8 limbs bind via
                 // compute_effects_hash → PI[EFFECTS_HASH].
                 row[PARAM_BASE + param::CAP_ENTRY] = cap_entry[0];
 
-                let new_cap = hash_2_to_1(current_state.capability_root, cap_entry[0]);
-                new_state.capability_root = new_cap;
+                match phase_b {
+                    // ---- Phase B2: GRANTER-side delegation row ----
+                    // The row covers the GRANTER, whose seeded cap_root holds
+                    // the delegated-from cap; the p3 AIR's gates membership-open
+                    // the held leaf against state_before.cap_root, enforce
+                    // granted ⊑ held (submask + AuthRequired lattice + expiry),
+                    // and pin params[0] to the granted leaf's in-circuit
+                    // 7-field digest. Delegating does NOT move the granter's
+                    // own tree (the install lands in the RECIPIENT's c-list),
+                    // so cap_root passes through unchanged.
+                    Some(w) => {
+                        row[PARAM_BASE + param::GRANT_DIRECTION] = BabyBear::ONE;
+                        row[PARAM_BASE + param::GRANT_HELD_SLOT_HASH] = w.held.slot_hash;
+                        // capability_root: passthrough (no mutation).
+                    }
+                    // ---- Legacy: RECIPIENT install (direction 0) ----
+                    None => {
+                        let new_cap =
+                            hash_2_to_1(current_state.capability_root, cap_entry[0]);
+                        new_state.capability_root = new_cap;
+                    }
+                }
                 new_state.nonce += 1;
             }
             Effect::RevokeCapability { slot_hash } => {

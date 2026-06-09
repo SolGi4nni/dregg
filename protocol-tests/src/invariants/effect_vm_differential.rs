@@ -188,6 +188,7 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     let cap_hash = blake3::hash(&cap.slot.to_le_bytes());
                     out.push(VmEffect::GrantCapability {
                         cap_entry: hash_to_8(cap_hash.as_bytes()),
+                        phase_b: None,
                     });
                 }
                 Effect::RevokeCapability { cell, slot } if cell == cell_id => {

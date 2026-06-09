@@ -70,6 +70,7 @@ fn all_schema_variants_prove_and_verify() {
             "GrantCapability",
             Effect::GrantCapability {
                 cap_entry: w8(0xCAFE),
+                phase_b: None,
             },
         ),
         (
@@ -312,6 +313,7 @@ fn commitment_chain_three_turns_verifies_and_swap_detected() {
         }],
         &[Effect::GrantCapability {
             cap_entry: w8(0xFACE),
+            phase_b: None,
         }],
     ];
 
@@ -356,7 +358,7 @@ fn commitment_chain_three_turns_verifies_and_swap_detected() {
                 current.nonce += 1;
                 current.refresh_commitment();
             }
-            Effect::GrantCapability { cap_entry } => {
+            Effect::GrantCapability { cap_entry, .. } => {
                 current.capability_root = hash_2_to_1(current.capability_root, cap_entry[0]);
                 current.nonce += 1;
                 current.refresh_commitment();

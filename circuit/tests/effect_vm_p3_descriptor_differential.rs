@@ -98,6 +98,7 @@ fn honest_corpus() -> Vec<(&'static str, Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)
                         a[0] = BabyBear::new(0xCAFE);
                         a
                     },
+                    phase_b: None,
                 }],
             )],
         ),

@@ -371,7 +371,13 @@ fn num_hash_sites() -> usize {
 }
 
 // ============================================================================
-// AttenuateCapability — Phase B in-circuit non-amplification (the reference)
+// Cap non-amplification — Phase B (AttenuateCapability, the reference) +
+// Phase B2 (GrantCapability granter-side delegation rows, which REUSE this
+// entire block: the same scalar witness columns, the same dedicated Poseidon2
+// chain, and the same order gates, fired on sel 3 × direction. Grant differs
+// only in the cap_root move — passthrough, the granter's tree is unchanged —
+// and in binding params[0] to the granted leaf digest instead of forcing the
+// in-place leaf-update.)
 // ============================================================================
 //
 // A verifying AttenuateCapability proof IMPLIES `granted ⊑ held` (no
@@ -497,8 +503,19 @@ pub mod attn {
     pub const HELD_EXPIRY_RAW: usize = EXPIRY_DIFF_BITS_BASE + EXPIRY_DIFF_BITS; // 160
     /// Granted RAW expiry HEIGHT.
     pub const GRANTED_EXPIRY_RAW: usize = HELD_EXPIRY_RAW + 1; // 161
-    /// Total scalar witness columns in the Attenuate block.
-    pub const ATTN_SCALAR_COLS: usize = GRANTED_EXPIRY_RAW + 1; // 162
+    // ---- Phase B2 (GrantCapability delegation) generalization ----
+    /// The GRANTED leaf's own sort key. For an Attenuate row this MUST equal
+    /// [`SLOT_HASH`] (the slot is fixed across an attenuation — explicit
+    /// equality gate); for a witnessed Grant delegation row it is the
+    /// RECIPIENT's new slot_hash (a different c-list), left free here and
+    /// bound publicly via the granted-leaf digest pinned to `params[0]`.
+    pub const GRANTED_SLOT_HASH: usize = GRANTED_EXPIRY_RAW + 1; // 162
+    /// The GRANTED leaf's own breadstuff felt. Attenuate rows force equality
+    /// with [`BREADSTUFF`]; Grant delegation rows may carry the delegated
+    /// cap's own breadstuff.
+    pub const GRANTED_BREADSTUFF: usize = GRANTED_SLOT_HASH + 1; // 163
+    /// Total scalar witness columns in the shared cap non-amp block.
+    pub const ATTN_SCALAR_COLS: usize = GRANTED_BREADSTUFF + 1; // 164
 
     /// Hash-site index of the held raw-height `encode_expiry` fold.
     pub const HS_HELD_EXPIRY_FOLD: usize = 4 + 2 * CAP_TREE_DEPTH;
@@ -655,10 +672,16 @@ where
     });
     let held_leaf = poseidon2_permute_expr::<AB>(builder, h1_in, &block_aux(1));
 
-    // ---- Granted leaf digest (same shape, narrowed rights) ----
+    // ---- Granted leaf digest (same shape, narrowed rights). Phase B2: the
+    //      granted leaf hashes its OWN slot_hash / breadstuff columns (a Grant
+    //      delegation installs at the RECIPIENT's new slot, possibly with its
+    //      own breadstuff); Attenuate rows force GRANTED_SLOT_HASH == SLOT_HASH
+    //      and GRANTED_BREADSTUFF == BREADSTUFF via explicit gates in `eval`.
+    //      TARGET stays SHARED — the delegated cap points at the same target
+    //      the held cap does (the runtime looks the held cap up BY target). ----
     let g0_in: [AB::Expr; POSEIDON2_WIDTH] = {
         let mut st: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| zero.clone());
-        st[0] = sc(SLOT_HASH);
+        st[0] = sc(GRANTED_SLOT_HASH);
         st[1] = sc(TARGET);
         st[2] = sc(GRANTED_AUTH_TAG);
         st[3] = sc(GRANTED_MASK_LO);
@@ -670,7 +693,7 @@ where
     let g1_in: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|j| match j {
         0 => g0_out[0].clone() + sc(GRANTED_MASK_HI),
         1 => g0_out[1].clone() + sc(GRANTED_EXPIRY),
-        2 => g0_out[2].clone() + sc(BREADSTUFF),
+        2 => g0_out[2].clone() + sc(GRANTED_BREADSTUFF),
         _ => g0_out[j].clone(),
     });
     let granted_leaf = poseidon2_permute_expr::<AB>(builder, g1_in, &block_aux(3));
@@ -774,9 +797,9 @@ fn attenuate_hash_witness(row: &[BabyBear]) -> Vec<BabyBear> {
     let held_leaf = last_state(&h1_aux)[0];
     out.extend(h1_aux);
 
-    // Granted leaf.
+    // Granted leaf (its OWN slot_hash / breadstuff columns — Phase B2).
     let mut g0 = [BabyBear::ZERO; POSEIDON2_WIDTH];
-    g0[0] = sc(SLOT_HASH);
+    g0[0] = sc(GRANTED_SLOT_HASH);
     g0[1] = sc(TARGET);
     g0[2] = sc(GRANTED_AUTH_TAG);
     g0[3] = sc(GRANTED_MASK_LO);
@@ -787,7 +810,7 @@ fn attenuate_hash_witness(row: &[BabyBear]) -> Vec<BabyBear> {
     let mut g1 = g0_out;
     g1[0] += sc(GRANTED_MASK_HI);
     g1[1] += sc(GRANTED_EXPIRY);
-    g1[2] += sc(BREADSTUFF);
+    g1[2] += sc(GRANTED_BREADSTUFF);
     let g1_aux = poseidon2_permute_aux_witness(g1);
     let granted_leaf = last_state(&g1_aux)[0];
     out.extend(g1_aux);
@@ -867,6 +890,11 @@ pub fn attenuate_scalar_block(w: &crate::effect_vm::AttenuateWitness) -> Vec<Bab
     b[SLOT_HASH] = held.slot_hash;
     b[TARGET] = held.target;
     b[BREADSTUFF] = held.breadstuff;
+    // Phase B2: the granted leaf hashes its OWN slot / breadstuff. For an
+    // Attenuate witness these equal held's (the AIR's same-slot gates check);
+    // for a Grant delegation they are the recipient-side leaf's own fields.
+    b[GRANTED_SLOT_HASH] = granted.slot_hash;
+    b[GRANTED_BREADSTUFF] = granted.breadstuff;
     b[HELD_AUTH_TAG] = held.auth_tag;
     b[HELD_MASK_LO] = held.mask_lo;
     b[HELD_MASK_HI] = held.mask_hi;
@@ -945,9 +973,10 @@ pub fn attenuate_scalar_block(w: &crate::effect_vm::AttenuateWitness) -> Vec<Bab
     b
 }
 
-/// Build the per-row Attenuate scalar blocks for an effect sequence: the
-/// all-zero block for every non-Attenuate row, and [`attenuate_scalar_block`]
-/// for each `AttenuateCapability { phase_b: Some(_), .. }` row. The result is
+/// Build the per-row cap-non-amp scalar blocks for an effect sequence: the
+/// all-zero block for every unwitnessed row, and [`attenuate_scalar_block`]
+/// for each `AttenuateCapability { phase_b: Some(_), .. }` or (Phase B2)
+/// `GrantCapability { phase_b: Some(_), .. }` row. The result is
 /// row-aligned to [`generate_effect_vm_trace`]'s output (one row per effect,
 /// then NoOp padding to the power-of-two height), so it is consumed by
 /// [`extend_trace_with_attenuation`].
@@ -962,6 +991,12 @@ pub fn attenuate_scalar_blocks_for(
             Effect::AttenuateCapability { phase_b: Some(w), .. } => {
                 blocks.push(attenuate_scalar_block(w));
             }
+            // Phase B2: a witnessed GrantCapability delegation row carries the
+            // SAME scalar block (held membership + order-gate witness); the
+            // grant-specific gates in `eval` fire on sel 3 × direction.
+            Effect::GrantCapability { phase_b: Some(w), .. } => {
+                blocks.push(attenuate_scalar_block(w));
+            }
             _ => blocks.push(vec![BabyBear::ZERO; attn::ATTN_SCALAR_COLS]),
         }
     }
@@ -971,7 +1006,8 @@ pub fn attenuate_scalar_blocks_for(
     blocks
 }
 
-/// Prove an Attenuate (or any) effect turn through the AUDITED p3 prover with
+/// Prove an Attenuate / witnessed-Grant (or any) effect turn through the
+/// AUDITED p3 prover with
 /// the Phase-B scalar witness threaded in. `base_trace` is the 186-col trace
 /// from [`generate_effect_vm_trace`]; `effects` is the SAME sequence (used to
 /// recover the per-row Phase-B witness). The proof self-verifies before return.
@@ -998,7 +1034,8 @@ pub fn prove_effect_vm_p3_attenuation(
 }
 
 /// FRI-free accept/reject decision (the exact predicate the audited verifier
-/// enforces) for an Attenuate turn carrying the Phase-B scalar witness. Mirrors
+/// enforces) for an Attenuate / witnessed-Grant turn carrying the Phase-B
+/// scalar witness. Mirrors
 /// [`p3_air_accepts`] but threads the witness through
 /// [`extend_trace_with_attenuation`].
 pub fn p3_air_accepts_attenuation(
@@ -1275,15 +1312,41 @@ where
             tb.assert_zero(s_setfield.clone() * prod);
         }
 
-        // -- GrantCapability (hash site 4) --
+        // -- GrantCapability (ONE selector, TWO row roles — params[1] direction,
+        //    mirroring Transfer). direction 0 = recipient install (legacy hash
+        //    site 4 fold); direction 1 = the Phase-B2 GRANTER-side delegation
+        //    row, whose cap_root PASSES THROUGH (the granter's tree is not
+        //    moved by delegating) and whose non-amp gates live with the shared
+        //    Attenuate gate block below (where the scalar witness is in scope). --
+        let grant_dir = prm(param::GRANT_DIRECTION);
+        // direction is boolean on grant rows.
         tb.assert_zero(
-            s_grantcap.clone() * (new_cap_root.clone() - digests[hs::GRANT_CAP].clone()),
+            s_grantcap.clone() * grant_dir.clone() * (grant_dir.clone() - one.clone()),
+        );
+        // direction 0: the legacy recipient-install cap_root advance.
+        tb.assert_zero(
+            s_grantcap.clone()
+                * (one.clone() - grant_dir.clone())
+                * (new_cap_root.clone() - digests[hs::GRANT_CAP].clone()),
+        );
+        // direction 1: granter-side passthrough — delegating must NOT move the
+        // granter's own cap_root.
+        tb.assert_zero(
+            s_grantcap.clone()
+                * grant_dir.clone()
+                * (new_cap_root.clone() - old_cap_root.clone()),
         );
         tb.assert_zero(s_grantcap.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_grantcap.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
         for i in 0..8 {
             tb.assert_zero(s_grantcap.clone() * (fld_a(i) - fld_b(i)));
         }
+        // delegation rows: reserved passthrough (mirrors the Attenuate frame).
+        tb.assert_zero(
+            s_grantcap.clone()
+                * grant_dir.clone()
+                * (sa(state::RESERVED) - sb(state::RESERVED)),
+        );
 
         // -- EmitEvent --
         let s_emitevent = lc(sel::EMIT_EVENT);
@@ -1884,46 +1947,93 @@ where
             );
         }
 
-        // -- AttenuateCapability: PHASE B in-circuit non-amplification (gates 1-5).
-        //    A verifying row IMPLIES granted ⊑ held on BOTH lattices + monotone
-        //    expiry, with held AUTHENTICATED against old_cap_root. See [`attn`]. --
+        // -- Shared cap NON-AMPLIFICATION block: PHASE B (AttenuateCapability,
+        //    sel 48) + PHASE B2 (GrantCapability granter-side delegation rows,
+        //    sel 3 × direction). A verifying row IMPLIES granted ⊑ held on BOTH
+        //    lattices + monotone expiry, with held AUTHENTICATED against the
+        //    row's own old_cap_root (Attenuate: the actor's tree; Grant: the
+        //    GRANTER's tree — the delegated-from rights). See [`attn`]. --
         let s_attn_cap = lc(sel::ATTENUATE_CAPABILITY);
+        // The witnessed-grant delegation selector: sel 3 × the boolean
+        // direction param (boolean-gated above). Selector exclusivity makes
+        // `s_attn_cap + s_grant_del` ∈ {0, 1} on every row.
+        let s_grant_del = s_grantcap.clone() * grant_dir.clone();
         {
             use attn::*;
             let sbase = attn_scalar_base();
             let w = |off: usize| -> AB::Expr { local[sbase + off].into() };
-            let s = s_attn_cap.clone();
+            // `s` gates the SHARED non-amp gates (membership-open + submask +
+            // AuthRequired lattice + expiry-monotone); the per-effect framing
+            // and cap_root-move gates are pinned to their own selectors.
+            let s = s_attn_cap.clone() + s_grant_del.clone();
 
-            // -- State frame: balance / fields / reserved unchanged. --
-            tb.assert_zero(s.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
+            // -- Attenuate state frame: balance / fields / reserved unchanged.
+            //    (Grant's frame lives with its selector block above.) --
+            tb.assert_zero(s_attn_cap.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
+            tb.assert_zero(s_attn_cap.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
             for i in 0..8 {
-                tb.assert_zero(s.clone() * (fld_a(i) - fld_b(i)));
+                tb.assert_zero(s_attn_cap.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(s.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
+            tb.assert_zero(s_attn_cap.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
 
-            // ===== GATE 1: MEMBERSHIP-OPEN — held leaf authenticated vs old_cap_root.
-            // The held-path top (folded from the held leaf digest up the witnessed
-            // sibling path) MUST equal state_before.cap_root. The sorted tree has
-            // exactly one leaf per slot, so this pins the held rights to the real
-            // committed leaf (Forgery 3: a fabricated held leaf has no path to the
-            // real root ⇒ this fails).
+            // ===== GATE 1 (SHARED): MEMBERSHIP-OPEN — held leaf authenticated vs
+            // old_cap_root. The held-path top (folded from the held leaf digest up
+            // the witnessed sibling path) MUST equal state_before.cap_root. The
+            // sorted tree has exactly one leaf per slot, so this pins the held
+            // rights to the real committed leaf (Forgery 3: a fabricated held leaf
+            // has no path to the real root ⇒ this fails). On a Grant delegation
+            // row, state_before.cap_root is the GRANTER's tree, so the held
+            // (delegated-from) rights are granter-authenticated.
             tb.assert_zero(s.clone() * (attn_d.old_root.clone() - old_cap_root.clone()));
-            // Also bind the param-anchored slot hash to the witnessed slot, so the
-            // public AttenuateCapability params (params[0]) identify the same slot
-            // the membership opens (no swapping the proven slot for another).
-            tb.assert_zero(s.clone() * (prm(param::ATTN_CAP_SLOT_HASH) - w(SLOT_HASH)));
+            // Bind the param-anchored slot hash to the witnessed slot, so the
+            // public params identify the same slot the membership opens (no
+            // swapping the proven slot for another). Attenuate uses params[0];
+            // Grant delegation rows use params[2] (params[0] carries the granted
+            // leaf digest there).
+            tb.assert_zero(
+                s_attn_cap.clone() * (prm(param::ATTN_CAP_SLOT_HASH) - w(SLOT_HASH)),
+            );
+            tb.assert_zero(
+                s_grant_del.clone() * (prm(param::GRANT_HELD_SLOT_HASH) - w(SLOT_HASH)),
+            );
 
-            // ===== GATE 2: LEAF-UPDATE — new_cap_root forced by the canonical move.
-            // The granted (narrowed) leaf folded up the SAME sibling path MUST
-            // equal state_after.cap_root. This REPLACES the pinned-digest advance:
-            // the circuit forces the sorted-tree root move, not the executor.
-            tb.assert_zero(s.clone() * (attn_d.new_root.clone() - new_cap_root.clone()));
+            // ===== GATE 2a (Attenuate): LEAF-UPDATE — new_cap_root forced by the
+            // canonical move. The granted (narrowed) leaf folded up the SAME
+            // sibling path MUST equal state_after.cap_root. This REPLACES the
+            // pinned-digest advance: the circuit forces the sorted-tree root move,
+            // not the executor.
+            tb.assert_zero(
+                s_attn_cap.clone() * (attn_d.new_root.clone() - new_cap_root.clone()),
+            );
             // The narrower-commitment param (params[1]) is bound to the granted
             // leaf digest, so the public attestation commits to exactly the leaf
             // whose narrowed rights the gates check.
             tb.assert_zero(
-                s.clone() * (prm(param::ATTN_NARROWER_COMMITMENT) - attn_d.granted_leaf.clone()),
+                s_attn_cap.clone()
+                    * (prm(param::ATTN_NARROWER_COMMITMENT) - attn_d.granted_leaf.clone()),
+            );
+            // Attenuate same-slot / same-breadstuff law (previously structural —
+            // the granted leaf hashed the shared columns; now that the granted
+            // leaf has its own slot/breadstuff columns for Grant, Attenuate pins
+            // them equal explicitly): an attenuation narrows IN PLACE.
+            tb.assert_zero(
+                s_attn_cap.clone() * (w(GRANTED_SLOT_HASH) - w(SLOT_HASH)),
+            );
+            tb.assert_zero(
+                s_attn_cap.clone() * (w(GRANTED_BREADSTUFF) - w(BREADSTUFF)),
+            );
+
+            // ===== GATE 2b (Grant delegation): GRANTED-LEAF BINDING — the public
+            // cap_entry param (params[0], all 8 limbs in effects_hash) is pinned
+            // to the granted CapLeaf's 7-field Poseidon2 digest recomputed
+            // in-circuit from the witnessed rights fields. The installed entry's
+            // ACTUAL rights (slot/target/auth/mask/expiry/breadstuff) — not an
+            // opaque digest — are what the recipient-side root advance consumes
+            // (the recipient install row's cap_entry is the same wire value).
+            // The granter row's cap_root passthrough is enforced with its frame
+            // above.
+            tb.assert_zero(
+                s_grant_del.clone() * (prm(param::CAP_ENTRY) - attn_d.granted_leaf.clone()),
             );
 
             // ===== GATE 3: SUBMASK (EffectMask facet order) — granted ⊆ held bitwise.

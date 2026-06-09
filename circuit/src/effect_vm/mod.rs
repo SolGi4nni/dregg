@@ -9,7 +9,10 @@
 //! - NoOp (0): Padding effect; all constraints trivially satisfied.
 //! - Transfer (1): Balance transfer with direction (in/out).
 //! - SetField (2): Update a custom field slot.
-//! - GrantCapability (3): Add capability to c-list (capability_root update).
+//! - GrantCapability (3): Cross-cell delegation. direction 0 = recipient
+//!   install (capability_root update); direction 1 = granter-side delegation
+//!   row (cap Phase B2: held membership-open + non-amp gates, cap_root
+//!   passthrough).
 //! - NoteSpend (4): Spend a note (nullifier reveal, balance credit).
 //! - NoteCreate (5): Create a note (commitment creation, BALANCE-NEUTRAL — the
 //!   note value lives in the commitment, never on the transparent ledger).

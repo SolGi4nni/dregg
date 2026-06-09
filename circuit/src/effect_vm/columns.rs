@@ -422,7 +422,13 @@ pub mod aux_off {
 ///   param1 = new_value
 ///
 /// GrantCapability:
-///   param0 = capability_entry (hash of new capability)
+///   param0 = capability_entry (recipient-install rows: opaque entry digest;
+///            witnessed granter-side delegation rows: the granted CapLeaf's
+///            7-field Poseidon2 digest, pinned in-circuit)
+///   param1 = direction (0 = recipient install / legacy, 1 = granter-side
+///            Phase-B2 delegation row carrying the non-amp gate witness)
+///   param2 = held slot_hash (delegation rows only: the granter c-list slot
+///            the membership-open authenticates)
 ///
 /// NoteSpend:
 ///   param0 = nullifier
@@ -454,6 +460,14 @@ pub mod param {
     pub const FIELD_INDEX: usize = 0;
     pub const NEW_VALUE: usize = 1;
     pub const CAP_ENTRY: usize = 0;
+    /// GrantCapability row role: 0 = recipient install (legacy fold), 1 =
+    /// granter-side Phase-B2 delegation row (membership-open + non-amp gates).
+    /// Legacy traces never write params[1] on grant rows, so the zero default
+    /// keeps every pre-B2 grant row on the install semantics unchanged.
+    pub const GRANT_DIRECTION: usize = 1;
+    /// Delegation rows only: the held (granter c-list) slot_hash the
+    /// membership-open authenticates; pinned in-circuit to the witness.
+    pub const GRANT_HELD_SLOT_HASH: usize = 2;
     pub const NULLIFIER: usize = 0;
     pub const NOTE_VALUE_LO: usize = 1;
     pub const NOTE_VALUE_HI: usize = 2;

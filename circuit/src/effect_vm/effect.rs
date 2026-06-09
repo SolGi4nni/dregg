@@ -16,6 +16,15 @@ use crate::field::BabyBear;
 /// The held and granted leaves share `slot_hash` / `target` / `breadstuff` (the
 /// slot is fixed across an attenuation; only the rights narrow), so one sibling
 /// path authenticates both the old and the recomputed root.
+///
+/// **Phase B2:** the SAME witness shape carries the GrantCapability granter-side
+/// delegation row (`Effect::GrantCapability::phase_b`): `held` is the granter's
+/// authenticated c-list leaf and `granted` is the leaf installed in the
+/// RECIPIENT's c-list — so for grant the granted leaf's `slot_hash` (the
+/// recipient's new slot) and `breadstuff` may DIFFER from held's, while
+/// `target` is always shared (the delegated cap points at the same target).
+/// The AIR keeps the attenuate same-slot/same-breadstuff law via explicit
+/// equality gates fired only on Attenuate rows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttenuateWitness {
     /// The HELD (pre-attenuation) leaf — the real committed rights, authenticated
@@ -55,16 +64,43 @@ pub enum Effect {
     },
     /// Set a custom field value.
     SetField { field_idx: u32, value: BabyBear },
-    /// Grant a capability (add entry to c-list Merkle root).
+    /// Grant a capability — the cross-cell delegation. ONE selector, TWO row
+    /// roles (params[1] `GRANT_DIRECTION`, mirroring `Transfer.direction`):
     ///
-    /// 32-byte widening (effect-vm-hash-widen lane, 2026-05-28): `cap_entry`
-    /// is the full 32-byte capability-identity hash projected into 8 BabyBear
-    /// limbs (4 bytes each, little-endian) via `bytes32_to_8_limbs` — same
-    /// shape as `EmitEvent`/`Custom`. The AIR's cap_root advance uses limb[0]
-    /// (`params[0]`): `new_cap_root == hash_2_to_1(old_cap_root, cap_entry[0])`;
-    /// all 8 limbs bind via `compute_effects_hash` → `PI[EFFECTS_HASH]`, giving
-    /// full ~256-bit binding (was ~31-bit when this was a single fold felt).
-    GrantCapability { cap_entry: [BabyBear; 8] },
+    /// * **direction 0 — recipient install (legacy).** The row covers the
+    ///   RECIPIENT cell (`apply_grant_capability` lands the new entry in the
+    ///   `to` cell's c-list); `cap_entry` is the entry digest and the AIR's
+    ///   cap_root advance uses limb[0] (`params[0]`):
+    ///   `new_cap_root == hash_2_to_1(old_cap_root, cap_entry[0])`.
+    ///   32-byte widening (effect-vm-hash-widen lane, 2026-05-28): all 8 limbs
+    ///   bind via `compute_effects_hash` → `PI[EFFECTS_HASH]`.
+    ///
+    /// * **direction 1 — granter-side delegation row (cap Phase B2, `phase_b:
+    ///   Some`).** The row covers the GRANTER cell, whose
+    ///   `state_before.cap_root` IS the tree holding the delegated-from cap, so
+    ///   the held rights are membership-AUTHENTICATED in-circuit (same
+    ///   machinery as `AttenuateCapability`). The granter's own tree is
+    ///   unchanged by delegating (the install lands in the recipient's tree),
+    ///   so the row's cap_root PASSES THROUGH. The AIR pins `cap_entry[0]` to
+    ///   the GRANTED CapLeaf's 7-field Poseidon2 digest recomputed in-circuit
+    ///   from its actual rights fields (slot/target/auth/mask/expiry/
+    ///   breadstuff — not an opaque digest) and enforces the three non-amp
+    ///   order gates (submask + AuthRequired lattice + expiry-monotone) on
+    ///   (granted vs held).
+    GrantCapability {
+        cap_entry: [BabyBear; 8],
+        /// **Phase B2** granter-side non-amp witness (the same shape as the
+        /// Attenuate witness — held + granted leaves, the held membership
+        /// path in the GRANTER's tree, tier ordinals, raw expiry heights).
+        /// `Some` ⇒ the row is the direction-1 delegation row; the granted
+        /// leaf carries its OWN `slot_hash` (the recipient's new slot) and
+        /// `breadstuff`, while `target` must equal the held cap's target
+        /// (enforced structurally — one shared TARGET column hashes into both
+        /// leaves). `None` ⇒ the legacy direction-0 recipient-install row.
+        /// Excluded from the 8-limb `compute_effects_hash` binding except for
+        /// the direction felt + held slot_hash absorbed for witnessed rows.
+        phase_b: Option<Box<AttenuateWitness>>,
+    },
     /// Revoke a capability (mix the revoked slot's hash into the c-list Merkle root).
     /// Like `GrantCapability`, the AIR constraint enforces
     /// `new_cap_root == hash_2_to_1(old_cap_root, slot_hash[0])` so a malicious

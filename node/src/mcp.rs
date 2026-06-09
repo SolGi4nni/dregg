@@ -2610,6 +2610,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         // cap_root advance) with zero high limbs — equivalent to the prior
         // single-felt binding, now in the [BabyBear; 8] shape.
         cap_entry: grant_cap_entry_8(cap_slot.wrapping_add(1)),
+        phase_b: None,
     }];
     let (bal, n) = match require_pre_state(&agent_cell_id, pre_state, "grant capability") {
         Ok(pre) => pre,
@@ -4353,6 +4354,7 @@ async fn tool_prove_sovereign_turn(params: &Value, state: &NodeState) -> McpTool
             },
             "grant_cap" => dregg_circuit::effect_vm::Effect::GrantCapability {
                 cap_entry: grant_cap_entry_8(amount as u32),
+                phase_b: None,
             },
             other => {
                 return McpToolResult::error(format!("unknown effect type: '{other}'"));
@@ -6177,9 +6179,11 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         dregg_turn::Effect::GrantCapability { cap, .. } => (
             vec![dregg_circuit::effect_vm::Effect::GrantCapability {
                 cap_entry: grant_cap_entry_8(cap.slot.wrapping_add(1)),
+                phase_b: None,
             }],
             vec![dregg_circuit::effect_vm::Effect::GrantCapability {
                 cap_entry: grant_cap_entry_8(cap.slot.wrapping_add(1)),
+                phase_b: None,
             }],
         ),
         dregg_turn::Effect::Introduce { .. } => (
@@ -8421,6 +8425,7 @@ mod tests {
 
         let vm_effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
             cap_entry: grant_cap_entry_8(1),
+            phase_b: None,
         }];
 
         let (proof_hex, public_inputs, _trace, _witness_hash) =
@@ -8456,6 +8461,7 @@ mod tests {
         let state = dregg_circuit::effect_vm::CellState::new(100, 0);
         let effects = vec![dregg_circuit::effect_vm::Effect::GrantCapability {
             cap_entry: grant_cap_entry_8(1),
+            phase_b: None,
         }];
         let (_trace, public_inputs) =
             dregg_circuit::effect_vm::generate_effect_vm_trace(&state, &effects);

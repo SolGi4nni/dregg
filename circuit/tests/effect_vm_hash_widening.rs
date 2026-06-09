@@ -216,9 +216,11 @@ fn grant_capability_widened_entry_yields_distinct_public_inputs() {
 
     let eff_a = vec![VmEffect::GrantCapability {
         cap_entry: bytes32_to_8_limbs(&a),
+        phase_b: None,
     }];
     let eff_b = vec![VmEffect::GrantCapability {
         cap_entry: bytes32_to_8_limbs(&b),
+        phase_b: None,
     }];
 
     // effects_hash differs (full 256-bit binding).

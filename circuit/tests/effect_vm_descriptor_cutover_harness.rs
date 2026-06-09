@@ -226,7 +226,7 @@ fn honest_case_for_selector(sel: usize) -> Option<(CellState, Vec<Effect>)> {
         s if s == sel::BRIDGE_FINALIZE => Effect::BridgeFinalize { finalize_hash: eight(0x1) },
         s if s == sel::RELEASE_ESCROW => Effect::ReleaseEscrow { escrow_id_hash: eight(0x1) },
         s if s == sel::REFUND_ESCROW => Effect::RefundEscrow { escrow_id_hash: eight(0x1) },
-        s if s == sel::GRANT_CAP => Effect::GrantCapability { cap_entry: eight(0x1) },
+        s if s == sel::GRANT_CAP => Effect::GrantCapability { cap_entry: eight(0x1), phase_b: None },
         s if s == sel::BURN => Effect::Burn {
             target_hash: BabyBear::new(0xB0B),
             amount_lo: BabyBear::new(75),

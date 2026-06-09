@@ -127,6 +127,7 @@ fn ivc_three_step_chain_verifies() {
                 a[0] = BabyBear::new(0xCAFE);
                 a
             },
+            phase_b: None,
         },
         Effect::SetField {
             field_idx: 2,
@@ -151,7 +152,7 @@ fn ivc_three_step_chain_verifies() {
                 state.nonce += 1;
                 state.refresh_commitment();
             }
-            Effect::GrantCapability { cap_entry } => {
+            Effect::GrantCapability { cap_entry, .. } => {
                 state.capability_root = hash_2_to_1(state.capability_root, cap_entry[0]);
                 state.nonce += 1;
                 state.refresh_commitment();

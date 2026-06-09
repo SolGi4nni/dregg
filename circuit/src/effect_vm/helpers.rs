@@ -202,10 +202,20 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(*field_idx));
                 hasher_inputs.push(*value);
             }
-            Effect::GrantCapability { cap_entry } => {
+            Effect::GrantCapability { cap_entry, phase_b } => {
                 hasher_inputs.push(BabyBear::new(3));
                 // 32-byte widening: absorb all 8 limbs (~256-bit binding).
                 hasher_inputs.extend_from_slice(cap_entry);
+                // Phase B2: a witnessed granter-side delegation row absorbs its
+                // direction felt + the held slot_hash, so the public encoding
+                // distinguishes the delegation row from a recipient install and
+                // commits to WHICH held slot the membership-open authenticates.
+                // Legacy (None) rows absorb nothing extra — byte-identical to
+                // the pre-B2 encoding.
+                if let Some(w) = phase_b {
+                    hasher_inputs.push(BabyBear::ONE);
+                    hasher_inputs.push(w.held.slot_hash);
+                }
             }
             Effect::RevokeCapability { slot_hash } => {
                 hasher_inputs.push(BabyBear::new(24));
