@@ -68,12 +68,23 @@ the conclusion (NOT hidden, NOT absorbed). The `divergence` field of this module
 
 The welded conclusion is the FULL `EmitEventSpec`: all 17 kernel fields frozen + the exact log
 post-image. This is the strongest surface (it pins the whole post-state), the BalanceA `Surface2`-grade
-weld. The ONLY honest caveat — carried as an explicit hypothesis and conclusion, not papered — is the
-kernel-vs-runtime layering: the Argus `interp` refines the kernel-step (frozen kernel); the descriptor +
-the conclusion additionally pin the runtime's receipt-row append. There is NO nonce-tick divergence (emit
-freezes the cell nonce too — its kernel is literally unchanged), and NO collapsed field (the spec checks
-all 17). The payload `topic`/`data` are honestly INERT (the receipt row carries `cell` in both `src`/`dst`
-and `0` in `amt`, independent of payload) — exposed as a non-vacuity tooth.
+weld. Two honest layerings are carried EXPLICITLY (not papered):
+
+  * the kernel-vs-runtime LOG layering: the Argus `interp` refines the kernel-step (frozen kernel); the
+    descriptor + the conclusion additionally pin the runtime's receipt-row append.
+
+  * the runnable ACTOR-NONCE reconcile (§6): the KERNEL weld (§1–§5, via the abstract
+    `emitEventA_full_sound`) pins all 17 kernel fields FROZEN, INCLUDING the cell-nonce FIELD — emit's
+    kernel is literally unchanged. The RUNNABLE wide descriptor (§6, the circuit the prover RUNS) carries
+    one further, distinct column: the ACTOR turn-SEQUENCE nonce (`state.NONCE`), which the running hand-AIR
+    TICKS by 1 on every non-NoOp row (anti-replay, `air.rs:1331`). That tick is the runtime turn-sequence
+    bookkeeping leg — a DIFFERENT object than the frozen cell-nonce field — so §6's runnable weld agrees on
+    the conserved economic-kernel components and NAMES the actor-nonce tick (`post.nonce = pre.nonce + 1`)
+    as the runtime leg, rather than conflating it with the frozen cell-nonce.
+
+NO collapsed field (the spec checks all 17). The payload `topic`/`data` are honestly INERT (the receipt row
+carries `cell` in both `src`/`dst` and `0` in `amt`, independent of payload) — exposed as a non-vacuity
+tooth.
 
 ## Honesty
 
@@ -371,25 +382,34 @@ the 8 side-table roots FROZEN. So the two AGREE on the whole 17-field post-state
 
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
-open Dregg2.Circuit.Emit.EffectVmEmitEmitEvent (RowEncodes CellFreezeSpec cellProjE unify_emitEvent_exec)
+open Dregg2.Circuit.Emit.EffectVmEmitEmitEvent (RowEncodes EmitTickCellSpec cellProjE unify_emitEvent_exec)
 open Dregg2.Circuit.Emit.EffectVmEmitEmitEventWide
   (emitEventVmDescriptorWide emitEvent_runnable_full_sound)
 open Dregg2.Exec.SystemRoots (SysRoots)
 
-/-- **`emitEvent_runnable_full_state_weld` — THE RUNNABLE full-state agreement (emit slice).**
+/-- **`emitEvent_runnable_full_state_weld` — THE RUNNABLE full-state agreement (emit slice), RECONCILED
+onto the runtime nonce-TICK convention.**
 
 Suppose, for the Argus emitEvent term:
   * the RUNNABLE wide descriptor `emitEventVmDescriptorWide` is SATISFIED by `(env, true, true)` under the
-    abstract Poseidon carrier `hash` (`hsat`), decoded by `RowEncodes env pre post` (`henc`), with the
+    abstract Poseidon carrier `hash` (`hsat`), decoded by `RowEncodesEmit env pre post` (`henc`), with the
     frozen-roots witness `sr = preRoots` (`hroots`);
   * the IR term's runtime executor COMMITS: `execFullA s (.emitEventA actor cell topic data) = some s'`
     (`hexec`), and the row's `pre` is the executor's pre-cell projection `cellProjE s.kernel c` (`hpre`).
 
 Then the RUNNABLE descriptor's pinned post-state `post` AGREES with the EXECUTOR's post-cell projection
-`cellProjE s'.kernel c` on EVERY economic-block component (the whole cell FROZEN), AND the side-table roots
-`sr` are FROZEN at `preRoots`. So the circuit the prover RUNS for emit binds the full 17-field post-state
-the IR term's executor produces — the per-cell block (via the absorbed columns) AND the 8 side-table roots
-(via the wide commitment), strictly stronger than the per-cell EffectVM row or the abstract universe. -/
+`cellProjE s'.kernel c` on every CONSERVED economic-kernel component (`balLo`/`balHi`/`fields`/`capRoot`/
+`reserved`), AND the side-table roots `sr` are FROZEN at `preRoots`. So the circuit the prover RUNS for
+emit binds the full 17-field kernel post-state the IR term's executor produces — the per-cell economic
+block (via the absorbed columns) AND the 8 side-table roots (via the wide commitment).
+
+THE HONEST RECONCILE (named, not papered): the runnable descriptor's `state.NONCE` column is the ACTOR's
+turn-SEQUENCE nonce (anti-replay), which the running hand-AIR TICKS by 1 on every non-NoOp row
+(`air.rs:1331`). That tick is the runtime turn-bookkeeping leg — it lives OFF the universe-A
+`RecordKernelState` (the cell-nonce-FIELD, which §1–§5's kernel weld separately pins FROZEN via the
+abstract `emitEventA_full_sound`; `cellProjE` zeros the sequence-nonce slot). So the runnable weld agrees
+on the conserved kernel components and CARRIES the actor-nonce tick as the explicit runtime leg
+(`post.nonce = pre.nonce + 1`), rather than conflating it with the frozen cell-nonce field. -/
 theorem emitEvent_runnable_full_state_weld
     (hash : List ℤ → ℤ) (env : VmRowEnv)
     (s s' : RecChainedState) (actor cell c : CellId) (topic data : Int)
@@ -401,26 +421,28 @@ theorem emitEvent_runnable_full_state_weld
     (hexec : execFullA s (.emitEventA actor cell topic data) = some s') :
     ( post.balLo = (cellProjE s'.kernel c).balLo
       ∧ post.balHi = (cellProjE s'.kernel c).balHi
-      ∧ post.nonce = (cellProjE s'.kernel c).nonce
       ∧ (∀ i, post.fields i = (cellProjE s'.kernel c).fields i)
       ∧ post.capRoot = (cellProjE s'.kernel c).capRoot
       ∧ post.reserved = (cellProjE s'.kernel c).reserved )
+    ∧ post.nonce = (cellProjE s'.kernel c).nonce + 1
     ∧ sr = preRoots := by
-  -- RUNNABLE circuit side: the wide descriptor pins `CellFreezeSpec pre post` + frozen roots.
+  -- RUNNABLE circuit side: the wide descriptor pins `EmitTickCellSpec pre post` (economic block frozen,
+  -- the actor nonce ticked) + frozen roots.
   obtain ⟨hfreeze, hsr⟩ :=
     emitEvent_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
   obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hfreeze
-  -- executor side: the committed emit freezes the whole kernel, so `cellProjE` of pre = post (per cell).
+  -- executor side: the committed emit freezes the WHOLE kernel (all 6 block components, INCLUDING the
+  -- cell-nonce FIELD), so `cellProjE` of pre = post per cell.
   obtain ⟨heLo, heHi, heN, heF, heCap, heRes⟩ := unify_emitEvent_exec s s' actor cell c topic data hexec
-  -- substitute `pre = cellProjE s.kernel c`, then chain the circuit-freeze with the executor-freeze.
   subst hpre
-  refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_⟩, hsr⟩
+  refine ⟨⟨?_, ?_, ?_, ?_, ?_⟩, ?_, hsr⟩
   · rw [hcLo, heLo]
   · rw [hcHi, heHi]
-  · rw [hcN, heN]
   · intro i; rw [hcF i, heF i]
   · rw [hcCap, heCap]
   · rw [hcRes, heRes]
+  · -- the actor-nonce ticks ONE above the (frozen) cell-nonce field.
+    rw [hcN, heN]
 
 #assert_axioms emitEvent_runnable_full_state_weld
 

@@ -58,8 +58,8 @@ open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols)
 open Dregg2.Circuit.Emit.EffectVmEmitEmitEvent
-  (IsEmitRow emitRowGates emitEventVmDescriptor EmitRowIntent emitEventVm_faithful
-   emitRowGates_flag_indep RowEncodes CellFreezeSpec intent_to_cellSpec)
+  (IsEmitRow SEL_EMIT_EVENT emitTickRowGates emitEventVmDescriptor EmitTickRowIntent emitTickVm_faithful
+   emitTickRowGates_flag_indep RowEncodes EmitTickCellSpec intent_to_tickCellSpec)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
   (wideHashSites RunnableFullStateSpec runnable_full_sound)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
@@ -75,20 +75,21 @@ ONLY on the gates (the sites bind the COMMITMENT — §4 — not the per-cell sp
 `EffectVmFullStateRunnable.transferGates_give_cellSpec`. -/
 
 /-- **`emitEventGates_give_cellSpec` — the GATE-ONLY per-cell soundness.** The narrow descriptor's per-row
-gates (a constraint-list segment), on an emit row decoded by `RowEncodes`, force `CellFreezeSpec` (the
-whole block FROZEN). No hash-site hypothesis. -/
+gates (a constraint-list segment), on an emit row decoded by `RowEncodesEmit` with `s_noop = 0`, force
+`EmitCellSpec` (the economic block FROZEN, the actor nonce TICKS by 1). No hash-site hypothesis. -/
 theorem emitEventGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0)
     (henc : RowEncodes env pre post)
     (hgates : ∀ c ∈ emitEventVmDescriptor.constraints, c.holdsVm env true true) :
-    CellFreezeSpec pre post := by
-  have hrowgates : ∀ c ∈ emitRowGates, c.holdsVm env true true := by
+    EmitTickCellSpec pre post := by
+  have hrowgates : ∀ c ∈ emitTickRowGates, c.holdsVm env true true := by
     intro c hc
     apply hgates
     unfold emitEventVmDescriptor
     simp only [List.mem_append]
-    exact Or.inl (Or.inl (Or.inl hc))
-  have hrowgates' := emitRowGates_flag_indep env true true hrowgates
-  exact intent_to_cellSpec env pre post henc ((emitEventVm_faithful env).mp hrowgates')
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+  have hrowgates' := emitTickRowGates_flag_indep env true true hrowgates
+  exact intent_to_tickCellSpec env pre post hnoop henc ((emitTickVm_faithful env).mp hrowgates')
 
 #assert_axioms emitEventGates_give_cellSpec
 
@@ -113,14 +114,15 @@ theorem emitEventWide_constraints_eq :
 the full clause is the per-cell `CellFreezeSpec` (the whole block frozen) AND `postRoots = preRoots`. -/
 
 /-- **`EmitEventFullClause`** — the full declarative post-state for the emit over `(pre, post, postRoots)`:
-the per-cell `CellFreezeSpec` (the whole block FROZEN) AND the 8 side-table roots FROZEN. Non-vacuous
-(`goodEmitEvent_realizes` / `emitEvent_clause_not_trivial`). -/
+the per-cell `EmitCellSpec` (the economic block FROZEN, the actor nonce TICKS by 1) AND the 8 side-table
+roots FROZEN. Non-vacuous (`goodEmitEvent_realizes` / `emitEvent_clause_not_trivial`). -/
 def EmitEventFullClause (preRoots : SysRoots)
     (pre post : CellState) (postRoots : SysRoots) : Prop :=
-  CellFreezeSpec pre post ∧ postRoots = preRoots
+  EmitTickCellSpec pre post ∧ postRoots = preRoots
 
 /-- **`emitEventRunnableSpec` — the FULL-state RUNNABLE instance.** `decodeFull` projects the wide gates to
-the GATE-ONLY `emitEventGates_give_cellSpec`, then carries the frozen-roots fact. THIN, NON-VACUOUS. -/
+the GATE-ONLY `emitEventGates_give_cellSpec` (extracting `s_noop = 0` from the emit-row hypothesis), then
+carries the frozen-roots fact. THIN, NON-VACUOUS. -/
 def emitEventRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
   descriptor    := emitEventVmDescriptorWide
   usesWideSites := rfl
@@ -131,20 +133,21 @@ def emitEventRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellStat
   decodeFull    := by
     intro env pre post postRoots hrow hdec hgates
     obtain ⟨henc, hroots⟩ := hdec
-    exact ⟨emitEventGates_give_cellSpec env pre post henc
+    exact ⟨emitEventGates_give_cellSpec env pre post hrow.2 henc
             (emitEventWide_constraints_eq ▸ hgates), hroots⟩
 
 /-- **`emitEvent_runnable_full_sound` — THE CROWN (emitEvent slice).** A row satisfying the RUNNABLE wide
 descriptor (`satisfiedVm emitEventVmDescriptorWide`, first/last active), under the structured decode
-(`RowEncodes` + frozen roots), pins the FULL 17-field declarative post-state: the per-cell `CellFreezeSpec`
-(the whole block FROZEN) AND all 8 side-table roots FROZEN. The analog of the abstract
-`emitEventA_full_sound`, but for the circuit the prover ACTUALLY RUNS. -/
+(`RowEncodesEmit` + frozen roots), pins the FULL 17-field declarative post-state: the per-cell
+`EmitCellSpec` (the economic block FROZEN, the actor nonce TICKED) AND all 8 side-table roots FROZEN. The
+analog of the abstract `emitEventA_full_sound`, but for the circuit the prover ACTUALLY RUNS (reconciled
+onto the runtime nonce-TICK convention). -/
 theorem emitEvent_runnable_full_sound (hash : List ℤ → ℤ)
     (env : VmRowEnv) (pre post : CellState) (sr preRoots : SysRoots)
     (hrow : IsEmitRow env)
     (henc : RowEncodes env pre post) (hroots : sr = preRoots)
     (hsat : satisfiedVm hash emitEventVmDescriptorWide env true true) :
-    CellFreezeSpec pre post ∧ sr = preRoots :=
+    EmitTickCellSpec pre post ∧ sr = preRoots :=
   runnable_full_sound (emitEventRunnableSpec preRoots) hash env pre post sr
     hrow ⟨henc, hroots⟩ hsat
 
@@ -197,15 +200,17 @@ def emitPre : CellState :=
   { balLo := 100, balHi := 0, nonce := 5, fields := fun i => if i = 3 then 9 else 0, capRoot := 0
   , reserved := 0, commit := 0 }
 
-/-- The post-state emit produces: the WHOLE block frozen (= `emitPre`). -/
-def emitPost : CellState := emitPre
+/-- The post-state emit produces: the economic block frozen (= `emitPre`) with the actor nonce TICKED
+(5 → 6). -/
+def emitPost : CellState := { emitPre with nonce := 6 }
 
 /-- **`goodEmitEvent_realizes` — NON-VACUITY (witness TRUE).** The emit `fullClause` is INHABITED by a
-real emit: `emitPost` IS `emitPre` (every block component FROZEN — emit moves nothing in the kernel) and
-the roots are frozen. So the full clause is NOT `True`. -/
+real emit: `emitPost`'s economic block IS `emitPre`'s (every economic component FROZEN — emit moves nothing
+in the kernel) with the actor nonce ticked (`6 = 5 + 1`), and the roots are frozen. So the full clause is
+NOT `True`. -/
 theorem goodEmitEvent_realizes :
     (emitEventRunnableSpec goodPreRoots).fullClause emitPre emitPost goodPreRoots :=
-  ⟨⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+  ⟨⟨rfl, rfl, by simp only [emitPre, emitPost]; norm_num, fun _ => rfl, rfl, rfl⟩, rfl⟩
 
 /-- **`emitEvent_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose bal_lo
 is NOT frozen (`emitPre.balLo = 100`, but a forged `999`) FAILS the full clause — non-vacuity from BOTH
@@ -214,7 +219,7 @@ theorem emitEvent_clause_not_trivial :
     ¬ EmitEventFullClause goodPreRoots emitPre { emitPost with balLo := 999 } goodPreRoots := by
   rintro ⟨⟨hbal, _⟩, _⟩
   -- hbal : (999) = emitPost.balLo = emitPre.balLo = 100
-  simp only [emitPre] at hbal
+  simp only [emitPre, emitPost] at hbal
   norm_num at hbal
 
 /-- **NON-VACUITY (the wide descriptor is the genuine 188-wide circuit).** `emitEventVmDescriptorWide`
@@ -236,6 +241,6 @@ theorem emitEventWide_is_genuine :
 
 #guard emitEventVmDescriptorWide.traceWidth == 188
 #guard emitEventVmDescriptorWide.hashSites.length == 4
-#guard emitEventVmDescriptorWide.constraints.length == 14 + 14 + 4 + 3
+#guard emitEventVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3 + 1
 
 end Dregg2.Circuit.Emit.EffectVmEmitEmitEventWide

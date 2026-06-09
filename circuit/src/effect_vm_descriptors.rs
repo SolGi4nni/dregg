@@ -113,8 +113,12 @@ pub const DREGG_EFFECTVM_CREATESEALPAIR_V2_JSON: &str = include_str!("../descrip
 pub const DREGG_EFFECTVM_CREATESEALPAIR_V2_FP: &str = "641929a552046fd6ea2455b10ea4c4e0d11d7709a237252dfcd9187bf119f1b7";
 pub const DREGG_EFFECTVM_DROPREFA_V2_JSON: &str = include_str!("../descriptors/dregg-effectvm-dropRefA-v2.json");
 pub const DREGG_EFFECTVM_DROPREFA_V2_FP: &str = "3daa5525aa9a4accef64e8cdbec2a13ed85cb7f7fe2abe9468acb19ce64b8c32";
+// emitEvent GRADUATED into the cutover (passthrough+tick reconcile): the Lean emit module
+// `EffectVmEmitEmitEvent` now ticks the runtime nonce (`gNonce`), freezes the economic block (NOT the
+// commit), and carries the selector-binding gate (`selectorGates 25`). The prior JSON froze the nonce +
+// the commit (made the honest TICKED trace UNSAT). Name unchanged (`-v1`); body + fingerprint updated.
 pub const DREGG_EFFECTVM_EMITEVENT_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-emitEvent-v1.json");
-pub const DREGG_EFFECTVM_EMITEVENT_V1_FP: &str = "1ed2b76564fc123f7968cfb75d8a89f85485585cabecd389ce4948dd2def6480";
+pub const DREGG_EFFECTVM_EMITEVENT_V1_FP: &str = "9da75b2120a3492a37719177d343c681a8f3acd967f0fed880cf7aa0f400c250";
 pub const DREGG_EFFECTVM_ENLIVENREFA_V1_JSON: &str = include_str!("../descriptors/dregg-effectvm-enlivenRefA-v1.json");
 pub const DREGG_EFFECTVM_ENLIVENREFA_V1_FP: &str = "61920ca6cce36632eddffcf03f16c5a82cd1dd6c62e17bcef38f6b21854da6cc";
 // GRADUATED (nonce-tick + last-row PI pins, v2): the Lean emit module was reconciled onto the runtime
