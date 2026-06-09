@@ -101,6 +101,7 @@ owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.makeSovereignA
 import Dregg2.Circuit.Spec.sovereigncommitment
+import Dregg2.Circuit.Emit.EffectVmEmitMakeSovereignFullState
 
 namespace Dregg2.Circuit.Argus.Effects.MakeSovereign
 

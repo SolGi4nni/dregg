@@ -85,6 +85,7 @@ read-only.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitCreateEscrow
+import Dregg2.Circuit.Emit.EffectVmEmitCreateEscrowWide
 
 namespace Dregg2.Circuit.Argus.Effects.CreateObligation
 
@@ -322,5 +323,62 @@ theorem createObligationStmt_rejects_dead_obligor :
 #assert_axioms createObligationStmt_posts
 #assert_axioms createObligationStmt_rejects_overdraft
 #assert_axioms createObligationStmt_rejects_dead_obligor
+
+/-! ## §6 — FULL-STATE on the RUNNABLE descriptor (the magnesium breadth — bind ALL 17 fields).
+
+createObligation is dispatch-aliased to PLAIN createEscrow (`createObligationStmt = createEscrowStmt …`,
+`createObligationA ↦ createEscrowChainA`), so its circuit IS plain createEscrow's
+(`createEscrowVmDescriptorGenuine`). `EffectVmEmitCreateEscrowWide.createEscrow_runnable_full_sound` lifts
+those SAME per-row gates through the generic `runnable_full_sound` over the WIDE descriptor
+`createEscrowVmDescriptorWide` (dedicated `sysRootsDigestCol`, `wideHashSites`, widened width): a satisfying
+row binds the FULL 17-field post-state (per-cell DEBIT AND the `escrows` digest advance), with the generic
+anti-ghost giving the no-malleability tooth on all 17. This section welds THAT full-state crown to the
+obligation executor cornerstone (§2 + the §4.1 projection). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitCreateEscrowWide
+  (createEscrowVmDescriptorWide createEscrow_runnable_full_sound)
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowFamilyWide (ESCROW_STEP_PARAM)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest)
+
+/-- **`createObligation_runnable_full_state` — THE FULL-STATE WELD (createObligation).** A row satisfying the
+WIDE RUNNABLE descriptor `createEscrowVmDescriptorWide` (its `RowEncodesCreate` decode NAMES `post` over the
+obligor cell's projection `cellProjCreate k.bal obligor asset` with `⟨stake⟩`, the dedicated digest carriers
+pinned to the `systemRootsDigest` of the pre/post sub-blocks with the accumulator `step`), when the IR term's
+executor COMMITS, agrees per-cell with the executor's debited obligor-cell projection
+`cellProjCreate k'.bal obligor asset` on EVERY limb AND binds the `escrows` side-table digest advance — all
+17 fields bound by the circuit the prover RUNS. -/
+theorem createObligation_runnable_full_state
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (id : Nat) (actor obligor beneficiary : CellId)
+    (asset : AssetId) (stake : ℤ)
+    (post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (preRoots postRoots : SysRoots) (step : ℤ)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitCreateEscrow.IsCreateEscrowRow env)
+    (henc : RowEncodesCreate env (cellProjCreate k.bal obligor asset) ⟨stake⟩ post)
+    (hAfter : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestCol
+                = systemRootsDigest hash postRoots)
+    (hBefore : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestColBefore
+                = systemRootsDigest hash preRoots)
+    (hStep : env.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol ESCROW_STEP_PARAM) = step)
+    (hsat : satisfiedVm hash createEscrowVmDescriptorWide env true true)
+    (hexec : interp (createObligationStmt id actor obligor beneficiary asset stake) k = some k') :
+    ( post.balLo = (cellProjCreate k'.bal obligor asset).balLo
+      ∧ post.balHi = (cellProjCreate k'.bal obligor asset).balHi
+      ∧ (∀ i, post.fields i = (cellProjCreate k'.bal obligor asset).fields i)
+      ∧ post.capRoot = (cellProjCreate k'.bal obligor asset).capRoot
+      ∧ post.reserved = (cellProjCreate k'.bal obligor asset).reserved
+      ∧ post.nonce = (cellProjCreate k'.bal obligor asset).nonce )
+    ∧ systemRootsDigest hash postRoots = systemRootsDigest hash preRoots + step := by
+  obtain ⟨hcs, hdig⟩ :=
+    createEscrow_runnable_full_sound ⟨stake⟩ hash preRoots step env
+      (cellProjCreate k.bal obligor asset) post postRoots hrow henc hAfter hBefore hStep hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hcs
+  rw [interp_createObligationStmt_eq_createEscrowKAsset] at hexec
+  have heLo := createObligationKAsset_proj_balLo hexec
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl,
+           hcN.trans rfl⟩, hdig⟩
+  rw [hcLo, heLo]
+
+#assert_axioms createObligation_runnable_full_state
 
 end Dregg2.Circuit.Argus.Effects.CreateObligation

@@ -81,6 +81,7 @@ and edits no other Argus module.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.cellDestroyA
 import Dregg2.Circuit.Spec.celllifecycle
+import Dregg2.Circuit.Emit.EffectVmEmitCellDestroyFullState
 
 namespace Dregg2.Circuit.Argus.Effects.CellDestroy
 

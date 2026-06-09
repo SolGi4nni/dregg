@@ -89,6 +89,7 @@ no other Argus module.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitExercise
+import Dregg2.Circuit.Emit.EffectVmEmitExerciseWide
 
 namespace Dregg2.Circuit.Argus.Effects.ExerciseViaCapability
 
@@ -405,6 +406,47 @@ theorem compileExercise_nontrivial :
 #assert_axioms exerciseStmt_rejects_wrong_target
 #assert_axioms exerciseStmt_frozen_kernel
 #assert_axioms compileExercise_nontrivial
+
+/-! ## §MAGNESIUM — THE RUNNABLE full-state soundness (all 17 fields + the 8 side-table roots, on the
+circuit the prover RUNS).
+
+§4 welded the Argus term against the audited runnable descriptor `exerciseVmDescriptor` on the PER-CELL
+surface (`exerciseDescriptor_full_sound`: the cell's economic block FROZEN, nonce TICKED). This section
+adds the FULL-STATE upgrade: the WIDE runnable descriptor `exerciseVmDescriptorWide` (the 188-wide
+`system_roots`-absorbing EffectVM descriptor) pins the FULL 17-field declarative post-state — the per-cell
+economic block FROZEN + the nonce TICKED (via the absorbed columns) AND ALL 8 side-table roots FROZEN (via
+the wide commitment). This closes the Class-C "pale ghost" on the runnable descriptor: the narrow 186-wide
+`exerciseVmDescriptor`'s commitment bound NONE of the 8 side-table roots; the wide one binds them.
+
+HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §4/§DEFER name): the OUTER hold-gate layer
+(`inner = []`); the NONCE-TICK divergence (the runtime row ticks the cell nonce — `post.nonce = pre.nonce
++ 1` — while the executor hold-step FREEZES the kernel, reconciled at the turn level); the receipt-log
+prepend (off the per-row state block, riding universe-A's portal). This module closes ONLY the
+side-table-root binding gap on the kernel state — the inner sub-forest stays the turn-composition layer. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitExercise (RowEncodesExercise ExerciseCellSpec)
+open Dregg2.Circuit.Emit.EffectVmEmitExerciseWide
+  (exerciseVmDescriptorWide exercise_runnable_full_sound)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`exercise_runnable_full_state_weld` — THE RUNNABLE full-state soundness (exercise hold-layer slice).**
+A row satisfying the RUNNABLE wide descriptor `exerciseVmDescriptorWide` (`satisfiedVm`, first/last
+active), decoded by `RowEncodesExercise env pre post` with the frozen-roots witness `sr = preRoots`, pins
+the FULL 17-field declarative post-state: the per-cell `ExerciseCellSpec` (economic block FROZEN, nonce
+TICKED) AND all 8 side-table roots FROZEN (`sr = preRoots`). This is the FULL-STATE strengthening of §4's
+per-cell `exercise_compile_sound` — and it BINDS the side-table roots the narrow descriptor left unbound.
+The per-cell economic freeze IS the frozen kernel the IR term's executor produces (§4); the nonce-tick +
+receipt-log are the carried turn-level residuals named above. -/
+theorem exercise_runnable_full_state_weld
+    (hash : List ℤ → ℤ) (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (pre post : CellState) (sr preRoots : SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitExercise.IsExerciseRow env)
+    (henc : RowEncodesExercise env pre post) (hroots : sr = preRoots)
+    (hsat : Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash exerciseVmDescriptorWide env true true) :
+    ExerciseCellSpec pre post ∧ sr = preRoots :=
+  exercise_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+
+#assert_axioms exercise_runnable_full_state_weld
 
 /-! ## §DEFER — honest scope of this weld (documented, NOT a silent gap).
 

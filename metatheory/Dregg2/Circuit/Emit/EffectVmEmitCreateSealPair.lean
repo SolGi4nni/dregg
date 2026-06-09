@@ -38,6 +38,7 @@ Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.sealpaircreation
 import Dregg2.Exec.SystemRoots
@@ -513,11 +514,188 @@ theorem staleNoncePairRow_rejected :
     state.BALANCE_LO, state.NONCE]
   norm_num
 
+/-! ## §MAG — THE MAGNESIUM FULL-STATE LIFT: the RUNNABLE descriptor binds ALL 17 fields.
+
+§7's `createSealPairDescriptor_full_sound` binds the per-cell state block (13 absorbed columns →
+`CellPairSpec`) on the 186-wide descriptor — but that descriptor's `state_commit` absorbs ONLY the 13
+state-block columns; the 8 `system_roots` side-table roots ride a separate record-layer commitment the
+row does not carry (the Class-C "pale ghost"). This section CLOSES that for createSealPair, following the
+VALIDATED REFERENCE `EffectVmFullStateRunnable.transferRunnableSpec` VERBATIM: a WIDE descriptor whose
+`state_commit` ALSO absorbs the dedicated `sysRootsDigestCol` carrier, lifted through the GENERIC crown
+`runnable_full_sound`. The crypto is discharged ONCE in the generic theorem; the per-effect content is
+THIN — the (hash-site-free) gate→`CellPairSpec` projection + the decode.
+
+THE HONEST FULL CLAUSE (the seal-root binding the task asks for). The RUNNABLE descriptor faithfully
+describes the RUNTIME createSealPair (`air.rs:983-1018`, the Stage-3 passthrough batch): every
+state-block column frozen EXCEPT the nonce, which ticks. That on-trace effect touches NO side-table — a
+fresh pair holds no box, so `sealedBoxes` is FRAMED (and the double cap-grant is the SEPARATE universe-A
+`CreateSealPairSpec` leg, the §11 carried divergence). So the runtime createSealPair FREEZES all 8
+`system_roots` roots (INCLUDING `SEALED_BOXES`), exactly as transfer does. The full clause is
+`CellPairSpec pre post` (passthrough + nonce tick) AND `postRoots = preRoots` (all 8 side-table roots
+frozen, the seal-root among them). The anti-ghost (`createSealPairRunnable_rejects_root_tamper`) bites on
+ALL 17 fields. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+
+/-- **`createSealPairVmDescriptorWide`** — createSealPair's descriptor WIDENED: the SAME per-row gates
+(state-block passthrough + nonce tick) + transitions + boundary pins + selector gate, but `traceWidth :=
+EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites`. Strictly additive: the constraint list is
+byte-identical; only the width grows by 2 and the outer site's spare slot becomes the `system_roots`
+digest carrier. -/
+def createSealPairVmDescriptorWide : EffectVmDescriptor :=
+  { createSealPairVmDescriptor with
+    name := createSealPairVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide createSealPair descriptor's constraints ARE createSealPair's. -/
+theorem createSealPairWide_constraints_eq :
+    createSealPairVmDescriptorWide.constraints = createSealPairVmDescriptor.constraints := rfl
+
+/-- **`createSealPairGates_give_cellPairSpec` — the GATE-ONLY per-cell soundness (no hash-site
+hypothesis).** The per-row gates of the createSealPair descriptor, on a pair-creation row decoded by
+`RowEncodesPair`, force `CellPairSpec` — the body of `createSealPairDescriptor_full_sound` with the
+hash-site layer DROPPED (the passthrough/tick factors through `createSealPairVm_faithful` +
+`intent_to_cellPairSpec`, neither of which reads the sites). -/
+theorem createSealPairGates_give_cellPairSpec (env : VmRowEnv) (pre post : CellState)
+    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesPair env pre post)
+    (hgates : ∀ c ∈ createSealPairVmDescriptor.constraints, c.holdsVm env true true) :
+    CellPairSpec pre post := by
+  have hrowgates : ∀ c ∈ createSealPairRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ createSealPairVmDescriptor.constraints := by
+      unfold createSealPairVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+    have hh := hgates c hmem
+    unfold createSealPairRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using hh
+  exact intent_to_cellPairSpec env pre post hnoop henc ((createSealPairVm_faithful env).mp hrowgates)
+
+/-- **`CreateSealPairFullClause`** — the full declarative 17-field post-state for the RUNTIME
+createSealPair: the per-cell `CellPairSpec` (balance/`bal_hi`/8 fields/`cap_root`/`RESERVED` frozen,
+nonce ticks) AND the `system_roots` sub-block FROZEN (the `SEALED_BOXES` root among the frozen 8 — a
+fresh pair holds no box). Non-vacuous: `createSealPairRunnable_realizes` inhabits it. -/
+def CreateSealPairFullClause (preRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellPairSpec pre post ∧ postRoots = preRoots
+
+/-- **`createSealPairRunnableSpec` — THE MAGNESIUM RUNNABLE INSTANCE for createSealPair.** `decodeAfter`
+is `RowEncodesPair` PLUS the frozen-roots witness; `decodeFull` projects the wide descriptor's per-row
+gates (= createSealPair's) to `createSealPairGates_give_cellPairSpec`, then carries the frozen-roots
+fact. THIN + NON-VACUOUS (the genuine passthrough + nonce tick + frozen sub-block, NOT `True`). -/
+def createSealPairRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
+  descriptor    := createSealPairVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsCreateSealPairRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesPair env pre post ∧ postRoots = preRoots
+  fullClause    := CreateSealPairFullClause preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    exact ⟨createSealPairGates_give_cellPairSpec env pre post hrow.2 henc
+            (createSealPairWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`createSealPair_runnable_full_sound` — THE MAGNESIUM CROWN (createSealPair).** A row satisfying
+createSealPair's WIDE RUNNABLE descriptor, under the structured decode on a pair-creation row, pins the
+FULL 17-field post-state: `CellPairSpec` (the genuine passthrough + nonce tick) AND `postRoots =
+preRoots` (all 8 side-table roots frozen, the `SEALED_BOXES` root among them). STRENGTHENS §7's per-cell
+`createSealPairDescriptor_full_sound` to the WHOLE state on the circuit the prover ACTUALLY RUNS. -/
+theorem createSealPair_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : SysRoots)
+    (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsCreateSealPairRow env)
+    (henc : RowEncodesPair env pre post) (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash createSealPairVmDescriptorWide env true true) :
+    CellPairSpec pre post ∧ postRoots = preRoots :=
+  runnable_full_sound (createSealPairRunnableSpec preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`createSealPairRunnable_rejects_root_tamper` — the SEAL-ROOT anti-ghost (the headline tooth).** Two
+rows satisfying createSealPair's WIDE descriptor that publish the SAME `NEW_COMMIT` (with
+`systemRootsDigest` carriers) but whose side-table sub-blocks DIFFER at index `i` (a forged
+`SEALED_BOXES` root, …) CANNOT both satisfy. The seal-family side-table state is bound BY the runnable
+commitment. -/
+theorem createSealPairRunnable_rejects_root_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash createSealPairVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash createSealPairVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (createSealPairRunnableSpec preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`createSealPairRunnable_rejects_state_tamper` — the per-cell-block anti-ghost on the wide
+descriptor.** Two wide pair-creation rows publishing the same `NEW_COMMIT` whose absorbed state-block
+columns DIFFER (a forged balance / tampered nonce / forged cap-root) cannot both satisfy. -/
+theorem createSealPairRunnable_rejects_state_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash createSealPairVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash createSealPairVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : EffectVmEmitTransferSound.absorbedCols e₁ ≠ EffectVmEmitTransferSound.absorbedCols e₂) :
+    False :=
+  wide_rejects_state_tamper (createSealPairRunnableSpec preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### Non-vacuity of the magnesium instance (witness TRUE + witness FALSE). -/
+
+/-- A concrete `(pre, post)` cell pair for a real passthrough pair-creation: every state-block column
+frozen, nonce `5 → 6`. -/
+def pairRefPre : CellState where
+  balLo := 100; balHi := 0; nonce := 5; fields := fun _ => 0; capRoot := 0; reserved := 0; commit := 0
+def pairRefPost : CellState where
+  balLo := 100; balHi := 0; nonce := 6; fields := fun _ => 0; capRoot := 0; reserved := 0; commit := 0
+
+/-- **`createSealPairRunnable_realizes` — NON-VACUITY (witness TRUE).** The createSealPair `fullClause` is
+INHABITED by a real passthrough pair-creation: `pairRefPost` is the genuine image of `pairRefPre` (nonce
+`5 → 6`, every other column frozen) and the roots are frozen. So the framework's `fullClause` is NOT
+`True`. -/
+theorem createSealPairRunnable_realizes :
+    (createSealPairRunnableSpec emptySystemRoots).fullClause pairRefPre pairRefPost emptySystemRoots :=
+  ⟨⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`createSealPairRunnable_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A
+post-state whose nonce is NOT `pre.nonce + 1` (`5 + 1 = 6` demanded, but a frozen `5`) FAILS
+`CreateSealPairFullClause` — so the magnesium `fullClause` is not vacuously true (it rejects the
+cutover-bug frozen-nonce post-state). -/
+theorem createSealPairRunnable_clause_not_trivial :
+    ¬ CreateSealPairFullClause emptySystemRoots pairRefPre { pairRefPost with nonce := 5 }
+        emptySystemRoots := by
+  rintro ⟨⟨_, _, hnon, _, _, _⟩, _⟩
+  -- hnon : (5) = pairRefPre.nonce + 1 = 5 + 1 = 6
+  simp only [pairRefPre] at hnon
+  norm_num at hnon
+
 /-! ## §13 — Axiom-hygiene pins. -/
 
 #guard createSealPairVmDescriptor.constraints.length == 13 + 14 + 4 + 3 + 1
 #guard createSealPairVmDescriptor.hashSites.length == 4
 #guard createSealPairVmDescriptor.traceWidth == 186
+
+-- §MAG: the wide descriptor keeps the SAME gates, swaps to the wide sites + width.
+#guard createSealPairVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3 + 1
+#guard createSealPairVmDescriptorWide.hashSites.length == 4
+#guard createSealPairVmDescriptorWide.traceWidth == 188
 
 #assert_axioms createSealPairVm_faithful
 #assert_axioms createSealPairVm_rejects_wrong_output
@@ -533,5 +711,13 @@ theorem staleNoncePairRow_rejected :
 #assert_axioms goodPairRow_realizes_intent
 #assert_axioms badPairRow_rejected
 #assert_axioms staleNoncePairRow_rejected
+
+-- §MAG: the magnesium full-state RUNNABLE crown + the side-table anti-ghost teeth.
+#assert_axioms createSealPairGates_give_cellPairSpec
+#assert_axioms createSealPair_runnable_full_sound
+#assert_axioms createSealPairRunnable_rejects_root_tamper
+#assert_axioms createSealPairRunnable_rejects_state_tamper
+#assert_axioms createSealPairRunnable_realizes
+#assert_axioms createSealPairRunnable_clause_not_trivial
 
 end Dregg2.Circuit.Emit.EffectVmEmitCreateSealPair

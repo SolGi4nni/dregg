@@ -74,6 +74,7 @@ Imports are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Argus.Compile
+import Dregg2.Circuit.Emit.EffectVmEmitNoopWide
 
 namespace Dregg2.Circuit.Argus.Effects.Noop
 
@@ -289,5 +290,46 @@ theorem noop_skipDescriptor_unsound_without_freeze :
     exact absurd hbal (by decide)
 
 #assert_axioms noop_skipDescriptor_unsound_without_freeze
+
+/-! ## §5 — THE MAGNESIUM UPGRADE: a genuine RUNNABLE no-op descriptor that BINDS the full frozen
+post-state (the contrast with `skipDescriptor`, which binds nothing).
+
+§3a welded the no-op IR term against `skipDescriptor` — the EMPTY AIR, which pins NOTHING (sound for the
+no-op ONLY because the executor freezes; `noop_skipDescriptor_unsound_without_freeze` makes that precise).
+This section supplies the FULL-STATE-on-RUNNABLE alternative: the FAITHFUL runnable no-op row the running
+prover actually lays (a `sel.NOOP = 1` PAD row whose every state-block column is FROZEN), WIDENED to
+absorb the `system_roots` sub-block — `noopVmDescriptorWide` (188-wide, 35 constraints + 4 hash sites,
+GENUINELY NON-EMPTY). Its crown `noop_runnable_full_sound` pins the FULL 17-field declarative post-state:
+the per-cell block FROZEN (via the absorbed columns, BOUND into the published commitment) AND ALL 8
+side-table roots FROZEN (via the wide commitment). The frame freeze IS the full-state proof for a no-op —
+and now the published commitment WITNESSES the whole frozen post-state, where `skipDescriptor`'s empty AIR
+witnessed nothing. This is the magnesium breadth for the no-op: a RUNNABLE circuit binding all 17 fields,
+strictly stronger than the empty-descriptor weld above. The IR term's executor produces exactly this
+freeze (the §2 cornerstone `interp noopStmt k = some k`). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Circuit.Emit.EffectVmEmitEmitEvent (RowEncodes CellFreezeSpec)
+open Dregg2.Circuit.Emit.EffectVmEmitNoopWide
+  (IsNoopRow noopVmDescriptorWide noop_runnable_full_sound)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`noop_runnable_full_state_weld` — THE RUNNABLE full-state soundness (no-op slice).** A row satisfying
+the RUNNABLE wide no-op descriptor `noopVmDescriptorWide` (`satisfiedVm`, first/last active), decoded by
+`RowEncodes env pre post` with the frozen-roots witness `sr = preRoots`, pins the FULL 17-field declarative
+post-state: the per-cell `CellFreezeSpec` (the whole block FROZEN) AND all 8 side-table roots FROZEN (`sr =
+preRoots`). This is the FULL-STATE freeze for the no-op on the circuit the prover ACTUALLY RUNS — STRICTLY
+STRONGER than the `skipDescriptor` weld (§3a), whose empty AIR bound NO field, because the published
+commitment now witnesses the whole frozen post-state. The freeze IS the identity the IR term's executor
+produces (`interp_noopStmt_eq_id`). -/
+theorem noop_runnable_full_state_weld
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (sr preRoots : SysRoots)
+    (hrow : IsNoopRow env)
+    (henc : RowEncodes env pre post) (hroots : sr = preRoots)
+    (hsat : satisfiedVm hash noopVmDescriptorWide env true true) :
+    CellFreezeSpec pre post ∧ sr = preRoots :=
+  noop_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+
+#assert_axioms noop_runnable_full_state_weld
 
 end Dregg2.Circuit.Argus.Effects.Noop

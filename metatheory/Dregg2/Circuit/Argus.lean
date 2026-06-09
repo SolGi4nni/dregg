@@ -26,6 +26,7 @@ import Dregg2.Circuit.Argus.Effects.BridgeCancel
 import Dregg2.Circuit.Argus.Effects.BridgeFinalize
 import Dregg2.Circuit.Argus.Effects.BridgeLock
 import Dregg2.Circuit.Argus.Effects.BridgeMint
+import Dregg2.Circuit.Argus.Effects.Burn
 import Dregg2.Circuit.Argus.Effects.CellDestroy
 import Dregg2.Circuit.Argus.Effects.CellSeal
 import Dregg2.Circuit.Argus.Effects.CellUnseal
@@ -43,6 +44,7 @@ import Dregg2.Circuit.Argus.Effects.FulfillObligation
 import Dregg2.Circuit.Argus.Effects.IncrementNonce
 import Dregg2.Circuit.Argus.Effects.Introduce
 import Dregg2.Circuit.Argus.Effects.MakeSovereign
+import Dregg2.Circuit.Argus.Effects.Mint
 import Dregg2.Circuit.Argus.Effects.Noop
 import Dregg2.Circuit.Argus.Effects.NoteCreate
 import Dregg2.Circuit.Argus.Effects.NoteSpend

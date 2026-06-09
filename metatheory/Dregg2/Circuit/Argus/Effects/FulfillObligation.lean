@@ -321,4 +321,52 @@ theorem fulfillObligationDescriptor_nontrivial :
 #assert_axioms fulfillObligationStmt_rejects_missing
 #assert_axioms fulfillObligationDescriptor_nontrivial
 
+/-! ## §6 — FULL-STATE on the RUNNABLE descriptor (the magnesium breadth — bind ALL 17 fields).
+
+`fulfillObligationStmt = refundEscrowStmt` definitionally, so the FULL-STATE refund weld
+(`RefundEscrow.refundEscrow_runnable_full_state` over the WIDE descriptor `refundEscrowVmDescriptorWide`)
+applies VERBATIM on the fulfil term: a satisfying row of the WIDE RUNNABLE descriptor binds the FULL
+17-field post-state (the obligor/creator-cell CREDIT AND the `escrows` digest advance), all 17 bound by
+the circuit the prover RUNS (the generic anti-ghost gives the no-malleability tooth). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitRefundEscrowWide (refundEscrowVmDescriptorWide)
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowFamilyWide (ESCROW_STEP_PARAM)
+open Dregg2.Circuit.Argus.Effects.RefundEscrow (refundEscrow_runnable_full_state)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest)
+
+/-- **`fulfillObligation_runnable_full_state` — THE FULL-STATE WELD (fulfillObligation).** The full-state
+refund weld lifted verbatim onto the fulfil term (the dispatch-alias): a satisfying row of the WIDE
+RUNNABLE descriptor agrees per-cell with the executor's CREDITED creator-cell projection on EVERY limb
+AND binds the `escrows` side-table digest advance — all 17 fields. -/
+theorem fulfillObligation_runnable_full_state
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (id : Nat) (r : EscrowRecord)
+    (post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (preRoots postRoots : SysRoots) (step : ℤ)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitRefundEscrow.IsRefundEscrowRow env)
+    (hr : k.escrows.find? (matchPred id) = some r)
+    (henc : RowEncodesRefund env (cellProjRefund k.bal r.creator r.asset) ⟨r.amount⟩ post)
+    (hAfter : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestCol
+                = systemRootsDigest hash postRoots)
+    (hBefore : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestColBefore
+                = systemRootsDigest hash preRoots)
+    (hStep : env.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol ESCROW_STEP_PARAM) = step)
+    (hsat : satisfiedVm hash refundEscrowVmDescriptorWide env true true)
+    (hexec : interp (fulfillObligationStmt id) k = some k') :
+    ( post.balLo = (cellProjRefund k'.bal r.creator r.asset).balLo
+      ∧ post.balHi = (cellProjRefund k'.bal r.creator r.asset).balHi
+      ∧ (∀ i, post.fields i = (cellProjRefund k'.bal r.creator r.asset).fields i)
+      ∧ post.capRoot = (cellProjRefund k'.bal r.creator r.asset).capRoot
+      ∧ post.reserved = (cellProjRefund k'.bal r.creator r.asset).reserved
+      ∧ post.nonce = (cellProjRefund k'.bal r.creator r.asset).nonce )
+    ∧ systemRootsDigest hash postRoots = systemRootsDigest hash preRoots + step := by
+  -- the fulfil term IS the refund term (`fulfillObligationStmt = refundEscrowStmt` definitionally);
+  -- route through the proven full-state refund weld.
+  have hexec' : interp (refundEscrowStmt id) k = some k' := by
+    rw [fulfillObligationStmt] at hexec; exact hexec
+  exact refundEscrow_runnable_full_state hash env k k' id r post preRoots postRoots step
+    hrow hr henc hAfter hBefore hStep hsat hexec'
+
+#assert_axioms fulfillObligation_runnable_full_state
+
 end Dregg2.Circuit.Argus.Effects.FulfillObligation

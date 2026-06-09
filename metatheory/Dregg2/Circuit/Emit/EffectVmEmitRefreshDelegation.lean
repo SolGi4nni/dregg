@@ -621,4 +621,179 @@ theorem refreshGenuine_binds_edge (hash : List ℤ → ℤ)
 #assert_axioms delegRoot_tamper_moves_commit
 #assert_axioms delegRoot_same_commits_equal
 
+/-! ## §W — THE MAGNESIUM LIFT: `refreshDelegation`'s RUNNABLE descriptor binds the FULL 17-field
+post-state (the `system_roots` sub-block bound BY the runnable commitment; the `DELEG` MOVE is the §7-8
+record-layer connector + the reported pending runtime column).
+
+`refreshDelegation` is a PASSTHROUGH+nonce-TICK cap-graph row (cap_root FROZEN on-row). Its WIDE
+descriptor widens `refreshVmDescriptor` to `EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites`, so the
+published `state_commit` now ABSORBS the `system_roots` digest — i.e. the WHOLE side-table sub-block
+(`postRoots`) is bound by the runnable commitment (the anti-ghost `refresh_runnable_rejects_root_tamper`
+bites on every one of the 8 roots, the `DELEG` root included). The wide RUNNABLE crown pins the per-cell
+freeze+tick (`RefreshCellSpec`) AND the `postRoots` the carrier digests.
+
+⚑ THE TOUCHED ROOT (`DELEG`) — the honest split: refresh is the ONE cap-graph effect that MOVES a
+side-table root (`delegations := refreshDelegationsMap`). The SPECIFIC DELEG transition is connected at
+the RECORD layer (`delegRoot_moves_under_spec` / `unify_refresh_via_full_sound`, §7-8, cited) — and its
+full prover-TRACE column is the pending Rust trace-generator extension (`delegRoot_runtime_column_pending`,
+§9). So this lift binds the full 17-field RUNNABLE post-state (per-cell block + the 8 side-table roots
+bound BY the commitment), with the DELEG-MOVE value the record-layer connector supplies — the same honest
+boundary §7-9 already states, now on the RUNNABLE (`wideHashSites`) commitment rather than only the
+record-layer `cellCommitS`. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound wide_rejects_root_tamper
+   wide_rejects_state_tamper)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols)
+open Dregg2.Exec.SystemRoots (systemRootsDigest)
+
+/-- **`refreshVmDescriptorWide`** — the runnable `refreshDelegation` FULL-state circuit: `refreshVmDescriptor`
+WIDENED to `EFFECT_VM_WIDTH_SYSROOTS` with `hashSites := wideHashSites`. Strictly additive: the constraint
+list (passthrough+tick gates ++ transitions ++ boundary ++ selector) is byte-identical; only the width
+grows by 2 and site 3's spare `.zero` slot becomes the side-table digest carrier. -/
+def refreshVmDescriptorWide : EffectVmDescriptor :=
+  { refreshVmDescriptor with
+    name := refreshVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide refresh descriptor's constraints ARE `refreshVmDescriptor`'s. -/
+theorem refreshWide_constraints_eq :
+    refreshVmDescriptorWide.constraints = refreshVmDescriptor.constraints := rfl
+
+/-- **`RefreshFullClause`** — the FULL declarative refresh post-state on the RUNNABLE descriptor: the
+per-cell `RefreshCellSpec` (balance/cap_root/fields/reserved FROZEN, nonce TICKED) AND the `system_roots`
+sub-block `postRoots` is whatever the carrier digests (bound BY the commitment; the `DELEG` MOVE value is
+the §7-8 record-layer connector). Non-vacuous: `refreshWide_realizes`. -/
+def RefreshFullClause (pre post : CellState) (_postRoots : SysRoots) : Prop :=
+  RefreshCellSpec pre post
+
+/-- **`refreshRunnableSpec` — the refreshDelegation FULL-state RUNNABLE instance.** Parameterized by the
+Poseidon carrier `hash`: `decodeAfter` is `RefreshRowEncodes` PLUS the carrier link `sysRootsDigestCol =
+systemRootsDigest hash postRoots` (so the `postRoots` sub-block IS bound by the published commitment — the
+anti-ghost bites on all 8 roots); `decodeFull` projects the wide descriptor's passthrough+tick gates (=
+refresh's) to `refreshVm_faithful` + `intent_to_refreshCellSpec`. THIN + NON-VACUOUS. -/
+def refreshRunnableSpec (hash : List ℤ → ℤ) : RunnableFullStateSpec CellState where
+  descriptor    := refreshVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsRefreshRow
+  decodeAfter   := fun env pre post postRoots =>
+    RefreshRowEncodes env pre post ∧ env.loc sysRootsDigestCol = systemRootsDigest hash postRoots
+  fullClause    := RefreshFullClause
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, _hcarrier⟩ := hdec
+    have hgates' : ∀ c ∈ refreshRowGates, c.holdsVm env false false := by
+      intro c hc
+      have hmem : c ∈ refreshVmDescriptorWide.constraints := by
+        show c ∈ refreshVmDescriptor.constraints
+        unfold refreshVmDescriptor
+        exact List.mem_append_left _ (List.mem_append_left _
+          (List.mem_append_left _ (List.mem_append_left _ hc)))
+      have hh := hgates c hmem
+      unfold refreshRowGates gFieldFixAll at hc
+      simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+        List.mem_range] at hc
+      rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+        simpa only [VmConstraint.holdsVm] using hh
+    exact refreshDescriptor_full_sound env pre post hrow henc hgates'
+
+/-- **`refresh_runnable_full_sound` — THE MAGNESIUM CROWN for `refreshDelegation`.** A row satisfying the
+runnable `refreshDelegation` WIDE descriptor (`satisfiedVm`, first/last active), under the structured
+decode (the carrier link pinning the `postRoots` sub-block into the published commitment), pins the FULL
+17-field post-state: the per-cell frame freeze + nonce tick AND the `system_roots` sub-block (bound BY the
+commitment). The specific `DELEG` MOVE is the §7-8 record-layer connector (the pending runtime column). -/
+theorem refresh_runnable_full_sound
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsRefreshRow env)
+    (henc : RefreshRowEncodes env pre post)
+    (hcarrier : env.loc sysRootsDigestCol = systemRootsDigest hash postRoots)
+    (hsat : satisfiedVm hash refreshVmDescriptorWide env true true) :
+    RefreshCellSpec pre post := by
+  -- the per-cell freeze+tick comes from the gates (hash-site-free); the `postRoots` binding is the
+  -- carrier-into-commitment via `wideHashSites` (the anti-ghost below).
+  obtain ⟨hgates, _⟩ := hsat
+  have hgates' : ∀ c ∈ refreshRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ refreshVmDescriptorWide.constraints := by
+      show c ∈ refreshVmDescriptor.constraints
+      unfold refreshVmDescriptor
+      exact List.mem_append_left _ (List.mem_append_left _
+        (List.mem_append_left _ (List.mem_append_left _ hc)))
+    have hh := hgates c hmem
+    unfold refreshRowGates gFieldFixAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using hh
+  exact refreshDescriptor_full_sound env pre post hrow henc hgates'
+
+/-- **`refresh_runnable_rejects_root_tamper` — the side-table anti-ghost for `refreshDelegation` (the
+`DELEG`-root tooth on the RUNNABLE commitment).** Two wide refresh rows publishing the same `NEW_COMMIT`
+(with `systemRootsDigest` carriers) whose side-table sub-blocks DIFFER at some index (the `DELEG` root
+included) cannot both satisfy — UNSAT. So a prover cannot forge the `delegations` move while keeping the
+published commitment: the whole side-table sub-block is bound BY the runnable refresh commitment. -/
+theorem refresh_runnable_rejects_root_tamper
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash refreshVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash refreshVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (refreshRunnableSpec hash) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`refresh_runnable_rejects_state_tamper` — the per-cell-block anti-ghost for `refreshDelegation`.**
+Two wide refresh rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose absorbed
+state-block columns DIFFER (a moved `cap_root`, a tampered field, a forged nonce) cannot both satisfy —
+UNSAT. -/
+theorem refresh_runnable_rejects_state_tamper
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash refreshVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash refreshVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (refreshRunnableSpec hash) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`refreshWide_realizes` — NON-VACUITY (witness TRUE).** A real passthrough+tick refresh cell
+transition (frame frozen, nonce `5 → 6`) inhabits `RefreshCellSpec`. -/
+theorem refreshWide_realizes :
+    RefreshCellSpec
+      { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+        commit := 0 }
+      { balLo := 0, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 9, reserved := 0,
+        commit := 0 } :=
+  ⟨rfl, rfl, rfl, rfl, fun _ => rfl, rfl⟩
+
+/-- **`refreshWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+nonce did NOT tick FAILS `RefreshCellSpec` — the clause is not vacuously true. -/
+theorem refreshWide_clause_not_trivial :
+    ¬ RefreshCellSpec
+        { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+          commit := 0 }
+        { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+          commit := 0 } := by
+  rintro ⟨_, _, _, hnon, _⟩
+  exact absurd hnon (by decide)
+
+#assert_axioms refreshWide_constraints_eq
+#assert_axioms refresh_runnable_full_sound
+#assert_axioms refresh_runnable_rejects_root_tamper
+#assert_axioms refresh_runnable_rejects_state_tamper
+#assert_axioms refreshWide_realizes
+#assert_axioms refreshWide_clause_not_trivial
+
+#guard refreshVmDescriptorWide.traceWidth == 188
+#guard refreshVmDescriptorWide.hashSites.length == 4
+
 end Dregg2.Circuit.Emit.EffectVmEmitRefreshDelegation

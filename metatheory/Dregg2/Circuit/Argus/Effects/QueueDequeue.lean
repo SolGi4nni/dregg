@@ -93,6 +93,10 @@ Imports are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.queueDequeueA
+-- The MAGNESIUM full-state lift of queueDequeue's RUNNABLE EffectVM descriptor (binds all 17 fields
+-- incl. the `queues` system-root); kept in the anchor so the wide descriptor + `runnable_full_sound`
+-- + the whole-state anti-ghost ride the same green build as this Surface2-triple weld.
+import Dregg2.Circuit.Emit.EffectVmEmitQueueDequeueFullState
 
 namespace Dregg2.Circuit.Argus.Effects.QueueDequeue
 

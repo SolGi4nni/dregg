@@ -103,6 +103,7 @@ Imports are read-only; this file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.receiptArchiveA
 import Dregg2.Circuit.Spec.cellstateaudit
+import Dregg2.Circuit.Emit.EffectVmEmitReceiptArchiveWide
 
 namespace Dregg2.Circuit.Argus.Effects.ReceiptArchive
 
@@ -423,5 +424,49 @@ theorem receiptArchiveStmt_rejects_nonlive :
 #assert_axioms receiptArchiveStmt_rejects_unauthorized
 #assert_axioms receiptArchiveStmt_rejects_nonaccount
 #assert_axioms receiptArchiveStmt_rejects_nonlive
+
+/-! ## §6 — THE MAGNESIUM UPGRADE: the RUNNABLE full-state soundness (all 17 fields + the 8 side-table
+roots, on the circuit the prover RUNS).
+
+§4 welded the Argus term against receipt-archive's ABSTRACT v1 `EffectCommit` full-state descriptor
+(`receiptArchiveA_full_sound`, in the `satisfiedE`/`CommitSurface` universe). This section adds the
+FULL-STATE-on-RUNNABLE soundness: the circuit the prover ACTUALLY RUNS — `satisfiedVm
+archiveVmDescriptorWide`, the 188-wide `system_roots`-absorbing EffectVM descriptor — pins the FULL
+17-field declarative post-state: the per-cell `field[1]` (the `lifecycle` RECORD slot) SET to `1` + the
+rest of the block FROZEN (via the absorbed columns) AND ALL 8 side-table roots FROZEN (via the wide
+commitment). This closes the Class-C "pale ghost" on the runnable descriptor: the narrow 186-wide
+`receiptArchiveVmDescriptor`'s commitment bound NONE of the 8 side-table roots; the wide one binds them.
+
+HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §4 names): (a) the audit write's chained
+motion is the self-targeted receipt prepended to `RecChainedState.log`, NOT a `RecordKernelState` field and
+with NO EffectVM row column — it rides universe-A's `logHashInjective` portal; (b) the set `field[1]` is
+the cell-record `lifecycle` SLOT, distinct from the kernel `lifecycle` SIDE-TABLE (one of the FROZEN frame
+fields). This module closes the side-table-root binding gap on the kernel state. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive (IsArchiveRow ArchiveRowEncodes ArchiveCellSpec)
+open Dregg2.Circuit.Emit.EffectVmEmitReceiptArchiveWide
+  (archiveVmDescriptorWide receiptArchive_runnable_full_sound)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`receiptArchive_runnable_full_state_weld` — THE RUNNABLE full-state soundness (receipt-archive
+slice).** A row satisfying the RUNNABLE wide descriptor `archiveVmDescriptorWide` (`satisfiedVm`,
+first/last active), decoded by `ArchiveRowEncodes env pre post` with the frozen-roots witness `sr =
+preRoots`, pins the FULL 17-field declarative post-state: the per-cell `ArchiveCellSpec` (`field[1]` SET to
+`1`, the rest of the block FROZEN) AND all 8 side-table roots FROZEN (`sr = preRoots`). This is the analog
+of the abstract `receiptArchiveA_full_sound` (§4's circuit side), but for the circuit the prover ACTUALLY
+RUNS — and it BINDS the side-table roots the narrow descriptor left unbound. The set `field[1]` IS
+universe-A's `lifecycle`-write transition the IR term's executor produces (§4); the log-receipt is the
+carried turn-level residual named above. -/
+theorem receiptArchive_runnable_full_state_weld
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (sr preRoots : SysRoots)
+    (hrow : IsArchiveRow env)
+    (henc : ArchiveRowEncodes env pre post) (hroots : sr = preRoots)
+    (hsat : satisfiedVm hash archiveVmDescriptorWide env true true) :
+    ArchiveCellSpec pre post ∧ sr = preRoots :=
+  receiptArchive_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+
+#assert_axioms receiptArchive_runnable_full_state_weld
 
 end Dregg2.Circuit.Argus.Effects.ReceiptArchive

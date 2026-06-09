@@ -82,6 +82,7 @@ file owns only itself. Build: `lake build Dregg2.Circuit.Argus.Effects.Increment
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.incrementNonceA
 import Dregg2.Circuit.Spec.cellstatemonotone
+import Dregg2.Circuit.Emit.EffectVmEmitIncrementNonceFullState
 
 namespace Dregg2.Circuit.Argus.Effects.IncrementNonce
 

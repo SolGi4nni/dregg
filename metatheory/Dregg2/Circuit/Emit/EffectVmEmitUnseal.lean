@@ -38,6 +38,7 @@ Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.sealboxoperations
 import Dregg2.Exec.SystemRoots
@@ -527,11 +528,248 @@ theorem staleNonceUnsealRow_rejected :
     STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, state.RESERVED]
   norm_num
 
+/-! ## §MAG — THE MAGNESIUM FULL-STATE LIFT: the RUNNABLE descriptor binds ALL 17 fields.
+
+§7's `unsealDescriptor_full_sound` binds the per-cell state block (13 absorbed columns →
+`CellUnsealSpec`) on the 186-wide descriptor — but that descriptor's `state_commit` absorbs ONLY the 13
+state-block columns; the 8 `system_roots` side-table roots ride a separate record-layer commitment the
+row does not carry (the Class-C "pale ghost"). This section CLOSES that for unseal, following the
+VALIDATED REFERENCE `EffectVmFullStateRunnable.transferRunnableSpec` VERBATIM: a WIDE descriptor whose
+`state_commit` ALSO absorbs the dedicated `sysRootsDigestCol` carrier, lifted through the GENERIC crown
+`runnable_full_sound`. The crypto is discharged ONCE in the generic theorem; the per-effect content is
+THIN — the (hash-site-free) gate→`CellUnsealSpec` projection + the decode.
+
+THE HONEST FULL CLAUSE (the seal-root binding the task asks for). The RUNNABLE descriptor faithfully
+describes the RUNTIME field-mask UNSEAL (`air.rs:1434-1481`): a sealed-FIELD-MASK unlock on the per-cell
+`RESERVED` column. That on-trace effect touches NO side-table — it does NOT consume a box from
+`sealedBoxes` (the cap-from-box grant is the SEPARATE universe-A `UnsealSpec`, the §9/§11 carried
+divergence; and even there the box is NOT consumed — `unseal_preserves_box_store`). So the runtime
+unseal FREEZES all 8 `system_roots` roots (INCLUDING `SEALED_BOXES`), exactly as transfer does. The full
+clause is `CellUnsealSpec pre post pow2` (RESERVED LOSES the mask bit `pow2`, nonce ticks,
+balance/cap/fields frozen) AND `postRoots = preRoots` (all 8 side-table roots frozen, the seal-root
+among them). The anti-ghost (`unsealRunnable_rejects_root_tamper`) bites on ALL 17 fields. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+
+/-- **`unsealVmDescriptorWide`** — unseal's descriptor WIDENED: the SAME per-row gates (RESERVED
+mask-clear + nonce tick + balance/cap/fields freeze) + transitions + boundary pins, but `traceWidth :=
+EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites`. Strictly additive: the constraint list is
+byte-identical; only the width grows by 2 and the outer site's spare slot becomes the `system_roots`
+digest carrier. -/
+def unsealVmDescriptorWide : EffectVmDescriptor :=
+  { unsealVmDescriptor with
+    name := unsealVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide unseal descriptor's constraints ARE unseal's. -/
+theorem unsealWide_constraints_eq :
+    unsealVmDescriptorWide.constraints = unsealVmDescriptor.constraints := rfl
+
+/-- **`unsealGates_give_cellUnsealSpec` — the GATE-ONLY per-cell soundness (no hash-site hypothesis).**
+The per-row gates of the unseal descriptor, on an unseal row decoded by `RowEncodesUnseal`, force
+`CellUnsealSpec` — the body of `unsealDescriptor_full_sound` with the hash-site layer DROPPED (the
+move/freeze factors through `unsealVm_faithful` + `intent_to_cellUnsealSpec`, neither of which reads the
+sites). -/
+theorem unsealGates_give_cellUnsealSpec (env : VmRowEnv) (pre post : CellState) (pow2 : ℤ)
+    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesUnseal env pre post pow2)
+    (hgates : ∀ c ∈ unsealVmDescriptor.constraints, c.holdsVm env true true) :
+    CellUnsealSpec pre post pow2 := by
+  have hrowgates : ∀ c ∈ unsealRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ unsealVmDescriptor.constraints := by
+      unfold unsealVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inl (Or.inl hc))
+    have hh := hgates c hmem
+    unfold unsealRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using hh
+  exact intent_to_cellUnsealSpec env pre post pow2 hnoop henc ((unsealVm_faithful env).mp hrowgates)
+
+/-- **`UnsealFullClause`** — the full declarative 17-field post-state for the RUNTIME unseal: the
+per-cell `CellUnsealSpec` (RESERVED loses the mask bit `pow2`, nonce ticks, balance/`bal_hi`/8
+fields/`cap_root` frozen) AND the `system_roots` sub-block FROZEN (the `SEALED_BOXES` root among the
+frozen 8 — the box is not consumed). Non-vacuous: `unsealRunnable_realizes` inhabits it. -/
+def UnsealFullClause (pow2 : ℤ) (preRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellUnsealSpec pre post pow2 ∧ postRoots = preRoots
+
+/-- **`unsealRunnableSpec` — THE MAGNESIUM RUNNABLE INSTANCE for unseal.** `decodeAfter` is
+`RowEncodesUnseal` PLUS the frozen-roots witness; `decodeFull` projects the wide descriptor's per-row
+gates (= unseal's) to `unsealGates_give_cellUnsealSpec`, then carries the frozen-roots fact. THIN +
+NON-VACUOUS (the genuine RESERVED mask-clear + nonce tick + frozen sub-block, NOT `True`). -/
+def unsealRunnableSpec (pow2 : ℤ) (preRoots : SysRoots) : RunnableFullStateSpec CellState where
+  descriptor    := unsealVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsUnsealRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesUnseal env pre post pow2 ∧ postRoots = preRoots
+  fullClause    := UnsealFullClause pow2 preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    exact ⟨unsealGates_give_cellUnsealSpec env pre post pow2 hrow.2 henc
+            (unsealWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`unseal_runnable_full_sound` — THE MAGNESIUM CROWN (unseal).** A row satisfying unseal's WIDE
+RUNNABLE descriptor, under the structured decode on an unseal row, pins the FULL 17-field post-state:
+`CellUnsealSpec` (the genuine RESERVED mask-clear) AND `postRoots = preRoots` (all 8 side-table roots
+frozen, the `SEALED_BOXES` root among them). STRENGTHENS §7's per-cell `unsealDescriptor_full_sound` to
+the WHOLE state on the circuit the prover ACTUALLY RUNS. -/
+theorem unseal_runnable_full_sound (hash : List ℤ → ℤ) (pow2 : ℤ) (preRoots : SysRoots)
+    (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsUnsealRow env)
+    (henc : RowEncodesUnseal env pre post pow2) (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash unsealVmDescriptorWide env true true) :
+    CellUnsealSpec pre post pow2 ∧ postRoots = preRoots :=
+  runnable_full_sound (unsealRunnableSpec pow2 preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`unsealRunnable_rejects_root_tamper` — the SEAL-ROOT anti-ghost (the headline tooth).** Two rows
+satisfying unseal's WIDE descriptor that publish the SAME `NEW_COMMIT` (with `systemRootsDigest`
+carriers) but whose side-table sub-blocks DIFFER at index `i` (a forged `SEALED_BOXES` root, …) CANNOT
+both satisfy. The seal-family side-table state is bound BY the runnable commitment. -/
+theorem unsealRunnable_rejects_root_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (pow2 : ℤ) (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash unsealVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash unsealVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (unsealRunnableSpec pow2 preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`unsealRunnable_rejects_state_tamper` — the per-cell-block anti-ghost on the wide descriptor.** Two
+wide unseal rows publishing the same `NEW_COMMIT` whose absorbed state-block columns DIFFER (a forged
+balance / tampered RESERVED mask / forged cap-root) cannot both satisfy. -/
+theorem unsealRunnable_rejects_state_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (pow2 : ℤ) (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash unsealVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash unsealVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : EffectVmEmitTransferSound.absorbedCols e₁ ≠ EffectVmEmitTransferSound.absorbedCols e₂) :
+    False :=
+  wide_rejects_state_tamper (unsealRunnableSpec pow2 preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### ⚑ THE HONEST RESIDUAL (the seal-family-CRITICAL binding gap, WITNESSED not papered).
+
+The unseal's GENUINE on-trace effect is the `RESERVED` sealed-field mask-CLEAR (`gReservedUnsealClear`).
+But the shared `reserved_not_bound_by_commitment` finding (`EffectVmEmitTransferSound` §7) proves
+`state.RESERVED` (after-column 89) is absorbed by NO hash-site — so it is NOT in `absorbedCols`, and the
+WIDE commitment does NOT pin it. CONSEQUENCE: `unseal_runnable_full_sound` genuinely forces the RESERVED
+mask-clear FROM THE GATES (sound WITHIN one satisfying row), the anti-ghost binds all 12 absorbed columns
++ the 8 side-table roots, but it does NOT bind RESERVED. We WITNESS this exactly (the unseal analog of
+`reserved_not_bound_by_commitment`): the no-malleability tooth covers 16 of the 17 fields, with the
+RESERVED-carried mask gate-enforced but not commitment-bound. (Closing it requires absorbing `saCol
+RESERVED` into a hash-site — a shared-layer change, outside this family's lane.) -/
+
+/-- **`unseal_reserved_mask_not_commitment_bound` — the WITNESSED seal-family residual.** `goodUnsealRow`
+(RESERVED after = `0`, the genuine post-mask for clearing `pow2 = 4` from `4`) and `maskForgedUnsealRow`
+(RESERVED after = `99`) have IDENTICAL `absorbedCols` (RESERVED is absorbed by no site), yet their `saCol
+RESERVED` columns differ. So the WIDE commitment cannot distinguish a correctly-unsealed cell from one
+carrying a forged sealed-field mask: the unseal's actual side-table payload (the RESERVED mask) is pinned
+ONLY by the per-row `gReservedUnsealClear` gate, NOT by `NEW_COMMIT`. The headline binding gap, reported. -/
+theorem unseal_reserved_mask_not_commitment_bound :
+    EffectVmEmitTransferSound.absorbedCols goodUnsealRow
+      = EffectVmEmitTransferSound.absorbedCols maskForgedUnsealRow
+    ∧ goodUnsealRow.loc (saCol state.RESERVED) ≠ maskForgedUnsealRow.loc (saCol state.RESERVED) := by
+  have hres : saCol state.RESERVED = 89 := by
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.RESERVED; rfl
+  have agree : ∀ off : Nat, saCol off ≠ (89:Nat) →
+      maskForgedUnsealRow.loc (saCol off) = goodUnsealRow.loc (saCol off) := by
+    intro off hoff
+    show (if saCol off = saCol state.RESERVED then (99:ℤ) else goodUnsealRow.loc (saCol off))
+        = goodUnsealRow.loc (saCol off)
+    rw [if_neg]; rw [hres]; exact hoff
+  have hneOff : ∀ off : Nat, off ≠ state.RESERVED → saCol off ≠ (89:Nat) := by
+    intro off hoff
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.RESERVED at *
+    omega
+  refine ⟨?_, ?_⟩
+  · unfold EffectVmEmitTransferSound.absorbedCols
+    rw [agree state.BALANCE_LO (hneOff _ (by decide)),
+        agree state.BALANCE_HI (hneOff _ (by decide)),
+        agree state.NONCE (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 0) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 1) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 2) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 3) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 4) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 5) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 6) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 7) (hneOff _ (by decide)),
+        agree state.CAP_ROOT (hneOff _ (by decide))]
+  · have hg : goodUnsealRow.loc (saCol state.RESERVED) = 0 := by
+      show (goodUnsealRow.loc (saCol state.RESERVED)) = 0
+      simp only [goodUnsealRow, SEL_UNSEAL, SEAL_POW2_IDX, sbCol, saCol, auxCol, STATE_BEFORE_BASE,
+        STATE_AFTER_BASE, PARAM_BASE, AUX_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+        state.NONCE, state.RESERVED]
+      norm_num
+    have hb : maskForgedUnsealRow.loc (saCol state.RESERVED) = 99 := by
+      show (if saCol state.RESERVED = saCol state.RESERVED then (99:ℤ)
+              else goodUnsealRow.loc (saCol state.RESERVED)) = 99
+      rw [if_pos rfl]
+    rw [hg, hb]; norm_num
+
+/-! ### Non-vacuity of the magnesium instance (witness TRUE + witness FALSE). -/
+
+/-- A concrete `(pre, post)` cell pair for a real RESERVED-mask UNSEAL of field 2 (`pow2 = 4`): balance
+/ cap / fields frozen, nonce `5 → 6`, RESERVED `4 → 0`. -/
+def unsealRefPre : CellState where
+  balLo := 100; balHi := 0; nonce := 5; fields := fun _ => 0; capRoot := 0; reserved := 4; commit := 0
+def unsealRefPost : CellState where
+  balLo := 100; balHi := 0; nonce := 6; fields := fun _ => 0; capRoot := 0; reserved := 0; commit := 0
+
+/-- **`unsealRunnable_realizes` — NON-VACUITY (witness TRUE).** The unseal `fullClause` is INHABITED by a
+real RESERVED-mask unseal: `unsealRefPost` is the genuine image of `unsealRefPre` (nonce `5 → 6`,
+RESERVED loses `pow2 = 4`, frame frozen) and the roots are frozen. So the framework's `fullClause` is
+NOT `True`. -/
+theorem unsealRunnable_realizes :
+    (unsealRunnableSpec 4 emptySystemRoots).fullClause unsealRefPre unsealRefPost emptySystemRoots :=
+  ⟨⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`unsealRunnable_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+`reserved` does not satisfy `pre.reserved = post.reserved + pow2` (`4 = 99 + 4` is false) FAILS
+`UnsealFullClause` — so the magnesium `fullClause` is not vacuously true. -/
+theorem unsealRunnable_clause_not_trivial :
+    ¬ UnsealFullClause 4 emptySystemRoots unsealRefPre { unsealRefPost with reserved := 99 }
+        emptySystemRoots := by
+  rintro ⟨⟨_, _, _, _, _, hres⟩, _⟩
+  -- hres : unsealRefPre.reserved (4) = (99) + 4
+  simp only [unsealRefPre] at hres
+  norm_num at hres
+
 /-! ## §13 — Axiom-hygiene pins. -/
 
 #guard unsealVmDescriptor.constraints.length == 13 + 14 + 4 + 3
 #guard unsealVmDescriptor.hashSites.length == 4
 #guard unsealVmDescriptor.traceWidth == 186
+
+-- §MAG: the wide descriptor keeps the SAME gates, swaps to the wide sites + width.
+#guard unsealVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3
+#guard unsealVmDescriptorWide.hashSites.length == 4
+#guard unsealVmDescriptorWide.traceWidth == 188
 
 #assert_axioms unsealVm_faithful
 #assert_axioms unsealVm_rejects_wrong_output
@@ -549,5 +787,14 @@ theorem staleNonceUnsealRow_rejected :
 #assert_axioms badUnsealRow_rejected
 #assert_axioms maskForgedUnsealRow_rejected
 #assert_axioms staleNonceUnsealRow_rejected
+
+-- §MAG: the magnesium full-state RUNNABLE crown + the side-table anti-ghost teeth.
+#assert_axioms unsealGates_give_cellUnsealSpec
+#assert_axioms unseal_runnable_full_sound
+#assert_axioms unsealRunnable_rejects_root_tamper
+#assert_axioms unsealRunnable_rejects_state_tamper
+#assert_axioms unseal_reserved_mask_not_commitment_bound
+#assert_axioms unsealRunnable_realizes
+#assert_axioms unsealRunnable_clause_not_trivial
 
 end Dregg2.Circuit.Emit.EffectVmEmitUnseal

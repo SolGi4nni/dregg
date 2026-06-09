@@ -204,6 +204,64 @@ theorem delegateAttenGenuine_binds_edge (hash : List ℤ → ℤ)
 #assert_axioms delegateAttenGenuine_sound
 #assert_axioms delegateAttenGenuine_binds_edge
 
+/-! ## §W — THE MAGNESIUM LIFT: `delegateAtten`'s RUNNABLE descriptor binds the FULL 17-field post-state.
+
+`delegateAtten` is the SAME runnable cap-graph row as `attenuateA`, so it inherits the SHARED cap-graph
+WIDE descriptor `attenuateVmDescriptorWide` (`EffectVmEmitAttenuateA §W`): widened to
+`EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites` so the published `state_commit` absorbs the `system_roots`
+digest. `delegateAtten`'s kernel step (`recKDelegateAtten`) edits ONLY `caps`; the 8 side-table roots are
+FROZEN, so the full clause is the per-cell `CapCellSpec` (cap_root = `delegateAttenCapDigestNew`) AND
+`postRoots = preRoots`. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+  (attenuateVmDescriptorWide CapFullClause cap_runnable_full_sound cap_runnable_binds_full_state
+   IsAttenRow CapRowEncodes)
+
+/-- **`delegateAttenVmDescriptorWide`** — the runnable `delegateAtten` FULL-state circuit: definitionally
+the shared cap-graph WIDE descriptor (`attenuateVmDescriptorWide`), 188-wide with `wideHashSites`. The
+`delegateAtten`-specific content is the post `cap_root` digest `delegateAttenCapDigestNew D s args` (the
+attenuated-grant digest), connected via `unify_delegateAtten`. -/
+def delegateAttenVmDescriptorWide : EffectVmDescriptor := attenuateVmDescriptorWide
+
+/-- **`delegateAtten_runnable_full_sound` — THE MAGNESIUM CROWN for `delegateAtten`.** A row satisfying the
+runnable `delegateAtten` WIDE descriptor pins the FULL 17-field cap-graph post-state: the per-cell
+`cap_root` MOVE to the attenuated-grant digest + frame freeze (binding `cell`/`caps`/`bal`-here + frame)
+AND the frozen `system_roots` sub-block (binding the 8 side-table roots). The `cap_root` value is
+universe-A's validated attenuated-grant digest via `unify_delegateAtten` (cited). -/
+theorem delegateAtten_runnable_full_sound (D : Caps → ℤ) (s : RecChainedState)
+    (args : DelegateAttenArgs) (preRoots : Dregg2.Exec.SystemRoots.SysRoots)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState)
+    (postRoots : Dregg2.Exec.SystemRoots.SysRoots)
+    (hrow : IsAttenRow env)
+    (henc : CapRowEncodes env pre post (delegateAttenCapDigestNew D s args))
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash delegateAttenVmDescriptorWide env true true) :
+    CapFullClause (delegateAttenCapDigestNew D s args) preRoots pre post postRoots :=
+  cap_runnable_full_sound (delegateAttenCapDigestNew D s args) preRoots hash env pre post postRoots
+    hrow henc hroots hsat
+
+/-- **`delegateAtten_runnable_binds_full_state` — the whole-17-field anti-ghost for `delegateAtten`.** Two
+wide `delegateAtten` rows publishing the same `NEW_COMMIT` agree on EVERY absorbed state-block column (the
+moved `cap_root` included) AND every side-table root. Inherited from `cap_runnable_binds_full_state`. -/
+theorem delegateAtten_runnable_binds_full_state (capDigestNew : ℤ)
+    (preRoots : Dregg2.Exec.SystemRoots.SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : Dregg2.Exec.SystemRoots.SysRoots)
+    (hsat₁ : satisfiedVm hash delegateAttenVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash delegateAttenVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂) :
+    Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbedCols e₁
+        = Dregg2.Circuit.Emit.EffectVmEmitTransferSound.absorbedCols e₂
+    ∧ (∀ i : Fin Dregg2.Exec.SystemRoots.N_SYSTEM_ROOTS, sr₁ i = sr₂ i) :=
+  cap_runnable_binds_full_state capDigestNew preRoots hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+
+#assert_axioms delegateAtten_runnable_full_sound
+#assert_axioms delegateAtten_runnable_binds_full_state
 
 /-! ## §5 — Axiom-hygiene tripwires. -/
 

@@ -67,6 +67,7 @@ file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.cellSealA
 import Dregg2.Circuit.Spec.celllifecycle
+import Dregg2.Circuit.Emit.EffectVmEmitCellSealFullState
 
 namespace Dregg2.Circuit.Argus.Effects.CellSeal
 

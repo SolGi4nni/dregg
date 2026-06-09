@@ -105,6 +105,7 @@ conclusion's `log`), not papered. Imports are read-only; this file OWNS only its
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.swissHandoffA
 import Dregg2.Circuit.Spec.swisshandoff
+import Dregg2.Circuit.Emit.EffectVmEmitSwissFamilyFull
 
 namespace Dregg2.Circuit.Argus.Effects.SwissReconcile
 
@@ -431,5 +432,32 @@ theorem swissReconcileStmt_rejects_absent :
 #assert_axioms swissReconcileStmt_bal_frozen
 #assert_axioms swissReconcileStmt_target_untouched
 #assert_axioms swissReconcileStmt_rejects_absent
+
+/-! ## §MAGNESIUM — the RUNNABLE descriptor binds the FULL `system_roots` sub-block (whole-state).
+
+`Emit/EffectVmEmitSwissFamilyFull.lean` lifts the RUNNABLE EffectVM descriptor for the 3-vat cert-reconcile
+to bind the FULL 17-field post-state (`swissReconcile_runnable_full_sound` pins `SwissFullClause`; the
+anti-ghost `swissReconcile_runnable_rejects_root_tamper` rules out a tamper of ANY of the 8 side-table
+roots). This section restates the headline at the effect level: the STURDYREF root advances to the
+cert-reconciled-list digest, and the 7 OTHER side-table roots are provably FROZEN — the whole-state binding
+the per-cell descriptor could not state. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitSwissFamilyFull
+  (SwissFullClause SwissFullClause_sturdyref_advance SwissFullClause_other_roots_frozen sturdyrefIdx)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Exec.SystemRoots (SysRoots N_SYSTEM_ROOTS)
+
+/-- **`magnesium_binds_full_sysroots` — the whole-`system_roots` binding for swissReconcile.** From the
+RUNNABLE full-state crown's `SwissFullClause`, the post STURDYREF root IS the witnessed cert-reconciled
+swiss-list digest `d`, and EVERY other side-table root is FROZEN at its pre value. So a swissReconcile proof
+binds the whole `system_roots` sub-block, not a per-cell projection. -/
+theorem magnesium_binds_full_sysroots
+    {d : ℤ} {pre post : CellState} {preRoots postRoots : SysRoots}
+    (hfull : SwissFullClause d pre post preRoots postRoots) :
+    postRoots sturdyrefIdx = d
+    ∧ (∀ i : Fin N_SYSTEM_ROOTS, i ≠ sturdyrefIdx → postRoots i = preRoots i) :=
+  ⟨SwissFullClause_sturdyref_advance hfull, fun i hi => SwissFullClause_other_roots_frozen hfull i hi⟩
+
+#assert_axioms magnesium_binds_full_sysroots
 
 end Dregg2.Circuit.Argus.Effects.SwissReconcile

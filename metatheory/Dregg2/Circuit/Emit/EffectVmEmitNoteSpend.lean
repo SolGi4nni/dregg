@@ -61,6 +61,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notenullifier
 import Dregg2.Exec.SystemRoots
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 
@@ -799,6 +800,299 @@ theorem badNullRow_rejected : ¬ (VmConstraint.gate gNullifierRootUpdate).holdsV
   simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, NULLIFIER_ROOT_STEP_PARAM,
     aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
   norm_num
+
+/-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the magnesium breadth — the GENERIC crown).
+
+§A–§G amplified the descriptor over the OLD raw `SYS_DIG_AFTER = aux 96` carrier with the bespoke
+`noteSpendVmDescriptorFull`. THIS section lifts noteSpend to the GENERIC full-state-on-RUNNABLE crown
+`EffectVmFullStateRunnable.runnable_full_sound` — the analog of `transferRunnableSpec` — over the
+DEDICATED, non-aliasing `sysRootsDigestCol = 186` carrier and the shared `wideHashSites` (so the crypto /
+anti-ghost is discharged ONCE in the generic theorem and the whole-17-field anti-ghost falls out of
+`wide_rejects_state_tamper`/`wide_rejects_root_tamper`). The per-effect content is THIN: the wide
+descriptor, the root-update gate over the dedicated carrier, the structured decode, and `decodeFull`
+(reusing §4's `noteSpendVm_faithful` + the root-gate faithfulness). NO new crypto portal.
+
+This binds the FULL post-state: the per-cell block (transparent CREDIT + nonce tick — the RUNTIME image,
+fields 1–3 of the §0 census) AND all 8 side-table roots (fields 4–12 — the `nullifiers` root ADVANCES by
+the accumulator step, every OTHER side-table root FROZEN). So a satisfying wide-descriptor witness pins
+the 17-field post-state the noteSpend RUNTIME executor produces, and tamper of ANY field/root is UNSAT.
+
+HONESTY (finding #2 + §10 still stand, UNAFFECTED): (a) binding the `nullifiers` DIGEST is NOT the
+no-double-spend FRESHNESS gate (`nf ∉ nullifiers` is a non-membership assertion the digest-advance gate
+cannot make — `noteSpend_freshness_still_needs_nonmembership`; the genuine non-membership circuit lives in
+`Argus/Effects/NoteSpend.lean`, to be bound to this carrier by a sorted-tree opening). (b) the per-cell
+clause is the RUNTIME credit `CellSpendSpec`; the universe-A balance-NEUTRAL convention diverges
+(`runtime_credit_vs_univA_neutral_divergence`) — this wide descriptor binds the RUNTIME post-state it
+actually enforces, the named divergence is orthogonal. -/
+
+open EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Circuit.Emit.EffectVmEmit (sysRootsDigestCol sysRootsDigestColBefore EFFECT_VM_WIDTH_SYSROOTS)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (RowEncodes CellState absorbedCols)
+
+/-! ### §W.1 — the root-UPDATE gate over the DEDICATED carrier (`sysRootsDigestCol`/`…Before`).
+
+Unlike §B's `gNullifierRootUpdate` (which reads the raw aux-96 `SYS_DIG_AFTER`, inside the balance-bit
+block), this gate reads the dedicated, non-aliasing `sysRootsDigestCol = 186` / `sysRootsDigestColBefore
+= 187` carriers the wide IR added — the exact column the `wideHashSites` absorb. -/
+
+/-- Root-update gate body over the DEDICATED carrier: `sa_sysdig − sb_sysdig − step` (so
+`sysRootsDigestCol = sysRootsDigestColBefore + step`), reading the dedicated `system_roots` carriers
+(186/187) and the `param2` accumulator step. The wide analog of `gNullifierRootUpdate`. -/
+def gNullifierRootUpdateWide : EmittedExpr :=
+  eSub (eSub (.var sysRootsDigestCol) (.var sysRootsDigestColBefore)) ePrmNullifierStep
+
+/-- **`NoteSpendRootIntentWide env`** — the dedicated-carrier root move: the `system_roots` digest at
+`sysRootsDigestCol` ADVANCES by the `param2` step over `sysRootsDigestColBefore`. -/
+def NoteSpendRootIntentWide (env : VmRowEnv) : Prop :=
+  env.loc sysRootsDigestCol
+    = env.loc sysRootsDigestColBefore + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)
+
+/-- **`gNullifierRootUpdateWide_faithful`.** The wide root-update gate holds IFF the dedicated-carrier
+digest advances by the accumulator step. -/
+theorem gNullifierRootUpdateWide_faithful (env : VmRowEnv) :
+    (VmConstraint.gate gNullifierRootUpdateWide).holdsVm env false false ↔ NoteSpendRootIntentWide env := by
+  simp only [VmConstraint.holdsVm, gNullifierRootUpdateWide, ePrmNullifierStep, eSub, EmittedExpr.eval,
+    NoteSpendRootIntentWide]
+  constructor
+  · intro h; linarith
+  · intro h; rw [h]; ring
+
+/-! ### §W.2 — the WIDE descriptor (dedicated carrier + `wideHashSites`). -/
+
+/-- **`noteSpendVmDescriptorWide`** — noteSpend's WIDE runnable descriptor: the §2 whole-cell credit/freeze
+gates PLUS the dedicated-carrier `nullifiers`-root-update gate ++ transition continuity ++ the 7 boundary
+PI pins ++ the selector-binding gate, with `traceWidth := EFFECT_VM_WIDTH_SYSROOTS` and `hashSites :=
+wideHashSites`. The `system_roots`-absorbing analog of `transferVmDescriptorWide`. -/
+def noteSpendVmDescriptorWide : EffectVmDescriptor :=
+  { name := noteSpendVmAirName ++ "-sysroots"
+  , traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+  , piCount := 34
+  , constraints := (noteSpendRowGates ++ [.gate gNullifierRootUpdateWide])
+                     ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates SEL_NOTE_SPEND
+  , hashSites := wideHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-- The wide descriptor's hash-sites ARE the shared `wideHashSites`. -/
+theorem noteSpendWide_usesWideSites : noteSpendVmDescriptorWide.hashSites = wideHashSites := rfl
+
+/-- **`noteSpendWide_forces_credit`** — the wide descriptor still forces the §2 whole-cell credit/freeze
+intent (`NoteSpendRowIntent`); the gates are a sublist of the wide constraints, all per-row `.gate`s. -/
+theorem noteSpendWide_forces_credit (env : VmRowEnv) (hrow : IsNoteSpendRow env) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteSpendVmDescriptorWide.constraints, c.holdsVm env b1 b2) :
+    NoteSpendRowIntent env := by
+  apply (noteSpendVm_faithful env hrow).mp
+  intro c hc
+  have hmem : c ∈ noteSpendVmDescriptorWide.constraints := by
+    unfold noteSpendVmDescriptorWide
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl hc))))
+  have := hgates c hmem
+  unfold noteSpendRowGates gFieldPassAll at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+    List.mem_range] at hc
+  rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+    simpa only [VmConstraint.holdsVm] using this
+
+/-- **`noteSpendWide_forces_root`** — the wide descriptor forces the dedicated-carrier `nullifiers`-root
+advance. -/
+theorem noteSpendWide_forces_root (env : VmRowEnv) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteSpendVmDescriptorWide.constraints, c.holdsVm env b1 b2) :
+    NoteSpendRootIntentWide env := by
+  apply (gNullifierRootUpdateWide_faithful env).mp
+  have hmem : (VmConstraint.gate gNullifierRootUpdateWide) ∈ noteSpendVmDescriptorWide.constraints := by
+    unfold noteSpendVmDescriptorWide
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inr (by simp)))))
+  have := hgates _ hmem
+  simpa only [VmConstraint.holdsVm] using this
+
+/-! ### §W.3 — the DECLARATIVE full 17-field post-state clause + the structured decode. -/
+
+/-- **`NoteSpendFullClause hash value preRoots postRoots step`** — the full declarative 17-field post-state
+for a noteSpend over `(pre, post, pr)`: the per-cell RUNTIME `CellSpendSpec` (transparent CREDIT by `value`
++ nonce tick — fields 1–3), the decoded roots `pr = postRoots`, the `nullifiers`-root committed-digest
+advance (`systemRootsDigest postRoots = systemRootsDigest preRoots + step` — field 5), and every
+NON-`NULLIFIER` side-table root FROZEN (fields 4,6–12). 13–17 ride the per-cell value's restLimbs (the
+named factoring). -/
+def NoteSpendFullClause (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (pre post : CellState) (pr : SysRoots) : Prop :=
+  CellSpendSpec pre value post
+  ∧ pr = postRoots
+  ∧ Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+      = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step
+  ∧ (∀ i : Fin N_SYSTEM_ROOTS, i.val ≠ Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER → postRoots i = preRoots i)
+
+/-- **`NoteSpendDecode hash value preRoots postRoots step env pre post pr`** — the structured row decode:
+the cell block + param value is `RowEncodesSpend`, the decoded roots are `postRoots`, the dedicated
+carriers ARE the `systemRootsDigest` of `postRoots`/`preRoots`, the `param2` step is `step`, AND the
+off-row witness data (the `nullifiers`-root digest advance + non-`NULLIFIER` freeze) hold. -/
+def NoteSpendDecode (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (env : VmRowEnv) (pre post : CellState) (pr : SysRoots) : Prop :=
+  RowEncodesSpend env pre value post
+  ∧ pr = postRoots
+  ∧ env.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+  ∧ env.loc sysRootsDigestColBefore = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots
+  ∧ env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM) = step
+  ∧ (∀ i : Fin N_SYSTEM_ROOTS, i.val ≠ Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER → postRoots i = preRoots i)
+
+/-! ### §W.4 — THE INSTANCE + the crown `noteSpend_runnable_full_sound`. -/
+
+/-- **`noteSpendRunnableSpec hash value preRoots postRoots step`** — noteSpend's `RunnableFullStateSpec`.
+`decodeAfter` is `NoteSpendDecode`; `fullClause` is `NoteSpendFullClause`; `decodeFull` projects the wide
+descriptor's credit/freeze gates to `CellSpendSpec` (via `noteSpendWide_forces_credit` +
+`intent_to_cellSpendSpec`) and the dedicated-carrier root gate to the digest advance. THIN; NON-VACUOUS
+(§W.5). -/
+def noteSpendRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ) :
+    RunnableFullStateSpec CellState where
+  descriptor    := noteSpendVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsNoteSpendRow
+  decodeAfter   := NoteSpendDecode hash value preRoots postRoots step
+  fullClause    := NoteSpendFullClause hash value preRoots postRoots step
+  decodeFull    := by
+    intro env pre post pr hrow hdec hgates
+    obtain ⟨henc, hpr, hdigA, hdigB, hstep, hfreezeRoots⟩ := hdec
+    have hcredit := noteSpendWide_forces_credit env hrow true true hgates
+    have hcell := intent_to_cellSpendSpec env pre post value henc hcredit
+    have hrootW := noteSpendWide_forces_root env true true hgates
+    have hadvance : Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+        = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step := by
+      have := hrootW
+      unfold NoteSpendRootIntentWide at this
+      rw [hdigA, hdigB, hstep] at this
+      exact this
+    exact ⟨hcell, hpr, hadvance, hfreezeRoots⟩
+
+/-- **`noteSpend_runnable_full_sound` — THE CROWN (full-state on the RUNNABLE descriptor).** A row
+satisfying noteSpend's WIDE runnable descriptor (`satisfiedVm noteSpendVmDescriptorWide`, first/last
+active), under the structured decode `NoteSpendDecode`, pins the FULL 17-field declarative post-state
+`NoteSpendFullClause`: the per-cell transparent credit + nonce tick (the RUNTIME image), the `nullifiers`-
+root committed-digest advance by the accumulator step, and every OTHER side-table root frozen. This is the
+generic `runnable_full_sound` instantiated at `noteSpendRunnableSpec`. (The no-double-spend FRESHNESS leg
+is NOT a per-row digest fact — see `noteSpend_freshness_still_needs_nonmembership` + the genuine
+non-membership circuit in `Argus/Effects/NoteSpend.lean`.) -/
+theorem noteSpend_runnable_full_sound (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (env : VmRowEnv) (pre post : CellState) (pr : SysRoots)
+    (hrow : IsNoteSpendRow env)
+    (hdec : NoteSpendDecode hash value preRoots postRoots step env pre post pr)
+    (hsat : satisfiedVm hash noteSpendVmDescriptorWide env true true) :
+    NoteSpendFullClause hash value preRoots postRoots step pre post pr :=
+  runnable_full_sound (noteSpendRunnableSpec hash value preRoots postRoots step) hash env pre post pr
+    hrow hdec hsat
+
+/-- **`noteSpend_runnable_rejects_root_tamper` — the side-table anti-ghost (free from the generic crown).**
+Two wide rows publishing the SAME `NEW_COMMIT` (with `systemRootsDigest` carriers) but whose `system_roots`
+sub-blocks DIFFER at some index (a dropped/omitted `nullifiers` update — an attacker omitting `nf` to
+enable a later double-spend, OR any other side-table root tampered) cannot BOTH satisfy — UNSAT. The
+whole-17-field anti-ghost tooth, from `wide_rejects_root_tamper`. -/
+theorem noteSpend_runnable_rejects_root_tamper (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash noteSpendVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash noteSpendVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (noteSpendRunnableSpec hash value preRoots postRoots step) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`noteSpend_runnable_rejects_state_tamper` — the per-cell-block anti-ghost (free).** Two wide rows
+publishing the same `NEW_COMMIT` but whose absorbed state-block columns (balance/nonce/fields/cap) DIFFER
+cannot both satisfy — a forged credit / tampered field / forged cap-root that still claims the published
+commitment is UNSAT. From `wide_rejects_state_tamper`. -/
+theorem noteSpend_runnable_rejects_state_tamper (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash noteSpendVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash noteSpendVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (noteSpendRunnableSpec hash value preRoots postRoots step) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### §W.5 — NON-VACUITY of the wide instance: the full clause is INHABITED + REFUTABLE. -/
+
+/-- A concrete frozen reference sub-block (every side-table empty before the spend). -/
+def wPreRootsS : SysRoots := Dregg2.Exec.SystemRoots.emptySystemRoots
+
+/-- A concrete post sub-block: the `nullifiers` (NULLIFIER) root advanced to `9`, every other root still
+empty (the genuine "only the touched root moved" shape). -/
+def wPostRootsS : SysRoots := fun i =>
+  if i = (⟨Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER, by decide⟩ : Fin N_SYSTEM_ROOTS) then 9 else 0
+
+/-- The honest cell pre/post for the witness: transparent credit `100 → 130` (value `30`), nonce `5 → 6`,
+frame frozen. -/
+def wPreS : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+def wPostS : CellState :=
+  { balLo := 130, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+
+/-- **`noteSpend_fullClause_inhabited` — NON-VACUITY (witness TRUE).** The full clause is inhabited by a
+real spend: transparent credit `100 → 130` + nonce tick, the `nullifiers` root digest advanced by the
+genuine step, every other root frozen. So `NoteSpendFullClause` is a MEANINGFUL 17-field predicate a real
+noteSpend satisfies, not `True`. -/
+theorem noteSpend_fullClause_inhabited (hash : List ℤ → ℤ) :
+    NoteSpendFullClause hash 30 wPreRootsS wPostRootsS
+      (Dregg2.Exec.SystemRoots.systemRootsDigest hash wPostRootsS
+        - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRootsS)
+      wPreS wPostS wPostRootsS := by
+  refine ⟨?_, rfl, by ring, ?_⟩
+  · -- CellSpendSpec wPreS 30 wPostS: balLo = 100 + 30 = 130, balHi frozen, nonce+1, frame frozen.
+    refine ⟨by norm_num [wPreS, wPostS], rfl, by norm_num [wPreS, wPostS], ?_, rfl, rfl⟩
+    intro i; rfl
+  · -- every NON-NULLIFIER root is frozen at 0.
+    intro i hi
+    simp only [wPostRootsS, wPreRootsS, Dregg2.Exec.SystemRoots.emptySystemRoots]
+    rw [if_neg]
+    intro hcontra
+    exact hi (by rw [hcontra])
+
+/-- **`noteSpend_fullClause_refutable` — NON-VACUITY (witness FALSE).** A post-state whose `balLo` is a
+forged `999` (NOT the credit `130`) FAILS `CellSpendSpec`, so `NoteSpendFullClause` is REFUTABLE — the
+clause rejects a forged transparent credit, pinning non-vacuity from both sides. -/
+theorem noteSpend_fullClause_refutable (hash : List ℤ → ℤ) :
+    ¬ NoteSpendFullClause hash 30 wPreRootsS wPostRootsS
+        (Dregg2.Exec.SystemRoots.systemRootsDigest hash wPostRootsS
+          - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRootsS)
+        wPreS { wPostS with balLo := 999 } wPostRootsS := by
+  rintro ⟨⟨hbal, _⟩, _⟩
+  -- hbal : (999) = wPreS.balLo + 30 = 130
+  simp only [wPreS] at hbal
+  norm_num at hbal
+
+/-! ### §W.6 — RECONCILIATION pins (the wide descriptor's shape). -/
+
+-- The wide descriptor carries the widened trace width + the dedicated carrier (NOT the old aux-96).
+#guard noteSpendVmDescriptorWide.traceWidth == 188
+#guard noteSpendVmDescriptorWide.hashSites.length == 4
+-- 13 credit/freeze gates + 1 wide-root gate + 14 transitions + 4 boundaryFirst + 3 boundaryLast + 1 selector.
+#guard noteSpendVmDescriptorWide.constraints.length == 13 + 1 + 14 + 4 + 3 + 1
+-- The wide root gate reads the DEDICATED carriers (186/187), never the old aux-96 (96).
+#guard sysRootsDigestCol == 186
+#guard sysRootsDigestColBefore == 187
+#guard decide (sysRootsDigestCol ≠ SYS_DIG_AFTER)
+
+#assert_axioms gNullifierRootUpdateWide_faithful
+#assert_axioms noteSpendWide_forces_credit
+#assert_axioms noteSpendWide_forces_root
+#assert_axioms noteSpend_runnable_full_sound
+#assert_axioms noteSpend_runnable_rejects_root_tamper
+#assert_axioms noteSpend_runnable_rejects_state_tamper
+#assert_axioms noteSpend_fullClause_inhabited
+#assert_axioms noteSpend_fullClause_refutable
 
 /-! ## §13 — Axiom-hygiene pins. -/
 

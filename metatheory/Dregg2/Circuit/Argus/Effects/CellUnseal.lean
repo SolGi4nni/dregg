@@ -75,6 +75,7 @@ file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.cellUnsealA
 import Dregg2.Circuit.Spec.celllifecycle
+import Dregg2.Circuit.Emit.EffectVmEmitCellUnseal
 
 namespace Dregg2.Circuit.Argus.Effects.CellUnseal
 

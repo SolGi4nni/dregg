@@ -78,6 +78,7 @@ this file owns only its own declarations.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.SetFieldCommit
+import Dregg2.Circuit.Emit.EffectVmEmitSetFieldFullState
 
 namespace Dregg2.Circuit.Argus.Effects.SetField
 

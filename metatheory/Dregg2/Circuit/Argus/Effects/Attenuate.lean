@@ -448,4 +448,32 @@ theorem attenuateVmDescriptorGenuine_nontrivial :
 #assert_axioms checkSubset_rejects_incomparable_grant
 #assert_axioms attenuateVmDescriptorGenuine_nontrivial
 
+/-! ## §W — THE MAGNESIUM CROWN re-exported for the attenuate weld (FULL 17-field RUNNABLE binding).
+
+The §-genuine descriptor binds the per-cell block. The shared cap-graph WIDE descriptor
+(`EffectVmEmitAttenuateA §W`, `attenuateVmDescriptorWide`) lifts the RUNNABLE binding to the FULL
+17-field post-state: the per-cell `cap_root` MOVE + frame freeze AND the 8 side-table roots (frozen — a
+caps-only effect). `cap_runnable_full_sound` is that crown; `cap_runnable_rejects_root_tamper` /
+`cap_runnable_rejects_cap_root_tamper` are the whole-state anti-ghost teeth. We re-export the crown for
+the attenuate weld so the magnesium full-state property is visible at this layer. -/
+
+/-- **`attenuate_runnable_full_sound` — the attenuate MAGNESIUM crown (re-exported).** A row satisfying
+the wide runnable cap-graph descriptor pins the FULL 17-field post-state. The shared
+`cap_runnable_full_sound` at the attenuate cap-digest. -/
+theorem attenuate_runnable_full_sound (capDigestNew : ℤ)
+    (preRoots : Dregg2.Exec.SystemRoots.SysRoots) (hash : List ℤ → ℤ)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (pre post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (postRoots : Dregg2.Exec.SystemRoots.SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.IsAttenRow env)
+    (henc : Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.CapRowEncodes env pre post capDigestNew)
+    (hroots : postRoots = preRoots)
+    (hsat : Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash
+              Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.attenuateVmDescriptorWide env true true) :
+    Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.CapFullClause capDigestNew preRoots pre post postRoots :=
+  Dregg2.Circuit.Emit.EffectVmEmitAttenuateA.cap_runnable_full_sound
+    capDigestNew preRoots hash env pre post postRoots hrow henc hroots hsat
+
+#assert_axioms attenuate_runnable_full_sound
+
 end Dregg2.Circuit.Argus.Effects.Attenuate

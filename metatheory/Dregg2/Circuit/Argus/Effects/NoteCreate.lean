@@ -344,4 +344,39 @@ theorem noteCreate_effectvm_agrees_argus
 
 #assert_axioms noteCreate_effectvm_agrees_argus
 
+/-! ## §7 — THE EFFECTVM DESCRIPTOR IS NOW FULL-STATE ON THE RUNNABLE CIRCUIT (magnesium breadth).
+
+§6 closed the per-cell balance divergence (the EffectVM descriptor and the IR term's executor AGREE on
+the per-cell balance). This section surfaces the FULL strengthening at the Argus layer: the EffectVM
+RUNNABLE descriptor for noteCreate has been lifted (in `EffectVmEmitNoteCreate §W`) to the GENERIC
+full-state-on-RUNNABLE crown — a satisfying witness of the WIDE descriptor (the dedicated
+`sysRootsDigestCol = 186` carrier + `wideHashSites`) pins the FULL 17-field post-state: the per-cell
+balance-NEUTRAL freeze + nonce tick AND the `commitments`-root committed-digest advance AND every other
+side-table root frozen. So the §4 weld (vs the v2 `Surface2` full-list digest) and the per-row RUNNABLE
+EffectVM descriptor BOTH now bind the whole state, and tamper of ANY field/root is UNSAT. We re-export
+the crown here so the Argus cornerstone module names the RUNNABLE descriptor's full-state property. -/
+
+/-- **`noteCreate_runnable_full_sound_argus` — the RUNNABLE EffectVM descriptor binds the FULL state.**
+Re-export of `EffectVmEmitNoteCreate.noteCreate_runnable_full_sound`: a row satisfying noteCreate's WIDE
+RUNNABLE descriptor (the circuit the prover ACTUALLY RUNS), under the structured decode, pins the FULL
+17-field declarative post-state — the per-cell balance-neutral freeze + nonce tick AND the `commitments`-
+root digest advance AND every other side-table root frozen. Strengthens §6's per-cell-balance agreement to
+the WHOLE post-state, on the runnable circuit (not just the abstract v2 surface). -/
+theorem noteCreate_runnable_full_sound_argus (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : Dregg2.Exec.SystemRoots.SysRoots) (step : ℤ)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (pre post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (pr : Dregg2.Exec.SystemRoots.SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.IsNoteCreateRow env)
+    (hdec : Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.NoteCreateDecode hash value preRoots postRoots step
+              env pre post pr)
+    (hsat : Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash
+              Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.noteCreateVmDescriptorWide env true true) :
+    Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.NoteCreateFullClause hash value preRoots postRoots step
+      pre post pr :=
+  Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.noteCreate_runnable_full_sound
+    hash value preRoots postRoots step env pre post pr hrow hdec hsat
+
+#assert_axioms noteCreate_runnable_full_sound_argus
+
 end Dregg2.Circuit.Argus.Effects.NoteCreate

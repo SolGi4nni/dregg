@@ -71,6 +71,11 @@ are read-only; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.balanceA
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+-- The sibling economic-family full-state-on-RUNNABLE welds (mint/burn), chained in here so the whole
+-- economic family rides the existing `Argus.lean` import of `Effects.BalanceA` into the coherence anchor.
+import Dregg2.Circuit.Argus.Effects.Mint
+import Dregg2.Circuit.Argus.Effects.Burn
 
 namespace Dregg2.Circuit.Argus.Effects.BalanceA
 
@@ -301,5 +306,187 @@ theorem balanceAStmt_rejects_self :
 #assert_axioms balanceAStmt_other_asset_untouched
 #assert_axioms balanceAStmt_rejects_overdraft
 #assert_axioms balanceAStmt_rejects_self
+
+/-! ## §6 — FULL-STATE on the RUNNABLE EffectVM descriptor (the magnesium breadth, per-asset entry).
+
+§4 welded balanceA against its OWN standalone v2 `Surface2` circuit (`balanceACircuit` /
+`balanceA_full_sound`), whose `satisfiedE2` soundness already pins the COMPLETE `BalanceMovementSpec` (all
+17 RecordKernelState fields, the whole-`bal`-function digest). That is full-state, but in the `satisfiedE2`
+universe — NOT the `satisfiedVm` / `EffectVmDescriptor` universe (the circuit the EffectVM prover actually
+runs row-by-row). As this file's DESCRIPTOR INVESTIGATION states, balanceA carries NO separate
+`balanceAVmDescriptor`: at the EffectVM layer its per-asset move is what the TRANSFER row pins on the
+`bal_lo` column — the genuine per-asset ledger entry `recTransferBal …` projected onto one cell's balance
+limb. So balanceA's RUNNABLE EffectVM descriptor IS `transferVmDescriptorWide` (the magnesium STAGE-4 wide
+descriptor, `EffectVmFullStateRunnable.transferVmDescriptorWide`), instantiated per ledger entry.
+
+This section delivers balanceA's full-state-on-RUNNABLE THROUGH that wide descriptor, reusing the GENERIC
+`runnable_full_sound` (the crypto is discharged ONCE there, against the NAMED `Poseidon2SpongeCR` portal —
+nothing re-assumed here), and WELDS the descriptor-pinned per-entry post-state to `recKExecAsset`'s genuine
+per-asset ledger move (`recTransferBal_correct`). The honest CONTRAST with the per-cell `bal_lo` block: the
+EffectVM row carries ONE cell's balance limb, so balanceA's two-sided move (debit `(src,a)`, credit
+`(dst,a)`) is TWO wide rows — a debit leg (`direction = 1`) and a credit leg (`direction = 0`) — paired at
+the turn layer (cited, `TurnEmit`), exactly as the transfer keystone's HONEST BOUNDARY assigns the
+two-sided conservation. Each leg's FULL 17-field per-cell post is pinned here. -/
+
+section RunnableFullState
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (IsTransferRow)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+  (CellState RowEncodes CellTransferSpec TransferParams signedMove)
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (transferVmDescriptorWide transferRunnableSpec TransferFullClause runnable_full_sound)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Exec.SystemRoots (SysRoots emptySystemRoots)
+open Dregg2.Circuit.Spec.BalanceMovement (recTransferBal_correct)
+
+/-- Project ledger entry `(c, a)` of `k` into the EffectVM `CellState` block: `balLo` = the genuine
+per-asset ledger measure `bal c a` (the SAME measure `recTransferBal` moves), every other block component
+`0` (balanceA touches no high-limb / nonce / field-array / cap-root / reserved on a ledger entry — all
+FROZEN). `commit` (the digest output) is `0`. The per-asset analog of `EffectVmEmitMint.cellProjA`. -/
+def cellProjA (k : RecordKernelState) (c : CellId) (a : AssetId) : CellState where
+  balLo    := k.bal c a
+  balHi    := 0
+  nonce    := 0
+  fields   := fun _ => 0
+  capRoot  := 0
+  reserved := 0
+  commit   := 0
+
+/-- balanceA's per-asset DEBIT-leg transfer params: amount `t.amt`, `direction = 1` (debit). `signedMove`
+is `t.amt·(1 − 2) = −t.amt` — exactly `recTransferBal`'s `src` debit. -/
+def debitParamsA (t : Turn) : TransferParams := { amount := t.amt, direction := 1 }
+
+/-- balanceA's per-asset CREDIT-leg transfer params: amount `t.amt`, `direction = 0` (credit). `signedMove`
+is `t.amt·(1 − 0) = +t.amt` — exactly `recTransferBal`'s `dst` credit. -/
+def creditParamsA (t : Turn) : TransferParams := { amount := t.amt, direction := 0 }
+
+/-- **`balanceA_runnable_full_sound` — THE DELIVERABLE (full-state on the RUNNABLE descriptor, per leg).**
+A row satisfying `transferVmDescriptorWide` — the WIDE descriptor the EffectVM prover RUNS for balanceA's
+per-asset `bal_lo` move (`satisfiedVm`, first/last active) — under the structured `RowEncodes` decode (for
+either leg's params `p`), pins the FULL 17-field declarative post-state: the per-cell `CellTransferSpec`
+(this entry's balance moved by the signed amount, the whole frame frozen) AND the 8 side-table roots FROZEN
+(`postRoots = preRoots`). Routed THROUGH the generic `runnable_full_sound` at the validated
+`transferRunnableSpec` — the crypto/anti-ghost on all 17 fields is the generic
+`wide_rejects_state_tamper`/`wide_rejects_root_tamper`, the sole portal `Poseidon2SpongeCR`. Strictly
+stronger than a per-row-intent projection: the wide `state_commit` absorbs the `system_roots` digest, so a
+tamper of ANY of the 17 fields' content is UNSAT. -/
+theorem balanceA_runnable_full_sound (p : TransferParams) (preRoots : SysRoots) (hash : List ℤ → ℤ)
+    (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsTransferRow env)
+    (henc : RowEncodes env pre p post)
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash transferVmDescriptorWide env true true) :
+    CellTransferSpec pre p post ∧ postRoots = preRoots :=
+  runnable_full_sound (transferRunnableSpec p preRoots) hash env pre post postRoots hrow
+    ⟨henc, hroots⟩ hsat
+
+#assert_axioms balanceA_runnable_full_sound
+
+/-! ### §6a — WELD: the descriptor-pinned per-entry post-state IS `recKExecAsset`'s genuine ledger move.
+
+The full-state `balanceA_runnable_full_sound` pins a `CellTransferSpec` per leg; here we confirm that
+per-cell move IS the per-asset ledger entry `recKExecAsset` commits, via `recTransferBal_correct` — so the
+RUNNABLE descriptor and the §2 cornerstone executor agree on the moved entry (not a fourth spec). The
+balanceA-specific content (over the reused transfer descriptor) is exactly this per-asset ledger weld. -/
+
+/-- **`debitLeg_matches_executor` — the SOURCE entry agrees.** When `recKExecAsset` commits
+(`interp (balanceAStmt t a) k = some k'`, the §2 cornerstone) with `src ≠ dst`, the DEBIT leg's
+descriptor-pinned per-cell post (`CellTransferSpec` at `debitParamsA t`, decoding the projected `(src,a)`
+entry) agrees with the executor's debited `(src,a)` ledger entry: `post.balLo = k'.bal t.src a = k.bal
+t.src a − t.amt`. So the full-state RUNNABLE leg pins EXACTLY the executor's source debit. -/
+theorem debitLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernelState)
+    (pre post : CellState) (postRoots preRoots : SysRoots)
+    (hne : t.src ≠ t.dst)
+    (hpre : pre = cellProjA k t.src a)
+    (hspec : CellTransferSpec pre (debitParamsA t) post ∧ postRoots = preRoots)
+    (hexec : interp (balanceAStmt t a) k = some k') :
+    post.balLo = k'.bal t.src a := by
+  obtain ⟨_, hlo, _, _, _, _, _⟩ := hspec.1
+  -- `post.balLo = pre.balLo + signedMove (debitParamsA t) = (bal src a) + (amt·(1−2·1)) = bal src a − amt`.
+  rw [hlo, hpre]
+  show k.bal t.src a + signedMove (debitParamsA t) = k'.bal t.src a
+  -- the §2 cornerstone names `k'` as `recKExecAsset`'s post: `bal := recTransferBal …`.
+  rw [interp_balanceAStmt_eq_recKExecAsset] at hexec
+  unfold recKExecAsset at hexec
+  by_cases hg : (authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
+      ∧ t.src ≠ t.dst ∧ t.src ∈ k.accounts ∧ t.dst ∈ k.accounts)
+  · rw [if_pos hg] at hexec
+    have hk' : k'.bal = recTransferBal k.bal t.src t.dst a t.amt :=
+      (congrArg RecordKernelState.bal (Option.some.inj hexec)).symm
+    rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).1]
+    show k.bal t.src a + t.amt * (1 - 2 * 1) = k.bal t.src a - t.amt
+    ring
+  · rw [if_neg hg] at hexec; simp only [reduceCtorEq] at hexec
+
+/-- **`creditLeg_matches_executor` — the DESTINATION entry agrees.** Symmetric to the debit leg: the CREDIT
+leg's descriptor-pinned per-cell post (`CellTransferSpec` at `creditParamsA t`, decoding the projected
+`(dst,a)` entry) agrees with the executor's credited `(dst,a)` ledger entry: `post.balLo = k'.bal t.dst a =
+k.bal t.dst a + t.amt`. So the full-state RUNNABLE leg pins EXACTLY the executor's destination credit. -/
+theorem creditLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernelState)
+    (pre post : CellState) (postRoots preRoots : SysRoots)
+    (hne : t.src ≠ t.dst)
+    (hpre : pre = cellProjA k t.dst a)
+    (hspec : CellTransferSpec pre (creditParamsA t) post ∧ postRoots = preRoots)
+    (hexec : interp (balanceAStmt t a) k = some k') :
+    post.balLo = k'.bal t.dst a := by
+  obtain ⟨_, hlo, _, _, _, _, _⟩ := hspec.1
+  rw [hlo, hpre]
+  show k.bal t.dst a + signedMove (creditParamsA t) = k'.bal t.dst a
+  rw [interp_balanceAStmt_eq_recKExecAsset] at hexec
+  unfold recKExecAsset at hexec
+  by_cases hg : (authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
+      ∧ t.src ≠ t.dst ∧ t.src ∈ k.accounts ∧ t.dst ∈ k.accounts)
+  · rw [if_pos hg] at hexec
+    have hk' : k'.bal = recTransferBal k.bal t.src t.dst a t.amt :=
+      (congrArg RecordKernelState.bal (Option.some.inj hexec)).symm
+    rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).2.1]
+    show k.bal t.dst a + t.amt * (1 - 2 * 0) = k.bal t.dst a + t.amt
+    ring
+  · rw [if_neg hg] at hexec; simp only [reduceCtorEq] at hexec
+
+#assert_axioms debitLeg_matches_executor
+#assert_axioms creditLeg_matches_executor
+
+/-! ### §6b — NON-VACUITY: a concrete leg satisfies the full clause, and it is refutable.
+
+The full-state lift is hollow if `CellTransferSpec` is never inhabited per-asset. We exhibit a concrete
+DEBIT leg (`kB0`/`tB0` from §5: cell 0 holds 30 of asset 0, moves 30 to cell 1) whose projected `(src,a)`
+entry `100 → ...` realizes the `debitParamsA` move, and refute a forged post. -/
+
+/-- The DEBIT leg's projected pre-state for `kB0`/`tB0`: cell 0's asset-0 entry is `30`, rest `0`. -/
+def debitPreB0 : CellState := cellProjA kB0 tB0.src 0
+
+/-- The DEBIT leg's full post: `bal_lo 30 → 0` (debit by 30), frame frozen, nonce ticked, roots frozen.
+A concrete inhabitant of `transferRunnableSpec`'s `fullClause` for balanceA's debit leg. -/
+def debitPostB0 : CellState :=
+  { debitPreB0 with balLo := 0, nonce := debitPreB0.nonce + 1 }
+
+/-- **`debitLeg_realizes` — NON-VACUITY (witness TRUE).** The DEBIT leg's `fullClause` is INHABITED:
+`debitPostB0` is the genuine `debitParamsA tB0` image of `debitPreB0` (`30 → 0`, signed move `−30`, frame
+frozen) with frozen roots. So the per-asset full clause is NOT `True`. -/
+theorem debitLeg_realizes :
+    (transferRunnableSpec (debitParamsA tB0) emptySystemRoots).fullClause
+      debitPreB0 debitPostB0 emptySystemRoots := by
+  refine ⟨⟨Or.inr rfl, ?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+  show debitPostB0.balLo = debitPreB0.balLo + signedMove (debitParamsA tB0)
+  show (0 : ℤ) = debitPreB0.balLo + tB0.amt * (1 - 2 * 1)
+  simp only [debitPreB0, cellProjA, kB0, tB0]
+  norm_num
+
+/-- **`debitLeg_clause_not_trivial` — REFUTABLE (witness FALSE).** A post whose `bal_lo` is NOT the debit
+(`debitPreB0.balLo = 30`, demanding `0`, but a forged `999`) FAILS the full clause. -/
+theorem debitLeg_clause_not_trivial :
+    ¬ (transferRunnableSpec (debitParamsA tB0) emptySystemRoots).fullClause
+        debitPreB0 { debitPostB0 with balLo := 999 } emptySystemRoots := by
+  rintro ⟨⟨_, hbal, _⟩, _⟩
+  -- hbal : 999 = debitPreB0.balLo + signedMove (debitParamsA tB0) = 30 + (−30) = 0
+  simp only [debitPreB0, cellProjA, kB0, tB0, signedMove, debitParamsA] at hbal
+  norm_num at hbal
+
+#assert_axioms debitLeg_realizes
+#assert_axioms debitLeg_clause_not_trivial
+
+end RunnableFullState
 
 end Dregg2.Circuit.Argus.Effects.BalanceA

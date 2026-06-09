@@ -72,6 +72,7 @@ via the named `Poseidon2SpongeCR` hypothesis (inside the cited anti-ghost, not t
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitCreateCommittedEscrow
+import Dregg2.Circuit.Emit.EffectVmEmitCreateCommittedEscrowWide
 
 namespace Dregg2.Circuit.Argus.Effects.CreateCommittedEscrow
 
@@ -320,5 +321,86 @@ theorem createCommittedEscrowStmt_fails_without_hiding (id : Nat)
 
 #assert_axioms createCommittedEscrowStmt_parks
 #assert_axioms createCommittedEscrowStmt_fails_without_hiding
+
+/-! ## §6 — FULL-STATE on the RUNNABLE descriptor (the magnesium breadth — bind ALL 17 fields).
+
+§4's weld concludes the per-cell agreement + the genuine escrow-root recompute over the AUDITED class-A
+descriptor (`escrowCreateVmDescriptorGenuine`), whose root carrier is the raw `aux_off_sys.SYSTEM_ROOTS_DIGEST`
+(= 96). That binds the `escrows` root into `state_commit`, but not in the shape the generic full-state crown
+consumes (the DEDICATED `sysRootsDigestCol`, the `wideHashSites` GROUP-4, the widened width).
+
+`EffectVmEmitCreateCommittedEscrowWide.committedEscrow_runnable_full_sound` lifts the SAME per-row gates
+through the generic `runnable_full_sound` over the WIDE descriptor `committedEscrowVmDescriptorWide`
+(`traceWidth = EFFECT_VM_WIDTH_SYSROOTS`, `hashSites = wideHashSites`, the dedicated-carrier root-update
+gate). A satisfying row of THAT descriptor binds the FULL 17-field post-state: the per-cell DEBIT (here
+the recipient cell's projected ledger entry) AND the `escrows` side-table digest advance — with the
+generic anti-ghost (`committedEscrow_wide_rejects_root_tamper` / `…state_tamper`) giving: tamper ANY of
+the 13 absorbed state-block columns OR ANY of the 8 side-table roots ⇒ the running descriptor is UNSAT.
+
+This section welds THAT full-state crown to the SAME executor cornerstone (§2/§3), so the welded
+statement now pins the executor's per-cell post-state through the FULL-STATE RUNNABLE descriptor — and,
+since createObligation is the dispatch-alias of this descriptor (`Argus/Effects/CreateObligation.lean`),
+createObligation inherits the full-state binding through the SAME wide circuit. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitCreateCommittedEscrowWide
+  (committedEscrowVmDescriptorWide committedEscrow_runnable_full_sound)
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowFamilyWide (ESCROW_STEP_PARAM)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest)
+
+/-- **`createCommittedEscrow_runnable_full_state` — THE FULL-STATE WELD (committed createEscrow / createObligation).**
+
+Suppose, for the Argus committed-escrow term:
+  * the WIDE RUNNABLE descriptor `committedEscrowVmDescriptorWide` is SATISFIED by `(env, true, true)`,
+    its `RowEncodesEscrow` decoding NAMES `post` over the creator cell's projection
+    `cellProjEscrow k.bal creator asset` with `⟨amount⟩`, and the dedicated digest carriers are pinned to
+    the `systemRootsDigest` of the pre/post `system_roots` sub-blocks (`hAfter`/`hBefore`) with the
+    accumulator `step` (`hStep`);
+  * the IR term's EXECUTOR interpretation COMMITS (`hexec`).
+
+Then the circuit's pinned `post` AGREES with the executor's debited creator-cell projection
+`cellProjEscrow k'.bal creator asset` on EVERY limb (`balLo` debited, the whole frame frozen, nonce
+frozen) AND the WIDE descriptor binds the `escrows` side-table digest advance
+(`systemRootsDigest postRoots = systemRootsDigest preRoots + step`). So the circuit the prover RUNS pins
+the per-cell state the executor produces AND the full side-table digest — all 17 fields bound (the other
+7 roots through the generic crown's pointwise digest binding). -/
+theorem createCommittedEscrow_runnable_full_state
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (id : Nat) (actor creator recipient : CellId)
+    (asset : AssetId) (amount : ℤ) (hidingProof : Bool)
+    (post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (preRoots postRoots : SysRoots) (step : ℤ)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitCreateCommittedEscrow.IsEscrowCreateRow env)
+    (henc : RowEncodesEscrow env (cellProjEscrow k.bal creator asset) ⟨amount⟩ post)
+    (hAfter : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestCol
+                = systemRootsDigest hash postRoots)
+    (hBefore : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestColBefore
+                = systemRootsDigest hash preRoots)
+    (hStep : env.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol ESCROW_STEP_PARAM) = step)
+    (hsat : satisfiedVm hash committedEscrowVmDescriptorWide env true true)
+    (hexec : interp (createCommittedEscrowStmt id actor creator recipient asset amount hidingProof) k
+              = some k') :
+    -- per-cell agreement with the executor (the conserved leg) …
+    ( post.balLo = (cellProjEscrow k'.bal creator asset).balLo
+      ∧ post.balHi = (cellProjEscrow k'.bal creator asset).balHi
+      ∧ (∀ i, post.fields i = (cellProjEscrow k'.bal creator asset).fields i)
+      ∧ post.capRoot = (cellProjEscrow k'.bal creator asset).capRoot
+      ∧ post.reserved = (cellProjEscrow k'.bal creator asset).reserved
+      ∧ post.nonce = (cellProjEscrow k'.bal creator asset).nonce )
+    -- … and the FULL side-table digest advance bound by the WIDE RUNNABLE descriptor.
+    ∧ systemRootsDigest hash postRoots = systemRootsDigest hash preRoots + step := by
+  -- circuit side: the WIDE full-state crown forces the per-cell `CellEscrowSpec` + the digest advance.
+  obtain ⟨hcs, hdig⟩ :=
+    committedEscrow_runnable_full_sound ⟨amount⟩ hash preRoots step env
+      (cellProjEscrow k.bal creator asset) post postRoots
+      hrow henc hAfter hBefore hStep hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hcs
+  -- executor side: the §2 cornerstone + §3 projection give the debited balLo (frozen limbs `0 = 0`).
+  rw [interp_createCommittedEscrowStmt_eq_createCommittedEscrowKAssetK] at hexec
+  have heLo := createCommittedEscrowKAssetK_proj_balLo hexec
+  refine ⟨⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl,
+           hcN.trans rfl⟩, hdig⟩
+  rw [hcLo, heLo]
+
+#assert_axioms createCommittedEscrow_runnable_full_state
 
 end Dregg2.Circuit.Argus.Effects.CreateCommittedEscrow

@@ -60,6 +60,7 @@ Imports are read-only.
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.bridgeoutboundcancel
 import Dregg2.Exec.SystemRoots
@@ -694,5 +695,179 @@ theorem bridgeCancelGenuine_recompute_nonvacuous :
 #assert_axioms genuine_sites_split
 #assert_axioms bridgeCancelGenuine_sound
 #assert_axioms bridgeCancelGenuine_binds_record
+
+/-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the MAGNESIUM breadth): bind ALL 17 fields.
+
+§H bound the cancelled escrow RECORD via the genuine recompute, but `escrow_root_not_in_descriptor_commit`
+stood: the RUNNABLE descriptor's published `state_commit` absorbed ONLY the 13 conserved state-block
+columns, NOT the `system_roots` digest. This section CLOSES that via the shared `EffectVmFullStateRunnable`
+recipe: the WIDE descriptor (`hashSites := wideHashSites`, `traceWidth := EFFECT_VM_WIDTH_SYSROOTS`)
+absorbs the dedicated `sysRootsDigestCol` carrier, so the descriptor the prover RUNS binds the per-cell
+REFUND-CREDIT block AND all 8 side-table roots. Tamper ANY field or ANY side-table root ⇒ UNSAT
+(`wide_rejects_state_tamper` / `wide_rejects_root_tamper`).
+
+bridgeCancel is the REFUND-CREDIT case: the per-cell block is `CellCancelSpec` (`balLo` CREDITED by the
+refund `amount`, frame frozen, nonce ticked) and the `system_roots` sub-block advances ONLY at `ESCROW`
+(the parked record marked resolved), the other 7 roots frozen. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper wideHashSites)
+open Dregg2.Exec.SystemRoots (emptySystemRoots)
+
+/-- **`bridgeCancelVmDescriptorWide`** — bridgeCancel's descriptor WIDENED to the `system_roots`-absorbing
+shape: the SAME per-row gates + transitions + boundary pins, but `traceWidth := EFFECT_VM_WIDTH_SYSROOTS`
+and `hashSites := wideHashSites`. Strictly additive over `bridgeCancelVmDescriptor` (byte-identical
+constraint list; width +2; site 3's spare `.zero` 4th slot becomes the `sysRootsDigestCol` carrier). -/
+def bridgeCancelVmDescriptorWide : EffectVmDescriptor :=
+  { bridgeCancelVmDescriptor with
+    name := bridgeCancelVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide descriptor's constraints ARE bridgeCancel's (the width/site swap leaves the
+per-row/transition/boundary gate list untouched). -/
+theorem bridgeCancelWide_constraints_eq :
+    bridgeCancelVmDescriptorWide.constraints = bridgeCancelVmDescriptor.constraints := rfl
+
+/-- **`bridgeCancelGates_give_cellSpec` — the GATE-ONLY per-cell soundness (no hash-site hypothesis).**
+The per-row gates of the bridgeCancel descriptor, on a cancel row decoded by `RowEncodesCancel`, force
+`CellCancelSpec`. The body of `bridgeCancelDescriptor_full_sound` with the hash-site layer DROPPED — it
+factors through `bridgeCancelVm_faithful` + `intent_to_cellCancelSpec`, NEITHER of which reads the sites. -/
+theorem bridgeCancelGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (amount : ℤ)
+    (hrow : IsBridgeCancelRow env) (henc : RowEncodesCancel env pre amount post)
+    (hgates : ∀ c ∈ bridgeCancelVmDescriptor.constraints, c.holdsVm env true true) :
+    CellCancelSpec pre amount post := by
+  have hrowgates : ∀ c ∈ bridgeCancelRowGates, c.holdsVm env true true := by
+    intro c hc
+    apply hgates
+    unfold bridgeCancelVmDescriptor
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl hc))
+  have hrowgates' := bridgeCancelRowGates_flag_indep env true true hrowgates
+  exact intent_to_cellCancelSpec env pre post amount henc ((bridgeCancelVm_faithful env hrow).mp hrowgates')
+
+/-- **`BridgeCancelFullClause`** — the full declarative post-state for bridgeCancel over `(pre, post,
+postRoots)`: the per-cell `CellCancelSpec` (`balLo` CREDITED by the refund `amount`, frame frozen, nonce
+ticked) AND the `system_roots` sub-block IS the declared `expectedRoots` (the `ESCROW` slot carrying the
+resolved escrow-list digest, the other 7 roots frozen). Non-vacuous: §`bridgeCancel_wide_realizes`. -/
+def BridgeCancelFullClause (amount : ℤ) (expectedRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellCancelSpec pre amount post ∧ postRoots = expectedRoots
+
+/-- **`bridgeCancelRunnableSpec` — the FULL-state RUNNABLE instance.** `decodeAfter` is `RowEncodesCancel`
+PLUS the declared post-roots witness PLUS the carrier pin `sysRootsDigestCol = systemRootsDigest postRoots`
+(the anti-ghost hd-link); `decodeFull` projects the wide descriptor's per-row gates to the GATE-ONLY
+`bridgeCancelGates_give_cellSpec`, then carries the declared post-roots. THIN + NON-VACUOUS (the per-cell
+REFUND CREDIT + the resolved side-table root, NOT `True`). -/
+def bridgeCancelRunnableSpec (hash : List ℤ → ℤ) (amount : ℤ) (expectedRoots : SysRoots) :
+    RunnableFullStateSpec CellState where
+  descriptor    := bridgeCancelVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsBridgeCancelRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesCancel env pre amount post ∧ postRoots = expectedRoots
+      ∧ env.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+  fullClause    := BridgeCancelFullClause amount expectedRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots, _hcar⟩ := hdec
+    exact ⟨bridgeCancelGates_give_cellSpec env pre post amount hrow henc
+            (bridgeCancelWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`bridgeCancel_runnable_full_sound` — THE FULL-STATE ON RUNNABLE crown (bridgeCancel).** A row
+satisfying the WIDE runnable descriptor, under the structured decode, pins the FULL 17-field declarative
+post-state: the per-cell REFUND-CREDIT/freeze/tick AND the whole `system_roots` sub-block. Crypto
+discharged ONCE in the generic `runnable_full_sound`; the per-effect obligation was only the thin decode. -/
+theorem bridgeCancel_runnable_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (amount : ℤ) (postRoots expectedRoots : SysRoots)
+    (hrow : IsBridgeCancelRow env)
+    (henc : RowEncodesCancel env pre amount post) (hroots : postRoots = expectedRoots)
+    (hcar : env.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots)
+    (hsat : satisfiedVm hash bridgeCancelVmDescriptorWide env true true) :
+    BridgeCancelFullClause amount expectedRoots pre post postRoots :=
+  runnable_full_sound (bridgeCancelRunnableSpec hash amount expectedRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots, hcar⟩ hsat
+
+/-- **`bridgeCancel_wide_rejects_state_tamper` — per-cell-block anti-ghost on the RUNNABLE descriptor.** -/
+theorem bridgeCancel_wide_rejects_state_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeCancelVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeCancelVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (bridgeCancelRunnableSpec hash 0 sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`bridgeCancel_wide_rejects_root_tamper` — side-table anti-ghost on the RUNNABLE descriptor (the gap's
+headline tooth, CLOSED).** Two wide rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
+carriers) but whose side-table sub-blocks DIFFER at some index cannot both satisfy — the `escrows` root
+(the cancelled record's resolve) and every other root is now bound BY the running commitment. -/
+theorem bridgeCancel_wide_rejects_root_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeCancelVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeCancelVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (bridgeCancelRunnableSpec hash 0 sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### Non-vacuity of the full-state instance: a real refunded+resolved post-state inhabits the clause. -/
+
+/-- A pre cell (bal 100, nonce 5, frame 0) and its honest cancel image (bal `100 + 5 = 105`, nonce 6). -/
+def widePreCell : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+def widePostCell : CellState :=
+  { balLo := 105, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+
+/-- A concrete post-roots sub-block: the `ESCROW` root carries the resolved escrow-list digest `1042`,
+every other side-table root `0` (frozen). -/
+def widePostRoots : SysRoots := escrowRootOf 1042 emptySystemRoots
+
+/-- **`bridgeCancel_wide_realizes` — NON-VACUITY of the instance (witness TRUE).** The full clause is
+INHABITED by a genuine cancel: `widePostCell` is the honest refund-credited image of `widePreCell`
+(`100 → 105`, credit 5, nonce `5 → 6`) and the post-roots advance ONLY at `ESCROW`. So `fullClause` is NOT
+`True`. -/
+theorem bridgeCancel_wide_realizes :
+    (bridgeCancelRunnableSpec EffectVmEmitEscrowRoot.cN 5 widePostRoots).fullClause
+      widePreCell widePostCell widePostRoots :=
+  ⟨⟨by norm_num [widePreCell, widePostCell], rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`bridgeCancel_wide_clause_refutable` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+`balLo` is NOT the refund credit (`999 ≠ 100 + 5`) FAILS `BridgeCancelFullClause`, pinning non-vacuity
+from BOTH sides. -/
+theorem bridgeCancel_wide_clause_refutable :
+    ¬ BridgeCancelFullClause 5 widePostRoots widePreCell
+        { widePostCell with balLo := 999 } widePostRoots := by
+  rintro ⟨⟨hbal, _⟩, _⟩
+  simp only [widePreCell, widePostCell] at hbal
+  norm_num at hbal
+
+/-- **Side-table non-vacuity (the root genuinely moves).** The resolved post-roots' `ESCROW` slot (`1042`)
+differs from the pre-roots' (`0`) — the `markResolved` advance is genuinely visible at `systemRoot.ESCROW`. -/
+theorem bridgeCancel_wide_root_moves :
+    widePostRoots escrowRootIx ≠ emptySystemRoots escrowRootIx := by
+  simp only [widePostRoots, escrowRootOf_escrow, emptySystemRoots]
+  norm_num
+
+#guard bridgeCancelVmDescriptorWide.traceWidth == 188
+#guard bridgeCancelVmDescriptorWide.hashSites.length == 4
+#guard bridgeCancelVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3
+
+#assert_axioms bridgeCancelGates_give_cellSpec
+#assert_axioms bridgeCancel_runnable_full_sound
+#assert_axioms bridgeCancel_wide_rejects_state_tamper
+#assert_axioms bridgeCancel_wide_rejects_root_tamper
+#assert_axioms bridgeCancel_wide_realizes
+#assert_axioms bridgeCancel_wide_clause_refutable
+#assert_axioms bridgeCancel_wide_root_moves
 
 end Dregg2.Circuit.Emit.EffectVmEmitBridgeCancel

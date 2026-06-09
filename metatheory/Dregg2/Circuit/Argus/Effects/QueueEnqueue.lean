@@ -80,6 +80,10 @@ per-cell EffectVM weld (the standalone descriptor carries the whole-state triple
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.queueEnqueueA
+-- The MAGNESIUM full-state lift of queueEnqueue's RUNNABLE EffectVM descriptor (binds all 17 fields
+-- incl. the `queues` system-root); kept in the anchor so the wide descriptor + `runnable_full_sound`
+-- + the whole-state anti-ghost ride the same green build as this Surface2-triple weld.
+import Dregg2.Circuit.Emit.EffectVmEmitQueueEnqueueFullState
 
 namespace Dregg2.Circuit.Argus.Effects.QueueEnqueue
 

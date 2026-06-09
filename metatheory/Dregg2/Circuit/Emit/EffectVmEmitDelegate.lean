@@ -219,6 +219,70 @@ theorem delegateGenuine_binds_edge (hash : List ℤ → ℤ)
         = e₂.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitCapRoot.cp.OP) :=
   attenuateGenuine_binds_edge hash hCR e₁ e₂ hsCommit₁ hsCommit₂ hrec₁ hrec₂ hcommit
 
+/-! ## §W — THE MAGNESIUM LIFT: `delegate`'s RUNNABLE descriptor binds the FULL 17-field post-state.
+
+`delegate` is the SAME runnable cap-graph row as `attenuateA`, so it inherits the SHARED cap-graph WIDE
+descriptor `attenuateVmDescriptorWide` (`EffectVmEmitAttenuateA §W`): the cap-root MOVE + frame freeze
+gates UNCHANGED, but widened to `EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites` so the published
+`state_commit` now absorbs the `system_roots` digest. A satisfying wide row pins the FULL 17-field
+post-state (per-cell block — incl. the moved `cap_root` — AND the 8 side-table roots). `delegate`'s
+kernel step `recDelegateCaps` edits ONLY `caps`; the 8 side-table roots are FROZEN, so the full clause is
+the per-cell `CapCellSpec` (cap_root = `delegateCapDigestNew`) AND `postRoots = preRoots`. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
+  (attenuateVmDescriptorWide CapFullClause capRunnableSpec cap_runnable_full_sound
+   cap_runnable_binds_full_state cap_runnable_rejects_cap_root_tamper cap_runnable_rejects_root_tamper
+   IsAttenRow CapRowEncodes)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols)
+open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`delegateVmDescriptorWide`** — the runnable `delegate` FULL-state circuit: definitionally the shared
+cap-graph WIDE descriptor (`attenuateVmDescriptorWide`), 188-wide with `wideHashSites`. The
+`delegate`-specific content is the post `cap_root` digest VALUE the witness supplies
+(`delegateCapDigestNew D s args` = the `recDelegateCaps` digest), connected below. -/
+def delegateVmDescriptorWide : EffectVmDescriptor := attenuateVmDescriptorWide
+
+/-- **`delegate_runnable_full_sound` — THE MAGNESIUM CROWN for `delegate`.** A row satisfying the runnable
+`delegate` WIDE descriptor (`satisfiedVm`, first/last active), under the structured decode (the post
+`cap_root` carrying `delegateCapDigestNew D s args`, the roots frozen), pins the FULL 17-field cap-graph
+post-state: the per-cell `cap_root` MOVE to the delegate digest + frame freeze (binding `cell`/`caps`/
+`bal`-here + frame) AND the frozen `system_roots` sub-block (binding the 8 side-table roots). The
+`cap_root` value is universe-A's validated `recDelegateCaps` digest via `unify_delegate` (cited). -/
+theorem delegate_runnable_full_sound (D : Caps → ℤ) (s : RecChainedState) (args : DelegateArgs)
+    (preRoots : SysRoots) (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState)
+    (postRoots : SysRoots)
+    (hrow : IsAttenRow env)
+    (henc : CapRowEncodes env pre post (delegateCapDigestNew D s args))
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash delegateVmDescriptorWide env true true) :
+    CapFullClause (delegateCapDigestNew D s args) preRoots pre post postRoots :=
+  cap_runnable_full_sound (delegateCapDigestNew D s args) preRoots hash env pre post postRoots
+    hrow henc hroots hsat
+
+/-- **`delegate_runnable_binds_full_state` — the whole-17-field anti-ghost for `delegate`.** Two wide
+`delegate` rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) agree on EVERY
+absorbed state-block column (the moved `cap_root` included) AND every side-table root — so a prover cannot
+keep `NEW_COMMIT` while tampering ANY of the 17 fields. Inherited from the shared
+`cap_runnable_binds_full_state`. -/
+theorem delegate_runnable_binds_full_state (capDigestNew : ℤ) (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash delegateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash delegateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂) :
+    absorbedCols e₁ = absorbedCols e₂
+    ∧ (∀ i : Fin Dregg2.Exec.SystemRoots.N_SYSTEM_ROOTS, sr₁ i = sr₂ i) :=
+  cap_runnable_binds_full_state capDigestNew preRoots hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+
+#assert_axioms delegate_runnable_full_sound
+#assert_axioms delegate_runnable_binds_full_state
+
 /-! ## §5 — Axiom-hygiene tripwires (the honesty tripwire). -/
 
 #assert_axioms delegateVm_faithful

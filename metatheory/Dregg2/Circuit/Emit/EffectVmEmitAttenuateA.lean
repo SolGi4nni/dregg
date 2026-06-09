@@ -63,6 +63,7 @@ are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitCapRoot
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Inst.attenuateA
 
@@ -723,5 +724,250 @@ theorem attenuateGenuine_op_tamper_refuted :
 #assert_axioms unify_attenuate_via_full_sound
 #assert_axioms capGoodRow_realizes_intent
 #assert_axioms capBadRow_rejected
+
+/-! ## §W — THE MAGNESIUM WIDENING: the cap-graph row's RUNNABLE descriptor binds the FULL 17-field
+post-state (the shared cap-graph `RunnableFullStateSpec`, reused by every cap-graph effect).
+
+`attenuateVmDescriptor` (and its re-exports `delegateVmDescriptor`, `dropRefVmDescriptor`,
+`introduceVmDescriptor`, `revokeDelegationVmDescriptor`) is a `cap_root` COLUMN MOVE + frame freeze,
+186-wide, whose 4-site GROUP-4 chain binds the 13 absorbed state-block columns (incl. the moved
+`cap_root`) but NOT the `system_roots` sub-block — so a satisfying RUNNABLE proof pinned a PROJECTION
+(13 fields), not the whole 17-field post-state. THIS section closes that with the WIDE descriptor +
+the generic `EffectVmFullStateRunnable.runnable_full_sound`: the cap-graph row's RUNNABLE descriptor now
+pins ALL 17 `RecordKernelState` fields (the per-cell block — `cell`/`caps`/`bal`-here + frame — AND the
+8 side-table roots), with the whole-state anti-ghost tooth on every field.
+
+The cap-graph kernel step (`attenuateSlotF` / `recDelegateCaps` / `removeEdgeCaps` / `recKDelegateAtten`)
+edits ONLY `caps`; ALL 8 side-table roots are FROZEN. So the wide cap-graph clause is the per-cell
+`CapCellSpec` (cap_root moved to the supplied digest, frame frozen) AND `postRoots = preRoots` — the
+side-table sub-block frozen, EXACTLY the transfer reference's frozen-roots shape, but with `cap_root`
+MOVING instead of frozen. (refreshDelegation, the ONE cap-graph effect that moves a side-table root —
+the `DELEG` epoch — has its own wide instance in `EffectVmEmitRefreshDelegation`; this shared builder
+covers the six caps-only cap-graph effects.) -/
+
+section CapGraphWide
+
+open Dregg2.Circuit.Emit.EffectVmEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (transferHashSites)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (absorbedCols)
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+
+/-- **`attenuateVmDescriptorWide`** — the cap-graph row's descriptor WIDENED to bind the `system_roots`
+sub-block: the SAME per-row `cap_root`-move + frame-freeze gates + transition continuity + boundary pins
+as `attenuateVmDescriptor`, but `traceWidth := EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites`
+(transfer's three inner sites — binding the moved `cap_root` — plus the `sysRootsDigestCol`-absorbing 4th
+site). Strictly additive over `attenuateVmDescriptor`: the constraint list is byte-identical; only the
+width grows by 2 and site 3's spare `.zero` slot becomes the side-table digest carrier. Every cap-graph
+effect re-exports this (it IS the same runnable `cap_root`-move row). -/
+def attenuateVmDescriptorWide : EffectVmDescriptor :=
+  { attenuateVmDescriptor with
+    name := attenuateVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide cap-graph descriptor's constraints ARE `attenuateVmDescriptor`'s (the width/site swap leaves
+the per-row/transition/boundary gate list untouched), so every per-row faithfulness/soundness theorem
+applies verbatim. -/
+theorem attenuateWide_constraints_eq :
+    attenuateVmDescriptorWide.constraints = attenuateVmDescriptor.constraints := rfl
+
+/-- The wide cap-graph descriptor's hash-sites ARE the `system_roots`-absorbing `wideHashSites` (so
+`usesWideSites := rfl` in the spec below). -/
+theorem attenuateWide_hashSites_eq :
+    attenuateVmDescriptorWide.hashSites = wideHashSites := rfl
+
+/-- **`attenuateWide_rowGates_sub`** — the per-row cap-graph gates are a PREFIX sublist of the wide
+descriptor's full constraint list (`attenuateRowGates ++ transitionAll ++ boundaryFirstPins`); so a row
+satisfying the full descriptor satisfies the row gates. The flag-free restriction the gate-only soundness
+(`attenuateDescriptor_full_sound`) consumes. -/
+theorem attenuateWide_rowGates_sub (env : VmRowEnv)
+    (hgates : ∀ c ∈ attenuateVmDescriptorWide.constraints, c.holdsVm env true true) :
+    ∀ c ∈ attenuateRowGates, c.holdsVm env false false := by
+  intro c hc
+  -- the row gates are all `.gate _`; their `holdsVm` ignores the first/last flags.
+  have hmem : c ∈ attenuateVmDescriptorWide.constraints := by
+    show c ∈ attenuateVmDescriptor.constraints
+    unfold attenuateVmDescriptor
+    simp only [List.mem_append]; exact Or.inl (Or.inl hc)
+  have hh := hgates c hmem
+  unfold attenuateRowGates gFieldFixAll at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+    List.mem_range] at hc
+  rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+    simpa only [VmConstraint.holdsVm] using hh
+
+/-- **`CapFullClause`** — the FULL declarative cap-graph post-state over `(pre, post, postRoots)`: the
+per-cell `CapCellSpec` (post `cap_root` IS the supplied post-cap-digest `capDigestNew`; balance limbs /
+nonce / 8 fields / reserved FROZEN) AND the `system_roots` sub-block FROZEN (`postRoots = preRoots` — a
+caps-only cap-graph effect touches no side-table). The parameter `capDigestNew` is the cap-table-move
+digest the effect's connector supplies (`attenCapDigestNew` / `delegateCapDigestNew` / …); `preRoots` is
+the frozen reference sub-block. Non-vacuous: `capWide_realizes` inhabits it. -/
+def CapFullClause (capDigestNew : ℤ) (preRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CapCellSpec pre post capDigestNew ∧ postRoots = preRoots
+
+/-- **`capRunnableSpec` — THE SHARED CAP-GRAPH FULL-STATE RUNNABLE INSTANCE.** The cap-graph
+`RunnableFullStateSpec`, parameterized by the post-cap-digest `capDigestNew` (the witnessed cap-table
+move) and the frozen reference roots `preRoots`. `decodeAfter` is `CapRowEncodes` (the structured column
+decode, pinning `cap_root`/frame) PLUS the frozen-roots witness; `decodeFull` projects the wide
+descriptor's per-row gates (= `attenuateVmDescriptor`'s) to the gate-only `attenuateDescriptor_full_sound`,
+then carries the frozen-roots fact. THIN — the only per-effect content is the (already-proved, hash-site-
+free) `attenuateDescriptor_full_sound` + the frozen-roots decode. NON-VACUOUS: `fullClause` is the genuine
+per-cell `cap_root` move + the frozen sub-block, NOT `True`. -/
+def capRunnableSpec (capDigestNew : ℤ) (preRoots : SysRoots) :
+    RunnableFullStateSpec CellState where
+  descriptor    := attenuateVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsAttenRow
+  decodeAfter   := fun env pre post postRoots =>
+    CapRowEncodes env pre post capDigestNew ∧ postRoots = preRoots
+  fullClause    := CapFullClause capDigestNew preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    exact ⟨attenuateDescriptor_full_sound env pre post capDigestNew henc
+            (attenuateWide_rowGates_sub env hgates), hroots⟩
+
+/-- **`cap_runnable_full_sound` — THE CAP-GRAPH MAGNESIUM CROWN.** A row satisfying the cap-graph WIDE
+RUNNABLE descriptor (`satisfiedVm attenuateVmDescriptorWide`, first/last active), under the structured
+decode, pins the FULL 17-field declarative cap-graph post-state: the per-cell `cap_root` MOVE to the
+supplied digest + frame freeze (binding `cell`/`caps`/`bal`-here + frame) AND the frozen `system_roots`
+sub-block (binding the 8 side-table roots). The generic `runnable_full_sound` instantiated at
+`capRunnableSpec`. Every caps-only cap-graph effect (attenuate / delegate / delegateAtten / introduce /
+revokeDelegation / dropRef) re-exports this with its own `capDigestNew` connector. -/
+theorem cap_runnable_full_sound (capDigestNew : ℤ) (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsAttenRow env)
+    (henc : CapRowEncodes env pre post capDigestNew)
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash attenuateVmDescriptorWide env true true) :
+    CapFullClause capDigestNew preRoots pre post postRoots :=
+  runnable_full_sound (capRunnableSpec capDigestNew preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`cap_runnable_binds_full_state` — the whole-17-field anti-ghost over the WIDE commitment.** Two
+rows satisfying the cap-graph wide descriptor that publish the SAME `NEW_COMMIT`, whose carriers ARE the
+`systemRootsDigest` of their post sub-blocks, agree on EVERY absorbed state-block column (the moved
+`cap_root` included) AND every side-table root. So a prover CANNOT keep `NEW_COMMIT` while tampering ANY
+of the 17 fields' bound content — the runnable cap-graph descriptor binds the whole post-state. -/
+theorem cap_runnable_binds_full_state (capDigestNew : ℤ) (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash attenuateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash attenuateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
+    absorbedCols e₁ = absorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i) :=
+  runnable_full_commit_binds (capRunnableSpec capDigestNew preRoots) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂
+
+/-- **`cap_runnable_rejects_cap_root_tamper` — the cap-graph headline tooth (state-block).** Two wide
+cap-graph rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose absorbed
+state-block columns DIFFER (a forged balance / tampered field / forged `cap_root`) cannot both satisfy —
+UNSAT. The moved `cap_root` (absorbed column 11) is bound by the wide commitment. -/
+theorem cap_runnable_rejects_cap_root_tamper (capDigestNew : ℤ) (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash attenuateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash attenuateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (capRunnableSpec capDigestNew preRoots) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`cap_runnable_rejects_root_tamper` — the cap-graph headline tooth (side-table).** Two wide
+cap-graph rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table
+sub-blocks DIFFER at some index (a dropped escrow, an omitted nullifier, a tampered DELEG/REFCOUNT root)
+cannot both satisfy — UNSAT. The 8 side-table roots are now bound BY the runnable cap-graph commitment. -/
+theorem cap_runnable_rejects_root_tamper (capDigestNew : ℤ) (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash attenuateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash attenuateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (capRunnableSpec capDigestNew preRoots) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### §W.NV — NON-VACUITY of the shared cap-graph clause (a real cap-move inhabits it; a forged one
+does not). -/
+
+/-- A frozen reference sub-block (the empty `system_roots`, since a caps-only cap-graph effect touches no
+side-table). -/
+def capPreRoots : SysRoots := emptySystemRoots
+
+/-- A concrete pre cell-state for the non-vacuity witness: balance `100`, nonce `5`, `cap_root` `11`. -/
+def capNVpre : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 11, reserved := 0,
+    commit := 0 }
+
+/-- A concrete post cell-state: `capNVpre` with `cap_root` moved to the new digest `77` (the cap-graph
+move), every other field frozen. -/
+def capNVpost : CellState := { capNVpre with capRoot := 77 }
+
+/-- **`capWide_realizes` — NON-VACUITY (witness TRUE).** The shared cap-graph `fullClause` is INHABITED by
+a real cap-graph move: `capNVpost` is `capNVpre` with `cap_root` advanced `11 → 77` (= the supplied digest
+`77`), frame frozen, and the roots frozen. So the framework's `fullClause` is NOT `True` — it is a
+meaningful 17-field predicate a real cap-graph move satisfies, and it is exactly the `fullClause` field of
+`capRunnableSpec`. -/
+theorem capWide_realizes :
+    (capRunnableSpec 77 capPreRoots).fullClause capNVpre capNVpost capPreRoots :=
+  ⟨⟨rfl, rfl, rfl, rfl, fun _ => rfl, rfl⟩, rfl⟩
+
+/-- **`capWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+`cap_root` is NOT the supplied digest (`capNVpre.capRoot` left at `11`, demanding `77`) FAILS
+`CapFullClause` — so the shared cap-graph clause is not vacuously true (it rejects an UNMOVED cap_root),
+pinning the framework's non-vacuity from BOTH sides. -/
+theorem capWide_clause_not_trivial :
+    ¬ CapFullClause 77 capPreRoots capNVpre
+        { capNVpost with capRoot := 11 } capPreRoots := by
+  rintro ⟨⟨hcap, _⟩, _⟩
+  -- hcap : (11 : ℤ) = 77 — absurd
+  exact absurd hcap (by decide)
+
+/-- **`capWide_roots_clause_not_trivial` — the side-table leg is REFUTABLE too.** A post-state with the
+cap-move RIGHT but a NON-frozen side-table (`postRoots ≠ preRoots`) FAILS `CapFullClause` — so the
+frozen-roots conjunct genuinely bites (a `postRoots := True`-style stub would collapse it). Witnessed by a
+populated `DELEG` root against the empty reference. -/
+theorem capWide_roots_clause_not_trivial :
+    ¬ CapFullClause 77 capPreRoots capNVpre capNVpost
+        (fun i => if i = (⟨Dregg2.Exec.SystemRoots.systemRoot.DELEG, by decide⟩ : Fin N_SYSTEM_ROOTS)
+                  then 999 else emptySystemRoots i) := by
+  rintro ⟨_, hroots⟩
+  -- hroots would force the populated sub-block = emptySystemRoots; evaluate at DELEG: 999 = 0.
+  have := congrFun hroots (⟨Dregg2.Exec.SystemRoots.systemRoot.DELEG, by decide⟩ : Fin N_SYSTEM_ROOTS)
+  simp only [capPreRoots, emptySystemRoots] at this
+  exact absurd this (by decide)
+
+#assert_axioms attenuateWide_constraints_eq
+#assert_axioms attenuateWide_hashSites_eq
+#assert_axioms cap_runnable_full_sound
+#assert_axioms cap_runnable_binds_full_state
+#assert_axioms cap_runnable_rejects_cap_root_tamper
+#assert_axioms cap_runnable_rejects_root_tamper
+#assert_axioms capWide_realizes
+#assert_axioms capWide_clause_not_trivial
+#assert_axioms capWide_roots_clause_not_trivial
+
+#guard attenuateVmDescriptorWide.traceWidth == 188
+#guard attenuateVmDescriptorWide.hashSites.length == 4
+-- the wide constraint list is byte-identical to the base (13 gates + 14 transitions + 4 boundary):
+#guard attenuateVmDescriptorWide.constraints.length == 13 + 14 + 4
+
+end CapGraphWide
 
 end Dregg2.Circuit.Emit.EffectVmEmitAttenuateA

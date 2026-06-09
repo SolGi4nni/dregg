@@ -72,6 +72,7 @@ own declarations.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.createCellFromFactoryA
+import Dregg2.Circuit.Emit.EffectVmEmitCreateCellFromFactoryFullState
 
 namespace Dregg2.Circuit.Argus.Effects.CreateCellFromFactory
 

@@ -342,4 +342,51 @@ theorem slashObligationDescriptorGenuine_nontrivial :
 #assert_axioms slashObligationStmt_rejects_missing
 #assert_axioms slashObligationDescriptorGenuine_nontrivial
 
+/-! ## §6 — FULL-STATE on the RUNNABLE descriptor (the magnesium breadth — bind ALL 17 fields).
+
+`slashObligationStmt = releaseEscrowStmt` definitionally, so the FULL-STATE release weld
+(`ReleaseEscrow.releaseEscrow_runnable_full_state` over the WIDE descriptor `releaseEscrowVmDescriptorWide`)
+applies VERBATIM on the slash term: a satisfying row of the WIDE RUNNABLE descriptor binds the FULL
+17-field post-state (the beneficiary/recipient-cell CREDIT AND the `escrows` digest advance), all 17
+bound by the circuit the prover RUNS (the generic anti-ghost gives the no-malleability tooth). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrowWide (releaseEscrowVmDescriptorWide)
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowFamilyWide (ESCROW_STEP_PARAM)
+open Dregg2.Circuit.Argus.Effects.ReleaseEscrow (releaseEscrow_runnable_full_state)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest)
+
+/-- **`slashObligation_runnable_full_state` — THE FULL-STATE WELD (slashObligation).** The full-state
+release weld lifted verbatim onto the slash term (the dispatch-alias): for the FOUND record `r`, a
+satisfying row of the WIDE RUNNABLE descriptor agrees per-cell with the executor's settle-credited
+recipient-cell projection on EVERY limb AND binds the `escrows` side-table digest advance — all 17 fields. -/
+theorem slashObligation_runnable_full_state
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (id : Nat) (amount : ℤ)
+    (post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (preRoots postRoots : SysRoots) (step : ℤ)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrow.IsReleaseEscrowRow env)
+    (hAfter : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestCol
+                = systemRootsDigest hash postRoots)
+    (hBefore : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestColBefore
+                = systemRootsDigest hash preRoots)
+    (hStep : env.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol ESCROW_STEP_PARAM) = step)
+    (hsat : satisfiedVm hash releaseEscrowVmDescriptorWide env true true)
+    (hexec : interp (slashObligationStmt id) k = some k')
+    (henc : ∃ r, findUnresolved k id = some r ∧ r.amount = amount ∧
+      RowEncodesRelease env (cellProjRelease k.bal r.recipient r.asset) ⟨amount⟩ post) :
+    ∃ r, findUnresolved k id = some r ∧
+      ( post.balLo = (cellProjRelease k'.bal r.recipient r.asset).balLo
+        ∧ post.balHi = (cellProjRelease k'.bal r.recipient r.asset).balHi
+        ∧ (∀ i, post.fields i = (cellProjRelease k'.bal r.recipient r.asset).fields i)
+        ∧ post.capRoot = (cellProjRelease k'.bal r.recipient r.asset).capRoot
+        ∧ post.reserved = (cellProjRelease k'.bal r.recipient r.asset).reserved
+        ∧ post.nonce = (cellProjRelease k'.bal r.recipient r.asset).nonce )
+      ∧ systemRootsDigest hash postRoots = systemRootsDigest hash preRoots + step := by
+  have hexec' : interp (releaseEscrowStmt id) k = some k' := by
+    rw [slashObligationStmt] at hexec; exact hexec
+  exact releaseEscrow_runnable_full_state hash env k k' id amount post preRoots postRoots step
+    hrow hAfter hBefore hStep hsat hexec' henc
+
+#assert_axioms slashObligation_runnable_full_state
+
 end Dregg2.Circuit.Argus.Effects.SlashObligation

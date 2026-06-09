@@ -40,6 +40,7 @@ the block frozen, the post-state bound into `state_commit` via the GROUP-4 hash 
 := True / native_decide / rfl-bridge. Imports read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.supplycreation
 
@@ -469,5 +470,192 @@ theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (
 #assert_axioms goodBridgeMintRow_isRow
 #assert_axioms goodBridgeMintRow_realizes_intent
 #assert_axioms badBridgeMintRow_rejected
+
+/-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the MAGNESIUM breadth): bind ALL 17 fields.
+
+The deployed `bridgeMintVmDescriptor`'s published `state_commit` absorbed ONLY the 13 conserved state-block
+columns, NOT the `system_roots` digest — so a satisfying RUNNABLE proof pinned a PROJECTION of the
+post-state (the per-cell CREDIT block + a `system_roots`-blind commitment). This section CLOSES that via the
+shared `EffectVmFullStateRunnable` recipe: the WIDE descriptor (`hashSites := wideHashSites`,
+`traceWidth := EFFECT_VM_WIDTH_SYSROOTS`) absorbs the dedicated `sysRootsDigestCol` carrier, so the
+descriptor the prover RUNS binds the per-cell CREDIT block AND all 8 side-table roots. Tamper ANY field or
+ANY side-table root ⇒ UNSAT (`wide_rejects_state_tamper` / `wide_rejects_root_tamper`).
+
+bridgeMint is the FROZEN-side-table case: it CREDITS the per-cell `balLo` (`CellBridgeMintSpec`) and
+prepends a DISCLOSING LOG receipt — touching NO `system_roots` side-table. So its sub-block is FROZEN
+(`postRoots = preRoots`), exactly the transfer reference's shape; the full clause binds the per-cell credit
+AND the (frozen) 8 roots into the running commitment. (The minted-supply total / the inbound-bridge portal
+proof are turn/portal-level, cited at §8½, not a `system_roots` field.) -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper wideHashSites hC)
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+
+/-- **`bridgeMintVmDescriptorWide`** — bridgeMint's descriptor WIDENED to the `system_roots`-absorbing
+shape: the SAME per-row gates + transitions + boundary pins + selector gate, but
+`traceWidth := EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites`. Strictly additive over
+`bridgeMintVmDescriptor` (byte-identical constraint list; width +2; site 3's spare `.zero` 4th slot becomes
+the `sysRootsDigestCol` carrier). -/
+def bridgeMintVmDescriptorWide : EffectVmDescriptor :=
+  { bridgeMintVmDescriptor with
+    name := bridgeMintVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide descriptor's constraints ARE bridgeMint's (the width/site swap leaves the
+per-row/transition/boundary/selector gate list untouched). -/
+theorem bridgeMintWide_constraints_eq :
+    bridgeMintVmDescriptorWide.constraints = bridgeMintVmDescriptor.constraints := rfl
+
+/-- **`bridgeMintGates_give_cellSpec` — the GATE-ONLY per-cell soundness (no hash-site hypothesis).**
+The per-row gates of the bridgeMint descriptor, on a bridge-mint row decoded by `RowEncodes`, force
+`CellBridgeMintSpec`. The body of `bridgeMintDescriptor_full_sound` with the hash-site layer DROPPED — it
+factors through `bridgeMintVm_faithful` + `intent_to_cellSpec`, NEITHER of which reads the sites. -/
+theorem bridgeMintGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (value : ℤ)
+    (hrow : IsBridgeMintRow env) (henc : RowEncodes env pre value post)
+    (hgates : ∀ c ∈ bridgeMintVmDescriptor.constraints, c.holdsVm env true true) :
+    CellBridgeMintSpec pre value post := by
+  have hrowgates : ∀ c ∈ bridgeMintRowGates, c.holdsVm env true true := by
+    intro c hc
+    apply hgates
+    unfold bridgeMintVmDescriptor
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+  have hrowgates' := bridgeMintRowGates_flag_indep env true true hrowgates
+  exact intent_to_cellSpec env pre post value henc ((bridgeMintVm_faithful env hrow).mp hrowgates')
+
+/-- **`BridgeMintFullClause`** — the full declarative post-state for bridgeMint over `(pre, post,
+postRoots)`: the per-cell `CellBridgeMintSpec` (`balLo` CREDITED by `value`, frame frozen, nonce ticked)
+AND the `system_roots` sub-block FROZEN (`postRoots = preRoots` — bridgeMint touches no side-table).
+Non-vacuous: §`bridgeMint_wide_realizes` inhabits it. -/
+def BridgeMintFullClause (value : ℤ) (preRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellBridgeMintSpec pre value post ∧ postRoots = preRoots
+
+/-- **`bridgeMintRunnableSpec` — the FULL-state RUNNABLE instance.** `decodeAfter` is `RowEncodes` PLUS the
+frozen-roots witness PLUS the carrier pin `sysRootsDigestCol = systemRootsDigest postRoots` (the anti-ghost
+hd-link); `decodeFull` projects the wide descriptor's per-row gates to the GATE-ONLY
+`bridgeMintGates_give_cellSpec`, then carries the frozen-roots fact. THIN + NON-VACUOUS (the per-cell
+CREDIT + the frozen 8-root sub-block, NOT `True`). -/
+def bridgeMintRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots : SysRoots) :
+    RunnableFullStateSpec CellState where
+  descriptor    := bridgeMintVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsBridgeMintRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodes env pre value post ∧ postRoots = preRoots
+      ∧ env.loc sysRootsDigestCol = systemRootsDigest hash postRoots
+  fullClause    := BridgeMintFullClause value preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots, _hcar⟩ := hdec
+    exact ⟨bridgeMintGates_give_cellSpec env pre post value hrow henc
+            (bridgeMintWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`bridgeMint_runnable_full_sound` — THE FULL-STATE ON RUNNABLE crown (bridgeMint).** A row satisfying
+the WIDE runnable descriptor, under the structured decode, pins the FULL 17-field declarative post-state:
+the per-cell CREDIT/freeze/tick AND the whole (frozen) `system_roots` sub-block. Crypto discharged ONCE in
+the generic `runnable_full_sound`; the per-effect obligation was only the thin decode. -/
+theorem bridgeMint_runnable_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (value : ℤ) (postRoots preRoots : SysRoots)
+    (hrow : IsBridgeMintRow env)
+    (henc : RowEncodes env pre value post) (hroots : postRoots = preRoots)
+    (hcar : env.loc sysRootsDigestCol = systemRootsDigest hash postRoots)
+    (hsat : satisfiedVm hash bridgeMintVmDescriptorWide env true true) :
+    BridgeMintFullClause value preRoots pre post postRoots :=
+  runnable_full_sound (bridgeMintRunnableSpec hash value preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots, hcar⟩ hsat
+
+/-- **`bridgeMint_wide_rejects_state_tamper` — per-cell-block anti-ghost on the RUNNABLE descriptor.** -/
+theorem bridgeMint_wide_rejects_state_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeMintVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeMintVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (bridgeMintRunnableSpec hash 0 sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`bridgeMint_wide_rejects_root_tamper` — side-table anti-ghost on the RUNNABLE descriptor.** Two wide
+rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) but whose side-table sub-blocks
+DIFFER at some index cannot both satisfy — every side-table root is now bound BY the running commitment, so
+a bridge-mint row that smuggled a side-table mutation (it must not touch any) is UNSAT. -/
+theorem bridgeMint_wide_rejects_root_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeMintVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeMintVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (bridgeMintRunnableSpec hash 0 sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### Non-vacuity of the full-state instance: a real credited+frozen-roots post-state inhabits the clause. -/
+
+/-- A pre cell (bal 100, nonce 5, frame 0) and its honest mint image (bal `100 + 30 = 130`, nonce 6). -/
+def widePreCell : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+def widePostCell : CellState :=
+  { balLo := 130, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+
+/-- A populated reference sub-block (escrow + nullifier roots set) — the FROZEN reference both sides carry.
+Used to show the wide commitment binds the WHOLE non-empty 8-root sub-block (not just the empty sentinel). -/
+def wideRefRoots : SysRoots := fun i =>
+  if i = (⟨Dregg2.Exec.SystemRoots.systemRoot.ESCROW, by decide⟩ : Fin N_SYSTEM_ROOTS) then 1234
+  else if i = (⟨Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER, by decide⟩ : Fin N_SYSTEM_ROOTS) then 42
+  else 0
+
+/-- **`bridgeMint_wide_realizes` — NON-VACUITY of the instance (witness TRUE).** The full clause is
+INHABITED by a genuine mint: `widePostCell` is the honest credited image of `widePreCell` (`100 → 130`,
+credit 30, nonce `5 → 6`) and the roots are FROZEN at the populated reference. So `fullClause` is NOT
+`True` — and the frozen sub-block is genuinely non-empty (the binding is not vacuous on the sentinel). -/
+theorem bridgeMint_wide_realizes :
+    (bridgeMintRunnableSpec hC 30 wideRefRoots).fullClause
+      widePreCell widePostCell wideRefRoots :=
+  ⟨⟨by norm_num [widePreCell, widePostCell], rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`bridgeMint_wide_clause_refutable` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+`balLo` is NOT the credit (`999 ≠ 100 + 30`) FAILS `BridgeMintFullClause`, pinning non-vacuity from BOTH
+sides. -/
+theorem bridgeMint_wide_clause_refutable :
+    ¬ BridgeMintFullClause 30 wideRefRoots widePreCell
+        { widePostCell with balLo := 999 } wideRefRoots := by
+  rintro ⟨⟨hbal, _⟩, _⟩
+  simp only [widePreCell, widePostCell] at hbal
+  norm_num at hbal
+
+/-- **`bridgeMint_wide_roots_clause_refutable` — the FROZEN-roots clause has teeth.** A post-roots that
+DROPS a side-table root (a tampered sub-block `emptySystemRoots ≠ wideRefRoots`) FAILS the frozen-roots
+conjunct — a `system_roots`-blind clause would accept it (forbidden). So the wide instance genuinely binds
+the 8-root sub-block, not just the per-cell block. -/
+theorem bridgeMint_wide_roots_clause_refutable :
+    ¬ BridgeMintFullClause 30 wideRefRoots widePreCell widePostCell emptySystemRoots := by
+  rintro ⟨_, hroots⟩
+  have hesc : emptySystemRoots (⟨Dregg2.Exec.SystemRoots.systemRoot.ESCROW, by decide⟩ : Fin N_SYSTEM_ROOTS)
+           = wideRefRoots (⟨Dregg2.Exec.SystemRoots.systemRoot.ESCROW, by decide⟩ : Fin N_SYSTEM_ROOTS) := by
+    rw [hroots]
+  simp only [emptySystemRoots, wideRefRoots, if_pos rfl] at hesc
+  norm_num at hesc
+
+#guard bridgeMintVmDescriptorWide.traceWidth == 188
+#guard bridgeMintVmDescriptorWide.hashSites.length == 4
+#guard bridgeMintVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3 + 1
+
+#assert_axioms bridgeMintGates_give_cellSpec
+#assert_axioms bridgeMint_runnable_full_sound
+#assert_axioms bridgeMint_wide_rejects_state_tamper
+#assert_axioms bridgeMint_wide_rejects_root_tamper
+#assert_axioms bridgeMint_wide_realizes
+#assert_axioms bridgeMint_wide_clause_refutable
+#assert_axioms bridgeMint_wide_roots_clause_refutable
 
 end Dregg2.Circuit.Emit.EffectVmEmitBridgeMint

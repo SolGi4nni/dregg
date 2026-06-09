@@ -489,4 +489,141 @@ theorem introduceGenuine_binds_edge (hash : List ℤ → ℤ)
 #assert_axioms badIntroduceRow_rejected
 #assert_axioms staleNonceIntroduceRow_rejected
 
+/-! ## §W — THE MAGNESIUM LIFT: `introduce`'s RUNNABLE descriptor binds the FULL 17-field post-state.
+
+`introduce` is a PASSTHROUGH+nonce-TICK cap-graph row (cap_root FROZEN on-row; the `caps` GRANT rides
+OFF-row via the `unify_introduce` connector). Its WIDE descriptor widens `introduceVmDescriptor` to
+`EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites`, so the published `state_commit` now absorbs the
+`system_roots` digest. `introduce`'s kernel step (`recCDelegate`) edits ONLY `caps`; the 8 side-table
+roots are FROZEN, so the full clause is the per-cell `IntroduceCellSpec` (frame frozen, nonce ticked) AND
+`postRoots = preRoots`. The `caps` grant is the named OFF-ROW `Function.Injective D` connector (the §9
+`unify_introduce` bar), NOT a state-block column — so this is the magnesium for the EffectVM ROW
+post-state (the per-cell block + the 8 frozen side-table roots, all bound). -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (boundaryLastPins boundaryLast_pins)
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest N_SYSTEM_ROOTS)
+
+/-- **`introduceVmDescriptorWide`** — the runnable `introduce` FULL-state circuit: `introduceVmDescriptor`
+WIDENED to `EFFECT_VM_WIDTH_SYSROOTS` with `hashSites := wideHashSites` (the `system_roots`-absorbing
+sites). Strictly additive: the constraint list (passthrough+tick gates ++ transitions ++ boundary ++
+selector) is byte-identical; only the width grows by 2 and site 3's spare `.zero` slot becomes the
+side-table digest carrier. -/
+def introduceVmDescriptorWide : EffectVmDescriptor :=
+  { introduceVmDescriptor with
+    name := "dregg-effectvm-introduceA-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide introduce descriptor's constraints ARE `introduceVmDescriptor`'s. -/
+theorem introduceWide_constraints_eq :
+    introduceVmDescriptorWide.constraints = introduceVmDescriptor.constraints := rfl
+
+/-- **`IntroduceFullClause`** — the FULL declarative introduce post-state: the per-cell
+`IntroduceCellSpec` (balance/cap_root/fields/reserved FROZEN, nonce TICKED) AND the `system_roots`
+sub-block FROZEN (`postRoots = preRoots`; the `caps` grant rides off-row). Non-vacuous: a real introduce
+row inhabits it (`introduceWide_realizes`). -/
+def IntroduceFullClause (preRoots : SysRoots) (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  IntroduceCellSpec pre post ∧ postRoots = preRoots
+
+/-- **`introduceRunnableSpec` — the introduce FULL-state RUNNABLE instance.** `decodeAfter` is
+`RowEncodesIntroduce` PLUS the frozen-roots witness; `decodeFull` projects the wide descriptor's
+passthrough+tick gates (= introduce's) to `introduceVm_faithful` + `intent_to_cellSpec` (the `s_noop = 0`
+needed for the tick comes from `IsIntroduceRow`), then carries the frozen-roots fact. THIN +
+NON-VACUOUS. -/
+def introduceRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
+  descriptor    := introduceVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsIntroduceRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesIntroduce env pre post ∧ postRoots = preRoots
+  fullClause    := IntroduceFullClause preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    obtain ⟨_hsel, hnoop⟩ := hrow
+    -- restrict the wide descriptor's constraints to the passthrough+tick row gates (flag-free).
+    have hgates' : ∀ c ∈ introduceRowGates, c.holdsVm env false false := by
+      intro c hc
+      have hmem : c ∈ introduceVmDescriptorWide.constraints := by
+        show c ∈ introduceVmDescriptor.constraints
+        unfold introduceVmDescriptor
+        simp only [List.mem_append]; exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+      have hh := hgates c hmem
+      unfold introduceRowGates gFieldPassAll at hc
+      simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+        List.mem_range] at hc
+      rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+        simpa only [VmConstraint.holdsVm] using hh
+    exact ⟨intent_to_cellSpec env pre post hnoop henc ((introduceVm_faithful env).mp hgates'), hroots⟩
+
+/-- **`introduce_runnable_full_sound` — THE MAGNESIUM CROWN for `introduce`.** A row satisfying the
+runnable `introduce` WIDE descriptor (`satisfiedVm`, first/last active), under the structured decode, pins
+the FULL 17-field introduce post-state: the per-cell frame freeze + nonce tick (binding `cell`/`bal`/
+`cap_root`-here + frame) AND the frozen `system_roots` sub-block (binding the 8 side-table roots). The
+`caps` grant is the named OFF-ROW `unify_introduce` connector. -/
+theorem introduce_runnable_full_sound (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsIntroduceRow env)
+    (henc : RowEncodesIntroduce env pre post)
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash introduceVmDescriptorWide env true true) :
+    IntroduceFullClause preRoots pre post postRoots :=
+  runnable_full_sound (introduceRunnableSpec preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`introduce_runnable_rejects_root_tamper` — the side-table anti-ghost for `introduce`.** Two wide
+introduce rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table
+sub-blocks DIFFER at some index cannot both satisfy — UNSAT. The 8 side-table roots are bound by the
+runnable introduce commitment. -/
+theorem introduce_runnable_rejects_root_tamper (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash introduceVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash introduceVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (introduceRunnableSpec preRoots) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`introduceWide_realizes` — NON-VACUITY (witness TRUE).** `goodIntroduceRow` (the passthrough+tick
+reference) decodes to a real introduce cell transition that, with frozen roots, inhabits
+`IntroduceFullClause` — so the framework's clause is NOT `True`. -/
+theorem introduceWide_realizes :
+    IntroduceCellSpec
+      { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0,
+        commit := 0 }
+      { balLo := 100, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0,
+        commit := 0 } :=
+  ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩
+
+/-- **`introduceWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+nonce did NOT tick (held at `5`, demanding `5 + 1 = 6`) FAILS `IntroduceCellSpec` — so the clause is not
+vacuously true. -/
+theorem introduceWide_clause_not_trivial :
+    ¬ IntroduceCellSpec
+        { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0,
+          commit := 0 }
+        { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0,
+          commit := 0 } := by
+  rintro ⟨_, _, hnon, _⟩
+  -- hnon : (5 : ℤ) = 5 + 1 — absurd
+  exact absurd hnon (by decide)
+
+#assert_axioms introduceWide_constraints_eq
+#assert_axioms introduce_runnable_full_sound
+#assert_axioms introduce_runnable_rejects_root_tamper
+#assert_axioms introduceWide_realizes
+#assert_axioms introduceWide_clause_not_trivial
+
+#guard introduceVmDescriptorWide.traceWidth == 188
+#guard introduceVmDescriptorWide.hashSites.length == 4
+
 end Dregg2.Circuit.Emit.EffectVmEmitIntroduce

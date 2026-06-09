@@ -89,6 +89,8 @@ file OWNS only its own declarations.
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.swissExportA
+import Dregg2.Circuit.Emit.EffectVmEmitSwissFamilyFull
+import Dregg2.Circuit.Emit.EffectVmEmitSwissExport
 
 namespace Dregg2.Circuit.Argus.Effects.SwissExport
 
@@ -386,5 +388,50 @@ theorem swissExportStmt_rejects_amplifying :
 #assert_axioms swissExportStmt_bal_neutral
 #assert_axioms swissExportStmt_rejects_duplicate
 #assert_axioms swissExportStmt_rejects_amplifying
+
+/-! ## §6 — THE MAGNESIUM TIE: the RUNNABLE full-state crown's STURDYREF advance IS universe-A's swiss move.
+
+`Emit/EffectVmEmitSwissFamilyFull.lean` lifts the RUNNABLE EffectVM descriptor to bind the FULL 17-field
+post-state: a satisfying wide swissExport row pins `SwissFullClause d pre post preRoots postRoots`, whose
+side-table conjunct is `postRoots = swissRootsUpdate preRoots d` — the `system_roots` STURDYREF root
+advances to the witnessed digest `d`, the OTHER 7 side-table roots FROZEN, and the WHOLE sub-block is bound
+into `state_commit` (anti-ghost on all 8 roots, `swissExport_runnable_rejects_root_tamper`). This section
+TIES that runnable STURDYREF advance to THIS module's universe-A swiss move: when the witnessed digest `d`
+is the universe-A grown-list digest, the magnesium-pinned STURDYREF root IS `D` of the genuine grown swiss
+list (the export's `exportRecord … :: pre.swiss`). So the circuit the prover ACTUALLY RUNS binds the full
+post-state AND its STURDYREF advance is the same swiss-list move this module welds. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitSwissFamilyFull
+  (SwissFullClause swissRootsUpdate swissRootsUpdate_sturdyref sturdyrefIdx)
+open Dregg2.Circuit.Emit.EffectVmEmitSwissExport (sturdyrefRootProj exportSwissDigestNew unify_swissExport)
+open Dregg2.Circuit.Inst.SwissExportA (ExportArgs)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`magnesium_sturdyref_is_export_move` — the runnable full-state STURDYREF advance IS the swiss export
+move.** Suppose the magnesium RUNNABLE crown pins `SwissFullClause d pre post preRoots postRoots` (the wide
+descriptor's full-state conclusion), the universe-A `ExportSpec` holds for `(s, args, s')`, and the
+witnessed digest `d` is the universe-A grown-list digest `exportSwissDigestNew D s args` (= `D (exportRecord
+… :: s.kernel.swiss)`, the post swiss-list digest the export installs). Then the magnesium-pinned STURDYREF
+root `postRoots STURDYREF` EQUALS `sturdyrefRootProj D s'.kernel` = `D s'.kernel.swiss` — the runnable
+full-state binding's STURDYREF advance IS this module's universe-A swiss move. The 7 OTHER side-table roots
+stay `preRoots` (the `swissRootsUpdate` frame), so the whole-state binding agrees with `ExportSpec`'s
+16-field freeze. -/
+theorem magnesium_sturdyref_is_export_move
+    (D : List SwissRecord → ℤ)
+    (d : ℤ) (pre post : CellState) (preRoots postRoots : SysRoots)
+    (s : RecChainedState) (args : ExportArgs) (s' : RecChainedState)
+    (hfull : SwissFullClause d pre post preRoots postRoots)
+    (hspec : ExportSpec s args.sw args.actor args.exporter args.target args.rights s')
+    (hd : d = exportSwissDigestNew D s args) :
+    postRoots sturdyrefIdx = sturdyrefRootProj D s'.kernel := by
+  -- the magnesium side-table conjunct pins `postRoots = swissRootsUpdate preRoots d`.
+  obtain ⟨_, hroots⟩ := hfull
+  -- so `postRoots STURDYREF = d`.
+  rw [hroots, swissRootsUpdate_sturdyref preRoots d, hd]
+  -- and `unify_swissExport` turns the universe-A spec into `sturdyrefRootProj D s'.kernel = D(grown list)`.
+  exact (unify_swissExport D s args s' hspec).symm
+
+#assert_axioms magnesium_sturdyref_is_export_move
 
 end Dregg2.Circuit.Argus.Effects.SwissExport

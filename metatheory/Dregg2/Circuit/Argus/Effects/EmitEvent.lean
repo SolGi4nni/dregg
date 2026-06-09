@@ -85,6 +85,7 @@ Imports are read-only; this file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.emitEventA
 import Dregg2.Exec.Handlers.Lifecycle
+import Dregg2.Circuit.Emit.EffectVmEmitEmitEventWide
 
 namespace Dregg2.Circuit.Argus.Effects.EmitEvent
 
@@ -351,5 +352,76 @@ theorem emitEventStmt_payload_inert :
 #assert_axioms emitEventStmt_rejects_dead
 #assert_axioms emitEventStmt_runtime_log_ticks
 #assert_axioms emitEventStmt_payload_inert
+
+/-! ## §6 — THE MAGNESIUM UPGRADE: the RUNNABLE full-state weld (all 17 fields + the 8 side-table roots,
+on the circuit the prover RUNS).
+
+§4 welded the Argus term against emit's ABSTRACT `EffectCommit` full-state descriptor
+(`emitEventA_full_sound`, in the `satisfiedE`/`CommitSurface` universe). This section adds the
+FULL-STATE-on-RUNNABLE weld: the circuit the prover ACTUALLY RUNS — `satisfiedVm
+emitEventVmDescriptorWide`, the 188-wide `system_roots`-absorbing EffectVM descriptor — pins the FULL
+17-field declarative post-state the IR term's executor produces, INCLUDING all 8 side-table roots (the
+Class-C "pale ghost" closed on the runnable descriptor, not just the abstract one).
+
+The connection: the Argus cornerstone (§2/§3) + `execFullA_emitEvent_iff_spec` + `unify_emitEvent`
+(`EffectVmEmitEmitEvent`) show that a committed IR-term emit FREEZES the whole kernel, so for any cell the
+executor's projected `(cellProjE pre, cellProjE post)` satisfies `CellFreezeSpec`. The RUNNABLE wide
+descriptor `emitEvent_runnable_full_sound` pins EXACTLY that `CellFreezeSpec` (per-cell block frozen) AND
+the 8 side-table roots FROZEN. So the two AGREE on the whole 17-field post-state, on the running circuit. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Circuit.Emit.EffectVmEmitEmitEvent (RowEncodes CellFreezeSpec cellProjE unify_emitEvent_exec)
+open Dregg2.Circuit.Emit.EffectVmEmitEmitEventWide
+  (emitEventVmDescriptorWide emitEvent_runnable_full_sound)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`emitEvent_runnable_full_state_weld` — THE RUNNABLE full-state agreement (emit slice).**
+
+Suppose, for the Argus emitEvent term:
+  * the RUNNABLE wide descriptor `emitEventVmDescriptorWide` is SATISFIED by `(env, true, true)` under the
+    abstract Poseidon carrier `hash` (`hsat`), decoded by `RowEncodes env pre post` (`henc`), with the
+    frozen-roots witness `sr = preRoots` (`hroots`);
+  * the IR term's runtime executor COMMITS: `execFullA s (.emitEventA actor cell topic data) = some s'`
+    (`hexec`), and the row's `pre` is the executor's pre-cell projection `cellProjE s.kernel c` (`hpre`).
+
+Then the RUNNABLE descriptor's pinned post-state `post` AGREES with the EXECUTOR's post-cell projection
+`cellProjE s'.kernel c` on EVERY economic-block component (the whole cell FROZEN), AND the side-table roots
+`sr` are FROZEN at `preRoots`. So the circuit the prover RUNS for emit binds the full 17-field post-state
+the IR term's executor produces — the per-cell block (via the absorbed columns) AND the 8 side-table roots
+(via the wide commitment), strictly stronger than the per-cell EffectVM row or the abstract universe. -/
+theorem emitEvent_runnable_full_state_weld
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (s s' : RecChainedState) (actor cell c : CellId) (topic data : Int)
+    (pre post : CellState) (sr preRoots : SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitEmitEvent.IsEmitRow env)
+    (henc : RowEncodes env pre post) (hroots : sr = preRoots)
+    (hpre : pre = cellProjE s.kernel c)
+    (hsat : satisfiedVm hash emitEventVmDescriptorWide env true true)
+    (hexec : execFullA s (.emitEventA actor cell topic data) = some s') :
+    ( post.balLo = (cellProjE s'.kernel c).balLo
+      ∧ post.balHi = (cellProjE s'.kernel c).balHi
+      ∧ post.nonce = (cellProjE s'.kernel c).nonce
+      ∧ (∀ i, post.fields i = (cellProjE s'.kernel c).fields i)
+      ∧ post.capRoot = (cellProjE s'.kernel c).capRoot
+      ∧ post.reserved = (cellProjE s'.kernel c).reserved )
+    ∧ sr = preRoots := by
+  -- RUNNABLE circuit side: the wide descriptor pins `CellFreezeSpec pre post` + frozen roots.
+  obtain ⟨hfreeze, hsr⟩ :=
+    emitEvent_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hfreeze
+  -- executor side: the committed emit freezes the whole kernel, so `cellProjE` of pre = post (per cell).
+  obtain ⟨heLo, heHi, heN, heF, heCap, heRes⟩ := unify_emitEvent_exec s s' actor cell c topic data hexec
+  -- substitute `pre = cellProjE s.kernel c`, then chain the circuit-freeze with the executor-freeze.
+  subst hpre
+  refine ⟨⟨?_, ?_, ?_, ?_, ?_, ?_⟩, hsr⟩
+  · rw [hcLo, heLo]
+  · rw [hcHi, heHi]
+  · rw [hcN, heN]
+  · intro i; rw [hcF i, heF i]
+  · rw [hcCap, heCap]
+  · rw [hcRes, heRes]
+
+#assert_axioms emitEvent_runnable_full_state_weld
 
 end Dregg2.Circuit.Argus.Effects.EmitEvent

@@ -58,6 +58,7 @@ Imports are read-only (`Argus/Stmt` for the IR + `Inst/createCellA` for the audi
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.createCellA
 import Dregg2.Circuit.Spec.accountgrowth
+import Dregg2.Circuit.Emit.EffectVmEmitCreateCellFullState
 
 namespace Dregg2.Circuit.Argus.Effects.CreateCell
 

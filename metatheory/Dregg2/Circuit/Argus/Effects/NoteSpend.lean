@@ -62,6 +62,7 @@ reads are PROVABLY the committed neighbors, not prover-chosen) — the sorted-tr
 `native_decide`. Imports are READ-ONLY; this file owns only itself.
 -/
 import Dregg2.Circuit.Argus.Policy
+import Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 
 namespace Dregg2.Circuit.Argus
 
@@ -778,6 +779,43 @@ CIRCUIT-side non-membership GATE is built with real teeth (sound + complete + an
 `witnessed`-discharge); the remaining gap is the sorted-tree OPENING that binds the gate's neighbor
 columns to the committed root — named precisely, not faked.
 -/
+
+/-! ## §8½ — THE RUNNABLE EFFECTVM DESCRIPTOR IS NOW FULL-STATE (magnesium breadth).
+
+The §1–§8 content built the EXECUTOR-side no-double-spend (in-band in the term) + the genuine SORTED-
+NEIGHBOR non-membership CIRCUIT GATE (sound + complete + anti-ghost) — the missing FRESHNESS gate-kind.
+In a parallel lift, the per-row RUNNABLE EffectVM descriptor for noteSpend (the circuit the prover
+ACTUALLY RUNS, `EffectVmEmitNoteSpend §W`) has been raised to the GENERIC full-state-on-RUNNABLE crown:
+a satisfying witness of the WIDE descriptor (the dedicated `sysRootsDigestCol = 186` carrier +
+`wideHashSites`) pins the FULL 17-field post-state — the per-cell transparent credit + nonce tick AND the
+`nullifiers`-root committed-digest advance AND every other side-table root frozen — and tamper of ANY
+field/root is UNSAT. We re-export the crown here so the Argus noteSpend module names the RUNNABLE
+descriptor's full-state property alongside the non-membership gate; the headline FRESHNESS leg this
+file's §2–§5 gate supplies is the still-named non-per-row residual (the digest advance binds the INSERT,
+not the non-membership). -/
+
+/-- **`noteSpend_runnable_full_sound_argus` — the RUNNABLE EffectVM descriptor binds the FULL state.**
+Re-export of `EffectVmEmitNoteSpend.noteSpend_runnable_full_sound`: a row satisfying noteSpend's WIDE
+RUNNABLE descriptor, under the structured decode, pins the FULL 17-field declarative post-state — the
+per-cell credit + nonce tick AND the `nullifiers`-root digest advance AND every other side-table root
+frozen. This is the per-row layer at FULL state; the FRESHNESS non-membership (this file's §2–§5 gate)
+remains the named turn-level leg. -/
+theorem noteSpend_runnable_full_sound_argus (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : Dregg2.Exec.SystemRoots.SysRoots) (step : ℤ)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (pre post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (pr : Dregg2.Exec.SystemRoots.SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.IsNoteSpendRow env)
+    (hdec : Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.NoteSpendDecode hash value preRoots postRoots step
+              env pre post pr)
+    (hsat : Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash
+              Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.noteSpendVmDescriptorWide env true true) :
+    Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.NoteSpendFullClause hash value preRoots postRoots step
+      pre post pr :=
+  Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.noteSpend_runnable_full_sound
+    hash value preRoots postRoots step env pre post pr hrow hdec hsat
+
+#assert_axioms noteSpend_runnable_full_sound_argus
 
 /-! ## §9 — Axiom-hygiene tripwires. Each keystone ⊆ {propext, Classical.choice, Quot.sound}; no `sorryAx`. -/
 

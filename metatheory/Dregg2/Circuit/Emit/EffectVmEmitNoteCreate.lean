@@ -57,6 +57,7 @@ import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.notecommitment
 import Dregg2.Exec.SystemRoots
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
 
@@ -791,6 +792,310 @@ theorem badRootRow_rejected : ¬ (VmConstraint.gate gCommitRootUpdate).holdsVm b
   simp only [badRootRow, goodRootRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, COMMIT_ROOT_STEP_PARAM,
     aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
   norm_num
+
+/-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the magnesium breadth — the GENERIC crown).
+
+§A–§G amplified the descriptor over the OLD raw `SYS_DIG_AFTER = aux 96` carrier with the bespoke
+`noteCreateVmDescriptorFull`. THIS section lifts noteCreate to the GENERIC full-state-on-RUNNABLE crown
+`EffectVmFullStateRunnable.runnable_full_sound` — the analog of the transfer reference
+`transferRunnableSpec` — over the DEDICATED, non-aliasing `sysRootsDigestCol = 186` carrier and the
+shared `wideHashSites` (so the crypto / anti-ghost is discharged ONCE in the generic theorem and the
+whole-17-field anti-ghost falls out of `wide_rejects_state_tamper`/`wide_rejects_root_tamper`). The
+per-effect content is THIN: the wide descriptor, the root-update gate over the dedicated carrier, the
+structured decode, and `decodeFull` (which reuses §4's `noteCreateVm_faithful` + the root-gate
+faithfulness). NO new crypto portal — the only terminal is the generic theorem's `Poseidon2SpongeCR`.
+
+This binds the FULL post-state: the per-cell block (balance-NEUTRAL freeze + nonce tick, fields 1–3 of
+the §0 census) AND all 8 side-table roots (fields 4–12 — the `commitments` root ADVANCES by the
+accumulator step, every OTHER side-table root FROZEN), so a satisfying wide-descriptor witness pins
+exactly the 17-field post-state the noteCreate executor produces, and tamper of ANY field/root is UNSAT
+(the generic anti-ghost). -/
+
+open EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Circuit.Emit.EffectVmEmit (sysRootsDigestCol sysRootsDigestColBefore EFFECT_VM_WIDTH_SYSROOTS)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (RowEncodes CellState absorbedCols)
+
+/-! ### §W.1 — the root-UPDATE gate over the DEDICATED carrier (`sysRootsDigestCol`/`…Before`).
+
+Unlike §B's `gCommitRootUpdate` (which reads the raw aux-96 `SYS_DIG_AFTER`, inside the balance-bit
+block), this gate reads the dedicated, non-aliasing `sysRootsDigestCol = 186` / `sysRootsDigestColBefore
+= 187` carriers the wide IR added — the exact column the `wideHashSites` absorb. So the `commitments`
+digest step the row binds is the SAME column the published `state_commit` commits to. -/
+
+/-- Root-update gate body over the DEDICATED carrier: `sa_sysdig − sb_sysdig − step` (so
+`sysRootsDigestCol = sysRootsDigestColBefore + step`), reading the dedicated `system_roots` carriers
+(186/187) and the `param2` accumulator step. The wide analog of `gCommitRootUpdate`. -/
+def gCommitRootUpdateWide : EmittedExpr :=
+  eSub (eSub (.var sysRootsDigestCol) (.var sysRootsDigestColBefore)) ePrmCommitStep
+
+/-- **`NoteCreateRootIntentWide env`** — the dedicated-carrier root move: the `system_roots` digest at
+`sysRootsDigestCol` ADVANCES by the `param2` step over `sysRootsDigestColBefore`. -/
+def NoteCreateRootIntentWide (env : VmRowEnv) : Prop :=
+  env.loc sysRootsDigestCol
+    = env.loc sysRootsDigestColBefore + env.loc (prmCol COMMIT_ROOT_STEP_PARAM)
+
+/-- **`gCommitRootUpdateWide_faithful`.** The wide root-update gate holds IFF the dedicated-carrier
+digest advances by the accumulator step. -/
+theorem gCommitRootUpdateWide_faithful (env : VmRowEnv) :
+    (VmConstraint.gate gCommitRootUpdateWide).holdsVm env false false ↔ NoteCreateRootIntentWide env := by
+  simp only [VmConstraint.holdsVm, gCommitRootUpdateWide, ePrmCommitStep, eSub, EmittedExpr.eval,
+    NoteCreateRootIntentWide]
+  constructor
+  · intro h; linarith
+  · intro h; rw [h]; ring
+
+/-! ### §W.2 — the WIDE descriptor (dedicated carrier + `wideHashSites`). -/
+
+/-- **`noteCreateVmDescriptorWide`** — noteCreate's WIDE runnable descriptor: the §2 whole-cell freeze
+gates PLUS the dedicated-carrier `commitments`-root-update gate ++ transition continuity ++ the 7
+boundary PI pins ++ the selector-binding gate, with `traceWidth := EFFECT_VM_WIDTH_SYSROOTS` and
+`hashSites := wideHashSites` (so `usesWideSites := rfl`). The `system_roots`-absorbing analog of
+`transferVmDescriptorWide`. -/
+def noteCreateVmDescriptorWide : EffectVmDescriptor :=
+  { name := noteCreateVmAirName ++ "-sysroots"
+  , traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+  , piCount := 34
+  , constraints := (noteCreateRowGates ++ [.gate gCommitRootUpdateWide])
+                     ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
+                     ++ selectorGates SEL_NOTE_CREATE
+  , hashSites := wideHashSites
+  , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
+
+/-- The wide descriptor's hash-sites ARE the shared `wideHashSites`. -/
+theorem noteCreateWide_usesWideSites : noteCreateVmDescriptorWide.hashSites = wideHashSites := rfl
+
+/-- **`noteCreateWide_forces_freeze`** — the wide descriptor still forces the §2 whole-cell FREEZE
+(`NoteCreateRowIntent`); the freeze gates are a sublist of the wide constraints, all per-row `.gate`s
+(flag-independent). -/
+theorem noteCreateWide_forces_freeze (env : VmRowEnv) (hrow : IsNoteCreateRow env) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteCreateVmDescriptorWide.constraints, c.holdsVm env b1 b2) :
+    NoteCreateRowIntent env := by
+  apply (noteCreateVm_faithful env hrow).mp
+  intro c hc
+  have hmem : c ∈ noteCreateVmDescriptorWide.constraints := by
+    unfold noteCreateVmDescriptorWide
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl hc))))
+  have := hgates c hmem
+  unfold noteCreateRowGates gFieldPassAll at hc
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+    List.mem_range] at hc
+  rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+    simpa only [VmConstraint.holdsVm] using this
+
+/-- **`noteCreateWide_forces_root`** — the wide descriptor forces the dedicated-carrier `commitments`-root
+advance. -/
+theorem noteCreateWide_forces_root (env : VmRowEnv) (b1 b2 : Bool)
+    (hgates : ∀ c ∈ noteCreateVmDescriptorWide.constraints, c.holdsVm env b1 b2) :
+    NoteCreateRootIntentWide env := by
+  apply (gCommitRootUpdateWide_faithful env).mp
+  have hmem : (VmConstraint.gate gCommitRootUpdateWide) ∈ noteCreateVmDescriptorWide.constraints := by
+    unfold noteCreateVmDescriptorWide
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inr (by simp)))))
+  have := hgates _ hmem
+  simpa only [VmConstraint.holdsVm] using this
+
+/-! ### §W.3 — the DECLARATIVE full 17-field post-state clause + the structured decode.
+
+`NoteCreateFullClause` is the genuine full post-state: the per-cell `CellNoteSpec` (balance-NEUTRAL
+freeze + nonce tick — fields 1–3), the decoded roots ARE `postRoots`, the `commitments` root's committed
+DIGEST advanced by the accumulator `step` (the bound update of field 6), and EVERY OTHER side-table root
+is FROZEN (fields 4,5,7–12). Non-vacuous: §W.5 inhabits it with a real publish. -/
+
+/-- **`NoteCreateFullClause hash value preRoots postRoots step`** — the full declarative 17-field
+post-state for a noteCreate over `(pre, post, pr)`: the per-cell balance-neutral `CellNoteSpec`, the
+decoded roots `pr = postRoots`, the `commitments`-root committed-digest advance
+(`systemRootsDigest postRoots = systemRootsDigest preRoots + step`), and every NON-`COMMIT` side-table
+root FROZEN (`postRoots i = preRoots i`). All 17 fields: 1–3 by `CellNoteSpec`; 6 by the digest advance;
+4,5,7–12 by the freeze; 13–17 ride the per-cell value's restLimbs (the named `CommitmentCrossBind`
+factoring, as the §0 census). -/
+def NoteCreateFullClause (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (pre post : CellState) (pr : SysRoots) : Prop :=
+  CellNoteSpec pre value post
+  ∧ pr = postRoots
+  ∧ Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+      = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step
+  ∧ (∀ i : Fin N_SYSTEM_ROOTS, i.val ≠ Dregg2.Exec.SystemRoots.systemRoot.COMMIT → postRoots i = preRoots i)
+
+/-- **`NoteCreateDecode hash value preRoots postRoots step env pre post pr`** — the structured row decode:
+the cell block + param value is `RowEncodesNote`, the decoded roots are `postRoots`, the dedicated
+carriers ARE the `systemRootsDigest` of `postRoots`/`preRoots`, the `param2` step is `step`, the
+published `NEW_COMMIT` is the after-`state_commit`, AND the off-row witness data (the `commitments`-root
+digest advance + non-`COMMIT` freeze) hold. The `RowEncodes`-style relation EXTENDED with the dedicated
+`sysRootsDigestCol` carrier link (the recipe's `decodeAfter`). -/
+def NoteCreateDecode (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (env : VmRowEnv) (pre post : CellState) (pr : SysRoots) : Prop :=
+  RowEncodesNote env pre value post
+  ∧ pr = postRoots
+  ∧ env.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+  ∧ env.loc sysRootsDigestColBefore = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots
+  ∧ env.loc (prmCol COMMIT_ROOT_STEP_PARAM) = step
+  ∧ (∀ i : Fin N_SYSTEM_ROOTS, i.val ≠ Dregg2.Exec.SystemRoots.systemRoot.COMMIT → postRoots i = preRoots i)
+
+/-! ### §W.4 — THE INSTANCE + the crown `noteCreate_runnable_full_sound`. -/
+
+/-- **`noteCreateRunnableSpec hash value preRoots postRoots step`** — noteCreate's `RunnableFullStateSpec`.
+`decodeAfter` is `NoteCreateDecode`; `fullClause` is `NoteCreateFullClause`; `decodeFull` projects the
+wide descriptor's freeze gates to `CellNoteSpec` (via `noteCreateWide_forces_freeze` +
+`intent_to_cellNoteSpec`) and the dedicated-carrier root gate to the digest advance (via
+`noteCreateWide_forces_root` + the carrier decode). THIN — the only per-effect content is §4's already-
+proved faithfulness + the decode; NON-VACUOUS (§W.5). -/
+def noteCreateRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ) :
+    RunnableFullStateSpec CellState where
+  descriptor    := noteCreateVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsNoteCreateRow
+  decodeAfter   := NoteCreateDecode hash value preRoots postRoots step
+  fullClause    := NoteCreateFullClause hash value preRoots postRoots step
+  decodeFull    := by
+    intro env pre post pr hrow hdec hgates
+    obtain ⟨henc, hpr, hdigA, hdigB, hstep, hfreezeRoots⟩ := hdec
+    -- per-cell freeze: the wide freeze gates ⟹ NoteCreateRowIntent ⟹ CellNoteSpec.
+    have hfreeze := noteCreateWide_forces_freeze env hrow true true hgates
+    have hcell := intent_to_cellNoteSpec env pre post value henc hfreeze
+    -- the dedicated-carrier root gate ⟹ the digest advances by the `param2` step …
+    have hrootW := noteCreateWide_forces_root env true true hgates
+    -- … which, decoded, is the `commitments`-root digest advance over `postRoots`/`preRoots`.
+    have hadvance : Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
+        = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step := by
+      have := hrootW
+      unfold NoteCreateRootIntentWide at this
+      rw [hdigA, hdigB, hstep] at this
+      exact this
+    exact ⟨hcell, hpr, hadvance, hfreezeRoots⟩
+
+/-- **`noteCreate_runnable_full_sound` — THE CROWN (full-state on the RUNNABLE descriptor).** A row
+satisfying noteCreate's WIDE runnable descriptor (`satisfiedVm noteCreateVmDescriptorWide`, first/last
+active), under the structured decode `NoteCreateDecode`, pins the FULL 17-field declarative post-state
+`NoteCreateFullClause`: the per-cell balance-neutral freeze + nonce tick, the `commitments`-root committed-
+digest advance by the accumulator step, and every OTHER side-table root frozen. This is the generic
+`runnable_full_sound` instantiated at `noteCreateRunnableSpec` — the circuit the prover ACTUALLY RUNS
+pins the whole post-state the noteCreate executor produces, not the weaker frame projection. -/
+theorem noteCreate_runnable_full_sound (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (env : VmRowEnv) (pre post : CellState) (pr : SysRoots)
+    (hrow : IsNoteCreateRow env)
+    (hdec : NoteCreateDecode hash value preRoots postRoots step env pre post pr)
+    (hsat : satisfiedVm hash noteCreateVmDescriptorWide env true true) :
+    NoteCreateFullClause hash value preRoots postRoots step pre post pr :=
+  runnable_full_sound (noteCreateRunnableSpec hash value preRoots postRoots step) hash env pre post pr
+    hrow hdec hsat
+
+/-- **`noteCreate_runnable_rejects_root_tamper` — the side-table anti-ghost (free from the generic
+crown).** Two rows satisfying the wide descriptor publishing the SAME `NEW_COMMIT` (with
+`systemRootsDigest` carriers) but whose `system_roots` sub-blocks DIFFER at some index (a dropped/omitted
+`commitments` update, OR any other side-table root tampered) cannot BOTH satisfy — UNSAT. The whole-17-
+field anti-ghost tooth, specialised from `wide_rejects_root_tamper`. -/
+theorem noteCreate_runnable_rejects_root_tamper (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash noteCreateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash noteCreateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (noteCreateRunnableSpec hash value preRoots postRoots step) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`noteCreate_runnable_rejects_state_tamper` — the per-cell-block anti-ghost (free).** Two wide rows
+publishing the same `NEW_COMMIT` but whose absorbed state-block columns (balance/nonce/fields/cap) DIFFER
+cannot both satisfy — a forged balance / tampered field / forged cap-root that still claims the published
+commitment is UNSAT. Specialised from `wide_rejects_state_tamper`. -/
+theorem noteCreate_runnable_rejects_state_tamper (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash noteCreateVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash noteCreateVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = Dregg2.Exec.SystemRoots.systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (noteCreateRunnableSpec hash value preRoots postRoots step) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### §W.5 — NON-VACUITY of the wide instance: the full clause is INHABITED + REFUTABLE.
+
+The crown is hollow if `NoteCreateFullClause` is vacuous. A concrete realization: the `commitments` root
+advances (the COMMIT index moves), every other root frozen, the cell balance-neutral. And a refutation:
+a forged post-balance fails `CellNoteSpec`. Both sides, no `native_decide`. -/
+
+/-- A concrete frozen reference sub-block (every side-table empty before the publish). -/
+def wPreRoots : SysRoots := Dregg2.Exec.SystemRoots.emptySystemRoots
+
+/-- A concrete post sub-block: the `commitments` (COMMIT) root advanced to `7`, every other root still
+empty (the genuine "only the touched root moved" shape). -/
+def wPostRoots : SysRoots := fun i =>
+  if i = (⟨Dregg2.Exec.SystemRoots.systemRoot.COMMIT, by decide⟩ : Fin N_SYSTEM_ROOTS) then 7 else 0
+
+/-- The honest cell pre/post for the witness: balance-neutral `100 → 100`, nonce `5 → 6`, frame frozen. -/
+def wPre : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+def wPost : CellState :=
+  { balLo := 100, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+
+/-- **`noteCreate_fullClause_inhabited` — NON-VACUITY (witness TRUE).** The full clause is inhabited by a
+real publish: balance-neutral cell freeze + nonce tick, the `commitments` root digest advanced by the
+genuine step `δ = systemRootsDigest wPostRoots − systemRootsDigest wPreRoots`, every other root frozen. So
+`NoteCreateFullClause` is a MEANINGFUL 17-field predicate a real noteCreate satisfies, not `True`. -/
+theorem noteCreate_fullClause_inhabited (hash : List ℤ → ℤ) :
+    NoteCreateFullClause hash 30 wPreRoots wPostRoots
+      (Dregg2.Exec.SystemRoots.systemRootsDigest hash wPostRoots
+        - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRoots)
+      wPre wPost wPostRoots := by
+  refine ⟨?_, rfl, by ring, ?_⟩
+  · -- CellNoteSpec wPre 30 wPost: balLo frozen, balHi frozen, nonce+1, fields/cap/reserved frozen.
+    refine ⟨rfl, rfl, by norm_num [wPre, wPost], ?_, rfl, rfl⟩
+    intro i; rfl
+  · -- every NON-COMMIT root is frozen at 0 (both empty/post agree off the COMMIT index).
+    intro i hi
+    simp only [wPostRoots, wPreRoots, Dregg2.Exec.SystemRoots.emptySystemRoots]
+    rw [if_neg]
+    intro hcontra
+    exact hi (by rw [hcontra])
+
+/-- **`noteCreate_fullClause_refutable` — NON-VACUITY (witness FALSE).** A post-state whose `balLo` is a
+forged `999` (NOT the balance-neutral frozen `100`) FAILS `CellNoteSpec`, so `NoteCreateFullClause` is
+REFUTABLE — the clause rejects a smuggled on-trace credit, pinning non-vacuity from both sides. -/
+theorem noteCreate_fullClause_refutable (hash : List ℤ → ℤ) :
+    ¬ NoteCreateFullClause hash 30 wPreRoots wPostRoots
+        (Dregg2.Exec.SystemRoots.systemRootsDigest hash wPostRoots
+          - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRoots)
+        wPre { wPost with balLo := 999 } wPostRoots := by
+  rintro ⟨⟨hbal, _⟩, _⟩
+  -- hbal : (999) = wPre.balLo = 100 (balance-neutral)
+  simp only [wPre] at hbal
+  norm_num at hbal
+
+/-! ### §W.6 — RECONCILIATION pins (the wide descriptor's shape). -/
+
+-- The wide descriptor carries the widened trace width + the dedicated carrier (NOT the old aux-96).
+#guard noteCreateVmDescriptorWide.traceWidth == 188
+#guard noteCreateVmDescriptorWide.hashSites.length == 4
+-- 13 freeze gates + 1 wide-root gate + 14 transitions + 4 boundaryFirst + 3 boundaryLast + 1 selector.
+#guard noteCreateVmDescriptorWide.constraints.length == 13 + 1 + 14 + 4 + 3 + 1
+-- The wide root gate reads the DEDICATED carriers (186/187), never the old aux-96 (96).
+#guard sysRootsDigestCol == 186
+#guard sysRootsDigestColBefore == 187
+#guard decide (sysRootsDigestCol ≠ SYS_DIG_AFTER)
+
+#assert_axioms gCommitRootUpdateWide_faithful
+#assert_axioms noteCreateWide_forces_freeze
+#assert_axioms noteCreateWide_forces_root
+#assert_axioms noteCreate_runnable_full_sound
+#assert_axioms noteCreate_runnable_rejects_root_tamper
+#assert_axioms noteCreate_runnable_rejects_state_tamper
+#assert_axioms noteCreate_fullClause_inhabited
+#assert_axioms noteCreate_fullClause_refutable
 
 /-! ## §13 — Axiom-hygiene pins. -/
 

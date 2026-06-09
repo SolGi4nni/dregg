@@ -73,6 +73,7 @@ itself. Build: `lake build Dregg2.Circuit.Argus.Effects.PipelinedSend`.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Spec.queuepipelinedsend
+import Dregg2.Circuit.Emit.EffectVmEmitPipelinedSendWide
 
 namespace Dregg2.Circuit.Argus.Effects.PipelinedSend
 
@@ -310,5 +311,51 @@ theorem pipelinedSendStmt_total_any_actor :
 #assert_axioms pipelinedSendStmt_log_ticks
 #assert_axioms pipelinedSendStmt_receipt_neutral
 #assert_axioms pipelinedSendStmt_total_any_actor
+
+/-! ## §6 — THE MAGNESIUM UPGRADE: the RUNNABLE full-state soundness (all 17 fields + the 8 side-table
+roots, on the circuit the prover RUNS).
+
+§4 welded the Argus term against pipelinedSend's ABSTRACT `EffectCommit` full-state descriptor
+(`pipelinedSendA_full_sound`, in the `satisfiedE`/`CommitSurface` universe). This section adds the
+FULL-STATE-on-RUNNABLE soundness: the circuit the prover ACTUALLY RUNS — `satisfiedVm
+pipelinedSendVmDescriptorWide`, the 188-wide `system_roots`-absorbing EffectVM descriptor — pins the FULL
+17-field declarative post-state: the per-cell economic block FROZEN + the nonce TICKED (via the absorbed
+columns) AND ALL 8 side-table roots FROZEN (via the wide commitment). This closes the Class-C "pale
+ghost" on the runnable descriptor (the narrow 186-wide `pipelinedSendVmDescriptor`'s commitment bound
+NONE of the 8 side-table roots; only a record-layer commitment off to the side did).
+
+HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §3/§4 name): (a) the apply-time pipelined
+send's SOLE motion is the neutral receipt prepended to the chained `RecChainedState.log`, NOT a
+`RecordKernelState` field and with NO EffectVM row column — it rides universe-A's `logHashInjective`
+portal; (b) the runtime row TICKS the cell nonce (`post.nonce = pre.nonce + 1`) while the executor's
+kernel-half is the IDENTITY (frozen nonce) — the SAME structural divergence transfer/exercise carry,
+reconciled at the turn level by the prologue's single tick (cited). This module closes the side-table-root
+binding gap on the kernel state. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend (IsPipelinedSendRow RowEncodesSend CellSendSpec)
+open Dregg2.Circuit.Emit.EffectVmEmitPipelinedSendWide
+  (pipelinedSendVmDescriptorWide pipelinedSend_runnable_full_sound)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`pipelinedSend_runnable_full_state_weld` — THE RUNNABLE full-state soundness (pipelinedSend slice).**
+A row satisfying the RUNNABLE wide descriptor `pipelinedSendVmDescriptorWide` (`satisfiedVm`, first/last
+active), decoded by `RowEncodesSend env pre post` with the frozen-roots witness `sr = preRoots`, pins the
+FULL 17-field declarative post-state: the per-cell `CellSendSpec` (economic block FROZEN, nonce TICKED) AND
+all 8 side-table roots FROZEN (`sr = preRoots`). This is the analog of the abstract
+`pipelinedSendA_full_sound` (§4's circuit side), but for the circuit the prover ACTUALLY RUNS — and it
+BINDS the side-table roots the abstract descriptor's per-cell EffectVM row left unbound. The per-cell
+economic freeze IS the frozen kernel the IR term's executor produces (§4 `pipelinedSend_compile_sound`);
+the nonce-tick + log-receipt are the carried turn-level residuals named above. -/
+theorem pipelinedSend_runnable_full_state_weld
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (sr preRoots : SysRoots)
+    (hrow : IsPipelinedSendRow env)
+    (henc : RowEncodesSend env pre post) (hroots : sr = preRoots)
+    (hsat : satisfiedVm hash pipelinedSendVmDescriptorWide env true true) :
+    CellSendSpec pre post ∧ sr = preRoots :=
+  pipelinedSend_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+
+#assert_axioms pipelinedSend_runnable_full_state_weld
 
 end Dregg2.Circuit.Argus.Effects.PipelinedSend

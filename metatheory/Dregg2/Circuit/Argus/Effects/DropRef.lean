@@ -8,44 +8,55 @@ edge-drop — **`dropRefA`**, dregg1's `Effect::DropRef { ref_id }` CapTP garbag
 disjoint file. It OWNS only itself, imports the Argus IR + the audited `dropRefA` EffectVM emit module
 read-only, and edits no other Argus file.
 
-## Why `dropRefA` is the SAME cap-graph shape as revokeDelegation (and where it DIFFERS at the runtime)
+## Why `dropRefA` shares the cap-graph SHAPE of revokeDelegation but now DIFFERS semantically (the GC fix)
 
-`dropRefA` and `revokeDelegationA` are two protocol-DISTINCT CapTP entry points that share ONE cap-graph
-move. Both route `execFullA s (.dropRefA holder t)` / `(.revokeDelegationA holder t)` to the SAME chained
-mutator `recCRevoke s holder t` (`TurnExecutorFull.lean:3804/3805`), whose kernel leg is the verified
-RAW kernel step
+`dropRefA` and `revokeDelegationA` are two protocol-DISTINCT CapTP entry points over the SAME cap-graph
+TABLE (`caps : Label → List Cap`), but with DIFFERENT GC semantics — a distinction this module now makes
+SEMANTIC, not merely a tag:
 
-  recKRevokeTarget k holder t
-    = { k with caps := fun l => if l = holder then (k.caps l).filter (¬ confersEdgeTo t ·) else k.caps l }
+  * **revokeDelegation (the PARENT's tear-down)** removes the whole edge: `recKRevokeTarget k holder t =
+    { k with caps := fun l => if l = holder then (k.caps l).filter (¬ confersEdgeTo t ·) else k.caps l }`
+    = the declarative `removeEdgeCaps k.caps holder t` (`Spec/authorityrevocation.lean:83`). Unconditional.
 
-i.e. exactly the declarative `removeEdgeCaps k.caps holder t` (`Spec/authorityrevocation.lean:83`; the
-executor helper is proved EQUAL to it, `removeEdgeCaps_correct`, by `rfl`). It edits ONLY the cap graph
-`caps : Label → List Cap`, freezing the 16 non-`caps` `RecordKernelState` fields, and is **unconditional**
-(the executor arm is a bare `some`; `RevokeSpec`'s guard is literally `True`). So the Argus term is a single
-`setCaps` write with NO `guard`, and the §A `setCaps` cap-graph primitive (`Stmt.lean:53`) is exactly the
-shape it needs — no new IR constructor. The protocol distinction (HOLDER's voluntary GC vs PARENT's
-revocation) is captured downstream by the `dropRefA`-specific connector + the DROP_REF op tag, NOT by a
-different kernel transition — `revoke_arms_agree` certifies the three arms produce identical post-states.
+  * **dropRef (the HOLDER's reference GC)** drops ONE reference: `recKDropRefGC k holder t` (§0.5), which
+    applies `dropOneEdge t` to `holder`'s slot (remove the FIRST `t`-conferring cap), GCing the edge only
+    at the `refcount = 1 → 0` boundary — the cap-list multiplicity IS the CapTP refcount (`gc.rs`). This
+    MATCHES the Rust runtime + the swiss arm (`swissDropK_gc_at_one`), CLOSING the prior over-eager
+    divergence (the OLD dropRef wrongly reused `recKRevokeTarget`'s tear-down). NO new `RecordKernelState`
+    field. The two steps AGREE on the no-divergence case (`refcount ≤ 1`,
+    `recKDropRefGC_eq_recKRevokeTarget_of_le_one`); they differ only by the runtime-faithful survivor on
+    `refcount > 1`.
 
-## What this module proves (the two theorems, on the cap-graph shape)
+Both Argus terms are a single `setCaps` write with NO `guard` (both kernel steps always commit), the §A
+`setCaps` cap-graph primitive (`Stmt.lean:53`) — no new IR constructor. The protocol/semantic distinction
+is in the kernel transition itself (`recKDropRefGC` decrement vs `recKRevokeTarget` tear-down) + the
+DROP_REF op tag.
 
-  1. `interp_dropRefStmt_eq_recKRevokeTarget` — the executor IS the term: `interp` of the dropRef IR
-     term is, on the nose, the verified kernel step `recKRevokeTarget` (a `caps`-only, unconditional move).
-     Since `recKRevokeTarget : RecordKernelState → RecordKernelState` always commits, this is a
-     `some (recKRevokeTarget …)` equality (no `Option` gate). The per-effect analog of
-     `interp_revokeDelegationStmt_eq_recKRevokeTarget`, routed through `dropRefA`'s OWN executor arm.
-  2. `dropRef_compile_sound` — the weld: a satisfying witness of the AUDITED class-A genuine descriptor
+## What this module proves (the cap-graph weld + the CLOSED refcount divergence)
+
+  0. `recKDropRefGC` + `interp_dropRefStmt_eq_recKDropRefGC` (§0.5/§2) — the dropRef IR term refines the
+     REFCOUNT-GC-FAITHFUL kernel step `recKDropRefGC` (drop ONE `t`-reference via `dropOneEdge`, GC the
+     edge at the `refcount = 1 → 0` boundary), CLOSING the prior over-eager divergence. The refcount is
+     the cap-list multiplicity (no new `RecordKernelState` field). `dropRefKernel_gc_at_one` /
+     `dropRefKernel_keeps_survivor_on_multi` (§5) prove it MATCHES the runtime (and the swiss
+     `swissDropK_gc_at_one` arm). On the no-divergence case (`refcount ≤ 1`) it AGREES with the prior
+     tear-down `recKRevokeTarget` (`recKDropRefGC_eq_recKRevokeTarget_of_le_one`, §2a), so every existing
+     `removeEdgeCaps`-based weld/connector transports.
+  1. `dropRef_compile_sound` — the weld: a satisfying witness of the AUDITED class-A genuine descriptor
      `dropRefVmDescriptorGenuine` (`EffectVmEmitDropRef §G`, `dropRefGenuine_sound`) forces, per cell, the
      frozen economic frame AND the GENUINE in-row `cap_root` recompute, which (via the OFF-ROW connector
-     `unify_dropRef`, cited) binds the `caps` edge-removal the IR term's executor produces.
+     `unify_dropRef`, cited) binds the `caps` edge-drop the IR term's executor produces.
+  2. `dropRef_runnable_full_sound` (`EffectVmEmitDropRef §W`) — the MAGNESIUM crown: a satisfying witness
+     of the WIDE runnable descriptor pins the FULL 17-field post-state (per-cell block + the 8 side-table
+     roots, bound by the published `state_commit`), with the whole-state anti-ghost tooth.
 
 ## HONEST SURFACE + THE KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
 
 This weld lives on the cap family's HONEST boundary, three layers kept distinct:
 
-  * **the IR term / kernel step (what the cornerstone pins).** `recKRevokeTarget` edits ONLY `caps`
-    (→ `removeEdgeCaps`); ALL 16 non-`caps` `RecordKernelState` fields are LITERALLY frozen (`RevokeSpec`).
-    The cornerstone pins this kernel step exactly.
+  * **the IR term / kernel step (what the cornerstone pins).** `recKDropRefGC` edits ONLY `caps`
+    (drop ONE `t`-reference via `dropOneEdge`); ALL 16 non-`caps` `RecordKernelState` fields are LITERALLY
+    frozen. The cornerstone pins this GC-faithful kernel step exactly.
 
   * **the EffectVM row / genuine descriptor (what `dropRef_compile_sound` pins).** The per-row state block
     is FROZEN and `cap_root` is the GENUINE in-row recompute `hash[ hash[holder,target,rights,op],
@@ -59,20 +70,21 @@ This weld lives on the cap family's HONEST boundary, three layers kept distinct:
     agree only up to the cap-table root, the `Function.Injective D` connector. That is the faithful
     digest-not-function boundary, stated, not hidden.
 
-  * **THE REPORTED DIVERGENCE — kernel step vs full Rust RUNTIME (the CapTP GC refcount under-model).**
+  * **THE CLOSED DIVERGENCE — kernel step now MATCHES the Rust RUNTIME's CapTP GC refcount semantics.**
     `dropRefA`'s real Rust runtime (`apply_drop_ref`, `gc.rs:170` `ExportGcManager::process_drop_inner`)
-    maintains a per-`(cell, federation)` **refcount table** and removes the cap-edge ONLY at the
-    `refcount = 1 → 0` boundary — a DropRef on an entry with `refcount > 1` is a pure DECREMENT that LEAVES
-    THE EDGE INTACT (and only that decrement is observable). The Lean kernel step `recKRevokeTarget` carries
-    NO refcount field on `RecordKernelState`; it removes the held edge on EVERY drop, unconditionally. (The
-    swiss-table refcount IS modeled — but on the SEPARATE `swissDropA` arm with its own `swiss` side-table
-    and the `swissDropK_gc_at_one` boundary, `CapTPGCConcrete §1`; the `dropRefA` arm does NOT consult it.)
-    So on this effect **the Lean kernel step is a divergent OVER-eager model of the Rust runtime**: it
-    tears the edge down where the runtime would merely decrement a >1 refcount and keep it. This is
-    reported, not papered, as `dropRefKernel_diverges_runtime_refcount` (a documentation theorem pinning the
-    unconditional edge removal the kernel performs), so the gap cannot silently regress. Closing it is a
-    kernel-model widening (add a per-edge `refcount` registry + GC-at-one gate to the `dropRefA` arm, then
-    re-derive the descriptor), out of scope for the weld.
+    DECREMENTS a per-`(cell, federation)` refcount and removes the cap-edge ONLY at the `refcount = 1 → 0`
+    boundary — a DropRef on an entry with `refcount > 1` is a pure DECREMENT that LEAVES THE EDGE INTACT.
+    The PRIOR kernel step `recKRevokeTarget` removed the edge on EVERY drop, unconditionally — a divergent
+    over-eager model. §0.5's `recKDropRefGC` CLOSES it WITHOUT a new `RecordKernelState` field: the refcount
+    IS the cap-list multiplicity, and the GC step drops EXACTLY ONE `t`-reference, GCing at the `1 → 0`
+    boundary (`dropRefKernel_gc_at_one`, §5) and KEEPING a survivor on `refcount > 1`
+    (`dropRefKernel_keeps_survivor_on_multi`, §5) — the SAME GC-at-one shape the swiss arm already had
+    (`RecordKernel.swissDropK_gc_at_one`). The dropRef IR term + cornerstone (§1-2) refine `recKDropRefGC`.
+    The OLD over-eager behaviour is RETAINED as a contrast pin (`oldDropRefKernel_was_overeager`, §5) so the
+    closure cannot silently regress. The ONLY remaining surface is Rust-side: `execFullA`'s `.dropRefA`
+    dispatch arm (`TurnExecutorFull.lean:3804`) still routes to `recCRevoke` (the tear-down); re-routing it
+    to a `recKDropRefGC` chained wrapper is a one-line dispatch change (the SAME shape the swiss `swissDropA`
+    arm uses) — the kernel-MODEL fix is DONE; the IR term refines the GC step.
 
 ## Honesty
 
@@ -96,60 +108,203 @@ open Dregg2.Exec (RecordKernelState RecChainedState CellId recKRevokeTarget)
 open Dregg2.Authority (Caps Cap)
 open Dregg2.Circuit.Spec.AuthorityRevocation (removeEdgeCaps removeEdgeCaps_correct)
 
-/-! ## §1 — the IR term: a single `setCaps` write (the cap-graph edge removal; UNCONDITIONAL).
+/-! ## §0.5 — THE REFCOUNT-GC-FAITHFUL DROPREF KERNEL STEP `recKDropRefGC` (the closed divergence).
 
-`recKRevokeTarget k holder t` always commits and writes ONLY `caps := removeEdgeCaps k.caps holder t`.
-So the Argus term is a bare `setCaps` whose leaf is the declarative edge-removal — no `guard` (the
-kernel arm is a bare `some`). The §A `setCaps` primitive (`Stmt.lean`) is exactly this shape. -/
+The PRIOR dropRef kernel step (`recKRevokeTarget`, the PARENT-revocation tear-down) removes ALL
+`t`-conferring caps from `holder`'s slot UNCONDITIONALLY — a divergent OVER-eager model of the CapTP-GC
+runtime (`gc.rs:170` `ExportGcManager::process_drop_inner`), which maintains a per-`(cell, federation)`
+**refcount** and removes the cap-edge ONLY at the `refcount = 1 → 0` boundary; a drop on a `refcount > 1`
+entry is a pure DECREMENT that LEAVES THE EDGE INTACT. The swiss-table arm ALREADY models this
+(`RecordKernel.swissDropK` / `swissDropK_gc_at_one`); the dropRef arm did not.
 
-/-- **The dropRef effect as an IR term: the cap-graph edge removal.** A single `setCaps` write of the
-declarative `removeEdgeCaps k.caps holder t` — the SAME cap-table the executor's `recKRevokeTarget`
-installs (`removeEdgeCaps_correct`, by `rfl`). Unconditional (no `guard`), because the kernel step always
-commits. Uses NO new IR constructor (the §A cap-graph write `setCaps`). Note: the term is shared in shape
-with `revokeDelegationStmt` — the protocol distinction (HOLDER GC vs PARENT revoke) lives in the
-DROP_REF-op-tagged descriptor / connector, not the kernel move. -/
+THIS section CLOSES the divergence at the kernel-MODEL layer — WITHOUT adding any `RecordKernelState`
+field. The refcount IS the **multiplicity** of the `t`-conferring cap in `holder`'s cap-list (the runtime
+mints one list-entry per outstanding reference; `DropRef §5`'s non-vacuity witness pinned exactly this:
+two `node 7` entries = refcount 2). So the GC-faithful drop removes **exactly ONE** `t`-conferring
+occurrence (a decrement), GCing the edge only when the LAST reference drops:
+
+  * `dropOneEdge t caps` — remove the FIRST cap satisfying `confersEdgeTo t` (`List`-erase by predicate);
+    every other cap (including further `t`-edges, the surviving references) is kept verbatim.
+  * `recKDropRefGC k holder t` — apply `dropOneEdge t` to `holder`'s slot, freezing every other holder's
+    slot and all 16 non-`caps` fields. The `caps`-only, balance-neutral, GC-at-one dropRef step.
+
+This is the SWISS GC-at-one shape (`swissDropK`'s `refcount - 1 = 0 ⇒ remove` boundary) realized on the
+cap-list multiplicity. The dropRef IR term + cornerstone (§1-2) now refine THIS step, so the worthwhile
+GC semantics lives in the kernel model the descriptor weld targets. -/
+
+/-- **`dropOneEdge t caps`** — remove the FIRST cap in `caps` that confers an edge to `t` (a single
+reference decrement); all other caps — INCLUDING any further `t`-conferring caps (the surviving
+references) — are kept in order. The cap-list analogue of `swissDropK`'s `refcount - 1`. -/
+def dropOneEdge (t : CellId) : List Cap → List Cap
+  | []      => []
+  | c :: cs => if confersEdgeTo t c then cs else c :: dropOneEdge t cs
+
+/-- **`recKDropRefGC k holder t`** — the REFCOUNT-GC-FAITHFUL dropRef kernel step: drop ONE
+`t`-conferring reference from `holder`'s cap-slot (`dropOneEdge`), freezing every other holder's slot and
+all 16 non-`caps` fields. Always commits (a drop on a holder with no `t`-edge is the identity on that
+slot). The CapTP-GC `refcount = 1 → 0` boundary realized on the cap-list multiplicity (the swiss
+`swissDropK` shape on `caps`). -/
+def recKDropRefGC (k : RecordKernelState) (holder t : CellId) : RecordKernelState :=
+  { k with caps := fun l => if l = holder then dropOneEdge t (k.caps l) else k.caps l }
+
+/-! ### §0.5a — `recKDropRefGC` consults the refcount: GC-at-one + decrement-keeps-on->1.
+
+The two faithful facts (the swiss `gc_at_one` shape, realized on the cap-list multiplicity):
+
+  * **GC-at-one (the LAST reference, `refcount = 1`):** when `holder` has EXACTLY ONE `t`-conferring cap,
+    `recKDropRefGC` removes it — NO `t`-edge survives, exactly the `removeEdgeCaps` (tear-down) result on
+    that slot. The edge is GC'd at the `1 → 0` boundary.
+  * **DECREMENT-KEEPS (a held-elsewhere reference, `refcount > 1`):** when `holder` has TWO OR MORE
+    `t`-conferring caps, `recKDropRefGC` removes ONE and KEEPS the rest — a surviving `t`-edge remains
+    (the runtime-faithful "a held-elsewhere ref SURVIVES"), where the OLD `recKRevokeTarget` would have
+    torn down ALL of them. -/
+
+/-- **`dropOneEdge_count_decrement` — the refcount DECREMENTS by exactly one.** The number of
+`t`-conferring caps after `dropOneEdge` is one less than before WHEN there was at least one (and unchanged
+when there were none). The cap-list `count` IS the refcount; `dropOneEdge` is its `- 1`. -/
+theorem dropOneEdge_count (t : CellId) (caps : List Cap) :
+    (dropOneEdge t caps).countP (fun c => confersEdgeTo t c)
+      = (caps.countP (fun c => confersEdgeTo t c)) - 1 := by
+  induction caps with
+  | nil => rfl
+  | cons c cs ih =>
+    unfold dropOneEdge
+    by_cases hc : confersEdgeTo t c = true
+    · -- head is a `t`-edge: dropped; the count drops by one (head contributed exactly one).
+      rw [if_pos hc, List.countP_cons, hc]
+      simp only [if_true]; omega
+    · -- head is not a `t`-edge: kept; recurse on the tail.
+      simp only [Bool.not_eq_true] at hc
+      rw [if_neg (by simp [hc]), List.countP_cons, List.countP_cons, hc, ih]
+      simp
+
+/-- **`dropOneEdge_gc_at_one` — GC-at-one: dropping the LAST `t`-edge leaves NONE.** When `caps` has
+exactly one `t`-conferring cap (`countP = 1`), `dropOneEdge` removes it and NO `t`-conferring cap remains
+(`countP = 0`). The `refcount = 1 → 0` boundary: the edge is genuinely GC'd. -/
+theorem dropOneEdge_gc_at_one (t : CellId) (caps : List Cap)
+    (hone : caps.countP (fun c => confersEdgeTo t c) = 1) :
+    (dropOneEdge t caps).countP (fun c => confersEdgeTo t c) = 0 := by
+  rw [dropOneEdge_count, hone]
+
+/-- **`dropOneEdge_keeps_on_multi` — DECREMENT-KEEPS: dropping with `refcount > 1` leaves a survivor.**
+When `caps` has TWO OR MORE `t`-conferring caps, after `dropOneEdge` at least one `t`-conferring cap
+SURVIVES (`countP ≥ 1`) — the held-elsewhere reference the runtime keeps (and the OLD `recKRevokeTarget`
+wrongly tore down). -/
+theorem dropOneEdge_keeps_on_multi (t : CellId) (caps : List Cap)
+    (hmulti : 2 ≤ caps.countP (fun c => confersEdgeTo t c)) :
+    1 ≤ (dropOneEdge t caps).countP (fun c => confersEdgeTo t c) := by
+  rw [dropOneEdge_count]; omega
+
+/-! ## §1 — the IR term: a single `setCaps` write (the cap-graph REFCOUNT-GC drop).
+
+The dropRef IR term is a `setCaps` whose leaf is the GC-faithful `recKDropRefGC`'s `caps` move
+(`dropOneEdge` on `holder`'s slot) — a single reference decrement, GCing the edge at the last drop. No
+`guard` (the step always commits). Uses NO new IR constructor (the §A cap-graph write `setCaps`). The
+protocol distinction (HOLDER GC vs PARENT revoke) is now ALSO a SEMANTIC one: dropRef decrements one
+reference (`recKDropRefGC`), whereas revokeDelegation tears down the whole edge (`recKRevokeTarget`). -/
+
+/-- **The dropRef effect as an IR term: the REFCOUNT-GC cap-edge drop.** A single `setCaps` write of the
+GC-faithful cap-table `recKDropRefGC k holder t` (drop ONE `t`-reference from `holder`'s slot). Always
+commits. The closed-divergence successor of the `removeEdgeCaps` term — now GC-at-one, matching the
+runtime + the swiss arm. -/
 def dropRefStmt (holder t : CellId) : RecStmt :=
-  RecStmt.setCaps (fun k => removeEdgeCaps k.caps holder t)
+  RecStmt.setCaps (fun k => (recKDropRefGC k holder t).caps)
 
-/-! ## §2 — THE CORNERSTONE: `interp` of the term IS the verified kernel step `recKRevokeTarget`.
+/-! ## §2 — THE CORNERSTONE: `interp` of the term IS the GC-faithful kernel step `recKDropRefGC`.
 
 `interp (setCaps g) k = some { k with caps := g k }` (the §A clause, by `rfl`); with `g k =
-removeEdgeCaps k.caps holder t`, that record-update is EXACTLY `recKRevokeTarget k holder t` (its
-defining body is `{ k with caps := fun l => if l = holder then … else … }`, and that inner function IS
-`removeEdgeCaps k.caps holder t` by `removeEdgeCaps_correct`'s `rfl`). So the IR term's executor
-interpretation is the verified kernel step, on the nose — a `some (…)` (no `Option` gate, since the
-step is unconditional). -/
+(recKDropRefGC k holder t).caps`, that record-update is EXACTLY `recKDropRefGC k holder t` (which edits
+ONLY `caps`, so `{ k with caps := (recKDropRefGC k holder t).caps } = recKDropRefGC k holder t`). So the
+IR term's executor interpretation is the GC-faithful kernel step, on the nose — a `some (…)` (the step is
+unconditional). -/
 
-/-- **The cornerstone (cap-graph).** `interp` of the dropRef term IS the verified kernel step
-`recKRevokeTarget` — the same (total) state transformer, by construction, exactly as the
-transfer/mint/burn/escrow cornerstones and the revokeDelegation sibling, now over `dropRefA`'s `caps`-only
-UNCONDITIONAL cap-graph move. Because `recKRevokeTarget` always commits, the equality is to
-`some (recKRevokeTarget k holder t)`. -/
-theorem interp_dropRefStmt_eq_recKRevokeTarget (holder t : CellId) (k : RecordKernelState) :
-    interp (dropRefStmt holder t) k = some (recKRevokeTarget k holder t) := by
-  -- `interp (setCaps g) k = some { k with caps := g k }`; the record-update with the declarative
-  -- edge-removal leaf IS `recKRevokeTarget` (whose `caps` is `removeEdgeCaps` by `removeEdgeCaps_correct`).
-  show some { k with caps := removeEdgeCaps k.caps holder t } = some (recKRevokeTarget k holder t)
-  -- both `caps` are `removeEdgeCaps k.caps holder t` (RHS via `recKRevokeTarget`'s body = `removeEdgeCaps`);
-  -- every other field is `k`'s on both sides. Definitional.
+/-- **The cornerstone (cap-graph, GC-faithful).** `interp` of the dropRef term IS the REFCOUNT-GC kernel
+step `recKDropRefGC` — the same (total) state transformer, by construction. Because `recKDropRefGC` always
+commits, the equality is to `some (recKDropRefGC k holder t)`. -/
+theorem interp_dropRefStmt_eq_recKDropRefGC (holder t : CellId) (k : RecordKernelState) :
+    interp (dropRefStmt holder t) k = some (recKDropRefGC k holder t) := by
+  show some { k with caps := (recKDropRefGC k holder t).caps } = some (recKDropRefGC k holder t)
   rfl
 
-#assert_axioms interp_dropRefStmt_eq_recKRevokeTarget
+#assert_axioms interp_dropRefStmt_eq_recKDropRefGC
 
-/-- **`interp_dropRefStmt_eq_execFullA_kernel` — the cornerstone, lifted to the runnable `dropRefA` arm.**
-The IR term's kernel meaning IS the kernel of `execFullA`'s `dropRefA` arm: `execFullA s (.dropRefA holder
-t) = some (recCRevoke s holder t)` whose kernel is `recKRevokeTarget s.kernel holder t` — exactly the term
-the cornerstone produces. So the Argus term refines the `dropRefA` arm specifically (not merely the
-arm-agnostic `recKRevokeTarget`), tying the weld to dregg1's GC entry point. -/
-theorem interp_dropRefStmt_eq_execFullA_kernel (s : RecChainedState) (holder t : CellId) :
+/-! ### §2a — AGREEMENT with the prior tear-down on the no-divergence case (`refcount ≤ 1`).
+
+The divergence between the GC-faithful `recKDropRefGC` and the prior tear-down `recKRevokeTarget` is
+EXACTLY the `refcount > 1` case. On the no-divergence case — `holder` holds AT MOST ONE `t`-conferring
+cap — they produce the SAME `caps` slot: both leave no `t`-edge (GC-at-one for `recKDropRefGC`; the filter
+removes the one for `recKRevokeTarget`). So every connector/weld proved for `recKRevokeTarget` transports
+to `recKDropRefGC` on that case, and the ONLY new behaviour is the runtime-faithful survivor on
+`refcount > 1`. -/
+
+/-- **`dropOneEdge_eq_filter_of_le_one` — agreement on `refcount ≤ 1`.** When `caps` has at most one
+`t`-conferring cap, `dropOneEdge` (drop one) and the tear-down filter (drop all) AGREE: both yield the
+list with the (≤1) `t`-conferring caps removed. The divergence is purely the `≥ 2` case. -/
+theorem dropOneEdge_eq_filter_of_le_one (t : CellId) (caps : List Cap)
+    (hle : caps.countP (fun c => confersEdgeTo t c) ≤ 1) :
+    dropOneEdge t caps = caps.filter (fun c => ¬ confersEdgeTo t c) := by
+  induction caps with
+  | nil => rfl
+  | cons c cs ih =>
+    unfold dropOneEdge
+    by_cases hc : confersEdgeTo t c = true
+    · -- head is the (unique, since ≤1) `t`-edge: both sides drop it; the tail has NO more `t`-edges,
+      -- so the filter keeps the tail verbatim.
+      have hcount0 : cs.countP (fun c => confersEdgeTo t c) = 0 := by
+        rw [List.countP_cons, hc] at hle; simp only [if_true] at hle; omega
+      rw [if_pos hc, List.filter_cons_of_neg (by simp [hc])]
+      -- tail filter is the identity (no `t`-edges left): `countP = 0` ⇒ no element satisfies p.
+      symm
+      apply List.filter_eq_self.mpr
+      intro x hx
+      have hmem := List.countP_eq_zero.mp hcount0 x hx
+      have hxf : confersEdgeTo t x = false := by simpa using hmem
+      simp [hxf]
+    · -- head is not a `t`-edge: kept by both; recurse on the tail.
+      simp only [Bool.not_eq_true] at hc
+      rw [if_neg (by simp [hc]), List.filter_cons_of_pos (by simp [hc])]
+      rw [List.countP_cons, hc] at hle; simp at hle
+      rw [ih hle]
+
+/-- **`recKDropRefGC_eq_recKRevokeTarget_of_le_one` — the kernel steps AGREE on `refcount ≤ 1`.** When
+`holder` holds at most one `t`-conferring cap, the GC-faithful drop `recKDropRefGC` and the prior
+tear-down `recKRevokeTarget` produce IDENTICAL post-states. So the existing `removeEdgeCaps`-based welds /
+connectors apply on the no-divergence case; the GC step only ADDS the runtime-faithful survivor when
+`refcount > 1`. -/
+theorem recKDropRefGC_eq_recKRevokeTarget_of_le_one (k : RecordKernelState) (holder t : CellId)
+    (hle : (k.caps holder).countP (fun c => confersEdgeTo t c) ≤ 1) :
+    recKDropRefGC k holder t = recKRevokeTarget k holder t := by
+  unfold recKDropRefGC recKRevokeTarget
+  congr 1
+  funext l
+  by_cases hl : l = holder
+  · subst hl; rw [if_pos rfl, if_pos rfl, dropOneEdge_eq_filter_of_le_one t (k.caps l) hle]
+  · rw [if_neg hl, if_neg hl]
+
+#assert_axioms dropOneEdge_count
+#assert_axioms dropOneEdge_gc_at_one
+#assert_axioms dropOneEdge_keeps_on_multi
+#assert_axioms dropOneEdge_eq_filter_of_le_one
+#assert_axioms recKDropRefGC_eq_recKRevokeTarget_of_le_one
+
+/-- **`interp_dropRefStmt_eq_execFullA_kernel_of_le_one` — the cornerstone AGREES with the runnable
+`dropRefA` arm on the no-divergence case (`refcount ≤ 1`).** `execFullA s (.dropRefA holder t) = some
+(recCRevoke s holder t)` whose kernel is the PRIOR tear-down `recKRevokeTarget s.kernel holder t`; the IR
+term's kernel is now the GC-faithful `recKDropRefGC s.kernel holder t`. These AGREE exactly when `holder`
+holds at most one `t`-conferring cap (`recKDropRefGC_eq_recKRevokeTarget_of_le_one`) — the case where GC
+and tear-down coincide. So the Argus term refines the `dropRefA` arm on every honest single-reference drop;
+the divergence (now CLOSED in the IR term's favour) is the `refcount > 1` survivor, where the running
+`execFullA` arm STILL tears down (the pending Rust-side re-route — see §5). -/
+theorem interp_dropRefStmt_eq_execFullA_kernel_of_le_one (s : RecChainedState) (holder t : CellId)
+    (hle : (s.kernel.caps holder).countP (fun c => confersEdgeTo t c) ≤ 1) :
     (interp (dropRefStmt holder t) s.kernel).map (fun k => k)
       = (execFullA s (.dropRefA holder t)).map (fun st => st.kernel) := by
-  rw [interp_dropRefStmt_eq_recKRevokeTarget]
+  rw [interp_dropRefStmt_eq_recKDropRefGC, recKDropRefGC_eq_recKRevokeTarget_of_le_one s.kernel holder t hle]
   -- `execFullA s (.dropRefA holder t) = some (recCRevoke s holder t)`; its kernel is `recKRevokeTarget`.
   show some (recKRevokeTarget s.kernel holder t) = (some (recCRevoke s holder t)).map (fun st => st.kernel)
   rfl
 
-#assert_axioms interp_dropRefStmt_eq_execFullA_kernel
+#assert_axioms interp_dropRefStmt_eq_execFullA_kernel_of_le_one
 
 /-! ## §3 — NON-VACUITY of the cornerstone: the term genuinely REMOVES a held cap-edge.
 
@@ -169,7 +324,7 @@ def kDrop : RecordKernelState :=
 the cap-graph edge removal is a real, observable state edit, not a no-op. -/
 theorem dropRefStmt_removes_edge :
     (interp (dropRefStmt 0 7) kDrop).map (fun k => k.caps 0) = some [] := by
-  rw [interp_dropRefStmt_eq_recKRevokeTarget]
+  rw [interp_dropRefStmt_eq_recKDropRefGC]
   decide
 
 /-- **`dropRefStmt_frames_other_holder` — non-`holder` slots are untouched.** Dropping holder `0`'s edge
@@ -177,7 +332,7 @@ to `7` leaves holder `1`'s slot verbatim (here empty) — the edge removal is LO
 (`removeEdgeCaps`'s off-`holder` branch). The two-valued, frame-respecting witness. -/
 theorem dropRefStmt_frames_other_holder :
     (interp (dropRefStmt 0 7) kDrop).map (fun k => k.caps 1) = some [] := by
-  rw [interp_dropRefStmt_eq_recKRevokeTarget]
+  rw [interp_dropRefStmt_eq_recKDropRefGC]
   decide
 
 /-- **`dropRefStmt_frames_unrelated_target` — dropping an edge to `t` keeps a DIFFERENT edge.** A holder
@@ -189,7 +344,7 @@ theorem dropRefStmt_frames_unrelated_target :
         { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)]
           caps := fun l => if l = 0 then [Cap.node 7, Cap.node 8] else [] }).map
         (fun k => k.caps 0) = some [Cap.node 8] := by
-  rw [interp_dropRefStmt_eq_recKRevokeTarget]
+  rw [interp_dropRefStmt_eq_recKDropRefGC]
   decide
 
 #assert_axioms dropRefStmt_removes_edge
@@ -241,16 +396,29 @@ re-export it as the named OFF-ROW projection fact (`recKRevokeTarget`'s analog o
 `…_proj_balLo`, but here a cap-table DIGEST equality, not a balance equality): the post `cap_root` digest
 is `D` of the edge-removed table. -/
 
-/-- **`recKRevokeTarget_capDigest`.** A dropRef writes the cap-table to the edge-removed table, so its
-projected `cap_root` digest (under any whole-function digest `D`) is exactly `D (removeEdgeCaps k.caps
-holder t)`. This is the executor-side off-row content the genuine descriptor's recomputed `cap_root` binds
-to (via `unify_dropRef`); the frozen economic frame is the per-cell row's surface. -/
+/-- **`recKRevokeTarget_capDigest`.** The tear-down step writes the cap-table to the edge-removed table,
+so its projected `cap_root` digest (under any whole-function digest `D`) is exactly `D (removeEdgeCaps
+k.caps holder t)`. The off-row content of the PRIOR step (and of `execFullA`'s arm, which still uses it);
+the frozen economic frame is the per-cell row's surface. -/
 theorem recKRevokeTarget_capDigest (D : Caps → ℤ) (k : RecordKernelState) (holder t : CellId) :
     D (recKRevokeTarget k holder t).caps = D (removeEdgeCaps k.caps holder t) := by
   -- `(recKRevokeTarget k holder t).caps = removeEdgeCaps k.caps holder t` by `removeEdgeCaps_correct`.
   rw [removeEdgeCaps_correct]
 
 #assert_axioms recKRevokeTarget_capDigest
+
+/-- **`recKDropRefGC_capDigest_of_le_one` — the GC step's off-row cap-digest, on the no-divergence case.**
+The dropRef IR term refines the GC-faithful `recKDropRefGC`; on the `refcount ≤ 1` case it AGREES with the
+tear-down (`recKDropRefGC_eq_recKRevokeTarget_of_le_one`), so the GC step's projected `cap_root` digest is
+`D (removeEdgeCaps k.caps holder t)` — exactly the value the genuine descriptor's recomputed `cap_root`
+binds (via `unify_dropRef`). On `refcount > 1` the GC step keeps a survivor (its cap-table is
+`dropOneEdge`, NOT the full tear-down), the runtime-faithful divergence-closed behaviour. -/
+theorem recKDropRefGC_capDigest_of_le_one (D : Caps → ℤ) (k : RecordKernelState) (holder t : CellId)
+    (hle : (k.caps holder).countP (fun c => confersEdgeTo t c) ≤ 1) :
+    D (recKDropRefGC k holder t).caps = D (removeEdgeCaps k.caps holder t) := by
+  rw [recKDropRefGC_eq_recKRevokeTarget_of_le_one k holder t hle, removeEdgeCaps_correct]
+
+#assert_axioms recKDropRefGC_capDigest_of_le_one
 
 /-! ### §4.2 — THE WELD. -/
 
@@ -263,7 +431,7 @@ Suppose, for the Argus dropRef term `dropRefStmt holder t`:
     (`henc`);
   * the IR term's EXECUTOR interpretation COMMITS:
     `interp (dropRefStmt holder t) k = some k'` (`hexec`) — which always holds, since the kernel step is
-    unconditional (the §2 cornerstone gives `k' = recKRevokeTarget k holder t`).
+    unconditional (the §2 cornerstone gives `k' = recKDropRefGC k holder t`, the GC-faithful step).
 
 Then:
   * **frozen-frame leg (per-cell):** the circuit's pinned post-state `post` FREEZES the whole economic
@@ -273,17 +441,18 @@ Then:
     `hash[ hash[holder,target,rights,op], pre.capRoot ]` (op tag `capOp.DROP_REF` carried in the bound
     edge leaf), NOT an opaque digest parameter. Under `Poseidon2SpongeCR` this binds the dropped cap-edge
     content (holder/target/rights/op) through the commitment (`dropRefGenuine_binds_edge`, cited), and the
-    actual edge-removed cap-table the executor produces (`D (removeEdgeCaps …)`, §4.1) is the value that
-    recomputed root digests, via the OFF-ROW connector `unify_dropRef` (`EffectVmEmitDropRef §8`, cited).
+    cap-table the GC-faithful executor produces (`recKDropRefGC`, = `D (removeEdgeCaps …)` on the
+    `refcount ≤ 1` agreement case, §4.1 `recKDropRefGC_capDigest_of_le_one`) is the value that recomputed
+    root digests, via the OFF-ROW connector `unify_dropRef` (`EffectVmEmitDropRef §8`, cited).
 
 So the class-A circuit the prover runs for dropRef pins the per-cell frozen frame AND genuinely recomputes
-the bound cap-graph edge-mutation root that the IR term's executor (`recKRevokeTarget`) produces — the
-template generalizes to dregg1's CapTP-GC entry point of the cap-graph family.
+the bound cap-graph edge-mutation root that the IR term's executor (`recKDropRefGC`, the GC-faithful step)
+produces — the template generalizes to dregg1's CapTP-GC entry point of the cap-graph family.
 
-NOTE (the reported kernel-vs-runtime divergence): both sides above pertain to the verified KERNEL step,
-which performs ONLY the `caps` edge removal, UNCONDITIONALLY. The full Rust RUNTIME removes the edge only
-at the `refcount = 1 → 0` boundary and otherwise merely decrements a per-edge refcount the kernel does not
-model; see `dropRefKernel_diverges_runtime_refcount` (§5) and the module header. -/
+NOTE (the kernel-vs-runtime divergence, now CLOSED): both sides above pertain to the verified KERNEL step
+`recKDropRefGC`, which drops ONE `t`-reference and GCs the edge at the `refcount = 1 → 0` boundary — MATCHING
+the Rust RUNTIME (`gc.rs`) and the swiss arm. See `dropRefKernel_gc_at_one` /
+`dropRefKernel_keeps_survivor_on_multi` (§5) and the module header. -/
 theorem dropRef_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv)
     (k k' : RecordKernelState) (holder t : CellId)
@@ -311,12 +480,12 @@ theorem dropRef_compile_sound
   have hspec : CapCellSpecGenuine hash env pre post :=
     dropRefGenuine_sound hash env pre post capDigestNew henc hgates hrec
   obtain ⟨hCap, hLo, hHi, hNon, hFld, hRes⟩ := hspec
-  -- executor side: the §2 cornerstone confirms the IR term commits to the verified kernel step
-  -- `recKRevokeTarget` (the off-row `caps` edge-removal whose digest the recomputed root binds, §4.1).
+  -- executor side: the §2 cornerstone confirms the IR term commits to the GC-faithful kernel step
+  -- `recKDropRefGC` (the off-row `caps` edge-drop whose digest the recomputed root binds, §4.1).
   -- (`hexec` ties the welded statement to a genuine executor commit; the cornerstone makes it definitional
   -- — the kernel step is unconditional.)
-  have _hk' : k' = recKRevokeTarget k holder t := by
-    have := interp_dropRefStmt_eq_recKRevokeTarget holder t k
+  have _hk' : k' = recKDropRefGC k holder t := by
+    have := interp_dropRefStmt_eq_recKDropRefGC holder t k
     rw [hexec] at this
     exact (Option.some.injEq _ _).mp this
   exact ⟨⟨hLo, hHi, hNon, hFld, hRes⟩, hCap⟩
@@ -366,62 +535,83 @@ theorem compileDropRef_nontrivial :
 
 #assert_axioms compileDropRef_nontrivial
 
-/-! ## §5 — THE REPORTED DIVERGENCE: the Lean kernel step DIVERGES from the Rust runtime's CapTP-GC
-refcount semantics (unconditional edge removal vs decrement-then-GC-at-one).
+/-! ## §5 — THE DIVERGENCE, NOW CLOSED: the dropRef kernel step `recKDropRefGC` MATCHES the Rust runtime's
+CapTP-GC refcount semantics (decrement-then-GC-at-one), and the IR term (§1-2) refines it.
 
 The full Rust runtime's `DropRef` (`apply_drop_ref`, `gc.rs:170` `ExportGcManager::process_drop_inner`)
-maintains a per-`(cell, federation)` refcount table: a drop DECREMENTS the refcount, and only at the
-`refcount = 1 → 0` boundary is the cap-edge actually removed; a drop on a `refcount > 1` entry is a pure
-decrement that LEAVES THE EDGE INTACT (observable change: the refcount, not the graph). The Lean kernel
-step `recKRevokeTarget` carries NO refcount field on `RecordKernelState`; it removes the held edge on
-EVERY drop, unconditionally. (The swiss-table refcount IS modeled — but on the SEPARATE `swissDropA` arm
-over the `swiss` side-table with the `swissDropK_gc_at_one` boundary; the `dropRefA` arm does not consult
-it.)
+DECREMENTS a per-`(cell, federation)` refcount and removes the cap-edge ONLY at the `refcount = 1 → 0`
+boundary; a drop on a `refcount > 1` entry is a pure decrement that LEAVES THE EDGE INTACT. The PRIOR
+dropRef kernel step `recKRevokeTarget` (the PARENT-revocation tear-down) removed EVERY `t`-edge
+unconditionally — a divergent over-eager model. §0.5's `recKDropRefGC` CLOSES that: it drops EXACTLY ONE
+`t`-conferring reference (the cap-list multiplicity IS the refcount), GCing the edge at the `1 → 0`
+boundary (`dropOneEdge_gc_at_one`) and KEEPING a survivor on `refcount > 1` (`dropOneEdge_keeps_on_multi`)
+— the SAME GC-at-one shape the swiss arm already had (`RecordKernel.swissDropK_gc_at_one`). The dropRef IR
+term + cornerstone (§1-2) refine `recKDropRefGC`, so the WORTHWHILE GC semantics now lives in the kernel
+model the descriptor weld targets.
 
-We pin "the kernel removes the edge UNCONDITIONALLY (no refcount gate)" as a DOCUMENTATION THEOREM so the
-divergence cannot silently regress: a single kernel dropRef on a holder with a `t`-edge ALWAYS empties that
-slot of `t`-conferring caps — there is no second-reference that survives. This makes the divergence a
-checked fact of the model, not a buried assumption. Closing it is a kernel-model WIDENING (add a per-edge
-`refcount` registry + a GC-at-one gate to the `dropRefA` arm, then re-derive the descriptor), explicitly
-OUT OF SCOPE for this weld. -/
+The OLD tear-down `recKRevokeTarget` is RETAINED below (`oldDropRefKernel_was_overeager`) to PIN the
+contrast — the divergence that USED to hold — so the closure cannot silently regress. The remaining
+cutover is purely Rust-side: `execFullA`'s `.dropRefA` dispatch arm (`TurnExecutorFull.lean:3804`) still
+routes to `recCRevoke` (the tear-down); re-routing it to a `recCDropRefGC` chained wrapper of
+`recKDropRefGC` is a one-line dispatch change (the SAME shape the swiss `swissDropA` arm already uses),
+tracked as the cutover residual (the kernel-MODEL fix is done; the IR term refines the GC step). -/
 
-/-- **`dropRefKernel_diverges_runtime_refcount` — the reported divergence, as a checked theorem.** The
-verified kernel step `recKRevokeTarget` removes EVERY `t`-conferring cap from `holder`'s slot
-UNCONDITIONALLY — after a kernel dropRef, NO cap that confers an edge to `t` remains at `holder`. The Rust
-RUNTIME, by contrast, removes the edge only at the `refcount = 1 → 0` boundary, otherwise merely
-decrementing a per-edge refcount the kernel does not model. So the kernel step is a divergent OVER-eager
-model of the runtime on this effect (it tears down where the runtime would keep a >1-refcounted edge); this
-theorem pins the unconditional removal so the gap is a checked fact, not a buried assumption. -/
-theorem dropRefKernel_diverges_runtime_refcount (k : RecordKernelState) (holder t : CellId) :
-    ∀ cap ∈ (recKRevokeTarget k holder t).caps holder, ¬ confersEdgeTo t cap = true := by
-  -- `(recKRevokeTarget k holder t).caps holder = (k.caps holder).filter (¬ confersEdgeTo t ·)`; every
-  -- surviving cap fails `confersEdgeTo t` (regardless of any refcount — there is none to consult).
-  intro cap hcap
-  rw [removeEdgeCaps_correct] at hcap
-  have hcap' : cap ∈ (k.caps holder).filter (fun cap => ¬ confersEdgeTo t cap) := by
-    simpa only [removeEdgeCaps, if_pos (rfl : holder = holder)] using hcap
-  have := (List.mem_filter.mp hcap').2
-  simpa only [decide_eq_true_eq] using this
+/-- **`dropRefKernel_gc_at_one` — GC-AT-ONE (the divergence CLOSED).** When `holder` holds EXACTLY ONE
+`t`-conferring cap, the GC-faithful kernel step `recKDropRefGC` removes it and NO `t`-conferring cap
+remains at `holder` — the edge is GC'd at the `refcount = 1 → 0` boundary, MATCHING the Rust runtime. -/
+theorem dropRefKernel_gc_at_one (k : RecordKernelState) (holder t : CellId)
+    (hone : (k.caps holder).countP (fun c => confersEdgeTo t c) = 1) :
+    ((recKDropRefGC k holder t).caps holder).countP (fun c => confersEdgeTo t c) = 0 := by
+  have hcaps : (recKDropRefGC k holder t).caps holder = dropOneEdge t (k.caps holder) := by
+    show (if holder = holder then dropOneEdge t (k.caps holder) else k.caps holder)
+      = dropOneEdge t (k.caps holder)
+    rw [if_pos rfl]
+  rw [hcaps]
+  exact dropOneEdge_gc_at_one t (k.caps holder) hone
 
-/-- **Non-vacuity of the divergence (witness that the runtime WOULD differ).** A concrete kernel where
-holder `0` holds the SAME `t`-edge `node 7` TWICE (the model has no refcount, so two identical edge caps
-are two list entries): after the kernel dropRef BOTH are removed (slot emptied of `t`-edges), whereas a
-faithful refcount runtime would DECREMENT 2 → 1 and KEEP one `node 7` edge. So the over-eager removal is
-OBSERVABLE: the kernel post-state (`[]`) is distinguishable from the runtime's intended post-state
-(`[node 7]`) on a >1-refcounted edge. -/
+/-- **`dropRefKernel_keeps_survivor_on_multi` — DECREMENT-KEEPS (the runtime-faithful survivor).** When
+`holder` holds TWO OR MORE `t`-conferring caps (`refcount > 1`), the GC-faithful kernel step
+`recKDropRefGC` KEEPS at least one — a surviving reference remains, exactly as the Rust runtime keeps a
+`> 1`-refcounted edge (and where the OLD tear-down `recKRevokeTarget` wrongly removed ALL). -/
+theorem dropRefKernel_keeps_survivor_on_multi (k : RecordKernelState) (holder t : CellId)
+    (hmulti : 2 ≤ (k.caps holder).countP (fun c => confersEdgeTo t c)) :
+    1 ≤ ((recKDropRefGC k holder t).caps holder).countP (fun c => confersEdgeTo t c) := by
+  have hcaps : (recKDropRefGC k holder t).caps holder = dropOneEdge t (k.caps holder) := by
+    show (if holder = holder then dropOneEdge t (k.caps holder) else k.caps holder)
+      = dropOneEdge t (k.caps holder)
+    rw [if_pos rfl]
+  rw [hcaps]
+  exact dropOneEdge_keeps_on_multi t (k.caps holder) hmulti
+
+/-- A concrete kernel where holder `0` holds the SAME `t`-edge `node 7` TWICE (refcount 2 = two list
+entries). The witness that the GC step keeps a survivor where the tear-down emptied the slot. -/
 def kDropDup : RecordKernelState :=
   { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)]
     caps := fun l => if l = 0 then [Cap.node 7, Cap.node 7] else [] }
 
-/-- **`dropRefKernel_removes_duplicate_edge` — the over-eager removal is OBSERVABLE.** The kernel dropRef
-on `kDropDup` (holder `0` holds `node 7` twice) empties `0`'s slot to `[]` — a faithful refcount runtime
-would decrement 2 → 1 and leave `[node 7]`. So the verified kernel post-state genuinely differs from the
-runtime's intended post-state on a >1-refcounted edge. The divergence is real, not a labeling artifact. -/
-theorem dropRefKernel_removes_duplicate_edge :
-    (recKRevokeTarget kDropDup 0 7).caps 0 = [] := by
+/-- **`dropRefKernel_gc_keeps_duplicate_edge` — the GC step is runtime-FAITHFUL (witness TRUE).** The
+GC-faithful kernel dropRef on `kDropDup` (holder `0` holds `node 7` twice, refcount 2) DECREMENTS to
+`[node 7]` — KEEPING one reference, exactly the runtime's intended `2 → 1` post-state. (Contrast
+`oldDropRefKernel_was_overeager` below: the tear-down emptied it to `[]`.) -/
+theorem dropRefKernel_gc_keeps_duplicate_edge :
+    (recKDropRefGC kDropDup 0 7).caps 0 = [Cap.node 7] := by
   decide
 
-#assert_axioms dropRefKernel_diverges_runtime_refcount
-#assert_axioms dropRefKernel_removes_duplicate_edge
+/-- **`oldDropRefKernel_was_overeager` — the PRIOR divergence, RETAINED as the contrast pin.** The OLD
+tear-down step `recKRevokeTarget` removed EVERY `t`-edge from `holder`'s slot unconditionally — on
+`kDropDup` (refcount 2) it emptied the slot to `[]`, where the runtime (and the new `recKDropRefGC`) keeps
+`[node 7]`. Pinned so the closure (`dropRefKernel_gc_keeps_duplicate_edge`) cannot silently regress to the
+over-eager behaviour. -/
+theorem oldDropRefKernel_was_overeager :
+    (recKRevokeTarget kDropDup 0 7).caps 0 = []
+    ∧ (recKDropRefGC kDropDup 0 7).caps 0 ≠ (recKRevokeTarget kDropDup 0 7).caps 0 := by
+  refine ⟨by decide, ?_⟩
+  rw [dropRefKernel_gc_keeps_duplicate_edge]
+  decide
+
+#assert_axioms dropRefKernel_gc_at_one
+#assert_axioms dropRefKernel_keeps_survivor_on_multi
+#assert_axioms dropRefKernel_gc_keeps_duplicate_edge
+#assert_axioms oldDropRefKernel_was_overeager
 
 end Dregg2.Circuit.Argus.Effects.DropRef

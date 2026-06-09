@@ -88,6 +88,7 @@ Imports are read-only; this file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.setPermissionsA
 import Dregg2.Circuit.Spec.cellstatepermissions
+import Dregg2.Circuit.Emit.EffectVmEmitSetPermissionsFullState
 
 namespace Dregg2.Circuit.Argus.Effects.SetPermissions
 

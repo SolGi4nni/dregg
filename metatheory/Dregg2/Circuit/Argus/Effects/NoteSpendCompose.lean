@@ -375,4 +375,41 @@ theorem noteSpendAEmitted_named :
 #assert_axioms noteSpendComposeStmt_rejects_double
 #assert_axioms noteSpendAEmitted_named
 
+/-! ## §5 — THE COMPOSED EFFECT'S RUNNABLE EFFECTVM DESCRIPTOR IS FULL-STATE (magnesium breadth).
+
+The composed noteSpend's per-row RUNNABLE circuit is `EffectVmEmitNoteSpend.noteSpendVmDescriptorWide`
+(the per-row arithmetic — transparent credit + `nullifiers`-root advance + frame freeze — is IDENTICAL to
+the base noteSpend's; the §8 spending-proof gate is a CHAINED/argument-level leg, NOT a per-row column,
+exactly the §1↔§2 split this file carries). That wide descriptor is now lifted to the GENERIC full-state-
+on-RUNNABLE crown: a satisfying per-row wide witness pins the FULL 17-field post-state, and tamper of ANY
+field/root is UNSAT. We re-export it for the composed effect so this module names the RUNNABLE
+descriptor's full-state property; the §3 weld (vs the v2 `Surface2` full-state descriptor) and the
+RUNNABLE EffectVM descriptor BOTH now bind the whole post-state. The proof gate + freshness remain the
+documented chained/turn-level legs (the per-row layer binds the INSERT's committed digest, not the
+non-membership). -/
+
+/-- **`noteSpendCompose_runnable_full_sound` — the composed effect's RUNNABLE descriptor is FULL-state.**
+Re-export of `EffectVmEmitNoteSpend.noteSpend_runnable_full_sound` for the composed effect (which shares
+the per-row wide descriptor): a row satisfying noteSpend's WIDE RUNNABLE descriptor, under the structured
+decode, pins the FULL 17-field declarative post-state — the per-cell credit + nonce tick AND the
+`nullifiers`-root digest advance AND every other side-table root frozen. The per-row layer of the §1–§3
+composition is now at FULL state; the §8 proof gate + freshness non-membership are the named
+chained/turn-level legs. -/
+theorem noteSpendCompose_runnable_full_sound (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : Dregg2.Exec.SystemRoots.SysRoots) (step : ℤ)
+    (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
+    (pre post : Dregg2.Circuit.Emit.EffectVmEmitTransferSound.CellState)
+    (pr : Dregg2.Exec.SystemRoots.SysRoots)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.IsNoteSpendRow env)
+    (hdec : Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.NoteSpendDecode hash value preRoots postRoots step
+              env pre post pr)
+    (hsat : Dregg2.Circuit.Emit.EffectVmEmit.satisfiedVm hash
+              Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.noteSpendVmDescriptorWide env true true) :
+    Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.NoteSpendFullClause hash value preRoots postRoots step
+      pre post pr :=
+  Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.noteSpend_runnable_full_sound
+    hash value preRoots postRoots step env pre post pr hrow hdec hsat
+
+#assert_axioms noteSpendCompose_runnable_full_sound
+
 end Dregg2.Circuit.Argus.Effects.NoteSpendCompose

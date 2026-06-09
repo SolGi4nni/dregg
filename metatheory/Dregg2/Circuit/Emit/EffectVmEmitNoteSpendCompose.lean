@@ -43,7 +43,9 @@ open Dregg2.Circuit.Spec.NoteNullifier
   (NoteSpendSpec noteSpendGuard execFullA_noteSpend_iff_spec execFullA_noteSpend_commits_iff
    execFullA_noteSpend_nullifiers execFullA_noteSpend_fresh execFullA_noteSpend_proof)
 open Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
-  (noteSpend_no_double_spend_is_turn_property noteSpend_nullifier_insert_is_out_of_row)
+  (noteSpend_no_double_spend_is_turn_property noteSpend_nullifier_insert_is_out_of_row
+   noteSpendVmDescriptorWide NoteSpendDecode NoteSpendFullClause noteSpend_runnable_full_sound
+   noteSpend_freshness_still_needs_nonmembership)
 
 /-! ## §1 — The TWO turn-level witnesses the per-row IR cannot derive (the gadget OUTPUTS).
 
@@ -145,5 +147,63 @@ theorem turn_gadgets_eq_guard (st : RecChainedState) (nf : Nat) (spendProof : Bo
 #assert_axioms stale_nullifier_does_not_commit
 #assert_axioms compose_commits_iff_turn_gadgets_accept
 #assert_axioms turn_gadgets_eq_guard
+
+/-! ## §5 — THE PER-ROW LAYER IS NOW FULL-STATE ON THE RUNNABLE DESCRIPTOR (the magnesium breadth).
+
+The composed noteSpend's per-row RUNNABLE circuit IS `EffectVmEmitNoteSpend.noteSpendVmDescriptorWide`
+(the per-row arithmetic — transparent credit + `nullifiers`-root advance + frame freeze — is IDENTICAL to
+the base noteSpend's; the §8 spending-proof gate and the freshness non-membership are TURN-LEVEL gadget
+legs, NOT per-row columns, exactly the §1–§3 split). That wide descriptor is now lifted to the GENERIC
+full-state-on-RUNNABLE crown `noteSpend_runnable_full_sound` (the dedicated `sysRootsDigestCol = 186`
+carrier + `wideHashSites`): a satisfying per-row wide witness pins the FULL 17-field post-state (per-cell
+credit + nonce tick AND the `nullifiers` root advance AND every other side-table root frozen), and tamper
+of ANY field/root is UNSAT (the generic anti-ghost).
+
+So the layered picture is now SHARP, with the per-row layer at FULL state:
+
+  (per-row WIDE descriptor : FULL 17-field post-state on the RUNNABLE circuit — `noteSpend_runnable_full_sound`)
+    ⊗ (turn-level non-membership gadget : the FRESHNESS `nf ∉ nullifiers` — still NOT per-row)
+    ⊗ (turn-level §8 spending-proof gadget : `spendProof = true`)
+    ⟹  the FULL declarative `NoteSpendSpec`.
+
+We re-export the per-row crown for the composed effect (same descriptor) and re-pin the precise residual
+boundary: the per-row layer binds the WHOLE post-state INCLUDING the nullifier-set insert's committed
+digest, but FRESHNESS remains the named turn-level non-membership leg. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
+open Dregg2.Circuit.Emit.EffectVmEmitNoteSpend (IsNoteSpendRow)
+open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
+open Dregg2.Exec.SystemRoots (SysRoots)
+
+/-- **`compose_perRow_is_full_state` — the composed noteSpend's per-row RUNNABLE circuit is FULL-state.**
+The composed effect SHARES the base noteSpend per-row wide descriptor `noteSpendVmDescriptorWide`, so a
+row satisfying it (under the structured decode) pins the FULL 17-field declarative post-state
+`NoteSpendFullClause` — the per-cell credit + nonce tick AND the `nullifiers`-root committed-digest advance
+AND every other side-table root frozen. This is exactly `noteSpend_runnable_full_sound`, re-exported for
+the composed effect: the per-row layer of the §2 composition is now at FULL state, not the frame
+projection. -/
+theorem compose_perRow_is_full_state (hash : List ℤ → ℤ)
+    (value : ℤ) (preRoots postRoots : SysRoots) (step : ℤ)
+    (env : VmRowEnv) (pre post : CellState) (pr : SysRoots)
+    (hrow : IsNoteSpendRow env)
+    (hdec : NoteSpendDecode hash value preRoots postRoots step env pre post pr)
+    (hsat : satisfiedVm hash noteSpendVmDescriptorWide env true true) :
+    NoteSpendFullClause hash value preRoots postRoots step pre post pr :=
+  noteSpend_runnable_full_sound hash value preRoots postRoots step env pre post pr hrow hdec hsat
+
+/-- **`compose_freshness_still_turn_level` — the precise residual AFTER the per-row full-state lift.** Even
+with the per-row wide descriptor binding the WHOLE post-state (including the nullifier-set insert's
+committed digest), the headline no-double-spend FRESHNESS (`nf ∉ st.nullifiers`) is STILL a turn-level
+non-membership fact, NOT a per-row digest-advance fact. The full-state lift closes the INSERT-binding leg;
+it does NOT graduate freshness (which the named sorted-tree non-membership gadget supplies). Re-exported so
+the boundary stays named after the breadth lift. -/
+theorem compose_freshness_still_turn_level
+    (st st' : RecChainedState) (nf : Nat) (actor : CellId) (spendProof : Bool)
+    (hspec : NoteSpendSpec st nf actor spendProof st') :
+    TurnLevelFreshness st nf :=
+  noteSpend_freshness_still_needs_nonmembership st st' nf actor spendProof hspec
+
+#assert_axioms compose_perRow_is_full_state
+#assert_axioms compose_freshness_still_turn_level
 
 end Dregg2.Circuit.Emit.EffectVmEmitNoteSpendCompose

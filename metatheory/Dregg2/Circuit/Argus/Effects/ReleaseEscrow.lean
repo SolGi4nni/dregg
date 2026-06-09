@@ -78,6 +78,7 @@ ONLY inside the reused emitter (not in the welded conclusion's statement). No `s
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrow
+import Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrowWide
 
 namespace Dregg2.Circuit.Argus.Effects.ReleaseEscrow
 
@@ -353,5 +354,76 @@ theorem releaseEscrowDescriptorGenuine_nontrivial :
 #assert_axioms releaseEscrowStmt_credits
 #assert_axioms releaseEscrowStmt_rejects_missing
 #assert_axioms releaseEscrowDescriptorGenuine_nontrivial
+
+/-! ## §6 — FULL-STATE on the RUNNABLE descriptor (the magnesium breadth — bind ALL 17 fields).
+
+§4 welds the AUDITED class-A descriptor (`releaseEscrowVmDescriptorGenuine`, raw-`96` carrier).
+`EffectVmEmitReleaseEscrowWide.releaseEscrow_runnable_full_sound` lifts the SAME per-row gates through the
+generic `runnable_full_sound` over the WIDE descriptor `releaseEscrowVmDescriptorWide` (dedicated
+`sysRootsDigestCol`, `wideHashSites`, widened width): a satisfying row binds the FULL 17-field post-state
+(per-cell CREDIT to the recipient AND the `escrows` digest advance), the generic anti-ghost giving:
+tamper ANY absorbed state-block column OR ANY of the 8 side-table roots ⇒ UNSAT.
+
+This section welds THAT full-state crown to the SAME executor cornerstone (§2 + the §3 projection). Since
+slashObligation is the dispatch-alias of this descriptor (`Argus/Effects/SlashObligation.lean`), it
+inherits the full-state binding through the SAME wide circuit. -/
+
+open Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrowWide
+  (releaseEscrowVmDescriptorWide releaseEscrow_runnable_full_sound)
+open Dregg2.Circuit.Emit.EffectVmEmitEscrowFamilyWide (ESCROW_STEP_PARAM)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest)
+
+/-- **`releaseEscrow_runnable_full_state` — THE FULL-STATE WELD (releaseEscrow / slashObligation).**
+
+Suppose, for the Argus releaseEscrow term:
+  * the WIDE RUNNABLE descriptor `releaseEscrowVmDescriptorWide` is SATISFIED by `(env, true, true)`, its
+    `RowEncodesRelease` decoding NAMES `post` over a recipient-cell projection `pre` with `⟨amount⟩`, the
+    dedicated digest carriers are pinned to the `systemRootsDigest` of the pre/post sub-blocks
+    (`hAfter`/`hBefore`) with the accumulator `step` (`hStep`);
+  * the IR term's EXECUTOR interpretation COMMITS (`hexec`).
+
+Then there is a FOUND record `r` such that, when the descriptor's encoded cell IS the recipient cell's
+pre-projection crediting `r.amount`, the circuit's pinned `post` AGREES with the executor's settle-credited
+recipient-cell projection `cellProjRelease k'.bal r.recipient r.asset` on EVERY limb AND the WIDE descriptor
+binds the `escrows` side-table digest advance. So the circuit the prover RUNS pins the per-cell state the
+executor produces AND the full side-table digest — all 17 fields. -/
+theorem releaseEscrow_runnable_full_state
+    (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (k k' : RecordKernelState) (id : Nat) (amount : ℤ)
+    (post : CellState) (preRoots postRoots : SysRoots) (step : ℤ)
+    (hrow : Dregg2.Circuit.Emit.EffectVmEmitReleaseEscrow.IsReleaseEscrowRow env)
+    (hAfter : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestCol
+                = systemRootsDigest hash postRoots)
+    (hBefore : env.loc Dregg2.Circuit.Emit.EffectVmEmit.sysRootsDigestColBefore
+                = systemRootsDigest hash preRoots)
+    (hStep : env.loc (Dregg2.Circuit.Emit.EffectVmEmit.prmCol ESCROW_STEP_PARAM) = step)
+    (hsat : satisfiedVm hash releaseEscrowVmDescriptorWide env true true)
+    (hexec : interp (releaseEscrowStmt id) k = some k')
+    (henc : ∃ r, findUnresolved k id = some r ∧ r.amount = amount ∧
+      RowEncodesRelease env (cellProjRelease k.bal r.recipient r.asset) ⟨amount⟩ post) :
+    ∃ r, findUnresolved k id = some r ∧
+      ( post.balLo = (cellProjRelease k'.bal r.recipient r.asset).balLo
+        ∧ post.balHi = (cellProjRelease k'.bal r.recipient r.asset).balHi
+        ∧ (∀ i, post.fields i = (cellProjRelease k'.bal r.recipient r.asset).fields i)
+        ∧ post.capRoot = (cellProjRelease k'.bal r.recipient r.asset).capRoot
+        ∧ post.reserved = (cellProjRelease k'.bal r.recipient r.asset).reserved
+        ∧ post.nonce = (cellProjRelease k'.bal r.recipient r.asset).nonce )
+      ∧ systemRootsDigest hash postRoots = systemRootsDigest hash preRoots + step := by
+  obtain ⟨r, hfind, hamt, hrenc⟩ := henc
+  -- executor side: the §2 cornerstone + §3 projection give the credited balLo for the FOUND record.
+  rw [interp_releaseEscrowStmt_eq_releaseEscrowKAsset] at hexec
+  obtain ⟨r', hfind', heLo⟩ := releaseEscrowKAsset_proj_balLo hexec
+  rw [hfind] at hfind'; cases hfind'
+  subst hamt
+  -- circuit side: the WIDE full-state crown forces the per-cell `CellReleaseSpec` + the digest advance.
+  obtain ⟨hcs, hdig⟩ :=
+    releaseEscrow_runnable_full_sound ⟨r.amount⟩ hash preRoots step env
+      (cellProjRelease k.bal r.recipient r.asset) post postRoots hrow hrenc hAfter hBefore hStep hsat
+  obtain ⟨hcLo, hcHi, hcN, hcF, hcCap, hcRes⟩ := hcs
+  refine ⟨r, hfind, ⟨?_, hcHi.trans rfl, fun i => (hcF i).trans rfl, hcCap.trans rfl, hcRes.trans rfl,
+    hcN.trans rfl⟩, hdig⟩
+  rw [hcLo, heLo]
+
+#assert_axioms releaseEscrow_runnable_full_state
 
 end Dregg2.Circuit.Argus.Effects.ReleaseEscrow

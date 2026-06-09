@@ -57,6 +57,7 @@ Imports are read-only.
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
 import Dregg2.Circuit.Emit.EffectVmEmitEscrowRoot
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.bridgeoutboundfinalize
 import Dregg2.Exec.SystemRoots
@@ -689,5 +690,196 @@ theorem bridgeFinalizeGenuine_recompute_nonvacuous :
 #assert_axioms genuine_sites_split
 #assert_axioms bridgeFinalizeGenuine_sound
 #assert_axioms bridgeFinalizeGenuine_binds_record
+
+/-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the MAGNESIUM breadth): bind ALL 17 fields.
+
+§H promoted bridgeFinalize to class A on the per-cell block + the genuine escrow-record recompute, but
+the headline finding `escrow_root_not_in_descriptor_commit` stood: the RUNNABLE descriptor's published
+`state_commit` absorbed ONLY the 13 conserved state-block columns, NOT the `system_roots` digest — so a
+satisfying RUNNABLE proof pinned a PROJECTION, not the whole post-state. This section CLOSES that via the
+shared `EffectVmFullStateRunnable` recipe: the WIDE descriptor (`hashSites := wideHashSites`,
+`traceWidth := EFFECT_VM_WIDTH_SYSROOTS`) absorbs the dedicated `sysRootsDigestCol` carrier into the
+published `state_commit`, so the descriptor the prover RUNS binds the per-cell block AND all 8 side-table
+roots — the full 17-field post-state. Tamper ANY field or ANY side-table root ⇒ the running descriptor is
+UNSAT (`wide_rejects_state_tamper` / `wide_rejects_root_tamper`, the whole-state anti-ghost).
+
+bridgeFinalize is the FROZEN-balance case (only `escrows` moves): the per-cell block is `CellFinalizeSpec`
+(bal frozen, frame frozen, nonce ticked) and the `system_roots` sub-block advances ONLY at `ESCROW`
+(`markResolved` flips the parked record's `resolved` flag), the other 7 roots frozen relative to the pre
+sub-block. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper wideHashSites)
+open Dregg2.Exec.SystemRoots (systemRootsDigest emptySystemRoots)
+
+/-- **`bridgeFinalizeVmDescriptorWide`** — bridgeFinalize's descriptor WIDENED to the
+`system_roots`-absorbing shape: the SAME per-row gates + transitions + boundary pins + selector gate, but
+`traceWidth := EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites`. Strictly additive over
+`bridgeFinalizeVmDescriptor` (byte-identical constraint list; width grows by 2; site 3's spare `.zero` 4th
+slot becomes the `sysRootsDigestCol` carrier), so the published `state_commit` now absorbs the side-table
+digest. -/
+def bridgeFinalizeVmDescriptorWide : EffectVmDescriptor :=
+  { bridgeFinalizeVmDescriptor with
+    name := bridgeFinalizeVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide descriptor's constraints ARE bridgeFinalize's (the width/site swap leaves the
+per-row/transition/boundary/selector gate list untouched). -/
+theorem bridgeFinalizeWide_constraints_eq :
+    bridgeFinalizeVmDescriptorWide.constraints = bridgeFinalizeVmDescriptor.constraints := rfl
+
+/-- **`bridgeFinalizeGates_give_cellSpec` — the GATE-ONLY per-cell soundness (no hash-site hypothesis).**
+The per-row gates of the bridgeFinalize descriptor, on a finalize row decoded by `RowEncodesFinalize`,
+force `CellFinalizeSpec`. The body of `bridgeFinalizeDescriptor_full_sound` with the hash-site layer
+DROPPED — it factors through `bridgeFinalizeVm_faithful` + `intent_to_cellFinalizeSpec`, NEITHER of which
+reads the sites. So the per-cell soundness depends ONLY on the gates (the sites bind the COMMITMENT). -/
+theorem bridgeFinalizeGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
+    (hrow : IsBridgeFinalizeRow env) (henc : RowEncodesFinalize env pre post)
+    (hgates : ∀ c ∈ bridgeFinalizeVmDescriptor.constraints, c.holdsVm env true true) :
+    CellFinalizeSpec pre post := by
+  have hrowgates : ∀ c ∈ bridgeFinalizeRowGates, c.holdsVm env true true := by
+    intro c hc
+    apply hgates
+    unfold bridgeFinalizeVmDescriptor
+    simp only [List.mem_append]
+    exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+  have hrowgates' := bridgeFinalizeRowGates_flag_indep env true true hrowgates
+  exact intent_to_cellFinalizeSpec env pre post henc ((bridgeFinalizeVm_faithful env hrow).mp hrowgates')
+
+/-- **`BridgeFinalizeFullClause`** — the full declarative post-state for bridgeFinalize over `(pre, post,
+postRoots)`: the per-cell `CellFinalizeSpec` (balance + frame FROZEN, nonce ticked) AND the `system_roots`
+sub-block IS the declared `expectedRoots` (the post sub-block whose `ESCROW` slot carries the resolved
+escrow-list digest, the other 7 roots frozen). Non-vacuous: §`bridgeFinalize_wide_realizes` inhabits it. -/
+def BridgeFinalizeFullClause (expectedRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellFinalizeSpec pre post ∧ postRoots = expectedRoots
+
+/-- **`bridgeFinalizeRunnableSpec` — the FULL-state RUNNABLE instance.** `decodeAfter` is
+`RowEncodesFinalize` (the structured column decode) PLUS the declared post-roots witness PLUS the carrier
+pin `sysRootsDigestCol = systemRootsDigest postRoots` (so the published `state_commit` binds the side-table
+digest — the anti-ghost hd-link); `decodeFull` projects the wide descriptor's per-row gates to the
+GATE-ONLY `bridgeFinalizeGates_give_cellSpec`, then carries the declared post-roots. THIN — the only
+per-effect content is the (proved here, hash-site-free) `bridgeFinalizeGates_give_cellSpec` + the decode.
+NON-VACUOUS: `fullClause` is the genuine per-cell freeze + the resolved side-table root, NOT `True`. -/
+def bridgeFinalizeRunnableSpec (hash : List ℤ → ℤ) (expectedRoots : SysRoots) :
+    RunnableFullStateSpec CellState where
+  descriptor    := bridgeFinalizeVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsBridgeFinalizeRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesFinalize env pre post ∧ postRoots = expectedRoots
+      ∧ env.loc sysRootsDigestCol = systemRootsDigest hash postRoots
+  fullClause    := BridgeFinalizeFullClause expectedRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots, _hcar⟩ := hdec
+    exact ⟨bridgeFinalizeGates_give_cellSpec env pre post hrow henc
+            (bridgeFinalizeWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`bridgeFinalize_runnable_full_sound` — THE FULL-STATE ON RUNNABLE crown (bridgeFinalize).** A row
+satisfying the WIDE runnable descriptor (`satisfiedVm bridgeFinalizeVmDescriptorWide`), under the
+structured decode (`RowEncodesFinalize` + the declared post-roots + the `sysRootsDigestCol` carrier pin),
+pins the FULL 17-field declarative post-state (`BridgeFinalizeFullClause`): the per-cell freeze/tick AND
+the whole `system_roots` sub-block. The crypto is discharged ONCE in the generic `runnable_full_sound`; the
+per-effect obligation was only the (thin) decode. -/
+theorem bridgeFinalize_runnable_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (pre post : CellState) (postRoots expectedRoots : SysRoots)
+    (hrow : IsBridgeFinalizeRow env)
+    (henc : RowEncodesFinalize env pre post) (hroots : postRoots = expectedRoots)
+    (hcar : env.loc sysRootsDigestCol = systemRootsDigest hash postRoots)
+    (hsat : satisfiedVm hash bridgeFinalizeVmDescriptorWide env true true) :
+    BridgeFinalizeFullClause expectedRoots pre post postRoots :=
+  runnable_full_sound (bridgeFinalizeRunnableSpec hash expectedRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots, hcar⟩ hsat
+
+/-- **`bridgeFinalize_wide_rejects_state_tamper` — per-cell-block anti-ghost on the RUNNABLE descriptor.**
+Two wide rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) but DIFFERING on an
+absorbed state-block column cannot both satisfy — a forged balance / tampered field / forged cap-root that
+still claims the published commitment is UNSAT. -/
+theorem bridgeFinalize_wide_rejects_state_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeFinalizeVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeFinalizeVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : absorbedCols e₁ ≠ absorbedCols e₂) : False :=
+  wide_rejects_state_tamper (bridgeFinalizeRunnableSpec hash sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`bridgeFinalize_wide_rejects_root_tamper` — side-table anti-ghost on the RUNNABLE descriptor (the
+gap's headline tooth, CLOSED).** Two wide rows publishing the same `NEW_COMMIT` (with `systemRootsDigest`
+carriers) but whose side-table sub-blocks DIFFER at some index `i` (a dropped escrow resolve, a forged
+nullifier, a reordered queue) cannot both satisfy. The `escrows` root — and every other side-table root —
+is now bound BY the running commitment: `escrow_root_not_in_descriptor_commit` is superseded for the WIDE
+descriptor. -/
+theorem bridgeFinalize_wide_rejects_root_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash bridgeFinalizeVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash bridgeFinalizeVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (bridgeFinalizeRunnableSpec hash sr₁) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### Non-vacuity of the full-state instance: a real resolved post-state inhabits the full clause. -/
+
+/-- A frozen pre cell (bal 100, nonce 5, frame 0) and its honest finalize image (bal frozen, nonce 6). -/
+def widePreCell : CellState :=
+  { balLo := 100, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+def widePostCell : CellState :=
+  { balLo := 100, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 0, reserved := 0, commit := 0 }
+
+/-- A concrete post-roots sub-block: the `ESCROW` root carries the resolved escrow-list digest `1042`
+(the `markResolved` advance), every other side-table root `0` (frozen). -/
+def widePostRoots : SysRoots := escrowRootOf 1042 emptySystemRoots
+
+/-- **`bridgeFinalize_wide_realizes` — NON-VACUITY of the instance (witness TRUE).** The full clause is
+INHABITED by a genuine finalize: `widePostCell` is the honest frozen image of `widePreCell` (bal frozen,
+nonce `5 → 6`) and the post-roots advance ONLY at `ESCROW`. So the framework's `fullClause` is NOT `True`
+— a meaningful 17-field predicate a real bridgeFinalize satisfies. -/
+theorem bridgeFinalize_wide_realizes :
+    (bridgeFinalizeRunnableSpec EffectVmEmitEscrowRoot.cN widePostRoots).fullClause
+      widePreCell widePostCell widePostRoots :=
+  ⟨⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`bridgeFinalize_wide_clause_refutable` — the clause is REFUTABLE (witness FALSE).** A post-state
+whose `balLo` is NOT frozen (a smuggled credit `999 ≠ 100`) FAILS `BridgeFinalizeFullClause` — so the
+full clause is not vacuously true (it rejects a forged frozen-balance violation), pinning non-vacuity from
+BOTH sides. -/
+theorem bridgeFinalize_wide_clause_refutable :
+    ¬ BridgeFinalizeFullClause widePostRoots widePreCell
+        { widePostCell with balLo := 999 } widePostRoots := by
+  rintro ⟨⟨hbal, _⟩, _⟩
+  simp only [widePreCell, widePostCell] at hbal
+  norm_num at hbal
+
+/-- **Side-table non-vacuity (the root genuinely moves).** The resolved post-roots' `ESCROW` slot (`1042`)
+differs from the pre-roots' (`0` in `emptySystemRoots`) — so the `markResolved` advance is genuinely
+visible at `systemRoot.ESCROW`, and the wide commitment's root tooth bites on a real move. -/
+theorem bridgeFinalize_wide_root_moves :
+    widePostRoots escrowRootIx ≠ emptySystemRoots escrowRootIx := by
+  simp only [widePostRoots, escrowRootOf_escrow, emptySystemRoots]
+  norm_num
+
+#guard bridgeFinalizeVmDescriptorWide.traceWidth == 188
+#guard bridgeFinalizeVmDescriptorWide.hashSites.length == 4
+#guard bridgeFinalizeVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3 + 1
+
+#assert_axioms bridgeFinalizeGates_give_cellSpec
+#assert_axioms bridgeFinalize_runnable_full_sound
+#assert_axioms bridgeFinalize_wide_rejects_state_tamper
+#assert_axioms bridgeFinalize_wide_rejects_root_tamper
+#assert_axioms bridgeFinalize_wide_realizes
+#assert_axioms bridgeFinalize_wide_clause_refutable
+#assert_axioms bridgeFinalize_wide_root_moves
 
 end Dregg2.Circuit.Emit.EffectVmEmitBridgeFinalize

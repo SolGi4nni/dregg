@@ -494,4 +494,158 @@ theorem revokeGenuine_binds_edge (hash : List ℤ → ℤ)
 #assert_axioms badRevokeRow_rejected
 #assert_axioms staleNonceRevokeRow_rejected
 
+/-! ## §W — THE MAGNESIUM LIFT: `revokeDelegation`'s RUNNABLE descriptor binds the FULL 17-field
+post-state (on the EXISTING kernel; the `DELEG`-EPOCH advance is the reported residual).
+
+`revokeDelegation` is a PASSTHROUGH+nonce-TICK cap-graph row (cap_root FROZEN on-row; the `caps` edge
+removal rides OFF-row via `unify_revoke`). Its WIDE descriptor widens `revokeVmDescriptor` to
+`EFFECT_VM_WIDTH_SYSROOTS` with `wideHashSites`, so the published `state_commit` now absorbs the
+`system_roots` digest. The kernel step (`recKRevokeTarget`) edits ONLY `caps` — it does NOT touch the
+`delegations`/`revoked` (`DELEG`) side-table — so on the EXISTING kernel the 8 side-table roots are
+FROZEN, and the full clause is the per-cell `RevokeCellSpec` (frame frozen, nonce ticked) AND `postRoots =
+preRoots`.
+
+⚑ REPORTED RESIDUAL (the `delegation_epoch` / `DELEG` advance — a SEPARATE kernel-widen wave, NOT closed
+here): dregg1's revokeDelegation ALSO bumps the per-child revocation epoch (the `DELEG` system-root). The
+verified KERNEL step `recKRevokeTarget` carries no such epoch field on `RecordKernelState`, so the kernel
+(and therefore THIS lift) FREEZES `DELEG` rather than advancing it. The full-state binding here is
+faithful to the kernel-model-as-is (all 8 roots bound, frozen); closing the epoch is a kernel-state
+widening tracked separately (`revoke_DELEG_epoch_residual` documents the boundary). -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest N_SYSTEM_ROOTS emptySystemRoots)
+
+/-- **`revokeDelegationVmDescriptorWide`** — the runnable `revokeDelegation` FULL-state circuit:
+`revokeVmDescriptor` WIDENED to `EFFECT_VM_WIDTH_SYSROOTS` with `hashSites := wideHashSites`. Strictly
+additive: the constraint list is byte-identical; only the width grows by 2 and site 3's spare slot becomes
+the side-table digest carrier. -/
+def revokeDelegationVmDescriptorWide : EffectVmDescriptor :=
+  { revokeVmDescriptor with
+    name := "dregg-effectvm-revokeDelegation-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide revoke descriptor's constraints ARE `revokeVmDescriptor`'s. -/
+theorem revokeWide_constraints_eq :
+    revokeDelegationVmDescriptorWide.constraints = revokeVmDescriptor.constraints := rfl
+
+/-- **`RevokeFullClause`** — the FULL declarative revokeDelegation post-state: the per-cell
+`RevokeCellSpec` (balance/cap_root/fields/reserved FROZEN, nonce TICKED) AND the `system_roots` sub-block
+FROZEN (`postRoots = preRoots` — on the existing kernel, the `DELEG` epoch is not advanced; the `caps`
+edge removal rides off-row). Non-vacuous: `revokeWide_realizes`. -/
+def RevokeFullClause (preRoots : SysRoots) (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  RevokeCellSpec pre post ∧ postRoots = preRoots
+
+/-- **`revokeRunnableSpec` — the revokeDelegation FULL-state RUNNABLE instance.** `decodeAfter` is
+`RowEncodesRevoke` PLUS the frozen-roots witness; `decodeFull` projects the wide descriptor's
+passthrough+tick gates (= revoke's) to `revokeVm_faithful` + `intent_to_cellSpec`, then carries the
+frozen-roots fact. THIN + NON-VACUOUS. -/
+def revokeRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
+  descriptor    := revokeDelegationVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsRevokeRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesRevoke env pre post ∧ postRoots = preRoots
+  fullClause    := RevokeFullClause preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    obtain ⟨_hsel, hnoop⟩ := hrow
+    have hgates' : ∀ c ∈ revokeRowGates, c.holdsVm env false false := by
+      intro c hc
+      have hmem : c ∈ revokeDelegationVmDescriptorWide.constraints := by
+        show c ∈ revokeVmDescriptor.constraints
+        unfold revokeVmDescriptor
+        simp only [List.mem_append]; exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
+      have hh := hgates c hmem
+      unfold revokeRowGates gFieldPassAll at hc
+      simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+        List.mem_range] at hc
+      rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+        simpa only [VmConstraint.holdsVm] using hh
+    exact ⟨intent_to_cellSpec env pre post hnoop henc ((revokeVm_faithful env).mp hgates'), hroots⟩
+
+/-- **`revokeDelegation_runnable_full_sound` — THE MAGNESIUM CROWN for `revokeDelegation`.** A row
+satisfying the runnable `revokeDelegation` WIDE descriptor (`satisfiedVm`, first/last active), under the
+structured decode, pins the FULL 17-field post-state: the per-cell frame freeze + nonce tick AND the
+frozen `system_roots` sub-block (binding the 8 side-table roots). The `caps` edge removal is the named
+OFF-ROW `unify_revoke` connector; the `DELEG`-epoch advance is the reported residual (frozen here). -/
+theorem revokeDelegation_runnable_full_sound (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsRevokeRow env)
+    (henc : RowEncodesRevoke env pre post)
+    (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash revokeDelegationVmDescriptorWide env true true) :
+    RevokeFullClause preRoots pre post postRoots :=
+  runnable_full_sound (revokeRunnableSpec preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`revokeDelegation_runnable_rejects_root_tamper` — the side-table anti-ghost for `revokeDelegation`.**
+Two wide revoke rows publishing the same `NEW_COMMIT` (with `systemRootsDigest` carriers) whose side-table
+sub-blocks DIFFER at some index cannot both satisfy — UNSAT. The 8 side-table roots (incl. `DELEG`) are
+bound by the runnable commitment (so a forged frozen-`DELEG` is rejected; an HONEST advance would require
+the kernel-widen wave to MOVE it, the reported residual). -/
+theorem revokeDelegation_runnable_rejects_root_tamper (preRoots : SysRoots)
+    (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash revokeDelegationVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash revokeDelegationVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (revokeRunnableSpec preRoots) hash hCR
+    e₁ e₂ sr₁ sr₂ hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`revokeWide_realizes` — NON-VACUITY (witness TRUE).** A real passthrough+tick revoke cell transition
+(frame frozen, nonce `5 → 6`) with frozen roots inhabits `RevokeFullClause`. -/
+theorem revokeWide_realizes :
+    RevokeCellSpec
+      { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+        commit := 0 }
+      { balLo := 0, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 9, reserved := 0,
+        commit := 0 } :=
+  ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩
+
+/-- **`revokeWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+nonce did NOT tick FAILS `RevokeCellSpec` — the clause is not vacuously true. -/
+theorem revokeWide_clause_not_trivial :
+    ¬ RevokeCellSpec
+        { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+          commit := 0 }
+        { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
+          commit := 0 } := by
+  rintro ⟨_, _, hnon, _⟩
+  exact absurd hnon (by decide)
+
+/-- **`revoke_DELEG_epoch_residual` — the reported `DELEG`-epoch boundary, as a checked theorem.** The
+verified kernel step `recKRevokeTarget` reads/writes ONLY `caps`; it is INDEPENDENT of the `delegations`
+side-table (the `DELEG` root). Concretely: two kernel states with IDENTICAL `caps` (hence identical
+EffectVM-row `cap_root`) can DIFFER on `delegations` (hence on the `DELEG` root). So this lift's
+frozen-`DELEG` clause is faithful to the kernel-as-is; advancing the per-child revocation epoch is a
+SEPARATE kernel-state widening (add a `delegations`/epoch transition to the `revokeDelegationA` arm), out
+of scope here — pinned so the residual is a checked fact, not a buried assumption. -/
+theorem revoke_DELEG_epoch_residual (D : Caps → ℤ)
+    (k : RecordKernelState) (g₁ g₂ : CellId → List Cap) (hne : D g₁ ≠ D g₂) :
+    capRootProj D { k with delegations := g₁ } = capRootProj D { k with delegations := g₂ }
+    ∧ D ({ k with delegations := g₁ } : RecordKernelState).delegations
+        ≠ D ({ k with delegations := g₂ } : RecordKernelState).delegations := by
+  refine ⟨?_, hne⟩
+  show D ({ k with delegations := g₁ } : RecordKernelState).caps
+      = D ({ k with delegations := g₂ } : RecordKernelState).caps
+  rfl
+
+#assert_axioms revokeWide_constraints_eq
+#assert_axioms revokeDelegation_runnable_full_sound
+#assert_axioms revokeDelegation_runnable_rejects_root_tamper
+#assert_axioms revokeWide_realizes
+#assert_axioms revokeWide_clause_not_trivial
+#assert_axioms revoke_DELEG_epoch_residual
+
+#guard revokeDelegationVmDescriptorWide.traceWidth == 188
+#guard revokeDelegationVmDescriptorWide.hashSites.length == 4
+
 end Dregg2.Circuit.Emit.EffectVmEmitRevokeDelegation

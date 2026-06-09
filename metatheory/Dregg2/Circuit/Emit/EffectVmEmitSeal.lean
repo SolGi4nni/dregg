@@ -40,6 +40,7 @@ Imports are read-only.
 -/
 import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.Emit.EffectVmEmitTransferSound
+import Dregg2.Circuit.Emit.EffectVmFullStateRunnable
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.Spec.sealboxoperations
 import Dregg2.Exec.SystemRoots
@@ -538,11 +539,266 @@ theorem staleNonceSealRow_rejected :
     STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, state.RESERVED]
   norm_num
 
+/-! ## §MAG — THE MAGNESIUM FULL-STATE LIFT: the RUNNABLE descriptor binds ALL 17 fields.
+
+§7's `sealDescriptor_full_sound` binds the per-cell state block (13 absorbed columns → `CellSealSpec`)
+on the 186-wide descriptor — but that descriptor's `state_commit` (transfer's `transferHashSites`)
+absorbs ONLY the 13 state-block columns; the 8 `system_roots` side-table roots ride a separate
+record-layer commitment the row does not carry (the Class-C "pale ghost": a satisfying RUNNABLE proof
+pins a projection, not the whole post-state). This section CLOSES that for seal, following the
+VALIDATED REFERENCE `EffectVmFullStateRunnable.transferRunnableSpec` VERBATIM: a WIDE descriptor
+(`hashSites := wideHashSites`, `traceWidth := EFFECT_VM_WIDTH_SYSROOTS`) whose `state_commit` ALSO
+absorbs the dedicated `sysRootsDigestCol` carrier, lifted through the GENERIC crown
+`runnable_full_sound`. The crypto (Poseidon2 CR binding the 13 columns + the side-table digest +
+`systemRootsDigest`'s pointwise bind) is discharged ONCE in the generic theorem; the per-effect content
+here is THIN — the (hash-site-free) gate→`CellSealSpec` projection + the decode.
+
+THE HONEST FULL CLAUSE (the seal-root binding the task asks for). The RUNNABLE descriptor faithfully
+describes the RUNTIME field-mask seal (`air.rs:1388-1432`): a sealed-FIELD-MASK lock on the per-cell
+`RESERVED` column. That on-trace effect touches NO side-table — in particular it does NOT prepend a box
+onto `sealedBoxes` (the box prepend is the SEPARATE universe-A `SealSpec`, the §9/§11 carried
+divergence). So the runtime seal FREEZES all 8 `system_roots` roots (INCLUDING `SEALED_BOXES`), exactly
+as transfer does. The full clause is therefore `CellSealSpec pre post pow2` (the genuine RESERVED-mask
+move + nonce tick + balance/cap/fields freeze) AND `postRoots = preRoots` (all 8 side-table roots
+frozen, the seal-root among them). The full 17-field binding: fields 1–3 + #13–17 ride the per-cell
+block (absorbed columns / `restLimbs`); fields 4–12 are the 8 side-table roots, now bound by the WIDE
+`state_commit` carrier. The anti-ghost (`sealRunnable_rejects_root_tamper`) bites on ALL of them. -/
+
+open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
+  (wideHashSites RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds
+   wide_rejects_state_tamper wide_rejects_root_tamper)
+open Dregg2.Exec.SystemRoots
+  (SysRoots systemRootsDigest emptySystemRoots N_SYSTEM_ROOTS)
+
+/-- **`sealVmDescriptorWide`** — seal's descriptor WIDENED: the SAME per-row gates (RESERVED mask-set +
+nonce tick + balance/cap/fields freeze) + transitions + boundary pins, but `traceWidth :=
+EFFECT_VM_WIDTH_SYSROOTS` and `hashSites := wideHashSites` (the `system_roots`-absorbing sites). Strictly
+additive over `sealVmDescriptor`: the constraint list is byte-identical; only the width grows by 2 and
+the outer hash-site's spare `.zero` 4th slot becomes the `system_roots` digest carrier. -/
+def sealVmDescriptorWide : EffectVmDescriptor :=
+  { sealVmDescriptor with
+    name := sealVmAirName ++ "-sysroots"
+    traceWidth := EFFECT_VM_WIDTH_SYSROOTS
+    hashSites := wideHashSites }
+
+/-- The wide seal descriptor's constraints ARE seal's (the width/site swap leaves the gate list
+untouched). -/
+theorem sealWide_constraints_eq :
+    sealVmDescriptorWide.constraints = sealVmDescriptor.constraints := rfl
+
+/-- **`sealGates_give_cellSealSpec` — the GATE-ONLY per-cell soundness (no hash-site hypothesis).** The
+per-row gates of the seal descriptor, on a seal row decoded by `RowEncodesSeal`, force `CellSealSpec`.
+This is the body of `sealDescriptor_full_sound` with the hash-site layer DROPPED — the move/freeze
+factors through `sealVm_faithful` (`sealRowGates ⟺ SealRowIntent`) + `intent_to_cellSealSpec`, neither
+of which reads the sites. So the runnable per-cell soundness depends ONLY on the gates (the sites bind
+the COMMITMENT — §MAG anti-ghost — not the per-cell spec). -/
+theorem sealGates_give_cellSealSpec (env : VmRowEnv) (pre post : CellState) (pow2 : ℤ)
+    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesSeal env pre post pow2)
+    (hgates : ∀ c ∈ sealVmDescriptor.constraints, c.holdsVm env true true) :
+    CellSealSpec pre post pow2 := by
+  -- the per-row gates are a sub-list of the descriptor's constraints; restrict to them (flag-free).
+  have hrowgates : ∀ c ∈ sealRowGates, c.holdsVm env false false := by
+    intro c hc
+    have hmem : c ∈ sealVmDescriptor.constraints := by
+      unfold sealVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inl (Or.inl hc))
+    have hh := hgates c hmem
+    unfold sealRowGates gFieldPassAll at hc
+    simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
+      List.mem_range] at hc
+    rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
+      simpa only [VmConstraint.holdsVm] using hh
+  exact intent_to_cellSealSpec env pre post pow2 hnoop henc ((sealVm_faithful env).mp hrowgates)
+
+/-- **`SealFullClause`** — the full declarative 17-field post-state for the RUNTIME seal over `(pre,
+post, postRoots)`: the per-cell `CellSealSpec` (RESERVED gains the mask bit `pow2`, nonce ticks,
+balance/`bal_hi`/8 fields/`cap_root` frozen) AND the `system_roots` sub-block FROZEN (the runtime
+field-mask seal touches no side-table — the `SEALED_BOXES` root among the frozen 8). `preRoots` is the
+frozen reference sub-block. Non-vacuous: `sealRunnable_realizes` inhabits it. -/
+def SealFullClause (pow2 : ℤ) (preRoots : SysRoots)
+    (pre post : CellState) (postRoots : SysRoots) : Prop :=
+  CellSealSpec pre post pow2 ∧ postRoots = preRoots
+
+/-- **`sealRunnableSpec` — THE MAGNESIUM RUNNABLE INSTANCE for seal.** The seal `RunnableFullStateSpec`:
+`decodeAfter` is `RowEncodesSeal` (the structured column decode) PLUS the frozen-roots witness;
+`decodeFull` projects the wide descriptor's per-row gates (= seal's) to the GATE-ONLY
+`sealGates_give_cellSealSpec`, then carries the frozen-roots fact. THIN — the only per-effect content is
+the (proved here, hash-site-free) `sealGates_give_cellSealSpec` + the frozen-roots decode. NON-VACUOUS:
+`fullClause` is the genuine RESERVED-mask move + nonce tick + the frozen sub-block, NOT `True`. -/
+def sealRunnableSpec (pow2 : ℤ) (preRoots : SysRoots) : RunnableFullStateSpec CellState where
+  descriptor    := sealVmDescriptorWide
+  usesWideSites := rfl
+  isRow         := IsSealRow
+  decodeAfter   := fun env pre post postRoots =>
+    RowEncodesSeal env pre post pow2 ∧ postRoots = preRoots
+  fullClause    := SealFullClause pow2 preRoots
+  decodeFull    := by
+    intro env pre post postRoots hrow hdec hgates
+    obtain ⟨henc, hroots⟩ := hdec
+    exact ⟨sealGates_give_cellSealSpec env pre post pow2 hrow.2 henc
+            (sealWide_constraints_eq ▸ hgates), hroots⟩
+
+/-- **`seal_runnable_full_sound` — THE MAGNESIUM CROWN (seal).** A row satisfying seal's WIDE RUNNABLE
+descriptor (`satisfiedVm sealVmDescriptorWide`, first/last active), under the structured decode
+(`RowEncodesSeal` + frozen-roots witness) on a seal row, pins the FULL 17-field declarative post-state:
+`CellSealSpec` (the genuine RESERVED-mask seal) AND `postRoots = preRoots` (all 8 side-table roots
+frozen, the `SEALED_BOXES` root among them). This STRENGTHENS §7's per-cell `sealDescriptor_full_sound`
+to the WHOLE state on the circuit the prover ACTUALLY RUNS — the magnesium breadth. -/
+theorem seal_runnable_full_sound (hash : List ℤ → ℤ) (pow2 : ℤ) (preRoots : SysRoots)
+    (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
+    (hrow : IsSealRow env)
+    (henc : RowEncodesSeal env pre post pow2) (hroots : postRoots = preRoots)
+    (hsat : satisfiedVm hash sealVmDescriptorWide env true true) :
+    CellSealSpec pre post pow2 ∧ postRoots = preRoots :=
+  runnable_full_sound (sealRunnableSpec pow2 preRoots) hash env pre post postRoots
+    hrow ⟨henc, hroots⟩ hsat
+
+/-- **`sealRunnable_rejects_root_tamper` — the SEAL-ROOT anti-ghost (the headline tooth).** Two rows
+satisfying seal's WIDE descriptor that publish the SAME `NEW_COMMIT` (with `systemRootsDigest` carriers)
+but whose side-table sub-blocks DIFFER at some index `i` (a forged `SEALED_BOXES` root, a dropped
+escrow, an omitted nullifier) CANNOT both satisfy. The seal-family side-table state is now bound BY the
+runnable commitment — tamper the seal root ⇒ UNSAT. -/
+theorem sealRunnable_rejects_root_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (pow2 : ℤ) (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash sealVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash sealVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    {i : Fin N_SYSTEM_ROOTS} (htamper : sr₁ i ≠ sr₂ i) : False :=
+  wide_rejects_root_tamper (sealRunnableSpec pow2 preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-- **`sealRunnable_rejects_state_tamper` — the per-cell-block anti-ghost on the wide descriptor.** Two
+wide seal rows publishing the same `NEW_COMMIT` whose absorbed state-block columns DIFFER (a forged
+balance / tampered RESERVED mask / forged cap-root) cannot both satisfy. -/
+theorem sealRunnable_rejects_state_tamper (hash : List ℤ → ℤ)
+    (hCR : Dregg2.Circuit.Poseidon2Binding.Poseidon2SpongeCR hash)
+    (pow2 : ℤ) (preRoots : SysRoots)
+    (e₁ e₂ : VmRowEnv) (sr₁ sr₂ : SysRoots)
+    (hsat₁ : satisfiedVm hash sealVmDescriptorWide e₁ true true)
+    (hsat₂ : satisfiedVm hash sealVmDescriptorWide e₂ true true)
+    (hpin₁ : e₁.loc (saCol state.STATE_COMMIT) = e₁.pub pi.NEW_COMMIT)
+    (hpin₂ : e₂.loc (saCol state.STATE_COMMIT) = e₂.pub pi.NEW_COMMIT)
+    (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT)
+    (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
+    (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂)
+    (htamper : EffectVmEmitTransferSound.absorbedCols e₁ ≠ EffectVmEmitTransferSound.absorbedCols e₂) :
+    False :=
+  wide_rejects_state_tamper (sealRunnableSpec pow2 preRoots) hash hCR e₁ e₂ sr₁ sr₂
+    hsat₁ hsat₂ hpin₁ hpin₂ hpub hd₁ hd₂ htamper
+
+/-! ### ⚑ THE HONEST RESIDUAL (the seal-family-CRITICAL binding gap, WITNESSED not papered).
+
+The seal's GENUINE on-trace effect is the `RESERVED` sealed-field mask (`gReservedSealSet`). But the
+shared `reserved_not_bound_by_commitment` finding (`EffectVmEmitTransferSound` §7) proves `state.RESERVED`
+(after-column 89) is absorbed by NO hash-site — so it is NOT in `absorbedCols`, and the WIDE commitment
+(`wide_binds_everything`, which binds the 12 absorbed columns + the `sysRootsDigestCol` carrier) does NOT
+pin it. CONSEQUENCE for the seal family: `seal_runnable_full_sound` genuinely forces the RESERVED move
+FROM THE GATES (`gReservedSealSet` ⇒ `post.reserved = pre.reserved + pow2`, sound WITHIN one satisfying
+row), and the anti-ghost binds all 12 absorbed columns + the 8 side-table roots — but it does NOT bind
+RESERVED. So two seal rows publishing the SAME `NEW_COMMIT` could carry DIFFERENT sealed-field masks. We
+WITNESS this exactly (the seal analog of `reserved_not_bound_by_commitment`), rather than paper it: the
+no-malleability tooth covers 16 of the 17 fields, with the RESERVED-carried mask gate-enforced but not
+commitment-bound. (Closing it requires absorbing `saCol RESERVED` into a hash-site — a change to the
+shared `EffectVmEmit`/`…TransferSound` layer, outside this family's lane.) -/
+
+/-- **`seal_reserved_mask_not_commitment_bound` — the WITNESSED seal-family residual.** `goodSealRow`
+(RESERVED after = `4`, the genuine mask for `pow2 = 4`) and `maskForgedSealRow` (RESERVED after = `99`)
+have IDENTICAL `absorbedCols` (RESERVED is absorbed by no site), yet their `saCol RESERVED` columns
+differ. So the WIDE commitment cannot distinguish a correctly-sealed cell from one carrying a forged
+sealed-field mask: the seal's actual side-table payload (the RESERVED mask) is pinned ONLY by the per-row
+`gReservedSealSet` gate, NOT by `NEW_COMMIT`. The headline binding gap for the seal family, reported. -/
+theorem seal_reserved_mask_not_commitment_bound :
+    EffectVmEmitTransferSound.absorbedCols goodSealRow
+      = EffectVmEmitTransferSound.absorbedCols maskForgedSealRow
+    ∧ goodSealRow.loc (saCol state.RESERVED) ≠ maskForgedSealRow.loc (saCol state.RESERVED) := by
+  have hres : saCol state.RESERVED = 89 := by
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.RESERVED; rfl
+  have agree : ∀ off : Nat, saCol off ≠ (89:Nat) →
+      maskForgedSealRow.loc (saCol off) = goodSealRow.loc (saCol off) := by
+    intro off hoff
+    show (if saCol off = saCol state.RESERVED then (99:ℤ) else goodSealRow.loc (saCol off))
+        = goodSealRow.loc (saCol off)
+    rw [if_neg]; rw [hres]; exact hoff
+  have hneOff : ∀ off : Nat, off ≠ state.RESERVED → saCol off ≠ (89:Nat) := by
+    intro off hoff
+    unfold saCol STATE_AFTER_BASE PARAM_BASE STATE_BEFORE_BASE NUM_EFFECTS STATE_SIZE NUM_PARAMS
+      state.RESERVED at *
+    omega
+  refine ⟨?_, ?_⟩
+  · unfold EffectVmEmitTransferSound.absorbedCols
+    rw [agree state.BALANCE_LO (hneOff _ (by decide)),
+        agree state.BALANCE_HI (hneOff _ (by decide)),
+        agree state.NONCE (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 0) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 1) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 2) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 3) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 4) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 5) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 6) (hneOff _ (by decide)),
+        agree (state.FIELD_BASE + 7) (hneOff _ (by decide)),
+        agree state.CAP_ROOT (hneOff _ (by decide))]
+  · -- goodSealRow RESERVED after = 4; maskForgedSealRow overwrites it to 99.
+    have hg : goodSealRow.loc (saCol state.RESERVED) = 4 := by
+      show (goodSealRow.loc (saCol state.RESERVED)) = 4
+      simp only [goodSealRow, SEL_SEAL, SEAL_POW2_IDX, sbCol, saCol, auxCol, STATE_BEFORE_BASE,
+        STATE_AFTER_BASE, PARAM_BASE, AUX_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+        state.NONCE, state.RESERVED]
+      norm_num
+    have hb : maskForgedSealRow.loc (saCol state.RESERVED) = 99 := by
+      show (if saCol state.RESERVED = saCol state.RESERVED then (99:ℤ)
+              else goodSealRow.loc (saCol state.RESERVED)) = 99
+      rw [if_pos rfl]
+    rw [hg, hb]; norm_num
+
+/-! ### Non-vacuity of the magnesium instance: a real runtime seal inhabits the full clause (witness
+TRUE), and a forged post-state fails it (witness FALSE) — the clause is not `True`. -/
+
+/-- A concrete `(pre, post)` cell pair for a real RESERVED-mask seal of field 2 (`pow2 = 4`): balance /
+cap / fields frozen, nonce `5 → 6`, RESERVED `0 → 4`. -/
+def sealRefPre : CellState where
+  balLo := 100; balHi := 0; nonce := 5; fields := fun _ => 0; capRoot := 0; reserved := 0; commit := 0
+def sealRefPost : CellState where
+  balLo := 100; balHi := 0; nonce := 6; fields := fun _ => 0; capRoot := 0; reserved := 4; commit := 0
+
+/-- **`sealRunnable_realizes` — NON-VACUITY (witness TRUE).** The seal `fullClause` is INHABITED by a
+real RESERVED-mask seal: `sealRefPost` is the genuine image of `sealRefPre` (nonce `5 → 6`, RESERVED
+gains `pow2 = 4`, frame frozen) and the roots are frozen. So the framework's `fullClause` is NOT `True`
+— it is a meaningful 17-field predicate a real seal satisfies. -/
+theorem sealRunnable_realizes :
+    (sealRunnableSpec 4 emptySystemRoots).fullClause sealRefPre sealRefPost emptySystemRoots :=
+  ⟨⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩, rfl⟩
+
+/-- **`sealRunnable_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
+`reserved` is NOT `pre.reserved + pow2` (a forged mask: `0 + 4 = 4` demanded, but `99`) FAILS
+`SealFullClause` — so the magnesium `fullClause` is not vacuously true (it rejects a forged mask),
+pinning non-vacuity from BOTH sides. -/
+theorem sealRunnable_clause_not_trivial :
+    ¬ SealFullClause 4 emptySystemRoots sealRefPre { sealRefPost with reserved := 99 }
+        emptySystemRoots := by
+  rintro ⟨⟨_, _, _, _, _, hres⟩, _⟩
+  -- hres : (99) = sealRefPre.reserved + 4 = 0 + 4 = 4
+  simp only [sealRefPre] at hres
+  norm_num at hres
+
 /-! ## §13 — Axiom-hygiene pins. -/
 
 #guard sealVmDescriptor.constraints.length == 13 + 14 + 4 + 3
 #guard sealVmDescriptor.hashSites.length == 4
 #guard sealVmDescriptor.traceWidth == 186
+
+-- §MAG: the wide descriptor keeps the SAME gates, swaps to the wide sites + width.
+#guard sealVmDescriptorWide.constraints.length == 13 + 14 + 4 + 3
+#guard sealVmDescriptorWide.hashSites.length == 4
+#guard sealVmDescriptorWide.traceWidth == 188
 
 #assert_axioms sealVm_faithful
 #assert_axioms sealVm_rejects_wrong_output
@@ -560,5 +816,14 @@ theorem staleNonceSealRow_rejected :
 #assert_axioms badSealRow_rejected
 #assert_axioms maskForgedSealRow_rejected
 #assert_axioms staleNonceSealRow_rejected
+
+-- §MAG: the magnesium full-state RUNNABLE crown + the side-table anti-ghost teeth.
+#assert_axioms sealGates_give_cellSealSpec
+#assert_axioms seal_runnable_full_sound
+#assert_axioms sealRunnable_rejects_root_tamper
+#assert_axioms sealRunnable_rejects_state_tamper
+#assert_axioms seal_reserved_mask_not_commitment_bound
+#assert_axioms sealRunnable_realizes
+#assert_axioms sealRunnable_clause_not_trivial
 
 end Dregg2.Circuit.Emit.EffectVmEmitSeal

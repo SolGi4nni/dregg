@@ -98,6 +98,7 @@ reused `setVKA_full_sound`, not in the welded conclusion's statement. No `sorry`
 -/
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.setVKA
+import Dregg2.Circuit.Emit.EffectVmEmitSetVKFullState
 
 namespace Dregg2.Circuit.Argus.Effects.SetVerificationKey
 

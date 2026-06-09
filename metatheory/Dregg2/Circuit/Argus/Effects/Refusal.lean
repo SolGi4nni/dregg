@@ -81,6 +81,7 @@ Imports are read-only; this file owns only itself.
 import Dregg2.Circuit.Argus.Stmt
 import Dregg2.Circuit.Inst.refusalA
 import Dregg2.Circuit.Spec.cellstateaudit
+import Dregg2.Circuit.Emit.EffectVmEmitRefusalFullState
 
 namespace Dregg2.Circuit.Argus.Effects.Refusal
 
