@@ -162,11 +162,13 @@ has no constraints and no hash sites, so its denotation `satisfiedVm` is `(∀ c
 circuit "enforces nothing": ANY witness satisfies it. -/
 theorem skipDescriptor_satisfied_any (hash : List ℤ → ℤ) (env : VmRowEnv) (isFirst isLast : Bool) :
     satisfiedVm hash skipDescriptor env isFirst isLast := by
-  refine ⟨?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · intro c hc; exact absurd hc (by simp [skipDescriptor])
   · -- `skipDescriptor.hashSites = []`, and `siteHoldsAll … [] = siteHoldsAll.go [] [] = True` (the
     -- empty-sites arm), so the digest obligation is vacuously discharged.
     simp only [skipDescriptor, siteHoldsAll, siteHoldsAll.go]
+  · -- `skipDescriptor.ranges = []`, so the range obligation is vacuously discharged too.
+    intro r hr; exact absurd hr (by simp [skipDescriptor])
 
 #assert_axioms skipDescriptor_satisfied_any
 

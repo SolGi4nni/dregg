@@ -293,8 +293,8 @@ theorem refundEscrowDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR
     (hsat₂ : satisfiedVm hash refundEscrowVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash refundEscrowVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat
@@ -622,7 +622,7 @@ theorem refundEscrowFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     CellRefundSpec pre p post
       ∧ RefundEscrowRootIntent env
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hintent := refundEscrowFull_forces_intent env true true hcs
   have hroot := refundEscrowFull_forces_root env true true hcs
   refine ⟨intent_to_cellRefundSpec env pre post p henc hintent, hroot, ?_⟩
@@ -789,7 +789,7 @@ theorem refundEscrowGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
                 (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
               (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hgates' : ∀ c ∈ refundEscrowRowGates, c.holdsVm env false false := by
     intro c hc
     have hmem : c ∈ refundEscrowVmDescriptorGenuine.constraints := by
@@ -828,7 +828,7 @@ theorem refundEscrowGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseid
     (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
     e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
   escrowRoot_amount_bound hash hCR e₁ e₂
-    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+    (genuine_sites_split hash e₁ hsat₁.2.1) (genuine_sites_split hash e₂ hsat₂.2.1) hroot
 
 /-- NON-VACUITY: the genuine recompute is inhabited (shared concrete witness). -/
 theorem refundEscrowGenuine_recompute_nonvacuous :

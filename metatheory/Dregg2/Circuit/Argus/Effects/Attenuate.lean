@@ -318,7 +318,7 @@ the GROUP-4 commitment sites follow. -/
 theorem satisfied_gives_capRootHolds (hash : List ℤ → ℤ) (env : VmRowEnv)
     (hsat : satisfiedVm hash attenuateVmDescriptorGenuine env true true) :
     capRootHolds hash env := by
-  obtain ⟨_hcon, hsites⟩ := hsat
+  obtain ⟨_hcon, hsites, _⟩ := hsat
   -- `hashSites = attenuateGenuineHashSites = capRecomputeSites ++ attenuateHashSites`.
   show capRootHolds hash env
   unfold capRootHolds capRecomputeSites siteHoldsAll

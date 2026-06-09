@@ -328,8 +328,8 @@ theorem noteSpendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : 
     (hsat₂ : satisfiedVm hash noteSpendVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash noteSpendVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat
@@ -712,7 +712,7 @@ theorem noteSpendFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : I
     CellSpendSpec pre value post
       ∧ NoteSpendRootIntent env
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hfreeze := noteSpendFull_forces_freeze env hrow true true hcs
   have hroot := noteSpendFull_forces_root env true true hcs
   refine ⟨intent_to_cellSpendSpec env pre post value henc hfreeze, hroot, ?_⟩

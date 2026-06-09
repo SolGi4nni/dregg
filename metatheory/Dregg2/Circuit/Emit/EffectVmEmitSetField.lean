@@ -297,7 +297,7 @@ theorem setFieldDescriptor_commit_binds_state (slot : Fin 8) (hash : List ℤ �
     (hsat₂ : satisfiedVm hash (setFieldVmDescriptor slot) e₂ true true)
     (hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT)) :
     absorbedCols e₁ = absorbedCols e₂ :=
-  setFieldVm_commit_binds_block slot hash hCR e₁ e₂ hsat₁.2 hsat₂.2 hcommit
+  setFieldVm_commit_binds_block slot hash hCR e₁ e₂ hsat₁.2.1 hsat₂.2.1 hcommit
 
 /-! ## §9 — THE EXECUTOR UNIFICATION + the named honest boundary.
 

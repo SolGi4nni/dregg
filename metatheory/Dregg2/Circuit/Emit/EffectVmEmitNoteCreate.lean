@@ -331,8 +331,8 @@ theorem noteCreateDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR :
     (hsat₂ : satisfiedVm hash noteCreateVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash noteCreateVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat
@@ -715,7 +715,7 @@ theorem noteCreateFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : 
     CellNoteSpec pre value post
       ∧ NoteCreateRootIntent env
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hfreeze := noteCreateFull_forces_freeze env hrow true true hcs
   have hroot := noteCreateFull_forces_root env true true hcs
   refine ⟨intent_to_cellNoteSpec env pre post value henc hfreeze, hroot, ?_⟩

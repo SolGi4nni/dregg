@@ -281,8 +281,8 @@ theorem refusalDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hsat₂ : satisfiedVm hash refusalVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ refusalHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ refusalHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ refusalHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ refusalHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash refusalVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat

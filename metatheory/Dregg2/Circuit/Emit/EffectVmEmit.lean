@@ -347,6 +347,15 @@ structure VmRange where
   bits : Nat
   deriving Repr, DecidableEq
 
+/-- **`VmRange.holds env r`** — the range tooth's denotation: the wire's value lies in `[0, 2^bits)`.
+This is the field-soundness tooth `satisfiedVm` now EVALUATES (it was inert before): a verifying
+witness genuinely pins the (after-state balance) limb into `[0, 2^bits)`, so it is non-negative and
+bounded — no field-wraparound underflow can disguise an over-debit as a small positive balance.
+Combined with the per-effect balance-update gate (`post = pre − amt`), the post-balance non-neg tooth
+is exactly AVAILABILITY (`amt ≤ pre`) over ℤ. -/
+def VmRange.holds (env : VmRowEnv) (r : VmRange) : Prop :=
+  0 ≤ env.loc r.wire ∧ env.loc r.wire < (2 : ℤ) ^ r.bits
+
 /-- The emitted EffectVM descriptor. -/
 structure EffectVmDescriptor where
   name        : String
@@ -363,7 +372,10 @@ A descriptor is satisfied by `(env, isFirst, isLast)` iff:
   * every `transition` continuity holds (`nxt (sbCol hi) = loc (saCol lo)`);
   * every `boundary first/last` body vanishes WHEN the corresponding flag is set;
   * every `piBinding first/last col k` holds WHEN the corresponding flag is set;
-  * every hash site carries its genuine digest (under the abstract `hash`).
+  * every hash site carries its genuine digest (under the abstract `hash`);
+  * **every range tooth holds (`VmRange.holds`): the wire lies in `[0, 2^bits)`** — the
+    field-soundness / availability / non-neg layer, now LIVE (it was inert when `satisfiedVm`
+    dropped `d.ranges`; the running AIR `EffectVmDescriptorAir::eval` already enforces it).
 
 The boundary/PI clauses are GUARDED by `isFirst`/`isLast` — matching `when_first_row()` /
 `when_last_row()`, which are vacuous off the boundary. This is the faithful denotation of the
@@ -382,7 +394,9 @@ def VmConstraint.holdsVm (env : VmRowEnv) (isFirst isLast : Bool) : VmConstraint
 constraint holds on the row window AND every hash site carries its genuine digest. -/
 def satisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
-  (∀ c ∈ d.constraints, c.holdsVm env isFirst isLast) ∧ siteHoldsAll hash env d.hashSites
+  (∀ c ∈ d.constraints, c.holdsVm env isFirst isLast)
+    ∧ siteHoldsAll hash env d.hashSites
+    ∧ (∀ r ∈ d.ranges, r.holds env)
 
 /-! ## §6¾ — THE `system_roots`-ABSORBING GROUP-4 EXTENSION SITE (magnesium STAGE 4).
 

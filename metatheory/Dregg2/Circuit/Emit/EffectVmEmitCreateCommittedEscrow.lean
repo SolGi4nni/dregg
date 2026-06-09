@@ -323,8 +323,8 @@ theorem escrowCreateDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR
     (hsat₂ : satisfiedVm hash escrowCreateVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash escrowCreateVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat
@@ -695,7 +695,7 @@ theorem escrowCreateFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     CellEscrowSpec pre p post
       ∧ EscrowCreateRootIntent env
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hintent := escrowCreateFull_forces_intent env true true hcs
   have hroot := escrowCreateFull_forces_root env true true hcs
   refine ⟨intent_to_cellEscrowSpec env pre post p henc hintent, hroot, ?_⟩
@@ -866,7 +866,7 @@ theorem escrowCreateGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
                 (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
               (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hgates' : ∀ c ∈ escrowCreateRowGates, c.holdsVm env false false := by
     intro c hc
     have hmem : c ∈ escrowCreateVmDescriptorGenuine.constraints := by
@@ -905,7 +905,7 @@ theorem escrowCreateGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseid
     (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
     e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
   escrowRoot_amount_bound hash hCR e₁ e₂
-    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+    (genuine_sites_split hash e₁ hsat₁.2.1) (genuine_sites_split hash e₂ hsat₂.2.1) hroot
 
 theorem escrowCreateGenuine_recompute_nonvacuous :
     escrowRootHolds EffectVmEmitEscrowRoot.cN EffectVmEmitEscrowRoot.goodEscrowRow :=

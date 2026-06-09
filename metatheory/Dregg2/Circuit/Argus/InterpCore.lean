@@ -260,18 +260,36 @@ theorem decideSites_iff (hash : List ℤ → ℤ) (env : VmRowEnv) (sites : List
   simp only [decideSites, siteHoldsAll]
   exact decideSitesGo_iff hash env [] sites
 
+/-! ## §4¾ — Deciding the RANGE layer (the `∀ r ∈ ranges, r.holds env` conjunct).
+
+`VmRange.holds env r` (`EffectVmEmit.lean`) is `0 ≤ loc r.wire ∧ loc r.wire < 2^r.bits` — the
+field-soundness tooth. `ℤ` has `DecidableLE`/`DecidableLT`, so each tooth is decidable; `List.all`
+over the per-tooth decision mirrors `∀ r ∈ rs, r.holds env`. This is the layer the running AIR's
+`add_range_check` gates realize — now part of the verified denotation, not a dropped field. -/
+
+/-- **`decideRanges env rs`** — every range tooth holds (`0 ≤ loc wire < 2^bits`), as a Bool. -/
+def decideRanges (env : VmRowEnv) (rs : List VmRange) : Bool :=
+  rs.all (fun r => decide (0 ≤ env.loc r.wire) && decide (env.loc r.wire < (2 : ℤ) ^ r.bits))
+
+/-- The range-list decision is correct: `= true` iff every tooth's wire lies in `[0, 2^bits)`. -/
+theorem decideRanges_iff (env : VmRowEnv) (rs : List VmRange) :
+    decideRanges env rs = true ↔ ∀ r ∈ rs, r.holds env := by
+  simp only [decideRanges, List.all_eq_true, Bool.and_eq_true, decide_eq_true_eq, VmRange.holds]
+
 /-! ## §5 — `decideVm` — THE verified total reference (and its correctness).
 
-`decideVm` ANDs the two halves. Its `= true` is PROVED equivalent to `satisfiedVm`. This is the
+`decideVm` ANDs the three halves. Its `= true` is PROVED equivalent to `satisfiedVm`. This is the
 tiny core: the Rust `EffectVmDescriptorAir::eval` is a transcription of `decideVm`, and the iff
 below is the spec it must realize. -/
 
 /-- **`decideVm hash d env isFirst isLast`** — the total Boolean decision of the descriptor's
-denotation: every constraint holds AND every hash site carries its genuine digest. The faithful
-structural mirror of `satisfiedVm`'s two conjuncts. -/
+denotation: every constraint holds AND every hash site carries its genuine digest AND every range
+tooth holds. The faithful structural mirror of `satisfiedVm`'s three conjuncts (right-associated
+to match `satisfiedVm`'s `A ∧ (B ∧ C)`). -/
 def decideVm (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
     (env : VmRowEnv) (isFirst isLast : Bool) : Bool :=
-  decideConstraints env isFirst isLast d.constraints && decideSites hash env d.hashSites
+  decideConstraints env isFirst isLast d.constraints
+    && (decideSites hash env d.hashSites && decideRanges env d.ranges)
 
 /-- **`decideVm_iff_satisfiedVm` — THE deliverable.** The total reference DECIDES the abstract
 denotation: `decideVm hash d env isFirst isLast = true ↔ satisfiedVm hash d env isFirst isLast`.
@@ -281,7 +299,7 @@ theorem decideVm_iff_satisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescript
     (env : VmRowEnv) (isFirst isLast : Bool) :
     decideVm hash d env isFirst isLast = true ↔ satisfiedVm hash d env isFirst isLast := by
   simp only [decideVm, satisfiedVm, Bool.and_eq_true,
-    decideConstraints_iff, decideSites_iff]
+    decideConstraints_iff, decideSites_iff, decideRanges_iff]
 
 #assert_axioms decideVm_iff_satisfiedVm
 

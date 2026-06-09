@@ -282,8 +282,8 @@ theorem pipelinedSendDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hsat₂ : satisfiedVm hash pipelinedSendVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ pipelinedSendHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ pipelinedSendHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash pipelinedSendVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat

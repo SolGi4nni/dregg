@@ -294,8 +294,8 @@ theorem createEscrowDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR
     (hsat₂ : satisfiedVm hash createEscrowVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash createEscrowVmDescriptor e true true →
       e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
     intro e hsat
@@ -653,7 +653,7 @@ theorem createEscrowFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     CellCreateSpec pre p post
       ∧ CreateEscrowRootIntent env
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, _⟩ := hsat
   have hintent := createEscrowFull_forces_intent env true true hcs
   have hroot := createEscrowFull_forces_root env true true hcs
   refine ⟨intent_to_cellCreateSpec env pre post p henc hintent, hroot, ?_⟩
@@ -841,7 +841,7 @@ theorem createEscrowGenuine_root_forced (hash : List ℤ → ℤ) (env : VmRowEn
             (env.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET))
             (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
           (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE) :=
-  escrowRootAdvance_forced hash env (genuine_sites_split hash env hsat.2)
+  escrowRootAdvance_forced hash env (genuine_sites_split hash env hsat.2.1)
 
 /-- **`createEscrowGenuine_sound` — THE CLASS-A SOUNDNESS.** Satisfying the genuine descriptor under
 `RowEncodesCreate` forces (a) the structured per-cell `CellCreateSpec` (debit + frame freeze — §7's
@@ -864,7 +864,7 @@ theorem createEscrowGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
                 (env.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED)))
               (env.loc EffectVmEmitEscrowRoot.SYS_DIG_BEFORE)
       ∧ post.commit = env.pub pi.NEW_COMMIT := by
-  obtain ⟨hcs, hsites⟩ := hsat
+  obtain ⟨hcs, hsites, hrng⟩ := hsat
   -- (a) the per-row gates force CellCreateSpec (gates identical to §7)
   have hgates' : ∀ c ∈ createEscrowRowGates, c.holdsVm env false false := by
     intro c hc
@@ -879,7 +879,7 @@ theorem createEscrowGenuine_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
       simpa only [VmConstraint.holdsVm] using this
   have hint := (createEscrowVm_faithful env).mp hgates'
   refine ⟨intent_to_cellCreateSpec env pre post p henc hint, ?_, ?_⟩
-  · exact createEscrowGenuine_root_forced hash env ⟨hcs, hsites⟩
+  · exact createEscrowGenuine_root_forced hash env ⟨hcs, hsites, hrng⟩
   · -- (c) the published commitment (boundaryLastPins, identical to §7)
     have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
       intro c hc
@@ -913,7 +913,7 @@ theorem createEscrowGenuine_binds_record (hash : List ℤ → ℤ) (hCR : Poseid
     ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.ASSET)
     ∧ e₁.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED) = e₂.loc (prmCol EffectVmEmitEscrowRoot.ep.RESOLVED) :=
   escrowRoot_binds_record hash hCR e₁ e₂
-    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+    (genuine_sites_split hash e₁ hsat₁.2.1) (genuine_sites_split hash e₂ hsat₂.2.1) hroot
 
 /-- **`createEscrowGenuine_amount_bound`** — the load-bearing corollary: two genuine rows with the same
 new root have the SAME parked amount. Combined with the `gBalLoDebit` gate (post-`bal_lo` = pre − amount),
@@ -926,7 +926,7 @@ theorem createEscrowGenuine_amount_bound (hash : List ℤ → ℤ) (hCR : Poseid
     (hroot : e₁.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER = e₂.loc EffectVmEmitEscrowRoot.SYS_DIG_AFTER) :
     e₁.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) = e₂.loc (prmCol EffectVmEmitEscrowRoot.AMOUNT) :=
   escrowRoot_amount_bound hash hCR e₁ e₂
-    (genuine_sites_split hash e₁ hsat₁.2) (genuine_sites_split hash e₂ hsat₂.2) hroot
+    (genuine_sites_split hash e₁ hsat₁.2.1) (genuine_sites_split hash e₂ hsat₂.2.1) hroot
 
 /-! ### §H NON-VACUITY: the genuine recompute is inhabited (shared `goodEscrowRow_recomputes`), and a
 skewed amount is unforgeable (shared `tampered_amount_moves_root`). Both are PROVED in

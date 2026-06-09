@@ -294,8 +294,8 @@ theorem runnable_full_commit_binds {St : Type} (E : RunnableFullStateSpec St)
     (hd₁ : e₁.loc sysRootsDigestCol = systemRootsDigest hash sr₁)
     (hd₂ : e₂.loc sysRootsDigestCol = systemRootsDigest hash sr₂) :
     absorbedCols e₁ = absorbedCols e₂ ∧ (∀ i : Fin N_SYSTEM_ROOTS, sr₁ i = sr₂ i) := by
-  have hs₁ : siteHoldsAll hash e₁ wideHashSites := E.usesWideSites ▸ hsat₁.2
-  have hs₂ : siteHoldsAll hash e₂ wideHashSites := E.usesWideSites ▸ hsat₂.2
+  have hs₁ : siteHoldsAll hash e₁ wideHashSites := E.usesWideSites ▸ hsat₁.2.1
+  have hs₂ : siteHoldsAll hash e₂ wideHashSites := E.usesWideSites ▸ hsat₂.2.1
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
     rw [hpin₁, hpin₂, hpub]
   refine ⟨(wide_binds_everything hash hCR e₁ e₂ hs₁ hs₂ hcommit).1, fun i => ?_⟩

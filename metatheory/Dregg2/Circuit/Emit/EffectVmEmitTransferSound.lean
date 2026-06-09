@@ -350,8 +350,8 @@ theorem transferDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : P
     (hrow₁ : IsTransferRow e₁) (hrow₂ : IsTransferRow e₂)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
-  have hs₁ := hsat₁.2
-  have hs₂ := hsat₂.2
+  have hs₁ := hsat₁.2.1
+  have hs₂ := hsat₂.2.1
   -- each row's published state_commit equals its NEW_COMMIT (pins_intent), which are equal
   have hc₁ := (transferVmDescriptor_pins_intent hash e₁ hrow₁ hsat₁).2
   have hc₂ := (transferVmDescriptor_pins_intent hash e₂ hrow₂ hsat₂).2
