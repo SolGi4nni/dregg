@@ -699,8 +699,12 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
             SdkError::InvalidWitness(format!("non-revocation p3 proof serialize failed: {e}"))
         })?;
 
-        // Non-revocation public inputs: [revocation_root]
-        let revoc_pi = vec![revoc_witness.tree.root()];
+        // Non-revocation public inputs: [revocation_root, queried_item]. The
+        // queried item is the spent nullifier; the non-revocation AIR binds it
+        // in-circuit to the bracketed control-row COL_0 (row-0 QUERIED_ITEM
+        // boundary), so this is a real handle the verifier can compare to the
+        // Effect-VM nullifier (no-double-spend binding "b").
+        let revoc_pi = vec![revoc_witness.tree.root(), revoc_witness.item_hash];
 
         components.has_non_revocation = true;
         all_public_inputs.extend_from_slice(&revoc_pi);
@@ -815,36 +819,29 @@ pub fn verify_full_turn(
 ///   sub-proof is still verified for internal soundness (item genuinely absent
 ///   from the tree it published), but the verifier does not assert WHICH tree.
 ///
-/// # SOUNDNESS BOUNDARY — binding (b) is a circuit residual, NOT closed here
+/// # No-double-spend binding (b) — CLOSED (item == this turn's nullifier)
 ///
-/// The full no-double-spend property needs a SECOND tooth: the item the
-/// non-revocation proof proves fresh must be THIS turn's nullifier
+/// The full no-double-spend property needs a SECOND tooth beyond (a): the item
+/// the non-revocation proof proves fresh must be THIS turn's nullifier
 /// (`PI[NOTESPEND_NULLIFIER]` of the Effect-VM sub-proof), not some other item.
-/// That tooth is **not closeable from the SDK** with the current audited
-/// non-revocation circuit, because the queried item (`ancestor_hash`, the
-/// control-row `col::COL_0` value that the ordering constraints C6/C7/C10/C11
-/// bracket strictly between two adjacent sorted leaves —
-/// `circuit/src/dsl/revocation.rs:589,596-622`) is a PRIVATE witness: the AIR
-/// publishes ONLY `revocation_root` (`public_input_count: 1`,
-/// `circuit/src/dsl/revocation.rs:404,689`). The verifier therefore has no
-/// cryptographically-bound handle on the proven item to compare against the
-/// Effect-VM nullifier. Appending the item to `sub_public_inputs` in the SDK and
-/// checking it here would be VACUOUS — that appended felt is unconstrained by
-/// the AIR (no boundary references `pi[1]`), so a malicious prover could publish
-/// the nullifier value while having proved freshness for a different item.
-///
-/// Closing binding (b) requires a one-line circuit change (out of scope for this
-/// SDK-only change): expose the bracketed item as a second public input of the
-/// audited non-revocation circuit, e.g. add to
-/// `non_revocation_circuit_descriptor`'s `boundaries`
-/// `BoundaryDef::PiBinding { row: BoundaryRow::Index(0), col: col::COL_0,
-/// pi_index: 1 }` and bump `public_input_count` to 2. Then the prover sets
-/// `revoc_pi = vec![root, item_hash]` and this verifier adds the second tooth
-/// `revoc_pi[1] == effect_pi[pi::NOTESPEND_NULLIFIER]`. Because `col::COL_0` on
-/// the control row is the exact value the ordering constraints pin, that PI
-/// would be a real binding. See the test
-/// `revocation_item_is_private_documenting_binding_b_residual` which pins this
-/// fact so it cannot silently regress.
+/// This is now enforced (step 8 below). The audited non-revocation circuit
+/// publishes the queried item as its second public input
+/// (`pi::QUERIED_ITEM`), bound IN-CIRCUIT to the bracketed control-row
+/// `col::COL_0` by a row-0 `PiBinding` boundary
+/// (`circuit/src/dsl/revocation.rs`). Because `col::COL_0` on the control row is
+/// the exact value the ordering constraints C6/C7/C10/C11 pin strictly between
+/// two adjacent sorted leaves, that PI is a REAL binding — a proof whose
+/// published `pi[1]` differs from the genuinely-bracketed item is UNSAT, so the
+/// felt is NOT a free wire. The prover sets `revoc_pi = vec![root, item_hash]`
+/// with `item_hash` the spent nullifier; this verifier (step 8) then enforces
+/// `revoc_pi[QUERIED_ITEM] == effect_pi[pi::NOTESPEND_NULLIFIER]` for any turn
+/// that genuinely spends a note (non-zero nullifier slot). A non-revocation
+/// proof proving freshness for a DIFFERENT item is rejected with
+/// [`FullTurnVerifyError::NullifierMismatch`]. Together (a)+(b): freshness is
+/// against THE canonical accumulator AND for THIS turn's nullifier. The test
+/// `freshness_binding_b_rejects_wrong_item` pins the anti-forgery property and
+/// `revocation_item_pi_exposed_binding_b_closed` guards that the circuit keeps
+/// exposing the item PI.
 pub fn verify_full_turn_bound(
     proof: &FullTurnProof,
     expected_old_commit: BabyBear,
@@ -932,7 +929,10 @@ pub fn verify_full_turn_bound(
                             reason: format!("non-revocation p3 deserialize: {e}"),
                         }
                     })?;
-                // Non-revocation PI is [revocation_root].
+                // Non-revocation PI is [revocation_root, queried_item]. Both are
+                // bound in-circuit; the queried item must be carried so the
+                // audited verifier re-binds it (a freshness proof for a different
+                // item is UNSAT under this item).
                 let root = attached
                     .sub_public_inputs
                     .first()
@@ -940,7 +940,14 @@ pub fn verify_full_turn_bound(
                     .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
                         "non-revocation PI missing revocation_root".into(),
                     ))?;
-                verify_non_revocation_p3(&p3, root)
+                let queried_item = attached
+                    .sub_public_inputs
+                    .get(1)
+                    .copied()
+                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                        "non-revocation PI missing queried_item (pi[1])".into(),
+                    ))?;
+                verify_non_revocation_p3(&p3, root, queried_item)
             }
             other => Err(format!("unknown sub-proof label: {}", other)),
         };
@@ -1150,6 +1157,55 @@ pub fn verify_full_turn_bound(
         }
     }
 
+    // 8. FRESHNESS / no-double-spend — binding (b): the item the non-revocation
+    //    proof proved fresh IS THIS turn's nullifier.
+    //
+    //    The non-revocation sub-proof now publishes the queried item as its
+    //    SECOND public input (`pi[QUERIED_ITEM]`), bound IN-CIRCUIT to the
+    //    bracketed control-row COL_0 by a row-0 boundary
+    //    (`circuit/src/dsl/revocation.rs`, `QUERIED_ITEM` PI). Step 3 already
+    //    re-verified the sub-proof against that published item, so it is a
+    //    cryptographically-bound handle on the genuinely-proven item — NOT a
+    //    free felt. Requiring it to equal the Effect-VM proof's NoteSpend
+    //    nullifier (`PI[NOTESPEND_NULLIFIER]`, pinned in-circuit to the spend
+    //    row's folded nullifier — `effect_vm/air.rs`) closes binding (b): the
+    //    freshness is for THIS turn's nullifier, not some other item a prover
+    //    proved fresh and stapled on.
+    //
+    //    Gating: only a turn that genuinely SPENDS a note has a nullifier, so
+    //    we enforce this only when `PI[NOTESPEND_NULLIFIER]` is populated
+    //    (non-zero sentinel). A non-spend turn may still legitimately carry a
+    //    non-revocation proof whose item is a CAPABILITY hash (token freshness),
+    //    which is not a nullifier and must not be forced to equal the zero slot.
+    //    Together (a)+(b): freshness is against THE canonical accumulator AND
+    //    for THIS turn's nullifier — the full no-double-spend property.
+    if proof.components.has_non_revocation && proof.components.has_state_transition {
+        let effect_nullifier = effect_sub.sub_public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER];
+        if effect_nullifier != BabyBear::ZERO {
+            let revoc_sub = proof
+                .composed
+                .sub_proofs
+                .iter()
+                .find(|sp| sp.label == "non-revocation")
+                .ok_or(FullTurnVerifyError::MissingComponent("non-revocation".into()))?;
+            let proven_item = revoc_sub
+                .sub_public_inputs
+                .get(1)
+                .copied()
+                .ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
+                        "non-revocation PI missing queried_item (pi[1])".into(),
+                    )
+                })?;
+            if proven_item != effect_nullifier {
+                return Err(FullTurnVerifyError::NullifierMismatch {
+                    proven_item,
+                    effect_nullifier,
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1207,6 +1263,22 @@ pub enum FullTurnVerifyError {
         /// The revocation root the non-revocation sub-proof actually published.
         got: BabyBear,
     },
+    /// The non-revocation sub-proof proved freshness for an item that is NOT
+    /// this turn's spent nullifier. This is the no-double-spend / freshness
+    /// anti-forgery tooth, binding (b): the non-revocation AIR now publishes
+    /// the queried item as `pi[QUERIED_ITEM]`, bound in-circuit to the
+    /// bracketed control-row COL_0 (`dsl/revocation.rs`). Requiring it to equal
+    /// the Effect-VM proof's `PI[NOTESPEND_NULLIFIER]` (pinned in-circuit to the
+    /// spend row's folded nullifier) ensures the freshness attests THIS turn's
+    /// nullifier, not some other item a prover proved fresh and attached. Only
+    /// enforced for turns that genuinely spend a note (non-zero nullifier slot).
+    NullifierMismatch {
+        /// The item the non-revocation sub-proof actually proved fresh
+        /// (`non-revocation pi[QUERIED_ITEM]`).
+        proven_item: BabyBear,
+        /// This turn's spent nullifier (`Effect-VM PI[NOTESPEND_NULLIFIER]`).
+        effect_nullifier: BabyBear,
+    },
 }
 
 impl std::fmt::Display for FullTurnVerifyError {
@@ -1251,6 +1323,16 @@ impl std::fmt::Display for FullTurnVerifyError {
                  root ({:?}) — the freshness proof is against a different (prover-chosen) \
                  nullifier set than this turn's canonical one (no-double-spend tooth)",
                 got, expected
+            ),
+            Self::NullifierMismatch {
+                proven_item,
+                effect_nullifier,
+            } => write!(
+                f,
+                "non-revocation proof proved freshness for item ({:?}), not this turn's \
+                 spent nullifier ({:?}) — the freshness attests a DIFFERENT item than the \
+                 turn spends (no-double-spend binding b)",
+                proven_item, effect_nullifier
             ),
         }
     }
@@ -1850,24 +1932,178 @@ mod tests {
         );
     }
 
-    /// SOUNDNESS-BOUNDARY pin for binding (b) (item == this turn's nullifier):
-    /// documents — and guards against silent regression of — the fact that the
-    /// audited non-revocation circuit does NOT expose the queried item as a
-    /// public input, so binding (b) is NOT closeable from the SDK. If a future
-    /// circuit change exposes the item (bumping `public_input_count` to 2), this
-    /// test fails LOUDLY, signalling that the second tooth (`revoc_pi[1] ==
-    /// effect_pi[NOTESPEND_NULLIFIER]`) should now be wired in
-    /// `verify_full_turn_bound` (see its SOUNDNESS BOUNDARY doc).
+    /// BINDING (b) CLOSED — circuit guard: the audited non-revocation circuit
+    /// now exposes the queried item as its second public input
+    /// (`pi::QUERIED_ITEM`), bound in-circuit to control-row `COL_0` by a row-0
+    /// `PiBinding` boundary. This guards against silent regression of the
+    /// circuit half of binding (b): if the item PI is ever removed (back to
+    /// `public_input_count == 1` / no row-0 COL_0 boundary), the verifier's
+    /// nullifier tooth (step 8) would have nothing real to compare and this test
+    /// fails LOUDLY.
     #[test]
-    fn revocation_item_is_private_documenting_binding_b_residual() {
+    fn revocation_item_pi_exposed_binding_b_closed() {
+        use dregg_circuit::dsl::circuit::{BoundaryDef, BoundaryRow};
+        use dregg_circuit::dsl::revocation::{col as rcol, pi as rpi};
+
         let desc = dregg_circuit::dsl::revocation::non_revocation_circuit_descriptor();
         assert_eq!(
-            desc.public_input_count, 1,
-            "the audited non-revocation circuit publishes ONLY [revocation_root]; the queried \
-             item (ancestor_hash / control-row COL_0) is a PRIVATE witness, so the item==nullifier \
-             tooth (binding b) needs a circuit PI before verify_full_turn_bound can enforce it. \
-             If this is now 2, wire the second tooth — see the verify_full_turn_bound doc.",
+            desc.public_input_count, 2,
+            "the audited non-revocation circuit must publish [revocation_root, queried_item] so \
+             verify_full_turn_bound can bind the proven-fresh item to this turn's nullifier \
+             (no-double-spend binding b)",
         );
+        // The queried-item PI must be a REAL binding: a row-0 PiBinding tying
+        // control-row COL_0 (the value the ordering constraints bracket) to
+        // pi[QUERIED_ITEM]. A free felt would make the SDK tooth vacuous.
+        let has_item_boundary = desc.boundaries.iter().any(|b| {
+            matches!(
+                b,
+                BoundaryDef::PiBinding {
+                    row: BoundaryRow::Index(0),
+                    col,
+                    pi_index,
+                } if *col == rcol::COL_0 && *pi_index == rpi::QUERIED_ITEM
+            )
+        });
+        assert!(
+            has_item_boundary,
+            "the queried-item PI must be pinned by a row-0 PiBinding on COL_0 — otherwise pi[1] is \
+             a free wire and the item==nullifier tooth would be vacuous",
+        );
+    }
+
+    /// FRESHNESS / no-double-spend — binding (b), HONEST: a turn that SPENDS a
+    /// note (so `PI[NOTESPEND_NULLIFIER]` is populated) and carries a
+    /// non-revocation proof of freshness for EXACTLY that nullifier verifies
+    /// through `verify_full_turn` — the new step-8 nullifier tooth accepts when
+    /// the proven-fresh item IS this turn's nullifier.
+    #[test]
+    fn freshness_binding_b_honest_spend_verifies() {
+        use dregg_circuit::dsl::revocation::DslRevocationTree;
+        use dregg_circuit::effect_vm::pi as vmpi;
+        use dregg_circuit::poseidon2::hash_many;
+
+        let initial = CellState::new(1000, 0);
+        // This turn's spent nullifier — a value known fresh against the tree
+        // below (the same item the binding-(a) tests prove non-membership for).
+        let nullifier = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
+        let effects = vec![VmEffect::NoteSpend { nullifier, value: 500 }];
+
+        // A revocation accumulator in which the nullifier is NOT yet present
+        // (the note has not been spent before — it is fresh).
+        let revoked: Vec<BabyBear> = (1..=20u32)
+            .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
+            .collect();
+        let tree = DslRevocationTree::new(revoked, 4);
+
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects: effects.clone(),
+            authorization: None,
+            membership: None,
+            conservation: None,
+            non_revocation: Some(NonRevocationWitness {
+                tree,
+                item_hash: nullifier, // freshness proven for THIS turn's nullifier
+            }),
+            turn_hash: [0xB1u8; 32],
+        };
+        let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
+
+        // Sanity: the EffectVM PI carries the nullifier (so step 8 actually fires).
+        let eff = proof
+            .composed
+            .sub_proofs
+            .iter()
+            .find(|sp| sp.label == "effect-vm")
+            .unwrap();
+        assert_eq!(
+            eff.sub_public_inputs[vmpi::NOTESPEND_NULLIFIER], nullifier,
+            "precondition: the spend turn surfaces its nullifier into PI[NOTESPEND_NULLIFIER]",
+        );
+
+        let old_commit = initial.state_commitment;
+        let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
+
+        verify_full_turn(&proof, old_commit, new_commit).expect(
+            "honest spend whose freshness is proven for THIS turn's nullifier must verify \
+             (binding b accepts item == nullifier)",
+        );
+    }
+
+    /// FRESHNESS / no-double-spend — binding (b), ANTI-FORGERY (the gap this
+    /// closes): a turn that spends nullifier N but whose non-revocation proof
+    /// proves freshness for a DIFFERENT item M (≠ N) MUST be rejected by
+    /// `verify_full_turn` with `NullifierMismatch`. This is the counterfeiting
+    /// hole binding (b) closes: proving "some OTHER item is fresh" must not let a
+    /// double-spend of N through. The queried item is bound in-circuit to the
+    /// non-revocation proof (row-0 COL_0 boundary), so the published `pi[1]` is
+    /// the genuinely-proven item — step 8's `pi[1] != PI[NOTESPEND_NULLIFIER]`
+    /// comparison is the ONLY thing between the mismatched freshness and
+    /// acceptance, and it MUST reject.
+    #[test]
+    fn freshness_binding_b_rejects_wrong_item() {
+        use dregg_circuit::dsl::revocation::DslRevocationTree;
+        use dregg_circuit::effect_vm::pi as vmpi;
+        use dregg_circuit::poseidon2::hash_many;
+
+        let initial = CellState::new(1000, 0);
+        // This turn spends nullifier N.
+        let nullifier = hash_many(&[BabyBear::new(0x0_7E), BabyBear::new(0x5EED)]);
+        let effects = vec![VmEffect::NoteSpend { nullifier, value: 500 }];
+
+        // The prover proves freshness for a DIFFERENT item M (not the nullifier),
+        // which is genuinely absent from the accumulator — an internally-sound
+        // non-membership proof, but for the WRONG item.
+        let other_item = hash_many(&[BabyBear::new(0xDEC0), BabyBear::new(0xDED)]);
+        assert_ne!(other_item, nullifier);
+        let revoked: Vec<BabyBear> = (1..=20u32)
+            .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
+            .collect();
+        let tree = DslRevocationTree::new(revoked, 4);
+
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects: effects.clone(),
+            authorization: None,
+            membership: None,
+            conservation: None,
+            non_revocation: Some(NonRevocationWitness {
+                tree,
+                item_hash: other_item, // freshness proven for the WRONG item
+            }),
+            turn_hash: [0xB2u8; 32],
+        };
+        let proof = prove_full_turn(&witness)
+            .expect("proof generates (the mismatch is a verify-time property)");
+
+        let eff = proof
+            .composed
+            .sub_proofs
+            .iter()
+            .find(|sp| sp.label == "effect-vm")
+            .unwrap();
+        let old_commit = initial.state_commitment;
+        let new_commit = eff.sub_public_inputs[vmpi::NEW_COMMIT];
+
+        let result = verify_full_turn(&proof, old_commit, new_commit);
+        match result {
+            Err(FullTurnVerifyError::NullifierMismatch {
+                proven_item,
+                effect_nullifier,
+            }) => {
+                assert_eq!(proven_item, other_item);
+                assert_eq!(effect_nullifier, nullifier);
+            }
+            Ok(()) => panic!(
+                "SOUNDNESS (no-double-spend binding b): verify_full_turn ACCEPTED a spend of \
+                 nullifier N whose freshness was proven for a DIFFERENT item M — the \
+                 counterfeiting hole is OPEN!"
+            ),
+            Err(other) => panic!(
+                "expected NullifierMismatch (the binding-b tooth), got: {other:?}",
+            ),
+        }
     }
 
     /// HONEST authorization-bound turn: a derivation whose conclusion is

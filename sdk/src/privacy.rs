@@ -110,6 +110,13 @@ pub struct NonRevocationProof {
     ///
     /// The verifier must know this root (committed by the federation) to verify.
     pub revocation_root: BabyBear,
+    /// The queried item (the primary ancestor / root-issuer revocation hash)
+    /// this proof attests is NOT revoked. It is the non-revocation circuit's
+    /// second public input (`pi::QUERIED_ITEM`), bound in-circuit to the
+    /// bracketed control-row `COL_0`, so the verifier re-binds it: a proof of
+    /// freshness for a different item would publish a different `pi[1]` and be
+    /// rejected.
+    pub item_hash: BabyBear,
 }
 
 /// Proof of non-revocation using the polynomial accumulator (O(1) verification).
@@ -595,6 +602,9 @@ impl AgentCipherclerk {
         Ok(NonRevocationProof {
             proof,
             revocation_root,
+            // The queried item is the primary ancestor (root-issuer) hash, which
+            // `generate_non_revocation_trace` surfaced as `pi[QUERIED_ITEM]`.
+            item_hash: *primary_hash,
         })
     }
 
@@ -728,7 +738,8 @@ pub fn verify_anonymous_presentation(
 /// Returns `Ok(())` if the proof is valid, `Err` with reason otherwise.
 pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), String> {
     let circuit = non_revocation_dsl_circuit();
-    let public_inputs = vec![proof.revocation_root];
+    // PI layout: [revocation_root, queried_item]. Both are bound in-circuit.
+    let public_inputs = vec![proof.revocation_root, proof.item_hash];
     dregg_circuit::stark::verify(&circuit, &proof.proof, &public_inputs)
 }
 

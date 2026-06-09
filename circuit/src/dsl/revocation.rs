@@ -94,6 +94,16 @@ pub mod col {
 /// Public input indices.
 pub mod pi {
     pub const REVOCATION_ROOT: usize = 0;
+
+    /// The queried item (`ancestor_hash`), exposed as a PUBLIC input so a
+    /// composing verifier can bind the proven-fresh item to a turn's nullifier
+    /// (no-double-spend binding "b"). This is a REAL binding, not a free wire:
+    /// the same value occupies control-row `COL_0`, which the ordering
+    /// constraints C6/C7/C10/C11 pin strictly between two adjacent sorted
+    /// leaves, and a row-0 `PiBinding` (see `boundaries`) ties that cell to
+    /// `pi[1]` in-circuit. A prover who publishes a `QUERIED_ITEM` other than
+    /// the bracketed item violates the row-0 boundary and the proof is UNSAT.
+    pub const QUERIED_ITEM: usize = 1;
 }
 
 // ============================================================================
@@ -321,7 +331,8 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
         }),
     });
 
-    // Boundary constraints: bind revocation_root to Merkle path tops.
+    // Boundary constraints: bind revocation_root to Merkle path tops, and bind
+    // the queried item (control-row COL_0) to the second public input.
     let boundaries = vec![
         BoundaryDef::PiBinding {
             row: BoundaryRow::Index(TREE_DEPTH),
@@ -332,6 +343,18 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
             row: BoundaryRow::Index(2 * TREE_DEPTH),
             col: col::COL_2,
             pi_index: pi::REVOCATION_ROOT,
+        },
+        // QUERIED-ITEM binding (no-double-spend tooth "b"): the control row is
+        // row 0, where COL_0 holds `ancestor_hash` — the item being proven
+        // fresh. The ordering constraints C6/C7/C10/C11 already pin COL_0
+        // strictly between two adjacent sorted leaves, so exposing it as
+        // `pi[QUERIED_ITEM]` via this row-0 boundary is a REAL binding, not a
+        // free wire: a proof whose published `pi[1]` differs from the bracketed
+        // item violates this boundary and is UNSAT.
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::Index(0),
+            col: col::COL_0,
+            pi_index: pi::QUERIED_ITEM,
         },
     ];
 
@@ -401,7 +424,7 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
         columns,
         constraints,
         boundaries,
-        public_input_count: 1, // [revocation_root]
+        public_input_count: 2, // [revocation_root, queried_item]
         lookup_tables: vec![],
     }
 }
@@ -686,7 +709,10 @@ pub fn generate_non_revocation_trace(
         trace.push(row);
     }
 
-    let public_inputs = vec![revocation_root];
+    // PI layout: [revocation_root, queried_item]. The queried item is
+    // `ancestor_hash` — the control-row COL_0 value the row-0 QUERIED_ITEM
+    // boundary binds and the ordering constraints bracket.
+    let public_inputs = vec![revocation_root, witness.ancestor_hash];
     (trace, public_inputs)
 }
 
@@ -713,15 +739,21 @@ pub fn prove_non_revocation_dsl(
 
 /// Verify a STARK non-revocation proof against the given root and item hash.
 ///
-/// The verifier only needs the revocation root (committed by the federation)
-/// and the proof. The item identity remains private.
+/// The verifier supplies the revocation `root` (committed by the federation)
+/// AND the `item_hash` whose freshness it expects this proof to attest. Both
+/// are public inputs (`[revocation_root, queried_item]`): the proof is bound
+/// in-circuit to BOTH, so a proof of freshness for a DIFFERENT item is
+/// rejected (the row-0 QUERIED_ITEM boundary fails). In privacy-preserving
+/// composition the caller may pass the item it independently expects (e.g. a
+/// turn's nullifier); the item is no longer hidden from a verifier that
+/// chooses to bind it.
 pub fn verify_non_revocation_dsl(
     proof: &StarkProof,
     root: BabyBear,
-    _item_hash: BabyBear,
+    item_hash: BabyBear,
 ) -> Result<(), String> {
     let circuit = non_revocation_dsl_circuit();
-    let public_inputs = vec![root];
+    let public_inputs = vec![root, item_hash];
     stark::verify(&circuit, proof, &public_inputs)
 }
 
@@ -756,14 +788,19 @@ pub fn prove_non_revocation_p3(
 }
 
 /// Verify a non-revocation proof on the AUDITED Plonky3 verifier
-/// (`p3-batch-stark`). The verifier needs only the revocation `root`.
+/// (`p3-batch-stark`). The verifier supplies the revocation `root` AND the
+/// `item_hash` whose freshness it expects this proof to attest; both are public
+/// inputs (`[revocation_root, queried_item]`) bound in-circuit. A proof of
+/// freshness for a DIFFERENT item publishes a different `pi[1]` and is rejected
+/// by the row-0 QUERIED_ITEM boundary.
 #[cfg(feature = "recursion")]
 pub fn verify_non_revocation_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     root: BabyBear,
+    item_hash: BabyBear,
 ) -> Result<(), String> {
     let circuit = non_revocation_dsl_circuit();
-    let public_inputs = vec![root];
+    let public_inputs = vec![root, item_hash];
     crate::dsl::dsl_p3_air::verify_dsl_p3(&circuit, proof, &public_inputs)
         .map_err(|e| format!("non-revocation p3 verification failed: {e}"))
 }
@@ -806,7 +843,32 @@ mod p3_tests {
 
         let proof =
             prove_non_revocation_p3(&tree, fresh).expect("honest non-revocation must prove+verify");
-        verify_non_revocation_p3(&proof, root).expect("audited p3 verify accepts honest freshness");
+        verify_non_revocation_p3(&proof, root, fresh)
+            .expect("audited p3 verify accepts honest freshness");
+    }
+
+    /// ANTI-FORGERY (no-double-spend binding "b"): a non-revocation proof that
+    /// genuinely proves freshness for item X MUST be rejected when the verifier
+    /// expects a DIFFERENT item Y. The queried item is now a public input
+    /// (`pi[QUERIED_ITEM]`) bound in-circuit to control-row COL_0 (the value the
+    /// ordering constraints bracket), so verifying with the wrong item supplies
+    /// a `pi[1]` the row-0 boundary cannot satisfy.
+    #[test]
+    fn p3_non_revocation_rejects_wrong_queried_item() {
+        let tree = build_tree(20);
+        let root = tree.root();
+        let fresh = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
+        let proof = prove_non_revocation_p3(&tree, fresh).expect("honest proof");
+
+        // Verify with a DIFFERENT item than the one actually proven fresh.
+        let other_item = hash_many(&[BabyBear::new(0xF00D), BabyBear::new(0xCAFE)]);
+        assert_ne!(other_item, fresh);
+        let res = verify_non_revocation_p3(&proof, root, other_item);
+        assert!(
+            res.is_err(),
+            "SOUNDNESS (binding b): a freshness proof for one item MUST NOT verify against a \
+             different expected item — the QUERIED_ITEM public-input binding is unenforced!"
+        );
     }
 
     /// ANTI-GHOST: a forged revocation `root` public input MUST be rejected by
@@ -819,7 +881,7 @@ mod p3_tests {
         let proof = prove_non_revocation_p3(&tree, fresh).expect("honest proof");
 
         let forged_root = root + BabyBear::new(1);
-        let res = verify_non_revocation_p3(&proof, forged_root);
+        let res = verify_non_revocation_p3(&proof, forged_root, fresh);
         assert!(
             res.is_err(),
             "SOUNDNESS: a forged revocation root MUST be rejected by the audited p3 verifier"
