@@ -772,6 +772,14 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
 /// 2. The public inputs bind to the expected state commitments.
 /// 3. Cross-proof PI bindings are consistent (shared roots match).
 ///
+/// This delegates to [`verify_full_turn_bound`] with `expected_revocation_root
+/// = None`, i.e. it does NOT pin the non-revocation sub-proof's accumulator root
+/// to a canonical one. A caller on the no-double-spend / freshness-critical path
+/// (a federation member finalizing a spend) MUST instead call
+/// [`verify_full_turn_bound`] with the canonical accumulator root, so the
+/// freshness proof is bound to THE canonical nullifier set for this turn rather
+/// than a tree of the prover's choosing.
+///
 /// # Returns
 ///
 /// `Ok(())` if the proof is valid, or an error describing what failed.
@@ -779,6 +787,69 @@ pub fn verify_full_turn(
     proof: &FullTurnProof,
     expected_old_commit: BabyBear,
     expected_new_commit: BabyBear,
+) -> Result<(), FullTurnVerifyError> {
+    verify_full_turn_bound(proof, expected_old_commit, expected_new_commit, None)
+}
+
+/// Verify a full turn proof, additionally binding the non-revocation sub-proof's
+/// accumulator root to a caller-supplied canonical root.
+///
+/// This is the freshness-critical (no-double-spend) verifier entry point. It is
+/// identical to [`verify_full_turn`] except for the `expected_revocation_root`
+/// argument:
+///
+/// - `expected_revocation_root = Some(root)`: the non-revocation sub-proof's
+///   published `revocation_root` PI MUST equal `root` (the canonical published
+///   accumulator the verifier expects, bound to the authenticated pre-state /
+///   federation receipt). The non-revocation AIR pins that PI to the Merkle
+///   tree the proof authenticated against (boundary at the path tops,
+///   `circuit/src/dsl/revocation.rs:324-336`), so a prover who proves freshness
+///   against its OWN tree — an empty / stale / hand-picked accumulator in which
+///   the item is trivially absent — publishes a different root and is rejected
+///   with [`FullTurnVerifyError::RevocationRootMismatch`]. This is binding (a)
+///   of the no-double-spend gap: the freshness is against THE canonical
+///   nullifier set, not one of the prover's choosing.
+///
+/// - `expected_revocation_root = None`: no canonical-root binding is performed
+///   (the legacy behaviour of [`verify_full_turn`]). The non-revocation
+///   sub-proof is still verified for internal soundness (item genuinely absent
+///   from the tree it published), but the verifier does not assert WHICH tree.
+///
+/// # SOUNDNESS BOUNDARY — binding (b) is a circuit residual, NOT closed here
+///
+/// The full no-double-spend property needs a SECOND tooth: the item the
+/// non-revocation proof proves fresh must be THIS turn's nullifier
+/// (`PI[NOTESPEND_NULLIFIER]` of the Effect-VM sub-proof), not some other item.
+/// That tooth is **not closeable from the SDK** with the current audited
+/// non-revocation circuit, because the queried item (`ancestor_hash`, the
+/// control-row `col::COL_0` value that the ordering constraints C6/C7/C10/C11
+/// bracket strictly between two adjacent sorted leaves —
+/// `circuit/src/dsl/revocation.rs:589,596-622`) is a PRIVATE witness: the AIR
+/// publishes ONLY `revocation_root` (`public_input_count: 1`,
+/// `circuit/src/dsl/revocation.rs:404,689`). The verifier therefore has no
+/// cryptographically-bound handle on the proven item to compare against the
+/// Effect-VM nullifier. Appending the item to `sub_public_inputs` in the SDK and
+/// checking it here would be VACUOUS — that appended felt is unconstrained by
+/// the AIR (no boundary references `pi[1]`), so a malicious prover could publish
+/// the nullifier value while having proved freshness for a different item.
+///
+/// Closing binding (b) requires a one-line circuit change (out of scope for this
+/// SDK-only change): expose the bracketed item as a second public input of the
+/// audited non-revocation circuit, e.g. add to
+/// `non_revocation_circuit_descriptor`'s `boundaries`
+/// `BoundaryDef::PiBinding { row: BoundaryRow::Index(0), col: col::COL_0,
+/// pi_index: 1 }` and bump `public_input_count` to 2. Then the prover sets
+/// `revoc_pi = vec![root, item_hash]` and this verifier adds the second tooth
+/// `revoc_pi[1] == effect_pi[pi::NOTESPEND_NULLIFIER]`. Because `col::COL_0` on
+/// the control row is the exact value the ordering constraints pin, that PI
+/// would be a real binding. See the test
+/// `revocation_item_is_private_documenting_binding_b_residual` which pins this
+/// fact so it cannot silently regress.
+pub fn verify_full_turn_bound(
+    proof: &FullTurnProof,
+    expected_old_commit: BabyBear,
+    expected_new_commit: BabyBear,
+    expected_revocation_root: Option<BabyBear>,
 ) -> Result<(), FullTurnVerifyError> {
     // 1. Rebuild the composed circuit descriptor from the component flags.
     let _composed_descriptor = build_full_turn_descriptor(&proof.components);
@@ -1033,6 +1104,52 @@ pub fn verify_full_turn(
         }
     }
 
+    // 7. FRESHNESS / no-double-spend: bind the non-revocation sub-proof's
+    //    accumulator root to the caller's canonical root (binding (a)).
+    //
+    //    The non-revocation sub-proof's `revocation_root` PI is pinned IN-CIRCUIT
+    //    to the Merkle tree the proof authenticated against (boundary at the path
+    //    tops, `circuit/src/dsl/revocation.rs:324-336`). Step 3 already verified
+    //    the non-membership math against THAT root. But internally-sound
+    //    non-membership against the PROVER's tree only proves "item ∉ some tree";
+    //    a counterfeiter could pick an empty / stale accumulator in which the
+    //    item is trivially absent. Requiring the published root to equal the
+    //    canonical accumulator the verifier expects (bound to the authenticated
+    //    pre-state / federation receipt) upgrades that to "item ∉ THE canonical
+    //    nullifier set for this turn" — the no-double-spend property.
+    //
+    //    Only enforced when the caller supplies the canonical root (the
+    //    freshness-critical path); `None` preserves the legacy
+    //    internal-soundness-only behaviour. The companion tooth (item == this
+    //    turn's nullifier) is a circuit residual — see the
+    //    [`verify_full_turn_bound`] SOUNDNESS BOUNDARY doc.
+    if let Some(expected_root) = expected_revocation_root {
+        if proof.components.has_non_revocation {
+            let revoc_sub = proof
+                .composed
+                .sub_proofs
+                .iter()
+                .find(|sp| sp.label == "non-revocation")
+                .ok_or(FullTurnVerifyError::MissingComponent("non-revocation".into()))?;
+            // Non-revocation PI is [revocation_root].
+            let proof_root = revoc_sub
+                .sub_public_inputs
+                .first()
+                .copied()
+                .ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
+                        "non-revocation PI missing revocation_root".into(),
+                    )
+                })?;
+            if proof_root != expected_root {
+                return Err(FullTurnVerifyError::RevocationRootMismatch {
+                    expected: expected_root,
+                    got: proof_root,
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1072,6 +1189,24 @@ pub enum FullTurnVerifyError {
         /// The "may perform THIS effect" fact reconstructed from the Effect-VM PIs.
         expected_action_binding: BabyBear,
     },
+    /// The non-revocation sub-proof proves freshness against a revocation
+    /// accumulator root that is NOT the canonical root the verifier expects for
+    /// this turn. This is the no-double-spend / freshness anti-forgery tooth:
+    /// the non-revocation AIR pins its published `revocation_root` PI to the
+    /// Merkle tree the proof actually authenticated against (boundary at the
+    /// path tops, `dsl/revocation.rs` C-`boundaries`), so a prover who supplies
+    /// its OWN tree (an empty / stale / hand-picked accumulator in which the
+    /// item is trivially absent) publishes a different root than the canonical
+    /// one and is rejected here. Without this tooth the internally-sound
+    /// non-membership math proves "item ∉ SOME tree of the prover's choosing",
+    /// not "item ∉ THE canonical nullifier set for this turn".
+    RevocationRootMismatch {
+        /// The canonical accumulator root the verifier expects (bound to the
+        /// authenticated pre-state / federation receipt).
+        expected: BabyBear,
+        /// The revocation root the non-revocation sub-proof actually published.
+        got: BabyBear,
+    },
 }
 
 impl std::fmt::Display for FullTurnVerifyError {
@@ -1109,6 +1244,13 @@ impl std::fmt::Display for FullTurnVerifyError {
                  expected Allow(effects_commit) = {:?} — the authorization proves a \
                  different action than the turn performs",
                 auth_derived_hash, expected_action_binding
+            ),
+            Self::RevocationRootMismatch { expected, got } => write!(
+                f,
+                "non-revocation proof root ({:?}) is not the canonical accumulator \
+                 root ({:?}) — the freshness proof is against a different (prover-chosen) \
+                 nullifier set than this turn's canonical one (no-double-spend tooth)",
+                got, expected
             ),
         }
     }
@@ -1570,6 +1712,162 @@ mod tests {
 
         verify_full_turn(&proof, old_commit, new_commit)
             .expect("full turn with membership + non-revocation must verify on the audited p3 path");
+    }
+
+    /// FRESHNESS / no-double-spend — binding (a), HONEST: a full turn whose
+    /// non-revocation proof proves freshness against the CANONICAL accumulator
+    /// root verifies through `verify_full_turn_bound(Some(canonical_root))`.
+    #[test]
+    fn freshness_bound_turn_with_canonical_root_verifies() {
+        use dregg_circuit::dsl::revocation::DslRevocationTree;
+        use dregg_circuit::poseidon2::hash_many;
+
+        let initial = CellState::new(1000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+
+        // THE canonical published nullifier accumulator for this turn.
+        let revoked: Vec<BabyBear> = (1..=20u32)
+            .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
+            .collect();
+        let canonical_tree = DslRevocationTree::new(revoked, 4);
+        let canonical_root = canonical_tree.root();
+        let fresh_item = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
+
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects,
+            authorization: None,
+            membership: None,
+            conservation: None,
+            non_revocation: Some(NonRevocationWitness {
+                tree: canonical_tree,
+                item_hash: fresh_item,
+            }),
+            turn_hash: [0x91u8; 32],
+        };
+        let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
+
+        let old_commit = initial.state_commitment;
+        let mut expected_final = initial.clone();
+        expected_final.balance = 900;
+        expected_final.nonce = 1;
+        expected_final.refresh_commitment();
+        let new_commit = expected_final.state_commitment;
+
+        verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root)).expect(
+            "honest fresh spend (freshness proven against THE canonical accumulator root) must verify",
+        );
+    }
+
+    /// FRESHNESS / no-double-spend — binding (a), ANTI-FORGERY (the gap this
+    /// closes): a turn whose non-revocation proof proves freshness against a
+    /// DIFFERENT (prover-chosen) accumulator root — here an EMPTY tree, in which
+    /// the item is trivially absent — MUST be rejected when the verifier pins the
+    /// canonical root. This is the counterfeiting hole: an internally-sound
+    /// non-membership proof against a tree of the prover's choosing is NOT a
+    /// proof of freshness against the canonical nullifier set. The
+    /// `RevocationRootMismatch` tooth is the ONLY thing standing between the
+    /// prover's hand-picked accumulator and acceptance — and it MUST reject.
+    #[test]
+    fn freshness_bound_turn_rejects_prover_chosen_root() {
+        use dregg_circuit::dsl::revocation::DslRevocationTree;
+        use dregg_circuit::poseidon2::hash_many;
+
+        let initial = CellState::new(1000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+
+        // THE canonical accumulator the verifier expects (the item IS revoked in it).
+        let spent = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
+        let canonical_revoked: Vec<BabyBear> = (1..=20u32)
+            .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
+            .chain(std::iter::once(spent)) // the item the prover wants to re-spend IS here
+            .collect();
+        let canonical_tree = DslRevocationTree::new(canonical_revoked, 4);
+        let canonical_root = canonical_tree.root();
+        assert!(
+            canonical_tree.contains(&spent),
+            "precondition: the item is genuinely revoked in the canonical accumulator",
+        );
+
+        // The PROVER picks its OWN accumulator that OMITS the item, so its
+        // internally-sound non-membership proof succeeds — against the WRONG tree.
+        let prover_revoked: Vec<BabyBear> = (1..=20u32)
+            .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
+            .collect(); // `spent` deliberately ABSENT
+        let prover_tree = DslRevocationTree::new(prover_revoked, 4);
+        let prover_root = prover_tree.root();
+        assert_ne!(
+            prover_root, canonical_root,
+            "the prover's hand-picked accumulator must differ from the canonical one",
+        );
+
+        let witness = FullTurnWitness {
+            initial_cell_state: initial.clone(),
+            effects,
+            authorization: None,
+            membership: None,
+            conservation: None,
+            non_revocation: Some(NonRevocationWitness {
+                tree: prover_tree, // freshness "proven" against the prover's own tree
+                item_hash: spent,
+            }),
+            turn_hash: [0x92u8; 32],
+        };
+        let proof =
+            prove_full_turn(&witness).expect("proof generates (the forgery is a verify-time property)");
+
+        let old_commit = initial.state_commitment;
+        let mut expected_final = initial.clone();
+        expected_final.balance = 900;
+        expected_final.nonce = 1;
+        expected_final.refresh_commitment();
+        let new_commit = expected_final.state_commitment;
+
+        // With the canonical root pinned, the prover-chosen root is rejected.
+        let result = verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root));
+        match result {
+            Err(FullTurnVerifyError::RevocationRootMismatch { expected, got }) => {
+                assert_eq!(expected, canonical_root);
+                assert_eq!(got, prover_root);
+            }
+            Ok(()) => panic!(
+                "SOUNDNESS (no-double-spend): verify_full_turn_bound ACCEPTED a turn whose \
+                 freshness was proven against a PROVER-CHOSEN accumulator (the item is revoked \
+                 in the canonical one) — the counterfeiting hole is OPEN!"
+            ),
+            Err(other) => panic!(
+                "expected RevocationRootMismatch (the no-double-spend tooth), got: {other:?}",
+            ),
+        }
+
+        // CONTROL: the legacy `verify_full_turn` (no canonical root pinned) does
+        // NOT catch this — confirming the tooth, not some unrelated check, is
+        // what rejects above. (Internal non-membership math is sound against the
+        // prover's tree, so the legacy path accepts.)
+        verify_full_turn(&proof, old_commit, new_commit).expect(
+            "legacy verify_full_turn (root unpinned) accepts the internally-sound proof — \
+             proving binding (a) is exactly what closes the gap",
+        );
+    }
+
+    /// SOUNDNESS-BOUNDARY pin for binding (b) (item == this turn's nullifier):
+    /// documents — and guards against silent regression of — the fact that the
+    /// audited non-revocation circuit does NOT expose the queried item as a
+    /// public input, so binding (b) is NOT closeable from the SDK. If a future
+    /// circuit change exposes the item (bumping `public_input_count` to 2), this
+    /// test fails LOUDLY, signalling that the second tooth (`revoc_pi[1] ==
+    /// effect_pi[NOTESPEND_NULLIFIER]`) should now be wired in
+    /// `verify_full_turn_bound` (see its SOUNDNESS BOUNDARY doc).
+    #[test]
+    fn revocation_item_is_private_documenting_binding_b_residual() {
+        let desc = dregg_circuit::dsl::revocation::non_revocation_circuit_descriptor();
+        assert_eq!(
+            desc.public_input_count, 1,
+            "the audited non-revocation circuit publishes ONLY [revocation_root]; the queried \
+             item (ancestor_hash / control-row COL_0) is a PRIVATE witness, so the item==nullifier \
+             tooth (binding b) needs a circuit PI before verify_full_turn_bound can enforce it. \
+             If this is now 2, wire the second tooth — see the verify_full_turn_bound doc.",
+        );
     }
 
     /// HONEST authorization-bound turn: a derivation whose conclusion is
