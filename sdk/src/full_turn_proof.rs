@@ -39,6 +39,9 @@
 //! Cross-proof PI bindings:
 //! - Authorization state_root == Membership merkle_root (same fact tree)
 //! - Effect VM old_commitment is the cell state the actor is authorized to mutate
+//! - Authorization derived_hash == Allow(effects_hash): the authorization
+//!   conclusion is bound to THIS turn's effects (effect-kind + cell + params),
+//!   not merely to "some fact in this cell's tree" (see [`effect_action_binding`])
 //! - Non-revocation root matches the federation's published revocation accumulator
 
 use dregg_circuit::dsl::derivation::{
@@ -63,6 +66,8 @@ use dregg_circuit::lean_descriptor_air::{
 use dregg_circuit::merkle_air::{
     MembershipP3Proof, membership_public_inputs, prove_membership_p3, verify_membership_p3,
 };
+use dregg_circuit::multi_step_air::ALLOW_PREDICATE;
+use dregg_circuit::poseidon2::hash_fact;
 use dregg_dsl_runtime::composition::{AttachedSubProof, ComposedProof, compose_aggregate};
 use dregg_dsl_runtime::{CircuitDescriptor, ComposedCircuitDescriptor};
 use serde::{Deserialize, Serialize};
@@ -236,6 +241,68 @@ fn effect_vm_circuit_descriptor() -> CircuitDescriptor {
         lookup_tables: vec![],
     }
 }
+
+// ============================================================================
+// Authorization ⟷ effect binding (the capability-security weld)
+// ============================================================================
+
+/// The canonical "this actor may perform THIS effect" fact hash for a turn.
+///
+/// This is the fact that a verifying authorization sub-proof MUST conclude for
+/// its derivation to authorize the turn's state transition. It is
+/// `hash_fact(ALLOW_PREDICATE, [effects_commit, 0, 0, 0])` where `effects_commit`
+/// is position 0 of the Effect-VM 4-felt effects hash — i.e.
+/// `compute_effects_hash(effects).0`.
+///
+/// # Why this is a real binding (not a loose check)
+///
+/// `effects_commit` is `PI[EFFECTS_HASH_BASE]` of the Effect-VM proof, which the
+/// Effect-VM AIR pins **in-circuit** to the Poseidon2-chained effects column via
+/// a row-0 boundary constraint (`effect_vm/air.rs` "Effects hash binding"). A
+/// forged effects commitment makes the audited Effect-VM verifier reject. The
+/// authorization proof's `derived_hash` (auth PI[1]) is pinned **in-circuit** to
+/// `hash_fact(HEAD_PRED, HEAD_TERM[0..4])` by the derivation circuit's C4/C6
+/// (`dsl/derivation.rs`). Requiring `auth.derived_hash == effect_action_binding(effects)`
+/// therefore welds the two audited proofs: the authorization conclusion must
+/// commit to exactly the effects the Effect-VM proof certifies. An authorization
+/// proof whose conclusion is for a DIFFERENT effect (different kind / target
+/// cell / amount / params ⇒ different `effects_commit`) produces a different
+/// `derived_hash` and is rejected by [`verify_full_turn`].
+///
+/// We bind position 0 of the effects hash (the AIR-boundary-bound element)
+/// rather than the full 4-felt form because, in the composed-turn verify path,
+/// only position 0 is enforced in-circuit by the audited Effect-VM verifier;
+/// positions 1..3 are the Effect-VM PI-matching-loop's responsibility (off-AIR,
+/// not run here) — see `AUDIT[stage1-pi-only-bound]` in `effect_vm::pi`. Binding
+/// the off-AIR positions here would not be cryptographically enforced, so we
+/// bind the one element that is.
+pub fn effect_action_binding(effects: &[effect_vm::Effect]) -> BabyBear {
+    let effects_commit = effect_vm::compute_effects_hash(effects).0;
+    hash_fact(
+        BabyBear::new(ALLOW_PREDICATE),
+        &[effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+    )
+}
+
+/// Reconstruct the expected [`effect_action_binding`] directly from the Effect-VM
+/// sub-proof's published public inputs (verifier side — the effect list is not
+/// transmitted, but its AIR-bound commitment is `PI[EFFECTS_HASH_BASE]`).
+///
+/// This is the verifier twin of [`effect_action_binding`]: the prover binds the
+/// authorization conclusion to `effect_action_binding(effects)`, and the verifier
+/// recomputes the same value from the in-circuit-bound effects commitment carried
+/// in the Effect-VM PIs, without needing the plaintext effects.
+fn effect_action_binding_from_effect_pi(effect_pi: &[BabyBear]) -> BabyBear {
+    let effects_commit = effect_pi[effect_vm::pi::EFFECTS_HASH_BASE];
+    hash_fact(
+        BabyBear::new(ALLOW_PREDICATE),
+        &[effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+    )
+}
+
+/// Index of `derived_hash` in the authorization sub-proof's public-input vector.
+/// Layout (see `prove_full_turn`): `[state_root, derived_hash, not_after, org_id, budget]`.
+const AUTH_PI_DERIVED_HASH: usize = 1;
 
 // ============================================================================
 // Effect-VM prover selection: hand-AIR (default) vs Lean descriptor interpreter.
@@ -924,6 +991,46 @@ pub fn verify_full_turn(
                 ),
             });
         }
+
+        // 6b. CRITICAL (capability-security): Authorization-to-EffectVM EFFECT
+        //     binding. The cell binding above proves the actor is authorized for
+        //     SOME fact in this cell's tree; it does NOT prove the actor may
+        //     perform THIS effect. We close that gap by requiring the
+        //     authorization proof's conclusion (auth PI[1] = derived_hash, pinned
+        //     in-circuit to hash_fact(HEAD_PRED, HEAD_TERM) by the derivation
+        //     circuit's C4/C6) to equal the "may perform THIS effect" fact —
+        //     Allow(effects_commit) — reconstructed from the Effect-VM proof's
+        //     in-circuit-bound effects commitment (PI[EFFECTS_HASH_BASE]). An
+        //     authorization proof whose derivation concludes a may-perform fact
+        //     for a DIFFERENT effect (kind / target cell / amount / params)
+        //     carries a different derived_hash and is rejected here.
+        //
+        //     This tooth binds the CONCLUSION (`Allow(h)`) to the effect. That the
+        //     conclusion genuinely follows from a capability the actor HOLDS is the
+        //     membership leg's job: the derivation circuit proves "body fact ⊢
+        //     Allow(h)" but treats the body fact hash as a free (nonzero) witness;
+        //     the c-list membership proof (bound via step 5: auth state_root ==
+        //     membership root) is what proves that body fact actually exists in the
+        //     cell's fact tree. Together: membership(fact ∈ tree) + derivation(fact
+        //     ⊢ Allow(h)) + this tooth(h == this effect) + the cell binding above
+        //     (tree == cell mutated) = the full capability-security chain.
+        let auth_derived_hash = auth_sub
+            .sub_public_inputs
+            .get(AUTH_PI_DERIVED_HASH)
+            .copied()
+            .ok_or_else(|| {
+                FullTurnVerifyError::MalformedPublicInputs(
+                    "authorization PI missing derived_hash (PI[1])".into(),
+                )
+            })?;
+        let expected_action_binding =
+            effect_action_binding_from_effect_pi(&effect_sub.sub_public_inputs);
+        if auth_derived_hash != expected_action_binding {
+            return Err(FullTurnVerifyError::AuthEffectMismatch {
+                auth_derived_hash,
+                expected_action_binding,
+            });
+        }
     }
 
     Ok(())
@@ -954,6 +1061,17 @@ pub enum FullTurnVerifyError {
     },
     /// Cross-proof public input binding is inconsistent.
     CrossProofMismatch { description: String },
+    /// The authorization proof's conclusion (`derived_hash`) does not bind to
+    /// the turn's effect: the actor proved authorization for a DIFFERENT effect
+    /// than the one the Effect-VM proof certifies. This is the capability-security
+    /// anti-forgery tooth — `derived_hash` must equal `Allow(effects_commit)` for
+    /// the bound effects (see [`effect_action_binding`]).
+    AuthEffectMismatch {
+        /// The authorization proof's bound conclusion (`auth PI[1]`).
+        auth_derived_hash: BabyBear,
+        /// The "may perform THIS effect" fact reconstructed from the Effect-VM PIs.
+        expected_action_binding: BabyBear,
+    },
 }
 
 impl std::fmt::Display for FullTurnVerifyError {
@@ -982,6 +1100,16 @@ impl std::fmt::Display for FullTurnVerifyError {
             Self::CrossProofMismatch { description } => {
                 write!(f, "cross-proof PI mismatch: {}", description)
             }
+            Self::AuthEffectMismatch {
+                auth_derived_hash,
+                expected_action_binding,
+            } => write!(
+                f,
+                "authorization conclusion ({:?}) does not authorize this effect: \
+                 expected Allow(effects_commit) = {:?} — the authorization proves a \
+                 different action than the turn performs",
+                auth_derived_hash, expected_action_binding
+            ),
         }
     }
 }
@@ -992,12 +1120,89 @@ impl std::error::Error for FullTurnVerifyError {}
 // Convenience: Minimal proof (Effect VM + Authorization only)
 // ============================================================================
 
+/// Build a derivation witness whose conclusion authorizes EXACTLY `effects`.
+///
+/// This is the prover-side twin of the [`verify_full_turn`] authorization↔effect
+/// tooth: it constructs a satisfiable single-step [`DerivationWitness`] whose
+/// conclusion is the may-perform fact `Allow(effects_commit)` (see
+/// [`effect_action_binding`]). The conclusion's term is a head VARIABLE bound by
+/// the substitution to the Effect-VM effects commitment, so the derivation
+/// circuit's substitution-application constraint (C10) holds and the resulting
+/// `derived_hash` equals `effect_action_binding(effects)`.
+///
+/// `capability_fact_hash` is the hash of the body fact the actor holds (the
+/// capability evidence whose Merkle membership the c-list proof attests), and
+/// `state_root` is the cell's fact-tree root it lives in — both bound in-circuit
+/// (C5 ties the body root to auth `PI[0] = state_root`, which the caller must
+/// pass as the cell's `old_commitment` so the cell-binding tooth also holds).
+///
+/// Carrying the real `capability_fact_hash` + `state_root` keeps the derivation
+/// honest: the conclusion follows from a body fact present in the cell tree, it
+/// is not a free-floating "Allow" — the membership leg still has to prove that
+/// fact exists, and the head is welded to the executed effect.
+pub fn derivation_authorizing_effects(
+    effects: &[effect_vm::Effect],
+    capability_fact_hash: BabyBear,
+    state_root: BabyBear,
+) -> dregg_circuit::derivation_air::DerivationWitness {
+    use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+
+    let effects_commit = effect_vm::compute_effects_hash(effects).0;
+    let allow_pred = BabyBear::new(ALLOW_PREDICATE);
+
+    // Rule: Allow(?0) :- capability(?0). Head term 0 is variable index 0, which
+    // the substitution binds to the effects commitment. The single body atom is
+    // the actor's held capability fact (present in the cell's fact tree).
+    let rule = CircuitRule {
+        id: 1,
+        num_body_atoms: 1,
+        num_variables: 1,
+        head_predicate: allow_pred,
+        head_terms: [
+            (true, BabyBear::ZERO), // variable, index 0 -> substitution[0]
+            (false, BabyBear::ZERO),
+            (false, BabyBear::ZERO),
+            (false, BabyBear::ZERO),
+        ],
+        body_atoms: vec![BodyAtomPattern {
+            predicate: allow_pred,
+            terms: [
+                (true, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+            ],
+        }],
+        equal_checks: vec![],
+        memberof_checks: vec![],
+        gte_check: None,
+        lt_check: None,
+    };
+
+    DerivationWitness {
+        rule,
+        state_root,
+        body_fact_hashes: vec![capability_fact_hash],
+        substitution: vec![effects_commit],
+        derived_predicate: allow_pred,
+        derived_terms: [effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        not_after_height: BabyBear::ZERO,
+        org_id_hash: BabyBear::ZERO,
+        budget_remaining: BabyBear::ZERO,
+    }
+}
+
 /// Generate a minimal full turn proof with just state transition + authorization.
 ///
 /// This is the most common case for sovereign cell turns where:
 /// - The actor is authorized via a derivation chain
 /// - The state transition is proven by the Effect VM
 /// - No value transfers or revocation channels involved
+///
+/// The `derivation`'s conclusion MUST authorize exactly `effects` — i.e. its
+/// `derived_hash` must equal [`effect_action_binding(effects)`](effect_action_binding) —
+/// or [`verify_full_turn`] rejects the proof with
+/// [`FullTurnVerifyError::AuthEffectMismatch`]. Use
+/// [`derivation_authorizing_effects`] to construct a conforming witness.
 ///
 /// For the full proof with all components, use [`prove_full_turn`] directly.
 pub fn prove_turn_with_auth(
@@ -1365,6 +1570,91 @@ mod tests {
 
         verify_full_turn(&proof, old_commit, new_commit)
             .expect("full turn with membership + non-revocation must verify on the audited p3 path");
+    }
+
+    /// HONEST authorization-bound turn: a derivation whose conclusion is
+    /// `Allow(effects_commit)` for the turn's actual effects (built via
+    /// `derivation_authorizing_effects`) verifies through `verify_full_turn`,
+    /// including the new authorization↔effect binding tooth.
+    #[test]
+    fn auth_bound_turn_with_matching_effect_verifies() {
+        let initial = CellState::new(1000, 0);
+        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let old_commit = initial.state_commitment;
+
+        // The actor's capability evidence lives at the cell's fact-tree root
+        // (== old_commitment, so the cell-binding tooth also holds).
+        let capability_fact_hash = BabyBear::new(0xCA9A);
+        let derivation = derivation_authorizing_effects(&effects, capability_fact_hash, old_commit);
+
+        let proof = prove_turn_with_auth(&initial, &effects, &derivation, [0x11u8; 32])
+            .expect("auth-bound proof should generate");
+        assert!(proof.components.has_authorization);
+        assert!(proof.components.has_state_transition);
+
+        let mut expected_final = initial.clone();
+        expected_final.balance = 900;
+        expected_final.nonce = 1;
+        expected_final.refresh_commitment();
+        let new_commit = expected_final.state_commitment;
+
+        verify_full_turn(&proof, old_commit, new_commit).expect(
+            "honest auth-bound turn must verify (derivation concludes Allow(this effect))",
+        );
+    }
+
+    /// ANTI-FORGERY (the gap this closes): a turn whose authorization proof
+    /// authorizes a DIFFERENT effect than the Effect-VM proof certifies MUST be
+    /// rejected by `verify_full_turn`. We build a fully valid authorization proof
+    /// whose derivation concludes `Allow(effects_B)` (a different amount), splice
+    /// it onto an Effect-VM proof for `effects_A`, fix up the shared cell-binding
+    /// PI so the prior teeth (cell binding, commitments) all PASS, and confirm the
+    /// new authorization↔effect tooth is the ONLY thing standing between the
+    /// mismatched authorization and acceptance — and that it rejects.
+    #[test]
+    fn auth_bound_turn_rejects_authorization_for_different_effect() {
+        let initial = CellState::new(1000, 0);
+        let old_commit = initial.state_commitment;
+
+        // The turn the Effect-VM proof actually performs: transfer 100 out.
+        let effects_a = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        // A DIFFERENT effect the malicious authorization is really for: transfer 500.
+        let effects_b = vec![VmEffect::Transfer { amount: 500, direction: 1 }];
+        // Sanity: the two effects have distinct in-circuit commitments.
+        assert_ne!(
+            effect_vm::compute_effects_hash(&effects_a).0,
+            effect_vm::compute_effects_hash(&effects_b).0
+        );
+
+        // Authorization proof that genuinely concludes Allow(effects_B), rooted at
+        // the SAME cell (so the cell-binding tooth cannot be what rejects).
+        let capability_fact_hash = BabyBear::new(0xBAD0);
+        let derivation_b =
+            derivation_authorizing_effects(&effects_b, capability_fact_hash, old_commit);
+
+        // Prove the turn with effects_A but the effects_B-authorizing derivation.
+        let proof = prove_turn_with_auth(&initial, &effects_a, &derivation_b, [0x22u8; 32])
+            .expect("proof generation succeeds (mismatch is a verify-time property)");
+
+        let mut expected_final = initial.clone();
+        expected_final.balance = 900; // effects_A: 1000 - 100
+        expected_final.nonce = 1;
+        expected_final.refresh_commitment();
+        let new_commit = expected_final.state_commitment;
+
+        let result = verify_full_turn(&proof, old_commit, new_commit);
+        match result {
+            Err(FullTurnVerifyError::AuthEffectMismatch { .. }) => { /* exactly the tooth */ }
+            Ok(()) => panic!(
+                "SOUNDNESS (capability-security): verify_full_turn ACCEPTED a turn whose \
+                 authorization authorizes a DIFFERENT effect than the one performed — the \
+                 authorization↔effect binding is not enforced!"
+            ),
+            Err(other) => panic!(
+                "expected AuthEffectMismatch (the authorization↔effect tooth), got a \
+                 different rejection: {other:?} — verify the test reached the new check",
+            ),
+        }
     }
 
     /// ANTI-GHOST end-to-end: forging the published MEMBERSHIP root in a finished
