@@ -60,11 +60,27 @@ and the algebra for all four already exists in-tree, complete and dormant:
 | **Evidence** | monotone — once known, never unknown | grow-only | the nullifier/commitment/epoch ledgers (persistent fragment) |
 | **State** | guarded-mutable — changes only under Pred, only by its owner | the frame | cells + programs; `StepCamera.lean` for the step-indexed tier |
 
-**The one gate:** every kernel verb is a **frame-preserving update** (`Fpu`)
-in the product of these substances. Conservation, non-amplification, and
-monotonicity stop being three gate-families and become one theorem schema.
-*(This is the skeleton's load-bearing claim. It is NOT yet proven — it is
-probe **R1** in §6, and the construction order starts there.)*
+**The two gates (the S0 verdict, `Dregg2/Substrate/FpuProbe.lean`,
+`fb0cb5695` — probe R1 returned PARTIAL/strong):** every kernel verb is
+
+> **admission** (a `Pred` discharge — does the supplied witness realize the
+> demanded predicate? the epistemic half, the verify/find seam) **×**
+> **Fpu of the verb's footprint** in the product camera `Sub4` (the ontic
+> half — the update respects what the substances ARE).
+
+The Fpu product genuinely unifies conservation + non-amplification +
+monotonicity as ONE theorem shape (`move`/`grant`/`write`/`spend` proved as
+product-Fpu instances of the EXISTING theorems; authority and evidence turned
+out to be literally the SAME `Auth`-camera over ∪-monoids — Resource.lean:319's
+"one law" cashed). Two PROVED limits: **E1** — order-shaped validity alone
+cannot carry Σδ=0 (`nat_auth_coordinated_mint_fpu`); the supply constant is
+parametric until **R2 makes s₀ = 0 canonical** (the issuer IS the Iris-bank
+authoritative element) — so the value leg is R2-conditional, now as a theorem
+dependency, not a vibe. **E2** — the camera is provably blind to the guards
+(`camera_blind_to_caveats`); admission is genuinely its own half (as the
+constructive-knowledge metatheory demands — the demand⊣supply side was never
+going to be a camera). The nonce hatch dissolved: the receipt log is
+evidence-shaped (monotone leg, not an interaction term).
 
 **The doctrine already has a trunk: `Metatheory/*` (the candidate-independent
 logic of constructive knowledge — `CONSTRUCTIVE-KNOWLEDGE.md`).** The skeleton
@@ -265,7 +281,7 @@ is designed to be able to FAIL.
 
 | # | Beautiful claim | What must survive formalization | Falsification probe | If it fails |
 |---|---|---|---|---|
-| **R1** | Every verb is one `Fpu` in the product camera | Substances interact inside one verb (move touches bal+nonce+log); the product may need interaction/frame terms; step-indexing may leak in | S0: state 3 verbs as Fpu; instantiate from EXISTING theorems. >2 ad-hoc escape hatches = the claim fails | Keep per-substance laws as 3 theorem families; the gem is duller but honest |
+| **R1** | Every verb is one `Fpu` in the product camera | Substances interact inside one verb; the product may need interaction terms; step-indexing may leak | **✅ S0 RETURNED: PARTIAL/strong (`fb0cb5695`, 2 hatches, 30 pins, axiom-clean).** The honest schema = **admission × footprint-Fpu** (see §2.1). E1: value R2-conditional (order-validity provably ⊉ Σδ=0; issuer-supply dissolves it). E2: guards provably outside the camera (admission is its own half). Authority≡evidence (one Auth camera). Step-indexing never leaked (StepCamera not needed at this tier) | Adopted: the two-gate formulation IS the fallback-free outcome — Fpu unifies the three substance laws; admission stays the Pred family |
 | **R2** | AssetId := issuer cell; exact Σδ=0 | Shielded-pool interaction (unshield vs issuer-negative wells); genesis bootstrap; fee-pot liveness | Re-prove tri-domain conservation + noteSpend value-binding under issuer-supply BEFORE migrating the ledger | Keep AssetId abstract + a registry cell; exactness via a supply-tracking issuer invariant instead |
 | **R3** | Cell programs cover ALL storage/escrow semantics | Cross-slot relational constraints (head−tail≤cap — the KNOWN v1 gap); multi-cell settle atomicity | Build the ESCROW factory + prove release-safety in Verify BEFORE deleting escrow verbs; queue family second | The stubborn family keeps a kernel verb; the others still migrate |
 | **R4** | svenvs envelope ≅ cell program (mandate) | svenvs needs step-indexed/Löb structure Pred lacks; the ∀-inhabitant quantification | Express cartpole's envelope as Pred; check `safe_weakening` maps onto OUR Auth camera | A rhyme, not a mount; dregg3 unaffected (it never depended on this) |
