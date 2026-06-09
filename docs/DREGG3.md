@@ -1,250 +1,267 @@
-# DREGG3 — the kernel, redesigned
+# DREGG3 — the substrate proposal
 
-**Status:** design proposal (2026-06-09). Says what the kernel SHOULD BE. Not a
-changelog. Written from a whole-tree read: the 52-variant `Effect` enum, the
-19-field `RecordKernelState`, the 10-variant `Authorization`, the 37-variant
-`StateConstraint`, the five-stratum proof tower, the circuit-family census
-(~11.5K live of 112K), and the token-lineage crates (macaroon/token/
-discharge-gateway). Companion: `docs-old/STORAGE-AS-CELL-PROGRAMS.md` (the
-May 24 thesis this doc generalizes), `metatheory/Dregg2/Claims.lean` (the
-proof ledger this doc's assurance case restructures).
+**Status:** design proposal v2 (2026-06-09). Supersedes v1 (same day). Says what
+the kernel SHOULD BE and how the system mounts on it. Not a changelog.
+
+**Provenance:** a whole-tree read (52-verb `Effect`, 19-field `RecordKernelState`,
+10-variant `Authorization`, 37-variant `StateConstraint`, the five-stratum proof
+tower, four censuses), the dormant resource layer (`Resource.lean`,
+`StepCamera.lean`, `Laws.lean`), the constellation (svenvs, mediateor,
+graphplay), and ember's framing: **polisware** (Egan — the cipherclerk is a
+citizen's clerk, the polis is the product) and **shipware** (KSR's *Aurora* —
+software a crew bets generations on). The gem is the skeleton; skeletons exist
+to carry flesh.
 
 ---
 
-## §0. The essence (what dregg has always been)
-
-Strip every generation of accretion and one sentence survives, visible from
-the macaroon beginning to the Argus end:
+## §0. The essence
 
 > **A turn is the exercise of an attenuable, proof-carrying token over owned
 > state, leaving a verifiable receipt.**
 
-Four primitive ideas, each the descendant of the humble origin:
+The token lineage (macaroon → biscuit → capability) is the oldest stratum and
+the deepest: biscuit's Datalog became the derivation circuit — *the token
+became the proof system*. Everything below is this sentence, given algebra.
 
-1. **The token** (macaroon → biscuit → capability): bearer authority that can
-   only ever *narrow* — caveats compose by conjunction, attenuation is
-   `granted ⊑ held`, third parties discharge what they're asked to. The
-   biscuit thread runs deeper than nostalgia: biscuit's *Datalog
-   authorization* is literally the ancestry of `dsl/derivation.rs` — the
-   derivation circuit proves "this fact chain derives Allow" — so **the token
-   IS the proof system's oldest circuit**. Dregg's capability is a biscuit
-   whose caveat language is `Pred` and whose verification is a STARK.
+And the constellation states the design move once, mathematically (graphplay):
+**trust lives in small faithful quotients with machine-checked lifts.** The
+envelope is the quotient of the inhabitant (svenvs); the pact is the quotient
+of the quarrel (mediateor); the receipt Q is the quotient of the transition,
+and the kernel below is the quotient of dregg itself. The ethics inside the
+math: *what the proof does not need, it does not ask to see* — testimony over
+inspection, projection over surveillance. These rhymes are informative, not
+load-bearing; §6 taxes every one of them.
 
-2. **The cell**: owned, guarded state. Every cell has a responsible operator
-   (sovereign owner, host, or federation) — *nothing is ownerless*. The
-   cell's `program` is the same caveat language turned inward: caveats
-   attenuate what a token may do; programs constrain what a cell may become.
-   One algebra, two polarities.
+## §1. The critique (unchanged from v1, abbreviated)
 
-3. **The turn**: the unit of execution and the unit of proof. Authorization ∘
-   guarded body ∘ receipt. Sequencing, parallel (joint) composition, typed
-   holes (intents) await their counit (fulfillment). `{P} e {Q}` — the
-   transformer algebra.
-
-4. **The receipt (Q)**: the committed postcondition. Everything downstream is
-   Q and its projections — the witness proves Q, the verifier consumes Q, the
-   privacy dial projects Q, aggregation folds Q, the light client trusts only
-   a chain of Q.
-
-Diamond dregg2 is not more machinery than this. It is *exactly* this, with
-nothing else, verified end to end.
+The pieces are individually strong; the hygiene war was won (0 sorry, 238
+axiom pins, real anti-ghost teeth). The faults are ontological, and they share
+one disease: **collaborators only ever added; nothing had authority to
+subtract.** Twelve named faults — verb accretion (52), ownerless side-tables,
+six authority vocabularies (incl. `Authorization::Unchecked`), commitment
+pluralism, two coexisting value laws (modulo-burn vs `balance_change`'s exact
+Σδ=0), session/interop/privacy promoted into kernel verbs, asset≠cell
+namespace, executor multiplicity, hand-proven bespoke codec, claims-as-journal.
+(Full table: v1, in git history at `07e3c146d`.)
 
 ---
 
-## §1. The harsh critique (twelve faults, each with its disease)
+## §2. The skeleton — four substances, one gate
 
-The pieces are individually strong — the hygiene war was won (0 sorry, 238
-axiom pins, real anti-ghost teeth). The faults are **ontological**: model
-collaborators only ever *added*, and nothing had the authority to subtract.
+### §2.1 The substances
 
-| # | Fault | Evidence | Disease |
-|---|-------|----------|---------|
-| 1 | **Verb accretion.** 52 kernel effects; queues×6, escrows×6, swiss×4, bridge×4, obligations×3 are protocol verbs. | `turn/src/action.rs:789` | Every app pattern became a kernel verb instead of a cell-program composition. The May 24 doc diagnosed this and was never executed. |
-| 2 | **Ownerless side-tables.** `RecordKernelState` carries `escrows/queues/swiss/sealedBoxes/factories` as flat global lists — objects summoned from nowhere, no responsible cell. | `RecordKernel.lean:475` (19 fields) | Modeling convenience ossified into ontology. The cell-keyed fields (`bal`, `lifecycle`, `slotCaveats`) show the right shape was known. |
-| 3 | **Authority vocabulary fragmentation.** TEN `Authorization` variants (incl. `Unchecked`!) × `CapabilityCaveat` × 37 `StateConstraint`s × `Preconditions` × macaroon caveats × biscuit Datalog × breadstuff — at least six overlapping predicate vocabularies. | `action.rs:210`; `cell/src/program.rs`; `macaroon/`; `token/` | Each auth need grew its own enum instead of one guard algebra with atoms. (The Lean side already proved them isomorphic: `Pred ≅ Caveat ≅ Spec.Guard`.) |
-| 4 | **Commitment pluralism.** BLAKE3 cell commit + Poseidon2 circuit commit + receipt-hash domains + (until yesterday) an XOR-fold cap root — cross-*bound* after the fact by the CommitmentCrossBind crown instead of being *one scheme*. | `cell/src/commitment.rs`; `CommitmentCrossBind.lean` | Designed per-component, welded later. The crown is heroic proof-work that a single scheme makes unnecessary. |
-| 5 | **Conservation modulo-burn.** The fee split (50/30/20 proposer/treasury/burn) is hardwired into the turn epilogue, so the conservation law is `Σδ = −burn`, not `Σδ = 0`. | `Argus/Turn.lean` | Economic policy leaked into the kernel invariant. Meanwhile `Action.balance_change` already implements the exact-`Σδ=0` Mina-excess discipline — two value laws coexist. |
-| 6 | **Session layer in the kernel.** ExportSturdyRef/EnlivenRef/DropRef/ValidateHandoff — CapTP *transport* concerns — are protocol verbs with circuit descriptors. | `action.rs` effects 14-17 | Layer confusion: vat-to-vat session machinery promoted to consensus-visible semantics. |
-| 7 | **Interop in the kernel.** Bridge×4 as kernel verbs; plus a dormant SP1/nova `chain/` workspace as a *fourth* proving stack. | effects 37-40; `chain/` (untouched since May 26) | Foreign-chain trust models belong in bridge *cells* (programs demanding foreign-finality witnesses), not in every node's verb set. |
-| 8 | **Privacy as special-cased verbs** (NoteSpend/NoteCreate with bespoke universe-conventions) instead of a single shielded-pool boundary. | effects 4-5; the noteCreate divergence saga | The pool boundary (shield/unshield + nullifiers) is the only kernel-level privacy primitive needed; the rest is Q-projection (already built: the Disclose dial). |
-| 9 | **Asset namespace ≠ cell namespace.** `AssetId` is its own space; mint/burn are bespoke verbs; issuers are nowhere. | `RecordKernel.lean` `bal : CellId → AssetId → ℤ` | A missed unification: an asset IS an issuer's promise — the issuer should be a cell. |
-| 10 | **Executor multiplicity.** dregg1 Rust executor (4.7K-line apply.rs) + Lean `execFullA`/per-action handlers + legacy `recKExec` + Argus `interp` — four expressions of the semantics, kept consistent by proofs (good) that wouldn't need to exist (better). | census Q1 | The SWAP half-done; the proofs of agreement are scaffolding for a deletion that hasn't happened. |
-| 11 | **The codec.** A bespoke JSON-ish wire with hand-proven per-field roundtrips (the FILL-J campaign — heroic, and recurring: every field-add re-opens it). | `Exec/CodecRoundtrip/` | Should be ONE schema-derived canonical encoding with a once-proven generic codec. |
-| 12 | **The claims ledger is a journal, not an argument.** `Claims.lean` = 34 sections in *campaign order*, stale (no Argus). The end-to-end light-client theorem exists in parts; the assurance *case* was never assembled. | `Claims.lean` (Jun 6) | Proofs accreted faster than the argument that organizes them. |
+The kernel governs four substances, each with its own **discipline of use** —
+and the algebra for all four already exists in-tree, complete and dormant:
+
+| Substance | Discipline | The law | The algebra (built, in-tree) |
+|---|---|---|---|
+| **Value** | linear — moves, never copies or vanishes | Σδ = 0, exact | ℕ-sum camera; `Excl` (`excl_no_dup` proven) — `Resource.lean` |
+| **Authority** | affine — weakens (attenuate/drop), never strengthens | granted ⊑ held | `Auth` camera; `ConfinesAuthority := Fpu` (*"one law"* — `Resource.lean:319`) |
+| **Evidence** | monotone — once known, never unknown | grow-only | the nullifier/commitment/epoch ledgers (persistent fragment) |
+| **State** | guarded-mutable — changes only under Pred, only by its owner | the frame | cells + programs; `StepCamera.lean` for the step-indexed tier |
+
+**The one gate:** every kernel verb is a **frame-preserving update** (`Fpu`)
+in the product of these substances. Conservation, non-amplification, and
+monotonicity stop being three gate-families and become one theorem schema.
+*(This is the skeleton's load-bearing claim. It is NOT yet proven — it is
+probe **R1** in §6, and the construction order starts there.)*
+
+The structural rules ARE the verb set: `move` is exchange for the linear
+substance; `grant` is cut+weakening for the affine one; `shield`/nullifiers
+are evidence-monotonicity; `write` is heap update under the frame. A turn is
+a proof term; the circuit is the logic's proof checker; a receipt is a
+judgment; the chain is one growing proof object. The frame rule, proven once,
+is simultaneously: sovereignty (your cell, untouchable), joint turns
+(separating conjunction), sharding (disjoint frames commute), and offline
+strands (your frame advances alone and merges sound).
+
+### §2.2 The nouns
+
+```
+Pred   — ONE guard algebra: curated atoms ⊕ all/any/not ⊕ witnessed(vk)
+         ⊕ thirdParty(discharge). Four polarities of the same object:
+         caveat (imposed on delegated power) · program (maintained on self)
+         · precondition (required of a turn) · intent demand (wanted of the
+         world). Evaluated by the executor; compiled to circuit obligations;
+         the Predicate⊣Witness Galois connection (Laws.lean) is its base.
+
+Cap    — the token: {target, rights, caveats: Pred, expiry, epoch}.
+         Attenuable on every axis; revocable by epoch; STORABLE in slots
+         (a cap is a value — absorbs seal-boxes, sturdyrefs, escrowed
+         authority; see risk R7 for the retrieval-epoch rule).
+
+Cell   — the four substances gathered + program + operator:
+         {operator, lifecycle, nonce, bal : Asset → ℤ,
+          clist : sorted-Merkle of Cap, program : Pred, slots : Slot → Value}.
+         Nothing is ownerless. Every object IS a cell or lives in one.
+
+Asset  — an issuer cell's promise: AssetId := CellId of the issuer; the
+         issuer carries −supply, so ∀a. Σ_c bal(c,a) = 0 ALWAYS (risk R2).
+         Mint/burn are the issuer moving from/to its well under its own
+         program. Fees are ordinary moves to pot-cells whose programs ARE
+         the fee policy.
+
+Turn   — auth ∘ body ∘ receipt; body ::= verb | seq | par | hole(Pred).
+         Prologue/epilogue are made of the same verbs. Conditional turns
+         (proof-gated, timeout-aborted) and eventual/pipelined batching are
+         COMPOSITION structure, kept. Multi-party via per-action commitment.
+
+Q      — the receipt: the committed postcondition under ONE commitment
+         scheme (sorted-Poseidon2 Merkle, all the way down — the
+         CommitmentCrossBind crown becomes a definition). The witness proves
+         Q; the dial projects Q; aggregation folds Q; the light client
+         verifies only Q-chains.
+```
+
+### §2.3 The verbs (eight)
+
+`create · write · move · grant · revoke · shield/unshield · lifecycle` —
+subsumption table as v1. Exercise is *using* a cap, not a verb; refusal is an
+outcome; nonce is prologue; pipelining is composition. Everything else among
+the 52 is a **cell-program pattern** (factory + Pred + these verbs): queues,
+inboxes, pubsub, escrows, obligations, auctions, namespaces, bridges, relays.
+
+### §2.4 The interpretations
+
+The Argus discipline — one term, multiple provably-agreeing readings —
+generalizes. Committed readings: `interp` (= the executor) and `compile`
+(= the circuit). Proposed readings, each its own workstream: `explain`
+(deterministic rendering for the citizen — the UI that cannot lie; honest
+scope per risk R6) and `merge` (the state-sync/CRDT function). The kernel's
+identity is the TERM; every reading is staff, not soul.
 
 ---
 
-## §2. The kernel, redesigned
+## §3. The flesh — what mounts on the skeleton
 
-### §2.1 The nouns (six)
+The vision must not dissolve the system into a logic paper. The skeleton's
+purpose is **leverage** for the ship. What each existing organ becomes:
 
-```
-Pred       — ONE guard algebra. atoms (the 37, curated) ⊕ all/any/not ⊕ witnessed(vk)
-             ⊕ third-party(discharge). Used as: caveats (on capabilities),
-             programs (on cells), preconditions (on turns), intent demands (on holes).
-             Evaluated by the executor; compiled to circuit obligations
-             (a witnessed guard and a circuit constraint are the same thing).
+**The cipherclerk** (8.7K LOC, 115 fns, explicitly Egan-named) — **the
+product's soul, kept and elevated.** The citizen's clerk: keys, attenuable
+tokens, delegation, sub-agent derivation, and — already built — the
+selective-disclosure dial (`hide/reveal/predicate/committed_threshold`).
+Under dregg3 its dials become *literally* Q-projections, its tokens become
+kernel caps via the edge adapters (macaroon/biscuit point inward through the
+`token` trait), and it gains the `explain` reading: the clerk that can always
+tell its citizen, faithfully, what a turn will do. The clerk is the polis
+interface; the kernel is what makes the clerk's promises true.
 
-Cap        — the token. {target, rights: Finset Auth, caveats: Pred, expiry, epoch}.
-             Bearer, attenuable (⊑ on every component), revocable (epoch),
-             STORABLE (a cap is a value a cell may hold in a slot — this single
-             feature absorbs seal-boxes, sturdyrefs, escrowed authority).
-             Verified by the derivation circuit (the biscuit lineage).
+**Userspace + the Verify toolkit** — **the second half of "comprehensive."**
+Kernel verification without app verification doesn't sing. The story:
+factories publish descriptors (slot layout + Pred constraints); the Verify
+toolkit (Contract/Frames/Tactics + Gated variants, ~20 apps already shaped
+this way) proves app-level contracts BY CONSUMING Q against descriptors —
+apps inherit theorems from the kernel without enlarging it. The bar for a
+shipped app: a `Gated` contract in `Dregg2/Apps/` + a factory descriptor +
+anti-ghost regression. The storage primitives (queues/escrows/…) re-land as
+*verified factories* — each carries the contract its kernel-verb ancestor
+never had. **Subtraction increases total verified surface.**
 
-Cell       — the owned-state unit. {operator, lifecycle, nonce,
-             bal : Asset → ℤ, clist : sorted-Merkle of Cap, program : Pred,
-             slots : Slot → Value (caps storable)}.
-             EVERY object in the system is a cell or lives in one.
+**The intent layer** (22K: matcher, bonds, partial fills, rings, PIR) —
+userspace, settling via ordinary turns; its demands are Pred at the wanting
+polarity; the solver is a subsumption searcher. The agent-mandate machinery
+is the svenvs-rhyme mount point (R4): a mandate is a program on an
+agent-cell; every agent turn carries the proof it stayed inside.
 
-Asset      — an issuer cell's promise. AssetId := CellId of the issuer.
-             The issuer's own balance may run negative (it carries −supply),
-             so conservation is EXACT: ∀a. Σ_c bal(c,a) = 0, always.
-             Mint = the issuer moving from its well (gated by its own program);
-             burn = moving back. No mint/burn verbs. No modulo-burn law.
+**CapTP** — the session layer: vats, sturdyref wire format, handoff certs,
+promise transport. Underneath: caps-in-slots + guarded grants. Nothing
+consensus-visible.
 
-Turn       — auth ∘ body ∘ receipt. body ::= verb | seq | par | hole(Pred).
-             Prologue (fee = ordinary moves to fee-pot cells; nonce tick) and
-             epilogue are MADE OF the same verbs — no special-cased value flow.
-             Multi-party composition via per-action commitment (already in
-             Action.commitment_mode); cross-turn atomicity via conditional
-             turns (proof-gated, timeout-aborted — keep, it's good).
+**Federation/strands/blocklace** — the body: causal partial order of
+receipts, equivocation-exclusion, finality tiers, Hosted↔Sovereign custody.
+graphplay's quotient machinery is the natural math for its topology/mixing
+questions when they arise (a rhyme, not a dependency).
 
-Receipt(Q) — the committed postcondition: new roots + admission witness +
-             event payload, under ONE commitment scheme. The witness proves Q;
-             the dial projects Q; aggregation folds Q; the light client
-             verifies only Q-chains.
-```
+**The polis layer** — governance as cells: councils, registries,
+constitutions as forward-certified programs (certify-before-dispute — the
+mediateor rhyme, R5), succession as certified root-genealogy. The
+constitution of a polis is a page of Pred, and a citizen can read it.
 
-### §2.2 The verbs (eight)
+## §4. Shipware — the acceptance criteria (Aurora)
 
-| Verb | Subsumes (of the 52) | Note |
-|------|---------------------|------|
-| `create` | CreateCell, CreateCellFromFactory, SpawnWithDelegation | Birth only via factory descriptor (a bare cell is the trivial factory). Spawn = create + grant. |
-| `write` | SetField, SetPermissions, SetVerificationKey, EmitEvent, ReceiptArchive, + every storage-primitive op | Guarded delta to owned slots. Caps storable in slots. Events = receipt payload, not a verb. |
-| `move` | Transfer, Burn, BridgeMint/Lock/Finalize/Cancel, Create/Release/Refund(Committed)Escrow, balance legs of everything | THE value verb, per-asset, Mina-excess discipline: per-action signed deltas, turn-level Σδ=0 *exactly* (ratifies `Action.balance_change`). Escrows/bridges = cells that hold value via move under programs. |
-| `grant` | GrantCapability, AttenuateCapability, Introduce, RefreshDelegation, Seal/Unseal/CreateSealPair, ExportSturdyRef/EnlivenRef | Install attenuated cap (granted ⊑ held, in-circuit — the cap-reshape). Attenuate = grant-to-self. Sealed/sturdy = caps in slots + guarded grant-out. |
-| `revoke` | RevokeCapability, RevokeDelegation, DropRef | Edge removal + epoch bump (the delegation_epoch semantics, kept). |
-| `shield` / `unshield` | NoteCreate / NoteSpend | The one privacy boundary: transparent↔shielded pool, nullifier ledger, commitment ledger. Everything else privacy-wise is Q-projection (Disclose). |
-| `lifecycle` | CellSeal, CellUnseal, CellDestroy, MakeSovereign | seal/unseal/destroy(+death-cert)/custody — kernel-known because frozen cells must reject writes and custody changes who attests. |
-| *(none)* | ExerciseViaCapability, IncrementNonce, Refusal, PipelinedSend, QueueAtomicTx, QueuePipelineStep, ValidateHandoff, Noop, Custom | **Not verbs.** Exercise = *using* a cap as any verb's authorization. Nonce = turn prologue. Refusal = a turn outcome. Pipelining/batching = turn-composition structure (`eventual.rs` semantics, kept as composition). Handoff-validation = a `Pred` atom. |
+A generation ship's software answers to harsher judges than an auditor.
+These are dregg3's acceptance criteria, each testable:
 
-Eight verbs. Everything else in the current 52 is a **cell-program pattern**
-(factory descriptor + Pred constraints + these verbs), per the May 24 doc —
-queues, inboxes, pubsub, blinded queues, relays, escrows, obligations,
-auctions, namespaces, bridges.
+1. **Succession.** Every root — VK, commitment context, constitution, judge —
+   has a certified successor path (genealogy, not flag-days). The crew must
+   never be stranded by an upgrade. *(Test: rotate every root on devnet with
+   chains intact across the boundary.)*
+2. **Closure.** Σδ = 0 exact; every resource accounted to an owner; the
+   system operates with NO external oracle or vendor. *(Test: the n=1
+   collapse — one machine runs the whole protocol forever, offline.)*
+3. **Legibility.** The kernel fits in a head; the constitution on a page;
+   every turn explains itself via the `explain` reading. A crew member —
+   not a cryptographer — can audit what happened. *(Test: the explain
+   rendering of every kernel verb, reviewed by a human cold.)*
+4. **Repairability.** Every component replaceable while live, behind proofs
+   (anti-brick upgrades; the svenvs gate-shape). *(Test: upgrade the
+   executor, a factory, and a constitution on a running devnet.)*
+5. **Autonomy.** Offline-first strands; partition-tolerance by structure;
+   re-merge proves itself. *(Test: two nodes diverge for a week, merge,
+   verify.)*
+6. **Honest quotients.** What the proof does not need, it does not ask to
+   see: the dial is the default mode of disclosure; testimony over
+   inspection. *(Test: every app's observability story states its
+   projection explicitly.)*
 
-### §2.3 The ones (the unifications)
+## §5. The construction (probe → formalize → implement → delete)
 
-- **ONE guard algebra** (`Pred`) — caveat = program = precondition = intent
-  demand. The Authorization enum collapses: `Signature | Proof |
-  cap-exercise | token-adapter(macaroon/biscuit edge formats)` — and
-  `Unchecked` **dies**.
-- **ONE commitment scheme** — sorted-Poseidon2 Merkle all the way down: slots
-  tree, clist tree (the cap-reshape, done), balance tree, cell leaf, state
-  root, receipt chain. BLAKE3 only at non-load-bearing edges. The
-  CommitmentCrossBind crown becomes a *definition* instead of a theorem.
-- **ONE value law** — Σδ = 0 per asset per turn, exact, no exceptions; fees
-  are moves; supply lives at issuers.
-- **ONE executor** — the verified Lean executor IS the executor (the SWAP
-  finished); Rust survives as the *witness generator and prover host*
-  (dreggrs), never as semantics.
-- **ONE circuit** — the Lean-emitted descriptor for the 8-verb × guard-compiler
-  statement, interpreted by `lean_descriptor_air` (the invariant, now reachable:
-  8 verbs ≈ the 18 already-graduated descriptors minus the doomed 30).
-- **ONE codec** — schema-derived canonical binary, generic roundtrip proven once.
-- **ONE assurance case** — see §4.
+Each stage opens with its falsification probe (§6); nothing load-bearing
+ships on vibes. Stages remain independently green.
 
-### §2.4 The layers (what is NOT kernel)
+- **S0. The Fpu probe (R1)** — one Lean module: state `move`/`grant`/`write`
+  as Fpu in the product camera; try to *instantiate the existing theorems*
+  (conservation spine, attenuation gate, frame lemmas) as its instances.
+  This decides the skeleton's exact shape. ~Small, decisive.
+- **S1. The cap crown finishes** *(in flight — A, B, B2, C landed; D = the
+  sdk authority binding remains).*
+- **S2. Value unification (R2 probe first)** — issuer-cells, exact Σδ=0,
+  fees as moves; ratify `balance_change` as THE mechanism. Shares the
+  S1 VK/commitment rotation — rotate once.
+- **S3. Storage-as-cell-programs (R3 probe per family, escrow FIRST)** —
+  the verified-factory migration; verbs die as contracts land; `storage/`
+  and `app-framework/` dissolve into factories + thin Action shims.
+- **S4. Guard unification** — Pred everywhere; `Authorization` collapses to
+  {signature, proof, cap-exercise, token-adapter}; `Unchecked` dies; the
+  37 atoms are curated (kernel atoms vs `witnessed(vk)` customs).
+- **S5. One circuit, one deletion wave** — descriptor coverage completes
+  over the 8-verb surface; hand-AIRs + ~33K orphaned circuit LOC + dormant
+  stacks die under the verified-replacement gates.
+- **S6. One executor, one codec** — the SWAP finishes (root-gaps die with
+  their verbs); apply.rs retires to witness-generation; schema-derived
+  canonical encoding with a once-proven generic codec.
+- **S7. The assurance case + the polis surface** — `AssuranceCase.lean`:
+  five claims (Authority · Conservation · Integrity · Freshness ·
+  Unfoolability), organized by guarantee, never by date, assumption floor
+  explicit (Poseidon2 CR, ed25519, FRI, GST — and nothing else). The
+  cipherclerk gains `explain`; the constitution page ships.
 
-```
-userspace   cell programs: queues, escrows, obligations, auctions, namespaces,
-            inboxes, pubsub, relays, registries, DEX/intent-settlement…
-            (factories + Pred + the 8 verbs; the intent crate's solver/matcher
-            machinery lives here, settling via ordinary turns)
-session     CapTP: vats, sturdyref wire format, handoff certs, promise
-            pipelining transport, store-and-forward (caps-in-slots + grants
-            underneath; nothing consensus-visible)
-interop     bridge cells (programs demanding foreign-finality witnesses);
-            chain/ zkVM experiments stay out of the kernel
-edge-auth   macaroon/biscuit token formats adapt INTO caps at the boundary
-            (the `token` crate's trait, pointed inward)
-kernel      §2.1–§2.3 only
-```
+## §6. The seeming-unification risk register
 
----
+ember's warning, taken as discipline: *by the time the details get fully
+formalized, sometimes beautiful visions fall apart.* Every elegant claim
+below must EARN load-bearing status by surviving its probe — and each probe
+is designed to be able to FAIL.
 
-## §3. What this does to the proof tower
+| # | Beautiful claim | What must survive formalization | Falsification probe | If it fails |
+|---|---|---|---|---|
+| **R1** | Every verb is one `Fpu` in the product camera | Substances interact inside one verb (move touches bal+nonce+log); the product may need interaction/frame terms; step-indexing may leak in | S0: state 3 verbs as Fpu; instantiate from EXISTING theorems. >2 ad-hoc escape hatches = the claim fails | Keep per-substance laws as 3 theorem families; the gem is duller but honest |
+| **R2** | AssetId := issuer cell; exact Σδ=0 | Shielded-pool interaction (unshield vs issuer-negative wells); genesis bootstrap; fee-pot liveness | Re-prove tri-domain conservation + noteSpend value-binding under issuer-supply BEFORE migrating the ledger | Keep AssetId abstract + a registry cell; exactness via a supply-tracking issuer invariant instead |
+| **R3** | Cell programs cover ALL storage/escrow semantics | Cross-slot relational constraints (head−tail≤cap — the KNOWN v1 gap); multi-cell settle atomicity | Build the ESCROW factory + prove release-safety in Verify BEFORE deleting escrow verbs; queue family second | The stubborn family keeps a kernel verb; the others still migrate |
+| **R4** | svenvs envelope ≅ cell program (mandate) | svenvs needs step-indexed/Löb structure Pred lacks; the ∀-inhabitant quantification | Express cartpole's envelope as Pred; check `safe_weakening` maps onto OUR Auth camera | A rhyme, not a mount; dregg3 unaffected (it never depended on this) |
+| **R5** | mediateor pact ≅ joint cell | Pacts are Isabelle + human-in-loop; dignity machinery ≠ state machinery | Model ONE scenario's pact as a factory + joint turn; check what's lost | Same — informative rhyme only |
+| **R6** | `explain` is a faithful third reading | NL "faithfulness" is not circuit faithfulness | Honest scope: explain = PROVED-TOTAL deterministic template rendering of the IR term; theorems = totality + injectivity-on-semantics, NOT NL meaning | Ship as "best-effort rendering, total + injective" — still kills blind signing |
+| **R7** | Caps storable in slots | A stored cap must not survive its grantor's revocation — retrieval needs an epoch re-check; storage must not launder freshness | Design the retrieval rule (epoch check at load, in-circuit) BEFORE absorbing seal/sturdy machinery | Sealed-box machinery stays a kernel-adjacent pattern with its own gate |
+| **R8** | Byzantine = sheaf non-gluing | The poset/presheaf formalization may not add power over existing blocklace proofs | A standalone metatheory module; pursue only if it SHORTENS an existing proof | Drop without grief; the blocklace proofs already stand |
 
-The five-stratum tower (Spec→Inst→Witness→Emit→Argus) is *kept* — it's a good
-architecture — but it is ×8 instead of ×52: roughly **227 per-effect files →
-~40**, with the keystones (CommitmentCrossBind, Argus apex, RecursiveAggregation,
-Boundary coinduction, the cap-reshape gates) carrying over nearly unchanged.
-The guard compiler becomes the new load-bearing middle: ONE theorem family
-"`Pred` evaluation ⟺ circuit obligation" replaces per-effect gate proofs for
-everything that moved to userspace. App-level guarantees (escrow safety, queue
-FIFO, auction soundness) become **userspace verification** — `Dregg2.Verify`
-consuming Q against factory descriptors — which is where they always belonged:
-apps get theorems without kernel surface.
+## §7. Decision points (ember)
 
-## §4. The assurance case (replaces the Claims journal)
-
-Five top-level claims, each a theorem DAG over the strata, with the assumption
-floor explicit (Poseidon2 CR, ed25519, FRI soundness, GST liveness — and
-nothing else):
-
-- **A. Authority** — every state change was authorized by an unforgeable,
-  never-amplified, fresh token chain. (derivation circuit + cap-reshape gates
-  + epoch freshness)
-- **B. Conservation** — ∀ asset: Σδ = 0, exactly, every turn. (the one value law)
-- **C. Integrity** — receipts bind the entire post-state; tamper ⇒ reject.
-  (the commitment scheme + anti-ghost teeth)
-- **D. Freshness** — no replay, no double-spend, revocation is immediate-at-
-  finality. (nonces, nullifiers, epochs, the bound verifier)
-- **E. Unfoolability** — a light client verifying a Q-chain learns A–D hold
-  for the whole history, against an arbitrarily malicious network. (Argus +
-  RecursiveAggregation, composed)
-
-`Claims.lean` becomes `AssuranceCase.lean`: five sections, each importing its
-DAG, each `#assert_axioms`-pinned, organized by guarantee — never by date.
-
-## §5. dregg2 → dregg3 (a reduction, not a rewrite)
-
-Verdict: **dregg3 is dregg2 minus ~44 verbs plus 6 unifications.** The verified
-core (cells, caps lattice, conservation spine, commitment crown, Argus, the
-blocklace) IS already the dregg3 kernel — encrusted. Staged, each stage green:
-
-1. **Cap crown** (in flight): openable clist + in-circuit non-amp + consumed-
-   witness + authority binding. *(Phases A–B landed.)*
-2. **Value unification**: ratify `balance_change` as THE mechanism; issuers
-   as cells; exact conservation; fees as moves. (One VK/commitment rotation,
-   shared with stage 1 — rotate once.)
-3. **Storage-as-cell-programs**: execute the May 24 doc; delete queue/escrow/
-   obligation/swiss/seal verbs as their factories land; `storage/` and
-   `app-framework/` dissolve.
-4. **Guard unification**: Pred everywhere; Authorization collapses;
-   `Unchecked` dies; macaroon/biscuit become edge adapters.
-5. **The cutover** (already mapped): descriptor prover = THE prover for the
-   8-verb circuit; delete hand-AIRs + ~33K orphaned circuit LOC + the dormant
-   stacks.
-6. **The SWAP finishes**: Lean executor everywhere; apply.rs dies; dreggrs =
-   witness-gen.
-7. **AssuranceCase.lean** + the codec + docs consolidation.
-
-Each stage is independently shippable and strictly subtractive after its
-landing. No greenfield. The metatheory keeps its 238 pins throughout.
-
-## §6. Decision points (ember)
-
-1. **AssetId := issuer CellId** (exact conservation, issuer-carried supply) —
-   the deepest semantic change. Yes/no shapes stage 2.
-2. **Caps storable in slots** (absorbs seal/sturdyref machinery) — yes/no
-   shapes stage 3-4.
-3. **Fee economics as ordinary moves to pot-cells** (kills modulo-burn) —
-   policy lives in the proposer/treasury pot programs, not the kernel.
-4. **Intent layer placement** — solver/matcher as userspace settling via
-   turns (recommended), or intents as a 9th kernel verb family?
-5. **The 37 Pred atoms** — curate which survive as kernel atoms vs userspace
-   `witnessed(vk)` customs.
-6. **Naming**: execute as "dregg2 in shape" (this doc = the spine of the
-   consolidation) or fork the identity to dregg3 (clean VK/commitment epoch,
-   same tree)?
+1. **AssetId := issuer CellId** — gates S2. *(R2 probe first regardless.)*
+2. **Caps-in-slots** — gates the seal/sturdy absorption. *(R7 design first.)*
+3. **Fees as pot-cell moves** — kills modulo-burn; policy moves to pot programs.
+4. **Intent layer as userspace** (recommended) or 9th verb family.
+5. **Pred atom curation** — which of the 37 are kernel; rest become `witnessed`.
+6. **Identity**: "dregg2 in shape" vs the dregg3 name on a clean commitment
+   epoch. (The ship gets rebuilt plank by plank either way; the question is
+   what we paint on the hull.)
