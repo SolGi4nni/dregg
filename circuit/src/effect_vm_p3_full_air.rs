@@ -746,10 +746,16 @@ where
             s_burn.clone() * (prm(param::BURN_TARGET) - pv[pi::BURN_TARGET_PI].clone()),
         );
 
-        // -- NoteCreate --
-        let nc_val_lo = p1.clone();
+        // -- NoteCreate: BALANCE-NEUTRAL --
+        // The note value is hidden in the commitment and is NEVER moved on the
+        // transparent ledger (the shielding convention the executor uses:
+        // `apply_note_create` records the commitment and does not touch balance).
+        // So `bal_lo` is FROZEN: new_bal_lo = old_bal_lo. Matches the verified Lean
+        // descriptor (`EffectVmEmitNoteCreate`, balance-neutral) + universe-A's
+        // `noteCreateA_bal_neutral`. (`p1` = value_lo stays bound into the commitment
+        // cross-binding; a prior version debited it, which diverged — closed.)
         tb.assert_zero(
-            s_notecreate.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + nc_val_lo),
+            s_notecreate.clone() * (new_bal_lo.clone() - old_bal_lo.clone()),
         );
         tb.assert_zero(s_notecreate.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
         tb.assert_zero(s_notecreate.clone() * (new_cap_root.clone() - old_cap_root.clone()));
