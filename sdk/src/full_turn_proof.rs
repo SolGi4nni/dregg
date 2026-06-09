@@ -44,6 +44,10 @@
 //!   not merely to "some fact in this cell's tree" (see [`effect_action_binding`])
 //! - Non-revocation root matches the federation's published revocation accumulator
 
+use dregg_circuit::cap_root::CapLeaf;
+use dregg_circuit::dsl::cap_membership::{
+    cap_membership_circuit_descriptor, prove_cap_membership_p3, verify_cap_membership_p3,
+};
 use dregg_circuit::dsl::derivation::{
     derivation_circuit_descriptor, prove_derivation_p3, verify_derivation_p3,
 };
@@ -113,6 +117,12 @@ pub struct TurnProofComponents {
     pub has_conservation: bool,
     /// Non-revocation proof: token/capability hasn't been revoked.
     pub has_non_revocation: bool,
+    /// Cap-membership proof (cap Phase D): the CONSUMED capability's 7-field
+    /// leaf is a member of the holder's pre-state openable `capability_root`
+    /// (the sorted-Poseidon2 tree of cap Phase A). `serde(default)` keeps
+    /// pre-Phase-D wire proofs deserializable (they carry no cap leg).
+    #[serde(default)]
+    pub has_cap_membership: bool,
 }
 
 /// Witnesses needed to generate each sub-proof.
@@ -145,6 +155,13 @@ pub struct FullTurnWitness {
     /// Present only when capabilities have revocation channels.
     /// Proves the token hasn't been added to the revocation accumulator.
     pub non_revocation: Option<NonRevocationWitness>,
+
+    // -- Cap-membership witness (cap Phase D) --
+    /// Present for a capability-gated turn: the CONSUMED capability's leaf
+    /// preimage + sorted-Merkle path against the holder's pre-state
+    /// `capability_root` (from the Phase-C
+    /// `TurnReceipt::consumed_capabilities` witness).
+    pub cap_membership: Option<CapMembershipWitness>,
 
     /// The turn hash for binding (prevents proof replay on different turns).
     pub turn_hash: [u8; 32],
@@ -187,6 +204,52 @@ pub struct NonRevocationWitness {
     pub item_hash: BabyBear,
 }
 
+/// Cap-membership witness (cap Phase D): the CONSUMED capability's full
+/// 7-field leaf preimage + sorted-Merkle membership path against the holder's
+/// pre-state openable `capability_root`. The prover side of the AUTHORITY leg;
+/// the Phase-C executor witness ([`dregg_turn::ConsumedCapWitness`]) carries
+/// exactly this data — see [`CapMembershipWitness::from_consumed`].
+pub struct CapMembershipWitness {
+    /// The consumed capability's canonical 7-field leaf preimage.
+    pub leaf: CapLeaf,
+    /// Sibling digests along the membership path, bottom-up
+    /// (`CAP_TREE_DEPTH` entries).
+    pub siblings: Vec<BabyBear>,
+    /// Direction bits (0 = current node is the LEFT child, 1 = right).
+    pub directions: Vec<u8>,
+}
+
+impl CapMembershipWitness {
+    /// Build from the Phase-C executor witness threaded through
+    /// `TurnReceipt::consumed_capabilities`.
+    pub fn from_consumed(w: &dregg_turn::ConsumedCapWitness) -> Self {
+        Self {
+            leaf: w.cap_leaf(),
+            siblings: w.siblings.iter().map(|&s| BabyBear::new(s)).collect(),
+            directions: w.directions.clone(),
+        }
+    }
+}
+
+/// What the VERIFIER expects the cap-membership leg to attest (cap Phase D —
+/// the AUTHORITY binding). Mirrors the freshness close's
+/// `expected_revocation_root`: both fields are recomputed by the verifier from
+/// data it trusts (the canonical pre-state c-list / the hash-bound receipt
+/// witness), never taken from the proof.
+pub struct CapMembershipExpectation {
+    /// The consumed capability's leaf preimage AS DISCLOSED in the receipt
+    /// (`ConsumedCapWitness` leaf fields, bound by `receipt_hash` v3). The
+    /// verifier recomputes its 7-field Poseidon2 digest and pins the leg's
+    /// `pi[LEAF_DIGEST]` to it — so the proven member IS the disclosed
+    /// capability (an inflated-mask tamper mismatches).
+    pub leaf: CapLeaf,
+    /// The holder's CANONICAL pre-state `capability_root` (the same value the
+    /// EffectVm row's `cap_root` column is seeded from — cap Phase A). The
+    /// verifier pins the leg's `pi[CAP_ROOT]` to it — so membership is in THE
+    /// holder's real c-list tree, not a prover-chosen one.
+    pub cap_root: BabyBear,
+}
+
 // ============================================================================
 // Circuit Descriptor Construction
 // ============================================================================
@@ -216,6 +279,11 @@ fn build_full_turn_descriptor(components: &TurnProofComponents) -> ComposedCircu
     // Non-revocation (sorted tree non-membership).
     if components.has_non_revocation {
         circuits.push(non_revocation_circuit_descriptor());
+    }
+
+    // Cap-membership (consumed capability ∈ openable capability_root).
+    if components.has_cap_membership {
+        circuits.push(cap_membership_circuit_descriptor());
     }
 
     let circuit_refs: Vec<&CircuitDescriptor> = circuits.iter().collect();
@@ -717,6 +785,36 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     }
 
     // ========================================================================
+    // 5b. Cap-membership proof (consumed capability — cap Phase D)
+    // ========================================================================
+    if let Some(cap_witness) = &witness.cap_membership {
+        // AUDITED PATH: capability membership in the openable sorted-Poseidon2
+        // capability tree is proven through the real Plonky3 verifier
+        // (`p3-batch-stark`) via `prove_cap_membership_p3`. Every node hash
+        // (`hash_fact(left, [right])` — the exact `CanonicalCapTree` node) is
+        // arithmetized in-circuit by the real Poseidon2 gadget, and the leaf
+        // digest / path-top root are pinned by row-0 / last-row boundaries.
+        let leaf_digest = cap_witness.leaf.digest();
+        let (cap_proof, cap_pi) =
+            prove_cap_membership_p3(leaf_digest, &cap_witness.siblings, &cap_witness.directions)
+                .map_err(|e| {
+                    SdkError::InvalidWitness(format!("cap-membership p3 proof failed: {e}"))
+                })?;
+        let cap_proof_bytes = postcard::to_allocvec(&cap_proof).map_err(|e| {
+            SdkError::InvalidWitness(format!("cap-membership p3 proof serialize failed: {e}"))
+        })?;
+
+        components.has_cap_membership = true;
+        all_public_inputs.extend_from_slice(&cap_pi);
+        sub_proofs.push(AttachedSubProof {
+            label: "cap-membership".into(),
+            proof_bytes: cap_proof_bytes,
+            sub_public_inputs: cap_pi,
+            vk_hash: compute_vk_hash_bytes(&cap_membership_circuit_descriptor()),
+        });
+    }
+
+    // ========================================================================
     // 6. Compose all sub-proofs into one (AUDITED p3 main proof)
     // ========================================================================
     let composed_descriptor = build_full_turn_descriptor(&components);
@@ -792,7 +890,7 @@ pub fn verify_full_turn(
     expected_old_commit: BabyBear,
     expected_new_commit: BabyBear,
 ) -> Result<(), FullTurnVerifyError> {
-    verify_full_turn_bound(proof, expected_old_commit, expected_new_commit, None)
+    verify_full_turn_bound(proof, expected_old_commit, expected_new_commit, None, None)
 }
 
 /// Verify a full turn proof, additionally binding the non-revocation sub-proof's
@@ -842,11 +940,38 @@ pub fn verify_full_turn(
 /// `freshness_binding_b_rejects_wrong_item` pins the anti-forgery property and
 /// `revocation_item_pi_exposed_binding_b_closed` guards that the circuit keeps
 /// exposing the item PI.
+///
+/// # AUTHORITY / cap-membership binding (cap Phase D)
+///
+/// `expected_cap_membership = Some(expectation)` is the capability-gated
+/// (hosted-authority) verifier entry point. The expectation's two fields are
+/// recomputed by the CALLER from data it trusts — the consumed capability's
+/// leaf preimage from the hash-bound receipt witness
+/// (`TurnReceipt::consumed_capabilities`, cap Phase C) and the holder's
+/// CANONICAL pre-state `capability_root` (the same value the EffectVm row's
+/// `cap_root` column is seeded from, cap Phase A) — never from the proof. The
+/// check (step 9) then enforces, against the cap-membership sub-proof's
+/// in-circuit-bound public inputs:
+///
+/// - **leg present**: a capability-gated turn whose proof carries NO
+///   cap-membership leg is rejected ([`FullTurnVerifyError::MissingComponent`])
+///   — the leg cannot be silently stripped;
+/// - **root binding**: `pi[CAP_ROOT]` (the path top, pinned by the circuit's
+///   last-row boundary) MUST equal the canonical pre-state `capability_root` —
+///   a membership path into a prover-chosen tree is rejected
+///   ([`FullTurnVerifyError::CapRootMismatch`]);
+/// - **leaf binding**: `pi[LEAF_DIGEST]` (row-0 boundary) MUST equal the
+///   7-field Poseidon2 digest of the disclosed consumed-cap leaf — a
+///   leaf-field tamper (e.g. an inflated `EffectMask`) is rejected
+///   ([`FullTurnVerifyError::CapLeafMismatch`]).
+///
+/// `None` skips the binding (self-sovereign turns consume no capability).
 pub fn verify_full_turn_bound(
     proof: &FullTurnProof,
     expected_old_commit: BabyBear,
     expected_new_commit: BabyBear,
     expected_revocation_root: Option<BabyBear>,
+    expected_cap_membership: Option<&CapMembershipExpectation>,
 ) -> Result<(), FullTurnVerifyError> {
     // 1. Rebuild the composed circuit descriptor from the component flags.
     let _composed_descriptor = build_full_turn_descriptor(&proof.components);
@@ -948,6 +1073,34 @@ pub fn verify_full_turn_bound(
                         "non-revocation PI missing queried_item (pi[1])".into(),
                     ))?;
                 verify_non_revocation_p3(&p3, root, queried_item)
+            }
+            "cap-membership" => {
+                let p3: DslP3Proof =
+                    postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
+                        FullTurnVerifyError::SubProofDeserialize {
+                            index: i,
+                            reason: format!("cap-membership p3 deserialize: {e}"),
+                        }
+                    })?;
+                // Cap-membership PI is [leaf_digest, cap_root]; both bound
+                // in-circuit (row-0 / last-row boundaries). Carrying both to
+                // the audited verifier re-binds them (a proof for a different
+                // leaf or tree is UNSAT under these PIs).
+                let leaf_digest = attached
+                    .sub_public_inputs
+                    .first()
+                    .copied()
+                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                        "cap-membership PI missing leaf_digest (pi[0])".into(),
+                    ))?;
+                let cap_root = attached
+                    .sub_public_inputs
+                    .get(1)
+                    .copied()
+                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                        "cap-membership PI missing cap_root (pi[1])".into(),
+                    ))?;
+                verify_cap_membership_p3(&p3, leaf_digest, cap_root)
             }
             other => Err(format!("unknown sub-proof label: {}", other)),
         };
@@ -1206,6 +1359,71 @@ pub fn verify_full_turn_bound(
         }
     }
 
+    // 9. AUTHORITY / cap-membership binding (cap Phase D — the payoff).
+    //
+    //    The cap-membership sub-proof's two PIs are pinned IN-CIRCUIT
+    //    (`dsl::cap_membership`: row-0 boundary = leaf digest, last-row
+    //    boundary = the path top) and step 3 already re-verified the sub-proof
+    //    against them, so both are cryptographically-bound handles — NOT free
+    //    felts. Requiring:
+    //
+    //      (a) pi[CAP_ROOT]    == the holder's CANONICAL pre-state
+    //          `capability_root` (caller-recomputed from the authoritative
+    //          c-list — the same value seeded into the EffectVm row's cap_root
+    //          column, cap Phase A), and
+    //      (b) pi[LEAF_DIGEST] == digest of the receipt-disclosed consumed-cap
+    //          leaf preimage (caller-recomputed from the receipt-hash-bound
+    //          Phase-C witness),
+    //
+    //    upgrades "some leaf ∈ some tree" to "THE disclosed capability ∈ THE
+    //    holder's real pre-state c-list" — production authority, in-proof.
+    //    A capability-gated turn whose proof LACKS the leg is rejected
+    //    outright (the leg cannot be stripped).
+    if let Some(expected) = expected_cap_membership {
+        if !proof.components.has_cap_membership {
+            return Err(FullTurnVerifyError::MissingComponent(
+                "cap-membership (capability-gated turn carries no AUTHORITY leg)".into(),
+            ));
+        }
+        let cap_sub = proof
+            .composed
+            .sub_proofs
+            .iter()
+            .find(|sp| sp.label == "cap-membership")
+            .ok_or(FullTurnVerifyError::MissingComponent("cap-membership".into()))?;
+        let proof_leaf_digest = cap_sub
+            .sub_public_inputs
+            .first()
+            .copied()
+            .ok_or_else(|| {
+                FullTurnVerifyError::MalformedPublicInputs(
+                    "cap-membership PI missing leaf_digest (pi[0])".into(),
+                )
+            })?;
+        let proof_cap_root = cap_sub
+            .sub_public_inputs
+            .get(1)
+            .copied()
+            .ok_or_else(|| {
+                FullTurnVerifyError::MalformedPublicInputs(
+                    "cap-membership PI missing cap_root (pi[1])".into(),
+                )
+            })?;
+        if proof_cap_root != expected.cap_root {
+            return Err(FullTurnVerifyError::CapRootMismatch {
+                expected: expected.cap_root,
+                got: proof_cap_root,
+            });
+        }
+        let expected_leaf_digest = expected.leaf.digest();
+        if proof_leaf_digest != expected_leaf_digest {
+            return Err(FullTurnVerifyError::CapLeafMismatch {
+                expected: expected_leaf_digest,
+                got: proof_leaf_digest,
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -1244,6 +1462,30 @@ pub enum FullTurnVerifyError {
         auth_derived_hash: BabyBear,
         /// The "may perform THIS effect" fact reconstructed from the Effect-VM PIs.
         expected_action_binding: BabyBear,
+    },
+    /// The cap-membership sub-proof's path tops a root that is NOT the
+    /// holder's canonical pre-state `capability_root`. This is the AUTHORITY
+    /// anti-forgery tooth (cap Phase D): the circuit's last-row boundary pins
+    /// the published root to the path the proof actually authenticated, so a
+    /// membership path into a prover-chosen tree (or a DIFFERENT cell's
+    /// cap_root spliced in) publishes a different root and is rejected here.
+    CapRootMismatch {
+        /// The canonical pre-state capability root the verifier expects.
+        expected: BabyBear,
+        /// The root the proof's membership path actually tops.
+        got: BabyBear,
+    },
+    /// The cap-membership sub-proof proves membership of a leaf that is NOT
+    /// the consumed capability disclosed in the receipt. The circuit's row-0
+    /// boundary pins the published leaf digest to the genuinely-proven member,
+    /// and the verifier recomputes the expected digest from the receipt's
+    /// 7-field leaf preimage — so a leaf-field tamper (e.g. an inflated
+    /// `EffectMask`) mismatches and is rejected here.
+    CapLeafMismatch {
+        /// Digest of the receipt-disclosed consumed-cap leaf.
+        expected: BabyBear,
+        /// The leaf digest the proof actually attests.
+        got: BabyBear,
     },
     /// The non-revocation sub-proof proves freshness against a revocation
     /// accumulator root that is NOT the canonical root the verifier expects for
@@ -1316,6 +1558,20 @@ impl std::fmt::Display for FullTurnVerifyError {
                  expected Allow(effects_commit) = {:?} — the authorization proves a \
                  different action than the turn performs",
                 auth_derived_hash, expected_action_binding
+            ),
+            Self::CapRootMismatch { expected, got } => write!(
+                f,
+                "cap-membership proof root ({:?}) is not the holder's canonical pre-state \
+                 capability_root ({:?}) — the membership path is into a different \
+                 (prover-chosen / spliced) capability tree (AUTHORITY tooth, cap Phase D)",
+                got, expected
+            ),
+            Self::CapLeafMismatch { expected, got } => write!(
+                f,
+                "cap-membership proof attests leaf digest ({:?}), not the receipt-disclosed \
+                 consumed capability ({:?}) — the proven member's fields differ from the \
+                 disclosed witness (leaf-tamper, AUTHORITY tooth, cap Phase D)",
+                got, expected
             ),
             Self::RevocationRootMismatch { expected, got } => write!(
                 f,
@@ -1444,6 +1700,7 @@ pub fn prove_turn_with_auth(
         membership: None,
         conservation: None,
         non_revocation: None,
+        cap_membership: None,
         turn_hash,
     };
     prove_full_turn(&witness)
@@ -1465,6 +1722,7 @@ pub fn prove_turn_self_sovereign(
         membership: None,
         conservation: None,
         non_revocation: None,
+        cap_membership: None,
         turn_hash,
     };
     prove_full_turn(&witness)
@@ -1777,6 +2035,7 @@ mod tests {
                 tree,
                 item_hash: fresh_item,
             }),
+            cap_membership: None,
             turn_hash: [0x77u8; 32],
         };
 
@@ -1825,6 +2084,7 @@ mod tests {
                 tree: canonical_tree,
                 item_hash: fresh_item,
             }),
+            cap_membership: None,
             turn_hash: [0x91u8; 32],
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
@@ -1836,7 +2096,7 @@ mod tests {
         expected_final.refresh_commitment();
         let new_commit = expected_final.state_commitment;
 
-        verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root)).expect(
+        verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None).expect(
             "honest fresh spend (freshness proven against THE canonical accumulator root) must verify",
         );
     }
@@ -1893,6 +2153,7 @@ mod tests {
                 tree: prover_tree, // freshness "proven" against the prover's own tree
                 item_hash: spent,
             }),
+            cap_membership: None,
             turn_hash: [0x92u8; 32],
         };
         let proof =
@@ -1906,7 +2167,7 @@ mod tests {
         let new_commit = expected_final.state_commitment;
 
         // With the canonical root pinned, the prover-chosen root is rejected.
-        let result = verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root));
+        let result = verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None);
         match result {
             Err(FullTurnVerifyError::RevocationRootMismatch { expected, got }) => {
                 assert_eq!(expected, canonical_root);
@@ -2006,6 +2267,7 @@ mod tests {
                 tree,
                 item_hash: nullifier, // freshness proven for THIS turn's nullifier
             }),
+            cap_membership: None,
             turn_hash: [0xB1u8; 32],
         };
         let proof = prove_full_turn(&witness).expect("honest fresh-spend proof should generate");
@@ -2072,6 +2334,7 @@ mod tests {
                 tree,
                 item_hash: other_item, // freshness proven for the WRONG item
             }),
+            cap_membership: None,
             turn_hash: [0xB2u8; 32],
         };
         let proof = prove_full_turn(&witness)
@@ -2214,6 +2477,7 @@ mod tests {
             }),
             conservation: None,
             non_revocation: None,
+            cap_membership: None,
             turn_hash: [0x88u8; 32],
         };
         let mut proof = prove_full_turn(&witness).expect("honest proof should generate");

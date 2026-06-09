@@ -203,9 +203,10 @@ pub use privacy::{
 
 // Re-export full turn proof composition API.
 pub use full_turn_proof::{
-    AuthorizationWitness, FullTurnProof, FullTurnVerifyError, FullTurnWitness, MembershipWitness,
-    NonRevocationWitness, TurnProofComponents, prove_full_turn, prove_turn_self_sovereign,
-    prove_turn_with_auth, revalidate_turn_self_sovereign, verify_full_turn, verify_full_turn_bound,
+    AuthorizationWitness, CapMembershipExpectation, CapMembershipWitness, FullTurnProof,
+    FullTurnVerifyError, FullTurnWitness, MembershipWitness, NonRevocationWitness,
+    TurnProofComponents, prove_full_turn, prove_turn_self_sovereign, prove_turn_with_auth,
+    revalidate_turn_self_sovereign, verify_full_turn, verify_full_turn_bound,
 };
 
 // Re-export discharge gateway client functions.

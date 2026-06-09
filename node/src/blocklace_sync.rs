@@ -1905,6 +1905,22 @@ async fn execute_finalized_turn(
         None
     };
 
+    // AUTHORITY path (cap Phase D): capture the actor cell's CANONICAL
+    // pre-execution `capability_root` — the sorted-Poseidon2 root over its
+    // c-list (cap Phase A's openable scheme, the same value the Effect-VM
+    // row's cap_root column is seeded from). A capability-gated turn's
+    // cap-membership leg is bound against THIS root, never one from the
+    // receipt/prover. Captured BEFORE execution (effects may mutate the
+    // c-list). A missing cell has the canonical EMPTY root.
+    let full_turn_pre_cap_root: dregg_circuit::field::BabyBear = if s.full_turn_proving_enabled {
+        s.ledger
+            .get(&signed_turn.turn.agent)
+            .map(|cell| dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities))
+            .unwrap_or_else(dregg_circuit::cap_root::empty_capability_root)
+    } else {
+        dregg_circuit::cap_root::empty_capability_root()
+    };
+
     // FRESHNESS path: capture the node's CANONICAL spent-nullifier set BEFORE this
     // turn's spend is recorded. A `NoteSpend` turn is proven against THIS set
     // (freshness = "not yet spent"); recording this turn's nullifier first would
@@ -2070,18 +2086,23 @@ async fn execute_finalized_turn(
             // its proof is NOT attached. The proof bytes are persisted keyed by
             // turn hash so any peer / operator can fetch the attached proof.
             //
-            // ROUTING BY CELL TYPE: a turn that SPENDS a note (carries a
-            // `NoteSpend`) is routed through the FRESHNESS path
-            // (`prove_and_verify_finalized_turn_freshness`), which attaches a
-            // non-revocation sub-proof and gates acceptance on
-            // `verify_full_turn_bound` with the canonical revocation root pinned —
-            // so the no-double-spend bindings (a)+(b) FIRE. A non-spend turn stays
-            // on the self-sovereign Effect-VM path (the correct trust model for an
-            // owner-authorized turn). The AUTHORITY (capability) leg is NOT wired:
-            // the executor does not retain the consumed-capability witness and the
-            // circuit binds the whole-state commitment, not `capability_root` — a
-            // genuine authorization witness is not reconstructible post-hoc (see
-            // turn_proving.rs module doc / commit message).
+            // ROUTING BY TRUST MODEL:
+            //  - A CAPABILITY-GATED turn (receipt carries an actor-held
+            //    `consumed_capabilities` witness, cap Phase C) routes through the
+            //    AUTHORITY path (`prove_and_verify_finalized_turn_capability`, cap
+            //    Phase D): the consumed cap's leaf is proven a sorted-Merkle member
+            //    of the actor's CANONICAL pre-state `capability_root`, and
+            //    acceptance is gated on `verify_full_turn_bound` with the cap
+            //    expectation pinned (root + leaf teeth). A cap-gated spend keeps
+            //    its freshness leg (the nullifier is threaded through).
+            //  - A turn that SPENDS a note (carries a `NoteSpend`) routes through
+            //    the FRESHNESS path (`prove_and_verify_finalized_turn_freshness`):
+            //    non-revocation sub-proof + canonical revocation root pinned, so
+            //    the no-double-spend bindings (a)+(b) FIRE.
+            //  - Everything else stays on the self-sovereign Effect-VM path (the
+            //    correct trust model for an owner-authorized turn).
+            // Residual (logged below): a BEARER-delegation witness (holder !=
+            // actor) needs the DELEGATOR's pre-state root captured — not wired yet.
             let full_turn_proof_attached: Option<Vec<u8>> =
                 if let Some((pre_balance, pre_nonce)) = full_turn_pre_state {
                     let effects: Vec<dregg_turn::Effect> = signed_turn
@@ -2093,8 +2114,36 @@ async fn execute_finalized_turn(
                         .collect();
                     let spent_nullifiers =
                         crate::turn_proving::spent_nullifiers(&effects);
-                    let proving_result = match spent_nullifiers.first() {
-                        Some(spent_nullifier) => {
+                    let actor_cap_witness = crate::turn_proving::actor_consumed_cap(
+                        &receipt.consumed_capabilities,
+                        &signed_turn.turn.agent,
+                    );
+                    if actor_cap_witness.is_none() && !receipt.consumed_capabilities.is_empty() {
+                        warn!(
+                            turn_hash = %turn_hash_hex,
+                            witnesses = receipt.consumed_capabilities.len(),
+                            "turn consumed BEARER-delegated capabilities (holder != actor); \
+                             the cap-membership leg needs the delegator's pre-state root \
+                             capture (named residual) — proving WITHOUT the AUTHORITY leg"
+                        );
+                    }
+                    let proving_result = match (actor_cap_witness, spent_nullifiers.first()) {
+                        (Some(consumed), spent_nullifier) => {
+                            // CAPABILITY-GATED turn → AUTHORITY path (cap Phase D),
+                            // freshness leg included when it also spends.
+                            crate::turn_proving::prove_and_verify_finalized_turn_capability(
+                                &signed_turn.turn.agent,
+                                pre_balance,
+                                pre_nonce,
+                                full_turn_pre_cap_root,
+                                &effects,
+                                computed_hash,
+                                consumed,
+                                spent_nullifier,
+                                &full_turn_previously_spent,
+                            )
+                        }
+                        (None, Some(spent_nullifier)) => {
                             // SPEND turn → freshness path (bound verify).
                             crate::turn_proving::prove_and_verify_finalized_turn_freshness(
                                 &signed_turn.turn.agent,
@@ -2106,7 +2155,7 @@ async fn execute_finalized_turn(
                                 &full_turn_previously_spent,
                             )
                         }
-                        None => {
+                        (None, None) => {
                             // Non-spend turn → self-sovereign Effect-VM path.
                             crate::turn_proving::prove_and_verify_finalized_turn(
                                 &signed_turn.turn.agent,

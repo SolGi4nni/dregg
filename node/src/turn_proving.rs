@@ -82,25 +82,29 @@
 //! freshness-bound proof, logged loudly as a real limitation. Closing this needs a
 //! depth-parameterized non-revocation AIR (tracked, not faked).
 //!
-//! ## AUTHORITY leg — NOT wired here (named blocker, see module-level note in the
-//! commit message): binding a hosted/capability-gated turn's authorization leg
-//! non-vacuously requires the Effect-VM cross-binding to bind to `capability_root`
-//! (not the whole-state commitment) AND the executor to thread the *consumed*
-//! capability's slot/fact/Merkle-path into the [`dregg_turn::TurnReceipt`]. Neither
-//! exists today (`derivation_records` records GRANTS the turn *creates*, not the
-//! capability it *consumes*; the cell c-list is not a Merkle tree rooted at the
-//! Effect-VM state commitment). Wiring an authorization leg now would carry a FREE
-//! (unconstrained) body-fact witness — a vacuous "the actor holds this capability"
-//! claim. We do not do that; the AUTHORITY tooth stays correctly absent until the
-//! circuit + executor support a real witness.
+//! ## AUTHORITY leg — WIRED (cap Phase D; the former blocker here is CLOSED)
+//!
+//! A capability-gated turn (receipt carries [`dregg_turn::TurnReceipt::consumed_capabilities`],
+//! the cap Phase C executor witness) is routed through
+//! [`prove_and_verify_finalized_turn_capability`], which attaches a
+//! **cap-membership** sub-proof — the consumed capability's 7-field leaf proven
+//! a sorted-Poseidon2-Merkle member of the holder's pre-state openable
+//! `capability_root` (cap Phase A) — and gates acceptance on
+//! [`dregg_sdk::verify_full_turn_bound`] with a [`dregg_sdk::CapMembershipExpectation`]
+//! pinning BOTH the leg's root (to the node's CANONICAL pre-state capability
+//! root) and its leaf digest (to the receipt-disclosed consumed-cap preimage).
+//! The two former gaps are gone: the cap_root IS an openable membership root
+//! the circuit seeds from (Phase A), and the executor DOES thread the consumed
+//! witness (Phase C) — so the leg is a real binding, not a free body-fact wire.
 
 use dregg_circuit::dsl::revocation::{DslRevocationTree, TREE_DEPTH};
 use dregg_circuit::effect_vm::fold_bytes32_to_bb;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::{CellState, generate_effect_vm_trace};
 use dregg_sdk::{
-    AgentCipherclerk, FullTurnProof, FullTurnVerifyError, FullTurnWitness, NonRevocationWitness,
-    prove_full_turn, prove_turn_self_sovereign, verify_full_turn_bound,
+    AgentCipherclerk, CapMembershipExpectation, CapMembershipWitness, FullTurnProof,
+    FullTurnVerifyError, FullTurnWitness, NonRevocationWitness, prove_full_turn,
+    prove_turn_self_sovereign, verify_full_turn_bound,
 };
 use dregg_types::CellId;
 
@@ -153,6 +157,13 @@ pub enum FullTurnProvingError {
     /// set (a genuine double-spend the executor should also have rejected) or the
     /// witness was otherwise unconstructible. The turn carries no freshness proof.
     NullifierAlreadyRevoked,
+    /// The receipt's consumed-capability witness (cap Phase C) does not open to
+    /// the node's CANONICAL pre-state `capability_root` for the holder — its
+    /// membership path is broken or tops a different (non-canonical) tree. A
+    /// cap-membership leg proven from it could only bind a wrong root, so the
+    /// capability path REFUSES rather than attach a leg the bound verifier
+    /// would (correctly) reject.
+    ConsumedCapWitnessInvalid { reason: String },
 }
 
 impl std::fmt::Display for FullTurnProvingError {
@@ -169,6 +180,11 @@ impl std::fmt::Display for FullTurnProvingError {
                 f,
                 "spent nullifier is already in the canonical revocation set (double-spend) — \
                  no non-membership witness exists"
+            ),
+            Self::ConsumedCapWitnessInvalid { reason } => write!(
+                f,
+                "consumed-capability witness does not open to the canonical pre-state \
+                 capability_root: {reason} — no sound cap-membership leg exists"
             ),
         }
     }
@@ -261,6 +277,22 @@ pub fn spent_nullifiers(effects: &[dregg_turn::Effect]) -> Vec<[u8; 32]> {
         collect(e, &mut out);
     }
     out
+}
+
+/// Pick the consumed-capability witness whose HOLDER is the actor cell — the
+/// breadstuff authorization surface, where the actor's own c-list held the
+/// consumed authority. This is the routing predicate for the AUTHORITY /
+/// cap-membership path (cap Phase D): a receipt carrying such a witness routes
+/// through [`prove_and_verify_finalized_turn_capability`].
+///
+/// Bearer-delegation witnesses (`holder != actor`) are NOT selected: their leg
+/// must bind the DELEGATOR's pre-state capability root, which the commit path
+/// does not capture yet (a named residual, logged loudly at the routing site).
+pub fn actor_consumed_cap<'a>(
+    consumed: &'a [dregg_turn::ConsumedCapWitness],
+    agent: &CellId,
+) -> Option<&'a dregg_turn::ConsumedCapWitness> {
+    consumed.iter().find(|w| w.holder == *agent)
 }
 
 /// Fold a raw 32-byte note nullifier into the BabyBear field element the
@@ -371,6 +403,7 @@ pub fn prove_and_verify_finalized_turn_freshness(
         membership: None,
         conservation: None,
         non_revocation: Some(NonRevocationWitness { tree, item_hash }),
+        cap_membership: None,
         turn_hash,
     };
     let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
@@ -378,8 +411,132 @@ pub fn prove_and_verify_finalized_turn_freshness(
     // VERIFY → ACCEPT leg, BOUND to the canonical revocation root. Acceptance is
     // gated on this Ok: a freshness proof against any other (prover-chosen) root,
     // or for any item other than this turn's nullifier, is rejected here.
-    verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root))
+    verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None)
         .map_err(FullTurnProvingError::Verify)?;
+
+    Ok(ProvenFinalizedTurn {
+        proof,
+        old_commit,
+        new_commit,
+    })
+}
+
+/// Prove a finalized CAPABILITY-GATED turn (cap Phase D — the AUTHORITY payoff)
+/// and gate acceptance on the cap-membership-bound verifier.
+///
+/// `consumed` is the receipt's Phase-C [`dregg_turn::ConsumedCapWitness`] whose
+/// `holder` is the ACTOR cell (`agent`) — the breadstuff surface, where the
+/// actor's own c-list held the consumed authority. In addition to the Effect-VM
+/// post-state binding, this:
+///
+/// 1. checks (defence in depth) that the receipt witness's membership path
+///    opens to `pre_capability_root` — the node's CANONICAL pre-state
+///    capability root for the holder, recomputed from the authoritative
+///    pre-execution c-list (NOT taken from the receipt) — refusing with
+///    [`FullTurnProvingError::ConsumedCapWitnessInvalid`] otherwise;
+/// 2. seeds the Effect-VM pre-state with that same canonical root
+///    ([`CellState::with_capability_root`], cap Phase A) so `old_commit` binds
+///    the very tree the membership leg opens;
+/// 3. attaches the **cap-membership** sub-proof (the consumed cap's 7-field
+///    leaf ∈ the openable sorted-Poseidon2 `capability_root`, proven through
+///    the audited p3 path);
+/// 4. verifies through [`verify_full_turn_bound`] with a
+///    [`CapMembershipExpectation`] pinning the leg's root to the canonical
+///    pre-state cap root ([`FullTurnVerifyError::CapRootMismatch`] tooth) and
+///    its leaf digest to the receipt-disclosed preimage
+///    ([`FullTurnVerifyError::CapLeafMismatch`] tooth).
+///
+/// A capability-gated turn that ALSO spends a note keeps its freshness leg:
+/// pass `spent_nullifier` + `previously_spent` and the non-revocation sub-proof
+/// is attached and bound exactly as in
+/// [`prove_and_verify_finalized_turn_freshness`] (no-degrade: cap routing never
+/// drops the no-double-spend teeth).
+#[allow(clippy::too_many_arguments)]
+pub fn prove_and_verify_finalized_turn_capability(
+    agent: &CellId,
+    pre_balance: u64,
+    pre_nonce: u64,
+    pre_capability_root: BabyBear,
+    effects: &[dregg_turn::Effect],
+    turn_hash: [u8; 32],
+    consumed: &dregg_turn::ConsumedCapWitness,
+    spent_nullifier: Option<&[u8; 32]>,
+    previously_spent: &[[u8; 32]],
+) -> Result<ProvenFinalizedTurn, FullTurnProvingError> {
+    // Defence in depth: the receipt witness must be internally consistent AND
+    // open to the CANONICAL pre-state capability root the node itself derived.
+    // (verify_full_turn_bound re-checks the root equality cryptographically;
+    // refusing here avoids minting a proof the bound verifier must reject.)
+    if !consumed.verify() {
+        return Err(FullTurnProvingError::ConsumedCapWitnessInvalid {
+            reason: "membership path does not recompute the witness's own cap_root".into(),
+        });
+    }
+    if consumed.cap_root != pre_capability_root.as_u32() {
+        return Err(FullTurnProvingError::ConsumedCapWitnessInvalid {
+            reason: format!(
+                "witness cap_root {} != canonical pre-state capability_root {}",
+                consumed.cap_root,
+                pre_capability_root.as_u32()
+            ),
+        });
+    }
+
+    // Optional freshness leg (a cap-gated turn that also spends a note).
+    let non_revocation = match spent_nullifier {
+        Some(nf) => {
+            let tree = canonical_revocation_tree_for_set(previously_spent)?;
+            let item_hash = nullifier_to_field(nf);
+            if tree.contains(&item_hash) {
+                return Err(FullTurnProvingError::NullifierAlreadyRevoked);
+            }
+            Some((tree, item_hash))
+        }
+        None => None,
+    };
+    let canonical_revocation_root = non_revocation.as_ref().map(|(tree, _)| tree.root());
+
+    // Effect-VM pre-state, seeded with the REAL canonical capability root (cap
+    // Phase A) — the same root the membership leg opens against.
+    let vm_effects = AgentCipherclerk::convert_effects_to_vm(agent, effects);
+    let initial_vm_state =
+        CellState::with_capability_root(pre_balance, pre_nonce as u32, pre_capability_root);
+    let old_commit = initial_vm_state.state_commitment;
+    let (_trace, pi) = generate_effect_vm_trace(&initial_vm_state, &vm_effects);
+    let new_commit = pi[dregg_circuit::effect_vm::pi::NEW_COMMIT];
+
+    // Compose the full-turn proof WITH the cap-membership leg (+ freshness when
+    // the turn also spends).
+    let witness = FullTurnWitness {
+        initial_cell_state: initial_vm_state,
+        effects: vm_effects,
+        authorization: None,
+        membership: None,
+        conservation: None,
+        non_revocation: non_revocation
+            .map(|(tree, item_hash)| NonRevocationWitness { tree, item_hash }),
+        cap_membership: Some(CapMembershipWitness::from_consumed(consumed)),
+        turn_hash,
+    };
+    let proof = prove_full_turn(&witness).map_err(FullTurnProvingError::Prove)?;
+
+    // VERIFY → ACCEPT leg, BOUND to the canonical pre-state capability root and
+    // the receipt-disclosed consumed-cap leaf (and, for a spend, the canonical
+    // revocation root). Acceptance is gated on this Ok: a membership path into
+    // any other (prover-chosen / spliced) tree, or for any leaf other than the
+    // disclosed consumed capability, is rejected here.
+    let expectation = CapMembershipExpectation {
+        leaf: consumed.cap_leaf(),
+        cap_root: pre_capability_root,
+    };
+    verify_full_turn_bound(
+        &proof,
+        old_commit,
+        new_commit,
+        canonical_revocation_root,
+        Some(&expectation),
+    )
+    .map_err(FullTurnProvingError::Verify)?;
 
     Ok(ProvenFinalizedTurn {
         proof,
@@ -586,6 +743,7 @@ mod tests {
             proven.old_commit,
             proven.new_commit,
             Some(canonical_root),
+            None,
         )
         .expect("light-client re-verify against the canonical root must accept");
     }
@@ -620,6 +778,7 @@ mod tests {
             proven.old_commit,
             proven.new_commit,
             Some(wrong_root),
+            None,
         );
         match result {
             Err(FullTurnVerifyError::RevocationRootMismatch { expected, got }) => {
@@ -712,5 +871,430 @@ mod tests {
             }
             other => panic!("expected RevocationCapacityExceeded, got {other:?}"),
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // AUTHORITY / cap-membership routing (cap Phase D — the payoff gauntlet)
+    // ──────────────────────────────────────────────────────────────────────
+
+    use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
+    use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, symbol};
+    use dregg_turn::forest::{CallForest, CallTree};
+    use dregg_turn::turn::{Turn, TurnResult};
+    use dregg_turn::{ComputronCosts, TurnExecutor};
+
+    fn open_permissions() -> Permissions {
+        Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        }
+    }
+
+    fn set_field_action(target: CellId, auth: Authorization, value: [u8; 32]) -> Action {
+        Action {
+            target,
+            method: symbol("set_field"),
+            args: vec![],
+            authorization: auth,
+            preconditions: Default::default(),
+            effects: vec![dregg_turn::Effect::SetField {
+                cell: target,
+                index: 0,
+                value,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![],
+        }
+    }
+
+    fn wrap_turn(agent: CellId, action: Action) -> Turn {
+        Turn {
+            agent,
+            nonce: 0,
+            call_forest: CallForest {
+                roots: vec![CallTree {
+                    action,
+                    children: vec![],
+                    hash: [0u8; 32],
+                }],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    /// Run a REAL breadstuff-gated turn through the executor (the cap Phase C
+    /// capture path): the agent's c-list holds a breadstuff capability to the
+    /// target, whose Signature-tier `set_state` the breadstuff satisfies.
+    /// Returns the committed receipt (carrying the consumed-cap witness), the
+    /// agent id, the agent's CANONICAL pre-state capability root (recomputed
+    /// independently from the pre-execution c-list, exactly as the commit path
+    /// captures it), and the turn's effects.
+    fn run_breadstuff_gated_turn() -> (
+        dregg_turn::TurnReceipt,
+        CellId,
+        BabyBear,
+        Vec<dregg_turn::Effect>,
+    ) {
+        let token: [u8; 32] = [0xD5; 32];
+        let mut agent = Cell::with_balance([0xA7u8; 32], [0u8; 32], 1_000);
+        agent.permissions = open_permissions();
+
+        let mut target = Cell::with_balance([0x3Bu8; 32], [0u8; 32], 500);
+        let mut perms = open_permissions();
+        perms.set_state = AuthRequired::Signature;
+        target.permissions = perms;
+        let target_id = target.id();
+
+        // A decoy capability so the consumed cap is not the only leaf.
+        agent
+            .capabilities
+            .grant(CellId::from_bytes([0x77u8; 32]), AuthRequired::None);
+        let slot = agent
+            .capabilities
+            .grant_with_breadstuff(target_id, AuthRequired::None, Some(token))
+            .expect("grant breadstuff cap");
+        // Restrict the cap to EXACTLY SetField. `grant_with_breadstuff` leaves
+        // `allowed_effects = None` (⇒ EFFECT_ALL ⇒ leaf mask limbs already
+        // all-ones), which would make the inflated-mask forgery below a NO-OP.
+        // A NARROW mask makes that forgery a REAL rights amplification.
+        agent
+            .capabilities
+            .iter_mut()
+            .find(|c| c.slot == slot)
+            .expect("granted cap present")
+            .allowed_effects = Some(dregg_cell::facet::EFFECT_SET_FIELD);
+
+        let agent_id = agent.id();
+        // The CANONICAL pre-state capability root, from the authoritative
+        // pre-execution c-list (the same capture the commit path performs).
+        let pre_cap_root =
+            dregg_cell::compute_canonical_capability_root_felt(&agent.capabilities);
+
+        let mut ledger = Ledger::new();
+        ledger.insert_cell(agent).unwrap();
+        ledger.insert_cell(target).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let turn = wrap_turn(
+            agent_id,
+            set_field_action(target_id, Authorization::Breadstuff(token), [42u8; 32]),
+        );
+        let effects: Vec<dregg_turn::Effect> = turn
+            .call_forest
+            .total_effects()
+            .into_iter()
+            .cloned()
+            .collect();
+        let receipt = match executor.execute(&turn, &mut ledger) {
+            TurnResult::Committed { receipt, .. } => receipt,
+            other => panic!("breadstuff turn must commit, got {other:?}"),
+        };
+        (receipt, agent_id, pre_cap_root, effects)
+    }
+
+    /// ROUTING: a capability-gated receipt is classified onto the cap path
+    /// (the actor-held witness is found); a self-sovereign receipt is not.
+    #[test]
+    fn routing_identifies_capability_gated_vs_self_sovereign() {
+        let (receipt, agent_id, _, _) = run_breadstuff_gated_turn();
+        assert_eq!(receipt.consumed_capabilities.len(), 1);
+        assert!(
+            actor_consumed_cap(&receipt.consumed_capabilities, &agent_id).is_some(),
+            "a breadstuff-gated turn routes to the cap-membership path"
+        );
+        assert!(
+            actor_consumed_cap(&[], &agent_id).is_none(),
+            "a self-sovereign turn (empty witnesses) stays on the existing paths"
+        );
+    }
+
+    /// CONTROL: an honest capability-gated turn proves + verifies end-to-end
+    /// WITH the cap-membership leg, bound to the canonical pre-state
+    /// capability root and the receipt-disclosed consumed-cap leaf.
+    #[test]
+    fn honest_capability_gated_turn_proves_with_cap_leg() {
+        let (receipt, agent_id, pre_cap_root, effects) = run_breadstuff_gated_turn();
+        let consumed = actor_consumed_cap(&receipt.consumed_capabilities, &agent_id)
+            .expect("actor-held consumed-cap witness");
+
+        let proven = prove_and_verify_finalized_turn_capability(
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xCAu8; 32],
+            consumed,
+            None,
+            &[],
+        )
+        .expect("honest capability-gated turn must prove + cap-bound-verify");
+
+        assert!(proven.proof.components.has_cap_membership, "cap leg attached");
+        assert!(!proven.proof_bytes().is_empty());
+
+        // Independent re-verification (a light client's path): recompute the
+        // expectation from the receipt witness + the canonical root.
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: pre_cap_root,
+        };
+        verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        )
+        .expect("light-client re-verify with the cap expectation must accept");
+    }
+
+    /// ANTI-FORGERY 1 — a consumed-cap witness whose path does NOT reach the
+    /// canonical pre-state cap_root is REJECTED: (a) the prover refuses a
+    /// tampered-path witness outright; (b) an honest proof re-verified against
+    /// a different expected root fails with `CapRootMismatch`.
+    #[test]
+    fn cap_witness_path_not_reaching_prestate_root_is_rejected() {
+        let (receipt, agent_id, pre_cap_root, effects) = run_breadstuff_gated_turn();
+        let consumed = actor_consumed_cap(&receipt.consumed_capabilities, &agent_id)
+            .unwrap()
+            .clone();
+
+        // (a) Tamper a sibling: the path no longer recomputes the witness's
+        // own root — the prover refuses (no sound leg exists).
+        let mut tampered = consumed.clone();
+        tampered.siblings[2] ^= 1;
+        let result = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCBu8; 32], &tampered, None, &[],
+        );
+        assert!(
+            matches!(
+                result,
+                Err(FullTurnProvingError::ConsumedCapWitnessInvalid { .. })
+            ),
+            "a tampered membership path must be refused, got {result:?}"
+        );
+
+        // (b) Honest proof, verified against a DIFFERENT expected root: the
+        // cap leg's in-circuit-bound root mismatches → CapRootMismatch.
+        let proven = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCCu8; 32], &consumed, None, &[],
+        )
+        .expect("honest proof");
+        let wrong_root = pre_cap_root + BabyBear::new(1);
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: wrong_root,
+        };
+        match verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        ) {
+            Err(FullTurnVerifyError::CapRootMismatch { expected, got }) => {
+                assert_eq!(expected, wrong_root);
+                assert_eq!(got, pre_cap_root);
+            }
+            Ok(()) => panic!(
+                "SOUNDNESS (AUTHORITY): a cap-membership proof against one tree was \
+                 ACCEPTED against a DIFFERENT root — the splicing hole is OPEN!"
+            ),
+            Err(other) => panic!("expected CapRootMismatch, got {other:?}"),
+        }
+    }
+
+    /// ANTI-FORGERY 2 — a leaf-field tamper (INFLATED EffectMask) is REJECTED:
+    /// the verifier recomputes the leaf digest from the disclosed witness
+    /// fields and the leg's row-0-bound digest mismatches (`CapLeafMismatch`);
+    /// and a receipt witness whose leaf was inflated no longer opens to the
+    /// canonical root, so the prover refuses it outright.
+    #[test]
+    fn inflated_mask_leaf_tamper_is_rejected() {
+        let (receipt, agent_id, pre_cap_root, effects) = run_breadstuff_gated_turn();
+        let consumed = actor_consumed_cap(&receipt.consumed_capabilities, &agent_id)
+            .unwrap()
+            .clone();
+
+        // The committed cap's rights are NARROW (exactly SetField) — the
+        // inflation below is a REAL amplification, not a no-op.
+        assert_eq!(consumed.leaf_mask_lo, 1, "fixture grants a SetField-only mask");
+        assert_eq!(consumed.leaf_mask_hi, 0, "fixture grants a SetField-only mask");
+
+        // (a) Prover side: an inflated-mask witness has no membership path to
+        // the canonical root (the inflated leaf is NOT in the tree).
+        let mut inflated = consumed.clone();
+        inflated.leaf_mask_lo = 0xFFFF;
+        inflated.leaf_mask_hi = 0xFFFF;
+        let result = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCDu8; 32], &inflated, None, &[],
+        );
+        assert!(
+            matches!(
+                result,
+                Err(FullTurnProvingError::ConsumedCapWitnessInvalid { .. })
+            ),
+            "an inflated-mask leaf must be refused (not in the canonical tree), got {result:?}"
+        );
+
+        // (b) Verifier side: an honest proof checked against an inflated-leaf
+        // expectation mismatches the in-circuit-bound leaf digest.
+        let proven = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCEu8; 32], &consumed, None, &[],
+        )
+        .expect("honest proof");
+        let mut inflated_leaf = consumed.cap_leaf();
+        let (lo, hi) = dregg_circuit::cap_root::split_effect_mask(0xFFFF_FFFF);
+        inflated_leaf.mask_lo = lo;
+        inflated_leaf.mask_hi = hi;
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: inflated_leaf,
+            cap_root: pre_cap_root,
+        };
+        match verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        ) {
+            Err(FullTurnVerifyError::CapLeafMismatch { expected, got }) => {
+                assert_eq!(expected, inflated_leaf.digest());
+                assert_eq!(got, consumed.cap_leaf().digest());
+            }
+            Ok(()) => panic!(
+                "SOUNDNESS (AUTHORITY): an INFLATED-MASK leaf was ACCEPTED — rights \
+                 amplification through the proof leg is OPEN!"
+            ),
+            Err(other) => panic!("expected CapLeafMismatch, got {other:?}"),
+        }
+    }
+
+    /// ANTI-FORGERY 3 — splicing a DIFFERENT cell's cap_root is REJECTED: the
+    /// witness opens to the agent's tree, so binding the leg to another cell's
+    /// canonical root fails (prover refusal AND verifier `CapRootMismatch`).
+    #[test]
+    fn different_cells_cap_root_splice_is_rejected() {
+        let (receipt, agent_id, pre_cap_root, effects) = run_breadstuff_gated_turn();
+        let consumed = actor_consumed_cap(&receipt.consumed_capabilities, &agent_id)
+            .unwrap()
+            .clone();
+
+        // A DIFFERENT cell with a different c-list ⇒ a different canonical root.
+        let mut other = Cell::with_balance([0x99u8; 32], [0u8; 32], 10);
+        other
+            .capabilities
+            .grant(CellId::from_bytes([0x55u8; 32]), AuthRequired::None);
+        let other_root =
+            dregg_cell::compute_canonical_capability_root_felt(&other.capabilities);
+        assert_ne!(other_root, pre_cap_root, "distinct c-lists ⇒ distinct roots");
+
+        // (a) Prover refuses: the witness does not open to the other cell's root.
+        let result = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, other_root, &effects, [0xCFu8; 32], &consumed, None, &[],
+        );
+        assert!(
+            matches!(
+                result,
+                Err(FullTurnProvingError::ConsumedCapWitnessInvalid { .. })
+            ),
+            "a witness for the agent's tree must not prove under another cell's root"
+        );
+
+        // (b) Verifier rejects an honest proof bound to the other cell's root.
+        let proven = prove_and_verify_finalized_turn_capability(
+            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xD0u8; 32], &consumed, None, &[],
+        )
+        .expect("honest proof");
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: other_root,
+        };
+        let result = verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        );
+        assert!(
+            matches!(result, Err(FullTurnVerifyError::CapRootMismatch { .. })),
+            "SOUNDNESS (AUTHORITY): another cell's cap_root must not bind, got {result:?}"
+        );
+    }
+
+    /// CONTROL 2: self-sovereign turns are UNCHANGED — no cap leg is attached,
+    /// and the plain verify path still accepts.
+    #[test]
+    fn self_sovereign_turn_unchanged_no_cap_leg() {
+        let alice = CellId::from_bytes([0xA1; 32]);
+        let bob = CellId::from_bytes([0xB2; 32]);
+        let effects = vec![dregg_turn::Effect::Transfer {
+            from: alice,
+            to: bob,
+            amount: 25,
+        }];
+        let proven = prove_and_verify_finalized_turn(&alice, 500, 1, &effects, [0xD1u8; 32])
+            .expect("self-sovereign turn proves as before");
+        assert!(
+            !proven.proof.components.has_cap_membership,
+            "a self-sovereign turn carries NO cap-membership leg"
+        );
+        dregg_sdk::verify_full_turn(&proven.proof, proven.old_commit, proven.new_commit)
+            .expect("self-sovereign verification is unchanged");
+    }
+
+    /// A capability-gated turn whose proof LACKS the cap leg must be rejected
+    /// when verified with the expectation (the leg cannot be stripped).
+    #[test]
+    fn missing_cap_leg_is_rejected_for_capability_gated_turn() {
+        let (receipt, agent_id, pre_cap_root, effects) = run_breadstuff_gated_turn();
+        let consumed = actor_consumed_cap(&receipt.consumed_capabilities, &agent_id)
+            .unwrap()
+            .clone();
+
+        // Prove WITHOUT the cap leg (the legacy self-sovereign prover), then
+        // try to pass it off as the capability-gated proof.
+        let proven = prove_and_verify_finalized_turn(&agent_id, 1_000, 0, &effects, [0xD2u8; 32])
+            .expect("legless proof proves");
+        let expectation = dregg_sdk::CapMembershipExpectation {
+            leaf: consumed.cap_leaf(),
+            cap_root: pre_cap_root,
+        };
+        let result = verify_full_turn_bound(
+            &proven.proof,
+            proven.old_commit,
+            proven.new_commit,
+            None,
+            Some(&expectation),
+        );
+        assert!(
+            matches!(result, Err(FullTurnVerifyError::MissingComponent(_))),
+            "SOUNDNESS (AUTHORITY): a capability-gated turn without the cap leg must be \
+             rejected, got {result:?}"
+        );
     }
 }

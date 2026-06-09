@@ -16,6 +16,7 @@
 //! runtime via proof-carrying turns.
 
 pub mod accumulator;
+pub mod cap_membership;
 pub mod circuit;
 pub mod committed_threshold;
 pub mod derivation;

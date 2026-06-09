@@ -7557,7 +7557,18 @@ mod tests {
         assert!(turn.sovereign_witnesses.contains_key(&cell_id));
         let witness = &turn.sovereign_witnesses[&cell_id];
         assert_eq!(witness.cell_state.id(), cell_id);
-        assert_eq!(witness.new_commitment, [0u8; 32]);
+        // The witness declares the GENUINE post-state commitment — the executor
+        // re-executes the effects against the injected pre-state and REJECTS
+        // all-zero placeholder commitments (execute.rs rules 7/8), so
+        // `execute_sovereign_turn` pre-executes locally (balance 1000 → 900 after
+        // the 100 outgoing transfer) and signs the real value. (The old
+        // expectation of `[0u8; 32]` enshrined the executor-rejected placeholder.)
+        let mut expected_post = cell.clone();
+        expected_post
+            .state
+            .set_balance(expected_post.state.balance() - 100);
+        assert_ne!(witness.new_commitment, [0u8; 32]);
+        assert_eq!(witness.new_commitment, expected_post.state_commitment());
     }
 
     #[test]
