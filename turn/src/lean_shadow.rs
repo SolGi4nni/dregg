@@ -289,40 +289,40 @@ pub fn effect_kind(eff: &Effect) -> &'static str {
         Effect::SetVerificationKey { .. } => "SetVerificationKey",
         Effect::NoteSpend { .. } => "NoteSpend",
         Effect::NoteCreate { .. } => "NoteCreate",
-        Effect::CreateSealPair { .. } => "CreateSealPair",
-        Effect::Seal { .. } => "Seal",
-        Effect::Unseal { .. } => "Unseal",
+        
+        
+        
         Effect::SpawnWithDelegation { .. } => "SpawnWithDelegation",
         Effect::RefreshDelegation => "RefreshDelegation",
         Effect::RevokeDelegation { .. } => "RevokeDelegation",
         Effect::BridgeMint { .. } => "BridgeMint",
-        Effect::BridgeLock { .. } => "BridgeLock",
-        Effect::BridgeFinalize { .. } => "BridgeFinalize",
-        Effect::BridgeCancel { .. } => "BridgeCancel",
+        
+        
+        
         Effect::Introduce { .. } => "Introduce",
         Effect::PipelinedSend { .. } => "PipelinedSend",
-        Effect::CreateObligation { .. } => "CreateObligation",
-        Effect::FulfillObligation { .. } => "FulfillObligation",
-        Effect::SlashObligation { .. } => "SlashObligation",
-        Effect::CreateEscrow { .. } => "CreateEscrow",
-        Effect::ReleaseEscrow { .. } => "ReleaseEscrow",
-        Effect::RefundEscrow { .. } => "RefundEscrow",
-        Effect::CreateCommittedEscrow { .. } => "CreateCommittedEscrow",
-        Effect::ReleaseCommittedEscrow { .. } => "ReleaseCommittedEscrow",
-        Effect::RefundCommittedEscrow { .. } => "RefundCommittedEscrow",
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Effect::ExerciseViaCapability { .. } => "ExerciseViaCapability",
         Effect::MakeSovereign { .. } => "MakeSovereign",
         Effect::CreateCellFromFactory { .. } => "CreateCellFromFactory",
-        Effect::QueueAllocate { .. } => "QueueAllocate",
-        Effect::QueueEnqueue { .. } => "QueueEnqueue",
-        Effect::QueueDequeue { .. } => "QueueDequeue",
-        Effect::QueueResize { .. } => "QueueResize",
-        Effect::QueueAtomicTx { .. } => "QueueAtomicTx",
-        Effect::QueuePipelineStep { .. } => "QueuePipelineStep",
-        Effect::ExportSturdyRef { .. } => "ExportSturdyRef",
-        Effect::EnlivenRef { .. } => "EnlivenRef",
-        Effect::DropRef { .. } => "DropRef",
-        Effect::ValidateHandoff { .. } => "ValidateHandoff",
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Effect::Refusal { .. } => "Refusal",
         Effect::CellSeal { .. } => "CellSeal",
         Effect::CellUnseal { .. } => "CellUnseal",
@@ -372,18 +372,10 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
         "GrantCapability",
         "AttenuateCapability",
         "Introduce",
-        // §FACTORY-DISSOLVED families (escrow/obligation; F2b: + the queue family
-        // QueueAllocate/QueueEnqueue/QueueDequeue/QueueResize/QueueAtomicTx/QueuePipelineStep;
-        // F3: + the seal/swiss/sturdyref family CreateSealPair/Seal/Unseal/ExportSturdyRef/
-        // EnlivenRef/DropRef/ValidateHandoff — caps-in-slots, R7 epoch-at-retrieval):
-        // the verified kernel no longer parses their wire actions — their semantics live in
-        // factory-born cells (cell::blueprint + sdk::factories, the Lean contracts in
-        // Dregg2/Apps/{EscrowFactory,ObligationFactory,QueueFactory,InboxFactory,PubsubFactory,
-        // CapSlotFactory}). A stored capability is a slot value gated on retrieval-epoch freshness
-        // (Dregg2/Apps/CapSlotFactory.lean: stored_cap_only_fresh_if_epoch_unrevoked +
-        // no_forge_from_storage; the runtime gate is apply.rs's R7 stored_epoch re-check).
-        // A turn carrying one falls back to the Rust executor LOUDLY (malformed-wire sentinel)
-        // during the transitional window; the Effect variants die wholesale in the verb lockstep.
+        // §FACTORY-DISSOLVED: the escrow/obligation/queue/bridge-3phase/caps-in-slots
+        // families no longer EXIST as Effect variants (the verb lockstep deleted them);
+        // their semantics live in factory-born cells (cell::blueprint + sdk::factories,
+        // Lean contracts in Dregg2/Apps/*Factory + CapSlotFactory).
     ]
 }
 
@@ -553,40 +545,15 @@ pub fn all_effect_kinds() -> &'static [&'static str] {
         "SetVerificationKey",
         "NoteSpend",
         "NoteCreate",
-        "CreateSealPair",
-        "Seal",
-        "Unseal",
         "SpawnWithDelegation",
         "RefreshDelegation",
         "RevokeDelegation",
         "BridgeMint",
-        "BridgeLock",
-        "BridgeFinalize",
-        "BridgeCancel",
         "Introduce",
         "PipelinedSend",
-        "CreateObligation",
-        "FulfillObligation",
-        "SlashObligation",
-        "CreateEscrow",
-        "ReleaseEscrow",
-        "RefundEscrow",
-        "CreateCommittedEscrow",
-        "ReleaseCommittedEscrow",
-        "RefundCommittedEscrow",
         "ExerciseViaCapability",
         "MakeSovereign",
         "CreateCellFromFactory",
-        "QueueAllocate",
-        "QueueEnqueue",
-        "QueueDequeue",
-        "QueueResize",
-        "QueueAtomicTx",
-        "QueuePipelineStep",
-        "ExportSturdyRef",
-        "EnlivenRef",
-        "DropRef",
-        "ValidateHandoff",
         "Refusal",
         "CellSeal",
         "CellUnseal",
@@ -817,7 +784,7 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // ─── GAP-shrink batch (the swap surface, MUST mirror effect_to_wire) ─────────────
         // QueueAllocate: the action target IS the gate cell (always in the map). The fresh
         // queue id is intrinsic (assigned deterministically), so the effect is always mappable.
-        Effect::QueueAllocate { .. } => true,
+        
         // GrantCapability: dregg1 `del`. The granter `from`, grantee `to`, and the cap target
         // must all be in the id map (the wire `del` carries delegator + recipient + target Nats).
         Effect::GrantCapability { from, to, cap } => has(from) && has(to) && has(&cap.target),
@@ -840,14 +807,12 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // the SAME single-cell `bal` debit (recDebit) + record insert, gated on the same `authorizedB`
         // transfer leg + balance + account + id-uniqueness. The debit reconstitutes via the `bal`
         // side-table and the record is off-root, so the reconstituted `.root()` AGREES with Rust.
-        Effect::CreateEscrow { cell, recipient, escrow_id, .. } => {
-            has(cell) && has(recipient) && !escrow_id.iter().all(|&b| b == 0)
-        }
+        
         // release/refund settle effects look the record up by id (off-root) and single-cell CREDIT
         // the recipient/creator (`recCredit` ⟺ `set_balance(old + amount)`). Mappable when the id is
         // non-null; the credited cell is read from the record (no extra cells to name).
-        Effect::ReleaseEscrow { escrow_id, .. } => !escrow_id.iter().all(|&b| b == 0),
-        Effect::RefundEscrow { escrow_id } => !escrow_id.iter().all(|&b| b == 0),
+        
+        
         // OBLIGATION CREATE (root-AGREEING). `apply_create_obligation` debits the obligor
         // (action target) `balance` + inserts an off-root `ObligationRecord`; the verified
         // `createObligationA` dispatch-aliases to `createEscrowChainA` (the SAME single-cell debit +
@@ -855,9 +820,7 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // (reconstitutes) and the record is off-root. The settle effects (fulfill/slash) reference
         // the Rust-DERIVED obligation id, which the wire-id collapse cannot reproduce, so they are
         // characterized root-gaps (record-lookup divergence), not mapped here.
-        Effect::CreateObligation { beneficiary, stake, stake_amount, .. } => {
-            has(beneficiary) && !stake.0.iter().all(|&b| b == 0) && *stake_amount > 0
-        }
+        
         // Everything else (escrows/bridge/seal-pairs/captp/factory/introduce/CreateCell/…) not
         // yet projected. NOTE on CreateCell: deliberately NOT projected — the verified
         // `createCellChainA` gate requires `mintAuthorizedB actor newCell` (cell creation is
@@ -929,21 +892,21 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         // The off-cell-merkle-root holding-store effects: the cells whose `balance` the
         // create debits / the settle credits need wire Nats (the side-table record itself is
         // off-root, so only the touched cells must be named).
-        Effect::CreateEscrow { cell, recipient, .. } => vec![*cell, *recipient],
+        
         // Settle effects (release/refund/fulfill/slash) carry only an id; the credited cell is
         // read from the record, so the actor (action target) — already collected — suffices.
-        Effect::ReleaseEscrow { .. } => vec![],
-        Effect::RefundEscrow { .. } => vec![],
-        Effect::CreateObligation { beneficiary, .. } => vec![*beneficiary],
-        Effect::FulfillObligation { .. } => vec![],
-        Effect::SlashObligation { .. } => vec![],
-        Effect::ReleaseCommittedEscrow { recipient, .. } => vec![*recipient],
-        Effect::RefundCommittedEscrow { creator, .. } => vec![*creator],
+        
+        
+        
+        
+        
+        
+        
         // QueueAllocate creates a FRESH queue cell whose id is NOT in the pre-state id map; only
         // the actor (the action target) needs a Nat, collected by `collect_tree_ids` already. The
         // fresh id is assigned deterministically in `effect_to_wire` (above the pre-id-map range)
         // so it never collides with a snapshot id.
-        Effect::QueueAllocate { .. } => vec![],
+        
         _ => vec![],
     }
 }
@@ -1181,16 +1144,7 @@ fn effect_to_wire(
         // (InsufficientBalance) while the verified executor commits — a characterised model
         // difference (the verified queue is a pure structural insert; the deposit accounting is a
         // separate `bal` concern). The corpus exercises the FUNDED case (agree) so this is sound.
-        Effect::QueueAllocate { capacity, .. } => {
-            let fresh = FRESH_ID_BASE + *fresh_seq;
-            *fresh_seq += 1;
-            WireAction::QueueAllocate {
-                id: fresh,
-                actor,
-                cell: actor,
-                capacity: *capacity,
-            }
-        }
+        
         // GrantCapability: dregg1 `apply_grant_capability` (`apply.rs:595`) copies a held cap (or,
         // for a SELF-grant `cap.target == from`, the implicit strongest self-cap — no c-list
         // lookup) into the grantee `to`'s c-list. `.delegate del rec t` routes to `recCDelegate`
@@ -1224,25 +1178,12 @@ fn effect_to_wire(
         // transfer-authority leg + `0≤amount≤bal creator` + `creator∈accounts` + id-uniqueness. The
         // wire `id` is the escrow_id collapsed to its low 64 bits (the create+settle pair carries the
         // SAME explicit `escrow_id`, so the collapsed wire ids coincide across a forest). asset 0.
-        Effect::CreateEscrow { cell, recipient, amount, escrow_id, .. } => WireAction::CreateEscrow {
-            id: bytes32_to_nat(escrow_id),
-            actor,
-            creator: id(cell)?,
-            recipient: id(recipient)?,
-            asset: 0,
-            amount: *amount as i128,
-        },
+        
         // ESCROW release/refund: look the record up by id, single-cell CREDIT the recipient/creator
         // (`recCredit` ⟺ `set_balance(old + amount)`), mark resolved. The credited cell is read from
         // the record (off-root), so only the id + actor cross the wire.
-        Effect::ReleaseEscrow { escrow_id, .. } => WireAction::ReleaseEscrow {
-            id: bytes32_to_nat(escrow_id),
-            actor,
-        },
-        Effect::RefundEscrow { escrow_id } => WireAction::RefundEscrow {
-            id: bytes32_to_nat(escrow_id),
-            actor,
-        },
+        
+        
         // OBLIGATION create: dregg1 `apply_create_obligation` debits the OBLIGOR (= action target)
         // `balance` by `stake_amount` + inserts an off-root `ObligationRecord`. `.createObligationA id
         // actor obligor beneficiary asset stake` dispatch-aliases to `createEscrowChainA` (the SAME
@@ -1250,16 +1191,7 @@ fn effect_to_wire(
         // beneficiary is the record's `recipient`. The wire `id` is the STAKE commitment collapsed —
         // a fresh-enough id for the create gate's uniqueness leg (the settle effects, which reference
         // the Rust-derived obligation id, are characterized root-gaps, not routed here).
-        Effect::CreateObligation { beneficiary, stake, stake_amount, .. } => {
-            WireAction::CreateObligation {
-                id: bytes32_to_nat(&stake.0),
-                actor,
-                obligor: actor,
-                beneficiary: id(beneficiary)?,
-                asset: 0,
-                stake: *stake_amount as i128,
-            }
-        }
+        
         // CreateCell: dregg1 inserts a fresh cell with the given balance (`apply.rs` CreateCell).
         // `.createcell actor newCell` routes to the cell-creation chained step, gated on the
         // actor's authority over its own action. The new cell's wire Nat is assigned ABOVE the
@@ -1844,10 +1776,9 @@ mod producer_coverage_tests {
             assert!(seen.insert(*name), "duplicate effect in coverage list: {name}");
             assert!(producer_covers_kind(name), "producer_covers_kind disagrees for {name}");
         }
-        // Twenty-five effect kinds are projected to the wire today (mirrors effect_is_mappable:
-        // the §SIDE-TABLE holding-store batch added CreateEscrow/ReleaseEscrow/RefundEscrow/
-        // CreateObligation — all four have effect_is_mappable arms).
-        assert_eq!(covered.len(), 25, "producer coverage count changed — update the report and confirm effect_is_mappable agrees");
+        // Twenty-one effect kinds are projected to the wire today (mirrors effect_is_mappable;
+        // VERB-LOCKSTEP: the escrow/obligation §SIDE-TABLE batch died with its Effect variants).
+        assert_eq!(covered.len(), 21, "producer coverage count changed — update the report and confirm effect_is_mappable agrees");
     }
 
     /// Every covered effect must appear in the full enumeration, and the

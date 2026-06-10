@@ -136,30 +136,9 @@ fn effect_body(effect: &Effect) -> String {
         Effect::NoteCreate {
             value, asset_type, ..
         } => format!("create a private note (value {value}, asset {asset_type})"),
-        Effect::CreateSealPair {
-            sealer_holder,
-            unsealer_holder,
-        } => format!(
-            "create a sealer/unsealer pair (sealer to cell {}, unsealer to cell {})",
-            hx32(sealer_holder.as_bytes()),
-            hx32(unsealer_holder.as_bytes())
-        ),
-        Effect::Seal {
-            pair_id,
-            capability,
-        } => format!(
-            "seal capability (target {} slot {}) with pair 0x{}",
-            hx32(capability.target.as_bytes()),
-            capability.slot,
-            hx32(pair_id)
-        ),
-        Effect::Unseal {
-            sealed_box: _,
-            recipient,
-        } => format!(
-            "unseal a box, delivering the capability to cell {}",
-            hx32(recipient.as_bytes())
-        ),
+        
+        
+        
         Effect::SpawnWithDelegation {
             child_public_key,
             max_staleness,
@@ -178,24 +157,9 @@ fn effect_body(effect: &Effect) -> String {
         Effect::BridgeMint { .. } => {
             "mint a note locally from a portable cross-federation spend proof".to_string()
         }
-        Effect::BridgeLock {
-            value,
-            asset_type,
-            destination,
-            timeout_height,
-            ..
-        } => format!(
-            "lock a note (value {value}, asset {asset_type}) for bridge to federation 0x{} (timeout height {timeout_height})",
-            hx32(destination)
-        ),
-        Effect::BridgeFinalize { nullifier, .. } => format!(
-            "finalize a bridge for nullifier 0x{} with a destination receipt",
-            hx32(nullifier)
-        ),
-        Effect::BridgeCancel { nullifier } => format!(
-            "cancel an expired bridge for nullifier 0x{}, returning the note",
-            hx32(nullifier)
-        ),
+        
+        
+        
         Effect::Introduce {
             introducer,
             recipient,
@@ -211,71 +175,15 @@ fn effect_body(effect: &Effect) -> String {
             "pipeline a send to an eventual ref, carrying {} sub-effect(s)",
             action.effects.len()
         ),
-        Effect::CreateObligation {
-            beneficiary,
-            deadline_height,
-            stake_amount,
-            ..
-        } => format!(
-            "create a proof obligation for beneficiary cell {} (bond {stake_amount}, deadline height {deadline_height})",
-            hx32(beneficiary.as_bytes())
-        ),
-        Effect::FulfillObligation { obligation_id, .. } => format!(
-            "fulfill obligation 0x{}, returning the locked stake",
-            hx32(obligation_id)
-        ),
-        Effect::SlashObligation { obligation_id } => format!(
-            "slash expired obligation 0x{}, transferring the stake to the beneficiary",
-            hx32(obligation_id)
-        ),
-        Effect::CreateEscrow {
-            cell,
-            recipient,
-            amount,
-            timeout_height,
-            escrow_id,
-            ..
-        } => format!(
-            "create escrow 0x{} locking {amount} from cell {} to cell {} (refund after height {timeout_height})",
-            hx32(escrow_id),
-            hx32(cell.as_bytes()),
-            hx32(recipient.as_bytes())
-        ),
-        Effect::ReleaseEscrow { escrow_id, .. } => format!(
-            "release escrow 0x{} to its recipient",
-            hx32(escrow_id)
-        ),
-        Effect::RefundEscrow { escrow_id } => format!(
-            "refund escrow 0x{} to its creator after timeout",
-            hx32(escrow_id)
-        ),
-        Effect::CreateCommittedEscrow {
-            escrow_id,
-            amount,
-            timeout_height,
-            ..
-        } => format!(
-            "create a committed (private) escrow 0x{} locking {amount} (refund after height {timeout_height})",
-            hx32(escrow_id)
-        ),
-        Effect::ReleaseCommittedEscrow {
-            escrow_id,
-            recipient,
-            ..
-        } => format!(
-            "release committed escrow 0x{} to cell {}",
-            hx32(escrow_id),
-            hx32(recipient.as_bytes())
-        ),
-        Effect::RefundCommittedEscrow {
-            escrow_id,
-            creator,
-            ..
-        } => format!(
-            "refund committed escrow 0x{} to creator cell {}",
-            hx32(escrow_id),
-            hx32(creator.as_bytes())
-        ),
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Effect::ExerciseViaCapability {
             cap_slot,
             inner_effects,
@@ -298,69 +206,15 @@ fn effect_body(effect: &Effect) -> String {
             hx32(owner_pubkey),
             hx32(token_id)
         ),
-        Effect::QueueAllocate {
-            capacity,
-            program_vk,
-        } => format!(
-            "allocate a queue with capacity {capacity}{}",
-            if program_vk.is_some() {
-                " (programmable)"
-            } else {
-                ""
-            }
-        ),
-        Effect::QueueEnqueue {
-            queue,
-            deposit,
-            message_hash,
-        } => format!(
-            "enqueue message 0x{} to queue {} (deposit {deposit})",
-            hx32(message_hash),
-            hx32(queue.as_bytes())
-        ),
-        Effect::QueueDequeue { queue } => format!(
-            "dequeue the next message from queue {}",
-            hx32(queue.as_bytes())
-        ),
-        Effect::QueueResize { queue, new_capacity } => format!(
-            "resize queue {} to capacity {new_capacity}",
-            hx32(queue.as_bytes())
-        ),
-        Effect::QueueAtomicTx { operations } => format!(
-            "execute an atomic queue transaction with {} operation(s)",
-            operations.len()
-        ),
-        Effect::QueuePipelineStep {
-            pipeline_id,
-            source,
-            sinks,
-        } => format!(
-            "run pipeline 0x{} step from queue {} to {} sink(s)",
-            hx32(pipeline_id),
-            hx32(source.as_bytes()),
-            sinks.len()
-        ),
-        Effect::ExportSturdyRef {
-            target,
-            swiss_number,
-            ..
-        } => format!(
-            "export cell {} as a sturdy ref (swiss 0x{})",
-            hx32(target.as_bytes()),
-            hx32(swiss_number)
-        ),
-        Effect::EnlivenRef {
-            swiss_number,
-            bearer,
-            ..
-        } => format!(
-            "enliven a sturdy ref (swiss 0x{}), granting a routing entry to cell {}",
-            hx32(swiss_number),
-            hx32(bearer.as_bytes())
-        ),
-        Effect::DropRef { ref_id } => {
-            format!("drop the remote reference 0x{} (GC decrement)", hx32(ref_id))
-        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
         Effect::Refusal {
             cell,
             offered_action_commitment,
@@ -370,10 +224,7 @@ fn effect_body(effect: &Effect) -> String {
             hx32(cell.as_bytes()),
             hx32(offered_action_commitment)
         ),
-        Effect::ValidateHandoff { cert_hash, .. } => format!(
-            "validate and consume handoff certificate 0x{}",
-            hx32(cert_hash)
-        ),
+        
         Effect::CellSeal { target, reason } => format!(
             "seal cell {} (reason commitment 0x{})",
             hx32(target.as_bytes()),
@@ -494,10 +345,8 @@ pub fn explain_turn(turn: &Turn) -> String {
 mod tests {
     use super::*;
     use dregg_cell::permissions::AuthRequired;
-    use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
+    use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions};
     use dregg_turn::action::{Event, RefusalReason};
-    use dregg_turn::conditional::{ConditionProof, ProofCondition};
-    use dregg_turn::escrow::{EscrowClaimAuth, EscrowCondition};
     use dregg_turn::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
 
     fn cid(n: u8) -> CellId {
@@ -574,18 +423,6 @@ mod tests {
                 value_commitment: None,
                 range_proof: None,
             },
-            Effect::CreateSealPair {
-                sealer_holder: cid(1),
-                unsealer_holder: cid(2),
-            },
-            Effect::Seal {
-                pair_id: [7u8; 32],
-                capability: cap.clone(),
-            },
-            Effect::Unseal {
-                sealed_box: sealed_box(),
-                recipient: cid(2),
-            },
             Effect::SpawnWithDelegation {
                 child_public_key: [1u8; 32],
                 child_token_id: [2u8; 32],
@@ -596,21 +433,6 @@ mod tests {
             Effect::BridgeMint {
                 portable_proof: portable_proof(),
             },
-            Effect::BridgeLock {
-                nullifier: [5u8; 32],
-                destination: [8u8; 32],
-                value: 10,
-                asset_type: 0,
-                timeout_height: 100,
-                spending_proof: vec![],
-            },
-            Effect::BridgeFinalize {
-                nullifier: [5u8; 32],
-                receipt: bridge_receipt(),
-            },
-            Effect::BridgeCancel {
-                nullifier: [5u8; 32],
-            },
             Effect::Introduce {
                 introducer: cid(1),
                 recipient: cid(2),
@@ -620,57 +442,6 @@ mod tests {
             Effect::PipelinedSend {
                 target: dregg_turn::eventual::EventualRef::new([9u8; 32], 0),
                 action: Box::new(sample_action(vec![Effect::IncrementNonce { cell: cid(1) }])),
-            },
-            Effect::CreateObligation {
-                beneficiary: cid(2),
-                condition: ProofCondition::HashPreimage { hash: [21u8; 32] },
-                deadline_height: 100,
-                stake: NoteCommitment([6u8; 32]),
-                stake_amount: 50,
-            },
-            Effect::FulfillObligation {
-                obligation_id: [10u8; 32],
-                proof: ConditionProof::Preimage([22u8; 32]),
-            },
-            Effect::SlashObligation {
-                obligation_id: [10u8; 32],
-            },
-            Effect::CreateEscrow {
-                cell: cid(1),
-                recipient: cid(2),
-                amount: 10,
-                condition: EscrowCondition::PredicateSatisfied {
-                    predicate_hash: [23u8; 32],
-                },
-                timeout_height: 100,
-                escrow_id: [11u8; 32],
-            },
-            Effect::ReleaseEscrow {
-                escrow_id: [11u8; 32],
-                proof: None,
-            },
-            Effect::RefundEscrow {
-                escrow_id: [11u8; 32],
-            },
-            Effect::CreateCommittedEscrow {
-                creator_commitment: [1u8; 32],
-                recipient_commitment: [2u8; 32],
-                value_commitment: dregg_cell::ValueCommitmentBytes([3u8; 32]),
-                condition_commitment: [4u8; 32],
-                timeout_height: 100,
-                escrow_id: [12u8; 32],
-                range_proof: vec![],
-                amount: 10,
-            },
-            Effect::ReleaseCommittedEscrow {
-                escrow_id: [12u8; 32],
-                claim_auth: claim_auth(),
-                recipient: cid(2),
-            },
-            Effect::RefundCommittedEscrow {
-                escrow_id: [12u8; 32],
-                claim_auth: claim_auth(),
-                creator: cid(1),
             },
             Effect::ExerciseViaCapability {
                 cap_slot: 0,
@@ -683,50 +454,11 @@ mod tests {
                 token_id: [2u8; 32],
                 params: factory_params(),
             },
-            Effect::QueueAllocate {
-                capacity: 8,
-                program_vk: None,
-            },
-            Effect::QueueEnqueue {
-                queue: cid(4),
-                message_hash: [14u8; 32],
-                deposit: 1,
-            },
-            Effect::QueueDequeue { queue: cid(4) },
-            Effect::QueueResize {
-                queue: cid(4),
-                new_capacity: 16,
-            },
-            Effect::QueueAtomicTx { operations: vec![] },
-            Effect::QueuePipelineStep {
-                pipeline_id: [15u8; 32],
-                source: cid(4),
-                sinks: vec![cid(5)],
-            },
-            Effect::ExportSturdyRef {
-                swiss_number: [16u8; 32],
-                target: cid(1),
-                permissions: AuthRequired::Signature,
-            },
-            Effect::EnlivenRef {
-                swiss_number: [16u8; 32],
-                bearer: cid(2),
-                expected_cell_id: cid(1),
-                expected_permissions: AuthRequired::Signature,
-            },
-            Effect::DropRef {
-                ref_id: [17u8; 32],
-            },
             Effect::Refusal {
                 cell: cid(1),
                 offered_action_commitment: [18u8; 32],
                 refusal_reason: RefusalReason::Declined,
                 proof_witness_index: 0,
-            },
-            Effect::ValidateHandoff {
-                cert_hash: [19u8; 32],
-                recipient_pk: [1u8; 32],
-                introducer_pk: [2u8; 32],
             },
             Effect::CellSeal {
                 target: cid(1),
@@ -784,35 +516,6 @@ mod tests {
             destination_commitment: NoteCommitment([6u8; 32]),
             value: 10,
             asset_type: 0,
-        }
-    }
-
-    fn bridge_receipt() -> dregg_cell::note_bridge::BridgeReceipt {
-        dregg_cell::note_bridge::BridgeReceipt {
-            nullifier: [5u8; 32],
-            destination_federation: [8u8; 32],
-            mint_height: 50,
-            signature: [0u8; 64],
-        }
-    }
-
-    fn claim_auth() -> EscrowClaimAuth {
-        EscrowClaimAuth {
-            cell_id: cid(2),
-            blinding: [0u8; 32],
-            signature: [0u8; 64],
-        }
-    }
-
-    fn sealed_box() -> SealedBox {
-        SealedBox {
-            pair_id: [7u8; 32],
-            ephemeral_public: [0u8; 32],
-            commitment: [0u8; 32],
-            ciphertext: vec![],
-            nonce: [0u8; 32],
-            sealer: None,
-            seal_epoch: 0,
         }
     }
 

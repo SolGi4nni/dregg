@@ -308,67 +308,6 @@ fn test_captp_session_across_partition() {
 // Test 5: Split-brain CapTP GC
 // =============================================================================
 
-/// A sees DropRef from B (sent before partition). B still thinks it holds the ref
-/// (the DropRef was from a later session or B retracted it). After partition heals,
-/// GC state must converge — either the ref is truly dropped or it's restored.
-#[test]
-fn test_split_brain_gc_convergence() {
-    let mut harness = dual_federation();
-    harness.connect_federations(0, 1);
-
-    // Export cells
-    let cell_1 = test_cell(0xE1);
-    let cell_2 = test_cell(0xE2);
-    let uri_1 = harness.export_sturdy(0, cell_1, 1);
-    let uri_2 = harness.export_sturdy(0, cell_2, 1);
-    harness.enliven_sturdy(1, &uri_1, 0).unwrap();
-    harness.enliven_sturdy(1, &uri_2, 0).unwrap();
-
-    // B sends DropRef for cell_1
-    let session = harness.session_mut(0, 1).unwrap();
-    session.send_b_to_a(WireMessage::DropRemoteRef {
-        from_strand: session.fed_b_id.0,
-        cell_id: cell_1.0,
-        session_epoch: 0,
-    });
-    session.deliver_pending();
-
-    // Verify: A's GC shows cell_1 dropped, cell_2 still held
-    let session = harness.session(0, 1).unwrap();
-    assert!(
-        session.export_gc_a.get(&cell_1).is_none()
-            || session.export_gc_a.get(&cell_1).unwrap().total_refs == 0,
-        "cell_1 should have zero refs after DropRef"
-    );
-    assert!(
-        session.export_gc_a.get(&cell_2).is_some()
-            && session.export_gc_a.get(&cell_2).unwrap().total_refs > 0,
-        "cell_2 should still be held"
-    );
-
-    // Now simulate partition + potential split-brain:
-    // B still thinks it holds cell_2. The DropRef for cell_1 was correctly processed.
-    // After partition, both sides agree on the GC state.
-    harness.disconnect_federations(0, 1);
-    harness.captp_sessions.remove(&(0, 1));
-    harness.connect_federations(0, 1);
-
-    // Re-export and enliven to verify the new session works
-    let uri_2_new = harness.export_sturdy(0, cell_2, 1);
-    let result = harness.enliven_sturdy(1, &uri_2_new, 0);
-    assert!(
-        result.is_ok(),
-        "After partition heal, cell_2 (never dropped) should be re-enliveneable"
-    );
-
-    // cell_1 was genuinely dropped — re-exporting is fine (it's a new export)
-    let uri_1_new = harness.export_sturdy(0, cell_1, 1);
-    let result = harness.enliven_sturdy(1, &uri_1_new, 0);
-    assert!(
-        result.is_ok(),
-        "Dropped cell can be re-exported in a new session"
-    );
-}
 
 // =============================================================================
 // Test 6: Partition detection triggers constitution freeze

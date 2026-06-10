@@ -911,12 +911,8 @@ impl TurnExecutor {
                 None => {
                     journal.rollback(
                         ledger,
-                        &self.obligations,
-                        &self.escrows,
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
-                        &self.committed_escrows,
-                        &self.committed_escrow_amounts,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -937,12 +933,8 @@ impl TurnExecutor {
             ) {
                 journal.rollback(
                     ledger,
-                    &self.obligations,
-                    &self.escrows,
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
-                    &self.committed_escrows,
-                    &self.committed_escrow_amounts,
                 );
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
@@ -954,12 +946,8 @@ impl TurnExecutor {
             if let Err((err, _)) = self.check_preconditions(action, &target_cell, &path) {
                 journal.rollback(
                     ledger,
-                    &self.obligations,
-                    &self.escrows,
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
-                    &self.committed_escrows,
-                    &self.committed_escrow_amounts,
                 );
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
@@ -1015,12 +1003,8 @@ impl TurnExecutor {
                 ) {
                     journal.rollback(
                         ledger,
-                        &self.obligations,
-                        &self.escrows,
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
-                        &self.committed_escrows,
-                        &self.committed_escrow_amounts,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1050,12 +1034,8 @@ impl TurnExecutor {
             // Roll back ALL hosted mutations before returning.
             journal.rollback(
                 ledger,
-                &self.obligations,
-                &self.escrows,
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
-                &self.committed_escrows,
-                &self.committed_escrow_amounts,
             );
             return Err(AtomicTurnError::ConservationViolation {
                 net_excess: total_delta,

@@ -192,26 +192,14 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
                     *target = *resolved;
                 }
             }
-            Effect::CreateObligation { beneficiary, .. } => {
-                if beneficiary == placeholder {
-                    *beneficiary = *resolved;
-                }
-            }
+            
             // ExerciseViaCapability: recurse into inner_effects for rewriting.
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 rewrite_effect_targets(inner_effects, placeholder, resolved);
             }
             // CapTP variants have mutable CellId fields (target, bearer):
-            Effect::ExportSturdyRef { target, .. } => {
-                if target == placeholder {
-                    *target = *resolved;
-                }
-            }
-            Effect::EnlivenRef { bearer, .. } => {
-                if bearer == placeholder {
-                    *bearer = *resolved;
-                }
-            }
+            
+            
             Effect::Refusal { cell, .. } => {
                 if cell == placeholder {
                     *cell = *resolved;
@@ -247,39 +235,19 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             // attestation's hash. Submitters must construct the
             // attestation with the resolved CellId already in place.
             Effect::ReceiptArchive { .. } => {}
-            // These effects don't have mutable CellId fields needing rewrite:
+            // No CellId fields to rewrite (or birth effects whose ids are derived).
             Effect::CreateCell { .. }
             | Effect::NoteSpend { .. }
             | Effect::NoteCreate { .. }
             | Effect::BridgeMint { .. }
-            | Effect::CreateSealPair { .. }
-            | Effect::Seal { .. }
-            | Effect::Unseal { .. }
             | Effect::PipelinedSend { .. }
             | Effect::SpawnWithDelegation { .. }
             | Effect::RefreshDelegation
             | Effect::RevokeDelegation { .. }
-            | Effect::FulfillObligation { .. }
-            | Effect::SlashObligation { .. }
-            | Effect::BridgeLock { .. }
-            | Effect::BridgeFinalize { .. }
-            | Effect::BridgeCancel { .. }
-            | Effect::CreateEscrow { .. }
-            | Effect::ReleaseEscrow { .. }
-            | Effect::RefundEscrow { .. }
-            | Effect::CreateCommittedEscrow { .. }
-            | Effect::ReleaseCommittedEscrow { .. }
-            | Effect::RefundCommittedEscrow { .. }
             | Effect::MakeSovereign { .. }
-            | Effect::CreateCellFromFactory { .. }
-            | Effect::QueueAllocate { .. }
-            | Effect::QueueEnqueue { .. }
-            | Effect::QueueDequeue { .. }
-            | Effect::QueueResize { .. }
-            | Effect::QueueAtomicTx { .. }
-            | Effect::QueuePipelineStep { .. }
-            | Effect::DropRef { .. }
-            | Effect::ValidateHandoff { .. } => {}
+            | Effect::CreateCellFromFactory { .. } => {}
+            // These effects don't have mutable CellId fields needing rewrite:
+            
         }
     }
 }

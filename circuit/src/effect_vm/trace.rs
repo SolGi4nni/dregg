@@ -79,7 +79,8 @@ pub struct EffectVmContext {
     /// Per-cell maximum custom effects (from cell program manifest).
     pub max_custom_effects: u8,
     /// Federation-scoped approved-handoffs Merkle root (4-felt Poseidon2 form).
-    /// Empty by default until Stage 7 populates the runtime emitter side.
+    /// RETIRED (VERB-LOCKSTEP): `ValidateHandoff` is gone; always the empty
+    /// sentinel until the PI-layout compaction lane.
     pub approved_handoffs_root: [BabyBear; 4],
     /// Stage 7-γ.0a: Poseidon2 of canonical `Turn::hash()` (v3). Shared
     /// across all per-cell proofs of one turn.
@@ -128,10 +129,9 @@ pub struct EffectVmContext {
     /// is the low 16 bits; position 3 is the high. Each limb < 2^16.
     /// Zero sentinel when no BridgeMint effect is in the trace.
     pub bridge_mint_value_limbs: [BabyBear; 4],
-    /// 4-limb decomposition of `BridgeLock.value` (same shape as
-    /// `bridge_mint_value_limbs`).
+    /// RETIRED (VERB-LOCKSTEP): `BridgeLock` is gone; always zero.
     pub bridge_lock_value_limbs: [BabyBear; 4],
-    /// 4-limb decomposition of `CreateEscrow.amount` (same shape).
+    /// RETIRED (VERB-LOCKSTEP): `CreateEscrow` is gone; always zero.
     pub create_escrow_amount_limbs: [BabyBear; 4],
 
     /// Slot-caveat manifest (Cav-Codex Block 3). Cell-program-declared
@@ -265,20 +265,8 @@ pub fn generate_effect_vm_trace_ext(
                         field_idx
                     );
                 }
-                Effect::Seal { field_idx } => {
-                    assert!(
-                        *field_idx < 8,
-                        "Seal field_idx out of bounds: {} (must be 0..7)",
-                        field_idx
-                    );
-                }
-                Effect::Unseal { field_idx, .. } => {
-                    assert!(
-                        *field_idx < 8,
-                        "Unseal field_idx out of bounds: {} (must be 0..7)",
-                        field_idx
-                    );
-                }
+                
+                
                 Effect::Transfer {
                     amount, direction, ..
                 } => {
@@ -303,78 +291,17 @@ pub fn generate_effect_vm_trace_ext(
                     // Matches the verified executor (`apply_note_create`) + Lean
                     // descriptor (`EffectVmEmitNoteCreate`, balance-neutral).
                 }
-                Effect::CreateObligation { stake_amount, .. } => {
-                    assert!(
-                        *stake_amount <= running_balance,
-                        "CreateObligation underflow: stake {} > running balance {} \
-                         (executor rejects; STARK constraint would wrap in BabyBear)",
-                        stake_amount,
-                        running_balance
-                    );
-                    running_balance -= stake_amount;
-                }
+                
                 Effect::NoteSpend { value, .. } => {
                     running_balance = running_balance.saturating_add(*value);
                 }
-                Effect::FulfillObligation { stake_return, .. } => {
-                    running_balance = running_balance.saturating_add(*stake_return);
-                }
-                Effect::SlashObligation { stake_amount, .. } => {
-                    running_balance = running_balance.saturating_add(*stake_amount);
-                }
-                Effect::AllocateQueue {
-                    capacity,
-                    cost_per_slot,
-                    ..
-                } => {
-                    let cost = (*capacity as u64) * (*cost_per_slot as u64);
-                    assert!(
-                        cost <= running_balance,
-                        "AllocateQueue underflow: cost {} > running balance {}",
-                        cost,
-                        running_balance
-                    );
-                    running_balance -= cost;
-                }
-                Effect::EnqueueMessage { deposit_amount, .. } => {
-                    assert!(
-                        (*deposit_amount as u64) <= running_balance,
-                        "EnqueueMessage underflow: deposit {} > running balance {}",
-                        deposit_amount,
-                        running_balance
-                    );
-                    running_balance -= *deposit_amount as u64;
-                }
-                Effect::DequeueMessage { deposit_refund, .. } => {
-                    running_balance = running_balance.saturating_add(*deposit_refund as u64);
-                }
-                Effect::ResizeQueue {
-                    new_capacity,
-                    old_capacity,
-                    cost_per_slot,
-                    ..
-                } => {
-                    if *new_capacity > *old_capacity {
-                        let delta = (*new_capacity - *old_capacity) as u64;
-                        let cost = delta * (*cost_per_slot as u64);
-                        assert!(
-                            cost <= running_balance,
-                            "ResizeQueue underflow: cost {} > running balance {}",
-                            cost,
-                            running_balance
-                        );
-                        running_balance -= cost;
-                    }
-                }
-                Effect::AtomicQueueTx { net_deposit, .. } => {
-                    assert!(
-                        (*net_deposit as u64) <= running_balance,
-                        "AtomicQueueTx underflow: net_deposit {} > running balance {}",
-                        net_deposit,
-                        running_balance
-                    );
-                    running_balance -= *net_deposit as u64;
-                }
+                
+                
+                
+                
+                
+                
+                
                 Effect::Burn {
                     amount_lo,
                     amount_full,
@@ -441,47 +368,47 @@ pub fn generate_effect_vm_trace_ext(
             Effect::GrantCapability { .. } => sel::GRANT_CAP,
             Effect::NoteSpend { .. } => sel::NOTE_SPEND,
             Effect::NoteCreate { .. } => sel::NOTE_CREATE,
-            Effect::CreateObligation { .. } => sel::CREATE_OBLIGATION,
-            Effect::FulfillObligation { .. } => sel::FULFILL_OBLIGATION,
+            
+            
             Effect::Custom { .. } => sel::CUSTOM,
-            Effect::SlashObligation { .. } => sel::SLASH_OBLIGATION,
-            Effect::Seal { .. } => sel::SEAL,
-            Effect::Unseal { .. } => sel::UNSEAL,
+            
+            
+            
             Effect::MakeSovereign => sel::MAKE_SOVEREIGN,
             Effect::CreateCellFromFactory { .. } => sel::CREATE_CELL_FROM_FACTORY,
-            Effect::ExportSturdyRef { .. } => sel::EXPORT_STURDY_REF,
-            Effect::EnlivenRef { .. } => sel::ENLIVEN_REF,
-            Effect::DropRef { .. } => sel::DROP_REF,
-            Effect::ValidateHandoff { .. } => sel::VALIDATE_HANDOFF,
-            Effect::AllocateQueue { .. } => sel::ALLOCATE_QUEUE,
-            Effect::EnqueueMessage { .. } => sel::ENQUEUE_MESSAGE,
-            Effect::DequeueMessage { .. } => sel::DEQUEUE_MESSAGE,
-            Effect::ResizeQueue { .. } => sel::RESIZE_QUEUE,
-            Effect::AtomicQueueTx { .. } => sel::ATOMIC_QUEUE_TX,
-            Effect::PipelineStep { .. } => sel::PIPELINE_STEP,
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             Effect::RevokeCapability { .. } => sel::REVOKE_CAPABILITY,
             Effect::EmitEvent { .. } => sel::EMIT_EVENT,
             Effect::SetPermissions { .. } => sel::SET_PERMISSIONS,
             Effect::SetVerificationKey { .. } => sel::SET_VERIFICATION_KEY,
-            Effect::CreateSealPair { .. } => sel::CREATE_SEAL_PAIR,
+            
             Effect::RefreshDelegation => sel::REFRESH_DELEGATION,
             Effect::IncrementNonce => sel::INCREMENT_NONCE,
             Effect::RevokeDelegation { .. } => sel::REVOKE_DELEGATION,
             Effect::CreateCell { .. } => sel::CREATE_CELL,
             Effect::SpawnWithDelegation { .. } => sel::SPAWN_WITH_DELEGATION,
-            Effect::BridgeCancel { .. } => sel::BRIDGE_CANCEL,
+            
             Effect::ExerciseViaCapability { .. } => sel::EXERCISE_VIA_CAPABILITY,
             Effect::Introduce { .. } => sel::INTRODUCE,
             Effect::PipelinedSend { .. } => sel::PIPELINED_SEND,
-            Effect::CreateEscrow { .. } => sel::CREATE_ESCROW,
-            Effect::BridgeLock { .. } => sel::BRIDGE_LOCK,
-            Effect::CreateCommittedEscrow { .. } => sel::CREATE_COMMITTED_ESCROW,
+            
+            
+            
             Effect::BridgeMint { .. } => sel::BRIDGE_MINT,
-            Effect::BridgeFinalize { .. } => sel::BRIDGE_FINALIZE,
-            Effect::ReleaseEscrow { .. } => sel::RELEASE_ESCROW,
-            Effect::RefundEscrow { .. } => sel::REFUND_ESCROW,
-            Effect::ReleaseCommittedEscrow { .. } => sel::RELEASE_COMMITTED_ESCROW,
-            Effect::RefundCommittedEscrow { .. } => sel::REFUND_COMMITTED_ESCROW,
+            
+            
+            
+            
+            
             Effect::Burn { .. } => sel::BURN,
             Effect::CellDestroy { .. } => sel::CELL_DESTROY,
             Effect::AttenuateCapability { .. } => sel::ATTENUATE_CAPABILITY,
@@ -603,12 +530,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = vk_hash[0];
                 new_state.nonce += 1;
             }
-            Effect::CreateSealPair { pair_hash } => {
-                // 32-byte widening: anchor limb[0] into params[0] (the AIR's
-                // in-trace anchor); the full 8 limbs bind via compute_effects_hash.
-                row[PARAM_BASE + 0] = pair_hash[0];
-                new_state.nonce += 1;
-            }
+            
             Effect::RefreshDelegation => {
                 // No params; selector alone records the intent.
                 new_state.nonce += 1;
@@ -631,10 +553,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = spawn_hash[0];
                 new_state.nonce += 1;
             }
-            Effect::BridgeCancel { nullifier_hash } => {
-                row[PARAM_BASE + 0] = nullifier_hash[0];
-                new_state.nonce += 1;
-            }
+            
             Effect::ExerciseViaCapability { exercise_hash } => {
                 row[PARAM_BASE + 0] = exercise_hash[0];
                 new_state.nonce += 1;
@@ -647,36 +566,9 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = send_hash[0];
                 new_state.nonce += 1;
             }
-            Effect::CreateEscrow {
-                amount_lo,
-                escrow_hash,
-                amount_full: _,
-            } => {
-                // Mirror NoteCreate: param0 = escrow_hash, param1 = amount_lo
-                row[PARAM_BASE + 0] = *escrow_hash;
-                row[PARAM_BASE + 1] = *amount_lo;
-                let amount_u64 = amount_lo.as_u32() as u64;
-                new_state.balance = new_state.balance.saturating_sub(amount_u64);
-                net_delta -= amount_u64 as i64;
-                new_state.nonce += 1;
-            }
-            Effect::BridgeLock {
-                value_lo,
-                lock_hash,
-                value_full: _,
-            } => {
-                // Mirror CreateEscrow: balance debit by value_lo.
-                row[PARAM_BASE + 0] = *lock_hash;
-                row[PARAM_BASE + 1] = *value_lo;
-                let value_u64 = value_lo.as_u32() as u64;
-                new_state.balance = new_state.balance.saturating_sub(value_u64);
-                net_delta -= value_u64 as i64;
-                new_state.nonce += 1;
-            }
-            Effect::CreateCommittedEscrow { commit_hash } => {
-                row[PARAM_BASE + 0] = commit_hash[0];
-                new_state.nonce += 1;
-            }
+            
+            
+            
             Effect::BridgeMint {
                 value_lo,
                 mint_hash,
@@ -690,20 +582,9 @@ pub fn generate_effect_vm_trace_ext(
                 net_delta += value_u64 as i64;
                 new_state.nonce += 1;
             }
-            Effect::BridgeFinalize { finalize_hash } => {
-                // 32-byte widening: anchor limb[0]; full 8 limbs bind via effects_hash.
-                row[PARAM_BASE + 0] = finalize_hash[0];
-                new_state.nonce += 1;
-            }
-            Effect::ReleaseEscrow { escrow_id_hash } | Effect::RefundEscrow { escrow_id_hash } => {
-                row[PARAM_BASE + 0] = escrow_id_hash[0];
-                new_state.nonce += 1;
-            }
-            Effect::ReleaseCommittedEscrow { commit_hash }
-            | Effect::RefundCommittedEscrow { commit_hash } => {
-                row[PARAM_BASE + 0] = commit_hash[0];
-                new_state.nonce += 1;
-            }
+            
+            
+            
             Effect::NoteSpend { nullifier, value } => {
                 let (val_lo, val_hi) = split_u64(*value);
                 row[PARAM_BASE + param::NULLIFIER] = *nullifier;
@@ -729,37 +610,8 @@ pub fn generate_effect_vm_trace_ext(
                 // subtracted `value`, which diverged from the executor; closed.)
                 new_state.nonce += 1;
             }
-            Effect::CreateObligation {
-                stake_amount,
-                obligation_id,
-                beneficiary_hash,
-            } => {
-                let (stake_lo, stake_hi) = split_u64(*stake_amount);
-                row[PARAM_BASE + param::OBLIGATION_STAKE_LO] = stake_lo;
-                row[PARAM_BASE + param::OBLIGATION_STAKE_HI] = stake_hi;
-                row[PARAM_BASE + param::OBLIGATION_ID] = *obligation_id;
-                row[PARAM_BASE + param::OBLIGATION_BENEFICIARY] = *beneficiary_hash;
-
-                new_state.balance = new_state.balance.saturating_sub(*stake_amount);
-                net_delta -= *stake_amount as i64;
-                // Stage 2: cap_root advances to bind both obligation_id and beneficiary.
-                let obligation_leaf = hash_2_to_1(*obligation_id, *beneficiary_hash);
-                new_state.capability_root = hash_2_to_1(new_state.capability_root, obligation_leaf);
-                new_state.nonce += 1;
-            }
-            Effect::FulfillObligation {
-                obligation_id,
-                stake_return,
-            } => {
-                let (ret_lo, ret_hi) = split_u64(*stake_return);
-                row[PARAM_BASE + param::FULFILL_OBLIGATION_ID] = *obligation_id;
-                row[PARAM_BASE + param::FULFILL_RETURN_LO] = ret_lo;
-                row[PARAM_BASE + param::FULFILL_RETURN_HI] = ret_hi;
-
-                new_state.balance = new_state.balance.saturating_add(*stake_return);
-                net_delta += *stake_return as i64;
-                new_state.nonce += 1;
-            }
+            
+            
             Effect::Custom {
                 program_vk_hash,
                 proof_commitment,
@@ -783,54 +635,9 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.nonce += 1;
                 // No balance change from the Effect VM perspective.
             }
-            Effect::SlashObligation {
-                obligation_id,
-                stake_amount,
-                beneficiary_hash,
-            } => {
-                let (stake_lo, stake_hi) = split_u64(*stake_amount);
-                row[PARAM_BASE + param::SLASH_OBLIGATION_ID] = *obligation_id;
-                row[PARAM_BASE + param::SLASH_STAKE_LO] = stake_lo;
-                row[PARAM_BASE + param::SLASH_STAKE_HI] = stake_hi;
-                row[PARAM_BASE + param::SLASH_BENEFICIARY] = *beneficiary_hash;
-                // Slash credits the beneficiary: balance increases.
-                new_state.balance = new_state.balance.saturating_add(*stake_amount);
-                net_delta += *stake_amount as i64;
-                // Update cap_root to reflect obligation removal.
-                new_state.capability_root = hash_2_to_1(new_state.capability_root, *obligation_id);
-                new_state.nonce += 1;
-            }
-            Effect::Seal { field_idx } => {
-                row[PARAM_BASE + param::SEAL_FIELD_IDX] = BabyBear::new(*field_idx);
-                // Stage 2: aux witness for 2^field_idx (constrained by Lagrange poly).
-                row[AUX_BASE + aux_off::SEAL_POW2_IDX] = BabyBear::new(1u32 << field_idx);
-                // Trace-gen-side check: bit must not already be set (no double-seal).
-                assert!(
-                    new_state.sealed_field_mask & (1 << field_idx) == 0,
-                    "Seal: field {} already sealed (sealed_mask={:#b})",
-                    field_idx,
-                    new_state.sealed_field_mask,
-                );
-                new_state.sealed_field_mask |= 1 << field_idx;
-                new_state.nonce += 1;
-            }
-            Effect::Unseal { field_idx, brand } => {
-                row[PARAM_BASE + param::UNSEAL_FIELD_IDX] = BabyBear::new(*field_idx);
-                row[PARAM_BASE + param::UNSEAL_BRAND] = *brand;
-                // Store brand in aux for constraint checking.
-                row[AUX_BASE + 6] = *brand;
-                // Stage 2: aux witness for 2^field_idx.
-                row[AUX_BASE + aux_off::SEAL_POW2_IDX] = BabyBear::new(1u32 << field_idx);
-                // Trace-gen-side check: bit must be set (cannot unseal unsealed field).
-                assert!(
-                    new_state.sealed_field_mask & (1 << field_idx) != 0,
-                    "Unseal: field {} not sealed (sealed_mask={:#b})",
-                    field_idx,
-                    new_state.sealed_field_mask,
-                );
-                new_state.sealed_field_mask &= !(1 << field_idx);
-                new_state.nonce += 1;
-            }
+            
+            
+            
             Effect::MakeSovereign => {
                 // Mode flag transitions from 0 to 1.
                 new_state.mode_flag = 1;
@@ -847,342 +654,16 @@ pub fn generate_effect_vm_trace_ext(
                 row[AUX_BASE + 7] = *child_vk_derived;
                 new_state.nonce += 1;
             }
-            Effect::ExportSturdyRef {
-                cell_id,
-                permissions,
-                random_seed,
-                export_counter,
-            } => {
-                row[PARAM_BASE + param::EXPORT_CELL_ID] = *cell_id;
-                row[PARAM_BASE + param::EXPORT_PERMISSIONS] = *permissions;
-                row[PARAM_BASE + param::EXPORT_RANDOM_SEED] = *random_seed;
-                row[PARAM_BASE + param::EXPORT_COUNTER] = BabyBear::new(*export_counter);
-
-                // Compute swiss_number = hash(cell_id, hash(random_seed, counter))
-                let inner_hash = hash_2_to_1(*random_seed, BabyBear::new(*export_counter));
-                let swiss_number = hash_2_to_1(*cell_id, inner_hash);
-                // Store computed swiss in aux[0] for constraint verification.
-                row[AUX_BASE + 0] = swiss_number;
-
-                // State: field[7] increments (export counter tracked there).
-                new_state.fields[7] = new_state.fields[7] + BabyBear::ONE;
-                new_state.nonce += 1;
-            }
-            Effect::EnlivenRef {
-                swiss_number,
-                presenter_id,
-                expected_cell_id,
-                expected_permissions,
-            } => {
-                row[PARAM_BASE + param::ENLIVEN_SWISS] = *swiss_number;
-                row[PARAM_BASE + param::ENLIVEN_PRESENTER] = *presenter_id;
-                row[PARAM_BASE + param::ENLIVEN_CELL_ID] = *expected_cell_id;
-                row[PARAM_BASE + param::ENLIVEN_PERMISSIONS] = *expected_permissions;
-
-                // Stage 7 / P1.C: 1-hop Merkle membership against the
-                // cell's committed swiss_table_root mirror
-                // (state_after.fields[4]).
-                //
-                // Leaf = hash(swiss, hash(cell_id, permissions)).
-                let inner = hash_2_to_1(*expected_cell_id, *expected_permissions);
-                let leaf = hash_2_to_1(*swiss_number, inner);
-                // For the deterministic witness path used by AIR tests
-                // (no real swiss table), the sibling is the previous
-                // root (ZERO at row 0) and the new root is the
-                // pair-hash. Real deployments use a structured sibling
-                // table maintained by the federation mirror.
-                let sibling = current_state.fields[4];
-                let chosen = hash_2_to_1(leaf, sibling);
-                let root = chosen;
-                row[AUX_BASE + 0] = root;
-                row[AUX_BASE + 1] = leaf;
-                row[AUX_BASE + 6] = sibling;
-                row[AUX_BASE + 7] = chosen;
-                // Materialise the post-enliven swiss_table_root in
-                // state_after.fields[4]. The AIR constraint
-                // (aux_root == state_after.fields[4]) is satisfied.
-                new_state.fields[4] = root;
-
-                // State: field[6] increments (use_count tracked there).
-                new_state.fields[6] = new_state.fields[6] + BabyBear::ONE;
-                new_state.nonce += 1;
-            }
-            Effect::DropRef {
-                cell_id,
-                holder_federation,
-                current_refcount,
-            } => {
-                row[PARAM_BASE + param::DROP_CELL_ID] = *cell_id;
-                row[PARAM_BASE + param::DROP_HOLDER_FED] = *holder_federation;
-                row[PARAM_BASE + param::DROP_REFCOUNT] = BabyBear::new(*current_refcount);
-
-                // Prove refcount > 0: store inverse in aux[0].
-                assert!(
-                    *current_refcount > 0,
-                    "DropRef: current_refcount must be > 0"
-                );
-                let rc_field = BabyBear::new(*current_refcount);
-                row[AUX_BASE + 0] = rc_field.inverse().expect("refcount is non-zero");
-
-                // Stage 7 / P1.C: 1-hop Merkle membership against the
-                // cell's committed refcount_table_root mirror
-                // (state_after.fields[3]).
-                let leaf = hash_2_to_1(*cell_id, *holder_federation);
-                let sibling = current_state.fields[3];
-                let chosen = hash_2_to_1(leaf, sibling);
-                row[AUX_BASE + 1] = leaf;
-                row[AUX_BASE + 6] = sibling;
-                row[AUX_BASE + 7] = chosen;
-                // Materialise the new refcount_table_root in field[3].
-                new_state.fields[3] = chosen;
-
-                // State: field[5] decrements (refcount tracked there).
-                new_state.fields[5] = new_state.fields[5] - BabyBear::ONE;
-                new_state.nonce += 1;
-            }
-            Effect::ValidateHandoff {
-                certificate_hash,
-                recipient_pk,
-                introducer_pk,
-                approved_set_root: _provided_root,
-            } => {
-                // Stage 7 / P1.C: bind PARAM approved_set_root to the
-                // verifier-supplied PI position 0 of APPROVED_HANDOFFS_BASE.
-                // The runtime-provided value is ignored; the trace
-                // generator writes the PI-bound value into the PARAM.
-                let approved_set_root = context.approved_handoffs_root[0];
-                row[PARAM_BASE + param::HANDOFF_CERT_HASH] = *certificate_hash;
-                row[PARAM_BASE + param::HANDOFF_RECIPIENT_PK] = *recipient_pk;
-                row[PARAM_BASE + param::HANDOFF_INTRODUCER_PK] = *introducer_pk;
-                row[PARAM_BASE + param::HANDOFF_APPROVED_SET_ROOT] = approved_set_root;
-
-                // Stage 7 / P1.C: 1-hop Merkle membership.
-                // leaf = hash(cert_hash, hash(recipient_pk, introducer_pk)).
-                let pks = hash_2_to_1(*recipient_pk, *introducer_pk);
-                let leaf = hash_2_to_1(*certificate_hash, pks);
-                // For the deterministic witness path, the sibling is
-                // chosen so that hash(leaf, sibling) == approved_set_root.
-                // Without a real federation mirror, we set the sibling
-                // such that the AIR's chosen-parent equals the root.
-                // Production code wires this from the federation's
-                // Merkle witness oracle.
-                //
-                // Deterministic path: if approved_set_root == ZERO, the
-                // trace satisfies hash(leaf, sibling) == 0 only when
-                // such a sibling exists; we leave this as ZERO for the
-                // "empty approved set" case (the AIR proof fails, which
-                // is the correct behaviour — you can't validate a
-                // handoff against an empty approved set).
-                let sibling = BabyBear::ZERO;
-                let chosen = hash_2_to_1(leaf, sibling);
-                row[AUX_BASE + 0] = leaf;
-                row[AUX_BASE + 1] = sibling;
-                row[AUX_BASE + 6] = chosen;
-                // NOTE: this trace satisfies the AIR iff
-                // `chosen == approved_set_root`. The
-                // federation-mirror witness layer is responsible for
-                // supplying sibling values that make this hold for
-                // committed approved-set entries. Until the witness
-                // oracle lands, this trace path will only succeed when
-                // the federation's approved_handoffs_root happens to
-                // equal hash(leaf, ZERO) — i.e., a single-entry tree.
-
-                // State: cap_root updated with routing entry.
-                // new_cap = hash(old_cap, hash(recipient_pk, cert_hash))
-                let routing_entry = hash_2_to_1(*recipient_pk, *certificate_hash);
-                new_state.capability_root = hash_2_to_1(new_state.capability_root, routing_entry);
-                new_state.nonce += 1;
-            }
-            Effect::AllocateQueue {
-                capacity,
-                owner_quota_id,
-                cost_per_slot,
-            } => {
-                row[PARAM_BASE + param::QUEUE_CAPACITY] = BabyBear::new(*capacity);
-                row[PARAM_BASE + param::QUEUE_OWNER_QUOTA] = *owner_quota_id;
-                row[PARAM_BASE + param::QUEUE_COST_PER_SLOT] = BabyBear::new(*cost_per_slot);
-
-                // Allocation cost = capacity * cost_per_slot.
-                let alloc_cost = (*capacity as u64) * (*cost_per_slot as u64);
-                new_state.balance = new_state.balance.saturating_sub(alloc_cost);
-                net_delta -= alloc_cost as i64;
-
-                // Queue root = empty queue hash = hash_2_to_1(ZERO, ZERO).
-                // Store in field[4] by convention (queue_root slot).
-                let empty_queue_hash = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-                new_state.fields[4] = empty_queue_hash;
-
-                // Store capacity in aux[0] for constraint verification.
-                row[AUX_BASE + 0] = empty_queue_hash;
-
-                new_state.nonce += 1;
-            }
-            Effect::EnqueueMessage {
-                message_hash,
-                deposit_amount,
-                sender_id,
-                queue_len,
-                program_vk,
-            } => {
-                row[PARAM_BASE + param::ENQUEUE_MSG_HASH] = *message_hash;
-                row[PARAM_BASE + param::ENQUEUE_DEPOSIT] = BabyBear::new(*deposit_amount);
-                row[PARAM_BASE + param::ENQUEUE_SENDER] = *sender_id;
-                row[PARAM_BASE + param::ENQUEUE_QUEUE_LEN] = BabyBear::new(*queue_len);
-                row[PARAM_BASE + param::ENQUEUE_PROGRAM_VK] = *program_vk;
-
-                // Queue root transition: new_root = hash(old_root, message_hash).
-                let old_queue_root = new_state.fields[4];
-                let new_queue_root = hash_2_to_1(old_queue_root, *message_hash);
-                new_state.fields[4] = new_queue_root;
-
-                // Deposit deducted from sender's balance.
-                new_state.balance = new_state.balance.saturating_sub(*deposit_amount as u64);
-                net_delta -= *deposit_amount as i64;
-
-                // Store new queue root in aux[0] for constraint verification.
-                row[AUX_BASE + 0] = new_queue_root;
-
-                // Program validation hash binding (aux[6] and aux[7]).
-                // NOTE: aux[2..5] are reserved for PI values on row 0.
-                // When program_vk != 0, compute and store the validation hash.
-                // When program_vk == 0, both are zero (backward compatible).
-                if *program_vk != BabyBear::ZERO {
-                    let inner = hash_2_to_1(*sender_id, *message_hash);
-                    let validation_hash = hash_2_to_1(*program_vk, inner);
-                    row[AUX_BASE + 6] = validation_hash;
-                    // aux[7] = inverse of program_vk (for the zero-check constraint).
-                    row[AUX_BASE + 7] = program_vk.inverse().expect("program_vk is non-zero");
-                }
-                // else: aux[6] and aux[7] remain ZERO (default).
-
-                new_state.nonce += 1;
-            }
-            Effect::DequeueMessage {
-                expected_message_hash,
-                deposit_refund,
-            } => {
-                row[PARAM_BASE + param::DEQUEUE_EXPECTED_HASH] = *expected_message_hash;
-                row[PARAM_BASE + param::DEQUEUE_DEPOSIT_REFUND] = BabyBear::new(*deposit_refund);
-
-                // Non-empty queue proof: store inverse of expected_message_hash in aux[1].
-                assert!(
-                    *expected_message_hash != BabyBear::ZERO,
-                    "DequeueMessage: expected_message_hash must be non-zero (non-empty queue)"
-                );
-                row[AUX_BASE + 1] = expected_message_hash
-                    .inverse()
-                    .expect("message hash is non-zero");
-
-                // Queue root advances: new_root = hash(old_root, expected_message_hash).
-                // (In a full implementation this would be a Merkle removal, but for
-                // the circuit we use a hash chain advance for soundness.)
-                let old_queue_root = new_state.fields[4];
-                let new_queue_root = hash_2_to_1(old_queue_root, *expected_message_hash);
-                new_state.fields[4] = new_queue_root;
-
-                // Deposit refund credited to balance.
-                new_state.balance = new_state.balance.saturating_add(*deposit_refund as u64);
-                net_delta += *deposit_refund as i64;
-
-                // Store new queue root in aux[0] for constraint verification.
-                row[AUX_BASE + 0] = new_queue_root;
-
-                new_state.nonce += 1;
-            }
-            Effect::ResizeQueue {
-                new_capacity,
-                queue_id,
-                cost_per_slot,
-                old_capacity,
-            } => {
-                row[PARAM_BASE + param::RESIZE_NEW_CAPACITY] = BabyBear::new(*new_capacity);
-                row[PARAM_BASE + param::RESIZE_QUEUE_ID] = *queue_id;
-                row[PARAM_BASE + param::RESIZE_COST_PER_SLOT] = BabyBear::new(*cost_per_slot);
-                row[PARAM_BASE + param::RESIZE_OLD_CAPACITY] = BabyBear::new(*old_capacity);
-
-                // Stage 2: signed-delta witness for sound shrink handling.
-                let (delta_sign, delta_mag) = if *new_capacity >= *old_capacity {
-                    (0u32, *new_capacity - *old_capacity)
-                } else {
-                    (1u32, *old_capacity - *new_capacity)
-                };
-                row[AUX_BASE + aux_off::RESIZE_DELTA_SIGN] = BabyBear::new(delta_sign);
-                row[AUX_BASE + aux_off::RESIZE_DELTA_MAG] = BabyBear::new(delta_mag);
-
-                // If growing, debit balance for delta * cost_per_slot.
-                if *new_capacity > *old_capacity {
-                    let delta = (*new_capacity - *old_capacity) as u64;
-                    let cost = delta * (*cost_per_slot as u64);
-                    new_state.balance = new_state.balance.saturating_sub(cost);
-                    net_delta -= cost as i64;
-                }
-                // Capacity update is reflected in the state commitment via field[5]
-                // (we use field[5] as the queue capacity slot for ResizeQueue).
-                new_state.fields[5] = BabyBear::new(*new_capacity);
-
-                new_state.nonce += 1;
-            }
-            Effect::AtomicQueueTx {
-                op_count,
-                tx_hash,
-                combined_old_root,
-                combined_new_root,
-                net_deposit,
-            } => {
-                row[PARAM_BASE + param::ATOMIC_TX_OP_COUNT] = BabyBear::new(*op_count);
-                row[PARAM_BASE + param::ATOMIC_TX_HASH] = *tx_hash;
-                row[PARAM_BASE + param::ATOMIC_TX_COMBINED_OLD_ROOT] = *combined_old_root;
-                row[PARAM_BASE + param::ATOMIC_TX_COMBINED_NEW_ROOT] = *combined_new_root;
-                row[PARAM_BASE + param::ATOMIC_TX_NET_DEPOSIT] = BabyBear::new(*net_deposit);
-
-                // State transition: field[4] changes from combined_old_root to combined_new_root.
-                // The circuit constrains that field[4] == combined_old_root before and
-                // becomes combined_new_root after, binding the atomic transition.
-                new_state.fields[4] = *combined_new_root;
-
-                // Balance debit by net_deposit (sum of deposits paid minus refunds received).
-                new_state.balance = new_state.balance.saturating_sub(*net_deposit as u64);
-                net_delta -= *net_deposit as i64;
-
-                // Auxiliary witness: aux[0] = hash(tx_hash, hash(combined_old_root, combined_new_root))
-                // This binds the transaction to the specific state transition.
-                let inner = hash_2_to_1(*combined_old_root, *combined_new_root);
-                let binding_hash = hash_2_to_1(*tx_hash, inner);
-                row[AUX_BASE + 0] = binding_hash;
-
-                new_state.nonce += 1;
-            }
-            Effect::PipelineStep {
-                pipeline_id,
-                source_old_root,
-                source_new_root,
-                sink_new_root,
-                message_hash,
-            } => {
-                row[PARAM_BASE + param::PIPELINE_ID] = *pipeline_id;
-                row[PARAM_BASE + param::PIPELINE_SOURCE_OLD_ROOT] = *source_old_root;
-                row[PARAM_BASE + param::PIPELINE_SOURCE_NEW_ROOT] = *source_new_root;
-                row[PARAM_BASE + param::PIPELINE_SINK_NEW_ROOT] = *sink_new_root;
-                row[PARAM_BASE + param::PIPELINE_MESSAGE_HASH] = *message_hash;
-
-                // State transition: field[4] (source queue root) changes from
-                // source_old_root to source_new_root (message dequeued from source).
-                new_state.fields[4] = *source_new_root;
-
-                // Auxiliary witness:
-                // aux[0] = hash(source_old_root, message_hash) = expected source_new_root
-                //   (proves dequeue: source_new_root == hash_chain_dequeue(source_old, msg))
-                // aux[1] = sink_new_root (stored for external verification of sink transition)
-                // aux[6] = pipeline_id^-1 (P1-5 fix: forces pipeline_id != 0)
-                let expected_source_new = hash_2_to_1(*source_old_root, *message_hash);
-                row[AUX_BASE + 0] = expected_source_new;
-                row[AUX_BASE + 1] = *sink_new_root;
-                row[AUX_BASE + 6] = pipeline_id
-                    .inverse()
-                    .expect("PipelineStep pipeline_id must be non-zero");
-
-                new_state.nonce += 1;
-            }
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             Effect::Burn {
                 target_hash,
                 amount_lo,
@@ -1554,6 +1035,8 @@ pub fn generate_effect_vm_trace_ext(
         BabyBear::new((context.current_block_height & 0x7FFF_FFFF) as u32);
     public_inputs[pi::MAX_CUSTOM_EFFECTS] = BabyBear::new(context.max_custom_effects as u32);
     public_inputs[pi::CUSTOM_EFFECT_COUNT] = BabyBear::new(custom_count as u32);
+    // RETIRED slot (VERB-LOCKSTEP): ValidateHandoff is gone; the approved-
+    // handoffs root stays the context-supplied sentinel until the PI compaction.
     for i in 0..pi::APPROVED_HANDOFFS_LEN {
         public_inputs[pi::APPROVED_HANDOFFS_BASE + i] = context.approved_handoffs_root[i];
     }
@@ -1629,31 +1112,27 @@ pub fn generate_effect_vm_trace_ext(
     // (see `compute_effects_hash` arms for BridgeMint/BridgeLock/
     // CreateEscrow). Together the two paths give the bit-injective
     // u64 binding that closes §6.5.
-    let (mint_sum, lock_sum, escrow_sum) = {
+    let mint_sum = {
         let mut m: u64 = 0;
-        let mut l: u64 = 0;
-        let mut e: u64 = 0;
         for eff in effects {
-            match eff {
-                Effect::BridgeMint { value_full, .. } => m = m.wrapping_add(*value_full),
-                Effect::BridgeLock { value_full, .. } => l = l.wrapping_add(*value_full),
-                Effect::CreateEscrow { amount_full, .. } => e = e.wrapping_add(*amount_full),
-                _ => {}
+            if let Effect::BridgeMint { value_full, .. } = eff {
+                m = m.wrapping_add(*value_full);
             }
         }
-        (m, l, e)
+        m
     };
     let mint_limbs = u64_to_4_limbs_16(mint_sum);
-    let lock_limbs = u64_to_4_limbs_16(lock_sum);
-    let escrow_limbs = u64_to_4_limbs_16(escrow_sum);
     for i in 0..pi::BRIDGE_MINT_VALUE_LIMBS_LEN {
         public_inputs[pi::BRIDGE_MINT_VALUE_LIMBS_BASE + i] = mint_limbs[i];
     }
+    // RETIRED slots (VERB-LOCKSTEP): BridgeLock / CreateEscrow no longer exist,
+    // so their limb slots are pinned to the zero sentinel (PI layout unchanged
+    // until the descriptor-regeneration lane compacts it).
     for i in 0..pi::BRIDGE_LOCK_VALUE_LIMBS_LEN {
-        public_inputs[pi::BRIDGE_LOCK_VALUE_LIMBS_BASE + i] = lock_limbs[i];
+        public_inputs[pi::BRIDGE_LOCK_VALUE_LIMBS_BASE + i] = BabyBear::ZERO;
     }
     for i in 0..pi::CREATE_ESCROW_AMOUNT_LIMBS_LEN {
-        public_inputs[pi::CREATE_ESCROW_AMOUNT_LIMBS_BASE + i] = escrow_limbs[i];
+        public_inputs[pi::CREATE_ESCROW_AMOUNT_LIMBS_BASE + i] = BabyBear::ZERO;
     }
     // Unused context-field shadows (the context-supplied limbs remain in
     // EffectVmContext for forward-compat with a per-effect-instance

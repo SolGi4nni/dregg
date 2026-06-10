@@ -730,33 +730,11 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_create_seal_pair(
-        mut self,
-        sealer_holder: CellId,
-        unsealer_holder: CellId,
-    ) -> Self {
-        self.effects.push(Effect::CreateSealPair {
-            sealer_holder,
-            unsealer_holder,
-        });
-        self
-    }
+    
 
-    pub fn effect_seal(mut self, pair_id: [u8; 32], capability: CapabilityRef) -> Self {
-        self.effects.push(Effect::Seal {
-            pair_id,
-            capability,
-        });
-        self
-    }
+    
 
-    pub fn effect_unseal(mut self, sealed_box: dregg_cell::SealedBox, recipient: CellId) -> Self {
-        self.effects.push(Effect::Unseal {
-            sealed_box,
-            recipient,
-        });
-        self
-    }
+    
 
     // §3.4 — Cell lifecycle ----------------------------------------------------
 
@@ -854,164 +832,35 @@ impl<S> ActionBuilder<S> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn effect_bridge_lock(
-        mut self,
-        nullifier: [u8; 32],
-        destination: [u8; 32],
-        value: u64,
-        asset_type: u64,
-        timeout_height: u64,
-        spending_proof: Vec<u8>,
-    ) -> Self {
-        self.effects.push(Effect::BridgeLock {
-            nullifier,
-            destination,
-            value,
-            asset_type,
-            timeout_height,
-            spending_proof,
-        });
-        self
-    }
+    
 
-    pub fn effect_bridge_finalize(
-        mut self,
-        nullifier: [u8; 32],
-        receipt: dregg_cell::note_bridge::BridgeReceipt,
-    ) -> Self {
-        self.effects
-            .push(Effect::BridgeFinalize { nullifier, receipt });
-        self
-    }
+    
 
-    pub fn effect_bridge_cancel(mut self, nullifier: [u8; 32]) -> Self {
-        self.effects.push(Effect::BridgeCancel { nullifier });
-        self
-    }
+    
 
     // §3.7 — Obligations -------------------------------------------------------
 
-    pub fn effect_create_obligation(
-        mut self,
-        beneficiary: CellId,
-        condition: crate::conditional::ProofCondition,
-        deadline_height: u64,
-        stake: dregg_cell::NoteCommitment,
-        stake_amount: u64,
-    ) -> Self {
-        self.effects.push(Effect::CreateObligation {
-            beneficiary,
-            condition,
-            deadline_height,
-            stake,
-            stake_amount,
-        });
-        self
-    }
+    
 
-    pub fn effect_fulfill_obligation(
-        mut self,
-        obligation_id: [u8; 32],
-        proof: crate::conditional::ConditionProof,
-    ) -> Self {
-        self.effects.push(Effect::FulfillObligation {
-            obligation_id,
-            proof,
-        });
-        self
-    }
+    
 
-    pub fn effect_slash_obligation(mut self, obligation_id: [u8; 32]) -> Self {
-        self.effects.push(Effect::SlashObligation { obligation_id });
-        self
-    }
+    
 
     // §3.8 — Escrow ------------------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
-    pub fn effect_create_escrow(
-        mut self,
-        cell: CellId,
-        recipient: CellId,
-        amount: u64,
-        condition: crate::escrow::EscrowCondition,
-        timeout_height: u64,
-        escrow_id: [u8; 32],
-    ) -> Self {
-        self.effects.push(Effect::CreateEscrow {
-            cell,
-            recipient,
-            amount,
-            condition,
-            timeout_height,
-            escrow_id,
-        });
-        self
-    }
+    
 
-    pub fn effect_release_escrow(mut self, escrow_id: [u8; 32], proof: Option<Vec<u8>>) -> Self {
-        self.effects
-            .push(Effect::ReleaseEscrow { escrow_id, proof });
-        self
-    }
+    
 
-    pub fn effect_refund_escrow(mut self, escrow_id: [u8; 32]) -> Self {
-        self.effects.push(Effect::RefundEscrow { escrow_id });
-        self
-    }
+    
 
     #[allow(clippy::too_many_arguments)]
-    pub fn effect_create_committed_escrow(
-        mut self,
-        creator_commitment: [u8; 32],
-        recipient_commitment: [u8; 32],
-        value_commitment: dregg_cell::ValueCommitmentBytes,
-        condition_commitment: [u8; 32],
-        timeout_height: u64,
-        escrow_id: [u8; 32],
-        range_proof: Vec<u8>,
-        amount: u64,
-    ) -> Self {
-        self.effects.push(Effect::CreateCommittedEscrow {
-            creator_commitment,
-            recipient_commitment,
-            value_commitment,
-            condition_commitment,
-            timeout_height,
-            escrow_id,
-            range_proof,
-            amount,
-        });
-        self
-    }
+    
 
-    pub fn effect_release_committed_escrow(
-        mut self,
-        escrow_id: [u8; 32],
-        claim_auth: crate::escrow::EscrowClaimAuth,
-        recipient: CellId,
-    ) -> Self {
-        self.effects.push(Effect::ReleaseCommittedEscrow {
-            escrow_id,
-            claim_auth,
-            recipient,
-        });
-        self
-    }
+    
 
-    pub fn effect_refund_committed_escrow(
-        mut self,
-        escrow_id: [u8; 32],
-        claim_auth: crate::escrow::EscrowClaimAuth,
-        creator: CellId,
-    ) -> Self {
-        self.effects.push(Effect::RefundCommittedEscrow {
-            escrow_id,
-            claim_auth,
-            creator,
-        });
-        self
-    }
+    
 
     // §3.9 — Events ------------------------------------------------------------
 
@@ -1025,59 +874,17 @@ impl<S> ActionBuilder<S> {
 
     // §3.10 — Queues -----------------------------------------------------------
 
-    pub fn effect_queue_allocate(mut self, capacity: u64, program_vk: Option<[u8; 32]>) -> Self {
-        self.effects.push(Effect::QueueAllocate {
-            capacity,
-            program_vk,
-        });
-        self
-    }
+    
 
-    pub fn effect_queue_enqueue(
-        mut self,
-        queue: CellId,
-        message_hash: [u8; 32],
-        deposit: u64,
-    ) -> Self {
-        self.effects.push(Effect::QueueEnqueue {
-            queue,
-            message_hash,
-            deposit,
-        });
-        self
-    }
+    
 
-    pub fn effect_queue_dequeue(mut self, queue: CellId) -> Self {
-        self.effects.push(Effect::QueueDequeue { queue });
-        self
-    }
+    
 
-    pub fn effect_queue_resize(mut self, queue: CellId, new_capacity: u64) -> Self {
-        self.effects.push(Effect::QueueResize {
-            queue,
-            new_capacity,
-        });
-        self
-    }
+    
 
-    pub fn effect_queue_atomic_tx(mut self, operations: Vec<crate::action::QueueTxOp>) -> Self {
-        self.effects.push(Effect::QueueAtomicTx { operations });
-        self
-    }
+    
 
-    pub fn effect_queue_pipeline_step(
-        mut self,
-        pipeline_id: [u8; 32],
-        source: CellId,
-        sinks: Vec<CellId>,
-    ) -> Self {
-        self.effects.push(Effect::QueuePipelineStep {
-            pipeline_id,
-            source,
-            sinks,
-        });
-        self
-    }
+    
 }
 
 // `.build()` is only available in an `Authorized` state.

@@ -181,23 +181,6 @@ fn cell_seal_widened_target_yields_distinct_public_inputs() {
     assert_eq!(&h4_a[..], eh_a);
 }
 
-#[test]
-fn release_escrow_widened_id_yields_distinct_effects_hash() {
-    // ReleaseEscrow.escrow_id_hash widened to [BabyBear; 8]. Two releases over
-    // escrow ids differing only above byte 4 must bind distinctly.
-    let (a, b) = high_byte_pair();
-
-    let (lo_a, _) = compute_effects_hash(&[VmEffect::ReleaseEscrow {
-        escrow_id_hash: bytes32_to_8_limbs(&a),
-    }]);
-    let (lo_b, _) = compute_effects_hash(&[VmEffect::ReleaseEscrow {
-        escrow_id_hash: bytes32_to_8_limbs(&b),
-    }]);
-    assert_ne!(
-        lo_a, lo_b,
-        "ReleaseEscrow effects_hash must differ when escrow ids differ above byte 4",
-    );
-}
 
 #[test]
 fn grant_capability_widened_entry_yields_distinct_public_inputs() {

@@ -846,12 +846,8 @@ impl TurnExecutor {
                 // the executor's in-memory maps (prevents phantom record attacks).
                 journal.rollback(
                     ledger,
-                    &self.obligations,
-                    &self.escrows,
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
-                    &self.committed_escrows,
-                    &self.committed_escrow_amounts,
                 );
                 // Remove temporarily-injected sovereign cells on rollback.
                 for cell_id in &sovereign_cell_ids {
@@ -874,12 +870,8 @@ impl TurnExecutor {
         if computrons_used > turn.fee {
             journal.rollback(
                 ledger,
-                &self.obligations,
-                &self.escrows,
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
-                &self.committed_escrows,
-                &self.committed_escrow_amounts,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -904,12 +896,8 @@ impl TurnExecutor {
         if let Err(error) = self.check_note_conservation(turn) {
             journal.rollback(
                 ledger,
-                &self.obligations,
-                &self.escrows,
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
-                &self.committed_escrows,
-                &self.committed_escrow_amounts,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -933,12 +921,8 @@ impl TurnExecutor {
         if excess != 0 {
             journal.rollback(
                 ledger,
-                &self.obligations,
-                &self.escrows,
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
-                &self.committed_escrows,
-                &self.committed_escrow_amounts,
             );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
@@ -963,12 +947,8 @@ impl TurnExecutor {
             let Some(cell) = ledger.get(cell_id) else {
                 journal.rollback(
                     ledger,
-                    &self.obligations,
-                    &self.escrows,
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
-                    &self.committed_escrows,
-                    &self.committed_escrow_amounts,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
@@ -996,12 +976,8 @@ impl TurnExecutor {
             if actual_new_commitment != witness.new_commitment {
                 journal.rollback(
                     ledger,
-                    &self.obligations,
-                    &self.escrows,
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
-                    &self.committed_escrows,
-                    &self.committed_escrow_amounts,
                 );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);

@@ -64,9 +64,11 @@ pub const MAX_CUSTOM_EFFECTS: usize = 19;
 /// prerequisite per `DESIGN-max-custom-effects.md` §7 threat 3).
 pub const CUSTOM_EFFECT_COUNT: usize = 20;
 
-// ---- CapTP federation-state root (Stage 1 prep; populated in Stage 7) ----
+// ---- CapTP federation-state root (RETIRED slot, VERB-LOCKSTEP) ----
 /// Federation-scoped approved-handoffs Merkle root, 4-felt Poseidon2 form.
-/// Initial value: empty-tree sentinel (Commitment4::empty()).
+/// RETIRED: `ValidateHandoff` no longer exists as an effect; the slot stays
+/// at the empty-tree sentinel until the descriptor-regeneration lane compacts
+/// the PI layout (frozen descriptors pin PI prefix offsets).
 pub const APPROVED_HANDOFFS_BASE: usize = 21;
 pub const APPROVED_HANDOFFS_LEN: usize = 4;
 
@@ -244,10 +246,12 @@ pub const HAS_TRANSITION_PROOF: usize = 88;
 /// little-endian: limbs[0] is the low 16 bits, limbs[3] is the high 16.
 pub const BRIDGE_MINT_VALUE_LIMBS_BASE: usize = 89;
 pub const BRIDGE_MINT_VALUE_LIMBS_LEN: usize = 4;
-/// 4-limb decomposition of `BridgeLock.value`.
+/// 4-limb decomposition of `BridgeLock.value`. RETIRED (VERB-LOCKSTEP):
+/// the effect no longer exists; the slot is always the zero sentinel.
 pub const BRIDGE_LOCK_VALUE_LIMBS_BASE: usize = 93;
 pub const BRIDGE_LOCK_VALUE_LIMBS_LEN: usize = 4;
-/// 4-limb decomposition of `CreateEscrow.amount`.
+/// 4-limb decomposition of `CreateEscrow.amount`. RETIRED (VERB-LOCKSTEP):
+/// the effect no longer exists; the slot is always the zero sentinel.
 pub const CREATE_ESCROW_AMOUNT_LIMBS_BASE: usize = 97;
 pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 

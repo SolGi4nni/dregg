@@ -284,13 +284,8 @@ fn build_corpus() -> Vec<CorpusCase> {
         vec![Effect::GrantCapability { from: a, to: a, cap }]
     });
 
-    // A still-GAP effect, to keep the corpus honest about the REMAINING swap surface:
-    // CreateSealPair is not yet projected to the Lean wire (the seal-pair family is deferred),
-    // so this turn is INELIGIBLE for shadow and reports GAP. This is the un-shrunk frontier.
-    case!("CreateSealPair (still-GAP)", 100, 100, |a, b| vec![Effect::CreateSealPair {
-        sealer_holder: a,
-        unsealer_holder: b,
-    }]);
+    // (VERB-LOCKSTEP: the CreateSealPair still-GAP case died with the Effect variant —
+    // the seal-pair family is the caps-in-slots factory story now.)
 
     cases
 }
@@ -695,13 +690,13 @@ fn write_ledger_markdown(
          gate requires the delegator to HOLD the cap-target edge, while apply.rs short-circuits a \
          self-grant (skips the c-list lookup). `GrantCapability/self-cap` (self-`node` cap held ⇒ \
          verified COMMITS) is the non-vacuity tooth.\n\n\
-         4. **GAP (no Lean model yet)** — the remaining escrow/bridge/seal-pair/captp-swiss/factory/ \
-         introduce/queue-enqueue-dequeue effects (e.g. `CreateSealPair`): not yet projected to the \
-         Lean wire, so the turn is INELIGIBLE for shadow. This is the remaining SWAP surface. The \
-         currently-modelled effects (20+) are: SetField, Transfer, SetPermissions, \
+         4. **GAP (no Lean model yet)** — the factory/introduce-family effects not yet projected \
+         to the Lean wire (the escrow/bridge-3phase/seal-pair/captp-swiss/queue families no longer \
+         EXIST as kernel verbs — they are factory cells now; the verb lockstep deleted their \
+         variants). The currently-modelled effects (20+) are: SetField, Transfer, SetPermissions, \
          SetVerificationKey, EmitEvent, MakeSovereign, RevokeDelegation, NoteSpend, NoteCreate, \
          IncrementNonce, Refusal, ReceiptArchive, CellSeal, CellUnseal, CellDestroy, Burn, \
-         RevokeCapability, RefreshDelegation, QueueAllocate, GrantCapability. The admission context \
+         RevokeCapability, RefreshDelegation, GrantCapability. The admission context \
          is HOST-FED (boundary-P1): the node supplies the clock / freeze-set / stored receipt-chain \
          head / Stingray budget slice (`ShadowHostCtx`), so the verified `admissible` clock/frozen/ \
          chain-head/budget legs are decided by the node, not the turn. The marshaller also carries \

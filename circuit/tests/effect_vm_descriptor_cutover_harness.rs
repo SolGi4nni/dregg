@@ -22,11 +22,10 @@
 //!
 //! ## What this validated (real Plonky3 output)
 //!
-//! * **GRADUATED (21 selectors AGREE + prove+verify+anti-ghost):** `transfer` (1, the beachhead),
-//!   the FULL-ECONOMIC effects `note_spend` (4), `note_create` (5), `bridge_mint` (40), `burn` (46)
-//!   (reconciled onto the runtime balance-column + nonce-tick convention), the FROZEN-FRAME nonce-tick
-//!   effects `create_seal_pair` (28) and `bridge_finalize` (41), and — via the NONCE-TICK-PATCH
-//!   graduation (`frozen_frame_nonce_tick_effects_graduated_into_cutover`) — the 12 reconciled
+//! * **GRADUATED (19 surviving selectors AGREE + prove+verify+anti-ghost):** `transfer` (1, the
+//!   beachhead), the FULL-ECONOMIC effects `note_spend` (4), `note_create` (5), `bridge_mint` (40),
+//!   `burn` (46) (reconciled onto the runtime balance-column + nonce-tick convention), and — via the
+//!   NONCE-TICK-PATCH graduation (`frozen_frame_nonce_tick_effects_graduated_into_cutover`) — the 12 reconciled
 //!   passthrough+tick effects `set_permissions` (26), `set_verification_key` (27), `refresh_delegation`
 //!   (29), `revoke_delegation` (30), `exercise_via_capability` (34), `introduce` (35), `pipelined_send`
 //!   (36), `cell_destroy` (47), `cell_seal` (49), `refusal` (52), `increment_nonce` (53), and
@@ -50,51 +49,25 @@
 //!   the anti-ghost-WEAK ones (frozen-frame descriptors MISSING the last-row balance PI binding —
 //!   their forged-balance tooth does not bite until that binding is emitted).
 //!
-//! ## THE EXECUTOR-VS-RUNTIME DIVERGENCE (why the remaining 20 are DEEPER, not mechanical)
+//! ## THE REMAINING DIVERGENCES (post verb-lockstep)
 //!
-//! The remaining DIVERGE effects are NOT graduate-by-matching-the-runtime: making their 186-wide
-//! descriptor `descriptor_air_accepts` the honest trace would require GUTTING the verified executor's
-//! on-trace state move, silently dropping a real guarantee (the pale-ghost trap). The honest split (the
-//! per-effect Lean emit-module headers cite the verified universe-A `*Spec` each carries):
+//! The verb lockstep DELETED the factory-dissolved families (escrow/obligation, queue,
+//! seal/swiss/sturdyref/handoff, bridge lock/finalize/cancel) — their selectors are RETIRED
+//! (pinned to zero in BOTH AIRs) and their descriptors left the registry, so the old DEEPER
+//! escrow/queue/swiss rows are gone WITH their effects, not reconciled. What remains DIVERGE:
 //!
-//!   * **escrow/bridge value-MOVE family — `create_escrow` (37), `bridge_lock` (38),
-//!     `create_committed_escrow` (39), `release_escrow` (42), `refund_escrow` (43), `bridge_cancel`
-//!     (33).** The verified executor MOVES the per-asset ledger ON-trace (release/refund/cancel CREDIT,
-//!     create/lock DEBIT — `recBalCreditCell ±amount`, proven in each module's `unify_*`/`*_refund`),
-//!     so each Lean descriptor pins an on-row `gBalLo{Credit,Debit}`. But the RUNTIME hand-AIR
-//!     (`trace.rs:656-686`, `air.rs:983` passthrough batch / `air.rs:1192` debit arm) runs 39/42/43/33 as
-//!     state-PASSTHROUGH (balance FROZEN, value rides the committed-escrow SIDE-TABLE root off-row) and
-//!     reads `param0` as the escrow-id hash, NOT an amount. Reconciling needs the off-row escrow-root
-//!     binding (the 188-wide `*Wide` system-roots site) — the per-row 186 IR cannot re-derive it.
-//!     (37/38 additionally read `param0` for the debit where the trace uses `param1`.)
 //!   * **lifecycle/birth family — `create_cell` (31), `spawn_with_delegation` (32),
-//!     `create_cell_from_factory` (13).** The Lean descriptor pins the BORN-EMPTY CHILD cell (all-zero
-//!     block, `balOf default = 0`); the runtime EffectVM row is the ACTING cell's PASSTHROUGH+tick
-//!     (`air.rs:983`/`1522`). Different cells — the row's `state_after` is the actor's (100000 bal, ticked
-//!     nonce), not the child's `0`. Reconciling needs deciding which cell the row models + binding the
-//!     other off-row.
-//!   * **lifecycle-SET / sovereign-ZERO — `receipt_archive` (51), `make_sovereign` (12).** The verified
-//!     executor SETS `field[1] := 1` (the lifecycle record-slot, `receipt_archive`) / ZEROES the balance
-//!     behind the sovereign commitment (`make_sovereign`, `balOf sovereignRebind = 0`) ON-trace; the
-//!     runtime FREEZES field[1] (lifecycle off-row, `air.rs:2513`) / freezes balance + moves only
-//!     `reserved += 256` (the mode flag, `air.rs:1493`). The on-trace SET/ZERO vs runtime off-row is the
-//!     conflict.
-//!   * **queue family — `allocate_queue` (18), `enqueue_message` (19), `dequeue_message` (20),
-//!     `resize_queue` (21).** Divergence in BOTH directions PLUS an off-row queue-root: the RUNTIME
-//!     CHARGES the allocation/deposit FEE on-row (`air.rs:1864`/`1917` balance debit) while the verified
-//!     `QueueAllocateSpec` is balance-NEUTRAL (`unify_allocate_balFrozen_univA`); and the queue ROOT
-//!     (`field[4]`) is a hash-chain the per-row IR cannot re-derive (off-trace side-table).
-//!   * **swiss-table digest family — `export_sturdy_ref` (14), `enliven_ref` (15).** A scalar
-//!     `swiss_root` digest MOVE the per-row IR cannot unfold (off-trace swiss-table).
-//!   * **cap-reshape family — `grant_cap` (3), `attenuate_capability` (48).** RESERVED for a separate
-//!     cap-commitment reshape (the `cap_root` is a scalar digest of the cap-table FUNCTION the IR can't
-//!     unfold). Out of scope here.
+//!     `create_cell_from_factory` (13).** The Lean descriptor pins the BORN-EMPTY CHILD cell;
+//!     the runtime EffectVM row is the ACTING cell's PASSTHROUGH+tick. Reconciling needs
+//!     deciding which cell the row models + binding the other off-row.
+//!   * **lifecycle-SET / sovereign-ZERO — `receipt_archive` (51), `make_sovereign` (12).**
+//!     On-trace SET/ZERO (verified executor) vs runtime off-row freeze.
+//!   * **cap-reshape family — `grant_cap` (3), `attenuate_capability` (48).** RESERVED for the
+//!     cap-commitment reshape lanes (Phase B graduated the hand-AIR; the descriptor DSL needs
+//!     Merkle-membership + lattice-table constraint kinds).
 //!
-//! In every DEEPER case the right reconcile is an ember-level decision about WHICH LAYER holds the
-//! canonical move (push the runtime on-row, or extend the descriptor to bind the verified move via the
-//! 188-wide side-table root), NOT a mechanical descriptor patch. `emit_event` was the LAST genuinely
-//! mechanical straggler — a pure no-state-move row mismodeled as FREEZE-ALL (frozen nonce) that the
-//! executor AND runtime AGREE freezes economically + ticks the actor nonce.
+//! In every DEEPER case the right reconcile is an ember-level decision about WHICH LAYER holds
+//! the canonical move, NOT a mechanical descriptor patch.
 
 use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi};
@@ -129,103 +102,26 @@ fn honest_case_for_selector(sel: usize) -> Option<(CellState, Vec<Effect>)> {
         s if s == sel::TRANSFER => Effect::Transfer { amount: 50, direction: 1 },
         s if s == sel::NOTE_SPEND => Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 },
         s if s == sel::NOTE_CREATE => Effect::NoteCreate { commitment: BabyBear::new(0x5678), value: 50 },
-        s if s == sel::SEAL => Effect::Seal { field_idx: 2 },
-        s if s == sel::UNSEAL => Effect::Unseal { field_idx: 2, brand: BabyBear::new(0x9) },
         s if s == sel::MAKE_SOVEREIGN => Effect::MakeSovereign,
         s if s == sel::CREATE_CELL_FROM_FACTORY => Effect::CreateCellFromFactory {
             factory_vk: BabyBear::new(0x11),
             child_vk_derived: BabyBear::new(0x22),
         },
-        s if s == sel::EXPORT_STURDY_REF => Effect::ExportSturdyRef {
-            cell_id: BabyBear::new(0x1),
-            permissions: BabyBear::new(0x3),
-            random_seed: BabyBear::new(0x7),
-            export_counter: 0,
-        },
-        s if s == sel::ENLIVEN_REF => Effect::EnlivenRef {
-            swiss_number: BabyBear::new(0x1),
-            presenter_id: BabyBear::new(0x2),
-            expected_cell_id: BabyBear::new(0x3),
-            expected_permissions: BabyBear::new(0x4),
-        },
-        s if s == sel::DROP_REF => Effect::DropRef {
-            cell_id: BabyBear::new(0x1),
-            holder_federation: BabyBear::new(0x2),
-            current_refcount: 3,
-        },
-        s if s == sel::VALIDATE_HANDOFF => Effect::ValidateHandoff {
-            certificate_hash: BabyBear::new(0x1),
-            recipient_pk: BabyBear::new(0x2),
-            introducer_pk: BabyBear::new(0x3),
-            approved_set_root: BabyBear::new(0x4),
-        },
-        s if s == sel::ALLOCATE_QUEUE => Effect::AllocateQueue {
-            capacity: 4,
-            owner_quota_id: BabyBear::new(0x1),
-            cost_per_slot: 1,
-        },
-        s if s == sel::ENQUEUE_MESSAGE => Effect::EnqueueMessage {
-            message_hash: BabyBear::new(0x1),
-            deposit_amount: 5,
-            sender_id: BabyBear::new(0x2),
-            queue_len: 0,
-            program_vk: BabyBear::ZERO,
-        },
-        s if s == sel::DEQUEUE_MESSAGE => Effect::DequeueMessage {
-            expected_message_hash: BabyBear::new(0x1),
-            deposit_refund: 5,
-        },
-        s if s == sel::RESIZE_QUEUE => Effect::ResizeQueue {
-            new_capacity: 8,
-            queue_id: BabyBear::new(0x1),
-            cost_per_slot: 1,
-            old_capacity: 4,
-        },
-        s if s == sel::ATOMIC_QUEUE_TX => Effect::AtomicQueueTx {
-            op_count: 2,
-            tx_hash: BabyBear::new(0x1),
-            combined_old_root: BabyBear::new(0x2),
-            combined_new_root: BabyBear::new(0x3),
-            net_deposit: 5,
-        },
-        s if s == sel::PIPELINE_STEP => Effect::PipelineStep {
-            pipeline_id: BabyBear::new(0x1),
-            source_old_root: BabyBear::new(0x2),
-            source_new_root: BabyBear::new(0x3),
-            sink_new_root: BabyBear::new(0x4),
-            message_hash: BabyBear::new(0x5),
-        },
         s if s == sel::EMIT_EVENT => Effect::EmitEvent { topic_hash: eight(0x1), payload_hash: eight(0x2) },
         s if s == sel::SET_PERMISSIONS => Effect::SetPermissions { permissions_hash: eight(0x1) },
         s if s == sel::SET_VERIFICATION_KEY => Effect::SetVerificationKey { vk_hash: eight(0x1) },
-        s if s == sel::CREATE_SEAL_PAIR => Effect::CreateSealPair { pair_hash: eight(0x1) },
         s if s == sel::REFRESH_DELEGATION => Effect::RefreshDelegation,
         s if s == sel::REVOKE_DELEGATION => Effect::RevokeDelegation { child_hash: eight(0x1) },
         s if s == sel::CREATE_CELL => Effect::CreateCell { create_hash: eight(0x1) },
         s if s == sel::SPAWN_WITH_DELEGATION => Effect::SpawnWithDelegation { spawn_hash: eight(0x1) },
-        s if s == sel::BRIDGE_CANCEL => Effect::BridgeCancel { nullifier_hash: eight(0x1) },
         s if s == sel::EXERCISE_VIA_CAPABILITY => Effect::ExerciseViaCapability { exercise_hash: eight(0x1) },
         s if s == sel::INTRODUCE => Effect::Introduce { intro_hash: eight(0x1) },
         s if s == sel::PIPELINED_SEND => Effect::PipelinedSend { send_hash: eight(0x1) },
-        s if s == sel::CREATE_ESCROW => Effect::CreateEscrow {
-            amount_lo: BabyBear::new(40),
-            escrow_hash: BabyBear::new(0x1),
-            amount_full: 40,
-        },
-        s if s == sel::BRIDGE_LOCK => Effect::BridgeLock {
-            value_lo: BabyBear::new(40),
-            lock_hash: BabyBear::new(0x1),
-            value_full: 40,
-        },
-        s if s == sel::CREATE_COMMITTED_ESCROW => Effect::CreateCommittedEscrow { commit_hash: eight(0x1) },
         s if s == sel::BRIDGE_MINT => Effect::BridgeMint {
             value_lo: BabyBear::new(40),
             mint_hash: BabyBear::new(0x1),
             value_full: 40,
         },
-        s if s == sel::BRIDGE_FINALIZE => Effect::BridgeFinalize { finalize_hash: eight(0x1) },
-        s if s == sel::RELEASE_ESCROW => Effect::ReleaseEscrow { escrow_id_hash: eight(0x1) },
-        s if s == sel::REFUND_ESCROW => Effect::RefundEscrow { escrow_id_hash: eight(0x1) },
         s if s == sel::GRANT_CAP => Effect::GrantCapability { cap_entry: eight(0x1), phase_b: None },
         s if s == sel::BURN => Effect::Burn {
             target_hash: BabyBear::new(0xB0B),
@@ -555,175 +451,6 @@ fn economic_effects_graduated_into_cutover() {
     assert_eq!(graduated, 4, "all four economic effects must graduate");
 }
 
-/// GRADUATED FROZEN-FRAME EFFECTS: createSealPair / bridgeFinalize reconciled onto the runtime
-/// nonce-TICK convention (the Lean emit modules now tick the global nonce via `gNonce`; the committed
-/// descriptor JSON was re-emitted to match). Each is a FROZEN-balance, TICKED-nonce effect: every
-/// economic-data column is frozen, the nonce ticks by one (the runtime ticks every non-NoOp row), and
-/// the post-state is bound into `state_commit` (GROUP-4) with the full last-row balance PI pins. Each
-/// now proves+verifies through BOTH the descriptor interpreter and the hand-AIR over the SAME honest
-/// witness, AGREES on accept, and BOTH reject the forged-balance + forged-state-commit tampers —
-/// exactly the beachhead gauntlet. This advances the cutover beyond the economic effects to the
-/// nonce-tick-reconciled frozen-frame effects.
-#[test]
-fn bridge_finalize_and_seal_pair_graduated_into_cutover() {
-    use dregg_circuit::effect_vm::columns::sel;
-    struct Case {
-        label: &'static str,
-        sel: usize,
-        st: CellState,
-        effects: Vec<Effect>,
-    }
-    let cases = vec![
-        Case {
-            label: "create_seal_pair",
-            sel: sel::CREATE_SEAL_PAIR,
-            st: CellState::new(100_000, 0),
-            effects: vec![Effect::CreateSealPair { pair_hash: {
-                let mut a = [BabyBear::ZERO; 8];
-                a[0] = BabyBear::new(0xA1);
-                a
-            } }],
-        },
-        Case {
-            label: "bridge_finalize",
-            sel: sel::BRIDGE_FINALIZE,
-            st: CellState::new(100_000, 0),
-            effects: vec![Effect::BridgeFinalize { finalize_hash: {
-                let mut a = [BabyBear::ZERO; 8];
-                a[0] = BabyBear::new(0xF1);
-                a
-            } }],
-        },
-    ];
-
-    let mut graduated = 0usize;
-    for c in cases {
-        let (base_trace, pis) = generate_effect_vm_trace(&c.st, &c.effects);
-        assert_eq!(base_trace[0].len(), 186, "[{}] canonical 186-col layout", c.label);
-        let json = descriptor_for_selector(c.sel)
-            .unwrap_or_else(|| panic!("[{}] selector {} has no descriptor", c.label, c.sel));
-        let name = descriptor_name_for_selector(c.sel).unwrap();
-        let desc = parse_vm_descriptor(json).expect("descriptor parses");
-        let dpis = &pis[..desc.public_input_count];
-
-        // (1) DESCRIPTOR INTERPRETER — prove + independent verify, real Plonky3.
-        let desc_proof = prove_vm_descriptor(&desc, &base_trace, dpis).unwrap_or_else(|e| {
-            panic!("[{}] descriptor `{name}` failed to PROVE the honest witness: {e}", c.label)
-        });
-        verify_vm_descriptor(&desc, &desc_proof, dpis)
-            .unwrap_or_else(|e| panic!("[{}] descriptor proof failed independent verify: {e}", c.label));
-
-        // (2) HAND-AIR — prove + independent verify, same witness.
-        let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
-            .unwrap_or_else(|e| panic!("[{}] hand-AIR failed to prove honest witness: {e:?}", c.label));
-        verify_effect_vm_p3(&hand_proof, &pis)
-            .unwrap_or_else(|e| panic!("[{}] hand-AIR proof failed verify: {e:?}", c.label));
-
-        // (3) THE DIFFERENTIAL — both accept the SAME honest witness.
-        let hand_accepts = p3_air_accepts(&base_trace, &pis);
-        let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(hand_accepts, "[{}] hand-AIR rejected a witness it just PROVED", c.label);
-        assert!(desc_accepts, "[{}] descriptor rejected a witness it just PROVED", c.label);
-        assert_eq!(hand_accepts, desc_accepts, "[{}] DIFFERENTIAL DISAGREEMENT", c.label);
-
-        // (4a) ANTI-GHOST — forged FINAL_BAL_LO is UNSAT for BOTH.
-        {
-            let mut forged = pis.clone();
-            forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
-            let fdpis = &forged[..desc.public_input_count];
-            assert!(!p3_air_accepts(&base_trace, &forged), "[{}] hand-AIR took forged bal", c.label);
-            assert!(
-                !descriptor_air_accepts(&desc, &base_trace, fdpis),
-                "[{}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO", c.label
-            );
-            assert!(
-                prove_vm_descriptor(&desc, &base_trace, fdpis).is_err(),
-                "[{}] descriptor PROVED a forged FINAL_BAL_LO", c.label
-            );
-        }
-        // (4b) ANTI-GHOST — mutated last-row state-commit cell is UNSAT.
-        {
-            let mut t = base_trace.clone();
-            let last = t.len() - 1;
-            t[last][STATE_AFTER_BASE + state::STATE_COMMIT] =
-                t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
-            assert!(
-                !descriptor_air_accepts(&desc, &t, dpis),
-                "[{}] descriptor took a forged last-row state-commit cell", c.label
-            );
-            assert!(
-                prove_vm_descriptor(&desc, &t, dpis).is_err(),
-                "[{}] descriptor PROVED a forged state-commit cell", c.label
-            );
-        }
-
-        eprintln!(
-            "[{}] GRADUATED: descriptor `{name}` + hand-AIR both prove+verify the honest witness, agree \
-             on accept, and both reject the forged-balance + forged-state-commit tampers.",
-            c.label
-        );
-        graduated += 1;
-    }
-    assert_eq!(graduated, 2, "both frozen-frame effects must graduate");
-}
-
-/// HONEST CUTOVER CATALOG — the economic effects that remain BLOCKED, and WHY. This documents the
-/// precise residual divergences the differential surfaces (a real, valuable finding, not a hidden
-/// failure). There are NO column-fixable economic blockers left among the selector-bound full-economic
-/// effects: burn/note_create/note_spend/bridge_mint graduated above. The remaining economic surfaces are
-/// IR-blocked (side-table digests the per-row IR cannot re-derive) — `create_escrow` / `bridge_lock`
-/// debit balance like burn (COLUMN-fixable later, same pattern), but their descriptors ALSO carry the
-/// escrow/bridge side-table semantics out-of-IR; we leave them on the hand-AIR until the per-row IR is
-/// extended. (`mint` is name-only: no Rust selector / no `Effect` variant, so it cannot be exercised by
-/// the trace generator at all.)
-#[test]
-fn remaining_economic_blockers_are_documented() {
-    // create_escrow (37) and bridge_lock (38) still read param0 for the debit amount (the trace puts
-    // amount at param1) AND freeze the nonce (the trace ticks) — the SAME column-fix that graduated
-    // burn would apply, but these effects additionally bind an escrow/bridge side-table the per-row IR
-    // does not model, so they are deferred to the IR-extension lane (kept on the hand-AIR).
-    for (label, sel, st, effects) in [
-        (
-            "create_escrow",
-            37usize,
-            CellState::new(100_000, 0),
-            vec![Effect::CreateEscrow {
-                amount_lo: BabyBear::new(40),
-                escrow_hash: BabyBear::new(0x1),
-                amount_full: 40,
-            }],
-        ),
-        (
-            "bridge_lock",
-            38usize,
-            CellState::new(100_000, 0),
-            vec![Effect::BridgeLock {
-                value_lo: BabyBear::new(40),
-                lock_hash: BabyBear::new(0x1),
-                value_full: 40,
-            }],
-        ),
-    ] {
-        let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
-        let json = descriptor_for_selector(sel).unwrap();
-        let desc = parse_vm_descriptor(json).unwrap();
-        let dpis = &pis[..desc.public_input_count];
-        assert!(
-            p3_air_accepts(&base_trace, &pis),
-            "[{label}] precondition: hand-AIR accepts the honest witness"
-        );
-        let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(
-            !desc_accepts,
-            "[{label}] UNEXPECTED: descriptor now accepts — promote it into the graduation test."
-        );
-        eprintln!(
-            "[{label}] STILL BLOCKED (column-fixable-later + IR side-table): hand-AIR proves it; the \
-             Lean descriptor `{}` does not (reads param0 + freezes nonce; trace uses param1 + ticks).",
-            desc.name
-        );
-    }
-}
 
 // ============================================================================
 // DIAGNOSTIC: pinpoint the failing constraint(s) per diverging selector.
@@ -962,7 +689,7 @@ fn nonce_tick_patch_graduates_the_13() {
         )
     };
 
-    let candidates: &[usize] = &[26, 27, 28, 29, 30, 34, 35, 36, 41, 47, 49, 52, 53];
+    let candidates: &[usize] = &[26, 27, 29, 30, 34, 35, 36, 47, 49, 52, 53];
     let mut graduated = Vec::new();
     let mut still_blocked = Vec::new();
     for &s in candidates {
@@ -1029,8 +756,9 @@ fn nonce_tick_patch_graduates_the_13() {
 /// registry decides IDENTICALLY to the hand-AIR on the real witness. This proves+verifies through BOTH
 /// the descriptor interpreter and the hand-AIR over the SAME honest witness, asserts they AGREE on
 /// accept, and asserts BOTH reject the forged-balance + forged-state-commit tampers — exactly the
-/// beachhead `transfer` / economic / frozen-frame gauntlet. With `create_seal_pair` (28) and
-/// `bridge_finalize` (41) already graduated, this completes the 13 and lifts the cutover to 20/56.
+/// beachhead `transfer` / economic / frozen-frame gauntlet. (The verb lockstep retired the
+/// `create_seal_pair` / `bridge_finalize` entries with their effects; the cutover set is now
+/// counted over the 29 surviving effects.)
 #[test]
 fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
     use dregg_circuit::effect_vm::columns::sel;
@@ -1148,7 +876,7 @@ fn descriptor_proof_binds_to_its_selector() {
     // The cutover-ready selectors the verify path tries (mirror of `full_turn_proof::CUTOVER_READY`).
     let cutover: &[usize] = &[
         sel::TRANSFER, sel::NOTE_SPEND, sel::NOTE_CREATE, sel::BRIDGE_MINT, sel::BURN,
-        sel::CREATE_SEAL_PAIR, sel::BRIDGE_FINALIZE, sel::CELL_SEAL, sel::CELL_DESTROY, sel::REFUSAL,
+        sel::CELL_SEAL, sel::CELL_DESTROY, sel::REFUSAL,
         sel::SET_VERIFICATION_KEY, sel::SET_PERMISSIONS, sel::EXERCISE_VIA_CAPABILITY,
         sel::PIPELINED_SEND, sel::INCREMENT_NONCE, sel::REFRESH_DELEGATION, sel::REVOKE_DELEGATION,
         sel::INTRODUCE,

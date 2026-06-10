@@ -22,16 +22,16 @@ impl TurnExecutor {
             Effect::NoteCreate { .. } => self.costs.effect_base,
             Effect::BridgeMint { .. } => self.costs.proof_verify, // bridge mints verify a STARK proof
             Effect::PipelinedSend { .. } => self.costs.effect_base,
-            Effect::CreateSealPair { .. } => self.costs.effect_base,
-            Effect::Seal { .. } => self.costs.effect_base,
-            Effect::Unseal { .. } => self.costs.effect_base,
+            
+            
+            
             Effect::Introduce { .. } => self.costs.effect_base,
             Effect::SpawnWithDelegation { .. } => self.costs.create_cell,
             Effect::RefreshDelegation => self.costs.effect_base,
             Effect::RevokeDelegation { .. } => self.costs.effect_base,
-            Effect::CreateObligation { .. } => self.costs.effect_base,
-            Effect::FulfillObligation { .. } => self.costs.proof_verify,
-            Effect::SlashObligation { .. } => self.costs.effect_base,
+            
+            
+            
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 // Base cost + cost of each inner effect
                 inner_effects
@@ -39,30 +39,15 @@ impl TurnExecutor {
                     .map(|e| self.compute_effect_cost(e))
                     .sum::<u64>()
             }
-            Effect::BridgeLock { .. }
-            | Effect::BridgeFinalize { .. }
-            | Effect::BridgeCancel { .. } => self.costs.effect_base,
-            Effect::CreateEscrow { .. }
-            | Effect::ReleaseEscrow { .. }
-            | Effect::RefundEscrow { .. }
-            | Effect::CreateCommittedEscrow { .. }
-            | Effect::ReleaseCommittedEscrow { .. }
-            | Effect::RefundCommittedEscrow { .. } => self.costs.effect_base,
+            
+            
             Effect::MakeSovereign { .. } => self.costs.effect_base,
             Effect::CreateCellFromFactory { .. } => self.costs.create_cell,
-            Effect::QueueAllocate { .. }
-            | Effect::QueueEnqueue { .. }
-            | Effect::QueueDequeue { .. }
-            | Effect::QueueResize { .. }
-            | Effect::QueueAtomicTx { .. }
-            | Effect::QueuePipelineStep { .. } => self.costs.effect_base,
+            
             // CapTP runtime effects (P1.A): each is a simple state bump
             // (counter / use_count / refcount) plus a federation-mirror
             // hook on commit; cost is one effect_base.
-            Effect::ExportSturdyRef { .. }
-            | Effect::EnlivenRef { .. }
-            | Effect::DropRef { .. }
-            | Effect::ValidateHandoff { .. } => self.costs.effect_base,
+            
             // Refusal: a non-action attestation. Cost is effect_base plus
             // proof-verify (the carried non-action witness goes through
             // the witnessed-predicate registry).
@@ -593,21 +578,10 @@ impl TurnExecutor {
                 // Obligation/escrow/nullifier insertion entries are rollback-only bookkeeping.
                 JournalEntry::NoteSpend { .. }
                 | JournalEntry::NoteCreate { .. }
-                | JournalEntry::ObligationCreated { .. }
-                | JournalEntry::ObligationFulfilled { .. }
-                | JournalEntry::ObligationSlashed { .. }
                 | JournalEntry::EventEmitted { .. }
-                | JournalEntry::EscrowCreated { .. }
-                | JournalEntry::EscrowReleased { .. }
-                | JournalEntry::EscrowRefunded { .. }
-                | JournalEntry::ObligationInserted { .. }
-                | JournalEntry::EscrowInserted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
-                | JournalEntry::CommittedEscrowCreated { .. }
-                | JournalEntry::CommittedEscrowReleased { .. }
-                | JournalEntry::CommittedEscrowRefunded { .. }
-                | JournalEntry::CommittedEscrowInserted { .. } => {}
+                 => {}
                 // Lifecycle / capability narrowing: rollback-only — no
                 // separate LedgerDelta field today. On commit the cell's
                 // CellLifecycle / CapabilityRef change is read off the
@@ -977,19 +951,7 @@ impl TurnExecutor {
                     });
                     *slot_counter += 1;
                 }
-                Effect::Unseal { recipient, .. } => {
-                    records.push(dregg_cell::DerivationRecord {
-                        target_cell: *recipient,
-                        target_slot: *slot_counter,
-                        edge: dregg_cell::DerivationEdge {
-                            source_cell: tree.action.target,
-                            source_slot: 0,
-                            derivation_type: dregg_cell::DerivationType::Unseal,
-                        },
-                        created_at: timestamp,
-                    });
-                    *slot_counter += 1;
-                }
+                
                 _ => {}
             }
         }

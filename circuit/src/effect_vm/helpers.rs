@@ -237,12 +237,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(27));
                 hasher_inputs.extend_from_slice(vk_hash);
             }
-            Effect::CreateSealPair { pair_hash } => {
-                hasher_inputs.push(BabyBear::new(28));
-                // 32-byte widening: absorb all 8 limbs so PI[EFFECTS_HASH] binds
-                // the full pair_hash (~256-bit), not a single ~31-bit fold.
-                hasher_inputs.extend_from_slice(pair_hash);
-            }
+            
             Effect::RefreshDelegation => {
                 hasher_inputs.push(BabyBear::new(29));
             }
@@ -261,10 +256,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(32));
                 hasher_inputs.extend_from_slice(spawn_hash);
             }
-            Effect::BridgeCancel { nullifier_hash } => {
-                hasher_inputs.push(BabyBear::new(33));
-                hasher_inputs.extend_from_slice(nullifier_hash);
-            }
+            
             Effect::ExerciseViaCapability { exercise_hash } => {
                 hasher_inputs.push(BabyBear::new(34));
                 hasher_inputs.extend_from_slice(exercise_hash);
@@ -277,35 +269,9 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(36));
                 hasher_inputs.extend_from_slice(send_hash);
             }
-            Effect::CreateEscrow {
-                amount_lo,
-                escrow_hash,
-                amount_full,
-            } => {
-                hasher_inputs.push(BabyBear::new(37));
-                hasher_inputs.push(*amount_lo);
-                hasher_inputs.push(*escrow_hash);
-                // 30-bit-trunc fix: absorb the four 16-bit limbs so the
-                // effects hash binds to the full u64, not the truncated
-                // value_lo.
-                let limbs = u64_to_4_limbs_16(*amount_full);
-                hasher_inputs.extend_from_slice(&limbs);
-            }
-            Effect::BridgeLock {
-                value_lo,
-                lock_hash,
-                value_full,
-            } => {
-                hasher_inputs.push(BabyBear::new(38));
-                hasher_inputs.push(*value_lo);
-                hasher_inputs.push(*lock_hash);
-                let limbs = u64_to_4_limbs_16(*value_full);
-                hasher_inputs.extend_from_slice(&limbs);
-            }
-            Effect::CreateCommittedEscrow { commit_hash } => {
-                hasher_inputs.push(BabyBear::new(39));
-                hasher_inputs.extend_from_slice(commit_hash);
-            }
+            
+            
+            
             Effect::BridgeMint {
                 value_lo,
                 mint_hash,
@@ -317,26 +283,11 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 let limbs = u64_to_4_limbs_16(*value_full);
                 hasher_inputs.extend_from_slice(&limbs);
             }
-            Effect::BridgeFinalize { finalize_hash } => {
-                hasher_inputs.push(BabyBear::new(41));
-                hasher_inputs.extend_from_slice(finalize_hash);
-            }
-            Effect::ReleaseEscrow { escrow_id_hash } => {
-                hasher_inputs.push(BabyBear::new(42));
-                hasher_inputs.extend_from_slice(escrow_id_hash);
-            }
-            Effect::RefundEscrow { escrow_id_hash } => {
-                hasher_inputs.push(BabyBear::new(43));
-                hasher_inputs.extend_from_slice(escrow_id_hash);
-            }
-            Effect::ReleaseCommittedEscrow { commit_hash } => {
-                hasher_inputs.push(BabyBear::new(44));
-                hasher_inputs.extend_from_slice(commit_hash);
-            }
-            Effect::RefundCommittedEscrow { commit_hash } => {
-                hasher_inputs.push(BabyBear::new(45));
-                hasher_inputs.extend_from_slice(commit_hash);
-            }
+            
+            
+            
+            
+            
             Effect::NoteSpend { nullifier, value } => {
                 hasher_inputs.push(BabyBear::new(4));
                 hasher_inputs.push(*nullifier);
@@ -351,28 +302,8 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(lo);
                 hasher_inputs.push(hi);
             }
-            Effect::CreateObligation {
-                stake_amount,
-                obligation_id,
-                beneficiary_hash,
-            } => {
-                hasher_inputs.push(BabyBear::new(6));
-                let (lo, hi) = split_u64(*stake_amount);
-                hasher_inputs.push(lo);
-                hasher_inputs.push(hi);
-                hasher_inputs.push(*obligation_id);
-                hasher_inputs.push(*beneficiary_hash);
-            }
-            Effect::FulfillObligation {
-                obligation_id,
-                stake_return,
-            } => {
-                hasher_inputs.push(BabyBear::new(7));
-                hasher_inputs.push(*obligation_id);
-                let (lo, hi) = split_u64(*stake_return);
-                hasher_inputs.push(lo);
-                hasher_inputs.push(hi);
-            }
+            
+            
             Effect::Custom {
                 program_vk_hash,
                 proof_commitment,
@@ -381,27 +312,9 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.extend_from_slice(program_vk_hash);
                 hasher_inputs.extend_from_slice(proof_commitment);
             }
-            Effect::SlashObligation {
-                obligation_id,
-                stake_amount,
-                beneficiary_hash,
-            } => {
-                hasher_inputs.push(BabyBear::new(9));
-                hasher_inputs.push(*obligation_id);
-                let (lo, hi) = split_u64(*stake_amount);
-                hasher_inputs.push(lo);
-                hasher_inputs.push(hi);
-                hasher_inputs.push(*beneficiary_hash);
-            }
-            Effect::Seal { field_idx } => {
-                hasher_inputs.push(BabyBear::new(10));
-                hasher_inputs.push(BabyBear::new(*field_idx));
-            }
-            Effect::Unseal { field_idx, brand } => {
-                hasher_inputs.push(BabyBear::new(11));
-                hasher_inputs.push(BabyBear::new(*field_idx));
-                hasher_inputs.push(*brand);
-            }
+            
+            
+            
             Effect::MakeSovereign => {
                 hasher_inputs.push(BabyBear::new(12));
             }
@@ -413,124 +326,16 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(*factory_vk);
                 hasher_inputs.push(*child_vk_derived);
             }
-            Effect::ExportSturdyRef {
-                cell_id,
-                permissions,
-                random_seed,
-                export_counter,
-            } => {
-                hasher_inputs.push(BabyBear::new(14));
-                hasher_inputs.push(*cell_id);
-                hasher_inputs.push(*permissions);
-                hasher_inputs.push(*random_seed);
-                hasher_inputs.push(BabyBear::new(*export_counter));
-            }
-            Effect::EnlivenRef {
-                swiss_number,
-                presenter_id,
-                expected_cell_id,
-                expected_permissions,
-            } => {
-                hasher_inputs.push(BabyBear::new(15));
-                hasher_inputs.push(*swiss_number);
-                hasher_inputs.push(*presenter_id);
-                hasher_inputs.push(*expected_cell_id);
-                hasher_inputs.push(*expected_permissions);
-            }
-            Effect::DropRef {
-                cell_id,
-                holder_federation,
-                current_refcount,
-            } => {
-                hasher_inputs.push(BabyBear::new(16));
-                hasher_inputs.push(*cell_id);
-                hasher_inputs.push(*holder_federation);
-                hasher_inputs.push(BabyBear::new(*current_refcount));
-            }
-            Effect::ValidateHandoff {
-                certificate_hash,
-                recipient_pk,
-                introducer_pk,
-                approved_set_root,
-            } => {
-                hasher_inputs.push(BabyBear::new(17));
-                hasher_inputs.push(*certificate_hash);
-                hasher_inputs.push(*recipient_pk);
-                hasher_inputs.push(*introducer_pk);
-                hasher_inputs.push(*approved_set_root);
-            }
-            Effect::AllocateQueue {
-                capacity,
-                owner_quota_id,
-                cost_per_slot,
-            } => {
-                hasher_inputs.push(BabyBear::new(18));
-                hasher_inputs.push(BabyBear::new(*capacity));
-                hasher_inputs.push(*owner_quota_id);
-                hasher_inputs.push(BabyBear::new(*cost_per_slot));
-            }
-            Effect::EnqueueMessage {
-                message_hash,
-                deposit_amount,
-                sender_id,
-                queue_len,
-                program_vk,
-            } => {
-                hasher_inputs.push(BabyBear::new(19));
-                hasher_inputs.push(*message_hash);
-                hasher_inputs.push(BabyBear::new(*deposit_amount));
-                hasher_inputs.push(*sender_id);
-                hasher_inputs.push(BabyBear::new(*queue_len));
-                hasher_inputs.push(*program_vk);
-            }
-            Effect::DequeueMessage {
-                expected_message_hash,
-                deposit_refund,
-            } => {
-                hasher_inputs.push(BabyBear::new(20));
-                hasher_inputs.push(*expected_message_hash);
-                hasher_inputs.push(BabyBear::new(*deposit_refund));
-            }
-            Effect::ResizeQueue {
-                new_capacity,
-                queue_id,
-                cost_per_slot,
-                old_capacity,
-            } => {
-                hasher_inputs.push(BabyBear::new(21));
-                hasher_inputs.push(BabyBear::new(*new_capacity));
-                hasher_inputs.push(*queue_id);
-                hasher_inputs.push(BabyBear::new(*cost_per_slot));
-                hasher_inputs.push(BabyBear::new(*old_capacity));
-            }
-            Effect::AtomicQueueTx {
-                op_count,
-                tx_hash,
-                combined_old_root,
-                combined_new_root,
-                net_deposit,
-            } => {
-                hasher_inputs.push(BabyBear::new(22));
-                hasher_inputs.push(BabyBear::new(*op_count));
-                hasher_inputs.push(*tx_hash);
-                hasher_inputs.push(*combined_old_root);
-                hasher_inputs.push(*combined_new_root);
-                hasher_inputs.push(BabyBear::new(*net_deposit));
-            }
-            Effect::PipelineStep {
-                pipeline_id,
-                source_old_root,
-                source_new_root,
-                sink_new_root,
-                message_hash,
-            } => {
-                hasher_inputs.push(BabyBear::new(23));
-                hasher_inputs.push(*pipeline_id);
-                hasher_inputs.push(*source_old_root);
-                hasher_inputs.push(*source_new_root);
-                hasher_inputs.push(*sink_new_root);
-                hasher_inputs.push(*message_hash);
-            }
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
             // ---- Near-miss aliasing closure (#100 follow-up) ----
             // Domain-tag bytes are reserved in the selector index space
             // (46, 47, 48 — matching `sel::BURN`, `sel::CELL_DESTROY`,

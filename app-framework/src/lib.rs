@@ -14,8 +14,8 @@
 //!   dregg presentation proofs from HTTP headers.
 //! - **Generic content store** (`store`): Thread-safe async CRUD store keyed by
 //!   32-byte identifiers.
-//! - **Escrow lifecycle helpers** (`escrow`): High-level wrappers for creating,
-//!   releasing, and refunding escrows via `DreggEngine`.
+//! - (VERB-LOCKSTEP: the escrow lifecycle helpers dissolved with the kernel
+//!   escrow verbs — settlement is the factory-cell story, `dregg_sdk::factories`.)
 //! - **Hex utilities** (`hex`): Encode/decode 32-byte arrays to/from hex strings.
 //!
 //! # Quick Start
@@ -52,7 +52,6 @@ pub mod captp_server;
 pub mod cipherclerk;
 pub mod discovery;
 pub mod dispute;
-pub mod escrow;
 pub mod fee_policy;
 pub mod fields;
 pub mod hex;
@@ -87,8 +86,6 @@ pub mod cclerk {
 /// Fill constraints for partial intent fulfillment.
 pub use dregg_intent::FillConstraints;
 
-/// Escrow condition and record types from the turn crate.
-pub use dregg_turn::escrow::{EscrowCondition, EscrowRecord};
 
 /// Predicate types for qualification proofs.
 pub use dregg_circuit::PredicateType;

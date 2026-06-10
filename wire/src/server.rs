@@ -30,7 +30,6 @@ use dregg_captp::{
     PipelinedAction, PipelinedMessage, SwissTable, validate_handoff,
 };
 
-use crate::captp_routing;
 
 // =============================================================================
 // Proof Verifier Trait
@@ -928,23 +927,6 @@ pub struct CapTpState {
     /// Session epoch counter: incremented each time any session is established.
     /// Used to assign unique epochs to sessions and reject stale-epoch messages.
     pub next_session_epoch: u64,
-    /// Stage 7 / P1.B: pending CapTP routing turns.
-    ///
-    /// Every CapTP wire handler builds a `Turn` carrying the corresponding
-    /// runtime `Effect` (ExportSturdyRef / EnlivenRef / DropRef /
-    /// ValidateHandoff) via `crate::captp_routing::build_captp_turn` and
-    /// pushes it here. The node layer drains this queue and runs each
-    /// turn through `TurnExecutor::execute`, producing the on-chain
-    /// receipt-chain entry that mirrors the wire-layer mutation. Until
-    /// the node integration lands the queue is informational, but the
-    /// structural commitment (every CapTP mutation has a corresponding
-    /// runtime Effect) is in place.
-    ///
-    /// The wire layer also performs the federation-mirror mutation
-    /// immediately (e.g., `swiss_table.enliven`); the drained turn is
-    /// the receipt-side record. P1.C tightens the AIR membership
-    /// constraints to bind the mirror's Merkle root.
-    pub pending_captp_turns: Vec<dregg_turn::Turn>,
     /// Cross-federation pipeline bridge: receives PipelinedMsg from peers
     /// and queues them against unresolved promises, plus tracks our own
     /// local promises so we can resolve / break them and notify peers.
@@ -1024,7 +1006,6 @@ impl CapTpState {
             known_federations: Vec::new(),
             current_height: 0,
             next_session_epoch: 1,
-            pending_captp_turns: Vec::new(),
             pipeline_bridge: CrossFedPipelineBridge::with_local_federation(FederationId(
                 local_federation,
             )),
@@ -1099,16 +1080,8 @@ impl CapTpState {
         std::mem::take(&mut self.pending_attested_root_pushes)
     }
 
-    /// Drain pending CapTP routing turns. The node layer calls this in
-    /// its main loop and executes each turn through `TurnExecutor`.
-    pub fn drain_pending_captp_turns(&mut self) -> Vec<dregg_turn::Turn> {
-        std::mem::take(&mut self.pending_captp_turns)
-    }
-
     /// Drain pipelined messages that were queued against a now-resolved
-    /// local promise. Returns the messages so the caller can dispatch them
-    /// (typically by building a Turn per message and pushing onto
-    /// `pending_captp_turns`).
+    /// local promise. Returns the messages so the caller can dispatch them.
     pub fn resolve_local_pipeline_promise(
         &mut self,
         promise_id: u64,
@@ -1271,33 +1244,8 @@ pub struct SiloServer {
     ban_list: SharedBanList,
     /// Graceful shutdown coordinator.
     shutdown: Arc<ShutdownCoordinator>,
-    /// Optional dispatcher for CapTP-routed pending turns (Seam 3 keystone).
-    /// When set, the server spawns a background task in `run()` that polls
-    /// `captp_state.drain_pending_captp_turns()` on an interval and forwards
-    /// each drained Turn to the dispatcher.
-    captp_turn_dispatcher: Option<CapTpTurnDispatcher>,
-    /// Interval between drain polls (default 100ms).
-    captp_drain_interval: std::time::Duration,
 }
 
-/// Type alias for a CapTP-routed Turn dispatcher.
-///
-/// The Seam 3 keystone: when the wire layer accepts a CapTP delivery, it
-/// constructs a Turn carrying the corresponding `Effect::EnlivenRef` /
-/// `DropRef` / `ExportSturdyRef` / `ValidateHandoff`. Those Turns sit in
-/// `CapTpState::pending_captp_turns` until the wire server's drain task
-/// pulls them out and forwards each to this dispatcher. The dispatcher
-/// is typically a thin wrapper around a node-side `TurnExecutor` holding
-/// the ledger. The dispatcher MUST handle each turn (or report an error);
-/// turns are not redelivered.
-pub type CapTpTurnDispatcher = Arc<
-    dyn Fn(
-            dregg_turn::Turn,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
-        + Send
-        + Sync,
->;
 
 /// Events logged by the server for diagnostics.
 #[derive(Clone, Debug)]
@@ -1362,8 +1310,6 @@ impl SiloServer {
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
             shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
-            captp_turn_dispatcher: None,
-            captp_drain_interval: std::time::Duration::from_millis(100),
         }
     }
 
@@ -1396,8 +1342,6 @@ impl SiloServer {
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
             shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
-            captp_turn_dispatcher: None,
-            captp_drain_interval: std::time::Duration::from_millis(100),
         }
     }
 
@@ -1483,55 +1427,6 @@ impl SiloServer {
         &self.captp_state
     }
 
-    /// Configure the dispatcher for CapTP-routed pending turns (Seam 3).
-    ///
-    /// Closes the receipt-mirror loop: when set, the server spawns a
-    /// background task in `run()` that periodically drains
-    /// `captp_state.pending_captp_turns` and forwards each Turn to the
-    /// dispatcher. Typically the dispatcher is a closure wrapping a
-    /// node-side `TurnExecutor::execute` call.
-    pub fn with_captp_turn_dispatcher(mut self, dispatcher: CapTpTurnDispatcher) -> Self {
-        self.captp_turn_dispatcher = Some(dispatcher);
-        self
-    }
-
-    /// Override the drain poll interval (default 100ms).
-    pub fn with_captp_drain_interval(mut self, interval: std::time::Duration) -> Self {
-        self.captp_drain_interval = interval;
-        self
-    }
-
-    /// Spawn the background CapTP drain task. Returns a `JoinHandle` so
-    /// callers can await its completion. The task exits when the shutdown
-    /// coordinator signals shutdown. Public so tests / external runtimes
-    /// can drive the loop without calling `run`.
-    pub fn spawn_captp_drain(&self) -> Option<tokio::task::JoinHandle<()>> {
-        let dispatcher = self.captp_turn_dispatcher.as_ref()?.clone();
-        let captp_state = Arc::clone(&self.captp_state);
-        let interval = self.captp_drain_interval;
-        let shutdown = Arc::clone(&self.shutdown);
-        let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                if shutdown.is_shutting_down() {
-                    return;
-                }
-                ticker.tick().await;
-                let drained = {
-                    let mut state = captp_state.write().await;
-                    state.drain_pending_captp_turns()
-                };
-                for turn in drained {
-                    if let Err(e) = dispatcher(turn).await {
-                        eprintln!("dregg-wire: captp turn dispatch failed: {e}");
-                    }
-                }
-            }
-        });
-        Some(handle)
-    }
-
     /// Get the listening address.
     pub fn addr(&self) -> SocketAddr {
         self.addr
@@ -1583,7 +1478,6 @@ impl SiloServer {
         let _actual_addr = listener.local_addr()?;
 
         // Seam 3: spawn the CapTP-turn drain task if a dispatcher is configured.
-        let _drain_handle = self.spawn_captp_drain();
 
         self.accept_loop(listener).await
     }
@@ -1601,7 +1495,6 @@ impl SiloServer {
         let _ = addr_tx.send(actual_addr);
 
         // Seam 3: spawn the CapTP-turn drain task if a dispatcher is configured.
-        let _drain_handle = self.spawn_captp_drain();
 
         self.accept_loop(listener).await
     }
@@ -2704,37 +2597,14 @@ impl SiloServer {
                 let session = CapSession::with_epoch(group_id, epoch);
                 captp.sessions.insert(fed_id, session);
 
-                // Stage 7 / P1.B: each initial export is also routed as an
-                // ExportSturdyRef Effect. The wire layer enqueues the turn
-                // and applies the federation-mirror mutation; the node
-                // drains the queue to produce the on-chain receipt.
+                // VERB-LOCKSTEP: the ExportSturdyRef kernel verb is gone (caps-in-slots
+                // factory story); the CapTP export lives in the federation MIRROR only.
                 let height = captp.current_height;
-                let agent_cell = dregg_types::CellId(config.node_id);
                 for export_bytes in &initial_exports {
                     let cell_id = dregg_types::CellId(*export_bytes);
-                    // Wire-layer mirror mutation (unchanged).
                     captp
                         .export_gc
                         .record_export_with_session(cell_id, fed_id, height, epoch);
-                    // Routed Effect: the export's swiss number isn't on
-                    // the wire here (CapHello only carries cell ids), so
-                    // we use the cell_id bytes as a deterministic stub.
-                    // The full handshake fills in the swiss properly.
-                    //
-                    // Block1-bind closure (`ExportSturdyRef-permissions`):
-                    // initial-export defaults to `AuthRequired::None`
-                    // (CapHello carries no per-export permissions; the
-                    // peer cell decides on enliven). The apply site
-                    // gates this against the cell's own access tier,
-                    // so a cell whose access requires Signature/Proof
-                    // cannot be exported as None via this path.
-                    let effect = captp_routing::export_sturdy_ref_effect(
-                        *export_bytes,
-                        cell_id,
-                        dregg_cell::permissions::AuthRequired::None,
-                    );
-                    let turn = captp_routing::build_captp_turn(agent_cell, cell_id, effect, 0);
-                    captp.pending_captp_turns.push(turn);
                 }
 
                 // Respond with our own CapHello (session established).
@@ -2800,26 +2670,9 @@ impl SiloServer {
                             // time, not the perm_tag byte.
                             dregg_cell::AuthRequired::Custom { .. } => 5u8,
                         };
-                        let bearer_cell = entry.cell_id;
-                        // Stage 7 / P1.B: route the EnlivenRef as a Turn.
-                        //
-                        // Block1-bind closure
-                        // (`EnlivenRef-permissions-merkle`): the swiss-
-                        // table entry carries the canonical
-                        // (cell_id, permissions) pair the AIR's PI
-                        // will bind. We project both onto the runtime
-                        // variant so the apply gate can validate the
-                        // bearer's c-list authority covers the
-                        // declared tier.
-                        let effect = captp_routing::enliven_ref_effect(
-                            uri.swiss,
-                            bearer_cell,
-                            entry.cell_id,
-                            entry.permissions.clone(),
-                        );
-                        let turn =
-                            captp_routing::build_captp_turn(agent_cell, bearer_cell, effect, 0);
-                        captp.pending_captp_turns.push(turn);
+                        // VERB-LOCKSTEP: the EnlivenRef kernel verb is gone; the
+                        // swiss-table mirror (validated above) is the CapTP source
+                        // of truth and R7 epoch-at-retrieval gates stored authority.
                         Some(WireMessage::EnlivenResponse {
                             success: true,
                             cell_id: Some(entry.cell_id.0),
@@ -2901,13 +2754,8 @@ impl SiloServer {
                         if let Some(session) = captp.sessions.get_mut(&fed_id) {
                             session.release_export(&cell);
                         }
-                        // Stage 7 / P1.B: route the DropRef as a Turn.
-                        // ref_id = the cell_id bytes (matches what the wire
-                        // message identifies).
-                        let agent_cell = dregg_types::CellId(config.node_id);
-                        let effect = captp_routing::drop_ref_effect(cell_id);
-                        let turn = captp_routing::build_captp_turn(agent_cell, cell, effect, 0);
-                        captp.pending_captp_turns.push(turn);
+                        // VERB-LOCKSTEP: the DropRef kernel verb is gone; the
+                        // export-GC mirror decrement above is the CapTP behavior.
                         None // Silent success (GC is fire-and-forget).
                     }
                     dregg_captp::DropResult::Invalid => Some(WireMessage::Error {
@@ -3091,46 +2939,12 @@ impl SiloServer {
                             // see the matching arm in the EnlivenRef path above.
                             dregg_cell::AuthRequired::Custom { .. } => 5u8,
                         };
-                        // Stage 7 / P1.B + Seam 3 keystone: route the ValidateHandoff
-                        // as a Turn. The cert_hash is BLAKE3 over the presentation
-                        // bytes (consume-on-use binding).
-                        let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-                        let agent_cell = dregg_types::CellId(config.node_id);
-                        let target_cell = acceptance.cell_id;
-                        // Block1-bind closure: ValidateHandoff carries the
-                        // cert's recipient/introducer pks explicitly so the
-                        // AIR PI binds the cryptographic identity, not a
-                        // synthetic derivation. The authorization gate
-                        // enforces equality with the carried cert.
-                        let effect = captp_routing::validate_handoff_effect(
-                            cert_hash,
-                            presentation.certificate.recipient_pk,
-                            introducer_pk,
-                        );
-
-                        let turn = if let Some(sig) = delivery_signature {
-                            // Cert-backed CapTpDelivered authorization closes the
-                            // receipt-mirror loop. The executor verifies cert +
-                            // sender_signature against the canonical signing message.
-                            captp_routing::build_captp_turn_delivered_from_parts(
-                                target_cell,
-                                target_cell,
-                                effect,
-                                0,
-                                presentation.certificate.clone(),
-                                introducer_pk,
-                                presentation.certificate.recipient_pk,
-                                sig.0,
-                            )
-                        } else {
-                            // Legacy: no delivery signature → Unchecked. Executor
-                            // will reject the resulting Turn, but the federation
-                            // mirror still mutates as before. The caller should
-                            // start sending a delivery_signature to enable the
-                            // on-chain receipt mirror.
-                            captp_routing::build_captp_turn(agent_cell, target_cell, effect, 0)
-                        };
-                        captp.pending_captp_turns.push(turn);
+                        // VERB-LOCKSTEP: the ValidateHandoff kernel verb is gone; the
+                        // validated swiss-table mirror + the seen-nonce registry below
+                        // ARE the handoff acceptance (consume-on-use binding), and the
+                        // CapTpDelivered authorization remains the cert-backed path for
+                        // turns the recipient submits itself.
+                        let _ = (&presentation_bytes, &delivery_signature, introducer_pk);
                         // Mark the nonce as seen so a replay of this exact
                         // certificate is rejected even if `max_uses` was
                         // left unbounded.

@@ -287,38 +287,6 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         value_full: portable_proof.value,
                     });
                 }
-                Effect::BridgeLock {
-                    nullifier,
-                    destination,
-                    value,
-                    asset_type,
-                    ..
-                } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(nullifier);
-                    h.update(destination);
-                    h.update(&asset_type.to_le_bytes());
-                    let value_lo = BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
-                    out.push(VmEffect::BridgeLock {
-                        value_lo,
-                        lock_hash: hash_to_bb(h.finalize().as_bytes()),
-                        value_full: *value,
-                    });
-                }
-                Effect::BridgeCancel { nullifier } => {
-                    out.push(VmEffect::BridgeCancel {
-                        nullifier_hash: hash_to_8(nullifier),
-                    });
-                }
-                Effect::BridgeFinalize { nullifier, receipt } => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(nullifier);
-                    let receipt_bytes = postcard::to_allocvec(receipt).unwrap_or_default();
-                    h.update(&receipt_bytes);
-                    out.push(VmEffect::BridgeFinalize {
-                        finalize_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
                 Effect::Introduce {
                     introducer,
                     recipient,
@@ -355,24 +323,6 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     h.update(&action.hash());
                     out.push(VmEffect::PipelinedSend {
                         send_hash: hash_to_8(h.finalize().as_bytes()),
-                    });
-                }
-                Effect::CreateEscrow {
-                    cell,
-                    recipient,
-                    amount,
-                    condition,
-                    ..
-                } if cell == cell_id => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(recipient.as_bytes());
-                    let cond_bytes = postcard::to_allocvec(condition).unwrap_or_default();
-                    h.update(&cond_bytes);
-                    let amount_lo = BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
-                    out.push(VmEffect::CreateEscrow {
-                        amount_lo,
-                        escrow_hash: hash_to_bb(h.finalize().as_bytes()),
-                        amount_full: *amount,
                     });
                 }
                 Effect::ExerciseViaCapability {
@@ -497,109 +447,6 @@ proptest! {
             claim.net_balance_delta, runtime_delta,
             "Transfer: AIR net_delta={} vs runtime delta={} (amount={}, dir={})",
             claim.net_balance_delta, runtime_delta, amount, direction,
-        );
-    }
-}
-
-// =====================================================================
-// Variant 2: CreateEscrow — CONSISTENT (balance debit)
-// =====================================================================
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
-
-    #[test]
-    fn differential_create_escrow(amount in 1u64..=5_000) {
-        let (mut ledger, ids) = fresh_ledger();
-        let actor = ids[0];
-        let recipient = ids[1];
-        let actor_cell = ledger.get(&actor).unwrap();
-        let before = CellSnapshot::of(actor_cell);
-        let nonce = actor_cell.state.nonce();
-
-        let mut escrow_id = [0u8; 32];
-        escrow_id[..8].copy_from_slice(&amount.to_le_bytes());
-        let effect = Effect::CreateEscrow {
-            cell: actor,
-            recipient,
-            amount,
-            condition: dregg_turn::EscrowCondition::SignedByAll { signers: vec![] },
-            timeout_height: u64::MAX,
-            escrow_id,
-        };
-        let turn = one_effect_turn(actor, nonce, effect);
-        let claim = air_claim(actor_cell, &turn);
-
-        let executor = TurnExecutor::new(ComputronCosts::zero());
-        let _ = executor.execute(&turn, &mut ledger);
-        let after = CellSnapshot::of(ledger.get(&actor).unwrap());
-        let runtime_delta = (after.balance as i64) - (before.balance as i64);
-
-        // Both should record the same debit when the executor accepts.
-        // When rejected (e.g., insufficient balance), runtime_delta == 0
-        // but the AIR's claim is still -amount; skip in that case.
-        if after.balance == before.balance {
-            // Executor didn't apply (rejected). Still check the AIR's claim
-            // matches its projection (it's the projection's job, not the
-            // executor's): expected -amount mod balance limb encoding.
-            prop_assert_eq!(
-                claim.net_balance_delta, -(amount as i64),
-                "CreateEscrow (rejected by executor): AIR claim should still project -amount, got {}",
-                claim.net_balance_delta,
-            );
-        } else {
-            prop_assert_eq!(
-                claim.net_balance_delta, runtime_delta,
-                "CreateEscrow: AIR delta={} vs runtime delta={}",
-                claim.net_balance_delta, runtime_delta,
-            );
-        }
-    }
-}
-
-// =====================================================================
-// Variant 3: BridgeLock — CONSISTENT (balance debit)
-// =====================================================================
-
-#[test]
-fn differential_bridge_lock() {
-    let (mut ledger, ids) = fresh_ledger();
-    let actor = ids[0];
-    let actor_cell = ledger.get(&actor).unwrap();
-    let before = CellSnapshot::of(actor_cell);
-    let nonce = actor_cell.state.nonce();
-
-    let value: u64 = 1234;
-    let effect = Effect::BridgeLock {
-        nullifier: [7u8; 32],
-        destination: [9u8; 32],
-        value,
-        asset_type: 0,
-        timeout_height: u64::MAX,
-        spending_proof: vec![],
-    };
-    let turn = one_effect_turn(actor, nonce, effect);
-    let claim = air_claim(actor_cell, &turn);
-
-    let executor = TurnExecutor::new(ComputronCosts::zero());
-    let _ = executor.execute(&turn, &mut ledger);
-    let after = CellSnapshot::of(ledger.get(&actor).unwrap());
-    let runtime_delta = (after.balance as i64) - (before.balance as i64);
-
-    // BridgeLock may be rejected by executor (no bridge state set up); in
-    // that case runtime_delta == 0 while AIR claim is -value. That's an
-    // executor-rejection artifact, not a soundness gap.
-    if runtime_delta == 0 {
-        assert_eq!(
-            claim.net_balance_delta,
-            -(value as i64),
-            "BridgeLock (executor-rejected): AIR projection should claim -value"
-        );
-    } else {
-        assert_eq!(
-            claim.net_balance_delta, runtime_delta,
-            "BridgeLock: AIR vs runtime mismatch (value={})",
-            value,
         );
     }
 }
@@ -1096,66 +943,6 @@ fn differential_spawn_with_delegation_passthrough() {
     assert_eq!(claim.net_balance_delta, 0);
     assert_eq!(claim.initial_cap_root, claim.final_cap_root);
     let _ = ledger;
-}
-
-// =====================================================================
-// Variant 13: BridgeCancel — PASSTHROUGH
-// =====================================================================
-
-#[test]
-fn differential_bridge_cancel_passthrough() {
-    let (mut ledger, ids) = fresh_ledger();
-    let actor = ids[0];
-    let actor_cell = ledger.get(&actor).unwrap();
-    let before = CellSnapshot::of(actor_cell);
-    let nonce = actor_cell.state.nonce();
-
-    let effect = Effect::BridgeCancel {
-        nullifier: [5u8; 32],
-    };
-    let turn = one_effect_turn(actor, nonce, effect);
-    let claim = air_claim(actor_cell, &turn);
-
-    let executor = TurnExecutor::new(ComputronCosts::zero());
-    let _ = executor.execute(&turn, &mut ledger);
-    let after = CellSnapshot::of(ledger.get(&actor).unwrap());
-
-    // BridgeCancel projection is balance-neutral on the AIR. Runtime would
-    // refund the locked value when a real lock exists — without one, the
-    // executor rejects, leaving balance unchanged. PASSTHROUGH GAP: when
-    // a real lock exists, runtime credits balance but AIR claims zero.
-    assert_eq!(claim.net_balance_delta, 0);
-    assert_eq!(after.balance, before.balance);
-}
-
-// =====================================================================
-// Variant 14: BridgeFinalize — PASSTHROUGH
-// =====================================================================
-
-#[test]
-fn differential_bridge_finalize_passthrough() {
-    let (ledger, ids) = fresh_ledger();
-    let actor = ids[0];
-    let actor_cell = ledger.get(&actor).unwrap();
-    let nonce = actor_cell.state.nonce();
-
-    let receipt = dregg_cell::BridgeReceipt {
-        nullifier: [6u8; 32],
-        destination_federation: [0u8; 32],
-        mint_height: 0,
-        signature: [0u8; 64],
-    };
-    let effect = Effect::BridgeFinalize {
-        nullifier: [6u8; 32],
-        receipt,
-    };
-    let turn = one_effect_turn(actor, nonce, effect);
-    let claim = air_claim(actor_cell, &turn);
-
-    let _ = ledger;
-    // AIR projection is balance-neutral by design.
-    assert_eq!(claim.net_balance_delta, 0);
-    assert_eq!(claim.initial_cap_root, claim.final_cap_root);
 }
 
 // =====================================================================

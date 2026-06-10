@@ -29,7 +29,7 @@
 //! This crate spans TWO trust levels with a clear boundary:
 //!
 //! ## Executor-Trusted (classical path)
-//! - Modules: [`executor`], [`forest`], [`action`], [`journal`], [`escrow`], [`obligation`]
+//! - Modules: [`executor`], [`forest`], [`action`], [`journal`]
 //! - The executor walks the call forest, checks authorization, and applies effects.
 //! - Soundness depends on honest federation execution (BFT replication).
 //! - External parties trust the federation's attested state root.
@@ -93,7 +93,6 @@ pub mod dsl;
 pub mod economics;
 pub mod encrypted;
 pub mod error;
-pub mod escrow;
 pub mod eventual;
 pub mod execution_path;
 pub mod executor;
@@ -103,10 +102,8 @@ pub(crate) mod journal;
 #[cfg(feature = "lean-shadow")]
 pub mod lean_apply;
 pub mod lean_shadow;
-pub mod obligation;
 pub mod pending;
 pub mod presence_discharge;
-pub mod queue_programs;
 pub mod routing;
 pub mod turn;
 pub mod verify;
@@ -118,7 +115,7 @@ mod tests;
 // Re-export primary types at crate root.
 pub use action::{
     Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, DelegationProofData,
-    Effect, Event, QueueTxOp, TokenKeyRef, derive_cell_macaroon_secret,
+    Effect, Event, TokenKeyRef, derive_cell_macaroon_secret,
 };
 pub use budget_gate::{BudgetGate, BudgetSlice};
 pub use builder::{
@@ -139,10 +136,6 @@ pub use encrypted::{
     TurnValidityPublicInputs, order_encrypted_turns,
 };
 pub use error::TurnError;
-pub use escrow::{
-    CommittedEscrow, EscrowClaimAuth, EscrowCondition, EscrowRecord, compute_condition_commitment,
-    compute_identity_commitment, verify_escrow_claim, verify_escrow_claim_commitment,
-};
 pub use eventual::{
     CycleError, EventualRef, OutputRef, Pipeline, PipelineBuilder, PipelineError, PipelineResult,
     Target, TurnBatch, TurnOutput,
@@ -151,7 +144,7 @@ pub use execution_path::{ExecutionPath, compute_execution_path};
 pub use executor::{
     AtomicProofEntry, AtomicSovereignTurn, AtomicTurnError, CellMigrationManager, ComputronCosts,
     MigrationCancelReason, MigrationError, MigrationState, MixedAtomicResult, MixedAtomicTurn,
-    ObligationRecord, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline,
+    ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline,
     execute_pipeline_result, resolve_eventual_ref,
 };
 pub use fast_path::{
@@ -160,10 +153,6 @@ pub use fast_path::{
     is_fast_path_eligible, process_fast_path_lock, verify_turn_sign,
 };
 pub use forest::{CallForest, CallTree};
-pub use obligation::{
-    MAX_OBLIGATION_DEADLINE, ObligationError, ObligationOutcome, ProofObligation, check_expiry,
-    create_obligation, fulfill_obligation, validate_obligation_deadline,
-};
 pub use pending::{
     BrokenReason, PendingEntry, PendingHandle, PendingStatus, PendingTurnRegistry,
     ResolutionCondition, ResolutionEvent, ResolutionOutcome,
@@ -178,11 +167,6 @@ pub use dregg_cell::{Precondition, Preconditions, PreconditionsBuilder};
 pub use presence_discharge::{
     PresenceCaveat as PresenceCapCaveat, PresenceClaimRequirement, PresenceDischarge,
     PresenceDischargeError, verify_presence_discharge,
-};
-pub use queue_programs::{
-    EnqueueValidationContext, QueueConstraint, QueueProgram, QueueProgramError,
-    QueueProgramRegistry, ValidationResult, compute_validation_hash, validate_enqueue,
-    vk_hash_to_field,
 };
 pub use routing::{IntroductionExport, RoutingDirective};
 pub use turn::{

@@ -30,8 +30,8 @@ pub fn derive_balance_change(target: CellId, effects: &[Effect]) -> i64 {
             }
             Effect::NoteSpend { value, .. } => -(*value as i64),
             Effect::NoteCreate { value, .. } => *value as i64,
-            Effect::CreateEscrow { cell, amount, .. } if *cell == target => -(*amount as i64),
-            Effect::CreateCommittedEscrow { amount, .. } => -(*amount as i64),
+            
+            
             // ReleaseEscrow / RefundEscrow / Release*Committed: the executor
             // moves the funds; we don't double-count here. The recipient's
             // action separately reflects the credit.

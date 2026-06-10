@@ -11,15 +11,15 @@ exhaustive by the compiler, the kernel-reduction census:
     monotonicity; `write` = heap update under the frame; `create` = cell birth; `lifecycle`
     = the seal/destroy/sovereign custody automaton);
 
-  * the live 52-variant `Effect` enum (`turn/src/action.rs:789`), reified as `EffectTag` —
-    ONE constructor per current variant, so the Lean compiler's exhaustiveness check IS the
-    completeness proof: a new wire variant that is not classified will not compile;
+  * the live 27-variant `Effect` enum (`turn/src/action.rs`, post VERB-LOCKSTEP), reified as
+    `EffectTag` — ONE constructor per current variant, so the Lean compiler's exhaustiveness
+    check IS the completeness proof: a new wire variant that is not classified will not compile;
 
-  * the DOOMED→FACTORY map: each non-survivor `Effect` variant paired with the factory-pattern
-    (`FactoryPattern`) that re-provides its behavior as a verified, factory-born cell program —
-    escrow→`EscrowFactory`, obligation→`ObligationFactory`, queue/inbox/pubsub→the queue
-    factories, bridge→`BridgeCell`, seal/swiss/sturdyref→caps-in-slots — each entry naming the
-    in-tree factory module that already proved its safety keystones (W2 land-before-kill);
+  * the §HISTORICAL DOOMED→FACTORY census (a comment in §6): the 25 deleted variants paired
+    with the factory pattern (`FactoryPattern`) that re-provides each family's behavior as a
+    verified, factory-born cell program — escrow→`EscrowFactory`, obligation→`ObligationFactory`,
+    queue/inbox/pubsub→the queue factories, bridge→`BridgeCell`, seal/swiss/sturdyref→
+    caps-in-slots. `no_live_factory_tags` proves the live enum carries NONE of them;
 
   * the TURN-STRUCTURE tags (`TurnStructure`) — variants that are NOT verbs at all but
     composition / outcome / prologue artifacts (DREGG3 §2.3: "Exercise is *using* a cap, not a
@@ -29,9 +29,9 @@ exhaustive by the compiler, the kernel-reduction census:
 
   1. COMPLETENESS — `classify : EffectTag → Classification` is total and exhaustive (the match
      covers every constructor; the compiler rejects an uncovered tag). `classify_total` witnesses
-     that every reachable tag lands in exactly one of the three buckets, and `cover_hits_all_three`
-     proves the cover is NON-VACUOUS (each bucket is actually populated — not a degenerate cover
-     that sends everything to one class).
+     that every reachable tag lands in a bucket, `cover_hits_both` proves the two LIVE buckets
+     are populated, and `no_live_factory_tags` proves the factory bucket is EMPTY on live tags
+     (the verb lockstep deleted the doomed families instead of carrying them).
 
   2. MINIMALITY of the 8 — `verbProvides : Verb → Behavior` exhibits, for each survivor verb, a
      behavior that NO OTHER verb provides (`minimality`): drop any one verb and that behavior is
@@ -187,46 +187,57 @@ inductive Classification
   | factory       (p : FactoryPattern) (builtFrom : List Verb)
   deriving DecidableEq, Repr
 
-/-! ## §6 — The reified live `Effect` enum (one tag per `turn/src/action.rs:789` variant).
+/-! ## §6 — The reified live `Effect` enum (one tag per `turn/src/action.rs` variant).
 
-ONE constructor per current wire variant (52). The Lean compiler's exhaustiveness check on
-`classify` below is the COMPLETENESS proof: a wire variant added without a registry entry will not
-compile. The order mirrors `action.rs`. -/
+ONE constructor per current wire variant (27, post VERB-LOCKSTEP). The Lean compiler's
+exhaustiveness check on `classify` below is the COMPLETENESS proof: a wire variant added without
+a registry entry will not compile. The order mirrors `action.rs`.
 
-/-- The 52 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs:789`. -/
+§HISTORICAL — the 25 DELETED tags (the verb lockstep, the Rust catch-up to F1b/F2b/F3).
+These no longer exist ANYWHERE: not in `turn/src/action.rs`, not on the wire, not in the
+circuit (their selector columns are RETIRED, pinned to zero). Their semantics are factory
+cells. The census, for the record (tag → factory pattern):
+
+  escrow ×6      : CreateEscrow, ReleaseEscrow, RefundEscrow, CreateCommittedEscrow,
+                   ReleaseCommittedEscrow, RefundCommittedEscrow      → FactoryPattern.escrow
+  obligation ×3  : CreateObligation, FulfillObligation, SlashObligation → FactoryPattern.obligation
+  bridge ×3      : BridgeLock, BridgeFinalize, BridgeCancel            → FactoryPattern.bridge
+                   (BridgeMint SURVIVES — the shield verb)
+  queue ×6       : QueueAllocate, QueueEnqueue, QueueDequeue, QueueResize,
+                   QueueAtomicTx, QueuePipelineStep                    → FactoryPattern.queue
+                   (value-less inbox / pubsub: FactoryPattern.inbox / .pubsub)
+  caps-in-slots ×7: CreateSealPair, Seal, Unseal, ExportSturdyRef, EnlivenRef,
+                   DropRef, ValidateHandoff                            → FactoryPattern.capsInSlots
+-/
+
+/-- The 27 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs`. -/
 inductive EffectTag
   | SetField | Transfer | GrantCapability | RevokeCapability | EmitEvent | IncrementNonce
-  | CreateCell | SetPermissions | SetVerificationKey | NoteSpend | NoteCreate | CreateSealPair
-  | Seal | Unseal | SpawnWithDelegation | RefreshDelegation | RevokeDelegation | BridgeMint
-  | BridgeLock | BridgeFinalize | BridgeCancel | Introduce | PipelinedSend | CreateObligation
-  | FulfillObligation | SlashObligation | CreateEscrow | ReleaseEscrow | RefundEscrow
-  | CreateCommittedEscrow | ReleaseCommittedEscrow | RefundCommittedEscrow | ExerciseViaCapability
-  | MakeSovereign | CreateCellFromFactory | QueueAllocate | QueueEnqueue | QueueDequeue
-  | QueueResize | QueueAtomicTx | QueuePipelineStep | ExportSturdyRef | EnlivenRef | DropRef
-  | Refusal | ValidateHandoff | CellSeal | CellUnseal | CellDestroy | Burn | AttenuateCapability
+  | CreateCell | SetPermissions | SetVerificationKey | NoteSpend | NoteCreate
+  | SpawnWithDelegation | RefreshDelegation | RevokeDelegation | BridgeMint
+  | Introduce | PipelinedSend | ExerciseViaCapability
+  | MakeSovereign | CreateCellFromFactory
+  | Refusal | CellSeal | CellUnseal | CellDestroy | Burn | AttenuateCapability
   | ReceiptArchive
   deriving DecidableEq, Repr
 
 /-- The complete roster of live tags — used to state completeness as a list cover and to witness
-the count (52). Kept in sync with `EffectTag` by the same compiler that checks `classify`. -/
+the count (27). Kept in sync with `EffectTag` by the same compiler that checks `classify`. -/
 def allEffectTags : List EffectTag :=
   [ .SetField, .Transfer, .GrantCapability, .RevokeCapability, .EmitEvent, .IncrementNonce,
-    .CreateCell, .SetPermissions, .SetVerificationKey, .NoteSpend, .NoteCreate, .CreateSealPair,
-    .Seal, .Unseal, .SpawnWithDelegation, .RefreshDelegation, .RevokeDelegation, .BridgeMint,
-    .BridgeLock, .BridgeFinalize, .BridgeCancel, .Introduce, .PipelinedSend, .CreateObligation,
-    .FulfillObligation, .SlashObligation, .CreateEscrow, .ReleaseEscrow, .RefundEscrow,
-    .CreateCommittedEscrow, .ReleaseCommittedEscrow, .RefundCommittedEscrow, .ExerciseViaCapability,
-    .MakeSovereign, .CreateCellFromFactory, .QueueAllocate, .QueueEnqueue, .QueueDequeue,
-    .QueueResize, .QueueAtomicTx, .QueuePipelineStep, .ExportSturdyRef, .EnlivenRef, .DropRef,
-    .Refusal, .ValidateHandoff, .CellSeal, .CellUnseal, .CellDestroy, .Burn, .AttenuateCapability,
+    .CreateCell, .SetPermissions, .SetVerificationKey, .NoteSpend, .NoteCreate,
+    .SpawnWithDelegation, .RefreshDelegation, .RevokeDelegation, .BridgeMint,
+    .Introduce, .PipelinedSend, .ExerciseViaCapability,
+    .MakeSovereign, .CreateCellFromFactory,
+    .Refusal, .CellSeal, .CellUnseal, .CellDestroy, .Burn, .AttenuateCapability,
     .ReceiptArchive ]
 
 /-! ## §7 — THE TOTAL COVER (completeness, exhaustive by the compiler).
 
-Every one of the 52 live `Effect` variants is mapped to its registry classification. The match is
+Every one of the 27 live `Effect` variants is mapped to its registry classification. The match is
 exhaustive: omitting a constructor is a compile error, so this function existing AND compiling IS
-the completeness theorem. The factory `builtFrom` lists name the surviving verbs the replacement
-is expressed over (the deletion-manifest reconciliation surface). -/
+the completeness theorem. Post VERB-LOCKSTEP the factory bucket is EMPTY on live tags
+(`no_live_factory_tags` below) — the doomed families were deleted, not reclassified. -/
 def classify : EffectTag → Classification
   -- ── survivor verbs ──────────────────────────────────────────────────────────────────
   | .SetField           => .survivor .write           -- guarded field write under the frame
@@ -257,32 +268,6 @@ def classify : EffectTag → Classification
   | .PipelinedSend         => .turnStructure .pipelining  -- eventual/pipelined send (composition)
   | .EmitEvent             => .turnStructure .receiptLog  -- emitted into Q, no ledger mutation
   | .ReceiptArchive        => .turnStructure .receiptLog  -- receipt-chain checkpoint (evidence log)
-  -- ── factory patterns (the verb arm dissolves into a cell program) ───────────────────
-  | .CreateEscrow            => .factory .escrow [.create, .move, .write]
-  | .ReleaseEscrow           => .factory .escrow [.move, .write]
-  | .RefundEscrow            => .factory .escrow [.move, .write]
-  | .CreateCommittedEscrow   => .factory .escrow [.create, .move, .write]
-  | .ReleaseCommittedEscrow  => .factory .escrow [.move, .write]
-  | .RefundCommittedEscrow   => .factory .escrow [.move, .write]
-  | .CreateObligation        => .factory .obligation [.create, .move, .write]
-  | .FulfillObligation       => .factory .obligation [.move, .write]
-  | .SlashObligation         => .factory .obligation [.move, .write]
-  | .QueueAllocate           => .factory .queue [.create, .write]
-  | .QueueEnqueue            => .factory .queue [.move, .write]
-  | .QueueDequeue            => .factory .queue [.move, .write]
-  | .QueueResize             => .factory .queue [.write]
-  | .QueueAtomicTx           => .factory .queue [.move, .write]
-  | .QueuePipelineStep       => .factory .queue [.move, .write]
-  | .BridgeLock              => .factory .bridge [.create, .move, .write]
-  | .BridgeFinalize          => .factory .bridge [.move, .write]
-  | .BridgeCancel            => .factory .bridge [.move, .write]
-  | .CreateSealPair          => .factory .capsInSlots [.create, .grant]
-  | .Seal                    => .factory .capsInSlots [.write, .grant]
-  | .Unseal                  => .factory .capsInSlots [.write, .grant]
-  | .ExportSturdyRef         => .factory .capsInSlots [.write, .grant]
-  | .EnlivenRef              => .factory .capsInSlots [.write, .grant]
-  | .DropRef                 => .factory .capsInSlots [.write, .revoke]
-  | .ValidateHandoff         => .factory .capsInSlots [.write, .grant]
 
 /-! ## §8 — COMPLETENESS theorems. -/
 
@@ -292,33 +277,36 @@ manifest can consume it: every tag in `allEffectTags` has a classification. -/
 theorem classify_total : ∀ t ∈ allEffectTags, ∃ c, classify t = c := by
   intro t _; exact ⟨classify t, rfl⟩
 
-/-- The roster lists exactly the 52 live variants. -/
-theorem effect_tag_count : allEffectTags.length = 52 := by decide
+/-- The roster lists exactly the 27 live variants (52 pre-lockstep − the 25 dissolved). -/
+theorem effect_tag_count : allEffectTags.length = 27 := by decide
 
 /-- `allEffectTags` has no duplicates — it is a faithful, non-redundant census of the wire enum. -/
 theorem effect_tags_nodup : allEffectTags.Nodup := by decide
 
-/-- NON-VACUITY of the cover: it actually populates all THREE buckets (it is not a degenerate
+/-- NON-VACUITY of the cover: it populates BOTH live buckets (it is not a degenerate
 cover that, say, sends everything to `turnStructure`). We exhibit one tag per bucket. -/
-theorem cover_hits_all_three :
+theorem cover_hits_both :
     (∃ t v, classify t = .survivor v) ∧
-    (∃ t s, classify t = .turnStructure s) ∧
-    (∃ t p b, classify t = .factory p b) := by
-  refine ⟨⟨.Transfer, .move, rfl⟩, ⟨.IncrementNonce, .prologue, rfl⟩,
-          ⟨.CreateEscrow, .escrow, [.create, .move, .write], rfl⟩⟩
+    (∃ t s, classify t = .turnStructure s) := by
+  exact ⟨⟨.Transfer, .move, rfl⟩, ⟨.IncrementNonce, .prologue, rfl⟩⟩
+
+/-- THE LOCKSTEP TOOTH: no LIVE tag is factory-classified. The doomed families were DELETED
+(the enum makes the refusal structural); `FactoryPattern` remains only as the §HISTORICAL
+record of where each family's semantics went. -/
+theorem no_live_factory_tags : ∀ t p b, classify t ≠ Classification.factory p b := by
+  intro t p b h; cases t <;> simp [classify] at h
 
 /-- The roster `survivors` contains EVERY `Verb` constructor — it is the complete signature, so
 membership of any verb is immediate. -/
 theorem mem_survivors : ∀ v : Verb, v ∈ survivors := by
   intro v; cases v <;> simp [survivors]
 
-/-- Every factory-classified tag is built ONLY from surviving verbs — the replacement is
-expressible over the dregg3 signature (the deletion-manifest reconciliation: no factory leans on a
-doomed verb). Immediate, since every `Verb` is a survivor (`mem_survivors`): the `builtFrom` lists
-mention only kernel verbs by construction. -/
+/-- (Vacuously true post-lockstep — kept so downstream consumers of the statement shape
+survive: there ARE no factory-classified live tags, per `no_live_factory_tags`.) -/
 theorem factory_builtFrom_are_survivors :
     ∀ t p b, classify t = .factory p b → ∀ v ∈ b, v ∈ survivors := by
-  intro _ _ _ _ v _; exact mem_survivors v
+  intro t p b h
+  exact absurd h (no_live_factory_tags t p b)
 
 /-! ## §9 — MINIMALITY of the eight: each survivor provides a behavior no other one does.
 
@@ -391,15 +379,6 @@ private instance : BEq Classification where
     | .factory p₁ b₁, .factory p₂ b₂ => p₁ == p₂ && b₁ == b₂
     | _, _ => false
 
--- the escrow family dissolves into the escrow factory, built from create/move/write:
-#guard classify .CreateEscrow == .factory .escrow [.create, .move, .write]
--- the queue family dissolves into the queue factory:
-#guard classify .QueueEnqueue == .factory .queue [.move, .write]
--- the bridge family dissolves into the bridge cell:
-#guard classify .BridgeFinalize == .factory .bridge [.move, .write]
--- seal/swiss/handoff dissolve into caps-in-slots:
-#guard classify .Seal == .factory .capsInSlots [.write, .grant]
-#guard classify .ExportSturdyRef == .factory .capsInSlots [.write, .grant]
 -- transfer/burn are the move verb; setfield is write; grant/revoke survive:
 #guard classify .Transfer == .survivor .move
 #guard classify .Burn == .survivor .move
@@ -412,7 +391,7 @@ private instance : BEq Classification where
 #guard classify .Refusal == .turnStructure .refusal
 #guard classify .PipelinedSend == .turnStructure .pipelining
 -- the roster counts:
-#guard allEffectTags.length == 52
+#guard allEffectTags.length == 27
 #guard survivors.length == 7          -- 7 constructors (shield/unshield folded)
 #guard survivorDirectionCount == 8    -- the human-facing eight
 
@@ -421,7 +400,8 @@ private instance : BEq Classification where
 #assert_axioms classify_total
 #assert_axioms effect_tag_count
 #assert_axioms effect_tags_nodup
-#assert_axioms cover_hits_all_three
+#assert_axioms cover_hits_both
+#assert_axioms no_live_factory_tags
 #assert_axioms mem_survivors
 #assert_axioms factory_builtFrom_are_survivors
 #assert_axioms minimality

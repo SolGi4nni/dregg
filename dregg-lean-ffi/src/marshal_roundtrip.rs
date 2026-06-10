@@ -518,7 +518,7 @@ fn main() -> ExitCode {
     }
 
     // ---------------------------------------------------------------------
-    // CASE 5 — all 56 FullActionA arms PARSE through the live Lean kernel.
+    // CASE 5 — all 29 FullActionA arms PARSE through the live Lean kernel.
     //          For each arm: marshal a minimal turn rooted at that action against
     //          wide_demo_state, call lean_forest_auth, assert the output is NOT the
     //          MalformedWireSentinel (unmarshal_result succeeds — we don't need commit).
@@ -526,7 +526,7 @@ fn main() -> ExitCode {
     {
         let state = wide_demo_state();
         let arms = all_action_arms_demo();
-        assert_eq!(arms.len(), 56, "all_action_arms_demo must cover every Lean arm");
+        assert_eq!(arms.len(), 29, "all_action_arms_demo must cover every Lean arm");
         let mut arm_failures = 0u32;
         for (i, action) in arms.iter().enumerate() {
             let turn = demo_turn_for_action(action.clone());

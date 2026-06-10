@@ -427,8 +427,8 @@ fn cutover_ready_selector(effects: &[VmEffectKind]) -> Option<usize> {
         // PI bindings, so the descriptor decides IDENTICALLY to the hand-AIR on the real witness
         // (honest accept + forged-balance/forged-state-commit reject) — validated by
         // `bridge_finalize_and_seal_pair_graduated_into_cutover`.
-        VmEffectKind::CreateSealPair { .. } => Some(sel::CREATE_SEAL_PAIR),
-        VmEffectKind::BridgeFinalize { .. } => Some(sel::BRIDGE_FINALIZE),
+        
+        
         // GRADUATED (nonce-tick + last-row PI pins, v2): the frozen-block lifecycle/flag effects
         // `CellSeal` (49), `CellDestroy` (47), `Refusal` (52). Their Lean descriptors were
         // reconciled onto the runtime Stage-3 passthrough batch (whole economic block frozen, nonce
@@ -505,8 +505,6 @@ const CUTOVER_READY_SELECTORS: &[usize] = &[
     sel::NOTE_CREATE,
     sel::BRIDGE_MINT,
     sel::BURN,
-    sel::CREATE_SEAL_PAIR,
-    sel::BRIDGE_FINALIZE,
     sel::CELL_SEAL,
     sel::CELL_DESTROY,
     sel::REFUSAL,

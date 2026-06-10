@@ -134,7 +134,7 @@
     {
       "pattern": "capsInSlots",
       "doc": "caps-in-slots: sealer/unsealer boxes, swiss sturdyrefs, handoff certs (R7 epoch-at-retrieval). A stored cap is a value in a slot; seal/unseal/enliven/handoff are grants gated on retrieval-epoch freshness.",
-      "module": "Dregg2.Authority.Cap (caps-in-slots; seal/swiss/handoff, R7 epoch-at-retrieval)",
+      "module": "Dregg2.Apps.CapSlotFactory (caps-in-slots, R7 epoch-at-retrieval LANDED)",
       "wire_tags": [
         "CreateSealPair",
         "Seal",

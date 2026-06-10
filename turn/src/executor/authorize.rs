@@ -453,45 +453,6 @@ impl TurnExecutor {
             ));
         }
 
-        // 7. Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
-        // `ValidateHandoff-runtime-variant-extend`): any
-        // `Effect::ValidateHandoff` carried in this action must declare
-        // the same `(recipient_pk, introducer_pk)` as the carrying
-        // CapTpDelivered cert. Without this check, the AIR's
-        // PI-bound `(recipient_pk, introducer_pk)` could carry forged
-        // values while the cert's keys (verified above) carry the real
-        // ones — the per-effect proof would then bind values that
-        // never matched the cryptographic origin.
-        for effect in &action.effects {
-            if let Effect::ValidateHandoff {
-                cert_hash: _,
-                recipient_pk: effect_recipient,
-                introducer_pk: effect_introducer,
-            } = effect
-            {
-                if effect_recipient != &handoff_cert.recipient_pk {
-                    return Err((
-                        TurnError::InvalidAuthorization {
-                            reason: "captp-delivered: Effect::ValidateHandoff.recipient_pk does \
-                                     not match cert.recipient_pk"
-                                .to_string(),
-                        },
-                        path.to_vec(),
-                    ));
-                }
-                if effect_introducer != introducer_pk {
-                    return Err((
-                        TurnError::InvalidAuthorization {
-                            reason: "captp-delivered: Effect::ValidateHandoff.introducer_pk does \
-                                     not match cert.introducer"
-                                .to_string(),
-                        },
-                        path.to_vec(),
-                    ));
-                }
-            }
-        }
-
         Ok(())
     }
 
@@ -2124,26 +2085,12 @@ impl TurnExecutor {
                 }
                 // Locking funds in an escrow or obligation stake is equivalent to
                 // sending value out — require Send permission on the source cell.
-                Effect::CreateEscrow { .. }
-                | Effect::CreateCommittedEscrow { .. }
-                | Effect::CreateObligation { .. }
-                    if !has_send =>
-                {
-                    result.push((dregg_cell::permissions::Action::Send, "Send"));
-                    has_send = true;
-                }
+                
                 // Settlement actions (release/refund/fulfill/slash) are checked for
                 // creator/beneficiary authorization in the handler, but still require
                 // at least Access permission to be mapped so that cells with
                 // Access: None cannot be targeted.
-                Effect::ReleaseEscrow { .. }
-                | Effect::RefundEscrow { .. }
-                | Effect::ReleaseCommittedEscrow { .. }
-                | Effect::RefundCommittedEscrow { .. }
-                | Effect::FulfillObligation { .. }
-                | Effect::SlashObligation { .. } => {
-                    result.push((dregg_cell::permissions::Action::Access, "Access"));
-                }
+                
                 // Refusal mutates the target cell's audit slot + nonce
                 // (CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3); it requires
                 // SetState authority because it overwrites slot[4] with
@@ -2184,15 +2131,7 @@ impl TurnExecutor {
         fn walk(out: &mut Vec<CellId>, effects: &[Effect]) {
             for e in effects {
                 match e {
-                    Effect::SetField { cell, .. }
-                    | Effect::RevokeCapability { cell, .. }
-                    | Effect::EmitEvent { cell, .. }
-                    | Effect::IncrementNonce { cell }
-                    | Effect::SetPermissions { cell, .. }
-                    | Effect::SetVerificationKey { cell, .. }
-                    | Effect::MakeSovereign { cell }
-                    | Effect::CreateEscrow { cell, .. }
-                    | Effect::Refusal { cell, .. } => push(out, *cell),
+                    
                     Effect::Transfer { from, to, .. } => {
                         push(out, *from);
                         push(out, *to);

@@ -45,7 +45,7 @@ use dregg_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
     RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
     note::NoteError,
-    note_bridge::{BridgedNullifierSet, PendingBridgeSet},
+    note_bridge::BridgedNullifierSet,
     nullifier_set::NullifierSet,
     preconditions::EvalContext,
     predicate::{InputRef, PredicateInput, WitnessedPredicateError, WitnessedPredicateKind},
@@ -58,9 +58,6 @@ use serde::{Deserialize, Serialize};
 use crate::action::{Action, Authorization, DelegationMode, Effect, Event};
 use crate::budget_gate::BudgetGate;
 use crate::error::TurnError;
-use crate::escrow::{
-    CommittedEscrow, EscrowClaimAuth, EscrowCondition, EscrowRecord, verify_escrow_claim,
-};
 use crate::forest::CallTree;
 use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;
@@ -362,21 +359,6 @@ enum NoteCommitmentMode {
     Mixed,
 }
 
-/// A record of an active obligation tracked by the executor for balance enforcement.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ObligationRecord {
-    /// The obligor (who locked the stake).
-    pub obligor: CellId,
-    /// The beneficiary (who receives stake on slash).
-    pub beneficiary: CellId,
-    /// Federation height deadline.
-    pub deadline_height: u64,
-    /// Numeric stake amount locked from the obligor's balance.
-    pub stake_amount: u64,
-    /// Whether this obligation has been resolved (fulfilled or slashed).
-    pub resolved: bool,
-}
-
 /// Trait for verifying ZK proofs. Implementations provide circuit-specific verification.
 ///
 /// The executor is fail-closed: if no ProofVerifier is configured and a cell requires
@@ -459,18 +441,6 @@ pub struct TurnExecutor {
     /// *local* spends. Together they form the permanent ledger gate that
     /// `Checkpoint::nullifier_set_root` commits to.
     pub note_nullifiers: Mutex<NullifierSet>,
-    /// Pending bridges: notes locked for cross-federation transfer (two-phase protocol).
-    /// Tracks notes that are committed-to-burn but not yet permanently spent.
-    pub pending_bridges: Mutex<PendingBridgeSet>,
-    /// Phased bridge receipt log (Stage 9 P3.D / DESIGN-receipts.md §5).
-    ///
-    /// Records monotone phase advancements per `bridge_id` for the four-phase
-    /// envelope protocol. Independent of `pending_bridges` (which is keyed on
-    /// `nullifier`, predates the full envelope format, and only tracks the
-    /// source-side state machine). On `BridgeFinalize`, the executor admits a
-    /// synthetic `Witnessed → Finalized` envelope pair so a future Refund for
-    /// the same bridge_id is rejected as non-monotone.
-    pub bridge_phase_log: Mutex<dregg_cell::note_bridge::BridgePhaseLog>,
     /// Trusted Ed25519 public keys for destination federation receipt verification.
     /// Used during BridgeFinalize to validate that the receipt was signed by a
     /// legitimate destination federation.
@@ -488,21 +458,6 @@ pub struct TurnExecutor {
     /// delegation access checks verify that gated capabilities haven't been revoked
     /// via their associated channel.
     pub revocation_channels: Option<RevocationChannelSet>,
-    /// Active obligation records, keyed by obligation ID.
-    /// Tracks locked stakes so that FulfillObligation and SlashObligation can
-    /// enforce balance movement (return to obligor or transfer to beneficiary).
-    pub obligations: Mutex<HashMap<[u8; 32], ObligationRecord>>,
-    /// Active escrow records, keyed by escrow ID.
-    /// Tracks locked funds for conditional settlement (release to recipient or refund to creator).
-    pub escrows: Mutex<HashMap<[u8; 32], EscrowRecord>>,
-    /// Active committed (privacy-preserving) escrow records, keyed by escrow ID.
-    /// Tracks committed escrows where parties and amounts are hidden behind commitments.
-    pub committed_escrows: Mutex<HashMap<[u8; 32], CommittedEscrow>>,
-    /// Executor-internal side-table mapping committed escrow IDs to their locked amounts.
-    /// This is needed for balance settlement (release/refund) since the committed escrow
-    /// record intentionally does not store the cleartext amount. Only the executor knows
-    /// this mapping; it is NOT exposed to observers.
-    pub committed_escrow_amounts: Mutex<HashMap<[u8; 32], u64>>,
     /// Cell migration manager: tracks cells that are being migrated to other federations.
     /// Uses a two-phase commit protocol with timeout-based cancellation to prevent
     /// cells from being lost during network partitions.
@@ -523,11 +478,6 @@ pub struct TurnExecutor {
     /// Uses `RefCell` for interior mutability since minting is called from
     /// within the execute path which takes `&self`.
     pub epoch_minter: Option<std::cell::RefCell<crate::economics::EpochMinter>>,
-    /// Queue program registry: maps queue IDs to their attached validation programs.
-    /// When an `EnqueueMessage` effect targets a queue with a registered program,
-    /// the executor validates the enqueue against the program's constraints before
-    /// accepting the effect. The validation result hash is bound to the STARK proof.
-    pub queue_program_registry: crate::queue_programs::QueueProgramRegistry,
     /// Per-agent last receipt hash (P0-3 fix).
     ///
     /// On every successful turn commit, the agent's entry is set to the
@@ -629,21 +579,14 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
-            pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
-            obligations: Mutex::new(HashMap::new()),
-            escrows: Mutex::new(HashMap::new()),
-            committed_escrows: Mutex::new(HashMap::new()),
-            committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
-            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
@@ -672,21 +615,14 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
-            pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
-            obligations: Mutex::new(HashMap::new()),
-            escrows: Mutex::new(HashMap::new()),
-            committed_escrows: Mutex::new(HashMap::new()),
-            committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
-            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
@@ -711,21 +647,14 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
-            pending_bridges: Mutex::new(PendingBridgeSet::new()),
-            bridge_phase_log: Mutex::new(dregg_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
             treasury_cell: None,
             max_introduction_lifetime: 1000,
             revocation_channels: None,
-            obligations: Mutex::new(HashMap::new()),
-            escrows: Mutex::new(HashMap::new()),
-            committed_escrows: Mutex::new(HashMap::new()),
-            committed_escrow_amounts: Mutex::new(HashMap::new()),
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(dregg_cell::FactoryRegistry::new()),
             epoch_minter: None,
-            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
@@ -1315,25 +1244,6 @@ impl TurnExecutor {
     /// Get a mutable reference to the program registry (for deploying programs).
     pub fn program_registry_mut(&mut self) -> &mut ProgramRegistry {
         &mut self.program_registry
-    }
-
-    /// Set the queue program registry for enqueue validation.
-    ///
-    /// When an `EnqueueMessage` effect targets a queue with a registered program,
-    /// the executor validates the enqueue against the program's constraints before
-    /// accepting the effect. Invalid enqueues are rejected.
-    pub fn set_queue_program_registry(
-        &mut self,
-        registry: crate::queue_programs::QueueProgramRegistry,
-    ) {
-        self.queue_program_registry = registry;
-    }
-
-    /// Get a mutable reference to the queue program registry.
-    pub fn queue_program_registry_mut(
-        &mut self,
-    ) -> &mut crate::queue_programs::QueueProgramRegistry {
-        &mut self.queue_program_registry
     }
 
     /// Get a mutable reference to the factory registry (for deploying factories).

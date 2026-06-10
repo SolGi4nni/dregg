@@ -158,186 +158,15 @@ fn hash_sites() -> Vec<HashSite> {
         ],
         arity: 2,
     });
-    // ---- CreateObligation: leaf = H2(obligation_id, beneficiary) (site 6),
-    //      expected = H2(old_cap_root, leaf) (site 7) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::OBLIGATION_ID),
-            Col(PARAM_BASE + param::OBLIGATION_BENEFICIARY),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(STATE_BEFORE_BASE + state::CAP_ROOT), Digest(6), Zero, Zero],
-        arity: 2,
-    });
-    // ---- SlashObligation: H2(old_cap_root, slash_obligation_id) ---- (site 8)
-    v.push(HashSite {
-        inputs: [
-            Col(STATE_BEFORE_BASE + state::CAP_ROOT),
-            Col(PARAM_BASE + param::SLASH_OBLIGATION_ID),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    // ---- ExportSturdyRef: inner = H2(random_seed, counter) (site 9),
-    //      swiss = H2(cell_id, inner) (site 10) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::EXPORT_RANDOM_SEED),
-            Col(PARAM_BASE + param::EXPORT_COUNTER),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(PARAM_BASE + param::EXPORT_CELL_ID), Digest(9), Zero, Zero],
-        arity: 2,
-    });
-    // ---- EnlivenRef: inner = H2(cell_id, perms) (site 11),
-    //      leaf = H2(swiss, inner) (site 12),
-    //      chosen = H2(leaf, sibling) (site 13) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::ENLIVEN_CELL_ID),
-            Col(PARAM_BASE + param::ENLIVEN_PERMISSIONS),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(PARAM_BASE + param::ENLIVEN_SWISS), Digest(11), Zero, Zero],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(AUX_BASE + 1), Col(AUX_BASE + 6), Zero, Zero],
-        arity: 2,
-    });
-    // ---- DropRef: leaf = H2(cell_id, holder_fed) (site 14),
-    //      chosen = H2(leaf, sibling) (site 15) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::DROP_CELL_ID),
-            Col(PARAM_BASE + param::DROP_HOLDER_FED),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(AUX_BASE + 1), Col(AUX_BASE + 6), Zero, Zero],
-        arity: 2,
-    });
-    // ---- ValidateHandoff: pks = H2(recipient_pk, introducer_pk) (site 16),
-    //      leaf = H2(cert_hash, pks) (site 17),
-    //      chosen = H2(leaf, sibling) (site 18),
-    //      routing = H2(recipient_pk, cert_hash) (site 19),
-    //      expected_new_cap = H2(old_cap_root, routing) (site 20) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::HANDOFF_RECIPIENT_PK),
-            Col(PARAM_BASE + param::HANDOFF_INTRODUCER_PK),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(PARAM_BASE + param::HANDOFF_CERT_HASH), Digest(16), Zero, Zero],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(AUX_BASE + 0), Col(AUX_BASE + 1), Zero, Zero],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::HANDOFF_RECIPIENT_PK),
-            Col(PARAM_BASE + param::HANDOFF_CERT_HASH),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(STATE_BEFORE_BASE + state::CAP_ROOT), Digest(19), Zero, Zero],
-        arity: 2,
-    });
-    // ---- AllocateQueue: empty_queue = H2(0, 0) ---- (site 21)
-    v.push(HashSite { inputs: [Zero, Zero, Zero, Zero], arity: 2 });
-    // ---- EnqueueMessage: new_root = H2(old_root=before.field[4], msg_hash) (22),
-    //      inner = H2(sender, msg_hash) (23),
-    //      expected_validation = H2(program_vk, inner) (24) ----
-    v.push(HashSite {
-        inputs: [
-            Col(STATE_BEFORE_BASE + state::FIELD_BASE + 4),
-            Col(PARAM_BASE + param::ENQUEUE_MSG_HASH),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::ENQUEUE_SENDER),
-            Col(PARAM_BASE + param::ENQUEUE_MSG_HASH),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(PARAM_BASE + param::ENQUEUE_PROGRAM_VK), Digest(23), Zero, Zero],
-        arity: 2,
-    });
-    // ---- DequeueMessage: new_root = H2(old_root, expected_msg_hash) ---- (25)
-    v.push(HashSite {
-        inputs: [
-            Col(STATE_BEFORE_BASE + state::FIELD_BASE + 4),
-            Col(PARAM_BASE + param::DEQUEUE_EXPECTED_HASH),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    // ---- AtomicQueueTx: inner = H2(combined_old, combined_new) (26),
-    //      binding = H2(tx_hash, inner) (27) ----
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::ATOMIC_TX_COMBINED_OLD_ROOT),
-            Col(PARAM_BASE + param::ATOMIC_TX_COMBINED_NEW_ROOT),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
-    v.push(HashSite {
-        inputs: [Col(PARAM_BASE + param::ATOMIC_TX_HASH), Digest(26), Zero, Zero],
-        arity: 2,
-    });
-    // ---- PipelineStep: expected_source_new = H2(source_old, msg_hash) ---- (28)
-    v.push(HashSite {
-        inputs: [
-            Col(PARAM_BASE + param::PIPELINE_SOURCE_OLD_ROOT),
-            Col(PARAM_BASE + param::PIPELINE_MESSAGE_HASH),
-            Zero,
-            Zero,
-        ],
-        arity: 2,
-    });
     // ---- AttenuateCapability ----
     // Phase B: the cap_root advance is NO LONGER a pinned 2-of-2 digest fold.
     // It is a GENUINE sorted-tree membership-open (held leaf authenticated
     // against old_cap_root) + leaf-update (granted leaf folded up the SAME path
     // to new_cap_root), emitted in a DEDICATED block of Poseidon2 sites laid out
     // after the generic sites (see [`attn`] + [`emit_attenuate_hashes`]). The
-    // generic site list therefore ends at PipelineStep (site 28); Attenuate adds
-    // no generic sites.
+    // generic site list therefore ends at RevokeCapability (site 5; the 23
+    // doomed-effect sites died in the verb lockstep); Attenuate adds no
+    // generic sites.
 
     v
 }
@@ -347,22 +176,6 @@ mod hs {
     pub const STATE_COMMIT: usize = 3;
     pub const GRANT_CAP: usize = 4;
     pub const REVOKE_CAP: usize = 5;
-    pub const CO_EXPECTED_CAP: usize = 7;
-    pub const SLASH_CAP: usize = 8;
-    pub const EXPORT_SWISS: usize = 10;
-    pub const ENLIVEN_LEAF: usize = 12;
-    pub const ENLIVEN_CHOSEN: usize = 13;
-    pub const DROP_LEAF: usize = 14;
-    pub const DROP_CHOSEN: usize = 15;
-    pub const HANDOFF_LEAF: usize = 17;
-    pub const HANDOFF_CHOSEN: usize = 18;
-    pub const HANDOFF_NEW_CAP: usize = 20;
-    pub const ALLOC_EMPTY: usize = 21;
-    pub const ENQUEUE_NEW_ROOT: usize = 22;
-    pub const ENQUEUE_VALIDATION: usize = 24;
-    pub const DEQUEUE_NEW_ROOT: usize = 25;
-    pub const ATOMIC_BINDING: usize = 27;
-    pub const PIPELINE_SOURCE_NEW: usize = 28;
 }
 
 /// Number of hash sites (= number of Poseidon2 aux blocks per row).
@@ -1170,6 +983,13 @@ where
         }
         tb.assert_zero(sel_sum - one.clone());
 
+        // VERB-LOCKSTEP refusal tooth (mirror of the bespoke AIR): every
+        // RETIRED selector column is pinned to ZERO on every row, so a trace
+        // claiming a factory-dissolved effect is UNSATISFIABLE.
+        for &retired in sel::RETIRED_SELECTORS.iter() {
+            tb.assert_zero(lc(retired));
+        }
+
         // ===== GROUP 2a: balance-limb range / underflow (UNCONDITIONAL) =====
         {
             let mut recomposed_lo = AB::Expr::ZERO;
@@ -1196,8 +1016,6 @@ where
         let s_grantcap = lc(sel::GRANT_CAP);
         let s_notespend = lc(sel::NOTE_SPEND);
         let s_notecreate = lc(sel::NOTE_CREATE);
-        let s_create_obligation = lc(sel::CREATE_OBLIGATION);
-        let s_fulfill_obligation = lc(sel::FULFILL_OBLIGATION);
         let s_custom = lc(sel::CUSTOM);
 
         let old_bal_lo = sb(state::BALANCE_LO);
@@ -1297,12 +1115,6 @@ where
         };
         let bit_at_idx = lagrange_bit(&field_index);
         tb.assert_zero(s_setfield.clone() * bit_at_idx);
-        let s_seal = lc(sel::SEAL);
-        let s_unseal = lc(sel::UNSEAL);
-        let seal_bit_at_idx = lagrange_bit(&prm(param::SEAL_FIELD_IDX));
-        tb.assert_zero(s_seal.clone() * seal_bit_at_idx);
-        let unseal_bit_at_idx = lagrange_bit(&prm(param::UNSEAL_FIELD_IDX));
-        tb.assert_zero(s_unseal.clone() * (unseal_bit_at_idx - one.clone()));
         // SetField field_idx range {0..7}.
         {
             let mut prod = one.clone();
@@ -1391,22 +1203,14 @@ where
 
         // Stage 3 passthrough batch.
         for s_sel_idx in [
-            sel::CREATE_SEAL_PAIR,
             sel::REFRESH_DELEGATION,
             sel::INCREMENT_NONCE,
             sel::REVOKE_DELEGATION,
             sel::CREATE_CELL,
             sel::SPAWN_WITH_DELEGATION,
-            sel::BRIDGE_CANCEL,
             sel::EXERCISE_VIA_CAPABILITY,
             sel::INTRODUCE,
             sel::PIPELINED_SEND,
-            sel::CREATE_COMMITTED_ESCROW,
-            sel::BRIDGE_FINALIZE,
-            sel::RELEASE_ESCROW,
-            sel::REFUND_ESCROW,
-            sel::RELEASE_COMMITTED_ESCROW,
-            sel::REFUND_COMMITTED_ESCROW,
         ] {
             passthrough_bal_cap_fields!(lc(s_sel_idx));
         }
@@ -1476,51 +1280,6 @@ where
             tb.assert_zero(s_bridgemint.clone() * (fld_a(i) - fld_b(i)));
         }
 
-        // -- CreateEscrow / BridgeLock --
-        for s_sel_idx in [sel::CREATE_ESCROW, sel::BRIDGE_LOCK] {
-            let s_v = lc(s_sel_idx);
-            let amount_lo = prm(1);
-            tb.assert_zero(
-                s_v.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + amount_lo),
-            );
-            tb.assert_zero(s_v.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_v.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..8 {
-                tb.assert_zero(s_v.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- CreateObligation (hash sites 6,7) --
-        let stake_lo = p0.clone();
-        tb.assert_zero(
-            s_create_obligation.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + stake_lo),
-        );
-        tb.assert_zero(
-            s_create_obligation.clone() * (new_bal_hi.clone() - old_bal_hi.clone()),
-        );
-        tb.assert_zero(
-            s_create_obligation.clone()
-                * (new_cap_root.clone() - digests[hs::CO_EXPECTED_CAP].clone()),
-        );
-        for i in 0..8 {
-            tb.assert_zero(s_create_obligation.clone() * (fld_a(i) - fld_b(i)));
-        }
-
-        // -- FulfillObligation --
-        let return_lo = p1.clone();
-        tb.assert_zero(
-            s_fulfill_obligation.clone() * (new_bal_lo.clone() - old_bal_lo.clone() - return_lo),
-        );
-        tb.assert_zero(
-            s_fulfill_obligation.clone() * (new_bal_hi.clone() - old_bal_hi.clone()),
-        );
-        tb.assert_zero(
-            s_fulfill_obligation.clone() * (new_cap_root.clone() - old_cap_root.clone()),
-        );
-        for i in 0..8 {
-            tb.assert_zero(s_fulfill_obligation.clone() * (fld_a(i) - fld_b(i)));
-        }
-
         // -- Custom: state passthrough (no reserved equality; nonce ticks global) --
         tb.assert_zero(s_custom.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_custom.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
@@ -1531,94 +1290,6 @@ where
         tb.assert_zero(
             s_custom.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
         );
-
-        // -- SlashObligation (hash site 8) --
-        let s_slash = lc(sel::SLASH_OBLIGATION);
-        let slash_stake_lo = prm(param::SLASH_STAKE_LO);
-        tb.assert_zero(
-            s_slash.clone() * (new_bal_lo.clone() - old_bal_lo.clone() - slash_stake_lo),
-        );
-        tb.assert_zero(s_slash.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-        tb.assert_zero(
-            s_slash.clone() * (new_cap_root.clone() - digests[hs::SLASH_CAP].clone()),
-        );
-        for i in 0..8 {
-            tb.assert_zero(s_slash.clone() * (fld_a(i) - fld_b(i)));
-        }
-
-        // -- Seal / Unseal pow2 lagrange helper --
-        let lagrange_pow2 = |x: &AB::Expr| -> AB::Expr {
-            let mut result = AB::Expr::ZERO;
-            for k in 0..8u32 {
-                let mut num = one.clone();
-                let mut den = BabyBear::ONE;
-                for j in 0..8u32 {
-                    if j == k {
-                        continue;
-                    }
-                    num = num * (x.clone() - AB::Expr::from_u64(j as u64));
-                    let diff = if k > j {
-                        BabyBear::new(k - j)
-                    } else {
-                        BabyBear::ZERO - BabyBear::new(j - k)
-                    };
-                    den = den * diff;
-                }
-                let den_inv = den.inverse().expect("Lagrange denom nonzero on {0..7}");
-                result = result + num * lift::<AB>(den_inv) * AB::Expr::from_u64(1u64 << k);
-            }
-            result
-        };
-
-        // -- Seal --
-        let old_reserved_seal = sb(state::RESERVED);
-        let new_reserved_seal = sa(state::RESERVED);
-        let seal_pow2 = aux(aux_off::SEAL_POW2_IDX);
-        tb.assert_zero(s_seal.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-        tb.assert_zero(s_seal.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-        tb.assert_zero(s_seal.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-        for i in 0..8 {
-            tb.assert_zero(s_seal.clone() * (fld_a(i) - fld_b(i)));
-        }
-        tb.assert_zero(
-            s_seal.clone() * (new_reserved_seal - old_reserved_seal - seal_pow2.clone()),
-        );
-        tb.assert_zero(
-            s_seal.clone() * (seal_pow2 - lagrange_pow2(&prm(param::SEAL_FIELD_IDX))),
-        );
-        {
-            let seal_field_idx = prm(param::SEAL_FIELD_IDX);
-            let mut prod = one.clone();
-            for k in 0..8u32 {
-                prod = prod * (seal_field_idx.clone() - AB::Expr::from_u64(k as u64));
-            }
-            tb.assert_zero(s_seal.clone() * prod);
-        }
-
-        // -- Unseal --
-        let old_reserved_unseal = sb(state::RESERVED);
-        let new_reserved_unseal = sa(state::RESERVED);
-        let unseal_pow2 = aux(aux_off::SEAL_POW2_IDX);
-        tb.assert_zero(s_unseal.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-        tb.assert_zero(s_unseal.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-        tb.assert_zero(s_unseal.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-        for i in 0..8 {
-            tb.assert_zero(s_unseal.clone() * (fld_a(i) - fld_b(i)));
-        }
-        tb.assert_zero(
-            s_unseal.clone() * (old_reserved_unseal - new_reserved_unseal - unseal_pow2.clone()),
-        );
-        tb.assert_zero(
-            s_unseal.clone() * (unseal_pow2 - lagrange_pow2(&prm(param::UNSEAL_FIELD_IDX))),
-        );
-        {
-            let unseal_field_idx = prm(param::UNSEAL_FIELD_IDX);
-            let mut prod = one.clone();
-            for k in 0..8u32 {
-                prod = prod * (unseal_field_idx.clone() - AB::Expr::from_u64(k as u64));
-            }
-            tb.assert_zero(s_unseal.clone() * prod);
-        }
 
         // -- MakeSovereign --
         let s_makesov = lc(sel::MAKE_SOVEREIGN);
@@ -1646,274 +1317,6 @@ where
         tb.assert_zero(
             s_factory.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
         );
-
-        // -- ExportSturdyRef (hash sites 9,10) --
-        let s_export = lc(sel::EXPORT_STURDY_REF);
-        {
-            let aux_swiss = aux(0);
-            tb.assert_zero(
-                s_export.clone() * (aux_swiss - digests[hs::EXPORT_SWISS].clone()),
-            );
-            tb.assert_zero(
-                s_export.clone()
-                    * (fld_a(7) - fld_b(7) - one.clone()),
-            );
-            tb.assert_zero(s_export.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s_export.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_export.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..7 {
-                tb.assert_zero(s_export.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- EnlivenRef (hash sites 11,12,13) --
-        let s_enliven = lc(sel::ENLIVEN_REF);
-        {
-            let aux_root = aux(0);
-            let aux_leaf = aux(1);
-            tb.assert_zero(
-                s_enliven.clone() * (aux_leaf - digests[hs::ENLIVEN_LEAF].clone()),
-            );
-            let aux_chosen = aux(7);
-            tb.assert_zero(
-                s_enliven.clone() * (aux_chosen.clone() - digests[hs::ENLIVEN_CHOSEN].clone()),
-            );
-            tb.assert_zero(s_enliven.clone() * (aux_root.clone() - fld_a(4)));
-            tb.assert_zero(s_enliven.clone() * (aux_chosen - aux_root));
-            tb.assert_zero(s_enliven.clone() * (aux(6) - fld_b(4)));
-            tb.assert_zero(
-                s_enliven.clone() * (fld_a(6) - fld_b(6) - one.clone()),
-            );
-            tb.assert_zero(s_enliven.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s_enliven.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_enliven.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in [0usize, 1, 2, 3, 5, 7] {
-                tb.assert_zero(s_enliven.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- DropRef (hash sites 14,15) --
-        let s_drop = lc(sel::DROP_REF);
-        {
-            let refcount_param = prm(param::DROP_REFCOUNT);
-            tb.assert_zero(
-                s_drop.clone() * (fld_a(5) - fld_b(5) + one.clone()),
-            );
-            tb.assert_zero(s_drop.clone() * (refcount_param.clone() - fld_b(5)));
-            let rc_inv = aux(0);
-            tb.assert_zero(
-                s_drop.clone() * (refcount_param * rc_inv - one.clone()),
-            );
-            let aux_leaf = aux(1);
-            tb.assert_zero(s_drop.clone() * (aux_leaf - digests[hs::DROP_LEAF].clone()));
-            let aux_chosen = aux(7);
-            tb.assert_zero(
-                s_drop.clone() * (aux_chosen.clone() - digests[hs::DROP_CHOSEN].clone()),
-            );
-            tb.assert_zero(s_drop.clone() * (aux_chosen - fld_a(3)));
-            tb.assert_zero(s_drop.clone() * (aux(6) - fld_b(3)));
-            tb.assert_zero(s_drop.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s_drop.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_drop.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in [0usize, 1, 2, 4, 6, 7] {
-                tb.assert_zero(s_drop.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- ValidateHandoff (hash sites 16..20) --
-        let s_handoff = lc(sel::VALIDATE_HANDOFF);
-        {
-            let approved_root = prm(param::HANDOFF_APPROVED_SET_ROOT);
-            let aux_leaf = aux(0);
-            tb.assert_zero(s_handoff.clone() * (aux_leaf - digests[hs::HANDOFF_LEAF].clone()));
-            let aux_chosen = aux(6);
-            tb.assert_zero(
-                s_handoff.clone() * (aux_chosen.clone() - digests[hs::HANDOFF_CHOSEN].clone()),
-            );
-            tb.assert_zero(s_handoff.clone() * (aux_chosen - approved_root.clone()));
-            tb.assert_zero(
-                s_handoff.clone() * (approved_root - pv[pi::APPROVED_HANDOFFS_BASE].clone()),
-            );
-            tb.assert_zero(
-                s_handoff.clone() * (new_cap_root.clone() - digests[hs::HANDOFF_NEW_CAP].clone()),
-            );
-            tb.assert_zero(s_handoff.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s_handoff.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            for i in 0..8 {
-                tb.assert_zero(s_handoff.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- AllocateQueue (hash site 21) --
-        let s_alloc_queue = lc(sel::ALLOCATE_QUEUE);
-        {
-            let capacity = prm(param::QUEUE_CAPACITY);
-            let cost_per_slot = prm(param::QUEUE_COST_PER_SLOT);
-            let alloc_cost = capacity * cost_per_slot;
-            tb.assert_zero(
-                s_alloc_queue.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + alloc_cost),
-            );
-            tb.assert_zero(s_alloc_queue.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(
-                s_alloc_queue.clone() * (fld_a(4) - digests[hs::ALLOC_EMPTY].clone()),
-            );
-            tb.assert_zero(s_alloc_queue.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..4 {
-                tb.assert_zero(s_alloc_queue.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 5..8 {
-                tb.assert_zero(s_alloc_queue.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- EnqueueMessage (hash sites 22,23,24) --
-        let s_enqueue = lc(sel::ENQUEUE_MESSAGE);
-        {
-            let deposit = prm(param::ENQUEUE_DEPOSIT);
-            tb.assert_zero(
-                s_enqueue.clone() * (fld_a(4) - digests[hs::ENQUEUE_NEW_ROOT].clone()),
-            );
-            tb.assert_zero(
-                s_enqueue.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + deposit),
-            );
-            tb.assert_zero(s_enqueue.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_enqueue.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..4 {
-                tb.assert_zero(s_enqueue.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 5..8 {
-                tb.assert_zero(s_enqueue.clone() * (fld_a(i) - fld_b(i)));
-            }
-            let program_vk = prm(param::ENQUEUE_PROGRAM_VK);
-            let validation_hash = aux(6);
-            let program_vk_inv = aux(7);
-            tb.assert_zero(
-                s_enqueue.clone()
-                    * program_vk.clone()
-                    * (validation_hash.clone() - digests[hs::ENQUEUE_VALIDATION].clone()),
-            );
-            tb.assert_zero(
-                s_enqueue.clone()
-                    * (one.clone() - program_vk * program_vk_inv)
-                    * validation_hash,
-            );
-        }
-
-        // -- DequeueMessage (hash site 25) --
-        let s_dequeue = lc(sel::DEQUEUE_MESSAGE);
-        {
-            let expected_msg_hash = prm(param::DEQUEUE_EXPECTED_HASH);
-            let deposit_refund = prm(param::DEQUEUE_DEPOSIT_REFUND);
-            tb.assert_zero(
-                s_dequeue.clone() * (fld_a(4) - digests[hs::DEQUEUE_NEW_ROOT].clone()),
-            );
-            let msg_inv = aux(1);
-            tb.assert_zero(
-                s_dequeue.clone() * (expected_msg_hash * msg_inv - one.clone()),
-            );
-            tb.assert_zero(
-                s_dequeue.clone() * (new_bal_lo.clone() - old_bal_lo.clone() - deposit_refund),
-            );
-            tb.assert_zero(s_dequeue.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_dequeue.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..4 {
-                tb.assert_zero(s_dequeue.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 5..8 {
-                tb.assert_zero(s_dequeue.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- ResizeQueue (no hash) --
-        let s_resize = lc(sel::RESIZE_QUEUE);
-        {
-            let new_capacity = prm(param::RESIZE_NEW_CAPACITY);
-            let old_capacity = prm(param::RESIZE_OLD_CAPACITY);
-            let cost_per_slot = prm(param::RESIZE_COST_PER_SLOT);
-            let delta_sign = aux(aux_off::RESIZE_DELTA_SIGN);
-            let delta_mag = aux(aux_off::RESIZE_DELTA_MAG);
-            tb.assert_zero(
-                s_resize.clone() * delta_sign.clone() * (delta_sign.clone() - one.clone()),
-            );
-            tb.assert_zero(
-                s_resize.clone()
-                    * ((new_capacity.clone() - old_capacity)
-                        - delta_mag.clone() * (one.clone() - two.clone() * delta_sign.clone())),
-            );
-            let resize_cost = delta_mag * cost_per_slot * (one.clone() - delta_sign);
-            tb.assert_zero(
-                s_resize.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + resize_cost),
-            );
-            tb.assert_zero(s_resize.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_resize.clone() * (fld_a(5) - new_capacity));
-            tb.assert_zero(s_resize.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            tb.assert_zero(s_resize.clone() * (fld_a(4) - fld_b(4)));
-            for i in 0..4 {
-                tb.assert_zero(s_resize.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 6..8 {
-                tb.assert_zero(s_resize.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- AtomicQueueTx (hash sites 26,27) --
-        let s_atomic_tx = lc(sel::ATOMIC_QUEUE_TX);
-        {
-            let combined_old = prm(param::ATOMIC_TX_COMBINED_OLD_ROOT);
-            let combined_new = prm(param::ATOMIC_TX_COMBINED_NEW_ROOT);
-            let net_deposit = prm(param::ATOMIC_TX_NET_DEPOSIT);
-            tb.assert_zero(s_atomic_tx.clone() * (fld_b(4) - combined_old));
-            tb.assert_zero(s_atomic_tx.clone() * (fld_a(4) - combined_new));
-            let aux_binding = aux(0);
-            tb.assert_zero(
-                s_atomic_tx.clone() * (aux_binding - digests[hs::ATOMIC_BINDING].clone()),
-            );
-            tb.assert_zero(
-                s_atomic_tx.clone() * (new_bal_lo.clone() - old_bal_lo.clone() + net_deposit),
-            );
-            tb.assert_zero(s_atomic_tx.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_atomic_tx.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..4 {
-                tb.assert_zero(s_atomic_tx.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 5..8 {
-                tb.assert_zero(s_atomic_tx.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
-
-        // -- PipelineStep (hash site 28) --
-        let s_pipeline = lc(sel::PIPELINE_STEP);
-        {
-            let pipeline_id_val = prm(param::PIPELINE_ID);
-            let source_old = prm(param::PIPELINE_SOURCE_OLD_ROOT);
-            let source_new = prm(param::PIPELINE_SOURCE_NEW_ROOT);
-            let sink_new = prm(param::PIPELINE_SINK_NEW_ROOT);
-            let pipeline_id_inv = aux(6);
-            tb.assert_zero(
-                s_pipeline.clone() * (pipeline_id_val * pipeline_id_inv - one.clone()),
-            );
-            tb.assert_zero(
-                s_pipeline.clone()
-                    * (source_new.clone() - digests[hs::PIPELINE_SOURCE_NEW].clone()),
-            );
-            let aux_expected = aux(0);
-            tb.assert_zero(
-                s_pipeline.clone() * (aux_expected - digests[hs::PIPELINE_SOURCE_NEW].clone()),
-            );
-            tb.assert_zero(s_pipeline.clone() * (fld_b(4) - source_old));
-            tb.assert_zero(s_pipeline.clone() * (fld_a(4) - source_new));
-            let aux_sink = aux(1);
-            tb.assert_zero(s_pipeline.clone() * (aux_sink - sink_new));
-            tb.assert_zero(s_pipeline.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
-            tb.assert_zero(s_pipeline.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-            tb.assert_zero(s_pipeline.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-            for i in 0..4 {
-                tb.assert_zero(s_pipeline.clone() * (fld_a(i) - fld_b(i)));
-            }
-            for i in 5..8 {
-                tb.assert_zero(s_pipeline.clone() * (fld_a(i) - fld_b(i)));
-            }
-        }
 
         // -- Burn --
         {

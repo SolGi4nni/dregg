@@ -112,15 +112,6 @@ fn honest_corpus() -> Vec<(&'static str, Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)
             100_000,
             Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 },
         ),
-        one(
-            "CreateObligation",
-            100_000,
-            Effect::CreateObligation {
-                stake_amount: 200,
-                obligation_id: BabyBear::new(0x01),
-                beneficiary_hash: BabyBear::new(0x02),
-            },
-        ),
         (
             "multi-effect",
             vec![mk(

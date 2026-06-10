@@ -66,8 +66,7 @@ impl TurnExecutor {
 
         // 5. Compute effects hash using the circuit's Poseidon2-based hash
         // (Stage 1 widened to 4 felts).
-        let obligations_guard = self.obligations.lock().unwrap();
-        let vm_effects = convert_turn_effects_to_vm(cell_id, turn, ledger, &obligations_guard);
+        let vm_effects = convert_turn_effects_to_vm(cell_id, turn, ledger);
         let effects_hash_4 = effect_vm::compute_effects_hash_4(&vm_effects);
 
         // 6. Compute balance delta from effects.
@@ -1087,22 +1086,13 @@ impl TurnExecutor {
             SCHEMA_SET_PERMISSIONS,
             SCHEMA_SET_VERIFICATION_KEY,
             SCHEMA_INTRODUCE,
-            SCHEMA_CREATE_SEAL_PAIR,
-            SCHEMA_BRIDGE_FINALIZE,
-            SCHEMA_BRIDGE_CANCEL,
             SCHEMA_REVOKE_DELEGATION,
             SCHEMA_SPAWN_WITH_DELEGATION,
-            SCHEMA_RELEASE_ESCROW,
-            SCHEMA_REFUND_ESCROW,
             SCHEMA_EXERCISE_VIA_CAPABILITY,
-            SCHEMA_CREATE_OBLIGATION,
-            SCHEMA_CREATE_ESCROW,
             SCHEMA_PIPELINED_SEND,
             SCHEMA_CREATE_CELL_FROM_FACTORY,
-            SCHEMA_CREATE_COMMITTED_ESCROW,
             SCHEMA_NOTE_SPEND,
             SCHEMA_NOTE_CREATE,
-            SCHEMA_BRIDGE_LOCK,
             SCHEMA_BURN,
         );
         None
@@ -1172,42 +1162,9 @@ impl TurnExecutor {
                     vec![*value, *asset_type],
                 ))
             }
-            (
-                "dregg-effect-bridge-lock-v1",
-                Effect::BridgeLock {
-                    nullifier,
-                    destination,
-                    value,
-                    asset_type,
-                    timeout_height,
-                    ..
-                },
-            ) => {
-                let asset_type_commit = {
-                    let mut h = blake3::Hasher::new();
-                    h.update(b"dregg-asset-type-commit/v1");
-                    h.update(&asset_type.to_le_bytes());
-                    *h.finalize().as_bytes()
-                };
-                // BridgeLock variant doesn't carry a value_commitment;
-                // use ZERO sentinel. (Future: when the runtime variant
-                // is extended with an optional Pedersen value
-                // commitment, plumb it here.)
-                Some((
-                    vec![*nullifier, *destination, asset_type_commit, [0u8; 32]],
-                    vec![*value, *asset_type, *timeout_height],
-                ))
-            }
-            ("dregg-effect-bridge-finalize-v1", Effect::BridgeFinalize { nullifier, receipt }) => {
-                let receipt_hash = {
-                    let bytes = postcard::to_allocvec(receipt).unwrap_or_default();
-                    *blake3::hash(&bytes).as_bytes()
-                };
-                Some((vec![*nullifier, receipt_hash], vec![]))
-            }
-            ("dregg-effect-bridge-cancel-v1", Effect::BridgeCancel { nullifier }) => {
-                Some((vec![*nullifier], vec![]))
-            }
+            
+            
+            
             ("dregg-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
                 Some((vec![*child.as_bytes()], vec![]))
             }
@@ -1280,18 +1237,18 @@ impl TurnExecutor {
     pub(super) fn extract_named_field_32b(effect: &Effect, name: &str) -> Option<[u8; 32]> {
         match (name, effect) {
             ("nullifier", Effect::NoteSpend { nullifier, .. }) => Some(nullifier.0),
-            ("nullifier", Effect::BridgeLock { nullifier, .. }) => Some(*nullifier),
-            ("nullifier", Effect::BridgeFinalize { nullifier, .. }) => Some(*nullifier),
-            ("nullifier", Effect::BridgeCancel { nullifier }) => Some(*nullifier),
+            
+            
+            
             ("nullifier", Effect::BridgeMint { portable_proof }) => Some(portable_proof.nullifier),
             ("note_commitment" | "commitment", Effect::NoteCreate { commitment, .. }) => {
                 Some(commitment.0)
             }
             ("note_tree_root", Effect::NoteSpend { note_tree_root, .. }) => Some(*note_tree_root),
-            ("destination", Effect::BridgeLock { destination, .. }) => Some(*destination),
-            ("escrow_id", Effect::CreateEscrow { escrow_id, .. }) => Some(*escrow_id),
-            ("escrow_id", Effect::ReleaseEscrow { escrow_id, .. }) => Some(*escrow_id),
-            ("escrow_id", Effect::RefundEscrow { escrow_id, .. }) => Some(*escrow_id),
+            
+            
+            
+            
             _ => None,
         }
     }
@@ -2117,18 +2074,8 @@ impl TurnExecutor {
                     // Stage 3 honest projections: AIR enforces balance changes
                     // for these variants, so they must contribute to net_delta
                     // for the PI-to-trace consistency constraint to hold.
-                    Effect::CreateEscrow { cell, amount, .. } => {
-                        if cell == cell_id {
-                            *net -= *amount as i64;
-                        }
-                    }
-                    Effect::BridgeLock { value, .. } => {
-                        // BridgeLock is always emitted by the actor cell, so
-                        // it always debits the actor's balance. (Unlike
-                        // Transfer, there's no separate `from` field — the
-                        // turn's agent is the locker.)
-                        *net -= *value as i64;
-                    }
+                    
+                    
                     Effect::BridgeMint { portable_proof } => {
                         // BridgeMint credits the actor's balance with the
                         // portable proof's declared value.

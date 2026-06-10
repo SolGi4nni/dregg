@@ -693,7 +693,12 @@ pub mod error_codes {
 }
 
 /// The current protocol version.
-pub const PROTOCOL_VERSION: u32 = 1;
+///
+/// v2 — THE VERB LOCKSTEP: the 25 factory-dissolved `Effect` variants (escrow ×6,
+/// obligation ×3, bridge lock/finalize/cancel ×3, queue ×6, caps-in-slots ×7) were
+/// DELETED from the enum, which shifts the postcard variant tags of every later
+/// surviving variant — a v1 peer's encoded turns do not decode as v2 and vice versa.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Maximum age (in seconds) for a request timestamp to be considered fresh.
 /// Requests older than this are rejected as stale (anti-replay).

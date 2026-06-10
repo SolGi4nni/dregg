@@ -5236,42 +5236,11 @@ impl AgentCipherclerk {
                         value: *value,
                     });
                 }
-                Effect::CreateObligation {
-                    stake_amount,
-                    beneficiary,
-                    ..
-                } => {
-                    let obligation_id_hash = blake3::hash(b"obligation");
-                    vm_effects.push(VmEffect::CreateObligation {
-                        stake_amount: *stake_amount,
-                        obligation_id: hash_to_bb(obligation_id_hash.as_bytes()),
-                        beneficiary_hash: hash_to_bb(&beneficiary.0),
-                    });
-                }
-                Effect::FulfillObligation { obligation_id, .. } => {
-                    vm_effects.push(VmEffect::FulfillObligation {
-                        obligation_id: hash_to_bb(obligation_id),
-                        stake_return: 0, // The actual return amount is computed by the executor
-                    });
-                }
-                Effect::SlashObligation { obligation_id } => {
-                    vm_effects.push(VmEffect::SlashObligation {
-                        obligation_id: hash_to_bb(obligation_id),
-                        stake_amount: 0, // Resolved by executor from obligation state
-                        beneficiary_hash: BabyBear::ZERO,
-                    });
-                }
-                Effect::Seal { pair_id, .. } => {
-                    // Map seal pair_id to a field index (first byte mod 8).
-                    let field_idx = (pair_id[0] % 8) as u32;
-                    vm_effects.push(VmEffect::Seal { field_idx });
-                }
-                Effect::Unseal { sealed_box, .. } => {
-                    // Derive field index and brand from the sealed box.
-                    let field_idx = (sealed_box.pair_id[0] % 8) as u32;
-                    let brand = hash_to_bb(&sealed_box.pair_id);
-                    vm_effects.push(VmEffect::Unseal { field_idx, brand });
-                }
+                
+                
+                
+                
+                
                 Effect::MakeSovereign { cell } if cell == cell_id => {
                     vm_effects.push(VmEffect::MakeSovereign);
                 }
@@ -5476,18 +5445,7 @@ impl AgentCipherclerk {
                 }
 
                 // -- Sealing / sovereign / factory (already handled above except CreateSealPair)
-                Effect::CreateSealPair {
-                    sealer_holder,
-                    unsealer_holder,
-                } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(sealer_holder.as_bytes());
-                    hasher.update(unsealer_holder.as_bytes());
-                    let pair_hash_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::CreateSealPair {
-                        pair_hash: hash_to_8(pair_hash_bytes.as_bytes()),
-                    });
-                }
+                
 
                 // -- Delegation -------------------------------------------------
                 Effect::SpawnWithDelegation {
@@ -5531,40 +5489,9 @@ impl AgentCipherclerk {
                         value_full: portable_proof.value,
                     });
                 }
-                Effect::BridgeLock {
-                    nullifier,
-                    destination,
-                    value,
-                    asset_type,
-                    ..
-                } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(nullifier);
-                    hasher.update(destination);
-                    hasher.update(&asset_type.to_le_bytes());
-                    let lock_hash_bytes = hasher.finalize();
-                    let value_lo = BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
-                    vm_effects.push(VmEffect::BridgeLock {
-                        value_lo,
-                        lock_hash: hash_to_bb(lock_hash_bytes.as_bytes()),
-                        value_full: *value,
-                    });
-                }
-                Effect::BridgeFinalize { nullifier, receipt } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(nullifier);
-                    let receipt_bytes = postcard::to_allocvec(receipt).unwrap_or_default();
-                    hasher.update(&receipt_bytes);
-                    let finalize_hash_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::BridgeFinalize {
-                        finalize_hash: hash_to_8(finalize_hash_bytes.as_bytes()),
-                    });
-                }
-                Effect::BridgeCancel { nullifier } => {
-                    vm_effects.push(VmEffect::BridgeCancel {
-                        nullifier_hash: hash_to_8(nullifier),
-                    });
-                }
+                
+                
+                
 
                 // -- Introduce / pipelined send ---------------------------------
                 Effect::Introduce {
@@ -5606,76 +5533,12 @@ impl AgentCipherclerk {
                 }
 
                 // -- Escrow (CRITICAL: locked value) ----------------------------
-                Effect::CreateEscrow {
-                    cell,
-                    recipient,
-                    amount,
-                    condition,
-                    ..
-                } if cell == cell_id => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(recipient.as_bytes());
-                    let cond_bytes = postcard::to_allocvec(condition).unwrap_or_default();
-                    hasher.update(&cond_bytes);
-                    let escrow_hash_bytes = hasher.finalize();
-                    let amount_lo = BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
-                    vm_effects.push(VmEffect::CreateEscrow {
-                        amount_lo,
-                        escrow_hash: hash_to_bb(escrow_hash_bytes.as_bytes()),
-                        amount_full: *amount,
-                    });
-                }
-                Effect::ReleaseEscrow { escrow_id, .. } => {
-                    vm_effects.push(VmEffect::ReleaseEscrow {
-                        escrow_id_hash: hash_to_8(escrow_id),
-                    });
-                }
-                Effect::RefundEscrow { escrow_id, .. } => {
-                    vm_effects.push(VmEffect::RefundEscrow {
-                        escrow_id_hash: hash_to_8(escrow_id),
-                    });
-                }
-                Effect::CreateCommittedEscrow {
-                    creator_commitment,
-                    recipient_commitment,
-                    value_commitment,
-                    condition_commitment,
-                    ..
-                } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(creator_commitment);
-                    hasher.update(recipient_commitment);
-                    hasher.update(&value_commitment.0);
-                    hasher.update(condition_commitment);
-                    let commit_hash_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::CreateCommittedEscrow {
-                        commit_hash: hash_to_8(commit_hash_bytes.as_bytes()),
-                    });
-                }
-                Effect::ReleaseCommittedEscrow {
-                    escrow_id,
-                    recipient,
-                    ..
-                } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(escrow_id);
-                    hasher.update(recipient.as_bytes());
-                    let commit_hash_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::ReleaseCommittedEscrow {
-                        commit_hash: hash_to_8(commit_hash_bytes.as_bytes()),
-                    });
-                }
-                Effect::RefundCommittedEscrow {
-                    escrow_id, creator, ..
-                } => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(escrow_id);
-                    hasher.update(creator.as_bytes());
-                    let commit_hash_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::RefundCommittedEscrow {
-                        commit_hash: hash_to_8(commit_hash_bytes.as_bytes()),
-                    });
-                }
+                
+                
+                
+                
+                
+                
 
                 // -- ExerciseViaCapability -------------------------------------
                 Effect::ExerciseViaCapability {
@@ -5694,199 +5557,18 @@ impl AgentCipherclerk {
                 }
 
                 // -- Queue ops -------------------------------------------------
-                Effect::QueueAllocate { capacity, .. } => {
-                    vm_effects.push(VmEffect::AllocateQueue {
-                        capacity: *capacity as u32,
-                        owner_quota_id: hash_to_bb(cell_id.as_bytes()),
-                        cost_per_slot: 1,
-                    });
-                }
-                Effect::QueueEnqueue {
-                    queue,
-                    message_hash,
-                    deposit,
-                } => {
-                    // Ledger not available in SDK function; use zero sentinel for
-                    // queue_len and program_vk. The bridge's ledger-sourced values
-                    // are the authoritative ones used at prove time by the executor.
-                    vm_effects.push(VmEffect::EnqueueMessage {
-                        message_hash: hash_to_bb(message_hash),
-                        deposit_amount: *deposit as u32,
-                        sender_id: hash_to_bb(cell_id.as_bytes()),
-                        queue_len: 0,
-                        program_vk: BabyBear::ZERO,
-                    });
-                    let _ = queue;
-                }
-                Effect::QueueDequeue { queue } => {
-                    // Sentinel head hash tagged with queue identity so two
-                    // dequeues on different queues produce distinct projections.
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(b"DREGG_DEQUEUE_HEAD/v1");
-                    hasher.update(queue.as_bytes());
-                    // queue_len unknown without ledger; use 0.
-                    hasher.update(&0u64.to_le_bytes());
-                    let head_bytes = hasher.finalize();
-                    vm_effects.push(VmEffect::DequeueMessage {
-                        expected_message_hash: hash_to_bb(head_bytes.as_bytes()),
-                        deposit_refund: 0,
-                    });
-                }
-                Effect::QueueResize {
-                    queue,
-                    new_capacity,
-                } => {
-                    // old_capacity unknown without ledger; use 0.
-                    vm_effects.push(VmEffect::ResizeQueue {
-                        new_capacity: *new_capacity as u32,
-                        queue_id: hash_to_bb(queue.as_bytes()),
-                        cost_per_slot: 1,
-                        old_capacity: 0,
-                    });
-                }
-                Effect::QueueAtomicTx { operations } => {
-                    let mut net_deposit: u64 = 0;
-                    for op in operations {
-                        match op {
-                            dregg_turn::QueueTxOp::Enqueue { deposit, .. } => {
-                                net_deposit += deposit;
-                            }
-                            dregg_turn::QueueTxOp::Dequeue { .. } => {}
-                        }
-                    }
-                    let op_count = operations.len() as u32;
-                    let tx_hash_input: Vec<u8> = operations
-                        .iter()
-                        .flat_map(|op| match op {
-                            dregg_turn::QueueTxOp::Enqueue { message_hash, .. } => {
-                                message_hash.to_vec()
-                            }
-                            dregg_turn::QueueTxOp::Dequeue { queue } => queue.as_bytes().to_vec(),
-                        })
-                        .collect();
-                    let tx_hash_bytes = blake3::hash(&tx_hash_input);
-                    let tx_hash = hash_to_bb(tx_hash_bytes.as_bytes());
-                    // combined_old_root unknown without ledger; use cell_id sentinel.
-                    let combined_old_root = hash_to_bb(cell_id.as_bytes());
-                    let combined_new_root =
-                        dregg_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
-                    vm_effects.push(VmEffect::AtomicQueueTx {
-                        op_count,
-                        tx_hash,
-                        combined_old_root,
-                        combined_new_root,
-                        net_deposit: net_deposit as u32,
-                    });
-                }
-                Effect::QueuePipelineStep {
-                    pipeline_id,
-                    source,
-                    sinks,
-                } => {
-                    let pipeline_bb = hash_to_bb(pipeline_id);
-                    let source_root = hash_to_bb(source.as_bytes());
-                    let msg_hash = hash_to_bb(pipeline_id);
-                    let source_new = dregg_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
-                    let sink_root = if let Some(sink) = sinks.first() {
-                        hash_to_bb(sink.as_bytes())
-                    } else {
-                        BabyBear::ZERO
-                    };
-                    let sink_new = dregg_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
-                    vm_effects.push(VmEffect::PipelineStep {
-                        pipeline_id: pipeline_bb,
-                        source_old_root: source_root,
-                        source_new_root: source_new,
-                        sink_new_root: sink_new,
-                        message_hash: msg_hash,
-                    });
-                }
+                
+                
+                
+                
+                
+                
 
                 // -- CapTP runtime effects (CRITICAL: cap authority) -----------
-                Effect::ExportSturdyRef {
-                    swiss_number,
-                    target,
-                    permissions,
-                } => {
-                    // Without Ledger we cannot read the export_counter from
-                    // target.state.fields[7]. Use sentinel 0 (same as the
-                    // bridge when the cell is missing from the ledger).
-                    let cell_id_bb = hash_to_bb(target.as_bytes());
-                    let random_seed_bb = hash_to_bb(swiss_number);
-                    let permissions_bb = match permissions {
-                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
-                            let mut h = blake3::Hasher::new();
-                            h.update(&[5u8]);
-                            h.update(vk_hash);
-                            hash_to_bb(h.finalize().as_bytes())
-                        }
-                    };
-                    vm_effects.push(VmEffect::ExportSturdyRef {
-                        cell_id: cell_id_bb,
-                        permissions: permissions_bb,
-                        random_seed: random_seed_bb,
-                        export_counter: 0, // Sentinel; live value sourced from Ledger at executor prove time.
-                    });
-                }
-                Effect::EnlivenRef {
-                    swiss_number,
-                    bearer,
-                    expected_cell_id,
-                    expected_permissions,
-                } => {
-                    let swiss_bb = hash_to_bb(swiss_number);
-                    let presenter_bb = hash_to_bb(bearer.as_bytes());
-                    let expected_cell_id_bb = hash_to_bb(expected_cell_id.as_bytes());
-                    let permissions_bb = match expected_permissions {
-                        dregg_cell::permissions::AuthRequired::None => BabyBear::new(0),
-                        dregg_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
-                        dregg_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
-                        dregg_cell::permissions::AuthRequired::Either => BabyBear::new(3),
-                        dregg_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
-                        dregg_cell::permissions::AuthRequired::Custom { vk_hash } => {
-                            let mut h = blake3::Hasher::new();
-                            h.update(&[5u8]);
-                            h.update(vk_hash);
-                            hash_to_bb(h.finalize().as_bytes())
-                        }
-                    };
-                    vm_effects.push(VmEffect::EnlivenRef {
-                        swiss_number: swiss_bb,
-                        presenter_id: presenter_bb,
-                        expected_cell_id: expected_cell_id_bb,
-                        expected_permissions: permissions_bb,
-                    });
-                }
-                Effect::DropRef { ref_id } => {
-                    // current_refcount unknown without Ledger; use 0 sentinel.
-                    let cell_id_bb = hash_to_bb(cell_id.as_bytes());
-                    let ref_id_bb = hash_to_bb(ref_id);
-                    vm_effects.push(VmEffect::DropRef {
-                        cell_id: cell_id_bb,
-                        holder_federation: ref_id_bb,
-                        current_refcount: 0,
-                    });
-                }
-                Effect::ValidateHandoff {
-                    cert_hash,
-                    recipient_pk,
-                    introducer_pk,
-                } => {
-                    let cert_bb = hash_to_bb(cert_hash);
-                    let recipient_pk_bb = hash_to_bb(recipient_pk);
-                    let introducer_pk_bb = hash_to_bb(introducer_pk);
-                    vm_effects.push(VmEffect::ValidateHandoff {
-                        certificate_hash: cert_bb,
-                        recipient_pk: recipient_pk_bb,
-                        introducer_pk: introducer_pk_bb,
-                        approved_set_root: BabyBear::ZERO,
-                    });
-                }
+                
+                
+                
+                
 
                 // -- Refusal (evidence-of-absence) ----------------------------
                 Effect::Refusal {
@@ -6694,146 +6376,6 @@ impl AgentCipherclerk {
             .ok_or(SdkError::CapTpNotConfigured)
     }
 
-    // =========================================================================
-    // Queue Operations
-    // =========================================================================
-
-    /// Allocate a new queue with specified capacity.
-    ///
-    /// Creates a turn containing a `QueueAllocate` effect. The new queue is
-    /// represented as a cell with queue metadata in its state fields. The cost
-    /// is `capacity * cost_per_slot` computrons from the agent's balance.
-    ///
-    /// # Arguments
-    ///
-    /// * `capacity` - Maximum number of entries the queue can hold.
-    /// * `program_vk` - Optional program verification key hash (for programmable queues).
-    /// * `federation_id` - Federation binding for the canonical signing message.
-    ///   The signed action is rejected by any executor running under a different
-    ///   federation_id; see `dregg_turn::executor::TurnExecutor::compute_signing_message`.
-    ///
-    /// # Returns
-    ///
-    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
-    /// for submission, or an error.
-    pub fn allocate_queue(
-        &self,
-        capacity: u64,
-        program_vk: Option<[u8; 32]>,
-        federation_id: &[u8; 32],
-    ) -> Result<Turn, SdkError> {
-        let effect = Effect::QueueAllocate {
-            capacity,
-            program_vk,
-        };
-        let action = self.make_action(
-            self.cell_id("default"),
-            "queue_allocate",
-            vec![effect],
-            federation_id,
-        );
-        Ok(self.make_turn(action))
-    }
-
-    /// Enqueue a message to a queue.
-    ///
-    /// The sender pays a deposit (anti-spam, refundable on dequeue). The message
-    /// content is delivered out-of-band; only the content hash is stored on-chain.
-    ///
-    /// # Arguments
-    ///
-    /// * `queue` - The CellId of the target queue.
-    /// * `message_hash` - BLAKE3 hash of the message content.
-    /// * `deposit` - Deposit amount in computrons (anti-spam bond).
-    /// * `federation_id` - Federation binding for the canonical signing message.
-    ///
-    /// # Returns
-    ///
-    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
-    /// for submission, or an error.
-    pub fn enqueue_message(
-        &self,
-        queue: CellId,
-        message_hash: [u8; 32],
-        deposit: u64,
-        federation_id: &[u8; 32],
-    ) -> Result<Turn, SdkError> {
-        let effect = Effect::QueueEnqueue {
-            queue,
-            message_hash,
-            deposit,
-        };
-        let action = self.make_action(
-            self.cell_id("default"),
-            "queue_enqueue",
-            vec![effect],
-            federation_id,
-        );
-        Ok(self.make_turn(action))
-    }
-
-    /// Dequeue the next message from a queue (FIFO consumption).
-    ///
-    /// Only the queue owner can dequeue. The deposit from the dequeued message
-    /// is refunded to the original sender.
-    ///
-    /// # Arguments
-    ///
-    /// * `queue` - The CellId of the queue to dequeue from.
-    /// * `federation_id` - Federation binding for the canonical signing message.
-    ///
-    /// # Returns
-    ///
-    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
-    /// for submission, or an error.
-    pub fn dequeue_message(
-        &self,
-        queue: CellId,
-        federation_id: &[u8; 32],
-    ) -> Result<Turn, SdkError> {
-        let effect = Effect::QueueDequeue { queue };
-        let action = self.make_action(
-            self.cell_id("default"),
-            "queue_dequeue",
-            vec![effect],
-            federation_id,
-        );
-        Ok(self.make_turn(action))
-    }
-
-    /// Execute an atomic cross-queue transaction.
-    ///
-    /// All operations in the transaction succeed or all are rolled back. This
-    /// enables patterns like "dequeue from A, enqueue to B" atomically.
-    ///
-    /// # Arguments
-    ///
-    /// * `operations` - The queue operations to perform atomically.
-    /// * `federation_id` - Federation binding for the canonical signing message.
-    ///
-    /// # Returns
-    ///
-    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready
-    /// for submission, or an error.
-    pub fn atomic_queue_tx(
-        &self,
-        operations: Vec<dregg_turn::QueueTxOp>,
-        federation_id: &[u8; 32],
-    ) -> Result<Turn, SdkError> {
-        if operations.is_empty() {
-            return Err(SdkError::InvalidWitness(
-                "atomic queue transaction must have at least one operation".into(),
-            ));
-        }
-        let effect = Effect::QueueAtomicTx { operations };
-        let action = self.make_action(
-            self.cell_id("default"),
-            "queue_atomic_tx",
-            vec![effect],
-            federation_id,
-        );
-        Ok(self.make_turn(action))
-    }
 }
 
 /// Encode bytes to hex string (used by federation registration methods).
@@ -8575,107 +8117,7 @@ mod tests {
     fn root_action(turn: &Turn) -> &dregg_turn::action::Action {
         &turn.call_forest.roots[0].action
     }
-
-    #[test]
-    fn allocate_queue_produces_real_signature() {
-        let cclerk = AgentCipherclerk::new();
-        let fed = [7u8; 32];
-        let turn = cclerk.allocate_queue(8, None, &fed).unwrap();
-        assert_real_signature(root_action(&turn));
-        assert_eq!(turn.agent, cclerk.cell_id("default"));
-    }
-
-    #[test]
-    fn allocate_queue_with_program_vk_produces_real_signature() {
-        let cclerk = AgentCipherclerk::new();
-        let fed = [3u8; 32];
-        let vk = [42u8; 32];
-        let turn = cclerk.allocate_queue(4, Some(vk), &fed).unwrap();
-        let action = root_action(&turn);
-        assert_real_signature(action);
-        match &action.effects[0] {
-            Effect::QueueAllocate {
-                capacity,
-                program_vk,
-            } => {
-                assert_eq!(*capacity, 4);
-                assert_eq!(*program_vk, Some(vk));
-            }
-            other => panic!("expected QueueAllocate effect, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn enqueue_message_produces_real_signature() {
-        let cclerk = AgentCipherclerk::new();
-        let fed = [1u8; 32];
-        let queue = cclerk.cell_id("queue-target");
-        let msg_hash = [0xAB; 32];
-        let turn = cclerk.enqueue_message(queue, msg_hash, 100, &fed).unwrap();
-        let action = root_action(&turn);
-        assert_real_signature(action);
-        match &action.effects[0] {
-            Effect::QueueEnqueue {
-                queue: q,
-                message_hash,
-                deposit,
-            } => {
-                assert_eq!(*q, queue);
-                assert_eq!(*message_hash, msg_hash);
-                assert_eq!(*deposit, 100);
-            }
-            other => panic!("expected QueueEnqueue effect, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn dequeue_message_produces_real_signature() {
-        let cclerk = AgentCipherclerk::new();
-        let fed = [9u8; 32];
-        let queue = cclerk.cell_id("queue-target");
-        let turn = cclerk.dequeue_message(queue, &fed).unwrap();
-        let action = root_action(&turn);
-        assert_real_signature(action);
-        match &action.effects[0] {
-            Effect::QueueDequeue { queue: q } => assert_eq!(*q, queue),
-            other => panic!("expected QueueDequeue effect, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn atomic_queue_tx_produces_real_signature() {
-        use dregg_turn::QueueTxOp;
-        let cclerk = AgentCipherclerk::new();
-        let fed = [5u8; 32];
-        let q1 = cclerk.cell_id("q1");
-        let q2 = cclerk.cell_id("q2");
-        let ops = vec![
-            QueueTxOp::Dequeue { queue: q1 },
-            QueueTxOp::Enqueue {
-                queue: q2,
-                message_hash: [0xCD; 32],
-                deposit: 50,
-            },
-        ];
-        let turn = cclerk.atomic_queue_tx(ops, &fed).unwrap();
-        let action = root_action(&turn);
-        assert_real_signature(action);
-        match &action.effects[0] {
-            Effect::QueueAtomicTx { operations } => assert_eq!(operations.len(), 2),
-            other => panic!("expected QueueAtomicTx effect, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn atomic_queue_tx_rejects_empty_operations() {
-        let cclerk = AgentCipherclerk::new();
-        let fed = [5u8; 32];
-        let result = cclerk.atomic_queue_tx(vec![], &fed);
-        assert!(
-            result.is_err(),
-            "atomic_queue_tx with no operations must error"
-        );
-    }
+    
 
     /// Signatures should bind to the federation_id: signing the same
     /// queue allocation under two different federations must produce

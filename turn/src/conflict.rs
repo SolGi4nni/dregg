@@ -233,13 +233,7 @@ fn extract_tree_access(
             Effect::EmitEvent { cell, .. } => {
                 read_set.push(*cell);
             }
-            Effect::CreateSealPair {
-                sealer_holder,
-                unsealer_holder,
-            } => {
-                write_set.push(*sealer_holder);
-                write_set.push(*unsealer_holder);
-            }
+            
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 // Inner effects also access cells.
                 for inner in inner_effects {

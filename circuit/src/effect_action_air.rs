@@ -548,36 +548,6 @@ pub const SCHEMA_INTRODUCE: EffectActionSchema = EffectActionSchema {
     algebraic: AlgebraicConstraint::None,
 };
 
-/// Schema for `CreateSealPair` binding:
-/// fields = [sealer_holder (32B), unsealer_holder (32B)]
-/// amounts = []
-pub const SCHEMA_CREATE_SEAL_PAIR: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-create-seal-pair-v1",
-    field_count: 2,
-    amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `BridgeFinalize` binding:
-/// fields = [nullifier (32B), receipt_hash (32B = BLAKE3 of postcard(receipt))]
-/// amounts = []
-pub const SCHEMA_BRIDGE_FINALIZE: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-bridge-finalize-v1",
-    field_count: 2,
-    amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `BridgeCancel` binding:
-/// fields = [nullifier (32B)]
-/// amounts = []
-pub const SCHEMA_BRIDGE_CANCEL: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-bridge-cancel-v1",
-    field_count: 1,
-    amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
 /// Schema for `RevokeDelegation` binding:
 /// fields = [child (32B)]
 /// amounts = []
@@ -598,31 +568,6 @@ pub const SCHEMA_SPAWN_WITH_DELEGATION: EffectActionSchema = EffectActionSchema 
     algebraic: AlgebraicConstraint::None,
 };
 
-/// Schema for `ReleaseEscrow` / `RefundEscrow` binding (both share shape):
-/// fields = [escrow_id (32B), proof_hash (32B = BLAKE3 of optional proof; ZERO if None)]
-/// amounts = []
-///
-/// `RefundEscrow` uses the same schema with `proof_hash = ZERO` because the
-/// refund variant doesn't carry a proof. The discriminator between release
-/// and refund lives in the AIR kind_name domain separator — distinct kind
-/// names mean a release proof cannot replay as a refund proof.
-pub const SCHEMA_RELEASE_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-release-escrow-v1",
-    field_count: 2,
-    amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `RefundEscrow` binding:
-/// fields = [escrow_id (32B)]
-/// amounts = []
-pub const SCHEMA_REFUND_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-refund-escrow-v1",
-    field_count: 1,
-    amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
 /// Schema for `ExerciseViaCapability` binding:
 /// fields = [inner_effects_hash (32B = BLAKE3 of inner_effects[*].hash() chain)]
 /// amounts = [cap_slot (u32 → u64), inner_effects_len (u64)]
@@ -634,26 +579,6 @@ pub const SCHEMA_REFUND_ESCROW: EffectActionSchema = EffectActionSchema {
 pub const SCHEMA_EXERCISE_VIA_CAPABILITY: EffectActionSchema = EffectActionSchema {
     kind_name: "dregg-effect-exercise-via-capability-v1",
     field_count: 1,
-    amount_count: 2,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `CreateObligation` binding:
-/// fields = [beneficiary (32B), condition_hash (32B), stake_commitment (32B)]
-/// amounts = [deadline_height (u64), stake_amount (u64)]
-pub const SCHEMA_CREATE_OBLIGATION: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-create-obligation-v1",
-    field_count: 3,
-    amount_count: 2,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `CreateEscrow` binding (full-fidelity sibling to VmEffect):
-/// fields = [recipient (32B), condition_hash (32B), escrow_id (32B)]
-/// amounts = [amount (u64), timeout_height (u64)]
-pub const SCHEMA_CREATE_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-create-escrow-v1",
-    field_count: 3,
     amount_count: 2,
     algebraic: AlgebraicConstraint::None,
 };
@@ -676,26 +601,6 @@ pub const SCHEMA_CREATE_CELL_FROM_FACTORY: EffectActionSchema = EffectActionSche
     kind_name: "dregg-effect-create-cell-from-factory-v1",
     field_count: 4,
     amount_count: 0,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `CreateCommittedEscrow` binding:
-/// fields = [creator_commitment (32B), recipient_commitment (32B),
-///           value_commitment (32B), condition_commitment (32B),
-///           escrow_id (32B), range_proof_hash (32B)]
-/// amounts = [amount (u64; cleartext amount deducted from creator balance),
-///            timeout_height (u64)]
-///
-/// The amount field carries the cleartext value that the executor will
-/// deduct from the creator's balance. The value_commitment + range_proof
-/// hide it cryptographically, but the proof-to-action binding must commit
-/// to which balance change happens, so we bind the cleartext amount here
-/// (the executor verifies the commitment+range_proof match the amount
-/// off-AIR).
-pub const SCHEMA_CREATE_COMMITTED_ESCROW: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-create-committed-escrow-v1",
-    field_count: 6,
-    amount_count: 2,
     algebraic: AlgebraicConstraint::None,
 };
 
@@ -757,29 +662,6 @@ pub const SCHEMA_NOTE_CREATE: EffectActionSchema = EffectActionSchema {
     kind_name: "dregg-effect-note-create-v1",
     field_count: 4,
     amount_count: 2,
-    algebraic: AlgebraicConstraint::None,
-};
-
-/// Schema for `BridgeLock` binding (sibling to `bridge_action_air`,
-/// which covers BridgeMint):
-///
-/// fields = [nullifier (32B), destination_federation (32B),
-///           asset_type_commitment (32B),
-///           value_commitment (32B; ZERO when none)]
-/// amounts = [value (u64), asset_type (u64), timeout_height (u64)]
-///
-/// `bridge_action_air` is the canonical full-fidelity binding for
-/// `Effect::BridgeMint` (nullifier + recipient + destination_federation +
-/// amount). This schema closes the symmetric gap for `Effect::BridgeLock`:
-/// the runtime variant carries `nullifier`, `destination`, `value`,
-/// `asset_type`, and `timeout_height`, and prior to this schema only
-/// `(nullifier, destination, asset_type)` were folded into a 4-byte
-/// `lock_hash`, with `timeout_height` and the `value_commitment`
-/// unbound. Now every parameter is pinned at full fidelity.
-pub const SCHEMA_BRIDGE_LOCK: EffectActionSchema = EffectActionSchema {
-    kind_name: "dregg-effect-bridge-lock-v1",
-    field_count: 4,
-    amount_count: 3,
     algebraic: AlgebraicConstraint::None,
 };
 
@@ -878,7 +760,6 @@ mod tests {
         assert_eq!(SCHEMA_SET_PERMISSIONS.width(), 16);
         assert_eq!(SCHEMA_SET_VERIFICATION_KEY.width(), 16);
         assert_eq!(SCHEMA_INTRODUCE.width(), 32 + 2);
-        assert_eq!(SCHEMA_CREATE_SEAL_PAIR.width(), 16);
     }
 
     #[test]
@@ -1188,24 +1069,7 @@ mod tests {
         );
         assert!(r.is_err(), "tampered perm_disc must be rejected");
     }
-
-    #[test]
-    fn create_seal_pair_roundtrip_and_swap_rejected() {
-        let sealer = [0x40u8; 32];
-        let unsealer = [0x50u8; 32];
-        let r = roundtrip(SCHEMA_CREATE_SEAL_PAIR, vec![sealer, unsealer], vec![]);
-        assert!(r.is_ok());
-
-        // Swap rejected.
-        let w = EffectActionWitness {
-            schema: SCHEMA_CREATE_SEAL_PAIR,
-            fields: vec![sealer, unsealer],
-            amounts: vec![],
-        };
-        let proof = prove_effect_action(&w);
-        let r = verify_effect_action(SCHEMA_CREATE_SEAL_PAIR, &[unsealer, sealer], &[], &proof);
-        assert!(r.is_err(), "swapped sealer/unsealer must be rejected");
-    }
+    
 
     #[test]
     fn cross_kind_proofs_do_not_verify_as_other_kinds() {
@@ -1257,43 +1121,7 @@ mod tests {
     }
 
     // ─── Additional per-Effect closures ──────────────────────────────────
-
-    #[test]
-    fn bridge_finalize_roundtrip_and_tamper_rejected() {
-        let null = [0x10u8; 32];
-        let receipt = [0x20u8; 32];
-        let r = roundtrip(SCHEMA_BRIDGE_FINALIZE, vec![null, receipt], vec![]);
-        assert!(r.is_ok());
-
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_FINALIZE,
-            fields: vec![null, receipt],
-            amounts: vec![],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong_receipt = receipt;
-        wrong_receipt[8] ^= 0x40;
-        let r = verify_effect_action(SCHEMA_BRIDGE_FINALIZE, &[null, wrong_receipt], &[], &proof);
-        assert!(r.is_err(), "tampered receipt must be rejected");
-    }
-
-    #[test]
-    fn bridge_cancel_roundtrip_and_tamper_rejected() {
-        let null = [0xA0u8; 32];
-        let r = roundtrip(SCHEMA_BRIDGE_CANCEL, vec![null], vec![]);
-        assert!(r.is_ok());
-
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_CANCEL,
-            fields: vec![null],
-            amounts: vec![],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = null;
-        wrong[31] ^= 0x01;
-        let r = verify_effect_action(SCHEMA_BRIDGE_CANCEL, &[wrong], &[], &proof);
-        assert!(r.is_err());
-    }
+    
 
     #[test]
     fn revoke_delegation_roundtrip_and_tamper_rejected() {
@@ -1339,62 +1167,7 @@ mod tests {
         );
         assert!(r.is_err(), "tampered max_staleness must be rejected");
     }
-
-    #[test]
-    fn release_escrow_roundtrip_and_proof_hash_tamper_rejected() {
-        let id = [0xAAu8; 32];
-        let phash = [0xBBu8; 32];
-        let r = roundtrip(SCHEMA_RELEASE_ESCROW, vec![id, phash], vec![]);
-        assert!(r.is_ok());
-
-        let w = EffectActionWitness {
-            schema: SCHEMA_RELEASE_ESCROW,
-            fields: vec![id, phash],
-            amounts: vec![],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = phash;
-        wrong[7] ^= 0x80;
-        let r = verify_effect_action(SCHEMA_RELEASE_ESCROW, &[id, wrong], &[], &proof);
-        assert!(r.is_err());
-    }
-
-    #[test]
-    fn release_refund_domain_separation() {
-        // Critical: a release proof must NOT verify as a refund proof.
-        let id = [0xAAu8; 32];
-        let phash = [0u8; 32];
-        let w_release = EffectActionWitness {
-            schema: SCHEMA_RELEASE_ESCROW,
-            fields: vec![id, phash],
-            amounts: vec![],
-        };
-        let proof_release = prove_effect_action(&w_release);
-        // Try to verify the release proof as a refund — schemas differ in
-        // field count (release=2, refund=1), so the count mismatch alone
-        // rejects. But even if a prover crafts a single-field witness, the
-        // kind_name domain separator rejects.
-        let r = verify_effect_action(SCHEMA_REFUND_ESCROW, &[id], &[], &proof_release);
-        assert!(r.is_err(), "release proof must not replay as refund");
-    }
-
-    #[test]
-    fn refund_escrow_roundtrip_and_id_tamper_rejected() {
-        let id = [0xCCu8; 32];
-        let r = roundtrip(SCHEMA_REFUND_ESCROW, vec![id], vec![]);
-        assert!(r.is_ok());
-
-        let w = EffectActionWitness {
-            schema: SCHEMA_REFUND_ESCROW,
-            fields: vec![id],
-            amounts: vec![],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = id;
-        wrong[1] ^= 0x10;
-        let r = verify_effect_action(SCHEMA_REFUND_ESCROW, &[wrong], &[], &proof);
-        assert!(r.is_err());
-    }
+    
 
     #[test]
     fn exercise_via_capability_inner_count_tamper_rejected() {
@@ -1419,96 +1192,7 @@ mod tests {
         );
         assert!(r.is_err(), "tampered inner_effects_len must be rejected");
     }
-
-    #[test]
-    fn create_obligation_full_fidelity() {
-        let beneficiary = [0xE0u8; 32];
-        let condition = [0xE1u8; 32];
-        let stake_commit = [0xE2u8; 32];
-        let deadline = 1_000_000u64;
-        let stake_amount = 1u64 << 40;
-        let r = roundtrip(
-            SCHEMA_CREATE_OBLIGATION,
-            vec![beneficiary, condition, stake_commit],
-            vec![deadline, stake_amount],
-        );
-        assert!(r.is_ok());
-
-        // Tamper deadline: prover supplied 1_000_000, verifier tries 999_999.
-        let w = EffectActionWitness {
-            schema: SCHEMA_CREATE_OBLIGATION,
-            fields: vec![beneficiary, condition, stake_commit],
-            amounts: vec![deadline, stake_amount],
-        };
-        let proof = prove_effect_action(&w);
-        let r = verify_effect_action(
-            SCHEMA_CREATE_OBLIGATION,
-            &[beneficiary, condition, stake_commit],
-            &[deadline - 1, stake_amount],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered deadline_height must be rejected");
-
-        // Tamper stake_amount via the 30-bit-trunc gambit.
-        let high_stake = (1u64 << 50) | 0xCAFE;
-        let w2 = EffectActionWitness {
-            schema: SCHEMA_CREATE_OBLIGATION,
-            fields: vec![beneficiary, condition, stake_commit],
-            amounts: vec![deadline, high_stake],
-        };
-        let proof2 = prove_effect_action(&w2);
-        let r = verify_effect_action(
-            SCHEMA_CREATE_OBLIGATION,
-            &[beneficiary, condition, stake_commit],
-            &[deadline, high_stake & ((1u64 << 30) - 1)],
-            &proof2,
-        );
-        assert!(
-            r.is_err(),
-            "30-bit-truncated stake_amount must not collide with high-bit stake"
-        );
-    }
-
-    #[test]
-    fn create_escrow_full_fidelity_with_timeout_and_id() {
-        let recipient = [0xF0u8; 32];
-        let condition = [0xF1u8; 32];
-        let escrow_id = [0xF2u8; 32];
-        let amount = (1u64 << 40) | 0xBEEF;
-        let timeout = 500_000u64;
-        let r = roundtrip(
-            SCHEMA_CREATE_ESCROW,
-            vec![recipient, condition, escrow_id],
-            vec![amount, timeout],
-        );
-        assert!(r.is_ok());
-
-        // Tamper escrow_id.
-        let w = EffectActionWitness {
-            schema: SCHEMA_CREATE_ESCROW,
-            fields: vec![recipient, condition, escrow_id],
-            amounts: vec![amount, timeout],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong_id = escrow_id;
-        wrong_id[0] ^= 0x01;
-        let r = verify_effect_action(
-            SCHEMA_CREATE_ESCROW,
-            &[recipient, condition, wrong_id],
-            &[amount, timeout],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered escrow_id must be rejected");
-
-        // Tamper timeout_height.
-        let r = verify_effect_action(
-            SCHEMA_CREATE_ESCROW,
-            &[recipient, condition, escrow_id],
-            &[amount, timeout + 1],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered timeout_height must be rejected");
-    }
+    
 
     #[test]
     fn pipelined_send_roundtrip_and_output_slot_tamper_rejected() {
@@ -1580,67 +1264,7 @@ mod tests {
         );
         assert!(r.is_err(), "tampered token_id must be rejected");
     }
-
-    #[test]
-    fn create_committed_escrow_binds_cleartext_amount() {
-        let creator_c = [0xB0u8; 32];
-        let recipient_c = [0xB1u8; 32];
-        let value_c = [0xB2u8; 32];
-        let condition_c = [0xB3u8; 32];
-        let escrow_id = [0xB4u8; 32];
-        let range_proof_h = [0xB5u8; 32];
-        let amount = (1u64 << 50) | 0xDEAD;
-        let timeout = 2_000_000u64;
-        let r = roundtrip(
-            SCHEMA_CREATE_COMMITTED_ESCROW,
-            vec![
-                creator_c,
-                recipient_c,
-                value_c,
-                condition_c,
-                escrow_id,
-                range_proof_h,
-            ],
-            vec![amount, timeout],
-        );
-        assert!(r.is_ok());
-
-        // Critical: the cleartext amount must be full-64-bit bound, not
-        // 30-bit truncated. This is the closure for the executor-side gap
-        // where `CreateCommittedEscrow` projects to `commit_hash` with no
-        // PI binding to the amount.
-        let w = EffectActionWitness {
-            schema: SCHEMA_CREATE_COMMITTED_ESCROW,
-            fields: vec![
-                creator_c,
-                recipient_c,
-                value_c,
-                condition_c,
-                escrow_id,
-                range_proof_h,
-            ],
-            amounts: vec![amount, timeout],
-        };
-        let proof = prove_effect_action(&w);
-        // Verifier with the 30-bit truncation must REJECT.
-        let r = verify_effect_action(
-            SCHEMA_CREATE_COMMITTED_ESCROW,
-            &[
-                creator_c,
-                recipient_c,
-                value_c,
-                condition_c,
-                escrow_id,
-                range_proof_h,
-            ],
-            &[amount & ((1u64 << 30) - 1), timeout],
-            &proof,
-        );
-        assert!(
-            r.is_err(),
-            "30-bit-truncated amount must not collide with high-bit amount"
-        );
-    }
+    
 
     // ─── NoteSpend / NoteCreate ─────────────────────────────────────────
     //
@@ -1922,262 +1546,7 @@ mod tests {
     }
 
     // ─── BridgeLock sibling AIR ─────────────────────────────────────────
-
-    #[test]
-    fn bridge_lock_full_fidelity_roundtrip() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let value: u64 = (1u64 << 45) | 0xCAFE_BABE;
-        let asset_type: u64 = 99;
-        let timeout_height: u64 = 1_000_000;
-        let r = roundtrip(
-            SCHEMA_BRIDGE_LOCK,
-            vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            vec![value, asset_type, timeout_height],
-        );
-        assert!(r.is_ok(), "honest bridge_lock binding must verify: {r:?}");
-    }
-
-    #[test]
-    fn bridge_lock_tamper_destination_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 1, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = destination_federation;
-        wrong[5] ^= 0x10;
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[nullifier, wrong, asset_type_commit, value_commit],
-            &[100, 1, 1000],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered destination must be rejected");
-    }
-
-    #[test]
-    fn bridge_lock_tamper_timeout_height_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let timeout = 1_000_000u64;
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 1, timeout],
-        };
-        let proof = prove_effect_action(&w);
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            &[100, 1, timeout + 1],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered timeout_height must be rejected");
-    }
-
-    #[test]
-    fn bridge_lock_tamper_nullifier_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 1, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = nullifier;
-        wrong[0] ^= 0xFF;
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[
-                wrong,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            &[100, 1, 1000],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered nullifier must be rejected");
-    }
-
-    #[test]
-    fn bridge_lock_tamper_asset_type_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 42, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        // Tamper asset_type amount (u64).
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            &[100, 43, 1000],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered asset_type must be rejected");
-        // Tamper asset_type_commit field.
-        let mut wrong = asset_type_commit;
-        wrong[20] ^= 0x80;
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[nullifier, destination_federation, wrong, value_commit],
-            &[100, 42, 1000],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered asset_type_commit must be rejected");
-    }
-
-    #[test]
-    fn bridge_lock_tamper_value_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let value: u64 = (1u64 << 50) | 0xDEAD;
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![value, 1, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        // 30-bit truncation must not collide.
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            &[value & ((1u64 << 30) - 1), 1, 1000],
-            &proof,
-        );
-        assert!(
-            r.is_err(),
-            "30-bit-truncated value must not collide with high-bit value"
-        );
-    }
-
-    #[test]
-    fn bridge_lock_tamper_value_commitment_rejected() {
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 1, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        let mut wrong = value_commit;
-        wrong[31] ^= 0x01;
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_LOCK,
-            &[nullifier, destination_federation, asset_type_commit, wrong],
-            &[100, 1, 1000],
-            &proof,
-        );
-        assert!(r.is_err(), "tampered value_commitment must be rejected");
-    }
-
-    #[test]
-    fn bridge_lock_domain_separated_from_bridge_finalize() {
-        // Distinct kind_name domain separator → a BridgeLock proof must
-        // not be replayable as any other bridge-side proof (different
-        // shape AND different kind_name).
-        let nullifier = [0x10u8; 32];
-        let destination_federation = [0x20u8; 32];
-        let asset_type_commit = [0x30u8; 32];
-        let value_commit = [0x40u8; 32];
-        let w = EffectActionWitness {
-            schema: SCHEMA_BRIDGE_LOCK,
-            fields: vec![
-                nullifier,
-                destination_federation,
-                asset_type_commit,
-                value_commit,
-            ],
-            amounts: vec![100, 1, 1000],
-        };
-        let proof = prove_effect_action(&w);
-        // BridgeFinalize has 2 fields, 0 amounts → shape mismatch first
-        // line of defence (count check). But even if a caller crafted a
-        // matching-shape SCHEMA, the kind_name domain separator rejects.
-        let r = verify_effect_action(
-            SCHEMA_BRIDGE_FINALIZE,
-            &[nullifier, destination_federation],
-            &[],
-            &proof,
-        );
-        assert!(
-            r.is_err(),
-            "BridgeLock proof must not verify as BridgeFinalize"
-        );
-    }
+    
 
     // ========================================================================
     // SCHEMA_BURN tests (AIR-SOUNDNESS-AUDIT.md #75)
@@ -2362,25 +1731,5 @@ mod tests {
         // would force old-99==901, but proof's row pins new_balance=900.
         let r = verify_effect_action(SCHEMA_BURN, &[target], &[1000, 900, 99, 1], &proof);
         assert!(r.is_err(), "tampered amount must be rejected");
-    }
-
-    #[test]
-    fn burn_domain_separation_from_other_schemas() {
-        // Distinct `kind_name` → a Burn proof cannot replay as a Transfer
-        // (or any other schema). Shape happens to overlap loosely with
-        // some 4-amount schemas, but the Fiat-Shamir domain separator
-        // rejects.
-        let target = [0xAAu8; 32];
-        let w = burn_witness(target, 1000, 900, 100, 1);
-        let proof = prove_effect_action(&w);
-        // Try to verify as SCHEMA_CREATE_OBLIGATION (3 fields, 2 amounts).
-        // Shape mismatch alone rejects, but kind_name backstops.
-        let r = verify_effect_action(
-            SCHEMA_CREATE_OBLIGATION,
-            &[target, [0u8; 32], [0u8; 32]],
-            &[100, 1],
-            &proof,
-        );
-        assert!(r.is_err(), "Burn proof must not replay as CreateObligation");
     }
 }

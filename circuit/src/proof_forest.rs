@@ -254,8 +254,6 @@ pub const CUTOVER_READY_SELECTORS: &[usize] = &[
     crate::effect_vm::columns::sel::NOTE_CREATE,
     crate::effect_vm::columns::sel::BRIDGE_MINT,
     crate::effect_vm::columns::sel::BURN,
-    crate::effect_vm::columns::sel::CREATE_SEAL_PAIR,
-    crate::effect_vm::columns::sel::BRIDGE_FINALIZE,
     crate::effect_vm::columns::sel::CELL_SEAL,
     crate::effect_vm::columns::sel::CELL_DESTROY,
     crate::effect_vm::columns::sel::REFUSAL,

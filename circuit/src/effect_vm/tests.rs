@@ -847,9 +847,6 @@ fn test_stage3_multi_variant_compose() {
             permissions_hash: w8(0xE2),
         },
         Effect::SetVerificationKey { vk_hash: w8(0xE3) },
-        Effect::CreateSealPair {
-            pair_hash: w8(0xE4),
-        },
         Effect::RefreshDelegation,
         Effect::RevokeDelegation {
             child_hash: w8(0xE5),
@@ -860,9 +857,6 @@ fn test_stage3_multi_variant_compose() {
         Effect::SpawnWithDelegation {
             spawn_hash: w8(0xE7),
         },
-        Effect::BridgeCancel {
-            nullifier_hash: w8(0xE8),
-        },
         Effect::ExerciseViaCapability {
             exercise_hash: w8(0xE9),
         },
@@ -872,35 +866,7 @@ fn test_stage3_multi_variant_compose() {
         Effect::PipelinedSend {
             send_hash: w8(0xEB),
         },
-        Effect::BridgeFinalize {
-            finalize_hash: w8(0xEC),
-        },
-        Effect::ReleaseEscrow {
-            escrow_id_hash: w8(0xED),
-        },
-        Effect::RefundEscrow {
-            escrow_id_hash: w8(0xEE),
-        },
-        Effect::CreateCommittedEscrow {
-            commit_hash: w8(0xEF),
-        },
-        Effect::ReleaseCommittedEscrow {
-            commit_hash: w8(0xF0),
-        },
-        Effect::RefundCommittedEscrow {
-            commit_hash: w8(0xF1),
-        },
         // Balance arithmetic:
-        Effect::CreateEscrow {
-            amount_lo: BabyBear::new(100),
-            escrow_hash: BabyBear::new(0xF2),
-            amount_full: 100,
-        },
-        Effect::BridgeLock {
-            value_lo: BabyBear::new(50),
-            lock_hash: BabyBear::new(0xF3),
-            value_full: 50,
-        },
         Effect::BridgeMint {
             value_lo: BabyBear::new(200),
             mint_hash: BabyBear::new(0xF4),
@@ -918,58 +884,17 @@ fn test_stage3_multi_variant_compose() {
         result.err()
     );
 
-    // Sanity: net delta should be -100 (CreateEscrow) - 50 (BridgeLock)
-    // + 200 (BridgeMint) = +50.
+    // Sanity: net delta should be +200 (BridgeMint; the escrow/lock debit
+    // variants died in the verb lockstep).
     let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(
-        delta, 50,
-        "net delta should be +50 (mint 200 - lock 50 - escrow 100)"
-    );
-}
-
-#[test]
-fn test_balance_debit_variants_verify() {
-    // CreateEscrow and BridgeLock both debit balance by amount_lo.
-    // Mirror NoteCreate's test pattern.
-    for effect in [
-        Effect::CreateEscrow {
-            amount_lo: BabyBear::new(100),
-            escrow_hash: BabyBear::new(0xE5C),
-            amount_full: 100,
-        },
-        Effect::BridgeLock {
-            value_lo: BabyBear::new(50),
-            lock_hash: BabyBear::new(0xB10),
-            value_full: 50,
-        },
-    ] {
-        let state = make_initial_state(1000);
-        let effects = vec![effect.clone()];
-        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-        let air = EffectVmAir::new(trace.len());
-        let proof = prove(&air, &trace, &public_inputs);
-        let result = verify(&air, &proof, &public_inputs);
-        assert!(
-            result.is_ok(),
-            "Balance-debit variant {:?} should verify: {:?}",
-            effect,
-            result.err()
-        );
-        // Verify balance actually decreased.
-        let old_bal = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
-        let new_bal = trace[0][STATE_AFTER_BASE + state::BALANCE_LO];
-        assert_ne!(old_bal, new_bal, "balance must decrease on debit variant");
-    }
+    assert_eq!(delta, 200, "net delta should be +200 (mint 200)");
 }
 
 #[test]
 fn test_passthrough_variants_verify() {
-    // CreateSealPair, RefreshDelegation, RevokeDelegation all share the
-    // EmitEvent passthrough shape. One round-trip each.
+    // RefreshDelegation / RevokeDelegation share the EmitEvent passthrough
+    // shape. One round-trip each.
     for effect in [
-        Effect::CreateSealPair {
-            pair_hash: w8(0x111),
-        },
         Effect::RefreshDelegation,
         Effect::RevokeDelegation {
             child_hash: w8(0x222),
@@ -1177,15 +1102,14 @@ fn test_constraint_evaluation_all_zeros_valid_trace() {
 // INTEGRATION TESTS: Real multi-effect turns through the full pipeline
 // ========================================================================
 
-/// Integration test: compose a realistic 4-effect turn (Transfer + SetField + GrantCap + CreateObligation),
+/// Integration test: compose a realistic 3-effect turn (Transfer + SetField + GrantCap),
 /// prove via STARK, verify, and confirm commitments match expected state transitions.
 #[test]
 fn test_integration_real_multi_effect_turn() {
     // Simulate a real sovereign cell with initial balance.
     let initial_state = CellState::new(50_000, 0);
 
-    // A realistic turn: transfer some funds, update a field, grant a capability,
-    // and lock a bond via CreateObligation.
+    // A realistic turn: transfer some funds, update a field, grant a capability.
     let effects = vec![
         Effect::Transfer {
             amount: 1000,
@@ -1198,11 +1122,6 @@ fn test_integration_real_multi_effect_turn() {
         Effect::GrantCapability {
             cap_entry: w8(0xCAFEBABE),
             phase_b: None,
-        },
-        Effect::CreateObligation {
-            stake_amount: 500,
-            obligation_id: BabyBear::new(0xDEAD01),
-            beneficiary_hash: BabyBear::new(0xBEEF01),
         },
     ];
 
@@ -1259,26 +1178,15 @@ fn test_integration_real_multi_effect_turn() {
     expected_state.nonce += 1;
     expected_state.refresh_commitment();
 
-    expected_state.balance -= 500; // CreateObligation locks stake
-    // Stage 2: CreateObligation advances cap_root with the
-    // obligation_id + beneficiary leaf.
-    {
-        let obligation_leaf = hash_2_to_1(BabyBear::new(0xDEAD01), BabyBear::new(0xBEEF01));
-        expected_state.capability_root =
-            hash_2_to_1(expected_state.capability_root, obligation_leaf);
-    }
-    expected_state.nonce += 1;
-    expected_state.refresh_commitment();
-
     assert_eq!(
         public_inputs[pi::NEW_COMMIT],
         expected_state.state_commitment,
         "Final commitment mismatch"
     );
 
-    // Verify net delta: -1000 (transfer) - 500 (obligation) = -1500
+    // Verify net delta: -1000 (transfer).
     let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, -1500);
+    assert_eq!(delta, -1000);
 
     // Verify effects hash covers ALL effects (Stage 1: 4-felt form).
     let expected_4 = compute_effects_hash_4(&effects);
@@ -1292,58 +1200,6 @@ fn test_integration_real_multi_effect_turn() {
     }
 }
 
-/// Integration test: obligation lifecycle (Create + Fulfill) in a single turn.
-#[test]
-fn test_integration_obligation_lifecycle() {
-    let initial_state = CellState::new(10_000, 5);
-
-    let effects = vec![
-        // Lock 2000 as a bond.
-        Effect::CreateObligation {
-            stake_amount: 2000,
-            obligation_id: BabyBear::new(0xAA),
-            beneficiary_hash: BabyBear::new(0xBB),
-        },
-        // Fulfill the obligation (return 2000).
-        Effect::FulfillObligation {
-            obligation_id: BabyBear::new(0xAA),
-            stake_return: 2000,
-        },
-    ];
-
-    let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
-    let air = EffectVmAir::new(trace.len());
-
-    // Verify constraints.
-    for alpha_val in [7, 13, 101] {
-        let alpha = BabyBear::new(alpha_val);
-        for row in 0..trace.len() - 1 {
-            let next_row = (row + 1) % trace.len();
-            let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
-            assert_eq!(
-                c,
-                BabyBear::ZERO,
-                "Obligation lifecycle: constraint non-zero at row {} with alpha={}: c={}",
-                row,
-                alpha_val,
-                c.0
-            );
-        }
-    }
-
-    // STARK roundtrip.
-    let proof = prove(&air, &trace, &public_inputs);
-    let result = verify(&air, &proof, &public_inputs);
-    assert!(
-        result.is_ok(),
-        "Obligation lifecycle should verify: {:?}",
-        result.err()
-    );
-
-    // Net delta: -2000 + 2000 = 0 (obligation created and fulfilled).
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, 0, "Balance should be net-zero after create+fulfill");
-}
 
 /// IVC compression test: prove sequential turns and compress via the state
 /// transition hash chain.
@@ -1610,15 +1466,6 @@ fn test_integration_8_effect_sovereign_turn() {
             cap_entry: w8(0x2222),
             phase_b: None,
         },
-        Effect::CreateObligation {
-            stake_amount: 1000,
-            obligation_id: BabyBear::new(0x0B01),
-            beneficiary_hash: BabyBear::new(0xBE01),
-        },
-        Effect::FulfillObligation {
-            obligation_id: BabyBear::new(0x0B01),
-            stake_return: 1000,
-        },
     ];
 
     let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
@@ -1652,7 +1499,8 @@ fn test_integration_8_effect_sovereign_turn() {
         result.err()
     );
 
-    // Net delta: -5000 + 2000 - 1000 + 1000 = -3000
+    // Net delta: -5000 + 2000 = -3000 (the escrow/obligation legs of the
+    // original 8-effect turn died with the verb lockstep).
     let delta = extract_net_delta(&public_inputs).unwrap();
     assert_eq!(delta, -3000);
 }
@@ -1740,62 +1588,6 @@ fn test_commitment_chain_continuity() {
     }
 }
 
-/// Test: tampered obligation stake amount is detected.
-/// Previously ignored (REVIEW[stage2-fri-single-row-gap]); fixed by MIN_TRACE_HEIGHT=64 (task #90).
-#[test]
-fn test_create_obligation_wrong_amount_caught() {
-    let state = CellState::new(5000, 0);
-    let effects = vec![Effect::CreateObligation {
-        stake_amount: 1000,
-        obligation_id: BabyBear::new(0x01),
-        beneficiary_hash: BabyBear::new(0x02),
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: change the balance debit to less than stake_amount.
-    // The constraint says new_bal_lo = old_bal_lo - p0, so if we change new_bal_lo
-    // to only debit 500 instead of 1000, constraint should catch it.
-    let old_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
-    trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal_lo - BabyBear::new(500);
-
-    let air = EffectVmAir::new(trace.len());
-    let result = std::panic::catch_unwind(|| {
-        let proof = prove(&air, &trace, &public_inputs);
-        verify(&air, &proof, &public_inputs)
-    });
-    assert!(
-        result.is_err() || matches!(result, Ok(Err(_))),
-        "Wrong obligation debit amount should be caught"
-    );
-}
-
-/// Test: fulfill obligation with wrong return amount is detected.
-/// Previously ignored (REVIEW[stage2-fri-single-row-gap]); fixed by MIN_TRACE_HEIGHT=64 (task #90).
-#[test]
-fn test_fulfill_obligation_wrong_return_caught() {
-    let state = CellState::new(5000, 0);
-    let effects = vec![Effect::FulfillObligation {
-        obligation_id: BabyBear::new(0x42),
-        stake_return: 1000,
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: credit more than the declared return amount.
-    let old_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
-    trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal_lo + BabyBear::new(9999);
-
-    let air = EffectVmAir::new(trace.len());
-    let result = std::panic::catch_unwind(|| {
-        let proof = prove(&air, &trace, &public_inputs);
-        verify(&air, &proof, &public_inputs)
-    });
-    assert!(
-        result.is_err() || matches!(result, Ok(Err(_))),
-        "Wrong obligation return amount should be caught"
-    );
-}
 
 /// Test: effects_hash binding prevents subset attacks.
 /// A prover cannot claim a subset of effects and get a valid proof.
@@ -1899,122 +1691,6 @@ fn test_proof_size_measurement() {
 // CapTP EFFECT TESTS
 // ========================================================================
 
-/// Test: ExportSturdyRef proves correct swiss number derivation.
-#[test]
-fn test_captp_export_sturdy_ref() {
-    let mut state = CellState::new(1000, 0);
-    // Set field[7] to 5 (existing export counter).
-    state.fields[7] = BabyBear::new(5);
-    state.refresh_commitment();
-
-    let effects = vec![Effect::ExportSturdyRef {
-        cell_id: BabyBear::new(0xCE11),
-        permissions: BabyBear::new(0x7),
-        random_seed: BabyBear::new(0x5EED),
-        export_counter: 5,
-    }];
-
-    let (trace, _public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "ExportSturdyRef");
-    let new_f7 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 7];
-    assert_eq!(new_f7, BabyBear::new(6), "export counter should increment");
-}
-
-/// Test: EnlivenRef proves swiss table entry validity.
-#[test]
-fn test_captp_enliven_ref() {
-    let mut state = CellState::new(1000, 0);
-    // Set field[6] to 2 (existing use count).
-    state.fields[6] = BabyBear::new(2);
-    state.refresh_commitment();
-
-    let effects = vec![Effect::EnlivenRef {
-        swiss_number: BabyBear::new(0x5155),
-        presenter_id: BabyBear::new(0x9E5),
-        expected_cell_id: BabyBear::new(0xCE11),
-        expected_permissions: BabyBear::new(0x7),
-    }];
-
-    let (trace, _public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "EnlivenRef");
-    let new_f6 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 6];
-    assert_eq!(new_f6, BabyBear::new(3), "use_count should increment");
-}
-
-/// Test: DropRef proves refcount > 0 and decrements.
-#[test]
-fn test_captp_drop_ref() {
-    let mut state = CellState::new(1000, 0);
-    // Set field[5] to 3 (existing refcount).
-    state.fields[5] = BabyBear::new(3);
-    state.refresh_commitment();
-
-    let effects = vec![Effect::DropRef {
-        cell_id: BabyBear::new(0xCE11),
-        holder_federation: BabyBear::new(0xFED1),
-        current_refcount: 3,
-    }];
-
-    let (trace, _public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "DropRef");
-    let new_f5 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 5];
-    assert_eq!(new_f5, BabyBear::new(2), "refcount should decrement");
-}
-
-/// Test: DropRef with zero refcount panics (executor rejects).
-#[test]
-#[should_panic(expected = "DropRef: current_refcount must be > 0")]
-fn test_captp_drop_ref_zero_refcount_rejected() {
-    let mut state = CellState::new(1000, 0);
-    state.fields[5] = BabyBear::ZERO; // refcount = 0
-    state.refresh_commitment();
-
-    let effects = vec![Effect::DropRef {
-        cell_id: BabyBear::new(0xCE11),
-        holder_federation: BabyBear::new(0xFED1),
-        current_refcount: 0, // Should panic
-    }];
-
-    // This should panic.
-    let _ = generate_effect_vm_trace(&state, &effects);
-}
-
-/// Test: ValidateHandoff proves certificate membership and updates cap_root.
-///
-/// Stage 7 / P1.C: the AIR now requires chosen == PI's
-/// approved_handoffs_root. We compute the expected root from the
-/// witnessed leaf and pass it via context.
-#[test]
-fn test_captp_validate_handoff() {
-    let state = CellState::new(1000, 0);
-
-    let cert_hash = BabyBear::new(0xCE87);
-    let recipient_pk = BabyBear::new(0x8EC1);
-    let introducer_pk = BabyBear::new(0x1117);
-    let pks = hash_2_to_1(recipient_pk, introducer_pk);
-    let leaf = hash_2_to_1(cert_hash, pks);
-    let sibling = BabyBear::ZERO;
-    let expected_root = hash_2_to_1(leaf, sibling);
-
-    let effects = vec![Effect::ValidateHandoff {
-        certificate_hash: cert_hash,
-        recipient_pk,
-        introducer_pk,
-        approved_set_root: expected_root, // ignored by trace gen; context wins
-    }];
-
-    let mut context = EffectVmContext::default();
-    context.approved_handoffs_root[0] = expected_root;
-    let (trace, _public_inputs) =
-        assert_effect_vm_roundtrip_ext(&state, &effects, context, "ValidateHandoff");
-
-    // Verify cap_root was updated.
-    let old_cap = state.capability_root;
-    let new_cap = trace[0][STATE_AFTER_BASE + state::CAP_ROOT];
-    assert_ne!(old_cap, new_cap, "cap_root should change after handoff");
-
-    // Verify the update matches expected formula.
-    let routing_entry = hash_2_to_1(BabyBear::new(0x8EC1), BabyBear::new(0xCE87));
-    let expected_cap = hash_2_to_1(old_cap, routing_entry);
-    assert_eq!(new_cap, expected_cap);
-}
 
 /// Test: Multi-effect CapTP turn (export + enliven + drop).
 #[test]
@@ -2027,23 +1703,6 @@ fn test_captp_multi_effect_turn() {
     state.refresh_commitment();
 
     let effects = vec![
-        Effect::ExportSturdyRef {
-            cell_id: BabyBear::new(0xCE11),
-            permissions: BabyBear::new(0x3),
-            random_seed: BabyBear::new(0xABC),
-            export_counter: 0,
-        },
-        Effect::EnlivenRef {
-            swiss_number: BabyBear::new(0x999),
-            presenter_id: BabyBear::new(0x111),
-            expected_cell_id: BabyBear::new(0x222),
-            expected_permissions: BabyBear::new(0x333),
-        },
-        Effect::DropRef {
-            cell_id: BabyBear::new(0xCE22),
-            holder_federation: BabyBear::new(0xFED2),
-            current_refcount: 3,
-        },
         Effect::Transfer {
             amount: 100,
             direction: 1,
@@ -2083,38 +1742,6 @@ fn test_captp_multi_effect_turn() {
     assert_eq!(delta, -100);
 }
 
-/// Test: ExportSturdyRef with tampered swiss number is caught.
-/// REVIEW[stage2-fri-single-row-gap] closed (task #90): MIN_TRACE_HEIGHT=64
-/// ensures the FRI proximity test reliably catches single-row tampers.
-/// P(miss with 80 queries, 6 FRI rounds) ≤ (1/4)^80 ≈ 10^-48.
-#[test]
-fn test_captp_export_tampered_swiss_caught() {
-    let mut state = CellState::new(1000, 0);
-    state.fields[7] = BabyBear::new(0);
-    state.refresh_commitment();
-
-    let effects = vec![Effect::ExportSturdyRef {
-        cell_id: BabyBear::new(0xCE11),
-        permissions: BabyBear::new(0x7),
-        random_seed: BabyBear::new(0x5EED),
-        export_counter: 0,
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: change the swiss number in aux[0].
-    trace[0][AUX_BASE + 0] = BabyBear::new(0xBAD);
-
-    let air = EffectVmAir::new(trace.len());
-    let result = std::panic::catch_unwind(|| {
-        let proof = prove(&air, &trace, &public_inputs);
-        verify(&air, &proof, &public_inputs)
-    });
-    assert!(
-        result.is_err() || matches!(result, Ok(Err(_))),
-        "Tampered swiss number should be caught"
-    );
-}
 
 // ========================================================================
 // SOUNDNESS TESTS: Adversarial exploitation attempts
@@ -2322,610 +1949,16 @@ fn test_soundness_limb_range_validation_catches_wrap() {
 // STORAGE QUEUE EFFECT TESTS
 // ========================================================================
 
-/// Test: AllocateQueue proves correct balance debit and empty queue root.
-#[test]
-fn test_storage_allocate_queue() {
-    let state = CellState::new(10_000, 0);
-
-    let effects = vec![Effect::AllocateQueue {
-        capacity: 100,
-        owner_quota_id: BabyBear::new(0x0A),
-        cost_per_slot: 10,
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "AllocateQueue");
-
-    // Verify balance debit: 100 * 10 = 1000 deducted.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, -1000, "AllocateQueue should debit 100*10=1000");
-
-    // Verify field[4] is the empty queue hash.
-    let expected_empty = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    let actual_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(
-        actual_f4, expected_empty,
-        "field[4] should be empty_queue_hash"
-    );
-}
-
-/// Test: EnqueueMessage proves queue root change and deposit debit.
-#[test]
-fn test_storage_enqueue_message() {
-    let mut state = CellState::new(10_000, 0);
-    // Set field[4] to a known queue root (simulating an existing queue).
-    let initial_queue_root = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    state.fields[4] = initial_queue_root;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xDEAD);
-    let effects = vec![Effect::EnqueueMessage {
-        message_hash: msg_hash,
-        deposit_amount: 50,
-        sender_id: BabyBear::new(0x5E),
-        queue_len: 0,
-        program_vk: BabyBear::ZERO, // no program (backward compat)
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "EnqueueMessage");
-
-    // Verify queue root changed: new_root = hash(initial_root, msg_hash).
-    let expected_new_root = hash_2_to_1(initial_queue_root, msg_hash);
-    let actual_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(actual_f4, expected_new_root, "queue root should advance");
-    assert_ne!(actual_f4, initial_queue_root, "queue root must change");
-
-    // Verify balance debit of deposit.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, -50, "EnqueueMessage should debit deposit of 50");
-}
-
-/// Test: DequeueMessage proves correct message dequeued and deposit refund.
-#[test]
-fn test_storage_dequeue_message() {
-    let mut state = CellState::new(5_000, 0);
-    // Set field[4] to a queue root that has messages.
-    let queue_root = hash_2_to_1(BabyBear::new(0xABC), BabyBear::new(0xDEF));
-    state.fields[4] = queue_root;
-    state.refresh_commitment();
-
-    let expected_msg = BabyBear::new(0xBEEF);
-    let effects = vec![Effect::DequeueMessage {
-        expected_message_hash: expected_msg,
-        deposit_refund: 75,
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "DequeueMessage");
-
-    // Verify queue root advanced.
-    let expected_new_root = hash_2_to_1(queue_root, expected_msg);
-    let actual_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(
-        actual_f4, expected_new_root,
-        "queue root should advance on dequeue"
-    );
-
-    // Verify balance credit (deposit refund).
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(
-        delta, 75,
-        "DequeueMessage should credit deposit refund of 75"
-    );
-}
-
-/// Test: Multi-effect storage queue lifecycle (Allocate + Enqueue + Enqueue + Dequeue).
-#[test]
-fn test_storage_multi_effect_queue_lifecycle() {
-    let state = CellState::new(50_000, 0);
-
-    let msg1 = BabyBear::new(0xCAFE);
-    let msg2 = BabyBear::new(0xBEEF);
-
-    let effects = vec![
-        // Allocate a queue (costs 10 * 5 = 50).
-        Effect::AllocateQueue {
-            capacity: 10,
-            owner_quota_id: BabyBear::new(0x01),
-            cost_per_slot: 5,
-        },
-        // Enqueue first message (deposit 100).
-        Effect::EnqueueMessage {
-            message_hash: msg1,
-            deposit_amount: 100,
-            sender_id: BabyBear::new(0xAA),
-            queue_len: 0,
-            program_vk: BabyBear::ZERO,
-        },
-        // Enqueue second message (deposit 100).
-        Effect::EnqueueMessage {
-            message_hash: msg2,
-            deposit_amount: 100,
-            sender_id: BabyBear::new(0xBB),
-            queue_len: 1,
-            program_vk: BabyBear::ZERO,
-        },
-        // Dequeue first message (refund 80).
-        Effect::DequeueMessage {
-            expected_message_hash: msg1,
-            deposit_refund: 80,
-        },
-    ];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "Queue lifecycle");
-    assert_eq!(trace.len(), 64); // padded to MIN_TRACE_HEIGHT=64 (FRI single-row-gap closure)
-
-    // Verify net delta: -50 (alloc) - 100 (enqueue1) - 100 (enqueue2) + 80 (dequeue) = -170.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, -170, "Net delta should be -170");
-
-    // Verify the queue root evolves correctly through the lifecycle.
-    // After AllocateQueue: field[4] = empty_hash.
-    let empty_hash = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    let f4_after_alloc = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(f4_after_alloc, empty_hash);
-
-    // After EnqueueMessage(msg1): field[4] = hash(empty_hash, msg1).
-    let root_after_msg1 = hash_2_to_1(empty_hash, msg1);
-    let f4_after_enq1 = trace[1][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(f4_after_enq1, root_after_msg1);
-
-    // After EnqueueMessage(msg2): field[4] = hash(root_after_msg1, msg2).
-    let root_after_msg2 = hash_2_to_1(root_after_msg1, msg2);
-    let f4_after_enq2 = trace[2][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(f4_after_enq2, root_after_msg2);
-
-    // After DequeueMessage(msg1): field[4] = hash(root_after_msg2, msg1).
-    let root_after_deq = hash_2_to_1(root_after_msg2, msg1);
-    let f4_after_deq = trace[3][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(f4_after_deq, root_after_deq);
-}
-
-/// Test: ResizeQueue proves correct balance debit and capacity update.
-#[test]
-fn test_storage_resize_queue() {
-    let mut state = CellState::new(10_000, 0);
-    // Set field[5] to current capacity (old_capacity = 10).
-    state.fields[5] = BabyBear::new(10);
-    state.refresh_commitment();
-
-    let effects = vec![Effect::ResizeQueue {
-        new_capacity: 20,
-        queue_id: BabyBear::new(0x01),
-        cost_per_slot: 5,
-        old_capacity: 10,
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "ResizeQueue");
-
-    // Verify balance debit: (20 - 10) * 5 = 50.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, -50, "ResizeQueue should debit (20-10)*5=50");
-
-    // Verify field[5] is updated to new capacity.
-    let new_f5 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 5];
-    assert_eq!(new_f5, BabyBear::new(20), "field[5] should be new capacity");
-}
-
-/// Test: EnqueueMessage with program_vk binds validation hash to STARK proof.
-#[test]
-fn test_enqueue_with_program_validation_stark_roundtrip() {
-    let mut state = CellState::new(10_000, 0);
-    let initial_queue_root = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    state.fields[4] = initial_queue_root;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xCAFE);
-    let sender = BabyBear::new(0x5E);
-    let program_vk = BabyBear::new(0x1234); // non-zero = has program
-
-    let effects = vec![Effect::EnqueueMessage {
-        message_hash: msg_hash,
-        deposit_amount: 75,
-        sender_id: sender,
-        queue_len: 0,
-        program_vk,
-    }];
-
-    let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    let air = EffectVmAir::new(trace.len());
-
-    // Verify constraints pass for all alpha values.
-    for alpha_val in [7u32, 13, 101, 251] {
-        let alpha = BabyBear::new(alpha_val);
-        for row in 0..trace.len() - 1 {
-            let next_row = (row + 1) % trace.len();
-            let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
-            assert_eq!(
-                c,
-                BabyBear::ZERO,
-                "EnqueueMessage+program: constraint non-zero at row {} alpha={}",
-                row,
-                alpha_val
-            );
-        }
-    }
-
-    // STARK roundtrip: prove and verify.
-    let proof = prove(&air, &trace, &public_inputs);
-    let result = verify(&air, &proof, &public_inputs);
-    assert!(
-        result.is_ok(),
-        "EnqueueMessage with program_vk should verify: {:?}",
-        result.err()
-    );
-
-    // Verify the validation hash is correctly set in aux[6].
-    let expected_inner = hash_2_to_1(sender, msg_hash);
-    let expected_validation = hash_2_to_1(program_vk, expected_inner);
-    let actual_aux6 = trace[0][AUX_BASE + 6];
-    assert_eq!(
-        actual_aux6, expected_validation,
-        "aux[6] should contain the program validation hash"
-    );
-
-    // Verify aux[7] = inverse(program_vk).
-    let actual_aux7 = trace[0][AUX_BASE + 7];
-    assert_eq!(
-        program_vk * actual_aux7,
-        BabyBear::ONE,
-        "aux[7] should be the inverse of program_vk"
-    );
-}
-
-/// Test: EnqueueMessage without program (program_vk=0) has zero validation hash.
-#[test]
-fn test_enqueue_without_program_backward_compat() {
-    let mut state = CellState::new(10_000, 0);
-    let initial_queue_root = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    state.fields[4] = initial_queue_root;
-    state.refresh_commitment();
-
-    let effects = vec![Effect::EnqueueMessage {
-        message_hash: BabyBear::new(0xBEEF),
-        deposit_amount: 50,
-        sender_id: BabyBear::new(0xAA),
-        queue_len: 0,
-        program_vk: BabyBear::ZERO, // no program
-    }];
-
-    let (trace, _public_inputs) =
-        assert_effect_vm_roundtrip(&state, &effects, "EnqueueMessage without program");
-
-    // aux[6] and aux[7] must both be zero.
-    assert_eq!(
-        trace[0][AUX_BASE + 6],
-        BabyBear::ZERO,
-        "aux[6] should be zero when no program"
-    );
-    assert_eq!(
-        trace[0][AUX_BASE + 7],
-        BabyBear::ZERO,
-        "aux[7] should be zero when no program"
-    );
-}
-
-/// Test: EnqueueMessage with invalid validation hash fails constraint check.
-#[test]
-fn test_enqueue_program_invalid_validation_hash_fails() {
-    let mut state = CellState::new(10_000, 0);
-    let initial_queue_root = hash_2_to_1(BabyBear::ZERO, BabyBear::ZERO);
-    state.fields[4] = initial_queue_root;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xDEAD);
-    let sender = BabyBear::new(0x5E);
-    let program_vk = BabyBear::new(0xABCD);
-
-    let effects = vec![Effect::EnqueueMessage {
-        message_hash: msg_hash,
-        deposit_amount: 50,
-        sender_id: sender,
-        queue_len: 0,
-        program_vk,
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    let air = EffectVmAir::new(trace.len());
-
-    // Corrupt aux[6] (the validation hash) to a wrong value.
-    trace[0][AUX_BASE + 6] = BabyBear::new(0x9999);
-
-    // Constraints should FAIL because the validation hash is wrong.
-    let alpha = BabyBear::new(7);
-    let c = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
-    assert_ne!(
-        c,
-        BabyBear::ZERO,
-        "Corrupted validation hash should cause constraint failure"
-    );
-}
 
 // ========================================================================
 // STORAGE PHASE 3: AtomicQueueTx and PipelineStep TESTS
 // ========================================================================
 
-/// Test: AtomicQueueTx proves a 2-queue atomic transaction → STARK verify.
-#[test]
-fn test_storage_atomic_queue_tx() {
-    let mut state = CellState::new(10_000, 0);
-    // Set field[4] to combined_old_root (hash of two queue roots).
-    let queue_a_root = hash_2_to_1(BabyBear::new(0xAA), BabyBear::new(0xBB));
-    let queue_b_root = hash_2_to_1(BabyBear::new(0xCC), BabyBear::new(0xDD));
-    let combined_old = hash_2_to_1(queue_a_root, queue_b_root);
-    state.fields[4] = combined_old;
-    state.refresh_commitment();
-
-    // After atomic tx: queue_a dequeues a msg, queue_b enqueues it.
-    let msg = BabyBear::new(0xDEAD);
-    let new_queue_a_root = hash_2_to_1(queue_a_root, msg);
-    let new_queue_b_root = hash_2_to_1(queue_b_root, msg);
-    let combined_new = hash_2_to_1(new_queue_a_root, new_queue_b_root);
-
-    // Compute tx_hash (binding).
-    let tx_hash = hash_2_to_1(msg, BabyBear::new(2)); // 2 ops
-
-    let effects = vec![Effect::AtomicQueueTx {
-        op_count: 2,
-        tx_hash,
-        combined_old_root: combined_old,
-        combined_new_root: combined_new,
-        net_deposit: 0,
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "AtomicQueueTx");
-
-    // Verify field[4] transitioned.
-    let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(
-        new_f4, combined_new,
-        "field[4] should become combined_new_root"
-    );
-    assert_ne!(new_f4, combined_old, "field[4] should change");
-
-    // Balance unchanged (atomic tx doesn't cost anything directly).
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, 0, "AtomicQueueTx should not change balance");
-}
-
-/// Test: AtomicQueueTx with tampered combined_new_root fails constraint evaluation.
-/// The per-row constraint check directly detects the tampering.
-#[test]
-fn test_storage_atomic_queue_tx_tampered_new_root_fails() {
-    let mut state = CellState::new(10_000, 0);
-    let combined_old = hash_2_to_1(BabyBear::new(0x11), BabyBear::new(0x22));
-    state.fields[4] = combined_old;
-    state.refresh_commitment();
-
-    let combined_new = hash_2_to_1(BabyBear::new(0x33), BabyBear::new(0x44));
-    let tx_hash = BabyBear::new(0xABC);
-
-    let effects = vec![Effect::AtomicQueueTx {
-        op_count: 1,
-        tx_hash,
-        combined_old_root: combined_old,
-        combined_new_root: combined_new,
-        net_deposit: 0,
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: change the combined_new_root in state_after field[4] to a wrong value.
-    trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4] = BabyBear::new(0xBAD);
-
-    let air = EffectVmAir::new(trace.len());
-
-    // Verify that constraint evaluation is non-zero (tampering detected).
-    // The AtomicQueueTx constraint requires new_f4 == combined_new_root.
-    // The state commitment integrity (Group 4) also fails since the inter2 hash
-    // won't match with a tampered field[4].
-    let alpha = BabyBear::new(7);
-    let c = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
-    assert_ne!(
-        c,
-        BabyBear::ZERO,
-        "Tampered combined_new_root should cause constraint failure"
-    );
-}
-
-/// Test: PipelineStep proves source→sink routing → STARK verify.
-#[test]
-fn test_storage_pipeline_step() {
-    let mut state = CellState::new(10_000, 0);
-    // Set field[4] to source_old_root (simulating an existing source queue).
-    let source_old = hash_2_to_1(BabyBear::new(0x50), BabyBear::new(0x51));
-    state.fields[4] = source_old;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xCAFE);
-    // source_new_root = hash(source_old_root, message_hash) -- dequeue.
-    let source_new = hash_2_to_1(source_old, msg_hash);
-    // sink_new_root = hash(sink_old_root, message_hash) -- enqueue.
-    let sink_old = hash_2_to_1(BabyBear::new(0x60), BabyBear::new(0x61));
-    let sink_new = hash_2_to_1(sink_old, msg_hash);
-
-    let pipeline_id = hash_2_to_1(BabyBear::new(0x99), BabyBear::new(0x100));
-
-    let effects = vec![Effect::PipelineStep {
-        pipeline_id,
-        source_old_root: source_old,
-        source_new_root: source_new,
-        sink_new_root: sink_new,
-        message_hash: msg_hash,
-    }];
-
-    let (trace, public_inputs) = assert_effect_vm_roundtrip(&state, &effects, "PipelineStep");
-
-    // Verify field[4] transitioned to source_new_root.
-    let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(new_f4, source_new, "field[4] should become source_new_root");
-    assert_ne!(new_f4, source_old, "field[4] should change");
-
-    // Balance unchanged.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(delta, 0, "PipelineStep should not change balance");
-}
-
-/// Test: PipelineStep with wrong pipeline_id (unauthorized routing) fails.
-/// The pipeline_id is bound to the proof via its presence in the params/effects_hash.
-/// A wrong pipeline_id in the params means a different effects_hash, which
-/// causes verification failure via the effects_hash boundary constraint.
-#[test]
-fn test_storage_pipeline_step_wrong_pipeline_id_fails() {
-    let mut state = CellState::new(10_000, 0);
-    let source_old = hash_2_to_1(BabyBear::new(0x50), BabyBear::new(0x51));
-    state.fields[4] = source_old;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xCAFE);
-    let source_new = hash_2_to_1(source_old, msg_hash);
-    let sink_old = hash_2_to_1(BabyBear::new(0x60), BabyBear::new(0x61));
-    let sink_new = hash_2_to_1(sink_old, msg_hash);
-
-    // Use a legitimate pipeline_id for the proof.
-    let real_pipeline_id = hash_2_to_1(BabyBear::new(0x99), BabyBear::new(0x100));
-
-    let effects = vec![Effect::PipelineStep {
-        pipeline_id: real_pipeline_id,
-        source_old_root: source_old,
-        source_new_root: source_new,
-        sink_new_root: sink_new,
-        message_hash: msg_hash,
-    }];
-
-    let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: claim a DIFFERENT effects hash (as if a different pipeline_id were used).
-    // The effects_hash in the public inputs is computed from all effects including
-    // the pipeline_id param. Claiming a wrong hash simulates unauthorized routing.
-    let fake_effects = vec![Effect::PipelineStep {
-        pipeline_id: BabyBear::new(0xBAD), // wrong pipeline
-        source_old_root: source_old,
-        source_new_root: source_new,
-        sink_new_root: sink_new,
-        message_hash: msg_hash,
-    }];
-    let (fake_lo, fake_hi) = compute_effects_hash(&fake_effects);
-    public_inputs[pi::EFFECTS_HASH_LO] = fake_lo;
-    public_inputs[pi::EFFECTS_HASH_HI] = fake_hi;
-
-    let air = EffectVmAir::new(trace.len());
-    let result = std::panic::catch_unwind(|| {
-        let proof = prove(&air, &trace, &public_inputs);
-        verify(&air, &proof, &public_inputs)
-    });
-    assert!(
-        result.is_err() || matches!(result, Ok(Err(_))),
-        "Wrong pipeline_id (via tampered effects_hash) should fail verification"
-    );
-}
 
 // ========================================================================
 // SOVEREIGN CELL QUEUE OPERATION TESTS (Bug fix verification)
 // ========================================================================
 
-/// Test: Sovereign cell executes QueueEnqueue with proof, proof verifies correctly.
-/// Validates Bug 2 fix: queue effects are no longer silently dropped to NoOp.
-#[test]
-fn test_sovereign_cell_enqueue_with_proof_verifies() {
-    // Sovereign cell state: has balance for deposit, has a queue root in field[4].
-    let mut state = CellState::new(50_000, 5);
-    state.mode_flag = 1; // sovereign
-    let initial_queue_root = hash_2_to_1(BabyBear::new(0x10), BabyBear::new(0x20));
-    state.fields[4] = initial_queue_root;
-    state.refresh_commitment();
-
-    let message_hash = BabyBear::new(0xCAFE);
-    let deposit_amount = 100u32;
-
-    // Expected new queue root after enqueue.
-    let expected_new_root = hash_2_to_1(initial_queue_root, message_hash);
-
-    let effects = vec![Effect::EnqueueMessage {
-        message_hash,
-        deposit_amount,
-        sender_id: BabyBear::new(0x5E),
-        queue_len: 3,
-        program_vk: BabyBear::ZERO, // No program validation.
-    }];
-
-    let (trace, public_inputs) =
-        assert_effect_vm_roundtrip(&state, &effects, "Sovereign EnqueueMessage");
-
-    // Verify queue root transitioned correctly.
-    let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(
-        new_f4, expected_new_root,
-        "field[4] should become new queue root after enqueue"
-    );
-
-    // Balance should decrease by deposit amount.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(
-        delta,
-        -(deposit_amount as i64),
-        "Sovereign EnqueueMessage should debit balance by deposit"
-    );
-}
-
-/// Test: Sovereign cell executes AtomicQueueTx with deposits, proof includes correct balance delta.
-/// Validates Bug 1 fix: AtomicQueueTx no longer enforces balance_unchanged.
-#[test]
-fn test_sovereign_cell_atomic_tx_with_deposits_verifies() {
-    let mut state = CellState::new(100_000, 0);
-    state.mode_flag = 1; // sovereign
-
-    // Set field[4] to combined_old_root (hash of two queue roots).
-    let queue_a_root = hash_2_to_1(BabyBear::new(0xAA), BabyBear::new(0xBB));
-    let queue_b_root = hash_2_to_1(BabyBear::new(0xCC), BabyBear::new(0xDD));
-    let combined_old = hash_2_to_1(queue_a_root, queue_b_root);
-    state.fields[4] = combined_old;
-    state.refresh_commitment();
-
-    // After atomic tx: 2 enqueue ops with deposits of 500 each = net deposit 1000.
-    let msg = BabyBear::new(0xDEAD);
-    let new_queue_a_root = hash_2_to_1(queue_a_root, msg);
-    let new_queue_b_root = hash_2_to_1(queue_b_root, msg);
-    let combined_new = hash_2_to_1(new_queue_a_root, new_queue_b_root);
-
-    let tx_hash = hash_2_to_1(msg, BabyBear::new(2)); // 2 ops
-    let net_deposit = 1000u32; // Total deposits paid across sub-operations.
-
-    let effects = vec![Effect::AtomicQueueTx {
-        op_count: 2,
-        tx_hash,
-        combined_old_root: combined_old,
-        combined_new_root: combined_new,
-        net_deposit,
-    }];
-
-    let (trace, public_inputs) =
-        assert_effect_vm_roundtrip(&state, &effects, "Sovereign AtomicQueueTx with deposits");
-
-    // Verify field[4] transitioned.
-    let new_f4 = trace[0][STATE_AFTER_BASE + state::FIELD_BASE + 4];
-    assert_eq!(
-        new_f4, combined_new,
-        "field[4] should become combined_new_root"
-    );
-
-    // Balance should decrease by net_deposit.
-    let delta = extract_net_delta(&public_inputs).unwrap();
-    assert_eq!(
-        delta,
-        -(net_deposit as i64),
-        "AtomicQueueTx with deposits should debit balance by net_deposit"
-    );
-
-    // Verify the actual balance in the trace matches expectation.
-    let final_bal_lo = trace[0][STATE_AFTER_BASE + state::BALANCE_LO];
-    let initial_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
-    let expected_diff = BabyBear::new(net_deposit);
-    assert_eq!(
-        initial_bal_lo - final_bal_lo,
-        expected_diff,
-        "Balance lo should decrease by net_deposit ({})",
-        net_deposit
-    );
-}
 
 // ========================================================================
 // P0-1 ADVERSARIAL TESTS: net_delta PI binding
@@ -3088,71 +2121,6 @@ fn test_soundness_p0_1_final_bal_pi_tampered_rejected() {
 //   s_pipeline * (pipeline_id * aux[6] - 1) == 0
 // forcing pipeline_id != 0 when the PipelineStep selector is active.
 
-/// P1-5: PipelineStep with pipeline_id=0 must be rejected.
-///
-/// We build a normal PipelineStep trace and then tamper the trace + PI so
-/// pipeline_id = 0 in the params column, mirroring the auxiliary witness
-/// that an adversarial prover would supply. The new aux[6]-inverse
-/// constraint cannot be satisfied; the verifier rejects.
-#[test]
-fn test_soundness_p1_5_pipeline_id_zero_rejected() {
-    let mut state = CellState::new(10_000, 0);
-    let source_old = hash_2_to_1(BabyBear::new(0x50), BabyBear::new(0x51));
-    state.fields[4] = source_old;
-    state.refresh_commitment();
-
-    let msg_hash = BabyBear::new(0xCAFE);
-    let source_new = hash_2_to_1(source_old, msg_hash);
-    let sink_old = hash_2_to_1(BabyBear::new(0x60), BabyBear::new(0x61));
-    let sink_new = hash_2_to_1(sink_old, msg_hash);
-
-    // Build a normal proof with a legitimate pipeline_id, then tamper.
-    let real_pipeline_id = hash_2_to_1(BabyBear::new(0x99), BabyBear::new(0x100));
-    let effects = vec![Effect::PipelineStep {
-        pipeline_id: real_pipeline_id,
-        source_old_root: source_old,
-        source_new_root: source_new,
-        sink_new_root: sink_new,
-        message_hash: msg_hash,
-    }];
-
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-
-    // Tamper: set pipeline_id and its inverse to zero. With pipeline_id=0
-    // there is no inverse, so this models a prover claiming an
-    // unauthorized null pipeline. The constraint
-    // (0 * 0 - 1 == -1 != 0) trips.
-    trace[0][PARAM_BASE + param::PIPELINE_ID] = BabyBear::ZERO;
-    trace[0][AUX_BASE + 6] = BabyBear::ZERO;
-    // Effects-hash boundary still demands the original hash, so this also
-    // fails via the effects_hash binding — but for this test we ensure the
-    // *new* P1-5 constraint independently rejects, by also tampering the
-    // effects hash PI to match.
-    let mut tampered_pi = public_inputs.clone();
-    let (efh_lo, efh_hi) = compute_effects_hash(&[Effect::PipelineStep {
-        pipeline_id: BabyBear::ZERO,
-        source_old_root: source_old,
-        source_new_root: source_new,
-        sink_new_root: sink_new,
-        message_hash: msg_hash,
-    }]);
-    tampered_pi[pi::EFFECTS_HASH_LO] = efh_lo;
-    tampered_pi[pi::EFFECTS_HASH_HI] = efh_hi;
-    trace[0][AUX_BASE + 4] = efh_lo;
-    trace[0][AUX_BASE + 5] = efh_hi;
-
-    let air = EffectVmAir::new(trace.len());
-    let result = std::panic::catch_unwind(|| {
-        let proof = prove(&air, &trace, &tampered_pi);
-        verify(&air, &proof, &tampered_pi)
-    });
-    assert!(
-        result.is_err() || matches!(result, Ok(Err(_))),
-        "P1-5: PipelineStep with pipeline_id=0 MUST be rejected by the \
-         non-zero constraint. Got: {:?}",
-        result
-    );
-}
 
 // ====================================================================
 // Stage 1 (`EFFECT-VM-SHAPE-A.md`) adversarial tests
@@ -3375,32 +2343,6 @@ fn test_stage2_acc_row0_shift_rejected() {
     );
 }
 
-/// Stage 2 adversarial: CreateObligation binds beneficiary into cap_root.
-/// Tampering the beneficiary witness so the cap_root advance no longer
-/// matches the (obligation_id, beneficiary) pair must trigger the AIR.
-#[test]
-fn test_stage2_create_obligation_beneficiary_tamper_rejected() {
-    let state = CellState::new(5000, 0);
-    let effects = vec![Effect::CreateObligation {
-        stake_amount: 1000,
-        obligation_id: BabyBear::new(0x1234),
-        beneficiary_hash: BabyBear::new(0xBEEF),
-    }];
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    // Tamper: change the OBLIGATION_BENEFICIARY param on row 0.
-    // The cap_root in state_after was computed with 0xBEEF; this
-    // tamper makes the constraint expect hash(0xCAFE) but the
-    // trace has hash(0xBEEF) — constraint fires.
-    trace[0][PARAM_BASE + param::OBLIGATION_BENEFICIARY] = BabyBear::new(0xCAFE);
-    let air = EffectVmAir::new(trace.len());
-    let alpha = BabyBear::new(7);
-    let c0 = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &public_inputs, alpha);
-    assert_ne!(
-        c0,
-        BabyBear::ZERO,
-        "Stage 2: tampering CreateObligation beneficiary must violate cap_root binding",
-    );
-}
 
 /// Stage 2 adversarial: applying MakeSovereign to an already-sovereign
 /// cell is rejected. The cell's old reserved has mode bit == 1; the
@@ -3424,59 +2366,6 @@ fn test_stage2_make_sovereign_double_transition_rejected() {
     );
 }
 
-/// Stage 2 adversarial: shrinking a queue (new_capacity < old_capacity)
-/// must not produce a fictitious debit. The honest path uses
-/// delta_sign = 1 and no debit.
-#[test]
-fn test_stage2_resize_queue_shrink_no_debit() {
-    let state = make_initial_state(1000);
-    let effects = vec![Effect::ResizeQueue {
-        new_capacity: 4,
-        queue_id: BabyBear::new(0x42),
-        cost_per_slot: 100,
-        old_capacity: 10,
-    }];
-    let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    // Honest trace: balance unchanged on shrink.
-    let old_bal = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
-    let new_bal = trace[0][STATE_AFTER_BASE + state::BALANCE_LO];
-    assert_eq!(old_bal, new_bal, "shrink must not debit balance");
-    // AIR-level: this honest trace must satisfy all constraints at row 0.
-    let air = EffectVmAir::new(trace.len());
-    let alpha = BabyBear::new(7);
-    let c0 = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &public_inputs, alpha);
-    assert_eq!(
-        c0,
-        BabyBear::ZERO,
-        "Stage 2: honest shrink must satisfy AIR (c0 = {:?})",
-        c0
-    );
-}
-
-/// Stage 2 adversarial: lying about the sign (e.g., claiming a shrink
-/// when actually growing) must violate either the boolean check or
-/// the delta-magnitude binding.
-#[test]
-fn test_stage2_resize_queue_lied_sign_rejected() {
-    let state = make_initial_state(10000);
-    let effects = vec![Effect::ResizeQueue {
-        new_capacity: 20,
-        queue_id: BabyBear::new(0x42),
-        cost_per_slot: 50,
-        old_capacity: 10,
-    }];
-    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    // Tamper: flip the sign bit to 1 (claim shrink) on what's actually a grow.
-    trace[0][AUX_BASE + aux_off::RESIZE_DELTA_SIGN] = BabyBear::ONE;
-    let air = EffectVmAir::new(trace.len());
-    let alpha = BabyBear::new(7);
-    let c0 = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &public_inputs, alpha);
-    assert_ne!(
-        c0,
-        BabyBear::ZERO,
-        "Stage 2: lying about resize delta sign must violate AIR",
-    );
-}
 
 /// Stage 2 adversarial: setting a sealed field is rejected.
 /// The bit-decomposition of `old_reserved` is constrained to match
@@ -3484,55 +2373,28 @@ fn test_stage2_resize_queue_lied_sign_rejected() {
 /// `field_idx` extracts the relevant bit. SetField requires bit == 0.
 #[test]
 fn test_stage2_setfield_on_sealed_field_rejected() {
-    let state = make_initial_state(1000);
-    // Seal field 3, then try to SetField on field 3.
-    let effects = vec![
-        Effect::Seal { field_idx: 3 },
-        Effect::SetField {
-            field_idx: 3,
-            value: BabyBear::new(42),
-        },
-    ];
-    // This should be caught by the AIR's
-    //   s_setfield * bit_at_idx == 0
-    // because after Seal, bit 3 of reserved is set.
-    // The trace generator may or may not panic; either way, the AIR
-    // must reject if a malicious prover bypasses the gen.
+    // (VERB-LOCKSTEP: the field-Seal effect is gone; a sealed field can only
+    // arrive in the PRE-state now. Seed the mask directly and assert the
+    // SetField row violates `s_setfield * bit_at_idx == 0`.)
+    let mut state = make_initial_state(1000);
+    state.sealed_field_mask = 1 << 3; // field 3 sealed in the pre-state
+    state.refresh_commitment();
+    let effects = vec![Effect::SetField {
+        field_idx: 3,
+        value: BabyBear::new(42),
+    }];
     let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
     let air = EffectVmAir::new(trace.len());
     let alpha = BabyBear::new(7);
-    // The SetField row is row 1 (after the Seal at row 0).
-    let c1 = air.eval_constraints(&trace[1], &trace[2 % trace.len()], &public_inputs, alpha);
+    // The SetField row is row 0.
+    let c0 = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &public_inputs, alpha);
     assert_ne!(
-        c1,
+        c0,
         BabyBear::ZERO,
         "Stage 2: SetField on a sealed field must produce non-zero AIR constraint",
     );
 }
 
-/// Stage 2 adversarial: Seal-then-Seal-same-field (double seal) is
-/// rejected because the bit at field_idx must be 0 before Seal fires.
-#[test]
-#[should_panic(expected = "already sealed")]
-fn test_stage2_seal_double_seal_rejected() {
-    let state = make_initial_state(1000);
-    let effects = vec![Effect::Seal { field_idx: 2 }, Effect::Seal { field_idx: 2 }];
-    // Trace generator's assert fires first (executor-side defense).
-    let _ = generate_effect_vm_trace(&state, &effects);
-}
-
-/// Stage 2 adversarial: Unsealing an unsealed field is rejected at
-/// trace generation (executor refuses to produce the trace).
-#[test]
-#[should_panic(expected = "not sealed")]
-fn test_stage2_unseal_unsealed_rejected() {
-    let state = make_initial_state(1000);
-    let effects = vec![Effect::Unseal {
-        field_idx: 1,
-        brand: BabyBear::new(0xBEEF),
-    }];
-    let _ = generate_effect_vm_trace(&state, &effects);
-}
 
 /// Stage 2 adversarial: the reserved bit-decomposition is constrained
 /// for EVERY row (not just sealing-effect rows). Tampering any bit so
@@ -3540,21 +2402,20 @@ fn test_stage2_unseal_unsealed_rejected() {
 /// fire the unconditional decomposition constraint at that row.
 #[test]
 fn test_stage2_reserved_bit_decomposition_tamper_rejected() {
+    // (VERB-LOCKSTEP: the Seal-based setup died with the field-seal effect; the
+    // reserved-bit decomposition constraints are UNCONDITIONAL on every row, so
+    // a Transfer row exercises the same tooth.)
     let state = make_initial_state(1000);
-    let effects = vec![Effect::Seal { field_idx: 1 }];
+    let effects = vec![Effect::Transfer { amount: 100, direction: 1 }];
     let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-    // Honest: row 0 starts with reserved=0, so bit 0..7 = 0 and mode = 0.
-    // Tamper: flip bit 0 on row 1 — that's after Seal, where actual
-    // reserved == 2, but trace will claim a different decomposition.
-    // Specifically: bit_1 is 1 honestly; we'll set bit_1 = 0 and bit_0 = 1
-    // (still decomposes to 1, but old_reserved == 2).
-    trace[1][AUX_BASE + aux_off::RESERVED_BIT_1] = BabyBear::ZERO;
-    trace[1][AUX_BASE + aux_off::RESERVED_BIT_0] = BabyBear::ONE;
+    // Honest: reserved == 0 on row 0, so all decomposition bits are 0.
+    // Tamper: claim bit_0 = 1 — the recomposition no longer equals old_reserved.
+    trace[0][AUX_BASE + aux_off::RESERVED_BIT_0] = BabyBear::ONE;
     let air = EffectVmAir::new(trace.len());
     let alpha = BabyBear::new(7);
-    let c1 = air.eval_constraints(&trace[1], &trace[0], &public_inputs, alpha);
+    let c0 = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
     assert_ne!(
-        c1,
+        c0,
         BabyBear::ZERO,
         "Stage 2: tampered reserved-bit decomposition must produce non-zero AIR constraint",
     );
@@ -3645,195 +2506,6 @@ fn assert_air_rejects(
     );
 }
 
-#[test]
-fn test_captp_adversarial_tamper_cases() {
-    struct Case {
-        setup: fn(&mut CellState),
-        effect: Effect,
-        tamper: fn(&mut [Vec<BabyBear>]),
-        label: &'static str,
-    }
-
-    let cases = [
-        Case {
-            setup: |s| s.fields[7] = BabyBear::new(5),
-            effect: Effect::ExportSturdyRef {
-                cell_id: BabyBear::new(0xCE11),
-                permissions: BabyBear::new(0x7),
-                random_seed: BabyBear::new(0x5EED),
-                export_counter: 5,
-            },
-            tamper: |t| t[0][AUX_BASE + 0] = t[0][AUX_BASE + 0] + BabyBear::ONE,
-            label: "ExportSturdyRef wrong swiss",
-        },
-        Case {
-            setup: |s| s.fields[6] = BabyBear::new(2),
-            effect: Effect::EnlivenRef {
-                swiss_number: BabyBear::new(0x5155),
-                presenter_id: BabyBear::new(0x9E5),
-                expected_cell_id: BabyBear::new(0xCE11),
-                expected_permissions: BabyBear::new(0x7),
-            },
-            tamper: |t| t[0][AUX_BASE + 1] = t[0][AUX_BASE + 1] + BabyBear::ONE,
-            label: "EnlivenRef wrong leaf",
-        },
-        Case {
-            setup: |s| {
-                s.fields[6] = BabyBear::new(2);
-                s.fields[4] = BabyBear::new(0x4444);
-            },
-            effect: Effect::EnlivenRef {
-                swiss_number: BabyBear::new(0x5155),
-                presenter_id: BabyBear::new(0x9E5),
-                expected_cell_id: BabyBear::new(0xCE11),
-                expected_permissions: BabyBear::new(0x7),
-            },
-            tamper: |t| t[0][AUX_BASE + 6] = t[0][AUX_BASE + 6] + BabyBear::ONE,
-            label: "EnlivenRef wrong sibling",
-        },
-        Case {
-            setup: |s| s.fields[6] = BabyBear::new(2),
-            effect: Effect::EnlivenRef {
-                swiss_number: BabyBear::new(0x5155),
-                presenter_id: BabyBear::new(0x9E5),
-                expected_cell_id: BabyBear::new(0xCE11),
-                expected_permissions: BabyBear::new(0x7),
-            },
-            tamper: |t| t[0][AUX_BASE + 0] = t[0][AUX_BASE + 0] + BabyBear::ONE,
-            label: "EnlivenRef wrong root",
-        },
-        Case {
-            setup: |s| s.fields[5] = BabyBear::new(3),
-            effect: Effect::DropRef {
-                cell_id: BabyBear::new(0xCE11),
-                holder_federation: BabyBear::new(0xFED1),
-                current_refcount: 3,
-            },
-            tamper: |t| t[0][AUX_BASE + 1] = t[0][AUX_BASE + 1] + BabyBear::ONE,
-            label: "DropRef wrong leaf",
-        },
-        Case {
-            setup: |s| {
-                s.fields[5] = BabyBear::new(3);
-                s.fields[3] = BabyBear::new(0x3333);
-            },
-            effect: Effect::DropRef {
-                cell_id: BabyBear::new(0xCE11),
-                holder_federation: BabyBear::new(0xFED1),
-                current_refcount: 3,
-            },
-            tamper: |t| t[0][AUX_BASE + 6] = t[0][AUX_BASE + 6] + BabyBear::ONE,
-            label: "DropRef wrong sibling",
-        },
-        Case {
-            setup: |s| s.fields[5] = BabyBear::new(3),
-            effect: Effect::DropRef {
-                cell_id: BabyBear::new(0xCE11),
-                holder_federation: BabyBear::new(0xFED1),
-                current_refcount: 3,
-            },
-            tamper: |t| {
-                t[0][STATE_AFTER_BASE + state::FIELD_BASE + 3] =
-                    t[0][STATE_AFTER_BASE + state::FIELD_BASE + 3] + BabyBear::ONE;
-            },
-            label: "DropRef wrong root mirror",
-        },
-    ];
-
-    for case in cases {
-        let mut state = CellState::new(1000, 0);
-        (case.setup)(&mut state);
-        state.refresh_commitment();
-        let effects = vec![case.effect];
-        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
-        (case.tamper)(&mut trace);
-        assert_air_rejects(&trace, &public_inputs, 0, case.label);
-    }
-}
-
-#[test]
-fn test_captp_validate_handoff_adversarial_wrong_root() {
-    let state = CellState::new(1000, 0);
-    let cert_hash = BabyBear::new(0xCE87);
-    let recipient_pk = BabyBear::new(0x8EC1);
-    let introducer_pk = BabyBear::new(0x1117);
-    let pks = hash_2_to_1(recipient_pk, introducer_pk);
-    let leaf = hash_2_to_1(cert_hash, pks);
-    let sibling = BabyBear::ZERO;
-    let expected_root = hash_2_to_1(leaf, sibling);
-
-    let effects = vec![Effect::ValidateHandoff {
-        certificate_hash: cert_hash,
-        recipient_pk,
-        introducer_pk,
-        approved_set_root: expected_root,
-    }];
-    let mut context = EffectVmContext::default();
-    // Set PI root to the WRONG value. The trace generator pulls
-    // approved_set_root from context, so the PARAM in the trace
-    // will not satisfy hash(leaf, sibling) == root.
-    context.approved_handoffs_root[0] = expected_root + BabyBear::ONE;
-    let (trace, public_inputs) = generate_effect_vm_trace_ext(&state, &effects, context);
-    assert_air_rejects(&trace, &public_inputs, 0, "ValidateHandoff wrong PI root");
-}
-
-#[test]
-fn test_captp_validate_handoff_adversarial_wrong_leaf() {
-    let state = CellState::new(1000, 0);
-    let cert_hash = BabyBear::new(0xCE87);
-    let recipient_pk = BabyBear::new(0x8EC1);
-    let introducer_pk = BabyBear::new(0x1117);
-    let pks = hash_2_to_1(recipient_pk, introducer_pk);
-    let leaf = hash_2_to_1(cert_hash, pks);
-    let sibling = BabyBear::ZERO;
-    let expected_root = hash_2_to_1(leaf, sibling);
-
-    let effects = vec![Effect::ValidateHandoff {
-        certificate_hash: cert_hash,
-        recipient_pk,
-        introducer_pk,
-        approved_set_root: expected_root,
-    }];
-    let mut context = EffectVmContext::default();
-    context.approved_handoffs_root[0] = expected_root;
-    let (mut trace, public_inputs) = generate_effect_vm_trace_ext(&state, &effects, context);
-    // Tamper aux[0] (leaf). Must violate leaf-derivation constraint.
-    trace[0][AUX_BASE + 0] = trace[0][AUX_BASE + 0] + BabyBear::ONE;
-    assert_air_rejects(&trace, &public_inputs, 0, "ValidateHandoff wrong leaf");
-}
-
-#[test]
-fn test_captp_validate_handoff_adversarial_prover_chosen_root() {
-    // Real and deep verdict for ValidateHandoff: prover cannot
-    // invent their own root even if they provide a matching
-    // sibling, because PARAM must equal PI.
-    let state = CellState::new(1000, 0);
-    let cert_hash = BabyBear::new(0xCE87);
-    let recipient_pk = BabyBear::new(0x8EC1);
-    let introducer_pk = BabyBear::new(0x1117);
-    let pks = hash_2_to_1(recipient_pk, introducer_pk);
-    let leaf = hash_2_to_1(cert_hash, pks);
-    let prover_root = hash_2_to_1(leaf, BabyBear::ZERO);
-
-    let effects = vec![Effect::ValidateHandoff {
-        certificate_hash: cert_hash,
-        recipient_pk,
-        introducer_pk,
-        approved_set_root: prover_root,
-    }];
-    let context = EffectVmContext::default(); // PI root = 0
-    let (mut trace, public_inputs) = generate_effect_vm_trace_ext(&state, &effects, context);
-    // Force the PARAM to the prover-chosen root (overriding the
-    // context-bound value the trace generator wrote).
-    trace[0][PARAM_BASE + param::HANDOFF_APPROVED_SET_ROOT] = prover_root;
-    // PI says 0; PARAM says prover_root; c_pi_bind must fire.
-    assert_air_rejects(
-        &trace,
-        &public_inputs,
-        0,
-        "ValidateHandoff prover-chosen root",
-    );
-}
 
 // ========================================================================
 // Stage 7 / §B: trace-side ACTOR_NONCE boundary tests.

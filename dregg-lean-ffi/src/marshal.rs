@@ -26,7 +26,7 @@
 //!   * the recursive ACTION-TREE node (`auth,caveats,action,children`) + delegation EDGEs;
 //!   * the 10-variant `Authorization` sum (`sig/pf/bread/bearer/unchecked/captp/custom/
 //!     oneof/stealth/token`);
-//!   * all 56 `FullActionA` arms via `WireAction` (byte-exact with `encodeActionW`);
+//!   * all 29 `FullActionA` arms via `WireAction` (byte-exact with `encodeActionW`);
 //!   * dregg1 `GrantCapability` / `RevokeCapability` map to `Delegate` / `Revoke` on the wire;
 //!   * dregg1 `BiscuitIssuer` / `CellScopedMacaroon` map to `Token` / `Custom` via
 //!     `auth_biscuit_issuer` / `auth_cell_macaroon`.
@@ -338,34 +338,10 @@ pub struct WireCaveat {
 }
 
 // ===================================================================
-// ACTION — the 56-arm `FullActionA` (FFI.lean:1684 encodeActionW). Every arm is
+// ACTION — the 29-arm `FullActionA` (FFI.lean encodeActionW, post verb-lockstep). Every arm is
 // representable via `WireAction`. Each `id/asset/idx/...` is a Nat; each
 // `amt/value/amount/stake/deposit/v/perms/vk/topic/data` is SIGNED.
 // ===================================================================
-
-/// A sub-op inside `QueueAtomicTx` (FFI.lean:1664 encodeQueueTxOp).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueueTxOp {
-    /// {"enq":[id,m,actor,cell,depId,dAsset,deposit]}
-    Enqueue {
-        id: u64,
-        m: u64,
-        actor: u64,
-        cell: u64,
-        dep_id: u64,
-        d_asset: u64,
-        deposit: i128,
-    },
-    /// {"deq":[id,actor,cell,depId]} — the refund amount is the deposit RECORD's OWN amount, NOT
-    /// a caller-supplied value (P2 canonical-semantics; the verified `queueDequeueA` reads the
-    /// record). The `deposit` field was REMOVED from the wire grammar to match.
-    Dequeue {
-        id: u64,
-        actor: u64,
-        cell: u64,
-        dep_id: u64,
-    },
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireAction {
@@ -395,12 +371,8 @@ pub enum WireAction {
     DelegateAtten { delegator: u64, recipient: u64, target: u64, keep: Vec<Auth> },
     /// {"atten":[actor,idx,AUTHS]}
     Attenuate { actor: u64, idx: u64, keep: Vec<Auth> },
-    /// {"dropref":[holder,target]}
-    DropRef { holder: u64, target: u64 },
     /// {"revdel":[holder,target]}
     RevokeDelegation { holder: u64, target: u64 },
-    /// {"vhandoff":[introducer,recipient,target]}
-    ValidateHandoff { introducer: u64, recipient: u64, target: u64 },
     /// {"exercise":[actor,target,[inner;...]]}  (inner `;`-joined inside `[ ]`)
     Exercise { actor: u64, target: u64, inner: Vec<WireAction> },
     /// {"createcell":[actor,newCell]}
@@ -411,18 +383,6 @@ pub enum WireAction {
     Spawn { actor: u64, child: u64, target: u64 },
     /// {"bmint":[actor,cell,asset,value]}  (value SIGNED)
     BridgeMint { actor: u64, cell: u64, asset: u64, value: i128 },
-    /// {"cesc":[id,actor,creator,recipient,asset,amount]}  (amount SIGNED)
-    CreateEscrow { id: u64, actor: u64, creator: u64, recipient: u64, asset: u64, amount: i128 },
-    /// {"resc":[id,actor]}
-    ReleaseEscrow { id: u64, actor: u64 },
-    /// {"fesc":[id,actor]}
-    RefundEscrow { id: u64, actor: u64 },
-    /// {"cobl":[id,actor,obligor,beneficiary,asset,stake]}  (stake SIGNED)
-    CreateObligation { id: u64, actor: u64, obligor: u64, beneficiary: u64, asset: u64, stake: i128 },
-    /// {"fobl":[id,actor]}
-    FulfillObligation { id: u64, actor: u64 },
-    /// {"sobl":[id,actor]}
-    SlashObligation { id: u64, actor: u64 },
     /// {"nspend":[nf,actor,sp]} — `sp` is the §8 note-spending-proof witness flag (0/1; the Lean
     /// parser fail-closes on `sp ≤ 1` and `noteSpendChainA` REJECTS when `sp = 0`, the proved
     /// `noteSpendChainA_fails_without_proof` teeth). The marshaller sets `sp = 1` iff the dregg1
@@ -430,56 +390,12 @@ pub enum WireAction {
     NoteSpend { nf: u64, actor: u64, spend_proof: bool },
     /// {"ncreate":[cm,actor]}
     NoteCreate { cm: u64, actor: u64 },
-    /// {"ccesc":[id,actor,creator,recipient,asset,amount,hidingProof]}  (amount SIGNED; hidingProof 0/1)
-    CreateCommittedEscrow {
-        id: u64,
-        actor: u64,
-        creator: u64,
-        recipient: u64,
-        asset: u64,
-        amount: i128,
-        hiding_proof: bool,
-    },
-    /// {"rccesc":[id,actor]}
-    ReleaseCommittedEscrow { id: u64, actor: u64 },
-    /// {"fccesc":[id,actor]}
-    RefundCommittedEscrow { id: u64, actor: u64 },
-    /// {"block":[id,actor,originator,destination,asset,amount]}  (amount SIGNED)
-    BridgeLock { id: u64, actor: u64, originator: u64, destination: u64, asset: u64, amount: i128 },
-    /// {"bfin":[id,actor,asset,amount]}  (amount SIGNED)
-    BridgeFinalize { id: u64, actor: u64, asset: u64, amount: i128 },
-    /// {"bcancel":[id,actor]}
-    BridgeCancel { id: u64, actor: u64 },
-    /// {"seal":[pid,actor,CAP]}
-    Seal { pair_id: u64, actor: u64, payload: Cap },
-    /// {"unseal":[pid,actor,recipient]}
-    Unseal { pair_id: u64, actor: u64, recipient: u64 },
-    /// {"csp":[pid,actor,sealerHolder,unsealerHolder]}
-    CreateSealPair { pair_id: u64, actor: u64, sealer_holder: u64, unsealer_holder: u64 },
     /// {"sov":[actor,cell]}
     MakeSovereign { actor: u64, cell: u64 },
     /// {"refusal":[actor,cell]}
     Refusal { actor: u64, cell: u64 },
     /// {"rarchive":[actor,cell]}
     ReceiptArchive { actor: u64, cell: u64 },
-    /// {"qalloc":[id,actor,cell,capacity]}
-    QueueAllocate { id: u64, actor: u64, cell: u64, capacity: u64 },
-    /// {"qenq":[id,m,actor,cell,depId,dAsset,deposit]}  (deposit SIGNED)
-    QueueEnqueue { id: u64, m: u64, actor: u64, cell: u64, dep_id: u64, d_asset: u64, deposit: i128 },
-    /// {"qdeq":[id,actor,cell,depId]} — the refund amount is the deposit RECORD's OWN amount (P2
-    /// canonical-semantics; the verified `queueDequeueA` reads the record, not a caller value), so
-    /// the `deposit` field was REMOVED from the wire grammar.
-    QueueDequeue { id: u64, actor: u64, cell: u64, dep_id: u64 },
-    /// {"qresize":[id,newCap,actor,cell]}
-    QueueResize { id: u64, new_cap: u64, actor: u64, cell: u64 },
-    /// {"export":[sw,actor,exporter,target,AUTHS]}
-    ExportSturdyRef { sw: u64, actor: u64, exporter: u64, target: u64, rights: Vec<Auth> },
-    /// {"enliven":[sw,actor,exporter,AUTHS]}
-    EnlivenRef { sw: u64, actor: u64, exporter: u64, claimed: Vec<Auth> },
-    /// {"shandoff":[sw,certHash,introducer,exporter]}
-    SwissHandoff { sw: u64, cert_hash: u64, introducer: u64, exporter: u64 },
-    /// {"sdrop":[sw,actor,exporter]}
-    SwissDrop { sw: u64, actor: u64, exporter: u64 },
     /// {"cseal":[actor,cell]}
     CellSeal { actor: u64, cell: u64 },
     /// {"cunseal":[actor,cell]}
@@ -488,10 +404,6 @@ pub enum WireAction {
     CellDestroy { actor: u64, cell: u64, cert_hash: u64 },
     /// {"rdel":[actor,child]}
     RefreshDelegation { actor: u64, child: u64 },
-    /// {"qatomic":[actor,OPS]}
-    QueueAtomicTx { actor: u64, ops: Vec<QueueTxOp> },
-    /// {"qpipe":[srcId,owner,NATSW,NATSW]}
-    QueuePipelineStep { src_id: u64, owner: u64, sink_cells: Vec<u64>, sink_ids: Vec<u64> },
     /// {"psend":[actor]}
     PipelinedSend { actor: u64 },
 }
@@ -896,7 +808,7 @@ fn encode_caveats(cs: &[WireCaveat], out: &mut String) {
     out.push(']');
 }
 
-// ---- WireAction (FFI.lean:1684 encodeActionW), all 56 arms ----
+// ---- WireAction (FFI.lean encodeActionW), all 29 arms ----
 
 /// Encode a `Nat` list as the `NATSW` array `[N(,N)*]` (or `[]`) — FFI.lean:1658.
 fn encode_nats_w(ns: &[u64], out: &mut String) {
@@ -906,46 +818,6 @@ fn encode_nats_w(ns: &[u64], out: &mut String) {
             out.push(',');
         }
         push_nat(out, *n);
-    }
-    out.push(']');
-}
-
-/// Encode ONE `QueueTxOp` sub-op — FFI.lean:1664 encodeQueueTxOp.
-fn encode_queue_tx_op(op: &QueueTxOp, out: &mut String) {
-    match op {
-        QueueTxOp::Enqueue { id, m, actor, cell, dep_id, d_asset, deposit } => {
-            out.push_str("{\"enq\":[");
-            for (i, n) in [*id, *m, *actor, *cell, *dep_id, *d_asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *deposit);
-            out.push_str("]}");
-        }
-        QueueTxOp::Dequeue { id, actor, cell, dep_id } => {
-            out.push_str("{\"deq\":[");
-            for (i, n) in [*id, *actor, *cell, *dep_id].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push_str("]}");
-        }
-    }
-}
-
-/// Encode a `List QueueTxOp` as the `OPS` array `[OP(,OP)*]` (or `[]`) — FFI.lean:1674.
-fn encode_queue_tx_ops(ops: &[QueueTxOp], out: &mut String) {
-    out.push('[');
-    for (i, op) in ops.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        encode_queue_tx_op(op, out);
     }
     out.push(']');
 }
@@ -1094,13 +966,7 @@ fn encode_action(a: &WireAction, out: &mut String) {
             encode_auths(keep, out);
             out.push_str("]}");
         }
-        WireAction::DropRef { holder, target } => {
-            out.push_str("{\"dropref\":[");
-            push_nat(out, *holder);
-            out.push(',');
-            push_nat(out, *target);
-            out.push_str("]}");
-        }
+        
         WireAction::RevokeDelegation { holder, target } => {
             out.push_str("{\"revdel\":[");
             push_nat(out, *holder);
@@ -1108,15 +974,7 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *target);
             out.push_str("]}");
         }
-        WireAction::ValidateHandoff { introducer, recipient, target } => {
-            out.push_str("{\"vhandoff\":[");
-            push_nat(out, *introducer);
-            out.push(',');
-            push_nat(out, *recipient);
-            out.push(',');
-            push_nat(out, *target);
-            out.push_str("]}");
-        }
+        
         WireAction::Exercise { actor, target, inner } => {
             out.push_str("{\"exercise\":[");
             push_nat(out, *actor);
@@ -1162,34 +1020,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *value);
             out.push_str("]}");
         }
-        WireAction::CreateEscrow { id, actor, creator, recipient, asset, amount } => {
-            out.push_str("{\"cesc\":[");
-            for (i, n) in [*id, *actor, *creator, *recipient, *asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *amount);
-            out.push_str("]}");
-        }
-        WireAction::ReleaseEscrow { id, actor } => emit_id_actor("resc", *id, *actor, out),
-        WireAction::RefundEscrow { id, actor } => emit_id_actor("fesc", *id, *actor, out),
-        WireAction::CreateObligation { id, actor, obligor, beneficiary, asset, stake } => {
-            out.push_str("{\"cobl\":[");
-            for (i, n) in [*id, *actor, *obligor, *beneficiary, *asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *stake);
-            out.push_str("]}");
-        }
-        WireAction::FulfillObligation { id, actor } => emit_id_actor("fobl", *id, *actor, out),
-        WireAction::SlashObligation { id, actor } => emit_id_actor("sobl", *id, *actor, out),
+        
+        
+        
+        
+        
+        
         WireAction::NoteSpend { nf, actor, spend_proof } => {
             out.push_str("{\"nspend\":[");
             push_nat(out, *nf);
@@ -1200,174 +1036,26 @@ fn encode_action(a: &WireAction, out: &mut String) {
             out.push_str("]}");
         }
         WireAction::NoteCreate { cm, actor } => emit_id_actor("ncreate", *cm, *actor, out),
-        WireAction::CreateCommittedEscrow {
-            id,
-            actor,
-            creator,
-            recipient,
-            asset,
-            amount,
-            hiding_proof,
-        } => {
-            out.push_str("{\"ccesc\":[");
-            for (i, n) in [*id, *actor, *creator, *recipient, *asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *amount);
-            out.push(',');
-            out.push(if *hiding_proof { '1' } else { '0' });
-            out.push_str("]}");
-        }
-        WireAction::ReleaseCommittedEscrow { id, actor } => emit_id_actor("rccesc", *id, *actor, out),
-        WireAction::RefundCommittedEscrow { id, actor } => emit_id_actor("fccesc", *id, *actor, out),
-        WireAction::BridgeLock { id, actor, originator, destination, asset, amount } => {
-            out.push_str("{\"block\":[");
-            for (i, n) in [*id, *actor, *originator, *destination, *asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *amount);
-            out.push_str("]}");
-        }
-        WireAction::BridgeFinalize { id, actor, asset, amount } => {
-            out.push_str("{\"bfin\":[");
-            push_nat(out, *id);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *asset);
-            out.push(',');
-            push_int(out, *amount);
-            out.push_str("]}");
-        }
-        WireAction::BridgeCancel { id, actor } => emit_id_actor("bcancel", *id, *actor, out),
-        WireAction::Seal { pair_id, actor, payload } => {
-            out.push_str("{\"seal\":[");
-            push_nat(out, *pair_id);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            encode_cap(payload, out);
-            out.push_str("]}");
-        }
-        WireAction::Unseal { pair_id, actor, recipient } => {
-            out.push_str("{\"unseal\":[");
-            push_nat(out, *pair_id);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *recipient);
-            out.push_str("]}");
-        }
-        WireAction::CreateSealPair { pair_id, actor, sealer_holder, unsealer_holder } => {
-            out.push_str("{\"csp\":[");
-            push_nat(out, *pair_id);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *sealer_holder);
-            out.push(',');
-            push_nat(out, *unsealer_holder);
-            out.push_str("]}");
-        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
         WireAction::MakeSovereign { actor, cell } => emit_id_actor("sov", *actor, *cell, out),
         WireAction::Refusal { actor, cell } => emit_id_actor("refusal", *actor, *cell, out),
         WireAction::ReceiptArchive { actor, cell } => emit_id_actor("rarchive", *actor, *cell, out),
-        WireAction::QueueAllocate { id, actor, cell, capacity } => {
-            out.push_str("{\"qalloc\":[");
-            push_nat(out, *id);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *cell);
-            out.push(',');
-            push_nat(out, *capacity);
-            out.push_str("]}");
-        }
-        WireAction::QueueEnqueue { id, m, actor, cell, dep_id, d_asset, deposit } => {
-            out.push_str("{\"qenq\":[");
-            for (i, n) in [*id, *m, *actor, *cell, *dep_id, *d_asset].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push(',');
-            push_int(out, *deposit);
-            out.push_str("]}");
-        }
-        WireAction::QueueDequeue { id, actor, cell, dep_id } => {
-            out.push_str("{\"qdeq\":[");
-            for (i, n) in [*id, *actor, *cell, *dep_id].iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                push_nat(out, *n);
-            }
-            out.push_str("]}");
-        }
-        WireAction::QueueResize { id, new_cap, actor, cell } => {
-            out.push_str("{\"qresize\":[");
-            push_nat(out, *id);
-            out.push(',');
-            push_nat(out, *new_cap);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *cell);
-            out.push_str("]}");
-        }
-        WireAction::ExportSturdyRef { sw, actor, exporter, target, rights } => {
-            out.push_str("{\"export\":[");
-            push_nat(out, *sw);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *exporter);
-            out.push(',');
-            push_nat(out, *target);
-            out.push(',');
-            encode_auths(rights, out);
-            out.push_str("]}");
-        }
-        WireAction::EnlivenRef { sw, actor, exporter, claimed } => {
-            out.push_str("{\"enliven\":[");
-            push_nat(out, *sw);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *exporter);
-            out.push(',');
-            encode_auths(claimed, out);
-            out.push_str("]}");
-        }
-        WireAction::SwissHandoff { sw, cert_hash, introducer, exporter } => {
-            out.push_str("{\"shandoff\":[");
-            push_nat(out, *sw);
-            out.push(',');
-            push_nat(out, *cert_hash);
-            out.push(',');
-            push_nat(out, *introducer);
-            out.push(',');
-            push_nat(out, *exporter);
-            out.push_str("]}");
-        }
-        WireAction::SwissDrop { sw, actor, exporter } => {
-            out.push_str("{\"sdrop\":[");
-            push_nat(out, *sw);
-            out.push(',');
-            push_nat(out, *actor);
-            out.push(',');
-            push_nat(out, *exporter);
-            out.push_str("]}");
-        }
+        
+        
+        
+        
+        
+        
+        
+        
         WireAction::CellSeal { actor, cell } => emit_id_actor("cseal", *actor, *cell, out),
         WireAction::CellUnseal { actor, cell } => emit_id_actor("cunseal", *actor, *cell, out),
         WireAction::CellDestroy { actor, cell, cert_hash } => {
@@ -1380,24 +1068,8 @@ fn encode_action(a: &WireAction, out: &mut String) {
             out.push_str("]}");
         }
         WireAction::RefreshDelegation { actor, child } => emit_id_actor("rdel", *actor, *child, out),
-        WireAction::QueueAtomicTx { actor, ops } => {
-            out.push_str("{\"qatomic\":[");
-            push_nat(out, *actor);
-            out.push(',');
-            encode_queue_tx_ops(ops, out);
-            out.push_str("]}");
-        }
-        WireAction::QueuePipelineStep { src_id, owner, sink_cells, sink_ids } => {
-            out.push_str("{\"qpipe\":[");
-            push_nat(out, *src_id);
-            out.push(',');
-            push_nat(out, *owner);
-            out.push(',');
-            encode_nats_w(sink_cells, out);
-            out.push(',');
-            encode_nats_w(sink_ids, out);
-            out.push_str("]}");
-        }
+        
+        
         WireAction::PipelinedSend { actor } => {
             out.push_str("{\"psend\":[");
             push_nat(out, *actor);
@@ -1633,7 +1305,7 @@ fn encode_cell_nats(entries: &[(u64, u64)], out: &mut String) {
     out.push(']');
 }
 
-/// ONE representative per Lean `allActions` arm (FFI.lean:2242-2301) — the 56-arm demo set.
+/// ONE representative per Lean `allActions` arm — the 29-arm demo set.
 pub fn all_action_arms_demo() -> Vec<WireAction> {
     vec![
         WireAction::Balance { actor: 1, src: 2, dst: 3, amt: -4, asset: 5 },
@@ -1654,9 +1326,7 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
             keep: vec![Auth::Read, Auth::Write],
         },
         WireAction::Attenuate { actor: 38, idx: 39, keep: vec![Auth::Read, Auth::Write] },
-        WireAction::DropRef { holder: 40, target: 41 },
         WireAction::RevokeDelegation { holder: 42, target: 43 },
-        WireAction::ValidateHandoff { introducer: 44, recipient: 45, target: 46 },
         WireAction::Exercise {
             actor: 47,
             target: 48,
@@ -1674,131 +1344,15 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
         WireAction::CreateCellFromFactory { actor: 250, new_cell: 251, vk: -252 },
         WireAction::Spawn { actor: 51, child: 52, target: 53 },
         WireAction::BridgeMint { actor: 54, cell: 55, asset: 56, value: -57 },
-        WireAction::CreateEscrow {
-            id: 58,
-            actor: 59,
-            creator: 60,
-            recipient: 61,
-            asset: 62,
-            amount: -63,
-        },
-        WireAction::ReleaseEscrow { id: 64, actor: 65 },
-        WireAction::RefundEscrow { id: 66, actor: 67 },
-        WireAction::CreateObligation {
-            id: 68,
-            actor: 69,
-            obligor: 70,
-            beneficiary: 71,
-            asset: 72,
-            stake: -73,
-        },
-        WireAction::FulfillObligation { id: 200, actor: 201 },
-        WireAction::SlashObligation { id: 202, actor: 203 },
         WireAction::NoteSpend { nf: 74, actor: 75, spend_proof: true },
         WireAction::NoteCreate { cm: 76, actor: 77 },
-        WireAction::CreateCommittedEscrow {
-            id: 78,
-            actor: 79,
-            creator: 80,
-            recipient: 81,
-            asset: 82,
-            amount: -83,
-            hiding_proof: true,
-        },
-        WireAction::ReleaseCommittedEscrow { id: 84, actor: 85 },
-        WireAction::RefundCommittedEscrow { id: 86, actor: 87 },
-        WireAction::BridgeLock {
-            id: 88,
-            actor: 89,
-            originator: 90,
-            destination: 91,
-            asset: 92,
-            amount: -93,
-        },
-        WireAction::BridgeFinalize { id: 94, actor: 95, asset: 96, amount: -97 },
-        WireAction::BridgeCancel { id: 98, actor: 99 },
-        WireAction::Seal {
-            pair_id: 100,
-            actor: 101,
-            payload: Cap::Endpoint(150, vec![Auth::Read, Auth::Write]),
-        },
-        WireAction::Unseal { pair_id: 102, actor: 103, recipient: 104 },
-        WireAction::CreateSealPair {
-            pair_id: 105,
-            actor: 106,
-            sealer_holder: 107,
-            unsealer_holder: 108,
-        },
         WireAction::MakeSovereign { actor: 109, cell: 110 },
         WireAction::Refusal { actor: 111, cell: 112 },
         WireAction::ReceiptArchive { actor: 113, cell: 114 },
-        WireAction::QueueAllocate { id: 115, actor: 116, cell: 117, capacity: 118 },
-        WireAction::QueueEnqueue {
-            id: 119,
-            m: 120,
-            actor: 121,
-            cell: 122,
-            dep_id: 123,
-            d_asset: 124,
-            deposit: -125,
-        },
-        WireAction::QueueDequeue {
-            id: 126,
-            actor: 127,
-            cell: 128,
-            dep_id: 129,
-        },
-        WireAction::QueueResize { id: 131, new_cap: 132, actor: 133, cell: 134 },
-        WireAction::ExportSturdyRef {
-            sw: 135,
-            actor: 136,
-            exporter: 137,
-            target: 138,
-            rights: vec![Auth::Read],
-        },
-        WireAction::EnlivenRef {
-            sw: 139,
-            actor: 140,
-            exporter: 141,
-            claimed: vec![Auth::Call],
-        },
-        WireAction::SwissHandoff {
-            sw: 142,
-            cert_hash: 143,
-            introducer: 144,
-            exporter: 145,
-        },
-        WireAction::SwissDrop { sw: 146, actor: 147, exporter: 148 },
         WireAction::CellSeal { actor: 149, cell: 150 },
         WireAction::CellUnseal { actor: 151, cell: 152 },
         WireAction::CellDestroy { actor: 153, cell: 154, cert_hash: 155 },
         WireAction::RefreshDelegation { actor: 156, child: 157 },
-        WireAction::QueueAtomicTx {
-            actor: 158,
-            ops: vec![
-                QueueTxOp::Enqueue {
-                    id: 159,
-                    m: 160,
-                    actor: 161,
-                    cell: 162,
-                    dep_id: 163,
-                    d_asset: 164,
-                    deposit: -165,
-                },
-                QueueTxOp::Dequeue {
-                    id: 166,
-                    actor: 167,
-                    cell: 168,
-                    dep_id: 169,
-                },
-            ],
-        },
-        WireAction::QueuePipelineStep {
-            src_id: 171,
-            owner: 172,
-            sink_cells: vec![173, 174],
-            sink_ids: vec![175, 176],
-        },
         WireAction::PipelinedSend { actor: 177 },
     ]
 }

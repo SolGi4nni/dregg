@@ -1710,11 +1710,6 @@ pub fn router_with_cors(
         .route("/turns/bearer-auth", post(post_bearer_auth))
         .route("/turns/peer-exchange", post(post_peer_exchange))
         // Queue operations
-        .route("/queues/allocate", post(post_queue_allocate))
-        .route("/queues/{id}/enqueue", post(post_queue_enqueue))
-        .route("/queues/{id}/dequeue", post(post_queue_dequeue))
-        .route("/queues/{id}/status", get(get_queue_status))
-        .route("/queues/atomic-tx", post(post_queue_atomic_tx))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     // Metrics endpoint (separate state: PrometheusHandle)
@@ -6720,40 +6715,15 @@ fn effect_cells(effect: &dregg_turn::Effect) -> Vec<String> {
         | Effect::MakeSovereign { cell }
         | Effect::Refusal { cell, .. }
         | Effect::AttenuateCapability { cell, .. } => vec![hex_encode(&cell.0)],
-        Effect::Transfer { from, to, .. }
-        | Effect::GrantCapability { from, to, .. }
-        | Effect::CreateSealPair {
-            sealer_holder: from,
-            unsealer_holder: to,
-        } => vec![hex_encode(&from.0), hex_encode(&to.0)],
+        
         Effect::SetPermissions { cell, .. } | Effect::SetVerificationKey { cell, .. } => {
             vec![hex_encode(&cell.0)]
         }
-        Effect::EnlivenRef {
-            bearer,
-            expected_cell_id,
-            ..
-        } => vec![hex_encode(&bearer.0), hex_encode(&expected_cell_id.0)],
-        Effect::ExportSturdyRef { target, .. }
-        | Effect::CellSeal { target, .. }
-        | Effect::CellUnseal { target }
-        | Effect::CellDestroy { target, .. }
-        | Effect::Burn { target, .. } => vec![hex_encode(&target.0)],
-        Effect::QueueEnqueue { queue, .. }
-        | Effect::QueueDequeue { queue }
-        | Effect::QueueResize { queue, .. } => vec![hex_encode(&queue.0)],
-        Effect::QueuePipelineStep { source, sinks, .. } => {
-            let mut cells = vec![hex_encode(&source.0)];
-            cells.extend(sinks.iter().map(|cell| hex_encode(&cell.0)));
-            cells
-        }
-        Effect::QueueAtomicTx { operations } => operations
-            .iter()
-            .map(|op| match op {
-                dregg_turn::QueueTxOp::Enqueue { queue, .. }
-                | dregg_turn::QueueTxOp::Dequeue { queue } => hex_encode(&queue.0),
-            })
-            .collect(),
+        
+        
+        
+        
+        
         _ => Vec::new(),
     }
 }
@@ -6879,146 +6849,6 @@ struct QueueAtomicTxResponse {
 struct QueueAtomicTxResult {
     index: usize,
     ok: bool,
-}
-
-async fn post_queue_allocate(
-    State(state): State<NodeState>,
-    Json(req): Json<QueueAllocateRequest>,
-) -> Result<Json<QueueAllocateResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    // Derive a queue ID from capacity + program_vk + a random nonce.
-    let mut hasher = blake3::Hasher::new_derive_key("dregg-queue-allocate-v1");
-    hasher.update(&req.capacity.to_le_bytes());
-    if let Some(ref vk) = req.program_vk {
-        hasher.update(vk.as_bytes());
-    }
-    // Add entropy from the node's public key to make queue IDs unique per node.
-    let cclerk = &s.cclerk;
-    hasher.update(&cclerk.public_key().0);
-    let latest_height = s
-        .store
-        .latest_attested_root()
-        .ok()
-        .flatten()
-        .map(|r| r.height)
-        .unwrap_or(0);
-    hasher.update(&latest_height.to_le_bytes());
-    let queue_id = *hasher.finalize().as_bytes();
-
-    tracing::info!(
-        capacity = req.capacity,
-        queue_id = %hex_encode(&queue_id),
-        "queue allocated"
-    );
-
-    Ok(Json(QueueAllocateResponse {
-        queue_id: hex_encode(&queue_id),
-    }))
-}
-
-async fn post_queue_enqueue(
-    State(state): State<NodeState>,
-    AxumPath(queue_id_hex): AxumPath<String>,
-    Json(req): Json<QueueEnqueueRequest>,
-) -> Result<Json<QueueEnqueueResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    let _queue_id = hex_decode(&queue_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let _message_hash = hex_decode(&req.message_hash).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // The actual enqueue is processed via the turn submission pipeline.
-    // This endpoint validates and returns the position for the caller.
-    tracing::info!(
-        queue = %queue_id_hex,
-        deposit = req.deposit,
-        "queue enqueue submitted"
-    );
-
-    Ok(Json(QueueEnqueueResponse {
-        position: 0, // Position is determined after turn execution
-    }))
-}
-
-async fn post_queue_dequeue(
-    State(state): State<NodeState>,
-    AxumPath(queue_id_hex): AxumPath<String>,
-) -> Result<Json<QueueDequeueResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    let _queue_id = hex_decode(&queue_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    tracing::info!(
-        queue = %queue_id_hex,
-        "queue dequeue submitted"
-    );
-
-    // Placeholder: actual dequeue happens via turn execution.
-    // Return empty message hash to indicate "pending via turn".
-    Ok(Json(QueueDequeueResponse {
-        message_hash: hex_encode(&[0u8; 32]),
-        deposit: 0,
-    }))
-}
-
-async fn get_queue_status(
-    State(state): State<NodeState>,
-    AxumPath(queue_id_hex): AxumPath<String>,
-) -> Result<Json<QueueStatusResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    let _queue_id = hex_decode(&queue_id_hex).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Placeholder: look up queue state from ledger.
-    // The actual implementation will index queue metadata in the node state.
-    Ok(Json(QueueStatusResponse {
-        queue_id: queue_id_hex,
-        occupancy: 0,
-        capacity: 0,
-        owner: String::new(),
-        program_vk: None,
-    }))
-}
-
-async fn post_queue_atomic_tx(
-    State(state): State<NodeState>,
-    Json(req): Json<QueueAtomicTxRequest>,
-) -> Result<Json<QueueAtomicTxResponse>, StatusCode> {
-    let s = state.read().await;
-    if !s.unlocked {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    if req.operations.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    tracing::info!(op_count = req.operations.len(), "queue atomic tx submitted");
-
-    // All operations are accepted as a batch; actual execution is via turn pipeline.
-    let results: Vec<QueueAtomicTxResult> = req
-        .operations
-        .iter()
-        .enumerate()
-        .map(|(i, _)| QueueAtomicTxResult { index: i, ok: true })
-        .collect();
-
-    Ok(Json(QueueAtomicTxResponse {
-        success: true,
-        results,
-    }))
 }
 
 // =============================================================================

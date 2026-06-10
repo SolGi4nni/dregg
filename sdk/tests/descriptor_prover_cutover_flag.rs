@@ -103,45 +103,6 @@ fn cutover_flag_routes_burn_through_descriptor_and_still_verifies() {
     verify_result.expect("descriptor-prover burn proof must verify through the descriptor arm");
 }
 
-/// The flagged production swap, GRADUATED FROZEN-FRAME effect: a single `BridgeFinalize` turn,
-/// proven + verified through the descriptor interpreter end-to-end. Exercises the widened
-/// `cutover_ready_selector` (BridgeFinalize = selector 41, nonce-tick-reconciled) and the widened
-/// verify arm. BridgeFinalize is balance-NEUTRAL: the balance is frozen, the nonce ticks.
-#[test]
-fn cutover_flag_routes_bridge_finalize_through_descriptor_and_still_verifies() {
-    let _g = FLAG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let initial = CellState::new(1000, 0);
-    let mut finalize_hash = [BabyBear::ZERO; 8];
-    finalize_hash[0] = BabyBear::new(0xF1);
-    let effects = vec![VmEffect::BridgeFinalize { finalize_hash }];
-    let turn_hash = [0xEFu8; 32];
-
-    // SAFETY: own-process test binary; no other thread reads/writes this env var.
-    unsafe {
-        std::env::set_var("DREGG_DESCRIPTOR_PROVER", "1");
-    }
-
-    let proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
-        .expect("descriptor-prover bridge-finalize proof should generate");
-    assert!(proof.components.has_state_transition);
-
-    let old_commit = initial.state_commitment;
-    let mut expected_final = initial.clone();
-    // balance-frozen (bridge finalize moves no transparent value); nonce ticks (non-NoOp row).
-    expected_final.nonce = 1;
-    expected_final.refresh_commitment();
-    let new_commit = expected_final.state_commitment;
-
-    let verify_result = verify_full_turn(&proof, old_commit, new_commit);
-
-    // SAFETY: own-process test binary.
-    unsafe {
-        std::env::remove_var("DREGG_DESCRIPTOR_PROVER");
-    }
-
-    verify_result
-        .expect("descriptor-prover bridge-finalize proof must verify through the descriptor arm");
-}
 
 /// Control: with the flag UNSET (default), the SAME transfer turn proves through the
 /// hand-AIR and verifies through the hand-AIR arm — the default production path is

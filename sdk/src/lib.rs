@@ -174,7 +174,7 @@ pub use cipherclerk::AgentCipherclerk as AgentCClerk;
 pub use dregg_cell::{CellId, Ledger};
 pub use dregg_circuit::{BabyBear, IvcProof, verify_ivc};
 pub use dregg_token::{Attenuation, AuthRequest, AuthToken};
-pub use dregg_turn::{Effect, QueueTxOp, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
+pub use dregg_turn::{Effect, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
 pub use dregg_turn::{
     VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
 };

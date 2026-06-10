@@ -125,28 +125,9 @@ fn check_all_14_effect_types() -> Result<(), String> {
             commitment: BabyBear::new(5678),
             value: 50,
         },
-        Effect::CreateObligation {
-            stake_amount: 200,
-            obligation_id: BabyBear::new(8888),
-            beneficiary_hash: BabyBear::new(7777),
-        },
-        Effect::FulfillObligation {
-            obligation_id: BabyBear::new(8888),
-            stake_return: 200,
-        },
         Effect::Custom {
             program_vk_hash: [BabyBear::new(1); 8],
             proof_commitment: [BabyBear::new(2); 4],
-        },
-        Effect::SlashObligation {
-            obligation_id: BabyBear::new(9999),
-            stake_amount: 50,
-            beneficiary_hash: BabyBear::new(1111),
-        },
-        Effect::Seal { field_idx: 0 },
-        Effect::Unseal {
-            field_idx: 0,
-            brand: BabyBear::new(555),
         },
         Effect::MakeSovereign,
         Effect::CreateCellFromFactory {
@@ -155,7 +136,8 @@ fn check_all_14_effect_types() -> Result<(), String> {
         },
     ];
 
-    assert_eq!(effects.len(), NUM_EFFECTS, "should have exactly 14 effects");
+    // (VERB-LOCKSTEP: the doomed obligation/seal entries left this corpus;
+    // NUM_EFFECTS counts selector COLUMNS, not corpus length.)
 
     // Pad to next power of 2 (16).
     let mut padded = effects.clone();
@@ -187,12 +169,7 @@ fn check_all_14_effect_types() -> Result<(), String> {
         sel::GRANT_CAP,
         sel::NOTE_SPEND,
         sel::NOTE_CREATE,
-        sel::CREATE_OBLIGATION,
-        sel::FULFILL_OBLIGATION,
         sel::CUSTOM,
-        sel::SLASH_OBLIGATION,
-        sel::SEAL,
-        sel::UNSEAL,
         sel::MAKE_SOVEREIGN,
         sel::CREATE_CELL_FROM_FACTORY,
     ];

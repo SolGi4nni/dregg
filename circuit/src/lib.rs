@@ -129,7 +129,6 @@ pub mod accumulator_types;
 pub mod arithmetic_predicate_air;
 pub mod block_transition_air;
 pub mod bridge_action_air;
-pub mod bridge_lock_action_air;
 pub mod compound_predicate_air;
 #[allow(deprecated)]
 pub mod derivation_air;

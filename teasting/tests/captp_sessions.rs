@@ -133,45 +133,6 @@ fn test_export_and_enliven_sturdy_ref() {
 // Test 3: GC - Fed B drops ref -> Fed A's export count decrements
 // =============================================================================
 
-/// Distributed GC: when B drops a reference, A's export entry refcount decrements.
-/// At zero refs, the export can be revoked.
-#[test]
-fn test_gc_drop_ref_decrements_export() {
-    let mut harness = dual_federation();
-
-    let cell = test_cell(0x33);
-    let mut gc_a = ExportGcManager::new();
-    let mut gc_b = ImportGcManager::new();
-
-    // Fed A exports a cell to Fed B.
-    gc_a.record_export(cell, fed_b_id(), 100);
-    assert_eq!(gc_a.get(&cell).unwrap().total_refs, 1);
-
-    // Fed B records the import.
-    gc_b.record_import(fed_b_id(), cell);
-    assert_eq!(gc_b.get(&fed_b_id(), &cell).unwrap().local_refs, 1);
-
-    // Fed B drops the reference.
-    let drop_msg = gc_b.local_ref_dropped(fed_b_id(), cell);
-    assert!(drop_msg.is_some(), "Should generate a DropRef message");
-
-    let msg = drop_msg.unwrap();
-    assert_eq!(msg.target_federation, fed_b_id());
-    assert_eq!(msg.cell_id, cell);
-
-    // Fed A processes the drop.
-    let result = gc_a.process_drop_with_session(cell, fed_b_id(), 0);
-    assert_eq!(result, DropResult::CanRevoke);
-    assert_eq!(gc_a.get(&cell).unwrap().total_refs, 0);
-
-    // GC sweep removes the dead export.
-    let swept = gc_a.gc_sweep();
-    assert_eq!(swept.len(), 1);
-    assert!(swept.contains(&cell));
-    assert!(gc_a.is_empty());
-
-    harness.advance_blocks(1);
-}
 
 // =============================================================================
 // Test 4: Pipeline - Fed B sends 3 pipelined actions to Fed A, all resolve

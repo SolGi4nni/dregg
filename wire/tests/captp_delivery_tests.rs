@@ -329,7 +329,16 @@ fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     // The cert_hash is BLAKE3 over the presentation bytes (the wire handler
     // uses this exact convention; see server.rs PresentHandoff handler).
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
+    // VERB-LOCKSTEP: ValidateHandoff is gone; the CapTpDelivered AUTHORIZATION is the
+    // machinery under test, so carry a survivor effect (EmitEvent) in the delivered turn.
+    let _ = cert_hash;
+    let effect = dregg_turn::Effect::EmitEvent {
+        cell: target_cell,
+        event: dregg_turn::Event {
+            topic: dregg_turn::action::symbol("captp.delivered.test"),
+            data: vec![],
+        },
+    };
 
     // Bob computes the canonical CapTP-delivery signing message and signs it.
     let effects = vec![effect.clone()];
@@ -422,7 +431,16 @@ fn captp_delivered_rejects_wrong_sender_signature() {
     let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
     let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
+    // VERB-LOCKSTEP: ValidateHandoff is gone; the CapTpDelivered AUTHORIZATION is the
+    // machinery under test, so carry a survivor effect (EmitEvent) in the delivered turn.
+    let _ = cert_hash;
+    let effect = dregg_turn::Effect::EmitEvent {
+        cell: target_cell,
+        event: dregg_turn::Event {
+            topic: dregg_turn::action::symbol("captp.delivered.test"),
+            data: vec![],
+        },
+    };
 
     // Bad signature: 64 zero bytes (not a valid sig for any sender_pk).
     let bad_sig = [0u8; 64];
@@ -497,7 +515,16 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
     let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
     let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
     let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-    let effect = captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, alice_pk.0);
+    // VERB-LOCKSTEP: ValidateHandoff is gone; the CapTpDelivered AUTHORIZATION is the
+    // machinery under test, so carry a survivor effect (EmitEvent) in the delivered turn.
+    let _ = cert_hash;
+    let effect = dregg_turn::Effect::EmitEvent {
+        cell: target_cell,
+        event: dregg_turn::Event {
+            topic: dregg_turn::action::symbol("captp.delivered.test"),
+            data: vec![],
+        },
+    };
 
     let effects = vec![effect.clone()];
     let federation_id = [0u8; 32];
@@ -560,257 +587,8 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 // CapTpDelivered authorization's cert. Forged keys → rejection.
 // ---------------------------------------------------------------------------
 
-/// Forged `Effect::ValidateHandoff.recipient_pk` (different from the cert's
-/// recipient_pk) is rejected by `verify_captp_delivered`. This closes the
-/// BLOCK1-BIND-CLOSURE-NOTES.md `ValidateHandoff-runtime-variant-extend`
-/// gap: the AIR's PI binds `recipient_pk` directly from the runtime
-/// variant, so without this authorization-side equality check, a prover
-/// could supply forged keys that nonetheless pass cert-signature
-/// verification.
-#[test]
-fn captp_delivered_rejects_forged_effect_recipient_pk() {
-    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use dregg_turn::action::Authorization;
-    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
 
-    let target_cell = cell(0x42);
-    let target_fed = fed(0xCA);
-    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
-        make_delivery_setup(target_cell, target_fed);
 
-    let cert = HandoffCertificate::create(
-        &alice_sk,
-        alice_fed,
-        target_fed,
-        target_cell,
-        bob_sk.public_key().0,
-        AuthRequired::None,
-        None,
-        Some(500),
-        Some(1),
-        swiss_num,
-    );
 
-    let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
-    let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
-    let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
 
-    // Forge: the effect declares a recipient_pk that is NOT cert.recipient_pk.
-    let (_evil_sk, evil_pk) = generate_keypair();
-    let forged_effect = captp_routing::validate_handoff_effect(cert_hash, evil_pk.0, alice_pk.0);
 
-    let effects = vec![forged_effect.clone()];
-    let federation_id = [0u8; 32];
-    let signing_msg = Authorization::captp_delivered_signing_message_for_federation(
-        &federation_id,
-        &cert.nonce,
-        &target_cell,
-        &target_cell,
-        0,
-        &effects,
-    );
-    let sig = dregg_types::sign(&bob_sk, &signing_msg);
-
-    let turn = captp_routing::build_captp_turn_delivered_from_parts(
-        target_cell,
-        target_cell,
-        forged_effect,
-        0,
-        cert.clone(),
-        alice_pk.0,
-        cert.recipient_pk,
-        sig.0,
-    );
-
-    let mut ledger = Ledger::new();
-    let mut target = Cell::remote_stub_with_id(target_cell);
-    target.permissions = Permissions {
-        send: P::None,
-        receive: P::None,
-        set_state: P::None,
-        set_permissions: P::None,
-        set_verification_key: P::None,
-        increment_nonce: P::None,
-        delegate: P::None,
-        access: P::None,
-    };
-    ledger.insert_cell(target).expect("insert target cell");
-
-    let executor = TurnExecutor::new(ComputronCosts::zero());
-    let result = executor.execute(&turn, &mut ledger);
-    match result {
-        dregg_turn::TurnResult::Rejected { reason, .. } => {
-            let s = format!("{reason:?}");
-            assert!(
-                s.contains("ValidateHandoff.recipient_pk") || s.contains("InvalidAuthorization"),
-                "expected effect.recipient_pk mismatch failure, got: {s}"
-            );
-        }
-        other => panic!("expected Rejected for forged effect.recipient_pk, got {other:?}"),
-    }
-}
-
-/// Forged `Effect::ValidateHandoff.introducer_pk` (different from the
-/// authorization's introducer_pk) is rejected. Complement of the
-/// recipient-mismatch test.
-#[test]
-fn captp_delivered_rejects_forged_effect_introducer_pk() {
-    use dregg_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use dregg_turn::action::Authorization;
-    use dregg_turn::executor::{ComputronCosts, TurnExecutor};
-
-    let target_cell = cell(0x42);
-    let target_fed = fed(0xCA);
-    let (alice_sk, alice_pk, alice_fed, bob_sk, _bob_pk, _swiss, swiss_num) =
-        make_delivery_setup(target_cell, target_fed);
-
-    let cert = HandoffCertificate::create(
-        &alice_sk,
-        alice_fed,
-        target_fed,
-        target_cell,
-        bob_sk.public_key().0,
-        AuthRequired::None,
-        None,
-        Some(500),
-        Some(1),
-        swiss_num,
-    );
-
-    let presentation = HandoffPresentation::create(cert.clone(), &bob_sk);
-    let presentation_bytes = postcard::to_allocvec(&presentation).unwrap();
-    let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
-
-    // Forge: the effect declares an introducer_pk that is NOT alice's.
-    let (_evil_sk, evil_pk) = generate_keypair();
-    let forged_effect =
-        captp_routing::validate_handoff_effect(cert_hash, cert.recipient_pk, evil_pk.0);
-
-    let effects = vec![forged_effect.clone()];
-    let federation_id = [0u8; 32];
-    let signing_msg = Authorization::captp_delivered_signing_message_for_federation(
-        &federation_id,
-        &cert.nonce,
-        &target_cell,
-        &target_cell,
-        0,
-        &effects,
-    );
-    let sig = dregg_types::sign(&bob_sk, &signing_msg);
-
-    let turn = captp_routing::build_captp_turn_delivered_from_parts(
-        target_cell,
-        target_cell,
-        forged_effect,
-        0,
-        cert.clone(),
-        alice_pk.0,
-        cert.recipient_pk,
-        sig.0,
-    );
-
-    let mut ledger = Ledger::new();
-    let mut target = Cell::remote_stub_with_id(target_cell);
-    target.permissions = Permissions {
-        send: P::None,
-        receive: P::None,
-        set_state: P::None,
-        set_permissions: P::None,
-        set_verification_key: P::None,
-        increment_nonce: P::None,
-        delegate: P::None,
-        access: P::None,
-    };
-    ledger.insert_cell(target).expect("insert target cell");
-
-    let executor = TurnExecutor::new(ComputronCosts::zero());
-    let result = executor.execute(&turn, &mut ledger);
-    match result {
-        dregg_turn::TurnResult::Rejected { reason, .. } => {
-            let s = format!("{reason:?}");
-            assert!(
-                s.contains("ValidateHandoff.introducer_pk") || s.contains("InvalidAuthorization"),
-                "expected effect.introducer_pk mismatch failure, got: {s}"
-            );
-        }
-        other => panic!("expected Rejected for forged effect.introducer_pk, got {other:?}"),
-    }
-}
-
-/// SiloServer drain-task integration: when a CapTP-delivered Turn is pushed
-/// into `pending_captp_turns`, the dispatcher receives it. This proves the
-/// node-loop integration is wired (the lane's "drain_pending_captp_turns
-/// actually called" requirement).
-#[tokio::test]
-async fn spawn_captp_drain_forwards_to_dispatcher() {
-    use dregg_turn::Turn;
-    use dregg_turn::action::{Authorization, Effect};
-    use dregg_wire::prelude::{SiloConfig, SiloServer};
-    use std::sync::Arc;
-    use tokio::sync::oneshot;
-
-    let config = SiloConfig::new("drain-test-silo");
-    let (tx, rx) = oneshot::channel::<Turn>();
-    let tx = Arc::new(tokio::sync::Mutex::new(Some(tx)));
-
-    let dispatcher: dregg_wire::prelude::CapTpTurnDispatcher = {
-        let tx = Arc::clone(&tx);
-        Arc::new(move |turn: Turn| {
-            let tx = Arc::clone(&tx);
-            Box::pin(async move {
-                let mut guard = tx.lock().await;
-                if let Some(sender) = guard.take() {
-                    sender.send(turn).map_err(|_| "send failed".to_string())?;
-                }
-                Ok::<(), String>(())
-            })
-        })
-    };
-
-    let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config)
-        .with_captp_turn_dispatcher(dispatcher)
-        .with_captp_drain_interval(std::time::Duration::from_millis(20));
-
-    // Push a Turn directly into the queue. We don't need a real CapTpDelivered
-    // here — the drain task forwards whatever is queued.
-    let queued_turn = dregg_turn::turn::Turn {
-        agent: cell(0x99),
-        nonce: 7,
-        call_forest: dregg_turn::forest::CallForest::new(),
-        fee: 0,
-        memo: Some("drain-test".to_string()),
-        valid_until: None,
-        previous_receipt_hash: None,
-        depends_on: vec![],
-        conservation_proof: None,
-        sovereign_witnesses: std::collections::HashMap::new(),
-        execution_proof: None,
-        execution_proof_cell: None,
-        execution_proof_new_commitment: None,
-        custom_program_proofs: None,
-        effect_binding_proofs: Vec::new(),
-        cross_effect_dependencies: Vec::new(),
-        effect_witness_index_map: Vec::new(),
-    };
-    {
-        let mut state = server.captp_state().write().await;
-        state.pending_captp_turns.push(queued_turn.clone());
-    }
-
-    // Spawn the drain task (normally invoked by `run`).
-    let _handle = server.spawn_captp_drain().expect("drain task spawned");
-
-    // The dispatcher should receive the Turn within a few intervals.
-    let received = tokio::time::timeout(std::time::Duration::from_millis(500), rx)
-        .await
-        .expect("dispatcher must receive the drained Turn within 500ms")
-        .expect("dispatcher channel must not be closed");
-
-    assert_eq!(received.nonce, 7);
-    assert_eq!(received.memo.as_deref(), Some("drain-test"));
-    // Silence unused imports
-    let _ = (
-        Effect::DropRef { ref_id: [0u8; 32] },
-        Authorization::Unchecked,
-    );
-}

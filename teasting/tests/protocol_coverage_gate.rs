@@ -39,18 +39,18 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::RefreshDelegation => true, // delegation suite
         Effect::RevokeDelegation { .. } => true, // delegation suite
         Effect::BridgeMint { .. } => true, // bridge tests
-        Effect::BridgeLock { .. } => true, // bridge tests
-        Effect::CreateObligation { .. } => true, // #113 apply test
-        Effect::FulfillObligation { .. } => true, // #112 apply test
-        Effect::SlashObligation { .. } => true, // obligation suite
-        Effect::CreateEscrow { .. } => true, // escrow suite
-        Effect::ReleaseEscrow { .. } => true, // escrow suite
-        Effect::RefundEscrow { .. } => true, // escrow suite
+         // bridge tests
+         // #113 apply test
+         // #112 apply test
+         // obligation suite
+         // escrow suite
+         // escrow suite
+         // escrow suite
         Effect::ExerciseViaCapability { .. } => true, // #111 apply test
-        Effect::ExportSturdyRef { .. } => true, // captp/#96 tests
-        Effect::EnlivenRef { .. } => true, // captp/#96 tests
-        Effect::DropRef { .. } => true,  // captp gc tests
-        Effect::ValidateHandoff { .. } => true, // captp handoff tests
+         // captp/#96 tests
+         // captp/#96 tests
+          // captp gc tests
+         // captp handoff tests
         Effect::CellSeal { .. } => true, // integration_lifecycle
         Effect::CellUnseal { .. } => true, // integration_lifecycle
         Effect::CellDestroy { .. } => true, // integration_destroy_terminal
@@ -58,28 +58,28 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::AttenuateCapability { .. } => true, // integration_attenuate_capability
         Effect::ReceiptArchive { .. } => true, // integration_attestation_archive
         // coverage_queue_effects.rs:
-        Effect::QueueAllocate { .. } => true,
-        Effect::QueueEnqueue { .. } => true,
-        Effect::QueueDequeue { .. } => true,
-        Effect::QueueResize { .. } => true,
-        Effect::QueueAtomicTx { .. } => true,
-        Effect::QueuePipelineStep { .. } => true,
+        
+        
+        
+        
+        
+        
         // coverage_misc_effects.rs:
         Effect::NoteCreate { .. } => true,
-        Effect::CreateSealPair { .. } => true,
-        Effect::Seal { .. } => true,
-        Effect::CreateCommittedEscrow { .. } => true,
-        Effect::ReleaseCommittedEscrow { .. } => true,
-        Effect::RefundCommittedEscrow { .. } => true,
-        Effect::BridgeFinalize { .. } => true,
-        Effect::BridgeCancel { .. } => true,
+        
+        
+        
+        
+        
+        
+        
         Effect::Introduce { .. } => true,
         Effect::MakeSovereign { .. } => true,
         Effect::CreateCellFromFactory { .. } => true,
         Effect::SetPermissions { .. } => true,
         Effect::Refusal { .. } => true,
 
-        Effect::Unseal { .. } => true, // coverage_misc_effects Seal->Unseal round-trip (#144 fixed)
+         // coverage_misc_effects Seal->Unseal round-trip (#144 fixed)
 
         // ── Not yet covered: documented blockers (#142 work-list) ────────
         Effect::NoteSpend { .. } => false, // needs the real ZK spending-proof stack

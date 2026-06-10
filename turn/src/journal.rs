@@ -15,8 +15,6 @@ use dregg_cell::{
 };
 
 use crate::action::Symbol;
-use crate::escrow::EscrowRecord;
-use crate::executor::ObligationRecord;
 
 /// A single undo entry in the journal.
 #[derive(Debug)]
@@ -67,31 +65,12 @@ pub(crate) enum JournalEntry {
     NoteSpend,
     /// A note was created (commitment added). Marker for journal replay ordering.
     NoteCreate,
-    /// An obligation was created. Marker for journal replay ordering;
-    /// actual data lives on the Effect that triggered this entry.
-    ObligationCreated,
-    /// An obligation was fulfilled. Marker for journal replay ordering.
-    ObligationFulfilled,
-    /// An obligation was slashed. Marker for journal replay ordering.
-    ObligationSlashed,
     /// An event was emitted from a cell. Recorded so the receipt can include it.
     EventEmitted {
         cell: CellId,
         topic: Symbol,
         data: Vec<FieldElement>,
     },
-    /// An escrow was created. Marker for journal replay ordering.
-    EscrowCreated,
-    /// An escrow was released (condition satisfied, funds sent to recipient). Marker.
-    EscrowReleased,
-    /// An escrow was refunded (timeout passed, funds returned to creator). Marker.
-    EscrowRefunded,
-    /// An obligation was inserted into the executor's obligation map.
-    /// On rollback, this obligation_id must be REMOVED from the map.
-    ObligationInserted { obligation_id: [u8; 32] },
-    /// An escrow was inserted into the executor's escrow map.
-    /// On rollback, this escrow_id must be REMOVED from the map.
-    EscrowInserted { escrow_id: [u8; 32] },
     /// A bridged nullifier was inserted into the executor's nullifier set.
     /// On rollback, this nullifier must be REMOVED from the set.
     BridgedNullifierInserted { nullifier: [u8; 32] },
@@ -99,16 +78,6 @@ pub(crate) enum JournalEntry {
     /// `note_nullifiers` set. On rollback this nullifier must be REMOVED so
     /// a failed turn doesn't permanently burn the note.
     NoteNullifierInserted { nullifier: Nullifier },
-    /// A committed escrow was created. Marker for journal replay ordering.
-    CommittedEscrowCreated,
-    /// A committed escrow was released (recipient claimed). Marker.
-    CommittedEscrowReleased,
-    /// A committed escrow was refunded (creator reclaimed after timeout). Marker.
-    CommittedEscrowRefunded,
-    /// A committed escrow was inserted into the executor's committed escrow map.
-    /// On rollback, this escrow_id must be REMOVED from both committed_escrows
-    /// and committed_escrow_amounts maps.
-    CommittedEscrowInserted { escrow_id: [u8; 32] },
     /// A cell's lifecycle state was changed (Seal, Unseal, Destroy, Archive).
     /// Records the old lifecycle so rollback can restore it.
     SetLifecycle {
@@ -237,66 +206,10 @@ impl LedgerJournal {
         self.entries.push(JournalEntry::NoteCreate);
     }
 
-    /// Record an obligation creation. Ordering marker only; data lives on the Effect.
-    pub fn record_obligation_created(
-        &mut self,
-        _obligor: CellId,
-        _beneficiary: CellId,
-        _deadline_height: u64,
-        _stake: NoteCommitment,
-    ) {
-        self.entries.push(JournalEntry::ObligationCreated);
-    }
-
-    /// Record an obligation fulfillment. Ordering marker only.
-    pub fn record_obligation_fulfilled(&mut self, _obligation_id: [u8; 32]) {
-        self.entries.push(JournalEntry::ObligationFulfilled);
-    }
-
-    /// Record an obligation slash. Ordering marker only.
-    pub fn record_obligation_slashed(&mut self, _obligation_id: [u8; 32]) {
-        self.entries.push(JournalEntry::ObligationSlashed);
-    }
-
     /// Record an event emission.
     pub fn record_event_emitted(&mut self, cell: CellId, topic: Symbol, data: Vec<FieldElement>) {
         self.entries
             .push(JournalEntry::EventEmitted { cell, topic, data });
-    }
-
-    /// Record an escrow creation. Ordering marker only; data lives on the Effect.
-    pub fn record_escrow_created(
-        &mut self,
-        _escrow_id: [u8; 32],
-        _creator: CellId,
-        _recipient: CellId,
-        _amount: u64,
-    ) {
-        self.entries.push(JournalEntry::EscrowCreated);
-    }
-
-    /// Record an escrow release. Ordering marker only.
-    pub fn record_escrow_released(&mut self, _escrow_id: [u8; 32]) {
-        self.entries.push(JournalEntry::EscrowReleased);
-    }
-
-    /// Record an escrow refund. Ordering marker only.
-    pub fn record_escrow_refunded(&mut self, _escrow_id: [u8; 32]) {
-        self.entries.push(JournalEntry::EscrowRefunded);
-    }
-
-    /// Record that an obligation was inserted into the executor's obligation map.
-    /// On rollback, this obligation_id will be removed from the map.
-    pub fn record_obligation_inserted(&mut self, obligation_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::ObligationInserted { obligation_id });
-    }
-
-    /// Record that an escrow was inserted into the executor's escrow map.
-    /// On rollback, this escrow_id will be removed from the map.
-    pub fn record_escrow_inserted(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::EscrowInserted { escrow_id });
     }
 
     /// Record that a bridged nullifier was inserted into the executor's nullifier set.
@@ -312,29 +225,6 @@ impl LedgerJournal {
     pub fn record_note_nullifier_inserted(&mut self, nullifier: Nullifier) {
         self.entries
             .push(JournalEntry::NoteNullifierInserted { nullifier });
-    }
-
-    /// Record a committed escrow creation. Ordering marker only.
-    pub fn record_committed_escrow_created(&mut self, _escrow_id: [u8; 32], _amount: u64) {
-        self.entries.push(JournalEntry::CommittedEscrowCreated);
-    }
-
-    /// Record a committed escrow release. Ordering marker only.
-    pub fn record_committed_escrow_released(&mut self, _escrow_id: [u8; 32]) {
-        self.entries.push(JournalEntry::CommittedEscrowReleased);
-    }
-
-    /// Record a committed escrow refund. Ordering marker only.
-    pub fn record_committed_escrow_refunded(&mut self, _escrow_id: [u8; 32]) {
-        self.entries.push(JournalEntry::CommittedEscrowRefunded);
-    }
-
-    /// Record that a committed escrow was inserted into the executor's maps.
-    /// On rollback, this escrow_id will be removed from both committed_escrows
-    /// and committed_escrow_amounts.
-    pub fn record_committed_escrow_inserted(&mut self, escrow_id: [u8; 32]) {
-        self.entries
-            .push(JournalEntry::CommittedEscrowInserted { escrow_id });
     }
 
     /// Record a cell-lifecycle change (Seal/Unseal/Destroy/Archive).
@@ -372,12 +262,8 @@ impl LedgerJournal {
     pub fn rollback(
         self,
         ledger: &mut Ledger,
-        obligations: &Mutex<HashMap<[u8; 32], ObligationRecord>>,
-        escrows: &Mutex<HashMap<[u8; 32], EscrowRecord>>,
         bridged_nullifiers: &Mutex<BridgedNullifierSet>,
         note_nullifiers: &Mutex<NullifierSet>,
-        committed_escrows: &Mutex<HashMap<[u8; 32], crate::escrow::CommittedEscrow>>,
-        committed_escrow_amounts: &Mutex<HashMap<[u8; 32], u64>>,
     ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
@@ -447,24 +333,14 @@ impl LedgerJournal {
                         c.state.set_delegation_epoch(old_epoch);
                     }
                 }
-                // CRITICAL FIX: Remove obligation/escrow/nullifier insertions on rollback.
+                // CRITICAL FIX: Remove nullifier insertions on rollback.
                 // Without this, an attacker could create phantom records that survive
                 // a failed turn and exploit them in subsequent turns for inflation.
-                JournalEntry::ObligationInserted { obligation_id } => {
-                    obligations.lock().unwrap().remove(&obligation_id);
-                }
-                JournalEntry::EscrowInserted { escrow_id } => {
-                    escrows.lock().unwrap().remove(&escrow_id);
-                }
                 JournalEntry::BridgedNullifierInserted { nullifier } => {
                     bridged_nullifiers.lock().unwrap().remove(&nullifier);
                 }
                 JournalEntry::NoteNullifierInserted { nullifier } => {
                     note_nullifiers.lock().unwrap().remove(&nullifier);
-                }
-                JournalEntry::CommittedEscrowInserted { escrow_id } => {
-                    committed_escrows.lock().unwrap().remove(&escrow_id);
-                    committed_escrow_amounts.lock().unwrap().remove(&escrow_id);
                 }
                 JournalEntry::SetLifecycle {
                     cell,
@@ -494,21 +370,11 @@ impl LedgerJournal {
                         }
                     }
                 }
-                // Note/obligation/escrow/event entries don't modify ledger state directly.
-                // On rollback these are simply discarded — the note layer,
-                // obligation registry, and escrow registry only process them after
-                // a successful commit.
+                // Note/event entries don't modify ledger state directly.
+                // On rollback these are simply discarded — the note layer only
+                // processes them after a successful commit.
                 JournalEntry::NoteSpend { .. }
                 | JournalEntry::NoteCreate { .. }
-                | JournalEntry::ObligationCreated { .. }
-                | JournalEntry::ObligationFulfilled { .. }
-                | JournalEntry::ObligationSlashed { .. }
-                | JournalEntry::EscrowCreated { .. }
-                | JournalEntry::EscrowReleased { .. }
-                | JournalEntry::EscrowRefunded { .. }
-                | JournalEntry::CommittedEscrowCreated { .. }
-                | JournalEntry::CommittedEscrowReleased { .. }
-                | JournalEntry::CommittedEscrowRefunded { .. }
                 | JournalEntry::EventEmitted { .. } => {}
             }
         }

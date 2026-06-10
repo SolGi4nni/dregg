@@ -9,13 +9,11 @@ use dregg_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::predicate::WitnessedPredicate;
 use dregg_cell::state::FieldElement;
-use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
+use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions};
 #[allow(unused_imports)]
 use dregg_cell::{ValueCommitment, ValueCommitmentBytes};
 use serde::{Deserialize, Serialize};
 
-use crate::conditional::{ConditionProof, ProofCondition};
-use crate::escrow::{EscrowClaimAuth, EscrowCondition};
 
 /// How much of the turn an action's signer commits to.
 ///
@@ -23,6 +21,20 @@ use crate::escrow::{EscrowClaimAuth, EscrowCondition};
 /// - `Full`: signs over the entire turn hash (maximum binding, current default)
 /// - `Partial`: signs over only this action's content + its position in the forest,
 ///   allowing composability where signers don't need to see other actions.
+/// Serde helper for `[u8; 64]` (Ed25519 signatures — serde doesn't support arrays > 32).
+/// Moved here verbatim from the dissolved `escrow` module (the wire encoding is unchanged).
+pub mod serde_sig64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
+        bytes.as_ref().serialize(ser)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
+        let v: Vec<u8> = Deserialize::deserialize(de)?;
+        v.try_into()
+            .map_err(|_| serde::de::Error::custom("expected 64 bytes"))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommitmentMode {
     /// Sign over the entire turn hash (current behavior — maximum binding).
@@ -269,7 +281,7 @@ pub enum Authorization {
         /// The recipient/sender public key. Must equal `handoff_cert.recipient_pk`.
         sender_pk: [u8; 32],
         /// Ed25519 signature by `sender_pk` over `captp_delivered_signing_message`.
-        #[serde(with = "crate::escrow::serde_sig64")]
+        #[serde(with = "serde_sig64")]
         sender_signature: [u8; 64],
     },
     /// App-defined authorization: a [`WitnessedPredicate`] proves the
@@ -401,7 +413,7 @@ pub enum Authorization {
         blinding_scalar: [u8; 32],
         /// Ed25519 signature by the one-time key `k = c + s` over
         /// [`Self::stealth_signing_message`].
-        #[serde(with = "crate::escrow::serde_sig64")]
+        #[serde(with = "serde_sig64")]
         signature: [u8; 64],
     },
     /// **First-class biscuit/macaroon credential authorization** per
@@ -516,7 +528,7 @@ pub enum DelegationProofData {
         /// Public key of the delegator (must hold the cap in their c-list).
         delegator_pk: [u8; 32],
         /// Ed25519 signature from delegator over the delegation message.
-        #[serde(with = "crate::escrow::serde_sig64")]
+        #[serde(with = "serde_sig64")]
         signature: [u8; 64],
         /// Public key of the bearer (the entity exercising the cap).
         bearer_pk: [u8; 32],
@@ -879,27 +891,6 @@ pub enum Effect {
         #[serde(default)]
         range_proof: Option<Vec<u8>>,
     },
-    /// Create a new sealer/unsealer pair for partition-tolerant capability transfer.
-    CreateSealPair {
-        /// Cell that will hold the sealer capability.
-        sealer_holder: CellId,
-        /// Cell that will hold the unsealer capability.
-        unsealer_holder: CellId,
-    },
-    /// Seal a capability into an opaque box.
-    Seal {
-        /// The pair to seal with.
-        pair_id: [u8; 32],
-        /// The capability to seal.
-        capability: CapabilityRef,
-    },
-    /// Unseal a box, recovering the original capability.
-    Unseal {
-        /// The sealed box to open.
-        sealed_box: SealedBox,
-        /// The cell that should receive the unsealed capability.
-        recipient: CellId,
-    },
     /// Spawn a child cell with snapshot+refresh delegation.
     /// The child inherits the actor's current c-list as a snapshot.
     SpawnWithDelegation {
@@ -930,45 +921,6 @@ pub enum Effect {
         /// The portable proof carrying the STARK spending proof from the source federation.
         portable_proof: PortableNoteProof,
     },
-    /// Phase 1: Lock a note for cross-federation bridge transfer.
-    ///
-    /// Instead of immediately burning the note, this creates a conditional lock.
-    /// The note cannot be spent or re-locked until the bridge is finalized or cancelled.
-    /// If the destination federation is offline or refuses, the note can be recovered
-    /// after the timeout.
-    BridgeLock {
-        /// The nullifier of the note being locked.
-        nullifier: [u8; 32],
-        /// The destination federation's identity.
-        destination: [u8; 32],
-        /// The value being bridged.
-        value: u64,
-        /// The asset type being bridged.
-        asset_type: u64,
-        /// Block height at which this lock expires (can be cancelled after).
-        timeout_height: u64,
-        /// The serialized spending proof for destination to verify.
-        spending_proof: Vec<u8>,
-    },
-    /// Phase 3: Finalize a bridge by presenting a valid receipt from the destination.
-    ///
-    /// The receipt proves the destination federation minted the value. On success,
-    /// the note's nullifier becomes permanently spent.
-    BridgeFinalize {
-        /// The nullifier of the pending bridge to finalize.
-        nullifier: [u8; 32],
-        /// The signed receipt from the destination federation.
-        receipt: BridgeReceipt,
-    },
-    /// Phase 4: Cancel a bridge after the timeout has expired.
-    ///
-    /// If the bridge was not finalized before the timeout height, the note is
-    /// unlocked and returned to the owner. Prevents value-trapping when the
-    /// destination federation is offline or refuses the bridge.
-    BridgeCancel {
-        /// The nullifier of the pending bridge to cancel.
-        nullifier: [u8; 32],
-    },
     /// Pipelined send: dispatch an action to the result of a pending turn.
     /// Three-party introduction.
     Introduce {
@@ -982,119 +934,6 @@ pub enum Effect {
         target: crate::eventual::EventualRef,
         /// The action to send to the resolved target.
         action: Box<Action>,
-    },
-    /// Create a bonded proof obligation: the actor commits to delivering a proof
-    /// satisfying `condition` before `deadline_height`, with `stake` locked as bond.
-    /// If the proof is not delivered, the stake is slashed to the beneficiary.
-    CreateObligation {
-        /// Who benefits (receives stake on failure, or whose ConditionalTurn resolves).
-        beneficiary: CellId,
-        /// What must be proven.
-        condition: ProofCondition,
-        /// Federation height deadline.
-        deadline_height: u64,
-        /// Note commitment representing the locked stake.
-        stake: NoteCommitment,
-        /// Numeric amount to lock from the obligor's cell balance as bond.
-        /// This is subtracted on creation, returned on fulfillment, or transferred
-        /// to the beneficiary on slash.
-        stake_amount: u64,
-    },
-    /// Fulfill a proof obligation by presenting the required proof.
-    /// On success, the locked stake is returned to the obligor.
-    FulfillObligation {
-        /// ID of the obligation being fulfilled.
-        obligation_id: [u8; 32],
-        /// The proof satisfying the obligation's condition.
-        proof: ConditionProof,
-    },
-    /// Slash an expired obligation: transfer the locked stake to the beneficiary.
-    /// Only valid after the obligation's deadline has passed without fulfillment.
-    SlashObligation {
-        /// ID of the obligation to slash.
-        obligation_id: [u8; 32],
-    },
-    /// Create a conditional escrow: lock value from the sender, release to recipient
-    /// if `condition` is met, else allow refund after `timeout_height`.
-    CreateEscrow {
-        /// The escrow creator (funds source).
-        cell: CellId,
-        /// Who gets the funds if condition is met.
-        recipient: CellId,
-        /// Amount to lock in escrow.
-        amount: u64,
-        /// What must be satisfied for release.
-        condition: EscrowCondition,
-        /// Block height after which refund is allowed.
-        timeout_height: u64,
-        /// Unique identifier for this escrow.
-        escrow_id: [u8; 32],
-    },
-    /// Release an escrow by satisfying its condition.
-    /// Transfers the escrowed amount to the recipient.
-    ReleaseEscrow {
-        /// ID of the escrow to release.
-        escrow_id: [u8; 32],
-        /// Proof satisfying the condition (if condition requires one).
-        proof: Option<Vec<u8>>,
-    },
-    /// Refund an escrow after its timeout has passed.
-    /// Returns the escrowed amount to the original creator.
-    RefundEscrow {
-        /// ID of the escrow to refund.
-        escrow_id: [u8; 32],
-    },
-    /// Create a privacy-preserving committed escrow.
-    ///
-    /// All party identities and the value are hidden behind cryptographic commitments.
-    /// The range proof must demonstrate the committed value is in `[0, 2^64)`.
-    /// The value commitment encodes the actual locked amount (verified via range proof),
-    /// and the corresponding cleartext amount is deducted from the creator's balance.
-    CreateCommittedEscrow {
-        /// Commitment to the creator's identity (BLAKE3 of CellId + blinding).
-        creator_commitment: [u8; 32],
-        /// Commitment to the recipient's identity (BLAKE3 of CellId + blinding).
-        recipient_commitment: [u8; 32],
-        /// Pedersen commitment to the escrowed value (compressed Ristretto).
-        value_commitment: ValueCommitmentBytes,
-        /// Commitment to the escrow condition (BLAKE3 of condition + nonce).
-        condition_commitment: [u8; 32],
-        /// Block height after which refund is allowed (public for enforcement).
-        timeout_height: u64,
-        /// Deterministic escrow ID (derived from commitments).
-        escrow_id: [u8; 32],
-        /// Range proof showing the committed value is in [0, 2^64).
-        range_proof: Vec<u8>,
-        /// The actual amount to lock (must match the value commitment opening).
-        /// This is needed to deduct from the creator's balance; the commitment
-        /// binds this value cryptographically via the range proof.
-        amount: u64,
-    },
-    /// Release a committed escrow by proving recipient identity.
-    ///
-    /// The claimer proves they are the recipient by revealing the opening of the
-    /// recipient_commitment and signing the escrow_id. In the initial implementation
-    /// this is a signed statement; a future version will accept a ZK presentation
-    /// proof bound to the escrow_id.
-    ReleaseCommittedEscrow {
-        /// ID of the committed escrow to release.
-        escrow_id: [u8; 32],
-        /// Authorization proving the claimer is the committed recipient.
-        claim_auth: EscrowClaimAuth,
-        /// The recipient CellId to credit (must match the claim_auth opening).
-        recipient: CellId,
-    },
-    /// Refund a committed escrow after timeout by proving creator identity.
-    ///
-    /// The creator proves their identity by revealing the opening of the
-    /// creator_commitment and signing the escrow_id.
-    RefundCommittedEscrow {
-        /// ID of the committed escrow to refund.
-        escrow_id: [u8; 32],
-        /// Authorization proving the claimer is the committed creator.
-        claim_auth: EscrowClaimAuth,
-        /// The creator CellId to credit (must match the claim_auth opening).
-        creator: CellId,
     },
     /// Exercise a capability from the actor's c-list in one atomic step.
     ///
@@ -1133,140 +972,6 @@ pub enum Effect {
         params: dregg_cell::factory::FactoryCreationParams,
     },
 
-    // ─── Queue Operations ─────────────────────────────────────────────────────
-    /// Allocate a new queue with specified capacity.
-    /// Costs: capacity * cost_per_slot computrons from the agent's balance.
-    /// The new queue is represented as a cell with queue metadata in its state fields.
-    QueueAllocate {
-        /// Capacity (max entries).
-        capacity: u64,
-        /// Optional program VK hash (for programmable queues).
-        program_vk: Option<[u8; 32]>,
-    },
-
-    /// Enqueue a message to a queue.
-    /// Sender pays deposit (anti-spam, refundable on dequeue).
-    QueueEnqueue {
-        /// Target queue (cell ID of the queue cell).
-        queue: CellId,
-        /// Content hash of the message (the message itself is delivered out-of-band).
-        message_hash: [u8; 32],
-        /// Deposit amount (computrons).
-        deposit: u64,
-    },
-
-    /// Dequeue the next message from a queue (FIFO consumption).
-    /// Only the queue owner can dequeue.
-    QueueDequeue {
-        /// Queue to dequeue from.
-        queue: CellId,
-    },
-
-    /// Resize a queue (change capacity).
-    /// Growing costs additional computrons. Shrinking is free (but can't shrink below current occupancy).
-    QueueResize {
-        /// Queue cell to resize.
-        queue: CellId,
-        /// New capacity.
-        new_capacity: u64,
-    },
-
-    /// Execute an atomic cross-queue transaction.
-    /// All operations succeed or all are rolled back.
-    QueueAtomicTx {
-        /// The operations to perform atomically.
-        operations: Vec<QueueTxOp>,
-    },
-
-    /// Execute a pipeline step: dequeue from source, route through pipeline, enqueue to sink(s).
-    QueuePipelineStep {
-        /// Pipeline identity (content-addressed from stage descriptions).
-        pipeline_id: [u8; 32],
-        /// Source queue.
-        source: CellId,
-        /// Sink queue(s) — pipeline determines routing.
-        sinks: Vec<CellId>,
-    },
-
-    // ─── CapTP Runtime Effects (Stage 7 / P1.A) ───────────────────────────
-    //
-    // The wire layer's CapTP handlers used to mutate `CapTpState` directly
-    // (see `wire/src/server.rs` :2243-2350). With these variants present,
-    // each CapTP operation becomes a turn-submitted Effect that runs through
-    // the executor and projects to its respective AIR variant (selectors
-    // 14..17 in `circuit/src/effect_vm.rs`).
-    //
-    // Field shapes are deliberately minimal here. The richer
-    // `SwissMembershipProof` / `RefcountMembershipProof` /
-    // `ApprovedHandoffProof` types proposed in `DESIGN-captp-integration.md`
-    // remain available for a future expansion; for now the executor reads
-    // membership witnesses from the federation's mirror state.
-    /// Export a cell as a sturdy reference (CapTP). The executor inserts a
-    /// swiss-table entry, derives the swiss number, and bumps the cell's
-    /// export counter (state.fields[7]).
-    ///
-    /// Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
-    /// `ExportSturdyRef-permissions`): the exported permissions mask is
-    /// carried explicitly on the variant. The AIR's `EXPORT_PERMISSIONS`
-    /// PARAM projects from this field — no executor synthesis. The apply
-    /// site materialises the same `permissions` in the federation's
-    /// swiss-table mirror, so the AIR's PI binds the cryptographic
-    /// identity of the export rather than a placeholder constant.
-    ExportSturdyRef {
-        /// 32-byte unguessable swiss number (or seed; the on-chain effect
-        /// commits to the exact swiss number used for routing).
-        swiss_number: [u8; 32],
-        /// The cell being exported (the bearer of the sturdy ref talks to
-        /// THIS cell when enlivening).
-        target: CellId,
-        /// Authorization tier the bearer of the resulting sturdy ref
-        /// obtains on enliven. Bound into the AIR's PI via
-        /// `EXPORT_PERMISSIONS`; mirrored into the swiss-table entry at
-        /// apply time. A forged value diverges from the entry the
-        /// federation mirror records → subsequent `EnlivenRef` against
-        /// this swiss number surfaces a mismatch.
-        permissions: dregg_cell::permissions::AuthRequired,
-    },
-    /// Enliven a sturdy ref: validate a presented swiss number against the
-    /// committed swiss-table state and grant a routing entry to `bearer`.
-    /// The executor verifies membership of `swiss_number` in the target's
-    /// swiss table and bumps the entry's use-count (state.fields[6]).
-    ///
-    /// Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
-    /// `EnlivenRef-permissions-merkle`): the swiss-table entry's
-    /// `(expected_cell_id, expected_permissions)` pair is carried
-    /// explicitly. The AIR's leaf
-    ///   `hash(swiss, hash(expected_cell_id, expected_permissions))`
-    /// projects from these PARAMs into the bearer's
-    /// `swiss_table_root` (state.fields[4]) via the existing 1-hop
-    /// append-only chain. The apply site validates the carried
-    /// permissions against the federation's swiss-table mirror entry
-    /// for `swiss_number` (the entry exists because validate at the
-    /// wire layer succeeded before this Turn was constructed). A
-    /// forged `expected_permissions` diverges from the mirror's
-    /// recorded tier → apply gate rejects.
-    EnlivenRef {
-        /// The swiss number being presented.
-        swiss_number: [u8; 32],
-        /// The cell that ends up holding the live ref (gets the routing
-        /// entry added to its c-list).
-        bearer: CellId,
-        /// The exporter cell whose swiss-table entry holds
-        /// `swiss_number`. Bound into the AIR's `ENLIVEN_CELL_ID`
-        /// PARAM via the leaf's inner hash.
-        expected_cell_id: CellId,
-        /// The authorization tier the bearer obtains. Bound into the
-        /// AIR's `ENLIVEN_PERMISSIONS` PARAM via the leaf's inner
-        /// hash. The apply site cross-checks this against the
-        /// federation's swiss-table mirror entry for `swiss_number`.
-        expected_permissions: dregg_cell::permissions::AuthRequired,
-    },
-    /// Drop a remote reference / GC decrement (CapTP). The executor verifies
-    /// the refcount is > 0 and decrements it (state.fields[5]).
-    DropRef {
-        /// 32-byte identifier of the reference being dropped (per-export id).
-        ref_id: [u8; 32],
-    },
     /// **Categorical dual of acting-effects: proof of *non-action*.**
     ///
     /// A `Refusal` is a structural artifact that the prover did *not*
@@ -1338,33 +1043,6 @@ pub enum Effect {
         /// specific offered action.
         proof_witness_index: u32,
     },
-    /// Validate a handoff certificate and accept the bearer (CapTP).
-    /// Off-chain Ed25519 signature verification has already happened (the
-    /// federation maintains `approved_handoffs_root`); the executor proves
-    /// Merkle membership of `cert_hash` in the root and consumes the leaf
-    /// (single-use guarantee per `DESIGN-captp-integration.md` §9.4).
-    ///
-    /// Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
-    /// `ValidateHandoff-runtime-variant-extend`): `recipient_pk` and
-    /// `introducer_pk` are now carried explicitly. The AIR's
-    /// `HANDOFF_RECIPIENT_PK` / `HANDOFF_INTRODUCER_PK` PARAMs project from
-    /// these fields, eliminating the prior synthetic derivation in the
-    /// bridge. The apply site validates that the carried keys match the
-    /// authorization's certificate (when the action carries a CapTP cert),
-    /// closing the soundness gap where a prover could supply forged keys.
-    ValidateHandoff {
-        /// The Poseidon2 hash of the handoff certificate (matches the leaf
-        /// the federation inserted when accepting the cert).
-        cert_hash: [u8; 32],
-        /// Recipient's Ed25519 public key (matches the cert's
-        /// `recipient_pk`). Bound into AIR PI via `HANDOFF_RECIPIENT_PK`.
-        recipient_pk: [u8; 32],
-        /// Introducer's Ed25519 public key. Bound into AIR PI via
-        /// `HANDOFF_INTRODUCER_PK`. The leaf bound into PI is
-        /// `hash(cert_hash, hash(recipient_pk, introducer_pk))`.
-        introducer_pk: [u8; 32],
-    },
-
     // ─── Cell lifecycle effects (Silver-Vision lifecycle subset) ─────────────
     //
     // Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §1.4–§1.5` and the cell-side
@@ -1472,19 +1150,6 @@ pub enum RefusalReason {
     /// substrate; apps decode via their `CustomEffectVerifier` or by
     /// pairing this with an `EmitEvent` carrying the decoded reason.
     Custom { reason_hash: [u8; 32] },
-}
-
-/// An operation within an atomic queue transaction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum QueueTxOp {
-    /// Enqueue a message as part of an atomic transaction.
-    Enqueue {
-        queue: CellId,
-        message_hash: [u8; 32],
-        deposit: u64,
-    },
-    /// Dequeue a message as part of an atomic transaction.
-    Dequeue { queue: CellId },
 }
 
 /// An event emitted by an action.
@@ -1708,12 +1373,12 @@ impl Effect {
         match self {
             // -- Conservative: paired-delta resource moves. --
             Effect::Transfer { .. } => LinearityClass::Conservative,
-            Effect::CreateEscrow { .. } => LinearityClass::Conservative,
-            Effect::ReleaseEscrow { .. } => LinearityClass::Conservative,
-            Effect::RefundEscrow { .. } => LinearityClass::Conservative,
-            Effect::CreateCommittedEscrow { .. } => LinearityClass::Conservative,
-            Effect::ReleaseCommittedEscrow { .. } => LinearityClass::Conservative,
-            Effect::RefundCommittedEscrow { .. } => LinearityClass::Conservative,
+            
+            
+            
+            
+            
+            
             // Notes spent-and-created together must conserve value; the
             // executor's conservation checker enforces this across
             // sibling spend/create pairs in the same turn.
@@ -1721,36 +1386,36 @@ impl Effect {
             Effect::NoteCreate { .. } => LinearityClass::Conservative,
             // Obligation creation locks stake; fulfillment returns it;
             // slash transfers it. Each is a conservative move.
-            Effect::CreateObligation { .. } => LinearityClass::Conservative,
-            Effect::FulfillObligation { .. } => LinearityClass::Conservative,
-            Effect::SlashObligation { .. } => LinearityClass::Conservative,
+            
+            
+            
             // Queue enqueue/dequeue pair: the message moves; the
             // deposit moves with it (paid on enqueue, refunded on
             // dequeue).
-            Effect::QueueEnqueue { .. } => LinearityClass::Conservative,
-            Effect::QueueDequeue { .. } => LinearityClass::Conservative,
+            
+            
             // Atomic queue transactions and pipeline steps batch
             // conservative moves; the executor enforces all-or-nothing.
-            Effect::QueueAtomicTx { .. } => LinearityClass::Conservative,
-            Effect::QueuePipelineStep { .. } => LinearityClass::Conservative,
+            
+            
             // Bridge phases form a cross-federation conservative
             // schedule: lock+finalize is the dual of mint on the other
             // side; cancel is a roll-back; lock-without-finalize is
             // value-locking, not value-creation.
-            Effect::BridgeLock { .. } => LinearityClass::Conservative,
-            Effect::BridgeFinalize { .. } => LinearityClass::Conservative,
-            Effect::BridgeCancel { .. } => LinearityClass::Conservative,
+            
+            
+            
 
             // -- Monotonic: scalar counters / refcounts going up. --
             Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
             // ExportSturdyRef bumps the cell's export counter
             // (state.fields[7]); EnlivenRef bumps the entry's use-count
             // (state.fields[6]).
-            Effect::ExportSturdyRef { .. } => LinearityClass::Monotonic,
-            Effect::EnlivenRef { .. } => LinearityClass::Monotonic,
+            
+            
             // ValidateHandoff consumes a one-shot leaf — monotonic
             // because the leaf-consumed counter only grows.
-            Effect::ValidateHandoff { .. } => LinearityClass::Monotonic,
+            
             // Refusals bump the cell's nonce and append to the
             // refusal-log slot; both monotonic.
             Effect::Refusal { .. } => LinearityClass::Monotonic,
@@ -1760,7 +1425,7 @@ impl Effect {
             Effect::RevokeDelegation { .. } => LinearityClass::Terminal,
             // DropRef decrements a refcount; once dropped, the bearer
             // cannot "un-drop" (a new export creates a fresh ref).
-            Effect::DropRef { .. } => LinearityClass::Terminal,
+            
             // Cell destroy is the canonical terminal — once Destroyed
             // the cell cannot transition to any other state
             // (CellLifecycle::is_terminal).
@@ -1794,14 +1459,14 @@ impl Effect {
             Effect::CreateCell { .. } => LinearityClass::Generative,
             Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
             Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
-            Effect::QueueAllocate { .. } => LinearityClass::Generative,
-            Effect::QueueResize { .. } => LinearityClass::Generative,
+            
+            
             // CreateSealPair and Seal generate fresh sealer/unsealer
             // capability handles; the unsealing path is the dual but
             // the creation is generative.
-            Effect::CreateSealPair { .. } => LinearityClass::Generative,
-            Effect::Seal { .. } => LinearityClass::Generative,
-            Effect::Unseal { .. } => LinearityClass::Generative,
+            
+            
+            
             // Grant and Introduce mint new capability slots in the
             // recipient's c-list; from the receiving cell's POV
             // these are generative.
@@ -1981,34 +1646,9 @@ impl Effect {
                     }
                 }
             }
-            Effect::CreateSealPair {
-                sealer_holder,
-                unsealer_holder,
-            } => {
-                hasher.update(&[13u8]);
-                hasher.update(sealer_holder.as_bytes());
-                hasher.update(unsealer_holder.as_bytes());
-            }
-            Effect::Seal {
-                pair_id,
-                capability,
-            } => {
-                hasher.update(&[14u8]);
-                hasher.update(pair_id);
-                hasher.update(capability.target.as_bytes());
-                hasher.update(&capability.slot.to_le_bytes());
-            }
-            Effect::Unseal {
-                sealed_box,
-                recipient,
-            } => {
-                hasher.update(&[15u8]);
-                hasher.update(&sealed_box.pair_id);
-                hasher.update(&sealed_box.ephemeral_public);
-                hasher.update(&sealed_box.commitment);
-                hasher.update(&sealed_box.nonce);
-                hasher.update(recipient.as_bytes());
-            }
+            
+            
+            
             Effect::BridgeMint { portable_proof } => {
                 hasher.update(&[21u8]);
                 hasher.update(&portable_proof.nullifier);
@@ -2018,35 +1658,9 @@ impl Effect {
                 hasher.update(&portable_proof.source_root.merkle_root);
                 hasher.update(&portable_proof.source_root.height.to_le_bytes());
             }
-            Effect::BridgeLock {
-                nullifier,
-                destination,
-                value,
-                asset_type,
-                timeout_height,
-                spending_proof,
-            } => {
-                hasher.update(&[26u8]);
-                hasher.update(nullifier);
-                hasher.update(destination);
-                hasher.update(&value.to_le_bytes());
-                hasher.update(&asset_type.to_le_bytes());
-                hasher.update(&timeout_height.to_le_bytes());
-                hasher.update(&(spending_proof.len() as u64).to_le_bytes());
-                hasher.update(spending_proof);
-            }
-            Effect::BridgeFinalize { nullifier, receipt } => {
-                hasher.update(&[27u8]);
-                hasher.update(nullifier);
-                hasher.update(&receipt.nullifier);
-                hasher.update(&receipt.destination_federation);
-                hasher.update(&receipt.mint_height.to_le_bytes());
-                hasher.update(&receipt.signature);
-            }
-            Effect::BridgeCancel { nullifier } => {
-                hasher.update(&[28u8]);
-                hasher.update(nullifier);
-            }
+            
+            
+            
             Effect::Introduce {
                 introducer,
                 recipient,
@@ -2085,177 +1699,15 @@ impl Effect {
                 hasher.update(&target.output_slot.to_le_bytes());
                 hasher.update(&action.hash());
             }
-            Effect::CreateObligation {
-                beneficiary,
-                condition,
-                deadline_height,
-                stake,
-                stake_amount,
-            } => {
-                hasher.update(&[22u8]);
-                hasher.update(beneficiary.as_bytes());
-                hasher.update(&deadline_height.to_le_bytes());
-                hasher.update(&stake.0);
-                hasher.update(&stake_amount.to_le_bytes());
-                // Include condition discriminant.
-                match condition {
-                    ProofCondition::HashPreimage { hash } => {
-                        hasher.update(&[0u8]);
-                        hasher.update(hash);
-                    }
-                    ProofCondition::RemoteProof {
-                        federation_root,
-                        expected_air,
-                        expected_conclusion,
-                    } => {
-                        hasher.update(&[1u8]);
-                        hasher.update(federation_root);
-                        hasher.update(expected_air.as_bytes());
-                        hasher.update(&expected_conclusion.to_le_bytes());
-                    }
-                    ProofCondition::LocalProof {
-                        expected_air,
-                        expected_public_inputs,
-                    } => {
-                        hasher.update(&[2u8]);
-                        hasher.update(expected_air.as_bytes());
-                        for pi in expected_public_inputs {
-                            hasher.update(&pi.to_le_bytes());
-                        }
-                    }
-                    ProofCondition::TurnExecuted { turn_hash } => {
-                        hasher.update(&[3u8]);
-                        hasher.update(turn_hash);
-                    }
-                }
-            }
-            Effect::FulfillObligation {
-                obligation_id,
-                proof,
-            } => {
-                hasher.update(&[23u8]);
-                hasher.update(obligation_id);
-                match proof {
-                    ConditionProof::Preimage(preimage) => {
-                        hasher.update(&[0u8]);
-                        hasher.update(preimage);
-                    }
-                    ConditionProof::StarkProof {
-                        proof_bytes,
-                        federation_root,
-                        public_outputs,
-                        air_name,
-                    } => {
-                        hasher.update(&[1u8]);
-                        hasher.update(&(proof_bytes.len() as u64).to_le_bytes());
-                        hasher.update(proof_bytes);
-                        hasher.update(federation_root);
-                        for po in public_outputs {
-                            hasher.update(&po.to_le_bytes());
-                        }
-                        hasher.update(air_name.as_bytes());
-                    }
-                    ConditionProof::Receipt(receipt) => {
-                        hasher.update(&[2u8]);
-                        hasher.update(&receipt.turn_hash);
-                    }
-                }
-            }
-            Effect::SlashObligation { obligation_id } => {
-                hasher.update(&[24u8]);
-                hasher.update(obligation_id);
-            }
-            Effect::CreateEscrow {
-                cell,
-                recipient,
-                amount,
-                condition,
-                timeout_height,
-                escrow_id,
-            } => {
-                hasher.update(&[29u8]);
-                hasher.update(cell.as_bytes());
-                hasher.update(recipient.as_bytes());
-                hasher.update(&amount.to_le_bytes());
-                hasher.update(&timeout_height.to_le_bytes());
-                hasher.update(escrow_id);
-                match condition {
-                    EscrowCondition::ProofPresented { verification_key } => {
-                        hasher.update(&[0u8]);
-                        hasher.update(verification_key);
-                    }
-                    EscrowCondition::SignedByAll { signers } => {
-                        hasher.update(&[1u8]);
-                        for signer in signers {
-                            hasher.update(signer);
-                        }
-                    }
-                    EscrowCondition::PredicateSatisfied { predicate_hash } => {
-                        hasher.update(&[2u8]);
-                        hasher.update(predicate_hash);
-                    }
-                }
-            }
-            Effect::ReleaseEscrow { escrow_id, proof } => {
-                hasher.update(&[30u8]);
-                hasher.update(escrow_id);
-                if let Some(p) = proof {
-                    hasher.update(&[1u8]);
-                    hasher.update(&(p.len() as u64).to_le_bytes());
-                    hasher.update(p);
-                } else {
-                    hasher.update(&[0u8]);
-                }
-            }
-            Effect::RefundEscrow { escrow_id } => {
-                hasher.update(&[31u8]);
-                hasher.update(escrow_id);
-            }
-            Effect::CreateCommittedEscrow {
-                creator_commitment,
-                recipient_commitment,
-                value_commitment,
-                condition_commitment,
-                timeout_height,
-                escrow_id,
-                range_proof,
-                amount,
-            } => {
-                hasher.update(&[32u8]);
-                hasher.update(creator_commitment);
-                hasher.update(recipient_commitment);
-                hasher.update(&value_commitment.0);
-                hasher.update(condition_commitment);
-                hasher.update(&timeout_height.to_le_bytes());
-                hasher.update(escrow_id);
-                hasher.update(&(range_proof.len() as u64).to_le_bytes());
-                hasher.update(range_proof);
-                hasher.update(&amount.to_le_bytes());
-            }
-            Effect::ReleaseCommittedEscrow {
-                escrow_id,
-                claim_auth,
-                recipient,
-            } => {
-                hasher.update(&[33u8]);
-                hasher.update(escrow_id);
-                hasher.update(claim_auth.cell_id.as_bytes());
-                hasher.update(&claim_auth.blinding);
-                hasher.update(&claim_auth.signature);
-                hasher.update(recipient.as_bytes());
-            }
-            Effect::RefundCommittedEscrow {
-                escrow_id,
-                claim_auth,
-                creator,
-            } => {
-                hasher.update(&[34u8]);
-                hasher.update(escrow_id);
-                hasher.update(claim_auth.cell_id.as_bytes());
-                hasher.update(&claim_auth.blinding);
-                hasher.update(&claim_auth.signature);
-                hasher.update(creator.as_bytes());
-            }
+            
+            
+            
+            
+            
+            
+            
+            
+            
             Effect::SpawnWithDelegation {
                 child_public_key,
                 child_token_id,
@@ -2336,159 +1788,17 @@ impl Effect {
                 }
                 hasher.update(&params.owner_pubkey);
             }
-            Effect::QueueAllocate {
-                capacity,
-                program_vk,
-            } => {
-                hasher.update(&[37u8]);
-                hasher.update(&capacity.to_le_bytes());
-                match program_vk {
-                    Some(vk) => {
-                        hasher.update(&[1u8]);
-                        hasher.update(vk);
-                    }
-                    None => {
-                        hasher.update(&[0u8]);
-                    }
-                }
-            }
-            Effect::QueueEnqueue {
-                queue,
-                message_hash,
-                deposit,
-            } => {
-                hasher.update(&[38u8]);
-                hasher.update(queue.as_bytes());
-                hasher.update(message_hash);
-                hasher.update(&deposit.to_le_bytes());
-            }
-            Effect::QueueDequeue { queue } => {
-                hasher.update(&[39u8]);
-                hasher.update(queue.as_bytes());
-            }
-            Effect::QueueResize {
-                queue,
-                new_capacity,
-            } => {
-                hasher.update(&[40u8]);
-                hasher.update(queue.as_bytes());
-                hasher.update(&new_capacity.to_le_bytes());
-            }
-            Effect::QueueAtomicTx { operations } => {
-                hasher.update(&[41u8]);
-                hasher.update(&(operations.len() as u64).to_le_bytes());
-                for op in operations {
-                    match op {
-                        QueueTxOp::Enqueue {
-                            queue,
-                            message_hash,
-                            deposit,
-                        } => {
-                            hasher.update(&[0u8]);
-                            hasher.update(queue.as_bytes());
-                            hasher.update(message_hash);
-                            hasher.update(&deposit.to_le_bytes());
-                        }
-                        QueueTxOp::Dequeue { queue } => {
-                            hasher.update(&[1u8]);
-                            hasher.update(queue.as_bytes());
-                        }
-                    }
-                }
-            }
-            Effect::QueuePipelineStep {
-                pipeline_id,
-                source,
-                sinks,
-            } => {
-                hasher.update(&[42u8]);
-                hasher.update(pipeline_id);
-                hasher.update(source.as_bytes());
-                hasher.update(&(sinks.len() as u64).to_le_bytes());
-                for sink in sinks {
-                    hasher.update(sink.as_bytes());
-                }
-            }
+            
+            
+            
+            
+            
+            
             // ── CapTP runtime effects (Stage 7 / P1.A) ────────────────────
-            Effect::ExportSturdyRef {
-                swiss_number,
-                target,
-                permissions,
-            } => {
-                hasher.update(&[43u8]);
-                hasher.update(swiss_number);
-                hasher.update(target.as_bytes());
-                // Bind the permissions tier (and Custom vk_hash) into the
-                // effects hash so a forged tier diverges from the real
-                // swiss-table entry's commitment.
-                match permissions {
-                    AuthRequired::None => {
-                        hasher.update(&[0u8]);
-                    }
-                    AuthRequired::Signature => {
-                        hasher.update(&[1u8]);
-                    }
-                    AuthRequired::Proof => {
-                        hasher.update(&[2u8]);
-                    }
-                    AuthRequired::Either => {
-                        hasher.update(&[3u8]);
-                    }
-                    AuthRequired::Impossible => {
-                        hasher.update(&[4u8]);
-                    }
-                    AuthRequired::Custom { vk_hash } => {
-                        hasher.update(&[5u8]);
-                        hasher.update(vk_hash);
-                    }
-                }
-            }
-            Effect::EnlivenRef {
-                swiss_number,
-                bearer,
-                expected_cell_id,
-                expected_permissions,
-            } => {
-                hasher.update(&[44u8]);
-                hasher.update(swiss_number);
-                hasher.update(bearer.as_bytes());
-                hasher.update(expected_cell_id.as_bytes());
-                match expected_permissions {
-                    AuthRequired::None => {
-                        hasher.update(&[0u8]);
-                    }
-                    AuthRequired::Signature => {
-                        hasher.update(&[1u8]);
-                    }
-                    AuthRequired::Proof => {
-                        hasher.update(&[2u8]);
-                    }
-                    AuthRequired::Either => {
-                        hasher.update(&[3u8]);
-                    }
-                    AuthRequired::Impossible => {
-                        hasher.update(&[4u8]);
-                    }
-                    AuthRequired::Custom { vk_hash } => {
-                        hasher.update(&[5u8]);
-                        hasher.update(vk_hash);
-                    }
-                }
-            }
-            Effect::DropRef { ref_id } => {
-                hasher.update(&[45u8]);
-                hasher.update(ref_id);
-            }
-            Effect::ValidateHandoff {
-                cert_hash,
-                recipient_pk,
-                introducer_pk,
-            } => {
-                hasher.update(&[46u8]);
-                hasher.update(cert_hash);
-                hasher.update(recipient_pk);
-                hasher.update(introducer_pk);
-            }
+            
+            
+            
+            
             Effect::CellSeal { target, reason } => {
                 hasher.update(&[48u8]);
                 hasher.update(target.as_bytes());
@@ -2639,60 +1949,29 @@ impl Effect {
                     + value_commitment.map_or(0, |_| 32)
                     + range_proof.as_ref().map_or(0, |rp| rp.len()) // commitment + value + asset_type + ciphertext + opt vc + opt rp
             }
-            Effect::CreateSealPair { .. } => 32 + 32,
-            Effect::Seal { .. } => 32 + 32 + 4,
-            Effect::Unseal { sealed_box, .. } => {
-                32 + 32 + 32 + sealed_box.ciphertext.len() + 32 + 32
-            }
+            
+            
+            
             Effect::BridgeMint { portable_proof } => {
                 32 + 32 + 8 + 8 + portable_proof.spending_proof.len() // nullifier + commitment + value + asset + proof
             }
-            Effect::BridgeLock { spending_proof, .. } => {
-                32 + 32 + 8 + 8 + 8 + spending_proof.len() // nullifier + dest + value + asset + timeout + proof
-            }
-            Effect::BridgeFinalize { .. } => {
-                32 + 32 + 32 + 8 + 64 // nullifier + receipt(nullifier + dest + height + sig)
-            }
-            Effect::BridgeCancel { .. } => 32, // nullifier
+            
+            
+             // nullifier
             Effect::PipelinedSend { .. } => 32 + 4 + 32,
             Effect::Introduce { .. } => 97,
             Effect::SpawnWithDelegation { .. } => 32 + 32 + 8,
             Effect::RefreshDelegation => 0,
             Effect::RevokeDelegation { .. } => 32,
-            Effect::CreateObligation { stake, .. } => {
-                32 + 32 + 8 + stake.0.len() + 8 // beneficiary + condition + deadline + stake + stake_amount
-            }
-            Effect::FulfillObligation { proof, .. } => {
-                32 + match proof {
-                    ConditionProof::Preimage(_) => 32,
-                    ConditionProof::StarkProof { proof_bytes, .. } => proof_bytes.len() + 32 + 32,
-                    ConditionProof::Receipt(_) => 32,
-                }
-            }
-            Effect::SlashObligation { .. } => 32,
-            Effect::CreateEscrow { condition, .. } => {
-                32 + 32
-                    + 8
-                    + 8
-                    + 32
-                    + match condition {
-                        EscrowCondition::ProofPresented { .. } => 32,
-                        EscrowCondition::SignedByAll { signers } => signers.len() * 32,
-                        EscrowCondition::PredicateSatisfied { .. } => 32,
-                    }
-            }
-            Effect::ReleaseEscrow { proof, .. } => 32 + proof.as_ref().map_or(0, |p| p.len()),
-            Effect::RefundEscrow { .. } => 32,
-            Effect::CreateCommittedEscrow { range_proof, .. } => {
-                32 + 32 + 32 + 32 + 8 + 32 + range_proof.len() + 8
-                // creator_comm + recipient_comm + value_comm + condition_comm + timeout + escrow_id + range_proof + amount
-            }
-            Effect::ReleaseCommittedEscrow { .. } => {
-                32 + 32 + 32 + 64 + 32 // escrow_id + pubkey + blinding + signature + recipient
-            }
-            Effect::RefundCommittedEscrow { .. } => {
-                32 + 32 + 32 + 64 + 32 // escrow_id + pubkey + blinding + signature + creator
-            }
+            
+            
+            
+            
+            
+            
+            
+            
+            
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 4 + inner_effects.iter().map(|e| e.data_bytes()).sum::<usize>()
             }
@@ -2706,23 +1985,17 @@ impl Effect {
                     + params.initial_caps.len() * 34
                     + 32
             }
-            Effect::QueueAllocate { program_vk, .. } => {
-                8 + program_vk.map_or(1, |_| 33) // capacity + opt vk
-            }
-            Effect::QueueEnqueue { .. } => 32 + 32 + 8, // queue + message_hash + deposit
-            Effect::QueueDequeue { .. } => 32,          // queue
-            Effect::QueueResize { .. } => 32 + 8,       // queue + new_capacity
-            Effect::QueueAtomicTx { operations } => {
-                8 + operations.len() * (32 + 32 + 8) // count + ops (worst case: all enqueues)
-            }
-            Effect::QueuePipelineStep { sinks, .. } => {
-                32 + 32 + 8 + sinks.len() * 32 // pipeline_id + source + count + sinks
-            }
+            
+             // queue + message_hash + deposit
+                      // queue
+                   // queue + new_capacity
+            
+            
             // CapTP runtime effects: small fixed-size blobs.
-            Effect::ExportSturdyRef { .. } => 32 + 32 + 33, // swiss + target + perms (1 byte + opt 32-byte vk_hash for Custom)
-            Effect::EnlivenRef { .. } => 32 + 32 + 32 + 33, // swiss + bearer + expected_cell_id + perms
-            Effect::DropRef { .. } => 32,                   // ref_id
-            Effect::ValidateHandoff { .. } => 32 + 32 + 32, // cert_hash + recipient_pk + introducer_pk
+             // swiss + target + perms (1 byte + opt 32-byte vk_hash for Custom)
+             // swiss + bearer + expected_cell_id + perms
+                               // ref_id
+             // cert_hash + recipient_pk + introducer_pk
             // Refusal: cell + commitment + reason-discriminant (+ opt 32-byte
             // custom reason hash) + u32 witness index.
             Effect::Refusal { refusal_reason, .. } => {
@@ -2774,39 +2047,18 @@ impl Effect {
             Effect::SetVerificationKey { .. } => dregg_cell::EFFECT_SET_VERIFICATION_KEY,
             Effect::NoteSpend { .. } => dregg_cell::EFFECT_NOTE_SPEND,
             Effect::NoteCreate { .. } => dregg_cell::EFFECT_NOTE_CREATE,
-            Effect::CreateSealPair { .. } | Effect::Seal { .. } | Effect::Unseal { .. } => {
-                dregg_cell::EFFECT_SEAL_OPS
-            }
-            Effect::BridgeMint { .. }
-            | Effect::BridgeLock { .. }
-            | Effect::BridgeFinalize { .. }
-            | Effect::BridgeCancel { .. } => dregg_cell::EFFECT_BRIDGE_OPS,
+            
+            
             Effect::Introduce { .. } | Effect::PipelinedSend { .. } => dregg_cell::EFFECT_INTRODUCE,
-            Effect::CreateObligation { .. }
-            | Effect::FulfillObligation { .. }
-            | Effect::SlashObligation { .. } => dregg_cell::EFFECT_OBLIGATION_OPS,
-            Effect::CreateEscrow { .. }
-            | Effect::ReleaseEscrow { .. }
-            | Effect::RefundEscrow { .. }
-            | Effect::CreateCommittedEscrow { .. }
-            | Effect::ReleaseCommittedEscrow { .. }
-            | Effect::RefundCommittedEscrow { .. } => dregg_cell::EFFECT_ESCROW_OPS,
+            Effect::BridgeMint { .. } => dregg_cell::EFFECT_BRIDGE_OPS,
             Effect::SpawnWithDelegation { .. }
             | Effect::RefreshDelegation
             | Effect::RevokeDelegation { .. } => dregg_cell::EFFECT_DELEGATION_OPS,
             Effect::ExerciseViaCapability { .. } => dregg_cell::EFFECT_ALL,
             Effect::MakeSovereign { .. } => dregg_cell::EFFECT_SOVEREIGN_OPS,
             Effect::CreateCellFromFactory { .. } => dregg_cell::EFFECT_CREATE_CELL,
-            Effect::QueueAllocate { .. }
-            | Effect::QueueEnqueue { .. }
-            | Effect::QueueDequeue { .. }
-            | Effect::QueueResize { .. }
-            | Effect::QueueAtomicTx { .. }
-            | Effect::QueuePipelineStep { .. } => dregg_cell::EFFECT_QUEUE_OPS,
-            Effect::ExportSturdyRef { .. }
-            | Effect::EnlivenRef { .. }
-            | Effect::DropRef { .. }
-            | Effect::ValidateHandoff { .. } => dregg_cell::EFFECT_CAPTP_OPS,
+            
+            
             Effect::Refusal { .. } => dregg_cell::EFFECT_REFUSAL,
             Effect::CellSeal { .. }
             | Effect::CellUnseal { .. }
@@ -2958,14 +2210,12 @@ mod linearity_tests {
 
     #[test]
     fn terminal_effects_dont_require_pairing() {
-        // Revoke, Destroy, DropRef are one-way; they MUST NOT trip the
-        // "demand a paired sibling" branch.
+        // Revoke is one-way; it MUST NOT trip the "demand a paired sibling" branch.
         let revoke = Effect::RevokeCapability {
             cell: cid(1),
             slot: 0,
         };
-        let drop_ref = Effect::DropRef { ref_id: [0; 32] };
-        for e in [revoke, drop_ref] {
+        for e in [revoke] {
             assert_eq!(e.linearity(), LinearityClass::Terminal);
             assert!(!e.linearity().requires_paired_sibling());
             assert!(!e.linearity().is_disclosed_non_conservation());

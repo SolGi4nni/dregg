@@ -371,16 +371,8 @@ fn require_effect_cells_for_commit(
                 require_local_cell_for_commit(ledger, recipient, label)?;
                 require_local_cell_for_commit(ledger, target, label)?;
             }
-            dregg_turn::Effect::CreateSealPair {
-                sealer_holder,
-                unsealer_holder,
-            } => {
-                require_local_cell_for_commit(ledger, sealer_holder, label)?;
-                require_local_cell_for_commit(ledger, unsealer_holder, label)?;
-            }
-            dregg_turn::Effect::Unseal { recipient, .. } => {
-                require_local_cell_for_commit(ledger, recipient, label)?;
-            }
+            
+            
             dregg_turn::Effect::CellSeal { target, .. }
             | dregg_turn::Effect::CellUnseal { target }
             | dregg_turn::Effect::CellDestroy { target, .. } => {
@@ -818,8 +810,7 @@ fn tool_group(tool: &str) -> &'static str {
         | "dregg_unseal_data"
         | "dregg_create_stealth_address"
         | "dregg_private_transfer"
-        | "dregg_encrypt_intent"
-        | "dregg_bridge_note" => "privacy",
+        | "dregg_encrypt_intent" => "privacy",
 
         "dregg_register_name"
         | "dregg_publish_subscription"
@@ -851,7 +842,6 @@ fn tool_title(tool: &str) -> &'static str {
         "dregg_get_receipt_chain" => "Read Receipt Chain",
         "dregg_seal_data" => "Seal Data (Encrypt)",
         "dregg_unseal_data" => "Unseal Data (Decrypt)",
-        "dregg_bridge_note" => "Bridge Note",
         "dregg_make_sovereign" => "Make Cell Sovereign",
         "dregg_peer_exchange" => "Sovereign Peer Exchange",
         "dregg_compress_history" => "IVC-Compress History",
@@ -906,7 +896,6 @@ fn tool_annotations(tool: &str) -> McpToolAnnotations {
             tool,
             "dregg_revoke_capability"
                 | "dregg_propose_membership"
-                | "dregg_bridge_note"
                 | "dregg_private_transfer"
         ))
     };
@@ -932,8 +921,7 @@ fn tool_annotations(tool: &str) -> McpToolAnnotations {
     // capability-transfer protocols / external marketplaces).
     let open_world_hint = Some(matches!(
         tool,
-        "dregg_bridge_note"
-            | "dregg_peer_exchange"
+        "dregg_peer_exchange"
             | "dregg_captp_deliver"
             | "dregg_exercise_handoff_cert"
             | "dregg_propose_membership"
@@ -1258,21 +1246,6 @@ fn tool_definitions_raw() -> Vec<McpToolDef> {
                     "sealed_box": { "type": "string", "description": "Hex-encoded sealed box bytes" }
                 },
                 "required": ["sealed_box"]
-            }),
-        },
-        McpToolDef {
-            name: "dregg_bridge_note",
-            title: None,
-            output_schema: None,
-            annotations: None,
-            description: "Bridge a note to another federation",
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "note_commitment": { "type": "string", "description": "Hex-encoded 32-byte note commitment" },
-                    "destination_federation": { "type": "string", "description": "Hex-encoded federation ID" }
-                },
-                "required": ["note_commitment", "destination_federation"]
             }),
         },
         // ─── Sovereign Cells ───────────────────────────────────────────────────────
@@ -1693,9 +1666,9 @@ fn tool_definitions_raw() -> Vec<McpToolDef> {
             output_schema: None,
             annotations: None,
             description: "Exercise a CapTP HandoffCertificate: constructs a Turn authorized by \
-                `Authorization::CapTpDelivered` (mirroring `dregg_captp_deliver`) and attaches a \
-                `Effect::ValidateHandoff { cert_hash, recipient_pk, introducer_pk }` so the \
-                executor's `verify_captp_delivered` block1-bind closure fires. \
+                `Authorization::CapTpDelivered` (mirroring `dregg_captp_deliver`) carrying the \
+                caller's effects; the executor's `verify_captp_delivered` validates the \
+                introducer-signed cert + the recipient's delivery signature. \
                 The node cipherclerk is the recipient/sender; the introducer key is supplied \
                 or generated ephemerally. An optional `effects` array lets the caller attach \
                 downstream effects (e.g. a Transfer). Returns the turn hash, cert nonce, STARK \
@@ -1714,7 +1687,7 @@ fn tool_definitions_raw() -> Vec<McpToolDef> {
                     "swiss": { "type": "string", "description": "Hex-encoded 32-byte swiss number (default: random)." },
                     "effects": {
                         "type": "array",
-                        "description": "Additional effects to attach after ValidateHandoff (e.g. a Transfer). Per parse_effect_json contract.",
+                        "description": "Effects to attach to the delivered turn (e.g. a Transfer). Per parse_effect_json contract.",
                         "items": { "type": "object" }
                     }
                 },
@@ -1925,7 +1898,6 @@ fn tool_required_scope(tool: &str) -> &'static str {
         | "dregg_fulfill_intent"
         | "dregg_seal_data"
         | "dregg_unseal_data"
-        | "dregg_bridge_note"
         | "dregg_prove_sovereign_turn"
         | "dregg_create_stealth_address"
         | "dregg_private_transfer"
@@ -2183,7 +2155,6 @@ async fn dispatch_tool(name: &str, params: Value, state: &NodeState) -> McpToolR
         "dregg_get_receipt_chain" => tool_get_receipt_chain(&params, state).await,
         "dregg_seal_data" => tool_seal_data(&params, state).await,
         "dregg_unseal_data" => tool_unseal_data(&params, state).await,
-        "dregg_bridge_note" => tool_bridge_note(&params, state).await,
         // Sovereign Cells
         "dregg_make_sovereign" => tool_make_sovereign(&params, state).await,
         "dregg_peer_exchange" => tool_peer_exchange(&params, state).await,
@@ -2217,7 +2188,7 @@ async fn dispatch_tool(name: &str, params: Value, state: &NodeState) -> McpToolR
         "dregg_place_bid" => tool_place_bid(&params, state).await,
         // CapTP delivery
         "dregg_captp_deliver" => tool_captp_deliver(&params, state).await,
-        // CapTP handoff cert exercise (ValidateHandoff block1-bind)
+        // CapTP handoff cert exercise (CapTpDelivered)
         "dregg_exercise_handoff_cert" => tool_exercise_handoff_cert(&params, state).await,
         // Sovereign witness (reshaped)
         "dregg_sign_sovereign_witness" => tool_sign_sovereign_witness(&params, state).await,
@@ -3448,139 +3419,6 @@ async fn tool_unseal_data(params: &Value, state: &NodeState) -> McpToolResult {
         })),
     }
 }
-
-async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
-    let note_commitment_hex = match params.get("note_commitment").and_then(|v| v.as_str()) {
-        Some(h) => h,
-        None => return McpToolResult::error("missing required parameter: note_commitment"),
-    };
-    let dest_federation_hex = match params
-        .get("destination_federation")
-        .and_then(|v| v.as_str())
-    {
-        Some(h) => h,
-        None => return McpToolResult::error("missing required parameter: destination_federation"),
-    };
-
-    let note_commitment_bytes = match hex_decode(note_commitment_hex) {
-        Ok(b) => b,
-        Err(_) => {
-            return McpToolResult::error("invalid hex for note_commitment (expected 64 hex chars)");
-        }
-    };
-    let dest_federation_bytes = match hex_decode(dest_federation_hex) {
-        Ok(b) => b,
-        Err(_) => {
-            return McpToolResult::error(
-                "invalid hex for destination_federation (expected 64 hex chars)",
-            );
-        }
-    };
-
-    let mut s = state.write().await;
-    if !s.unlocked {
-        return McpToolResult::error("cipherclerk is locked; unlock first");
-    }
-
-    // Use the note commitment as the nullifier for the bridge lock.
-    // In a full implementation, the nullifier would be derived from the note's secret.
-    let nullifier = note_commitment_bytes;
-    let destination = dest_federation_bytes;
-
-    // Get current height for timeout calculation.
-    let current_height = s
-        .store
-        .latest_attested_root()
-        .ok()
-        .flatten()
-        .map(|r| r.height)
-        .unwrap_or(0);
-
-    // Build a turn with Effect::BridgeLock to initiate the two-phase bridge protocol.
-    let agent_cell_id = dregg_cell::CellId::derive_raw(&s.cclerk.public_key().0, &[0u8; 32]);
-
-    let effect = dregg_turn::Effect::BridgeLock {
-        nullifier,
-        destination,
-        value: 0, // Value determined by the note being bridged.
-        asset_type: 0,
-        timeout_height: current_height + 1000, // Bridge timeout: ~1000 blocks.
-        spending_proof: vec![], // Spending proof placeholder (would be STARK proof in production).
-    };
-
-    let nonce = s.cclerk.receipt_chain_length() as u64;
-    let turn = Turn {
-        agent: agent_cell_id,
-        nonce,
-        fee: 0,
-        memo: Some("bridge note".to_string()),
-        valid_until: None,
-        call_forest: build_forest_with_effects(agent_cell_id, vec![effect]),
-        depends_on: vec![],
-        previous_receipt_hash: s.cclerk.receipt_chain().last().map(|r| r.receipt_hash()),
-        conservation_proof: None,
-        sovereign_witnesses: std::collections::HashMap::new(),
-        execution_proof: None,
-        execution_proof_cell: None,
-        execution_proof_new_commitment: None,
-        custom_program_proofs: None,
-        effect_binding_proofs: Vec::new(),
-        cross_effect_dependencies: Vec::new(),
-        effect_witness_index_map: Vec::new(),
-    };
-
-    let signed = s.cclerk.sign_turn(&turn);
-    let turn_hash = hex_encode(&turn.hash());
-
-    // Execute locally.
-    let executor = dregg_turn::TurnExecutor::new(dregg_turn::ComputronCosts::default());
-    let exec_result = executor.execute(&turn, &mut s.ledger);
-
-    match exec_result {
-        dregg_turn::TurnResult::Committed { receipt, .. } => {
-            s.cclerk
-                .append_receipt(receipt)
-                .expect("local executor and cclerk chains must agree; divergence is a serious bug");
-
-            let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
-            drop(s);
-
-            state.emit(crate::state::NodeEvent::Receipt {
-                hash: turn_hash.clone(),
-            });
-
-            if let Some(gossip) = state.gossip().await {
-                let hash = signed.turn.hash();
-                tokio::spawn(async move {
-                    gossip.gossip_turn(hash, turn_data).await;
-                });
-            }
-
-            McpToolResult::json(&serde_json::json!({
-                "bridged": true,
-                "note_commitment": note_commitment_hex,
-                "destination_federation": dest_federation_hex,
-                "turn_hash": turn_hash,
-                "timeout_height": current_height + 1000,
-            }))
-        }
-        dregg_turn::TurnResult::Rejected { reason, .. } => {
-            drop(s);
-            McpToolResult::json(&serde_json::json!({
-                "bridged": false,
-                "error": format!("bridge turn rejected: {reason}"),
-            }))
-        }
-        _ => {
-            drop(s);
-            McpToolResult::error("bridge note turn did not commit")
-        }
-    }
-}
-
-// =============================================================================
-// Sovereign Cell tools
-// =============================================================================
 
 async fn tool_make_sovereign(params: &Value, state: &NodeState) -> McpToolResult {
     let cell_id_hex = match params.get("cell_id").and_then(|v| v.as_str()) {
@@ -5449,10 +5287,10 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
 /// this tool models the *recipient* exercising a cert they received from a third-party
 /// introducer. The caller supplies introducer identity (sk or pk), optional downstream
 /// effects, and optionally a pre-built cert hash (if omitted we BLAKE3 the serialised
-/// cert). The action always carries an `Effect::ValidateHandoff` so the executor's
-/// block1-bind closure fires and confirms the cert's `(recipient_pk, introducer_pk)`
-/// match those on the action. A STARK proof is generated over the downstream effects
-/// (or a NoOp if none) so the receipt chain carries verifiable provenance.
+/// cert). The `Authorization::CapTpDelivered` carries the cert; the executor verifies
+/// the introducer signature + the recipient's delivery signature. A STARK proof is
+/// generated over the downstream effects (or a NoOp if none) so the receipt chain
+/// carries verifiable provenance.
 async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToolResult {
     // ── Parse required inputs ────────────────────────────────────────────────
     let target_cell_hex = match params.get("target_cell").and_then(|v| v.as_str()) {
@@ -5617,16 +5455,11 @@ async fn tool_exercise_handoff_cert(params: &Value, state: &NodeState) -> McpToo
     let cert_hash: [u8; 32] = blake3::hash(&cert_bytes).into();
     let cert_nonce_hex = hex_encode(&cert.nonce);
 
-    // ── Build effects list: ValidateHandoff first, then downstream ────────────
-    // The block1-bind closure in `verify_captp_delivered` checks every
-    // `Effect::ValidateHandoff` in the action against the cert's keys.
-    let validate_effect = dregg_turn::Effect::ValidateHandoff {
-        cert_hash,
-        recipient_pk,
-        introducer_pk: action_introducer_pk_bytes,
-    };
-    let mut all_effects = vec![validate_effect];
-    all_effects.extend(downstream_effects.iter().cloned());
+    // VERB-LOCKSTEP: the ValidateHandoff kernel verb is gone (caps-in-slots /
+    // R7 epoch-at-retrieval is the stored-authority story). The CapTpDelivered
+    // AUTHORIZATION carries the cert + delivery signature; the turn carries the
+    // downstream effects directly.
+    let all_effects = downstream_effects.clone();
 
     // ── Sender signature (recipient signs the canonical delivery message) ─────
     let agent_cell_id = target_cell_id;
@@ -7432,7 +7265,7 @@ fn handle_initialize(id: Value) -> JsonRpcResponse {
             "You are inhabiting dregg — verified, capability-secure polis-infrastructure for AI \
              minds. This is a place, not an RPC grab-bag. Before acting, ORIENT: read the \
              resources `dregg://about` (what dregg is + the four modes orient/act/delegate/verify), \
-             `dregg://ontology` (the 56 verified effects you can drive), and `dregg://identity` \
+             `dregg://ontology` (the 29 verified effects you can drive), and `dregg://identity` \
              (who you are here). Then read `dregg://capabilities` (or call \
              `dregg_check_capabilities`) to see what authority you hold. Every state-changing turn \
              runs through a Lean-verified kernel and returns a STARK-proved receipt — VERIFY your \
@@ -7576,7 +7409,7 @@ async fn handle_tools_call(id: Value, params: Value, state: &NodeState) -> JsonR
 // =============================================================================
 //
 // Resources let an AI agent ORIENT before it acts: read the dregg ontology
-// (the 56 verified effects + constraint vocabulary), the node's own identity,
+// (the 29 verified effects + constraint vocabulary), the node's own identity,
 // its receipt chain, capabilities, consensus/finality status, and any cell's
 // state — all by URI, without invoking a (gated, side-effecting) tool. This is
 // the "what is this place and what do I hold" half of inhabiting dregg.
@@ -7605,9 +7438,9 @@ fn static_resources() -> Vec<StaticResource> {
         StaticResource {
             uri: "dregg://ontology",
             name: "dregg-ontology",
-            title: "dregg Ontology (56 verified effects)",
+            title: "dregg Ontology (29 verified effects)",
             description:
-                "The complete dregg effect vocabulary — 56 effects with wire codecs, facets \
+                "The complete dregg effect vocabulary — 29 effects with wire codecs, facets \
                  (write/grant/control), categories, and semantics, autogenerated from the \
                  verified Lean executor. READ THIS FIRST to learn everything an agent can do.",
             mime_type: "application/json",
@@ -7775,7 +7608,7 @@ fn dregg_about_markdown() -> String {
         - **Intent** — a posted request for a service/capability that another agent can fulfill \
         (`dregg_post_intent` / `dregg_fulfill_intent`).\n\n\
         ## The four modes of inhabiting dregg\n\
-        1. **Orient** — read `dregg://ontology` (56 verified effects), `dregg://identity`, \
+        1. **Orient** — read `dregg://ontology` (29 verified effects), `dregg://identity`, \
         `dregg://capabilities`, `dregg://status`. (Tool group: `orient`.)\n\
         2. **Act** — submit verified turns, transfer value, use apps. (Tool group: `act` / `apps`.)\n\
         3. **Delegate** — grant attenuated capabilities to sub-agents; this is the \
@@ -8125,7 +7958,7 @@ fn handle_prompts_get(id: Value, params: Value) -> JsonRpcResponse {
         "orient" => (
             "Orient in dregg",
             "You're inhabiting dregg. Before acting:\n\
-             1. Read resource `dregg://about` and `dregg://ontology` to learn the 56 effects.\n\
+             1. Read resource `dregg://about` and `dregg://ontology` to learn the 29 effects.\n\
              2. Read `dregg://identity` to see who you are (your agent cell id, federation).\n\
              3. Call `dregg_check_capabilities` (or read `dregg://capabilities`) to see what \
              authority you hold.\n\
@@ -9285,7 +9118,7 @@ mod tests {
 
     /// Honest path: exercise_handoff_cert with a valid introducer key commits
     /// and emits a STARK proof. Mirrors the existing `dregg_captp_deliver`
-    /// integration but confirms the ValidateHandoff block1-bind fires.
+    /// integration (CapTpDelivered cert + delivery-signature verification).
     #[tokio::test]
     async fn exercise_handoff_cert_honest_path_commits() {
         let (state, _tmp) = fresh_unlocked_state().await;
@@ -9883,7 +9716,7 @@ mod tests {
         let revoke = tool_annotations("dregg_revoke_capability");
         assert!(!revoke.read_only_hint && revoke.destructive_hint == Some(true));
         // bridging reaches the open world.
-        assert_eq!(tool_annotations("dregg_bridge_note").open_world_hint, Some(true));
+        assert_eq!(tool_annotations("dregg_peer_exchange").open_world_hint, Some(true));
     }
 
     #[test]
@@ -9959,7 +9792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ontology_resource_exposes_56_effects() {
+    async fn ontology_resource_exposes_29_effects() {
         let (state, _tmp) = fresh_unlocked_state().await;
         let resp = handle_resources_read(
             serde_json::json!(1),
@@ -9970,8 +9803,8 @@ mod tests {
         let v = serde_json::to_value(&resp).unwrap();
         let text = v["result"]["contents"][0]["text"].as_str().unwrap();
         let catalog: Value = serde_json::from_str(text).unwrap();
-        assert_eq!(catalog["effect_count"], 56);
-        assert!(catalog["effects"].as_array().unwrap().len() >= 56);
+        assert_eq!(catalog["effect_count"], 29);
+        assert_eq!(catalog["effects"].as_array().unwrap().len(), 29);
     }
 
     #[tokio::test]

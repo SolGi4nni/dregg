@@ -217,47 +217,6 @@ fn test_stale_messages_after_teardown() {
 // Test 4: DropRef arrives before EnlivenRef (temporal inversion)
 // =============================================================================
 
-/// Due to network reordering, a DropRef message arrives before the corresponding
-/// EnlivenRef. The system must handle this gracefully: either buffer the DropRef
-/// until the enliven arrives, or ignore it (since there's nothing to drop).
-/// It must NOT crash or corrupt state.
-#[test]
-fn test_drop_before_enliven_graceful() {
-    let mut session = SimCapTpSession::establish(fed_a_id(), fed_b_id());
-    session.deliver_pending();
-
-    // Export a cell from A
-    let cell = test_cell(0x33);
-    let _uri = session.export_from_a(cell, AuthRequired::None);
-
-    // Before B enlivens, send a DropRef (temporal inversion due to network reorder)
-    let premature_drop = WireMessage::DropRemoteRef {
-        from_strand: fed_b_id().0,
-        cell_id: cell.0,
-        session_epoch: 0,
-    };
-    session.send_b_to_a(premature_drop);
-    session.deliver_pending();
-
-    // The drop should be handled gracefully:
-    // - The export exists (it was exported), so the drop decrements the ref count
-    // - OR: if the system tracks that B never enlivened it, the drop is a no-op
-    //
-    // Either way: no crash, no state corruption
-    assert!(
-        session.connected,
-        "Session must not crash on premature DropRef"
-    );
-
-    // Subsequent operations should still work
-    let cell2 = test_cell(0x44);
-    let uri2 = session.export_from_a(cell2, AuthRequired::None);
-    let result = session.enliven_at_a(&uri2);
-    assert!(
-        result.is_ok(),
-        "Session must remain functional after premature DropRef"
-    );
-}
 
 // =============================================================================
 // Test 5: Concurrent writes to same directory entry — CAS semantics
