@@ -12,6 +12,7 @@
        inspectors; studio-embed.js attaches a shared seeded in-memory runtime
        to every <dregg-app> a section renders. -->
   <script type="module" src="/_includes/runtime-bootstrap.js"></script>
+  <script type="module" src="/_includes/studio/image-shell.js"></script>
   <style>
     /* Tier-1 deeplink banner + Tier-2 embedded inspector chrome. */
     .pg-sb-banner {
@@ -54,13 +55,9 @@
       <span class="pg-header__title">Dragon's Egg <span class="accent">playground</span></span>
     </div>
     <div class="pg-header__right">
-      <a class="pg-header__link" href="/">Home</a>
+      <dregg-image-nav current="playground"></dregg-image-nav>
       <a class="pg-header__link" href="/apps.html">Apps</a>
       <a class="pg-header__link" href="/starbridge/">Starbridge</a>
-      <a class="pg-header__link" href="/learn.html">Learn</a>
-      <a class="pg-header__link" href="/paper.html">Paper</a>
-      <a class="pg-header__link" href="/demo.html">Demo</a>
-      <a class="pg-header__link" href="/explorer/">Explorer</a>
       <a class="pg-header__link" href="https://github.com/emberian/dregg">GitHub</a>
       <span class="pg-header__status" id="wasm-status">loading...</span>
     </div>

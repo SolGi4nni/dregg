@@ -412,7 +412,10 @@ function render(section) {
     </div>
 
     <div class="twb-verbs">${verbCards}</div>
-    <div class="twb-verbnote"><strong>${esc(active.verb)}</strong> — ${esc(active.note)}</div>
+    <div class="twb-verbnote"><strong>${esc(active.verb)}</strong> — ${esc(active.note)}
+      <a class="twb-verblink" data-dregg-uri="dregg://verb/${esc(active.verb === 'shield' || active.verb === 'unshield' ? 'shieldUnshield' : active.verb)}"
+         href="/learn/concepts/substances.html#verb-${esc(active.verb === 'shield' || active.verb === 'unshield' ? 'shieldUnshield' : active.verb)}"
+         title="open this verb's row in the substances rung (generated from VerbRegistry.lean)">what is ${esc(active.verb)}? →</a></div>
     <div class="twb-verbactions">${effButtons}${actBtn ? ' ' + actBtn : ''}</div>
 
     ${agentList}
@@ -506,6 +509,7 @@ function wire(section) {
 .twb-verb__status { font-size:0.6rem; text-transform:uppercase; letter-spacing:0.04em; color:var(--accent-bright,#7db87b); }
 .twb-verb.is-passive .twb-verb__status { color:var(--text-dim,#8a958f); }
 .twb-verbnote { font-size:0.78rem; color:var(--text-dim,#8a958f); margin:4px 0 8px; line-height:1.5; }
+.twb-verblink { margin-left:8px; color:var(--accent-bright,#8fddff); text-decoration:none; border-bottom:1px dotted currentColor; font-size:0.74rem; white-space:nowrap; }
 .twb-verbactions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 .twb-agents { font-size:0.74rem; color:var(--text-dim,#8a958f); margin:6px 0 10px; }
 .twb-agent { cursor:copy; border:1px solid var(--line,#2a3530); border-radius:4px; padding:1px 6px; margin-right:4px; }

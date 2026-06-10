@@ -26,7 +26,7 @@
  */
 
 import { parseRef } from '../uri.js';
-import { InspectorBase, renderParseError, shortHex, dreggCodeLink, emptyState } from './_base.js';
+import { InspectorBase, renderParseError, shortHex, dreggCodeLink, emptyState, whatIsThisLink } from './_base.js';
 
 function tsLabel(ts) {
   const n = Number(ts);
@@ -140,6 +140,7 @@ class DreggCellHistory extends InspectorBase {
             <span class="dregg-inspector__kind">cell-history</span>
             ${dreggCodeLink(html, `dregg://cell/${cellId}`, shortHex(cellId, 16), 'open the cell')}
             <span class="dregg-inspector__meta">${chain.length} receipt${chain.length === 1 ? '' : 's'} in chain${filteredClientSide ? ' (client-filtered)' : ''}</span>
+            ${whatIsThisLink(html, 'cell-history')}
           </header>
 
           <div class="dregg-ch__scrub">

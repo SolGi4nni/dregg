@@ -10,6 +10,7 @@
  */
 
 import { findRuntime } from '../context.js';
+import { surfaceHref, rungRef } from '../resolver.js';
 
 function ensureInspectorChrome() {
   if (document.getElementById('dregg-inspector-chrome')) return;
@@ -22,6 +23,7 @@ function ensureInspectorChrome() {
 .dregg-inspector__link { color: var(--accent, #64c8ff); text-decoration: none; border-bottom: 1px dotted currentColor; cursor: pointer; }
 .dregg-inspector__link:hover { border-bottom-style: solid; }
 .dregg-inspector__meta { color: var(--fg-dim, #9aa0a6); font-size: 0.78rem; }
+.dregg-inspector__what { margin-left: auto; font-size: 0.72rem; }
 .dregg-inspector__summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 8px 0 10px; }
 .dregg-inspector__summary div { border: 1px solid var(--line, #30363d); border-radius: 4px; background: var(--bg-raised, #161b22); padding: 7px; min-width: 0; }
 .dregg-inspector__summary span { display: block; color: var(--fg-dim, #9aa0a6); font-size: 0.66rem; text-transform: uppercase; }
@@ -213,6 +215,19 @@ export function dreggHref(uri) {
 
 export function dreggCodeLink(html, uri, label, title = uri) {
   return html`<a class="dregg-inspector__link" href=${dreggHref(uri)} data-dregg-uri=${uri} title=${title}><code>${label}</code></a>`;
+}
+
+/**
+ * "what is this?" — the inspector→docs leg of the image: a link to the
+ * concept rung that explains this object kind (resolver.js RUNG_FOR_KIND).
+ * Returns null for kinds with no rung, so callers can sprinkle it freely.
+ */
+export function whatIsThisLink(html, kind) {
+  const rung = rungRef(kind);
+  const href = rung ? surfaceHref(rung) : null;
+  if (!href) return null;
+  return html`<a class="dregg-inspector__link dregg-inspector__what" href=${href}
+    title="open the docs rung that explains this object kind">what is this?</a>`;
 }
 
 export function emptyState(html, title, body, actions = []) {

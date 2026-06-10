@@ -153,6 +153,11 @@
   </div>
 </main>
 
+<!-- Preact/signals bootstrap for the platform inspectors the composer embeds
+     (the compose-then-inspect round trip mounts <dregg-council> etc. in
+     factory view). Fail-soft: without it the composer still works fully. -->
+<script type="module" src="/_includes/runtime-bootstrap.js"></script>
+
 <script type="module">
   // Importing the inspectors barrel registers <dregg-turn-composer>,
   // <dregg-predicate-explorer> and <dregg-ontology> (plus the rest of the studio
@@ -179,6 +184,15 @@
   tabs.forEach((t) => t.addEventListener('click', () => show(t.dataset.panel)));
   const initial = (location.hash || '').replace('#', '');
   if (['compose', 'factory', 'predicates', 'catalog'].includes(initial)) show(initial);
+
+  // dregg:// deep links land here via the shared resolver (resolver.js):
+  //   dregg://factory/<vk-or-key>  → ?factory=…   (factory composer example)
+  //   dregg://constraint/<kind>    → ?constraint=… (predicate browser entry)
+  //   dregg://effect/<name>        → ?effect=…     (effect catalog search)
+  const params = new URLSearchParams(location.search);
+  if (params.has('factory')) show('factory');
+  else if (params.has('constraint')) show('predicates');
+  else if (params.has('effect')) show('catalog');
 
   // Guided first-run banner: dismiss persists in localStorage.
   const guide = document.getElementById('ide-guide');

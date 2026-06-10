@@ -41,6 +41,18 @@ const PRED_CATALOG_URL = '/_includes/studio/predicate-catalog.generated.json';
 const ASSURANCE_URL = '/_includes/studio/assurance-catalog.generated.json';
 const SAMPLES_URL = '/_includes/studio/factory-samples.generated.json';
 
+// Compose-then-inspect round trip: when the composed constraint set IS a
+// recognizable polis machine (council / amendment / constitution / worker
+// mandate), mount the matching platform inspector on it in factory view.
+import { classifyConstraints, constraintsOf } from '../polis-decode.js';
+
+const POLIS_INSPECTOR_TAG = {
+  council: 'dregg-council',
+  amendment: 'dregg-council',
+  constitution: 'dregg-constitution',
+  mandate: 'dregg-mandate',
+};
+
 function esc(s) {
   if (s == null) return '';
   return String(s)
@@ -232,6 +244,25 @@ class DreggFactoryComposer extends HTMLElement {
       this._composable = this._composable.filter((c) => c.name !== 'AnyOf' && c.name !== 'AllOf' && c.name !== 'Not');
       this._draftKind = this._composable[0]?.name || null;
     }
+    // dregg://factory/<vk-or-key> deep link (resolver.js → ?factory=…): load
+    // the worked example whose key / descriptor hash / factory vk matches.
+    if (!this._deepLinked) {
+      this._deepLinked = true;
+      try {
+        const want = (new URLSearchParams(window.location.search).get('factory') || '').trim().toLowerCase();
+        if (want) {
+          const hex = (bytes) => (bytes || []).map((b) => Number(b).toString(16).padStart(2, '0')).join('');
+          const key = Object.keys(this._samples).find((k) => {
+            const s = this._samples[k];
+            if (!s || !s.descriptor) return false;
+            return k.toLowerCase() === want
+              || String(s.descriptor_hash || '').toLowerCase().startsWith(want)
+              || hex(s.descriptor.factory_vk).startsWith(want);
+          });
+          if (key) { this._loadExample(key); return; }
+        }
+      } catch { /* embedded without URL context */ }
+    }
     this._render();
   }
 
@@ -360,14 +391,43 @@ class DreggFactoryComposer extends HTMLElement {
     const meta = this._renderMeta();
     const badges = this._renderBadges();
     const exportB = this._renderExport();
+    const inspect = this._renderInspect();
 
     this.innerHTML =
       `<div class="dregg-fc">${head}${examples}` +
       `<div class="dregg-fc__cols">` +
         `<div class="dregg-fc__col">${list}${add}${meta}${exportB}</div>` +
         `<div class="dregg-fc__col dregg-fc__col--badges">${badges}</div>` +
-      `</div></div>`;
+      `</div>${inspect}</div>`;
     this._wire();
+  }
+
+  /**
+   * Compose-then-inspect: when the composed constraint set IS a recognizable
+   * polis machine, mount the matching platform inspector (factory view) on
+   * the EXACT descriptor this composer would export — the same machine
+   * recognizer the explorer's Polis page uses (polis-decode.js). Edits to the
+   * constraint list re-render the inspector live.
+   */
+  _renderInspect() {
+    let cls = null;
+    let desc = null;
+    try {
+      desc = this._descriptor();
+      cls = classifyConstraints(constraintsOf(desc));
+    } catch { /* not classifiable */ }
+    if (!cls || !desc) return '';
+    const tag = POLIS_INSPECTOR_TAG[cls.family];
+    if (!tag) return '';
+    return (
+      `<details class="dregg-fc__inspect" open>` +
+        `<summary>Inspect what this builds — your constraint set is a recognizable ` +
+        `<code>${esc(cls.family)}</code> machine</summary>` +
+        `<div class="dregg-fc__inspect-body">` +
+          `<${tag} mode="descriptor" data-descriptor="${esc(JSON.stringify(desc))}"></${tag}>` +
+        `</div>` +
+      `</details>`
+    );
   }
 
   _renderExamples() {
@@ -679,6 +739,9 @@ if (!customElements.get('dregg-factory-composer')) {
 .dregg-fc__prov code, .dregg-fc__note code { color:var(--fg); }
 .dregg-fc__dim { color:var(--fg-dim); font-size:0.92em; }
 .dregg-fc__examples { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:12px 0; padding:8px 10px; border:1px dashed var(--line); border-radius:6px; }
+.dregg-fc__inspect { border:1px solid var(--line); border-radius:6px; margin-top:12px; }
+.dregg-fc__inspect > summary { cursor:pointer; padding:8px 10px; color:var(--fg-dim); font-size:0.84rem; user-select:none; }
+.dregg-fc__inspect-body { border-top:1px solid var(--line); padding:10px; background:var(--bg, #0d1117); }
 .dregg-fc__exlabel { font-size:0.72rem; color:var(--fg-dim); }
 .dregg-fc__ex { cursor:pointer; font:inherit; font-size:0.76rem; padding:4px 10px; border:1px solid var(--line); border-radius:12px; background:var(--bg-raised); color:var(--fg); }
 .dregg-fc__ex:hover { border-color:var(--accent,#5b8a5a); }

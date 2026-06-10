@@ -142,6 +142,23 @@ class DreggPredicateExplorer extends HTMLElement {
       }
     }
     this._render();
+    // dregg://constraint/<kind> deep link (resolver.js → ?constraint=<kind>):
+    // open the language reference at that entry, once.
+    if (!this._deepLinked) {
+      this._deepLinked = true;
+      try {
+        const want = new URLSearchParams(window.location.search).get('constraint');
+        if (want) {
+          this._tab = 'language';
+          this._render();
+          const el = this.querySelector(`#pred-${CSS.escape(want)}`);
+          if (el) {
+            el.classList.add('is-deeplinked');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      } catch { /* no URL context (embedded) */ }
+    }
   }
 
   _render() {
@@ -183,7 +200,7 @@ class DreggPredicateExplorer extends HTMLElement {
               ? `<span class="dregg-pred__tag dregg-pred__tag--live" title="checked against a faithful JS mirror of the Rust evaluator">evaluable here</span>`
               : `<span class="dregg-pred__tag dregg-pred__tag--exec" title="needs the executor: witness / proof / side-table">needs executor</span>`)
           : '';
-        return `<div class="dregg-pred__item">` +
+        return `<div class="dregg-pred__item" id="pred-${esc(it.kind || it.name)}">` +
           `<div class="dregg-pred__item-head"><code class="dregg-pred__kind">${esc(it.kind || it.name)}</code>${evalable}</div>` +
           `<div class="dregg-pred__sem">${esc(it.semantics)}</div>` +
           (fields ? `<div class="dregg-pred__fields">${fields}</div>` : '') +
@@ -357,6 +374,7 @@ if (!customElements.get('dregg-predicate-explorer')) {
 .dregg-pred__sec { margin-bottom:18px; }
 .dregg-pred__sec h3 { font-size:0.86rem; color:var(--fg); margin:0 0 8px; text-transform:uppercase; letter-spacing:0.04em; }
 .dregg-pred__item { border:1px solid var(--line); border-radius:6px; background:var(--bg-raised); padding:8px 10px; margin-bottom:6px; }
+.dregg-pred__item.is-deeplinked { border-color:var(--accent,#5b8a5a); box-shadow:0 0 0 1px var(--accent,#5b8a5a); }
 .dregg-pred__item-head { display:flex; align-items:center; gap:8px; }
 .dregg-pred__kind { font-size:0.88rem; color:var(--fg); font-weight:600; }
 .dregg-pred__tag { font-size:0.68rem; padding:1px 7px; border-radius:3px; }

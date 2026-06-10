@@ -392,3 +392,39 @@
   padding: var(--s1) 0;
   line-height: 1.6;
 }
+
+/* --- Live-instance strips (docs ↔ live objects, image-shell) ------------- */
+
+.catalog-instance {
+  padding: var(--s2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.catalog-instance:last-of-type { border-bottom: none; }
+
+.catalog-instance__head {
+  font-family: var(--font-display);
+  margin-bottom: 2px;
+}
+
+.catalog-instance__head a {
+  color: var(--chalk);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent-bright);
+}
+
+.catalog-instance__head a:hover { color: var(--accent-bright); }
+
+.catalog-instance__meta {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* anchor targets jumped to from dregg://verb|constraint|guarantee links */
+:target.catalog-guarantee,
+tr:target td {
+  background: var(--accent-soft);
+}

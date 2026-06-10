@@ -16,6 +16,7 @@
 
 import { createRemoteRuntime } from '../_includes/studio/runtime-remote.js';
 import { parseRef, isRef } from '../_includes/studio/uri.js';
+import { classifyConstraints, constraintsOf } from '../_includes/studio/polis-decode.js';
 // Side-effect import: registers every <dregg-*> inspector custom element and
 // the <dregg-app> context provider. This is the platform vocabulary.
 import '../_includes/studio/context.js';
@@ -63,6 +64,7 @@ const PAGES = {
   receipts:     { tag: 'dregg-receipt-list', uri: () => 'dregg://receipt-list/all' },
   turns:        { tag: 'dregg-receipt-list', uri: () => 'dregg://receipt-list/all' },
   history:      { custom: 'history' },
+  polis:        { custom: 'polis' },
   capabilities: { tag: 'dregg-capability-list', uri: () => 'dregg://capability-list/0' },
   intents:      { custom: 'intents' },
   federation:   { tag: 'dregg-federation-list', uri: () => 'dregg://federation-list/all' },
@@ -72,6 +74,10 @@ const PAGES = {
 // Map a parsed dregg:// kind to the nav page that hosts its inspector.
 const KIND_TO_PAGE = {
   'cell-history': 'history',
+  council: 'polis',
+  constitution: 'polis',
+  mandate: 'polis',
+  'amendment-ceremony': 'polis',
   cell: 'cells',
   receipt: 'receipts',
   turn: 'turns',
@@ -373,6 +379,7 @@ export function navigateTo(page) {
   if (!mount) return;
   if (def.custom === 'intents') { renderIntentList(mount); return; }
   if (def.custom === 'history') { renderHistoryPage(); return; }
+  if (def.custom === 'polis') { renderPolisPage(); return; }
   if (def.uri) mountInspector(mount, def.uri());
 }
 
@@ -413,12 +420,13 @@ function resolveSearch(raw) {
   if (!q) return null;
   if (isRef(q)) return q;
 
-  const shorthand = /^(cell|receipt|turn|block|intent|federation|capability|token|history)\/(.+)$/i.exec(q);
+  const shorthand = /^(cell|receipt|turn|block|intent|federation|capability|token|history|council|constitution|mandate|ceremony)\/(.+)$/i.exec(q);
   if (shorthand) {
     const kind = shorthand[1].toLowerCase();
     const id = shorthand[2];
     if (kind === 'block') return `dregg://block/0/${id}`;
     if (kind === 'history') return `dregg://cell-history/${id}`;
+    if (kind === 'ceremony') return `dregg://amendment-ceremony/${id}`;
     return `dregg://${kind}/${id}`;
   }
 
@@ -487,6 +495,107 @@ function renderHistoryPage() {
     };
     btn.addEventListener('click', walk);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') walk(); });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Polis: governance-cell inspection. The scan classifies the runtime's cells
+// by their SERVED program views (polis-decode.js — the same recognizer the
+// inspectors use); manual entry auto-detects the family at open time. Cells
+// whose program view the node doesn't serve simply can't be classified —
+// stated, not guessed.
+// ---------------------------------------------------------------------------
+const POLIS_TAG = {
+  council: 'dregg-council',
+  amendment: 'dregg-council',
+  constitution: 'dregg-constitution',
+  mandate: 'dregg-mandate',
+};
+const POLIS_KIND = { council: 'council', amendment: 'council', constitution: 'constitution', mandate: 'mandate' };
+
+function classifyCellFamily(cell) {
+  try {
+    const cls = classifyConstraints(constraintsOf(cell?.program));
+    return cls?.family || null;
+  } catch { return null; }
+}
+
+async function openPolisCell(id) {
+  // Auto-detect the family from the live cell's program view, then open the
+  // right inspector. Unclassifiable → council view with its honest
+  // "not council-shaped" label (the slots still render, labeled best-effort).
+  let family = null;
+  try {
+    const sig = runtime?.getCell?.(id);
+    let cell = sig?.value;
+    if (!cell) {
+      // give the lazy fetch one short beat
+      await new Promise((r) => setTimeout(r, 600));
+      cell = sig?.value;
+    }
+    family = classifyCellFamily(cell);
+  } catch {}
+  openUri(`dregg://${POLIS_KIND[family] || 'council'}/${id}`);
+}
+
+function renderPolisPage() {
+  const input = document.getElementById('polis-cell-input');
+  const datalist = document.getElementById('polis-cell-options');
+  const btn = document.getElementById('polis-inspect-btn');
+  const scan = document.getElementById('polis-scan');
+  if (!input || !btn) return;
+
+  // Scan the runtime's cell list for polis-shaped programs (only cells whose
+  // list entry carries a program view are classifiable from the list).
+  const cells = (() => { try { return runtime?.listCells?.().value || []; } catch { return []; } })();
+  if (datalist) {
+    datalist.replaceChildren();
+    for (const c of cells.slice(0, 60)) {
+      const id = c.cell_id || c.id;
+      if (!id) continue;
+      const opt = document.createElement('option');
+      opt.value = id;
+      const fam = classifyCellFamily(c);
+      opt.label = `${String(id).slice(0, 16)}…${fam ? ` (${fam})` : ''}`;
+      datalist.appendChild(opt);
+    }
+  }
+  if (scan) {
+    const found = cells
+      .map((c) => ({ id: c.cell_id || c.id, family: classifyCellFamily(c) }))
+      .filter((x) => x.id && x.family);
+    if (found.length) {
+      scan.innerHTML = `<div class="ex-page__header"><p>polis-shaped programs on this runtime:</p></div>`;
+      const wrap = document.createElement('div');
+      wrap.className = 'ex-polis-scan__chips';
+      for (const f of found.slice(0, 24)) {
+        const b = document.createElement('button');
+        b.className = 'btn btn-secondary';
+        b.textContent = `${f.family} ${String(f.id).slice(0, 12)}…`;
+        b.addEventListener('click', () => openUri(`dregg://${POLIS_KIND[f.family]}/${f.id}`));
+        wrap.appendChild(b);
+      }
+      scan.appendChild(wrap);
+    } else {
+      scan.innerHTML = `<div class="ex-inspector-empty"><strong>No polis-shaped cells classifiable from this runtime's cell list.</strong>` +
+        `<span>Cells whose list entries carry no program view cannot be classified here — enter a cell id above ` +
+        `(the inspector fetches its full program), or deploy a council from the Studio's worked examples.</span></div>`;
+    }
+  }
+
+  if (btn.dataset.wired !== 'true') {
+    btn.dataset.wired = 'true';
+    const go = () => {
+      const id = (input.value || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{6,64}$/.test(id)) {
+        input.classList.add('is-bad');
+        setTimeout(() => input.classList.remove('is-bad'), 1200);
+        return;
+      }
+      openPolisCell(id);
+    };
+    btn.addEventListener('click', go);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   }
 }
 

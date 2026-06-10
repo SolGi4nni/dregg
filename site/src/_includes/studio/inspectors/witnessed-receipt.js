@@ -26,7 +26,7 @@
  */
 
 import { parseRef } from '../uri.js';
-import { InspectorBase, dreggCodeLink, emptyState, renderParseError, shortHex } from './_base.js';
+import { InspectorBase, dreggCodeLink, emptyState, renderParseError, shortHex, whatIsThisLink } from './_base.js';
 
 // ---------------------------------------------------------------------------
 // Scope + tier derivation
@@ -267,7 +267,8 @@ class DreggWitnessedReceipt extends InspectorBase {
           h('span', { class: 'dregg-inspector__kind' }, 'witnessed receipt'),
           h('code', { class: 'dregg-inspector__id', title: parsed.id }, shortHex(parsed.id, 24)),
           h(ScopeBadge, { scope }),
-          h(TierBadge, { tier })
+          h(TierBadge, { tier }),
+          whatIsThisLink(html, 'witnessed-receipt')
         ),
         h('div', { class: 'dregg-receipt__summary' },
           h('div', null, h('span', null, 'Actions'), h('strong', null, String(actionCount))),

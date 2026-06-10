@@ -59,6 +59,11 @@ class DreggOntology extends HTMLElement {
   connectedCallback() {
     this._q = this.getAttribute('q') || '';
     this._cat = this.getAttribute('cat') || '';
+    // dregg://effect/<name> deep link (resolver.js → ?effect=<name>).
+    try {
+      const want = new URLSearchParams(window.location.search).get('effect');
+      if (want && !this._q) this._q = want;
+    } catch { /* embedded without URL context */ }
     this._loadAndRender();
   }
 

@@ -16,7 +16,7 @@ import { findRuntime } from './context.js';
 
 // Use shared _base (STARBRIDGE-FOLLOWUP-02 full Wave 3 integration clean-up).
 // Removes prior dupe; cell/cell-list continue to work (extend the imported class).
-import { InspectorBase, renderParseError, shortHex } from './inspectors/_base.js';
+import { InspectorBase, renderParseError, shortHex, whatIsThisLink } from './inspectors/_base.js';
 
 // --- <dregg-cell> -----------------------------------------------------------
 
@@ -70,9 +70,10 @@ class DreggCell extends InspectorBase {
 
       return html`
         <div class="dregg-inspector dregg-inspector--cell">
-          <header>
+          <header style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <span class="dregg-inspector__kind">cell</span>
             <code class="dregg-inspector__id" title=${parsed.id}>${parsed.id.slice(0, 24)}…</code>
+            ${whatIsThisLink(html, 'cell')}
           </header>
           <div class="dregg-cell__summary">
             <div><span>Balance</span><strong>${String(c.balance)}</strong></div>
@@ -391,3 +392,10 @@ import './inspectors/factory-composer.js';
 // backward (pre/post state commitments, effects, proof/witness status per
 // step) over the live node's receipt surface or any runtime's receipt list.
 import './inspectors/cell-history.js';
+
+// THE POLIS ORGAN: <dregg-council> / <dregg-constitution> / <dregg-mandate> /
+// <dregg-amendment-ceremony> — governance cells decoded by the pure
+// polis-decode.js port of starbridge_polis::council::inspect_council (the
+// same decoder behind `dregg polis council` and Discord /council-status),
+// with the charter terms read from the served program view / descriptor.
+import './inspectors/polis.js';

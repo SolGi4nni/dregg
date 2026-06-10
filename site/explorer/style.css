@@ -1786,3 +1786,8 @@ button { font-family: inherit; cursor: pointer; }
   font-family: var(--mono, ui-monospace, monospace);
 }
 .ex-history-picker .ex-search__input.is-bad { border-color: var(--danger, #d4685c); }
+
+/* --- Polis page -------------------------------------------------------------- */
+.ex-polis-scan { margin-bottom: 12px; }
+.ex-polis-scan__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ex-polis-scan__chips .btn { font-family: var(--mono, ui-monospace, monospace); font-size: 0.76rem; }

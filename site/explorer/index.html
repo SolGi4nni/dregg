@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="../_includes/vizzer.css">
   <script type="module" src="../_includes/runtime-bootstrap.js"></script>
+  <script type="module" src="../_includes/studio/image-shell.js"></script>
 </head>
 <body>
   <!-- Header -->
@@ -34,9 +35,8 @@
         <span class="ex-connection__label">connecting…</span>
       </div>
       <button class="ex-header__settings-btn" id="settings-btn" title="Node settings">&#9881;</button>
-      <a class="ex-header__link" href="../index.html">Home</a>
+      <dregg-image-nav current="explorer"></dregg-image-nav>
       <a class="ex-header__link" href="../starbridge/">Starbridge</a>
-      <a class="ex-header__link" href="../playground/">Playground</a>
       <a class="ex-header__link" href="https://github.com/emberian/dregg">GitHub</a>
     </div>
   </header>
@@ -91,6 +91,9 @@
         </button>
         <button class="ex-nav__item" data-page="history">
           <span class="ex-nav__icon">&#8630;</span><span class="ex-nav__label">Time travel</span>
+        </button>
+        <button class="ex-nav__item" data-page="polis">
+          <span class="ex-nav__icon">&#9745;</span><span class="ex-nav__label">Polis</span>
         </button>
         <button class="ex-nav__item" data-page="capabilities">
           <span class="ex-nav__icon">&#8669;</span><span class="ex-nav__label">Capabilities</span>
@@ -199,6 +202,29 @@
         </div>
         <div id="mount-history"></div>
         <div id="detail-history" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Polis: governance cells (council / constitution / worker mandate) -->
+      <section class="ex-page" id="page-polis">
+        <div class="ex-page__header">
+          <h2>Polis</h2>
+          <p>Governance cells made legible: <code>&lt;dregg-council&gt;</code> decodes an M-of-N proposal
+             cell's machine from its 8 slots (the same decode as the CLI's
+             <code>dregg polis council</code> — a browser port of
+             <code>starbridge_polis::council::inspect_council</code>);
+             <code>&lt;dregg-constitution&gt;</code> shows a per-version parameter cell's pins;
+             <code>&lt;dregg-mandate&gt;</code> a worker's budget slice and revocation state.
+             The list below scans the node's cells for polis-shaped programs.</p>
+        </div>
+        <div class="ex-history-picker" id="polis-picker">
+          <input type="text" id="polis-cell-input" class="ex-search__input" list="polis-cell-options"
+                 placeholder="64-hex cell id of a council / constitution / mandate cell…" autocomplete="off" spellcheck="false">
+          <datalist id="polis-cell-options"></datalist>
+          <button class="btn btn-primary" id="polis-inspect-btn">Inspect</button>
+        </div>
+        <div class="ex-polis-scan" id="polis-scan"></div>
+        <div id="mount-polis"></div>
+        <div id="detail-polis" class="ex-detail-slot"></div>
       </section>
 
       <!-- Capabilities -->
