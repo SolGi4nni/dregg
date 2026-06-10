@@ -606,10 +606,12 @@ noncomputable def isJointTurn_to_wide {I P₁ P₂ J : 𝒞}
     · exact h.lift_snd (views false) (views true) (hv false true)
   uniq {W m m'} e := h.hom_ext (e false) (e true)
 
-/-! ### §3: the final coalgebra `νF` — the OPEN sharpened.
+/-! ### §3: the final coalgebra `νF` — existence CLOSED downstream.
 
-Even with `νF`'s existence still open, we can prove its universal property and the
-uniqueness of the anamorphism. The OPEN is narrowed to: construct the carrier. -/
+This section proves the universal property and the uniqueness of the anamorphism in the
+abstract. The once-OPEN carrier construction is now DONE: `Metatheory/Open/FinalCoalgebra.lean`
+builds the carrier (`nuF` = behaviour functions `List Adm → Obs`) and proves + pins
+`nuF_exists` / `nuF_isFinal` / `coalgHom_eq_anaMap` (`#assert_axioms`, kernel-clean). -/
 
 /-- Coalgebra morphism composition (the category of `F`-coalgebras has composition;
 identity is `cell_self_bisim`). Needed to state finality. -/

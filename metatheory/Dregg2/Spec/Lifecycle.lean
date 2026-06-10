@@ -42,11 +42,13 @@ co-witness that a cross-vat reference cycle is garbage — that is exactly
 So reclamation degrades to a *temporal* bound: a cell past its **lease-expiry height**
 may be reclaimed regardless of the (un-provable) distributed-liveness fact. The lease
 is the provable alternative to the impossible proof. `reclaim_by_lease` is PROVED;
-`distributed_death_not_co_witnessable` is an honest `-- OPEN:` citing the obstruction.
+`distributed_death_not_co_witnessable` is PROVED too (see its theorem below — a one-line
+delegation to `Dregg2.Liveness.dead_undecidable`'s halting reduction; pinned in
+`Dregg2/Claims.lean` §19).
 
 Style: spec-first, grind up. Computable classifiers are *defined* and their
 classifications *proved*; the duality and fold are faithful `Prop`s; the one genuine
-impossibility is an explicit `-- OPEN:` hypothesis.
+impossibility is itself a proved negative theorem (the halting-reduction above).
 -/
 import Dregg2.Liveness
 import Dregg2.Tactics

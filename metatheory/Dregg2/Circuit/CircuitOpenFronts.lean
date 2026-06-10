@@ -5,7 +5,7 @@ POLICY: **no lurking holes**. Every unfinished circuit/refinement front is named
 explicit `sorry` theorem (or a tracked `HoleStatus`). Silent spec-fallback (`exact h` pretending
 circuit = spec) is forbidden — use these portals instead.
 
-Run `#eval countOpenHoles` after each wave to watch the frontier shrink.
+Run `#eval countOpenFronts` after each wave to watch the frontier shrink.
 -/
 import Dregg2.Circuit.TurnEffectRefinement
 import Dregg2.Circuit.ActionDispatch
@@ -36,82 +36,71 @@ structure OpenFront where
   note     : String
   deriving Repr
 
-/-! ## §1 — inventory (every named gap; shrink this list). -/
+/-! ## §1 — inventory (every named gap; shrink this list).
+
+CLOSED fronts (verified by the closing theorem's existence; entries removed):
+
+* **Wave 3, per-effect circuit ⊑ spec — ALL 20 Inst-diamond fronts CLOSED.** Every listed
+  action (emitEventA, incrementNonceA, setPermissionsA, setVKA, delegateAttenA, attenuateA,
+  unsealA, createSealPairA, makeSovereignA, refusalA, receiptArchiveA, pipelinedSendA,
+  exportSturdyRefA→swissExport, enlivenRefA→enliven, swissHandoffA, swissDropA, cellSealA,
+  cellUnsealA, cellDestroyA, refreshDelegationA) has a real per-effect
+  `*_circuit_refines_spec` theorem (`EffectRefinementBatch2.lean`, composed through the Inst
+  `*_full_sound` diamonds) and a matching `*_emitted_refines_spec`
+  (`EffectEmittedRefinement.lean`). No `fullActionCircuitStep` arm routes through
+  `hole_circuit_step` any more (the portal survives only as a re-export; see §0).
+* exerciseA_composite_circuit: CLOSED — `fullActionCircuitStep`'s exerciseA arm is a REAL
+  composite (hold-gate ∘ inner-turn CIRCUIT fold), proven ⊑ `turnSpec` by mutual structural
+  recursion (`exerciseInnerFold_refines_turnSpec` / `fullAction_circuit_refines_spec`).
+* createCellFromFactoryA_circuit: CLOSED — `createCellFromFactoryA_emitted_refines_spec`
+  discharged via `createCellFromFactoryA_full_sound` + the born-empty-authority bridge.
+* createObligationA / releaseCommittedEscrowA / refundCommittedEscrowA: CLOSED —
+  dispatch-aliased to the escrow-create / dual-release / dual-refund circuit steps.
+* (F1a/F1b) createCommittedEscrowA / bridgeFinalizeA / bridgeCancelA fronts REMOVED: the
+  constructors are gone (the families re-landed as verified factory cells).
+* (F2a/F2b) the queue-family fronts REMOVED: the family dissolved into the verified
+  `Dregg2/Apps/QueueFactory` et al (VerbRegistry `.factory .queue`); kernel constructors gone.
+* emitted_batch2_remaining: CLOSED — 39 distinct `*_emitted_refines_spec` theorems exist
+  (every surviving Inst effect covered); zero `sorry` in `EffectEmittedRefinement.lean`.
+* turn_emit_per_step_remaining: CLOSED — `TurnEmit.step_emitted_refines_fullActionStep`
+  dispatches every arm to a real emitted (or circuit-dispatch) discharge; "no declarative
+  fallback remains" (TurnEmit §5b).
+* Wave 4 crypto: CLOSED — `poseidon2_in_circuit` + `digest_injective_to_cr` grounded on the
+  single named `Poseidon2Binding.Poseidon2SpongeCR` assumption (no double-assumed hash).
+* Wave 5 whole-turn: ALL THREE CLOSED — `TurnCircuitCompose.turn_emitted_refines_exec_direct`
+  (complete stack), `macaroonChainBinds` (+ `macaroon_chain_teeth`), and
+  `TurnAdmission.rust_proof_admits_commit`.
+* Wave 6 inter-vat: BOTH CLOSED — `CoordinatedTurnEmit.covenantGuard_of_emitted`
+  (+ `covenantGuard_emitted_teeth`) and
+  `CoordinatedTurnEmit.coordinated_emitted_refines_execCoordinatedForestG`.
+* privacy_voting_token: CLOSED — `pv_token_good_commits` PROVED + `#assert_axioms`-pinned
+  (`Apps/PrivacyVotingGated.lean`).
+* Wave 7 exercise: `exercise_inner_turn_witness` CLOSED
+  (`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec`); `exercise_r4_facet_mask`
+  CLOSED (P2 canonical-semantics: `execFullA` enforces the R4 facet mask via
+  `innerFacetsAdmittedA`; `ExerciseInnerTurn.exercise_r4_facet_mask`); `handler_makeSovereign`
+  / `handler_receiptArchive` CLOSED (handler aligned; genuine proofs in `HandlerExecutor`).
+  See `Dregg2/Exec/HandlerOpenFronts.lean` — the handler lane's surviving front
+  (`spawn_factory_metadata`) is tracked THERE, not here.
+
+What genuinely remains in the circuit lane: -/
 
 def openFronts : List OpenFront := [
-  -- Wave 3: per-effect circuit ⊑ spec (TurnEffectRefinement dispatch)
-  ⟨"emitEventA_circuit", .w3_diamond, some "emitEventA", "v1 Inst + EffectRefinement diamond"⟩
-  , ⟨"incrementNonceA_circuit", .w3_diamond, some "incrementNonceA", "v1 Inst diamond"⟩
-  , ⟨"setPermissionsA_circuit", .w3_diamond, some "setPermissionsA", "v1 Inst diamond"⟩
-  , ⟨"setVKA_circuit", .w3_diamond, some "setVKA", "v1 Inst diamond"⟩
-  , ⟨"delegateAttenA_circuit", .w3_diamond, some "delegateAttenA", "v2 Inst diamond"⟩
-  , ⟨"attenuateA_circuit", .w3_diamond, some "attenuateA", "v2 Inst diamond"⟩
-  -- exerciseA_composite_circuit: CLOSED — `fullActionCircuitStep`'s exerciseA arm is now a REAL
-  -- composite (hold-gate ∘ inner-turn CIRCUIT fold), proven ⊑ `turnSpec` by mutual structural recursion
-  -- (`exerciseInnerFold_refines_turnSpec` / `fullAction_circuit_refines_spec`).
-  -- createCellFromFactoryA_circuit: CLOSED — `createCellFromFactoryA_emitted_refines_spec` discharged
-  -- via `createCellFromFactoryA_full_sound` + the born-empty-authority bridge.
-  -- createObligationA / releaseCommittedEscrowA / refundCommittedEscrowA: CLOSED — dispatch-aliased to
-  -- the escrow-create / dual-release / dual-refund circuit steps (TurnEffectRefinement), real emitted
-  -- spec content (EscrowHoldingCreate / Release / Refund) bridged to their committed `fullActionStep`.
-  -- (F1a/F1b) createCommittedEscrowA / bridgeFinalizeA / bridgeCancelA fronts REMOVED: the
-  -- constructors are gone (the families re-landed as verified factory cells).
-  , ⟨"unsealA_circuit", .w3_diamond, some "unsealA", "v2 Inst diamond"⟩
-  , ⟨"createSealPairA_circuit", .w3_diamond, some "createSealPairA", "v2 Inst diamond"⟩
-  , ⟨"makeSovereignA_circuit", .w3_diamond, some "makeSovereignA", "v1 Inst diamond"⟩
-  , ⟨"refusalA_circuit", .w3_diamond, some "refusalA", "v1 Inst diamond"⟩
-  , ⟨"receiptArchiveA_circuit", .w3_diamond, some "receiptArchiveA", "v1 Inst diamond"⟩
-  -- (F2a) the queue-family fronts (allocate/enqueue/dequeue/resize/atomicTx/pipelineStep)
-  -- REMOVED: the family dissolved into the verified `Dregg2/Apps/QueueFactory` et al
-  -- (VerbRegistry `.factory .queue`); (F2b) the kernel constructors are now GONE too.
-  , ⟨"pipelinedSendA_circuit", .w3_diamond, some "pipelinedSendA", "v1 hold-gate diamond"⟩
-  , ⟨"exportSturdyRefA_circuit", .w3_diamond, some "exportSturdyRefA", "swiss export diamond"⟩
-  , ⟨"enlivenRefA_circuit", .w3_diamond, some "enlivenRefA", "v2 Inst diamond"⟩
-  , ⟨"swissHandoffA_circuit", .w3_diamond, some "swissHandoffA", "v2 Inst diamond"⟩
-  , ⟨"swissDropA_circuit", .w3_diamond, some "swissDropA", "v2 Inst diamond"⟩
-  , ⟨"cellSealA_circuit", .w3_diamond, some "cellSealA", "v2 Inst diamond"⟩
-  , ⟨"cellUnsealA_circuit", .w3_diamond, some "cellUnsealA", "v2 Inst diamond"⟩
-  , ⟨"cellDestroyA_circuit", .w3_diamond, some "cellDestroyA", "v2 dual diamond"⟩
-  , ⟨"refreshDelegationA_circuit", .w3_diamond, some "refreshDelegationA", "v2 Inst diamond"⟩
-  -- Wave 3: emitted ⊑ spec (EffectEmittedRefinement batch-2)
-  , ⟨"emitted_batch2_remaining", .w3_diamond, none, "~35 Inst effects lack *_emitted_refines_spec"⟩
-  -- Wave 3: turn emit per-step (TurnEmit fallback arm)
-  , ⟨"turn_emit_per_step_remaining", .w3_diamond, none, "step_emitted_refines_fullActionStep fa' fallback"⟩
-  -- Wave 4: crypto — CLOSED. `poseidon2_in_circuit` + `digest_injective_to_cr` are grounded on the
-  -- single named `Poseidon2Binding.Poseidon2SpongeCR` assumption: `Poseidon2Emit.state_commit_sponge_binding`
-  -- / `log_hash_sponge_binding` and `DigestPortal.{cellLeafInjective,compressNInjective,logHashInjective}_*`
-  -- discharge the abstract injectivity portals from real Poseidon2 CR (no double-assumed hash).
-  -- Wave 5: whole-turn — ALL THREE CLOSED:
-  --   * turn_circuit_composition: `TurnCircuitCompose.turnCircuitOfEmitted` folds per-step emitted AIRs;
-  --     `turn_emitted_refines_exec_direct` is now the COMPLETE stack (executor commit + authentic root +
-  --     bound macaroon chain `macaroonChainBinds` + aligned wires `multiStepGlueAligned`).
-  --   * turn_macaroon_caveats: `macaroonChainBinds` binds `authChain` to the caveat fold (TOOTH:
-  --     `macaroon_chain_teeth` rejects a forged auth digest). No longer a free column.
-  --   * rust_proof_required_at_commit: `TurnAdmission.rust_proof_admits_commit` is a real proof —
-  --     the per-step STARK refinement + emitted chain ⇒ `execFullTurnA` commits (no silent admission).
-  -- Wave 6: inter-vat — TWO CLOSED:
-  --   * coordinated_covenant_in_poly: the `vCovenantGuard` polynomial column IS the φ guard;
-  --     `CoordinatedTurnEmit.covenantGuard_of_emitted` EXTRACTS `φ = true` from any satisfying witness
-  --     (TOOTH: `covenantGuard_emitted_teeth` — a `φ = false` step has NO satisfying witness).
-  --   * record_kernel_state_lift: `CoordinatedTurnEmit.coordinated_emitted_refines_execCoordinatedForestG`
-  --     lifts emitted satisfaction to `execCoordinatedForestG` (the `RecordKernelState` step).
-  , ⟨"privacy_voting_token", .w6_inter_vat, none, "pv_token_good_commits regression"⟩
-  -- Wave 7: exercise — `exercise_inner_turn_witness` CLOSED: the inner emitted chain refines `turnSpec`
-  -- (`ExerciseInnerTurn.exercise_inner_emitted_refines_turnSpec` via `TurnEmit.turn_emitted_refines_turnSpec`).
-  -- `exercise_r4_facet_mask` REMAINS: handler `facetedOf Auth.control` masking vs bare
-  -- `execFullA` inner path is a genuine executor-semantics alignment obligation (needs a facet-bridge
-  -- lemma), NOT a circuit soundness hole.
-  , ⟨"exercise_r4_facet_mask", .w7_exercise_r4, some "exerciseA", "handler facetedOf alignment"⟩
-  , ⟨"handler_makeSovereign", .w7_exercise_r4, some "makeSovereignA", "field alignment lemma"⟩
-  , ⟨"handler_receiptArchive", .w7_exercise_r4, some "receiptArchiveA", "field alignment lemma"⟩
+  -- §5c TurnEmit: the adversarial-witness EXTRACTOR (no dead whole-trace `hEnc`) is generic
+  -- (`WitnessExtract.effect2_extract*`) but instantiated per-effect only for mint
+  -- (`mintA_extract` / `mintA_extract_emitted` / `mintA_extract_rejects_wrong_supply`, the
+  -- validated reference). Lifting the PI-bound extraction to every v2 effect arm is open.
+  ⟨"per_effect_adversarial_extractors", .w5_turn_admission, none,
+    "WitnessExtract effect2_extract instantiated for mintA only; lift to all v2 effects"⟩
 ]
 
 def countOpenFronts : Nat := openFronts.length
 
-/-! ## §2 — explicit sorry portals (Wave 3 circuit ⊑ spec holes).
-    Canonical definitions live in `TurnEffectRefinement.HolePortals`; re-exported here for the registry. -/
-
-/-! Wave-3 circuit ⊑ spec hole theorems: see `TurnEffectRefinement.HolePortals` (34 per-action + fallback). -/
+/-! ## §2 — sorry portals: NONE remain.
+    `TurnEffectRefinement.HolePortals` now contains only the generic
+    `hole_fullAction_circuit_refines_spec_fallback` (a REAL proof kept for the
+    `hole_circuit_step` re-export); the 34 per-action `sorry` hole theorems are gone —
+    every dispatch arm has a genuine per-effect refinement (see the CLOSED ledger in §1). -/
 
 /-! ## §3 — Wave 4–7 fronts: tracked declaratively in `openFronts`, no vacuous portals.
 

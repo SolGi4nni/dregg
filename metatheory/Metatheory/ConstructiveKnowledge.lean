@@ -21,10 +21,14 @@ abstract parameter, never a dregg2-specific `Nat`-for-semantics. It would be the
 metatheory of *any* system built this way (`§7`).
 
 DISCIPLINE: faithful Props with real content. The PROVED keystones are pinned with
-`#assert_axioms` (kernel-clean: only `propext`/`Classical.choice`/`Quot.sound`). The deep
-open parts — the reachability closure of the non-forgeability invariant (`§3`) and the
-abstract ZK indistinguishability (`§2`) — are honest `-- OPEN:` obligations resting on a
-stated *parameter* (a hypothesis), never an `axiom`/`admit`/`sorry`-alias.
+`#assert_axioms` (kernel-clean: only `propext`/`Classical.choice`/`Quot.sound`). The two
+once-deep open parts are now CLOSED downstream: the reachability closure of the
+non-forgeability invariant (`§3`) is proved + pinned in
+`Metatheory/Open/AuthorityClosure.lean` (`noforge_closure` / `noforge_step_tracesTo`,
+with the amplification-aware variants), and the abstract ZK indistinguishability (`§2`)
+in `Metatheory/Open/PerfectZK.lean` (`view_indep_of_witness` /
+`view_factors_through_statement` + the floor-leak laws). Any `-- OPEN:` notes in this
+file's body predate those closures — follow the forward references above.
 -/
 import Dregg2.Laws
 import Dregg2.Boundary

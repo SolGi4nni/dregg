@@ -24,13 +24,17 @@ somewhere downstream. This is dregg2's Lean-native port of svenvs's `verify-clai
 |-------|---------|
 | **PROVED-axiom-clean** | A Lean theorem whose `collectAxioms` is exactly the three standard kernel axioms. No `sorry`, no `admit`, no `axiom`-keyword, no `native_decide`. **Pinned** in `Dregg2/Claims.lean` (build-enforced). |
 | **PROVED (home-pinned, parked)** | Identical strength, and self-pinned `#assert_axioms` in its **home module** — but its `.olean` is not yet in `Dregg2/Claims.lean`'s import closure (a concurrent-edit race; see *Parked pins* below). Listed here as PROVED; its central pin is commented out so `lake env lean` stays exit-0, to be re-enabled after an `.olean` rebuild. |
-| **rests-on-§8-primitive** | The theorem is real and `sorry`-free *in its own body*, but it is **stated over** an explicit, labelled, literature-standard interface obligation (a `conservation_step`-style operational primitive, or a `CryptoKernel`/`World`/`Verifiable` law). These primitives are `sorry`'d on purpose — they are the circuit's / protocol's job (§8 boundary), never Lean's. A theorem that transitively touches such a `sorry` is NOT `#assert_axioms`-pinned (that would correctly fail). |
-| **honest-OPEN** | A genuine open theorem carried as an explicit `sorry` with a one-line in-source reason. Not pinned, not claimed proved. These are the deepest residues (cross-cell/operational bisimulation, Byzantine quorum-intersection, post-GST liveness, distributed-death co-witnessability, the Authority whole-history closure, the topo-sort / functoriality residuals). |
+| **rests-on-§8-primitive** | The theorem is real and `sorry`-free, but it is **stated over** an explicit, labelled, literature-standard interface obligation (a `conservation_step`-style operational primitive, or a `CryptoKernel`/`World`/`Verifiable` law). These primitives are stated as typeclass fields / `Prop` portals on purpose — they are the circuit's / protocol's job (§8 boundary), never Lean's. |
+| **honest-OPEN** | A genuine open obligation carried as a **named residual `Prop`, an explicit hypothesis, or a prose `-- OPEN:` note — never a `sorry`** (the corpus has zero). Not pinned, not claimed proved. The current residues are listed in *§ OPEN* below. |
 
-There are **zero `axiom`-keyword declarations** and **zero `native_decide`** in the corpus
-(verified by scan). Every `sorry` is one of the two honest buckets below.
+There are **zero `sorry`s, zero `admit`s, and zero `native_decide`** in the corpus (verified
+by scan: `grep -rn "^\s*sorry\s*$" Dregg2/ Metatheory/` → 0). The only `axiom`-keyword
+declarations are the **two clearly-named DEMO axioms** in `Dregg2/Widget/Basic.lean`
+(`demoEd25519VerifyExtern` / `demoUnvettedAssumption`) that exist to exhibit the amber
+"carrier-bounded" trust tier in the ProofWidgets surface — deliberately NOT pinned, and a
+clean-triple pin on anything touching them would correctly fail (see `Claims.lean` §34).
 
-## The two honest `sorry`-buckets (and nothing else masquerades as a proof)
+## The two honest non-proof buckets (and nothing else masquerades as a proof)
 
 1. **§8 interface obligations** — the `CryptoKernel` / `World` laws, `Core.conservation_step`
    (Law 1's balance), `Laws.search_sound` (the soundness-by-verification contract on an opaque
@@ -38,19 +42,26 @@ There are **zero `axiom`-keyword declarations** and **zero `native_decide`** in 
    anti-inflation rib. Discharged by Rust + the ZK circuits, **by design never in Lean**.
    Soundness/extractability of `verify`/`commit`/`hash` is a *circuit* obligation stated as
    `CryptoKernel` laws; Lean treats `verify` as a decidable oracle. A boundary, not a gap.
-   (These enter downstream theorems as **typeclass parameters / hypotheses**, so they do
+   These enter downstream theorems as **typeclass parameters / hypotheses**, so they do
    **not** appear in `collectAxioms` — a theorem taking them as hypotheses is genuinely
-   kernel-clean and IS pinned. Only theorems that contain a `sorry`'d primitive *in their own
-   proof term* are excluded.)
-2. **Genuine open theorems** — the deepest coinductive/joint/operational residues and the
-   adversary/GST-model-dependent distributed claims. Listed explicitly in *§ OPEN* below.
+   kernel-clean and IS pinned. (Several have since been *discharged inside Lean* — Merkle,
+   Pedersen, PredicateKernel, NonMembership, Temporal/Dfa, Bridge — see `Claims.lean`
+   §18–§22.)
+2. **Genuine open obligations** — carried as named residual `Prop`s / explicit hypotheses /
+   prose `OPEN` notes (never `sorry`). Listed explicitly in *§ OPEN* below.
 
 ---
 
 ## Machine-checked keystones (PROVED-axiom-clean — pinned in `Dregg2/Claims.lean`)
 
-**128 pins** currently build-enforced. Grouped by subsystem (the `Dregg2/Claims.lean` section
-numbers). Every row is `collectAxioms`-clean as of the last verification.
+**165 theorem pins (`#assert_axioms`) + 50 whole-namespace pins (`#assert_namespace_axioms`)**
+currently build-enforced (plus 20 parked pins, commented out — see *Parked pins* below; recount:
+`grep -c "^#assert_axioms" Dregg2/Claims.lean`). Grouped by subsystem (the `Dregg2/Claims.lean`
+section numbers). Every row is `collectAxioms`-clean as of the last verification. The table
+below shows the original §0–§17 keystones; `Claims.lean` §18–§34 pin many more subsystems
+(WP/LTS, crypto §8 discharges, BFT safety+liveness, Cordial-Miners, executor axes, caveat +
+attestation faces, consistency witness, handler-transformer, the Hatchery) — the file itself
+is the authoritative inventory.
 
 | § | keystone (fully-qualified) | module | what it claims |
 |---|----------------------------|--------|----------------|
@@ -81,7 +92,7 @@ numbers). Every row is `collectAxioms`-clean as of the last verification.
 | 11 | `…forwarded_cap_is_revocable`, `…revocable_iff_not_authority`, `…phi_admits_iff_discharged`, `…cross_vat_needs_witness`, `…macaroon_does_not_cross_phi`, `…biscuit_crosses_phi`, `…phi_domain_is_exactly_biscuit`, `…phi_composes_with_attenuation`, `…phi_attenuation_factors_through_confers` | `Spec.VatBoundary` | biscuit crosses Φ / macaroon does not; Φ composes with attenuation |
 | 13 | `Dregg2.Finality.conservation_tier_independent(_iff)` | `Finality` | conservation (Law 1) holds independent of the finality tier — the lattice never weakens it |
 | 14 | `Dregg2.Liveness.revocation_needs_consensus` | `Liveness` | revocation (unlike GC collection) requires consensus — the asymmetry of the two deaths |
-| 15 | `Dregg2.Exec.Consensus.{quorum_reaches_bft_tier, committedByQuorum_reaches_bft_tier, below_quorum_not_bft, net_no_downgrade(_via_world), finality_monotone_on_net, quorum_grows_preserves_finality, committed_holds_along_rounds, cross_tier_join_on_net, NetCell.tier_eq_bft_iff}` | `Exec.Consensus` | quorum→finality-tier bridge: a reached quorum lands in the BFT tier; finality is monotone on a growing net (**Byzantine *safety* itself stays OPEN — see below**) |
+| 15 | `Dregg2.Exec.Consensus.{quorum_reaches_bft_tier, committedByQuorum_reaches_bft_tier, below_quorum_not_bft, net_no_downgrade(_via_world), finality_monotone_on_net, quorum_grows_preserves_finality, committed_holds_along_rounds, cross_tier_join_on_net, NetCell.tier_eq_bft_iff}` | `Exec.Consensus` | quorum→finality-tier bridge: a reached quorum lands in the BFT tier; finality is monotone on a growing net (Byzantine safety itself is now proved too — `Proof.BFT.bft_safety` + `World.quorum_intersection_safety`, see §19/§21) |
 | 16 | `Dregg2.Upgrade.upgrade_never_bricks`, `…stale_version_falls_back_to_signature` | `Upgrade` | anti-brick `set_program`: a stale AIR_VERSION falls back to owner signature; never bricks |
 | 17 | `Dregg2.Proof.{refine_conservation(_measure), refine_run_conservation, refine_integrity(_intra)}` | `Proof.Refine` | Exec ⊑ Abstract: conservation + intra-vat integrity refine (**full simulation diagram OPEN**) |
 
@@ -106,29 +117,52 @@ with a note to re-enable after an `.olean` rebuild. They are PROVED — they are
 
 ---
 
-## OPEN (honest — genuine open theorems, carried as labelled `sorry`, NOT proved, NOT pinned)
+## OPEN (honest — genuine open obligations; named residual `Prop`s / hypotheses / prose notes, never `sorry`)
 
-| open theorem | module | what is still needed |
-|--------------|--------|----------------------|
-| `Dregg2.Spec.only_connectivity_begets_connectivity` (the Authority **whole-history closure**) | `Spec.Authority` | **`collectAxioms` = `[sorryAx]` — confirmed DIRTY.** The per-step core `gen_step_traces` IS proved-clean; the whole-history non-forgeability closure over `Reachable` (the `attenuate`-adds-a-narrowed-edge case across the full step history) is NOT. A docstring nearby calls it "PROVED, closed" — that is an **overclaim**; the theorem still inherits `sorryAx`. |
-| `Dregg2.Liveness.dead_undecidable` | `Liveness` | genuine undecidability of global deadness — needs a Turing/computability model (diagonalization against every `decide : … → Bool`) absent from the imports |
-| `Dregg2.Spec.Lifecycle.distributed_death_not_co_witnessable` | `Spec.Lifecycle` | the same FIND-side undecidability: distributed death is co-semi-decidable at best under asynchrony+partition+graph-privacy; the lease fallback (`reclaim_by_lease`) is the provable alternative |
-| `Dregg2.World.quorum_intersection_safety_OPEN` (Byzantine **quorum intersection / safety**) | `World` | the adversary/honesty model + conflict semantics + the n>3f arithmetic; belongs with the protocol that owns the honest-set semantics, not the bare network oracle |
-| `Dregg2.World.liveness_after_gst_OPEN` (**post-GST liveness**) | `World` | the partial-synchrony / GST bound + honest-supermajority assumption; asynchrony is the adversary's, not a law of the `World` interface |
-| `Dregg2.Hyperedge` Sound-of-step-complete at N-ary (`Sound T (Spec i) …`) and `hyper_not_all_admissible` | `Hyperedge` | the **cross-cell / operational bisimulation** at N-ary, and the proper-subobject obstruction for general `Fintype ι` (the binary case `hyper_binding_is_proper` IS proved) |
-| `Dregg2.Coordination` projection-progress (Carbone–Montesi) + the `mu`-recursion projection case | `Coordination` | the reachable-LTS operational machinery (`Dual` partner among reachable configs) / a closedness hypothesis on `G` |
-| `Dregg2.Spec.Conditional.pipeline_topological` (the topo-sort) | `Spec.Await` | the Szpilrajn linear-extension `Finset` topological sort; the load-bearing antecedent (strict partial order ⇒ an order *can* exist) IS proved |
-| `Dregg2.Spec.phi_functorial` (Φ **functoriality**) | `Spec.VatBoundary` | the full two-category coherence: one concrete non-degenerate `Verifiable` witnessing `preserves_id` + `lossy_on_confinement` + `preserves_comp` simultaneously |
+**Closed since the last revision of this table** (each now PROVED-axiom-clean and pinned —
+grep the cited pin):
+
+* `Dregg2.Spec.only_connectivity_begets_connectivity` — the Authority **whole-history
+  closure** is now a real theorem, home-pinned (`#assert_axioms`, `Spec/Authority.lean`).
+  The old "confirmed DIRTY" verdict no longer holds.
+* `Dregg2.Liveness.dead_undecidable` — proved via a genuine halting-problem reduction
+  (`haltGraph`); pinned in `Claims.lean` §19 (with `Exec.CellLiveness.death_not_decidable`).
+* `Dregg2.Spec.Lifecycle.distributed_death_not_co_witnessable` — proved (delegates to
+  `dead_undecidable`); pinned in `Claims.lean` §19.
+* Byzantine **quorum intersection / safety** and **post-GST liveness** — the old
+  `World.quorum_intersection_safety_OPEN` / `liveness_after_gst_OPEN` declarations no longer
+  exist; replaced by the PROVED `World.quorum_intersection_safety` + `World.liveness_after_gst`
+  (pinned, `Claims.lean` §19; liveness discharged from the named `World.gst_liveness` class
+  field) and the stronger `Proof.BFT.bft_safety` (`n>3f` quorum intersection, home-pinned) +
+  `Proof.BFTLiveness` (namespace-pinned, §21–§22).
+* `Dregg2.Hyperedge` Sound-of-step-complete at N-ary + `hyper_not_all_admissible` — both
+  restated and proved (`hyper_not_all_admissible` home-pinned in `Hyperedge.lean`; the whole
+  `Dregg2.Hyperedge` namespace is pinned in `Claims.lean` §20).
+* `Dregg2.Spec.Conditional.pipeline_topological` — proved (home-pinned, `Spec/Await.lean`).
+* `Dregg2.Spec.phi_functorial` — proved under the explicit `NonDegenerate` hypothesis, with
+  `nonDegenerate_concrete` + `phi_functorial_concrete` proving the hypothesis satisfiable;
+  all pinned in `Claims.lean` §11.
+
+**Still genuinely open** (the real-debt list):
+
+| open obligation | module | what is still needed |
+|-----------------|--------|----------------------|
+| **OPEN-CM-LIVENESS / O2 pacemaker** (`cm_pacemaker_residual`, a named residual `Prop`) | `Proof.CordialMinersLiveness` | the post-GST "an honest quorum's votes are delivered" pacemaker; carried as a named hypothesis the runtime/partial-synchrony model discharges, never faked |
+| **OPEN-CM-DISSEMINATION** | `Proof.CordialMiners` | the gossip / reliable-broadcast convergence that makes a finalized leader's quorum visible to all honest miners ("the precise irreducible residual", see the in-file note) |
+| **OPEN-CM-STINGRAY** (narrowed) | `Proof.CordialMiners` / `Coord.StingrayCertReconcile` | the full Stingray bandwidth/budget accounting model; the safety bounds (`overspend_bounded_by_f_ceiling`, `byzantine_undetected_overspend_le_f_ceiling`) ARE proved |
+| Synchronizer ↔ operational `World.rand` coupling | `Proof.Synchronizer` | the reduction note in §5: connecting the Bernoulli honest-leader model to the *operational* `World.rand` byte-stream is the one remaining sharp OPEN there |
+| `Dregg2.Coordination` `mu`-recursion projection | `Coordination` | deadlock-freedom / projection-progress is proved on the `NoRec` fragment (reachable-config LTS `GStep`/`GReach`, `Claims.lean` §20); the `mu`/`var` recursion case is the residual (and the linearity⇒I-confluence conflation is *refuted* — independent judgements) |
+| `Dregg2.Proof.Refine` full simulation diagram | `Proof.Refine` | the conservation + intra-vat integrity refinements ARE pinned (§17); the full abstract operational forward simulation needs an abstract small-step relation absent from `Core` |
+| Handler-transformer upper tiers | `HandlerTransformer` | the Fpu = sheaf-gluing weld and the comodel-morphism / sheaf-of-handlers tier (`Claims.lean` §33's honest OPENs) |
 
 ---
 
 ## rests-on-§8-primitive (real, `sorry`-free in body, but stated over a labelled interface obligation)
 
 These are **not** OPEN and **not** overclaims — they are the §8 boundary, by design. The
-primitive itself is a `sorry`'d / typeclass-parameter obligation that Rust + the ZK circuits
-discharge. A downstream theorem that takes the primitive as a **hypothesis / typeclass
-parameter** is kernel-clean and IS pinned above (it does not touch `sorryAx`); a theorem whose
-**own body** invokes the primitive is excluded from the pins and lives here.
+primitive itself is a typeclass-field / `Prop`-portal obligation (never a `sorry`) that Rust +
+the ZK circuits discharge. A downstream theorem that takes the primitive as a **hypothesis /
+typeclass parameter** is kernel-clean and IS pinned above (it does not touch `sorryAx`).
 
 | primitive (the labelled obligation) | module | who discharges it |
 |-------------------------------------|--------|-------------------|
