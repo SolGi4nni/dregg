@@ -1,0 +1,39 @@
+[package]
+name = "dregg-auth"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+description = "Scoped, time-boxed, delegatable, revocable, OFFLINE-verifiable agent permissions — the friendly face of dregg's token layer, pointed at agents. No node, no wallet, no blockchain."
+
+# The adoption-quotient commitment (DREGG3-MARATHON W4): L1 is STANDALONE.
+# Offline verification, no node/turn/circuit. The dependency set is deliberately
+# TIGHT — `dregg-token` is brought in WITHOUT macaroon HMAC and WITHOUT the
+# default node-adjacent surface. `biscuit-auth` is pulled directly only for the
+# key types (KeyPair/PrivateKey/PublicKey/Algorithm) the offline path needs.
+#
+# NOTE: the token crate's biscuit backend uses base64 for its `eb2_` wire
+# encoding, but base64 is declared under token's `rand-deps` feature — so the
+# biscuit `to_encoded`/`from_encoded` path only links with `rand-deps` enabled.
+# We enable {biscuit, rand-deps} and explicitly NOT `macaroon`. `rand-deps` is a
+# compile-surface dependency here (it also carries a revocation registry L1 does
+# not use); the macaroon HMAC stack and the full default feature set stay out.
+[dependencies]
+dregg-token = { path = "../token", default-features = false, features = ["biscuit", "rand-deps"] }
+biscuit-auth = { version = "6.0.0" }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[lib]
+name = "dregg_auth"
+
+[[bin]]
+name = "dregg-auth"
+path = "src/bin/dregg-auth.rs"
+
+[lints]
+workspace = true
