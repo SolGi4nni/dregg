@@ -566,7 +566,7 @@ impl StateConstraint {
 ///
 /// **21 variants total** per `SLOT-CAVEATS-EVALUATION.md` §7.6:
 /// - 4 static post-state: `FieldEquals`, `FieldGte`, `FieldLte`, `SumEquals`
-/// - 1 cross-slot post-state: `FieldLteField`
+/// - 2 cross-slot post-state: `FieldLteField`, `FieldLteOther`
 /// - 3 immutability/once: `Immutable`, `WriteOnce`, `StrictMonotonic`
 /// - 3 transition: `Monotonic`, `FieldDelta`, `FieldDeltaInRange`
 /// - 2 height-bound: `FieldGteHeight`, `FieldLteHeight`
@@ -605,6 +605,20 @@ pub enum StateConstraint {
     /// Field at `left_index` must be <= field at `right_index` in the same
     /// post-state. Queue-like programs use this to enforce tail <= head.
     FieldLteField { left_index: u8, right_index: u8 },
+    /// Field at `index` must be `<= field at `other` + delta` in the same
+    /// post-state (`new[index] <= new[other] + delta`, signed). The
+    /// `+delta` generalization of [`Self::FieldLteField`]: the queue /
+    /// inbox / pubsub *capacity* and *no-underflow* cross-slot bounds.
+    ///
+    /// - `FieldLteOther { index: head, other: cap, delta: tail }` ≡ the
+    ///   CAPACITY bound `head − tail ≤ cap`.
+    /// - `FieldLteOther { index: tail, other: head, delta: 0 }` ≡ the
+    ///   NO-UNDERFLOW bound `tail ≤ head`.
+    ///
+    /// Slots read as big-endian u64 lifted to i128, with `delta` added on
+    /// the right (so a negative `delta` tightens the bound). Mirrors the
+    /// verified Lean atom `Dregg2.Exec.RelationalCaveat.RelCaveat.fieldLteOther`.
+    FieldLteOther { index: u8, other: u8, delta: i64 },
     /// Sum of fields at indices must equal value (intra-cell conservation).
     /// Fields are interpreted as big-endian u64 in the last 8 bytes.
     SumEquals {
@@ -1337,6 +1351,27 @@ fn evaluate_constraint_full(
                 return violated(
                     constraint,
                     format!("field[{left}] > field[{right}] in post-state"),
+                );
+            }
+            Ok(())
+        }
+        StateConstraint::FieldLteOther {
+            index,
+            other,
+            delta,
+        } => {
+            let i = check_index(*index)?;
+            let o = check_index(*other)?;
+            // `new[index] <= new[other] + delta`, signed: read both slots as
+            // big-endian u64 lifted to i128 (mirrors Lean `fieldOf` + the
+            // integration harness `field_i128`), add the signed `delta` on the
+            // right. Fail-closed on violation.
+            let lhs = field_to_u64(&new_state.fields[i]) as i128;
+            let rhs = field_to_u64(&new_state.fields[o]) as i128 + *delta as i128;
+            if lhs > rhs {
+                return violated(
+                    constraint,
+                    format!("field[{i}] = {lhs} > field[{o}] + {delta} = {rhs} in post-state"),
                 );
             }
             Ok(())

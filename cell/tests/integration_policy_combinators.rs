@@ -160,3 +160,148 @@ fn all_of_differential() {
     let p_empty = CellProgram::Predicate(vec![StateConstraint::AllOf { variants: vec![] }]);
     assert!(p_empty.evaluate(&s, None, None).is_ok(), "empty AllOf admits (vacuous AND)");
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// FieldLteOther — the RECORD-LEVEL relational caveat (cross-slot
+// `new[index] <= new[other] + delta`). The Rust mirror of the verified Lean
+// atom `Dregg2.Exec.RelationalCaveat.RelCaveat.fieldLteOther`. Exercised THROUGH
+// the live `CellProgram::evaluate` → `evaluate_constraint_full` dispatch — the
+// actual executor enforcement path, not a standalone re-implementation.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Queue cell slot layout (mirrors Lean `rq0` / the `relational_caveat.rs`
+// harness): head_seq, tail_seq, capacity.
+const Q_HEAD: usize = 0;
+const Q_TAIL: usize = 1;
+const Q_CAP: usize = 2;
+
+/// `FieldLteOther` enforces a queue's CAPACITY bound through the live program
+/// evaluator: a factory cell carrying `head <= cap` admits an in-bound write
+/// and rejects an over-bound one. Mirrors Lean `relStateStepGuarded_capacity_enforced`
+/// + the `rq0` #guard (iii)/(iv).
+#[test]
+fn field_lte_other_capacity_live_path() {
+    // A factory-style queue cell program: head_seq must stay <= capacity.
+    // (`delta = 0` folds the committed `tail = 0`, so the bound is head <= cap.)
+    let p = CellProgram::Predicate(vec![StateConstraint::FieldLteOther {
+        index: Q_HEAD as u8,
+        other: Q_CAP as u8,
+        delta: 0,
+    }]);
+
+    // In-bound post-state: head 2, cap 2 (occupancy = capacity) ⇒ admits.
+    let mut in_bound = CellState::new(0);
+    in_bound.fields[Q_HEAD] = field_from_u64(2);
+    in_bound.fields[Q_TAIL] = field_from_u64(0);
+    in_bound.fields[Q_CAP] = field_from_u64(2);
+    assert!(
+        p.evaluate(&in_bound, None, None).is_ok(),
+        "head 2 <= cap 2 ⇒ in-bound write admitted through the live evaluator"
+    );
+
+    // Over-bound post-state: head 3, cap 2 (occupancy > capacity) ⇒ rejected.
+    let mut over_bound = in_bound.clone();
+    over_bound.fields[Q_HEAD] = field_from_u64(3);
+    assert!(
+        p.evaluate(&over_bound, None, None).is_err(),
+        "head 3 > cap 2 ⇒ over-bound write rejected by the capacity caveat"
+    );
+}
+
+/// The `+delta` framing: `FieldLteOther head cap tail` ≡ the capacity bound
+/// `head - tail <= cap`, with `tail` carried in `delta`. Mirrors Lean
+/// `fieldLteOther_expresses_capacity`.
+#[test]
+fn field_lte_other_capacity_with_tail_delta_live() {
+    // With tail = 1 folded into delta, the bound is head <= cap + 1.
+    let p = CellProgram::Predicate(vec![StateConstraint::FieldLteOther {
+        index: Q_HEAD as u8,
+        other: Q_CAP as u8,
+        delta: 1,
+    }]);
+    let mut s = CellState::new(0);
+    s.fields[Q_CAP] = field_from_u64(2);
+    s.fields[Q_HEAD] = field_from_u64(3); // 3 <= cap 2 + delta 1 = 3 ⇒ admit (occupancy 2 = cap)
+    assert!(p.evaluate(&s, None, None).is_ok(), "head 3 <= cap 2 + tail 1");
+    s.fields[Q_HEAD] = field_from_u64(4); // 4 > 3 ⇒ reject (occupancy 3 > cap 2)
+    assert!(p.evaluate(&s, None, None).is_err(), "head 4 > cap 2 + tail 1 ⇒ reject");
+}
+
+/// `FieldLteOther tail head 0` ≡ the NO-UNDERFLOW bound `tail <= head` through
+/// the live evaluator. Mirrors Lean `fieldLteOther_expresses_underflow`.
+#[test]
+fn field_lte_other_no_underflow_live_path() {
+    let p = CellProgram::Predicate(vec![StateConstraint::FieldLteOther {
+        index: Q_TAIL as u8,
+        other: Q_HEAD as u8,
+        delta: 0,
+    }]);
+    let mut s = CellState::new(0);
+    s.fields[Q_HEAD] = field_from_u64(1);
+    s.fields[Q_TAIL] = field_from_u64(1); // tail 1 = head 1 ⇒ admit (empty queue)
+    assert!(p.evaluate(&s, None, None).is_ok(), "tail 1 <= head 1 ⇒ admit");
+    s.fields[Q_TAIL] = field_from_u64(2); // tail 2 > head 1 ⇒ reject (FIFO underflow)
+    assert!(p.evaluate(&s, None, None).is_err(), "tail 2 > head 1 ⇒ reject");
+}
+
+/// SUPERSET: an empty `Predicate([])` (no relational caveat) admits an
+/// otherwise-over-bound state — the relational gate only ever TIGHTENS a write.
+/// Mirrors Lean `relStateStepGuarded_nil_eq`.
+#[test]
+fn field_lte_other_empty_program_recovers_unconstrained() {
+    let p = CellProgram::Predicate(vec![]);
+    let mut s = CellState::new(0);
+    s.fields[Q_HEAD] = field_from_u64(99);
+    s.fields[Q_CAP] = field_from_u64(2);
+    assert!(
+        p.evaluate(&s, None, None).is_ok(),
+        "no relational caveat ⇒ head 99 admitted (the gate only tightens)"
+    );
+}
+
+/// Multiple `FieldLteOther` caveats AND together through the live evaluator: a
+/// write must satisfy BOTH the capacity AND the no-underflow bound; breaking
+/// either rejects (fail-closed conjunction).
+#[test]
+fn field_lte_other_conjunction_live_path() {
+    let p = CellProgram::Predicate(vec![
+        StateConstraint::FieldLteOther {
+            index: Q_HEAD as u8,
+            other: Q_CAP as u8,
+            delta: 0,
+        }, // capacity: head <= cap
+        StateConstraint::FieldLteOther {
+            index: Q_TAIL as u8,
+            other: Q_HEAD as u8,
+            delta: 0,
+        }, // no-underflow: tail <= head
+    ]);
+    let mut s = CellState::new(0);
+    s.fields[Q_HEAD] = field_from_u64(2);
+    s.fields[Q_TAIL] = field_from_u64(1);
+    s.fields[Q_CAP] = field_from_u64(2);
+    assert!(p.evaluate(&s, None, None).is_ok(), "head 2 <= cap 2 AND tail 1 <= head 2 ⇒ admit");
+    // Break capacity (head 3 > cap 2): rejected even though tail <= head.
+    s.fields[Q_HEAD] = field_from_u64(3);
+    assert!(
+        p.evaluate(&s, None, None).is_err(),
+        "head 3 > cap 2 breaks capacity ⇒ rejected"
+    );
+}
+
+/// Fail-closed: a `FieldLteOther` naming a slot `>= STATE_SLOTS` surfaces
+/// `InvalidFieldIndex` through the live evaluator rather than silently passing.
+#[test]
+fn field_lte_other_out_of_range_fails_closed_live() {
+    use dregg_cell::state::STATE_SLOTS;
+    let p = CellProgram::Predicate(vec![StateConstraint::FieldLteOther {
+        index: STATE_SLOTS as u8, // out of range
+        other: Q_CAP as u8,
+        delta: 0,
+    }]);
+    let s = CellState::new(0);
+    assert!(
+        p.evaluate(&s, None, None).is_err(),
+        "out-of-range slot index ⇒ fail closed through the live evaluator"
+    );
+}

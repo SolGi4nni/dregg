@@ -305,6 +305,11 @@ pub fn project_slot_caveat_manifest(
             // Deferred — no AIR teeth in Block 3 first wave.
             dregg_cell::StateConstraint::SumEquals { .. }
             | dregg_cell::StateConstraint::FieldLteField { .. }
+            // Record-level relational caveat (cross-slot `new[i] <= new[o] +
+            // delta`) is enforced by the scalar post-state evaluator, not via a
+            // per-slot AIR projection — deferred like the other record-level
+            // relational atoms above.
+            | dregg_cell::StateConstraint::FieldLteOther { .. }
             | dregg_cell::StateConstraint::BoundedBy { .. }
             | dregg_cell::StateConstraint::FieldDeltaInRange { .. }
             | dregg_cell::StateConstraint::FieldGteHeight { .. }

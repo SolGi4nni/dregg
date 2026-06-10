@@ -179,6 +179,7 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::FieldGte { .. } => true,
         StateConstraint::FieldLte { .. } => true,
         StateConstraint::FieldLteField { .. } => true,
+        StateConstraint::FieldLteOther { .. } => true,
         StateConstraint::SumEquals { .. } => true,
         StateConstraint::SumEqualsAcross { .. } => true,
         StateConstraint::WriteOnce { .. } => true,
@@ -193,6 +194,17 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         StateConstraint::PreimageGate { .. } => true,
         StateConstraint::AllowedTransitions { .. } => true,
         StateConstraint::AnyOf { .. } => true,
+
+        // Policy-combinator core (Lean `Exec.Program` algebra) — enforced by
+        // the scalar `evaluate_constraint_full` post-state evaluator.
+        StateConstraint::MemberOf { .. } => true,
+        StateConstraint::PrefixOf { .. } => true,
+        StateConstraint::InRangeTwoSided { .. } => true,
+        StateConstraint::DeltaBounded { .. } => true,
+        StateConstraint::AffineLe { .. } => true,
+        StateConstraint::AffineEq { .. } => true,
+        StateConstraint::Reachable { .. } => true,
+        StateConstraint::AllOf { .. } => true,
 
         // Not yet enforced/confirmed through the executor (#142 work-list):
         StateConstraint::FieldGteHeight { .. } => false, // not attempted (height-relative)

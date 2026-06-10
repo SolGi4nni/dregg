@@ -679,6 +679,9 @@ fn constraint_dissect(
             left_index,
             right_index,
         } => ("field_lte_field", Some(*left_index), vec![*right_index]),
+        SC::FieldLteOther { index, other, .. } => {
+            ("field_lte_other", Some(*index), vec![*other])
+        }
         SC::SumEquals { indices, .. } => {
             let mut extra = indices.clone();
             let primary = extra.first().copied();
@@ -745,6 +748,23 @@ fn constraint_dissect(
             }
             dregg_cell::program::RenouncedSet::BlindedSet { .. } => ("renounced", None, vec![]),
         },
+        // Policy-combinator core (the orthogonal atom set mirrored from the
+        // Lean `Exec.Program` algebra). These have no single primary slot for
+        // some shapes; surface the first named slot where one exists.
+        SC::MemberOf { index, .. } => ("member_of", Some(*index), vec![]),
+        SC::PrefixOf { seg_indices, .. } => {
+            ("prefix_of", seg_indices.first().copied(), seg_indices.iter().skip(1).copied().collect())
+        }
+        SC::InRangeTwoSided { index, .. } => ("in_range_two_sided", Some(*index), vec![]),
+        SC::DeltaBounded { index, .. } => ("delta_bounded", Some(*index), vec![]),
+        SC::AffineLe { terms, .. } => {
+            ("affine_le", terms.first().map(|(_, s)| *s), terms.iter().skip(1).map(|(_, s)| *s).collect())
+        }
+        SC::AffineEq { terms, .. } => {
+            ("affine_eq", terms.first().map(|(_, s)| *s), terms.iter().skip(1).map(|(_, s)| *s).collect())
+        }
+        SC::Reachable { from_index, .. } => ("reachable", Some(*from_index), vec![]),
+        SC::AllOf { .. } => ("all_of", None, vec![]),
     }
 }
 
