@@ -279,7 +279,13 @@ theorem replay_closed_after_body_commit (ctx : AdmCtx) (h : TurnHdr) (st : RecSt
     rw [hframe, hbodyNonce, commitPrologue_nonce]
   rw [hgoal, hmatch]; omega
 
-/-! ## §6 — KEYSTONE (c): CONSERVATION-MODULO-BURN on a committed body.
+/-! ## §6 — LEGACY-SCALAR corollary (c): CONSERVATION-MODULO-BURN on a committed body.
+
+⚠ W1 RETIREMENT: this is no longer the fee keystone. The W1 value unification (§6' below) lands
+the fee legs on the PER-ASSET ledger with the burn residue credited to a burn-pot CELL, making the
+fee QUADRUPLE {agent, proposer, treasury, burn-pot} EXACTLY conserved (`runTurnV_quadruple_exact`,
+KEYSTONE (c′)) — the modulo dies. The theorem below stays as the LEGACY-SCALAR corollary describing
+the deployed `runTurn` wrapper until the W1 VK rotation swaps the executor onto `runTurnV`.
 
 The epilogue distributes the fee — proposer 50%, treasury 30%, the residue BURNED. So the fee-relevant
 triple {agent, proposer, treasury} does NOT come back to its pre-turn total: it drops by EXACTLY
@@ -447,5 +453,458 @@ def ts0 : Dregg2.Exec.RecChainedState :=
 #guard (match runTurn ec0 eh0 (transferStmt { actor := 7, src := 7, dst := 8, amt := 5 }) ts0 with
         | .bodyCommitted sf => (balOf (sf.kernel.cell 20), balOf (sf.kernel.cell 30)) == (5, 3)
         | _ => false)
+
+/-! ## §6' — W1 VALUE UNIFICATION: the fee QUADRUPLE on the PER-ASSET ledger, EXACT.
+
+KEYSTONE (c) above (`conservation_modulo_burn_on_commit`) is the LEGACY-SCALAR fee law: the fee
+moves the scalar `balance` field, and the burn residue leaves the supply — conservation MODULO the
+protocol sink. The R2 probe killed both defects (`IssuerSupplyProbe §4`, E5): the burn residue is an
+ordinary MOVE to a burn-pot CELL (whose program is the burn policy), and the fee legs belong on the
+per-asset `bal` ledger so ONE law (`ExactConservation`) covers fees too. THIS section lands that
+wrapper:
+
+  * `commitPrologueV` — fee debit ON THE PER-ASSET LEDGER (at the designated fee asset `fa`) +
+    the same NONCE TICK (never rolled back);
+  * `distributeFeeV` — proposer 50% / treasury 30% / burn-pot RESIDUE, all three as per-asset
+    moves: NOTHING leaves the ledger;
+  * `admissibleV` — the same eight gates with FeeCoverage reading `bal agent fa` (E5 dies at
+    admission too) PLUS the E6 pot-genesis gate (proposer/treasury/burn-pot must be wired —
+    fail-closed, so no share can vanish off-ledger);
+  * `runTurnV` — the value-unified turn wrapper. ONE deliberate divergence from the scalar
+    `runTurn`: the anti-spam fee of a FAILED body is also DISTRIBUTED (not parked) — exactness
+    holds on EVERY non-rejected outcome, and the fee is proposer/treasury/pot revenue, never
+    destruction;
+  * KEYSTONE (c′): the fee quadruple {agent, proposer, treasury, burn-pot} is EXACTLY conserved
+    on both non-rejected outcomes (`runTurnV_quadruple_exact`, `…_on_body_failure`) — Σδ = 0, no
+    modulo — and the whole law rides the turn (`runTurnV_preserves_exact`): a conserved pre-state
+    stays conserved through prologue ∘ body ∘ epilogue.
+
+`conservation_modulo_burn_on_commit` RETIRES as keystone: it remains above as the legacy-scalar
+corollary describing the deployed wrapper until the W1 VK rotation swaps the executor onto
+`runTurnV`. -/
+
+section ValueUnify
+
+open Dregg2.Exec (AssetId RecChainedState recBalCreditCell recBalCreditCell_recTotalAsset
+  recTotalAssetWithEscrow recTotalAsset escrowHeldAsset ExactConservation)
+open Dregg2.Exec.Admission (isFrozen admissionClock)
+
+/-- Credit `amt` of asset `fa` to cell `c` on the PER-ASSET ledger (`recBalCreditCell`); negative
+`amt` is the debit. Touches ONLY `kernel.bal` — cells/log/accounts/escrows are untouched. -/
+def creditBalV (s : RecChainedState) (c : CellId) (fa : AssetId) (amt : Int) : RecChainedState :=
+  { s with kernel := { s.kernel with bal := recBalCreditCell s.kernel.bal c fa amt } }
+
+/-- Optionally credit a recipient on the per-asset ledger (`none` ⇒ no edit; the exact wrapper's
+admission gate refuses unwired pots, so `none` is unreachable on the committed path). -/
+def creditBalOptV (s : RecChainedState) (rcpt : Option CellId) (fa : AssetId) (amt : Int) :
+    RecChainedState :=
+  match rcpt with
+  | some c => creditBalV s c fa amt
+  | none => s
+
+/-- **The W1 prologue**: NONCE TICK (the same `commitPrologue` mechanism, fee `0` so the scalar
+balance is untouched) + the fee DEBIT on the per-asset ledger at the fee asset `fa`. Never rolled
+back. -/
+def commitPrologueV (s : RecChainedState) (agent : CellId) (fa : AssetId) (fee : Int) :
+    RecChainedState :=
+  creditBalV (commitPrologue s agent 0) agent fa (-fee)
+
+/-- **The W1 epilogue**: distribute the fee as per-asset moves — proposer `fee/2`, treasury
+`fee*3/10`, and the RESIDUE to the burn-pot cell. Nothing leaves the ledger. -/
+def distributeFeeV (ctx : AdmCtx) (s : RecChainedState) (fa : AssetId) (fee : Int) :
+    RecChainedState :=
+  creditBalOptV
+    (creditBalOptV (creditBalOptV s ctx.proposer fa (proposerShare fee))
+      ctx.treasury fa (treasuryShare fee))
+    ctx.burnPot fa (feeBurned fee)
+
+/-- **The W1 admission predicate**: the eight `admissible` gates with FeeCoverage reading the
+PER-ASSET ledger (`bal agent fa` — E5 dies at admission), plus the E6 pot-genesis gate: the fee
+quadruple's pot cells must be WIRED, fail-closed, so no fee share can vanish off-ledger. -/
+def admissibleV (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState) (fa : AssetId) : Bool :=
+  -- 1. EmptyForest
+  h.forestNonEmpty &&
+  -- 2. AgentLive
+  decide (h.agent ∈ s.kernel.accounts) &&
+  -- 3. Expiry
+  (match h.validUntil with | none => true | some vu => decide (admissionClock ctx ≤ vu)) &&
+  -- 4. NonceMatch
+  decide (h.nonce = storedNonce s h.agent) &&
+  -- 5. FeeCoverage — on the PER-ASSET ledger (E5)
+  decide (0 ≤ h.fee) && decide (h.fee ≤ s.kernel.bal h.agent fa) &&
+  -- 6. NotFrozen (agent + write-set)
+  (!isFrozen ctx h.agent) && (h.writeSet.all (fun c => !isFrozen ctx c)) &&
+  -- 7. ChainHead
+  decide (h.prevReceipt = ctx.storedHead) &&
+  -- 8. Budget
+  decide (h.fee ≤ (ctx.budget : Int)) &&
+  -- 9. POT GENESIS (E6): the quadruple must exist — no share may vanish off-ledger
+  ctx.proposer.isSome && ctx.treasury.isSome && ctx.burnPot.isSome
+
+/-- **`runTurnV` — the value-unified turn wrapper.** `admissibleV` → per-asset prologue (fee debit
+at `fa` + nonce tick, never rolled back) → the Argus body → fee distribution to the quadruple on
+BOTH non-rejected outcomes (a failed body's anti-spam fee is revenue, not destruction — exactness
+everywhere). -/
+def runTurnV (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt) (s : RecChainedState) (fa : AssetId) :
+    TurnOutcome :=
+  if admissibleV ctx h s fa = true then
+    let s₁ := commitPrologueV s h.agent fa h.fee
+    match interpChained st s₁ with
+    | some s' => TurnOutcome.bodyCommitted (distributeFeeV ctx s' fa h.fee)
+    | none    => TurnOutcome.prologueCommittedBodyFailed (distributeFeeV ctx s₁ fa h.fee)
+  else
+    TurnOutcome.rejected
+
+/-! ### §6'a — the per-asset move's pointwise/aggregate laws. -/
+
+/-- The credited cell's column moves by exactly `amt`. -/
+theorem creditBalV_bal_self (s : RecChainedState) (c : CellId) (fa : AssetId) (amt : Int) :
+    (creditBalV s c fa amt).kernel.bal c fa = s.kernel.bal c fa + amt := by
+  show recBalCreditCell s.kernel.bal c fa amt c fa = _
+  unfold recBalCreditCell
+  rw [if_pos ⟨rfl, rfl⟩]
+
+/-- Every other (cell, asset) entry is untouched. -/
+theorem creditBalV_bal_frame (s : RecChainedState) (c : CellId) (fa : AssetId) (amt : Int)
+    (c' : CellId) (b : AssetId) (h : ¬ (c' = c ∧ b = fa)) :
+    (creditBalV s c fa amt).kernel.bal c' b = s.kernel.bal c' b := by
+  show recBalCreditCell s.kernel.bal c fa amt c' b = _
+  unfold recBalCreditCell
+  rw [if_neg h]
+
+/-- The aggregate law: a live-cell credit moves the combined per-asset measure by `amt` at the
+credited asset only (instantiates `recBalCreditCell_recTotalAsset`; escrows untouched). -/
+theorem creditBalV_measure (s : RecChainedState) (c : CellId) (fa : AssetId) (amt : Int)
+    (hc : c ∈ s.kernel.accounts) (b : AssetId) :
+    recTotalAssetWithEscrow (creditBalV s c fa amt).kernel b
+      = recTotalAssetWithEscrow s.kernel b + (if b = fa then amt else 0) := by
+  unfold Dregg2.Exec.recTotalAssetWithEscrow
+  have hesc : escrowHeldAsset (creditBalV s c fa amt).kernel b
+      = escrowHeldAsset s.kernel b := rfl
+  have hbal : recTotalAsset (creditBalV s c fa amt).kernel b
+      = recTotalAsset s.kernel b + (if b = fa then amt else 0) := by
+    show (∑ x ∈ s.kernel.accounts, recBalCreditCell s.kernel.bal c fa amt x b) = _
+    exact recBalCreditCell_recTotalAsset s.kernel.accounts s.kernel.bal c fa amt hc b
+  rw [hbal, hesc]
+  ring
+
+/-- The W1 prologue ticks the nonce by exactly one (the anti-replay tick — `creditBalV` never
+touches the cell record, `commitPrologue` at fee `0` never touches the balance). -/
+theorem commitPrologueV_nonce (s : RecChainedState) (agent : CellId) (fa : AssetId) (fee : Int) :
+    nonceOf ((commitPrologueV s agent fa fee).kernel.cell agent)
+      = nonceOf (s.kernel.cell agent) + 1 := by
+  show nonceOf ((commitPrologue s agent 0).kernel.cell agent) = _
+  exact commitPrologue_nonce s agent 0
+
+/-- The W1 prologue debits the agent's fee-asset column by exactly the fee. -/
+theorem commitPrologueV_bal_agent (s : RecChainedState) (agent : CellId) (fa : AssetId)
+    (fee : Int) :
+    (commitPrologueV s agent fa fee).kernel.bal agent fa = s.kernel.bal agent fa - fee := by
+  unfold commitPrologueV
+  rw [creditBalV_bal_self]
+  show s.kernel.bal agent fa + (-fee) = _
+  ring
+
+/-- The W1 prologue leaves every other (cell, asset) ledger entry untouched. -/
+theorem commitPrologueV_bal_frame (s : RecChainedState) (agent : CellId) (fa : AssetId)
+    (fee : Int) (c' : CellId) (b : AssetId) (h : ¬ (c' = agent ∧ b = fa)) :
+    (commitPrologueV s agent fa fee).kernel.bal c' b = s.kernel.bal c' b := by
+  unfold commitPrologueV
+  rw [creditBalV_bal_frame _ _ _ _ _ _ h]
+
+/-- The W1 prologue's aggregate law: the combined measure drops by the fee at the fee asset only. -/
+theorem commitPrologueV_measure (s : RecChainedState) (agent : CellId) (fa : AssetId) (fee : Int)
+    (hagent : agent ∈ s.kernel.accounts) (b : AssetId) :
+    recTotalAssetWithEscrow (commitPrologueV s agent fa fee).kernel b
+      = recTotalAssetWithEscrow s.kernel b - (if b = fa then fee else 0) := by
+  unfold commitPrologueV
+  rw [creditBalV_measure _ _ _ _ (show agent ∈ (commitPrologue s agent 0).kernel.accounts
+        from hagent) b]
+  have hpro : recTotalAssetWithEscrow (commitPrologue s agent 0).kernel b
+      = recTotalAssetWithEscrow s.kernel b := rfl
+  rw [hpro]
+  by_cases hb : b = fa
+  · rw [if_pos hb, if_pos hb]; ring
+  · rw [if_neg hb, if_neg hb]; ring
+
+/-- The W1 epilogue's aggregate law: with the quadruple's pot cells wired and live, distributing
+the fee RAISES the combined measure by exactly the fee at the fee asset (the three shares sum to
+the whole — `proposerShare + treasuryShare + feeBurned = fee`). -/
+theorem distributeFeeV_measure (ctx : AdmCtx) (s : RecChainedState) (fa : AssetId) (fee : Int)
+    (p t pot : CellId)
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hpot : ctx.burnPot = some pot)
+    (hpm : p ∈ s.kernel.accounts) (htm : t ∈ s.kernel.accounts)
+    (hpotm : pot ∈ s.kernel.accounts) (b : AssetId) :
+    recTotalAssetWithEscrow (distributeFeeV ctx s fa fee).kernel b
+      = recTotalAssetWithEscrow s.kernel b + (if b = fa then fee else 0) := by
+  unfold distributeFeeV creditBalOptV
+  rw [hp, ht, hpot]
+  rw [creditBalV_measure _ _ _ _ (show pot ∈ (creditBalV (creditBalV s p fa (proposerShare fee))
+        t fa (treasuryShare fee)).kernel.accounts from hpotm) b,
+      creditBalV_measure _ _ _ _ (show t ∈ (creditBalV s p fa
+        (proposerShare fee)).kernel.accounts from htm) b,
+      creditBalV_measure _ _ _ _ hpm b]
+  unfold feeBurned
+  by_cases hb : b = fa
+  · rw [if_pos hb, if_pos hb, if_pos hb, if_pos hb]; ring
+  · rw [if_neg hb, if_neg hb, if_neg hb, if_neg hb]; ring
+
+/-! ### §6'b — admission extraction + anti-replay. -/
+
+/-- Extract the load-bearing gates from a passing `admissibleV`. -/
+theorem admissibleV_extract {ctx : AdmCtx} {h : TurnHdr} {s : RecChainedState} {fa : AssetId}
+    (hadm : admissibleV ctx h s fa = true) :
+    h.agent ∈ s.kernel.accounts ∧ h.nonce = storedNonce s h.agent
+      ∧ 0 ≤ h.fee ∧ h.fee ≤ s.kernel.bal h.agent fa
+      ∧ ctx.proposer.isSome = true ∧ ctx.treasury.isSome = true
+      ∧ ctx.burnPot.isSome = true := by
+  unfold admissibleV at hadm
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hadm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨_, h2⟩, _⟩, h4⟩, h5⟩, h6⟩, _⟩, _⟩, _⟩, _⟩, h11⟩, h12⟩, h13⟩ := hadm
+  exact ⟨h2, h4, h5, h6, h11, h12, h13⟩
+
+/-- A nonce mismatch is inadmissible (the replay gate, V-side). -/
+theorem admissibleV_rejects_replay {ctx : AdmCtx} {h : TurnHdr} {s : RecChainedState}
+    {fa : AssetId} (hbad : h.nonce ≠ storedNonce s h.agent) :
+    admissibleV ctx h s fa = false := by
+  unfold admissibleV
+  simp [hbad]
+
+/-- **ANTI-REPLAY (V).** The W1 prologue's nonce tick closes the turn's own replay window: the
+same header is inadmissible against the post-prologue state (hence against both non-rejected
+outcomes' bases). -/
+theorem commitPrologueV_closes_replay {ctx : AdmCtx} {h : TurnHdr} {s : RecChainedState}
+    {fa : AssetId} (hadm : admissibleV ctx h s fa = true) :
+    admissibleV ctx h (commitPrologueV s h.agent fa h.fee) fa = false := by
+  apply admissibleV_rejects_replay
+  have hmatch : h.nonce = storedNonce s h.agent := (admissibleV_extract hadm).2.1
+  have htick : storedNonce (commitPrologueV s h.agent fa h.fee) h.agent
+      = storedNonce s h.agent + 1 := commitPrologueV_nonce s h.agent fa h.fee
+  rw [htick, hmatch]
+  omega
+
+/-! ### §6'c — outcome characterisation. -/
+
+/-- Inadmissible ⇒ `rejected`, no state edit. -/
+theorem runTurnV_rejected (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt) (s : RecChainedState)
+    (fa : AssetId) (hbad : admissibleV ctx h s fa = false) :
+    runTurnV ctx h st s fa = TurnOutcome.rejected := by
+  simp only [runTurnV, hbad, if_neg (by simp : ¬ (false = true))]
+
+/-- Admission + committing body ⇒ `bodyCommitted (distributeFeeV …)`. -/
+theorem runTurnV_body_committed (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
+    (s s' : RecChainedState) (fa : AssetId)
+    (hadm : admissibleV ctx h s fa = true)
+    (hbody : interpChained st (commitPrologueV s h.agent fa h.fee) = some s') :
+    runTurnV ctx h st s fa = TurnOutcome.bodyCommitted (distributeFeeV ctx s' fa h.fee) := by
+  simp only [runTurnV, if_pos hadm, hbody]
+
+/-- Admission + failing body ⇒ `prologueCommittedBodyFailed (distributeFeeV (prologue) …)` — the
+prologue persists AND the anti-spam fee is distributed (never destroyed). -/
+theorem runTurnV_body_failed (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt) (s : RecChainedState)
+    (fa : AssetId)
+    (hadm : admissibleV ctx h s fa = true)
+    (hbody : interpChained st (commitPrologueV s h.agent fa h.fee) = none) :
+    runTurnV ctx h st s fa = TurnOutcome.prologueCommittedBodyFailed
+      (distributeFeeV ctx (commitPrologueV s h.agent fa h.fee) fa h.fee) := by
+  simp only [runTurnV, if_pos hadm, hbody]
+
+/-! ### §6'd — KEYSTONE (c′): the fee quadruple is EXACT, and the law rides the turn. -/
+
+/-- The fee quadruple's per-asset measure: the four fee cells' `fa` columns. -/
+def feeQuadBal (s : RecChainedState) (fa : AssetId) (agent p t pot : CellId) : Int :=
+  s.kernel.bal agent fa + s.kernel.bal p fa + s.kernel.bal t fa + s.kernel.bal pot fa
+
+/-- The epilogue's pointwise effect on the four fee cells (distinct): agent untouched, proposer
+`+fee/2`, treasury `+fee*3/10`, pot `+feeBurned`. -/
+private theorem distributeFeeV_quad (ctx : AdmCtx) (s : RecChainedState) (fa : AssetId)
+    (fee : Int) (agent p t pot : CellId)
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hpot : ctx.burnPot = some pot)
+    (hap : agent ≠ p) (hat : agent ≠ t) (hapot : agent ≠ pot)
+    (hpt : p ≠ t) (hppot : p ≠ pot) (htpot : t ≠ pot) :
+    (distributeFeeV ctx s fa fee).kernel.bal agent fa = s.kernel.bal agent fa
+    ∧ (distributeFeeV ctx s fa fee).kernel.bal p fa = s.kernel.bal p fa + proposerShare fee
+    ∧ (distributeFeeV ctx s fa fee).kernel.bal t fa = s.kernel.bal t fa + treasuryShare fee
+    ∧ (distributeFeeV ctx s fa fee).kernel.bal pot fa = s.kernel.bal pot fa + feeBurned fee := by
+  unfold distributeFeeV creditBalOptV
+  rw [hp, ht, hpot]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hapot he),
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hat he),
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hap he)]
+  · rw [creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hppot he),
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hpt he),
+        creditBalV_bal_self]
+  · rw [creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact htpot he),
+        creditBalV_bal_self,
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hpt he.symm)]
+  · rw [creditBalV_bal_self,
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact htpot he.symm),
+        creditBalV_bal_frame _ _ _ _ _ _ (by rintro ⟨he, -⟩; exact hppot he.symm)]
+
+/-- **KEYSTONE (c′) — THE FEE QUADRUPLE IS EXACT (committed body).** On an admissible W1 turn
+whose body commits over FOUR DISTINCT fee cells (and leaves their fee-asset balances at the
+post-prologue values), the quadruple total is UNCHANGED: `Σδ = 0` exactly — the agent's `−fee` is
+the proposer/treasury/pot's `+fee`, nothing leaves the ledger. The modulo dies. -/
+theorem runTurnV_quadruple_exact (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
+    (s s' : RecChainedState) (fa : AssetId) (p t pot : CellId)
+    (hadm : admissibleV ctx h s fa = true)
+    (hbody : interpChained st (commitPrologueV s h.agent fa h.fee) = some s')
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hpot : ctx.burnPot = some pot)
+    (hap : h.agent ≠ p) (hat : h.agent ≠ t) (hapot : h.agent ≠ pot)
+    (hpt : p ≠ t) (hppot : p ≠ pot) (htpot : t ≠ pot)
+    (hbA : s'.kernel.bal h.agent fa = (commitPrologueV s h.agent fa h.fee).kernel.bal h.agent fa)
+    (hbP : s'.kernel.bal p fa = (commitPrologueV s h.agent fa h.fee).kernel.bal p fa)
+    (hbT : s'.kernel.bal t fa = (commitPrologueV s h.agent fa h.fee).kernel.bal t fa)
+    (hbPot : s'.kernel.bal pot fa = (commitPrologueV s h.agent fa h.fee).kernel.bal pot fa) :
+    ∃ so, runTurnV ctx h st s fa = TurnOutcome.bodyCommitted so ∧
+      feeQuadBal so fa h.agent p t pot = feeQuadBal s fa h.agent p t pot := by
+  refine ⟨distributeFeeV ctx s' fa h.fee, runTurnV_body_committed ctx h st s s' fa hadm hbody, ?_⟩
+  obtain ⟨hqA, hqP, hqT, hqPot⟩ :=
+    distributeFeeV_quad ctx s' fa h.fee h.agent p t pot hp ht hpot
+      hap hat hapot hpt hppot htpot
+  have hproP : (commitPrologueV s h.agent fa h.fee).kernel.bal p fa = s.kernel.bal p fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee p fa (by rintro ⟨he, -⟩; exact hap he.symm)
+  have hproT : (commitPrologueV s h.agent fa h.fee).kernel.bal t fa = s.kernel.bal t fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee t fa (by rintro ⟨he, -⟩; exact hat he.symm)
+  have hproPot : (commitPrologueV s h.agent fa h.fee).kernel.bal pot fa
+      = s.kernel.bal pot fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee pot fa (by rintro ⟨he, -⟩; exact hapot he.symm)
+  unfold feeQuadBal
+  rw [hqA, hqP, hqT, hqPot, hbA, hbP, hbT, hbPot,
+      commitPrologueV_bal_agent, hproP, hproT, hproPot]
+  unfold feeBurned
+  ring
+
+/-- **KEYSTONE (c′) — EXACT on the FAILED body too.** The anti-spam fee of a failed body is
+distributed to the same quadruple, so `Σδ = 0` exactly on the `prologueCommittedBodyFailed`
+outcome as well — the W1 wrapper NEVER destroys value (the scalar wrapper's failed-body fee just
+vanished from the triple). -/
+theorem runTurnV_quadruple_exact_on_body_failure (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
+    (s : RecChainedState) (fa : AssetId) (p t pot : CellId)
+    (hadm : admissibleV ctx h s fa = true)
+    (hbody : interpChained st (commitPrologueV s h.agent fa h.fee) = none)
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hpot : ctx.burnPot = some pot)
+    (hap : h.agent ≠ p) (hat : h.agent ≠ t) (hapot : h.agent ≠ pot)
+    (hpt : p ≠ t) (hppot : p ≠ pot) (htpot : t ≠ pot) :
+    ∃ sp, runTurnV ctx h st s fa = TurnOutcome.prologueCommittedBodyFailed sp ∧
+      feeQuadBal sp fa h.agent p t pot = feeQuadBal s fa h.agent p t pot := by
+  refine ⟨distributeFeeV ctx (commitPrologueV s h.agent fa h.fee) fa h.fee,
+    runTurnV_body_failed ctx h st s fa hadm hbody, ?_⟩
+  obtain ⟨hqA, hqP, hqT, hqPot⟩ :=
+    distributeFeeV_quad ctx (commitPrologueV s h.agent fa h.fee) fa h.fee h.agent p t pot
+      hp ht hpot hap hat hapot hpt hppot htpot
+  have hproP : (commitPrologueV s h.agent fa h.fee).kernel.bal p fa = s.kernel.bal p fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee p fa (by rintro ⟨he, -⟩; exact hap he.symm)
+  have hproT : (commitPrologueV s h.agent fa h.fee).kernel.bal t fa = s.kernel.bal t fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee t fa (by rintro ⟨he, -⟩; exact hat he.symm)
+  have hproPot : (commitPrologueV s h.agent fa h.fee).kernel.bal pot fa
+      = s.kernel.bal pot fa :=
+    commitPrologueV_bal_frame s h.agent fa h.fee pot fa (by rintro ⟨he, -⟩; exact hapot he.symm)
+  unfold feeQuadBal
+  rw [hqA, hqP, hqT, hqPot, commitPrologueV_bal_agent, hproP, hproT, hproPot]
+  unfold feeBurned
+  ring
+
+/-- **THE LAW RIDES THE TURN.** A conserved pre-state stays conserved through the WHOLE W1 wrapper
+(prologue ∘ committed body ∘ epilogue): the prologue's `−fee` and the epilogue's `+fee` cancel at
+the fee asset, every other asset is untouched, and the body preserves the combined measure (every
+welded effect does — that is `RecordKernel §VALUE-UNIFY`). `ExactConservation` is a turn-level
+invariant of `runTurnV`, with NO modulo and NO exemption. -/
+theorem runTurnV_preserves_exact (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
+    (s s' : RecChainedState) (fa : AssetId) (p t pot : CellId)
+    (hadm : admissibleV ctx h s fa = true)
+    (hbody : interpChained st (commitPrologueV s h.agent fa h.fee) = some s')
+    (hp : ctx.proposer = some p) (ht : ctx.treasury = some t) (hpot : ctx.burnPot = some pot)
+    (hpm : p ∈ s'.kernel.accounts) (htm : t ∈ s'.kernel.accounts)
+    (hpotm : pot ∈ s'.kernel.accounts)
+    -- the body preserved the combined per-asset measure (what every welded kernel verb proves):
+    (hbodyCons : ∀ b, recTotalAssetWithEscrow s'.kernel b
+        = recTotalAssetWithEscrow (commitPrologueV s h.agent fa h.fee).kernel b)
+    (hex : ExactConservation s.kernel) :
+    ∃ so, runTurnV ctx h st s fa = TurnOutcome.bodyCommitted so ∧ ExactConservation so.kernel := by
+  refine ⟨distributeFeeV ctx s' fa h.fee, runTurnV_body_committed ctx h st s s' fa hadm hbody, ?_⟩
+  intro b
+  rw [distributeFeeV_measure ctx s' fa h.fee p t pot hp ht hpot hpm htm hpotm b,
+      hbodyCons b,
+      commitPrologueV_measure s h.agent fa h.fee (admissibleV_extract hadm).1 b]
+  have hzero := hex b
+  by_cases hb : b = fa
+  · rw [if_pos hb, if_pos hb]; omega
+  · rw [if_neg hb, if_neg hb]; omega
+
+end ValueUnify
+
+/-! ### §7' — axiom hygiene (the W1 keystones). -/
+
+#assert_axioms creditBalV_measure
+#assert_axioms commitPrologueV_nonce
+#assert_axioms commitPrologueV_measure
+#assert_axioms distributeFeeV_measure
+#assert_axioms admissibleV_extract
+#assert_axioms commitPrologueV_closes_replay
+#assert_axioms runTurnV_rejected
+#assert_axioms runTurnV_body_committed
+#assert_axioms runTurnV_body_failed
+#assert_axioms runTurnV_quadruple_exact                    -- KEYSTONE (c′), committed
+#assert_axioms runTurnV_quadruple_exact_on_body_failure    -- KEYSTONE (c′), failed body
+#assert_axioms runTurnV_preserves_exact                    -- THE LAW rides the turn
+
+/-! ### §8' — non-vacuity (`#guard`): the quadruple is EXACT where the triple lost the burn.
+
+Agent 7 holds 100 of fee-asset 0 on the PER-ASSET ledger (nonce 3 in the cell record); proposer 20 /
+treasury 30 / burn-pot 40 are live. Same header `eh0` (fee 10). The scalar §8 run showed the triple
+drop 100 → 98 (modulo-burn); the W1 quadruple stays EXACTLY 100 on BOTH non-rejected outcomes. -/
+
+/-- The W1 host context: `ec0` + the wired burn-pot 40. -/
+def ecV0 : AdmCtx := { ec0 with burnPot := some 40 }
+
+/-- W1 pre-state: agent 7 with 100 of asset 0 on the `bal` ledger (+ nonce 3 in the cell record);
+proposer 20, treasury 30, burn-pot 40 live and empty. -/
+def esV0 : Dregg2.Exec.RecChainedState :=
+  { kernel := { accounts := {7, 20, 30, 40}, caps := fun _ => [],
+                cell := fun c => if c = 7 then .record [("balance", .int 0), ("nonce", .int 3)]
+                                 else .record [("balance", .int 0)],
+                bal := fun c a => if c = 7 ∧ a = 0 then 100 else 0 },
+    log := [] }
+
+-- COMMITTED body: accepted, and the QUADRUPLE is EXACT (100 → 100; agent 90 / 20 +5 / 30 +3 / 40 +2):
+#guard (match runTurnV ecV0 eh0 bodyOK esV0 0 with | .bodyCommitted _ => true | _ => false)
+#guard ((runTurnV ecV0 eh0 bodyOK esV0 0).state?.map
+        (fun sf => (sf.kernel.bal 7 0, sf.kernel.bal 20 0, sf.kernel.bal 30 0, sf.kernel.bal 40 0)))
+        == some (90, 5, 3, 2)
+#guard (feeQuadBal esV0 0 7 20 30 40 == 100)
+#guard ((runTurnV ecV0 eh0 bodyOK esV0 0).state?.map (fun sf => feeQuadBal sf 0 7 20 30 40))
+        == some 100
+-- TAMPER: the scalar wrapper's modulo-burn value (98) is FALSE here — nothing left the ledger:
+#guard (((runTurnV ecV0 eh0 bodyOK esV0 0).state?.map (fun sf => feeQuadBal sf 0 7 20 30 40))
+        == some 98) == false
+-- FAILED body: prologue persists, the anti-spam fee is DISTRIBUTED, the quadruple is STILL exact:
+#guard (match runTurnV ecV0 eh0 bodyFail esV0 0 with
+        | .prologueCommittedBodyFailed _ => true | _ => false)
+#guard ((runTurnV ecV0 eh0 bodyFail esV0 0).state?.map (fun sf => feeQuadBal sf 0 7 20 30 40))
+        == some 100
+-- ...and the replay window is closed against the committed state:
+#guard ((runTurnV ecV0 eh0 bodyFail esV0 0).state?.map (fun sp => admissibleV ecV0 eh0 sp 0))
+        == some false
+-- E6 POT-GENESIS TOOTH: with NO burn-pot wired (`ec0`), the W1 wrapper REJECTS (fail-closed — a
+-- missing pot would silently destroy the burn residue):
+#guard (match runTurnV ec0 eh0 bodyOK esV0 0 with | .rejected => true | _ => false)
+-- E5 TOOTH: fee coverage reads the PER-ASSET ledger — an agent with an empty asset-0 column is
+-- rejected regardless of any scalar `balance` field:
+#guard (match runTurnV ecV0 eh0 bodyOK
+          { esV0 with kernel := { esV0.kernel with bal := fun _ _ => 0 } } 0 with
+        | .rejected => true | _ => false)
+
+/-- The W1 pre-state WITH the issuer well: cell 1 carries −100 (the issuer of asset 0), so the
+whole state satisfies `ExactConservation` — and the committed turn PRESERVES it. -/
+def esVX : Dregg2.Exec.RecChainedState :=
+  { esV0 with kernel := { esV0.kernel with
+      accounts := {1, 7, 20, 30, 40},
+      bal := fun c a => if c = 7 ∧ a = 0 then 100 else if c = 1 ∧ a = 0 then -100 else 0 } }
+
+#guard (Dregg2.Exec.recTotalAssetWithEscrow esVX.kernel 0 == 0)  -- exact BEFORE
+#guard ((runTurnV ecV0 eh0 bodyOK esVX 0).state?.map
+        (fun sf => Dregg2.Exec.recTotalAssetWithEscrow sf.kernel 0)) == some 0  -- exact AFTER
 
 end Dregg2.Circuit.Argus

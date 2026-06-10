@@ -56,6 +56,12 @@ structure AdmCtx where
   proposer    : Option CellId := none
   /-- The treasury cell credited 30% of the fee (`self.treasury_cell`); `none` ⇒ that share is burned. -/
   treasury    : Option CellId := none
+  /-- **The burn-pot cell (W1 value unification).** The residue `feeBurned fee` is CREDITED here as
+  an ordinary per-asset move (the pot's program is the burn policy), making the fee quadruple
+  {agent, proposer, treasury, burn-pot} EXACTLY conserved — the modulo-burn sink dies
+  (`Argus/Turn.lean §6'`). `none` = the pot is not wired (the legacy scalar path; the exact wrapper
+  `runTurnV` fail-closes on it — E6 pot-genesis). DEFAULTS `none` (additive). -/
+  burnPot     : Option CellId := none
 deriving Repr
 
 /-- The clock dimension used for `validUntil` expiry: prefer `blockHeight` when wired, else `now`. -/
