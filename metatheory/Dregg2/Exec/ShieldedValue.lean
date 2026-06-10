@@ -391,7 +391,7 @@ private theorem unshieldK_committed {s s' : ShieldedState} {nf : Nat} {dst : Cel
           subst hs'
           obtain ⟨hfresh, hk₁⟩ := noteSpend_committed hns
           obtain ⟨hgate, hshape⟩ := recKExecAsset_committed hk₂
-          refine ⟨n, hfind, hfresh, hgate.2.2.2.1, rfl, ?_⟩
+          refine ⟨n, rfl, hfresh, hgate.2.2.2.1, rfl, ?_⟩
           show k₂ = _
           rw [hshape, hk₁]
 
@@ -447,6 +447,7 @@ private theorem unspentValueIn_insert_fresh (notes : List NoteRecord) (nulls : L
     unspentValueIn notes (nf :: nulls) b = unspentValueIn notes nulls b := by
   unfold unspentValueIn
   congr 1
+  congr 1
   apply List.filter_congr
   intro n hn
   have hne : n.nf ≠ nf := hfresh n hn
@@ -474,7 +475,7 @@ private theorem unspentValueIn_spend (notes : List NoteRecord) (nulls : List Nat
       obtain ⟨hhead, htail⟩ := List.pairwise_cons.mp hdist
       by_cases hm : (m.nf == nf) = true
       · -- the head IS the spent note.
-        rw [List.find?_cons_of_pos _ hm] at hfind
+        rw [List.find?_cons_of_pos hm] at hfind
         injection hfind with hmn
         rw [← hmn]
         have hmnf : m.nf = nf := by simpa using hm
@@ -492,7 +493,7 @@ private theorem unspentValueIn_spend (notes : List NoteRecord) (nulls : List Nat
         · rw [if_neg (fun hp => hb hp.1), if_neg hb]
           ring
       · -- the head is NOT the spent note: its membership is identical on both sides; recurse.
-        rw [List.find?_cons_of_neg _ hm] at hfind
+        rw [List.find?_cons_of_neg hm] at hfind
         have hmnf : m.nf ≠ nf := by simpa using hm
         have hiff : (m.asset = b ∧ m.nf ∉ nf :: nulls) ↔ (m.asset = b ∧ m.nf ∉ nulls) := by
           constructor
@@ -535,9 +536,9 @@ theorem shieldK_preserves_pool {vc : ValueCommitment} {s s' : ShieldedState} {ac
       -- k₁ is the recTransferBal write on s.kernel.
       have hbal : (noteCreateBound vc k₁ nt).bal
           = recTransferBal s.kernel.bal src (poolOf a) a nt.value := by
-        rw [hshape]
+        rw [hshape]; rfl
       have hnulls : (noteCreateBound vc k₁ nt).nullifiers = s.kernel.nullifiers := by
-        rw [hshape]
+        rw [hshape]; rfl
       show (noteCreateBound vc k₁ nt).bal (poolOf b) b
           = unspentValueIn ({ cm := nt.commitment vc, nf := nf, asset := a, value := nt.value }
               :: s.notes) (noteCreateBound vc k₁ nt).nullifiers b
