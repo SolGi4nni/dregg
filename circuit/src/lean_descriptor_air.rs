@@ -1697,6 +1697,33 @@ pub fn verify_vm_descriptor(
         .map_err(|e| format!("EffectVmDescriptorAir verification failed: {e:?}"))
 }
 
+/// Extend a BASE EffectVM trace into the FULL descriptor-AIR-width `p3` matrix
+/// (base wires + Poseidon2 site-aux blocks + range bits), exactly as
+/// [`prove_vm_descriptor`] does before proving. This is the witness surface the
+/// RECURSION leaf path consumes: the whole-chain fold re-proves the SAME
+/// descriptor constraint set as a recursion-compatible uni-STARK over this
+/// matrix and wraps it in an in-circuit verifier layer
+/// (`ivc_turn_chain::prove_turn_chain_recursive`), so the statement verified
+/// in-circuit is identical to the one [`prove_vm_descriptor`]'s batch proof
+/// attests — same AIR (`EffectVmDescriptorAir`), same trace, same PI prefix.
+pub fn descriptor_recursion_matrix(
+    desc: &EffectVmDescriptor,
+    base_trace: &[Vec<DreggBabyBear>],
+) -> Result<RowMajorMatrix<P3BabyBear>, String> {
+    desc.check_bounds()?;
+    if base_trace.is_empty() {
+        return Err("base trace must be non-empty".to_string());
+    }
+    if base_trace[0].len() != desc.trace_width {
+        return Err(format!(
+            "base row width {} must equal descriptor trace_width {}",
+            base_trace[0].len(),
+            desc.trace_width
+        ));
+    }
+    Ok(vm_to_matrix(&extend_vm_trace(desc, base_trace)))
+}
+
 /// FRI-free accept/reject decision of the `EffectVmDescriptorAir` (the Lean-emitted
 /// descriptor interpreter) on a BASE EffectVM trace + public inputs, via Plonky3's
 /// canonical `check_all_constraints` — the EXACT predicate the audited p3 verifier

@@ -95,9 +95,10 @@ fn verify_participant(p: &JointParticipant) -> Result<(), String> {
     stark::verify(&air, &p.proof, &p.public_inputs)
 }
 
-/// Public re-export of the per-cell whole-turn soundness check, so the
-/// whole-chain IVC accumulator ([`crate::ivc_turn_chain`]) reuses exactly the
-/// same per-turn admission discipline.
+/// Public re-export of the LEGACY bespoke per-cell whole-turn soundness check.
+/// The whole-chain IVC accumulator ([`crate::ivc_turn_chain`]) has CUT OVER to
+/// descriptor participants ([`verify_descriptor_participant`] + in-circuit
+/// descriptor leaves); this remains for the bespoke Silver surface.
 pub fn verify_participant_pub(p: &JointParticipant) -> Result<(), String> {
     verify_participant(p)
 }

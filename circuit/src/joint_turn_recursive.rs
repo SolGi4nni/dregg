@@ -46,6 +46,26 @@
 //!     enforcing CG-2 (every cell's `shared_turn_id == published id`) and the
 //!     commitment hash-chain digest.
 //!
+//! ## HONEST GAP — the per-cell leaves here are still SHAPE STUBS (chain fold is not)
+//!
+//! [`EffectVmShapeAir`] is NOT the full Effect VM constraint set (its own docs:
+//! a trace that passes it would not pass the real AIR), so in THIS module
+//! per-cell execution soundness still rests on the HOST-side gate
+//! (`check_joint_preconditions` verifying each participant's bespoke proof) —
+//! a trusted-prover assumption for the per-cell leg. The whole-chain fold
+//! ([`crate::ivc_turn_chain`], the light-client path) has been CUT OVER: its
+//! leaves are the REAL Lean-descriptor EffectVM AIR
+//! (`EffectVmDescriptorAir`) re-proven over each turn's own execution trace
+//! and verified in-circuit, with ungated-prover tamper tests proving the host
+//! gate is not load-bearing there. Converting THIS joint-turn fold the same
+//! way needs its participants re-pointed from the bespoke `JointParticipant`
+//! (legacy `stark::StarkProof`) onto `DescriptorParticipant` + carried traces
+//! — the same recipe `ivc_turn_chain::prove_descriptor_leaf` applies — and is
+//! deliberately left for the joint-turn lane so the Silver surface
+//! (`joint_turn_aggregation`) stays intact in this pass. The ignored test
+//! `gold_joint_leaf_is_still_a_shape_stub_no_in_circuit_execution_tooth`
+//! documents the exact missing tooth.
+//!
 //! Each leaf is first wrapped in its own recursive verifier layer
 //! (`build_and_prove_next_layer`, uni→batch), then the resulting batch proofs
 //! are pairwise aggregated (`build_and_prove_aggregation_layer`) up a binary
@@ -67,10 +87,10 @@
 //!      any tree is built. (Test:
 //!      `recursive_rejects_disagreeing_turn_ids`.)
 //!
-//! Because the per-cell soundness is now *inside* the recursion (the leaf
-//! verifier circuits actually re-derive each EffectVm proof's FRI/quotient
-//! checks), the root proof attesting "all leaves verified" is what makes
-//! verification constant-cost: the verifier never touches the N inner proofs.
+//! The wrap layers genuinely re-derive each LEAF proof's FRI/quotient checks
+//! in-circuit — but per the HONEST GAP above, the per-cell leaves attest the
+//! SHAPE subset, not full execution; the root's constant-cost verification is
+//! real, while the per-cell execution leg still rides the host gate.
 
 #![cfg(feature = "recursion")]
 
@@ -447,6 +467,60 @@ mod tests {
             Ok(_) => panic!("a tampered participant proof must not produce a recursive root proof"),
             Err(other) => panic!("expected ParticipantProofInvalid, got {other:?}"),
         }
+    }
+
+    /// **THE MISSING TOOTH (documented, not yet bitten).** The whole-chain fold
+    /// (`ivc_turn_chain`) proves that a host-gate-skipping prover cannot
+    /// produce a verifying root, because its leaves are the REAL descriptor
+    /// AIR. THIS module's per-cell leaves are `EffectVmShapeAir` stubs rebuilt
+    /// from `(shared_turn_id, cell_commit)` — so an ungated joint prover
+    /// feeding a forged `cell_commit` (a post-state that execution never
+    /// reached) CAN still wrap a satisfying stub leaf; only the host gate
+    /// catches it. This test is the tamper case that must pass once the
+    /// joint-turn leaves are cut over to `DescriptorParticipant` + carried
+    /// traces (the `ivc_turn_chain::prove_descriptor_leaf` recipe); it is
+    /// ignored until then because TODAY it would FAIL exactly as described.
+    #[test]
+    #[ignore = "gold-joint per-cell leaves are still EffectVmShapeAir stubs: an ungated prover \
+                CAN wrap a forged cell_commit (only the host gate rejects it). Cut the leaves \
+                over to the descriptor AIR (ivc_turn_chain::prove_descriptor_leaf recipe) and \
+                then this in-circuit rejection must hold."]
+    fn gold_joint_leaf_is_still_a_shape_stub_no_in_circuit_execution_tooth() {
+        let config = create_recursion_config();
+        let backend = create_recursion_backend();
+        let params = ProveNextLayerParams::default();
+
+        // A cell_commit no execution ever produced. With REAL descriptor
+        // leaves, no satisfying leaf exists for it; with the shape stub, the
+        // fabricated passthrough trace satisfies the leaf and wraps fine —
+        // the exact gap.
+        let forged_commit = BabyBear::new(0xDEAD_BEE);
+        let shared = BabyBear::new(0x77);
+        let (leaf_inner, leaf_pis) = prove_cell_leaf(shared, forged_commit, LEAF_ROWS);
+
+        let air = EffectVmShapeAir;
+        let p3_pis: Vec<P3BabyBear> = leaf_pis.iter().map(|&v| to_p3(v)).collect();
+        let input = RecursionInput::UniStark {
+            proof: &leaf_inner,
+            air: &air,
+            public_inputs: p3_pis,
+            preprocessed_commit: None,
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmShapeAir, _, D>(
+                &input, &config, &backend, &params,
+            )
+        }));
+        let rejected = match result {
+            Ok(Ok(_)) => false,
+            Ok(Err(_)) => true,
+            Err(_) => true,
+        };
+        assert!(
+            rejected,
+            "a forged cell_commit must have NO satisfying per-cell leaf once the joint-turn \
+             leaves are the real descriptor AIR (today the shape stub accepts it — the gap)"
+        );
     }
 
     /// GOLD teeth (in-circuit, the load-bearing one): a per-cell leaf proven for

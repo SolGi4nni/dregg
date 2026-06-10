@@ -1,8 +1,9 @@
 //! # `whole_history_demo` — the aggregate-then-light-verify demo (real output).
 //!
 //! This is the working demonstration the GOLD-tier history-compression story claims: take a chain of
-//! several REAL finalized turns (each a genuine EffectVm whole-turn STARK proof with Poseidon2 state
-//! commitments), fold them — via the existing prover, read-only — into ONE constant-size aggregate
+//! several REAL finalized turns (each a genuine Lean-descriptor EffectVM proof with Poseidon2 state
+//! commitments, whose full constraint set is re-proven and verified IN-CIRCUIT as the fold's leaf),
+//! fold them — via the existing prover, read-only — into ONE constant-size aggregate
 //! (`WholeChainProof`), and then have the light client verify the WHOLE history from just that
 //! aggregate, re-witnessing NOTHING: no re-execution of any turn, no re-hashing of any state, no walk
 //! of the blocklace.
@@ -19,20 +20,23 @@
 use std::time::Instant;
 
 use dregg_circuit::effect_vm::pi;
-use dregg_circuit::effect_vm::{CellState, Effect, EffectVmAir, generate_effect_vm_trace};
+use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
+use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::ivc_turn_chain::FinalizedTurn;
-use dregg_circuit::joint_turn_aggregation::JointParticipant;
-use dregg_circuit::stark;
+use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
+use dregg_circuit::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
 
 use dregg_lightclient::{
     FinalityCert, fold_and_attest, verify_finalized_history, verify_history,
 };
 
-/// Build ONE real finalized turn: a genuine EffectVm whole-turn STARK proof for a cell at
-/// `(balance, nonce)` applying a `Transfer` debit of `amount`. Returns the turn + its REAL
-/// `(old_root, new_root)` Poseidon2 state commitments (the trace generator derives them; the AIR
-/// boundary-binds them — they are not fabricated).
+/// Build ONE real finalized turn on the PRODUCTION descriptor path: execute a `Transfer` debit of
+/// `amount` for a cell at `(balance, nonce)`, prove the 186-column trace through the Lean transfer
+/// descriptor (`prove_vm_descriptor`, the audited p3 batch prover — the same wire artifact the SDK
+/// cutover emits), and carry the trace as the in-circuit leaf witness. Returns the turn + its REAL
+/// `(old_root, new_root)` Poseidon2 state commitments (the trace generator derives them; the
+/// descriptor's hash sites bind them — they are not fabricated).
 fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear, BabyBear) {
     let state = CellState::new(balance, nonce);
     let effects = vec![Effect::Transfer {
@@ -42,13 +46,19 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear,
     let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
     let old_root = public_inputs[pi::OLD_COMMIT];
     let new_root = public_inputs[pi::NEW_COMMIT];
-    let air = EffectVmAir::new(trace.len());
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    let json = descriptor_for_selector(sel::TRANSFER).expect("transfer descriptor registered");
+    let desc = parse_vm_descriptor(json).expect("transfer descriptor parses");
+    let dpis = &public_inputs[..desc.public_input_count];
+    let proof =
+        prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
     (
-        FinalizedTurn::new(JointParticipant {
-            proof,
-            public_inputs,
-        }),
+        FinalizedTurn::new(
+            DescriptorParticipant {
+                proof,
+                public_inputs,
+            },
+            trace,
+        ),
         old_root,
         new_root,
     )
@@ -95,8 +105,10 @@ fn main() {
     println!("  light-verified in time independent of N — re-witnessing nothing.\n");
 
     // --- 1. A real chain of finalized turns -----------------------------------------------------
-    const K: usize = 6;
-    rule(&format!("1. EXECUTE — {K} real finalized turns (genuine EffectVm STARK proofs)"));
+    const K: usize = 3;
+    rule(&format!(
+        "1. EXECUTE — {K} real finalized turns (genuine Lean-descriptor EffectVM proofs)"
+    ));
     let build_t0 = Instant::now();
     let (turns, genesis, final_root) = make_chain(1_000, 0, 7, K);
     println!(

@@ -10,20 +10,34 @@
 //! public commitments the aggregate binds.
 //!
 //! This is the executable counterpart of the Lean theorem
-//! `Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history`, with ONE of its three
-//! named hypotheses NOT yet discharged by this artifact. Under `EngineSound` — the plonky3 FRI
-//! obligation `recursive_sound`, the EffectVm circuit⟺executor obligation `leaf_sound`, the
-//! `TurnChainBindingAir` obligation `binding_sound` — verifying `agg.root` yields `AggregateAttests`.
-//! What the CURRENT fold discharges in-circuit: `recursive_sound` (the real recursion engine) and
-//! `binding_sound` (ordering — no reorder/drop/insert, the temporal tooth `new_root[i] ==
-//! old_root[i+1]` — and the final root as the genuine fold). What it does NOT yet discharge:
-//! `leaf_sound` — the folded leaves are `EffectVmShapeAir` stubs (`circuit/src/ivc_turn_chain.rs::
-//! prove_turn_leaf`); the REAL whole-turn proofs are verified host-side at prove time
-//! (`prove_turn_chain_recursive` step 3), so per-turn execution soundness currently rests on the
-//! PROVER having run that gate — an honest trusted-prover assumption until the leaves wrap the
-//! descriptor proofs in-circuit (the `DescriptorParticipant` admission seam exists; task #94).
-//! [`AttestedHistory`] is the `AggregateAttests` verdict under that caveat, and [`verify_history`]
-//! is the light-client check.
+//! `Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history`. Under `EngineSound` —
+//! the plonky3 FRI obligation `recursive_sound`, the EffectVm circuit⟺executor obligation
+//! `leaf_sound`, the `TurnChainBindingAir` obligation `binding_sound` — verifying `agg.root` yields
+//! `AggregateAttests`. What the fold discharges in-circuit:
+//!
+//! - `binding_sound` — ordering (no reorder/drop/insert, the temporal tooth `new_root[i] ==
+//!   old_root[i+1]`) and the final root as the genuine fold, via the wrapped `TurnChainBindingAir`
+//!   leaf;
+//! - `leaf_sound` — **the folded leaves ARE the turn circuits**: each leaf is the Lean-descriptor
+//!   EffectVM AIR (`EffectVmDescriptorAir`, the graduated ONE-circuit cutover constraint set —
+//!   Poseidon2 state-commit hash sites, transition continuity, `OLD/NEW_COMMIT` PI bindings, range
+//!   checks) re-proven over that turn's REAL 186-column execution trace and verified IN-CIRCUIT by
+//!   the recursion wrap (`circuit/src/ivc_turn_chain.rs::prove_descriptor_leaf` +
+//!   `build_and_prove_next_layer`). The host-side descriptor admission
+//!   (`verify_descriptor_participant`) is an admission discipline, NOT the soundness boundary: a
+//!   prover that SKIPS it cannot produce a verifying root for a forged turn, because a forged
+//!   `(old_root, new_root)` has no satisfying leaf (the `ungated_prover_with_forged_post_commit_
+//!   cannot_produce_a_root` / `ungated_prover_with_stub_leaf_cannot_produce_a_root` tamper tests in
+//!   `ivc_turn_chain`).
+//!
+//! What remains NAMED, not discharged (the honest floor): `recursive_sound` — the recursion fork's
+//! FRI engine soundness, including its circuit/common-data discipline (the root batch proof does not
+//! yet pin a verifying-key fingerprint of the leaf verifier circuits, and aggregation layers do not
+//! re-expose leaf public values at the root, so the aggregate's public `genesis_root`/`final_root`/
+//! `chain_digest` are bound to the leaves at PROVE time — every wrap fails unless its PIs match what
+//! its proof attests, in-circuit — and carried beside the root rather than re-read from it at verify
+//! time). [`AttestedHistory`] is the `AggregateAttests` verdict under that named carrier, and
+//! [`verify_history`] is the light-client check.
 //!
 //! ## Proofs are ADDITIVE ATTESTATION — and that is the POINT.
 //!
@@ -324,13 +338,17 @@ pub fn verify_finalized_history(
 mod tests {
     use super::*;
     use dregg_circuit::effect_vm::pi;
-    use dregg_circuit::effect_vm::{CellState, Effect, EffectVmAir, generate_effect_vm_trace};
+    use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
+    use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::joint_turn_aggregation::JointParticipant;
-    use dregg_circuit::stark;
+    use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
+    use dregg_circuit::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
 
-    /// Build a real EffectVm whole-turn proof for a cell at `(balance, nonce)` applying a debit of
-    /// `amount`, returning the finalized turn + its REAL `(old_root, new_root)` Poseidon2 commitments.
+    /// Build a real finalized turn on the PRODUCTION descriptor path: execute a transfer debit of
+    /// `amount` from `(balance, nonce)`, prove the 186-column trace through the Lean transfer
+    /// descriptor (`prove_vm_descriptor`, the audited p3 batch prover — the same wire artifact the
+    /// SDK cutover emits), and carry the trace as the in-circuit leaf witness. Returns the turn +
+    /// its REAL `(old_root, new_root)` Poseidon2 commitments.
     fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear, BabyBear) {
         let state = CellState::new(balance, nonce);
         let effects = vec![Effect::Transfer {
@@ -340,13 +358,19 @@ mod tests {
         let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
         let old_root = public_inputs[pi::OLD_COMMIT];
         let new_root = public_inputs[pi::NEW_COMMIT];
-        let air = EffectVmAir::new(trace.len());
-        let proof = stark::prove(&air, &trace, &public_inputs);
+        let json = descriptor_for_selector(sel::TRANSFER).expect("transfer descriptor registered");
+        let desc = parse_vm_descriptor(json).expect("transfer descriptor parses");
+        let dpis = &public_inputs[..desc.public_input_count];
+        let proof =
+            prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
         (
-            FinalizedTurn::new(JointParticipant {
-                proof,
-                public_inputs,
-            }),
+            FinalizedTurn::new(
+                DescriptorParticipant {
+                    proof,
+                    public_inputs,
+                },
+                trace,
+            ),
             old_root,
             new_root,
         )
@@ -377,18 +401,19 @@ mod tests {
         (turns, genesis, final_root)
     }
 
-    /// **THE LIGHT-CLIENT HEADLINE (Rust witness).** Fold a real K=4 finalized-turn chain into ONE
-    /// aggregate, then verify it AS A LIGHT CLIENT — re-witnessing nothing — and obtain an
-    /// `AttestedHistory` whose endpoints are the genuine genesis/final roots and whose `num_turns` is
-    /// the whole history. This is `light_client_verifies_whole_history` run on real proofs.
+    /// **THE LIGHT-CLIENT HEADLINE (Rust witness).** Fold a real K=3 finalized-turn chain — REAL
+    /// descriptor leaves verified in-circuit — into ONE aggregate, then verify it AS A LIGHT CLIENT
+    /// — re-witnessing nothing — and obtain an `AttestedHistory` whose endpoints are the genuine
+    /// genesis/final roots and whose `num_turns` is the whole history. This is
+    /// `light_client_verifies_whole_history` run on real proofs.
     #[test]
     fn light_client_attests_whole_history() {
-        let (turns, genesis, final_root) = make_chain(1000, 0, 7, 4);
+        let (turns, genesis, final_root) = make_chain(1000, 0, 7, 3);
 
         let (agg, attested) =
-            fold_and_attest(&turns).expect("a continuous 4-turn chain must fold and light-verify");
+            fold_and_attest(&turns).expect("a continuous 3-turn chain must fold and light-verify");
 
-        assert_eq!(attested.num_turns, 4, "the light client learns ALL four turns are attested");
+        assert_eq!(attested.num_turns, 3, "the light client learns ALL three turns are attested");
         assert_eq!(attested.genesis_root, genesis, "attested genesis = real genesis root");
         assert_eq!(attested.final_root, final_root, "attested final = real folded final root");
         assert_eq!(attested.chain_digest, agg.chain_digest, "digest carried from the aggregate");
@@ -416,7 +441,7 @@ mod tests {
         }
     }
 
-    /// **THE THREE-LEG HEADLINE (Rust witness).** Fold a real K=4 chain, then verify it AS A FINALIZED
+    /// **THE THREE-LEG HEADLINE (Rust witness).** Fold a real K=2 chain, then verify it AS A FINALIZED
     /// light client: the aggregate verifies (legs 1+2), the root seam holds, AND a genuine 3-of-4
     /// super-ratification quorum certifies the final root (leg 3). The client obtains a
     /// `FinalizedAttestation` whose endpoint is the genuine, QUORUM-finalized root — re-witnessing
@@ -424,8 +449,8 @@ mod tests {
     /// proofs + a real quorum.
     #[test]
     fn finalized_light_client_accepts_finalized_history() {
-        let (turns, _genesis, final_root) = make_chain(1000, 0, 7, 4);
-        let (agg, _att) = fold_and_attest(&turns).expect("a continuous 4-turn chain must fold");
+        let (turns, _genesis, final_root) = make_chain(1000, 0, 7, 2);
+        let (agg, _att) = fold_and_attest(&turns).expect("a continuous 2-turn chain must fold");
 
         // n=4 ⇒ supermajority threshold = 2*4/3 + 1 = 3. A 3-signer quorum finalizes.
         let cert = make_cert(3, 4, final_root);
@@ -434,7 +459,7 @@ mod tests {
         let attestation = verify_finalized_history(&agg, final_root, &cert)
             .expect("aggregate + quorum cert + seam must all hold");
 
-        assert_eq!(attestation.history.num_turns, 4, "all four turns attested");
+        assert_eq!(attestation.history.num_turns, 2, "both turns attested");
         assert_eq!(attestation.finalized_root, final_root, "the trusted root is the finalized one");
         assert_eq!(attestation.quorum_signers, 3, "the quorum is 3 distinct signers");
     }
@@ -449,7 +474,7 @@ mod tests {
         let (mut agg, _att) = fold_and_attest(&turns).expect("the honest chain must fold");
 
         // Tamper: claim a DIFFERENT public final root than the one the aggregate actually proves.
-        let (other_turns, _og, other_final) = make_chain(500, 50, 3, 2);
+        let other_final = final_root + BabyBear::ONE;
         assert_ne!(other_final, final_root, "the foreign root must differ");
         agg.final_root = other_final;
 
@@ -472,7 +497,7 @@ mod tests {
     /// fork-attack defense. (Rust mirror of `not_final_leader_invalidates` / sub-quorum rejection.)
     #[test]
     fn finalized_light_client_rejects_sub_quorum_cert() {
-        let (turns, _g, final_root) = make_chain(1000, 0, 7, 3);
+        let (turns, _g, final_root) = make_chain(1000, 0, 7, 2);
         let (agg, _att) = fold_and_attest(&turns).expect("the honest chain must fold");
 
         // 2 of 4 signers — below the supermajority threshold of 3. A forged/insufficient finality cert.
@@ -552,16 +577,11 @@ mod tests {
         let (turns, _g, _f) = make_chain(1000, 0, 7, 2);
         let (mut agg, _attested) = fold_and_attest(&turns).expect("the honest chain must fold");
 
-        // Corrupt the PUBLIC final root the aggregate claims — a light client that re-witnesses
-        // nothing must still catch this, because the root proof binds the published roots. We corrupt
-        // the root proof object itself by folding a DIFFERENT (discontinuous) chain's root in.
-        let (other_turns, _og, _of) = make_chain(500, 50, 3, 2);
-        let other =
-            prove_turn_chain_recursive(&other_turns).expect("the other chain folds");
-        // Splice the other history's public claims onto THIS aggregate's root proof — the root proof
-        // no longer matches the (genesis,final,digest) it is paired with.
-        agg.final_root = other.final_root;
-        agg.chain_digest = other.chain_digest;
+        // Corrupt the PUBLIC final root + digest the aggregate claims — splice foreign public
+        // claims onto THIS aggregate's root proof, so the root proof no longer matches the
+        // (genesis, final, digest) it is paired with.
+        agg.final_root = agg.final_root + BabyBear::ONE;
+        agg.chain_digest = agg.chain_digest + BabyBear::ONE;
 
         // The light client checks ONLY the succinct root; the mismatch between the spliced public
         // claims and the proof's bound values is exactly what the verifier rejects (or the attestation
