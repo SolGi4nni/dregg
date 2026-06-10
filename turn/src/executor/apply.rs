@@ -628,7 +628,9 @@ impl TurnExecutor {
             // action proves the cell owner consents to share access
             // to their own cell. Attenuation against an implicit
             // self-cap is always satisfied (the implicit cap is the
-            // strongest possible).
+            // strongest possible ON EVERY AXIS: permissions ⊤, mask
+            // EFFECT_ALL, expiry unbounded) — any requested mask/expiry
+            // is an attenuation of it.
         } else {
             let held_cap = from_cell
                 .capabilities
@@ -643,6 +645,7 @@ impl TurnExecutor {
                     )
                 })?;
 
+            // B2 non-amp, axis 1 — AuthRequired lattice: granted ⊑ held.
             if !dregg_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
                 return Err((
                     TurnError::DelegationDenied {
@@ -652,20 +655,72 @@ impl TurnExecutor {
                     path.to_vec(),
                 ));
             }
+
+            // B2 non-amp, axis 2 — facet SUBMASK: the granted effect mask
+            // must be a bitwise subset of the held mask (`None` = EFFECT_ALL,
+            // matching the circuit's Phase-B2 leaf encoding in
+            // `cap_ref_to_leaf`). Previously unchecked: a holder of a
+            // TRANSFER-only facet could grant an all-effects cap.
+            let held_mask = held_cap.allowed_effects.unwrap_or(EFFECT_ALL);
+            let granted_mask = cap.allowed_effects.unwrap_or(EFFECT_ALL);
+            if !is_facet_attenuation(held_mask, granted_mask) {
+                return Err((
+                    TurnError::DelegationDenied {
+                        parent: *from,
+                        child_target: *to,
+                    },
+                    path.to_vec(),
+                ));
+            }
+
+            // B2 non-amp, axis 3 — EXPIRY-MONOTONE: granted ⊑ held over the
+            // expiry lattice (`None` = ⊤ unbounded; finite shrink-only,
+            // matching the circuit's monotone-expiry GTE gate). A holder of
+            // a height-bounded cap must not grant an unbounded (or
+            // later-expiring) one.
+            if let Some(held_exp) = held_cap.expires_at {
+                match cap.expires_at {
+                    None => {
+                        return Err((
+                            TurnError::DelegationDenied {
+                                parent: *from,
+                                child_target: *to,
+                            },
+                            path.to_vec(),
+                        ));
+                    }
+                    Some(granted_exp) if granted_exp > held_exp => {
+                        return Err((
+                            TurnError::DelegationDenied {
+                                parent: *from,
+                                child_target: *to,
+                            },
+                            path.to_vec(),
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
         }
 
         let to_cell = ledger
             .get_mut(to)
             .ok_or_else(|| (TurnError::CellNotFound { id: *to }, path.to_vec()))?;
-        let granted_slot = to_cell
-            .capabilities
-            .grant_with_breadstuff(cap.target, cap.permissions.clone(), cap.breadstuff)
-            .ok_or_else(|| {
-                (
-                    TurnError::CapabilitySlotOverflow { cell: *to },
-                    path.to_vec(),
-                )
-            })?;
+        // B2: install the entry FAITHFULLY — carrying the granted
+        // `allowed_effects` + `expires_at` (+ breadstuff + R7 stored_epoch)
+        // just gated above. The old install path
+        // (`grant_with_breadstuff`) silently widened every grant to
+        // `allowed_effects: None, expires_at: None` — amplifying on the mask
+        // and expiry axes at install time even when the wire grant was
+        // properly attenuated. The circuit (Phase B2) already enforces the
+        // submask + lattice + expiry-monotone semantics; this makes the
+        // executor MATCH it.
+        let granted_slot = to_cell.capabilities.grant_ref(cap).ok_or_else(|| {
+            (
+                TurnError::CapabilitySlotOverflow { cell: *to },
+                path.to_vec(),
+            )
+        })?;
         journal.record_grant_capability(*to, granted_slot);
         Ok(())
     }
@@ -2513,6 +2568,33 @@ impl TurnExecutor {
             .get(&cap_target)
             .ok_or_else(|| (TurnError::CellNotFound { id: cap_target }, path.to_vec()))?;
 
+        // R7 epoch-at-retrieval (DREGG3 §6): a STORED capability must not
+        // survive its grantor's revocation. When the cap carries a
+        // delegation-snapshot stamp (`stored_epoch: Some(e)`), re-check it
+        // against the grantor's CURRENT delegation_epoch at exercise time.
+        // The grantor of authority over `cap_target` is `cap_target` itself
+        // (the self-grant origin; its epoch is bumped by its
+        // `RevokeDelegation`s) — conservatively, ANY grantor epoch-bump
+        // stales earlier-stored caps; the holder's duty is to refresh.
+        //
+        // ⚠ MIGRATION WINDOW (loud): `stored_epoch: None` = a direct grant
+        // OR a pre-R7 persisted cap — both are EXEMPT from this check until
+        // re-granted with a snapshot stamp.
+        if let Some(stored) = cap.stored_epoch {
+            let current_epoch = target_cell_ref.state.delegation_epoch();
+            if stored < current_epoch {
+                return Err((
+                    TurnError::CapabilityStale {
+                        actor: *actor,
+                        grantor: cap_target,
+                        stored_epoch: stored,
+                        current_epoch,
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
         // Permission check: the capability's permissions must allow the operations.
         // If the capability requires Impossible, reject.
         if matches!(cap.permissions, dregg_cell::AuthRequired::Impossible) {
@@ -2775,7 +2857,13 @@ impl TurnExecutor {
             )
         })?;
         let seal_pair = dregg_cell::SealPair::sealer_only(sealer_public);
-        let sealed = seal_pair.seal(capability);
+        // R7 epoch-at-retrieval: stamp the box with the SEALER's identity and
+        // its delegation_epoch at seal time (both bound into the box
+        // commitment). `apply_unseal` rejects the box once the sealer's epoch
+        // advances — a cap sealed BEFORE a revocation cannot be unsealed
+        // AFTER it.
+        let seal_epoch = actor_cell.state.delegation_epoch();
+        let sealed = seal_pair.seal_stamped(capability, *actor, seal_epoch);
         // Store seal commitment in actor's field 7 for on-chain discoverability.
         let actor_mut = ledger
             .get_mut(actor)
@@ -2884,6 +2972,37 @@ impl TurnExecutor {
             return Err((TurnError::CellNotFound { id: *recipient }, path.to_vec()));
         }
 
+        // R7 epoch-at-retrieval (DREGG3 §6): a cap sealed into a box BEFORE a
+        // revocation must not be unsealable AFTER it. When the box carries an
+        // epoch stamp (`sealer: Some`, bound into the box commitment — the
+        // commitment recheck inside `unseal` below authenticates it), reject
+        // iff the stamp is older than the sealer's CURRENT delegation_epoch.
+        //
+        // ⚠ MIGRATION WINDOW (loud): unstamped boxes (`sealer: None` — every
+        // box sealed before R7, plus client-side `SealPair::seal`) are EXEMPT
+        // from this check; they keep the legacy unchecked semantics until
+        // re-sealed through the stamped path. Residual (W2
+        // `no_forge_from_storage`): an unsealer-secret holder can re-seal
+        // content with a forged-fresh stamp; closing that needs the stamp
+        // pinned to chain state (sealer field-7 commitment / circuit witness).
+        if let Some(sealer_id) = sealed_box.sealer {
+            let sealer_cell = ledger
+                .get(&sealer_id)
+                .ok_or_else(|| (TurnError::CellNotFound { id: sealer_id }, path.to_vec()))?;
+            let current_epoch = sealer_cell.state.delegation_epoch();
+            if sealed_box.seal_epoch < current_epoch {
+                return Err((
+                    TurnError::CapabilityStale {
+                        actor: *actor,
+                        grantor: sealer_id,
+                        stored_epoch: sealed_box.seal_epoch,
+                        current_epoch,
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
         let unsealer_cap_id = Self::seal_capability_id(&sealed_box.pair_id, false);
         let actor_cell = ledger
             .get(actor)
@@ -2923,9 +3042,14 @@ impl TurnExecutor {
                 let recipient_cell = ledger
                     .get_mut(recipient)
                     .ok_or_else(|| (TurnError::CellNotFound { id: *recipient }, path.to_vec()))?;
+                // Install FAITHFULLY (`grant_ref`): preserve the unsealed
+                // cap's `allowed_effects` + `expires_at` (+ R7 stored_epoch).
+                // The old `grant_with_breadstuff` install silently WIDENED a
+                // faceted/expiring sealed cap to unrestricted/unbounded on
+                // unseal — the same B2 runtime-laxity hole as grant.
                 let granted_slot = recipient_cell
                     .capabilities
-                    .grant_with_breadstuff(cap.target, cap.permissions.clone(), cap.breadstuff)
+                    .grant_ref(&cap)
                     .ok_or_else(|| {
                         (
                             TurnError::CapabilitySlotOverflow { cell: *recipient },

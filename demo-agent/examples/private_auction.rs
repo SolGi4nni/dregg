@@ -347,6 +347,7 @@ fn main() {
         breadstuff: Some(artwork_hash),
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     });
     let sealed_bytes = postcard::to_stdvec(&sealed_art).unwrap();
 

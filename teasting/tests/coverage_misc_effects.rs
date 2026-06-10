@@ -284,6 +284,7 @@ fn seal_stores_commitment_in_field7() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     // No prior turns for this actor_id, so no previous_receipt_hash needed.
@@ -341,6 +342,7 @@ fn unseal_round_trips_and_grants_capability_to_recipient() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
     let sealed = pair.seal(&cap_to_seal);
 

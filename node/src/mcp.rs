@@ -2553,6 +2553,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
     let cap_slot = cap.slot;
 
@@ -3042,6 +3043,7 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         breadstuff: None,
         expires_at: restrictions.not_after.map(|t| t as u64),
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     let effect = dregg_turn::Effect::GrantCapability {
@@ -6062,6 +6064,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
                 breadstuff: None,
                 expires_at: None,
                 allowed_effects: None,
+                stored_epoch: None,
             };
             dregg_turn::Effect::GrantCapability {
                 from: from_cell,

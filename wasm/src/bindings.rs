@@ -3651,6 +3651,7 @@ fn parse_effects(raw_actions: &[RawAction], agent_cell_id: &CellId) -> Result<Ve
                     breadstuff: None,
                     expires_at: None,
                     allowed_effects: None,
+                    stored_epoch: None,
                 };
                 effects.push(Effect::GrantCapability { from, to, cap });
             }

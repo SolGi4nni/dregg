@@ -171,6 +171,7 @@ fn check_grant_capability() -> Result<(), String> {
                 breadstuff: None,
                 expires_at: None,
                 allowed_effects: None,
+                stored_epoch: None,
             },
         })
         .build();

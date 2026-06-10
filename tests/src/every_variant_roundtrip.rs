@@ -87,6 +87,7 @@ fn all_effect_variants() -> Vec<Variant> {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     vec![
@@ -202,6 +203,8 @@ fn all_effect_variants() -> Vec<Variant> {
                     commitment: [0u8; 32],
                     ciphertext: vec![],
                     nonce: [0u8; 32],
+                    sealer: None,
+                    seal_epoch: 0,
                 },
                 recipient: cell_a,
             },

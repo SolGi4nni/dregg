@@ -113,6 +113,9 @@ fn check_all_14_effect_types() -> Result<(), String> {
                 a[0] = BabyBear::new(7777);
                 a
             },
+            // Legacy recipient-install direction (no Phase-B2 granter-side
+            // non-amp witness) — the pre-B2 row shape this preflight covers.
+            phase_b: None,
         },
         Effect::NoteSpend {
             nullifier: BabyBear::new(1234),

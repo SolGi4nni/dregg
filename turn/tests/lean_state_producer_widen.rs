@@ -475,6 +475,7 @@ fn grant_capability_is_a_cap_fidelity_swap_gap() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
     let turn =
         single_effect_turn(a_id, a_id, 0, Effect::GrantCapability { from: a_id, to: b_id, cap });

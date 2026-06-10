@@ -674,6 +674,7 @@ fn differential_grant_cap() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
     let effect = Effect::GrantCapability {
         from: actor,

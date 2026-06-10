@@ -1490,6 +1490,7 @@ fn test_grant_and_use_capability() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2387,6 +2388,7 @@ fn test_grant_capability_amplification_blocked() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2454,6 +2456,7 @@ fn test_grant_capability_attenuation_only() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);
@@ -2519,6 +2522,7 @@ fn test_grant_capability_attenuation_succeeds() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
 
     let mut builder = TurnBuilder::new(agent_id, 0);

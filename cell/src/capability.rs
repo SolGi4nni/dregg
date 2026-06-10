@@ -69,6 +69,27 @@ pub struct CapabilityRef {
     /// further restrict (bitwise subset), never amplify.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_effects: Option<EffectMask>,
+    /// R7 (epoch-at-retrieval): the grantor's `delegation_epoch` captured when
+    /// this capability was STORED (delegation-snapshot time). `None` = a
+    /// direct grant — exempt from the freshness re-check. `Some(e)` = the
+    /// executor's `ExerciseViaCapability` re-checks
+    /// `e >= grantor.delegation_epoch()` at exercise time, so a stored cap
+    /// cannot survive its grantor's revocation (any grantor epoch-bump
+    /// conservatively stales earlier-stored caps; the holder's duty is to
+    /// refresh). The grantor of authority over `target` IS `target` (the
+    /// self-grant origin; `target.delegation_epoch` is bumped by `target`'s
+    /// `RevokeDelegation`s).
+    ///
+    /// ⚠ MIGRATION WINDOW (loud, per DREGG3 §6 R7): `#[serde(default)]`
+    /// means legacy persisted caps decode as `None` and are EXEMPT from the
+    /// check. Until re-granted/refreshed, pre-R7 stored caps keep the old
+    /// (unchecked) semantics.
+    ///
+    /// NOT part of the canonical 7-field cap leaf (`cap_ref_to_leaf`) this
+    /// phase — it is an executor-side gate; absorbing it into the circuit's
+    /// cap-root is the Phase-C/W2 follow-up (a VK bump).
+    #[serde(default)]
+    pub stored_epoch: Option<u64>,
 }
 
 /// An attenuated capability without a slot assignment.
@@ -94,6 +115,10 @@ pub struct AttenuatedCap {
     /// Optional facet mask (same semantics as CapabilityRef::allowed_effects).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_effects: Option<EffectMask>,
+    /// R7 stored-epoch (same semantics as `CapabilityRef::stored_epoch`).
+    /// Attenuation PRESERVES freshness metadata — narrowing never refreshes.
+    #[serde(default)]
+    pub stored_epoch: Option<u64>,
 }
 
 /// The c-list: the set of capabilities a cell holds.
@@ -135,6 +160,7 @@ impl CapabilitySet {
             breadstuff,
             expires_at: None,
             allowed_effects: None,
+            stored_epoch: None,
         });
         Some(slot)
     }
@@ -157,6 +183,7 @@ impl CapabilitySet {
             breadstuff: None,
             expires_at: Some(expires_at),
             allowed_effects: None,
+            stored_epoch: None,
         });
         Some(slot)
     }
@@ -181,6 +208,56 @@ impl CapabilitySet {
             breadstuff,
             expires_at,
             allowed_effects: None,
+            stored_epoch: None,
+        });
+        Some(slot)
+    }
+
+    /// Grant a capability preserving EVERY field of `cap` except the slot
+    /// (which this c-list assigns). The faithful install primitive: the
+    /// executor's `GrantCapability` / `Unseal` arms use it so the installed
+    /// entry carries the genuinely-attenuated `allowed_effects` + `expires_at`
+    /// (+ `breadstuff` + R7 `stored_epoch`) instead of silently widening to
+    /// `None`/`None` (the B2 runtime-laxity hole).
+    ///
+    /// Returns the assigned slot number, or `None` if the slot counter would
+    /// overflow.
+    pub fn grant_ref(&mut self, cap: &CapabilityRef) -> Option<u32> {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        self.refs.push(CapabilityRef {
+            target: cap.target,
+            slot,
+            permissions: cap.permissions.clone(),
+            breadstuff: cap.breadstuff,
+            expires_at: cap.expires_at,
+            allowed_effects: cap.allowed_effects,
+            stored_epoch: cap.stored_epoch,
+        });
+        Some(slot)
+    }
+
+    /// Grant a capability carrying an R7 delegation-snapshot epoch: the
+    /// grantor's `delegation_epoch` at store time. Exercise via the executor
+    /// re-checks `stored_epoch >= grantor.delegation_epoch()` so the stored
+    /// cap dies with its grantor's next revocation.
+    pub fn grant_snapshot(
+        &mut self,
+        target: CellId,
+        permissions: AuthRequired,
+        breadstuff: Option<[u8; 32]>,
+        stored_epoch: u64,
+    ) -> Option<u32> {
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        self.refs.push(CapabilityRef {
+            target,
+            slot,
+            permissions,
+            breadstuff,
+            expires_at: None,
+            allowed_effects: None,
+            stored_epoch: Some(stored_epoch),
         });
         Some(slot)
     }
@@ -208,6 +285,7 @@ impl CapabilitySet {
             breadstuff: None,
             expires_at: None,
             allowed_effects: Some(effect_mask),
+            stored_epoch: None,
         });
         Some(slot)
     }
@@ -271,6 +349,7 @@ impl CapabilitySet {
             breadstuff: existing.breadstuff,
             expires_at: existing.expires_at,
             allowed_effects: existing.allowed_effects,
+            stored_epoch: existing.stored_epoch,
         })
     }
 
@@ -306,6 +385,7 @@ impl CapabilitySet {
             breadstuff: existing.breadstuff,
             expires_at: existing.expires_at,
             allowed_effects: Some(effect_mask),
+            stored_epoch: existing.stored_epoch,
         })
     }
 
@@ -399,6 +479,7 @@ impl CapabilitySet {
             breadstuff: cap.breadstuff,
             expires_at: cap.expires_at,
             allowed_effects: cap.allowed_effects,
+            stored_epoch: cap.stored_epoch,
         });
         Some(slot)
     }

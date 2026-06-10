@@ -736,6 +736,7 @@ mod tests {
                 breadstuff: None,
                 expires_at: None,
                 allowed_effects: None,
+                stored_epoch: None,
             },
         };
         let turn0 = make_test_turn(id_a, 0, vec![grant_effect]);
@@ -1283,6 +1284,7 @@ mod tests {
                 breadstuff: None,
                 expires_at: None,
                 allowed_effects: None,
+                stored_epoch: None,
             },
         };
         let turn_a = make_test_turn(id_alice, 0, vec![grant_effect]);

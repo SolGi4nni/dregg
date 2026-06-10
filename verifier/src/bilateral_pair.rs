@@ -593,6 +593,7 @@ mod tests {
                     expires_at: None,
                     breadstuff: None,
                     allowed_effects: None,
+                    stored_epoch: None,
                 },
             )
             .build();

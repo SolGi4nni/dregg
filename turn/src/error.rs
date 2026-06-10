@@ -151,6 +151,22 @@ pub enum TurnError {
         tripped_at: u64,
     },
 
+    /// R7 (epoch-at-retrieval): a STORED capability failed the freshness
+    /// re-check — its captured epoch (`stored_epoch` on a c-list entry /
+    /// `seal_epoch` on a sealed box) is older than the grantor's current
+    /// `delegation_epoch`. A cap stored before a revocation must not
+    /// survive it: storage (slots, seal-boxes) must not launder freshness.
+    CapabilityStale {
+        actor: CellId,
+        /// The cell whose `delegation_epoch` advanced past the stamp (the
+        /// authority grantor: the cap's target, or the box's sealer).
+        grantor: CellId,
+        /// The epoch captured at store/seal time.
+        stored_epoch: u64,
+        /// The grantor's current delegation epoch.
+        current_epoch: u64,
+    },
+
     /// The capability slot counter overflowed (2^32 grants exhausted).
     CapabilitySlotOverflow { cell: CellId },
 
@@ -559,6 +575,19 @@ impl core::fmt::Display for TurnError {
                     "capability revoked: actor {actor}'s delegation revoked via channel \
                      {:02x}{:02x}... (tripped_at={tripped_at})",
                     channel_id[0], channel_id[1]
+                )
+            }
+            TurnError::CapabilityStale {
+                actor,
+                grantor,
+                stored_epoch,
+                current_epoch,
+            } => {
+                write!(
+                    f,
+                    "stale stored capability: actor {actor}'s cap was stored at grantor \
+                     {grantor}'s delegation epoch {stored_epoch}, but the grantor has since \
+                     revoked (current epoch {current_epoch}); refresh the capability"
                 )
             }
             TurnError::CapabilitySlotOverflow { cell } => {

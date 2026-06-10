@@ -876,6 +876,7 @@ fn ledger_delta_capability_grant_and_revoke() {
         breadstuff: None,
         expires_at: None,
         allowed_effects: None,
+        stored_epoch: None,
     };
     let delta = LedgerDelta {
         created: Vec::new(),

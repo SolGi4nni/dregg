@@ -20,6 +20,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
 use crate::capability::CapabilityRef;
+use crate::id::CellId;
 
 /// The public half of a seal pair. Safe to serialize and share.
 /// Contains only the information needed to seal (encrypt) capabilities.
@@ -67,6 +68,28 @@ pub struct SealedBox {
     pub ciphertext: Vec<u8>,
     /// Nonce used for encryption (32 bytes generated; first 12 used for AEAD, full value in commitment).
     pub nonce: [u8; 32],
+    /// R7 (epoch-at-retrieval): the SEALING cell's identity. `Some` ⇒ the box
+    /// is epoch-stamped: `seal_epoch` was captured from this cell's
+    /// `delegation_epoch()` at seal time, and BOTH stamp fields are absorbed
+    /// into the box commitment (so a third party without the plaintext cannot
+    /// strip or alter the stamp). The executor's `apply_unseal` rejects the
+    /// box (`TurnError::CapabilityStale`) iff
+    /// `seal_epoch < sealer.delegation_epoch()` — a cap sealed BEFORE a
+    /// revocation can no longer be unsealed AFTER it.
+    ///
+    /// ⚠ MIGRATION WINDOW (loud, per DREGG3 §6 R7): `#[serde(default)]` —
+    /// legacy boxes decode as `None`/`0` and are EXEMPT from the staleness
+    /// check (old commitment formula, no stamp). Also note the residual:
+    /// whoever holds the unsealer secret can re-seal arbitrary content with a
+    /// fresh stamp; pinning the stamp to chain state (the sealer's field-7
+    /// commitment / in-circuit witness) is the W2
+    /// `no_forge_from_storage` follow-up.
+    #[serde(default)]
+    pub sealer: Option<CellId>,
+    /// R7: the sealer's `delegation_epoch()` at seal time (`0` when legacy /
+    /// unstamped; only meaningful when `sealer` is `Some`).
+    #[serde(default)]
+    pub seal_epoch: u64,
 }
 
 /// Errors that can occur in seal/unseal operations.
@@ -166,7 +189,28 @@ impl SealPair {
         *hasher.finalize().as_bytes()
     }
 
+    /// Legacy / unstamped seal: no R7 epoch stamp (`sealer: None`). Boxes
+    /// produced this way fall in the R7 MIGRATION WINDOW — the executor's
+    /// `apply_unseal` cannot freshness-check them and lets them through.
+    /// Prefer [`SealPair::seal_stamped`].
     pub fn seal(&self, cap: &CapabilityRef) -> SealedBox {
+        self.seal_inner(cap, None, 0)
+    }
+
+    /// R7 epoch-stamped seal: records the sealing cell's identity and its
+    /// `delegation_epoch()` at seal time, binding both into the box
+    /// commitment. `apply_unseal` rejects the box once the sealer's epoch
+    /// advances past `seal_epoch` (revocation kills sealed-away caps).
+    pub fn seal_stamped(&self, cap: &CapabilityRef, sealer: CellId, seal_epoch: u64) -> SealedBox {
+        self.seal_inner(cap, Some(sealer), seal_epoch)
+    }
+
+    fn seal_inner(
+        &self,
+        cap: &CapabilityRef,
+        sealer: Option<CellId>,
+        seal_epoch: u64,
+    ) -> SealedBox {
         let mut eph_bytes = [0u8; 32];
         getrandom::fill(&mut eph_bytes).expect("getrandom failed");
         let ephemeral_secret = StaticSecret::from(eph_bytes);
@@ -180,7 +224,13 @@ impl SealPair {
         );
         let nonce = Self::generate_nonce(cap, ephemeral_public.as_bytes());
         let plaintext = Self::serialize_capability(cap);
-        let commitment = Self::compute_commitment(&plaintext, ephemeral_public.as_bytes(), &nonce);
+        let commitment = Self::compute_commitment(
+            &plaintext,
+            ephemeral_public.as_bytes(),
+            &nonce,
+            sealer.as_ref(),
+            seal_epoch,
+        );
         let ciphertext = Self::encrypt(&enc_key, &nonce, &plaintext);
         SealedBox {
             pair_id: self.id,
@@ -188,6 +238,8 @@ impl SealPair {
             commitment,
             ciphertext,
             nonce,
+            sealer,
+            seal_epoch,
         }
     }
 
@@ -208,8 +260,17 @@ impl SealPair {
         );
         let plaintext = Self::decrypt(&enc_key, &sealed.nonce, &sealed.ciphertext)
             .ok_or(SealError::DecryptionFailed)?;
-        let expected_commitment =
-            Self::compute_commitment(&plaintext, &sealed.ephemeral_public, &sealed.nonce);
+        // Recompute the commitment INCLUDING the R7 stamp the box claims:
+        // tampering with `sealer`/`seal_epoch` on a stamped box (without the
+        // plaintext) breaks this equality. Legacy boxes (`sealer: None`) use
+        // the original v2 formula byte-identically.
+        let expected_commitment = Self::compute_commitment(
+            &plaintext,
+            &sealed.ephemeral_public,
+            &sealed.nonce,
+            sealed.sealer.as_ref(),
+            sealed.seal_epoch,
+        );
         if expected_commitment != sealed.commitment {
             return Err(SealError::CommitmentMismatch);
         }
@@ -231,8 +292,13 @@ impl SealPair {
         let Some(plaintext) = Self::decrypt(&enc_key, &sealed.nonce, &sealed.ciphertext) else {
             return false;
         };
-        let expected =
-            Self::compute_commitment(&plaintext, &sealed.ephemeral_public, &sealed.nonce);
+        let expected = Self::compute_commitment(
+            &plaintext,
+            &sealed.ephemeral_public,
+            &sealed.nonce,
+            sealed.sealer.as_ref(),
+            sealed.seal_epoch,
+        );
         expected == sealed.commitment
     }
 
@@ -251,12 +317,24 @@ impl SealPair {
         plaintext: &[u8],
         ephemeral_public: &[u8; 32],
         nonce: &[u8; 32],
+        sealer: Option<&CellId>,
+        seal_epoch: u64,
     ) -> [u8; 32] {
         let cap_hash = blake3::hash(plaintext);
         let mut hasher = blake3::Hasher::new_derive_key("dregg-seal commitment v2");
         hasher.update(cap_hash.as_bytes());
         hasher.update(ephemeral_public);
         hasher.update(nonce);
+        // R7: bind the epoch stamp. Legacy (`sealer: None`) boxes absorb
+        // NOTHING extra, keeping the pre-R7 commitment byte-identical so old
+        // boxes still verify (the migration window). Stamped boxes absorb a
+        // domain byte + sealer id + epoch so the stamp cannot be stripped or
+        // altered without the plaintext.
+        if let Some(sealer_id) = sealer {
+            hasher.update(b"r7-epoch-stamp");
+            hasher.update(sealer_id.as_bytes());
+            hasher.update(&seal_epoch.to_le_bytes());
+        }
         *hasher.finalize().as_bytes()
     }
 
@@ -282,13 +360,17 @@ impl SealPair {
     }
 
     fn serialize_capability(cap: &CapabilityRef) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(85);
+        let mut buf = Vec::with_capacity(94);
+        // Version 5: includes the R7 stored_epoch (Option<u64>) — storage
+        //   must not launder freshness: a snapshot-stamped cap sealed into a
+        //   box must come back out still snapshot-stamped, not silently
+        //   widened to a direct (exempt) grant.
         // Version 4: tier byte (5) for `AuthRequired::Custom` is followed by
         //   the 32-byte vk_hash, so that two custom auth modes round-trip
         //   distinctly through the seal.
         // Version 3: includes allowed_effects facet mask.
         // Version 2 added expires_at. Version 1 was the original layout.
-        buf.push(4u8);
+        buf.push(5u8);
         buf.extend_from_slice(cap.target.as_bytes());
         buf.extend_from_slice(&cap.slot.to_le_bytes());
         let perm_byte = match &cap.permissions {
@@ -333,6 +415,14 @@ impl SealPair {
             }
             None => buf.push(0),
         }
+        // Version 5: R7 stored_epoch round-trip.
+        match cap.stored_epoch {
+            Some(e) => {
+                buf.push(1);
+                buf.extend_from_slice(&e.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
         buf
     }
 
@@ -343,11 +433,12 @@ impl SealPair {
             });
         }
 
-        // Version dispatch. Version 4 admits AuthRequired::Custom (tier byte
-        //   5, followed by a 32-byte vk_hash). Version 3 added the
-        //   allowed_effects facet mask. Version 2 added expires_at. Version
-        //   1 (implicit) had neither.
+        // Version dispatch. Version 5 added the R7 stored_epoch. Version 4
+        //   admits AuthRequired::Custom (tier byte 5, followed by a 32-byte
+        //   vk_hash). Version 3 added the allowed_effects facet mask.
+        //   Version 2 added expires_at. Version 1 (implicit) had neither.
         let (version, payload) = match data[0] {
+            5 => (5u8, &data[1..]),
             4 => (4u8, &data[1..]),
             3 => (3u8, &data[1..]),
             2 => (2u8, &data[1..]),
@@ -496,6 +587,48 @@ impl SealPair {
         } else {
             None
         };
+
+        // Parse stored_epoch (version 5+). Silently absent in v1–v4 payloads
+        // (pre-R7) — those decode as `None` = direct grant, exempt from the
+        // retrieval-epoch re-check (the R7 migration window).
+        let stored_epoch = if version >= 5 && offset < payload.len() {
+            match payload[offset] {
+                0 => {
+                    offset += 1;
+                    None
+                }
+                1 => {
+                    offset += 1;
+                    if payload.len() < offset + 8 {
+                        return Err(SealError::DeserializationFailed {
+                            reason: format!(
+                                "data too short for stored_epoch: {} bytes",
+                                payload.len()
+                            ),
+                        });
+                    }
+                    let e = u64::from_le_bytes([
+                        payload[offset],
+                        payload[offset + 1],
+                        payload[offset + 2],
+                        payload[offset + 3],
+                        payload[offset + 4],
+                        payload[offset + 5],
+                        payload[offset + 6],
+                        payload[offset + 7],
+                    ]);
+                    offset += 8;
+                    Some(e)
+                }
+                other => {
+                    return Err(SealError::DeserializationFailed {
+                        reason: format!("invalid stored_epoch discriminant: {other}"),
+                    });
+                }
+            }
+        } else {
+            None
+        };
         let _ = offset; // silence dead-store warning at trailing parse
 
         Ok(CapabilityRef {
@@ -505,6 +638,7 @@ impl SealPair {
             breadstuff,
             expires_at,
             allowed_effects,
+            stored_epoch,
         })
     }
 
@@ -567,6 +701,7 @@ mod tests {
             breadstuff: None,
             expires_at: None,
             allowed_effects: None,
+            stored_epoch: None,
         }
     }
     fn make_test_cap_with_breadstuff(seed: u8) -> CapabilityRef {
@@ -583,6 +718,7 @@ mod tests {
             breadstuff: Some(bs),
             expires_at: None,
             allowed_effects: None,
+            stored_epoch: None,
         }
     }
 
@@ -695,6 +831,7 @@ mod tests {
                 breadstuff: None,
                 expires_at: None,
                 allowed_effects: None,
+                stored_epoch: None,
             };
             assert_eq!(pair.unseal(&pair.seal(&cap)).unwrap().permissions, perm);
         }
@@ -769,6 +906,7 @@ mod tests {
             breadstuff: None,
             expires_at: Some(12345),
             allowed_effects: Some(EFFECT_TRANSFER | EFFECT_EMIT_EVENT),
+            stored_epoch: None,
         };
         let sealed = pair.seal(&cap);
         let unsealed = pair.unseal(&sealed).unwrap();
@@ -802,6 +940,77 @@ mod tests {
         let sealed = pair.seal(&cap);
         let unsealed = pair.unseal(&sealed).unwrap();
         assert_eq!(unsealed.allowed_effects, Some(0));
+    }
+
+    /// R7: `stored_epoch` must round-trip through seal/unseal (codec v5).
+    /// Storage must not launder freshness — a snapshot-stamped cap must come
+    /// back out still stamped, never widened to a direct (exempt) grant.
+    #[test]
+    fn stored_epoch_round_trips_through_seal_unseal() {
+        let pair = test_seal_pair(23);
+        let mut cap = make_test_cap(50);
+        cap.stored_epoch = Some(7);
+        let sealed = pair.seal(&cap);
+        let unsealed = pair.unseal(&sealed).unwrap();
+        assert_eq!(unsealed.stored_epoch, Some(7));
+        assert_eq!(unsealed, cap);
+
+        // None must stay None.
+        let cap2 = make_test_cap(51);
+        assert_eq!(cap2.stored_epoch, None);
+        assert_eq!(pair.unseal(&pair.seal(&cap2)).unwrap().stored_epoch, None);
+    }
+
+    /// R7: an epoch-stamped box round-trips, and TAMPERING with the stamp
+    /// (sealer or seal_epoch) breaks the commitment — the stamp cannot be
+    /// stripped back to a legacy/exempt box or refreshed to a newer epoch
+    /// without the plaintext.
+    #[test]
+    fn epoch_stamp_round_trips_and_is_tamper_evident() {
+        let pair = test_seal_pair(24);
+        let cap = make_test_cap(60);
+        let sealer = CellId::from_bytes([0xCE; 32]);
+        let sealed = pair.seal_stamped(&cap, sealer, 3);
+        assert_eq!(sealed.sealer, Some(sealer));
+        assert_eq!(sealed.seal_epoch, 3);
+        assert_eq!(pair.unseal(&sealed).unwrap(), cap);
+
+        // Strip the stamp → CommitmentMismatch.
+        let mut stripped = sealed.clone();
+        stripped.sealer = None;
+        stripped.seal_epoch = 0;
+        assert!(matches!(
+            pair.unseal(&stripped),
+            Err(SealError::CommitmentMismatch)
+        ));
+
+        // Refresh the epoch → CommitmentMismatch.
+        let mut refreshed = sealed.clone();
+        refreshed.seal_epoch = 99;
+        assert!(matches!(
+            pair.unseal(&refreshed),
+            Err(SealError::CommitmentMismatch)
+        ));
+
+        // Swap the claimed sealer → CommitmentMismatch.
+        let mut swapped = sealed;
+        swapped.sealer = Some(CellId::from_bytes([0xDD; 32]));
+        assert!(matches!(
+            pair.unseal(&swapped),
+            Err(SealError::CommitmentMismatch)
+        ));
+    }
+
+    /// R7 migration window: an UNSTAMPED (legacy-style) box keeps the
+    /// pre-R7 commitment formula and still unseals.
+    #[test]
+    fn unstamped_box_still_unseals() {
+        let pair = test_seal_pair(25);
+        let cap = make_test_cap(61);
+        let sealed = pair.seal(&cap);
+        assert_eq!(sealed.sealer, None);
+        assert_eq!(sealed.seal_epoch, 0);
+        assert_eq!(pair.unseal(&sealed).unwrap(), cap);
     }
 
     #[test]

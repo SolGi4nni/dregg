@@ -96,6 +96,7 @@ proptest! {
             breadstuff: None,
             expires_at: None,
             allowed_effects: None,
+            stored_epoch: None,
         };
         let action = Action {
             target: parent_id,

@@ -222,6 +222,7 @@ impl Mandate {
                 expires_at: None,
                 // The attenuated facet mask — only the kept rights' effect bits are exposed.
                 allowed_effects: Some(facet_mask(&self.keep)),
+                stored_epoch: None,
             },
         }
     }
