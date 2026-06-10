@@ -529,5 +529,6 @@ import Dregg2.Apps.PubsubFactory         -- W2: pubsub = shared head_seq + per-s
 import Dregg2.Apps.ObligationFactory     -- W2: the obligation family as a factory-born cell-program (bond in own bal column, escrow-shaped, no new atom)
 import Dregg2.Apps.BridgeCell            -- W2: the bridge family as a factory-born cell (lock / finalize-to-pot / cancel + safety keystones)
 import Dregg2.Apps.BountyBoardForever    -- W2 residual: BountyBoard's lifetime conservation re-lifted onto the plain recTotalAsset measure
+import Dregg2.Substrate.VerbRegistry      -- DREGG3 §2.3 made load-bearing: the reified kernel verb-set source of truth (8 survivor verbs + the 52-variant Effect cover + DOOMED→FACTORY map); total classification (exhaustive by compiler) + minimality of the 8 + non-vacuity. The anchor the executor dispatch / circuit descriptor table / deletion manifest reconcile against
 import Dregg2.Verify.ReceiptContract     -- W4/assurance: the receipt (Q) contract face — app properties provable from the receipt chain alone (light-client-grade)
 import Dregg2.AssuranceCase              -- W5: the five guarantees (Authority/Conservation/Integrity/Freshness/Unfoolability) organized BY GUARANTEE, superseding Claims' chronological journal
