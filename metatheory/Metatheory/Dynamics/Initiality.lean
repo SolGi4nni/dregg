@@ -116,8 +116,6 @@ structure StmtAlgebra (α : Type) where
   setNullifiersOp  : (RecordKernelState → List Nat) → α
   setRevokedOp     : (RecordKernelState → List Nat) → α
   setCommitmentsOp : (RecordKernelState → List Nat) → α
-  setEscrowsOp     : (RecordKernelState → List EscrowRecord) → α
-  setQueuesOp      : (RecordKernelState → List QueueRecord) → α
   setSwissOp       : (RecordKernelState → List SwissRecord) → α
   setFactoriesOp   : (RecordKernelState → List (Nat × FactoryEntry)) → α
   setSealedBoxesOp : (RecordKernelState → List SealedBoxRecord) → α
@@ -150,8 +148,6 @@ def foldStmt {α : Type} (alg : StmtAlgebra α) : RecStmt → α
   | .setNullifiers g   => alg.setNullifiersOp g
   | .setRevoked g      => alg.setRevokedOp g
   | .setCommitments g  => alg.setCommitmentsOp g
-  | .setEscrows g      => alg.setEscrowsOp g
-  | .setQueues g       => alg.setQueuesOp g
   | .setSwiss g        => alg.setSwissOp g
   | .setFactories g    => alg.setFactoriesOp g
   | .setSealedBoxes g  => alg.setSealedBoxesOp g
@@ -191,8 +187,6 @@ def interpAlgebra : StmtAlgebra StateK where
   setNullifiersOp  := fun g k => some { k with nullifiers := g k }
   setRevokedOp     := fun g k => some { k with revoked := g k }
   setCommitmentsOp := fun g k => some { k with commitments := g k }
-  setEscrowsOp     := fun g k => some { k with escrows := g k }
-  setQueuesOp      := fun g k => some { k with queues := g k }
   setSwissOp       := fun g k => some { k with swiss := g k }
   setFactoriesOp   := fun g k => some { k with factories := g k }
   setSealedBoxesOp := fun g k => some { k with sealedBoxes := g k }
@@ -240,8 +234,6 @@ structure IsFoldHom {α : Type} (alg : StmtAlgebra α) (f : RecStmt → α) : Pr
   onSetNullifiers  : ∀ g, f (.setNullifiers g) = alg.setNullifiersOp g
   onSetRevoked     : ∀ g, f (.setRevoked g) = alg.setRevokedOp g
   onSetCommitments : ∀ g, f (.setCommitments g) = alg.setCommitmentsOp g
-  onSetEscrows     : ∀ g, f (.setEscrows g) = alg.setEscrowsOp g
-  onSetQueues      : ∀ g, f (.setQueues g) = alg.setQueuesOp g
   onSetSwiss       : ∀ g, f (.setSwiss g) = alg.setSwissOp g
   onSetFactories   : ∀ g, f (.setFactories g) = alg.setFactoriesOp g
   onSetSealedBoxes : ∀ g, f (.setSealedBoxes g) = alg.setSealedBoxesOp g
@@ -266,8 +258,6 @@ theorem foldStmt_isHom {α : Type} (alg : StmtAlgebra α) : IsFoldHom alg (foldS
   onSetNullifiers _ := rfl
   onSetRevoked _ := rfl
   onSetCommitments _ := rfl
-  onSetEscrows _ := rfl
-  onSetQueues _ := rfl
   onSetSwiss _ := rfl
   onSetFactories _ := rfl
   onSetSealedBoxes _ := rfl
@@ -298,8 +288,6 @@ theorem fold_unique {α : Type} (alg : StmtAlgebra α) (f : RecStmt → α) (hf 
   | setNullifiers g => exact hf.onSetNullifiers g
   | setRevoked g => exact hf.onSetRevoked g
   | setCommitments g => exact hf.onSetCommitments g
-  | setEscrows g => exact hf.onSetEscrows g
-  | setQueues g => exact hf.onSetQueues g
   | setSwiss g => exact hf.onSetSwiss g
   | setFactories g => exact hf.onSetFactories g
   | setSealedBoxes g => exact hf.onSetSealedBoxes g

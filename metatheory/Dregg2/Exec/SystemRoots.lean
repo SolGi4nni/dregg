@@ -67,7 +67,8 @@ Option C1). Distinct, kernel-only, never reachable by a `SetField` (which addres
 namespace systemRoot
 /-- `escrows` list digest (createEscrow / refund / release / bridge-park). -/
 def ESCROW       : Nat := 0
-/-- `queues` table digest (allocate / enqueue / dequeue / resize / pipeline). FIFO order intrinsic. -/
+/-- `queues` table digest. FIFO order intrinsic. (F2a: the queue verb family dissolved into
+the factory cells; the kernel `queues` table + this root die in F2b with the VK rotation.) -/
 def QUEUE        : Nat := 1
 /-- refcount table digest (dropRef GC); was the running prover's `fields[3]` mirror. -/
 def REFCOUNT     : Nat := 2

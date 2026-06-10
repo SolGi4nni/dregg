@@ -212,8 +212,6 @@ def compileAlgebra : StmtAlgebra EffectVmDescriptor where
   setNullifiersOp  := fun _ => skipDescriptor
   setRevokedOp     := fun _ => skipDescriptor
   setCommitmentsOp := fun _ => skipDescriptor
-  setEscrowsOp     := fun _ => skipDescriptor
-  setQueuesOp      := fun _ => skipDescriptor
   setSwissOp       := fun _ => skipDescriptor
   setFactoriesOp   := fun _ => skipDescriptor
   setSealedBoxesOp := fun _ => skipDescriptor

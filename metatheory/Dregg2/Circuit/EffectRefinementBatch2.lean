@@ -20,11 +20,6 @@ import Dregg2.Circuit.Inst.createSealPairA
 import Dregg2.Circuit.Inst.makeSovereignA
 import Dregg2.Circuit.Inst.refusalA
 import Dregg2.Circuit.Inst.receiptArchiveA
-import Dregg2.Circuit.Inst.queueAllocateA
-import Dregg2.Circuit.Inst.queueDequeueA
-import Dregg2.Circuit.Inst.queueResizeA
-import Dregg2.Circuit.Inst.queueAtomicTxA
-import Dregg2.Circuit.Inst.queuePipelineStepA
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Inst.swissExportA
 import Dregg2.Circuit.Inst.enlivenRefA
@@ -63,11 +58,6 @@ open Dregg2.Circuit.Inst.CreateSealPairA
 open Dregg2.Circuit.Inst.MakeSovereignA
 open Dregg2.Circuit.Inst.RefusalA
 open Dregg2.Circuit.Inst.ReceiptArchiveA
-open Dregg2.Circuit.Inst.QueueAllocateA
-open Dregg2.Circuit.Inst.QueueDequeueA
-open Dregg2.Circuit.Inst.QueueResizeA
-open Dregg2.Circuit.Inst.QueueAtomicTxA
-open Dregg2.Circuit.Inst.QueuePipelineStepA
 open Dregg2.Circuit.Inst.PipelinedSendA
 open Dregg2.Circuit.Inst.SwissExportA
 open Dregg2.Circuit.Inst.EnlivenRefA
@@ -87,9 +77,6 @@ open Dregg2.Circuit.Spec.SealBoxOperations (UnsealSpec)
 open Dregg2.Circuit.Spec.SealPairCreation (CreateSealPairSpec)
 open Dregg2.Circuit.Spec.SovereignCommitment (MakeSovereignSpec)
 open Dregg2.Circuit.Spec.CellStateAudit (RefusalSpec ReceiptArchiveSpec)
-open Dregg2.Circuit.Spec.QueueFifoCore (QueueAllocateSpec QueueResizeSpec QueueDequeueSpec)
-open Dregg2.Circuit.Spec.QueueAtomicTx (QueueAtomicTxSpec)
-open Dregg2.Circuit.Spec.QueuePipelineFanout (QueuePipelineFanoutSpec)
 open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
 open Dregg2.Circuit.Spec.SwissExport (ExportSpec)
 open Dregg2.Circuit.Spec.SwissEnliven (EnlivenSpec)
@@ -278,45 +265,7 @@ theorem unseal_circuit_refines_fullActionStep (S : Surface2) (D : Caps → ℤ) 
       subst hbox'
       simpa [hfind] using hspec
 
-def queueAllocateCircuitStep (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState) : Prop :=
-  effect2CircuitStep S (queueAllocateE LQ cN hN hLQ) s args s'
-
-theorem queueAllocate_circuit_refines_spec (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
-    (h : queueAllocateCircuitStep S LQ cN hN hLQ s args s') :
-    QueueAllocateSpec s args.id args.actor args.cell args.cap s' :=
-  queueAllocateA_full_sound S LQ cN hN hLQ hRest hLog s args s' h
-
-def queueResizeCircuitStep (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) : Prop :=
-  effect2CircuitStep S (queueResizeE LQ cN hN hLQ) s args s'
-
-theorem queueResize_circuit_refines_spec (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueResizeA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState)
-    (h : queueResizeCircuitStep S LQ cN hN hLQ s args s') :
-    QueueResizeSpec s args.id args.newCap args.actor args.cell s' :=
-  queueResizeA_full_sound S LQ cN hN hLQ hRest hLog s args s' h
-
-def queuePipelineStepCircuitStep (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState) : Prop :=
-  effect2CircuitStep S (queuePipelineStepE LQ cN hN hLQ) s args s'
-
-theorem queuePipelineStep_circuit_refines_spec (S : Surface2) (LQ : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueuePipelineStepA.RestIffNoQueues S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState)
-    (h : queuePipelineStepCircuitStep S LQ cN hN hLQ s args s') :
-    QueuePipelineFanoutSpec s args.srcId args.owner args.sinkCells args.sinkIds s' :=
-  queuePipelineStepA_full_sound S LQ cN hN hLQ hRest hLog s args s' h
+-- (F2a) the queueAllocate/Resize/PipelineStep circuit steps DELETED with the queue family.
 
 def swissExportCircuitStep (S : Surface2) (LS : SwissRecord → ℤ) (cN : List ℤ → ℤ)
     (hN : compressNInjective cN) (hLS : listLeafInjective LS)
@@ -424,37 +373,7 @@ theorem cellDestroy_circuit_refines_spec (S : Surface2) (DLife : (CellId → Nat
 
 /-! ## §4 — triple-component effects. -/
 
-def queueDequeueCircuitStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState) : Prop :=
-  satisfiedE2 S (queueDequeueE LQ cNQ hNQ hLQ)
-    (encodeE2 S (queueDequeueE LQ cNQ hNQ hLQ) s args s')
-
-theorem queueDequeue_circuit_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueEnqueueA.RestIffNoQueuesBalEscrows S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState)
-    (h : queueDequeueCircuitStep S LQ cNQ hNQ hLQ s args s') :
-    QueueDequeueSpec s args.id args.actor args.cell s' :=
-  queueDequeueA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
-
-def queueAtomicTxCircuitStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState) : Prop :=
-  satisfiedE2 S (queueAtomicTxE LQ cNQ hNQ hLQ)
-    (encodeE2 S (queueAtomicTxE LQ cNQ hNQ hLQ) s args s')
-
-theorem queueAtomicTx_circuit_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueEnqueueA.RestIffNoQueuesBalEscrows S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState)
-    (h : queueAtomicTxCircuitStep S LQ cNQ hNQ hLQ s args s') :
-    QueueAtomicTxSpec s args.actor args.ops s' :=
-  queueAtomicTxA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
+-- (F2a) the queueDequeue/queueAtomicTx triple-component circuit steps DELETED with the queue family.
 
 /-! ## §5 — quint-component effect (factory create). -/
 

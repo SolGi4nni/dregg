@@ -57,7 +57,8 @@ inductive RecStmt where
   | setNullifiers  (g : RecordKernelState → List Nat)               -- spent-note nullifier SET
   | setRevoked     (g : RecordKernelState → List Nat)               -- revocation registry
   | setCommitments (g : RecordKernelState → List Nat)               -- note-commitment SET
-  | setQueues      (g : RecordKernelState → List QueueRecord)       -- FIFO queue side-table
+  -- (F2a) `setQueues` DELETED with the queue effect family (VerbRegistry: `.factory .queue`;
+  -- the queue side-table write re-lands as factory-cell field writes, `Apps/QueueFactory`).
   | setSwiss       (g : RecordKernelState → List SwissRecord)       -- CapTP export/GC registry
   | setFactories   (g : RecordKernelState → List (Nat × FactoryEntry))  -- published factory registry
   | setSealedBoxes (g : RecordKernelState → List SealedBoxRecord)   -- sealed-box holding store
@@ -113,7 +114,6 @@ def interp : RecStmt → RecordKernelState → Option RecordKernelState
   | .setNullifiers g,  k => some { k with nullifiers := g k }
   | .setRevoked g,     k => some { k with revoked := g k }
   | .setCommitments g, k => some { k with commitments := g k }
-  | .setQueues g,      k => some { k with queues := g k }
   | .setSwiss g,       k => some { k with swiss := g k }
   | .setFactories g,   k => some { k with factories := g k }
   | .setSealedBoxes g, k => some { k with sealedBoxes := g k }

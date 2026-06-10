@@ -54,19 +54,16 @@ def openFronts : List OpenFront := [
   -- createObligationA / releaseCommittedEscrowA / refundCommittedEscrowA: CLOSED — dispatch-aliased to
   -- the escrow-create / dual-release / dual-refund circuit steps (TurnEffectRefinement), real emitted
   -- spec content (EscrowHoldingCreate / Release / Refund) bridged to their committed `fullActionStep`.
-  , ⟨"createCommittedEscrowA_circuit", .w3_diamond, some "createCommittedEscrowA", "v2 dual diamond"⟩
-  , ⟨"bridgeFinalizeA_circuit", .w3_diamond, some "bridgeFinalizeA", "v2 Inst diamond"⟩
-  , ⟨"bridgeCancelA_circuit", .w3_diamond, some "bridgeCancelA", "v2 dual diamond"⟩
+  -- (F1a/F1b) createCommittedEscrowA / bridgeFinalizeA / bridgeCancelA fronts REMOVED: the
+  -- constructors are gone (the families re-landed as verified factory cells).
   , ⟨"unsealA_circuit", .w3_diamond, some "unsealA", "v2 Inst diamond"⟩
   , ⟨"createSealPairA_circuit", .w3_diamond, some "createSealPairA", "v2 Inst diamond"⟩
   , ⟨"makeSovereignA_circuit", .w3_diamond, some "makeSovereignA", "v1 Inst diamond"⟩
   , ⟨"refusalA_circuit", .w3_diamond, some "refusalA", "v1 Inst diamond"⟩
   , ⟨"receiptArchiveA_circuit", .w3_diamond, some "receiptArchiveA", "v1 Inst diamond"⟩
-  , ⟨"queueAllocateA_circuit", .w3_diamond, some "queueAllocateA", "v2 Inst diamond"⟩
-  , ⟨"queueDequeueA_circuit", .w3_diamond, some "queueDequeueA", "v2 triple diamond"⟩
-  , ⟨"queueResizeA_circuit", .w3_diamond, some "queueResizeA", "v2 Inst diamond"⟩
-  , ⟨"queueAtomicTxA_circuit", .w3_diamond, some "queueAtomicTxA", "v2 triple diamond"⟩
-  , ⟨"queuePipelineStepA_circuit", .w3_diamond, some "queuePipelineStepA", "v2 Inst diamond"⟩
+  -- (F2a) the queue-family fronts (allocate/enqueue/dequeue/resize/atomicTx/pipelineStep)
+  -- REMOVED: the family dissolved into the verified `Dregg2/Apps/QueueFactory` et al
+  -- (VerbRegistry `.factory .queue`); the kernel constructors die in F2b.
   , ⟨"pipelinedSendA_circuit", .w3_diamond, some "pipelinedSendA", "v1 hold-gate diamond"⟩
   , ⟨"exportSturdyRefA_circuit", .w3_diamond, some "exportSturdyRefA", "swiss export diamond"⟩
   , ⟨"enlivenRefA_circuit", .w3_diamond, some "enlivenRefA", "v2 Inst diamond"⟩

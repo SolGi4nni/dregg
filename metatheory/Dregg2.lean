@@ -268,12 +268,10 @@ import Dregg2.Circuit.Spec.exercise        -- Wave 1 exercise composite: re-expo
 import Dregg2.Circuit.Inst.exerciseA       -- D5 v1 composite: exerciseA_full_sound ⇒ ExerciseHoldSpec; hold circuit + inner turn ⇒ ExerciseSpec
 import Dregg2.Circuit.Inst.noteCreateA     -- D5 v2 breadth: noteCreateA_full_sound ⇒ NoteCreateASpec (commitments list)
 import Dregg2.Circuit.Inst.noteSpendA      -- D5 v2 breadth: noteSpendA_full_sound ⇒ NoteSpendSpec (nullifiers list)
-import Dregg2.Circuit.Inst.queueAllocateA  -- D5 v2 breadth: queueAllocateA_full_sound ⇒ QueueAllocateSpec (queues list)
-import Dregg2.Circuit.Inst.queueEnqueueA  -- D5 v2-triple: queueEnqueueA_full_sound ⇒ QueueEnqueueSpec (queues+bal+escrows)
-import Dregg2.Circuit.Inst.queueDequeueA  -- D5 v2-triple: queueDequeueA_full_sound ⇒ QueueDequeueSpec (queues+bal+escrows)
-import Dregg2.Circuit.Inst.queueAtomicTxA -- D5 v2-triple: queueAtomicTxA_full_sound ⇒ QueueAtomicTxSpec (queues+bal+escrows batch)
-import Dregg2.Circuit.Inst.queuePipelineStepA -- D5 v2 breadth: queuePipelineStepA_full_sound ⇒ QueuePipelineFanoutSpec (queues list)
-import Dregg2.Circuit.Inst.queueResizeA    -- D5 v2 breadth: queueResizeA_full_sound ⇒ QueueResizeSpec (queues list)
+-- (F2a) the queue family's per-effect circuit strata DELETED (Inst/Witness/Emit/Spec/Argus-weld ×
+-- queueAllocate/Enqueue/Dequeue/Resize/AtomicTx/PipelineStep): VerbRegistry classifies all six
+-- `.factory .queue`; the behavior lives in Apps/{QueueFactory,InboxFactory,PubsubFactory}. The
+-- kernel verbs themselves die in F2b.
 import Dregg2.Circuit.Inst.pipelinedSendA   -- D5 v1 breadth: pipelinedSendA_full_sound ⇒ PipelinedSendSpec (log-only)
 import Dregg2.Circuit.Inst.revoke          -- D5 v2 breadth: revoke_full_sound ⇒ RevokeSpec (caps)
 import Dregg2.Circuit.Inst.revokeDelegationA -- D5 v2 breadth: revokeDelegationA_full_sound ⇒ RevokeSpec (caps)
@@ -313,15 +311,9 @@ import Dregg2.Circuit.Witness.CreateCellFromFactoryWitness  -- B2 v2-quint WITNE
 import Dregg2.Circuit.Witness.RefusalWitness          -- B3 v1 WITNESS (refusalA audit-slot write): refusalWitnessVec runs execFullA + lays the v1 full-state witness (width 74) via Common.layoutE/SConc; executor-derived witness SATISFIES; forged 3rd-cell mint (50→999) REJECTED (frame-reuse gate 68≠69). Rust lean_executor_derived_refusal proves+verifies / rejects. Reuses refusalA_full_sound.
 import Dregg2.Circuit.Witness.ReceiptArchiveWitness   -- B3 v1 WITNESS (receiptArchiveA lifecycle-slot write): same shape as refusalA; forged 3rd-cell mint REJECTED (frame-reuse 68≠69). Rust lean_executor_derived_receipt_archive. Reuses receiptArchiveA_full_sound.
 import Dregg2.Circuit.Witness.RefreshDelegationWitness -- B3 v2 WITNESS (refreshDelegationA delegations funcComponent): refreshWitnessVec runs execFullA + delegationsDigConcrete; executor-derived witness SATISFIES; forged stolen delegation cap REJECTED (component-bind 68≠69). Rust lean_executor_derived_refresh_delegation. Reuses refreshDelegationA_full_sound.
-import Dregg2.Circuit.Witness.QueueResizeWitness      -- B3 v2 WITNESS (queueResizeA queues listComponent): resizeWitnessVec runs execFullA + queuesDigConcrete (post_queues_eq_resizePostQueues derives the apex from the conditional spec); forged buffer-tamper REJECTED (component-bind 68≠69). Rust lean_executor_derived_queue_resize. Reuses queueResizeA_full_sound.
-import Dregg2.Circuit.Witness.QueuePipelineStepWitness -- B3 v2 WITNESS (queuePipelineStepA queues listComponent, message routing): pipelineWitnessVec runs execFullA + queuesDigConcrete; forged dropped-routing-message REJECTED (component-bind 68≠69). Rust lean_executor_derived_queue_pipeline_step. Reuses queuePipelineStepA_full_sound.
 import Dregg2.Circuit.Witness.MintWitness            -- B4 v2 WITNESS (mintA bal funcComponent): mintWitnessVec runs execFullA + balDigConcrete; executor-derived witness SATISFIES; forged 3rd-ledger mint (50→999) REJECTED (component-bind 68≠69). Rust b4_executor_derived_mint. Reuses mintA_full_sound.
 import Dregg2.Circuit.Witness.NoteCreateWitness      -- B4 v2 WITNESS (noteCreateA commitments listComponent): forged 3rd-commitment tamper REJECTED (component-bind 68≠69). Rust b4_executor_derived_note_create. Reuses noteCreateA_full_sound.
 import Dregg2.Circuit.Witness.NoteSpendWitness       -- B4 v2 WITNESS (noteSpendA nullifiers listComponent, anti-replay): forged nullifier-drop (double-spend laundering) REJECTED (component-bind 68≠69). Rust b4_executor_derived_note_spend. Reuses noteSpendA_full_sound.
-import Dregg2.Circuit.Witness.QueueAllocateWitness   -- B4 v2 WITNESS (queueAllocateA queues listComponent): forged bystander-queue-capacity tamper REJECTED (component-bind 68≠69). Rust b4_executor_derived_queue_allocate. Reuses queueAllocateA_full_sound.
-import Dregg2.Circuit.Witness.QueueEnqueueWitness    -- B4 v3-triple WITNESS (queueEnqueueA queues+bal+escrows): forged escrow-amount tamper REJECTED (escrow bind gate 72≠73). Rust b4_executor_derived_queue_enqueue. Reuses queueEnqueueA_full_sound.
-import Dregg2.Circuit.Witness.QueueDequeueWitness    -- B4 v3-triple WITNESS (queueDequeueA queues+bal+escrows, FIFO pop+refund): forged refund-ledger tamper REJECTED (bal bind gate 70≠71). Rust b4_executor_derived_queue_dequeue. Reuses queueDequeueA_full_sound.
-import Dregg2.Circuit.Witness.QueueAtomicTxWitness   -- B4 v3-triple WITNESS (queueAtomicTxA all-or-nothing batch): forged FIFO-buffer tamper REJECTED (queues bind gate 68≠69). Rust b4_executor_derived_queue_atomic_tx. Reuses queueAtomicTxA_full_sound.
 import Dregg2.Circuit.Witness.PipelinedSendWitness   -- B4 v1 WITNESS (pipelinedSendA touched=∅ log-only): forged bystander-cell mint (frozen-frame) REJECTED (frame-reuse gate 68≠69). Rust b4_executor_derived_pipelined_send. Reuses pipelinedSendA_full_sound.
 import Dregg2.Circuit.Witness.Common                  -- B3 SHARED v1 surface: concrete CommitSurface SConc (StateCommit toy primitives + lhConcrete log hash) + layoutE (encodeE tabulated, unconstrained roots 64/65 zeroed for i64-safety) + witnessJson. The v1 witness generators' common base.
 import Dregg2.Circuit.Witness.EmitEventWitness        -- B3 v1 WITNESS (emitEventA log-only touched=∅): emitEventWitnessVec runs execFullA + layoutE/SConc; executor-derived witness SATISFIES; forged receipt-row (log gate 72≠73) + minted bystander cell (frame gate 68≠69) REJECTED. Rust lean_executor_derived_emit_event. Reuses emitEventA_full_sound.
@@ -368,12 +360,10 @@ import Dregg2.Circuit.Spec.notecommitment        -- noteCreateA: commitment-set 
 import Dregg2.Circuit.Spec.bridgeinboundmint     -- bridgeMintA: §8 portal inflow spec (disclosed +value at one asset)
 import Dregg2.Circuit.Spec.sealpaircreation      -- createSealPairA: two c-list grants spec (sealer/unsealer caps)
 import Dregg2.Circuit.Spec.sealboxoperations     -- sealA/unsealA: capability box bind/move spec
-import Dregg2.Circuit.Spec.queuepipelinedsend    -- queueEnqueueA + deposit: FIFO append + parked deposit spec (combined-conserving)
+import Dregg2.Circuit.Spec.queuepipelinedsend    -- pipelinedSendA: apply-time-neutral clock-row spec (log-only, full 17-field frame) — SURVIVOR (pipelinedSend ≠ the dissolved queuePipelineStep)
 -- D5 executor⟺spec wave-2 (repaired harder families — root cause was a missing `open Dregg2.Exec.EffectsState (stateAuthB)` that cascaded into leaked sorryAx; gate-verified green + #assert_axioms-clean):
 import Dregg2.Circuit.Spec.cellstatelog          -- emitEventA: event/log-append spec + full frame (balance-neutral, no authority gate beyond cell-existence)
 import Dregg2.Circuit.Spec.swissexport           -- exportSturdyRefA: CapTP sturdy-ref mint spec (swissExportK; non-amplifying rights ⊆ held, no-dup, balance-neutral)
-import Dregg2.Circuit.Spec.queuefifocore         -- queueAllocate/Resize/Enqueue/DequeueA: the 4 FIFO ring-buffer ops (insert-fresh / no-id-reuse / no-shrink-below-occupancy / dead-cell-rejection, balance-neutral)
-import Dregg2.Circuit.Spec.queuepipelinefanout   -- queuePipelineStepA: atomic dequeue→fanout-enqueue pipeline step spec
 import Dregg2.Circuit.Spec.celllifecycle       -- cellSealA/cellUnsealA/cellDestroyA: Live↔Sealed↔Destroyed lifecycle spec
 import Dregg2.Circuit.Spec.refreshdelegation     -- refreshDelegationA: parent c-list snapshot into delegations
 import Dregg2.DSLEffect                -- `dregg_effect <name> : <Class>` effects eDSL → Spec.Conservation LinearityClass coloring + inherited obligation; #assert_namespace_axioms-clean

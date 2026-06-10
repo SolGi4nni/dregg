@@ -23,7 +23,7 @@ committed / bridge-lock/finalize/cancel all inherit ONE genuine root recompute. 
 a `List EscrowRecord` whose committed root is `ListCommit.listDigest LE compressN` (the Poseidon sponge
 of the per-record leaves). The runtime's escrow side-table is an APPEND/PREPEND accumulator: the new root
 is `hash_2_to_1(record_leaf, old_root)` — the canonical prepend-accumulator advance (the SAME shape the
-queue uses for FIFO append, `EffectVmEmitQueueEnqueue:15`, but here the leaf is the escrow record).
+queue once used for FIFO append (its emit module died in F2a), but here the leaf is the escrow record).
 
 ## What this module BINDS (genuinely, in-row)
 

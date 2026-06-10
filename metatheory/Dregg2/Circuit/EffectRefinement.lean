@@ -24,7 +24,6 @@ import Dregg2.Circuit.Inst.spawnA
 import Dregg2.Circuit.Inst.noteCreateA
 import Dregg2.Circuit.Inst.revoke
 import Dregg2.Circuit.Inst.sealA
-import Dregg2.Circuit.Inst.queueEnqueueA
 import Dregg2.Circuit.EffectCommit
 import Dregg2.Circuit.EffectInstances
 import Dregg2.Circuit.Inst.exerciseA
@@ -51,7 +50,6 @@ open Dregg2.Circuit.Inst.SpawnA
 open Dregg2.Circuit.Inst.NoteCreateA
 open Dregg2.Circuit.Inst.Revoke
 open Dregg2.Circuit.Inst.SealA
-open Dregg2.Circuit.Inst.QueueEnqueueA
 open Dregg2.Circuit.EffectCommit
 open Dregg2.Circuit.EffectInstances
 open Dregg2.Circuit.Inst.ExerciseA
@@ -66,7 +64,6 @@ open Dregg2.Circuit.Spec.NoteNullifier
 open Dregg2.Circuit.Spec.NoteCommitment
 open Dregg2.Circuit.Spec.AuthorityRevocation
 open Dregg2.Circuit.Spec.SealBoxOperations
-open Dregg2.Circuit.Spec.QueueFifoCore
 open Dregg2.Circuit.Spec.CellStateField
 open Dregg2.Exec
 open Dregg2.Exec.CircuitEmit
@@ -776,63 +773,8 @@ theorem seal_circuit_refines_exec (S : Surface2) (LE : SealedBoxRecord → ℤ) 
 #assert_axioms seal_spec_refines_circuit
 #assert_axioms seal_circuit_refines_exec
 
-/-! ## §17 — QueueEnqueueA diamond (circuit ⟺ QueueEnqueueSpec ⟺ execFullA).
-
-F1b: the enqueue is DEPOSIT-FREE (the escrow-deposit leg died with the escrow family — a
-value-bearing enqueue is now a factory-cell pattern), so the diamond collapses from the
-bal⊕queues⊕escrows triple to the single `queues`-component `EffectSpec2`. -/
-
-def queueEnqueueExecStep (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
-  execFullA s (.queueEnqueueA args.id args.m args.actor args.cell) = some s'
-
-def queueEnqueueSpecStep (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
-  QueueEnqueueSpec s args.id args.m args.actor args.cell s'
-
-def queueEnqueueCircuitStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
-  satisfiedE2 S (queueEnqueueE LQ cNQ hNQ hLQ)
-    (encodeE2 S (queueEnqueueE LQ cNQ hNQ hLQ) s args s')
-
-theorem queueEnqueue_exec_equiv_spec (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) :
-    queueEnqueueExecStep s args s' ↔ queueEnqueueSpecStep s args s' :=
-  execFullA_queueEnqueueA_iff_spec s args.id args.m args.actor args.cell s'
-
-theorem queueEnqueue_circuit_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
-    (h : queueEnqueueCircuitStep S LQ cNQ hNQ hLQ s args s') :
-    queueEnqueueSpecStep s args s' :=
-  queueEnqueueA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
-
-theorem queueEnqueue_spec_refines_circuit (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
-    (h : queueEnqueueSpecStep s args s') :
-    queueEnqueueCircuitStep S LQ cNQ hNQ hLQ s args s' :=
-  effect2_circuit_full_complete S (queueEnqueueE LQ cNQ hNQ hLQ)
-    (fun k k' hframe => (hRest k k').mpr hframe)
-    (enqueueGuardEncodes LQ cNQ hNQ hLQ) s args s'
-    ((apex_iff_queueEnqueueSpec LQ cNQ hNQ hLQ s args s').mpr h)
-
-theorem queueEnqueue_circuit_refines_exec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
-    (h : queueEnqueueCircuitStep S LQ cNQ hNQ hLQ s args s') :
-    queueEnqueueExecStep s args s' :=
-  (queueEnqueue_exec_equiv_spec s args s').mpr
-    (queueEnqueue_circuit_refines_spec S LQ cNQ hNQ hLQ hRest hLog s args s' h)
-
-#assert_axioms queueEnqueue_exec_equiv_spec
-#assert_axioms queueEnqueue_circuit_refines_spec
-#assert_axioms queueEnqueue_spec_refines_circuit
-#assert_axioms queueEnqueue_circuit_refines_exec
+-- (F2a) §17 QueueEnqueueA diamond DELETED with the queue effect family (VerbRegistry:
+-- `.factory .queue`; the FIFO behavior is the verified `Dregg2/Apps/QueueFactory`).
 
 /-! ## §18 — SetFieldA diamond (v1 circuit ⟺ SetFieldSpec ⟺ execFullA). -/
 

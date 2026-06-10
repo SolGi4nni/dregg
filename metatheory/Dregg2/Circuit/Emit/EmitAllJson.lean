@@ -37,12 +37,6 @@ import Dregg2.Circuit.Emit.EffectVmEmitMint
 import Dregg2.Circuit.Emit.EffectVmEmitNoteCreate
 import Dregg2.Circuit.Emit.EffectVmEmitNoteSpend
 import Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend
-import Dregg2.Circuit.Emit.EffectVmEmitQueueAllocate
-import Dregg2.Circuit.Emit.EffectVmEmitQueueAtomicTx
-import Dregg2.Circuit.Emit.EffectVmEmitQueueDequeue
-import Dregg2.Circuit.Emit.EffectVmEmitQueueEnqueue
-import Dregg2.Circuit.Emit.EffectVmEmitQueuePipelineStep
-import Dregg2.Circuit.Emit.EffectVmEmitQueueResize
 import Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive
 import Dregg2.Circuit.Emit.EffectVmEmitRefreshDelegation
 import Dregg2.Circuit.Emit.EffectVmEmitRefusal
@@ -93,17 +87,8 @@ def allEntries : List Entry :=
   , ⟨"noteCreateVmDescriptor",          EffectVmEmitNoteCreate.noteCreateVmDescriptor⟩
   , ⟨"noteSpendVmDescriptor",           EffectVmEmitNoteSpend.noteSpendVmDescriptor⟩
   , ⟨"pipelinedSendVmDescriptor",       EffectVmEmitPipelinedSend.pipelinedSendVmDescriptor⟩
-    -- The four root-parameterized queue descriptors are functions of an OPAQUE side-table
-    -- parameter (the `newRoot`/`emptyRoot`/`resizeCost` the row asserts but does NOT recompute —
-    -- exactly the class-C queue gap in the assurance ledger). The emitted descriptor SHAPE is
-    -- independent of that scalar (it enters only as one gate constant), so we serialize the
-    -- canonical instance at `0`.
-  , ⟨"queueAllocateVmDescriptor",       EffectVmEmitQueueAllocate.queueAllocateVmDescriptor 0⟩
-  , ⟨"queueAtomicVmDescriptor",         EffectVmEmitQueueAtomicTx.queueAtomicVmDescriptor⟩
-  , ⟨"queueDequeueVmDescriptor",        EffectVmEmitQueueDequeue.queueDequeueVmDescriptor 0⟩
-  , ⟨"queueEnqueueVmDescriptor",        EffectVmEmitQueueEnqueue.queueEnqueueVmDescriptor 0⟩
-  , ⟨"queuePipelineVmDescriptor",       EffectVmEmitQueuePipelineStep.queuePipelineVmDescriptor⟩
-  , ⟨"queueResizeVmDescriptor",         EffectVmEmitQueueResize.queueResizeVmDescriptor 0⟩
+    -- (F2a) the six queue descriptors are GONE from the emit-all manifest: the queue family
+    -- dissolved into the verified factory cells (`Dregg2/Apps/QueueFactory` et al).
   , ⟨"receiptArchiveVmDescriptor",      EffectVmEmitReceiptArchive.receiptArchiveVmDescriptor⟩
   , ⟨"refreshVmDescriptor",             EffectVmEmitRefreshDelegation.refreshVmDescriptor⟩
   , ⟨"refusalVmDescriptor",             EffectVmEmitRefusal.refusalVmDescriptor⟩

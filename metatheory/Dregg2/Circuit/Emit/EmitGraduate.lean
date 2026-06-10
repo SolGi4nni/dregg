@@ -2,8 +2,7 @@
 # Dregg2.Circuit.Emit.EmitGraduate — focused scratch emitter for the cutover-graduating descriptors.
 
 Prints `<defName>\t<descriptor.name>\t<emitVmJson descriptor>` for ONLY the descriptors whose Lean
-emit modules already tick the runtime nonce (the EmitAllJson runner is currently broken by the
-parameterized queue descriptors, so this avoids importing them). Run:
+emit modules already tick the runtime nonce. Run:
 
   `lake env lean --run Dregg2/Circuit/Emit/EmitGraduate.lean`
 -/

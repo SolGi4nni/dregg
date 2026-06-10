@@ -27,7 +27,6 @@ import Dregg2.Circuit.Inst.spawnA
 import Dregg2.Circuit.Inst.noteCreateA
 import Dregg2.Circuit.Inst.revoke
 import Dregg2.Circuit.Inst.sealA
-import Dregg2.Circuit.Inst.queueEnqueueA
 import Dregg2.Circuit.Inst.exerciseA
 import Dregg2.Circuit.Inst.attenuateA
 import Dregg2.Circuit.Inst.emitEventA
@@ -44,11 +43,6 @@ import Dregg2.Circuit.Inst.createSealPairA
 import Dregg2.Circuit.Inst.makeSovereignA
 import Dregg2.Circuit.Inst.refusalA
 import Dregg2.Circuit.Inst.receiptArchiveA
-import Dregg2.Circuit.Inst.queueAllocateA
-import Dregg2.Circuit.Inst.queueDequeueA
-import Dregg2.Circuit.Inst.queueResizeA
-import Dregg2.Circuit.Inst.queueAtomicTxA
-import Dregg2.Circuit.Inst.queuePipelineStepA
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Inst.swissExportA
 import Dregg2.Circuit.Inst.enlivenRefA
@@ -90,7 +84,6 @@ open Dregg2.Circuit.Inst.SpawnA
 open Dregg2.Circuit.Inst.NoteCreateA
 open Dregg2.Circuit.Inst.Revoke
 open Dregg2.Circuit.Inst.SealA
-open Dregg2.Circuit.Inst.QueueEnqueueA
 open Dregg2.Circuit.Inst.ExerciseA
 open Dregg2.Exec.CircuitEmit (satisfiedEmitted)
 open Dregg2.Authority
@@ -524,34 +517,7 @@ theorem seal_emitted_refines_spec (S : Surface2) (LE : SealedBoxRecord → ℤ) 
     (sealCircuitStep S LE cN hN hLE) sealSpecStep (seal_circuit_refines_spec S LE cN hN hLE hRest hLog)
     (fun pre args post => seal_emitted_equiv_circuit S LE cN hN hLE pre args post) s args s' h
 
-/-! ## §15 — QueueEnqueueA (F1b deposit-free: single `queues`-component v2). -/
-
-def queueEnqueueEmittedStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queueEnqueueE LQ cNQ hNQ hLQ) queueEnqueueAAirName s args s'
-
-theorem queueEnqueue_emitted_equiv_circuit (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState) :
-    queueEnqueueEmittedStep S LQ cNQ hNQ hLQ s args s' ↔
-      queueEnqueueCircuitStep S LQ cNQ hNQ hLQ s args s' :=
-  effect2_emitted_equiv_circuit_local S (queueEnqueueE LQ cNQ hNQ hLQ) queueEnqueueAAirName s args s'
-
-theorem queueEnqueue_emitted_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
-    (h : queueEnqueueEmittedStep S LQ cNQ hNQ hLQ s args s') :
-    queueEnqueueSpecStep s args s' :=
-  effect2_emitted_refines_bespoke_spec S (queueEnqueueE LQ cNQ hNQ hLQ) queueEnqueueAAirName
-    (queueEnqueueCircuitStep S LQ cNQ hNQ hLQ) queueEnqueueSpecStep
-    (queueEnqueue_circuit_refines_spec S LQ cNQ hNQ hLQ hRest hLog)
-    (fun pre args post =>
-      queueEnqueue_emitted_equiv_circuit S LQ cNQ hNQ hLQ pre args post)
-    s args s' h
+-- (F2a) §15 QueueEnqueueA emitted diamond DELETED with the queue effect family.
 
 /-! ## §16 — SetFieldA (v1 EffectCommit). -/
 
@@ -627,17 +593,6 @@ open Dregg2.Circuit.Inst.MakeSovereignA
 open Dregg2.Circuit.Inst.RefusalA (refusalE refusalAAirName RefusalArgs refusalA_full_sound)
 open Dregg2.Circuit.Inst.ReceiptArchiveA
   (receiptArchiveE receiptArchiveAAirName ReceiptArchiveArgs receiptArchiveA_full_sound)
-open Dregg2.Circuit.Inst.QueueAllocateA
-  (queueAllocateE queueAllocateAAirName AllocateArgs queueAllocateA_full_sound)
-open Dregg2.Circuit.Inst.QueueDequeueA
-  (queueDequeueE queueDequeueAAirName DequeueArgs queueDequeueA_full_sound)
-open Dregg2.Circuit.Inst.QueueResizeA
-  (queueResizeE queueResizeAAirName ResizeArgs queueResizeA_full_sound)
-open Dregg2.Circuit.Inst.QueueAtomicTxA
-  (queueAtomicTxE queueAtomicTxAAirName AtomicTxArgs queueAtomicTxA_full_sound)
-open Dregg2.Circuit.Inst.QueuePipelineStepA
-  (queuePipelineStepE queuePipelineStepAAirName PipelineArgs RestIffNoQueues
-    queuePipelineStepA_full_sound)
 open Dregg2.Circuit.Inst.PipelinedSendA
   (pipelinedSendE pipelinedSendAAirName PipelinedSendArgs pipelinedSendA_full_sound)
 open Dregg2.Circuit.Inst.SwissExportA
@@ -667,9 +622,6 @@ open Dregg2.Circuit.Spec.SealBoxOperations (UnsealSpec)
 open Dregg2.Circuit.Spec.SealPairCreation (CreateSealPairSpec)
 open Dregg2.Circuit.Spec.SovereignCommitment (MakeSovereignSpec)
 open Dregg2.Circuit.Spec.CellStateAudit (RefusalSpec ReceiptArchiveSpec)
-open Dregg2.Circuit.Spec.QueueFifoCore (QueueAllocateSpec QueueResizeSpec QueueDequeueSpec)
-open Dregg2.Circuit.Spec.QueueAtomicTx (QueueAtomicTxSpec)
-open Dregg2.Circuit.Spec.QueuePipelineFanout (QueuePipelineFanoutSpec)
 open Dregg2.Circuit.Spec.QueuePipelinedSend (PipelinedSendSpec)
 open Dregg2.Circuit.Spec.SwissExport (ExportSpec)
 open Dregg2.Circuit.Spec.SwissEnliven (EnlivenSpec)
@@ -984,154 +936,7 @@ theorem receiptArchiveA_emitted_refines_spec (S : CommitSurface)
   receiptArchiveA_full_sound S hN hL hRest hLog s args s' hwf hwf'
     ((effect1_emitted_equiv_circuit_local S receiptArchiveE receiptArchiveAAirName s args s').mp h)
 
-def queueAllocateAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queueAllocateE LE cN hN hLE) queueAllocateAAirName s args s'
-
-theorem queueAllocateA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState) :
-    queueAllocateAEmittedStep S LE cN hN hLE s args s' ↔
-      effect2CircuitStep S (queueAllocateE LE cN hN hLE) s args s' :=
-  effect2_emitted_equiv_circuit_local S (queueAllocateE LE cN hN hLE) queueAllocateAAirName s args s'
-
-theorem queueAllocateA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
-    (h : queueAllocateAEmittedStep S LE cN hN hLE s args s') :
-    QueueAllocateSpec s args.id args.actor args.cell args.cap s' :=
-  effect2_emitted_refines_bespoke_spec S (queueAllocateE LE cN hN hLE) queueAllocateAAirName
-    (fun pre args post =>
-      satisfiedE2 S (queueAllocateE LE cN hN hLE)
-        (encodeE2 S (queueAllocateE LE cN hN hLE) pre args post))
-    (fun pre args post => QueueAllocateSpec pre args.id args.actor args.cell args.cap post)
-    (fun pre args post hc => queueAllocateA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
-    (fun pre args post => queueAllocateA_emitted_equiv_circuit S LE cN hN hLE pre args post)
-    s args s' h
-
-def queueDequeueAEmittedStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queueDequeueE LQ cNQ hNQ hLQ) queueDequeueAAirName s args s'
-
-theorem queueDequeueA_emitted_equiv_circuit (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState) :
-    queueDequeueAEmittedStep S LQ cNQ hNQ hLQ s args s' ↔
-      satisfiedE2 S (queueDequeueE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueDequeueE LQ cNQ hNQ hLQ) s args s') :=
-  effect2_emitted_equiv_circuit_local S (queueDequeueE LQ cNQ hNQ hLQ) queueDequeueAAirName s args s'
-
-theorem queueDequeueA_emitted_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState)
-    (h : queueDequeueAEmittedStep S LQ cNQ hNQ hLQ s args s') :
-    QueueDequeueSpec s args.id args.actor args.cell s' :=
-  effect2_emitted_refines_bespoke_spec S (queueDequeueE LQ cNQ hNQ hLQ) queueDequeueAAirName
-    (fun pre args post =>
-      satisfiedE2 S (queueDequeueE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueDequeueE LQ cNQ hNQ hLQ) pre args post))
-    (fun pre args post =>
-      QueueDequeueSpec pre args.id args.actor args.cell post)
-    (fun pre args post hc =>
-      queueDequeueA_full_sound S LQ cNQ hNQ hLQ hRest hLog pre args post hc)
-    (fun pre args post =>
-      queueDequeueA_emitted_equiv_circuit S LQ cNQ hNQ hLQ pre args post)
-    s args s' h
-
-def queueResizeAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queueResizeE LE cN hN hLE) queueResizeAAirName s args s'
-
-theorem queueResizeA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) :
-    queueResizeAEmittedStep S LE cN hN hLE s args s' ↔
-      effect2CircuitStep S (queueResizeE LE cN hN hLE) s args s' :=
-  effect2_emitted_equiv_circuit_local S (queueResizeE LE cN hN hLE) queueResizeAAirName s args s'
-
-theorem queueResizeA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueueResizeA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState)
-    (h : queueResizeAEmittedStep S LE cN hN hLE s args s') :
-    QueueResizeSpec s args.id args.newCap args.actor args.cell s' :=
-  effect2_emitted_refines_bespoke_spec S (queueResizeE LE cN hN hLE) queueResizeAAirName
-    (fun pre args post =>
-      satisfiedE2 S (queueResizeE LE cN hN hLE)
-        (encodeE2 S (queueResizeE LE cN hN hLE) pre args post))
-    (fun pre args post => QueueResizeSpec pre args.id args.newCap args.actor args.cell post)
-    (fun pre args post hc => queueResizeA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
-    (fun pre args post => queueResizeA_emitted_equiv_circuit S LE cN hN hLE pre args post)
-    s args s' h
-
-def queueAtomicTxAEmittedStep (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queueAtomicTxE LQ cNQ hNQ hLQ) queueAtomicTxAAirName s args s'
-
-theorem queueAtomicTxA_emitted_equiv_circuit (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState) :
-    queueAtomicTxAEmittedStep S LQ cNQ hNQ hLQ s args s' ↔
-      satisfiedE2 S (queueAtomicTxE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueAtomicTxE LQ cNQ hNQ hLQ) s args s') :=
-  effect2_emitted_equiv_circuit_local S (queueAtomicTxE LQ cNQ hNQ hLQ) queueAtomicTxAAirName s args s'
-
-theorem queueAtomicTxA_emitted_refines_spec (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ)
-    (hNQ : compressNInjective cNQ) (hLQ : listLeafInjective LQ)
-    (hRest : RestIffNoQueuesBalEscrows S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState)
-    (h : queueAtomicTxAEmittedStep S LQ cNQ hNQ hLQ s args s') :
-    QueueAtomicTxSpec s args.actor args.ops s' :=
-  effect2_emitted_refines_bespoke_spec S (queueAtomicTxE LQ cNQ hNQ hLQ) queueAtomicTxAAirName
-    (fun pre args post =>
-      satisfiedE2 S (queueAtomicTxE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueAtomicTxE LQ cNQ hNQ hLQ) pre args post))
-    (fun pre args post => QueueAtomicTxSpec pre args.actor args.ops post)
-    (fun pre args post hc =>
-      queueAtomicTxA_full_sound S LQ cNQ hNQ hLQ hRest hLog pre args post hc)
-    (fun pre args post =>
-      queueAtomicTxA_emitted_equiv_circuit S LQ cNQ hNQ hLQ pre args post)
-    s args s' h
-
-def queuePipelineStepAEmittedStep (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState) : Prop :=
-  effect2EmittedStepLocal S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName s args s'
-
-theorem queuePipelineStepA_emitted_equiv_circuit (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState) :
-    queuePipelineStepAEmittedStep S LE cN hN hLE s args s' ↔
-      effect2CircuitStep S (queuePipelineStepE LE cN hN hLE) s args s' :=
-  effect2_emitted_equiv_circuit_local S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName
-    s args s'
-
-theorem queuePipelineStepA_emitted_refines_spec (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueuePipelineStepA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState)
-    (h : queuePipelineStepAEmittedStep S LE cN hN hLE s args s') :
-    QueuePipelineFanoutSpec s args.srcId args.owner args.sinkCells args.sinkIds s' :=
-  effect2_emitted_refines_bespoke_spec S (queuePipelineStepE LE cN hN hLE) queuePipelineStepAAirName
-    (fun pre args post =>
-      satisfiedE2 S (queuePipelineStepE LE cN hN hLE)
-        (encodeE2 S (queuePipelineStepE LE cN hN hLE) pre args post))
-    (fun pre args post =>
-      QueuePipelineFanoutSpec pre args.srcId args.owner args.sinkCells args.sinkIds post)
-    (fun pre args post hc =>
-      queuePipelineStepA_full_sound S LE cN hN hLE hRest hLog pre args post hc)
-    (fun pre args post => queuePipelineStepA_emitted_equiv_circuit S LE cN hN hLE pre args post)
-    s args s' h
+-- (F2a) the queueAllocate/Dequeue/Resize/AtomicTx/PipelineStep emitted steps DELETED with the queue family.
 
 def pipelinedSendAEmittedStep (S : CommitSurface) (s : RecChainedState) (args : PipelinedSendArgs)
     (s' : RecChainedState) : Prop :=
@@ -1389,7 +1194,6 @@ theorem refreshDelegationA_emitted_refines_spec (S : Surface2) (DDel : (CellId �
 #assert_axioms noteCreate_emitted_refines_spec
 #assert_axioms revoke_emitted_refines_spec
 #assert_axioms seal_emitted_refines_spec
-#assert_axioms queueEnqueue_emitted_refines_spec
 #assert_axioms setField_emitted_refines_spec
 #assert_axioms exerciseHold_emitted_refines_spec
 #assert_axioms createCellFromFactoryA_emitted_refines_spec

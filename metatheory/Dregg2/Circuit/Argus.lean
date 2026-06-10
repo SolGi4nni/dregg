@@ -48,8 +48,8 @@ import Dregg2.Circuit.Argus.Effects.NoteCreate
 import Dregg2.Circuit.Argus.Effects.NoteSpend
 import Dregg2.Circuit.Argus.Effects.NoteSpendCompose
 import Dregg2.Circuit.Argus.Effects.PipelinedSend
-import Dregg2.Circuit.Argus.Effects.QueueDequeue
-import Dregg2.Circuit.Argus.Effects.QueueEnqueue
+-- (F2a) Effects.QueueEnqueue / Effects.QueueDequeue DELETED: the queue family classifies
+-- `.factory .queue` (VerbRegistry); its behavior is the verified Apps/QueueFactory et al.
 import Dregg2.Circuit.Argus.Effects.ReceiptArchive
 import Dregg2.Circuit.Argus.Effects.RefreshDelegation
 import Dregg2.Circuit.Argus.Effects.Refusal

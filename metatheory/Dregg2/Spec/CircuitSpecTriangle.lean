@@ -76,7 +76,6 @@ import Dregg2.Circuit.Inst.setVKA
 import Dregg2.Circuit.Inst.incrementNonceA
 import Dregg2.Circuit.Inst.noteCreateA
 import Dregg2.Circuit.Inst.noteSpendA
-import Dregg2.Circuit.Inst.queueAllocateA
 import Dregg2.Circuit.Inst.cellSealA
 import Dregg2.Circuit.Inst.cellUnsealA
 import Dregg2.Circuit.Inst.swissExportA
@@ -100,13 +99,8 @@ import Dregg2.Circuit.Inst.spawnA
 import Dregg2.Circuit.Inst.createCellFromFactoryA
 import Dregg2.Circuit.Inst.cellDestroyA
 import Dregg2.Circuit.Inst.balanceA
-import Dregg2.Circuit.Inst.queueResizeA
 import Dregg2.Circuit.Inst.pipelinedSendA
 import Dregg2.Circuit.Inst.exerciseA
-import Dregg2.Circuit.Inst.queueEnqueueA
-import Dregg2.Circuit.Inst.queueDequeueA
-import Dregg2.Circuit.Inst.queueAtomicTxA
-import Dregg2.Circuit.Inst.queuePipelineStepA
 import Dregg2.Spec.FunctionalRefinement
 
 namespace Dregg2.Spec.CircuitSpecTriangle
@@ -672,49 +666,8 @@ theorem noteSpend_circuit_rejects_wrong_nullifiers
     ¬ satisfiedE2 S (noteSpendE LE cN hN hLE) (encodeE2 S (noteSpendE LE cN hN hLE) s args s') :=
   fun h => hwrong (noteSpend_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
 
-/-! ## §9 — THE QUEUE-ALLOCATE FAMILY: circuit pins the INTENT fresh-queue (FR `queueAllocateSpec`).
-
-`queueAllocate` PREPENDS a fresh empty queue record onto `queues`. `FunctionalRefinement` carries the
-INTENT `queueAllocateSpec` (prepend `{id, owner, capacity, buffer := []}`). The circuit spec's queues
-clause is `freshQueue id actor cap :: queues` — definitionally that intent record. We pin the circuit
-to the intent fresh-queue. -/
-
-open Dregg2.Circuit.Inst.QueueAllocateA (AllocateArgs queueAllocateE queueAllocateA_full_sound)
-open Dregg2.Circuit.Spec.QueueFifoCore (QueueAllocateSpec freshQueue)
-
-/-- **`intentQueueAllocate queues id owner cap`** — the INTENT queues-table of an allocate: a fresh
-empty queue `{id, owner, capacity := cap, buffer := []}` is PREPENDED; the rest preserved. The SAME
-record `FunctionalRefinement.queueAllocateSpec` prepends. -/
-def intentQueueAllocate (queues : List QueueRecord) (id : Nat) (owner : CellId) (cap : Nat) :
-    List QueueRecord :=
-  { id := id, owner := owner, capacity := cap, buffer := [] } :: queues
-
-/-- **`freshQueue_eq_intent` (PROVED).** The circuit's `freshQueue` IS the intent fresh-queue record. -/
-theorem freshQueue_eq_intent (id : Nat) (owner : CellId) (cap : Nat) :
-    freshQueue id owner cap = { id := id, owner := owner, capacity := cap, buffer := [] } := rfl
-
-/-- **QUEUE-ALLOCATE circuit pins the intent fresh-queue.** A verifying `queueAllocateE` witness forces
-the post-`queues` to be EXACTLY `intentQueueAllocate … id actor cap`. -/
-theorem queueAllocate_circuit_pins_intent
-    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
-    (h : satisfiedE2 S (queueAllocateE LE cN hN hLE) (encodeE2 S (queueAllocateE LE cN hN hLE) s args s')) :
-    s'.kernel.queues = intentQueueAllocate s.kernel.queues args.id args.actor args.cap := by
-  have hspec : QueueAllocateSpec s args.id args.actor args.cell args.cap s' :=
-    queueAllocateA_full_sound S LE cN hN hLE hRest hLog s args s' h
-  rw [hspec.2.1]; rfl
-
-/-- **QUEUE-ALLOCATE circuit anti-ghost.** -/
-theorem queueAllocate_circuit_rejects_wrong_queues
-    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueueAllocateA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AllocateArgs) (s' : RecChainedState)
-    (hwrong : s'.kernel.queues ≠ intentQueueAllocate s.kernel.queues args.id args.actor args.cap) :
-    ¬ satisfiedE2 S (queueAllocateE LE cN hN hLE) (encodeE2 S (queueAllocateE LE cN hN hLE) s args s') :=
-  fun h => hwrong (queueAllocate_circuit_pins_intent S LE cN hN hLE hRest hLog s args s' h)
+-- (F2a) §9 queue-allocate intent-pinning DELETED with the queue effect family
+-- (VerbRegistry `.factory .queue`; behavior = the verified `Dregg2/Apps/QueueFactory`).
 
 /-! ## §10 — THE CELL-SEAL (lifecycle) FAMILY: a NEW intent functional spec + circuit pinning.
 
@@ -1464,8 +1417,8 @@ theorem createFromFactory_circuit_rejects_wrong_accounts
   fun h => hwrong (createFromFactory_circuit_pins_intent S LE cN hN hLE DBal hDBal DCell hDCell DSC hDSC
     DAuth hDAuth hRest hLog s args s' h)
 
-/-! ## §19 — THE TAIL: balanceA (2nd value-movement instance) / queue-resize / pipelined-send /
-exercise. -/
+/-! ## §19 — THE TAIL: balanceA (2nd value-movement instance) / pipelined-send / exercise
+(queue-resize: F2a-deleted with the queue family). -/
 
 /-! ### §19a — BALANCE-A: the SECOND v2 instance of the value movement, pinned to `intentTransfer`. -/
 
@@ -1486,25 +1439,7 @@ theorem balanceA_circuit_pins_intent
   have hne : args.t.src ≠ args.t.dst := hspec.1.2.2.2.1
   exact pin_intent_of_bridge hspec.2.1 (intentTransfer_eq_recTransferBal _ _ _ _ _ hne).symm
 
-/-! ### §19b — QUEUE-RESIZE: circuit pins the intent capacity-change over the found queue. -/
-
-open Dregg2.Circuit.Inst.QueueResizeA (ResizeArgs queueResizeE queueResizeA_full_sound)
-open Dregg2.Circuit.Spec.QueueFifoCore (QueueResizeSpec)
-
-/-- **QUEUE-RESIZE circuit pins the intent capacity change.** A verifying `queueResizeE` witness
-forces, for the found queue `q` (by `id`), the post-`queues` to be EXACTLY `replaceQueue … id { q with
-capacity := newCap }` (the capacity changed in place, buffer + every other queue preserved). -/
-theorem queueResize_circuit_pins_intent
-    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueueResizeA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : ResizeArgs) (s' : RecChainedState) (q : QueueRecord)
-    (hq : findQueue s.kernel.queues args.id = some q)
-    (h : satisfiedE2 S (queueResizeE LE cN hN hLE) (encodeE2 S (queueResizeE LE cN hN hLE) s args s')) :
-    s'.kernel.queues = replaceQueue s.kernel.queues args.id { q with capacity := args.newCap } := by
-  have hspec : QueueResizeSpec s args.id args.newCap args.actor args.cell s' :=
-    queueResizeA_full_sound S LE cN hN hLE hRest hLog s args s' h
-  exact hspec.2.1 q hq
+-- (F2a) §19b queue-resize intent-pinning DELETED with the queue effect family.
 
 /-! ### §19c — PIPELINED-SEND: log-only; circuit pins the intent receipt advance. -/
 
@@ -1546,105 +1481,8 @@ theorem exercise_circuit_pins_intent
     exerciseA_full_sound S hN hL hRest hLog s args s' hwf hwf' h
   exact hspec.2
 
-/-! ## §20 — THE TRANSACTIONAL QUEUE FAMILY (enqueue / dequeue / atomic-tx / pipeline-step):
-circuit pins the FIFO/atomic op result determined the whole post-state.
-
-F1b: the deposit/refund escrow legs are GONE with the escrow family (a value-bearing queue is a
-factory-cell pattern now) — enqueue/dequeue are pure FIFO moves on the `queues` component, and the
-diamonds collapse from triples to single-component `EffectSpec2`. Their circuit specs are
-guard-plus-image forms.
-The honest intent connection: a verifying witness pins that the FIFO/atomic operation SUCCEEDED and
-its result IS the committed post-state — the prover cannot fabricate a post-state that is not the
-genuine queue-op image (no out-of-FIFO insertion, no phantom message). -/
-
-open Dregg2.Circuit.Inst.QueueEnqueueA (EnqueueArgs queueEnqueueE queueEnqueueA_full_sound)
-open Dregg2.Circuit.Spec.QueueFifoCore (QueueEnqueueSpec QueueDequeueSpec enqueueGuard dequeueGuard)
-open Dregg2.Exec (findQueue replaceQueue qbufEnqueue qbufDequeue)
-
-/-- **QUEUE-ENQUEUE circuit pins the FIFO tail-append.** A verifying `queueEnqueueE` witness pins
-the enqueue guard AND that the post-`queues` is EXACTLY the tail-append image of the found queue —
-the genuine FIFO insert, no fabricated post-state. -/
-theorem queueEnqueue_circuit_pins_intent
-    (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ)
-    (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueEnqueueA.RestIffNoQueues S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : EnqueueArgs) (s' : RecChainedState)
-    (h : satisfiedE2 S (queueEnqueueE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueEnqueueE LQ cNQ hNQ hLQ) s args s')) :
-    enqueueGuard s.kernel args.id args.m args.actor args.cell
-      ∧ ∀ q, findQueue s.kernel.queues args.id = some q →
-          s'.kernel.queues
-            = replaceQueue s.kernel.queues args.id { q with buffer := qbufEnqueue q.buffer args.m } := by
-  have hspec : QueueEnqueueSpec s args.id args.m args.actor args.cell s' :=
-    queueEnqueueA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
-  exact ⟨hspec.1, hspec.2.1⟩
-
-open Dregg2.Circuit.Inst.QueueDequeueA (DequeueArgs queueDequeueE queueDequeueA_full_sound)
-
-/-- **QUEUE-DEQUEUE circuit pins the FIFO head-removal.** A verifying `queueDequeueE` witness pins
-the dequeue guard AND that the post-`queues` is EXACTLY the head-removal image of the found queue —
-the genuine oldest-message pop, no fabricated post-state. -/
-theorem queueDequeue_circuit_pins_intent
-    (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ)
-    (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueDequeueA.RestIffNoQueues S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : DequeueArgs) (s' : RecChainedState)
-    (h : satisfiedE2 S (queueDequeueE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueDequeueE LQ cNQ hNQ hLQ) s args s')) :
-    dequeueGuard s.kernel args.id args.actor args.cell
-      ∧ ∀ q m rest, findQueue s.kernel.queues args.id = some q →
-          qbufDequeue q.buffer = some (m, rest) →
-          s'.kernel.queues = replaceQueue s.kernel.queues args.id { q with buffer := rest } := by
-  have hspec : QueueDequeueSpec s args.id args.actor args.cell s' :=
-    queueDequeueA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
-  exact ⟨hspec.1, hspec.2.1⟩
-
-open Dregg2.Circuit.Inst.QueueAtomicTxA (AtomicTxArgs queueAtomicTxE queueAtomicTxA_full_sound)
-open Dregg2.Circuit.Spec.QueueAtomicTx (QueueAtomicTxSpec)
-
-/-- **QUEUE-ATOMIC-TX circuit pins the atomic batch result.** A verifying `queueAtomicTxE` witness
-pins that the atomic transaction chain `queueAtomicTxChainA s ops` SUCCEEDED (some `s1`) and the
-post-`kernel` is EXACTLY `s1.kernel` — all-or-nothing: the whole batch committed as one, no partial
-application. -/
-theorem queueAtomicTx_circuit_pins_intent
-    (S : Surface2)
-    (LQ : QueueRecord → ℤ) (cNQ : List ℤ → ℤ) (hNQ : compressNInjective cNQ)
-    (hLQ : listLeafInjective LQ)
-    (hRest : Dregg2.Circuit.Inst.QueueEnqueueA.RestIffNoQueues S.RH)
-    (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : AtomicTxArgs) (s' : RecChainedState)
-    (h : satisfiedE2 S (queueAtomicTxE LQ cNQ hNQ hLQ)
-        (encodeE2 S (queueAtomicTxE LQ cNQ hNQ hLQ) s args s')) :
-    ∃ s1, queueAtomicTxChainA s args.ops = some s1 ∧ s'.kernel = s1.kernel := by
-  have hspec : QueueAtomicTxSpec s args.actor args.ops s' :=
-    queueAtomicTxA_full_sound S LQ cNQ hNQ hLQ hRest hLog s args s' h
-  obtain ⟨s1, hchain, hk, _⟩ := hspec
-  exact ⟨s1, hchain, hk⟩
-
-open Dregg2.Circuit.Inst.QueuePipelineStepA (PipelineArgs queuePipelineStepE queuePipelineStepA_full_sound)
-open Dregg2.Circuit.Spec.QueuePipelineFanout (QueuePipelineFanoutSpec)
-
-/-- **QUEUE-PIPELINE-STEP circuit pins the dequeue + fan-out result.** A verifying `queuePipelineStepE`
-witness pins that the source FIFO dequeue `queueDequeueK s.kernel srcId owner` SUCCEEDED (some
-`(k1, m)`) and the fan-out `pipelineFanoutK k1 owner m sinkCells sinkIds` produced EXACTLY the
-post-`kernel` — the genuine pipeline routing, no fabricated sink delivery. -/
-theorem queuePipelineStep_circuit_pins_intent
-    (S : Surface2) (LE : QueueRecord → ℤ) (cN : List ℤ → ℤ)
-    (hN : compressNInjective cN) (hLE : listLeafInjective LE)
-    (hRest : Dregg2.Circuit.Inst.QueuePipelineStepA.RestIffNoQueues S.RH) (hLog : logHashInjective S.LH)
-    (s : RecChainedState) (args : PipelineArgs) (s' : RecChainedState)
-    (h : satisfiedE2 S (queuePipelineStepE LE cN hN hLE)
-        (encodeE2 S (queuePipelineStepE LE cN hN hLE) s args s')) :
-    ∃ k1 m, queueDequeueK s.kernel args.srcId args.owner = some (k1, m)
-      ∧ pipelineFanoutK k1 args.owner m args.sinkCells args.sinkIds = some s'.kernel := by
-  have hspec : QueuePipelineFanoutSpec s args.srcId args.owner args.sinkCells args.sinkIds s' :=
-    queuePipelineStepA_full_sound S LE cN hN hLE hRest hLog s args s' h
-  obtain ⟨⟨k1, m, hdeq, hfan⟩, _⟩ := hspec
-  exact ⟨k1, m, hdeq, hfan⟩
+-- (F2a) §20 transactional-queue intent-pinning (enqueue/dequeue/atomic-tx/pipeline-step)
+-- DELETED with the queue effect family.
 
 /-! ## §4 — axiom-hygiene tripwires. Every triangle corner rests only on the kernel axioms +
 the §8 carried CR set (no `sorry`/`axiom`/`native_decide`). -/
@@ -1681,9 +1519,6 @@ the §8 carried CR set (no `sorry`/`axiom`/`native_decide`). -/
 #assert_axioms noteCreate_circuit_rejects_wrong_commitments
 #assert_axioms noteSpend_circuit_pins_intent
 #assert_axioms noteSpend_circuit_rejects_wrong_nullifiers
-#assert_axioms freshQueue_eq_intent
-#assert_axioms queueAllocate_circuit_pins_intent
-#assert_axioms queueAllocate_circuit_rejects_wrong_queues
 #assert_axioms cellSeal_circuit_pins_intent
 #assert_axioms cellSeal_circuit_rejects_wrong_lifecycle
 #assert_axioms swissExport_circuit_pins_intent
@@ -1736,13 +1571,7 @@ the §8 carried CR set (no `sorry`/`axiom`/`native_decide`). -/
 #assert_axioms createFromFactory_circuit_rejects_wrong_accounts
 
 #assert_axioms balanceA_circuit_pins_intent
-#assert_axioms queueResize_circuit_pins_intent
 #assert_axioms pipelinedSend_circuit_pins_intent
 #assert_axioms exercise_circuit_pins_intent
-
-#assert_axioms queueEnqueue_circuit_pins_intent
-#assert_axioms queueDequeue_circuit_pins_intent
-#assert_axioms queueAtomicTx_circuit_pins_intent
-#assert_axioms queuePipelineStep_circuit_pins_intent
 
 end Dregg2.Spec.CircuitSpecTriangle
