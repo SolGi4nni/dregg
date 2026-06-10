@@ -105,7 +105,7 @@ theorem recKernel_ext {k k' : RecordKernelState}
 The `recTransfer_correct` analog: rather than blindly trusting `noteSpendChainA`, we PIN what a
 committed run does — its nullifier set grows by exactly `nf` (head-consed), its log grows by exactly
 the receipt (head-consed), and every OTHER kernel field is literally unchanged. So the spec's
-nullifier-set + log + frame clauses genuinely encode the helper's behaviour. Only stated for the
+nullifier-set + log + frame clauses encode the helper's behaviour. Only stated for the
 committed (`nf ∉ nullifiers`) case, since that is the post-state the spec characterizes. -/
 theorem noteSpendChainA_correct (st : RecChainedState) (nf : Nat) (actor : CellId)
     (hfresh : nf ∉ st.kernel.nullifiers) :
@@ -287,8 +287,8 @@ A spec that accepts everything is worthless. The dual of Transfer's `rejects_*` 
 nullifier is ALREADY in the spent set is REJECTED — `execFullA` returns `none`. This is the
 anti-replay gate having teeth — the real double-spend prevention (a SET, not a scalar flag). -/
 
-/-- **`execFullA_noteSpend_rejects_double` — PROVED.** A `noteSpendA` whose nullifier `nf` is ALREADY
-spent (`nf ∈ nullifiers`) is REJECTED by the executor (`= none`). The anti-replay gate is genuinely a
+/-- **`execFullA_noteSpend_rejects_double`.** A `noteSpendA` whose nullifier `nf` is ALREADY
+spent (`nf ∈ nullifiers`) is REJECTED by the executor (`= none`). The anti-replay gate is a
 gate — no nullifier can be spent twice. -/
 theorem execFullA_noteSpend_rejects_double (st : RecChainedState) (nf : Nat) (actor : CellId)
     (spendProof : Bool) (hspent : nf ∈ st.kernel.nullifiers) :
@@ -299,7 +299,7 @@ theorem execFullA_noteSpend_rejects_double (st : RecChainedState) (nf : Nat) (ac
   · rw [if_pos hp, if_pos hspent]
   · rw [if_neg hp]
 
-/-- **`execFullA_noteSpend_rejects_no_proof` — PROVED (THE NOTE-PROOF TEETH, executor side).** A
+/-- **`execFullA_noteSpend_rejects_no_proof` (THE NOTE-PROOF TEETH, executor side).** A
 `noteSpendA` carrying an INVALID/missing §8 spending proof (`spendProof = false`) is REJECTED by the
 executor (`= none`), EVEN ON A FRESH nullifier — the proof gate fail-closes BEFORE the ledger insert.
 This is the `apply.rs:929` "spending proof verification failed" rejection now CAPTURED in the verified

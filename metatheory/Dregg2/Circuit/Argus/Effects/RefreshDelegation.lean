@@ -6,7 +6,7 @@ welded into the Argus IR, on the FULL-STATE `Surface2` surface.
 on transfer/mint/burn (single-cell moves). `Argus/Effects/BalanceA.lean` is the FULL-STATE template: it
 welds a v2 `EffectCommit2`/`Surface2` `*_full_sound` (concluding the WHOLE post-state) by routing the
 executor side through a chained-executor lift + an independent executor⟺spec corner. This module replays
-THAT (stronger) template for the genuinely different **cap-graph / delegation-snapshot** effect
+THAT (stronger) template for the different **cap-graph / delegation-snapshot** effect
 `refreshDelegationA`, in a disjoint file (it imports the Argus IR + the audited `refreshDelegationA` v2
 instance read-only and owns only its own declarations; it edits no other Argus module).
 
@@ -16,7 +16,7 @@ instance read-only and owns only its own declarations; it edits no other Argus m
 `apply.rs:2991`): a child re-snapshots its parent's CURRENT c-list. The chained kernel arm is
 `refreshDelegationChainA` (`TurnExecutorFull.lean:1761`), which `execFullA` routes to
 (`TurnExecutorFull.lean:3897`). FAIL-CLOSED on a TWO-conjunct gate — the self-authority gate
-(`stateAuthB actor child`, dregg1's self-only `action_target == child`) AND the child genuinely having a
+(`stateAuthB actor child`, dregg1's self-only `action_target == child`) AND the child having a
 parent (`(delegate child).isSome`, dregg1's `delegate.ok_or_else`, `apply.rs:3004`). On commit it
 OVERWRITES `delegations child` with a FRESH snapshot of the parent's CURRENT `caps` (`parentClist`),
 prepends a self-targeted receipt row, and FREEZES the other 16 `RecordKernelState` fields. Balance-neutral.
@@ -41,7 +41,7 @@ EffectCommit2 / `Surface2` universe (`Dregg2/Circuit/Inst/refreshDelegationA.lea
     keyed on the chained executor via the independent `refreshDelegation_iff_spec` (executor ⟺ spec, BOTH
     directions, full state).
 
-So this module is HONEST in both directions, exactly as BalanceA:
+This module covers both directions, exactly as BalanceA:
 
   (1) **Cornerstone (the standalone executor-refinement):** `interp_refreshDelegationStmt_eq_refreshDelegationStep`
       — the kernel step IS the Argus term, using `setDelegations`. New, standalone, the delegation-snapshot
@@ -54,7 +54,7 @@ So this module is HONEST in both directions, exactly as BalanceA:
       post-state the IR term's executor produces. The FULL-STATE Surface2 surface (strictly stronger than a
       per-cell EffectVM projection).
 
-## HONEST SURFACE + THE REPORTED KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
+## SURFACE + THE REPORTED KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
 
   * **FULL-STATE Surface2 (not per-cell).** The conclusion is `st' = { kernel := k', log := receipt :: log }`
     — the WHOLE chained post-state, because `RefreshDelegationSpec` pins every one of the 17 kernel fields
@@ -79,7 +79,7 @@ So this module is HONEST in both directions, exactly as BalanceA:
     so no monotone epoch is tracked), so the gap cannot silently regress. Closing it is a kernel-model
     widening (add a `delegationEpoch` registry to the kernel + re-derive the descriptor), out of scope.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the
 whole-function-digest assumption enters ONLY inside the reused `refreshDelegationA_full_sound` (its
@@ -122,7 +122,7 @@ it term-for-term: a `Bool` `guard` of the EXACT two conjuncts, then a `setDelega
 snapshot), NOT `setCell`/`recTransfer`. -/
 
 /-- The refreshDelegation admissibility gate as a `Bool` — exactly `refreshDelegationStep`'s `if` (the two
-conjuncts: self-authority over `child`, and `child` genuinely having a parent). The kernel gate is
+conjuncts: self-authority over `child`, and `child` having a parent). The kernel gate is
 IDENTICAL to the chained `refreshDelegationChainA` gate (no `acceptsEffects` pre-gate is added). -/
 def refreshDelegationGuard (actor child : CellId) (k : RecordKernelState) : Bool :=
   stateAuthB k.caps actor child && (k.delegate child).isSome
@@ -298,7 +298,7 @@ theorem refreshDelegation_compile_sound
 
 #assert_axioms refreshDelegation_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely OVERWRITES the snapshot (observable), the gate REJECTS forged
+/-! ## §5 — NON-VACUITY: the IR term OVERWRITES the snapshot (observable), the gate REJECTS forged
 inputs (fail-closed), and the reported kernel-vs-runtime divergence is a checked fact.
 
 The cornerstone/weld would be hollow if refresh never committed, if the snapshot overwrite were a no-op, or
@@ -319,7 +319,7 @@ def kRD : RecordKernelState :=
 
 /-- **NON-VACUITY (the SNAPSHOT is OBSERVABLE).** A committed refresh of child `1` OVERWRITES `1`'s
 `delegations` snapshot from `[]` to the PARENT `0`'s current c-list `[node 7, node 0, node 1]` — the
-`setDelegations`/`refreshDelegationsMap` overwrite is real (the parent c-list genuinely lands in the
+`setDelegations`/`refreshDelegationsMap` overwrite is real (the parent c-list lands in the
 child's snapshot, not a no-op). -/
 theorem refreshDelegationStmt_snapshots :
     (interp (refreshDelegationStmt 0 1) kRD).map (fun k => k.delegations 1)
@@ -346,7 +346,7 @@ theorem refreshDelegationStmt_rejects_noParent :
 /-- **NON-VACUITY (fail-closed: no authority).** A refresh attempted by a FOREIGN actor (cell `2`, which
 holds NO cap over child `1` and is `≠ 1`, so it is NOT self-authorized) does NOT commit — the AUTHORITY leg
 `stateAuthB 2 1` fails closed (`2 ≠ 1` and `caps 2 = []`), even though child `1` DOES have a parent. So the
-refresh is genuinely SELF-only: a third party cannot refresh someone else's delegation. (A refresh by the
+refresh is SELF-only: a third party cannot refresh someone else's delegation. (A refresh by the
 child itself, `actor = child = 1`, IS self-authorized — `stateAuthB` admits acting on one's own cell — so
 the authority tooth must use a FOREIGN actor, which this witness does.) No snapshot is taken. -/
 theorem refreshDelegationStmt_rejects_unauthorized :

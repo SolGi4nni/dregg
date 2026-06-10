@@ -110,7 +110,7 @@ theorem workflow_order_is_guard (s : StepKind) (actor : Party) (phase : Phase)
 
 /-- **`workflow_attest_is_guard`.** The concrete attestation check
 (`CryptoKernel.verify stmt att = true`) holds iff `attestGuard stmt` admits under the natural
-supply. The §8 verify seam is honestly stated — not a hidden gap. -/
+supply. The §8 verify seam is stated — not a hidden gap. -/
 theorem workflow_attest_is_guard (stmt : Digest) (s : StepKind) (actor : Party) (phase : Phase)
     (att : Proof) :
     Guard.admits (attestGuard stmt) ⟨s, actor, phase⟩ (wsupply att) = true

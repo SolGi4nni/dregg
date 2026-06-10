@@ -342,7 +342,7 @@ def exerciseEffect (actor target : CellId) (inner : List FacetedEffect) : Closed
 /-- The exercise registry slice (one entry). -/
 def exerciseRegistry : Registry := [ ⟨ExerciseArgs, exerciseH⟩ ]
 
-/-- **`exercise_conserves` — the headline corollary (the §DEFER payoff, PROVED).** A committed exercise
+/-- **`exercise_conserves` — the headline corollary (the §DEFER payoff).** A committed exercise
 moves the combined per-asset measure by EXACTLY the SUM of its inner sub-forest's deltas — the sub-forest
 conservation folded onto `subTurn_conserves`, with NO new induction. This is the per-effect contribution
 the GLOBAL `turn_conserves` sums when an exercise sits inside a larger turn. -/
@@ -441,7 +441,7 @@ build. -/
 #assert_axioms exerciseSubFuel_adequate
 #assert_axioms exerciseSubFuel_zero
 
-/-! ## §DEFER — honest scope of this recursive handler.
+/-! ## §DEFER — scope of this recursive handler.
 
 Deliberately OUT of this handler (documented, NOT a silent gap):
 

@@ -44,7 +44,7 @@ are a well-founded pair over the tree's `sizeOf`). Non-vacuity (`#eval`): a conc
 a parent delegating an attenuated cap to a child, committing — and a child attempting to EXCEED the
 delegated caps, rejected (fail-closed).
 
-Delegated caps NEVER amplify (`derive_no_amplify`, reused, never faked). Verified standalone with
+Delegated caps NEVER amplify (`derive_no_amplify`, reused). Verified standalone with
 `lake env lean Dregg2/Exec/TurnForest.lean`. Reuses RecordKernel/Caps/TurnExecutor; edits none.
 -/
 import Dregg2.Exec.TurnExecutor
@@ -135,7 +135,7 @@ def childrenActions : List Child → TxTurn
   | ⟨_, _, _, sub⟩ :: rest => forestActions sub ++ childrenActions rest
 end
 
-/-- **`execTurn_append` (PROVED).** Running a concatenated turn equals running the prefix and, on
+/-- **`execTurn_append`.** Running a concatenated turn equals running the prefix and, on
 success, the suffix, phrased as the explicit `match`. The linear-transaction associativity the
 forest flattening rests on (the `execTurn` recursion is a left fold). -/
 theorem execTurn_append (s : RecChainedState) (xs ys : TxTurn) :
@@ -162,7 +162,7 @@ theorem execTurn_append (s : RecChainedState) (xs ys : TxTurn) :
       | none    => rfl
       | some s1 => exact ih s1
 
-/-! **`execForest` IS `execTurn` over the pre-order flattening (PROVED).** The tree transaction
+/-! **`execForest` IS `execTurn` over the pre-order flattening.** The tree transaction
 equals the linear transaction over its pre-ordered node-actions: `execForest s f = execTurn s
 (forestActions f)`. This is the bridge that lifts EVERY `execTurn` theorem (`execTurn_conserves`,
 `execTurn_attests`, …) to the forest — the recursion threads the chained state in exactly the
@@ -222,14 +222,14 @@ def childrenEdges : List Child → List (List Auth × Cap)
   | ⟨_, keep, pc, sub⟩ :: rest => (keep, pc) :: (forestEdges sub ++ childrenEdges rest)
 end
 
-/-- **`edge_no_amplify` — PROVED (the per-edge Granovetter law).** A single delegation edge is
+/-- **`edge_no_amplify` (the per-edge Granovetter law).** A single delegation edge is
 non-amplifying: the cap delegated to the child (`attenuate keep parentCap`) confers ≤ the parent's
-authority. This is `Caps.derive_no_amplify` — reused verbatim, never faked. -/
+authority. This is `Caps.derive_no_amplify` — reused verbatim. -/
 theorem edge_no_amplify (keep : List Auth) (parentCap : Cap) :
     capAuthConferred (attenuate keep parentCap) ⊆ capAuthConferred parentCap :=
   derive_no_amplify keep parentCap
 
-/-- **`execForest_no_amplify` — THE FOREST GRANOVETTER LAW (PROVED).** EVERY delegation edge of the
+/-- **`execForest_no_amplify` — THE FOREST GRANOVETTER LAW.** EVERY delegation edge of the
 forest is non-amplifying: for each `(keep, parentCap)` edge, the cap handed to the child confers ≤
 the parent's authority (`derive_no_amplify`). No child anywhere in the tree — at any nesting depth —
 gains authority the parent lacked: *only connectivity begets connectivity*, across the whole forest.
@@ -249,7 +249,7 @@ END-TO-END across the whole tree. This is the N-ary CG-5: the forest conserves p
 turn whose own Σ = 0, so the tree's Σ = 0 follows by the fold — no separate binding needed). We get
 it for free from `execTurn_conserves` through the flattening bridge. -/
 
-/-- **`execForest_conserves` — PROVED (the N-ary CG-5, whole tree).** A committed forest preserves
+/-- **`execForest_conserves` (the N-ary CG-5, whole tree).** A committed forest preserves
 the total `balance` field across the live accounts: `recTotal s'.kernel = recTotal s.kernel`. The
 per-domain Σ = 0 across the WHOLE tree — every node's `recCexec` conserves, telescoped over the
 pre-order fold (the tree generalization of `joint_cg5_conserves`/`forestApply_cg5_conserves`). -/
@@ -258,7 +258,7 @@ theorem execForest_conserves (s s' : RecChainedState) (f : TurnForest)
   rw [execForest_eq_execTurn] at h
   exact execTurn_conserves s s' (forestActions f) h
 
-/-- **`execForest_balance_domain_conserves` — PROVED (per-domain Σ = 0, the `Spec` shape).** A
+/-- **`execForest_balance_domain_conserves` (per-domain Σ = 0, the `Spec` shape).** A
 committed forest nets to `0` in the `balance` domain (`Spec.conservedInDomain Domain.balance` on the
 realized total-delta). The executable shadow of dregg1's per-domain `excess == 0` gate, across the
 whole nested forest. -/
@@ -281,7 +281,7 @@ pre-order flattening). NEVER weakened. -/
 def fullForestInv (s : RecChainedState) (f : TurnForest) (s' : RecChainedState) : Prop :=
   fullTurnInv s (forestActions f) s'
 
-/-- **`execForest_attests` — THE NESTED FOREST IS STEP-COMPLETE BY CONSTRUCTION (PROVED).** Every
+/-- **`execForest_attests` — THE NESTED FOREST IS STEP-COMPLETE BY CONSTRUCTION.** Every
 committed forest attests the FULL `StepInv` over the WHOLE tree: Conservation (balance field) ∧
 Authority (every node) ∧ ChainLink ∧ ObsAdvance. This generalizes `execTurn_attests` recursively
 over the nested call-forest — the four conjuncts are exactly dregg1's transaction obligations,
@@ -292,7 +292,7 @@ theorem execForest_attests {s s' : RecChainedState} {f : TurnForest}
   rw [execForest_eq_execTurn] at h
   exact execTurn_attests h
 
-/-- **Authority conjunct, projected — PROVED.** Every node-action of a committed forest was
+/-- **Authority conjunct, projected.** Every node-action of a committed forest was
 authorized (`authorizedB` true at the state it ran against). The Granovetter grounding leg: each
 node's own op passed the authority gate, AND (by `execForest_no_amplify`) every delegated child cap
 was ≤ its parent's — so authority only ever flows DOWN the tree, never up. -/
@@ -303,7 +303,7 @@ theorem execForest_all_authorized (s s' : RecChainedState) (f : TurnForest)
   rw [execForest_eq_execTurn] at h
   exact execTurn_all_authorized s s' (forestActions f) h
 
-/-- **`execForest_unauthorized_fails` — PROVED (fail-closed at the root).** If the root node's move
+/-- **`execForest_unauthorized_fails` (fail-closed at the root).** If the root node's move
 is unauthorized, the whole forest rejects (no partial commit). Reuses `recCexec`'s authority gate
 through the `execForest` root. -/
 theorem execForest_unauthorized_fails (s : RecChainedState) (a : Action) (kids : List Child)

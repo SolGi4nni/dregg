@@ -275,7 +275,7 @@ example :
       (.record [("status", .int 1), ("amount", .int 7), ("locked", .int 50), ("paid", .int 0)])
       (.record [("status", .int 2), ("amount", .int 9), ("locked", .int 70), ("paid", .int 20)]) = false := by decide
 
--- HONEST SEMANTICS: because the escrow carries a trailing `invariant` (an `always`-guarded arm),
+-- SEMANTICS: because the escrow carries a trailing `invariant` (an `always`-guarded arm),
 -- the `always` arm matches EVERY method — so an unknown method is NOT default-denied; it is
 -- governed by the conservation invariant alone. Default-deny on unknown methods holds only for
 -- an `on`-arms-only program with no `invariant`. An unknown method that VIOLATES conservation IS denied:

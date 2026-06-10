@@ -92,7 +92,7 @@ def crossBid : KernelIntent Dregg2.Authority.Blocklace.demoLace demoReg demoStmt
 
 /-- **The cross-asset bid is NOT directly fillable:** no conversion `5 gold ⟶ 1 art` exists in the
 discrete resource theory — the hole is unpluggable WITHOUT the market's standing offers (Phase 4's
-offer-generated conversions / the `Match` coend's multi-hop routing). This is the honest boundary: the
+offer-generated conversions / the `Match` coend's multi-hop routing). This is the boundary: the
 intent is well-formed, but its fill is a *market* fact, not a resource fact. -/
 theorem crossBid_needs_market : ¬ Converts crossBid.offered crossBid.wanted :=
   res_no_convert (by decide)

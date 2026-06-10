@@ -31,7 +31,7 @@ the executor side through the cornerstone `interp_transferStmt_eq_recKExec`. So 
 post-state that the IR term `interp (transferStmt turn)` produces* — the same term, two
 interpretations, provably aligned.
 
-## HONEST SCOPE (precise — do NOT over-read)
+## SCOPE (precise — do NOT over-read)
 
   * PER-CELL (the SRC/debit leg). The runnable descriptor is a SINGLE-ROW AIR; its soundness pins ONE
     cell's transition + that cell's commitment binding. `interp`/`recKExec` is the multi-cell whole
@@ -53,7 +53,7 @@ interpretations, provably aligned.
     carries a real descriptor + soundness. The weld theorem is stated ONLY for the transfer term, where
     `compile` IS the audited runnable descriptor (`compile_transferStmt`, by `rfl`).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms transfer_compile_sound` ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no
 `:= True` vacuity, no weakening-that-just-typechecks: the conclusion is the genuine per-cell
@@ -376,7 +376,7 @@ post-state the IR term's executor interpretation produces.
 
 The SAME shape as `transfer_compile_sound`: route the circuit side through `compile_mintStmt`/
 `compile_burnStmt` + the audited `…Descriptor_full_sound`, and the executor side through the cornerstone
-`interp_mintStmt_eq_recKMint` / `interp_burnStmt_eq_recKBurn` + the §M.1 projections. The honest surface
+`interp_mintStmt_eq_recKMint` / `interp_burnStmt_eq_recKBurn` + the §M.1 projections. The surface
 is PER-CELL (`cellProj` of the affected cell), exactly as transfer (the descriptors are single-row AIRs;
 the global supply total is the TURN-COMPOSITION layer, cited by the Emit modules' §8½ — NOT a per-cell
 gap). Mint MATCHES on the nonce (descriptor freezes, executor freezes — no divergence); burn RECONCILES
@@ -395,7 +395,7 @@ Suppose, for the Argus mint term `mintStmt actor cell amt`:
 Then the circuit's pinned post-state `post` AGREES with the executor's post-cell projection
 `cellProj k' cell` on the conserved balance (credited by `amt`) AND the WHOLE frame (balHi, the 8
 fields, cap_root, reserved each frozen) AND the nonce — mint has NO divergence (both the descriptor and
-`recKMint` freeze the cell nonce, `Mint` §HONEST-BOUNDARY). So the circuit the prover runs for mint pins
+`recKMint` freeze the cell nonce, `EffectVmEmitMint` §BOUNDARY). So the circuit the prover runs for mint pins
 the per-cell state the IR term's executor produces. -/
 theorem mint_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv)

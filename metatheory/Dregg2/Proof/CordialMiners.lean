@@ -53,7 +53,7 @@ participant's wave-end block ratifies at most one leader per wave, because ratif
 two leaders equal. This is dregg1's actual finality (`find_all_final_leaders` returns ≤ 1 final
 leader per wave) — proved, not assumed.
 
-## HONEST SCOPE (named OPENs — NOT sorries)
+## SCOPE (named OPENs — NOT sorries)
 
 What this models **faithfully**: the DAG round/wave/leader structure (`ordering.rs`), the
 `approves`/`ratifies`/`is_super_ratified` commit rule, and the safety property that a wave has
@@ -167,7 +167,7 @@ def CordialState.ratifies (S : CordialState) (o l : Block) (threshold : Nat) : P
 /-! ### 2b. From a lace-read voter set to the BFT `Vote` list (the bridge, COMPUTED).
 
 The crux of closing OPEN-CM-DISSEMINATION's *quorum* half: the `BFT.Vote` list the
-quorum-intersection feeder consumes is no longer an assumed structure field — it is **built
+quorum-intersection feeder consumes is not an assumed structure field — it is **built
 from the participants the lace actually exhibits as ratifiers** (`ratifyingVoters`, the
 `HasApprovingBlock`-filter over the real `lace`). `votesFromVoters` materializes one
 `Vote ⟨p, bid⟩` per such participant, and `votersFor_votesFromVoters` proves the BFT voter
@@ -181,7 +181,7 @@ HashSet of `ordering.rs::is_super_ratified` rendered as the `Vote` set the feede
 def votesFromVoters (voters : List AuthorId) (bid : Authority.Blocklace.BlockId) : List Vote :=
   voters.map (fun p => ⟨p, bid⟩)
 
-/-- **`votersFor_votesFromVoters` (PROVED) — the count is read off the voter list.** For a
+/-- **`votersFor_votesFromVoters` — the count is read off the voter list.** For a
 `votesFromVoters voters bid` list, `votersFor … bid` is exactly `voters.dedup`. Every
 materialized vote endorses `bid`, so the `filter` keeps all of them and the `map (·.voter)`
 recovers `voters`; the `dedup` in `votersFor` is the only residue. Hence the BFT voter count
@@ -203,7 +203,7 @@ theorem votersFor_votesFromVoters (voters : List AuthorId) (bid : Authority.Bloc
   rw [List.map_map]
   exact List.map_id _
 
-/-- **`length_votersFor_votesFromVoters_of_nodup` (PROVED)** — when the ratifier list is
+/-- **`length_votersFor_votesFromVoters_of_nodup`** — when the ratifier list is
 `Nodup` (it is: `ratifyingVoters` ends in `.dedup`), the BFT voter count is *exactly* the
 ratifier count, no shrinkage. This is the equality that turns the assumed `quorum` field into a
 fact computed from the lace. -/
@@ -279,12 +279,12 @@ lace-read `ratifies`/`is_super_ratified`, NOT a hypothesized vote set. -/
 def Committed (S : CordialState) (cfg : Finality.Config) (l : Block) : Prop :=
   Nonempty (superRatifiedFromLace S cfg l)
 
-/-- **`SuperRatification.ofLace` (PROVED) — the derivation that closes the audit gap.** From a
+/-- **`SuperRatification.ofLace` — the derivation that closes the audit gap.** From a
 lace-read `superRatifiedFromLace` we *construct* the BFT-feeder `SuperRatification`, with its
 `votes` **built from the lace's own ratifier set** (`votesFromVoters (ratifyingVoters o l) l.id`)
 and its `quorum` field **derived** (via `length_votersFor_votesFromVoters_of_nodup`) from
 `quorum_from_lace` — the count the lace exhibits. So the quorum the safety theorem consumes is
-no longer assumed data: it is computed from the approving blocks in the real `lace`. -/
+not assumed data: it is computed from the approving blocks in the real `lace`. -/
 noncomputable def SuperRatification.ofLace
     {S : CordialState} {cfg : Finality.Config} {l : Block}
     (h : superRatifiedFromLace S cfg l) : SuperRatification S cfg l where
@@ -303,7 +303,7 @@ noncomputable def SuperRatification.ofLace
     exact h.quorum_from_lace
   unique_leader := h.unique_leader
 
-/-- **`committed_iff_superRatification` (PROVED)** — being committed (lace-read) gives the
+/-- **`committed_iff_superRatification`** — being committed (lace-read) gives the
 BFT-feeder evidence, and conversely any `SuperRatification` whose vote count is witnessed by a
 lace ratifier set is a lace commit. The forward direction is the load-bearing one: a
 lace-derived commit yields the feeder `SuperRatification` with a quorum *computed from the
@@ -323,7 +323,7 @@ candidate leaders — and the honesty law (one ratification per wave-position) f
 equal. This is dregg1's `find_all_final_leaders` returning at most one final leader per wave,
 proved from the DAG commit rule. -/
 
-/-- **`cordial_agreement` (PROVED) — DAG-BFT safety / agreement.** Given a `BFT.BFTModel` over
+/-- **`cordial_agreement` — DAG-BFT safety / agreement.** Given a `BFT.BFTModel` over
 the *combined* ratification votes of two super-ratification candidates `l₁ l₂`, if a single
 honest participant cannot ratify two distinct leaders for the same wave position
 (`honest_one_ratification` — the DAG form of honest-vote-once), then two super-ratified leaders
@@ -393,7 +393,7 @@ theorem cordial_agreement
   -- that honest ratifier ratified BOTH leaders ⇒ honesty law collapses the ids ⇒ blocks equal.
   exact hid_inj (honest_one_ratification v hhonest hv1 hv2)
 
-/-- **`cordial_no_conflicting_final_leaders` (PROVED) — the `False` / safety form.** Two
+/-- **`cordial_no_conflicting_final_leaders` — the `False` / safety form.** Two
 *distinct* blocks cannot both be committed (super-ratified final leaders) under the honest DAG-
 BFT model: the assumption `l₁ ≠ l₂` together with two super-ratifications is a CONTRADICTION.
 This is the safety statement "an equivocating leader cannot have two of its blocks both anchor
@@ -413,12 +413,12 @@ theorem cordial_no_conflicting_final_leaders
 
 `honest_one_ratification` is not a fresh oracle: it is the ratification-level shadow of
 `Authority.Blocklace.honest_no_equivocation`. Here we show one concrete way it is met — when
-the leader id pins the leader block (canonical lace) and the wave-position is genuinely
+the leader id pins the leader block (canonical lace) and the wave-position is
 shared, an honest ratifier's *single* `approves` read forces the ids equal. The general
 discharge is the OPEN-CM-DISSEMINATION reliable-broadcast convergence; this lemma exhibits the
 non-vacuous core: under id-determinism the hypothesis reduces to the BFT honest-vote-once. -/
 
-/-- **`honest_one_ratification_of_bft` (PROVED)** — the DAG honesty law is *implied by* the
+/-- **`honest_one_ratification_of_bft`** — the DAG honesty law is *implied by* the
 classical `BFTModel.honest_vote_once` over the same vote union. So feeding `cordial_agreement`
 its honesty hypothesis costs nothing beyond what the BFT model already grants: the ratification
 honesty law IS honest-vote-once on the ratification votes. This is the precise sense in which
@@ -456,7 +456,7 @@ exact same quorum-intersection core. What moved assumed→derived: the `> 2n/3` 
 `ratifyingVoters … |>.length` over the real `lace`) and the unique-leader guard (now a read of
 the blocks present in `S.lace`). -/
 
-/-- **`cordial_agreement_from_lace` (PROVED) — DAG-BFT safety with the quorum READ OFF THE
+/-- **`cordial_agreement_from_lace` — DAG-BFT safety with the quorum READ OFF THE
 LACE.** Two blocks each `Committed` (i.e. each satisfying `superRatifiedFromLace`: the lace
 exhibits an `≥ n-f` ratifier read) cannot be distinct, under the honest BFT model over the
 *materialized* ratification votes (built from each leader's lace ratifier set) plus
@@ -465,7 +465,7 @@ the actual blocklace — not an assumed `SuperRatification.quorum` field. This i
 target: the safety theorem is now about the PROTOCOL's lace-read commit rule.
 
 **OPEN-CM-DISSEMINATION (the precise irreducible residual).** What is *still* assumed, and is
-genuinely the gossip/reliable-broadcast convergence (off the safety critical path):
+the gossip/reliable-broadcast convergence (off the safety critical path):
   1. `M : BFTModel cfg (…)` — the adversary/honesty discipline (`≤ f` Byzantine among actual
      ratifiers, `n > 3f`, honest-vote-once) over the materialized ratification votes. This is
      the *same* assumed adversary model `BFT.lean` carries (the `World.recv_mono`-style
@@ -491,7 +491,7 @@ theorem cordial_agreement_from_lace
   cordial_agreement_via_bft S cfg l₁ l₂
     (SuperRatification.ofLace h₁.some) (SuperRatification.ofLace h₂.some) M hid_inj
 
-/-- **`cordial_no_conflicting_final_leaders_from_lace` (PROVED) — the `False` / safety form,
+/-- **`cordial_no_conflicting_final_leaders_from_lace` — the `False` / safety form,
 lace-derived.** Two *distinct* blocks cannot both be `Committed` (both exhibit an `≥ n-f`
 ratifier read off the real lace) under the honest model. The quorum is the lace's
 `ratifyingVoters` count, not assumed data. -/
@@ -610,7 +610,7 @@ theorem p1_ratifies : state.HasApprovingBlock ro rg1 1 :=
 theorem p2_ratifies : state.HasApprovingBlock ro rg1 2 :=
   ⟨ra2, by decide, by decide, Or.inr ra2_pre_ro, ra2_approves⟩
 
-/-- **The quorum, READ OFF THE LACE (PROVED).** The lace-computed ratifier set
+/-- **The quorum, READ OFF THE LACE.** The lace-computed ratifier set
 `ratifyingVoters ro rg1` contains the three distinct participants `0,1,2` — because the lace
 holds their approving blocks (`pᵢ_ratifies`) — so its length is `≥ 3 = n - f`. No vote list was
 assumed: the count is `ordering.rs::ratifies` evaluated on `ratLace`. -/
@@ -632,7 +632,7 @@ theorem quorum_from_lace : cfg.n - cfg.f ≤ (state.ratifyingVoters ro rg1).leng
   rw [show cfg.n - cfg.f = 3 from by decide, this]
   exact (hnd.subperm hsub).length_le
 
-/-- **`ratLeader = rg1` is super-ratified-FROM-THE-LACE** (PROVED): the lace `ratLace` exhibits
+/-- **`ratLeader = rg1` is super-ratified-FROM-THE-LACE**: the lace `ratLace` exhibits
 the `≥ n - f` ratifier quorum (`quorum_from_lace`, computed via `ratifyingVoters`) at the
 observer `ro`, and `rg1` is the unique author-7 block at its round. EVERY field is derived from
 the blocks present in `ratLace`. -/
@@ -653,7 +653,7 @@ def srG1 : superRatifiedFromLace state cfg rg1 where
     · exact absurd hcreator (by decide)        -- b = ra2: creator 2 ≠ 7.
     · exact absurd hcreator (by decide)        -- b = ro:  creator 0 ≠ 7.
 
-/-- **`rg1` is committed** in the demo state (PROVED) — a final leader anchoring `tau`, with the
+/-- **`rg1` is committed** in the demo state — a final leader anchoring `tau`, with the
 commit decision (`Committed = superRatifiedFromLace`) READ OFF the real blocklace `ratLace`. -/
 theorem g1_committed : Committed state cfg rg1 := ⟨srG1⟩
 

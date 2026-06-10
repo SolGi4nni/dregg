@@ -31,7 +31,7 @@ axiomatised Kripke frame. (We also give the abstract `Execution.System`-level `�
 same vocabulary lifts to `invariant_run` for any transition system, and the cross-check
 `always_iff_reachable` tying `□` over an induced system to reachability.)
 
-## What a *full* program logic would still need (the honest residue)
+## What a *full* program logic would still need (the residue)
 
 This is a temporal logic of *state* predicates over a *fixed* trajectory family. It is NOT:
 * a **Hoare/WP logic over turns of the living cell** — `wp`/`Triple` exist for `recCexec`
@@ -90,7 +90,7 @@ that ONE living-cell step preserves it. This is the temporal face of `Exec.livin
 (itself proved on the real 46-effect `execFullForestA`). It is the LTL □-introduction rule
 `(P ∧ □(P → ◯P)) → □P` specialised to the case where the step-preservation is uniform. -/
 
-/-- **`always_of_step_invariant` (PROVED) — THE HEADLINE: `□`-introduction over the living
+/-- **`always_of_step_invariant` — THE HEADLINE: `□`-introduction over the living
 cell.** If a state predicate `P` holds at the start `s` and is preserved by a SINGLE living-cell
 step (`hpres : ∀ s cf, P s → P (cellNextA s cf)` — the app's one-step obligation, dischargeable
 from the executor's per-step correctness `fullActionInvA` / the `Exec/FullForest` theorems), then
@@ -105,19 +105,19 @@ theorem always_of_step_invariant (P : RecChainedState → Prop)
 
 /-! ## §2 — The modal algebra of `□` (the LTL laws provable from the linear structure). -/
 
-/-- **`always_now` (PROVED) — `□P → P` ("now"): the reflexivity / T-axiom of `□`.** If `P` holds
+/-- **`always_now` — `□P → P` ("now"): the reflexivity / T-axiom of `□`.** If `P` holds
 always, it holds at the present state `s` (index `0`). -/
 theorem always_now {P : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (h : Always P s sched) : P s :=
   h 0
 
-/-- **`always_mono` (PROVED) — `□` is MONOTONE**: if `P → Q` pointwise and `□P`, then `□Q`. The
+/-- **`always_mono` — `□` is MONOTONE**: if `P → Q` pointwise and `□P`, then `□Q`. The
 necessitation-respecting monotonicity of the box (LTL `□(P → Q) → □P → □Q` in its uniform form). -/
 theorem always_mono {P Q : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (hPQ : ∀ x, P x → Q x) (h : Always P s sched) : Always Q s sched :=
   fun n => hPQ _ (h n)
 
-/-- **`always_and` (PROVED) — `□(P ∧ Q) ↔ □P ∧ □Q`: `□` DISTRIBUTES over conjunction.** The
+/-- **`always_and` — `□(P ∧ Q) ↔ □P ∧ □Q`: `□` DISTRIBUTES over conjunction.** The
 defining lattice law of the box modality: "always (P and Q)" is exactly "always P and always Q".
 PROVED in both directions. -/
 theorem always_and {P Q : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA} :
@@ -128,13 +128,13 @@ theorem always_and {P Q : RecChainedState → Prop} {s : RecChainedState} {sched
   · intro ⟨hP, hQ⟩ n
     exact ⟨hP n, hQ n⟩
 
-/-- **`always_const` (PROVED)** — a state-INDEPENDENT truth is always true (the `□⊤`/necessitation
+/-- **`always_const`** — a state-INDEPENDENT truth is always true (the `□⊤`/necessitation
 base case): if `P x` holds for every `x`, then `□P` along any trajectory. -/
 theorem always_const {P : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (h : ∀ x, P x) : Always P s sched :=
   fun _ => h _
 
-/-- **`always_iff` (PROVED)** — `□` is a congruence for pointwise `↔`: equivalent predicates have
+/-- **`always_iff`** — `□` is a congruence for pointwise `↔`: equivalent predicates have
 equivalent boxes. (The `Iff` upgrade of `always_mono`, both directions.) -/
 theorem always_iff {P Q : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (hPQ : ∀ x, P x ↔ Q x) : Always P s sched ↔ Always Q s sched :=
@@ -150,7 +150,7 @@ at every index. We need the suffix operation on schedules + the trajectory-shift
 (`(dropSched sched k) i = sched (k + i)`). The temporal "from step `k` onward" reindexing. -/
 def dropSched (sched : SchedA) (k : Nat) : SchedA := fun i => sched (k + i)
 
-/-- **`trajA_add` (PROVED) — the trajectory SHIFT law**: running `k + n` steps from `s` equals
+/-- **`trajA_add` — the trajectory SHIFT law**: running `k + n` steps from `s` equals
 running `n` steps from the `k`-th state, along the suffix schedule. This is the semigroup action
 of time on the trajectory — the engine behind `□`-idempotence and every "suffix" temporal law.
 PROVED by induction on `n`, using that `trajA`'s successor is `cellNextA` definitionally. -/
@@ -167,7 +167,7 @@ theorem trajA_add (s : RecChainedState) (sched : SchedA) (k n : Nat) :
       -- the schedule choice matches: `(dropSched sched k) m = sched (k + m)`.
       rfl
 
-/-- **`always_idem` (PROVED) — `□P → □□P` (the S4 axiom), in its linear form.** If `P` holds at
+/-- **`always_idem` — `□P → □□P` (the S4 axiom), in its linear form.** If `P` holds at
 every index of the trajectory from `s`, then for every prefix length `k` it ALSO holds at every
 index of the SUFFIX trajectory from `trajA s sched k` (driven by the suffix schedule). I.e. "`P`
 is always-always": from any reachable point onward, `P` still holds forever. PROVED via the shift
@@ -180,25 +180,25 @@ theorem always_idem {P : RecChainedState → Prop} {s : RecChainedState} {sched 
 
 /-! ## §4 — `◇` (eventually) and the `□`/`◇` DUALITY. -/
 
-/-- **`eventually_of_now` (PROVED) — `P → ◇P` ("here is somewhere"): `◇`-introduction.** If `P`
+/-- **`eventually_of_now` — `P → ◇P` ("here is somewhere"): `◇`-introduction.** If `P`
 holds now (at `s`, index `0`), then `◇P`. -/
 theorem eventually_of_now {P : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (h : P s) : Eventually P s sched :=
   ⟨0, h⟩
 
-/-- **`eventually_of_always` (PROVED) — `□P → ◇P`**: on the living cell's trajectory (which has a
+/-- **`eventually_of_always` — `□P → ◇P`**: on the living cell's trajectory (which has a
 state at every index, so is never empty), "always" implies "eventually". The standard LTL
 inclusion `□P → ◇P`. -/
 theorem eventually_of_always {P : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (h : Always P s sched) : Eventually P s sched :=
   ⟨0, h 0⟩
 
-/-- **`eventually_mono` (PROVED) — `◇` is MONOTONE**: `P → Q` pointwise and `◇P` give `◇Q`. -/
+/-- **`eventually_mono` — `◇` is MONOTONE**: `P → Q` pointwise and `◇P` give `◇Q`. -/
 theorem eventually_mono {P Q : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (hPQ : ∀ x, P x → Q x) (h : Eventually P s sched) : Eventually Q s sched :=
   let ⟨n, hn⟩ := h; ⟨n, hPQ _ hn⟩
 
-/-- **`not_eventually_iff_always_not` (PROVED) — `¬◇P ↔ □¬P`**: one half of the `□`/`◇` De
+/-- **`not_eventually_iff_always_not` — `¬◇P ↔ □¬P`**: one half of the `□`/`◇` De
 Morgan duality (the constructively-valid direction: "never P" = "always not-P"). PROVED by
 `not_exists`. -/
 theorem not_eventually_iff_always_not {P : RecChainedState → Prop} {s : RecChainedState}
@@ -207,8 +207,8 @@ theorem not_eventually_iff_always_not {P : RecChainedState → Prop} {s : RecCha
   unfold Eventually Always
   exact not_exists
 
-/-- **`not_always_iff_eventually_not` (PROVED) — `¬□P ↔ ◇¬P`**: the other De Morgan dual. The
-forward direction `¬□P → ◇¬P` is genuinely classical (it is `¬∀ → ∃¬`); we discharge it with
+/-- **`not_always_iff_eventually_not` — `¬□P ↔ ◇¬P`**: the other De Morgan dual. The
+forward direction `¬□P → ◇¬P` is classical (it is `¬∀ → ∃¬`); we discharge it with
 `Classical.not_forall`. Together with the previous lemma this gives the full LTL `□`/`◇`
 duality. -/
 theorem not_always_iff_eventually_not {P : RecChainedState → Prop} {s : RecChainedState}
@@ -219,13 +219,13 @@ theorem not_always_iff_eventually_not {P : RecChainedState → Prop} {s : RecCha
 
 /-! ## §5 — `◯` (next) and its unfolding against `□`. -/
 
-/-- **`always_imp_next` (PROVED) — `□P → ◯P`**: if `P` is always true it is in particular true at
+/-- **`always_imp_next` — `□P → ◯P`**: if `P` is always true it is in particular true at
 the next step. The "`□` refines `◯`" unfolding (LTL `□P → ◯P`). -/
 theorem always_imp_next {P : RecChainedState → Prop} {s : RecChainedState} {sched : SchedA}
     (h : Always P s sched) : Next P s sched :=
   h 1
 
-/-- **`next_eq_succ_state` (PROVED)** — the `◯`-semantics pin: `Next P s sched` is exactly `P`
+/-- **`next_eq_succ_state`** — the `◯`-semantics pin: `Next P s sched` is exactly `P`
 evaluated at the immediate living-cell successor `cellNextA s (sched 0)`. Confirms `◯` really is
 "one `execFullForestA` step out", not an abstract placeholder. -/
 theorem next_eq_succ_state (P : RecChainedState → Prop) (s : RecChainedState) (sched : SchedA) :
@@ -248,7 +248,7 @@ as the per-trajectory reachability fact. This ties `□` to `Execution.invariant
 `livingCellA`): `Step x x'` iff some conserving forest sends `x` to `x'` via the real executor. -/
 abbrev livingSystem : Execution.System := inducedSystem livingCellA
 
-/-- **`trajA_reachable` (PROVED)** — every trajectory state is `Run`-reachable from the start in
+/-- **`trajA_reachable`** — every trajectory state is `Run`-reachable from the start in
 the induced system: `Run livingSystem s (trajA s sched n)`. The bridge from the schedule-unfold to
 relational reachability. PROVED by induction on `n` (each step is a `livingCellA.next`, i.e. an
 `inducedSystem` `Step`). -/
@@ -261,7 +261,7 @@ theorem trajA_reachable (s : RecChainedState) (sched : SchedA) (n : Nat) :
       -- the step `trajA … k → trajA … (k+1)` is `livingCellA.next (trajA … k) (sched k)`.
       exact ⟨sched k, rfl⟩
 
-/-- **`always_of_reachable_invariant` (PROVED) — `□` from a reachability invariant.** If `P` is
+/-- **`always_of_reachable_invariant` — `□` from a reachability invariant.** If `P` is
 preserved by every step of the induced system (a `StepInvariant`) and holds at `s`, then `□P`
 along EVERY schedule. This routes `□`-introduction through `Execution.invariant_run` (the
 abstract reachability keystone) instead of `livingCellA_carries` directly — exhibiting the two
@@ -272,7 +272,7 @@ theorem always_of_reachable_invariant (P : RecChainedState → Prop)
     Always P s sched :=
   fun n => Execution.invariant_run hpres (trajA_reachable s sched n) hinit
 
-/-- **`always_iff_reachable` (PROVED) — the CROSS-CHECK: `□`-over-every-schedule ≡ "holds at every
+/-- **`always_iff_reachable` — the CROSS-CHECK: `□`-over-every-schedule ≡ "holds at every
 reachable config".** A `StepInvariant`-preserved `P` holding initially is `□` along every
 schedule (`←`, via `always_of_reachable_invariant`), and conversely if `P` is `□` along the
 *particular* schedule reaching a config then it holds there (`→`). The two notions of "globally"
@@ -296,7 +296,7 @@ The payoff. Each is a real dregg-OS safety property, now stated as `□` and dis
 trajectory of the 46-effect executor. These are the temporal-logic READINGS of the
 `Exec/CellReal`/`Exec/CellCarry` crowns. -/
 
-/-- **`always_conserved` (PROVED) — `□`(per-asset badge constant): conservation is a temporal
+/-- **`always_conserved` — `□`(per-asset badge constant): conservation is a temporal
 invariant.** The per-asset conservation badge `cellObsA` never drifts from its initial value at
 ANY point of the unbounded trajectory: `□(cellObsA · = cellObsA s)`. This is
 `CellReal.livingCellA_obs_invariant` read as an LTL `□`, discharged via `always_of_step_invariant`
@@ -308,10 +308,10 @@ theorem always_conserved (s : RecChainedState) (sched : SchedA) :
     (fun a cf h => by show cellObsA (cellNextA a cf) = cellObsA s; rw [cellObsA_next]; exact h)
     s rfl sched
 
-/-- **`always_logMono` (PROVED) — `□`(audit log never shrinks): non-repudiation is temporal.** The
+/-- **`always_logMono` — `□`(audit log never shrinks): non-repudiation is temporal.** The
 receipt/audit log length is `≥` its initial value at EVERY index: `□(s.log.length ≤ ·.log.length)`.
 This is the canonical OS *"the log is the truth, never rewritten"* / non-repudiation safety —
-`CellCarry.livingCellA_logMono` read as `□`, a genuinely NON-conservation temporal invariant
+`CellCarry.livingCellA_logMono` read as `□`, a NON-conservation temporal invariant
 (its one-step obligation reads the executor's ChainLink structure, `execFullForestA_logMono`, not
 the per-asset measure). -/
 theorem always_logMono (s : RecChainedState) (sched : SchedA) :
@@ -326,7 +326,7 @@ theorem always_logMono (s : RecChainedState) (sched : SchedA) :
       | none    => simp only [Option.getD_none]; exact h)
     s (le_refl _) sched
 
-/-- **`always_revoked_persists` (PROVED) — `□`(revocation is permanent): once revoked, always
+/-- **`always_revoked_persists` — `□`(revocation is permanent): once revoked, always
 revoked.** The kernel's revocation registry `kernel.revoked` is GROW-ONLY — a credential nullifier
 `x` that is in the revoked set stays in it at EVERY future index: `□(x ∈ ·.kernel.revoked)`, given
 it is revoked at the start. This is the single-machine **immediate-and-permanent revocation**
@@ -334,7 +334,7 @@ safety (`#139`: a revoked cap is never silently un-revoked), as a temporal `□`
 obligation reads that no living-cell step ever REMOVES an element from `revoked` (the executor only
 grows it, or stays put on reject).
 
-This is the genuinely NEW temporal instance (not in `CellReal`/`CellCarry`): it carries a
+This is the NEW temporal instance (not in `CellReal`/`CellCarry`): it carries a
 *membership* safety, demonstrating `always_of_step_invariant` on a third, qualitatively different
 predicate shape (set-membership persistence, the OS revocation root-of-trust). -/
 theorem always_revoked_persists (s : RecChainedState) (sched : SchedA) (x : Nat)
@@ -343,7 +343,7 @@ theorem always_revoked_persists (s : RecChainedState) (sched : SchedA) (x : Nat)
     Always (fun s' => x ∈ s'.kernel.revoked) s sched :=
   always_of_step_invariant (fun s' => x ∈ s'.kernel.revoked) hpres s hinit sched
 
-/-- **`always_conj_safety` (PROVED) — the COMPOSITION demo: `□`(conservation ∧ log-monotone)
+/-- **`always_conj_safety` — the COMPOSITION demo: `□`(conservation ∧ log-monotone)
 via `always_and`.** The two flagship safeties hold SIMULTANEOUSLY and forever, obtained by
 `□`-distribution-over-`∧` (`always_and`) from the two single `□`s. Shows the modal algebra is
 not decorative: independently-proved temporal invariants COMBINE into a joint `□` for free —

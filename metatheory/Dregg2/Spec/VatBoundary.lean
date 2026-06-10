@@ -38,7 +38,7 @@ What is PROVED here: `cross_vat_needs_witness`, `phi_drops_confinement`,
 (`phi_functorial`) — PROVED under an explicit `NonDegenerate` hypothesis that
 bundles exactly what the functor laws need (an accepting witness exists; `stmtOf` is
 non-injective with two distinct caps collapsing; discharge propagates along conferral). Over a
-*degenerate* verifier (`Verify ≡ false`, or injective `stmtOf`) the laws are genuinely FALSE,
+*degenerate* verifier (`Verify ≡ false`, or injective `stmtOf`) the laws are FALSE,
 so the hypothesis is load-bearing, not decorative. A CONCRETE discriminating model
 (`nonDegenerate_concrete`) PROVES that hypothesis is SATISFIABLE, and `phi_functorial_concrete`
 is then `phi_functorial` applied to it — exhibiting exactly where confinement is dropped.
@@ -71,7 +71,7 @@ set_option linter.unusedSectionVars false
 /-! ## §1 — The two authority regimes as distinct admissibility objects.
 
 We do NOT model the boundary as a flat coproduct of "intra" and "cross" tags. The two
-regimes are *genuinely different objects*: one is a graph-incidence fact, the other a
+regimes are *different objects*: one is a graph-incidence fact, the other a
 discharged guard. `Φ` is the map between them. -/
 
 /-- **The POSITIONAL regime (intra-vat, caps-as-caps).** Authority of cell `h` over the
@@ -127,7 +127,7 @@ The l4v case-split (`Positional.Integrity`) IS `Φ`'s before/after: the same cha
 admissible *intra* by the trivial witness (positional) and *cross* only by a discharged
 `Guard` (epistemic). We connect `Positional.Integrity` to `Spec.Guard` directly. -/
 
-/-- **`cross_vat_needs_witness` (PROVED).** The exact statement of the regime change:
+/-- **`cross_vat_needs_witness`.** The exact statement of the regime change:
 
   * *intra-vat* admissibility is **positional** — `Integrity.intra` from `owner ∈ subjects`,
     with NO witness consulted (caps-as-caps; the held edge is the proof);
@@ -186,7 +186,7 @@ def AuthoritySurvives (Witness : Type u) [Verifiable Statement Witness]
     (g : Guard Request Statement) (req : Request) : Prop :=
   ∀ w : Statement → Witness, Epistemic g req w
 
-/-- **`phi_drops_confinement` (PROVED) — the lossy keystone.**
+/-- **`phi_drops_confinement` — the lossy keystone.**
 `permission_survives ∧ ¬ authority_survives` for a crossed cap, whenever the far side's
 verifier is *discriminating* (there is some statement+witness it accepts and some it
 rejects — a non-degenerate `Verify`). Faithfully:
@@ -233,7 +233,7 @@ def ForwardedRevocable (Witness : Type u) [Verifiable Statement Witness]
     (g : Guard Request Statement) (req : Request) : Prop :=
   ∃ w : Statement → Witness, ¬ Epistemic g req w
 
-/-- **`forwarded_cap_is_revocable` (PROVED) — loss = revocable forwarders.**
+/-- **`forwarded_cap_is_revocable` — loss = revocable forwarders.**
 A cap forwarded across `Φ` is revocable: given any far-side supply `wNo` the verifier
 rejects, the crossed cap fails to admit under it. So `¬ AuthoritySurvives` (§4) is
 precisely *the existence of a revoking far-side state* — the loss is
@@ -248,7 +248,7 @@ theorem forwarded_cap_is_revocable [Verifiable Statement Witness]
   intro hadm
   exact hNo ((phi_admits_iff_discharged stmtOf c req wNo).mp hadm)
 
-/-- **`revocable_iff_not_authority` (PROVED)** — the two faces of the loss are the same
+/-- **`revocable_iff_not_authority`** — the two faces of the loss are the same
 fact: a crossed cap is `ForwardedRevocable` iff its `AuthoritySurvives` fails.
 Revocability-by-construction IS the failure of authority to transfer. -/
 theorem revocable_iff_not_authority [Verifiable Statement Witness]
@@ -277,7 +277,7 @@ variable {Ctx Gateway : Type}
 def InPhiDomain (tok : Token Ctx Gateway) : Prop :=
   Token.crossVatVerifiable tok = true
 
-/-- **`macaroon_does_not_cross_phi` (PROVED).** A macaroon is NOT in `Φ`'s domain: its
+/-- **`macaroon_does_not_cross_phi`.** A macaroon is NOT in `Φ`'s domain: its
 HMAC root secret is held only by the scoping cell, so it is not third-party verifiable
 (`discoveries §6.3`). `Φ` cannot carry it across — keys-as-keys off-island is the
 biscuit's job. -/
@@ -287,13 +287,13 @@ theorem macaroon_does_not_cross_phi (tok : Token Ctx Gateway)
   rw [Dregg2.Authority.macaroon_not_crossvat tok h]
   exact Bool.false_ne_true
 
-/-- **`biscuit_crosses_phi` (PROVED).** A biscuit IS in `Φ`'s domain: it is public-key
+/-- **`biscuit_crosses_phi`.** A biscuit IS in `Φ`'s domain: it is public-key
 verifiable off-island, so `Φ` carries it across into the epistemic regime. -/
 theorem biscuit_crosses_phi (tok : Token Ctx Gateway)
     (h : tok.kind = .biscuit) : InPhiDomain tok :=
   Dregg2.Authority.biscuit_crossvat tok h
 
-/-- **`phi_domain_is_exactly_biscuit` (PROVED)** — the domain of `Φ` is precisely the
+/-- **`phi_domain_is_exactly_biscuit`** — the domain of `Φ` is precisely the
 biscuits: a token crosses iff it is a biscuit. The biscuit/macaroon split is not
 incidental — it *defines* where `Φ` is defined. -/
 theorem phi_domain_is_exactly_biscuit (tok : Token Ctx Gateway) :
@@ -309,7 +309,7 @@ You can only forward `≤` what you hold across the boundary too: `Φ` is monoto
 rights attenuation order, tying to `Spec.Authority.confers`. The cross-vat demand
 inherits the intra-vat conferral discipline — no amplification across the boundary. -/
 
-/-- **`phi_composes_with_attenuation` (PROVED).** If `child` attenuates `parent`
+/-- **`phi_composes_with_attenuation`.** If `child` attenuates `parent`
 (`confers parent child`, the `is_attenuation` premise of the generative ops), then the
 crossed objects respect the same target and the same rights `≤`: `Φ` does not amplify
 across the boundary. The conferral order is preserved by the crossing, so a forwarded
@@ -320,7 +320,7 @@ theorem phi_composes_with_attenuation
     child.target = parent.target ∧ child.rights ≤ parent.rights :=
   ⟨hconf.1, hconf.2⟩
 
-/-- **`phi_attenuation_factors_through_confers` (PROVED)** — companion: the statement-map
+/-- **`phi_attenuation_factors_through_confers`** — companion: the statement-map
 `stmtOf` carries the conferral order whenever it is monotone in rights. Forwarding a
 narrowed cap across `Φ` yields a demand whose underlying authority is `≤` the held one;
 the far side never sees more than was conferred. (Stated as: a monotone `stmtOf`
@@ -336,7 +336,7 @@ theorem phi_attenuation_factors_through_confers
 
 §1–§6 give `Φ`'s action on objects (positional cap ↦ witnessed demand), its named loss
 (`phi_drops_confinement` / `forwarded_cap_is_revocable`), its domain (biscuits), and its
-compatibility with the attenuation order. What remains genuinely OPEN is the FULL
+compatibility with the attenuation order. What remains OPEN is the FULL
 categorical statement: that `Φ` is a *functor* between the **positional authority
 category** (objects = cells, morphisms = held caps composing along introduce/endow, the
 graph dynamics of `Spec.Authority`) and the **epistemic authority category** (objects =
@@ -386,7 +386,7 @@ witness to EXIST (an abstract `Verify` may accept none — e.g. `Verify ≡ fals
 `lossy_on_confinement` needs a non-injective `stmtOf` with two distinct caps mapping equal
 (an abstract `stmtOf` may be injective, or `Cap` a subsingleton); and `preserves_comp` needs
 the discharge-propagation the §6 comment names (a monotone-`stmtOf`-style condition). We bundle
-EXACTLY these three as a hypothesis — making `phi_functorial` honestly conditional, then PROVED
+EXACTLY these three as a hypothesis — making `phi_functorial` conditional, then PROVED
 under it. §7.1 then exhibits a concrete model satisfying `NonDegenerate` (so the hypothesis is
 not vacuous). -/
 structure NonDegenerate (Request : Type u) {Statement Witness : Type u}
@@ -417,7 +417,7 @@ The hypothesis is exactly what makes the abstract claim TRUE rather than false: 
 injective `stmtOf`. With it, all three `PhiFunctorial` fields are PROVED for the SAME
 `Phi stmtOf`, tying the positional graph dynamics to the epistemic discharge composition into
 identity/composition-preserving functor laws simultaneously with the lossiness witness — the
-full two-category bridge. The residual is honestly the named `NonDegenerate`
+full two-category bridge. The residual is the named `NonDegenerate`
 hypothesis, which §7.1 proves is satisfiable. -/
 theorem phi_functorial [Verifiable Statement Witness]
     (stmtOf : Cap CellId Rights → Statement)
@@ -441,10 +441,10 @@ theorem phi_functorial [Verifiable Statement Witness]
     obtain ⟨c₁, c₂, hne, heq⟩ := hnd.collapses
     exact ⟨c₁, c₂, hne, by unfold Phi crossDemand; rw [heq]⟩
 
-/-! ### §7.1 — A WITNESSED instance: `phi_functorial_concrete` (PROVED, axiom-clean) — the
+/-! ### §7.1 — A WITNESSED instance: `phi_functorial_concrete` (axiom-clean) — the
 proof that `NonDegenerate` is SATISFIABLE.
 
-The abstract `phi_functorial` above is honestly conditional on `NonDegenerate` because over an
+The abstract `phi_functorial` above is conditional on `NonDegenerate` because over an
 *arbitrary* `Verifiable`/`stmtOf` the laws are FALSE: `preserves_id` needs an accepting witness
 to exist (an abstract `Verify` may accept none — e.g. `Verify ≡ false`), and
 `lossy_on_confinement` needs a non-injective `stmtOf` between two distinct caps (an abstract
@@ -480,7 +480,7 @@ local instance concreteVerifiable : Verifiable Unit Bool := ⟨fun _ b => b⟩
 @[simp] private theorem concreteVerifiable_verify (s : Unit) (b : Bool) :
     Verifiable.Verify (self := concreteVerifiable) s b = b := rfl
 
-/-- **`nonDegenerate_concrete` — the concrete model SATISFIES `NonDegenerate` (PROVED).** The
+/-- **`nonDegenerate_concrete` — the concrete model SATISFIES `NonDegenerate`.** The
 discriminating echo-verifier with the maximally-lossy `stmtOf ≡ ()` discharges all three
 non-degeneracy fields, so the `phi_functorial` hypothesis is non-vacuously inhabited:
   * `accepts` — the witness `fun _ => true` discharges `()` (`Verify () true = true`);
@@ -500,10 +500,10 @@ theorem nonDegenerate_concrete :
   collapses :=
     ⟨⟨true, ()⟩, ⟨false, ()⟩, by intro h; simp [Cap.mk.injEq] at h, rfl⟩
 
-/-- **`phi_functorial_concrete` (PROVED, axiom-clean) — now a CONSEQUENCE of the abstract
+/-- **`phi_functorial_concrete` (axiom-clean) — now a CONSEQUENCE of the abstract
 `phi_functorial`.** Rather than a standalone re-proof, the concrete functor laws are exactly
 `phi_functorial` applied to the satisfiable witness `nonDegenerate_concrete`. So the abstract
-theorem is genuinely proved (under its named hypothesis) AND that hypothesis is genuinely
+theorem is proved (under its named hypothesis) AND that hypothesis is
 inhabited by a discriminating model — the loss landing on `stmtOf ⟨true,()⟩ = stmtOf ⟨false,()⟩`. -/
 theorem phi_functorial_concrete :
     PhiFunctorial (CellId := Bool) (Rights := Unit) Unit Unit Bool
@@ -518,7 +518,7 @@ theorem phi_functorial_concrete :
 
 Every PROVED keystone depends ONLY on the three standard kernel axioms.
 `phi_functorial` is PINNED: it is PROVED under
-the explicit `NonDegenerate` hypothesis (the honest residual is that named hypothesis, which
+the explicit `NonDegenerate` hypothesis (the residual is that named hypothesis, which
 `nonDegenerate_concrete` proves is satisfiable). `phi_functorial_concrete` is a CONSEQUENCE of `phi_functorial` applied to the
 discriminating witness, and both are axiom-clean. -/
 

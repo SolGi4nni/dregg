@@ -145,7 +145,7 @@ def forgedCellWitnessJson : String := witnessJson forgedCellWitness
 
 -- The exact bytes the Rust `lean_executor_derived_refusal` test pastes (goldens pin them so an
 -- executor/surface drift is caught here first).
--- (honest JSON byte pin removed: Common.lhConcrete is now the CR-grounded turnLogDigest)
+-- (no JSON byte pin: Common.lhConcrete is the CR-grounded turnLogDigest)
 #guard !(honestWitnessJson == forgedCellWitnessJson)
 
 /-! ## §5 — axiom-hygiene tripwires. -/

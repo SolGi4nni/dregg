@@ -101,7 +101,7 @@ theorem execFullForestG_setOpNode (s : RecChainedState) (cred : Authorization Dg
   rw [sgmSetOpNode, execFullForestG_leaf, execFullAGated]
   rfl
 
-/-- **`sgm_commit_iff_op_admit_gated` — PROVED (output-side COMMIT-IFF-ADMIT, op leg).** On a mandate
+/-- **`sgm_commit_iff_op_admit_gated` (output-side COMMIT-IFF-ADMIT, op leg).** On a mandate
 cell carrying the op admit-table, with the credential gate (`hg`) and the executor's authority/liveness
 gate (`hauth`) passing, the gated executor COMMITS a `last_op := op.toInt` write IFF `sgmAdmitM`'s op
 leg admits `op`. Pins that the ONLY committable ops are the admitted ones. -/
@@ -152,7 +152,7 @@ def guestSgmG0 : RecChainedState :=
         slotCaveats := fun c => if c = mandateCell then guestCaveats else [] }
     log := [] }
 
-/-- **`sgm_guest_get_rejected` — PROVED (THE NEGATIVE TOOTH).** A guest lacking GET clearance CANNOT
+/-- **`sgm_guest_get_rejected` (THE NEGATIVE TOOTH).** A guest lacking GET clearance CANNOT
 record a GET op (`last_op := 0`): the executor returns `none`, because `(_, 0)` is NOT in the guest's
 op admit-table. This is exactly the request `sgmAdmitM guestMandate _ {op := GET}` rejects — now
 ENFORCED BY THE EXECUTOR (where no prior caveat could express clearance). -/
@@ -254,7 +254,7 @@ open Dregg2.Exec.StarbridgeGated (eraseForestG execForestG execForestG_erases)
 def SchedAnchorSafe (sched : SchedG) : Prop :=
   ∀ n, anchorForestOK mandateCell (eraseForestG (sched n).val)
 
-/-- **`sgmStrong_cellNextG_carries` (PROVED)** — one anchor-safe gated step preserves the conjunction
+/-- **`sgmStrong_cellNextG_carries`** — one anchor-safe gated step preserves the conjunction
 `mandateCell live ∧ sgmInBucketStrong`. Bridges `cellNextG` to `execFullForestA` via the erase. -/
 theorem sgmStrong_cellNextG_carries (bucket : Int) (s : RecChainedState) (cg : ConservingGatedForest)
     (hok : anchorForestOK mandateCell (eraseForestG cg.val))
@@ -274,7 +274,7 @@ theorem sgmStrong_cellNextG_carries (bucket : Int) (s : RecChainedState) (cg : C
       exact (execFullForestA_progLive_preserved s s' (eraseForestG cg.val) mandateCell mandateCaveats
         hfa hlive hstrong.2).1
 
-/-- **`sgm_bucket_strong_forever` (PROVED) — VALUE-PINNING CROWN LEG.** Along EVERY anchor-safe gated
+/-- **`sgm_bucket_strong_forever` — VALUE-PINNING CROWN LEG.** Along EVERY anchor-safe gated
 schedule, the agent stays in the SPECIFIC bucket: `sgmAnchor (trajG …) = bucket` (the literal binding),
 not merely "some program is live". This is the strong predicate wired onto the living trajectory. -/
 theorem sgm_bucket_strong_forever (bucket : Int) (s : RecChainedState)
@@ -327,7 +327,7 @@ def sgmGPutEmit : Option RecChainedState :=
 -- VALUE-PINNING NON-VACUITY: honest in-bucket genesis ADMITTED; drifted anchor REJECTED.
 #guard (sgmInBucketStrong sgmG0.kernel (demoMandate.anchor : Int))                          -- TRUE
 #guard (sgmInBucketStrong sgmDriftG0.kernel (demoMandate.anchor : Int)) == false            -- drift REJECTED
-#guard (sgmAnchor sgmDriftG0.kernel == sgmAnchor sgmG0.kernel) == false                     -- anchors genuinely differ
+#guard (sgmAnchor sgmDriftG0.kernel == sgmAnchor sgmG0.kernel) == false                     -- anchors differ
 #guard (sgmInBucketStrong sgmDriftG0.kernel (demoMandate.anchor + 1 : Int))                 -- drift IS in its own bucket
 
 #guard (gateOK (mkAuth goodCred []) sgmG0)

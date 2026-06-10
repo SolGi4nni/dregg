@@ -33,7 +33,7 @@ Three theorems, ascending:
   `commitments`, by induction on the lowered action list through the pre-order bridge.
 * **`livingCellA_commitments_persist`** — THE CROWN: `com0 ⊆ s.kernel.commitments → ∀ n, com0 ⊆
   (trajA s sched n).kernel.commitments`. The grow-only set carried along the whole unbounded trajectory by
-  `livingCellA_carries` with `Good := (com0 ⊆ ·.kernel.commitments)` — a genuinely NON-conservation safety,
+  `livingCellA_carries` with `Good := (com0 ⊆ ·.kernel.commitments)` — a NON-conservation safety,
   discharged from the registry frame on a commit + the stay-put self-loop on a reject.
 -/
 import Dregg2.Exec.CellCarry
@@ -124,7 +124,7 @@ theorem noteSpendNullifier_commitments {k k' : RecordKernelState} {nf : Nat}
 /-! ## Step 1 — `execFullA_commitments_grow`: the PER-STEP registry frame (grow-only across one step). -/
 
 mutual
-/-- **`execFullA_commitments_grow` (PROVED) — THE per-step registry frame.** A committed real `execFullA`
+/-- **`execFullA_commitments_grow` — THE per-step registry frame.** A committed real `execFullA`
 step only GROWS the note-commitment set: `s.kernel.commitments ⊆ s'.kernel.commitments`. By case analysis
 on the effect kind — `noteCreate` conses a fresh commitment (`noteCreateCommitment`, so the old set is a
 sublist hence subset), and EVERY OTHER effect leaves `commitments` literally UNCHANGED (each via its
@@ -288,7 +288,7 @@ end
 
 /-! ## Step 2 — the turn/forest lift: a committed full-FOREST only grows `commitments`. -/
 
-/-- **`execFullTurnA_commitments_grow` (PROVED).** A committed per-asset full-TURN (a list of
+/-- **`execFullTurnA_commitments_grow`.** A committed per-asset full-TURN (a list of
 `FullActionA`) only grows `commitments`: `s.kernel.commitments ⊆ s'.kernel.commitments`. By induction on
 the action list — each committed `execFullA` head step grows the set (`execFullA_commitments_grow`); the
 empty turn is `subset_refl`; the inductive step chains by `List.Subset.trans`. -/
@@ -306,7 +306,7 @@ theorem execFullTurnA_commitments_grow :
           exact List.Subset.trans (execFullA_commitments_grow s s1 a ha)
             (execFullTurnA_commitments_grow s1 s' rest h)
 
-/-- **`execFullForestA_commitments_grow` (PROVED).** A committed full-FOREST only grows `commitments`. Read
+/-- **`execFullForestA_commitments_grow`.** A committed full-FOREST only grows `commitments`. Read
 straight through the pre-order bridge `execFullForestA_eq_execFullTurnA` into `execFullTurnA_commitments_grow`.
 This is the forest-level META-FILL-C grow-only registry fact — the one-step obligation of the crown. -/
 theorem execFullForestA_commitments_grow (s s' : RecChainedState) (f : FullForestA)
@@ -316,14 +316,14 @@ theorem execFullForestA_commitments_grow (s s' : RecChainedState) (f : FullFores
 
 /-! ## Step 3 — THE CROWN: a published commitment persists along the whole unbounded trajectory. -/
 
-/-- **`livingCellA_commitments_persist` (PROVED) — THE COMMITMENT-PERSISTENCE CROWN.** Fix any baseline set
+/-- **`livingCellA_commitments_persist` — THE COMMITMENT-PERSISTENCE CROWN.** Fix any baseline set
 `com0` of published note commitments contained in the initial state's commitment set. Then `com0` is
 contained in `commitments` at EVERY index of the unbounded adversarial trajectory `trajA s sched`, under
 EVERY schedule: a published commitment is NEVER retracted, dropped, or rewritten. This is the
 anti-equivocation / auditability invariant of the off-ledger commitment tree — the **grow-only DUAL** of the
 nullifier set's no-double-spend (`META-FILL C`), now COINDUCTIVE on the SHIPPED executor.
 
-It is carried by `livingCellA_carries` with `Good := (com0 ⊆ ·.kernel.commitments)`, a genuinely
+It is carried by `livingCellA_carries` with `Good := (com0 ⊆ ·.kernel.commitments)`, a
 NON-conservation safety. Its one-step obligation is discharged from the registry frame on a COMMIT
 (`execFullForestA_commitments_grow` grows the set, chained by `List.Subset.trans`) and the **stay-put
 self-loop** on a REJECT (`cellNextA` leaves the state — and thus `commitments` — UNCHANGED). With
@@ -351,7 +351,7 @@ The persistence invariant would be vacuous if no turn ever grew `commitments`. A
 forest commits and conses `cm` onto the set: the length goes `0 → 1` and `cm` is present afterward. So
 `livingCellA_commitments_persist` bounds a strictly-growing quantity (a baseline already-present
 commitment stays present even as new ones are added), and the crown is exercised by a property that
-genuinely moves. -/
+moves. -/
 
 /-- A real single-`noteCreateA` forest: actor 9 publishes commitment `42`. It commits (a fresh
 commitment cannot conflict) and grows `commitments` by one. -/

@@ -155,7 +155,7 @@ build. -/
 #assert_axioms noteSpendA
 #assert_axioms noteCreateA
 
-/-! ## §DEFER — honest scope of this batch.
+/-! ## §DEFER — scope of this batch.
 
 Deliberately OUT of this batch (documented, NOT a silent gap):
 

@@ -134,7 +134,7 @@ def sPre : RecChainedState := { kernel := kPre, log := [] }
 def argsRef : CreateCellArgs := { actor := 0, newCell := 3 }
 def sPost : RecChainedState := (execFullA sPre (.createCellA 0 3)).getD sPre
 
-/-- THE FORGERY: cell 3 honestly born-empty, accounts grown, but a THIRD cell (2)'s bal is ALSO minted
+/-- THE FORGERY: cell 3 born-empty, accounts grown, but a THIRD cell (2)'s bal is ALSO minted
 0 → 999. The comp2-bal gate (70 = 71) must reject it (accounts comp1 + born-empty comp3 stay honest). -/
 def sForged : RecChainedState :=
   { kernel := { (bornEmptyCellSlots kPre 3) with

@@ -102,7 +102,7 @@ tail advance of the `consume` case (`lib.rs:325`). -/
 def consume (s : SubState) : Option SubState :=
   if s.tail < s.head then some { s with tail := s.tail + 1 } else none
 
-/-- **`publish_preserves_WF` (PROVED).** A committed publish preserves `WF`: `head` rises by one, so
+/-- **`publish_preserves_WF`.** A committed publish preserves `WF`: `head` rises by one, so
 `tail ≤ head` is maintained (`tail ≤ head ≤ head+1`), and the in-flight count rises by one but the
 publish gate `inFlight < capacity` guarantees the new `inFlight = (head+1) − tail ≤ capacity`. The
 `Always`-invariant + the `publish`-case capacity discipline, in one step. -/
@@ -115,7 +115,7 @@ theorem publish_preserves_WF (s s' : SubState) (hwf : s.WF) (h : publish s = som
     omega
   · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-- **`consume_preserves_WF` (PROVED).** A committed consume preserves `WF`: `tail` rises by one but
+/-- **`consume_preserves_WF`.** A committed consume preserves `WF`: `tail` rises by one but
 the consume gate `tail < head` guarantees the new `tail ≤ head`, and the in-flight count `head − tail`
 DROPS by one (so the capacity bound is maintained a fortiori). The `Always`-invariant + the
 `consume`-case non-emptiness discipline, in one step. -/
@@ -130,16 +130,16 @@ theorem consume_preserves_WF (s s' : SubState) (hwf : s.WF) (h : consume s = som
 
 /-! ### §A.teeth — the rejections are REAL (the invariant is not vacuously preserved). -/
 
-/-- **`consume_empty_rejected` (PROVED) — the empty-queue gate has teeth.** A consume on an EMPTY queue
+/-- **`consume_empty_rejected` — the empty-queue gate has teeth.** A consume on an EMPTY queue
 (`tail = head`, so `inFlight = 0`) is REJECTED (`none`): the consumer cannot read past the producer.
 This is dregg1's "consuming from an empty queue (tail > head) must be rejected" at its boundary
-(`tail = head`). NON-VACUOUS: the `consume` gate genuinely fail-closes. -/
+(`tail = head`). NON-VACUOUS: the `consume` gate fail-closes. -/
 theorem consume_empty_rejected (s : SubState) (h : s.tail = s.head) : consume s = none := by
   unfold consume; rw [if_neg (by omega)]
 
-/-- **`publish_full_rejected` (PROVED) — the capacity gate has teeth.** A publish into a FULL queue
+/-- **`publish_full_rejected` — the capacity gate has teeth.** A publish into a FULL queue
 (`inFlight = capacity`) is REJECTED (`none`): no overflow past `capacity`. dregg1's "write past
-capacity → rejected". NON-VACUOUS: the `publish` gate genuinely fail-closes. -/
+capacity → rejected". NON-VACUOUS: the `publish` gate fail-closes. -/
 theorem publish_full_rejected (s : SubState) (h : s.inFlight = s.capacity) : publish s = none := by
   unfold publish; rw [if_neg (by omega)]
 
@@ -175,7 +175,7 @@ def subTraj (s : SubState) (sched : SubSched) : Nat → SubState
   | 0     => s
   | n + 1 => subStep (subTraj s sched n) (sched n)
 
-/-- **`subStep_preserves_WF` (PROVED) — one step keeps the subscription well-formed.** Whichever
+/-- **`subStep_preserves_WF` — one step keeps the subscription well-formed.** Whichever
 operation fires, `WF` survives: publish via `publish_preserves_WF`, consume via `consume_preserves_WF`,
 and the STAY-PUT self-loop on a rejected operation trivially preserves it (the state is unchanged). -/
 theorem subStep_preserves_WF (s : SubState) (op : SubOp) (hwf : s.WF) : (subStep s op).WF := by
@@ -191,7 +191,7 @@ theorem subStep_preserves_WF (s : SubState) (op : SubOp) (hwf : s.WF) : (subStep
       | some s' => simp only [Option.getD_some]; exact consume_preserves_WF s s' hwf hp
       | none    => simp only [Option.getD_none]; exact hwf
 
-/-- **`subscription_consumer_safe_forever` (PROVED) — THE HEADLINE on the slot automaton: a consumer
+/-- **`subscription_consumer_safe_forever` — THE HEADLINE on the slot automaton: a consumer
 never reads past a producer, FOREVER.** From any well-formed start, along the ENTIRE unbounded stream
 of publish/consume operations — under EVERY adversarial schedule — the subscription stays well-formed:
 `(subTraj s sched n).WF` at EVERY index `n`, i.e. `seq_tail ≤ seq_head` AND `head − tail ≤ capacity`

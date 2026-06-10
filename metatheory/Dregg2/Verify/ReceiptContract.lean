@@ -55,7 +55,7 @@ realizable injective carriers (the `compressNInjective` + tail-leaf injectivity 
 commitment binds through) and show: a receipt chain whose published Q is the commitment of a
 cell with a DISTINCT user-field tail FAILS `ResolutionVisible` — a tampered receipt (one not
 equal to the resolved-cell commitment) provably does NOT satisfy the property. So the
-receipt-chain guarantee genuinely discriminates: it accepts the honest published receipt of a
+receipt-chain guarantee discriminates: it accepts the honest published receipt of a
 resolved cell and REJECTS a tampered one. `#guard` witnesses both polarities on concrete cells.
 
 Imports are READ-ONLY (`Verify/Contract`, `Exec/RecordCommit`, `Verify/EscrowFactoryProbe`);
@@ -94,7 +94,7 @@ term rejects; the published-chain receipt of an EXTANT state is always present.)
 def receiptOf (c : CellId) (s : RecChainedState) : Option ℤ :=
   some (cellCommit compressN compress2 (restLimbs c) (s.kernel.cell c))
 
-/-- **`receiptOf_determined` (PROVED).** Equal cell `Value`s ⟹ equal published receipt: the
+/-- **`receiptOf_determined`.** Equal cell `Value`s ⟹ equal published receipt: the
 receipt chain entry for `c` is a TOTAL FUNCTION of the cell the state holds. The light client's
 view cannot disagree about a cell two states share. -/
 theorem receiptOf_determined (c : CellId) {s₁ s₂ : RecChainedState}
@@ -117,7 +117,7 @@ structure ReceiptContract (E : CellExecutor) (c : CellId) where
 
 namespace ReceiptContract
 
-/-- **`forever` (PROVED).** The receipt-chain guarantee, parametric over any `CellExecutor`
+/-- **`forever`.** The receipt-chain guarantee, parametric over any `CellExecutor`
 with a `CellCarries` instance: from the property holding on the initial published receipt, it
 holds on the published receipt at EVERY trajectory index — a statement entirely about the
 RECEIPT CHAIN `fun n => receiptOf … c (E.traj s sched n)`, with no full-state conclusion. The
@@ -138,7 +138,7 @@ the receipt chain.
 The census close. A receipt-property `QInv` PROJECTS a full-state contract `C` when (i)
 `C.Inv s → QInv (receiptOf … s)` (every admitted full state publishes a Q the property accepts)
 and (ii) `QInv` is closed under the receipt of a living-cell step from an admitted state
-(`C.Inv s → QInv (receiptOf … (E.next s cf))`). The HONEST point of the descent is that a
+(`C.Inv s → QInv (receiptOf … (E.next s cf))`). The point of the descent is that a
 receipt-property is NOT in general carried by the receipt ALONE — the receipt does not determine
 the next receipt; the full state does. So the faithful bridge carries `C.Inv` internally (the
 verifier's view) and PROJECTS at every step to the receipt chain (the light client's view). Two
@@ -150,7 +150,7 @@ faces of the bridge are delivered:
     (i), the receipt-chain property holds at every trajectory index — conclusion in the receipt
     chain alone, `C.Inv` never exposed. -/
 
-/-- **`ofCellContract` — THE BRIDGE OBJECT (PROVED).** Package a target receipt-property `QInv`
+/-- **`ofCellContract` — THE BRIDGE OBJECT.** Package a target receipt-property `QInv`
 together with its receipt-step closure as a first-class `ReceiptContract`. The app author proves
 `QInv` is preserved across the receipt of a living-cell step (`hstep`); `ofCellContract` hands
 back the object whose `.forever` then carries `QInv` along the receipt chain. The first-class
@@ -163,7 +163,7 @@ def ofCellContract {E : CellExecutor} (c : CellId)
   QInv := QInv
   step_ob := hstep
 
-/-- **`receipt_property_forever` — the descent crown (PROVED).** The clean light-client
+/-- **`receipt_property_forever` — the descent crown.** The clean light-client
 statement the bridge buys: given a full-state `CellContract C` whose invariant `C.Inv` projects
 onto a receipt-property `QInv` (`hproj`) AND holds at the initial state (`hinit`), the
 receipt-chain property `QInv (receiptOf … c (E.traj s sched n))` holds at EVERY trajectory
@@ -202,7 +202,7 @@ def ResolutionVisible (e : CellId) (vRel : Value) (s : RecChainedState) : Prop :
   receiptOf compressN compress2 restLimbs e s
     = some (cellCommit compressN compress2 (restLimbs e) vRel)
 
-/-- **`resolution_property_projects` (PROVED).** `ResolutionVisible` IS a property of the
+/-- **`resolution_property_projects`.** `ResolutionVisible` IS a property of the
 published receipt: it is preserved by any state sharing the bounty cell's `Value`. This is the
 projection witness the bridge consumes — the resolution-visible property factors through Q. -/
 theorem resolution_property_projects (e : CellId) (vRel : Value) {s₁ s₂ : RecChainedState}
@@ -214,7 +214,7 @@ theorem resolution_property_projects (e : CellId) (vRel : Value) {s₁ s₂ : Re
   rw [← receiptOf_determined compressN compress2 restLimbs e hcell]
   exact hrec
 
-/-- **`resolution_visible_forever` (PROVED).** Once the bounty cell's published receipt is the
+/-- **`resolution_visible_forever`.** Once the bounty cell's published receipt is the
 resolved-cell commitment AND that holds invariantly along the living cell (the step preserves
 the receipt match — supplied as the `ReceiptContract`'s `step_ob`), a light client reading only
 the receipt chain sees the bounty resolved at EVERY trajectory index. The light-client face of
@@ -240,11 +240,11 @@ from the resolved reference CANNOT satisfy `ResolutionVisible`. So a tampered re
 one whose published Q for the bounty cell is not the resolved-cell commitment — provably FAILS
 the property, while the honest published receipt of the resolved cell satisfies it. -/
 
-/-- **`resolution_visible_rejects_tampered` (PROVED) — the discrimination tooth.** If the
+/-- **`resolution_visible_rejects_tampered` — the discrimination tooth.** If the
 bounty cell `e`'s ACTUAL committed value has a user-field tail DIFFERENT from the resolved
 reference `vRel` (a tampered / not-actually-resolved cell), then the published receipt cannot
 equal the resolved-cell commitment, so `ResolutionVisible` is FALSE. The light-client property
-genuinely catches a receipt that does not witness resolution — it is not vacuously true.
+catches a receipt that does not witness resolution — it is not vacuously true.
 Off `cellCommit_binds_tail` (equal commitments ⟹ equal tails), contrapositive. Discharged from
 the SAME realizable injective carriers (`compressNInjective` + tail-leaf injectivity) the
 canonical commitment binds through — never an axiom, never a `+`-fold. -/
@@ -300,7 +300,7 @@ def sTamper : RecChainedState :=
 #guard (decide (receiptOf cNC c2C restLimbsC 3 sTamper
               = some (cellCommit cNC c2C (restLimbsC 3) vReleased)) == false)
 
--- ...and the underlying tails genuinely differ (so `resolution_visible_rejects_tampered`'s
+-- ...and the underlying tails differ (so `resolution_visible_rejects_tampered`'s
 -- `htail` premise is satisfiable on this witness — differ at user-tail key `"8"`):
 #guard (decide ((Dregg2.Exec.FieldsMap.userTail vTampered).map
                   (Dregg2.Exec.FieldsMap.tailLeaf c2C)

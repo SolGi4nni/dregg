@@ -1,7 +1,7 @@
 /-
 # Dregg2.Circuit.Emit.EffectVmEmitNoteSpendCompose — the TURN-LEVEL composition for noteSpend.
 
-`noteSpend` is the canonical "genuinely-NOT-per-row" effect: its FULL semantics are a TURN/ACCUMULATOR
+`noteSpend` is the canonical "NOT-per-row" effect: its FULL semantics are a TURN/ACCUMULATOR
 property the per-row EffectVM IR cannot re-derive. The per-row descriptor
 (`EffectVmEmitNoteSpend.noteSpendVmDescriptorFull`) pins what a per-row gate CAN pin:
 
@@ -25,7 +25,7 @@ This module makes the COMPOSITION explicit and proves its SUFFICIENCY:
     ⟹  the FULL declarative `NoteSpendSpec` (all 17 RecordKernelState fields + the touched two).
 
 The per-row layer ALONE is provably INSUFFICIENT (we re-export the boundary theorem): without the
-turn-level freshness witness, `NoteSpendSpec`'s guard cannot be discharged. So this is an HONEST split,
+turn-level freshness witness, `NoteSpendSpec`'s guard cannot be discharged. So this is an split,
 not a papered-over gap: every leg either graduates at the per-row layer OR is handled at the correct
 (turn/accumulator) layer with a named gadget, and the two together are SUFFICIENT.
 
@@ -109,7 +109,7 @@ unprovable, no commit. This is the honest "per-row insufficient, turn-level requ
 /-- **`stale_nullifier_does_not_commit` — the turn gadget is load-bearing (fail-closed).** If `nf` is
 already spent (`nf ∈ st.nullifiers` — the turn-level non-membership gadget would REJECT), then NO
 post-state commits: the per-row descriptor cannot rescue a stale spend, because the guard the executor
-checks (the gadget's domain) fails. So the composition genuinely NEEDS the turn-level layer. -/
+checks (the gadget's domain) fails. So the composition NEEDS the turn-level layer. -/
 theorem stale_nullifier_does_not_commit
     (st : RecChainedState) (nf : Nat) (actor : CellId) (spendProof : Bool)
     (hstale : nf ∈ st.kernel.nullifiers) :

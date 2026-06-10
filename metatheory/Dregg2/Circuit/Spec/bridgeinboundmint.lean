@@ -44,7 +44,7 @@ OTHER kernel field, untouched.
 
   2. `recBalCredit_inbound_correct` — the post-`bal` helper validated DECLARATIVELY (the `(cell,a)`
      entry credited by `value`, every other `(c,b)` entry literally preserved), so the spec's
-     `bal = recBalCredit …` clause genuinely encodes credit ∧ ledger-frame rather than blind trust.
+     `bal = recBalCredit …` clause encodes credit ∧ ledger-frame rather than blind trust.
 
   3. `recCMintAsset_iff_inboundSpec` — the ⟺ on the chained step `recCMintAsset`.
      `execBridgeMintA_iff_spec` — execFullA ⟺ spec for the `bridgeMintA` variant (BOTH directions).
@@ -99,7 +99,7 @@ spec's `bal = recBalCredit …` clause carries real meaning rather than trusting
 
 /-- **`recBalCredit_inbound_correct`** — the ledger-update helper validated DECLARATIVELY: an inbound
 mint credits `(cell, a)` by exactly `value`, and leaves every OTHER (cell,asset) entry literally
-untouched. So the spec's `bal = recBalCredit …` clause genuinely encodes credit ∧ ledger-frame. -/
+untouched. So the spec's `bal = recBalCredit …` clause encodes credit ∧ ledger-frame. -/
 theorem recBalCredit_inbound_correct (bal : CellId → AssetId → ℤ) (cell : CellId) (a : AssetId)
     (value : ℤ) :
     recBalCredit bal cell a value cell a = bal cell a + value

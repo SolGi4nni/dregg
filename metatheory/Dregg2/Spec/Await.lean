@@ -301,13 +301,13 @@ def IsTopoOrder (g : PromiseGraph Node) (order : List Node) : Prop :=
   (∀ i j, g.dep i j → i ∈ order → j ∈ order →
     order.idxOf j ≤ order.idxOf i)
 
-/-- **`depends_irrefl` (PROVED)** — on an acyclic graph, `Depends` is irreflexive: the
+/-- **`depends_irrefl`** — on an acyclic graph, `Depends` is irreflexive: the
 content of `Acyclic`, repackaged as the irreflexivity half of a strict partial order. A
 promise never transitively awaits itself. -/
 theorem depends_irrefl (g : PromiseGraph Node) (hac : Acyclic g) (i : Node) :
     ¬ Depends g i i := hac i
 
-/-- **`depends_trans` (PROVED)** — `Depends` is transitive (it is a transitive closure):
+/-- **`depends_trans`** — `Depends` is transitive (it is a transitive closure):
 the transitivity half of the strict partial order. Together with `depends_irrefl` this
 makes `Depends` a **strict partial order** on the nodes of an acyclic promise graph — the
 exact precondition under which a topological order is guaranteed to exist (every finite
@@ -316,7 +316,7 @@ theorem depends_trans (g : PromiseGraph Node) {i j k : Node}
     (hij : Depends g i j) (hjk : Depends g j k) : Depends g i k :=
   Depends.trans hij hjk
 
-/-- **`idxOf_le_of_pairwise` (PROVED) — the sorted-list index lemma.** In a list `l` whose
+/-- **`idxOf_le_of_pairwise` — the sorted-list index lemma.** In a list `l` whose
 elements are `Pairwise`-related by a relation `s` that is transitive, antisymmetric, and
 total (a linear order on its carrier), if `a, b ∈ l` and `s a b`, then `a` appears no later
 than `b` (`idxOf a ≤ idxOf b`). This is the bridge from "the sort respects `s`" to "the
@@ -348,7 +348,7 @@ of the reversed reflexive closure `r a b := a = b ∨ Depends g b a`, sorted ove
 by `Finset.sort`. A dependency `dep i j` gives `r j i`, so `j` precedes `i` in the sorted
 list (`idxOf_le_of_pairwise`): dependencies resolve first. -/
 theorem pipeline_topological (g : PromiseGraph Node) (hac : Acyclic g) :
-    -- the strict-partial-order content (PROVED): no self-dependency, transitive …
+    -- the strict-partial-order content: no self-dependency, transitive …
     ((∀ i, ¬ Depends g i i) ∧
      (∀ i j k, Depends g i j → Depends g j k → Depends g i k)) ∧
     -- … hence a topological resolution order EXISTS (Szpilrajn linear extension + sort).
@@ -449,7 +449,7 @@ theorem await_two_faces
       (c.guard.admits req (fun _ => d) = true ∧ c.height ≤ c.deadline) :=
   conditional_is_temporal_guard c req d
 
-/-- **`temporal_face_is_await_discharge` (PROVED) — connect to `Await.four_faces_unify`.**
+/-- **`temporal_face_is_await_discharge` — connect to `Await.four_faces_unify`.**
 The temporal half of `Spec.Await` is the same object as the `discharge`/authority face of
 the executable `Dregg2.Await`: both are a third-party caveat (a `witnessed`/`thirdParty`
 guard) awaiting its gateway's settlement. We exhibit the link structurally — a `Conditional`

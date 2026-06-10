@@ -23,11 +23,11 @@ cap-root-move descriptor (ONE circuit) and adds the `delegateAttenA` CONNECTOR.
 grant — the column move the descriptor pins. So the runnable `cap_root` transition IS universe-A's
 validated `caps`-digest transition; not a fourth spec.
 
-## HONEST BOUNDARY (precise)
+## BOUNDARY (precise)
 
   * **IR GAP — needs IR extension: cap-root hash-site** (inherited). The `cap_root` column is the SCALAR
     digest of the cap-table FUNCTION; the IR cannot re-derive it IN-circuit from the cap-table rows. The
-    cap-table-is-genuinely-Merkled binding lives in `Function.Injective D` (carried, realizable), the
+    cap-table-is-Merkled binding lives in `Function.Injective D` (carried, realizable), the
     SAME bar `delegateAttenA_full_sound` uses. We connect through `capRootProj`.
 
   * **The attenuation premise (`DelegateAttenGuard`) is NOT a `cap_root` ROW gate.** It is enforced by
@@ -44,7 +44,7 @@ validated `caps`-digest transition; not a fourth spec.
 
   * PER-CELL / PER-ROW; `state.RESERVED` not commitment-bound (inherited findings).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR`;
 cap-table digest ONLY as `Function.Injective D`. No `sorry`/`:= True`/`native_decide`/rfl-bridge.

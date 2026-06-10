@@ -49,7 +49,7 @@ class CryptoKernel (Digest : Type) (Proof : Type) [AddCommGroup Digest] where
   /-- Deterministic per-note nullifier (Zcash): the anti-double-spend tag. -/
   nullifier : Digest → Digest
   /-- **LAW — homomorphic commitment** (value-tier conservation over *hidden* amounts):
-  the obligation the Pedersen impl + circuit satisfy. This is the one genuinely-grounded
+  the obligation the Pedersen impl + circuit satisfy. This is the one grounded
   ALGEBRAIC law (the metatheory uses it; Pedersen satisfies it exactly). -/
   commit_hom : ∀ v w r s, commit (v + w) (r + s) = commit v r + commit w s
   /-- **CARRIER — collision-resistance of the hash** (`Prop`, the CORRECT KIND of
@@ -78,7 +78,7 @@ theorem discharged_iff_verify [CryptoKernel Digest Proof] (stmt : Digest) (proof
 
 /-! ## Closing the cross-vat integrity bridge via the portal. -/
 
-/-- **The cross-vat integrity bridge, CLOSED via the portal (PROVED).** A non-owner
+/-- **The cross-vat integrity bridge, CLOSED via the portal.** A non-owner
 (cross-vat) change is admissible per `Authority.Integrity` exactly when the actor presents
 a `Proof` that the CryptoKernel `verify`s against the change's admissibility statement
 `p ko ko'`. This is the `Integrity.cross` case with the **CryptoKernel proof as the

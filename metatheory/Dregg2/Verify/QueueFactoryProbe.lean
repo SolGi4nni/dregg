@@ -13,8 +13,8 @@ probe flagged as the HARDER case, for ONE reason and one only:
 The escrow needed nothing cross-slot (its locked amount IS the cell's own `bal` column — a
 single source of truth, §HARD-i of the escrow probe). The queue's occupancy `head − tail` is a
 DERIVED quantity over two live slots, bounded by a third — and the executable `SlotCaveat`
-vocabulary is structurally PER-SLOT. This probe determines, HONESTLY, whether the existing
-vocabulary suffices or whether a new atom is genuinely needed — and models it if so.
+vocabulary is structurally PER-SLOT. This probe determines,, whether the existing
+vocabulary suffices or whether a new atom is needed — and models it if so.
 
 ## §0 — THE CAPACITY-BOUND RESOLUTION (the probe's whole reason to exist)
 
@@ -68,16 +68,16 @@ state_constraints:
 
 ## The four queue-safety keystones (mirroring escrow's four)
 
-  (a) NO OVERFLOW    — PROVED: enqueue from a state respecting the bound, with room
+  (a) NO OVERFLOW — enqueue from a state respecting the bound, with room
       (`occupancy < capacity`), lands in a state STILL respecting `head − tail ≤ capacity`; a
       full queue's enqueue fail-closes.
-  (b) NO UNDERFLOW / FIFO ORDER — PROVED: `tail ≤ head` preserved; a dequeue on an EMPTY queue
+  (b) NO UNDERFLOW / FIFO ORDER — `tail ≤ head` preserved; a dequeue on an EMPTY queue
       (`head = tail`) fail-closes; FIFO order is the `qbuf_fifo_order` mechanism (head removes
       the front, tail appends the back) carried verbatim from the factory FIFO shadow
       (`Apps.QueueFactory.qbuf_fifo_order`; F2b moved it there from the deleted kernel buffer).
-  (c) SENDER-AUTH ON ENQUEUE — PROVED: an enqueue by an actor NOT in the sender set fail-closes
+  (c) SENDER-AUTH ON ENQUEUE — an enqueue by an actor NOT in the sender set fail-closes
       (the `SenderAuthorized` caveat / the publish gate).
-  (d) CONSERVATION (value queue) — PROVED, inherited from `recKExecAsset_conserves_per_asset`:
+  (d) CONSERVATION (value queue), inherited from `recKExecAsset_conserves_per_asset`:
       a deposit-queue's enqueue/dequeue moves value via an ordinary per-asset move, so the held
       value is conserved across the lifecycle — no side-table, no bespoke measure (as escrow).
 
@@ -87,7 +87,7 @@ The queue is fully a factory-born cell-program EXCEPT that its defining invarian
 bound — is a CROSS-SLOT relation the current executable `SlotCaveat` vocabulary cannot express.
 With the `FieldLteOther` record-level atom ADDED, all four keystones hold and the 6 queue verbs
 become deletable (the factory + atom subsumes them). Without it, the queue must keep a verb (or
-the bound is unenforced). This is the HONEST PARTIAL the escrow §VERDICT predicted.
+the bound is unenforced). This is the PARTIAL the escrow §VERDICT predicted.
 
 NEW file only. Does NOT touch EscrowFactoryProbe/RecordKernel/EffectsState, nor any Metatheory/*.
 Reuses the proved per-asset move conservation + the EXISTING `SlotCaveat` vocabulary; defines
@@ -185,7 +185,7 @@ def queueRecordCaveats : List RecordCaveat :=
   [ RecordCaveat.fieldLteOther headSeqField capacityField 0   -- capacity: head ≤ cap (+ tail, folded below)
   , RecordCaveat.fieldLteOther tailSeqField headSeqField 0 ]  -- no-underflow: tail ≤ head
 
-/-- **`queueFactory_conforms` — PROVED.** The queue factory's OWN published EMPTY initial state
+/-- **`queueFactory_conforms`.** The queue factory's OWN published EMPTY initial state
 satisfies its OWN `SlotCaveat`s (a well-formed factory cannot publish an invariant-violating
 genesis). -/
 theorem queueFactory_conforms (cap owner : Int) (senders : List CellId) :
@@ -223,7 +223,7 @@ We tie the candidate atom's `eval` to the semantic capacity / underflow predicat
 `fieldLteOther tail head 0` is EXACTLY `tail ≤ head`. So the atom captures both cross-slot bounds
 the existing vocabulary cannot. -/
 
-/-- **`fieldLteOther_expresses_capacity` — PROVED.** The candidate atom with `delta := tail`
+/-- **`fieldLteOther_expresses_capacity`.** The candidate atom with `delta := tail`
 evaluates true on the queue's record IFF the capacity bound holds. (The `delta` carries the
 second cross-slot term `tail`, since `RecordCaveat.eval` reads only the named `index`/`other`
 slots plus a scalar `delta`; a fully-general two-slot-LHS would fold `tail` into `index`'s read,
@@ -235,7 +235,7 @@ theorem fieldLteOther_expresses_capacity (k : RecordKernelState) (e : CellId) :
   rw [decide_eq_true_iff]
   omega
 
-/-- **`fieldLteOther_expresses_underflow` — PROVED.** The candidate atom with `delta := 0`
+/-- **`fieldLteOther_expresses_underflow`.** The candidate atom with `delta := 0`
 evaluates true IFF the no-underflow bound `tail ≤ head` holds. -/
 theorem fieldLteOther_expresses_underflow (k : RecordKernelState) (e : CellId) :
     (RecordCaveat.fieldLteOther tailSeqField headSeqField 0).eval (k.cell e) = true
@@ -606,16 +606,16 @@ vocabulary CANNOT express:
     `SlotCaveat.eval` signature) — so W2 must add a record-level caveat kind to the live
     vocabulary, with an evaluator taking the full post-record.
 
-  * KEYSTONE (a) NO OVERFLOW — PROVED (`enqueue_preserves_capacity` + `full_queue_enqueue_rejected`):
+  * KEYSTONE (a) NO OVERFLOW (`enqueue_preserves_capacity` + `full_queue_enqueue_rejected`):
     enqueue with room keeps `head − tail ≤ cap`; a full queue rejects. THIS is the keystone that
     NEEDS `FieldLteOther` (the others reuse existing atoms).
-  * KEYSTONE (b) NO UNDERFLOW / FIFO — PROVED (`dequeue_preserves_no_underflow` +
+  * KEYSTONE (b) NO UNDERFLOW / FIFO (`dequeue_preserves_no_underflow` +
     `empty_queue_dequeue_rejected` + `enqueue_preserves_no_underflow`; FIFO ORDER carried from the
     factory FIFO shadow `qbuf_fifo_order` via `fifo_order_holds`). The `tail ≤ head` half ALSO
     needs `FieldLteOther`; the empty-fail-closed + order are existing mechanism.
-  * KEYSTONE (c) SENDER-AUTH — PROVED (`enqueue_requires_sender_auth`), and it IS the EXISTING
+  * KEYSTONE (c) SENDER-AUTH (`enqueue_requires_sender_auth`), and it IS the EXISTING
     `SenderAuthorized` atom verbatim (`enqueue_matches_senderAuthorized_caveat`). No new atom.
-  * KEYSTONE (d) CONSERVATION — PROVED (`queueDeposit_conserves`), INHERITED from
+  * KEYSTONE (d) CONSERVATION (`queueDeposit_conserves`), INHERITED from
     `recKExecAsset_conserves_per_asset` exactly as escrow; order ops are bal-neutral
     (`enqueue_bal_neutral`). No new atom.
 

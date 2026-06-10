@@ -26,7 +26,7 @@ the block frozen, the post-state bound into `state_commit` via the GROUP-4 hash 
     `CellBridgeMintSpec` EXACTLY. The runnable column transition IS universe-A's bridge-mint ledger
     transition.
 
-## HONEST BOUNDARY
+## BOUNDARY
 
   * PER-CELL / PER-ROW. Cross-row composition + the disclosing log receipt = the turn layer, cited.
   * The `(cell, asset)` index + the `mintAdmit` guard + the BRIDGE CryptoPortal proof (the inbound-value
@@ -617,7 +617,7 @@ def wideRefRoots : SysRoots := fun i =>
 /-- **`bridgeMint_wide_realizes` — NON-VACUITY of the instance (witness TRUE).** The full clause is
 INHABITED by a genuine mint: `widePostCell` is the honest credited image of `widePreCell` (`100 → 130`,
 credit 30, nonce `5 → 6`) and the roots are FROZEN at the populated reference. So `fullClause` is NOT
-`True` — and the frozen sub-block is genuinely non-empty (the binding is not vacuous on the sentinel). -/
+`True` — and the frozen sub-block is non-empty (the binding is not vacuous on the sentinel). -/
 theorem bridgeMint_wide_realizes :
     (bridgeMintRunnableSpec hC 30 wideRefRoots).fullClause
       widePreCell widePostCell wideRefRoots :=
@@ -635,7 +635,7 @@ theorem bridgeMint_wide_clause_refutable :
 
 /-- **`bridgeMint_wide_roots_clause_refutable` — the FROZEN-roots clause has teeth.** A post-roots that
 DROPS a side-table root (a tampered sub-block `emptySystemRoots ≠ wideRefRoots`) FAILS the frozen-roots
-conjunct — a `system_roots`-blind clause would accept it (forbidden). So the wide instance genuinely binds
+conjunct — a `system_roots`-blind clause would accept it (forbidden). So the wide instance binds
 the 8-root sub-block, not just the per-cell block. -/
 theorem bridgeMint_wide_roots_clause_refutable :
     ¬ BridgeMintFullClause 30 wideRefRoots widePreCell widePostCell emptySystemRoots := by

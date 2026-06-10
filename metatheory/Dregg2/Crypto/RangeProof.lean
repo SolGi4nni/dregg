@@ -168,7 +168,7 @@ type `Digest` and an opaque `Proof`:
 * `extract` unpacks `extractable`+`binding` to its operational content: an accepted proof for a
   commitment `c` witnesses a satisfying trace whose value `v` is BOTH in range AND committed by `c`
   (`commit v r = c`) — binding is what fuses "the proven value" with "the committed value".
-* `honest_range_verifies` — completeness: a genuinely in-range value's honest proof verifies. -/
+* `honest_range_verifies` — completeness: an in-range value's honest proof verifies. -/
 class RangeProofKernel (Digest : Type u) (Proof : Type u) where
   /-- The Pedersen commitment (range proofs are built on these; its `binding` is the carrier below). -/
   commit : Int → Int → Digest
@@ -193,7 +193,7 @@ class RangeProofKernel (Digest : Type u) (Proof : Type u) where
       verifyRange commitment lo hi proof = true →
         ∃ circuit : CircuitIR,
           commit circuit.value circuit.blinding = commitment ∧ Satisfies circuit lo hi
-  /-- **CARRIER — completeness** (Bulletproofs completeness): the honest proof for a genuinely
+  /-- **CARRIER — completeness** (Bulletproofs completeness): the honest proof for a
   in-range committed value verifies. The witness `(v, r)` with `commit v r = commitment` and
   `v ∈ [lo, hi]` makes `verifyRange` accept the honest `proveRange` proof. -/
   honest_range_verifies : ∀ (v r : Int) (lo hi : Int),
@@ -416,7 +416,7 @@ namespace Reference
 
 /-- The reference commitment over `ℤ`: `commit v r := v` — the degenerate "commitment carries the
 value" stand-in the executor's reference path uses (blinding ignored). This keeps the reference
-kernel's stated completeness law (`honest_range_verifies`) genuinely PROVABLE: the commitment
+kernel's stated completeness law (`honest_range_verifies`) PROVABLE: the commitment
 determines the in-range fact about `v`. Real Pedersen (`v·V + r·R`) hides `v`; the toy does not —
 it exists only to witness the kernel laws non-vacuously over `ℤ`. -/
 def refCommit : Int → Int → Int := fun v _ => v
@@ -452,7 +452,7 @@ def base : Registry (Statement Int) Int := fun _ => none
 def refVk : Nat := 7
 
 /-- A disclosed in-range statement over `ℤ`: commitment `15` (value 15, blinding 0), bounds `[10,20]`
-— genuinely in range, so the reference verifier accepts. -/
+— in range, so the reference verifier accepts. -/
 def inRangeStmt : Statement Int := { commitment := 15, lo := 10, hi := 20 }
 
 /-- A disclosed OUT-OF-range statement over `ℤ`: commitment `25`, bounds `[10,20]` — the reference

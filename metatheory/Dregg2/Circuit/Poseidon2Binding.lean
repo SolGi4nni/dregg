@@ -33,7 +33,7 @@ an `axiom`), so every theorem here pins exactly `{propext, Classical.choice, Quo
     injective encoder" as a `LeafRealization` / `LogRealization` bundle. Encoder-injectivity is NOT
     a cryptographic assumption (a canonical serialization is provably injective — the toy
     `Reference` instances below exhibit injective encoders and discharge CR with `True`); it is an
-    honestly-separated STRUCTURAL field, while CR is the SOLE crypto carrier.
+    separate STRUCTURAL field, while CR is the SOLE crypto carrier.
 
 The toy `Reference` realizations (over injective `ℤ`
 encoders + `True`-discharged CR) witness non-vacuity: every derivation fires on a real instance.
@@ -259,9 +259,9 @@ theorem logHashInjective_of_realization {LH : List Turn → ℤ} (R : LogRealiza
   rw [R.factor xs, R.factor ys] at h
   exact R.encodeLog_inj xs ys (R.spongeCR _ _ h)
 
-/-! ## §4 — non-vacuity witnesses: REAL realizations whose CR sponge is genuinely injective.
+/-! ## §4 — non-vacuity witnesses: REAL realizations whose CR sponge is injective.
 
-These exhibit injective serializations + a genuinely-injective (toy) sponge, so each derivation
+These exhibit injective serializations + an injective (toy) sponge, so each derivation
 above FIRES on a concrete instance — proving the bundles are inhabitable and the theorems
 non-vacuous. (Real Poseidon2 leaves CR as the standing obligation; here we discharge it with a
 provably-injective stand-in, exactly as `PortalFloor.Reference` does.) -/
@@ -281,7 +281,7 @@ theorem refSponge_CR : Poseidon2SpongeCR refSponge := by
 example : compressNInjective refSponge := compressNInjective_of_poseidon2CR refSponge_CR
 
 /-- The REALIZED bundle is inhabitable: a sponge tagged with the REAL `babyBearD4W16` params plus a
-genuinely-injective CR carrier. Witnesses that `Poseidon2RealizedSponge` (the bridge-with-params) is
+injective CR carrier. Witnesses that `Poseidon2RealizedSponge` (the bridge-with-params) is
 non-vacuous, and that recovering the bare CR from it fires the frame portal. -/
 def refRealizedSponge : Poseidon2RealizedSponge refSponge :=
   { params := babyBearD4W16, params_are_real := rfl, spongeCR := refSponge_CR }
@@ -377,7 +377,7 @@ theorem refEncodeLeaf_inj (c : CellId) (v w : Value) :
   have h2 : (encV v : ℤ) = (encV w : ℤ) := (List.cons.inj (List.cons.inj h).2).1
   exact encV_injective (by exact_mod_cast h2)
 
-/-- A genuinely-realized leaf hash (toy CR sponge + injective encoder): `CH c v = refSponge (enc c v)`.
+/-- A realized leaf hash (toy CR sponge + injective encoder): `CH c v = refSponge (enc c v)`.
 The `LeafRealization` bundle is inhabited, so `cellLeafInjective_of_realization` fires. -/
 def refCH (c : CellId) (v : Value) : ℤ := refSponge (refEncodeLeaf c v)
 

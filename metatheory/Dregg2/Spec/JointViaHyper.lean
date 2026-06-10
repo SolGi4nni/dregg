@@ -2,7 +2,7 @@
 # Dregg2.Spec.JointViaHyper — N-ary cross-cell joint soundness, VIA the hyperedge apex.
 
 `JointTurn.lean` records the cross-cell binding at two grains: the load-bearing **binary**
-keystone `joint_sound` (PROVED via `stepComplete_preserves` on the product coalgebra), and a
+keystone `joint_sound` (via `stepComplete_preserves` on the product coalgebra), and a
 **stubbed N-ary** `family_joint_sound` (`JointTurn.lean:447`, `sorry`) framed over a *family
 of binary edges* (`JointFamily`/`FamilyBinding`). That stub is open for a structural reason,
 not a missing lemma: its *conclusion* is `Sound (J.cell i) (Spec i) (b.pre i)` — bisimilarity
@@ -46,7 +46,7 @@ variable {Bal : Type u} [AddCommMonoid Bal]
 
 /-! ## §1 — `joint_via_hyperedge`: the N-ary keystone as a corollary of `hyperedge_sound`.
 
-The honest content `family_joint_sound` was reaching for, derived in essentially one step
+The content `family_joint_sound` was reaching for, derived in essentially one step
 from the apex. A forest of `N` participants — packaged as ONE `Hyperedge` carrying the
 wide-pullback `tid` agreement (CG-2 at every leg) and the single Σ-over-`univ` = 0
 conservation (CG-5) — is *sound in the safety sense*: a joint predicate `Good`, preserved by
@@ -60,7 +60,7 @@ bisimulation-to-a-free-`Spec` target. The binding `H` enters as the irreducible 
 (`hyper_binding_is_proper`), exactly as the binary `joint_sound` needs its `JointBinding`. -/
 
 /-- **`joint_via_hyperedge` — N-ary cross-cell joint soundness, via the hyperedge apex
-(PROVED).**
+.**
 
 A forest of `N := ι` participants (one shared coalgebra `T`, per-incidence projections
 `turnId`/`halfEdge`) bound by ONE `Hyperedge H` (apex `tid` + Σ=0) is sound: if every
@@ -105,15 +105,15 @@ hyperedge, with no extra data.
 
 We expose this two ways:
   * `binary_joint_via_hyperedge` — run the binary `joint_sound` keystone, feeding it the
-    binding extracted from the `Fin 2` hyperedge (PROVED);
+    binding extracted from the `Fin 2` hyperedge;
   * `binary_binding_from_hyperedge` — the standalone statement that a `Fin 2` hyperedge IS a
-    bilateral `JointBinding` over its two incidences (PROVED; this is the re-bundling
+    bilateral `JointBinding` over its two incidences (this is the re-bundling
     `Hyperedge` documented as the *forward* direction — the reverse `SharedTurnId.toHyperedge`
     is the homogeneous round-trip, with the genuine obstruction being only the
     distinct-coalgebra `T₁ ≠ T₂` re-bundling, recorded there). -/
 
 /-- **`binary_binding_from_hyperedge` — a 2-incidence hyperedge IS a bilateral `JointBinding`
-(PROVED).** The forward re-bundling: from a `Fin 2`-indexed hyperedge over one carrier `T`,
+.** The forward re-bundling: from a `Fin 2`-indexed hyperedge over one carrier `T`,
 `Hyperedge.toJointBinding` reads off the binary CG-2 ⊗ CG-5 binding over its two incidences.
 So the bilateral binding is the `ι = Fin 2` slice of the apex, no extra content. -/
 theorem binary_binding_from_hyperedge
@@ -127,7 +127,7 @@ theorem binary_binding_from_hyperedge
   ⟨H.toJointBinding⟩
 
 /-- **`binary_joint_via_hyperedge` — the bilateral keystone as the `ι = Fin 2` slice
-(PROVED).**
+.**
 
 Recovers `JointTurn.joint_sound` from a `Fin 2`-indexed `Hyperedge`: the binary keystone's
 required `JointBinding` premise is the hyperedge's own binding read through
@@ -188,7 +188,7 @@ single-incidence singleton (`ι = Unit`, `Bal = ℤ`) it is *decidable*: the onl
 the Σ over `Unit` being `0`, i.e. the lone half-edge value being `0`. We exhibit the
 decidable both-ways slice so "validity is a proof-property, not a vote" is concrete. -/
 
-/-- **`singletonHyperedge` — the canonical admissible singleton (PROVED).** Over `ι = Unit`,
+/-- **`singletonHyperedge` — the canonical admissible singleton.** Over `ι = Unit`,
 one-state carrier, `Bal = ℤ`, a hyperedge whose lone half-edge is `0` (so CG-5 `Σ = 0`
 holds). This *is* `HyperAdmissible` — the positive face of validity-as-decidable-proof. -/
 def singletonHyperedge :
@@ -210,7 +210,7 @@ turn `false` vs `true`), each with a balanced (zero) half-edge. Both are valid; 
 validity proof selects between them. That is precisely the double-spend shape: one pre-state,
 two valid atomic turns. Resolving it is canonicity, NOT validity — `Finality`'s job. -/
 
-/-- **`hyperedge_is_validity_not_canonicity` — validity ≠ canonicity (PROVED).**
+/-- **`hyperedge_is_validity_not_canonicity` — validity ≠ canonicity.**
 
 There is a single coalgebra / framing / participant pre-state `xs` admitting TWO DISTINCT
 turns `t₁ ≠ t₂`, each making `xs` `HyperAdmissible`. Hence validity (`HyperAdmissible`) does
@@ -244,7 +244,7 @@ theorem hyperedge_is_validity_not_canonicity :
 
 /-! ### §3.3 — why canonicity (not validity) is where consensus lives.
 
-`Hyperedge.hyper_binding_is_proper` (PROVED, in `Hyperedge.lean`) says the binding is a
+`Hyperedge.hyper_binding_is_proper` (in `Hyperedge.lean`) says the binding is a
 PROPER subobject of the N-fold product — content per-cell soundness cannot supply. The
 *validity* half of that content (CG-2 ⊗ CG-5 on a SINGLE hyperedge) is decidable and local
 (`atomicity_as_proof`). What is irreducibly NON-local is choosing among MULTIPLE valid
@@ -261,7 +261,7 @@ selectors, BOTH of which always return a `HyperAdmissible` turn for the §3.2 pr
 DISAGREE on that pre-state. So "always selects something valid" does not pin a unique selector;
 distinguishing them consumes data outside `HyperAdmissible`. -/
 
-/-- **`selector_needs_more_than_validity` — a valid selector is not unique (PROVED).**
+/-- **`selector_needs_more_than_validity` — a valid selector is not unique.**
 
 Strengthens the §3.2 ∃-witness into a statement ABOUT selectors (the extra content canonicity
 needs). For the §3.2 coalgebra/framing/pre-state `xs`, there exist TWO selectors
@@ -272,7 +272,7 @@ needs). For the §3.2 coalgebra/framing/pre-state `xs`, there exist TWO selector
 * they **disagree** at `xs`: `sel₁ xs ≠ sel₂ xs`.
 
 So the property "returns an admissible turn" does NOT determine the selector: validity is
-satisfied by two genuinely different choices. Any *canonical* selector must therefore consume
+satisfied by two different choices. Any *canonical* selector must therefore consume
 information OUTSIDE the validity proof — the symmetric admissibility of §3.2 cannot break the
 tie — which is exactly the `Finality` tier's ordering input. This is the precise sense in which
 `hyper_binding_is_proper`'s irreducible content is *validity* (local, decidable), while
@@ -310,7 +310,7 @@ This is the "validity is a real gate" half that complements §3.2's "validity �
 *disagreeing* legs are rejected by validity outright. Together: the apex agreement is necessary
 (rejects mismatch) but not sufficient for canonicity (two valid apexes can collide). -/
 
-/-- **`mismatched_legs_have_no_hyperedge` — CG-2 rejects disagreeing legs (PROVED).**
+/-- **`mismatched_legs_have_no_hyperedge` — CG-2 rejects disagreeing legs.**
 
 If two incidences `i j : ι` reach DIFFERENT post-step turn-ids under the SAME turn `t`
 (`turnId i (T.next (x i) t) ≠ turnId j (T.next (x j) t)`), then there is NO `Hyperedge`
@@ -334,7 +334,7 @@ theorem mismatched_legs_have_no_hyperedge
   subst hx; subst ht
   exact hmis ((H.agree i).trans (H.agree j).symm)
 
-/-- **`mismatch_rejection_is_nonvacuous` — the rejection fires on a concrete instance (PROVED).**
+/-- **`mismatch_rejection_is_nonvacuous` — the rejection fires on a concrete instance.**
 
 The §3.4 tooth is not vacuously true: we exhibit a concrete coalgebra (carrier `Bool`,
 identity transition, `turnId = id`) and two pre-states `x 0 = false`, `x 1 = true` whose legs
@@ -375,7 +375,7 @@ theorem mismatch_rejection_is_nonvacuous :
     form (`Good` preserved along the whole run), which is what soundness should mean. So this
     module does not "fix" the stub's signature; it provides the *honest* keystone alongside
     it, leaving `family_joint_sound` untouched (as instructed). The remaining open
-    bisimulation form is recorded honestly in `Hyperedge.hyperedge_sound_bisim`. -/
+    bisimulation form is recorded in `Hyperedge.hyperedge_sound_bisim`. -/
 
 /-! ## §5 — GOLD: recursive aggregation is the apex conjunction, no leak.
 
@@ -424,7 +424,7 @@ def accepts (accept : α → Prop) : AggTree α → Prop
   | .node l r => l.accepts accept ∧ r.accepts accept
 
 /-- **`recursive_agg_no_leak` — the recursive aggregation root accepts iff every leaf accepts
-(PROVED).**
+.**
 
 For ANY aggregation tree shape (any pairing order the Rust `aggregate_tree` produces, balanced or
 with carried odd leaves), the root's acceptance is logically equivalent to the conjunction of all
@@ -452,7 +452,7 @@ theorem accepts_iff_all_leaves (accept : α → Prop) :
         exact ⟨fun a ha => h a (Or.inl ha), fun a ha => h a (Or.inr ha)⟩
 
 /-- **`recursive_agg_rejects_unverified_leaf` — the tooth: ONE unverified leaf sinks the root
-(PROVED).**
+.**
 
 If any leaf `a ∈ t.leaves` fails its verifier (`¬ accept a`), the root does NOT accept. This is
 the Lean mirror of the Rust `recursive_layer_rejects_mismatched_leaf_public_inputs` /
@@ -469,7 +469,7 @@ theorem rejects_unverified_leaf (accept : α → Prop) (t : AggTree α)
 end AggTree
 
 /-- **`recursive_agg_constant_shape` — the root attests the WHOLE bundle regardless of tree shape
-(PROVED).** Two aggregation trees with the SAME leaf multiset accept on the same condition (`∀
+.** Two aggregation trees with the SAME leaf multiset accept on the same condition (`∀
 leaf, accept`). So the pairing order the Rust `aggregate_tree` chooses (and the carried odd leaf)
 does not change WHAT the root attests — only one root proof is checked either way. This underwrites
 "the verification cost doesn't grow with the number of cells": the root's meaning is the leaf

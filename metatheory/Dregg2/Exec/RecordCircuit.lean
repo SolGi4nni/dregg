@@ -39,7 +39,7 @@ def bitsToInt : List Int → Int
 /-- Booleanity: every entry is `0` or `1` (what the per-bit gate `bᵢ·(1-bᵢ)=0` enforces). -/
 def Boolean (bits : List Int) : Prop := ∀ b ∈ bits, b = 0 ∨ b = 1
 
-/-- **`range_sound` (PROVED) — the gate ⇒ range direction.** If the bits are boolean, their
+/-- **`range_sound` — the gate ⇒ range direction.** If the bits are boolean, their
 recomposition lies in `[0, 2^(#bits))`. This is what makes a satisfied range gadget *prove* a
 comparison: a value with a valid `n`-bit decomposition is provably in `[0, 2ⁿ)`. -/
 theorem range_sound : ∀ (bits : List Int), Boolean bits →
@@ -53,7 +53,7 @@ theorem range_sound : ∀ (bits : List Int), Boolean bits →
       simp only [bitsToInt, List.length_cons]
       rcases hb with rfl | rfl <;> omega
 
-/-- **`range_complete` (PROVED) — the range ⇒ gate direction.** Every `v ∈ [0, 2ⁿ)` has an
+/-- **`range_complete` — the range ⇒ gate direction.** Every `v ∈ [0, 2ⁿ)` has an
 `n`-bit boolean decomposition. This is what makes the range gadget *satisfiable* whenever the
 comparison really holds — the completeness half of the bridge. -/
 theorem range_complete : ∀ (n : Nat) (v : Int), 0 ≤ v → v < 2 ^ n →
@@ -78,7 +78,7 @@ theorem range_complete : ∀ (n : Nat) (v : Int), 0 ≤ v → v < 2 ^ n →
       · simp only [bitsToInt, hrec]
         omega
 
-/-- **`range_iff` (PROVED) — the gadget is sound ∧ complete.** A value is in `[0, 2ⁿ)` *iff* an
+/-- **`range_iff` — the gadget is sound ∧ complete.** A value is in `[0, 2ⁿ)` *iff* an
 `n`-bit boolean decomposition of it exists. This single equivalence is what the constraint
 compiler turns each `≤`/`<`/`monotonic` gate into, with both bridge directions free. -/
 theorem range_iff (n : Nat) (v : Int) :

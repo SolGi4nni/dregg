@@ -6,7 +6,7 @@ SetState refusal commitment) welded into the Argus IR, as a FULL-STATE weld.
 it on transfer/mint/burn/createEscrow. `Effects/BalanceA.lean` then welded a per-component effect to a
 genuine standalone full-state descriptor (`balanceA_full_sound`), concluding the WHOLE 17-field
 post-state, and `Effects/CellSeal.lean` followed that surface for the LIFECYCLE family. This module
-follows the SAME strong full-state surface for the genuinely different AUDIT-WRITE primitive `refusalA`,
+follows the SAME strong full-state surface for the different AUDIT-WRITE primitive `refusalA`,
 in a disjoint file (it imports the Argus IR + the audited `refusalA` v1 instance + the independent
 cell-state-audit spec, all read-only, and owns only its own declarations).
 
@@ -32,7 +32,7 @@ with leaf `setField refusalField (k.cell c) (.int 1)` — NOT `setBal` (balanceA
 (cellSeal's, which writes the `lifecycle` SIDE-TABLE). That is the structural contrast: cellSeal flips a
 `CellId → Nat` side-table; refusal writes a non-`balance` slot of the `CellId → Value` record map.
 
-## THE DESCRIPTOR — a GENUINE full-state v1 `EffectCommit` soundness (the HONEST surface contrast).
+## THE DESCRIPTOR — a GENUINE full-state v1 `EffectCommit` soundness (the surface contrast).
 
 Unlike balanceA/cellSeal (whose standalone descriptors live in the v2 `EffectCommit2`/`Surface2`
 universe), `refusalA`'s genuine standalone circuit⟺spec crown jewel lives in the **v1 `EffectCommit`**
@@ -48,10 +48,10 @@ slot flips, the log grows by one receipt, every OTHER kernel field frozen), keye
 STILL the strong full-state surface BalanceA prefers (the conclusion is the WHOLE post-state, not a
 per-cell `cellProj` projection) — it just rides the v1 sponge framework (`CommitSurface`/`satisfiedE`/
 `encodeE`/`effect_circuit_full_sound`) rather than the v2 one, because that is the descriptor `refusalA`
-genuinely carries. There is a SEPARATE per-cell EffectVM row (`Emit/EffectVmEmitRefusal`) that TICKS the
+carries. There is a SEPARATE per-cell EffectVM row (`Emit/EffectVmEmitRefusal`) that TICKS the
 cell nonce, but its own header records "the refusal SOUNDNESS lives ONLY in `refusalA_full_sound`" — so we
 weld against the full-state one, and note the EffectVM nonce-tick as a divergence belonging to a DIFFERENT
-universe we do not weld here (carried in the structured report, NOT papered).
+universe we do not weld here (carried in the structured report).
 
 ## THE KERNEL-vs-RUNTIME DIVERGENCE (carried explicitly — read this).
 
@@ -70,7 +70,7 @@ named precisely:
     not model. The welded conclusion (§4) then names the chained post-state `{ kernel := k', log :=
     receipt :: s.log }` EXPLICITLY, so the receipt-log obligation is part of the welded statement.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 sponge-injectivity assumptions enter ONLY inside the reused `refusalA_full_sound` (its
@@ -184,7 +184,7 @@ The standalone refusal descriptor (§4) is keyed on the CHAINED executor `execFu
 layer is exactly the §2 kernel write PLUS the runtime receipt-log prepend `{ actor, src := cell, dst :=
 cell, amt := 0 } :: s.log` — the runtime piece the `RecordKernelState`-level `interp` structurally cannot
 emit. We bridge faithfully, naming the receipt-row prepend EXPLICITLY in the chained post-state (the honest
-kernel-vs-runtime divergence — NOT papered). -/
+kernel-vs-runtime divergence). -/
 
 /-- The self-targeted receipt row a committed refusal prepends to the chain log (the SAME literal
 `stateStep` installs). Named so the chained post-state's `log` clause is the genuine row. -/
@@ -297,7 +297,7 @@ theorem refusal_compile_sound
 
 #assert_axioms refusal_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely STAMPS the refusal (slot write observable), preserves every
+/-! ## §5 — NON-VACUITY: the IR term STAMPS the refusal (slot write observable), preserves every
 other field (frame), and the gate REJECTS forged / non-account / non-Live inputs (fail-closed).
 
 The cornerstone/weld would be hollow if refusal never committed, if the write were a no-op, or if the gate
@@ -316,14 +316,14 @@ def kR0 : RecordKernelState :=
 
 /-- **NON-VACUITY (the REFUSAL is OBSERVABLE).** The committed refusal STAMPS cell `0`'s `"refusal"` audit
 slot to `1` (before: the slot is absent, read as `0`) — the cross-cell SetState refusal commitment
-genuinely lands (the `setCell` audit write is real, not a no-op). -/
+lands (the `setCell` audit write is real, not a no-op). -/
 theorem refusalStmt_stamps :
     (interp (refusalStmt 0 0) kR0).map (fun k => fieldOf "refusal" (k.cell 0)) = some 1 := by
   rw [interp_refusalStmt_eq_kernel]
   decide
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The refusal of a Live, self-owned cell COMMITS (`isSome`)
-— the three-leg gate genuinely admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
+— the three-leg gate admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
 theorem refusalStmt_commits :
     (interp (refusalStmt 0 0) kR0).isSome = true := by
   rw [interp_refusalStmt_eq_kernel]

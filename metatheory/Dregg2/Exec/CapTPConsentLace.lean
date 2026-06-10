@@ -66,7 +66,7 @@ The security properties, proved over the EXECUTABLE lace-gated settle, at n > 1 
 
 NOT gated on succinct proofs: settlement re-drains through `exec`, which re-witnesses each
 mutation's authority. The blocklace `signed` bit and content-addressing (`Canonical`) are the §8
-crypto seam, carried HONESTLY as hypotheses exactly as `Authority.Blocklace` does — Ed25519
+crypto seam, carried as hypotheses exactly as `Authority.Blocklace` does — Ed25519
 verification + hash-collision-resistance are Rust/circuit obligations, never Lean-proved here.
 
 REUSES `Exec.CapTPPipeline` (verified drain), `Exec.CapTPSettlement` (the abstract suspended
@@ -176,7 +176,7 @@ def laceSettle (k : KernelState) (B : Lace) (batch : SuspendedBatch) (digest : D
 /-! ## §4 — Consent-binding: settlement requires signed self-authored consent from every party.
 The three teeth — unsigned, wrong-author, and absent consents do NOT count. -/
 
-/-- **`unsigned_does_not_count` (PROVED)** — a consent block with `signed = false` does NOT count
+/-- **`unsigned_does_not_count`** — a consent block with `signed = false` does NOT count
 as approval: `isApprovalFor` is false. So a forged/unsigned consent (the §8 signature did not
 verify) never advances the exchange — the grant only counts WITH the signature. -/
 theorem unsigned_does_not_count (b : Block) (party : Label) (digest : Digest)
@@ -184,7 +184,7 @@ theorem unsigned_does_not_count (b : Block) (party : Label) (digest : Digest)
     isApprovalFor b party digest = false := by
   unfold isApprovalFor; rw [hsig]; simp
 
-/-- **`wrong_author_does_not_count` (PROVED)** — a consent block whose `creator` is NOT `party`
+/-- **`wrong_author_does_not_count`** — a consent block whose `creator` is NOT `party`
 does NOT count as `party`'s approval. So a consent signed under another party's name (an
 impersonation) does not advance the exchange on `party`'s behalf — authorship is bound. -/
 theorem wrong_author_does_not_count (b : Block) (party : Label) (digest : Digest)
@@ -195,7 +195,7 @@ theorem wrong_author_does_not_count (b : Block) (party : Label) (digest : Digest
     simp only [beq_eq_false_iff_ne, ne_eq]; exact hauth
   rw [this]; simp
 
-/-- **`wrong_digest_does_not_count` (PROVED)** — a consent block whose `seq` (the batch digest it
+/-- **`wrong_digest_does_not_count`** — a consent block whose `seq` (the batch digest it
 signs over) is NOT `digest` does NOT count toward batch `digest`. A signature over a DIFFERENT
 batch cannot be replayed as consent to this one — the consent is bound to the batch. -/
 theorem wrong_digest_does_not_count (b : Block) (party : Label) (digest : Digest)
@@ -206,7 +206,7 @@ theorem wrong_digest_does_not_count (b : Block) (party : Label) (digest : Digest
     simp only [beq_eq_false_iff_ne, ne_eq]; exact hd
   rw [this]; simp
 
-/-- **`absent_does_not_count` (PROVED)** — if NO block in the lace is a valid approval for
+/-- **`absent_does_not_count`** — if NO block in the lace is a valid approval for
 `party` over `digest`, then `party` has not consented: `partySignedConsent` is false. Consent
 must be PRESENT in the lace (gossiped); a party cannot consent by an out-of-band claim. -/
 theorem absent_does_not_count (B : Lace) (party : Label) (digest : Digest)
@@ -217,7 +217,7 @@ theorem absent_does_not_count (B : Lace) (party : Label) (digest : Digest)
   intro b hb
   rw [hnone b hb]; simp
 
-/-- **`settle_requires_signed_authorship` (PROVED) — the consent-binding keystone.** If ANY
+/-- **`settle_requires_signed_authorship` — the consent-binding keystone.** If ANY
 required party `p` has NOT contributed a valid signed self-authored consent over the batch digest
 (`partySignedConsent B p digest = false`), the lace-gated settle returns the UNCHANGED state — no
 mutation commits. So a batch commits ONLY when every required party's grant is backed by its
@@ -235,7 +235,7 @@ theorem settle_requires_signed_authorship (k : KernelState) (B : Lace) (batch : 
 
 /-! ## §5 — No premature settlement: an under-consented batch mutates nothing. -/
 
-/-- **`incomplete_lace_freezes_state` (PROVED)** — a batch whose signed-consent exchange has NOT
+/-- **`incomplete_lace_freezes_state`** — a batch whose signed-consent exchange has NOT
 converged settles to the UNCHANGED state: no mutation commits before every required party has
 signed. The partial, suspended computation holds the mutations in escrow until the distributed
 signing exchange converges. -/
@@ -246,7 +246,7 @@ theorem incomplete_lace_freezes_state (k : KernelState) (B : Lace) (batch : Susp
 
 /-! ## §6 — Settlement is the verified drain (atomic + per-mutation re-authorized + no-amplify). -/
 
-/-- **`laceSettle_complete_is_drain` (PROVED)** — once the signed exchange converges, settling IS
+/-- **`laceSettle_complete_is_drain`** — once the signed exchange converges, settling IS
 draining the whole batch through the verified executor. Multi-party signed consent GATES the
 drain; it does NOT bypass the per-mutation authority check — every mutation is STILL re-authorized
 by `exec` at commit. -/
@@ -255,7 +255,7 @@ theorem laceSettle_complete_is_drain (k : KernelState) (B : Lace) (batch : Suspe
     laceSettle k B batch digest = drainAll k batch.mutations := by
   unfold laceSettle; rw [hc]; rfl
 
-/-- **`laceSettle_atomic_aborts_on_unauthorized` (PROVED) — atomic settle-or-nothing.** Even with
+/-- **`laceSettle_atomic_aborts_on_unauthorized` — atomic settle-or-nothing.** Even with
 COMPLETE signed consent, a forged/over-authorized mutation buried in the batch aborts the WHOLE
 settlement to `none` — nothing commits. The distributed signing exchange cannot launder an
 over-authorized mutation past the executor: the per-turn `authorizedB` check still fires. (Rides
@@ -269,7 +269,7 @@ theorem laceSettle_atomic_aborts_on_unauthorized (k : KernelState) (B : Lace)
   rw [laceSettle_complete_is_drain k B batch digest hc, hmut]
   exact drainAll_aborts_on_unauthorized_head hno
 
-/-- **`laceSettle_preserves_caps` (PROVED) — no authority amplification through the exchange.** A
+/-- **`laceSettle_preserves_caps` — no authority amplification through the exchange.** A
 settled batch — no matter how elaborate the multi-party signed exchange that gated it — never
 grows the capability table. Incomplete consent leaves the state literally unchanged; complete
 consent settles via `drainAll`, which preserves `caps` (`drainAll_preserves_caps`). The
@@ -283,7 +283,7 @@ theorem laceSettle_preserves_caps (k k' : KernelState) (B : Lace) (batch : Suspe
   · rw [if_neg hc] at h
     simp only [Option.some.injEq] at h; subst h; rfl
 
-/-- **`laceSettle_conserves` (PROVED)** — a settled batch conserves total supply: incomplete
+/-- **`laceSettle_conserves`** — a settled batch conserves total supply: incomplete
 consent is a no-op (trivially conserving); a complete-consent settle drains through `exec`, which
 conserves each turn (`drainAll_conserves`). The signed exchange neither mints nor burns. -/
 theorem laceSettle_conserves (k k' : KernelState) (B : Lace) (batch : SuspendedBatch)
@@ -312,7 +312,7 @@ def consentForks (B : Lace) (p : Label) (digest : Digest) : Prop :=
   ∃ a b : Block, a.seq = digest ∧ b.seq = digest ∧
     approveMark ∈ a.preds ∧ revokeMark ∈ b.preds ∧ Equivocation B p a b
 
-/-- **`consent_equivocation_detectable` (PROVED, reuses `equivocation_detectable`)** — a consent
+/-- **`consent_equivocation_detectable` (reuses `equivocation_detectable`)** — a consent
 fork is byzantine-repelling-DETECTABLE: if `p` equivocates over the batch, `p` is a blocklace
 `Equivocator` and the witnessing incomparable pair `(a, b)` is present in the lace. The signed
 fork cannot be hidden — its evidence is two concrete same-author, same-digest, conflicting consent
@@ -324,7 +324,7 @@ theorem consent_equivocation_detectable {B : Lace} {p : Label} {digest : Digest}
   obtain ⟨heq, hne, hnab, hnba⟩ := equivocation_detectable e
   exact ⟨heq, a, b, hne, hnab, hnba⟩
 
-/-- **`equivocating_party_blocks_settlement` (PROVED) — a forking consenter is DETECTED and cannot
+/-- **`equivocating_party_blocks_settlement` — a forking consenter is DETECTED and cannot
 settle behind its fork.** A required party `p` that has equivocated over the batch (`hfork`) is, by
 the byzantine-repelling keystone, a DETECTABLE blocklace equivocator (returned as part (1) below).
 A fork-aware validator — which the running blocklace finalizer IS — therefore rejects `p`'s
@@ -361,7 +361,7 @@ exclusion is part of the gate, not a downstream policy hypothesis.
 
 A party's consent is COUNTED at settlement iff it has a signed self-authored approve AND has NOT
 signed a conflicting revoke over the same batch. The signed-conflict detector `equivocatesSigned`
-is decidable over the lace and SOUND: a party it flags genuinely authored two conflicting signed
+is decidable over the lace and SOUND: a party it flags authored two conflicting signed
 consent blocks over the same digest (`equivocatesSigned_sound` — it implies a real `consentForks`
 under the structural incomparability the canonical lace supplies). -/
 
@@ -409,7 +409,7 @@ def laceSettleExcl (k : KernelState) (B : Lace) (batch : SuspendedBatch) (digest
   else
     some k
 
-/-- **`signed_equivocator_consent_not_counted` (PROVED)** — the heart of the fix: a party flagged
+/-- **`signed_equivocator_consent_not_counted`** — the heart of the fix: a party flagged
 as a signed equivocator has its consent DROPPED — `consentCounted` is false even though its approve
 is signed and valid. The signed fork does not count. -/
 theorem signed_equivocator_consent_not_counted (B : Lace) (p : Label) (digest : Digest)
@@ -418,7 +418,7 @@ theorem signed_equivocator_consent_not_counted (B : Lace) (p : Label) (digest : 
   unfold consentCounted
   rw [hfork]; simp
 
-/-- **`settle_excludes_signed_equivocator` (PROVED) — the REAL equivocation-repels keystone.**
+/-- **`settle_excludes_signed_equivocator` — the REAL equivocation-repels keystone.**
 A required party `p` that has signed BOTH a valid approve AND a conflicting revoke over the batch
 digest (`hfork : equivocatesSigned`) has its consent DROPPED by the strengthened settlement
 validator: `laceSettleExcl` returns the UNCHANGED state — nothing commits. The signed equivocator
@@ -437,7 +437,7 @@ theorem settle_excludes_signed_equivocator (k : KernelState) (B : Lace) (batch :
     exact ⟨p, hp, by rw [signed_equivocator_consent_not_counted B p digest hfork]; simp⟩
   rw [hincomplete]; rfl
 
-/-- **`equivocatesSigned_sound` (PROVED) — the detector flags a GENUINE fork, not a phantom.** A
+/-- **`equivocatesSigned_sound` — the detector flags a GENUINE fork, not a phantom.** A
 party `equivocatesSigned` flags has, present in the lace, an approve block `a` and a revoke block
 `b`, both authored by `p`, both signed, both over `digest`, acking the conflicting markers. So the
 decidable `Bool` detector is backed by two concrete conflicting signed consent blocks — the
@@ -463,7 +463,7 @@ theorem equivocatesSigned_sound (B : Lace) (p : Label) (digest : Digest)
 
 /-! ## §8 — Monotone convergence: gossiping more signed consent never un-converges the exchange. -/
 
-/-- **`partySignedConsent_mono` (PROVED)** — consent is monotone under lace growth (CRDT join):
+/-- **`partySignedConsent_mono`** — consent is monotone under lace growth (CRDT join):
 if `p` had a signed consent in `B`, it still has one after a block `b` is gossiped in
 (`b :: B`). The exchange only converges — appending blocks never retracts a recorded consent. -/
 theorem partySignedConsent_mono (B : Lace) (b : Block) (party : Label) (digest : Digest)
@@ -473,7 +473,7 @@ theorem partySignedConsent_mono (B : Lace) (b : Block) (party : Label) (digest :
   simp only [List.any_cons, Bool.or_eq_true]
   exact Or.inr h
 
-/-- **`consentLaceComplete_mono` (PROVED)** — convergence is monotone at the THRESHOLD: if the
+/-- **`consentLaceComplete_mono`** — convergence is monotone at the THRESHOLD: if the
 n-ary signed exchange had converged in `B`, it stays converged after any further consent block is
 gossiped. Once every required party has signed, no later message can un-settle the batch — the
 exchange is a ratchet toward settlement (the lace face of `CapTPSettlement.consent_monotone`,
@@ -613,7 +613,7 @@ theorem demo_fork_not_pointed :
     ¬ pointed demoLaceFork fork9revoke fork9approve := by
   constructor <;> · rintro ⟨hmem, _, _⟩; revert hmem; decide
 
-/-- **`demo_fork_left_marker` (PROVED)** — in `demoLaceFork`, the leftmost block of ANY
+/-- **`demo_fork_left_marker`** — in `demoLaceFork`, the leftmost block of ANY
 `≺`-chain is one of the reserved markers (id `0xA`/`0xB`), which are NOT in the lace. Every
 `pointed` edge in `demoLaceFork` acks only a marker (`approveMark`/`revokeMark`), and a marker
 does not resolve in the lace, so no `pointed` edge exists at all — hence no `precedes` chain. This
@@ -645,7 +645,7 @@ theorem demo_no_precedes (x y : Block) : ¬ precedes demoLaceFork x y := by
   | base hp => exact noedge _ _ hp
   | trans _ _ ih _ => exact ih
 
-/-- **`demo_consent_equivocation` (PROVED)** — author 9 equivocates over batch 42 in
+/-- **`demo_consent_equivocation`** — author 9 equivocates over batch 42 in
 `demoLaceFork`: an APPROVE (id 102) and a conflicting REVOKE (id 103), both authored by 9, both
 over digest 42, present, neither observing the other. The signed consent fork. -/
 theorem demo_consent_equivocation : consentForks demoLaceFork 9 demoDigest := by
@@ -653,7 +653,7 @@ theorem demo_consent_equivocation : consentForks demoLaceFork 9 demoDigest := by
   refine ⟨by decide, by decide, by decide, by decide, ?_⟩
   exact ⟨by decide, demo_no_precedes _ _, demo_no_precedes _ _⟩
 
-/-- **`demo_fork_detected` (PROVED)** — the byzantine-repelling theorem on the concrete consent
+/-- **`demo_fork_detected`** — the byzantine-repelling theorem on the concrete consent
 fork: party 9 is an equivocator and the witnessing incomparable pair is present. So a fork-aware
 validator CAN detect party 9's double consent (this is what makes rejecting it computable). -/
 theorem demo_fork_detected :
@@ -661,7 +661,7 @@ theorem demo_fork_detected :
     ∃ a b : Block, a ≠ b ∧ ¬ precedes demoLaceFork a b ∧ ¬ precedes demoLaceFork b a :=
   consent_equivocation_detectable demo_consent_equivocation
 
-/-- **`demo_fork_blocks_settlement` (PROVED)** — the equivocation keystone on the concrete fork.
+/-- **`demo_fork_blocks_settlement`** — the equivocation keystone on the concrete fork.
 Party 9 has forked over the batch (an unsigned approve id 102 + a revoke id 103, the incomparable
 pair `demo_consent_equivocation`), so 9 has NO valid signed consent counted
 (`partySignedConsent demoLaceFork 9 demoDigest = false`, by `decide`). Hence `equivocating_party_
@@ -709,7 +709,7 @@ example : (laceSettle demoState demoLaceSignedFork demoBatch demoDigest).isSome 
   unfold demoBatch demoMutation drainAll drainStep exec demoState authorizedB
   decide
 
-/-- **THE STRENGTHENED GATE EXCLUDES THE SIGNED EQUIVOCATOR (PROVED).** Under `laceSettleExcl`,
+/-- **THE STRENGTHENED GATE EXCLUDES THE SIGNED EQUIVOCATOR.** Under `laceSettleExcl`,
 party 9's consent is DROPPED (it signed a conflicting revoke), so the n-ary gate does NOT converge
 and settlement returns the UNCHANGED state — nothing commits. The signed equivocator cannot cause a
 settlement to commit with its consent counted. Driven by `settle_excludes_signed_equivocator` on the
@@ -718,7 +718,7 @@ example : laceSettleExcl demoState demoLaceSignedFork demoBatch demoDigest = som
   settle_excludes_signed_equivocator demoState demoLaceSignedFork demoBatch demoDigest
     (p := 9) (by decide) (by decide)
 
-/-- The signed fork is backed by REAL evidence (PROVED, via `equivocatesSigned_sound`): two concrete
+/-- The signed fork is backed by REAL evidence (via `equivocatesSigned_sound`): two concrete
 present blocks, both authored by 9, both signed, both over digest 42, acking the conflicting
 approve/revoke markers. The exclusion is justified, not arbitrary. -/
 example : ∃ a b : Block, a ∈ demoLaceSignedFork ∧ b ∈ demoLaceSignedFork ∧
@@ -727,7 +727,7 @@ example : ∃ a b : Block, a ∈ demoLaceSignedFork ∧ b ∈ demoLaceSignedFork
     approveMark ∈ a.preds ∧ revokeMark ∈ b.preds :=
   equivocatesSigned_sound demoLaceSignedFork 9 demoDigest (by decide)
 
-/-- **`signedFork_is_real_consentForks` (PROVED)** — the signed fork is a GENUINE blocklace
+/-- **`signedFork_is_real_consentForks`** — the signed fork is a GENUINE blocklace
 equivocation, not just an application-level conflict: `signedFork9approve` and `signedFork9revoke`
 are incomparable (neither acks the other — each acks only a reserved marker absent from the lace),
 so author 9 is a real `Blocklace.Equivocator` over the batch. The strengthened exclusion is backed
@@ -762,7 +762,7 @@ theorem demo_signed_consent_equivocation : consentForks demoLaceSignedFork 9 dem
   refine ⟨by decide, by decide, by decide, by decide, ?_⟩
   exact ⟨by decide, signedFork_no_precedes _ _, signedFork_no_precedes _ _⟩
 
-/-- **`demo_signed_fork_detected` (PROVED)** — author 9's SIGNED fork is byzantine-repelling
+/-- **`demo_signed_fork_detected`** — author 9's SIGNED fork is byzantine-repelling
 detectable: 9 is a real `Equivocator` and the incomparable pair is present. So the strengthened
 exclusion rests on a genuine, checkable equivocation. -/
 theorem demo_signed_fork_detected :
@@ -778,7 +778,7 @@ settles and commits — the exclusion only bites equivocators, never honest sign
 #guard ([7, 8, 9].map (fun p => equivocatesSigned demoLaceAllSigned p demoDigest)) == [false, false, false]
 #guard consentLaceCompleteExcl demoLaceAllSigned [7, 8, 9] demoDigest == true
 
-/-- **THE HONEST CASE COMMITS UNDER THE STRENGTHENED GATE (PROVED).** All three parties signed clean
+/-- **THE HONEST CASE COMMITS UNDER THE STRENGTHENED GATE.** All three parties signed clean
 approves; none equivocated; so `laceSettleExcl` converges and DRAINS the userspace mutation through
 the verified executor — the strengthened gate does not over-block. -/
 example : (laceSettleExcl demoState demoLaceAllSigned demoBatch demoDigest).isSome = true := by

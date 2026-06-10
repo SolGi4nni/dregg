@@ -38,7 +38,7 @@ with `step s a := perm (absorb s a)` the per-block compression and
 
 ## The reduction (a real proof, NOT a relabel)
 
-`Poseidon2SpongeCR (spongeOf …)` is DISCHARGED from THREE honestly-separated pieces — two irreducible
+`Poseidon2SpongeCR (spongeOf …)` is DISCHARGED from THREE separate pieces — two irreducible
 crypto carriers and one structural domain-separation fact, ALL stated explicitly:
 
   1. **`CompressionCR M`** — IRREDUCIBLE PRIMITIVE: ONE permutation call, used as the per-block
@@ -130,7 +130,7 @@ def finalState (xs : List ℤ) : State :=
 /-- The full sponge digest: squeeze slot 0 of the final state. This is `hash_many` line-for-line. -/
 def spongeOf (xs : List ℤ) : ℤ := M.squeeze (M.finalState xs)
 
-/-- `chunksOf` recovers the original list under `flatten` (PROVED structural invertibility of the
+/-- `chunksOf` recovers the original list under `flatten` (structural invertibility of the
 chunking — the domain-extension alignment step needs no assumption). -/
 theorem chunksOf_flatten (xs : List ℤ) : (M.chunksOf xs).flatten = xs :=
   chunksRec_flatten M.rate xs
@@ -221,7 +221,7 @@ theorem spongeCR_of_reduction (M : SpongeMachine State)
   intro xs ys h
   exact finalState_inj M hC hSep (hSq xs ys h)
 
-/-! ## §4 — non-vacuity: a REAL `SpongeMachine` whose carriers genuinely hold.
+/-! ## §4 — non-vacuity: a REAL `SpongeMachine` whose carriers hold.
 
 A concrete machine over `State := ℕ × List ℤ` (chaining nat × accumulated blocks), with an INJECTIVE
 "permutation" (the carriers HOLD), so every reduction above FIRES on a real instance — and the
@@ -347,7 +347,7 @@ injective" to "ONE permutation call is CR (`CompressionCR`) + the slot-0 truncat
 
 /-- **`realizedSpongeOfReduction`** — package `M.spongeOf` as a `Poseidon2RealizedSponge` (tagged with
 the REAL `babyBearD4W16` p3 params), with its `spongeCR` field DISCHARGED by the permutation reduction.
-This is what makes `Poseidon2SpongeCR` DISCHARGEABLE (no longer primitive-at-the-sponge-level): the
+This is what makes `Poseidon2SpongeCR` DISCHARGEABLE (not primitive-at-the-sponge-level): the
 tower's `spongeCR` carrier is now a THEOREM over `CompressionCR` + `SqueezeBindsReachable`. -/
 def realizedSpongeOfReduction (M : SpongeMachine State)
     (hC : CompressionCR M) (hSq : SqueezeBindsReachable M) (hSep : InitStepSeparated M) :

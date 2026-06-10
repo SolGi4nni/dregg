@@ -37,9 +37,9 @@ The anti-ghost on ALL 17 fields falls out of the generic `runnable_full_commit_b
 `wide_rejects_root_tamper` (§4) — tamper the set `field[1]`, any absorbed cell, OR any side-table root ⇒
 the RUNNABLE descriptor is UNSAT.
 
-## HONEST SURFACE — the log-receipt divergence is UNCHANGED and named.
+## SURFACE — the log-receipt divergence is UNCHANGED and named.
 
-The full clause pins the WHOLE 17-field kernel post-state. The ONE honest residual — the audit write's
+The full clause pins the WHOLE 17-field kernel post-state. The ONE residual — the audit write's
 chained motion is the self-targeted receipt prepended to `RecChainedState.log`, which is NOT a
 `RecordKernelState` field and has NO EffectVM row column — is the SAME boundary the narrow header and the
 Argus `ReceiptArchive.lean` weld carry: the log receipt rides universe-A's `logHashInjective` portal, NOT

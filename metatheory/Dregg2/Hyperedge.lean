@@ -81,13 +81,13 @@ structure Hyperedge
   hyperedge). One Σ over `Finset.univ`, valued in `Bal` so it also holds over commitments. -/
   balanced : (Finset.univ.sum fun i => halfEdge i (x i) t) = 0
 
-/-! ### The cone collapses: any two legs agree (the equalizer condition, N-ary, PROVED).
+/-! ### The cone collapses: any two legs agree (the equalizer condition, N-ary).
 
 This is the content `SharedTurnId.agree` gave in the binary case — derived here for *every*
 pair of incidences from the single apex, with no pairwise hypotheses. The whole point of
 the wide-pullback framing: pairwise agreement is a *theorem*, not `C(N,2)` data. -/
 
-/-- **`Hyperedge.legs_agree` — every pair of incidences shares a turn-id (PROVED).** For any
+/-- **`Hyperedge.legs_agree` — every pair of incidences shares a turn-id.** For any
 two participants `i j`, their post-step turn-ids are equal — because both equal the single
 apex `tid`. The `O(N²)` pairwise `SharedTurnId`s of the family-of-binary-edges framing are
 *recovered for free* from the one apex; none are hypothesized. -/
@@ -169,7 +169,7 @@ participants live in the same `T` (the homogeneous reading; the binary `SharedTu
 two *different* coalgebras `T₁ T₂`, so we recover the **homogeneous** binary special case
 `T₁ = T₂ = T`, which is exactly the `study-category §1.4` shared-carrier setting). -/
 
-/-- **`Hyperedge.toSharedTurnId` — the binary hyperedge gives the CG-2 pullback (PROVED).**
+/-- **`Hyperedge.toSharedTurnId` — the binary hyperedge gives the CG-2 pullback.**
 A `Fin 2`-indexed hyperedge over a single carrier `T` reconstructs the binary
 `SharedTurnId T T …`: its two legs `agree 0`, `agree 1` are precisely the `agree₁`, `agree₂`
 of the pullback. The wide pullback at `N = 2` IS the binary pullback. -/
@@ -187,7 +187,7 @@ def Hyperedge.toSharedTurnId
   agree₂ := H.agree 1
 
 /-- **`Hyperedge.toJointBinding` — the binary hyperedge gives the full CG-2 ⊗ CG-5 binding
-(PROVED).** The `Fin 2` hyperedge reconstructs `JointBinding T T …`: CG-2 is
+.** The `Fin 2` hyperedge reconstructs `JointBinding T T …`: CG-2 is
 `toSharedTurnId`; CG-5's `balanced` (`half₁ x₁ t + half₂ x₂ t = 0`) is the N-ary
 `H.balanced` (`Σ_{Fin 2} = halfEdge 0 (x 0) t + halfEdge 1 (x 1) t`) read through
 `Fin.sum_univ_two`. So a 2-incidence atomic hyperedge IS a bilateral `JointBinding` — the
@@ -216,7 +216,7 @@ on the two legs); the obstruction is purely the CG-5 *re-bundling*: a `JointBind
 **a-priori-distinct** coalgebras `T₁ T₂` with two half-edge projections `half₁ half₂` only
 collapses to a single-carrier `Hyperedge` once `T₁ = T₂` and the two projections are packaged
 as one `halfEdge : Fin 2 → HalfEdgeOf T`. We state the *homogeneous* round-trip (one carrier,
-projections already given as a `Fin 2`-family) — there the data is genuinely present and the
+projections already given as a `Fin 2`-family) — there the data is present and the
 `balanced` re-bundling is `Fin.sum_univ_two` backwards. -/
 def SharedTurnId.toHyperedge
     {T : TurnCoalg Obs AdmissibleTurn}
@@ -246,7 +246,7 @@ A bilateral swap is a 2-cycle; a *ring* of `N` cells each passing `δ` to the ne
 (sent to `i+1`); summed over the cycle every `δ` is cancelled by its successor's `−δ`, so the
 CG-5 aggregate is `0`. The cycle is one hyperedge, not `N` bilateral edges. -/
 
-/-- **`ringHyperedge` — an `N`-cycle as a single hyperedge over `ℤ`-balances (PROVED Σ=0).**
+/-- **`ringHyperedge` — an `N`-cycle as a single hyperedge over `ℤ`-balances (Σ=0).**
 Over the cyclic index `Fin n`, incidence `i`'s half-edge is `δ i - δ (i+1)` (what it holds
 minus what it forwards). On a one-state coalgebra the telescoping cycle sum is `0`: each `δ i`
 appears once `+` and once `−` around the ring. This exhibits the ring as ONE atomic hyperedge
@@ -297,7 +297,7 @@ def hyperPred
     (ι → T.Carrier) → AdmissibleTurn → (ι → T.Carrier) → Prop :=
   fun xs t xs' => ∀ i, P i (xs i) t (xs' i)
 
-/-- **`hyper_stepComplete` — the N-fold product is step-complete (PROVED).** If every
+/-- **`hyper_stepComplete` — the N-fold product is step-complete.** If every
 incidence is per-cell step-complete, the product `hyperCoalg ι T` is step-complete against
 the pointwise-assembled `hyperPred` invariants. This is the *one-step* collapse the apex
 buys: all `N` participants discharged by a single `∀ i` introduction, no pairwise gluing.
@@ -350,7 +350,7 @@ theorem hyperedge_sound
 
 /-! ### §4.3 — The honest negatives. -/
 
-/-- **`hyperedge_sound_needs_binding` — the binding premise is load-bearing (PROVED).**
+/-- **`hyperedge_sound_needs_binding` — the binding premise is load-bearing.**
 N-ary analogue of `JointTurn.joint_sound_needs_binding`: it is NOT the case that per-cell
 step-completeness alone entails `HyperAdmissible` for every tuple. Witnessed by the singleton
 hyperedge of `hyper_binding_is_proper` (one incidence, half-edge `1`, CG-5 `1 ≠ 0`): both

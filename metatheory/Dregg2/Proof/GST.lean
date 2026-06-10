@@ -19,9 +19,9 @@ liveness for free (`gst_liveness`). The combinatorial half of the consensus OPEN
 (co-final honest leaders ⇒ a synchronization round past GST, `honestLeader_eventually_of_fair`); the
 measure-theoretic half (that `World.rand`'s Bernoulli law *makes* honest leaders co-final a.s.)
 stays the SAME named OPEN `Synchronizer.lean` documents — carried as the honest `GSTModel` field
-`honestLeader_eventually`, never faked, never an axiom (the `recv_mono` discipline).
+`honestLeader_eventually`, never an axiom (the `recv_mono` discipline).
 
-TEETH: the GST bound is genuinely load-bearing. A co-final-but-never-past-GST honest-leader
+TEETH: the GST bound is load-bearing. A co-final-but-never-past-GST honest-leader
 predicate (`honestLeader r := r < 5`, with `gst := 10`) admits NO synchronization round — refuted as
 a theorem. The honest co-finality premise is exactly what rules it out; we prove both directions (a
 co-final predicate `r ≥ 5` yields a synchronization round for any `gst`; the bounded one does not).
@@ -69,7 +69,7 @@ of `BFTLiveness`'s proved machinery (`gstRound_obtains`, `liveness_of_pacemaker`
   derivable from BARE co-finality (`∀ t, ∃ r ≥ t, honestLeader r`) + the GST index
   (`honestLeader_eventually_of_fair`), so this field is the consistent-discipline carrier of the SAME
   measure-theoretic OPEN `Synchronizer.lean` names (that `World.rand`'s Bernoulli law makes honest
-  leaders co-final a.s.) — honest, never faked. -/
+  leaders co-final a.s.) — honest. -/
 structure GSTModel (Msg : Type) [World Msg] (votesOf : List Msg → List Vote)
     (cfg : Finality.Config) where
   /-- **DLS88 GST round.** The round after which Δ-bounded delivery holds. PRODUCED here. -/
@@ -91,7 +91,7 @@ structure GSTModel (Msg : Type) [World Msg] (votesOf : List Msg → List Vote)
   a later round `r ≥ t` past GST with an honest leader — the round-line `WeakFair` for honest-leader
   synchronization. This is exactly the shape `Pacemaker.synchronizes` outputs; §2 derives it from BARE
   co-finality + the GST index (`honestLeader_eventually_of_fair`), so it carries the SAME `World.rand`
-  measure OPEN `Synchronizer` names — as an honest hypothesis field, never faked, never an axiom. -/
+  measure OPEN `Synchronizer` names — as a hypothesis field, never an axiom. -/
   honestLeader_eventually : ∀ t : Nat, ∃ r : Nat, t ≤ r ∧ gst ≤ r ∧ honestLeader r
 
 variable {Msg : Type} [World Msg] {votesOf : List Msg → List Vote} {cfg : Finality.Config}
@@ -160,7 +160,7 @@ theorem honestLeader_eventually_of_fair (gst : Nat) (honestLeader : Nat → Prop
   obtain ⟨r, hr, hhonest⟩ := hcofinal (max t gst)
   exact ⟨r, le_trans (le_max_left _ _) hr, le_trans (le_max_right _ _) hr, hhonest⟩
 
-/-- **A `GSTModel` from a co-finality premise (the field is no longer carried raw).** Given the
+/-- **A `GSTModel` from a co-finality premise (the field is not carried raw).** Given the
 BFT-primitive data (gst, honestLeader, endorsers, the supermajority + delivery facts) AND bare
 honest-leader co-finality, build a full `GSTModel` whose `honestLeader_eventually` is DERIVED by K-G3.
 This exhibits that the new field reduces to co-finality + the GST index — the residual is only the
@@ -191,7 +191,7 @@ layer (`Fairness.lean`, the sibling track) without importing it — the two meet
 /-- **K-G4 — the round-delivery line is a fairness instance.** From the productivity premise `hprod`
 (the delivered distinct-voter count for `block` grows without bound — the round-line "continuously
 offered" honest vote) and the sublist-preservation discipline `hvotesOf` (a superlist of messages
-yields a superlist of votes — the SAME honest hypothesis `committedByQuorum_mono` carries, since the
+yields a superlist of votes — the SAME hypothesis `committedByQuorum_mono` carries, since the
 voter-extraction must respect the network's append-only delivery), the threshold is eventually
 delivered from ANY starting round `t`: a round-line leadsto. `World.recv`'s monotone growth
 (`recv_mono`) carries the productivity-witnessed count up to a future round `≥ t`. This re-expresses
@@ -218,8 +218,8 @@ theorem round_line_is_fair (block : Nat)
 The scaffold is inhabited on the reference `World` (`Msg = Vote`), whose `fixedVotes` schedule
 delivers voters 0,1,2 for block 7 by round 3 — exactly the `BFTLiveness.Inhabited` witness, now
 PRODUCED through `pacemaker_of_gstModel`, so the descent `gst_liveness` holds concretely (a quorum
-genuinely forms). The TEETH show the GST bound is load-bearing: K-G3 turns honest-leader co-finality
-into a synchronization round, and the conjunct `gst ≤ r` is genuinely needed — a co-final-but-bounded
+forms). The TEETH show the GST bound is load-bearing: K-G3 turns honest-leader co-finality
+into a synchronization round, and the conjunct `gst ≤ r` is needed — a co-final-but-bounded
 honest-leader predicate admits NO synchronization round past a large GST, refuted as a theorem. -/
 namespace Inhabited
 
@@ -245,7 +245,7 @@ example : BFTLiveness.Pacemaker M Dregg2.Proof.BFTLiveness.Inhabited.votesOf
     Dregg2.Proof.BFTLiveness.Inhabited.cfg :=
   pacemaker_of_gstModel gstModel
 
-/-- **The descent is non-vacuous: BFT liveness genuinely obtains for the reference world** (K-G2). A
+/-- **The descent is non-vacuous: BFT liveness obtains for the reference world** (K-G2). A
 block IS `committedByQuorum` — the three honest voters 0,1,2 for block 7 meet the threshold-3 quorum,
 derived through the GST scaffold, not assumed. -/
 example : ∃ r block, committedByQuorum (Msg := M) Dregg2.Proof.BFTLiveness.Inhabited.votesOf r
@@ -257,7 +257,7 @@ example : ∃ r block, GSTRound (Msg := M) Dregg2.Proof.BFTLiveness.Inhabited.vo
     Dregg2.Proof.BFTLiveness.Inhabited.cfg block r :=
   gstRound_obtains_of_gstModel gstModel
 
-/-! ### TEETH — the GST bound (`gst ≤ r`) is genuinely load-bearing.
+/-! ### TEETH — the GST bound (`gst ≤ r`) is load-bearing.
 
 K-G3 derives the post-GST synchronization round from honest-leader CO-FINALITY. We show the
 co-finality premise is not decorative and the `gst ≤ r` conjunct has real content:
@@ -280,7 +280,7 @@ example : ∃ r, (0 : Nat) ≤ r ∧ (10 : Nat) ≤ r ∧ (fun r => 5 ≤ r) r :
 `honestLeader r := r < 5` (honest leaders all occur before round 5 — NOT co-final) and `gst = 10`,
 there is no round `r` with `gst ≤ r ∧ honestLeader r`: `10 ≤ r` and `r < 5` are contradictory. So the
 descent's conclusion FAILS — exactly what co-finality (the `honestLeader_eventually` field) rules out.
-This is the concrete adversarial case the GST bound genuinely REJECTS. -/
+This is the concrete adversarial case the GST bound REJECTS. -/
 theorem teeth_bounded_no_sync_round :
     ¬ ∃ r, (10 : Nat) ≤ r ∧ (fun r => r < 5) r := by
   rintro ⟨r, hgst, hbound⟩
@@ -289,7 +289,7 @@ theorem teeth_bounded_no_sync_round :
 
 /-- **The teeth, contrapositive form: a bounded predicate is NOT co-final.** `honestLeader r := r < 5`
 fails the co-finality premise of K-G3 — there is no honest leader at or past round 5. So K-G3's
-hypothesis `hcofinal` is genuinely required: it is exactly the property the bounded adversary lacks. -/
+hypothesis `hcofinal` is required: it is exactly the property the bounded adversary lacks. -/
 theorem teeth_bounded_not_cofinal :
     ¬ (∀ t, ∃ r, t ≤ r ∧ (fun r => r < 5) r) := by
   intro hcofinal
@@ -307,7 +307,7 @@ combinatorics (`votersFor_length_mono`, `omega`, `max`). None pull in `sorryAx` 
 `collectAxioms` sees only the standard kernel triple. The partial-synchrony assumptions live entirely
 in `GSTModel`'s fields and the theorem premises (the `recv_mono` discipline), never in `#print axioms`.
 The `World.rand`-measure bridge (that honest leaders are co-final a.s.) stays the SAME named OPEN
-`Synchronizer.lean` documents — carried as `honestLeader_eventually`, never faked. -/
+`Synchronizer.lean` documents — carried as `honestLeader_eventually`. -/
 #assert_axioms pacemaker_of_gstModel
 #assert_axioms gst_liveness
 #assert_axioms gstRound_obtains_of_gstModel

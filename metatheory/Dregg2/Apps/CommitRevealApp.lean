@@ -75,7 +75,7 @@ the opened value; reject ⇒ roll back). -/
 def runReveal (B : Lace) (commit r : Block) (chain : ChainWit) : Option Nat :=
   if revealAdmits B commit r chain then some (revealValue r) else none
 
-/-- **`revealAdmits_dispatch` (PROVED)** — the admission bit IS the CausalGuard verifier (through the
+/-- **`revealAdmits_dispatch`** — the admission bit IS the CausalGuard verifier (through the
 named wrapper): `revealAdmits B commit r chain = causallyAfterVerifier B commit r chain`. The hinge
 every contract theorem rewrites through. -/
 theorem revealAdmits_dispatch (B : Lace) (commit r : Block) (chain : ChainWit) :
@@ -85,7 +85,7 @@ theorem revealAdmits_dispatch (B : Lace) (commit r : Block) (chain : ChainWit) :
 
 /-! ## §2 — APP CONTRACT THEOREM 1: an HONEST reveal (causally after its commit) is ADMITTED. -/
 
-/-- **`honest_reveal_admitted` (PROVED) — the headline.** If the reveal `r` causally follows the commit
+/-- **`honest_reveal_admitted` — the headline.** If the reveal `r` causally follows the commit
 (witnessed by a genuine ack-chain `chain`, `causallyAfterVerifier B commit r chain = true`), then the
 commit-reveal cell ADMITS it — `revealAdmits B commit r chain = true` — and its admission DENOTES the
 lightcone fact `CausalAfter B commit r` (the reveal really observed the commit). The op COMMITS the
@@ -102,7 +102,7 @@ theorem honest_reveal_admitted (B : Lace) (commit r : Block) (chain : ChainWit)
   · exact causallyAfter_denotes_precedes B commit r chain hcausal
   · unfold runReveal; rw [hadmit]; rfl
 
-/-- **`honest_reveal_discharges` (PROVED)** — an honest reveal discharges the predicate through the
+/-- **`honest_reveal_discharges`** — an honest reveal discharges the predicate through the
 registry keystone (`registry_sound`): the admission is soundness-by-verification, identical to every
 witnessed kind. The causal guard is a first-class registry plugin, not bespoke app logic. -/
 theorem honest_reveal_discharges (B : Lace) (commit r : Block) (chain : ChainWit)
@@ -115,7 +115,7 @@ theorem honest_reveal_discharges (B : Lace) (commit r : Block) (chain : ChainWit
 
 /-! ## §3 — APP CONTRACT THEOREM 2: a reveal NOT causally following its commit is REJECTED. -/
 
-/-- **`frontrun_reveal_rejected` (PROVED) — the front-running teeth.** If the reveal `r` does NOT
+/-- **`frontrun_reveal_rejected` — the front-running teeth.** If the reveal `r` does NOT
 causally follow the commit (`¬ CausalAfter B commit r` — a concurrent or earlier block), then NO
 witness chain can make the cell admit it: for EVERY chain the guard rejects (`revealAdmits = false`)
 and the op rolls back (`runReveal = none`). A reveal that never observed its commit is structurally
@@ -136,7 +136,7 @@ theorem frontrun_reveal_rejected (B : Lace) (commit r : Block)
   refine ⟨hrej, ?_⟩
   unfold runReveal; rw [hrej]; rfl
 
-/-- **`frontrun_reveal_unforgeable` (PROVED) — no prover can admit a front-run.** Installed at its named
+/-- **`frontrun_reveal_unforgeable` — no prover can admit a front-run.** Installed at its named
 kind, the `causallyAfter(commit)` gate rejects a reveal `r` whose causal check fails for EVERY prover
 and EVERY witness chain it proposes (`causalAfter_named_cannot_forge`). A reveal that did not causally
 follow its commit has no admitting path through the in-TCB gate — the non-amplification statement for
@@ -151,7 +151,7 @@ theorem frontrun_reveal_unforgeable (B : Lace) (commit r : Block) (chain : Chain
 
 /-! ## §4 — APP CONTRACT THEOREM 3: the OUTCOME is CONSERVED (the gate is value-orthogonal). -/
 
-/-- **`reveal_conserves_value` (PROVED) — admission never mutates the payload.** WHENEVER the reveal op
+/-- **`reveal_conserves_value` — admission never mutates the payload.** WHENEVER the reveal op
 commits (`runReveal B commit r chain = some v`), the yielded value `v` is EXACTLY the value the reveal
 block carries: `v = revealValue r`. The causal guard gates ORDERING, never the opened payload — it
 cannot substitute, inflate, or drop the revealed value. The "no asset moved by the gate" property of
@@ -190,7 +190,7 @@ abbrev demoFrontReveal : Block := f2
 -- ...and the op ROLLS BACK:
 #guard (runReveal demoLace demoFrontCommit demoFrontReveal [] == none)        -- true (none)
 
-/-- **`demo_honest_reveal_admitted` (PROVED)** — the app contract THEOREM 1 witnessed on the demo lace:
+/-- **`demo_honest_reveal_admitted`** — the app contract THEOREM 1 witnessed on the demo lace:
 the honest reveal is admitted, denotes `CausalAfter`, and commits value `1`. NON-VACUOUS positive. -/
 theorem demo_honest_reveal_admitted :
     revealAdmits demoLace demoCommit demoReveal demoChain = true ∧
@@ -198,7 +198,7 @@ theorem demo_honest_reveal_admitted :
       runReveal demoLace demoCommit demoReveal demoChain = some (revealValue demoReveal) :=
   honest_reveal_admitted demoLace demoCommit demoReveal demoChain (by decide)
 
-/-- **`demo_frontrun_reveal_rejected` (PROVED)** — the app contract THEOREM 2 witnessed on the demo
+/-- **`demo_frontrun_reveal_rejected`** — the app contract THEOREM 2 witnessed on the demo
 lace: the concurrent front-run reveal `f2` is rejected for EVERY witness chain, and the op rolls back.
 NON-VACUOUS negative — the front-running teeth bite. -/
 theorem demo_frontrun_reveal_rejected (chain : ChainWit) :

@@ -15,8 +15,7 @@ as a reduction GAME, so the trust boundary is not just "carrier ⇒ protocol-saf
 
 - **IRREDUCIBLE PRIMITIVE.** `Ed25519EufCma K` (below) is the genuine cryptographic assumption:
   ed25519 existential-unforgeability under chosen-message attack (Edwards-curve / DLog hardness over
-  Curve25519). It is NOT a Lean theorem and NOT `:= True`; it is a `Prop` carrier, named honestly,
-  exactly the `PortalFloor` discipline. It is the bottom of THIS stack. We DEFINE the EUF-CMA game as
+  Curve25519). It is NOT a Lean theorem and NOT `:= True`; it is a `Prop` carrier, named,   exactly the `PortalFloor` discipline. It is the bottom of THIS stack. We DEFINE the EUF-CMA game as
   a first-class predicate (`SigForgery` = "an accepting signature on a message NOT legitimately signed
   under that key") and `Ed25519EufCma` = "no such forgery exists", so the carrier has explicit content
   (a forger is a concrete refutation), not an opaque token.
@@ -67,7 +66,7 @@ def SigForgery {PK Msg Sig : Type u} (K : SignatureKernel PK Msg Sig)
 
 /-- **`Ed25519EufCma K`** — THE IRREDUCIBLE PRIMITIVE: existential-unforgeability under
 chosen-message attack. No `(pk, m, s)` is a forgery — every accepting signature is on a legitimately
-signed message. Stated as the negation of the EUF-CMA win condition. Named honestly; never a Lean
+signed message. Stated as the negation of the EUF-CMA win condition. Named; never a Lean
 law, never `:= True`. -/
 def Ed25519EufCma {PK Msg Sig : Type u} (K : SignatureKernel PK Msg Sig) : Prop :=
   ∀ (pk : PK) (m : Msg) (s : Sig), ¬ SigForgery K pk m s

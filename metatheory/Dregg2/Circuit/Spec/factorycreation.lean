@@ -34,7 +34,7 @@ INDEPENDENTLY of the executor. The deliverables, mirroring the reference pattern
   3. `factoryPostCell_correct` / `factoryInstall_frame` — the post-state cell-install + caveat-install
      helpers validated DECLARATIVELY (the minted cell carries the factory fields/VK/caveats; every
      OTHER cell's record + caveat list is literally preserved), so the spec's `cell`/`slotCaveats`
-     clauses genuinely encode mint ∧ install ∧ cell-frame, not blind trust.
+     clauses encode mint ∧ install ∧ cell-frame, not blind trust.
 
 Unlike `Transfer`/`mintA`, the executor arm is NOT a single `if`-branch: it is a 4-deep nest
 (`0 ≤ vk` → `findFactory` → `e.conforms` → `createCellChainA`), so the spec is existentially
@@ -123,7 +123,7 @@ def factoryPostCaveats (base : CellId → List SlotCaveat) (newCell : CellId) (e
 
 /-- **`factoryPostCell_correct`** — the cell-install map validated DECLARATIVELY: the minted cell IS
 the factory's initial-fields+VK install over the base cell, and EVERY OTHER cell's whole record is
-literally untouched. So the spec's `cell = factoryPostCell …` clause genuinely encodes
+literally untouched. So the spec's `cell = factoryPostCell …` clause encodes
 mint ∧ cell-frame. -/
 theorem factoryPostCell_correct (base : CellId → Value) (newCell : CellId) (e : FactoryEntry) :
     factoryPostCell base newCell e newCell
@@ -136,7 +136,7 @@ theorem factoryPostCell_correct (base : CellId → Value) (newCell : CellId) (e 
 /-- **`factoryPostCaveats_correct`** — the caveat-install map validated DECLARATIVELY: the minted
 cell carries EXACTLY the factory's published caveats (the constructor-transparency content), and
 every OTHER cell's caveat list is literally untouched. So the spec's `slotCaveats =
-factoryPostCaveats …` clause genuinely encodes install ∧ caveat-frame. -/
+factoryPostCaveats …` clause encodes install ∧ caveat-frame. -/
 theorem factoryPostCaveats_correct (base : CellId → List SlotCaveat) (newCell : CellId)
     (e : FactoryEntry) :
     factoryPostCaveats base newCell e newCell = e.caveats
@@ -318,7 +318,7 @@ theorem createFromFactoryA_authorized (st : RecChainedState) (actor newCell : Ce
   obtain ⟨_, ⟨_, _, _, hauth, _⟩, _⟩ := (execCreateFromFactoryA_iff_spec st actor newCell vk st').mp h
   exact hauth
 
-/-- **`createFromFactoryA_fresh` — the id was genuinely fresh.** A committed creation PROVES the new
+/-- **`createFromFactoryA_fresh` — the id was fresh.** A committed creation PROVES the new
 cell was NOT already a live account in the pre-state. Read off the spec's guard. -/
 theorem createFromFactoryA_fresh (st : RecChainedState) (actor newCell : CellId) (vk : Int)
     (st' : RecChainedState) (h : execFullA st (.createCellFromFactoryA actor newCell vk) = some st') :

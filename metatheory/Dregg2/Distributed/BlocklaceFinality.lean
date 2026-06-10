@@ -28,7 +28,7 @@ property the node relies on (**no two conflicting final leaders per wave** + fin
 **DIFFERENTIAL**: the computed Lean `tauOrder` and the Rust `ordering.rs::tau` AGREE on a concrete
 multi-node trace (the Lean model reproduces the exact order the node finalizes).
 
-## HONEST SCOPE — what is faithful, what is simplified, what is the named residual.
+## SCOPE — what is faithful, what is simplified, what is the named residual.
 
 FAITHFUL (matches `ordering.rs` line-for-line as a pure function):
 * `computeRounds` — the round = 1 + max(pred rounds), genesis = 1 recurrence (`compute_rounds`).
@@ -267,7 +267,7 @@ determinism) the SAME executed state. This is the computed-rule analogue of `cor
 single-anchor — proved DIRECTLY over the node's `find_all_final_leaders` function, not an abstract
 record. -/
 
-/-- **`finalLeaderAt_unique` (PROVED — single anchor per wave, the SAFETY tooth).** `finalLeaderAt`
+/-- **`finalLeaderAt_unique` (single anchor per wave, the SAFETY tooth).** `finalLeaderAt`
 returns AT MOST ONE leader for a wave: it is an `Option Block` whose `some` branch fires ONLY when
 the leader slot has EXACTLY ONE candidate. So a wave cannot anchor two distinct final leaders — the
 no-conflicting-leader property, read straight off the node's computed rule. Two `some` results for
@@ -279,7 +279,7 @@ theorem finalLeaderAt_unique (B : Lace) (participants : List AuthorId) (wave wav
     l₁ = l₂ := by
   rw [h₁] at h₂; exact Option.some.inj h₂
 
-/-- **`finalLeaderAt_needs_unique_candidate` (PROVED — the anti-equivocation tooth).** A wave yields
+/-- **`finalLeaderAt_needs_unique_candidate` (the anti-equivocation tooth).** A wave yields
 a final leader ONLY when its leader slot has exactly one candidate block: if the round-robin leader
 equivocates at the slot (`≥ 2` candidates) or is silent (`0`), `finalLeaderAt = none`. So a forking
 leader CANNOT anchor a wave — the equivocation guard the node enforces, proved over the rule. -/
@@ -302,7 +302,7 @@ theorem finalLeaderAt_needs_unique_candidate (B : Lace) (participants : List Aut
       · simp only [hsr] at h; exact absurd h (by simp)
     | cons y ys => rw [hc] at h; simp at h
 
-/-- **`tauOrder_deterministic` (PROVED — the determinism tooth).** The finalized order is a
+/-- **`tauOrder_deterministic` (the determinism tooth).** The finalized order is a
 deterministic FUNCTION of `(lace, participants, wavelength)`: two computations from the same inputs
 are equal. So two honest replicas with the same lace finalize the SAME order — the consensus-side of
 "no two conflicting finalized states" (the execution-side is `ConsensusExec.executeFinalized` being a
@@ -314,7 +314,7 @@ theorem tauOrder_deterministic (B : Lace) (participants : List AuthorId) (wavele
     (h₂ : tauOrder B participants wavelength = o₂) :
     o₁ = o₂ := by rw [← h₁, ← h₂]
 
-/-- **`findAllFinalLeaders_deterministic` (PROVED).** The final-leader set is a deterministic
+/-- **`findAllFinalLeaders_deterministic`.** The final-leader set is a deterministic
 function of the inputs — equal laces ⇒ equal final-leader lists. The anchor sequence the node
 finalizes is reproducible. -/
 theorem findAllFinalLeaders_deterministic (B : Lace) (participants : List AuthorId) (wavelength : Nat)
@@ -323,7 +323,7 @@ theorem findAllFinalLeaders_deterministic (B : Lace) (participants : List Author
     (h₂ : findAllFinalLeaders B participants wavelength = ys) :
     xs = ys := by rw [← h₁, ← h₂]
 
-/-- **`finalLeaders_one_per_wave` (PROVED — the structural agreement, indexed by wave).** Reading
+/-- **`finalLeaders_one_per_wave` (the structural agreement, indexed by wave).** Reading
 `findAllFinalLeaders` through `finalLeaderAt`, the leader anchoring ANY GIVEN wave is unique:
 whatever the node lists as the final leader of wave `w` is the single `finalLeaderAt … w …` value, so
 two computations cannot disagree on a wave's anchor. This is the executable-model face of
@@ -365,7 +365,7 @@ def executeTau (dec : Decoder) (s0 : RecChainedState)
     (B : Lace) (participants : List AuthorId) (wavelength : Nat) : Option RecChainedState :=
   executeFinalized s0 ((tauBlocks B participants wavelength).map dec)
 
-/-- **`tau_drives_verified_run` (PROVED — the executor connection, part (a)).** A successful
+/-- **`tau_drives_verified_run` (the executor connection, part (a)).** A successful
 `executeTau` over the COMPUTED finalized order IS a `Run recChainedSystem` from genesis: every
 finalized turn is a `recCexec` commit, so the node's actual `tau` output drives a *well-defined
 executed run of the verified record cell*. Consensus's computed order is a legal input to the proved
@@ -377,7 +377,7 @@ theorem tau_drives_verified_run (dec : Decoder) (s0 s' : RecChainedState)
     Run recChainedSystem s0 s' :=
   finalized_run _ h
 
-/-- **`tau_execution_agreement` (PROVED — the executor connection, part (b): consensus-to-state
+/-- **`tau_execution_agreement` (the executor connection, part (b): consensus-to-state
 agreement).** Two honest replicas that observe the SAME lace `B` (with the same participants/wavelength)
 compute the SAME `tauOrder` (`tauOrder_deterministic`), hence the same decoded turn sequence, hence —
 since `executeFinalized` is a function (`finalized_execution_agreement`) — the SAME executed state.
@@ -393,7 +393,7 @@ theorem tau_execution_agreement (dec : Decoder) (s0 : RecChainedState)
   -- both reduce to `executeFinalized s0 (same decoded list)`; `tauOrder` is a function of (B,P,w).
   rw [← h₁, ← h₂]
 
-/-! ## 9. NON-VACUITY — a CONCRETE multi-node trace the model genuinely FINALIZES.
+/-! ## 9. NON-VACUITY — a CONCRETE multi-node trace the model FINALIZES.
 
 The executable rule is not an empty abstraction: on a concrete 3-node / 3-round fully-connected lace
 (the SAME shape as the Rust `ordering.rs::test_three_node_one_wave_finalized`) the model finalizes ALL

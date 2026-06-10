@@ -313,7 +313,7 @@ def creditOpt (s : RecChainedState) (rcpt : Option CellId) (amt : Int) : RecChai
 def distributeFee (ctx : AdmCtx) (s : RecChainedState) (fee : Int) : RecChainedState :=
   creditOpt (creditOpt s ctx.proposer (proposerShare fee)) ctx.treasury (treasuryShare fee)
 
-/-! ### §4b.2 — The conservation-modulo-burn invariant (PROVED, non-vacuous).
+/-! ### §4b.2 — The conservation-modulo-burn invariant (non-vacuous).
 
 We track the conserved measure over the {agent, proposer, treasury} triple across the FULL prologue
 (fee-debit) + distribution. With the three cells DISTINCT, the post-turn sum equals the pre-turn sum
@@ -323,7 +323,7 @@ MINUS exactly `feeBurned fee` — the burn is accounted for, NOT silently lost. 
 def feeTriSum (s : RecChainedState) (agent p t : CellId) : Int :=
   balOf (s.kernel.cell agent) + balOf (s.kernel.cell p) + balOf (s.kernel.cell t)
 
-/-- **`fee_conservation_modulo_burn` — THE A2 KEYSTONE (PROVED).** Across `commitPrologue` (agent
+/-- **`fee_conservation_modulo_burn` — THE A2 KEYSTONE.** Across `commitPrologue` (agent
 −= fee) THEN `distributeFee` (proposer += fee/2, treasury += fee*3/10), over THREE DISTINCT cells, the
 triple's total drops by EXACTLY `feeBurned fee`. The fee is conserved modulo the protocol burn — no
 silent loss. (`agent ≠ p`, `agent ≠ t`, `p ≠ t`; `ctx.proposer = some p`, `ctx.treasury = some t`.) -/

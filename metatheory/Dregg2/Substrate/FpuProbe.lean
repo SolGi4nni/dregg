@@ -145,7 +145,7 @@ These two negative results are the probe's first real finding (the "does a natur
   * over a **group** (the kernel's debt-capable `ℤ` ledger), `fits` is TOTAL, so EVERY
     `●`-update — including the most violent mint — is Fpu (`int_auth_fpu_vacuous`):
     camera validity carries NOTHING;
-  * over the **ordered cancellative `ℕ`**, the order genuinely bites
+  * over the **ordered cancellative `ℕ`**, the order bites
     (`nat_frag_mint_not_fpu`) — but a COORDINATED mint (authority and fragment grown
     together; Iris's `auth_update_alloc`) is STILL Fpu (`nat_auth_coordinated_mint_fpu`).
 
@@ -210,7 +210,7 @@ theorem int_auth_fpu_vacuous (a a' f f' : ℤ) :
       exact absurd hv (by simp [ResourceAlgebra.op, ResourceAlgebra.valid, Auth.op, Auth.valid])
 
 /-- **NEGATIVE SPACE-PROBE 2 (even ℕ's order does not give Σδ=0).** Over the ordered,
-cancellative `ℕ` the camera order genuinely bites (`nat_frag_mint_not_fpu` below) — but a
+cancellative `ℕ` the camera order bites (`nat_frag_mint_not_fpu` below) — but a
 COORDINATED mint, growing the authority and one's own fragment together, is STILL a
 frame-preserving update (it is exactly Iris's `auth_update_alloc`). So `Fpu` in the
 order-validity camera does NOT imply conservation; it implies only frame-consistency.
@@ -305,7 +305,7 @@ candidate (the task's hint, and DREGG3 R2's shadow): put the SUPPLY ITSELF into
 validity — `valid (● L) := μ L = s₀` where `μ` is the conserved measure and `s₀` the
 constituted constant. Then a supply-preserving move IS Fpu and a mint is provably NOT.
 
-THE COST, counted honestly (LEDGER E1): the camera is PARAMETRIC in `(μ, s₀)` — the
+THE COST, counted (LEDGER E1): the camera is PARAMETRIC in `(μ, s₀)` — the
 measure quantifies over the live-account set, and the constant is constituted at some
 genesis. Under R2 (`AssetId := issuer cell`, the issuer carries `−supply`) the constant
 becomes canonically `0` and the parameter dissolves; TODAY it is an escape hatch.
@@ -751,7 +751,7 @@ theorem write_fpu [DecidableEq L] (l : L) (v v' : V) :
     exact hv' l' e (by rw [hpre]; exact he')
 
 /-- **STATE NON-VACUITY: writing an UNOWNED slot is NOT Fpu.** Claiming a slot out of
-thin air invalidates the frame that genuinely owns it — sovereignty as a camera fact
+thin air invalidates the frame that owns it — sovereignty as a camera fact
 (the anti-ghost tooth at the substrate tier). -/
 theorem alloc_unowned_not_fpu [DecidableEq L] (l : L) (v w : V) :
     ¬ Fpu (R := Heap L V) emp (single l (.ex v)) := by
@@ -1041,7 +1041,7 @@ not pass clean:
   * the guard family (caveats/authority/lifecycle admission) provably CANNOT collapse
     into the schema (E2) — it remains its own theorem family, which DREGG3 §2.2's `Pred`
     (preconditions, Hoare-style) already anticipates structurally.
-So: keep the Fpu schema as the FRAME/no-amplification/monotonicity gate (it genuinely
+So: keep the Fpu schema as the FRAME/no-amplification/monotonicity gate (it
 unifies those three — one theorem shape, four carriers, two of them literally one
 camera), and keep admission-guards as the second, separate gate. The DREGG3 §2 skeleton
 should say "two gates" (Fpu + admission), not one. -/
@@ -1059,7 +1059,7 @@ should say "two gates" (Fpu + admission), not one. -/
     (Dregg2.Authority.Cap.endpoint 7 [Dregg2.Authority.Auth.read, Dregg2.Authority.Auth.write]))
   ⊆ confRights (Dregg2.Authority.Cap.endpoint 7
       [Dregg2.Authority.Auth.read, Dregg2.Authority.Auth.write]))
--- ... and the AMPLIFYING pair of `amplifying_grant_not_fpu` genuinely does NOT:
+-- ... and the AMPLIFYING pair of `amplifying_grant_not_fpu` does NOT:
 #guard decide (¬ ({Dregg2.Authority.Auth.write} : Finset Rights) ⊆ {Dregg2.Authority.Auth.read})
 
 /-! ## §AXIOMS — hygiene tripwires (whitelist: propext, Classical.choice, Quot.sound). -/

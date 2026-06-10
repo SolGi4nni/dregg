@@ -51,7 +51,7 @@ nullifier derivation) is a `Prop`-carrier PORTAL/HYPOTHESIS — `noteSpend`'s `s
 NOT executed in Lean (consistent with dregg2's §8 boundary, exactly as the `Crypto/*` modules do).
 What we PROVE is about the STATE TRANSITION: the balance debit/credit and the nullifier-set insert.
 The crypto soundness is *assumed* (carried); the conservation/authority/metadata facts are
-genuinely proved over the state move. A note spend that does not carry `CryptoOK` does not commit
+proved over the state move. A note spend that does not carry `CryptoOK` does not commit
 (fail-closed on the portal), and one that does commits as a balance debit + a nullifier-set insert.
 
 Self-contained: reuses ONLY the already-built
@@ -116,7 +116,7 @@ theorem setField'_read (field : FieldName) (cell : Value) (n : Int) :
   | dig _  => simp [setField', Value.scalar, Value.field]
   | sym _  => simp [setField', Value.scalar, Value.field]
 
-/-- **NON-INTERFERENCE — PROVED (the shared bespoke lemma).** Writing ANY metadata field
+/-- **NON-INTERFERENCE (the shared bespoke lemma).** Writing ANY metadata field
 `field ≠ "balance"` leaves the conserved balance read (`balOf`) UNCHANGED. The generalization of
 `EffectTransfer.setNonce_balOf` over the field name: each effect's metadata move (status / nullifier
 bit / lock flag) rides alongside the two-party balance conservation without disturbing it, as long as
@@ -197,7 +197,7 @@ The PORTAL (§8): an effect whose semantics involve cryptography (note spend/cre
 a `CryptoOK : Prop` HYPOTHESIS guarding the *crypto* check; the state move modelled here is exactly
 this `pairedStep` (debit/credit + set membership marker). The crypto soundness is carried, not run. -/
 
-/-- **The generic Conservative state transition (PROVED computable).** Gated two-party balance move
+/-- **The generic Conservative state transition (computable).** Gated two-party balance move
 (`recCexec`) followed by the metadata `field`-write on the source. Fail-closed: any gate failure
 aborts. The single combinator the whole cluster instantiates. -/
 @[reducible] def pairedStep (field : FieldName) (mark : Int) (s : RecChainedState)
@@ -210,7 +210,7 @@ aborts. The single combinator the whole cluster instantiates. -/
 def pairedTurn (actor src dst : CellId) (amt : ℤ) : Turn :=
   { actor := actor, src := src, dst := dst, amt := amt }
 
-/-- **`pairedStep` factors through its `recCexec` core — PROVED.** The bridge every downstream
+/-- **`pairedStep` factors through its `recCexec` core.** The bridge every downstream
 theorem reuses (the `transferStep_factors` analog). -/
 theorem pairedStep_factors {field : FieldName} {mark : Int} {s s' : RecChainedState}
     {actor src dst : CellId} {amt : ℤ}
@@ -224,7 +224,7 @@ theorem pairedStep_factors {field : FieldName} {mark : Int} {s s' : RecChainedSt
       rw [hc] at h; simp only [Option.some.injEq] at h
       exact ⟨s1, rfl, h.symm⟩
 
-/-- **GENERIC TWO-PARTY CONSERVATION (PROVED).** Any committed `pairedStep` over a metadata
+/-- **GENERIC TWO-PARTY CONSERVATION.** Any committed `pairedStep` over a metadata
 `field ≠ "balance"` preserves the total `balance` (Σδ = 0): the source `−amt` debit and dest `+amt`
 credit cancel (`recCexec`'s `recKExec_conserves`), and the metadata write preserves `balOf`
 (`writeMeta_recTotal`). The reusable conservation core every effect inherits VERBATIM. -/
@@ -238,7 +238,7 @@ theorem pairedStep_conserves {field : FieldName} (hne : field ≠ balanceField) 
   simp only []
   rw [writeMeta_recTotal field hne s1.kernel src mark, hcore]
 
-/-- **GENERIC PER-DOMAIN Σ = 0 (PROVED).** The realized balance-domain delta of a committed
+/-- **GENERIC PER-DOMAIN Σ = 0.** The realized balance-domain delta of a committed
 `pairedStep` nets to `0` (`Spec.conservedInDomain Domain.balance`) — the executable shadow of
 dregg1's `excess == 0` gate for every Paired effect. -/
 theorem pairedStep_domain {field : FieldName} (hne : field ≠ balanceField) {mark : Int}
@@ -248,7 +248,7 @@ theorem pairedStep_domain {field : FieldName} (hne : field ≠ balanceField) {ma
   unfold conservedInDomain
   rw [pairedStep_conserves hne h]; simp
 
-/-- **GENERIC AUTHORIZATION (PROVED).** A committed `pairedStep` ⇒ the source held a cap
+/-- **GENERIC AUTHORIZATION.** A committed `pairedStep` ⇒ the source held a cap
 authorizing the debit (`authorizedB` at the pre-state) — VERBATIM from `recCexec`'s authority
 conjunct. The reusable authority core. -/
 theorem pairedStep_authorized {field : FieldName} {mark : Int} {s s' : RecChainedState}
@@ -258,7 +258,7 @@ theorem pairedStep_authorized {field : FieldName} {mark : Int} {s s' : RecChaine
   obtain ⟨s1, hc, _⟩ := pairedStep_factors h
   exact (recCexec_attests hc).2.1
 
-/-- **GENERIC FAIL-CLOSED (PROVED).** An unauthorized move commits no `pairedStep`. The
+/-- **GENERIC FAIL-CLOSED.** An unauthorized move commits no `pairedStep`. The
 integrity/confinement core for every Paired effect. -/
 theorem pairedStep_unauthorized_fails (field : FieldName) (mark : Int) (s : RecChainedState)
     (actor src dst : CellId) (amt : ℤ)
@@ -282,7 +282,7 @@ theorem recCexec_caps_eq {s s1 : RecChainedState} {t : Turn} (h : recCexec s t =
       rw [hk] at h; simp only [Option.some.injEq] at h; subst h
       exact (recKExec_frame s.kernel k' t hk).2
 
-/-- **GENERIC CAPS-UNCHANGED (PROVED).** A committed `pairedStep` leaves the cap table UNTOUCHED
+/-- **GENERIC CAPS-UNCHANGED.** A committed `pairedStep` leaves the cap table UNTOUCHED
 (neither the gated debit/credit nor the metadata write edits `caps`). The reusable authority-frame. -/
 theorem pairedStep_caps_unchanged {field : FieldName} {mark : Int} {s s' : RecChainedState}
     {actor src dst : CellId} {amt : ℤ}
@@ -293,7 +293,7 @@ theorem pairedStep_caps_unchanged {field : FieldName} {mark : Int} {s s' : RecCh
   simp only [writeMeta_caps]
   exact recCexec_caps_eq hc
 
-/-- **GENERIC AUTHORITY-GRAPH-UNCHANGED (PROVED).** A committed `pairedStep` leaves the
+/-- **GENERIC AUTHORITY-GRAPH-UNCHANGED.** A committed `pairedStep` leaves the
 reconstructed authority `Graph` (`Spec.execGraph`) UNCHANGED — Paired effects move balance/metadata,
 never connectivity. The authority-domain frame the forward-sim reads. -/
 theorem pairedStep_authGraph_unchanged {field : FieldName} {mark : Int} {s s' : RecChainedState}
@@ -302,7 +302,7 @@ theorem pairedStep_authGraph_unchanged {field : FieldName} {mark : Int} {s s' : 
     execGraph s'.kernel.caps = execGraph s.kernel.caps := by
   rw [pairedStep_caps_unchanged h]
 
-/-- **GENERIC METADATA (PROVED).** A committed `pairedStep` (a) writes the source's metadata
+/-- **GENERIC METADATA.** A committed `pairedStep` (a) writes the source's metadata
 `field` to EXACTLY `meta`, and (b) leaves the cap table UNCHANGED. The metadata + authority
 obligation, parametric over the field — each effect instantiates it at its own field constant. -/
 theorem pairedStep_metadata {field : FieldName} {mark : Int} {s s' : RecChainedState}
@@ -344,7 +344,7 @@ UNCHANGED. The genuine abstract transition (the bottom edge of the simulation sq
   conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧
     a'.authGraph = a.authGraph
 
-/-- **GENERIC FORWARD SIMULATION — THE REFINEMENT (PROVED).** A committed `pairedStep` (over any
+/-- **GENERIC FORWARD SIMULATION — THE REFINEMENT.** A committed `pairedStep` (over any
 metadata `field ≠ "balance"`) is matched by an abstract `Spec` step `AbsStep (absP s) (absP s')`,
 AND the committed turn passed the abstract authority `Guard`. So every executable Paired effect is
 an abstract step: the abstract balance total is conserved, the authority graph preserved, and the
@@ -393,7 +393,7 @@ passes (fail-closed on the portal). -/
     (s : RecChainedState) (actor src dst : CellId) (amt : ℤ) : Option RecChainedState :=
   if p.verified then pairedStep field mark s actor src dst amt else none
 
-/-- **PORTAL FAIL-CLOSED (PROVED).** If the crypto portal does NOT hold, no `portalStep` commits —
+/-- **PORTAL FAIL-CLOSED.** If the crypto portal does NOT hold, no `portalStep` commits —
 the §8 boundary: an unverified note effect is rejected before any state move. -/
 theorem portalStep_fails_without_crypto {field : FieldName} {mark : Int} {p : CryptoPortal}
     [Decidable p.verified] {s : RecChainedState} {actor src dst : CellId} {amt : ℤ}
@@ -401,7 +401,7 @@ theorem portalStep_fails_without_crypto {field : FieldName} {mark : Int} {p : Cr
     portalStep field mark p s actor src dst amt = none := by
   unfold portalStep; rw [if_neg hp]
 
-/-- **PORTAL ⇒ STATE MOVE (PROVED).** A committed `portalStep` (a) carries the crypto portal
+/-- **PORTAL ⇒ STATE MOVE.** A committed `portalStep` (a) carries the crypto portal
 (`p.verified` held) and (b) factors as the committed `pairedStep` — so all the generic
 conservation/authority/metadata/forward-sim facts apply to the state move VERBATIM, with the crypto
 soundness assumed (carried) per §8. -/
@@ -441,12 +441,12 @@ def noteSpendChain (p : CryptoPortal) [Decidable p.verified] (s : RecChainedStat
     | none    => none
   else none
 
-/-- **`noteSpend_fails_without_crypto` — PROVED.** No spend commits without the §8 crypto portal. -/
+/-- **`noteSpend_fails_without_crypto`.** No spend commits without the §8 crypto portal. -/
 theorem noteSpend_fails_without_crypto {p : CryptoPortal} [Decidable p.verified] {s : RecChainedState}
     {nf : Nat} {actor : CellId} (hp : ¬ p.verified) : noteSpendChain p s nf actor = none := by
   unfold noteSpendChain; rw [if_neg hp]
 
-/-- **`noteSpend_no_double_spend` — PROVED (the REAL anti-replay invariant).** A nullifier already in
+/-- **`noteSpend_no_double_spend` (the REAL anti-replay invariant).** A nullifier already in
 the spent SET CANNOT be spent again: `noteSpendChain` fails-closed — the SET prevents it, not a scalar
 flag. -/
 theorem noteSpend_no_double_spend {p : CryptoPortal} [Decidable p.verified] {s : RecChainedState}
@@ -456,7 +456,7 @@ theorem noteSpend_no_double_spend {p : CryptoPortal} [Decidable p.verified] {s :
   · rw [if_pos hp, Dregg2.Exec.note_no_double_spend s.kernel nf h]
   · rw [if_neg hp]
 
-/-- **`noteSpend_then_reject` — PROVED (composed anti-replay).** After a committed spend of `nf`, a
+/-- **`noteSpend_then_reject` (composed anti-replay).** After a committed spend of `nf`, a
 second spend of the SAME `nf` on the resulting state fails-closed. Double-spend is impossible. -/
 theorem noteSpend_then_reject {p : CryptoPortal} [Decidable p.verified] {s s' : RecChainedState}
     {nf : Nat} {actor : CellId} (h : noteSpendChain p s nf actor = some s') :
@@ -506,13 +506,13 @@ def noteCreateChain (p : CryptoPortal) [Decidable p.verified] (s : RecChainedSta
     some { kernel := noteCreateCommitment s.kernel cm, log := pairedTurn actor 0 0 0 :: s.log }
   else none
 
-/-- **`noteCreate_fails_without_crypto` — PROVED.** No commitment is created without the §8 range-proof
+/-- **`noteCreate_fails_without_crypto`.** No commitment is created without the §8 range-proof
 portal. -/
 theorem noteCreate_fails_without_crypto {p : CryptoPortal} [Decidable p.verified] {s : RecChainedState}
     {cm : Nat} {actor : CellId} (hp : ¬ p.verified) : noteCreateChain p s cm actor = none := by
   unfold noteCreateChain; rw [if_neg hp]
 
-/-- **`noteCreate_inserts_chain` — PROVED.** A committed `noteCreateChain` actually inserts `cm` into the
+/-- **`noteCreate_inserts_chain`.** A committed `noteCreateChain` actually inserts `cm` into the
 commitment set. -/
 theorem noteCreate_inserts_chain {p : CryptoPortal} [Decidable p.verified] {s s' : RecChainedState}
     {cm : Nat} {actor : CellId} (h : noteCreateChain p s cm actor = some s') :
@@ -523,7 +523,7 @@ theorem noteCreate_inserts_chain {p : CryptoPortal} [Decidable p.verified] {s s'
     exact Dregg2.Exec.noteCreate_inserts s.kernel cm
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-- **`noteCreate_conserves_combined_per_asset` — PROVED.** A committed `noteCreateChain` is bal-NEUTRAL:
+/-- **`noteCreate_conserves_combined_per_asset`.** A committed `noteCreateChain` is bal-NEUTRAL:
 it leaves the COMBINED per-asset total UNCHANGED at EVERY asset `b` (it grows only the commitment SET,
 never `bal`/`escrows`). The note's hidden-value asset is OUT OF SCOPE (the §8 portal). -/
 theorem noteCreate_conserves_combined_per_asset {p : CryptoPortal} [Decidable p.verified]
@@ -536,7 +536,7 @@ theorem noteCreate_conserves_combined_per_asset {p : CryptoPortal} [Decidable p.
     exact Dregg2.Exec.noteCreate_recTotalAsset s.kernel cm b
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-- **`noteCreate_then_spend_roundtrip` — PROVED.** A note CREATED (commitment inserted) can then be
+/-- **`noteCreate_then_spend_roundtrip`.** A note CREATED (commitment inserted) can then be
 SPENT (its nullifier inserted): the create grows `commitments`, the spend grows `nullifiers` — distinct
 SETs, so the create does NOT block the spend. The create→spend privacy round-trip is well-formed. -/
 theorem noteCreate_then_spend_roundtrip {p q : CryptoPortal} [Decidable p.verified] [Decidable q.verified]
@@ -786,7 +786,7 @@ theorem bridgeCancel_forward_sim {Statement Witness : Type} [Verifiable Statemen
 /-! ## §4 — Axiom-hygiene tripwires (the honesty pins over every keystone).
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
-`native_decide`. The generic spine + every effect's five keystones are genuinely proved. -/
+`native_decide`. The generic spine + every effect's five keystones are proved. -/
 
 -- The shared bespoke machinery + generic spine:
 #assert_axioms setField'_read

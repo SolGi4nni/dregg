@@ -58,7 +58,7 @@ def cellOracle (s : ChainedState) : ℤ := cellObs s
 
 /-! ## Step 3 — the recovered keystone: bisimulation-from-oracle (STUDY-lean4-coinduction §3.2). -/
 
-/-- **`bisim_of_oracle` (PROVED) — the well-posed `sound_of_step_complete`.** If a decode map
+/-- **`bisim_of_oracle` — the well-posed `sound_of_step_complete`.** If a decode map
 `oracle` commutes with observation (`h_obs`) and transition (`h_step`), then `Impl` is **sound**
 (bisimilar) relative to `Spec` from every state. The earlier free-`Spec` keystone was refuted
 (`Spec=Empty`); surfacing the oracle bridge makes the *genuine* bisimulation provable — relational
@@ -75,7 +75,7 @@ theorem bisim_of_oracle {Obs : Type} (Impl Spec : TurnCoalg Obs Turn)
   · -- step_rel: successors related LATER (the ▶ guard; `Later = id`).
     rintro a b rfl t; exact (h_step a t).symm
 
-/-! ## The living cell IS sound — bisimilar to the conservation oracle, forever (PROVED). -/
+/-! ## The living cell IS sound — bisimilar to the conservation oracle, forever. -/
 
 /-- The oracle commutes with observation — definitional. -/
 theorem cell_h_obs (s : ChainedState) :
@@ -93,11 +93,11 @@ theorem cell_h_step (s : ChainedState) (t : Turn) :
   | some s' => simp only [Option.getD_some]; exact conservation_step_realized h
   | none    => simp only [Option.getD_none]
 
-/-- **`livingCell_sound` (PROVED) — the Mg-Vision keystone, realized.** The executable living cell
+/-- **`livingCell_sound` — the Mg-Vision keystone, realized.** The executable living cell
 is **bisimilar to its conservation oracle from every state**: its observable behaviour never drifts
 from the conservation law, over unbounded (coinductive) time. Step-completeness — the Conservation
 conjunct of `cexec_attests`, routed through `cell_h_step` — is *exactly* what makes the bisimulation
-hold ("no drifting future"). This is `sound_of_step_complete` recovered honestly for a concrete,
+hold ("no drifting future"). This is `sound_of_step_complete` recovered for a concrete,
 executable, step-complete cell. -/
 theorem livingCell_sound (s : ChainedState) : Sound livingCell conservationOracle s :=
   bisim_of_oracle livingCell conservationOracle cellOracle cell_h_obs cell_h_step s
@@ -137,13 +137,13 @@ from the captured `kernel`/`log`. "Going back" is re-seeding, not undoing. -/
 def restore (snap : Snapshot) : ChainedState :=
   { kernel := snap.kernel, log := snap.log }
 
-/-- **Round-trip (PROVED) — restore∘checkpoint reproduces the cell.** Serializing a running cell to
+/-- **Round-trip — restore∘checkpoint reproduces the cell.** Serializing a running cell to
 a snapshot token and re-seeding from it yields the *same* `ChainedState`. This is genuine content
 (it crosses `ChainedState → Snapshot → ChainedState`, asserting the token captured enough to rebuild
 the carrier); it is NOT the `id`-tautology the old `checkpoint := id` version stated. -/
 theorem restore_snapshot (s : ChainedState) : restore (snapshot s) = s := rfl
 
-/-- **The badge survives the round-trip (PROVED).** The restored cell emits exactly the badge the
+/-- **The badge survives the round-trip.** The restored cell emits exactly the badge the
 snapshot recorded — `restore` reproduces the *observable*, so the snapshot token is a faithful
 record of what crosses the vat boundary, not merely of raw state. -/
 theorem restore_snapshot_obs (s : ChainedState) :
@@ -163,7 +163,7 @@ def replayFrom (s : ChainedState) : List Turn → Option ChainedState
   | []      => some s
   | t :: ts => (cexec s t).bind (fun s' => replayFrom s' ts)
 
-/-- **Checkpoint/replay round-trip over a whole turn sequence (PROVED).** Replaying a sequence of
+/-- **Checkpoint/replay round-trip over a whole turn sequence.** Replaying a sequence of
 turns from a *restored snapshot* reproduces exactly the result of replaying the same sequence from
 the original cell. The proof routes through `restore_snapshot` (`restore (snapshot s) = s`) and then
 the genuine recursion of `replayFrom` over `cexec` — this is "checkpoint/restore/replay are theorems"
@@ -172,7 +172,7 @@ theorem replay_from_snapshot (s : ChainedState) (ts : List Turn) :
     replayFrom (restore (snapshot s)) ts = replayFrom s ts := by
   rw [restore_snapshot]
 
-/-- **Single-turn replay from a snapshot (PROVED).** Replaying one committed turn after restoring a
+/-- **Single-turn replay from a snapshot.** Replaying one committed turn after restoring a
 snapshot reproduces the unique successor of that turn from the original cell. A corollary of
 `restore_snapshot`, but stated about the real `cexec` step (not the `id`-identity of the old
 `checkpoint_replay`). -/
@@ -180,8 +180,8 @@ theorem replay_one_from_snapshot {s s' : ChainedState} {t : Turn} (h : cexec s t
     cexec (restore (snapshot s)) t = some s' := by
   rw [restore_snapshot]; exact h
 
-/-- **Time-travel: the badge is conserved across a checkpoint (PROVED).** Restoring to a snapshot
-and re-running a turn preserves the conserved observation. Now genuinely about `restore`/`snapshot`
+/-- **Time-travel: the badge is conserved across a checkpoint.** Restoring to a snapshot
+and re-running a turn preserves the conserved observation. Now about `restore`/`snapshot`
 + conservation (not `checkpoint := id`): the restored cell emits the snapshot's recorded badge, and
 the committed turn from it conserves that badge. -/
 theorem snapshot_conserves {s s' : ChainedState} {t : Turn}

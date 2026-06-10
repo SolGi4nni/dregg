@@ -25,7 +25,7 @@ This is the shared foundation every leaf inspector widget reuses. It carries two
      not depended on as an `axiom`. The tier exists so that **if** a §8 obligation were ever booked as an
      honest `axiom`-keyword carrier, the badge would route it here (amber: "trusted modulo a named §8
      assumption") rather than silently green. The discriminating demo at the bottom of this file proves
-     the classifier genuinely distinguishes this case.
+     the classifier distinguishes this case.
    * **`extraAxioms`** — depends on an axiom that is neither kernel-standard nor a recognised carrier:
      an *un-vetted* trust assumption. Red. (`sorryAx` lands here — a hidden `sorry` shows up RED.)
    * **`axiomItself`** — the named declaration *is* an `axiom` (no proof term at all). Grey: "asserted,
@@ -271,7 +271,7 @@ def elabDreggBadge : CommandElab := fun
     logInfo m!"#dregg_badge {name}: {tier.label} — {tier.blurb}"
   | stx => throwError "unexpected syntax {stx}"
 
-/-! ## §5 — NON-VACUITY: the badge moves, and it discriminates four genuinely different proof terms.
+/-! ## §5 — NON-VACUITY: the badge moves, and it discriminates four different proof terms.
 
 First, the **pure** contrast — `classifyAxioms` returns a *different* `Tier` for each shape of axiom set,
 with no elaboration at all. If the classifier were vacuous (always one tier), these `#eval`s would all
@@ -287,7 +287,7 @@ print the same value; they do not. -/
 #guard (classifyAxioms false #[``sorryAx]).label == "ExtraAxioms"                   -- "ExtraAxioms"
 -- AxiomItself: the decl is an axiom.
 #guard (classifyAxioms true #[]).label == "AxiomItself"                             -- "AxiomItself"
--- The four verdicts are pairwise distinct — the classifier genuinely partitions.
+-- The four verdicts are pairwise distinct — the classifier partitions.
 #guard decide (Tier.kernelChecked ≠ Tier.carrierBounded ∧ Tier.carrierBounded ≠ Tier.extraAxioms
               ∧ Tier.extraAxioms ≠ Tier.axiomItself)                                -- true
 
@@ -302,13 +302,13 @@ axiom demoUnvettedAssumption : (2 : Nat) = 2
 theorem demo_via_carrier : (1 : Nat) = 1 := demoEd25519VerifyExtern
 /-- A theorem resting on the *un-vetted* demo axiom ⇒ `extraAxioms` (red). -/
 theorem demo_via_extra : (2 : Nat) = 2 := demoUnvettedAssumption
-/-- A genuinely-proved theorem ⇒ `kernelChecked` (green). -/
+/-- A proved theorem ⇒ `kernelChecked` (green). -/
 theorem demo_clean : (3 : Nat) = 3 := rfl
 
 /-! ### The badges. The two crowns MUST come back green (their real axiom sets are kernel-clean); the
 demos exhibit the other three tiers. This is the heart of "no placeholders": the colour is the truth. -/
 
--- THE CROWNS (the spec's required non-vacuity targets) — genuinely KernelChecked.
+-- THE CROWNS (the spec's required non-vacuity targets) — KernelChecked.
 #dregg_badge Dregg2.Exec.livingCellA_carries
 #dregg_badge Dregg2.Exec.livingCellA_logMono
 

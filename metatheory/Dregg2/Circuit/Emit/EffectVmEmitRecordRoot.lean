@@ -27,7 +27,7 @@ the transfer keystone proves.
      two rows that satisfy the record sites and publish the SAME `state_commit` have the SAME
      `fields_root`. Contrapositive: tampering a committed map field (which moves `fields_root`, off
      `Exec.FieldsMap.fieldsRoot_binds_tail`) MOVES `state_commit` ⇒ the published `NEW_COMMIT` pin is
-     UNSAT. The map is genuinely bound (a `fields_root := 0` stub would collapse this — forbidden).
+     UNSAT. The map is bound (a `fields_root := 0` stub would collapse this — forbidden).
   3. NON-VACUITY — a concrete honest row whose absorbed `fields_root` differs from a tampered row's,
      refuting any shared-`state_commit` satisfaction under CR (the anti-ghost end-to-end), AND the
      legacy NO-OP (`fields_root = 0` ⇒ the record sites coincide byte-for-byte with the transfer
@@ -41,7 +41,7 @@ transfer keystone (`transferVm_faithful`, `transferDescriptor_commit_binds_state
 for the record descriptor on legacy rows. STAGE 2 strictly EXTENDS the binding (adds `fields_root`)
 without weakening the transfer guarantee.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY
 as the NAMED `Poseidon2Binding.Poseidon2SpongeCR hash` (task #13's discharged carrier). No `sorry`,
@@ -173,7 +173,7 @@ theorem recordAbsorbed_determined_by_commit (hash : List ℤ → ℤ) (hCR : Pos
 the record GROUP-4 sites and publish the SAME `state_commit` have the SAME `fields_root`. Hence a
 prover CANNOT keep the published commitment while tampering a committed map field: moving `fields_root`
 (which `Exec.FieldsMap.fieldsRoot_binds_tail` guarantees a tampered map does) MOVES `state_commit`. The
-user-field map is genuinely bound into the EffectVM commitment. -/
+user-field map is bound into the EffectVM commitment. -/
 theorem recordDescriptor_commit_binds_fieldsRoot (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (e₁ e₂ : VmRowEnv)
     (hs₁ : siteHoldsAll hash e₁ recordHashSites)
@@ -302,7 +302,7 @@ theorem recordTamper_rejected (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
 /-- **NON-VACUITY (legacy NO-OP, witness TRUE).** `goodRow` (the transfer reference, whose
 `FIELDS_ROOT`/`RESERVED` carrier is the `else 0` default) has `fields_root = 0`, so its record GROUP-4
 sites coincide with its transfer GROUP-4 sites: STAGE 2 is byte-identical on the legacy reference row.
-The legacy fold is genuinely a no-op (a populated-map row, `recordGoodRow`, is NOT — proved above). -/
+The legacy fold is a no-op (a populated-map row, `recordGoodRow`, is NOT — proved above). -/
 theorem goodRow_fieldsRoot_zero : goodRow.loc (saCol state.FIELDS_ROOT) = 0 := by
   show goodRow.loc (saCol state.FIELDS_ROOT) = 0
   unfold goodRow

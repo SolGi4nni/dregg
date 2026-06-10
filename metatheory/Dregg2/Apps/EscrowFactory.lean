@@ -94,7 +94,7 @@ def mintEscrowCell (s : RecChainedState) (actor escrowCell : CellId) (vk : Int) 
     Option RecChainedState :=
   createCellFromFactoryChainA s actor escrowCell vk
 
-/-- **`mintEscrowCell_installs_state_machine` — PROVED (the factory keystone, escrow-specialized).**
+/-- **`mintEscrowCell_installs_state_machine` (the factory keystone, escrow-specialized).**
 A minted escrow cell carries EXACTLY the escrow factory's caveats — the five deal-term immutables PLUS
 the no-double-resolve state machine `admitTable [(open,released),(open,refunded)]` — installed by the
 executor, so `stateStepGuarded` enforces them on every later `SetField`. Reuses
@@ -109,7 +109,7 @@ theorem mintEscrowCell_installs_state_machine {s s' : RecChainedState} {actor es
   rw [← (Option.some.injEq _ _).mp hfind] at hcav
   exact hcav
 
-/-- **`mintEscrowCell_caveats` — PROVED.** When the registry IS `escrowRegistry vk …`, the minted cell
+/-- **`mintEscrowCell_caveats`.** When the registry IS `escrowRegistry vk …`, the minted cell
 carries the escrow state machine + deal-term immutables (concretely). -/
 theorem mintEscrowCell_caveats {s s' : RecChainedState} {actor escrowCell : CellId} {vk : Int}
     {amount depositor beneficiary cond asset : Int}
@@ -122,7 +122,7 @@ theorem mintEscrowCell_caveats {s s' : RecChainedState} {actor escrowCell : Cell
     rw [hreg]; exact escrowRegistry_finds vk.toNat amount depositor beneficiary cond asset
   exact mintEscrowCell_installs_state_machine _ hfind h
 
-/-- **`mintEscrowCell_neutral` — PROVED.** Minting an escrow cell is conservation-NEUTRAL for every
+/-- **`mintEscrowCell_neutral`.** Minting an escrow cell is conservation-NEUTRAL for every
 asset (the cell is born EMPTY; the value is deposited SEPARATELY by an ordinary move). Reuses
 `createCellFromFactoryChainA_neutral`. -/
 theorem mintEscrowCell_neutral {s s' : RecChainedState} {actor escrowCell : CellId} {vk : Int}
@@ -130,14 +130,14 @@ theorem mintEscrowCell_neutral {s s' : RecChainedState} {actor escrowCell : Cell
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   createCellFromFactoryChainA_neutral b h
 
-/-- **`mintEscrowCell_grows_accounts` — PROVED.** A minted escrow cell IS a live account (the mint has
-teeth: the registry genuinely grew, neutrality is not a no-op). -/
+/-- **`mintEscrowCell_grows_accounts`.** A minted escrow cell IS a live account (the mint has
+teeth: the registry grew, neutrality is not a no-op). -/
 theorem mintEscrowCell_grows_accounts {s s' : RecChainedState} {actor escrowCell : CellId} {vk : Int}
     (h : mintEscrowCell s actor escrowCell vk = some s') :
     escrowCell ∈ s'.kernel.accounts :=
   createCellFromFactoryChainA_grows_accounts h
 
-/-- **`mintEscrowCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an unknown
+/-- **`mintEscrowCell_unknown_factory_fails` (fail-closed).** Minting against an unknown
 factory key never mints. The escrow program cannot be conjured without a published factory. -/
 theorem mintEscrowCell_unknown_factory_fails (s : RecChainedState) (actor escrowCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :
@@ -158,7 +158,7 @@ def depositEscrow (k : RecordKernelState) (depositor escrowCell : CellId) (asset
     Option RecordKernelState :=
   recKExecAsset k { actor := depositor, src := depositor, dst := escrowCell, amt := amt } asset
 
-/-- **`depositEscrow_conserves` — PROVED.** A committed deposit preserves every asset's total supply
+/-- **`depositEscrow_conserves`.** A committed deposit preserves every asset's total supply
 (the value moves between two live accounts — funding the lock, not minting it). The ordinary move law. -/
 theorem depositEscrow_conserves {k k' : RecordKernelState} {depositor escrowCell : CellId}
     {asset : AssetId} {amt : ℤ} (h : depositEscrow k depositor escrowCell asset amt = some k')
@@ -231,7 +231,7 @@ fail-closed guard requires `dst ∈ accounts`: a settle whose target is NOT a li
 for FREE, by the move law — the reward can never be moved into a non-account. This is the single-machine
 analog of the D3 liveness teeth, carried by the move itself rather than a bespoke side-table check. -/
 
-/-- **`settle_requires_live_target` — PROVED.** A settle (release or refund body) whose `target` is NOT
+/-- **`settle_requires_live_target`.** A settle (release or refund body) whose `target` is NOT
 a live account is rejected (`none`) — the move cannot deliver value into a non-account, so no held value
 can be moved into a frozen/absent cell. The factory-shape D3 teeth. -/
 theorem settle_requires_live_target {k : RecordKernelState} {e target : CellId} {asset : AssetId}
@@ -242,7 +242,7 @@ theorem settle_requires_live_target {k : RecordKernelState} {e target : CellId} 
   rintro ⟨_, _, _, _, _, htgt⟩
   exact hdead htgt
 
-/-- **`release_requires_live_beneficiary` — PROVED (END-USER D3, release side).** A release whose
+/-- **`release_requires_live_beneficiary` (END-USER D3, release side).** A release whose
 beneficiary is not a live account is rejected. -/
 theorem release_requires_live_beneficiary {k : RecordKernelState} {e beneficiary : CellId}
     {asset : AssetId} {witness : Int} (hdead : beneficiary ∉ k.accounts) :
@@ -252,7 +252,7 @@ theorem release_requires_live_beneficiary {k : RecordKernelState} {e beneficiary
   · rw [if_pos hg]; exact settle_requires_live_target hdead
   · rw [if_neg hg]
 
-/-- **`refund_requires_live_depositor` — PROVED (END-USER D3, refund side).** A refund whose depositor
+/-- **`refund_requires_live_depositor` (END-USER D3, refund side).** A refund whose depositor
 target is not a live account is rejected. -/
 theorem refund_requires_live_depositor {k : RecordKernelState} {e depositor : CellId} {asset : AssetId}
     (hdead : depositor ∉ k.accounts) :

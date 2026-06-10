@@ -31,12 +31,12 @@ namespace). It supplies, in ONE place:
   * **`cellCommitS`** — the canonical cell commitment EXTENDED to absorb `systemRootsDigest` as ONE
     more limb (mirroring how STAGE 1's `RecordCommit.cellCommit` absorbs `fieldsRoot`). The anti-ghost
     tooth + legacy no-op are PROVED over it:
-      - `cellCommitS_binds_systemRoots` (PROVED) — equal commitments ⇒ equal `systemRootsDigest` ⇒
+      - `cellCommitS_binds_systemRoots` — equal commitments ⇒ equal `systemRootsDigest` ⇒
         (off the digest injectivity) the SAME 8 side-table roots. Tampering ANY side-table root
         (escrow drop, nullifier omission, …) FLIPS its root ⇒ flips the digest ⇒ flips the commitment
         ⇒ UNSAT against the pinned `state_commit`. This is the per-effect anti-ghost tooth the coverage
         memos demand, lifted to ALL 8 side-tables at once.
-      - `legacy_commitS_absorbs_empty_roots` (PROVED) — a LEGACY cell (all-sentinel `system_roots`)
+      - `legacy_commitS_absorbs_empty_roots` — a LEGACY cell (all-sentinel `system_roots`)
         commits BYTE-IDENTICALLY to the empty-roots reference: the absorbed digest is the fixed
         `emptySystemRootsDigest` constant, cell-INDEPENDENT, so folding it in is a uniform no-op.
         Legacy cells/commitments are UNCHANGED (strictly additive backward-compat).
@@ -80,7 +80,7 @@ def DELEG        : Nat := 4
 def NULLIFIER    : Nat := 5
 /-- `commitments` accumulator digest (noteCreate append). -/
 def COMMIT       : Nat := 6
-/-- `sealedBoxes` store digest (seal / unseal / createSealPair); its OWN home now, no longer folded
+/-- `sealedBoxes` store digest (seal / unseal / createSealPair); its OWN home, not folded
 into `cap_root` (the §E note shared it with the c-list root under duress; STAGE 3 frees it). -/
 def SEALED_BOXES : Nat := 7
 end systemRoot
@@ -130,7 +130,7 @@ def emptySystemRootsDigest (compressN : List FieldElem → FieldElem) : FieldEle
 
 /-! ## §3 — injectivity: `systemRootsDigest` binds the WHOLE sub-block (anti-ghost foundation). -/
 
-/-- **`systemRootsDigest_binds` (PROVED).** Equal digests force the SAME ordered root list. Off the
+/-- **`systemRootsDigest_binds`.** Equal digests force the SAME ordered root list. Off the
 single realizable `compressN`-injectivity carrier (`ListCommit.ListDigestBindsList` with the identity
 leaf, which is trivially injective). So tampering ANY side-table root — a dropped escrow, an omitted
 nullifier, a reordered queue — produces a DIFFERENT `systemRootsDigest`: the anti-ghost foundation. -/
@@ -140,7 +140,7 @@ theorem systemRootsDigest_binds (compressN : List FieldElem → FieldElem)
     rootList sr = rootList sr' :=
   ListDigestBindsList id compressN hN (fun _ _ h => h) _ _ h
 
-/-- **`systemRootsDigest_binds_fn` (PROVED).** Equal digests force the WHOLE sub-block FUNCTION equal.
+/-- **`systemRootsDigest_binds_fn`.** Equal digests force the WHOLE sub-block FUNCTION equal.
 `rootList = List.ofFn`, and `List.ofFn_inj` says `ofFn sr = ofFn sr' → sr = sr'`. So if the committed
 digest is fixed, the entire `system_roots` sub-block is pinned. -/
 theorem systemRootsDigest_binds_fn (compressN : List FieldElem → FieldElem)
@@ -150,7 +150,7 @@ theorem systemRootsDigest_binds_fn (compressN : List FieldElem → FieldElem)
   have hlist : rootList sr = rootList sr' := systemRootsDigest_binds compressN hN sr sr' h
   exact List.ofFn_inj.mp hlist
 
-/-- **`systemRootsDigest_binds_pointwise` (PROVED).** Equal digests force EVERY side-table root equal
+/-- **`systemRootsDigest_binds_pointwise`.** Equal digests force EVERY side-table root equal
 (pointwise at each kernel index `i`). The per-index anti-ghost statement: if the committed digest is
 fixed, NO side-table root can be tampered. Combined with the commitment absorption (§4), this is the
 3-corner anti-ghost tooth for all 8 side-tables. -/
@@ -182,7 +182,7 @@ cell-INDEPENDENT constant in the system-roots slot — the no-op fold (the Rust
 def legacyReferenceCommitS (rest : List FieldElem) : FieldElem :=
   compressN (rest ++ [emptySystemRootsDigest compressN])
 
-/-- **`cellCommitS_binds_systemRoots` (PROVED — the anti-ghost tooth).** Equal canonical commitments
+/-- **`cellCommitS_binds_systemRoots` (the anti-ghost tooth).** Equal canonical commitments
 (over the SAME `rest`) force the SAME `systemRootsDigest`. Off the `compressN`-injectivity carrier:
 the sponge binds its input list, the shared `rest` cancels, the singleton digest limbs are equal.
 Combined with `systemRootsDigest_binds_pointwise`, this is the per-side-table anti-ghost tooth:
@@ -198,7 +198,7 @@ theorem cellCommitS_binds_systemRoots
   have := List.append_cancel_left hlist
   simpa using this
 
-/-- **`cellCommitS_binds_roots_pointwise` (PROVED corollary).** Equal commitments force EVERY
+/-- **`cellCommitS_binds_roots_pointwise` (corollary).** Equal commitments force EVERY
 side-table root equal. The full chain: equal commitment ⇒ equal digest
 (`cellCommitS_binds_systemRoots`) ⇒ equal roots pointwise (`systemRootsDigest_binds_pointwise`). This
 is "the canonical commitment binds the whole side-table state" — the soundness statement STAGE 3
@@ -210,7 +210,7 @@ theorem cellCommitS_binds_roots_pointwise
   systemRootsDigest_binds_pointwise compressN hN sr sr'
     (cellCommitS_binds_systemRoots compressN hN rest sr sr' h) i
 
-/-- **`legacy_commitS_absorbs_empty_roots` (PROVED — the backward-compat keystone).** A LEGACY cell
+/-- **`legacy_commitS_absorbs_empty_roots` (the backward-compat keystone).** A LEGACY cell
 (all-sentinel `system_roots`, i.e. every side-table empty) has a canonical commitment BYTE-IDENTICAL
 to the empty-roots reference. Its `systemRootsDigest` is the FIXED `emptySystemRootsDigest` constant,
 independent of the cell, so the absorbed limb is the same constant for every legacy cell: folding it
@@ -219,10 +219,10 @@ UNCHANGED (the Rust `legacy_cells_share_system_roots_contribution` test's Lean s
 theorem legacy_commitS_absorbs_empty_roots (rest : List FieldElem) :
     cellCommitS compressN rest emptySystemRoots = legacyReferenceCommitS compressN rest := rfl
 
-/-- **`legacy_commitsS_agree` (PROVED corollary).** ANY two LEGACY cells (both with an all-sentinel
+/-- **`legacy_commitsS_agree` (corollary).** ANY two LEGACY cells (both with an all-sentinel
 `system_roots` sub-block, `sr = sr' = emptySystemRoots`) commit IDENTICALLY over the same `rest`: the
 absorbed digest is the same fixed constant for both, so the absorption does not distinguish legacy
-cells (uniform no-op). Stated for two hypothesised-legacy sub-blocks to make the no-op genuinely
+cells (uniform no-op). Stated for two hypothesised-legacy sub-blocks to make the no-op
 load-bearing (not a syntactic `x = x`). -/
 theorem legacy_commitsS_agree (rest : List FieldElem) (sr sr' : SysRoots)
     (hsr : sr = emptySystemRoots) (hsr' : sr' = emptySystemRoots) :
@@ -265,7 +265,7 @@ private def tamperedRoots : SysRoots := fun i =>
 -- ANTI-GHOST: tampering ONE side-table root (escrow drop) MOVES the commitment.
 #guard decide (cellCommitS cNC restC populatedRoots = cellCommitS cNC restC tamperedRoots) == false
 
--- The digest itself distinguishes them (the carrier is genuinely committing the sub-block):
+-- The digest itself distinguishes them (the carrier is committing the sub-block):
 #guard decide (systemRootsDigest cNC populatedRoots = systemRootsDigest cNC tamperedRoots) == false
 #guard decide (systemRootsDigest cNC legacyRoots = emptySystemRootsDigest cNC)
 

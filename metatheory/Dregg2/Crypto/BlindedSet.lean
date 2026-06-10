@@ -359,7 +359,7 @@ accepts (it is the toy "a member of the set rooted at 3 is authorized, holder bl
 def authStmt : Statement Int := { root := 3, blindedMember := 0 }
 
 /-- Non-vacuity of `blindedset_verify_sound`: at the reference kernel an accepted proof yields
-SOME member genuinely in the issuer's authorized set rooted at `3`. -/
+SOME member in the issuer's authorized set rooted at `3`. -/
 example : ∃ member : Int, MemberOf refCompress authStmt.root member :=
   blindedset_verify_sound (K := refKernel) trivial authStmt 0 (by decide)
 

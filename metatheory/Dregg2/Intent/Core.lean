@@ -193,7 +193,7 @@ def demoBadPred : Intent DemoRes Dregg2.Authority.Blocklace.demoLace demoReg dem
   resource := EscrowWitness.fund (res 0 1)
   validity := Deadline.causalAfter Dregg2.Authority.Blocklace.g0
 
-/-- The predicate genuinely refuses: `¬ demoBadPred.predicate demoBadPred.wanted` (1 art ≠ 5 gold 5
+/-- The predicate refuses: `¬ demoBadPred.predicate demoBadPred.wanted` (1 art ≠ 5 gold 5
 art), so no `fulfill demoBadPred …` can be formed. -/
 theorem demoBadPred_unfulfillable : ¬ demoBadPred.predicate demoBadPred.wanted := by
   intro h
@@ -244,7 +244,7 @@ theorem demo_validity_kinds :
     demoIntent.validity.kind = true ∧ demoFrameIntent.validity.kind = false := ⟨rfl, rfl⟩
 
 /-- **The causal deadline is MET for free** on the demo lace (`g0 ≺ g1`, no authority) — so the demo
-intent's validity window is genuinely dischargeable, not a dead field. (The frame twin would need an
+intent's validity window is dischargeable, not a dead field. (The frame twin would need an
 attesting authority — `Time/Deadline.lean`'s `demo_frame_unmet_without_authority`.) -/
 theorem demoIntent_deadline_met : demoIntent.validity.Met Dregg2.Authority.Blocklace.g1 :=
   Dregg2.Authority.Blocklace.demo_honest_precedes

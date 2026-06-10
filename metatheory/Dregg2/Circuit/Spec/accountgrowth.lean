@@ -113,7 +113,7 @@ We validate it relationally (the `recTransfer_correct` analog), so the spec's
 
 /-- **`createCellIntoAsset_correct`** — the account-growth helper validated DECLARATIVELY: the new id
 IS a live account; every per-cell indexed slot at `newCell` is born empty; every OTHER cell's slots
-are literally untouched. So the spec's touched clauses genuinely encode growth ∧ born-empty. -/
+are literally untouched. So the spec's touched clauses encode growth ∧ born-empty. -/
 theorem createCellIntoAsset_correct (k : RecordKernelState) (newCell : CellId) :
     newCell ∈ (createCellIntoAsset k newCell).accounts
     ∧ (createCellIntoAsset k newCell).cell newCell = default
@@ -290,7 +290,7 @@ theorem createCellA_born_empty_caps (st : RecChainedState) (actor newCell : Cell
   rw [hcp]; simp only [if_pos]
 
 /-- **`createCellA_supply_neutral` — CONSERVATION CONTENT: account-growth is supply-NEUTRAL.** A
-committed `createCellA` leaves `recTotalAsset` UNCHANGED for EVERY asset — the index set genuinely
+committed `createCellA` leaves `recTotalAsset` UNCHANGED for EVERY asset — the index set
 grew, but the fresh cell is born empty (the `bal`-reset), so its contribution is exactly `0`. Lifts
 `createCellChainA_neutral` to the `execFullA` level. -/
 theorem createCellA_supply_neutral (st : RecChainedState) (actor newCell : CellId)

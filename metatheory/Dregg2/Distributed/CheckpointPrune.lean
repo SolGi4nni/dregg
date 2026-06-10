@@ -56,12 +56,12 @@ devnet prune path relies on:
   or below a checkpoint height the federation ATTESTED, so the invariant "whatever a node prunes it
   can point at an attestation covering it" (`config.rs:41`) holds structurally.
 
-**The honest primitive boundary.** The federation's checkpoint attestation is ONE aggregate BLS12-381
+**The primitive boundary.** The federation's checkpoint attestation is ONE aggregate BLS12-381
 signature over the checkpoint content hash (`federation/src/threshold.rs:5` + `hints/` weighted
 threshold; `checkpoint.rs:144 verify_with_committee`). The BLS pairing check is an IRREDUCIBLE
 cryptographic primitive — it is carried here as the named portal `CheckpointAttested` (a `Prop`
 hypothesis = the EUF-CMA / pairing-soundness assumption that a valid aggregate QC means a real
-old-committee supermajority signed the content hash). It is NEVER faked with `:= True`: the safety
+old-committee supermajority signed the content hash). It is never defined `:= True`: the safety
 theorems take it as a HYPOTHESIS and the recovery-convergence reduction is proved RELATIVE to it,
 exactly as `ThresholdDecrypt.Blake3Prf` / `EpochReconfig.SigValid` carry their crypto portals. What
 IS reduced (not assumed) is the recovery-convergence itself: given an attested checkpoint, the
@@ -144,12 +144,12 @@ def defaultPolicy : RetentionPolicy := .forever
 #guard wouldPrune (.untilArchive 500) 501 1000 == false
 #guard wouldPrune (.untilArchive 500) 1000 1000 == false
 
-/-- **`forever_prunes_nothing` (PROVED — the `improve-don't-degrade` floor).** The default policy
+/-- **`forever_prunes_nothing` (the `improve-don't-degrade` floor).** The default policy
 deletes NO block at ANY height/tip. This is the safety floor the node ships with: a node started
 without explicit retention config (`config.rs:92`) never silently loses a finalized turn. -/
 theorem forever_prunes_nothing (h tip : Nat) : wouldPrune .forever h tip = false := rfl
 
-/-- **`wouldPrune_below_checkpoint` (PROVED — the no-gap variant).** Under `UntilArchive a`, the
+/-- **`wouldPrune_below_checkpoint` (the no-gap variant).** Under `UntilArchive a`, the
 pruned set is EXACTLY `{h | h ≤ a}` — a downward-closed prefix. Nothing above the attested archival
 boundary is ever dropped; the prune is a clean *prefix* cut, which is what makes the retained tail
 sufficient for recovery. -/
@@ -163,7 +163,7 @@ A checkpoint snapshots the federation-attested finalized prefix at a height: it 
 block ids finalized at-or-below that height (its `snapshotIds`, the content-addressed image of the
 `lace.checkpoint()` DAG snapshot + ledger snapshot, `blocklace_sync.rs:2838`), the height, and an
 ATTESTATION (the BLS aggregate QC over the content hash, `checkpoint.rs:144`). The attestation is the
-named crypto portal `CheckpointAttested` (§the honest primitive boundary); it is NEVER `:= True`. -/
+named crypto portal `CheckpointAttested` (§the primitive boundary); it is NEVER `:= True`. -/
 
 /-- **`Checkpoint`** — `federation/src/checkpoint.rs:25`, the safety-relevant projection. `height` is
 the finalized height the snapshot was taken at; `snapshotIds` is the content-addressed id-set the
@@ -243,7 +243,7 @@ def recoverFromCheckpoint (cp : Checkpoint) (B : Lace) (pol : RetentionPolicy) (
 
 /-! ## 4. THE RECOVERY KEYSET LAW — recovery reconstructs the WHOLE original keyset.
 
-The load-bearing fact: a checkpoint that honestly snapshots `B` (`snapshotsLace`) lets recovery
+The load-bearing fact: a checkpoint that snapshots `B` (`snapshotsLace`) lets recovery
 reconstruct a lace whose keyset is EXACTLY `laceIds B` — the prune deleted blocks, but the checkpoint
 SNAPSHOT committed their ids and the retained tail holds the rest, so the merge recovers everything.
 No finalized id is lost. -/
@@ -276,7 +276,7 @@ theorem snapshotLace_keyset (cp : Checkpoint) (B : Lace) (hsnap : snapshotsLace 
     obtain ⟨b, hbB, hbid⟩ := hhB
     exact ⟨b, ⟨hbB, hbid ▸ hh⟩, hbid⟩
 
-/-- **`recover_keyset` (PROVED — the no-loss law).** On an HONEST checkpoint snapshot of `B`, recovery
+/-- **`recover_keyset` (the no-loss law).** On an HONEST checkpoint snapshot of `B`, recovery
 reconstructs a lace whose keyset is EXACTLY `laceIds B`: the snapshot commits the deleted ids and the
 retained tail holds the rest, so the merge recovers EVERY original id. The prune deleted blocks from
 the hot store, but NO id is lost to the recoverable history — `catchupOnto_keyset` shows the recovered
@@ -315,7 +315,7 @@ theorem filterMap_resolve_congr (R B : Lace) (ids : List BlockId)
     simp only [List.filterMap_cons]
     rw [hres h (by simp), ih (fun id hid => hres id (by simp [hid]))]
 
-/-- **`prune_preserves_finalized_prefix` (PROVED — finalized-prefix preservation, THE headline).**
+/-- **`prune_preserves_finalized_prefix` (finalized-prefix preservation, THE headline).**
 A node that prunes below an honest, attested checkpoint and recovers finalizes EXACTLY the same
 sequence of finalized turns (`tauGolden`, the `(creator,seq)` order) as it did before pruning,
 PROVIDED (i) the recovered lace finalizes the same `tauOrder` and (ii) it content-AGREES with the
@@ -354,7 +354,7 @@ the original share a keyset (`recover_keyset`), are canonical, content-agree, an
 order — the four hypotheses of `merge_convergence_to_state`. So bounded storage costs NOTHING in
 finalized state. The node's own doc-comment (`state.rs:584`) names this reduction; here it is proved. -/
 
-/-- **`recovered_converges_to_unpruned` (PROVED — recoverability, THE convergence).** A node that
+/-- **`recovered_converges_to_unpruned` (recoverability, THE convergence).** A node that
 prunes below an honest, attested checkpoint and recovers (checkpoint snapshot + retained tail)
 executes to the SAME finalized `RecChainedState` as a peer that never pruned. The hypotheses are the
 `LaceMerge` convergence quad: both laces canonical (`hcR`, `hcB`), the recovered keyset equals the
@@ -377,7 +377,7 @@ theorem recovered_converges_to_unpruned
     recover_keyset cp B pol tip hsnap
   exact merge_convergence_to_state dec s0 participants wavelength hcR hcB hkey hagree hOrder
 
-/-- **`prune_recovers_full_keyset` (PROVED — the no-loss bound, corollary).** The id-set the recovered
+/-- **`prune_recovers_full_keyset` (the no-loss bound, corollary).** The id-set the recovered
 node holds EQUALS the original lace's id-set: the checkpoint + retained tail together hold every id
 the prune deleted. So `--enable-pruning` bounds storage growth WITHOUT erasing any causal history —
 the recovered keyset is the full keyset. (Direct from `recover_keyset`; restated as the storage
@@ -387,7 +387,7 @@ theorem prune_recovers_full_keyset (cp : Checkpoint) (B : Lace) (pol : Retention
     laceIds (recoverFromCheckpoint cp B pol tip) = laceIds B :=
   recover_keyset cp B pol tip hsnap
 
-/-- **`pruned_height_is_attested` (PROVED — the `config.rs:41` invariant, structural).** Whatever the
+/-- **`pruned_height_is_attested` (the `config.rs:41` invariant, structural).** Whatever the
 prune DELETES sits at-or-below the checkpoint height: a block removed by `pruneLace` has `seq ≤
 cp.height`. Composed with `CheckpointAttested cp` (the federation QC over the snapshot at that
 height), this is the node's invariant "whatever a node prunes, it can point at an attestation that
@@ -438,7 +438,7 @@ def pol3 : RetentionPolicy := .rollingWindow 2
 #guard (traceR1.map (·.seq)).all (· ≤ cp3.height)
 
 /-! The `#guard`s are the project's machine-checked non-vacuity teeth (a false `#guard` is a BUILD
-ERROR). Against the CONCRETE `trace3` finalized lace: (i) `pruneLace` genuinely DELETES the genesis
+ERROR). Against the CONCRETE `trace3` finalized lace: (i) `pruneLace` DELETES the genesis
 round; (ii) `recoverFromCheckpoint` reconstructs the FULL keyset — `recover_keyset` is witnessed
 non-vacuously, no finalized id is lost; (iii) `Forever` deletes nothing (`forever_prunes_nothing`
 witnessed); (iv) the pruned round sits below the attested checkpoint height. So the safety theorems
@@ -447,7 +447,7 @@ constrain a REAL non-trivial prune/recover, and the model reproduces the node's
 
 /-! ## 8. Axiom hygiene — the prune/recover arc + the safety theorems are kernel-clean. The crypto
 boundary is the NAMED `CheckpointAttested` portal (BLS pairing, irreducible), carried as a hypothesis
-on the safety theorems — NEVER faked `:= True`, and it does not enter the proved reductions as an
+on the safety theorems `:= True`, and it does not enter the proved reductions as an
 axiom (it is a `Prop` argument, discharged by the caller's federation QC verification). -/
 
 #assert_axioms forever_prunes_nothing

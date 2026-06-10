@@ -17,7 +17,7 @@ the causal DAG, the happened-before order, or the causal-ordering invariant anyw
 distributed tree (`Distributed/BlocklaceFinality`/`StrandIntegrity` model the *blocklace* lace's
 `precedes`/`tau`, a DIFFERENT structure: the lace is the per-creator signed feed DAG; this
 `CausalDag` is the coordination layer's hash-pointer turn DAG that gossip and coord share). This
-module models exactly that genuinely-uncovered Layer-1 semantics.
+module models exactly that uncovered Layer-1 semantics.
 
 ## What is modelled (faithful to `types/src/causal.rs`)
 
@@ -67,7 +67,7 @@ concrete chains/diamonds and asserts its `happened_before`/`are_concurrent`/`top
 agree, edge for edge, with this Lean model. So the verified partial-order IS the order the
 coordination layer computes.
 
-## Honest scope
+## Scope
 
 The hashes are abstract identities (`Nat`); content-addressing / collision-resistance of BLAKE3 is
 the standard named assumption that makes distinct turns have distinct hashes (`causal.rs:99-103`
@@ -174,7 +174,7 @@ private theorem get_append_left {α} (xs ys : List α) (i : Nat) (hi : i < xs.le
   show (xs ++ ys)[i] = xs[i]
   rw [List.getElem_append_left (h := hi)]
 
-/-- **`insert_wf` — the causal-ordering invariant is preserved (PROVED).** If `d` is wellformed and
+/-- **`insert_wf` — the causal-ordering invariant is preserved.** If `d` is wellformed and
 `d.insert h deps = some d'`, then `d'` is wellformed. The new entry's deps were all present in `d`
 (the `containsHash` gate) hence appear at earlier indices, and old entries keep their witnesses
 since the append only extends. So a coordinated op's dependency discipline keeps the WHOLE history
@@ -271,7 +271,7 @@ def Dag.noDup (d : Dag) : Prop :=
   ∀ i j (hi : i < d.turns.length) (hj : j < d.turns.length),
     (d.turns.get ⟨i, hi⟩).hash = (d.turns.get ⟨j, hj⟩).hash → i = j
 
-/-- **`directDep_strict_rank` — every backward edge strictly decreases the canonical index (PROVED).**
+/-- **`directDep_strict_rank` — every backward edge strictly decreases the canonical index.**
 On a wellformed, dup-free DAG, if `b`'s entry at index `i` has `a` as a dep, there is an index
 `j < i` whose hash is `a`. This is the numeric heart of acyclicity. -/
 theorem directDep_strict_rank (d : Dag) (hwf : d.wf)
@@ -300,7 +300,7 @@ theorem present_has_index (d : Dag) (h : Hash) (hp : d.present h) :
   show d.turns[i].hash = h
   rw [hgi]; exact hhash
 
-/-- **`hb_index_descends` — happened-before strictly lowers the canonical index (PROVED).** On a
+/-- **`hb_index_descends` — happened-before strictly lowers the canonical index.** On a
 wellformed dup-free DAG, if `a` happened before `b`, then for EVERY index `ib` of `b` there is an
 index `ia` of `a` with `ia < ib`. (Dup-free makes "the index of b" unique, but we only need: there
 is some lower index for `a`.) The proof inducts on the happened-before derivation; each step uses
@@ -340,7 +340,7 @@ theorem hb_index_descends (d : Dag) (hwf : d.wf) (hnd : d.noDup)
       obtain ⟨ia, hia, hia_lt, hia_hash⟩ := ih ic hic_len hic_hash
       exact ⟨ia, hia, by omega, hia_hash⟩
 
-/-- **`hb_irrefl` — IRREFLEXIVITY (PROVED): no turn happened before itself.** On a wellformed
+/-- **`hb_irrefl` — IRREFLEXIVITY: no turn happened before itself.** On a wellformed
 dup-free DAG, `¬ happenedBefore d a a` for any present `a`. If it did, `hb_index_descends` would
 force `ia < ia` (same hash, dup-free ⇒ same index), a contradiction. This is the acyclicity at the
 heart of the causal order — and a genuine theorem, not `causal.rs:186`'s `a == descendant` guard. -/
@@ -358,7 +358,7 @@ theorem hb_irrefl (d : Dag) (hwf : d.wf) (hnd : d.noDup) (a : Hash) :
   have : ia = ib := hnd ia ib hia hib (by rw [hia_hash, hbhash])
   omega
 
-/-- **`hb_trans` — TRANSITIVITY (PROVED).** `happenedBefore` is transitive: it is a transitive
+/-- **`hb_trans` — TRANSITIVITY.** `happenedBefore` is transitive: it is a transitive
 closure, so chaining `a→b` and `b→c` is immediate by induction on the second derivation. (Holds on
 ANY DAG; no wellformedness needed.) -/
 theorem hb_trans (d : Dag) {a b c : Hash}
@@ -367,7 +367,7 @@ theorem hb_trans (d : Dag) {a b c : Hash}
   | base hdd => exact happenedBefore.step hab hdd
   | step _ hdd ih => exact happenedBefore.step ih hdd
 
-/-- **`hb_asymm` — ASYMMETRY (PROVED).** On a wellformed dup-free DAG, not both `a→b` and `b→a`:
+/-- **`hb_asymm` — ASYMMETRY.** On a wellformed dup-free DAG, not both `a→b` and `b→a`:
 otherwise transitivity gives `a→a`, contradicting irreflexivity. So two distinct coordinated turns
 are never each-other's cause — the DAG has no 2-cycle. -/
 theorem hb_asymm (d : Dag) (hwf : d.wf) (hnd : d.noDup) {a b : Hash}
@@ -380,7 +380,7 @@ theorem hb_asymm (d : Dag) (hwf : d.wf) (hnd : d.noDup) {a b : Hash}
 `a` comes first. The deterministic Kahn sort respects in-degree; its correctness reduces to:
 happened-before implies a strictly-smaller canonical insertion index. We have exactly that. -/
 
-/-- **`hb_imp_index_lt` — happened-before ⇒ earlier insertion index (PROVED).** On a wellformed
+/-- **`hb_imp_index_lt` — happened-before ⇒ earlier insertion index.** On a wellformed
 dup-free DAG, `a` happened before `b` implies `a`'s canonical index is strictly below `b`'s. Hence
 ANY linear extension that respects insertion order (the Kahn `topological_order`) lists causes
 before effects: a coordinated replay observes dependencies first. -/
@@ -390,7 +390,7 @@ theorem hb_imp_index_lt (d : Dag) (hwf : d.wf) (hnd : d.noDup) {a b : Hash}
     ∃ ia, ∃ hia : ia < d.turns.length, ia < ib ∧ (d.turns.get ⟨ia, hia⟩).hash = a :=
   hb_index_descends d hwf hnd hhb ib hib hbhash
 
-/-- **`fresh_is_maximal` — a freshly inserted turn is causally MAXIMAL (PROVED).** Right after
+/-- **`fresh_is_maximal` — a freshly inserted turn is causally MAXIMAL.** Right after
 `d.insert h deps = some d'`, nothing in `d'` happened *after* `h`: there is no present `b` with
 `happenedBefore d' h b`. Mirrors the frontier property (`causal.rs:131-132`): the new turn has no
 successors. (A turn can only be a dep of turns inserted LATER, and `h` is currently the last.) -/
@@ -445,7 +445,7 @@ theorem fresh_is_maximal (d : Dag) (h : Hash) (deps : List Hash)
 `are_concurrent` (`causal.rs:216`) is the incomparable relation. On a wellformed DAG it is symmetric
 and irreflexive — the standard "neither before the other" relation of a partial order. -/
 
-/-- **`concurrent_symm` (PROVED).** Concurrency is symmetric (`are_concurrent a b = are_concurrent
+/-- **`concurrent_symm`.** Concurrency is symmetric (`are_concurrent a b = are_concurrent
 b a`): the running code's `!hb(a,b) && !hb(b,a)` is order-independent. -/
 theorem concurrent_symm (d : Dag) (a b : Hash) : concurrent d a b ↔ concurrent d b a := by
   unfold concurrent
@@ -453,7 +453,7 @@ theorem concurrent_symm (d : Dag) (a b : Hash) : concurrent d a b ↔ concurrent
   · rintro ⟨hne, hab, hba⟩; exact ⟨hne.symm, hba, hab⟩
   · rintro ⟨hne, hba, hab⟩; exact ⟨hne.symm, hab, hba⟩
 
-/-- **`hb_imp_not_concurrent` (PROVED).** If `a` happened before `b`, they are NOT concurrent — the
+/-- **`hb_imp_not_concurrent`.** If `a` happened before `b`, they are NOT concurrent — the
 two relations are mutually exclusive, exactly as `are_concurrent` checks. -/
 theorem hb_imp_not_concurrent (d : Dag) {a b : Hash} (hhb : happenedBefore d a b) :
     ¬ concurrent d a b := by

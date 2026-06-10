@@ -218,7 +218,7 @@ dispatch tag the executor reads), a `check : RecChainedState → Bool` reading t
 node's OWN target cell — strictly INTRA-cell for the drift-stable tiers), and — for the `.coordinated`
 (tier-3) cross-cell axis — an OPTIONAL `cross : Option (RecChainedState → Bool)` discharge predicate.
 
-The `.coordinated` tier is the genuinely non-monotone, no-rep case (`DriftWitness .coordinated =
+The `.coordinated` tier is the non-monotone, no-rep case (`DriftWitness.coordinated =
 PUnit` — no drift-stability proof). dregg1 fail-closed it (`authorize.rs:1608`) because a live read of
 another cell to authorize this one is a TOCTOU hole — UNLESS the read and the use are ONE atomic
 snapshot. On a single machine BOTH cells live in the SAME `RecChainedState`, so the companion-cell
@@ -227,7 +227,7 @@ free). `cross` is the proved-equalizer discharge welded inline (`CoordinatedCave
 / `CrossCaveat.jointApplyCaveated`): the cross-cell condition is checked on the SAME `s` the node then
 commits against — time-of-check = time-of-use, no window for a concurrent turn to invalidate it
 (`gateOK na s` reads exactly the `s` `execFullA` runs on; `gatedNode_check_eq_use`). `cross = none` ⇒
-the old fail-closed behavior (no companion view supplied ⇒ a coordinated caveat genuinely cannot
+the old fail-closed behavior (no companion view supplied ⇒ a coordinated caveat cannot
 discharge on this node). -/
 structure GatedCaveat where
   /-- The computable drift-tier tag (`monotone`/`reservation`/`locked`/`coordinated`) the executor
@@ -375,7 +375,7 @@ def childrenEdgesG :
 end
 
 mutual
-/-- **`forestEdgesG_eq_forestEdgesA_eraseG` — PROVED (the auth-orthogonal edge bridge).** The gated
+/-- **`forestEdgesG_eq_forestEdgesA_eraseG` (the auth-orthogonal edge bridge).** The gated
 tree's delegation edges are EXACTLY the ungated `eraseG`'d tree's edges — the credential+caveat
 decoration adds no edge and removes none. So `execFullForestG_no_amplify` is a one-liner off
 `execFullForestA_no_amplify (eraseG f)`. Proved by mutual structural induction. -/
@@ -471,8 +471,8 @@ def caveatsDischarged
 
 /-- **`revocationGate` — the REVOCATION leg (hole #3 / `#139`, kernel-state-read, FAIL-CLOSED).** The
 node's credential is admitted only if its nullifier `na.credNul` is NOT in the COMMITTED revocation
-registry `s.kernel.revoked` (the MDB root). This reads adversary-uncontrollable kernel state — NOT the
-formerly-pinned wire-supplied `na.rev` — so a revoked credential finally fail-closes. -/
+registry `s.kernel.revoked` (the MDB root). This reads adversary-uncontrollable kernel state — NOT
+the wire-supplied `na.rev` — so a revoked credential fail-closes. -/
 def revocationGate
     (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
       (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway) (Bytes := Bytes) (Tag := Tag))
@@ -488,11 +488,11 @@ def gateOK
     (s : RecChainedState) : Bool :=
   credentialValidG na && capAuthorityG na && caveatsDischarged na s && revocationGate na s
 
-/-- **`gateOK_revoked_fails` — THE REVOCATION TEETH (PROVED).** A node whose credential nullifier sits
+/-- **`gateOK_revoked_fails` — THE REVOCATION TEETH.** A node whose credential nullifier sits
 in the COMMITTED revocation registry `s.kernel.revoked` is REJECTED by the gate (`gateOK = false`) —
 so `execFullAGated` returns `none` and the whole forest rolls back. NON-VACUOUS: the rejection reads
 the committed registry (adversary-uncontrollable), so a revoked credential cannot pass no matter how
-valid its signature or how discharged its caveats. Closes hole #3 — the formerly-decorative `rev`. -/
+valid its signature or how discharged its caveats. -/
 theorem gateOK_revoked_fails
     (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
       (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway) (Bytes := Bytes) (Tag := Tag))
@@ -555,7 +555,7 @@ def execFullChildrenG (delegator : Dregg2.Exec.CellId) (s : RecChainedState) :
       | none    => none
 end
 
-/-- **`execFullAGated_some_iff` — PROVED (the load-bearing unfolding lemma).** The gated step commits
+/-- **`execFullAGated_some_iff` (the load-bearing unfolding lemma).** The gated step commits
 IFF the gate passed AND the underlying `execFullA` committed: `execFullAGated s na a = some s' ↔
 (gateOK na s = true ∧ execFullA s a = some s')`. EVERYTHING rests on this — conservation reads the
 RHS's `execFullA` run, attestation reads the LHS's gate Bools. NON-VACUOUS: both legs are forced (a
@@ -576,7 +576,7 @@ theorem execFullAGated_some_iff (s s' : RecChainedState)
     · intro h; exact absurd h (by simp)
     · intro h; exact absurd h.1 hg
 
-/-- **`gatedNode_check_eq_use` — the within-cell NO-TOCTOU keystone (PROVED).** A committed gated node
+/-- **`gatedNode_check_eq_use` — the within-cell NO-TOCTOU keystone.** A committed gated node
 proves the gate held on EXACTLY the pre-state `s` the action then commits against — one indivisible
 snapshot (`gateOK na s = true ∧ execFullA s a = some s'`). The executed analog of
 `CrossCaveat.caveated_check_eq_use`: there is no window for a concurrent turn to invalidate the
@@ -647,7 +647,7 @@ def execFullTurnG (s : RecChainedState) :
     | some s' => execFullTurnG s' rest
     | none    => none
 
-/-- **`execFullTurnG_append` — PROVED.** Running a concatenated gated linear turn equals running the
+/-- **`execFullTurnG_append`.** Running a concatenated gated linear turn equals running the
 prefix and, on success, the suffix. The associativity the bridge's pre-order flattening rests on —
 the SAME induction as `execFullTurnA_append`, with the gate carried. -/
 theorem execFullTurnG_append (s : RecChainedState)
@@ -679,7 +679,7 @@ theorem execFullTurnG_append (s : RecChainedState)
       | some s1 => exact ih s1
 
 mutual
-/-- **`lowerForestG_actions_eq_eraseG` — PROVED (the action-projection bridge).** Erasing the auth
+/-- **`lowerForestG_actions_eq_eraseG` (the action-projection bridge).** Erasing the auth
 from the gated linear lowering gives EXACTLY the ungated lowering of `eraseG f`: `(lowerForestG
 f).map Prod.snd = lowerForestA (eraseG f)`. So `turnLedgerDeltaAsset` reads the SAME action list either
 way (the credential+caveat decoration is ledger-orthogonal) — the conservation corollaries ride this
@@ -738,7 +738,7 @@ bridge: gate-passes ⇒ erasing the auth gives the IDENTICAL committed run of `e
 conservation/attestation theorem follows as a corollary off the EXISTING `FullForest` theorems. -/
 
 mutual
-/-- **`execFullForestG_eq_execFullTurnG` — PROVED (the gated bridge).** The gated tree transaction IS
+/-- **`execFullForestG_eq_execFullTurnG` (the gated bridge).** The gated tree transaction IS
 the gated linear fold over the pre-order `(auth, action)` pairing. The CLONE of
 `execFullForestA_eq_execFullTurnA` (rests on `execFullTurnG_append`). Lifts every gated linear theorem
 to the tree. -/
@@ -804,7 +804,7 @@ theorem execFullChildrenG_eq_execFullTurnG (delegator : Dregg2.Exec.CellId) (s :
       | some s2 => exact execFullChildrenG_eq_execFullTurnG delegator s2 rest
 end
 
-/-- **`execFullTurnG_erases` — PROVED.** On the COMMIT path the gated linear fold equals the ungated
+/-- **`execFullTurnG_erases`.** On the COMMIT path the gated linear fold equals the ungated
 linear fold of the action-projection: `execFullTurnG s zs = some s' → execFullTurnA s (zs.map
 Prod.snd) = some s'`. Each gated step `execFullAGated s na a = some` unfolds (via
 `execFullAGated_some_iff`) to `execFullA s a = some` — the gate changed only admission, never the
@@ -837,7 +837,7 @@ theorem execFullTurnG_erases (s s' : RecChainedState)
           rw [hfa]
           exact ih s1 h
 
-/-- **`execFullForestG_erases` — THE EFFECT-PROJECTION BRIDGE (PROVED).** Gate-passes ⇒ erasing the
+/-- **`execFullForestG_erases` — THE EFFECT-PROJECTION BRIDGE.** Gate-passes ⇒ erasing the
 auth decoration gives the IDENTICAL committed run: `execFullForestG s f = some s' → execFullForestA s
 (eraseG f) = some s'`. The auth gate changed ONLY admission (more `none`s), never a committed
 post-state. NON-VACUOUS: the LHS can fail (`none`) where the RHS would commit (the gate is a real
@@ -862,7 +862,7 @@ Each is the EXISTING `FullForest` theorem applied to `eraseG f` via `execFullFor
 through `lowerForestG_actions_eq_eraseG`. The auth gate is ORTHOGONAL to conservation: the launder
 teeth SURVIVE (a per-asset nonzero delta in each asset is still CAUGHT). -/
 
-/-- **`execFullForestG_ledger_per_asset` — PROVED (the per-asset VECTOR survives the gate).** A
+/-- **`execFullForestG_ledger_per_asset` (the per-asset VECTOR survives the gate).** A
 committed gated full-forest moves `recTotalAsset b` by EXACTLY the net per-asset ledger delta
 of its action-projection, for EVERY asset `b`. The CONSERVATION VECTOR end-to-end across the gated
 tree — read off the EXISTING `execFullForestA_ledger_per_asset` applied to `eraseG f`. -/
@@ -877,7 +877,7 @@ theorem execFullForestG_ledger_per_asset (s s' : RecChainedState)
   rw [lowerForestG_actions_eq_eraseG]
   exact FullForest.execFullForestA_ledger_per_asset s s' (eraseG f) b (execFullForestG_erases s s' f h)
 
-/-- **`execFullForestG_conserves_per_asset` — PROVED (CONSERVATION SURVIVES THE AUTH GATE).** A
+/-- **`execFullForestG_conserves_per_asset` (CONSERVATION SURVIVES THE AUTH GATE).** A
 committed gated full-forest whose per-asset net is `0` in asset `b` preserves asset `b`'s total supply —
 the per-asset VECTOR, end-to-end, UNCHANGED by the credential+caveat gate. The launder teeth survive:
 a forest whose per-asset delta is NONZERO in some asset is still CAUGHT (a scalar could not state it).
@@ -891,7 +891,7 @@ theorem execFullForestG_conserves_per_asset (s s' : RecChainedState)
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
   rw [execFullForestG_ledger_per_asset s s' f b h, hzero, add_zero]
 
-/-- **`execFullForestG_no_amplify` — PROVED (Granovetter survives the gate).** EVERY delegation edge
+/-- **`execFullForestG_no_amplify` (Granovetter survives the gate).** EVERY delegation edge
 of the gated forest is non-amplifying: the credential+caveat decoration adds no amplification (the edge
 data is the `FullChildG` triple, IDENTICAL to `FullChildA`). A one-liner off
 `execFullForestA_no_amplify (eraseG f)` via `forestEdgesG_eq_forestEdgesA_eraseG`. -/
@@ -922,7 +922,7 @@ def gatedActionInvG (s : RecChainedState)
   credentialValidG na = true ∧ capAuthorityG na = true ∧ caveatsDischarged na s = true
     ∧ fullActionInvA s a s'
 
-/-- **`execFullAGated_attests` — PROVED (the committed⇒all-four headline, per node).** Every committed
+/-- **`execFullAGated_attests` (the committed⇒all-four headline, per node).** Every committed
 gated node attests `gatedActionInvG`: credential-valid ∧ cap-authority ∧ caveats-discharged ∧ the full
 per-asset/chain/kind obligation. NON-VACUOUS: a forged credential ⇒ no commit ⇒ no false attestation;
 a valid commit ⇒ all four conjuncts with teeth. The gate Bools come from `gatedNode_check_eq_use`
@@ -941,7 +941,7 @@ theorem execFullAGated_attests (s s' : RecChainedState)
     exact ⟨hgate.1.1.1, hgate.1.1.2, hgate.1.2⟩
   exact ⟨h3.1, h3.2.1, h3.2.2, execFullA_attests_per_asset hfa⟩
 
-/-- **`execFullForestG_unauthorized_fails` — PROVED (fail-closed at the root, ANY leg).** If the root
+/-- **`execFullForestG_unauthorized_fails` (fail-closed at the root, ANY leg).** If the root
 node's gate fails on ANY leg (`gateOK na s = false` — a forged credential, an unauthorized cap, OR a
 false caveat), the whole forest rejects (no partial commit). NON-VACUOUS: a forged-credential root with
 otherwise-valid caps still gives `none` (credential-orthogonality); a valid-credential root with a false
@@ -960,7 +960,7 @@ theorem execFullForestG_unauthorized_fails (s : RecChainedState)
   have : execFullAGated s na a = none := by unfold execFullAGated; rw [if_neg (by simp [h])]
   rw [this]
 
-/-- **`execFullTurnG_each_attests` — PROVED.** Every `(na, a)` of a committed gated linear turn attests
+/-- **`execFullTurnG_each_attests`.** Every `(na, a)` of a committed gated linear turn attests
 its `gatedActionInvG` at the state it ran on. The threaded per-node witness along the all-or-nothing
 gated fold. -/
 theorem execFullTurnG_each_attests (s s' : RecChainedState)
@@ -987,7 +987,7 @@ theorem execFullTurnG_each_attests (s s' : RecChainedState)
             exact ⟨s, s1, hga, execFullAGated_attests s s1 na a hga⟩
           · exact ih s1 h p hprest
 
-/-- **`execFullForestG_each_attests` — PROVED (per-node step-completeness, whole gated tree).** Every
+/-- **`execFullForestG_each_attests` (per-node step-completeness, whole gated tree).** Every
 node `(na, a)` of a committed gated full-forest attests its `gatedActionInvG`: credential passed the §8
 oracle ∧ caveats discharged on its pre-state ∧ the per-asset conservation vector ∧ cap-authority, at
 EVERY nesting depth. Credential-blindness ELIMINATED forest-wide. Read through the gated bridge
@@ -1001,7 +1001,7 @@ theorem execFullForestG_each_attests (s s' : RecChainedState)
   rw [execFullForestG_eq_execFullTurnG] at h
   exact execFullTurnG_each_attests s s' (lowerForestG f) h
 
-/-- **`execFullForestG_root_attests` — PROVED (corollary).** The root node's own `(auth, action)`
+/-- **`execFullForestG_root_attests` (corollary).** The root node's own `(auth, action)`
 attests its `gatedActionInvG` (the per-node membership-lift specialized to the root — the root pair is
 the head of `lowerForestG f`). -/
 theorem execFullForestG_root_attests (s s' : RecChainedState)

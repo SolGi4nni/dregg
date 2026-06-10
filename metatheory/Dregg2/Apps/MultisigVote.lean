@@ -45,7 +45,7 @@ open Dregg2.Authority (Cap Auth)
 A `Proposal` bundles the on-chain target cell `proposalCell`, the published `registry` of enfranchised
 voter cells, and the `threshold` (the quorum: number of distinct enfranchised approvals required to
 pass). The approval set itself lives in the REAL kernel's `nullifiers` seen-set — a cast vote inserts
-the voter's `CellId` as a vote nullifier, so the set is genuinely on-chain and the no-double-vote gate
+the voter's `CellId` as a vote nullifier, so the set is on-chain and the no-double-vote gate
 is the kernel's own. -/
 
 /-- **`Proposal`** — the multisig proposal config: the target cell `proposalCell`, the published
@@ -148,7 +148,7 @@ theorem revote_rejected {p : Proposal} {k : RecordKernelState} {voter : CellId}
 
 /-- **`vote_inserts` — a committed vote actually inserts the voter** into the approval seen-set (so a
 SUBSEQUENT vote by the same voter is rejected by `revote_rejected`). The positive face: the approval
-genuinely lands on-chain. -/
+lands on-chain. -/
 theorem vote_inserts {p : Proposal} {k k' : RecordKernelState} {voter : CellId}
     (h : castVote p k voter = some k') : voter ∈ k'.nullifiers := by
   unfold castVote at h
@@ -223,7 +223,7 @@ def prop0 : Proposal := { proposalCell := 100, registry := {0, 1, 2}, threshold 
 
 Real discriminating instances on `voteK0`/`prop0`: the empty proposal is sub-threshold (does NOT
 pass); the outsider (cell 3) is rejected while the registry voter (cell 0) and the cap-bearer (cell 4)
-are admitted; a double-voter is counted once; and reaching the threshold genuinely resolves the
+are admitted; a double-voter is counted once; and reaching the threshold resolves the
 proposal to passed. -/
 
 /-- **`empty_does_not_pass` (TEETH — sub-threshold)** — with NO votes cast, the tally is `0 < 2`, so

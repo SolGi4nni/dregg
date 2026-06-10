@@ -27,7 +27,7 @@ environment's view* — a function, not a probability ensemble. We make that pre
   * **Perfect realization** `π ⊑ F := ∀ z, π.beh z = F.beh z` — the environment's view is
     *identical* for EVERY environment. This is `≈` with the indistinguishability advantage
     forced to `0` for all `Z` (statistical/perfect security).
-  * A **context** `ρ : Context` genuinely **interposes**: it is a transformer of behaviours
+  * A **context** `ρ : Context` **interposes**: it is a transformer of behaviours
     that may rewrite the environment it presents to the inner system (`pre`), wrap that
     system's reply (`post`), and even inject side-channel observations — but it touches the
     inner system **only through its `beh` view interface** (the UC discipline: `ρ` uses `π`
@@ -46,7 +46,7 @@ environment's view* — a function, not a probability ensemble. We make that pre
   * `realizes_witness` : a concrete `π ⊑ F` that HOLDS, and `perfectUC_carries_through` shows
     composition transports it through the non-trivial `leak` context.
   * `realizes_fails` : a concrete pair with `¬ (π ⊑ F)` (views differ at some `z`), so `⊑`
-    is NOT vacuously true — it genuinely rejects.
+    is NOT vacuously true — it rejects.
 
 ## BRIDGE TO THE STATIC FRAGMENT
 
@@ -129,7 +129,7 @@ theorem perfectlyRealizes_trans {Z : Type u} {View : Type v} {S₁ S₂ S₃ : S
     (h₁ : S₁ ⊑ S₂) (h₂ : S₂ ⊑ S₃) : S₁ ⊑ S₃ :=
   fun z => (h₁ z).trans (h₂ z)
 
-/-! # §2. Contexts that genuinely interpose, but only through the view interface.
+/-! # §2. Contexts that interpose, but only through the view interface.
 
 A UC **context** `ρ` is the calling protocol/environment that USES the inner system as a
 subroutine — a "wrapper". The UC discipline is that `ρ` may talk to the inner system *only
@@ -192,7 +192,7 @@ argument is exactly *function composition*: the context reaches the inner system
 its view, identical inner views (`π ⊑ F`) produce identical post-processed views, for every
 outer environment. Proof = `congrArg`-style rewriting under `ρ.post`. -/
 
-/-- **Perfect-UC composition theorem (deterministic ideal, statistical security) — PROVED,
+/-- **Perfect-UC composition theorem (deterministic ideal, statistical security),
 kernel-clean.** `π ⊑ F → (ρ^π) ⊑ (ρ^F)` for every context `ρ`. This is the perfect-case
 Canetti composition: perfect indistinguishability is preserved by black-box contextual
 composition. (The COMPUTATIONAL theorem — PPT `Z`, probabilistic ensembles, negligible
@@ -219,7 +219,7 @@ theorem perfectUC_is_congrArg {Z View Z' View' : Type _}
 #assert_axioms perfectUC_composition
 #assert_axioms perfectUC_is_congrArg
 
-/-! # §4. TEETH — the context genuinely interposes; `⊑` holds AND fails.
+/-! # §4. TEETH — the context interposes; `⊑` holds AND fails.
 
 We rule out two flavours of vacuity:
 
@@ -258,7 +258,7 @@ def leak : Context Nat Nat Nat Nat where
 def idSys : Sys := ⟨fun z => z⟩
 def succSys : Sys := ⟨fun z => z + 1⟩
 
-/-- **`tighten` genuinely interposes — `tighten^idSys ≠ idSys`.** The composed behaviour is
+/-- **`tighten` interposes — `tighten^idSys ≠ idSys`.** The composed behaviour is
 `z ↦ z*2 + 1`, not the identity; so `tighten` is NOT a degenerate (system-preserving)
 context. Composition is a real substitution. -/
 theorem tighten_interposes : (tighten ▷ idSys) ≠ idSys := by
@@ -269,7 +269,7 @@ theorem tighten_interposes : (tighten ▷ idSys) ≠ idSys := by
 
 /-- **`leak` collapses distinct systems — `leak^idSys = leak^succSys` though `idSys ≠ succSys`.**
 `leak` discards the inner view (always emits `7`), so two *different* inner systems compose to
-the *same* outer system. This proves `leak` genuinely reshapes/erases information: contexts
+the *same* outer system. This proves `leak` reshapes/erases information: contexts
 are far from injective, hence the composition theorem is non-trivial. -/
 theorem leak_collapses : (leak ▷ idSys) = (leak ▷ succSys) ∧ idSys ≠ succSys := by
   refine ⟨?_, ?_⟩
@@ -318,7 +318,7 @@ theorem realizes_fails : ¬ (idSys ⊑ succSys) := by
 For the *behaviour-preserving* context `tighten` (it is injective on the relevant inner views),
 `idSys ⊑ succSys` still fails after composition: `¬ (tighten^idSys ⊑ tighten^succSys)`. This
 shows the composition theorem's *hypothesis* is load-bearing — drop `π ⊑ F` and the conclusion
-genuinely fails (no free realization). -/
+fails (no free realization). -/
 theorem composition_needs_hypothesis : ¬ ((tighten ▷ idSys) ⊑ (tighten ▷ succSys)) := by
   intro h
   -- view at z'=0: tighten ▷ idSys = (0*2)+1 = 1; tighten ▷ succSys = (0*2 + 1)+1 = 2.
@@ -358,7 +358,7 @@ def idContext (Z View : Type _) : Context Z View Z View where
   post := fun _ v => v
 
 /-- `idContext` really is the identity on systems: `idContext^S = S`. (It IS the degenerate
-context — by contrast with `§4`'s genuinely-interposing ones.) -/
+context — by contrast with `§4`'s interposing ones.) -/
 theorem idContext_id {Z View : Type _} (S : System Z View) :
     ((idContext Z View) ▷ S) = S := rfl
 
@@ -372,7 +372,7 @@ def verifiedSys {P W : Type} [Verifiable P W] (X Y : Claim P) (wx wy : W) :
     (Frame.verified (Ω := Unit) X wx (),
      Frame.verified (Ω := Unit) Y wy ())
 
-/-- **Static fragment = perfect-UC through the identity context — PROVED, kernel-clean.**
+/-- **Static fragment = perfect-UC through the identity context.**
 If `verifiedSys X X wx wx ⊑ verifiedSys Y Y wy wy` (the two verified-view systems are perfectly
 indistinguishable), then composition with the degenerate `idContext` preserves it. The
 *content* mirrors `honest_dist_knowledge_composes`: a perfect realization of verified views is
@@ -386,7 +386,7 @@ theorem static_is_degenerate_context
 /-- **Direct tie to `EpistemicConsensus.honest_dist_knowledge_composes`.** The repo's static
 keystone (honest distributed knowledge of two discharged claims pools into knowledge of their
 conjunction) is reproved here as a corollary: from honest distributed knowledge of each
-`verified` view, the conjunction is honestly distributed-known. We invoke the repo theorem
+`verified` view, the conjunction is distributed-known. We invoke the repo theorem
 directly, exhibiting that this module's frame is *compatible* with — and refines, via the
 context/perfect-UC layer — the existing static fragment. -/
 theorem reproves_static_compose {Ω : Type u} {ι : Type v} (Fr : Frame Ω ι)
@@ -412,7 +412,7 @@ dregg2: an environment supplies a full cell state, and the system's view is the 
 projection `Dregg2.Privacy.project` — the genuine tier-1 privacy primitive. We show two
 *different protocol realizations* of this ideal that compute the same public view (one reads the
 state directly, one re-assembles it through the disclosure mask) **perfectly realize** each
-other (`⊑`), and that the realization SURVIVES a genuinely-interposing context — perfect-UC
+other (`⊑`), and that the realization SURVIVES an interposing context — perfect-UC
 composition doing real work over a real dregg2 disclosure functionality, not a toy. -/
 
 namespace Disclosure
@@ -431,7 +431,7 @@ def idealF (vis : FieldVisibility Name) : System (Env Name V) (Obs Name V) where
   beh := fun s => project s vis
 
 /-- A **protocol realization** `realπ` that recomputes the public view by FIRST blanking every
-private field to a default `d`, THEN projecting. A genuinely different computation from `idealF`
+private field to a default `d`, THEN projecting. A different computation from `idealF`
 (it overwrites the private coordinates) that nonetheless yields the same observation — the
 private values never reach the public view. This is a real "protocol vs ideal" pair, not
 `z+0` vs `z`. -/
@@ -440,7 +440,7 @@ def realπ (vis : FieldVisibility Name) (d : V) : System (Env Name V) (Obs Name 
                                     | Visibility.pub  => s n
                                     | Visibility.priv => d) vis
 
-/-- **`realπ` perfectly realizes `idealF` — PROVED, kernel-clean.** Every environment's view of
+/-- **`realπ` perfectly realizes `idealF`.** Every environment's view of
 the blank-then-project protocol equals its view of the ideal direct projection: the two states
 agree on every PUBLIC field (private fields are projected away either way), so
 `Dregg2.Privacy.field_projection_hides_private` forces equal projections. A genuine `π ⊑ F` over
@@ -455,7 +455,7 @@ theorem realπ_realizes_idealF (vis : FieldVisibility Name) (d : V) :
   intro n hpub
   rw [hpub]
 
-/-- **The realization survives a genuinely-interposing context — PROVED, kernel-clean.** For ANY
+/-- **The realization survives an interposing context.** For ANY
 context `ρ` (e.g. one that rewrites the environment and post-processes the public observation),
 `ρ ▷ realπ ⊑ ρ ▷ idealF`: the perfect realization of the real dregg2 disclosure functionality is
 carried through black-box composition by `perfectUC_composition`. The computational
@@ -466,7 +466,7 @@ theorem realπ_realizes_through_context
     (ρ ▷ realπ vis d) ⊑ (ρ ▷ idealF vis) :=
   perfectUC_composition ρ (realπ_realizes_idealF vis d)
 
-/-- **`⊑` genuinely REJECTS a leaky protocol — PROVED, kernel-clean (teeth).** A protocol
+/-- **`⊑` REJECTS a leaky protocol (teeth).** A protocol
 `leakyπ` whose view is the IDENTITY on the state (leaking even private fields) does NOT perfectly
 realize the ideal whenever some private field actually differs from the projected `none`: there
 is an environment distinguishing them. So `⊑` over the real functionality is a genuine two-sided
@@ -493,7 +493,7 @@ end Disclosure
 Closed (FRAGMENT): **perfect (statistical) UC composition for deterministic ideal
 functionalities** — `perfectUC_composition : π ⊑ F → (ρ^π) ⊑ (ρ^F)`, where `⊑` is equality of
 the environment's view (the perfect collapse of `≈`) and `ρ` is a black-box context that
-genuinely interposes (`§4`: `tighten^idSys ≠ idSys`, `leak` collapses distinct systems). The
+interposes (`§4`: `tighten^idSys ≠ idSys`, `leak` collapses distinct systems). The
 relation `⊑` is witnessed both HOLDING (`realizes_witness`, carried through `leak`/`tighten`)
 and FAILING (`realizes_fails`; the composition hypothesis is load-bearing,
 `composition_needs_hypothesis`). The static §6 fragment of `EpistemicConsensus` is recovered as

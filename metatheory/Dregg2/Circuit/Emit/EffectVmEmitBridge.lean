@@ -16,7 +16,7 @@ with `transferVm_faithful`:
     the EMITTED gates accept the row  ⟺  the encoded kernel transition is the correct
     protocol transfer of the actor's ledger column.
 
-## What the row PINS vs what it does NOT (the honest boundary)
+## What the row PINS vs what it does NOT (the boundary)
 
 The EffectVM transfer row carries ONE cell's balance as a single `bal_lo` limb (the ACTOR cell),
 the actor's nonce, the transfer `amount`/`direction`, and the frozen frame. `recKExecAsset` /
@@ -29,7 +29,7 @@ asset-`a` column move** (`direction = 1` ⟹ actor is `src`, debited; `direction
     `actorDelta amt dir = amt·(1 - 2·dir)`, i.e. the actor's side of `recTransferBal` (debit if
     src, credit if dst); `dir` is a bit. Via the END-TO-END composition the EMITTED GATES enforce
     exactly this.
-  * ALSO PINNED at the row (carried as encoding conditions because the row genuinely has these
+  * ALSO PINNED at the row (carried as encoding conditions because the row has these
     columns): the actor's nonce ticks by one; the actor's `bal_hi` + cap_root + reserved + 8
     fields are frozen — the honest shape of a transfer encoding.
   * DOES NOT PIN (out of the row's witness — these live in the abstract layer / turn root):
@@ -41,7 +41,7 @@ asset-`a` column move** (`direction = 1` ⟹ actor is `src`, debited; `direction
       - the cap-graph, nullifier set, escrow store contents (frozen `cap_root` HASH only).
 
 So this is an HONEST PARTIAL bridge with a precise boundary: it pins the actor's single-column
-ledger move (the part the row genuinely witnesses) + the honest frame-freeze/nonce-tick, and is
+ledger move (the part the row witnesses) + the honest frame-freeze/nonce-tick, and is
 explicit that the counterparty/asset-index/guard are NOT row-level. This respects worklist finding
 #2 (no overclaiming set-membership/uniqueness) — transfer is a pure balance-delta, so the part the
 row DOES carry bridges cleanly and TOTALLY (both directions) to the abstract actor-column move.
@@ -100,7 +100,7 @@ theorem recTransferBal_dst (bal : CellId → AssetId → ℤ) (src dst : CellId)
 `RowEncodes env pre post a actor amt dir` says: the row `env` is the HONEST encoding of the
 abstract transfer transition that moves cell `actor`'s asset-`a` column from `pre.bal actor a` to
 `post.bal actor a`, with the row's `direction` = `dir` and `amount` = `amt`. It pins the row's
-columns to the kernel fields the row genuinely carries.
+columns to the kernel fields the row carries.
 
 The encoding is INJECTIVE on what it claims: distinct `(pre.bal actor a, post.bal actor a)` give
 distinct row `bal_lo` columns, and tampering `post.bal actor a` away from the move breaks the

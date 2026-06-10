@@ -138,7 +138,7 @@ theorem forged_block_rejected (sigOk : SigChecker) (rk : PubKey)
   intro wf; rw [wf.1] at hforge; exact absurd hforge (by simp)
 
 /-- **`forged_root_rejected`** — a root block whose signature does not verify under the root-authority
-key is rejected: the chain must bottom out in a genuinely root-signed block. -/
+key is rejected: the chain must bottom out in a root-signed block. -/
 theorem forged_root_rejected (sigOk : SigChecker) (rk : PubKey) {root : Block}
     (hforge : sigOk rk root = false) : ¬ WellFormed sigOk rk [root] := by
   intro wf; rw [wf] at hforge; exact absurd hforge (by simp)

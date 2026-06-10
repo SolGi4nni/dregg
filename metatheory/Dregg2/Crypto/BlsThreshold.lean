@@ -20,7 +20,7 @@ The real `hints::verify_aggregate` (`hints/src/lib.rs:208`) is a THREE-GATE conj
 We separate the gates exactly as the Rust does, and PROVE: an accepting certificate ⇒ there is a
 0/1 selector `b` over the committee whose selected weight reaches the threshold AND whose product of
 public keys is `agg_pk` AND that aggregate verifies under BLS — i.e. *a genuine weighted quorum signed
-`m`*. The two layers are honestly split:
+`m`*. The two layers are split:
 
   * **DISCHARGEABLE (proved here, no crypto):** the threshold/selector ARITHMETIC — `b ∈ {0,1}^n`,
     `aggWeight = Σ selected weights`, and `aggWeight ≥ threshold ⇒ selectedWeight ≥ threshold`. This is
@@ -41,7 +41,7 @@ public keys is `agg_pk` AND that aggregate verifies under BLS — i.e. *a genuin
         `extractable` carrier, the same discipline as `PortalFloor.VerifierKernel`.)
 
 These three are the genuine cryptographic assumptions of weighted-threshold BLS — pairing/curve math,
-named honestly, exactly like `PortalFloor` names ed25519 EUF-CMA. The reduction *from* them *to* "an
+named, exactly like `PortalFloor` names ed25519 EUF-CMA. The reduction *from* them *to* "an
 honest quorum signed" is the load-bearing thing proved here.
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); NO `sorry`/`:=True`/`native_decide`.
@@ -95,7 +95,7 @@ theorem selectedWeight_le_total (C : Committee PK) {S : Finset ℕ} (hS : S ⊆ 
 
 end Committee
 
-/-! ## §2 — the THREE named irreducible primitives (curve/pairing math, named honestly).
+/-! ## §2 — the THREE named irreducible primitives (curve/pairing math, named.
 
 These are NOT Lean definitions — encoding "KZG binding" as a `Prop` constant would be a relabel. They
 are the genuine cryptographic obligations, named here and DISCHARGED into the soundness contracts of
@@ -180,7 +180,7 @@ end ThresholdCert
 
 variable {C : Committee PK} {msg : ℕ}
 
-/-- **`quorum_weight_suffices`** (PROVED, no crypto) — if an accepting cert's claimed `aggWeight`
+/-- **`quorum_weight_suffices`** (no crypto) — if an accepting cert's claimed `aggWeight`
 reaches the threshold AND the SNARK contract pins `aggWeight = selectedWeight selected`, then the
 HONEST selected weight reaches the threshold. This is the algebraic heart: the threshold gate's
 `agg_weight ≥ threshold` becomes a statement about the REAL selected committee weight, because the
@@ -193,7 +193,7 @@ theorem quorum_weight_suffices
   rw [hsnark.aggWeight_eq] at hge
   exact hge
 
-/-- **`selected_is_subcommittee`** (PROVED) — the selected set is a genuine sub-committee (no phantom
+/-- **`selected_is_subcommittee`** — the selected set is a genuine sub-committee (no phantom
 members outside the committee can be counted). Directly the SNARK domain check. -/
 theorem selected_is_subcommittee
     (cert : ThresholdCert C msg) (hsnark : cert.SnarkContract) :
@@ -207,7 +207,7 @@ theorem selected_is_subcommittee
 it concludes a GENUINE weighted quorum signed `msg`: a sub-committee `S ⊆ members` with
 `selectedWeight S ≥ threshold` AND `selectedWeight S ≤ totalWeight` (well-formed) AND every member of
 `S` signed `msg`. This is the federation's quorum-certificate soundness — reduced to the three named
-pairing-crypto primitives, never faked. -/
+pairing-crypto primitives. -/
 theorem accepting_cert_has_quorum
     (cert : ThresholdCert C msg)
     (hacc : cert.accepts)
@@ -222,7 +222,7 @@ theorem accepting_cert_has_quorum
   · exact quorum_weight_suffices cert hacc hsnark
   · exact C.selectedWeight_le_total (selected_is_subcommittee cert hsnark)
 
-/-! ## §3c — ANTI-GHOST: the threshold gate genuinely rejects a sub-quorum.
+/-! ## §3c — ANTI-GHOST: the threshold gate rejects a sub-quorum.
 
 The dual of soundness: if the HONEST selected weight is below threshold, NO accepting cert can claim
 otherwise — because the SNARK contract binds `aggWeight` to the real selected weight. So a forged

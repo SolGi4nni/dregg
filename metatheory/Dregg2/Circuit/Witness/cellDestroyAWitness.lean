@@ -47,7 +47,7 @@ cell `1` (so a bystander destroy / cert bind shows up). -/
 def natProbes (cell : CellId) : List CellId := [cell, 1]
 
 /-- Concrete `CellId → Nat` digest: the REAL `refP2` sponge over the probe values (binds each — NO lossy
-`% 10⁶` collapse, so a probe value ≥ 10⁶ no longer aliases). -/
+`% 10⁶` collapse, so a probe value ≥ 10⁶ does not alias). -/
 def natFnDigestC (cell : CellId) (f : CellId → Nat) : ℤ :=
   refP2 ((natProbes cell).map (fun c => (f c : ℤ)))
 
@@ -125,7 +125,7 @@ def goodArgsC : CellDestroyArgs := { actor := 0, cell := 0, certHash := 77 }
 
 def goodPostC : RecChainedState := (cellDestroyChainA sC0 0 0 77).getD sC0
 
-/-- THE FORGERY: cell 0 honestly destroyed, BUT bystander cell 1 is ALSO destroyed (lifecycle → 3) — a
+/-- THE FORGERY: cell 0 destroyed, BUT bystander cell 1 is ALSO destroyed (lifecycle → 3) — a
 collateral kill the destroy never authorized. The deathCert/frame/log stay honest, so a projection
 circuit would have passed it; the LIFECYCLE component digest differs (component-1 gate `68 = 69`). -/
 def forgedLifecycleC : CellId → Nat :=

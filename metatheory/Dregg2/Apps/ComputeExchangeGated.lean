@@ -102,7 +102,7 @@ def orderFundNode (cred : Authorization Dg Pf) (buyerCell escrowCell : CellId) (
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** -/
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** -/
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
   show (match execFullAGated s na a with
@@ -128,7 +128,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
   rw [hcred]
   simp
 
-/-- **`cx_forged_rejected` — PROVED (gate teeth #1, preserved).** A market op (order-mint / order-fund /
+/-- **`cx_forged_rejected` (gate teeth #1, preserved).** A market op (order-mint / order-fund /
 ANY action) with a FORGED credential is rejected by the production turn entry, for EVERY pre-state. -/
 theorem cx_forged_rejected (s : RecChainedState) (action : FullActionA) :
     execFullForestG s (cxNode forgedCred action) = none := by
@@ -153,7 +153,7 @@ theorem cx_forged_order_fund_rejected (s : RecChainedState) (buyerCell escrowCel
 def cxNodeRevoked (cred : Authorization Dg Pf) (nul : Nat) (action : FullActionA) : DForest :=
   ⟨ { mkAuth cred [] with credNul := nul }, action, [] ⟩
 
-/-- **`cx_revoked_rejected` — PROVED (gate teeth #2, preserved).** A market op whose credential
+/-- **`cx_revoked_rejected` (gate teeth #2, preserved).** A market op whose credential
 nullifier `nul` is in the COMMITTED revocation registry is REJECTED, for EVERY pre-state and ANY
 action — even with a genuine signature. Revocation reads committed state. -/
 theorem cx_revoked_rejected (s : RecChainedState) (cred : Authorization Dg Pf) (nul : Nat)

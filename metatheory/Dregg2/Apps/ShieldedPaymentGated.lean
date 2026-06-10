@@ -89,7 +89,7 @@ def spendNode (cred : Authorization Dg Pf) (nf : Nat) (spendProof : Bool) : DFor
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED.** -/
+/-- **`execFullForestG_leaf`.** -/
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
   show (match execFullAGated s na a with
@@ -117,7 +117,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §5 — END-USER THEOREM 1: a FORGED credential ⇒ the whole gated op REJECTS. -/
 
-/-- **`sp_forged_rejected` — PROVED (END-USER THEOREM 1).** A shielded op (ANY note action) presented
+/-- **`sp_forged_rejected` (END-USER THEOREM 1).** A shielded op (ANY note action) presented
 with a FORGED credential is rejected by the production turn entry, for EVERY pre-state `s`. -/
 theorem sp_forged_rejected (s : RecChainedState) (action : FullActionA) :
     execFullForestG s (spNode forgedCred action) = none := by
@@ -141,7 +141,7 @@ def mkAuthRevoked (cred : Authorization Dg Pf) (nul : Nat) : DNodeAuth :=
 def spNodeRevoked (cred : Authorization Dg Pf) (nul : Nat) (action : FullActionA) : DForest :=
   ⟨ mkAuthRevoked cred nul, action, [] ⟩
 
-/-- **`sp_revoked_rejected` — PROVED (END-USER THEOREM 2).** A shielded op whose credential nullifier
+/-- **`sp_revoked_rejected` (END-USER THEOREM 2).** A shielded op whose credential nullifier
 `nul` sits in the COMMITTED revocation registry `s.kernel.revoked` is rejected, for EVERY pre-state and
 EVERY (even genuine) credential. A revoked key cannot deposit/spend, no matter how valid its signature.
 (Note: this `nul` is the CREDENTIAL revocation serial in `s.kernel.revoked` — distinct from the note
@@ -168,7 +168,7 @@ theorem spend_runs_noteSpend (s : RecChainedState) (nf : Nat) (spendProof : Bool
 
 /-! ## §8 — END-USER THEOREM 3: a SPEND with a missing/invalid §8 proof ⇒ none (the spending-proof tooth). -/
 
-/-- **`sp_spend_requires_proof` — PROVED (END-USER THEOREM 3, THE §8 SPENDING-PROOF TOOTH).** A spend
+/-- **`sp_spend_requires_proof` (END-USER THEOREM 3, THE §8 SPENDING-PROOF TOOTH).** A spend
 whose §8 STARK spending proof did NOT verify (`spendProof = false`) is rejected by the executor:
 `execFullForestG s (spendNode goodCred nf false) = none` — EVEN with a genuine, non-revoked credential.
 This is exactly the `apply.rs:929` "NoteSpend spending proof verification failed" rejection — now CAPTURED
@@ -182,7 +182,7 @@ theorem sp_spend_requires_proof (s : RecChainedState) (nf : Nat)
 
 /-! ## §9 — END-USER THEOREM 4: a SPEND of an ALREADY-SPENT nullifier ⇒ none (the no-double-spend tooth). -/
 
-/-- **`sp_no_double_spend` — PROVED (END-USER THEOREM 4, THE GENUINE ZCASH ANTI-REPLAY).** A spend of a
+/-- **`sp_no_double_spend` (END-USER THEOREM 4, THE GENUINE ZCASH ANTI-REPLAY).** A spend of a
 note whose nullifier `nf` is ALREADY in the COMMITTED spent set `s.kernel.nullifiers` is rejected by the
 executor: `execFullForestG s (spendNode goodCred nf spendProof) = none` — EVEN with a genuine credential
 AND a valid §8 spending proof. This is the REAL nullifier-set anti-replay `RecordKernel.note_no_double_spend`
@@ -201,7 +201,7 @@ theorem sp_no_double_spend (s : RecChainedState) (nf : Nat) (spendProof : Bool)
 
 /-! ## §10 — END-USER THEOREM 5: a COMMITTED spend RECORDS the nullifier (self-reinforcing anti-replay). -/
 
-/-- **`sp_spend_inserts_nullifier` — PROVED (END-USER THEOREM 5).** A COMMITTED spend actually INSERTS
+/-- **`sp_spend_inserts_nullifier` (END-USER THEOREM 5).** A COMMITTED spend actually INSERTS
 `nf` into the kernel's spent set: `nf ∈ s'.kernel.nullifiers`. Composed with `sp_no_double_spend`, this
 makes the anti-replay self-reinforcing — once a note is spent, the next spend of the same note is
 rejected forever. (Reads off `RecordKernel.note_spend_inserts` through the gate-passing collapse.) -/
@@ -236,14 +236,14 @@ theorem spendNode_delta_zero (cred : Authorization Dg Pf) (nf : Nat) (spendProof
     turnLedgerDeltaAsset ((lowerForestG (spendNode cred nf spendProof)).map Prod.snd) b = 0 := by
   simp [spendNode, spNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`sp_deposit_conserves` — PROVED (END-USER THEOREM 6a).** A COMMITTED note deposit preserves EVERY
+/-- **`sp_deposit_conserves` (END-USER THEOREM 6a).** A COMMITTED note deposit preserves EVERY
 asset's total supply: the commitment-tree insert touches no balance. -/
 theorem sp_deposit_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (cm : Nat)
     (b : AssetId) (h : execFullForestG s (depositNode cred cm) = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   execFullForestG_conserves_per_asset s s' (depositNode cred cm) b h (depositNode_delta_zero cred cm b)
 
-/-- **`sp_spend_conserves` — PROVED (END-USER THEOREM 6b).** A COMMITTED note spend preserves EVERY
+/-- **`sp_spend_conserves` (END-USER THEOREM 6b).** A COMMITTED note spend preserves EVERY
 asset's total supply: the nullifier-set insert touches no balance. -/
 theorem sp_spend_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (nf : Nat)
     (spendProof : Bool) (b : AssetId) (h : execFullForestG s (spendNode cred nf spendProof) = some s') :

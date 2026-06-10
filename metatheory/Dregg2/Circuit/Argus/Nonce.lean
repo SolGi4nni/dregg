@@ -45,10 +45,10 @@ prologue's. There is no divergence — only a correct attribution.
     yield EXACTLY the whole-turn one-tick law. So the carried "divergence" conjunct is re-cast as a
     DERIVED turn-level CONSEQUENCE: the descriptor's `+1` is the prologue's single tick; the body's
     freeze is the body's (zero) contribution; the net is one tick per turn — the correct semantics. The
-    `Bridge*`/`Compile` welds CONSUME this reconciliation, so they no longer carry a divergence — they
+    `Bridge*`/`Compile` welds CONSUME this reconciliation, so they
     carry a `NonceReconciled` fact that the turn model proves correct.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every keystone ⊆ {propext, Classical.choice, Quot.sound}, no `sorryAx`. No `:= True`
 vacuity, no reconcile-by-prose: §2 is a real theorem that the WHOLE-TURN nonce is correct (`+1` exactly),
@@ -208,7 +208,7 @@ per-turn `+1` is the PROLOGUE's (§1). So the descriptor's `+1` does not stack a
 
 `NonceReconciled` packages exactly those two per-effect facts; `nonceReconciled_is_turn_one_tick` proves
 that, composed with the turn's prologue tick, they ARE the whole-turn one-tick law (§1). So a weld that
-concludes `NonceReconciled` is no longer carrying a divergence: it is carrying a fact the turn model
+concludes `NonceReconciled` is carrying a fact the turn model
 proves correct. -/
 
 /-- **`NonceReconciled npre npost nexec`** — the per-effect nonce relationship a weld establishes, named
@@ -281,7 +281,7 @@ theorem descriptor_matches_turn_tick
 /-! ## §3 — NON-VACUITY: a concrete turn whose body freezes the cell nonce while the prologue ticks once.
 
 We reuse the `Turn.lean` §8 fixtures (`ec0`/`eh0`/`es0`, agent 7 nonce 3). A committing `skip` body
-genuinely freezes the agent's cell nonce (the body has no nonce write), and the accepted post-state's
+freezes the agent's cell nonce (the body has no nonce write), and the accepted post-state's
 agent nonce is `4` — pre `3` **+ 1**, exactly once. And a `NonceReconciled` instance over the projected
 nonce `3` is witnessed (descriptor post `4`, executor freeze `3`), so the reconciliation predicate is
 inhabited and `descriptor_exceeds_executor_by_one` gives `4 = 3 + 1`. -/

@@ -128,7 +128,7 @@ theorem keeps_iff_coordinationFree {S : Type u} [MergeState S] (g : Guard S) :
   Iff.rfl
 
 /-- **`keeps_runs_free` — confluence-keeping ⇒ runs coordination-free.** The forward payoff: a
-confluence-keeping guard's concurrent merges genuinely preserve its invariant
+confluence-keeping guard's concurrent merges preserve its invariant
 (`Confluence.admits_sound`), so the cell may run tier-1. The proof an app author is handed when the
 classifier says YES. -/
 theorem keeps_runs_free {S : Type u} [MergeState S] (g : Guard S)
@@ -161,7 +161,7 @@ floor survives. Every join-semilattice projection of practical interest (a coord
 high-water mark, `id` on `ℕ`) is monotone; we state the general theorem and then the canonical
 `ℕ`-mark instance the causal-monotone pole lands on. -/
 
-/-- **`monotone_keeps` — (a) a MONOTONE FLOOR guard ALWAYS keeps confluence (PROVED).** If the
+/-- **`monotone_keeps` — (a) a MONOTONE FLOOR guard ALWAYS keeps confluence.** If the
 projection is monotone under the merge (`x ≤ y → proj x ≤ proj y` — the grow-only / high-water-mark
 property a `monotoneOverForks` guard maintains), the floor invariant `c ≤ proj s` is I-confluent: a
 merge only RAISES the projection (`le_sup_left` + monotonicity), so two branches above the floor merge
@@ -190,7 +190,7 @@ over it — the `balance ≥ 0` / bounded-budget shape. We give the general "bre
 pair exists) and then instantiate it on the canonical two-replica budget, reusing the catalog's proved
 non-confluence. -/
 
-/-- **`bounded_breaks` — (b) a BOUNDED CEILING guard BREAKS confluence given a clashing split (PROVED).**
+/-- **`bounded_breaks` — (b) a BOUNDED CEILING guard BREAKS confluence given a clashing split.**
 If two states `x`, `y` each sit within the ceiling (`proj ≤ c`) but their merge overshoots it
 (`¬ proj (x ⊔ y) ≤ c` — the "two concurrent spends that each fit, but not together" shape), the
 ceiling guard is NOT I-confluent. The cell must SERIALIZE: it forfeits tier-1 and forces ordering
@@ -222,7 +222,7 @@ to the merge-preservation question; that is the dichotomy's only honest answer f
 relation. -/
 
 /-- **`relational_decided_by_merge` — (c) a RELATIONAL guard's confluence is DECIDED by the merge
-(PROVED).** A relational guard keeps confluence IFF its invariant `P` is preserved under the pointwise
+.** A relational guard keeps confluence IFF its invariant `P` is preserved under the pointwise
 join: `(∀ x y, P x → P y → P (x ⊔ y)) ↔ guardKeepsConfluence (relational P)`. The verdict is the
 merge, nothing else — there is no syntactic shortcut for a general cross-slot relation; the app author
 must show (or the executor must check) that the join preserves `P`. -/
@@ -244,7 +244,7 @@ theorem relational_keeps_of_join_preserved {S : Type u} [MergeState S] (P : Inva
 
 The teeth: a concrete MONOTONE guard classified confluence-keeping AND running free; a concrete
 CEILING guard classified NOT AND forced to order (with the constructive clashing pair). The classifier
-is genuinely two-sided, never vacuous. -/
+is two-sided, never vacuous. -/
 
 namespace Witness
 
@@ -258,13 +258,13 @@ A `ℕ` high-water mark with the identity projection and floor `c`: `id` is mono
 /-- The concrete monotone guard: a `ℕ` high-water mark with floor `3` (`id`-projection ≥ 3). -/
 def markGuard : Guard ℕ := Guard.monotone id 3
 
-/-- **`markGuard_keeps` — the monotone guard IS classified confluence-keeping (PROVED).** The
+/-- **`markGuard_keeps` — the monotone guard IS classified confluence-keeping.** The
 identity projection on `ℕ` is monotone (`x ≤ y → x ≤ y`), so the floor `3 ≤ ·` is I-confluent: two
 marks ≥ 3 merge (by `max`) to a mark still ≥ 3. -/
 theorem markGuard_keeps : guardKeepsConfluence markGuard :=
   monotone_keeps id 3 (fun _ _ h => h)
 
-/-- **`markGuard_runs_free` — and therefore RUNS COORDINATION-FREE (PROVED).** The cost verdict for
+/-- **`markGuard_runs_free` — and therefore RUNS COORDINATION-FREE.** The cost verdict for
 the monotone pole: the mark guard is `Tier1Eligible` — partition-tolerant, no consensus. The proof an
 app author gets for a grow-only guard. -/
 theorem markGuard_runs_free : CoordinationFree markGuard :=
@@ -287,7 +287,7 @@ def budgetGuard : Guard Budget := Guard.bounded consumed 1
 def splitX : Budget := fun i => if i = 0 then 1 else 0
 def splitY : Budget := fun i => if i = 0 then 0 else 1
 
-/-- **`budgetGuard_breaks` — the ceiling guard is classified NOT confluence-keeping (PROVED).** The
+/-- **`budgetGuard_breaks` — the ceiling guard is classified NOT confluence-keeping.** The
 clashing split `(1,0)`, `(0,1)`: each consumes ≤ 1, but their merge `(1,1)` consumes 2 > 1. So the
 ceiling invariant is not I-confluent — `bounded_breaks` on the concrete split. -/
 theorem budgetGuard_breaks : ¬ guardKeepsConfluence budgetGuard :=
@@ -296,7 +296,7 @@ theorem budgetGuard_breaks : ¬ guardKeepsConfluence budgetGuard :=
     (show consumed splitY ≤ 1 by decide)
     (show ¬ consumed (splitX ⊔ splitY) ≤ 1 by decide)
 
-/-- **`budgetGuard_forces_ordering` — and therefore FORCES ORDERING (PROVED, with the witness).** The
+/-- **`budgetGuard_forces_ordering` — and therefore FORCES ORDERING (with the witness).** The
 cost verdict for the bounded pole: the budget guard forces serialization (consensus), and the
 constructive clashing pair is exhibited — each branch within budget, their merge over it. The honest
 cost the system reports, with a counterexample, never a bare claim. -/

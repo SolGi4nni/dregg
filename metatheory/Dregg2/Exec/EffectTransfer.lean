@@ -96,7 +96,7 @@ theorem setNonce_nonceOf (cell : Value) (n : Int) : nonceOf (setNonce cell n) = 
   | dig _  => simp [Value.scalar, Value.field, nonceField]
   | sym _  => simp [Value.scalar, Value.field, nonceField]
 
-/-- **Non-interference — PROVED.** Writing the `nonce` field leaves the `balance` read (`balOf`)
+/-- **Non-interference.** Writing the `nonce` field leaves the `balance` read (`balOf`)
 unchanged. The two named fields are distinct (`"nonce" ≠ "balance"`), so a `nonce` write never
 perturbs the conserved balance measure. -/
 theorem setNonce_balOf (cell : Value) (n : Int) : balOf (setNonce cell n) = balOf cell := by
@@ -150,7 +150,7 @@ def bumpNonce (k : RecordKernelState) (src : CellId) : RecordKernelState :=
   { k with cell := fun c => if c = src then setNonce (k.cell c) (nonceOf (k.cell c) + 1)
                             else k.cell c }
 
-/-- **`transferStep` — Transfer's executable semantics (PROVED computable).** Run the gated
+/-- **`transferStep` — Transfer's executable semantics (computable).** Run the gated
 debit/credit via `recCexec`, then advance the source's `nonce` by 1. Fail-closed: any gate failure
 (`recCexec = none`) aborts the whole effect. The `Turn` carries `actor` (authorization), `src`
 (target / debit cell), `dst` (credit cell), `amt` (the transferred amount). -/
@@ -164,7 +164,7 @@ def transferStep (s : RecChainedState) (actor src dst : CellId) (amt : ℤ) :
 def transferTurn (actor src dst : CellId) (amt : ℤ) : Turn :=
   { actor := actor, src := src, dst := dst, amt := amt }
 
-/-- **`transferStep` unfolds through its `recCexec` core — PROVED.** A committed `transferStep`
+/-- **`transferStep` unfolds through its `recCexec` core.** A committed `transferStep`
 factors as a committed `recCexec` (the gated debit/credit, into `s1`) followed by the source nonce
 bump. The bridge every downstream theorem reuses to inherit `recCexec_attests`. -/
 theorem transferStep_factors {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
@@ -186,7 +186,7 @@ from `recCexec`'s `recKExec_conserves` (which IS the `-amt` at `src` / `+amt` at
 `recTransfer_balanceSum_conserve`), then show the metadata nonce bump preserves `recTotal` by the
 NON-INTERFERENCE lemma (`setNonce_balOf`). -/
 
-/-- The nonce bump preserves the conserved `balance` total — PROVED. The metadata move does not
+/-- The nonce bump preserves the conserved `balance` total. The metadata move does not
 perturb the balance domain (every cell's `balOf` is unchanged by a `nonce` write). -/
 theorem bumpNonce_recTotal (k : RecordKernelState) (src : CellId) :
     recTotal (bumpNonce k src) = recTotal k := by
@@ -197,7 +197,7 @@ theorem bumpNonce_recTotal (k : RecordKernelState) (src : CellId) :
   · simp only [hc, if_pos]; exact setNonce_balOf (k.cell src) (nonceOf (k.cell src) + 1)
   · simp only [if_neg hc]
 
-/-- **`transfer_conserves` — two-party balance conservation (PROVED).** A committed `transferStep`
+/-- **`transfer_conserves` — two-party balance conservation.** A committed `transferStep`
 preserves the total `balance` across the live accounts: `recTotal s'.kernel = recTotal s.kernel`.
 The source's `-amt` debit and the destination's `+amt` credit cancel (Σδ = 0, from
 `recKExec_conserves`), and the source's `nonce` bump does not perturb the balance measure
@@ -213,7 +213,7 @@ theorem transfer_conserves {s s' : RecChainedState} {actor src dst : CellId} {am
   simp only []
   rw [bumpNonce_recTotal s1.kernel src, hcore]
 
-/-- **`transfer_two_party_domain` — PROVED (per-domain Σ = 0).** The realized balance-domain
+/-- **`transfer_two_party_domain` (per-domain Σ = 0).** The realized balance-domain
 delta of a committed `transferStep` nets to `0` (`Spec.conservedInDomain Domain.balance`), the
 executable shadow of dregg1's `excess == 0` gate for the `Paired` Transfer effect. -/
 theorem transfer_two_party_domain {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
@@ -227,7 +227,7 @@ theorem transfer_two_party_domain {s s' : RecChainedState} {actor src dst : Cell
 The sender held a cap authorizing the debit — `authorizedB` at the pre-state, inherited VERBATIM
 from `recCexec`'s authority gate. -/
 
-/-- **`transfer_authorized` — PROVED.** A committed `transferStep` implies the source held a cap
+/-- **`transfer_authorized`.** A committed `transferStep` implies the source held a cap
 authorizing the debit (`authorizedB` true at the pre-state). dregg1 Transfer's authorization
 obligation, reused from `recCexec_attests`'s Authority conjunct. -/
 theorem transfer_authorized {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
@@ -236,7 +236,7 @@ theorem transfer_authorized {s s' : RecChainedState} {actor src dst : CellId} {a
   obtain ⟨s1, hc, _⟩ := transferStep_factors h
   exact (recCexec_attests hc).2.1
 
-/-- **`transfer_unauthorized_fails` — PROVED (fail-closed).** If the move is unauthorized at the
+/-- **`transfer_unauthorized_fails` (fail-closed).** If the move is unauthorized at the
 pre-state, no `transferStep` commits. The integrity/confinement core for Transfer. -/
 theorem transfer_unauthorized_fails (s : RecChainedState) (actor src dst : CellId) (amt : ℤ)
     (h : authorizedB s.kernel.caps (transferTurn actor src dst amt) = false) :
@@ -263,7 +263,7 @@ theorem recCexec_caps_eq {s s1 : RecChainedState} {t : Turn} (h : recCexec s t =
       rw [hk] at h; simp only [Option.some.injEq] at h; subst h
       exact (recKExec_frame s.kernel k' t hk).2
 
-/-- **`transfer_caps_unchanged` — PROVED.** A committed `transferStep` leaves the cap table
+/-- **`transfer_caps_unchanged`.** A committed `transferStep` leaves the cap table
 UNTOUCHED (neither the gated debit/credit nor the nonce bump edits `caps`). -/
 theorem transfer_caps_unchanged {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
     (h : transferStep s actor src dst amt = some s') :
@@ -273,7 +273,7 @@ theorem transfer_caps_unchanged {s s' : RecChainedState} {actor src dst : CellId
   simp only [bumpNonce]
   exact recCexec_caps_eq hc
 
-/-- **`transfer_authGraph_unchanged` — PROVED.** A committed `transferStep` leaves the reconstructed
+/-- **`transfer_authGraph_unchanged`.** A committed `transferStep` leaves the reconstructed
 authority `Graph` (`Spec.execGraph`) UNCHANGED — Transfer moves balance/metadata, never connectivity.
 The authority-domain frame condition for Transfer. -/
 theorem transfer_authGraph_unchanged {s s' : RecChainedState} {actor src dst : CellId} {amt : ℤ}
@@ -281,7 +281,7 @@ theorem transfer_authGraph_unchanged {s s' : RecChainedState} {actor src dst : C
     execGraph s'.kernel.caps = execGraph s.kernel.caps := by
   rw [transfer_caps_unchanged h]
 
-/-- **`transfer_metadata` — PROVED (metadata + authority domains).** A committed `transferStep`:
+/-- **`transfer_metadata` (metadata + authority domains).** A committed `transferStep`:
 (a) advances the source's `nonce` by EXACTLY 1 (`nonceOf src' = nonceOf src + 1` — read against the
 post-debit cell, which by `recCexec`/`recTransfer`+`setBalance`/`setNonce` non-interference equals
 the pre-state nonce), and (b) leaves the cap table UNCHANGED. The metadata + authority obligations
@@ -331,7 +331,7 @@ def AbsStep (a a' : AbstractT) : Prop :=
   conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧
     a'.authGraph = a.authGraph
 
-/-- **`transfer_forward_sim` — the refinement (PROVED).** A committed `transferStep` is matched by
+/-- **`transfer_forward_sim` — the refinement.** A committed `transferStep` is matched by
 an abstract `Spec` step: `AbsStep (absT s) (absT s')` holds, AND the committed turn passed the
 abstract authority `Guard`. So every executable Transfer step is an abstract step (forward
 simulation), with the abstract balance total conserved, the authority graph preserved, and the turn
@@ -353,7 +353,7 @@ theorem transfer_forward_sim {s s' : RecChainedState} {actor src dst : CellId} {
     rw [Dregg2.Spec.exec_authz_iff_guard]
     exact transfer_authorized h
 
-/-- **`transfer_refines_recordSquare` — PROVED.** The Transfer step satisfies BOTH static
+/-- **`transfer_refines_recordSquare`.** The Transfer step satisfies BOTH static
 projections of `Spec/ExecRefinement.lean`'s record refinement square — balance-domain conservation
 (`Spec.conservedInDomain Domain.balance` on the realized delta) and the abstract authority `Guard` —
 so `transfer_forward_sim`'s `AbsStep` is exactly that square's bottom edge, instantiated for the
@@ -371,7 +371,7 @@ end ForwardSim
 /-! ## §6 — Axiom-hygiene tripwires.
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
-`native_decide`. Every theorem here is genuinely proved. -/
+`native_decide`. Every theorem here is proved. -/
 
 #assert_axioms setNonce_nonceOf
 #assert_axioms setNonce_balOf

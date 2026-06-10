@@ -36,7 +36,7 @@ The catalog (each is a `MergeState` instance + a classified keystone invariant):
 
 Reuse combinators (written once): `ProductMergeState` /
 `product_iconfluent`, `MapMergeState` / `map_iconfluent` (the pointwise lift), and
-an HONEST note on the n-ary lift (pairwise I-confluence does NOT auto-give n-ary
+an note on the n-ary lift (pairwise I-confluence does NOT auto-give n-ary
 safety — the "three pairwise-fine spends jointly overspend" gap `Confluence.lean`
 flags; the grow-only n-ary lift IS provable and is proved, the bounded case is not).
 
@@ -386,7 +386,7 @@ theorem withinBudget_not_iconfluent :
   exact hno hbad
 
 /-- The constructive escalation witness via `Confluence.nonpairwise_escalation`: a
-clashing pair exists, so consensus is genuinely forced. -/
+clashing pair exists, so consensus is forced. -/
 theorem withinBudget_escalation :
     ∃ x y : Budget, withinBudget 1 x ∧ withinBudget 1 y ∧ ¬ withinBudget 1 (x ⊔ y) :=
   nonpairwise_escalation (withinBudget 1) withinBudget_not_iconfluent
@@ -470,7 +470,7 @@ theorem localConsume_withinQuota {ι : Type u} [DecidableEq ι]
   · subst hj; simpa using hroom
   · simp only [if_neg hj]; exact hb j
 
-/-! ## §7. The n-ary lift — and the HONEST gap.
+/-! ## §7. The n-ary lift — and the gap.
 
 `Confluence.lean` flags that PAIRWISE I-confluence does NOT auto-give n-ary safety
 ("three pairwise-fine spends jointly overspend"). We are explicit about which lifts
@@ -486,7 +486,7 @@ hold and which do not.
   * **The bounded n-ary lift FAILS** — and that failure is exactly §6a. Even
     "pairwise within budget" does not give "n-ary within budget" (`B = 2`, three
     replicas each consuming `1`: every PAIR sums to `2 ≤ 2`, but the triple sums to
-    `3 > 2`). We do NOT claim it; the honest statement is the escalation of §6a/§6b,
+    `3 > 2`). We do NOT claim it; the statement is the escalation of §6a/§6b,
     and the resolution is the quota partition (which IS n-ary-safe — `escrow_refinement`
     is stated over an arbitrary `Fintype ι`, i.e. any arity, precisely because the
     quota discipline is a per-replica UPPER bound that `sup_le` closes at every
@@ -499,7 +499,7 @@ theorem gset_member_nary {α : Type u} [DecidableEq α] (a : α) (F : Finset (GS
   have hle : s ≤ F.sup id := Finset.le_sup (f := id) hsF
   exact hle has
 
-/-- **The bounded case is NOT n-ary-safe — the honest gap, proved.** With `B = 2`
+/-- **The bounded case is NOT n-ary-safe — the gap, proved.** With `B = 2`
 and three replicas each consuming `1`, every pair is within budget but the triple is
 not. This is why the quota partition (§6b), not a pairwise closure, is the correct
 tier-1 escrow. -/
@@ -591,7 +591,7 @@ Each pin elaborates to an error if the keystone depends on any axiom outside
 #assert_axioms withinQuota_implies_global
 #assert_axioms escrow_refinement
 #assert_axioms localConsume_withinQuota
--- §7 n-ary lift + the honest gap
+-- §7 n-ary lift + the gap
 #assert_axioms gset_member_nary
 #assert_axioms bounded_not_nary_safe
 

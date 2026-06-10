@@ -36,7 +36,7 @@ re-proves the faithfulness + anti-ghost over the now-bound root, and connects it
     flip the published commitment (UNSAT). This is the anti-ghost tooth the coverage memos demand, now over
     the touched field. Connected to `refreshDelegationA_full_sound` (`unify_refresh_delegMove_via_full_sound`).
 
-## HONEST BOUNDARY (precise) — what is cutover-ready vs still genuinely blocked
+## BOUNDARY (precise) — what is cutover-ready vs still blocked
 
   * **EffectVM-ROW freeze+tick is FULL + cutover-ready.** The runnable row pins the runtime
     passthrough+nonce-tick EXACTLY as the hand-AIR does, so the descriptor is a faithful drop-in for the
@@ -54,7 +54,7 @@ re-proves the faithfulness + anti-ghost over the now-bound root, and connects it
 
   * `state.RESERVED` not commitment-bound at the EffectVM-row layer (inherited finding); PER-CELL / PER-ROW.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR`;
 the side-table digest CR ONLY as `Exec.SystemRoots`'s `compressNInjective` carrier (the realizable
@@ -388,7 +388,7 @@ record-commitment MODEL, and its full prover-trace column lands when the Rust tr
 EffectVM-row `cap_root` column reads ONLY `caps` — it is independent of `delegations` — so the deleg-move
 is carried by the record-layer `DELEG` root (§7), NOT by any current base-trace state column. -/
 
-/-- **`delegRoot_runtime_column_pending` — the honest boundary, as a theorem.** The EffectVM-row
+/-- **`delegRoot_runtime_column_pending` — the boundary, as a theorem.** The EffectVM-row
 `cap_root` column reads ONLY `caps`; it is independent of `delegations`. Concretely: two kernel states
 with IDENTICAL `caps` (hence identical EffectVM-row `cap_root`) can DIFFER on `delegations` (hence differ
 on the record-layer `DELEG` root). So the `delegations` move is witnessed by the STAGE-3 `DELEG` root
@@ -632,7 +632,7 @@ published `state_commit` now ABSORBS the `system_roots` digest — i.e. the WHOL
 bites on every one of the 8 roots, the `DELEG` root included). The wide RUNNABLE crown pins the per-cell
 freeze+tick (`RefreshCellSpec`) AND the `postRoots` the carrier digests.
 
-⚑ THE TOUCHED ROOT (`DELEG`) — the honest split: refresh is the ONE cap-graph effect that MOVES a
+⚑ THE TOUCHED ROOT (`DELEG`) — the split: refresh is the ONE cap-graph effect that MOVES a
 side-table root (`delegations := refreshDelegationsMap`). The SPECIFIC DELEG transition is connected at
 the RECORD layer (`delegRoot_moves_under_spec` / `unify_refresh_via_full_sound`, §7-8, cited) — and its
 full prover-TRACE column is the pending Rust trace-generator extension (`delegRoot_runtime_column_pending`,

@@ -67,7 +67,7 @@ the installed rights SET is `⊆` the parent's IN-BAND, the FULL order (leg 1); 
 `attenuate` structurally produces that same subset (leg 3). Leg 1 and leg 3 now state the SAME full
 subset — the prior cardinality/subset gap is closed.
 
-## HONEST SURFACE — exactly the cap-family per-cell weld surface (do NOT over-read)
+## SURFACE — exactly the cap-family per-cell weld surface (do NOT over-read)
 
 The circuit side is the audited CLASS-A genuine descriptor `attenuateVmDescriptorGenuine` +
 `attenuateGenuine_sound` (`EffectVmEmitAttenuateA §G`). The weld concludes the SAME per-cell surface the
@@ -81,7 +81,7 @@ function — they agree only up to the cap-root, the `cap_root` connector); the 
 digest-not-function boundary is faithful, stated, not hidden — the SAME boundary the cap-graph keystone
 carries. Cross-row composition is the turn layer (`TurnEmit`), cited not claimed.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both welds ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY via
 the named `Poseidon2SpongeCR` hypothesis (inside the cited anti-ghost `attenuateGenuine_binds_edge`, not
@@ -136,7 +136,7 @@ This is the value the attenuate move would install — its rights-count must not
 def grantedRightsCard (actor : CellId) (idx : Nat) (keep : List Auth) : RecordKernelState → Int :=
   fun k => ((capAuthConferred (attenuate keep (heldCapAt actor idx k))).length : Int)
 
-/-- **`grantedRightsCard_le_held` — the in-band gate ALWAYS admits a genuine attenuation (PROVED).**
+/-- **`grantedRightsCard_le_held` — the in-band gate ALWAYS admits a genuine attenuation.**
 The attenuated cap's conferred-rights COUNT is `≤` the parent's, for EVERY cap shape: the `endpoint`
 filter shrinks the rights list (`List.length_filter_le`); `node`/`null` caps are unchanged. So the
 `checkLe` non-amplification gate (granted-count ≤ held-count) commits on every genuine attenuate — it is
@@ -172,7 +172,7 @@ the attenuate move would install — its rights SET must be `⊆` the parent's (
 def grantedRightsSet (actor : CellId) (idx : Nat) (keep : List Auth) : RecordKernelState → ExecAuth :=
   fun k => confRights (attenuate keep (heldCapAt actor idx k))
 
-/-- **`grantedRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation (PROVED).**
+/-- **`grantedRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation.**
 The attenuated cap's conferred-rights SET is `⊆` (= `≤`) the parent's, over the genuine `ExecAuth =
 Finset Auth` order — directly `attenuate_confRights_le` (the executor's `attenuate` STRUCTURALLY narrows,
 `attenuate_subset` lifted to `Finset`). So the `checkSubset` non-amplification gate (granted ⊆ held)
@@ -245,7 +245,7 @@ upgrade was needed). -/
 
 /-- **`attenuateStmt_admits_iff` — the in-band gate is exactly the FULL non-amplification SUBSET check.**
 The attenuate term COMMITS (its `checkSubset` leg admits) IFF the installed cap's conferred-rights SET is
-`⊆` the parent's, over the genuine `ExecAuth = Finset Auth` order. So the in-band gate genuinely REJECTS
+`⊆` the parent's, over the genuine `ExecAuth = Finset Auth` order. So the in-band gate REJECTS
 (fails closed) a move that is NOT a subset — a strict superset OR an incomparable pair: two-valued,
 non-vacuous, and the FULL partial order (not the cardinality shadow). -/
 theorem attenuateStmt_admits_iff (actor : CellId) (idx : Nat) (keep : List Auth)
@@ -331,7 +331,7 @@ theorem satisfied_gives_capRootHolds (hash : List ℤ → ℤ) (env : VmRowEnv)
 #assert_axioms satisfied_gives_capRootHolds
 
 /-! ## §5 — THE WELD: a satisfying witness of the GENUINE descriptor agrees, per cell, with the
-post-state the IR term's executor interpretation produces — AND genuinely recomputes the bound cap edge.
+post-state the IR term's executor interpretation produces — AND recomputes the bound cap edge.
 
 Unlike `Argus/Compile.lean` (which routes through the central `compileE`), this module welds DIRECTLY
 against the audited class-A `attenuateVmDescriptorGenuine` (the genuine cap-root recompute). The circuit
@@ -350,7 +350,7 @@ Suppose, for the Argus attenuate term `attenuateStmt actor idx keep`:
 
 Then the circuit's pinned post-cell state is the GENUINE `CapCellSpecGenuine`: `post.capRoot` is the
 FORCED in-row recompute `hash[ hash[holder,target,rights,op], pre.capRoot ]` (NOT an opaque parameter —
-the cap-root is genuinely recomputed from the bound cap-edge mutation + the old root), every other column
+the cap-root is recomputed from the bound cap-edge mutation + the old root), every other column
 (balance limbs / nonce / 8 fields / reserved) FROZEN.
 
 PRECISELY (do NOT over-read): the descriptor PINS *which* cap-edge digest (holder/target/RIGHTS/op) landed
@@ -391,7 +391,7 @@ theorem attenuate_compile_sound
 #assert_axioms attenuate_compile_sound
 
 /-! ## §6 — NON-VACUITY: the genuine descriptor is the real class-A circuit; the in-band `checkSubset`
-genuinely admits a valid attenuation and REJECTS a non-subset — INCLUDING an incomparable pair.
+admits a valid attenuation and REJECTS a non-subset — INCLUDING an incomparable pair.
 
 The weld would be worthless if (a) the descriptor were the inert placeholder, or (b) the in-band gate
 admitted everything. Neither: the genuine descriptor carries 12 frame gates + the cap-root recompute (the
@@ -437,7 +437,7 @@ theorem checkSubset_rejects_incomparable_grant :
 /-- **NON-VACUITY (the descriptor is the genuine class-A circuit, not the placeholder).** The genuine
 attenuate descriptor carries 12 frame-freeze gates + 14 transition + 4 boundary = 30 constraints, and 6
 hash-sites (2 cap-root-recompute + 4 GROUP-4 commitment) — the opaque `gCapMove` parameter gate is GONE.
-So `attenuate_compile_sound` is a statement about a REAL genuinely-recomputed cap-root circuit. -/
+So `attenuate_compile_sound` is a statement about a REAL recomputed cap-root circuit. -/
 theorem attenuateVmDescriptorGenuine_nontrivial :
     attenuateVmDescriptorGenuine.constraints.length = 12 + 14 + 4
     ∧ attenuateVmDescriptorGenuine.hashSites.length = 6 := by

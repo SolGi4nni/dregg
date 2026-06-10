@@ -31,7 +31,7 @@ to "the canonical value model", and closes the E4 gap:
         now a THEOREM over executed state;
       - `boundUnshield_preserves_pool_consistency` — a bound-unshield preserves `PoolConsistent`:
         debiting the pool by exactly the spent note's value, while that note leaves the unspent set,
-        keeps the pool-balance ↔ unspent-value equation — the pool can no longer be drained beyond
+        keeps the pool-balance ↔ unspent-value equation — the pool cannot be drained beyond
         its notes;
       - `boundShield_preserves_pool_consistency` — shield (transfer-in ∘ note-create) raises both
         sides by the created note's value;
@@ -159,7 +159,7 @@ E4 closes it. We give notes an `AssetId` (`AssetBoundNote`), formulate the pool 
 whose `bal` tracks the unspent notes' value (`PoolConsistent`), and make the unshield amount a
 GATED function of the spent note (`boundUnshieldK`). Then the binding is a THEOREM
 (`boundUnshield_amount_bound`) and the pool↔notes invariant is PRESERVED
-(`boundUnshield_preserves_pool_consistency`) — the pool can no longer be drained beyond its notes. -/
+(`boundUnshield_preserves_pool_consistency`) — the pool cannot be drained beyond its notes. -/
 
 /-- **An ASSET-TYPED bound note** (E4): `ShieldedValue.BoundNote` (value + blinding + range bits) plus
 the `asset : AssetId` the probe found missing. The pool of `asset` is the pseudo-cell that custodies
@@ -227,10 +227,10 @@ def boundUnshieldK (k : RecordKernelState) (nf : Nat) (spent : AssetBoundNote) (
 
 /-! ### §2.2 — THE E4 KEYSTONE: the amount IS the spent note's value. -/
 
-/-- **`boundUnshield_amount_bound` — THE E4 KEYSTONE (PROVED).** A committed bound-unshield's
+/-- **`boundUnshield_amount_bound` — THE E4 KEYSTONE.** A committed bound-unshield's
 transparent outflow EQUALS the spent note's hidden value: `amt = spent.value`. This is the
 Mina-excess / `balance_change` value-binding obligation the probe found unrepresentable, now a
-THEOREM over executed state — the unshield amount is no longer a free parameter; it is pinned to the
+THEOREM over executed state — the unshield amount is not a free parameter; it is pinned to the
 note that authorizes it. (Trivial from the gate, but the POINT is that the gate exists and commits:
 the binding is now part of the verb's success condition.) -/
 theorem boundUnshield_amount_bound {k k' : RecordKernelState} {nf : Nat} {spent : AssetBoundNote}
@@ -251,7 +251,7 @@ theorem boundUnshield_wrong_amount_rejected (k : RecordKernelState) (nf : Nat)
 
 /-! ### §2.3 — the LEDGER half (rides the probe). -/
 
-/-- **`boundShieldK_preserves_exact` (PROVED — the ledger half).** Bound-shield preserves the
+/-- **`boundShieldK_preserves_exact` (the ledger half).** Bound-shield preserves the
 canonical conserved ledger: the transparent leg is a transfer into the pool cell, the value-bound
 commitment insert is bal/escrow-neutral (`noteCreateBound_recTotalAsset`). -/
 theorem boundShieldK_preserves_exact {vc : ValueCommitment} {k k' : RecordKernelState}
@@ -279,7 +279,7 @@ private theorem noteSpend_measures {k k' : RecordKernelState} {nf : Nat}
     simp only [Option.some.injEq] at h
     subst h; rfl
 
-/-- **`boundUnshieldK_preserves_exact` (PROVED — the ledger half).** Bound-unshield preserves the
+/-- **`boundUnshieldK_preserves_exact` (the ledger half).** Bound-unshield preserves the
 canonical conserved ledger: the nullifier insert is neutral, the pool→user leg is a transfer. (The
 LEDGER survives regardless of binding — what E4 ADDS over the probe is `PoolConsistent` below.) -/
 theorem boundUnshieldK_preserves_exact {k k' : RecordKernelState} {nf : Nat} {spent : AssetBoundNote}
@@ -349,7 +349,7 @@ private theorem boundUnshield_pool_debit {k k' : RecordKernelState} {nf : Nat}
   unfold recTransferBal
   rw [if_pos rfl, if_pos rfl, hbal₁]
 
-/-- **`boundUnshield_preserves_pool_consistency` — THE E4 CUSTODY KEYSTONE (PROVED).** A bound-unshield
+/-- **`boundUnshield_preserves_pool_consistency` — THE E4 CUSTODY KEYSTONE.** A bound-unshield
 that spends `spent` (removing it from the unspent inventory) and withdraws exactly `spent.value`
 PRESERVES `PoolConsistent`. Concretely: the pool of `spent.asset` is debited by `spent.value`
 (`boundUnshield_pool_debit`), and the unspent-value of `spent.asset` drops by `spent.value` because
@@ -381,7 +381,7 @@ theorem boundUnshield_preserves_pool_consistency {k k' : RecordKernelState} {nf 
   · -- another asset: both sides untouched.
     rw [hother a ha, hrem a, if_neg ha, sub_zero, hpre a]
 
-/-- **`boundShield_preserves_pool_consistency` (PROVED — the shield-side custody half).** A
+/-- **`boundShield_preserves_pool_consistency` (the shield-side custody half).** A
 bound-shield that transfers `nt.value` of `nt.asset` into the pool and appends `nt` to the inventory
 PRESERVES `PoolConsistent`: the pool of `nt.asset` is credited by `nt.value` and the unspent-value of
 `nt.asset` rises by `nt.value` (the appended note), other assets untouched. Symmetric to the unshield
@@ -409,7 +409,7 @@ end Pool
 The forward model has NO conservation exemptions: fee-burn and the bridge outflow both die in
 pot-cells. These re-export the probe's pot theorems as the canonical fee/bridge laws. -/
 
-/-- **CANONICAL FEE LAW (PROVED, via `turn_exact_with_burn_pot`).** On a committed turn whose body
+/-- **CANONICAL FEE LAW (via `turn_exact_with_burn_pot`).** On a committed turn whose body
 leaves the four fee cells at their post-prologue balances, crediting the burn residue to a burn-pot
 cell makes the fee QUADRUPLE {agent, proposer, treasury, burn-pot} EXACTLY conserved — `Σδ = 0`, no
 modulo. `conservation_modulo_burn_on_commit` retires: burn = an ordinary move to a pot whose program
@@ -435,7 +435,7 @@ theorem canonical_fee_law (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
   turn_exact_with_burn_pot ctx h st s s' p t pot hadm hbody hp ht hap hat hpt hpa hpp hptt
     hbA hbP hbT hbPot
 
-/-- **CANONICAL BRIDGE LAW (PROVED, via `bridgeFinalizeToPot_preserves_exact`).** Bridge finalize
+/-- **CANONICAL BRIDGE LAW (via `bridgeFinalizeToPot_preserves_exact`).** Bridge finalize
 SETTLES the locked value to a bridge-pot cell (the foreign chain's custody as a cell) instead of
 dropping it off-ledger — preserving the canonical conserved ledger. The bridge-outflow exemption
 (`bridgeFinalize_breaks_exact`, carried as the non-vacuity tooth) is retired. -/

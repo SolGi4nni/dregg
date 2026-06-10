@@ -54,7 +54,7 @@ does not verify constant-product economics.
 (`noncommuting_admits_no_halfBraiding`, §4: a non-commutative resource process is provably no center
 object) and the *rigidity* refutation (`escrow_no_iso_without_rigidity`, §7.3: a non-dualizable object
 gives no projection iso). Commutativity is real content where it IS used — `CommCentralMonoid.mul_comm`
-(§1, the central monoid is genuinely commutative) and centrality (§4). A discrete demo
+(§1, the central monoid is commutative) and centrality (§4). A discrete demo
 (`Intent/Resource.DemoRes`) has only the trivial `M = 𝟙_` (its hom-sets are subsingletons), so its
 `mul_comm` is a `Subsingleton.elim` tautology — VACUOUS. So commutativity is also checked on a
 **non-discrete** witness: the *writer comm-monoid object* `Multiplicative ℕ` in cartesian-monoidal
@@ -63,7 +63,7 @@ its `IsCommMonObj.mul_comm` carries real content (`a * b` and `b * a` are comput
 diagonal). NOTE: the lax monad `escrowMonad_isMonoidal` itself needs no commutativity (see above).
 
 §8 carriers: none (this layer is mathlib-internal
-category theory; the only hypotheses are `MonObj`/`IsCommMonObj` typeclass carriers, never faked laws).
+category theory; the only hypotheses are `MonObj`/`IsCommMonObj` typeclass carriers laws).
 -/
 import Mathlib.CategoryTheory.Monoidal.Center
 import Mathlib.CategoryTheory.Monoidal.CommMon_
@@ -118,7 +118,7 @@ abbrev carrier (M : CommCentralMonoid R) : R := M.X.1
 
 /-- The half-braiding swap of the central monoid: `M.X.2.β U : M.X.1 ⊗ U ≅ U ⊗ M.X.1`. This is the
 isomorphism witnessing that the standing pool commutes *invertibly* past every other resource `U` (the
-no-arb order-independence datum). Projected straight off the `Center R` object — never faked. -/
+no-arb order-independence datum). Projected straight off the `Center R` object. -/
 abbrev swap (M : CommCentralMonoid R) (U : R) : M.X.1 ⊗ U ≅ U ⊗ M.X.1 := M.X.2.β U
 
 /-- The pool multiplication, in `Center R` (paper `mul`): coalesces two pool contributions. Lives in the
@@ -399,7 +399,7 @@ theorem writer_mul_apply (p : WriterObj × WriterObj) : μₘ[WriterObj] p = p.1
 
 /-- **`writer_mul_comm_has_content` — `mul_comm` carries real content (for centrality §1/§4).** The
 writer pool's multiplication is a real binary function on a non-subsingleton type: commutativity equates
-the two orders (`mul (a,b) = mul (b,a)`), yet the *inputs* `(a,b)` and `(b,a)` are genuinely distinct off
+the two orders (`mul (a,b) = mul (b,a)`), yet the *inputs* `(a,b)` and `(b,a)` are distinct off
 the diagonal (the swap is real, not a `Subsingleton.elim` tautology). So `CommCentralMonoid.mul_comm` is
 non-vacuous on a genuine carrier. Witnessed at `a = ofAdd 3, b = ofAdd 5` (under `Multiplicative`, `*` is
 `+`, so both products are `ofAdd 8`). -/
@@ -411,7 +411,7 @@ theorem writer_mul_comm_has_content :
   refine ⟨?_, ?_⟩
   · -- `mul` is `fun p => p.1 * p.2`; commutativity collapses the two orders to one value.
     rw [writer_mul_apply, writer_mul_apply, _root_.mul_comm]
-  · -- the inputs themselves are genuinely distinct (the swap is not the identity): the first
+  · -- the inputs themselves are distinct (the swap is not the identity): the first
     -- components are `ofAdd 3` vs `ofAdd 5`, and `toAdd ∘ ofAdd = id` exposes `3 ≠ 5`.
     intro h
     have h3 : (3 : ℕ) = 5 := congrArg (Multiplicative.toAdd ∘ Prod.fst) h
@@ -438,7 +438,7 @@ example (X Y : Type) :
 
 /-! ## 7. The escrow ↔ ∃ weld (Flake–Laugwitz–Posur Cor 3.11, 3.19/3.20) — the projection formula.
 
-This is the honest weld of the escrow monad `T_M = (–⊗M)` to the adjunction side. The paper's setup is
+This is the weld of the escrow monad `T_M = (–⊗M)` to the adjunction side. The paper's setup is
 an oplax-lax (monoidal) adjunction `G ⊣ R`: setting `X = 1` in the projection-formula morphism gives a
 natural transformation `lproj_{A,1} : A ⊗ R1 ⟶ RG(A)` which (Cor 3.11) is a **morphism of monads** from
 the *tensor monad* `(– ⊗ R1)` (`R1` is a monoid because `R` is lax monoidal) to the *adjunction monad*
@@ -452,13 +452,13 @@ the *tensor monad* `(– ⊗ R1)` (`R1` is a monoid because `R` is lax monoidal)
   `MonadHom` — a `NatTrans` together with the unit-coherence (`app_η`, Lemma 3.9) and
   multiplication-coherence (`app_μ`, Lemma 3.10) squares — NOT a vacuous identity: its source and target
   *endofunctors differ on objects* (`(escrowMonad (𝟙_ C)).obj A = A ⊗ 𝟙_` vs `(RG).obj A = A`), and its
-  component is the right unitor — genuinely the *first projection* `Prod.fst`, not `𝟙`
+  component is the right unitor — the *first projection* `Prod.fst`, not `𝟙`
   (`escrowMonadHom_app_is_projection`).
 
   **§7.2 (Cor 3.20) — `escrowProjectionEquiv`.** Cor 3.19 says `lproj_{B,−}` is a *natural
   isomorphism* whenever `B` has a (left) dual; Cor 3.20 specializes to: if the category is rigid the
   projection formula holds. We make rigidity **load-bearing**, not the vacuous `IsIso (𝟙 _)` dodge: the
-  tensored object is the monoidal unit, which is genuinely *self-dual* (`ExactPairing (𝟙_)(𝟙_)`,
+  tensored object is the monoidal unit, which is *self-dual* (`ExactPairing (𝟙_)(𝟙_)`,
   mathlib's `exactPairingUnit`). That self-dual datum is *exactly* what produces the adjunction
   `tensorRightAdjunction (𝟙_)(𝟙_) : tensorRight (𝟙_ C) ⊣ tensorRight (𝟙_ C)` — an adjunction that
   cannot even be *formed* without the `ExactPairing` instance. Its unit AND counit are isomorphisms,
@@ -466,7 +466,7 @@ the *tensor monad* `(– ⊗ R1)` (`R1` is a monoid because `R` is lax monoidal)
   `ε_ = (ρ_).hom` for the self-dual unit). Hence the escrow endofunctor is an *equivalence*
   (`escrowProjectionEquiv`): the projection formula iso of Cor 3.20.
 
-  **§7.3 (teeth) — `escrow_no_iso_without_rigidity`.** The iso genuinely requires a dual. In the
+  **§7.3 (teeth) — `escrow_no_iso_without_rigidity`.** The iso requires a dual. In the
   *non-rigid* category `Discrete (FreeMonoid (Fin 2))` the generator `gen 0` has **no** dual at all:
   any `ExactPairing (gen 0) Y` would force a coevaluation `𝟙_ ⟶ gen 0 ⊗ Y`, i.e. `1 = of 0 * Y.as`
   in the free monoid (`[] = 0 :: …`), impossible (`gen0_no_exactPairing`). So the
@@ -513,10 +513,10 @@ in the identity-adjunction model). Definitional sanity. -/
 
 end EscrowWeld
 
-/-- **Non-vacuity of `escrowMonadHom` (the projection genuinely discards the pool).** The source monad
+/-- **Non-vacuity of `escrowMonadHom` (the projection discards the pool).** The source monad
 `escrowMonad (𝟙_ Type)` has underlying functor `(– ⊗ 𝟙_) = (– × PUnit)`, which is *not* the identity:
 its objects carry a real (degenerate) pool slot. The monad-morphism component `escrowMonadHom.app Bool`
-is then the right unitor `ρ_Bool : Bool × PUnit ⟶ Bool`, which in `Type` is genuinely the
+is then the right unitor `ρ_Bool : Bool × PUnit ⟶ Bool`, which in `Type` is the
 **first projection** (`Prod.fst`) — it forgets the pool, it is not a formal identity. So
 `escrowMonadHom` connects a non-trivial standing-pool monad to the trivial (identity-adjunction) monad,
 exactly the projection-formula content of Cor 3.11. -/
@@ -557,7 +557,7 @@ the monoidal unit `𝟙_ C` — is *rigid* (self-dual: `ExactPairing (𝟙_)(�
 `tensorRightAdjunction (𝟙_)(𝟙_)` (an adjunction that exists ONLY because of the pairing) has iso unit
 and counit (both derived from the coevaluation/evaluation of that very pairing). This is the projection
 formula iso — NOT the `IsIso (𝟙 _)` dodge: the equivalence's *functor* is `tensorRight (𝟙_)`, which
-moves objects (`A ↦ A ⊗ 𝟙_`), and its invertibility is read off the pairing. That rigidity is genuinely
+moves objects (`A ↦ A ⊗ 𝟙_`), and its invertibility is read off the pairing. That rigidity is
 necessary (not automatic) is what §7.3's teeth establish: for the non-dualizable `gen 0`,
 `tensorRight (gen 0)` is no equivalence at all. -/
 noncomputable def escrowProjectionEquiv : C ≌ C :=
@@ -589,7 +589,7 @@ theorem gen0_no_exactPairing (Y : Discrete (FreeMonoid (Fin 2))) :
 iso. Concretely: the escrow endofunctor `tensorRight (gen 0)` for the *non-dualizable* `gen 0` is **not
 essentially surjective** — it never hits `𝟙_`, because every value `A ⊗ gen 0` has underlying word
 `A.as * of 0`, which ends in `0` and so is never the empty word `1 = 𝟙_.as`. Hence `tensorRight (gen 0)`
-is no equivalence: the projection-formula iso of §7.2 genuinely required the rigidity (`ExactPairing`)
+is no equivalence: the projection-formula iso of §7.2 required the rigidity (`ExactPairing`)
 that `gen 0` lacks (`gen0_no_exactPairing`). -/
 theorem escrow_no_iso_without_rigidity (A : Discrete (FreeMonoid (Fin 2))) :
     ¬ Nonempty ((tensorRight (gen 0)).obj A ≅ 𝟙_ (Discrete (FreeMonoid (Fin 2)))) := by

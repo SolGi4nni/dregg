@@ -54,7 +54,7 @@ the Argus cornerstones; this module derives no collision-resistance.
     canonical receipt of the cell the VERIFIED EXECUTOR produces — the receipt Q the node publishes for
     that turn is the receipt of the by-construction-correct post-state.
 
-## HONEST SCOPE — what CONNECTS vs the named GAP (do NOT over-read)
+## SCOPE — what CONNECTS vs the named GAP (do NOT over-read)
 
   * CONNECTS: the receipt Q (`cellCommit`) of the Argus-produced state is forced equal across the
     circuit-root corner and the executor-receipt-chain corner, on every LIVE cell, under the SAME
@@ -62,13 +62,13 @@ the Argus cornerstones; this module derives no collision-resistance.
   * The NAMED GAP — **the shape-AIR / PI-binding hypothesis** (`hRootPI`/`hSFRootPI`): this weld assumes
     the two roots are pinned to the SAME published value (the cross-AIR public-input binding). That binding
     is the running prover's PI equation, not re-derived here — it is the SAME residual `CommitmentCrossBind
-    §3` carries (the `hPI : RH k = RH k'` shape) and `Argus/Compile.lean`'s HONEST SCOPE flags (the
+    §3` carries (the `hPI : RH k = RH k'` shape) and `Argus/Compile.lean`'s SCOPE flags (the
     descriptor is a single-row AIR; the published-root cross-binding is the turn-composition layer). We
     EXPOSE it as an explicit hypothesis, NOT a `:= True`. The H4-descriptor field-subset widening (MID-4
     R1, tasks #36/#37/#91) is likewise OUT OF SCOPE: we bind to `cellCommit`, the canonical receipt the H4
     chain encodes, exactly as the crown does.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on the keystones ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `:= True`,
 no vacuity-that-typechecks. §4 exhibits the receipt as an OBSERVABLE function (a tampered Argus output
@@ -108,7 +108,7 @@ def argusReceipt (compressN : List ℤ → ℤ) (compress2 : Int → Int → Int
     (st : RecStmt) (k : RecordKernelState) (c : CellId) : Option ℤ :=
   (interp st k).map (fun k' => cellCommit compressN compress2 (restLimbs c) (k'.cell c))
 
-/-- **`argus_receipt_some_iff` (PROVED).** The receipt for `c` is published (`some`) IFF the Argus term
+/-- **`argus_receipt_some_iff`.** The receipt for `c` is published (`some`) IFF the Argus term
 COMMITS, and its value is the `cellCommit` of the produced cell. So the receipt is exactly defined on the
 terms that produce a state — the protocol publishes Q precisely when there is a post-state to receipt. -/
 theorem argus_receipt_some_iff (compressN : List ℤ → ℤ) (compress2 : Int → Int → Int)
@@ -118,7 +118,7 @@ theorem argus_receipt_some_iff (compressN : List ℤ → ℤ) (compress2 : Int �
       = some (cellCommit compressN compress2 (restLimbs c) (k'.cell c)) := by
   unfold argusReceipt; rw [h]; rfl
 
-/-- **`argus_receipt_determined` (PROVED).** Equal Argus outputs ⟹ equal receipt: the receipt Q is a
+/-- **`argus_receipt_determined`.** Equal Argus outputs ⟹ equal receipt: the receipt Q is a
 TOTAL FUNCTION of the state the term produces. This is the "ONE authenticated Q for the produced state"
 the cross-bind layer needs but could not state without the IR — the receipt cannot disagree about a state
 the Argus term pins. (Lifts `CommitmentCrossBind.cellCommit_determined` from an abstract `Value` equality
@@ -147,7 +147,7 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (LH : List Turn → ℤ)
 variable (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
 
-/-- **`argus_circuit_pins_receipt` (PROVED) — the circuit corner.** When the Argus term COMMITS to `k'`
+/-- **`argus_circuit_pins_receipt` — the circuit corner.** When the Argus term COMMITS to `k'`
 and the CIRCUIT root over the produced state `k'` equals a second witnessed state `k₂`'s circuit root
 (the published-root PI binding), the receipt Q the term publishes for any live cell EQUALS `k₂`'s receipt
 of that cell. A satisfying CIRCUIT witness of the published root pins the canonical receipt of the cell the
@@ -173,7 +173,7 @@ theorem argus_circuit_pins_receipt
   -- the receipt the Argus term publishes is the `cellCommit` of the produced cell `k'.cell c`.
   rw [argus_receipt_some_iff compressN compress2 restLimbs st k k' c hexec, hframe c hc]
 
-/-- **`argus_executor_pins_receipt` (PROVED) — the executor receipt-chain corner.** When the Argus term
+/-- **`argus_executor_pins_receipt` — the executor receipt-chain corner.** When the Argus term
 COMMITS to `k'` and the EXECUTOR receipt-chain root over `k'` (the `recSetFieldCommit` that FOLDS the
 append-only receipt log) equals a second witnessed state `k₂`'s executor root, the receipt Q the term
 publishes for any untouched live cell EQUALS `k₂`'s receipt. The executor's RECEIPT-CHAIN-bearing proof
@@ -196,7 +196,7 @@ theorem argus_executor_pins_receipt
       hCmb hCompressN hLeaf hRest hLog k' k₂ cell log log' hSFRootPI
   rw [argus_receipt_some_iff compressN compress2 restLimbs st k k' c hexec, hframe c hc]
 
-/-- **`argus_commits_to_one_receipt` — THE CONNECTION KEYSTONE (PROVED).** The MID-4 close FOR THE IR.
+/-- **`argus_commits_to_one_receipt` — THE CONNECTION KEYSTONE.** The MID-4 close FOR THE IR.
 An Argus term commits to a produced state `k'`; the protocol publishes that turn's receipt Q for cell `c`
 as the canonical commitment of the ACTUAL produced cell, `q := cellCommit … (k'.cell c)`. When BOTH the
 circuit root and the executor receipt-chain root over `k'` are pinned (the cross-AIR / cross-proof
@@ -226,10 +226,10 @@ theorem argus_commits_to_one_receipt
       -- `q` = the receipt of the ARGUS-PRODUCED cell (a real function of `k'`, fixed by the commit):
       ( argusReceipt compressN compress2 restLimbs st k c
             = some (cellCommit compressN compress2 (restLimbs c) (k'.cell c))
-        -- (ii) the CIRCUIT corner forces that produced receipt to `k₂`'s (genuinely derived, not `rfl`):
+        -- (ii) the CIRCUIT corner forces that produced receipt to `k₂`'s (derived, not `rfl`):
         ∧ cellCommit compressN compress2 (restLimbs c) (k'.cell c)
             = cellCommit compressN compress2 (restLimbs c) (k₂.cell c)
-        -- (iii) the EXECUTOR corner forces the SAME produced receipt to `k₂`'s (also genuinely derived):
+        -- (iii) the EXECUTOR corner forces the SAME produced receipt to `k₂`'s (also derived):
         ∧ cellCommit compressN compress2 (restLimbs c) (k'.cell c)
             = cellCommit compressN compress2 (restLimbs c) (k₂.cell c) ) :=
   fun c hcCirc hcExec =>
@@ -247,7 +247,7 @@ theorem argus_commits_to_one_receipt
         = cellCommit compressN compress2 (restLimbs c) (k₂.cell c) := Option.some.inj (hPub.symm.trans hExec)
     ⟨hPub, hCircEq, hExecEq⟩
 
-/-- **`argus_circuit_executor_receipts_agree` (PROVED) — the cross-corner AGREEMENT, stated NON-vacuously.**
+/-- **`argus_circuit_executor_receipts_agree` — the cross-corner AGREEMENT, stated NON-vacuously.**
 The load-bearing joint fact MID-4 said was absent, written so the statement is NOT a `rfl` tautology: on the
 common carrier, if the CIRCUIT corner is forced to pin the produced cell's receipt to a value `qc` (here
 `qc = k₂`'s receipt under `hRootPI`) AND the EXECUTOR receipt-chain corner is forced to pin it to `qe`
@@ -300,7 +300,7 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
 variable (compress2 : Int → Int → Int) (restLimbs : CellId → List ℤ)
 
-/-- **`transfer_receipt_is_executor_receipt` (PROVED).** The receipt the Argus TRANSFER term publishes
+/-- **`transfer_receipt_is_executor_receipt`.** The receipt the Argus TRANSFER term publishes
 for cell `c` IS the canonical `cellCommit` of the cell the VERIFIED EXECUTOR `recKExec` produces — the
 cornerstone (`interp (transferStmt turn) = recKExec`) carried onto the receipt Q. So the protocol's
 published receipt for a transfer turn is the receipt of the by-construction-correct post-state, not of a
@@ -315,7 +315,7 @@ theorem transfer_receipt_is_executor_receipt
     rw [interp_transferStmt_eq_recKExec]; exact hexec
   exact argus_receipt_some_iff compressN compress2 restLimbs (transferStmt turn) k k' c hi
 
-/-- **`transfer_commits_to_one_receipt` — THE TRANSFER WELD (PROVED).** The §2 keystone instantiated at
+/-- **`transfer_commits_to_one_receipt` — THE TRANSFER WELD.** The §2 keystone instantiated at
 the transfer term, with the Argus side routed through the cornerstone so the produced state IS `recKExec k
 turn`. When the CIRCUIT and EXECUTOR receipt-chain roots over the verified executor output are pinned to a
 second witnessed state `k₂`, the receipt the node publishes for the transfer turn coincides with `k₂`'s on
@@ -354,7 +354,7 @@ end Transfer
 
 The weld would be hollow if Q were constant. We REUSE `CommitmentCrossBind`'s realizable INJECTIVE toy
 carriers (`cNC` the positional Horner sponge, `c2C` the leaf combiner, `restLimbsC` a per-cell prefix) and
-exhibit a concrete Argus term whose produced state's receipt is genuinely sensitive — a tampered cell value
+exhibit a concrete Argus term whose produced state's receipt is sensitive — a tampered cell value
 MOVES the receipt — and whose committing run PUBLISHES a receipt. So `argusReceipt` is a real, observable
 function of the Argus output, not a vacuous placeholder. -/
 
@@ -378,7 +378,7 @@ theorem writeCell0_commits (v : Value) :
     interp (writeCell0 v) kR
       = some { kR with cell := fun c => if c ∈ ({0} : Finset CellId) then v else kR.cell c } := rfl
 
-/-- **`writeCell0_receipt_eq` (PROVED).** The receipt `writeCell0 v` publishes for cell `0` IS exactly the
+/-- **`writeCell0_receipt_eq`.** The receipt `writeCell0 v` publishes for cell `0` IS exactly the
 canonical `cellCommit` of the WRITTEN value `v` — the produced cell `0` is `v` (the `setCell {0}` write
 lands). Reduces `argusReceipt` to a clean `cellCommit` of `v`, so observability is a `cellCommit`
 separation (the SAME shape `CommitmentCrossBind`'s anti-ghost `#guard` discharges). -/
@@ -399,7 +399,7 @@ theorem writeCell0_receipt_eq (compressN : List ℤ → ℤ) (compress2 : Int �
 
 -- ANTI-GHOST (the receipt is OBSERVABLE): two Argus terms that write DIFFERENT cell-`0` values publish
 -- DIFFERENT receipts (the canonical `cellCommit` separates the distinct user-field maps). So the receipt Q
--- genuinely depends on the state the Argus term produces — tampering the output MOVES Q.
+-- depends on the state the Argus term produces — tampering the output MOVES Q.
 #guard (decide (argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 50)])) kR 0
               = argusReceipt cNC c2C restLimbsC (writeCell0 (.record [("8", .int 999)])) kR 0) == false)
 
@@ -412,7 +412,7 @@ theorem writeCell0_receipt_eq (compressN : List ℤ → ℤ) (compress2 : Int �
 -- fails closed yields no post-state, hence no receipt.
 #guard ((argusReceipt cNC c2C restLimbsC (RecStmt.guard (fun _ => false)) kR 0).isNone)
 
-/-- **`writeCell0_receipt_binds_tail` — PROVED (the receipt BINDS the produced cell's user-field map).**
+/-- **`writeCell0_receipt_binds_tail` (the receipt BINDS the produced cell's user-field map).**
 Under the realizable canonical-commitment CR carriers (`compressNInjective compressN` + the tail-leaf
 injectivity `listLeafInjective (tailLeaf compress2)`, the SAME set `cellCommit_binds_tail` consumes), if
 two Argus terms `writeCell0 v` / `writeCell0 w` publish the SAME receipt for cell `0`, then the produced
@@ -435,9 +435,9 @@ theorem writeCell0_receipt_binds_tail
       = cellCommit compressN compress2 (restLimbsC 0) w := Option.some.inj h
   exact Dregg2.Exec.RecordCommit.cellCommit_binds_tail compressN compress2 hN hLE (restLimbsC 0) v w hcc
 
-/-- **`writeCell0_receipt_observable` — PROVED (the receipt is NON-CONSTANT on distinct-tail outputs).**
+/-- **`writeCell0_receipt_observable` (the receipt is NON-CONSTANT on distinct-tail outputs).**
 The contrapositive of the binding lemma, instantiated: two Argus terms producing cells whose user-field
-tails DIFFER (`htail`) publish DIFFERENT receipts. So the receipt Q genuinely depends on the state the
+tails DIFFER (`htail`) publish DIFFERENT receipts. So the receipt Q depends on the state the
 Argus term produces — the weld is non-vacuous (Q is not a constant oracle). REUSES the carrier set the
 crown uses; the distinct-tail premise is witnessed below (`#guard`, two records differing at key `"8"`). -/
 theorem writeCell0_receipt_observable

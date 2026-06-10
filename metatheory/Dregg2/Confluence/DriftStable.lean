@@ -110,7 +110,7 @@ theorem locked_driftStable {S : Type u} [MergeState S] {E : Invariant S}
 /-! ### §3a. The lock is non-vacuous — a concrete version-stamped chain.
 
 The lock environment is instantiated over `Fin 1 → ℕ` (a single-writer cell with one monotone
-version slot). On this one-element index, pointwise order is linear, so `lockEnv` genuinely
+version slot). On this one-element index, pointwise order is linear, so `lockEnv`
 forces comparable merges and `locked_driftStable` applies. -/
 
 /-- A single-writer cell: a one-slot G-counter carrying a monotone version. -/
@@ -220,7 +220,7 @@ inductive DriftTier where
   | reservation
   /-- Tier-4: exclusive access cuts drift to a chain — `IConfluentUnder env φ` for a chain `env`. -/
   | locked
-  /-- Tier-5: genuinely non-monotone, no rep — MUST take the atomic equalizer per use. -/
+  /-- Tier-5: non-monotone, no rep — MUST take the atomic equalizer per use. -/
   | coordinated
 deriving DecidableEq, Repr
 
@@ -250,7 +250,7 @@ structure TieredCaveat (S : Type u) [MergeState S] where
 /-- **`tieredCaveat_driftStable`.** For any tiered caveat with tier ≠ `coordinated`, the carried
 witness yields drift-stability: a caveat true at compose-state `x` and drift `Δ` stays true at
 `x ⊔ Δ`. The conclusion follows from the witness: `monotone`/`reservation` carry `IConfluent φ`;
-`locked` carries `IConfluentUnder env φ` (env hypotheses genuinely consumed). For `coordinated`
+`locked` carries `IConfluentUnder env φ` (env hypotheses consumed). For `coordinated`
 no witness exists — the executor takes the equalizer. -/
 theorem tieredCaveat_driftStable {S : Type u} [MergeState S]
     (tc : TieredCaveat S) (hne : tc.tier ≠ .coordinated)
@@ -269,7 +269,7 @@ theorem tieredCaveat_driftStable {S : Type u} [MergeState S]
       rw [htier] at hw
       exact driftStable_composes hw.down hx hΔ
   | locked =>
-      -- witness : PLift (IConfluentUnder env φ) — the env hypotheses are genuinely consumed.
+      -- witness : PLift (IConfluentUnder env φ) — the env hypotheses are consumed.
       have hw : DriftWitness tc.env tc.φ tc.tier := tc.witness
       rw [htier] at hw
       exact driftStable_composes_under hw.down hEx hEΔ hx hΔ
@@ -302,7 +302,7 @@ def lockedTC (v : ℕ) : TieredCaveat VersionCell where
 
 /-- **The locked tiered caveat is drift-stable by dispatch, with a non-monotone `φ`.** Reading the
 `.locked` tag and the carried `IConfluentUnder env φ` witness, the "exactly version `v`" caveat
-(which is NOT unconditionally I-confluent) survives drift under the lock — env hypotheses genuinely
+(which is NOT unconditionally I-confluent) survives drift under the lock — env hypotheses
 consumed. -/
 theorem lockedTC_driftStable (v : ℕ) {x Δstate : VersionCell}
     (hx : x 0 = v) (hΔ : Δstate 0 = v) :

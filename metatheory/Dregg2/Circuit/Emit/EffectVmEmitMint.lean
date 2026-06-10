@@ -25,7 +25,7 @@ CREDIT: post-`bal_lo` = pre PLUS `amount`, the rest of the block frozen, the pos
     `(cell, asset)`, satisfies `CellMintSpec` EXACTLY (the conserved `bal cell a` rises by `amt`; frame
     `0 = 0`). The runnable column transition IS universe-A's `bal`-ledger transition.
 
-## HONEST BOUNDARY
+## BOUNDARY
 
   * PER-CELL / PER-ROW (single ledger entry's credit + commitment binding). Cross-row composition + the
     disclosing log receipt = the turn layer, cited.
@@ -383,7 +383,7 @@ agreement), exactly the shape `transferDescriptor_full_sound` + `…_commit_bind
 The ONE residual — the *global supply total* — is NOT a per-cell state-block column; it is a
 CROSS-CELL / TURN-LEVEL accumulator (mint by definition changes the total supply, which no single cell
 carries). This is the EXACT analogue of transfer's two-sided conservation (sender-debit ⟺
-receiver-credit), which the keystone's HONEST BOUNDARY assigns to the turn-composition layer, NOT the
+receiver-credit), which the keystone's BOUNDARY assigns to the turn-composition layer, NOT the
 per-row theorem. So mint meets the per-cell class-A bar transfer set; the supply-total invariant is a
 turn property (cited, not papered), not a per-cell gap. -/
 

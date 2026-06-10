@@ -12,7 +12,7 @@ adjoint `∀_f`, giving the celebrated triple
 dregg2 knowledge layer is exactly such a hyperdoctrine: `Predicate ⊣ Witness` is the BASE
 tripos, and KNOWLEDGE is a *graded* family of per-agent Lawvere adjunctions `∃_a ⊣ q_a* ⊣ ∀_a`
 along the indistinguishability quotient, with `Kₐ = ∀_a`. This module makes that triple
-concrete and pins what genuinely holds, in TWO clearly-separated parts.
+concrete and pins what holds, in TWO clearly-separated parts.
 
 ## PART A — the POSETAL Set-doctrine SPECIAL CASE (fully provable).
 
@@ -32,7 +32,7 @@ TEETH (this is the *special* case, and we show its edges):
   * Beck–Chevalley FAILS on a concrete NON-pullback finite (`Fin`) square;
   * a NON-monotone reindexing breaks the Galois connection (concretely on `Fin 2`).
 
-## PART B — the FAITHFUL RELATION-FORM (the genuinely deeper, previously-deferred fibre).
+## PART B — the FAITHFUL RELATION-FORM (the deeper, previously-deferred fibre).
 
 The epistemic fibre of `Metatheory.EpistemicConsensus.Frame`: `∀_a = Knows` is a box-modality
 over an indistinguishability relation `R` that, for **Byzantine** agents, is REFLEXIVE but NOT
@@ -46,7 +46,7 @@ and prove the genuine general adjunction `∃_R ⊣ ∀_R` that holds for ANY re
 reflexivity already yields the modal `T`-axioms; and that the graph of a function recovers
 Part A's first adjunction `∃_f ⊣ f*` (so Part B *contains* Part A — it is not a relabeling).
 
-TEETH (why Part B is genuinely DIFFERENT from the clean Part-A triple):
+TEETH (why Part B is DIFFERENT from the clean Part-A triple):
   * for an EQUIVALENCE relation the box `∀_R` is IDEMPOTENT (S4 / a quotient interior) — the
     clean situation in which the further right adjoint (the `kernImage`-style closure) exists;
   * for a merely-REFLEXIVE Byzantine relation, `∀_R ∘ ∀_R ≠ ∀_R` (S4 BREAKS) — proved on a
@@ -108,7 +108,7 @@ theorem reindex_adj_forallAlong (f : α → β) :
     GaloisConnection (reindex f) (forallAlong f) :=
   Set.preimage_kernImage
 
-/-- **The triple, packaged: both adjunctions at once — PROVED.** -/
+/-- **The triple, packaged: both adjunctions at once.** -/
 theorem lawvere_triple (f : α → β) :
     GaloisConnection (existsAlong f) (reindex f) ∧
     GaloisConnection (reindex f) (forallAlong f) :=
@@ -220,12 +220,12 @@ def g : Fin 1 → Fin 1 := fun _ => 0
 def p : Fin 1 → Fin 2 := fun _ => 0
 def q : Fin 1 → Fin 1 := fun _ => 0
 
-/-- The square COMMUTES — so the failure below is genuinely about the *pullback* property, not
+/-- The square COMMUTES — so the failure below is about the *pullback* property, not
 about non-commuting. -/
 theorem square_commutes : ∀ x : Fin 1, f (p x) = g (q x) := by
   intro x; rfl
 
-/-- **Beck–Chevalley FAILS here — PROVED.** With `S := {1} ⊆ Fin 2`:
+/-- **Beck–Chevalley FAILS here.** With `S := {1} ⊆ Fin 2`:
 `reindex g (existsAlong f S) = univ` but `existsAlong q (reindex p S) = ∅`, so they differ. -/
 theorem beck_chevalley_fails :
     reindex g (existsAlong f ({1} : Set (Fin 2))) ≠ existsAlong q (reindex p ({1} : Set (Fin 2))) := by
@@ -243,7 +243,7 @@ theorem beck_chevalley_fails :
   -- hx : (0 : Fin 2) ∈ ({1} : Set (Fin 2))
   exact absurd hx (by decide)
 
-/-- Witness that this square is genuinely NOT a pullback: the pair `(1,0)` is compatible
+/-- Witness that this square is NOT a pullback: the pair `(1,0)` is compatible
 (`f 1 = g 0`) but has no lift in `P` (every `p x = 0 ≠ 1`). So `PullbackSq f g p q` is FALSE —
 the BC hypothesis really is unmet (not merely unverified). -/
 theorem not_pullback : ¬ PullbackSq f g p q := by
@@ -267,7 +267,7 @@ namespace NonMonotone
 for a "reindexing" that fails to preserve order.) -/
 def c : Set (Fin 2) → Set (Fin 2) := fun T => Tᶜ
 
-/-- `c` is NOT monotone — PROVED. `∅ ⊆ univ` but `c univ = ∅ ⊄ univᶜ`... concretely
+/-- `c` is NOT monotone. `∅ ⊆ univ` but `c univ = ∅ ⊄ univᶜ`... concretely
 `c ∅ = univ ⊄ ∅ = c univ` even though `∅ ⊆ univ`. -/
 theorem c_not_monotone : ¬ Monotone c := by
   intro hmono
@@ -276,9 +276,9 @@ theorem c_not_monotone : ¬ Monotone c := by
   rw [c, c, Set.compl_empty, Set.compl_univ] at this
   exact (this (Set.mem_univ (0 : Fin 2)))
 
-/-- **A non-monotone reindexing admits NO Galois left adjoint — PROVED.** If some `l` made
+/-- **A non-monotone reindexing admits NO Galois left adjoint.** If some `l` made
 `GaloisConnection l c` then `c` would be monotone (`gc.monotone_u`); but `c` is not. So the
-connection is impossible — the triple genuinely requires monotone reindexing. -/
+connection is impossible — the triple requires monotone reindexing. -/
 theorem no_galois_with_nonmonotone_reindex :
     ¬ ∃ l : Set (Fin 2) → Set (Fin 2), GaloisConnection l c := by
   rintro ⟨l, gc⟩
@@ -292,7 +292,7 @@ end PartA
 # PART B — the FAITHFUL relation-form: the Byzantine epistemic fibre.
 ##################################################################################
 
-Now the previously-deferred, genuinely-deeper fibre. The carrier is the indistinguishability
+Now the previously-deferred, deeper fibre. The carrier is the indistinguishability
 relation of `Metatheory.EpistemicConsensus.Frame`: `Frame.Knows i φ w = ∀ w', Indist i w' w → φ w'`.
 We work over a single agent's relation `R : Ω → Ω → Prop`. For a Byzantine agent `R` is
 REFLEXIVE (`indist_refl`) but NOT necessarily symmetric or transitive.
@@ -347,10 +347,10 @@ theorem relExists_relForall_counit (R : Ω → Ω → Prop) (T : Set Ω) :
 
 The graph relation `R s w := f s = w` (of an endo-function `f : Ω → Ω`) reduces the relational
 quantifiers to Part A's first adjunction: `∃_R = ∃_f = image f` and `∀_R = f* = preimage f`. So the
-relational fibre is a STRICT generalization of the function fibre — Part B is genuinely a wider
+relational fibre is a STRICT generalization of the function fibre — Part B is a wider
 setting that CONTAINS Part A, not a relabeling of it. -/
 
-/-- **`∃_{graph f}` is `Set.image f` — PROVED.** With `R s w := f s = w`, the relational image is
+/-- **`∃_{graph f}` is `Set.image f`.** With `R s w := f s = w`, the relational image is
 exactly the set image, so Part B's diamond restricts to Part A's `∃_f`. -/
 theorem relExists_graph_eq_image (f : Ω → Ω) (S : Set Ω) :
     relExists (fun s w => f s = w) S = Set.image f S := by
@@ -360,7 +360,7 @@ theorem relExists_graph_eq_image (f : Ω → Ω) (S : Set Ω) :
   · rintro ⟨s, hfs, hsS⟩; exact ⟨s, hsS, hfs⟩
   · rintro ⟨s, hsS, hfs⟩; exact ⟨s, hfs, hsS⟩
 
-/-- **`∀_{graph f}` is `Set.preimage f` — PROVED.** With `R s w := f s = w`, the relational box is
+/-- **`∀_{graph f}` is `Set.preimage f`.** With `R s w := f s = w`, the relational box is
 exactly the preimage `f* = f⁻¹`, recovering Part A's reindexing. Hence `∃_{graph f} ⊣ ∀_{graph f}`
 IS the Part-A adjunction `∃_f ⊣ f*`. -/
 theorem relForall_graph_eq_preimage (f : Ω → Ω) (T : Set Ω) :
@@ -377,13 +377,13 @@ theorem relForall_graph_eq_preimage (f : Ω → Ω) (T : Set Ω) :
 `□φ → φ` (Knows is veridical) and `φ → ◇φ`. These hold for the Byzantine relation too — it is
 still reflexive. -/
 
-/-- **Modal `T` for the box (`□φ → φ`, Knows is veridical) — PROVED from reflexivity.** -/
+/-- **Modal `T` for the box (`□φ → φ`, Knows is veridical) — from reflexivity.** -/
 theorem relForall_le_self {R : Ω → Ω → Prop} (hrefl : ∀ w, R w w) (T : Set Ω) :
     relForall R T ⊆ T := by
   intro s hs
   exact hs s (hrefl s)
 
-/-- **Modal `T` for the diamond (`φ → ◇φ`) — PROVED from reflexivity.** -/
+/-- **Modal `T` for the diamond (`φ → ◇φ`) — from reflexivity.** -/
 theorem self_le_relExists {R : Ω → Ω → Prop} (hrefl : ∀ w, R w w) (S : Set Ω) :
     S ⊆ relExists R S := by
   intro w hw
@@ -404,7 +404,7 @@ quotient (equivalence) is what underwrites the kernImage closure. We show:
 
 These are concrete on `Fin 3`. -/
 
-/-- **For an equivalence relation the box is IDEMPOTENT (S4) — PROVED.** If `R` is reflexive and
+/-- **For an equivalence relation the box is IDEMPOTENT (S4).** If `R` is reflexive and
 transitive then `relForall R (relForall R T) = relForall R T` (an interior operator). This is the
 CLEAN situation — the one Part A's `kernImage` triple lives in. (Symmetry is not even needed for
 idempotence; reflexive+transitive = a *preorder* suffices, which is the S4 frame.) -/
@@ -434,7 +434,7 @@ def R : Fin 3 → Fin 3 → Prop := fun a b =>
 S5 law `EpistemicConsensus` retains), just not an equivalence. -/
 theorem R_refl : ∀ w, R w w := fun _ => Or.inl rfl
 
-/-- `R` is NOT transitive — PROVED. `R 0 1` and `R 1 2` but not `R 0 2`. This is the Byzantine
+/-- `R` is NOT transitive. `R 0 1` and `R 1 2` but not `R 0 2`. This is the Byzantine
 defect: confusion does not chain. -/
 theorem R_not_trans : ¬ (∀ a b c, R a b → R b c → R a c) := by
   intro htrans
@@ -448,7 +448,7 @@ theorem R_not_trans : ¬ (∀ a b c, R a b → R b c → R a c) := by
   · exact absurd h.1 (by decide)
 
 /-- **`R` is a genuine Byzantine indistinguishability relation: reflexive but NOT an equivalence
-(it fails transitivity) — PROVED.** This certifies the teeth below are about the *real* gap
+(it fails transitivity).** This certifies the teeth below are about the *real* gap
 between the equivalence (quotient) fibre of Part A and the Byzantine fibre, not a relabeling. -/
 theorem R_byzantine_not_equiv :
     (∀ w, R w w) ∧ ¬ (∀ a b c, R a b → R b c → R a c) :=
@@ -463,13 +463,13 @@ def U : Set (Fin 3) := {0, 1}
 
 instance : DecidablePred (· ∈ U) := fun w => by unfold U; exact inferInstance
 
-/-- `0 ∈ □U` — PROVED. Every direct successor of `0` (i.e. `0` and `1`) lies in `U = {0,1}`.
+/-- `0 ∈ □U`. Every direct successor of `0` (i.e. `0` and `1`) lies in `U = {0,1}`.
 We unfold the box to the concrete decidable `Fin 3` proposition and `decide`. -/
 theorem zero_mem_box : (0 : Fin 3) ∈ relForall R U := by
   show ∀ w, R 0 w → w ∈ U
   decide
 
-/-- `0 ∉ □□U` — PROVED. The successor `1` of `0` is NOT in `□U` (because `1`'s successor `2 ∉ U`),
+/-- `0 ∉ □□U`. The successor `1` of `0` is NOT in `□U` (because `1`'s successor `2 ∉ U`),
 so `0` cannot have all its successors in `□U`. This is the FAILURE of positive introspection (the
 modal "4" axiom) caused by `R 0 1`, `R 1 2`, `¬ R 0 2` — the Byzantine non-transitivity. -/
 theorem zero_not_mem_box_box : (0 : Fin 3) ∉ relForall R (relForall R U) := by
@@ -482,7 +482,7 @@ theorem zero_not_mem_box_box : (0 : Fin 3) ∉ relForall R (relForall R U) := by
 `□□U = {s | every R-successor of s is in □U}`; but `0`'s successor `1 ∉ □U` (since `1 →R 2 ∉ U`),
 so `0 ∉ □□U`. The two boxes therefore DISAGREE at world `0`. Hence on a reflexive-but-NON-transitive
 (Byzantine) relation the box `∀_R` is NOT idempotent — the clean S4/interior structure of
-`relForall_idem_of_preorder` (and with it Part A's `kernImage` closure) genuinely FAILS. -/
+`relForall_idem_of_preorder` (and with it Part A's `kernImage` closure) FAILS. -/
 theorem box_box_ne_box :
     relForall R (relForall R U) ≠ relForall R U := by
   intro h
@@ -495,7 +495,7 @@ namespace DiamondNotMeet
 
 open S4Breaks (R)
 
-/-- **The diamond `∃_R` FAILS to preserve binary meets for the Byzantine relation — PROVED.**
+/-- **The diamond `∃_R` FAILS to preserve binary meets for the Byzantine relation.**
 
 For Part A, the right-adjoint `kernImage` exists because `f* = preimage` preserves ALL meets AND
 joins (a frame homomorphism). The relational `∃_R` (diamond) is a LEFT adjoint, so it preserves
@@ -511,20 +511,20 @@ def S2 : Set (Fin 3) := {1}
 instance : DecidablePred (· ∈ S1) := fun w => by unfold S1; exact inferInstance
 instance : DecidablePred (· ∈ S2) := fun w => by unfold S2; exact inferInstance
 
-/-- `1 ∈ ∃_R S1 ∩ ∃_R S2` — PROVED. World `1` is reached from `0 ∈ S1` (via `R 0 1`) and from
+/-- `1 ∈ ∃_R S1 ∩ ∃_R S2`. World `1` is reached from `0 ∈ S1` (via `R 0 1`) and from
 `1 ∈ S2` (via `R 1 1`), so it lies in BOTH images, hence in their meet. We unfold the diamond to
 its concrete decidable `Fin 3` form and `decide`. -/
 theorem one_mem_inter_dia : (1 : Fin 3) ∈ relExists R S1 ∩ relExists R S2 := by
   show (∃ s, R s 1 ∧ s ∈ S1) ∧ (∃ s, R s 1 ∧ s ∈ S2)
   decide
 
-/-- `1 ∉ ∃_R (S1 ∩ S2)` — PROVED. `S1 ∩ S2 = {0} ∩ {1} = ∅`, and the diamond of the empty set is
+/-- `1 ∉ ∃_R (S1 ∩ S2)`. `S1 ∩ S2 = {0} ∩ {1} = ∅`, and the diamond of the empty set is
 empty: there is no source `s` for world `1`. -/
 theorem one_not_mem_dia_inter : (1 : Fin 3) ∉ relExists R (S1 ∩ S2) := by
   show ¬ ∃ s, R s 1 ∧ s ∈ S1 ∩ S2
   decide
 
-/-- **The diamond `∃_R` FAILS to preserve binary meets — PROVED.** `1 ∈ ∃_R S1 ∩ ∃_R S2` but
+/-- **The diamond `∃_R` FAILS to preserve binary meets.** `1 ∈ ∃_R S1 ∩ ∃_R S2` but
 `1 ∉ ∃_R (S1 ∩ S2)`, so `∃_R (S1 ∩ S2) ≠ ∃_R S1 ∩ ∃_R S2`: the diamond is not a meet-homomorphism.
 (For Part A's function fibre, by contrast, the right adjoint `kernImage = ∀_f` exists precisely
 because reindexing `f*` preserves all meets and joins — a frame homomorphism. The Byzantine fibre
@@ -544,7 +544,7 @@ pushes `S` FORWARD along `R` (predecessors-in-`S`), whereas `relForall R T = {s 
 quantifies over `R`-SUCCESSORS. So `(relForall R Sᶜ)ᶜ` is the diamond of the CONVERSE relation, not
 of `R` itself. We make this precise: the mate holds with the converse `Rᵒᵖ`, for EVERY relation, and
 we show by concrete teeth that the *naive same-`R*` mate `relExists R = (relForall R ·ᶜ)ᶜ` FAILS on a
-non-symmetric (Byzantine) relation — so the converse is genuinely load-bearing, not cosmetic. -/
+non-symmetric (Byzantine) relation — so the converse is load-bearing, not cosmetic. -/
 
 /-- The CONVERSE / opposite relation `Rᵒᵖ s w := R w s`. -/
 def converse (R : Ω → Ω → Prop) : Ω → Ω → Prop := fun s w => R w s
@@ -597,13 +597,13 @@ instance : DecidablePred (· ∈ Smate) := fun w => by unfold Smate; exact infer
 instance : DecidablePred (· ∈ (Smate : Set (Fin 3))ᶜ) := fun w => by
   unfold Smate; exact inferInstance
 
-/-- `2 ∈ relExists R {1}` — PROVED. World `2` is an `R`-successor of `1 ∈ {1}` (`R 1 2`), so it is
+/-- `2 ∈ relExists R {1}`. World `2` is an `R`-successor of `1 ∈ {1}` (`R 1 2`), so it is
 reached forward along `R`. -/
 theorem two_mem_relExists : (2 : Fin 3) ∈ relExists R Smate := by
   show ∃ s, R s 2 ∧ s ∈ Smate
   decide
 
-/-- `2 ∉ (relForall R {1}ᶜ)ᶜ` — PROVED, equivalently `2 ∈ relForall R {1}ᶜ`. World `2`'s only
+/-- `2 ∉ (relForall R {1}ᶜ)ᶜ`, equivalently `2 ∈ relForall R {1}ᶜ`. World `2`'s only
 `R`-successor is `2` itself, which lies in `{1}ᶜ`; so all of `2`'s successors avoid `{1}`. -/
 theorem two_not_mem_naive_mate :
     (2 : Fin 3) ∉ (relForall R (Smate : Set (Fin 3))ᶜ)ᶜ := by
@@ -612,11 +612,11 @@ theorem two_not_mem_naive_mate :
   show ∀ w, R 2 w → w ∈ (Smate : Set (Fin 3))ᶜ
   decide
 
-/-- **The NAIVE same-`R` mate FAILS — PROVED.** `relExists R S ≠ (relForall R Sᶜ)ᶜ` on the Byzantine
+/-- **The NAIVE same-`R` mate FAILS.** `relExists R S ≠ (relForall R Sᶜ)ᶜ` on the Byzantine
 (non-symmetric) relation with `S = {1}`: world `2` lies in the forward-diamond `◇_R{1}` (it is an
 `R`-successor of `1`) but NOT in `(□_R {1}ᶜ)ᶜ` (which is the diamond of the CONVERSE — predecessors).
 So `◇ = ¬□¬` is only faithful with the converse relation; on a non-symmetric relation the directions
-genuinely differ. (For a SYMMETRIC `R`, `converse R = R` and the two coincide — recovering the
+differ. (For a SYMMETRIC `R`, `converse R = R` and the two coincide — recovering the
 classical S5 mate.) -/
 theorem naive_mate_fails :
     relExists R Smate ≠ (relForall R (Smate : Set (Fin 3))ᶜ)ᶜ := by
@@ -640,7 +640,7 @@ end MateNeedsConverse
 
 The hyperdoctrine projection formula in Part A was the EQUALITY `∃_f(S ∩ f*T) = ∃_f S ∩ T`, available
 because `f*` is a frame homomorphism. For a general relation the literal posetal equality
-`relExists R (S ∩ relForall R T) = relExists R S ∩ T` FAILS (non-functional `R`). What genuinely holds
+`relExists R (S ∩ relForall R T) = relExists R S ∩ T` FAILS (non-functional `R`). What holds
 — and is the honest relational Frobenius / projection LAX law — is the `⊆` half, valid for EVERY `R`:
 
       relExists R (S ∩ relForall R T) ⊆ relExists R S ∩ T.
@@ -684,19 +684,19 @@ def Tf : Set (Fin 3) := {1}
 instance : DecidablePred (· ∈ Sf) := fun w => by unfold Sf; exact inferInstance
 instance : DecidablePred (· ∈ Tf) := fun w => by unfold Tf; exact inferInstance
 
-/-- `1 ∈ relExists R S ∩ T` — PROVED. `1` is an `R`-successor of `0 ∈ S` (`R 0 1`) and `1 ∈ T`. -/
+/-- `1 ∈ relExists R S ∩ T`. `1` is an `R`-successor of `0 ∈ S` (`R 0 1`) and `1 ∈ T`. -/
 theorem one_mem_rhs : (1 : Fin 3) ∈ relExists R Sf ∩ Tf := by
   show (∃ s, R s 1 ∧ s ∈ Sf) ∧ (1 : Fin 3) ∈ Tf
   decide
 
-/-- `1 ∉ relExists R (S ∩ relForall R T)` — PROVED. The only source for `1` in `S = {0}` is `0`, but
+/-- `1 ∉ relExists R (S ∩ relForall R T)`. The only source for `1` in `S = {0}` is `0`, but
 `0 ∉ relForall R T = □_R{1}` (because `0`'s successor `1`... wait, `0` also sees `0 ∉ {1}`), so the
 intersection `S ∩ □_R T` is empty over the relevant source. Hence `1` has no qualifying source. -/
 theorem one_not_mem_lhs : (1 : Fin 3) ∉ relExists R (Sf ∩ relForall R Tf) := by
   show ¬ ∃ s, R s 1 ∧ s ∈ Sf ∧ (∀ w, R s w → w ∈ Tf)
   decide
 
-/-- **The naive posetal Frobenius EQUALITY FAILS — PROVED.**
+/-- **The naive posetal Frobenius EQUALITY FAILS.**
 `relExists R (S ∩ relForall R T) ≠ relExists R S ∩ T` on the Byzantine relation with `S = {0}`,
 `T = {1}`: world `1` is in the RHS (it is an `R`-successor of the `S`-element `0`, and `1 ∈ T`) but
 NOT in the LHS (the only `S`-source `0` does NOT know `T` — `0` also `R`-sees `0 ∉ T`). So the
@@ -759,7 +759,7 @@ theorem relForall_comp (R S : Ω → Ω → Prop) :
     rintro h c ⟨b, hSab, hRbc⟩
     exact h b hSab c hRbc
 
-/-- **Functoriality is genuinely COMPATIBLE with the adjunction: the composite still adjoins.**
+/-- **Functoriality is COMPATIBLE with the adjunction: the composite still adjoins.**
 `relExists (R ∘ S) ⊣ relForall (R ∘ S)`, and by the two functoriality laws this is exactly
 `(relExists R ∘ relExists S) ⊣ (relForall S ∘ relForall R)` — the adjunction of a composite of
 adjunctions, with the right adjoints composing in reverse. A non-vacuous corollary tying §B.1 to
@@ -789,7 +789,7 @@ instance : DecidablePred (· ∈ W) := fun w => by unfold W; exact inferInstance
 worlds, so the functoriality law `relExists_comp` is not asserting an identity on trivial data.
 `relComp R Q` first does `Q` (so `2 → 0` and `2 → 2`), then `R` (so `0 → {0,1}`, `2 → 2`); starting
 from `{2}` this reaches `{0,1,2}`. We verify `1 ∈ relExists (relComp R Q) {2}` — a world UNREACHABLE
-by `R` alone from `{2}` (since `R 2 1` is false), proving the composite is genuinely richer. -/
+by `R` alone from `{2}` (since `R 2 1` is false), proving the composite is richer. -/
 theorem one_mem_comp_dia : (1 : Fin 3) ∈ relExists (relComp R Q) W := by
   show ∃ a, (∃ b, Q a b ∧ R b 1) ∧ a ∈ W
   decide
@@ -801,10 +801,10 @@ theorem one_not_mem_single_dia : (1 : Fin 3) ∉ relExists R W := by
   show ¬ ∃ s, R s 1 ∧ s ∈ W
   decide
 
-/-- **Functoriality VERIFIED on the concrete composite — PROVED.** The general law `relExists_comp`
+/-- **Functoriality VERIFIED on the concrete composite.** The general law `relExists_comp`
 specialized to `R`, `Q`, `{2}` gives `relExists (relComp R Q) {2} = (relExists R ∘ relExists Q) {2}`;
 combined with `one_mem_comp_dia` this exhibits `1` on the right-hand side too, certifying the law is
-non-vacuous on discriminating data (the composite genuinely reaches `1`, unreachable by `R` alone). -/
+non-vacuous on discriminating data (the composite reaches `1`, unreachable by `R` alone). -/
 theorem comp_dia_reaches_one :
     (1 : Fin 3) ∈ (relExists R ∘ relExists Q) W := by
   rw [← relExists_comp]; exact one_mem_comp_dia

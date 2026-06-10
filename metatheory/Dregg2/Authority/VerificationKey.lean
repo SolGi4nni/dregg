@@ -193,7 +193,7 @@ def editProved [CryptoKernel Digest Proof]
 
 omit [AddCommGroup Digest] in
 /-- **`provedState_reset_on_unproven`** — the reset transition (Mina precedent): any non-proof
-state edit drives `provedState` to `false`. The "still circuit-vouched?" bit honestly drops the
+state edit drives `provedState` to `false`. The "still circuit-vouched?" bit drops the
 moment state changes without a proof. -/
 theorem provedState_reset_on_unproven (cell : VkCell Digest) (newStmt : Digest) :
     (editUnproven cell newStmt).provedState = false := rfl

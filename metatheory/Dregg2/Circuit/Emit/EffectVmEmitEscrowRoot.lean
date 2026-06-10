@@ -48,13 +48,13 @@ DETERMINISTIC FUNCTION of (the bound record fields, the old root). No free `step
   * **forced**: two rows with the SAME record fields AND the same old root have the SAME new root
     (`escrowRootAdvance_forced`) — the recompute is a function, not a choice;
   * **anti-ghost on the record**: under CR, two rows publishing the same new root that recompute it
-    honestly have the SAME record-leaf-tuple AND the same old root (`escrowRoot_binds_record`) — so
+ have the SAME record-leaf-tuple AND the same old root (`escrowRoot_binds_record`) — so
     tampering ANY parked-record field (amount/recipient/…) or the old root changes the new root.
 
 This is what the opaque step could never give: the root is now a genuine recomputation of the escrow-list
 digest advance, FORCED by the bound record content (whose amount IS the debited amount).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY as the named
 `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`. Imports are read-only.
@@ -237,7 +237,7 @@ theorem escrowRoot_amount_bound (hash : List ℤ → ℤ) (hCR : Poseidon2Sponge
 
 /-! ## §6 — NON-VACUITY: a concrete recompute fires; a tampered amount moves the root.
 
-We use a concrete injective toy sponge (Horner) so the recompute is genuinely computable and a tampered
+We use a concrete injective toy sponge (Horner) so the recompute is computable and a tampered
 record provably yields a DIFFERENT new root. (The soundness theorems above use the abstract CR sponge; the
 vacuity guard exhibits a realizable witness — the recompute is not vacuously satisfiable.) -/
 

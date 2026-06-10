@@ -148,7 +148,7 @@ def sgmOpAdmitTable (m : StorageMandate) : List (Int × Int) :=
     ([StorageOp.GET, StorageOp.PUT, StorageOp.LIST]).filterMap fun op =>
       if sgmOpAdmitted m op then some (old, op.toInt) else none
 
-/-- **`sgmOpAdmitTable_mem_iff` — PROVED.** The table contains `(old, op.toInt)` (for a valid prior op
+/-- **`sgmOpAdmitTable_mem_iff`.** The table contains `(old, op.toInt)` (for a valid prior op
 code `old ∈ {-1,0,1,2}`) iff the op is admitted by `sgmAdmitM`'s op-leg. -/
 theorem sgmOpAdmitTable_mem_iff (m : StorageMandate) (old : Int) (op : StorageOp)
     (hold : old ∈ [(-1 : Int), 0, 1, 2]) :

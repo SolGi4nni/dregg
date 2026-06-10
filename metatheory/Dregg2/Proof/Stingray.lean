@@ -194,7 +194,7 @@ remaining budget cannot fund both (`a₁ + a₂ > remaining`). We prove BOTH dra
 under EITHER schedule, and — sharper — that the committed verdict is a genuine FUNCTION of the
 adversary's order, so there is NO schedule-agnostic atomic commit (CAP/BEC Thm 3.1). -/
 
-/-- **`overdraw_not_both_commit` (PROVED).** Core no-double-spend: if the two concurrent draws
+/-- **`overdraw_not_both_commit`.** Core no-double-spend: if the two concurrent draws
 cannot BOTH be funded from the slice (`a₁ + a₂ > remaining`), then under EITHER adversary
 schedule at most one of them commits — never both. Whichever fires first debits the slice; the
 other then faces `remaining - (first) < (second)` and is rejected fail-closed. This is the
@@ -281,7 +281,7 @@ theorem d21_two_aborts_one :
     (runDraws potSlice drawAmt drawAmt .d21).c₂ = true := by
   decide
 
-/-- **`stingray_schedules_disagree` (PROVED).** The two adversary schedules produce DIFFERENT
+/-- **`stingray_schedules_disagree`.** The two adversary schedules produce DIFFERENT
 committed outcomes: `d12 ↦ (true,false)`, `d21 ↦ (false,true)`. The adversary's order bit is
 OBSERVABLE in which draw commits. Machine-checked. -/
 theorem stingray_schedules_disagree :
@@ -292,7 +292,7 @@ theorem stingray_schedules_disagree :
      (runDraws potSlice drawAmt drawAmt .d21).c₂) := by
   decide
 
-/-- **KEYSTONE — `stingray_no_concurrent_overspend` (PROVED).** THE HEADLINE.
+/-- **KEYSTONE — `stingray_no_concurrent_overspend`.** THE HEADLINE.
 
 There is NO schedule-agnostic atomic commit for two concurrent draws against one over-subscribed
 Stingray slice: there exists a slice and two draw amounts (the real `f=1` ceiling-2000 slice, two
@@ -325,7 +325,7 @@ is the `card ≤ 1`-shape invariant whose concurrent merge overflows
 (`Confluence.cardLeOne_not_iconfluent`); `nonpairwise_escalation` exhibits the forced clashing
 pair. Two faces (operational schedule-disagreement; lattice merge-violation) of one obstruction. -/
 
-/-- **`stingray_overdraw_must_escalate` (PROVED).** The over-subscribed budget draw is NOT
+/-- **`stingray_overdraw_must_escalate`.** The over-subscribed budget draw is NOT
 I-confluent and is FORCED to escalate to consensus (dregg1's Tier-3 / the `escalate` path in
 `shared_budget.rs`). We exhibit the bridge to the metatheory classifier: the contended budget has
 the `card ≤ 1` shape (at most one over-draw may stand), which is NOT `Confluence.IConfluent`
@@ -345,7 +345,7 @@ hot path the Stingray design exists for), BOTH draws commit under EITHER schedul
 slice is the SAME. So the dichotomy is real: in-budget concurrency is schedule-agnostic
 (no coordination), over-budget concurrency is not (must escalate). -/
 
-/-- **`inbudget_both_commit_schedule_agnostic` (PROVED).** THE SAFE FRAGMENT. When the slice can
+/-- **`inbudget_both_commit_schedule_agnostic`.** THE SAFE FRAGMENT. When the slice can
 fund BOTH draws (`a₁ + a₂ ≤ remaining`), both draws commit under EITHER adversary schedule, and
 the final slice is identical (`spent` advanced by `a₁ + a₂` either way — addition commutes). So
 the committed outcome is schedule-agnostic: the coordination-free hot path the Stingray bounded
@@ -419,18 +419,18 @@ theorem inbudget_both_commit_schedule_agnostic (s : Slice) (a₁ a₂ : Nat)
 The Stingray within-epoch concurrent-spend safety is PROVED on a faithful port of the dregg1
 `BudgetSlice`/`StingrayCounter` semantics, both poles of the dichotomy closed:
 
-  * **Headline impossibility (PROVED):** `stingray_no_concurrent_overspend` — two concurrent
+  * **Headline impossibility:** `stingray_no_concurrent_overspend` — two concurrent
     draws against one OVER-subscribed slice (`a₁ + a₂ > remaining`) cannot both commit, and which
     one does is a genuine function of the adversary's order (`stingray_schedules_disagree`); there
     is NO schedule-agnostic verdict. The budget-layer no-double-spend = the CAP/BEC Thm 3.1
     obstruction on the real bounded counter (`overdraw_not_both_commit` is the ∀-schedule core).
-  * **Safe fragment (PROVED):** `inbudget_both_commit_schedule_agnostic` — when the slice funds
+  * **Safe fragment:** `inbudget_both_commit_schedule_agnostic` — when the slice funds
     both draws (`a₁ + a₂ ≤ remaining`), both commit under EITHER schedule and leave the same
     slice. The coordination-free hot path the Stingray design exists for.
-  * **No-Byzantine soundness floor (PROVED):** `stingray_f0_ceiling_eq_balance` +
+  * **No-Byzantine soundness floor:** `stingray_f0_ceiling_eq_balance` +
     `stingray_no_byzantine_total_le_balance` — at `f=0` the ceiling IS the balance, so a single
     slice can never over-draw the true balance.
-  * **Classifier bridge (PROVED):** `stingray_overdraw_must_escalate` — the over-subscribed case
+  * **Classifier bridge:** `stingray_overdraw_must_escalate` — the over-subscribed case
     is `¬ Confluence.IConfluent` (`cardLeOne_not_iconfluent`), the SAME third judgement dregg2
     uses; escalation to Tier-3 consensus is forced by an exhibited counterexample.
 

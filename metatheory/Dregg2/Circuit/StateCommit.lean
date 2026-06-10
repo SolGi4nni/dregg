@@ -52,7 +52,7 @@ injectivity of a genuine hash, never `axiom`, never sum-injectivity):
   * `AccountsWF k` — NOT crypto: the structural invariant "cells outside `accounts` hold the default".
                      PROVED PRESERVED by `recKExec_preserves_AccountsWF` (a real theorem, not a portal).
 The OLD `FrameDigestBindsCells`/`MovedDigestBindsCells`/`CombineInjective` portals are now PROVED
-LEMMAS (derived from the CR set + `List.map_inj_left` on the sorted carrier), no longer carried.
+LEMMAS (derived from the CR set + `List.map_inj_left` on the sorted carrier), not carried.
 
 PROVED (everything else — crucially THE FRAME): `recKExec_preserves_AccountsWF`, the binding lemmas,
 `transfer_circuit_full_sound`, `transfer_circuit_full_complete`, the anti-ghost rejections
@@ -93,7 +93,7 @@ untouched). It is NOT a crypto assumption — we PROVE `recKExec` preserves it. 
 structural well-formedness the dead-cell frame case rests on. -/
 def AccountsWF (k : RecordKernelState) : Prop := ∀ c, c ∉ k.accounts → k.cell c = default
 
-/-- **THEOREM 1 — `recKExec_preserves_AccountsWF` (PROVED, not portaled).** A committed `recKExec`
+/-- **THEOREM 1 — `recKExec_preserves_AccountsWF` (not portaled).** A committed `recKExec`
 step preserves `AccountsWF`: the account set is unchanged (`recKExec_frame`), and `recTransfer`
 touches only `src`/`dst` (both IN `accounts`), so any cell outside `accounts` keeps its default. -/
 theorem recKExec_preserves_AccountsWF {k k' : RecordKernelState} {t : Turn}
@@ -199,7 +199,7 @@ def recStateCommit (k : RecordKernelState) (t : Turn) : ℤ :=
 /-! ### The collision-resistance carriers + the PROVED binding lemmas.
 
 The carried set is the standard Poseidon CR (each REALIZABLE injectivity of a genuine hash). The
-per-digest binding facts the soundness `funext` consumes are PROVED from it, no longer carried. -/
+per-digest binding facts the soundness `funext` consumes are PROVED from it, not carried. -/
 
 /-- **CR carrier `compressInjective h`** — the 2-to-1 hash `h` is injective: `h a b = h c d ⇒ a=c ∧
 b=d`. The standard collision-resistance of a Poseidon 4-to-1/node compress (REALIZABLE — unlike the
@@ -236,7 +236,7 @@ def RestHashIffFrame : Prop :=
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt)
 
-/-- **LEMMA `MovedDigestBindsCells` (PROVED from `compressInjective compress` + `cellLeafInjective`).**
+/-- **LEMMA `MovedDigestBindsCells` (from `compressInjective compress` + `cellLeafInjective`).**
 Equal moved (2-leaf) node hashes force WHOLE-`Value` equality of BOTH `src` and `dst` leaves. The old
 carried portal is now derived: `compress`-injectivity splits the node hash into its two leaf inputs,
 then `cellLeafInjective` recovers each `Value`. -/
@@ -249,7 +249,7 @@ theorem MovedDigestBindsCells
   obtain ⟨hs, hd⟩ := hC _ _ _ _ h
   exact ⟨hL src _ _ hs, hL dst _ _ hd⟩
 
-/-- **LEMMA `FrameDigestBindsCells` (PROVED from `compressNInjective compressN` + `cellLeafInjective`).**
+/-- **LEMMA `FrameDigestBindsCells` (from `compressNInjective compressN` + `cellLeafInjective`).**
 Equal frame digests over a carrier `S` force per-cell WHOLE-`Value` equality on `S`. The old carried
 portal is now derived: `compressN`-injectivity makes the two sorted-leaf lists equal, `List.map_inj_left`
 on the SAME sorted carrier `S.sort` makes the per-position leaf hashes equal, then `cellLeafInjective`
@@ -270,7 +270,7 @@ theorem FrameDigestBindsCells
   intro c hc
   exact hL c _ _ (hpt c ((Finset.mem_sort (· ≤ ·)).mpr hc))
 
-/-- **LEMMA `CombineInjective` (PROVED — it IS `compressInjective cmb`).** Equal root combinations
+/-- **LEMMA `CombineInjective` (it IS `compressInjective cmb`).** Equal root combinations
 force equal cell-digest AND equal rest-hash children. Kept as a named lemma so the root-binding
 corollary reads cleanly. -/
 theorem CombineInjective (hCmb : compressInjective cmb) (a b c d : ℤ) (h : cmb a b = cmb c d) :
@@ -426,7 +426,7 @@ the moved-balance debit/credit; the three frame EQ gates + the PROVED binding le
 post-state frame; the `AccountsWF` invariant closes the dead-cell case. The post `cell` map is
 reconstructed by `funext` — NOT asserted. Result: `TransferSpec k t k'`. -/
 
-/-- **THEOREM 2 — `transfer_circuit_full_sound` (PROVED, frame RECONSTRUCTED not portaled).** A
+/-- **THEOREM 2 — `transfer_circuit_full_sound` (frame RECONSTRUCTED not portaled).** A
 satisfying full-state witness on the encoded pre/turn/post proves the complete declarative
 `TransferSpec`: every one of the 17 components is pinned. Carries ONLY the standard Poseidon
 collision-resistance set (`compressInjective compress`, `compressNInjective compressN`,
@@ -483,13 +483,13 @@ theorem transfer_circuit_full_sound
   have hframe16 := (hRest k k').mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
     hDE, hDEA⟩ := hframe16
-  -- frame digests equal ⇒ untouched cells equal (PROVED FrameDigestBindsCells).
+  -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells).
   have hfdeq : frameDigest CH compressN k (frameCarrier k t)
       = frameDigest CH compressN k' (frameCarrier k t) :=
     (sframereuse_iff CH RH cmb compress compressN k t k').mp hframegate
   have hcellframe : ∀ c ∈ frameCarrier k t, k.cell c = k'.cell c :=
     FrameDigestBindsCells CH compressN hCompressN hLeaf k k' (frameCarrier k t) hfdeq
-  -- moved digests equal ⇒ both moved leaves equal the spec's debit/credit (PROVED MovedDigestBindsCells).
+  -- moved digests equal ⇒ both moved leaves equal the spec's debit/credit (MovedDigestBindsCells).
   have hmoveq : movedDigest CH compress k'.cell t.src t.dst
       = movedDigest CH compress (recTransfer k.cell t.src t.dst t.amt) t.src t.dst :=
     (smovedbind_iff CH RH cmb compress compressN k t k').mp hmovedgate
@@ -530,7 +530,7 @@ combiner's injectivity gives the headline "the published root BINDS the whole st
 This is the §8-portal binding shape `Spike.EffectVmConstraints2.state_commitment_binds_state` mirrors
 — and the reason `compressInjective cmb` is a required portal. -/
 
-/-- **`recStateCommit_binds` (PROVED via `compressInjective cmb`).** Equal full-state roots (for the
+/-- **`recStateCommit_binds` (via `compressInjective cmb`).** Equal full-state roots (for the
 same turn) force equal cell-digest AND equal rest-hash. With the binding lemmas + `RestHashIffFrame`
 this propagates to the actual state — the published root is a binding commitment. -/
 theorem recStateCommit_binds (hCmb : compressInjective cmb) (k k' : RecordKernelState) (t : Turn)
@@ -544,7 +544,7 @@ theorem recStateCommit_binds (hCmb : compressInjective cmb) (k k' : RecordKernel
 
 /-! ## §6 — FULL-STATE COMPLETENESS: every committed step satisfies `stateCircuit`. -/
 
-/-- **THEOREM 3 — `transfer_circuit_full_complete` (PROVED).** A real committed `recKExec` step (=
+/-- **THEOREM 3 — `transfer_circuit_full_complete`.** A real committed `recKExec` step (=
 `TransferSpec`) yields a satisfying full-state witness: ALL protocol-acceptable Transfer behaviours
 are full-state-circuit-acceptable. The frame gates hold because `k'`'s frame is literally `k`'s
 (`List.map_congr_left` on the untouched cells ⇒ equal ordered leaf lists ⇒ equal sponge, +
@@ -684,7 +684,7 @@ old two-balance `transferCircuit` ACCEPTS but the new full-state `stateCircuit` 
 (so it passes); `stateCircuit`'s frame-reuse gate hashes cell 2's leaf into the untouched-cell sponge
 (so it fails). This is the concrete death of the "pale ghost".
 
-The concrete primitives must be COMPUTABLE and INJECTIVE (so the rejection #guard genuinely fires on
+The concrete primitives must be COMPUTABLE and INJECTIVE (so the rejection #guard fires on
 a binding commitment, not a lossy `+`-fold): `chConcrete = balOf` (the leaf), and INJECTIVE toy
 node/sponge hashes (`compressConcrete` = a range-bounded `a*BIG + b` pairing; `compressNConcrete` = a
 positional Horner fold) over the tiny `#guard` domain. -/
@@ -696,7 +696,7 @@ nullifier length) — unchanged by a pure cell forgery, so the rest-frame gate i
 bites; the FRAME-REUSE gate is. -/
 def rhConcrete : RecordKernelState → ℤ := fun k => (k.accounts.card : ℤ) + (k.nullifiers.length : ℤ)
 /-- Concrete root combiner: an INJECTIVE pairing `a * BIG + b` (BIG larger than any toy child), so
-the root genuinely binds its two children on the `#guard` domain (NOT the lossy `a + b`). -/
+the root binds its two children on the `#guard` domain (NOT the lossy `a + b`). -/
 def cmbConcrete : ℤ → ℤ → ℤ := fun a b => a * 1000000 + b
 /-- Concrete 2-to-1 node hash: an INJECTIVE pairing `a * BIG + b` on the toy domain (NOT `a + b`). -/
 def compressConcrete : ℤ → ℤ → ℤ := fun a b => a * 1000000 + b

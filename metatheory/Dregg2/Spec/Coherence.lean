@@ -81,7 +81,7 @@ def conferralGuard {Statement : Type u} (parent : Cap CellId Rights) :
     Guard (ConferralRequest CellId Rights) Statement :=
   Guard.firstParty (fun child => decide (confers parent child))
 
-/-- **`guard_is_authority_conferral` (PROVED) — conferral IS a `Guard.admits`.**
+/-- **`guard_is_authority_conferral` — conferral IS a `Guard.admits`.**
 For any verify oracle and any witness supply, the `conferralGuard parent` admits the child
 cap `child` *exactly* when `Authority.confers parent child` holds. So the capability graph's
 conferral edge-relation is realized, with no remainder, as a `Spec.Guard` evaluation — the
@@ -105,7 +105,7 @@ theorem conferralGuard_admits_self {Statement Witness : Type u} [Verifiable Stat
     Guard.admits (conferralGuard (Statement := Statement) c) c w = true :=
   (guard_is_authority_conferral c c w).mpr (confers_refl c)
 
-/-- **Companion — `Introduce`'s conferred cap passes its parent's conferral guard (PROVED).**
+/-- **Companion — `Introduce`'s conferred cap passes its parent's conferral guard.**
 The cap an `Introduce` step confers is admitted by the held `parent`'s `conferralGuard`,
 because `gen_conferral_is_attenuation`'s `≤`+same-target IS `confers parent cap`. So the
 graph-dynamics authorization (clause 3) and the guard gate are the same accept. This ties the
@@ -147,7 +147,7 @@ noncomputable def hyperedgeDeltas
     (H : Hyperedge ι T turnId halfEdge) : List Bal :=
   Finset.univ.toList.map (fun i => halfEdge i (H.x i) H.t)
 
-/-- **`conservation_is_hyperedge_cg5` (PROVED) — CG-5 = cross-cell `Σδ = 0`.**
+/-- **`conservation_is_hyperedge_cg5` — CG-5 = cross-cell `Σδ = 0`.**
 A hyperedge's CG-5 conservation (`H.balanced`, the `Finset.univ` aggregate) holds IFF its
 half-edge delta list conserves in the `crossCell` domain (`conservedInDomain Domain.crossCell`,
 the `List.sum = 0` law). The bridge between the two `Σ`s is `Finset.sum_map_toList`; the law
@@ -166,7 +166,7 @@ theorem conservation_is_hyperedge_cg5
   unfold conservedInDomain hyperedgeDeltas
   rw [Finset.sum_map_toList]
 
-/-- **`hyperedge_conserves_crossCell` (PROVED)** — the forward consequence: EVERY hyperedge
+/-- **`hyperedge_conserves_crossCell`** — the forward consequence: EVERY hyperedge
 conserves in the cross-cell domain. Its CG-5 `balanced` field is, by `conservation_is_hyperedge_cg5`,
 exactly `conservedInDomain Domain.crossCell`. So an atomic cross-cell turn is automatically a
 `crossCell`-domain-conserving turn — the conservation law is not a *separate* obligation, it
@@ -215,7 +215,7 @@ structure TerminalRevokesEdge
   /-- the authority graph shrinks: the dying cell's edge is revoked. -/
   revoked  : Revoke G holder cap G'
 
-/-- **`lifecycle_revoke_is_authority_restrictive` (PROVED) — terminal ⇒ restrictive revoke.**
+/-- **`lifecycle_revoke_is_authority_restrictive` — terminal ⇒ restrictive revoke.**
 Given a terminal lifecycle `Transition src s` (so `s` is `destroyed`/`migrated`, carrying its
 `DeathCertificate`/tombstone witness) and the dying cell `holder` actually holding `cap` in
 `G`, the post-graph that *removes* `holder ⟶ cap` is exactly a `Revoke` step, and together
@@ -234,11 +234,11 @@ theorem lifecycle_revoke_is_authority_restrictive
   { terminal := hterm
     revoked  := { holds_cap := hheld, result := rfl } }
 
-/-- **`revoke_is_terminal_restrictive` (PROVED)** — the reverse reading at the act level: a
+/-- **`revoke_is_terminal_restrictive`** — the reverse reading at the act level: a
 `Revoke` step IS a `RestrictAct` (already `Authority.revoke_is_restrict`), and it removes the
 edge it names. We re-expose it here joined to the lifecycle terminal vocabulary: revoking is
 the graph-side terminal move, mirroring `Lifecycle.terminal_rejects_transition` (no inverse).
-The revoked edge is genuinely gone — `removeEdge` denies `holder ⟶ cap`. -/
+The revoked edge is gone — `removeEdge` denies `holder ⟶ cap`. -/
 theorem revoke_is_terminal_restrictive
     {G G' : Graph CellId Rights} {holder : CellId} {cap : Cap CellId Rights}
     (st : Revoke G holder cap G') :
@@ -248,7 +248,7 @@ theorem revoke_is_terminal_restrictive
   rintro ⟨_, hne⟩
   exact hne ⟨rfl, rfl⟩
 
-/-- **`migrated_and_destroyed_both_revoke` (PROVED)** — BOTH terminal shapes correspond to a
+/-- **`migrated_and_destroyed_both_revoke`** — BOTH terminal shapes correspond to a
 revoke. `destroyed cert` and `migrated dest` are the two `isTerminal` states; each, reached
 from `live`, drives the same edge-removal. Confirms the correspondence covers the whole
 terminal pole, not just `destroyed`: migration tombstone and death certificate are two
@@ -283,7 +283,7 @@ variable {Obs AdmissibleTurn TurnId : Type u}
 variable {Bal : Type u} [AddCommMonoid Bal]
 variable {S : Type u} [Confluence.MergeState S]
 
-/-- **`choreography_red_conserves` (PROVED) — red ↦ hyperedge ↦ CG-5, three modules tied.**
+/-- **`choreography_red_conserves` — red ↦ hyperedge ↦ CG-5, three modules tied.**
 A RED (coupled) interaction `P`, given its binding data `b : RedBinding P xs`, realizes a
 `Hyperedge` over its participant cells (`red_projects_to_hyperedge` / `RedBinding.toHyperedge`),
 and that hyperedge conserves in the cross-cell `Domain` (§2). So a red interaction's atomic
@@ -301,7 +301,7 @@ theorem choreography_red_conserves
     conservedInDomain Domain.crossCell (hyperedgeDeltas b.toHyperedge) :=
   hyperedge_conserves_crossCell b.toHyperedge
 
-/-- **`choreography_red_conserves_sum` (PROVED)** — the same fact in raw `Σ = 0` form: a red
+/-- **`choreography_red_conserves_sum`** — the same fact in raw `Σ = 0` form: a red
 interaction's half-edge aggregate over its incidence set vanishes. This is `b.balanced` read
 through §2, exhibiting that "red coupling" and "cross-cell conservation" are one equation. -/
 theorem choreography_red_conserves_sum
@@ -327,7 +327,7 @@ Both `Spec.Guard` and `Spec.Authority` carry a notion of "attenuation":
 
 The thesis: these are ONE meet-narrowing concept across the layer — "attenuation" always
 means *lower-bounding in a meet-semilattice*, never weakening. The cross-link is carried by the
-two theorems below that genuinely touch `Guard` and `confers`:
+two theorems below that touch `Guard` and `confers`:
 
   * **`guard_attenuate_narrows_is_meet`** — the guard side: `admits (g ⊓ c) ⇒ admits g`
     (`Guard.attenuate_narrows`, the predicate-lattice meet);
@@ -341,7 +341,7 @@ residual. (We do NOT restate the bare generic `inf_le_left` separately: a generi
 
 section AttenuationOneOrder
 
-/-- **`guard_attenuate_narrows_is_meet` (PROVED)** — the guard side: attenuating a guard and
+/-- **`guard_attenuate_narrows_is_meet`** — the guard side: attenuating a guard and
 admitting implies the un-attenuated guard already admitted. This is `Guard.attenuate_narrows`,
 exhibited here as the meet law: `admits (g ⊓ c) ⇒ admits g`. Re-stated in the coherence
 module to sit beside the authority `≤` it coincides with. -/
@@ -352,7 +352,7 @@ theorem guard_attenuate_narrows_is_meet
     Guard.admits g req w = true :=
   Guard.attenuate_narrows g c req w h
 
-/-- **`authority_confers_narrows_is_meet` (PROVED)** — the authority side: a conferred child
+/-- **`authority_confers_narrows_is_meet`** — the authority side: a conferred child
 cap is `≤` its parent on the `Rights` meet-semilattice. This is `confers`'s `.2`, i.e. the
 `≤` that `Authority.attenuate_is_restrictive_narrowing` and `Caveat.attenuate_narrows` walk
 down. Stated beside the guard narrowing to make the shared `⊓`/`≤` lower-bounding explicit. -/
@@ -367,7 +367,7 @@ end AttenuationOneOrder
 /-! ## §6 — Axiom-hygiene tripwires.
 
 Every cross-link above depends only on the three standard kernel axioms; the
-pins certify the web is genuinely woven. The independently-built modules carry their own
+pins certify the web is woven. The independently-built modules carry their own
 honest OPENs (`Authority.only_connectivity_begets_connectivity`,
 `Lifecycle.distributed_death_…`, `Hyperedge.hyperedge_sound_bisim`,
 `Choreography`'s operational LTS, `VatBoundary.phi_functorial` under `NonDegenerate`) —
@@ -457,7 +457,7 @@ The §1/§5 theorems (`guard_is_authority_conferral`, `authority_confers_narrows
 PARAMETRIC over any `[SemilatticeInf Rights] [OrderTop Rights]`. Instantiated at the trivial
 `Rights = Unit`, the conferral guard admits EVERY same-target child (the `≤` conjunct is `() ≤ ()`,
 always true) — vacuous. Instantiated at the GENUINE executable rights lattice `Exec.ExecAuth =
-Finset Auth` (ordered by `⊆`), the SAME `conferralGuard` genuinely REJECTS an amplifying child:
+Finset Auth` (ordered by `⊆`), the SAME `conferralGuard` REJECTS an amplifying child:
 `authority_confers_narrows_is_meet`'s `≤` is now a real subset test that can FAIL. This section
 exhibits the tooth, proving the cross-link constrains. -/
 
@@ -490,7 +490,7 @@ theorem coherence_amplify_refused :
   rintro ⟨_, hle⟩
   exact absurd hle (by decide)
 
--- The conferral predicate (§1's `conferralGuard` body) at the genuine lattice genuinely
+-- The conferral predicate (§1's `conferralGuard` body) at the genuine lattice
 -- discriminates: `true` on the sound attenuation, `false` on the amplifying grant (NOT the
 -- `Unit`-collapse where it would admit everything).
 #guard decide (confers (CellId := Label) heldReadCap soundNarrowChild) = true

@@ -269,7 +269,7 @@ finality tier only prunes the order search; it neither creates nor destroys reso
 is the statement that *re-annotating a cell at a different tier does not change the
 conservation verdict*. We make this honest (not `True`) by exhibiting the conservation
 balance as a predicate that takes a `Tier` argument it provably DISCARDS, and proving the
-verdict agrees across two genuinely-distinct tiers. The content lives in: (a) the balance
+verdict agrees across two distinct tiers. The content lives in: (a) the balance
 predicate is `Core.conservation_step`'s equality, which mentions no `Tier`; (b) the
 cross-tier agreement below quantifies over distinct tiers and proves equality of verdicts.
 -/

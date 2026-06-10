@@ -23,7 +23,7 @@ discharges NO portal arm with `True`/trivial on a REACHABLE path: every crypto-f
 out in a concrete kernel ORACLE (`sigVerify`/`verify`/`verifyTag`), and the two non-crypto arms are
 honest — `.unchecked` fail-closes to `false` (rejected, never silently passed) and `.breadstuff`
 is a genuine pure-Lean c-list read whose authority is gated by the VERIFIED `authModeAdmits` WHAT
-leg, not faked. The instance's `soundness` Prop is the CONJUNCTION of the three genuine §8 carriers
+leg. The instance's `soundness` Prop is the CONJUNCTION of the three genuine §8 carriers
 the reachable arms consume (ed25519 `unforgeable` ∧ STARK `extractable` ∧ HMAC `unforgeable`) — so
 the carrier is a real assumption, never `True`.
 
@@ -141,7 +141,7 @@ does not collide with D's (which stays for `#eval`); the cutover selects THIS on
 
 /-- **The REAL §8 `AuthPortal`** (META-FILL E). `credentialValid := portalVerifyReal` routes each
 arm to its own §8 oracle; `soundness` is `ed25519.unforgeable ∧ STARK.extractable ∧ HMAC.unforgeable`
-— the conjunction of the THREE carriers the reachable `Authorization` arms genuinely consume. NO
+— the conjunction of the THREE carriers the reachable `Authorization` arms consume. NO
 arm is `True`-discharged; the carrier is a real assumption (the seL4 floor). -/
 instance realAuthPortal [RealAuthPortal Digest Proof] {Ctx : Type} :
     AuthPortal (Authorization Digest Proof) Ctx where
@@ -152,7 +152,7 @@ instance realAuthPortal [RealAuthPortal Digest Proof] {Ctx : Type} :
       ∧ (RealAuthPortal.hmac (Digest := Digest) (Proof := Proof)).unforgeable
 
 /-- **`realAuthPortal_soundness_is_conjunction` — the carrier IS the three-way conjunction
-(definitional, PROVED).** The production `AuthPortal.soundness` is EXACTLY `ed25519 unforgeable ∧
+(definitional).** The production `AuthPortal.soundness` is EXACTLY `ed25519 unforgeable ∧
 STARK extractable ∧ HMAC unforgeable` — three genuine §8 carriers, never `True`. This pins the TCB
 content: a verifier of this module sees precisely which three primitives are assumed. -/
 theorem realAuthPortal_soundness_is_conjunction [RealAuthPortal Digest Proof] (Ctx : Type) :
@@ -247,9 +247,9 @@ theorem token_arm_sound [R : RealAuthPortal Digest Proof]
 /-! ## §5 — the fail-closed ANCHORS (the anti-vacuity teeth: NO `True` on a reachable path).
 
 `.unchecked` ALWAYS rejects (the §8 anchor); a forged signature/proof/tag at ANY crypto arm
-rejects. These prove the production portal is genuinely fail-closed — never a silent pass. -/
+rejects. These prove the production portal is fail-closed — never a silent pass. -/
 
-/-- **`unchecked_arm_rejects` — the §8 ANCHOR (PROVED, no carrier).** `.unchecked` ALWAYS
+/-- **`unchecked_arm_rejects` — the §8 ANCHOR (no carrier).** `.unchecked` ALWAYS
 fail-closes at the production portal: `portalVerifyReal .unchecked = false`. This is the anti-vacuity
 keystone — the one arm that COULD have been `True`-discharged is instead the rejected anchor (a
 credential-less node never passes the WHO leg). -/
@@ -257,7 +257,7 @@ theorem unchecked_arm_rejects [RealAuthPortal Digest Proof] :
     portalVerifyReal (Digest := Digest) (Proof := Proof) Authorization.unchecked = false :=
   rfl
 
-/-- **`signature_arm_rejects_forged` — a forged signature fails closed (PROVED, no carrier).** If
+/-- **`signature_arm_rejects_forged` — a forged signature fails closed (no carrier).** If
 the ed25519 oracle rejects `(stmt, sig)`, the production portal rejects the `.signature` arm. The
 dispatch faithfully forwards the oracle's verdict — a forged credential is caught. NON-VACUOUS: the
 hypothesis is a real forgery (oracle = false). -/
@@ -267,7 +267,7 @@ theorem signature_arm_rejects_forged [R : RealAuthPortal Digest Proof]
     portalVerifyReal (Authorization.signature stmt sig) = false :=
   hforged
 
-/-- **`token_arm_rejects_forged` — a forged macaroon tail fails closed (PROVED, no carrier).** If
+/-- **`token_arm_rejects_forged` — a forged macaroon tail fails closed (no carrier).** If
 the HMAC compare oracle rejects `(key, sig)`, the production portal rejects the `.token` arm. -/
 theorem token_arm_rejects_forged [R : RealAuthPortal Digest Proof]
     (key : Digest) (sig : Proof)
@@ -275,7 +275,7 @@ theorem token_arm_rejects_forged [R : RealAuthPortal Digest Proof]
     portalVerifyReal (Authorization.token key sig) = false :=
   hforged
 
-/-- **`no_reachable_arm_is_trivially_true` — the ANTI-VACUITY SUMMARY (PROVED).** There EXISTS a
+/-- **`no_reachable_arm_is_trivially_true` — the ANTI-VACUITY SUMMARY.** There EXISTS a
 reachable credential the production portal REJECTS (`.unchecked`), so the portal is NOT the constant
 `fun _ => true`. Combined with the per-arm rejection lemmas, this rules out the audit's worst-case
 "some reachable path discharges with `True`" hole: every arm either routes to a concrete oracle

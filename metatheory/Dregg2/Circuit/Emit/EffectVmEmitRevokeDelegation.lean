@@ -23,14 +23,14 @@ connector (§9).
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the cap-table move is OFF-ROW)
+## What the EffectVM row CANNOT enforce (the boundary — the cap-table move is OFF-ROW)
 
   * the `caps := removeEdgeCaps caps holder t` edge removal — the `cap_root` is the SCALAR digest of the
     cap-table FUNCTION; the runtime hand-AIR FREEZES the on-row `cap_root` column and binds the actual
     removal via `effects_hash` OFF the per-row state block. The removal SOUNDNESS lives in universe-A's
     `revokeDelegationA_full_sound` / `Function.Injective D` (cited via the §connector).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR`;
 cap-table digest ONLY as `Function.Injective D`. No `sorry`/`:= True`/`native_decide`/rfl-bridge.

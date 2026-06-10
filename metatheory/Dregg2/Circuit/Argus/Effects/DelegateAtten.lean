@@ -35,7 +35,7 @@ So a committed `delegateAttenA`:
 
 Unlike the unattenuated `delegate` (where amplification is impossible because the held cap is COPIED,
 so `granted.rights = held.rights` definitionally and a `checkSubset` would gate the vacuous `x ⊆ x`),
-`delegateAttenA` genuinely NARROWS: `attenuate keep c` filters an `endpoint` cap's rights to `keep`, so
+`delegateAttenA` NARROWS: `attenuate keep c` filters an `endpoint` cap's rights to `keep`, so
 `confRights (attenuate keep (heldCapTo …)) ⊆ confRights (heldCapTo …)` over the genuine `Finset Auth`
 order (`attenuate_confRights_le`). This is a REAL, non-trivial subset, and the hint's `checkSubset`
 in-band leg has genuine content here (it is the same finite-lattice gate `Effects/Attenuate.lean`
@@ -88,14 +88,14 @@ SAME as BalanceA): the circuit's `caps` component is a whole-FUNCTION injective 
 (`Function.Injective D` — the realizable Poseidon-CR bar), entering ONLY inside the reused
 `delegateAttenA_full_sound`, never in the welded conclusion's statement.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both keystones (`interp_delegateAttenStmt_eq_recKDelegateAtten`,
 `delegateAtten_compile_sound`) ⊆ {propext, Classical.choice, Quot.sound}; the whole-function-digest
 assumption enters ONLY via the reused `delegateAttenA_full_sound`'s `Function.Injective D` hypothesis,
 not in the welded conclusion. No `sorry`, no `:= True`, no `native_decide`, no `rfl`-posing-as-bridge.
-Non-vacuity teeth (§6): the IR term genuinely INSTALLS the attenuated cap (observable cap-graph write),
-genuinely NARROWS the rights (`{read,write}` → `{read}`, a real subset), genuinely REJECTS an
+Non-vacuity teeth (§6): the IR term INSTALLS the attenuated cap (observable cap-graph write),
+NARROWS the rights (`{read,write}` → `{read}`, a real subset), REJECTS an
 unconnected delegator (fail-closed), the `checkSubset` gate REJECTS a superset AND an incomparable
 pair, and the welded descriptor is the genuine standalone v2 one (its emitted descriptor names
 `dregg-delegateAttenA-v2`), not the inert placeholder. This module OWNS only itself; every import is
@@ -142,7 +142,7 @@ non-amplification, `attenuate_confRights_le`). -/
 def grantedDelRightsSet (del t : Label) (keep : List Auth) : RecordKernelState → ExecAuth :=
   fun k => confRights (attenuate keep (heldCapTo k.caps del t))
 
-/-- **`grantedDelRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation (PROVED).**
+/-- **`grantedDelRightsSet_le_held` — the FULL in-band gate ALWAYS admits a genuine attenuation.**
 The attenuated cap's conferred-rights SET is `⊆` (= `≤`) the parent's, over the genuine `ExecAuth =
 Finset Auth` order — directly `attenuate_confRights_le` (the executor's `attenuate` STRUCTURALLY
 narrows the rights set). So the `checkSubset` non-amplification gate (granted ⊆ held) commits on every
@@ -161,7 +161,7 @@ attenuated cap-graph install.
     `t`-conferring cap). It is the only thing that gates the commit.
   * `checkSubset (granted.rights) (held.rights)` is the in-band FULL non-amplification gate over the
     genuine `Finset Auth ⊆` order: the installed cap's conferred-rights SET ⊆ the parent's. It ALWAYS
-    admits a genuine attenuation (§1), so it does NOT alter the commit set — but it is genuinely
+    admits a genuine attenuation (§1), so it does NOT alter the commit set — but it is
     two-valued (§6), internalizing the FULL `granted.rights ⊆ held.rights` in the IR.
   * `setCaps install` is the EXACT executor cap-table write `grant k.caps rec (attenuate keep (heldCapTo
     k.caps del t))`. -/
@@ -232,7 +232,7 @@ del rec t keep` (`TurnExecutorFull.lean:3802`). The §3 cornerstone is over the 
 `recKDelegateAtten`. The chained layer is exactly `recKDelegateAtten` PLUS the receipt-log prepend
 `authReceipt del :: s.log` — and, crucially, NOTHING ELSE: `recCDelegateAtten` has NO `acceptsEffects`
 dst-liveness pre-gate (unlike the balanceA chained layer). So this lift carries NO side-condition
-hypothesis (the honest contrast with balanceA, where the R1 gate had to be carried). -/
+hypothesis (the contrast with balanceA, where the R1 gate had to be carried). -/
 
 /-- **`interp_delegateAttenStmt_chained` — the IR term's executor, lifted to the chained `execFullA`,
 with NO side-condition.** When the §3 cornerstone commits on the kernel (`interp (delegateAttenStmt …)
@@ -329,8 +329,8 @@ theorem delegateAtten_compile_sound
 
 #assert_axioms delegateAtten_compile_sound
 
-/-! ## §6 — NON-VACUITY: the IR term genuinely INSTALLS the ATTENUATED cap (observable + a REAL subset),
-genuinely REJECTS an unconnected delegator (fail-closed), the in-band `checkSubset` REJECTS a non-subset
+/-! ## §6 — NON-VACUITY: the IR term INSTALLS the ATTENUATED cap (observable + a REAL subset),
+REJECTS an unconnected delegator (fail-closed), the in-band `checkSubset` REJECTS a non-subset
 (superset AND incomparable), and the welded descriptor is the genuine standalone v2 one.
 
 The cornerstone/weld would be hollow if delegateAtten never committed, if the install were a no-op, if
@@ -362,7 +362,7 @@ theorem delegateAttenStmt_installs_attenuated :
 install above is a genuine state change, not a pre-existing edge. -/
 theorem delegateAttenStmt_recipient_empty_before : kDA.caps 2 = [] := by decide
 
-/-- **NON-AMPLIFICATION (the attenuation genuinely NARROWS — a REAL subset, not a copy).** On `kDA` the
+/-- **NON-AMPLIFICATION (the attenuation NARROWS — a REAL subset, not a copy).** On `kDA` the
 GRANTED rights SET (`{read}`, from the `[read]`-attenuation) is a STRICT subset of the HELD rights SET
 (`{read,write}`): the delegateAtten move drops the `write` right. This is the content the unattenuated
 `delegate` lacks (it copies, so granted = held) — here `granted.rights ⊊ held.rights`, the genuine

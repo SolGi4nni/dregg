@@ -22,7 +22,7 @@ deleted" is the carried headline `nameservice_registration_forever`.
 What is genuine (not a relabel of CellCommit):
   * `nameCommit` is injective (`nameCommit_inj`): distinct `(name, owner)` bindings produce distinct
     registry entries — the collision-freedom a name hash requires;
-  * `register`/`transfer`/`revoke` genuinely commit on the executor and grow the registry;
+  * `register`/`transfer`/`revoke` commit on the executor and grow the registry;
   * the headline carries the full audit trail after a transfer — both original and new ownership
     bindings persist (`nameservice_transfer_audit_forever`);
   * `resolveRegistered` is a decidable registry reader with a soundness lemma.
@@ -59,7 +59,7 @@ is its injective abstraction — `nameCommit_inj`.) Using `Nat.pair` (the Cantor
 encoding INJECTIVE, so the registry is collision-free by construction. -/
 def nameCommit (name : Name) (owner : Owner) : Nat := Nat.pair name owner
 
-/-- **`nameCommit_inj` — the registry is COLLISION-FREE (PROVED).** Distinct `(name, owner)` bindings
+/-- **`nameCommit_inj` — the registry is COLLISION-FREE.** Distinct `(name, owner)` bindings
 produce DISTINCT registry commitments: `nameCommit n₁ o₁ = nameCommit n₂ o₂ → n₁ = n₂ ∧ o₁ = o₂`. This
 is the property a name HASH must have — two different name/owner bindings can NEVER alias the same
 registry slot (dregg1's content-addressed `NAME_HASH_SLOT`). It is what makes `nameservice_*_forever`
@@ -122,9 +122,9 @@ where
   binding; `revokedTag o ≠ o` always, so a tombstone never aliases a live binding). -/
   revokedTag (o : Owner) : Owner := o + 1
 
-/-! ### The CORE turns genuinely COMMIT and GROW the registry (non-vacuity teeth). -/
+/-! ### The CORE turns COMMIT and GROW the registry (non-vacuity teeth). -/
 
-/-- **`register_commits` (PROVED) — a registration turn genuinely COMMITS on the real executor.** It
+/-- **`register_commits` — a registration turn COMMITS on the real executor.** It
 is not a never-firing forest: `execFullForestA s (register name owner)` is `some _` for ANY state (a
 fresh commitment publish cannot conflict — `noteCreateA` always commits). So the carried invariant is
 about a registration that actually happened. -/
@@ -135,9 +135,9 @@ theorem register_commits (s : RecChainedState) (name : Name) (owner : Owner) :
     execFullTurnA, execFullA, noteCreateChainA]
   rfl
 
-/-- **`register_publishes` (PROVED) — registration ANCHORS the binding.** After a committed
+/-- **`register_publishes` — registration ANCHORS the binding.** After a committed
 registration, the name→owner binding commitment is IN the registry: `isRegistered s' name owner =
-true`. This is dregg1's *"anchor the name binding in cell state"* — the registration genuinely writes
+true`. This is dregg1's *"anchor the name binding in cell state"* — the registration writes
 the permanent binding (the `noteCreate` conses `nameCommit name owner` onto `commitments`). -/
 theorem register_publishes (s s' : RecChainedState) (name : Name) (owner : Owner)
     (h : execFullForestA s (register name owner) = some s') :
@@ -157,7 +157,7 @@ The load-bearing one-step fact, INHERITED from `Exec/CellCommit.lean` (the 46-ar
 once): a committed `execFullForestA` only GROWS `commitments`, so any binding already registered stays
 registered across one step. We lift it to the nameservice's binding-membership and then carry it. -/
 
-/-- **`nameservice_step_preserves` (PROVED) — the per-forest nameservice frame.** If a name→owner
+/-- **`nameservice_step_preserves` — the per-forest nameservice frame.** If a name→owner
 binding is registered in `s`, then after ANY committed forest `f` it is STILL registered in `s'`:
 `isRegistered s name owner → isRegistered s' name owner`. Discharged from
 `CellCommit.execFullForestA_commitments_grow` (the registry is grow-only across the whole executor) —
@@ -190,7 +190,7 @@ def registerCF (name : Name) (owner : Owner) : ConservingForest :=
 /-- **`nameservice_registration_forever`** — once a name→owner binding is registered in the initial
 state, it is registered at every index of every adversarial trajectory `trajA s sched`. No silent
 deletion, no re-binding. The `Good := isRegistered · name owner = true` instance of
-`livingCellA_carries`, with `nameservice_step_preserves` as the one-step obligation. A genuinely
+`livingCellA_carries`, with `nameservice_step_preserves` as the one-step obligation. A
 non-conservation safety: it reads the registry, never the per-asset measure. -/
 theorem nameservice_registration_forever (s : RecChainedState) (name : Name) (owner : Owner)
     (hinit : isRegistered s name owner = true) (sched : SchedA) :
@@ -207,7 +207,7 @@ theorem nameservice_registration_forever (s : RecChainedState) (name : Name) (ow
       | none    => simp only [Option.getD_none]; exact h)
     s hinit sched
 
-/-- **`resolve_sound_forever` (PROVED) — RESOLVE never silently fails for a registered name.** A
+/-- **`resolve_sound_forever` — RESOLVE never silently fails for a registered name.** A
 corollary in the resolver's own vocabulary: if a name→owner binding is registered initially, then
 `resolveRegistered (trajA s sched n) name owner = some (nameCommit name owner)` at EVERY index — the
 resolve reader returns the binding's entry forever, never `none`. This is the user-facing *"a name,
@@ -226,7 +226,7 @@ crown carries the audit trail: NEITHER binding is ever silently dropped, for all
 makes the "ownership only changes via an authorized transfer, and the change is permanently witnessed"
 property concrete — there is no path that erases the prior owner's registration. -/
 
-/-- **`nameservice_transfer_audit_forever` (PROVED) — a transfer's FULL audit trail persists FOREVER.**
+/-- **`nameservice_transfer_audit_forever` — a transfer's FULL audit trail persists FOREVER.**
 Suppose in state `s` BOTH the original `nameCommit name oldOwner` AND the post-transfer `nameCommit
 name newOwner` bindings are registered (the state immediately after a committed `transfer`). Then BOTH
 bindings remain registered at EVERY index of EVERY trajectory: the ownership history is append-only and
@@ -241,7 +241,7 @@ theorem nameservice_transfer_audit_forever (s : RecChainedState) (name : Name)
   fun n => ⟨ nameservice_registration_forever s name oldOwner hold sched n,
              nameservice_registration_forever s name newOwner hnew sched n ⟩
 
-/-- **`distinct_bindings_dont_alias` (PROVED) — the carry is about THIS binding, not a collision.** For
+/-- **`distinct_bindings_dont_alias` — the carry is about THIS binding, not a collision.** For
 distinct owners (`o₁ ≠ o₂`), the registry entries differ (`nameCommit name o₁ ≠ nameCommit name o₂`,
 from `nameCommit_inj`). So "`name → oldOwner` registered" and "`name → newOwner` registered" are
 GENUINELY DIFFERENT registry facts — the transfer audit trail is two distinct entries, not one entry
@@ -256,7 +256,7 @@ theorem distinct_bindings_dont_alias (name : Name) (o₁ o₂ : Owner) (h : o₁
 A concrete nameservice scene: register `"alice.dregg"` (name `1`) to owner `100`, then transfer it to
 owner `200`. After registration the binding resolves; after transfer BOTH bindings are in the registry
 (the audit trail). The headline `nameservice_registration_forever` is non-vacuous: the registry
-genuinely GROWS (a real `noteCreate` commit), and the carried membership is preserved as it grows. -/
+GROWS (a real `noteCreate` commit), and the carried membership is preserved as it grows. -/
 
 /-- The name `"alice.dregg"` (interned id `1`). -/
 def aliceName : Name := 1

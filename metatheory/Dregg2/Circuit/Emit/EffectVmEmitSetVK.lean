@@ -24,7 +24,7 @@ This v2 reconciles the descriptor to the runtime passthrough+tick.
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary)
+## What the EffectVM row CANNOT enforce (the boundary)
 
   * the actual `verification_key` slot write — it rides `params[0]` + `effects_hash` OFF the per-row
     state block (the hand-AIR carries no VK `field` column). The VK-write soundness lives in universe-A's

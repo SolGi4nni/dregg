@@ -24,14 +24,14 @@ boundaryLastPins`, so the descriptor AGREES with the hand-AIR AND both anti-ghos
     conserved balance untouched);
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the WHOLE point of the effect)
+## What the EffectVM row CANNOT enforce (the boundary — the WHOLE point of the effect)
 
   * the `refusal := 1` audit slot write — a NON-`balance` RECORD field, NO EffectVM column;
   * the self-targeted receipt; the three-leg audit guard.
 
 The refusal SOUNDNESS lives ONLY in `refusalA_full_sound`.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only. No
 `sorry`/`:= True`/`native_decide`. Read-only imports.
@@ -348,7 +348,7 @@ theorem descriptor_agrees_with_executor_refusal
   subst hpre
   rw [hcLo, heLo]
 
-/-! ## §11 — THE HONEST BOUNDARY: the refusal-slot write is OFF-ROW. -/
+/-! ## §11 — THE BOUNDARY: the refusal-slot write is OFF-ROW. -/
 
 /-- **`refusal_offrow_unenforced` — the loud finding.** The frozen-frame intent is invariant under any
 change OUTSIDE the economic block columns (modulo the `s_noop` nonce tick): two rows agreeing on all

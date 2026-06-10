@@ -62,7 +62,7 @@ def subCaveats : List SlotCaveat := [ .monotonicSeq seqSlot ]
 def subNode (cred : Authorization Dg Pf) (value : Int) : DForest :=
   ⟨ mkAuth cred [], .setFieldA subActor subCell seqSlot value, [] ⟩
 
-/-- **`execFullForestG_leaf` — PROVED** (childless gated forest = its single gated node). -/
+/-- **`execFullForestG_leaf`** (childless gated forest = its single gated node). -/
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
   show (match execFullAGated s na a with
@@ -81,14 +81,14 @@ theorem execFullForestG_subNode (s : RecChainedState) (cred : Authorization Dg P
   rw [subNode, execFullForestG_leaf, execFullAGated]
   rfl
 
-/-- **`gateOK_forged_false` — PROVED** (forged credential ⇒ gate `false`, state-independent). -/
+/-- **`gateOK_forged_false`** (forged credential ⇒ gate `false`, state-independent). -/
 theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []) s = false := by
   have hcred : credentialValidG (mkAuth forgedCred []) = false := by decide
   unfold gateOK
   rw [hcred]
   simp
 
-/-- **`sub_forged_rejected` — PROVED (THEOREM 1).** A forged credential ⇒ the consume rejects, ∀ state. -/
+/-- **`sub_forged_rejected` (THEOREM 1).** A forged credential ⇒ the consume rejects, ∀ state. -/
 theorem sub_forged_rejected (s : RecChainedState) (value : Int) :
     execFullForestG s (subNode forgedCred value) = none := by
   rw [subNode]
@@ -102,7 +102,7 @@ theorem sub_good_runs_write (s : RecChainedState) (value : Int)
       = stateStepGuarded s seqSlot subActor subCell value := by
   rw [execFullForestG_subNode, if_pos hgate]
 
-/-- **`sub_nonsequential_rejected` — PROVED (THEOREM 2).** A consume whose write is NOT the next
+/-- **`sub_nonsequential_rejected` (THEOREM 2).** A consume whose write is NOT the next
 sequence number (`caveatsAdmit = false`: a REPLAY of an old seq, or a SKIP ahead) is rejected by the
 executor — `execFullForestG s (subNode goodCred value) = none` — EVEN with a genuine credential. The
 `MonotonicSequence seq` slot caveat fail-closes the write. No replay, no skip. -/
@@ -118,7 +118,7 @@ theorem subNode_delta_zero (cred : Authorization Dg Pf) (value : Int) (b : Asset
     turnLedgerDeltaAsset ((lowerForestG (subNode cred value)).map Prod.snd) b = 0 := by
   simp [subNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`sub_op_conserves` — PROVED (THEOREM 3).** A committed consume preserves every asset's supply. -/
+/-- **`sub_op_conserves` (THEOREM 3).** A committed consume preserves every asset's supply. -/
 theorem sub_op_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (value : Int) (b : AssetId)
     (h : execFullForestG s (subNode cred value) = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=

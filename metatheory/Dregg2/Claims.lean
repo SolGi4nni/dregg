@@ -187,7 +187,7 @@ a returns-7 plugin cannot). -/
 #assert_axioms Dregg2.Spec.Conditional.temporal_face_is_await_discharge
 
 /-! ## §11 — Spec.VatBoundary: Φ the named-lossy caps↔keys functor. `phi_functorial` is
-proved under the explicit `NonDegenerate` hypothesis (the honest residual — not a `sorry`);
+proved under the explicit `NonDegenerate` hypothesis (the residual — not a `sorry`);
 `nonDegenerate_concrete` proves the hypothesis is satisfiable. -/
 #assert_axioms Dregg2.Spec.phi_admits_iff_discharged
 #assert_axioms Dregg2.Spec.cross_vat_needs_witness
@@ -452,7 +452,7 @@ The presentation layer `Dregg2.Widget.*` (the ProofWidgets vocabulary — every 
 executor state / `Lean.collectAxioms` verdicts, NO placeholder data) is built in-corpus via the root
 import but is intentionally NOT pinned here: `Widget.Basic` declares two clearly-named DEMO axioms to
 exhibit the amber "carrier-bounded" trust tier (a synthetic theorem depending on a fake §8 carrier, so
-its badge is genuinely amber). That by-design dependency would correctly fail a clean-triple pin —
+its badge is amber). That by-design dependency would correctly fail a clean-triple pin —
 exactly as the §8-resting keystones are (correctly) omitted from this ledger. -/
 #assert_axioms Dregg2.Verify.logMono_via_tactics
 #assert_axioms Dregg2.Verify.revoked_grow_via_tactics

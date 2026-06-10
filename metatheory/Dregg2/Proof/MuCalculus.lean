@@ -38,7 +38,7 @@ with no `sorry`, so we take it; the negation-of-atoms escape hatch loses nothing
   — EACH CTL operator equals the denotation of its standard μ/ν-formula. The headline: the syntactic
   μ-calculus is faithful to the semantic CTL of `Proof/CTL.lean`.
 
-## TEETH (non-vacuity — the embedding is faithful, and the μ/ν alternation genuinely matters)
+## TEETH (non-vacuity — the embedding is faithful, and the μ/ν alternation matters)
 
 The `encode_*` theorems ARE the primary teeth: they prove the embedding is not decorative (a vacuous
 `denote` could never equal the genuine `EF`/`AG`). On top of that we reuse `CTL.branchSys` (the `Fin 3`
@@ -111,7 +111,7 @@ def denoteFun (S : System) : Formula S → Env S → Set S.Config
   | .mu x a,  ρ => sInf { Y | denoteFun S a (Function.update ρ x Y) ⊆ Y }
   | .nu x a,  ρ => sSup { Y | Y ⊆ denoteFun S a (Function.update ρ x Y) }
 
-/-- **`denoteFun_mono` (PROVED)** — the denotation is monotone in the environment: if `ρ x ⊆ σ x` for
+/-- **`denoteFun_mono`** — the denotation is monotone in the environment: if `ρ x ⊆ σ x` for
 every variable `x`, then `denoteFun S φ ρ ⊆ denoteFun S φ σ`. Structural induction on `φ`; the `μ`/`ν`
 cases use that the body is monotone in `ρ` *uniformly in the bound slot* (the `Function.update` only
 overwrites slot `x`, and the bound `Y` is the same on both sides). This is the backbone that makes the
@@ -177,7 +177,7 @@ def bodyHom (S : System) (a : Formula S) (ρ : Env S) (x : Var) :
 @[simp] theorem bodyHom_apply (a : Formula S) (ρ : Env S) (x : Var) (X : Set S.Config) :
     bodyHom S a ρ x X = denote S a (Function.update ρ x X) := rfl
 
-/-- **`denote_mu` (PROVED)** — the binder `μ` denotation IS the `OrderHom.lfp` of its body. The bare
+/-- **`denote_mu`** — the binder `μ` denotation IS the `OrderHom.lfp` of its body. The bare
 `sInf` in `denoteFun` coincides with `(bodyHom …).lfp` because `bodyHom`'s underlying function is
 exactly `fun X => denote S a (ρ[x↦X])`, so the prefixed-point sets are equal. -/
 theorem denote_mu (x : Var) (a : Formula S) (ρ : Env S) :
@@ -185,7 +185,7 @@ theorem denote_mu (x : Var) (a : Formula S) (ρ : Env S) :
   show sInf { Y | denoteFun S a (Function.update ρ x Y) ⊆ Y } = (bodyHom S a ρ x).lfp
   rfl
 
-/-- **`denote_nu` (PROVED)** — dually, the binder `ν` denotation IS the `OrderHom.gfp` of its body. -/
+/-- **`denote_nu`** — dually, the binder `ν` denotation IS the `OrderHom.gfp` of its body. -/
 theorem denote_nu (x : Var) (a : Formula S) (ρ : Env S) :
     denote S (.nu x a) ρ = (bodyHom S a ρ x).gfp := by
   show sSup { Y | Y ⊆ denoteFun S a (Function.update ρ x Y) } = (bodyHom S a ρ x).gfp
@@ -193,7 +193,7 @@ theorem denote_nu (x : Var) (a : Formula S) (ρ : Env S) :
 
 /-! ## §2 — The fixpoint (unfolding) laws for the binders. -/
 
-/-- **`mu_unfold` (PROVED)**: `denote (μ x. a) ρ = denote a (ρ[x ↦ denote (μ x. a) ρ])`. The defining
+/-- **`mu_unfold`**: `denote (μ x. a) ρ = denote a (ρ[x ↦ denote (μ x. a) ρ])`. The defining
 recursion of a least-fixpoint binder, from `OrderHom.map_lfp` through `denote_mu`. -/
 theorem mu_unfold (x : Var) (a : Formula S) (ρ : Env S) :
     denote S (.mu x a) ρ
@@ -202,7 +202,7 @@ theorem mu_unfold (x : Var) (a : Formula S) (ρ : Env S) :
   conv_rhs => rw [denote_mu]
   exact (bodyHom S a ρ x).map_lfp.symm
 
-/-- **`nu_unfold` (PROVED)**: `denote (ν x. a) ρ = denote a (ρ[x ↦ denote (ν x. a) ρ])`. From
+/-- **`nu_unfold`**: `denote (ν x. a) ρ = denote a (ρ[x ↦ denote (ν x. a) ρ])`. From
 `OrderHom.map_gfp`. -/
 theorem nu_unfold (x : Var) (a : Formula S) (ρ : Env S) :
     denote S (.nu x a) ρ
@@ -219,12 +219,12 @@ fixpoint operators reduce a `bodyHom` to the matching `CTL.*Body` by `OrderHom.e
 functions agree once `Function.update_self` collapses `ρ[0↦X] 0 = X` at the recursion variable), then
 `congrArg .lfp`/`.gfp`. We bind the recursion variable to `0` throughout (the canonical fresh name). -/
 
-/-- **`encode_EX` (PROVED)**: `EX P = denote (◇ (atom P))`. The existential modal next is the diamond
+/-- **`encode_EX`**: `EX P = denote (◇ (atom P))`. The existential modal next is the diamond
 of an atom — no fixpoint. -/
 theorem encode_EX (P : Set S.Config) (ρ : Env S) :
     denote S (.dia (.atom P)) ρ = EX S P := rfl
 
-/-- **`encode_AX` (PROVED)**: `AX P = denote (□ (atom P))`. The universal modal next is the box of an
+/-- **`encode_AX`**: `AX P = denote (□ (atom P))`. The universal modal next is the box of an
 atom. -/
 theorem encode_AX (P : Set S.Config) (ρ : Env S) :
     denote S (.box (.atom P)) ρ = AX S P := rfl
@@ -239,7 +239,7 @@ theorem euBody_eq (P Q : Set S.Config) (ρ : Env S) :
   show Q ∪ (P ∩ pre S ((Function.update ρ 0 X) 0)) = Q ∪ (P ∩ pre S X)
   rw [Function.update_self]
 
-/-- **`encode_EU` (PROVED)**: `EU P Q = denote (μx. Q ∨ (P ∧ ◇x))`. The standard least-fixpoint
+/-- **`encode_EU`**: `EU P Q = denote (μx. Q ∨ (P ∧ ◇x))`. The standard least-fixpoint
 encoding of "along some path, `P` until `Q`". -/
 theorem encode_EU (P Q : Set S.Config) (ρ : Env S) :
     denote S (.mu 0 (.or_ (.atom Q) (.and_ (.atom P) (.dia (.var 0))))) ρ = EU S P Q := by
@@ -254,13 +254,13 @@ theorem auBody_eq (P Q : Set S.Config) (ρ : Env S) :
   show Q ∪ (P ∩ preAll S ((Function.update ρ 0 X) 0)) = Q ∪ (P ∩ preAll S X)
   rw [Function.update_self]
 
-/-- **`encode_AU` (PROVED)**: `AU P Q = denote (μx. Q ∨ (P ∧ □x))`. The least-fixpoint encoding of
+/-- **`encode_AU`**: `AU P Q = denote (μx. Q ∨ (P ∧ □x))`. The least-fixpoint encoding of
 "along every path, `P` until `Q`". -/
 theorem encode_AU (P Q : Set S.Config) (ρ : Env S) :
     denote S (.mu 0 (.or_ (.atom Q) (.and_ (.atom P) (.box (.var 0))))) ρ = AU S P Q := by
   rw [denote_mu, auBody_eq]; rfl
 
-/-- **`encode_EF` (PROVED)**: `EF P = denote (μx. P ∨ ◇x)`. The textbook μ-formula for "`P` is
+/-- **`encode_EF`**: `EF P = denote (μx. P ∨ ◇x)`. The textbook μ-formula for "`P` is
 reachable along some path". Proved through `encode_EU` with `Q := P`, `P := univ` (since `EF = EU univ
 P` and `univ ∧ ◇x = ◇x`), reducing the `bodyHom` directly. -/
 theorem encode_EF (P : Set S.Config) (ρ : Env S) :
@@ -274,7 +274,7 @@ theorem encode_EF (P : Set S.Config) (ρ : Env S) :
     rw [Function.update_self, Set.univ_inter]
   rw [hbody]; rfl
 
-/-- **`encode_AF` (PROVED)**: `AF P = denote (μx. P ∨ □x)`. The μ-formula for "on every path `P`
+/-- **`encode_AF`**: `AF P = denote (μx. P ∨ □x)`. The μ-formula for "on every path `P`
 eventually holds" (operator-level; the liveness *reading* inherits `CTL.lean`'s fairness gate). -/
 theorem encode_AF (P : Set S.Config) (ρ : Env S) :
     denote S (.mu 0 (.or_ (.atom P) (.box (.var 0)))) ρ = AF S P := by
@@ -294,7 +294,7 @@ theorem egBody_eq (P : Set S.Config) (ρ : Env S) :
   show P ∩ pre S ((Function.update ρ 0 X) 0) = P ∩ pre S X
   rw [Function.update_self]
 
-/-- **`encode_EG` (PROVED)**: `EG P = denote (νx. P ∧ ◇x)`. The greatest-fixpoint encoding of "along
+/-- **`encode_EG`**: `EG P = denote (νx. P ∧ ◇x)`. The greatest-fixpoint encoding of "along
 some path `P` holds forever". -/
 theorem encode_EG (P : Set S.Config) (ρ : Env S) :
     denote S (.nu 0 (.and_ (.atom P) (.dia (.var 0)))) ρ = EG S P := by
@@ -308,7 +308,7 @@ theorem agBody_eq (P : Set S.Config) (ρ : Env S) :
   show P ∩ preAll S ((Function.update ρ 0 X) 0) = P ∩ preAll S X
   rw [Function.update_self]
 
-/-- **`encode_AG` (PROVED)**: `AG P = denote (νx. P ∧ □x)`. The greatest-fixpoint encoding of the
+/-- **`encode_AG`**: `AG P = denote (νx. P ∧ □x)`. The greatest-fixpoint encoding of the
 branching invariant "along every path `P` holds forever" — the headline ν-formula. -/
 theorem encode_AG (P : Set S.Config) (ρ : Env S) :
     denote S (.nu 0 (.and_ (.atom P) (.box (.var 0)))) ρ = AG S P := by
@@ -319,7 +319,7 @@ theorem encode_AG (P : Set S.Config) (ρ : Env S) :
 The encoding theorems above are the primary teeth — they prove the embedding is faithful (a vacuous
 `denote` could never equal `EF`/`AG`). Here we make the μ/ν alternation CONCRETE on `CTL.branchSys`
 (the `Fin 3` witness `0 → 1`, `0 → 2`, `1 ↺`, `2 ↺`), showing the least- and greatest-fixpoint formulae
-genuinely separate: `0` is in `μx. {1} ∨ ◇x` but NOT in `νx. {1}ᶜ ∧ □x`. Both reuse the proved CTL
+separate: `0` is in `μx. {1} ∨ ◇x` but NOT in `νx. {1}ᶜ ∧ □x`. Both reuse the proved CTL
 teeth (`mem_EF_branch`, `not_mem_AF_branch`) through the encoding. -/
 
 /-- The `EF`-formula on the branching witness: `μx. {1} ∨ ◇x`, the syntactic form of `EF branchSys {1}`. -/
@@ -334,22 +334,22 @@ def agComplPhi : Formula CTL.branchSys :=
 immaterial to `efPhi`/`agComplPhi`, which have no free variables. -/
 def ρ₀ : Env CTL.branchSys := fun _ => (∅ : Set (Fin 3))
 
-/-- **`denote_efPhi_eq` (PROVED)**: the `EF`-formula denotes exactly `EF branchSys {1}` — the encoding
+/-- **`denote_efPhi_eq`**: the `EF`-formula denotes exactly `EF branchSys {1}` — the encoding
 specialized to the witness. -/
 theorem denote_efPhi_eq : denote CTL.branchSys efPhi ρ₀ = EF CTL.branchSys CTL.tgt := by
   unfold efPhi; exact encode_EF CTL.tgt ρ₀
 
-/-- **`denote_agComplPhi_eq` (PROVED)**: the `AG`-of-complement formula denotes `AG branchSys {1}ᶜ`. -/
+/-- **`denote_agComplPhi_eq`**: the `AG`-of-complement formula denotes `AG branchSys {1}ᶜ`. -/
 theorem denote_agComplPhi_eq :
     denote CTL.branchSys agComplPhi ρ₀ = AG CTL.branchSys CTL.tgtᶜ := by
   unfold agComplPhi; exact encode_AG CTL.tgtᶜ ρ₀
 
-/-- **TEETH 1 — `mem_denote_efPhi` (PROVED)**: the root `0` IS in the μ-formula `μx. {1} ∨ ◇x`,
+/-- **TEETH 1 — `mem_denote_efPhi`**: the root `0` IS in the μ-formula `μx. {1} ∨ ◇x`,
 because `0 → 1` reaches `{1}` (reusing `CTL.mem_EF_branch` through the encoding). -/
 theorem mem_denote_efPhi : (0 : Fin 3) ∈ denote CTL.branchSys efPhi ρ₀ := by
   rw [denote_efPhi_eq]; exact CTL.mem_EF_branch
 
-/-- **TEETH 2 — `not_mem_denote_agComplPhi` (PROVED)**: the root `0` is NOT in the ν-formula
+/-- **TEETH 2 — `not_mem_denote_agComplPhi`**: the root `0` is NOT in the ν-formula
 `νx. {1}ᶜ ∧ □x`. Were it, then (via `EF_EG_dual`: `EF {1} = (AG {1}ᶜ)ᶜ`) `0` would be OUTSIDE
 `EF {1}` — contradicting TEETH 1. So swapping `μ`→`ν` and the polarity flips membership of `0`: the
 fixpoint alternation is real, not collapsed. -/
@@ -361,7 +361,7 @@ theorem not_mem_denote_agComplPhi : (0 : Fin 3) ∉ denote CTL.branchSys agCompl
     rw [CTL.EF_EG_dual]; exact fun h => h hag
   exact hnotEF CTL.mem_EF_branch
 
-/-- **TEETH 3 — `efPhi_ne_agComplPhi_denote` (PROVED): the μ/ν alternation genuinely separates.** The
+/-- **TEETH 3 — `efPhi_ne_agComplPhi_denote`: the μ/ν alternation separates.** The
 two formulae denote DIFFERENT sets on the witness — `0` is in the μ-formula but not the ν-formula. A
 direct refutation that the least-fixpoint `EF` and the (complemented) greatest-fixpoint `AG` collapse
 into one another. The headline alternation teeth. -/
@@ -375,7 +375,7 @@ theorem efPhi_ne_agComplPhi_denote :
 Every keystone is pinned to the kernel triple. `encode_EX`/`encode_AX` are `rfl`; the fixpoint encoders
 and the unfolds rest on mathlib's `OrderHom.lfp`/`gfp` (whose `Classical.choice` enters via `sInf`/
 `sSup` on `Set`, unavoidable and already present in `CTL.lean`/`Temporal.lean`). The alternation TEETH
-go through `CTL.EF_EG_dual` (the genuinely-classical De Morgan dual) — they still pin within the
+go through `CTL.EF_EG_dual` (the classical De Morgan dual) — they still pin within the
 standard kernel triple `{propext, Classical.choice, Quot.sound}`, exactly as `CTL.EF_EG_dual` itself. -/
 
 #assert_axioms denoteFun_mono

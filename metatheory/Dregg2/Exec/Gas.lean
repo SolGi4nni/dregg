@@ -64,13 +64,13 @@ def gasCost : FullAction → Nat
   | .mint _ _ _     => 5
   | .burn _ _ _     => 4
 
-/-- **Every action costs gas — PROVED (non-vacuity of the schedule).** No `FullAction` is free, so a
+/-- **Every action costs gas (non-vacuity of the schedule).** No `FullAction` is free, so a
 finite budget is a genuine bound on every kind (an all-zero schedule would make every theorem
 vacuous; this rules that out). -/
 theorem gasCost_pos (fa : FullAction) : 0 < gasCost fa := by
   cases fa <;> simp [gasCost]
 
-/-- **The costs are not all equal — PROVED (the schedule is a real, kind-sensitive price).** A mint
+/-- **The costs are not all equal (the schedule is a real, kind-sensitive price).** A mint
 costs strictly more than a balance move; a revoke strictly less. So the bound discriminates between
 turn kinds rather than just counting actions. -/
 theorem gasCost_distinct :
@@ -120,7 +120,7 @@ A committed metered run leaves EXACTLY `budget − totalCost acts` gas — the c
 the sum of the per-action costs of the (all of the) actions that ran. Since `totalCost ≥ 0`, the
 remaining gas never exceeds the budget: monotone non-increasing. -/
 
-/-- **`gas_monotone` — PROVED.** A committed metered run consumes EXACTLY `totalCost acts` gas: the
+/-- **`gas_monotone`.** A committed metered run consumes EXACTLY `totalCost acts` gas: the
 returned remaining gas is `budget − totalCost acts`. Hence remaining gas is non-increasing across
 the run (`leftover ≤ budget`), and the total consumed equals Σ `gasCost` over the executed actions.
 Proved by induction on the turn; each step charges exactly `gasCost a`. -/
@@ -143,7 +143,7 @@ theorem gas_monotone :
             rw [htail, totalCost_cons, Nat.sub_sub]
       · rw [if_neg hb] at h; exact absurd h (by simp)
 
-/-- **Remaining gas never exceeds the budget — PROVED (monotone non-increasing).** A direct
+/-- **Remaining gas never exceeds the budget (monotone non-increasing).** A direct
 corollary of `gas_monotone`: subtraction on `Nat` can only shrink, so the leftover gas of any
 committed run is `≤ budget`. -/
 theorem gas_leftover_le_budget (budget : Nat) (acts : List FullAction) (s s' : RecChainedState)
@@ -157,7 +157,7 @@ metered run produces NO state at all (`none`) — it never partially applies a p
 leaves the executor mid-mutation. Because `execGas` returns the leftover gas only via `some (_, _)`,
 a `none` result means nothing committed. -/
 
-/-- **`gas_exhaustion_fails_closed` — PROVED (the safety property).** If the turn's total cost
+/-- **`gas_exhaustion_fails_closed` (the safety property).** If the turn's total cost
 strictly exceeds the budget, the metered run FAILS CLOSED: `execGas = none`. No state is returned, so
 no partial mutation escapes — the executor never applies a prefix of an unaffordable turn. Proved by
 induction: somewhere the running budget cannot cover the next action's `gasCost`, and the `if`-guard
@@ -189,13 +189,13 @@ it — gas cannot conjure a turn the executor rejects for authority/availability
 run succeeds and returns EXACTLY the un-metered `execFullTurn` state. Gas metering does not alter the
 semantics of an affordable, valid turn: it is a pure liveness guard layered on top.
 
-This is the honestly-stated theorem. A naive "`budget ≥ totalCost ⇒ execGas succeeds`" is FALSE — an
+A naive "`budget ≥ totalCost ⇒ execGas succeeds`" is FALSE — an
 affordable turn can still be rejected by `execFull` (e.g. an unauthorized mint). So the precondition
 is strengthened to "the turn commits un-metered", and the conclusion is the strong one: the metered
 state EQUALS the un-metered state. (Improve, don't degrade: we keep the strong equality and pay for
 it with the honest precondition.) -/
 
-/-- **`gas_sufficient_runs` — PROVED (pure guard).** If the budget covers the whole turn
+/-- **`gas_sufficient_runs` (pure guard).** If the budget covers the whole turn
 (`totalCost acts ≤ budget`) AND the un-metered executor commits the turn (`execFullTurn s acts =
 some s'`), then the metered run commits to the SAME state `s'`, leaving `budget − totalCost acts`
 gas: `execGas budget acts s = some (s', budget − totalCost acts)`. So gas metering is a pure guard —
@@ -233,7 +233,7 @@ committed metered run, and then delegate VERBATIM to `TurnExecutorFull`'s safety
 conservation (`execFullTurn_conserves`) and the per-action `fullActionInv`
 (`execFullTurn_each_attests`). Gas adds a liveness bound and removes no safety. -/
 
-/-- **The metered run refines the un-metered turn — PROVED.** Any state a committed metered run
+/-- **The metered run refines the un-metered turn.** Any state a committed metered run
 reaches, the un-metered `execFullTurn` reaches too: `execGas budget acts s = some (s', g) ⇒
 execFullTurn s acts = some s'`. The gas guard only ever REJECTS more, never accepts more — so every
 metered commit is an un-metered commit. This is the bridge that lets every `execFullTurn` safety
@@ -256,7 +256,7 @@ theorem execGas_refines_execFullTurn :
             simp only [execFullTurn, hfa]; exact htail
       · rw [if_neg hb] at h; exact absurd h (by simp)
 
-/-- **`gas_conserves` — PROVED.** A committed metered run whose net ledger delta is `0`
+/-- **`gas_conserves`.** A committed metered run whose net ledger delta is `0`
 (balance/authority only, or balanced mint/burn) preserves the conserved supply `recTotal`. Delegates
 to `execFullTurn_conserves` via `execGas_refines_execFullTurn` — gas adds no conservation obligation
 and removes none. -/
@@ -265,7 +265,7 @@ theorem gas_conserves (budget : Nat) (acts : List FullAction) (s s' : RecChained
     recTotal s'.kernel = recTotal s.kernel :=
   execFullTurn_conserves s s' acts (execGas_refines_execFullTurn budget acts s s' g h) hzero
 
-/-- **`gas_ledger` — PROVED.** A committed metered run moves `recTotal` by exactly the net of the
+/-- **`gas_ledger`.** A committed metered run moves `recTotal` by exactly the net of the
 per-action ledger deltas (`turnLedgerDelta acts`) — the gas layer does not perturb the conservation
 ledger. Delegates to `execFullTurn_ledger`. -/
 theorem gas_ledger (budget : Nat) (acts : List FullAction) (s s' : RecChainedState) (g : Nat)
@@ -273,7 +273,7 @@ theorem gas_ledger (budget : Nat) (acts : List FullAction) (s s' : RecChainedSta
     recTotal s'.kernel = recTotal s.kernel + turnLedgerDelta acts :=
   execFullTurn_ledger s s' acts (execGas_refines_execFullTurn budget acts s s' g h)
 
-/-- **`gas_preserves_attests` — PROVED.** Every action of a committed metered run attests its full
+/-- **`gas_preserves_attests`.** Every action of a committed metered run attests its full
 `fullActionInv` (exact ledger conservation ∧ ChainLink ∧ ObsAdvance ∧ the kind-specific
 authority/graph/disclosure obligation) — exactly as the un-metered turn does. Delegates to
 `execFullTurn_each_attests`. Gas adds a liveness bound and removes NO safety. -/

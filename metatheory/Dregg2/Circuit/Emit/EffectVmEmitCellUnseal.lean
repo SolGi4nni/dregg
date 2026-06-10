@@ -20,7 +20,7 @@ the cellUnseal selector.
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the WHOLE point of the effect)
+## What the EffectVM row CANNOT enforce (the boundary — the WHOLE point of the effect)
 
   * the `lifecycle` flip Sealed → Live — a per-cell SIDE-TABLE, NO EffectVM column. Its SOUNDNESS lives
     ONLY in universe-A's `cellUnsealA_full_sound` (the `Inst/cellUnsealA.lean` v2 `Surface2` descriptor).
@@ -33,7 +33,7 @@ through the generic `runnable_full_sound`: a satisfying WIDE-descriptor witness 
 post-state — the per-cell block (`CellUnsealCellSpec`) AND every one of the 8 side-table roots FROZEN
 (cellUnseal touches no side-table on-row). The anti-ghost tooth bites on all 17 (incl. any root).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY through the named
 `Poseidon2SpongeCR` portal (in the generic theorems). No `sorry`/`:= True`/`native_decide`. `fullClause`
@@ -196,7 +196,7 @@ def RowEncodesUnseal (env : VmRowEnv) (pre post : CellState) : Prop :=
   ∧ env.pub pi.NEW_COMMIT = post.commit
 
 /-- **`CellUnsealCellSpec pre post`** — the per-cell FULL-state cellUnseal row spec: economic block
-FROZEN; the nonce TICKS by 1. (The lifecycle Sealed→Live flip is off-block — the honest boundary.) -/
+FROZEN; the nonce TICKS by 1. (The lifecycle Sealed→Live flip is off-block — the boundary.) -/
 def CellUnsealCellSpec (pre post : CellState) : Prop :=
   post.balLo = pre.balLo
   ∧ post.balHi = pre.balHi

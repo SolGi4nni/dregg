@@ -7,7 +7,7 @@ fields + log) weld.
 transfer/mint/burn/createEscrow. `Effects/BalanceA.lean` welded a per-component effect to its genuine
 standalone v2 `Surface2` descriptor (`balanceA_full_sound`); `Effects/CellSeal.lean` followed that stronger
 full-state surface for the LIFECYCLE family, carrying the kernel-vs-runtime receipt-log divergence explicitly.
-This module welds the genuinely DIFFERENT primitive `setPermissionsA` — a write of a CELL-RECORD FIELD (the
+This module welds the DIFFERENT primitive `setPermissionsA` — a write of a CELL-RECORD FIELD (the
 per-cell `permissions` slot), the protocol-managed-metadata regime — in a disjoint file (it imports the Argus
 IR + the audited `setPermissionsA` instance + the independent permissions spec, all read-only, and owns only
 its own declarations).
@@ -56,7 +56,7 @@ prover anchors `permissions_hash[0]` into `params[0]` and binds the full 8-limb 
 `compute_effects_hash` — `circuit/src/effect_vm/trace.rs:577`, `air.rs:939-960`). The Lean kernel COLLAPSES
 that struct to a SINGLE scalar `permissions : Int` slot `p` on the cell record. So this weld is over the
 collapsed scalar surface: `interp`/the descriptor/the spec all speak about ONE `permissions` field set to `p`,
-NOT the 8 component bits/the digest. This is an HONEST surface narrowing, not a soundness gap on the modelled
+NOT the 8 component bits/the digest. This is an surface narrowing, not a soundness gap on the modelled
 scalar — every theorem here is true of the collapsed model — but a re-widening to the 8-field struct + the
 off-row `params[0]`/effects_hash digest binding is FUTURE work (the class-C gap noted in
 `Emit/EffectVmEmitSetPermissions.lean`). The §4 weld carries this as the explicit `collapsedScalarSurface`
@@ -75,9 +75,9 @@ slot set, the log grows by one receipt, every OTHER kernel field frozen), keyed 
 directions). This is the full-state surface (all 17 fields enumerated, no ghost field can be silently
 mutated). NB it is the v1 `satisfiedE`/`CommitSurface` framework (single touched cell, `touchedCellMap` apex),
 NOT the v2 `Surface2`/`satisfiedE2` whole-function-digest balanceA/cellSeal use — but it concludes the SAME
-strength of full-state spec; the surface is honestly named `full-state-SetPermissionsSpec (v1 CommitSurface)`.
+strength of full-state spec; the surface is named `full-state-SetPermissionsSpec (v1 CommitSurface)`.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the cell-leaf /
 rest-frame Poseidon-CR injectivity assumptions enter ONLY inside the reused `setPermissionsA_full_sound` (its
@@ -202,7 +202,7 @@ The standalone setPermissions descriptor (§4) is keyed on the CHAINED executor 
 permsField actor cell (.int p)`. The §2 cornerstone is over the KERNEL side only. The chained layer is exactly
 the §2 kernel write PLUS the runtime receipt-log prepend `permsReceipt actor cell :: s.log` — the runtime
 piece the `RecordKernelState`-level `interp` structurally cannot emit. We bridge faithfully, naming the
-receipt-row prepend EXPLICITLY in the chained post-state (the honest kernel-vs-runtime divergence — NOT
+receipt-row prepend EXPLICITLY in the chained post-state (the kernel-vs-runtime divergence — NOT
 papered). -/
 
 /-- The runtime receipt row a committed `setPermissionsA` prepends: one self-targeted (`src = dst = cell`),
@@ -295,7 +295,7 @@ I.e. setPermissions' OWN circuit and the IR term AGREE on the WHOLE 17-field Rec
 balance-NEUTRAL, cap-NEUTRAL metadata regime) AND the receipt log — the full `SetPermissionsSpec`, not a
 per-cell projection. The receipt-log row is named EXPLICITLY in the conclusion, so the kernel-vs-runtime
 divergence is part of the welded statement. (The COLLAPSED-vs-FULL permissions-struct divergence — the file
-header's `collapsedScalarSurface` — is honestly carried: `p` is the scalar collapse of dregg1's 8-field
+header's `collapsedScalarSurface` — is carried: `p` is the scalar collapse of dregg1's 8-field
 struct; this weld is sound on that collapsed surface.) So the circuit the prover runs for setPermissions pins
 the complete chained state the IR term's executor produces. -/
 theorem setPermissions_compile_sound
@@ -322,7 +322,7 @@ theorem setPermissions_compile_sound
 
 #assert_axioms setPermissions_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely WRITES the permissions slot (write observable), preserves every
+/-! ## §5 — NON-VACUITY: the IR term WRITES the permissions slot (write observable), preserves every
 other field (balance/cap/lifecycle frame), and the gate REJECTS forged / non-account / non-Live inputs
 (fail-closed).
 
@@ -339,7 +339,7 @@ def kP0 : RecordKernelState :=
     bal := fun _ _ => 0 }
 
 /-- **NON-VACUITY (the WRITE is OBSERVABLE — the collapsed scalar surface).** The committed write sets cell
-`0`'s `permissions` slot from `1` to `7` — the metadata genuinely changes (the `setCell`/`setField permsField`
+`0`'s `permissions` slot from `1` to `7` — the metadata changes (the `setCell`/`setField permsField`
 write is real, not a no-op). This exercises the COLLAPSED scalar permissions surface (one `Int` slot, dregg1's
 8-field struct collapsed): a fresh value `7` lands and reads back. -/
 theorem setPermissionsStmt_writes :
@@ -348,7 +348,7 @@ theorem setPermissionsStmt_writes :
   decide
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The write to a Live, self-owned cell COMMITS (`isSome`) — the
-3-conjunct gate genuinely admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
+3-conjunct gate admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
 theorem setPermissionsStmt_commits :
     (interp (setPermissionsStmt 0 0 7) kP0).isSome = true := by
   rw [interp_setPermissionsStmt_eq_kernel]

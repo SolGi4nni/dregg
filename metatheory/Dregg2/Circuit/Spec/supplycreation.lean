@@ -22,7 +22,7 @@ reference pattern (`Dregg2/Circuit/Transfer.lean` §6b):
      field would make the frame clause unprovable. (None was found — see frameGaps in the report.)
   3. `recBalCredit_correct` — the post-`bal` helper validated DECLARATIVELY (the `cell`/`a` cell is
      credited by `amt`, every other (cell,asset) entry literally preserved), so the spec's
-     `bal = recBalCredit …` clause genuinely encodes credit ∧ ledger-frame, not blind trust.
+     `bal = recBalCredit …` clause encodes credit ∧ ledger-frame, not blind trust.
 
 The supply-creation family on `execFullA` is `mintA` (and its §8-portal twin `bridgeMintA`, which
 dispatches to the SAME `recCMintAsset` — a corollary, `execBridgeMintA_iff_spec`, is included). The
@@ -64,7 +64,7 @@ relationally (the touched entry is credited by `amt`, every other entry preserve
 
 /-- **`recBalCredit_correct`** — the ledger-update helper validated DECLARATIVELY: a mint credits
 `(cell, a)` by exactly `amt`, and leaves every OTHER (cell,asset) entry literally untouched. So the
-spec's `bal = recBalCredit …` clause genuinely encodes credit ∧ ledger-frame. -/
+spec's `bal = recBalCredit …` clause encodes credit ∧ ledger-frame. -/
 theorem recBalCredit_correct (bal : CellId → AssetId → ℤ) (cell : CellId) (a : AssetId) (amt : ℤ) :
     recBalCredit bal cell a amt cell a = bal cell a + amt
     ∧ (∀ c b, ¬ (c = cell ∧ b = a) → recBalCredit bal cell a amt c b = bal c b) := by

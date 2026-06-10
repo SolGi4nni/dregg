@@ -104,7 +104,7 @@ theorem sgmStep_preserves_WF (m : StorageMandate) (s : SgmRuntime) (op : SgmOp) 
   | some s' => simp only [Option.getD_some]; exact sgmAdmitM_preserves_WF m s s' req hwf hp
   | none    => simp only [Option.getD_none]; exact hwf
 
-/-- **`sgm_volume_legal_forever` (PROVED)** — volume spent stays within ceiling along every admitted
+/-- **`sgm_volume_legal_forever`** — volume spent stays within ceiling along every admitted
 op stream, under every adversarial schedule. -/
 theorem sgm_volume_legal_forever (m : StorageMandate) (s : SgmRuntime) (hinit : s.WF) (sched : SgmSched) :
     ∀ n, (sgmTraj m s sched n).WF := by
@@ -131,7 +131,7 @@ executor's `caveatsAdmit` on a `last_op` write reduces EXACTLY to `sgmOpAdmitTab
 is EXACTLY `sgmAdmitM`'s op-allowlist ∧ GET-clearance leg. The inline internalization of the op
 admission. -/
 
-/-- **`sgm_caveatsAdmit_op_eq_table` — PROVED.** On a cell carrying `mandateCaveats`, the executor's
+/-- **`sgm_caveatsAdmit_op_eq_table`.** On a cell carrying `mandateCaveats`, the executor's
 `caveatsAdmit` on a `last_op` write is exactly `sgmOpAdmitTable`-membership of `(old, newOp)`. -/
 theorem sgm_caveatsAdmit_op_eq_table (k : RecordKernelState)
     (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (newOp : Int) :
@@ -144,7 +144,7 @@ theorem sgm_caveatsAdmit_op_eq_table (k : RecordKernelState)
   rw [hf]
   simp only [List.all_cons, List.all_nil, Bool.and_true, SlotCaveat.eval]
 
-/-- **`sgm_commit_iff_op_admit` — PROVED (the COMMIT-IFF-ADMIT op-leg, predicate↔executor).** On a
+/-- **`sgm_commit_iff_op_admit` (the COMMIT-IFF-ADMIT op-leg, predicate↔executor).** On a
 mandate cell whose committed `last_op` is a valid prior op code `old ∈ {-1,0,1,2}`, the executor's
 caveat gate on writing op `op` ADMITS iff `sgmAdmitM`'s op-leg admits `op` (op allowed ∧ GET ⇒
 clearance). The off-line op admission and the running executor decide the SAME ops. -/
@@ -194,7 +194,7 @@ theorem sgm_chain_conserves {s s' : RecChainedState} (actor : CellId) (key op bl
             _ = recTotalAsset s1.kernel b := h2
             _ = recTotalAsset s.kernel b := h1
 
-/-- **`sgm_pay_supply_forever` (PROVED) — APP SEMANTICS (ungated crown).** Along EVERY adversarial
+/-- **`sgm_pay_supply_forever` — APP SEMANTICS (ungated crown).** Along EVERY adversarial
 schedule on the real living cell, payment asset combined supply never drifts. -/
 theorem sgm_pay_supply_forever (s0 : RecChainedState) (sched : SchedA) :
     ∀ n, recTotalAsset (trajA s0 sched n).kernel payAsset =
@@ -218,7 +218,7 @@ and `CellNullifier.execFullA_nullifiers_grow`. Generic over the cell id and the 
 -- (F2b: the queue-family frame helpers died with the queue verb family.)
 
 mutual
-/-- **`execFullA_progLive_preserved` (PROVED) — the per-effect program-live FRAME.** A committed
+/-- **`execFullA_progLive_preserved` — the per-effect program-live FRAME.** A committed
 `FullActionA` keeps a live cell `c` live AND keeps its published caveat program installed. The three
 create arms mint a FRESH `newCell ≠ c`; every other arm updates a non-`{accounts,slotCaveats}` field
 (or `insert`s elsewhere), so the `(c ∈ accounts, slotCaveats c)` pair is preserved verbatim;
@@ -437,7 +437,7 @@ theorem execInnerA_progLive_preserved (s s' : RecChainedState) (inner : List Ful
           exact execInnerA_progLive_preserved s1 s' rest c cav h hlive1 hprog1
 end
 
-/-- **`execFullTurnA_progLive_preserved` (PROVED).** A committed per-asset full TURN keeps a live cell's
+/-- **`execFullTurnA_progLive_preserved`.** A committed per-asset full TURN keeps a live cell's
 caveat program installed. Induction on the action list. -/
 theorem execFullTurnA_progLive_preserved :
     ∀ (s s' : RecChainedState) (tt : List FullActionA) (c : CellId) (cav : List SlotCaveat),
@@ -454,7 +454,7 @@ theorem execFullTurnA_progLive_preserved :
           obtain ⟨hlive1, hprog1⟩ := execFullA_progLive_preserved s s1 a c cav ha hlive hprog
           exact execFullTurnA_progLive_preserved s1 s' rest c cav h hlive1 hprog1
 
-/-- **`execFullForestA_progLive_preserved` (PROVED).** A committed full FOREST keeps a live cell's caveat
+/-- **`execFullForestA_progLive_preserved`.** A committed full FOREST keeps a live cell's caveat
 program installed. Through the pre-order bridge `execFullForestA_eq_execFullTurnA`. -/
 theorem execFullForestA_progLive_preserved (s s' : RecChainedState) (f : FullForestA) (c : CellId)
     (cav : List SlotCaveat) (h : execFullForestA s f = some s')
@@ -531,7 +531,7 @@ theorem anchorListOK_of_exercise {c : CellId} {actor t : CellId} {inner : List F
   exact hall ⟨a, ha⟩ (List.mem_attach inner ⟨a, ha⟩)
 
 mutual
-/-- **`execFullA_anchorVal_preserved` (PROVED) — the per-effect ANCHOR-VALUE frame.** A committed
+/-- **`execFullA_anchorVal_preserved` — the per-effect ANCHOR-VALUE frame.** A committed
 `FullActionA` that is anchor-safe for `c` (`anchorActionOK c fa`) preserves `c`'s stored
 `commitment_anchor` scalar, PROVIDED `c` carries the `.immutable commitmentAnchorSlot` caveat in its
 published program. Every non-cell-touching arm leaves `c`'s record verbatim; the field-write arms
@@ -813,7 +813,7 @@ theorem execInnerA_anchorVal_preserved (s s' : RecChainedState) (inner : List Fu
           rw [hrec, hstep]
 end
 
-/-- **`execFullTurnA_anchorVal_preserved` (PROVED).** A committed per-asset full TURN whose action list
+/-- **`execFullTurnA_anchorVal_preserved`.** A committed per-asset full TURN whose action list
 is anchor-safe for `c` preserves `c`'s `commitment_anchor` scalar (given `c` live + carrying the
 immutable caveat). Induction on the action list, reusing `progLive_preserved` to carry liveness+caveat
 across each step. -/
@@ -840,7 +840,7 @@ theorem execFullTurnA_anchorVal_preserved :
           have hrec := execFullTurnA_anchorVal_preserved s1 s' rest c h hlive1 himm1 hokrest
           rw [hrec, hstep]
 
-/-- **`execFullForestA_anchorVal_preserved` (PROVED) — THE ANCHOR-VALUE FOREST FRAME.** A committed
+/-- **`execFullForestA_anchorVal_preserved` — THE ANCHOR-VALUE FOREST FRAME.** A committed
 full FOREST that is anchor-safe for `c` (`anchorForestOK c f` — no `makeSovereign` aimed at `c`, even
 nested inside an `exerciseA`) preserves `c`'s stored `commitment_anchor` scalar, provided `c` is live
 and carries the `.immutable commitmentAnchorSlot` caveat. Through the pre-order bridge
@@ -938,7 +938,7 @@ theorem sgmInBucketStrong_of_mandate_cell_eq {k k' : RecordKernelState} (bucket 
   · unfold sgmMandateProgramOK at hprog ⊢
     simpa [hcav] using hprog
 
-/-- **`sgmWF_traj_carries` (PROVED) — NON-VACUOUS carry.** A committed forest keeps the mandate cell
+/-- **`sgmWF_traj_carries` — NON-VACUOUS carry.** A committed forest keeps the mandate cell
 live AND its published caveat program installed. The generic frame `execFullForestA_progLive_preserved`
 instantiated at `mandateCell`/`mandateCaveats`. -/
 theorem sgmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
@@ -946,7 +946,7 @@ theorem sgmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
   obtain ⟨hlive, hprog⟩ := hwf
   exact execFullForestA_progLive_preserved s s' cf mandateCell mandateCaveats h hlive hprog
 
-/-- **`sgmBucket_traj_carries` (PROVED) — NON-VACUOUS carry.** Same generic frame: the bucket binding's
+/-- **`sgmBucket_traj_carries` — NON-VACUOUS carry.** Same generic frame: the bucket binding's
 enforcement (live cell + installed immutable-anchor caveat program) persists along every forest. -/
 theorem sgmBucket_traj_carries (s s' : RecChainedState) (cf : FullForestA) (bucket : Int)
     (h : execFullForestA s cf = some s') (hb : sgmInBucket s.kernel bucket) :
@@ -960,7 +960,7 @@ theorem mandateCaveats_has_immutable_anchor :
     (.immutable commitmentAnchorSlot : SlotCaveat) ∈ mandateCaveats := by
   simp [mandateCaveats]
 
-/-- **`sgmBucketStrong_traj_carries` (PROVED) — the VALUE-PINNING carry.** A committed forest that is
+/-- **`sgmBucketStrong_traj_carries` — the VALUE-PINNING carry.** A committed forest that is
 anchor-safe for the mandate cell (no `makeSovereign` aimed at it — the sole un-caveat-gated rebind that
 drops fields) preserves the LITERAL bucket binding `sgmAnchor = bucket`, not merely program-liveness.
 This is the residual the §B″ note said was missing from the program-live carry — now PROVED via the

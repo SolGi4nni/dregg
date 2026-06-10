@@ -21,7 +21,7 @@ will carry over its lifetime."* In Lean that becomes three proved facts:
   3. `vk_determines_invariants` — content-addressing makes the contract inspectable: equal `vk`
      ⇒ equal `(schema, program)`, given that the content-hash is injective. (Collision-resistance
      of the hash is a §8 crypto obligation, NOT a Lean law; we keep the hash abstract/opaque and
-     surface its injectivity as an honest hypothesis — discharged here by a concrete injective
+     surface its injectivity as a hypothesis — discharged here by a concrete injective
      `Nat` pairing so the demos compute.)
 
 Pure, computable, `#eval`-able; imports only `Exec.RecordCell` (which pulls `Program`/`Value`),
@@ -48,7 +48,7 @@ abbrev FactoryVk := Nat
 /-! ## The content-hash of `(schema, program)` — abstract but injective.
 
 We need an injective map `(Schema × RecordProgram) → FactoryVk` to state
-`vk_determines_invariants` honestly. Rather than `axiom`-ing an opaque injective function (a
+`vk_determines_invariants`. Rather than `axiom`-ing an opaque injective function (a
 cheat), we give a *concrete* injective encoding via Lean's `Encodable`/`Nat`-pairing on the
 derived `Repr`-free data. Both `Schema` and `RecordProgram` are plain inductives; we encode them
 through a single injective pairing on their `toString`-free structural codes. The cleanest honest
@@ -80,7 +80,7 @@ def HashInjective : Prop :=
 /-- **`FactoryDescriptor`** — a PUBLISHED contract that mints conforming cells. `schema` is the
 child cell's field layout; `program` is the `StateConstraint` set every child carries for its
 whole life; `vk` is the content-hash of `(schema, program)`. A descriptor is *well-formed*
-(`WellFormed`) when its `vk` really is the hash of its content — i.e. it is genuinely
+(`WellFormed`) when its `vk` really is the hash of its content — i.e. it is
 content-addressed, not a forged label. (`STORAGE-AS-CELL-PROGRAMS.md §2 Step 1`.) -/
 structure FactoryDescriptor where
   schema  : Schema
@@ -88,7 +88,7 @@ structure FactoryDescriptor where
   vk      : FactoryVk
   deriving Repr
 
-/-- **`FactoryDescriptor.WellFormed d`** — the descriptor is genuinely content-addressed: its
+/-- **`FactoryDescriptor.WellFormed d`** — the descriptor is content-addressed: its
 `vk` is the content-hash of its `(schema, program)`. The `mkDescriptor` smart constructor builds
 only well-formed descriptors; an arbitrary `⟨s, p, v⟩` may carry a forged `vk` and is rejected by
 this predicate. -/
@@ -100,7 +100,7 @@ hashing `(schema, program)`. Always produces a `WellFormed` descriptor. -/
 def mkDescriptor (schema : Schema) (program : RecordProgram) : FactoryDescriptor :=
   { schema := schema, program := program, vk := factoryHash schema program }
 
-/-- Every `mkDescriptor`-published factory is well-formed — PROVED (definitional). -/
+/-- Every `mkDescriptor`-published factory is well-formed (definitional). -/
 theorem mkDescriptor_wellFormed (schema : Schema) (program : RecordProgram) :
     (mkDescriptor schema program).WellFormed := rfl
 
@@ -143,7 +143,7 @@ def cellStep (cell : Cell) (method : Nat) (op : RecOp) : Option Cell :=
 
 /-! ## THE KEYSTONE — constructor transparency. -/
 
-/-- **`factory_mints_conforming` / `constructor_transparency` (THE KEYSTONE — PROVED).** Every
+/-- **`factory_mints_conforming` / `constructor_transparency` (THE KEYSTONE).** Every
 cell a factory mints carries EXACTLY the factory's declared `program`. So anyone who knows the
 factory's `vk` (and can read the descriptor) knows the cell's lifetime invariants — there is no
 hidden behavior. (`STORAGE-AS-CELL-PROGRAMS.md §1.2`: *"anyone with the `factory_vk` … knows
@@ -168,7 +168,7 @@ theorem constructor_transparency
     cell.program = d.program :=
   (factory_mints_conforming h).1
 
-/-- **`createFromFactory_rejects_nonconforming` (PROVED)** — minting fails-closed: a non-
+/-- **`createFromFactory_rejects_nonconforming`** — minting fails-closed: a non-
 conforming initial value never mints a cell. The schema is a creation-time gate (it is the
 `field_constraints` half of the descriptor, `STORAGE-AS-CELL-PROGRAMS.md §2 Step 1`). -/
 theorem createFromFactory_rejects_nonconforming
@@ -180,10 +180,10 @@ theorem createFromFactory_rejects_nonconforming
 
 /-! ## The lifetime invariant — every transition on a minted cell is gated by the factory. -/
 
-/-- **`cellStep_admitted` (PROVED)** — a committed transition on ANY cell was admitted by that
+/-- **`cellStep_admitted`** — a committed transition on ANY cell was admitted by that
 cell's program: if `cellStep cell method op = some cell'`, then `cell.program` admits the new
 state. This is `RecordCell.recExec_admitted` lifted through the `Cell` wrapper — the cell's
-program genuinely gates its arrow. -/
+program gates its arrow. -/
 theorem cellStep_admitted
     {cell : Cell} {method : Nat} {op : RecOp} {cell' : Cell}
     (h : cellStep cell method op = some cell') :
@@ -197,7 +197,7 @@ theorem cellStep_admitted
       -- `cell'.state = new`, and `recExec … = some new`, so `recExec_admitted hr` applies.
       exact recExec_admitted hr
 
-/-- **`cellStep_preserves_program` (PROVED)** — a transition never changes the cell's program: the
+/-- **`cellStep_preserves_program`** — a transition never changes the cell's program: the
 program a minted cell carries is the program it keeps. (No constructor rebinds it.) Together with
 `factory_mints_conforming` this gives the *lifetime* claim: the factory's program governs every
 state the cell ever reaches. -/
@@ -212,7 +212,7 @@ theorem cellStep_preserves_program
       rw [hr, Option.some.injEq] at h
       subst h; rfl
 
-/-- **`factory_cell_step_admitted` (THE LIFETIME KEYSTONE — PROVED).** Every transition on a
+/-- **`factory_cell_step_admitted` (THE LIFETIME KEYSTONE).** Every transition on a
 *factory-minted* cell is gated by the FACTORY's declared `program` (the descriptor's
 `StateConstraint`s). Combining `factory_mints_conforming` (the cell runs the factory's program)
 with `cellStep_admitted` (every step is gated by the cell's program): the published contract holds
@@ -232,12 +232,12 @@ theorem factory_cell_step_admitted
 
 /-! ## `vk_determines_invariants` — content-addressing makes the contract inspectable. -/
 
-/-- **`vk_determines_invariants` (PROVED, modulo the §8 injectivity hypothesis).** Two well-formed
+/-- **`vk_determines_invariants` (modulo the §8 injectivity hypothesis).** Two well-formed
 factories with the same `vk` published the SAME `(schema, program)` — so the `vk` *is* the
 contract: it determines the cell's entire field layout and lifetime invariant set. This is the
 formal content of *constructor transparency*: reading the `vk` (and resolving the descriptor) tells
 you the cell's whole life. The injectivity of the content-hash (`hinj : HashInjective`) is the
-§8 obligation (collision-resistance of BLAKE3, discharged by the hash circuit), surfaced honestly
+§8 obligation (collision-resistance of BLAKE3, discharged by the hash circuit), surfaced
 as a hypothesis — NOT proved here, NOT axiom-ed. -/
 theorem vk_determines_invariants
     (hinj : HashInjective)
@@ -252,7 +252,7 @@ theorem vk_determines_invariants
     rw [← hw₁, ← hw₂]; exact hvk
   exact hinj d₁.schema d₂.schema d₁.program d₂.program hheq
 
-/-- **`vk_determines_program` (PROVED, modulo §8)** — the headline corollary: equal `vk` ⇒ equal
+/-- **`vk_determines_program` (modulo §8)** — the headline corollary: equal `vk` ⇒ equal
 lifetime program. Knowing the `vk` pins down exactly which `StateConstraint`s every child cell
 carries. -/
 theorem vk_determines_program
@@ -263,7 +263,7 @@ theorem vk_determines_program
     d₁.program = d₂.program :=
   (vk_determines_invariants hinj hw₁ hw₂ hvk).2
 
-/-- **`same_content_same_vk` (PROVED)** — the converse direction, requiring NO crypto hypothesis:
+/-- **`same_content_same_vk`** — the converse direction, requiring NO crypto hypothesis:
 publishing the same content yields the same `vk`. (A hash is a *function* of its input — this is
 pure determinism, not collision-resistance.) Together with `vk_determines_invariants` this says the
 content-hash is a faithful bidirectional handle on the contract. -/

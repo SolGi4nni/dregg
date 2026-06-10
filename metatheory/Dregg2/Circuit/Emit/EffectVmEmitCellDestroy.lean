@@ -24,7 +24,7 @@ forged-balance + forged-state-commit anti-ghost teeth bite (the createSealPair-v
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the WHOLE point of the effect)
+## What the EffectVM row CANNOT enforce (the boundary — the WHOLE point of the effect)
 
   * the `lifecycle` flip to `Destroyed` — a per-cell SIDE-TABLE, NO EffectVM column;
   * the `deathCert` bind — likewise a side-table;
@@ -32,7 +32,7 @@ forged-balance + forged-state-commit anti-ghost teeth bite (the createSealPair-v
 
 The destroy SOUNDNESS lives ONLY in `cellDestroyA_full_sound`.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only. No
 `sorry`/`:= True`/`native_decide`. Read-only imports.
@@ -344,7 +344,7 @@ theorem descriptor_agrees_with_executor_destroy
   subst hpre
   rw [hcLo, heLo]
 
-/-! ## §11 — THE HONEST BOUNDARY: the lifecycle/deathCert/receipt side-effect is OFF-ROW. -/
+/-! ## §11 — THE BOUNDARY: the lifecycle/deathCert/receipt side-effect is OFF-ROW. -/
 
 /-- **`cellDestroy_offrow_unenforced` — the loud finding.** The frozen-frame intent is invariant under
 any change OUTSIDE the economic state-block columns (modulo the `s_noop` nonce tick): two rows agreeing

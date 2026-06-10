@@ -33,7 +33,7 @@ and freezes the whole kernel — `apply.rs:2455` — touching NO side-table).
 The anti-ghost on ALL 17 fields falls out of the generic `runnable_full_commit_binds` /
 `wide_rejects_root_tamper` (§4).
 
-## HONEST SURFACE — the OUTER-LAYER + NONCE-TICK divergences are UNCHANGED and named.
+## SURFACE — the OUTER-LAYER + NONCE-TICK divergences are UNCHANGED and named.
 
 This module pins the OUTER HOLD-GATE layer (`inner = []`), exactly the layer the narrow descriptor /
 Argus `ExerciseViaCapability.lean` weld speak about; the INNER sub-forest (R4 facet-mask + `execInnerA`

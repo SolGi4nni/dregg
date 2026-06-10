@@ -151,7 +151,7 @@ def inducedSystem (Impl : TurnCoalg Obs AdmissibleTurn) : Execution.System where
 /-- **`stepComplete_preserves` — the well-posed, PROVED keystone.** If `Impl` is
 step-complete and a state-predicate `Good` is preserved by every `StepInv`-respecting
 transition, then `Good` holds at every reachable configuration of the whole execution
-(`Execution.invariant_run`). This is the honest content of "step-completeness buys
+(`Execution.invariant_run`). This is the content of "step-completeness buys
 soundness": no drifting future, stated as a safety invariant rather than the ill-posed
 bisimulation-to-an-arbitrary-`Spec`. -/
 theorem stepComplete_preserves (Impl : TurnCoalg Obs AdmissibleTurn)
@@ -174,7 +174,7 @@ theorem stepComplete_preserves (Impl : TurnCoalg Obs AdmissibleTurn)
 `Sound`/`IsBisim` capture behavioural equivalence between coalgebras. The
 step-completeness ⇒ soundness content lives in `stepComplete_preserves`. -/
 
-/-- **Equality is a bisimulation (reflexivity) — PROVED.** -/
+/-- **Equality is a bisimulation (reflexivity).** -/
 theorem bisim_eq (Impl : TurnCoalg Obs AdmissibleTurn) :
     IsBisim Impl Impl (fun a b => a = b) where
   obs_eq := fun x y h => by subst h; rfl

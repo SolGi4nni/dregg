@@ -164,7 +164,7 @@ theorem execEffect_conserves (e : ClosedEffect) (s s' : RecordKernelState)
     recTotalAsset s' b = recTotalAsset s b + effectDelta e b :=
   e.handler.conserves s e.args s' h b
 
-/-- **`turn_conserves` — THE HEADLINE (PROVED, ONE generic induction).** For ANY list of closed effects
+/-- **`turn_conserves` — THE HEADLINE (ONE generic induction).** For ANY list of closed effects
 run as a transaction through the registry, the combined per-asset measure changes by EXACTLY the SUM of
 the per-effect deltas, at EVERY asset `b`. Proved by `List.foldlM` induction reusing only the per-handler
 `conserves` field (`execEffect_conserves`) — never a per-effect restatement. This is the proof-matrix
@@ -284,7 +284,7 @@ the proven factory contract (`Apps/EscrowFactory.lean`) over factory-born cells'
 A pure state-edit effect (the shape of dregg1's `SetField` / lifecycle markers): it writes the cell's
 lifecycle side-table, touching NO `bal` and NO `escrows`, so the combined per-asset measure is unchanged
 (`delta = 0`). The point of the slice is that its `admission` gate is NON-TRIVIAL: it only commits if the
-target cell is currently Live (`acceptsEffects`), so `admission_gated` genuinely bites — a state-write
+target cell is currently Live (`acceptsEffects`), so `admission_gated` bites — a state-write
 into a Sealed/Destroyed cell is REJECTED. (We model the write as an idempotent re-assert of `lcLive` to
 keep it balance-neutral and self-contained; the obligation machinery is identical for any field write.) -/
 
@@ -307,7 +307,7 @@ theorem setLifecycle_recTotalAsset (k : RecordKernelState) (cell : CellId) (lc :
 /-- **`stateH` — the registered state-write handler.** `delta = 0` (balance-neutral). `conserves` from
 the `setLifecycle` frame lemma (`bal`/`escrows` untouched). `auth_gated` is vacuously a self-edit but we
 make the gate honest by tying `auth` to the admission witness (a Live cell self-asserting). The headline
-here is `admission_gated`: it FORCES the liveness check — the obligation genuinely bites. -/
+here is `admission_gated`: it FORCES the liveness check — the obligation bites. -/
 def stateH : EffectHandler StateArgs where
   step := stateStep
   delta := fun _ _ => 0
@@ -396,7 +396,7 @@ def goodTransfer : ClosedEffect := transferEffect { actor := 0, src := 0, dst :=
 -- carries the proofs, so pinning the handlers pins their obligation fields transitively):
 #assert_axioms setLifecycle_recTotalAsset
 
-/-! ## §DEFER — honest scope of this v1 slice.
+/-! ## §DEFER — scope of this v1 slice.
 
 Deliberately OUT of this proof-of-approach (each is the next workflow's work, NOT a gap in what is
 claimed here):

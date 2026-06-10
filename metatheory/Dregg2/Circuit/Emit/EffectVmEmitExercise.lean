@@ -22,7 +22,7 @@ teeth bite.
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the OUTER hold layer + inner fold)
+## What the EffectVM row CANNOT enforce (the boundary — the OUTER hold layer + inner fold)
 
   * the `authReceipt` log growth (no log column); the `exerciseGuard` cap-edge hold (v1 `propBit`,
     off-row); the INNER `List FullActionA` fold (each inner action is its OWN per-row descriptor,
@@ -30,7 +30,7 @@ teeth bite.
     `exerciseA_full_sound`; this module pins the conserved frame + nonce tick and connects to the
     validated kernel-freeze.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`. No `sorry`, no `:= True`, no `native_decide`. Imports are

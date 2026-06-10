@@ -39,7 +39,7 @@ The fix for `AF`/`EG` liveness is to **restrict the path quantifier to JUST sche
   built `JustProgress` on the real 46-effect executor) makes `transferSched` reach `Pgoal`, so the
   goal sits in `AF_just`/`EF` with NO hypotheses — the just-paths liveness PRODUCES a real `◇`.
 
-## TEETH — the just restriction is genuinely LOAD-BEARING (not vacuous)
+## TEETH — the just restriction is LOAD-BEARING (not vacuous)
 
 `af_plain_fails_on_stutter` — the PLAIN (non-just) `AF` reading FAILS. We reuse Fairness's
 `badSched` (fire only the independent `cf5` forever ⇒ the trajectory STUTTERS, frozen at `fma0`,
@@ -83,7 +83,7 @@ def AF_just (B : ConservingForest → Prop) (P : RecChainedState → Prop) (s : 
   ∀ sched, Just B s sched → Eventually P s sched
 
 /-- **`EG_just B P s` — the JUST-PATHS `EG`**: SOME `B`-just schedule from `s` keeps `P` true at
-every index (`Temporal.Always`). The existential dual of `AF_just`: a genuinely-progressing (just)
+every index (`Temporal.Always`). The existential dual of `AF_just`: a progressing (just)
 path along which `P` holds forever, rather than the trivial stutter witness plain `EG` would
 accept. -/
 def EG_just (B : ConservingForest → Prop) (P : RecChainedState → Prop) (s : RecChainedState) :
@@ -97,7 +97,7 @@ B-just path plus a well-founded measure toward `P` yields an eventual hit. We li
 path-quantified `AF_just`: if EVERY just schedule from `s` carries such a package, every just
 schedule reaches `P`, i.e. `s ∈ AF_just`. -/
 
-/-- **`livingAF_just_progress` (PROVED) — THE KEYSTONE.** If every `B`-just schedule from `s`
+/-- **`livingAF_just_progress` — THE KEYSTONE.** If every `B`-just schedule from `s`
 admits a `JustProgress` package toward `P` (the per-path well-founded measure of `Fairness`), then
 `s` satisfies the just-paths `AF`: `AF_just B P s`. This is `Fairness.just_progress` (the genuine
 `◇`) lifted across the just-path quantifier — the answered liveness reading of CTL's deferred `AF`,
@@ -108,7 +108,7 @@ theorem livingAF_just_progress (B : ConservingForest → Prop) (P : RecChainedSt
     AF_just B P s :=
   fun sched hjust => just_progress (hpkg sched hjust)
 
-/-- **`livingAF_just_of_progress_pointwise` (PROVED)** — the per-schedule face: a single
+/-- **`livingAF_just_of_progress_pointwise`** — the per-schedule face: a single
 `JustProgress` package on a just schedule reaches `P` (the `Eventually` witness). The atomic step
 `livingAF_just_progress` quantifies; kept as a named lemma so an app can read off the eventual hit
 on one concrete schedule (e.g. the demonstrator's `transferSched`). -/
@@ -124,7 +124,7 @@ theorem livingAF_just_of_progress_pointwise {B P s sched}
 `CTL.EF`-member: the just-paths `∀◇` liveness implies the branching `∃◇` reachability — the
 liveness reading does not escape the calculus it answers. -/
 
-/-- **`eventually_to_EF` (PROVED)** — `Eventually P s sched ⟹ s ∈ CTL.EF livingSystem {P}`. The
+/-- **`eventually_to_EF`** — `Eventually P s sched ⟹ s ∈ CTL.EF livingSystem {P}`. The
 eventual hit at trajectory index `n` is a config `Run`-reachable from `s` (`trajA_reachable`)
 satisfying `P`, which is exactly `CTL.EF`-membership (`EF_iff_reachable`). The linear-`◇`-to-
 branching-`EF` weld. -/
@@ -137,7 +137,7 @@ theorem eventually_to_EF (P : RecChainedState → Prop) (s : RecChainedState) (s
   exact (CTL.EF_iff_reachable livingSystem {s' | P s'} s).mpr
     ⟨trajA s sched n, trajA_reachable s sched n, hn⟩
 
-/-- **`livingAF_just_to_EF` (PROVED) — THE BRIDGE.** A just-paths-`AF` state whose justness is
+/-- **`livingAF_just_to_EF` — THE BRIDGE.** A just-paths-`AF` state whose justness is
 WITNESSED by at least one just schedule lands in CTL's branching `EF`: `P` is reachable along some
 path. So the answered liveness reading (`AF_just`) refines into the existing branching reachability
 calculus (`CTL.EF`) via `eventually_to_EF`. (`sched`+`hjust` supply the witnessing just path; on
@@ -158,16 +158,16 @@ hypotheses — the just-paths liveness produces a genuine `◇`/`EF` on the 46-e
 /-- `transferSched` is `BReg`-just from `fma0` — read off `Fairness.refundDemo`'s `just` field. -/
 theorem transferSched_just : Just BReg fma0 transferSched := refundDemo.just
 
-/-- **`refund_demo_eventually_Pgoal` (PROVED)** — the concrete `Eventually`: `just_progress` on
+/-- **`refund_demo_eventually_Pgoal`** — the concrete `Eventually`: `just_progress` on
 `Fairness.refundDemo` reaches `Pgoal` along `transferSched` (this is `Fairness.refund_demo_eventually`,
 re-exposed at this layer as the per-schedule witness feeding the bridge). -/
 theorem refund_demo_eventually_Pgoal : Eventually Pgoal fma0 transferSched :=
   refund_demo_eventually
 
-/-- **`refund_demo_AF_just` (PROVED) — the UNCONDITIONAL just-paths liveness witness.** The
+/-- **`refund_demo_AF_just` — the UNCONDITIONAL just-paths liveness witness.** The
 demonstrator goal `Pgoal` (a receipt lands) sits in CTL's branching `EF` from `fma0`, obtained by
 bridging `Fairness.refund_demo_eventually` (the concrete `◇` along the just `transferSched`) through
-`eventually_to_EF`. With NO hypotheses: the just-paths reading genuinely PRODUCES a reachable
+`eventually_to_EF`. With NO hypotheses: the just-paths reading PRODUCES a reachable
 liveness goal on the real executor. The non-vacuous face of `livingAF_just_progress`. -/
 theorem refund_demo_AF_just : fma0 ∈ CTL.EF livingSystem {s' | Pgoal s'} :=
   eventually_to_EF Pgoal fma0 transferSched refund_demo_eventually
@@ -182,7 +182,7 @@ trajectory is FROZEN at `fma0` (`Fairness.badSched_traj_const`), so the receipt 
 REJECTS (`Fairness.badSched_not_just`). So `∀ sched, Eventually Pgoal …` is FALSE while
 `AF_just … Pgoal` (over just schedules) holds — the restriction is load-bearing, not vacuous. -/
 
-/-- **`badSched_log_const` (PROVED)** — along the starving `badSched`, the receipt log is FROZEN at
+/-- **`badSched_log_const`** — along the starving `badSched`, the receipt log is FROZEN at
 its initial (empty) length: `(trajA fma0 badSched n).log.length = 0` for all `n`. Direct from
 `Fairness.badSched_traj_const` (the trajectory is the constant `fma0`) and `fma0.log = []`. -/
 theorem badSched_log_const (n : Nat) : (trajA fma0 badSched n).log.length = 0 := by
@@ -190,7 +190,7 @@ theorem badSched_log_const (n : Nat) : (trajA fma0 badSched n).log.length = 0 :=
   -- `fma0.log.length = 0` (the genesis state has an empty receipt log) — decided on the concrete state.
   decide
 
-/-- **`not_eventually_Pgoal_badSched` (PROVED)** — `Pgoal` is NEVER reached along the stuttering
+/-- **`not_eventually_Pgoal_badSched`** — `Pgoal` is NEVER reached along the stuttering
 `badSched`: `¬ Eventually Pgoal fma0 badSched`. At every index the log length is `0`, so
 `Pgoal = (1 ≤ log.length)` fails everywhere. The eternal-stutter branch the plain `AF` would
 wrongly demand the goal on. -/
@@ -201,12 +201,12 @@ theorem not_eventually_Pgoal_badSched : ¬ Eventually Pgoal fma0 badSched := by
   rw [badSched_log_const n] at this
   exact absurd this (by decide)
 
-/-- **`af_plain_fails_on_stutter` — THE TEETH (PROVED).** The PLAIN (non-just) `AF` reading of the
+/-- **`af_plain_fails_on_stutter` — THE TEETH.** The PLAIN (non-just) `AF` reading of the
 demonstrator goal — "along EVERY schedule `Pgoal` is eventually reached" — is FALSE on the living
 cell from `fma0`: the stuttering `badSched` (`Fairness.badSched`) freezes the trajectory at `fma0`,
 so `Pgoal` is never reached (`not_eventually_Pgoal_badSched`). Since `Fairness.refundDemo` proves
 the *just-paths* `AF_just BReg Pgoal fma0` holds, the failure of the unrestricted `∀ sched,
-Eventually` shows the JUST-PATH RESTRICTION is genuinely load-bearing — `AF_just` is NOT vacuously
+Eventually` shows the JUST-PATH RESTRICTION is load-bearing — `AF_just` is NOT vacuously
 equal to the plain reading. (The witness `badSched` is precisely the schedule justness rejects,
 `Fairness.badSched_not_just`.) -/
 theorem af_plain_fails_on_stutter :
@@ -214,7 +214,7 @@ theorem af_plain_fails_on_stutter :
   intro hall
   exact not_eventually_Pgoal_badSched (hall badSched)
 
-/-- **`badSched_is_rejected` (PROVED) — the criterion side of the teeth.** The very schedule that
+/-- **`badSched_is_rejected` — the criterion side of the teeth.** The very schedule that
 breaks plain `AF` (`badSched`) is the one JUSTNESS rejects: `¬ Just (fun _ => True) fma0 badSched`
 (`Fairness.badSched_not_just`). Pairs with `af_plain_fails_on_stutter` to close the argument: the
 failing branch is exactly the non-just branch `AF_just` excludes — so the just restriction is
@@ -222,8 +222,8 @@ EXACTLY what salvages the liveness reading. -/
 theorem badSched_is_rejected : ¬ Just (fun _ => True) fma0 badSched :=
   badSched_not_just
 
-/-- **`af_just_separates_plain` — THE HEADLINE TEETH (PROVED).** The just-paths `AF` and the plain
-`AF` reading genuinely SEPARATE on the living cell: there EXISTS a goal (`Pgoal`) and start (`fma0`)
+/-- **`af_just_separates_plain` — THE HEADLINE TEETH.** The just-paths `AF` and the plain
+`AF` reading SEPARATE on the living cell: there EXISTS a goal (`Pgoal`) and start (`fma0`)
 where the just-paths liveness is non-vacuously SALVAGED (`refundDemo` witnesses `AF_just`-style
 progress along the just `transferSched`, `refund_demo_eventually_Pgoal`) yet the unrestricted
 "every schedule reaches it" FAILS (`af_plain_fails_on_stutter`). Restricting the path quantifier to

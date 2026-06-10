@@ -33,7 +33,7 @@ post-`cap_root` that still claims the published `NEW_COMMIT` is UNSAT (the anti-
 `D (attenuateSlotF k.caps actor idx keep)` — i.e. the column move the descriptor pins. So the runnable
 `cap_root` column transition IS universe-A's `caps`-digest transition; not a fourth spec.
 
-## HONEST BOUNDARY (precise — do NOT over-read) — the IR GAP, flagged loudly
+## BOUNDARY (precise — do NOT over-read) — the IR GAP, flagged loudly
 
   * **IR GAP — needs IR extension: cap-root hash-site.** The `cap_root` column carries the SCALAR digest
     `D caps` of the cap-table FUNCTION `Caps = Label → List Cap`. The EffectVM IR's `VmHashSite` can only
@@ -54,7 +54,7 @@ post-`cap_root` that still claims the published `NEW_COMMIT` is UNSAT (the anti-
   * `state.RESERVED` is NOT absorbed by any hash-site (inherited finding from the transfer keystone);
     it is pinned only by its per-row passthrough gate.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`; the cap-table digest enters ONLY as `Function.Injective D`
@@ -522,7 +522,7 @@ an OPAQUE PARAMETER the prover supplies. That is class C: the cap-table mutation
 *recomputed* (the ledger's Tier-1 cap-family gap). This section CLOSES that gap, exactly as
 `EffectVmEmitEscrowRoot` closed the escrow side-table gap:
 
-  * DROP the opaque `gCapMove` gate. The `cap_root` move is no longer a free-parameter equality.
+  * DROP the opaque `gCapMove` gate. The `cap_root` move is not a free-parameter equality.
   * ADD the SHARED `EffectVmEmitCapRoot.capRecomputeSites`: two in-row hash-sites that RECOMPUTE
     `new_cap_root = hash[ edge_leaf, old_cap_root ]` with `edge_leaf = hash[holder,target,rights,op]`.
     The new root is FORCED by the bound cap-edge mutation + the old root, not chosen.
@@ -941,7 +941,7 @@ theorem capWide_clause_not_trivial :
 
 /-- **`capWide_roots_clause_not_trivial` — the side-table leg is REFUTABLE too.** A post-state with the
 cap-move RIGHT but a NON-frozen side-table (`postRoots ≠ preRoots`) FAILS `CapFullClause` — so the
-frozen-roots conjunct genuinely bites (a `postRoots := True`-style stub would collapse it). Witnessed by a
+frozen-roots conjunct bites (a `postRoots := True`-style stub would collapse it). Witnessed by a
 populated `DELEG` root against the empty reference. -/
 theorem capWide_roots_clause_not_trivial :
     ¬ CapFullClause 77 capPreRoots capNVpre capNVpost

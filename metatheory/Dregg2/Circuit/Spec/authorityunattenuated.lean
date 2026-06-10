@@ -84,7 +84,7 @@ def recDelegateCaps (caps : Caps) (del rec t : CellId) : Caps :=
 
 /-- **`recDelegateCaps_correct`** — the post-`caps` helper validated DECLARATIVELY. The recipient's
 slot gains exactly the delegator's held `t`-conferring cap (prepended to its prior caps), and every
-OTHER holder's cap-slot is literally unchanged. So the spec's `caps`-clause genuinely encodes
+OTHER holder's cap-slot is literally unchanged. So the spec's `caps`-clause encodes
 grant ∧ caps-frame, rather than trusting `grant`. -/
 theorem recDelegateCaps_correct (caps : Caps) (del rec t : CellId) :
     recDelegateCaps caps del rec t rec
@@ -204,12 +204,12 @@ theorem execFullA_introduceA_iff_spec (s : RecChainedState) (intro rec t : CellI
 /-! ## §6 — Soundness teeth (the spec is NOT vacuous).
 
 The `→` direction of the spec already validates the executor on EVERY field. Here we exhibit the
-positive content a committed delegate carries (the recipient genuinely GAINS the held cap, the
-balance ledger is genuinely UNTOUCHED) and the negative content (an un-connected delegator cannot
+positive content a committed delegate carries (the recipient GAINS the held cap, the
+balance ledger is UNTOUCHED) and the negative content (an un-connected delegator cannot
 delegate). These mirror `recDelegate_grants` / `recKDelegate_frame` but are derived from the
 INDEPENDENT spec, not the executor body. -/
 
-/-- **`delegate_grants_recipient` — POSITIVE teeth.** A committed delegate genuinely puts the
+/-- **`delegate_grants_recipient` — POSITIVE teeth.** A committed delegate puts the
 delegator's held `t`-conferring cap into the recipient's slot. Derived from the spec's `caps` clause
 + the declaratively-validated post-`caps` helper. -/
 theorem delegate_grants_recipient (s : RecChainedState) (del rec t : CellId) (s' : RecChainedState)

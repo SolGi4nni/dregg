@@ -210,7 +210,7 @@ F2b: the `subWF` queue-capacity crown (`subscription_wellformed_forever`) moved 
 story (`Apps/QueueFactory.lean` relational-caveat keystones) with the kernel queue side-table's
 deletion — there is no kernel-level `queues` invariant left to reproduce. -/
 
-/-! ## §6 — Non-vacuity guards — the reproduced crowns bind quantities that genuinely move. -/
+/-! ## §6 — Non-vacuity guards — the reproduced crowns bind quantities that move. -/
 
 #guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 42)
 #guard (Dregg2.Apps.Identity.fmaRevoked.kernel.revoked.contains 99 == false)

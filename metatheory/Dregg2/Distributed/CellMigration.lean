@@ -57,13 +57,13 @@ to where). The handoff is three transitions on the `World`:
      PREPAREd again, so a committed migration is final (the `is_terminal` gate, Rust:
      `MigrationError::NotMigratable`).
 
-HONEST scope: federations are modelled as an INDEX (`FedId := ℕ`) and custody as a `Finset CellId`
+Scope: federations are modelled as an INDEX (`FedId := ℕ`) and custody as a `Finset CellId`
 per federation — a faithful PROJECTION of `Ledger`'s `cells`/`sovereign_commitments` maps onto "which
 cells are live here." The cell's transferable authority is modelled as `(bal : ℤ, caps : Finset CapId)`
 — the conserved quantity (`bal` ↔ `recTotalAsset`/`CellState.balance`; `caps` ↔ the c-list
 `CapabilitySet`). The cryptographic `voucher_hash`/`attestation` binding is modelled as STRUCTURAL
 equality of the committed `(bal, caps)` (the Rust uses BLAKE3 commitments — a named, standard
-collision-resistance assumption stands between the two, NOT faked here: the Lean proves the protocol
+collision-resistance assumption stands between the two here: the Lean proves the protocol
 LOGIC given that the commitment binds, exactly as `EntangledJoint` proves over `JointId` equality).
 
 Pure, computable, `#eval`/`#guard`-able. No `sorry`, no `native_decide`.
@@ -214,7 +214,7 @@ def handoff (w : World) (s d : FedId) (c : CellId) : Option World := do
 
 /-! ## 5. KEYSTONE 1 — no-double-existence. -/
 
-/-- **`accept_refuses_double` (PROVED).** ACCEPT refuses to install a cell the destination already
+/-- **`accept_refuses_double`.** ACCEPT refuses to install a cell the destination already
 holds — the core no-double-existence gate. If `v.cell` is already live at `v.to`, `accept` is `none`.
 -/
 theorem accept_refuses_double (w : World) (v : Voucher)
@@ -274,7 +274,7 @@ def handoffWorld (w : World) (s d : FedId) (c : CellId) : World :=
     locked    := (insert c w.locked).erase c
     tombstone := fun f x => if f = s ∧ x = c then some d else w.tombstone f x }
 
-/-- **`handoff_eq` (PROVED).** Under the n > 1 preconditions (`s ≠ d`, cell live only at `s`, not
+/-- **`handoff_eq`.** Under the n > 1 preconditions (`s ≠ d`, cell live only at `s`, not
 locked, not terminal at `s`), the full `prepare → accept → commit` arc reduces to exactly
 `handoffWorld`. The single reduction lemma every keystone builds on. -/
 theorem handoff_eq (w : World) (s d : FedId) (c : CellId)
@@ -314,7 +314,7 @@ theorem handoff_eq (w : World) (s d : FedId) (c : CellId)
   rw [hacc]
   exact hcom
 
-/-- **`handoff_unique_home` (PROVED — the n > 1 no-double-existence keystone).** After a full
+/-- **`handoff_unique_home` (the n > 1 no-double-existence keystone).** After a full
 `prepare → accept → commit` handoff of cell `c` between two DISTINCT federations `s ≠ d`, starting
 from a world where `c` was live ONLY at `s` (a single home), the cell is live at the DESTINATION `d`
 and NOT at the source `s`. So the migrated cell has exactly one live home — it never doubles.
@@ -339,7 +339,7 @@ theorem handoffWorld_live_other (w : World) (s d : FedId) (c : CellId)
   simp only [handoffWorld]
   rw [if_neg hfs, if_neg hfd]
 
-/-- **`handoff_singleton_home` (PROVED).** Strengthening of `handoff_unique_home` to the `liveHomes`
+/-- **`handoff_singleton_home`.** Strengthening of `handoff_unique_home` to the `liveHomes`
 SINGLETON statement: if, additionally, `s` and `d` are the ONLY federations within the index bound
 `N` where `c` could be live (everywhere else `c` was absent and stays absent — the handoff touches
 only `s` and `d`), then after the handoff `c`'s live-home set is the SINGLETON `{d}`. -/
@@ -366,7 +366,7 @@ theorem handoff_singleton_home (w : World) (s d : FedId) (c : CellId) (N : Nat)
 
 /-! ## 6. KEYSTONE 2 — authority-conservation. -/
 
-/-- **`handoff_full_auth` (PROVED).** The single fact behind both conservation keystones: after a
+/-- **`handoff_full_auth`.** The single fact behind both conservation keystones: after a
 handoff, the cell's FULL authority (`bal` AND `caps`) at its new home `d` equals its authority at its
 old home `s` before the move. The destination installs exactly the voucher's committed `auth =
 authAt s c`, and the source-erase at COMMIT does not touch `authAt`. -/
@@ -378,7 +378,7 @@ theorem handoff_full_auth (w : World) (s d : FedId) (c : CellId)
   refine ⟨handoffWorld w s d c, handoff_eq w s d c hsd hs hd hlk htomb, ?_⟩
   simp [handoffWorld]
 
-/-- **`handoff_conserves_balance` (PROVED — the n > 1 authority-conservation keystone).** The cell's
+/-- **`handoff_conserves_balance` (the n > 1 authority-conservation keystone).** The cell's
 balance at its NEW home `d` equals its balance at its OLD home `s` before the move. Migration neither
 mints nor burns balance — the per-cell image of `recTotalAsset` conservation. -/
 theorem handoff_conserves_balance (w : World) (s d : FedId) (c : CellId)
@@ -389,7 +389,7 @@ theorem handoff_conserves_balance (w : World) (s d : FedId) (c : CellId)
   obtain ⟨w', hh, hauth⟩ := handoff_full_auth w s d c hsd hs hd hlk htomb
   exact ⟨w', hh, by rw [hauth]⟩
 
-/-- **`handoff_conserves_caps` (PROVED).** The capability set (c-list) is likewise conserved across
+/-- **`handoff_conserves_caps`.** The capability set (c-list) is likewise conserved across
 the move: `w'.authAt d c |>.caps = w.authAt s c |>.caps`. Authority (capabilities) is neither forged
 nor dropped by migration. -/
 theorem handoff_conserves_caps (w : World) (s d : FedId) (c : CellId)
@@ -402,7 +402,7 @@ theorem handoff_conserves_caps (w : World) (s d : FedId) (c : CellId)
 
 /-! ## 7. KEYSTONE 3 — anti-replay / terminality. -/
 
-/-- **`migrated_cannot_reprepare` (PROVED).** A tombstoned (already-migrated) cell cannot be
+/-- **`migrated_cannot_reprepare`.** A tombstoned (already-migrated) cell cannot be
 PREPAREd again: `prepare` returns `none`. A committed migration is final — the cell cannot fork off
 a second handoff from its old home. -/
 theorem migrated_cannot_reprepare (w : World) (s d : FedId) (c : CellId)
@@ -428,7 +428,7 @@ the live index set). For a uniquely-homed cell this is just its single home's ba
 def aggBalance (w : World) (N : Nat) (c : CellId) : Int :=
   ∑ f ∈ liveHomes w N c, (w.authAt f c).bal
 
-/-- **`handoff_aggBalance_conserved` (PROVED).** Under the singleton-home hypotheses, the cell's
+/-- **`handoff_aggBalance_conserved`.** Under the singleton-home hypotheses, the cell's
 aggregate balance over its live homes is the SAME before (`= bal at s`) and after (`= bal at d`) the
 handoff — and those are equal by `handoff_conserves_balance`. The conserved-quantity bridge to the
 executor: migrating a cell is balance-neutral at the federation-aggregate level. -/

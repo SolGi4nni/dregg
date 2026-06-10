@@ -5,7 +5,7 @@
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
 it on transfer/mint/burn/createEscrow; `Effects/BalanceA.lean` welded a per-asset move against a
 FULL-STATE descriptor; `Effects/Seal.lean` welded a kernel-touching LIST-side-table effect against its
-own full-state descriptor over the chained executor. This module welds the genuinely DIFFERENT
+own full-state descriptor over the chained executor. This module welds the DIFFERENT
 **CapTP pipelined-send** primitive `pipelinedSendA` — the apply-time NEUTRAL clock row of captp routing
 (a pipelined send whose real dispatch / `EventualRef`→prior-result resolution already ran in the
 `ConditionalTurn` pass; at apply time it is a balance-neutral clock tick). It lives in a disjoint file
@@ -46,7 +46,7 @@ per-cell EffectVM weld). There is no v2 `Surface2`/`EffectVm` descriptor for thi
 `CommitSurface` one is the genuine standalone descriptor (it is exactly the one
 `EffectRefinementBatch2.pipelinedSendCircuitStep` / `…_circuit_refines_spec` uses).
 
-## THE KERNEL-vs-RUNTIME DIVERGENCE (the task's `divergence` field — carried, NOT papered).
+## THE KERNEL-vs-RUNTIME DIVERGENCE (the task's `divergence` field — carried).
 
 The Argus `RecStmt`/`interp` runs on the bare `RecordKernelState` (kernel-only). The pipelined-send's
 ENTIRE post-state change — the neutral receipt prepended to the receipt LOG — lives OUTSIDE the kernel,
@@ -61,7 +61,7 @@ dst-liveness side-condition); here it is the WHOLE effect (the kernel half is va
 explicit. This is the honest cost of welding a chained-LOG effect against a KERNEL-only IR: the IR term
 is `skip`, and ALL of the effect's content is in the carried chained leg.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 frame-digest assumptions enter ONLY inside the reused `pipelinedSendA_full_sound` (its
@@ -246,8 +246,8 @@ theorem pipelinedSend_compile_sound
 
 #assert_axioms pipelinedSend_compile_sound
 
-/-! ## §5 — NON-VACUITY: the chained step genuinely TICKS the log with the NEUTRAL receipt (observable),
-the kernel is genuinely FROZEN, and the effect is TOTAL (commits unconditionally, regardless of actor).
+/-! ## §5 — NON-VACUITY: the chained step TICKS the log with the NEUTRAL receipt (observable),
+the kernel is FROZEN, and the effect is TOTAL (commits unconditionally, regardless of actor).
 
 The cornerstone/weld would be hollow if the kernel term were not the identity, if the chained step never
 committed, or if the log were not actually grown. A concrete chained pre-state `stPS0` (live accounts
@@ -279,7 +279,7 @@ theorem pipelinedSendStmt_chained_commits :
   rfl
 
 /-- **NON-VACUITY (the log TICKS by exactly ONE NEUTRAL receipt, observable).** The chained step GROWS the
-receipt log from `[]` to length `1` — the clock genuinely ticks by exactly one audited row (the carried
+receipt log from `[]` to length `1` — the clock ticks by exactly one audited row (the carried
 divergence leg is REAL, not a no-op). The post-log head is the neutral `pipelinedSendReceipt 0` marker. -/
 theorem pipelinedSendStmt_log_ticks :
     (execFullA stPS0 (.pipelinedSendA 0)).map (fun s => s.log) = some [pipelinedSendReceipt 0] := by
@@ -324,7 +324,7 @@ columns) AND ALL 8 side-table roots FROZEN (via the wide commitment). This close
 ghost" on the runnable descriptor (the narrow 186-wide `pipelinedSendVmDescriptor`'s commitment bound
 NONE of the 8 side-table roots; only a record-layer commitment off to the side did).
 
-HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §3/§4 name): (a) the apply-time pipelined
+RESIDUALS (carried, NOT papered — the SAME boundaries §3/§4 name): (a) the apply-time pipelined
 send's SOLE motion is the neutral receipt prepended to the chained `RecChainedState.log`, NOT a
 `RecordKernelState` field and with NO EffectVM row column — it rides universe-A's `logHashInjective`
 portal; (b) the runtime row TICKS the cell nonce (`post.nonce = pre.nonce + 1`) while the executor's

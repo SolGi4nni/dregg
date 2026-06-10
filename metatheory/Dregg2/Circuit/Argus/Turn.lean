@@ -290,7 +290,7 @@ the deployed `runTurn` wrapper until the W1 VK rotation swaps the executor onto 
 The epilogue distributes the fee — proposer 50%, treasury 30%, the residue BURNED. So the fee-relevant
 triple {agent, proposer, treasury} does NOT come back to its pre-turn total: it drops by EXACTLY
 `feeBurned fee` — NOT `0` (that would be silent fee creation) and NOT the whole `fee` (that would be
-silent loss; the proposer/treasury are genuinely credited). This is `Admission.fee_conservation_modulo
+silent loss; the proposer/treasury are credited). This is `Admission.fee_conservation_modulo
 _burn` surfaced through the Argus `bodyCommitted` outcome. The body is assumed triple-neutral on the
 three fee cells (the usual case: an Argus effect whose body does not itself move balances among the
 fee cells), exactly as `TurnAdmission.runGatedForestTurn_conserves_modulo_burn`. -/
@@ -350,8 +350,8 @@ theorem conservation_modulo_burn_on_commit (ctx : AdmCtx) (h : TurnHdr) (st : Re
 /-! ## §8 — NON-VACUITY (`#eval`/`#guard`): all THREE outcomes are exhibited.
 
 We exhibit a concrete turn for each of the three outcomes — `rejected`, `prologueCommittedBodyFailed`,
-`bodyCommitted` — so the three-way is not vacuous: each branch is reachable, the prologue genuinely
-persists on the failing body, and the committed turn genuinely conserves modulo burn (drop = the burn,
+`bodyCommitted` — so the three-way is not vacuous: each branch is reachable, the prologue
+persists on the failing body, and the committed turn conserves modulo burn (drop = the burn,
 not `0`, not the whole fee). Agent cell 7 (balance 100, nonce 3), proposer 20, treasury 30. -/
 
 /-- Pre-state: agent 7 (bal 100, nonce 3), proposer 20 (bal 0), treasury 30 (bal 0) — three distinct
@@ -389,7 +389,7 @@ def bodyFail : RecStmt := RecStmt.guard (fun _ => false)
 -- OUTCOME 2 — `prologueCommittedBodyFailed`: admissible turn, FAILING body. Prologue persists.
 #guard (match runTurn ec0 eh0 bodyFail es0 with
         | .prologueCommittedBodyFailed _ => true | _ => false)
--- The prologue genuinely committed: agent 7 balance 100 → 90, nonce 3 → 4 (NEVER rolled back):
+-- The prologue committed: agent 7 balance 100 → 90, nonce 3 → 4 (NEVER rolled back):
 #guard ((runTurn ec0 eh0 bodyFail es0).state?.map
         (fun sp => (balOf (sp.kernel.cell 7), nonceOf (sp.kernel.cell 7)))) == some (90, 4)
 -- ...but it is NOT an accepted turn (anti-spam fee charged, body reverted):

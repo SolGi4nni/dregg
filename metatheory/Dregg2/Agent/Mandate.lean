@@ -418,7 +418,7 @@ theorem revoke_kills_subtree (t : DelegTree) (hw : t.WellAttenuated)
 
 Every headline above is satisfiable AND has teeth. We build a concrete principal→agent→sub-agent
 tree, materialize the root edge onto the real executor (it COMMITS), and exhibit that each invariant
-genuinely REFUSES a violating delegation (the witness-true-and-false bar). -/
+REFUSES a violating delegation (the witness-true-and-false bar). -/
 
 open Dregg2.Authority (Cap Auth)
 
@@ -503,7 +503,7 @@ runtime cannot mint spend by sub-delegating. -/
 theorem demo_overbudget_clamped :
     (rootM.subDelegate 2 [Auth.read] 999 Caveat.any).budget = 100 := by decide
 
-/-- **TEETH — the rights bound genuinely narrows.** A read-only sub-delegation drops `write`: the
+/-- **TEETH — the rights bound narrows.** A read-only sub-delegation drops `write`: the
 child's `keep` is `{read}`, NOT `{read,write}`. Attenuation is real, not a no-op. -/
 theorem demo_rights_narrow : childM.keep = [Auth.read] := by decide
 

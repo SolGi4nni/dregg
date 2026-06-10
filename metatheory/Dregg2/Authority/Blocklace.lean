@@ -276,7 +276,7 @@ theorem cdtToLace_canonical {g : CDT.Tree}
   have : na.self = nb.self := by simpa [cdtNodeToBlock] using hid
   rw [hinj na hna nb hnb this]
 
-/-- **`cdt_edge_is_pointed` (PROVED)** — the structural heart of the bridge: a CDT
+/-- **`cdt_edge_is_pointed`** — the structural heart of the bridge: a CDT
 `(child → parent)` present edge IS a blocklace `pointed` (ack) edge `parent ← child`. The
 derivation edge and the causal-ack edge are the same edge, on the translated lace. -/
 theorem cdt_edge_is_pointed {g : CDT.Tree} {child parent : CDT.CapNode}
@@ -379,7 +379,7 @@ def demoLace : Lace := [g0, g1, f1, f2]
 #guard decide (f1.creator = f2.creator ∧ f1.seq = f2.seq)         -- same strand+seq
 #guard decide (f1.id ∈ f2.preds ∨ f2.id ∈ f1.preds) == false      -- neither acks other
 
-/-- The honest ack edge `g0 ← g1` is a `pointed` edge in `demoLace` (PROVED, `decide`). -/
+/-- The honest ack edge `g0 ← g1` is a `pointed` edge in `demoLace` (`decide`). -/
 theorem demo_honest_edge : pointed demoLace g0 g1 := by
   refine ⟨by decide, by decide, by decide⟩
 
@@ -393,7 +393,7 @@ theorem demo_fork_not_pointed :
     ¬ pointed demoLace f1 f2 ∧ ¬ pointed demoLace f2 f1 := by
   constructor <;> · rintro ⟨hmem, _, _⟩; revert hmem; decide
 
-/-- **`demo_precedes_left_g0` (PROVED)** — in `demoLace`, the leftmost block of ANY `≺`-chain
+/-- **`demo_precedes_left_g0`** — in `demoLace`, the leftmost block of ANY `≺`-chain
 is genesis `g0`: `precedes demoLace x y → x = g0`. Because every `pointed` edge in `demoLace`
 acks genesis (all nonempty `preds` are `[0]`, the id of `g0`), so the source of any base edge
 is the block looked up at id `0`, which is `g0`; transitivity preserves the leftmost. This is

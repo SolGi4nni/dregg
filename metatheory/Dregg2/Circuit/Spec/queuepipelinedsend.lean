@@ -68,7 +68,7 @@ def pipelinedSendReceipt (actor : CellId) : Turn :=
   { actor := actor, src := actor, dst := actor, amt := 0 }
 
 /-- The INDEPENDENT receipt-data equals the executor's actual `escrowReceiptA` (the apply-time
-NEUTRAL marker). So the spec's `log` clause genuinely pins the executor's appended row, not a
+NEUTRAL marker). So the spec's `log` clause pins the executor's appended row, not a
 re-export. -/
 theorem pipelinedSendReceipt_eq (actor : CellId) :
     pipelinedSendReceipt actor = escrowReceiptA actor := by
@@ -79,7 +79,7 @@ theorem pipelinedSendReceipt_eq (actor : CellId) :
 The `recTransfer_correct` analog: rather than blindly trusting the executor's `some { kernel := …,
 log := … }` literal, we PIN what a committed pipelined-send does — its log grows by exactly the
 `pipelinedSendReceipt` row (head), the tail is the old log, and the kernel is literally unchanged. So
-the spec's `st'.log = pipelinedSendReceipt … :: st.log` ∧ kernel-frame clauses genuinely encode the
+the spec's `st'.log = pipelinedSendReceipt … :: st.log` ∧ kernel-frame clauses encode the
 arm's behaviour. -/
 theorem pipelinedSendStep_correct (st : RecChainedState) (actor : CellId) :
     ({ kernel := st.kernel, log := escrowReceiptA actor :: st.log } : RecChainedState).log
@@ -192,7 +192,7 @@ theorem execFullA_pipelinedSend_log {st st' : RecChainedState} {actor : CellId}
 
 /-- A committed `pipelinedSendA` leaves the ENTIRE kernel unchanged (the full kernel-frame: every one
 of the 17 fields is fixed, so the kernel record itself is `st.kernel`). The apply-time effect is
-genuinely NEUTRAL — no ledger move, no side-table touched. -/
+NEUTRAL — no ledger move, no side-table touched. -/
 theorem execFullA_pipelinedSend_kernel {st st' : RecChainedState} {actor : CellId}
     (h : execFullA st (.pipelinedSendA actor) = some st') :
     st'.kernel = st.kernel := by
@@ -213,7 +213,7 @@ kernel carries is preserved across a `pipelinedSendA` — in particular the per-
 `recTotalAsset` is fixed for every asset (the `delta = 0` neutrality the apply-time marker
 claims). This is the teeth of "apply-time NEUTRAL". -/
 
-/-- **`execFullA_pipelinedSend_neutral` — PROVED.** A committed `pipelinedSendA` preserves the
+/-- **`execFullA_pipelinedSend_neutral`.** A committed `pipelinedSendA` preserves the
 per-asset combined measure `recTotalAsset` for EVERY asset — the apply-time effect moves no
 value (`delta = 0`). Read directly off the whole-kernel frame. -/
 theorem execFullA_pipelinedSend_neutral {st st' : RecChainedState} {actor : CellId} (b : AssetId)

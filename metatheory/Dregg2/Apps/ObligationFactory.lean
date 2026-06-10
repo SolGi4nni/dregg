@@ -48,12 +48,12 @@ state_constraints (drawn ENTIRELY from the EXISTING `SlotCaveat` vocabulary — 
 
 ## The four obligation-safety keystones (mirroring escrow's four)
 
-  (a) CONSERVATION across the lifecycle  — PROVED, off `recKExecAsset_conserves_per_asset`
+  (a) CONSERVATION across the lifecycle, off `recKExecAsset_conserves_per_asset`
       (every obligation transition is an ordinary per-asset move; what's bonded is exactly what's
       returned-or-forfeit).
-  (b) NO-DOUBLE-RESOLVE                   — PROVED, the monotonic state machine: from a resolved
+  (b) NO-DOUBLE-RESOLVE, the monotonic state machine: from a resolved
       state (1 or 2) no transition is admitted; the op fail-closes.
-  (c) FULFIL/SLASH GATED BY CONDITION/DEADLINE — PROVED: `fulfilObligation` rejects when the
+  (c) FULFIL/SLASH GATED BY CONDITION/DEADLINE — `fulfilObligation` rejects when the
       supplied witness ≠ the `condition` slot; `slashObligation` rejects when the supplied witness
       ≠ the `deadline` slot OR when the condition WAS discharged (an unconditioned slash).
   (d) BOND NOT STRANDED (open ⇒ resolvable) — PROVED as one-step resolvability: from any OPEN
@@ -139,7 +139,7 @@ def obligationFactory (bond obligor obligee cond deadline : Int) : FactoryEntry 
     , (deadlineField, deadline) ]
   programVk := 0
 
-/-- **`obligationFactory_conforms` — PROVED.** The factory's OWN published initial state satisfies
+/-- **`obligationFactory_conforms`.** The factory's OWN published initial state satisfies
 its OWN caveats (no balance smuggling, state machine permits the genesis OPEN write, the
 immutables permit their first write). -/
 theorem obligationFactory_conforms (bond obligor obligee cond deadline : Int) :
@@ -252,22 +252,22 @@ enforce it at the `obState k e = sOpen` guard: a fulfil or slash on a NON-OPEN (
 obligation fail-closes. So a fulfilled obligation cannot slash and a slashed one cannot re-fulfil:
 the bond can leave the held column AT MOST ONCE. -/
 
-/-- **`fulfil_requires_open` — PROVED.** A fulfilment on a NON-OPEN obligation is rejected. -/
+/-- **`fulfil_requires_open`.** A fulfilment on a NON-OPEN obligation is rejected. -/
 theorem fulfil_requires_open (k : RecordKernelState) (e obligor : CellId) (asset : AssetId)
     (witness : Int) (hns : obState k e ≠ sOpen) :
     fulfilObligation k e obligor asset witness = none := by
   unfold fulfilObligation
   rw [if_neg (by rintro ⟨ho, _⟩; exact hns ho)]
 
-/-- **`slash_requires_open` — PROVED.** A slash on a NON-OPEN obligation is rejected. -/
+/-- **`slash_requires_open`.** A slash on a NON-OPEN obligation is rejected. -/
 theorem slash_requires_open (k : RecordKernelState) (e obligee : CellId) (asset : AssetId)
     (dlWitness condWitness : Int) (hns : obState k e ≠ sOpen) :
     slashObligation k e obligee asset dlWitness condWitness = none := by
   unfold slashObligation
   rw [if_neg (by rintro ⟨ho, _⟩; exact hns ho)]
 
-/-- **`no_double_resolve_fulfilled` — PROVED (RESOLVE side).** Once a settle has driven the
-obligation to FULFILLED, NO further fulfil or slash commits — both fail-closed (no longer OPEN).
+/-- **`no_double_resolve_fulfilled` (RESOLVE side).** Once a settle has driven the
+obligation to FULFILLED, NO further fulfil or slash commits — both fail-closed.
 The bond left exactly once. -/
 theorem no_double_resolve_fulfilled (k : RecordKernelState) (e tgt : CellId) (asset : AssetId)
     (witness dlWitness condWitness : Int) (hres : obState k e = sFulfilled) :
@@ -277,7 +277,7 @@ theorem no_double_resolve_fulfilled (k : RecordKernelState) (e tgt : CellId) (as
   exact ⟨fulfil_requires_open k e tgt asset witness hns,
          slash_requires_open k e tgt asset dlWitness condWitness hns⟩
 
-/-- **`no_double_resolve_slashed` — PROVED.** Once SLASHED, no fulfil or slash commits. -/
+/-- **`no_double_resolve_slashed`.** Once SLASHED, no fulfil or slash commits. -/
 theorem no_double_resolve_slashed (k : RecordKernelState) (e tgt : CellId) (asset : AssetId)
     (witness dlWitness condWitness : Int) (hres : obState k e = sSlashed) :
     fulfilObligation k e tgt asset witness = none
@@ -354,7 +354,7 @@ theorem slash_rejects_when_condition_met (k : RecordKernelState) (e obligee : Ce
 From any OPEN obligation with a live, distinct, authorized settle target and the bonded value in
 its `bal` column, BOTH a fulfilment (condition discharged) and a slash (deadline reached,
 condition failed) COMMIT, and a committed settle DRAINS the bond column to 0 — so no bonded value
-is STRUCTURALLY trapped. (HONEST SCOPE: one-step resolvability, the structural analog of the verb
+is STRUCTURALLY trapped. (SCOPE: one-step resolvability, the structural analog of the verb
 guarantee; scheduler-fairness *eventual* settlement is the consensus/GST layer.) -/
 
 /-- The move-admissibility bundle for an obligation settle (mirrors escrow's `SettleReady`): the
@@ -443,7 +443,7 @@ requires `dst ∈ accounts`. A settle whose target is NOT a live account is reje
 bond can never be forfeit/returned into a frozen/absent cell (which would silently destroy it,
 breaking conservation). -/
 
-/-- **`settle_requires_live_target` — PROVED.** A settle whose `target` is NOT a live account is
+/-- **`settle_requires_live_target`.** A settle whose `target` is NOT a live account is
 rejected (`none`) — the move cannot deliver the bond into a non-account. -/
 theorem settle_requires_live_target {k : RecordKernelState} {e target : CellId} {asset : AssetId}
     {newState : Int} (hdead : target ∉ k.accounts) :
@@ -453,7 +453,7 @@ theorem settle_requires_live_target {k : RecordKernelState} {e target : CellId} 
   rintro ⟨_, _, _, _, _, htgt⟩
   exact hdead htgt
 
-/-- **`fulfil_requires_live_obligor` — PROVED.** A fulfilment whose obligor target is not a live
+/-- **`fulfil_requires_live_obligor`.** A fulfilment whose obligor target is not a live
 account is rejected. -/
 theorem fulfil_requires_live_obligor {k : RecordKernelState} {e obligor : CellId} {asset : AssetId}
     {witness : Int} (hdead : obligor ∉ k.accounts) :
@@ -463,7 +463,7 @@ theorem fulfil_requires_live_obligor {k : RecordKernelState} {e obligor : CellId
   · rw [if_pos hg]; exact settle_requires_live_target hdead
   · rw [if_neg hg]
 
-/-- **`slash_requires_live_obligee` — PROVED.** A slash whose obligee target is not a live account
+/-- **`slash_requires_live_obligee`.** A slash whose obligee target is not a live account
 is rejected. -/
 theorem slash_requires_live_obligee {k : RecordKernelState} {e obligee : CellId} {asset : AssetId}
     {dlWitness condWitness : Int} (hdead : obligee ∉ k.accounts) :
@@ -497,7 +497,7 @@ def mintObligationCell (s : RecChainedState) (actor obCell : CellId) (vk : Int) 
     Option RecChainedState :=
   createCellFromFactoryChainA s actor obCell vk
 
-/-- **`mintObligationCell_installs_state_machine` — PROVED (the factory keystone, obligation-
+/-- **`mintObligationCell_installs_state_machine` (the factory keystone, obligation-
 specialized).** A minted obligation cell carries EXACTLY the factory's caveats — the five deal-term
 immutables PLUS the no-double-resolve state machine `admitTable [(open,fulfilled),(open,slashed)]`
 — installed by the executor, so `stateStepGuarded` enforces them on every later `SetField`. -/
@@ -511,7 +511,7 @@ theorem mintObligationCell_installs_state_machine {s s' : RecChainedState} {acto
   rw [← (Option.some.injEq _ _).mp hfind] at hcav
   exact hcav
 
-/-- **`mintObligationCell_caveats` — PROVED.** When the registry IS `obligationRegistry vk …`, the
+/-- **`mintObligationCell_caveats`.** When the registry IS `obligationRegistry vk …`, the
 minted cell concretely carries the obligation state machine + deal-term immutables. -/
 theorem mintObligationCell_caveats {s s' : RecChainedState} {actor obCell : CellId} {vk : Int}
     {bond obligor obligee cond deadline : Int}
@@ -524,21 +524,21 @@ theorem mintObligationCell_caveats {s s' : RecChainedState} {actor obCell : Cell
     rw [hreg]; exact obligationRegistry_finds vk.toNat bond obligor obligee cond deadline
   exact mintObligationCell_installs_state_machine _ hfind h
 
-/-- **`mintObligationCell_neutral` — PROVED.** Minting an obligation cell is conservation-NEUTRAL
+/-- **`mintObligationCell_neutral`.** Minting an obligation cell is conservation-NEUTRAL
 for every asset (the cell is born EMPTY; the bond is posted SEPARATELY by an ordinary move). -/
 theorem mintObligationCell_neutral {s s' : RecChainedState} {actor obCell : CellId} {vk : Int}
     (b : AssetId) (h : mintObligationCell s actor obCell vk = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   createCellFromFactoryChainA_neutral b h
 
-/-- **`mintObligationCell_grows_accounts` — PROVED.** A minted obligation cell IS a live account
+/-- **`mintObligationCell_grows_accounts`.** A minted obligation cell IS a live account
 (the mint has teeth; neutrality is not a no-op). -/
 theorem mintObligationCell_grows_accounts {s s' : RecChainedState} {actor obCell : CellId} {vk : Int}
     (h : mintObligationCell s actor obCell vk = some s') :
     obCell ∈ s'.kernel.accounts :=
   createCellFromFactoryChainA_grows_accounts h
 
-/-- **`mintObligationCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an
+/-- **`mintObligationCell_unknown_factory_fails` (fail-closed).** Minting against an
 unknown factory key never mints. The obligation program cannot be conjured without a published
 factory. -/
 theorem mintObligationCell_unknown_factory_fails (s : RecChainedState) (actor obCell : CellId)
@@ -553,7 +553,7 @@ def postBond (k : RecordKernelState) (obligor obCell : CellId) (asset : AssetId)
     Option RecordKernelState :=
   recKExecAsset k { actor := obligor, src := obligor, dst := obCell, amt := amt } asset
 
-/-- **`postBond_conserves` — PROVED.** A committed bond posting preserves every asset's total
+/-- **`postBond_conserves`.** A committed bond posting preserves every asset's total
 supply (the value moves between two live accounts — funding the bond, not minting it). -/
 theorem postBond_conserves {k k' : RecordKernelState} {obligor obCell : CellId}
     {asset : AssetId} {amt : ℤ} (h : postBond k obligor obCell asset amt = some k')

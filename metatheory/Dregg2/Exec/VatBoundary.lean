@@ -42,7 +42,7 @@ def reqFromPost (s' : ChainedState) : Req :=
   | t :: _ => { actor := t.actor, height := s'.log.length - 1 }
   | []     => default
 
-/-- **`reqFromPost_commit` (PROVED)** — on a committed step the post-state's recovered request equals
+/-- **`reqFromPost_commit`** — on a committed step the post-state's recovered request equals
 the turn's request: `reqFromPost s' = reqOf s t` (because `cexec` appends `t` to the chain head).
 This is what lets the cross-vat witness, checked against `reqOf s t`, discharge the state-relation
 predicate `p s s' = reqFromPost s'`. -/
@@ -75,9 +75,9 @@ variable (owner : Label) (subjects : List Label)
 recovered from the committed post-state. (`Integrity`'s `p : KO → KO → P`.) -/
 def cellChangeReq : ChainedState → ChainedState → Req := fun _ s' => reqFromPost s'
 
-/-! ## The vat-boundary law on the living cell (the keystone, PROVED). -/
+/-! ## The vat-boundary law on the living cell (the keystone). -/
 
-/-- **`vat_boundary_law` (PROVED) — the vat-boundary law, realized on the executable living cell.**
+/-- **`vat_boundary_law` — the vat-boundary law, realized on the executable living cell.**
 Every admissible committed turn respects `Authority.Integrity`:
   * a **cross-vat** turn is admitted by `Integrity.cross` with the **presented token as the
     discharging witness** (`reqFromPost_commit` aligns the checked request with `p s s'`);
@@ -105,14 +105,14 @@ theorem vat_boundary_law (s s' : ChainedState) (vt : VatTurn)
       -- intra-vat: the owning vat may change its own state (trivial witness).
       exact Integrity.intra hown
 
-/-- **`vat_boundary_intra` (PROVED)** — the intra-vat half, standalone: an in-trust-root turn needs
+/-- **`vat_boundary_intra`** — the intra-vat half, standalone: an in-trust-root turn needs
 no witness (caps-as-caps); the owning vat's change is admissible by `troa_lrefl`/`Integrity.intra`. -/
 theorem vat_boundary_intra (s s' : ChainedState) (hown : owner ∈ subjects) :
     Integrity (P := Req) (W := Token Req Unit × Discharges Unit)
       owner subjects (cellChangeReq) s s' :=
   Integrity.intra hown
 
-/-- **`vat_boundary_cross` (PROVED)** — the cross-vat half, standalone: admissibility across the
+/-- **`vat_boundary_cross`** — the cross-vat half, standalone: admissibility across the
 boundary is *exactly* token-discharge of the request, with the token as the witness. The decidable
 `Verify` has replaced the positional `∃ cap ∈ caps`. -/
 theorem vat_boundary_cross (s s' : ChainedState) (t : Turn)

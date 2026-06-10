@@ -95,9 +95,9 @@ def inboxExec (prog : RecordProgram) (method : Nat) (old : Value) (ops : List Re
 
 /-! ## Generic gating lemma — a committed inbox transition was admitted (the `recExec_admitted` lift). -/
 
-/-- **`inboxExec_admitted` (PROVED)** — nothing commits that the program rejects: if
+/-- **`inboxExec_admitted`** — nothing commits that the program rejects: if
 `inboxExec prog method old ops = some new`, then `prog.admits method old new = true`. The exact
-multi-op analogue of `RecordCell.recExec_admitted`; the program genuinely gates the inbox arrow. -/
+multi-op analogue of `RecordCell.recExec_admitted`; the program gates the inbox arrow. -/
 theorem inboxExec_admitted
     {prog : RecordProgram} {method : Nat} {old : Value} {ops : List RecOp} {new : Value}
     (h : inboxExec prog method old ops = some new) :
@@ -108,7 +108,7 @@ theorem inboxExec_admitted
     rw [← h]; exact ha
   · rw [if_neg ha] at h; exact absurd h (by simp)
 
-/-- **`inboxExec_commits_candidate` (PROVED)** — a commit commits exactly the folded candidate
+/-- **`inboxExec_commits_candidate`** — a commit commits exactly the folded candidate
 (no silent rewrite between apply and commit). With `inboxExec_admitted` this fully characterizes a
 committed inbox transition: `new = applyOpList old ops` ∧ `admits old new`. -/
 theorem inboxExec_commits_candidate
@@ -132,7 +132,7 @@ theorem all_constraint_holds
   simp only [RecordProgram.admits, List.all_eq_true] at h
   exact h c hc
 
-/-- **`fieldLeField_holds` (PROVED)** — from `evalConstraint (.fieldLeField l r) o n = true`,
+/-- **`fieldLeField_holds`** — from `evalConstraint (.fieldLeField l r) o n = true`,
 recover the honest `Int` facts: both fields are present scalars and `a ≤ b`. (The lift of
 `fieldLeField`'s `decide` back to a real inequality, mirroring `recExec_mono_holds`.) -/
 theorem fieldLeField_holds
@@ -149,7 +149,7 @@ theorem fieldLeField_holds
           rw [ha, hb] at h
           exact ⟨a, b, rfl, rfl, of_decide_eq_true h⟩
 
-/-- **`monotonic_holds` (PROVED)** — from `evalConstraint (.simple (.monotonic f)) o n = true`,
+/-- **`monotonic_holds`** — from `evalConstraint (.simple (.monotonic f)) o n = true`,
 recover the honest facts: both old and new `f` are present scalars and `old ≤ new` (the cursor
 advanced, never retreated). -/
 theorem monotonic_holds
@@ -168,7 +168,7 @@ theorem monotonic_holds
 
 /-! ## THE KEYSTONE — `inbox_fifo`: a committed transition preserves the FIFO invariant. -/
 
-/-- **`inbox_fifo` (THE KEYSTONE — PROVED).** Over the inbox program, a *committed* send-or-dequeue
+/-- **`inbox_fifo` (THE KEYSTONE).** Over the inbox program, a *committed* send-or-dequeue
 preserves the FIFO safety invariant `tail ≤ head` AND advances both cursors monotonically (neither
 `head` nor `tail` ever retreats). This is the inbox's life invariant: the consumer never passes the
 producer, and the cursors are append-only — proved purely from the `RecordProgram` constraints
@@ -212,7 +212,7 @@ theorem inbox_fifo
     have hc := all_constraint_holds hpred0 (c := .simple (.monotonic "tail")) (by simp)
     exact monotonic_holds hc
 
-/-- **`inbox_capacity_held` (PROVED)** — a committed transition keeps the in-flight count within
+/-- **`inbox_capacity_held`** — a committed transition keeps the in-flight count within
 capacity: `new.inflight ≤ cap`. (The clean, in-catalog half of the capacity bound; the cross-slot
 `head - tail ≤ cap` relational form is the `-- OPEN:` in `inboxProgram`. Here we prove the derived
 register stays bounded, which — GIVEN the `inflightTracks` discipline `inboxExec` maintains — is
@@ -263,7 +263,7 @@ def gatedSend
   else
     none
 
-/-- **`send_requires_authorized_token` (PROVED)** — the clean gate-AND lemma: a *committed* gated
+/-- **`send_requires_authorized_token`** — the clean gate-AND lemma: a *committed* gated
 send necessarily presented an authorized-sender token that discharges. So a send that no authorized
 token covers can never commit — the token layer is load-bearing on the send path, never bypassed.
 This is the keys-as-caps `Discharged` object for the send (`Token.admits ⇒ Laws.Discharged`,
@@ -278,7 +278,7 @@ theorem send_requires_authorized_token
   · simpa only [sendAuthorized] using ha
   · rw [if_neg ha] at h; exact absurd h (by simp)
 
-/-- **`gatedSend_also_admitted` (PROVED)** — a committed gated send ALSO satisfies the inbox
+/-- **`gatedSend_also_admitted`** — a committed gated send ALSO satisfies the inbox
 program (both obligations discharged). Together with `send_requires_authorized_token` this is the
 full characterization: a committed send presented a discharging token AND was admitted by the FIFO
 program (so `inbox_fifo` applies to it). -/
@@ -298,7 +298,7 @@ theorem gatedSend_also_admitted
 -- `CryptoKernel`): the token's `RootSeal`/issuer-root must equal the inbox's `sender_set_root` and
 -- the presenter must control the sealed key. dregg1's scalar evaluator defers exactly this (it
 -- returns `true` for `SenderAuthorized` and discharges it in a dedicated auth pass; see
--- `Exec/Program.lean`'s `boundDelta`/`Witnessed` deferral). We defer it identically and honestly,
+-- `Exec/Program.lean`'s `boundDelta`/`Witnessed` deferral). We defer it identically and,
 -- rather than fake a binding the single-cell evaluator cannot witness.
 
 /-! ## It runs (`#guard`) — a fresh inbox; a send; a dequeue; rejected malformed transitions. -/

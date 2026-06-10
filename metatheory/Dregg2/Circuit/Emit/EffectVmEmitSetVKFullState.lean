@@ -13,7 +13,7 @@ setVerificationKey writes the cell's VK OFF the VM trace (its SOUNDNESS is the u
 RUNNABLE row is the frozen-frame + nonce-tick passthrough. So its `system_roots` sub-block is FROZEN; the
 magnesium win is the WIDE commitment now BINDS all 8 roots. The §RECIPE applied to setVK.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

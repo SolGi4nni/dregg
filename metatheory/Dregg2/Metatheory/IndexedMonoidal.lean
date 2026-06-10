@@ -26,21 +26,21 @@ This module makes that precise:
   * **§3 KEYSTONE — a CONCRETE non-trivial dregg instance** welding K + A on ONE total category:
       - base = the **walking-arrow context category** `Ctx` (`lo ⟶ hi`, "extend the context");
       - fibres = the **monoidal resource category** `Discrete Bundle` of `Resource.lean` (asset bundles
-        under `*` = bundle-union — genuinely monoidal, NOT cartesian);
+        under `*` = bundle-union — monoidal, NOT cartesian);
       - reindexing along `lo ⟶ hi` = `Discrete.monoidalFunctor` of an explicit `MonoidHom` (the
         "spend the art, keep the gold" projection) — a STRONG monoidal functor (mathlib
         `Discrete.monoidalFunctorMonoidal`).
     We prove the instance carries BOTH:
       (a) the **∃/∀ predicate adjoints** on the base map, via the posetal Set doctrine of
           `Lawvere.PartA` (`Set.image_preimage` / `Set.preimage_kernImage`) — `∃_f ⊣ f* ⊣ ∀_f`;
-      (b) each **fibre is genuinely monoidal** (the linear `⊗`), with a real binary tensor.
-  * **§4** the **INTERACTION** (the genuinely new welding content): the projection/Frobenius law
+      (b) each **fibre is monoidal** (the linear `⊗`), with a real binary tensor.
+  * **§4** the **INTERACTION** (the new welding content): the projection/Frobenius law
     relating `∃` (the predicate left adjoint) and the fibrewise `⊗`. We prove the **LAX `⊆` half**
     (the honest one-directional form that survives in general, à la `Lawvere` §B.6) AND show the
     naive EQUALITY FAILS on a concrete non-functional witness — so the lax inclusion is not a cheap
     `True`-collapse, it is the genuine surviving law.
-  * **§5 TEETH** — non-vacuity: fibres are NOT subsingleton-collapsed (`⊗` genuinely discriminates,
-    `res 2 ≠ res 0`); the predicate adjoint genuinely discriminates (`∃_f` non-trivial); the total
+  * **§5 TEETH** — non-vacuity: fibres are NOT subsingleton-collapsed (`⊗` discriminates,
+    `res 2 ≠ res 0`); the predicate adjoint discriminates (`∃_f` non-trivial); the total
     category `∫F` has a genuine non-identity morphism whose base leg is `lo ⟶ hi` and whose fibre leg
     is a real `Discrete` tensor map.
 
@@ -148,7 +148,7 @@ We exhibit a genuine, non-trivial `IndexedMonoidalCategory` whose
   * base is the **walking-arrow context category** `Ctx` (objects `lo`, `hi`; a single non-identity
     "extend the context" arrow `lo ⟶ hi`), and
   * fibres are the **monoidal resource category** `Discrete Bundle` of `Resource.lean` (asset bundles,
-    `*` = bundle union, `1` = the empty bundle — genuinely monoidal, NOT cartesian).
+    `*` = bundle union, `1` = the empty bundle — monoidal, NOT cartesian).
 
 The reindexing along `lo ⟶ hi` is `Discrete.monoidalFunctor` of the explicit `MonoidHom` "drop the
 art component, keep the gold" — a *strong* monoidal functor (so a fortiori lax). This is the resource
@@ -208,7 +208,7 @@ def dropArt : Bundle →* Bundle where
     show (0 : ℕ) = 0 + 0
     rfl
 
-/-- `dropArt` genuinely discriminates: it sends the bundle `(0,1)` (one art) to `(0,0)` (empty),
+/-- `dropArt` discriminates: it sends the bundle `(0,1)` (one art) to `(0,0)` (empty),
 collapsing distinct bundles — so it is NOT injective, hence a real attenuation. -/
 theorem dropArt_not_injective : ¬ Function.Injective dropArt := by
   intro hinj
@@ -250,14 +250,14 @@ def F : Ctx ⥤ Cat.{0, 0} where
 /-- `F.obj c` is `Discrete Bundle` for every context — so the fibre is the monoidal resource category. -/
 theorem F_obj (c : Ctx) : F.obj c = Cat.of (Discrete Bundle) := rfl
 
-/-- **(b) Each fibre is genuinely MONOIDAL — the resource `⊗`.** The `MonoidalCategory (F.obj c)`
+/-- **(b) Each fibre is MONOIDAL — the resource `⊗`.** The `MonoidalCategory (F.obj c)`
 instance, inherited from `Discrete.monoidal` on the bundle `CommMonoid`. This is the linear tensor:
 `X ⊗ Y` = bundle union, `𝟙_` = the empty bundle, and crucially NO diagonal `Δ : X ⟶ X ⊗ X` (it is not
 cartesian). -/
 instance fibreMonoidal (c : Ctx) : MonoidalCategory (F.obj c) :=
   inferInstanceAs (MonoidalCategory (Discrete Bundle))
 
-/-- **The reindexing functor is (strong, hence) LAX monoidal — PROVED.** For the `extend` arrow this is
+/-- **The reindexing functor is (strong, hence) LAX monoidal.** For the `extend` arrow this is
 `Discrete.monoidalFunctorMonoidal dropArt` (a strong monoidal functor); for identities it is the
 identity functor's monoidal structure. So every reindexing carries `ε`/`μ`, the data an indexed
 monoidal category demands. -/
@@ -284,7 +284,7 @@ abbrev DreggTotal : Type _ := dreggIM.Total
 
 /-! ### §3.4 The two structures COEXIST on the one total category `∫F`. -/
 
-/-- The total category is genuinely a category (Grothendieck of `F`) — sanity that the weld typechecks
+/-- The total category is a category (Grothendieck of `F`) — sanity that the weld typechecks
 as a single object. -/
 example : Category DreggTotal := inferInstance
 
@@ -340,7 +340,7 @@ theorem lawvere_triple (f : ι → κ) :
       GaloisConnection (reindex f) (forallAlong f) :=
   ⟨existsAlong_adj_reindex f, reindex_adj_forallAlong f⟩
 
-/-! ### §4.2 THE INTERACTION (the genuinely new welding content): the projection / Frobenius law
+/-! ### §4.2 THE INTERACTION (the new welding content): the projection / Frobenius law
 relating `∃_f` (the predicate left adjoint) and a fibrewise resource tensor.
 
 In an indexed monoidal category the *Frobenius / projection formula* relates the base quantifier `∃_f`
@@ -398,18 +398,18 @@ def Tf : Set (Fin 3) := {1}
 instance : DecidablePred (· ∈ Sf) := fun w => by unfold Sf; exact inferInstance
 instance : DecidablePred (· ∈ Tf) := fun w => by unfold Tf; exact inferInstance
 
-/-- `1 ∈ relExists R S ∩ T` — PROVED. `1` is an `R`-successor of `0 ∈ S` (edge `0∼1`) and `1 ∈ T`. -/
+/-- `1 ∈ relExists R S ∩ T`. `1` is an `R`-successor of `0 ∈ S` (edge `0∼1`) and `1 ∈ T`. -/
 theorem one_mem_rhs : (1 : Fin 3) ∈ relExists R Sf ∩ Tf := by
   show (∃ s, R s 1 ∧ s ∈ Sf) ∧ (1 : Fin 3) ∈ Tf
   decide
 
-/-- `1 ∉ relExists R (S ∩ relForall R T)` — PROVED. The only `S`-source for `1` is `0`, but `0` does
+/-- `1 ∉ relExists R (S ∩ relForall R T)`. The only `S`-source for `1` is `0`, but `0` does
 NOT know `T = {1}` (`0` reflexively `R`-sees `0 ∉ T`), so `S ∩ □T` has no qualifying source. -/
 theorem one_not_mem_lhs : (1 : Fin 3) ∉ relExists R (Sf ∩ relForall R Tf) := by
   show ¬ ∃ s, R s 1 ∧ s ∈ Sf ∧ (∀ w, R s w → w ∈ Tf)
   decide
 
-/-- **The naive projection EQUALITY FAILS — PROVED.** `relExists R (S ∩ relForall R T) ≠ relExists R S ∩ T`
+/-- **The naive projection EQUALITY FAILS.** `relExists R (S ∩ relForall R T) ≠ relExists R S ∩ T`
 on this non-functional reindexing: `1` is in the RHS but not the LHS. Hence the reverse of `frobenius_le`
 is false here, and the LAX `⊆` half is the genuine surviving interaction (the literal Frobenius equality
 is special to the frame-homomorphism / function fibre — `frobenius`). -/
@@ -427,10 +427,10 @@ end Predicate
 ##################################################################################
 
 We certify the keystone is not a degenerate / subsingleton collapse on every axis the task names:
-  * the FIBRE is not subsingleton-collapsed — the resource `⊗` genuinely discriminates;
+  * the FIBRE is not subsingleton-collapsed — the resource `⊗` discriminates;
   * the fibre `⊗` is a real binary operation (a genuine tensor, not the unit);
-  * the reindexing genuinely attenuates (`dropArt` not injective — §3.2);
-  * the predicate `∃_f` genuinely discriminates (non-trivial image);
+  * the reindexing attenuates (`dropArt` not injective — §3.2);
+  * the predicate `∃_f` discriminates (non-trivial image);
   * the TOTAL category `∫F` has a genuine non-identity morphism whose base leg is `extend` and whose
     fibre leg is a real `Discrete` tensor map — the two structures meet on ONE arrow. -/
 
@@ -440,14 +440,14 @@ open Dregg2.Intent DreggInstance Predicate
 
 /-- **The fibre is NOT subsingleton-collapsed.** The resource objects `res 2 0` and `res 0 0` are
 distinct (`2 gold` ≠ `empty`), so the fibre `Discrete Bundle` has at least two objects — the monoidal
-structure is on a genuinely non-trivial category. -/
+structure is on a non-trivial category. -/
 theorem fibre_not_subsingleton : (res 2 0) ≠ (res 0 0) := by
   intro h
   have : (mkBundle 2 0) = (mkBundle 0 0) := congrArg Discrete.as h
   exact absurd (Multiplicative.ofAdd.injective this) (by decide)
 
 /-- **The fibre `⊗` is a REAL binary operation.** `res 1 0 ⊗ res 1 0 = res 2 0` (1 gold tensored with
-1 gold yields 2 gold) — the tensor genuinely ADDS the bundles; it is not a projection or the unit. -/
+1 gold yields 2 gold) — the tensor ADDS the bundles; it is not a projection or the unit. -/
 theorem tensor_is_real_binop :
     (res 1 0 ⊗ res 1 0 : Discrete Bundle) = res 2 0 := by
   apply Discrete.ext
@@ -468,7 +468,7 @@ theorem tensor_not_idem : (res 1 0 ⊗ res 1 0 : Discrete Bundle) ≠ res 1 0 :=
 This is the WHOLE POINT of indexing *monoidal* (not Heyting/cartesian) fibres: a resource cannot be
 duplicated. Concretely, a morphism `res 1 0 ⟶ res 1 0 ⊗ res 1 0` in `Discrete Bundle` would force
 `(res 1 0).as = (res 1 0 ⊗ res 1 0).as`, i.e. `mkBundle 1 0 = mkBundle 2 0` (the tensor ADDS, so
-`1 gold ≠ 2 gold`) — impossible. So `1 gold` cannot copy itself: the fibre tensor is genuinely linear,
+`1 gold ≠ 2 gold`) — impossible. So `1 gold` cannot copy itself: the fibre tensor is linear,
 withholding the cartesian `Δ`. (A Heyting fibre would HAVE this diagonal; that is exactly the wrong,
 duplicable behaviour the indexed-monoidal fix forbids.) -/
 theorem no_diagonal_linear :
@@ -480,7 +480,7 @@ theorem no_diagonal_linear :
   have : ((1, 0) : ℕ × ℕ) = (2, 0) := Multiplicative.ofAdd.injective heq
   exact absurd (congrArg Prod.fst this) (by decide)
 
-/-- **The predicate `∃_f` genuinely discriminates.** For the constant base map `f : Fin 1 → Fin 2`,
+/-- **The predicate `∃_f` discriminates.** For the constant base map `f : Fin 1 → Fin 2`,
 `∃_f {0} = {f 0}` is a genuine singleton image, and `∃_f` is NOT the trivial (always-`univ` or
 always-`∅`) operator: `∃_f ∅ = ∅` while `∃_f {0} = {0}` differ. -/
 theorem existsAlong_discriminates :
@@ -522,9 +522,9 @@ def weldMorphism : objLo ⟶ objHi where
 weld. -/
 theorem weldMorphism_base : weldMorphism.base = CtxHom.extend := rfl
 
-/-- The weld morphism is NON-trivial: it genuinely CROSSES contexts (`objLo.base = lo ≠ hi = objHi.base`),
+/-- The weld morphism is NON-trivial: it CROSSES contexts (`objLo.base = lo ≠ hi = objHi.base`),
 so it is not a self-loop / endo-identity — its base leg `extend` is a real context extension, not an
-identity. This certifies the total morphism welds two genuinely distinct fibres, not one fibre to
+identity. This certifies the total morphism welds two distinct fibres, not one fibre to
 itself. -/
 theorem weldMorphism_crosses_contexts : objLo.base ≠ objHi.base := by
   show Ctx.lo ≠ Ctx.hi

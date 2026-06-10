@@ -187,7 +187,7 @@ def castNodeWithChain (cred : Authorization Dg Pf) (chain : Chain Cx Gw (Key Tg)
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** A gated forest with NO children runs
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** A gated forest with NO children runs
 EXACTLY its root gated node step: `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`. (Both branches
 of `execFullForestG`'s match collapse because `execFullChildrenG _ s' [] = some s'`.) The bridge through
 which every cast-vote's `none`/`some` is read off `execFullAGated` directly. -/
@@ -230,7 +230,7 @@ caveatsDischarged (mkAuth cred []) s && revocationGate (mkAuth cred []) s`. For 
 chain), the nullifier is `0` (not in an empty revocation registry). So `gateOK` is exactly the credential
 leg `credentialValidG (mkAuth cred [])` — `portalVerify cred`. -/
 
-/-- **`gateOK_forged_false` — PROVED.** The forged credential's gate leg is FALSE
+/-- **`gateOK_forged_false`.** The forged credential's gate leg is FALSE
 (`portalVerify (.signature 7 8) = decide (7 = 8) = false`) — independent of state, so the whole gate
 `gateOK (mkAuth forgedCred []) s = false`. -/
 theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []) s = false := by
@@ -241,7 +241,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §4b — The TOKEN + MACAROON-CHAIN gate legs (parallel to §4's signature forgery). -/
 
-/-- **`gateOK_token_forged_false` — PROVED.** A FORGED macaroon token's gate leg is FALSE
+/-- **`gateOK_token_forged_false`.** A FORGED macaroon token's gate leg is FALSE
 (`portalVerify (.token 7 8) = false`) — independent of state and chain. -/
 theorem gateOK_token_forged_false (s : RecChainedState) (chain : Chain Cx Gw (Key Tg) Bt Tg) :
     gateOK (mkAuthWithChain forgedTokenCred chain) s = false := by
@@ -250,7 +250,7 @@ theorem gateOK_token_forged_false (s : RecChainedState) (chain : Chain Cx Gw (Ke
   rw [hcred]
   simp
 
-/-- **`gateOK_chain_forged_false` — PROVED.** A FORGED macaroon chain (HMAC tail mismatch) fails the
+/-- **`gateOK_chain_forged_false`.** A FORGED macaroon chain (HMAC tail mismatch) fails the
 `chainGateG` leg — independent of state, even with a genuine token. -/
 theorem gateOK_chain_forged_false (s : RecChainedState) :
     gateOK (mkAuthWithChain goodTokenCred pvForgedChain) s = false := by
@@ -262,7 +262,7 @@ theorem gateOK_chain_forged_false (s : RecChainedState) :
   rw [hcav]
   simp
 
-/-- **`gateOK_chain_caveat_violation_false` — PROVED.** A verifying chain whose caveats do NOT admit
+/-- **`gateOK_chain_caveat_violation_false`.** A verifying chain whose caveats do NOT admit
 `pvChainCtx` fails the `chainGateG` leg — the caveat meet bites. -/
 theorem gateOK_chain_caveat_violation_false (s : RecChainedState) :
     gateOK (mkAuthWithChain goodTokenCred pvCaveatViolationChain) s = false := by
@@ -277,7 +277,7 @@ theorem gateOK_chain_caveat_violation_false (s : RecChainedState) :
 
 /-! ## §5 — END-USER THEOREM 1: a FORGED voter credential ⇒ the whole gated turn REJECTS. -/
 
-/-- **`pv_forged_credential_rejected` — PROVED.** A cast-vote (any voter-slot/mark) presented with a
+/-- **`pv_forged_credential_rejected`.** A cast-vote (any voter-slot/mark) presented with a
 FORGED credential is rejected by the production turn entry: `execFullForestG s (castNode forgedCred …) =
 none`, for EVERY pre-state `s`. The credential leg fail-closes ⇒ the whole forest rolls back — nobody
 can vote without a genuine credential. -/
@@ -289,7 +289,7 @@ theorem pv_forged_credential_rejected (s : RecChainedState) (voterSlot : FieldNa
 
 /-! ## §5b — TOKEN + MACAROON-CHAIN arm: forgery rejections and a good cast commits. -/
 
-/-- **`pv_token_forged_rejected` — PROVED.** A cast-vote with a FORGED macaroon token credential is
+/-- **`pv_token_forged_rejected`.** A cast-vote with a FORGED macaroon token credential is
 rejected — `execFullForestG s (castNodeWithChain forgedTokenCred pvGoodChain …) = none`, ∀ state —
 even when the macaroon chain is genuine. -/
 theorem pv_token_forged_rejected (s : RecChainedState) (voterSlot : FieldName) (mark : Int) :
@@ -299,7 +299,7 @@ theorem pv_token_forged_rejected (s : RecChainedState) (voterSlot : FieldName) (
     (.setFieldA ballotActor ballotCell voterSlot mark) []
     (gateOK_token_forged_false s pvGoodChain)
 
-/-- **`pv_chain_forged_rejected` — PROVED.** A cast-vote with a FORGED macaroon chain is rejected —
+/-- **`pv_chain_forged_rejected`.** A cast-vote with a FORGED macaroon chain is rejected —
 `execFullForestG s (castNodeWithChain goodTokenCred pvForgedChain …) = none`, ∀ state — even with a
 genuine token credential. -/
 theorem pv_chain_forged_rejected (s : RecChainedState) (voterSlot : FieldName) (mark : Int) :
@@ -308,7 +308,7 @@ theorem pv_chain_forged_rejected (s : RecChainedState) (voterSlot : FieldName) (
   exact execFullForestG_unauthorized_fails s (mkAuthWithChain goodTokenCred pvForgedChain)
     (.setFieldA ballotActor ballotCell voterSlot mark) [] (gateOK_chain_forged_false s)
 
-/-- **`pv_chain_caveat_violation_rejected` — PROVED.** A cast-vote whose macaroon chain verifies but
+/-- **`pv_chain_caveat_violation_rejected`.** A cast-vote whose macaroon chain verifies but
 does NOT admit `pvChainCtx` is rejected — the chain caveat meet fail-closes. -/
 theorem pv_chain_caveat_violation_rejected (s : RecChainedState) (voterSlot : FieldName) (mark : Int) :
     execFullForestG s (castNodeWithChain goodTokenCred pvCaveatViolationChain voterSlot mark) = none := by
@@ -331,7 +331,7 @@ registry `s.kernel.revoked`, EVERY cast presented with it is rejected — at EVE
 the gate's revocation leg (`gateOK_revoked_fails`, reading adversary-uncontrollable kernel state), the
 SAME revocation discipline `IdentityGated` proves permanent. A revoked voter can never re-validate. -/
 
-/-- **`pv_revoked_voter_rejected` — PROVED (the revoked-voter headline).** If a voter's credential
+/-- **`pv_revoked_voter_rejected` (the revoked-voter headline).** If a voter's credential
 nullifier `nul` is in the COMMITTED revocation registry `s.kernel.revoked`, then EVERY cast-vote
 presented with it is rejected by the production turn entry — `execFullForestG s (castNodeNul cred nul …) =
 none` — at EVERY reachable state `s`. The revocation leg fail-closes ⇒ the whole forest rolls back.
@@ -365,7 +365,7 @@ theorem pv_good_cast_runs_write (s : RecChainedState) (voterSlot : FieldName) (m
       = stateStepGuarded s voterSlot ballotActor ballotCell mark := by
   rw [execFullForestG_castNode, if_pos hgate]
 
-/-- **`pv_no_double_vote` — PROVED (END-USER THEOREM 3, the anti-replay headline).** If a voter's ballot
+/-- **`pv_no_double_vote` (END-USER THEOREM 3, the anti-replay headline).** If a voter's ballot
 nullifier slot already holds a recorded vote (the `WriteOnce` caveat rejects the re-cast:
 `caveatsAdmit … = false`, i.e. `old ≠ 0 ∧ new ≠ old`), then a SECOND cast is rejected by the executor —
 `execFullForestG s (castNode goodCred voterSlot mark) = none` — EVEN with a genuine, non-revoked
@@ -394,7 +394,7 @@ theorem castNode_delta_zero (cred : Authorization Dg Pf) (voterSlot : FieldName)
     turnLedgerDeltaAsset ((lowerForestG (castNode cred voterSlot mark)).map Prod.snd) b = 0 := by
   simp [castNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`pv_cast_conserves` — PROVED (END-USER THEOREM 4).** A COMMITTED cast-vote preserves EVERY asset's
+/-- **`pv_cast_conserves` (END-USER THEOREM 4).** A COMMITTED cast-vote preserves EVERY asset's
 total supply: `recTotalAsset s'.kernel b = recTotalAsset s.kernel b`, for every asset
 `b`. The ballot write touches the tally/nullifier metadata, never balance — so a vote moves no money. A
 one-liner off `execFullForestG_conserves_per_asset` with the `SetField`-is-balance-neutral hypothesis
@@ -461,7 +461,7 @@ theorem pv_ballot0_token_write_commits :
   unfold stateStepGuarded ballot0 voterNullB ballotActor ballotCell ballotCaveats
   decide
 
-/-- **`pv_token_good_commits` — PROVED (concrete non-vacuity).** On `ballot0`, voter B's FIRST cast
+/-- **`pv_token_good_commits` (concrete non-vacuity).** On `ballot0`, voter B's FIRST cast
 with a genuine macaroon token + a verifying, admitting macaroon chain COMMITS over the fresh
 `null_B` slot. -/
 theorem pv_token_good_commits :

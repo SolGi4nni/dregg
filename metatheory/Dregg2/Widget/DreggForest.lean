@@ -26,7 +26,7 @@ THE "NO PLACEHOLDERS" DISCIPLINE — every glyph is COMPUTED from the real Lean 
 
 The driving value is `Dregg2.Exec.FullForest.goodFullForest` — the project's own non-vacuous witness: a
 3-node, 3-level mint→transfer→burn tree that commits per-asset (`execFullForestA fmaDeleg goodFullForest`
-is `some`) with two genuinely-held, non-amplifying delegation edges. The `#html` at the bottom forces the
+is `some`) with two held, non-amplifying delegation edges. The `#html` at the bottom forces the
 render path to elaborate over that real value, so the build EXERCISES the whole derivation.
 
 Every rendering function is a total, term-level fold
@@ -325,7 +325,7 @@ def dreggForestPanel (title : String) (f : FullForestA) : Html :=
 
 /-! **THE RENDER DRIVER.** Force-elaborate the forest graph over the REAL `goodFullForest` value. The
 `#html` command runs the full derivation (walk + `ctorName`/`targetOf`/`attenuate`/`capTarget` over the
-actual tree) and saves the widget — so the leaf build genuinely exercises the render path. Put your cursor
+actual tree) and saves the widget — so the leaf build exercises the render path. Put your cursor
 on the command to see the interactive graph. -/
 #html dreggForestPanel "dregg call-forest · goodFullForest (mint → transfer → burn, 2 gated edges)" goodFullForest
 
@@ -346,13 +346,13 @@ DIFFERENT graph. If the derivation were placeholder, these counts/labels would n
 -- edges, but the labels are ALL `balanceA` (not mint/burn) — the labels track the value, not a fixed table.
 #guard (forestVertices deepFullForest).size == 3   -- 3
 #guard forestCtorNames deepFullForest == ["balanceA", "balanceA", "balanceA"]  -- ["balanceA", "balanceA", "balanceA"]
--- `emitOnlyForest` is a SINGLE node, NO edges — the walk genuinely shrinks for a childless forest.
+-- `emitOnlyForest` is a SINGLE node, NO edges — the walk shrinks for a childless forest.
 #guard (forestVertices emitOnlyForest).size == 1   -- 1
 #guard (forestEdges emitOnlyForest).size == 0      -- 0
 #guard forestCtorNames emitOnlyForest == ["emitEventA"]  -- ["emitEventA"]
 -- `authFullForest` (introduce → exercise) — distinct constructors again, derived from the value.
 #guard forestCtorNames authFullForest == ["introduceA", "exerciseA"]  -- ["introduceA", "exerciseA"]
--- The label lists genuinely DIFFER across forests (not a constant) — the derivation tracks the value:
+-- The label lists DIFFER across forests (not a constant) — the derivation tracks the value:
 #guard decide (forestCtorNames goodFullForest ≠ forestCtorNames deepFullForest)  -- true
 
 -- The EDGE labels are the ATTENUATED conferred rights (not the declared cap). `goodFullForest`'s first edge

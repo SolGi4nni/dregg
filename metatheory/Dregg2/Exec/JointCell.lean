@@ -173,7 +173,7 @@ theorem applyHalfIn_total {B B' : KernelState} {bt : BiTurn}
 
 /-! ## The half-edges sum to zero (the algebraic core of CG-5) -/
 
-/-- **The bilateral `EqualAndOpposite` identity (PROVED).** The two signed half-edge
+/-- **The bilateral `EqualAndOpposite` identity.** The two signed half-edge
 balances sum to `0`: `halfA bt + halfB bt = 0`. This is the on-machine
 `CrossSideExistenceAir` balance: `-amt + amt = 0`. It is what makes the joint total
 conserved — and it is *not* a property of either ledger alone. -/
@@ -182,7 +182,7 @@ theorem halves_sum_zero (bt : BiTurn) : halfA bt + halfB bt = 0 := by
 
 /-! ## THE KEYSTONE — CG-5 cross-side conservation -/
 
-/-- **`joint_cg5_conserves` — THE KEYSTONE (PROVED).** A committed bilateral turn preserves
+/-- **`joint_cg5_conserves` — THE KEYSTONE.** A committed bilateral turn preserves
 the **joint total** `total A + total B`. The sender's loss in ledger `A` exactly equals the
 receiver's gain in ledger `B` (the half-edges cancel), so the cross-side aggregate is
 invariant. This is **CG-5**: the cross-side conservation dregg2 must carry because it has no
@@ -233,7 +233,7 @@ theorem SharedBinding.agree {bt : BiTurn} (s : SharedBinding bt) : s.sidOfA = s.
   s.agreeA.trans s.agreeB.symm
 
 /-- **`joint_sound_of_binding` — the cross-cell keystone with the binding LOAD-BEARING
-(PROVED).** GIVEN the CG-2 shared-id binding (both halves agree on the shared id — supplied
+.** GIVEN the CG-2 shared-id binding (both halves agree on the shared id — supplied
 as a HYPOTHESIS, *never derived*) AND that the bilateral turn commits, the joint turn is
 **conserving AND bound to one identity**. The conclusion is a *conjunction* whose two legs
 need two *different* premises, and that is the point:
@@ -245,7 +245,7 @@ need two *different* premises, and that is the point:
     `applyHalfOut`/`applyHalfIn` say nothing about each side's turn-id projection (the
     `account_updates_hash`); only the `SharedBinding` premise forces the two halves to be the
     *same forest*, not two solo turns that merely happen to conserve. The binding is therefore
-    genuinely load-bearing — discard it and this conjunct cannot be closed.
+    load-bearing — discard it and this conjunct cannot be closed.
 
 This is exactly REORIENT §2 / `study-category §1.3`: cross-cell soundness is **NOT**
 per-cell-sound ∧ per-cell-sound. Conservation is symmetric and per-side-derivable, but the
@@ -258,7 +258,7 @@ theorem joint_sound_of_binding {A B A' B' : KernelState} {bt : BiTurn}
     jointTotal A' B' = jointTotal A B ∧ bind.sidOfA = bind.sidOfB :=
   ⟨joint_cg5_conserves h, bind.agree⟩
 
-/-- **Atomicity companion — both halves commit or neither (PROVED).** If the bilateral turn
+/-- **Atomicity companion — both halves commit or neither.** If the bilateral turn
 commits, *each* half-edge committed in its own ledger (extracting the per-side post-states).
 This is the executable face of `JointTurn.atomicity_as_proof`'s cumulative AND: `jointApply`
 returns `some` exactly when both `applyHalfOut` and `applyHalfIn` do. -/
@@ -288,7 +288,7 @@ carves a *proper* subobject of the product of ledger-states; it is irreducible. 
 def FakeBalances (out_amt in_amt : ℤ) : Prop := out_amt + in_amt = 0
 
 /-- **`binding_is_proper` — the CG-5 binding is a genuine (non-vacuous) restriction
-(PROVED).** A declared bilateral move of `1` out and `2` in does **not** balance
+.** A declared bilateral move of `1` out and `2` in does **not** balance
 (`1 + 2 ≠ 0`), so it is excluded by the `EqualAndOpposite` identity that every committed
 bilateral turn satisfies (`halves_sum_zero`). Thus there exist product configurations the
 binding rejects — cross-side soundness is strictly MORE than per-ledger × per-ledger, and
@@ -298,7 +298,7 @@ theorem binding_is_proper : ∃ out_amt in_amt : ℤ, ¬ FakeBalances out_amt in
   unfold FakeBalances
   decide
 
-/-- **The committed bilateral ALWAYS balances (the contrast, PROVED).** Whatever its `amt`,
+/-- **The committed bilateral ALWAYS balances (the contrast).** Whatever its `amt`,
 a `BiTurn`'s real half-edges `(halfA, halfB)` satisfy `FakeBalances` (sum to zero) — so the
 `(1, 2)` witness of `binding_is_proper` is *not* realizable as any committed bilateral turn.
 This pins down that the binding's exclusion is exactly the `out = in` constraint. -/

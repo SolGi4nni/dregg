@@ -29,9 +29,9 @@ trusts a *correct-looking* history, not a *finalized* one — the exact gap a fo
 (3) reuses the node's actual finality predicate (`isSuperRatified`, the `2n/3+1` distinct-participant
 super-majority of `BlocklaceFinality`), so "the cert is valid" means "the node would have finalized
 this head". The ANTI-GHOST teeth (`§6`) show a forged cert (sub-quorum) and a root-mismatch cert are
-both REJECTED, so the third leg genuinely separates a finalized head from an unfinalized fork.
+both REJECTED, so the third leg separates a finalized head from an unfinalized fork.
 
-**The honest boundary (unchanged).** The ONE thing outside Lean is plonky3/pickles FRI recursion
+**The boundary (unchanged).** The ONE thing outside Lean is plonky3/pickles FRI recursion
 soundness — carried, exactly as in `RecursiveAggregation`, by the NAMED, REALIZABLE `EngineSound`
 hypothesis (a `structure` field, not an axiom; witnessed non-vacuously). The finality leg is FULLY
 proved: `isSuperRatified` is a concrete `Bool` function over the lace, and the quorum count is a real
@@ -112,7 +112,7 @@ def CertQuorum (cert : FinalityCert) : Bool :=
     (waveLastRound cert.wave cert.wavelength)
 
 /-- A valid cert exhibits the super-ratification quorum: `finalLeaderAt = some anchor` fires only
-through the `isSuperRatified` guard, so `CertQuorum` holds. The quorum leg is genuinely present in a
+through the `isSuperRatified` guard, so `CertQuorum` holds. The quorum leg is present in a
 valid cert — not an independent assertion. -/
 theorem certValid_has_quorum (cert : FinalityCert) (h : CertValid cert) :
     CertQuorum cert = true := by
@@ -173,13 +173,13 @@ structure FinalizedHistoryAttested
   attested correct history's endpoint IS the quorum-finalized root the client trusts. -/
   root_is_finalized : agg.finalRoot = finalizedRoot ∧ cert.finalizedRoot = finalizedRoot
 
-/-- **`light_client_accepts_finalized_history` (PROVED — THE THREE-LEG HEADLINE).**
+/-- **`light_client_accepts_finalized_history` (THE THREE-LEG HEADLINE).**
 
 A light client given `(agg, finalizedRoot, cert)` that checks
   (1) `verify agg.root = true`  — the succinct aggregate (re-witnessing NOTHING),
   (2) `Bound`                   — the aggregate/cert roots equal the shown `finalizedRoot`, and
   (3) `CertValid cert`          — the cert is a genuine super-ratification quorum (the node's rule),
-genuinely obtains `FinalizedHistoryAttested`: the whole history executed correctly + is correctly
+obtains `FinalizedHistoryAttested`: the whole history executed correctly + is correctly
 ordered + the endpoint root it trusts is the genuine fold AND was finalized by a BFT quorum. Leg 1+2
 ride `light_client_verifies_whole_history` (under the named `EngineSound`); leg 3 is fully proved from
 `CertValid` via `certValid_has_quorum`. The verification of the succinct aggregate plus the quorum
@@ -203,7 +203,7 @@ Composing the attested correctness with the executor-genuine `StateChained` witn
 conservation over the WHOLE finalized history — the client trusts a no-mint/no-burn ledger reaching a
 quorum-finalized endpoint, having re-executed nothing. -/
 
-/-- **`finalized_history_conserves` (PROVED — KEYSTONE).** A light client that accepts a finalized
+/-- **`finalized_history_conserves` (KEYSTONE).** A light client that accepts a finalized
 history (the three legs) inherits value conservation over the whole history: the ledger total at the
 folded, quorum-finalized endpoint equals the genesis total. The finality leg adds *that the endpoint
 is finalized*; this rides `HistoryAggregation.wellformed_history_conserves` for *that the conserved
@@ -225,10 +225,10 @@ kernel `decide` does not reduce `finalLeaderAt` — the SANCTIONED non-vacuity t
   * **§5a (the `Prop` headline FIRES).** For ANY cert whose validity + root-seam hold, the headline
     concludes `FinalizedHistoryAttested` over the realizing aggregate of `RecursiveAggregation` (whose
     `real_engine_sound` already witnesses legs 1+2). `finalized_light_client_fires_for` proves this
-    parametrically — so the three-leg theorem is genuinely inhabited the moment a valid cert exists.
+    parametrically — so the three-leg theorem is inhabited the moment a valid cert exists.
 
   * **§5b (a valid cert EXISTS — executable witness).** The `#guard`s over `BlocklaceFinality.trace3`
-    (the 3-node fully-connected trace whose wave-0 leader genuinely super-ratifies) establish, by
+    (the 3-node fully-connected trace whose wave-0 leader super-ratifies) establish, by
     machine evaluation, that `finalLeaderAt trace3 [1,2,3] 0 3 = some <creator-1 genesis>` (= a valid
     cert anchor) AND its `CertQuorum` is `true`. So §5a's antecedent is realized by the node's REAL
     finalization rule on a concrete trace — the legs co-occur on a real, finalized chain. -/
@@ -246,7 +246,7 @@ open Dregg2.Distributed.BlocklaceFinality
 anchors (the `#guard`s below evaluate `finalLeaderAt trace3 … = some` it). -/
 def realAnchor : Block := ⟨10, 1, 0, [], true⟩
 
-/-- The realizing certificate over `trace3`'s genuinely-finalized wave-0 leader, binding the SAME
+/-- The realizing certificate over `trace3`'s finalized wave-0 leader, binding the SAME
 finalized root the realizing aggregate proves (`realAggregate.finalRoot`). -/
 def realCert : FinalityCert where
   lace         := trace3
@@ -256,7 +256,7 @@ def realCert : FinalityCert where
   anchor       := realAnchor
   finalizedRoot := (realAggregate.finalRoot)
 
-/-! **§5b — EXECUTABLE WITNESSES the realizing cert is genuinely valid + carries a real quorum.**
+/-! **§5b — EXECUTABLE WITNESSES the realizing cert is valid + carries a real quorum.**
 These `#guard`s evaluate the node's REAL finality rule on `trace3`: the cert's anchor IS the final
 leader (`CertValid realCert` holds, executably), the super-ratification quorum IS present
 (`CertQuorum realCert = true`), and the anchor is creator-1's genesis (the wave-0 round-robin leader).
@@ -269,9 +269,9 @@ the `qsort`-laden rule. -/
         (waveLastRound realCert.wave realCert.wavelength)    -- CertQuorum realCert = true (executable)
 #guard realCert.anchor.creator == 1                          -- the genuine wave-0 round-robin leader
 
-/-- **`finalized_light_client_fires_for` (PROVED — §5a: THE THREE-LEG HEADLINE IS WITNESSED, parametric
+/-- **`finalized_light_client_fires_for` (§5a: THE THREE-LEG HEADLINE IS WITNESSED, parametric
 in the realized cert).** For ANY cert + shown root whose validity (`CertValid`) and root-seam (`Bound`)
-hold, the finalized-history light client genuinely concludes `FinalizedHistoryAttested` over the
+hold, the finalized-history light client concludes `FinalizedHistoryAttested` over the
 realizing aggregate (whose `real_engine_sound` discharges legs 1+2). Composed with the §5b `#guard`
 witness that such a cert EXISTS (`realCert` over `trace3`), this shows
 `light_client_accepts_finalized_history` is non-vacuous — it fires on a real chain finalized by a real
@@ -287,7 +287,7 @@ theorem finalized_light_client_fires_for
     realAggregate teethGenesis realSteps cert realAggregate.finalRoot
     real_engine_sound rfl hbound hcert
 
-/-- **`fired_attestation_is_real` (PROVED — the attestation has CONTENT).** The verdict obtained from
+/-- **`fired_attestation_is_real` (the attestation has CONTENT).** The verdict obtained from
 `finalized_light_client_fires_for` carries the genuine quorum (`CertQuorum cert = true`, from leg 3)
 AND a real executor step for the (only) turn of the realizing history (from leg 1). So the finalized
 attestation is a TRUE fact about a real, quorum-finalized executor run — not a formal husk — whenever
@@ -304,7 +304,7 @@ theorem fired_attestation_is_real
               Dregg2.Distributed.HistoryAggregation.honestStep (by simp [realSteps])
   simpa [Dregg2.Distributed.HistoryAggregation.honestStep] using h
 
-/-- **`real_bound` (PROVED — the root seam closes).** The realizing cert's `finalizedRoot` was BUILT as
+/-- **`real_bound` (the root seam closes).** The realizing cert's `finalizedRoot` was BUILT as
 `realAggregate.finalRoot`, so the seam holds by construction — leg 2 is satisfiable. Combined with the
 §5b `#guard` (leg 3) and `real_engine_sound` (legs 1+2), every antecedent of
 `finalized_light_client_fires_for` is realized. -/
@@ -333,7 +333,7 @@ open Dregg2.Distributed.BlocklaceFinality
 
 /-- A FORGED certificate: it claims creator `2`'s genesis (id 20) is the wave-0 anchor of `trace3`,
 but the node's round-robin leader for wave 0 is creator `1`. Creator 2 is NOT the wave-0 final leader,
-so the cert is NOT `CertValid` — even though (honestly) in a fully-connected trace creator 2's block
+so the cert is NOT `CertValid` — even though in a fully-connected trace creator 2's block
 IS super-ratified. The discriminator the node's finality rule uses is the round-robin LEADER SLOT, not
 raw super-ratification, and that is exactly what `CertValid` (`finalLeaderAt = some anchor`) checks. -/
 def forgedCert : FinalityCert where
@@ -346,8 +346,8 @@ def forgedCert : FinalityCert where
 
 /-! **THE FORGED-ANCHOR TOOTH (executable witness).** The forged cert is NOT `CertValid`: the node's
 real rule anchors creator `1` (not creator `2`) at wave 0, so `finalLeaderAt … ≠ some forgedCert.anchor`.
-The `#guard`s evaluate this on `trace3` — a false `#guard` is a build error — so the cert leg genuinely
-REJECTS a forged (creator-2-claimed) anchor. (HONEST: creator 2's block IS super-ratified in a
+The `#guard`s evaluate this on `trace3` — a false `#guard` is a build error — so the cert leg
+REJECTS a forged (creator-2-claimed) anchor. (creator 2's block IS super-ratified in a
 fully-connected trace; the rejection is at the LEADER-SLOT check `finalLeaderAt`, which is precisely
 why `CertValid` is the round-robin `finalLeaderAt = some anchor`, not bare `isSuperRatified`.) -/
 
@@ -357,7 +357,7 @@ why `CertValid` is the round-robin `finalLeaderAt = some anchor`, not bare `isSu
           == some realAnchor                                             -- the TRUE wave-0 anchor is creator 1
 #guard forgedCert.anchor.creator == 2                                    -- the forged (non-leader) claim
 
-/-- **`not_final_leader_invalidates` (PROVED — the forged-anchor tooth, `Prop` form).** If the node's
+/-- **`not_final_leader_invalidates` (the forged-anchor tooth, `Prop` form).** If the node's
 rule does NOT anchor a cert's claimed `anchor` for its wave (`finalLeaderAt … ≠ some cert.anchor` — the
 executable `#guard` witnesses this for `forgedCert` on `trace3`), then the cert is NOT `CertValid`, so
 leg 3 of the headline cannot be supplied: a light client REJECTS it and grants no finalized
@@ -367,7 +367,7 @@ theorem not_final_leader_invalidates (cert : FinalityCert)
     ¬ CertValid cert := by
   intro h; exact hne h
 
-/-- **`root_mismatch_unbinds` (PROVED — the seam tooth).** If a cert's `finalizedRoot` differs from
+/-- **`root_mismatch_unbinds` (the seam tooth).** If a cert's `finalizedRoot` differs from
 the shown `finalizedRoot`, it cannot satisfy `Bound`: an adversary cannot pair a valid aggregate of
 history A (proving root `rA`) with a finality cert that finalized a DIFFERENT root `rB ≠ rA`. The seam
 forces one root through all three legs, so the finalized attestation cannot mix histories. -/
@@ -378,7 +378,7 @@ theorem root_mismatch_unbinds
   intro hb
   exact hmis hb.cert_binds
 
-/-- **`agg_root_mismatch_unbinds` (PROVED — the seam tooth, aggregate side).** Symmetrically, if the
+/-- **`agg_root_mismatch_unbinds` (the seam tooth, aggregate side).** Symmetrically, if the
 aggregate's proven `finalRoot` differs from the shown root, `Bound` fails: a finality cert for root
 `r` cannot be paired with an aggregate that proves a DIFFERENT endpoint. Both seam directions bite. -/
 theorem agg_root_mismatch_unbinds

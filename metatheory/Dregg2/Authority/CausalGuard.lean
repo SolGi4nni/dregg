@@ -73,7 +73,7 @@ def chainOk (B : Lace) (src : Block) : List Block → Block → Bool
   | [],      dst => pointedB B src dst
   | m :: ms, dst => pointedB B src m && chainOk B m ms dst
 
-/-- **`chainOk_sound` (PROVED) — a valid chain DENOTES `precedes`.** If `chainOk B src chain dst`,
+/-- **`chainOk_sound` — a valid chain DENOTES `precedes`.** If `chainOk B src chain dst`,
 then `precedes B src dst`: every checked edge is a `precedes.base` step, composed by `precedes.trans`
 along the chain. The accept bit of the guard is therefore a genuine causal-inclusion fact, never a
 free `True`. -/
@@ -106,7 +106,7 @@ untrusted; only this in-TCB check decides. -/
 def causallyAfterVerifier (B : Lace) (E : Block) : Verifier GateStmt ChainWit :=
   fun gate chain => chainOk B E chain gate
 
-/-- **`causallyAfter_denotes_precedes` (PROVED) — (a) the atom's denotation MATCHES `precedes`.**
+/-- **`causallyAfter_denotes_precedes` — (a) the atom's denotation MATCHES `precedes`.**
 Whenever the `causally_after(E)` verifier ACCEPTS a gate (with any witness chain), the gate causally
 follows `E` in the happened-before order: `CausalAfter B E gate` (= `precedes B E gate`). The guard
 atom's accept bit is precisely the `Time/Causal` causal-after relation — the modality is the same one
@@ -117,7 +117,7 @@ theorem causallyAfter_denotes_precedes (B : Lace) (E gate : Block) (chain : Chai
   rw [causalAfter_iff_precedes]
   exact chainOk_sound B chain E gate h
 
-/-- **`causallyAfter_installs` (PROVED) — the atom is a genuine registry plugin.** Installing the
+/-- **`causallyAfter_installs` — the atom is a genuine registry plugin.** Installing the
 `causally_after(E)` verifier at a custom kind makes the registry dispatch it, and an accepted chain
 discharges the predicate through `registry_sound` — soundness-by-verification, identical to every
 other witnessed kind. So the causal modality is a first-class installable guard, not bespoke. -/
@@ -134,7 +134,7 @@ theorem causallyAfter_installs (base : Registry GateStmt ChainWit) (vk : Nat)
   simp only [reg, if_pos rfl]
   exact haccept
 
-/-- **`causallyAfter_adversarial_cannot_forge` (PROVED) — the gate is the sole authority.** No
+/-- **`causallyAfter_adversarial_cannot_forge` — the gate is the sole authority.** No
 prover, however the chain is synthesized, can make the atom accept a gate the in-TCB check rejects:
 if `chainOk B E chain gate = false` (no valid causal walk), the dispatch rejects for every prover.
 A gate that does not causally follow `E` cannot be admitted by supplying a bogus chain. -/
@@ -173,7 +173,7 @@ witness is the successor `b`. -/
 def monotoneStepVerifier (B : Lace) (val : Block → Nat) : Verifier Block Block :=
   fun a b => pointedB B a b && decide (val a ≤ val b)
 
-/-- **`monotoneStep_sound` (PROVED) — an accepted step is a real, non-regressing ack edge.** If the
+/-- **`monotoneStep_sound` — an accepted step is a real, non-regressing ack edge.** If the
 guard accepts `(a, b)`, then `b` acks `a` (`precedes B a b`) AND `val a ≤ val b`. The accept bit is a
 genuine local monotonicity fact on a genuine causal edge. -/
 theorem monotoneStep_sound (B : Lace) (val : Block → Nat) (a b : Block)
@@ -183,7 +183,7 @@ theorem monotoneStep_sound (B : Lace) (val : Block → Nat) (a b : Block)
   simp only [Bool.and_eq_true, decide_eq_true_eq] at h
   exact ⟨.base ((pointedB_iff B a b).mp h.1), h.2⟩
 
-/-- **`monotoneStep_implies_monotone` (PROVED) — (a) the per-edge atom DENOTES `MonotoneOverForks`.**
+/-- **`monotoneStep_implies_monotone` — (a) the per-edge atom DENOTES `MonotoneOverForks`.**
 If EVERY direct ack edge in the lace passes the `monotone_over_forks(val)` guard (no edge lets `val`
 regress), then `val` is monotone along the WHOLE happened-before order: `a ≺ b → val a ≤ val b`.
 Proved by induction on `precedes` — base case is the gated edge, transitive case chains `≤`. The
@@ -196,7 +196,7 @@ theorem monotoneStep_implies_monotone (B : Lace) (val : Block → Nat)
   | base h => exact hedges _ _ h
   | trans _ _ ihab ihbc => exact le_trans ihab ihbc
 
-/-- **`monotone_preserved_on_extension` (PROVED) — monotone values keep their order on ANY causal
+/-- **`monotone_preserved_on_extension` — monotone values keep their order on ANY causal
 extension.** The MONOTONE-OVER-FORKS guarantee stated forward: given `MonotoneOverForks B val`, if a
 later frontier `now'` causally observes an earlier event `E` (`E ≺ now'`), the value at `E` bounds the
 value at `now'`. A monotone quantity, once advanced, stays advanced along every fork-extension — the
@@ -233,7 +233,7 @@ abbrev forkReveal : Block := f2
 -- The fork reveal does NOT ack the fork commit: the empty-chain walk fails (no direct edge).
 #guard (causallyAfterVerifier demoLace forkCommit forkReveal [] == false)     -- true (rejected)
 
-/-- **`commit_reveal_accepted` (PROVED) — the guarantee holds for an honest reveal.** The honest
+/-- **`commit_reveal_accepted` — the guarantee holds for an honest reveal.** The honest
 reveal `g1` causally follows its commit `g0`, so the `causally_after(commit)` guard ADMITS it: the
 accept bit holds, and its denotation is `CausalAfter demoLace commit honestReveal` (the reveal
 observed the commit). The honest commit-reveal is admissible exactly because the causal edge exists. -/
@@ -243,7 +243,7 @@ theorem commit_reveal_accepted :
   refine ⟨by decide, ?_⟩
   exact causallyAfter_denotes_precedes demoLace commit honestReveal honestChain (by decide)
 
-/-- **`commit_reveal_rejected` (PROVED) — the rejected input: a reveal that did not follow its
+/-- **`commit_reveal_rejected` — the rejected input: a reveal that did not follow its
 commit.** The fork reveal `f2` is CONCURRENT with the fork commit `f1` (`f2 ∥ f1`), so it does NOT
 causally follow it: `¬ CausalAfter demoLace forkCommit forkReveal`. Therefore NO causal-inclusion
 witness can make the guard accept — for EVERY witness chain the verifier rejects. A reveal that never
@@ -262,7 +262,7 @@ theorem commit_reveal_rejected :
   exact demo_causalAfter_fails.1
     (causallyAfter_denotes_precedes demoLace forkCommit forkReveal chain hacc)
 
-/-- **`commit_reveal_unforgeable` (PROVED) — the rejected reveal cannot be admitted by any prover.**
+/-- **`commit_reveal_unforgeable` — the rejected reveal cannot be admitted by any prover.**
 Installed at a custom kind, the `causally_after(forkCommit)` guard rejects the concurrent reveal `f2`
 for EVERY prover and EVERY witness chain it proposes: a reveal that did not causally follow its commit
 has no admitting path through the in-TCB gate. The non-amplification statement for the causal guard —
@@ -312,7 +312,7 @@ invariant "the mark is ≥ a floor `c`" as the I-confluence witness: it is prese
 a `monotone_over_forks`-guarded mark runs coordination-free. -/
 def aboveFloor (c : Nat) : Dregg2.Confluence.Invariant Nat := fun v => c ≤ v
 
-/-- **`monotone_guard_is_iconfluent` (PROVED) — `monotoneOverForks` KEEPS coordination-freedom.** The
+/-- **`monotone_guard_is_iconfluent` — `monotoneOverForks` KEEPS coordination-freedom.** The
 grow-only "high-water mark ≥ floor `c`" invariant — the invariant a `monotone_over_forks(val)` guard
 maintains — is `Confluence.IConfluent` over the `max`-merge lattice: two branches each above the floor
 merge (by `max`) to a value still above it. So a cell gated ONLY by a monotone-over-forks atom is
@@ -325,7 +325,7 @@ theorem monotone_guard_is_iconfluent (c : Nat) :
   unfold aboveFloor at *
   exact le_trans hx le_sup_left
 
-/-- **`bounded_resource_not_iconfluent` (PROVED) — the CONTRAST: a coupled gated write is NOT
+/-- **`bounded_resource_not_iconfluent` — the CONTRAST: a coupled gated write is NOT
 coordination-free.** When the gated write carries a bounded-resource invariant (`card ≤ 1`, the
 `balance ≥ 0` shape), it is NOT I-confluent (`Confluence.cardLeOne_not_iconfluent`): two concurrent
 in-bound branches merge to an over-the-bound state. A `causally_after(E)` guard composed with such an

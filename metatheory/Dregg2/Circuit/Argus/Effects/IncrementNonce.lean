@@ -6,7 +6,7 @@ welded into the Argus IR.
 it on transfer/mint/burn/createEscrow; `Effects/BalanceA.lean` welded a per-asset move against the v2
 `Surface2` FULL-STATE descriptor, and `Effects/Seal.lean` welded a LIST side-table effect against its
 own v2 `Surface2` full-state descriptor with the receipt-log prepend carried as the explicit kernel-vs-
-runtime divergence. This module welds the genuinely DIFFERENT **per-cell metadata field-write** primitive
+runtime divergence. This module welds the DIFFERENT **per-cell metadata field-write** primitive
 `incrementNonceA` (the monotone nonce bump), in a disjoint file (it imports the Argus IR + the audited
 `incrementNonceA` v1 `EffectCommit` instance + the cell-state-monotone spec read-only, and owns only its
 own declarations).
@@ -49,7 +49,7 @@ this module welds the FULL-STATE `incrementNonceA_full_sound` DIRECTLY against t
 the WHOLE `IncrementNonceSpec` agreement (strictly stronger than the per-cell EffectVM weld
 `Emit/EffectVmEmitIncrementNonce.incNonceDescriptor_classA` would give).
 
-The HONEST chained-vs-kernel divergence carried explicitly (the task's `divergence` field, NOT papered):
+The HONEST chained-vs-kernel divergence carried explicitly (the task's `divergence` field):
 the Argus `RecStmt`/`interp` runs on the bare `RecordKernelState`, so the cornerstone (§2) pins the
 KERNEL fragment of the bump — the `nonce`-slot `writeField` — and is then LIFTED (§3) to the chained
 `execFullA`/`stateStep` over `RecChainedState`, where the chained layer adds exactly the **receipt-log
@@ -67,10 +67,10 @@ single-tick reconciliation (`Argus.Nonce`). This module does NOT weld the v2 per
 welds the v1 FULL-STATE `IncrementNonceSpec`, where the nonce semantics is the FAITHFUL record-field
 write (`cell`'s `nonce` ↦ `n`), captured EXACTLY by `incNonceCellMap` — NO collapsed nonce field, NO
 turn-prologue tick reconciliation in the statement. So the only divergence the welded conclusion carries
-is the §3 receipt-log prepend; the nonce-prologue concern is OUT of scope here (reported honestly, not
+is the §3 receipt-log prepend; the nonce-prologue concern is OUT of scope here (reported, not
 faked into the weld).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 cell-leaf / rest-frame / log-hash injectivity assumptions enter ONLY inside the reused
@@ -326,7 +326,7 @@ theorem incrementNonce_compile_sound
 
 #assert_axioms incrementNonce_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely BUMPS the nonce (observable), FREEZES the value/caps, and
+/-! ## §5 — NON-VACUITY: the IR term BUMPS the nonce (observable), FREEZES the value/caps, and
 the gate REJECTS forged inputs (fail-closed on each leg).
 
 The cornerstone/weld would be hollow if incrementNonceA never committed, if the bump were a no-op, if it

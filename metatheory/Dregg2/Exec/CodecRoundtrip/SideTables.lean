@@ -875,7 +875,7 @@ theorem parseSwissTable_encode (ss : List WireSwissRecord) (rest : PState) :
 
 The `CELLS` field is `[[id,valueW],…]`: a length-fuel loop (§8 recipe) whose element `parseCellW`
 embeds the FULL recursive wide-`Value` codec (§5's `parseValueW_roundtrip`) for the payload. The one
-genuinely-new obligation versus the side-tables: the loop calls `parseCellW (cs.length+1) cs` —
+new obligation versus the side-tables: the loop calls `parseCellW (cs.length+1) cs` —
 re-deriving the element's value-fuel from the REMAINING input length — so the per-element
 `parseValueW` adequacy is `valueSize v ≤ (remaining).length + 1`, which the byte-length lower bound
 `valueSize_le_encodeLen` (the parse-depth never exceeds the encoded width) discharges with slack. The

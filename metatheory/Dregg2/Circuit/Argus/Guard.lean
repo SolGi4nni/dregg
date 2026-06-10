@@ -31,7 +31,7 @@ authority, frame) lifts through the guard FOR FREE.
 
 dregg1's `StateConstraint` catalog (`Exec/Program.lean`, ~19 variants) is `evalConstraint`-evaluated
 on the LIVE leg, but the *circuit* path has historically dropped them. `constraintToGuard` routes each
-constraint honestly onto the unified `Guard`:
+constraint onto the unified `Guard`:
 
   * **locally-decidable** constraints (`sumEquals`, `affineLe/Eq`, `fieldDeltaInRange`,
     `allowedTransitions`, every `simple` atom, …) become `firstParty` over `evalConstraint` — they
@@ -97,7 +97,7 @@ def guardG [Verifiable Statement Witness]
     (g : Guard RecordKernelState Statement) (w : Statement → Witness) : RecStmt :=
   RecStmt.guard (fun k => g.admits k w)
 
-/-- **`interp_guardG` — the lift's executable meaning (PROVED).** Running a lifted guard restricts the
+/-- **`interp_guardG` — the lift's executable meaning.** Running a lifted guard restricts the
 domain by `g.admits` and otherwise leaves the state UNTOUCHED — exactly the cornerstone `RecStmt.guard`
 semantics, now driven by the unified `Spec.Guard`. The guard DECIDES; it never mutates. -/
 @[simp] theorem interp_guardG [Verifiable Statement Witness]
@@ -112,7 +112,7 @@ the domain, then `interp s` runs UNCHANGED. The committed state is EXACTLY `inte
 guard only ever restricts, never mutates. This is what lifts every `interp s` keystone through the
 guard for free. -/
 
-/-- **`interp_guardSeq` — PROVED.** Interpreting a guarded statement is: gate on `g.admits k w`, then
+/-- **`interp_guardSeq`.** Interpreting a guarded statement is: gate on `g.admits k w`, then
 run `interp s` on the SAME `k`. (`interp` of a `guardG`-prefixed `seq` is the `admits`-gated `interp
 s`.) The structural shape the keystones below read off. -/
 theorem interp_guardSeq [Verifiable Statement Witness]
@@ -125,7 +125,7 @@ theorem interp_guardSeq [Verifiable Statement Witness]
   | false => simp [Option.bind]
   | true  => simp [Option.bind]
 
-/-- **`interp_guardSeq_admits` — PROVED (the keystone, ⇐ direction).** A guarded statement COMMITS to
+/-- **`interp_guardSeq_admits` (the keystone, ⇐ direction).** A guarded statement COMMITS to
 `k'` exactly when the guard ADMITS *and* the underlying `interp s` commits to that very same `k'`. The
 domain-restriction law: the committed state is precisely `interp s`'s — the guard contributes NO
 mutation, only the admission side-condition. This is the analog of `predStateStepGuarded_eq` and is
@@ -140,7 +140,7 @@ theorem interp_guardSeq_admits [Verifiable Statement Witness]
   | false => rw [hg, if_neg (by simp)] at h; exact absurd h (by simp)
   | true  => rw [hg, if_pos rfl] at h; exact ⟨rfl, h⟩
 
-/-- **`guardSeq_commit_eq_underlying` — PROVED (the "never mutates" corollary).** A committed guarded
+/-- **`guardSeq_commit_eq_underlying` (the "never mutates" corollary).** A committed guarded
 statement produces EXACTLY the post-state the underlying `interp s` produces on the same input. The
 guard is a pure domain restrictor: it can only ever PREVENT the step, never alter its result. The
 precise mirror of `predStateStepGuarded_eq` (`a Pred-gated write = the underlying stateStep write`). -/
@@ -151,7 +151,7 @@ theorem guardSeq_commit_eq_underlying [Verifiable Statement Witness]
     interp s k = some k' :=
   (interp_guardSeq_admits h).2
 
-/-- **`interp_guardSeq_of_admits` — PROVED (the keystone, ⇒ direction).** Conversely, if the guard
+/-- **`interp_guardSeq_of_admits` (the keystone, ⇒ direction).** Conversely, if the guard
 ADMITS and `interp s` commits to `k'`, the guarded statement commits to that same `k'`. Together with
 `interp_guardSeq_admits` this is the IFF: a guarded statement commits to `k'` *iff* the guard admits
 AND `interp s` commits to `k'`. -/
@@ -162,7 +162,7 @@ theorem interp_guardSeq_of_admits [Verifiable Statement Witness]
     interp (RecStmt.seq (guardG g w) s) k = some k' := by
   rw [interp_guardSeq, if_pos hadm, hs]
 
-/-- **`interp_guardSeq_iff` — PROVED (the full domain-restriction keystone, packaged).** A guarded
+/-- **`interp_guardSeq_iff` (the full domain-restriction keystone, packaged).** A guarded
 statement commits to `k'` IFF the guard admits AND `interp s` commits to `k'` — and the committed state
 is `interp s`'s, never anything the guard cooked up. The single statement that says "the Argus guard
 restricts the domain, never mutates", from which the executor keystones lift. -/
@@ -173,7 +173,7 @@ theorem interp_guardSeq_iff [Verifiable Statement Witness]
       ↔ (g.admits k w = true ∧ interp s k = some k') :=
   ⟨interp_guardSeq_admits, fun ⟨ha, hs⟩ => interp_guardSeq_of_admits ha hs⟩
 
-/-- **`interp_guardSeq_reject` — PROVED (FAIL-CLOSED).** If the guard REJECTS, the guarded statement
+/-- **`interp_guardSeq_reject` (FAIL-CLOSED).** If the guard REJECTS, the guarded statement
 does NOT commit — regardless of what `interp s` would do. The executor-level teeth: a violated Argus
 guard rejects the WHOLE step. -/
 theorem interp_guardSeq_reject [Verifiable Statement Witness]
@@ -190,7 +190,7 @@ interp (transferStmt turn)` (the verified transfer, `= recKExec` by the cornerst
 ANY Argus guard, and conservation STILL holds of the guarded commit — proved by reading the keystone,
 not by re-proving conservation. This is the "free lift" made real. -/
 
-/-- **`guardSeq_transfer_conserves` — PROVED (the keystone paying off).** A guarded transfer that
+/-- **`guardSeq_transfer_conserves` (the keystone paying off).** A guarded transfer that
 commits PRESERVES the total `balance` (conservation), inherited from `recKExec_conserves` THROUGH the
 domain-restriction keystone — the Argus guard added an admission side-condition and changed NOTHING
 about the committed state, so the executor keystone lifts verbatim. -/
@@ -203,7 +203,7 @@ theorem guardSeq_transfer_conserves [Verifiable Statement Witness]
   rw [interp_transferStmt_eq_recKExec] at hs
   exact recKExec_conserves k k' turn hs
 
-/-- **`guardSeq_transfer_authorized` — PROVED (authority lifts too).** A guarded transfer that commits
+/-- **`guardSeq_transfer_authorized` (authority lifts too).** A guarded transfer that commits
 was AUTHORIZED — `recKExec_authorized` lifted through the same keystone. Two independent executor
 keystones (conservation, authority) lifting through ONE guard with no per-guard reproof: exactly the
 "every executor keystone lifts for free" claim. -/
@@ -264,20 +264,20 @@ def kEmpty : RecordKernelState :=
 -- The non-vacuity at the proof layer (an ADMIT witness and a REJECT witness). We expand `admits`
 -- through its `@[simp]` `firstParty` characterization first (`Guard.admits` is a `mutual` def whose
 -- `Decidable` reduction stalls under bare `decide`; the `#guard`s above use the compiler evaluator,
--- which handles it — so both layers genuinely witness the two values).
+-- which handles it — so both layers witness the two values).
 example : (liveBoundGuard 3).admits kGood (fun _ => ()) = true := by
   simp [liveBoundGuard, kGood]
 example : (liveBoundGuard 3).admits kEmpty (fun _ => ()) = false := by
   simp [liveBoundGuard, kEmpty]
 
-/-- **`interp_guardG_kGood_unchanged` — PROVED (the guard mutates NOTHING).** On the admitting kernel
+/-- **`interp_guardG_kGood_unchanged` (the guard mutates NOTHING).** On the admitting kernel
 `kGood`, running the lifted guard returns `kGood` UNCHANGED — the pure domain-restrictor semantics, at
 a concrete state (the `BEq`-free statement of what the `.isSome` `#guard` observes). -/
 theorem interp_guardG_kGood_unchanged :
     interp (guardG (liveBoundGuard 3) (fun _ => ())) kGood = some kGood := by
   rw [interp_guardG, if_pos (by simp [liveBoundGuard, kGood])]
 
-/-- **`liveBoundGuard_nonvacuous` — PROVED (the guard is genuinely two-valued).** It ADMITS `kGood`
+/-- **`liveBoundGuard_nonvacuous` (the guard is two-valued).** It ADMITS `kGood`
 and REJECTS `kEmpty` — so neither `:= True` nor `:= False`. A vacuous guard could not state this. -/
 theorem liveBoundGuard_nonvacuous :
     (liveBoundGuard 3).admits kGood (fun _ => ()) = true ∧
@@ -311,10 +311,10 @@ def tPair : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 -- effect is the same term): the gate restricts the domain.
 #guard ((interp (RecStmt.seq (guardG (liveBoundGuard 3) (fun _ => ())) (transferStmt tPair)) kEmpty).isNone)  -- gated out
 
-/-- **`guardSeq_commit_eq_transfer_concrete` — PROVED (the keystone, witnessed concretely).** On
+/-- **`guardSeq_commit_eq_transfer_concrete` (the keystone, witnessed concretely).** On
 `kPair` the Argus-guarded transfer commits to EXACTLY the same state as the bare transfer — the
 domain-restriction keystone instantiated at a concrete admitting input. Non-vacuous: the underlying
-`interp (transferStmt tPair) kPair` is genuinely `some _`, not `none`. -/
+`interp (transferStmt tPair) kPair` is `some _`, not `none`. -/
 theorem guardSeq_commit_eq_transfer_concrete :
     interp (RecStmt.seq (guardG (liveBoundGuard 3) (fun _ => ())) (transferStmt tPair)) kPair
       = interp (transferStmt tPair) kPair := by
@@ -356,7 +356,7 @@ def constraintToGuard (view : RecordKernelState → Value × Value) :
       -- locally decidable — evaluate `evalConstraint` on the slot view (the live-leg semantics).
       Guard.firstParty (fun k => evalConstraint c (view k).1 (view k).2)
 
-/-- **`constraintToGuard_firstParty_eval` — PROVED.** For a locally-decidable constraint, its Argus
+/-- **`constraintToGuard_firstParty_eval`.** For a locally-decidable constraint, its Argus
 guard `admits` IS `evalConstraint` on the view — i.e. the routing carries the live-leg semantics
 verbatim, with no oracle. (`boundDelta` is excluded: it routes to `witnessed`, characterized
 separately by `constraintToGuard_boundDelta_witnessed`.) -/
@@ -368,7 +368,7 @@ theorem constraintToGuard_firstParty_eval [Verifiable ObligationStmt Witness]
   | boundDelta lf p pf e => simp [locallyDecidable] at hloc   -- excluded by `hloc`
   | _ => simp [constraintToGuard]
 
-/-- **`constraintToGuard_boundDelta_witnessed` — PROVED.** The cross-cell `boundDelta` routes to the
+/-- **`constraintToGuard_boundDelta_witnessed`.** The cross-cell `boundDelta` routes to the
 verify seam: its Argus guard `admits` IS `Verifiable.Verify` of the obligation against the supplied
 witness — the SINGLE site where a future circuit enters. The obligation EXISTS (`.constraint
 (.boundDelta …)`); it is not faked, it is routed. -/
@@ -381,7 +381,7 @@ theorem constraintToGuard_boundDelta_witnessed [Verifiable ObligationStmt Witnes
           (w (.constraint (.boundDelta lf p pf e))) := by
   simp [constraintToGuard]
 
-/-- **`constraintToGuard_boundDelta_iff_discharged` — PROVED.** Equivalently, the `boundDelta` Argus
+/-- **`constraintToGuard_boundDelta_iff_discharged`.** Equivalently, the `boundDelta` Argus
 guard admits IFF the seam DISCHARGES the obligation (`Laws.Discharged`) — the demand⊣supply bridge of
 `Spec.Guard` reused: the Bucket-B witnessed arm is `Laws.Discharged` at the verify seam, importing the
 oracle's soundness contract for free. -/
@@ -395,7 +395,7 @@ theorem constraintToGuard_boundDelta_iff_discharged [Verifiable ObligationStmt W
   rw [constraintToGuard_boundDelta_witnessed]; rfl
 
 /-! ### §4.1 — Bucket-B routing is NON-VACUOUS: locally-decidable constraints actually EVALUATE,
-rejecting a violator and admitting a satisfier; and the witnessed `boundDelta` arm is genuinely the
+rejecting a violator and admitting a satisfier; and the witnessed `boundDelta` arm is the
 seam, not a silent `true`/`false`.
 
 We use the slot view `simpleView f` that reads field `f` of cell `0` as both `old` and `new` (the
@@ -432,8 +432,8 @@ def kRoleBad : RecordKernelState :=
 #guard ((constraintToGuard cell0View (.boundDelta "amt" 1 "amt" true)).admits
           kRoleOk (fun _ => ()))                                                         -- true (oracle says so)
 
-/-- **`bucketB_memberOf_nonvacuous` — PROVED.** The routed `memberOf` Argus guard ADMITS the satisfier
-and REJECTS the violator — genuinely two-valued, evaluating `evalConstraint`. The Bucket-B routing has
+/-- **`bucketB_memberOf_nonvacuous`.** The routed `memberOf` Argus guard ADMITS the satisfier
+and REJECTS the violator — two-valued, evaluating `evalConstraint`. The Bucket-B routing has
 real teeth on the locally-decidable arms (not `:= True`). -/
 theorem bucketB_memberOf_nonvacuous :
     (constraintToGuard cell0View (.simple (.memberOf "role" [1,2,3]))).admits kRoleOk (fun _ => ()) = true ∧
@@ -442,7 +442,7 @@ theorem bucketB_memberOf_nonvacuous :
   · rw [constraintToGuard_firstParty_eval cell0View _ (by decide)]; decide
   · rw [constraintToGuard_firstParty_eval cell0View _ (by decide)]; decide
 
-/-- **`bucketB_localcoincides_evalConstraint` — PROVED (the routing IS the live-leg check).** At a
+/-- **`bucketB_localcoincides_evalConstraint` (the routing IS the live-leg check).** At a
 concrete locally-decidable constraint, the Argus guard's verdict coincides with `evalConstraint` on the
 view — the Bucket-B `firstParty` arm is the EXACT live-leg semantics, demonstrated end-to-end. -/
 theorem bucketB_localcoincides_evalConstraint :
@@ -475,7 +475,7 @@ def programGuardStmt [Verifiable ObligationStmt Witness]
     (w : ObligationStmt → Witness) (s : RecStmt) : RecStmt :=
   RecStmt.seq (guardG (programToGuard view cs) w) s
 
-/-- **`programGuardStmt_commit_eq_underlying` — PROVED (Bucket-B inherits the keystone).** A
+/-- **`programGuardStmt_commit_eq_underlying` (Bucket-B inherits the keystone).** A
 program-gated effect that commits produces EXACTLY the underlying `interp s` state — the routed
 constraint program restricted the domain and mutated NOTHING. So every executor keystone of `s` lifts
 through the WHOLE Bucket-B program for free, by the §2 domain-restriction keystone. -/
@@ -486,7 +486,7 @@ theorem programGuardStmt_commit_eq_underlying [Verifiable ObligationStmt Witness
     interp s k = some k' :=
   guardSeq_commit_eq_underlying h
 
-/-- **`programGuardStmt_admits_all` — PROVED.** A program-gated commit means EVERY routed constraint
+/-- **`programGuardStmt_admits_all`.** A program-gated commit means EVERY routed constraint
 admitted (the meet semantics): the conjunction `all` of the routed guards held. The witness that the
 whole Bucket-B program was enforced — each local constraint evaluated true, each witnessed obligation
 discharged. -/

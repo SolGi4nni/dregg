@@ -27,14 +27,14 @@ and the two endpoints of a transferability dial:
   nothing to a third party, and the authorizer can repudiate.
 
 §8 portal: the DV-ZK / deniable-authentication crypto is an honest Prop-portal, carried as a class
-(`DVKernel`) of opaque oracles + named laws — never faked as proved in Lean. `verifyFor`, `simulate`,
+(`DVKernel`) of opaque oracles + named laws as proved in Lean. `verifyFor`, `simulate`,
 and the law `simulate_indistinguishable` are §8 obligations the deniable-auth scheme discharges.
 
 Proved here:
 * `public_is_transferable` / `public_convinces_any_third_party` — public mode is non-repudiable;
 * `designated_not_transferable` — designated mode has a verifier it does NOT convince;
 * `designated_is_deniable` — the simulator repudiation;
-* `dial_endpoints_distinct` — the two modes are genuinely distinct (a witnessed separation, not vacuous).
+* `dial_endpoints_distinct` — the two modes are distinct (a witnessed separation, not vacuous).
 
 Pure, computable, `#eval`-able over a reference DV-kernel that witnesses the interface is inhabitable.
 -/
@@ -169,7 +169,7 @@ theorem designated_convinces_V0 [DVKernel Verifier Statement Proof VSecret]
 
 /-- **`designated_not_transferable`** — a designated-verifier transcript is NOT transferable. From
 `¬ Transferable` (= `¬ ∀ V, …`) we extract a concrete verifier `W` the transcript does not convince
-(`¬ DischargedFor W`). A third party other than `V₀` can genuinely fail to be persuaded — the
+(`¬ DischargedFor W`). A third party other than `V₀` can fail to be persuaded — the
 opposite of non-repudiation, a behaviour dregg's universal verify cannot produce. -/
 theorem designated_not_transferable [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
@@ -215,7 +215,7 @@ theorem repudiation_no_third_party_evidence [DVKernel Verifier Statement Proof V
 
 /-- **`designated_excludes_public`** — the designated endpoint is disjoint from the transferable
 endpoint: a transcript in the designated mode is NOT transferable. The dial's two settings denote
-genuinely different propositions on the same transcript. -/
+different propositions on the same transcript. -/
 theorem designated_excludes_public [DVKernel Verifier Statement Proof VSecret]
     {V₀ : Verifier} {stmt : Statement} {proof : Proof}
     (h : DialHolds (VSecret := VSecret) (Verifier := Verifier) (.designated V₀) stmt proof) :
@@ -248,12 +248,12 @@ def secretOf : V → VSec
 
 /-- The designated verifier `v0`'s *simulated* transcript for a statement: a trapdoor-tagged value
 `stmt + secret + 1` that ONLY `v0`'s rule accepts. (The `+1` keeps it off the public-acceptance value,
-so a simulated transcript is genuinely non-transferable.) -/
+so a simulated transcript is non-transferable.) -/
 def sim : VSec → Stmt → Prf := fun s stmt => stmt + s + 1
 
 /-- Each verifier accepts its own trapdoor-simulated tag (the §8 simulator law holds for every
 verifier). Additionally `vOther` accepts the genuine public tag `proof = stmt`. Crucially `v0` does
-NOT accept the public tag `stmt` (only its own `sim`), so the two verifiers genuinely disagree —
+NOT accept the public tag `stmt` (only its own `sim`), so the two verifiers disagree —
 what makes the designated mode non-transferable in this toy. -/
 def vrfy : V → Stmt → Prf → Bool
   | .v0,     stmt, proof => decide (proof = sim (secretOf .v0) stmt)
@@ -295,10 +295,10 @@ def simFor (Vv : V) (stmt : Stmt) : Prf :=
   DVKernel.simulate (Verifier := V) (Statement := Stmt) (Proof := Prf) (VSecret := VSec)
     (DVKernel.vsecret (Statement := Stmt) (Proof := Prf) (VSecret := VSec) Vv) stmt
 
-/-- **`dial_endpoints_distinct`** — on the reference kernel there is a transcript that genuinely sits
+/-- **`dial_endpoints_distinct`** — on the reference kernel there is a transcript that sits
 at the designated endpoint: `designatedProof` for statement `7` satisfies `DesignatedFor v0` (`v0`
 convinced AND not transferable) yet fails `Transferable V` (`vOther` is not convinced). The two dial
-settings denote genuinely different propositions — the endpoints are inhabited and separated. -/
+settings denote different propositions — the endpoints are inhabited and separated. -/
 theorem dial_endpoints_distinct :
     DesignatedFor (Statement := Stmt) (Proof := Prf) (VSecret := VSec) V.v0 7 designatedProof
       ∧ ¬ Transferable V (Statement := Stmt) (Proof := Prf) (VSecret := VSec) 7 designatedProof := by

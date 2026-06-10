@@ -35,9 +35,9 @@ ACTUALLY RUNS.
 The anti-ghost on ALL 17 fields falls out of the generic `runnable_full_commit_binds` /
 `wide_rejects_root_tamper` (§4).
 
-## HONEST SURFACE — the log-receipt divergence is UNCHANGED and named.
+## SURFACE — the log-receipt divergence is UNCHANGED and named.
 
-The full clause pins the WHOLE 17-field kernel post-state (every field FROZEN). The ONE honest residual —
+The full clause pins the WHOLE 17-field kernel post-state (every field FROZEN). The ONE residual —
 emit's SOLE motion is the receipt prepended to `RecChainedState.log`, which is NOT a `RecordKernelState`
 field and has NO EffectVM row column — is the SAME boundary the narrow header and the Argus
 `EmitEvent.lean` weld carry: the log receipt rides universe-A's `logHashInjective` portal, NOT this

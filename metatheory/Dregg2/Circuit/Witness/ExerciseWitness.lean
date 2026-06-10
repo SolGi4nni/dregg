@@ -127,7 +127,7 @@ def honestWitnessJson : String := witnessJson honestWitness
 def forgedLogWitnessJson : String := witnessJson forgedLogWitness
 def forgedCellWitnessJson : String := witnessJson forgedCellWitness
 
--- (honest JSON byte pin removed: Common.lhConcrete is now the CR-grounded turnLogDigest)
+-- (no JSON byte pin: Common.lhConcrete is the CR-grounded turnLogDigest)
 #guard !(honestWitnessJson == forgedLogWitnessJson)
 #guard !(honestWitnessJson == forgedCellWitnessJson)
 

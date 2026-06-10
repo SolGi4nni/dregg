@@ -41,7 +41,7 @@ instance {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args) (a : Assignme
 /-! ## §1 — the CONCRETE commitment surface. -/
 
 /-- Concrete nullifier-list digest: the REAL CR-grounded `Poseidon2Surface.refP2` sponge over the
-`nullifiers` list (length-seeded, binding each entry — the genuinely-injective `refP2_injOn`, realizing
+`nullifiers` list (length-seeded, binding each entry — the injective `refP2_injOn`, realizing
 the real `babyBearD4W16` Poseidon2; the OLD base-`10⁶` Horner aliased entries ≥ 10⁶). -/
 def nulDigConcrete : List Nat → ℤ :=
   fun xs => Dregg2.Circuit.Poseidon2Surface.refP2 (xs.map (fun x => (x : ℤ)))

@@ -18,7 +18,7 @@ one, and bal_hi / cap_root / reserved / the 8 fields are FROZEN; the post-state 
 via the SAME GROUP-4 chain as transfer. So `noteSpendVmDescriptor` and the hand-AIR AGREE on the honest
 trace (the cutover differential passes), and any wrong-credit / wrong-nonce / mutated-frame row is UNSAT.
 
-## THE DEEPER DIVERGENCE (reported §10, NOT papered): runtime CREDIT vs universe-A balance-NEUTRAL
+## THE DEEPER DIVERGENCE (reported §10): runtime CREDIT vs universe-A balance-NEUTRAL
 
 Universe-A's `NoteSpendSpec` models the spend as BALANCE-NEUTRAL nullifier accumulation (`bal' = bal`) —
 a DIFFERENT shielding convention. The runtime credit and the universe-A neutral convention are
@@ -51,7 +51,7 @@ no-double-spend (that lives at universe-A's nullifier-set guard and the turn-acc
      which the 4-arity Poseidon2 hash-site IR does NOT provide.** We surface this loudly as
      `noteSpend_no_double_spend_is_turn_property` rather than pretending the per-row gate covers it.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY as the named
 `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`. Imports are read-only.
@@ -387,7 +387,7 @@ theorem univA_spend_is_balance_neutral (st st' : RecChainedState) (nf : Nat) (ac
   obtain ⟨_, _, _, _, _, _, _, _, hbal, _⟩ := hspec
   rw [hbal]
 
-/-! ## §10 — THE DEEPER DIVERGENCE (reported, NOT papered): runtime CREDIT vs universe-A balance-NEUTRAL.
+/-! ## §10 — THE DEEPER DIVERGENCE (reported): runtime CREDIT vs universe-A balance-NEUTRAL.
 
 The validated RUNTIME hand-AIR + `generate_effect_vm_trace` model a noteSpend as a TRANSPARENT CREDIT
 (`new_bal_lo = old_bal_lo + value`): the consumed shielded note returns value to the transparent pool.

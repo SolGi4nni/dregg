@@ -92,18 +92,18 @@ def Pred.ofConstraint (c : StateConstraint) : Pred := .atom c
 /-- A legacy `predicate` program (a conjunction of `StateConstraint`s) embeds as `allOf` of atoms. -/
 def Pred.ofProgram (cs : List StateConstraint) : Pred := .allOf (cs.map Pred.ofConstraint)
 
-/-- **`ofSimple_eval` — PROVED (no-op embedding).** A `SimpleConstraint` embedded into `Pred`
+/-- **`ofSimple_eval` (no-op embedding).** A `SimpleConstraint` embedded into `Pred`
 evaluates IDENTICALLY to `evalSimple`. The legacy simple layer is a strict sub-algebra. -/
 theorem Pred.ofSimple_eval (c : SimpleConstraint) (o n : Value) :
     (Pred.ofSimple c).eval o n = evalSimple c o n := rfl
 
-/-- **`ofConstraint_eval` — PROVED (no-op embedding).** A `StateConstraint` embedded into `Pred`
+/-- **`ofConstraint_eval` (no-op embedding).** A `StateConstraint` embedded into `Pred`
 evaluates IDENTICALLY to `evalConstraint`. EVERY existing program is a `Pred` with the SAME truth
 value — so every proof phrased over `evalConstraint` lifts to the algebra unchanged. -/
 theorem Pred.ofConstraint_eval (c : StateConstraint) (o n : Value) :
     (Pred.ofConstraint c).eval o n = evalConstraint c o n := rfl
 
-/-- **`ofProgram_eval` — PROVED.** A legacy conjunctive `predicate` program embeds as `allOf` and
+/-- **`ofProgram_eval`.** A legacy conjunctive `predicate` program embeds as `allOf` and
 evaluates to the SAME `cs.all evalConstraint` that `RecordProgram.admits (.predicate cs)` uses. The
 forked `predicate`/`anyOf` grammar is exactly the `allOf`/`anyOf` fragment of the clean algebra. -/
 theorem Pred.ofProgram_eval (cs : List StateConstraint) (o n : Value) :
@@ -116,42 +116,42 @@ theorem Pred.ofProgram_eval (cs : List StateConstraint) (o n : Value) :
 
 /-! ## Heyting / Boolean laws (the algebra is a genuine Boolean algebra, not an ad-hoc grammar). -/
 
-/-- **`eval_not` — PROVED.** Negation is the Boolean complement at EVERY level (the §B.1 fix: `not`
-is no longer `SimpleConstraint`-only). -/
+/-- **`eval_not`.** Negation is the Boolean complement at EVERY level (the §B.1 fix: `not`
+is not `SimpleConstraint`-only). -/
 theorem Pred.eval_not (p : Pred) (o n : Value) : (Pred.not p).eval o n = !(p.eval o n) := rfl
 
-/-- **`eval_not_not` — PROVED.** Double negation collapses on the decidable algebra. -/
+/-- **`eval_not_not`.** Double negation collapses on the decidable algebra. -/
 theorem Pred.eval_not_not (p : Pred) (o n : Value) :
     (Pred.not (Pred.not p)).eval o n = p.eval o n := by
   simp only [Pred.eval, Bool.not_not]
 
-/-- **`eval_and` — PROVED.** Conjunction is `&&`. -/
+/-- **`eval_and`.** Conjunction is `&&`. -/
 theorem Pred.eval_and (l r : Pred) (o n : Value) :
     (Pred.and l r).eval o n = (l.eval o n && r.eval o n) := rfl
 
-/-- **`eval_or` — PROVED.** Disjunction is `||`. -/
+/-- **`eval_or`.** Disjunction is `||`. -/
 theorem Pred.eval_or (l r : Pred) (o n : Value) :
     (Pred.or l r).eval o n = (l.eval o n || r.eval o n) := rfl
 
-/-- **De Morgan — PROVED.** `¬(l ∧ r) = ¬l ∨ ¬r` on the algebra. -/
+/-- **De Morgan.** `¬(l ∧ r) = ¬l ∨ ¬r` on the algebra. -/
 theorem Pred.deMorgan_and (l r : Pred) (o n : Value) :
     (Pred.not (Pred.and l r)).eval o n = (Pred.or (Pred.not l) (Pred.not r)).eval o n := by
   simp only [Pred.eval, Bool.not_and]
 
-/-- **De Morgan — PROVED.** `¬(l ∨ r) = ¬l ∧ ¬r`. -/
+/-- **De Morgan.** `¬(l ∨ r) = ¬l ∧ ¬r`. -/
 theorem Pred.deMorgan_or (l r : Pred) (o n : Value) :
     (Pred.not (Pred.or l r)).eval o n = (Pred.and (Pred.not l) (Pred.not r)).eval o n := by
   simp only [Pred.eval, Bool.not_or]
 
-/-- **`allOf_cons` — PROVED.** n-ary conjunction unfolds: the head AND the rest. -/
+/-- **`allOf_cons`.** n-ary conjunction unfolds: the head AND the rest. -/
 theorem Pred.allOf_cons (p : Pred) (ps : List Pred) (o n : Value) :
     (Pred.allOf (p :: ps)).eval o n = (p.eval o n && (Pred.allOf ps).eval o n) := rfl
 
-/-- **`anyOf_cons` — PROVED.** n-ary disjunction unfolds: the head OR the rest. -/
+/-- **`anyOf_cons`.** n-ary disjunction unfolds: the head OR the rest. -/
 theorem Pred.anyOf_cons (p : Pred) (ps : List Pred) (o n : Value) :
     (Pred.anyOf (p :: ps)).eval o n = (p.eval o n || (Pred.anyOf ps).eval o n) := rfl
 
-/-- **`allOf_nil_admits` / `anyOf_nil_rejects` — PROVED (the unit laws).** Empty `allOf` is `tt`
+/-- **`allOf_nil_admits` / `anyOf_nil_rejects` (the unit laws).** Empty `allOf` is `tt`
 (vacuous conjunction admits); empty `anyOf` is `ff` (empty disjunction rejects, fail-closed). -/
 theorem Pred.allOf_nil_admits (o n : Value) : (Pred.allOf []).eval o n = true := rfl
 theorem Pred.anyOf_nil_rejects (o n : Value) : (Pred.anyOf []).eval o n = false := rfl
@@ -185,7 +185,7 @@ def predCaveatsAdmit (caveats : List PredCaveat) (k : RecordKernelState) (f : Fi
   (caveats.filter (fun pc => pc.field == f)).all
     (fun pc => pc.eval (fieldOf f (k.cell target)) new)
 
-/-- **`predStateStepGuarded` — the `Pred`-gated field write (PROVED computable).** First the
+/-- **`predStateStepGuarded` — the `Pred`-gated field write (computable).** First the
 authority gate (`stateStep`), then the `Pred`-caveat gate (`predCaveatsAdmit`): a write commits iff
 the actor holds authority AND every `Pred`-caveat bound to the written slot admits the
 `(actor, old, new)` transition. Fail-closed on EITHER gate. The post-state is EXACTLY `stateStep`'s —
@@ -197,7 +197,7 @@ def predStateStepGuarded (caveats : List PredCaveat) (s : RecChainedState) (f : 
   else
     none
 
-/-- **`predStateStepGuarded_eq` — PROVED (the safety net).** A committed `Pred`-gated write is
+/-- **`predStateStepGuarded_eq` (the safety net).** A committed `Pred`-gated write is
 EXACTLY the underlying `stateStep` write (the algebra gate only restricts the domain — it never
 changes the post-state). The bridge that lifts EVERY `stateStep` keystone (conservation, authority,
 forward-sim) to the `Pred`-guarded write verbatim — the mirror of `stateStepGuarded_eq`. -/
@@ -210,9 +210,9 @@ theorem predStateStepGuarded_eq {caveats : List PredCaveat} {s s' : RecChainedSt
   · rw [if_pos hg] at h; exact h
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`predStateStepGuarded_admits` — PROVED.** A committed `Pred`-gated write means every
+/-- **`predStateStepGuarded_admits`.** A committed `Pred`-gated write means every
 `Pred`-caveat bound to the written slot ADMITTED the transition. The witness that the algebra was
-genuinely enforced on the live leg. -/
+enforced on the live leg. -/
 theorem predStateStepGuarded_admits {caveats : List PredCaveat} {s s' : RecChainedState}
     {f : FieldName} {actor target : CellId} {n : Int}
     (h : predStateStepGuarded caveats s f actor target n = some s') :
@@ -222,7 +222,7 @@ theorem predStateStepGuarded_admits {caveats : List PredCaveat} {s s' : RecChain
   · exact hg
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`predStateStepGuarded_violation_fails` — PROVED (FAIL-CLOSED).** If ANY `Pred`-caveat bound to
+/-- **`predStateStepGuarded_violation_fails` (FAIL-CLOSED).** If ANY `Pred`-caveat bound to
 the written slot rejects the transition (`predCaveatsAdmit = false`), the write does NOT commit. The
 executor-level teeth of the algebra: a violated policy `Pred` rejects the write, BY THE EXECUTOR. -/
 theorem predStateStepGuarded_violation_fails (caveats : List PredCaveat) (s : RecChainedState)

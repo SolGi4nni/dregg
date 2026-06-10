@@ -120,7 +120,7 @@ theorem drainStep_preserves_caps {k k' : KernelState} {s : QueuedSend}
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h; rfl
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`drainAll_preserves_caps` (PROVED) — the headline no-amplification law over the
+/-- **`drainAll_preserves_caps` — the headline no-amplification law over the
 EXECUTABLE drain.** Draining a whole pipeline preserves the capability table: the post-state's
 `caps` equals the pre-state's. So NO send in the pipeline can acquire authority the sender did
 not already hold — every send is authority-checked against the unchanged `caps`, and the
@@ -138,7 +138,7 @@ theorem drainAll_preserves_caps :
 
 /-! ## §3 — Every committed send was authorized (`exec_authorized` lifted to the drain). -/
 
-/-- **`drainAll_all_authorized` (PROVED)** — if the whole pipeline drains successfully, then
+/-- **`drainAll_all_authorized`** — if the whole pipeline drains successfully, then
 EVERY send in it was authorized at the moment it was applied: there is a thread of states
 `k = k₀ → k₁ → … → kₙ = k'` such that each send `sᵢ` satisfies `authorizedB kᵢ.caps sᵢ.turn`.
 We state the head-of-queue instance (the first send is authorized against the initial caps)
@@ -163,7 +163,7 @@ theorem drainAll_tail {k k' : KernelState} {s : QueuedSend} {rest : List QueuedS
 
 /-! ## §4 — The anti-ghost tooth: an over-authorized / forged send is REJECTED on drain. -/
 
-/-- **`overAuthorized_send_rejected` (PROVED) — the anti-ghost tooth.** A queued send whose
+/-- **`overAuthorized_send_rejected` — the anti-ghost tooth.** A queued send whose
 actor is NOT authorized over its `src` (a forged or over-authorized send — the sender asserts
 authority it does not hold in the `caps` table) is REJECTED by the executor on drain:
 `drainStep` returns `none`. So pipelining a send you cannot authorize gains you nothing on
@@ -175,7 +175,7 @@ theorem overAuthorized_send_rejected {k : KernelState} {s : QueuedSend}
   unfold drainStep
   exact exec_unauthorized_fails k s.turn hno
 
-/-- **`drainAll_aborts_on_unauthorized_head` (PROVED)** — if the FIRST queued send is
+/-- **`drainAll_aborts_on_unauthorized_head`** — if the FIRST queued send is
 unauthorized, the ENTIRE pipeline drain aborts to `none`: no later send is applied, and the
 state is not advanced. A single forged send anywhere the executor reaches first kills the
 batch — the pipeline cannot launder authority by burying a forged send among valid ones. -/
@@ -188,7 +188,7 @@ theorem drainAll_aborts_on_unauthorized_head {k : KernelState} {s : QueuedSend}
 
 /-! ## §5 — Break cascade: a broken promise leaves NO state change (no orphaned grant). -/
 
-/-- **`break_freezes_state` (PROVED) — the break cascade installs nothing.** When the targeted
+/-- **`break_freezes_state` — the break cascade installs nothing.** When the targeted
 promise is BROKEN (`pipeline.rs::break_promise`), `resolve` delivers nothing: the kernel state
 is returned UNCHANGED. So a broken promise cannot leave a dangling grant — no queued send is
 applied, the `caps` and `bal` tables are frozen exactly as before. The cascade propagates the
@@ -197,7 +197,7 @@ break to dependents WITHOUT installing any authority (the security counterpart o
 theorem break_freezes_state (k : KernelState) (reason : String) (queue : List QueuedSend) :
     resolve k (.broken reason) queue = some k := rfl
 
-/-- **`break_preserves_caps` (PROVED)** — corollary: a break preserves the capability table
+/-- **`break_preserves_caps`** — corollary: a break preserves the capability table
 trivially (the state is unchanged), so no orphaned grant survives a broken promise. -/
 theorem break_preserves_caps (k : KernelState) (reason : String) (queue : List QueuedSend) :
     ∀ k', resolve k (.broken reason) queue = some k' → k'.caps = k.caps := by
@@ -210,7 +210,7 @@ theorem break_preserves_caps (k : KernelState) (reason : String) (queue : List Q
 Each drained send is a verified turn, so `exec_conserves` composes: a successfully drained
 pipeline conserves the total supply. Pipelining batches turns; it does not mint or burn. -/
 
-/-- **`drainAll_conserves` (PROVED)** — a successfully drained pipeline conserves total supply.
+/-- **`drainAll_conserves`** — a successfully drained pipeline conserves total supply.
 Every send is a real `exec` turn (each conserves by `exec_conserves`), so the batch conserves:
 the post-state's `total` equals the pre-state's. Pipelining is purely a latency optimization —
 it neither creates nor destroys resource. -/
@@ -231,7 +231,7 @@ claim: the abstract guard the queued call carries is, concretely, `authorizedB k
 "resolution does not discharge it" is "draining re-runs `exec`, which re-checks `authorizedB`."
 The executable drain is therefore the realization of the abstract law — no new verify side. -/
 
-/-- **`drain_realizes_seam` (PROVED)** — the abstract pipelining seam, realized concretely. A
+/-- **`drain_realizes_seam`** — the abstract pipelining seam, realized concretely. A
 send drains to `some k'` IFF the executor (re-checking `authorizedB`) accepts it — i.e. the
 abstract "the queued call's authorization survives resolution unchanged" is the concrete fact
 that delivery re-runs the SAME authority check `authorizedB k.caps turn`. Drain success ⇒
@@ -412,7 +412,7 @@ def promiseState (r : Reg) (id : Nat) : Option PState := lookup r.promises id
 /-! ### §8b.1 — State-machine laws (proved). -/
 
 /-- `lookup` of an APPENDED fresh key (not already present via the `find?` short-circuit) returns
-the appended value when the key is genuinely new. Used for `create`. -/
+the appended value when the key is new. Used for `create`. -/
 theorem lookup_append_new {α} (xs : List (Nat × α)) (k : Nat) (v : α)
     (h : xs.find? (·.1 = k) = none) : lookup (xs ++ [(k, v)]) k = some v := by
   simp only [lookup, List.find?_append, h, List.find?_cons]

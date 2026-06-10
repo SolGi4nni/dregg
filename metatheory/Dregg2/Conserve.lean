@@ -187,7 +187,7 @@ example (acc : Finset CellId) (bal : CellId → ℤ) (src dst : CellId) (amt : �
       = ∑ c ∈ acc, bal c := by
   exact sum_transfer_conserve acc bal src dst amt hsrc hdst hne
 
-/-- Honesty-rail: `sum_transfer_conserve` genuinely requires `hne : src ≠ dst`. Without it the
+/-- Honesty-rail: `sum_transfer_conserve` requires `hne : src ≠ dst`. Without it the
 debit and credit collapse onto one cell and do not cancel; the `src = dst` version of this
 claim is false. -/
 example (acc : Finset CellId) (bal : CellId → ℤ) (src dst : CellId) (amt : ℤ)

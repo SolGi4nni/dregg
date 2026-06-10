@@ -34,7 +34,7 @@ descriptor's connector (`EffectVmEmitBridgeMint §7`, `cellProjA`) projects.
      the turn PROLOGUE's single tick discharges — `bridgeMint_compile_sound_nonce_is_turn_tick`), NOT a
      carried divergence.
 
-## HONEST SURFACE (precise — do NOT over-read)
+## SURFACE (precise — do NOT over-read)
 
   * **PER-CELL / PER-(cell,asset) (the credited leg).** The runnable descriptor is a SINGLE-ROW AIR; its
     soundness pins ONE `(cell, asset)` ledger entry's transition + that row's commitment binding. We weld
@@ -59,7 +59,7 @@ descriptor's connector (`EffectVmEmitBridgeMint §7`, `cellProjA`) projects.
   * `state.RESERVED` not absorbed by any hash-site (inherited transfer-keystone finding, carried by the
     descriptor — cited, not re-claimed).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both theorems ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `:= True`
 vacuity, no weakening-that-just-typechecks: the conclusion is the genuine per-cell agreement the reused
@@ -147,7 +147,7 @@ theorem interp_bridgeMintStmt_eq_recKMintAsset
 
 #assert_axioms interp_bridgeMintStmt_eq_recKMintAsset
 
-/-! ## §3 — NON-VACUITY of the cornerstone: the bridge-mint term genuinely CREDITS the ledger.
+/-! ## §3 — NON-VACUITY of the cornerstone: the bridge-mint term CREDITS the ledger.
 
 The cornerstone would be hollow if `bridgeMintStmt` never committed, or if the credit were a no-op. We
 witness BOTH valences on a one-account kernel that grants account `0` a privileged mint cap over itself:
@@ -172,7 +172,7 @@ theorem bridgeMintStmt_credits :
 
 /-- **`bridgeMintStmt_rejects_unauthorized` — fail-closed without supply authority.** A bridge-mint
 attempted by an UNAUTHORIZED actor (account `1`, which holds no mint cap over cell `0`) rejects (`none`):
-the privileged-supply gate genuinely fails closed (the cornerstone's two-valued, non-vacuous reject side
+the privileged-supply gate fails closed (the cornerstone's two-valued, non-vacuous reject side
 — the bridge inbound is gated, the foreign half is the carried portal). -/
 theorem bridgeMintStmt_rejects_unauthorized :
     interp (bridgeMintStmt 1 0 0 30) kBM = none := by
@@ -187,7 +187,7 @@ theorem bridgeMintStmt_rejects_unauthorized :
 The SAME shape as the mint/burn welds (`Argus/Compile.lean §M.2`): route the circuit side through the
 audited `bridgeMintDescriptor_full_sound` (`EffectVmEmitBridgeMint §5`, which forces `CellBridgeMintSpec`)
 and the executor side through the §2 cornerstone + a per-(cell,asset) projection of `recKMintAsset` onto
-the descriptor's own `cellProjA`. The honest surface is PER-CELL (`cellProjA` of the credited
+the descriptor's own `cellProjA`. The surface is PER-CELL (`cellProjA` of the credited
 `(cell, asset)` entry), exactly as the descriptor's `§7` connector. The per-effect nonce-tick (descriptor
 ticks the row nonce; the ledger image freezes — and `cellProjA` zeroes both) is RECONCILED to the turn's
 one prologue tick (`NonceReconciled`, NOT a carried divergence), like burn/transfer. We weld DIRECTLY

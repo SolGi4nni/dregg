@@ -55,7 +55,7 @@ CORRECTED semantics**: it distributes the circuit COMPOSITIONALLY (each primitiv
 sub-circuit, `seq` conjoins), instead of the non-compositional two-level pattern match. This is
 not a regression of a guarantee — it is the honest shape that rides initiality.
 
-## The HONEST RESIDUAL (the deep finding, stated not hidden)
+## THE RESIDUAL (the deep finding)
 
 `compileFold`'s LEAF descriptors are `skipDescriptor` for the state-component primitives, because
 a fold's leaf operation receives ONLY the constructor's opaque closure (e.g. `leaf :
@@ -64,13 +64,13 @@ the concrete per-row gate polynomials of `transferVmDescriptor`/`mintVmDescripto
 SAME structural fact `Compile.lean §M` proved from the other side (`compileE` keys on an EFFECT
 TAG, not the term, precisely because `setCell`'s leaf is an opaque closure a `RecStmt`-structural
 map cannot branch on, and transfer/mint/burn are the SAME `seq (guard) (setCell)` shape). So the
-fold rides initiality, but its leaf circuits are honestly empty at THIS granularity — the genuine
+fold rides initiality, but its leaf circuits are empty at THIS granularity — the genuine
 descriptors live on the effect-tagged `compileE` surface, and welding the fold to those is the
 effect-tag annotation, NOT a finer fold over `RecStmt`. The collapse is REAL (any two folds of
 `compileAlgebra` agree on ALL terms); the leaf richness is the next gate (a tagged IR), recorded
 here, not papered.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` clean (the three kernel axioms only); no `sorry`, no `:= True`, no
 `native_decide`. This file owns ONLY its own declarations and imports the IR + the descriptor
@@ -228,7 +228,7 @@ def compileAlgebra : StmtAlgebra EffectVmDescriptor where
 initiality (unlike the structural `compile`). -/
 def compileFold : RecStmt → EffectVmDescriptor := foldStmt compileAlgebra
 
-/-- **`compileFold` IS a `Σ`-algebra homomorphism (PROVED).** The existence half: it agrees with
+/-- **`compileFold` IS a `Σ`-algebra homomorphism.** The existence half: it agrees with
 `compileAlgebra` at every constructor, with `seq` compositional via `seqDescr`. This is the
 hypothesis `compile_not_a_seq_hom` showed the STRUCTURAL `compile` cannot meet — `compileFold` meets
 it by construction. -/
@@ -250,7 +250,7 @@ descriptor-algebra `compAlg` and a hom of it. `compileFold` + `compileFold_isHom
 hypothesis. So the collapse for the circuit reading is now REAL: ANY two readings that are folds of
 `compileAlgebra` agree on EVERY term, by uniqueness — no per-effect / per-term differential. -/
 
-/-- **`compileFold_collapse` — the N²→1 COLLAPSE, DISCHARGED (PROVED).** Any circuit reading `comp`
+/-- **`compileFold_collapse` — the N²→1 COLLAPSE, DISCHARGED.** Any circuit reading `comp`
 that is a `Σ`-algebra homomorphism of `compileAlgebra` EQUALS `compileFold` on EVERY term — so two
 such readings agree everywhere by initiality, NOT by N² per-effect lemmas. The hypothesis is exactly
 `compileFold_isHom`, which `compileFold` meets; this is `fold_compile_would_collapse` with its
@@ -261,7 +261,7 @@ theorem compileFold_collapse (comp : RecStmt → EffectVmDescriptor)
 
 #assert_axioms compileFold_collapse
 
-/-- **`interp_compile_agree_of_generators` — the PAYOFF in executor⟺circuit form (PROVED).** Stated
+/-- **`interp_compile_agree_of_generators` — the PAYOFF in executor⟺circuit form.** Stated
 for a parametric carrier `α` (the shared semantic target of the two readings): if BOTH the executor
 reading `exe` and the circuit reading `cir` are folds of ONE algebra `alg`, they AGREE on EVERY term
 — the executor⟺circuit agreement on ALL terms follows from agreement on the ~20 CONSTRUCTORS (the
@@ -281,10 +281,10 @@ the CONSTRUCTORS forces agreement on a real two-level `seq` term — the genuine
 (the `seqDescr` node is pinned by the leaf agreements). The forced value is a genuine `seqDescr`
 composite, not either leaf alone. -/
 
-/-- **`compileFold_collapse_constrains` — the collapse is NON-VACUOUS (PROVED).** Any hom `comp` of
+/-- **`compileFold_collapse_constrains` — the collapse is NON-VACUOUS.** Any hom `comp` of
 `compileAlgebra` is FORCED, on the COMPOUND term `seq (guard φ) (setCell T leaf)` (the transfer
 SHAPE), to equal `compileFold` there — its value is determined by the leaf operations and the
-`seqDescr` law, not free. So uniqueness genuinely bites on a non-atomic term. -/
+`seqDescr` law, not free. So uniqueness bites on a non-atomic term. -/
 theorem compileFold_collapse_constrains (comp : RecStmt → EffectVmDescriptor)
     (h : IsFoldHom compileAlgebra comp)
     (φ : RecordKernelState → Bool) (T : Finset CellId)
@@ -295,7 +295,7 @@ theorem compileFold_collapse_constrains (comp : RecStmt → EffectVmDescriptor)
 
 #assert_axioms compileFold_collapse_constrains
 
-/-- **The forced compound value is a genuine `seqDescr` composite (PROVED) — the constraint is REAL.**
+/-- **The forced compound value is a genuine `seqDescr` composite — the constraint is REAL.**
 `compileFold` of the transfer-shape term is `seqDescr (compileFold (guard φ)) (compileFold (setCell
 …))` — a two-level node whose meaning is the CONJUNCTION of the legs' sub-circuits, NOT either leaf
 alone. This exhibits that the collapse pins a COMPOSITE, witnessing non-vacuity concretely. -/
@@ -337,7 +337,7 @@ theorem compileFold_transferShape_constraints
     (compileFold (.seq (.guard φ) (.setCell T leaf))).constraints = [] := by
   rfl
 
-/-- **`compileFold_ne_compile_on_transfer` — the corrected-semantics divergence, PINNED (PROVED).**
+/-- **`compileFold_ne_compile_on_transfer` — the corrected-semantics divergence, PINNED.**
 On the transfer shape the structural `compile` yields the 36-constraint `transferVmDescriptor` while
 `compileFold` yields the empty-gate conjunction of two `skipDescriptor` legs — so the two readings
 DIFFER (different `constraints` length: 36 vs 0). This is the necessary consequence of
@@ -382,7 +382,7 @@ theorem compileFold_ne_compile_on_transfer
     reading; the audited structural `compile` (`transfer_compile_sound` et al.) is retained as the
     descriptor-dispatch beachhead.
 
-  * **The honest residual**: `compileAlgebra`'s LEAF circuits are `skipDescriptor` because a fold's
+  * **The residual**: `compileAlgebra`'s LEAF circuits are `skipDescriptor` because a fold's
     leaf operation gets only the constructor's OPAQUE closure (the §M opaque-leaf finding from the
     fold side). The genuine per-effect descriptors live on the effect-tagged `compileE`; reaching
     them is an effect ANNOTATION on the IR (a tagged term carrying its `ArgusEffect`), NOT a finer

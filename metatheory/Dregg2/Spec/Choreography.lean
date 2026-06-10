@@ -21,7 +21,7 @@ The bridge: an interaction's colour is exactly "does its atomic commit need a hy
   * **`epp_membrane_is_projection`** — the per-endpoint projection of a red interaction IS
     its hyperedge incidence; the vat-boundary membrane and the cell's hyperedge participation
     are the same object (resting on `epp_correspondence`'s current head-duality scope,
-    noted honestly).
+    noted.
   * **`red_iff_coupled`** — red ⟺ ¬ I-confluent ⟺ needs a hyperedge.
 
 Faithful `Prop`s; proved keystones pinned with `#assert_axioms`; no `Nat`-for-semantics.
@@ -110,7 +110,7 @@ coupling FORCES the shared-`tid` wide-pullback binding (the cells cannot commit 
 — their half-edges must balance to `0` against one apex `tid`). The *structural*
 correspondence is: given the interaction's binding data (the shared turn, the apex `tid`, the
 CG-2 legs, the CG-5 balance), the participant tuple is `HyperAdmissible` — i.e. there is a
-`Hyperedge` naming it. We prove that, and honestly leave the OPERATIONAL half open. -/
+`Hyperedge` naming it. We prove that, and leave the OPERATIONAL half open. -/
 
 /-- **`RedBinding` — the binding data a red interaction's atomic commit carries.** Exactly
 the content of a `Hyperedge`'s non-tuple fields, stated as the *premise* a coupled commit
@@ -132,7 +132,7 @@ structure RedBinding
   /-- CG-5: the half-edge aggregate over the incidence set balances to `0`. -/
   balanced : (Finset.univ.sum fun i => P.halfEdge i (xs i) t) = 0
 
-/-- **`RedBinding.toHyperedge` — the binding assembles the atomic hyperedge (PROVED).**
+/-- **`RedBinding.toHyperedge` — the binding assembles the atomic hyperedge.**
 A red interaction's binding data over the incidence tuple `xs` IS a `Hyperedge` over the
 same `turnId`/`halfEdge` projections — the coupled commit is one wide-pullback object. The
 apex `tid` and the single Σ=0 are exactly the hyperedge's `tid`/`balanced`; the CG-2 legs are
@@ -148,7 +148,7 @@ def RedBinding.toHyperedge
   agree := b.agree
   balanced := b.balanced
 
-/-- **`red_projects_to_hyperedge` — the keystone (STRUCTURAL half, PROVED).**
+/-- **`red_projects_to_hyperedge` — the keystone (STRUCTURAL half).**
 
 A RED interaction's atomic commit, *given its binding data* (`RedBinding` over the incidence
 tuple `xs`), realizes a `Hyperedge` over the participant cells — so the tuple is
@@ -173,7 +173,7 @@ theorem red_projects_to_hyperedge
     HyperAdmissible (Bal := Bal) ι T P.turnId P.halfEdge xs b.t :=
   ⟨b.toHyperedge, rfl, rfl⟩
 
-/-- **`red_legs_agree` — a red interaction's incidences share one turn-id (PROVED).** The
+/-- **`red_legs_agree` — a red interaction's incidences share one turn-id.** The
 operational gloss of "the coupling forces the shared-`tid` binding": for any two participant
 cells of a red interaction, their post-step turn-ids coincide (both are the apex). This is
 `Hyperedge.legs_agree` read at the interaction altitude — the cross-cell `tid` cut a red
@@ -186,7 +186,7 @@ theorem red_legs_agree
     P.turnId i (T.next (xs i) b.t) = P.turnId j (T.next (xs j) b.t) :=
   Hyperedge.legs_agree b.toHyperedge i j
 
-/-! ## §3 — `blue_needs_no_hyperedge`: BLUE ↦ independent per-cell commits (PROVED).
+/-! ## §3 — `blue_needs_no_hyperedge`: BLUE ↦ independent per-cell commits.
 
 A blue (I-confluent) interaction needs NO shared binding. Two halves, both PROVED:
 
@@ -209,7 +209,7 @@ theorem blue_commits_independently
     P.effect.inv (x ⊔ y) :=
   blue_merge_safe P.effect.inv hblue x y hx hy
 
-/-- **`blue_needs_no_hyperedge` — the keystone (PROVED).**
+/-- **`blue_needs_no_hyperedge` — the keystone.**
 
 A blue interaction needs no cross-cell hyperedge binding, made precise as the conjunction of
 the two halves:
@@ -244,7 +244,7 @@ I-confluence judgement); the second is content: a non-I-confluent (red) effect E
 clashing concurrent pair (`Confluence.nonpairwise_escalation`) — a Σ=0-style settlement that
 cannot run cross-group-free, the operational meaning of "must escalate to a hyperedge". -/
 
-/-- **`red_iff_coupled` — red ⟺ not I-confluent, with the forced-escalation witness (PROVED).**
+/-- **`red_iff_coupled` — red ⟺ not I-confluent, with the forced-escalation witness.**
 
 (i) `P.IsRed ↔ ¬ Confluence.IConfluent P.effect.inv` is the colour's definition unfolded —
 honest definitional content (`BlueEligible := IConfluent`), so this direction is `Iff.rfl`-class
@@ -273,7 +273,7 @@ faithfully: it rests on `Projection.epp_correspondence`'s CURRENT head-duality s
 `Coordination.projection_sound`, head-duality only — the full bisimulation awaits the
 operational LTS), conjoined with the hyperedge-incidence agreement `Hyperedge.legs_agree`. -/
 
-/-- **`epp_membrane_is_projection` — the two altitudes meet (PROVED at the stated scope).**
+/-- **`epp_membrane_is_projection` — the two altitudes meet (at the stated scope).**
 
 For a `Projectable` protocol-cell running a head communication `comm a b s k` (a red,
 coupled interaction at the choreography altitude — a 2-cell binding), TWO facts hold at once
@@ -281,13 +281,13 @@ and are *the same correspondence read at two altitudes*:
 
   * **(projection / membrane)** the endpoints' projections are `Dual`
     (`Projection.epp_correspondence` — the per-endpoint membrane enforcing each role's local
-    type; head-duality scope, honestly noted);
+    type; head-duality scope, noted);
   * **(hyperedge incidence)** the participant cells of the red interaction's atomic commit
     share one apex turn-id (`Hyperedge.legs_agree` over the interaction's binding) — the
     membrane-enforced role IS the cell's hyperedge participation (the same `tid` the
     projection synchronises on).
 
-**HONEST SCOPE.** The projection half is exactly what `epp_correspondence` proves today (head
+**SCOPE.** The projection half is exactly what `epp_correspondence` proves today (head
 duality, = `Coordination.projection_sound`); the *independent* two-altitudes content — that
 the per-endpoint membrane and the hyperedge incidence are literally one object along the
 composed-projection bisimulation — awaits the operational LTS (`-- OPEN` in

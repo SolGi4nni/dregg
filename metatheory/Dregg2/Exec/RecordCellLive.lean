@@ -3,7 +3,7 @@
 
 `REORIENT.md §5 step 1` (the standing `OPEN`): the `Value`/`RecordProgram` Preserves cell
 (`Exec/Value.lean`, `Exec/Program.lean`, `Exec/RecordCell.lean`) was built as a *flat, dead*
-fragment — `recExec : Value → RecOp → Option Value` is a genuinely-gated single transition
+fragment — `recExec : Value → RecOp → Option Value` is a gated single transition
 (`recExec_admitted`), but it had **no `νF` life**: no coalgebra, no receipt chain, no
 observation, no step-completeness, no soundness. It was "the part of dregg that isn't dregg."
 
@@ -79,11 +79,11 @@ def recordCell : TurnCoalg Nat RecOp where
 
 /-! ## `recCexec_attests` — step-completeness on the running record machine. -/
 
-/-- **`recCexec_attests` (PROVED) — the four `StepInv` facts on a committed record transition.**
+/-- **`recCexec_attests` — the four `StepInv` facts on a committed record transition.**
 Every commit attests: (Admitted) the program admitted the candidate; (Apply) the new value is
 exactly `applyOp`'s candidate; (ChainLink) the log extends by the op at the head; (ObsAdvance) the
 height advances by one; plus the program/method are carried invariant. This is the record-cell
-shadow of `Exec.cexec_attests` — the structure-map genuinely gates the living arrow. -/
+shadow of `Exec.cexec_attests` — the structure-map gates the living arrow. -/
 theorem recCexec_attests {s s' : RecChained} {op : RecOp} (h : recCexec s op = some s') :
     s.program.admits s.method s.value s'.value = true
     ∧ s'.value = applyOp s.value op
@@ -100,7 +100,7 @@ theorem recCexec_attests {s s' : RecChained} {op : RecOp} (h : recCexec s op = s
       refine ⟨recExec_admitted hr, recExec_commits_applyOp hr, rfl, ?_, rfl, rfl⟩
       simp [List.length_cons]
 
-/-- **`recordCell_obs_advances` (PROVED)** — on a committed turn the coalgebra's observation
+/-- **`recordCell_obs_advances`** — on a committed turn the coalgebra's observation
 strictly advances: `recordCell.obs s' = recordCell.obs s + 1`. The ObsAdvance conjunct, read off the
 living coalgebra: the badge that crosses the boundary is a strictly-monotone chain height. -/
 theorem recordCell_obs_advances {s s' : RecChained} {op : RecOp} (h : recCexec s op = some s') :
@@ -109,7 +109,7 @@ theorem recordCell_obs_advances {s s' : RecChained} {op : RecOp} (h : recCexec s
   unfold recHeight
   exact (recCexec_attests h).2.2.2.1
 
-/-- **`recCexec_stays_or_commits` (PROVED)** — the total successor `recNext` is either a genuine
+/-- **`recCexec_stays_or_commits`** — the total successor `recNext` is either a genuine
 commit (`recCexec = some s'`) or a fail-closed stay-put (`s' = s`). The totalization is honest:
 nothing happens except an admitted commit or a rejection that leaves the cell untouched. -/
 theorem recNext_commits_or_stays (s : RecChained) (op : RecOp) :
@@ -125,7 +125,7 @@ A program enforcing `sumEquals fields c` makes the Σ of the named fields a fixe
 admitted post-state. We prove that this conserved sum is preserved along *every* successful run —
 the Preserves-substrate analog of the ledger's `Σ_k` conservation, over name-keyed records. -/
 
-/-- **`admits_sumEquals` (PROVED)** — if a `predicate` program admits `(old, new)` and one of its
+/-- **`admits_sumEquals`** — if a `predicate` program admits `(old, new)` and one of its
 constraints is `sumEquals fields c`, then the post-state's named-field sum is exactly `c`. Recovers
 the honest equation from the Boolean gate. -/
 theorem admits_sumEquals {cs : List StateConstraint} {m : Nat} {old new : Value}
@@ -144,7 +144,7 @@ theorem recCexec_program {s s' : RecChained} {op : RecOp} (h : recCexec s op = s
     s'.program = s.program ∧ s'.method = s.method :=
   ⟨(recCexec_attests h).2.2.2.2.1, (recCexec_attests h).2.2.2.2.2⟩
 
-/-- **`recCexec_sumEquals` (PROVED)** — a single committed step of a `sumEquals`-enforcing program
+/-- **`recCexec_sumEquals`** — a single committed step of a `sumEquals`-enforcing program
 lands in a post-state whose named-field sum is the conserved constant `c`. -/
 theorem recCexec_sumEquals {s s' : RecChained} {op : RecOp}
     {cs : List StateConstraint} {fields : List FieldName} {c : Int}
@@ -161,7 +161,7 @@ def recReplay (s : RecChained) : List RecOp → Option RecChained
   | []        => some s
   | op :: ops => (recCexec s op).bind (fun s' => recReplay s' ops)
 
-/-- **`recReplay_preserves_sumEquals` (THE HEADLINE — PROVED): conservation over name-keyed
+/-- **`recReplay_preserves_sumEquals` (THE HEADLINE): conservation over name-keyed
 records.** For a program enforcing `sumEquals fields c`, the conserved sum `Σ new[fields] = c` holds
 after *every* successful run from a state that already satisfies it. This is genuine conservation
 over Preserves records — a falsifiable invariant preserved along the cell's whole life, derived from
@@ -207,7 +207,7 @@ def recChain (s : RecChained) (op : RecOp) (s' : RecChained) : Prop :=
 def recObsA  (s : RecChained) (_ : RecOp) (s' : RecChained) : Prop :=
   s'.log.length = s.log.length + 1 ∨ s' = s
 
-/-- **`recordCell_stepComplete` (PROVED)** — the record cell attests its four `StepInv` conjuncts at
+/-- **`recordCell_stepComplete`** — the record cell attests its four `StepInv` conjuncts at
 every transition: the totalized arrow always commits-or-stays, with the chain/height facts holding
 on the commit branch. This is `Boundary.StepComplete` for the living record cell. -/
 theorem recordCell_stepComplete :
@@ -220,7 +220,7 @@ theorem recordCell_stepComplete :
     exact ⟨Or.inl a.2.1, Or.inl hc, Or.inl a.2.2.1, Or.inl a.2.2.2.1⟩
   · exact ⟨Or.inr hstay, Or.inr hstay, Or.inr hstay, Or.inr hstay⟩
 
-/-- **`recordCell_run_preserves_sumEquals` (PROVED) — conservation over records, via the abstract
+/-- **`recordCell_run_preserves_sumEquals` — conservation over records, via the abstract
 keystone.** The `sumEquals` invariant is preserved along every reachable run of the record
 *coalgebra*, obtained by instantiating `Boundary.stepComplete_preserves` (the "no drifting future"
 safety invariant) with `Good := (Σ fields = c)`. So the record cell's conservation is not a bespoke

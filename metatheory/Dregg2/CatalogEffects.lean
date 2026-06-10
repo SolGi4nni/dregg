@@ -193,7 +193,7 @@ theorem effect_regimes_disjoint (e : EffectKind) :
   LinearityClass.paired_and_disclosed_exclusive (effectLinearity e)
 
 /-- The coloring covers ALL SIX colors — each is witnessed by ≥ 1 effect (so no color is
-vacuous and the catalog is genuinely six-way discriminating). The §2 representatives, bundled. -/
+vacuous and the catalog is six-way discriminating). The §2 representatives, bundled. -/
 theorem effectLinearity_covers_all_colors :
     effectLinearity .transfer = Conservative ∧
     effectLinearity .incrementNonce = Monotonic ∧

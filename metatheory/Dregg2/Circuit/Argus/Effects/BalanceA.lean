@@ -4,7 +4,7 @@ into the Argus IR.
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
 it on transfer/mint/burn — each a SINGLE-CELL move on the per-cell record `balance` field (`setCell`,
-`recKExec`/`recKMint`/`recKBurn`). This module welds the genuinely DIFFERENT ledger primitive `balanceA`,
+`recKExec`/`recKMint`/`recKBurn`). This module welds the DIFFERENT ledger primitive `balanceA`,
 in a disjoint file (it imports the Argus IR + the audited `balanceA` instance read-only and owns only its
 own declarations).
 
@@ -44,7 +44,7 @@ welds against, so the situation is worth stating precisely:
     independent `execFullA_balanceA_iff_spec` (`Spec/balancemovement.lean`). This is a SEPARATE, complete
     descriptor — balanceA is its OWN effect there, not transfer's.
 
-So this module is HONEST in both directions:
+This module covers both directions:
 
   (1) **Cornerstone (the standalone executor-refinement the task names):** `interp_balanceAStmt_eq_recKExecAsset`
       — the per-asset RAW-kernel executor `recKExecAsset` IS the Argus term, using `setBal`. New, standalone,
@@ -62,7 +62,7 @@ on 6 conjuncts; the chained `recCexecAsset`/`execFullA` adds a 7th — `acceptsE
 credit into a Sealed/Destroyed cell). The lift theorem `interp_balanceAStmt_chained` carries that dst-liveness
 conjunct as an explicit hypothesis, exactly as the kernel layering demands.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 whole-function-digest assumption enters ONLY inside the reused `balanceA_full_sound` (its `Function.Injective D`
@@ -157,7 +157,7 @@ The standalone balanceA descriptor (§4) is keyed on the CHAINED executor `recCe
 §2 cornerstone is over the RAW kernel step `recKExecAsset`. The chained layer is exactly `recKExecAsset` PLUS
 two things: an `acceptsEffects` dst-liveness pre-gate (R1: no credit into a non-Live cell) and the receipt-log
 prepend `t :: s.log`. We bridge faithfully, carrying the `acceptsEffects` conjunct as an explicit hypothesis
-(the honest chained-vs-raw contrast — NOT papered). -/
+(the honest chained-vs-raw contrast). -/
 
 /-- **`interp_balanceAStmt_chained` — the IR term's executor, lifted to the chained `execFullA`.** When the
 destination accepts effects (`acceptsEffects st.kernel t.dst = true`, the chained layer's extra R1 gate) and
@@ -246,7 +246,7 @@ theorem balanceA_compile_sound
 
 #assert_axioms balanceA_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely MOVES the ledger (debit/credit observable), the welded circuit
+/-! ## §5 — NON-VACUITY: the IR term MOVES the ledger (debit/credit observable), the welded circuit
 is the genuine standalone descriptor (not a placeholder), and the gate REJECTS forged inputs (fail-closed).
 
 The cornerstone/weld would be hollow if balanceA never committed, if the move were a no-op, or if the gate
@@ -265,14 +265,14 @@ def kB0 : RecordKernelState :=
 def tB0 : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 
 /-- **NON-VACUITY (the DEBIT is OBSERVABLE).** The committed movement DROPS source cell `0`'s asset-`0` ledger
-entry from `30` to `0` — the value genuinely LEAVES the source (the `setBal`/`recTransferBal` debit is real). -/
+entry from `30` to `0` — the value LEAVES the source (the `setBal`/`recTransferBal` debit is real). -/
 theorem balanceAStmt_debits :
     (interp (balanceAStmt tB0 0) kB0).map (fun k => k.bal 0 0) = some 0 := by
   rw [interp_balanceAStmt_eq_recKExecAsset]
   decide
 
 /-- **NON-VACUITY (the CREDIT is OBSERVABLE).** The committed movement RAISES destination cell `1`'s asset-`0`
-ledger entry from `0` to `30` — the value genuinely ARRIVES at the destination (the credit is real). -/
+ledger entry from `0` to `30` — the value ARRIVES at the destination (the credit is real). -/
 theorem balanceAStmt_credits :
     (interp (balanceAStmt tB0 0) kB0).map (fun k => k.bal 1 0) = some 30 := by
   rw [interp_balanceAStmt_eq_recKExecAsset]
@@ -325,7 +325,7 @@ nothing re-assumed here), and WELDS the descriptor-pinned per-entry post-state t
 per-asset ledger move (`recTransferBal_correct`). The honest CONTRAST with the per-cell `bal_lo` block: the
 EffectVM row carries ONE cell's balance limb, so balanceA's two-sided move (debit `(src,a)`, credit
 `(dst,a)`) is TWO wide rows — a debit leg (`direction = 1`) and a credit leg (`direction = 0`) — paired at
-the turn layer (cited, `TurnEmit`), exactly as the transfer keystone's HONEST BOUNDARY assigns the
+the turn layer (cited, `TurnEmit`), exactly as the transfer keystone's BOUNDARY assigns the
 two-sided conservation. Each leg's FULL 17-field per-cell post is pinned here. -/
 
 section RunnableFullState

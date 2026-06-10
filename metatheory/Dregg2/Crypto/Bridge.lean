@@ -344,7 +344,7 @@ namespace Reference
 def refCompress : Int → Int → Int := fun a b => a + b
 
 /-- A concrete observation over `ℤ`: observed value `v = 100`, its digest `vDigest = 100`, salt `7`, so
-the committed digest is `compress 100 7 = 107`; threshold `50` — genuinely cleared (`50 ≤ 100`). -/
+the committed digest is `compress 100 7 = 107`; threshold `50` — cleared (`50 ≤ 100`). -/
 def sampleStmt : Statement Int := { c := 107, threshold := 50 }
 
 /-- Non-vacuity of the OPENING: `107 = compress 100 7` holds for the toy `compress`. -/

@@ -86,9 +86,9 @@ theorem sum_update_sub (acc : Finset CellId) (bal : CellId → ℤ) (a : CellId)
   · subst h; rw [if_pos rfl, if_pos rfl]; ring
   · rw [if_neg h, if_neg h]
 
-/-! ## The generators refine `Core.mint_delta` / `Core.burn_delta` (PROVED). -/
+/-! ## The generators refine `Core.mint_delta` / `Core.burn_delta`. -/
 
-/-- **Mint inflow (Law-1 generator) — PROVED.** A committed mint increases total supply by
+/-- **Mint inflow (Law-1 generator).** A committed mint increases total supply by
 exactly `amt`; the concrete refinement of `Core.mint_delta`. -/
 theorem execMint_delta (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : execMint k actor cell amt = some k') : total k' = total k + amt := by
@@ -101,7 +101,7 @@ theorem execMint_delta (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     simpa [total] using sum_update_add k.accounts k.bal cell amt hcell
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Burn outflow (Law-1 generator) — PROVED.** A committed burn decreases total supply by
+/-- **Burn outflow (Law-1 generator).** A committed burn decreases total supply by
 exactly `amt`; the concrete refinement of `Core.burn_delta`. -/
 theorem execBurn_delta (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : execBurn k actor cell amt = some k') : total k' = total k - amt := by
@@ -115,7 +115,7 @@ theorem execBurn_delta (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     simpa [total] using sum_update_sub k.accounts k.bal cell amt hcell
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **No inflow without authority — PROVED.** A committed mint implies the actor was
+/-- **No inflow without authority.** A committed mint implies the actor was
 authorized over `cell` (the integrity shadow for the privileged supply-creation generator). -/
 theorem execMint_authorized (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : execMint k actor cell amt = some k') : mintAuthorizedB k.caps actor cell = true := by
@@ -124,7 +124,7 @@ theorem execMint_authorized (k k' : KernelState) (actor cell : CellId) (amt : �
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **No outflow without authority — PROVED.** A committed burn implies the actor was
+/-- **No outflow without authority.** A committed burn implies the actor was
 authorized over `cell`. -/
 theorem execBurn_authorized (k k' : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : execBurn k actor cell amt = some k') : mintAuthorizedB k.caps actor cell = true := by
@@ -134,7 +134,7 @@ theorem execBurn_authorized (k k' : KernelState) (actor cell : CellId) (amt : �
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Fail-closed (mint) — PROVED.** Without mint authority, no mint commits. -/
+/-- **Fail-closed (mint).** Without mint authority, no mint commits. -/
 theorem execMint_unauthorized_fails (k : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : mintAuthorizedB k.caps actor cell = false) : execMint k actor cell amt = none := by
   unfold execMint
@@ -142,7 +142,7 @@ theorem execMint_unauthorized_fails (k : KernelState) (actor cell : CellId) (amt
   rintro ⟨ha, _⟩
   rw [h] at ha; exact absurd ha (by simp)
 
-/-- **Fail-closed (burn) — PROVED.** Without mint authority, no burn commits. -/
+/-- **Fail-closed (burn).** Without mint authority, no burn commits. -/
 theorem execBurn_unauthorized_fails (k : KernelState) (actor cell : CellId) (amt : ℤ)
     (h : mintAuthorizedB k.caps actor cell = false) : execBurn k actor cell amt = none := by
   unfold execBurn

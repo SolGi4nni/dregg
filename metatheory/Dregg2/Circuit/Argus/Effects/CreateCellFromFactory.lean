@@ -57,11 +57,11 @@ see the SAME `e` the gate validated — matching `createCellFromFactoryChainA`'s
      every global side-table frozen). The circuit pins `CreateFromFactoryCircuitSpec`; we bridge it to the
      executor's `CreateFromFactorySpec` (the bundled-vs-explicit born-empty-authority forms are PROVABLY
      equivalent via `bornEmptyAuthority_post_iff`), then collapse to one welded post-state.
-  4. Non-vacuity teeth: a concrete factory mint genuinely GROWS `accounts` (fresh id absent→present) AND
+  4. Non-vacuity teeth: a concrete factory mint GROWS `accounts` (fresh id absent→present) AND
      installs the factory's published caveats; the gate REJECTS a negative vk, an unknown factory, an
      unauthorized creation, and a re-mint of a live id (fail-closed).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the whole-function /
 digest-injectivity assumptions enter ONLY inside the reused `createCellFromFactoryA_full_sound` (its
@@ -464,7 +464,7 @@ theorem createCellFromFactory_compile_sound
 
 #assert_axioms createCellFromFactory_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely GROWS `accounts` AND installs the factory program, and the
+/-! ## §5 — NON-VACUITY: the IR term GROWS `accounts` AND installs the factory program, and the
 gate REJECTS forged inputs (fail-closed).
 
 We reuse the executor's own factory fixtures (`facS`, `subFactory` at vk 42; actor `0` holds the minter
@@ -472,7 +472,7 @@ cap `Cap.node 5` over the fresh cell `5`). The headline tooth: the fresh id `5` 
 PRESENT after — the structural growth `allocCell` realizes — AND the minted cell carries the factory's
 published caveats (constructor transparency). The rejection lemmas show the gate fails closed five ways. -/
 
--- The factory mint of FRESH cell `5` (actor `0`, vk `42`) genuinely COMMITS at the term level…
+-- The factory mint of FRESH cell `5` (actor `0`, vk `42`) COMMITS at the term level…
 #guard (interp (createCellFromFactoryStmt 0 5 42) facS.kernel).isSome
 -- …and the growth is OBSERVABLE: cell `5` is ABSENT before and PRESENT after (the structural alloc).
 #guard ¬ ((5 : CellId) ∈ facS.kernel.accounts)
@@ -488,7 +488,7 @@ published caveats (constructor transparency). The rejection lemmas show the gate
 -- A STALE id (cell 0 is already a live account) is REJECTED:
 #guard (interp (createCellFromFactoryStmt 0 0 42) facS.kernel).isNone
 
-/-- **`createCellFromFactoryStmt_grows_accounts` — the IR term genuinely GROWS `accounts` (PROVED,
+/-- **`createCellFromFactoryStmt_grows_accounts` — the IR term GROWS `accounts` (PROVED,
 non-vacuous).** On the executor's own `facS` fixture, the factory mint of fresh cell `5` (actor `0`, vk
 `42`) COMMITS, and the committed post-state has cell `5` as a live account (PRESENT after) while it was
 ABSENT before. This is the `accounts`-growth `allocCell` realizes — now driven by a factory-templated
@@ -507,7 +507,7 @@ theorem createCellFromFactoryStmt_grows_accounts :
 #assert_axioms createCellFromFactoryStmt_grows_accounts
 
 /-- **`createCellFromFactoryStmt_installs_program` — the minted cell carries the factory's program
-(PROVED, the constructor-transparency tooth).** On the `facS` fixture, the committed factory mint installs
+(the constructor-transparency tooth).** On the `facS` fixture, the committed factory mint installs
 EXACTLY `subFactory`'s published caveats on the minted cell `5` — so its published invariants are enforced
 for life. Non-vacuous: it is the genuine factory caveat list, not `[]`. -/
 theorem createCellFromFactoryStmt_installs_program :

@@ -34,13 +34,13 @@ soundness by REUSING the existing seam/authority machinery, never reinventing it
      handle as a structure and prove it confers exactly the exported cap's authority, modulo
      Φ's confinement loss (`import_handle_confers_exactly` + `import_handle_is_revocable`).
 
-## Discipline (the §8/crypto split, honestly drawn)
+## Discipline (the §8/crypto split, drawn)
 
 The handoff certificate's *attestation* (`HandoffCertificate.introducer_signature` /
 `HandoffPresentation.recipient_signature`, validated by `validate_handoff`) is a
 `Laws.Discharged`/`Prop`-carrier seam — the §8 verify side — NOT Lean-proved cryptography.
 We carry it as the discharge of a `Spec.Guard`, exactly as `Spec.VatBoundary` and
-`Spec.Await` do. The distributed-GC liveness of exported caps (`gc.rs`) is genuinely OPEN
+`Spec.Await` do. The distributed-GC liveness of exported caps (`gc.rs`) is OPEN
 (it relates to `Exec.CellLiveness`'s cross-vat-cycle impossibility) and is left as a
 documented `-- OPEN:`, NOT a `sorry`/`axiom`.
 -/
@@ -114,7 +114,7 @@ def PipelinedCall.authorized {CellId : Type*}
     (req : Request) (w : Statement → Witness) : Prop :=
   Guard.admits m.guard req w = true
 
-/-- **`pipelining_preserves_seam` (PROVED) — the headline pipelining soundness.**
+/-- **`pipelining_preserves_seam` — the headline pipelining soundness.**
 Pipelining does NOT bypass authorization: delivering a pipelined call onto a resolved cell
 preserves its authorization obligation *exactly*. For any resolved cell, the delivered
 call's `guard` is the same guard, so it `authorized`-admits under `(req, w)` **iff** the
@@ -135,7 +135,7 @@ theorem pipelining_preserves_seam {CellId : Type*}
   -- `admits` evaluations are literally the same — `Iff.rfl`.
   Iff.rfl
 
-/-- **`pipelining_undischarged_stays_undischarged` (PROVED) — the contrapositive face.**
+/-- **`pipelining_undischarged_stays_undischarged` — the contrapositive face.**
 If the queued call is NOT authorized (its guard does not admit under `(req, w)` — the
 sender has not supplied a discharging witness), then the DELIVERED call is still not
 authorized. Resolving the target promise cannot conjure authority the sender never had:
@@ -166,7 +166,7 @@ variable {Node : Type} [DecidableEq Node]
 are not a separate notion. -/
 def pendingPromise (n : Node) : Promise Node := { id := n, fulfilled := false }
 
-/-- **`pipeline_chain_is_dataflow_edge` (PROVED)** — `pipeline_chain`'s "step `k+1` targets
+/-- **`pipeline_chain_is_dataflow_edge`** — `pipeline_chain`'s "step `k+1` targets
 step `k`'s result promise" IS a `Spec.Await.PromiseGraph` dependency edge `dep next prev`
 (next awaits prev). So a CapTP pipeline chain is a path in the await dataflow DAG; its
 acyclicity + topological resolution are `Spec.Await.pipeline_topological` verbatim, and a
@@ -178,7 +178,7 @@ theorem pipeline_chain_is_dataflow_edge
     PromiseGraph.Depends g next prev :=
   PromiseGraph.Depends.edge hstep
 
-/-- **`pipeline_break_cascades` (PROVED)** — `pipeline.rs::break_promise`'s cascading
+/-- **`pipeline_break_cascades`** — `pipeline.rs::break_promise`'s cascading
 breakage (a broken target propagates failure to every queued message's `result_promise_id`,
 recursively) IS `Spec.Await`'s `broken_promise_propagates_trans`: a broken promise breaks
 all its transitive dependents in the dataflow DAG. We reuse the await keystone unchanged —
@@ -261,7 +261,7 @@ def HandoffCert.post (cert : HandoffCert CellId Rights) (G : Graph CellId Rights
     Graph CellId Rights :=
   addEdge G cert.recipient cert.granted
 
-/-- **`handoff_is_introduce` (PROVED) — the CapTP handoff IS a Granovetter `Introduce`.**
+/-- **`handoff_is_introduce` — the CapTP handoff IS a Granovetter `Introduce`.**
 A valid 3-vat handoff (A introduces B to the target cell on C) constructs a
 `Spec.Authority.Introduce` step `G ⟶ cert.post G`: the four-part introduce discipline of
 `apply.rs::apply_introduce` is satisfied verbatim — connectivity (A reaches B), A holds the
@@ -283,7 +283,7 @@ theorem handoff_is_introduce
   consented     := hv.targetConsents
   result        := rfl
 
-/-- **`handoff_non_amplifying` (PROVED, reuses `introduce_non_amplifying`) — the conferred
+/-- **`handoff_non_amplifying` (reuses `introduce_non_amplifying`) — the conferred
 cap confers no more than A held.** The cap A gifts to B has rights `≤` the cap A holds to
 the target on C, on the attenuation order. The cross-vat handoff cannot amplify authority:
 B receives at most what A could already exert (`is_attenuation(held, granted)` — *granted
@@ -297,7 +297,7 @@ theorem handoff_non_amplifying
     cert.granted.rights ≤ cert.held.rights :=
   introduce_non_amplifying (handoff_is_introduce hv)
 
-/-- **`handoff_same_target` (PROVED, reuses `introduce_same_target`)** — companion: the
+/-- **`handoff_same_target` (reuses `introduce_same_target`)** — companion: the
 conferred cap names the SAME target cell as A's held cap. A handoff re-shares an existing
 edge's target; it cannot conjure a cap to a target A could not already reach. (The swiss
 entry A registered IS the target; B is introduced to exactly that cell on C.) -/
@@ -308,7 +308,7 @@ theorem handoff_same_target
     cert.granted.target = cert.held.target :=
   introduce_same_target (handoff_is_introduce hv)
 
-/-- **`handoff_is_authorized_gen` (PROVED)** — a valid handoff is an authorized GENERATIVE
+/-- **`handoff_is_authorized_gen`** — a valid handoff is an authorized GENERATIVE
 act (`GenAct.introduce`) on the capability graph. So the cross-vat introduction is governed
 by `only_connectivity_begets_connectivity`: the new edge B holds traces back, through the
 handoff, to A's already-held swiss entry — no cross-vat edge appears ex nihilo. -/
@@ -327,7 +327,7 @@ stop honoring the witness, whereas A's own intra-vat cap, enforced by A's mediat
 The handoff gifts B a *cross-vat* cap (B and the target cell on C are in different vats), so
 B's new cap is exactly such a forwarder. We reuse `forwarded_cap_is_revocable` directly. -/
 
-/-- **`handoff_forwarder_revocable` (PROVED, reuses `VatBoundary.forwarded_cap_is_revocable`).**
+/-- **`handoff_forwarder_revocable` (reuses `VatBoundary.forwarded_cap_is_revocable`).**
 The cross-vat cap B receives via the handoff is a **revocable forwarder**: under any
 far-side (vat C) witness-supply `wNo` the target's verifier rejects, the crossed cap fails
 to admit. So although B's *permission* survives the crossing (B can present a biscuit and
@@ -344,7 +344,7 @@ theorem handoff_forwarder_revocable
     ForwardedRevocable (Request := Request) Witness (Phi stmtOf cert.granted) req :=
   forwarded_cap_is_revocable stmtOf cert.granted req hNo
 
-/-- **`handoff_permission_survives_authority_does_not` (PROVED, reuses
+/-- **`handoff_permission_survives_authority_does_not` (reuses
 `VatBoundary.phi_drops_confinement`)** — the full lossy keystone on the handed-off cap. When
 the target vat C runs a *discriminating* verifier (accepts some witness, rejects some other),
 the cross-vat cap B receives keeps `PermissionSurvives` (B can present an accepting biscuit)
@@ -378,7 +378,7 @@ structure ImportHandle (CellId Rights : Type*) where
   /-- The exported cap the handle stands in for. -/
   exported : Cap CellId Rights
 
-/-- **`import_handle_confers_exactly` (PROVED)** — the import handle confers exactly the
+/-- **`import_handle_confers_exactly`** — the import handle confers exactly the
 exported cap's authority: it `confers` the exported cap and vice-versa (same target, equal
 rights — `confers` both ways collapses to equality of authority by antisymmetry of `≤`, but
 we state the faithful two-way conferral, which is what the bookkeeping guarantees). The local
@@ -388,7 +388,7 @@ theorem import_handle_confers_exactly (h : ImportHandle CellId Rights) :
     confers h.exported h.exported :=
   confers_refl h.exported
 
-/-- **`import_handle_is_revocable` (PROVED, reuses `forwarded_cap_is_revocable`)** — the
+/-- **`import_handle_is_revocable` (reuses `forwarded_cap_is_revocable`)** — the
 import handle, being a cross-vat reference, is a revocable forwarder: the exporting vat can
 revoke by ceasing to honor the witness (Φ's loss applies to the handle exactly as to a
 handed-off cap). So an import handle is NOT an irrevocable copy of the remote cap — it is a
@@ -403,7 +403,7 @@ theorem import_handle_is_revocable
 /-! ## §4 — OPEN: distributed GC liveness.
 
 `gc.rs` (distributed garbage collection of exported caps) requires a *liveness* guarantee —
-that an unreachable exported cap is eventually reclaimed across vats. This is genuinely OPEN
+that an unreachable exported cap is eventually reclaimed across vats. This is OPEN
 and NOT provable here: it relates to `Exec.CellLiveness`'s cross-vat-cycle impossibility
 (`death_is_timed_out`: death is never *decided*, only lease-timed-out, and a cross-vat
 reference cycle cannot be collectively decided dead by any one vat). A sound distributed-GC

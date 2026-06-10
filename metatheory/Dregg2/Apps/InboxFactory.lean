@@ -39,12 +39,12 @@ state_constraints:
 
 ## The three inbox-safety keystones (the queue's, MINUS conservation)
 
-  (a) NO OVERFLOW            — PROVED: a deliver from a state respecting `head − tail ≤ cap`, with
+  (a) NO OVERFLOW — a deliver from a state respecting `head − tail ≤ cap`, with
       room, lands STILL respecting it; a FULL inbox's deliver fail-closes.
-  (b) NO UNDERFLOW / SEQUENCED — PROVED: `tail ≤ head` preserved; an EMPTY inbox's consume
+  (b) NO UNDERFLOW / SEQUENCED — `tail ≤ head` preserved; an EMPTY inbox's consume
       fail-closes; sequenced order is the factory FIFO shadow (`qbuf_fifo_order`).
-  (c) SENDER-AUTH ON DELIVER  — PROVED: a deliver by an actor ∉ the sender set fail-closes;
-      OWNER-ONLY CONSUME — PROVED: a consume by a non-owner fail-closes.
+  (c) SENDER-AUTH ON DELIVER — a deliver by an actor ∉ the sender set fail-closes;
+      OWNER-ONLY CONSUME — a consume by a non-owner fail-closes.
   (NO KEYSTONE d: an inbox carries no value; `deliver_bal_neutral`/`consume_bal_neutral` witness
    that every op is balance-NEUTRAL — the strictly-easier sibling.)
 
@@ -117,7 +117,7 @@ def inboxRelCaveats (postTail : Int) : List RelCaveat :=
   [ RelCaveat.fieldLteOther headSeqField capacityField postTail
   , RelCaveat.fieldLteOther tailSeqField headSeqField 0 ]
 
-/-- **`inboxFactory_conforms` — PROVED.** The inbox factory's OWN published EMPTY initial state
+/-- **`inboxFactory_conforms`.** The inbox factory's OWN published EMPTY initial state
 satisfies its OWN `SlotCaveat`s. -/
 theorem inboxFactory_conforms (cap owner : Int) (senders : List CellId) :
     (inboxFactory cap owner senders).conforms = true := by
@@ -149,7 +149,7 @@ def iNoUnderflow (k : RecordKernelState) (e : CellId) : Prop := iTail k e ≤ iH
 
 /-! ## §3b — The LIVE relational caveat EXPRESSES the bounds (instantiated from RelationalCaveat). -/
 
-/-- **`relcav_expresses_capacity` — PROVED (instantiated).** The live capacity atom on the inbox
+/-- **`relcav_expresses_capacity` (instantiated).** The live capacity atom on the inbox
 cell's record is EXACTLY the capacity invariant `head − tail ≤ cap`. -/
 theorem relcav_expresses_capacity (k : RecordKernelState) (e : CellId) :
     (RelCaveat.fieldLteOther headSeqField capacityField (iTail k e)).eval (k.cell e) = true
@@ -159,7 +159,7 @@ theorem relcav_expresses_capacity (k : RecordKernelState) (e : CellId) :
   unfold capacityOk at h
   exact h
 
-/-- **`relcav_expresses_underflow` — PROVED (instantiated).** The live no-underflow atom is EXACTLY
+/-- **`relcav_expresses_underflow` (instantiated).** The live no-underflow atom is EXACTLY
 `tail ≤ head`. -/
 theorem relcav_expresses_underflow (k : RecordKernelState) (e : CellId) :
     (RelCaveat.fieldLteOther tailSeqField headSeqField 0).eval (k.cell e) = true
@@ -371,7 +371,7 @@ theorem consume_requires_owner (k : RecordKernelState) (e actor : CellId) (newRo
 
 /-! ## §8 — BALANCE-NEUTRALITY (the strictly-easier sibling: NO value move, NO KEYSTONE d). -/
 
-/-- **`deliver_bal_neutral` — PROVED.** An inbox deliver is a pure field write — every asset's total
+/-- **`deliver_bal_neutral`.** An inbox deliver is a pure field write — every asset's total
 supply is unchanged. (An inbox carries NO value; this is why it drops the queue's conservation
 keystone.) -/
 theorem deliver_bal_neutral {k k' : RecordKernelState} {e actor : CellId} {senders : List CellId}
@@ -384,7 +384,7 @@ theorem deliver_bal_neutral {k k' : RecordKernelState} {e actor : CellId} {sende
     unfold recTotalAsset iWriteField; rfl
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`consume_bal_neutral` — PROVED.** An inbox consume is a pure field write — balance-NEUTRAL. -/
+/-- **`consume_bal_neutral`.** An inbox consume is a pure field write — balance-NEUTRAL. -/
 theorem consume_bal_neutral {k k' : RecordKernelState} {e actor : CellId} {newRoot : Int}
     (h : inboxConsume k e actor newRoot = some k') (b : AssetId) :
     recTotalAsset k' b = recTotalAsset k b := by
@@ -427,7 +427,7 @@ def mintInboxCell (s : RecChainedState) (actor iCell : CellId) (vk : Int) :
     Option RecChainedState :=
   createCellFromFactoryChainA s actor iCell vk
 
-/-- **`mintInboxCell_installs_caveats` — PROVED.** A minted inbox cell carries EXACTLY the factory's
+/-- **`mintInboxCell_installs_caveats`.** A minted inbox cell carries EXACTLY the factory's
 caveats, installed by the executor. -/
 theorem mintInboxCell_installs_caveats {s s' : RecChainedState} {actor iCell : CellId}
     {vk : Int} (e : FactoryEntry)
@@ -439,7 +439,7 @@ theorem mintInboxCell_installs_caveats {s s' : RecChainedState} {actor iCell : C
   rw [← (Option.some.injEq _ _).mp hfind] at hcav
   exact hcav
 
-/-- **`mintInboxCell_caveats` — PROVED.** When the registry IS `inboxRegistry vk …`, the minted cell
+/-- **`mintInboxCell_caveats`.** When the registry IS `inboxRegistry vk …`, the minted cell
 concretely carries the inbox factory's caveats. -/
 theorem mintInboxCell_caveats {s s' : RecChainedState} {actor iCell : CellId} {vk : Int}
     {cap owner : Int} {senders : List CellId}
@@ -450,20 +450,20 @@ theorem mintInboxCell_caveats {s s' : RecChainedState} {actor iCell : CellId} {v
     rw [hreg]; exact inboxRegistry_finds vk.toNat cap owner senders
   exact mintInboxCell_installs_caveats _ hfind h
 
-/-- **`mintInboxCell_neutral` — PROVED.** Minting an inbox cell is conservation-NEUTRAL for every
+/-- **`mintInboxCell_neutral`.** Minting an inbox cell is conservation-NEUTRAL for every
 asset. -/
 theorem mintInboxCell_neutral {s s' : RecChainedState} {actor iCell : CellId} {vk : Int}
     (b : AssetId) (h : mintInboxCell s actor iCell vk = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   createCellFromFactoryChainA_neutral b h
 
-/-- **`mintInboxCell_grows_accounts` — PROVED.** A minted inbox cell IS a live account. -/
+/-- **`mintInboxCell_grows_accounts`.** A minted inbox cell IS a live account. -/
 theorem mintInboxCell_grows_accounts {s s' : RecChainedState} {actor iCell : CellId} {vk : Int}
     (h : mintInboxCell s actor iCell vk = some s') :
     iCell ∈ s'.kernel.accounts :=
   createCellFromFactoryChainA_grows_accounts h
 
-/-- **`mintInboxCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an unknown
+/-- **`mintInboxCell_unknown_factory_fails` (fail-closed).** Minting against an unknown
 factory key never mints. -/
 theorem mintInboxCell_unknown_factory_fails (s : RecChainedState) (actor iCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :

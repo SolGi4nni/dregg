@@ -16,7 +16,7 @@ The §RECIPE applied to setField (a per-slot family — one instance per `slot :
 value" is read off `post.fields slot` (the `RowEncodesSF` clause `env.loc (prmCol VALUE) =
 post.fields slot` ties the value carrier to it), so the clause is env-free + non-vacuous.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

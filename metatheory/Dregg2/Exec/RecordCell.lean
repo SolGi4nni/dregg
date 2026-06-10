@@ -14,10 +14,10 @@ single transition: `recExec prog old op : Option Value`. The `Option` IS the par
 arrow — `none` is "the structure-map rejects this turn" (default-deny / a constraint failed), and
 `some new` is a committed point in the codomain. The **keystone** (`recExec_admitted`) is the
 executable `denote`-only-tightens fact: *nothing commits that the structure-map rejects* — every
-committed transition was genuinely admitted by the program. This is the record-cell shadow of
-`Exec/StepComplete.lean`'s `cexec_attests`: the program **genuinely gates the arrow**.
+committed transition was admitted by the program. This is the record-cell shadow of
+`Exec/StepComplete.lean`'s `cexec_attests`: the program **gates the arrow**.
 
-We then prove the structure-map's constraint *genuinely holds post-commit* for a concrete program
+We then prove the structure-map's constraint *holds post-commit* for a concrete program
 (`monotonic "count"`): a committed transition really does satisfy `new.count ≥ old.count`. The
 op-application is total and computable; admissibility is the only gate. Pure, `#eval`-able;
 imports only `Exec.Program` (which pulls `Exec.Value`), so it type-checks fast.
@@ -82,7 +82,7 @@ theorem setFieldList_find_self (fs : List (FieldName × Value)) (f : FieldName) 
         rw [if_neg hk, List.find?_cons_of_neg (by simpa using hkf)]
         exact ih
 
-/-- **`setField_scalar_self` (PROVED)** — reading the scalar we just set returns exactly it. The
+/-- **`setField_scalar_self`** — reading the scalar we just set returns exactly it. The
 record-cell write/read law: `applyOp` puts the intended value on the intended field. -/
 theorem setField_scalar_self (old : Value) (f : FieldName) (val : Int) :
     (setField old f (.int val)).scalar f = some val := by
@@ -105,11 +105,11 @@ def recExec (prog : RecordProgram) (method : Nat) (old : Value) (op : RecOp) : O
   let new := applyOp old op
   if prog.admits method old new = true then some new else none
 
-/-! ## THE KEYSTONE — the program genuinely gates the arrow. -/
+/-! ## THE KEYSTONE — the program gates the arrow. -/
 
-/-- **`recExec_admitted` (THE KEYSTONE — PROVED).** A committed transition was *admitted* by the
+/-- **`recExec_admitted` (THE KEYSTONE).** A committed transition was *admitted* by the
 program: if `recExec prog method old op = some new`, then `prog.admits method old new = true`.
-Nothing commits that the structure-map rejects — the program genuinely gates the arrow. This is
+Nothing commits that the structure-map rejects — the program gates the arrow. This is
 the executable `denote`-only-tightens fact for the record cell (the `cexec_attests` shadow at the
 single-transition tier): the domain filter is *load-bearing*, never bypassed. -/
 theorem recExec_admitted
@@ -122,7 +122,7 @@ theorem recExec_admitted
     rw [← h]; exact ha
   · rw [if_neg ha] at h; exact absurd h (by simp)
 
-/-- **`recExec_commits_applyOp` (PROVED)** — a committed transition commits exactly the candidate
+/-- **`recExec_commits_applyOp`** — a committed transition commits exactly the candidate
 the op produced (no silent rewriting between apply and commit). Together with `recExec_admitted`
 this fully characterizes a commit: `new = applyOp old op` *and* `admits old new`. -/
 theorem recExec_commits_applyOp
@@ -134,7 +134,7 @@ theorem recExec_commits_applyOp
   · rw [if_pos ha, Option.some.injEq] at h; exact h.symm
   · rw [if_neg ha] at h; exact absurd h (by simp)
 
-/-- **`recExec_some_iff_admits` (PROVED)** — the arrow commits *iff* the candidate is admitted:
+/-- **`recExec_some_iff_admits`** — the arrow commits *iff* the candidate is admitted:
 `recExec` succeeds exactly on the admitted candidate. (`recExec_admitted` is the ⟸-soundness; this
 is the full ⇔ characterization of the domain.) -/
 theorem recExec_some_iff_admits
@@ -150,15 +150,15 @@ theorem recExec_some_iff_admits
   · intro ha
     exact ⟨applyOp old op, by rw [if_pos ha]⟩
 
-/-! ## The constraint genuinely holds post-commit — a concrete program (`monotonic "count"`). -/
+/-! ## The constraint holds post-commit — a concrete program (`monotonic "count"`). -/
 
 /-- A monotonic-counter program: `count` only ever increases (`new.count ≥ old.count`). The
 canonical living-cell example — the same `counterProgram` shape as `Exec/Program.lean`, here the
 body of a *gated arrow*. -/
 def monoCountProgram : RecordProgram := .predicate [.simple (.monotonic "count")]
 
-/-- **`recExec_mono_holds` (PROVED)** — for the `monotonic "count"` program, a *committed*
-transition genuinely satisfies the constraint: the new `count` is ≥ the old `count`, and both are
+/-- **`recExec_mono_holds`** — for the `monotonic "count"` program, a *committed*
+transition satisfies the constraint: the new `count` is ≥ the old `count`, and both are
 present scalars. This is the structure-map's declared constraint *holding on the committed codomain
 point* — the filter is not merely consulted, its predicate is true of every state that gets
 through. (We reason from `admits = true` back through `evalConstraint`/`evalSimple` to recover the

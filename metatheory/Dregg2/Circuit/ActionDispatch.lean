@@ -278,7 +278,7 @@ theorem exerciseStepA_iff_holdSpec (st st' : RecChainedState) (actor target : Ce
 
 /-! ## §4 — `execInnerA` = `execFullTurnA`. -/
 
-/-- **`execInnerA_eq_execFullTurnA` — PROVED.** The mutual inner fold and the named full-turn
+/-- **`execInnerA_eq_execFullTurnA`.** The mutual inner fold and the named full-turn
 executor coincide (same `execFullA` head + tail shape). -/
 theorem execInnerA_eq_execFullTurnA (st : RecChainedState) (inner : List FullActionA) :
     execInnerA st inner = execFullTurnA st inner := by

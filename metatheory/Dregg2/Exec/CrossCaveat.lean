@@ -69,7 +69,7 @@ def jointApplyCaveated (φ : CrossCaveat) (A B : KernelState) (bt : BiTurn) :
     Option (KernelState × KernelState) :=
   if φ A B = true then jointApply A B bt else none
 
-/-- **`caveated_check_eq_use` — NO TOCTOU (PROVED).** A committed caveated bilateral turn proves the
+/-- **`caveated_check_eq_use` — NO TOCTOU.** A committed caveated bilateral turn proves the
 caveat held on EXACTLY the pre-state `(A, B)` from which the underlying atomic `jointApply` committed
 — the time-of-check state and the time-of-use state are the IDENTICAL snapshot `(A, B)`. There is no
 gap for a concurrent mutation: `φ` and the commit read the same `A`, `B`, and `jointApply` is atomic.
@@ -82,7 +82,7 @@ theorem caveated_check_eq_use {φ : CrossCaveat} {A B A' B' : KernelState} {bt :
   · rw [if_pos hφ] at h; exact ⟨hφ, h⟩
   · rw [if_neg hφ] at h; exact absurd h (by simp)
 
-/-- **`crossCaveat_sound` — THE KEYSTONE: cross-cell admissibility = equalizer ⊓ caveat (PROVED).**
+/-- **`crossCaveat_sound` — THE KEYSTONE: cross-cell admissibility = equalizer ⊓ caveat.**
 GIVEN the CG-2 shared-id binding (carried as a HYPOTHESIS, *never derived* — exactly as
 `joint_sound_of_binding` requires), a committed caveated bilateral turn is precisely the CONJUNCTION:
 
@@ -103,7 +103,7 @@ theorem crossCaveat_sound {φ : CrossCaveat} {A B A' B' : KernelState} {bt : BiT
   obtain ⟨hcg5, hcg2⟩ := joint_sound_of_binding bind hj
   exact ⟨hcg5, hcg2, hφ⟩
 
-/-- **`crossCaveat_atomic` — the check and BOTH half-commits are one indivisible step (PROVED).** A
+/-- **`crossCaveat_atomic` — the check and BOTH half-commits are one indivisible step.** A
 committed caveated turn: `φ` held on `(A, B)`, AND both half-edges committed in their own ledgers
 from that same `(A, B)`. So the caveat-check and the two-sided commit are atomic over one snapshot —
 the executable face of "no concurrent turn can invalidate `φ` between check and use." -/
@@ -114,9 +114,9 @@ theorem crossCaveat_atomic {φ : CrossCaveat} {A B A' B' : KernelState} {bt : Bi
   obtain ⟨ho, hi⟩ := joint_atomic hj
   exact ⟨hφ, ho, hi⟩
 
-/-- **`crossCaveat_rejects` — THE TEETH (PROVED).** If the cross-cell caveat is FALSE on the
+/-- **`crossCaveat_rejects` — THE TEETH.** If the cross-cell caveat is FALSE on the
 pre-state, the bilateral turn is rejected — EVEN IF the underlying joint turn would otherwise commit.
-The caveat genuinely gates: a false `φ` fail-closes the whole turn (it is not a no-op overlay). -/
+The caveat gates: a false `φ` fail-closes the whole turn (it is not a no-op overlay). -/
 theorem crossCaveat_rejects {φ : CrossCaveat} {A B : KernelState} {bt : BiTurn}
     (hφ : φ A B = false) : jointApplyCaveated φ A B bt = none := by
   unfold jointApplyCaveated; rw [if_neg (by simp [hφ])]
@@ -144,7 +144,7 @@ def sBhigh : KernelState :=
 #guard ((jointApply sA sBhigh goodBi).isSome)  --  true  (RAW turn fine; only the caveat rejects)
 #guard ((jointApplyCaveated covenant sA sB goodBi).map (fun p => jointTotal p.1 p.2)) == some 125  --  some 125 (CG-5 still conserved)
 
-/-- **`covenant_rejects_high` — the cross-cell read genuinely gates (PROVED).** When `B`'s state
+/-- **`covenant_rejects_high` — the cross-cell read gates.** When `B`'s state
 violates the covenant (cell 7 = 200 > cell 0 = 100), the caveated turn is rejected — a theorem, not
 just an `#eval`. The caveat's dependence on `B`'s state is real and load-bearing. -/
 theorem covenant_rejects_high : jointApplyCaveated covenant sA sBhigh goodBi = none := by

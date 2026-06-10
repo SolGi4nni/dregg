@@ -55,7 +55,7 @@ properties the epoch handoff relies on:
   committee is fully determined by an old-epoch quorum; there is no instant in which authority is
   unattested.
 
-§ PORTAL (honest carried crypto assumption, NEVER faked as proved — mirroring `Dregg2.CryptoKernel`
+§ PORTAL (honest carried crypto assumption as proved — mirroring `Dregg2.CryptoKernel`
 and `Authority.CaveatChain`'s `MacUnforgeable`): the per-vote Ed25519 signature check
 `SigValid : PubKey → Msg → Sig → Bool` (`epoch.rs:344` `pk.verify(&vote_message, sig)`). We do NOT
 prove Ed25519 secure; the quorum theorems are stated relative to it — "a verifying QC carries

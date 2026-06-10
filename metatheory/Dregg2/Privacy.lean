@@ -249,7 +249,7 @@ Two objects are indistinguishable exactly when their views are equal: `Indisting
 ≜ view a = view a'`. This is perfect (information-theoretic) hiding on the modelled view. The
 hiding laws say the view is constant on the anonymity class, and the kernel carries a
 k-anonymity law — the anonymity set has cardinality `≥ k > 1`. The `Reference` witness
-provides a genuinely non-constant `view` (it separates different recipient classes while
+provides a non-constant `view` (it separates different recipient classes while
 collapsing each anonymity class), so the parametric theorems are non-vacuous.
 
 **What stays a §8 portal.** Computational indistinguishability against a PPT adversary
@@ -336,7 +336,7 @@ laws live as fields of `GraphPrivacyKernel`. Indistinguishability is reframed as
 of a concrete observer-`view`** (perfect, information-theoretic hiding on the modelled
 transcript): the view is constant on the anonymity class and the anonymity set has
 cardinality `≥ k`. A parametric theorem over `[GraphPrivacyKernel]` is non-vacuous because
-`Reference` exhibits a lawful instance whose `view` is genuinely non-constant. -/
+`Reference` exhibits a lawful instance whose `view` is non-constant. -/
 
 /-- **The graph-privacy kernel** (`Elem`-independent objects + GENUINE hiding laws). The
 hiding facts are modelled information-theoretically: `addrView`/`nullifierView` are concrete
@@ -349,7 +349,7 @@ and `Crypto/Primitives.lean::unlinkable` — NOT proved here.) -/
 class GraphPrivacyKernel where
   /-- The minimum anonymity-set size guaranteed (k-anonymity parameter). -/
   k : Nat
-  /-- k is genuinely `> 1` — the anonymity set is not the degenerate singleton. -/
+  /-- k is `> 1` — the anonymity set is not the degenerate singleton. -/
   k_gt_one : 1 < k
   /-- `recipientOf a` : the long-term recipient an address pays (the secret an observer
   must NOT learn). Two addresses to the same recipient share an anonymity class. -/
@@ -376,7 +376,7 @@ class GraphPrivacyKernel where
     derivedFrom a R → derivedFrom a' R → addrView a = addrView a'
   /-- **LAW — k-anonymity for stealth**: every address sits in an anonymity class (same
   recipient) of size `≥ k > 1`, witnessed by a `Finset` of distinct addresses sharing both
-  its recipient and its view. The collapse is over a genuinely large class, not a singleton. -/
+  its recipient and its view. The collapse is over a large class, not a singleton. -/
   stealth_k_anonymity : ∀ a : StealthAddr,
     ∃ s : Finset StealthAddr, k ≤ s.card ∧ a ∈ s ∧
       ∀ a' ∈ s, recipientOf a' = recipientOf a ∧ addrView a' = addrView a
@@ -390,13 +390,13 @@ class GraphPrivacyKernel where
 
 /-- **The blinded-membership kernel** (the `Elem`-PARAMETERIZED objects + GENUINE law).
 Homed in a separate class because `memberOf`/`memberView` are universe-polymorphic in
-`Elem`. Same honest model: `memberView` is a concrete observer-transcript, and the hiding
+`Elem`. Same model: `memberView` is a concrete observer-transcript, and the hiding
 law says it is constant across members of the same commitment (perfect hiding of *which*
 element), plus a `k`-anonymity field — the witnessed member set has `≥ k` elements. -/
 class BlindedMembershipKernel (Elem : Type u) [DecidableEq Elem] where
   /-- The minimum anonymity-set size for membership (k-anonymity). -/
   k : Nat
-  /-- k is genuinely `> 1`. -/
+  /-- k is `> 1`. -/
   k_gt_one : 1 < k
   /-- **Blinded-set membership** `memberOf e sc`: `e` is committed in the set `sc`
   (the witness is a Merkle/accumulator opening; hides which element). -/
@@ -421,8 +421,8 @@ class BlindedMembershipKernel (Elem : Type u) [DecidableEq Elem] where
 Indistinguishability is observer-view equality: `addrView a = addrView a'`,
 `memberView e sc = memberView e' sc`, `nullifierView n = nullifierView n'`. The theorems
 state perfect information-theoretic hiding on the modelled view; the k-anonymity fields
-ensure the collapse is over a genuinely large anonymity set. Non-vacuous: `Reference`
-instantiates them at a view that is genuinely non-constant. -/
+ensure the collapse is over a large anonymity set. Non-vacuous: `Reference`
+instantiates them at a view that is non-constant. -/
 
 /-- **Graph tier law: stealth unlinkability (perfect, on the view).** Two stealth addresses
 derived for the *same* recipient have the SAME observer-view — two payments to one recipient
@@ -435,7 +435,7 @@ theorem unlinkable [GraphPrivacyKernel]
   GraphPrivacyKernel.unlinkable_law R a a' h h'
 
 /-- **Graph tier law: stealth k-anonymity.** Every address sits in an anonymity class
-(same recipient, same view) of size `≥ k > 1` — the unlinkability collapse is genuinely
+(same recipient, same view) of size `≥ k > 1` — the unlinkability collapse is
 over many addresses, not a singleton. Body is the `stealth_k_anonymity` FIELD; combined
 with `k_gt_one` this rules out the degenerate one-element "anonymity set". -/
 theorem stealth_anonymity_set_large [GraphPrivacyKernel] (a : StealthAddr) :
@@ -469,7 +469,7 @@ theorem blinded_membership_hides_element {Elem : Type u} [DecidableEq Elem]
 
 /-- **Graph tier law: membership k-anonymity.** Every witnessed member of `sc` sits in an
 anonymity set of `≥ k > 1` co-members (same commitment, same view) — the "which element"
-hiding is over a genuinely-large set. Body is `member_k_anonymity` + `k_gt_one`. -/
+hiding is over a large set. Body is `member_k_anonymity` + `k_gt_one`. -/
 theorem membership_anonymity_set_large {Elem : Type u} [DecidableEq Elem]
     [BlindedMembershipKernel Elem] (sc : SetCommitment Elem) (e : Elem)
     (h : BlindedMembershipKernel.memberOf e sc) :
@@ -531,16 +531,16 @@ theorem anonymity_nullifier_reconciliation [GraphPrivacyKernel]
 
 /-! ## The `Reference` instances — non-trivial witnesses.
 
-A lawful witness whose observer-`view` is a genuinely non-constant function: it distinguishes
+A lawful witness whose observer-`view` is a non-constant function: it distinguishes
 addresses for different recipients while collapsing those for the same recipient. This makes
 the parametric theorems non-vacuous — there exists an instance where hiding is real
-perfect-on-the-view collapse over a genuine `≥ k` anonymity set, and the view genuinely
+perfect-on-the-view collapse over a genuine `≥ k` anonymity set, and the view
 separates distinct classes. (These are test witnesses for the information-theoretic core;
 the real computational unlinkability is the Rust/circuit discharge — see module header.) -/
 
 namespace Reference
 
-/-- Reference graph-privacy kernel with a genuinely non-constant observer-view.
+/-- Reference graph-privacy kernel with a non-constant observer-view.
 `recipientOf a := a.oneTimeKey % 2` (two recipients, `0`/`1`), `addrView a := recipientOf a`
 (collapses the anonymity class, separates the two classes), `nullifierView := 0` (constant —
 the correct model of nullifier anonymity: perfect independence from holder), `k := 2`.

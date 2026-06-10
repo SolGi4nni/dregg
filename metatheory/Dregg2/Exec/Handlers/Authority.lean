@@ -31,7 +31,7 @@ Two faces:
     held cap itself), so they are the maximal in-rights delegation — still provably subset-held by the
     SAME lemma. `delegateAttenA` carries an explicit narrower `keep`.
 
-  * **REVOCATIONS (genuinely TOTAL + SELF-LIMITING).** `attenuateA`/`revokeDelegationA`/`dropRefA`/
+  * **REVOCATIONS (TOTAL + SELF-LIMITING).** `attenuateA`/`revokeDelegationA`/`dropRefA`/
     `revokeA` only SHRINK authority — `recKRevokeTarget` filters out the holder's `t`-conferring caps,
     `attenuateSlotF` narrows the actor's own held cap in place. They ALWAYS commit (revocation cannot
     fail — at worst it is the identity), so we model them as TOTAL handlers (`step` returns `some`
@@ -145,7 +145,7 @@ def delegateAttenH : EffectHandler DelegateArgs where
       rw [capsOnly_recTotalAsset_fixed]; ring
     · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`delegateAttenH` is NON-AMPLIFYING (the headline, PROVED).** The cap the delegation grants the
+/-- **`delegateAttenH` is NON-AMPLIFYING (the headline).** The cap the delegation grants the
 recipient confers REAL rights `⊆` the delegator's held cap to `t`: `confRights (attenuate keep held) ≤
 confRights held` over the genuine `ExecAuth` lattice (`recKDelegateAtten_non_amplifying`). Granted
 authority cannot exceed held — the rights-amplification hole is closed BY CONSTRUCTION. -/
@@ -164,7 +164,7 @@ def delegateH : EffectHandler DelegateArgs := delegateAttenH
 /-- `introduceA` — the 3-party Granovetter introduce, attenuated path. Same handler as `delegateH`. -/
 def introduceH : EffectHandler DelegateArgs := delegateAttenH
 
-/-! ## §2 — REVOCATIONS: genuinely TOTAL, SELF-LIMITING authority shrinkage.
+/-! ## §2 — REVOCATIONS: TOTAL, SELF-LIMITING authority shrinkage.
 
 `revokeA`/`dropRefA`/`revokeDelegationA` filter out the holder's `t`-conferring caps
 (`recKRevokeTarget`); `attenuateA` narrows the actor's own `idx`-th held cap in place
@@ -206,7 +206,7 @@ def revokeH : EffectHandler RevokeArgs where
     unfold recKRevokeTarget
     rw [capsOnly_recTotalAsset_fixed]; ring
 
-/-- **`revokeH` is SELF-LIMITING (PROVED).** After the revoke, the holder's surviving caps are a SUBLIST
+/-- **`revokeH` is SELF-LIMITING.** After the revoke, the holder's surviving caps are a SUBLIST
 of its pre-state caps at EVERY slot (`recKRevokeTarget` only filters), so authority strictly shrinks —
 no amplification is possible. The monotone-decrease witness for the total handler. -/
 theorem revokeH_self_limiting (k : RecordKernelState) (a : RevokeArgs) (l : Label) :
@@ -255,7 +255,7 @@ def attenuateH : EffectHandler AttenuateArgs where
     simp only [Option.some.injEq] at h; subst h
     rw [capsOnly_recTotalAsset_fixed]; ring
 
-/-- **`attenuateH` is NON-AMPLIFYING (PROVED).** The narrowed cap confers a genuine `List Auth` SUBSET
+/-- **`attenuateH` is NON-AMPLIFYING.** The narrowed cap confers a genuine `List Auth` SUBSET
 of the original: `capAuthConferred (attenuate keep c) ⊆ capAuthConferred c` (`attenuate_subset`). The
 actor's own authority only shrinks — the purest self-limiting move. -/
 theorem attenuateH_non_amplifying (keep : List Auth) (c : Cap) :
@@ -287,7 +287,7 @@ def introduceEffect (introducer recipient target : CellId) : ClosedEffect :=
     args := { delegator := introducer, recipient := recipient, target := target, keep := allAuths },
     handler := introduceH }
 
-/-! ### §CERT — the REAL CapTP certificate attenuation (no longer `keep := allAuths`).
+/-! ### §CERT — the REAL CapTP certificate attenuation (not `keep := allAuths`).
 
 dregg1's `validate_handoff` does NOT confer the introducer's full held rights — it confers the
 `HandoffCertificate.permissions` mask (`Exec.CapTP.HandoffCert.granted`), which the introducer's signed
@@ -314,7 +314,7 @@ def validateHandoffCertEffect (cert : Dregg2.Exec.CapTP.HandoffCert CellId (List
               keep := certMask cert },
     handler := delegateAttenH }
 
-/-- **`validateHandoffCert_non_amplifying` — PROVED.** A cert-attenuated handoff confers the recipient
+/-- **`validateHandoffCert_non_amplifying`.** A cert-attenuated handoff confers the recipient
 REAL rights `⊆` the introducer's held cap to `target`: the cert mask cannot amplify (`granted ⊆ held`,
 `HandoffValid.nonAmplifying`), discharged off `delegateAttenH_non_amplifying` for the cert's `keep`. -/
 theorem validateHandoffCert_non_amplifying (k : RecordKernelState)
@@ -439,7 +439,7 @@ self-limiting keystones are pinned directly. -/
 #assert_axioms attenuateH
 #assert_axioms attenuateH_non_amplifying
 
-/-! ## §DEFER — honest scope of this batch.
+/-! ## §DEFER — scope of this batch.
 
 Deliberately OUT of this batch (documented, NOT a silent gap):
 

@@ -105,7 +105,7 @@ private theorem transferBal_write_preserves_exact (k : RecordKernelState) {src d
   rw [hbal]
   exact hex b
 
-/-- **MINT-AS-ISSUER-MOVE preserves the value law (PROVED).** The reformed mint is a transfer, so
+/-- **MINT-AS-ISSUER-MOVE preserves the value law.** The reformed mint is a transfer, so
 the debit/credit cancel. Note the proof needs NO availability gate: conservation never depended on
 it — the negative well is sound for the value law. -/
 theorem issuerMoveK_preserves_exact {k k' : RecordKernelState} {actor : CellId} {a : AssetId}
@@ -122,7 +122,7 @@ theorem issuerMoveK_preserves_exact {k k' : RecordKernelState} {actor : CellId} 
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **BURN-AS-ISSUER-MOVE preserves the value law (PROVED).** Symmetric: the burn is the same
+/-- **BURN-AS-ISSUER-MOVE preserves the value law.** Symmetric: the burn is the same
 transfer with direction swapped. -/
 theorem issuerBurnK_preserves_exact {k k' : RecordKernelState} {actor : CellId} {a : AssetId}
     {src : CellId} {amt : ℤ} (h : issuerBurnK issuerOf k actor a src amt = some k')
@@ -316,7 +316,7 @@ theorem execFullTurnA_preserves_exact {s s' : RecChainedState} {tt : List FullAc
 
 /-! ## §4 — the REAL-step commuting relation (legacy ⟷ issuer-move, both actual step functions). -/
 
-/-- **`issuerMint_pointwise_vs_credit` (PROVED).** Run the LEGACY mint and the W1 issuer-mint from
+/-- **`issuerMint_pointwise_vs_credit`.** Run the LEGACY mint and the W1 issuer-mint from
 the SAME state with the SAME arguments (recipient `cell`, asset `a`, amount `amt`); if both commit,
 the W1 post-ledger IS the legacy post-ledger with the issuer's well debited by exactly `amt` at `a`
 — pointwise, at every `(cell, asset)`. The probe proved this through the issuer-supply VIEW

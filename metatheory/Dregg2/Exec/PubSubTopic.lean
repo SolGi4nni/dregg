@@ -270,7 +270,7 @@ theorem pubsub_publisher_immutable
 -- theorem now would be vacuous over a sender we cannot reference, so it is left UNWRITTEN rather
 -- than asserted with a `sorry`. The *state half* IS discharged (`pubsub_publisher_immutable`: the
 -- gate's authority target is fixed across every committed publish); the sender-side enforcement is
--- deferred honestly to the auth-gate build: the Lean cell proves *if* Verify accepts *then*
+-- deferred to the auth-gate build: the Lean cell proves *if* Verify accepts *then*
 -- admissible, and the sender-signature check routes through the authority seam, NOT into this
 -- semantic law.
 

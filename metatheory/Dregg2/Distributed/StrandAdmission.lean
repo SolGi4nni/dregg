@@ -163,7 +163,7 @@ def finalLeaderAtAdmitted (fed : AdmissionState) (B : Lace) (participants : List
   | some l => if admitted fed l.creator then some l else none
   | none   => none
 
-/-- **`unadmitted_strand_no_final_leader` (PROVED — the consensus-side F-4 tooth).** If the leader
+/-- **`unadmitted_strand_no_final_leader` (the consensus-side F-4 tooth).** If the leader
 that `BlocklaceFinality` would anchor at a wave is created by an UNADMITTED strand, the
 admission-gated finality returns `none`: that wave anchors NOTHING. A Sybil strand cannot be a
 final leader. -/
@@ -175,7 +175,7 @@ theorem unadmitted_strand_no_final_leader (fed : AdmissionState) (B : Lace)
   unfold finalLeaderAtAdmitted unadmitted at *
   rw [hl]; simp only [hsybil]; rfl
 
-/-- **`gated_leader_is_admitted` (PROVED).** Conversely, whenever the gated finality DOES anchor a
+/-- **`gated_leader_is_admitted`.** Conversely, whenever the gated finality DOES anchor a
 leader, that leader's creator IS admitted — the gate is sound in both directions: only admitted
 strands ever anchor a wave. -/
 theorem gated_leader_is_admitted (fed : AdmissionState) (B : Lace)
@@ -199,7 +199,7 @@ def admittedFinalLeaders (fed : AdmissionState) (B : Lace) (participants : List 
   let waveCount := if wavelength == 0 then 0 else mr / wavelength + 1
   (List.range waveCount).filterMap (fun w => finalLeaderAtAdmitted fed B participants w wavelength)
 
-/-- **`sybil_block_not_finalizable` (PROVED — the HEADLINE F-4 closure).** Every block that
+/-- **`sybil_block_not_finalizable` (the HEADLINE F-4 closure).** Every block that
 anchors the admission-gated finalized order is from an ADMITTED strand: an unadmitted Sybil's block
 is in `admittedFinalLeaders` for NO wave. Spelled out: for all `l ∈ admittedFinalLeaders …`,
 `admitted l.creator`. So no Sybil strand reaches finality — the finding is defended at the
@@ -212,7 +212,7 @@ theorem sybil_block_not_finalizable (fed : AdmissionState) (B : Lace)
   obtain ⟨w, _, hw⟩ := List.mem_filterMap.mp hl
   exact gated_leader_is_admitted fed B participants w wavelength l hw
 
-/-- **`sybil_contributes_no_leader` (PROVED — the per-Sybil restatement).** A fixed UNADMITTED
+/-- **`sybil_contributes_no_leader` (the per-Sybil restatement).** A fixed UNADMITTED
 strand `s` appears as the creator of NO admission-gated final leader, at any wave. The Sybil is
 finality-inert. -/
 theorem sybil_contributes_no_leader (fed : AdmissionState) (B : Lace)
@@ -265,7 +265,7 @@ theorem hasValidBond_amount_ge {fed : AdmissionState} {strand : AuthorId}
   have hge : fed.minBond ≤ b.amount := by simpa using hamt
   exact le_trans hge hle
 
-/-- **`bonded_equivocator_slashable` (PROVED — the STAKE-path tooth).** If a strand was admitted
+/-- **`bonded_equivocator_slashable` (the STAKE-path tooth).** If a strand was admitted
 via the stake path (`hasValidBond`, so `bondAmount ≥ minBond`) and it equivocates (a
 `Blocklace.Equivocation` proof object), then slashing burns at least `minBond`: the slash covers
 the misbehavior, the attacker forfeits ≥ the admission price. The equivocation proof is the only
@@ -277,7 +277,7 @@ theorem bonded_equivocator_slashable (fed : AdmissionState) (B : Lace) (strand :
   unfold slash
   exact hasValidBond_amount_ge hbond
 
-/-- **`slash_covers_misbehavior` (PROVED — the slash burns the WHOLE bond).** Slashing an
+/-- **`slash_covers_misbehavior` (the slash burns the WHOLE bond).** Slashing an
 equivocator burns its entire posted bond: after the slash, the strand has NO bond left, and the
 amount burned equals the bond it held. So the economic stake is fully forfeited — no residual
 value survives the misbehavior. -/
@@ -294,7 +294,7 @@ theorem slash_covers_misbehavior (fed : AdmissionState) (B : Lace) (strand : Aut
   have : x.owner ≠ strand := by simpa using hx.2
   simp [this]
 
-/-- **`slashed_equivocator_loses_stake_admission` (PROVED — the consequence: slashing REVOKES the
+/-- **`slashed_equivocator_loses_stake_admission` (the consequence: slashing REVOKES the
 stake-path admission).** After an equivocator is slashed, it no longer has a valid bond, so it is
 no longer admitted VIA THE STAKE PATH. (If it were ALSO a seed or vouched, those paths persist — the
 hybrid gate is an OR; slashing kills only the path the bond bought. This is faithful: a slashed
@@ -315,19 +315,19 @@ members vouch for it. Distinctness (`Nodup`) + the `isRoot` gate are the anti-Sy
 cannot vouch for itself (it is not rooted), nor can a ring of fresh Sybils vouch each other into
 admission (none is rooted), nor can one member be counted twice (`dedup`). -/
 
-/-- **`vouch_admits_iff_threshold` (PROVED — the vouch path is EXACTLY the threshold).** A strand
+/-- **`vouch_admits_iff_threshold` (the vouch path is EXACTLY the threshold).** A strand
 is admitted via the vouch path iff its distinct rooted-voucher count reaches `N`. The biconditional
 pins the path to the threshold, neither stricter nor looser. -/
 theorem vouch_admits_iff_threshold (fed : AdmissionState) (strand : AuthorId) :
     vouchedToThreshold fed strand = true ↔ vouchedBy fed strand ≥ fed.N := by
   unfold vouchedToThreshold; exact decide_eq_true_iff
 
-/-- **`vouchers_nodup` (PROVED).** The distinct-voucher set has no duplicates — built by `dedup`,
+/-- **`vouchers_nodup`.** The distinct-voucher set has no duplicates — built by `dedup`,
 so one member cannot be double-counted toward `N` (the analogue of `MembershipSafety.approvers_nodup`). -/
 theorem vouchers_nodup (fed : AdmissionState) (strand : AuthorId) :
     (distinctVouchersFor fed strand).Nodup := List.nodup_dedup _
 
-/-- **`vouchers_are_rooted` (PROVED — only ADMITTED members vouch).** Every counted voucher is
+/-- **`vouchers_are_rooted` (only ADMITTED members vouch).** Every counted voucher is
 itself rooted-admitted (a seed or bonded): the `isRoot` gate drops a non-admitted Sybil's vouch
 before it can count. So a ring of fresh, unrooted Sybils cannot vouch each other into admission. -/
 theorem vouchers_are_rooted (fed : AdmissionState) (strand : AuthorId) :
@@ -341,13 +341,13 @@ theorem vouchers_are_rooted (fed : AdmissionState) (strand : AuthorId) :
   rw [Bool.and_eq_true] at hf
   exact hf.2.2
 
-/-- **`vouched_admits` (PROVED — the vouch path admits).** If a strand reaches the vouch threshold,
+/-- **`vouched_admits` (the vouch path admits).** If a strand reaches the vouch threshold,
 it IS admitted (the hybrid gate's vouch disjunct fires). -/
 theorem vouched_admits (fed : AdmissionState) (strand : AuthorId)
     (h : vouchedToThreshold fed strand = true) : admitted fed strand = true := by
   unfold admitted; rw [h]; simp
 
-/-- **`below_threshold_not_admitted_vouch` (PROVED — < N does NOT admit via vouch).** If a strand
+/-- **`below_threshold_not_admitted_vouch` (< N does NOT admit via vouch).** If a strand
 has fewer than `N` distinct rooted vouches AND is neither a seed nor bonded, it is NOT admitted: the
 vouch path requires the full threshold, and the other paths are closed. So `N - 1` Sybil-ring
 vouches (or any sub-threshold support) buy nothing. -/
@@ -362,18 +362,18 @@ theorem below_threshold_not_admitted_vouch (fed : AdmissionState) (strand : Auth
   rw [hnotseed, hnobond, decide_eq_false (by rw [hvf]; exact not_false)]
   rfl
 
-/-- **`bonded_admits` (PROVED — the stake path admits).** A strand with a valid bond is admitted
+/-- **`bonded_admits` (the stake path admits).** A strand with a valid bond is admitted
 (the hybrid gate's stake disjunct fires) — the economic path, needing NO social standing. -/
 theorem bonded_admits (fed : AdmissionState) (strand : AuthorId)
     (h : hasValidBond fed strand = true) : admitted fed strand = true := by
   unfold admitted; rw [h]; simp
 
-/-- **`seed_admits` (PROVED — the bootstrap root).** A genesis seed is admitted by construction. -/
+/-- **`seed_admits` (the bootstrap root).** A genesis seed is admitted by construction. -/
 theorem seed_admits (fed : AdmissionState) (strand : AuthorId)
     (h : isSeed fed strand = true) : admitted fed strand = true := by
   unfold admitted; rw [h]; simp
 
-/-- **`admitted_iff` (PROVED — the gate, fully unfolded).** `admitted` holds iff the strand is a
+/-- **`admitted_iff` (the gate, fully unfolded).** `admitted` holds iff the strand is a
 seed, OR vouched to threshold, OR bonded — the hybrid stake-OR-vouch (-OR-seed) disjunction in one
 statement. -/
 theorem admitted_iff (fed : AdmissionState) (strand : AuthorId) :
@@ -383,7 +383,7 @@ theorem admitted_iff (fed : AdmissionState) (strand : AuthorId) :
   rw [Bool.or_eq_true, Bool.or_eq_true]
   tauto
 
-/-! ## 6. NON-VACUITY — CONCRETE strands the gate genuinely ADMITS / REJECTS (the Rust differential).
+/-! ## 6. NON-VACUITY — CONCRETE strands the gate ADMITS / REJECTS (the Rust differential).
 
 These `#guard`s establish, against a CONCRETE federation (`fedDemo`: two seeds {1,2}, vouch
 threshold `N = 2`, `minBond = 100`), that the gate is a REAL constraint: a fresh Sybil with no
@@ -445,7 +445,7 @@ def fedSybil1 : AdmissionState := { seeds := [2, 3], N := 2, minBond := 100, vou
 
 open BlocklaceFinality (trace3 trace3Participants)
 
--- HONEST: the gated wave-0 final leader is creator 1's genesis (admission transparent to members).
+-- the gated wave-0 final leader is creator 1's genesis (admission transparent to members).
 #guard (finalLeaderAtAdmitted fedHonest3 trace3 trace3Participants 0 3).isSome
 #guard ((finalLeaderAtAdmitted fedHonest3 trace3 trace3Participants 0 3).map (·.creator)) == some 1
 -- the ungated rule DOES anchor creator 1 — so the gate is what makes the difference, not the trace.
@@ -584,7 +584,7 @@ def encodeAdmitWire (fed : AdmissionState) (q : AuthorId) : String :=
   ";Bo=" ++ String.intercalate "," (fed.bonds.map (fun b => toString b.owner ++ ":" ++ toString b.amount)) ++
   ";q=" ++ toString q
 
-/-- **`strand_admit_eq_admitted` (PROVED — the export carries the proof).** For any wire that decodes
+/-- **`strand_admit_eq_admitted` (the export carries the proof).** For any wire that decodes
 to `(fed, q)`, the exported `dregg_strand_admit` returns `"1"` iff the VERIFIED `admitted fed q` holds
 (and `"0"` iff it does not). So the F-4 verdict the node reads off the export is DEFINITIONALLY the
 verified hybrid-gate verdict — `dregg_strand_admit` is the verified `admitted`, marshalled. Gating
@@ -595,7 +595,7 @@ theorem strand_admit_eq_admitted (s : String) (fed : AdmissionState) (q : Author
   unfold dregg_strand_admit admitGate
   rw [h]
 
-/-- **`strand_admit_admits_iff` (PROVED).** Read as a Boolean: the export emits `"1"` exactly when the
+/-- **`strand_admit_admits_iff`.** Read as a Boolean: the export emits `"1"` exactly when the
 verified rule admits. The clean live-path predicate the federation calls. -/
 theorem strand_admit_admits_iff (s : String) (fed : AdmissionState) (q : AuthorId)
     (h : decodeAdmitWire s = some (fed, q)) :
@@ -608,7 +608,7 @@ theorem strand_admit_admits_iff (s : String) (fed : AdmissionState) (q : AuthorI
     · intro hc; exact absurd hc (by decide)
     · intro hc; exact absurd hc (by simp)
 
-/-- **`admit_gate_deterministic` (PROVED).** The gate is a deterministic function of the wire: two
+/-- **`admit_gate_deterministic`.** The gate is a deterministic function of the wire: two
 honest replicas that encode the SAME registry+strand get the SAME verdict — agreement reduces to
 seeing the same registry, through the exported gate the node actually calls. -/
 theorem admit_gate_deterministic (s : String) (o₁ o₂ : String)

@@ -104,7 +104,7 @@ Floor: ed25519 (signature on the handoff), HMAC (caveat-chain tags), Poseidon2-C
 /-- **`authority_guarantee` (NEW aggregation).** The authority headline over the REAL
 `List Auth` attenuation lattice, in one statement: (1) an introduction's conferred cap is a
 genuine non-amplifying SUBSET of the held cap (`introduce_non_amplifying`), AND (2) the
-non-amplification predicate genuinely DISCRIMINATES — a grant conferring an authority the
+non-amplification predicate DISCRIMINATES — a grant conferring an authority the
 holder lacks is rejected (`amplifying_grant_rejected`). So "no effect confers more authority
 than was held" is proved AND shown to have teeth. The CapTP-handoff refinement that lands
 this on the dispatcher gate is `AuthModes.captp_sound` / `captp_granted_le_held`, re-pinned
@@ -144,7 +144,7 @@ DAG:
   • `Spec.turnConserves_balance` / `Spec.conservation_over_monoid` — the value-monoid
     -parametric whole-turn conservation (committed = cleartext value).
   • `Conserve.sum_transfer_conserve` — the shared library lemma the above rest on; with the
-    honesty rail `Conserve.sum_transfer_conserve` genuinely requiring `src ≠ dst`.
+    honesty rail `Conserve.sum_transfer_conserve` requiring `src ≠ dst`.
 
 Floor: NONE beyond integer arithmetic. Conservation is a kernel theorem; the only crypto
 that touches it is Pedersen (DLog) IF values are committed rather than cleartext, and the
@@ -238,7 +238,7 @@ DAG:
   • `Circuit.Argus.noteSpendStmt_then_reject` — the composed barrier: after a committed
     spend of `nf`, a second spend of the SAME `nf` fails closed.
   • `Circuit.Argus.noteSpendStmt_replay_rejected` — the TEETH (witness FALSE): a nullifier
-    already present is REJECTED (`= none`); the gate is genuinely two-valued.
+    already present is REJECTED (`= none`); the gate is two-valued.
   • `Crypto.NonMembership.nonmembership_sound` / `_complete` — the freshness witness is a
     sorted-tree non-membership opening: `nf ∉ set` is a whole-set assertion with a circuit
     gate (closes the "in-memory only" gap).
@@ -400,7 +400,7 @@ theorem running_entry_sound
 #assert_axioms Dregg2.Exec.FullForestAuth.execFullForestG_no_amplify
 #assert_axioms Dregg2.Exec.FullForestAuth.execFullForestG_each_attests
 #assert_axioms Dregg2.Exec.FullForestAuth.execFullForestG_root_attests
--- the fail-closed teeth (the gate is genuinely two-valued):
+-- the fail-closed teeth (the gate is two-valued):
 #assert_axioms Dregg2.Exec.FullForestAuth.execFullForestG_unauthorized_fails
 
 end RunningEntry

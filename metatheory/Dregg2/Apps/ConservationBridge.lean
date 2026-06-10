@@ -28,7 +28,7 @@ What is proved (`#assert_axioms`-clean):
   * `flow_balance_iff_no_leak` — flow-balance ⇔ no resource leaks at the cut; the forced-trade's
     `(1,2)` unbalanced configuration is the leak `binding_is_proper` excludes.
 
-Honest scope: this is the atomic bridge (one maneuver edge, one flow). The general multi-edge case
+Scope: this is the atomic bridge (one maneuver edge, one flow). The general multi-edge case
 (Σ over a whole avoidance round = total divergence over a multi-edge cut) is flagged OPEN below.
 Fuel is a sink in the OS; this is not a constellation-wide fuel-conservation claim.
 -/
@@ -62,7 +62,7 @@ def divA (bt : BiTurn) : ℤ := halfA bt
 to be the JointCell half-edge `halfB bt`. -/
 def divB (bt : BiTurn) : ℤ := halfB bt
 
-/-- **`divA_eq_neg_flow` / `divB_eq_flow` (PROVED) — the divergences ARE the signed flow.** The
+/-- **`divA_eq_neg_flow` / `divB_eq_flow` — the divergences ARE the signed flow.** The
 divergence at the source is `-flowAB` (flow leaves) and at the sink is `+flowAB` (flow enters) —
 confirming `divA`/`divB` are the genuine graph-flow divergence contributions, not arbitrary. -/
 theorem divA_eq_neg_flow (bt : BiTurn) : divA bt = - flowAB bt := by
@@ -92,7 +92,7 @@ theorem conservation_is_flow_balance (bt : BiTurn) :
   -- `divA = halfA`, `divB = halfB` definitionally, so both sides are the SAME proposition.
   exact Iff.rfl
 
-/-- **`boundaryFlow_zero` (PROVED) — the boundary flow IS balanced (= Σδ=0).** Discharges the
+/-- **`boundaryFlow_zero` — the boundary flow IS balanced (= Σδ=0).** Discharges the
 graph side directly from the OS keystone: every committed avoidance maneuver balances its flow
 across the A–B boundary, because its half-edges sum to zero. -/
 theorem boundaryFlow_zero (bt : BiTurn) : boundaryFlow bt = 0 := by
@@ -115,13 +115,13 @@ theorem committed_maneuver_balances_flow
 /-- A boundary is **leak-free** iff its net flow is zero (nothing accumulates at the cut). -/
 def LeakFree (bt : BiTurn) : Prop := boundaryFlow bt = 0
 
-/-- **`flow_balance_iff_no_leak` (PROVED) — flow-balance is exactly leak-freedom.** The
+/-- **`flow_balance_iff_no_leak` — flow-balance is exactly leak-freedom.** The
 graph-theoretic content of Σδ=0: the boundary conserves flow iff no resource leaks at the cut.
 Definitional, but it names the graph-side meaning of the OS conservation. -/
 theorem flow_balance_iff_no_leak (bt : BiTurn) :
     LeakFree bt ↔ boundaryFlow bt = 0 := Iff.rfl
 
-/-- **Every committed maneuver is leak-free (PROVED).** Directly from `boundaryFlow_zero`. -/
+/-- **Every committed maneuver is leak-free.** Directly from `boundaryFlow_zero`. -/
 theorem committed_is_leakfree (bt : BiTurn) : LeakFree bt := boundaryFlow_zero bt
 
 /-- **`forced_trade_is_excluded_leak`** — the naive free-yield ordering is a flow configuration
@@ -165,7 +165,7 @@ OPEN: the multi-edge generalization. The atomic bridge proves the case of one ma
 one oriented flow. The natural extension is a whole avoidance round: a set of committed bilateral
 maneuvers is a flow on the multi-edge conjunction graph, and "round total ledger conservation =
 total divergence over a multi-edge cut of the conjunction graph" is the sum of the per-edge
-bridges. Tying the cut to the WL equitable-partition boundary of `WhoYields` is the genuinely
+bridges. Tying the cut to the WL equitable-partition boundary of `WhoYields` is the
 novel multi-edge object. Not proved here; the atomic bridge is.
 -/
 

@@ -66,7 +66,7 @@ theorem blue_iff_tier1Eligible_def {S : Type u} [Confluence.MergeState S]
     BlueEligible I ↔ Confluence.Tier1Eligible I :=
   Iff.rfl
 
-/-- **A blue interaction's concurrent merges preserve its invariant — PROVED** (the
+/-- **A blue interaction's concurrent merges preserve its invariant** (the
 operational payoff of the colour: a blue step can run on every replica without
 coordination and still keep `I`). Direct consequence of `BlueEligible = IConfluent`. -/
 theorem blue_merge_safe {S : Type u} [Confluence.MergeState S]

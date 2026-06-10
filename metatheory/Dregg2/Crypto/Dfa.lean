@@ -313,7 +313,7 @@ A concrete automaton recognizing `a⁺b` (one-or-more `a` then a `b`), the `dfa_
 `circuit.rs:1724`: states `{0,1,2,3}`, bytes `{0x61='a', 0x62='b'}`. The transition relation `δ` is the
 table's membership predicate; the run for `"aab"` is `0 →a 1 →a 1 →b 2`, ending in the accept state `2`.
 
-To build an HONEST reference kernel (`verify` genuinely checks the proof against the statement),
+To build an HONEST reference kernel (`verify` checks the proof against the statement),
 we use a `Statement` whose `δ`/`accept` are DECIDABLE — they are disjunctions / equalities
 over `ℕ`. The `Proof` IS the candidate trace; `verify stmt tr` literally DECIDES whether `tr` is an
 accepting run of `stmt`'s automaton (so it works for ANY statement, not just the reference), and

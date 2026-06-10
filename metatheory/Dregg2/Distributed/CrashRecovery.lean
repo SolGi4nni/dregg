@@ -44,7 +44,7 @@ fully-replayed ledger, independent of WHERE the checkpoint fell. The crash-consi
   a DIFFERENT ledger: the theorem is not vacuously true; persisting the full post-checkpoint log is
   load-bearing.
 
-## HONEST SCOPE.
+## SCOPE.
 
 FAITHFUL (matches `commit_log.rs` / `state.rs` recovery as a pure function of the write stream):
 * `applyWrites` = last-writer-wins point update = `Ledger::insert_cell` overwrite.

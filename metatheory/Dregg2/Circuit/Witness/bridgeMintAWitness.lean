@@ -102,7 +102,7 @@ def goodArgsC : BridgeMintArgs := { actor := 0, cell := 0, a := 0, value := 30 }
 
 def goodPostC : RecChainedState := (recCMintAsset sC0 0 0 0 30).getD sC0
 
-/-- THE FORGERY: cell 0 honestly credited (130), but bystander cell 2 ALSO minted 50 → 999. -/
+/-- THE FORGERY: cell 0 credited (130), but bystander cell 2 ALSO minted 50 → 999. -/
 def forgedBalC : CellId → AssetId → ℤ :=
   fun c a => if a = 0 then (if c = 0 then 130 else if c = 1 then 5 else if c = 2 then 999 else 0) else 0
 

@@ -58,16 +58,16 @@ predicate the factory binds):
 
 ## The four release-safety keystones (and which proved / which are model-approximated)
 
-  (a) CONSERVATION across the lifecycle  — PROVED, off `recKExecAsset_conserves_per_asset`
+  (a) CONSERVATION across the lifecycle, off `recKExecAsset_conserves_per_asset`
       (every escrow transition is an ordinary per-asset move, so the kernel's value law
       applies VERBATIM; what's deposited is exactly what's released-or-refunded).
-  (b) NO-DOUBLE-RESOLVE                   — PROVED, the monotonic state machine: from a
+  (b) NO-DOUBLE-RESOLVE, the monotonic state machine: from a
       resolved state (1 or 2) no transition is admitted; `escrowStep` fail-closes.
-  (c) RELEASE ONLY WHEN CONDITION HOLDS   — PROVED: `escrowRelease` rejects (`none`) when the
+  (c) RELEASE ONLY WHEN CONDITION HOLDS — `escrowRelease` rejects (`none`) when the
       supplied witness ≠ the cell's `condition` slot.
   (d) VALUE NOT STRANDED (open ⇒ resolvable) — PROVED as a STRUCTURAL liveness: from any OPEN
       escrow with a live, distinct, authorized target and sufficient held balance, BOTH a
-      release (condition discharged) AND a refund COMMIT. (The honest scope note: this is
+      release (condition discharged) AND a refund COMMIT. (The scope note: this is
       one-step resolvability, NOT scheduler-fairness eventual settlement — that needs the
       consensus/GST layer, flagged below. The structural fact is exactly what the kernel
       verbs gave: no held value is structurally trapped.)
@@ -161,7 +161,7 @@ def escrowFactory (amount depositor beneficiary cond asset : Int) : FactoryEntry
     , (assetField, asset) ]
   programVk := 0
 
-/-- **`escrowFactory_conforms` — PROVED.** The escrow factory's OWN published initial state
+/-- **`escrowFactory_conforms`.** The escrow factory's OWN published initial state
 satisfies its OWN caveats (no balance smuggling, state machine permits the genesis OPEN write,
 the immutables permit their first write). A well-formed factory cannot publish an initial
 state that already violates the invariants it claims to enforce. -/
@@ -293,21 +293,21 @@ operations enforce this at the `escrowState k e = sOpen` guard: a release or ref
 NON-OPEN (already resolved) escrow fail-closes to `none`. So a released escrow cannot refund
 and a refunded escrow cannot re-release: the value can leave the held column AT MOST ONCE. -/
 
-/-- **`release_requires_open` — PROVED.** A release on a NON-OPEN escrow is rejected. -/
+/-- **`release_requires_open`.** A release on a NON-OPEN escrow is rejected. -/
 theorem release_requires_open (k : RecordKernelState) (e beneficiary : CellId) (asset : AssetId)
     (witness : Int) (hns : escrowState k e ≠ sOpen) :
     escrowRelease k e beneficiary asset witness = none := by
   unfold escrowRelease
   rw [if_neg (by rintro ⟨ho, _⟩; exact hns ho)]
 
-/-- **`refund_requires_open` — PROVED.** A refund on a NON-OPEN escrow is rejected. -/
+/-- **`refund_requires_open`.** A refund on a NON-OPEN escrow is rejected. -/
 theorem refund_requires_open (k : RecordKernelState) (e depositor : CellId) (asset : AssetId)
     (hns : escrowState k e ≠ sOpen) :
     escrowRefund k e depositor asset = none := by
   unfold escrowRefund
   rw [if_neg hns]
 
-/-- **`no_double_resolve_released` — PROVED (the no-double-resolve teeth, RELEASE side).** Once
+/-- **`no_double_resolve_released` (the no-double-resolve teeth, RELEASE side).** Once
 a settle has driven the escrow to RELEASED, NO further release or refund commits — both
 fail-closed because the escrow is no longer OPEN. The held value left exactly once. -/
 theorem no_double_resolve_released (k : RecordKernelState) (e tgt : CellId) (asset : AssetId)
@@ -316,7 +316,7 @@ theorem no_double_resolve_released (k : RecordKernelState) (e tgt : CellId) (ass
   have hns : escrowState k e ≠ sOpen := by rw [hres]; decide
   exact ⟨release_requires_open k e tgt asset witness hns, refund_requires_open k e tgt asset hns⟩
 
-/-- **`no_double_resolve_refunded` — PROVED (REFUND side).** Once REFUNDED, no release or
+/-- **`no_double_resolve_refunded` (REFUND side).** Once REFUNDED, no release or
 refund commits. -/
 theorem no_double_resolve_refunded (k : RecordKernelState) (e tgt : CellId) (asset : AssetId)
     (witness : Int) (hres : escrowState k e = sRefunded) :
@@ -375,7 +375,7 @@ theorem release_requires_condition (k : RecordKernelState) (e beneficiary : Cell
 
 From any OPEN escrow with a live, distinct, authorized settle target and the held value
 available in its `bal` column, BOTH a release (condition discharged) and a refund COMMIT — so
-no held value is STRUCTURALLY trapped. (Honest scope: this is one-step resolvability, the
+no held value is STRUCTURALLY trapped. (Scope: this is one-step resolvability, the
 structural analog of the kernel verbs' guarantee; scheduler-fairness *eventual* settlement
 needs the consensus/GST liveness layer — see §VERDICT. The structural fact is what the verb
 family provided and what the cell program must not lose.) -/
@@ -609,15 +609,15 @@ ESCROW IS FULLY CAPTURED as a factory-born cell program + a release-safety contr
     — `escrowFactory_conforms` PROVED. The escrow `program` is drawn entirely from the EXISTING
     SlotCaveat vocabulary (Immutable × 5 + admitTable × 1). No new constraint kind needed.
 
-  * KEYSTONE (a) CONSERVATION  — PROVED (`escrowSettle/Release/Refund_conserves`), INHERITED from
+  * KEYSTONE (a) CONSERVATION (`escrowSettle/Release/Refund_conserves`), INHERITED from
     the ordinary per-asset move law `recKExecAsset_conserves_per_asset`. The side-table-free
     design is the whole point: escrow stops carrying its own conservation theory.
-  * KEYSTONE (b) NO-DOUBLE-RESOLVE — PROVED (`no_double_resolve_released/refunded`,
+  * KEYSTONE (b) NO-DOUBLE-RESOLVE (`no_double_resolve_released/refunded`,
     `release/refund_requires_open`, `release_advances_state`): the monotonic state machine
     drives OPEN→{RELEASED,REFUNDED} once; no further op commits.
-  * KEYSTONE (c) RELEASE-ONLY-ON-CONDITION — PROVED (`release_requires_condition`).
+  * KEYSTONE (c) RELEASE-ONLY-ON-CONDITION (`release_requires_condition`).
   * KEYSTONE (d) NOT-STRANDED — PROVED as ONE-STEP resolvability (`open_escrow_releasable/
-    refundable` + `escrowSettle_commits`). HONEST SCOPE: scheduler-fairness *eventual*
+    refundable` + `escrowSettle_commits`). SCOPE: scheduler-fairness *eventual*
     settlement is a consensus/GST liveness statement, NOT a single-machine theorem — this is
     the SAME boundary the kernel verbs had; the cell program loses nothing here.
 

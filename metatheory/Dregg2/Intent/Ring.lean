@@ -218,7 +218,7 @@ def sentBy (r : Ring) (c : CellId) (a : AssetId) : ℤ :=
     (fun acc l => acc + (if l.from_ = c then l.amount else 0)) 0
 
 /-- The total `amount` of `asset` RECEIVED across the ring — summed over the **receiving cells**, NOT
-over legs. This is genuinely the credit side: `recvOf r a = ∑_c recvBy r c a` over the cells the ring
+over legs. This is the credit side: `recvOf r a = ∑_c recvBy r c a` over the cells the ring
 touches. It is computed independently of `sentOf` (which folds the SEND side over legs), so the
 per-asset balance `sentOf = recvOf` is a REAL reindexing theorem (sum-over-legs = sum-over-cells),
 NOT a definitional `rfl`. This mirrors the Rust `recv_per_asset` HashMap, which the engine compares
@@ -334,7 +334,7 @@ theorem sentBy_sum_eq_sentOf (r : Ring) (a : AssetId) :
 `sentOf r a = recvOf r a`: the total of asset `a` debited across the legs equals the total credited,
 where `recvOf` is computed independently as the sum over RECEIVING cells of their per-cell receipts.
 The proof is the reindexing `sum-over-legs = sum-over-cells` (`recvOf_eq_sentOf`), NOT definitional
-equality — `sentOf` and `recvOf` are genuinely distinct folds (one over legs, one over the touched
+equality — `sentOf` and `recvOf` are distinct folds (one over legs, one over the touched
 cells). This is exactly the Rust `check_settlement_conservation` per-asset check comparing the two
 separately-accumulated `sent_per_asset` / `recv_per_asset` HashMaps. -/
 theorem perAsset_of_paired (r : Ring) (a : AssetId) : sentOf r a = recvOf r a :=
@@ -1127,7 +1127,7 @@ theorem chainedRing_lowered_fulfillment_is_verified_conserving
 -- ...in at least its declared minimum: node 0 wanted ≥5 and gets 5; node 1 wanted ≥7 and gets 7.
 #guard receivedAmount validSwapCycle 0 == 5
 #guard receivedAmount validSwapCycle 1 == 7
--- The TEETH are computable too: the incompatible cycles genuinely have no graph edge.
+-- The TEETH are computable too: the incompatible cycles have no graph edge.
 #guard (decide (isCompatible (assetMismatchCycle.getD 0 default)
   (assetMismatchCycle.getD 1 default))) == false
 #guard (decide (isCompatible (underfundCycle.getD 0 default)

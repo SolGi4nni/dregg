@@ -385,7 +385,7 @@ theorem unchecked_sound (targetGuard : Guard Request Stmt)
   simpa [authModeAdmits] using h
 
 /-- **`unchecked_no_escalation` — the no-privilege-escalation theorem.** If a target
-is genuinely CONSTRAINED — there is a witness supply `wBad` under which its authority
+is CONSTRAINED — there is a witness supply `wBad` under which its authority
 guard REJECTS the request — then `Unchecked` cannot authorize it under *that* supply.
 `Unchecked` is admitted only where the guard already admits; it conjures no authority
 the gate denies. (Stated at the rejecting supply: an `Unchecked` mode whose context

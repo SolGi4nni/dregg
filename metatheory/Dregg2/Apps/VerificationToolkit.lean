@@ -122,7 +122,7 @@ On a cell whose `slotCaveats sp.cell = sp.caveats`, the executor's `caveatsAdmit
 def AppSpec.committed (sp : AppSpec) (k : RecordKernelState) : Int :=
   fieldOf sp.slot (k.cell sp.cell)
 
-/-- **`caveatsAdmit_eq_table` (PROVED, generic).** On a cell carrying `sp.caveats`, the executor's
+/-- **`caveatsAdmit_eq_table` (generic).** On a cell carrying `sp.caveats`, the executor's
 `caveatsAdmit` on an `sp.slot` write is exactly `sp.admitTable`-membership of `(committed, new)`. -/
 theorem caveatsAdmit_eq_table (sp : AppSpec) (k : RecordKernelState)
     (hprog : k.slotCaveats sp.cell = sp.caveats) (actor : CellId) (new : Int) :
@@ -136,7 +136,7 @@ theorem caveatsAdmit_eq_table (sp : AppSpec) (k : RecordKernelState)
   rw [hf]
   simp only [List.all_cons, List.all_nil, Bool.and_true, SlotCaveat.eval, AppSpec.committed]
 
-/-- **`caveatsAdmit_iff_admit` (PROVED, generic).** On a cell carrying `sp.caveats`, with the
+/-- **`caveatsAdmit_iff_admit` (generic).** On a cell carrying `sp.caveats`, with the
 committed value and the written value on the grid, the executor's caveat gate ADMITS the
 `(committed → new)` write IFF the author's `admit` predicate holds. The predicate the author wrote
 off-line and the predicate the running executor enforces decide the SAME transitions. -/
@@ -170,7 +170,7 @@ theorem admit_imp_commits (sp : AppSpec) (s : RecChainedState)
   rw [if_pos hca]
   exact hauth
 
-/-- **`app_commit_iff_admit` (PROVED, generic) — THE COMMIT-IFF-ADMIT TEMPLATE.** On a cell carrying
+/-- **`app_commit_iff_admit` (generic) — THE COMMIT-IFF-ADMIT TEMPLATE.** On a cell carrying
 `sp.caveats`, with the committed and written values on the grid, the executor's caveat-gated write
 COMMITS (is `some`) IFF the author's `admit` predicate holds AND the underlying authority gate fires.
 Each app instantiates THIS — no re-proof of the executor↔predicate plumbing. -/
@@ -200,9 +200,9 @@ theorem app_commit_iff_admit (sp : AppSpec) (s : RecChainedState)
 
 A transition the author's `admit` REJECTS is rejected by the executor (`= none`). This is the
 parametric generalization of `cwm_illegal_dag_rejected_exec` / `sgm_*_rejected` lifted to the
-executor: the published admission is genuinely load-bearing, a violating turn does NOT commit. -/
+executor: the published admission is load-bearing, a violating turn does NOT commit. -/
 
-/-- **`app_violation_rejected` (PROVED, generic) — THE TOOTH.** On a cell carrying `sp.caveats`, an
+/-- **`app_violation_rejected` (generic) — THE TOOTH.** On a cell carrying `sp.caveats`, an
 `admit`-FALSE write `(committed → new)` (with values on the grid) is rejected by the executor's
 caveat gate: `stateStepGuarded = none`. A bad app instance — one whose `admit` would forbid a
 transition — cannot sneak the write past the executor. -/
@@ -228,7 +228,7 @@ amplification), and the actor was authorized. The author cannot violate these �
 guarantees lifted through `stateStepGuarded_eq`, exposed at the `AppSpec` boundary so each app gets
 them for free. -/
 
-/-- **`app_commit_conserves` (PROVED, generic).** A committed app write preserves total balance,
+/-- **`app_commit_conserves` (generic).** A committed app write preserves total balance,
 provided the app slot is not the reserved `balance` field. -/
 theorem app_commit_conserves (sp : AppSpec) (s s' : RecChainedState) (actor : CellId) (new : Int)
     (hf : sp.slot ≠ balanceField)
@@ -236,7 +236,7 @@ theorem app_commit_conserves (sp : AppSpec) (s s' : RecChainedState) (actor : Ce
     recTotal s'.kernel = recTotal s.kernel :=
   guarded_state_conserves hf h
 
-/-- **`app_commit_no_amplify` (PROVED, generic).** A committed app write leaves the authority graph
+/-- **`app_commit_no_amplify` (generic).** A committed app write leaves the authority graph
 UNCHANGED — the caveat-gated metadata write never edits the cap table, so it cannot mint or amplify
 any capability. The non-amplification keystone at the app boundary. -/
 theorem app_commit_no_amplify (sp : AppSpec) (s s' : RecChainedState) (actor : CellId) (new : Int)
@@ -244,7 +244,7 @@ theorem app_commit_no_amplify (sp : AppSpec) (s s' : RecChainedState) (actor : C
     execGraph s'.kernel.caps = execGraph s.kernel.caps :=
   guarded_state_authGraph_unchanged h
 
-/-- **`app_commit_authorized` (PROVED, generic).** A committed app write implies the actor held
+/-- **`app_commit_authorized` (generic).** A committed app write implies the actor held
 authority over `sp.cell` — the authority gate fires under the caveat gate. No unauthorized write
 ever commits. -/
 theorem app_commit_authorized (sp : AppSpec) (s s' : RecChainedState) (actor : CellId) (new : Int)
@@ -252,7 +252,7 @@ theorem app_commit_authorized (sp : AppSpec) (s s' : RecChainedState) (actor : C
     stateAuthB s.kernel.caps actor sp.cell = true :=
   guarded_state_authorized h
 
-/-- **`app_commit_field_written` (PROVED, generic).** After a committed app write, the slot reads
+/-- **`app_commit_field_written` (generic).** After a committed app write, the slot reads
 back exactly the written value (and by `stateStepGuarded_admits`, every caveat — i.e. `admit` — was
 satisfied). The functional-correctness face. -/
 theorem app_commit_field_written (sp : AppSpec) (s s' : RecChainedState) (actor : CellId) (new : Int)
@@ -284,8 +284,8 @@ def AppDiffPinned (sp : AppSpec) (v : List Bool) : Prop := sp.diffCorpus = v
 instance (sp : AppSpec) (v : List Bool) : Decidable (AppDiffPinned sp v) := by
   unfold AppDiffPinned; infer_instance
 
-/-- **`appDiffPinned_nonvacuous` (PROVED, generic).** If a corpus is pinned to `v`, then `v` is
-exactly the per-row `admit` decisions — so the pin genuinely constrains `admit` (it is NOT a tautology
+/-- **`appDiffPinned_nonvacuous` (generic).** If a corpus is pinned to `v`, then `v` is
+exactly the per-row `admit` decisions — so the pin constrains `admit` (it is NOT a tautology
 the author can satisfy with any vector). The drift tooth has teeth. -/
 theorem appDiffPinned_faithful (sp : AppSpec) (v : List Bool) (h : AppDiffPinned sp v) :
     sp.diffCorpus = v := h

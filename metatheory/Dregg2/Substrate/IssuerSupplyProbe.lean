@@ -16,7 +16,7 @@ ledger §7). Concretely:
     issuer-move mint — PRESERVES the exact invariant, each proved by INSTANTIATING an existing
     conservation theorem (never re-proved). The TRANSITIONAL invariant (before the
     storage-as-cell-programs migration, while `escrows : List EscrowRecord` parks value OFF-ledger)
-    reads `∀ a, recTotalAsset k a = 0` — the cell-sum ALONE is genuinely ≠ 0 while value
+    reads `∀ a, recTotalAsset k a = 0` — the cell-sum ALONE is ≠ 0 while value
     is parked (`escrow_create_debits_per_asset` witnesses the debit), so the holding-store term is
     load-bearing until S3 turns escrows into pot-cells.
   * **Mint**: PASS, with the equivalence PROVED as a commuting square (`mint_is_issuer_move`):
@@ -66,7 +66,7 @@ open Dregg2.Circuit.Argus
 off-ledger escrow holding-store equals ZERO for every asset. (After the S3 storage-as-cell-programs
 migration parks escrowed value in pot-CELLS, the `escrowHeldAsset` term dies and the law collapses
 to the pure `∀ a, Σ_{c ∈ accounts} bal c a = 0`. Until then the holding-store term is load-bearing:
-`escrow_create_debits_per_asset` proves the bare cell-sum genuinely moves on a lock.)
+`escrow_create_debits_per_asset` proves the bare cell-sum moves on a lock.)
 
 `issuerView` is the issuer-supply ADJUSTED ledger over the EXISTING state: the issuer of `a`
 carries −(circulating supply of `a`), where circulating = cell-ledger + escrow-parked
@@ -107,7 +107,7 @@ theorem issuerView_total (k : RecordKernelState) (a : AssetId) (ha : issuerOf a 
   unfold issuerBal
   rw [Finset.sum_sub_distrib, sum_indicator k.accounts (issuerOf a) (circulating k a) ha]
 
-/-- **THE VIEW IS EXACT (PROVED).** Wherever the issuer of `a` is a live account, the adjusted
+/-- **THE VIEW IS EXACT.** Wherever the issuer of `a` is a live account, the adjusted
 combined ledger sums to ZERO at `a` — `∀ a, Σ_c bal c a (+ escrow) = 0` holds BY CONSTRUCTION of
 the issuer-supply view. The R2 claim's exactness is not an extra invariant to carry; it is what
 the view MEANS, provided the issuer exists. -/
@@ -238,7 +238,7 @@ def issuerMoveK (k : RecordKernelState) (actor : CellId) (a : AssetId) (dst : Ce
     some { k with bal := recTransferBal k.bal (issuerOf a) dst a amt }
   else none
 
-/-- **(b) MINT-AS-ISSUER-MOVE preserves exact conservation (PROVED).** The reformed mint is a
+/-- **(b) MINT-AS-ISSUER-MOVE preserves exact conservation.** The reformed mint is a
 transfer, so the debit/credit cancel — instantiates `recTransferBal_sum_conserve_moved` (moved
 asset) + `recTransferBal_untouched` (every other asset). Note the proof needs NO availability gate:
 conservation never depended on it (the negative well is sound for the value law). -/
@@ -318,7 +318,7 @@ theorem mint_is_issuer_move (k : RecordKernelState) (cell : CellId) (a : AssetId
     have hccand : ¬ (c = cell ∧ b = a) := fun hp => hba hp.2
     rw [if_neg hccand, if_neg hba, if_neg hba, add_zero]
 
-/-- **Self-mint is a view-NOOP (PROVED).** A current-law mint INTO the issuer's own well leaves the
+/-- **Self-mint is a view-NOOP.** A current-law mint INTO the issuer's own well leaves the
 issuer-supply adjusted ledger LITERALLY UNCHANGED: the +amt credit and the +amt supply-debit cancel
 at the issuer. In the reformed world this is the transfer the `src ≠ dst` gate rejects — and the
 view agrees there was nothing to do. -/
@@ -384,7 +384,7 @@ def feeQuadSum (s : RecChainedState) (agent p t pot : CellId) : Int :=
 def burnToPot (s : RecChainedState) (pot : CellId) (fee : Int) : RecChainedState :=
   creditCell s pot (feeBurned fee)
 
-/-- **EXACT fee conservation with a burn-pot (mechanism level, PROVED).** Across the full
+/-- **EXACT fee conservation with a burn-pot (mechanism level).** Across the full
 prologue-debit + 50/30 distribution + pot-credit, over FOUR distinct cells, the quadruple total is
 UNCHANGED — `Σδ = 0` exactly, instantiating `fee_conservation_modulo_burn` (which supplies the
 `−feeBurned` of the triple) + the credit/frame lemmas (which supply the `+feeBurned` of the pot). -/
@@ -413,7 +413,7 @@ theorem fee_exact_with_burn_pot (ctx : AdmCtx) (s : RecChainedState)
   rw [htri', htri, hpot, hpot₂]
   ring
 
-/-- **EXACT fee conservation through the FULL `runTurn` wrapper (PROVED).** On an admissible turn
+/-- **EXACT fee conservation through the FULL `runTurn` wrapper.** On an admissible turn
 whose Argus body commits (and leaves the four fee cells at their post-prologue balances — the same
 body-neutrality the existing keystone assumes, extended to the pot), the accepted post-state with
 the burn residue credited to the pot has the fee quadruple EXACTLY conserved. Instantiates
@@ -522,7 +522,7 @@ private theorem noteSpend_measures {k k' : RecordKernelState} {nf : Nat}
     subst h
     rfl
 
-/-- **SHIELD preserves exact conservation (PROVED — the pool-cell candidate's ledger half).** The
+/-- **SHIELD preserves exact conservation (the pool-cell candidate's ledger half).** The
 shielded pool appears in the sum AS A CELL, the transparent leg is a transfer (instantiated
 keystone), the commitment insert is neutral. -/
 theorem shieldK_preserves_exact {k k' : RecordKernelState} {actor src : CellId} {a : AssetId}
@@ -538,7 +538,7 @@ theorem shieldK_preserves_exact {k k' : RecordKernelState} {actor src : CellId} 
   rw [hneutral]
   exact transfer_preserves_exact hk₁ hex b
 
-/-- **UNSHIELD preserves exact conservation (PROVED — the ledger half).** The nullifier insert is
+/-- **UNSHIELD preserves exact conservation (the ledger half).** The nullifier insert is
 neutral and the pool→user leg is a transfer. NOTE what this does NOT say: nothing ties `amt` to
 any note — exactness of the SUM survives even a value-unbound unshield, because the pool cell pays
 for it transparently. The pool can be DRAINED BEYOND ITS NOTES only if the value-binding is absent
@@ -664,7 +664,7 @@ def kPool : RecordKernelState :=
 #guard (((runTurn ec0 eh0 bodyOK es0).state?.map
           (fun sf => feeQuadSum (burnToPot sf 40 10) 7 20 30 40)) == some 98) == false
 
-/-! ## §9 — THE HONEST LEDGER (escape hatches counted) + the verdict.
+/-! ## §9 — THE LEDGER (escape hatches counted) + the verdict.
 
 **Escape hatches (each named, none silent):**
 
@@ -680,7 +680,7 @@ def kPool : RecordKernelState :=
     issuer-shaped, a real (small) migration, not a relabeling.
   * **E3 — the transitional escrow term.** Until S3 (storage-as-cell-programs), `ExactLedger`
     carries `+ escrowHeldAsset` for the off-ledger holding-store. Honest: the pure cell-sum is
-    genuinely ≠ 0 while value is parked. The S3 migration (escrows → pot-cells) deletes the term.
+    ≠ 0 while value is parked. The S3 migration (escrows → pot-cells) deletes the term.
   * **E4 — the shielded value-binding is NOT REPRESENTABLE today.** The pool-cell candidate's
     ledger half is proved; the pool↔notes half (`bal (poolOf a) a = Σ unspent hidden values of a`)
     cannot be stated: notes carry no asset and no executor-visible value, and `noteSpend` takes no
@@ -720,6 +720,6 @@ function; making it the identity is the §2.2 simplification, available but not 
   5. the shielded pool as pool pseudo-cells with shield/unshield = transfer∘note composites
      (the ledger half, proved here) PLUS the new value-binding obligation: asset-typed
      `BoundNote`s and the per-turn `unshield.amt = value(spent note)` circuit constraint (E4 —
-     the only genuinely NEW proof obligation R2 creates). -/
+     the only NEW proof obligation R2 creates). -/
 
 end Dregg2.Substrate.IssuerSupplyProbe

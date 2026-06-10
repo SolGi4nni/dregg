@@ -34,7 +34,7 @@ The deliverables, mirroring the reference pattern (`Dregg2/Circuit/Transfer.lean
      the report.)
   3. `noteCreateCommitment_correct` — the post-`commitments` helper validated DECLARATIVELY (`cm` is
      prepended, the membership grows, and the OLD membership is preserved), so the spec's
-     `commitments = cm :: …` clause genuinely encodes insert ∧ set-frame, not blind trust.
+     `commitments = cm :: …` clause encodes insert ∧ set-frame, not blind trust.
 
 The companion semantic corollaries pin the content: a committed `noteCreate` INSERTS `cm`
 (`noteCreateA_inserts`), PRESERVES every prior commitment (`noteCreateA_preserves`), is balance-NEUTRAL
@@ -77,7 +77,7 @@ the new set CONTAINS `cm`, and every PRIOR commitment is preserved) so the spec'
 
 /-- **`noteCreateCommitment_correct`** — the commitment-set helper validated DECLARATIVELY: a
 note-create PREPENDS `cm` (so `cm` is now a member), and every PRIOR commitment remains a member (the
-set grows, nothing is lost — append-only). So the spec's `commitments = cm :: …` clause genuinely
+set grows, nothing is lost — append-only). So the spec's `commitments = cm :: …` clause
 encodes insert ∧ grow-only-frame. -/
 theorem noteCreateCommitment_correct (k : RecordKernelState) (cm : Nat) :
     (noteCreateCommitment k cm).commitments = cm :: k.commitments
@@ -211,7 +211,7 @@ theorem noteCreateA_admits_iff (st : RecChainedState) (cm : Nat) (actor : CellId
 /-! ## §6 — NON-VACUITY / DISTINCTNESS: the spec is genuine, and the effect is grow-only.
 
 A spec that accepts everything would be worthless ONLY if the effect itself were a no-op — but
-`noteCreateA` genuinely GROWS the commitment set every time (and is the SOLE effect that touches
+`noteCreateA` GROWS the commitment set every time (and is the SOLE effect that touches
 `commitments`). We exhibit: it strictly extends the set (length grows), and the published commitment
 was not necessarily present before — so the spec carries real content. (`noteCreateA` is total by
 design, so there is no "rejection" theorem; the genuine content is the strict GROWTH, below.) -/

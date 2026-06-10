@@ -141,14 +141,14 @@ theorem proofForest_sound (pf : ProofForest)
   unfold fullProofForestInv
   exact execForest_attests (pf.attested hvalid)
 
-/-- **Conservation conjunct, projected — PROVED.** A linked, valid proof-forest preserves `recTotal`
+/-- **Conservation conjunct, projected.** A linked, valid proof-forest preserves `recTotal`
 end-to-end (the intra-cell CG-5 over the whole forest). Read out of the composite `StepInv`. -/
 theorem proofForest_conserves (pf : ProofForest)
     (hvalid : ∀ n ∈ pf.nodes, n.StepProofValid) (hlinked : Linked pf) :
     recTotal pf.s'.kernel = recTotal pf.s.kernel :=
   (proofForest_sound pf hvalid hlinked).1
 
-/-- **ChainLink conjunct, projected — PROVED.** A linked, valid proof-forest extends the receipt
+/-- **ChainLink conjunct, projected.** A linked, valid proof-forest extends the receipt
 chain by EXACTLY its nodes' moves (newest-first), no fork/rewrite — the executable shadow of the
 per-node `prevReceipt` pointers chaining. Read out of the composite `StepInv`. -/
 theorem proofForest_chainlinks (pf : ProofForest)

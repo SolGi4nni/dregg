@@ -157,7 +157,7 @@ def SlotCaveat.eval : SlotCaveat → CellId → Int → Int → Bool
 state (dregg1's `None` / genesis arm, `cell/src/program.rs:1331`: a transition caveat permits the
 FIRST write on a fresh cell `nonce==0`)? The four TRANSITION caveats (immutable/writeOnce/monotonic/
 monotonicSeq) permit any first write (they only constrain SUBSEQUENT transitions); the ABSOLUTE
-caveats (`boundedBy` value-range, `senderAuthorized` set-membership) still genuinely constrain the
+caveats (`boundedBy` value-range, `senderAuthorized` set-membership) still constrain the
 genesis value — a `BoundedBy [0,10]` slot CANNOT be born at 99. Used by `FactoryEntry.conforms`. -/
 def SlotCaveat.bornFresh : SlotCaveat → Int → Bool
   | .immutable _,        _   => true                                    -- first write permitted (genesis)
@@ -313,15 +313,15 @@ structure RecordKernelState where
   /-- **The KERNEL-STATE REVOCATION REGISTRY** (`self.revocation_channel`, hole #3 / `#139`): the
   committed set of revoked credential nullifiers — the MDB/derivation-table root that `cap_revoke`
   tears down (single-machine ⇒ immediate revocation). A node's credential is revoked iff its
-  `credNul` is in THIS set, read off committed state (NOT the wire-supplied, formerly-pinned
-  `NodeAuth.rev`), so the fail-closed gate `gateOK` can finally honour revocation. Balance-NEUTRAL
+  `credNul` is in THIS set, read off committed state (NOT the wire-supplied
+  `NodeAuth.rev`), so the fail-closed gate `gateOK` honours revocation. Balance-NEUTRAL
   (`recTotalAsset` reads `bal`, never `revoked`). DEFAULTS EMPTY (the additive
   extension, exactly as `nullifiers`/`commitments` were added). -/
   revoked    : List Nat := []
   /-- **The note COMMITMENT SET** (`META-FILL C`, closing `#121`): the grow-only dual of
   `nullifiers`. dregg1's `apply_note_create` inserts a fresh Pedersen commitment into the off-ledger
   commitment tree (a §8 CryptoPortal-gated range proof guards the hidden value). A `noteCreate` grows
-  THIS set (NOT `bal`, NOT `nullifiers`) — so it is bal-NEUTRAL and genuinely distinct
+  THIS set (NOT `bal`, NOT `nullifiers`) — so it is bal-NEUTRAL and distinct
   from escrow/obligation/noteSpend (the `#121` de-conflation). DEFAULTS EMPTY (the additive
   extension, exactly as `nullifiers` was added). -/
   commitments : List Nat := []
@@ -522,7 +522,7 @@ theorem recKExec_conserves (k k' : RecordKernelState) (turn : Turn)
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **No state change without authority — PROVED** (the integrity/confinement core for the record
+/-- **No state change without authority** (the integrity/confinement core for the record
 kernel: it never moves a cell's `balance` field on behalf of an unauthorized actor). Same gate
 (`authorizedB`) as the scalar kernel — authority is orthogonal to the state representation. -/
 theorem recKExec_authorized (k k' : RecordKernelState) (turn : Turn)
@@ -533,7 +533,7 @@ theorem recKExec_authorized (k k' : RecordKernelState) (turn : Turn)
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Fail-closed — PROVED.** An unauthorized turn does NOT commit on the record kernel. -/
+/-- **Fail-closed.** An unauthorized turn does NOT commit on the record kernel. -/
 theorem recKExec_unauthorized_fails (k : RecordKernelState) (turn : Turn)
     (h : authorizedB k.caps turn = false) : recKExec k turn = none := by
   unfold recKExec
@@ -561,7 +561,7 @@ silently swap asset A for asset B while the scalar stays put (`EFFECT-ISA-DESIGN
 over a deliberately PARALLEL `MACellId`/`maAuthorizedB` toy that "cannot clash with `Kernel.CellId`"
 and is imported by nothing executable (a sibling law). Here we re-prove it over the REAL
 `RecordKernelState.bal` ledger and the REAL `authorizedB k.caps` gate — the SAME state type and
-authority the FFI's `execFullTurn` runs — so the per-asset law is no longer a sibling. (Migrating
+authority the FFI's `execFullTurn` runs — so the per-asset law is not a sibling. (Migrating
 the executable `FullAction` dispatch onto `bal` + the negative differential is the next phase.) -/
 
 /-- The per-asset balance ledger after a transfer of asset `a`: debit `src`, credit `dst` in the
@@ -621,7 +621,7 @@ theorem recTransferBal_untouched (bal : CellId → AssetId → ℤ) (src dst : C
 gate.** Every committed per-asset transfer preserves `recTotalAsset k b` for EVERY asset `b`: the
 moved asset by the debit/credit cancellation, every other asset because its column is untouched.
 This is the `CONSERVATION_VECTOR` (`DREGG2-GAP-MAP.md FILL 1`) on the real executable
-`RecordKernelState` — the multi-asset refinement of `recKExec_conserves`, no longer a `MultiAsset`
+`RecordKernelState` — the multi-asset refinement of `recKExec_conserves`, not a `MultiAsset`
 sibling toy. -/
 theorem recKExecAsset_conserves_per_asset (k k' : RecordKernelState) (turn : Turn) (a : AssetId)
     (h : recKExecAsset k turn a = some k') (b : AssetId) :
@@ -644,7 +644,7 @@ theorem recKExecAsset_conserves_per_asset (k k' : RecordKernelState) (turn : Tur
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **No state change without authority — PROVED** for the per-asset kernel: it never moves a cell's
+/-- **No state change without authority** for the per-asset kernel: it never moves a cell's
 resource on behalf of an unauthorized actor. The REAL `authorizedB` gate, not `MultiAsset`'s
 `maAuthorizedB` toy. -/
 theorem recKExecAsset_authorized (k k' : RecordKernelState) (turn : Turn) (a : AssetId)
@@ -655,7 +655,7 @@ theorem recKExecAsset_authorized (k k' : RecordKernelState) (turn : Turn) (a : A
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Fail-closed — PROVED.** An unauthorized per-asset turn does NOT commit. -/
+/-- **Fail-closed.** An unauthorized per-asset turn does NOT commit. -/
 theorem recKExecAsset_unauthorized_fails (k : RecordKernelState) (turn : Turn) (a : AssetId)
     (h : authorizedB k.caps turn = false) : recKExecAsset k turn a = none := by
   unfold recKExecAsset
@@ -663,7 +663,7 @@ theorem recKExecAsset_unauthorized_fails (k : RecordKernelState) (turn : Turn) (
   rintro ⟨ha, _⟩
   rw [h] at ha; exact absurd ha (by simp)
 
-/-- **The cross-asset NON-LAUNDERING fact — PROVED.** A committed transfer of asset `a` CANNOT
+/-- **The cross-asset NON-LAUNDERING fact.** A committed transfer of asset `a` CANNOT
 change asset `b ≠ a`'s total supply. This is exactly what a SCALAR kernel cannot guarantee: a
 scalar that sums one aggregate would accept a turn that mints asset B while burning an equal amount
 of asset A (aggregate-conserving, per-asset-VIOLATING). The per-asset ledger makes that laundering
@@ -705,11 +705,11 @@ than the named `balance` field. The fresh cell is born EMPTY in EVERY asset (dre
 def createCellIntoAsset (k : RecordKernelState) (newCell : CellId) : RecordKernelState :=
   { bornEmptyCellSlots k newCell with accounts := insert newCell k.accounts }
 
-/-- **`recTotalAsset_insert_fresh` — ACCOUNT-GROWTH IS CONSERVATION-NEUTRAL (PROVED).** Growing
+/-- **`recTotalAsset_insert_fresh` — ACCOUNT-GROWTH IS CONSERVATION-NEUTRAL.** Growing
 `accounts` by a FRESH `newCell` while resetting its `bal` column leaves `recTotalAsset k b` UNCHANGED
 for EVERY asset `b`. NON-VACUOUS: the conclusion is an equality of sums over a STRICTLY LARGER index set
 (`insert newCell k.accounts`) — it asserts the fresh cell contributes EXACTLY `0` (not that `accounts`
-is unchanged: it genuinely grew). The fresh term is `0` because the `bal`-reset wrote it `0`; every OLD
+is unchanged: it grew). The fresh term is `0` because the `bal`-reset wrote it `0`; every OLD
 cell is unchanged because `c ≠ newCell` (`hfresh`). Mirrors `EffectsSupply.createCellInto_recTotal`:
 `Finset.sum_insert hfresh` for the fresh term + `Finset.sum_congr` for the old cells. Without the
 `bal`-reset, a re-inserted previously-credited id would make this FALSE (the supply-amplification hole),
@@ -727,14 +727,14 @@ theorem recTotalAsset_insert_fresh (k : RecordKernelState) (newCell : CellId) (b
   have hcne : c ≠ newCell := fun heq => hfresh (heq ▸ hc)
   simp only [if_neg hcne]
 
-/-- **`createCellIntoAsset_grows_accounts` — the GROWTH has teeth (PROVED).** After `createCellIntoAsset`,
+/-- **`createCellIntoAsset_grows_accounts` — the GROWTH has teeth.** After `createCellIntoAsset`,
 the new cell IS a live account: `newCell ∈ accounts`. Witnesses that the neutrality theorem is NOT a
-no-op — the index set genuinely grew. -/
+no-op — the index set grew. -/
 theorem createCellIntoAsset_grows_accounts (k : RecordKernelState) (newCell : CellId) :
     newCell ∈ (createCellIntoAsset k newCell).accounts := by
   unfold createCellIntoAsset; exact Finset.mem_insert_self _ _
 
-/-- **`createCellIntoAsset_born_empty_caps` — the fresh id's cap slot is empty (PROVED).** -/
+/-- **`createCellIntoAsset_born_empty_caps` — the fresh id's cap slot is empty.** -/
 theorem createCellIntoAsset_born_empty_caps (k : RecordKernelState) (newCell : CellId) :
     (createCellIntoAsset k newCell).caps newCell = [] := by
   dsimp [createCellIntoAsset, bornEmptyCellSlots]; simp only [if_pos]
@@ -746,7 +746,7 @@ def recKernelSystem : System where
   Config := RecordKernelState
   Step k k' := ∃ turn, recKExec k turn = some k'
 
-/-- **Conservation across an ENTIRE record-kernel run — PROVED** (`Execution.invariant_run`
+/-- **Conservation across an ENTIRE record-kernel run** (`Execution.invariant_run`
 lifting `recKExec_conserves`); the record-cell analog of `Kernel.kernel_run_conserves`. -/
 theorem recKernel_run_conserves {k k' : RecordKernelState} (hrun : Run recKernelSystem k k') :
     recTotal k' = recTotal k := by
@@ -779,7 +779,7 @@ def recFullStepInv (s : RecChainedState) (t : Turn) (s' : RecChainedState) : Pro
   s'.log = t :: s.log ∧
   s'.log.length = s.log.length + 1
 
-/-- **`recCexec_attests` — the record kernel is STEP-COMPLETE (PROVED).** Every committed chained
+/-- **`recCexec_attests` — the record kernel is STEP-COMPLETE.** Every committed chained
 record-cell step attests the FULL `StepInv` over the content-addressed cell: Conservation (of the
 `balance` field) ∧ Authority ∧ ChainLink ∧ ObsAdvance. This is `StepComplete.cexec_attests` lifted
 to the record cell-state — step-completeness holds BY CONSTRUCTION over the concrete cell, not just
@@ -801,7 +801,7 @@ def recChainedSystem : System where
   Config := RecChainedState
   Step s s' := ∃ t, recCexec s t = some s'
 
-/-- **Soundness along any record-cell execution — PROVED.** Any state-predicate `Good` preserved by
+/-- **Soundness along any record-cell execution.** Any state-predicate `Good` preserved by
 every step that attests `recFullStepInv` holds at every reachable configuration of the whole chained
 record-kernel execution — `Boundary.stepComplete_preserves` realized for the record cell. -/
 theorem recChained_sound (Good : RecChainedState → Prop)
@@ -812,7 +812,7 @@ theorem recChained_sound (Good : RecChainedState → Prop)
   obtain ⟨t, ht⟩ := hstep
   exact hpres a t b ha (recCexec_attests ht)
 
-/-- **Conservation of the `balance` field across the entire record-cell execution — PROVED**
+/-- **Conservation of the `balance` field across the entire record-cell execution**
 (the headline instance of `recChained_sound`). -/
 theorem recChained_run_conserves {s s' : RecChainedState} (hrun : Run recChainedSystem s s') :
     recTotal s'.kernel = recTotal s.kernel := by
@@ -890,14 +890,14 @@ def noteSpendNullifier (k : RecordKernelState) (nf : Nat) : Option RecordKernelS
   if nf ∈ k.nullifiers then none
   else some { k with nullifiers := nf :: k.nullifiers }
 
-/-- **`note_no_double_spend` — PROVED.** A nullifier already in the spent set CANNOT be spent again:
+/-- **`note_no_double_spend`.** A nullifier already in the spent set CANNOT be spent again:
 `noteSpendNullifier` fails-closed. This is the real anti-replay invariant (the SET prevents it), NOT
 a scalar flag. -/
 theorem note_no_double_spend (k : RecordKernelState) (nf : Nat) (h : nf ∈ k.nullifiers) :
     noteSpendNullifier k nf = none := by
   unfold noteSpendNullifier; rw [if_pos h]
 
-/-- **`note_spend_inserts` — PROVED.** A committed `noteSpendNullifier` actually inserts `nf` into the
+/-- **`note_spend_inserts`.** A committed `noteSpendNullifier` actually inserts `nf` into the
 set (so a SUBSEQUENT spend of the same `nf` is rejected by `note_no_double_spend`). -/
 theorem note_spend_inserts {k k' : RecordKernelState} {nf : Nat}
     (h : noteSpendNullifier k nf = some k') : nf ∈ k'.nullifiers := by
@@ -906,7 +906,7 @@ theorem note_spend_inserts {k k' : RecordKernelState} {nf : Nat}
   · rw [if_pos hin] at h; exact absurd h (by simp)
   · rw [if_neg hin] at h; simp only [Option.some.injEq] at h; subst h; simp
 
-/-- **`note_spend_then_reject` — PROVED (the composed anti-replay).** After a committed spend of `nf`,
+/-- **`note_spend_then_reject` (the composed anti-replay).** After a committed spend of `nf`,
 a second spend of the SAME `nf` on the resulting state fails-closed. Double-spend is impossible. -/
 theorem note_spend_then_reject {k k' : RecordKernelState} {nf : Nat}
     (h : noteSpendNullifier k nf = some k') : noteSpendNullifier k' nf = none :=
@@ -932,7 +932,7 @@ def recBalCreditCell (bal : CellId → AssetId → ℤ) (c : CellId) (a : AssetI
     CellId → AssetId → ℤ :=
   fun x b => if x = c ∧ b = a then bal x b + amt else bal x b
 
-/-- **The per-asset single-cell credit delta — PROVED.** A `recBalCreditCell c a amt` raises asset
+/-- **The per-asset single-cell credit delta.** A `recBalCreditCell c an amt` raises asset
 `a`'s supply by `amt` (when `c` is live) and leaves EVERY OTHER asset literally untouched. The
 per-asset analog of `recCredit_recTotal`, reusing `sum_indicator`. -/
 theorem recBalCreditCell_recTotalAsset (acc : Finset CellId) (bal : CellId → AssetId → ℤ)
@@ -988,13 +988,13 @@ commitment SET (the grow-only dual of `noteSpendNullifier`). bal-NEUTRAL: it tou
 def noteCreateCommitment (k : RecordKernelState) (cm : Nat) : RecordKernelState :=
   { k with commitments := cm :: k.commitments }
 
-/-- **`noteCreate_inserts` — PROVED.** A `noteCreateCommitment` actually inserts `cm` into the
+/-- **`noteCreate_inserts`.** A `noteCreateCommitment` actually inserts `cm` into the
 commitment set. -/
 theorem noteCreate_inserts (k : RecordKernelState) (cm : Nat) :
     cm ∈ (noteCreateCommitment k cm).commitments := by
   unfold noteCreateCommitment; simp
 
-/-- **`noteCreate_recTotalAsset` — PROVED (bal-NEUTRALITY).** A `noteCreateCommitment` leaves
+/-- **`noteCreate_recTotalAsset` (bal-NEUTRALITY).** A `noteCreateCommitment` leaves
 `recTotalAsset b` UNCHANGED for EVERY asset `b`: it grows only the commitment SET, never the `bal`
 ledger. -/
 theorem noteCreate_recTotalAsset (k : RecordKernelState) (cm : Nat) (b : AssetId) :
@@ -1109,8 +1109,8 @@ value-binding lands in `Dregg2/Exec/ShieldedValue.lean`. -/
 /-- **THE VALUE LAW (W1).** Per asset: the cell-ledger sum is 0. The issuer of each asset is an
 ordinary live account whose well runs NEGATIVE by exactly the circulating supply
 (`IssuerSupplyProbe.issuerView_exact` proves the issuer-supply view satisfies this BY CONSTRUCTION).
-F1b: the transitional off-ledger escrow term is GONE — value formerly parked in the kernel
-holding-store lives in factory cells' own `bal` columns, which this SAME sum covers. -/
+F1b: there is NO off-ledger escrow term — escrow value lives in factory cells' own `bal`
+columns, which this SAME sum covers. -/
 def ExactConservation (k : RecordKernelState) : Prop :=
   ∀ a : AssetId, recTotalAsset k a = 0
 

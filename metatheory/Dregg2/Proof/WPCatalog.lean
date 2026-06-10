@@ -83,7 +83,7 @@ def ledgerSM : RecordProgram := dregg_program {
   }
 }
 
-/-- **`ledgerSM` elaborates to exactly the expected catalog `.predicate` term — PROVED by `rfl`.**
+/-- **`ledgerSM` elaborates to exactly the expected catalog `.predicate` term — by `rfl`.**
 The eDSL surface IS the verified term: `recReplay_preserves_sumEquals`/`recCexec_attests` apply to
 *this* program with no codegen gap. -/
 theorem ledgerSM_eq_expected :
@@ -141,7 +141,7 @@ Defined here, after the program + specs, so the identifiers the macro body names
 `ledgerSpec`, `ledgerCounterSpec`, `badSpec`, `evalSimple_monotonic_iff`) are in scope at the
 macro's definition site (Lean macro hygiene resolves them there, not at the use site). -/
 
-/-- **`evalSimple_monotonic_iff` (PROVED)** — the monotone constraint's `evalSimple` as a genuine
+/-- **`evalSimple_monotonic_iff`** — the monotone constraint's `evalSimple` as a genuine
 `Int` inequality, WITHOUT naming the `private` `intLe` (we use `of_decide_eq_true`/`decide_eq_true`,
 which see through `intLe a b ≡ decide (a ≤ b)` by defeq). This is the one content lemma the
 relational VC class needs as a simp rule so the gate `monotonic seq` reduces to `old.seq ≤ new.seq`
@@ -175,7 +175,7 @@ It `intro`s the universally-quantified VC, opens the predicate-gate seam (unfold
 HONESTY RAIL: the whole body is `first | (…; done) | fail "…"`. The seam-opening `simp only … at *`
 ERRORS ON NO PROGRESS, so on a goal that is not a `VC_preserve` obligation `vcg_discharge` falls
 straight to the `fail` branch — it cannot fake progress. Every inner closer arm ends in `done`
-(`(simp_all; done)`, the relational arm + the outer `done`), so a VC whose leaf is genuinely false
+(`(simp_all; done)`, the relational arm + the outer `done`), so a VC whose leaf is false
 (the §6 `badSpec`) leaves that leaf OPEN, every arm errors, and `vcg_discharge` FAILS LOUDLY rather
 than reporting a half-closed VC as success. Negative-tested by `fail_if_success` in §6. -/
 macro "vcg_discharge" : tactic =>
@@ -209,7 +209,7 @@ macro "vcg_discharge" : tactic =>
 `vcg_discharge` (which opens the predicate-gate seam and reads the conservation leaf back), VC
 classes 2/3/4 trivially (`pre = inv = post`). The capstone is `vcg_run_sound`. -/
 
-/-- **`ledger_VC_preserve` (PROVED — closed by `vcg_discharge`).** VC class 1 for the ledger SM:
+/-- **`ledger_VC_preserve` (closed by `vcg_discharge`).** VC class 1 for the ledger SM:
 whenever `ledgerSM` admits `(old, new)`, the conservation `escrowed + paidOut = 100` is preserved.
 The automation opens the predicate gate, reads the `sumEquals` leaf, and closes — the conservation
 constraint pins `new`'s sum regardless of `old`. THIS IS THE AUTOMATION WORKING: no hand proof. -/
@@ -217,12 +217,12 @@ theorem ledger_VC_preserve :
     VC_preserve ledgerSM 0 ledgerSpec := by
   vcg_discharge
 
-/-- **`ledgerVCs` (PROVED)** — the full discharged VC set for the ledger SM: VC class 1 by
+/-- **`ledgerVCs`** — the full discharged VC set for the ledger SM: VC class 1 by
 `ledger_VC_preserve` (automated); classes 2/3/4 trivial (`pre = inv = post`). -/
 theorem ledgerVCs : vcg ledgerSM 0 ledgerSpec :=
   ⟨ledger_VC_preserve, VC_stayput_trivial _, fun _ h => h, fun _ h => h⟩
 
-/-- **`ledger_run_sound` (THE CAPSTONE — PROVED via the automated pipeline).** For the
+/-- **`ledger_run_sound` (THE CAPSTONE — via the automated pipeline).** For the
 eDSL-authored `ledgerSM` program, the conservation invariant `escrowed + paidOut = 100` holds at
 EVERY reachable state of the cell's whole run, given it holds at the start. Produced end-to-end:
 `dregg_program {…}` → `vcg` → `vcg_discharge` → `vcg_run_sound`. The demonstrated userspace-
@@ -248,18 +248,18 @@ holds at the start. We spec it separately (`inv := seq ≥ n₀`) and discharge 
 `omega`. This shows the automation handles the *relational* (old-vs-new) constraint class too, not
 just the post-state-only conservation class. (`ledgerCounterSpec` is defined in §3.) -/
 
-/-- **`ledgerCounter_VC_preserve` (PROVED — closed by `vcg_discharge`).** VC class 1 for the
+/-- **`ledgerCounter_VC_preserve` (closed by `vcg_discharge`).** VC class 1 for the
 `seq ≥ n₀` invariant: the monotone gate gives `old.seq ≤ new.seq`, and `n₀ ≤ old.seq` (the
 invariant) chains to `n₀ ≤ new.seq` by `omega`. The relational-constraint automation. -/
 theorem ledgerCounter_VC_preserve (n₀ : Int) :
     VC_preserve ledgerSM 0 (ledgerCounterSpec n₀) := by
   vcg_discharge
 
-/-- **`ledgerCounterVCs` (PROVED)** — full discharged VC set for the `seq ≥ n₀` invariant. -/
+/-- **`ledgerCounterVCs`** — full discharged VC set for the `seq ≥ n₀` invariant. -/
 theorem ledgerCounterVCs (n₀ : Int) : vcg ledgerSM 0 (ledgerCounterSpec n₀) :=
   ⟨ledgerCounter_VC_preserve n₀, VC_stayput_trivial _, fun _ h => h, fun _ h => h⟩
 
-/-- **`ledgerCounter_run_sound` (PROVED — the counter-fragment capstone).** For `ledgerSM`,
+/-- **`ledgerCounter_run_sound` (the counter-fragment capstone).** For `ledgerSM`,
 `seq ≥ n₀` holds at every reachable state of the whole run. The monotonic-counter half of the
 multi-field invariant, produced by the same automated pipeline. -/
 theorem ledgerCounter_run_sound (n₀ : Int)
@@ -301,7 +301,7 @@ example : True := by
 /-! ## §7 — `#guard` discriminating checks (fail-closed: admit the good, reject the bad).
 
 The VCG runs over the EXACT `ledgerSM` term the eDSL produced. Its admissibility gate must fire on
-a well-formed lifecycle move and reject every violation — so VC class 1 is about a genuinely-gated
+a well-formed lifecycle move and reject every violation — so VC class 1 is about a gated
 arrow, not a vacuous one. (Method is irrelevant for a `.predicate` program — all constraints bind.) -/
 
 /- A good move: Open→Settling (status 0→1), `seq` ticks up (3→4), conservation held (escrowed 100,

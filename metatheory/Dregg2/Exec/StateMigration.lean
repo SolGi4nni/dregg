@@ -15,7 +15,7 @@ This module models `Migration : Schema → Schema → (Value → Value)` and pro
     owner-signature discipline (`Upgrade.setProgramAdmissible … bySignature`, always admissible) and
     applies the identity re-shaping — a bad migration never bricks the cell.
 
-HONEST scope: we model field-add and field-rename, the two migrations that arise in practice.
+Scope: we model field-add and field-rename, the two migrations that arise in practice.
 Arbitrary schema rewriting is not attempted; `applyMigration` is a fail-soft gate that commits only
 when the result checks conforming AND balance-preserving, else falls back to identity.
 
@@ -45,7 +45,7 @@ structure Migration where
   /-- The proposed field-remapping applied to the record on upgrade. -/
   reshape   : Value → Value
 
-/-! ## The two concrete, provably-safe re-shapings (the HONEST scope). -/
+/-! ## The two concrete, provably-safe re-shapings (the scope). -/
 
 /-- **`addField name t default v`** — the field-ADD re-shaping: prepend a new field
 `(name, default)` to a record value, preserving every existing field. The canonical
@@ -114,7 +114,7 @@ def migrationFallbackAuth : UpgradeAuth := UpgradeAuth.bySignature
 
 /-! ## KEYSTONE 1 — `migrate_conforms`. -/
 
-/-- **`migrate_conforms` (PROVED).** Applying a migration to a value yields a value conforming to
+/-- **`migrate_conforms`.** Applying a migration to a value yields a value conforming to
 the NEW schema, PROVIDED the original conforms to the old schema. Two cases of the gate:
 
 * the proposed transform PASSED the gate ⇒ `applyMigration` committed it, and the gate's first
@@ -182,7 +182,7 @@ theorem addField_conforms (name : FieldName) (t : Ty) (default : Value)
 
 /-! ## KEYSTONE 2 — `migrate_conserves`. -/
 
-/-- **`migrate_conserves` (PROVED).** A migration PRESERVES the `balance`-field total: the
+/-- **`migrate_conserves`.** A migration PRESERVES the `balance`-field total: the
 conserved quantity (the `balance` field measured by `balOf`, exactly `RecordKernel.balOf`)
 survives the schema change. The gate's SECOND conjunct (`balOf reshape = balOf v`) is precisely
 this, and the fallback is the identity, which preserves it trivially. Stated as the
@@ -211,7 +211,7 @@ theorem migrate_conserves_domain (m : Migration) (v : Value) :
 
 /-! ## KEYSTONE 3 — `migrate_anti_brick`. -/
 
-/-- **`migrate_anti_brick` (PROVED).** A migration that WOULD violate conformance or conservation
+/-- **`migrate_anti_brick`.** A migration that WOULD violate conformance or conservation
 (fails the gate) FALLS BACK rather than bricking the cell. Two conjuncts, mirroring
 `Upgrade.stale_version_falls_back_to_signature`:
 
@@ -221,7 +221,7 @@ theorem migrate_conserves_domain (m : Migration) (v : Value) :
    (the cell is not bricked); and the migration is authorized by the always-admissible owner
    signature (`Upgrade.setProgramAdmissible … bySignature` — `adminBySignature`).
 
-2. **The bad transform was genuinely operative:** the gate really did reject it (it is `false`),
+2. **The bad transform was operative:** the gate really did reject it (it is `false`),
    so the fallback is the operative arm, not a redundant one — exactly the structure of
    `stale_version_falls_back_to_signature`.
 
@@ -240,7 +240,7 @@ theorem migrate_anti_brick (m : Migration) (v : Value)
   · -- The fallback is authorized by the always-admissible owner signature (`adminBySignature`).
     exact adminBySignature live stored
 
-/-- **`migrate_anti_brick_preserves`** — the cell is genuinely not bricked: if the original `v`
+/-- **`migrate_anti_brick_preserves`** — the cell is not bricked: if the original `v`
 conformed to the new schema and the migration took the fallback (`hbad`), the migrated value
 STILL conforms to the new schema and preserves balance. The concrete "no data-brick" payoff of
 the fallback. PROVED. -/

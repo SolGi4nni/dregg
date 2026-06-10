@@ -88,23 +88,23 @@ def BoundNote.commitment (vc : ValueCommitment) (nt : BoundNote) : Nat :=
 
 /-- **`noteCreateBound`** — the value-welded `noteCreate`: insert EXACTLY `commit value blinding` (the
 Pedersen commitment of the bound note's hidden value) into the off-ledger commitment set. This is
-`noteCreateCommitment` with the inserted `cm` no longer a bare opaque `Nat` but the value-commitment
+`noteCreateCommitment` with the inserted `cm` not a bare opaque `Nat` but the value-commitment
 of a specific, range-witnessed amount. -/
 def noteCreateBound (vc : ValueCommitment) (k : RecordKernelState) (nt : BoundNote) : RecordKernelState :=
   noteCreateCommitment k (nt.commitment vc)
 
 /-! ## §4 — The WELD theorems. -/
 
-/-- **`noteCreateBound_binds` — THE WELD (PROVED).** The commitment `noteCreateBound` inserts into the
+/-- **`noteCreateBound_binds` — THE WELD.** The commitment `noteCreateBound` inserts into the
 set IS the Pedersen commitment of the bound note's hidden value (`commit value blinding`). The set
-entry is no longer an unbound `Nat`: it TESTIFIES to a specific hidden amount (under the §8 `binding`
+entry is not an unbound `Nat`: it TESTIFIES to a specific hidden amount (under the §8 `binding`
 carrier). -/
 theorem noteCreateBound_binds (vc : ValueCommitment) (k : RecordKernelState) (nt : BoundNote) :
     vc.commit nt.value nt.blinding ∈ (noteCreateBound vc k nt).commitments := by
   unfold noteCreateBound BoundNote.commitment
   exact noteCreate_inserts k _
 
-/-- **`noteCreateBound_in_range` — NO HIDDEN INFLATION AT CREATION (PROVED).** A range-valid bound note
+/-- **`noteCreateBound_in_range` — NO HIDDEN INFLATION AT CREATION.** A range-valid bound note
 has its hidden value in `[0, 2 ^ n)`: a created note can NEVER commit a negative or overflowing amount.
 This is the no-inflation precondition the executed commitment now carries (the honest `range_sound`
 gadget — no primitive seam). -/
@@ -136,7 +136,7 @@ theorem sum_nonneg_of_AllNonneg (notes : List BoundNote) (h : AllNonneg notes) :
       simp only [List.map_cons, List.sum_cons]
       exact ⟨by linarith [hnt.1], by linarith [hnt.2]⟩
 
-/-- **`created_value_conservation` — SHIELDED VALUE-CONSERVATION OVER EXECUTED STATE (PROVED).** Over a
+/-- **`created_value_conservation` — SHIELDED VALUE-CONSERVATION OVER EXECUTED STATE.** Over a
 NON-NEGATIVE created-note list, the SUM of the commitments inserted equals the commitment of the SUMMED
 value under the SUMMED blinding: `Σ commit vᵢ rᵢ = commit (Σ vᵢ) (Σ rᵢ)` (the Pedersen `commit_hom`
 collapse, the heart of value conservation). So a verifier seeing only the disclosed created commitments
@@ -162,7 +162,7 @@ theorem created_value_conservation (vc : ValueCommitment) (notes : List BoundNot
       rw [vc.hom nt.value (rest.map BoundNote.value).sum nt.blinding (rest.map BoundNote.blinding).sum
             hnt.1 hvr hnt.2 hbr]
 
-/-- **`created_set_grows` (PROVED).** `noteCreateBound` only GROWS the commitment set: every previously
+/-- **`created_set_grows`.** `noteCreateBound` only GROWS the commitment set: every previously
 created commitment is still present (the grow-only dual of the nullifier set; creation never removes).
 -/
 theorem created_set_grows (vc : ValueCommitment) (k : RecordKernelState) (nt : BoundNote) (c : Nat)
@@ -170,7 +170,7 @@ theorem created_set_grows (vc : ValueCommitment) (k : RecordKernelState) (nt : B
   unfold noteCreateBound noteCreateCommitment
   exact List.mem_cons_of_mem _ h
 
-/-- **`noteCreateBound_recTotalAsset` (PROVED) — bal-NEUTRALITY survives the weld.** The welded create
+/-- **`noteCreateBound_recTotalAsset` — bal-NEUTRALITY survives the weld.** The welded create
 still leaves the on-ledger `recTotalAsset` UNCHANGED for every asset: shielded value
 lives in the off-ledger commitment set, never the transparent `bal` ledger (so it cannot double-count
 against transparent balances). -/
@@ -396,7 +396,7 @@ private theorem unshieldK_committed {s s' : ShieldedState} {nf : Nat} {dst : Cel
 
 /-! ### §6.2 — THE E4 KEYSTONE: the unshield amount IS the spent note's value (over the REAL step). -/
 
-/-- **`unshield_value_binding` — THE E4 KEYSTONE (PROVED, by construction + committed step).** A
+/-- **`unshield_value_binding` — THE E4 KEYSTONE (by construction + committed step).** A
 committed unshield spent a note that IS IN the inventory, whose nullifier IS the consumed one, and
 the transparent legs moved EXACTLY that note's value in EXACTLY that note's asset: `dst` is
 credited `n.value` and the pool of `n.asset` is debited `n.value`. The Mina-excess /
@@ -460,7 +460,7 @@ private theorem unspentValueIn_insert_fresh (notes : List NoteRecord) (nulls : L
     · exact hne he
     · exact h2 hm'
 
-/-- **The spend bookkeeping (PROVED).** Consuming the nullifier of the (unique, by distinctness)
+/-- **The spend bookkeeping.** Consuming the nullifier of the (unique, by distinctness)
 note `find?` locates drops that note's asset's unspent sum by exactly the note's value, and leaves
 every other asset's sum unchanged. -/
 private theorem unspentValueIn_spend (notes : List NoteRecord) (nulls : List Nat) (nf : Nat)
@@ -509,7 +509,7 @@ private theorem unspentValueIn_spend (notes : List NoteRecord) (nulls : List Nat
 
 /-! ### §6.4 — THE CUSTODY KEYSTONES: `PoolInvariant` is preserved (the pool is undrainable). -/
 
-/-- **`shieldK_preserves_pool` (PROVED).** A committed shield credits the pool of `a` by exactly
+/-- **`shieldK_preserves_pool`.** A committed shield credits the pool of `a` by exactly
 the created note's value AND appends that note unspent — both sides of the pool↔notes equation rise
 together; every other asset's pool column and inventory slice are untouched. Distinctness is
 maintained by the freshness gate. -/
@@ -560,7 +560,7 @@ theorem shieldK_preserves_pool {vc : ValueCommitment} {s s' : ShieldedState} {ac
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **`unshieldK_preserves_pool` (PROVED) — THE POOL IS UNDRAINABLE.** A committed unshield debits
+/-- **`unshieldK_preserves_pool` — THE POOL IS UNDRAINABLE.** A committed unshield debits
 the pool of the spent note's asset by exactly the note's value, and the note (the UNIQUE one with
 that nullifier, by distinctness) leaves the unspent sum — the equation is maintained; every other
 asset is untouched. With `PoolInvariant` carried, no sequence of shields/unshields can take more

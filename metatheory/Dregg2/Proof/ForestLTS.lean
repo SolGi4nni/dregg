@@ -189,7 +189,7 @@ def ForestAbsStep {ι : Type v} [Fintype ι] (p p' : ι → AbstractState) : Pro
 total `Σ_i total (cells i)`, given the CG-5 Σ=0 binding `Σ_i δ i = 0` (an explicit HYPOTHESIS,
 never derived). Telescoping: each half moves its total by `−δ i`, summing gives
 `Σ total (cells' i) = Σ total (cells i) − Σ δ i`, and the binding kills the second sum.
-The binding is genuinely load-bearing: without it the joint total need not be preserved. -/
+The binding is load-bearing: without it the joint total need not be preserved. -/
 theorem forestApply_cg5_conserves {ι : Type v} [Fintype ι] [DecidableEq ι]
     {cells cells' : ι → KernelState} {ft : ForestTurn ι}
     (hbind : ∑ i, ft.δ i = 0)

@@ -40,7 +40,7 @@ abbrev FieldName := String
 /-- **Schema field types** — the declared *shape* of (part of) a cell's state. A cell's
 AIR-id is the hash of (the canonical encoding of) this. The three leaves are the
 circuit-native scalars; `record` nests. (Bounded `vector`s / `set`s are a later extension;
-nested records already make this genuinely "ZK over records".) -/
+nested records already make this "ZK over records".) -/
 inductive Ty where
   /-- One field element (a balance, a counter, an amount). -/
   | scalar
@@ -132,7 +132,7 @@ end
 /-! ## `flatten_width` — the foundation lemma: width is a function of the SCHEMA alone. -/
 
 mutual
-/-- **`flatten_width` (PROVED)** — every value flattens to exactly `width t` field elements,
+/-- **`flatten_width`** — every value flattens to exactly `width t` field elements,
 *regardless of whether it conforms*. This is what makes a record→circuit compiler well-defined:
 the AIR's column count is fixed by the schema, and a malformed witness changes the *values* on
 the wires (failing constraints) but never the *number* of wires. The circuit-compilable

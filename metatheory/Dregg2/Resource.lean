@@ -290,7 +290,7 @@ instance : ResourceAlgebra (Auth M) where
 /-- **CANONICAL conservation law: conservation = a frame-preserving update on the
 authoritative camera.** Moving a holder's fragment `f → f'` under a *fixed* sovereign
 total `a` is frame-preserving exactly when it does not enlarge what any frame needs
-(`hmono`). This is the honest statement the bare-sum law hides: a *withdrawal* (`f' ≼ f`)
+(`hmono`). This is the statement the bare-sum law hides: a *withdrawal* (`f' ≼ f`)
 is always conservative; a *deposit* is conservative only against the authority's
 headroom. "Σ in = Σ out" is the special case where `hmono` holds by an exact swap. -/
 theorem conservation_is_fpu (a f f' : M)

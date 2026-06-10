@@ -39,7 +39,7 @@ is now, by construction, one the verified model finalizes.
    nine `(creator, seq)` finalized blocks, and on the equivocating-leader lace it admits NOTHING from
    the equivocator — the gate reproduces the verified rule at n=3.
 
-## HONEST SCOPE.
+## SCOPE.
 
 * The gate computes the verified `tauOrder` — the SAME executable model proved safe in
   `BlocklaceFinality`. It is NOT a re-derivation; it IMPORTS `tauOrder`/`tauGolden`/`findAllFinalLeaders`
@@ -179,7 +179,7 @@ finalized block before slicing it to the executor. -/
 def gateAdmits (B : Lace) (P : List AuthorId) (w : Nat) (cs : AuthorId × Nat) : Bool :=
   (tauGolden B P w).contains cs
 
-/-- **`gate_admits_iff_verified_finalizes` (PROVED — the gate-soundness tooth).** The gate admits a
+/-- **`gate_admits_iff_verified_finalizes` (the gate-soundness tooth).** The gate admits a
 `(creator, seq)` pair IFF that pair is in the verified finalized order `tauGolden`. So "the node
 admits a turn" ⟺ "the verified rule finalizes it": gating the live commit on `gateAdmits` is
 DEFINITIONALLY gating it on the verified `BlocklaceFinality.tauOrder`. The "agreement-checked"
@@ -190,7 +190,7 @@ theorem gate_admits_iff_verified_finalizes (B : Lace) (P : List AuthorId) (w : N
   unfold gateAdmits
   exact List.contains_iff_mem
 
-/-- **`gate_deterministic` (PROVED).** The gate is a deterministic function of the wire: two calls on
+/-- **`gate_deterministic`.** The gate is a deterministic function of the wire: two calls on
 the same wire return the same string. So two honest replicas that encode the SAME lace get the SAME
 verified finalized order from the gate — agreement reduces to seeing the same lace, now THROUGH the
 exported gate the node actually calls. -/
@@ -198,7 +198,7 @@ theorem gate_deterministic (s : String) (o₁ o₂ : String)
     (h₁ : finalizeGate s = o₁) (h₂ : finalizeGate s = o₂) : o₁ = o₂ := by
   rw [← h₁, ← h₂]
 
-/-- **`gate_admits_subset_verified` (PROVED).** Everything the gate admits is a verified-finalized
+/-- **`gate_admits_subset_verified`.** Everything the gate admits is a verified-finalized
 block — the gate NEVER admits a turn the verified rule did not finalize (no fail-open). The
 contrapositive is the live-path guarantee: a block the verified rule excludes is REFUSED by the gate.-/
 theorem gate_admits_subset_verified (B : Lace) (P : List AuthorId) (w : Nat) (cs : AuthorId × Nat)
@@ -216,7 +216,7 @@ the `#guard`s below (`qsort`-laden `tauGolden` does not kernel-reduce under `dec
 exclusion is a machine-checked `#guard`, the project's sanctioned tooth — a false `#guard` is a build
 error). -/
 
-/-- **`gate_admit_is_rule_output` (PROVED — the gate carries the verified rule's safety).** Whatever
+/-- **`gate_admit_is_rule_output` (the gate carries the verified rule's safety).** Whatever
 the gate admits is an element of the verified finalized order `tauGolden B P w`, which is the
 projection of the verified `tauOrder` (`findAllFinalLeaders`) the safety theorems constrain. So any
 safety fact about `tauGolden` (e.g. it never lists an equivocating leader's slot block, per
@@ -299,7 +299,7 @@ def decodeOrderWire (s : String) : Option (List BlockId) := do
   let body ← stripReq? "T=" s
   parseNatList? ',' body
 
-/-- **`tau_order_export_eq` (PROVED — the export carries the proof: output = encoded verified
+/-- **`tau_order_export_eq` (the export carries the proof: output = encoded verified
 `tauOrder`).** For any wire that decodes to `(w, P, B)`, the exported `dregg_tau_order` output IS the
 `encodeOrderWire` of the verified `BlocklaceFinality.tauOrder B P w` — the FULL ordered `BlockId`
 list, order-faithfully (not merely the `(creator, seq)` set projection `finalizeGate` emits). So the
@@ -312,7 +312,7 @@ theorem tau_order_export_eq (s : String) (w : Nat) (parts : List AuthorId) (B : 
   unfold dregg_tau_order tauOrderGate
   rw [h]
 
-/-- **`tau_order_export_is_verified` (PROVED — the order is the verified rule's output, not a
+/-- **`tau_order_export_is_verified` (the order is the verified rule's output, not a
 re-derivation).** The export's emitted order, read through `encodeOrderWire`, is the encoding of
 EXACTLY `tauOrder B parts w` — the same executable rule whose safety
 (`tauOrder_deterministic`/`finalLeaderAt_needs_unique_candidate`/`finalLeaders_one_per_wave`) is
@@ -323,7 +323,7 @@ theorem tau_order_export_is_verified (s : String) (w : Nat) (parts : List Author
     ∃ ord, dregg_tau_order s = encodeOrderWire ord ∧ ord = tauOrder B parts w :=
   ⟨tauOrder B parts w, tau_order_export_eq s w parts B h, rfl⟩
 
-/-- **`tau_order_gate_deterministic` (PROVED).** The raw-order gate is a deterministic function of
+/-- **`tau_order_gate_deterministic`.** The raw-order gate is a deterministic function of
 the wire. Two honest replicas that encode the SAME lace read the SAME verified total order from the
 export — agreement reduces to seeing the same lace. -/
 theorem tau_order_gate_deterministic (s : String) (o₁ o₂ : String)

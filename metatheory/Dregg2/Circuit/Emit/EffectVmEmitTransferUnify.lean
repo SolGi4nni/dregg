@@ -58,7 +58,7 @@ image, and report the nonce-tick gap LOUDLY (`exec_nonce_is_frozen_not_ticked`):
 per-cell sequence counter the EffectVM row ticks must add a `nonce`-ticking effect to `recKExec`; as
 of universe-A, transfer leaves the cell's nonce untouched.)
 
-## HONEST BOUNDARY (precise)
+## BOUNDARY (precise)
 
   * PER CELL. This unifies ONE cell's transition. The cross-cell two-sided conservation — sender DEBIT
     + receiver CREDIT summing to zero net mint across the two cells — is the TURN-COMPOSITION layer
@@ -69,7 +69,7 @@ of universe-A, transfer leaves the cell's nonce untouched.)
   * The `nonce`-tick mismatch above is the ONE genuine semantic divergence between the keystone's
     per-cell spec and universe-A's executor image. It is stated exactly, not papered.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. No `sorry`, no `:= True`,
 no `native_decide`, no `rfl`-posing-as-bridge. Imports are read-only (`Transfer`, the keystone Sound

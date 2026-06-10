@@ -156,7 +156,7 @@ then close the decidable / hypothesis leaves with `simp_all` / `omega`.
 
 HONESTY RAIL: the structural rewrite is a `simp only [admits_*]` that FAILS ON NO PROGRESS —
 so on a non-guard goal `discharge` falls straight through to the `fail` branch (it cannot fake
-progress). The trailing `done` is load-bearing: if a leaf is left OPEN (e.g. a genuinely false
+progress). The trailing `done` is load-bearing: if a leaf is left OPEN (e.g. a false
 guard, or one missing its context fact) the first arm errors and `discharge` FAILS LOUDLY
 rather than report a half-unfolded `admits` as progress. -/
 macro "discharge" : tactic =>
@@ -221,7 +221,7 @@ example (n : Nat) (h : n = 1) : True := by
     (have : n + 1 = 2 := by discharge)
   trivial
 
-/-- HONESTY-RAIL negative test (variant): a guard goal that is genuinely FALSE
+/-- HONESTY-RAIL negative test (variant): a guard goal that is FALSE
 (`firstParty p` admits but `p req = false`) cannot be closed by `discharge` — it reduces to
 the false leaf `p req = true` and stops, never fabricating it. -/
 example (p : Request → Bool) (req : Request) (w : Statement → Witness) (hp : p req = false) :

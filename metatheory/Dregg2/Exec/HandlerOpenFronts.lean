@@ -114,7 +114,7 @@ end HolePortals
 #guard countOpenFronts == openFronts.length
 #guard countOpenFronts == 1
 #guard ¬ openFronts.isEmpty
--- The closed `exercise_inner_turn_witness` AND `exercise_r4_facet_mask` fronts are no longer listed.
+-- The closed `exercise_inner_turn_witness` AND `exercise_r4_facet_mask` fronts are not listed.
 #guard (openFronts.filter (fun f => f.id == "exercise_inner_turn_witness")).isEmpty
 
 end Dregg2.Exec.HandlerOpenFronts

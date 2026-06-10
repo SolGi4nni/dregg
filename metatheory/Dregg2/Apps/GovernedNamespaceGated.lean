@@ -150,7 +150,7 @@ def amendThresholdNode (cred : Authorization Dg Pf) (newThreshold : Int) : DFore
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** A gated forest with NO children
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** A gated forest with NO children
 runs EXACTLY its root gated node step: `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`. (Both
 branches of `execFullForestG`'s match collapse because `execFullChildrenG _ s' [] = some s'`.) This is
 the bridge through which every governed op's `none`/`some` is read off `execFullAGated` directly. -/
@@ -195,7 +195,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §5 — END-USER THEOREMS 1–2: only authorized/attested callers commit; forged/unauthorized ⇒ none. -/
 
-/-- **`gn_forged_credential_rejected` — PROVED (END-USER THEOREM 1).** A governed-namespace op (any
+/-- **`gn_forged_credential_rejected` (END-USER THEOREM 1).** A governed-namespace op (any
 slot/value) presented with a FORGED threshold-sig / unauthorized carrier is rejected by the production
 turn entry: `execFullForestG s (gnNode forgedCred …) = none`, for EVERY pre-state `s`. The §8 credential
 leg (the committee threshold) fail-closes ⇒ the whole forest rolls back — only authorized/attested
@@ -211,7 +211,7 @@ theorem gn_forged_commit_rejected (s : RecChainedState) (newRoot : Int) :
     execFullForestG s (commitRootNode forgedCred newRoot) = none :=
   gn_forged_credential_rejected s routeTableRootSlot newRoot
 
-/-- **`gn_unauthorized_rejected` — PROVED (END-USER THEOREM 2, generic fail-closed).** ANY governed op
+/-- **`gn_unauthorized_rejected` (END-USER THEOREM 2, generic fail-closed).** ANY governed op
 whose gate fails on ANY leg (forged credential, unauthorized cap, undischarged caveat, OR a revoked
 nullifier) rejects the whole turn — `execFullForestG s (gnNode cred …) = none`. The single fail-closed
 root every authorization story rides on. -/
@@ -240,7 +240,7 @@ theorem gn_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value 
       = stateStepGuarded s slot nsActor nsCell value := by
   rw [execFullForestG_gnNode, if_pos hgate]
 
-/-- **`gn_committee_immutable` — PROVED (END-USER THEOREM 3).** If the `Immutable committee_root` caveat
+/-- **`gn_committee_immutable` (END-USER THEOREM 3).** If the `Immutable committee_root` caveat
 rejects the rewrite (`caveatsAdmit = false`, i.e. a value ≠ the constitutional committee root), the
 amendment is rejected — `execFullForestG s (amendCommitteeNode goodCred newRoot) = none` — EVEN with a
 genuine, fully-authorized committee credential. The committee is CONSTITUTIONAL: it cannot be captured
@@ -252,7 +252,7 @@ theorem gn_committee_immutable (s : RecChainedState) (newRoot : Int)
   rw [amendCommitteeNode, gn_good_node_runs_write s committeeRootSlot newRoot hgate]
   exact stateStepGuarded_caveat_violation_fails s committeeRootSlot nsActor nsCell newRoot hfix
 
-/-- **`gn_threshold_immutable` — PROVED (END-USER THEOREM 4).** If the `Immutable threshold` caveat
+/-- **`gn_threshold_immutable` (END-USER THEOREM 4).** If the `Immutable threshold` caveat
 rejects the rewrite (`caveatsAdmit = false`, i.e. a value ≠ the constitutional threshold), the change
 is rejected — `execFullForestG s (amendThresholdNode goodCred newThreshold) = none` — EVEN with a
 genuine credential. The signature bar cannot be lowered: no "drop the threshold to 1 signer" attack. -/
@@ -263,7 +263,7 @@ theorem gn_threshold_immutable (s : RecChainedState) (newThreshold : Int)
   rw [amendThresholdNode, gn_good_node_runs_write s thresholdSlot newThreshold hgate]
   exact stateStepGuarded_caveat_violation_fails s thresholdSlot nsActor nsCell newThreshold hfix
 
-/-- **`gn_version_monotonic_seq` — PROVED (END-USER THEOREM 5).** If the `MonotonicSequence version`
+/-- **`gn_version_monotonic_seq` (END-USER THEOREM 5).** If the `MonotonicSequence version`
 caveat rejects the bump (`caveatsAdmit = false`, i.e. `new ≠ old + 1` — a replay or a skip), the commit
 is rejected — `execFullForestG s (versionBumpNode goodCred newVersion) = none` — EVEN with a genuine
 credential. An atomic table swap advances the version by EXACTLY +1: no replaying an old version, no
@@ -275,7 +275,7 @@ theorem gn_version_monotonic_seq (s : RecChainedState) (newVersion : Int)
   rw [versionBumpNode, gn_good_node_runs_write s versionSlot newVersion hgate]
   exact stateStepGuarded_caveat_violation_fails s versionSlot nsActor nsCell newVersion hseq
 
-/-- **`gn_dispute_window_cannot_shrink` — PROVED (END-USER THEOREM 6).** If the `Monotonic
+/-- **`gn_dispute_window_cannot_shrink` (END-USER THEOREM 6).** If the `Monotonic
 dispute_window_height` caveat rejects the write (`caveatsAdmit = false`, i.e. `new < old`), the proposal
 is rejected — `execFullForestG s (disputeWindowNode goodCred newHeight) = none` — EVEN with a genuine
 credential. The contestation window can only push FORWARD: no shrinking the window out from under
@@ -294,7 +294,7 @@ constitution must lose its vote/commit power forever. We model "rotated out" as 
 nullifier sitting in the COMMITTED revocation registry `s.kernel.revoked` — the gate's revocation leg
 (`gateOK_revoked_fails`, reading adversary-uncontrollable kernel state) fail-closes. -/
 
-/-- **`gn_revoked_member_rejected` — PROVED (END-USER THEOREM 7).** If `goodCred`'s nullifier is in the
+/-- **`gn_revoked_member_rejected` (END-USER THEOREM 7).** If `goodCred`'s nullifier is in the
 COMMITTED revocation registry `s.kernel.revoked` (the member was rotated out of the committee), then
 EVERY governed op presented with it is rejected — `execFullForestG s (gnNode goodCred …) = none` — at
 EVERY reachable state `s`. NON-VACUOUS: a GENUINE (`portalVerify`-passing) credential is still rejected
@@ -320,7 +320,7 @@ theorem gnNode_delta_zero (cred : Authorization Dg Pf) (slot : FieldName) (value
     turnLedgerDeltaAsset ((lowerForestG (gnNode cred slot value)).map Prod.snd) b = 0 := by
   simp [gnNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`gn_commit_conserves` — PROVED (END-USER THEOREM 8).** A COMMITTED governed table swap preserves
+/-- **`gn_commit_conserves` (END-USER THEOREM 8).** A COMMITTED governed table swap preserves
 EVERY asset's total supply: `recTotalAsset s'.kernel b = recTotalAsset s.kernel b`,
 for every asset `b`. The route-table commitment write touches metadata, never balance — so a governance
 swap moves no money. A one-liner off `execFullForestG_conserves_per_asset` with the

@@ -257,7 +257,7 @@ instance : OrderTop AuthReq where
 /-- **`handoff_concrete_attenuation` — the seam closed.** When the running validator's
 concrete non-amplification decision accepts (`handoffNonAmplifyingC` true on the permission
 leg), the abstract attenuation `granted ≤ held` holds at the CONCRETE `AuthReq` carrier. So
-the proven `Exec.CapTP.handoff_non_amplifying` is no longer dark: its `granted.rights ≤
+the proven `Exec.CapTP.handoff_non_amplifying` is exercised on this path: its `granted.rights ≤
 held.rights` conclusion is exactly the decision the Rust runtime runs, on the same 6-element
 lattice. -/
 theorem handoff_concrete_attenuation

@@ -29,7 +29,7 @@ forged-`FINAL_BAL_LO` anti-ghost tooth did not bite. This v2:
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`, with the full
     last-row balance PI pins.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the WHOLE point of the effect)
+## What the EffectVM row CANNOT enforce (the boundary — the WHOLE point of the effect)
 
   * the `lifecycle` flip Live → Sealed — a per-cell SIDE-TABLE, NO EffectVM column;
   * the self-targeted receipt; the self-authority + is-Live guard.
@@ -37,7 +37,7 @@ forged-`FINAL_BAL_LO` anti-ghost tooth did not bite. This v2:
 The row witnesses the balance-neutrality (+ nonce tick) of seal but NOT the seal itself; the seal
 SOUNDNESS lives ONLY in `cellSealA_full_sound`.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only. No
 `sorry`/`:= True`/`native_decide`. Read-only imports.
@@ -366,7 +366,7 @@ theorem descriptor_agrees_with_executor_seal
   subst hpre
   rw [hcLo, heLo]
 
-/-! ## §11 — THE HONEST BOUNDARY: the lifecycle flip is OFF-ROW. -/
+/-! ## §11 — THE BOUNDARY: the lifecycle flip is OFF-ROW. -/
 
 /-- **`cellSeal_offrow_unenforced` — the loud finding.** The frozen-frame intent is invariant under any
 change OUTSIDE the economic block columns: two rows agreeing on all economic columns satisfy the intent

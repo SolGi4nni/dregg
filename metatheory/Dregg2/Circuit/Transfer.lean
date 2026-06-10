@@ -340,7 +340,7 @@ proven equal to — killing the "two-balance projection" ghost. -/
 
 /-- **`recTransfer_correct`** — the cell-update helper validated DECLARATIVELY (not trusted): a
 transfer debits `src`'s balance by `amt`, credits `dst`'s by `amt`, and leaves every other cell's
-whole record untouched. So the spec's `k'.cell = recTransfer …` clause genuinely encodes
+whole record untouched. So the spec's `k'.cell = recTransfer …` clause encodes
 debit ∧ credit ∧ cell-frame, rather than blindly trusting the helper. -/
 theorem recTransfer_correct (cell : CellId → Value) (src dst : CellId) (amt : ℤ) (hne : src ≠ dst) :
     balOf (recTransfer cell src dst amt src) = balOf (cell src) - amt
@@ -500,12 +500,12 @@ theorem transfer_bridge_iff (k : RecordKernelState) (t : Turn) :
 
 /-! ## §8 — NON-VACUITY: the circuit REJECTS bad inputs.
 
-A bridge that accepts everything is worthless. Here we EXHIBIT that the circuit is genuinely a gate:
+A bridge that accepts everything is worthless. Here we EXHIBIT that the circuit is a gate:
 a non-conserving witness, an unauthorized witness, and an overdraft witness each make
 `transferCircuit` UNSATISFIABLE. These are the Orchard-class forgeries the derived circuit forbids by
 construction. -/
 
-/-- **`transfer_circuit_rejects_nonconserving` — PROVED.** ANY witness whose moved-cell post-balances
+/-- **`transfer_circuit_rejects_nonconserving`.** ANY witness whose moved-cell post-balances
 do not conserve (`srcPost + dstPost ≠ srcPre + dstPre`) FAILS the conservation gate — the circuit is
 UNSATISFIABLE on it. Value cannot be forged out of thin air. -/
 theorem transfer_circuit_rejects_nonconserving (k : RecordKernelState) (t : Turn)
@@ -517,7 +517,7 @@ theorem transfer_circuit_rejects_nonconserving (k : RecordKernelState) (t : Turn
   have hgate : cTConserve.holds (encodeT k t k') := h cTConserve (by unfold transferCircuit; simp)
   exact hbad ((tconserve_iff k t k').mp hgate)
 
-/-- **`transfer_circuit_rejects_unauthorized` — PROVED.** Any witness over a pre-state where the move
+/-- **`transfer_circuit_rejects_unauthorized`.** Any witness over a pre-state where the move
 is NOT authorized (`authorizedB caps t = false`) FAILS the authority gate — UNSATISFIABLE. An
 unauthorized transfer cannot be proven. -/
 theorem transfer_circuit_rejects_unauthorized (k : RecordKernelState) (t : Turn)
@@ -527,7 +527,7 @@ theorem transfer_circuit_rejects_unauthorized (k : RecordKernelState) (t : Turn)
   have hgate : cTAuth.holds (encodeT k t k') := h cTAuth (by unfold transferCircuit; simp)
   rw [tauth_iff] at hgate; rw [hbad] at hgate; exact absurd hgate (by simp)
 
-/-- **`transfer_circuit_rejects_overdraft` — PROVED.** Any witness over a pre-state where the amount
+/-- **`transfer_circuit_rejects_overdraft`.** Any witness over a pre-state where the amount
 exceeds the source balance (`balOf src < amt`, i.e. `¬ amt ≤ balOf src`) FAILS the availability gate
 — UNSATISFIABLE. No overdraft can be proven. -/
 theorem transfer_circuit_rejects_overdraft (k : RecordKernelState) (t : Turn)

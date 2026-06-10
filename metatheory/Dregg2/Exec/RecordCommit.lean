@@ -17,14 +17,14 @@ This module is the LEAN keystone certifying that the Rust Stage-1 change is SOUN
     `restLimbs` carrier abstracts the identity/permissions/vk/caps/lifecycle prefix the Rust hasher
     absorbs before it (none of which Stage 1 touches), so the proofs are about the absorption itself.
 
-  * `cellCommit_binds_fieldsRoot` (PROVED) — INJECTIVITY OVER THE EXTENDED STATE: two cells whose
+  * `cellCommit_binds_fieldsRoot` — INJECTIVITY OVER THE EXTENDED STATE: two cells whose
     canonical commitments agree have the SAME rest-limbs AND the SAME `fields_root`. Tampering the
     user map (which flips `fields_root`, off `FieldsMap.fieldsRoot_binds_tail`) therefore FLIPS the
     commitment — the anti-ghost tooth for the map. Discharged off a single carried `compressN`
     collision-resistance hypothesis (a REALIZABLE Poseidon/BLAKE3 sponge injectivity — never an
     axiom, never a `+`-fold).
 
-  * `legacy_commit_absorbs_empty_root` (PROVED) — THE BACKWARD-COMPAT NO-OP: a LEGACY cell (no
+  * `legacy_commit_absorbs_empty_root` — THE BACKWARD-COMPAT NO-OP: a LEGACY cell (no
     user-tail keys, i.e. an empty overflow map) commits BYTE-IDENTICALLY to the empty-root reference.
     Its `fields_root` is the FIXED `emptyTailRoot` constant (`FieldsMap.fieldsRoot_empty_legacy`),
     cell-INDEPENDENT, so the absorbed limb is the same constant for every legacy cell: folding it in
@@ -88,12 +88,12 @@ def legacyReferenceCommit (rest : List ℤ) : ℤ :=
 
 /-! ## §2 — INJECTIVITY OVER THE EXTENDED STATE (the anti-ghost tooth for the map). -/
 
-/-- **`cellCommit_binds_state` (PROVED).** Equal canonical commitments (over the SAME `rest` prefix)
+/-- **`cellCommit_binds_state`.** Equal canonical commitments (over the SAME `rest` prefix)
 force the SAME user-field-map root. Off the single realizable `compressN`-injectivity carrier: the
 sponge binds its input list, and `rest` is shared, so the absorbed `fields_root` limbs are equal.
 Combined with `FieldsMap.fieldsRoot_binds_tail` (the map digest is injective on the tail), this is
 the anti-ghost tooth: two cells with the SAME commitment have the SAME committed map — so tampering
-the map (which moves `fields_root`) provably MOVES the commitment. The Stage-1 absorption is genuinely
+the map (which moves `fields_root`) provably MOVES the commitment. The Stage-1 absorption is
 LOAD-BEARING (a `fields_root := 0` stub would make this vacuous — forbidden). -/
 theorem cellCommit_binds_fieldsRoot
     (hN : compressNInjective compressN) (rest : List ℤ) (v w : Value)
@@ -107,7 +107,7 @@ theorem cellCommit_binds_fieldsRoot
   have := List.append_cancel_left hlist
   simpa using this
 
-/-- **`cellCommit_binds_tail` (PROVED corollary).** Equal commitments force the SAME committed user
+/-- **`cellCommit_binds_tail` (corollary).** Equal commitments force the SAME committed user
 tail (the actual `(key, value)` overflow entries), given the map digest's injectivity carriers. The
 full chain: equal commitment ⇒ equal `fields_root` (`cellCommit_binds_fieldsRoot`) ⇒ equal user tail
 (`FieldsMap.fieldsRoot_binds_tail`). This is "the canonical commitment binds the whole record" for
@@ -123,7 +123,7 @@ theorem cellCommit_binds_tail
 
 /-! ## §3 — THE LEGACY NO-OP (byte-identical backward-compat keystone). -/
 
-/-- **`legacy_commit_absorbs_empty_root` (PROVED).** THE backward-compat keystone the task requires:
+/-- **`legacy_commit_absorbs_empty_root`.** THE backward-compat keystone the task requires:
 a LEGACY cell — a record with NO user-tail keys (every key reserved/non-numeric, i.e. the 8-fixed-
 field cell whose overflow map is empty) — has a canonical commitment BYTE-IDENTICAL to the
 empty-root reference. Its `fields_root` is the FIXED `emptyTailRoot` constant
@@ -139,7 +139,7 @@ theorem legacy_commit_absorbs_empty_root
   unfold cellCommit legacyReferenceCommit
   rw [fieldsRoot_empty_legacy compress2 compressN fs h]
 
-/-- **`legacy_commits_agree` (PROVED corollary).** ANY two legacy cells (both with empty user tails)
+/-- **`legacy_commits_agree` (corollary).** ANY two legacy cells (both with empty user tails)
 share the SAME `fields_root` contribution: their commitments differ ONLY in the `rest` prefix. With
 the SAME `rest`, two legacy cells commit IDENTICALLY — the absorption does not distinguish legacy
 cells (it is a uniform no-op). Mirrors the Rust assertion that a fresh cell and a populated-then-

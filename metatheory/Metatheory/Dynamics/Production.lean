@@ -214,7 +214,7 @@ theorem unauthorized_amplification_not_production :
 
 /-- **The DUAL: an AUTHORIZED production over the rights camera IS `Fpu`** — granting `read`
 under a held bound that already contains `read` is a valid production step. Together with
-`unauthorized_amplification_not_production` this pins the production law as genuinely
+`unauthorized_amplification_not_production` this pins the production law as
 two-sided (true for authorized, false for unauthorized) — the non-vacuity is complete. -/
 theorem authorized_grant_is_production :
     Fpu (R := Auth (USet Rights))

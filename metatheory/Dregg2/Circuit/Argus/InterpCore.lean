@@ -42,7 +42,7 @@ transcription, and `decideVm` is the spec it must match. This SHRINKS the interp
     (`decideSites_eq_go` ties the two recursions), so the digest-chaining order is realized
     faithfully — site `i` reads digests `[0..i)`.
 
-## The HONEST residual (named, not papered).
+## The residual (named, not papered).
 
 `decideVm` decides `satisfiedVm` — the Lean ABSTRACT denotation. It does NOT, by itself, prove
 the Rust `EffectVmDescriptorAir::eval` realizes `satisfiedVm`; that is a Rust↔Lean transcription
@@ -55,7 +55,7 @@ the precise remaining path (`§5`), discovered by reading `lean_descriptor_air.r
        (`EffectVmEmit.lean:225`) — a general boundary polynomial vanishing on first/last — is NOT
        realized by the running interpreter. The `decideConstraint_boundary_*` lemmas DO decide it
        (so the reference is complete over Lean's form), but the Rust transcription drops the arm.
-       Honest status: NO current descriptor emits `.boundary` (all boundary pins go through
+       Status: NO current descriptor emits `.boundary` (all boundary pins go through
        `.piBinding`), so the gap is currently VACUOUS on the emitted corpus — but the reference
        and the Rust enum DISAGREE in shape, and a future `.boundary`-emitting descriptor would not
        be enforced by the Rust AIR. `decideConstraints_no_boundary_agrees` makes the
@@ -313,7 +313,7 @@ instance instDecidableSatisfiedVm (hash : List ℤ → ℤ) (d : EffectVmDescrip
 
 #assert_axioms instDecidableSatisfiedVm
 
-/-! ## §6 — The HONEST residual, made precise (R1: the Rust `Boundary`-arm gap).
+/-! ## §6 — The residual, made precise (R1: the Rust `Boundary`-arm gap).
 
 The Rust `VmConstraint` enum (`lean_descriptor_air.rs:909`) has ONLY `Gate`/`Transition`/`PiBinding`
 — NO `Boundary`. Lean's `decideConstraint` decides `.boundary` (the per-constructor lemmas above
@@ -395,7 +395,7 @@ theorem decideVm_selectorOnly_accepts (hash : List ℤ → ℤ) (s : Nat) (env :
 /-- **Non-vacuity (reject).** On a NON-pad row (`loc NOOP = 0`) whose selector `s` is NOT set
 (`loc s ≠ 1`), `decideVm` REJECTS the selector-only descriptor — the cross-selector-replay tooth,
 decided through the verified core. Together with `_accepts`, this proves `decideVm` is NON-vacuous:
-it genuinely separates satisfying from violating environments. -/
+it separates satisfying from violating environments. -/
 theorem decideVm_selectorOnly_rejects (hash : List ℤ → ℤ) (s : Nat) (env : VmRowEnv)
     (hpad : env.loc sel.NOOP = 0) (hwrong : env.loc s ≠ 1) :
     decideVm hash (selectorOnlyDescriptor s) env true true = false := by

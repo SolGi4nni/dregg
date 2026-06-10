@@ -55,7 +55,7 @@ def idNode (cred : Authorization Dg Pf) (slot : FieldName) (value : Int) : DFore
 
 /-! ## §2 — The leaf-collapse bridge (a childless gated forest runs EXACTLY its single gated node). -/
 
-/-- **`execFullForestG_leaf` — PROVED.** `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`
+/-- **`execFullForestG_leaf`.** `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`
 (both match branches collapse: `execFullChildrenG _ s' [] = some s'`). -/
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
@@ -68,7 +68,7 @@ theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullAct
 
 /-! ## §3 — The credential gate: a FORGED credential fails-closed (state-independent). -/
 
-/-- **`gateOK_forged_false` — PROVED.** `portalVerify (.signature 7 8) = decide (7 = 8) = false`, so the
+/-- **`gateOK_forged_false`.** `portalVerify (.signature 7 8) = decide (7 = 8) = false`, so the
 credential leg fails ⇒ the whole 4-leg gate is `false`, for EVERY pre-state. -/
 theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []) s = false := by
   have hcred : credentialValidG (mkAuth forgedCred []) = false := by decide
@@ -78,7 +78,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §4 — END-USER THEOREM 1: a FORGED credential ⇒ the whole gated turn REJECTS. -/
 
-/-- **`id_forged_rejected` — PROVED.** No identity op (any slot/value) commits with a forged credential:
+/-- **`id_forged_rejected`.** No identity op (any slot/value) commits with a forged credential:
 `execFullForestG s (idNode forgedCred …) = none`, for EVERY pre-state `s`. -/
 theorem id_forged_rejected (s : RecChainedState) (slot : FieldName) (value : Int) :
     execFullForestG s (idNode forgedCred slot value) = none := by
@@ -88,7 +88,7 @@ theorem id_forged_rejected (s : RecChainedState) (slot : FieldName) (value : Int
 
 /-! ## §5 — END-USER THEOREM 2 (THE HEADLINE): a REVOKED credential can NEVER act. -/
 
-/-- **`id_revoked_rejected` — PROVED (permanent revocation).** If `goodCred`'s nullifier is in the
+/-- **`id_revoked_rejected` (permanent revocation).** If `goodCred`'s nullifier is in the
 COMMITTED revocation registry `s.kernel.revoked`, then EVERY identity op presented with it is rejected
 by the production turn entry — `execFullForestG s (idNode goodCred …) = none` — at EVERY reachable
 state `s`. The revocation leg (`gateOK_revoked_fails`, reading adversary-uncontrollable kernel state)
@@ -109,7 +109,7 @@ theorem idNode_delta_zero (cred : Authorization Dg Pf) (slot : FieldName) (value
     turnLedgerDeltaAsset ((lowerForestG (idNode cred slot value)).map Prod.snd) b = 0 := by
   simp [idNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`id_op_conserves` — PROVED.** A committed identity op preserves every asset's total supply
+/-- **`id_op_conserves`.** A committed identity op preserves every asset's total supply
 (metadata write, no money). One-liner off `execFullForestG_conserves_per_asset`. -/
 theorem id_op_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf)
     (slot : FieldName) (value : Int) (b : AssetId)

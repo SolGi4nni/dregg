@@ -138,7 +138,7 @@ def mintBridgeCell (s : RecChainedState) (actor bridgeCell : CellId) (vk : Int) 
     Option RecChainedState :=
   mintEscrowCell s actor bridgeCell vk
 
-/-- **`mintBridgeCell_caveats` — PROVED.** When the registry IS `bridgeRegistry vk …`, the minted cell
+/-- **`mintBridgeCell_caveats`.** When the registry IS `bridgeRegistry vk …`, the minted cell
 carries the bridge state machine + deal-term immutables (installed by the executor, for life). -/
 theorem mintBridgeCell_caveats {s s' : RecChainedState} {actor bridgeCell : CellId} {vk : Int}
     {amount originator pot finalityWitness asset : Int}
@@ -149,21 +149,21 @@ theorem mintBridgeCell_caveats {s s' : RecChainedState} {actor bridgeCell : Cell
       = (bridgeFactoryEntry amount originator pot finalityWitness asset).caveats :=
   mintEscrowCell_caveats hreg h
 
-/-- **`mintBridgeCell_neutral` — PROVED.** Minting a bridge cell is conservation-NEUTRAL for every
+/-- **`mintBridgeCell_neutral`.** Minting a bridge cell is conservation-NEUTRAL for every
 asset (born EMPTY; the value is locked SEPARATELY by an ordinary move). -/
 theorem mintBridgeCell_neutral {s s' : RecChainedState} {actor bridgeCell : CellId} {vk : Int}
     (b : AssetId) (h : mintBridgeCell s actor bridgeCell vk = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   mintEscrowCell_neutral b h
 
-/-- **`mintBridgeCell_grows_accounts` — PROVED.** A minted bridge cell IS a live account (the mint
+/-- **`mintBridgeCell_grows_accounts`.** A minted bridge cell IS a live account (the mint
 has teeth; neutrality is not a no-op). -/
 theorem mintBridgeCell_grows_accounts {s s' : RecChainedState} {actor bridgeCell : CellId} {vk : Int}
     (h : mintBridgeCell s actor bridgeCell vk = some s') :
     bridgeCell ∈ s'.kernel.accounts :=
   mintEscrowCell_grows_accounts h
 
-/-- **`mintBridgeCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an unknown
+/-- **`mintBridgeCell_unknown_factory_fails` (fail-closed).** Minting against an unknown
 factory key never mints — the bridge program cannot be conjured without a published factory. -/
 theorem mintBridgeCell_unknown_factory_fails (s : RecChainedState) (actor bridgeCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :
@@ -184,7 +184,7 @@ def lockBridge (k : RecordKernelState) (originator bridgeCell : CellId) (asset :
     Option RecordKernelState :=
   depositEscrow k originator bridgeCell asset amt
 
-/-- **`lockBridge_conserves` — PROVED (KEYSTONE a, the LOCK leg).** A committed lock preserves every
+/-- **`lockBridge_conserves` (KEYSTONE a, the LOCK leg).** A committed lock preserves every
 asset's total supply (the value moves between two live accounts — funding the lock, not minting it).
 The ordinary move law. -/
 theorem lockBridge_conserves {k k' : RecordKernelState} {originator bridgeCell : CellId}
@@ -245,7 +245,7 @@ theorem no_refinalize_after_cancel {k : RecordKernelState} {bridgeCell tgt : Cel
       ∧ cancelBridge k bridgeCell tgt asset = none :=
   no_double_resolve_refunded k bridgeCell tgt asset finalityWitness hcan
 
-/-- **`finalize_advances_state` — PROVED.** After a committed finalize the bridge state slot reads
+/-- **`finalize_advances_state`.** After a committed finalize the bridge state slot reads
 FINALIZED — so a SECOND finalize/cancel sees a non-LOCKED state and `no_double_finalize` bites. -/
 theorem finalize_advances_state {k k' : RecordKernelState} {bridgeCell pot : CellId} {asset : AssetId}
     {finalityWitness : Int} (h : finalizeBridge k bridgeCell pot asset finalityWitness = some k') :
@@ -281,7 +281,7 @@ theorem locked_cancellable {k : RecordKernelState} {bridgeCell originator : Cell
 
 /-! ## §4b — the SETTLE-LIVENESS teeth (no value moved into a frozen/absent cell). -/
 
-/-- **`finalize_requires_live_pot` — PROVED.** A finalize whose bridge-POT target is not a live account
+/-- **`finalize_requires_live_pot`.** A finalize whose bridge-POT target is not a live account
 is rejected — the move cannot deliver the crossed value into a non-account, so no locked value can be
 settled into a frozen/absent pot. The factory-shape D3 teeth (the move's own fail-closed guard). -/
 theorem finalize_requires_live_pot {k : RecordKernelState} {bridgeCell pot : CellId} {asset : AssetId}
@@ -289,7 +289,7 @@ theorem finalize_requires_live_pot {k : RecordKernelState} {bridgeCell pot : Cel
     finalizeBridge k bridgeCell pot asset finalityWitness = none :=
   release_requires_live_beneficiary hdead
 
-/-- **`cancel_requires_live_originator` — PROVED.** A cancel whose originator refund target is not a
+/-- **`cancel_requires_live_originator`.** A cancel whose originator refund target is not a
 live account is rejected. -/
 theorem cancel_requires_live_originator {k : RecordKernelState} {bridgeCell originator : CellId}
     {asset : AssetId} (hdead : originator ∉ k.accounts) :
@@ -419,7 +419,7 @@ verb family, which shares the SAME off-ledger `escrows` store as escrow (the `br
           • `bridgeCancelKAsset`                                (replaced by: `cancelBridge` = the move
             OUT to the originator — `escrowRefund`).
     (2) the `bridge : Bool` TAG on `EscrowRecord` (`RecordKernel.lean:~269`) — DISSOLVED, because the
-        bridge no longer parks a record in the shared store; its value lives in the minted cell's `bal`
+        bridge does not park a record in the shared store; its value lives in the minted cell's `bal`
         column and its lifecycle in the cell's `state` slot. (The tag's only job was to separate the
         two RESOLUTION semantics in the shared store; with no shared store the distinction is the
         finalize-target, the pot, not a record flag.)

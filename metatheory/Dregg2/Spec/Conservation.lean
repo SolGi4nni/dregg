@@ -121,7 +121,7 @@ def is_disclosed_non_conservation : LinearityClass → Bool
   | Terminal     => false
   | Neutral      => false
 
-/-! ### Classifier facts (PROVED — they pin the prose claims to the `def`s). -/
+/-! ### Classifier facts (they pin the prose claims to the `def`s). -/
 
 /-- `requires_paired_sibling` is true *exactly* on `Conservative`. -/
 theorem requires_paired_sibling_iff (c : LinearityClass) :

@@ -147,7 +147,7 @@ theorem prov_good_node_runs_write (s : RecChainedState) (slot : FieldName) (valu
 
 /-! ## §4 — THEOREM 1: a write WITHOUT a valid capability is REJECTED (write-access requires the cap). -/
 
-/-- **`prov_forged_credential_rejected` — PROVED.** A provenance op (any slot/value) presented with a
+/-- **`prov_forged_credential_rejected`.** A provenance op (any slot/value) presented with a
 FORGED credential is rejected by the production turn entry — `execFullForestG s (provNode forgedCred …)
 = none`, for EVERY pre-state `s`. Nobody can append to / rewind / re-tip an agent's provenance log
 without a genuine capability. The §8 credential leg fail-closes ⇒ the whole forest rolls back. -/
@@ -174,7 +174,7 @@ stateStepGuarded …`; then the SLOT caveat on the written field makes `caveatsA
 `stateStepGuarded = none` (`stateStepGuarded_caveat_violation_fails`). The whole turn rejects — enforced
 BY THE EXECUTOR. -/
 
-/-- **`prov_entry_writeonce` — PROVED (THEOREM 2: APPEND-ONLY / NO OVERWRITE).** If entry slot `i`
+/-- **`prov_entry_writeonce` (THEOREM 2: APPEND-ONLY / NO OVERWRITE).** If entry slot `i`
 already holds a DIFFERENT non-zero digest (the `WriteOnce` caveat rejects the rewrite:
 `caveatsAdmit = false`), then a write over it is rejected by the executor — EVEN with a genuine
 credential. A committed provenance entry can NEVER be silently overwritten — this is the tamper-evidence
@@ -187,7 +187,7 @@ theorem prov_entry_writeonce (s : RecChainedState) (i : Nat) (digest : Int)
   rw [appendEntryRaw, prov_good_node_runs_write s (entrySlot i) digest hgate]
   exact stateStepGuarded_caveat_violation_fails s (entrySlot i) agentActor logCell digest hfrozen
 
-/-- **`prov_head_cannot_rewind` — PROVED (THEOREM 3: NO REWIND / RE-ORDER).** If the `Monotonic head`
+/-- **`prov_head_cannot_rewind` (THEOREM 3: NO REWIND / RE-ORDER).** If the `Monotonic head`
 caveat rejects the new cursor (`caveatsAdmit = false`, i.e. `newHead < old`), an advance is rejected —
 EVEN with a genuine credential. The append cursor can only GROW: a committed provenance prefix cannot
 be re-ordered, truncated, or rewound to fork a different continuation. -/
@@ -200,7 +200,7 @@ theorem prov_head_cannot_rewind (s : RecChainedState) (newHead : Int)
 
 /-! ## §6 — THEOREM 4: a committed append READS BACK exactly what was written (faithful recording). -/
 
-/-- **`prov_append_reads_back` — PROVED (THEOREM 4: FAITHFUL RECORDING).** When a provenance write
+/-- **`prov_append_reads_back` (THEOREM 4: FAITHFUL RECORDING).** When a provenance write
 COMMITS (`= some s'`), reading the written slot of the log cell back returns EXACTLY the digest written.
 The verifier reads TRUTH: a committed provenance entry is on the cell with the value the agent recorded —
 no silent rewrite, no drop. Rests on the proved `setField_fieldOf` write/read law through the committed
@@ -225,7 +225,7 @@ theorem prov_append_reads_back (s s' : RecChainedState) (cred : Authorization Dg
 
 /-! ## §7 — THEOREM 5: a committed append leaves a NON-REPUDIABLE AUDIT ROW (who/where). -/
 
-/-- **`prov_append_audited` — PROVED (THEOREM 5: AUDIT TRAIL).** A committed provenance write extends
+/-- **`prov_append_audited` (THEOREM 5: AUDIT TRAIL).** A committed provenance write extends
 the kernel RECEIPT LOG by exactly one row, recording the actor and the cell it wrote — a non-repudiable
 audit entry for every append. (`stateStep` prepends `{ actor, src := cell, dst := cell, amt := 0 }`.) So
 the provenance log is doubly attestable: the cell state holds the entry, and the receipt log holds the
@@ -267,7 +267,7 @@ log is exactly the honest hash chain of those claims. Decidable, computable, FAI
 def verifyChain (claims committed : List Int) : Bool :=
   committed == entryDigests claims
 
-/-- **`prov_chain_links` — PROVED (THEOREM 6: HONEST CHAIN VERIFIES).** A log whose committed entry
+/-- **`prov_chain_links` (THEOREM 6: HONEST CHAIN VERIFIES).** A log whose committed entry
 digests are EXACTLY the honest fold of the claims passes verification: `verifyChain claims
 (entryDigests claims) = true`. The verifier accepts a faithfully-built provenance chain. -/
 theorem prov_chain_links (claims : List Int) :
@@ -275,9 +275,9 @@ theorem prov_chain_links (claims : List Int) :
   unfold verifyChain
   simp
 
-/-- **`prov_chain_tamper_rejected` — PROVED (THEOREM 6, the TEETH: tamper is CAUGHT).** If the committed
+/-- **`prov_chain_tamper_rejected` (THEOREM 6, the TEETH: tamper is CAUGHT).** If the committed
 digests differ from the honest fold (a link was overwritten, dropped, or forged), verification REJECTS:
-`committed ≠ entryDigests claims → verifyChain claims committed = false`. So the chain is genuinely
+`committed ≠ entryDigests claims → verifyChain claims committed = false`. So the chain is
 verifiable — a single altered entry breaks it. NON-VACUOUS against `prov_chain_links` (witnessed in §9
 with a concrete tampered middle link). -/
 theorem prov_chain_tamper_rejected (claims committed : List Int)
@@ -294,7 +294,7 @@ theorem provNode_delta_zero (cred : Authorization Dg Pf) (slot : FieldName) (val
     turnLedgerDeltaAsset ((lowerForestG (provNode cred slot value)).map Prod.snd) b = 0 := by
   simp [provNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`prov_append_conserves` — PROVED (THEOREM 7).** A COMMITTED provenance turn preserves EVERY
+/-- **`prov_append_conserves` (THEOREM 7).** A COMMITTED provenance turn preserves EVERY
 asset's total supply: writing a claim digest touches metadata, never balance — so logging provenance
 moves no money. A one-liner off `execFullForestG_conserves_per_asset` with the `SetField`-is-balance-
 neutral hypothesis discharged by `provNode_delta_zero`. -/

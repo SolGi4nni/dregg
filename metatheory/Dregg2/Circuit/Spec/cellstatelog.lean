@@ -74,7 +74,7 @@ def emitReceipt (actor cell : CellId) : Turn :=
 The `recTransfer_correct` analog: rather than blindly trusting `emitStep`, we PIN what it does — its
 log grows by exactly the `emitReceipt` row (head), the tail is the old log, and the kernel is
 literally unchanged. So the spec's `st'.log = emitReceipt … :: st.log` ∧ kernel-frame clauses
-genuinely encode the helper's behaviour. -/
+encode the helper's behaviour. -/
 theorem emitStep_correct (st : RecChainedState) (actor cell : CellId) (topic data : Int) :
     (emitStep st actor cell topic data).log = emitReceipt actor cell :: st.log
     ∧ (emitStep st actor cell topic data).kernel = st.kernel := by
@@ -207,9 +207,9 @@ A spec that accepts everything is worthless. The dual of Transfer's `rejects_*` 
 target cell is NOT a live account is REJECTED — `execFullA` returns `none`. This is the cell-existence
 gate having teeth. -/
 
-/-- **`execFullA_emitEvent_rejects_dead` — PROVED.** An `emitEventA` whose target `cell` is NOT a
+/-- **`execFullA_emitEvent_rejects_dead`.** An `emitEventA` whose target `cell` is NOT a
 live account (`cell ∉ accounts`) is REJECTED by the executor (`= none`). The one gate this effect
-carries is genuinely a gate. -/
+carries is a gate. -/
 theorem execFullA_emitEvent_rejects_dead (st : RecChainedState) (actor cell : CellId)
     (topic data : Int) (hdead : cell ∉ st.kernel.accounts) :
     execFullA st (.emitEventA actor cell topic data) = none := by

@@ -233,7 +233,7 @@ def cwmAdmitTable (m : WorkflowMandate) : List (Int × Int) :=
   (List.range (m.steps.length + 1)).filterMap fun c =>
     if cwmAdvanceAdmits m c then some ((c : Int), ((c + 1 : Nat) : Int)) else none
 
-/-- **`cwmAdvanceAdmits_iff` — PROVED.** The baked predicate is EXACTLY `cwmAdvanceM`'s success at
+/-- **`cwmAdvanceAdmits_iff`.** The baked predicate is EXACTLY `cwmAdvanceM`'s success at
 cursor `c` (the off-line predicate and the table-source decision agree). -/
 theorem cwmAdvanceAdmits_iff (m : WorkflowMandate) (s : CwmRuntime) :
     cwmAdvanceAdmits m s.cursor = true ↔ (cwmAdvanceM m s).isSome = true := by
@@ -244,7 +244,7 @@ theorem cwmAdvanceAdmits_iff (m : WorkflowMandate) (s : CwmRuntime) :
       cases hcl : stepClearanceOK m s.cursor <;> simp
   · simp only [hlen, decide_false, Bool.false_and, ↓reduceIte, Option.isSome_none]
 
-/-- **`cwmAdmitTable_mem_iff` — PROVED.** The table contains `(c, c+1)` (as `Int`s) iff the charter
+/-- **`cwmAdmitTable_mem_iff`.** The table contains `(c, c+1)` (as `Int`s) iff the charter
 admits an advance at cursor `c`. The bridge from table membership to the predicate decision. -/
 theorem cwmAdmitTable_mem_iff (m : WorkflowMandate) (c : Nat) (hc : c < m.steps.length) :
     ((c : Int), ((c + 1 : Nat) : Int)) ∈ cwmAdmitTable m ↔ cwmAdvanceAdmits m c = true := by

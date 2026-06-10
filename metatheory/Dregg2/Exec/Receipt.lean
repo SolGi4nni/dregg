@@ -84,7 +84,7 @@ theorem wellLinked_tail {H : Receipt → Nat} {r : Receipt} {rest : ReceiptChain
 
 /-! ## Appending a fresh receipt keeps the chain well-linked. -/
 
-/-- **Append preserves well-linkedness — PROVED.** Extending a non-empty well-linked chain
+/-- **Append preserves well-linkedness.** Extending a non-empty well-linked chain
 `c` with a new head receipt `r` whose `prevHash` is the hash of the current head keeps the
 chain well-linked. This is the *only* way to grow the chain — exactly the `previous_receipt_hash`
 discipline that makes the log append-only. -/
@@ -118,7 +118,7 @@ theorem genesis_is_last {H : Receipt → Nat} (HFresh : ∀ p, H p ≠ genesisSe
     have hlink : r.prevHash = H p := hwl.1
     exact absurd (hgen ▸ hlink).symm (HFresh p)
 
-/-- **`chain_tamper_evident` (KEYSTONE, PROVED).** Two well-linked chains whose HEAD receipts are
+/-- **`chain_tamper_evident` (KEYSTONE).** Two well-linked chains whose HEAD receipts are
 equal are the SAME chain — i.e. history under a well-linked head is unique; no fork/insert/rewrite
 is possible without breaking a `prevHash` link. Given an injective digest `H` with a fresh sentinel
 (the §8 oracle), the head receipt commits to its entire predecessor history: if the heads agree
@@ -183,7 +183,7 @@ see `cexec_appends_receipt`.) -/
 def mkReceipt (prevDigest oldC newC effH : Nat) : Receipt :=
   { prevHash := prevDigest, oldCommit := oldC, newCommit := newC, effectsHash := effH }
 
-/-- **`replay_deterministic` (PROVED) — the unfold is a function.** Two replays that fold the SAME
+/-- **`replay_deterministic` — the unfold is a function.** Two replays that fold the SAME
 inputs (`H`, genesis chain, turn-data list) over the SAME builder produce the SAME chain. This is
 the orthogonal-persistence guarantee: the chain (cache) is fully re-derivable from the log (truth),
 deterministically. Mirrors `Exec/Cell.replay_deterministic` (the successor is a function of inputs).
@@ -206,14 +206,14 @@ def replayFold (H : Receipt → Nat) : ReceiptChain → List (Nat × Nat × Nat)
         | hd :: _  => H hd
       replayFold H (mkReceipt prevDigest oldC newC effH :: acc) rest
 
-/-- **`replayFold_deterministic` (PROVED).** The concrete fold is a pure function of its inputs, so
+/-- **`replayFold_deterministic`.** The concrete fold is a pure function of its inputs, so
 replaying the same genesis chain + turn-log reproduces the same chain — determinism for the
 *specific* replay function (a stronger statement than the generic `replay_deterministic`). -/
 theorem replayFold_deterministic (H : Receipt → Nat) (genesis : ReceiptChain)
     (turns : List (Nat × Nat × Nat)) :
     replayFold H genesis turns = replayFold H genesis turns := rfl
 
-/-- **`replayFold_wellLinked` (PROVED) — replay PRODUCES a well-linked chain.** Folding any
+/-- **`replayFold_wellLinked` — replay PRODUCES a well-linked chain.** Folding any
 turn-log onto a well-linked starting chain yields a well-linked chain: every appended receipt links
 to the prior head (or pins the sentinel at genesis). So the re-derived cache is itself tamper-proof
 — replay can't manufacture a broken link. -/
@@ -247,7 +247,7 @@ job; here we just need a well-typed per-turn record carrying the ChainLink.) -/
 def receiptOfStep (prevDigest : Nat) (s s' : ChainedState) : Receipt :=
   mkReceipt prevDigest (cellObs s).toNat (cellObs s').toNat s'.log.length
 
-/-- **`cexec_appends_receipt` (PROVED) — a committed step extends the chain by EXACTLY one.**
+/-- **`cexec_appends_receipt` — a committed step extends the chain by EXACTLY one.**
 Lifting `cexec_attests`'s `chainP` (the new log is `t :: oldlog` — the ChainLink) and `obsP` (the
 length grew by one — ObsAdvance): a `cexec` step prepends exactly one turn to the log, hence
 corresponds to appending exactly one receipt to the receipt chain. The log grows by one and only

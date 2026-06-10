@@ -19,7 +19,7 @@ Two faces:
     `bridgeMintH` ALIASES the mint kernel step (`recKMintAsset` — `bridgeMint` reuses the per-asset mint,
     `TurnExecutorFull:4610`), `delta = +value`. `createCellH`/`createCellFromFactoryH`/`spawnH` are
     ACCOUNT-GROWTH: a fresh cell born EMPTY, so the COMBINED measure is unchanged (`delta = 0`) even
-    though `accounts` genuinely GREW (`recTotalAsset_insert_fresh` — non-vacuous neutrality).
+    though `accounts` GREW (`recTotalAsset_insert_fresh` — non-vacuous neutrality).
 
   * **STATE/WRITE (closing R1's lifecycle-admission hole + R6).** dregg1's `SetField`/`IncrementNonce`/
     `SetPermissions`/`SetVerificationKey`/`MakeSovereign`/`Refusal`/`ReceiptArchive` are all
@@ -164,7 +164,7 @@ def bridgeMintH : EffectHandler SupplyArgs := mintH
 /-! ### §1.4 — ACCOUNT-GROWTH: `createCellH` / `createCellFromFactoryH` / `spawnH`.
 
 `Effect::CreateCell` mints a FRESH cell born EMPTY (`balance == 0` in every asset), so on the per-asset
-ledger it is conservation-NEUTRAL (`delta = 0`) EVEN THOUGH `accounts` genuinely GREW — proved
+ledger it is conservation-NEUTRAL (`delta = 0`) EVEN THOUGH `accounts` GREW — proved
 non-vacuously via `recTotalAsset_insert_fresh` (the fresh cell contributes exactly `0`). Creation is
 PRIVILEGED supply (`mintAuthorizedB` — bare ownership is NOT enough) AND requires a FRESH id
 (`newCell ∉ accounts`, the exact freshness premise the neutrality lemma consumes). `spawn` /
@@ -500,7 +500,7 @@ def hs0Destroyed : RecordKernelState :=
 -- §TEETH-5: an UNAUTHORIZED mint (actor 1 holds NO node cap on cell 0) is REJECTED even into a Live cell.
 #guard ((execEffect (mintEffect 1 0 0 25) hs0).isSome) == false  --  false
 -- §TEETH-6 (account-growth, neutral): createCell of fresh cell 2 (by privileged actor 0) SUCCEEDS and
--- leaves the combined measure UNCHANGED (born empty), while genuinely growing `accounts`.
+-- leaves the combined measure UNCHANGED (born empty), while growing `accounts`.
 #guard ((execEffect (createCellEffect 0 2) hs0).map
         (fun k => (recTotalAsset k 0, decide (2 ∈ k.accounts)))) == some (100, true)  --  some (100, true)
 -- §TEETH-7: createCell of a STALE id (cell 0 already exists) is REJECTED (the freshness gate bites —

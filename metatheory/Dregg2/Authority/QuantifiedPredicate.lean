@@ -108,7 +108,7 @@ The compilation of `exists_ range P` into the relational closure (seed `⊥`, th
 def orFold (range : List ι) (P : ι → RelPred) : RelPred :=
   range.foldr (fun i acc => .or (P i) acc) .bot
 
-/-- **`forall_eq_andFold` — PROVED (the keystone).** A bounded universal evaluates IDENTICALLY to the
+/-- **`forall_eq_andFold` (the keystone).** A bounded universal evaluates IDENTICALLY to the
 N-fold conjunction of its body. So `forall_ range P` DE-QUANTIFIES into `andFold range P : RelPred` —
 a bounded-∀ over cleartext is exactly O(N) of the body's relational constraints, NO new primitive. -/
 theorem forall_eq_andFold (range : List ι) (P : ι → RelPred) (rec : Value) :
@@ -121,7 +121,7 @@ theorem forall_eq_andFold (range : List ι) (P : ι → RelPred) (rec : Value) :
     simp only [List.all_cons, List.foldr_cons, RelPred.eval]
     rw [ih]
 
-/-- **`exists_eq_orFold` — PROVED (the keystone, dual).** A bounded existential evaluates IDENTICALLY
+/-- **`exists_eq_orFold` (the keystone, dual).** A bounded existential evaluates IDENTICALLY
 to the N-fold disjunction of its body. So `exists_ range P` DE-QUANTIFIES into `orFold range P :
 RelPred` — a bounded-∃ over cleartext is exactly O(N) of the body's relational constraints. -/
 theorem exists_eq_orFold (range : List ι) (P : ι → RelPred) (rec : Value) :
@@ -142,7 +142,7 @@ def compile : QuantPred ι → Option RelPred
   | .exists_ range P => some (orFold range P)
   | .memberOf _      => none  -- routes to the witnessed seam, not the relational closure
 
-/-- **`compile_sound` — PROVED.** Whenever `compile p = some r`, the compiled `RelPred` `r` evaluates
+/-- **`compile_sound`.** Whenever `compile p = some r`, the compiled `RelPred` `r` evaluates
 IDENTICALLY to `p`'s cleartext evaluator on EVERY record. So the de-quantification is faithful: the
 bounded quantifier and its O(N) relational compilation agree everywhere (anti-vacuously — see §6). -/
 theorem compile_sound (p : QuantPred ι) (r : RelPred) (hc : compile p = some r) (rec : Value) :
@@ -160,7 +160,7 @@ cost) + N + 1` — linear in the range. We state the structural form: `andFold`/
 Boolean node per range element on top of the bodies, so the cost is the sum of the body costs plus
 `N + 1`. (We bound the SHAPE here; the per-body cost is `RelationalClosure.relPred_constraints_bounded`.) -/
 
-/-- **`andFold_budget` — PROVED.** The N-fold conjunction's constraint budget is the sum of the body
+/-- **`andFold_budget`.** The N-fold conjunction's constraint budget is the sum of the body
 budgets plus `N + 1` (one `.and` node per element + the `⊤` seed). Linear in the range length — the
 bounded-∀ stays efficiently circuit-expressible. -/
 theorem andFold_budget (range : List ι) (P : ι → RelPred) :
@@ -175,7 +175,7 @@ theorem andFold_budget (range : List ι) (P : ι → RelPred) :
       RelationalClosure.constraintBudget]
     omega
 
-/-- **`orFold_budget` — PROVED (dual).** The N-fold disjunction's constraint budget is likewise the
+/-- **`orFold_budget` (dual).** The N-fold disjunction's constraint budget is likewise the
 sum of the body budgets plus `N + 1` — the bounded-∃ is linear in the range length too. -/
 theorem orFold_budget (range : List ι) (P : ι → RelPred) :
     RelationalClosure.constraintBudget (orFold range P)
@@ -210,7 +210,7 @@ def memberWitnessed {Stmt Wit : Type}
     (reg : Registry Stmt Wit) (kind : WitnessedKind) (root : Stmt) (path : Wit) : Bool :=
   registryVerify reg kind root path
 
-/-- **`memberOf_discharges` — PROVED.** When the registry's `kind`-verifier ACCEPTS the (root, path)
+/-- **`memberOf_discharges`.** When the registry's `kind`-verifier ACCEPTS the (root, path)
 witness, the membership atom is `Discharged` at the witnessed seam — the `SenderAuthorized` /
 `MemberOf` discharge, lifted to `memberOf kind` through the existing registry keystone. Soundness is
 the registry's, against any (possibly adversarial) prover; the Merkle binding stays a §8 obligation. -/
@@ -227,7 +227,7 @@ theorem memberOf_discharges {Stmt Wit : Type}
 shape an app author writes; it discharges through `memberOf_discharges`. -/
 def senderAuthorized : QuantPred ι := .memberOf .merkleMembership
 
-/-- **`senderAuthorized_is_memberOf` — PROVED (the connection).** `senderAuthorized` IS literally the
+/-- **`senderAuthorized_is_memberOf` (the connection).** `senderAuthorized` IS literally the
 `memberOf` atom at the Merkle-membership kind: it routes to the same witnessed verifier, no separate
 machinery. So the "sender in the authorized set" predicate is exactly the committed-set membership
 quantifier — the connection to the existing `SenderAuthorized` atom, made definitional. -/
@@ -240,14 +240,14 @@ The boundary, stated as a theorem: `memberOf` has no `RelPred` image (`compile �
 cleartext evaluator is `false` (fail-closed) — because the committed set is behind a `witnessed(vk)`,
 not in the post-record. Only the BOUNDED-RANGE quantifiers de-quantify; membership is the §8 portal. -/
 
-/-- **`memberOf_no_cleartext_compile` — PROVED (the boundary).** `compile (memberOf kind) = none`:
+/-- **`memberOf_no_cleartext_compile` (the boundary).** `compile (memberOf kind) = none`:
 membership over a committed set has NO relational-closure image — it must route through the witnessed
 seam (`memberOf_discharges`), not the cleartext fold. The de-quantification keystone is precisely for
 the bounded-range fragment; this names where it stops. -/
 theorem memberOf_no_cleartext_compile (kind : WitnessedKind) :
     compile (ι := ι) (.memberOf kind) = none := rfl
 
-/-- **`memberOf_clear_fails_closed` — PROVED.** The cleartext evaluator FAILS CLOSED on `memberOf`:
+/-- **`memberOf_clear_fails_closed`.** The cleartext evaluator FAILS CLOSED on `memberOf`:
 the committed set is not in the post-record, so `evalClear` cannot witness membership and returns
 `false`. Membership is discharged ONLY through the witnessed verifier (`memberOf_discharges`). -/
 theorem memberOf_clear_fails_closed (kind : WitnessedKind) (rec : Value) :
@@ -290,14 +290,14 @@ def qBad : Value :=
 #guard allBelowCap.evalClear qOk == (andFold [0, 1, 2] belowCap).eval qOk
 #guard allBelowCap.evalClear qBad == (andFold [0, 1, 2] belowCap).eval qBad
 
-/-- **`allBelowCap_discriminates` — PROVED (non-vacuity, as a theorem).** The bounded-∀ "all queue
+/-- **`allBelowCap_discriminates` (non-vacuity, as a theorem).** The bounded-∀ "all queue
 entries below capacity" returns DIFFERENT bits on the good and the violating record — a genuine
 discriminator, not a vacuous `:= true`. One over-bound entry flips it (`List.all` is fail-closed). -/
 theorem allBelowCap_discriminates :
     allBelowCap.evalClear qOk = true ∧ allBelowCap.evalClear qBad = false := by
   constructor <;> rfl
 
-/-- **`allBelowCap_dequantifies` — PROVED.** The bounded-∀ equals its N-fold-∧ compilation on BOTH
+/-- **`allBelowCap_dequantifies`.** The bounded-∀ equals its N-fold-∧ compilation on BOTH
 records — so the de-quantification keystone (`forall_eq_andFold`) is non-vacuous: it carries a real,
 discriminating predicate into the relational closure, both bits preserved. -/
 theorem allBelowCap_dequantifies :
@@ -320,7 +320,7 @@ def anyIsFive : QuantPred Nat := .exists_ [0, 1, 2] isFive
 #guard anyIsFive.evalClear qOk == (orFold [0, 1, 2] isFive).eval qOk
 #guard anyIsFive.evalClear qBad == (orFold [0, 1, 2] isFive).eval qBad
 
-/-- **`anyIsFive_discriminates` — PROVED (non-vacuity, the ∃ side).** The bounded-∃ "some entry = 5"
+/-- **`anyIsFive_discriminates` (non-vacuity, the ∃ side).** The bounded-∃ "some entry = 5"
 returns DIFFERENT bits: true where an entry matches (`qOk.q1 = 5`), false where none does (`qBad`). A
 genuine discriminator — `List.any` is satisfied by exactly one witness and unsatisfiable without. -/
 theorem anyIsFive_discriminates :
@@ -357,13 +357,13 @@ def adversarialPath : Root → Option Path := fun _ => some 999
 -- FAIL CLOSED: cleartext evaluation of the membership atom is always `false` (set not in record).
 #guard (senderAuthorized : QuantPred Nat).evalClear qOk == false
 
-/-- **`member_demo_discharges` — PROVED.** The honest membership witness `(root 42, path 43)` makes
+/-- **`member_demo_discharges`.** The honest membership witness `(root 42, path 43)` makes
 the `sender-authorized` atom `Discharged` — the §6.3 accept, through `memberOf_discharges`. -/
 theorem member_demo_discharges :
     @Discharged Root Path (verifiableOfRegistry memberReg .merkleMembership) 42 43 :=
   memberOf_discharges memberReg .merkleMembership 42 43 (by decide)
 
-/-- **`member_demo_rejects_nonmember` — PROVED (non-vacuity, the membership side).** A NON-member
+/-- **`member_demo_rejects_nonmember` (non-vacuity, the membership side).** A NON-member
 witness is REJECTED by the verifier even when an adversarial prover proposes it: `memberWitnessed`
 returns `false`, so the atom does NOT discharge. The gate, not the prover, decides — membership is a
 genuine discriminator (accepts a member, rejects a non-member). -/

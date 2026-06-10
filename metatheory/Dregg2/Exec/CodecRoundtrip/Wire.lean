@@ -318,7 +318,7 @@ example : parseWWire (encodeWWire wireWitness) = some wireWitness :=
   parseWWire_encode wireWitness wireWitness_cells_wf wireWitness_turn_wf rfl
 
 -- NON-VACUITY for the §10b leaf: a MULTI-entry per-cell-Nat table (a Sealed cell `1` and a Destroyed
--- cell `3`) round-trips with a trailing `rest` — so `parseCellNats_encode` genuinely inverts the
+-- cell `3`) round-trips with a trailing `rest` — so `parseCellNats_encode` inverts the
 -- `lifecycle`/`deathCert` codec on populated data, not just `[]`.
 example : parseCellNats ((encodeCellNats [(0, 1), (7, 3)]).toList ++ "Z".toList)
     = some ([(0, 1), (7, 3)], "Z".toList) :=

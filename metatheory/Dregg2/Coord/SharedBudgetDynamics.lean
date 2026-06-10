@@ -73,7 +73,7 @@ model. The bridge to `EntangledJoint`: that module's `totalSpent ≤ Σ ceilings
 bound; THIS module's `Σ accepted ≤ balance` is the *settled* bound after escalation — together they
 are the full COD safety story (optimistic over-allocate, tau-resolve back within the true balance).
 
-## Honest scope
+## Scope
 
 Ed25519 spending-certificate signatures (`shared_budget.rs` rebalance reports) are the named crypto
 assumption — a "report" here is a verified report; we model the COUNTING/conservation `rebalance`
@@ -96,7 +96,7 @@ open scoped BigOperators
 the balance — that is what allows concurrent local spending; safety is the `f * ceiling` bound. -/
 def ceiling (balance f : Nat) : Nat := balance * (f + 1) / (2 * f + 1)
 
-/-- **`ceiling_le_balance` — the per-agent ceiling never exceeds the pool (PROVED).** Since
+/-- **`ceiling_le_balance` — the per-agent ceiling never exceeds the pool.** Since
 `f + 1 ≤ 2f + 1`, `balance * (f+1) / (2f+1) ≤ balance`. So no single agent can be allotted more than
 the whole balance; over-allocation lives only in the SUM `Σ ceiling > balance`. -/
 theorem ceiling_le_balance (balance f : Nat) : ceiling balance f ≤ balance := by
@@ -119,7 +119,7 @@ theorem ceiling_le_balance (balance f : Nat) : ceiling balance f ≤ balance := 
 
 /-! ## 2. The Byzantine worst-case-overspend bound (`f * ceiling`). -/
 
-/-- **`overspend_bounded_by_f_ceiling` — the STINGRAY SAFETY BOUND (PROVED).** With `n` agents, each
+/-- **`overspend_bounded_by_f_ceiling` — the STINGRAY SAFETY BOUND.** With `n` agents, each
 allotted `ceiling balance f`, and at most `f` Byzantine, the maximum overspend the honest majority
 cannot detect before rebalance is `f * ceiling balance f`. We prove: the total an adversary of `f`
 agents can spend (each up to its ceiling) is `f * ceiling`, and this is the entire undetectable
@@ -129,7 +129,7 @@ theorem overspend_bounded_by_f_ceiling (balance f advSpend : Nat)
     (hadv : advSpend ≤ f * ceiling balance f) :
     advSpend ≤ f * ceiling balance f := hadv
 
-/-- **`f_ceiling_safe_margin` — the bound is BELOW the doubled-balance blowup (PROVED, non-vacuity).**
+/-- **`f_ceiling_safe_margin` — the bound is BELOW the doubled-balance blowup (non-vacuity).**
 The `f * ceiling` overspend is a genuine bound: with `f ≥ 1` and the ceiling a `(f+1)/(2f+1) ≈ 1/2`
 fraction, `f * ceiling < balance * f` — the Byzantine surplus is sub-linear in the naive
 `n * ceiling` worst case, which is the entire point of the `(f+1)/(2f+1)` choice over `1/1`. -/
@@ -165,7 +165,7 @@ def resolveOrdered : Nat → List Nat → List Resolution × Nat
 def acceptedSum (bal : Nat) (amounts : List Nat) : Nat :=
   bal - (resolveOrdered bal amounts).2
 
-/-- **`resolveOrdered_remaining_le` — the running balance only DECREASES (PROVED).** The final
+/-- **`resolveOrdered_remaining_le` — the running balance only DECREASES.** The final
 remaining balance never exceeds the starting balance (debits only subtract). The monotonicity the
 conservation rests on. -/
 theorem resolveOrdered_remaining_le (bal : Nat) (amounts : List Nat) :
@@ -183,7 +183,7 @@ theorem resolveOrdered_remaining_le (bal : Nat) (amounts : List Nat) :
         simp only
         exact ih bal
 
-/-- **`resolveOrdered_accepted_le_balance` — TAU-RESOLUTION CONSERVATION (PROVED).** The total
+/-- **`resolveOrdered_accepted_le_balance` — TAU-RESOLUTION CONSERVATION.** The total
 ACCEPTED debit amount after `resolve_with_ordering` never exceeds the starting `total_balance`. Even
 though the agents collectively OVERSPENT (the optimistic `is_overspent` condition that triggered
 escalation), the tau-ordered resolution admits only a balance-respecting set of debits — the
@@ -194,7 +194,7 @@ theorem resolveOrdered_accepted_le_balance (bal : Nat) (amounts : List Nat) :
   unfold acceptedSum
   omega
 
-/-- **`resolveOrdered_remaining_eq_balance_sub_accepted` — exact accounting (PROVED).** The final
+/-- **`resolveOrdered_remaining_eq_balance_sub_accepted` — exact accounting.** The final
 remaining balance is exactly `balance − (sum of accepted)`: the resolution is a clean partition of
 the balance into accepted-spend + leftover. (The exact form of `shared_budget.rs:580`
 `self.total_balance = remaining_balance`.) -/
@@ -204,14 +204,14 @@ theorem accepted_plus_remaining (bal : Nat) (amounts : List Nat) :
   have := resolveOrdered_remaining_le bal amounts
   omega
 
-/-- **`resolveOrdered_head_accept` — FIRST-WINS at the head (PROVED).** The first tau-ordered debit
+/-- **`resolveOrdered_head_accept` — FIRST-WINS at the head.** The first tau-ordered debit
 is accepted iff it fits the full balance; on accept the tail resolves against `bal - a`. This is the
 prefix/first-come-wins determinism: the same tau order yields the same verdicts on every node. -/
 theorem resolveOrdered_head_accept (bal a : Nat) (as : List Nat) (h : a ≤ bal) :
     (resolveOrdered bal (a :: as)).1.head? = some Resolution.accepted := by
   unfold resolveOrdered; rw [if_pos h]; rfl
 
-/-- **`resolveOrdered_head_reject` — FIRST-WINS reject at the head (PROVED).** A head debit exceeding
+/-- **`resolveOrdered_head_reject` — FIRST-WINS reject at the head.** A head debit exceeding
 the balance is rejected and the tail resolves against the UNCHANGED balance — the rejected debit
 consumes nothing. -/
 theorem resolveOrdered_head_reject (bal a : Nat) (as : List Nat) (h : ¬ a ≤ bal) :
@@ -237,7 +237,7 @@ def rebalance (balance : Nat) (reports : List Report) : Nat :=
   let spent := totalReported reports
   if spent ≤ balance then balance - spent else 0
 
-/-- **`rebalance_conserves` — REBALANCE BALANCE-CONSERVATION (PROVED).** On the no-overspend path,
+/-- **`rebalance_conserves` — REBALANCE BALANCE-CONSERVATION.** On the no-overspend path,
 `new_balance + totalReported = old_balance`: the epoch-close exactly transfers the reported spend
 out of the pool — no value created or destroyed. -/
 theorem rebalance_conserves (balance : Nat) (reports : List Report)
@@ -247,7 +247,7 @@ theorem rebalance_conserves (balance : Nat) (reports : List Report)
   rw [if_pos hok]
   omega
 
-/-- **`rebalance_le_balance` — the new balance never grows (PROVED).** Reconciliation can only shrink
+/-- **`rebalance_le_balance` — the new balance never grows.** Reconciliation can only shrink
 the pool (or clamp to 0): `rebalance balance reports ≤ balance`. -/
 theorem rebalance_le_balance (balance : Nat) (reports : List Report) :
     rebalance balance reports ≤ balance := by
@@ -256,7 +256,7 @@ theorem rebalance_le_balance (balance : Nat) (reports : List Report) :
   · rw [if_pos h]; omega
   · rw [if_neg h]; omega
 
-/-- **`rebalance_valid_reports_within_ceilings` — valid reports keep aggregate ≤ n·ceiling (PROVED).**
+/-- **`rebalance_valid_reports_within_ceilings` — valid reports keep aggregate ≤ n·ceiling.**
 If every report is within `ceil` and there are `n` reports, the total reported is at most `n * ceil`
 — bounding the worst-case deduction (and connecting to the Stingray `f * ceiling` undetected-surplus
 bound: only the `f` un-honest reports can be inflated, each to `ceil`). -/

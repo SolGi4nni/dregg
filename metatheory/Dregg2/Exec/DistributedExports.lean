@@ -143,7 +143,7 @@ calls for the §6 non-amplification leg. Same `String → String` shape as `dreg
 @[export dregg_captp_validate_handoff]
 def dregg_captp_validate_handoff (s : String) : String := handoffGate s
 
-/-- **`captp_validate_handoff_eq` (PROVED — the export carries the proof).** For any wire that decodes
+/-- **`captp_validate_handoff_eq` (the export carries the proof).** For any wire that decodes
 to `q`, the export returns `"1"` iff the VERIFIED `handoffNonAmplifyingC` accepts. So the runtime's
 non-amplification verdict IS the verified lattice decision, marshalled. -/
 theorem captp_validate_handoff_eq (s : String) (q : HandoffQuery)
@@ -154,7 +154,7 @@ theorem captp_validate_handoff_eq (s : String) (q : HandoffQuery)
   unfold dregg_captp_validate_handoff handoffGate
   rw [h]
 
-/-- **`captp_validate_handoff_admits_iff` (PROVED).** Read as a Boolean: the export emits `"1"`
+/-- **`captp_validate_handoff_admits_iff`.** Read as a Boolean: the export emits `"1"`
 exactly when the verified rule says the handoff is non-amplifying. -/
 theorem captp_validate_handoff_admits_iff (s : String) (q : HandoffQuery)
     (h : decodeHandoffWire s = some q) :
@@ -277,7 +277,7 @@ def dropGate (s : String) : String :=
 @[export dregg_captp_process_drop]
 def dregg_captp_process_drop (s : String) : String := dropGate s
 
-/-- **`captp_process_drop_eq` (PROVED).** For any wire that decodes to `q`, the export returns the
+/-- **`captp_process_drop_eq`.** For any wire that decodes to `q`, the export returns the
 verified `processDrop` verdict tag + the verified post-table's `totalRefs`. So the runtime GC verdict
 IS `CapTPGCConcrete.processDrop`, marshalled. -/
 theorem captp_process_drop_eq (s : String) (q : DropQuery)
@@ -369,7 +369,7 @@ runtime calls on a promise resolution/break. -/
 @[export dregg_captp_pipeline_resolve]
 def dregg_captp_pipeline_resolve (s : String) : String := pipelineGate s
 
-/-- **`captp_pipeline_resolve_eq` (PROVED).** For any wire that decodes to `q`, the export returns the
+/-- **`captp_pipeline_resolve_eq`.** For any wire that decodes to `q`, the export returns the
 verified FIFO drain order + post-count. -/
 theorem captp_pipeline_resolve_eq (s : String) (q : PipelineQuery)
     (h : decodePipelineWire s = some q) :
@@ -379,13 +379,13 @@ theorem captp_pipeline_resolve_eq (s : String) (q : PipelineQuery)
   unfold dregg_captp_pipeline_resolve pipelineGate
   rw [h]
 
-/-- **`pipeline_fulfill_drains_fifo` (PROVED).** On a fulfill event the drained order IS the input
+/-- **`pipeline_fulfill_drains_fifo`.** On a fulfill event the drained order IS the input
 queue, in insertion order (the FIFO tooth — the verified `Registry.resolve_preserves_fifo` order). -/
 theorem pipeline_fulfill_drains_fifo (q : PipelineQuery) (hf : q.fulfill = true) :
     (pipelineDrain q).1 = q.queue := by
   unfold pipelineDrain; rw [hf]; rfl
 
-/-- **`pipeline_break_drains_nothing` (PROVED).** On a break event NOTHING drains — the cascade
+/-- **`pipeline_break_drains_nothing`.** On a break event NOTHING drains — the cascade
 delivers no message (the verified `CapTPPipeline.break_freezes_state` over the registry). -/
 theorem pipeline_break_drains_nothing (q : PipelineQuery) (hb : q.fulfill = false) :
     (pipelineDrain q).1 = [] := by
@@ -457,7 +457,7 @@ calls in `evaluate_votes`. -/
 @[export dregg_coord_2pc_decide]
 def dregg_coord_2pc_decide (s : String) : String := twoPCGate s
 
-/-- **`coord_2pc_decide_eq` (PROVED).** For any wire that decodes to `q`, the export returns the
+/-- **`coord_2pc_decide_eq`.** For any wire that decodes to `q`, the export returns the
 verified `evaluate` decision tag. The runtime's commit/abort/pending verdict IS
 `TwoPhaseCommit.evaluate`, marshalled — so it inherits `evaluate_not_commit_and_abort` (no conflicting
 decision) by construction. -/
@@ -572,7 +572,7 @@ calls for `happened_before`. -/
 @[export dregg_coord_causal_order]
 def dregg_coord_causal_order (s : String) : String := causalGate s
 
-/-- **`coord_causal_order_eq` (PROVED).** For any wire that decodes to `q`, the export returns `"1"`
+/-- **`coord_causal_order_eq`.** For any wire that decodes to `q`, the export returns `"1"`
 iff the decidable `hbBool` says `a` happened before `b`. -/
 theorem coord_causal_order_eq (s : String) (q : CausalQuery)
     (h : decodeCausalWire s = some q) :
@@ -660,7 +660,7 @@ runtime calls in `resolve_with_ordering`. -/
 @[export dregg_coord_shared_budget]
 def dregg_coord_shared_budget (s : String) : String := budgetGate s
 
-/-- **`coord_shared_budget_eq` (PROVED).** For any wire that decodes to `q`, the export returns the
+/-- **`coord_shared_budget_eq`.** For any wire that decodes to `q`, the export returns the
 verified `resolveOrdered` per-debit verdicts + remaining balance + accepted sum. The runtime's
 tau-resolution IS `SharedBudgetDynamics.resolveOrdered`, marshalled — so it inherits
 `resolveOrdered_accepted_le_balance` (accepted ≤ balance) by construction. -/

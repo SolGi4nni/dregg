@@ -48,7 +48,7 @@ def runHandlerTurn (ctx : AdmCtx) (h : TurnHdr) (s : RecChainedState)
 
 `runTurn`/`runGatedForestTurn` return `Option RecChainedState`, and the C export collapsed BOTH
 `some (commitPrologue …)` (admission passed but the BODY FAILED — e.g. a forged credential rolled the
-forest back, only the never-rolled-back fee/nonce prologue survives) AND `some s'` (body genuinely
+forest back, only the never-rolled-back fee/nonce prologue survives) AND `some s'` (body
 committed) to the SAME `ok:1`. A forged-credential turn therefore reported `ok:1` and was treated as a
 committed/accepted turn by the node — taking the attacker's word that the body succeeded.
 
@@ -56,7 +56,7 @@ committed/accepted turn by the node — taking the attacker's word that the body
 when the forest body actually committed. A `PrologueCommittedBodyFailed` result charges the fee
 (anti-spam) but the turn is REJECTED — it must NOT be treated as an accepted turn. -/
 
-/-- The three-way result of a turn: the body genuinely committed, the body failed but the prologue
+/-- The three-way result of a turn: the body committed, the body failed but the prologue
 (fee/nonce) was committed (anti-spam, NOT an accepted turn), or admission rejected it (no edit). -/
 inductive TurnStatus
   /-- Admission failed: rejected with NO state edit. -/
@@ -65,7 +65,7 @@ inductive TurnStatus
   back, but the BODY FAILED (a forged credential / failed effect / violated caveat rolled the forest
   back). The fee may be charged as anti-spam, but **the turn is REJECTED** — not an accepted turn. -/
   | prologueCommittedBodyFailed
-  /-- Admission passed AND the body committed: the turn is genuinely ACCEPTED. -/
+  /-- Admission passed AND the body committed: the turn is ACCEPTED. -/
   | bodyCommitted
 deriving Repr, DecidableEq
 
@@ -206,7 +206,7 @@ theorem runGatedForestTurn_committing_body (ctx : AdmCtx) (h : TurnHdr) (s : Rec
   refine prologue_then_commit ctx h s (gfBody ctx h forest) (distributeFee ctx s' h.fee) hadm ?_
   simp [gfBody, hbody]
 
-/-- **A2 end-to-end conservation-modulo-burn (PROVED).** On a committing turn over THREE DISTINCT fee
+/-- **A2 end-to-end conservation-modulo-burn.** On a committing turn over THREE DISTINCT fee
 cells, the {agent, proposer, treasury} triple's total after the FULL turn (prologue ∘ body ∘ distribute)
 equals the triple total over the POST-PROLOGUE PRE-DISTRIBUTION state `s` (the original, with the
 prologue's −fee already counted via `commitPrologue`) MINUS exactly `feeBurned h.fee`. Concretely: the

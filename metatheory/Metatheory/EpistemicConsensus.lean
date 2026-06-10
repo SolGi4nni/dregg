@@ -140,7 +140,7 @@ namespace Frame
 
 variable {Ω : Type u} {ι : Type v} (F : Frame Ω ι)
 
-/-- **Every agent knows a discharged claim — PROVED, kernel-clean.** If `w₀` discharges `X`,
+/-- **Every agent knows a discharged claim.** If `w₀` discharges `X`,
 then at the actual world *every* agent `i` `Knows` the proposition `verified X w₀` —
 honest or Byzantine, alive or dead. The reason is the realizability core: `Discharged` is
 world-independent, so it survives every indistinguishability edge. Knowledge-by-verification
@@ -150,7 +150,7 @@ theorem all_know_discharged {P W : Type u} [Verifiable P W]
     F.Knows i (verified (Ω := Ω) X w₀) F.actual :=
   fun _ _ => hd
 
-/-- **The honest group has distributed knowledge of a discharged claim — PROVED,
+/-- **The honest group has distributed knowledge of a discharged claim,
 kernel-clean.** The headline result: a `Verify`-discharged statement is **distributed
 knowledge among the honest agents** (`DistKnows F.Honest`). It ties the realizability core
 (`ConstructiveKnowledge.holds_iff_discharged_witness`: `Holds X` ⇔ a discharging witness
@@ -161,8 +161,8 @@ theorem honest_distributed_knows_discharged {P W : Type u} [Verifiable P W]
     F.DistKnows F.Honest (verified (Ω := Ω) X w₀) F.actual :=
   fun _ _ => hd
 
-/-- **Fault-tolerance: Byzantine agents cannot forge knowledge — PROVED, kernel-clean.**
-A claim is honestly distributed-known **iff** it is genuinely discharged (`Holds`-backed):
+/-- **Fault-tolerance: Byzantine agents cannot forge knowledge.**
+A claim is distributed-known **iff** it is discharged (`Holds`-backed):
 
   `DistKnows Honest (verified X w₀) actual  ↔  Holds X` (the realizability core).
 
@@ -182,7 +182,7 @@ theorem honest_dist_knowledge_iff_holds {P W : Type u} [Verifiable P W]
   have hd : Discharged (P := P) (W := W) X.stmt w₀ := hdk F.actual (fun i hi => hrefl i hi)
   exact (holds_iff_discharged_witness (W := W) X).mpr ⟨w₀, hd⟩
 
-/-- **Dropping Byzantine agents only strengthens distributed knowledge — PROVED,
+/-- **Dropping Byzantine agents only strengthens distributed knowledge,
 kernel-clean.** Monotonicity in the group: if `B ⊆ B'` (every member of `B` is in `B'`) then
 distributed knowledge of `B` implies distributed knowledge of `B'` — a *larger* group knows
 *at least* as much (their `C₁`: `{b,c}` knows what neither `b` nor `c` knows alone). In
@@ -194,7 +194,7 @@ theorem distKnows_mono_group (B B' : ι → Prop) (hsub : ∀ i, B i → B' i)
     (φ : Prop' Ω) (w : Ω) (h : F.DistKnows B φ w) : F.DistKnows B' φ w :=
   fun w' hall => h w' (fun i hi => hall i (hsub i hi))
 
-/-- **Single-agent knowledge entails group distributed knowledge — PROVED, kernel-clean.**
+/-- **Single-agent knowledge entails group distributed knowledge.**
 If any single member `i ∈ B` already `Knows φ`, the whole group `B` has distributed knowledge
 of `φ`: the group's confusion is a *sub*-relation of `i`'s (it must satisfy `i`'s edge among
 others), so anything `i` rules out the group rules out too. The non-trivial converse FAILS
@@ -223,7 +223,7 @@ namespace Frame
 
 variable {Ω : Type u} {ι : Type v} (F : Frame Ω ι)
 
-/-- **An unrealizable claim is never honestly distributed-known — PROVED, kernel-clean.** If
+/-- **An unrealizable claim is never distributed-known.** If
 NO witness discharges `X` (`¬ Holds X`), then for every offered witness `w₀` the honest
 group does *not* have distributed knowledge of `verified X w₀` at the actual world (using the
 honest reflexive edges). The Byzantine minority cannot conjure distributed knowledge of a
@@ -247,7 +247,7 @@ true if no model satisfies its hypotheses, or `Iff.rfl`-trivial if the modality 
 rule that out by exhibiting a CONCRETE frame in which:
 
   * some honest agent **provably does NOT know** a fact that the honest *group* DOES know
-    (so `Knows`, `DistKnows` are genuinely different — the modality is non-degenerate, the
+    (so `Knows`, `DistKnows` are different — the modality is non-degenerate, the
     "group knows more than any member" gap of the simplicial paper's `C₁` is real here); and
   * a Byzantine agent is present and its assertions are powerless.
 
@@ -284,7 +284,7 @@ theorem agentH_not_knows_p : ¬ F.Knows true p F.actual := by
 rules out the `false` world. Take the full group `B := True` (both agents). Distributed
 knowledge holds because *any* `w'` confused by the whole group must satisfy agentB's identity
 edge, forcing `w' = actual = true`, where `p` holds. So `DistKnows` strictly exceeds agentH's
-`Knows`: the modality genuinely distinguishes single-agent from group knowledge. -/
+`Knows`: the modality distinguishes single-agent from group knowledge. -/
 theorem group_distKnows_p : F.DistKnows (fun _ => True) p F.actual := by
   intro w' hall
   -- agentB (false) is in the group; its edge `Indist false w' actual` is `w' = actual`.
@@ -303,7 +303,7 @@ theorem dist_knowledge_strictly_exceeds_member :
   ⟨group_distKnows_p, agentH_not_knows_p⟩
 
 /-- **`honest_dist_knowledge_iff_holds` is non-vacuous here** — there is a genuine
-`Verifiable` instance, a genuinely-discharged claim, and a genuinely-UNdischarged one, so the
+`Verifiable` instance, a discharged claim, and a UNdischarged one, so the
 `↔` separates true from false rather than holding by `Iff.rfl`. The verifier: `Verify p w :=
 w` over `P = Unit`, `W = Bool`. The claim `X := ⟨()⟩`; witness `true` discharges it,
 witness `false` does not. -/
@@ -311,15 +311,15 @@ instance : Verifiable Unit Bool where
   Verify := fun _ w => w
 
 /-- A claim that IS dischargeable (by `true`) and one that is NOT (no witness): here the same
-claim is discharged by `true` and not by `false`, so `Holds` is genuinely inhabited and the
-underlying check is genuinely discriminating (not constantly-true). -/
+claim is discharged by `true` and not by `false`, so `Holds` is inhabited and the
+underlying check is discriminating (not constantly-true). -/
 theorem verifiable_discriminates :
     Discharged (P := Unit) (W := Bool) () true ∧ ¬ Discharged (P := Unit) (W := Bool) () false := by
   constructor
   · show (true = true); rfl
   · show ¬ (false = true); simp
 
-/-- `Holds` of the unit-claim is genuinely TRUE here (witness `true`) — so the `←` of
+/-- `Holds` of the unit-claim is TRUE here (witness `true`) — so the `←` of
 `honest_dist_knowledge_iff_holds` has real content (a discharged claim exists). -/
 theorem holds_unit_claim : Holds (P := Unit) (W := Bool) ⟨()⟩ :=
   ⟨true, verifiable_discriminates.1⟩
@@ -353,7 +353,7 @@ namespace Frame
 variable {Ω : Type u} {ι : Type v} (F : Frame Ω ι)
 
 /-- **Composition fragment — honest distributed knowledge is closed under conjunction of
-discharged claims — PROVED, kernel-clean.** If the honest group distributed-knows
+discharged claims.** If the honest group distributed-knows
 `verified X wx` and `verified Y wy`, it distributed-knows their conjunction. This is the
 UC-flavoured "a verified component composed with another verified component stays verified":
 pooling two honestly-known verified facts yields honest knowledge of the composite. -/
@@ -381,7 +381,7 @@ needs (i) an interactive-machine / probabilistic-execution model (`view_Z` is a 
 ensemble), (ii) a simulator `S` witnessing `≈` (computational indistinguishability of
 ensembles), and (iii) a substitution/hybrid argument for the context `ρ`. None of those live
 in this order/realizability-theoretic frame — `Verify` here is a *decidable* oracle, not a
-probabilistic ensemble, and indistinguishability `≈` is the SAME genuinely-cryptographic
+probabilistic ensemble, and indistinguishability `≈` is the SAME cryptographic
 residue flagged in `ConstructiveKnowledge §2` and `EpistemicDial §6` (simulator existence,
 computational indistinguishability), explicitly NEVER merged into a Lean order-law. The
 honest residue here is the *static* fragment plus the standing parametricity of the

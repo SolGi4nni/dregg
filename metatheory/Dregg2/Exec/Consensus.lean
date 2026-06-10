@@ -31,14 +31,14 @@ two notions of "committed" together at a single cell. That is this module's job:
 What stays OPEN (NOT attempted here — they need an adversary / GST model that the bare
 `World` interface deliberately omits): Byzantine quorum-intersection safety and post-GST
 liveness. `World.lean` already states these as honest `sorry`'d `…_OPEN` theorems; we cite
-those rather than restating them. Any genuinely-new obligation is an explicit `-- OPEN:`.
+those rather than restating them. Any new obligation is an explicit `-- OPEN:`.
 
 Builds only on existing modules by `import`; defines nothing already taken. All names live
 in `namespace Dregg2.Exec.Consensus`.
 
 Axiom-hygiene note (read with the `#assert_axioms` blocks below): theorems whose statements
 are *purely* about the tier lattice / the cell record / the World monotonicity facts are
-genuinely kernel-clean and are pinned with `#assert_axioms`. `Finality.no_downgrade` and
+kernel-clean and are pinned with `#assert_axioms`. `Finality.no_downgrade` and
 `World.committedByQuorum_mono` are themselves `sorry`-free, so the theorems riding them are
 clean too. We do NOT pin anything that quantifies over (or instantiates) the
 `…_OPEN`/`sorry`'d World theorems — there are none here; this module never touches the open
@@ -131,7 +131,7 @@ theorem NetCell.tier_eq_bft_iff (c : NetCell) :
   · simp [h]
   · simp [h]
 
-/-- **`quorum_reaches_bft_tier` (PROVED — KEYSTONE).** A turn that is BFT-final (its
+/-- **`quorum_reaches_bft_tier` (KEYSTONE).** A turn that is BFT-final (its
 distinct-voter count meets the lifted `½(n+f)` quorum) inhabits the BFT/quorum finality
 tier of the `Finality` lattice: its carried `Tier` is exactly `Tier.bft`. This is the
 portal join — the `World` notion "a quorum of votes was received" and the `Finality` notion
@@ -184,7 +184,7 @@ Two complementary statements, both rejecting a downgrade:
     lower its tier.
 -/
 
-/-- **`net_no_downgrade` (PROVED — KEYSTONE).** The finality of a network cell never
+/-- **`net_no_downgrade` (KEYSTONE).** The finality of a network cell never
 downgrades along its finalization-event run. We model the cell's commit history as an
 `Execution.Run Finality.finalitySystem` over the carried `Tier` (each event may only
 keep-or-strengthen the tier, per `finalitySystem.Step = (· ≤ ·)`); the endpoint tier is no
@@ -201,7 +201,7 @@ theorem net_no_downgrade_via_world {Msg : Type} [World.World Msg] {t₀ t : Fina
     (hrun : Execution.Run Finality.finalitySystem t₀ t) : t₀ ≤ t :=
   World.world_no_downgrade (Msg := Msg) hrun
 
-/-- **`finality_monotone_on_net` (PROVED — KEYSTONE).** The direct cell-level monotonicity:
+/-- **`finality_monotone_on_net` (KEYSTONE).** The direct cell-level monotonicity:
 take a cell `c₁` and a later cell `c₂` for the *same block and config*, where `c₂`'s votes
 are a superlist of `c₁`'s (the network's append-only delivery: `recv` only adds). Then
 `c₂`'s tier is no weaker than `c₁`'s. Once a turn reaches a finality tier via quorum it
@@ -226,7 +226,7 @@ theorem finality_monotone_on_net (c₁ c₂ : NetCell)
     show Finality.Tier.causal.rank ≤ c₂.tier.rank
     cases c₂.tier <;> decide
 
-/-- **`quorum_grows_preserves_finality` (PROVED — KEYSTONE).** Adding more replica
+/-- **`quorum_grows_preserves_finality` (KEYSTONE).** Adding more replica
 observations only RAISES or HOLDS the tier, never lowers it: a cell `c'` whose votes are a
 superlist of an already-BFT-final cell `c` (same block/config) is itself BFT-final, so its
 tier equals `c`'s (both `bft`). The "growing the quorum holds the tier" guarantee. A direct
@@ -241,7 +241,7 @@ theorem quorum_grows_preserves_finality (c c' : NetCell)
     exact World.quorum_monotone hgrow c.config c.block hfinal
   rw [hc, quorum_reaches_bft_tier c' hf']
 
-/-- **The round-indexed form (PROVED).** Riding `World.committedByQuorum_mono`: if a block
+/-- **The round-indexed form.** Riding `World.committedByQuorum_mono`: if a block
 is `committedByQuorum` at round `r`, it is still committed at any later round `r' ≥ r` (for a
 sublist-respecting `votesOf`), so its finality tier holds. This is the network-time version
 of `quorum_grows_preserves_finality` — the network advancing the round cannot un-finalize. -/
@@ -261,7 +261,7 @@ tier-3 BFT cell) settles at the `max` of the two — the stronger requirement do
 instantiate `Finality.commit_at_join_of_tiers` directly on the `NetCell` tiers.
 -/
 
-/-- **`cross_tier_join_on_net` (PROVED — KEYSTONE).** A turn observed across the tiers of a
+/-- **`cross_tier_join_on_net` (KEYSTONE).** A turn observed across the tiers of a
 nonempty list of net cells commits at the `crossTierJoin`-fold (`max`) of their tiers, and —
 given a join-tier rule that has committed the block — that join tier dominates every cell's
 tier and the block is canonical at it. A direct instantiation of
@@ -289,7 +289,7 @@ theorem cross_tier_join_on_net {H : Type u}
 
 /-! ## 5. The Byzantine-safety / GST-liveness frontier — cited, not re-stated.
 
-The two DEEP theorems are genuinely open research; they need an adversary model (which
+The two DEEP theorems are open research; they need an adversary model (which
 voters are Byzantine), a conflict relation on blocks, and a partial-synchrony / GST bound —
 none of which the bare `World` interface commits to. `World.lean` already states them as
 honest `sorry`'d obligations; this module does NOT attempt them and does NOT re-introduce a
@@ -351,7 +351,7 @@ def cellAtRound4 : NetCell := mkNetCell 4 7
 
 /-! ## 7. Axiom-hygiene tripwires.
 
-`#assert_axioms` on each genuinely-closed keystone. These FAIL the build if any depends on a
+`#assert_axioms` on each closed keystone. These FAIL the build if any depends on a
 `sorryAx`. ALL of the keystones below ride only `sorry`-free lemmas (`Finality.no_downgrade`,
 `World.quorum_monotone`, `World.committedByQuorum_mono`, `Finality.commit_at_join_of_tiers`
 are all themselves proved without `sorry`), so they are kernel-clean. We pin NONE of the

@@ -17,7 +17,7 @@ FULL per-cell post-state — NOT merely the per-row intent that `transferVmDescr
 already gives, but the WHOLE 14-column state block determined or frozen, AND bound into the published
 state-commitment under Poseidon2 collision-resistance (the anti-ghost whole-state tooth).
 
-## What is genuinely STRONGER here than `transferVmDescriptor_pins_intent`
+## What is STRONGER here than `transferVmDescriptor_pins_intent`
 
 `EffectVmEmitTransfer.transferVmDescriptor_pins_intent` already gives `TransferRowIntent env ∧
 state_commit = PI[NEW_COMMIT]`. `TransferRowIntent` pins the balance move + nonce tick + frame
@@ -41,7 +41,7 @@ This is what makes the SINGLE runnable description enforce the FULL cell state (
 weaker conservation-only bridge would give): the commitment chain is what pins the 3rd, 4th, … cells
 of the block, so the witness binds the whole post-state.
 
-## HONEST BOUNDARY (precise — do NOT over-read)
+## BOUNDARY (precise — do NOT over-read)
 
   * PER-CELL, not cross-cell. This descriptor is a SINGLE-ROW AIR: it pins ONE cell's full state
     transition + the binding of that cell's after-state into ITS published `state_commit`. The
@@ -65,7 +65,7 @@ of the block, so the witness binds the whole post-state.
     `reserved` analogue, so this is a column of the RUNNABLE block with weaker binding than the rest —
     reported loudly.)
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY
 as the NAMED hypothesis `Poseidon2Binding.Poseidon2SpongeCR hash` (task #13's discharged carrier),
@@ -232,7 +232,7 @@ theorem cellSpec_is_intentImage (pre post : CellState) (p : TransferParams)
 
 Satisfying the WHOLE runnable descriptor (gates + transitions + boundaries + the 4 hash-sites), under
 the `RowEncodes` decoding, forces the structured per-cell `CellTransferSpec` AND publishes the
-post-commit as `PI[NEW_COMMIT]`. This is genuinely stronger than `transferVmDescriptor_pins_intent`:
+post-commit as `PI[NEW_COMMIT]`. This is stronger than `transferVmDescriptor_pins_intent`:
 it is stated about a DETERMINED post-state RECORD whose balance/nonce/frame are each pinned by name,
 and it is the per-cell projection of universe-A's `BalanceMovementSpec`/`TransferSpec`. -/
 theorem transferDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)

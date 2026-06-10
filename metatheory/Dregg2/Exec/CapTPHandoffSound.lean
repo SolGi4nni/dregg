@@ -19,7 +19,7 @@ READ-ONLY):
      digest of the cert fields, and `attested` becomes `SignatureKernel.sigVerify introPK msg
      sig = true` over the ed25519 `SignatureKernel` of `Crypto/PortalFloor.lean` — the SAME
      EUF-CMA carrier the rest of the metatheory uses. The unforgeability hypothesis is the
-     HONESTLY-LABELED `SignatureKernel.unforgeable` `Prop`, never a Lean law.
+     NAMED `SignatureKernel.unforgeable` `Prop`, never a Lean law.
 
   2. **The 6-check gate.** `validateHandoff2` mirrors `validate_handoff`'s six checks
      clause-for-clause: (1) introducer signature, (2) recipient signature, (3) known
@@ -135,7 +135,7 @@ structure HandoffCert2 where
 signature). We fold the certificate's fields into one `Nat` via a fixed mixing schedule; the
 exact mixing is immaterial to the soundness (only `sigVerify introPK msg sig` matters), but it
 is a genuine function of ALL signed fields, so two certs differing in any signed field have
-different messages whenever the fold is injective (which we do not need, but state honestly). -/
+different messages whenever the fold is injective (which we do not need, but state. -/
 def HandoffCert2.signingMessage (c : HandoffCert2) : Msg :=
   -- domain tag "dregg-handoff-cert-v1" ↦ a fixed prime, then mix every signed field. Mirrors
   -- `signing_message()`, which folds `introducer`, `target_*`, `recipient_pk`, the permission
@@ -326,7 +326,7 @@ instance (F : Federation) : Decidable F.NonTrivial :=
   inferInstanceAs (Decidable (2 ≤ F.vats.length))
 
 /-- **`Federation.nonTrivial_of_two`** — two DISTINCT member vats force `n > 1`. So whenever an
-adversary `adv ≠ A` is in the same federation as the introducer `A`, the federation is genuinely
+adversary `adv ≠ A` is in the same federation as the introducer `A`, the federation is
 non-trivial (the n = 1 single-machine case cannot host a cross-vat attacker at all). -/
 theorem Federation.nonTrivial_of_two (F : Federation) {A adv : VatId}
     (hA : A ∈ F.vats) (hadv : adv ∈ F.vats) (hne : adv ≠ A) : F.NonTrivial := by
@@ -340,7 +340,7 @@ theorem Federation.nonTrivial_of_two (F : Federation) {A adv : VatId}
     · show 2 ≤ F.vats.length; rw [hv]; simp
 
 /-- **`handoff_unforgeable` — THEOREM (2), the core.** Under the ed25519 EUF-CMA carrier
-(`K.unforgeable`, the HONESTLY-NAMED hypothesis), if the certificate names introducer key
+(`K.unforgeable`, the NAMED hypothesis), if the certificate names introducer key
 `c.introPK` and the adversary did NOT produce a valid signature over the signing message under
 that key (`¬ K.Signed c.introPK c.signingMessage` — the adversary lacks the secret for
 `c.introPK`), then NO `HandoffEnv` makes the certificate validate. The forged certificate is

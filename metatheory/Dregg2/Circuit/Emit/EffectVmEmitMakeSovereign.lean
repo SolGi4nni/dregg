@@ -22,7 +22,7 @@ post-rebind. The row pins:
     tooth — but see the boundary: this is the EffectVM Poseidon2 digest, NOT the universe-A
     `stateCommitment` the rebind actually installs).
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the WHOLE point of the rebind)
+## What the EffectVM row CANNOT enforce (the boundary — the WHOLE point of the rebind)
 
 `makeSovereign` REPLACES the dropped state with `stateCommitment (base target)` — the universe-A
 state-commitment of the WHOLE pre-record. The EffectVM `state_commit` column is a DIFFERENT commitment
@@ -36,7 +36,7 @@ PRE-record was committed under `stateCommitment`. Concretely:
 So the row witnesses that the readable balance was ZEROED by the rebind, but NOT that the dropped state
 was sovereign-committed. The rebind SOUNDNESS lives ONLY in `makeSovereignA_full_sound`.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR named hypothesis only. No
 `sorry`/`:= True`/`native_decide`. Read-only imports.
@@ -177,7 +177,7 @@ which has NO `balance` field — so `balOf = 0`. We prove this from `sovereignRe
 
 /-- **`sovereignRebind_balOf_zero` — the rebound cell carries `balance == 0`.** The target's rebound
 record is commitment-only (`commitmentField ≠ balanceField`), so its `balOf` read fails closed to `0`:
-the readable balance is genuinely dropped behind the commitment. -/
+the readable balance is dropped behind the commitment. -/
 theorem sovereignRebind_balOf_zero (base : CellId → Value) (target : CellId) :
     balOf (sovereignRebind base target target) = 0 := by
   rw [(sovereignRebindMap_correct base target).1]
@@ -239,7 +239,7 @@ theorem makeSovereign_row_matches_executor (env : VmRowEnv) (pre post : CellStat
   · rw [eRes, ← hsaRes]; exact hRes
   · intro i; rw [eFld i, ← hsaF i]; exact hFld i.val i.isLt
 
-/-! ## §10 — THE HONEST BOUNDARY: the sovereign-commitment INSTALL is OFF-ROW.
+/-! ## §10 — THE BOUNDARY: the sovereign-commitment INSTALL is OFF-ROW.
 
 The rebind's defining act — installing `commitmentField := stateCommitment(pre)`, the universe-A
 state-commitment of the WHOLE dropped pre-record — has NO EffectVM column. The EffectVM `state_commit`

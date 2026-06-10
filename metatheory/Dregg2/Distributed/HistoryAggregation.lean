@@ -13,7 +13,7 @@ It is the *meaning* of the chain. `RecursiveAggregation.lean` adds the SNARK rec
 it names the inner-proof-soundness + recursive-verifier-soundness hypotheses (the part you cannot
 prove in Lean — plonky3/pickles FRI), and shows that, UNDER those named hypotheses, an aggregate
 proof's validity is exactly `AggregateAttests` from this file — so a light client that checks only
-the succinct aggregate genuinely learns the whole history is correct.
+the succinct aggregate learns the whole history is correct.
 
 **The two binding facts modeled here** (the `TurnChainBindingAir` of `ivc_turn_chain.rs:188`):
   1. **Per-step correctness** — each fold step `(pre, turn, post)` is a GENUINE `recCexec` step
@@ -76,7 +76,7 @@ pre/post kernels. -/
 
 /-- A single fold step: a genuine `recCexec` transition `(pre, turn) ↦ post`, plus the receipt logs
 the chained state carries. Modeled directly over the verified executor so the step's roots are the
-real commitments of states the executor genuinely reached — what an honest inner step proof, when
+real commitments of states the executor reached — what an honest inner step proof, when
 sound, attests. -/
 structure ChainStep where
   /-- The pre-state chained record (kernel + receipt log). -/
@@ -155,10 +155,10 @@ def foldedFinalRoot (g : RecChainedState) (steps : List ChainStep) : ℤ :=
 
 The accumulator's verifier only sees ROOTS, not states. Under collision-resistance of the commitment
 (`compressInjective cmb`, via `recStateCommit_binds`), the root-level tooth recovers the underlying
-kernel continuity. This is why the LIGHT CLIENT, seeing only roots, genuinely learns state
+kernel continuity. This is why the LIGHT CLIENT, seeing only roots, learns state
 continuity — the §8 root is an injective full-state commitment. -/
 
-/-- **`seam_roots_chain` (PROVED — the easy direction).** State-level continuity at a seam ENTAILS
+/-- **`seam_roots_chain` (the easy direction).** State-level continuity at a seam ENTAILS
 the root-level tooth: if `s.post = s'.pre` and the turn-contexts agree at the seam, their roots
 chain. So an honest accumulator never asserts the tooth separately — it is free from execution. -/
 theorem seam_roots_chain (s s' : ChainStep)
@@ -168,7 +168,7 @@ theorem seam_roots_chain (s s' : ChainStep)
   unfold ChainStep.newRoot ChainStep.oldRoot
   rw [hstate, hturn]
 
-/-- **`root_tooth_pins_state` (PROVED — THE CR RECOVERY).** Under collision-resistance of the
+/-- **`root_tooth_pins_state` (THE CR RECOVERY).** Under collision-resistance of the
 commitment combiner, the ROOT-level tooth pins the underlying full-state COMMITMENT: if two steps
 share a turn-context and their seam roots agree, then their cell-digests AND rest-hashes agree
 (`cellDigest s.post = cellDigest s'.pre ∧ RH s.post = RH s'.pre`). That is exactly the binding
@@ -191,14 +191,14 @@ theorem root_tooth_pins_state (hCmb : compressInjective cmb) (s s' : ChainStep)
 
 /-! ## 6. THE HEADLINE — a well-formed chain attests the WHOLE history. -/
 
-/-- **`every_turn_executed_correctly` (PROVED).** For EVERY turn in the chain, the turn executed
+/-- **`every_turn_executed_correctly`.** For EVERY turn in the chain, the turn executed
 correctly per the verified executor: each `ChainStep.commits` IS the `recCexec` witness, so it holds
 by construction. The first headline conjunct, made explicit. -/
 theorem every_turn_executed_correctly (steps : List ChainStep) :
     ∀ s ∈ steps, recCexec s.pre s.turn = some s.post :=
   fun s _ => s.commits
 
-/-- **`wellformed_is_run` (PROVED — the run-level keystone).** A state-chained sequence from genesis
+/-- **`wellformed_is_run` (the run-level keystone).** A state-chained sequence from genesis
 `g` IS a `Run recChainedSystem` from `g` to `lastStateOf g steps`: each step is a
 `recChainedSystem.Step` (`⟨turn, commits⟩`), composed along `StateChained`. So ALL of `RecordKernel`'s
 run-level theorems apply to the whole history. -/
@@ -213,16 +213,16 @@ theorem wellformed_is_run (g : RecChainedState) (steps : List ChainStep)
     have hstep : recChainedSystem.Step s.pre s.post := ⟨s.turn, s.commits⟩
     simpa [lastStateOf] using Run.step (S := recChainedSystem) hstep (ih s.post hrest)
 
-/-- **`wellformed_history_conserves` (PROVED — KEYSTONE).** Value is conserved across the WHOLE
+/-- **`wellformed_history_conserves` (KEYSTONE).** Value is conserved across the WHOLE
 folded history: the ledger total at the folded endpoint equals the genesis total. The aggregate
-genuinely attests a no-mint/no-burn history of arbitrary length. Rides `recChained_run_conserves`
+attests a no-mint/no-burn history of arbitrary length. Rides `recChained_run_conserves`
 over the run keystone. The light client, trusting only the aggregate, inherits this. -/
 theorem wellformed_history_conserves (g : RecChainedState) (steps : List ChainStep)
     (hch : StateChained g steps) :
     recTotal (lastStateOf g steps).kernel = recTotal g.kernel :=
   recChained_run_conserves (wellformed_is_run g steps hch)
 
-/-- **`chainBound_of_stateChained` (PROVED).** State-level continuity entails the root-level temporal
+/-- **`chainBound_of_stateChained`.** State-level continuity entails the root-level temporal
 tooth at every seam WHERE THE TURN-CONTEXTS AGREE. We state the per-seam fact directly via
 `seam_roots_chain`; whole-list `ChainBound` follows when each seam's turn-contexts agree (the
 configuration the accumulator's NoOp-padding establishes — see `ivc_turn_chain.rs:325`). This makes
@@ -235,10 +235,10 @@ theorem chainBound_of_stateChained (s s' : ChainStep) (rest : List ChainStep)
   obtain ⟨_, hpre', _⟩ := hcont
   exact seam_roots_chain CH RH cmb compress compressN s s' hpre'.symm hturn
 
-/-- **`wellformed_attests_whole_history` (PROVED — THE HEADLINE).** A well-formed chain from genesis
+/-- **`wellformed_attests_whole_history` (THE HEADLINE).** A well-formed chain from genesis
 `g` GENUINELY attests the whole history:
   (1) **every turn executed correctly** — for every step, `recCexec pre turn = some post` (the
-      verified executor genuinely ran that turn);
+      verified executor ran that turn);
   (2) **the chain is correctly ordered** — the root-level temporal tooth holds (`ChainBound`), so no
       reorder/drop/insert;
   (3) **the final root is the genuine fold of the whole history** — `foldedFinalRoot` commits the
@@ -261,7 +261,7 @@ theorem wellformed_attests_whole_history (g : RecChainedState) (steps : List Cha
 /-! ## 7. NON-VACUITY — the binding tooth has TEETH (witnessed BOTH ways).
 
 `WellFormedChain` is not empty (a real 1-step chain over the teeth genesis is well-formed), and the
-temporal tooth genuinely REJECTS a broken order (two steps whose seam roots differ are NOT
+temporal tooth REJECTS a broken order (two steps whose seam roots differ are NOT
 `ChainBound`). Both witnessed below over the concrete `ConsensusExec.teethGenesis`. -/
 
 open Dregg2.Exec.ConsensusExec (teethGenesis honestTurn tamperedTurn)
@@ -274,25 +274,25 @@ def honestStep : ChainStep where
   post := (recCexec teethGenesis honestTurn).get (by decide)
   commits := (Option.some_get _).symm
 
-/-- **`honest_chain_wellformed` (PROVED — non-vacuity, positive).** The single-step honest chain is
+/-- **`honest_chain_wellformed` (non-vacuity, positive).** The single-step honest chain is
 state-chained from genesis: `WellFormedChain` is INHABITED by a real executor run, so the headline is
 not vacuous. (We exhibit `StateChained`; `ChainBound` on a singleton is `True`.) -/
 theorem honest_chain_wellformed :
     WellFormedChain CH RH cmb compress compressN teethGenesis [honestStep] :=
   { chained := ⟨rfl, trivial⟩, bound := trivial }
 
-/-- **`honest_step_executes` (PROVED — non-vacuity).** The honest step's turn genuinely commits:
+/-- **`honest_step_executes` (non-vacuity).** The honest step's turn commits:
 `recCexec teethGenesis honestTurn` is `some`. So `wellformed_is_run`/`…_conserves` apply to a REAL
 non-empty history, not a vacuous `none`. -/
 theorem honest_step_executes :
     (recCexec teethGenesis honestTurn).isSome = true := by decide
 
-/-- **`tooth_rejects_broken_order` (PROVED — THE ANTI-GHOST TOOTH, witnessed negative).** A reordered
+/-- **`tooth_rejects_broken_order` (THE ANTI-GHOST TOOTH, witnessed negative).** A reordered
 / spliced chain is NOT `ChainBound`: if the first step's `newRoot` differs from the second's
 `oldRoot`, the `Continues` tooth fails, so `ChainBound` is false. We witness this abstractly: for ANY
 two steps whose seam roots disagree, `ChainBound [s, s']` is `False` — exactly the
 `TurnChainError::ChainBreak` rejection (`ivc_turn_chain.rs:138`), proving the binding is non-vacuous
-(it genuinely separates a continuous order from a tampered one). -/
+(it separates a continuous order from a tampered one). -/
 theorem tooth_rejects_broken_order (s s' : ChainStep)
     (hbreak : ChainStep.newRoot CH RH cmb compress compressN s
                 ≠ ChainStep.oldRoot CH RH cmb compress compressN s') :

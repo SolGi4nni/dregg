@@ -318,42 +318,42 @@ def RecordProgram.admits : RecordProgram → Nat → Value → Value → Bool
 
 /-! ## Basic laws (the structure-map is a genuine, Heyting-respecting, fail-closed filter). -/
 
-/-- The terminal program admits every transition — PROVED. -/
+/-- The terminal program admits every transition. -/
 theorem admits_none (m : Nat) (o n : Value) : RecordProgram.admits .none m o n = true := rfl
 
-/-- A `predicate` program is exactly the conjunction of its constraints — PROVED (definitional). -/
+/-- A `predicate` program is exactly the conjunction of its constraints (definitional). -/
 theorem admits_predicate (cs : List StateConstraint) (m : Nat) (o n : Value) :
     RecordProgram.admits (.predicate cs) m o n = cs.all (fun c => evalConstraint c o n) := rfl
 
-/-- **Default-deny — PROVED.** An empty `Cases` (and any `Cases` with no matching arm) denies. -/
+/-- **Default-deny.** An empty `Cases` (and any `Cases` with no matching arm) denies. -/
 theorem admits_cases_nil (m : Nat) (o n : Value) :
     RecordProgram.admits (.cases []) m o n = false := rfl
 
-/-- A `Circuit` program is never admitted by the *pure* evaluator (it needs its proof) — PROVED. -/
+/-- A `Circuit` program is never admitted by the *pure* evaluator (it needs its proof). -/
 theorem admits_circuit (h : Nat) (m : Nat) (o n : Value) :
     RecordProgram.admits (.circuit h) m o n = false := rfl
 
-/-- **Negation is the Boolean complement — PROVED** (the Heyting `¬` on the predicate algebra). -/
+/-- **Negation is the Boolean complement** (the Heyting `¬` on the predicate algebra). -/
 theorem evalSimple_not (c : SimpleConstraint) (o n : Value) :
     evalSimple (.not c) o n = !(evalSimple c o n) := rfl
 
-/-- **Double negation collapses — PROVED** (`¬¬c = c` on the decidable predicate algebra). -/
+/-- **Double negation collapses** (`¬¬c = c` on the decidable predicate algebra). -/
 theorem evalSimple_not_not (c : SimpleConstraint) (o n : Value) :
     evalSimple (.not (.not c)) o n = evalSimple c o n := by
   simp [evalSimple]
 
-/-- **Disjunction is `∃`/`any` — PROVED** (the Heyting `⊔`). -/
+/-- **Disjunction is `∃`/`any`** (the Heyting `⊔`). -/
 theorem evalConstraint_anyOf (vs : List SimpleConstraint) (o n : Value) :
     evalConstraint (.anyOf vs) o n = vs.any (fun c => evalSimple c o n) := rfl
 
-/-- **`boundDelta` now FAILS CLOSED — PROVED (the soundness fix).** The single-cell evaluator REJECTS
+/-- **`boundDelta` now FAILS CLOSED (the soundness fix).** The single-cell evaluator REJECTS
 every `boundDelta` constraint (was the silent-`true` fail-OPEN hole `Program.lean:144`). The cross-cell
 delta is discharged at the JointTurn/CoordinatedCaveat seam, never admitted here. Mirrors dregg1's
 `evaluate` returning `Err(BoundDeltaNotWired)` (`program.rs:1956`). -/
 theorem evalConstraint_boundDelta_fails (lf : FieldName) (p : Nat) (pf : FieldName) (e : Bool)
     (o n : Value) : evalConstraint (.boundDelta lf p pf e) o n = false := rfl
 
-/-- **`clearanceGe` admit-characterization — PROVED.** The gate admits IFF the actor's clearance
+/-- **`clearanceGe` admit-characterization.** The gate admits IFF the actor's clearance
 label (read from `new[af]`) is present AND DOMINATES the slot's sensitivity label `box` in the
 clearance graph `g` (`dominatesD`). Wires the proved-sound lattice primitive into admission. -/
 theorem evalConstraint_clearanceGe_iff (g : ClearanceGraph) (af : FieldName) (box : Label)
@@ -365,8 +365,8 @@ theorem evalConstraint_clearanceGe_iff (g : ClearanceGraph) (af : FieldName) (bo
   | none   => simp [h]
   | some a => simp [h]
 
-/-- **`clearanceGe` ⇒ semantic dominance — PROVED (soundness of the new atom).** An ADMITTED
-`clearanceGe` write means the actor's clearance label genuinely `dominates` the slot's sensitivity
+/-- **`clearanceGe` ⇒ semantic dominance (soundness of the new atom).** An ADMITTED
+`clearanceGe` write means the actor's clearance label `dominates` the slot's sensitivity
 label in `g` (the `Prop`-level reflexive-transitive closure) — reusing the orphaned-but-proved
 `dominates_of_dominatesD` (`ClearanceGraph.lean:92`). So the predicate language now has REAL lattice
 teeth, not a precomputed table. -/
@@ -379,7 +379,7 @@ theorem evalConstraint_clearanceGe_sound (g : ClearanceGraph) (af : FieldName) (
 
 /-! ## New atom admit-characterizations (the policy-combinator core) — each PROVED. -/
 
-/-- **`memberOf` admit-char — PROVED.** Admits IFF the field is present and its value is in the
+/-- **`memberOf` admit-char.** Admits IFF the field is present and its value is in the
 allowlist. Real teeth: a value not in `set` is rejected. -/
 theorem evalSimple_memberOf_iff (f : FieldName) (set : List Int) (o n : Value) :
     evalSimple (.memberOf f set) o n = true ↔
@@ -389,8 +389,8 @@ theorem evalSimple_memberOf_iff (f : FieldName) (set : List Int) (o n : Value) :
   | none   => simp
   | some x => simp
 
-/-- **`prefixOf` admit-char — PROVED.** Admits IFF the path reads (all segments present) AND the
-queried prefix is genuinely a list-prefix of it. The structural nameservice containment. -/
+/-- **`prefixOf` admit-char.** Admits IFF the path reads (all segments present) AND the
+queried prefix is a list-prefix of it. The structural nameservice containment. -/
 theorem evalSimple_prefixOf_iff (segs : List FieldName) (pre : List Int) (o n : Value) :
     evalSimple (.prefixOf segs pre) o n = true ↔
       ∃ path, readPath n segs = some path ∧ pre.isPrefixOf path = true := by
@@ -399,7 +399,7 @@ theorem evalSimple_prefixOf_iff (segs : List FieldName) (pre : List Int) (o n : 
   | none      => simp
   | some path => simp
 
-/-- **`inRangeTwoSided` admit-char — PROVED.** Admits IFF the field is present and lies in `[lo,hi]`. -/
+/-- **`inRangeTwoSided` admit-char.** Admits IFF the field is present and lies in `[lo,hi]`. -/
 theorem evalSimple_inRangeTwoSided_iff (f : FieldName) (lo hi : Int) (o n : Value) :
     evalSimple (.inRangeTwoSided f lo hi) o n = true ↔
       ∃ x, n.scalar f = some x ∧ lo ≤ x ∧ x ≤ hi := by
@@ -408,7 +408,7 @@ theorem evalSimple_inRangeTwoSided_iff (f : FieldName) (lo hi : Int) (o n : Valu
   | none   => simp
   | some x => simp [intLe, decide_eq_true_eq]
 
-/-- **`deltaBounded` admit-char — PROVED (REAL two-sided).** Admits IFF both old and new are present
+/-- **`deltaBounded` admit-char (REAL two-sided).** Admits IFF both old and new are present
 and `|new − old| ≤ d` (symmetric: `-d ≤ new−old ≤ d`). -/
 theorem evalSimple_deltaBounded_iff (f : FieldName) (d : Int) (o n : Value) :
     evalSimple (.deltaBounded f d) o n = true ↔
@@ -421,7 +421,7 @@ theorem evalSimple_deltaBounded_iff (f : FieldName) (d : Int) (o n : Value) :
     | none   => simp
     | some b => simp [intLe, decide_eq_true_eq]
 
-/-- **`affineLe` admit-char — PROVED.** Admits IFF every term-field reads AND the affine combination
+/-- **`affineLe` admit-char.** Admits IFF every term-field reads AND the affine combination
 `Σ kᵢ·new[fᵢ] ≤ c`. The general arithmetic relation. -/
 theorem evalConstraint_affineLe_iff (terms : List (Int × FieldName)) (c : Int) (o n : Value) :
     evalConstraint (.affineLe terms c) o n = true ↔
@@ -431,7 +431,7 @@ theorem evalConstraint_affineLe_iff (terms : List (Int × FieldName)) (c : Int) 
   | none   => simp [h]
   | some s => simp [h, intLe]
 
-/-- **`affineEq` admit-char — PROVED.** Admits IFF every term-field reads AND `Σ kᵢ·new[fᵢ] = c`. -/
+/-- **`affineEq` admit-char.** Admits IFF every term-field reads AND `Σ kᵢ·new[fᵢ] = c`. -/
 theorem evalConstraint_affineEq_iff (terms : List (Int × FieldName)) (c : Int) (o n : Value) :
     evalConstraint (.affineEq terms c) o n = true ↔
       ∃ s, affineSum n terms = some s ∧ s = c := by
@@ -440,8 +440,8 @@ theorem evalConstraint_affineEq_iff (terms : List (Int × FieldName)) (c : Int) 
   | none   => simp [h]
   | some s => simp [h]
 
-/-- **`reachable` ⇒ semantic dominance — PROVED (soundness).** An admitted `reachable` means the
-source-field's label genuinely `dominates`/reaches `toLabel` in `g` (lifting `dominatesD` to the
+/-- **`reachable` ⇒ semantic dominance (soundness).** An admitted `reachable` means the
+source-field's label `dominates`/reaches `toLabel` in `g` (lifting `dominatesD` to the
 `Prop`-level closure via the proved-sound `dominates_of_dominatesD`). The DAG-prerequisite teeth. -/
 theorem evalConstraint_reachable_sound (g : ClearanceGraph) (ff : FieldName) (toL : Label)
     (o n : Value) (h : evalConstraint (.reachable g ff toL) o n = true) :

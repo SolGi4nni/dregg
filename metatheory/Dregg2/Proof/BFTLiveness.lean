@@ -144,7 +144,7 @@ theorem liveness_of_pacemaker {Msg : Type} [World Msg]
 honest-supermajority + GST-delivery obligations. -/
 
 /-- **`gst_liveness_of_pacemaker`** — derives the `World.gst_liveness`-shaped conclusion from the
-pacemaker primitives alone; `World.gst_liveness` is no longer primitive, it follows from
+pacemaker primitives alone; `World.gst_liveness` is not primitive, it follows from
 `honest_quorum` + `honest_le_delivered`. -/
 theorem gst_liveness_of_pacemaker {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config)
@@ -198,7 +198,7 @@ def pacemaker : Pacemaker M votesOf cfg where
   honest_quorum := fun _ _ => by show (3 : Nat) ≤ 3; omega
   honest_le_delivered := fun r hr _ => ref_delivered_at r hr
 
-/-- A `GSTRound` genuinely obtains for the reference world — the theorem is non-vacuous. -/
+/-- A `GSTRound` obtains for the reference world — the theorem is non-vacuous. -/
 example : ∃ r block, GSTRound (Msg := M) votesOf cfg block r :=
   gstRound_obtains votesOf cfg pacemaker
 
@@ -216,7 +216,7 @@ Bernoulli(`h`)-per-view law. Mathlib has `Measure.infinitePi` (used in `BeaconSp
 but wiring it to `World.rand` needs a `World`-interface extension (a randomness measure, not a
 value oracle), off this file's allowed surface.
 
-`World.gst_liveness` is no longer primitive — it is derived (`gst_liveness_of_pacemaker`) from
+`World.gst_liveness` is not primitive — it is derived (`gst_liveness_of_pacemaker`) from
 the strictly-more-primitive `Pacemaker` fields, none of which is the threshold-conclusion.
 -/
 

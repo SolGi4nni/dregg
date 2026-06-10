@@ -16,7 +16,7 @@ as `decide (satisfied kernelCircuit …)` has its §8 soundness law derived, not
 Field layout: `totalPre`/`totalPost` (Conservation), `authBit` (Authority),
 `lenPre`/`lenPost` (ObsAdvance + ChainLink length), `chainOk` (ChainLink list-equality).
 
-Honesty boundary: Conservation and ObsAdvance are pure arithmetic (both directions proved).
+Boundary: Conservation and ObsAdvance are pure arithmetic (both directions proved).
 Authority is a {0,1} bit-equation (both directions proved). ChainLink full list-equality
 cannot be reconstructed from scalars alone; it is carried as a decidable `chainOk` indicator
 (defined to be the spec predicate). The only external obligation is that the Rust prover's
@@ -46,7 +46,7 @@ abbrev Var := Nat
 abbrev Assignment := Var → ℤ
 
 /-- **Arithmetic expressions** — variables, constants, `+`, `*` over the field. This is the
-genuinely circuit-shaped IR (R1CS/AIR gates are exactly sums of products of wires). -/
+circuit-shaped IR (R1CS/AIR gates are exactly sums of products of wires). -/
 inductive Expr where
   | var   : Var → Expr
   | const : ℤ → Expr
@@ -240,7 +240,7 @@ theorem circuit_complete (s : ChainedState) (t : Turn) (s' : ChainedState)
     (h : fullStepInv s t s') : satisfied kernelCircuit (encode s t s') :=
   (bridge s t s').mpr h
 
-/-- **The executor produces satisfying witnesses (PROVED end-to-end).** Any committed
+/-- **The executor produces satisfying witnesses (end-to-end).** Any committed
 chained step (`cexec`) yields an assignment satisfying `kernelCircuit` — chaining
 `cexec_attests` (step-completeness) with `bridge` (circuit completeness). This is the
 prover side: running the kernel *is* generating a valid witness. -/

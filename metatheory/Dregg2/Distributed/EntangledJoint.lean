@@ -60,7 +60,7 @@ runs. The joint turn is therefore not a fresh semantics: it is a *scheduler* ove
 per-cell transition, and its safety reduces to the per-cell laws (`recKExecAsset_authorized`,
 `recKExecAsset_conserves_per_asset`, `recKExecAsset_frame`-style cap invariance) composed over a list.
 
-## Honest scope / named hypotheses
+## Scope / named hypotheses
 
   * The CG-2 `JointId` agreement (all legs pin the *same* shared turn-id) is carried as DATA / a
     `JointBinding` HYPOTHESIS, never derived from the per-cell steps — exactly as `JointCell`'s
@@ -153,7 +153,7 @@ theorem jointApplyAll_head_commits (k k' : RecordKernelState) (l : Leg) (ls : Li
   | none => rw [hl] at h; simp at h
   | some k₁ => exact ⟨k₁, rfl, by rw [hl] at h; simpa using h⟩
 
-/-- **`jointApplyAll_atomic` — ATOMICITY (PROVED), all-or-none over N ≥ 2 legs.** A committed joint
+/-- **`jointApplyAll_atomic` — ATOMICITY, all-or-none over N ≥ 2 legs.** A committed joint
 turn factors into a chain of committed per-cell steps: there is an intermediate-state witness for
 EVERY leg, and each step is a real `recKExecAsset` commit. If even one leg had failed, the fold would
 be `none` — so a `some` result certifies *all* legs committed. This is `atomic.rs`'s invariant: the
@@ -170,7 +170,7 @@ theorem jointApplyAll_atomic :
       · exact ⟨k, k₁, hl⟩
       · exact jointApplyAll_atomic ls k₁ k' htl m hmem'
 
-/-- **`jointApplyAll_none_preserves` — NO PARTIAL COMMIT (PROVED).** If a joint turn does NOT commit
+/-- **`jointApplyAll_none_preserves` — NO PARTIAL COMMIT.** If a joint turn does NOT commit
 (`jointApplyAll k legs = none`), then the machine is left as-is: there is no observable post-state.
 This is the *abort* side of atomicity — `atomic.rs::abort` leaves every participant's ledger
 unchanged. (In the `Option` model, `none` IS "no state produced"; this lemma records that the only
@@ -187,7 +187,7 @@ Two legs: (a) every committed leg passed the REAL `authorizedB k.caps` gate — 
 behalf of an unauthorized actor; (b) the cap table is invariant across ALL legs — the joint turn
 forges/grants NO capability. Together: authority cannot be amplified by *coordinating* N turns. -/
 
-/-- **(a) Every leg of a committed joint turn was authorized (PROVED), at N ≥ 2.** By induction over
+/-- **(a) Every leg of a committed joint turn was authorized, at N ≥ 2.** By induction over
 the legs: the head leg passed `authorizedB` (via `recKExecAsset_authorized`) and the tail commits
 from the post-state. So a committed joint turn contains NO unauthorized leg — for every leg there is
 an intermediate machine state at which the leg both COMMITTED (`applyLeg ka l = some kb`) AND was
@@ -217,7 +217,7 @@ theorem applyLeg_caps (k k' : RecordKernelState) (l : Leg) (h : applyLeg k l = s
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; rw [← h]; exact ⟨rfl, rfl⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **(b) `jointApplyAll_caps_frame` — the joint turn grants NO capability (PROVED), at N ≥ 2.** The
+/-- **(b) `jointApplyAll_caps_frame` — the joint turn grants NO capability, at N ≥ 2.** The
 cap table after the whole joint turn equals the cap table before: across ALL legs, no capability is
 forged, copied, or amplified. (The accounts set is likewise invariant.) Combined with (a), authority
 across the coordinated turn is exactly the pre-turn authority — no amplification. -/
@@ -238,7 +238,7 @@ per_asset`). Composed over the all-or-none fold, the WHOLE joint turn preserves 
 the N-cell generalization of `JointCell.joint_cg5_conserves`. (No global ledger is needed: each leg
 is internally conservative per-asset, so the fold is too — the joint total is the sum of legs.) -/
 
-/-- **`jointApplyAll_conserves` — N-cell per-asset conservation (PROVED).** A committed joint turn
+/-- **`jointApplyAll_conserves` — N-cell per-asset conservation.** A committed joint turn
 preserves `recTotalAsset k b` for EVERY asset `b`, across all N legs. By induction: the head leg
 conserves (per-cell keystone), the tail conserves from the post-state, so the composite does. -/
 theorem jointApplyAll_conserves :
@@ -284,7 +284,7 @@ def entangled (g : EntangleGraph) (c c' : CellId) : Prop := canon c c' ∈ g.edg
 instance (g : EntangleGraph) (c c' : CellId) : Decidable (entangled g c c') := by
   unfold entangled; infer_instance
 
-/-- **`canon_symm` — the graph is symmetric (PROVED).** `canon c c' = canon c' c`, so an edge looks
+/-- **`canon_symm` — the graph is symmetric.** `canon c c' = canon c' c`, so an edge looks
 up identically from either endpoint. -/
 theorem canon_symm (c c' : CellId) : canon c c' = canon c' c := by
   unfold canon
@@ -295,7 +295,7 @@ theorem canon_symm (c c' : CellId) : canon c c' = canon c' c := by
   · have h' : c' ≤ c := le_of_not_ge h
     rw [if_neg h, if_pos h']
 
-/-- **`entangled_symm` — entanglement is symmetric (PROVED).** -/
+/-- **`entangled_symm` — entanglement is symmetric.** -/
 theorem entangled_symm (g : EntangleGraph) (c c' : CellId) :
     entangled g c c' ↔ entangled g c' c := by
   unfold entangled; rw [canon_symm]
@@ -311,7 +311,7 @@ fates of all its participants' cells. -/
 def entangleWith (g : EntangleGraph) (legs : List Leg) : EntangleGraph :=
   { edges := cliqueEdges (touchedCells legs) ++ g.edges }
 
-/-- **`entangleWith_binds` — entanglement closure (PROVED).** After `entangleWith g legs`, ANY two
+/-- **`entangleWith_binds` — entanglement closure.** After `entangleWith g legs`, ANY two
 cells both touched by the joint turn are entangled. So a committed N-cell joint turn makes its cells
 pairwise interdependent — the all-or-none commit is reflected in the evolved graph. -/
 theorem entangleWith_binds (g : EntangleGraph) (legs : List Leg) (c c' : CellId)
@@ -324,7 +324,7 @@ theorem entangleWith_binds (g : EntangleGraph) (legs : List Leg) (c c' : CellId)
   rw [List.mem_flatMap]
   exact ⟨c, hc, List.mem_map.mpr ⟨c', hc', rfl⟩⟩
 
-/-- **`entangleWith_monotone` — entanglement is append-only (PROVED).** `entangleWith` never deletes
+/-- **`entangleWith_monotone` — entanglement is append-only.** `entangleWith` never deletes
 an edge: any previously-entangled pair stays entangled. Joint turns only ADD interdependence. -/
 theorem entangleWith_monotone (g : EntangleGraph) (legs : List Leg) (c c' : CellId)
     (h : entangled g c c') : entangled (entangleWith g legs) c c' := by
@@ -369,7 +369,7 @@ def Allowance.ok (a : Allowance) : Prop := a.spent ≤ a.ceiling
 def Allowance.tryDebit (a : Allowance) (amount : Nat) : Option Allowance :=
   if amount ≤ a.remaining then some { a with spent := a.spent + amount } else none
 
-/-- **`tryDebit_invariant` — per-agent NON-OVERSPEND (PROVED).** If `spent ≤ ceiling` holds and a
+/-- **`tryDebit_invariant` — per-agent NON-OVERSPEND.** If `spent ≤ ceiling` holds and a
 debit is admitted by the gate, then `spent ≤ ceiling` STILL holds. So no committed debit ever pushes
 an agent past its ceiling — the local safety the hot path guarantees without coordination. -/
 theorem tryDebit_invariant (a a' : Allowance) (amount : Nat)
@@ -385,7 +385,7 @@ theorem tryDebit_invariant (a a' : Allowance) (amount : Nat)
     omega
   · rw [if_neg hc] at h; exact absurd h (by simp)
 
-/-- **`tryDebit_rejects_overspend` — the gate REJECTS an overspending debit (PROVED, non-vacuity).**
+/-- **`tryDebit_rejects_overspend` — the gate REJECTS an overspending debit (non-vacuity).**
 If `amount > remaining`, `tryDebit` returns `none`. The gate is a genuine restriction — there exist
 debits it refuses (so the invariant above is not vacuously maintained by admitting nothing). -/
 theorem tryDebit_rejects_overspend (a : Allowance) (amount : Nat)
@@ -415,7 +415,7 @@ def SharedBudget.isOverspent (b : SharedBudget) : Prop := b.totalSpent > b.total
 /-- The whole-table invariant: every agent is locally within its ceiling. -/
 def SharedBudget.ok (b : SharedBudget) : Prop := ∀ a ∈ b.allowances, a.ok
 
-/-- **`totalSpent_le_ceilings` — AGGREGATE NON-OVERSPEND (PROVED), at n > 1.** If every agent is
+/-- **`totalSpent_le_ceilings` — AGGREGATE NON-OVERSPEND, at n > 1.** If every agent is
 within its ceiling (`b.ok`), the aggregate committed spend is bounded by the sum of ceilings:
 `totalSpent ≤ totalCeilings`. This is the COD safety bound `shared_budget.rs` relies on — the
 worst-case overspend is bounded by what the allowances permit, so an honest majority's true reveal at
@@ -439,7 +439,7 @@ theorem totalSpent_le_ceilings (b : SharedBudget) (hok : b.ok) :
       omega
 
 /-- **`tryDebit_table_preserves_ok` — admitting a debit on one agent preserves the table invariant
-(PROVED).** Updating a single agent's allowance via the gate keeps the WHOLE table `ok`, so the
+.** Updating a single agent's allowance via the gate keeps the WHOLE table `ok`, so the
 aggregate bound above is maintained step by step under the hot-path debit stream. -/
 theorem tryDebit_table_preserves_ok (b : SharedBudget) (hok : b.ok)
     (a a' : Allowance) (amount : Nat) (hmem : a ∈ b.allowances)
@@ -470,7 +470,7 @@ structure JointBinding (jt : JointTurn) where
   /-- CG-2: every leg consents to the turn's shared id (the equalizer over `JointId`). -/
   agree     : ∀ l ∈ jt.legs, consentOf l = jt.jid
 
-/-- **`jointBinding_one_identity` — the equalizer (PROVED).** Under the binding, ANY two legs of the
+/-- **`jointBinding_one_identity` — the equalizer.** Under the binding, ANY two legs of the
 joint turn project the SAME consent id. So a committed joint turn is ONE forest, not N solo turns
 that merely happen to conserve — exactly `JointCell.SharedBinding.agree` lifted to N legs. -/
 theorem jointBinding_one_identity {jt : JointTurn} (b : JointBinding jt)
@@ -478,7 +478,7 @@ theorem jointBinding_one_identity {jt : JointTurn} (b : JointBinding jt)
     b.consentOf l₁ = b.consentOf l₂ :=
   (b.agree l₁ h₁).trans (b.agree l₂ h₂).symm
 
-/-- **`joint_sound_of_binding` — THE N-CELL KEYSTONE (PROVED).** GIVEN the CG-2 binding (all legs
+/-- **`joint_sound_of_binding` — THE N-CELL KEYSTONE.** GIVEN the CG-2 binding (all legs
 consent to one `jid` — a HYPOTHESIS, never derived) AND that the joint turn commits, the coordinated
 turn is simultaneously: (1) per-asset CONSERVING for every asset (from the machine), (2) NO-CAP-
 AMPLIFYING (the cap table is unchanged), and (3) bound to ONE identity (all legs agree). The

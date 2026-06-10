@@ -21,7 +21,7 @@ Three orthogonal judgements:
     with no atomic commit; a coupled (Σ=0 settlement) step must block.
 
 OPEN: the linearity⇒I-confluence conflation is refuted — these are independent judgements.
-The branching `merge` in projection is genuinely partial (MPST projection is sound but
+The branching `merge` in projection is partial (MPST projection is sound but
 incomplete). Recursion (`mu`/`var`) is handled by the `NoRec` precondition; deadlock-freedom
 and privacy-by-projection hold on the non-recursive fragment.
 
@@ -200,7 +200,7 @@ its mutual branch helpers). Directed split:
   * `choice a b bs`: if `p = a` ⇒ `select b (bs↾p)`; if `p = b` ⇒ `offer a (bs↾p)`;
     else `p` must reconcile the branches via `mergeLocal` (`projectBranches`) — the
     partial case. We default a failed/absent merge to `done` so `project` is TOTAL as a
-    function (the *partiality* lives, honestly, in `mergeLocal` returning `none`); a real
+    function (the *partiality* lives,, in `mergeLocal` returning `none`); a real
     implementation surfaces "not projectable" as a `Projectable` failure.
   * `mu X g` / `var X` / `done`: structural.
 `projectMap`/`projectBranches` recurse on the branch list so the structural-recursion
@@ -286,7 +286,7 @@ end
 
 /-- **`Projectable G` — well-formedness = every role projects successfully.** A `G` is
 well-formed iff for every role the merge in every branching reconciles (no `mergeLocal`
-failure). The honest content is "no `mergeLocal` invoked while computing `project G p`
+failure). The content is "no `mergeLocal` invoked while computing `project G p`
 returned `none`" — made concrete via `MergesAt`. A `choice` whose passive-role branches
 disagree (identity-merge fails) is NOT `Projectable`. -/
 def Projectable (G : GlobalType) : Prop :=
@@ -472,7 +472,7 @@ theorem privacy_var_counterexample :
 learns only `project G p`; co-parties' moves are hidden by the protocol structure. An
 uninvolved role (not in `roles G`) projects to `done` (learns nothing).
 
-HONEST SCOPE: holds on the non-recursive fragment `NoRec G` (see `privacy_var_counterexample`
+SCOPE: holds on the non-recursive fragment `NoRec G` (see `privacy_var_counterexample`
 for the counterexample on `var`). Proved by mutual structural recursion (the `GlobalType`
 nested inductive prevents `induction`); the companion `privacy_branches` proves the
 passive-role collapse.
@@ -713,7 +713,7 @@ theorem deadlock_freedom_by_design
   | done => exact absurd rfl hdone
 
 /- **`Guarded G`** — every `choice` has at least one branch (no empty external choice
-`a → b : {}`, which is itself a genuinely stuck state with no branch to select). The
+`a → b : {}`, which is itself a stuck state with no branch to select). The
 standard MPST well-formedness side-condition for the *progress-step* form: an empty
 `offer`/`select` is stuck not because of any reachability gap but because there is
 literally nothing to fire. (For the `Dual`-pair form `deadlock_freedom_by_design` this is

@@ -6,7 +6,7 @@ The single keystone both tracks converge on. `Boundary.lean` proves the abstract
 Authority ∧ ChainLink ∧ ObsAdvance`, soundness holds along the whole execution. But in
 dregg1 that is **unverified and likely false** (auth runs as plain Rust; `AUTH_ROOT`/
 `CONSERVATION_VECTOR`/the chainlink are not all in the proof's PI). Here we make the
-executable kernel **genuinely step-complete** and PROVE it — which:
+executable kernel **step-complete** and PROVE it — which:
   * turns `Core.conservation_step` from a PRIMITIVE into a THEOREM (it is the
     `Conservation` conjunct of a committed `exec` step), and
   * realizes `Boundary.StepComplete` for a concrete machine, so `stepComplete_preserves`
@@ -66,12 +66,12 @@ def obsP (s : ChainedState) (_t : Turn) (s' : ChainedState) : Prop :=
 def fullStepInv (s : ChainedState) (t : Turn) (s' : ChainedState) : Prop :=
   consP s t s' ∧ authP s t s' ∧ chainP s t s' ∧ obsP s t s'
 
-/-! ## Step-completeness — PROVED (the spine). -/
+/-! ## Step-completeness (the spine). -/
 
-/-- **`cexec_attests` — the executable kernel is STEP-COMPLETE (PROVED).** Every committed
+/-- **`cexec_attests` — the executable kernel is STEP-COMPLETE.** Every committed
 chained step attests the FULL `StepInv`: Conservation ∧ Authority ∧ ChainLink ∧ ObsAdvance.
 This is the concrete realization of `Boundary.StepComplete`, and its first conjunct is
-exactly `Core.conservation_step` *as a theorem about the machine* (no longer a primitive). -/
+exactly `Core.conservation_step` *as a theorem about the machine* (not a primitive). -/
 theorem cexec_attests {s s' : ChainedState} {t : Turn} (h : cexec s t = some s') :
     fullStepInv s t s' := by
   unfold cexec at h
@@ -173,7 +173,7 @@ def chainedSystem : System where
   Config := ChainedState
   Step s s' := ∃ t, cexec s t = some s'
 
-/-- **Soundness along any execution — PROVED.** Any state-predicate `Good` preserved by
+/-- **Soundness along any execution.** Any state-predicate `Good` preserved by
 every step that attests `fullStepInv` holds at every reachable configuration of the whole
 chained-kernel execution. This is `Boundary.stepComplete_preserves` realized for the
 concrete machine — step-completeness ⇒ whole-execution safety, end to end. -/
@@ -185,7 +185,7 @@ theorem chained_sound (Good : ChainedState → Prop)
   obtain ⟨t, ht⟩ := hstep
   exact hpres a t b ha (cexec_attests ht)
 
-/-- **Conservation across the entire execution — PROVED** (the headline instance of
+/-- **Conservation across the entire execution** (the headline instance of
 `chained_sound`): total supply is invariant over any run of the chained kernel. -/
 theorem chained_run_conserves {s s' : ChainedState} (hrun : Run chainedSystem s s') :
     total s'.kernel = total s.kernel := by

@@ -14,7 +14,7 @@ A `Credential` carries a vector of attributes (`schema.rs:101-115`). A `Presenta
 Three laws proved non-vacuously:
   (a) `presentation_hides_undisclosed` — the view is determined only by disclosed attributes
       and proven predicates; hidden attributes are not determined by it.
-  (b) `proven_predicate_holds` — a predicate the presentation proves genuinely holds of the
+  (b) `proven_predicate_holds` — a predicate the presentation proves holds of the
       credential's attribute; `predicate_proof_has_teeth` shows a false predicate is unprovable.
   (c) `multishow_unlinkable` — two presentations of the same credential with different fresh
       blinding factors have equal observer-views.
@@ -101,13 +101,13 @@ demands the discharging proof. (The *circuit's* enforcement of this is §8.) -/
 the slot, the predicate, and the soundness witness `holds : evalPred pred (cred.attr
 slot) = true`. Mirrors `presentation.rs:307-351`: each `PredicateRequest` becomes a
 proof bound to the credential's actual attribute value — a proof exists ONLY when
-the predicate genuinely holds. -/
+the predicate holds. -/
 structure ProvenPredicate {n : Nat} (cred : Credential n) where
   /-- Which attribute slot the predicate is about (`req.attribute`, `presentation.rs:320`). -/
   slot : Fin n
   /-- The predicate proven (`req.predicate`, `presentation.rs:343`). -/
   pred : Predicate
-  /-- **Soundness witness**: the predicate genuinely holds of the credential's
+  /-- **Soundness witness**: the predicate holds of the credential's
   actual (hidden) value. The proof object cannot be forged for a false predicate. -/
   holds : evalPred pred (cred.attr slot) = true
 
@@ -204,7 +204,7 @@ theorem presentation_hides_undisclosed {n : Nat}
   | false => simp [hi]
   | true  => simp [hi, hdisc i hi]
 
-/-- **Teeth for (a): hiding is NON-vacuous — the view genuinely depends on the
+/-- **Teeth for (a): hiding is NON-vacuous — the view depends on the
 disclosed slots.** Two credentials that DIFFER on a disclosed slot (with that slot
 revealed) produce DIFFERENT observer-views. So `presentation_hides_undisclosed` is
 not a `True`-masquerade: the disclosed part is really revealed (the view separates
@@ -223,7 +223,7 @@ theorem disclosed_slot_is_revealed {n : Nat}
   simp only [if_true] at h2
   exact hne (Option.some.inj h2)
 
-/-! ## LAW (b) — a proven predicate genuinely holds of the underlying credential.
+/-! ## LAW (b) — a proven predicate holds of the underlying credential.
 
 Soundness: the presentation cannot prove a predicate that is false of the actual
 hidden value. The `ProvenPredicate.holds` field IS the discharging proof; this
@@ -231,7 +231,7 @@ theorem extracts it for any proof in the presentation's list. (The *circuit's*
 binding of `holds` to the real value is the §8 oracle; the relation `evalPred` is
 the honest arithmetic content — `bridge/src/present.rs:2847-2868`.) -/
 
-/-- **LAW (b): every proven predicate genuinely holds of the underlying credential.**
+/-- **LAW (b): every proven predicate holds of the underlying credential.**
 For any predicate proof `pp` attached to the presentation, `evalPred pp.pred
 (cred.attr pp.slot) = true` — the proof witnesses a TRUE predicate over the hidden
 attribute. This is presentation predicate-soundness (`presentation.rs:307-351`): a
@@ -279,8 +279,8 @@ theorem multishow_unlinkable {n : Nat} {cred : Credential n}
 
 /-- **Teeth for (c): unlinkability is NON-vacuous — distinct-blinding shows really
 do collapse despite the secret blinding differing.** Concretely, two presentations
-of the same credential with blinding `0` and `1` (genuinely distinct) and identical
-policy have the SAME view: the view function genuinely ignores `blinding`, so this is
+of the same credential with blinding `0` and `1` (distinct) and identical
+policy have the SAME view: the view function ignores `blinding`, so this is
 real hiding of the per-show randomness, not a `True`-collapse. -/
 theorem multishow_blinding_invisible {n : Nat} (cred : Credential n)
     (mask : Fin n → Bool) :
@@ -291,7 +291,7 @@ theorem multishow_blinding_invisible {n : Nat} (cred : Credential n)
 /-! ## Reference witnesses — concrete non-vacuous instantiation.
 
 A 3-slot credential, a presentation disclosing slot 0 and proving `.gte 18` of slot 1.
-Demonstrates: (a) the disclosed slot is genuinely revealed, (b) the predicate holds,
+Demonstrates: (a) the disclosed slot is revealed, (b) the predicate holds,
 (c) two shows with different blinding collapse to one view. The view is non-constant in
 the disclosed slot, so the hiding theorems have real content. -/
 namespace Reference
@@ -300,7 +300,7 @@ namespace Reference
 `attr 2 = 7`. -/
 def cred : Credential 3 := ⟨fun i => [42, 21, 7].get i⟩
 
-/-- A proof that slot-1's value (`21`) is `≥ 18` — genuinely TRUE, so inhabitable. -/
+/-- A proof that slot-1's value (`21`) is `≥ 18` — TRUE, so inhabitable. -/
 def ageProof : ProvenPredicate cred where
   slot := 1
   pred := .gte 18
@@ -322,15 +322,15 @@ def pres' : Presentation cred where
   anonymous := true
 
 /-- (a)-non-vacuity: the disclosed slot 0 really shows `some 42`; the hidden slots
-show `none`. The view genuinely reveals the disclosed value and hides the rest. -/
+show `none`. The view reveals the disclosed value and hides the rest. -/
 example : disclosedView pres 0 = some 42 ∧ disclosedView pres 1 = none := by
   refine ⟨?_, ?_⟩ <;> decide
 
-/-- (b)-non-vacuity: the proven predicate genuinely holds of the hidden value `21`. -/
+/-- (b)-non-vacuity: the proven predicate holds of the hidden value `21`. -/
 example : evalPred ageProof.pred (cred.attr ageProof.slot) = true :=
   proven_predicate_holds pres ageProof (by simp [pres])
 
-/-- (c)-non-vacuity: the two shows (`blinding 99` vs `100`, genuinely distinct) have
+/-- (c)-non-vacuity: the two shows (`blinding 99` vs `100`, distinct) have
 EQUAL observer-views — the credential is unlinkable across shows. -/
 example : observerView pres = observerView pres' :=
   multishow_unlinkable pres pres' rfl rfl (by decide)

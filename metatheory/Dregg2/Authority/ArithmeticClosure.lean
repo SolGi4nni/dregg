@@ -33,7 +33,7 @@ its `RelPred` is imported and SUBSUMED, not edited):
 
   * **§NON-AFFINE GAIN** — the discriminator that affine could not express: a multiplicative invariant
     `record[a]·record[b] = record[c]` (the constant-product / AMM-pool shape `x·y = k`). Witnessed
-    true on a good record, false on a tampered one — AND argued genuinely non-affine (`mulInv` agrees
+    true on a good record, false on a tampered one — AND argued non-affine (`mulInv` agrees
     with no affine atom: it is non-monotone in each factor, which an affine `Σ cᵢ·xᵢ ≤ k` cannot be).
 
   * **§BOUNDED-CIRCUIT** — a degree-d, m-monomial `ArithPred` compiles to O(monomials × degree) PLONK
@@ -42,7 +42,7 @@ its `RelPred` is imported and SUBSUMED, not edited):
     gadgets. `arithPred_constraints_bounded` PROVES `constraintBudget p ≤ sizeBound p`, and
     `monomial_cost_is_degree` pins the per-monomial cost at its factor count. The named BOUNDARY:
     UNBOUNDED degree / UNBOUNDED monomials (a polynomial whose degree or term count is set by the
-    witness, not the predicate) and genuinely non-arithmetic relations (a hash, a range proof read as
+    witness, not the predicate) and non-arithmetic relations (a hash, a range proof read as
     a circuit, a causal/trace guard) — those route through `witnessed(vk)`
     (`Authority.Predicate`), the §8 oracle.
 
@@ -137,7 +137,7 @@ def ArithPred.polyGe (p : PolyTerm) (k : Int) : ArithPred := .polyLe (polyNeg p)
 half-spaces (the same closure move `RelPred.affineEq` makes, now for polynomials). -/
 def ArithPred.polyEq (p : PolyTerm) (k : Int) : ArithPred := .and (.polyLe p k) (ArithPred.polyGe p k)
 
-/-- **`polyNeg_eval` — PROVED.** Negating every coefficient negates the polynomial sum. -/
+/-- **`polyNeg_eval`.** Negating every coefficient negates the polynomial sum. -/
 theorem polyNeg_eval (p : PolyTerm) (rec : Value) : polyEval (polyNeg p) rec = -polyEval p rec := by
   unfold polyEval polyNeg
   rw [List.map_map]
@@ -150,7 +150,7 @@ theorem polyNeg_eval (p : PolyTerm) (rec : Value) : polyEval (polyNeg p) rec = -
     unfold monomialEval
     ring
 
-/-- **`polyEq_eval` — PROVED.** `polyEq p k` evaluates true iff `Σ monomials = k`. Equality is
+/-- **`polyEq_eval`.** `polyEq p k` evaluates true iff `Σ monomials = k`. Equality is
 `(Σ ≤ k) ∧ (Σ ≥ k)` — `.and` of two polynomial half-spaces recovered from the closure. -/
 theorem polyEq_eval (p : PolyTerm) (k : Int) (rec : Value) :
     (ArithPred.polyEq p k).eval rec = decide (polyEval p rec = k) := by
@@ -180,7 +180,7 @@ def termToMonomial (t : RelationalClosure.Term) : Monomial := { coeff := t.1, fa
 /-- An affine `terms` list as a degree-1 `polyTerm` (every monomial single-factor). -/
 def affineToPoly (terms : List RelationalClosure.Term) : PolyTerm := terms.map termToMonomial
 
-/-- **`affineToPoly_eval` — PROVED.** The degree-1 polynomial built from an affine `terms` list
+/-- **`affineToPoly_eval`.** The degree-1 polynomial built from an affine `terms` list
 evaluates to EXACTLY the affine sum `Σ cᵢ·record[fᵢ]`. So the polynomial atom of degree 1 IS the
 affine atom. -/
 theorem affineToPoly_eval (terms : List RelationalClosure.Term) (rec : Value) :
@@ -206,7 +206,7 @@ def ofRelPred : RelPred → ArithPred
   | .top              => .top
   | .bot              => .bot
 
-/-- **`ofRelPred_eval_eq` — PROVED (the affine-subsumption theorem).** Lifting an affine `RelPred`
+/-- **`ofRelPred_eval_eq` (the affine-subsumption theorem).** Lifting an affine `RelPred`
 into `ArithPred` PRESERVES its denotation: `(ofRelPred p).eval rec = p.eval rec` for every record. So
 the entire affine closure — and everything `RelationalClosure` already showed it subsumes
 (`FieldLteOther`, `AffineLe`, `SumEquals`, the live `RelCaveat`) — is the degree-1 slice of the
@@ -234,37 +234,37 @@ theorem ofRelPred_eval_eq (p : RelPred) (rec : Value) :
 @[simp] theorem eval_top (rec : Value) : ArithPred.top.eval rec = true := rfl
 @[simp] theorem eval_bot (rec : Value) : ArithPred.bot.eval rec = false := rfl
 
-/-- **De Morgan I — PROVED.** `¬(a ∧ b) ≡ (¬a ∨ ¬b)`. -/
+/-- **De Morgan I.** `¬(a ∧ b) ≡ (¬a ∨ ¬b)`. -/
 theorem deMorgan_and (a b : ArithPred) (rec : Value) :
     (ArithPred.not (.and a b)).eval rec = (ArithPred.or (.not a) (.not b)).eval rec := by
   simp [Bool.not_and]
 
-/-- **De Morgan II — PROVED.** `¬(a ∨ b) ≡ (¬a ∧ ¬b)`. -/
+/-- **De Morgan II.** `¬(a ∨ b) ≡ (¬a ∧ ¬b)`. -/
 theorem deMorgan_or (a b : ArithPred) (rec : Value) :
     (ArithPred.not (.or a b)).eval rec = (ArithPred.and (.not a) (.not b)).eval rec := by
   simp [Bool.not_or]
 
-/-- **Double negation — PROVED.** `¬¬a ≡ a`. -/
+/-- **Double negation.** `¬¬a ≡ a`. -/
 theorem not_not (a : ArithPred) (rec : Value) :
     (ArithPred.not (.not a)).eval rec = a.eval rec := by simp
 
-/-- **Complementation (excluded middle) — PROVED.** `a ∨ ¬a ≡ ⊤`. -/
+/-- **Complementation (excluded middle).** `a ∨ ¬a ≡ ⊤`. -/
 theorem or_not_self (a : ArithPred) (rec : Value) :
     (ArithPred.or a (.not a)).eval rec = ArithPred.top.eval rec := by
   simp [Bool.or_not_self]
 
-/-- **Non-contradiction — PROVED.** `a ∧ ¬a ≡ ⊥`. -/
+/-- **Non-contradiction.** `a ∧ ¬a ≡ ⊥`. -/
 theorem and_not_self (a : ArithPred) (rec : Value) :
     (ArithPred.and a (.not a)).eval rec = ArithPred.bot.eval rec := by
   simp [Bool.and_not_self]
 
-/-- **Distributivity — PROVED.** `a ∧ (b ∨ c) ≡ (a ∧ b) ∨ (a ∧ c)`. -/
+/-- **Distributivity.** `a ∧ (b ∨ c) ≡ (a ∧ b) ∨ (a ∧ c)`. -/
 theorem and_or_distrib (a b c : ArithPred) (rec : Value) :
     (ArithPred.and a (.or b c)).eval rec
       = (ArithPred.or (.and a b) (.and a c)).eval rec := by
   simp [Bool.and_or_distrib_left]
 
-/-- **Identity — PROVED.** `a ∧ ⊤ ≡ a` and `a ∨ ⊥ ≡ a`. -/
+/-- **Identity.** `a ∧ ⊤ ≡ a` and `a ∨ ⊥ ≡ a`. -/
 theorem and_top (a : ArithPred) (rec : Value) :
     (ArithPred.and a .top).eval rec = a.eval rec := by simp
 theorem or_bot (a : ArithPred) (rec : Value) :
@@ -307,13 +307,13 @@ def constraintBudget : ArithPred → Nat
   | .top        => 1
   | .bot        => 1
 
-/-- **`monomial_cost_is_degree` — PROVED.** A monomial of degree `d` (i.e. `d` factors) costs exactly
+/-- **`monomial_cost_is_degree`.** A monomial of degree `d` (i.e. `d` factors) costs exactly
 `d+1` constraints — `d−1` `qM·a·b` multiplication gates to fold the product, plus a coefficient wire
 and the running-sum edge, modeled as `factors.length + 1`. The per-monomial cost is LINEAR in degree;
 a product is not free, but it is bounded by the monomial's own arity. -/
 theorem monomial_cost_is_degree (m : Monomial) : monomialCost m = m.factors.length + 1 := rfl
 
-/-- **`arithPred_constraints_bounded` — PROVED (the bounded-circuit argument).** A degree-d,
+/-- **`arithPred_constraints_bounded` (the bounded-circuit argument).** A degree-d,
 m-monomial `ArithPred` compiles to at most `sizeBound p` circuit constraints — `O(monomials × degree)`
 made precise: the atom is `Σⱼ (degⱼ + 1) + 1`, every Boolean node `+1`. So the arithmetic closure
 stays efficiently circuit-expressible: any author-written polynomial guard of BOUNDED degree and
@@ -356,14 +356,14 @@ named slots of the SAME post-record. Beyond it, each fragment is named, and each
 `arithPred_is_record_local` (the boundary, stated positively) makes (3) precise; `atom_poly_finite`
 makes (1) precise — the atom's polynomial is always a concrete finite syntax with a concrete cost. -/
 
-/-- **`arithPred_is_record_local` — PROVED (the boundary, stated positively).** `ArithPred.eval p` is
+/-- **`arithPred_is_record_local` (the boundary, stated positively).** `ArithPred.eval p` is
 a function of the post-record ALONE: two evaluations on the *same* record agree. So the closure is the
 record-local fragment — every escape (causal guards, cross-trace relations) reads something
 `ArithPred.eval` cannot see and must route through `witnessed(vk)`. -/
 theorem arithPred_is_record_local (p : ArithPred) (rec : Value) :
     p.eval rec = p.eval rec := rfl
 
-/-- **`atom_poly_finite` — PROVED (boundary clause 1).** Every atom carries a FINITE `polyTerm`, so
+/-- **`atom_poly_finite` (boundary clause 1).** Every atom carries a FINITE `polyTerm`, so
 its constraint cost is a concrete `Nat`. An unbounded-degree / unbounded-monomial polynomial has no
 such finite syntax and is NOT an `ArithPred` (it routes to `witnessed(vk)`). The precise statement
 that the fragment is the *bounded-degree, bounded-monomial* one. -/
@@ -374,7 +374,7 @@ theorem atom_poly_finite (p : PolyTerm) (k : Int) :
 /-! ## §6 — §NON-AFFINE GAIN: the multiplicative invariant affine could not express.
 
 The gain, made concrete: a constant-product / AMM-pool invariant `record[x]·record[y] = k` (the
-`x·y = k` curve). This is genuinely degree-2 — a single `qM·a·b` mul gate — and NO affine atom
+`x·y = k` curve). This is degree-2 — a single `qM·a·b` mul gate — and NO affine atom
 `Σ cᵢ·record[fᵢ] ≤ k` can express it: an affine functional is MONOTONE in each coordinate (raising a
 positive-coefficient slot can only raise the sum), but the product invariant is NON-monotone (raising
 `x` past the curve makes the product TOO BIG, lowering it makes the product TOO SMALL — it rejects on
@@ -419,20 +419,20 @@ def mulInv : ArithPred :=
 -- Excluded middle holds on a tampered pool too — the algebra laws are pointwise, not "nice"-record.
 #guard (ArithPred.or mulInv (.not mulInv)).eval poolBad == true
 
-/-- **`mulInv_discriminates` — PROVED (non-vacuity, as a theorem).** There is an `ArithPred` and two
+/-- **`mulInv_discriminates` (non-vacuity, as a theorem).** There is an `ArithPred` and two
 records on which it returns DIFFERENT bits — the arithmetic closure is a genuine discriminator, not a
 vacuous `:= true`. -/
 theorem mulInv_discriminates :
     ∃ (p : ArithPred) (r₁ r₂ : Value), p.eval r₁ = true ∧ p.eval r₂ = false :=
   ⟨mulInv, poolOk, poolBad, by decide, by decide⟩
 
-/-- **`mulInv_not_constant` — PROVED.** `mulInv` witnesses BOTH truth values (true on the curve, false
+/-- **`mulInv_not_constant`.** `mulInv` witnesses BOTH truth values (true on the curve, false
 off it) — the non-vacuity bar (`feedback-dont-launder-vacuity-as-honest`). -/
 theorem mulInv_not_constant :
     (∃ r, mulInv.eval r = false) ∧ (∃ r, mulInv.eval r = true) :=
   ⟨⟨poolBad, by decide⟩, ⟨poolOk, by decide⟩⟩
 
-/-- **`mulInv_non_affine_witness` — PROVED (the GAIN over affine).** `mulInv` rejects on BOTH sides of
+/-- **`mulInv_non_affine_witness` (the GAIN over affine).** `mulInv` rejects on BOTH sides of
 the curve: it is true at `x = 2`, but false at `x = 1` (product too small) AND false at `x = 4`
 (product too big), with `y` and `k` FIXED. An affine atom `Σ cᵢ·record[fᵢ] ≤ k` is monotone in each
 coordinate — varying a single slot can flip its bit at most ONCE (a threshold). A predicate that is

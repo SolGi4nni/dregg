@@ -23,7 +23,7 @@ The two keystones (`upgrade_never_bricks`, `stale_version_falls_back_to_signatur
 and `#assert_axioms`-clean — they follow from `adminBySignature`, the unconditionally-true
 owner-signature arm. The module also ports the svenvs self-verification envelope as standalone
 machinery (`invariant_intro`/`safety_preservation`/`self_improvement_is_safe`/`genealogy_sound`/
-`identity_vouch_unconditional`); the honest note at `upgrade_never_bricks` says which parts the
+`identity_vouch_unconditional`); the note at `upgrade_never_bricks` says which parts the
 two keystones actually consume (the genesis/`bySignature` case, not the fold).
 -/
 import Dregg2.Authority.Positional
@@ -398,7 +398,7 @@ signature rather than silently rejecting. Two conjuncts:
 
 1. `bySignature` is admissible (`adminBySignature` — unconditionally true), and
 2. a proof against the stored (stale) version is not admissible — the fallback is
-   genuinely operative, not redundant. (`setProgramAdmissible live stored (byProof stored)`
+   operative, not redundant. (`setProgramAdmissible live stored (byProof stored)`
    reduces to `stored = live`, contradicting `stale stored live = stored < live`.)
 
 Both conjuncts are direct — not routed through the envelope; the envelope spine is proved
@@ -516,7 +516,7 @@ theorem upgrade_is_authorized_intra
   -- whose side condition `owner ∈ subjects` is `hsub`.
   exact Integrity.intra hsub
 
-/-- **`owner_change_is_intra`** — the bare structural fact, honestly named and scoped. With NO
+/-- **`owner_change_is_intra`** — the bare structural fact, named and scoped. With NO
 authorization claim, the only thing the `intra` arm needs is `owner ∈ subjects`; merely *owning*
 the object (being among its subjects) suffices for the l4v `troa_lrefl` arm. This is deliberately
 weak — it does NOT assert the upgrade was authorized — and is kept separate from

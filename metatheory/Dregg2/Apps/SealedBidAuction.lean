@@ -8,7 +8,7 @@ decision-free core — see the OPEN block below for the model-shape calls deferr
 
   * **(b) causal reveal-ordering EXCLUDES frontrunning** — a *lightcone fact*, not a gas race: a fill that
     does not causally follow the bid's reveal event fails the bid's validity window. The teeth: a bid
-    revealed on the Byzantine fork `f1` is genuinely UNFILLABLE by a concurrent fill on `f2`
+    revealed on the Byzantine fork `f1` is UNFILLABLE by a concurrent fill on `f2`
     (`no_frontrunning_teeth`), backed by `Time.Causal.demo_frontrun_caught` (`f1 ∦ f2`).
   * **(c) CONSERVATION across the settle** — no value minted: the settle receipt carries a conversion
     `offered ⟶ outcome`, hence `Converts offered outcome` (the thin Coecke–Fritz convertibility shadow,
@@ -31,9 +31,9 @@ decision-free core — see the OPEN block below for the model-shape calls deferr
     `just_progress` yields `Eventually Refunded`. Carried as the abstract template
     (`loser_refunded_eventually`) AND de-vacuified by a concrete inhabited witness on the REAL executor
     (`auction_loser_refunded`, reusing `Fairness.refundDemo`'s B-just `transferSched` path). The teeth that
-    keep this non-vacuous: `Fairness.badSched_not_just` (a starving schedule is genuinely REJECTED).
+    keep this non-vacuous: `Fairness.badSched_not_just` (a starving schedule is REJECTED).
 
-## The §8 carriers — kept honest (explicit, never faked)
+## The §8 carriers — kept honest (explicit)
 
 The sealed-bid commitment is the COMMIT phase: a bidder publishes `commit value blinding` BEFORE the
 reveal frontier, then the reveal "opens" it. The validity face is `causalAfter revealEvt` (the reveal
@@ -445,7 +445,7 @@ trivial `□→◇`. Two faces:
     layer instantiates `Refunded`/`μ` with the holding-store refund-count;
   * the CONCRETE inhabited witness (`auction_loser_refunded`): UNCONDITIONAL on the REAL executor, reusing
     `Fairness.refundDemo` (the B-just `transferSched` path, all four `JustProgress` fields proved against
-    the 46-effect executor) — proving the machinery is genuinely INHABITABLE, not a vacuous carried
+    the 46-effect executor) — proving the machinery is INHABITABLE, not a vacuous carried
     package. The teeth that keep `Just` non-vacuous is `Fairness.badSched_not_just` (a starving schedule
     REJECTED). -/
 
@@ -463,16 +463,16 @@ theorem loser_refunded_eventually {B s sched} (jp : JustProgress B Refunded s sc
     Eventually Refunded s sched :=
   just_progress jp
 
-/-- **`auction_loser_refunded` (the liveness TEETH — `◇` genuinely PRODUCED, UNCONDITIONAL).** The
+/-- **`auction_loser_refunded` (the liveness TEETH — `◇` PRODUCED, UNCONDITIONAL).** The
 concrete `refundDemo` package (the B-just `transferSched` path on the REAL executor, all four
 `JustProgress` fields proved) feeds `just_progress` to yield `Eventually Pgoal fma0 transferSched` with NO
 hypotheses: the refund goal IS eventually reached. This de-vacuifies `loser_refunded_eventually` — the
-`JustProgress` machinery is genuinely inhabitable and `just_progress` truly produces a `◇`. (`Pgoal` =
+`JustProgress` machinery is inhabitable and `just_progress` truly produces a `◇`. (`Pgoal` =
 "a receipt has landed", the concrete stand-in the escrow holding-store replaces.) -/
 theorem auction_loser_refunded : Eventually Pgoal fma0 transferSched :=
   just_progress refundDemo
 
-/-- **`auction_starvation_rejected` (the liveness NON-VACUITY teeth)** — the justness criterion genuinely
+/-- **`auction_starvation_rejected` (the liveness NON-VACUITY teeth)** — the justness criterion
 REJECTS a starving schedule: `badSched` (firing only an independent cell forever) is NOT B-just, so it
 cannot underwrite a refund-liveness claim. Without this the `Just` premise of `loser_refunded_eventually`
 could be vacuously `True` and the `◇` would be empty. dregg2's [Survey] Example 21 ("Bart never gets his
@@ -544,7 +544,7 @@ theorem escrow_refinement_sound {offered : DreggResources} {ke ue : EscrowWitnes
 INHABITED: an escrow trivially dominates ITSELF (`UserspaceDominatesKernel e e`). This proves
 `UserspaceDominatesKernel` is not the empty relation / not vacuously unsatisfiable — there is at least one
 real witness, so `escrow_refinement_sound` has content. (The NON-trivial witness — the userspace
-cell-program genuinely dominating the kernel lockbox — is the OPEN ember scopes.) -/
+cell-program dominating the kernel lockbox — is the OPEN ember scopes.) -/
 theorem escrow_refinement_reflexive {offered : DreggResources} (e : EscrowWitness offered) :
     UserspaceDominatesKernel e e :=
   fun _ hk => hk

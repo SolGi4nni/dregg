@@ -108,7 +108,7 @@ theorem blake3_commitment_binds {Cell Digest : Type} [K : Blake3Kernel Digest]
 
 /-! ## §3 — non-vacuity witnesses (the carriers are not `True`).
 
-Reference instances exhibiting injective packings/serializations + a genuinely-injective (toy)
+Reference instances exhibiting injective packings/serializations + an injective (toy)
 hash/compression, so each reduction FIRES, plus FALSE-witnesses (a colliding compression / a
 non-injective serialization) so the carriers are meaningful. -/
 
@@ -167,7 +167,7 @@ def refCommitment :
   commit := fun n => Dregg2.Crypto.PortalFloor.Reference.instBlake3Kernel.hash (refSerialize n)
   factor := fun _ => rfl
 
-/-- The BLAKE3 binding FIRES: given the (PROVED, non-vacuous) reference CR carrier, the commitment
+/-- The BLAKE3 binding FIRES: given the (non-vacuous) reference CR carrier, the commitment
 binds — exercising `blake3_commitment_binds` on a concrete instance. -/
 theorem refCommitment_binds
     (hcr : Dregg2.Crypto.PortalFloor.Reference.instBlake3Kernel.collisionHard) {a b : ℕ}

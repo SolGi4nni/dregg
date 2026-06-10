@@ -12,7 +12,7 @@ witness generators that amplify that beachhead to the rest of the effect set.
 The CONCRETE surface reuses `StateCommit`'s already-fixed injective toy primitives (`chConcrete`,
 `rhConcrete`, `cmbConcrete`, `compressNConcrete`) and adds ONE concrete log hash `lhConcrete` (an
 injective positional Horner fold over the receipt rows' `(actor,src,dst,amt)` fields — the log analog
-of `compressNConcrete`, so the log-bind gate genuinely binds the receipt chain). It is packaged as a
+of `compressNConcrete`, so the log-bind gate binds the receipt chain). It is packaged as a
 `CommitSurface` value `SConc` the generic framework consumes.
 
 The witness LAYOUT helper `layoutE` tabulates `encodeE SConc E pre args post` over `[0, 74)`, then
@@ -49,19 +49,19 @@ NOTE: `lhConcrete` is now the CR-grounded `Poseidon2Surface.turnLogDigest` (the 
 FULL `encTurnRec`, realizing the real `babyBearD4W16` Poseidon2). The OLD `acc*10⁶ + actor*1000 +
 src*100 + dst*10 + amt` packing bound the four fields but ALIASED across the per-field windows (an `amt ≥
 10` carried into `dst`, etc.); the field-binding `encTurnRec` does not. The sponge `compressN`/`cmb`/`CH`
-remain the injective `StateCommit` primitives, so the whole `SConc` surface is now genuinely binding. -/
+remain the injective `StateCommit` primitives, so the whole `SConc` surface is now binding. -/
 
 /-- **`lhConcrete`** — the concrete receipt-chain hash: an INJECTIVE positional Horner fold over the
 `(actor,src,dst,amt)` of each receipt row (each row shifted by a base larger than any toy row field),
 with the length folded in so distinct-length chains never collide. A genuine binding commitment to the
-receipt list (NOT a lossy sum, and it does NOT drop `src`/`dst`), so the log-bind gate genuinely catches
+receipt list (NOT a lossy sum, and it does NOT drop `src`/`dst`), so the log-bind gate catches
 a forged receipt. -/
 def lhConcrete : List Turn → ℤ := Dregg2.Circuit.Poseidon2Surface.turnLogDigest
 
 /-- **`SConc`** — the concrete commitment surface for the witness generators: the `StateCommit`
 injective primitives plus `lhConcrete`. Every digest column the witness lays out is a REAL field number
 under this surface (the Rust prover consumes them), and every primitive is injective on the toy domain
-(so the anti-ghost `#guard`s genuinely fire on a binding commitment). -/
+(so the anti-ghost `#guard`s fire on a binding commitment). -/
 def SConc : CommitSurface :=
   { CH := chConcrete, RH := rhConcrete, cmb := cmbConcrete
     compressN := compressNConcrete, LH := lhConcrete }

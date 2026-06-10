@@ -84,7 +84,7 @@ def removeEdgeCaps (caps : Caps) (holder t : CellId) : Caps :=
   fun l => if l = holder then (caps l).filter (fun cap => ¬ confersEdgeTo t cap) else caps l
 
 /-- **`removeEdgeCaps_correct`** — the declarative `removeEdge` is EXACTLY the executor's
-`recKRevokeTarget` post-`caps`. So pinning the spec's `caps` clause to `removeEdgeCaps` genuinely
+`recKRevokeTarget` post-`caps`. So pinning the spec's `caps` clause to `removeEdgeCaps`
 encodes the executor's revocation, while being written independently of it. -/
 theorem removeEdgeCaps_correct (k : RecordKernelState) (holder t : CellId) :
     (recKRevokeTarget k holder t).caps = removeEdgeCaps k.caps holder t := by
@@ -191,11 +191,11 @@ theorem execFullA_revokeDelegation_iff_spec (st : RecChainedState) (holder t : C
 /-! ## §4 — Non-vacuity: the spec is a GENUINE `removeEdge`, not a rubber stamp.
 
 A spec that left `caps` untouched would be worthless. Here we EXHIBIT that the spec's `caps` clause
-genuinely tears the edge down (`holder` confers no edge to `t` afterward), preserves every other
+tears the edge down (`holder` confers no edge to `t` afterward), preserves every other
 holder, and — the dual frame — leaves all balances untouched. -/
 
-/-- **`revoke_drops_holder_edges` — PROVED.** After a committed revoke, the `holder` confers NO edge
-to `t`: every cap it still holds fails `confersEdgeTo t`. The edge is genuinely gone. -/
+/-- **`revoke_drops_holder_edges`.** After a committed revoke, the `holder` confers NO edge
+to `t`: every cap it still holds fails `confersEdgeTo t`. The edge is gone. -/
 theorem revoke_drops_holder_edges (st : RecChainedState) (holder t : CellId)
     (st' : RecChainedState) (h : RevokeSpec st holder t st') :
     ∀ cap ∈ st'.kernel.caps holder, ¬ confersEdgeTo t cap = true := by
@@ -203,7 +203,7 @@ theorem revoke_drops_holder_edges (st : RecChainedState) (holder t : CellId)
   rw [hcaps]
   exact (recKRevokeTarget_correct st.kernel.caps holder t).1
 
-/-- **`revoke_preserves_other_holders` — PROVED.** Any holder `l ≠ holder` keeps its cap-list
+/-- **`revoke_preserves_other_holders`.** Any holder `l ≠ holder` keeps its cap-list
 verbatim across the revoke — authority only SHRINKS at the targeted holder. -/
 theorem revoke_preserves_other_holders (st : RecChainedState) (holder t : CellId)
     (st' : RecChainedState) (h : RevokeSpec st holder t st') :
@@ -212,7 +212,7 @@ theorem revoke_preserves_other_holders (st : RecChainedState) (holder t : CellId
   rw [hcaps]
   exact (recKRevokeTarget_correct st.kernel.caps holder t).2
 
-/-- **`revoke_preserves_balances` — PROVED.** The dual frame: a revocation edits only `caps`, so the
+/-- **`revoke_preserves_balances`.** The dual frame: a revocation edits only `caps`, so the
 conserved `recTotal` (and `accounts`/`cell`) are unchanged. Revocation moves no value. -/
 theorem revoke_preserves_balances (st : RecChainedState) (holder t : CellId)
     (st' : RecChainedState) (h : RevokeSpec st holder t st') :
@@ -224,7 +224,7 @@ theorem revoke_preserves_balances (st : RecChainedState) (holder t : CellId)
   unfold recTotal
   rw [hacc, hcell]
 
-/-- **`revoke_log_advances` — PROVED.** The receipt chain advances by EXACTLY one `authReceipt`
+/-- **`revoke_log_advances`.** The receipt chain advances by EXACTLY one `authReceipt`
 row (the chain grows by one; the dual of `Transfer`'s ChainLink). -/
 theorem revoke_log_advances (st : RecChainedState) (holder t : CellId)
     (st' : RecChainedState) (h : RevokeSpec st holder t st') :

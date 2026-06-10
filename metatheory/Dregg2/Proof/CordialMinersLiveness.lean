@@ -1,6 +1,6 @@
 /-
 # Dregg2.Proof.CordialMinersLiveness — closing the MECHANICAL/MODERATE liveness residual of
-# the Cordial-Miners DAG-BFT consensus, ADDITIVELY, with the genuinely-hard pacemaker /
+# the Cordial-Miners DAG-BFT consensus, ADDITIVELY, with the hard pacemaker /
 # dissemination cores left as explicitly-NAMED residual statements (never faked, never `sorry`).
 
 `Dregg2.Proof.CordialMiners` proves the **safety** keystone (`cordial_agreement` /
@@ -35,7 +35,7 @@ frontier is a named, type-checked object rather than prose.
 
 ## What stays OPEN — named residual objects, NOT sorries
 
-  3. **`HonestRatifierConvergence` — the dissemination residual (post-GST).** The genuinely-hard
+  3. **`HonestRatifierConvergence` — the dissemination residual (post-GST).** The hard
      liveness/dissemination core (`dissemination.rs` reliable broadcast + the post-GST pacemaker):
      after GST, on the *union* of two laces the honest nodes' causal pasts have converged enough
      that a shared honest ratifier of one leader is visible as a ratifier of the other. We give it
@@ -49,7 +49,7 @@ frontier is a named, type-checked object rather than prose.
      `BFT.lean`'s O2 and `BeaconSpace`'s honest-leader hit. We RE-EXPORT the BeaconSpace discharge
      of exactly that residual (`liveness_over_beacon`) so the named obstruction is connected to its
      existing partial discharge rather than restated. We never fake it; `cm_pacemaker_residual`
-     is a `Prop`-valued *named statement*, accompanied by the honest note that its from-scratch
+     is a `Prop`-valued *named statement*, accompanied by the note that its from-scratch
      proof is the view-synchrony argument off the safety critical path.
 
 Every adversary/dissemination assumption is a
@@ -101,7 +101,7 @@ the tie-break leaves is between blocks sharing an id, which on a canonical lace 
 theorem Block.xleq_antisymm_id {a b : Block} (hab : Block.xleq a b) (hba : Block.xleq b a) :
     a.id = b.id := le_antisymm hab hba
 
-/-- **`xsort_consistency` (PROVED — the law the task names).** The deterministic tie-break `xleq`
+/-- **`xsort_consistency` (the law the task names).** The deterministic tie-break `xleq`
 is a genuine total preorder over any segment `seg`: reflexive, transitive, and total on the segment's
 blocks. This is what makes `ordering.rs::xsort` deterministic — two honest nodes computing it over
 the same segment get the same order. Packaged as one statement over an explicit segment. -/
@@ -124,34 +124,34 @@ by block id via insertion sort over `xleq`. The within-segment total order `cord
 scoped out — now a concrete function. -/
 def Block.xsort (seg : List Block) : List Block := seg.insertionSort Block.xleq
 
-/-- **`xsort_sorted` (PROVED)** — the output is `xleq`-`Pairwise` (sorted by id): consecutive blocks
+/-- **`xsort_sorted`** — the output is `xleq`-`Pairwise` (sorted by id): consecutive blocks
 are id-ordered. Uses `List.pairwise_insertionSort` with the `Std.Total`/`IsTrans` instances. -/
 theorem xsort_sorted (seg : List Block) : (Block.xsort seg).Pairwise Block.xleq :=
   List.pairwise_insertionSort Block.xleq seg
 
-/-- **`xsort_perm` (PROVED)** — `xsort` only *reorders*: it is a permutation of the segment, so the
+/-- **`xsort_perm`** — `xsort` only *reorders*: it is a permutation of the segment, so the
 total order loses no block and invents none (the `tau` segment is exactly the super-ratified blocks,
 reordered). -/
 theorem xsort_perm (seg : List Block) : List.Perm (Block.xsort seg) seg :=
   List.perm_insertionSort Block.xleq seg
 
-/-- **`xsort_length` (PROVED)** — `xsort` preserves length (corollary of `xsort_perm`). -/
+/-- **`xsort_length`** — `xsort` preserves length (corollary of `xsort_perm`). -/
 theorem xsort_length (seg : List Block) : (Block.xsort seg).length = seg.length :=
   (xsort_perm seg).length_eq
 
-/-- **`xsort_mem` (PROVED)** — membership is preserved both ways: a block is in the sorted segment
+/-- **`xsort_mem`** — membership is preserved both ways: a block is in the sorted segment
 iff it was in the segment. -/
 theorem xsort_mem {b : Block} {seg : List Block} : b ∈ Block.xsort seg ↔ b ∈ seg :=
   (xsort_perm seg).mem_iff
 
-/-- **`xsort_idem` (PROVED — DETERMINISM).** Re-sorting an already-sorted segment is a no-op:
+/-- **`xsort_idem` (DETERMINISM).** Re-sorting an already-sorted segment is a no-op:
 `xsort (xsort seg) = xsort seg`. This is the determinism property — `tau` is a fixpoint of `xsort`,
 so the order is stable and node-independent. Proved from `Pairwise.insertionSort_eq` (a list already
 `Pairwise r` is unchanged by `insertionSort r`). -/
 theorem xsort_idem (seg : List Block) : Block.xsort (Block.xsort seg) = Block.xsort seg :=
   (xsort_sorted seg).insertionSort_eq
 
-/-- **`xsort_segment_total_order` (PROVED — the linear-extension keystone).** On a *canonical*
+/-- **`xsort_segment_total_order` (the linear-extension keystone).** On a *canonical*
 segment (distinct blocks have distinct ids — the content-addressing invariant, exactly
 `Lace.Canonical` restricted to the segment), `xsort` realizes a genuine **linear order**: any two
 DISTINCT blocks of the segment are *strictly* id-comparable (`a.id < b.id ∨ b.id < a.id`), and the
@@ -175,7 +175,7 @@ theorem xsort_segment_total_order (seg : List Block)
 blocks). The single-lace specialization makes that manifest — both quorums are facts about ONE
 concrete blocklace `S.lace`, not two abstract vote sets. -/
 
-/-- **`cordial_agreement_from_single_lace` (PROVED) — agreement with BOTH quorums read off ONE
+/-- **`cordial_agreement_from_single_lace` — agreement with BOTH quorums read off ONE
 blocklace.** Two leaders `l₁ l₂` both `Committed` in the *same* `CordialState S` — i.e. the *single*
 blocklace `S.lace` exhibits an `≥ n-f` `ratifyingVoters` read for *each* — cannot be distinct, under
 the honest BFT model over the materialized (lace-derived) ratification votes plus id-determinism.
@@ -193,7 +193,7 @@ theorem cordial_agreement_from_single_lace
     l₁ = l₂ :=
   cordial_agreement_from_lace S cfg l₁ l₂ h₁ h₂ M hid_inj
 
-/-- **`cordial_no_conflicting_final_leaders_from_single_lace` (PROVED) — the `False`/safety form on
+/-- **`cordial_no_conflicting_final_leaders_from_single_lace` — the `False`/safety form on
 ONE lace.** Two *distinct* blocks cannot both be `Committed` in the same `CordialState` (both exhibit
 an `≥ n-f` `ratifyingVoters` read off the *single* `S.lace`) under the honest model. -/
 theorem cordial_no_conflicting_final_leaders_from_single_lace
@@ -207,7 +207,7 @@ theorem cordial_no_conflicting_final_leaders_from_single_lace
 
 /-! ## 3. The dissemination residual, NAMED: `HonestRatifierConvergence` (post-GST).
 
-The genuinely-hard liveness/dissemination core. `cordial_agreement_from_lace`'s OPEN-CM-DISSEMINATION
+The hard liveness/dissemination core. `cordial_agreement_from_lace`'s OPEN-CM-DISSEMINATION
 residual item (3) is: after GST, on the *union* of two laces the honest nodes' causal pasts have
 converged enough that a shared honest ratifier of one leader is visible as a ratifier of the other
 (the `dissemination.rs` reliable-broadcast guarantee). We give it as an explicit `structure` — the
@@ -226,7 +226,7 @@ participant that ratifies BOTH candidate leader ids. Its fields ARE the conclusi
 
 This is exactly the `dissemination.rs` guarantee the safety argument needs and the SAME residual as
 `BFT.lean`'s O2 — *deriving* it is the post-GST pacemaker/view-synchrony argument (see
-`cm_pacemaker_residual`). Here it is a hypothesis the runtime discharges, never faked. -/
+`cm_pacemaker_residual`). Here it is a hypothesis the runtime discharges. -/
 structure HonestRatifierConvergence (cfg : Finality.Config)
     (lid₁ lid₂ : Authority.Blocklace.BlockId) (V : List Vote) where
   /-- The adversary/honesty model over the combined ratification-vote universe `V`. -/
@@ -240,7 +240,7 @@ structure HonestRatifierConvergence (cfg : Finality.Config)
   /-- After convergence, the witness ratifies leader id `lid₂` (visible on `V`). -/
   ratifies₂ : witness ∈ votersFor V lid₂
 
-/-- **`HonestRatifierConvergence.ofQuorums` (PROVED) — the convergence witness IS the
+/-- **`HonestRatifierConvergence.ofQuorums` — the convergence witness IS the
 quorum-intersection conclusion.** When BOTH leader ids reach the BFT quorum `n - f` on the combined
 universe `V`, the converged honest ratifier exists: it is exactly the honest witness
 `BFT.honest_witness_in_intersection` produces. So `HonestRatifierConvergence` is not a stronger
@@ -258,7 +258,7 @@ noncomputable def HonestRatifierConvergence.ofQuorums
     ratifies₁ := w.choose_spec.2.1
     ratifies₂ := w.choose_spec.2.2 }
 
-/-- **`agreement_of_convergence` (PROVED) — agreement GIVEN the named dissemination residual.** With
+/-- **`agreement_of_convergence` — agreement GIVEN the named dissemination residual.** With
 the post-GST `HonestRatifierConvergence` witness in hand (the converged honest ratifier of both
 leaders) plus the DAG honesty law (honest-one-ratification, here the BFT model's `honest_vote_once`)
 and id-determinism, the two leaders collapse `l₁ = l₂`. This is the liveness-side companion to
@@ -288,7 +288,7 @@ def cm_pacemaker_residual {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config) : Prop :=
   ∃ (r : Nat) (block : Nat), committedByQuorum votesOf r cfg block
 
-/-- **`cm_pacemaker_from_gstRound` (PROVED) — the residual reduces to a delivered GST round.** GIVEN
+/-- **`cm_pacemaker_from_gstRound` — the residual reduces to a delivered GST round.** GIVEN
 a post-GST round whose honest supermajority's votes are delivered (`BFT.GSTRound` — DLS88 Δ-delivery
 + HotStuff responsive view), the Cordial-Miners pacemaker residual holds. So the irreducible part of
 `cm_pacemaker_residual` is exactly "after GST an honest quorum's votes are delivered" — the named O2
@@ -320,7 +320,7 @@ def selfVoters : List AuthorId := [0, 1, 2]
 `Vote ⟨p, rg1.id⟩` per ratifier). A concrete, computable `List Vote`. -/
 def selfVotes : List Vote := votesFromVoters selfVoters rg1.id
 
-/-- **`selfVotes_votersFor` (PROVED)** — the `votersFor` count of `selfVotes` for `rg1.id` is exactly
+/-- **`selfVotes_votersFor`** — the `votersFor` count of `selfVotes` for `rg1.id` is exactly
 the three ratifiers (`votersFor_votesFromVoters` + `selfVoters` is `Nodup`): no shrinkage, the count
 is read off the lace's ratifier list. -/
 theorem selfVotes_votersFor : votersFor selfVotes rg1.id = selfVoters := by
@@ -373,7 +373,7 @@ def selfModel : BFTModel cfg selfVotes where
     intro v b₁ b₂ _ hv1 hv2
     rw [selfVotes_voter_block hv1, selfVotes_voter_block hv2]
 
-/-- **`selfConvergence` (PROVED) — the dissemination residual is INHABITED.** The lace-read ratifier
+/-- **`selfConvergence` — the dissemination residual is INHABITED.** The lace-read ratifier
 set for `rg1` (the three distinct ratifiers `0,1,2`, count `= 3 = n - f`, from `selfVotes_votersFor`)
 gives, via `ofQuorums`, a concrete `HonestRatifierConvergence` for `rg1.id` against itself — the
 converged honest ratifier. So the named post-GST dissemination residual is non-vacuous: a real

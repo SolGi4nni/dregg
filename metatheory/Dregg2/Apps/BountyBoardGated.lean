@@ -86,7 +86,7 @@ def postFundNode (cred : Authorization Dg Pf) (poster escrowCell : CellId) (asse
 
 /-! ## §2 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** A gated forest with NO children
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** A gated forest with NO children
 runs EXACTLY its root gated node step. -/
 theorem execFullForestG_leaf (s : RecChainedState) (na : DNodeAuth) (a : FullActionA) :
     execFullForestG s (⟨na, a, []⟩ : DForest) = execFullAGated s na a := by
@@ -113,7 +113,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
   rw [hcred]
   simp
 
-/-- **`bb_forged_rejected` — PROVED (gate teeth #1, preserved).** A bounty-board op (post-mint /
+/-- **`bb_forged_rejected` (gate teeth #1, preserved).** A bounty-board op (post-mint /
 post-fund / claim / cancel — ANY action) with a FORGED credential is rejected by the production turn
 entry, for EVERY pre-state `s`. The credential leg fail-closes ⇒ the whole forest rolls back. -/
 theorem bb_forged_rejected (s : RecChainedState) (a : FullActionA) :
@@ -139,7 +139,7 @@ theorem bb_forged_post_fund_rejected (s : RecChainedState) (poster escrowCell : 
 def bbNodeNul (cred : Authorization Dg Pf) (nul : Nat) (action : FullActionA) : DForest :=
   ⟨ { mkAuth cred [] with credNul := nul }, action, [] ⟩
 
-/-- **`bb_revoked_rejected` — PROVED (gate teeth #2, preserved).** A bounty-board op whose credential
+/-- **`bb_revoked_rejected` (gate teeth #2, preserved).** A bounty-board op whose credential
 nullifier `nul` is in the COMMITTED revocation registry `s.kernel.revoked` is REJECTED (`none`), for
 EVERY pre-state `s` and ANY action — even with a genuine signature. Revocation reads committed state. -/
 theorem bb_revoked_rejected (s : RecChainedState) (cred : Authorization Dg Pf) (nul : Nat)

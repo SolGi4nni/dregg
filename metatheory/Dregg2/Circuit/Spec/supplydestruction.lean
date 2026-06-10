@@ -100,7 +100,7 @@ analog).
 `recBalCredit bal cell a (-amt)` is the ONLY component the burn rewrites. We validate it DECLARATIVELY
 (not trusting the helper blindly): a burn lowers cell `cell`'s asset `a` by exactly `amt`, and leaves
 EVERY OTHER `(cell, asset)` ledger entry literally untouched. So the spec's
-`s'.kernel.bal = recBalCredit …` clause genuinely encodes debit ∧ ledger-frame. -/
+`s'.kernel.bal = recBalCredit …` clause encodes debit ∧ ledger-frame. -/
 theorem recBurn_ledger_correct (bal : CellId → AssetId → ℤ) (cell : CellId) (a : AssetId) (amt : ℤ) :
     recBalCredit bal cell a (-amt) cell a = bal cell a - amt
     ∧ (∀ c b, ¬ (c = cell ∧ b = a) → recBalCredit bal cell a (-amt) c b = bal c b) := by

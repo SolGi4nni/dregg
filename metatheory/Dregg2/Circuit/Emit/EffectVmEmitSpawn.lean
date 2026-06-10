@@ -27,7 +27,7 @@ post-state into `state_commit` (the anti-ghost tooth, reused from the transfer k
 
 `spawnVmDescriptor` emits exactly that per-CHILD-cell row.
 
-## HONEST PARTIAL — the THREE genuinely-unreachable components (IR gaps, flagged loudly)
+## HONEST PARTIAL — the THREE unreachable components (IR gaps, flagged loudly)
 
 The per-row CHILD-cell circuit CANNOT reach the following `SpawnSpec` components; they live ONLY in
 universe-A's full-state portals (the SAME bar `spawnA_full_sound` uses), NOT in this per-row descriptor:
@@ -47,7 +47,7 @@ accounts-set growth, the delegate/delegations side-tables, or the log inside the
 is an HONEST PARTIAL: a per-row beachhead for a 5-component effect, the three table/log components
 flagged as IR gaps reached only through the validated full-state portals.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`; the cap-table digest ONLY as `Function.Injective D`. No

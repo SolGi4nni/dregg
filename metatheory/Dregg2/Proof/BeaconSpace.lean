@@ -313,7 +313,7 @@ theorem liveness_over_beacon (B : BeaconSpace)
 The canonical interior witness (`Measure.infinitePi` at `h = 3/4`) requires
 `Mathlib.Probability.ProductMeasure`; see `BeaconSpaceInterior` for that. Here we use the simpler
 all-honest Dirac beacon (`μ = dirac (fun _ => true)`, `h = 1`) to confirm the structure is
-genuinely inhabited. -/
+inhabited. -/
 namespace Inhabited
 
 /-- The all-honest beacon stream (every view's leader is honest). -/

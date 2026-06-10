@@ -95,7 +95,7 @@ gate on the post-write record of the target cell. It commits EXACTLY `stateStepG
 when the relational caveats also hold — otherwise FAILS CLOSED. -/
 
 /-- **`relStateStepGuarded s recCavs f actor target n` — the record-level-guarded field write
-(PROVED computable).** First the per-slot guarded write (`stateStepGuarded`: authority + lifecycle +
+(computable).** First the per-slot guarded write (`stateStepGuarded`: authority + lifecycle +
 per-slot caveats), then the record-level relational gate `relCaveatsAdmit recCavs` on the post-write
 record of `target`. Commits `stateStepGuarded`'s post-state iff BOTH gates pass. Fail-closed on
 either. The executable shadow of dregg1's record-level `RecordProgram::evaluate` arm that reads the
@@ -106,7 +106,7 @@ def relStateStepGuarded (s : RecChainedState) (recCavs : List RelCaveat) (f : Fi
   | some s' => if relCaveatsAdmit recCavs (s'.kernel.cell target) = true then some s' else none
   | none    => none
 
-/-- **`relStateStepGuarded_eq` — PROVED.** A committed relationally-guarded write is EXACTLY the
+/-- **`relStateStepGuarded_eq`.** A committed relationally-guarded write is EXACTLY the
 underlying per-slot `stateStepGuarded` write (the relational gate only RESTRICTS the domain — it
 never changes the post-state). The bridge that lifts EVERY existing keystone to the relational write
 verbatim. -/
@@ -123,9 +123,9 @@ theorem relStateStepGuarded_eq {s s' : RecChainedState} {recCavs : List RelCavea
         exact h
       · rw [if_neg hrel] at h; exact absurd h (by simp)
 
-/-- **`relStateStepGuarded_admits` — PROVED.** A committed relationally-guarded write means every
+/-- **`relStateStepGuarded_admits`.** A committed relationally-guarded write means every
 record-level relational caveat ADMITTED the post-write record. The witness that the published
-cross-slot invariants were genuinely enforced BY THE WRITE. -/
+cross-slot invariants were enforced BY THE WRITE. -/
 theorem relStateStepGuarded_admits {s s' : RecChainedState} {recCavs : List RelCaveat} {f : FieldName}
     {actor target : CellId} {n : Int} (h : relStateStepGuarded s recCavs f actor target n = some s') :
     relCaveatsAdmit recCavs (s'.kernel.cell target) = true := by
@@ -140,7 +140,7 @@ theorem relStateStepGuarded_admits {s s' : RecChainedState} {recCavs : List RelC
         exact hrel
       · rw [if_neg hrel] at h; exact absurd h (by simp)
 
-/-- **`relStateStepGuarded_nil_eq` — SUPERSET (PROVED).** With an EMPTY relational-caveat list the
+/-- **`relStateStepGuarded_nil_eq` — SUPERSET.** With an EMPTY relational-caveat list the
 relationally-guarded write is DEFINITIONALLY the existing per-slot `stateStepGuarded` write: the
 record-level gate is vacuously satisfied (`List.all [] = true`). So the existing surface is recovered
 exactly — the promotion is a strict superset, nothing downstream regresses. -/
@@ -151,7 +151,7 @@ theorem relStateStepGuarded_nil_eq (s : RecChainedState) (f : FieldName) (actor 
   | none => rfl
   | some s' => simp
 
-/-- **`relStateStepGuarded_per_slot_fails` — SUPERSET, the per-slot half (PROVED).** If the
+/-- **`relStateStepGuarded_per_slot_fails` — SUPERSET, the per-slot half.** If the
 underlying per-slot guarded write fails (authority / lifecycle / per-slot caveat rejected), the
 relationally-guarded write ALSO fails — the relational gate can only TIGHTEN, never loosen. -/
 theorem relStateStepGuarded_per_slot_fails (s : RecChainedState) (recCavs : List RelCaveat)
@@ -167,7 +167,7 @@ inherits the existing balance/authority/metadata keystones VERBATIM — we INSTA
 `EffectsState` lemmas, we do NOT re-prove them. This is the guarantee that the new cross-slot gate
 preserves conservation + the authority frame. -/
 
-/-- **`rel_state_conserves` — BALANCE UNCHANGED (PROVED, instantiated).** A committed
+/-- **`rel_state_conserves` — BALANCE UNCHANGED (instantiated).** A committed
 relationally-guarded write (of a non-`balance` field) preserves the total balance — the record-level
 relational gate is balance-neutral (it only DECIDES; it never moves value). Lifted from
 `guarded_state_conserves` through `relStateStepGuarded_eq`. -/
@@ -177,7 +177,7 @@ theorem rel_state_conserves {s s' : RecChainedState} {recCavs : List RelCaveat} 
     recTotal s'.kernel = recTotal s.kernel :=
   guarded_state_conserves hf (relStateStepGuarded_eq h)
 
-/-- **`rel_state_authGraph_unchanged` — PROVED (instantiated).** A committed relationally-guarded
+/-- **`rel_state_authGraph_unchanged` (instantiated).** A committed relationally-guarded
 write leaves the authority graph unchanged — a cross-slot relational caveat gates WRITES, never
 connectivity. Lifted from `guarded_state_authGraph_unchanged`. -/
 theorem rel_state_authGraph_unchanged {s s' : RecChainedState} {recCavs : List RelCaveat}
@@ -186,7 +186,7 @@ theorem rel_state_authGraph_unchanged {s s' : RecChainedState} {recCavs : List R
     execGraph s'.kernel.caps = execGraph s.kernel.caps :=
   guarded_state_authGraph_unchanged (relStateStepGuarded_eq h)
 
-/-- **`rel_state_authorized` — PROVED (instantiated).** A committed relationally-guarded write
+/-- **`rel_state_authorized` (instantiated).** A committed relationally-guarded write
 implies the actor held authority over the target — the authority gate still fires under the
 relational gate. Lifted from `guarded_state_authorized`. -/
 theorem rel_state_authorized {s s' : RecChainedState} {recCavs : List RelCaveat} {f : FieldName}
@@ -195,7 +195,7 @@ theorem rel_state_authorized {s s' : RecChainedState} {recCavs : List RelCaveat}
     stateAuthB s.kernel.caps actor target = true :=
   guarded_state_authorized (relStateStepGuarded_eq h)
 
-/-- **`rel_state_field_written` — PROVED (instantiated).** After a committed relationally-guarded
+/-- **`rel_state_field_written` (instantiated).** After a committed relationally-guarded
 write, the target's slot reads back exactly the written value — the metadata move is intact and the
 record-level caveats held on this post-record (`relStateStepGuarded_admits`). Lifted from
 `guarded_state_field_written`. -/
@@ -221,7 +221,7 @@ def capacityOk (rec : Value) (head tail cap : FieldName) : Prop :=
 def noUnderflow (rec : Value) (head tail : FieldName) : Prop :=
   fieldOf tail rec ≤ fieldOf head rec
 
-/-- **`fieldLteOther_expresses_capacity` — PROVED.** The atom `fieldLteOther head cap (record[tail])`
+/-- **`fieldLteOther_expresses_capacity`.** The atom `fieldLteOther head cap (record[tail])`
 evaluates true on the record IFF the capacity bound holds. (The `delta` carries the second cross-slot
 term `tail`, since `RelCaveat.eval` reads the named `index`/`other` slots plus a scalar `delta`.) -/
 theorem fieldLteOther_expresses_capacity (rec : Value) (head tail cap : FieldName) :
@@ -230,7 +230,7 @@ theorem fieldLteOther_expresses_capacity (rec : Value) (head tail cap : FieldNam
   unfold RelCaveat.eval capacityOk
   rw [decide_eq_true_iff]; omega
 
-/-- **`fieldLteOther_expresses_underflow` — PROVED.** The atom `fieldLteOther tail head 0` evaluates
+/-- **`fieldLteOther_expresses_underflow`.** The atom `fieldLteOther tail head 0` evaluates
 true IFF the no-underflow bound `tail ≤ head` holds. -/
 theorem fieldLteOther_expresses_underflow (rec : Value) (head tail : FieldName) :
     (RelCaveat.fieldLteOther tail head 0).eval rec = true ↔ noUnderflow rec head tail := by
@@ -243,7 +243,7 @@ The teeth of the promotion: if the post-write record VIOLATES any record-level r
 the relationally-guarded write does NOT commit — even when authority, lifecycle, and all per-slot
 caveats pass. This is what makes a queue's capacity/underflow bound REAL in-executor. -/
 
-/-- **`relStateStepGuarded_rel_violation_fails` — PROVED (FAIL-CLOSED).** If the post-write record of
+/-- **`relStateStepGuarded_rel_violation_fails` (FAIL-CLOSED).** If the post-write record of
 `target` (the record `stateStepGuarded` would commit) VIOLATES the record-level relational caveats
 (`relCaveatsAdmit = false`), the relationally-guarded write does NOT commit. The executor-level
 teeth: a write that would push occupancy over capacity, or tail past head, is REJECTED. -/
@@ -254,7 +254,7 @@ theorem relStateStepGuarded_rel_violation_fails {s s'' : RecChainedState} {recCa
     relStateStepGuarded s recCavs f actor target n = none := by
   unfold relStateStepGuarded; rw [hcommit]; simp only; rw [if_neg (by rw [hviol]; simp)]
 
-/-- **`relStateStepGuarded_capacity_enforced` — the capacity bound is enforced (PROVED).** A
+/-- **`relStateStepGuarded_capacity_enforced` — the capacity bound is enforced.** A
 committed relationally-guarded write whose relational caveat list carries the capacity atom
 `fieldLteOther head cap (post[tail])` lands in a post-record that RESPECTS `head − tail ≤ cap`. So the
 cross-slot capacity bound is an in-executor INVARIANT of any committed write under this caveat —

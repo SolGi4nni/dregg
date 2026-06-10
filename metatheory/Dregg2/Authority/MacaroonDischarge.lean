@@ -37,14 +37,14 @@ The REAL safety properties the federation/SDK relies on, proved here:
   (`macaroon.rs:324-329`, `579-601` `test_unbound_discharge_rejected_even_when_empty`). Fail-closed.
 * **No cross-root replay — the binding tooth** (`binding_not_replayable_to_other_root`): a discharge
   bound to parent tail `p` is REJECTED when checked against any *different* parent tail `p' ≠ p`,
-  PROVIDED `bindingHash` is collision-resistant (the named `BindingCR` carrier — never faked). This is
+  PROVIDED `bindingHash` is collision-resistant (the named `BindingCR` carrier). This is
   the property that defeats "strip caveats off the root, reuse the old discharge": a less-attenuated
   root has a different tail, so its `bindingHash` differs, so the bound discharge no longer matches.
 * **Forging a binding needs a MAC query** (`rebinding_requires_mac_query`): you cannot retro-fit a
   discharge to a new parent without re-running the keyed hash under the discharge key — routed through
   the same `MacKernel.unforgeable` portal `CaveatChain` uses, so a forgeable instance REFUTES it.
 
-§ PORTALS (honest carried crypto, NEVER faked): (a) the keyed hash `mac` and its EUF-CMA
+§ PORTALS (honest carried crypto): (a) the keyed hash `mac` and its EUF-CMA
 `unforgeable` — IMPORTED from `Authority.CaveatChain.MacKernel`; (b) `bindingHash`'s collision
 resistance `BindingCR` — a `Prop` carrier in the same discipline (SHA-256 collision-resistance, the
 assumption `crypto::binding_hash` discharges). Neither is proved; the no-replay theorem is the
@@ -210,7 +210,7 @@ theorem rebinding_changes_replay (bindingHash : Tag → Bytes)
     (d : Discharge (Key Tag) Bytes Tag) (p p' : Tag) (hne : p ≠ p')
     -- the MAC, restricted to the (single, fixed) base tag, is injective in its message (the
     -- collision-freedom the keyed hash gives on a fixed key/prefix — a consequence of `unforgeable`
-    -- in the EUF-CMA portal; assumed here as the local `hmacInj` premise, honestly named):
+    -- in the EUF-CMA portal; assumed here as the local `hmacInj` premise, named):
     (hmacInj : ∀ (base : Tag) (x y : Bytes),
       (MacKernel.mac base x : Tag) = MacKernel.mac base y → x = y) :
     Discharge.replay bindingHash (bindTo d p) ≠ Discharge.replay bindingHash (bindTo d p') := by

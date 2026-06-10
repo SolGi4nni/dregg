@@ -142,7 +142,7 @@ def Verify (s : Scenario) (m : Maneuver) : Bool :=
 
 The referee is exactly `Intent.resolve` at `P := Scenario`, `W := Maneuver`: the untrusted
 matcher (`Searchable.find`, the LLM negotiation layer) PROPOSES a maneuver; the cell RE-RUNS
-`Verify` and accepts ONLY a maneuver that genuinely clears the conjunction. Adversary-proof
+`Verify` and accepts ONLY a maneuver that clears the conjunction. Adversary-proof
 soundness is then `intent_sound_against_adversary`, inherited verbatim. -/
 
 /-- **The verify side of the seam, as a `Verifiable` instance.** The predicate is the
@@ -163,7 +163,7 @@ def referee [Searchable Scenario Maneuver] (s : Scenario) : Option Maneuver :=
   (refereeIntent s).resolve
 
 /-- **`referee_sound` — THE KEYSTONE: a committed maneuver was Verify-discharging, EVEN IF
-the proposer is adversarial (PROVED, inherited).** For ANY `Searchable` instance whatsoever
+the proposer is adversarial (inherited).** For ANY `Searchable` instance whatsoever
 (including a matcher engineered to return collision-creating garbage), if the referee COMMITS
 a maneuver `m`, then `Verify s m = true` — `m` provably clears the conjunction. This is the
 executed analog the pitch promises: the trust anchor is a machine-checked proof, not faith.
@@ -197,12 +197,12 @@ def garbageManeuver : Maneuver := { target := 0, delta := 1 }
 /-- A CLEARING maneuver: nudge sat 0 by 100 (to pos 100) — separation 99 ≥ 5: clear. -/
 def clearManeuver : Maneuver := { target := 0, delta := 100 }
 
-/-- **TEETH (PROVED) — the garbage maneuver does NOT verify.** `Verify` genuinely rejects a
+/-- **TEETH — the garbage maneuver does NOT verify.** `Verify` rejects a
 maneuver that fails to clear the conjunction; so `referee_sound` is non-vacuous (acceptance
 is a real constraint, not `True`). -/
 theorem garbage_rejected : Verify conjScenario garbageManeuver = false := by decide
 
-/-- **The clearing maneuver DOES verify (PROVED)** — the screen is not fail-closed-on-
+/-- **The clearing maneuver DOES verify** — the screen is not fail-closed-on-
 everything either: a genuine fix is accepted. With `garbage_rejected`, `Verify` is a real,
 two-sided decision. -/
 theorem clear_accepted : Verify conjScenario clearManeuver = true := by decide
@@ -226,15 +226,15 @@ conjunction. The referee must reject it. -/
 @[reducible] def emptyProposer : Searchable Scenario Maneuver where
   find := fun _ => none
 
-/-- **TEETH against an adversary (PROVED) — the referee REJECTS the adversarial proposal.**
+/-- **TEETH against an adversary — the referee REJECTS the adversarial proposal.**
 Even though `evilProposer` proposes `garbageManeuver`, the referee returns `none`: the
 propose-then-VERIFY shape filters it out. This is `referee_sound` made concrete — the
 adversarial fill never escapes. -/
 theorem referee_rejects_adversary :
     (@referee evilProposer conjScenario) = none := by decide
 
-/-- **The referee ACCEPTS the correct proposal (PROVED).** With a proposer that returns a
-genuinely-clearing maneuver, the referee commits it. -/
+/-- **The referee ACCEPTS the correct proposal.** With a proposer that returns a
+clearing maneuver, the referee commits it. -/
 theorem referee_accepts_good :
     (@referee goodProposer conjScenario) = some clearManeuver := by decide
 
@@ -244,7 +244,7 @@ Fuel is a **cell budget**: a `KernelState` whose `bal` at the `fuel` asset is th
 Δv. A burn is a half-edge OUT of that cell (`applyHalfOut`). The budget gate is PROVED, not
 checked: an out-of-fuel sat (`bal fuel = 0`) CANNOT burn any positive amount.
 
-HONEST: fuel is a **SINK** here — a single-cell debit. There is NO constellation-wide
+fuel is a **SINK** here — a single-cell debit. There is NO constellation-wide
 conservation: a burn destroys budget, it is not transferred to another sat's tank. -/
 
 open Dregg2.Exec
@@ -274,7 +274,7 @@ def satB_fueled : KernelState :=
 def burnA : BiTurn :=
   { actorA := fuelA, srcA := fuelA, actorB := fuelB, dstB := fuelB, amt := 10, sid := 0 }
 
-/-- **`outOfFuel_cannot_burn` — THE BUDGET GATE (PROVED).** sat_A, with `bal fuelA = 0`,
+/-- **`outOfFuel_cannot_burn` — THE BUDGET GATE.** sat_A, with `bal fuelA = 0`,
 cannot execute any positive burn: `applyHalfOut` REJECTS `burnA` (amount 10 exceeds the
 available 0). This is the executable "sat_A cannot yield" — a theorem about the gate, not a
 demo `if`. It rests directly on `applyHalfOut`'s `amt ≤ k.bal srcA` budget condition. -/
@@ -311,7 +311,7 @@ theorem forced_trade_excludes_naive :
     ∃ out_amt in_amt : ℤ, ¬ FakeBalances out_amt in_amt :=
   binding_is_proper
 
-/-- **The contrast (PROVED): a genuine bilateral trade DOES balance.** Whatever its amount,
+/-- **The contrast: a genuine bilateral trade DOES balance.** Whatever its amount,
 sat_B's half-edge OUT and the matching half-edge IN cancel (`halfA bt + halfB bt = 0`), so a
 *real* trade is admissible exactly where the naive free-yield is not. The forced trade is the
 balanced configuration; the naive ordering is the excluded one. -/
@@ -331,7 +331,7 @@ is not I-confluent. -/
 open Dregg2.Confluence
 
 /-- **`collisionSafety_must_escalate` — collision-safety is NOT coordination-free; it MUST
-escalate to a joint maneuver (PROVED, inherited).** The "at most one occupant" invariant (two
+escalate to a joint maneuver (inherited).** The "at most one occupant" invariant (two
 objects cannot share a slot — the collision shape) is NOT I-confluent: there is a concrete
 clashing pair of individually-safe versions whose merge violates safety. Hence a cell with
 this invariant cannot run tier-1 (coordination-free); it must escalate to consensus — i.e. a
@@ -376,7 +376,7 @@ out-of-fuel sat cannot burn; the forced-trade naive-ordering excluded. -/
 
 /-! ## 9. THE REAL-PHYSICS REFEREE — the same seam, now carrying CONTINUOUS-TIME-SOUND physics.
 
-This is the §"Honest scope" substantive piece, DISCHARGED: we plug the conservative orbital
+This is the §"Scope" substantive piece, DISCHARGED: we plug the conservative orbital
 screen of `Dregg2.Apps.OrbitalScreen` (`screen_clear_imp_continuous_clear`) into the EXACT same
 `Intent.resolve` referee seam. The proposer (the LLM negotiation layer) is still the untrusted
 `Searchable`; the referee re-runs the *continuous-time-sound* screen. Now `referee_sound_physics`
@@ -422,7 +422,7 @@ def physReferee [Searchable PhysScenario PhysWitness] (s : PhysScenario) : Optio
   (physRefereeIntent s).resolve
 
 /-- **`physReferee_screened` — a committed clearance was screen-discharging, EVEN vs an
-adversarial proposer (PROVED, inherited).** The same adversary-proof keystone as `referee_sound`,
+adversarial proposer (inherited).** The same adversary-proof keystone as `referee_sound`,
 now at the physics screen: whatever the (possibly adversarial) negotiation layer proposes, a
 COMMITTED clearance has `screen s.d0 s.v s.T s.thrSq = true`. -/
 theorem physReferee_screened [Searchable PhysScenario PhysWitness]
@@ -431,7 +431,7 @@ theorem physReferee_screened [Searchable PhysScenario PhysWitness]
   Dregg2.Authority.intent_sound_against_adversary (physRefereeIntent s) w h
 
 /-- **`referee_sound_physics` — THE UPGRADED KEYSTONE: a committed maneuver is clear on the
-WHOLE CONTINUOUS STEP (PROVED).** Combining the adversary-proof seam (`physReferee_screened`)
+WHOLE CONTINUOUS STEP.** Combining the adversary-proof seam (`physReferee_screened`)
 with the conservative screen's continuous-time soundness
 (`OrbitalScreen.screen_clear_imp_continuous_clear`): if the referee COMMITS a clearance for
 scenario `s` — even against an adversarial proposer — then at EVERY continuous time `t ∈ [0,T]`
@@ -464,14 +464,14 @@ modelling a negotiation layer that checked only the endpoints. -/
 @[reducible] def samplerProposer : Searchable PhysScenario PhysWitness where
   find := fun _ => some ()
 
-/-- **`physReferee` reduces to its screen-gated `if` (PROVED helper).** With the sampler
+/-- **`physReferee` reduces to its screen-gated `if` (helper).** With the sampler
 proposer (always proposing the token), the referee is exactly "accept iff the screen clears." -/
 theorem physReferee_sampler_eq (s : PhysScenario) :
     (@physReferee samplerProposer s) = (if VerifyPhys s () = true then some () else none) :=
   rfl
 
 /-- **`physReferee_rejects_crossing` — the conservative referee REJECTS the crossing pair
-(PROVED).** Even though the endpoint-sampler proposer claims clearance, the referee's own
+.** Even though the endpoint-sampler proposer claims clearance, the referee's own
 continuous-time screen sees the mid-step closest approach and returns `none`. The
 "samples-look-clear" proposal does not escape — `referee_sound_physics` made concrete. -/
 theorem physReferee_rejects_crossing :
@@ -480,7 +480,7 @@ theorem physReferee_rejects_crossing :
   rw [show VerifyPhys crossingScenario () = false from screen_rejects_crossing]
   simp
 
-/-- **`physReferee_accepts_clear` — the referee ACCEPTS a genuinely-clear scenario (PROVED).**
+/-- **`physReferee_accepts_clear` — the referee ACCEPTS a clear scenario.**
 Two-sided: the conservative screen is not fail-closed-on-everything; a real clearance passes. -/
 theorem physReferee_accepts_clear :
     (@physReferee samplerProposer clearScenario) = some () := by
@@ -497,7 +497,7 @@ theorem physReferee_accepts_clear :
 
 -- The conservative referee REJECTS the crossing pair (endpoint-sampler would have accepted):
 #guard (@physReferee samplerProposer crossingScenario).isSome == false  -- none  (mid-step conjunction caught)
--- … ACCEPTS a genuinely-clear scenario:
+-- … ACCEPTS a clear scenario:
 #guard (@physReferee samplerProposer clearScenario).isSome              -- some ()
 -- The underlying screen verdicts (the REAL continuous-time-sound physics):
 #guard VerifyPhys crossingScenario () == false          -- false (clear at samples, NOT continuously)

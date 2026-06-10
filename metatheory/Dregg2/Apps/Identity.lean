@@ -249,7 +249,7 @@ end
 
 /-! ## Step 2 — the turn- and forest-level lift (induction on the list + the pre-order bridge). -/
 
-/-- **`execFullTurnA_revoked_eq` (PROVED).** A committed per-asset full TURN leaves the credential
+/-- **`execFullTurnA_revoked_eq`.** A committed per-asset full TURN leaves the credential
 revocation registry UNCHANGED. By induction on the action list — each committed `execFullA` step frames
 the registry (`execFullA_revoked_eq`), chained by `Eq.trans`; the empty turn is `rfl`. Mirrors
 `CellNullifier.execFullTurnA_nullifiers_grow`'s structure (with `=` for `⊆`). -/
@@ -266,7 +266,7 @@ theorem execFullTurnA_revoked_eq :
           rw [ha] at h
           exact (execFullTurnA_revoked_eq s1 s' rest h).trans (execFullA_revoked_eq s s1 a ha)
 
-/-- **`execFullForestA_revoked_eq` (PROVED).** A committed full FOREST leaves the credential revocation
+/-- **`execFullForestA_revoked_eq`.** A committed full FOREST leaves the credential revocation
 registry UNCHANGED. Read straight through the pre-order bridge `execFullForestA_eq_execFullTurnA` into
 the turn-level lemma — the route `CellNullifier.execFullForestA_nullifiers_grow` takes. -/
 theorem execFullForestA_revoked_eq (s s' : RecChainedState) (f : FullForestA)
@@ -274,7 +274,7 @@ theorem execFullForestA_revoked_eq (s s' : RecChainedState) (f : FullForestA)
   rw [execFullForestA_eq_execFullTurnA] at h
   exact execFullTurnA_revoked_eq s s' (lowerForestA f) h
 
-/-- **`execFullForestA_revoked_grow` (PROVED) — the grow-only COROLLARY.** Read off the equality:
+/-- **`execFullForestA_revoked_grow` — the grow-only COROLLARY.** Read off the equality:
 `s.kernel.revoked ⊆ s'.kernel.revoked` (the permanent-revocation frame as the dregg1
 `RevocationRegistry`'s insert-only `HashSet` sees it). Stated as `⊆` so the carry below is forward-
 compatible with a future explicit `cap_revoke` effect that GROWS the registry. -/
@@ -288,7 +288,7 @@ theorem execFullForestA_revoked_grow (s s' : RecChainedState) (f : FullForestA)
 s.kernel.revoked`, every id in `rev0` stays revoked at every index of every adversarial trajectory
 `trajA s sched`. Carried by `livingCellA_carries` with `Good := (rev0 ⊆ ·.kernel.revoked)`, whose
 one-step obligation is `execFullForestA_revoked_grow` on a commit and the stay-put self-loop on a reject.
-A genuinely non-conservation safety: it reads the registry, never the per-asset measure. -/
+A non-conservation safety: it reads the registry, never the per-asset measure. -/
 theorem livingCellA_revoked_grow (rev0 : List Nat) (s : RecChainedState)
     (hinit : rev0 ⊆ s.kernel.revoked) (sched : SchedA) :
     ∀ n, rev0 ⊆ (trajA s sched n).kernel.revoked :=
@@ -343,8 +343,8 @@ theorem identity_gate_revoked_forever
 /-! ## It runs (`#eval`) — the registry is non-empty and stable across a real committed turn.
 
 We exhibit a kernel with `credNul = 42` already revoked, run a real conserving transfer, and observe
-`42` is still revoked afterward. This witnesses non-vacuity: the carried invariant bounds a genuinely
-non-empty, genuinely stable registry. -/
+`42` is still revoked afterward. This witnesses non-vacuity: the carried invariant bounds a
+non-empty, stable registry. -/
 
 /-- A real kernel state with credential id `42` ALREADY revoked: `fma0` with `revoked := [42]`. -/
 def fmaRevoked : RecChainedState :=
@@ -357,7 +357,7 @@ def fmaRevoked : RecChainedState :=
 #guard (execFullForestA fmaRevoked transferCF.1).map (fun s' => s'.kernel.revoked.contains 42) == some true  -- some true (STILL revoked)
 #guard (execFullForestA fmaRevoked transferCF.1).map
         (fun s' => decide (([42] : List Nat) ⊆ s'.kernel.revoked)) == some true       -- some true (the carried ⊆)
--- a credential id NOT revoked (`99`) is genuinely absent — the registry has teeth, not all-true:
+-- a credential id NOT revoked (`99`) is absent — the registry has teeth, not all-true:
 #guard fmaRevoked.kernel.revoked.contains 99 == false                                 -- false
 
 /-! ## Axiom hygiene -/

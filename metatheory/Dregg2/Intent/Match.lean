@@ -230,7 +230,7 @@ end Dregg2.Intent
 
 /-! ## Axiom-hygiene pins — the kernel triple only (`propext`, `Classical.choice`, `Quot.sound`).
 `Quot.sound` is load-bearing here: the coend IS a quotient, and the density round-trip
-(`oneHop_collapse`) genuinely closes a coend equality by `Quot.sound`. A `sorryAx` would fail the pin. -/
+(`oneHop_collapse`) closes a coend equality by `Quot.sound`. A `sorryAx` would fail the pin. -/
 #assert_axioms Dregg2.Intent.offer_leftLeg
 #assert_axioms Dregg2.Intent.offer_rightLeg
 #assert_axioms Dregg2.Intent.collapse

@@ -43,7 +43,7 @@ maneuvers — a flow on the **multi-edge** conjunction graph. The headline:
   * `round_flow_decomp`, `RoundLeakFree`/`round_is_leakfree`, `round_cg5_conserves`,
     `cutFlow_zero`, `round_flow_is_wl_cut_flow`, `wl_cut_flow_zero_of_discrete`.
 
-**THE HONEST SCOPE (Part B's residual, stated precisely):**
+**THE SCOPE (Part B's residual, stated precisely):**
   * `Placement` is supplied as DATA — which conjunction-graph edge each maneuver sits on. We do
     NOT derive it from the `BiTurn`'s `actorA/dstB` cell-ids (those are `CellId`s in two
     *separate* ledgers, not vertices of one shared `Fin n` conjunction graph; constructing that
@@ -81,7 +81,7 @@ def roundBoundaryFlow (round : Round) : ℤ := (round.map boundaryFlow).sum
 
 /-! ## 2. (A) CLOSED — the round's total cross-boundary flow is ZERO. -/
 
-/-- **`round_boundaryFlow_zero` — THE MULTI-EDGE HEADLINE (PROVED).** A whole avoidance round's
+/-- **`round_boundaryFlow_zero` — THE MULTI-EDGE HEADLINE.** A whole avoidance round's
 *total* cross-boundary flow — summed over ALL its maneuver edges — is `0`. This is the genuine
 multi-edge generalization of the atomic `boundaryFlow_zero`: not a single-edge restatement but a
 sum over an arbitrary-length `Round`, discharged edge-by-edge from `boundaryFlow_zero` via
@@ -96,7 +96,7 @@ theorem round_boundaryFlow_zero (round : Round) : roundBoundaryFlow round = 0 :=
   exact boundaryFlow_zero bt
 
 /-- **`round_flow_decomp` — total flow = total source-divergence + total sink-divergence
-(PROVED).** The round's total cross-boundary flow splits into the sum of the maneuvers'
+.** The round's total cross-boundary flow splits into the sum of the maneuvers'
 source-side divergences (`divA`, flow leaving) plus the sum of their sink-side divergences
 (`divB`, flow entering). This makes "total divergence over a multi-edge cut" literal: the
 cut-balance is exactly Σ`divA` + Σ`divB`, and `round_boundaryFlow_zero` says it is `0`. -/
@@ -109,7 +109,7 @@ theorem round_flow_decomp (round : Round) :
     rfl
   rw [hmap, List.sum_map_add]
 
-/-- **`round_div_sum_zero` — the two cut-side totals are equal-and-opposite (PROVED).** The
+/-- **`round_div_sum_zero` — the two cut-side totals are equal-and-opposite.** The
 round's total source-divergence cancels its total sink-divergence: Σ`divA` + Σ`divB` = 0. The
 multi-edge `EqualAndOpposite`: across the whole round, what leaves the source cells equals what
 enters the sink cells. -/
@@ -121,7 +121,7 @@ theorem round_div_sum_zero (round : Round) :
 multi-edge cut over the whole avoidance phase). -/
 def RoundLeakFree (round : Round) : Prop := roundBoundaryFlow round = 0
 
-/-- **`round_is_leakfree` (PROVED).** Every round of committed maneuvers is leak-free — the
+/-- **`round_is_leakfree`.** Every round of committed maneuvers is leak-free — the
 multi-edge lift of `committed_is_leakfree`. -/
 theorem round_is_leakfree (round : Round) : RoundLeakFree round :=
   round_boundaryFlow_zero round
@@ -143,7 +143,7 @@ def jointApplyRound : KernelState → KernelState → Round → Option (KernelSt
     | some (A', B') => jointApplyRound A' B' rest
     | none => none
 
-/-- **`round_cg5_conserves` — CG-5 OVER THE WHOLE ROUND (PROVED).** A fully-committed avoidance
+/-- **`round_cg5_conserves` — CG-5 OVER THE WHOLE ROUND.** A fully-committed avoidance
 round preserves the joint ledger total `total A + total B`: each maneuver's sender-loss in one
 ledger equals its receiver-gain in the other (the per-edge half-edges cancel), so the cross-side
 aggregate is invariant across the entire round. The multi-edge lift of `joint_cg5_conserves`,
@@ -192,7 +192,7 @@ maneuvers whose placed edge crosses the WL cell boundary. -/
 def cutFlow (G : ConjGraph n) (place : Placement n) (round : Round) : ℤ :=
   ((round.filter (fun bt => crossesWLCut G (place bt))).map boundaryFlow).sum
 
-/-- **`cutFlow_zero` — the round's WL-cut flow BALANCES (PROVED).** The total flow carried by the
+/-- **`cutFlow_zero` — the round's WL-cut flow BALANCES.** The total flow carried by the
 round across the WL cell boundary is `0`: it is a sub-sum of the all-zero per-edge boundary flows,
 so it vanishes (`List.sum_eq_zero` over the filtered list). Divergence over the multi-edge WL cut
 is conserved. -/
@@ -211,7 +211,7 @@ def OnConflictEdges (G : ConjGraph n) (place : Placement n) (round : Round) : Pr
   ∀ bt ∈ round, G.conflict (place bt).1 (place bt).2 = true
 
 /-- **`every_maneuver_crosses_under_discrete` — under WL-discreteness, the filter is the IDENTITY
-(PROVED).** If the conjunction graph is WL-discrete on its edges (`WhoYields.WLDiscreteOnEdges`:
+.** If the conjunction graph is WL-discrete on its edges (`WhoYields.WLDiscreteOnEdges`:
 no two conflicting sats share a role) and the round is placed on conflict edges, then EVERY
 maneuver crosses the WL cut — its endpoints are in distinct WL cells. Hence filtering the round to
 its cut-crossing maneuvers keeps the whole round. This is where WL rigidity meets the conservation
@@ -226,7 +226,7 @@ theorem every_maneuver_crosses_under_discrete
   simp only [decide_eq_true_eq]
   exact hdisc (place bt).1 (place bt).2 (hplace bt hbt)
 
-/-- **`round_flow_is_wl_cut_flow` — THE SHARP TIE (PROVED).** Under WL-discreteness on the
+/-- **`round_flow_is_wl_cut_flow` — THE SHARP TIE.** Under WL-discreteness on the
 conflict edges, the round's WL-cut flow EQUALS its full total cross-boundary flow: because every
 conflict-edge maneuver crosses the cut, no maneuver is filtered out. The "symmetry boundary" the
 atomic bridge named is therefore the LITERAL WL cell boundary — the cut over which the *whole*
@@ -238,7 +238,7 @@ theorem round_flow_is_wl_cut_flow
   unfold cutFlow roundBoundaryFlow
   rw [every_maneuver_crosses_under_discrete G place round hdisc hplace]
 
-/-- **`wl_cut_flow_zero_of_discrete` — the round balances across the WL boundary (PROVED).**
+/-- **`wl_cut_flow_zero_of_discrete` — the round balances across the WL boundary.**
 Combining the sharp tie with the multi-edge headline: under WL-discreteness, the round's flow
 across the literal WL cell boundary is `0`. Total ledger conservation of the whole avoidance round
 = total divergence over the multi-edge WL cut of the conjunction graph — vanishing. This is the
@@ -272,13 +272,13 @@ cell belongs to. Everything downstream (placement, conflict-respecting) is deriv
 abbrev CellLabeling (n : ℕ) := CellId → Fin n
 
 /-- **The canonical placement, DERIVED from a cell labeling.** A maneuver's oriented A→B edge
-sits between the vertices of its source cell `srcA` and destination cell `dstB`: no longer
+sits between the vertices of its source cell `srcA` and destination cell `dstB`: not
 arbitrary per-maneuver data, but `vtx` applied to the cells the `BiTurn` actually touches. -/
 def canonPlacement (vtx : CellLabeling n) : Placement n :=
   fun bt => (vtx bt.srcA, vtx bt.dstB)
 
 /-- **`canon_cutFlow_zero_of_discrete` — the WL-cut balance with the placement DERIVED from the
-labeling (PROVED).** `wl_cut_flow_zero_of_discrete` at `canonPlacement vtx`: under WL-discreteness,
+labeling.** `wl_cut_flow_zero_of_discrete` at `canonPlacement vtx`: under WL-discreteness,
 the round's flow across the WL cell boundary vanishes, the placement now a function of the physical
 labeling rather than supplied per edge. -/
 theorem canon_cutFlow_zero_of_discrete
@@ -343,7 +343,7 @@ def roundGraph (vtx : CellLabeling n) (round : Round)
   irrefl := roundConflict_irrefl vtx round wf
   tag := tag
 
-/-- **`canon_onConflictEdges` — every maneuver is on a conflict edge, BY CONSTRUCTION (PROVED).**
+/-- **`canon_onConflictEdges` — every maneuver is on a conflict edge, BY CONSTRUCTION.**
 For the round-induced graph, the canonical placement of every maneuver lands on a genuine conflict
 edge — witnessed by the maneuver itself. So Part (B)'s `OnConflictEdges` hypothesis is DISCHARGED,
 not assumed. -/
@@ -357,13 +357,13 @@ theorem canon_onConflictEdges (vtx : CellLabeling n) (round : Round)
   unfold edgeHits
   simp
 
-/-- **`round_balances_across_derived_cut` — THE NARROWED CLOSE (PROVED).** Given ONLY the physical
+/-- **`round_balances_across_derived_cut` — THE NARROWED CLOSE.** Given ONLY the physical
 cell labeling `vtx`, a well-formed round, operator `tag`s, AND the genuine WL-discreteness
 precondition, the round's flow across the (round-induced) WL cell boundary is `0` — with the
 conjunction graph, the per-maneuver placement, AND the conflict-respecting condition ALL DERIVED
 from `(round, vtx, tag)`. The residual is reduced from "supply an arbitrary `Placement`" to
 "supply the physical cell→satellite labeling `vtx`" (plus the irreducible WL-discreteness
-hypothesis — a real scenario property, never faked). -/
+hypothesis — a real scenario property). -/
 theorem round_balances_across_derived_cut
     (vtx : CellLabeling n) (round : Round) (wf : WellFormedRound vtx round) (tag : Fin n → ℕ)
     (hdisc : (roundGraph vtx round wf tag).WLDiscreteOnEdges) :

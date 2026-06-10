@@ -240,7 +240,7 @@ class SealKernel (Key Cipher : Type u) where
     ∀ (key : Key) (ct : Cipher), aeadOpen key ct = true → Sealed key ct
 
 /-- `seal_floor_sound` — given the AEAD carrier, a successful open proves the ciphertext was
-genuinely sealed under the key. `Sealed` is a real conclusion, not a tautology. -/
+sealed under the key. `Sealed` is a real conclusion, not a tautology. -/
 theorem seal_floor_sound {Key Cipher : Type u} [K : SealKernel Key Cipher]
     (hauth : K.authentic) (key : Key) (ct : Cipher)
     (haccept : K.aeadOpen key ct = true) : K.Sealed key ct :=
@@ -272,7 +272,7 @@ class MacKernelE (Key Msg Tag : Type u) where
   verifyTag_sound : unforgeable →
     ∀ (key : Key) (msg : Msg) (t : Tag), verifyTag key msg t = true → Tagged key msg t
 
-/-- `mac_floor_sound` — given the HMAC carrier, an accepting tag proves it was genuinely MAC'd,
+/-- `mac_floor_sound` — given the HMAC carrier, an accepting tag proves it was MAC'd,
 so a forged macaroon tail is rejected. `Tagged` is a real conclusion, not a tautology. -/
 theorem mac_floor_sound {Key Msg Tag : Type u} [K : MacKernelE Key Msg Tag]
     (hunf : K.unforgeable) (key : Key) (msg : Msg) (t : Tag)
@@ -465,7 +465,7 @@ example : instMacKernelE.Tagged 3 4 (Nat.pair 3 4) :=
 
 These are the other half of non-vacuity: a forgeable/colliding instance where the carrier `Prop` is
 provably FALSE. They prove the §9 carriers are NOT `True` in disguise — stripping the oracle's
-soundness genuinely refutes the assumption. Soundness fields here are `fun h => h` (the carrier IS
+soundness refutes the assumption. Soundness fields here are `fun h => h` (the carrier IS
 the soundness shape), so the broken oracle is still a LAWFUL instance; only the carrier is false. -/
 
 /-- Forgeable ed25519: accepts every signature but `Signed` never holds. -/

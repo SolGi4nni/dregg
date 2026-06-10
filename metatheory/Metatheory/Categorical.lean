@@ -15,7 +15,7 @@ takes minimal categorical axioms and derives them as consequences.
   (closed in `Metatheory.Open.FinalCoalgebra`).
 
 Honesty caveat (§1): functoriality into a discrete target is thin — the coherence diagrams
-are vacuous (every diagram in a discrete category commutes). The honest content of
+are vacuous (every diagram in a discrete category commutes). The content of
 "conservation = a lax monoidal functor to `Discrete M`" is monoid-hom on counts plus
 invariance on morphisms. We derive precisely that and no more.
 -/
@@ -129,7 +129,7 @@ theorem diagonal_collapses_measure [IsCancelAdd M]
   fun A => no_free_copy Sig A (δ A)
 
 /-- A non-zero count forbids a global diagonal: a conservation functor with any non-zero
-count witnesses that `C` is genuinely substructural (non-cartesian) on the resource
+count witnesses that `C` is substructural (non-cartesian) on the resource
 fragment. The absence of a natural copy and a non-trivial conservation are contradictory. -/
 theorem nonzero_count_forbids_diagonal [IsCancelAdd M]
     (Sig : C ⥤ Discrete M) [Sig.LaxMonoidal]
@@ -253,7 +253,7 @@ end Seam
 
 /-! ### §2 bridge: the abstract `Seam` is the REAL `Predicate ⊣ Witness` of `Dregg2.Laws`.
 
-Previously the `Seam` structure was never instantiated — decorative. Here we build the ONE
+Here we build the ONE
 `Seam` value from the real verifier: `Dregg2.Laws.predicate_witness_galois` is the formal-
 concept (Birkhoff) polarity of the actual `Discharged` relation `Verify p w = true`. So
 `realizes`/`verifies` are the real predicate/witness polars, and every `seam_*` lemma above
@@ -669,7 +669,7 @@ OPEN (`§3`, the anamorphism / final-coalgebra **existence** — now SHARPENED).
 `Dregg2.Boundary` *wants* is the **final** `behaviour`-coalgebra `νF` — the unique behaviour
 into which every coalgebra anamorphs (the "live codata, never bottoms out" of `§2`).
 
-What is now PROVED (no longer open): the universal property is fully stated (`IsFinalCell`),
+What is PROVED: the universal property is fully stated (`IsFinalCell`),
 its **uniqueness half is a theorem** — the anamorphism is unique (`ana_unique`, the
 coinduction principle) and the final object is canonical up to a carrier round-trip
 (`final_unique_roundtrip`), both *conditional on finality*, which is the genuine categorical
@@ -823,7 +823,7 @@ uninstantiated structure.
 `Dregg2.Boundary` gives a structure map; here the cell is an `F`-coalgebra and the hyperedge
 a **pullback** — now also a **wide pullback** for N participants (`wideJointTurn_universal`/
 `wideJointTurn_mediator_unique`) — with the binding's universal property PROVED and only the
-final-coalgebra existence (`νF`) honestly OPEN (its uniqueness/coinduction, `ana_unique`, is
+final-coalgebra existence (`νF`) OPEN (its uniqueness/coinduction, `ana_unique`, is
 proved *conditionally on finality*).
 
 **The three judgements, each now a categorical structure.** §1 conservation is
@@ -843,8 +843,8 @@ join-subalgebra (`confJoin`/`confJoin_lub`) and tier-1 eligibility shown to BE t
 adjunction read at the coalgebra's observation** (`seamConsistent_of_adj`) — not an extra
 postulate, the adjunction itself.
 
-The honest caveat (`study-category §5`): the conservation derivation's target is *discrete*,
-so it is **thin** — what is genuinely derived is *monoid-hom + invariance*, the real content
+The caveat (`study-category §5`): the conservation derivation's target is *discrete*,
+so it is **thin** — what is derived is *monoid-hom + invariance*, the real content
 the `Dregg2.Core` docstring already names; the "strong monoidal functor" packaging is
 decorative and we do not oversell it. The §4/§5 lattice derivations are honest order theory
 (no thinness caveat); the §6 boundary square is the genuine adjunction, faithfully

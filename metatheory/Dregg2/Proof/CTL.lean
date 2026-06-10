@@ -38,7 +38,7 @@ linear/deterministic world and TRUE here. We prove it on a hand-controlled `Fin 
 (`branchSys`: `s₀ → s₁`, `s₀ → s₂`, `s₁`/`s₂` self-loop), where `s₀` reaches the target `{1}` on
 SOME path but not on EVERY path (the `s₂` trap). Decidable, finite, refutation-proved.
 
-## What is DEFERRED (the honest residue) — the liveness reading of AF/EG under fairness
+## What is DEFERRED (the residue) — the liveness reading of AF/EG under fairness
 
 This is the **safety** fragment of CTL. The OPERATORS `AF`/`EG` are defined and their fixpoint laws
 proved, but the *liveness reading* — theorems asserting "on every path `P` is eventually reached"
@@ -51,7 +51,7 @@ log / revocation invariants) and the branching-separation teeth (fully sound), a
 fairness-dependent liveness theorems behind that decision.
 
 Pure; spec-first.
-The two genuinely-classical duals (`EX_AX_dual`, `EF_EG_dual`, which use `compl_compl`) are pinned
+The two classical duals (`EX_AX_dual`, `EF_EG_dual`, which use `compl_compl`) are pinned
 in the classical-aware list, exactly as `Temporal.not_always_iff_eventually_not` is.
 -/
 import Dregg2.Execution
@@ -158,7 +158,7 @@ def AF (P : Set S.Config) : Set S.Config := AU S Set.univ P
 /-- **`EG P`** — along SOME path `P` holds forever. `(egBody S P).gfp`.
 
 NOTE (DEFERRED liveness): defined with its fixpoint law (`EG_unfold`); the fairness-dependent
-"some genuinely infinite fair path" reading is gated — see the module docstring. -/
+"some infinite fair path" reading is gated — see the module docstring. -/
 def EG (P : Set S.Config) : Set S.Config := (egBody S P).gfp
 
 /-- **`AG P`** — along EVERY path `P` holds forever (the branching invariant). `(agBody S P).gfp`. -/
@@ -177,38 +177,38 @@ def AG (P : Set S.Config) : Set S.Config := (agBody S P).gfp
 `EU`/`AU`/`EF`/`AF` unfold via `OrderHom.map_lfp`; `EG`/`AG` via `OrderHom.map_gfp`. These are the
 fixpoint equations characterizing each operator. -/
 
-/-- **`EU_unfold` (PROVED)**: `EU P Q = Q ∪ (P ∩ EX (EU P Q))`. From `OrderHom.map_lfp`. -/
+/-- **`EU_unfold`**: `EU P Q = Q ∪ (P ∩ EX (EU P Q))`. From `OrderHom.map_lfp`. -/
 theorem EU_unfold (P Q : Set S.Config) : EU S P Q = Q ∪ (P ∩ EX S (EU S P Q)) :=
   (euBody S P Q).map_lfp.symm
 
-/-- **`AU_unfold` (PROVED)**: `AU P Q = Q ∪ (P ∩ AX (AU P Q))`. From `OrderHom.map_lfp`. -/
+/-- **`AU_unfold`**: `AU P Q = Q ∪ (P ∩ AX (AU P Q))`. From `OrderHom.map_lfp`. -/
 theorem AU_unfold (P Q : Set S.Config) : AU S P Q = Q ∪ (P ∩ AX S (AU S P Q)) :=
   (auBody S P Q).map_lfp.symm
 
-/-- **`EF_unfold` (PROVED)**: `EF P = P ∪ EX (EF P)` (the `Q ∪ (univ ∩ …)` simplifies). -/
+/-- **`EF_unfold`**: `EF P = P ∪ EX (EF P)` (the `Q ∪ (univ ∩ …)` simplifies). -/
 theorem EF_unfold (P : Set S.Config) : EF S P = P ∪ EX S (EF S P) := by
   -- `EF P = EU univ P` definitionally on both sides; unfold once via `EU_unfold`, drop `univ ∩`.
   show EU S Set.univ P = P ∪ EX S (EU S Set.univ P)
   conv_lhs => rw [EU_unfold S Set.univ P, Set.univ_inter]
 
-/-- **`AF_unfold` (PROVED)**: `AF P = P ∪ AX (AF P)`. The branching-`◇` unfolding (operator-level;
+/-- **`AF_unfold`**: `AF P = P ∪ AX (AF P)`. The branching-`◇` unfolding (operator-level;
 liveness reading deferred). -/
 theorem AF_unfold (P : Set S.Config) : AF S P = P ∪ AX S (AF S P) := by
   show AU S Set.univ P = P ∪ AX S (AU S Set.univ P)
   conv_lhs => rw [AU_unfold S Set.univ P, Set.univ_inter]
 
-/-- **`EG_unfold` (PROVED)**: `EG P = P ∩ EX (EG P)`. From `OrderHom.map_gfp`. -/
+/-- **`EG_unfold`**: `EG P = P ∩ EX (EG P)`. From `OrderHom.map_gfp`. -/
 theorem EG_unfold (P : Set S.Config) : EG S P = P ∩ EX S (EG S P) :=
   (egBody S P).map_gfp.symm
 
-/-- **`AG_unfold` (PROVED)**: `AG P = P ∩ AX (AG P)`. From `OrderHom.map_gfp`. The branching
+/-- **`AG_unfold`**: `AG P = P ∩ AX (AG P)`. From `OrderHom.map_gfp`. The branching
 □-unfolding: "always" = "now and (next-step) always". -/
 theorem AG_unfold (P : Set S.Config) : AG S P = P ∩ AX S (AG S P) :=
   (agBody S P).map_gfp.symm
 
 /-! ## §2.1 — The induction / coinduction principles (the load-bearing reasoning rules). -/
 
-/-- **`AG_coind` (PROVED) — the gfp COINDUCTION rule for `AG`.** If a candidate invariant `Inv` is
+/-- **`AG_coind` — the gfp COINDUCTION rule for `AG`.** If a candidate invariant `Inv` is
 contained in `P` and is `AX`-closed (every successor of an `Inv`-config is again `Inv`), then `Inv`
 proves `AG P`. This is `OrderHom.le_gfp`: an `AX`-closed sub-invariant witnesses the greatest
 fixpoint. THE rule by which a one-step invariant lifts to a branching "always". -/
@@ -216,13 +216,13 @@ theorem AG_coind (P Inv : Set S.Config) (h₁ : Inv ⊆ P) (h₂ : Inv ⊆ AX S 
     Inv ⊆ AG S P :=
   (agBody S P).le_gfp (fun _ hs => ⟨h₁ hs, h₂ hs⟩)
 
-/-- **`EG_coind` (PROVED) — the gfp coinduction rule for `EG`.** A candidate `Inv ⊆ P` that has,
+/-- **`EG_coind` — the gfp coinduction rule for `EG`.** A candidate `Inv ⊆ P` that has,
 at every point, SOME successor back in `Inv` (`Inv ⊆ EX Inv`) proves `EG P`. -/
 theorem EG_coind (P Inv : Set S.Config) (h₁ : Inv ⊆ P) (h₂ : Inv ⊆ EX S Inv) :
     Inv ⊆ EG S P :=
   (egBody S P).le_gfp (fun _ hs => ⟨h₁ hs, h₂ hs⟩)
 
-/-- **`EF_least` (PROVED) — the lfp INDUCTION rule for `EF`.** `EF P` is the LEAST set containing
+/-- **`EF_least` — the lfp INDUCTION rule for `EF`.** `EF P` is the LEAST set containing
 `P` and closed under taking `pre`-predecessors: for any `U` with `P ⊆ U` and `pre S U ⊆ U`, we have
 `EF P ⊆ U`. This is `OrderHom.lfp_le`. THE rule by which "`P` is reachable" reasoning bottoms out. -/
 theorem EF_least (P U : Set S.Config) (h₁ : P ⊆ U) (h₂ : pre S U ⊆ U) : EF S P ⊆ U := by
@@ -232,7 +232,7 @@ theorem EF_least (P U : Set S.Config) (h₁ : P ⊆ U) (h₂ : pre S U ⊆ U) : 
   · exact h₁ hQ
   · exact h₂ (pre_mono S (le_refl _) hpre.2)
 
-/-- **`AU_least` (PROVED) — the lfp induction rule for `AU`** (hence `AF` via `univ`): for any `U`
+/-- **`AU_least` — the lfp induction rule for `AU`** (hence `AF` via `univ`): for any `U`
 with `Q ⊆ U` and `(P ∩ preAll S U) ⊆ U`, we have `AU P Q ⊆ U`. -/
 theorem AU_least (P Q U : Set S.Config) (h₁ : Q ⊆ U) (h₂ : (P ∩ preAll S U) ⊆ U) :
     AU S P Q ⊆ U :=
@@ -240,31 +240,31 @@ theorem AU_least (P Q U : Set S.Config) (h₁ : Q ⊆ U) (h₂ : (P ∩ preAll S
 
 /-! ## §3 — Monotonicity + the De Morgan DUALITY algebra (the modal algebra). -/
 
-/-- **`EX_mono` (PROVED)** — `EX` is monotone in its argument. -/
+/-- **`EX_mono`** — `EX` is monotone in its argument. -/
 theorem EX_mono {P Q : Set S.Config} (h : P ⊆ Q) : EX S P ⊆ EX S Q := pre_mono S h
 
-/-- **`AX_mono` (PROVED)** — `AX` is monotone in its argument. -/
+/-- **`AX_mono`** — `AX` is monotone in its argument. -/
 theorem AX_mono {P Q : Set S.Config} (h : P ⊆ Q) : AX S P ⊆ AX S Q := preAll_mono S h
 
-/-- **`EF_mono` (PROVED)** — `EF` is monotone. -/
+/-- **`EF_mono`** — `EF` is monotone. -/
 theorem EF_mono {P Q : Set S.Config} (h : P ⊆ Q) : EF S P ⊆ EF S Q := by
   refine EF_least S P (EF S Q) (subset_trans h ?_) ?_
   · intro s hs; rw [EF_unfold]; exact Or.inl hs
   · intro s hs; rw [EF_unfold S Q]; exact Or.inr hs
 
-/-- **`AG_mono` (PROVED)** — `AG` is monotone. -/
+/-- **`AG_mono`** — `AG` is monotone. -/
 theorem AG_mono {P Q : Set S.Config} (h : P ⊆ Q) : AG S P ⊆ AG S Q := by
   refine AG_coind S Q (AG S P) ?_ ?_
   · exact subset_trans (by rw [AG_unfold]; exact Set.inter_subset_left) h
   · intro s hs; rw [AG_unfold] at hs; exact hs.2
 
-/-- **`EG_mono` (PROVED)** — `EG` is monotone. -/
+/-- **`EG_mono`** — `EG` is monotone. -/
 theorem EG_mono {P Q : Set S.Config} (h : P ⊆ Q) : EG S P ⊆ EG S Q := by
   refine EG_coind S Q (EG S P) ?_ ?_
   · exact subset_trans (by rw [EG_unfold]; exact Set.inter_subset_left) h
   · intro s hs; rw [EG_unfold] at hs; exact hs.2
 
-/-- **`EX_AX_dual` (PROVED) — the ∃/∀ next-step De Morgan duality**: `EX P = (AX Pᶜ)ᶜ`. "Some
+/-- **`EX_AX_dual` — the ∃/∀ next-step De Morgan duality**: `EX P = (AX Pᶜ)ᶜ`. "Some
 successor in `P`" = "not (all successors in `Pᶜ`)". Genuinely classical (uses `not_forall` /
 `not_not`); pinned in the classical-aware `#assert` list. -/
 theorem EX_AX_dual (P : Set S.Config) : EX S P = (AX S Pᶜ)ᶜ := by
@@ -272,11 +272,11 @@ theorem EX_AX_dual (P : Set S.Config) : EX S P = (AX S Pᶜ)ᶜ := by
   simp only [EX, AX, pre, preAll, Set.mem_setOf_eq, Set.mem_compl_iff, not_forall,
     not_not, exists_prop]
 
-/-- **`AX_EX_dual` (PROVED)** — the mirror image: `AX P = (EX Pᶜ)ᶜ`. -/
+/-- **`AX_EX_dual`** — the mirror image: `AX P = (EX Pᶜ)ᶜ`. -/
 theorem AX_EX_dual (P : Set S.Config) : AX S P = (EX S Pᶜ)ᶜ := by
   rw [EX_AX_dual, compl_compl, compl_compl]
 
-/-- **`EF_EG_dual` (PROVED) — `EF P = (AG Pᶜ)ᶜ`**: "`P` is reachable along some path" =
+/-- **`EF_EG_dual` — `EF P = (AG Pᶜ)ᶜ`**: "`P` is reachable along some path" =
 "not (along every path, `¬P` holds forever)". The branching `◇`/`□` De Morgan dual. Genuinely
 classical (uses `compl_compl`); pinned in the classical-aware `#assert` list.
 
@@ -314,7 +314,7 @@ theorem EF_EG_dual (P : Set S.Config) : EF S P = (AG S Pᶜ)ᶜ := by
 reachability. They must coincide — and `AG` dually is the relational invariant "holds at every
 reachable config". These two theorems weld the branching calculus onto `Execution.lean`. -/
 
-/-- **`EF_iff_reachable` (PROVED) — the lfp `EF` ≡ inductive reachability.**
+/-- **`EF_iff_reachable` — the lfp `EF` ≡ inductive reachability.**
 `s ∈ EF S P ↔ ∃ t, Reachable S s t ∧ t ∈ P`. Forward: the reachability-set `{s | ∃ t, Reachable …}`
 is a pre-fixed point of the `EF` body, so `EF P ⊆` it (`EF_least`). Backward: induction on `Run`,
 unfolding `EF` one step per edge. -/
@@ -337,7 +337,7 @@ theorem EF_iff_reachable (P : Set S.Config) (s : S.Config) :
     | refl x => rw [EF_unfold]; exact Or.inl ht
     | step hxy _ ih => rw [EF_unfold]; exact Or.inr ⟨_, hxy, ih ht⟩
 
-/-- **`AG_iff_all_reachable` (PROVED) — the gfp `AG` ≡ relational invariance.**
+/-- **`AG_iff_all_reachable` — the gfp `AG` ≡ relational invariance.**
 `s ∈ AG S P ↔ ∀ t, Reachable S s t → t ∈ P`. The greatest-fixpoint "always on every path" is
 exactly "`P` holds at every reachable config". Forward: `AG`-membership transports along a `Run` by
 unfolding (`Run`-induction). Backward: `{s | ∀ t, Reachable s t → t ∈ P}` is `AX`-closed in `P`, so
@@ -370,12 +370,12 @@ theorem AG_iff_all_reachable (P : Set S.Config) (s : S.Config) :
 
 /-! ## §5 — Instantiation on the REAL executor: the bridge to the LTL layer.
 
-`Temporal.livingSystem = Boundary.inducedSystem livingCellA` is the genuinely-branching transition
+`Temporal.livingSystem = Boundary.inducedSystem livingCellA` is the branching transition
 system of the 46-effect executor (one config, many `ConservingForest` successors). Here the
 branching `AG` is welded to the linear `Temporal.Always`. -/
 
 open Dregg2.Exec in
-/-- **`livingAG_iff_temporalAlways` (PROVED) — THE BRIDGE: branching `AG` ≡ linear `□` on the living
+/-- **`livingAG_iff_temporalAlways` — THE BRIDGE: branching `AG` ≡ linear `□` on the living
 cell.** For a `StepInvariant`-preserved predicate `Good` holding at `s`, membership in
 `AG livingSystem {s' | Good s'}` is equivalent to `Temporal.Always Good` along EVERY schedule. The
 branching "always on every path" and the linear "globally along every schedule" COINCIDE on the
@@ -392,7 +392,7 @@ theorem livingAG_iff_temporalAlways (Good : RecChainedState → Prop)
     (Temporal.always_iff_reachable Good hpres s hinit).symm
 
 open Dregg2.Exec in
-/-- **`livingAG_conserved` (PROVED) — conservation holds `AG` on the REAL branching executor.** The
+/-- **`livingAG_conserved` — conservation holds `AG` on the REAL branching executor.** The
 per-asset conservation badge `cellObsA` equals its initial value along EVERY path of the branching
 induced system: `s ∈ AG livingSystem {s' | cellObsA s' = cellObsA s}`. The CTL reading of
 `Temporal.always_conserved`, discharged by `AG_coind` with the conservation invariant (the one-step
@@ -410,7 +410,7 @@ theorem livingAG_conserved (s : RecChainedState) :
   · -- `s` is in `Inv` (reflexivity of the badge equality).
     show cellObsA s = cellObsA s; rfl
 
-/-! ## §6 — NON-VACUITY / TEETH: branching genuinely separates `EX`/`AX` and `EF`/`AF`.
+/-! ## §6 — NON-VACUITY / TEETH: branching separates `EX`/`AX` and `EF`/`AF`.
 
 The whole empirical content of branching time is that "some path" ≠ "every path". We prove it on a
 hand-controlled finite system. `branchSys`: states `Fin 3`, edges `0 → 1`, `0 → 2`, `1 → 1`,
@@ -455,7 +455,7 @@ theorem not_mem_AX_branch : (0 : Fin 3) ∉ AX branchSys tgt := by
   -- `2` is a successor of `0` (the second edge), but `2 ∉ {1}`.
   exact two_not_mem_tgt (h 2 (by right; left; exact ⟨rfl, rfl⟩))
 
-/-- **TEETH 1 — `EX_ne_AX` (PROVED): branching time separates the existential and universal next.**
+/-- **TEETH 1 — `EX_ne_AX`: branching time separates the existential and universal next.**
 On `branchSys`, `EX tgt ≠ AX tgt`, witnessed at `s₀`: `0 ∈ EX tgt` (the `0 → 1` branch) but
 `0 ∉ AX tgt` (the `0 → 2` branch escapes `tgt`). This is FALSE in any deterministic/linear system
 and is the defining content of branching. -/
@@ -499,7 +499,7 @@ theorem not_mem_AF_branch : (0 : Fin 3) ∉ AF branchSys tgt := by
   -- `hle h0 : (0 : Fin 3) ∈ tgt`, i.e. `0 = 1` — false.
   exact zero_not_mem_tgt (hle h0)
 
-/-- **TEETH 2 — `EF_ne_AF` (PROVED): branching time separates existential and universal eventually.**
+/-- **TEETH 2 — `EF_ne_AF`: branching time separates existential and universal eventually.**
 On `branchSys`, `EF tgt ≠ AF tgt`, witnessed at `s₀`: `0 ∈ EF tgt` (the `0 → 1` path reaches it)
 but `0 ∉ AF tgt` (the `0 → 2 → 2 → …` path is a `tgt`-free trap). The headline branching teeth:
 "reachable on SOME path" is strictly weaker than "reached on EVERY path". -/
@@ -513,9 +513,9 @@ def atZero : Set branchSys.Config := {(0 : Fin 3)}
 /-- `x ∈ atZero ↔ x = 0` — unfold the singleton (so `decide` settles `Fin 3` membership). -/
 @[simp] theorem mem_atZero {x : Fin 3} : x ∈ atZero ↔ x = 0 := Set.mem_singleton_iff
 
-/-- **TEETH 3 — `EG_not_vacuous` (PROVED): `EG` is not the whole space.** `s₀ ∉ EG branchSys {0}`:
+/-- **TEETH 3 — `EG_not_vacuous`: `EG` is not the whole space.** `s₀ ∉ EG branchSys {0}`:
 `0` has no self-loop (its only successors are `1`, `2`, both `∉ {0}`), so there is no infinite path
-staying in `{0}`. Shows `EG` genuinely rejects. -/
+staying in `{0}`. Shows `EG` rejects. -/
 theorem EG_not_vacuous : (0 : Fin 3) ∉ EG branchSys atZero := by
   intro h
   rw [EG_unfold branchSys atZero] at h
@@ -534,7 +534,7 @@ theorem EG_not_vacuous : (0 : Fin 3) ∉ EG branchSys atZero := by
 /-- The "in `{0,1}`" predicate as an explicit `Set branchSys.Config`. -/
 def inZeroOne : Set branchSys.Config := {x : Fin 3 | x = 0 ∨ x = 1}
 
-/-- **TEETH 4 — `AG_not_vacuous` (PROVED): `AG ≠ univ`.** `s₀ ∉ AG branchSys {0,1}`: the reachable
+/-- **TEETH 4 — `AG_not_vacuous`: `AG ≠ univ`.** `s₀ ∉ AG branchSys {0,1}`: the reachable
 config `2 ∉ {0,1}` (via the run `0 → 2`), so the branching invariant fails. Uses
 `AG_iff_all_reachable` + the explicit escaping run. The branching analogue of
 `Temporal.recAbsStep_not_vacuous`. -/
@@ -557,7 +557,7 @@ teeth: `AG` does NOT hold of an arbitrary predicate — a `P` that excludes the 
 decreasing-log predicate, which excludes `s` itself. -/
 
 open Dregg2.Exec in
-/-- **TEETH 5 — `livingAG_log_decrease_rejected` (PROVED): `AG` has teeth on the real executor.**
+/-- **TEETH 5 — `livingAG_log_decrease_rejected`: `AG` has teeth on the real executor.**
 The "log strictly shorter than start" predicate is NOT `AG` from `s`, because it FAILS at `s`
 itself (`s.log.length < s.log.length` is false) and `AG P ⊆ P`. Demonstrates the branching `AG` is
 a genuine constraint on the 46-effect executor, not satisfied by an arbitrary safety predicate. -/
@@ -570,7 +570,7 @@ theorem livingAG_log_decrease_rejected (s : RecChainedState) :
 
 /-! ## §7 — Axiom-hygiene tripwires.
 
-Every keystone is pinned. The two genuinely-classical De Morgan duals (`EX_AX_dual`, `EF_EG_dual`,
+Every keystone is pinned. The two classical De Morgan duals (`EX_AX_dual`, `EF_EG_dual`,
 which use `not_forall`/`compl_compl`) and `AX_EX_dual` (derived from `EX_AX_dual`) legitimately use
 `Classical.choice` and are listed in the classical-aware namespace pin's `except` clause — exactly
 as `Temporal.not_always_iff_eventually_not` is. The CORE fixpoint calculus is kernel-triple clean

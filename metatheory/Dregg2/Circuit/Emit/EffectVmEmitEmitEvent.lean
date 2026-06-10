@@ -22,7 +22,7 @@ ticked nonce) was UNSAT under it. This reconciles the runnable descriptor to the
 the 13 economic columns FREEZE, the nonce TICKS, and `state_commit` is bound ONLY via the last-row PI pin
 (the GROUP-4 hash chain recomputes it over the ticked nonce).
 
-## TWO NONCE NOTIONS (the honest distinction, NOT papered)
+## TWO NONCE NOTIONS (the honest distinction)
 
 The EffectVM row's `state.NONCE` column is the ACTOR turn-SEQUENCE nonce (anti-replay, `PI[ACTOR_NONCE]`),
 which the protocol ticks on every real effect. This is a DIFFERENT object than the cell's own `nonce`
@@ -35,9 +35,9 @@ field). So this module carries BOTH:
     INCLUDING the nonce slot FROZEN, the universe-A kernel-freeze projected per cell. This is the shared
     no-op-style freeze primitive (reused by `EffectVmEmitNoopWide`, which models the `s_noop = 1` PAD row
     whose global nonce gate does NOT tick), and the abstract per-cell kernel-freeze the Argus §1–§5 weld
-    pins. The two genuinely differ ONLY on the actor-sequence nonce slot.
+    pins. The two differ ONLY on the actor-sequence nonce slot.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`. No `sorry`, no `:= True`, no `native_decide`, no

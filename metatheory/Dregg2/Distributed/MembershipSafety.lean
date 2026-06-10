@@ -53,7 +53,7 @@ golden vectors) reproduces, value-for-value, the exact numbers the `constitution
 assert (n=3 join needs 3 votes; n=1→2 needs 1; H-rule 2→3 and 3→2 both need 3; `compute_threshold`
 table).
 
-## HONEST SCOPE — what is faithful, what is the named seam.
+## SCOPE — what is faithful, what is the named seam.
 
 FAITHFUL (matches `constitution.rs` as pure functions):
 * `computeThreshold n = 2n/3 + 1` (`compute_threshold`), with the `n = 0 ↦ 0` guard.
@@ -233,7 +233,7 @@ theorem computeThreshold_eq_superMajority {n : Nat} (hn : 0 < n) :
   have : (n == 0) = false := by simp [hne]
   simp [this]
 
-/-- **`apply_join_threshold` (PROVED — threshold-recomputation correctness for Join).** When a Join
+/-- **`apply_join_threshold` (threshold-recomputation correctness for Join).** When a Join
 applies (the key was NOT already a member), the resulting threshold is EXACTLY the supermajority
 `computeThreshold` of the new participant count, and that count is the old participants plus the new
 key (deduped). Read straight off `apply_proposal`'s Join branch — the node never forgets to
@@ -251,7 +251,7 @@ theorem apply_join_threshold (c : Constitution) (k : AuthorId)
     simp only [applyProposal, hnew, Bool.false_eq_true, if_false]
   rw [happ]; exact ⟨rfl, rfl, rfl⟩
 
-/-- **`apply_leave_threshold` (PROVED — threshold-recomputation correctness for Leave).** When a
+/-- **`apply_leave_threshold` (threshold-recomputation correctness for Leave).** When a
 Leave applies (the key WAS a member), the threshold is recomputed to the supermajority of the
 new (smaller) participant set, which is the old set with `k` filtered out. -/
 theorem apply_leave_threshold (c : Constitution) (k : AuthorId)
@@ -267,7 +267,7 @@ theorem apply_leave_threshold (c : Constitution) (k : AuthorId)
     simp only [applyProposal, hmem, if_true]
   rw [happ]; exact ⟨rfl, rfl, rfl⟩
 
-/-- **`apply_bumps_version` (PROVED).** Every APPLIED proposal strictly bumps the version — the
+/-- **`apply_bumps_version`.** Every APPLIED proposal strictly bumps the version — the
 linearizable amendment history `constitution.rs` keeps (`history.push`). A `false` (no-op) apply
 leaves the constitution untouched. -/
 theorem apply_bumps_version (c : Constitution) (p : MembershipProposal)
@@ -297,19 +297,19 @@ The core constitutional-safety property: a threshold amendment `T → T'` can ne
 than BOTH `T` and `T'` distinct approvals. So the bar to *change the bar* dominates both the old
 and the new bar — neither a minority lowering nor a majority raising can sneak through. -/
 
-/-- **`requiredVotes_amend_eq_max` (PROVED — the H-rule, exact form).** The votes required to amend
+/-- **`requiredVotes_amend_eq_max` (the H-rule, exact form).** The votes required to amend
 the threshold from the current `T` to `T'` are EXACTLY `max(T, T')` (`required_votes_for`). -/
 theorem requiredVotes_amend_eq_max (c : Constitution) (t' : Nat) :
     requiredVotesFor c (.amendThreshold t') = max c.threshold t' := rfl
 
-/-- **`requiredVotes_amend_ge_current` (PROVED — H-rule lower bound, old threshold).** Amending the
+/-- **`requiredVotes_amend_ge_current` (H-rule lower bound, old threshold).** Amending the
 threshold needs AT LEAST the current threshold's worth of approvals: a majority cannot raise the
 threshold to lock others out without the current quorum's consent. -/
 theorem requiredVotes_amend_ge_current (c : Constitution) (t' : Nat) :
     requiredVotesFor c (.amendThreshold t') ≥ c.threshold :=
   le_max_left _ _
 
-/-- **`requiredVotes_amend_ge_new` (PROVED — H-rule lower bound, new threshold).** Amending the
+/-- **`requiredVotes_amend_ge_new` (H-rule lower bound, new threshold).** Amending the
 threshold needs AT LEAST the NEW threshold's worth of approvals: a minority cannot lower the
 threshold to seize control, because the move already requires the (higher) old-bar quorum AND
 cannot dip below the new bar either. -/
@@ -317,7 +317,7 @@ theorem requiredVotes_amend_ge_new (c : Constitution) (t' : Nat) :
     requiredVotesFor c (.amendThreshold t') ≥ t' :=
   le_max_right _ _
 
-/-- **`h_rule_dominates_both` (PROVED — the full H-rule bound).** A threshold amendment requires at
+/-- **`h_rule_dominates_both` (the full H-rule bound).** A threshold amendment requires at
 least BOTH the old and the new threshold's worth of distinct approvals — the conjunction that
 defeats both the seize-control (lower) and the lock-out (raise) attacks in one statement. -/
 theorem h_rule_dominates_both (c : Constitution) (t' : Nat) :
@@ -325,7 +325,7 @@ theorem h_rule_dominates_both (c : Constitution) (t' : Nat) :
     requiredVotesFor c (.amendThreshold t') ≥ t' :=
   ⟨le_max_left _ _, le_max_right _ _⟩
 
-/-- **`h_rule_passing_needs_both` (PROVED — H-rule, on the passing side).** If a threshold
+/-- **`h_rule_passing_needs_both` (H-rule, on the passing side).** If a threshold
 amendment PASSES, then the number of distinct current-member approvers is ≥ the old threshold AND
 ≥ the new threshold. So no passed amendment ever undershoots either bar — the H-rule is enforced at
 the point of admission, not merely declared. -/
@@ -343,7 +343,7 @@ A proposal passes ONLY with at least `requiredVotesFor` approvals from DISTINCT 
 current participants. The approver set is `Nodup` (dedup) and a subset of `c.participants`, so a
 Byzantine voter cannot double-count and a non-member cannot vote. -/
 
-/-- **`approvers_nodup` (PROVED).** The distinct-approver set has no duplicates — it is built by
+/-- **`approvers_nodup`.** The distinct-approver set has no duplicates — it is built by
 `dedup`, exactly the `HashSet<voter>` of `VoteTracker`. A single key cannot be counted twice toward
 threshold. -/
 theorem approvers_nodup (c : Constitution) (proposalBlock : BlockId)
@@ -351,7 +351,7 @@ theorem approvers_nodup (c : Constitution) (proposalBlock : BlockId)
     (distinctApprovers c proposalBlock votes inPast).Nodup :=
   List.nodup_dedup _
 
-/-- **`approvers_are_participants` (PROVED).** Every distinct approver is a CURRENT participant: the
+/-- **`approvers_are_participants`.** Every distinct approver is a CURRENT participant: the
 `is_participant` gate in `record_vote` is enforced, so a non-member's vote is dropped before it can
 count. The approver list is a subset of `c.participants`. -/
 theorem approvers_are_participants (c : Constitution) (proposalBlock : BlockId)
@@ -366,7 +366,7 @@ theorem approvers_are_participants (c : Constitution) (proposalBlock : BlockId)
   rw [Bool.and_eq_true] at hf
   exact hf.2.1
 
-/-- **`approvers_votes_in_past` (PROVED).** Every distinct approver cast its vote ON THIS PROPOSAL —
+/-- **`approvers_votes_in_past`.** Every distinct approver cast its vote ON THIS PROPOSAL —
 there is a vote record by that key whose vote block is in the proposal block's causal past. So an
 approval cannot be forged from a vote on a DIFFERENT proposal: the causal-past binding
 (`MembershipVote.proposal_block`) is enforced. -/
@@ -383,7 +383,7 @@ theorem approvers_votes_in_past (c : Constitution) (proposalBlock : BlockId)
   rw [Bool.and_eq_true] at hf
   exact ⟨v, hf.1, rfl, hf.2.1, hf.2.2⟩
 
-/-- **`passed_needs_threshold_distinct_members` (PROVED — the master admission theorem).** A passed
+/-- **`passed_needs_threshold_distinct_members` (the master admission theorem).** A passed
 proposal has at least `requiredVotesFor` approvals from a `Nodup` set of keys that are ALL current
 participants. Spelled out: there is a list `S` of approvers with `|S| ≥ requiredVotesFor`, `S` has
 no duplicates, and every key in `S` is a current participant. This is the federation's membership-
@@ -401,7 +401,7 @@ theorem passed_needs_threshold_distinct_members (c : Constitution) (p : Membersh
          approvers_nodup c proposalBlock votes inPast,
          approvers_are_participants c proposalBlock votes inPast⟩
 
-/-- **`passed_needs_quorum_in_past` (PROVED — admission via the CAUSAL PAST, the n>1 tower wire).**
+/-- **`passed_needs_quorum_in_past` (admission via the CAUSAL PAST, the n>1 tower wire).**
 The causal-past instantiation: with the blocklace `inPastOf B`, a passed proposal's `requiredVotesFor`
 distinct approvers each have a vote BLOCK in `proposalBlock`'s causal past in `B`, are distinct, and
 are all current members. This is the form the node actually checks — votes are blocks referencing
@@ -439,7 +439,7 @@ def autoEvict (c : Constitution) (k : AuthorId) : Constitution × Bool :=
               version := c.version + 1 }, true)
   else (c, false)
 
-/-- **`autoEvict_removes` (PROVED).** If the equivocation proof's creator was a current participant,
+/-- **`autoEvict_removes`.** If the equivocation proof's creator was a current participant,
 auto-eviction applies, the creator is filtered OUT of the new participant set, and the threshold is
 recomputed — all WITHOUT any vote. The `Equivocation` proof object (from `Authority.Blocklace`) is
 the only authorization needed: the fork is its own warrant. -/
@@ -458,7 +458,7 @@ theorem autoEvict_removes (c : Constitution) (B : Lace) (k : AuthorId) (a b : Bl
   refine ⟨rfl, rfl, rfl, ?_⟩
   simp [List.mem_filter]
 
-/-- **`autoEvict_threshold` (PROVED).** After auto-eviction the threshold equals the supermajority
+/-- **`autoEvict_threshold`.** After auto-eviction the threshold equals the supermajority
 of the new participant count — the SAME recompute as a voted Leave, so the post-eviction federation
 is in a consistent constitutional state (the threshold finality counts against is correct). -/
 theorem autoEvict_threshold (c : Constitution) (k : AuthorId)
@@ -477,7 +477,7 @@ rule that drives the verified executor (`ConsensusExec.executeFinalized`). -/
 `findAllFinalLeaders … participants …`). The constitution's `participants` IS this list. -/
 def Constitution.asWaveParticipants (c : Constitution) : List AuthorId := c.participants
 
-/-- **`membership_change_reparameterizes_finality` (PROVED — the connection).** After an applied
+/-- **`membership_change_reparameterizes_finality` (the connection).** After an applied
 Join / Leave, the participant list that `BlocklaceFinality` round-robins `waveLeader` over is
 exactly the constitution's NEW participant set, AND the supermajority finality counts against equals
 the constitution's recomputed threshold (`computeThreshold_eq_superMajority`, given `n > 0`). So the
@@ -495,7 +495,7 @@ theorem membership_change_reparameterizes_finality (c : Constitution) (k : Autho
         = superMajority (applyProposal c (.leave k)).1.participants.length
   rw [hthr, computeThreshold_eq_superMajority hpos]
 
-/-! ## 10. NON-VACUITY — CONCRETE traces the model genuinely ADMITS / REJECTS (n > 1), the Rust
+/-! ## 10. NON-VACUITY — CONCRETE traces the model ADMITS / REJECTS (n > 1), the Rust
 differential.
 
 These `#guard`s reproduce, value-for-value, the numbers the `constitution.rs` unit tests assert.

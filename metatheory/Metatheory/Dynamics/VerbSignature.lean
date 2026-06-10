@@ -9,7 +9,7 @@
 > **`Fpu` of the verb's footprint** in the product camera `Sub4` (the ontic half — the
 > update respects what the substances ARE).
 
-These are **two genuinely separate gates** (the S0 verdict was PARTIAL precisely because
+These are **two separate gates** (the S0 verdict was PARTIAL precisely because
 the admission guard provably does NOT collapse into the camera — `FpuProbe §E2`
 `camera_blind_to_caveats`: the camera is BLIND to the caveats). So a `Verb` is a *pair*:
 
@@ -134,10 +134,10 @@ This is the single abstract theorem behind DREGG3 §2.1: the two gates (admissio
 footprint-`Fpu`) together preserve product validity. Because `Product V A E S = V × A × E ×
 S` with componentwise `valid`, "product validity preserved" unfolds to all four substance
 disciplines AT ONCE — conservation (`V`), non-amplification (`A`), monotone growth (`E`),
-and the frame (`S`). The admission gate is genuinely *separate* (it does not enter this
+and the frame (`S`). The admission gate is *separate* (it does not enter this
 implication's proof — `FpuProbe §E2`, the camera is blind to the guard); it is carried in
 `Fires` because a real verb needs BOTH, but the *validity-preservation* is the `Fpu` half.
-The honest content: a fired verb cannot break any third party's holding in any
+The content: a fired verb cannot break any third party's holding in any
 substance. -/
 theorem kernel_meta_law (v : Verb P V A E S) (w : W) (h : Fires (W := W) v w) :
     ∀ fr : Product V A E S,
@@ -180,21 +180,21 @@ The meta-law `Fires v w → preserves-validity` could be vacuous in two ways:
 (a) if `Fires` were never satisfiable, or (b) if every footprint were `Fpu`. We refute
 both. (a) is witnessed by ANY genuine fired verb (the candidate model `Production.lean`
 exhibits `move`/`grant`/`write`); (b) is refuted here: a verb whose footprint is a NON-`Fpu`
-update genuinely fails to preserve validity, so the `Fpu` hypothesis is load-bearing. -/
+update fails to preserve validity, so the `Fpu` hypothesis is load-bearing. -/
 
 /-- **`meta_law_nonvacuous` — the `Fpu` hypothesis is load-bearing, PROVED, kernel-clean.**
 If a verb's footprint update is NOT a frame-preserving update (witnessed by a frame `fr`
 that is compatible with `pre` but breaks against `post`), then the verb does NOT preserve
 product validity — there is a frame the post-footprint invalidates. So the meta-law's
 `Footprint` (= footprint-`Fpu`) hypothesis cannot be dropped: a non-`Fpu` footprint
-genuinely breaks a third party's holding. This is the camera tooth lifted to the verb. -/
+breaks a third party's holding. This is the camera tooth lifted to the verb. -/
 theorem meta_law_nonvacuous (v : Verb P V A E S) (fr : Product V A E S)
     (hpre : ResourceAlgebra.valid (v.pre ⊙ fr))
     (hpost : ¬ ResourceAlgebra.valid (v.post ⊙ fr)) :
     ¬ Footprint v :=
   fun hfpu => hpost (hfpu fr hpre)
 
-/-- **A fired verb is genuinely satisfiable** (the (a)-direction of non-vacuity): given an
+/-- **A fired verb is satisfiable** (the (a)-direction of non-vacuity): given an
 admitting witness and a real `Fpu` footprint, `Fires` holds — so the meta-law's antecedent
 is inhabitable, not vacuous. The candidate model supplies concrete witnesses. -/
 theorem fires_intro (v : Verb P V A E S) (w : W)
@@ -210,7 +210,7 @@ theorem fires_intro (v : Verb P V A E S) (w : W)
 A `Verb` is `admission × footprint`. The kernel meta-law (`kernel_meta_law`): a fired verb
 (admits ∧ footprint-`Fpu`) preserves product validity — conservation ∧ non-amplification ∧
 monotonicity ∧ frame, ONE abstract theorem (`kernel_meta_law_pointwise` unfolds the four
-legs). The two gates are genuinely separate (admission does not enter the
+legs). The two gates are separate (admission does not enter the
 validity-preservation; the camera is blind to it — `FpuProbe §E2`). Non-vacuity is pinned
 both ways (`meta_law_nonvacuous` / `fires_intro`). `Production.lean` adds the
 non-forgeability production law and the `Dregg2` candidate model showing the dregg2 verbs

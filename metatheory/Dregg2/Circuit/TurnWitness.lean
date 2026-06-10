@@ -6,7 +6,7 @@ Abstract turn witnesses for the Wave-1 gadget/witness layer: per-action `StepWit
 digest. `turnWitnessSatisfies` folds step witnesses through an abstract `compress` portal (state-root
 chaining); `turn_witness_refines_turnCircuit` lifts per-step declarative satisfaction to `turnSpec`.
 
-§4b makes the turn root AUTHENTIC (no longer decorative): `authenticTurnRoots` binds `preRoot`/
+§4b makes the turn root AUTHENTIC (not decorative): `authenticTurnRoots` binds `preRoot`/
 `postRoot` to `StateCommit.recStateCommit` of the boundary kernels (a genuine binding full-state
 commitment over all 17 fields). `turnWitnessSatisfies_binds_postRoot` makes `turnWitnessSatisfies`
 load-bearing — the prover-folded post-root is forced to equal the real post-state commitment —
@@ -127,7 +127,7 @@ full-state commitment (a Poseidon Merkle root over all 17 `RecordKernelState` fi
 post-state commitment, so a tampered `postRoot` is rejected. -/
 
 /-- **`authenticTurnRoots`** — bind the witness boundary roots to the GENUINE full-state commitments
-of the boundary kernels (under a chosen commitment surface + turn). The roots are no longer free
+of the boundary kernels (under a chosen commitment surface + turn). The roots are not free
 decoration: `preRoot` IS `recStateCommit` of `s.kernel` and `postRoot` IS `recStateCommit` of
 `s'.kernel`. -/
 def authenticTurnRoots
@@ -197,7 +197,7 @@ theorem authentic_roots_bind_state
 /-! ### Non-vacuity: a witness where `authenticTurnRoots` HOLDS, and a tampered one where it is FALSE.
 
 These are closed proofs (not `#guard` — the abstract surface is `ℤ`-valued and not `Decidable` on a
-free state), pinning the spec as genuinely two-sided: the honest witness inhabits it, the tampered
+free state), pinning the spec as two-sided: the honest witness inhabits it, the tampered
 witness refutes it. -/
 
 /-- WITNESS (HOLDS): the genuine-root witness inhabits `authenticTurnRoots`. -/
@@ -250,7 +250,7 @@ def innerTurnWitnessSatisfies (compress : ℤ → ℤ → ℤ) (stepRoot : StepW
 /-- **`InnerChainWitness`** — the LOAD-BEARING inner witness: a per-step state chain anchored at the
 exercise hold post-state (`exerciseHoldState pre actor`) and ending at `post`, with each step's
 witness satisfying its declarative `fullActionStep`. This is exactly the `turn_witness_refines_turnCircuit`
-payload, restricted so the head is the hold state — so the inner fold genuinely refines `turnSpec`. -/
+payload, restricted so the head is the hold state — so the inner fold refines `turnSpec`. -/
 structure InnerChainWitness (pre post : RecChainedState) (actor : CellId)
     (inner : List FullActionA) (itw : InnerTurnWitness) where
   /-- Witness step count matches the inner action list. -/

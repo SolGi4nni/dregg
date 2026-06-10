@@ -15,7 +15,7 @@ is the WIDE commitment now BINDS all 8 roots. The `cap_root` column is absorbed 
 block), so a `cap_root` tamper is anti-ghosted too; the cap-graph MEMBERSHIP stays the named opaque digest
 (a refinement, not a soundness gap). The §RECIPE applied to setPermissions.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

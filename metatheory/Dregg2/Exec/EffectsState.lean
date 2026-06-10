@@ -110,7 +110,7 @@ theorem setField_fieldOf (f : FieldName) (cell : Value) (n : Int) :
   | dig _  => simp [Value.scalar, Value.field]
   | sym _  => simp [Value.scalar, Value.field]
 
-/-- **NON-INTERFERENCE — PROVED (the load-bearing lemma).** Writing a field `f` DISTINCT from the
+/-- **NON-INTERFERENCE (the load-bearing lemma).** Writing a field `f` DISTINCT from the
 `balance` field leaves the conserved balance read (`balOf`) UNCHANGED. This is what lets every
 Neutral/Monotonic/Terminal metadata move ride alongside the (frozen) balance domain without
 disturbing it — the generic `f`-parameterized form of `EffectTransfer.setNonce_balOf`. -/
@@ -196,11 +196,11 @@ a live account (MEMBERSHIP), AND `target`'s lifecycle admits new effects (LIVENE
 R6 fix). On commit, write field `f` of `target` to `v` and extend the receipt chain by one row
 (the metadata advance). NO balance move, NO cap edit — the regime invariant.
 
-**R6 — lifecycle liveness now gates the LIVE executor.** Previously the gate consulted only authority
-+ membership (`target ∈ accounts`), so a field write into a SEALED/Destroyed cell silently COMMITTED
-(bypassing `cellSeal`). The `cellLive` conjunct closes that hole HERE, in the bare step the live
+**R6 — lifecycle liveness gates the LIVE executor.** Authority + membership (`target ∈ accounts`)
+alone would admit a field write into a SEALED/Destroyed cell (bypassing `cellSeal`). The `cellLive`
+conjunct closes that hole HERE, in the bare step the live
 executor (`execFullA`'s `.incrementNonceA`/`.setPermissionsA`/`.setVKA`/`.refusalA`/`.receiptArchiveA`
-arms, and — via `stateStepGuarded` — `.setFieldA`) runs: a write into a non-Live cell now returns
+arms, and — via `stateStepGuarded` — `.setFieldA`) runs: a write into a non-Live cell returns
 `none`, matching the handler's `acceptsEffects` gate. -/
 def stateStep (s : RecChainedState) (f : FieldName) (actor target : CellId) (v : Value) :
     Option RecChainedState :=
@@ -211,7 +211,7 @@ def stateStep (s : RecChainedState) (f : FieldName) (actor target : CellId) (v :
   else
     none
 
-/-- **`stateStep_factors` — PROVED.** A committed `stateStep` was authorized and produced exactly
+/-- **`stateStep_factors`.** A committed `stateStep` was authorized and produced exactly
 the field-write post-state + a one-row chain extension. The live-target gate is exposed separately by
 `state_target_live`. The bridge every downstream theorem reuses. -/
 theorem stateStep_factors {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -249,7 +249,7 @@ def caveatsAdmit (k : RecordKernelState) (f : FieldName) (actor target : CellId)
   ((k.slotCaveats target).filter (fun cav => cav.field == f)).all
     (fun cav => cav.eval actor (fieldOf f (k.cell target)) new)
 
-/-- **`stateStepGuarded` — the CAVEAT-GATED field write (PROVED computable).** First the authority
+/-- **`stateStepGuarded` — the CAVEAT-GATED field write (computable).** First the authority
 gate (`stateStep`), then the slot-caveat gate (`caveatsAdmit`): a write commits iff the actor holds
 authority over `target` AND every caveat bound to the written slot admits the `(actor, old, new)`
 transition. Fail-closed on EITHER gate. On commit the post-state is EXACTLY `stateStep`'s — the
@@ -262,7 +262,7 @@ def stateStepGuarded (s : RecChainedState) (f : FieldName) (actor target : CellI
   else
     none
 
-/-- **`stateStepGuarded_eq` — PROVED.** A committed caveat-gated write is EXACTLY the underlying
+/-- **`stateStepGuarded_eq`.** A committed caveat-gated write is EXACTLY the underlying
 `stateStep` write (the caveat gate only restricts the domain — it never changes the post-state). The
 bridge that lifts EVERY `stateStep` keystone (conservation, authority, forward-sim) to the guarded
 write verbatim. -/
@@ -274,9 +274,9 @@ theorem stateStepGuarded_eq {s s' : RecChainedState} {f : FieldName} {actor targ
   · rw [if_pos hg] at h; exact h
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`stateStepGuarded_admits` — PROVED.** A committed caveat-gated write means every caveat bound
+/-- **`stateStepGuarded_admits`.** A committed caveat-gated write means every caveat bound
 to the written slot ADMITTED the transition (`caveatsAdmit` held at the pre-state). The witness that
-the published per-slot invariants were genuinely enforced. -/
+the published per-slot invariants were enforced. -/
 theorem stateStepGuarded_admits {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
     {n : Int} (h : stateStepGuarded s f actor target n = some s') :
     caveatsAdmit s.kernel f actor target n = true := by
@@ -285,7 +285,7 @@ theorem stateStepGuarded_admits {s s' : RecChainedState} {f : FieldName} {actor 
   · exact hg
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`stateStepGuarded_caveat_violation_fails` — PROVED (FAIL-CLOSED).** If ANY caveat bound to the
+/-- **`stateStepGuarded_caveat_violation_fails` (FAIL-CLOSED).** If ANY caveat bound to the
 written slot rejects the transition (`caveatsAdmit = false`), the guarded write does NOT commit. This
 is the executor-level teeth: an `Immutable` slot rejects any rewrite, a `MonotonicSequence` slot
 rejects a non-`+1` write, a `WriteOnce` slot rejects a second write. -/
@@ -301,7 +301,7 @@ The Neutral/metadata regime's defining obligation: a non-balance effect's tri-do
 total is unchanged via the §0 non-interference lemma, and the cap table / authority graph are
 untouched (the field write never edits `caps`). -/
 
-/-- The field write preserves the conserved `balance` total — PROVED — provided the written field
+/-- The field write preserves the conserved `balance` total — provided the written field
 is not the `balance` field. Every cell's `balOf` is unchanged by a non-balance field write (`§0`
 non-interference, applied at the `target`). -/
 theorem writeField_recTotal (k : RecordKernelState) (f : FieldName) (target : CellId) (v : Value)
@@ -313,7 +313,7 @@ theorem writeField_recTotal (k : RecordKernelState) (f : FieldName) (target : Ce
   · simp only [hc, if_pos]; exact setField_balOf f (k.cell target) v hf
   · simp only [if_neg hc]
 
-/-- **`state_conserves` — BALANCE UNCHANGED (PROVED).** A committed Neutral/Monotonic/Terminal
+/-- **`state_conserves` — BALANCE UNCHANGED.** A committed Neutral/Monotonic/Terminal
 effect (writing a non-`balance` field) preserves the total balance: `recTotal s'.kernel = recTotal
 s.kernel`. The metadata move does NOT perturb the conserved balance — the regime's first
 tri-domain obligation (balance `Δ = 0`). -/
@@ -324,7 +324,7 @@ theorem state_conserves {s s' : RecChainedState} {f : FieldName} {actor target :
   subst hs'
   exact writeField_recTotal s.kernel f target v hf
 
-/-- **`stateStep_preserves_exact` — the metadata regime preserves the W1 value law (PROVED).** A
+/-- **`stateStep_preserves_exact` — the metadata regime preserves the W1 value law.** A
 committed Neutral/Monotonic/Terminal field write leaves `ExactConservation` (the per-asset exact law,
 `RecordKernel §VALUE-UNIFY`) intact: `writeField` edits only the `cell` record map, never the
 per-asset `bal` ledger nor the `escrows` holding-store, so `recTotalAsset` is definitionally
@@ -338,7 +338,7 @@ theorem stateStep_preserves_exact {s s' : RecChainedState} {f : FieldName} {acto
 
 #assert_axioms stateStep_preserves_exact
 
-/-- **`state_balance_domain` — PROVED (per-domain Σ = 0).** The realized balance-domain delta of a
+/-- **`state_balance_domain` (per-domain Σ = 0).** The realized balance-domain delta of a
 committed Neutral/metadata effect nets to `0` (`Spec.conservedInDomain Domain.balance`) — the
 executable shadow of dregg1's `excess == 0` gate for the non-conserving-but-balance-neutral colors. -/
 theorem state_balance_domain {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -347,7 +347,7 @@ theorem state_balance_domain {s s' : RecChainedState} {f : FieldName} {actor tar
   unfold conservedInDomain
   rw [state_conserves hf h]; simp
 
-/-- **`state_caps_unchanged` — PROVED.** A committed Neutral/Monotonic/Terminal effect leaves the
+/-- **`state_caps_unchanged`.** A committed Neutral/Monotonic/Terminal effect leaves the
 cap table UNTOUCHED (the field write edits only `cell`, never `caps`). -/
 theorem state_caps_unchanged {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
     {v : Value} (h : stateStep s f actor target v = some s') :
@@ -355,7 +355,7 @@ theorem state_caps_unchanged {s s' : RecChainedState} {f : FieldName} {actor tar
   obtain ⟨_, hs'⟩ := stateStep_factors h
   subst hs'; rfl
 
-/-- **`state_authGraph_unchanged` — PROVED.** A committed Neutral/metadata effect leaves the
+/-- **`state_authGraph_unchanged`.** A committed Neutral/metadata effect leaves the
 reconstructed authority `Graph` (`Spec.execGraph`) UNCHANGED — these effects move metadata, never
 connectivity. The regime's second tri-domain obligation (authority `Δ = 0`). -/
 theorem state_authGraph_unchanged {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -365,7 +365,7 @@ theorem state_authGraph_unchanged {s s' : RecChainedState} {f : FieldName} {acto
 
 /-! ## §3 — `state_authorized`: a committed Neutral/metadata effect was authorized. -/
 
-/-- **`state_authorized` — PROVED.** A committed Neutral/Monotonic/Terminal effect implies the
+/-- **`state_authorized`.** A committed Neutral/Monotonic/Terminal effect implies the
 actor held authority over the `target` (`stateAuthB` true at the pre-state). The regime's
 authorization obligation, reused from the cap gate. -/
 theorem state_authorized {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -373,7 +373,7 @@ theorem state_authorized {s s' : RecChainedState} {f : FieldName} {actor target 
     stateAuthB s.kernel.caps actor target = true :=
   (stateStep_factors h).1
 
-/-- **`state_target_live` — PROVED.** A committed Neutral/metadata field write targeted a live account.
+/-- **`state_target_live`.** A committed Neutral/metadata field write targeted a live account.
 This prevents self-authorized writes from creating ghost cell state outside `accounts`. -/
 theorem state_target_live {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
     {v : Value} (h : stateStep s f actor target v = some s') :
@@ -384,7 +384,7 @@ theorem state_target_live {s s' : RecChainedState} {f : FieldName} {actor target
   · exact hg.2.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`state_target_lifecycle_live` — PROVED (the R6 teeth).** A committed Neutral/metadata field
+/-- **`state_target_lifecycle_live` (the R6 teeth).** A committed Neutral/metadata field
 write targeted a LIFECYCLE-LIVE cell (`cellLive`, i.e. the lifecycle discriminant is `0`=Live). This
 is the executor-level R6 close: a write into a Sealed/Destroyed cell cannot have committed. -/
 theorem state_target_lifecycle_live {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -396,7 +396,7 @@ theorem state_target_lifecycle_live {s s' : RecChainedState} {f : FieldName} {ac
   · exact hg.2.2
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`state_nonlive_fails` — PROVED (FAIL-CLOSED, the R6 teeth).** A field write into a cell whose
+/-- **`state_nonlive_fails` (FAIL-CLOSED, the R6 teeth).** A field write into a cell whose
 lifecycle does NOT admit effects (`cellLive = false`: Sealed or Destroyed) does NOT commit in the
 live executor. This is the executable shadow of dregg1's `accepts_effects` rejection — the hole the
 handler closed (`acceptsEffects`) is now closed in the bare step `execFullA` runs. -/
@@ -409,7 +409,7 @@ theorem state_nonlive_fails (s : RecChainedState) (f : FieldName) (actor target 
   rw [h] at hg
   exact absurd hg.2.2 (by simp)
 
-/-- **`state_unauthorized_fails` — PROVED (fail-closed).** If the actor lacks authority over the
+/-- **`state_unauthorized_fails` (fail-closed).** If the actor lacks authority over the
 target, no Neutral/metadata effect commits. The integrity/confinement core for the regime. -/
 theorem state_unauthorized_fails (s : RecChainedState) (f : FieldName) (actor target : CellId)
     (v : Value) (h : stateAuthB s.kernel.caps actor target = false) :
@@ -425,7 +425,7 @@ theorem state_unauthorized_fails (s : RecChainedState) (f : FieldName) (actor ta
 The receipt chain grows by exactly one row (the monotone clock — `Monotonic` for EVERY committed
 action), and the target's written field reads back the written value. -/
 
-/-- **`state_obsadvance` — PROVED (metadata MONOTONE advance).** A committed Neutral/metadata
+/-- **`state_obsadvance` (metadata MONOTONE advance).** A committed Neutral/metadata
 effect grows the receipt chain by exactly one row (the monotone metadata clock — replay-detectable).
 This is the `Monotonic` color shared by every kind. -/
 theorem state_obsadvance {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -434,7 +434,7 @@ theorem state_obsadvance {s s' : RecChainedState} {f : FieldName} {actor target 
   obtain ⟨_, hs'⟩ := stateStep_factors h
   subst hs'; simp
 
-/-- **`state_field_written` — PROVED (the metadata field move).** After a committed Neutral/metadata
+/-- **`state_field_written` (the metadata field move).** After a committed Neutral/metadata
 effect that writes `.int n`, the target's field `f` reads back exactly `n`. The bespoke field-write
 semantics every concrete effect specializes (`SetField` sets a field, `IncrementNonce` writes the
 bumped counter, `Seal` raises the flag, …). -/
@@ -446,7 +446,7 @@ theorem state_field_written {s s' : RecChainedState} {f : FieldName} {actor targ
   simp only [writeField, if_pos]
   exact setField_fieldOf f (s.kernel.cell target) n
 
-/-- **`state_metadata` — PROVED (the full metadata domain).** A committed Neutral/metadata effect:
+/-- **`state_metadata` (the full metadata domain).** A committed Neutral/metadata effect:
 (a) writes the target's field `f` to the written scalar `n`, AND (b) advances the receipt chain by
 exactly one row, AND (c) leaves the cap table unchanged. The complete metadata-domain obligation. -/
 theorem state_metadata {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -488,7 +488,7 @@ def AbsStep (a a' : AbstractS) : Prop :=
   conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧
     a'.authGraph = a.authGraph
 
-/-- **`state_forward_sim` — THE REFINEMENT (PROVED).** A committed Neutral/Monotonic/Terminal effect
+/-- **`state_forward_sim` — THE REFINEMENT.** A committed Neutral/Monotonic/Terminal effect
 (writing a non-`balance` field) is matched by an abstract `Spec` step `AbsStep (absS s) (absS s')`,
 AND the committed effect passed the abstract authority `Guard`. So every executable
 Neutral/metadata step is an abstract step (forward simulation), with the abstract balance total
@@ -532,7 +532,7 @@ def isSealed (v : Value) : Bool := decide (fieldOf sealField v = 1)
 /-- The `sealed` lifecycle flag is distinct from the conserved `balance` field. -/
 theorem sealField_ne_balance : sealField ≠ balanceField := by decide
 
-/-- **`sealStep` — a TERMINAL seal effect (PROVED computable).** Fail-closed on authority AND on
+/-- **`sealStep` — a TERMINAL seal effect (computable).** Fail-closed on authority AND on
 the one-way gate: a cell that is ALREADY sealed cannot be re-sealed (no double-seal). On commit it
 raises the `sealed` flag to `1`. This is the `cellSeal`/`makeSovereign`/`cellDestroy` shape — a
 one-way lifecycle transition. -/
@@ -540,7 +540,7 @@ def sealStep (s : RecChainedState) (actor target : CellId) : Option RecChainedSt
   if isSealed (s.kernel.cell target) = true then none  -- already terminal: no inverse, no re-seal
   else stateStep s sealField actor target (.int 1)
 
-/-- **`seal_raises_flag` — PROVED.** A committed `sealStep` raises the target's `sealed` flag to `1`
+/-- **`seal_raises_flag`.** A committed `sealStep` raises the target's `sealed` flag to `1`
 (the cell enters the terminal state). -/
 theorem seal_raises_flag {s s' : RecChainedState} {actor target : CellId}
     (h : sealStep s actor target = some s') :
@@ -552,7 +552,7 @@ theorem seal_raises_flag {s s' : RecChainedState} {actor target : CellId}
     have := state_field_written h
     unfold isSealed; rw [this]; simp
 
-/-- **`seal_conserves` — PROVED.** A `sealStep` preserves the balance total (the lifecycle flag is
+/-- **`seal_conserves`.** A `sealStep` preserves the balance total (the lifecycle flag is
 not the balance field). -/
 theorem seal_conserves {s s' : RecChainedState} {actor target : CellId}
     (h : sealStep s actor target = some s') :
@@ -562,7 +562,7 @@ theorem seal_conserves {s s' : RecChainedState} {actor target : CellId}
   · rw [if_pos hsealed] at h; exact absurd h (by simp)
   · rw [if_neg hsealed] at h; exact state_conserves sealField_ne_balance h
 
-/-- **`seal_irreversible` — PROVED (the no-double-seal one-way gate).** A cell that is ALREADY in
+/-- **`seal_irreversible` (the no-double-seal one-way gate).** A cell that is ALREADY in
 the terminal (sealed) state cannot be re-sealed: `sealStep` rejects. This is the executable
 irreversibility of the `Terminal` color — there is no `sealStep` that re-enters an already-terminal
 cell, so the flag, once `1`, has no `sealStep`-path back to `0`. -/
@@ -571,7 +571,7 @@ theorem seal_irreversible (s : RecChainedState) (actor target : CellId)
     sealStep s actor target = none := by
   unfold sealStep; rw [if_pos h]
 
-/-- **`seal_authGraph_unchanged` — PROVED.** Sealing a cell does not edit the authority graph
+/-- **`seal_authGraph_unchanged`.** Sealing a cell does not edit the authority graph
 (a lifecycle transition is connectivity-neutral). -/
 theorem seal_authGraph_unchanged {s s' : RecChainedState} {actor target : CellId}
     (h : sealStep s actor target = some s') :
@@ -666,28 +666,28 @@ A committed `stateStepGuarded` IS a committed `stateStep` (the caveat gate only 
 domain), so it preserves balance, leaves the authority graph fixed, advances the metadata clock, and
 writes the field — VERBATIM the §2–§5 keystones, lifted through `stateStepGuarded_eq`. -/
 
-/-- **`guarded_state_conserves` — BALANCE UNCHANGED (PROVED).** A committed caveat-gated field write
+/-- **`guarded_state_conserves` — BALANCE UNCHANGED.** A committed caveat-gated field write
 (of a non-`balance` field) preserves the total balance — the caveat gate is balance-neutral. -/
 theorem guarded_state_conserves {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
     {n : Int} (hf : f ≠ balanceField) (h : stateStepGuarded s f actor target n = some s') :
     recTotal s'.kernel = recTotal s.kernel :=
   state_conserves hf (stateStepGuarded_eq h)
 
-/-- **`guarded_state_authGraph_unchanged` — PROVED.** A committed caveat-gated write leaves the
+/-- **`guarded_state_authGraph_unchanged`.** A committed caveat-gated write leaves the
 authority graph unchanged (caveats gate writes, never connectivity). -/
 theorem guarded_state_authGraph_unchanged {s s' : RecChainedState} {f : FieldName}
     {actor target : CellId} {n : Int} (h : stateStepGuarded s f actor target n = some s') :
     execGraph s'.kernel.caps = execGraph s.kernel.caps :=
   state_authGraph_unchanged (stateStepGuarded_eq h)
 
-/-- **`guarded_state_authorized` — PROVED.** A committed caveat-gated write implies the actor held
+/-- **`guarded_state_authorized`.** A committed caveat-gated write implies the actor held
 authority over the target (the authority gate still fires under the caveat gate). -/
 theorem guarded_state_authorized {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
     {n : Int} (h : stateStepGuarded s f actor target n = some s') :
     stateAuthB s.kernel.caps actor target = true :=
   state_authorized (stateStepGuarded_eq h)
 
-/-- **`guarded_state_field_written` — PROVED.** After a committed caveat-gated write, the target's
+/-- **`guarded_state_field_written`.** After a committed caveat-gated write, the target's
 slot reads back exactly the written value (and — by `stateStepGuarded_admits` — every caveat on that
 slot was satisfied by this transition). -/
 theorem guarded_state_field_written {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
@@ -775,11 +775,11 @@ def ss0 : RecChainedState :=
 
 /-! ### §10.R6 — THE R6 TEETH: a write into a NON-LIVE (Sealed/Destroyed) cell is REJECTED.
 
-The cutover finding, evaluated. `ssR6` is `ss0` with cell 0's LIFECYCLE side-table flipped to Sealed
+`ssR6` is `ss0` with cell 0's LIFECYCLE side-table flipped to Sealed
 (`1`) — the cell still EXISTS (`0 ∈ accounts`) and the actor still OWNS it (so authority + membership
-both pass), but its lifecycle no longer admits effects. Previously the live `stateStep` gated ONLY on
-authority + membership, so this write COMMITTED (the R6 hole — a write bypassing `cellSeal`). With the
-`cellLive` gate it now returns `none`, matching the handler's `acceptsEffects`. A LIVE sibling cell
+both pass), but its lifecycle no longer admits effects. Without the `cellLive` gate this write would
+COMMIT (the R6 hole — a write bypassing `cellSeal`); with it, `stateStep` returns
+`none`, matching the handler's `acceptsEffects`. A LIVE sibling cell
 (cell 1, lifecycle `0`) still accepts the same write — the gate only TIGHTENS the non-live case. -/
 def ssR6 : RecChainedState :=
   { ss0 with kernel := { ss0.kernel with lifecycle := fun c => if c = 0 then 1 else 0 } }
@@ -814,7 +814,7 @@ example (s' : RecChainedState) (h : sealStep ss0 0 0 = some s') :
     sealStep s' 0 0 = none :=
   seal_irreversible s' 0 0 (seal_raises_flag h)
 
-/-! ## §11 — SLOT-CAVEAT TEETH: the executor genuinely rejects caveat-violating field writes.
+/-! ## §11 — SLOT-CAVEAT TEETH: the executor rejects caveat-violating field writes.
 
 Cell 0 carries factory-bound caveats: `status` is `Immutable`, `seq` is `MonotonicSequence`, `owner`
 is `WriteOnce`, `level` is `Monotonic`, `band` is `BoundedBy [10,20]`, and `admin` is
@@ -917,13 +917,13 @@ def ssSGM : RecChainedState :=
 #guard ((stateStepGuarded ssSGM "secret" 0 0 42).map (fun s => recTotal s.kernel)) == some 105  --  some 105 (conserved)
 #guard ((stateStepGuarded ssSGM "secret" 0 0 42).map (fun s => fieldOf "secret" (s.kernel.cell 0))) == some 42  --  some 42
 
-/-- **Non-vacuity at the theorem layer (the executor genuinely rejects the under-cleared write).** An
+/-- **Non-vacuity at the theorem layer (the executor rejects the under-cleared write).** An
 under-cleared actor's clearance write FAILS CLOSED via `stateStepGuarded_caveat_violation_fails` — the
 caveat gate rejected it, so the live `setFieldA` leg does not commit. -/
 example : stateStepGuarded ssSGM "secret" 2 0 42 = none :=
   stateStepGuarded_caveat_violation_fails ssSGM "secret" 2 0 42 (by decide)
 
-/-- **Non-vacuity: the ADMITTED clearance write was genuinely caveat-clean** (`stateStepGuarded_admits`
+/-- **Non-vacuity: the ADMITTED clearance write was caveat-clean** (`stateStepGuarded_admits`
 witnesses `caveatsAdmit` held — the clearance mandate was satisfied, not bypassed). -/
 example (s' : RecChainedState) (h : stateStepGuarded ssSGM "secret" 0 0 42 = some s') :
     caveatsAdmit ssSGM.kernel "secret" 0 0 42 = true :=

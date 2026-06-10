@@ -10,7 +10,7 @@ module makes that boundary PRECISE and PROVES — on BOTH sides — what holds a
 
 Existing `Privacy.lean`/`PrivacyKernel.lean`/`BlindedSet.lean` prove the *positive* direction
 (view-collapse: the payload is hidden). They never modelled the *negative* direction — the
-metadata an observer genuinely RECOVERS. This module supplies the missing dual, so the
+metadata an observer RECOVERS. This module supplies the missing dual, so the
 deliverable is a two-sided map rather than a one-sided "what's hidden" story.
 
 ## What an observer of the DAG sees vs the private payload
@@ -45,7 +45,7 @@ projection an observer computes from a transcript — it KEEPS the metadata and 
 is `obs`. `payload_anonymity_card_ge` proves the anonymity set for a turn's PAYLOAD has size `≥`
 the number of distinct payloads sharing that turn's metadata — DERIVED by an injection from a
 payload family into the corpus, NOT asserted as a constant. The residual is then characterized
-HONESTLY: this k is the payload-anonymity within a fixed metadata bucket; ACROSS metadata buckets
+this k is the payload-anonymity within a fixed metadata bucket; ACROSS metadata buckets
 (different partner sets/slots) the observer partitions the corpus and the anonymity collapses to
 the bucket — `metadata_partitions_anonymity` proves the bucket is an upper bound on what hides.
 
@@ -144,7 +144,7 @@ theorem payload_indistinguishable (slot : Nat) (partners : Finset Cell) (volume 
   unfold Indistinguishable
   exact obs_drops_payload _ _ rfl rfl rfl
 
-/-! ## The LEAK side — what the observer DOES learn (the residual, characterized honestly).
+/-! ## The LEAK side — what the observer DOES learn (the residual, characterized).
 
 The observer-view is a FAITHFUL function of the metadata: it determines partners, slot, volume.
 We state each as a recovery map (`obsView t` *determines* the field) AND as a distinguishability
@@ -164,7 +164,7 @@ theorem obs_reveals_volume (t : Transcript) : (obsView t).volume = t.volume := r
 /-- **`partner_change_distinguishable` — the LEAK tooth (graph).** Two turns identical in payload,
 slot, and volume but differing in their PARTNER SET are observer-DISTINGUISHABLE. The observer can
 tell apart "Alice coordinated with Bob" from "Alice coordinated with Carol", even though the
-amounts are hidden. This is the honest residual: who-coordinates-with-whom is NOT private. -/
+amounts are hidden. This is the residual: who-coordinates-with-whom is NOT private. -/
 theorem partner_change_distinguishable (slot : Nat) (volume : Nat) (p : Payload)
     (ps ps' : Finset Cell) (hne : ps ≠ ps') :
     Distinguishable
@@ -238,10 +238,10 @@ theorem payload_anonymity_card_ge {ι : Type u} [Fintype ι] [DecidableEq ι]
         rw [Finset.card_image_of_injective _ hinj]
     _ ≤ (payloadAnonymitySet corpus obs).card := Finset.card_le_card hsub
 
-/-! ## The residual, characterized HONESTLY — metadata PARTITIONS the anonymity.
+/-! ## The residual, characterized — metadata PARTITIONS the anonymity.
 
 The k above is anonymity *within one metadata bucket*. The observer also sees the metadata, so it
-PARTITIONS the corpus by observer-view. The honest residual statement: a turn's payload-anonymity
+PARTITIONS the corpus by observer-view. The residual statement: a turn's payload-anonymity
 set never exceeds its own bucket — the metadata is a hard ceiling on what hides. If a bucket has a
 unique metadata signature (a turn whose `(slot, partners, volume)` no other corpus turn shares),
 its payload-anonymity set is a SINGLETON: the payload is effectively deanonymized by metadata. -/
@@ -303,12 +303,12 @@ def tAC : Transcript :=
   { slot := 5, partners := {alice, carol}, volume := 1, payload := ⟨100⟩ }
 
 /-- **Non-vacuity of the PRIVACY tooth.** `tAB` and `tAB'` differ only in payload and are
-genuinely indistinguishable — a concrete inhabitant of `payload_indistinguishable`. -/
+indistinguishable — a concrete inhabitant of `payload_indistinguishable`. -/
 theorem ref_payload_indistinguishable : Indistinguishable tAB tAB' :=
   payload_indistinguishable 5 {alice, bob} 1 ⟨100⟩ ⟨200⟩
 
 /-- **Non-vacuity of the LEAK tooth (partners).** `tAB` and `tAC` differ only in partners and are
-genuinely distinguishable — Alice+Bob vs Alice+Carol IS observable. NON-VACUOUS: the two partner
+distinguishable — Alice+Bob vs Alice+Carol IS observable. NON-VACUOUS: the two partner
 sets are actually distinct (`carol ∉ {alice,bob}`), so this is not the empty hypothesis. -/
 theorem ref_partner_distinguishable : Distinguishable tAB tAC := by
   apply partner_change_distinguishable 5 1 ⟨100⟩ {alice, bob} {alice, carol}
@@ -320,7 +320,7 @@ theorem ref_partner_distinguishable : Distinguishable tAB tAC := by
     Cell.mk.injEq] at hc
   omega
 
-/-- **Non-vacuity that the view genuinely SEPARATES** the two scenarios: the observer-views of
+/-- **Non-vacuity that the view SEPARATES** the two scenarios: the observer-views of
 `tAB` and `tAC` are actually different records (the leak is real, not a vacuous inequality). -/
 theorem ref_views_differ : obsView tAB ≠ obsView tAC := ref_partner_distinguishable
 

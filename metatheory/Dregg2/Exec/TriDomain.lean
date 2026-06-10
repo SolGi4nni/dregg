@@ -341,7 +341,7 @@ theorem revoke_authMeasure (s s' : RecChainedState) (holder t : CellId) (H : Fin
     exact_mod_cast (List.Sublist.filter (fun c => capConfersEdge c) List.filter_sublist).length_le
   · simp only [if_neg hh]; exact le_refl _
 
-/-- **The authority-domain edit, per kind — PROVED.** The cap graph after a committed `FullAction`:
+/-- **The authority-domain edit, per kind.** The cap graph after a committed `FullAction`:
 UNCHANGED for value/supply (`Δ = 0`), `addEdge` for a grant (`+1`), `removeEdge` for a revoke (`−1`).
 This is what makes the signed `authorityDelta` an honest count of the structural edit. -/
 theorem authority_graph_edit (s s' : RecChainedState) (fa : FullAction) (h : execFull s fa = some s') :
@@ -373,7 +373,7 @@ theorem metadata_advance (s s' : RecChainedState) (fa : FullAction) (h : execFul
   have := execFull_obsadvance s s' fa h
   rw [this]; push_cast; ring
 
-/-- **`triConserved_of_execFull` — THE 3-DOMAIN CONSERVATION LAW (PROVED, NON-VACUOUS).** For any
+/-- **`triConserved_of_execFull` — THE 3-DOMAIN CONSERVATION LAW (NON-VACUOUS).** For any
 committed `FullAction` and any finite holder domain `H` containing the would-be recipient `rec` of a
 delegation, the post-state's three domain measures relate to the pre-state's by the color-dictated
 per-domain facts: balance by `balanceDelta` (`execFull_ledger`), AUTHORITY by the REAL on-state
@@ -417,7 +417,7 @@ theorem triConserved_of_execFull (s s' : RecChainedState) (fa : FullAction) (H :
     have := metadata_advance s s' fa h
     omega
 
-/-! ## §6 — Per-color obligation specializations (the color → domain dictionary, PROVED).
+/-! ## §6 — Per-color obligation specializations (the color → domain dictionary).
 
 The headline carries all three deltas for any kind; here we read off, per color, the precise
 obligation each domain incurs — now with the AUTHORITY obligation stated on the REAL `authMeasure`. -/
@@ -507,7 +507,7 @@ def triResiduals (pre post : TriMeasure) (fa : FullAction) : Domain → List ℤ
   | .crossCell => [0]
 
 /-- **`triConserved_iff_all_domains_zero` — INDEPENDENCE for the NON-REVOKE (exact-authority) kinds
-(PROVED).** For a `fa` that is not a revoke, `TriConserved` IFF every domain's residual nets to `0` —
+.** For a `fa` that is not a revoke, `TriConserved` IFF every domain's residual nets to `0` —
 the `Spec.multi_domain_independent` discipline realized over the three executable measures, the
 authority residual now on the REAL `authMeasure`. (Revoke's authority obligation is the one-way `≤`,
 not an exact `Σ = 0`, so it is handled by `terminal_revoke_obligation` directly.) -/
@@ -551,7 +551,7 @@ theorem triConserved_iff_all_domains_zero (pre post : TriMeasure) (fa : FullActi
         refine ⟨by omega, by omega, by omega, by omega⟩
 
 /-- **`triConserved_of_execFull_all_domains` — the headline in independence form for the non-revoke
-kinds (PROVED).** Every committed non-revoke `FullAction` (with the recipient in domain, for a
+kinds.** Every committed non-revoke `FullAction` (with the recipient in domain, for a
 delegation) passes ALL THREE `excess` gates independently: each `Spec.Domain` residual nets to `0`,
 the authority residual on the REAL `authMeasure`. -/
 theorem triConserved_of_execFull_all_domains (s s' : RecChainedState) (fa : FullAction)
@@ -582,11 +582,11 @@ theorem triConserved_of_execFull_all_domains (s s' : RecChainedState) (fa : Full
 #assert_axioms triConserved_iff_all_domains_zero
 #assert_axioms triConserved_of_execFull_all_domains
 
-/-! ## §9 — NON-VACUITY: a concrete turn where the AUTHORITY measure genuinely MOVES.
+/-! ## §9 — NON-VACUITY: a concrete turn where the AUTHORITY measure MOVES.
 
 Reusing `TurnExecutorFull.fs0`. We instantiate the tri-domain law at a DELEGATE (the authority
 measure RISES by `+1`, read off the actual cap table), a MINT (balance moves, authority fixed), and
-a TRANSFER (authority fixed) — showing the on-state `authMeasure` is genuinely read and moved. -/
+a TRANSFER (authority fixed) — showing the on-state `authMeasure` is read and moved. -/
 
 /-- A DELEGATE: authority measure `+1` (a fresh edge-bearing cap on `rec = 1`), balance fixed,
 metadata `+1`. The three deltas `(0, +1, +1)`. -/
@@ -601,7 +601,7 @@ example : ((execFull fs0 (.mint 9 0 50)).map (fun s' => recTotal s'.kernel)) = s
     ∧ metadataDelta (.mint 9 0 50) = 1 := by
   refine ⟨?_, rfl, rfl, rfl⟩; rfl
 
--- The `authMeasure` genuinely READS the cap table and MOVES: over the holder domain `{0,1}`, slot
+-- The `authMeasure` READS the cap table and MOVES: over the holder domain `{0,1}`, slot
 -- `0` already holds an edge-bearing `node 7` cap (measure `1`); a delegate to `1` grants `1` a fresh
 -- `node 7` cap, raising the measure to `2`; a mint leaves it fixed at `1` (authority framed).
 #guard (authMeasure fs0 {0, 1}) == 1  --  1 (slot 0 holds `node 7`)
@@ -609,7 +609,7 @@ example : ((execFull fs0 (.mint 9 0 50)).map (fun s' => recTotal s'.kernel)) = s
 #guard ((execFull fs0 (.mint 9 0 50)).map (fun s' => authMeasure s' {0, 1})) == some 1  --  some 1 (authority framed)
 
 /-- The authority measure of `fs0` over `{0,1}` is `1` (slot `0` holds the edge-bearing `node 7`
-cap), and a delegate to `1` raises it to `2` — the on-state count genuinely reads and moves. PROVED
+cap), and a delegate to `1` raises it to `2` — the on-state count reads and moves. PROVED
 by `rfl` (the measure computes on the real cap table). -/
 example : authMeasure fs0 {0, 1} = 1 := by rfl
 

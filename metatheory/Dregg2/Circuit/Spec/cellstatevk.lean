@@ -92,7 +92,7 @@ theorem setVKCellMap_eq_writeField (k : RecordKernelState) (cell : CellId) (vk :
 `recTransfer_correct` analog). A VK write (a) sets `cell`'s `verification_key` slot to exactly `vk`,
 (b) leaves `cell`'s conserved `balance` field untouched (the regime's balance-Δ=0 obligation, via the
 non-interference of a DISTINCT slot — `verification_key ≠ balance`), and (c) leaves every OTHER cell's
-whole record untouched. So the spec's `cell`-clause genuinely encodes write ∧ balance-frame ∧
+whole record untouched. So the spec's `cell`-clause encodes write ∧ balance-frame ∧
 cell-frame, rather than blindly trusting the helper. -/
 theorem setVK_cellWrite_correct (k : RecordKernelState) (cell : CellId) (vk : Int) :
     fieldOf vkField (setVKCellMap k cell vk cell) = vk
@@ -247,13 +247,13 @@ theorem execFullA_setVK_admits_guard {s s' : RecChainedState} {actor cell : Cell
     setVKGuard s actor cell :=
   ((execFullA_setVK_iff_spec s actor cell vk s').mp h).1
 
-/-! ## §5 — NON-VACUITY: the guard genuinely REJECTS bad inputs.
+/-! ## §5 — NON-VACUITY: the guard REJECTS bad inputs.
 
 A spec that the executor meets vacuously (because the arm accepts everything) is worthless. These
 exhibit the arm as a genuine gate: an unauthorized actor, a non-account `cell`, and a non-Live
 (sealed/destroyed) `cell` each make the arm FAIL CLOSED (`= none`), so no spec post-state exists. -/
 
-/-- **`setVK_rejects_unauthorized` — PROVED.** If the actor does NOT hold authority over `cell`, the
+/-- **`setVK_rejects_unauthorized`.** If the actor does NOT hold authority over `cell`, the
 arm fails closed: no committed post-state exists. -/
 theorem setVK_rejects_unauthorized (s : RecChainedState) (actor cell : CellId) (vk : Int)
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
@@ -264,7 +264,7 @@ theorem setVK_rejects_unauthorized (s : RecChainedState) (actor cell : CellId) (
   rintro ⟨hauth, _, _⟩
   rw [hbad] at hauth; exact absurd hauth (by simp)
 
-/-- **`setVK_rejects_nonaccount` — PROVED.** If `cell` is not a live account, the arm fails closed. -/
+/-- **`setVK_rejects_nonaccount`.** If `cell` is not a live account, the arm fails closed. -/
 theorem setVK_rejects_nonaccount (s : RecChainedState) (actor cell : CellId) (vk : Int)
     (hbad : cell ∉ s.kernel.accounts) :
     execFullA s (.setVKA actor cell vk) = none := by
@@ -273,7 +273,7 @@ theorem setVK_rejects_nonaccount (s : RecChainedState) (actor cell : CellId) (vk
   rw [if_neg]
   rintro ⟨_, hmem, _⟩; exact hbad hmem
 
-/-- **`setVK_rejects_nonlive` — PROVED.** If `cell`'s lifecycle does NOT admit effects
+/-- **`setVK_rejects_nonlive`.** If `cell`'s lifecycle does NOT admit effects
 (sealed/destroyed — the R6 gate), the arm fails closed. This is the executor-level lifecycle
 enforcement: a VK write into a sealed cell is REJECTED — the very upgrade-safety property
 `SetVerificationKey` needs (a destroyed cell cannot have its VK rotated out from under its proofs). -/

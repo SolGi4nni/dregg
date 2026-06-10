@@ -36,7 +36,7 @@ by passthrough gates, and the 4 GROUP-4 hash-sites bind the whole post-state int
     `bal cell a` drops by `amt`; the frame is `0 = 0`). So the runnable `bal_lo` column transition IS
     universe-A's `bal`-ledger transition, NOT a fourth spec.
 
-## HONEST BOUNDARY (precise — do NOT over-read)
+## BOUNDARY (precise — do NOT over-read)
 
   * PER-CELL / PER-ROW. Single-row AIR: ONE `(cell, asset)` ledger entry's debit + its binding into the
     published `state_commit`. Cross-row composition (and the disclosing log receipt) is the turn layer
@@ -51,7 +51,7 @@ by passthrough gates, and the 4 GROUP-4 hash-sites bind the whole post-state int
   * `state.RESERVED` is NOT absorbed by any hash-site (inherited finding from the transfer keystone);
     pinned only by its per-row passthrough gate.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`. No `sorry`, no `:= True`, no `native_decide`, no

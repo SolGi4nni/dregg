@@ -94,7 +94,7 @@ def SC : Surface2 := { RH := rhConcrete, LH := lhConcrete }
 /-! ### cellSealA concrete instance. -/
 
 /-- The concrete `lifecycle` component for `cellSealA` (computable digest; `postClause` = the digest
-equality, so the `ActiveComponent` is honestly inhabited — `binds`/`encodes` are the identity). -/
+equality, so the `ActiveComponent` is inhabited — `binds`/`encodes` are the identity). -/
 def sealLifeCompC : ActiveComponent RecChainedState Inst.CellSealA.CellSealArgs :=
   { digest    := fun k => lifeDigConcrete k.lifecycle
   , expected  := fun s args => lifeDigConcrete (sealLifecycleMap s.kernel args.cell)
@@ -147,7 +147,7 @@ def sPreSeal : RecChainedState := { kernel := kPreSeal, log := [] }
 def sealArgs : Inst.CellSealA.CellSealArgs := { actor := 0, cell := 0 }
 def sPostSeal : RecChainedState := (execFullA sPreSeal (.cellSealA 0 0)).getD sPreSeal
 
-/-- THE SEAL FORGERY: cell 0 honestly sealed, but a THIRD cell (2) is ALSO flipped to Sealed — a
+/-- THE SEAL FORGERY: cell 0 sealed, but a THIRD cell (2) is ALSO flipped to Sealed — a
 bystander lifecycle tamper. The component-bind gate must reject it. -/
 def sForgedSeal : RecChainedState :=
   { kernel := { kPreSeal with
@@ -162,7 +162,7 @@ def sPreUnseal : RecChainedState := { kernel := kPreUnseal, log := [] }
 def unsealArgs : Inst.CellUnsealA.CellUnsealArgs := { actor := 0, cell := 0 }
 def sPostUnseal : RecChainedState := (execFullA sPreUnseal (.cellUnsealA 0 0)).getD sPreUnseal
 
-/-- THE UNSEAL FORGERY: cell 0 honestly unsealed (→ Live), but a THIRD cell (2) is flipped to Sealed. -/
+/-- THE UNSEAL FORGERY: cell 0 unsealed (→ Live), but a THIRD cell (2) is flipped to Sealed. -/
 def sForgedUnseal : RecChainedState :=
   { kernel := { kPreUnseal with
       lifecycle := fun c => if c = 2 then lcSealed else lcLive }

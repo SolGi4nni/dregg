@@ -10,7 +10,7 @@ PROVED at n > 1, and the irreducible CG-2 identity carried as the named `JointBi
 
 This module is the **CONNECTION** — and the connection ONLY. It does NOT re-derive the joint-turn safety
 (that is EntangledJoint's, reused verbatim) nor the per-effect executor-refinement (that is BalanceA's,
-reused verbatim). The genuinely new content is the WELD that makes "the thing EntangledJoint folds" and
+reused verbatim). The new content is the WELD that makes "the thing EntangledJoint folds" and
 "the thing Argus produces" provably THE SAME object, and the realization of `par` as the separation-fold
 of per-cell Argus interps over disjoint cells.
 
@@ -63,7 +63,7 @@ per-cell soundnesses). The binding is carried as a NAMED premise exactly as the 
     `Dregg2/Circuit/TurnEmit`, `EntangledJoint`'s own §Connection cites the per-cell laws composed over a
     list). So this module connects Argus-**executor** ⟷ joint-layer fully; the Argus-**circuit** ⟷ joint
     is the per-leg circuit weld composed (each leg's `balanceA_compile_sound`), NOT a monolithic joint-AIR.
-    That shape-AIR gap (one circuit for the whole N-cell par) is the honest residual, stated not hidden.
+    That shape-AIR gap (one circuit for the whole N-cell par) is the residual, stated not hidden.
 
 `#assert_axioms` on the keystone ⊆ {propext, Classical.choice, Quot.sound}; NO `sorry`/`:=True`/
 `native_decide`. Imports `EntangledJoint` + `Effects.BalanceA` READ-ONLY; this file owns only itself.
@@ -101,7 +101,7 @@ The hinge. `EntangledJoint.applyLeg k l` is `recKExecAsset k l.turn l.asset` (de
 recKExecAsset k …`. Chaining them: a joint-turn leg is, on the nose, `interp (legStmt l) k`. The
 protocol layer's per-cell step and the Argus IR's per-cell meaning are THE SAME partial function. -/
 
-/-- **`applyLeg_eq_interp_legStmt` — THE WELD (PROVED).** Every leg of the N-cell joint turn IS the
+/-- **`applyLeg_eq_interp_legStmt` — THE WELD.** Every leg of the N-cell joint turn IS the
 executor-interpretation of its Argus IR term: `applyLeg k l = interp (legStmt l) k`. The joint layer's
 `recKExecAsset` step and the Argus `balanceAStmt` term's `interp` are the same map, so the state the
 joint turn threads through each leg is exactly what the Argus IR produces. This is the connection in
@@ -153,7 +153,7 @@ theorem applyLeg_eq_argusPar : applyLeg = argusPar := by
   funext k l
   exact applyLeg_eq_interp_legStmt k l
 
-/-- **`jointApplyAll_eq_argusJointApply` — THE FOLD WELD (PROVED).** EntangledJoint's N-cell all-or-none
+/-- **`jointApplyAll_eq_argusJointApply` — THE FOLD WELD.** EntangledJoint's N-cell all-or-none
 joint turn IS the Argus par: `jointApplyAll k legs = argusJointApply k legs` for every state and every leg
 list. The protocol layer's coordinated turn (faithful to `coord/src/atomic.rs`'s 2PC) is, definitionally
 up to §2's leg-weld, the separation-fold of per-cell Argus IR terms — `par` realized over the verified IR.
@@ -184,7 +184,7 @@ nator guarantees. The per-asset ledger columns each leg touches are its own `(sr
 disjoint from every other leg, those writes are visibly non-overlapping (the `recTransferBal` write touches
 only `src`/`dst` of asset `a`). -/
 
-/-- **`argusPar_caps_frame` — the Argus par grants NO capability (PROVED separation).** Across the whole
+/-- **`argusPar_caps_frame` — the Argus par grants NO capability (separation).** Across the whole
 par, the cap graph and the accounts set are invariant: the par forges/copies/amplifies no capability and
 creates/destroys no account, however the legs' cells overlap. Lifted from
 `EntangledJoint.jointApplyAll_caps_frame` through §4's weld. The authority-frame half of separation. -/
@@ -192,7 +192,7 @@ theorem argusPar_caps_frame (k k' : RecordKernelState) (legs : List Leg)
     (h : argusJointApply k legs = some k') : k'.caps = k.caps ∧ k'.accounts = k.accounts :=
   jointApplyAll_caps_frame legs k k' ((jointApplyAll_eq_argusJointApply k legs).trans h)
 
-/-- **`argusPar_conserves` — the Argus par conserves every asset (PROVED separation).** A committed par
+/-- **`argusPar_conserves` — the Argus par conserves every asset (separation).** A committed par
 preserves `recTotalAsset k b` for EVERY asset `b`, across all N legs — the ⊗ of per-cell-conservative
 single-cell edits is conservative. Lifted from `EntangledJoint.jointApplyAll_conserves` through §4's weld.
 The value half of separation. -/
@@ -200,7 +200,7 @@ theorem argusPar_conserves (k k' : RecordKernelState) (legs : List Leg)
     (h : argusJointApply k legs = some k') : ∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b :=
   jointApplyAll_conserves legs k k' ((jointApplyAll_eq_argusJointApply k legs).trans h)
 
-/-- **`argusPar_separates_on_disjoint` — the SEPARATION on disjoint cells (PROVED).** When a single Argus
+/-- **`argusPar_separates_on_disjoint` — the SEPARATION on disjoint cells.** When a single Argus
 leg `l` is composed (as a head) with a tail par `ls`, and `l`'s touched cells (`src`/`dst`) are DISJOINT
 from the tail's touched cells, the head's ledger edit and the tail's are independent: the whole par's cap
 graph / accounts are frame-invariant (no leg's authority leaks into another), and value is conserved across
@@ -232,7 +232,7 @@ votes) AND that the **Argus par commits**, the coordinated turn is simultaneousl
 Argus terms say nothing about each leg's consent id) and REQUIRES the binding. The proof routes the Argus
 commit through §4's weld to the protocol commit and REUSES `EntangledJoint.joint_sound_of_binding`. -/
 
-/-- **`argus_joint_sound_of_binding` — THE ARGUS-LEVEL N-CELL KEYSTONE (PROVED).** For a joint turn `jt`,
+/-- **`argus_joint_sound_of_binding` — THE ARGUS-LEVEL N-CELL KEYSTONE.** For a joint turn `jt`,
 GIVEN the CG-2 binding `bind` (all legs consent to one `jid` — the irreducible HYPOTHESIS) AND that the
 **Argus par** commits (`argusJointApply k jt.legs = some k'`, i.e. every per-cell Argus `legStmt` term
 committed in the all-or-none fold), the coordinated turn is simultaneously:
@@ -261,7 +261,7 @@ The weld would be worthless if no joint par ever committed, or if the Argus par 
 `jointApplyAll`. We exhibit a concrete N = 3-cell ring joint turn (EntangledJoint's `ringJoint` shape) and
 confirm: the Argus par COMMITS (every per-cell `legStmt` term fired), it AGREES with `jointApplyAll` on the
 nose, the par CONSERVES asset 0 (the joint total 170 is preserved), and an overdrawing leg ABORTS the WHOLE
-Argus par (all-or-none) — so the keystone above is about a genuinely committing, conservative par. -/
+Argus par (all-or-none) — so the keystone above is about a committing, conservative par. -/
 
 /-- A 3-cell starting state (EntangledJoint's `s3` shape): cells {0,1,2} live, asset-0 ledger balances
 100/50/20, authority by ownership. -/
@@ -309,7 +309,7 @@ def ringHead : Leg := { turn := { actor := 0, src := 0, dst := 1, amt := 30 }, a
 
 /-- **`ring_argus_par_commits_and_conserves` — non-vacuity, PROVED.** The 3-cell ring Argus par COMMITS
 (some post-state) AND that post-state conserves asset 0 (joint total 170 preserved). So the keystone is
-about a genuinely committing, conservative N-cell par — not a vacuous "no par ever commits". -/
+about a committing, conservative N-cell par — not a vacuous "no par ever commits". -/
 theorem ring_argus_par_commits_and_conserves :
     ∃ k', argusJointApply j3 ringJT.legs = some k' ∧ recTotalAsset k' 0 = 170 := by
   -- the par commits to a concrete state (the fold weld + the protocol-side `#guard`-able commit), and the
@@ -317,15 +317,15 @@ theorem ring_argus_par_commits_and_conserves :
   refine ⟨_, rfl, ?_⟩
   decide
 
-/-- **`ring_argus_par_agrees` — the par AGREES with the protocol fold (PROVED, concrete).** On the ring
+/-- **`ring_argus_par_agrees` — the par AGREES with the protocol fold (concrete).** On the ring
 state, `jointApplyAll` and `argusJointApply` produce the SAME post-state — the fold weld
 (`jointApplyAll_eq_argusJointApply`) instantiated, exhibiting that the equality is not vacuous (both sides
-genuinely commit to one state). -/
+commit to one state). -/
 theorem ring_argus_par_agrees :
     jointApplyAll j3 ringJT.legs = argusJointApply j3 ringJT.legs :=
   jointApplyAll_eq_argusJointApply j3 ringJT.legs
 
-/-- **`bad_argus_par_aborts` — all-or-none on the Argus par (PROVED).** The overdrawing joint turn does
+/-- **`bad_argus_par_aborts` — all-or-none on the Argus par.** The overdrawing joint turn does
 NOT commit the Argus par: one bad leg aborts the WHOLE separation-fold (no partial commit). So the par's
 atomicity is genuine — the conservation keystone is not maintained by silently dropping bad legs. -/
 theorem bad_argus_par_aborts : argusJointApply j3 badJT.legs = none := by decide

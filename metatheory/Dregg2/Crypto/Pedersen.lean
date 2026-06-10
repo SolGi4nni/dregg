@@ -9,7 +9,7 @@ non-negative (no inflation hidden behind commitments).
     pedersen_verify_sound        : verify accepts → Conserves …  (derived + `extractable`)
     pedersen_dial_wired          : dial at `selective` (commitments disclosed, amounts hidden)
 
-The algebra is the genuinely grounded part: `CryptoPrimitives.commit_hom` is the proved additive
+The algebra is the grounded part: `CryptoPrimitives.commit_hom` is the proved additive
 homomorphism; conservation is `map_sum` over it. Non-negativity uses `Exec/RecordCircuit.range_iff`
 (no seam). The only crypto residue is the Pedersen `binding` carrier (DLog) — a `Prop`, never a
 Lean law: binding is what makes the commitment-sum equation testify to the amount
@@ -190,7 +190,7 @@ theorem pedersen_conservation_bridge (commit : Int → Int → Digest) (circuit 
     rw [statementOf_insC_sum, statementOf_outsC_sum]
     exact hbal
 
-/-- **Non-negativity is honestly proven, no seam.** From a satisfying trace, every note's amount
+/-- **Non-negativity is proven, no seam.** From a satisfying trace, every note's amount
 is in `[0, 2 ^ bits.length)` — directly from the range gadget (`RecordCircuit.range_sound`),
 exactly the no-inflation side. PROVED. -/
 theorem pedersen_amounts_nonneg (commit : Int → Int → Digest) (circuit : CircuitIR)
@@ -208,7 +208,7 @@ theorem pedersen_amounts_nonneg (commit : Int → Int → Digest) (circuit : Cir
 
 /-! ## The homomorphic step — commitment-sum ⇒ value conservation (uses `commit_hom`).
 
-The bridge above is structural over `commit`. The genuinely grounded Pedersen content is that the
+The bridge above is structural over `commit`. The grounded Pedersen content is that the
 sum of commitments equals the commitment of the summed value+blinding (`commit_hom`/`map_sum`) —
 so a balanced commitment sum, given matching total blindings, means the values balance. -/
 
@@ -231,7 +231,7 @@ theorem listCommit_collapse [CryptoPrimitives Digest] (notes : List Note) :
 output value sum as committed: `commit (Σ inValue) (Σ inBl) = commit (Σ outValue) (Σ outBl)`.
 The Pedersen homomorphism (`commit_hom`) collapses per-note commitment sums into a single
 commitment equation. The step from this equation to `Σ inValue = Σ outValue` is the `binding`
-carrier, honestly not asserted here. -/
+carrier, not asserted here. -/
 theorem pedersen_value_conservation [CryptoPrimitives Digest] (circuit : CircuitIR)
     (h : Conserves (CryptoPrimitives.commit (Digest := Digest)) circuit) :
     CryptoPrimitives.commit ((circuit.ins.map Note.value).sum) ((circuit.ins.map Note.blinding).sum)

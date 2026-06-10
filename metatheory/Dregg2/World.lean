@@ -189,7 +189,7 @@ theorem votersFor_length_mono {votes₁ votes₂ : List Vote}
   -- a nodup list that is a subset of another is a subperm of it, hence no longer.
   simpa [votersFor] using (List.subperm_of_subset hnd hsub).length_le
 
-/-- **`quorum_monotone` (PROVED) — more votes preserve quorum-reached.** If a quorum was
+/-- **`quorum_monotone` — more votes preserve quorum-reached.** If a quorum was
 reached over a vote list `votes₁`, then it is still reached over any larger list `votes₂`
 (`votes₁ <+ votes₂`). Distinct-voter count is monotone under adding votes, and the threshold
 is fixed; this is *safety of the count* under the network's append-only delivery — once a
@@ -202,7 +202,7 @@ theorem quorum_monotone {votes₁ votes₂ : List Vote}
   simp only [quorumReached, decide_eq_true_eq] at hq ⊢
   exact le_trans hq (votersFor_length_mono h block)
 
-/-- **Quorum is monotone *along network delivery* (PROVED).** Combining `World.recv_mono`
+/-- **Quorum is monotone *along network delivery*.** Combining `World.recv_mono`
 with `quorum_monotone`: if a quorum for `block` was reached over the votes delivered by
 round `r`, it is still reached over the votes delivered by any later round `r' ≥ r`, *for
 any voter-extraction `votesOf` that respects sublists* (delivering more messages yields a
@@ -227,7 +227,7 @@ obligation each rule satisfies by construction; for the network model we take ca
 be *exactly* having-a-quorum, which makes the obligation hold definitionally. We then relay
 `Finality.no_downgrade`'s tier-monotonicity shape over a `World`-driven finality run. -/
 
-/-- **The network-quorum finality rule (PROVED to be a lawful `FinalityRule`).** A
+/-- **The network-quorum finality rule (a lawful `FinalityRule`).** A
 tier-`tier` rule whose `committed` predicate is `committedByQuorum` over round `r`, and
 whose `canonical` selector is the *same* predicate — so commit-soundness
 (`committed h → canonical h`) holds by `id`. This is the §2.2 "tier-2 ack-threshold / tier-3
@@ -249,7 +249,7 @@ unfolding — confirms the abstract predicate is wired to the concrete vote coun
       = (quorumReached (votesOf (World.recv r)) cfg block = true) :=
   rfl
 
-/-- **No-downgrade relayed over a `World`-driven finality run (PROVED).** The
+/-- **No-downgrade relayed over a `World`-driven finality run.** The
 finality-strength transition system `Finality.finalitySystem` (configurations = `Tier`,
 steps may only keep-or-strengthen the tier) is driven, in the real system, by network
 events delivered through `World.recv`; this theorem instantiates `Finality.no_downgrade`'s
@@ -264,18 +264,18 @@ theorem world_no_downgrade [World Msg] {t₀ t : Finality.Tier}
     t₀ ≤ t :=
   Finality.no_downgrade hrun
 
-/-! ## Quorum intersection (PROVED via pigeonhole) and the GST liveness obligation.
+/-! ## Quorum intersection (via pigeonhole) and the GST liveness obligation.
 
 The intersection *core* of BFT safety — that two quorums for distinct blocks must share a
 voter — is pure counting from the `½(n+f)` threshold and a participant-membership bound, so
 it is proved here with no external paper. The *full* honest-vote-once safety (a shared voter
 is a CONTRADICTION because an honest node never double-votes) needs the adversary/honesty
-model and Malkhi–Reiter; that part stays an honest scope-note, NOT a `sorry`. Liveness after
+model and Malkhi–Reiter; that part stays an scope-note, NOT a `sorry`. Liveness after
 GST is discharged from a NAMED assumed `World` oracle law (`gst_liveness`), the
 partial-synchrony obligation the network layer satisfies — the same honest pattern as
 `recv_mono`, not an axiom. -/
 
-/-- **Quorum intersection (PROVED, pigeonhole).** If `cfg.threshold` is the lifted
+/-- **Quorum intersection (pigeonhole).** If `cfg.threshold` is the lifted
 `halfQuorum = ⌊(n+f)/2⌋+1` and two quorums for blocks `b₁`, `b₂` have both formed over a
 common vote list, and the union of their distinct voters is bounded by the participant
 population `n + f` (the membership bound the protocol layer supplies — the network oracle
@@ -330,7 +330,7 @@ theorem quorum_intersection_safety
   rw [Finset.mem_inter, List.mem_toFinset, List.mem_toFinset] at hv
   exact ⟨v, hv.1, hv.2⟩
 
-/-- **Liveness after GST (PROVED, discharged from the `gst_liveness` oracle law).** Under the
+/-- **Liveness after GST (discharged from the `gst_liveness` oracle law).** Under the
 GST + honest-quorum precondition `hprod` (for some `block`, the distinct-voter count delivered
 grows without bound — an honest supermajority keeps voting and, after GST, their votes are
 delivered), the network reaches a round where `committedByQuorum` holds — the τ-BFT progress

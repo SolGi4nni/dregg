@@ -21,7 +21,7 @@ The new content is:
     (the present/absent read law). Discharged off `ListCommit`; not a new axiom.
   * the VACUITY GUARD (`_RECORD-LAYER-UPGRADE.md` §D.4): a POSITIVE `#guard` (present key reads its
     value) AND a NEGATIVE `#guard` (absent key does not) — `fields_root := 0` is forbidden; the root
-    genuinely commits the data (off `ListDigestBindsList` injectivity).
+    commits the data (off `ListDigestBindsList` injectivity).
 
 Pure, computable, `#eval`/`#guard`-able (no `native_decide`). Imports `Exec.Program` (for the
 name-keyed `Value`/`scalar`) and `Circuit.ListCommit` (the injective accumulator portal).
@@ -94,7 +94,7 @@ A legacy cell's `fields_root` is provably exactly this constant (next lemma), so
 commitment is a no-op for legacy cells (the Stage 0 backward-compat keystone). -/
 def emptyTailRoot (compressN : List Int → Int) : Int := compressN []
 
-/-- **`fieldsRoot_empty_legacy` (PROVED)** — a record with NO user-tail keys (every key is reserved
+/-- **`fieldsRoot_empty_legacy`** — a record with NO user-tail keys (every key is reserved
 / non-numeric, i.e. a legacy 8-fixed-field cell) has `fields_root = emptyTailRoot`, the fixed
 constant. This is the Stage 0 backward-compat keystone in Lean: legacy cells' `fields_root` does
 not depend on the cell, so absorbing it into any commitment leaves legacy commitments UNCHANGED. -/
@@ -112,12 +112,12 @@ the user tail. -/
 def tailLookup (v : Value) (k : FieldName) : Option Value :=
   ((userTail v).find? (fun p => p.1 == k)).map (·.2)
 
-/-- **`fieldsRoot_membership` (PROVED, the §B.4 read law).** A user-map key `k` reads value `x` out
+/-- **`fieldsRoot_membership` (the §B.4 read law).** A user-map key `k` reads value `x` out
 of the committed tail (`tailLookup v k = some x`) **iff** the FIRST tail entry keyed `k` is `(k, x)`.
 Reading IS membership against the committed tail (`userTail v` — the list the `fields_root` digest
 commits): a present key returns its committed value, an absent key returns `none`. The digest's
 injectivity (`fieldsRoot_binds_tail`, off `ListDigestBindsList`) then guarantees two records with the
-SAME `fields_root` have the SAME tail, so the read-back value is genuinely committed (no `:= 0` stub
+SAME `fields_root` have the SAME tail, so the read-back value is committed (no `:= 0` stub
 survives). -/
 theorem fieldsRoot_membership (v : Value) (k : FieldName) (x : Value) :
     tailLookup v k = some x ↔ (userTail v).find? (fun p => p.1 == k) = some (k, x) := by
@@ -136,7 +136,7 @@ theorem fieldsRoot_membership (v : Value) (k : FieldName) (x : Value) :
 
 /-- **Injectivity corollary** — two records whose `fields_root` agree (under an injective
 `listDigest`) have the SAME user tail, hence read back the SAME value at every user key. This is the
-"the root genuinely commits the data" guarantee that rules out a `:= 0` stub. -/
+"the root commits the data" guarantee that rules out a `:= 0` stub. -/
 theorem fieldsRoot_binds_tail (compress2 : Int → Int → Int) (compressN : List Int → Int)
     (hN : compressNInjective compressN) (hLE : listLeafInjective (tailLeaf compress2))
     (v w : Value) (h : fieldsRoot compress2 compressN v = fieldsRoot compress2 compressN w) :
@@ -180,7 +180,7 @@ private def c2C : Int → Int → Int := fun a b => a * 1000003 + b
 -- ANTI-VACUITY: a cell WITH user-map data has a root DIFFERENT from the empty-tail constant
 -- (a `:= 0`/empty stub would collapse this — forbidden).
 #guard decide (fieldsRoot c2C cNC overflowCell = emptyTailRoot cNC) == false
--- A tampered user value flips the root (the digest genuinely commits the map tail):
+-- A tampered user value flips the root (the digest commits the map tail):
 private def overflowTampered : Value :=
   .record [("0", .int 11), ("7", .int 99), ("8", .int 9999), ("9", .dig 42)]
 #guard decide (fieldsRoot c2C cNC overflowCell = fieldsRoot c2C cNC overflowTampered) == false

@@ -79,7 +79,7 @@ satisfy them (positive `#guard`), and a degenerate `+`-fold / collapsing-leaf in
 (negative `#guard`), so no carried hypothesis is secretly `True`. Plus anti-ghost teeth: tampering a
 non-cell field or a third cell flips `recStateCommit` (so the cross-bind is non-trivial).
 
-## The RESIDUAL, named honestly (the part NOT yet reachable)
+## The RESIDUAL, named (the part NOT yet reachable)
 
 This crown binds the three commitments **through their shared `CH`/`RH`/`cmb` surface** to ONE
 `RecordKernelState`. Two things remain OUT OF SCOPE and are NOT claimed:
@@ -118,26 +118,26 @@ section Agreement
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (LH : List Turn → ℤ)
 
-/-- **`stateCommit_determined` (PROVED).** Equal states (and turn) ⟹ equal circuit full-state root.
+/-- **`stateCommit_determined`.** Equal states (and turn) ⟹ equal circuit full-state root.
 The CIRCUIT commitment is a function of the `RecordKernelState`. -/
 theorem stateCommit_determined {k k' : RecordKernelState} {t : Turn} (h : k = k') :
     recStateCommit CH RH cmb compress compressN k t
       = recStateCommit CH RH cmb compress compressN k' t := by rw [h]
 
-/-- **`setFieldCommit_determined` (PROVED).** Equal states AND equal receipt chains ⟹ equal executor
+/-- **`setFieldCommit_determined`.** Equal states AND equal receipt chains ⟹ equal executor
 log-bearing root. The EXECUTOR commitment is a function of the `RecChainedState` (kernel + log). -/
 theorem setFieldCommit_determined {k k' : RecordKernelState} {cell : CellId} {log log' : List Turn}
     (hk : k = k') (hl : log = log') :
     recSetFieldCommit CH RH cmb compressN LH k cell log
       = recSetFieldCommit CH RH cmb compressN LH k' cell log' := by rw [hk, hl]
 
-/-- **`cellCommit_determined` (PROVED).** Equal cell `Value`s ⟹ equal canonical cell commitment. The
+/-- **`cellCommit_determined`.** Equal cell `Value`s ⟹ equal canonical cell commitment. The
 CELL commitment is a function of the cell's `Value`. -/
 theorem cellCommit_determined (compress2 : Int → Int → Int) (rest : List ℤ) {v w : Value}
     (h : v = w) :
     cellCommit compressN compress2 rest v = cellCommit compressN compress2 rest w := by rw [h]
 
-/-- **`all_three_agree_on_eq_state` (PROVED).** The packaged "ONE object" fact: for a single
+/-- **`all_three_agree_on_eq_state`.** The packaged "ONE object" fact: for a single
 `RecordKernelState` `k`, a single turn `t`, a single receipt chain `log`, and a single cell `c`, the
 three commitments are SIMULTANEOUSLY determined — each equals its own value on `k`/`k.cell c`. This is
 the joint statement "all three commit to the SAME state object `k`" (its negation — three commitments
@@ -168,7 +168,7 @@ section Inject
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ) (LH : List Turn → ℤ)
 
-/-- **`stateCommit_binds_cells_and_rest` (PROVED).** Equal CIRCUIT full-state roots (same turn) force
+/-- **`stateCommit_binds_cells_and_rest`.** Equal CIRCUIT full-state roots (same turn) force
 the two states to agree on EVERY cell in `accounts \ {src,dst}` (the untouched frame), on the moved
 pair `{src,dst}`, AND on all 16 non-cell components. The published circuit root BINDS the cell map +
 the rest. Derived: `recStateCommit_binds` splits the root (`cmb` CR) into equal `cellDigest` and equal
@@ -209,7 +209,7 @@ theorem stateCommit_binds_cells_and_rest
     MovedDigestBindsCells CH compress hCompress hLeaf k.cell k'.cell t.src t.dst hmd
   exact ⟨hframe, ⟨hsrc, hdst⟩, hframe16⟩
 
-/-- **`setFieldCommit_binds_all` (PROVED).** Equal EXECUTOR log-bearing roots (same touched cell) force
+/-- **`setFieldCommit_binds_all`.** Equal EXECUTOR log-bearing roots (same touched cell) force
 the two chained states to agree on EVERY untouched cell (`accounts \ {cell}`), on the touched cell's
 leaf `CH cell`, on all 16 non-cell fields, AND on the receipt chain (`LH log`). The published executor
 root BINDS the cell map + the rest + THE LOG. Derived: `cmb` CR splits the root into the cell-side and
@@ -271,7 +271,7 @@ section Weld
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ)
 variable (cmb compress : ℤ → ℤ → ℤ) (compressN : List ℤ → ℤ)
 
-/-- **`crossbind_rest_agree` (PROVED).** If the circuit root's rest child (`RH k`) and the executor
+/-- **`crossbind_rest_agree`.** If the circuit root's rest child (`RH k`) and the executor
 root's rest child (`RH k'`) are PI-bound equal, then `RestHashIffFrame` forces `k` and `k'` to agree
 on ALL 16 non-cell components. A circuit proof (pinning `recStateCommit k`) and an executor proof
 (pinning `recSetFieldCommit k'`) that publish the SAME rest sub-root constrain the SAME 16 fields. -/
@@ -286,7 +286,7 @@ theorem crossbind_rest_agree (hRest : RestHashIffFrame RH)
       ∧ k'.delegationEpochAt = k.delegationEpochAt :=
   (hRest k k').mp hPI
 
-/-- **`crossbind_cells_agree` (PROVED).** If the circuit root's frame child and the executor root's
+/-- **`crossbind_cells_agree`.** If the circuit root's frame child and the executor root's
 frame child (the SAME `frameDigest CH compressN · S` over a SHARED carrier `S`) are PI-bound equal,
 then the proved sponge binding forces `k` and `k'` to agree on EVERY cell in `S`. A circuit proof and
 an executor proof publishing the SAME frame sub-root constrain the SAME cells. -/
@@ -297,7 +297,7 @@ theorem crossbind_cells_agree
     ∀ c ∈ S, k.cell c = k'.cell c :=
   FrameDigestBindsCells CH compressN hCompressN hLeaf k k' S hPI
 
-/-- **`crossbind_circuit_exec_same_state` (PROVED).** The packaged weld: GIVEN the circuit and the
+/-- **`crossbind_circuit_exec_same_state`.** The packaged weld: GIVEN the circuit and the
 executor publish the SAME rest sub-root AND the SAME frame sub-root over the SHARED untouched carrier
 `S`, the state the CIRCUIT proof is about (`k`) and the state the EXECUTOR proof is about (`k'`)
 provably AGREE on the 16 non-cell fields AND on every cell of `S` — ONE authenticated state object
@@ -346,7 +346,7 @@ the cell (the v3 sponge), so this is a factoring, not an axiom. Witnessed BOTH w
 def LeafIsCellCommit (restLimbs : CellId → List ℤ) : Prop :=
   ∀ (c : CellId) (v : Value), CH c v = cellCommit compressN compress2 (restLimbs c) v
 
-/-- **`stateCommit_binds_cellCommit` — THE CROWN (PROVED).** Equal CIRCUIT full-state roots force the
+/-- **`stateCommit_binds_cellCommit` — THE CROWN.** Equal CIRCUIT full-state roots force the
 two states' RUNNING canonical cell commitments (`cellCommit`, BLAKE3 v3) to AGREE on every untouched
 live cell AND on the moved pair. A satisfying `recStateCommit` witness therefore CONSTRAINS the
 committed cell state: "circuit proof" now provably equals "the committed cell's canonical commitment."
@@ -376,7 +376,7 @@ theorem stateCommit_binds_cellCommit
   · exact cellCommit_determined compressN compress2 (restLimbs t.src) hsrc
   · exact cellCommit_determined compressN compress2 (restLimbs t.dst) hdst
 
-/-- **`setFieldCommit_binds_cellCommit` — the executor-side crown (PROVED).** Equal EXECUTOR
+/-- **`setFieldCommit_binds_cellCommit` — the executor-side crown.** Equal EXECUTOR
 log-bearing roots force the running canonical cell commitments to agree on every untouched cell AND on
 the touched cell. The executor's receipt-chain-bearing proof ALSO constrains the committed cell state.
 Same factoring chain off `setFieldCommit_binds_all`. -/
@@ -425,7 +425,7 @@ open Dregg2.Circuit.Emit.EffectVmFullStateRunnable (wideHashSites wide_binds_sys
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.SystemRoots (SysRoots systemRootsDigest N_SYSTEM_ROOTS)
 
-/-- **`runnable_binds_same_system_roots` (PROVED — R1 closed for the side-table state).** Two rows of
+/-- **`runnable_binds_same_system_roots` (R1 closed for the side-table state).** Two rows of
 the WIDE runnable descriptor that publish the SAME `state_commit`, whose `sysRootsDigestCol` carriers
 ARE the `systemRootsDigest` of their `system_roots` sub-blocks, agree on EVERY side-table root. This
 is `cellCommitS_binds_roots_pointwise` (the record-layer binding) realized on the CIRCUIT THE PROVER
@@ -509,7 +509,7 @@ key `"8"`). -/
 #guard decide ((FieldsMap.userTail (.record [("8", .int 50)])).map (FieldsMap.tailLeaf c2C)
              = (FieldsMap.userTail (.record [("8", .int 999)])).map (FieldsMap.tailLeaf c2C)) == false
 
-/-! POSITIVE: the toy `cmbC` is genuinely injective on the `#guard` domain (a realizable
+/-! POSITIVE: the toy `cmbC` is injective on the `#guard` domain (a realizable
 `compressInjective` witness, NOT the lossy `a + b`). Two distinct child-pairs ⇒ distinct combinations. -/
 #guard decide (cmbC 3 5 = cmbC 3 6) == false
 #guard decide (cmbC 3 5 = cmbC 4 5) == false
@@ -524,7 +524,7 @@ key `"8"`). -/
 
 /-! ANTI-GHOST (cross-bind is non-trivial): the running canonical commitment `cellCommit` SEPARATES a
 tampered cell value from the honest one (distinct user-field maps ⇒ distinct roots ⇒ distinct
-commitments). So binding `recStateCommit` to `cellCommit` genuinely catches a forged cell — the bind
+commitments). So binding `recStateCommit` to `cellCommit` catches a forged cell — the bind
 is not vacuous. -/
 #guard decide (cellCommit cNC c2C (restLimbsC 2) (.record [("8", .int 50)])
              = cellCommit cNC c2C (restLimbsC 2) (.record [("8", .int 999)])) == false

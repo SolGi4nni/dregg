@@ -50,7 +50,7 @@ collapses them to the strong property).
 (`CryptoKernel.verify` oracle) and never re-litigated. The propagation `delay` is an interface
 parameter (the `World`/gossip layer supplies it); Lean assumes only `delay m m = 0`. The *liveness*
 of propagation — that a revocation issued at `m` actually reaches `n` within `delay m n` — is the
-honest hypothesis `Propagates` made explicit and witnessed, not smuggled.
+hypothesis `Propagates` made explicit and witnessed, not smuggled.
 
 Pure, computable, `#eval`/`#guard`-able.
 -/
@@ -239,7 +239,7 @@ A stale-but-not-yet-propagated revocation IS honored. We exhibit a concrete two-
 credential revoked at origin `m=0` at time `τ=0` is still honored by node `n=1` at time `t=4`, with
 `τ ≤ t < τ + delay m n` (the propagation delay is `5`, so `0 ≤ 4 < 5`). This shows
 `eventual_bounded_revocation`'s bound cannot be tightened to anything below `τ + delay m n` — the
-delay is real, and the guarantee is genuinely *eventual-bounded*, not immediate. -/
+delay is real, and the guarantee is *eventual-bounded*, not immediate. -/
 
 section Tooth
 
@@ -253,7 +253,7 @@ def toothTopology : Topology where
   delay := fun m n => if m = n then 0 else 5
   selfDelay := fun m => by simp
 
-/-- A genuinely-issued credential (Reference kernel: a valid proof *is* the statement). -/
+/-- A issued credential (Reference kernel: a valid proof *is* the statement). -/
 def toothCred : VC Crypto.Reference.D Crypto.Reference.P :=
   issue 99 1 42 7
     (issuerStmt (Digest := Crypto.Reference.D) (Proof := Crypto.Reference.P)
@@ -272,7 +272,7 @@ theorem tooth_revoked : RevokedAt toothLog toothCred 0 0 := by
 /-- **THE TOOTH (tightness).** In `toothTopology`, the credential `toothCred` was revoked at origin
 `0` at time `τ = 0`, yet node `1` STILL HONORS it at time `t = 4` — because the cross-link delay is
 `5`, and `τ + delay 0 1 = 0 + 5 = 5 > 4`. A stale-but-not-yet-propagated revocation being honored.
-This witnesses that `eventual_bounded_revocation`'s bound is TIGHT: honoring genuinely persists up to
+This witnesses that `eventual_bounded_revocation`'s bound is TIGHT: honoring persists up to
 (but not including) `τ + delay m n`, so the guarantee cannot be strengthened to immediate in the
 distributed setting. -/
 theorem tightness_tooth :
@@ -321,7 +321,7 @@ theorem single_machine_collapse :
 
 end Tooth
 
-/-! ## 6. Non-vacuity of the spec surface (a stale window genuinely exists).
+/-! ## 6. Non-vacuity of the spec surface (a stale window exists).
 
 `eventual_bounded_revocation` is non-vacuous because its hypothesis `RevokedAt` is *witnessed*
 (`tooth_revoked`) AND its conclusion is *falsifiable before the bound* (`tightness_tooth`: honoring

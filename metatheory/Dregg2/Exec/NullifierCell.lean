@@ -144,7 +144,7 @@ theorem nullifierSet_monotone_iconfluent (s₀ : Finset Nullifier) :
   rw [mergeState_sup_eq_union]
   exact hx.trans (Finset.subset_union_left)
 
-/-- **The no-loss invariant genuinely discriminates (non-vacuity of `…_monotone_iconfluent`).**
+/-- **The no-loss invariant discriminates (non-vacuity of `…_monotone_iconfluent`).**
 For a non-empty baseline `{n}`, the no-loss invariant `fun s => {n} ⊆ s` is satisfied by
 `{n}` itself yet FAILS for the empty set `∅` — so it is a real, falsifiable predicate,
 not always-true. This is what makes `nullifierSet_monotone_iconfluent` non-vacuous: it

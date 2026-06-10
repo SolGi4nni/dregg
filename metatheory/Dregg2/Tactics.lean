@@ -1,7 +1,7 @@
 /-
 # Dregg2.Tactics — shared proof automation for the dregg2 metatheory.
 
-Small helpers shared across modules and executable protocols. These close genuinely routine
+Small helpers shared across modules and executable protocols. These close routine
 goals (reflexivity, definitional simp, injection cleanup, linear arithmetic) — not a way
 to make a real obligation look discharged. If a helper does not close a goal, the goal is
 real: prove it properly or leave an explicit `sorry` with a one-line reason.

@@ -13,7 +13,7 @@ refusal is evidence-of-absence (state passthrough + nonce-tick; the receipt + re
 `system_roots` sub-block is FROZEN; the magnesium win is the WIDE commitment now BINDS all 8 roots. The
 §RECIPE applied to refusal.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

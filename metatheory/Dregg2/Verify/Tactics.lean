@@ -162,7 +162,7 @@ theorem commitments_persist_via_auto (com0 : List Nat) (s : RecChainedState) (sc
 [Dregg2])` knows the registry-subset frames but not `Nat`'s `le_trans` chained with
 `execFullForestA_logMono`. So it HANDS BACK the commit goal: the `simp only [Option.getD_some]`-exposed
 `s.log.length ≤ s'.log.length`, with `hgood`/`s`/`s'`/`cf`/`hc` in context. We then close it by hand,
-*proving the goal was genuinely LEFT* (never `sorry`-faked: had `exec_frame` faked a close, the trailing
+*proving the goal was LEFT* (never `sorry`-faked: had `exec_frame` faked a close, the trailing
 `exact` would error with "no goals"; had it errored, the build would fail here). This is the Hatchery
 promise — kill the 45 boring arms + the stay-put arm, hand back the ONE real obligation. -/
 theorem logMono_handback_demo (s : RecChainedState) (sched : SchedA) :
@@ -201,7 +201,7 @@ example (credNul : Nat) (s : RecChainedState) (hinit : credNul ∈ s.kernel.revo
     ∀ n, credNul ∈ (trajA s sched n).kernel.revoked :=
   Dregg2.Apps.Identity.livingCellA_identity_revoked_forever credNul s hinit sched
 
-/-! ## §6 — Non-vacuity guards — the tactic-built crowns bind quantities that genuinely move. -/
+/-! ## §6 — Non-vacuity guards — the tactic-built crowns bind quantities that move. -/
 
 #guard ((execFullForestA fma0 transferCF.1).map
           (fun s' => decide (fma0.log.length < s'.log.length)) == some true)

@@ -37,13 +37,13 @@ state_constraints:
 
 ## The three pubsub-safety keystones
 
-  (a) NO READ-AHEAD          — PROVED: a read advances `cursor[r]` toward `head` only when
+  (a) NO READ-AHEAD — a read advances `cursor[r]` toward `head` only when
       `cursor[r] < head` (a message is available); from `cursor[r] ≤ head` it lands STILL
       `cursor[r] ≤ head`; a CAUGHT-UP reader (`cursor[r] = head`) fail-closes (cannot read past the
       published frontier). THIS is the per-reader instantiation of the relational `fieldLteOther`.
-  (b) PUBLISHER-AUTHORIZED APPEND — PROVED: a publish by a non-publisher fail-closes; the publisher
+  (b) PUBLISHER-AUTHORIZED APPEND — a publish by a non-publisher fail-closes; the publisher
       append advances the shared `head_seq` by 1.
-  (c) READER ISOLATION       — PROVED: advancing reader `r`'s cursor leaves `head_seq` AND every
+  (c) READER ISOLATION — advancing reader `r`'s cursor leaves `head_seq` AND every
       OTHER reader's cursor unchanged (one subscriber's progress never moves another's, nor the log).
 
 ## Non-vacuity
@@ -104,7 +104,7 @@ no-underflow uses, instantiated for reader `r`. -/
 def readerRelCaveat (r : CellId) : RelCaveat :=
   RelCaveat.fieldLteOther (readerCursorField r) headSeqField 0
 
-/-- **`pubsubFactory_conforms` — PROVED.** The topic factory's OWN published EMPTY initial state
+/-- **`pubsubFactory_conforms`.** The topic factory's OWN published EMPTY initial state
 satisfies its OWN `SlotCaveat`s. -/
 theorem pubsubFactory_conforms (publisher : Int) :
     (pubsubFactory publisher).conforms = true := by
@@ -132,7 +132,7 @@ def psCaughtUp (k : RecordKernelState) (e r : CellId) : Prop := psCursor k e r =
 
 /-! ## §3b — The LIVE relational caveat EXPRESSES the per-reader bound (instantiated). -/
 
-/-- **`readerRelCaveat_expresses_no_read_ahead` — PROVED (instantiated, per reader).** Subscriber
+/-- **`readerRelCaveat_expresses_no_read_ahead` (instantiated, per reader).** Subscriber
 `r`'s live caveat on the topic record is EXACTLY its no-read-ahead bound `cursor[r] ≤ head`. The
 SAME `fieldLteOther` atom the queue uses, instantiated per subscriber. -/
 theorem readerRelCaveat_expresses_no_read_ahead (k : RecordKernelState) (e r : CellId) :
@@ -336,7 +336,7 @@ theorem read_leaves_head {k k' : RecordKernelState} {e r : CellId}
 
 /-! ## §8 — BALANCE-NEUTRALITY (pubsub carries no value — bal-neutral like the inbox). -/
 
-/-- **`publish_bal_neutral` — PROVED.** A publish is a pure field write — every asset's total supply
+/-- **`publish_bal_neutral`.** A publish is a pure field write — every asset's total supply
 is unchanged. -/
 theorem publish_bal_neutral {k k' : RecordKernelState} {e actor : CellId} {newRoot : Int}
     (h : pubsubPublish k e actor newRoot = some k') (b : AssetId) :
@@ -348,7 +348,7 @@ theorem publish_bal_neutral {k k' : RecordKernelState} {e actor : CellId} {newRo
     unfold recTotalAsset psWriteField; rfl
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`read_bal_neutral` — PROVED.** A read is a pure field write — balance-NEUTRAL. -/
+/-- **`read_bal_neutral`.** A read is a pure field write — balance-NEUTRAL. -/
 theorem read_bal_neutral {k k' : RecordKernelState} {e r : CellId}
     (h : pubsubRead k e r = some k') (b : AssetId) :
     recTotalAsset k' b = recTotalAsset k b := by
@@ -383,7 +383,7 @@ def mintTopicCell (s : RecChainedState) (actor tCell : CellId) (vk : Int) :
     Option RecChainedState :=
   createCellFromFactoryChainA s actor tCell vk
 
-/-- **`mintTopicCell_installs_caveats` — PROVED.** A minted topic cell carries EXACTLY the factory's
+/-- **`mintTopicCell_installs_caveats`.** A minted topic cell carries EXACTLY the factory's
 caveats, installed by the executor. -/
 theorem mintTopicCell_installs_caveats {s s' : RecChainedState} {actor tCell : CellId}
     {vk : Int} (e : FactoryEntry)
@@ -395,7 +395,7 @@ theorem mintTopicCell_installs_caveats {s s' : RecChainedState} {actor tCell : C
   rw [← (Option.some.injEq _ _).mp hfind] at hcav
   exact hcav
 
-/-- **`mintTopicCell_caveats` — PROVED.** When the registry IS `pubsubRegistry vk …`, the minted
+/-- **`mintTopicCell_caveats`.** When the registry IS `pubsubRegistry vk …`, the minted
 cell concretely carries the topic factory's caveats. -/
 theorem mintTopicCell_caveats {s s' : RecChainedState} {actor tCell : CellId} {vk : Int}
     {publisher : Int}
@@ -406,19 +406,19 @@ theorem mintTopicCell_caveats {s s' : RecChainedState} {actor tCell : CellId} {v
     rw [hreg]; exact pubsubRegistry_finds vk.toNat publisher
   exact mintTopicCell_installs_caveats _ hfind h
 
-/-- **`mintTopicCell_neutral` — PROVED.** Minting a topic cell is conservation-NEUTRAL. -/
+/-- **`mintTopicCell_neutral`.** Minting a topic cell is conservation-NEUTRAL. -/
 theorem mintTopicCell_neutral {s s' : RecChainedState} {actor tCell : CellId} {vk : Int}
     (b : AssetId) (h : mintTopicCell s actor tCell vk = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   createCellFromFactoryChainA_neutral b h
 
-/-- **`mintTopicCell_grows_accounts` — PROVED.** A minted topic cell IS a live account. -/
+/-- **`mintTopicCell_grows_accounts`.** A minted topic cell IS a live account. -/
 theorem mintTopicCell_grows_accounts {s s' : RecChainedState} {actor tCell : CellId} {vk : Int}
     (h : mintTopicCell s actor tCell vk = some s') :
     tCell ∈ s'.kernel.accounts :=
   createCellFromFactoryChainA_grows_accounts h
 
-/-- **`mintTopicCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an unknown
+/-- **`mintTopicCell_unknown_factory_fails` (fail-closed).** Minting against an unknown
 factory key never mints. -/
 theorem mintTopicCell_unknown_factory_fails (s : RecChainedState) (actor tCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :

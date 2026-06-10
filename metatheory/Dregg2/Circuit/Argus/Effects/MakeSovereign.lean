@@ -4,7 +4,7 @@ welded into the Argus IR, as a FULL-STATE (17-field) weld against the effect's O
 descriptor.
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
-it on transfer/mint/burn. `Effects/BalanceA.lean` and `Effects/CellSeal.lean` then welded genuinely
+it on transfer/mint/burn. `Effects/BalanceA.lean` and `Effects/CellSeal.lean` then welded
 different primitives to their OWN standalone full-state descriptors, each concluding the WHOLE 17-field
 post-state. This module follows that STRONGER full-state surface for `makeSovereignA`, in a disjoint
 file (it imports the Argus IR + the audited `makeSovereignA` instance + the independent sovereign-
@@ -90,7 +90,7 @@ cells are `default`, so the `accounts`-keyed frame digest binds the whole cell m
 explicit hypotheses of the weld (the honest v1-surface cost), so the conclusion is the genuine full
 `MakeSovereignSpec` — all 17 kernel fields + the receipt log.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the v1 CR /
 digest-injectivity assumptions (`compressNInjective`/`cellLeafInjective`/`RestHashIffFrame`/
@@ -209,7 +209,7 @@ The standalone makeSovereign descriptor (§4) is keyed on the CHAINED executor `
 exactly the §2 kernel rebind PLUS the runtime receipt-log prepend `{ actor, src := cell, dst := cell,
 amt := 0 } :: s.log` — the runtime piece the `RecordKernelState`-level `interp` structurally cannot
 emit. We bridge faithfully, naming the receipt-row prepend EXPLICITLY in the chained post-state (the
-honest kernel-vs-runtime divergence — NOT papered). -/
+kernel-vs-runtime divergence). -/
 
 /-- **`interp_makeSovereignStmt_chained` — the IR term's KERNEL executor, lifted to the chained
 `execFullA`.** When the §2 cornerstone commits on the kernel (`interp (makeSovereignStmt actor cell)
@@ -326,7 +326,7 @@ theorem makeSovereign_compile_sound
 
 #assert_axioms makeSovereign_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely REBINDS the cell (commitment observable, balance dropped),
+/-! ## §5 — NON-VACUITY: the IR term REBINDS the cell (commitment observable, balance dropped),
 PRESERVES `accounts` (the hint-vs-model divergence, proved), and the gate REJECTS forged inputs
 (fail-closed) while ADMITTING a non-account target (the recorded frame-gap).
 
@@ -346,7 +346,7 @@ def kMS0 : RecordKernelState :=
     bal := fun _ _ => 0 }
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The rebind of a self-owned cell COMMITS (`isSome`) —
-the single `stateAuthB` gate genuinely admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
+the single `stateAuthB` gate admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
 theorem makeSovereignStmt_commits :
     (interp (makeSovereignStmt 0 0) kMS0).isSome = true := by
   rw [interp_makeSovereignStmt_eq_kernel]
@@ -363,7 +363,7 @@ theorem makeSovereignStmt_balance_unreadable :
   decide
 
 /-- **NON-VACUITY (the COMMITMENT is OBSERVABLE).** After the committed rebind, cell `0` carries a
-`commitment` field (the digest binding the WHOLE pre-state value) — the rebind genuinely installs the
+`commitment` field (the digest binding the WHOLE pre-state value) — the rebind installs the
 commitment record, not a no-op. -/
 theorem makeSovereignStmt_commitment_present :
     (interp (makeSovereignStmt 0 0) kMS0).map (fun k => ((k.cell 0).field "commitment").isSome)

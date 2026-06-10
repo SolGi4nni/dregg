@@ -66,7 +66,7 @@ The base SET discipline (`noteSpendNullifier` fail-closed on a present nf) and i
 theorems live in `RecordKernel`. We re-export the head fact for locality, then LIFT the discipline
 to the chained `NoteSpend` effect entry and to whole spend SEQUENCES. -/
 
-/-- **The base anti-replay, re-stated at this module (PROVED, delegates to `RecordKernel`).** A
+/-- **The base anti-replay, re-stated at this module (delegates to `RecordKernel`).** A
 nullifier already in the spent set cannot be spent again: `noteSpendNullifier` fails-closed. This
 is the head of the discipline everything below lifts. -/
 theorem kernel_no_double_spend (k : RecordKernelState) (nf : Nat)
@@ -75,7 +75,7 @@ theorem kernel_no_double_spend (k : RecordKernelState) (nf : Nat)
 
 /-! ### The chained effect-layer entry (`noteSpendChainA`, the real `NoteSpend`). -/
 
-/-- **`chainNoteSpend_no_double_spend` — PROVED.** The chained `NoteSpend` executor itself
+/-- **`chainNoteSpend_no_double_spend`.** The chained `NoteSpend` executor itself
 fails-closed on a nullifier already in the spent set: the effect-layer entry inherits the kernel's
 double-spend gate. (`noteSpendChainA` matches on `noteSpendNullifier`; the `none` branch propagates
 to a `none` result — the turn is rejected, no receipt is appended.) -/
@@ -104,7 +104,7 @@ theorem chainNoteSpend_inserts {s s' : RecChainedState} {nf : Nat} {actor : Cell
       exact note_spend_inserts hk
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-- **`chainNoteSpend_then_reject` — PROVED (the composed one-step replay barrier).** After a
+/-- **`chainNoteSpend_then_reject` (the composed one-step replay barrier).** After a
 committed chained `NoteSpend` of `nf`, a SECOND chained spend of the SAME `nf` on the resulting
 state fails-closed. Replay across two effect-layer steps is impossible. -/
 theorem chainNoteSpend_then_reject {s s' : RecChainedState} {nf : Nat} {actor actor' : CellId}
@@ -114,7 +114,7 @@ theorem chainNoteSpend_then_reject {s s' : RecChainedState} {nf : Nat} {actor ac
 
 /-! ### Monotonicity: a spent nullifier never leaves the set (no resurrection). -/
 
-/-- **`nullifier_set_monotone` — PROVED.** Any committed chained `NoteSpend` only GROWS the
+/-- **`nullifier_set_monotone`.** Any committed chained `NoteSpend` only GROWS the
 nullifier set: every previously-spent `nf'` is still present afterward. (The chained spend is a
 `cons` onto `nullifiers`; nothing is ever removed.) This is the structural reason a spent note can
 never be resurrected. -/
@@ -140,7 +140,7 @@ theorem nullifier_set_monotone {s s' : RecChainedState} {nf nf' : Nat} {actor : 
         exact List.mem_cons_of_mem _ hmem
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-- **`nullifier_persists` — PROVED.** A nullifier spent BEFORE a (possibly unrelated) committed
+/-- **`nullifier_persists`.** A nullifier spent BEFORE a (possibly unrelated) committed
 chained spend is STILL rejected on the resulting state — combine monotonicity with the gate. The
 anti-replay is permanent: once spent, forever rejected, regardless of intervening spends. -/
 theorem nullifier_persists {s s' : RecChainedState} {nf nf' : Nat} {actor actor' : CellId}
@@ -161,7 +161,7 @@ def noteSpendSeq (s : RecChainedState) (actor : CellId) (spendProof : Bool) :
     | some s' => noteSpendSeq s' actor spendProof rest
     | none    => none
 
-/-- **`seq_preserves_spent` — PROVED.** Any committed spend SEQUENCE preserves every
+/-- **`seq_preserves_spent`.** Any committed spend SEQUENCE preserves every
 already-spent nullifier (membership is monotone along the whole fold). -/
 theorem seq_preserves_spent {actor : CellId} {spendProof : Bool} :
     ∀ (nfs : List Nat) {s s' : RecChainedState} {nf' : Nat},
@@ -177,7 +177,7 @@ theorem seq_preserves_spent {actor : CellId} {spendProof : Bool} :
         rw [hstep] at h
         exact seq_preserves_spent rest h (nullifier_set_monotone hstep hmem)
 
-/-- **`seq_no_respend` — PROVED (the whole-turn anti-replay).** If a nullifier `nf'` is already
+/-- **`seq_no_respend` (the whole-turn anti-replay).** If a nullifier `nf'` is already
 spent before a spend SEQUENCE, then no matter what the sequence does, `nf'` remains in the spent
 set afterward — so a later spend of `nf'` is rejected. A multi-`NoteSpend` turn forest cannot
 double-spend a previously-recorded note. -/
@@ -201,12 +201,12 @@ discharges, never a Lean law. Everything below is then structurally provable. -/
 variable {Digest Proof : Type} [AddCommGroup Digest]
 
 omit [AddCommGroup Digest] in
-/-- **`fresh_ephemeral_distinct_onetime` — PROVED (structural, carrier-hypothesized).** Given the
+/-- **`fresh_ephemeral_distinct_onetime` (structural, carrier-hypothesized).** Given the
 recipient-bound derivation `deriveOneTime` and its injectivity `hinj` (the §8 DH carrier — the
 obligation that distinct ephemerals can't collude to one address), TWO DISTINCT FRESH ephemeral
 pubkeys produce DISTINCT one-time addresses. This is the structural precondition of unlinkability:
 two payments to one recipient land on different addresses (no trivial address-reuse linkage). The
-crypto (that `deriveOneTime` is genuinely injective / hides the recipient) is the NAMED hypothesis,
+crypto (that `deriveOneTime` is injective / hides the recipient) is the NAMED hypothesis,
 NOT a `sorry`. -/
 theorem fresh_ephemeral_distinct_onetime
     (deriveOneTime : Digest → Digest) (hinj : Function.Injective deriveOneTime)
@@ -214,7 +214,7 @@ theorem fresh_ephemeral_distinct_onetime
     deriveOneTime ep ≠ deriveOneTime ep' :=
   fun hcontra => hfresh (hinj hcontra)
 
-/-- **`stealth_distinct_statements` — PROVED.** When two fresh ephemerals give distinct one-time
+/-- **`stealth_distinct_statements`.** When two fresh ephemerals give distinct one-time
 addresses `deriveOneTime ep ≠ deriveOneTime ep'`, the two `Authorization.stealth` credentials they
 key are built over DISTINCT one-time pubkeys — so `portalVerify` (which is `CryptoKernel.verify`
 keyed on the one-time pubkey) is asked about two DIFFERENT verification statements. An observer
@@ -231,7 +231,7 @@ theorem stealth_distinct_statements [CryptoKernel Digest Proof]
     injection hcontra
   exact fresh_ephemeral_distinct_onetime deriveOneTime hinj hfresh hotp
 
-/-- **`stealth_distinct_portal_keys` — PROVED.** The portal-verify of a `stealth` credential is
+/-- **`stealth_distinct_portal_keys`.** The portal-verify of a `stealth` credential is
 exactly `CryptoKernel.verify` on its one-time pubkey (definitional from `portalVerify`), so two
 fresh-derived stealth credentials are verified against DIFFERENT keys. This pins the
 "keyed on the one-time pubkey" claim to the actual portal reduction. -/
@@ -243,7 +243,7 @@ theorem stealth_distinct_portal_keys [CryptoKernel Digest Proof]
 /-! ### The signing-message binds the ephemeral pubkey (already proved, byte-level). -/
 
 open Dregg2.Exec.SigningMessage in
-/-- **`stealth_ephemeralPk_binds` — PROVED (delegates to `SigningMessage`).** The preimage the
+/-- **`stealth_ephemeralPk_binds` (delegates to `SigningMessage`).** The preimage the
 one-time signature is computed over BINDS the ephemeral pubkey: a different `R` ⇒ a different
 preimage, so a relay cannot swap the ephemeral key (and thus cannot redirect / link the payment by
 forging a matching signature over a swapped `R`). Pure byte-list injectivity — no crypto. -/
@@ -256,7 +256,7 @@ theorem stealth_ephemeralPk_binds
 /-! ### The information-theoretic unlinkability (observer view), via the graph-privacy kernel. -/
 
 open Dregg2.Privacy in
-/-- **`stealth_unlinkable_via_graphKernel` — PROVED (delegates to `Privacy.unlinkable`).** Given a
+/-- **`stealth_unlinkable_via_graphKernel` (delegates to `Privacy.unlinkable`).** Given a
 `GraphPrivacyKernel`, two one-time addresses derived for the SAME recipient have the SAME
 observer-view — they are information-theoretically indistinguishable on the modelled public
 transcript. This is the unlinkability the stealth-address tier promises: two payments to one

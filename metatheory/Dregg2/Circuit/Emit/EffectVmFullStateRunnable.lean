@@ -10,7 +10,7 @@ absorbs **exactly 13 state-block columns** (`bal_lo, bal_hi, nonce, fields[0..7]
 (`auxCol SYSTEM_ROOTS_DIGEST = 186` is PAST `EFFECT_VM_WIDTH = 186` — the running prover carries no
 such column), so every side-table effect (escrow / queue / nullifier / commitment / swiss /
 sealedBox / delegation / refcount) is bound by the descriptor **only via a separate record-layer
-commitment the row does not carry**. The per-effect files PROVE this gap honestly
+commitment the row does not carry**. The per-effect files PROVE this gap
 (`*_root_not_in_descriptor_commit`). That is the "pale ghost": a satisfying RUNNABLE proof pins a
 projection, not the whole post-state.
 
@@ -196,7 +196,7 @@ Poseidon CR carrier): when each wide row's `sysRootsDigestCol` IS the `systemRoo
 the RUNNABLE descriptor — the circuit the prover runs — binds the whole side-table state, not a
 record-layer commitment off to the side. -/
 
-/-- **`wide_binds_systemRoots` (PROVED — the gap closed).** Two wide rows publishing the SAME
+/-- **`wide_binds_systemRoots` (the gap closed).** Two wide rows publishing the SAME
 `state_commit`, whose `sysRootsDigestCol` carriers ARE the `systemRootsDigest` of their respective
 `SysRoots` sub-blocks `sr₁`/`sr₂`, agree on EVERY side-table root (pointwise on the 8-index
 sub-block). The chain: equal commitment ⇒ equal carrier (`wide_binds_everything`) ⇒ equal digest ⇒
@@ -403,7 +403,7 @@ def goodPreRoots : SysRoots := emptySystemRoots
 `fullClause` is INHABITED by a real transfer: `goodPost` is the genuine intent image of `goodPre`
 (`100 → 70`, nonce `5 → 6`, frame frozen) and the roots are frozen. So the generic framework's
 `fullClause` is NOT `True` — it is a meaningful 17-field predicate a real transfer satisfies, and it
-is exactly the `fullClause` field of `transferRunnableSpec` (so the instance is genuinely non-vacuous). -/
+is exactly the `fullClause` field of `transferRunnableSpec` (so the instance is non-vacuous). -/
 theorem goodTransfer_realizes :
     (transferRunnableSpec goodParams goodPreRoots).fullClause goodPre goodPost goodPreRoots :=
   ⟨goodSpec_holds, rfl⟩

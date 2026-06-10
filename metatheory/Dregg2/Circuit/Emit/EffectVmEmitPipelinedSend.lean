@@ -21,7 +21,7 @@ AGREES with the hand-AIR on the honest witness AND both anti-ghost teeth bite.
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the off-block log-receipt)
+## What the EffectVM row CANNOT enforce (the boundary — the off-block log-receipt)
 
   * `pipelinedSendA`'s ONLY universe-A state change is the additive `authReceipt`/neutral log-receipt
     prepend (`st'.log = pipelinedSendReceipt actor :: st.log`); the EffectVM row has NO log column. The
@@ -29,7 +29,7 @@ AGREES with the hand-AIR on the honest witness AND both anti-ghost teeth bite.
     NOT in the per-row state block — the kernel-freeze (the soundness-load-bearing "nothing in the kernel
     moved") IS in-circuit; only the additive log-receipt is off-block.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR
 hash`. No `sorry`/`:= True`/`native_decide`/`rfl`-bridge. Imports read-only.

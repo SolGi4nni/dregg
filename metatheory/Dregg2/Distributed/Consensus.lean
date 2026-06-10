@@ -33,7 +33,7 @@ dregg1 actually runs) and the finalization→executor bridge (`Exec.ConsensusExe
    liveness threshold, the weaker `t^L`. The gap `tL < tS` is `resilience_gap_real`.
    NON-VACUITY: `dreggResilience` is a concrete asymmetric pair; the gap is exhibited.
    NEGATIVE TOOTH: `safety_can_break_above_tS` — above `t^S` (when the quorum no longer
-   intersects honestly) a conflicting finalization is NOT excluded; the safety bound is a real
+   intersects a conflicting finalization is NOT excluded; the safety bound is a real
    constraint, not vacuous.
 
 2. **`equivocation_excluded` (Wong 3.1 / f+1).** A cell-owner that double-signs leaves BOTH
@@ -64,7 +64,7 @@ dregg1 actually runs) and the finalization→executor bridge (`Exec.ConsensusExe
    residual / OPEN-CM-LIVENESS), with `leaderless_progress` proving progress FROM that hypothesis
    WITHOUT any leader-election sub-protocol — the sidestep made precise.
 
-## HONEST SCOPE (named carried OPENs — NEVER `sorry`/`axiom`/`True`)
+## SCOPE (named carried OPENs — NEVER `sorry`/`axiom`/`True`)
 
 * `PostGSTProgress` — the post-GST `GSTRound` delivery (gossip convergence) is the genuine
   liveness residual (OPEN-CM-LIVENESS / `BFT.lean`'s O2). Carried as a named hypothesis the
@@ -152,7 +152,7 @@ def cfg : Finality.Config := ⟨4, 1, 3⟩
 /-- **`dreggResilience` — dregg's concrete asymmetric resilience pair (NON-VACUITY witness).**
 At `cfg` (`n = 4, f = 1`): `tS = 1` (safety tolerates the full fault budget `f = 1`) and
 `tL = 0` (liveness needs strictly more honest delivery — a *lower* resilience). The gap
-`tL < tS` (`0 < 1`) is the asymmetry: this pair EXISTS and is genuinely asymmetric, so
+`tL < tS` (`0 < 1`) is the asymmetry: this pair EXISTS and is asymmetric, so
 `ResiliencePair` is not a vacuous structure. -/
 def dreggResilience : ResiliencePair cfg :=
   { point := dreggDeployment
@@ -161,18 +161,18 @@ def dreggResilience : ResiliencePair cfg :=
   , asymmetric := by decide
   , tS_is_fault_budget := by decide }
 
-/-- **`resilience_gap_real` (PROVED — the gap is a feature, not a min).** dregg's resilience pair
+/-- **`resilience_gap_real` (the gap is a feature, not a min).** dregg's resilience pair
 has a STRICT gap `tL < tS`: safety resilience strictly exceeds liveness resilience. Collapsing to
 `min(t^S, t^L) = tL = 0` would discard the high `t^S = 1` safety — exactly the structure Sridhar
 says the single number throws away. The gap is real and stated. -/
 theorem resilience_gap_real : dreggResilience.tL < dreggResilience.tS := dreggResilience.asymmetric
 
-/-- **`safety_resilience_high` (PROVED)** — dregg's safety resilience equals the full fault
+/-- **`safety_resilience_high`** — dregg's safety resilience equals the full fault
 budget `f = 1`: the `n − f` quorum tolerates ALL `f` Byzantine validators for safety. This is
 the "high `t^S`" the blocklace's verify-offline quorum read earns. -/
 theorem safety_resilience_high : dreggResilience.tS = cfg.f := dreggResilience.tS_is_fault_budget
 
-/-- **`liveness_resilience_strictly_lower` (PROVED)** — the liveness resilience is STRICTLY below
+/-- **`liveness_resilience_strictly_lower`** — the liveness resilience is STRICTLY below
 the safety resilience: `tL < f`. Progress needs more than mere non-conflict (an honest
 supermajority must *deliver*), so the live-set bound is tighter. Sridhar's asymmetric pair, on
 dregg's deployment point. -/
@@ -188,7 +188,7 @@ faults, the `n − f` quorum's tolerance) two committed leaders cannot conflict.
 `cordial_no_conflicting_final_leaders` — the `n > 3f` quorum-intersection-at-an-honest-process
 core transferred onto the DAG commit rule. -/
 
-/-- **`safety_holds_below_tS` (PROVED — the safety half of the resilience pair).** Under the
+/-- **`safety_holds_below_tS` (the safety half of the resilience pair).** Under the
 honest DAG-BFT model (the `BFTModel` over the combined ratification votes carries `≤ f` Byzantine
 ratifiers, i.e. `≤ t^S`, and `n > 3f`), two DISTINCT committed leaders are a CONTRADICTION. So
 below the safety resilience `t^S = f`, safety holds: no two honest replicas finalize conflicting
@@ -205,7 +205,7 @@ theorem safety_holds_below_tS
   ⟨cordial_no_conflicting_final_leaders_from_lace S cfg l₁ l₂ hconflict h₁ h₂ M hid_inj,
    rp.tS_is_fault_budget⟩
 
-/-- **`liveness_needs_tL` (PROVED — the liveness half, SEPARATELY bounded).** Liveness (post-GST
+/-- **`liveness_needs_tL` (the liveness half, SEPARATELY bounded).** Liveness (post-GST
 progress: a wave reaches the quorum threshold) requires the honest live-set to MEET the threshold,
 the weaker `t^L`-bounded condition. Given a `GSTRound` (the post-GST honest-supermajority delivery
 — the named `PostGSTProgress` residual), the block IS committed by quorum. This is SEPARATE from
@@ -221,7 +221,7 @@ theorem liveness_needs_tL [World Msg]
 safety resilience `t^S` the quorum-intersection argument FAILS: if MORE than `f` validators are
 Byzantine (the model's `fault_bound` is violated), the two `n − f` quorums need NOT share an
 honest ratifier, so a conflicting finalization is NOT excluded. We witness this by exhibiting that
-the *honest-witness* conclusion genuinely DEPENDS on `≤ f` faults: with `f` so large that
+the *honest-witness* conclusion DEPENDS on `≤ f` faults: with `f` so large that
 `n − f ≤ f` (here a degenerate config), the intersection lower bound `n − 2f` is `≤ 0`, so no
 honest witness is forced — safety is not free above `t^S`. This proves `safety_holds_below_tS` is
 a real constraint, not vacuously true.
@@ -243,17 +243,17 @@ equivocator's block is then REPELLED from ratification: `approves` requires `¬ 
 honest observer never approves an equivocator's leader candidate. This is the f+1/slashing tooth:
 the double-signing is not silent — it is on the blocklace as evidence. -/
 
-/-- **`equivocation_excluded` (PROVED — Wong 3.1).** A cell-owner `p` that double-signs leaves a
+/-- **`equivocation_excluded` (Wong 3.1).** A cell-owner `p` that double-signs leaves a
 self-incriminating incomparable pair `(a, b)` in the blocklace: `p` is detectably an
 `Equivocator` (the witnessing pair IS the excludable evidence, `equivocation_detectable`), AND
-the two blocks are genuinely incomparable (neither observes the other — a real fork, not a chain).
+the two blocks are incomparable (neither observes the other — a real fork, not a chain).
 The evidence is two concrete in-lace blocks; the double-signing cannot be hidden. -/
 theorem equivocation_excluded {B : Lace} {p : AuthorId} {a b : Block}
     (e : Equivocation B p a b) :
     Equivocator B p ∧ a ≠ b ∧ ¬ precedes B a b ∧ ¬ precedes B b a :=
   equivocation_detectable e
 
-/-- **`equivocator_repelled_from_approval` (PROVED — the exclusion has TEETH).** An equivocator's
+/-- **`equivocator_repelled_from_approval` (the exclusion has TEETH).** An equivocator's
 leader candidate `l` is REPELLED from ratification: no honest observer `o` *approves* `l` when its
 creator `l.creator` is a detected equivocator, because `approves` requires `¬ Equivocator B
 l.creator`. So an equivocator's block gains no approver, hence no ratifier, hence cannot be
@@ -284,7 +284,7 @@ theorem honest_finalization_unforkable
 The demo lace from `Blocklace` (`demoLace`): author `9` double-signs (`f1 ∥ f2`). We exhibit the
 exclusion on it AND its repulsion-from-approval, so `equivocation_excluded` is not vacuous. -/
 
-/-- **`demo_equivocation_excluded` (PROVED — non-vacuity).** On the concrete `demoLace`, author
+/-- **`demo_equivocation_excluded` (non-vacuity).** On the concrete `demoLace`, author
 `9`'s double-signing `(f1, f2)` is excluded: `9` is a detected equivocator and the pair is a real
 fork. The f+1/slashing evidence is two concrete in-lace blocks. -/
 theorem demo_equivocation_excluded :
@@ -339,7 +339,7 @@ the state at `h` is final because the monotone, authenticated chain pins it. -/
 def finalAt (chain : CheckpointChain) (h : Nat) (commit : Nat) : Prop :=
   ∃ c ∈ chain.checkpoints, c.height = h ∧ c.stateCommit = commit
 
-/-- **`no_conflicting_finalized_state_reconfig` (PROVED — Wong 3.2 long-range).** Reconfiguration-
+/-- **`no_conflicting_finalized_state_reconfig` (Wong 3.2 long-range).** Reconfiguration-
 safe finality: two finalizations at the SAME height `h` anchored to the same monotone, authenticated
 checkpoint chain — even under DIFFERENT validator sets — cannot conflict, PROVIDED the chain is
 canonical (no two checkpoints at one height, the content-addressing of the chain). So
@@ -356,7 +356,7 @@ theorem no_conflicting_finalized_state_reconfig
   rw [← hcom, ← hcom']
   exact canon c hc c' hc' (hch.trans hch'.symm)
 
-/-- **`pairwise_lt_last_dominates` (PROVED — the order lemma).** In a list strictly `Pairwise`-
+/-- **`pairwise_lt_last_dominates` (the order lemma).** In a list strictly `Pairwise`-
 increasing by `height`, every member's height is `≤` the LAST element's height: the strict order
 makes the last the maximum. (Stated over `getLast?` to avoid the dependent non-emptiness proof.) -/
 theorem pairwise_lt_last_dominates :
@@ -392,7 +392,7 @@ theorem pairwise_lt_last_dominates :
         rw [hxs] at hctl
         exact ih head hpt hgl' c hctl
 
-/-- **`monotone_checkpoint_excludes_rewrite` (PROVED).** A checkpoint chain's heights are STRICTLY
+/-- **`monotone_checkpoint_excludes_rewrite`.** A checkpoint chain's heights are STRICTLY
 increasing, so the LAST (current) checkpoint has the GREATEST height: no checkpoint in the chain
 sits above the head. Hence a rewrite that tries to anchor history at a height *not exceeding* the
 current head cannot APPEND a new checkpoint — the strict-monotone chain rejects it. This is the
@@ -427,7 +427,7 @@ def demoChain : CheckpointChain where
   strict_mono := by decide
   all_authenticated := by decide
 
-/-- **`demoChain_reconfigures` (PROVED — non-vacuity)** — the demo chain genuinely changes the
+/-- **`demoChain_reconfigures` (non-vacuity)** — the demo chain changes the
 validator set across heights (10 → 11 → 12), so reconfiguration is real, and yet the height chain
 is strictly monotone. The finality at height `1` commits to `200`, anchored across the set change. -/
 theorem demoChain_reconfigures :
@@ -435,7 +435,7 @@ theorem demoChain_reconfigures :
     (demoChain.checkpoints[0]?).map (·.validatorSet) ≠ (demoChain.checkpoints[2]?).map (·.validatorSet) := by
   refine ⟨⟨{ height := 1, stateCommit := 200, validatorSet := 11 }, by decide, by decide, by decide⟩, by decide⟩
 
-/-- **`demoChain_rewrite_rejected` (PROVED — non-vacuity of the long-range tooth)** — a retired
+/-- **`demoChain_rewrite_rejected` (non-vacuity of the long-range tooth)** — a retired
 key-set trying to re-anchor height `0` (below the head height `2`) is rejected: `0 < 2` so the
 rewrite cannot extend past the head. The posterior-corruption attack is excluded on a concrete
 chain. -/
@@ -454,7 +454,7 @@ DOES NOT APPLY: there is no leader-election sub-protocol whose failure could sta
 We RECORD this structurally and prove post-GST progress WITHOUT a leader-election sub-protocol,
 carrying the genuine liveness residual (`GSTRound` delivery) as the NAMED open `PostGSTProgress`. -/
 
-/-- **`ratifyingVoters_perm_length` (PROVED — leaderlessness lemma).** The lace-read ratifier
+/-- **`ratifyingVoters_perm_length` (leaderlessness lemma).** The lace-read ratifier
 COUNT is invariant under any permutation of `participants`: re-labeling the round-robin order
 preserves which distinct participants ratify (`HasApprovingBlock` does NOT read the participant
 ORDER, only membership), so the dedup'd count is identical. This is the technical heart of
@@ -485,7 +485,7 @@ not a leader's proposal authority. Formally: super-ratification depends only on 
 value of `waveLeader` as a *proposer whose block must be awaited*. The leader label is round-robin
 metadata (which segment a block anchors), not a liveness-critical authority.
 
-We capture this HONESTLY (not vacuously) as: the commit decision is invariant under any PERMUTATION
+We capture this (not vacuously) as: the commit decision is invariant under any PERMUTATION
 of `participants` — re-labeling the round-robin leader order (which is what `waveLeader` reads)
 leaves every committed block committed. A permutation preserves the participant MULTISET (it is a
 genuine re-labeling, NOT adding/removing validators), so this is a real structural property of the
@@ -494,7 +494,7 @@ def Leaderless (S : CordialState) (cfg : Finality.Config) : Prop :=
   ∀ (perm : List AuthorId), S.participants.Perm perm → ∀ (l : Block),
     Committed S cfg l ↔ Committed ⟨S.lace, S.rounds, perm, S.wavelength⟩ cfg l
 
-/-- **`blocklace_is_leaderless` (PROVED — Wong 3.6 sidestep, structural).** The blocklace commit
+/-- **`blocklace_is_leaderless` (Wong 3.6 sidestep, structural).** The blocklace commit
 rule is `Leaderless`: permuting the round-robin leader assignment (`participants`, hence
 `waveLeader`) does NOT change which blocks are committed, because `Committed = superRatifiedFromLace`
 reads only the lace-derived `ratifyingVoters` COUNT (perm-invariant, `ratifyingVoters_perm_length`),
@@ -530,7 +530,7 @@ def PostGSTProgress [World Msg] (votesOf : List Msg → List Vote)
     (cfg : Finality.Config) (block : Nat) : Prop :=
   ∃ r, Proof.BFT.GSTRound votesOf cfg block r
 
-/-- **`leaderless_progress` (PROVED — progress WITHOUT a leader-election sub-protocol).** Given the
+/-- **`leaderless_progress` (progress WITHOUT a leader-election sub-protocol).** Given the
 named post-GST delivery residual `PostGSTProgress` (the honest supermajority's votes are delivered
 after GST — gossip convergence), the block IS committed by quorum at SOME round, WITHOUT invoking
 any leader-election / view-synchronization sub-protocol. The proof reads only the DAG quorum
@@ -543,7 +543,7 @@ theorem leaderless_progress [World Msg]
   obtain ⟨r, hr⟩ := hprog
   exact ⟨r, Proof.BFT.gst_liveness_from_round_model votesOf cfg block hr⟩
 
-/-- **`view_sync_class_empty` (PROVED — the attack class is defined away).** The consecutive-bad-
+/-- **`view_sync_class_empty` (the attack class is defined away).** The consecutive-bad-
 leader / view-synchronization attack class is EMPTY for the blocklace: leaderless progress
 (`leaderless_progress`) derives commitment from the DAG quorum alone, with NO leader-election term
 in its hypotheses. Formally: progress depends only on `PostGSTProgress` (delivery), not on any
@@ -589,7 +589,7 @@ abbrev PostGSTDeliveryModel (Msg : Type) [World Msg] (votesOf : List Msg → Lis
     (cfg : Finality.Config) : Type :=
   Proof.GST.GSTModel Msg votesOf cfg
 
-/-- **`leaderless_progress_from_delivery` (PROVED — the protocol-level DAG progress argument, on the
+/-- **`leaderless_progress_from_delivery` (the protocol-level DAG progress argument, on the
 MINIMIZED carrier).** From the bare post-GST delivery model alone — honest-leader co-finality past
 GST + the honest set being a supermajority + Δ-delivery of honest votes — SOME block is
 `committedByQuorum` at some round, with NO leader-election / view-synchronization sub-protocol in any
@@ -606,10 +606,10 @@ theorem leaderless_progress_from_delivery {Msg : Type} [World Msg]
     ∃ r block, committedByQuorum (Msg := Msg) votesOf r cfg block :=
   Proof.GST.gst_liveness D
 
-/-- **`PostGSTProgress_of_deliveryModel` (PROVED — the coarse premise is DERIVED from the small one).**
+/-- **`PostGSTProgress_of_deliveryModel` (the coarse premise is DERIVED from the small one).**
 The legacy coarse `PostGSTProgress block` (`∃ r, GSTRound … block r`, which ASSUMED the quorum-formed
 round) is *implied by* the minimized `PostGSTDeliveryModel` for the block the model's honest leader
-proposes at its synchronization round. So the §6 leaderless theorems' premise is no longer a primitive
+proposes at its synchronization round. So the §6 leaderless theorems' premise is not a primitive
 assumption — it follows from the strictly-smaller delivery carrier (the `GSTModel` fields), whose own
 residual is just honest-leader co-finality. This is the carrier-shrink made precise: we DISCHARGE the
 old named-open from the new, smaller one. -/
@@ -620,7 +620,7 @@ theorem PostGSTProgress_of_deliveryModel {Msg : Type} [World Msg]
   obtain ⟨r, block, hr⟩ := Proof.GST.gstRound_obtains_of_gstModel D
   exact ⟨block, r, hr⟩
 
-/-- **`leaderless_progress_minimized` (PROVED — §6's `leaderless_progress` re-derived from the small
+/-- **`leaderless_progress_minimized` (§6's `leaderless_progress` re-derived from the small
 carrier).** Composing the discharge with `leaderless_progress`: from the minimized
 `PostGSTDeliveryModel` (the bare delivery primitives) the block its honest leader proposes IS committed
 by quorum at some round — WITHOUT the coarse `PostGSTProgress` ever being assumed. The §6 conclusion now
@@ -644,13 +644,13 @@ supermajority `h > 2/3` (`honest_hit_as`: the geometric law sums to 1; `expected
 a.s. statement into a constructive hit-index) — named in `Synchronizer.lean`, off the `World`
 interface surface. NOTHING above it is assumed; everything above it is proven. -/
 
-/-- **`progress_residual_is_cofinality` (PROVED — the residual is JUST bare co-finality).** A
+/-- **`progress_residual_is_cofinality` (the residual is JUST bare co-finality).** A
 `PostGSTDeliveryModel` is BUILDABLE from the BFT-primitive delivery data (gst, honest leader,
 endorsers, the supermajority `honest_quorum`, the Δ-delivery `honest_le_delivered`) PLUS bare
 honest-leader co-finality `∀ t, ∃ r ≥ t, honestLeader r` — the GST/post-GST conjunct is DERIVED
 (`gstModel_of_cofinal`, riding `honestLeader_eventually_of_fair`). So the entire post-GST liveness
 carrier reduces to: "the honest-supermajority's votes are delivered after GST" (population + Δ facts)
-and "honest leaders recur" (co-finality) — and that last is the SOLE genuinely-open piece, discharged
+and "honest leaders recur" (co-finality) — and that last is the SOLE open piece, discharged
 almost-surely by `Synchronizer.honest_hit_as`, residual = the `World.rand` measure bridge. -/
 def progress_residual_is_cofinality {Msg : Type} [World Msg]
     (votesOf : List Msg → List Vote) (cfg : Finality.Config)
@@ -663,7 +663,7 @@ def progress_residual_is_cofinality {Msg : Type} [World Msg]
   Proof.GST.gstModel_of_cofinal gst block honestLeader honestEndorsers
     honest_quorum honest_le_delivered hcofinal
 
-/-- **`liveness_progress_from_cofinality` (PROVED — the WHOLE thing, from co-finality + delivery).**
+/-- **`liveness_progress_from_cofinality` (the WHOLE thing, from co-finality + delivery).**
 Composes the residual-reduction with the proven DAG progress argument: given the honest-supermajority
 delivery data AND bare honest-leader co-finality, some block IS `committedByQuorum`. This is the final
 shrunk statement: post-GST leaderless progress, with EVERYTHING above bare co-finality + Δ-delivery
@@ -680,7 +680,7 @@ theorem liveness_progress_from_cofinality {Msg : Type} [World Msg]
     (progress_residual_is_cofinality votesOf cfg gst block honestLeader honestEndorsers
       honest_quorum honest_le_delivered hcofinal)
 
-/-- **`liveness_resilience_is_supermajority` (PROVED — the `t^L` threshold, GROUNDED).** The liveness
+/-- **`liveness_resilience_is_supermajority` (the `t^L` threshold, GROUNDED).** The liveness
 resilience `t^L` is the honest-SUPERMAJORITY bound: progress needs the honest set to be `> 2/3` of
 participants (the `honest_quorum` field — strictly more than `t^S = f`'s mere non-conflict). We expose
 this as a real number: ANY `Synchronizer.LeaderRotation` whose honest fraction `h` drives liveness has
@@ -698,7 +698,7 @@ theorem liveness_resilience_is_supermajority {Msg : Type} [World Msg]
 
 /-! ### 6c′. NEGATIVE TOOTH — below `t^L` (honest leaders not co-final) the protocol STALLS.
 
-The liveness bound is non-vacuous: the co-finality premise of the descent is genuinely load-bearing.
+The liveness bound is non-vacuous: the co-finality premise of the descent is load-bearing.
 If honest leaders are NOT co-final — an adversary that schedules honest leaders only EARLY, all before
 GST (the below-`t^L` regime: the honest set fails to recur as a supermajority leader) — then NO
 synchronization round past GST with an honest leader exists, so the quorum never forms and the protocol
@@ -711,7 +711,7 @@ resilience — when honest leaders are NOT co-final (here all bounded to rounds 
 (`gst = 10`) — there is NO round `r` past GST with an honest leader: `gst ≤ r` and `r < 5` are
 contradictory. So the descent's progress premise FAILS and no quorum can form — the protocol stalls.
 This is exactly the adversary co-finality (the `honestLeader_eventually` field) rules out, and it shows
-the liveness bound is genuinely needed: drop co-finality (or push all honest leaders before GST) and
+the liveness bound is needed: drop co-finality (or push all honest leaders before GST) and
 progress is provably impossible. Rides `GST.Inhabited.teeth_bounded_no_sync_round`. -/
 theorem liveness_stalls_below_tL :
     ¬ ∃ r, (10 : Nat) ≤ r ∧ (fun r => r < 5) r :=
@@ -725,14 +725,14 @@ theorem liveness_stall_not_cofinal :
     ¬ (∀ t, ∃ r, t ≤ r ∧ (fun r => r < 5) r) :=
   Proof.GST.Inhabited.teeth_bounded_not_cofinal
 
-/-! ### 6c″. NON-VACUITY — the minimized carrier is INHABITED and progress genuinely obtains.
+/-! ### 6c″. NON-VACUITY — the minimized carrier is INHABITED and progress obtains.
 
 The shrunk carrier is not an empty abstraction: the reference `GSTModel` (`GST.Inhabited.gstModel`,
 GST at round 3, three honest endorsers delivering block 7 by round 3, honest leaders at every round)
-inhabits `PostGSTDeliveryModel`, and `leaderless_progress_from_delivery` genuinely COMMITS a block on
+inhabits `PostGSTDeliveryModel`, and `leaderless_progress_from_delivery` COMMITS a block on
 it — the quorum forms, derived from the bare delivery primitives, with no leader election anywhere. -/
 
-/-- **`reference_progress` (PROVED — the minimized carrier genuinely makes progress).** On the
+/-- **`reference_progress` (the minimized carrier makes progress).** On the
 reference world the bare delivery model `GST.Inhabited.gstModel` inhabits `PostGSTDeliveryModel`, and
 the proven DAG progress argument COMMITS a block by quorum — derived, not assumed. The carrier-shrink
 is non-vacuous: a real quorum forms from the bare primitives. -/
@@ -760,7 +760,7 @@ theorem reference_progress :
 
 Every PROVED keystone rides only the lemmas `cordial_no_conflicting_final_leaders_from_lace`,
 `equivocation_detectable`, `gst_liveness_from_round_model`, and pure list/order facts. The only
-genuinely-OPEN part is `PostGSTProgress` — a NAMED hypothesis the liveness theorems are stated
+OPEN part is `PostGSTProgress` — a NAMED hypothesis the liveness theorems are stated
 conditionally on; `leaderless_progress` proves progress FROM it. -/
 #assert_axioms resilience_gap_real
 #assert_axioms safety_resilience_high

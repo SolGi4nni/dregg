@@ -23,7 +23,7 @@ Literature anchors (see `study-gc.md`):
     (witness a finite path = a `Verify`); *dead* is the global, non-co-witnessable
     `find`. Deadness is never decided; it is **timed out** by lease expiry.
 
-The KEY HONEST FACTS this module encodes — including the impossibilities:
+The KEY FACTS this module encodes — including the impossibilities:
 
   1. The **liveness graph is cyclic** and is a DIFFERENT graph from the **acyclic
      capability-derivation tree (CDT)** of `Authority`. Refcount ≠ reachability:
@@ -159,7 +159,7 @@ strictly narrower than its parent) and is the property the **liveness graph lack
 def CDT.Acyclic (t : CDT) : Prop :=
   ∀ a b : CellId, CDT.Derives t a b → CDT.Derives t b a → a = b
 
-/-- **`theorem liveness_not_cdt` — the two graphs are genuinely distinct.** The CDT is
+/-- **`theorem liveness_not_cdt` — the two graphs are distinct.** The CDT is
 acyclic by construction, but the liveness graph that *projects onto the same cells* can
 carry a cycle (a child cell handing a cap back to an ancestor). Hence one cannot soundly
 substitute "refcount-zero on the (acyclic) CDT" for "unreachable on the (cyclic) liveness
@@ -288,7 +288,7 @@ def Live (g : LivenessGraph) (l : Lease) (now : Nat) (c : CellId) : Prop :=
 /-- **`theorem lease_completes_deadness`** — the lease *completes* the undecidable
 deadness test: although `Dead` is undecidable, `Live` is decidable-modulo-reachability
 and, crucially, a cell that is both `Dead` and past its lease is NOT `Live` — so the
-operational predicate reclaims every genuinely-dead cell *eventually* (once `now` passes
+operational predicate reclaims every dead cell *eventually* (once `now` passes
 `expiresAt`). This is the construction that is consistent with codata + no-global-snapshot
 + graph-privacy simultaneously. -/
 theorem lease_completes_deadness
@@ -386,7 +386,7 @@ structure CrossVatCycle (g : LivenessGraph) (a b : CellId) : Prop where
   edge_ba : g.edge b a
   /-- The two cells live in distinct (mutually-distrusting) vats. -/
   cross   : g.vat a ≠ g.vat b
-  /-- The cycle is rootless: `a` is genuinely dead. -/
+  /-- The cycle is rootless: `a` is dead. -/
   dead_a  : Dead g a
   /-- ...and so is `b`. -/
   dead_b  : Dead g b

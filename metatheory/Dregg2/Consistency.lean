@@ -13,7 +13,7 @@ lemmas check co-instantiation of interacting carriers.
 
 OPEN: faithfulness to the real Rust system is a separate grounding axis, not proved here.
 The crypto-standard carriers (`collisionHard`, `binding`, `extractable`, …) cannot be proved in
-Lean — they are honestly isolated in §4 and are NOT the non-vacuity evidence.
+Lean — they are isolated in §4 and are NOT the non-vacuity evidence.
 -/
 
 import Mathlib.Tactic
@@ -47,7 +47,7 @@ The prior `HolderAnonymity` witness had `view ≡ 0`, `ViewIndistinguishable ≡
 an all-True collapse making `blindedset_hides_holder` vacuous. We replace it with a concrete,
 discriminating witness (over `Digest := Int`):
 
-  * `compress := BlindedSet.Reference.refCompress` (`= (·+·)`), so `MemberOf` is genuinely
+  * `compress := BlindedSet.Reference.refCompress` (`= (·+·)`), so `MemberOf` is
     inhabited via `ref_member_at`;
   * `view _ root := root.toNat` — depends only on the issuer root, not which member. Different
     roots give different views (the tooth ruling out `fun _ _ => 0`);
@@ -76,14 +76,14 @@ example (root m m' : Int)
       (discriminatingAnon.view m root) (discriminatingAnon.view m' root) :=
   @blindedset_hides_holder Int discriminatingAnon root m m' h h'
 
-/-- Tooth 2 — the view is genuinely non-constant: roots `3` and `5` give different views, so
+/-- Tooth 2 — the view is non-constant: roots `3` and `5` give different views, so
 `view ≢ fun _ _ => c` and `ViewIndistinguishable` is the honest `Eq`, not a `True`-collapse. -/
 example (m m' : Int) :
     discriminatingAnon.view m 3 ≠ discriminatingAnon.view m' 5 := by
   show (3 : Int).toNat ≠ (5 : Int).toNat
   decide
 
-/-- Tooth 3 — real members exist: `compress := refCompress` makes `MemberOf` genuinely inhabited
+/-- Tooth 3 — real members exist: `compress := refCompress` makes `MemberOf` inhabited
 (`ref_member_at`). Here `1` and `2` are authorized members of root `3`. -/
 example : MemberOf discriminatingAnon.compress 3 1 ∧ MemberOf discriminatingAnon.compress 3 2 := by
   refine ⟨?_, ?_⟩
@@ -162,7 +162,7 @@ noncomputable abbrev superRatificationWitness :
       CordialMiners.Inhabited.rg1 :=
   CordialMiners.Inhabited.superRatifyG1
 
-/-- Tooth — the ratifying quorum is genuinely met on the lace (`≥ n−f = 3` ratifiers), not
+/-- Tooth — the ratifying quorum is met on the lace (`≥ n−f = 3` ratifiers), not
 assumed: `rg1` is committed. -/
 example : CordialMiners.Committed CordialMiners.Inhabited.state CordialMiners.Inhabited.cfg
     CordialMiners.Inhabited.rg1 :=
@@ -220,7 +220,7 @@ The system-level carriers do not all share a single type parameter (privacy over
 consensus over `Vote`, cross-cell over `TurnCoalg`, cross-vat over `Int`/`Bool`), so a single
 joint `instance` is a type-parameter clash. We therefore package the joint inhabitation as one
 inhabited record bundling all discriminating witnesses simultaneously, plus cluster-consistency
-lemmas where carriers genuinely interact over a shared type. The bundle being inhabited means
+lemmas where carriers interact over a shared type. The bundle being inhabited means
 all carriers coexist in one Lean context without deriving `False`: the system is neither vacuous
 nor contradictory at the system level. -/
 
@@ -313,7 +313,7 @@ theorem cluster_anonymity_membership_consistent :
     have := BlindedSet.Reference.ref_member_at (x := 2) (s := 1); simpa using this
   exact ⟨⟨h1, h2⟩, @blindedset_hides_holder Int discriminatingAnon 3 1 2 h1 h2⟩
 
-/-! ## §4 — Crypto-standard carriers (necessarily Lean-trivial — HONEST, isolated, not counted).
+/-! ## §4 — Crypto-standard carriers (necessarily Lean-trivial — isolated, not counted).
 
 These `Prop` carriers cover cryptographic hardness (DLog, collision-resistance, STARK/FRI soundness,
 foreign-chain finality). They cannot be proved in Lean; a `True` discharge in the reference

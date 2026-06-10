@@ -25,7 +25,7 @@ refinement square at this layer. `concreteTransferAsset` (the `balMap`-backed, f
 `recKExecAsset`) refines it via the `Option`-level square `toAbstract_concreteTransferAsset`, and
 `concreteTransferAsset_conserves_per_asset` carries `recTotalAsset _ b` conservation FOR EVERY asset
 `b` down to the node-grade state THROUGH the square — plus the cross-asset non-laundering tooth
-(`concreteTransferAsset_no_cross_asset_leak`). The per-asset guarantee no longer stops at the abstract
+(`concreteTransferAsset_no_cross_asset_leak`). The per-asset guarantee does not stop at the abstract
 layer. See `docs/rebuild/_PROOF-INTEGRITY-LEDGER.md` MID-2 (now RESOLVED).
 
 `CellId = Label = Nat` carries `LawfulBEq` + `LawfulHashable`, so `Std.HashMap.getD_insert`'s
@@ -162,7 +162,7 @@ peel to the only changed field (`cell`) and prove the two lookup-functions agree
 + `Std.HashMap.getD_insert`, whose `if k == a` collapses to the abstract `if c = src` because
 `CellId = Nat` is `LawfulBEq`. -/
 
-/-- **THE TRANSFER SQUARE — PROVED.** Abstracting the concrete transfer equals the abstract transfer.
+/-- **THE TRANSFER SQUARE.** Abstracting the concrete transfer equals the abstract transfer.
 This is the heart of the refinement: the efficient two-insert update, read back through `toAbstract`,
 is LITERALLY the abstract `recTransfer` function — so every abstract fact about `recTransfer` holds of
 the concrete op verbatim. -/
@@ -197,7 +197,7 @@ theorem toAbstract_concreteTransfer (cs : ConcreteKernelState) (src dst : CellId
       rw [h1, h2]
       simp only [Bool.false_eq_true, if_false, if_neg hsrc, if_neg hdst]
 
-/-- **THE SETFIELD SQUARE — PROVED.** Abstracting the concrete field write equals the abstract
+/-- **THE SETFIELD SQUARE.** Abstracting the concrete field write equals the abstract
 `writeField`. The setField hot path refines exactly as cleanly as transfer. -/
 theorem toAbstract_concreteWriteField (cs : ConcreteKernelState) (f : FieldName)
     (target : CellId) (v : Value) :
@@ -333,7 +333,7 @@ theorem toAbstract_balMap_transferAsset (cs : ConcreteKernelState) (turn : Turn)
     rw [if_neg (by rintro ⟨_, h⟩; exact hb h.symm),
         if_neg (by rintro ⟨_, h⟩; exact hb h.symm), if_neg hb]
 
-/-- **THE PER-ASSET TRANSFER SQUARE — PROVED.** The `Option`-level commuting square: abstracting the
+/-- **THE PER-ASSET TRANSFER SQUARE.** The `Option`-level commuting square: abstracting the
 concrete per-asset op equals the abstract `recKExecAsset`. Both the GATE and the COMMIT branch
 correspond — the gate because `toAbstract` is the identity on `caps`/`accounts` and `toAbstract_bal`
 bridges the availability read; the commit because `toAbstract_balMap_transferAsset` is the ledger
@@ -387,7 +387,7 @@ theorem concreteTransferAsset_conserves_per_asset (cs cs' : ConcreteKernelState)
     rw [← toAbstract_concreteTransferAsset, h, Option.map_some]
   exact recKExecAsset_conserves_per_asset (toAbstract cs) (toAbstract cs') turn a hsq b
 
-/-- **CROSS-ASSET NON-LAUNDERING, carried to node-grade — PROVED.** A committed concrete transfer of
+/-- **CROSS-ASSET NON-LAUNDERING, carried to node-grade.** A committed concrete transfer of
 asset `a` CANNOT change asset `b ≠ a`'s total supply on the `balMap`-backed state. This is exactly the
 property an AGGREGATE scalar cannot enforce (it would accept minting B while burning an equal A): the
 per-asset refinement makes that laundering unrepresentable as a single concrete transfer. Derived
@@ -438,7 +438,7 @@ def demoStream (n : Nat) (cs : ConcreteKernelState) : ConcreteKernelState :=
 
 A multi-asset starter `balMap`: cell 0 holds 100 of asset 0 and 7 of asset 1; cell 1 holds 5 of
 asset 0. `actor = src = 0` ⇒ `authorizedB` passes via the `actor == src` disjunct (no caps needed).
-We exhibit (a) a COMMIT that genuinely moves asset 0 (witnessing the gate TRUE + the ledger update),
+We exhibit (a) a COMMIT that moves asset 0 (witnessing the gate TRUE + the ledger update),
 (b) the cross-asset column (asset 1) literally UNCHANGED by that asset-0 transfer, and (c) a
 fail-closed REJECT (`amt` exceeds the asset's available balance) witnessing the gate FALSE — so the
 per-asset op is non-vacuous on both branches. -/

@@ -99,7 +99,7 @@ theorem cwm_illegal_dag_rejected_gated (s : RecChainedState) (target : Int)
   rw [execFullForestG_advanceNode, if_pos hgate]
   exact stateStepGuarded_caveat_violation_fails s stepCursorSlot cwmActor mandateCell target hseq
 
-/-- **`cwm_clearance_violation_rejected_gated` (PROVED)** — insufficient clearance at the current
+/-- **`cwm_clearance_violation_rejected_gated`** — insufficient clearance at the current
 cursor is rejected at the predicate layer (`cwmAdvanceM`), independent of the executor gate. -/
 theorem cwm_clearance_violation_rejected_gated (s : CwmRuntime)
     (hadm : stepAdmissible charterMandate3 s.cursor (completedOf s.cursor) = true)
@@ -117,7 +117,7 @@ cursor transitions are the admitted ones. The negative tooth (`cwm_outofclearanc
 a concrete out-of-clearance state where the executor returns `none` where today's weaker
 `monotonicSeq` caveat would WRONGLY commit. -/
 
-/-- **`cwm_commit_iff_admit_gated` — PROVED (output-side COMMIT-IFF-ADMIT).** On a mandate cell at
+/-- **`cwm_commit_iff_admit_gated` (output-side COMMIT-IFF-ADMIT).** On a mandate cell at
 committed cursor `c < steps.length` carrying the admit-table program, with the credential gate
 passing (`hg`) and the executor's authority/liveness gate passing (`hauth`, the per-cell `stateStep`
 obligation independent of admission), the GATED executor COMMITS the `c → c+1` advance IFF
@@ -175,7 +175,7 @@ def clerkCwmG1 : RecChainedState :=
         slotCaveats := fun c => if c = mandateCell then clerkCaveats else [] }
     log := [] }
 
-/-- **`cwm_outofclearance_rejected` — PROVED (THE NEGATIVE TOOTH).** A clerk holding only `review`
+/-- **`cwm_outofclearance_rejected` (THE NEGATIVE TOOTH).** A clerk holding only `review`
 clearance CANNOT advance the cursor `1 → 2` (the `redact` step): the executor returns `none`, because
 `(1,2)` is NOT in the clerk's admit-table. This is exactly the transition `cwmAdvanceM clerkMandate3
 {cursor:=1}` rejects — now ENFORCED BY THE EXECUTOR (where `.monotonicSeq` would wrongly admit). -/
@@ -323,7 +323,7 @@ open Dregg2.Exec.StarbridgeGated (eraseForestG execForestG_erases)
 def SchedAnchorSafe (sched : SchedG) : Prop :=
   ∀ n, anchorForestOK mandateCell (eraseForestG (sched n).val)
 
-/-- **`cwmStrong_cellNextG_carries` (PROVED)** — one anchor-safe gated step preserves
+/-- **`cwmStrong_cellNextG_carries`** — one anchor-safe gated step preserves
 `mandateCell live ∧ programOK ∧ cwmInCompartmentStrong`. -/
 theorem cwmStrong_cellNextG_carries (comp : Int) (s : RecChainedState) (cg : ConservingGatedForest)
     (hok : anchorForestOK mandateCell (eraseForestG cg.val))
@@ -344,7 +344,7 @@ theorem cwmStrong_cellNextG_carries (comp : Int) (s : RecChainedState) (cg : Con
       have hstrong' := cwmCompartmentStrong_traj_carries s s' (eraseForestG cg.val) comp hfa hstrong hprog hok hlive
       exact ⟨hlive', hprog', hstrong'⟩
 
-/-- **`cwm_compartment_strong_forever` (PROVED) — VALUE-PINNING CROWN LEG.** Along EVERY anchor-safe
+/-- **`cwm_compartment_strong_forever` — VALUE-PINNING CROWN LEG.** Along EVERY anchor-safe
 gated schedule, the agent stays in the SPECIFIC compartment: `cwmAnchor (trajG …) = comp` (the literal
 binding), not merely "some program is live". -/
 theorem cwm_compartment_strong_forever (comp : Int) (s : RecChainedState)
@@ -417,7 +417,7 @@ def cwmGSigned : Option RecChainedState :=
 -- VALUE-PINNING NON-VACUITY: honest in-compartment ADMITTED; drifted anchor REJECTED.
 #guard (decide (cwmInCompartmentStrong ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel cwmCompartmentTag)) == false  -- drift REJECTED
 #guard (decide (cwmInCompartmentStrong ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel (cwmCompartmentTag + 1)))      -- drift IS in its own compartment
-#guard (cwmAnchor ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel == cwmAnchor cwmG0.kernel) == false               -- anchors genuinely differ
+#guard (cwmAnchor ({ cwmG0 with kernel := { cwmG0.kernel with cell := cwmDriftCell } }).kernel == cwmAnchor cwmG0.kernel) == false               -- anchors differ
 #guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).isSome)
 #guard ((execFullForestG cwmG0 (cwmRefreshNode goodCred)).map
         (fun s => (s.kernel.delegations cwmMonitorCell).length)) == some 2

@@ -90,7 +90,7 @@ def policyGuarded [Verifiable ObligationStmt Witness]
     (w : ObligationStmt → Witness) (s : RecStmt) : RecStmt :=
   programGuardStmt view prog w s
 
-/-- **`policyGuarded_eq_seq` — PROVED (the shape).** `policyGuarded` is exactly a guarded `seq`: the
+/-- **`policyGuarded_eq_seq` (the shape).** `policyGuarded` is exactly a guarded `seq`: the
 routed program guard `guardG (programToGuard view prog) w` sequenced before the effect `s`. This is
 the structural fact every keystone below reads off — and it is `programGuardStmt`'s definition, so the
 §4.2 Guard.lean theorems apply verbatim. -/
@@ -115,7 +115,7 @@ This is the proof that the installed policy is ENFORCED INLINE. The policy is a 
 
 Together they are the IFF (`policyGuarded_commit_iff`). -/
 
-/-- **`policyGuarded_commit_iff` — PROVED (THE ENFORCEMENT KEYSTONE).** The installed-policy-gated
+/-- **`policyGuarded_commit_iff` (THE ENFORCEMENT KEYSTONE).** The installed-policy-gated
 effect commits to `k'` IFF the routed installed program ADMITS the transition AND the underlying effect
 `interp s` commits to that very same `k'`. The policy only restricts the domain — the committed state
 is `interp s`'s, never anything the policy cooked up. This IS "the installed assertions are enforced
@@ -128,7 +128,7 @@ theorem policyGuarded_commit_iff [Verifiable ObligationStmt Witness]
   rw [policyGuarded_eq_seq]
   exact interp_guardSeq_iff (programToGuard view prog) w s k k'
 
-/-- **`policyGuarded_commit_eq_underlying` — PROVED (the policy NEVER MUTATES).** A committed
+/-- **`policyGuarded_commit_eq_underlying` (the policy NEVER MUTATES).** A committed
 policy-gated effect produces EXACTLY the post-state the underlying effect `interp s` produces on the
 same input. The installed program is a pure domain restrictor — it can only ever PREVENT the effect,
 never alter its result. This is what lifts every executor / Argus-weld keystone of `s` through the
@@ -140,7 +140,7 @@ theorem policyGuarded_commit_eq_underlying [Verifiable ObligationStmt Witness]
     interp s k = some k' :=
   programGuardStmt_commit_eq_underlying h
 
-/-- **`policyGuarded_admits_all` — PROVED.** A committed policy-gated effect means EVERY installed
+/-- **`policyGuarded_admits_all`.** A committed policy-gated effect means EVERY installed
 constraint ADMITTED the transition (the meet semantics of the routed program guard): each local
 constraint evaluated true, each circuit-routed obligation was discharged. The witness that the WHOLE
 installed program was enforced, not just consulted. -/
@@ -151,7 +151,7 @@ theorem policyGuarded_admits_all [Verifiable ObligationStmt Witness]
     ∀ c ∈ prog, (constraintToGuard view c).admits k w = true :=
   programGuardStmt_admits_all h
 
-/-- **`policyGuarded_reject` — PROVED (FAIL-CLOSED, the teeth).** If the installed program REJECTS the
+/-- **`policyGuarded_reject` (FAIL-CLOSED, the teeth).** If the installed program REJECTS the
 transition (`(programToGuard view prog).admits k w = false`), the policy-gated effect does NOT commit —
 regardless of what the underlying effect `interp s` would do. This is the executor-level enforcement:
 a violated installed assertion/caveat rejects the WHOLE effect, BY THE EXECUTOR. The closing of the
@@ -164,7 +164,7 @@ theorem policyGuarded_reject [Verifiable ObligationStmt Witness]
   rw [policyGuarded_eq_seq]
   exact interp_guardSeq_reject (programToGuard view prog) w s k h
 
-/-- **`programToGuard_singleton_admits` — PROVED.** A single-constraint installed program's
+/-- **`programToGuard_singleton_admits`.** A single-constraint installed program's
 `programToGuard` admits IFF that one constraint's `constraintToGuard` admits (the `Guard.all` of a
 singleton is its sole conjunct). The reduction the §3 non-vacuity reads off, so the routed installed
 program's verdict is exactly the constraint's. -/
@@ -182,7 +182,7 @@ conserves and is still authorized — inherited THROUGH the enforcement keystone
 program; conservation AND authority STILL hold of the gated commit, read off the keystone. This is the
 "every effect keystone lifts through the installed policy for free" claim made real. -/
 
-/-- **`policyGuarded_transfer_conserves` — PROVED.** A policy-gated transfer that commits PRESERVES the
+/-- **`policyGuarded_transfer_conserves`.** A policy-gated transfer that commits PRESERVES the
 total balance — `recKExec_conserves` lifted through the enforcement keystone. The installed program
 added an admission side-condition and changed NOTHING about the committed state. -/
 theorem policyGuarded_transfer_conserves [Verifiable ObligationStmt Witness]
@@ -194,7 +194,7 @@ theorem policyGuarded_transfer_conserves [Verifiable ObligationStmt Witness]
   rw [interp_transferStmt_eq_recKExec] at hs
   exact recKExec_conserves k k' turn hs
 
-/-- **`policyGuarded_transfer_authorized` — PROVED.** A policy-gated transfer that commits was
+/-- **`policyGuarded_transfer_authorized`.** A policy-gated transfer that commits was
 AUTHORIZED — `recKExec_authorized` lifted through the same keystone. Two independent executor keystones
 (conservation, authority) lifting through ONE installed program with no per-policy reproof. -/
 theorem policyGuarded_transfer_authorized [Verifiable ObligationStmt Witness]
@@ -211,12 +211,12 @@ theorem policyGuarded_transfer_authorized [Verifiable ObligationStmt Witness]
 We exhibit two REAL installed constraints from the catalog — a `memberOf` allowlist and an `immutable`
 anchor — each of which a real cell would install, and show the policy-gated effect is REJECTED on a
 violating transition and ADMITTED on a valid one. This is what makes the enforcement MEANINGFUL: the
-policy is genuinely two-valued and the gate genuinely fires.
+policy is two-valued and the gate fires.
 
 The `view` reads cell `0`'s record as the `(old, new)` slot view (`old` from the pre-state cell, `new`
 from the proposed post-state cell). For these constraints we use the absolute / immutable views below.
 The effect we gate is the verified `transferStmt` on a self-authorized move (so the underlying effect
-genuinely commits — the gate is the ONLY thing that can reject). -/
+commits — the gate is the ONLY thing that can reject). -/
 
 /-- The trivial obligation-seam verify instance (the §3 examples route only LOCAL constraints, which
 ignore the witness; the circuit-discharged arm is exercised by §4's real gate). Always accepts —
@@ -253,7 +253,7 @@ def tRole : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 real constraint from the catalog. -/
 def rolePolicyProg : List StateConstraint := [.simple (.memberOf "role" [1, 2, 3])]
 
--- The installed `memberOf` policy genuinely gates the transfer:
+-- The installed `memberOf` policy gates the transfer:
 -- ADMIT — role 2 ∈ allowlist ⇒ the program admits ⇒ the gated transfer commits.
 #guard ((programToGuard cell0AbsView rolePolicyProg).admits kRoleLive (fun _ => ()))            -- true
 #guard ((interp (policyGuarded cell0AbsView rolePolicyProg (fun _ => ()) (transferStmt tRole)) kRoleLive).isSome)  -- commits
@@ -263,9 +263,9 @@ def rolePolicyProg : List StateConstraint := [.simple (.memberOf "role" [1, 2, 3
 #guard ((interp (policyGuarded cell0AbsView rolePolicyProg (fun _ => ()) (transferStmt tRole)) kRoleBadLive).isNone)  -- gated out
 #guard ((interp (transferStmt tRole) kRoleBadLive).isSome)                                      -- bare transfer WOULD commit
 
-/-- **`policyGuarded_memberOf_nonvacuous` — PROVED.** The installed `memberOf` program ADMITS the
+/-- **`policyGuarded_memberOf_nonvacuous`.** The installed `memberOf` program ADMITS the
 satisfier `kRoleLive` (role ∈ allowlist) and REJECTS the violator `kRoleBadLive` (role ∉ allowlist) —
-genuinely two-valued, evaluating `evalConstraint`. The installed policy has real teeth (not `:= True`),
+two-valued, evaluating `evalConstraint`. The installed policy has real teeth (not `:= True`),
 so the enforcement keystone is MEANINGFUL. -/
 theorem policyGuarded_memberOf_nonvacuous :
     (programToGuard cell0AbsView rolePolicyProg).admits kRoleLive (fun _ => ()) = true ∧
@@ -276,11 +276,11 @@ theorem policyGuarded_memberOf_nonvacuous :
   · rw [rolePolicyProg, programToGuard_singleton_admits,
         constraintToGuard_firstParty_eval cell0AbsView _ (by decide)]; decide
 
-/-- **`policyGuarded_memberOf_gates_transfer` — PROVED (the gate ∘ effect, end-to-end).** On the
+/-- **`policyGuarded_memberOf_gates_transfer` (the gate ∘ effect, end-to-end).** On the
 violator `kRoleBadLive`, the installed-`memberOf`-gated transfer FAILS CLOSED (`= none`) even though
 the underlying transfer would commit — the installed policy rejected the WHOLE effect. On the satisfier
 `kRoleLive`, the gated transfer commits to EXACTLY the bare transfer's state. This exhibits the
-enforcement keystone LIVE: the installed assertion genuinely gates the operation. -/
+enforcement keystone LIVE: the installed assertion gates the operation. -/
 theorem policyGuarded_memberOf_gates_transfer :
     interp (policyGuarded cell0AbsView rolePolicyProg (fun _ => ()) (transferStmt tRole)) kRoleBadLive
         = none
@@ -298,7 +298,7 @@ theorem policyGuarded_memberOf_gates_transfer :
 `immutable f` admits a transition iff `new[f] = old[f]` (after init). A cell that installs
 `immutable "owner"` forbids any effect that would CHANGE `owner`. We show the policy rejects an
 owner-changing transition and admits an owner-preserving one — a second, structurally-different
-catalog atom genuinely gating the operation (so the non-vacuity is not memberOf-special). -/
+catalog atom gating the operation (so the non-vacuity is not memberOf-special). -/
 
 /-- A `view` that exhibits an owner CHANGE: `old[owner] = 5`, `new[owner] = 7` (a violation of an
 installed `immutable "owner"` anchor). Concrete, computable — the `(old, new)` an owner-rewriting
@@ -313,13 +313,13 @@ def ownerKeepView (_k : RecordKernelState) : Value × Value :=
 /-- The installed program: cell forbids changing `owner` (an `immutable` anchor). -/
 def ownerPolicyProg : List StateConstraint := [.simple (.immutable "owner")]
 
--- The installed `immutable` policy genuinely gates: REJECTS the owner change, ADMITS the keep.
+-- The installed `immutable` policy gates: REJECTS the owner change, ADMITS the keep.
 #guard ((programToGuard ownerChangeView ownerPolicyProg).admits kRoleLive (fun _ => ())) == false -- false (5 ≠ 7)
 #guard ((programToGuard ownerKeepView   ownerPolicyProg).admits kRoleLive (fun _ => ()))           -- true  (5 = 5)
 
-/-- **`policyGuarded_immutable_nonvacuous` — PROVED.** The installed `immutable "owner"` program
+/-- **`policyGuarded_immutable_nonvacuous`.** The installed `immutable "owner"` program
 REJECTS the owner-CHANGING transition (`old=5 ≠ new=7`) and ADMITS the owner-PRESERVING one
-(`old=5 = new=5`) — a second real catalog atom genuinely two-valued, gating the operation. The
+(`old=5 = new=5`) — a second real catalog atom two-valued, gating the operation. The
 enforcement is meaningful across structurally-distinct installed constraints, not just `memberOf`. -/
 theorem policyGuarded_immutable_nonvacuous :
     (programToGuard ownerChangeView ownerPolicyProg).admits kRoleLive (fun _ => ()) = false ∧
@@ -330,7 +330,7 @@ theorem policyGuarded_immutable_nonvacuous :
   · rw [ownerPolicyProg, programToGuard_singleton_admits,
         constraintToGuard_firstParty_eval ownerKeepView _ (by decide)]; decide
 
-/-- **`policyGuarded_immutable_rejects_change` — PROVED.** Gating ANY effect by the installed
+/-- **`policyGuarded_immutable_rejects_change`.** Gating ANY effect by the installed
 `immutable "owner"` program under the owner-CHANGING view fails the whole effect closed (`= none`):
 the read-only anchor is enforced by the executor. (We gate `transferStmt tRole`; the rejection is the
 installed policy's, independent of the effect body.) -/
@@ -353,7 +353,7 @@ the empty oracle placeholder.
 
 `sumEquals` is the cleanest Bucket-B reference: it is a single PLONK LINEAR gate (`Σ kᵢ·new[fᵢ] = c`
 with all `kᵢ = 1`, exactly the `affineEq`/`affineLe` "Maps to a PLONK linear gate" family), so the
-circuit teeth are a faithful arithmetic constraint — no hashing, no opaque AIR. (The genuinely
+circuit teeth are a faithful arithmetic constraint — no hashing, no opaque AIR. (The
 cross-cell `boundDelta` needs a two-row peer-state composition — a strictly harder circuit; `sumEquals`
 is the right FIRST reference, and the gate generalizes to it by adding the peer columns.) -/
 
@@ -372,7 +372,7 @@ def colSumExpr : List Nat → EmittedExpr
   | []      => .const 0
   | c :: cs => .add (.var c) (colSumExpr cs)
 
-/-- **`colSumExpr_eval` — PROVED.** The sum polynomial evaluates to the actual `ℤ`-sum of the column
+/-- **`colSumExpr_eval`.** The sum polynomial evaluates to the actual `ℤ`-sum of the column
 readouts: `(colSumExpr cols).eval a = (cols.map a).sum`. The faithful arithmetic of the linear gate. -/
 theorem colSumExpr_eval (cols : List Nat) (a : Dregg2.Circuit.Assignment) :
     (colSumExpr cols).eval a = (cols.map a).sum := by
@@ -390,7 +390,7 @@ def sumGateBody (cols : List Nat) (value : Int) : EmittedExpr :=
 the running circuit historically dropped for Bucket-B `sumEquals`). -/
 def sumGate (cols : List Nat) (value : Int) : VmGate := { body := sumGateBody cols value }
 
-/-- **`sumGate_holds_iff_colsum` — PROVED (the gate's pure circuit meaning, BOTH directions).** The
+/-- **`sumGate_holds_iff_colsum` (the gate's pure circuit meaning, BOTH directions).** The
 `sumEquals` gate HOLDS on a row IFF the layout columns sum to `value`: `body.eval loc = 0 ↔
 (cols.map loc).sum = value`. This is the genuine circuit-arithmetic teeth on the columns — a real
 linear constraint (each column has coefficient `+1`), satisfied EXACTLY when the column sum hits the
@@ -419,7 +419,7 @@ def layFields (lay : List (FieldName × Nat)) : List FieldName := lay.map (·.1)
 /-- The columns of a layout (the prover columns the gate sums over). -/
 def layCols (lay : List (FieldName × Nat)) : List Nat := lay.map (·.2)
 
-/-- **`sumScalars_cons` — PROVED.** `sumScalars`'s right-fold step, as a clean cons-lemma: the field
+/-- **`sumScalars_cons`.** `sumScalars`'s right-fold step, as a clean cons-lemma: the field
 sum of `f :: fs` prepends `f`'s scalar onto the rest sum (fail-closed if either is absent). The shape
 the layout-induction below reads off. -/
 theorem sumScalars_cons (v : Value) (f : FieldName) (fs : List FieldName) :
@@ -439,9 +439,9 @@ def RowEncodesSum (env : VmRowEnv) : List (FieldName × Nat) → Value → Prop
   | (f, col) :: r, new =>
       (∃ x : Int, new.scalar f = some x ∧ env.loc col = x) ∧ RowEncodesSum env r new
 
-/-- **`rowEncodesSum_colsum_eq_fieldsum` — PROVED (the encoding aligns the sums).** Under
+/-- **`rowEncodesSum_colsum_eq_fieldsum` (the encoding aligns the sums).** Under
 `RowEncodesSum`, the gate's column sum EQUALS the protocol's field sum: `(layCols lay).map (env.loc)`
-sums to the same `ℤ` as `sumScalars new (layFields lay)` produces (and the field sum genuinely reads —
+sums to the same `ℤ` as `sumScalars new (layFields lay)` produces (and the field sum reads —
 no field is absent, because the encoding witnessed each `new.scalar f = some xᶠ`). The bridge's
 arithmetic core. -/
 theorem rowEncodesSum_colsum_eq_fieldsum (env : VmRowEnv) (lay : List (FieldName × Nat)) (new : Value)
@@ -459,7 +459,7 @@ theorem rowEncodesSum_colsum_eq_fieldsum (env : VmRowEnv) (lay : List (FieldName
     simp only [hx, List.map_cons, List.sum_cons, hcol]
     ring_nf
 
-/-- **`sumGate_iff_sumEquals` — PROVED (THE CIRCUIT ⟺ PROTOCOL BRIDGE for `sumEquals`).** Under the
+/-- **`sumGate_iff_sumEquals` (THE CIRCUIT ⟺ PROTOCOL BRIDGE for `sumEquals`).** Under the
 honest row encoding, the `sumEquals` CIRCUIT GATE holds IFF the `sumEquals` PROTOCOL constraint holds of
 the encoded post-state: `(sumGate (layCols lay) value).holds env ↔ evalConstraint (.sumEquals
 (layFields lay) value) old new = true`. So the gate's algebraic statement SUFFICES to enforce
@@ -504,7 +504,7 @@ instance instVerifiableSumGate : Verifiable ObligationStmt SumWitness where
         decide (layFields w.lay = fields) && decide ((sumGate (layCols w.lay) value).holds w.env)
     | _, _ => false
 
-/-- **`sumGate_discharges_obligation` — PROVED.** Under the circuit-backed instance, the `sumEquals`
+/-- **`sumGate_discharges_obligation`.** Under the circuit-backed instance, the `sumEquals`
 obligation `.constraint (.sumEquals (layFields lay) value)` is DISCHARGED (`Verify = true`) by the
 witness `⟨env, lay⟩` IFF the real `sumGate` holds on the row. The verify seam carries a GENUINE circuit
 verdict — not the abstract oracle. -/
@@ -516,7 +516,7 @@ theorem sumGate_discharges_obligation (env : VmRowEnv) (lay : List (FieldName ×
           && decide ((sumGate (layCols lay) value).holds env)) = true ↔ _
   rw [decide_eq_true (rfl), Bool.true_and, decide_eq_true_iff]
 
-/-- **`sumEquals_witnessed_has_circuit_teeth` — PROVED (THE BUCKET-B `witnessed` ARM, DISCHARGED BY A
+/-- **`sumEquals_witnessed_has_circuit_teeth` (THE BUCKET-B `witnessed` ARM, DISCHARGED BY A
 REAL CIRCUIT).** Route a `sumEquals` constraint to the `witnessed` arm (`Guard.witnessed (.constraint
 (.sumEquals (layFields lay) value))`), supply the circuit witness `⟨env, lay⟩`, and — under the honest
 row encoding — the guard `admits` IFF the `sumEquals` PROTOCOL constraint holds of the encoded
@@ -534,7 +534,7 @@ theorem sumEquals_witnessed_has_circuit_teeth
   -- … and the circuit gate holds IFF the `sumEquals` predicate holds (the §4.2 bridge).
   exact sumGate_iff_sumEquals env lay value old new henc
 
-/-! ### §4.4 — NON-VACUITY + ANTI-GHOST: the circuit gate genuinely SATISFIES the satisfier and is
+/-! ### §4.4 — NON-VACUITY + ANTI-GHOST: the circuit gate SATISFIES the satisfier and is
 UNSAT on a tampered sum.
 
 A concrete layout `[("a", 100), ("b", 101)]`, target `value = 7`, and two rows: one whose columns carry
@@ -555,25 +555,25 @@ def envBad : VmRowEnv :=
   { loc := fun c => if c = 100 then 3 else if c = 101 then 5 else 0,
     nxt := fun _ => 0, pub := fun _ => 0 }
 
--- The circuit gate genuinely SATISFIES the right sum and is UNSAT on the tampered one:
+-- The circuit gate SATISFIES the right sum and is UNSAT on the tampered one:
 #guard (decide ((sumGate (layCols demoLay) 7).holds envSat))            -- true  (3+4=7)
 #guard (decide ((sumGate (layCols demoLay) 7).holds envBad)) == false   -- false (3+5=8≠7)
 
-/-- **`sumGate_satisfies_satisfier` — PROVED.** The `sumEquals` gate (layout `demoLay`, target 7) HOLDS
-on `envSat` (columns sum to `3+4 = 7`). The gate is genuinely satisfiable — non-vacuous, real teeth. -/
+/-- **`sumGate_satisfies_satisfier`.** The `sumEquals` gate (layout `demoLay`, target 7) HOLDS
+on `envSat` (columns sum to `3+4 = 7`). The gate is satisfiable — non-vacuous, real teeth. -/
 theorem sumGate_satisfies_satisfier : (sumGate (layCols demoLay) 7).holds envSat := by
   rw [sumGate_holds_iff_colsum]; decide
 
-/-- **`sumGate_rejects_tamper` — PROVED (THE ANTI-GHOST TOOTH).** The `sumEquals` gate is UNSAT on
+/-- **`sumGate_rejects_tamper` (THE ANTI-GHOST TOOTH).** The `sumEquals` gate is UNSAT on
 `envBad` (columns sum to `3+5 = 8 ≠ 7`): `¬ (sumGate …).holds envBad`. A row whose post-state field
 sum is tampered FAILS the circuit gate — the genuine circuit teeth `sumEquals` lacked. A vacuous gate
 could not reject this. -/
 theorem sumGate_rejects_tamper : ¬ (sumGate (layCols demoLay) 7).holds envBad := by
   rw [sumGate_holds_iff_colsum]; decide
 
-/-- **`sumGate_demo_iff_predicate` — PROVED (the bridge, witnessed concretely).** On the satisfier row
+/-- **`sumGate_demo_iff_predicate` (the bridge, witnessed concretely).** On the satisfier row
 `envSat` with a record `new = {a:3, b:4}` it encodes, the gate holds IFF the `sumEquals` predicate holds
-(both true); the circuit⟺protocol bridge at a concrete encoded row, non-vacuous (the predicate genuinely
+(both true); the circuit⟺protocol bridge at a concrete encoded row, non-vacuous (the predicate
 reads `some 7`). -/
 theorem sumGate_demo_iff_predicate :
     (sumGate (layCols demoLay) 7).holds envSat

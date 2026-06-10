@@ -22,14 +22,14 @@ TICK directly, and binds the cap-table grant OFF-row via the universe-A connecto
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary — the cap-table grant is OFF-ROW)
+## What the EffectVM row CANNOT enforce (the boundary — the cap-table grant is OFF-ROW)
 
   * the `caps := recDelegateCaps caps intro recip t` grant + the Granovetter `delegateGuard` — the
     `cap_root` is the SCALAR digest of the cap-table FUNCTION; the runtime hand-AIR FREEZES the on-row
     `cap_root` column and binds the actual grant via `effects_hash` OFF the per-row state block. The grant
     SOUNDNESS lives in universe-A's `introduceA_full_sound` / `Function.Injective D` (cited via §connector).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR ONLY as `Poseidon2SpongeCR`;
 cap-table digest ONLY as `Function.Injective D`. No `sorry`/`:= True`/`native_decide`/rfl-bridge.

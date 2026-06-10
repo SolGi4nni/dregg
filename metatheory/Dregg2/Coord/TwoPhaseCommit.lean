@@ -9,7 +9,7 @@ procedure** that decides *whether to apply at all*: `coord/src/atomic.rs`'s `Coo
 2-phase commit (`atomic.rs:1-7`, `Propose → Vote → Commit/Abort`) whose heart is `evaluate_votes`
 (`atomic.rs:761-779`): from the collected Yes/No votes and the `threshold`, it yields a `Decision`
 ∈ {Commit, Abort, Pending}. THAT vote-counting state machine — and the safety property that it never
-simultaneously decides Commit AND Abort — is genuinely uncovered. This module models it faithfully
+simultaneously decides Commit AND Abort — is uncovered. This module models it faithfully
 and proves the 2PC agreement / no-conflicting-decision property.
 
 ## What is modelled (faithful to `coord/src/atomic.rs`)
@@ -65,7 +65,7 @@ and asserts its emitted `Decision` agrees, vote-for-vote, with this Lean `evalua
 `EntangledJoint.jointApplyAll` is invoked to apply the forest — this module is the *gate*, that one
 is the *effect*. Together they cover the whole Layer-2 atomic turn (decision + application).
 
-## Honest scope
+## Scope
 
 The Ed25519 vote-signature verification is the named crypto assumption (a cast vote = a verified
 vote); we do not re-derive signature unforgeability. We model the *counting* `evaluate_votes` does on
@@ -134,7 +134,7 @@ def Tally.castNo (t : Tally) : Tally := { t with no := t.no + 1 }
 
 /-! ## 3. NO CONFLICTING DECISION — the core 2PC agreement safety. -/
 
-/-- **`evaluate_not_commit_and_abort` — NO CONFLICTING DECISION (PROVED).** On a well-formed tally,
+/-- **`evaluate_not_commit_and_abort` — NO CONFLICTING DECISION.** On a well-formed tally,
 the Commit condition (`yes ≥ threshold`) and the Abort condition (`no > n - threshold`) are NEVER
 both true. Hence `evaluate` yields a single, unambiguous verdict — the coordinator cannot tell one
 participant "commit" and another "abort". This is the heart of 2PC safety: every honest replayer of
@@ -149,7 +149,7 @@ theorem evaluate_not_commit_and_abort (t : Tally) (hwf : t.wf) :
   omega
 
 /-- **`evaluate_commit_xor_abort` — the verdict is Commit XOR Abort XOR Pending, exclusively
-(PROVED).** A direct corollary: if `evaluate t = commit` then it is NOT `abort`, and vice versa.
+.** A direct corollary: if `evaluate t = commit` then it is NOT `abort`, and vice versa.
 `evaluate` is a function so this is definitional, but we record the *semantic* exclusivity: the two
 TERMINAL decisions never coexist as available verdicts. -/
 theorem commit_excludes_abort (t : Tally)
@@ -158,8 +158,8 @@ theorem commit_excludes_abort (t : Tally)
 
 /-! ## 4. COMMIT ⇒ threshold met;  ABORT ⇒ threshold unreachable. -/
 
-/-- **`commit_needs_threshold` (PROVED).** `evaluate t = Commit` implies `yes ≥ threshold`: the
-committing QC genuinely has at least `threshold` Yes voters (what `commit()` re-checks,
+/-- **`commit_needs_threshold`.** `evaluate t = Commit` implies `yes ≥ threshold`: the
+committing QC has at least `threshold` Yes voters (what `commit()` re-checks,
 `atomic.rs:565-572`). No commit without a real quorum. -/
 theorem commit_needs_threshold (t : Tally) (h : evaluate t = Decision.commit) :
     t.threshold ≤ t.yes := by
@@ -169,7 +169,7 @@ theorem commit_needs_threshold (t : Tally) (h : evaluate t = Decision.commit) :
   · rw [if_neg hc] at h
     by_cases hd : t.n - t.threshold < t.no <;> simp [hd] at h
 
-/-- **`abort_needs_too_many_no` (PROVED).** `evaluate t = Abort` implies the No count already
+/-- **`abort_needs_too_many_no`.** `evaluate t = Abort` implies the No count already
 exceeds `n - threshold` (and the threshold was not yet met). The abort fires only on a genuine
 "threshold unreachable" condition. -/
 theorem abort_needs_too_many_no (t : Tally) (h : evaluate t = Decision.abort) :
@@ -182,7 +182,7 @@ theorem abort_needs_too_many_no (t : Tally) (h : evaluate t = Decision.abort) :
     · exact ⟨hd, hc⟩
     · rw [if_neg hd] at h; exact absurd h (by decide)
 
-/-- **`abort_no_late_commit` — ABORT IS SOUND / IRREVOCABLE (PROVED).** Once the abort condition
+/-- **`abort_no_late_commit` — ABORT IS SOUND / IRREVOCABLE.** Once the abort condition
 holds (`no > n - threshold`) on a well-formed tally, the Yes count can NEVER reach `threshold` even
 if every remaining un-voted participant votes Yes: the maximum achievable Yes is `n - no`, and
 `n - no < threshold`. So aborting is safe — no later QC can form. This PROVES `atomic.rs:773`'s
@@ -193,7 +193,7 @@ theorem abort_no_late_commit (t : Tally) (hwf : t.wf) (hno : t.n - t.threshold <
   have h2 := hwf.thr_le_n
   omega
 
-/-- **`abort_max_yes_below_threshold` — even all-remaining-Yes stays below threshold (PROVED).**
+/-- **`abort_max_yes_below_threshold` — even all-remaining-Yes stays below threshold.**
 The strongest form: if the current No count triggers abort, then `yes + (unvoted) < threshold` where
 `unvoted = n - yes - no` is every participant who has not yet voted. So no admissible future vote
 stream can flip the decision to Commit. -/
@@ -206,7 +206,7 @@ theorem abort_max_yes_below_threshold (t : Tally) (hwf : t.wf)
 
 /-! ## 5. DECISION MONOTONICITY + totality. -/
 
-/-- **`commit_stable_under_more_yes` (PROVED).** If a tally already commits, casting another Yes vote
+/-- **`commit_stable_under_more_yes`.** If a tally already commits, casting another Yes vote
 keeps it committing — a reached commit decision is stable as more Yes votes arrive (the Yes count
 only grows). The coordinator never un-commits. -/
 theorem commit_stable_under_more_yes (t : Tally) (h : evaluate t = Decision.commit) :
@@ -216,7 +216,7 @@ theorem commit_stable_under_more_yes (t : Tally) (h : evaluate t = Decision.comm
   simp only
   rw [if_pos (by omega)]
 
-/-- **`decision_total` (PROVED).** `evaluate` always returns exactly one of the three decisions —
+/-- **`decision_total`.** `evaluate` always returns exactly one of the three decisions —
 it is total and never gets stuck. (The running `receive_vote` returns `Some(decision)` on a terminal
 verdict and `None` (Pending) otherwise — `atomic.rs:537-542`.) -/
 theorem decision_total (t : Tally) :
@@ -231,7 +231,7 @@ theorem decision_total (t : Tally) :
 
 /-! ## 6. UNANIMOUS THRESHOLD = TRUE ALL-OR-NONE (bridge to EntangledJoint). -/
 
-/-- **`unanimous_commit_iff_all_yes` (PROVED).** With `threshold = n` (the EntangledJoint /
+/-- **`unanimous_commit_iff_all_yes`.** With `threshold = n` (the EntangledJoint /
 `entangled_diff.rs:283` setting), Commit holds iff ALL `n` participants voted Yes. So the 2PC commit
 gate IS unanimity — exactly the condition under which `EntangledJoint.jointApplyAll` applies the
 whole forest all-or-none. -/
@@ -246,7 +246,7 @@ theorem unanimous_commit_iff_all_yes (t : Tally) (hwf : t.wf) (huni : t.threshol
     unfold evaluate
     rw [if_pos (by omega)]
 
-/-- **`unanimous_one_no_aborts` (PROVED).** With `threshold = n`, a SINGLE No vote (and the rest
+/-- **`unanimous_one_no_aborts`.** With `threshold = n`, a SINGLE No vote (and the rest
 not-yet-Yes) makes the threshold unreachable — the decision can only be Abort or Pending, NEVER
 Commit. So under unanimity any dissent kills the joint turn: the all-or-none of EntangledJoint at the
 decision layer. -/

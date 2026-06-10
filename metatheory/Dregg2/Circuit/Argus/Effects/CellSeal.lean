@@ -5,7 +5,7 @@ welded into the Argus IR, as a FULL-STATE `Surface2` weld.
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated it
 on transfer/mint/burn/createEscrow. `Effects/BalanceA.lean` then welded a per-component effect to its
 genuine standalone v2 `Surface2` descriptor (`balanceA_full_sound`), concluding the WHOLE 17-field
-post-state. This module follows that STRONGER `BalanceA` surface for the genuinely different LIFECYCLE
+post-state. This module follows that STRONGER `BalanceA` surface for the different LIFECYCLE
 primitive `cellSealA`, in a disjoint file (it imports the Argus IR + the audited `cellSealA` v2 instance +
 the independent lifecycle spec, all read-only, and owns only its own declarations).
 
@@ -56,7 +56,7 @@ the INDEPENDENT `cellSeal_iff_spec` (executor ⟺ spec, BOTH directions). This i
 `BalanceA` surface (whole-state full-function digest), not the per-cell EffectVM/`cellProj` surface
 transfer/delegate live on.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the
 whole-function-digest assumption enters ONLY inside the reused `cellSealA_full_sound` (its
@@ -151,7 +151,7 @@ The standalone cellSeal descriptor (§4) is keyed on the CHAINED executor `cellS
 actor cell`. The §2 cornerstone is over the KERNEL side only. The chained layer is exactly the §2 kernel flip
 PLUS the runtime receipt-log prepend `cellLifecycleReceipt actor cell :: s.log` — the runtime piece the
 `RecordKernelState`-level `interp` structurally cannot emit. We bridge faithfully, naming the receipt-row
-prepend EXPLICITLY in the chained post-state (the honest kernel-vs-runtime divergence — NOT papered). -/
+prepend EXPLICITLY in the chained post-state (the kernel-vs-runtime divergence). -/
 
 /-- **`interp_cellSealStmt_chained` — the IR term's KERNEL executor, lifted to the chained `execFullA`.**
 When the §2 cornerstone commits on the kernel (`interp (cellSealStmt actor cell) s.kernel = some k'`), the
@@ -251,7 +251,7 @@ theorem cellSeal_compile_sound
 
 #assert_axioms cellSeal_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely SEALS the cell (lifecycle flip observable), preserves every
+/-! ## §5 — NON-VACUITY: the IR term SEALS the cell (lifecycle flip observable), preserves every
 other field (frame), and the gate REJECTS forged / non-Live inputs (fail-closed).
 
 The cornerstone/weld would be hollow if cellSeal never committed, if the flip were a no-op, or if the gate
@@ -268,14 +268,14 @@ def kS0 : RecordKernelState :=
     bal := fun _ _ => 0 }
 
 /-- **NON-VACUITY (the SEAL is OBSERVABLE).** The committed seal FLIPS cell `0`'s lifecycle discriminant from
-Live (`0`) to Sealed (`1`) — the cell genuinely transitions (the `setLifecycle` flip is real, not a no-op). -/
+Live (`0`) to Sealed (`1`) — the cell transitions (the `setLifecycle` flip is real, not a no-op). -/
 theorem cellSealStmt_seals :
     (interp (cellSealStmt 0 0) kS0).map (fun k => k.lifecycle 0) = some 1 := by
   rw [interp_cellSealStmt_eq_kernel]
   decide
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The seal of a Live, self-owned cell COMMITS (`isSome`) — the
-2-conjunct gate genuinely admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
+2-conjunct gate admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
 theorem cellSealStmt_commits :
     (interp (cellSealStmt 0 0) kS0).isSome = true := by
   rw [interp_cellSealStmt_eq_kernel]

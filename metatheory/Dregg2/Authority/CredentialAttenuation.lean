@@ -49,7 +49,7 @@ This module gives that clearance its lattice and proves the headline:
   attenuation step amplifies authority — over the REAL structured clearance, not a flat set.
 * **`chain_narrows` (n>1)** — along a delegation chain `[c₀ ← c₁ ← … ← cₙ]` of `n` credentials each
   derived from the previous by `attenuate`, the leaf credential `cₙ` admits ⊆ the root `c₀` admits.
-  This is the genuinely multi-party statement: `n` independent delegates, authority shrinking at every
+  This is the multi-party statement: `n` independent delegates, authority shrinking at every
   hand-off, the leaf bounded by the root. Stated and proved for arbitrary chain length.
 * **teeth** — an *amplifying* restriction (one that claims an action mask, a window, or a user the
   parent withheld) is NOT expressible as an `attenuate` of the parent, and a forged step is rejected.
@@ -62,15 +62,14 @@ action-mask narrowing at the clearance layer IS a non-amplifying capability gran
 layer. So the credential-attenuation algebra here is the same `is_attenuation(held, granted)` the
 verified executor enforces — not a parallel toy.
 
-## §8 honest crypto boundary (NEVER faked)
-
+## §8 honest crypto boundary 
 The clearance *algebra* — that the narrowing meet only shrinks authority — is PROVED here outright; it
 needs no cryptographic assumption. What needs the assumption is **integrity**: that a derived
 credential presented to a verifier really IS an `attenuate` of the parent and was not fabricated with a
 wider clearance. That binding is the HMAC chain of `Authority.CaveatChain` (macaroons) / the signature
 chain of `Authority.BiscuitGraph` (biscuits). We do NOT re-prove HMAC/ed25519 secure; we expose the
 SAME `CaveatChain.MacKernel.unforgeable` carrier as the named assumption and route the integrity
-statement through it. The honest split: **narrowing is a theorem; non-forgeability is a named
+statement through it. The split: **narrowing is a theorem; non-forgeability is a named
 assumption discharged by the real keyed-hash / signature, provably FALSE on a collapsing oracle.**
 
 Pure, computable, `#eval`-able.
@@ -343,7 +342,7 @@ theorem amplification_impossible (c : Clearance) (r : Request) (hden : c.admits 
 
 /-- **`order_discriminates` (TEETH — the order is not vacuous).** A clearance with a WIDER mask is NOT
 `≼` one with a narrower mask: `{read,write} ⊄ {read}` so the `≼` mask clause fails. So the order
-genuinely rejects an amplification; it is not `True`. -/
+rejects an amplification; it is not `True`. -/
 theorem order_discriminates :
     ¬ ( ({ mask := {read, write}, window := Window.unbounded, confined? := false, subjects := ∅ }
             : Clearance)
@@ -358,7 +357,7 @@ theorem order_discriminates :
 A real credential is delegated through a *chain* of holders: the issuer mints the root, the holder
 attenuates and hands to a sub-delegate, who attenuates again, and so on. We model the chain as a list
 of restrictions `δs` applied left-to-right from a root clearance; the resulting leaf is bounded by the
-root. This is the genuinely **multi-party** (n>1) statement — `n` delegates, authority narrowing at
+root. This is the **multi-party** (n>1) statement — `n` delegates, authority narrowing at
 EVERY hand-off, the leaf's admitted set ⊆ the root's. (Single-machine n=1 is the degenerate `δs = []`,
 which gives `c ≼ c` — scales-to-zero, not the target; the content is the chain.) -/
 
@@ -461,7 +460,7 @@ theorem clearance_attenuation_is_exec_nonamplifying
 /-! ## §11 — §8 INTEGRITY BOUNDARY: narrowing is proved; non-forgery is the named MAC assumption.
 
 The narrowing above is unconditional. The thing that needs the carried crypto assumption is that a
-credential a verifier RECEIVES is genuinely an `attenuate` of the issuer's root — i.e. the caveat list
+credential a verifier RECEIVES is an `attenuate` of the issuer's root — i.e. the caveat list
 binding the clearance was not forged with a wider mask/window. That binding is the macaroon HMAC chain
 (`Authority.CaveatChain`). We do NOT re-prove HMAC; we reuse `CaveatChain.MacKernel.unforgeable` as the
 SAME named assumption, and state the integrity reduction relative to it. The clearance is recovered
@@ -539,12 +538,12 @@ def lateReq : Request := { user := 42, action := read, time := 2000 }
 -- The amplification tooth, computed: the leaf NEVER admits what it dropped.
 #guard leafCred.admits writeReq == false
 
-/-- **`leaf_narrows_root` (the demo keystone, n=3, PROVED).** The leaf credential after two hand-offs
+/-- **`leaf_narrows_root` (the demo keystone, n=3).** The leaf credential after two hand-offs
 admits ⊆ the root: instantiates `chain_narrows` on the concrete three-party chain. -/
 theorem leaf_narrows_root (r : Request) (h : leafCred.admits r = true) : rootCred.admits r = true :=
   chain_narrows rootCred [toHolder, toSubDelegate] r h
 
-/-- **`leaf_drops_write` (demo tooth, PROVED).** The leaf credential admits NO write request, however
+/-- **`leaf_drops_write` (demo tooth).** The leaf credential admits NO write request, however
 the user/time — write was attenuated away and `amplification_impossible` forbids adding it back. -/
 theorem leaf_drops_write (r : Request) (hw : r.action = write) : leafCred.admits r = false := by
   -- the leaf's effective mask is {read} (the second hand-off `toSubDelegate` dropped write); a write

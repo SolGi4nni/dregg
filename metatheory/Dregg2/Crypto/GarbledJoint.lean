@@ -99,7 +99,7 @@ theorem garbled_input_private (K : GarbledKernel A B) (a : A) (b : B) :
     (K.eval (K.garble a) b).2 = K.simulator (K.P a b) := by
   rw [K.private_sim a b, K.correct a b]
 
-/-- **`garbled_input_private_indistinguishable` — same-outcome ⇒ same-transcript (PROVED).** If two
+/-- **`garbled_input_private_indistinguishable` — same-outcome ⇒ same-transcript.** If two
 input pairs `(a₁,b₁)` and `(a₂,b₂)` agree on the predicate's outcome, party-b's transcript is
 IDENTICAL across them. This is the sharpest privacy tooth: a different secret with the same result is
 unobservable — exactly `test_prover_cannot_learn_threshold`. -/
@@ -153,7 +153,7 @@ def PrivateJointGate.admits (g : PrivateJointGate A B) : Bool :=
 def PrivateJointGate.transcript (g : PrivateJointGate A B) : g.K.Transcript :=
   (g.K.eval (g.K.garble g.a) g.b).2
 
-/-- **`joint_turn_private_gate` — THE WELD (PROVED).** For a joint turn guarded by a `GarbledKernel`
+/-- **`joint_turn_private_gate` — THE WELD.** For a joint turn guarded by a `GarbledKernel`
 predicate over both cells' private state:
 
 1. **admission ⇔ the joint condition:** the gate admits IFF `P a b` holds — the two cells transition
@@ -184,7 +184,7 @@ theorem joint_turn_private_gate (g : PrivateJointGate A B) :
     intro k k' h l hmem
     exact jointApplyAll_atomic g.jt.legs k k' h l hmem
 
-/-- **`private_gate_reveals_only_outcome` — the ANTI-GHOST privacy tooth (PROVED).** Under a FIXED
+/-- **`private_gate_reveals_only_outcome` — the ANTI-GHOST privacy tooth.** Under a FIXED
 garbled scheme `K`, two private input pairs `(a₁,b₁)` and `(a₂,b₂)` that reach the SAME admission
 outcome expose IDENTICAL transcripts — even with entirely different private inputs. An observer in
 party-b's seat cannot tell which secret pair produced an admission: the only thing the gate discloses
@@ -222,7 +222,7 @@ def geKernel : GarbledKernel ℕ ℕ where
 example : geKernel.P 100 150 = true := by decide
 
 /-- Non-vacuity (REJECTION tooth): the reference kernel rejects `b = 50 < a = 100` — `P` fires
-false. So the carrier is not vacuously-admitting; the gate genuinely discriminates. -/
+false. So the carrier is not vacuously-admitting; the gate discriminates. -/
 example : geKernel.P 100 50 = false := by decide
 
 /-- Non-vacuity (CORRECTNESS welded): evaluation yields exactly `P a b`. -/

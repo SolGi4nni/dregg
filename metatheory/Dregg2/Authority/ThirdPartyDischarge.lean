@@ -37,7 +37,7 @@ FAITHFULLY MODELED (the protocol logic, grounded above):
   - the three-conjunct acceptance gate (fresh ∧ chain-valid ∧ bound-to-the-right-parent);
   - the TEETH: a replayed (stale) discharge and a cross-bound (wrong-parent) discharge are REJECTED.
 
-§8 PROP-PORTAL (NEVER faked as proved — `dregg2 §8`, like `CryptoKernel`):
+§8 PROP-PORTAL (carried as a hypothesis — `dregg2 §8`, like `CryptoKernel`):
   - the AEAD `seal`/`unseal` (XChaCha20-Poly1305, `macaroon/src/crypto.rs:5-8,59-61`) and the
     keyed hash `hmac_sha256` / `binding_hash = SHA256` are **uninterpreted opaque functions**
     with only the laws an honest impl satisfies (correctness of unseal∘seal; the keyed hash is a
@@ -171,7 +171,7 @@ def replayTail (r : Bytes) (nonceBytes : Bytes) (cs : List (DCaveat Ctx)) : Byte
 def bindCaveat (parentTail : Bytes) : DCaveat Ctx :=
   .bindToParent (bindingHash parentTail)
 
-/-- **`mintDischarge`** — the 3P honestly mints a discharge bound to `parentTail`
+/-- **`mintDischarge`** — the 3P mints a discharge bound to `parentTail`
 (`create_discharge` then `bind_discharge`): key `r`, timestamp `createdAt`, the 3P's own enforced
 caveats `cs`, then append the bind caveat, computing the tail by honest replay. -/
 def mintDischarge (r : Bytes) (createdAt : Time) (nonceBytes : Bytes)
@@ -236,12 +236,12 @@ def accepts (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
 
 /-! ## Soundness — acceptance is exactly the four-conjunct gate. -/
 
-/-- **`accepts_iff` (PROVED) — the integrity/soundness law.** A discharge is accepted IFF it
+/-- **`accepts_iff` — the integrity/soundness law.** A discharge is accepted IFF it
 discharges the right ticket (the recovered `r` keys the macaroon), AND binds to the correct parent,
 AND is fresh, AND satisfies the third-party predicate. This is the faithful statement of
 `verify_discharge` (`macaroon.rs:267-332`): there is NO other way to be accepted — no hidden bypass.
 
-(`chainValid` is folded in as the authentication that the body is genuinely keyed by `r`; we expose
+(`chainValid` is folded in as the authentication that the body is keyed by `r`; we expose
 it as its own conjunct so the law is the literal protocol gate.) -/
 theorem accepts_iff (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
     (parentTail : Bytes) (ctx : Ctx) (now : Time) :
@@ -268,7 +268,7 @@ theorem accepts_iff (tpc : ThirdPartyCaveat Ctx) (m : DischargeMacaroon Ctx)
 
 /-! ## Completeness — an honestly-minted, fresh, in-context discharge is accepted. -/
 
-/-- **`honest_discharge_accepted` (PROVED).** If the 3P honestly minted the discharge bound to the
+/-- **`honest_discharge_accepted`.** If the 3P minted the discharge bound to the
 parent (`mintDischarge`), the verifier recovers exactly that key from the VID (AEAD correctness:
 `vid = seal(parentTail, r)` so `unseal parentTail vid = some r`), the discharge is fresh and its
 predicate holds, THEN it is accepted. This closes the loop: the honest protocol run succeeds. -/
@@ -323,7 +323,7 @@ theorem unbound_discharge_rejected (tpc : ThirdPartyCaveat Ctx) (m : DischargeMa
   | none => rfl
   | some r => simp [hunbound]
 
-/-- **`cross_bound_rejected` (PROVED) — the SHARP form of the cross-bind teeth.** Suppose `m` was
+/-- **`cross_bound_rejected` — the SHARP form of the cross-bind teeth.** Suppose `m` was
 honestly minted bound to parent `tailA` (`mintDischarge … tailA`), and an attacker presents it
 against a DIFFERENT parent `tailB` whose binding hash differs (`bindingHash tailB ≠ bindingHash tailA`
 — honest, since a collision is exactly the §8 `cryptoSound` carrier we do NOT assume away). Then the
@@ -358,7 +358,7 @@ end Protocol
 
 /-- A trivial REFERENCE crypto kernel for `#eval` ONLY (NOT a soundness claim — `seal` is identity-
 tagged, which is obviously forgeable; it exists solely so the protocol logic is executable). The
-real instance is the Rust FFI (`crypto.rs`). `cryptoSound := False` here HONESTLY records "this toy
+real instance is the Rust FFI (`crypto.rs`). `cryptoSound := False` here records "this toy
 is not sound" — the law statements never depend on `cryptoSound`. -/
 instance refCrypto : DischargeCrypto where
   aeadSeal k m    := 0 :: k.length :: m         -- tag with key length so different keys differ

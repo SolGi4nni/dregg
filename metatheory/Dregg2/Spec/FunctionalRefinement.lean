@@ -198,7 +198,7 @@ def burnGate (k : RecordKernelState) (a : SupplyArgs) : Prop :=
   mintAuthorizedB k.caps a.actor a.cell = true ∧ 0 ≤ a.amt ∧ a.amt ≤ k.bal a.cell a.asset ∧
   a.cell ∈ k.accounts
 
-/-- **THE MINT TRIANGLE (PROVED, FULL BICONDITIONAL).** `mintStep k a = some k'` IFF the mint gate
+/-- **THE MINT TRIANGLE (FULL BICONDITIONAL).** `mintStep k a = some k'` IFF the mint gate
 holds AND `k' = mintSpec k a`. The `→` is output-uniqueness (a commit pins the unique intent
 post-state — the credit lands on EXACTLY cell `a.cell`'s asset `a.asset` column, by EXACTLY `+a.amt`,
 strictly stronger than `recTotalAsset += amt`); the `←` is completeness (the gate suffices). -/
@@ -219,7 +219,7 @@ theorem mint_triangle (k k' : RecordKernelState) (a : SupplyArgs) :
   · rintro ⟨⟨hadm, hauth, hamt, hacc⟩, hk⟩
     rw [if_pos hadm, if_pos ⟨hauth, hamt, hacc⟩, hk, intentCredit_eq_balCredit]
 
-/-- **ANTI-GHOST TOOTH (mint, PROVED).** Any candidate `k'' ≠ mintSpec k a` is REJECTED — a mint
+/-- **ANTI-GHOST TOOTH (mint).** Any candidate `k'' ≠ mintSpec k a` is REJECTED — a mint
 that credited a WRONG amount, the WRONG asset, the WRONG cell, or touched a 2nd column cannot come
 out of `mintStep`. The supply move is pinned to the unique intent post-state. -/
 theorem mint_antighost (k k'' : RecordKernelState) (a : SupplyArgs)
@@ -227,7 +227,7 @@ theorem mint_antighost (k k'' : RecordKernelState) (a : SupplyArgs)
   intro h
   exact hne ((mint_triangle k k'' a).mp h).2
 
-/-- **THE BURN TRIANGLE (PROVED, FULL BICONDITIONAL).** `burnStep k a = some k'` IFF the burn gate
+/-- **THE BURN TRIANGLE (FULL BICONDITIONAL).** `burnStep k a = some k'` IFF the burn gate
 (incl. availability in the burned asset) holds AND `k' = burnSpec k a`. The `→` pins the unique
 intent post-state (the DEBIT lands on EXACTLY cell `a.cell`'s asset `a.asset` column, by EXACTLY
 `-a.amt`); the `←` is completeness. -/
@@ -249,7 +249,7 @@ theorem burn_triangle (k k' : RecordKernelState) (a : SupplyArgs) :
   · rintro ⟨⟨hadm, hauth, hamt, havail, hacc⟩, hk⟩
     rw [if_pos hadm, if_pos ⟨hauth, hamt, havail, hacc⟩, hk, intentDebit_eq_balCredit]
 
-/-- **ANTI-GHOST TOOTH (burn, PROVED).** Any candidate `k'' ≠ burnSpec k a` is REJECTED. -/
+/-- **ANTI-GHOST TOOTH (burn).** Any candidate `k'' ≠ burnSpec k a` is REJECTED. -/
 theorem burn_antighost (k k'' : RecordKernelState) (a : SupplyArgs)
     (hne : k'' ≠ burnSpec k a) : burnStep k a ≠ some k'' := by
   intro h
@@ -278,7 +278,7 @@ to `target`"). The cap installed is `attenuate keep (heldCapTo …)` — the SAM
 def delegateSpec (k : RecordKernelState) (a : DelegateArgs) : RecordKernelState :=
   { k with caps := grant k.caps a.recipient (attenuate a.keep (heldCapTo k.caps a.delegator a.target)) }
 
-/-- **THE DELEGATE TRIANGLE (PROVED, FULL BICONDITIONAL).** `delegateAttenStep k a = some k'` IFF the
+/-- **THE DELEGATE TRIANGLE (FULL BICONDITIONAL).** `delegateAttenStep k a = some k'` IFF the
 Granovetter connectivity premise holds (`delegateGateB` — the delegator already holds a cap conferring
 an edge to `target`) AND `k' = delegateSpec k a`. The `→` pins the UNIQUE resulting cap function (the
 recipient gains EXACTLY the attenuated held cap, and NO other slot changes — an over-broad grant, a
@@ -294,7 +294,7 @@ theorem delegate_triangle (k k' : RecordKernelState) (a : DelegateArgs) :
     · rw [if_neg hg] at h; exact absurd h (by simp)
   · rintro ⟨hg, hk⟩; rw [if_pos hg, hk]
 
-/-- **ANTI-GHOST TOOTH (delegate, PROVED).** Any candidate `k'' ≠ delegateSpec k a` is REJECTED — the
+/-- **ANTI-GHOST TOOTH (delegate).** Any candidate `k'' ≠ delegateSpec k a` is REJECTED — the
 delegation commits EXACTLY the attenuated-held-cap grant; an over-broad cap edge, a grant to the wrong
 target/recipient, or a touched 2nd slot cannot come out of `delegateAttenStep`. -/
 theorem delegate_antighost (k k'' : RecordKernelState) (a : DelegateArgs)
@@ -309,7 +309,7 @@ idx-th held cap to `keep`"). -/
 def attenuateSpec (k : RecordKernelState) (a : AttenuateArgs) : RecordKernelState :=
   { k with caps := attenuateSlotF k.caps a.actor a.idx a.keep }
 
-/-- **THE ATTENUATE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `attenuateStep` ALWAYS commits
+/-- **THE ATTENUATE TRIANGLE (TOTAL, output-uniqueness).** `attenuateStep` ALWAYS commits
 (self-attenuation cannot fail — at worst the identity, still narrower-or-equal), so the gate is
 trivially `true`; the load-bearing content is the `↔`: `attenuateStep k a = some k'` IFF
 `k' = attenuateSpec k a`. The output is the UNIQUE intent post-state (the actor's own `idx`-th cap
@@ -321,7 +321,7 @@ theorem attenuate_triangle (k k' : RecordKernelState) (a : AttenuateArgs) :
   · intro h; simp only [Option.some.injEq] at h; exact h.symm
   · intro hk; rw [hk]
 
-/-- **ANTI-GHOST TOOTH (attenuate, PROVED).** Any candidate `k'' ≠ attenuateSpec k a` is REJECTED —
+/-- **ANTI-GHOST TOOTH (attenuate).** Any candidate `k'' ≠ attenuateSpec k a` is REJECTED —
 the only thing `attenuateStep` ever commits is the in-place narrowing of the actor's `idx`-th cap; a
 ghost that widened the cap, narrowed the WRONG slot, or touched another cell is excluded. -/
 theorem attenuate_antighost (k k'' : RecordKernelState) (a : AttenuateArgs)
@@ -352,7 +352,7 @@ theorem recKRevokeTarget_eq_spec (k : RecordKernelState) (a : RevokeArgs) :
     recKRevokeTarget k a.holder a.target = revokeSpec k a := by
   unfold recKRevokeTarget revokeSpec revokeTargetCaps; rfl
 
-/-- **THE REVOKE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `revokeStep` ALWAYS commits
+/-- **THE REVOKE TRIANGLE (TOTAL, output-uniqueness).** `revokeStep` ALWAYS commits
 (revocation cannot fail — at worst the identity), so the gate is trivially `true`; the load-bearing
 content is the `↔`: `revokeStep k a = some k'` IFF `k' = revokeSpec k a`. The output is the UNIQUE
 intent post-state (the holder's `target`-conferring caps filtered out, NO other slot touched). -/
@@ -364,7 +364,7 @@ theorem revoke_triangle (k k' : RecordKernelState) (a : RevokeArgs) :
     rw [← h, recKRevokeTarget_eq_spec]
   · intro hk; rw [hk, recKRevokeTarget_eq_spec]
 
-/-- **ANTI-GHOST TOOTH (revoke, PROVED).** Any candidate `k'' ≠ revokeSpec k a` is REJECTED — the
+/-- **ANTI-GHOST TOOTH (revoke).** Any candidate `k'' ≠ revokeSpec k a` is REJECTED — the
 revoke commits EXACTLY the filtered cap function; a ghost that KEPT a `target`-conferring cap (an
 incomplete revoke), filtered the WRONG holder, or dropped extra caps is excluded. -/
 theorem revoke_antighost (k k'' : RecordKernelState) (a : RevokeArgs)
@@ -388,7 +388,7 @@ commitment"), NOT from `noteCreateCommitment`. -/
 def noteCreateSpec (k : RecordKernelState) (cm : Nat) : RecordKernelState :=
   { k with commitments := cm :: k.commitments }
 
-/-- **THE NOTE-CREATE TRIANGLE (PROVED — TOTAL, output-uniqueness).** `noteCreateCommitment` ALWAYS
+/-- **THE NOTE-CREATE TRIANGLE (TOTAL, output-uniqueness).** `noteCreateCommitment` ALWAYS
 commits (a fresh commitment cannot conflict — the grow-only dual of the nullifier set), so the content
 is the `↔`: `noteCreateCommitment k cm = k'` IFF `k' = noteCreateSpec k cm`. The output is the UNIQUE
 intent post-state (the commitment set grows by EXACTLY `cm`, nothing else moves). -/
@@ -399,7 +399,7 @@ theorem noteCreate_triangle (k k' : RecordKernelState) (cm : Nat) :
   · intro h; exact h.symm
   · intro hk; rw [hk]
 
-/-- **ANTI-GHOST TOOTH (noteCreate, PROVED).** Any candidate `k'' ≠ noteCreateSpec k cm` is REJECTED —
+/-- **ANTI-GHOST TOOTH (noteCreate).** Any candidate `k'' ≠ noteCreateSpec k cm` is REJECTED —
 noteCreate commits EXACTLY the front-insert of `cm`; a ghost that inserted the WRONG commitment, moved
 `bal`/`nullifiers`/`escrows`, or dropped an existing commitment is excluded. -/
 theorem noteCreate_antighost (k k'' : RecordKernelState) (cm : Nat)
@@ -414,7 +414,7 @@ double-spend); the spec is only reached when the gate holds. -/
 def noteSpendSpec (k : RecordKernelState) (nf : Nat) : RecordKernelState :=
   { k with nullifiers := nf :: k.nullifiers }
 
-/-- **THE NOTE-SPEND TRIANGLE (PROVED, FULL BICONDITIONAL).** `noteSpendNullifier k nf = some k'` IFF
+/-- **THE NOTE-SPEND TRIANGLE (FULL BICONDITIONAL).** `noteSpendNullifier k nf = some k'` IFF
 the nullifier is FRESH (`nf ∉ k.nullifiers` — the no-double-spend gate) AND `k' = noteSpendSpec k nf`.
 The `→` pins the UNIQUE intent post-state (the nullifier set grows by EXACTLY `nf`) AND surfaces the
 freshness gate; the `←` is completeness (a fresh nullifier commits its spend). -/
@@ -439,7 +439,7 @@ theorem noteSpend_antighost (k k'' : RecordKernelState) (nf : Nat)
   intro h
   exact hne ((noteSpend_triangle k k'' nf).mp h).2
 
-/-- **NO DOUBLE-SPEND (PROVED, the anti-ghost's second face).** An already-spent nullifier cannot be
+/-- **NO DOUBLE-SPEND (the anti-ghost's second face).** An already-spent nullifier cannot be
 spent again — `noteSpendNullifier` fails-closed `none`. So NO post-state (ghost or not) commits a
 double-spend. -/
 theorem noteSpend_double_spend_rejected (k k'' : RecordKernelState) (nf : Nat)
@@ -567,7 +567,7 @@ def stateWriteGate (k : RecordKernelState) (a : StateWriteArgs) : Prop :=
   acceptsEffects k a.target = true ∧
   authorizedB k.caps { actor := a.actor, src := a.target, dst := a.target, amt := 0 } = true
 
-/-- **THE PURE-STATE-WRITE TRIANGLE (PROVED, FULL BICONDITIONAL).** `stateWriteStep k a = some k'` IFF
+/-- **THE PURE-STATE-WRITE TRIANGLE (FULL BICONDITIONAL).** `stateWriteStep k a = some k'` IFF
 the write gate (live cell + self-authority) holds AND `k' = stateWriteSpec k a`. The `→` is
 output-uniqueness (a commit pins the unique intent post-state — EXACTLY field `a.field` of cell
 `a.target` set to `a.value`, no other cell/field/component moved); the `←` is completeness. Covers
@@ -586,7 +586,7 @@ theorem stateWrite_triangle (k k' : RecordKernelState) (a : StateWriteArgs) :
   · rintro ⟨⟨hlive, hauth⟩, hk⟩
     rw [if_pos (by simp [hlive, hauth]), hk]
 
-/-- **ANTI-GHOST TOOTH (pure-state write, PROVED).** Any candidate `k'' ≠ stateWriteSpec k a` is
+/-- **ANTI-GHOST TOOTH (pure-state write).** Any candidate `k'' ≠ stateWriteSpec k a` is
 REJECTED — the write commits EXACTLY the named-field update; a ghost that wrote the WRONG field, the
 WRONG cell, the WRONG value, moved `bal`/`caps`, or touched a 2nd cell cannot come out of
 `stateWriteStep`. -/
@@ -602,7 +602,7 @@ its post-state is FULLY transparent on `k.cell`. Reading the code, it REPLACES e
 record with the commitment-only literal `.record [(commitmentField, .dig (stateCommitment (k.cell
 target)))]`, leaving EVERY OTHER cell's record and ALL other `RecordKernelState` fields
 (`bal`/`accounts`/`caps`/`commitments`/`nullifiers`/lifecycle/…) literally
-untouched. The ONLY genuinely-irreducible carrier inside is the SCALAR digest `stateCommitment (k.cell
+untouched. The ONLY irreducible carrier inside is the SCALAR digest `stateCommitment (k.cell
 target)` (the §8 commitment hash of the old record — a structural Nat fold). So we write the spec
 TRANSPARENTLY as an explicit `{ k with cell := <commitment-only stub at target, prior cells elsewhere> }`
 construction from intent, with the digest entering as `stateCommitment` (the named commitment carrier),
@@ -629,7 +629,7 @@ def makeSovereignGate (k : RecordKernelState) (a : MakeSovereignArgs) : Prop :=
   acceptsEffects k a.target = true ∧
   authorizedB k.caps { actor := a.actor, src := a.target, dst := a.target, amt := 0 } = true
 
-/-- **The executor's `makeSovereignKernel` realizes the TRANSPARENT intent post-state — PROVED.** An
+/-- **The executor's `makeSovereignKernel` realizes the TRANSPARENT intent post-state.** An
 independent-function equality (the escrow/revoke pattern): the executor rebinds `k.cell` via
 `sovereignRebind` (commitment-only literal at `target`, prior cells elsewhere); the spec installs the
 `sovereignStub` at `target`, prior cells elsewhere. EQUAL — proving the drop lands on EXACTLY `target`,
@@ -639,11 +639,11 @@ theorem makeSovereignKernel_eq_spec (k : RecordKernelState) (a : MakeSovereignAr
     makeSovereignKernel k a.target = makeSovereignSpec k a := by
   unfold makeSovereignKernel makeSovereignSpec sovereignRebind sovereignStub; rfl
 
-/-- **THE MAKE-SOVEREIGN TRIANGLE (PROVED, FULL BICONDITIONAL — against the TRANSPARENT spec).**
+/-- **THE MAKE-SOVEREIGN TRIANGLE (FULL BICONDITIONAL — against the TRANSPARENT spec).**
 `makeSovereignStepK k a = some k'` IFF the gate (live cell + self-authority) holds AND `k' =
 makeSovereignSpec k a`. The `→` pins the unique TRANSPARENT post-state (EXACTLY `target`'s record
 replaced by the commitment-only stub, no other cell/field moved); the `←` is completeness. The anti-ghost
-tooth genuinely bites: a candidate leaving the record readable, or dropping a different cell, is excluded. -/
+tooth bites: a candidate leaving the record readable, or dropping a different cell, is excluded. -/
 theorem makeSovereign_triangle (k k' : RecordKernelState) (a : MakeSovereignArgs) :
     makeSovereignStepK k a = some k' ↔ (makeSovereignGate k a ∧ k' = makeSovereignSpec k a) := by
   unfold makeSovereignStepK makeSovereignGate
@@ -658,7 +658,7 @@ theorem makeSovereign_triangle (k k' : RecordKernelState) (a : MakeSovereignArgs
   · rintro ⟨⟨hlive, hauth⟩, hk⟩
     rw [if_pos (by simp [hlive, hauth]), hk, makeSovereignKernel_eq_spec]
 
-/-- **ANTI-GHOST TOOTH (make-sovereign, PROVED).** Any candidate `k'' ≠ makeSovereignSpec k a` is
+/-- **ANTI-GHOST TOOTH (make-sovereign).** Any candidate `k'' ≠ makeSovereignSpec k a` is
 REJECTED — the make-sovereign commits EXACTLY the commitment-rebind of `target`; a ghost that left the
 record readable, rebound the WRONG cell, or moved a 2nd component cannot come out of
 `makeSovereignStepK`. -/
@@ -691,7 +691,7 @@ Destroyed (no re-destroy). -/
 def cellDestroyGate (k : RecordKernelState) (a : CellDestroyArgs) : Prop :=
   stateAuthB k.caps a.actor a.cell = true ∧ (k.lifecycle a.cell != lcDestroyed) = true
 
-/-- **THE CELL-DESTROY TRIANGLE (PROVED, FULL BICONDITIONAL).** `cellDestroyStep k a = some k'` IFF the
+/-- **THE CELL-DESTROY TRIANGLE (FULL BICONDITIONAL).** `cellDestroyStep k a = some k'` IFF the
 gate (self-authority + non-terminal) holds AND `k' = cellDestroySpec k a`. The `→` pins the unique
 intent post-state (EXACTLY the destroy flip + death-cert bind on cell `a.cell`); the `←` is
 completeness. -/
@@ -708,7 +708,7 @@ theorem cellDestroy_triangle (k k' : RecordKernelState) (a : CellDestroyArgs) :
   · rintro ⟨⟨hauth, hlc⟩, hk⟩
     rw [if_pos (by simp [hauth, hlc]), hk]
 
-/-- **ANTI-GHOST TOOTH (cell destroy, PROVED).** Any candidate `k'' ≠ cellDestroySpec k a` is REJECTED —
+/-- **ANTI-GHOST TOOTH (cell destroy).** Any candidate `k'' ≠ cellDestroySpec k a` is REJECTED —
 the destroy commits EXACTLY the Destroyed flip + death-cert bind; a ghost that left the cell Live, bound
 the WRONG cert, or touched another cell cannot come out of `cellDestroyStep`. -/
 theorem cellDestroy_antighost (k k'' : RecordKernelState) (a : CellDestroyArgs)
@@ -723,12 +723,12 @@ delegation table"), NOT from `refreshDelegationStep`. -/
 def refreshDelegationSpec (k : RecordKernelState) (a : RefreshDelegationArgs) : RecordKernelState :=
   { k with delegations := fun c => if c = a.child then parentClist k a.child else k.delegations c }
 
-/-- The refresh-delegation gate: the actor holds self-authority over the child AND the child genuinely
+/-- The refresh-delegation gate: the actor holds self-authority over the child AND the child
 has a parent (`delegate child` is `some`). -/
 def refreshDelegationGate (k : RecordKernelState) (a : RefreshDelegationArgs) : Prop :=
   stateAuthB k.caps a.actor a.child = true ∧ (k.delegate a.child).isSome = true
 
-/-- **THE REFRESH-DELEGATION TRIANGLE (PROVED, FULL BICONDITIONAL).** `refreshDelegationStep k a =
+/-- **THE REFRESH-DELEGATION TRIANGLE (FULL BICONDITIONAL).** `refreshDelegationStep k a =
 some k'` IFF the gate (self-authority + parent-exists) holds AND `k' = refreshDelegationSpec k a`. The
 `→` pins the unique intent post-state (EXACTLY the child's delegation slot overwritten with the parent's
 current c-list); the `←` is completeness. -/
@@ -745,7 +745,7 @@ theorem refreshDelegation_triangle (k k' : RecordKernelState) (a : RefreshDelega
   · rintro ⟨⟨hauth, hdel⟩, hk⟩
     rw [if_pos (by simp [hauth, hdel]), hk]
 
-/-- **ANTI-GHOST TOOTH (refresh delegation, PROVED).** Any candidate `k'' ≠ refreshDelegationSpec k a`
+/-- **ANTI-GHOST TOOTH (refresh delegation).** Any candidate `k'' ≠ refreshDelegationSpec k a`
 is REJECTED — the refresh commits EXACTLY the parent-c-list snapshot into the child's slot; a ghost that
 snapshotted a STALE c-list, the WRONG child, or touched another component cannot come out of
 `refreshDelegationStep`. -/
@@ -784,7 +784,7 @@ AND the id is FRESH (`newCell ∉ accounts`). -/
 def createCellGate (k : RecordKernelState) (a : CreateArgs) : Prop :=
   mintAuthorizedB k.caps a.actor a.newCell = true ∧ a.newCell ∉ k.accounts
 
-/-- **THE CREATE-CELL TRIANGLE (PROVED, FULL BICONDITIONAL).** `createCellStep k a = some k'` IFF the
+/-- **THE CREATE-CELL TRIANGLE (FULL BICONDITIONAL).** `createCellStep k a = some k'` IFF the
 gate (privileged creator + fresh id) holds AND `k' = createCellSpec k a`. The `→` pins the unique intent
 post-state (EXACTLY the fresh born-empty insert — the new cell appears with a zeroed bal column, no
 existing cell touched); the `←` is completeness. Covers createCell / createCellFromFactory / spawn (all
@@ -802,7 +802,7 @@ theorem createCell_triangle (k k' : RecordKernelState) (a : CreateArgs) :
   · rintro ⟨⟨hauth, hfresh⟩, hk⟩
     rw [if_pos (by simp [hauth, hfresh]), hk]
 
-/-- **ANTI-GHOST TOOTH (create-cell, PROVED).** Any candidate `k'' ≠ createCellSpec k a` is REJECTED —
+/-- **ANTI-GHOST TOOTH (create-cell).** Any candidate `k'' ≠ createCellSpec k a` is REJECTED —
 the create commits EXACTLY the born-empty fresh-cell insert; a ghost that minted the cell with a NON-zero
 balance (a supply-amplification!), re-inserted an EXISTING id, or touched an existing cell cannot come out
 of `createCellStep`. -/
@@ -811,14 +811,14 @@ theorem createCell_antighost (k k'' : RecordKernelState) (a : CreateArgs)
   intro h
   exact hne ((createCell_triangle k k'' a).mp h).2
 
-/-- **THE SPAWN TRIANGLE (PROVED, FULL BICONDITIONAL).** `spawnStep` is definitionally `createCellStep`,
+/-- **THE SPAWN TRIANGLE (FULL BICONDITIONAL).** `spawnStep` is definitionally `createCellStep`,
 so spawn commits EXACTLY the same born-empty growth post-state under the same gate. The supply content
 is the fresh empty child (the cap-copy/delegation-snapshot is bal-orthogonal, carried elsewhere). -/
 theorem spawn_triangle (k k' : RecordKernelState) (a : CreateArgs) :
     spawnStep k a = some k' ↔ (createCellGate k a ∧ k' = createCellSpec k a) :=
   createCell_triangle k k' a
 
-/-- **ANTI-GHOST TOOTH (spawn, PROVED).** Spawn commits EXACTLY the born-empty growth; a child minted
+/-- **ANTI-GHOST TOOTH (spawn).** Spawn commits EXACTLY the born-empty growth; a child minted
 with a non-zero balance (amplification via spawn) is excluded. -/
 theorem spawn_antighost (k k'' : RecordKernelState) (a : CreateArgs)
     (hne : k'' ≠ createCellSpec k a) : spawnStep k a ≠ some k'' :=
@@ -945,7 +945,7 @@ Distinct from `delegateSpec` (§7): introduce copies the FULL held cap; delegate
 def introduceSpec (k : RecordKernelState) (delegator recipient target : CellId) : RecordKernelState :=
   { k with caps := grant k.caps recipient (heldCapTo k.caps delegator target) }
 
-/-- **THE INTRODUCE TRIANGLE (PROVED, FULL BICONDITIONAL).** `recKDelegate k delegator recipient target =
+/-- **THE INTRODUCE TRIANGLE (FULL BICONDITIONAL).** `recKDelegate k delegator recipient target =
 some k'` IFF the Granovetter connectivity premise holds (the delegator already holds a cap conferring an
 edge to `target`) AND `k' = introduceSpec …`. The `→` pins the unique TRANSPARENT cap-graph edit (the
 recipient gains EXACTLY the held cap, no other slot moved); the `←` is completeness. This is the same step
@@ -962,7 +962,7 @@ theorem introduce_triangle (k k' : RecordKernelState) (delegator recipient targe
     · rw [if_neg hg] at h; exact absurd h (by simp)
   · rintro ⟨hg, hk⟩; rw [if_pos hg, hk]
 
-/-- **ANTI-GHOST TOOTH (introduce / validateHandoff, PROVED).** Any candidate `k'' ≠ introduceSpec …` is
+/-- **ANTI-GHOST TOOTH (introduce / validateHandoff).** Any candidate `k'' ≠ introduceSpec …` is
 REJECTED — an introduce that granted an OVER-BROAD cap (more than the held witness), to the WRONG recipient,
 or manufactured a fresh cap is excluded. -/
 theorem introduce_antighost (k k'' : RecordKernelState) (delegator recipient target : CellId)
@@ -978,7 +978,7 @@ def dropRefSpec (k : RecordKernelState) (holder target : CellId) : RecordKernelS
   { k with caps := fun l => if l = holder then (k.caps l).filter (fun cap => ¬ confersEdgeTo target cap)
                             else k.caps l }
 
-/-- **THE DROPREF TRIANGLE (PROVED — TOTAL, output-uniqueness).** `recKRevokeTarget` ALWAYS commits
+/-- **THE DROPREF TRIANGLE (TOTAL, output-uniqueness).** `recKRevokeTarget` ALWAYS commits
 (dropping a reference cannot fail — at worst the identity), so the content is the `↔`: `recKRevokeTarget k
 holder target = k'` IFF `k' = dropRefSpec k holder target`. The output is the UNIQUE TRANSPARENT post-state
 (the holder's `target`-conferring caps filtered out, NO other slot touched). -/
@@ -989,7 +989,7 @@ theorem dropRef_triangle (k k' : RecordKernelState) (holder target : CellId) :
   · intro h; exact h.symm
   · intro hk; rw [hk]
 
-/-- **ANTI-GHOST TOOTH (dropRef, PROVED).** Any candidate `k'' ≠ dropRefSpec k holder target` is
+/-- **ANTI-GHOST TOOTH (dropRef).** Any candidate `k'' ≠ dropRefSpec k holder target` is
 REJECTED — a dropRef that KEPT a `target`-conferring cap (an incomplete drop), filtered the WRONG holder,
 or dropped extra caps is excluded. -/
 theorem dropRef_antighost (k k'' : RecordKernelState) (holder target : CellId)
@@ -1025,7 +1025,7 @@ target"), as the transparent `subTurn` fold, NOT as `exerciseStep`. -/
 def exerciseSpec (k : RecordKernelState) (a : ExerciseArgs) : Option RecordKernelState :=
   subTurn (innerEffects a.inner) k
 
-/-- **THE EXERCISE TRIANGLE (PROVED, FULL BICONDITIONAL — output-uniqueness).** `exerciseStep k a = some
+/-- **THE EXERCISE TRIANGLE (FULL BICONDITIONAL — output-uniqueness).** `exerciseStep k a = some
 k'` IFF the admission gate (`exerciseAdmitB` — the hold-gate AND the R4 facet-mask) holds AND `k' =`
 the inner-forest fold result (`exerciseSpec k a = some k'`). The `→` pins the unique TRANSPARENT post-state
 (EXACTLY the inner sub-turn) AND surfaces the hold-gate + facet-mask discipline; the `←` is completeness.
@@ -1040,7 +1040,7 @@ theorem exercise_triangle (k k' : RecordKernelState) (a : ExerciseArgs) :
     · rw [if_neg hg] at h; exact absurd h (by simp)
   · rintro ⟨hg, hk⟩; rw [if_pos hg]; exact hk
 
-/-- **ANTI-GHOST TOOTH (exercise, PROVED).** Any candidate `k'' ≠` the inner-forest fold result is
+/-- **ANTI-GHOST TOOTH (exercise).** Any candidate `k'' ≠` the inner-forest fold result is
 REJECTED — the exercise commits EXACTLY the sub-turn over the inner forest; a candidate that ran a
 DIFFERENT forest, skipped an inner effect, or edited the cap graph is excluded. Once a commit happens, the
 post-state is pinned to the unique transparent fold. -/

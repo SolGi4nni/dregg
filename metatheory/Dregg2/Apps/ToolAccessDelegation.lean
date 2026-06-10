@@ -170,7 +170,7 @@ The bridge that makes every toolkit theorem about `stateStepGuarded` a theorem a
 theorem setFieldA_is_stateStepGuarded (s : RecChainedState) (actor cell : CellId) (f : FieldName)
     (v : Int) : execFullA s (.setFieldA actor cell f v) = stateStepGuarded s f actor cell v := rfl
 
-/-- **`tool_invocation_commit_iff_admit` — THE HEADLINE INVARIANT (PROVED).** On a mandate cell
+/-- **`tool_invocation_commit_iff_admit` — THE HEADLINE INVARIANT.** On a mandate cell
 carrying the delegated caveats, with the committed counter `c` and the next count `c+1` on the grant's
 grid, the production caveat-gated executor COMMITS the invocation IFF `delegAdmit g now tool c (c+1)`
 (scope ∧ deadline ∧ `c+1 ≤ rateLimit`) AND the worker held authority. A worker can NEVER drive a
@@ -197,7 +197,7 @@ Each is `app_violation_rejected` instantiated at a presentation whose `delegAdmi
 production executor returns `none` — the invocation does not commit. Proven generically (any presentation
 where the relevant conjunct fails), then witnessed concretely in §8. -/
 
-/-- **`tool_invocation_rejected` — the GENERIC tooth (PROVED).** ANY invocation the delegated policy
+/-- **`tool_invocation_rejected` — the GENERIC tooth.** ANY invocation the delegated policy
 rejects (`delegAdmit = false` — over-rate, past-deadline, or out-of-scope) is rejected by the
 production executor: `execFullA (.setFieldA …) = none`. -/
 theorem tool_invocation_rejected (g : Grant) (now tool : Int) (cell worker : CellId)
@@ -212,9 +212,9 @@ theorem tool_invocation_rejected (g : Grant) (now tool : Int) (cell worker : Cel
   exact app_violation_rejected (mandateSpec g now tool cell) s hprog worker (c + 1)
     (by rw [hcur]; exact hold) hnew (by rw [hcur]; exact hbad)
 
-/-- **`tool_invocation_over_rate_rejected` — the RATE tooth (PROVED).** When the counter is already at
+/-- **`tool_invocation_over_rate_rejected` — the RATE tooth.** When the counter is already at
 the granted ceiling (`c = rateLimit`, so `c+1 > rateLimit`), the (N+1)-th invocation is rejected —
-EVEN with the correct tool and inside the deadline. The rate limit is genuinely load-bearing. -/
+EVEN with the correct tool and inside the deadline. The rate limit is load-bearing. -/
 theorem tool_invocation_over_rate_rejected (g : Grant) (cell worker : CellId)
     (s : RecChainedState) (c : Int)
     (hprog : s.kernel.slotCaveats cell = (mandateSpec g g.deadline g.toolId cell).caveats)
@@ -229,9 +229,9 @@ theorem tool_invocation_over_rate_rejected (g : Grant) (cell worker : CellId)
     rw [decide_eq_false_iff_not]; omega
   simp [this]
 
-/-- **`tool_invocation_past_deadline_rejected` — the DEADLINE tooth (PROVED).** An invocation presented
+/-- **`tool_invocation_past_deadline_rejected` — the DEADLINE tooth.** An invocation presented
 after the granted deadline (`now > deadline`) is rejected — EVEN with the correct tool and head-room on
-the rate. The time bound is genuinely load-bearing. -/
+the rate. The time bound is load-bearing. -/
 theorem tool_invocation_past_deadline_rejected (g : Grant) (now : Int) (cell worker : CellId)
     (s : RecChainedState) (c : Int)
     (hprog : s.kernel.slotCaveats cell = (mandateSpec g now g.toolId cell).caveats)
@@ -246,7 +246,7 @@ theorem tool_invocation_past_deadline_rejected (g : Grant) (now : Int) (cell wor
     rw [decide_eq_false_iff_not]; omega
   simp [this]
 
-/-- **`tool_invocation_out_of_scope_rejected` — the SCOPE tooth (PROVED).** An invocation of a tool
+/-- **`tool_invocation_out_of_scope_rejected` — the SCOPE tooth.** An invocation of a tool
 OTHER than the granted `toolId` is rejected — EVEN inside the deadline with head-room. The worker is
 narrowly scoped to a single tool/MCP; it cannot invoke any other under this mandate. -/
 theorem tool_invocation_out_of_scope_rejected (g : Grant) (now tool : Int) (cell worker : CellId)
@@ -270,7 +270,7 @@ caveat-gated metadata write never edits the cap table). So the worker exhausting
 launder value or amplify its authority — exactly the ocap discipline. These lift verbatim through the
 toolkit's `app_commit_*` carriers via the `setFieldA = stateStepGuarded` bridge. -/
 
-/-- **`tool_invocation_conserves` (PROVED).** A committed tool invocation preserves total balance —
+/-- **`tool_invocation_conserves`.** A committed tool invocation preserves total balance —
 the rate counter is not the `balance` field, so incrementing it moves no money. -/
 theorem tool_invocation_conserves (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
@@ -279,7 +279,7 @@ theorem tool_invocation_conserves (cell worker : CellId) (s s' : RecChainedState
   exact app_commit_conserves (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1)
     (by decide : callsMadeSlot ≠ balanceField) h
 
-/-- **`tool_invocation_no_amplify` (PROVED).** A committed tool invocation leaves the authority graph
+/-- **`tool_invocation_no_amplify`.** A committed tool invocation leaves the authority graph
 UNCHANGED — the worker mints / amplifies NO capability by invoking the tool. The ocap non-amplification
 guarantee at the delegation boundary. -/
 theorem tool_invocation_no_amplify (cell worker : CellId) (s s' : RecChainedState) (c : Int)
@@ -288,7 +288,7 @@ theorem tool_invocation_no_amplify (cell worker : CellId) (s s' : RecChainedStat
   rw [setFieldA_is_stateStepGuarded] at h
   exact app_commit_no_amplify (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1) h
 
-/-- **`tool_invocation_authorized` (PROVED).** A committed tool invocation implies the worker held
+/-- **`tool_invocation_authorized`.** A committed tool invocation implies the worker held
 authority over the mandate cell — no unauthorized invocation ever commits. -/
 theorem tool_invocation_authorized (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
@@ -296,8 +296,8 @@ theorem tool_invocation_authorized (cell worker : CellId) (s s' : RecChainedStat
   rw [setFieldA_is_stateStepGuarded] at h
   exact app_commit_authorized (mandateSpec ⟨0,0,0⟩ 0 0 cell) s s' worker (c + 1) h
 
-/-- **`tool_invocation_counts_one` (PROVED).** After a committed invocation, the rate counter reads back
-exactly `c+1` — the call was genuinely metered (the consumption is recorded, not merely permitted). -/
+/-- **`tool_invocation_counts_one`.** After a committed invocation, the rate counter reads back
+exactly `c+1` — the call was metered (the consumption is recorded, not merely permitted). -/
 theorem tool_invocation_counts_one (cell worker : CellId) (s s' : RecChainedState) (c : Int)
     (h : execFullA s (.setFieldA worker cell callsMadeSlot (c + 1)) = some s') :
     fieldOf callsMadeSlot (s'.kernel.cell cell) = c + 1 := by
@@ -427,7 +427,7 @@ WHO side of the delegation, reusing `StarbridgeGated` verbatim (we add NO creden
 def invocationNode (cred : Authorization Dg Pf) (cell worker : CellId) (newCount : Int) : DForest :=
   ⟨ mkAuth cred [], .setFieldA worker cell callsMadeSlot newCount, [] ⟩
 
-/-- **`invocation_forged_rejected` (PROVED).** A tool invocation presented with a FORGED biscuit
+/-- **`invocation_forged_rejected`.** A tool invocation presented with a FORGED biscuit
 credential is rejected by the production gated entry, for EVERY pre-state — the WHO leg fail-closes. -/
 theorem invocation_forged_rejected (cell worker : CellId) (newCount : Int) (s : RecChainedState) :
     execFullForestG s (invocationNode forgedCred cell worker newCount) = none := by
@@ -445,7 +445,7 @@ def invocationNodeRevoked (cred : Authorization Dg Pf) (nul : Nat) (cell worker 
     (newCount : Int) : DForest :=
   ⟨ { mkAuth cred [] with credNul := nul }, .setFieldA worker cell callsMadeSlot newCount, [] ⟩
 
-/-- **`invocation_revoked_rejected` (PROVED).** A tool invocation whose credential nullifier sits in
+/-- **`invocation_revoked_rejected`.** A tool invocation whose credential nullifier sits in
 the COMMITTED revocation registry `s.kernel.revoked` is rejected — for EVERY pre-state and EVERY (even
 genuine) credential. Revocation is immediate (single-machine): a revoked grant cannot invoke the tool. -/
 theorem invocation_revoked_rejected (cred : Authorization Dg Pf) (nul : Nat) (cell worker : CellId)

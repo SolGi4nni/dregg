@@ -67,7 +67,7 @@ preservation and then re-do the IDENTICAL `cellNextA` commit/stay-put case split
 Both `List.Subset` (`⊆`) and `Nat`'s `≤` carry `Trans` instances, so a SINGLE combinator covers every
 shipped crown's one-step obligation. -/
 
-/-- **`cellNextA_carries_rel` (PROVED) — the one-step packager.** Let `R` be any transitive relation
+/-- **`cellNextA_carries_rel` — the one-step packager.** Let `R` be any transitive relation
 on `α`, `proj : RecChainedState → α` a state projection, and `forestGrow` a witness that a committed
 full forest moves `proj` forward along `R` (`R (proj s) (proj s')`). Then a single living-cell step
 preserves the baseline relation `R base (proj ·)`:
@@ -91,7 +91,7 @@ theorem cellNextA_carries_rel {α : Type _} (R : α → α → Prop) [Trans R R 
                exact Trans.trans h (forestGrow s s' cf.1 hc)
   | none    => simp only [Option.getD_none]; exact h
 
-/-- **`livingCellA_carries_rel` (PROVED) — the forever combinator.** The full Hatchery payoff for a
+/-- **`livingCellA_carries_rel` — the forever combinator.** The full Hatchery payoff for a
 monotone field: given a `Trans` relation `R`, a projection `proj`, and a forest-grow witness, ANY
 baseline `R base (proj s)` is preserved at EVERY index of the unbounded adversarial trajectory `trajA s
 sched`, under EVERY schedule. Obtained by feeding `cellNextA_carries_rel` (the one-step obligation) to

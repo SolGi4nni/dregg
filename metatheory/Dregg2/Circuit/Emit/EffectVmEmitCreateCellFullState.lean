@@ -16,7 +16,7 @@ NOTE: the cross-cell `accounts` GROW (the new cell joins the live set) is the TU
 (the "PER-CELL, not cross-cell" boundary), NOT this single-row descriptor; the structural-alloc primitive
 obstruction is proven in `Argus/Effects/CreateCell`. The §RECIPE applied to createCell.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

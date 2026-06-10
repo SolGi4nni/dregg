@@ -53,16 +53,16 @@ carries (`Stmt.lean §A`) are exactly the shapes a two-side-table effect assembl
      executor side (`cellDestroy_iff_spec`, executor ⟺ `CellDestroySpec`) name the SAME
      `CellDestroySpec`, so they PROVABLY agree on the whole state.
 
-## HONEST SURFACE (precise — do NOT over-read)
+## SURFACE (precise — do NOT over-read)
 
   * **Surface = FULL-STATE `CellDestroySpec` (the dual `Surface2` descriptor), NOT the per-cell EffectVM
     row.** A SEPARATE per-cell EffectVM descriptor for cellDestroy exists
     (`EffectVmEmitCellDestroy.cellDestroyVmDescriptor`) — but it carries a REAL nonce-tick divergence
-    (it ticks the runtime row nonce while freezing the economic block) AND it is honestly OFF-ROW for the
+    (it ticks the runtime row nonce while freezing the economic block) AND it is OFF-ROW for the
     whole point of the effect: the lifecycle flip / deathCert bind / receipt are NOT representable as
     EffectVM state-block columns (`cellDestroy_offrow_unenforced`). The destroy SOUNDNESS lives ONLY in
     `cellDestroyA_full_sound` (that module's own header says so). So this weld deliberately targets the
-    DUAL full-state descriptor — the genuinely sound surface — where there is **NO divergence**: the
+    DUAL full-state descriptor — the sound surface — where there is **NO divergence**: the
     dual descriptor freezes the cell record + bal (it touches ONLY `lifecycle`/`deathCert`), exactly as
     `CellDestroySpec` and the executor do. `divergence = none`.
 
@@ -71,7 +71,7 @@ carries (`Stmt.lean §A`) are exactly the shapes a two-side-table effect assembl
     reused `cellDestroyA_full_sound` as named hypotheses — the realizable Poseidon-CR / collision-freeness
     portals — not as fresh axioms in the welded conclusion's statement.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no
 `:= True` vacuity, no `native_decide`, no weakening-that-just-typechecks: the conclusion is the genuine
@@ -239,7 +239,7 @@ theorem interp_cellDestroyStmt_chained
 
 #assert_axioms interp_cellDestroyStmt_chained
 
-/-! ## §4 — NON-VACUITY of the cornerstone: the IR term genuinely DESTROYS (both side-tables move),
+/-! ## §4 — NON-VACUITY of the cornerstone: the IR term DESTROYS (both side-tables move),
 and the gate REJECTS forged inputs (fail-closed).
 
 The cornerstone would be hollow if `cellDestroyStmt` never committed, if the writes were no-ops, or if the
@@ -382,7 +382,7 @@ theorem cellDestroy_compile_sound
 
 /-! ## §6 — NON-VACUITY of the WELD: cellDestroy's dual circuit is the GENUINE full-state descriptor (the
 two touched components are the WHOLE `lifecycle`/`deathCert` functions, NOT placeholders), and the welded
-executor side genuinely commits.
+executor side commits.
 
 The weld would be hollow if `cellDestroyE` were an inert descriptor (e.g. the `cellDestroyEWire` emission
 stub whose components are `fun _ => 0`), or if `cellDestroyStmt` never committed. We pin both: the witness
@@ -392,7 +392,7 @@ active components are the genuine full-`lifecycle`/full-`deathCert` `funcCompone
 
 /-- **`cellDestroyStmt_commits_on_witness` — the welded executor side is REALIZABLE (not vacuous).** On the
 witness kernel `kCD` (§4) wrapped as a chained state, the IR term COMMITS — so `cellDestroy_compile_sound`'s
-`hexec` hypothesis is satisfiable, and the weld is about a circuit whose executor side genuinely fires (the
+`hexec` hypothesis is satisfiable, and the weld is about a circuit whose executor side fires (the
 destroy really happens: cell `0` → Destroyed, cert `42` bound). -/
 theorem cellDestroyStmt_commits_on_witness :
     (interp (cellDestroyStmt 0 0 42) kCD).isSome = true := by
@@ -404,7 +404,7 @@ WHOLE functions (not the `fun _ => 0` emission stub).** The two active component
 real per-state FULL-FUNCTION agreements against `destroyKernelMap` — i.e. for any encoded post the clause
 says the WHOLE post-`lifecycle`/`deathCert` function EQUALS the destroy map's (a `funcComponent` digests the
 entire function, so its `postClause` is plain function equality, the strongest per-field binding). This is
-the anti-placeholder tooth: `cellDestroy_compile_sound` welds against a descriptor that genuinely pins both
+the anti-placeholder tooth: `cellDestroy_compile_sound` welds against a descriptor that pins both
 side-table FUNCTIONS, not a `True`-stubbed one (contrast `cellDestroyEWire`, whose `postClause` is `True`). -/
 theorem cellDestroyE_components_are_full_functions
     (DLif : (CellId → Nat) → ℤ) (hDLif : Function.Injective DLif)

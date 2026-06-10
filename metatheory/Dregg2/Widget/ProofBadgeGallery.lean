@@ -36,14 +36,14 @@ rows come back GREEN — that is the honest outcome, and the gallery proves it f
 
 ## On the amber (`carrierBounded`) tier — the faithful story
 
-The spec asks for a carrier-bounded theorem *"if you can find one."* The honest finding, verified against
+The spec asks for a carrier-bounded theorem *"if you can find one."* The finding, verified against
 the whole `Dregg2/**` tree this session: **there is no real dregg theorem at `carrierBounded`**, by design.
 dregg's §8 crypto/authority carriers are entered as **`opaque` definitions / typeclass hypotheses** (the
 `*Extern` opaques in `Crypto/PortalFloor.lean`, the `AuthPortal.soundness` class fields), *never* as
 `axiom`-keyword constants — so `collectAxioms` never books them, and a faithful dregg proof lands GREEN, not
 amber. (Grep confirms: zero `axiom`-keyword carriers in the tree; every `*Extern` is `opaque`.) The amber
 tier exists precisely so that *if* such an obligation were ever booked as an honest `axiom`, the badge would
-route it amber rather than silently green. To exhibit that the classifier genuinely produces amber, the
+route it amber rather than silently green. To exhibit that the classifier produces amber, the
 gallery's final row is the **clearly-labelled synthetic demonstrator** `Dregg2.Widget.demo_via_carrier`
 (from `Basic.lean`: a theorem resting on the named demo axiom `demoEd25519VerifyExtern`, which carries the
 `Extern` §8 fragment). It is marked SYNTHETIC in the table — it is *not* a real dregg theorem dressed up; it
@@ -205,7 +205,7 @@ def galleryHtml [Monad m] [MonadEnv m] : m Html := do
 
 /-! ## §4 — Force the render. `#html (galleryHtml : MetaM Html)` elaborates the gallery over the REAL
 values: `HtmlEval (MetaM Html)` runs the `collectAxioms` reads and builds the `Html`, so the verify step
-genuinely exercises the render path. Put your cursor on it to see the gallery in the infoview. -/
+exercises the render path. Put your cursor on it to see the gallery in the infoview. -/
 
 #html (galleryHtml : MetaM Html)
 
@@ -218,7 +218,7 @@ demonstrator MUST be `carrierBounded` (amber). If any real crown ever picked up 
 So a green row in the rendered gallery is not a claim; it is a checked fact, exactly like `#assert_axioms`.
 
 It also proves the gallery is NON-VACUOUS: the verdicts are not all the same. The real rows are green AND
-the synthetic row is amber — two genuinely different `collectAxioms` outcomes, partitioned by the classifier
+the synthetic row is amber — two different `collectAxioms` outcomes, partitioned by the classifier
 (`kernelChecked ≠ carrierBounded`), confirmed by the kernel here. -/
 run_cmd do
   for e in galleryEntries do
@@ -227,7 +227,7 @@ run_cmd do
     unless t = expected do
       throwError "GALLERY TRIPWIRE: {e.name} expected tier {expected.label}, computed {t.label} \
         (its REAL axiom set disagrees with the row's colour)"
-  -- Non-vacuity, machine-checked: the gallery genuinely shows ≥ 2 distinct tiers (green real + amber demo),
+  -- Non-vacuity, machine-checked: the gallery shows ≥ 2 distinct tiers (green real + amber demo),
   -- so the surface is not a constant. (`decide` over `DecidableEq Tier`; no `native_decide`.)
   unless decide (Tier.kernelChecked ≠ Tier.carrierBounded) do
     throwError "GALLERY: the tier partition collapsed — kernelChecked = carrierBounded"
@@ -258,7 +258,7 @@ here so the gallery file is self-evidently non-vacuous.) -/
 #guard (classifyAxioms false #[``propext, ``Classical.choice, ``Quot.sound]).label == "KernelChecked"  -- "KernelChecked"
 -- The synthetic-row shape (a §8 carrier-named extra axiom) ⇒ amber.
 #guard (classifyAxioms false #[``propext, `demoEd25519VerifyExtern]).label == "CarrierBounded"  -- "CarrierBounded"
--- The two are distinct — the gallery genuinely partitions its rows.
+-- The two are distinct — the gallery partitions its rows.
 #guard decide (classifyAxioms false #[``propext] ≠ classifyAxioms false #[``propext, `fooExtern])  -- true
 
 end Dregg2.Widget

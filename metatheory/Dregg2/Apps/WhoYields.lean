@@ -128,7 +128,7 @@ round never merges two vertices that already had different colors, so distinctio
 accumulate. They let us conclude rigidity from the initial tags WITHOUT kernel-reducing the
 `mergeSort`/`dedup` computation — the honest, computation-free path. -/
 
-/-- **`refine_refines` (PROVED) — one round only splits.** If two vertices receive the same
+/-- **`refine_refines` — one round only splits.** If two vertices receive the same
 color after `refine`, they had the same color before: `refine` is a refinement of `c`. The
 proof: equal `idxOf` of two list-members forces equal signatures (`List.idxOf` is injective on
 members), and equal signatures share their first component, which is `c`. -/
@@ -149,7 +149,7 @@ theorem refine_refines (c : Fin n → ℕ) {i j : Fin n}
   have : (G.signature c i).1 = (G.signature c j).1 := congrArg Prod.fst hsig
   simpa [signature] using this
 
-/-- **`refineN_separates_of_tag (PROVED)` — distinct tags stay distinct under refinement.** If
+/-- **`refineN_separates_of_tag` — distinct tags stay distinct under refinement.** If
 two sats have different operator-policy tags, every round of WL refinement keeps them apart:
 `G.refineN k i ≠ G.refineN k j` for all `k`. The contrapositive of `refine_refines`, iterated. -/
 theorem refineN_separates_of_tag {i j : Fin n} (htag : G.tag i ≠ G.tag j) :
@@ -172,7 +172,7 @@ negotiation) — that is the rigidity dichotomy below. -/
 /-- The **role** of a sat: its stable WL color. Lower role yields in a conflict. -/
 def roleOf (i : Fin n) : ℕ := G.stableColoring i
 
-/-- **`roleOf_distinct_of_tag` (PROVED) — distinct tags ⟹ distinct roles.** The headline
+/-- **`roleOf_distinct_of_tag` — distinct tags ⟹ distinct roles.** The headline
 structural consequence: if two sats start with different tags, they get different who-yields
 roles — no computation through the sort/dedup needed. This is what makes `outOfFuel_breaks_symmetry`
 and `forcedTrade_discrete` provable WITHOUT kernel-reducing the WL machinery. -/
@@ -188,7 +188,7 @@ def WLDiscreteOnEdges : Prop :=
 
 /-! ## 4. THE RIGIDITY THEOREM — asymmetric ⇒ forced who-yields, no central authority. -/
 
-/-- **`rigid_of_discrete` — THE KEYSTONE (PROVED).** If the conjunction graph is WL-discrete on
+/-- **`rigid_of_discrete` — THE KEYSTONE.** If the conjunction graph is WL-discrete on
 its edges (asymmetric), then for EVERY conflicting pair the who-yields role is FORCED: the two
 sats get distinct roles, so the deterministic "lower role yields" rule names a unique yielder
 with **no central authority and no negotiation**. This is the verified, terminating who-yields
@@ -206,7 +206,7 @@ theorem rigid_of_discrete (hdisc : G.WLDiscreteOnEdges)
 WL-discreteness this is well-defined: the sat with the strictly-lower role yields. Computable. -/
 def yielder (i j : Fin n) : Fin n := if G.roleOf i ≤ G.roleOf j then i else j
 
-/-- **`yielder_forced` — the yielder is uniquely determined, no tie (PROVED).** Under
+/-- **`yielder_forced` — the yielder is uniquely determined, no tie.** Under
 WL-discreteness the two roles differ, so `yielder` picks the strict minimum — there is exactly
 one yielder, decided by local data alone. -/
 theorem yielder_forced (hdisc : G.WLDiscreteOnEdges)
@@ -223,7 +223,7 @@ theorem yielder_forced (hdisc : G.WLDiscreteOnEdges)
 
 /-! ## 5. THE CONTRAPOSITIVE TEETH — negotiation is load-bearing at the SYMMETRIC cells. -/
 
-/-- **`symmetric_needs_negotiation` — the teeth (PROVED).** If two CONFLICTING sats share a
+/-- **`symmetric_needs_negotiation` — the teeth.** If two CONFLICTING sats share a
 role (a WL-symmetric pair — graph-indistinguishable), then the deterministic "lower role yields"
 rule CANNOT break the tie: neither is strictly lower, so the rule is silent and a genuine
 negotiation (back-and-forth) is required. This is the precise sense in which "negotiation is
@@ -249,7 +249,7 @@ distinct colors (the conflict-resolving condition). -/
 def ProperColoring (r : Fin n → ℕ) : Prop :=
   ∀ i j, G.conflict i j = true → r i ≠ r j
 
-/-- **`three_mutual_conflict_needs_three_roles` — the chromatic floor (PROVED).** If three sats
+/-- **`three_mutual_conflict_needs_three_roles` — the chromatic floor.** If three sats
 `a, b, c` are pairwise in conflict (a `K₃` triangle in the conjunction graph), then ANY proper
 role assignment uses at least 3 distinct roles among them — `r a`, `r b`, `r c` are pairwise
 distinct. Hence ≥3 phases are needed to resolve a 3-cycle of conflicts: the round-cap's
@@ -261,7 +261,7 @@ theorem three_mutual_conflict_needs_three_roles
     r a ≠ r b ∧ r b ≠ r c ∧ r a ≠ r c :=
   ⟨hproper a b hab, hproper b c hbc, hproper a c hac⟩
 
-/-- **The number of distinct roles among a conflicting triangle is exactly 3 (PROVED).** The
+/-- **The number of distinct roles among a conflicting triangle is exactly 3.** The
 `Finset` `{r a, r b, r c}` has cardinality 3 — a concrete "needs 3 phases" witness. -/
 theorem triangle_three_distinct_roles
     (r : Fin n → ℕ) (hproper : G.ProperColoring r)
@@ -294,7 +294,7 @@ def forcedTrade : ConjGraph 2 where
   -- tag = priority*2 + outOfFuelFlag : A=(prio 0, fuel-out)=1, B=(prio 1, fuelled)=2.
   tag := fun i => if i = 0 then 1 else 2
 
-/-- **`outOfFuel_breaks_symmetry` — the forced-trade's SECOND, independent proof (PROVED).**
+/-- **`outOfFuel_breaks_symmetry` — the forced-trade's SECOND, independent proof.**
 In the fuel-aware tagging, sat A and sat B get DISTINCT roles even on the symmetric 2-sat
 geometry: the out-of-fuel vertex-color breaks the symmetry the naive priority-only rule
 assumed, so the who-yields assignment is rigid (forced) — A's empty tank is what makes B the
@@ -306,7 +306,7 @@ theorem outOfFuel_breaks_symmetry :
   apply forcedTrade.roleOf_distinct_of_tag
   decide
 
-/-- **The fuel-aware scenario IS WL-discrete on its edges (PROVED).** Hence by
+/-- **The fuel-aware scenario IS WL-discrete on its edges.** Hence by
 `rigid_of_discrete` the who-yields role is forced for the conflicting A–B pair — no central
 authority, decided by the local fuel tag alone. -/
 theorem forcedTrade_discrete : forcedTrade.WLDiscreteOnEdges := by
@@ -321,7 +321,7 @@ theorem forcedTrade_discrete : forcedTrade.WLDiscreteOnEdges := by
 
 The asymmetric scenario's forced roles; the symmetric scenario's tie; the triangle's 3 roles. -/
 
-/-- A genuinely ASYMMETRIC 3-sat scenario: a path 0–1–2 (0 conflicts 1, 1 conflicts 2, NOT 0–2),
+/-- A ASYMMETRIC 3-sat scenario: a path 0–1–2 (0 conflicts 1, 1 conflicts 2, NOT 0–2),
 distinct tags. WL separates all three, so who-yields is fully forced. -/
 def asym3 : ConjGraph 3 where
   conflict := fun i j => decide ((i.val = 0 ∧ j.val = 1) ∨ (i.val = 1 ∧ j.val = 0)

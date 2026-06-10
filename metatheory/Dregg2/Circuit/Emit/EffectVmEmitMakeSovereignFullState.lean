@@ -16,7 +16,7 @@ The `cap_root` column is among the dropped (absorbed) columns, so a `cap_root` t
 the cap-graph MEMBERSHIP stays the named opaque digest (a refinement, not a soundness gap). The §RECIPE
 applied to makeSovereign.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

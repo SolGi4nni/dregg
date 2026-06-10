@@ -16,7 +16,7 @@ THE MISSING PIECE supplied here:
 
   * §3 ABSTRACT execute→prove (`execute_produces_satisfying_witness`) and verify→accept
     (`satisfying_witness_proves_full_state`), at the abstract surface (CR portals carried, the template's
-    honest soundness form).
+    soundness form).
   * §4 a CONCRETE witness GENERATOR `delegateWitnessVec` that RUNS `recCDelegate` and lays the full-state
     v2 witness (width 72) out as a flat `List Int`, every digest column filled by a CONCRETE computable
     commitment surface (`rhConcrete`/`lhConcrete`/`capsDigConcrete`) over the executor's post-state. The
@@ -58,7 +58,7 @@ instance (cs : ConstraintSystem) (a : Assignment) : Decidable (satisfied cs a) :
 
 /-! ## §3 — THE ABSTRACT EXECUTE→PROVE / PROVE→STATE theorems (CR portals carried).
 
-Both halves at the ABSTRACT `Surface2` level — the honest soundness form. The concrete surface in §4 is
+Both halves at the ABSTRACT `Surface2` level — the soundness form. The concrete surface in §4 is
 the toy that makes the specific `#guard`s decide, not a CR hash. -/
 
 variable (S : Surface2) (D : Caps → ℤ) (hD : Function.Injective D)

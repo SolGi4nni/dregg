@@ -20,7 +20,7 @@ algebra). No hand proof — *this is the smart-contract spec language* (`HATCHER
 | `automaton_inv% a b`        | linear relation of fields | `obs·a + obs·b = obs s0 a + obs s0 b`    | `cellObsA_next` ×2 + `omega` (field algebra) |
 
 Each macro produces a REAL `CellContract` (NOT a stub): the `step_ob` field is filled by a tactic that
-runs the executor case-split and closes BOTH arms honestly. The GATE (`§5`) shows each macro, applied
+runs the executor case-split and closes BOTH arms. The GATE (`§5`) shows each macro, applied
 to its canonical field, elaborating to a building contract — and `monotone_registry% revoked`
 reproducing `Apps.Identity.livingCellA_identity_revoked_forever` as a *one-liner* `.forever` call.
 
@@ -164,7 +164,7 @@ The field-relational shape (`HATCHERY.md §138, §149`: *"a relation among field
 `exec_frame` + `omega`/field algebra"*). The Subscription headline `seq_tail ≤ seq_head` is the
 archetype on a self-contained automaton; on the REAL kernel state the analogous *linear relation among
 two fields* is the COMBINED two-asset supply: `cellObsA s a + cellObsA s b` is conserved (a single
-linear equation relating two ledger columns). It is genuinely relational — it constrains a sum of two
+linear equation relating two ledger columns). It is relational — it constrains a sum of two
 distinct fields, NOT either field alone (`obs a = 105`, `obs b = 7`, but the carried datum is their sum
 `112`).
 
@@ -307,7 +307,7 @@ noncomputable def eventuallyDischargeGatedLog : EventuallyG gatedLogGoal fma0 lo
 noncomputable def eventuallyDischargeTransfer : EventuallyG Pgoal fma0 transferSchedG :=
   gated_transfer_eventually
 
-/-! ## §6 — Non-vacuity guards — the macro contracts are substantive; the tags genuinely vary.
+/-! ## §6 — Non-vacuity guards — the macro contracts are substantive; the tags vary.
 
 The macro-built contracts carry quantities that GENUINELY MOVE / discriminate (not `x = x`):
 * `monotone_registry%` — a real revoked id `42` is present (`true`) while `99` is absent (`false`):
@@ -315,7 +315,7 @@ The macro-built contracts carry quantities that GENUINELY MOVE / discriminate (n
 * `conservation%` — asset 0's supply is `105`, conserved across a real transfer; the bound is a
   genuine moving quantity (a transfer redistributes `bal` while holding the TOTAL).
 * `automaton_inv%` — the combined `obs 0 + obs 1 = 105 + 7 = 112` is RELATIONAL: it differs from
-  either field alone (`105`, `7`), so the carried datum genuinely combines two fields (not a constant
+  either field alone (`105`, `7`), so the carried datum combines two fields (not a constant
   re-statement of one).
 And the four macros emit three distinct `SafetyShape`s (`.membership`, `.constant`, `.other`). -/
 

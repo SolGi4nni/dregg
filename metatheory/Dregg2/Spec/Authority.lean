@@ -424,11 +424,11 @@ theorem gen_step_traces {consents : CellId → Prop} {G G' : Graph CellId Rights
       · subst heq; subst hceq
         exact Or.inr (Or.inr (Or.inr ⟨parent, source, st, st.holds_source⟩))
 
-/-- **`restrict_step_adds_nothing` (PROVED)** — a restrictive step never makes a new edge
+/-- **`restrict_step_adds_nothing`** — a restrictive step never makes a new edge
 appear: if `G' h c` after a `RestrictAct` then `G h c` was already true. Restriction only
 subtracts (revoke) or replaces-by-narrowing (attenuate); the narrowed edge it adds is the
 holder's *own* re-shaped cap, governed by the generative trace at the point it was first
-conferred. So the only source of genuinely-new edges is `GenAct` — which `gen_step_traces`
+conferred. So the only source of new edges is `GenAct` — which `gen_step_traces`
 grounds. (The narrowed cap added by `attenuate` CAN be new; this lemma is stated for the
 edges restriction *preserves*, and the `attenuate`-adds-a-narrowing case is exactly why the
 whole-history invariant below is OPEN — see the note.) -/
@@ -493,7 +493,7 @@ theorem only_connectivity_begets_connectivity {consents : CellId → Prop}
               rcases hedge with ⟨hmid, _⟩ | ⟨heq, hceq⟩
               · -- the edge survived the removal: it was present in `Gmid`; inherit the IH.
                 exact ih hmid
-              · -- the genuinely-new narrowed edge `holder ⟶ narrowed`. Its authority is the
+              · -- the new narrowed edge `holder ⟶ narrowed`. Its authority is the
                 -- removed predecessor cap `holder ⟶ cap`'s authority, narrowed once. The IH (at
                 -- the DIFFERENT edge `holder ⟶ cap`) traces the predecessor; `confers_trans`
                 -- extends that witness by ONE narrowing (`confers cap narrowed`, the `≤` of

@@ -292,12 +292,12 @@ read-outs that fails closed when the order is violated, and — crucially — mu
 composes before any effect body exactly like `guard` (every executor keystone of the body lifts
 through it for free). We pin its meaning + the never-mutates law. -/
 
-/-- **`interp_checkLe` — PROVED.** `checkLe` commits iff `a k ≤ b k` and returns `k` unchanged on
+/-- **`interp_checkLe`.** `checkLe` commits iff `a k ≤ b k` and returns `k` unchanged on
 admit; the foundation of the in-band `granted ≤ held` non-amplification gate. -/
 @[simp] theorem interp_checkLe (a b : RecordKernelState → Int) (k : RecordKernelState) :
     interp (RecStmt.checkLe a b) k = if a k ≤ b k then some k else none := rfl
 
-/-- **`checkLe_commit_unchanged` — PROVED (never mutates).** When `checkLe` commits, the post-state
+/-- **`checkLe_commit_unchanged` (never mutates).** When `checkLe` commits, the post-state
 IS the input — a pure domain restrictor (the `granted ≤ held` gate adds an admission side-condition
 and changes nothing). -/
 theorem checkLe_commit_unchanged {a b : RecordKernelState → Int} {k k' : RecordKernelState}
@@ -307,8 +307,8 @@ theorem checkLe_commit_unchanged {a b : RecordKernelState → Int} {k k' : Recor
   · rw [if_pos hle] at h; exact (Option.some.injEq _ _ ▸ h).symm
   · rw [if_neg hle] at h; exact absurd h (by simp)
 
-/-- **`checkLe_admits_iff` — PROVED.** `checkLe` admits (is `some`) IFF the order holds — so it
-genuinely REJECTS (fails closed) when `b k < a k` (amplification): non-vacuous, two-valued. -/
+/-- **`checkLe_admits_iff`.** `checkLe` admits (is `some`) IFF the order holds — so it
+REJECTS (fails closed) when `b k < a k` (amplification): non-vacuous, two-valued. -/
 theorem checkLe_admits_iff (a b : RecordKernelState → Int) (k : RecordKernelState) :
     (interp (RecStmt.checkLe a b) k).isSome = true ↔ a k ≤ b k := by
   rw [interp_checkLe]
@@ -332,13 +332,13 @@ the in-band shape of the FULL `granted.rights ⊆ held.rights` gate, the thing `
 express (`checkLe_card_necessary_not_sufficient` in the attenuate weld). The `Finset Auth` order is
 decidable (`Auth` has `DecidableEq`), so the `if a k ≤ b k` is a genuine computable domain restriction. -/
 
-/-- **`interp_checkSubset` — PROVED.** `checkSubset` commits iff `a k ≤ b k` over the genuine
+/-- **`interp_checkSubset`.** `checkSubset` commits iff `a k ≤ b k` over the genuine
 `ExecAuth = Finset Auth` `⊆` order and returns `k` unchanged on admit; the in-band FULL
 `granted.rights ⊆ held.rights` non-amplification gate (not the cardinality shadow `checkLe` carries). -/
 @[simp] theorem interp_checkSubset (a b : RecordKernelState → ExecAuth) (k : RecordKernelState) :
     interp (RecStmt.checkSubset a b) k = if a k ≤ b k then some k else none := rfl
 
-/-- **`checkSubset_commit_unchanged` — PROVED (never mutates).** When `checkSubset` commits, the
+/-- **`checkSubset_commit_unchanged` (never mutates).** When `checkSubset` commits, the
 post-state IS the input — a pure domain restrictor, exactly like `checkLe` (the full subset gate adds an
 admission side-condition over the rights lattice and changes nothing), so every executor keystone of the
 gated body lifts through it for free. -/
@@ -349,7 +349,7 @@ theorem checkSubset_commit_unchanged {a b : RecordKernelState → ExecAuth} {k k
   · rw [if_pos hle] at h; exact (Option.some.injEq _ _ ▸ h).symm
   · rw [if_neg hle] at h; exact absurd h (by simp)
 
-/-- **`checkSubset_admits_iff` — PROVED.** `checkSubset` admits (is `some`) IFF the genuine subset order
+/-- **`checkSubset_admits_iff`.** `checkSubset` admits (is `some`) IFF the genuine subset order
 holds — so it REJECTS (fails closed) on `¬ (a k ⊆ b k)`, which covers BOTH a strict superset AND an
 incomparable pair (the partial-order reject the scalar `checkLe` cannot make): non-vacuous, two-valued. -/
 theorem checkSubset_admits_iff (a b : RecordKernelState → ExecAuth) (k : RecordKernelState) :
@@ -372,7 +372,7 @@ def kSub : RecordKernelState :=
 #guard ((interp (RecStmt.checkSubset (fun _ => ({Auth.read} : Finset Auth))
                   (fun _ => ({Auth.write} : Finset Auth))) kSub).isNone)                         -- reject ∥
 
-/-- **`checkSubset_decides_partial_order` — PROVED (the primitive captures the PARTIAL order faithfully).**
+/-- **`checkSubset_decides_partial_order` (the primitive captures the PARTIAL order faithfully).**
 `checkSubset` admits a genuine subset, rejects a strict superset, AND — the load-bearing case `checkLe`'s
 total `Int ≤` could never express — REJECTS an INCOMPARABLE pair (`{read}` vs `{write}`, neither ⊆ the
 other). So the gate decides exactly `granted.rights ⊆ held.rights` over `Finset Auth`, the full
@@ -404,12 +404,12 @@ instance shows the write is observable (not a no-op). We pin the two cap-graph /
 per-cell-lifecycle representatives + a list-table representative; the rest are definitionally the
 same `{ k with <field> := g k }` shape (`interp` reduces by `rfl`). -/
 
-/-- **`interp_setCaps` — PROVED.** Writing the cap graph overwrites `caps` with `g k` and touches
+/-- **`interp_setCaps`.** Writing the cap graph overwrites `caps` with `g k` and touches
 nothing else; the write the grant/revoke/attenuate effects assemble. -/
 @[simp] theorem interp_setCaps (g : RecordKernelState → Caps) (k : RecordKernelState) :
     interp (RecStmt.setCaps g) k = some { k with caps := g k } := rfl
 
-/-- **`interp_setLifecycle` — PROVED.** Writing the lifecycle registry overwrites `lifecycle` with
+/-- **`interp_setLifecycle`.** Writing the lifecycle registry overwrites `lifecycle` with
 `g k` (the Live/Sealed/Destroyed transition write). -/
 @[simp] theorem interp_setLifecycle (g : RecordKernelState → CellId → Nat) (k : RecordKernelState) :
     interp (RecStmt.setLifecycle g) k = some { k with lifecycle := g k } := rfl
@@ -419,18 +419,18 @@ def kC : RecordKernelState :=
   { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)], caps := fun _ => [] }
 
 -- The component writes are OBSERVABLE state edits, not no-ops:
--- setLifecycle to "everything Sealed (1)" genuinely changes cell 0's lifecycle 0 → 1.
+-- setLifecycle to "everything Sealed (1)" changes cell 0's lifecycle 0 → 1.
 #guard (((interp (RecStmt.setLifecycle (fun _ _ => 1)) kC).map (fun k => k.lifecycle 0)) == some 1)
 #guard (kC.lifecycle 0 == 0)   -- before: Live
 
-/-- **`setLifecycle_writes` — PROVED (the write lands, non-vacuously).** Sealing every cell flips
+/-- **`setLifecycle_writes` (the write lands, non-vacuously).** Sealing every cell flips
 cell `0`'s lifecycle from Live (`0`) to Sealed (`1`): the component write is a real, observable
 state edit (`interp` commits and the post-component is `g k`). -/
 theorem setLifecycle_writes :
     (interp (RecStmt.setLifecycle (fun _ _ => 1)) kC).map (fun k => k.lifecycle 0) = some 1 := by
   rw [interp_setLifecycle]; rfl
 
-/-- **`setCaps_writes` — PROVED.** Granting cell `0` a `node 1` cap lands in the cap graph: after the
+/-- **`setCaps_writes`.** Granting cell `0` a `node 1` cap lands in the cap graph: after the
 write, cell `0` holds exactly `[Cap.node 1]`, where before it held none. The cap-graph component
 write is observable (not a no-op) — the in-band shape grant/attenuate effects emit. -/
 theorem setCaps_writes :

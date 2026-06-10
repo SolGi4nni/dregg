@@ -238,7 +238,7 @@ inductive Transition : Lifecycle CellId FactoryId Digest → Lifecycle CellId Fa
   | destroyArchived (att : ArchivalAttestation CellId Digest) (cert : DeathCertificate CellId Digest) :
       Transition (archived att) (destroyed cert)
 
-/-- **`terminal_rejects_transition` — the categorical terminal-object law (PROVED).**
+/-- **`terminal_rejects_transition` — the categorical terminal-object law.**
 No transition leaves a terminal state: if `isTerminal s` then there is NO `s'` with
 `Transition s s'`. This is `LinearityClass.Terminal` made structural — the terminal
 object has no outgoing morphism, so ending is irreversible (`migrated`/`destroyed`
@@ -251,12 +251,12 @@ theorem terminal_rejects_transition (s s' : Lifecycle CellId FactoryId Digest)
   -- and discharge each via the incompatible `isTerminal` value of its source.
   cases htr <;> simp [isTerminal] at hterm
 
-/-- Corollary: a `migrated` tombstone is genuinely a dead end — no transition out. -/
+/-- Corollary: a `migrated` tombstone is a dead end — no transition out. -/
 theorem migrated_terminal (dest : CellId) (s' : Lifecycle CellId FactoryId Digest) :
     ¬ Transition (migrated dest) s' :=
   terminal_rejects_transition _ s' (by simp [isTerminal])
 
-/-- Corollary: a `destroyed` cell is genuinely a dead end — no transition out. -/
+/-- Corollary: a `destroyed` cell is a dead end — no transition out. -/
 theorem destroyed_terminal (cert : DeathCertificate CellId Digest)
     (s' : Lifecycle CellId FactoryId Digest) :
     ¬ Transition (destroyed cert) s' :=
@@ -289,10 +289,10 @@ inductive Ending : Lifecycle CellId FactoryId Digest → Type u where
   /-- Migrated, leaving a destination tombstone. -/
   | byMigration (dest : CellId) : Ending (migrated dest)
 
-/-- **`creation_and_death_are_dual` — the duality theorem (PROVED).** Symmetric
+/-- **`creation_and_death_are_dual` — the duality theorem.** Symmetric
 witnessed poles: from a `Birth` (a `live` state with a `Provenance`) and any `Ending`
 (a terminal state with its witness), BOTH ends carry a finite witness AND the two
-states are genuinely distinct poles — the birth state accepts effects while the ending
+states are distinct poles — the birth state accepts effects while the ending
 state is terminal (hence rejects them). Formally: birth accepts effects, ending is
 terminal, and they are unequal lifecycle states. This is the generative/terminal
 `LinearityClass` duality: creation and termination are symmetric *attested* acts, not
@@ -332,7 +332,7 @@ def FoldsTo (accum : Digest → Digest → Digest) (seed : Digest)
     (prefixChain : List Digest) (h : Digest) : Prop :=
   prefixChain.foldl accum seed = h
 
-/-- **`archival_is_fold` — archival IS the fold (faithful, PROVED).** An
+/-- **`archival_is_fold` — archival IS the fold (faithful).** An
 `ArchivalAttestation` whose `checkpointHash` was produced by folding the receipt-chain
 prefix is exactly a `FoldsTo` witness: the checkpoint summarizes the prefix via the
 recursive accumulator. Given the prefix and that `checkpointHash = foldl accum seed
@@ -376,7 +376,7 @@ structure Reclaimable (CellId FactoryId Digest : Type u) where
 open Nat.Partrec (Code) in
 open Nat.Partrec.Code in
 /--
-**`distributed_death_not_co_witnessable` — the honest negative obligation (PROVED).**
+**`distributed_death_not_co_witnessable` — the honest negative obligation.**
 
 Dual to `birthProvable`: there is NO uniform constructive co-witness of distributed
 deadness. Stated in `Liveness`'s own shape — no **computable** decider soundly-and-
@@ -407,7 +407,7 @@ def reclaimableByLease (r : Reclaimable CellId FactoryId Digest) (now : Nat) : B
 **`reclaim_by_lease` — the PROVED alternative to the impossible proof.**
 
 A cell past its lease-expiry height may be reclaimed **regardless** of any (un-provable)
-distributed-liveness fact. Concretely: take a cell that is genuinely `Dead` in the
+distributed-liveness fact. Concretely: take a cell that is `Dead` in the
 liveness graph `g` (the case no collector can detect, `crossvat_cycle_leaks`) AND whose
 lease has lapsed at `now`. Then it is *not* operationally `Live` (`Liveness.Live`) — so
 the runtime reclaims it — **even though** `Dead` was never decided. The reclamation is
@@ -432,7 +432,7 @@ theorem reclaim_by_lease
 
 /-- **`creation_provable_death_temporal` — the asymmetry, stated as one theorem.**
 For any `Birth` (creation side) and any `Reclaimable` whose lease has lapsed over a
-genuinely-`Dead` cell (the distributed-death side): the factory that created the cell
+`Dead` cell (the distributed-death side): the factory that created the cell
 is EXHIBITABLE (a constructive witness), while the dead cell is reclaimed by lease and
 is NOT operationally `Live` — its death was *timed out*, never proved. Creation:
 provable. Distributed death: temporal. -/
@@ -450,10 +450,9 @@ end Lifecycle
 
 Pin the clean keystones: each must depend ONLY on the three standard kernel axioms
 (no `sorryAx`). These cover both classifier classifications, the terminal-object
-one-wayness, the creation↔termination duality, archival-as-fold, the PROVED lease
-fallback, AND — now PROVED via the halting reduction in `Dregg2.Liveness` — the
-distributed-death undecidability (`distributed_death_not_co_witnessable`), which was
-formerly an honest OPEN and is now asserted clean alongside the rest. -/
+one-wayness, the creation↔termination duality, archival-as-fold, the lease
+fallback, AND — via the halting reduction in `Dregg2.Liveness` — the
+distributed-death undecidability (`distributed_death_not_co_witnessable`). -/
 
 #assert_axioms Lifecycle.acceptsEffects_iff
 #assert_axioms Lifecycle.isTerminal_iff

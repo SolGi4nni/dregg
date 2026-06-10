@@ -68,7 +68,7 @@ end Vec3
 Over one screening step, the relative position of the pair is the **affine** function
 `rel d0 v t = d0 + t • v`. As explained in the header this is the first-order (rectilinear)
 relative motion — the exact structure of the linearized CW/Hill relative dynamics over a
-short step, and the honest first-order truth for any C¹ relative trajectory. -/
+short step, and the first-order truth for any C¹ relative trajectory. -/
 
 /-- The relative position at time `t` into the step: `d(t) = d0 + t·v`. -/
 def rel (d0 v : Vec3) (t : ℚ) : Vec3 := Vec3.add d0 (Vec3.smul t v)
@@ -85,7 +85,7 @@ def bCoef (d0 v : Vec3) : ℚ := 2 * (d0.x * v.x + d0.y * v.y + d0.z * v.z)
 /-- The constant coefficient `‖d0‖²`. -/
 def cCoef (d0 : Vec3) : ℚ := d0.normSq
 
-/-- **`sepSq` IS the quadratic `a t² + b t + c` (PROVED).** Pins the geometric squared
+/-- **`sepSq` IS the quadratic `a t² + b t + c`.** Pins the geometric squared
 separation to its quadratic-in-`t` form, the algebraic fact the soundness rests on. -/
 theorem sepSq_eq_quadratic (d0 v : Vec3) (t : ℚ) :
     sepSq d0 v t = aCoef v * t ^ 2 + bCoef d0 v * t + cCoef d0 := by
@@ -112,7 +112,7 @@ continuous minimum of `sepSq` over `[0,T]` is attained here. -/
 def tca (d0 v : Vec3) (T : ℚ) : ℚ := max 0 (min T (vertex d0 v))
 
 /-- **`sepSq_min_at_tca` — the closest-approach value is a LOWER BOUND on the continuous
-separation over the whole step (PROVED).** For every `t ∈ [0,T]`, `sepSq d0 v t ≥ sepSq d0 v
+separation over the whole step.** For every `t ∈ [0,T]`, `sepSq d0 v t ≥ sepSq d0 v
 (tca d0 v T)`. This is the heart: the value at the clamped vertex bounds the separation at
 EVERY continuous time in the step — so checking one point (the `tca`) certifies the whole
 interval. -/
@@ -238,7 +238,7 @@ theorem screen_clear_imp_continuous_clear
   have hmin : thrSq ≤ sepSq d0 v (tca d0 v T) := by simpa using of_decide_eq_true hscreen
   exact le_trans hmin (sepSq_min_at_tca d0 v T t h0 hT)
 
-/-- **`screen_clear_imp_no_conjunction` — the negative form (PROVED).** A `clear` verdict
+/-- **`screen_clear_imp_no_conjunction` — the negative form.** A `clear` verdict
 means there is no continuous time in the step at which the pair is in conjunction (separation
 strictly below threshold). This is the form a referee consumes: "clear ⇒ no conjunction
 anywhere in the maneuver step." -/
@@ -266,7 +266,7 @@ def crossingT  : ℚ := 10
 /-- Squared threshold `thrSq = 25` (a `5`-unit miss-distance threshold). -/
 def crossingThrSq : ℚ := 25
 
-/-- **The naive endpoint sampler is FOOLED (PROVED).** At `t=0` separation² is `100 ≥ 25` and
+/-- **The naive endpoint sampler is FOOLED.** At `t=0` separation² is `100 ≥ 25` and
 at `t=T=10` separation² is `(10 - 20)² = 100 ≥ 25` — BOTH endpoints clear. A sampler checking
 only `{0, T}` returns "clear". -/
 theorem endpoints_look_clear :
@@ -276,15 +276,15 @@ theorem endpoints_look_clear :
     simp only [sepSq, rel, Vec3.add, Vec3.smul, Vec3.normSq, crossingD0, crossingV,
       crossingThrSq, crossingT] <;> norm_num
 
-/-- **But there IS a real mid-step conjunction (PROVED).** At `t=5` the pair is at the origin,
+/-- **But there IS a real mid-step conjunction.** At `t=5` the pair is at the origin,
 separation² `= 0 < 25` — a genuine collision the endpoint sampler missed. -/
 theorem midstep_conjunction_exists :
     sepSq crossingD0 crossingV 5 < crossingThrSq := by
   unfold sepSq rel Vec3.add Vec3.smul Vec3.normSq crossingD0 crossingV crossingThrSq; norm_num
 
-/-- **THE TEETH — the continuous screen REJECTS the crossing pair (PROVED).** Unlike the
+/-- **THE TEETH — the continuous screen REJECTS the crossing pair.** Unlike the
 endpoint sampler, our `screen` returns `false`: the closest-approach time `tca` lands at the
-true mid-step minimum and the screen sees separation² `< 25`. So `screen = clear` is genuinely
+true mid-step minimum and the screen sees separation² `< 25`. So `screen = clear` is
 stronger than "clear at the samples" — it is sound against the between-samples closest
 approach. (Were the screen UNSOUND it would have returned `true` here like the sampler.) -/
 theorem screen_rejects_crossing :
@@ -308,11 +308,11 @@ affine screen but assumes less. -/
 def coarseClear (sep0 vmax T thr : ℚ) : Bool :=
   decide (thr ≤ sep0 - vmax * T)
 
-/-- **`coarse_clear_imp_lipschitz_clear` — the conservative Lipschitz bound (PROVED).** Given a
+/-- **`coarse_clear_imp_lipschitz_clear` — the conservative Lipschitz bound.** Given a
 trajectory whose linear separation satisfies the reverse-triangle bound `sep(t) ≥ sep0 −
 vmax·t` over the step (the content of a `vmax` speed bound), if `coarseClear` is `true` then
 `sep(t) ≥ thr` for every `t ∈ [0,T]`. This is sound for ANY speed-bounded continuous
-trajectory — not just the affine model — and is the honest fallback when affinity cannot be
+trajectory — not just the affine model — and is the fallback when affinity cannot be
 assumed. -/
 theorem coarse_clear_imp_lipschitz_clear
     (sep0 vmax T thr : ℚ) (hv : 0 ≤ vmax)
@@ -331,7 +331,7 @@ theorem coarse_clear_imp_lipschitz_clear
 
 A clear pair accepted; the crossing pair (clear at endpoints) REJECTED; the coarse screen. -/
 
-/-- A genuinely-clear pair: parallel tracks `8` apart, `thrSq = 25` (miss distance 5). -/
+/-- A clear pair: parallel tracks `8` apart, `thrSq = 25` (miss distance 5). -/
 def clearD0 : Vec3 := ⟨8, 0, 0⟩
 /-- Velocity of the clear pair: purely along-track, so separation never drops. -/
 def clearV  : Vec3 := ⟨0, 3, 0⟩
@@ -360,7 +360,7 @@ def clearV  : Vec3 := ⟨0, 3, 0⟩
 #assert_axioms coarse_clear_imp_lipschitz_clear
 
 /-
-OPEN (the curvature refinement, honestly flagged). The affine screen is EXACT for the affine
+OPEN (the curvature refinement, flagged). The affine screen is EXACT for the affine
 relative model and the `coarseClear` Lipschitz screen is SOUND for any speed-bounded
 trajectory. The remaining gap to a fully-general continuous-time guarantee over a LONG step is
 the **curvature term**: the true CW relative solution adds bounded oscillatory/secular terms

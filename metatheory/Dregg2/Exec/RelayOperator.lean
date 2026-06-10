@@ -32,8 +32,8 @@ And `quota_enforced`: a committed relay keeps `bytesThisEpoch ≤ quota`.
 | 7 `dispute_count` | `"disputeCount"` | `monotonic` (disputes only increase) |
 
 ## Honest bounds carried as `-- OPEN:`
-This is the single-cell economic skeleton; the genuinely cross-tier obligations of §3.5 are
-declared and routed to their seams (per the doc), NOT faked here. See the `-- OPEN:` notes at the
+This is the single-cell economic skeleton; the cross-tier obligations of §3.5 are
+declared and routed to their seams (per the doc) here. See the `-- OPEN:` notes at the
 program definition (epoch-reset of `bytesThisEpoch`; the DFA route-table WitnessedPredicate; the
 SenderAuthorized gate; the multi-cell dispatch to the target inbox). The floor and anti-drain are
 NOT open — they are proved.
@@ -143,7 +143,7 @@ theorem admits_iff_all (quotaCap : Int) (m : Nat) (old new : Value) :
 
 /-! ## THE KEYSTONE (a) — the bond floor invariant. -/
 
-/-- **`bond_floor_held` (KEYSTONE a — PROVED).** A *committed* relay transition keeps the bond at
+/-- **`bond_floor_held` (KEYSTONE a).** A *committed* relay transition keeps the bond at
 or above the (immutable) minimum: if `relayStep` commits, then `new.bondMin ≤ new.bond` with both
 present. This is the §3.5 bond floor (`FieldGte { index 0, value slot 1 }`) holding on the codomain
 point — reasoned from the `fieldLeField "bondMin" "bond"` constraint post-commit. The relay can
@@ -169,7 +169,7 @@ theorem bond_floor_held
 
 /-! ## THE KEYSTONE (b) — bond may decrease only with a dispute (the slash discipline). -/
 
-/-- **`bond_decrease_needs_dispute` (KEYSTONE b — PROVED).** A *committed* relay transition that
+/-- **`bond_decrease_needs_dispute` (KEYSTONE b).** A *committed* relay transition that
 LOWERS the bond *forces* the dispute counter to have strictly advanced: if `relayStep` commits and
 `new.bond < old.bond` (with both present as `a`/`b`), then there exist `da < db` with
 `old.disputeCount = da`, `new.disputeCount = db`. This is the §3.5 `BoundedBy { index 0,
@@ -214,7 +214,7 @@ theorem bond_decrease_needs_dispute
 
 /-! ## `quota_enforced` — the per-epoch byte counter stays within the quota cap. -/
 
-/-- **`quota_enforced` (PROVED, within-epoch).** A *committed* relay transition keeps the
+/-- **`quota_enforced` (within-epoch).** A *committed* relay transition keeps the
 per-epoch byte counter at or below the quota cap: if `relayStep quotaCap` commits, then
 `new.bytesThisEpoch ≤ quotaCap` (present). This is the §3.5 `RateLimitBySum { index 3, max slot 2 }`
 holding on the codomain point — reasoned from the `fieldLe "bytesThisEpoch" quotaCap` conjunct.

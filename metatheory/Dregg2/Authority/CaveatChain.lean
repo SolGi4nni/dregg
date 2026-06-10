@@ -22,7 +22,7 @@ This module carries the real Rust semantics of `macaroon/src/macaroon.rs`:
 Real semantics here: the fold structure of the tag, append-only attenuation, conjunction admit-semantics
 (`Token.admits` = `List.all`, `token/src/dregg_caveats.rs:388`), and the replay-and-compare verifier.
 
-§8 PORTAL (honest carried crypto assumption, NEVER faked as proved — mirroring `Dregg2.CryptoKernel`):
+§8 PORTAL (honest carried crypto assumption as proved — mirroring `Dregg2.CryptoKernel`):
 the keyed-hash `mac : Key → Bytes → Tag` itself. Its security — that an adversary lacking the root key
 or any running tag cannot produce a tag for a forged chain — is the `MacUnforgeable` Prop-carrier. The
 integrity theorems are stated relative to it: we do NOT prove HMAC secure; we prove the reduction.
@@ -397,7 +397,7 @@ lacking the key, EUF-CMA forbids. This is the reduction "forge a verifying chain
 security stays the §8 portal (`unforgeable`), never proved in Lean.
 
 NON-VACUITY: discharged by the toy kernel via `Demo.collapse`-FALSE refutation (the carrier is FALSE
-there, so this theorem genuinely depends on a sound `mac`); positively witnessed at the honest toy
+there, so this theorem depends on a sound `mac`); positively witnessed at the honest toy
 kernel by `Demo.honest_tail_tagged`. -/
 theorem chain_unforgeable (hunf : MacKernel.unforgeable (Key := Key Tag) (Bytes := Bytes) (Tag := Tag))
     (c : Chain Ctx Gateway (Key Tag) Bytes Tag) (last : Link Ctx Gateway Bytes)
@@ -463,7 +463,7 @@ def forgedTampered : Chain H Unit Nat Nat Nat :=
 
 /-! ### Non-vacuity for `chain_unforgeable`: a POSITIVE genuine-MAC witness + a NEGATIVE collapse tooth. -/
 
-/-- The honest toy kernel's `unforgeable` carrier HOLDS — PROVED, not `True`. The recompute-compare
+/-- The honest toy kernel's `unforgeable` carrier HOLDS, not `True`. The recompute-compare
 oracle is sound: an accepting tag equals the recomputed MAC. -/
 theorem honest_unforgeable : honestMacKernel.unforgeable := by
   intro k m t h
@@ -504,7 +504,7 @@ the exact structure the old `unforgeable := True` would have papered over. `Tagg
 
 /-- **REFUTATION** — the collapsing kernel's `unforgeable` carrier is FALSE: it accepts a tag that is
 not `Tagged`. This proves `MacKernel.unforgeable` is LOAD-BEARING in `chain_unforgeable`: a forgeable
-`mac` cannot supply the premise, so the chain-unforgeability conclusion genuinely depends on a sound
+`mac` cannot supply the premise, so the chain-unforgeability conclusion depends on a sound
 HMAC — exactly what `unforgeable := True` silently forfeited. -/
 theorem collapse_not_unforgeable : ¬ collapseMacKernel.unforgeable := by
   intro h; exact h 0 0 0 rfl

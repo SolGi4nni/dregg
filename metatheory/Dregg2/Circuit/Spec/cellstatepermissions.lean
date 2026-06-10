@@ -93,7 +93,7 @@ theorem setPermsCellMap_eq_writeField (k : RecordKernelState) (cell : CellId) (p
 `recTransfer_correct` analog). A permissions write (a) sets `cell`'s `permissions` slot to exactly
 `p`, (b) leaves `cell`'s conserved `balance` field untouched (the regime's balance-Δ=0 obligation, via
 the non-interference of a DISTINCT slot — `permissions ≠ balance`), and (c) leaves every OTHER cell's
-whole record untouched. So the spec's `cell`-clause genuinely encodes write ∧ balance-frame ∧
+whole record untouched. So the spec's `cell`-clause encodes write ∧ balance-frame ∧
 cell-frame, rather than blindly trusting the helper. -/
 theorem setPermissions_cellWrite_correct (k : RecordKernelState) (cell : CellId) (p : Int) :
     fieldOf permsField (setPermsCellMap k cell p cell) = p
@@ -247,13 +247,13 @@ theorem execFullA_setPermissions_admits_guard {s s' : RecChainedState} {actor ce
     setPermsGuard s actor cell :=
   ((execFullA_setPermissions_iff_spec s actor cell p s').mp h).1
 
-/-! ## §5 — NON-VACUITY: the guard genuinely REJECTS bad inputs.
+/-! ## §5 — NON-VACUITY: the guard REJECTS bad inputs.
 
 A spec that the executor meets vacuously (because the arm accepts everything) is worthless. These
 exhibit the arm as a genuine gate: an unauthorized actor, a non-account `cell`, and a non-Live
 (sealed/destroyed) `cell` each make the arm FAIL CLOSED (`= none`), so no spec post-state exists. -/
 
-/-- **`setPermissions_rejects_unauthorized` — PROVED.** If the actor does NOT hold authority over
+/-- **`setPermissions_rejects_unauthorized`.** If the actor does NOT hold authority over
 `cell`, the arm fails closed: no committed post-state exists. -/
 theorem setPermissions_rejects_unauthorized (s : RecChainedState) (actor cell : CellId) (p : Int)
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
@@ -264,7 +264,7 @@ theorem setPermissions_rejects_unauthorized (s : RecChainedState) (actor cell : 
   rintro ⟨hauth, _, _⟩
   rw [hbad] at hauth; exact absurd hauth (by simp)
 
-/-- **`setPermissions_rejects_nonaccount` — PROVED.** If `cell` is not a live account, the arm fails
+/-- **`setPermissions_rejects_nonaccount`.** If `cell` is not a live account, the arm fails
 closed. -/
 theorem setPermissions_rejects_nonaccount (s : RecChainedState) (actor cell : CellId) (p : Int)
     (hbad : cell ∉ s.kernel.accounts) :
@@ -274,7 +274,7 @@ theorem setPermissions_rejects_nonaccount (s : RecChainedState) (actor cell : Ce
   rw [if_neg]
   rintro ⟨_, hmem, _⟩; exact hbad hmem
 
-/-- **`setPermissions_rejects_nonlive` — PROVED.** If `cell`'s lifecycle does NOT admit effects
+/-- **`setPermissions_rejects_nonlive`.** If `cell`'s lifecycle does NOT admit effects
 (sealed/destroyed — the R6 gate), the arm fails closed. This is the executor-level lifecycle
 enforcement: a permissions write into a sealed cell is REJECTED. -/
 theorem setPermissions_rejects_nonlive (s : RecChainedState) (actor cell : CellId) (p : Int)

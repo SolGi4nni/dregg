@@ -1,5 +1,5 @@
 /-
-# Dregg2.Proof.BeaconSpaceInterior — the interior, genuinely-independent Bernoulli witness.
+# Dregg2.Proof.BeaconSpaceInterior — the interior, independent Bernoulli witness.
 
 Closes the non-vacuity OPEN from `BeaconSpace` §6: the Dirac boundary witness (`h = 1`) sidesteps
 genuine cross-view independence. This file supplies the canonical interior witness: an i.i.d.
@@ -58,7 +58,7 @@ theorem viewMeasure_false : viewMeasure {false} = ENNReal.ofReal (1 - (3 / 4 : �
 
 /-- **The canonical interior beacon measure.** The infinite product over all views `ℕ` of the
 i.i.d. `Bernoulli(3/4)` per-view law. By `Measure.infinitePi` (Ionescu–Tulcea), the views are
-genuinely product-independent — the cross-view independence the Dirac witness sidestepped. -/
+product-independent — the cross-view independence the Dirac witness sidestepped. -/
 noncomputable def interiorMeasure : Measure (ℕ → Bool) :=
   Measure.infinitePi (fun _ : ℕ => viewMeasure)
 
@@ -96,7 +96,7 @@ theorem interior_indep_block (b N : ℕ) :
 /-! ## 3. The interior `BeaconSpace` instance. -/
 
 /-- **A concrete `BeaconSpace` at the strictly-interior honest fraction `h = 3/4`** with a
-genuinely-independent Bernoulli-per-view product measure. Every structure field — crucially
+independent Bernoulli-per-view product measure. Every structure field — crucially
 `indep_block`, the cross-view independence — is discharged by the real infinite product, NOT a
 degenerate point-mass. -/
 noncomputable def beacon : BeaconSpace.BeaconSpace where
@@ -119,7 +119,7 @@ theorem beacon_h_interior : (2 : ℝ) / 3 < beacon.h ∧ beacon.h < 1 := by
 /-- **Capstone: `BeaconSpace` is non-vacuously inhabitable at a strictly-interior honest fraction
 with genuine per-view independence.** The interior beacon has `2/3 < h < 1`, its block law is the
 genuine independent product `(1-h)^N`, it discharges the constructive hit-index and the full
-synchronizer round for every (gst, t). The §1–§4 results hold over a genuinely random, genuinely
+synchronizer round for every (gst, t). The §1–§4 results hold over a random,
 interior beacon. -/
 theorem beaconSpace_interior_nonvacuous :
     -- (i) strictly-interior honest fraction
@@ -138,10 +138,10 @@ theorem beaconSpace_interior_nonvacuous :
   · intro Msg _ gst t
     exact BeaconSpace.synchronizer_round_obtains_over_beacon beacon gst t
 
-/-- The interior beacon is genuinely a `BeaconSpace` — structure inhabited. -/
+/-- The interior beacon is a `BeaconSpace` — structure inhabited. -/
 noncomputable example : BeaconSpace.BeaconSpace := beacon
 
-/-- The honest fraction is strictly below the `h = 1` boundary (genuinely interior). -/
+/-- The honest fraction is strictly below the `h = 1` boundary (interior). -/
 example : beacon.h < 1 := beacon_h_interior.2
 
 #assert_axioms viewMeasure_false

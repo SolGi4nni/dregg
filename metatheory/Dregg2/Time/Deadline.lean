@@ -20,7 +20,7 @@ This module:
      relative time becomes causal time by paying `2δ` of wait. The `2δ` is GENUINELY load-bearing:
      drop it and the conclusion fails (the uncertainty intervals still overlap).
 
-§8 carriers (EXPLICIT hypotheses, NEVER faked): the time authority is honest within `f` faults; the
+§8 carriers (EXPLICIT hypotheses): the time authority is honest within `f` faults; the
 skew `δ` physically bounds the real drift; signatures are unforgeable. They enter ONLY where a
 physical-time/causal conclusion is drawn (the bridge), gated as `FrameHonesty` + `WaitCausality`.
 
@@ -78,7 +78,7 @@ is the load-bearing content of §3 below.) -/
 
 /-- **`Deadline.Met d now` — the deadline `d` is discharged at frontier `now`.** Dispatches by kind:
 causal ⟹ `CausalAfter B E now` (a lace order fact); frame ⟹ `FrameWithin reg stmtOf fs att` (the
-authority's attestation is accepted). One predicate, two genuinely different discharge conditions —
+authority's attestation is accepted). One predicate, two different discharge conditions —
 the type forced the author to say which. -/
 def Deadline.Met {B : Lace} {reg : Registry Stmt Wit} {stmtOf : FrameStatement → Stmt}
     (d : Deadline B reg stmtOf) (now : Frontier) : Prop :=
@@ -104,7 +104,7 @@ convention — so the relativistic honesty is load-bearing, not decorative." We 
     (one with the authority, one without) under which the SAME frame deadline flips. So the two
     constructors are not interchangeable wrappers; they carry different trust.   -/
 
-/-- **`causalAfter_no_frame_dependency` (PROVED) — the causal deadline ignores the frame.** Evaluating
+/-- **`causalAfter_no_frame_dependency` — the causal deadline ignores the frame.** Evaluating
 a `causalAfter E` deadline under ANY two registries `reg₁ reg₂` (and any encoders) gives the SAME
 `Met` proposition at the same frontier: the causal face does not consult the authority. The lightcone
 fact is intrinsic — no frame argument can change it. -/
@@ -114,10 +114,10 @@ theorem causalAfter_no_frame_dependency {B : Lace} (E now : Frontier)
       (Deadline.causalAfter (B := B) (reg := reg₂) (stmtOf := stmtOf₂) E).Met now :=
   Iff.rfl
 
-/-- **`frameWithin_has_frame_dependency` (PROVED) — the frame deadline DOES turn on the authority.**
+/-- **`frameWithin_has_frame_dependency` — the frame deadline DOES turn on the authority.**
 There exist a frame statement, an attestation, and two registries — one WITH a `temporal` authority
 that accepts, one WITHOUT any — under which the SAME `frameWithin` deadline is MET in the first and
-NOT met in the second. So the frame face genuinely depends on the chosen frame: the constructor is not
+NOT met in the second. So the frame face depends on the chosen frame: the constructor is not
 decorative. (Contrast `causalAfter_no_frame_dependency`: the asymmetry IS the §4 distinction.) -/
 theorem frameWithin_has_frame_dependency :
     ∃ (B : Lace) (stmtOf : FrameStatement → Nat) (fs : FrameStatement) (att : Nat)
@@ -146,8 +146,8 @@ overlap. Then real-time order IS causal order. Formally: an event `E` attested a
 a frontier `now` reached after waiting `2δ` past `T` (its interval starts `≥ T + δ`), because the
 intervals `[·, T]` and `[T+δ, ·]` are DISJOINT — happens-before is then determinate.
 
-We state it honestly with EXPLICIT carriers:
-  * `FrameHonesty fs (eTime)` — §8(b): the attested reading honestly bounds `E`'s true time
+We state it with EXPLICIT carriers:
+  * `FrameHonesty fs (eTime)` — §8(b): the attested reading bounds `E`'s true time
     (`E` happened at-or-before the frame reading within `δ`);
   * `WaitCausality B fs E now` — the §8 "after-2δ no-overlap ⟹ causal" carrier: GIVEN we have waited
     `≥ 2δ` of real time past the reading to reach `now`, the disjoint-interval determinacy puts `E` in
@@ -171,24 +171,24 @@ def waited (B : Lace) (rt : Frontier → Time) (start now : Frontier) (twoδ : T
 stated as an IMPLICATION whose ANTECEDENT is the real-time wait itself:
 
   GIVEN a CAUSAL wait of `≥ 2δ` real time past the attested reading reaching `now`
-  (`waited B rt start now (2*fs.δ)`) AND the reading honestly bounds `E`'s true time
+  (`waited B rt start now (2*fs.δ)`) AND the reading bounds `E`'s true time
   (`FrameHonesty fs (rt start)`), THEN `E` is in `now`'s causal past (`CausalAfter B E now`).
 
 The antecedent is the *genuine* `waited`-fact (not a vacuous `twoδ = 2δ` equation): the carrier
 therefore CANNOT be invoked without a real 2δ wait, and is NOT propositionally equivalent to its
 conclusion — you cannot extract `CausalAfter` unless you actually exhibit the wait + honesty. This is
 the §8 trust assumption that real-time separation by `≥ 2δ` forces lace order, resting on honest clocks
-(≤ `f` faulty) and the physical skew bound, exactly like `FrameHonesty`. It is genuinely load-bearing:
+(≤ `f` faulty) and the physical skew bound, exactly like `FrameHonesty`. It is load-bearing:
 the bridge must FEED it `hw` and `hhonest` (drop either and the carrier does not fire). -/
 def WaitCausality (B : Lace) (rt : Frontier → Time) (fs : FrameStatement)
     (E start now : Frontier) : Prop :=
   waited B rt start now (2 * fs.δ) → FrameHonesty fs (rt start) → CausalAfter B E now
 
-/-- **`commit_wait_bridge` (PROVED) — THE KEYSTONE: frame ∧ waited(2δ) ⟹ causal.** Given:
+/-- **`commit_wait_bridge` — THE KEYSTONE: frame ∧ waited(2δ) ⟹ causal.** Given:
   * an ACCEPTED frame attestation `hacc : FrameWithin reg stmtOf fs att` (the authority attests `T`
     within `δ`, verified by the in-TCB gate);
   * a CAUSAL wait of `≥ 2δ` real-time past the reading reaching `now` (`hw : waited … (2*fs.δ)`);
-  * the §8 carriers: the reading honestly bounds `E`'s true time (`hhonest`), and commit-wait's
+  * the §8 carriers: the reading bounds `E`'s true time (`hhonest`), and commit-wait's
     disjoint-interval determinacy (`hcw`);
 THEN `E` is in `now`'s causal past: `CausalAfter B E now`. The FRAME fact `frameWithin F T δ` has been
 UPGRADED to a LIGHTCONE fact by paying `2δ` of wait — Spanner's external consistency, in Lean. This is
@@ -205,7 +205,7 @@ theorem commit_wait_bridge {B : Lace} {reg : Registry Stmt Wit} {stmtOf : FrameS
   -- decorative — drop `hw` and the carrier cannot be applied (its antecedent is the wait itself).
   hcw hw hhonest
 
-/-- **`commit_wait_upgrades_deadline` (PROVED) — the deadline-level reading of the bridge.** A
+/-- **`commit_wait_upgrades_deadline` — the deadline-level reading of the bridge.** A
 `frameWithin` deadline that is MET, after a `2δ` commit-wait (with the §8 carriers), yields a
 `causalAfter E` deadline that is MET at `now`. The frame DEADLINE becomes a causal DEADLINE: the same
 promise, now a lightcone fact, discharged with NO further trust (a court can re-read it as causal). -/
@@ -223,15 +223,15 @@ theorem commit_wait_upgrades_deadline {B : Lace} {reg : Registry Stmt Wit}
 
 /-! ## 5. The `2δ` is GENUINELY load-bearing — drop it and the bridge CANNOT conclude.
 
-§4's teeth: "the bridge genuinely uses the `2δ` wait (drop it ⇒ can't conclude)." Now that the carrier
+§4's teeth: "the bridge uses the `2δ` wait (drop it ⇒ can't conclude)." Now that the carrier
 `WaitCausality` takes the `waited B rt start now (2*fs.δ)` proof as its ANTECEDENT (not a vacuous
 `twoδ = 2δ` equation), the load-bearingness is a real fact: in a concrete world where the agent waited
-only `δ`, the carrier's antecedent is genuinely UNSATISFIED — there is no `waited … (2δ)` proof to feed
+only `δ`, the carrier's antecedent is UNSATISFIED — there is no `waited … (2δ)` proof to feed
 it — so the carrier cannot fire, AND the bridge's own `hw` premise is unsatisfiable. We exhibit a
 concrete world where waiting only `δ` admits an honest, accepted frame fact whose `CausalAfter` is
 nonetheless FALSE, and prove the `2δ`-wait premise is unmeetable there. -/
 
-/-- **`commit_wait_needs_full_2delta` (PROVED) — the SHARP load-bearing statement.** There is a
+/-- **`commit_wait_needs_full_2delta` — the SHARP load-bearing statement.** There is a
 concrete world (the demo lace, `δ = 1`, an `E = f1` that is NOT causally before `now = g1`) where: the
 §8 honesty carrier holds, the agent has waited only `δ` (`rt g1 − rt g0 = 1`), yet `CausalAfter B E now`
 is FALSE — AND the bridge's required premise `waited B rt start now (2*δ) = waited … 2` is UNSATISFIABLE
@@ -269,7 +269,7 @@ theorem commit_wait_needs_full_2delta :
     have := Dregg2.Authority.Blocklace.demo_precedes_left_g0 h
     revert this; decide
 
-/-- **`shortWaitCarrier_gives_nothing` (PROVED) — the carrier needs the FULL `2δ`-wait proof.** In the
+/-- **`shortWaitCarrier_gives_nothing` — the carrier needs the FULL `2δ`-wait proof.** In the
 same `δ`-only world (`commit_wait_needs_full_2delta`), the commit-wait carrier `WaitCausality` cannot be
 applied to conclude `CausalAfter`, because its antecedent `waited B rt start now (2*fs.δ)` is FALSE
 there. So EVEN HOLDING the carrier as a §8 hypothesis, a court cannot upgrade the frame fact without the
@@ -287,7 +287,7 @@ theorem shortWaitCarrier_gives_nothing :
 
 /-! ## 6. Non-vacuity of the deadline type — both kinds are inhabited and discriminable.
 
-The two constructors are genuinely distinct (`kind` separates them), both `Met`-able, and the causal
+The two constructors are distinct (`kind` separates them), both `Met`-able, and the causal
 one is met for free on the demo lace while the frame one needs an authority. -/
 
 /-- A demo causal deadline on `demoLace`: "must causally follow genesis `g0`." -/
@@ -300,18 +300,18 @@ def demoFrame : Deadline Dregg2.Authority.Blocklace.demoLace
     (reg := (fun _ => none : Registry Nat Nat)) (stmtOf := fun _ => 0) :=
   Deadline.frameWithin { authority := { issuer := 99 }, T := 1000, δ := 5 } 0
 
-/-- **`demo_kinds_distinct` (PROVED)** — the two constructors are discriminable: the causal deadline
+/-- **`demo_kinds_distinct`** — the two constructors are discriminable: the causal deadline
 reads `kind = true`, the frame one `kind = false`. A court tells them apart — the §4 forcing is real. -/
 theorem demo_kinds_distinct : demoCausal.kind = true ∧ demoFrame.kind = false :=
   ⟨rfl, rfl⟩
 
-/-- **`demo_causal_met_for_free` (PROVED)** — the causal demo deadline is MET at frontier `g1` with NO
+/-- **`demo_causal_met_for_free`** — the causal demo deadline is MET at frontier `g1` with NO
 authority (the registry is empty): `demoCausal.Met g1`, because `g0 ≺ g1` on the lace. The lightcone
 fact needs no trust. -/
 theorem demo_causal_met_for_free : demoCausal.Met Dregg2.Authority.Blocklace.g1 :=
   Dregg2.Authority.Blocklace.demo_honest_precedes
 
-/-- **`demo_frame_unmet_without_authority` (PROVED)** — the frame demo deadline is NOT met under the
+/-- **`demo_frame_unmet_without_authority`** — the frame demo deadline is NOT met under the
 empty registry (no `temporal` authority): `¬ demoFrame.Met g1`. The frame convention is NOT true for
 free — exactly the asymmetry the type forces. -/
 theorem demo_frame_unmet_without_authority : ¬ demoFrame.Met Dregg2.Authority.Blocklace.g1 := by
@@ -332,7 +332,7 @@ def demoRt : Frontier → Time := fun b => if b = Dregg2.Authority.Blocklace.g1 
 /-- The frame statement for the firing demo: `δ = 1`, so the required wait is `2δ = 2`. -/
 def demoFs : FrameStatement := { authority := { issuer := 99 }, T := 1, δ := 1 }
 
-/-- **`demo_waitCausality_holds` (PROVED)** — a CONCRETE commit-wait carrier, built from the lace order.
+/-- **`demo_waitCausality_holds`** — a CONCRETE commit-wait carrier, built from the lace order.
 For `E = g0`, `now = g1`, it discharges `CausalAfter` precisely from the honest ack edge `g0 ≺ g1`
 (`demo_honest_precedes`) once the `2δ` wait is exhibited. The carrier is NOT the bare conclusion smuggled
 in: it is a function of the genuine wait + honesty proofs, returning the lace fact. -/
@@ -343,10 +343,10 @@ theorem demo_waitCausality_holds :
   intro _hw _hhonest
   exact Dregg2.Authority.Blocklace.demo_honest_precedes
 
-/-- **`demo_bridge_fires` (PROVED)** — the commit-wait bridge DISCHARGES with a genuine `2δ` wait. We
+/-- **`demo_bridge_fires`** — the commit-wait bridge DISCHARGES with a genuine `2δ` wait. We
 exhibit an accepted frame attestation (any `reg`/`att` — acceptance only gates which attestation we
 trust), a real `2δ = 2` wait across `g0 ≺ g1` (`demoRt`-gap `= 2`), the honesty bound, and the concrete
-carrier, and conclude `CausalAfter demoLace g0 g1`. The frame fact is genuinely UPGRADED to a lightcone
+carrier, and conclude `CausalAfter demoLace g0 g1`. The frame fact is UPGRADED to a lightcone
 fact — proving the bridge has content. -/
 theorem demo_bridge_fires :
     CausalAfter Dregg2.Authority.Blocklace.demoLace

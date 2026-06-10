@@ -210,7 +210,7 @@ theorem settleIntent_refines :
 
 /-- The settled "3 art" bundle's per-asset shadow, concretely: asset 0 (gold) = 0, asset 1 (art) = 3,
 every other asset = 0. The real per-asset delta the auction's settle induces on the ledger — NON-VACUOUS
-(asset 1 is genuinely `3`, not collapsed to a single scalar). -/
+(asset 1 is `3`, not collapsed to a single scalar). -/
 theorem settleIntent_toBal :
     toBal settleIntent.offered.as = fun a => if a = 0 then (0 : ℤ) else if a = 1 then 3 else 0 := by
   show toBal (res 0 3).as = _

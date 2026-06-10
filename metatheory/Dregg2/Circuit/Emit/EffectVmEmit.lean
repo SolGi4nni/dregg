@@ -107,7 +107,7 @@ def DELEG        : Nat := 4
 def NULLIFIER    : Nat := 5
 /-- `commitments` accumulator digest (noteCreate append). -/
 def COMMIT       : Nat := 6
-/-- `sealedBoxes` store digest (seal / unseal / createSealPair); its OWN home now, no longer folded
+/-- `sealedBoxes` store digest (seal / unseal / createSealPair); its OWN home, not folded
 into `cap_root`. -/
 def SEALED_BOXES : Nat := 7
 end systemRoot
@@ -133,7 +133,7 @@ end aux_off_sys
 
 /-! ## §0½ — THE WIDENED `system_roots` COLUMN (magnesium STAGE 4: the deployed gap closed).
 
-The honest finding the per-effect files PROVE (`*_root_not_in_descriptor_commit`,
+The finding the per-effect files PROVE (`*_root_not_in_descriptor_commit`,
 `docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md:52-56`): the side-table `system_roots` digest is
 `Exec.SystemRoots.systemRootsDigest`-bound at the RECORD layer (`cellCommitS`), but `auxCol
 aux_off_sys.SYSTEM_ROOTS_DIGEST = AUX_BASE + 96 = 186` is **PAST `EFFECT_VM_WIDTH = 186`** — the
@@ -146,7 +146,7 @@ The two dedicated carriers are placed at the FIRST TWO absolute columns past the
 `187`), so they are DISTINCT from every column the 186-wide layout claims (every aux slot is
 `< AUX_BASE + 96 = 186`). Unlike the early cohort's `SYS_DIG_AFTER := aux_off_sys.SYSTEM_ROOTS_DIGEST`
 (= the raw `96`, which lands inside the aux block at abs col `96` = `auxCol 6`, aliasing a balance
-bit — benign for those effects but not a CLEAN home), these are a genuinely-dedicated, non-aliasing
+bit — benign for those effects but not a CLEAN home), these are a dedicated, non-aliasing
 sub-block. `sysRootsDigestSiteWidth_clean` proves the disjointness by `decide`. -/
 
 /-- **`EFFECT_VM_WIDTH_SYSROOTS`** — the WIDENED trace width that carries the dedicated `system_roots`
@@ -349,7 +349,7 @@ structure VmRange where
 
 /-- **`VmRange.holds env r`** — the range tooth's denotation: the wire's value lies in `[0, 2^bits)`.
 This is the field-soundness tooth `satisfiedVm` now EVALUATES (it was inert before): a verifying
-witness genuinely pins the (after-state balance) limb into `[0, 2^bits)`, so it is non-negative and
+witness pins the (after-state balance) limb into `[0, 2^bits)`, so it is non-negative and
 bounded — no field-wraparound underflow can disguise an over-debit as a small positive balance.
 Combined with the per-effect balance-update gate (`post = pre − amt`), the post-balance non-neg tooth
 is exactly AVAILABILITY (`amt ≤ pre`) over ℤ. -/

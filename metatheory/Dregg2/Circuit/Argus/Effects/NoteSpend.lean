@@ -5,7 +5,7 @@ DOUBLE-SPEND non-membership, in-band on BOTH the executor and the circuit.
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and
 `Argus/Policy.lean` built the first Bucket-B CIRCUIT REFERENCE — a real `VmGate` proved equivalent
 to a protocol predicate (`sumGate ⟺ sumEquals`) + anti-ghost + a circuit-backed `Verifiable`
-discharging the `witnessed` obligation. This module does the genuinely-hard one the census flagged
+discharging the `witnessed` obligation. This module does the hard one the census flagged
 MISSING: a **non-membership** circuit gate, for the noteSpend nullifier set.
 
 ## Why this is the crown
@@ -27,7 +27,7 @@ file supplies that missing gate-kind, with real teeth, on both sides:
   spent — the no-double-spend is enforced IN THE TERM, closing the "executor-only in-memory" gap at
   the IR level. Non-vacuous: a replay ⇒ `none`.
 
-* **Circuit side (§2–§5, the genuinely-new reference).** A **SORTED-NEIGHBOR** non-membership gate.
+* **Circuit side (§2–§5, the new reference).** A **SORTED-NEIGHBOR** non-membership gate.
   The committed nullifier set is sorted strictly ascending (a named commitment discipline). To prove
   `nf ∉ set`, the prover exhibits two NEIGHBOR witnesses `lo < nf < hi` that are CONSECUTIVE in the
   sentinel-padded sorted set. The gate is a REAL arithmetic constraint — two strict-`<` checks, each
@@ -94,7 +94,7 @@ theorem interp_noteSpendStmt_eq_noteSpendNullifier (nf : Nat) (k : RecordKernelS
     interp (noteSpendStmt nf) k = noteSpendNullifier k nf := by
   simp only [noteSpendStmt, interp, noteSpendNullifier]
 
-/-- **`noteSpendStmt_no_double_spend` — PROVED (the no-double-spend, IN THE TERM).** If the noteSpend
+/-- **`noteSpendStmt_no_double_spend` (the no-double-spend, IN THE TERM).** If the noteSpend
 term COMMITS (`interp … = some k'`), then the spent nullifier was NOT already in the set
 (`nf ∉ k.nullifiers`). The anti-replay guarantee is enforced inline by the cornerstone term's own
 `interp` — closing the "executor-only in-memory nullifier set" gap at the IR level. -/
@@ -106,14 +106,14 @@ theorem noteSpendStmt_no_double_spend {nf : Nat} {k k' : RecordKernelState}
   · rw [if_pos hin] at h; exact absurd h (by simp)
   · exact hin
 
-/-- **`noteSpendStmt_inserts` — PROVED.** A committed noteSpend term actually inserts `nf` into the
+/-- **`noteSpendStmt_inserts`.** A committed noteSpend term actually inserts `nf` into the
 set, so a SUBSEQUENT spend of the same `nf` is rejected (the composed anti-replay). -/
 theorem noteSpendStmt_inserts {nf : Nat} {k k' : RecordKernelState}
     (h : interp (noteSpendStmt nf) k = some k') : nf ∈ k'.nullifiers := by
   rw [interp_noteSpendStmt_eq_noteSpendNullifier] at h
   exact note_spend_inserts h
 
-/-- **`noteSpendStmt_then_reject` — PROVED (the composed double-spend barrier, in the IR).** After a
+/-- **`noteSpendStmt_then_reject` (the composed double-spend barrier, in the IR).** After a
 committed noteSpend term of `nf`, the noteSpend term of the SAME `nf` on the result fails closed
 (`= none`). Double-spend is impossible AT THE TERM LEVEL. -/
 theorem noteSpendStmt_then_reject {nf : Nat} {k k' : RecordKernelState}
@@ -122,8 +122,8 @@ theorem noteSpendStmt_then_reject {nf : Nat} {k k' : RecordKernelState}
   rw [interp_noteSpendStmt_eq_noteSpendNullifier] at h
   exact note_spend_then_reject h
 
-/-- **`noteSpendStmt_replay_rejected` — PROVED (NON-VACUITY, witness FALSE).** A nullifier ALREADY in
-the set is REJECTED by the term (`interp … = none`) — the gate is genuinely two-valued, the
+/-- **`noteSpendStmt_replay_rejected` (NON-VACUITY, witness FALSE).** A nullifier ALREADY in
+the set is REJECTED by the term (`interp … = none`) — the gate is two-valued, the
 no-double-spend has real teeth (not `:= True`). -/
 theorem noteSpendStmt_replay_rejected (nf : Nat) (k : RecordKernelState) (h : nf ∈ k.nullifiers) :
     interp (noteSpendStmt nf) k = none := by
@@ -134,14 +134,14 @@ theorem noteSpendStmt_replay_rejected (nf : Nat) (k : RecordKernelState) (h : nf
 def kSpent : RecordKernelState :=
   { accounts := {0}, cell := fun _ => .record [], caps := fun _ => [], nullifiers := [3, 5] }
 
--- The executor-side no-double-spend is genuinely two-valued:
+-- The executor-side no-double-spend is two-valued:
 -- a fresh nullifier COMMITS; an immediate replay is REJECTED.
 #guard ((interp (noteSpendStmt 7) kSpent).isSome)   -- 7 ∉ {3,5} ⇒ commits
 #guard ((interp (noteSpendStmt 5) kSpent).isNone)   -- 5 ∈ {3,5} ⇒ rejected
 
 /-! ## §2 — THE MATH CORE: sorted-neighbor non-membership (`lo < nf < hi` ⟺ `nf ∉ xs`).
 
-The genuinely-new content. A nullifier set committed as a STRICT-ASCENDING list `xs` admits a
+The new content. A nullifier set committed as a STRICT-ASCENDING list `xs` admits a
 non-membership argument: `nf ∉ xs` IFF there is a CONSECUTIVE sentinel-padded neighbor pair
 `(lo, hi)` (with `lo < hi`) such that `lo < nf < hi`. We build a self-contained `SortedAsc`
 predicate and a `NeighborGap` witness (so this module depends on NO moving mathlib list API), and
@@ -160,17 +160,17 @@ def SortedAsc : List Int → Prop
 reads — the EffectVM columns carry `ℤ`). -/
 def sortedAscNat (xs : List Nat) : Prop := SortedAsc (xs.map (Int.ofNat))
 
-/-- **`sortedAsc_tail` — PROVED.** The tail of a strict-ascending list is strict-ascending. -/
+/-- **`sortedAsc_tail`.** The tail of a strict-ascending list is strict-ascending. -/
 theorem sortedAsc_tail {a : Int} {xs : List Int} (h : SortedAsc (a :: xs)) : SortedAsc xs := by
   cases xs with
   | nil => exact True.intro
   | cons b r => exact h.2
 
-/-- **`sortedAsc_head_lt` — PROVED.** In a strict-ascending `a :: b :: r`, the head is strictly below
+/-- **`sortedAsc_head_lt`.** In a strict-ascending `a :: b :: r`, the head is strictly below
 the second element. -/
 theorem sortedAsc_head_lt {a b : Int} {r : List Int} (h : SortedAsc (a :: b :: r)) : a < b := h.1
 
-/-- **`sortedAsc_head_lt_mem` — PROVED.** In a strict-ascending list `a :: xs`, the head is strictly
+/-- **`sortedAsc_head_lt_mem`.** In a strict-ascending list `a :: xs`, the head is strictly
 below EVERY element of `xs` (so the head is the unique minimum). The key monotonicity fact. -/
 theorem sortedAsc_head_lt_mem {a : Int} {xs : List Int} (h : SortedAsc (a :: xs)) :
     ∀ y ∈ xs, a < y := by
@@ -210,7 +210,7 @@ inductive NeighborGap (nf : Int) : List Int → Type
   neighbor candidate): `a < nf` and `NeighborGap nf r`. -/
   | skip {a : Int} {r : List Int} (h : a < nf) (rest : NeighborGap nf r) : NeighborGap nf (a :: r)
 
-/-- **`neighborGap_sound` — PROVED (the sorted-neighbor argument is SOUND).** A `NeighborGap` witness
+/-- **`neighborGap_sound` (the sorted-neighbor argument is SOUND).** A `NeighborGap` witness
 for `nf` against a strict-ascending `xs` proves `nf ∉ xs`: at each step `nf` is either strictly below
 the head (so below everything remaining) or strictly above it (so `≠` head, recurse on the sorted tail).
 A prover that walks the neighbors has proved non-membership. -/
@@ -231,7 +231,7 @@ theorem neighborGap_sound {nf : Int} {xs : List Int} (hs : SortedAsc xs) (hg : N
     · subst hh; exact lt_irrefl _ h
     · exact ih (sortedAsc_tail hs) hr
 
-/-- **`neighborGap_complete` — PROVED (the sorted-neighbor argument is COMPLETE).** For ANY
+/-- **`neighborGap_complete` (the sorted-neighbor argument is COMPLETE).** For ANY
 strict-ascending committed set `xs`, a genuine non-member `nf ∉ xs` HAS a `NeighborGap` witness — the
 honest prover always finds its neighbors. The induction marches the head pointer forward (`skip`) until
 `nf` falls below the current head (`below`), or runs off the end (`emptySet`). No non-member is left
@@ -250,7 +250,7 @@ def neighborGap_complete {nf : Int} {xs : List Int} (hs : SortedAsc xs) (hnm : n
     · have hgt : a < nf := lt_of_le_of_ne (not_lt.mp hlt) (Ne.symm hane)
       exact NeighborGap.skip hgt (ih (sortedAsc_tail hs) hnr)
 
-/-- **`neighborGap_iff_not_mem` — PROVED (the sorted-neighbor argument DECIDES non-membership).** Over a
+/-- **`neighborGap_iff_not_mem` (the sorted-neighbor argument DECIDES non-membership).** Over a
 strict-ascending committed set, a `NeighborGap` witness EXISTS iff `nf ∉ xs`: soundness
 (`neighborGap_sound`) gives ⇒, completeness (`neighborGap_complete`) gives ⇐. So "the prover can exhibit
 sorted neighbors" is EXACTLY "the nullifier is fresh" — the protocol-side statement the circuit gate is
@@ -305,7 +305,7 @@ lookups. -/
 def NmRowOk (c : NmCols) (env : VmRowEnv) : Prop :=
   0 ≤ env.loc c.dLo ∧ 0 ≤ env.loc c.dHi
 
-/-- **`gapLo_holds_iff` — PROVED.** The lower-gap gate holds IFF `env.loc nf = env.loc lo + 1 +
+/-- **`gapLo_holds_iff`.** The lower-gap gate holds IFF `env.loc nf = env.loc lo + 1 +
 env.loc dLo` — the faithful arithmetic of the linear gate. -/
 theorem gapLo_holds_iff (c : NmCols) (env : VmRowEnv) :
     (gapLoGate c).holds env ↔ env.loc c.nf = env.loc c.lo + 1 + env.loc c.dLo := by
@@ -315,7 +315,7 @@ theorem gapLo_holds_iff (c : NmCols) (env : VmRowEnv) :
   · intro h; linarith
   · intro h; linarith
 
-/-- **`gapHi_holds_iff` — PROVED.** The upper-gap gate holds IFF `env.loc hi = env.loc nf + 1 +
+/-- **`gapHi_holds_iff`.** The upper-gap gate holds IFF `env.loc hi = env.loc nf + 1 +
 env.loc dHi`. -/
 theorem gapHi_holds_iff (c : NmCols) (env : VmRowEnv) :
     (gapHiGate c).holds env ↔ env.loc c.hi = env.loc c.nf + 1 + env.loc c.dHi := by
@@ -325,13 +325,13 @@ theorem gapHi_holds_iff (c : NmCols) (env : VmRowEnv) :
   · intro h; linarith
   · intro h; linarith
 
-/-- **`nonMemberGate_sound_between` — PROVED (the gate's SOUNDNESS, the load-bearing teeth).** Under
+/-- **`nonMemberGate_sound_between` (the gate's SOUNDNESS, the load-bearing teeth).** Under
 the range-check precondition `NmRowOk` (gap witnesses non-negative), if the two gap gates BOTH hold
 then the neighbors strictly bracket the nullifier: `lo < nf ∧ nf < hi`. This is the genuine
 circuit-arithmetic enforcement: a gate-satisfying row with valid (non-negative) gap witnesses PROVES
 `nf` is interior to `(lo, hi)` — a real strict-between constraint, the direction non-membership
 soundness rests on. (The converse — completeness — is `nonMemberGate_complete`: the honest prover lays
-the EXACT gaps, so a genuinely-interior `nf` is gate-acceptable. We separate the two because the
+the EXACT gaps, so an interior `nf` is gate-acceptable. We separate the two because the
 witness columns are the prover's: soundness must hold for ANY non-negative witnesses, completeness
 EXHIBITS the honest ones.) -/
 theorem nonMemberGate_sound_between (c : NmCols) (env : VmRowEnv) (hwf : NmRowOk c env)
@@ -343,7 +343,7 @@ theorem nonMemberGate_sound_between (c : NmCols) (env : VmRowEnv) (hwf : NmRowOk
   rw [gapHi_holds_iff] at hhi
   exact ⟨by linarith, by linarith⟩
 
-/-- The HONEST witness environment for a genuinely-interior `nf`: lay the exact gaps `dLo = nf−lo−1`,
+/-- The HONEST witness environment for an interior `nf`: lay the exact gaps `dLo = nf−lo−1`,
 `dHi = hi−nf−1` on the witness columns (and the neighbors/`nf` on theirs). The prover's completeness
 construction — the row that REALIZES the non-membership gate for `lo < nf < hi`. The four data columns
 take their genuine values; everything else is `0`. (Assumes the five layout columns are distinct so
@@ -359,7 +359,7 @@ def honestNmEnv (c : NmCols) (loV nfV hiV : Int) : VmRowEnv where
   nxt := fun _ => 0
   pub := fun _ => 0
 
-/-- **`nonMemberGate_complete` — PROVED (the gate's COMPLETENESS).** For a genuinely-interior `nf`
+/-- **`nonMemberGate_complete` (the gate's COMPLETENESS).** For an interior `nf`
 (`lo < nf < hi`), the HONEST witness env (the exact gaps) is well-formed (`NmRowOk` — the gaps are
 non-negative) AND satisfies BOTH gap gates. So every strict-between configuration is gate-acceptable:
 no honest non-member is left un-provable. (Requires the five layout columns distinct.) -/
@@ -407,7 +407,7 @@ is the hypothesis a sorted-tree adjacency opening supplies and the deployed desc
 def GapInterval (lo hi : Int) (xs : List Int) : Prop :=
   ∀ y ∈ xs, y ≤ lo ∨ hi ≤ y
 
-/-- **`between_gap_not_mem` — PROVED (the bridge SOUNDNESS).** If `nf` is strictly between `lo` and
+/-- **`between_gap_not_mem` (the bridge SOUNDNESS).** If `nf` is strictly between `lo` and
 `hi`, and `(lo, hi)` is an empty gap of the committed set (`GapInterval`), then `nf ∉ xs`. So the
 gate's strict-between fact, on GENUINE adjacent neighbors, PROVES non-membership: no committed element
 sits where `nf` does. -/
@@ -418,7 +418,7 @@ theorem between_gap_not_mem {lo nf hi : Int} {xs : List Int}
   · exact absurd h (not_le.mpr hlo)
   · exact absurd h (not_le.mpr hhi)
 
-/-- **`mem_not_between_gap` — PROVED (the ANTI-GHOST, math side).** If `nf` IS a committed member and
+/-- **`mem_not_between_gap` (the ANTI-GHOST, math side).** If `nf` IS a committed member and
 `(lo, hi)` is an empty gap of the set, then `nf` is NOT strictly between `lo` and `hi`: a member
 cannot sit inside a gap that excludes all members. The protocol-side anti-ghost the circuit anti-ghost
 lifts. -/
@@ -445,7 +445,7 @@ predecessor at the `-∞` sentinel `nf-1`. -/
 def gapEndpoints {nf : Int} {xs : List Int} (g : NeighborGap nf xs) : Int × Int :=
   gapEndpointsAux (nf - 1) g
 
-/-- **`gapEndpointsAux_lo_le` — PROVED.** When the threaded predecessor `lo` is strictly below EVERY
+/-- **`gapEndpointsAux_lo_le`.** When the threaded predecessor `lo` is strictly below EVERY
 element of `xs` (a genuine lower sentinel for the remaining list — `∀ y ∈ xs, lo < y`), the lower
 endpoint `gapEndpointsAux lo g` reports is `≥ lo`. (Each `skip a` overwrites `lo` with the head `a`,
 which is `> lo` by the sentinel hypothesis and `<` everything ahead by sortedness, so the bound
@@ -462,7 +462,7 @@ theorem gapEndpointsAux_lo_le {nf : Int} {xs : List Int} (g : NeighborGap nf xs)
     have hra : ∀ y ∈ r, a < y := fun y hy => sortedAsc_head_lt_mem hs y hy
     exact le_of_lt (lt_of_lt_of_le hla (ih (sortedAsc_tail hs) a hra))
 
-/-- **`gapEndpointsAux_gives_gap` — PROVED (the threaded gap invariant).** For a strict-ascending `xs`
+/-- **`gapEndpointsAux_gives_gap` (the threaded gap invariant).** For a strict-ascending `xs`
 and a predecessor `lo < nf`, the endpoints `gapEndpointsAux lo g` (a) strictly bracket `nf` and (b) form
 an empty `GapInterval` of `xs`. The skip case reads the new predecessor's `≥`-bound from
 `gapEndpointsAux_lo_le` (the FRESH skipped head `a` is a genuine sentinel for the tail by sortedness, so
@@ -497,7 +497,7 @@ theorem gapEndpointsAux_gives_gap {nf : Int} {xs : List Int} (hs : SortedAsc xs)
       rw [hh]; exact Or.inl (gapEndpointsAux_lo_le rest (sortedAsc_tail hs) a hra)
     · exact hgap y hr
 
-/-- **`neighborGap_gives_gap` — PROVED (the §2→§4 connector).** A `NeighborGap` witness for `nf`
+/-- **`neighborGap_gives_gap` (the §2→§4 connector).** A `NeighborGap` witness for `nf`
 against a strict-ascending `xs` yields endpoints `(lo, hi) = gapEndpoints g` that (a) strictly bracket
 `nf` and (b) form an empty `GapInterval` of `xs`. So the constructive neighbor witness IS a genuine
 gap decoding — closing the loop between the structured §2 argument and the §4 gate bridge. -/
@@ -525,8 +525,8 @@ columns hold (the sorted-tree adjacency opening's job). -/
 def NmRowEncodes (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : Int) : Prop :=
   env.loc c.nf = nf ∧ GapInterval (env.loc c.lo) (env.loc c.hi) xs
 
-/-- **`nonMemberGate_sound` — PROVED (CIRCUIT⟺PROTOCOL SOUNDNESS).** A range-checked row (`NmRowOk`)
-that satisfies BOTH gap gates, under the honest gap decoding (`NmRowEncodes`), PROVES the spent
+/-- **`nonMemberGate_sound` (CIRCUIT⟺PROTOCOL SOUNDNESS).** A range-checked row (`NmRowOk`)
+that satisfies BOTH gap gates, under the gap decoding (`NmRowEncodes`), PROVES the spent
 nullifier is NOT in the committed set: `nf ∉ xs`. The gate's algebraic statement SUFFICES to enforce
 non-membership — the missing no-double-spend teeth, now real. -/
 theorem nonMemberGate_sound (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : Int)
@@ -538,8 +538,8 @@ theorem nonMemberGate_sound (c : NmCols) (env : VmRowEnv) (xs : List Int) (nf : 
   rw [hnf] at hlo hhi
   exact between_gap_not_mem hlo hhi hgap
 
-/-- **`nonMemberGate_rejects_member` — PROVED (THE ANTI-GHOST TOOTH).** If the spent nullifier IS a
-committed member (`nf ∈ xs`), then NO range-checked row can satisfy both gap gates under the honest gap
+/-- **`nonMemberGate_rejects_member` (THE ANTI-GHOST TOOTH).** If the spent nullifier IS a
+committed member (`nf ∈ xs`), then NO range-checked row can satisfy both gap gates under the gap
 decoding: the gate is UNSAT. A double-spend attempt — a nullifier already in the set — cannot produce a
 gate-satisfying non-membership witness on its genuine neighbors. This is the tooth `sumGate_rejects_tamper`
 is to `sumEquals`: a prover cannot forge non-membership of an already-spent nullifier. -/
@@ -552,7 +552,7 @@ theorem nonMemberGate_rejects_member (c : NmCols) (env : VmRowEnv) (xs : List In
   rw [hnf] at hlo hhi
   exact mem_not_between_gap hmem hgap ⟨hlo, hhi⟩
 
-/-- **`nonMemberGate_complete_nonmember` — PROVED (CIRCUIT⟺PROTOCOL COMPLETENESS).** For a genuine
+/-- **`nonMemberGate_complete_nonmember` (CIRCUIT⟺PROTOCOL COMPLETENESS).** For a genuine
 non-member (`nf ∉ xs`) of a strict-ascending committed set, there EXIST neighbor/gap values and an
 honest range-checked row that (a) decodes the gap correctly (`NmRowEncodes`) and (b) satisfies BOTH gap
 gates. So every genuine non-member is gate-acceptable — the non-membership argument is complete, not
@@ -620,7 +620,7 @@ instance instVerifiableNonMember : Verifiable ObligationStmt NmWitness where
           && decide ((gapHiGate w.cols).holds w.env)
     | _, _ => false
 
-/-- **`nonMember_discharges_obligation` — PROVED.** Under the circuit-backed instance, the
+/-- **`nonMember_discharges_obligation`.** Under the circuit-backed instance, the
 non-membership obligation `.named NM_OBLIGATION` is DISCHARGED (`Verify = true`) by the witness IFF the
 row is range-checked AND both gap gates hold. The verify seam carries a GENUINE circuit verdict. -/
 theorem nonMember_discharges_obligation (env : VmRowEnv) (c : NmCols) (xs : List Int) :
@@ -632,9 +632,9 @@ theorem nonMember_discharges_obligation (env : VmRowEnv) (c : NmCols) (xs : List
   simp only [Bool.and_eq_true, decide_eq_true_eq]
   tauto
 
-/-- **`nonMembership_witnessed_has_circuit_teeth` — PROVED (THE BUCKET-B `witnessed` ARM, DISCHARGED BY
+/-- **`nonMembership_witnessed_has_circuit_teeth` (THE BUCKET-B `witnessed` ARM, DISCHARGED BY
 A REAL NON-MEMBERSHIP CIRCUIT).** Route the non-membership obligation to the `witnessed` arm
-(`Guard.witnessed (.named NM_OBLIGATION)`), supply the circuit witness, and — under the honest gap
+(`Guard.witnessed (.named NM_OBLIGATION)`), supply the circuit witness, and — under the gap
 decoding (`NmRowEncodes`) — if the guard `admits` then the spent nullifier is NOT in the committed set.
 So the `witnessed` non-membership arm is discharged by the GENUINE gap circuit (not an empty
 placeholder): the circuit teeth are real and they DECIDE no-double-spend. This is the non-membership
@@ -678,7 +678,7 @@ def freshRow : VmRowEnv where
 /-- `25 ∉ demoSet` (the fresh nullifier really is a non-member). -/
 theorem fresh_not_mem : (25 : Int) ∉ demoSet := by decide
 
--- The non-membership gate genuinely ACCEPTS the fresh nullifier `25` on its real neighbors:
+-- The non-membership gate ACCEPTS the fresh nullifier `25` on its real neighbors:
 #guard (decide (NmRowOk demoCols freshRow))                                -- gaps non-negative
 #guard (decide ((gapLoGate demoCols).holds freshRow))                      -- 25 = 20+1+4
 #guard (decide ((gapHiGate demoCols).holds freshRow))                      -- 30 = 25+1+4
@@ -689,7 +689,7 @@ theorem freshRow_gap : GapInterval (freshRow.loc demoCols.lo) (freshRow.loc demo
   intro y hy
   fin_cases hy <;> norm_num
 
-/-- **`freshRow_proves_nonmembership` — PROVED (NON-VACUITY, witness TRUE).** The non-membership gate,
+/-- **`freshRow_proves_nonmembership` (NON-VACUITY, witness TRUE).** The non-membership gate,
 on `freshRow` (the fresh nullifier `25` with its genuine neighbors), PROVES `25 ∉ demoSet`: a real,
 non-vacuous fresh-nullifier non-membership certificate. The gate has teeth. -/
 theorem freshRow_proves_nonmembership : (25 : Int) ∉ demoSet := by
@@ -714,7 +714,7 @@ theorem doubleSpendRow_gap :
   intro y hy
   fin_cases hy <;> norm_num
 
-/-- **`doubleSpend_unsat` — PROVED (THE CONCRETE ANTI-GHOST).** A double-spend attempt — `nf = 20`,
+/-- **`doubleSpend_unsat` (THE CONCRETE ANTI-GHOST).** A double-spend attempt — `nf = 20`,
 which IS a member of `demoSet`, with its genuine neighbors `(20, 30)` — CANNOT satisfy both gap gates
 under any range-checked witness. The gate is UNSAT for an already-spent nullifier: no honest
 non-membership certificate exists for a member. This is the no-double-spend tooth the running circuit
@@ -733,7 +733,7 @@ proves the SAME `nf ∉ set` from a gate-satisfying row. So when the circuit's c
 executor's `nullifiers` (the named root binding the deployed descriptor must supply — see boundary),
 the gate's non-membership proof DISCHARGES exactly the executor's double-spend guard precondition. -/
 
-/-- **`circuit_gate_meets_executor_guard` — PROVED (the two halves agree).** If the circuit's committed
+/-- **`circuit_gate_meets_executor_guard` (the two halves agree).** If the circuit's committed
 set is the executor kernel's nullifier set (`xs = k.nullifiers`, the named-root binding), then a
 gate-satisfying, range-checked, honestly-decoded row proves EXACTLY the precondition under which the
 executor term `noteSpendStmt` COMMITS — `nf ∉ k.nullifiers`. The circuit's non-membership gate and the
@@ -750,7 +750,7 @@ theorem circuit_gate_meets_executor_guard (c : NmCols) (env : VmRowEnv) (k : Rec
   exact hni (by rw [hnf]; exact List.mem_map_of_mem hmem)
 
 /-!
-### What remains for the FULL deployed noteSpend descriptor (reported, NOT papered)
+### What remains for the FULL deployed noteSpend descriptor (reported)
 
 This module supplies the missing non-membership GATE-KIND with real teeth on both sides. What the
 DEPLOYED `noteSpendVmDescriptor`/`noteSpendVmDescriptorFull` (`EffectVmEmitNoteSpend.lean`) still needs
@@ -777,7 +777,7 @@ to use it end-to-end:
 So: the EXECUTOR-side no-double-spend is CLOSED in-band (`noteSpendStmt_no_double_spend`); the
 CIRCUIT-side non-membership GATE is built with real teeth (sound + complete + anti-ghost +
 `witnessed`-discharge); the remaining gap is the sorted-tree OPENING that binds the gate's neighbor
-columns to the committed root — named precisely, not faked.
+columns to the committed root — named precisely.
 -/
 
 /-! ## §8½ — THE RUNNABLE EFFECTVM DESCRIPTOR IS NOW FULL-STATE (magnesium breadth).

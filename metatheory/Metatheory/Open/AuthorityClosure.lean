@@ -31,7 +31,7 @@ Two deliverables, exactly as flagged in the OPEN note:
   right is `≤` a finite `⊗`-combination of `init`-held rights (`AmpClosed`). The
   non-amplifying closure (A) is recovered as the `b = 𝟙` special case.
 
-What remains genuinely OPEN is stated precisely at the foot of §B: the *receipt-disclosure
+What remains OPEN is stated precisely at the foot of §B: the *receipt-disclosure
 typing* (that `Generative`/amplifying acts are forced on-chain and un-strippable) is an
 operational obligation on the executable system, not an order-theoretic fact about
 `AmpProduces`, and is not modelled here. The closure proved is exactly the reachability
@@ -249,7 +249,7 @@ In any state `final` reachable by ANY finite sequence of *amplifying* production
 held in `final` descends (`≤`) to a finite `⊗`-**combination** of `init`-held rights
 (`AmpClosed init r`). This is *"only connectivity begets connectivity"* WITH rights
 amplification: a reachable right need not be bounded by any single init right (amplification
-genuinely produces new access — `unsealer ⊗ box ⊢ contents`), but it is *still* bounded by
+produces new access — `unsealer ⊗ box ⊢ contents`), but it is *still* bounded by
 the joint authority of the rights `init` actually held. No access appears that is not a
 `⊗`-combination of initial connectivity.
 
@@ -291,7 +291,7 @@ authority). That is an *operational* obligation on the executable system's turn 
 a property of HOW an `AmpProduces` step is recorded and attested, not of the order relation
 `r' ≤ a ⊗ b` itself — and it lives with `Dregg2.Core`'s conservation/`TurnTag` machinery
 (`§4.1`, the `withholding_no_free_copy` / minting line), not in this candidate-independent
-closure. The honest residue here: the reachability *bound* is proved (every reachable right
+closure. The residue here: the reachability *bound* is proved (every reachable right
 is a `⊗`-combination of initial connectivity); the *un-strippability of the amplification
 receipt* remains an operational obligation, precisely stated and explicitly NOT faked here. -/
 

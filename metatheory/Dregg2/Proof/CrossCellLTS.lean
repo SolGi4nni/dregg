@@ -37,7 +37,7 @@ committed `jointApply A B bt = some (A', B')` is matched by `crossAbsStep`.
 It lifts to whole bilateral runs (`crossAbsRun_forward`). The CG-5 conservation conjunct is
 DERIVED on the running machine here — because `jointApply` threads ONE shared `amt` through both
 halves, the binding `halfA + halfB = 0` is realized in the transition itself. Where the binding
-is genuinely a HYPOTHESIS (the CG-2 turn-identity agreement, irreducible per `study-category`),
+is a HYPOTHESIS (the CG-2 turn-identity agreement, irreducible per `study-category`),
 it is carried exactly as in `JointTurn`/`Exec.JointCell`: `crossAbsStep_bound` pairs the square
 with `SharedBinding.agree`, and the binding cannot be dropped (`crossAbsStep_needs_binding`).
 
@@ -186,7 +186,7 @@ Every committed bilateral step `jointApply A B bt = some (A', B')` is matched by
 cross-cell abstract step `crossAbsStep bt`. This is the cross-cell forward simulation — the
 multi-cell lift of `LTS.recAbsStep_forward`. -/
 
-/-- **KEYSTONE — `crossAbsStep_forward` (PROVED-clean).** The cross-cell forward-simulation square
+/-- **KEYSTONE — `crossAbsStep_forward`.** The cross-cell forward-simulation square
 for the bilateral kernel: every committed bilateral turn is matched by the cross-cell abstract LTS
 edge `crossAbsStep`. Assembles:
 
@@ -230,7 +230,7 @@ theorem crossAbsStep_forward (A B A' B' : KernelState) (bt : BiTurn)
       { actor := bt.actorB, src := bt.dstB, dst := bt.dstB, amt := bt.amt }
       (applyHalfIn_authz hib)
 
-/-- **`crossAbsStep_forward_exists` (PROVED-clean).** The turn-index-closed form: every committed
+/-- **`crossAbsStep_forward_exists`.** The turn-index-closed form: every committed
 bilateral step is matched by a `CrossAbsStep` (the `AbstractState × AbstractState`-level
 transition, with the grounding bilateral turn existentially witnessed). The bottom edge as a bare
 relation. -/
@@ -239,7 +239,7 @@ theorem crossAbsStep_forward_exists (A B A' B' : KernelState) (bt : BiTurn)
     CrossAbsStep (crossAbsOf (A, B)) (crossAbsOf (A', B')) :=
   ⟨bt, crossAbsStep_forward A B A' B' bt h⟩
 
-/-- **`crossAbsStep_refines` (PROVED-clean).** The square in `Refines`-shape: for the canonical
+/-- **`crossAbsStep_refines`.** The square in `Refines`-shape: for the canonical
 cross-cell abstraction `p := crossAbsOf (A,B)` there is an abstract successor `p' := crossAbsOf
 (A',B')` such that the cross-cell LTS steps `crossAbsStep bt p p'`. Full bilateral forward
 simulation. -/
@@ -269,7 +269,7 @@ inductive CrossAbsRun : (AbstractState × AbstractState) → (AbstractState × A
   | step {p p' p'' : AbstractState × AbstractState}
       (s : CrossAbsStep p p') (rest : CrossAbsRun p' p'') : CrossAbsRun p p''
 
-/-- **`crossAbsRun_forward` (PROVED-clean).** The whole-history cross-cell forward simulation:
+/-- **`crossAbsRun_forward`.** The whole-history cross-cell forward simulation:
 every concrete bilateral `BiRun` is matched by a `CrossAbsRun` of cross-cell steps between the
 cross-abstractions of its endpoints. The cross-cell refinement square is stable under iteration —
 the abstract cross-cell LTS simulates the concrete bilateral one over unbounded executions. PROVED
@@ -283,19 +283,19 @@ theorem crossAbsRun_forward {P Q : KernelState × KernelState} (hrun : BiRun P Q
 
 /-! ## §6 — The cross-cell step is NOT vacuous (the grounding + conservation conjuncts do work). -/
 
-/-- **`crossAbsStep_conserves` (PROVED).** The cross-cell conservation conjunct can be PROJECTED
+/-- **`crossAbsStep_conserves`.** The cross-cell conservation conjunct can be PROJECTED
 OUT: `crossAbsStep` entails the JOINT total is preserved. The load-bearing cross-cell measure. -/
 theorem crossAbsStep_conserves {bt : BiTurn} {p p' : AbstractState × AbstractState}
     (h : crossAbsStep bt p p') : jointBalance p' = jointBalance p := h.1
 
-/-- **`crossAbsStep_grounded` (PROVED).** The two-sided grounding can be PROJECTED OUT:
+/-- **`crossAbsStep_grounded`.** The two-sided grounding can be PROJECTED OUT:
 `crossAbsStep` entails both halves are authorized in their own authority graphs. -/
 theorem crossAbsStep_grounded {bt : BiTurn} {p p' : AbstractState × AbstractState}
     (h : crossAbsStep bt p p') :
     (bt.actorA = bt.srcA ∨ p.1.authGraph.has bt.actorA bt.srcA) ∧
     (bt.actorB = bt.dstB ∨ p.2.authGraph.has bt.actorB bt.dstB) := h.2.2
 
-/-- **`crossAbsStep_not_vacuous` (PROVED).** `crossAbsStep` is NOT the always-true relation:
+/-- **`crossAbsStep_not_vacuous`.** `crossAbsStep` is NOT the always-true relation:
 there is a bilateral turn, and cross-cell states, for which it FAILS. A turn whose A-side actor ≠
 src over the EMPTY A-graph is not grounded, so no `crossAbsStep` holds for it. Refutes "the
 cross-cell step is vacuously `True`" — the grounding conjunct does real work. -/
@@ -326,7 +326,7 @@ per-cell is strictly WEAKER than (in fact, on a non-trivial transfer, INCOMPATIB
 cross-cell move; the conserved measure is a NEW conjunct (the joint sum + half-edge binding), not
 the conjunction of the two per-cell conjuncts. We make this PRECISE rather than papering over it. -/
 
-/-- **`half_breaks_per_cell_conservation` (PROVED) — the obstruction, concretely.** There is a
+/-- **`half_breaks_per_cell_conservation` — the obstruction, concretely.** There is a
 committed bilateral turn (`amt = 30`) whose A-side debit half VIOLATES the single-cell
 conservation `total A' = total A`: it drops `total A` by `30`. So the single-cell forward square's
 (C) conjunct does NOT hold of the bilateral half — the per-cell squares cannot be reused for the
@@ -341,11 +341,11 @@ theorem half_breaks_per_cell_conservation :
   -- `total sA - 30 ≠ total sA` since `30 ≠ 0`.
   decide
 
-/-- **`cross_conservation_is_not_per_cell` (PROVED) — the obstruction, abstractly.** It is NOT the
+/-- **`cross_conservation_is_not_per_cell` — the obstruction, abstractly.** It is NOT the
 case that cross-cell conservation factors as per-cell conservation on both sides. Concretely:
 there is a committed bilateral turn for which `(absOf A').balanceTotal ≠ (absOf A).balanceTotal`
 (the A-component MOVES) even though the JOINT total is preserved (`crossAbsStep`'s (C5)). So the
-cross-cell (C5) is genuinely the SUM-conjunct, NOT the conjunction `a₁'.bal = a₁.bal ∧ a₂'.bal =
+cross-cell (C5) is the SUM-conjunct, NOT the conjunction `a₁'.bal = a₁.bal ∧ a₂'.bal =
 a₂.bal` that two per-cell squares would deliver. The two single-cell squares, even composed, prove
 a DIFFERENT (false-here) statement; the cross-cell measure is irreducible to them. -/
 theorem cross_conservation_is_not_per_cell :
@@ -370,12 +370,12 @@ turn-identity agreement — that both halves commit to the SAME shared `account_
 nothing about each side's turn-id projection), exactly per `Exec.JointCell.joint_sound_of_binding`.
 We carry it as the `SharedBinding` premise and show it is load-bearing. -/
 
-/-- **`crossAbsStep_bound` (PROVED) — the cross-cell square WITH the CG-2 binding as HYPOTHESIS.**
+/-- **`crossAbsStep_bound` — the cross-cell square WITH the CG-2 binding as HYPOTHESIS.**
 Given the `SharedBinding` (both halves agree on the shared turn-id — a PREMISE, never derived) AND
 a committed bilateral turn, the cross-cell forward square holds AND both halves are bound to one
 identity. The conclusion is a conjunction whose two legs need two different premises (mirroring
 `joint_sound_of_binding`): the `crossAbsStep` square comes from `h` alone; the single-identity
-`bind.sidOfA = bind.sidOfB` is UNPROVABLE from `h` and needs the binding. The binding is genuinely
+`bind.sidOfA = bind.sidOfB` is UNPROVABLE from `h` and needs the binding. The binding is
 load-bearing — discard it and the identity conjunct cannot be closed. -/
 theorem crossAbsStep_bound {A B A' B' : KernelState} {bt : BiTurn}
     (bind : SharedBinding bt)
@@ -383,7 +383,7 @@ theorem crossAbsStep_bound {A B A' B' : KernelState} {bt : BiTurn}
     crossAbsStep bt (crossAbsOf (A, B)) (crossAbsOf (A', B')) ∧ bind.sidOfA = bind.sidOfB :=
   ⟨crossAbsStep_forward A B A' B' bt h, bind.agree⟩
 
-/-- **`crossAbsStep_needs_binding` (PROVED) — the CG-2 binding is a GENUINE restriction.** The
+/-- **`crossAbsStep_needs_binding` — the CG-2 binding is a GENUINE restriction.** The
 executable analogue of `JointTurn.binding_is_proper` lifted to the cross-cell LTS: there exist
 declared bilateral half-edges that do NOT balance (`1` out, `2` in), excluded by the
 `EqualAndOpposite` identity (`halves_sum_zero`) every committed bilateral satisfies. So cross-cell

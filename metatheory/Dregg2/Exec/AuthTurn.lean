@@ -202,7 +202,7 @@ def delegationStale (k : RecordKernelState) (child : Label) : Bool :=
   | some parent => decide (k.delegationEpochAt child < k.delegationEpoch parent)
   | none        => false
 
-/-- **`recKRevokeDelegationFull_frame` — the full delegation-revoke is balance-NEUTRAL (PROVED).** Like
+/-- **`recKRevokeDelegationFull_frame` — the full delegation-revoke is balance-NEUTRAL.** Like
 the bare `recKRevokeTarget`, the faithful full step (cap-edge removal + epoch bump + snapshot clear)
 edits only `caps`/`delegationEpoch`/`delegations`/`delegationEpochAt` — so `recTotal`, `accounts`, and
 `cell` are untouched. Revocation moves no value, even with the epoch semantics modelled. -/
@@ -214,7 +214,7 @@ theorem recKRevokeDelegationFull_frame (k : RecordKernelState) (parent child : L
   -- `recTotal` reads `accounts`+`cell`, both untouched by either leg.
   refine ⟨rfl, rfl, rfl⟩
 
-/-- **`recKRevokeDelegationFull_caps` — the full step's cap-edge IS the shared `removeEdge` (PROVED).**
+/-- **`recKRevokeDelegationFull_caps` — the full step's cap-edge IS the shared `removeEdge`.**
 The faithful step's `caps` post-state equals the bare `recKRevokeTarget`'s — the epoch/snapshot legs
 touch no `caps`. So the cap-graph soundness (`recKRevokeTarget_execGraph`, the connector `unify_revoke`)
 carries verbatim onto the full step. -/
@@ -223,7 +223,7 @@ theorem recKRevokeDelegationFull_caps (k : RecordKernelState) (parent child : La
 
 /-- **`recKRevokeDelegationFull_bumps_parent_epoch` — leg (2), PROVED.** The faithful full step bumps
 the PARENT's `delegationEpoch` by EXACTLY `+1` (dregg1's `bump_delegation_epoch`, `apply.rs:3069`). The
-kernel now MODELS the epoch advance — it is no longer a frozen under-model. -/
+kernel MODELS the epoch advance. -/
 theorem recKRevokeDelegationFull_bumps_parent_epoch (k : RecordKernelState) (parent child : Label) :
     (recKRevokeDelegationFull k parent child).delegationEpoch parent = k.delegationEpoch parent + 1 := by
   show (if parent = parent then k.delegationEpoch parent + 1 else k.delegationEpoch parent)
@@ -243,7 +243,7 @@ theorem recKRevokeDelegationFull_clears_child_snapshot (k : RecordKernelState) (
   · show (if child = child then 0 else k.delegationEpochAt child) = 0
     rw [if_pos rfl]
 
-/-- **`recKRevokeDelegationFull_makes_child_stale` — THE FRESHNESS TOOTH (PROVED).** After a faithful
+/-- **`recKRevokeDelegationFull_makes_child_stale` — THE FRESHNESS TOOTH.** After a faithful
 delegation revoke, IF the revoked `child`'s parent pointer still points at the revoking `parent` (the
 `apply_revoke_delegation` precondition `child.delegate == Some(action_target)`, `apply.rs:3055`) and the
 parent's pre-epoch was at least the child's stamp (the snapshot was fresh before), then the child's
@@ -427,7 +427,7 @@ theorem recKDelegate_grounds (k k' : RecordKernelState) (delegator recipient t :
     rw [execGraph_eq_any]; exact hg
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-! ### §6.RIGHTS — the rights-delegation grounds in a genuinely-held cap and attenuates it.
+/-! ### §6.RIGHTS — the rights-delegation grounds in a held cap and attenuates it.
 
 When `recKDelegateAtten` commits: (a) `heldCapTo` is a real member of the delegator's slot that
 `confersEdgeTo t`; (b) the granted cap's real conferred rights are `⊆` the held cap's

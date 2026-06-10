@@ -68,9 +68,9 @@ The NAMED GAP (not papered):
     does) and welds ONE leg's circuit against ONE leg's executor post-state. The aggregation of all
     legs' per-leg circuit proofs into a SINGLE proof over the ring is the recursive-aggregation /
     `Circuit/TurnEmit` layer — cited, NOT re-proved here. This is the same honest per-row→whole-turn
-    boundary the transfer/mint/burn welds live on (`Compile.lean` HONEST SCOPE), surfaced at the ring.
+    boundary the transfer/mint/burn welds live on (`Compile.lean` SCOPE), surfaced at the ring.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 whole-function-digest assumption enters ONLY inside the reused `balanceA_full_sound` (its
@@ -197,7 +197,7 @@ effects. We thread a settled-ring leg through it: a leg of a ring that settles i
 commit (§3), so — modulo the chained R1 dst-liveness side-condition — its OWN circuit pins the whole
 state the leg's executor produces. The un-witnessed coeffect leg is now CIRCUIT-witnessed.
 
-### HONEST SURFACE (the named GAP, restated where it bites).
+### The named GAP, restated where it bites.
 
 The hypothesis `haccept : acceptsEffects st.kernel l.to_ = true` is the chained-vs-raw R1 gate
 (`Effects/BalanceA.lean §3`): `settleRing` folds the RAW `recKExecAsset` (no dst-liveness pre-gate, no
@@ -209,7 +209,7 @@ here. -/
 /-- **`settled_ring_leg_circuit_pins_executor_state` — a settled-ring leg carries an Argus `compile_sound`
 on the FULL post-state.**
 
-For a ring `l :: r` that genuinely SETTLES (`hsettle : settleRing k (l :: r) = some k'`, the load-bearing
+For a ring `l :: r` that SETTLES (`hsettle : settleRing k (l :: r) = some k'`, the load-bearing
 hypothesis — §3's `settled_ring_legs_are_argus` extracts the head leg's executor commit FROM it, so this
 is a statement about a settled ring, not an arbitrary committing leg), read on a chained state `st` whose
 kernel is the leg's pre-state (`hpre`) and whose destination accepts effects (`haccept`, the chained R1
@@ -304,12 +304,12 @@ theorem fulfilled_bilateral_ring_is_argus (k : RecordKernelState) (l₀ l₁ : R
 #assert_axioms fulfilled_intent_leg_is_argus_interp
 #assert_axioms fulfilled_bilateral_ring_is_argus
 
-/-! ## §7 — NON-VACUITY: the weld is about a REAL settlement that genuinely MOVES the ledger.
+/-! ## §7 — NON-VACUITY: the weld is about a REAL settlement that MOVES the ledger.
 
 The connection would be hollow if the Argus settlement fold never committed or moved nothing. We exhibit a
 concrete 2-leg ring over a funded ledger and show the Argus fold (§3) commits AND moves value — the legs
 are real `balanceA` interp runs, not a vacuous identity. The `closedRing3` of `Ring.lean` is `RingBalanced`
-but not funded on an arbitrary ledger; here we fund a tiny bilateral cycle so the fold genuinely settles. -/
+but not funded on an arbitrary ledger; here we fund a tiny bilateral cycle so the fold settles. -/
 
 /-- A funded 2-cell ledger for the non-vacuity witness: cells 0 and 1 are live accounts; cell 0 holds 5 of
 asset 7, cell 1 holds 5 of asset 8 (a fundable bilateral swap of distinct assets). -/
@@ -332,9 +332,9 @@ def bilatRing0 : Ring :=
 -- ...and the senders are drained (cell 0's asset-7 and cell 1's asset-8 both go to 0): a REAL movement.
 #guard ((settleRingArgus kRing0 bilatRing0).map (fun k => (k.bal 0 7, k.bal 1 8))) == some (0, 0)
 
-/-- **`bilatRing0_settles_via_argus` — the Argus settlement fold genuinely COMMITS and MOVES the ledger.**
+/-- **`bilatRing0_settles_via_argus` — the Argus settlement fold COMMITS and MOVES the ledger.**
 The funded bilateral cycle settles through the Argus interp fold (§3) to a state where the moved columns
-have genuinely transferred (cell 1 gains 5 of asset 7, cell 0 gains 5 of asset 8) — the legs are REAL
+have transferred (cell 1 gains 5 of asset 7, cell 0 gains 5 of asset 8) — the legs are REAL
 `balanceA` interp runs, so `settled_ring_leg_circuit_pins_executor_state` and the conservation keystone are
 about a non-vacuous settlement, not an empty fold. -/
 theorem bilatRing0_settles_via_argus :

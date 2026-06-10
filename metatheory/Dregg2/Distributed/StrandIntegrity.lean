@@ -307,7 +307,7 @@ def forkedLace : Lace := [k0b, k0a]
 /-- `Strand honestLace 7` reduces to the literal `[h0, h1]` (both blocks are author `7`). -/
 theorem strand_honestLace_7 : Strand honestLace 7 = [h0, h1] := by decide
 
-/-- **`honest_strand_forkFree` (PROVED)** — `7`'s strand in `honestLace` is fork-free:
+/-- **`honest_strand_forkFree`** — `7`'s strand in `honestLace` is fork-free:
 its two blocks sit at distinct seqs, so the single-tip guarantee holds. -/
 theorem honest_strand_forkFree : StrandForkFree honestLace 7 := by
   intro a ha b hb hseq
@@ -316,7 +316,7 @@ theorem honest_strand_forkFree : StrandForkFree honestLace 7 := by
   rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;>
     first | rfl | (exact absurd hseq (by decide))
 
-/-- **`honest_single_tip` (PROVED)** — the honest feed has ONE head: the unique block at its tip
+/-- **`honest_single_tip`** — the honest feed has ONE head: the unique block at its tip
 sequence is `h1`. Instantiates the keystone `strand_single_tip` on the concrete clean strand. -/
 theorem honest_single_tip {a b : Block}
     (ha : a ∈ Strand honestLace 7) (hb : b ∈ Strand honestLace 7)
@@ -324,7 +324,7 @@ theorem honest_single_tip {a b : Block}
     a = b :=
   strand_single_tip honest_strand_forkFree ha hb hatip hbtip
 
-/-- **`forked_strand_not_forkFree` (PROVED)** — the NEG tooth: the OLD overwriting `insert`
+/-- **`forked_strand_not_forkFree`** — the NEG tooth: the OLD overwriting `insert`
 (`insertOverwrite k0b [k0a]` = `forkedLace`) leaves author `9`'s strand NOT fork-free — two
 *distinct* blocks `k0a ≠ k0b` both at seq 0. There is no single tip; the fork is live state. This
 is precisely the A1 bug the FIXED `insert` repels (it would reject `k0b` as an `Equivocation`,
@@ -337,7 +337,7 @@ theorem forked_strand_not_forkFree :
   have : k0b = k0a := hff k0b hk0b k0a hk0a (by decide)
   exact absurd this (by decide)
 
-/-- **`fixed_insert_keeps_single_tip` (PROVED)** — the POSITIVE contrast: extending the clean
+/-- **`fixed_insert_keeps_single_tip`** — the POSITIVE contrast: extending the clean
 honest strand with a fresh seq-2 block via the FIXED accepting path keeps fork-freedom (hence the
 single tip). The corrected `insert` admits `h2` (seq 2 clears the `find_conflict` guard) and the
 feed stays a single append-only log. -/

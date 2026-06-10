@@ -42,7 +42,7 @@ def Tier1Eligible {S : Type u} [MergeState S] (I : Invariant S) : Prop :=
 
 /-- **The `FinalityRule.admits` gate (the static check).** The classifier rejects a
 tier-1 declaration unless `Tier1Eligible`; soundness = a tier-1 cell's concurrent
-merges genuinely preserve `I`. (Obligation; the real classifier is over the cell's
+merges preserve `I`. (Obligation; the real classifier is over the cell's
 write-set × state-lattice — `discoveries §3.7`.) -/
 theorem admits_sound {S : Type u} [MergeState S] (I : Invariant S)
     (h : Tier1Eligible I) (x y : S) (hx : I x) (hy : I y) : I (x ⊔ y) := by
@@ -67,11 +67,11 @@ theorem nonpairwise_escalation {S : Type u} [MergeState S] (I : Invariant S)
 
 Over `Finset ℕ` (⊔ = ∪): a bounded invariant (`card ≤ 1`) is NOT I-confluent and must
 escalate; a grow-only invariant IS I-confluent and runs tier-1. This proves the judgement
-is genuinely falsifiable, not vacuous. -/
+is falsifiable, not vacuous. -/
 
 instance : MergeState (Finset ℕ) := { toSemilatticeSup := inferInstance }
 
-/-- **An I-confluent invariant exists (PROVED):** the grow-only `True` invariant is
+/-- **An I-confluent invariant exists:** the grow-only `True` invariant is
 preserved by any merge — grow-only sets run coordination-free (tier-1). -/
 theorem top_iconfluent : IConfluent (S := Finset ℕ) (fun _ => True) :=
   fun _ _ _ _ => trivial

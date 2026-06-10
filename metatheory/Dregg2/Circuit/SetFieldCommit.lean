@@ -27,7 +27,7 @@ and — the new piece `Transfer` did not have — a `log` commitment (`setFieldA
 The post-state's pinned-ness is derived from a GENUINE BINDING COMMITMENT (a Poseidon Merkle node-hash
 `compress` + sponge `compressN` over the ORDERED untouched leaves + a leaf hash `CH` + a log hash
 `LH`), never a `+`-fold (a sum is not injective, so a sum-fold could satisfy NONE of the binding
-portals — the soundness theorem would be VACUOUS). The state commitment splits into FOUR honestly
+portals — the soundness theorem would be VACUOUS). The state commitment splits into FOUR
 encoded digests over the witness:
   * `restHash`   — `RH` of the 16 non-`cell` kernel components (REUSED from `StateCommit`).
   * `frameDigest`— `compressN (S.sort.map (fun c => CH c (cell c)))` over `S = accounts \ {cell}`
@@ -405,7 +405,7 @@ PROVED binding lemmas (`FrameDigestBindsCells` REUSED from `StateCommit`, `cellL
 `RestHashIffFrame`, `logHashInjective`) give the WHOLE post-state. The post `cell` map is RECONSTRUCTED
 by `funext` — NOT asserted. Result: `SetFieldSpec s actor cell f v s'`. -/
 
-/-- **THEOREM — `setfield_circuit_full_sound` (PROVED, frame RECONSTRUCTED not portaled).** A
+/-- **THEOREM — `setfield_circuit_full_sound` (frame RECONSTRUCTED not portaled).** A
 satisfying full-state witness on the encoded chained pre/effect/post proves the complete declarative
 `SetFieldSpec`: every component is pinned. Carries ONLY the standard Poseidon collision-resistance set
 (`compressNInjective compressN`, `cellLeafInjective CH`, `RestHashIffFrame RH`, `logHashInjective LH`)
@@ -448,7 +448,7 @@ theorem setfield_circuit_full_sound
   have hframe16 := (hRest s.kernel s'.kernel).mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hQ, hSC, hFac, hLif, hDC, hDel, hDgs,
     hSB⟩ := hframe16
-  -- frame digests equal ⇒ untouched cells equal (PROVED FrameDigestBindsCells, REUSED).
+  -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells, REUSED).
   have hfdeq : StateCommit.frameDigest CH compressN s.kernel (sfFrameCarrier s.kernel cell)
       = StateCommit.frameDigest CH compressN s'.kernel (sfFrameCarrier s.kernel cell) :=
     (sfframe_iff CH RH cmb compressN LH s actor cell f v s').mp hframegate
@@ -491,7 +491,7 @@ theorem setfield_circuit_full_sound
 
 /-! ## §5b — ROOT-BINDING corollary (where `compressInjective cmb` earns its keep). -/
 
-/-- **`recSetFieldCommit_binds` (PROVED via `compressInjective cmb`).** Equal full-state roots (for the
+/-- **`recSetFieldCommit_binds` (via `compressInjective cmb`).** Equal full-state roots (for the
 same touched cell) force equal cell-digest AND equal (rest ⊕ log) child — the published root is a
 binding commitment to the whole chained state. -/
 theorem recSetFieldCommit_binds (hCmb : StateCommit.compressInjective cmb)
@@ -513,7 +513,7 @@ satisfying full-state witness: ALL protocol-acceptable `setFieldA` behaviours ar
 acceptable. The frame gates hold because `s'`'s frame is literally `s`'s; the target gate because the
 post cell IS the spec write; the log gate because the post log IS the one-row extension. -/
 
-/-- **THEOREM — `setfield_circuit_full_complete` (PROVED).** A committed `setFieldA` (its apex
+/-- **THEOREM — `setfield_circuit_full_complete`.** A committed `setFieldA` (its apex
 `SetFieldSpec`) yields a satisfying full-state witness. -/
 theorem setfield_circuit_full_complete
     (hRest : StateCommit.RestHashIffFrame RH)
@@ -701,7 +701,7 @@ def sSF0 : RecChainedState :=
 one receipt row appended). -/
 def goodPostSF : RecChainedState := (execFullA sSF0 (.setFieldA 0 0 "balance" 70)).getD sSF0
 
-/-- **THE FORGERY:** cell 0 honestly written to 70, but the bystander cell 2 is MINTED from 50 to 999
+/-- **THE FORGERY:** cell 0 written to 70, but the bystander cell 2 is MINTED from 50 to 999
 (and the honest receipt appended). A guard-only circuit sees nothing wrong on cell 2. -/
 def forgedThirdCellSF : RecChainedState :=
   { goodPostSF with

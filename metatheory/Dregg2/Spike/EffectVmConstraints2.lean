@@ -385,7 +385,7 @@ prover cannot exhibit two different states with the published final commitment.
 
 This is the honest §8-portal statement: the AIR + boundary constraint give the binding, and the
 ONLY thing not proved in Lean is the hash's collision-resistance, which is supplied as a
-hypothesis (a portal assumption, never faked as proven).
+hypothesis (a portal assumption as proven).
 -/
 theorem state_commitment_binds_state
     (H : Hash) (hCR : CommitTreeInjective H)

@@ -28,13 +28,13 @@ CONNECTOR: the projected post-`cap_root` is universe-A's `recDelegateCaps` diges
 `D (recDelegateCaps k.caps del rec t)` — the column move the descriptor pins. So the runnable `cap_root`
 transition IS universe-A's validated `caps`-digest transition; not a fourth spec.
 
-## HONEST BOUNDARY (precise)
+## BOUNDARY (precise)
 
   * **IR GAP — needs IR extension: cap-root hash-site** (inherited from `EffectVmEmitAttenuateA`). The
     `cap_root` column carries the SCALAR digest `D caps` of the cap-table FUNCTION; the EffectVM IR's
     `VmHashSite` cannot re-derive `cap_root` IN-circuit from the cap-table rows. So the descriptor pins
     the `cap_root` COLUMN transition (witness supplies the digest) and binds it into `state_commit`, but
-    the cap-table-is-genuinely-Merkled binding lives in the `Function.Injective D` portal (carried,
+    the cap-table-is-Merkled binding lives in the `Function.Injective D` portal (carried,
     realizable), the SAME bar `delegate_full_sound` uses. We connect through `capRootProj`.
 
   * **The Granovetter GUARD (`delegateGuard`) is NOT a `cap_root` ROW gate.** Unlike `attenuateA` (whose
@@ -47,7 +47,7 @@ transition IS universe-A's validated `caps`-digest transition; not a fourth spec
   * PER-CELL / PER-ROW; cross-row composition is the turn layer (`TurnEmit`), cited not claimed.
   * `state.RESERVED` not bound by the commitment (inherited finding).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 `Poseidon2SpongeCR hash`; the cap-table digest ONLY as `Function.Injective D`. No `sorry`, no `:= True`,

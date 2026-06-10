@@ -177,7 +177,7 @@ theorem tier1Admissible_eq_tier1Eligible
     tier1Admissible I = Confluence.Tier1Eligible I := rfl
 
 /-- **Eligible ⇒ merges preserve the invariant (soundness of the gate).** A tier-1
-cell whose invariant passed `tier1Admissible` genuinely preserves its invariant
+cell whose invariant passed `tier1Admissible` preserves its invariant
 under any concurrent merge `x ⊔ y` — so tier-1 (coordination-free) is SOUND for it.
 Reuses `Confluence.admits_sound`. -/
 theorem tier1Admissible_merge_sound
@@ -217,7 +217,7 @@ theorem cardLeOne_not_tier1Admissible :
     ¬ tier1Admissible (S := Finset ℕ) (fun s => s.card ≤ 1) :=
   Confluence.cardLeOne_not_iconfluent
 
-/-- **The gate genuinely discriminates (non-vacuity):** there exists an admissible
+/-- **The gate discriminates (non-vacuity):** there exists an admissible
 invariant AND an inadmissible one over the same lattice — so `tier1Admissible` is a
 real, falsifiable side-condition, not always-true or always-false. The grow-only
 `True` invariant passes; `card ≤ 1` fails. -/

@@ -294,7 +294,7 @@ one (`keep = [read]` against a parent cap `.endpoint 0 [read,write]`) COMMITS; t
 (`keep = [read,write]` against a parent cap `.endpoint 0 [read]`) is REJECTED by `capAuthorityG`
 (`granted ⊄ held` over `ExecAuth`) ⇒ the whole forest rolls back. The previous `.unchecked` cap mode
 admitted BOTH. This is the same-wire contrast proving the proved `granted ≤ held` attenuation is now
-load-bearing — no longer admit-by-construction. -/
+load-bearing — not admit-by-construction. -/
 
 /-- A non-amplifying delegated node: `keep = [read]` ⊆ parent rights `[read, write]`. Its WHAT leg
 ADMITS (`[read].toFinset ≤ {read, write}`). Balance-neutral `emitEvent`. -/
@@ -436,20 +436,20 @@ REJECTED by the WHAT leg (`capAuthorityG`). -/
 def tokenOverAttenForestG : DForest :=
   ⟨ mkAuthToken goodTokenCred tokenCtxOutOfWindow [trueCaveat], .emitEventA 0 0 0 0, [] ⟩
 
-/-- **WHO leg — the genuine biscuit credential VERIFIES (PROVED).** The `Authorization.token` arm
+/-- **WHO leg — the genuine biscuit credential VERIFIES.** The `Authorization.token` arm
 routes through the §8 portal (`CryptoKernel.verify 11 11` = `decide (11 = 11)` = `true`). -/
 theorem tokenOkForestG_credential_valid : credentialValidG tokenOkForestG.auth = true := by
   unfold tokenOkForestG mkAuthToken credentialValidG goodTokenCred
   decide
 
-/-- **WHO leg — the FORGED biscuit credential FAILS (PROVED, the teeth).** The portal's
+/-- **WHO leg — the FORGED biscuit credential FAILS (the teeth).** The portal's
 `CryptoKernel.verify 11 12` = `decide (11 = 12)` = `false`: a forged biscuit signature fail-closes
 exactly as the executor's `TokenAuthInvalid`. NON-VACUOUS against the positive above. -/
 theorem tokenForgedForestG_credential_invalid : credentialValidG tokenForgedForestG.auth = false := by
   unfold tokenForgedForestG mkAuthToken credentialValidG forgedTokenCred
   decide
 
-/-- **WHAT leg — the in-window token's attenuation ADMITS (PROVED).** `AuthMode.token agentToken`
+/-- **WHAT leg — the in-window token's attenuation ADMITS.** `AuthMode.token agentToken`
 admits iff ALL the biscuit's caveats discharge on `caveatCtx = 150`: `100 ≤ 150 ∧ 150 ≤ 200`. This is
 the token's OWN attenuation, gating the executor — not `.unchecked`. -/
 theorem tokenOkForestG_what_admits : capAuthorityG tokenOkForestG.auth = true := by
@@ -458,7 +458,7 @@ theorem tokenOkForestG_what_admits : capAuthorityG tokenOkForestG.auth = true :=
     List.all_cons, List.all_nil]
   decide
 
-/-- **WHAT leg — the OVER-ATTENUATED token's attenuation REJECTS (PROVED, the teeth).** Presented at
+/-- **WHAT leg — the OVER-ATTENUATED token's attenuation REJECTS (the teeth).** Presented at
 `caveatCtx = 50`, the biscuit's `100 ≤ h` caveat is FALSE, so `agentToken.admits = false` ⇒
 `capAuthorityG = false`. The credential's OWN attenuation narrows it out of scope — the executor
 rejects, not an out-of-band check. NON-VACUOUS against the in-window admit. -/
@@ -479,7 +479,7 @@ theorem tokenOkForestG_revocation_fma0 : revocationGate tokenOkForestG.auth fma0
   unfold tokenOkForestG mkAuthToken revocationGate fma0
   simp
 
-/-- **`tokenOkForestG_gateOK` — the VALID agent token is ADMITTED by the full 4-leg gate (PROVED).**
+/-- **`tokenOkForestG_gateOK` — the VALID agent token is ADMITTED by the full 4-leg gate.**
 WHO (biscuit verifies) ∧ WHAT (in-window attenuation admits) ∧ caveats ∧ not-revoked. The agent-facing
 `Authorization::Token` gates the executor admission positively on the live path. -/
 theorem tokenOkForestG_gateOK : gateOK tokenOkForestG.auth fma0 = true := by
@@ -488,7 +488,7 @@ theorem tokenOkForestG_gateOK : gateOK tokenOkForestG.auth fma0 = true := by
              tokenOkForestG_caveats_fma0, tokenOkForestG_revocation_fma0]
   trivial
 
-/-- **`tokenForgedForestG_gate_rejects` — the FORGED token is REJECTED by the gate (PROVED).** The WHO
+/-- **`tokenForgedForestG_gate_rejects` — the FORGED token is REJECTED by the gate.** The WHO
 leg fail-closes the conjunction. -/
 theorem tokenForgedForestG_gate_rejects : gateOK tokenForgedForestG.auth fma0 = false := by
   unfold gateOK
@@ -496,7 +496,7 @@ theorem tokenForgedForestG_gate_rejects : gateOK tokenForgedForestG.auth fma0 = 
   simp
 
 /-- **`tokenOverAttenForestG_gate_rejects` — the OVER-ATTENUATED token is REJECTED by the gate
-(PROVED).** The WHAT leg (the token's own attenuation) fail-closes the conjunction — orthogonal to the
+.** The WHAT leg (the token's own attenuation) fail-closes the conjunction — orthogonal to the
 forged case (the credential VERIFIES here; it is the attenuation that narrows it out). -/
 theorem tokenOverAttenForestG_gate_rejects : gateOK tokenOverAttenForestG.auth fma0 = false := by
   unfold gateOK
@@ -511,7 +511,7 @@ where
     decide
 
 /-- **`tokenOkForestG_commits` — the VALID agent token COMMITS on the live `execFullForestG` path
-(PROVED).** Not just `gateOK`: the whole gated forest runs and produces a post-state. This is the
+.** Not just `gateOK`: the whole gated forest runs and produces a post-state. This is the
 end-to-end positive: an agent presenting a genuine, in-scope `Authorization::Token` has its turn
 admitted by the verified executor. -/
 theorem tokenOkForestG_commits : (execFullForestG fma0 tokenOkForestG).isSome := by
@@ -523,7 +523,7 @@ theorem tokenOkForestG_commits : (execFullForestG fma0 tokenOkForestG).isSome :=
     (.emitEventA 0 0 0 0)).mpr ⟨tokenOkForestG_gateOK, hs'⟩
   simpa [hga]
 
-/-- **`tokenForgedForestG_rolls_back` — the FORGED agent token does NOT commit (PROVED).** The gate
+/-- **`tokenForgedForestG_rolls_back` — the FORGED agent token does NOT commit.** The gate
 rejects ⇒ `execFullForestG = none` ⇒ whole-forest rollback. -/
 theorem tokenForgedForestG_rolls_back : execFullForestG fma0 tokenForgedForestG = none := by
   have hgate : gateOK tokenForgedForestG.auth fma0 = false := tokenForgedForestG_gate_rejects
@@ -536,7 +536,7 @@ theorem tokenForgedForestG_rolls_back : execFullForestG fma0 tokenForgedForestG 
   simp only [hgate]
   rfl
 
-/-- **`tokenOverAttenForestG_rolls_back` — the OVER-ATTENUATED agent token does NOT commit (PROVED).**
+/-- **`tokenOverAttenForestG_rolls_back` — the OVER-ATTENUATED agent token does NOT commit.**
 The token's own attenuation narrows it out of scope ⇒ `execFullForestG = none` ⇒ rollback. The
 credential verified; the EXECUTOR ADMISSION still rejects on the attenuation. -/
 theorem tokenOverAttenForestG_rolls_back : execFullForestG fma0 tokenOverAttenForestG = none := by
@@ -589,8 +589,8 @@ companion cell `1`) and differ ONLY in the cross-cell THRESHOLD:
   * the VIOLATED covenant (companion cell `1` would need ≥ `10`, but holds only `5`) ⇒ the coordinated
     caveat FAILS ⇒ `caveatsDischarged = false` ⇒ the gate REJECTS ⇒ `execFullForestG = none`, rollback.
 
-So the tier-3 cross-cell caveat is EXECUTED end-to-end on the SAME live entry as tier-1/tier-2 — no
-longer hard-rejected, no longer out-of-band. Non-vacuous each direction (witnessed true AND false). -/
+So the tier-3 cross-cell caveat is EXECUTED end-to-end on the SAME live entry as tier-1/tier-2.
+Non-vacuous each direction (witnessed true AND false). -/
 
 /-- A SATISFIED tier-3 coordinated caveat: the cross-cell condition reads the COMPANION cell `1` out of
 the same atomic snapshot and gates on it (`companion holds ≥ 5 of asset 0`). At `fma0` cell `1` holds
@@ -600,7 +600,7 @@ def coordCaveatSat : GatedCaveat :=
   , cross := some (fun s => decide (5 ≤ s.kernel.bal 1 0)) }
 
 /-- A VIOLATED tier-3 coordinated caveat: same companion-cell read, but the threshold (`≥ 10`) is NOT
-met (cell `1` holds only `5`). The welded equalizer FAIL-CLOSES — the cross-cell covenant genuinely
+met (cell `1` holds only `5`). The welded equalizer FAIL-CLOSES — the cross-cell covenant
 gates. -/
 def coordCaveatViolated : GatedCaveat :=
   { tier := .coordinated, check := fun _ => false
@@ -621,22 +621,22 @@ def coordOkForestG : DForest :=
 def coordViolatedForestG : DForest :=
   ⟨ mkAuth goodCred [coordCaveatViolated], .emitEventA 0 0 0 0, [] ⟩
 
-/-- **`coordCaveatSat_holds` — the welded equalizer DISCHARGES (PROVED).** The tier-3 caveat's
+/-- **`coordCaveatSat_holds` — the welded equalizer DISCHARGES.** The tier-3 caveat's
 cross-cell condition (companion cell `1` ≥ 5 of asset 0) holds on the `fma0` snapshot. This is the
 positive coordinated discharge routed through `GatedCaveat.holds`'s `.coordinated`/`cross` arm — the
-atomic-snapshot read, no longer the dead `false` branch. -/
+atomic-snapshot read, not a dead `false` branch. -/
 theorem coordCaveatSat_holds : coordCaveatSat.holds fma0 = true := by
   unfold coordCaveatSat GatedCaveat.holds fma0
   decide
 
 /-- **`coordCaveatViolated_fails` — the welded equalizer FAIL-CLOSES on a violated covenant (PROVED,
 the teeth).** The cross-cell threshold (≥ 10) is not met at `fma0` (cell 1 holds 5), so the coordinated
-caveat is rejected — the cross-cell read genuinely gates, non-vacuously against the satisfied case. -/
+caveat is rejected — the cross-cell read gates, non-vacuously against the satisfied case. -/
 theorem coordCaveatViolated_fails : coordCaveatViolated.holds fma0 = false := by
   unfold coordCaveatViolated GatedCaveat.holds fma0
   decide
 
-/-- **`coordCaveatNoView_fails` — no companion view ⇒ fail-closed (PROVED, the dregg1 posture).** A
+/-- **`coordCaveatNoView_fails` — no companion view ⇒ fail-closed (the dregg1 posture).** A
 `.coordinated` caveat with `cross = none` cannot discharge on a single node — exactly the old behavior,
 recovered as the `none` case. -/
 theorem coordCaveatNoView_fails : coordCaveatNoView.holds fma0 = false := by
@@ -662,7 +662,7 @@ theorem coordOkForestG_gateOK : gateOK coordOkForestG.auth fma0 = true := by
   trivial
 
 /-- **`coordOkForestG_commits` — the SATISFIED tier-3 coordinated caveat COMMITS end-to-end on the live
-`execFullForestG` path (PROVED).** The whole gated forest runs and produces a post-state — the cross-
+`execFullForestG` path.** The whole gated forest runs and produces a post-state — the cross-
 cell coordinated condition is DISCHARGED inline by the welded equalizer, on the SAME production entry
 as tier-1/tier-2. This is the end-to-end positive the task demands: a tier-3 cross-cell caveat whose
 condition holds is admitted, not hard-rejected. -/
@@ -687,8 +687,8 @@ theorem coordViolatedForestG_gate_rejects : gateOK coordViolatedForestG.auth fma
   simp
 
 /-- **`coordViolatedForestG_rolls_back` — the VIOLATED tier-3 coordinated caveat does NOT commit
-(PROVED, the teeth).** The cross-cell covenant fails ⇒ `execFullForestG = none` ⇒ whole-forest
-rollback. The cross-cell read genuinely gates the EXECUTOR ADMISSION, non-vacuously against
+(the teeth).** The cross-cell covenant fails ⇒ `execFullForestG = none` ⇒ whole-forest
+rollback. The cross-cell read gates the EXECUTOR ADMISSION, non-vacuously against
 `coordOkForestG_commits`. -/
 theorem coordViolatedForestG_rolls_back : execFullForestG fma0 coordViolatedForestG = none := by
   have hgate : gateOK coordViolatedForestG.auth fma0 = false := coordViolatedForestG_gate_rejects
@@ -768,13 +768,13 @@ except the chain fails `verify`. REJECTED by the chain leg. -/
 def chainForgedForestG : DForest :=
   ⟨ mkAuthChain goodCred [trueCaveat] forgedDropped, .emitEventA 0 0 0 0, [] ⟩
 
-/-- **`chainOkForestG_chainGate` — the genuine chain's HMAC gate PASSES (PROVED).** `chainGateG`
+/-- **`chainOkForestG_chainGate` — the genuine chain's HMAC gate PASSES.** `chainGateG`
 unfolds to `windowed.verify && windowed.admits 150 _`; the honest chain verifies and admits in-window. -/
 theorem chainOkForestG_chainGate : chainGateG chainOkForestG.auth = true := by
   unfold chainOkForestG mkAuthChain chainGateG
   decide
 
-/-- **`chainForgedForestG_chainGate` — the forged chain's HMAC gate FAILS (PROVED, the teeth).**
+/-- **`chainForgedForestG_chainGate` — the forged chain's HMAC gate FAILS (the teeth).**
 `forgedDropped.verify = false` (the dropped caveat broke the tail — `removal_breaks_tail`), so the
 `&&` short-circuits to `false`. NON-VACUOUS against the genuine chain above. -/
 theorem chainForgedForestG_chainGate : chainGateG chainForgedForestG.auth = false := by
@@ -800,7 +800,7 @@ theorem chainOkForestG_gateOK : gateOK chainOkForestG.auth fma0 = true := by
   trivial
 
 /-- **`chainOkForestG_commits` — the GENUINE macaroon chain COMMITS end-to-end on the live
-`execFullForestG` path (PROVED).** The whole gated forest runs and produces a post-state — the HMAC
+`execFullForestG` path.** The whole gated forest runs and produces a post-state — the HMAC
 chain is verified+admitted inline by `chainGateG`, on the SAME production entry as tiers 1-3. -/
 theorem chainOkForestG_commits : (execFullForestG fma0 chainOkForestG).isSome := by
   have herase : (execFullForestA fma0 (eraseG chainOkForestG)).isSome := by decide
@@ -822,7 +822,7 @@ theorem chainForgedForestG_gate_rejects : gateOK chainForgedForestG.auth fma0 = 
   rw [chainForgedForestG_caveats_fma0]
   simp
 
-/-- **`chainForgedForestG_rolls_back` — the FORGED macaroon chain does NOT commit (PROVED, the
+/-- **`chainForgedForestG_rolls_back` — the FORGED macaroon chain does NOT commit (the
 teeth).** The dropped caveat broke the HMAC tail ⇒ `execFullForestG = none` ⇒ whole-forest rollback.
 Caveat-removal is caught at the EXECUTOR ADMISSION, non-vacuously against `chainOkForestG_commits`. -/
 theorem chainForgedForestG_rolls_back : execFullForestG fma0 chainForgedForestG = none := by

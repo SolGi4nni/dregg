@@ -3,11 +3,11 @@
 into the Argus IR, in its OWN disjoint module (the per-effect-farm vehicle, off the Argus cornerstone).
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
-it on transfer/mint/burn/createEscrow. `Effects/BalanceA.lean` welded the genuinely-different per-asset
+it on transfer/mint/burn/createEscrow. `Effects/BalanceA.lean` welded the different per-asset
 ledger primitive against its OWN standalone v2 `Surface2` descriptor (the FULL 17-field `*_full_sound`
 surface). This module welds the grow-only commitment-SET primitive `noteCreate` the SAME way: against
 its OWN audited v2 `Surface2` descriptor (`Inst/noteCreateA.lean`'s `noteCreateA_full_sound`), the
-strongest surface this effect genuinely supports.
+strongest surface this effect supports.
 
 `noteCreate` is the APPEND-ONLY dual of `noteSpend`: a `noteSpend` GROWS the `nullifiers` set under a
 double-spend GATE (fail-closed on a repeated nullifier), but a `noteCreate` GROWS the `commitments`
@@ -27,10 +27,8 @@ ONE component write, no gate.
   * The EFFECTVM per-row descriptor (`Emit/EffectVmEmitNoteCreate.lean`, `noteCreateVmDescriptor`) models
     the publish — RECONCILED onto the runtime hand-AIR — as BALANCE-NEUTRAL + nonce TICK:
     `new_bal_lo = old_bal_lo` (the note value is hidden in the commitment, never moved on the transparent
-    ledger), the nonce ticks, the frame freezes. A PRIOR version modeled it as a transparent debit
-    (`new_bal_lo = old_bal_lo − value`), which diverged from the universe-A balance-neutral convention;
-    that divergence is now CLOSED at the source (the EffectVM descriptor + the Rust circuit AIR/trace are
-    balance-neutral, matching the executor), so the EffectVM descriptor AGREES with the IR term's
+    ledger), the nonce ticks, the frame freezes. The EffectVM descriptor + the Rust circuit AIR/trace are
+    balance-neutral, matching the executor, so the EffectVM descriptor AGREES with the IR term's
     balance-neutral executor for EVERY note (`EffectVmEmitNoteCreate.noteCreate_balance_neutral_matches_univA`).
 
   * The v2 `Surface2` / `EffectCommit2` descriptor (`Inst/noteCreateA.lean`) is the GENUINE standalone
@@ -45,12 +43,11 @@ ONE component write, no gate.
 
 So this module welds against the v2 `Surface2` descriptor (the BalanceA surface) — strictly stronger
 than a per-cell EffectVM weld AND divergence-free, because that descriptor binds the whole-state
-full-list digest and shares the executor's balance-neutral convention. The EffectVM descriptor is NOW
+full-list digest and shares the executor's balance-neutral convention. The EffectVM descriptor is
 ALSO balance-neutral, so the two surfaces AGREE: §6 (`noteCreate_effectvm_agrees_argus`) proves the
-EffectVM descriptor's per-cell post-balance EQUALS the IR term's executor's, for every note — the
-formerly-carried divergence is CLOSED, not relabeled.
+EffectVM descriptor's per-cell post-balance EQUALS the IR term's executor's, for every note.
 
-This module is therefore HONEST in both directions:
+This module covers both directions:
 
   (1) **Cornerstone (the standalone executor-refinement):** `interp_noteCreateStmt_eq_noteCreateCommitment`
       — the kernel insert `noteCreateCommitment` IS the Argus term, using `setCommitments`. New, standalone,
@@ -63,7 +60,7 @@ This module is therefore HONEST in both directions:
       own circuit agrees with the WHOLE post-state the IR term's executor produces. Strictly stronger than
       a per-cell weld, because noteCreate's standalone descriptor carries the whole-state full-list digest.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 whole-list-digest assumption enters ONLY inside the reused `noteCreateA_full_sound` (its
@@ -245,7 +242,7 @@ theorem noteCreate_compile_sound
 
 #assert_axioms noteCreate_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely GROWS the commitment set (insert observable), is balance-
+/-! ## §5 — NON-VACUITY: the IR term GROWS the commitment set (insert observable), is balance-
 NEUTRAL, and ALWAYS commits (append-only — the distinguishing no-double-check, the dual of noteSpend's
 fail-closed gate).
 
@@ -263,7 +260,7 @@ def kN0 : RecordKernelState :=
     bal := fun c a => if c = 0 ∧ a = 0 then 30 else 0 }
 
 /-- **NON-VACUITY (the INSERT is OBSERVABLE).** The committed publish GROWS the commitment set from `[]`
-to `[42]` — the fresh commitment `42` genuinely lands in the set (the `setCommitments`/cons insert is
+to `[42]` — the fresh commitment `42` lands in the set (the `setCommitments`/cons insert is
 real, not a no-op). -/
 theorem noteCreateStmt_inserts :
     (interp (noteCreateStmt 42) kN0).map (fun k => k.commitments) = some [42] := by
@@ -310,15 +307,14 @@ theorem noteCreateStmt_append_only :
 #assert_axioms noteCreateStmt_bal_neutral
 #assert_axioms noteCreateStmt_append_only
 
-/-! ## §6 — THE CLOSED DIVERGENCE — now AGREEMENT: the EffectVM descriptor matches this balance-neutral weld.
+/-! ## §6 — AGREEMENT: the EffectVM descriptor matches this balance-neutral weld.
 
 This weld (§4) is against the v2 `Surface2` descriptor, which shares the executor's balance-NEUTRAL
-convention. The OTHER (EffectVM per-row) descriptor `EffectVmEmitNoteCreate.noteCreateVmDescriptor` was
-FIXED (this campaign) to ALSO be balance-neutral (`post.balLo = pre.balLo`; the formerly-carried
-transparent-debit divergence is closed at the source — the Rust circuit AIR/trace are balance-neutral
-too, matching the executor). So both surfaces now agree: we PROVE, at the Argus layer, that the EffectVM
+convention. The OTHER (EffectVM per-row) descriptor `EffectVmEmitNoteCreate.noteCreateVmDescriptor` is
+ALSO balance-neutral (`post.balLo = pre.balLo`; the Rust circuit AIR/trace are balance-neutral too,
+matching the executor). So both surfaces agree: we PROVE, at the Argus layer, that the EffectVM
 descriptor's per-cell post-balance EQUALS the IR term's executor's post-balance, for EVERY note (no
-`value = 0` side-condition). The divergence is CLOSED, not relabeled. -/
+`value = 0` side-condition). -/
 
 /-- **`noteCreate_effectvm_agrees_argus` — the CLOSED divergence, now AGREEMENT at the Argus layer.** The
 Argus IR term's executor is BALANCE-NEUTRAL: on a committed publish the post-state's per-asset ledger

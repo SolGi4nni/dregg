@@ -34,7 +34,7 @@ primitive at all (see the RECORD-slot vs SIDE-TABLE note below). The structural 
 `refusalA` — the SAME `setCell {cell}`-over-`setField`-at-a-non-`balance`-slot move; the two audit
 variants differ ONLY in WHICH non-`balance` slot they stamp (`"lifecycle"` vs `"refusal"`).
 
-## THE RECORD-SLOT vs SIDE-TABLE name collision (recorded honestly — read this).
+## THE RECORD-SLOT vs SIDE-TABLE name collision (recorded — read this).
 
 `receiptArchiveA` writes the `"lifecycle"` RECORD FIELD — slot `"lifecycle"` inside the `cell` MAP's
 record at index `cell`. This is a DIFFERENT object from `RecordKernelState.lifecycle`, the `CellId → Nat`
@@ -45,10 +45,10 @@ So even though the field is NAMED `"lifecycle"`, the IR move is `setCell` (the r
 preserved and it can still be re-targeted later. This is the load-bearing confirmation the name
 collision hides no frame interaction (it is exactly `Spec/cellstateaudit.lean`'s
 `receiptArchiveA_lifecycleSideTableFrame`), surfaced here so the `setCell`-not-`setLifecycle` choice is
-not mistaken for a primitive mismatch. The IR genuinely has the right primitive: `setCell` IS the
+not mistaken for a primitive mismatch. The IR has the right primitive: `setCell` IS the
 record-map writer.
 
-## THE DESCRIPTOR — a GENUINE full-state v1 `EffectCommit` soundness (the HONEST surface).
+## THE DESCRIPTOR — a GENUINE full-state v1 `EffectCommit` soundness (the surface).
 
 Like `refusalA` (and unlike balanceA/cellSeal, whose standalone descriptors live in the v2
 `EffectCommit2`/`Surface2` universe), `receiptArchiveA`'s genuine standalone circuit⟺spec crown jewel
@@ -66,12 +66,12 @@ including the `lifecycle` SIDE-TABLE), keyed on the CHAINED executor `execFullA`
 `execFullA_receiptArchiveA_iff_spec` (executor ⟺ spec, BOTH directions). This is the strong full-state
 surface BalanceA prefers (the conclusion is the WHOLE post-state, not a per-cell `cellProj` projection) —
 it just rides the v1 sponge framework (`CommitSurface`/`satisfiedE`/`encodeE`/`effect_circuit_full_sound`)
-rather than the v2 one, because that is the descriptor `receiptArchiveA` genuinely carries. There is a
+rather than the v2 one, because that is the descriptor `receiptArchiveA` carries. There is a
 SEPARATE per-cell EffectVM row (`Emit/EffectVmEmitReceiptArchive`) that pins the `field[1]` lifecycle
 column SET + frame freeze, but its OWN header records two boundaries — (a) the receipt-LOG growth is NOT
 an EffectVM column (it lives in the `logHashInjective` portal), and (b) the per-row circuit is a per-cell
 `field[1]` projection — so we weld against the FULL-STATE v1 one, and note the EffectVM per-row row as a
-DIFFERENT universe we do not weld here (carried in the structured report, NOT papered).
+DIFFERENT universe we do not weld here (carried in the structured report).
 
 ## THE KERNEL-vs-RUNTIME DIVERGENCE (carried explicitly — read this).
 
@@ -92,7 +92,7 @@ carry, here named precisely:
     k', log := receipt :: s.log }` EXPLICITLY, so the receipt-log obligation is part of the welded
     statement.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 sponge-injectivity assumptions enter ONLY inside the reused `receiptArchiveA_full_sound` (its
@@ -207,7 +207,7 @@ s lifecycleField actor cell (.int 1)` (`execFullA_receiptArchiveA_eq`, by `rfl`)
 over the KERNEL side only. The chained layer is exactly the §2 kernel write PLUS the runtime receipt-log
 prepend `{ actor, src := cell, dst := cell, amt := 0 } :: s.log` — the runtime piece the
 `RecordKernelState`-level `interp` structurally cannot emit. We bridge faithfully, naming the receipt-row
-prepend EXPLICITLY in the chained post-state (the honest kernel-vs-runtime divergence — NOT papered). -/
+prepend EXPLICITLY in the chained post-state (the kernel-vs-runtime divergence). -/
 
 /-- The self-targeted receipt row a committed receipt-archive prepends to the chain log (the SAME literal
 `stateStep` installs: its `actor` field is the EFFECT's `actor`, its `src`/`dst` the target `cell`). Named
@@ -330,7 +330,7 @@ theorem receiptArchive_compile_sound
 
 #assert_axioms receiptArchive_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely STAMPS the receipt-archive (slot write observable),
+/-! ## §5 — NON-VACUITY: the IR term STAMPS the receipt-archive (slot write observable),
 preserves every other field (frame — incl. the `lifecycle` SIDE-TABLE), and the gate REJECTS forged /
 non-account / non-Live inputs (fail-closed).
 
@@ -350,14 +350,14 @@ def kRA0 : RecordKernelState :=
 
 /-- **NON-VACUITY (the RECEIPT-ARCHIVE is OBSERVABLE).** The committed receipt-archive STAMPS cell `0`'s
 `"lifecycle"` RECORD slot to `1` (before: the slot is absent, read as `0`) — the receipt-archive lifecycle
-commitment genuinely lands (the `setCell` audit write is real, not a no-op). -/
+commitment lands (the `setCell` audit write is real, not a no-op). -/
 theorem receiptArchiveStmt_stamps :
     (interp (receiptArchiveStmt 0 0) kRA0).map (fun k => fieldOf "lifecycle" (k.cell 0)) = some 1 := by
   rw [interp_receiptArchiveStmt_eq_kernel]
   decide
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The receipt-archive of a Live, self-owned cell COMMITS
-(`isSome`) — the three-leg gate genuinely admits. (Pins that the weld's `hexec` hypothesis is
+(`isSome`) — the three-leg gate admits. (Pins that the weld's `hexec` hypothesis is
 satisfiable.) -/
 theorem receiptArchiveStmt_commits :
     (interp (receiptArchiveStmt 0 0) kRA0).isSome = true := by
@@ -437,7 +437,7 @@ rest of the block FROZEN (via the absorbed columns) AND ALL 8 side-table roots F
 commitment). This closes the Class-C "pale ghost" on the runnable descriptor: the narrow 186-wide
 `receiptArchiveVmDescriptor`'s commitment bound NONE of the 8 side-table roots; the wide one binds them.
 
-HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §4 names): (a) the audit write's chained
+RESIDUALS (carried, NOT papered — the SAME boundaries §4 names): (a) the audit write's chained
 motion is the self-targeted receipt prepended to `RecChainedState.log`, NOT a `RecordKernelState` field and
 with NO EffectVM row column — it rides universe-A's `logHashInjective` portal; (b) the set `field[1]` is
 the cell-record `lifecycle` SLOT, distinct from the kernel `lifecycle` SIDE-TABLE (one of the FROZEN frame

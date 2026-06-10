@@ -26,7 +26,7 @@ witnessed non-gluing (the fork as a real failed hypothesis).
 **ESTABLISHED (in the lit, cited, not claimed as a dregg theorem):** "consensus = H⁰" and "fork =
 a sound H¹ obstruction detector" (SHEAF-OF-VERIFIERS §3). We use the content and cite the framing.
 
-**OUT OF SCOPE (honestly not built):** the cohomology objects themselves (a Čech complex, `δ⁰`, an
+**OUT OF SCOPE not built):** the cohomology objects themselves (a Čech complex, `δ⁰`, an
 `H⁰`/`H¹` group, a `Presheaf` instance). We have the gluing and the non-gluing; we do NOT name
 them `H⁰`/`H¹` as objects. Calling this "cohomology" would let vocabulary stand in for an absent
 coboundary — exactly what SHEAF-OF-VERIFIERS refuses, and so do we.
@@ -95,7 +95,7 @@ theorem honest_distributed_knows_discharged {P W : Type} [Verifiable P W]
     F.DistKnows F.Honest (verified (Ω := Ω) X w₀) F.actual :=
   fun _ _ => hd
 
-/-- **An unrealizable claim is never honestly distributed-known (PORTED keystone).** -/
+/-- **An unrealizable claim is never distributed-known (PORTED keystone).** -/
 theorem no_dist_knowledge_of_unrealizable {P W : Type} [Verifiable P W]
     (X : Claim P) (w₀ : W) (hnh : ¬ Holds (W := W) X)
     (hrefl : ∀ i, F.Honest i → F.Indist i F.actual F.actual) :
@@ -147,7 +147,7 @@ instance instVerifiableClearance : Verifiable ClearanceProblem ClearanceWitness 
 /-- The `Claim` form of a clearance problem (for the epistemic frame). -/
 def clearanceClaim (p : ClearanceProblem) : Claim ClearanceProblem := ⟨p⟩
 
-/-- **`clearance_discharged_iff_screen` (PROVED) — a clearance claim is discharged iff the
+/-- **`clearance_discharged_iff_screen` — a clearance claim is discharged iff the
 conservative screen says clear.** Pins the epistemic `Discharged` to the REAL physics: the fact
 the operators come to know is exactly "the continuous-time screen is clear." -/
 theorem clearance_discharged_iff_screen (p : ClearanceProblem) (w : ClearanceWitness) :
@@ -177,7 +177,7 @@ theorem consensus_on_clearance (F : Constellation Ω ι) (p : ClearanceProblem)
       (Frame.verified (Ω := Ω) (clearanceClaim p) (() : ClearanceWitness)) F.actual :=
   F.honest_distributed_knows_discharged (clearanceClaim p) () hclear
 
-/-- **`no_consensus_on_unscreened` — a fork cannot be forged (PROVED).** If NO witness
+/-- **`no_consensus_on_unscreened` — a fork cannot be forged.** If NO witness
 discharges the clearance claim (the screen does NOT certify the pair clear — `¬ Holds`), then
 the honest operators do NOT have distributed knowledge of clearance, no matter what any
 (possibly Byzantine) operator asserts. Consensus on safety cannot be manufactured for an
@@ -189,7 +189,7 @@ theorem no_consensus_on_unscreened (F : Constellation Ω ι) (p : ClearanceProbl
         (Frame.verified (Ω := Ω) (clearanceClaim p) (() : ClearanceWitness)) F.actual :=
   F.no_dist_knowledge_of_unrealizable (clearanceClaim p) () hno hrefl
 
-/-- **`consensus_composes` — agreement on two clearances composes (PROVED).** If the honest
+/-- **`consensus_composes` — agreement on two clearances composes.** If the honest
 operators have distributed knowledge that pair-X clears AND that pair-Y clears, they have it of
 the conjunction — a re-screen after a fix (the chain-reaction beat) pools cleanly. The
 UC-flavoured static composition fragment, instantiated. -/
@@ -227,7 +227,7 @@ same boundary separation). This is the `proofForest_sound` split: per-node valid
 def Glues (a b : LocalSection) : Prop :=
   a.verdict = true ∧ b.verdict = true ∧ a.boundary = b.boundary
 
-/-- **`glued_global_section` — the GLUING (PROVED).** When two operators' sections glue, there
+/-- **`glued_global_section` — the GLUING.** When two operators' sections glue, there
 is a sound GLOBAL verdict: the whole maneuver is locally-accepted by both AND they are
 consistent on the overlap — a global section over the 2-operator cover. The conclusion is the
 conjunction "both accepted ∧ consistent on the overlap," exactly the H⁰ content (a unique glued
@@ -247,7 +247,7 @@ def opB_honest : LocalSection := { verdict := true, boundary := 5 }
 DIFFERENT boundary separation (`99`) — its restriction map disagrees on the overlap. -/
 def opB_byzantine : LocalSection := { verdict := true, boundary := 99 }
 
-/-- **`honest_sections_glue` (PROVED) — the consistent family has a global section.** Operator A
+/-- **`honest_sections_glue` — the consistent family has a global section.** Operator A
 and the honest operator B glue: both accepted, and they agree on the overlap (`5 = 5`). The
 2-operator constellation reaches a global verified verdict with no central cop. -/
 theorem honest_sections_glue : Glues opA opB_honest := by
@@ -262,7 +262,7 @@ theorem byzantine_section_does_not_glue : ¬ Glues opA opB_byzantine := by
   -- `opA.boundary = 5`, `opB_byzantine.boundary = 99`; `5 = 99` is false.
   exact absurd hbnd (by decide)
 
-/-- **`fork_is_genuine` (PROVED) — the obstruction is non-vacuous.** Both operators' sections
+/-- **`fork_is_genuine` — the obstruction is non-vacuous.** Both operators' sections
 are individually valid, yet they do not glue — so the non-gluing is a real phenomenon, not an
 artifact of one section being invalid. (Each `verdict = true`; the obstruction lives ENTIRELY in
 the overlap disagreement, exactly as the sheaf-of-verifiers picture requires.) -/

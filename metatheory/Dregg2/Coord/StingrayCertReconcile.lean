@@ -61,7 +61,7 @@ Plus the conservation/quorum-shape facts: `rebalance_balance_le` (the pool only 
 (conservative estimate), and `rebalance_conserves_on_exact` (balance + reconstructed = old, no value
 created).
 
-## Honest scope
+## Scope
 
 `CertUnforgeable` is the ONE named crypto assumption (Ed25519 EUF-CMA — the curve math lives in
 `ed25519-dalek`, a primitive, NOT a dregg protocol semantic). Everything else — the gate ordering,
@@ -195,7 +195,7 @@ def rebalance (c : Counter) (certs : List Cert) (requireAll : Bool) : Except Reb
 
 /-! ## 4. §9(3) — EPOCH MONOTONICITY / NO-REPLAY. -/
 
-/-- **`rebalance_version_strictly_increases` — §9(3) epoch monotonicity (PROVED).** Every successful
+/-- **`rebalance_version_strictly_increases` — §9(3) epoch monotonicity.** Every successful
 `rebalance` bumps the version by exactly one (`budget.rs:504` `self.version += 1`). -/
 theorem rebalance_version_strictly_increases (c : Counter) (certs : List Cert) (rq : Bool)
     {o : Outcome} (h : rebalance c certs rq = .ok o) :
@@ -211,7 +211,7 @@ theorem rebalance_version_strictly_increases (c : Counter) (certs : List Cert) (
       dsimp only
       exact ⟨rfl, Nat.lt_succ_self _⟩
 
-/-- **`checkCert_stale_rejected` — a certificate for the WRONG epoch is rejected (PROVED).** If
+/-- **`checkCert_stale_rejected` — a certificate for the WRONG epoch is rejected.** If
 `cert.version ≠ c.version`, `checkCert` fails with `versionMismatch`; the version gate is FIRST so it
 fires before any other check. -/
 theorem checkCert_stale_rejected (c : Counter) (seen : List Silo) (cert : Cert)
@@ -219,7 +219,7 @@ theorem checkCert_stale_rejected (c : Counter) (seen : List Silo) (cert : Cert)
     checkCert c seen cert = .error (.versionMismatch c.version cert.version) := by
   unfold checkCert; rw [if_pos h]
 
-/-- **`stale_cert_rejected` — NO-REPLAY across epochs (PROVED).** A certificate produced for epoch `v`
+/-- **`stale_cert_rejected` — NO-REPLAY across epochs.** A certificate produced for epoch `v`
 (`cert.version = v`) cannot be accepted by a counter that has advanced to epoch `v' ≠ v`: ANY list
 that contains such a stale cert at its head is rejected. Combined with monotonicity (the version only
 goes UP), a spend certified in epoch `v` can never be re-counted in a later epoch — the append-only
@@ -236,7 +236,7 @@ theorem stale_cert_rejected (c : Counter) (cert : Cert) (rest : List Cert)
 
 /-! ## 5. §9(2) — QUORUM COMPLETENESS + BYZANTINE-BOUNDED RECONSTRUCTION. -/
 
-/-- **`full_mode_needs_all_silos` — the quorum-completeness gate (PROVED).** In full mode
+/-- **`full_mode_needs_all_silos` — the quorum-completeness gate.** In full mode
 (`require_all_certs = true`, `budget.rs:421`), a rebalance with FEWER certificates than silos is
 rejected with `IncompleteCertificates`. The honest-quorum requirement: you cannot finalize an epoch
 without hearing from every silo (or, in partial mode, conservatively charging the silent ones). -/
@@ -246,7 +246,7 @@ theorem full_mode_needs_all_silos (c : Counter) (certs : List Cert)
   unfold rebalance
   rw [if_pos (by exact ⟨rfl, h⟩)]
 
-/-- **`checkCert_ok_spent` — a passing `checkCert` returns exactly `cert.spent` (PROVED).** -/
+/-- **`checkCert_ok_spent` — a passing `checkCert` returns exactly `cert.spent`.** -/
 theorem checkCert_ok_spent (c : Counter) (seen : List Silo) (cert : Cert) {s : Nat}
     (h : checkCert c seen cert = .ok s) : s = cert.spent := by
   unfold checkCert at h
@@ -262,7 +262,7 @@ theorem checkCert_ok_spent (c : Counter) (seen : List Silo) (cert : Cert) {s : N
           · exact absurd h (by simp)
           · simpa [eq_comm] using h
 
-/-- **`checkAll_sum_eq` — `checkAll` returns exactly `Σ cert.spent` when all certs validate (PROVED).**
+/-- **`checkAll_sum_eq` — `checkAll` returns exactly `Σ cert.spent` when all certs validate.**
 The reconstructed spend is the sum of the certificates' claimed spends — no other arithmetic. -/
 theorem checkAll_sum_eq (c : Counter) :
     ∀ (certs : List Cert) (seen : List Silo) (acc : Nat) (seen' : List Silo) (s : Nat),
@@ -285,7 +285,7 @@ theorem checkAll_sum_eq (c : Counter) :
           simp only [List.map_cons, List.sum_cons]
           omega
 
-/-- **`full_rebalance_total_is_cert_sum` — full-mode reconstruction = Σ certified spend (PROVED).**
+/-- **`full_rebalance_total_is_cert_sum` — full-mode reconstruction = Σ certified spend.**
 When `rebalance` succeeds in full mode, `totalSpent = Σ cert.spent`: the coordinator's view of true
 spending is exactly the sum of the validated certificates (no partial-mode imputation). -/
 theorem full_rebalance_total_is_cert_sum (c : Counter) (certs : List Cert)
@@ -312,7 +312,7 @@ abbrev TrueSpend := Silo → Nat
 /-- A certificate is HONEST w.r.t. ground truth `g` iff it reports the silo's true spend. -/
 def Cert.honest (g : TrueSpend) (cert : Cert) : Prop := cert.spent = g cert.silo
 
-/-- **`underReport_le_ceiling` — a validated Byzantine cert under-reports by ≤ ceiling (PROVED).**
+/-- **`underReport_le_ceiling` — a validated Byzantine cert under-reports by ≤ ceiling.**
 Any certificate that PASSES `checkCert` has `spent ≤ ceiling` (the `CertificateExceedsCeiling` gate,
 `budget.rs:458`). So the amount a Byzantine silo can hide (true − certified) is at most its true
 spend, and the amount it can spend at all before the next rebalance is capped at `ceiling`. The
@@ -330,7 +330,7 @@ theorem checkCert_spent_le_ceiling (c : Counter) (seen : List Silo) (cert : Cert
       · exact absurd h (by simp)
       · rename_i hle; subst hs; omega
 
-/-- **`byzantine_undetected_overspend_le_f_ceiling` — §9(2) the STINGRAY BYZANTINE BOUND (PROVED).**
+/-- **`byzantine_undetected_overspend_le_f_ceiling` — §9(2) the STINGRAY BYZANTINE BOUND.**
 With `f` Byzantine silos, each certifying at most `ceiling` (the `:458` gate), the total spend that
 those Byzantine silos can carry while passing rebalance is at most `f · ceiling`. This is the maximum
 UNDETECTABLE overspend the reconstruction admits: the honest silos pin their own true spend exactly,
@@ -398,7 +398,7 @@ theorem accepted_cert_is_silos_own [CertUnforgeable] (c : Counter) (seen : List 
 
 /-! ## 7. Conservation (the pool only shrinks; exact accounting on the no-overspend path). -/
 
-/-- **`rebalance_balance_le` — the pool only shrinks (PROVED).** A successful `rebalance` never
+/-- **`rebalance_balance_le` — the pool only shrinks.** A successful `rebalance` never
 INCREASES the balance: the new balance is `balance − total` (or clamped to 0). No value is created by
 reconciliation (`budget.rs:495-501`). -/
 theorem rebalance_balance_le (c : Counter) (certs : List Cert) (rq : Bool)
@@ -415,7 +415,7 @@ theorem rebalance_balance_le (c : Counter) (certs : List Cert) (rq : Bool)
       generalize (if rq then certSpent else certSpent + missingCharge c seen) = total
       split <;> omega
 
-/-- **`rebalance_conserves_on_exact` — exact accounting on the no-overspend path (PROVED).** When the
+/-- **`rebalance_conserves_on_exact` — exact accounting on the no-overspend path.** When the
 reconstructed total does not exceed the balance, `newBalance + totalSpent = balance`: the epoch-close
 exactly transfers the reconstructed spend out of the pool — no value created or destroyed
 (`budget.rs:500` `self.total_balance -= total_spent`). -/

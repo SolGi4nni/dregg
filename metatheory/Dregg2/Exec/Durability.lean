@@ -3,7 +3,7 @@
 
 `Exec/Cell.lean` shipped the proven **snapshot mechanism** — `Snapshot`/`restore`/`replayFrom` and the
 round-trip `replay_from_snapshot` (`restore (snapshot s) = s`, then replay the log) — on the toy `cexec`
-machine, with the honest note that *"the log is the truth, the DB is the cache"*. It deliberately retired
+machine, with the note that *"the log is the truth, the DB is the cache"*. It deliberately retired
 an earlier `restore ∘ checkpoint = rfl` **label-fiction**: a `checkpoint := id` that advertised
 `id`-tautologies as time-travel. This module pays the rest of that debt by modelling what a real storage
 layer needs and the toy snapshot only gestured at — **crash durability under a write-ahead log** — and
@@ -97,18 +97,18 @@ def recSnapshot (s : RecChainedState) : RecSnapshot := { state := s }
 /-- Re-seed a fresh cell from a checkpoint token (mirrors `Cell.restore`). -/
 def recRestore (snap : RecSnapshot) : RecChainedState := snap.state
 
-/-- **Round-trip (PROVED) — `recRestore ∘ recSnapshot = id`** — the real-machine image of
+/-- **Round-trip — `recRestore ∘ recSnapshot = id`** — the real-machine image of
 `Cell.restore_snapshot`. Serializing the cell to a checkpoint token and re-seeding reproduces it. -/
 theorem recRestore_snapshot (s : RecChainedState) : recRestore (recSnapshot s) = s := rfl
 
-/-- **Replay-from-snapshot (PROVED) — the real-machine image of `Cell.replay_from_snapshot`.** Replaying
+/-- **Replay-from-snapshot — the real-machine image of `Cell.replay_from_snapshot`.** Replaying
 a committed forest sequence from a *restored checkpoint* reproduces replaying it from the original cell:
 restore lands you at the same place, then the genuine `recReplayFrom` recursion proceeds identically. -/
 theorem recReplayFrom_snapshot (s : RecChainedState) (fs : List FullForestA) :
     recReplayFrom (recRestore (recSnapshot s)) fs = recReplayFrom s fs := by
   rw [recRestore_snapshot]
 
-/-- **Replay APPENDS via execution (PROVED).** Replaying `fs ++ [f]` from `s` = replay `fs`, then run the
+/-- **Replay APPENDS via execution.** Replaying `fs ++ [f]` from `s` = replay `fs`, then run the
 one extra committed forest `f` (fail-closed: if the prefix or the tail rejects, the whole thing rejects).
 This is the WAL's *append-then-replay* algebra: the engine that lets `durableApply` extend the log and
 recovery reproduce the extended state. Proved by structural induction on `fs`, threading the `bind`. -/
@@ -184,18 +184,18 @@ def recover (d : DurableState) : Option RecChainedState :=
 
 /-! ## Step 5 — THE HEADLINE: `wal_crash_recovery_sound`. -/
 
-/-- **`crash` preserves the durable fields (PROVED).** A crash changes neither the checkpoint base nor the
+/-- **`crash` preserves the durable fields.** A crash changes neither the checkpoint base nor the
 committed WAL — only the volatile cache is lost. (`crash` is the identity on `(snap, wal)`.) -/
 theorem crash_durable (d : DurableState) :
     (crash d).snap = d.snap ∧ (crash d).wal = d.wal := ⟨rfl, rfl⟩
 
-/-- **`recover = live` (PROVED).** Recovery — replaying the durable WAL from the checkpoint — yields
+/-- **`recover = live`.** Recovery — replaying the durable WAL from the checkpoint — yields
 exactly the volatile in-memory state, because that state was DEFINED as the same replay. This is the
 write-ahead coherence made an equation: the cache the crash destroyed is bit-for-bit what recovery
 rebuilds. -/
 theorem recover_eq_live (d : DurableState) : recover d = live d := rfl
 
-/-- **`wal_crash_recovery_sound` (PROVED) — THE HEADLINE: crash-recovery is identity on the committed
+/-- **`wal_crash_recovery_sound` — THE HEADLINE: crash-recovery is identity on the committed
 state.** For EVERY durable state, **recovering after a crash reproduces exactly the pre-crash committed
 in-memory state**: `recover (crash d) = live d`. The crash discards the volatile cache (`crash` keeps only
 `(snap, wal)`); recovery replays the durable committed WAL from the checkpoint base; and the live state
@@ -206,7 +206,7 @@ theorem wal_crash_recovery_sound (d : DurableState) : recover (crash d) = live d
   show recReplayFrom (recRestore (crash d).snap) (crash d).wal = live d
   rfl
 
-/-- **`wal_crash_recovery_after_apply` (PROVED) — a COMMITTED TURN SURVIVES THE CRASH.** Apply a turn
+/-- **`wal_crash_recovery_after_apply` — a COMMITTED TURN SURVIVES THE CRASH.** Apply a turn
 durably, crash, recover: you land on exactly the state the apply produced (`recover (crash (durableApply d
 cf)) = live (durableApply d cf)`). On an admitted turn this is the post-turn state with the new forest in
 the WAL — proving the committed turn is **not lost** across the crash; on a rejected turn it is the
@@ -217,7 +217,7 @@ theorem wal_crash_recovery_after_apply (d : DurableState) (cf : FullForestA) :
 
 /-! ## Step 6 — the COMMITTED TURN advances the live state (no-lost-commit, positively). -/
 
-/-- **`durableApply_commit_live` (PROVED) — an admitted turn's recovered state IS the executed successor.**
+/-- **`durableApply_commit_live` — an admitted turn's recovered state IS the executed successor.**
 If the live state is `s` and the turn `cf` COMMITS (`execFullForestA s cf = some s'`), then after
 `durableApply` the live (= recoverable) state is exactly `s'`. So a write-ahead-logged turn is reproduced
 by recovery as precisely the executed result — the committed turn is durably captured, byte-for-byte. The
@@ -237,7 +237,7 @@ theorem durableApply_commit_live (d : DurableState) (cf : FullForestA) (s s' : R
   rw [show recReplayFrom (recRestore d.snap) d.wal = live d from rfl, hlive]
   simpa using hexec
 
-/-- **`durableApply_reject_stays` (PROVED) — a REJECTED turn leaves the durable log UNCHANGED.** If the
+/-- **`durableApply_reject_stays` — a REJECTED turn leaves the durable log UNCHANGED.** If the
 turn `cf` is inadmissible from the live state `s` (`execFullForestA s cf = none`), `durableApply` is the
 identity on the durable state — nothing is written to the WAL (fail-closed: an aborted turn is never
 committed, so it cannot be "recovered" into existence). The all-or-nothing journal discipline. -/
@@ -271,7 +271,7 @@ so `deserialize` drops it and the fold runs over `committed` alone. -/
 def recoverSynced (t : TornDurableState) : Option RecChainedState :=
   recReplayFrom (recRestore t.snap) t.committed
 
-/-- **`wal_torn_write_no_corruption` (PROVED) — a TORN WRITE corrupts nothing; the last committed state is
+/-- **`wal_torn_write_no_corruption` — a TORN WRITE corrupts nothing; the last committed state is
 reproduced.** Recovering past a crash that tore an in-flight append yields exactly the state of replaying
 the **committed prefix** — the torn (un-`sync`'d) forest is cleanly dropped, NEVER half-applied. So a crash
 mid-write loses at most the in-flight turn and never corrupts or partially-commits it: the durability
@@ -280,7 +280,7 @@ contract `storage/src/wal.rs`'s checksum-skip provides. (Holds definitionally: `
 theorem wal_torn_write_no_corruption (t : TornDurableState) :
     recoverSynced t = recReplayFrom (recRestore t.snap) t.committed := rfl
 
-/-- **`wal_torn_write_no_lost_commit` (PROVED) — the SYNCED commits all survive a torn write.** If the
+/-- **`wal_torn_write_no_lost_commit` — the SYNCED commits all survive a torn write.** If the
 committed prefix replays to `s` (`recReplayFrom (recRestore t.snap) t.committed = some s`), then recovery
 after the torn write also yields `s`: every turn that got its `fsync` is reproduced, regardless of the torn
 tail. No *committed* turn is ever lost to a torn write — only the in-flight (never-synced) one is. -/
@@ -289,7 +289,7 @@ theorem wal_torn_write_no_lost_commit (t : TornDurableState) (s : RecChainedStat
 
 /-! ## Step 8 — the WAL is APPEND-ONLY (the durable log is never rewritten). -/
 
-/-- **`durableApply_wal_appendOnly` (PROVED) — the WAL only grows, by a suffix.** Every `durableApply`
+/-- **`durableApply_wal_appendOnly` — the WAL only grows, by a suffix.** Every `durableApply`
 leaves the committed WAL as the old WAL plus a (possibly empty) suffix: `d.wal` is a PREFIX of
 `(durableApply d cf).wal`. A committed turn appends `[cf]`; a rejected turn appends `[]`. The durable log
 is never reordered or truncated by a step — *the log is the truth, never rewritten* — the append-only WAL
@@ -305,7 +305,7 @@ theorem durableApply_wal_appendOnly (d : DurableState) (cf : FullForestA) :
   · -- live d = none: stay-put, suffix [].
     exact ⟨[], by simp⟩
 
-/-- **`durableApply_wal_length_mono` (PROVED) — the committed WAL never shrinks.** A corollary in length:
+/-- **`durableApply_wal_length_mono` — the committed WAL never shrinks.** A corollary in length:
 `d.wal.length ≤ (durableApply d cf).wal.length` — a step never drops a committed entry. The monotone audit
 log at the storage layer, mirroring `CellCarry.livingCellA_logMono` at the receipt-chain layer. -/
 theorem durableApply_wal_length_mono (d : DurableState) (cf : FullForestA) :
@@ -326,7 +326,7 @@ def durTraj (s : RecChainedState) (sched : Nat → FullForestA) : Nat → Durabl
   | 0     => durableInit s
   | n + 1 => durableApply (durTraj s sched n) (sched n)
 
-/-- **`durableApply_live_commits` (PROVED) — `durableApply` preserves a present live state.** If a
+/-- **`durableApply_live_commits` — `durableApply` preserves a present live state.** If a
 durable state has a live state, so does its successor under any turn: a committed turn replays to the
 executed successor (`durableApply_commit_live`), and a rejected turn is the identity (`live` unchanged). So
 "the recoverable state is present" is preserved by ONE step. -/
@@ -337,7 +337,7 @@ theorem durableApply_live_commits (d : DurableState) (cf : FullForestA)
   | some s' => rw [durableApply_commit_live d cf s s' hs hexec]; rfl
   | none    => rw [durableApply_reject_stays d cf s hs hexec]; exact h
 
-/-- **`durTraj_recoverable` (PROVED) — RECOVERY ALWAYS SUCCEEDS, FOREVER.** Along ANY unbounded stream of
+/-- **`durTraj_recoverable` — RECOVERY ALWAYS SUCCEEDS, FOREVER.** Along ANY unbounded stream of
 durable turns from a fresh checkpoint, the live (= recoverable) state is present at EVERY index:
 `(live (durTraj s sched n)).isSome` for all `n`. So a crash at any point in the system's entire history is
 recoverable — the durable log always replays to a real state. Plain `Nat` induction off
@@ -357,7 +357,7 @@ theorem durTraj_recoverable (s : RecChainedState) (sched : Nat → FullForestA) 
 applied durably to a fresh checkpoint. The WAL grows `0 → 1`; a CRASH drops the cache; RECOVERY replays the
 one logged forest and lands EXACTLY on the post-transfer state — its asset-0 badge equals the executed
 result. A non-committing turn would never enter the WAL, so the model is non-vacuous: it durably captures a
-turn that genuinely moved the ledger. -/
+turn that moved the ledger. -/
 
 /-- The durable state after one real committed transfer on `fma0`. -/
 def dStep1 : DurableState := durableApply (durableInit fma0) transferCF.1

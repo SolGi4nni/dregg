@@ -36,7 +36,7 @@ VERBATIM — we do NOT re-derive their soundness:
          coarser tier reveals a SUBSET of what the finer one does (the privacy lattice order).
        * **`private` = the greatest lower bound** (`private_is_glb`): the private tier collapses EVERY
          Argus state to the SAME (empty) view — the ⊥ of the dial, information-theoretic hiding of the
-         whole produced state. Non-vacuous: `trusted` is genuinely above it (`trusted_separates`).
+         whole produced state. Non-vacuous: `trusted` is above it (`trusted_separates`).
 
   3. **The projection is OF THE ARGUS OUTPUT** (§4) — threading the cornerstone. A committed Argus
      transfer (`interp (transferStmt turn) k = some k'`, = `recKExec` by the cornerstone) produces a Q
@@ -52,7 +52,7 @@ VERBATIM — we do NOT re-derive their soundness:
      checks (`disclose_app_reveals_gated_slot`). So the verifier reads the disclosed Q and confirms the
      userspace invariant — the dial and the app admission decide the same committed transitions.
 
-## HONEST SCOPE — what connects vs the named GAP (do NOT over-read)
+## SCOPE — what connects vs the named GAP (do NOT over-read)
 
   * **CONNECTS.** The Argus-produced `RecordKernelState` (the cornerstone/weld output) IS the object
     the dial projects: every theorem here is stated over `interp (…Stmt …) k` (or the chained executor),
@@ -176,7 +176,7 @@ tier, i.e. its image is a sub-lattice of Q closed under the projection. -/
 the public ones their disclosed value). The carrier on which "re-disclose" acts. -/
 def viewState (o : Obs FieldName Int) : State FieldName Int := fun f => (o f).getD 0
 
-/-- **`disclose_idempotent` — PROVED (a genuine projection).** Disclosing the Argus cell at a tier,
+/-- **`disclose_idempotent` (a genuine projection).** Disclosing the Argus cell at a tier,
 then RE-disclosing the result at the SAME tier, yields the SAME view: `DiscloseAt` is idempotent. So
 its image is a fixed sub-lattice of Q — the defining property of a projection (what the verifier learns
 is closed under re-projection; disclosing twice reveals nothing new). -/
@@ -196,7 +196,7 @@ NOTHING about the private part. It is EXACTLY `Privacy.field_projection_hides_pr
 Argus cell-view: two Argus-produced states whose cells agree on every PUBLIC field have the SAME
 disclosed view, whatever their private fields. We REUSE the layer's proof — no re-derivation. -/
 
-/-- **`disclose_hides_private` — PROVED (THE KEYSTONE).** If two Argus-produced states `k`, `k'` have
+/-- **`disclose_hides_private` (THE KEYSTONE).** If two Argus-produced states `k`, `k'` have
 cells whose PUBLIC fields agree (every `f` with `tier.mask f = pub` reads the same scalar), their
 disclosures at that tier are EQUAL — independent of the private fields. So the dial reveals the public
 projection of Q and hides the rest: the load-bearing connection, the `Privacy.project` hiding law
@@ -218,20 +218,20 @@ Pointwise on the masks: `pub` under `t₁` ⟹ `pub` under `t₂`. -/
 def Tier.RevealsLE (t₁ t₂ : Tier) : Prop :=
   ∀ f, t₁.mask f = Visibility.pub → t₂.mask f = Visibility.pub
 
-/-- **`private_le_selective` — PROVED.** `private ⊑ selective sel` for ANY `sel`: the private tier
+/-- **`private_le_selective`.** `private ⊑ selective sel` for ANY `sel`: the private tier
 reveals nothing, so it trivially reveals no more than a selective tier. The bottom step of the dial. -/
 theorem private_le_selective (sel : FieldName → Bool) :
     Tier.RevealsLE .sovereign (.selective sel) := by
   intro f hf; simp only [Tier.mask] at hf; exact absurd hf (by simp)
 
-/-- **`selective_le_trusted` — PROVED.** `selective sel ⊑ trusted` for ANY `sel`: the trusted tier
+/-- **`selective_le_trusted`.** `selective sel ⊑ trusted` for ANY `sel`: the trusted tier
 reveals every field, so it reveals at least every field a selective tier does. The top step. Together
 with `private_le_selective` this is the dial chain `private ⊑ selective ⊑ trusted`. -/
 theorem selective_le_trusted (sel : FieldName → Bool) :
     Tier.RevealsLE (.selective sel) .trusted := by
   intro f _; rfl
 
-/-- **`disclose_refines` — PROVED (a coarser tier's view is determined by a finer tier's).** If `t₁ ⊑
+/-- **`disclose_refines` (a coarser tier's view is determined by a finer tier's).** If `t₁ ⊑
 t₂`, then on a field `t₁` reveals, `t₁`'s disclosed value EQUALS `t₂`'s — so the coarser disclosure is
 a restriction of the finer one. The information-monotonicity of the dial: turning the dial toward
 `trusted` only ever ADDS revealed fields, never changes or hides an already-revealed one. -/
@@ -248,7 +248,7 @@ INDEPENDENT of the Argus output entirely. So every produced Q (every reachable p
 effects moved balances/fields) collapses to the SAME view — perfect (information-theoretic) hiding of
 the whole cell. This is the GLB: no tier reveals less, and it forgets all of Q. -/
 
-/-- **`private_collapses_all` — PROVED (⊥ — the GLB of the dial).** At the `private` tier, the
+/-- **`private_collapses_all` (⊥ — the GLB of the dial).** At the `private` tier, the
 disclosure of ANY Argus-produced cell is the constant empty view `fun _ => none` — independent of `k`,
 `c`, and every field. So every produced state collapses to ONE view: the private tier is the greatest
 lower bound of the dial (reveals nothing about Q). -/
@@ -256,7 +256,7 @@ theorem private_collapses_all (k : RecordKernelState) (c : CellId) :
     DiscloseAt .sovereign k c = (fun _ => none) := by
   funext f; simp only [DiscloseAt, project, Tier.mask]
 
-/-- **`private_is_glb` — PROVED (the GLB law).** ANY two Argus states have the SAME private
+/-- **`private_is_glb` (the GLB law).** ANY two Argus states have the SAME private
 disclosure of ANY two cells — the private tier is the bottom element: it forgets the whole produced Q
 (and is the lower bound below `private_le_selective`/`selective_le_trusted`). -/
 theorem private_is_glb (k k' : RecordKernelState) (c c' : CellId) :
@@ -289,7 +289,7 @@ theorem transfer_post_balance {turn : Turn} {k k' : RecordKernelState}
     rfl
   · exact absurd h (by simp)
 
-/-- **`disclose_transfer_reveals_balance` — PROVED (the dial reveals the VERIFIED output).** On a
+/-- **`disclose_transfer_reveals_balance` (the dial reveals the VERIFIED output).** On a
 committed Argus transfer (`interp (transferStmt turn) k = some k'`), the `trusted` disclosure of the
 source cell reveals exactly the verified post-balance the transfer wrote: `DiscloseAt .trusted k'
 turn.src "balance" = some (post-balance)`. So the dial projects the GENUINE state the Argus cornerstone
@@ -301,7 +301,7 @@ theorem disclose_transfer_reveals_balance {turn : Turn} {k k' : RecordKernelStat
   simp only [DiscloseAt, project, Tier.mask, cellView]
   rw [transfer_post_balance h]
 
-/-- **`disclose_transfer_private_hides` — PROVED (the dial HIDES the verified output).** On the SAME
+/-- **`disclose_transfer_private_hides` (the dial HIDES the verified output).** On the SAME
 committed Argus transfer, the `private` disclosure of the source cell reveals `none` for the balance —
 the privacy dial hides the very post-balance `trusted` exposed. So the same Argus Q is fully revealed
 or fully hidden by turning the dial, and the hiding is genuine over the verified output. -/
@@ -312,10 +312,10 @@ theorem disclose_transfer_private_hides {turn : Turn} {k k' : RecordKernelState}
   -- (the hiding holds over WHATEVER Argus produced; `_h` names that `k'` is the committed output).
   simp only [DiscloseAt, project, Tier.mask]
 
-/-- **`disclose_transfer_dial_is_two_valued` — PROVED (the dial genuinely moves on the Argus output).**
+/-- **`disclose_transfer_dial_is_two_valued` (the dial moves on the Argus output).**
 On a committed Argus transfer, the `trusted` and `private` disclosures of the source balance DIFFER (one
 is `some post-bal`, the other `none`). So the dial is non-vacuous over the verified Q: the privacy
-setting genuinely changes what the verifier learns about the state the Argus term produced. -/
+setting changes what the verifier learns about the state the Argus term produced. -/
 theorem disclose_transfer_dial_is_two_valued {turn : Turn} {k k' : RecordKernelState}
     (h : interp (transferStmt turn) k = some k') :
     DiscloseAt .trusted k' turn.src balanceField
@@ -348,7 +348,7 @@ theorem onlyField_mask_other {f g : FieldName} (hg : g ≠ f) :
   simp only [onlyField, Tier.mask]
   rw [if_neg (by simpa using hg)]
 
-/-- **`disclose_app_invariant_rides_Q` — PROVED (`Q ⟹ app_invariant`).** Suppose an Argus `setFieldStmt`
+/-- **`disclose_app_invariant_rides_Q` (`Q ⟹ app_invariant`).** Suppose an Argus `setFieldStmt`
 on the app's slot/cell commits at the chained executor — i.e. the toolkit's caveat-gated write
 `stateStepGuarded` commits to `s'` (the `SetField` weld's executor surface). Then by the toolkit
 `app_commit_iff_admit`, the app's admission predicate `sp.admit` held of the `(committed → new)`
@@ -366,7 +366,7 @@ theorem disclose_app_invariant_rides_Q (sp : AppSpec) (s s' : RecChainedState)
     rw [hcommit]; rfl
   exact ((app_commit_iff_admit sp s hprog actor new hold hnew).mp hsome).1
 
-/-- **`disclose_app_reveals_gated_slot` — PROVED (the verifier READS the invariant off Q).** After the
+/-- **`disclose_app_reveals_gated_slot` (the verifier READS the invariant off Q).** After the
 committed Argus `setFieldStmt`, the slot `sp.slot` reads back exactly the written value `new`
 (`app_commit_field_written`, the toolkit's functional face), and the `onlyField sp.slot` selective
 disclosure of the post-state cell REVEALS exactly that value: `DiscloseAt (onlyField sp.slot) s'.kernel
@@ -383,20 +383,20 @@ theorem disclose_app_reveals_gated_slot (sp : AppSpec) (s s' : RecChainedState)
   -- `onlyField sp.slot` makes `sp.slot` public, so its disclosure is `some (fieldOf sp.slot …)`.
   simp only [DiscloseAt, project, cellView, onlyField_mask_self, hwritten]
 
-/-- **`disclose_app_hides_other_slot` — PROVED (selective view hides the rest of Q).** The SAME
+/-- **`disclose_app_hides_other_slot` (selective view hides the rest of Q).** The SAME
 `onlyField sp.slot` disclosure HIDES any OTHER field `g ≠ sp.slot` (reveals `none`): the verifier reading
-the gated slot off Q learns nothing about the cell's other fields. The selective tier is genuinely
+the gated slot off Q learns nothing about the cell's other fields. The selective tier is
 selective over the Argus output — `disclose_app_reveals_gated_slot` is not a "reveal everything" stub. -/
 theorem disclose_app_hides_other_slot (sp : AppSpec) (k : RecordKernelState) (c : CellId)
     (g : FieldName) (hg : g ≠ sp.slot) :
     DiscloseAt (onlyField sp.slot) k c g = none := by
   simp only [DiscloseAt, project, onlyField_mask_other hg]
 
-/-! ## §6 — NON-VACUITY: the dial genuinely projects, hides, and rides — on concrete Argus output.
+/-! ## §6 — NON-VACUITY: the dial projects, hides, and rides — on concrete Argus output.
 
 The connection would be hollow if every disclosure were the same, if `private` were not actually below
 `trusted`, or if the selective tier revealed everything. We exhibit a concrete Argus cell and check the
-dial is genuinely three-valued, that the keystone hiding law has teeth (a private-field change is
+dial is three-valued, that the keystone hiding law has teeth (a private-field change is
 invisible), and that the toolkit-ride reveals exactly the gated slot. -/
 
 /-- A concrete Argus-produced cell record: `role = 2` (a public field), `secret = 9` (to be hidden). -/
@@ -421,10 +421,10 @@ def roleOnly : Tier := onlyField "role"
 #guard (DiscloseAt roleOnly kDemo 0 "secret" == none)
 #guard (DiscloseAt .trusted kDemo 0 "secret" == some 9)   -- trusted WOULD reveal it
 
-/-- **`dial_three_valued` — PROVED (the dial is non-vacuous, three-valued on Q).** On `kDemo`'s `role`
+/-- **`dial_three_valued` (the dial is non-vacuous, three-valued on Q).** On `kDemo`'s `role`
 field the dial takes three distinct shapes: `trusted` reveals `some 2`, `private` hides (`none`), and
 the role-only selective reveals `some 2` (= trusted on this field) while hiding `secret` (`none`, ≠
-trusted's `some 9`). So the dial genuinely moves and the selective tier is genuinely partial. -/
+trusted's `some 9`). So the dial moves and the selective tier is partial. -/
 theorem dial_three_valued :
     DiscloseAt .trusted kDemo 0 "role" = some 2
     ∧ DiscloseAt .sovereign kDemo 0 "role" = none
@@ -432,10 +432,10 @@ theorem dial_three_valued :
     ∧ DiscloseAt .trusted kDemo 0 "secret" = some 9 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
-/-- **`disclose_hides_private_has_teeth` — PROVED (the keystone bites, non-vacuously).** `kDemo` and
+/-- **`disclose_hides_private_has_teeth` (the keystone bites, non-vacuously).** `kDemo` and
 `kDemo'` AGREE on the public `role` field but DIFFER on the private `secret` field (`9` vs `42`). The
 role-only selective disclosure is nonetheless EQUAL on both — the keystone `disclose_hides_private`
-genuinely hides the private change (the views are indistinguishable), while a `trusted` disclosure WOULD
+hides the private change (the views are indistinguishable), while a `trusted` disclosure WOULD
 separate them (`some 9 ≠ some 42`). So the hiding is real, not a `True`-collapse. -/
 theorem disclose_hides_private_has_teeth :
     DiscloseAt roleOnly kDemo 0 = DiscloseAt roleOnly kDemo' 0

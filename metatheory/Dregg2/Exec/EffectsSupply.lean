@@ -118,7 +118,7 @@ def createCellStep (s : RecChainedState) (actor newCell : CellId) (bal : ℤ) :
 def createTurn (actor newCell : CellId) (bal : ℤ) : Turn :=
   { actor := actor, src := newCell, dst := newCell, amt := bal }
 
-/-- **`createCellStep` factors through its gate — PROVED.** A committed creation implies the three gate
+/-- **`createCellStep` factors through its gate.** A committed creation implies the three gate
 conjuncts held and pins the post-state. The bridge downstream keystones reuse. -/
 theorem createCellStep_factors {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
@@ -150,7 +150,7 @@ theorem createCellInto_recTotal (k : RecordKernelState) (newCell : CellId) (bal 
   have hcne : c ≠ newCell := fun heq => hfresh (heq ▸ hc)
   simp only [if_neg hcne]
 
-/-- **`create_conserves` — disclosed non-conservation (PROVED).** A committed `createCellStep` raises the
+/-- **`create_conserves` — disclosed non-conservation.** A committed `createCellStep` raises the
 total `balance` by exactly the disclosed `bal`: `recTotal s'.kernel = recTotal s.kernel + bal`. The supply
 move is not `Σδ = 0`; it is the disclosed delta `+bal` (the Generative disclosure obligation). -/
 theorem create_conserves {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
@@ -160,13 +160,13 @@ theorem create_conserves {s s' : RecChainedState} {actor newCell : CellId} {bal 
   subst hs'
   exact createCellInto_recTotal s.kernel newCell bal hfresh
 
-/-- **`create_discloses` — PROVED.** `CreateCell` is Generative, so its created supply is disclosed.
+/-- **`create_discloses`.** `CreateCell` is Generative, so its created supply is disclosed.
 Discharged via `CatalogEffects.generative_discloses` + `g_createCell`. -/
 theorem create_discloses :
     (effectLinearity .createCell).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .createCell Dregg2.CatalogEffects.g_createCell
 
-/-- **`create_disclosed_domain` — PROVED.** The realized balance-domain delta of a committed
+/-- **`create_disclosed_domain`.** The realized balance-domain delta of a committed
 `createCellStep` is exactly the disclosed `[bal]` (not `[0]`). -/
 theorem create_disclosed_domain {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
@@ -175,7 +175,7 @@ theorem create_disclosed_domain {s s' : RecChainedState} {actor newCell : CellId
 
 /-! ### §1.3 — `create_authorized` + fail-closed. -/
 
-/-- **`create_authorized` — PROVED.** A committed `createCellStep` implies the creator held
+/-- **`create_authorized`.** A committed `createCellStep` implies the creator held
 creation authority over the new cell (`mintAuthorizedB` — bare ownership is not enough; creation
 coins supply). -/
 theorem create_authorized {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
@@ -183,7 +183,7 @@ theorem create_authorized {s s' : RecChainedState} {actor newCell : CellId} {bal
     mintAuthorizedB s.kernel.caps actor newCell = true :=
   (createCellStep_factors h).1
 
-/-- **`create_unauthorized_fails` — PROVED (fail-closed).** Without creation authority, no cell is
+/-- **`create_unauthorized_fails` (fail-closed).** Without creation authority, no cell is
 minted. The confinement core. -/
 theorem create_unauthorized_fails (s : RecChainedState) (actor newCell : CellId) (bal : ℤ)
     (h : mintAuthorizedB s.kernel.caps actor newCell = false) :
@@ -193,7 +193,7 @@ theorem create_unauthorized_fails (s : RecChainedState) (actor newCell : CellId)
 
 /-! ### §1.4 — `create_metadata`: caps framed + the chain advances by one. -/
 
-/-- **`create_caps_unchanged` — PROVED.** A committed `createCellStep` leaves the cap table
+/-- **`create_caps_unchanged`.** A committed `createCellStep` leaves the cap table
 untouched (creation edits `accounts`/`cell`, never `caps`). -/
 theorem create_caps_unchanged {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     (h : createCellStep s actor newCell bal = some s') :
@@ -201,7 +201,7 @@ theorem create_caps_unchanged {s s' : RecChainedState} {actor newCell : CellId} 
   obtain ⟨_, _, _, hs'⟩ := createCellStep_factors h
   subst hs'; rfl
 
-/-- **`create_metadata` — PROVED (metadata + authority frame).** A committed `createCellStep`: (a) grows
+/-- **`create_metadata` (metadata + authority frame).** A committed `createCellStep`: (a) grows
 the receipt chain by EXACTLY one row (replay-detectable, ObsAdvance), and (b) leaves the cap table /
 reconstructed authority graph UNCHANGED. -/
 theorem create_metadata {s s' : RecChainedState} {actor newCell : CellId} {bal : ℤ}
@@ -234,7 +234,7 @@ def createFromFactoryStep (s : RecChainedState) (actor newCell : CellId) (bal : 
       | none    => none
   | none => none
 
-/-- **`factory_create_factors` — PROVED.** A committed factory-create factors as a committed
+/-- **`factory_create_factors`.** A committed factory-create factors as a committed
 `Factory.createFromFactory` (the child) AND a committed `createCellStep` (the ledger insert). -/
 theorem factory_create_factors {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     {d : Factory.FactoryDescriptor} {initial : Value} {s' : RecChainedState} {child : Factory.Cell}
@@ -252,7 +252,7 @@ theorem factory_create_factors {s : RecChainedState} {actor newCell : CellId} {b
           obtain ⟨hsl, hch⟩ := h
           exact ⟨by rw [hch], by rw [hsl]⟩
 
-/-- **`factory_constructor_transparency` — PROVED.** The cell a committed `createFromFactoryStep` mints
+/-- **`factory_constructor_transparency`.** The cell a committed `createFromFactoryStep` mints
 carries exactly the factory's declared `program` and conforms to its schema: no hidden behavior, the
 published contract is the child's lifetime invariant set. Delegated to `Factory.factory_mints_conforming`. -/
 theorem factory_constructor_transparency {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
@@ -262,7 +262,7 @@ theorem factory_constructor_transparency {s : RecChainedState} {actor newCell : 
       conforms child.state (.record d.schema) = true :=
   Factory.factory_mints_conforming (factory_create_factors h).1
 
-/-- **`factory_create_conserves` — DISCLOSED non-conservation (PROVED).** The ledger insert raises
+/-- **`factory_create_conserves` — DISCLOSED non-conservation.** The ledger insert raises
 `recTotal` by exactly the disclosed `bal` (inherited from `create_conserves`). -/
 theorem factory_create_conserves {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     {d : Factory.FactoryDescriptor} {initial : Value} {s' : RecChainedState} {child : Factory.Cell}
@@ -270,20 +270,20 @@ theorem factory_create_conserves {s : RecChainedState} {actor newCell : CellId} 
     recTotal s'.kernel = recTotal s.kernel + bal :=
   create_conserves (factory_create_factors h).2
 
-/-- **`factory_create_discloses` — PROVED.** `CreateCellFromFactory` is Generative ⇒ disclosed. -/
+/-- **`factory_create_discloses`.** `CreateCellFromFactory` is Generative ⇒ disclosed. -/
 theorem factory_create_discloses :
     (effectLinearity .createCellFromFactory).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .createCellFromFactory
     Dregg2.CatalogEffects.g_createCellFromFactory
 
-/-- **`factory_create_authorized` — PROVED.** A committed factory-create implies creation authority. -/
+/-- **`factory_create_authorized`.** A committed factory-create implies creation authority. -/
 theorem factory_create_authorized {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     {d : Factory.FactoryDescriptor} {initial : Value} {s' : RecChainedState} {child : Factory.Cell}
     (h : createFromFactoryStep s actor newCell bal d initial = some (s', child)) :
     mintAuthorizedB s.kernel.caps actor newCell = true :=
   create_authorized (factory_create_factors h).2
 
-/-- **`factory_create_metadata` — PROVED.** Chain advances by one + caps framed. -/
+/-- **`factory_create_metadata`.** Chain advances by one + caps framed. -/
 theorem factory_create_metadata {s : RecChainedState} {actor newCell : CellId} {bal : ℤ}
     {d : Factory.FactoryDescriptor} {initial : Value} {s' : RecChainedState} {child : Factory.Cell}
     (h : createFromFactoryStep s actor newCell bal d initial = some (s', child)) :
@@ -320,7 +320,7 @@ def spawnStep (s : RecChainedState) (actor child target : CellId) (bal : ℤ) :
   else
     none
 
-/-- **`spawnStep` factors through `createCellStep` — PROVED.** A committed spawn is a committed
+/-- **`spawnStep` factors through `createCellStep`.** A committed spawn is a committed
 `createCellStep` (into `s1`) whose parent target was already live and held by the actor, followed by
 the concrete held-cap copy and initial delegation snapshot. -/
 theorem spawnStep_factors {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
@@ -348,14 +348,14 @@ theorem spawnStep_factors {s s' : RecChainedState} {actor child target : CellId}
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- The cap/metadata grant preserves `recTotal` (it edits no balance fields) — PROVED. -/
+/-- The cap/metadata grant preserves `recTotal` (it edits no balance fields). -/
 theorem spawn_grant_recTotal (k : RecordKernelState) (actor child : CellId) (cap : Cap) :
     recTotal { k with caps := fun l => if l = child then cap :: k.caps l else k.caps l
                       delegate := fun c => if c = child then some actor else k.delegate c
                       delegations := fun c => if c = child then k.caps actor else k.delegations c }
       = recTotal k := rfl
 
-/-- **`spawn_conserves` — DISCLOSED non-conservation (PROVED).** A committed spawn raises `recTotal` by
+/-- **`spawn_conserves` — DISCLOSED non-conservation.** A committed spawn raises `recTotal` by
 exactly the disclosed child endowment `bal` (the cap grant does not touch the balance field). -/
 theorem spawn_conserves {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
@@ -365,13 +365,13 @@ theorem spawn_conserves {s s' : RecChainedState} {actor child target : CellId} {
   rw [spawn_grant_recTotal s1.kernel actor child (heldCapTo s.kernel.caps actor target)]
   exact create_conserves hc
 
-/-- **`spawn_discloses` — PROVED.** `SpawnWithDelegation` is Generative ⇒ disclosed. -/
+/-- **`spawn_discloses`.** `SpawnWithDelegation` is Generative ⇒ disclosed. -/
 theorem spawn_discloses :
     (effectLinearity .spawnWithDelegation).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .spawnWithDelegation
     Dregg2.CatalogEffects.g_spawnWithDelegation
 
-/-- **`spawn_authorized` — PROVED.** A committed spawn implies the spawner held creation authority over
+/-- **`spawn_authorized`.** A committed spawn implies the spawner held creation authority over
 the child (the parent's privilege to spawn). -/
 theorem spawn_authorized {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
@@ -379,7 +379,7 @@ theorem spawn_authorized {s s' : RecChainedState} {actor child target : CellId} 
   obtain ⟨s1, _, hc, _⟩ := spawnStep_factors h
   exact create_authorized hc
 
-/-- **`spawn_parent_grounded` — PROVED.** A committed spawn implies the actor already held a live edge
+/-- **`spawn_parent_grounded`.** A committed spawn implies the actor already held a live edge
 to the parent target; child creation alone cannot introduce a fresh target edge. -/
 theorem spawn_parent_grounded {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
@@ -389,7 +389,7 @@ theorem spawn_parent_grounded {s s' : RecChainedState} {actor child target : Cel
   obtain ⟨_, hg, _, _⟩ := spawnStep_factors h
   exact hg
 
-/-- **`spawn_provenance` — PROVED.** The spawned child receives exactly the concrete cap the actor
+/-- **`spawn_provenance`.** The spawned child receives exactly the concrete cap the actor
 already held to the parent target. -/
 theorem spawn_provenance {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
@@ -398,7 +398,7 @@ theorem spawn_provenance {s s' : RecChainedState} {actor child target : CellId} 
   subst hs'
   simp
 
-/-- **`spawn_parent_snapshot` — PROVED.** Spawn initializes the child parent pointer and its birth
+/-- **`spawn_parent_snapshot`.** Spawn initializes the child parent pointer and its birth
 snapshot of the parent's c-list. -/
 theorem spawn_parent_snapshot {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
     (h : spawnStep s actor child target bal = some s') :
@@ -412,7 +412,7 @@ theorem spawn_parent_snapshot {s s' : RecChainedState} {actor child target : Cel
   simp only [if_true, true_and]
   rw [hcaps]
 
-/-- **`spawn_metadata` — PROVED.** A committed spawn grows the receipt chain by exactly one (the child's
+/-- **`spawn_metadata`.** A committed spawn grows the receipt chain by exactly one (the child's
 creation row); the cap edit is the disclosed child grant (NOT a frame — spawn DOES extend authority, the
 sole §3 difference from `CreateCell`). -/
 theorem spawn_metadata {s s' : RecChainedState} {actor child target : CellId} {bal : ℤ}
@@ -440,7 +440,7 @@ def bridgeMintStep (s : RecChainedState) (actor cell : CellId) (value : ℤ) :
   | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := value } :: s.log }
   | none    => none
 
-/-- **`bridgeMintStep` factors through `recKMint` — PROVED.** A committed bridge-mint is a committed
+/-- **`bridgeMintStep` factors through `recKMint`.** A committed bridge-mint is a committed
 record-cell `recKMint` (the disclosed credit) plus the receipt row. Reuses the supply spine. -/
 theorem bridgeMintStep_factors {s s' : RecChainedState} {actor cell : CellId} {value : ℤ}
     (h : bridgeMintStep s actor cell value = some s') :
@@ -451,7 +451,7 @@ theorem bridgeMintStep_factors {s s' : RecChainedState} {actor cell : CellId} {v
   | none => rw [hm] at h; exact absurd h (by simp)
   | some k' => rw [hm] at h; simp only [Option.some.injEq] at h; exact ⟨k', rfl, h.symm⟩
 
-/-- **`bridge_mint_conserves` — disclosed non-conservation, gated by the §8 portal (PROVED).** Given the
+/-- **`bridge_mint_conserves` — disclosed non-conservation, gated by the §8 portal.** Given the
 foreign-finality portal `ForeignFinal nullifier value` (the cross-chain proof, discharged outside Lean), a
 committed `bridgeMintStep` raises `recTotal` by exactly the disclosed `value`. The local disclosed credit
 is `recKMint_delta` (proved); the foreign half is the carried hypothesis (OPEN: §8 portal). -/
@@ -463,12 +463,12 @@ theorem bridge_mint_conserves {s s' : RecChainedState} {actor cell : CellId} {va
   subst hs'
   exact recKMint_delta s.kernel k' actor cell value hm
 
-/-- **`bridge_mint_discloses` — PROVED.** `BridgeMint` is Generative, so its supply delta is disclosed. -/
+/-- **`bridge_mint_discloses`.** `BridgeMint` is Generative, so its supply delta is disclosed. -/
 theorem bridge_mint_discloses :
     (effectLinearity .bridgeMint).is_disclosed_non_conservation = true :=
   Dregg2.CatalogEffects.generative_discloses .bridgeMint Dregg2.CatalogEffects.g_bridgeMint
 
-/-- **`bridge_mint_authorized` — PROVED.** A committed bridge-mint implies the privileged mint authority
+/-- **`bridge_mint_authorized`.** A committed bridge-mint implies the privileged mint authority
 (the local credit is gated; the foreign side is the portal). -/
 theorem bridge_mint_authorized {s s' : RecChainedState} {actor cell : CellId} {value : ℤ}
     (h : bridgeMintStep s actor cell value = some s') :
@@ -476,7 +476,7 @@ theorem bridge_mint_authorized {s s' : RecChainedState} {actor cell : CellId} {v
   obtain ⟨k', hm, _⟩ := bridgeMintStep_factors h
   exact recKMint_authorized s.kernel k' actor cell value hm
 
-/-- **`bridge_mint_unauthorized_fails` — PROVED (fail-closed).** Without mint authority, no bridge-mint
+/-- **`bridge_mint_unauthorized_fails` (fail-closed).** Without mint authority, no bridge-mint
 commits (regardless of foreign finality). -/
 theorem bridge_mint_unauthorized_fails (s : RecChainedState) (actor cell : CellId) (value : ℤ)
     (h : mintAuthorizedB s.kernel.caps actor cell = false) :
@@ -484,7 +484,7 @@ theorem bridge_mint_unauthorized_fails (s : RecChainedState) (actor cell : CellI
   unfold bridgeMintStep
   rw [recKMint_unauthorized_fails s.kernel actor cell value h]
 
-/-- **`bridge_mint_caps_unchanged` — PROVED.** The local bridge-mint credit frames the cap table. -/
+/-- **`bridge_mint_caps_unchanged`.** The local bridge-mint credit frames the cap table. -/
 theorem bridge_mint_caps_unchanged {s s' : RecChainedState} {actor cell : CellId} {value : ℤ}
     (h : bridgeMintStep s actor cell value = some s') :
     s'.kernel.caps = s.kernel.caps := by
@@ -496,7 +496,7 @@ theorem bridge_mint_caps_unchanged {s s' : RecChainedState} {actor cell : CellId
   · rw [if_pos hg] at hm; simp only [Option.some.injEq] at hm; rw [← hm]
   · rw [if_neg hg] at hm; exact absurd hm (by simp)
 
-/-- **`bridge_mint_metadata` — PROVED.** Chain advances by one + caps/auth graph framed. -/
+/-- **`bridge_mint_metadata`.** Chain advances by one + caps/auth graph framed. -/
 theorem bridge_mint_metadata {s s' : RecChainedState} {actor cell : CellId} {value : ℤ}
     (h : bridgeMintStep s actor cell value = some s') :
     s'.log.length = s.log.length + 1 ∧
@@ -538,7 +538,7 @@ where
 def lockTurn (owner lockCell : CellId) (value : ℤ) : Turn :=
   { actor := owner, src := owner, dst := lockCell, amt := value }
 
-/-- Writing the `bridge_lock` field leaves the `balance` read UNCHANGED — PROVED. The two named fields are
+/-- Writing the `bridge_lock` field leaves the `balance` read UNCHANGED. The two named fields are
 distinct (`"bridge_lock" ≠ "balance"`), so the lock-nonce write never perturbs the escrow measure. -/
 theorem setLockField_balOf (v : Value) (nullifier : ℤ) :
     balOf (bridgeLockStep.setLockField v nullifier) = balOf v := by
@@ -553,7 +553,7 @@ theorem setLockField_balOf (v : Value) (nullifier : ℤ) :
   | dig _ => simp [balOf, bridgeLockStep.setLockField, Value.scalar, Value.field, balanceField, lockField]
   | sym _ => simp [balOf, bridgeLockStep.setLockField, Value.scalar, Value.field, balanceField, lockField]
 
-/-- **`bridgeLockStep` factors through `recCexec` — PROVED.** A committed lock is a committed escrow
+/-- **`bridgeLockStep` factors through `recCexec`.** A committed lock is a committed escrow
 `recCexec` (into `s1`) followed by the lock-nonce write. -/
 theorem bridgeLockStep_factors {s s' : RecChainedState} {owner lockCell : CellId} {value nullifier : ℤ}
     (h : bridgeLockStep s owner lockCell value nullifier = some s') :
@@ -566,7 +566,7 @@ theorem bridgeLockStep_factors {s s' : RecChainedState} {owner lockCell : CellId
   | none => rw [hc] at h; exact absurd h (by simp)
   | some s1 => rw [hc] at h; simp only [Option.some.injEq] at h; exact ⟨s1, rfl, h.symm⟩
 
-/-- The lock-nonce write preserves the conserved `balance` total — PROVED (it touches only the
+/-- The lock-nonce write preserves the conserved `balance` total (it touches only the
 `bridge_lock` field). -/
 theorem lockWrite_recTotal (k : RecordKernelState) (lockCell : CellId) (nullifier : ℤ) :
     recTotal { k with cell := fun c => if c = lockCell then bridgeLockStep.setLockField (k.cell c) nullifier
@@ -578,7 +578,7 @@ theorem lockWrite_recTotal (k : RecordKernelState) (lockCell : CellId) (nullifie
   · simp only [hc, if_pos]; exact setLockField_balOf (k.cell lockCell) nullifier
   · simp only [if_neg hc]
 
-/-- **`bridge_lock_conserves` — two-party balance conservation (PROVED, the paired regime).** A committed
+/-- **`bridge_lock_conserves` — two-party balance conservation (the paired regime).** A committed
 `bridgeLockStep` preserves `recTotal`: the owner's `-value` debit and the lock-cell's `+value` credit
 cancel (the two-party escrow), and the lock-nonce write does not perturb the balance measure. The bridge
 lock is an internal `Σδ = 0` move — the value is escrowed, not destroyed. -/
@@ -590,7 +590,7 @@ theorem bridge_lock_conserves {s s' : RecChainedState} {owner lockCell : CellId}
   rw [lockWrite_recTotal s1.kernel lockCell nullifier]
   exact (recCexec_attests hc).1
 
-/-- **`bridge_lock_paired_domain` — PROVED (per-domain Σ=0).** The realized balance delta of a committed
+/-- **`bridge_lock_paired_domain` (per-domain Σ=0).** The realized balance delta of a committed
 lock nets to `0` (`conservedInDomain Domain.balance`), the executable shadow of the `c_bridgeLock`
 Conservative obligation. -/
 theorem bridge_lock_paired_domain {s s' : RecChainedState} {owner lockCell : CellId} {value nullifier : ℤ}
@@ -598,7 +598,7 @@ theorem bridge_lock_paired_domain {s s' : RecChainedState} {owner lockCell : Cel
     conservedInDomain Domain.balance [recTotal s'.kernel - recTotal s.kernel] := by
   unfold conservedInDomain; rw [bridge_lock_conserves h]; simp
 
-/-- **`bridge_lock_authorized` — PROVED.** A committed lock implies the owner was authorized to move the
+/-- **`bridge_lock_authorized`.** A committed lock implies the owner was authorized to move the
 escrowed value (reused from the escrow `recCexec` gate). -/
 theorem bridge_lock_authorized {s s' : RecChainedState} {owner lockCell : CellId} {value nullifier : ℤ}
     (h : bridgeLockStep s owner lockCell value nullifier = some s') :
@@ -606,7 +606,7 @@ theorem bridge_lock_authorized {s s' : RecChainedState} {owner lockCell : CellId
   obtain ⟨s1, hc, _⟩ := bridgeLockStep_factors h
   exact (recCexec_attests hc).2.1
 
-/-- **`bridge_lock_metadata` — PROVED.** Chain advances by one + caps framed. -/
+/-- **`bridge_lock_metadata`.** Chain advances by one + caps framed. -/
 theorem bridge_lock_metadata {s s' : RecChainedState} {owner lockCell : CellId} {value nullifier : ℤ}
     (h : bridgeLockStep s owner lockCell value nullifier = some s') :
     s'.log.length = s.log.length + 1 ∧
@@ -633,20 +633,20 @@ def bridgeCancelStep (s : RecChainedState) (owner lockCell : CellId) (value : �
 def cancelTurn (owner lockCell : CellId) (value : ℤ) : Turn :=
   { actor := owner, src := lockCell, dst := owner, amt := value }
 
-/-- **`bridge_cancel_conserves` — TWO-PARTY balance conservation (PROVED, PAIRED).** A committed
+/-- **`bridge_cancel_conserves` — TWO-PARTY balance conservation (PAIRED).** A committed
 `bridgeCancelStep` preserves `recTotal` — the refund is the inverse escrow, `Σδ = 0`. -/
 theorem bridge_cancel_conserves {s s' : RecChainedState} {owner lockCell : CellId} {value : ℤ}
     (h : bridgeCancelStep s owner lockCell value = some s') :
     recTotal s'.kernel = recTotal s.kernel :=
   (recCexec_attests h).1
 
-/-- **`bridge_cancel_authorized` — PROVED.** A committed cancel was authorized (the refund gate). -/
+/-- **`bridge_cancel_authorized`.** A committed cancel was authorized (the refund gate). -/
 theorem bridge_cancel_authorized {s s' : RecChainedState} {owner lockCell : CellId} {value : ℤ}
     (h : bridgeCancelStep s owner lockCell value = some s') :
     authorizedB s.kernel.caps (cancelTurn owner lockCell value) = true :=
   (recCexec_attests h).2.1
 
-/-- **`bridge_cancel_metadata` — PROVED.** Chain advances by one + caps framed. -/
+/-- **`bridge_cancel_metadata`.** Chain advances by one + caps framed. -/
 theorem bridge_cancel_metadata {s s' : RecChainedState} {owner lockCell : CellId} {value : ℤ}
     (h : bridgeCancelStep s owner lockCell value = some s') :
     s'.log.length = s.log.length + 1 ∧
@@ -670,7 +670,7 @@ def bridgeFinalizeStep (s : RecChainedState) (actor lockCell : CellId) (spentMar
            log := { actor := actor, src := lockCell, dst := lockCell, amt := 0 } :: s.log }
   else none
 
-/-- **`bridgeFinalizeStep` factors — PROVED.** A committed finalize implies the lock-cell was live and
+/-- **`bridgeFinalizeStep` factors.** A committed finalize implies the lock-cell was live and
 pins the post-state (the spent-marker write + the receipt). -/
 theorem bridgeFinalizeStep_factors {s s' : RecChainedState} {actor lockCell : CellId} {spentMarker : ℤ}
     (h : bridgeFinalizeStep s actor lockCell spentMarker = some s') :
@@ -684,7 +684,7 @@ theorem bridgeFinalizeStep_factors {s s' : RecChainedState} {actor lockCell : Ce
   · rw [if_pos hl, Option.some.injEq] at h; exact ⟨hl, h.symm⟩
   · rw [if_neg hl] at h; exact absurd h (by simp)
 
-/-- **`bridge_finalize_conserves` — balance framed (PROVED, `Σδ = 0`), gated by the §8 portal.** Given
+/-- **`bridge_finalize_conserves` — balance framed (`Σδ = 0`), gated by the §8 portal.** Given
 the foreign-receipt portal `ForeignFinal nullifier value` (OPEN: discharged outside Lean), a committed
 `bridgeFinalizeStep` preserves `recTotal`: the value already left at lock time, so finalization touches
 only the `bridge_lock` nonce (the spent marker), never the balance field. -/
@@ -697,7 +697,7 @@ theorem bridge_finalize_conserves {s s' : RecChainedState} {actor lockCell : Cel
   subst hs'
   exact lockWrite_recTotal s.kernel lockCell spentMarker
 
-/-- **`bridge_finalize_consumes_lock` — PROVED.** A committed finalize writes the lock-cell's
+/-- **`bridge_finalize_consumes_lock`.** A committed finalize writes the lock-cell's
 `bridge_lock` field to exactly the disclosed `spentMarker` — the nullifier becomes permanently spent
 (replay-protection: the same foreign tx cannot be finalized twice). -/
 theorem bridge_finalize_consumes_lock {s s' : RecChainedState} {actor lockCell : CellId} {spentMarker : ℤ}
@@ -714,7 +714,7 @@ theorem bridge_finalize_consumes_lock {s s' : RecChainedState} {actor lockCell :
   | dig _ => simp [Value.scalar, Value.field, lockField]
   | sym _ => simp [Value.scalar, Value.field, lockField]
 
-/-- **`bridge_finalize_metadata` — PROVED.** Chain advances by one + caps framed. -/
+/-- **`bridge_finalize_metadata`.** Chain advances by one + caps framed. -/
 theorem bridge_finalize_metadata {s s' : RecChainedState} {actor lockCell : CellId} {spentMarker : ℤ}
     (h : bridgeFinalizeStep s actor lockCell spentMarker = some s') :
     s'.log.length = s.log.length + 1 ∧
@@ -758,7 +758,7 @@ total is CONSERVED and the authority graph UNCHANGED. The bottom edge of the pai
 def AbsStepPaired (a a' : AbstractS) : Prop :=
   conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧ a'.authGraph = a.authGraph
 
-/-- **`create_forward_sim` — THE REFINEMENT for `CreateCell` (PROVED).** A committed `createCellStep` is
+/-- **`create_forward_sim` — THE REFINEMENT for `CreateCell`.** A committed `createCellStep` is
 matched by an abstract DISCLOSED step `AbsStepDisclosed (absS s) (absS s') bal`: the abstract balance total
 rises by exactly the disclosed `bal`, the authority graph is preserved, AND the committed creation passed
 the privileged authority gate. The record-world disclosed-supply forward-simulation square for
@@ -771,7 +771,7 @@ theorem create_forward_sim {s s' : RecChainedState} {actor newCell : CellId} {ba
   · simp only [absS]; exact create_conserves h
   · simp only [absS]; exact (create_metadata h).2
 
-/-- **`bridge_mint_forward_sim` — THE REFINEMENT for `BridgeMint` (PROVED, §8-portal-gated).** GIVEN the
+/-- **`bridge_mint_forward_sim` — THE REFINEMENT for `BridgeMint` (§8-portal-gated).** GIVEN the
 foreign-finality portal, a committed `bridgeMintStep` is matched by an abstract DISCLOSED step recording
 the disclosed `+value`, with the authority graph preserved and the local mint gate passed. -/
 theorem bridge_mint_forward_sim {s s' : RecChainedState} {actor cell : CellId} {value nullifier : ℤ}
@@ -783,7 +783,7 @@ theorem bridge_mint_forward_sim {s s' : RecChainedState} {actor cell : CellId} {
   · simp only [absS]; exact bridge_mint_conserves hforeign h
   · simp only [absS]; exact (bridge_mint_metadata h).2
 
-/-- **`bridge_lock_forward_sim` — THE REFINEMENT for `BridgeLock` (PROVED).** A committed `bridgeLockStep`
+/-- **`bridge_lock_forward_sim` — THE REFINEMENT for `BridgeLock`.** A committed `bridgeLockStep`
 is matched by an abstract PAIRED step: the abstract balance total is conserved (the internal escrow), the
 authority graph preserved, and the escrow turn passed the abstract authority `Guard`. The record-world
 paired forward-simulation square for the bridge lock. -/
@@ -803,7 +803,7 @@ end ForwardSim
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
 `native_decide`. The §8 foreign-finality portal `ForeignFinal` is an `opaque` `Prop` (a data carrier,
 never an axiom — it never closes a goal, only appears as a hypothesis on the bridge keystones). The
-`#assert_axioms` below confirm the local transitions are genuinely proved; the foreign half is carried,
+`#assert_axioms` below confirm the local transitions are proved; the foreign half is carried,
 never faked. -/
 
 #assert_axioms createCellStep_factors

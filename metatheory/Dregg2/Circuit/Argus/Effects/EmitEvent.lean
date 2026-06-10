@@ -4,7 +4,7 @@ Argus IR.
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated
 it on transfer/mint/burn (single-cell moves) + createEscrow (two-component side-table). `BalanceA.lean`
-welded the genuinely DIFFERENT ledger primitive against a FULL-STATE `Surface2` descriptor whose
+welded the DIFFERENT ledger primitive against a FULL-STATE `Surface2` descriptor whose
 soundness concludes the WHOLE 17-field post-state. This module welds `emitEvent`, in a disjoint file (it
 imports the Argus IR + the audited `emitEventA` v1 instance + its independent spec read-only and owns
 only its own declarations).
@@ -25,7 +25,7 @@ IR term needs NO component-write primitive at all (the kernel is frozen), and NO
 every prior weld: transfer/balanceA MOVE a component (`setCell`/`setBal`); emit MOVES NOTHING in the
 kernel, it only ADMITS.
 
-## THE KERNEL-VS-RUNTIME DIVERGENCE (carried explicitly, NOT papered).
+## THE KERNEL-VS-RUNTIME DIVERGENCE (carried explicitly).
 
 There are TWO faithful executor layers here, and they GENUINELY differ — the honest core of this weld:
 
@@ -64,7 +64,7 @@ the conclusion (NOT hidden, NOT absorbed). The `divergence` field of this module
       kernel (every field frozen) AND the observation log (the receipt prepended) — strictly stronger
       than a per-cell weld, exactly the BalanceA `Surface` surface.
 
-## HONEST SURFACE — full-state, with the kernel-vs-runtime divergence named.
+## SURFACE — full-state, with the kernel-vs-runtime divergence named.
 
 The welded conclusion is the FULL `EmitEventSpec`: all 17 kernel fields frozen + the exact log
 post-image. This is the strongest surface (it pins the whole post-state), the BalanceA `Surface2`-grade
@@ -82,11 +82,11 @@ weld. Two honest layerings are carried EXPLICITLY (not papered):
     the conserved economic-kernel components and NAMES the actor-nonce tick (`post.nonce = pre.nonce + 1`)
     as the runtime leg, rather than conflating it with the frozen cell-nonce.
 
-NO collapsed field (the spec checks all 17). The payload `topic`/`data` are honestly INERT (the receipt row
+NO collapsed field (the spec checks all 17). The payload `topic`/`data` are INERT (the receipt row
 carries `cell` in both `src`/`dst` and `0` in `amt`, independent of payload) — exposed as a non-vacuity
 tooth.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the Poseidon-CR /
 log-hash injectivity assumptions enter ONLY inside the reused `emitEventA_full_sound` (its CR portal
@@ -185,7 +185,7 @@ generic cornerstone `some k'` so the §2 refinement is what drives the lift, kee
 cell topic data)` commits to the chained state `⟨k', emitReceipt actor cell :: st.log⟩`. So the Argus
 term's kernel meaning lifts to the chained runtime the standalone descriptor speaks about — and the
 runtime's EXTRA receipt-row append (the kernel step does NOT see the log) is carried EXPLICITLY in the
-conclusion, the honest kernel-vs-runtime divergence. -/
+conclusion, the kernel-vs-runtime divergence. -/
 theorem interp_emitEventStmt_chained
     (st : RecChainedState) (actor cell : CellId) (topic data : Int) (k' : RecordKernelState)
     (hexec : interp (emitEventStmt cell) st.kernel = some k') :
@@ -288,8 +288,8 @@ theorem emitEvent_compile_sound
 
 #assert_axioms emitEvent_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely COMMITS on a live cell, FREEZES the kernel, and the guard
-REJECTS a dead cell (fail-closed); the runtime ticks the log; the payload is honestly INERT.
+/-! ## §5 — NON-VACUITY: the IR term COMMITS on a live cell, FREEZES the kernel, and the guard
+REJECTS a dead cell (fail-closed); the runtime ticks the log; the payload is INERT.
 
 The cornerstone/weld would be hollow if emit never committed, if the guard admitted everything, or if the
 "frozen kernel" claim were vacuous. A concrete two-cell kernel `kE` (cells 0,1 live) exercises a real
@@ -312,7 +312,7 @@ def stE : RecChainedState := { kernel := kE, log := [] }
 #guard (stE.log.length == 0)                    -- before: empty log
 
 /-- **NON-VACUITY (commits + FREEZES the kernel, observably).** Emitting on the LIVE cell `1` commits and
-returns the kernel LITERALLY UNCHANGED — the term genuinely admits, and the "frozen kernel" claim is real
+returns the kernel LITERALLY UNCHANGED — the term admits, and the "frozen kernel" claim is real
 (the post-kernel IS `kE`, not a no-op vacuity). The log-domain analog of `balanceAStmt_debits`, but here
 the observable is that the kernel is PRESERVED (emit is a pure domain restrictor). -/
 theorem emitEventStmt_admits_frozen :
@@ -326,7 +326,7 @@ theorem emitEventStmt_admits_frozen :
 
 /-- **NON-VACUITY (fail-closed: dead cell).** An emit whose target `cell` is NOT a live account (here
 cell `7 ∉ {0,1}`) does NOT commit — the term returns `none` (the cell-liveness leg of the guard fails).
-The one gate emit carries is genuinely a gate. -/
+The one gate emit carries is a gate. -/
 theorem emitEventStmt_rejects_dead :
     interp (emitEventStmt 7) kE = none := by
   -- the cornerstone turns the term into `emitEventStep kE …`; the liveness `if` closes on the DECIDABLE
@@ -347,7 +347,7 @@ theorem emitEventStmt_runtime_log_ticks :
   rw [interp_emitEventStmt_chained stE 5 1 9 42 kE hk]
   rfl
 
-/-- **NON-VACUITY (the payload is honestly INERT).** Two runtime emits on the live cell `1` that DIFFER
+/-- **NON-VACUITY (the payload is INERT).** Two runtime emits on the live cell `1` that DIFFER
 only in `topic`/`data` (`(9,42)` vs `(0,0)`) produce the SAME observation log — the receipt row carries
 `cell` in both `src`/`dst` and `0` in `amt`, INDEPENDENT of the event payload. This pins the honest
 boundary stated in the header: `topic`/`data` ride the args for guard/bookkeeping but do NOT affect the

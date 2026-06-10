@@ -54,7 +54,7 @@ No new IR constructor is needed (the `guard` primitive is the whole kernel conte
      carrying the per-cell `ExerciseCellSpec` (whole economic block frozen) AND the explicit NONCE-TICK
      divergence as a conjunct.
 
-## HONEST SURFACE + THE REPORTED DIVERGENCES (precise — do NOT over-read)
+## SURFACE + THE REPORTED DIVERGENCES (precise — do NOT over-read)
 
   * **PER-CELL.** `exerciseVmDescriptor` is a SINGLE-ROW AIR; its soundness pins ONE cell's transition
     (frozen economic block + nonce tick) + that cell's commitment binding. `interp`/`exerciseStepA` is the
@@ -66,7 +66,7 @@ No new IR constructor is needed (the `guard` primitive is the whole kernel conte
     economic block is FROZEN (exercise moves no value AT THE HOLD LAYER), so the conserved leg is the
     frozen `balLo` directly.
 
-  * **THE NONCE-TICK DIVERGENCE (kernel-freeze vs runtime row-tick — carried, NOT papered).** The executor
+  * **THE NONCE-TICK DIVERGENCE (kernel-freeze vs runtime row-tick — carried).** The executor
     hold-step `exerciseStepA` FREEZES the whole kernel (the cell record, nonce included). The runtime
     EffectVM row TICKS the cell nonce by 1 on this non-NoOp row (`EffectVmEmitExercise §0`, the Stage-3
     passthrough batch's global nonce gate). So the descriptor's `post.nonce = pre.nonce + 1` while the
@@ -80,7 +80,7 @@ No new IR constructor is needed (the `guard` primitive is the whole kernel conte
     layer; its conservation is the algebra twin `Handlers.Exercise.exercise_conserves` (the summed inner
     deltas) and each inner effect's own per-row descriptor — cited, NOT claimed here.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both headline theorems ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no
 `:= True` vacuity, no weakening-that-just-typechecks. Poseidon2 CR enters ONLY via the cited descriptor
@@ -173,7 +173,7 @@ the §2 hold-gate PLUS the runtime receipt prepend `authReceipt actor :: s.log` 
 kernel `interp` cannot model). With the inner forest EMPTY (`inner = []`), the runnable `exerciseA` arm
 reduces to the outer step `exerciseStepA` itself: the facet-mask gate is vacuously true (`[].all _ =
 true`) and the inner fold is the identity (`execInnerA s' [] = some s'`). We bridge faithfully, naming the
-receipt-row prepend EXPLICITLY in the chained post-state (the honest kernel-vs-runtime divergence — NOT
+receipt-row prepend EXPLICITLY in the chained post-state (the kernel-vs-runtime divergence — NOT
 papered, exactly as `Effects/CellSeal §3`). -/
 
 /-- **`execFullA_exercise_nil` — the runnable arm on the BARE cap-exercise IS the outer hold-step.** With
@@ -283,7 +283,7 @@ Suppose, for the Argus exercise term `exerciseStmt actor target`:
     transition (`henc`), with the pre-`bal_lo` column reading the executor's projected balance of any
     cell `c` (`hpreBal`);
   * the IR term's KERNEL executor interpretation COMMITS: `interp (exerciseStmt actor target) s.kernel =
-    some k'` (`hexec`) — i.e. the actor genuinely HOLDS the cap-edge.
+    some k'` (`hexec`) — i.e. the actor HOLDS the cap-edge.
 
 Then:
   * **frozen-frame leg (per-cell):** the circuit's pinned post-state `post` FREEZES the whole economic
@@ -302,7 +302,7 @@ So the runnable circuit the prover runs for the cap-exercise hold layer pins the
 frame that the IR term's executor produces, agrees on the conserved balance, and ticks the nonce ONCE (the
 runtime row-bookkeeping leg) — the per-effect refinement for dregg1's `ExerciseViaCapability` outer layer.
 
-NOTE (the honest scope): both legs pertain to the OUTER hold-gate layer (`inner = []`). The inner
+NOTE (the scope): both legs pertain to the OUTER hold-gate layer (`inner = []`). The inner
 sub-forest (R4 facet-mask + the `execInnerA` fold) is the turn-composition layer; its conservation is the
 summed inner deltas (`Handlers.Exercise.exercise_conserves`) and each inner effect's own per-row
 descriptor — cited, OUT of this weld (§DEFER). -/
@@ -342,7 +342,7 @@ theorem exercise_compile_sound
 
 #assert_axioms exercise_compile_sound
 
-/-! ## §5 — NON-VACUITY: the term genuinely GATES on the held cap-edge (admit/reject two-valued), freezes
+/-! ## §5 — NON-VACUITY: the term GATES on the held cap-edge (admit/reject two-valued), freezes
 the kernel, and the descriptor is the genuine runnable circuit (not a placeholder). The cornerstone/weld
 would be hollow if `exerciseStmt` admitted everything, mutated the kernel, or rode an inert descriptor. -/
 
@@ -352,7 +352,7 @@ def kEx : RecordKernelState :=
   { accounts := {0, 1}, cell := fun _ => .record [("balance", .int 0)]
     caps := fun l => if l = 0 then [Cap.node 7] else [] }
 
-/-- **`exerciseStmt_admits_held` — the hold-gate ADMITS a genuinely held edge (the kernel UNCHANGED).**
+/-- **`exerciseStmt_admits_held` — the hold-gate ADMITS a held edge (the kernel UNCHANGED).**
 Holder `0` exercising its `node 7` cap to target `7` COMMITS, returning the kernel VERBATIM (`some kEx`) —
 the cap-exercise hold layer reads the c-list and freezes the kernel (no value moves, no edge changes). The
 admitting half of the two-valued gate, and the kernel-freeze the weld pins. -/
@@ -418,7 +418,7 @@ economic block FROZEN + the nonce TICKED (via the absorbed columns) AND ALL 8 si
 the wide commitment). This closes the Class-C "pale ghost" on the runnable descriptor: the narrow 186-wide
 `exerciseVmDescriptor`'s commitment bound NONE of the 8 side-table roots; the wide one binds them.
 
-HONEST RESIDUALS (carried, NOT papered — the SAME boundaries §4/§DEFER name): the OUTER hold-gate layer
+RESIDUALS (carried, NOT papered — the SAME boundaries §4/§DEFER name): the OUTER hold-gate layer
 (`inner = []`); the NONCE-TICK divergence (the runtime row ticks the cell nonce — `post.nonce = pre.nonce
 + 1` — while the executor hold-step FREEZES the kernel, reconciled at the turn level); the receipt-log
 prepend (off the per-row state block, riding universe-A's portal). This module closes ONLY the
@@ -448,7 +448,7 @@ theorem exercise_runnable_full_state_weld
 
 #assert_axioms exercise_runnable_full_state_weld
 
-/-! ## §DEFER — honest scope of this weld (documented, NOT a silent gap).
+/-! ## §DEFER — scope of this weld (documented, NOT a silent gap).
 
   * **The INNER sub-forest is OUT of this per-effect weld.** This module pins the OUTER hold-gate layer
     (the bare cap-exercise, `inner = []`) — exactly the layer the audited descriptor connector speaks

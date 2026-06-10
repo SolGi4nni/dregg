@@ -31,7 +31,7 @@ instance: at least one model exists.
 DISCIPLINE: faithful structures with real content; the keystones `#assert_axioms`'d
 kernel-clean (`⊆ {propext, Classical.choice, Quot.sound}`). No `:= True` load-bearing; the
 non-vacuity guard `authority_evidence_share_camera` exhibits the unification *as a
-theorem*, and `value_no_free_copy` shows the value camera genuinely bites.
+theorem*, and `value_no_free_copy` shows the value camera bites.
 -/
 import Dregg2.Resource
 import Dregg2.Tactics
@@ -228,7 +228,7 @@ theorem authority_evidence_share_camera (a f f' : M)
 The VALUE substance is a *conservation camera*: `Fpu` is the frame-preserving update, and
 the linear discipline ("moves, never copies or vanishes") is `excl_no_dup` for the
 unique-resource (NFT) case — an exclusive resource cannot compose with itself validly.
-This exhibits that the value camera genuinely bites (not `valid := True`). -/
+This exhibits that the value camera bites (not `valid := True`). -/
 
 /-- **`value_no_free_copy` — the linear discipline of value, PROVED, kernel-clean.** In the
 exclusive (NFT/linear-token) value camera `Excl R`, no resource composes with itself

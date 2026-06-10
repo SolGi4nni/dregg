@@ -70,7 +70,7 @@ EVERY adversarial schedule. This strengthened crown ADDS the LITERAL bindings `c
 sgmAnchor = bucket` — the agent stays in the SPECIFIC compartment/bucket, not just "some program is
 live" — along every ANCHOR-SAFE schedule (one issuing no `makeSovereign` aimed at a mandate cell, the
 sole un-caveat-gated record rebind that drops fields). The anchor-safe hypothesis is the precise,
-honestly-stated residual: it is the ONE behaviour the immutable-anchor caveat cannot reject inline. -/
+stated residual: it is the ONE behaviour the immutable-anchor caveat cannot reject inline. -/
 
 /-- A schedule is anchor-safe for BOTH mandate cells (compartment + bucket = cell `0` in each). -/
 def DualSchedAnchorSafe (sched : SchedG) : Prop :=

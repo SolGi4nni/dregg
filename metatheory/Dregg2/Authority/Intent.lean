@@ -14,7 +14,7 @@ The asymmetry between the two sides is carried in the types:
   soundness-by-verification (`Laws.search_sound`).
 
 The keystone (`intent_fill_verifies`): whatever an untrusted matcher returns, if the
-cell's VERIFY accepts it, the fill genuinely satisfies the predicate. Soundness rests on
+cell's VERIFY accepts it, the fill satisfies the predicate. Soundness rests on
 VERIFY alone; FIND is never trusted.
 
 Reuses `Verifiable`/`Discharged`/`Searchable`/`find`/`search_sound`/`Await` unchanged.
@@ -203,13 +203,13 @@ theorem intent_inverts_boundary [Verifiable P W] (i : Intent P W)
   constructor
   · intro hcross
     cases hcross with
-    | intra hmem => exact absurd hmem (by simp)   -- no `intra`: owner ∉ [] (genuinely cross)
+    | intra hmem => exact absurd hmem (by simp)   -- no `intra`: owner ∉ [] (cross)
     | cross w hw => exact ⟨w, hw⟩                  -- the cross witness IS a firing of the intent
   · rintro ⟨w, hw⟩
     exact Integrity.cross w hw                     -- a firing builds the outgoing `cross` admission
 
 /-- **`intent_accepts_witnesses_boundary` — the incoming filler IS the outgoing admission
-witness (PROVED).** A specific filler `w` that the intent *accepts* on the incoming side
+witness.** A specific filler `w` that the intent *accepts* on the incoming side
 (`i.Accepts w`, the decidable local VERIFY) is exactly a witness that admits the *outgoing*
 cross-vat change via `Integrity.cross`. The two faces share their witness, in opposite
 directions across the membrane — the concrete content of "intent is the inverse boundary." -/

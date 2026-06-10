@@ -58,12 +58,12 @@ def wp {σ α : Type} (step : σ → α → Option σ) (t : α) (Q : σ → Prop
 def Triple {σ α : Type} (step : σ → α → Option σ) (P : σ → Prop) (t : α) (Q : σ → Prop) : Prop :=
   ∀ s, P s → wp step t Q s
 
-/-- `wp` is monotone in the postcondition — PROVED (the consequence rule, weakening side). -/
+/-- `wp` is monotone in the postcondition (the consequence rule, weakening side). -/
 theorem wp_mono {σ α : Type} {step : σ → α → Option σ} {t : α} {Q Q' : σ → Prop}
     (hQ : ∀ s, Q s → Q' s) {s : σ} (h : wp step t Q s) : wp step t Q' s :=
   fun s' hstep => hQ s' (h s' hstep)
 
-/-- A rejected (`none`) turn satisfies every `wp` — PROVED (the fail-closed/vacuous branch). -/
+/-- A rejected (`none`) turn satisfies every `wp` (the fail-closed/vacuous branch). -/
 theorem wp_of_none {σ α : Type} {step : σ → α → Option σ} {t : α} {Q : σ → Prop} {s : σ}
     (h : step s t = none) : wp step t Q s := by
   intro s' hstep; rw [h] at hstep; exact absurd hstep (by simp)
@@ -75,24 +75,24 @@ theorem wp_of_none {σ α : Type} {step : σ → α → Option σ} {t : α} {Q :
 
 `PHASE-VCG-WP §3.1`. This is definitional (`wp` unfolds to exactly the conclusion), but the
 *content* is that `recCexec`'s commit implies the `StepInv` facts — it factors through
-`recCexec_attests`. The WP only ever asserts properties of the genuinely-gated post-state. -/
+`recCexec_attests`. The WP only ever asserts properties of the gated post-state. -/
 
-/-- **`wp_sound` (PROVED)** — if `wp recCexec op Q s` holds, then every committed successor
+/-- **`wp_sound`** — if `wp recCexec op Q s` holds, then every committed successor
 satisfies `Q`. Per-step WP-soundness, definitional over `recCexec`'s commit. -/
 theorem wp_sound {s : RecChained} {op : RecOp} {Q : RecChained → Prop}
     (h : wp recCexec op Q s) :
     ∀ s', recCexec s op = some s' → Q s' :=
   h
 
-/-- **`wp_sound_value` (PROVED)** — the value-level reading: a `wp` over the record's
+/-- **`wp_sound_value`** — the value-level reading: a `wp` over the record's
 *value* projection is faithful to `recCexec`'s committed value. Factors through
-`recCexec_attests` (the committed value is exactly `applyOp`, genuinely admitted). -/
+`recCexec_attests` (the committed value is exactly `applyOp`, admitted). -/
 theorem wp_sound_value {s : RecChained} {op : RecOp} {Q : Value → Prop}
     (h : wp recCexec op (fun s' => Q s'.value) s) :
     ∀ s', recCexec s op = some s' → Q s'.value :=
   h
 
-/-- **`wp_attests` (PROVED)** — the bridge to step-completeness: a committed `recCexec` step
+/-- **`wp_attests`** — the bridge to step-completeness: a committed `recCexec` step
 attests its candidate was admitted (`recCexec_attests`), so any `wp` asserting an admitted-state
 property is discharged by the gate. This is `recCexec_attests` re-packaged as the WP-soundness
 content — the WP never asserts anything the structure-map's gate did not establish. -/
@@ -150,7 +150,7 @@ structure. A `vcg`-discharged set is exactly the input to `vcg_run_sound`. -/
 def vcg (program : RecordProgram) (method : Nat) (spec : CellSpec) : Prop :=
   VC_preserve program method spec ∧ VC_stayput spec ∧ VC_init spec ∧ VC_post spec
 
-/-- The stay-put VC is *always* discharged — PROVED (the self-loop is the identity). The VCG
+/-- The stay-put VC is *always* discharged (the self-loop is the identity). The VCG
 emits it but it closes by `id`, matching `recNext_commits_or_stays`'s stay branch. -/
 theorem VC_stayput_trivial (spec : CellSpec) : VC_stayput spec := fun _ h => h
 
@@ -168,7 +168,7 @@ w.r.t. the operational `recCexec`. -/
 /-- The `inv`-on-value predicate as a `Good` for the record coalgebra. -/
 private def invGood (spec : CellSpec) : RecChained → Prop := fun c => spec.inv c.value
 
-/-- **`vcg_preserves_good` (PROVED)** — VC class 1 + 2 discharge `Good`-preservation along the
+/-- **`vcg_preserves_good`** — VC class 1 + 2 discharge `Good`-preservation along the
 totalized `recNext`: on a commit the admitted post-value satisfies `inv` (VC 1, via
 `recCexec_attests`); on a stay-put the value is unchanged (VC 2, trivially). This is the `hpres`
 hypothesis `stepComplete_preserves` consumes — *generated* from the VC set. -/
@@ -191,7 +191,7 @@ theorem vcg_preserves_good (program : RecordProgram) (spec : CellSpec)
   · -- stay-put: the value is unchanged, so `inv` carries over.
     rw [hstay]; exact hgood
 
-/-- **`vcg_run_sound` (THE SINGLE SOUNDNESS OBLIGATION — PROVED).** A fully-discharged VC set
+/-- **`vcg_run_sound` (THE SINGLE SOUNDNESS OBLIGATION).** A fully-discharged VC set
 (`vcg program method spec`) entails that `inv` AND `post` hold at every reachable state of the
 record cell's whole run, given the precondition at the start. Concluded by handing the generated
 `StepInvariant` to `Boundary.stepComplete_preserves`. This is the machine-generated analog of
@@ -237,7 +237,7 @@ def counterSpec (n₀ : Int) : CellSpec where
   post := fun v => ∃ c, v.scalar "count" = some c ∧ n₀ ≤ c
   inv  := fun v => ∃ c, v.scalar "count" = some c ∧ n₀ ≤ c
 
-/-- **`counter_VC_preserve` (PROVED)** — VC class 1 for the counter, discharged via
+/-- **`counter_VC_preserve`** — VC class 1 for the counter, discharged via
 `recExec_mono_holds`. If `monoCountProgram` admits `(old, new)` and `old.count ≥ n₀`, then
 `new.count ≥ n₀` (monotonicity: `new.count ≥ old.count ≥ n₀`). This is the generator output
 matching the hand reasoning exactly. -/
@@ -257,12 +257,12 @@ theorem counter_VC_preserve (n₀ : Int) :
       rw [hnb] at hadm
       exact ⟨b, rfl, le_trans hge (of_decide_eq_true hadm)⟩
 
-/-- **`counterVCs` (PROVED)** — the full discharged VC set for the counter: all four classes
+/-- **`counterVCs`** — the full discharged VC set for the counter: all four classes
 closed (preserve via `counter_VC_preserve`; stay-put/init/post trivial since `pre = inv = post`). -/
 theorem counterVCs (n₀ : Int) : vcg monoCountProgram 0 (counterSpec n₀) :=
   ⟨counter_VC_preserve n₀, VC_stayput_trivial _, fun _ h => h, fun _ h => h⟩
 
-/-- **`counter_run_sound` (PROVED — the worked example lands green).** For the monotonic-counter
+/-- **`counter_run_sound` (the worked example lands green).** For the monotonic-counter
 program, `count ≥ n₀` holds at every reachable state of the cell's whole run, generated by
 `vcg_run_sound` from `counterVCs`. The VCG mechanizes what `recordCell_run_preserves_sumEquals`
 did by hand — this is the regression check that the generator matches reality. -/
@@ -304,7 +304,7 @@ def escrowSpec (deposit₀ : Int) : CellSpec where
   post := fun v => sumScalars v ["escrowed", "paidOut"] = some deposit₀
   inv  := fun v => sumScalars v ["escrowed", "paidOut"] = some deposit₀
 
-/-- **`escrow_VC_preserve` (PROVED)** — VC class 1 for the single-ledger escrow, discharged via
+/-- **`escrow_VC_preserve`** — VC class 1 for the single-ledger escrow, discharged via
 `admits_sumEquals`. Any admitted post-state has `escrowed + paidOut = deposit₀` (the constraint is
 a *post-state* sum, so `old` is irrelevant — the gate pins `new`'s sum). -/
 theorem escrow_VC_preserve (deposit₀ : Int) :
@@ -314,11 +314,11 @@ theorem escrow_VC_preserve (deposit₀ : Int) :
   exact admits_sumEquals (cs := [.sumEquals ["escrowed", "paidOut"] deposit₀])
     hadm (by simp)
 
-/-- **`escrowVCs` (PROVED)** — the full discharged VC set for the single-ledger escrow. -/
+/-- **`escrowVCs`** — the full discharged VC set for the single-ledger escrow. -/
 theorem escrowVCs (deposit₀ : Int) : vcg (escrowProgram deposit₀) 0 (escrowSpec deposit₀) :=
   ⟨escrow_VC_preserve deposit₀, VC_stayput_trivial _, fun _ h => h, fun _ h => h⟩
 
-/-- **`escrow_run_sound` (PROVED — the single-ledger fragment lands green).** For the escrow
+/-- **`escrow_run_sound` (the single-ledger fragment lands green).** For the escrow
 conservation program, `escrowed + paidOut = deposit₀` holds at every reachable state of the
 cell's whole run, generated by `vcg_run_sound`. The conservation half of the escrow invariant,
 in the single-ledger case — closable today, exactly as the study says. -/

@@ -250,7 +250,7 @@ theorem exec_full_step_refines {s s' : RecChainedState} {fa : FullAction}
     ∃ a', RefinesRec s' a' ∧ AbsStep (absFull s) a' :=
   ⟨absFull s', refines_absFull s', exec_full_refines_spec h⟩
 
-/-- **`exec_full_step_refines_bundled` — PROVED.** The full square bundled with the exact ledger
+/-- **`exec_full_step_refines_bundled`.** The full square bundled with the exact ledger
 movement (the conservation CONTENT of the step): the abstract successor refines, the bottom edge is
 an `AbsStep`, AND the abstract total moved by EXACTLY `ledgerDelta fa` (`0` for conservative kinds,
 `±amt` for supply) — so the operational step carries the precise `Spec.Conservation` measure, not
@@ -275,7 +275,7 @@ inductive AbsRun : AbstractState → AbstractState → Prop where
   | refl (a : AbstractState) : AbsRun a a
   | step {a b c : AbstractState} (h1 : AbsStep a b) (h2 : AbsRun b c) : AbsRun a c
 
-/-- **`exec_fullTurn_refines_spec` — PROVED.** A committed `execFullTurn` is matched by an `AbsRun`
+/-- **`exec_fullTurn_refines_spec`.** A committed `execFullTurn` is matched by an `AbsRun`
 over the abstractions: every executable transaction is a sequence of permitted abstract steps. The
 transaction-level forward simulation, by induction on the turn reusing `exec_full_refines_spec`. -/
 theorem exec_fullTurn_refines_spec :
@@ -319,7 +319,7 @@ def OnlyConnectivityCloses : Prop :=
       a'.authGraph h c → (a.authGraph h c ∨ ∃ b b' : AbstractState, AbsRun a b ∧ AbsStep b b' ∧
         (∃ recipient, b'.authGraph = addEdge b.authGraph recipient c ∧ recipient = h))
 
-/-- **The per-step non-amplification IS proved (the closure's single-step ingredient — PROVED).** A
+/-- **The per-step non-amplification IS proved (the closure's single-step ingredient).** A
 committed delegation's added edge `rec ⟶ ⟨t,()⟩` is GROUNDED: the delegator already held connectivity
 to `t` on the pre-graph (`execFull_delegate_grounds`). So no `conserveAddEdge` conjures reachability —
 the closure's per-step content holds; only the run-level *bookkeeping* (`OnlyConnectivityCloses`)
@@ -333,7 +333,7 @@ theorem delegate_step_grounded {s s' : RecChainedState} {del rec t : CellId}
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
 `native_decide`. The forward-simulation keystones (`exec_full_refines_spec`, the full square, the
-turn-level `AbsRun`) are genuinely proved; `OnlyConnectivityCloses` is a `def`-named PROP obligation
+turn-level `AbsRun`) are proved; `OnlyConnectivityCloses` is a `def`-named PROP obligation
 (a hypothesis over runs), NOT an `axiom`, so there is nothing axiom-dirty to exclude. -/
 
 #assert_axioms absFull_balanceTotal
@@ -376,9 +376,9 @@ example (s' : RecChainedState) (h : execFull fs0 (.mint 9 0 50) = some s') :
 /-! ### The RIGHTS tooth (de-vacuified). The `conserveAddEdge` arm carries its added edge on the
 CONNECTIVITY carrier (`ExecRights = Unit`, modelling Granovetter reach). The genuine RIGHTS
 non-amplification — `granted ≤ held` over the real `Spec.ExecCapRights = Finset Auth` lattice —
-genuinely FAILS for an amplifying grant. On `Unit` this is impossible (every same-target conferral
+FAILS for an amplifying grant. On `Unit` this is impossible (every same-target conferral
 holds); here it is a real refutation (`Spec.amplifying_grant_refused`), so the forest-level
-delegation discipline genuinely forbids escalation. -/
+delegation discipline forbids escalation. -/
 
 /-- An amplifying grant is OUTSIDE the genuine conferral relation: a child requesting `{read,write}`
 does NOT `confers` from a `{read}`-parent over `Spec.ExecCapRights`. The de-vacuified tooth at the

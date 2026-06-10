@@ -40,7 +40,7 @@ at `0` is recovered) rather than checking finitely many cases. The companion `sh
 states the secrecy-floor side: `t-1` shares are consistent with EVERY secret (information-theoretic
 privacy), the reason `< t` validators learn nothing.
 
-## Crypto hypotheses, named honestly
+## Crypto hypotheses, named
 
 This module proves the **Shamir/Lagrange algebra** — the reconstruction correctness and the threshold gate.
 It does NOT prove the AEAD secure: `ThresholdCiphertext`'s confidentiality+integrity (BLAKE3-keyed
@@ -298,7 +298,7 @@ def Blake3Prf : Prop :=
 /-- **`share_mac_detects_tamper`** — RELATIVE to `Blake3Prf`: if a presented share `(s', i)` passes MAC
 verification against the reconstructed key but differs from the dealer's honest share `(s, i)` at the same
 index, that is a contradiction — so a tampered share at a held index cannot pass. This is the soundness of
-the `InvalidShareMac` check (`threshold_decrypt.rs:482-493`), reduced to the PRF carrier, not faked. -/
+the `InvalidShareMac` check (`threshold_decrypt.rs:482-493`), reduced to the PRF carrier. -/
 theorem share_mac_detects_tamper (hprf : Blake3Prf) (key sHonest sBad idx : Nat)
     (hpass : blake3Mac key sBad idx = blake3Mac key sHonest idx) :
     sBad = sHonest :=

@@ -230,7 +230,7 @@ def handlerTurnDelta (acts : List FullActionA) (b : AssetId) : Int :=
     (execHandlerTurn [] s).map (·.kernel) = some s.kernel := by
   simp only [execHandlerTurn, closedOf, List.map_nil, execTurn_nil, Option.map_some]
 
-/-- **`execHandlerTurn_conserves` — THE DERIVED GLOBAL CONSERVATION (PROVED by LIFTING `turn_conserves`).**
+/-- **`execHandlerTurn_conserves` — THE DERIVED GLOBAL CONSERVATION (by LIFTING `turn_conserves`).**
 For ANY `FullActionA` list run through the handler executor, the combined per-asset measure over the
 kernel changes by EXACTLY the SUM of the per-effect deltas, at EVERY asset `b`. The proof is ONE LINE of
 lifting: the kernel transition is `execTurn (closedOf acts)`, so the scaffold's generic `turn_conserves`
@@ -309,7 +309,7 @@ theorem execHandlerOne_kernel (a : FullActionA) (s s' : RecChainedState)
 
 /-! ### §6.1 — R1: TRANSFER. `execHandlerOne (.balanceA t a)` commits ⇒ `execFullA` commits, kernels AGREE. -/
 
-/-- **`handler_refines_execFullA_transfer` — THE R1 STRENGTHENING (PROVED).** Whenever the handler
+/-- **`handler_refines_execFullA_transfer` — THE R1 STRENGTHENING.** Whenever the handler
 executor commits a transfer, `execFullA` ALSO commits it AND produces the SAME kernel: `transferH`'s
 extra `acceptsEffects t.dst` gate only NARROWS what commits; once it passes, the underlying
 `recKExecAsset` is the very transition `execFullA`'s `.balanceA` arm runs (`recCexecAsset`), so the
@@ -347,7 +347,7 @@ those semantics now. -/
 
 /-! ### §6.2b — SUPPLY: MINT / BURN. Handler liveness gates only narrow; the bare ledger step agrees. -/
 
-/-- **`handler_refines_execFullA_mint` — PROVED.** A committed mint under the handler executor is exactly
+/-- **`handler_refines_execFullA_mint`.** A committed mint under the handler executor is exactly
 `recKMintAsset` on the kernel — the same transition `execFullA`'s `.mintA` arm runs via `recCMintAsset`. -/
 theorem handler_refines_execFullA_mint (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (h : execHandlerOne (.mintA actor cell a amt) s = some s') :
@@ -365,7 +365,7 @@ theorem handler_refines_execFullA_mint (s s' : RecChainedState) (actor cell : Ce
     rw [hstep]
   · rw [if_neg hadm] at hstep; exact absurd hstep (by simp)
 
-/-- **`handler_refines_execFullA_burn` — PROVED.** A committed burn under the handler executor is exactly
+/-- **`handler_refines_execFullA_burn`.** A committed burn under the handler executor is exactly
 `recKBurnAsset` on the kernel — the same transition `execFullA`'s `.burnA` arm runs via `recCBurnAsset`. -/
 theorem handler_refines_execFullA_burn (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (h : execHandlerOne (.burnA actor cell a amt) s = some s') :
@@ -437,7 +437,7 @@ theorem handler_refines_execFullA_createCell (s s' : RecChainedState) (actor new
     rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-- **`handler_refines_execFullA_spawn` — the born-empty create alias (PROVED).** `toClosedEffect` maps
+/-- **`handler_refines_execFullA_spawn` — the born-empty create alias.** `toClosedEffect` maps
 `spawnA` onto `spawnH` (= `createCellH`). Refinement is against `createCellA` — the shared executable core
 — not the full `spawnChainA` cap/delegation metadata (`§DEFER`). -/
 theorem handler_refines_execFullA_spawn (s s' : RecChainedState) (actor child target : CellId)
@@ -458,7 +458,7 @@ theorem handler_refines_execFullA_spawn (s s' : RecChainedState) (actor child ta
     rw [if_pos ⟨hg.1, hg.2⟩, hk]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
 
-/-- **`handler_refines_execFullA_createCellFromFactory` — the born-empty create alias (PROVED).**
+/-- **`handler_refines_execFullA_createCellFromFactory` — the born-empty create alias.**
 `toClosedEffect` maps `createCellFromFactoryA` onto `createCellFromFactoryH` (= `createCellH`).
 Refinement is against `createCellA` — not the full `createCellFromFactoryChainA` install (`§DEFER`). -/
 theorem handler_refines_execFullA_createCellFromFactory (s s' : RecChainedState) (actor newCell : CellId)
@@ -554,7 +554,7 @@ the gate `execFullA`'s `stateStep` checks. (The representative for the whole fie
 family — `setField`/`setPermissions`/`setVK`/`makeSovereign`/`refusal`/`receiptArchive`/`emit`/the
 cell-lifecycle arms — which `toClosedEffect` routes through the SAME `stateWriteH`.) -/
 
-/-- **`handler_refines_execFullA_stateWrite` — THE R6 STRENGTHENING (PROVED).**
+/-- **`handler_refines_execFullA_stateWrite` — THE R6 STRENGTHENING.**
 On the honest path where the target cell EXISTS (`cell ∈ accounts`), whenever the handler executor
 commits a nonce write, `execFullA` ALSO commits it AND produces the SAME kernel. With R6 reconciled,
 `execFullA`'s bare `stateStep` now shares the handler's `acceptsEffects`/`cellLive` liveness gate
@@ -585,7 +585,7 @@ theorem handler_refines_execFullA_stateWrite (s s' : RecChainedState) (actor cel
       -- R6 NOW RECONCILED: `execFullA`'s bare `stateStep` ALSO consults lifecycle liveness
       -- (`cellLive`, the R6 fix). `cellLive s.kernel cell` is DEFINITIONALLY `acceptsEffects s.kernel
       -- cell` (both = `lifecycle cell == 0`), so the handler's liveness conjunct (`hg.1`) discharges
-      -- the executor's NEW liveness conjunct directly — no longer just the honest-path membership.
+      -- the executor's liveness conjunct directly — not just the membership leg.
       have hlive : Dregg2.Exec.EffectsState.cellLive s.kernel cell = true := hg.1
       -- `nonceField` is the SAME field name in both layers (`rfl`).
       rw [if_pos ⟨hg.2, hmem, hlive⟩]
@@ -787,7 +787,7 @@ theorem handler_refines_execFullA_setField (s s' : RecChainedState) (actor cell 
 
 /-! ### §6.4 — LIFECYCLE: `execHandlerOne (.cellSealA …)` commits ⇒ `execFullA` commits, kernels AGREE. -/
 
-/-- **`handler_refines_execFullA_cellSeal` — THE LIFECYCLE STRENGTHENING (PROVED).** A committed cell
+/-- **`handler_refines_execFullA_cellSeal` — THE LIFECYCLE STRENGTHENING.** A committed cell
 seal under the handler executor is EXACTLY the bare `setLifecycle` post-state `execFullA`'s
 `cellSealChainA` arm produces on the kernel. -/
 theorem handler_refines_execFullA_cellSeal (s s' : RecChainedState) (actor cell : CellId)
@@ -1130,7 +1130,7 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms handler_refines_execFullA_receiptArchive
 #assert_axioms handler_refines_execFullA_exercise
 
-/-! ## §DEFER — honest scope of THIS cutover keystone (additive; the call-site switch is mechanical).
+/-! ## §DEFER — scope of THIS cutover keystone (additive; the call-site switch is mechanical).
 
 Deliberately OUT of this file (documented, NOT a silent gap):
 

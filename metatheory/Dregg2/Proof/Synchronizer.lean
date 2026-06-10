@@ -81,7 +81,7 @@ elected at view `n+1`, i.e. the first `n` views had dishonest leaders (each w.p.
 noncomputable def geomTerm (h : ℝ) (n : ℕ) : ℝ := (1 - h) ^ n * h
 
 /-- **Expected number of FAILURES (dishonest views) before the first honest leader = `(1-h)/h`**
-(PROVED). The arithmetico-geometric sum `∑' n, n·(1-h)^n·h`. This is the heart of ELRS's
+. The arithmetico-geometric sum `∑' n, n·(1-h)^n·h`. This is the heart of ELRS's
 expected-linear analysis: with each view an independent Bernoulli(`h`) honest-leader trial, the
 mean number of *wasted* views is `(1-h)/h`. Proved from mathlib's
 `tsum_coe_mul_geometric_of_norm_lt_one` (`∑' n, n·r^n = r/(1-r)^2`) at `r = 1-h`. -/
@@ -99,7 +99,7 @@ theorem expected_failures_eq (h : ℝ) (hpos : 0 < h) (hle : h ≤ 1) :
   rw [hsub]
   field_simp
 
-/-- **Expected number of VIEWS to the first honest leader = `1/h`** (PROVED). Views = `1 +`
+/-- **Expected number of VIEWS to the first honest leader = `1/h`**. Views = `1 +`
 failures (the successful view is counted too), so `E[views] = 1 + (1-h)/h = 1/h`. This is the
 ELRS expected-view count for the randomized synchronizer. -/
 theorem expected_views_eq (h : ℝ) (hpos : 0 < h) (hle : h ≤ 1) :
@@ -107,7 +107,7 @@ theorem expected_views_eq (h : ℝ) (hpos : 0 < h) (hle : h ≤ 1) :
   rw [expected_failures_eq h hpos hle]
   field_simp; ring
 
-/-- **Expected views is `O(1)` — `≤ 3/2` under the BFT supermajority `h > 2/3`** (PROVED). The
+/-- **Expected views is `O(1)` — `≤ 3/2` under the BFT supermajority `h > 2/3`**. The
 ELRS expected-*constant* bound: with an honest fraction strictly above `2/3`, the synchronizer
 hits an honest leader in expected fewer than `3/2` views — a constant independent of the number
 of participants or views. This is the sharp form of "expected `O(1)` views to an honest leader". -/
@@ -118,7 +118,7 @@ theorem expected_views_O1 (h : ℝ) (hsuper : 2/3 < h) (hle : h ≤ 1) :
   rw [div_le_div_iff₀ hpos (by norm_num)]
   linarith
 
-/-- **The geometric law sums to `1` — an honest leader is hit almost surely** (PROVED). With a
+/-- **The geometric law sums to `1` — an honest leader is hit almost surely**. With a
 strictly-positive honest fraction `0 < h ≤ 1`, `∑' n, (1-h)^n·h = 1`: the probability that the
 first honest leader is elected at *some* finite view is `1`. So a view with an honest leader (the
 synchronization round's precondition) occurs with probability `1` / in expectation — there is no
@@ -172,13 +172,13 @@ structure LeaderRotation (Msg : Type) [World Msg] where
 
 variable {Msg : Type} [World Msg]
 
-/-- **Expected views to an honest leader, for a concrete rotation = `1/h`** (PROVED). The rotation
+/-- **Expected views to an honest leader, for a concrete rotation = `1/h`**. The rotation
 instantiates the §1 geometric law at its own honest fraction. -/
 theorem LeaderRotation.expected_views_eq (R : LeaderRotation Msg) :
     (1 : ℝ) + (∑' n : ℕ, (n : ℝ) * geomTerm R.h n) = 1 / R.h :=
   Synchronizer.expected_views_eq R.h R.honest_pos R.honest_le_one
 
-/-- **THE expected-O(1)-views bound for the randomized synchronizer (PROVED).** For any leader
+/-- **THE expected-O(1)-views bound for the randomized synchronizer.** For any leader
 rotation with a `> 2/3` honest fraction, the expected number of views until an honest leader is
 elected is `≤ 3/2` — a constant. This is the ELRS expected-linear-synchronization core, here in
 its sharp expected-constant form. -/
@@ -186,7 +186,7 @@ theorem LeaderRotation.expected_views_O1 (R : LeaderRotation Msg) :
     (1 : ℝ) + (∑' n : ℕ, (n : ℝ) * geomTerm R.h n) ≤ 3/2 :=
   Synchronizer.expected_views_O1 R.h R.honest_super R.honest_le_one
 
-/-- **An honest leader is hit almost surely (PROVED).** The rotation's geometric law sums to `1`,
+/-- **An honest leader is hit almost surely.** The rotation's geometric law sums to `1`,
 so an honest-leader view occurs with probability `1`. -/
 theorem LeaderRotation.honest_hit_as (R : LeaderRotation Msg) :
     (∑' n : ℕ, geomTerm R.h n) = 1 :=
@@ -201,7 +201,7 @@ exists. We package "an honest-leader view at or after any bound exists" as the s
 output, given the (honest, hypothesis-carried) fact that the almost-sure event materialises as an
 actual hit-index — the bridge from the probabilistic law to a concrete view. -/
 
-/-- **A synchronization round with an honest leader obtains (PROVED, from an explicit hit
+/-- **A synchronization round with an honest leader obtains (from an explicit hit
 hypothesis).** The randomized relay, run from any starting round `t` and past `gst`, eventually
 elects an honest leader (the almost-sure hit of `§2`); we represent the materialised hit as the
 hypothesis `hhit` — "from the relay's `World.rand` stream there is a view `r ≥ max t gst` whose
@@ -216,7 +216,7 @@ theorem synchronizer_round_obtains (R : LeaderRotation Msg) (gst t : Nat)
   obtain ⟨r, hr, hhonest⟩ := hhit
   exact ⟨r, le_trans (le_max_left _ _) hr, le_trans (le_max_right _ _) hr, hhonest⟩
 
-/-- **The `Pacemaker.synchronizes` arithmetic skeleton is discharged unconditionally (PROVED).**
+/-- **The `Pacemaker.synchronizes` arithmetic skeleton is discharged unconditionally.**
 The `synchronizes` field's arithmetic skeleton is the pure existence `∀ t, ∃ r, t ≤ r ∧ gst ≤ r`
 (its honest-leader conjunct `honestLeader r` is supplied separately, by the relay/beacon hit). That
 skeleton holds for any `gst` by `r := max t gst`. Combined with `synchronizer_round_obtains` (which

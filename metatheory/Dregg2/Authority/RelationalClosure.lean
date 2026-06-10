@@ -42,7 +42,7 @@ This module builds that closure as ONE object:
     a CAUSAL/history-dependent guard reading the trace (§8 Axis 2) — is NOT a `RelPred`; it routes
     through `witnessed(vk)` (`Authority.Predicate.custom`), where the verifier is the §8 oracle.
 
-  * **§NON-VACUITY** — the closure genuinely DISCRIMINATES: a concrete `RelPred` true of one record
+  * **§NON-VACUITY** — the closure DISCRIMINATES: a concrete `RelPred` true of one record
     and false of a tampered one (and a Boolean combination that is true∧false-witnessing).
 
 NEW file only. Does NOT edit `Exec.RelationalCaveat`, `Authority.Predicate`, `EffectsState`, or
@@ -128,7 +128,7 @@ out of the ONE atom + the connectives. We prove each existing atom's denotation 
 def ofFieldLteOther (index other : FieldName) (delta : Int) : RelPred :=
   .affineLe [(1, index), (-1, other)] delta
 
-/-- **`ofFieldLteOther_eq` — PROVED.** The closure instance evaluates IDENTICALLY to the live
+/-- **`ofFieldLteOther_eq`.** The closure instance evaluates IDENTICALLY to the live
 `RelCaveat.fieldLteOther` atom (`Exec.RelationalCaveat`). So the live cross-slot capacity/underflow
 caveat is literally a point in the relational closure — no new constructor needed. -/
 theorem ofFieldLteOther_eq (index other : FieldName) (delta : Int) (rec : Value) :
@@ -143,7 +143,7 @@ theorem ofFieldLteOther_eq (index other : FieldName) (delta : Int) (rec : Value)
 /-- `FieldLteField left right` ≡ `record[left] ≤ record[right]` — the `delta = 0` instance. -/
 def ofFieldLteField (left right : FieldName) : RelPred := ofFieldLteOther left right 0
 
-/-- **`ofFieldLteField_eq` — PROVED.** `FieldLteField left right` (`cell/src/program.rs:607`) is the
+/-- **`ofFieldLteField_eq`.** `FieldLteField left right` (`cell/src/program.rs:607`) is the
 `delta = 0` point of the closure: it evaluates true iff `record[left] ≤ record[right]`. -/
 theorem ofFieldLteField_eq (left right : FieldName) (rec : Value) :
     (ofFieldLteField left right).eval rec = decide (fieldOf left rec ≤ fieldOf right rec) := by
@@ -156,12 +156,12 @@ theorem ofFieldLteField_eq (left right : FieldName) (rec : Value) :
 the `RelPred` atom verbatim. -/
 def ofAffineLe (terms : List Term) (c : Int) : RelPred := .affineLe terms c
 
-/-- **`ofAffineLe_eq` — PROVED (definitional).** `AffineLe terms c` is the closure atom unchanged:
+/-- **`ofAffineLe_eq` (definitional).** `AffineLe terms c` is the closure atom unchanged:
 its denotation is exactly `Σ cᵢ·record[fᵢ] ≤ c`. -/
 theorem ofAffineLe_eq (terms : List Term) (c : Int) (rec : Value) :
     (ofAffineLe terms c).eval rec = decide (affineSum terms rec ≤ c) := rfl
 
-/-- **`affineSum_neg` — PROVED.** Negating every coefficient negates the sum:
+/-- **`affineSum_neg`.** Negating every coefficient negates the sum:
 `Σ (−cᵢ)·record[fᵢ] = −Σ cᵢ·record[fᵢ]`. The lemma behind `affineGe`/`affineEq` being the negated
 half-space. -/
 theorem affineSum_neg (terms : List Term) (rec : Value) :
@@ -177,7 +177,7 @@ theorem affineSum_neg (terms : List Term) (rec : Value) :
 def ofSumEquals (indices : List FieldName) (v : Int) : RelPred :=
   RelPred.affineEq (indices.map (fun f => ((1 : Int), f))) v
 
-/-- **`affineEq_eq` — PROVED.** `affineEq terms k` evaluates true iff `Σ cᵢ·record[fᵢ] = k`. Equality
+/-- **`affineEq_eq`.** `affineEq terms k` evaluates true iff `Σ cᵢ·record[fᵢ] = k`. Equality
 is `(Σ ≤ k) ∧ (Σ ≥ k)` — `.and` of two half-spaces recovered from the closure, where the old
 vocabulary needed a bespoke equality atom. -/
 theorem affineEq_eq (terms : List Term) (k : Int) (rec : Value) :
@@ -195,7 +195,7 @@ theorem affineEq_eq (terms : List Term) (k : Int) (rec : Value) :
   · rw [decide_eq_false (by omega : ¬ affineSum terms rec ≤ k), Bool.false_and,
         decide_eq_false (by omega : ¬ affineSum terms rec = k)]
 
-/-- **`ofSumEquals_eq` — PROVED.** `SumEquals indices v` evaluates true iff `Σ record[fᵢ] = v`.
+/-- **`ofSumEquals_eq`.** `SumEquals indices v` evaluates true iff `Σ record[fᵢ] = v`.
 Equality (the `SumEquals`/`AffineEq` shape) is `(Σ ≤ v) ∧ (Σ ≥ v)` — recovered from the closure's
 `.and` of two atoms, where the old vocabulary needed a bespoke atom. -/
 theorem ofSumEquals_eq (indices : List FieldName) (v : Int) (rec : Value) :
@@ -219,37 +219,37 @@ combining affine half-spaces. -/
 @[simp] theorem eval_top (rec : Value) : RelPred.top.eval rec = true := rfl
 @[simp] theorem eval_bot (rec : Value) : RelPred.bot.eval rec = false := rfl
 
-/-- **De Morgan I — PROVED.** `¬(p ∧ q) ≡ (¬p ∨ ¬q)` on the evaluator. -/
+/-- **De Morgan I.** `¬(p ∧ q) ≡ (¬p ∨ ¬q)` on the evaluator. -/
 theorem deMorgan_and (p q : RelPred) (rec : Value) :
     (RelPred.not (.and p q)).eval rec = (RelPred.or (.not p) (.not q)).eval rec := by
   simp [Bool.not_and]
 
-/-- **De Morgan II — PROVED.** `¬(p ∨ q) ≡ (¬p ∧ ¬q)` on the evaluator. -/
+/-- **De Morgan II.** `¬(p ∨ q) ≡ (¬p ∧ ¬q)` on the evaluator. -/
 theorem deMorgan_or (p q : RelPred) (rec : Value) :
     (RelPred.not (.or p q)).eval rec = (RelPred.and (.not p) (.not q)).eval rec := by
   simp [Bool.not_or]
 
-/-- **Double negation — PROVED.** `¬¬p ≡ p`. -/
+/-- **Double negation.** `¬¬p ≡ p`. -/
 theorem not_not (p : RelPred) (rec : Value) :
     (RelPred.not (.not p)).eval rec = p.eval rec := by simp
 
-/-- **Complementation (excluded middle) — PROVED.** `p ∨ ¬p ≡ ⊤`. -/
+/-- **Complementation (excluded middle).** `p ∨ ¬p ≡ ⊤`. -/
 theorem or_not_self (p : RelPred) (rec : Value) :
     (RelPred.or p (.not p)).eval rec = RelPred.top.eval rec := by
   simp [Bool.or_not_self]
 
-/-- **Non-contradiction — PROVED.** `p ∧ ¬p ≡ ⊥`. -/
+/-- **Non-contradiction.** `p ∧ ¬p ≡ ⊥`. -/
 theorem and_not_self (p : RelPred) (rec : Value) :
     (RelPred.and p (.not p)).eval rec = RelPred.bot.eval rec := by
   simp [Bool.and_not_self]
 
-/-- **Distributivity — PROVED.** `p ∧ (q ∨ r) ≡ (p ∧ q) ∨ (p ∧ r)`. -/
+/-- **Distributivity.** `p ∧ (q ∨ r) ≡ (p ∧ q) ∨ (p ∧ r)`. -/
 theorem and_or_distrib (p q r : RelPred) (rec : Value) :
     (RelPred.and p (.or q r)).eval rec
       = (RelPred.or (.and p q) (.and p r)).eval rec := by
   simp [Bool.and_or_distrib_left]
 
-/-- **Identity — PROVED.** `p ∧ ⊤ ≡ p` and `p ∨ ⊥ ≡ p`. -/
+/-- **Identity.** `p ∧ ⊤ ≡ p` and `p ∨ ⊥ ≡ p`. -/
 theorem and_top (p : RelPred) (rec : Value) :
     (RelPred.and p .top).eval rec = p.eval rec := by simp
 theorem or_bot (p : RelPred) (rec : Value) :
@@ -286,7 +286,7 @@ def constraintBudget : RelPred → Nat
   | .top              => 1
   | .bot              => 1
 
-/-- **`relPred_constraints_bounded` — PROVED (the bounded-circuit argument).** A `RelPred` compiles
+/-- **`relPred_constraints_bounded` (the bounded-circuit argument).** A `RelPred` compiles
 to at most `sizeBound p` circuit constraints. So the *offered closure stays efficiently
 circuit-expressible*: any author-written relational guard of bounded size costs a bounded, linear-in-
 size number of constraints. (Here equality, in fact, since each cost is one-per-node — the bound is
@@ -301,8 +301,8 @@ theorem relPred_constraints_bounded (p : RelPred) :
   | top              => simp [constraintBudget, sizeBound]
   | bot              => simp [constraintBudget, sizeBound]
 
-/-- **`affine_atom_is_linear` — PROVED.** The atom's circuit cost is exactly `‖terms‖+1` — linear in
-the number of slots it reads, the PLONK linear-gate cost. The closure's leaf is genuinely a single
+/-- **`affine_atom_is_linear`.** The atom's circuit cost is exactly `‖terms‖+1` — linear in
+the number of slots it reads, the PLONK linear-gate cost. The closure's leaf is a single
 linear constraint (plus the bound's range/comparison gate). -/
 theorem affine_atom_is_linear (terms : List Term) (k : Int) :
     constraintBudget (.affineLe terms k) = terms.length + 1 := rfl
@@ -332,14 +332,14 @@ fragments lie OUTSIDE it; each is named, and each routes through `witnessed(vk)`
 `relPred_is_record_local` makes (3) precise: `RelPred.eval` is a function of the post-record ALONE —
 no trace, no history, no other cell. That is the closure's boundary, stated as a theorem. -/
 
-/-- **`relPred_is_record_local` — PROVED (the boundary, stated positively).** `RelPred.eval p` is a
+/-- **`relPred_is_record_local` (the boundary, stated positively).** `RelPred.eval p` is a
 function of the post-record ALONE: two evaluations on the *same* record agree. So the closure is, by
 construction, the record-local fragment — every escape (causal guards, cross-trace relations) reads
 something `RelPred.eval` cannot see, and must route through `witnessed(vk)`. -/
 theorem relPred_is_record_local (p : RelPred) (rec : Value) :
     p.eval rec = p.eval rec := rfl
 
-/-- **`atom_terms_finite` — PROVED (boundary clause 1).** Every atom in the closure carries a FINITE
+/-- **`atom_terms_finite` (boundary clause 1).** Every atom in the closure carries a FINITE
 `terms` list, so its constraint cost is finite — `constraintBudget` is always a concrete `Nat`. An
 unbounded quantifier over the record has no such finite witness and so is NOT a `RelPred` (it routes
 to `witnessed(vk)`). This is the precise statement that the fragment is the *bounded* affine one. -/
@@ -358,7 +358,7 @@ installing exactly the live caveat — the promotion is on the existing surface,
 def ofRelCaveat : RelCaveat → RelPred
   | .fieldLteOther index other delta => ofFieldLteOther index other delta
 
-/-- **`ofRelCaveat_eval_eq` — PROVED.** A lifted live caveat evaluates IDENTICALLY in the closure —
+/-- **`ofRelCaveat_eval_eq`.** A lifted live caveat evaluates IDENTICALLY in the closure —
 so `RelPred` is a faithful superset of the live `RelCaveat` surface: the algebra contains the atom,
 and the atom keeps its meaning. -/
 theorem ofRelCaveat_eval_eq (cav : RelCaveat) (rec : Value) :
@@ -366,7 +366,7 @@ theorem ofRelCaveat_eval_eq (cav : RelCaveat) (rec : Value) :
   cases cav with
   | fieldLteOther index other delta => exact ofFieldLteOther_eq index other delta rec
 
-/-! ## §7 — §NON-VACUITY: the closure genuinely DISCRIMINATES (true of one record, false of a
+/-! ## §7 — §NON-VACUITY: the closure DISCRIMINATES (true of one record, false of a
 tampered one) — and a Boolean combination that is witnessed both true and false. -/
 
 /-- A queue cell record: head 1, tail 0, capacity 2 (occupancy 1, room for one more). -/
@@ -404,14 +404,14 @@ def capInv : RelPred :=
 -- hold pointwise, not only on "nice" records.
 #guard (RelPred.or capInv (.not capInv)).eval recBad == true
 
-/-- **`closure_discriminates` — PROVED (non-vacuity, as a theorem not just `#guard`).** There is a
+/-- **`closure_discriminates` (non-vacuity, as a theorem not just `#guard`).** There is a
 `RelPred` and two records on which it returns DIFFERENT bits — the closure is a genuine discriminator,
 not a vacuous `:= true`. -/
 theorem closure_discriminates :
     ∃ (p : RelPred) (r₁ r₂ : Value), p.eval r₁ = true ∧ p.eval r₂ = false :=
   ⟨capInv, recOk, recBad, by decide, by decide⟩
 
-/-- **`closure_not_constant_true` — PROVED.** `capInv` is NOT the always-true predicate (it rejects
+/-- **`closure_not_constant_true`.** `capInv` is NOT the always-true predicate (it rejects
 the tampered record). Pinned the other way too: it IS true somewhere. So `capInv` witnesses both
 truth values — the non-vacuity bar (`feedback-dont-launder-vacuity-as-honest`). -/
 theorem closure_not_constant_true :

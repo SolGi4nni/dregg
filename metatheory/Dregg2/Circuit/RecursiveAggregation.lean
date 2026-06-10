@@ -2,7 +2,7 @@
 # Dregg2.Circuit.RecursiveAggregation — RECURSIVE-AGGREGATION SOUNDNESS (magnesium → gold).
 
 **The headline.** A light client that verifies ONE succinct aggregate proof — and re-witnesses
-NOTHING of the history — genuinely learns that the WHOLE chain of N finalized turns is correct:
+NOTHING of the history — learns that the WHOLE chain of N finalized turns is correct:
 every turn executed correctly per the verified executor, the chain is correctly ordered (no
 reorder/drop/insert), and the final root is the genuine fold of the whole history. This is the model
 that the IVC accumulator (`circuit/src/ivc_turn_chain.rs::prove_turn_chain_recursive` →
@@ -14,7 +14,7 @@ succinct aggregate. The aggregate's validity, UNDER the named soundness hypothes
 `HistoryAggregation.WellFormedChain` (`aggregate_attests_whole_history`) — so trusting the aggregate
 is trusting the whole history. The verification IS the trust.
 
-**What is PROVED vs. what is a NAMED, REALIZABLE hypothesis (the honest boundary).** You cannot prove
+**What is PROVED vs. what is a NAMED, REALIZABLE hypothesis (the boundary).** You cannot prove
 plonky3/pickles FRI-recursion soundness in Lean — it is the soundness of a concrete Rust prover over
 a concrete field. So we NAME the three soundness facts the recursion engine supplies, as `structure`
 fields the headline takes as hypotheses (each realizable: it is the standard SNARK soundness of a
@@ -22,7 +22,7 @@ fixed verifier circuit, which `DESIGN-recursion-aggregation-private-joint-turns.
 BOUNDED obligation for plonky3's single fixed verifier AIR + differential testing):
 
   * **`InnerProofSound`** — an inner whole-turn step proof that VERIFIES attests the verified executor
-    genuinely ran that turn (`recCexec pre turn = some post`). This is the EffectVm/descriptor
+    ran that turn (`recCexec pre turn = some post`). This is the EffectVm/descriptor
     circuit⟺executor soundness, ALREADY proved per-effect in Lean (`WholeTurnTriangle`,
     `EffectVmEmit*`) — here lifted to the leaf-proof boundary as the realized hypothesis the
     recursion engine carries up.
@@ -33,7 +33,7 @@ BOUNDED obligation for plonky3's single fixed verifier AIR + differential testin
   * **`RecursiveVerifierSound`** — an AGGREGATE proof that VERIFIES attests EVERY wrapped child leaf
     proof verifies. This is the recursion engine's in-circuit verifier (`verify_p3_batch_proof_circuit`
     run as a circuit, `prove_aggregation_layer`) being sound — the ONE big FRI obligation (§H1), the
-    part genuinely outside Lean.
+    part outside Lean.
 
 EVERYTHING ELSE — that these three, COMPOSED, yield the full `WellFormedChain` attestation, and hence
 the whole-history correctness + conservation — is PROVED here in Lean, gap-free. The composition is
@@ -95,7 +95,7 @@ structure Aggregate where
   /-- Public: the number of finalized turns folded (`WholeChainProof.num_turns`). -/
   numTurns    : Nat
 
-/-! ## 2. The named, realizable soundness hypotheses (the honest boundary).
+/-! ## 2. The named, realizable soundness hypotheses (the boundary).
 
 These are the three facts the recursion engine supplies that we CANNOT prove in Lean (FRI/recursion
 soundness). They are bundled in `EngineSound` as a hypothesis the headline takes — NOT an axiom. The
@@ -114,7 +114,7 @@ NON-vacuous. -/
 structure EngineSound (agg : Aggregate Proof) (g : RecChainedState) (steps : List ChainStep) : Prop where
   /-- **H-RECURSE (`RecursiveVerifierSound`)** — if the root aggregate verifies, then every child leaf
   AND the binding leaf verify. The recursion engine's in-circuit verifier soundness (the ONE FRI
-  obligation, §H1). This is the only hypothesis genuinely outside Lean's reach. -/
+  obligation, §H1). This is the only hypothesis outside Lean's reach. -/
   recursive_sound : verify agg.root = true →
     (∀ p ∈ agg.leafProofs, verify p = true) ∧ verify agg.bindingProof = true
   /-- **H-LEAF (`InnerProofSound`)** — the leaf proofs are PAIRED POSITIONALLY with the chain steps
@@ -159,7 +159,7 @@ theorem forall₂_all_verify_executed
     · exact hps (hall p (List.mem_cons_self))
     · exact ih (fun q hq => hall q (List.mem_cons_of_mem p hq)) a hrest
 
-/-- **`every_leaf_verifies_implies_executed` (PROVED).** From the recursion-soundness + leaf-soundness
+/-- **`every_leaf_verifies_implies_executed`.** From the recursion-soundness + leaf-soundness
 hypotheses, a verifying root implies every step's verified-executor transition holds. The chain of
 in-circuit verifications collapses to "every turn executed correctly" — `recursive_sound` (root ⇒
 leaves verify) composed with `leaf_sound` (positional pairing ⇒ each step executed). -/
@@ -188,9 +188,9 @@ structure AggregateAttests (agg : Aggregate Proof) (g : RecChainedState) (steps 
       | none   => stateRoot CH RH cmb compress compressN g.kernel zeroTurn
       | some s => ChainStep.oldRoot CH RH cmb compress compressN s)
 
-/-- **`light_client_verifies_whole_history` (PROVED — THE MAGNESIUM→GOLD HEADLINE).**
+/-- **`light_client_verifies_whole_history` (THE MAGNESIUM→GOLD HEADLINE).**
 
-A light client that checks ONLY `verify agg.root = true` (re-witnessing NOTHING) genuinely obtains
+A light client that checks ONLY `verify agg.root = true` (re-witnessing NOTHING) obtains
 `AggregateAttests`: every turn executed correctly, the chain is correctly ordered (no reorder/drop/
 insert), and the public final root is the genuine fold of the whole history — UNDER the named,
 realizable engine-soundness hypotheses. The verification of the succinct aggregate IS the trust in
@@ -218,7 +218,7 @@ history — all WITHOUT the light client re-running a single turn. We expose the
 directly from the `StateChained` witness the prover supplies (the chain's executor genuineness), which
 the aggregate attests is consistent with the verified leaves. -/
 
-/-- **`attested_history_is_run` (PROVED).** Given the executor-genuine chain (`StateChained` — the
+/-- **`attested_history_is_run`.** Given the executor-genuine chain (`StateChained` — the
 prover's witness that the steps are a real run, which the verifying leaves attest step-by-step), the
 whole attested history is a `Run recChainedSystem` from genesis to the folded endpoint. The light
 client inherits every run-level theorem of the verified record cell. -/
@@ -227,7 +227,7 @@ theorem attested_history_is_run
     Run recChainedSystem g (lastStateOf g steps) :=
   wellformed_is_run g steps hch
 
-/-- **`attested_history_conserves` (PROVED — KEYSTONE).** Value is conserved across the WHOLE attested
+/-- **`attested_history_conserves` (KEYSTONE).** Value is conserved across the WHOLE attested
 history: the ledger total at the folded endpoint equals the genesis total. A light client trusting the
 aggregate trusts a no-mint/no-burn history of arbitrary length, having re-executed nothing. Rides
 `HistoryAggregation.wellformed_history_conserves`. -/
@@ -246,7 +246,7 @@ chain (a real 1-step executor run over the teeth genesis): a `verify` that accep
 whose root/leaf/binding all verify, and an `EngineSound` proof — so the headline fires on a real
 chain and concludes a real `AggregateAttests`. We ALSO witness the negative: a `verify` that REJECTS
 gives a vacuously-true `EngineSound` (no obligation), and the headline is not invoked — the tooth is
-in the `binding_sound`/`leaf_sound` implications, which §6 shows genuinely separate honest from
+in the `binding_sound`/`leaf_sound` implications, which §6 shows separate honest from
 tampered. -/
 
 section Realize
@@ -280,7 +280,7 @@ def realAggregate : Aggregate RealProof where
   chainDigest := 0
   numTurns := 1
 
-/-- **`real_engine_sound` (PROVED — non-vacuity, positive).** The named soundness hypotheses are
+/-- **`real_engine_sound` (non-vacuity, positive).** The named soundness hypotheses are
 SATISFIABLE on a real chain: `EngineSound` holds for the accepting verifier, the realizing aggregate,
 the teeth genesis, and the honest 1-step chain. Each implication is discharged concretely — the leaf
 soundness yields the genuine `recCexec teethGenesis honestTurn = some _` (the honest step's `commits`),
@@ -308,8 +308,8 @@ theorem real_engine_sound :
     · -- finalRoot is defined as the genuine fold.
       rfl
 
-/-- **`light_client_fires_on_real_chain` (PROVED — the headline is WITNESSED).** On the realizing
-instance, the light-client headline genuinely concludes `AggregateAttests`: verifying the (accepting)
+/-- **`light_client_fires_on_real_chain` (the headline is WITNESSED).** On the realizing
+instance, the light-client headline concludes `AggregateAttests`: verifying the (accepting)
 root attests the honest 1-step history. So `light_client_verifies_whole_history` is non-vacuous — it
 fires on a real chain and delivers a real attestation, not an empty implication. -/
 theorem light_client_fires_on_real_chain :
@@ -318,8 +318,8 @@ theorem light_client_fires_on_real_chain :
   light_client_verifies_whole_history RealProof acceptAll zCH zRH zcmb zcompress zcompressN
     realAggregate teethGenesis realSteps real_engine_sound rfl
 
-/-- **`real_chain_first_turn_executed` (PROVED — the attestation is REAL).** Reading the conclusion
-of the witnessed headline: the first (only) turn of the realizing history genuinely executed —
+/-- **`real_chain_first_turn_executed` (the attestation is REAL).** Reading the conclusion
+of the witnessed headline: the first (only) turn of the realizing history executed —
 `recCexec teethGenesis honestTurn = some _`. So the light client's attestation is a TRUE fact about a
 real executor run, not a formal husk. -/
 theorem real_chain_first_turn_executed :
@@ -329,7 +329,7 @@ theorem real_chain_first_turn_executed :
 
 end Realize
 
-/-! ## 6. THE ANTI-GHOST TOOTH — the named hypotheses genuinely REJECT a tampered aggregate.
+/-! ## 6. THE ANTI-GHOST TOOTH — the named hypotheses REJECT a tampered aggregate.
 
 Additive attestation is only meaningful if the aggregate cannot attest a BROKEN history. The teeth:
 (a) the binding soundness CANNOT certify a reordered chain — if the steps' seam roots disagree,
@@ -347,12 +347,12 @@ variable (cmb : ℤ → ℤ → ℤ)
 variable (compress : ℤ → ℤ → ℤ)
 variable (compressN : List ℤ → ℤ)
 
-/-- **`tampered_aggregate_cannot_bind` (PROVED — THE ANTI-GHOST TOOTH).** No sound aggregate can
+/-- **`tampered_aggregate_cannot_bind` (THE ANTI-GHOST TOOTH).** No sound aggregate can
 attest a REORDERED 2-step chain. If the first step's `newRoot` differs from the second's `oldRoot`
 (a spliced/reordered/dropped turn — the `TurnChainError::ChainBreak` condition), then for ANY engine
 whose binding leaf verifies, `binding_sound` would force `ChainBound [s, s']`, which is FALSE for a
 broken order. Hence the engine cannot have a verifying binding proof over a tampered chain — the
-aggregate genuinely REJECTS reorder/drop/insert. -/
+aggregate REJECTS reorder/drop/insert. -/
 theorem tampered_aggregate_cannot_bind
     (agg : Aggregate Proof) (g : RecChainedState) (s s' : ChainStep)
     (es : EngineSound Proof verify CH RH cmb compress compressN agg g [s, s'])
@@ -363,9 +363,9 @@ theorem tampered_aggregate_cannot_bind
   obtain ⟨hbound, _, _⟩ := es.binding_sound hverify
   exact tooth_rejects_broken_order CH RH cmb compress compressN s s' hbreak hbound
 
-/-- **`leaf_pairing_defeats_swap` (PROVED — the leg-swap tooth).** A verifying leaf proof attests the
+/-- **`leaf_pairing_defeats_swap` (the leg-swap tooth).** A verifying leaf proof attests the
 transition of ITS OWN POSITIONALLY-PAIRED step, not some other turn's. The `leaf_sound` `Forall₂`
-binds the head leaf `p` to the head step `s`: if `p` verifies, the executor genuinely ran `s`'s
+binds the head leaf `p` to the head step `s`: if `p` verifies, the executor ran `s`'s
 `(pre, turn) ↦ post`. An adversary cannot satisfy the head leaf by supplying a proof of a DIFFERENT
 turn while exporting `s`'s roots — the leaf is bound to `s` by the positional pairing, not re-pointable.
 This is the recursion analog of the per-effect anti-ghost. -/

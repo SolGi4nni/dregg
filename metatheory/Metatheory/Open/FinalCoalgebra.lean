@@ -41,7 +41,7 @@ whose behaviour functor `Boundary.F Obs Adm X = Obs × (Adm → X)` is *definiti
     into `νF` cannot disagree. This is the coinduction principle (`IsFinalCell.uniq`) applied
     to the concrete `Dregg2` cell, the load-bearing consumption the audit's fix (4) names.
 
-So `νF` is no longer proven-then-orphaned: the concrete turn system unfolds INTO it and
+So `νF` is not orphaned: the concrete turn system unfolds INTO it and
 inherits its uniqueness.
 -/
 import Metatheory.Categorical
@@ -228,7 +228,7 @@ theorem Boundary.no_drift_into_nuF (T : TurnCoalg Obs Adm)
     (g h : CoalgHom (cellOfTurnCoalg T) (nuF Obs Adm)) : g.f = h.f :=
   nuF_isFinal.uniq g h
 
-/-- **Every real-cell unfold into `νF` IS the canonical anamorphism — PROVED, kernel-clean.**
+/-- **Every real-cell unfold into `νF` IS the canonical anamorphism.**
 The sharper form: any coalgebra morphism `g` from the real cell into `νF` equals the
 anamorphism `anaMap`, hence `g.f x w = T.obs (run x w)`. So the final coalgebra does not just
 *forbid* drift, it *pins* the real cell's behaviour to one explicit Moore unfold. -/

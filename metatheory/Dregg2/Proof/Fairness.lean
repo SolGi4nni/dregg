@@ -4,7 +4,7 @@
 `Proof/Temporal.lean` built the linear-temporal `□`/`◇`/`◯` algebra over the living cell's trajectory
 `trajA`, and was explicit about the residue: *"the only `◇`-theorems provable from `livingCellA_carries`
 alone are the trivial ones (`P now → ◇P`, `□P → ◇P`); a real liveness result needs a fairness
-hypothesis + a measure"* (`Temporal.lean` §"the honest residue"). This module supplies exactly that —
+hypothesis + a measure"* (`Temporal.lean` §"the residue"). This module supplies exactly that —
 but it adopts **van Glabbeek's JUSTNESS**, NOT weak/strong fairness, as the base completeness criterion.
 
 THE DECISION (locked, `docs/rebuild/INTENT-REFS-fairness.md` §3–§4; ember's colleague Rob van Glabbeek):
@@ -51,7 +51,7 @@ stutters (or fires only independent cells) forever while an enabled component st
   non-interfering steps, and the descent on the interfering step. `Eventually P` follows by strong
   induction on `μ`.
 
-## The honest crux (`commits_stable_off_npc`) — what is proved vs. carried
+## The crux (`commits_stable_off_npc`) — what is proved vs. carried
 
 [Just] closure (3) says enabledness is lost ONLY through genuine interference. Its dregg2 reading is
 `commits_stable_off_npc`: if `cf` commits at `s` and the fired `u` touches no cell `cf` needs
@@ -62,12 +62,12 @@ commit is literally unchanged), which is *exactly the branch justness is about* 
 lemma over all ~60 `FullActionA` kinds — `applyHalfOut_caps`/`recKExec_frame` exist only piecemeal) is
 carried as the explicit `JustLTSC.commits_stable` FIELD obligation — and DE-VACUIFIED by a concrete
 NON-stutter witness (`commits_stable_concrete`, §6.bis: an independent authority-free emit on cell 7
-genuinely COMMITS — no stutter — yet provably leaves `transferCF`'s commit on `{0,1}` intact), so the
+COMMITS — no stutter — yet provably leaves `transferCF`'s commit on `{0,1}` intact), so the
 field is shown TRUE for real independent COMMITTING forests, not merely for stutters. NOT stubbed and NOT
 `sorry`'d. See `commits_stable_off_npc` (the stutter theorem), `commits_stable_concrete` (the concrete
 commit-vs-commit witness) and `JustLTSC.commits_stable` (the carried universal field) for the division.
 
-## Teeth (non-vacuity — machine-checked, the criterion genuinely REJECTS)
+## Teeth (non-vacuity — machine-checked, the criterion REJECTS)
 
 1. **`badSched_not_just`** — `badSched := fun _ => cf5` firing only an independent cell FOREVER STARVES
    an enabled `cf0` with `concurrent cf0 cf5`: a machine-checked REFUTATION `¬ Just fma0 badSched`
@@ -77,7 +77,7 @@ commit-vs-commit witness) and `JustLTSC.commits_stable` (the carried universal f
    a fully-built `JustProgress` package (`refundDemo`, all four fields PROVED against the real executor —
    the B-just `transferSched` path, goal `Pgoal`, measure `muGoal`) feeds `just_progress` to yield
    `Eventually Pgoal fma0 transferSched` with NO hypotheses. This proves the `JustProgress` machinery is
-   genuinely INHABITABLE (not a vacuous carried package) and that `just_progress` truly PRODUCES a `◇` on
+   INHABITABLE (not a vacuous carried package) and that `just_progress` truly PRODUCES a `◇` on
    the real machine ([Just] Thm-1 feasibility, concrete). `loser_refund_eventually` keeps the abstract
    escrow TEMPLATE form (swap `Pgoal`/`muGoal` for the holding-store to read off `Eventually (refunded
    loser)`); `refundDemo` is its inhabited witness.
@@ -99,7 +99,7 @@ open Dregg2.Proof.Temporal
 /-! ## §1 — The components presentation: `npcA` (necessary participants) and `afcA` (affected cells).
 
 [Survey] §13 derives the concurrency relation `↝` from two cell-sets per transition: the NECESSARY
-PARTICIPANT components `npc` (cells whose participation the transition genuinely needs) and the AFFECTED
+PARTICIPANT components `npc` (cells whose participation the transition needs) and the AFFECTED
 components `afc` (cells the transition mutates). Cells are the components. We read both off the
 PRE-ORDER LOWERING `lowerForestA` (the executor's own execution-order flattening, `Exec/FullForest.lean`
 §3), so the sets agree exactly with what the executor runs.
@@ -160,7 +160,7 @@ def affectedOf : FullActionA → List CellId
 
 /-- **`npcA cf` — the NECESSARY-PARTICIPANT cells of a forest** ([Survey] §13): the root actor's
 `targetOf` ∪ the `targetOf` of every node of the pre-order lowering (`lowerForestA`). A cell in
-`npcA cf` is one the committed forest genuinely needs to participate — exactly the cells whose state the
+`npcA cf` is one the committed forest needs to participate — exactly the cells whose state the
 executor reads/threads. As a `Finset CellId` (de-duplicated via `List.toFinset`). -/
 def npcA (cf : ConservingForest) : Finset CellId :=
   ((lowerForestA cf.1).map targetOf).toFinset
@@ -226,11 +226,11 @@ end. The dregg2 reading: if `cf` commits at `s` and the fired `u` is concurrent 
 loop). The commit-vs-commit uniform per-effect frame is carried as `JustLTSC.commits_stable` (the
 honest field), discharged concretely in the teeth — NOT stubbed, NOT `sorry`'d. -/
 
-/-- **`commits_stable_off_npc` — PROVED (the stutter branch of [Just] closure (3)).** If `cf` commits
+/-- **`commits_stable_off_npc` (the stutter branch of [Just] closure (3)).** If `cf` commits
 at `s` and the fired `u` is a STUTTER at `s` (`execFullForestA s u.1 = none` ⇒ `cellNextA s u = s`),
 then `cf` still commits at `cellNextA s u`. This is the load-bearing half: the `getD`-self-loop is
 precisely the non-progressing transition justness rules out, and on it the commit set is LITERALLY
-unchanged (`cellNextA s u = s`). NON-VACUOUS: a stutter genuinely arises (`badRootFullForest` etc.
+unchanged (`cellNextA s u = s`). NON-VACUOUS: a stutter arises (`badRootFullForest` etc.
 reject), and on it enabledness is provably preserved — no interference can have occurred (a stutter
 mutates nothing). -/
 theorem commits_stable_off_npc (s : RecChainedState) (cf u : ConservingForest)
@@ -261,7 +261,7 @@ one-step monotone bound and (by induction over the gap) the between-indices boun
 log_n`. They are the potential-frame engine for the demonstrator's measure `μ := if 1 ≤ log then 0 else
 1` (the `frame`/`enabled` fields of the concrete `JustProgress` in §7). -/
 
-/-- **`cellNextA_logMono` — PROVED.** A single living-cell step never SHRINKS the receipt log: a commit
+/-- **`cellNextA_logMono`.** A single living-cell step never SHRINKS the receipt log: a commit
 extends it (`execFullForestA_logMono`), a stutter leaves it (`cellNextA s u = s`). The one-step
 append-only bound on the REAL executor. -/
 theorem cellNextA_logMono (s : RecChainedState) (u : ConservingForest) :
@@ -271,7 +271,7 @@ theorem cellNextA_logMono (s : RecChainedState) (u : ConservingForest) :
   | some s' => simp only [Option.getD_some]; exact execFullForestA_logMono s s' u.1 hc
   | none    => simp only [Option.getD_none]; exact le_refl _
 
-/-- **`trajA_logMono_le` — PROVED.** The receipt log is monotone along the trajectory: for `k ≤ n`, the
+/-- **`trajA_logMono_le`.** The receipt log is monotone along the trajectory: for `k ≤ n`, the
 log at index `k` is `≤` the log at index `n`. The iterated `cellNextA_logMono`, by induction over the
 gap `n - k`. The append-only potential bound the demonstrator's `frame` field reads. -/
 theorem trajA_logMono_le (s : RecChainedState) (sched : SchedA) (k n : Nat) (h : k ≤ n) :
@@ -335,7 +335,7 @@ theorem JustProgress.frame_le {B P s sched} (jp : JustProgress B P s sched) :
         have : k = m + 1 := Nat.le_antisymm hkn hge
         rw [this]
 
-/-- **`just_progress` — PROVED (THE genuine `◇`, the liveness payoff).** From the `JustProgress` package
+/-- **`just_progress` (THE genuine `◇`, the liveness payoff).** From the `JustProgress` package
 (a B-just path + a well-founded measure `μ` toward `P` with the enabling/descent/frame witnesses,
 carried as FIELDS), `Eventually P s sched`. This is the honest dual of
 `Temporal.always_of_step_invariant` (the `□`-rule): where `□` was discharged from one-step PRESERVATION,
@@ -368,7 +368,7 @@ theorem just_progress {B P s sched} (jp : JustProgress B P s sched) :
       -- UNLESS `μ(k) = m`. Since `μ(n+1) < μ(k)` and `μ(k) ≤ m`, `μ(n+1) ≤ m - 1 < m` when `m ≥ 1`.
       omega
 
-/-! ## §6 — TEETH (1): the criterion genuinely REJECTS a starving schedule (`badSched_not_just`).
+/-! ## §6 — TEETH (1): the criterion REJECTS a starving schedule (`badSched_not_just`).
 
 Without teeth `Just` could be `fun _ _ => True` and everything is vacuous. We exhibit a concrete
 schedule that STARVES an enabled component and prove the criterion REJECTS it (`¬ Just`). This is
@@ -411,9 +411,9 @@ theorem npcA_cf0 : npcA cf0 = {0} := by
 theorem afcA_cf5 : afcA cf5 = {5, 6} := by
   decide
 
-/-- **`cf0_concurrent_cf5` — PROVED**: `cf5` is concurrent with `cf0` (`npcA cf0 = {0} ∩ afcA cf5 =
+/-- **`cf0_concurrent_cf5`**: `cf5` is concurrent with `cf0` (`npcA cf0 = {0} ∩ afcA cf5 =
 {5,6} = ∅`). So firing `cf5` NEVER interferes with `cf0`. This is the operational content: the bad
-schedule's only activity is genuinely independent of the starved component. -/
+schedule's only activity is independent of the starved component. -/
 theorem cf0_concurrent_cf5 : concurrent cf0 cf5 := by
   unfold concurrent
   rw [npcA_cf0, afcA_cf5]
@@ -444,7 +444,7 @@ theorem cf0_commits_everywhere : ∀ k, Commits (trajA fma0 badSched k) cf0 := b
 B-just (for any `B` that admits `cf0` as non-blocking, e.g. `B := fun _ => True`): `cf0` commits at
 every state of `trajA fma0 badSched` (a real per-asset transfer between LIVE cells — `cf0_commits_
 everywhere`), is non-blocking, yet EVERY step `badSched n = cf5` is concurrent with `cf0`
-(`cf0_concurrent_cf5`), so NO step interferes — violating Def 6. The criterion genuinely REJECTS the
+(`cf0_concurrent_cf5`), so NO step interferes — violating Def 6. The criterion REJECTS the
 starvation; `Just` is therefore NOT `fun _ _ => True`. dregg2's [Survey] Example 21. -/
 theorem badSched_not_just :
     ¬ Just (fun _ => True) fma0 badSched := by
@@ -457,7 +457,7 @@ theorem badSched_not_just :
 /-! ## §6.bis — closure (3) commit-vs-commit, DISCHARGED CONCRETELY (a NON-stutter witness).
 
 The crux flag (`INTENT-REFS-fairness.md` §5) marks the commit-vs-commit half of [Just] closure (3) — an
-INTERFERENCE-FREE COMMITTED step preserves a commit — as the honest residue (a uniform per-effect
+INTERFERENCE-FREE COMMITTED step preserves a commit — as the residue (an uniform per-effect
 locality lemma over all ~60 `FullActionA` kinds is carried as `JustLTSC.commits_stable`, not yet proved
 in full generality). Here we PROVE a CONCRETE, GENUINELY NON-STUTTER instance of it: an independent
 authority-free emit on the LIVE-but-independent cell `1` COMMITS (it is no stutter — cell 1 is live, so
@@ -483,7 +483,7 @@ def emitFar : ConservingForest :=
     simp only [lowerForestA, lowerChildrenA, turnLedgerDeltaAsset, List.map_cons, List.map_nil,
       List.sum_cons, List.sum_nil, ledgerDeltaAsset, add_zero]⟩
 
-/-- `emitFar` is no stutter — it genuinely COMMITS at `fma0` (authority-free emit). -/
+/-- `emitFar` is no stutter — it COMMITS at `fma0` (authority-free emit). -/
 theorem emitFar_commits : Commits fma0 emitFar := by
   show (execFullForestA fma0 emitFar.1).isSome = true; decide
 
@@ -494,7 +494,7 @@ theorem transferCF_concurrent_emitFar : concurrent transferCF emitFar := by
   show Disjoint (npcA transferCF) (afcA emitFar)
   decide
 
-/-- **`commits_stable_concrete` — PROVED (closure (3), the NON-stutter commit-vs-commit half).** A
+/-- **`commits_stable_concrete` (closure (3), the NON-stutter commit-vs-commit half).** A
 GENUINE independent COMMITTING step (`emitFar`, which commits — no stutter) preserves `transferCF`'s
 commit: `transferCF` still commits at `cellNextA fma0 emitFar`. This is the commit-vs-commit closure (3)
 on the REAL executor for a real independent committing forest — the de-vacuification of the carried
@@ -522,7 +522,7 @@ abbrev pendingRefunds : RecChainedState → Nat := fun s => s.log.length
 potential so the demonstrator is a faithful template, not a degenerate constant.) -/
 def Refunded (s : RecChainedState) : Prop := pendingRefunds s = 0
 
-/-- **`loser_refund_eventually` — THE LIVENESS DEMONSTRATOR (PROVED).** Given a `JustProgress` package
+/-- **`loser_refund_eventually` — THE LIVENESS DEMONSTRATOR.** Given a `JustProgress` package
 whose measure is the pending-refund count and whose goal is `Refunded` (all refunds discharged),
 `just_progress` yields `Eventually Refunded`: the loser IS eventually refunded. The constructive proof
 that `just_progress` produces a genuine `◇` from a justness hypothesis — `μ := pendingRefunds`, every
@@ -612,10 +612,10 @@ theorem BReg_interferes_transferCF (cf : ConservingForest) (hB : BReg cf) :
   have hx01 : x ∈ afcA transferCF := by rw [afcA_transferCF]; exact hB.2 hx
   exact (Finset.disjoint_left.mp hconc) hx hx01
 
-/-- **`refundDemo` — the CONCRETE inhabited `JustProgress` (PROVED, all four fields, on the REAL
+/-- **`refundDemo` — the CONCRETE inhabited `JustProgress` (all four fields, on the REAL
 executor).** A fully-built liveness package: the B-just `transferSched` path from `fma0`, with goal
 `Pgoal` (one receipt landed) and measure `muGoal`. Proves the machinery is NON-VACUOUS — a `JustProgress`
-genuinely exists over the 46-effect executor, not just as a carried hypothesis. -/
+exists over the 46-effect executor, not just as a carried hypothesis. -/
 def refundDemo : JustProgress BReg Pgoal fma0 transferSched where
   just := by
     -- B-justness: take `n := k`; `sched k = transferCF` interferes with every `BReg` forest.
@@ -655,11 +655,11 @@ def refundDemo : JustProgress BReg Pgoal fma0 transferSched where
       simp only [muGoal, if_neg hP]
       split <;> omega
 
-/-- **`refund_demo_eventually` — THE UNCONDITIONAL LIVENESS TEETH (PROVED).** `just_progress` applied to
+/-- **`refund_demo_eventually` — THE UNCONDITIONAL LIVENESS TEETH.** `just_progress` applied to
 the CONCRETE `refundDemo` package yields `Eventually Pgoal fma0 transferSched` with NO hypotheses: the
 goal (a receipt lands) IS eventually reached on the real executor under reactive B-justness. This is the
-non-vacuous face of `loser_refund_eventually`: the `JustProgress` machinery is genuinely inhabitable and
-`just_progress` genuinely PRODUCES a `◇`. dregg2's [Just] Thm-1 feasibility, made concrete. -/
+non-vacuous face of `loser_refund_eventually`: the `JustProgress` machinery is inhabitable and
+`just_progress` PRODUCES a `◇`. dregg2's [Just] Thm-1 feasibility, made concrete. -/
 theorem refund_demo_eventually : Eventually Pgoal fma0 transferSched :=
   just_progress refundDemo
 

@@ -125,7 +125,7 @@ theorem recAbsStep_run_forward {k k' : RecordKernelState}
     obtain ⟨turn, hturn⟩ := hstep
     exact AbsRun.step (recAbsStep_forward_exists _ _ turn hturn) ih
 
-/-! ## §4 — Non-vacuity: `recAbsStep` genuinely constrains its arguments. -/
+/-! ## §4 — Non-vacuity: `recAbsStep` constrains its arguments. -/
 
 /-- `recAbsStep t a a'` entails `t` is authorized in `a`'s authority graph — the (G) conjunct
 distinguishing `recAbsStep` from a bare conservation identity. -/
@@ -212,7 +212,7 @@ it at the LTS layer so the de-vacuification is visible here too: a `Spec.AuthSte
 `Introduce` constructor carries a `confers source cap` premise whose rights conjunct is a real `⊆`,
 and an amplifying grant is OUTSIDE the relation (`Spec.amplifying_grant_refused`). -/
 
-/-- **`authStep_endow_non_amplifying` (PROVED).** An `Endow`-fired `AuthStep` over the GENUINE
+/-- **`authStep_endow_non_amplifying`.** An `Endow`-fired `AuthStep` over the GENUINE
 rights lattice confers a cap whose rights are `≤` the held source's — the real `granted ≤ held`
 (NOT `() ≤ ()`). This is `Spec.Endow.nonAmplifying.2` read at `Rights = Spec.ExecCapRights`. -/
 theorem authStep_endow_non_amplifying
@@ -222,8 +222,8 @@ theorem authStep_endow_non_amplifying
     cap.rights ≤ source.rights :=
   st.nonAmplifying.2
 
-/-- **`authStep_rights_tooth` (PROVED — NON-VACUITY).** Over the genuine lattice the conferral
-relation an authority step rides genuinely FAILS for an amplifying grant: a child requesting
+/-- **`authStep_rights_tooth` (NON-VACUITY).** Over the genuine lattice the conferral
+relation an authority step rides FAILS for an amplifying grant: a child requesting
 `{read,write}` does not `confers` from a `{read}`-parent. On `ExecRights = Unit` this is impossible
 (every same-target conferral holds); here it is a real refutation — reusing the de-vacuified tooth
 `Spec.amplifying_grant_refused`. The `recAbsStep`/`authAbsStep` connectivity layer is paired with
@@ -257,13 +257,13 @@ balance half into the complete single-cell LTS. -/
 /-- **`authAbsStep consents a a'`** — the abstract LTS edge for an authority turn:
 
   * (C') `a'.balanceTotal = a.balanceTotal` — an authority turn moves no balance;
-  * (A') `Spec.AuthStep consents a.authGraph a'.authGraph` — the authority graph genuinely steps.
+  * (A') `Spec.AuthStep consents a.authGraph a'.authGraph` — the authority graph steps.
 
 This is the dual of `recAbsStep`: balance fixed, an `AuthStep` fires. -/
 def authAbsStep (consents : Label → Prop) (a a' : AbstractState) : Prop :=
   -- (C') the balance domain is fixed (an authority turn is conservation-trivial).
   a'.balanceTotal = a.balanceTotal ∧
-  -- (A') the authority graph genuinely steps via an authorized `Spec.AuthStep`.
+  -- (A') the authority graph steps via an authorized `Spec.AuthStep`.
   Spec.AuthStep (CellId := Label) (Rights := ExecRights) consents a.authGraph a'.authGraph
 
 /-- **KEYSTONE — `authAbsStep_forward`.** Every committed `recKDelegate` is matched by

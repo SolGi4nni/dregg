@@ -85,7 +85,7 @@ def exec [CryptoKernel Digest Proof] (stmt : Digest)
   else
     none
 
-/-! ## The verified guarantees (the value proposition, PROVED). -/
+/-! ## The verified guarantees (the value proposition). -/
 
 /-- **Authenticity — PROVED:** a step commits ONLY if taken by its authorized party. No
 unauthorized party can ever advance the workflow. -/
@@ -132,7 +132,7 @@ theorem exec_appends [CryptoKernel Digest Proof] {stmt : Digest}
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; rw [← h]
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **No merge without prior approval — PROVED** (a headline corollary): the CI bot can
+/-- **No merge without prior approval** (a headline corollary): the CI bot can
 merge only from the `approved` phase, which only `approve` (by the reviewer) produces. -/
 theorem merge_requires_approved [CryptoKernel Digest Proof] {stmt : Digest}
     {k k' : WState Proof} {actor : Party} {att : Proof}

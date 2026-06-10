@@ -36,7 +36,7 @@ kernel-clean), so the "conserved" claim under the chart is not decoration: it is
 Every charting helper is a total,
 term-level read of the real executor state; the pure derivations are `#assert_axioms`-pinned to the
 standard kernel triple. The `#html`/`#eval`s at the bottom force the render path AND exhibit the
-non-vacuity (the conserved totals are flat while the per-cell balances genuinely move).
+non-vacuity (the conserved totals are flat while the per-cell balances move).
 -/
 import Dregg2.Widget.Basic
 import Dregg2.Exec.CellReal
@@ -185,7 +185,7 @@ def conservationLedgerPanel : Html :=
 
 `#html conservationLedgerPanel` elaborates the whole derivation — `execFullForestA fma0 transferCF.1`,
 `recTotalAsset` on both states, the per-cell `bal` reads — and saves the widget, so the verify
-step genuinely exercises the chart's render path over the executor's real output. The `#dregg_badge`
+step exercises the chart's render path over the executor's real output. The `#dregg_badge`
 anchors the conservation keystone: its colour is the proof term's verdict (green = kernel-clean). -/
 
 -- THE RENDER DRIVER — elaborates the chart over the real committed transfer.
@@ -200,7 +200,7 @@ If the widget were placeholder, these would not track the executor. They do: the
 per-asset conserved total is literally equal before and after (the law), AND the per-cell balances change
 by ±30 (a real transfer beneath the invariant). The conserved-vs-moved contrast is the non-vacuity. -/
 
--- The forest genuinely commits (so `ledgerAfter` is the executor's output, not the `getD` fallback).
+-- The forest commits (so `ledgerAfter` is the executor's output, not the `getD` fallback).
 #guard (execFullForestA fma0 transferCF.1).isSome                             -- true
 -- The per-asset conserved totals BEFORE — the real `fma0` supplies (asset 0 = 105, asset 1 = 7).
 #guard chartedAssets.map (conservedTotal ledgerBefore) == [105, 7]            -- [105, 7]
@@ -208,7 +208,7 @@ by ±30 (a real transfer beneath the invariant). The conserved-vs-moved contrast
 #guard chartedAssets.map (conservedTotal ledgerAfter) == [105, 7]             -- [105, 7]
 -- Machine-checked flatness: every charted asset's conserved total is unchanged across the commit.
 #guard chartedAssets.all (fun b => decide (conservedTotal ledgerAfter b = conservedTotal ledgerBefore b))  -- true
--- …yet the per-cell `bal` ledger genuinely MOVES — cell 0's asset 0 falls 30, cell 1's rises 30 (NOT flat).
+-- …yet the per-cell `bal` ledger MOVES — cell 0's asset 0 falls 30, cell 1's rises 30 (NOT flat).
 #guard balDelta 0 0 == -30                                                     -- -30
 #guard balDelta 1 0 == 30                                                      -- +30
 -- The contrast that proves non-vacuity: totals flat (Δ=0) WHILE the books move (Δ≠0) — a real transfer,

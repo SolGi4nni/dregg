@@ -35,7 +35,7 @@ prove:
   `executeTau` (`LaceMerge.merge_convergence_to_state`). This is "a caught-up node reaching the same
   finalized state IS LaceMerge convergence applied", stated end-to-end for the catch-up path.
 
-## HONEST SCOPE.
+## SCOPE.
 
 FAITHFUL (matches the node catch-up path as a pure function of the received block SET):
 * `catchupFrom blocks` — the fold of skip-if-present merges. The orphan buffer
@@ -94,7 +94,7 @@ def catchupOnto (B₀ : Lace) (blocks : List Block) : Lace :=
 theorem laceIds_singleton (b : Block) : laceIds [b] = {b.id} := by
   ext h; simp [mem_laceIds, eq_comm]
 
-/-- **`catchupOnto_keyset` (PROVED — reconstruction is exact, lagging case).** Catching `blocks` up ONTO a
+/-- **`catchupOnto_keyset` (reconstruction is exact, lagging case).** Catching `blocks` up ONTO a
 held lace `B₀` yields a keyset that is `laceIds B₀` plus exactly the received block ids. The fold of merges
 accumulates the union one id at a time (`laceIds_mergeLace`), so the result depends only on the SET of
 received ids — NOT their arrival order or grouping. This is the load-bearing fact behind "a caught-up node
@@ -115,7 +115,7 @@ theorem catchupOnto_keyset (B₀ : Lace) (blocks : List Block) :
     rw [Finset.insert_eq]
     ac_rfl
 
-/-- **`catchup_keyset` (PROVED — reconstruction is exact, fresh-joiner case).** A FRESH node (empty starting
+/-- **`catchup_keyset` (reconstruction is exact, fresh-joiner case).** A FRESH node (empty starting
 lace) that catches up from `blocks` reaches a lace whose keyset is EXACTLY the received id set. The corollary
 of `catchupOnto_keyset` at `B₀ = []`. -/
 theorem catchup_keyset (blocks : List Block) :
@@ -126,7 +126,7 @@ theorem catchup_keyset (blocks : List Block) :
 
 /-! ## 3. ORDER-INDEPENDENCE OF CATCH-UP — different arrival orders, same content-addressed state. -/
 
-/-- **`catchup_order_independent` (PROVED).** Two nodes that receive the SAME set of blocks (here: one list a
+/-- **`catchup_order_independent`.** Two nodes that receive the SAME set of blocks (here: one list a
 PERMUTATION of the other — same multiset, hence same id-toFinset) in DIFFERENT orders reconstruct laces with
 the SAME keyset. The order-independence of the lossy/out-of-order catch-up: whatever order gossip delivered
 the finalized blocks in, the caught-up content-addressed state is identical. -/
@@ -139,7 +139,7 @@ theorem catchup_order_independent {blocks₁ blocks₂ : List Block}
   simp only [List.mem_toFinset]
   exact (hperm.map (·.id)).mem_iff
 
-/-- **`catchup_order_independent_set` (PROVED — the SET form).** More generally, any two received lists with
+/-- **`catchup_order_independent_set` (the SET form).** More generally, any two received lists with
 the SAME id-keyset reconstruct the same keyset, even if not literal permutations (e.g. one carries a
 duplicate-gossip copy, or content-addressing collapses equal-id blocks). The robust statement the
 dissemination layer relies on: catch-up converges on the id SET, not the delivery sequence. -/
@@ -159,7 +159,7 @@ causal past). Then the laggard executes to the SAME `RecChainedState` as the lea
 open Dregg2.Exec.ConsensusExec (Decoder)
 open Dregg2.Exec (RecChainedState)
 
-/-- **`catchup_converges_to_leader` (PROVED — THE end-to-end catch-up convergence).** A laggard node that
+/-- **`catchup_converges_to_leader` (THE end-to-end catch-up convergence).** A laggard node that
 catches up from a received block list `recv` whose content-addressed keyset equals the leader's lace keyset —
 with both laces canonical and content-agreeing on shared ids (the §8 content-addressing bridge) and finalizing
 the same `tauOrder` (the `BlocklaceFinality` permutation-invariance seam) — EXECUTES TO THE SAME finalized
@@ -183,7 +183,7 @@ theorem catchup_converges_to_leader
   -- Apply LaceMerge's two-replica convergence with leader = B₁, catchup = B₂.
   exact merge_convergence_to_state dec s0 participants wavelength hcL hcC hkey hagree hOrder
 
-/-- **`catchup_lagging_converges` (PROVED — the LAGGING-node variant).** A node already holding `B₀` that
+/-- **`catchup_lagging_converges` (the LAGGING-node variant).** A node already holding `B₀` that
 catches up by merging the missing finalized blocks `recv` reaches the same executed state as a leader whose
 keyset equals `laceIds B₀ ∪ recv-ids`. Same proof shape via `catchupOnto_keyset`; the lagging node's lace is
 `catchupOnto B₀ recv`. Models the "fell behind then synced the delta" case (vs. the fresh-joiner

@@ -60,7 +60,7 @@ open Dregg2.Proof.Temporal (Always always_of_step_invariant)
 
 /-- **`SafetyShape`** — the qualitative shape of a carried safety property. A REAL tag: it is the
 category the downstream contract-card widget (`Widget/ContractView.lean`) renders by, and it carries
-genuinely distinct information across the shipped instances (`#guard`-distinguished in §4). It gates
+distinct information across the shipped instances (`#guard`-distinguished in §4). It gates
 NOTHING in the proofs — `CellContract`'s force is entirely in `Inv`/`step_ob` — but it is not
 decorative either: it is consumed by the widget layer and by the non-triviality demonstration.
 
@@ -403,7 +403,7 @@ theorem commitments_and_revoked_forever (com0 : List Nat) (credNul : Nat) (s : R
 
 `logAppendOnly`'s `Inv` bounds a STRICTLY-GROWING quantity: a real committed transfer (`transferCF`,
 actor 0 transfers 30 of asset 0 from cell 0 to cell 1) grows the audit log `0 → 1`, so the carried `≤`
-is a bound on a quantity that genuinely moves — not a trivially-true `x = x`. And the three shipped
+is a bound on a quantity that moves — not a trivially-true `x = x`. And the three shipped
 contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying data, not a constant. -/
 
 #guard (fma0.log.length == 0)

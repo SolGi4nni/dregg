@@ -40,10 +40,10 @@ The anti-ghost on ALL 17 fields falls out of the generic `runnable_full_commit_b
 `wide_rejects_state_tamper` / `wide_rejects_root_tamper` instantiated at this spec (§4) — tamper ANY
 absorbed column OR any side-table root ⇒ the RUNNABLE descriptor is UNSAT.
 
-## HONEST SURFACE — the kernel-vs-runtime log divergence is UNCHANGED and named.
+## SURFACE — the kernel-vs-runtime log divergence is UNCHANGED and named.
 
 The full clause pins the WHOLE 17-field `RecordKernelState` post-state (per-cell block + the 8 roots).
-The ONE honest residual — the apply-time pipelined send's SOLE motion is the neutral receipt prepended to
+The ONE residual — the apply-time pipelined send's SOLE motion is the neutral receipt prepended to
 the chained `RecChainedState.log`, which is NOT a `RecordKernelState` field and has NO EffectVM row column
 (the row layout has no log column) — is the SAME boundary the narrow `EffectVmEmitPipelinedSend` header and
 the Argus `PipelinedSend.lean` weld carry: the log receipt rides universe-A's `logHashInjective` portal,

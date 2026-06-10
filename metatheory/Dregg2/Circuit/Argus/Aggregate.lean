@@ -6,7 +6,7 @@ whose `interp` IS the verified executor (`interp_transferStmt_eq_recKExec` — t
 whose `compile` IS the circuit, with the turn wrapper `runTurn` producing the three-way `TurnOutcome`.
 Separately, `Distributed/HistoryAggregation.lean` + `Circuit/RecursiveAggregation.lean` built the
 STRAND / LIGHT-CLIENT layer: a history is a `List ChainStep` (each carrying an executor witness
-`recCexec pre turn = some post`), and a light client that checks ONE succinct aggregate genuinely
+`recCexec pre turn = some post`), and a light client that checks ONE succinct aggregate
 learns the WHOLE chain executed correctly, is correctly ordered, and folds to the genuine final root
 (`light_client_verifies_whole_history`), with an apex anti-ghost (tamper any seam ⇒ reject).
 
@@ -33,7 +33,7 @@ transfer term, lifted to chained state, is `interpChained (transferStmt turn)`, 
     `commits` is discharged by `argus_body_is_recCexec`. This is the unit of an Argus strand.
 
   * `argusStrand` / `argus_strand_stateChained` — a sequence of Argus transfer turns folds into a
-    `List ChainStep` that is genuinely `StateChained` from genesis (a contiguous executor run).
+    `List ChainStep` that is `StateChained` from genesis (a contiguous executor run).
 
   * `argus_strand_light_client` — **THE APEX.** Threaded into `light_client_verifies_whole_history`
     (the layer's headline, REUSED), a light client that checks ONLY the succinct aggregate over the
@@ -43,7 +43,7 @@ transfer term, lifted to chained state, is `interpChained (transferStmt turn)`, 
     anti-ghost `tampered_argus_strand_rejected` (tamper any guarantee-relevant seam ⇒ the binding is
     impossible ⇒ reject) — both rides of the reused layer keystones.
 
-## HONEST SCOPE — the two NAMED, UNPAPERED gaps (do not over-read)
+## SCOPE — the two NAMED, UNPAPERED gaps (do not over-read)
 
 1. **The fee/nonce/distribution PROLOGUE-EPILOGUE is OUTSIDE this strand.** The connection is at the
    BODY level (`interpChained`), which IS `recCexec`. The Argus FULL turn `runTurn` additionally
@@ -63,7 +63,7 @@ transfer term, lifted to chained state, is `interpChained (transferStmt turn)`, 
    the REAL per-effect EffectVM descriptor (transfer's 36-constraint `transferVmDescriptor`,
    `Compile.lean`) or a SHAPE placeholder leaf is the census gap: `leaf_sound` is satisfied by the
    Argus executor here, yet the identity "the folded leaf's AIR = the descriptor `compile` emits" is
-   the carried `InnerProofSound` hypothesis, NOT proved in Lean. We state it; we do not paper it.
+   the carried `InnerProofSound` hypothesis, NOT proved in Lean.
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); NO `sorry`/`:=True`. The reused
 layer hypotheses are `structure` FIELDS, not axioms; non-vacuity witnessed over a real Argus transfer
@@ -102,7 +102,7 @@ the kernel; the strand step additionally records the receipt. -/
 def argusPost (turn : Dregg2.Exec.Turn) (s sBody : RecChainedState) : RecChainedState :=
   { sBody with log := turn :: s.log }
 
-/-- **`argus_body_is_recCexec` — THE CONNECTION LEMMA (PROVED).** When the Argus transfer body commits
+/-- **`argus_body_is_recCexec` — THE CONNECTION LEMMA.** When the Argus transfer body commits
 (`interpChained (transferStmt turn) s = some sBody`), the genuine bare-executor chained step is
 `recCexec s turn = some (argusPost turn s sBody)`: the Argus body's kernel transition IS `recKExec`'s
 (the cornerstone), and `recCexec` is that with the receipt appended. So the Argus IR cornerstone
@@ -122,7 +122,7 @@ theorem argus_body_is_recCexec (turn : Dregg2.Exec.Turn) (s sBody : RecChainedSt
   subst hsBody
   rfl
 
-/-- **`argus_body_commits_iff_recCexec` (PROVED).** The Argus transfer BODY commits IFF the bare
+/-- **`argus_body_commits_iff_recCexec`.** The Argus transfer BODY commits IFF the bare
 executor `recCexec` commits — the two agree on WHETHER the transfer happens (both are gated by exactly
 `recKExec`'s admissibility), and the strand step `recCexec` is the Argus body plus the receipt append.
 So building an Argus strand never silently drops or invents a transfer relative to the executor. -/
@@ -167,7 +167,7 @@ so downstream rewrites see through `argusChainStep`). -/
 A strand is "a seq of Argus receipts". We model the producer directly: fold the Argus transfer
 effect-body executor over a list of turns from genesis, building one `argusChainStep` per turn that
 commits (fail-closed: a non-committing turn aborts the strand, exactly the executor's discipline). The
-resulting `List ChainStep` is what the light client verifies — and it is genuinely `StateChained`. -/
+resulting `List ChainStep` is what the light client verifies — and it is `StateChained`. -/
 
 /-- **`argusStrand s turns`** — fold the Argus transfer body executor from genesis `s`, building one
 strand step per committing turn. `none` if any Argus body fails to commit (fail-closed). Each step's
@@ -182,7 +182,7 @@ def argusStrand (s : RecChainedState) : List Dregg2.Exec.Turn → Option (List C
         (fun tail => argusChainStep turn s sBody hbody :: tail)
     | none       => none
 
-/-- **`argus_strand_stateChained` (PROVED).** Every strand the Argus producer yields is genuinely
+/-- **`argus_strand_stateChained`.** Every strand the Argus producer yields is
 `StateChained` from genesis: the first step's `pre` is genesis, and each step's `post` is the next
 step's `pre` (the fold threads `argusPost` as the next pre-state by construction). So the Argus-produced
 strand is a contiguous verified-executor run — the precondition the layer's run/conservation keystones
@@ -213,11 +213,11 @@ theorem argus_strand_stateChained (s : RecChainedState) (turns : List Dregg2.Exe
 
 Now we feed the Argus-produced strand into the layer's headline. The light client checks ONE succinct
 aggregate over the strand and — under the layer's named, realizable engine-soundness hypotheses
-(`EngineSound`, REUSED) — genuinely learns the whole Argus history executed correctly, is correctly
+(`EngineSound`, REUSED) — learns the whole Argus history executed correctly, is correctly
 ordered, and folds to the genuine final root. The strand is the Argus one; the soundness is the layer's. -/
 
-/-- **`argus_strand_light_client` (PROVED — THE APEX).** A light client that checks ONLY `verify
-agg.root = true` over an Argus-produced strand `steps` (re-witnessing NOTHING) genuinely obtains
+/-- **`argus_strand_light_client` (THE APEX).** A light client that checks ONLY `verify
+agg.root = true` over an Argus-produced strand `steps` (re-witnessing NOTHING) obtains
 `AggregateAttests`: EVERY Argus turn executed correctly per the verified executor (`recCexec` — the
 Argus body, by the cornerstone), the strand is correctly ordered (no reorder/drop/insert), and the
 public final root is the genuine fold of the whole Argus history — UNDER the layer's named, realizable
@@ -243,8 +243,8 @@ theorem argus_strand_light_client
   ⟨light_client_verifies_whole_history Proof verify CH RH cmb compress compressN agg g steps es hroot,
    wellformed_is_run g steps (argus_strand_stateChained g turns steps hstrand)⟩
 
-/-- **`argus_strand_every_turn_executed` (PROVED).** Reading the apex's conclusion: every turn of the
-Argus-produced strand the light client verified genuinely executed per the verified executor
+/-- **`argus_strand_every_turn_executed`.** Reading the apex's conclusion: every turn of the
+Argus-produced strand the light client verified executed per the verified executor
 (`recCexec pre turn = some post`). The light client, having checked only the succinct root, learns
 that each Argus turn in the history is a real verified-executor step. -/
 theorem argus_strand_every_turn_executed
@@ -260,7 +260,7 @@ theorem argus_strand_every_turn_executed
     ∀ s ∈ steps, recCexec s.pre s.turn = some s.post :=
   (argus_strand_light_client verify CH RH cmb compress compressN agg g turns steps hstrand es hroot).1.every_turn
 
-/-- **`argus_strand_is_run` (PROVED).** The Argus-produced strand is a genuine `Run recChainedSystem`
+/-- **`argus_strand_is_run`.** The Argus-produced strand is a genuine `Run recChainedSystem`
 from genesis to the folded endpoint — so the light client inherits EVERY run-level theorem of the
 verified record cell over the whole Argus history, having re-executed nothing. Rides the layer's
 `wellformed_is_run` over the `argus_strand_stateChained` witness. -/
@@ -270,7 +270,7 @@ theorem argus_strand_is_run (g : RecChainedState)
     Dregg2.Execution.Run recChainedSystem g (lastStateOf g steps) :=
   wellformed_is_run g steps (argus_strand_stateChained g turns steps hstrand)
 
-/-- **`argus_strand_conserves` (PROVED — KEYSTONE).** Value is conserved across the WHOLE Argus-produced
+/-- **`argus_strand_conserves` (KEYSTONE).** Value is conserved across the WHOLE Argus-produced
 strand: the ledger total at the folded endpoint equals the genesis total. A light client trusting the
 aggregate over an Argus strand trusts a no-mint/no-burn history of arbitrary length, having re-executed
 nothing. Rides the layer's `wellformed_history_conserves` over the Argus strand's `StateChained`
@@ -293,11 +293,11 @@ layer's two anti-ghost teeth over the Argus-produced strand:
       REUSED) — a proof of Argus turn `j` cannot satisfy the `i`-th leaf.
 Both are the layer's teeth, now over an Argus strand. -/
 
-/-- **`tampered_argus_strand_rejected` (PROVED — THE APEX ANTI-GHOST).** No sound aggregate can attest a
+/-- **`tampered_argus_strand_rejected` (THE APEX ANTI-GHOST).** No sound aggregate can attest a
 REORDERED Argus strand. If two adjacent Argus steps `s, s'` have a broken seam (the first's post-root ≠
 the second's pre-root — a spliced/reordered/dropped Argus turn), then for ANY engine whose binding leaf
 verifies, the binding soundness would force `ChainBound [s, s']`, which is FALSE. Hence the aggregate
-genuinely REJECTS a tampered Argus history — tampering any guarantee-relevant seam-state field (which
+REJECTS a tampered Argus history — tampering any guarantee-relevant seam-state field (which
 moves the §8 full-state root) breaks the binding. Rides the layer's `tampered_aggregate_cannot_bind`. -/
 theorem tampered_argus_strand_rejected
     {Proof : Type} (verify : Proof → Bool)
@@ -312,7 +312,7 @@ theorem tampered_argus_strand_rejected
     False :=
   tampered_aggregate_cannot_bind Proof verify CH RH cmb compress compressN agg g s s' es hbreak hverify
 
-/-- **`argus_strand_leaf_bound_to_own_turn` (PROVED — the leg-swap tooth, Argus form).** A verifying leaf
+/-- **`argus_strand_leaf_bound_to_own_turn` (the leg-swap tooth, Argus form).** A verifying leaf
 proof in the Argus strand's aggregate attests the transition of ITS OWN positionally-paired Argus step,
 not some other Argus turn's. An adversary cannot satisfy the head leaf with a proof of a DIFFERENT Argus
 turn while exporting this step's roots. Rides the layer's `leaf_pairing_defeats_swap`. -/
@@ -329,7 +329,7 @@ theorem argus_strand_leaf_bound_to_own_turn
     recCexec s.pre s.turn = some s.post :=
   leaf_pairing_defeats_swap Proof verify CH RH cmb compress compressN agg g p ps s ss hagg es hleafverify
 
-/-! ## §6 — THE FULL-TURN BOUNDARY (named gap 1, stated precisely — NOT papered).
+/-! ## §6 — THE FULL-TURN BOUNDARY (named gap 1, stated precisely).
 
 The strand welded above is the Argus BODY-executor strand (the conserved core). The Argus FULL turn
 `runTurn` wraps that body in an admission gate + a committed fee/nonce prologue + a fee-distribution
@@ -337,7 +337,7 @@ epilogue. We state EXACTLY how an accepted `runTurn` exposes the body step the s
 boundary between "what this strand covers" (the body = `recCexec`) and "what the wrapper adds" (the
 fee/nonce/distribution, a SEPARATE conservation-modulo-burn layer) is a theorem, not a comment. -/
 
-/-- **`argus_full_turn_body_links` (PROVED — the boundary, stated).** If the Argus FULL turn `runTurn`
+/-- **`argus_full_turn_body_links` (the boundary, stated).** If the Argus FULL turn `runTurn`
 is ACCEPTED (`bodyCommitted`), then its body — run on the post-PROLOGUE state `commitPrologue s agent
 fee` — committed, and THAT body step is a genuine `recCexec` step the strand consumes
 (`argus_body_is_recCexec`). The strand here is built over the body executor; the prologue's fee/nonce
@@ -368,7 +368,7 @@ The apex would be hollow if `argusStrand` never produced a non-empty strand, or 
 could not fire. We exhibit a CONCRETE Argus transfer over the teeth genesis: the body commits, the
 connection lemma yields a genuine `recCexec` step, the strand is a real `[argusChainStep]`, and it is
 `StateChained`. We ALSO witness the negative: an INADMISSIBLE transfer (e.g. amount exceeding balance)
-produces NO Argus body, so the strand fails closed — the connection genuinely separates a real transfer
+produces NO Argus body, so the strand fails closed — the connection separates a real transfer
 from a non-transfer. -/
 
 open Dregg2.Exec.ConsensusExec (teethGenesis honestTurn)
@@ -388,14 +388,14 @@ theorem honest_argus_body_is_recCexec :
                 ((interpChained (transferStmt honestTurn) teethGenesis).get (by decide))) :=
   argus_body_is_recCexec honestTurn teethGenesis _ (Option.some_get _).symm
 
-/-- **`honest_argus_strand_some` (PROVED — non-vacuity, positive).** The single-turn honest Argus strand
-genuinely PRODUCES a strand: `argusStrand teethGenesis [honestTurn]` is `some [_]` — a real one-step
+/-- **`honest_argus_strand_some` (non-vacuity, positive).** The single-turn honest Argus strand
+PRODUCES a strand: `argusStrand teethGenesis [honestTurn]` is `some [_]` — a real one-step
 Argus history. So the apex/run/conservation theorems apply to a REAL non-empty Argus strand. -/
 theorem honest_argus_strand_some :
     (argusStrand teethGenesis [honestTurn]).isSome = true := by decide
 
-/-- **`honest_argus_strand_stateChained` (PROVED — the produced strand is a real run).** The Argus strand
-the producer yields over `[honestTurn]` is genuinely `StateChained` from the teeth genesis — a contiguous
+/-- **`honest_argus_strand_stateChained` (the produced strand is a real run).** The Argus strand
+the producer yields over `[honestTurn]` is `StateChained` from the teeth genesis — a contiguous
 verified-executor run. So `argus_strand_is_run`/`…_conserves` apply to a REAL Argus strand. -/
 theorem honest_argus_strand_stateChained :
     ∀ steps, argusStrand teethGenesis [honestTurn] = some steps → StateChained teethGenesis steps :=
@@ -410,27 +410,27 @@ theorem honest_argus_strand_conserves :
   fun steps h => argus_strand_conserves teethGenesis [honestTurn] steps h
 
 /-- A TAMPERED (inadmissible) Argus transfer: cell `0` tries to send `999` (exceeds its balance `100`).
-The Argus body does NOT commit — `interpChained (transferStmt …)` is `none`. So the connection genuinely
+The Argus body does NOT commit — `interpChained (transferStmt …)` is `none`. So the connection
 separates a real transfer (commits, becomes a `recCexec` step) from a non-transfer (fails closed, no
 step), exactly as the executor's discipline demands. The strand producer then aborts (`none`). -/
 def overdraftTurn : Dregg2.Exec.Turn := { actor := 0, src := 0, dst := 1, amt := 999 }
 
-/-- **`overdraft_argus_body_fails` (PROVED — non-vacuity, negative).** An overdrafting Argus transfer's
+/-- **`overdraft_argus_body_fails` (non-vacuity, negative).** An overdrafting Argus transfer's
 body fails closed: `interpChained (transferStmt overdraftTurn) teethGenesis` is `none`. So the Argus body
-genuinely REJECTS an inadmissible transfer — the connection lemma's hypothesis is a real constraint, and
+REJECTS an inadmissible transfer — the connection lemma's hypothesis is a real constraint, and
 `argus_body_commits_iff_recCexec` is non-vacuous (the executor agrees: `recCexec` also fails). -/
 theorem overdraft_argus_body_fails :
     (interpChained (transferStmt overdraftTurn) teethGenesis).isNone = true := by decide
 
-/-- **`overdraft_argus_strand_none` (PROVED — the producer fails closed).** The strand producer aborts on
+/-- **`overdraft_argus_strand_none` (the producer fails closed).** The strand producer aborts on
 the overdrafting turn: `argusStrand teethGenesis [overdraftTurn]` is `none`. A non-executable Argus turn
 cannot enter a strand — fail-closed, exactly `recCexec`'s discipline. -/
 theorem overdraft_argus_strand_none :
     argusStrand teethGenesis [overdraftTurn] = none := by decide
 
-/-- **`argus_strand_separates_honest_from_tampered` (PROVED — the connection HAS TEETH).** The honest
+/-- **`argus_strand_separates_honest_from_tampered` (the connection HAS TEETH).** The honest
 Argus transfer produces a strand (`some`), the overdrafting one does not (`none`): the strand producer
-genuinely distinguishes an executable Argus transfer from an inadmissible one. So the connection is not
+distinguishes an executable Argus transfer from an inadmissible one. So the connection is not
 a husk that accepts anything — it tracks the verified executor's accept/reject exactly. -/
 theorem argus_strand_separates_honest_from_tampered :
     (argusStrand teethGenesis [honestTurn]).isSome = true

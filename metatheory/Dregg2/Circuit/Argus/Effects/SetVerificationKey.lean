@@ -4,10 +4,10 @@
 
 `Argus/Stmt.lean` laid the cornerstone (the executor IS the meaning of a `RecStmt` term) and validated it
 on transfer/mint/burn (single-cell record-`balance` moves). `Argus/Effects/BalanceA.lean` /
-`Argus/Effects/RefreshDelegation.lean` then welded genuinely-different effects to their OWN standalone
+`Argus/Effects/RefreshDelegation.lean` then welded different effects to their OWN standalone
 full-state circuit⟺spec descriptors (concluding the WHOLE post-state) by routing the executor side through
 a chained-executor lift + an independent executor⟺spec corner. This module replays THAT (full-state)
-template for the genuinely different **protocol-managed metadata field write** `setVKA`, in a disjoint
+template for the different **protocol-managed metadata field write** `setVKA`, in a disjoint
 file (it imports the Argus IR + the audited `setVKA` v1 instance + the independent cell-state-vk spec, all
 read-only, and owns only its own declarations; it edits no other Argus module).
 
@@ -48,7 +48,7 @@ DIFFERENT slot of the same record.
     portals (`compressNInjective`/`cellLeafInjective`/`RestHashIffFrame`/`logHashInjective`) + `AccountsWF`
     enter ONLY inside that reused soundness, not in the welded conclusion's statement.
 
-So this module is HONEST in both directions, exactly as BalanceA/RefreshDelegation:
+This module covers both directions, exactly as BalanceA/RefreshDelegation:
 
   (1) **Cornerstone (the standalone executor-refinement):** `interp_setVerificationKeyStmt_eq_setVKKernelStep`
       — the kernel-level VK-write step IS the Argus term, using `setCell {cell}` on the `verification_key`
@@ -61,7 +61,7 @@ So this module is HONEST in both directions, exactly as BalanceA/RefreshDelegati
       with the WHOLE post-state the IR term's executor produces. The FULL-STATE `CommitSurface` surface
       (strictly stronger than a per-cell EffectVM projection).
 
-## HONEST SURFACE + THE REPORTED KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
+## SURFACE + THE REPORTED KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
 
   * **FULL-STATE `CommitSurface` (not per-cell).** The conclusion is
     `st' = { kernel := k', log := receipt :: log }` — the WHOLE chained post-state, because `SetVKSpec` pins
@@ -89,7 +89,7 @@ So this module is HONEST in both directions, exactly as BalanceA/RefreshDelegati
     as a checked documentation theorem (`setVK_full_state_writes_vs_effectvm_offtrace`) so the divergence
     cannot silently regress.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the
 `CommitSurface` cell-leaf/rest/log/compression injectivity portals + `AccountsWF` enter ONLY inside the
@@ -320,7 +320,7 @@ theorem setVerificationKey_compile_sound
 
 #assert_axioms setVerificationKey_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely WRITES the VK slot (observable), frames the conserved balance
+/-! ## §5 — NON-VACUITY: the IR term WRITES the VK slot (observable), frames the conserved balance
 + cap-graph, and the gate REJECTS forged inputs (fail-closed).
 
 The cornerstone/weld would be hollow if setVK never committed, if the VK write were a no-op, if it disturbed
@@ -338,7 +338,7 @@ def kSVK : RecordKernelState :=
 
 /-- **NON-VACUITY (the VK WRITE is OBSERVABLE).** A committed setVK of cell `0` to `vk = 42` SETS cell `0`'s
 `verification_key` slot from `0` (absent) to `42` — the `setCell`/`setField vkField` write is real (the VK
-genuinely lands in the record, not a no-op). -/
+lands in the record, not a no-op). -/
 theorem setVerificationKeyStmt_writes :
     (interp (setVerificationKeyStmt 0 0 42) kSVK).map
       (fun k => fieldOf vkField (k.cell 0)) = some 42 := by

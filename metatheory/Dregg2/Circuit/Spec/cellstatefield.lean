@@ -86,7 +86,7 @@ def setFieldCellMap (base : CellId → Value) (target : CellId) (f : FieldName) 
 /-- **`writeFieldCellMap_correct`** — the touched-cell post map validated DECLARATIVELY (not
 trusted), the `setFieldA` analog of `Transfer.recTransfer_correct`: at the target, reading slot `f`
 back yields exactly `v` (the write/read law); every OTHER cell's whole record is untouched. So the
-spec's `setFieldCellMap` clause genuinely encodes write-`f`-to-`v` ∧ cell-frame. -/
+spec's `setFieldCellMap` clause encodes write-`f`-to-`v` ∧ cell-frame. -/
 theorem writeFieldCellMap_correct (base : CellId → Value) (target : CellId) (f : FieldName)
     (v : Int) :
     fieldOf f (setFieldCellMap base target f v target) = v

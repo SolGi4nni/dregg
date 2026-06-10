@@ -27,7 +27,7 @@ bottom `acceptanceOnly` IS the zero-knowledge position of that module
 DISCIPLINE (candidate-independent, faithful Props): every carrier is abstract; the dial
 is an honest `LinearOrder`/`BoundedOrder`. The PROVED keystones are pinned with
 `#assert_axioms` (kernel-clean: only `propext`/`Classical.choice`/`Quot.sound`). The one
-genuinely-cryptographic residue — that the *order* between positions reflects an actual
+cryptographic residue — that the *order* between positions reflects an actual
 computational indistinguishability — is an honest `-- OPEN:` resting on the `Disclosure`
 separation *parameter*, never an `axiom`/`admit`/`sorry`-alias.
 -/
@@ -76,7 +76,7 @@ namespace Dial
 
 /-- Rank a position by *how much is learned* (`0` = one bit, `2` = full). The order is
 defined as the pullback of this rank along `≤` on `Nat`; the rank is an order-isomorphism
-onto `{0,1,2}` and exists ONLY to transport `Nat`'s `LinearOrder` honestly — every law is
+onto `{0,1,2}` and exists ONLY to transport `Nat`'s `LinearOrder` — every law is
 then stated on `Dial` itself, never on the `Nat`. -/
 def rank : Dial → Nat
   | acceptanceOnly => 0
@@ -152,7 +152,7 @@ information `I` (`a ≤ b` = "`a` leaks no more than `b`") and the verify seam `
   shown more); we do NOT assume it constant.
 * `pred`/`wit` — the predicate and witness underlying the verification;
 * `accepts_eq` — the **position-independence law as a hypothesis on the verifier**:
-  acceptance at every notch is exactly `Discharged pred wit`. This is the honest content —
+  acceptance at every notch is exactly `Discharged pred wit`. This is the content —
   the verifier consults the witness, never the disclosure level — from which the
   acceptance-invariant is *derived* (not assumed). -/
 structure DiscloseAt (I : Type u) (P W : Type u) [Preorder I] [Verifiable P W] where
@@ -176,14 +176,14 @@ namespace DiscloseAt
 
 variable {I P W : Type u} [Preorder I] [Verifiable P W]
 
-/-- **Monotone-information law — PROVED, kernel-clean.** Turning the dial *down*
+/-- **Monotone-information law.** Turning the dial *down*
 (`d₁ ≤ d₂`) leaks no more information (`leaked d₁ ≤ leaked d₂`). This is the dial's whole
 point as an information channel: a lower resolution is a *coarsening*. -/
 theorem leak_mono (S : DiscloseAt I P W) {d₁ d₂ : Dial} (h : d₁ ≤ d₂) :
     S.leaked d₁ ≤ S.leaked d₂ :=
   S.mono h
 
-/-- **The floor leaks least — PROVED, kernel-clean.** At the zero-knowledge bottom the
+/-- **The floor leaks least.** At the zero-knowledge bottom the
 verifier learns the minimum: `leaked ⊥ ≤ leaked d` for every position `d`. -/
 theorem leak_bot_le (S : DiscloseAt I P W) (d : Dial) :
     S.leaked ⊥ ≤ S.leaked d :=
@@ -200,16 +200,16 @@ theorem accepts_invariant_under_dial (S : DiscloseAt I P W) (d₁ d₂ : Dial) :
     S.accepts d₁ ↔ S.accepts d₂ :=
   (S.accepts_eq d₁).trans (S.accepts_eq d₂).symm
 
-/-- **Acceptance is preserved exactly as one descends — PROVED, kernel-clean.** If it
+/-- **Acceptance is preserved exactly as one descends.** If it
 accepts at `d₂` it accepts at every lower `d₁ ≤ d₂`, and conversely — the operational
 "proves the same while reveals less." A direct corollary of the invariant (here the
-ordering hypothesis is genuinely irrelevant: acceptance is position-independent in *both*
+ordering hypothesis is irrelevant: acceptance is position-independent in *both*
 directions, which is exactly the strength of the claim). -/
 theorem accepts_preserved_down (S : DiscloseAt I P W) {d₁ d₂ : Dial} (_h : d₁ ≤ d₂) :
     S.accepts d₁ ↔ S.accepts d₂ :=
   accepts_invariant_under_dial S d₁ d₂
 
-/-- **The acceptance bit is exactly the golden-oracle check — PROVED, kernel-clean.** At
+/-- **The acceptance bit is exactly the golden-oracle check.** At
 the zero-knowledge floor the single bit the verifier learns IS `Discharged pred wit`: the
 floor accepts iff the witness discharges the predicate, with nothing else disclosed. This
 is the bridge that makes the dial's bottom the realizability `Holds` check of
@@ -293,7 +293,7 @@ def dregg2ToDial : Dregg2Mode → Dial
   | Dregg2Mode.selective    => Dial.selective
   | Dregg2Mode.trusted      => Dial.fullDisclosure
 
-/-- **svenvs's embedding is a strictly-monotone order-embedding — PROVED, kernel-clean.**
+/-- **svenvs's embedding is a strictly-monotone order-embedding.**
 `a ≤ b ↔ svenvsToDial a ≤ svenvsToDial b`: the lone judge's two-point order is faithfully
 the dial restricted to its two extremes. -/
 theorem svenvsToDial_orderEmbedding (a b : Svenvs) :
@@ -308,7 +308,7 @@ def svenvsEmb : Svenvs ↪o Dial where
   inj' := by intro a b h; cases a <;> cases b <;> simp_all [svenvsToDial]
   map_rel_iff' := by intro a b; exact (svenvsToDial_orderEmbedding a b).symm
 
-/-- **dregg2's embedding is a strictly-monotone order-embedding — PROVED, kernel-clean.**
+/-- **dregg2's embedding is a strictly-monotone order-embedding.**
 `a ≤ b ↔ dregg2ToDial a ≤ dregg2ToDial b`: the three privacy modes ARE the three dial
 notches, order and all. -/
 theorem dregg2ToDial_orderEmbedding (a b : Dregg2Mode) :
@@ -361,7 +361,7 @@ theorem dial_unifies_single_and_multi_party
    preservesAcceptance_of_embed svenvsToDial S,
    preservesAcceptance_of_embed dregg2ToDial S⟩
 
-/-- **The two embeddings AGREE at the shared extremes — PROVED, kernel-clean.** Where the
+/-- **The two embeddings AGREE at the shared extremes.** Where the
 coarse (svenvs) and fine (dregg2) dials name the same physical notch, they map to the same
 dial position: both floors land on `acceptanceOnly`, both ceilings on `fullDisclosure`.
 This is what makes "the same dial at two resolutions" literal rather than analogical. -/
@@ -416,7 +416,7 @@ def visToDial : Visibility → Dial
   | Visibility.pub  => Dial.fullDisclosure
 
 open Dregg2.Privacy (Visibility) in
-/-- **The real-mode embedding is a strictly-monotone order-embedding — PROVED, kernel-clean.**
+/-- **The real-mode embedding is a strictly-monotone order-embedding.**
 `a ≤ b ↔ visToDial a ≤ visToDial b`: the real `Privacy.Visibility` disclosure order is
 faithfully the dial restricted to its two extremes. -/
 theorem visToDial_orderEmbedding (a b : Visibility) :
@@ -450,7 +450,7 @@ theorem dial_unifies_svenvs_and_real_dregg2
    preservesAcceptance_of_embed visToDial S⟩
 
 open Dregg2.Privacy (Visibility) in
-/-- **The toy and the real mode agree at the floor — PROVED, kernel-clean.** svenvs's
+/-- **The toy and the real mode agree at the floor.** svenvs's
 `nonDisclose`, dregg2's toy `fullyPrivate`, AND the real `Privacy.Visibility.priv` all map to
 the dial floor `acceptanceOnly`; svenvs's `disclose`, the toy `trusted`, and the real `pub`
 all map to `fullDisclosure`. So the real field-visibility mode names the *same* dial notches
@@ -463,7 +463,7 @@ theorem real_mode_agrees_with_toys_at_extremes :
   ⟨⟨rfl, rfl⟩, ⟨rfl, rfl⟩⟩
 
 open Dregg2.Privacy (Visibility) in
-/-- **The dial floor IS the real-mode `priv` (field withheld) — PROVED, kernel-clean.** The
+/-- **The dial floor IS the real-mode `priv` (field withheld).** The
 zero-knowledge bottom of the dial is exactly where the real `Privacy.Visibility.priv` lands,
 and the real `field_projection_hides_private` law says a `priv` field is withheld from the
 public projection. So "the dial floor discloses nothing" is, on the real type, "the projection
@@ -520,7 +520,7 @@ theorem dial_is_party_count_agnostic [Fintype ι] (PS : PartySchedule ι I P W) 
   ⟨fun _ => rfl, fun _ _ hij => PS.S.mono hij,
    fun i j => DiscloseAt.accepts_invariant_under_dial PS.S (PS.pos i) (PS.pos j)⟩
 
-/-- **Each verifier learns only its OWN position — PROVED, kernel-clean.** Verifier `i`'s
+/-- **Each verifier learns only its OWN position.** Verifier `i`'s
 leaked information is determined by `pos i` and nothing else: two schedules that agree on
 `i`'s position (even over different verifier sets) give `i` the same information. This is
 the precise sense in which the multi-party channel is "many independent single-party
@@ -531,7 +531,7 @@ theorem each_learns_only_own_position
     PS.learnedBy i = PS'.learnedBy i' := by
   unfold learnedBy; rw [hpos, hS]
 
-/-- **The single-party instance is svenvs's lone judge — PROVED, kernel-clean.** With
+/-- **The single-party instance is svenvs's lone judge.** With
 `ι := Fin 1` there is exactly one verifier; the party-agnostic law specialises to it with
 no change, recovering svenvs's vertical single-party disclosure as the `Fintype.card = 1`
 case of the uniform law. -/
@@ -575,7 +575,7 @@ theorem zk_is_dial_bottom :
     dialDisclosure.acceptancePos < dialDisclosure.contentPos :=
   ⟨rfl, verifier_learns_only_acceptance dialDisclosure⟩
 
-/-- **Content is unreachable from the dial floor — PROVED, kernel-clean.** The
+/-- **Content is unreachable from the dial floor.** The
 complementary half: a verifier pinned at `acceptanceOnly` cannot climb to content
 (`¬ contentPos ≤ acceptancePos`), i.e. it learns NOT the witness content. This is
 `content_not_reached_from_acceptance` read on the dial — the zero-knowledge guarantee at
@@ -591,7 +591,7 @@ theorem dial_bottom_reaches_not_content :
 OPEN (the crypto-indistinguishability grounding the dial order). Every law above pins the
 *epistemic order* faithfully — the dial is a genuine bounded chain, both mode systems embed
 into it monotonically, acceptance is position-independent, and the floor is the ZK
-acceptance position. The single remaining, genuinely-cryptographic obligation is that this
+acceptance position. The single remaining, cryptographic obligation is that this
 ORDER REFLECTS AN ACTUAL INDISTINGUISHABILITY: that a verifier confined to a lower dial
 position cannot *computationally* distinguish/extract the information notionally available
 only above it (simulator existence, computational indistinguishability of real vs.

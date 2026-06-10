@@ -26,7 +26,7 @@ Two smart constructors build one:
   * `funcComponent` (off any injective whole-value digest)  — a function-field (`bal`/`caps`);
     `postClause` is FULL function equality `read post = expectedVal pre args`.
   * `keyedComponent` (off `KeyedCommit.KeyedDigestBindsKeys`) — the FINITE-CARRIER, pointwise variant
-    (`∀ k ∈ S, leaf-of-post k = expected k`), for effects whose spec is genuinely keyed-pointwise.
+    (`∀ k ∈ S, leaf-of-post k = expected k`), for effects whose spec is keyed-pointwise.
 
 `binds` does ALL the |touched|-variable work, so v2's soundness needs NO `funext`-over-cells: the
 component's `postClause` drops out of `binds` directly. The 15-or-16 untouched non-`cell` fields are
@@ -156,7 +156,7 @@ def funcComponent {St Args β : Type}
 `S : Finset κ` (args-independent, so it fits the args-free `digest : RKS → ℤ` interface), whose digest
 is the `KeyedCommit.keyedDigest` sponge of the leaf reading `KL : RKS → κ → ℤ`. `binds` is
 `KeyedDigestBindsKeys` — POINTWISE on the carrier (`∀ k ∈ S, KL post k = KLexp pre args k`); `encodes`
-is `keyedDigest_congr`. For effects whose spec is genuinely keyed-pointwise over a fixed key set
+is `keyedDigest_congr`. For effects whose spec is keyed-pointwise over a fixed key set
 (`expectedVal` may still depend on pre+args; the CARRIER is what must be fixed). -/
 def keyedComponent {St Args : Type} {κ : Type} [LinearOrder κ]
     (KL : RecordKernelState → κ → ℤ) (cN : List ℤ → ℤ) (hN : compressNInjective cN)

@@ -101,7 +101,7 @@ def forgedCellWitness : List Int := layoutE setVKE s0 goodArgs forgedCell
 def honestWitnessJson : String := witnessJson honestWitness
 def forgedCellWitnessJson : String := witnessJson forgedCellWitness
 
--- (honest JSON byte pin removed: Common.lhConcrete is now the CR-grounded turnLogDigest)
+-- (no JSON byte pin: Common.lhConcrete is the CR-grounded turnLogDigest)
 #guard !(honestWitnessJson == forgedCellWitnessJson)
 
 #assert_axioms setVKWitnessVec_commit

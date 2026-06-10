@@ -303,7 +303,7 @@ theorem execFullForestA_nullifiers_grow (s s' : RecChainedState) (f : FullForest
 /-- **`livingCellA_no_double_spend`** — Fix any baseline of consumed nullifiers `nul0 ⊆ s.kernel.nullifiers`.
 Along the entire unbounded adversarial trajectory `trajA s sched`, under every schedule, every nullifier
 in `nul0` stays consumed: `nul0 ⊆ (trajA s sched n).kernel.nullifiers` at every index `n`. This is the
-canonical ledger anti-replay safety ("once spent, forever spent") — a genuinely non-conservation property
+canonical ledger anti-replay safety ("once spent, forever spent") — a non-conservation property
 carried by `livingCellA_carries`. The one-step obligation is: on a commit, `execFullForestA_nullifiers_grow`
 (the set only grows); on a reject, the state is unchanged. -/
 theorem livingCellA_no_double_spend (nul0 : List Nat) (s : RecChainedState)

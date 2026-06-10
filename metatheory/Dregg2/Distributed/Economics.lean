@@ -45,7 +45,7 @@ open Dregg2.Exec.Admission (proposerShare treasuryShare feeBurned)
 /-! ## §1 — The resource-accounting model
 
 The economic state of the system over a workload is captured by a small mechanism record. The
-quantities marked OPEN are genuinely-empirical (they depend on the prover, the network, the
+quantities marked OPEN are empirical (they depend on the prover, the network, the
 victim's exposure) and are carried as named parameters; the theorems are stated *for all* such
 parameters under the explicit fee conditions. -/
 
@@ -95,7 +95,7 @@ EVERY admitted turn pays `fee`, if `fee ≥ marginalJunkCost (= proveCost)` then
 on those `k` turns is bounded above by the fees those same `k` turns paid. The attacker cannot
 make the network do work it has not paid for. -/
 
-/-- **`spam_work_bounded_by_fees` — THEOREM 1 (PROVED).** If the per-turn fee covers the marginal
+/-- **`spam_work_bounded_by_fees` — THEOREM 1.** If the per-turn fee covers the marginal
 junk cost (`fee ≥ marginalJunkCost`), then for EVERY workload size `k`, the total network work to
 admit those `k` turns is `≤` the total fees collected from them. The bound is exact and uniform in
 `k`: an attacker forcing `networkWork k` of work has paid at least that much in fees. -/
@@ -161,7 +161,7 @@ def victimLoss : Nat := g.turns * g.victimLossPerTurn
 
 end GriefCampaign
 
-/-- **`griefing_unprofitable` — THEOREM 2 (PROVED, CONDITIONAL on the exact fee condition).** If
+/-- **`griefing_unprofitable` — THEOREM 2 (CONDITIONAL on the exact fee condition).** If
 the per-turn fee is at least the per-turn victim loss (`fee ≥ victimLossPerTurn`), then over ANY
 campaign length the attacker's total cost dominates the total victim loss it inflicts:
 `attackerCost ≥ victimLoss`. The attacker pays at least one unit of its own value per unit of harm
@@ -205,7 +205,7 @@ def proposerReward (fee : Int) : Int := proposerShare fee
 tying theorem 3 to the audited split, not a re-modelled number.) -/
 theorem proposerReward_eq (fee : Int) : proposerReward fee = fee / 2 := rfl
 
-/-- **`proposer_reward_covers_cost` — THEOREM 3 (PROVED, under a NAMED cost bound).** If the
+/-- **`proposer_reward_covers_cost` — THEOREM 3 (under a NAMED cost bound).** If the
 proposer's proving cost is at most half the fee (`proveCost ≤ fee / 2`, equivalently
 `2·proveCost ≤ fee` for the truncation), then the proposer's 50% reward `proposerShare fee` is at
 least its cost `proveCost`. Honest block production is individually rational: the proposer is never

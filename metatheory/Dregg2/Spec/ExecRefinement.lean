@@ -89,7 +89,7 @@ theorem refineConservation_sum (s s' : KernelState) (hacc : s'.accounts = s.acco
   rw [Finset.sum_map_toList s.accounts (fun c => s'.bal c - s.bal c),
       Finset.sum_sub_distrib, hacc]
 
-/-- **KEYSTONE 1 — `exec_refines_conservation` (PROVED-clean).** An `exec`-committed step's
+/-- **KEYSTONE 1 — `exec_refines_conservation`.** An `exec`-committed step's
 per-cell balance deltas satisfy `Spec`'s balance-domain conservation
 (`conservedInDomain Domain.balance`, i.e. `Σδ = 0` over `Bal = ℤ`). This is the conservation
 PROJECTION of the refinement square: `Exec.exec_conserves` (the single-ℤ ledger preserves
@@ -120,7 +120,7 @@ theorem exec_refines_conservation_over_monoid (k k' : KernelState) (turn : Turn)
   conservation_over_monoid Domain.balance pre (refineConservation k k')
     (exec_refines_conservation k k' turn h)
 
-/-- Multi-domain placement (PROVED): a committed `exec` step conserves the `balance` domain of
+/-- Multi-domain placement: a committed `exec` step conserves the `balance` domain of
 the four-domain abstract law. We package the step's deltas as `TurnDeltas` that are the
 kernel's ℤ ledger in the `balance` slot and empty (vacuously conserving) elsewhere, and read
 off `turnConserves`-style balance conservation. This is the precise sense in which the
@@ -163,7 +163,7 @@ branch — the gate is decided *now*, the positional regime). -/
 def execAuthGuard (caps : Caps) : Guard ExecRequest Statement :=
   Guard.firstParty (fun t => authorizedB caps t)
 
-/-- **KEYSTONE 2 — `exec_authz_refines_guard` (PROVED-clean).** The executable gate
+/-- **KEYSTONE 2 — `exec_authz_refines_guard`.** The executable gate
 `authorizedB` admitting a turn ⇒ the corresponding abstract `Spec.Guard.admits` is `true`. The
 decidable kernel gate REFINES the abstract `Guard` demand: every turn the machine admits, the
 abstract gate admits. (The `↔` even holds — the refinement is exact, not merely sound — but
@@ -227,7 +227,7 @@ The deduplicated, order-insensitive carrier with a genuine `SemilatticeInf` + `O
 `Finset Auth` (= `Exec.ExecAuth`), so it slots DIRECTLY into `Spec.Authority`'s
 `{Rights} [SemilatticeInf Rights] [OrderTop Rights]` interface. We state the rights-bearing
 `confers` / non-amplification theorems over THIS carrier — where `≤` is a real `⊆` test that can
-genuinely FAIL on an amplifying grant — and connect it to executable caps via `Exec.confRights`.
+FAIL on an amplifying grant — and connect it to executable caps via `Exec.confRights`.
 This is the de-vacuification: every theorem below has a strict-attenuation witness AND an
 amplification-rejection witness (§2.3), neither of which `Unit` can grow. -/
 
@@ -251,9 +251,9 @@ The headline `granted.rights ≤ held.rights` over the genuine lattice. `attenua
 rights (`Exec.attenuate_confRights_le`); we lift it to `confers` on rights-labelled Spec caps,
 then exhibit BOTH a strict-attenuation witness (held has a right granted lacks) AND an
 amplification-rejection witness (`confers` is FALSE for an amplifying grant). On `ExecRights =
-Unit` both collapse to `True`; here the second is genuinely FALSE. -/
+Unit` both collapse to `True`; here the second is FALSE. -/
 
-/-- **`attenuate_confers_real` (PROVED, NON-VACUOUS).** Attenuating a held cap and re-labelling
+/-- **`attenuate_confers_real` (NON-VACUOUS).** Attenuating a held cap and re-labelling
 the Spec image yields a `confers`-child of the held cap's Spec image — over the GENUINE
 `ExecCapRights` lattice. The rights conjunct is `confRights (attenuate keep c) ≤ confRights c`
 (`Exec.attenuate_confRights_le`), a real `⊆`, NOT `() ≤ ()`. This is the rights non-amplification
@@ -264,16 +264,16 @@ theorem attenuate_confers_real (t : Label) (keep : List Authority.Auth) (c : Aut
   show confRights (attenuate keep c) ≤ confRights c
   exact attenuate_confRights_le keep c
 
-/-- **`confers_real_forbids_amplification` (PROVED, the TOOTH).** If a child Spec cap (over the
+/-- **`confers_real_forbids_amplification` (the TOOTH).** If a child Spec cap (over the
 genuine lattice) `confers`-descends from a parent, then its rights are `⊆` the parent's: it
 CANNOT carry an authority the parent lacks. Contrapositive of "amplification allowed". On `Unit`
-this is vacuous (`() ≤ ()`); here it genuinely constrains — see `amplifying_grant_refused`. -/
+this is vacuous (`() ≤ ()`); here it constrains — see `amplifying_grant_refused`. -/
 theorem confers_real_forbids_amplification
     {parent child : Cap Label ExecCapRights} (h : confers parent child) :
     child.rights ≤ parent.rights :=
   h.2
 
-/-- **`amplifying_grant_refused` (PROVED — the NON-VACUITY TOOTH).** A child cap requesting
+/-- **`amplifying_grant_refused` (the NON-VACUITY TOOTH).** A child cap requesting
 `{read, write}` does NOT `confers`-descend from a parent holding only `{read}`: the amplifying
 grant is REJECTED. This is the exact case `ExecRights := Unit` could never reject (there, every
 same-target child confers). The `decide` discharges the real `⊄` over `Finset Auth`. -/
@@ -284,7 +284,7 @@ theorem amplifying_grant_refused :
   -- `{read,write} ≤ {read}` is FALSE over the genuine ⊆-lattice.
   exact absurd hle (by decide)
 
-/-- **`strict_attenuation_witness` (PROVED — the STRICT-ATTENUATION TOOTH).** A held cap confers
+/-- **`strict_attenuation_witness` (the STRICT-ATTENUATION TOOTH).** A held cap confers
 `{read, write}`; the granted child confers only `{read}` — the held cap has a right (`write`) the
 granted does NOT, and the grant `confers` SOUNDLY (strict `⊂`). Exhibits that `≤` is not
 everywhere-trivial: it admits the sound narrowing AND (by `amplifying_grant_refused`) rejects the
@@ -295,7 +295,7 @@ theorem strict_attenuation_witness :
       ∧ ({Authority.Auth.read} : ExecCapRights) ≠ {Authority.Auth.read, Authority.Auth.write} := by
   refine ⟨⟨rfl, by decide⟩, by decide⟩
 
--- The decidable teeth as `#guard`s: the order is genuinely non-trivial (NOT everywhere-true).
+-- The decidable teeth as `#guard`s: the order is non-trivial (NOT everywhere-true).
 #guard decide (({Authority.Auth.read, Authority.Auth.write} : ExecCapRights)
                   ≤ {Authority.Auth.read}) = false   -- amplification REJECTED
 #guard decide (({Authority.Auth.read} : ExecCapRights)
@@ -307,14 +307,14 @@ table: cell `h` holds a Spec edge to `t` iff, in `Exec.caps`, `h` holds a `node 
 `Unit` (the connectivity skeleton). -/
 def execGraph (caps : Caps) : Graph Label ExecRights :=
   fun h c =>
-    -- the `.any` reads `c.target`, so the edge genuinely depends on the cap `c`.
+    -- the `.any` reads `c.target`, so the edge depends on the cap `c`.
     (caps h).any (fun cap =>
       (cap == Authority.Cap.node c.target) ||
       (match cap with
        | .endpoint t rights => (t == c.target) && rights.contains Auth.write
        | _ => false)) = true
 
-/-- **`exec_owns_self_confers` (PROVED, NOW OVER THE GENUINE RIGHTS LATTICE)** — the authority
+/-- **`exec_owns_self_confers` (NOW OVER THE GENUINE RIGHTS LATTICE)** — the authority
 object the ownership branch lands on is the **reflexive self-conferral**, stated over the REAL
 `ExecCapRights = Finset Auth` lattice (NOT the `Unit` skeleton). When a turn is admitted via
 ownership (`turn.actor = turn.src`), the owner's self-cap (carrying its ACTUAL conferred rights
@@ -332,7 +332,7 @@ theorem exec_owns_self_confers (turn : Turn) (r : ExecCapRights) (hown : turn.ac
   rw [hown]
   exact confers_refl _
 
-/-- **`exec_owns_attenuated_confers` (PROVED, NON-VACUOUS COMPOSITION)** — the de-vacuified
+/-- **`exec_owns_attenuated_confers` (NON-VACUOUS COMPOSITION)** — the de-vacuified
 payoff: an owner may delegate from its own cap ONLY a non-amplifying (attenuated) child, over the
 genuine rights lattice. Composing `exec_owns_self_confers` (reflexive, `r ≤ r`) with
 `attenuate_confers_real` (the real `⊆` narrowing) via `confers_trans`: the attenuated grant
@@ -345,7 +345,7 @@ theorem exec_owns_attenuated_confers (turn : Turn) (c : Authority.Cap)
   rw [hown]
   exact confers_trans (confers_refl _) (attenuate_confers_real turn.src keep c)
 
-/-- **`exec_heldcap_is_graph_has` (PROVED)** — the held-cap branch of `authorizedB` refines
+/-- **`exec_heldcap_is_graph_has`** — the held-cap branch of `authorizedB` refines
 `Graph.has` on the reconstructed graph. If the actor is NOT the owner yet `authorizedB` admits
 the turn, then the actor holds a `node src` / `endpoint src write` cap, i.e. on `execGraph` the
 actor `Graph.has` the source: the executable held-cap acceptance witnesses abstract
@@ -365,7 +365,7 @@ theorem exec_heldcap_is_graph_has (caps : Caps) (turn : Turn)
     unfold execGraph
     exact hcap
 
-/-- **`exec_authz_grounds_in_graph` (PROVED)** — the FULL authority refinement disjunction:
+/-- **`exec_authz_grounds_in_graph`** — the FULL authority refinement disjunction:
 every turn the executable gate admits is grounded in the reconstructed Spec authority graph —
 either by ownership (refining the reflexive conferral `confers (·) (·)`) or by a held cap
 (refining `Graph.has`). This is the authority projection of the simulation: `authorizedB`'s
@@ -418,7 +418,7 @@ def Refines (k : KernelState) (a : AbstractState) : Prop :=
 theorem refines_absOf (k : KernelState) : Refines k (absOf k) :=
   ⟨rfl, rfl⟩
 
-/-- **The conservation projection of the commuting square (PROVED-clean).** If `Refines k a`
+/-- **The conservation projection of the commuting square.** If `Refines k a`
 and `exec k turn = some k'`, then the abstract `balanceTotal` is PRESERVED across the step:
 `a'.balanceTotal = a.balanceTotal` for `a' := absOf k'`. The square commutes on the
 conservation projection — the abstract step is the identity on the conserved total, which is
@@ -430,7 +430,7 @@ theorem exec_step_refines_conservation (k k' : KernelState) (a : AbstractState) 
   simp only [absOf]
   rw [htot, hsim.1]
 
-/-- **The authority projection of the commuting square (PROVED-clean).** If `Refines k a` and
+/-- **The authority projection of the commuting square.** If `Refines k a` and
 `exec k turn = some k'`, then the committed turn is admitted by the abstract authority gate
 over `a`'s graph-conferring caps — and the post-state's authority graph is UNCHANGED (`exec`
 moves only `bal`, never `caps`), so `Refines k' a'` holds on the authority projection. The
@@ -474,7 +474,7 @@ theorem exec_step_refines (k k' : KernelState) (a : AbstractState) (turn : Turn)
   · exact exec_step_refines_conservation k k' a turn hsim h
   · exact exec_step_refines_authority k k' a turn w hsim h
 
-/-- **The conservation invariant of the square, lifted to a whole kernel run (PROVED).**
+/-- **The conservation invariant of the square, lifted to a whole kernel run.**
 Composing `exec_step_refines`'s conservation projection with `Exec.kernel_run_conserves`: an
 abstract state refining the initial kernel state refines the final one on the conserved total
 across an ENTIRE `kernelSystem` run. So the refinement square's conservation projection is
@@ -578,7 +578,7 @@ This is the SAME residue already flagged by `Proof/Refine` (the operational diag
 `Spec.Authority.only_connectivity_begets_connectivity`'s OPEN (the whole-history graph
 bookkeeping). It needs the abstract LTS, not just the two static projections; until that LTS
 is named, the bottom edge of the square is the projection-preserving abstraction, not a full
-abstract transition. The honest residual obligation:
+abstract transition. The residual obligation:
 
 -- OPEN (operational residue, NOT proved here): define `AbsStep : AbstractState → AbstractState
 --   → Prop` as the `Spec.Conservation`-conservative, `Spec.Authority`-authorized abstract turn

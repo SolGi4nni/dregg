@@ -21,15 +21,12 @@ records the commitment in the journal and NEVER touches the cell balance) and un
 executor and universe-A on the per-cell balance with NO divergence, and any forged on-trace balance
 move (a smuggled debit/credit) is UNSAT (the `gBalLoFreeze` gate rejects it).
 
-## THE CLOSED DIVERGENCE (formerly §9): runtime debit vs universe-A balance-NEUTRAL — now AGREEMENT
+## BALANCE-NEUTRAL AGREEMENT (§9): EffectVM == universe-A on the frozen balance
 
-A PRIOR version of this descriptor modeled the publish as a TRANSPARENT DEBIT (`new_bal_lo =
-old_bal_lo − value`), reconciled onto the OLD `generate_effect_vm_trace` note arm. That carried a real
-semantic gap from universe-A's balance-neutral shielding convention — they agreed only at `value = 0`.
-The Rust circuit (`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`) and this descriptor are now
+The Rust circuit (`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`) and this descriptor are
 BOTH balance-neutral, matching the executor: the value lives hidden in the commitment, never on the
-transparent ledger. §9 below is now an AGREEMENT theorem (`noteCreate_balance_neutral_matches_univA`),
-not a divergence: the EffectVM descriptor and universe-A AGREE on the frozen balance for EVERY note.
+transparent ledger. §9 below is an AGREEMENT theorem (`noteCreate_balance_neutral_matches_univA`):
+the EffectVM descriptor and universe-A AGREE on the frozen balance for EVERY note.
 
 ## THE IR-EXTENSION FLAG (the commitment-set insert — the LOAD-BEARING leg, out-of-IR)
 
@@ -45,9 +42,9 @@ published commitment `cm` or its insertion.
      EffectVM row has no counterpart column. This module proves what the IR DOES support (the whole
      state-block FREEZE + the 14-column commitment) and reports the commitment-set insert as out-of-IR
      — NOT papered. The append-only "no double-check" / freshness is likewise a TURN/ACCUMULATOR
-     property over the `commitments` SET, stated honestly out-of-row.
+     property over the `commitments` SET, stated out-of-row.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY as the named
 `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`. Imports are read-only.
@@ -354,17 +351,15 @@ theorem noteCreateDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR :
     rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
-/-! ## §9 — THE CLOSED DIVERGENCE — now AGREEMENT: EffectVM balance-NEUTRAL == universe-A balance-NEUTRAL.
+/-! ## §9 — AGREEMENT: EffectVM balance-NEUTRAL == universe-A balance-NEUTRAL.
 
-A PRIOR version modeled noteCreate as a TRANSPARENT DEBIT (`new_bal_lo = old_bal_lo − value`),
-reconciled onto the OLD `generate_effect_vm_trace` note arm — which carried a genuine gap from
-universe-A's balance-neutral shielding convention (`noteCreateA_bal_neutral : bal' = bal`), reconcilable
-only at `value = 0`. That divergence is now CLOSED at the source: `noteCreateVmDescriptor` FREEZES
-`bal_lo` (balance-neutral), and the Rust circuit (`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`)
-is fixed to match. So the EffectVM descriptor and universe-A BOTH freeze the per-cell balance — they
-AGREE for EVERY note, not just `value = 0`. We surface that as `noteCreate_balance_neutral_matches_univA`
-(an AGREEMENT theorem, no divergence conjunct). The commitment-set insert (§11) and its no-double-check
-leg are universe-A properties unaffected by the (now-unified) balance convention. -/
+`noteCreateVmDescriptor` FREEZES `bal_lo` (balance-neutral), matching universe-A's shielding
+convention (`noteCreateA_bal_neutral : bal' = bal`) and the Rust circuit
+(`circuit/src/effect_vm/air.rs` `c_nc_bal`, `trace.rs`). So the EffectVM descriptor and universe-A
+BOTH freeze the per-cell balance — they AGREE for EVERY note, not just `value = 0`. We surface that
+as `noteCreate_balance_neutral_matches_univA` (an AGREEMENT theorem, no divergence conjunct). The
+commitment-set insert (§11) and its no-double-check leg are universe-A properties unaffected by the
+balance convention. -/
 
 open Dregg2.Exec (RecChainedState RecordKernelState CellId AssetId)
 open Dregg2.Circuit.Spec.NoteCommitment
@@ -434,7 +429,7 @@ theorem note_insert_is_out_of_row (st st' : RecChainedState) (cm : Nat) (actor :
     st'.kernel.commitments = cm :: st.kernel.commitments :=
   hspec.2.1
 
-/-- **`note_append_only_is_out_of_row` — the no-double-check / freshness leg, honestly out-of-row.**
+/-- **`note_append_only_is_out_of_row` — the no-double-check / freshness leg, out-of-row.**
 `noteCreate` is APPEND-ONLY with NO guard: every prior commitment survives. This grow-only / membership
 property is over the WHOLE `commitments` SET, NOT a per-row arithmetic fact — enforced ONLY at
 universe-A's accumulator / the turn layer, NEVER by the per-row circuit. We extract it from the spec to

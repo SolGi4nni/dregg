@@ -192,7 +192,7 @@ def capGraphHtml (caps : Caps) (holders : List Label) : Html :=
                .x {}, .y {} ]}
     showDetails={true} />
 
-/-! ## §4 — NON-VACUITY: the table is genuinely read, and the delegation genuinely attenuates.
+/-! ## §4 — NON-VACUITY: the table is read, and the delegation attenuates.
 
 These `#eval`s prove the graph data MOVES with the real `Caps`: the rows are the actual held caps, and
 the delegation chain visibly drops rights (`read,write` ↦ `read` ↦ `∅`). If the projection were

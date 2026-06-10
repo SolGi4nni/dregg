@@ -33,13 +33,13 @@ write. For these, K1 (a LOW write of a LOW-derived value preserves `lowEq`) and 
 invisible to the low observer) are proved, and K3 lifts them across a whole turn for any list of
 slice-confined writes.
 
-What is **OPEN / out of slice** (flagged, not faked): the value-moving effects
+What is **OPEN / out of slice** (flagged): the value-moving effects
 (`balanceA`/`mintA`/`burnA`/escrow) only noninterfere when the `bal` ledger is LOW — but ember's
 decision makes `bal` HIGH, so a transfer's commit/reject branches on HIGH data and is a *declassifier*
 unless its guard is itself LOW. And `makeSovereignA` is provably a LEAK — it writes the LOW
 `commitment` field as a hash of the WHOLE pre-state record, HIGH fields included. That leak is the
 load-bearing TEETH (`makeSovereign_leaks`): it proves `lowEq` is not vacuous and that the proven slice
-genuinely EXCLUDES declassifiers — the boundary between noninterfering effects and declassifiers is
+EXCLUDES declassifiers — the boundary between noninterfering effects and declassifiers is
 real and proved.
 
 Pure; spec-first. §8 crypto (`stateCommitment` collision-resistance) is
@@ -107,7 +107,7 @@ observation is the FULL stored `Value` at the field (`Value.field`), not its `In
 (`fieldOf`) — a low observer of a public field sees whatever value sits there, of WHATEVER `Value`
 shape (`.int`, `.dig`, …). This is load-bearing: a `makeSovereign` commitment is stored as a `.dig`,
 which `fieldOf` would silently collapse to `0`, hiding the leak; observing `Value.field` keeps the
-`.dig` digest genuinely visible (so T1's leak truly manifests — see §7). This is the executor-`Value`
+`.dig` digest visible (so T1's leak truly manifests — see §7). This is the executor-`Value`
 analog of `Privacy.project` / `field_projection_hides_private`: the public view is *independent of* the
 values stored in HIGH fields. -/
 def cellLowEq (p : Policy) (lowSlots : List FieldName) (v w : Value) : Prop :=
@@ -167,7 +167,7 @@ so we need the `Value.field`-level facts: (i) a write to `f` lands `some v` at s
 (`field_setField_ne`). Same `setFieldList` induction as `setField_fieldOf`/`setField_balOf`, but on
 `Value.field` (the structural value) rather than `Value.scalar` (the `Int` projection). -/
 
-/-- **A write to slot `f` lands `some v` at slot `f` (PROVED), at the `Value.field` level.** The
+/-- **A write to slot `f` lands `some v` at slot `f`, at the `Value.field` level.** The
 structural-value companion of `EffectsState.setField_fieldOf` (which reads back the `Int` scalar);
 here we read back the whole stored `Value`, so it works for a `.dig` commitment too. -/
 theorem field_setField_eq (f : FieldName) (cell v : Value) :
@@ -194,7 +194,7 @@ theorem field_setField_eq (f : FieldName) (cell v : Value) :
   | sym _  => simp [Value.field]
 
 /-- **A write to slot `f` does not perturb the `Value.field` read of a DISTINCT slot `g ≠ f`
-(PROVED).** The structural-value companion of `setField_balOf` (which is the `Int`-scalar form at
+.** The structural-value companion of `setField_balOf` (which is the `Int`-scalar form at
 `g = balanceField`). This is the load-bearing non-interference fact: writing one field cannot change
 ANOTHER field's stored value. -/
 theorem field_setField_ne (f g : FieldName) (cell v : Value) (hg : g ≠ f) :
@@ -417,7 +417,7 @@ theorem unwinding_turn
 
 /-! ## §7 — TEETH.
 
-The keystones must not be vacuous. We exhibit (T3) that `lowEq` genuinely separates and genuinely
+The keystones must not be vacuous. We exhibit (T3) that `lowEq` separates and
 hides, (T4) that K1's slice is inhabited by a real committing step, and (T1 — the central teeth) that
 `makeSovereign` is a genuine LEAK that BREAKS noninterference, which is why it is EXCLUDED from the
 confined slice. The leak forces `lowEq` to have teeth and the slice to be a real boundary. -/
@@ -446,7 +446,7 @@ def tLeak : RecChainedState :=
 
 /-! ### T3 — `lowEq` is a non-trivial relation (separates on LOW, hides on HIGH). -/
 
-/-- **T3a — HIGH is genuinely hidden.** `sLeak` and `tLeak` differ ONLY in the HIGH `secret` field;
+/-- **T3a — HIGH is hidden.** `sLeak` and `tLeak` differ ONLY in the HIGH `secret` field;
 they ARE low-equal on the observed LOW slot `["commitment"]`. So `lowEq` does NOT see the secret —
 balance/secret confidentiality is real, not the vacuous `fun _ _ => True`. -/
 theorem sLeak_lowEq_tLeak : lowEq policyLeak ["commitment"] sLeak tLeak := by
@@ -459,7 +459,7 @@ theorem sLeak_lowEq_tLeak : lowEq policyLeak ["commitment"] sLeak tLeak := by
   show (sLeak.kernel.cell c).field "commitment" = (tLeak.kernel.cell c).field "commitment"
   rfl
 
-/-- **T3b — `lowEq` genuinely SEPARATES on a LOW field.** A state differing from `sLeak` in the LOW
+/-- **T3b — `lowEq` SEPARATES on a LOW field.** A state differing from `sLeak` in the LOW
 `commitment` field is NOT low-equal to it (when `commitment` is observed). So `lowEq` is a proper,
 discriminating relation — it is not collapsed to `True`. -/
 theorem lowEq_separates :
@@ -494,8 +494,8 @@ theorem lowWrite_commits_sLeak : (execFullA sLeak lowWrite).isSome = true := by 
 theorem lowWrite_commits_tLeak : (execFullA tLeak lowWrite).isSome = true := by decide
 
 /-- **T4b — K1 is non-vacuously satisfied: two HIGH-differing-but-LOW-equal states, run through the
-same LOW write, stay low-equal.** This instantiates `unwinding_setField` at a genuinely committing
-step from genuinely-HIGH-differing states — the unwinding is inhabited, not vacuous. -/
+same LOW write, stay low-equal.** This instantiates `unwinding_setField` at a committing
+step from HIGH-differing states — the unwinding is inhabited, not vacuous. -/
 theorem unwinding_setField_inhabited
     {s' t' : RecChainedState}
     (hes : execFullA sLeak lowWrite = some s')
@@ -538,7 +538,7 @@ post-`MakeSovereign` states low-equal on the observed `commitment` slot: the com
 written from `stateCommitment` of the whole record, which DIFFERS between the two (it folds in the
 HIGH secret). So noninterference FAILS for `makeSovereignA` — it is a DECLASSIFIER, not a
 noninterfering effect, and is correctly EXCLUDED from `sliceConfined`. This is the load-bearing teeth:
-it proves `lowEq` is not vacuous and that the proven slice (K1–K3) genuinely excludes the leak. -/
+it proves `lowEq` is not vacuous and that the proven slice (K1–K3) excludes the leak. -/
 theorem makeSovereign_leaks :
     lowEq policyLeak ["commitment"] sLeak tLeak ∧
     ¬ ( ∀ s' t', execFullA sLeak (.makeSovereignA 0 0) = some s' →

@@ -33,7 +33,7 @@ This module closes that gap **inside Lean** with a genuine round-trip:
     bytes (`emitVmJson_injective`), and every field the Lean soundness theorems pin is recoverable
     from the bytes the prover runs. The fingerprint now guards bytes whose MEANING is proved faithful.
 
-## The hard core (genuinely proved, axiom-clean)
+## The hard core (proved, axiom-clean)
 
 The crux is the decimal NUMBER round-trip: the emitter renders `Nat`/`Int` via `toString`
 (`Nat.repr` = `String.ofList (Nat.toDigits 10 ·)`), so the parser must INVERT `Nat.toDigits`. That is
@@ -44,7 +44,7 @@ produced char is an ASCII digit), giving `readNat_toString` / `readInt_toString`
 round-trip mirroring Rust `parse_int`. Everything below is `#assert_axioms`-clean
 (⊆ {propext, Classical.choice, Quot.sound}).
 
-## §MODELING — the one honest modeling choice (named, not hidden)
+## §MODELING — the one modeling choice (named)
 
 The Rust `parse_vm_descriptor` reads the six top-level keys in a *loop* (any order, tolerant). The
 Lean `parseVmJson` reads them in the FIXED order `emitVmJson` emits (name → trace_width →

@@ -82,7 +82,7 @@ structure FrameStatement where
   deriving Repr
 
 /-- A `FrameStatement` is non-degenerate when its skew is a real, positive interval (`δ > 0`): the
-authority genuinely *does not* claim point-precision. We keep `δ` general (an `Int` field) but expose
+authority *does not* claim point-precision. We keep `δ` general (an `Int` field) but expose
 this predicate so non-vacuity can insist the carried skew is real. -/
 def FrameStatement.skewReal (fs : FrameStatement) : Prop := 0 < fs.δ
 
@@ -123,7 +123,7 @@ verifier accepts, the framed predicate is discharged through `Laws.Discharged` a
 producer enters. NO honesty hypothesis is needed for *acceptance* — only for the physical-time leap
 (§6 below). -/
 
-/-- **`frameWithin_sound` (PROVED) — soundness-by-verification.** An accepted `temporal` attestation
+/-- **`frameWithin_sound` — soundness-by-verification.** An accepted `temporal` attestation
 discharges the framed predicate at the registry seam. Reuses `registry_sound`; the prover never
 enters. (The leap from "discharged" to "real time ≥ T − δ" is §6, gated on the §8 carrier.) -/
 theorem frameWithin_sound (reg : Registry Stmt Wit) (stmtOf : FrameStatement → Stmt)
@@ -132,7 +132,7 @@ theorem frameWithin_sound (reg : Registry Stmt Wit) (stmtOf : FrameStatement →
     @Dregg2.Laws.Discharged Stmt Wit (verifiableOfRegistry reg .temporal) (stmtOf fs) att :=
   registry_sound reg .temporal (stmtOf fs) att h
 
-/-- **`frame_adversarial_cannot_forge` (PROVED) — the gate is the sole authority.** If the installed
+/-- **`frame_adversarial_cannot_forge` — the gate is the sole authority.** If the installed
 `temporal` verifier REJECTS a reading, NO producer (however adversarial) can make `FrameWithin` hold
 with it: acceptance has no prover-controlled path. Reuses `adversarial_find_cannot_forge`. So a frame
 deadline cannot be forged by a lying clock-reading — it must pass the in-TCB verifier. -/
@@ -154,9 +154,9 @@ fails closed (`registryVerify … = false` — "no frame authority, no frame fac
 attestation it is false; only WITH the authority's accepting reading does it hold. (Contrast the
 causal face, which holds with no authority at all — that gap IS the load-bearing distinction.) -/
 
-/-- **`frameWithin_false_without_authority` (PROVED) — no authority, no frame fact.** If the registry
+/-- **`frameWithin_false_without_authority` — no authority, no frame fact.** If the registry
 has NO `temporal` verifier installed (`reg .temporal = none`), then `FrameWithin` is FALSE for every
-attestation — the frame predicate is genuinely undecided/unmet without a named time authority. This
+attestation — the frame predicate is undecided/unmet without a named time authority. This
 is the structural contrast to `Causal.CausalAfter`, which needs no authority. -/
 theorem frameWithin_false_without_authority (reg : Registry Stmt Wit) (stmtOf : FrameStatement → Stmt)
     (hnone : reg .temporal = none) (fs : FrameStatement) (att : Wit) :
@@ -190,10 +190,10 @@ named in the doc, discharged by the protocol + circuits, NOT here. This is a gen
 def FrameHonesty (fs : FrameStatement) (trueTime : Time) : Prop :=
   fs.T - fs.δ ≤ trueTime
 
-/-- **`frameHonesty_nontrivial` (PROVED) — the carrier is REAL, not `True`.** For a statement with a
+/-- **`frameHonesty_nontrivial` — the carrier is REAL, not `True`.** For a statement with a
 real reading there is a `trueTime` SATISFYING the carrier (an honest clock: `trueTime = T`) and a
 `trueTime` FALSIFYING it (a clock lying beyond `δ`: `trueTime = T − δ − 1`). So `FrameHonesty`
-genuinely constrains the world — it is a falsifiable §8 assumption, exactly like the BFT honest-
+constrains the world — it is a falsifiable §8 assumption, exactly like the BFT honest-
 majority, never the trivial carrier. -/
 theorem frameHonesty_nontrivial (fs : FrameStatement) (hδ : fs.skewReal) :
     FrameHonesty fs fs.T ∧ ¬ FrameHonesty fs (fs.T - fs.δ - 1) := by
@@ -202,7 +202,7 @@ theorem frameHonesty_nontrivial (fs : FrameStatement) (hδ : fs.skewReal) :
   · linarith
   · intro h; linarith
 
-/-- **`frame_accept_bounds_realtime` (PROVED) — the BRIDGE: accepted + honest ⟹ real time bounded.**
+/-- **`frame_accept_bounds_realtime` — the BRIDGE: accepted + honest ⟹ real time bounded.**
 The keystone of the frame face. GIVEN the §8 carrier `FrameHonesty fs trueTime` (the authority's
 declared skew physically holds), an ACCEPTED frame attestation entails the real time is at least
 `T − δ`: the frame reading is a genuine lower bound on physical time within the skew. WITHOUT the
@@ -224,7 +224,7 @@ For a real time authority the `temporal` verifier is the `CryptoKernel.verify` o
 attestation is a signed/proven clock reading). `crypto_kind_routes_to_oracle` gives soundness-by-
 verification through the oracle for free; the binding/extractability of the signature stays §8. -/
 
-/-- **`frameWithin_via_oracle` (PROVED) — the frame predicate routed through the §8 oracle.** When
+/-- **`frameWithin_via_oracle` — the frame predicate routed through the §8 oracle.** When
 the `temporal` kind is registered with `CryptoKernel.verify` and the oracle accepts the authority's
 signed reading, the framed predicate is discharged. No Lean reasoning into the crypto occurs — the
 signature's unforgeability is the §8 carrier, not a theorem. Reuses `crypto_kind_routes_to_oracle`. -/
@@ -239,22 +239,22 @@ theorem frameWithin_via_oracle {Digest Proof : Type} [AddCommGroup Digest] [Cryp
 /-! ## 8. The retyping of `MAX_DISCHARGE_AGE` — the sharpest "before/after §4" example.
 
 `ThirdPartyDischarge.lean` gates freshness on `0 ≤ now − created_at ≤ 300` — a BARE wall-clock check,
-a `frame_within` MISSING its declared `δ` and frame. Here it is retyped honestly: the `300`-second
+a `frame_within` MISSING its declared `δ` and frame. Here it is retyped: the `300`-second
 window IS a `FrameStatement` with the skew `δ = 300` carried EXPLICITLY and the verifying party named
 as a `TimeAuthority`. The freshness bit becomes "the time authority attests `now` lies within `δ` of
-`created_at`" — the skew is no longer a magic constant but the authority's declared interval. -/
+`created_at`" — the skew is not a magic constant but the authority's declared interval. -/
 
 /-- The `MAX_DISCHARGE_AGE` skew, now a FIRST-CLASS field (was the bare constant `300`). -/
 def maxDischargeSkew : Time := 300
 
 /-- **`dischargeFreshnessAsFrame F createdAt`** — the honest retyping of the discharge freshness
 check: a `FrameStatement` for authority `F` attesting frame-time `createdAt` within the EXPLICIT skew
-`δ = maxDischargeSkew` (300s). The `300` is no longer a magic constant buried in a `≤`; it is the
+`δ = maxDischargeSkew` (300s). The `300` is not a magic constant buried in a `≤`; it is the
 authority's *declared interval half-width*, exposed as `fs.δ`. -/
 def dischargeFreshnessAsFrame (F : TimeAuthority) (createdAt : Time) : FrameStatement :=
   { authority := F, T := createdAt, δ := maxDischargeSkew }
 
-/-- **`discharge_skew_is_explicit` (PROVED)** — the retyped freshness check carries its skew openly:
+/-- **`discharge_skew_is_explicit`** — the retyped freshness check carries its skew openly:
 `(dischargeFreshnessAsFrame F t).δ = 300`, a real positive interval (`skewReal`). The `before` had no
 `δ` field at all; the `after` exposes it — which is the entire content of §4's discipline on the
 sharpest example in the codebase. -/

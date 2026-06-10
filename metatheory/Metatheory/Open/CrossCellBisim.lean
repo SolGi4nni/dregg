@@ -13,7 +13,7 @@ item — is, for the single cell, **complete** … the residual is the **cross-c
 is sharpened in TWO places:
 
   * `Proof/ContendedCrossCell.lean §9 -- OPEN (2)` (`Dregg2/Proof/ContendedCrossCell.lean:479-484`):
-      > "The genuinely-COINDUCTIVE adversary — schedules of UNBOUNDED interleaved turns over the
+      > "The COINDUCTIVE adversary — schedules of UNBOUNDED interleaved turns over the
       > `Boundary.TurnCoalg` … names the exact missing piece: **an adversary-stream confluence
       > theorem over `inducedSystem`**."
   * `Exec/CellProgram.lean -- OPEN` (`Dregg2/Exec/CellProgram.lean:177`): a full
@@ -62,7 +62,7 @@ two ARBITRARY schedules that are permutations of the same multiset of pairwise-d
 the same ledger — needs a `List.Perm`/bubble-sort decomposition of the permutation into adjacent
 disjoint transpositions, each discharged by `applyHalfOut_comm_disjoint`; that is bounded combinatorial
 engineering (a `Perm.rec` over the adjacent-transposition generators), NOT new research, and is the
-named residual. The genuinely-research residual UNCHANGED from `ContendedCrossCell §9` / `ForestLTS §11`
+named residual. The research residual UNCHANGED from `ContendedCrossCell §9` / `ForestLTS §11`
 is the CONTENDED (non-disjoint) infinite case — there is provably NO schedule-agnostic ledger
 (`coupled_no_schedule_agnostic_commit`), so its whole-history "closure" is the consensus/escalation
 boundary, not a confluence theorem. We do NOT attempt to fake a confluence there.
@@ -133,7 +133,7 @@ theorem total_of_xeq {A A' : KernelState} (h : xeq A A') : total A = total A' :=
   rw [h.2.1]
   exact Finset.sum_congr rfl (fun c _ => h.1 c)
 
-/-- **`xcellNext_xeq_congr` (PROVED)** — one totalised debit step is a CONGRUENCE for `xeq`: equal
+/-- **`xcellNext_xeq_congr`** — one totalised debit step is a CONGRUENCE for `xeq`: equal
 ledgers debited by the same turn stay equal. (The gate and the per-cell rewrite of `applyHalfOut` read
 only `bal`/`accounts`/`caps`, all respected by `xeq`.) The step-functoriality the induction needs. -/
 theorem xcellNext_xeq_congr {A A' : KernelState} (h : xeq A A') (bt : BiTurn) :
@@ -160,7 +160,7 @@ commute. The OPEN names the missing lift as "an adversary-stream confluence theo
 `inducedSystem`". We prove the WHOLE-HISTORY (all-`n`) form on the executable kernel: a single disjoint
 debit `bt` commutes past an ENTIRE trajectory of disjoint debits. -/
 
-/-- **`xcellNext_commute_step` (PROVED)** — a disjoint debit `bt` commutes past ONE committed disjoint
+/-- **`xcellNext_commute_step`** — a disjoint debit `bt` commutes past ONE committed disjoint
 debit `bt₁`: debiting `bt₁` then `bt` equals (extensionally) debiting `bt` then `bt₁`. The totalised
 lift of the two-point `applyHalfOut_comm_disjoint`, including the fail-closed branch (if `bt` fails
 over `A` it fails over the `bt₁`-debited `A` too, both self-looping). -/
@@ -192,7 +192,7 @@ theorem xcellNext_commute_step {A A' : KernelState} {bt₁ bt : BiTurn}
     rw [hL, hRinner, xcellNext_of_commit h1]
     exact xeq_refl A'
 
-/-- **KEYSTONE — `xcell_whole_history_confluent` (PROVED) — the adversary-stream confluence over
+/-- **KEYSTONE — `xcell_whole_history_confluent` — the adversary-stream confluence over
 `inducedSystem`, on the EXECUTABLE kernel.** A single disjoint debit `bt` commutes past an ENTIRE
 trajectory of debits: for any schedule `s` whose every debit source is disjoint from `bt.srcA` and
 every debit COMMITS along the run, debiting `bt` and THEN running the first `n` ticks of `s` reaches
@@ -228,7 +228,7 @@ oracle trajectory FOREVER along ANY infinite adversarial schedule, and the `tota
 coincide at every tick. (A debit is NOT conserving, so the faithful oracle is the exact-tracking
 reflexive `bisim_eq`, lifted coinductively — NOT a fixed value, which would be false here.) -/
 
-/-- **`xcell_obsBisim` (PROVED) — the coinductive lift, on the executable kernel.** Driving `xcellCoalg`
+/-- **`xcell_obsBisim` — the coinductive lift, on the executable kernel.** Driving `xcellCoalg`
 from any shared ledger `A` along ANY infinite adversarial schedule `s` keeps the running configuration
 `ObsBisim` to the (identically-driven) oracle trajectory at every tick. This is
 `obsBisim_traj_of_bisim` instantiated on the executable cross-cell coalgebra via the reflexive
@@ -239,7 +239,7 @@ theorem xcell_obsBisim (A : KernelState) (s : Sched BiTurn) :
       (traj xcellCoalg A s n) (traj xcellCoalg A s n) :=
   obsBisim_traj_of_bisim (bisim_eq xcellCoalg) (rfl) s
 
-/-- **`traj_xeq_congr` (PROVED)** — `xeq` start ledgers stay `xeq` along the WHOLE trajectory under any
+/-- **`traj_xeq_congr`** — `xeq` start ledgers stay `xeq` along the WHOLE trajectory under any
 schedule: `xcellNext`-congruence (`xcellNext_xeq_congr`) iterated through `traj`. The whole-history lift
 of the one-step congruence. -/
 theorem traj_xeq_congr {A A' : KernelState} (h : xeq A A') (s : Sched BiTurn) :
@@ -251,7 +251,7 @@ theorem traj_xeq_congr {A A' : KernelState} (h : xeq A A') (s : Sched BiTurn) :
       simp only [traj_succ, xcellCoalg_next]
       exact xcellNext_xeq_congr ih (s m)
 
-/-- **`xcell_obsStream_eq` (PROVED) — the directly-observable cross-cell payoff.** Two
+/-- **`xcell_obsStream_eq` — the directly-observable cross-cell payoff.** Two
 EXTENSIONALLY-EQUAL shared ledgers, driven by the SAME infinite adversarial schedule, emit the SAME
 `total`-observation stream at EVERY tick — the adversary cannot make the observable badge of `xeq`
 configurations drift apart over the unbounded interleaving. Non-trivial content (it consumes
@@ -288,7 +288,7 @@ theorem xcellNext_preserves_floor (A : KernelState) (bt : BiTurn)
     · rw [if_neg hc]; exact hfloor c
   · rw [if_neg hg]; simp only [Option.getD_none]; exact hfloor c
 
-/-- **`xcell_safety_infinite` (PROVED)** — the per-cell non-negativity FLOOR holds along the WHOLE
+/-- **`xcell_safety_infinite`** — the per-cell non-negativity FLOOR holds along the WHOLE
 unbounded executable trajectory under ANY adversarial schedule. A genuine cross-cell safety property
 carried infinitely: a fail-closed debit cannot overdraw, so no schedule (however adversarially
 interleaved) can drive any cell negative. Proved by `Nat` induction threading
@@ -312,7 +312,7 @@ produce DISTINCT committed sets, so there is NO whole-history confluence there. 
 impossibility as the precise boundary of our fragment. -/
 
 /-- **`confluence_fails_when_coupled` (re-export)** — the confluence's DISJOINTNESS hypothesis is
-genuinely needed: for the coupled running example (two debits on ONE pot), the two adversary schedules
+needed: for the coupled running example (two debits on ONE pot), the two adversary schedules
 DISAGREE on which turn commits (`ContendedCrossCell.coupled_schedules_disagree`). So
 `xcell_whole_history_confluent`'s `hdis` cannot be dropped — off the disjoint fragment the
 whole-history closure is the consensus/escalation boundary, not a confluence (the research residue we
@@ -338,7 +338,7 @@ theorem confluence_fails_when_coupled :
 
 /-! ## §8 — OUTCOME + the precise residual.
 
-FRAGMENT (PROVED, axiom-clean) of the README's "cross-cell whole-history closure":
+FRAGMENT (axiom-clean) of the README's "cross-cell whole-history closure":
 
   * `xcellCoalg` — the missing `Boundary.TurnCoalg` over the EXECUTABLE cross-cell shared ledger
     (`Exec/CellProgram.lean:177`'s named missing instance), the debit-thread totalised fail-closed;

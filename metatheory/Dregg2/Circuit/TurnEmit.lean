@@ -212,7 +212,7 @@ theorem turn_emitted_refines_turnSpec
 
 /-- **`turn_emitted_refines_exec`** — compose emitted-turn soundness with the executor bridge.
 
-HONEST CAVEAT: this is parametric in a per-step refinement hypothesis `hstep`. When `hstep` is
+CAVEAT: this is parametric in a per-step refinement hypothesis `hstep`. When `hstep` is
 discharged via `step_emitted_refines_fullActionStep`, BOTH of that lemma's conditionalities flow
 through here: (1) it is sorry-bearing where per-effect arms are open holes, so the composed
 result is NOT `#assert_axioms`-pinned, and (2) it establishes only honest-encoded-trace soundness, NOT
@@ -354,7 +354,7 @@ def stepEmittedEncodeAgrees
 encoder refines to `fullActionStep` for every effect with an emitted diamond; other arms defer to
 the circuit dispatch (`fullAction_circuit_refines_spec`).
 
-HONEST CAVEAT (this is NOT whole-turn adversarial soundness):
+CAVEAT (this is NOT whole-turn adversarial soundness):
 
 1. **All arms CLOSED.** The `exerciseA` arm discharges through
    `fullAction_circuit_refines_spec` (its inner-turn fold is a REAL composite circuit step).
@@ -612,7 +612,7 @@ theorem mintA_extract_emitted
 
 /-- **`mintA_extract_rejects_wrong_supply`** — ANTI-GHOST tooth: a claimed mint post `s'` whose ledger
 does NOT credit `recBalCredit … amt` (a forged supply) has NO satisfying PI-bound witness. The extractor
-genuinely REJECTS supply forgery — the bind gate + injective `bal` digest make it UNSAT. -/
+REJECTS supply forgery — the bind gate + injective `bal` digest make it UNSAT. -/
 theorem mintA_extract_rejects_wrong_supply
     (S : Surface2) (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
     (s : RecChainedState) (args : MintArgs) (s' : RecChainedState) (a : Assignment)
@@ -686,7 +686,7 @@ instance (d : EmittedDescriptor) (a : Assignment) : Decidable (satisfiedEmitted 
 
 -- TOOTH 1 (conclusion is NON-TRIVIAL): the all-zero witness FAILS `mintEmitted` (mint pins `var 0 = 1`).
 -- So `effect2_step_extracts_circuit`'s conclusion is a real constraint, not `True`; a stripped/forged
--- witness is genuinely rejected by `satisfiedEmitted`.
+-- witness is rejected by `satisfiedEmitted`.
 #guard decide (satisfiedEmitted mintEmitted (fun _ => 0)) == false
 -- TOOTH 2 (premise `hreg` is TAMPERABLE): a wrong AIR-name resolves to `none`, so the descriptor-identity
 -- premise FAILS for any tampered name — extraction cannot fire on a mismatched descriptor.

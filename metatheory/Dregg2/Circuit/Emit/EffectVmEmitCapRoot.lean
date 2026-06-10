@@ -61,7 +61,7 @@ Under the two hash-sites, the new `cap_root` is UNIQUELY `hash[ hash[holder,targ
 
   * **forced**: two rows with the SAME edge fields AND the same old root have the SAME new root
     (`capRootAdvance_forced`) — the recompute is a function, not a choice;
-  * **anti-ghost on the edge**: under CR, two rows publishing the same new root that recompute it honestly
+  * **anti-ghost on the edge**: under CR, two rows publishing the same new root that recompute it
     have the SAME edge-leaf-tuple AND the same old root (`capRoot_binds_edge`) — so tampering ANY edge
     field (holder/target/rights/op) or the old root changes the new root.
 
@@ -75,7 +75,7 @@ c-list (`circuit/src/cap_root.rs`'s `CanonicalCapTree`, mirroring the proven `Ds
 sorted, sentinel-bracketed, `hash_fact` nodes, depth 16; leaf = `Poseidon2(slot_hash, target,
 auth_tag, mask_lo, mask_hi, expiry, breadstuff)`), computed BYTE-IDENTICALLY in the cell
 (`dregg_cell::compute_canonical_capability_root_felt`) and the circuit (the EffectVM `cap_root`
-column is SEEDED from that same value, no longer from `BabyBear::ZERO`). The cell≡circuit
+column is SEEDED from that same value, not from `BabyBear::ZERO`). The cell≡circuit
 differential `circuit/tests/cap_root_cell_circuit_differential.rs` is the gate.
 
 This module is UNAFFECTED by that value change, and that is exactly the point of the Phase-A
@@ -97,7 +97,7 @@ So every theorem below holds for any `cap_root` value, including the new sorted-
 prepend-accumulator advance + its anti-ghost (`capRoot_binds_edge`) are the Phase-A digest pin; the
 openable-tree VALUE the digest carries is the cell≡circuit sorted root.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY as the named
 `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`. Imports are read-only.
@@ -275,7 +275,7 @@ theorem capRoot_op_bound (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash
 
 /-! ## §6 — NON-VACUITY: a concrete recompute fires; a tampered edge moves the root.
 
-A concrete injective toy sponge (Horner) so the recompute is genuinely computable and a tampered edge
+A concrete injective toy sponge (Horner) so the recompute is computable and a tampered edge
 provably yields a DIFFERENT new root. (The soundness theorems above use the abstract CR sponge; the
 vacuity guard exhibits a realizable witness.) -/
 

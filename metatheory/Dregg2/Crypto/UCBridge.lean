@@ -6,7 +6,7 @@
     (∀ Z, view_Z(π) ≈ view_Z(F))  →  (∀ Z, view_Z(ρ^π) ≈ view_Z(ρ^F))
 
 as a sharp OPEN, resting on "simulator existence + computational indistinguishability of
-ensembles" — the same genuinely-cryptographic residue that `Crypto.Primitives` isolates as the
+ensembles" — the same cryptographic residue that `Crypto.Primitives` isolates as the
 `Prop` carriers `CryptoPrimitives.binding` (DLog binding) and `CryptoPrimitives.unlinkable`
 (hiding/anonymity). Those carriers are never proved in Lean — Lean's `Verify` is a decidable
 oracle, not a probabilistic ensemble, and `≈` is not a Lean order-law.
@@ -38,11 +38,11 @@ kernel:
      `AddCommGroup`) really IS the cyclic-group Pedersen commitment `commit ck m = g^d · ck^m`
      formalised in `Dregg2_FCom.thy`. This is a HUMAN-CHECKED correspondence, not a
      machine-checked one: the two formalisations live in different logics and are not connected
-     by a verified translation. It is the honest residual gap.
+     by a verified translation. It is the residual gap.
 
 This is strictly stronger than a bare Lean `axiom`/`sorry` (which would assert UC on nothing):
 the obligation is discharged by a real proof in a real UC tool. It is strictly weaker than a
-single-kernel Lean proof: the trust spans two kernels + the transport fidelity. Stated honestly.
+single-kernel Lean proof: the trust spans two kernels + the transport fidelity.
 
 ## How to verify the Isabelle side.
     isabelle build -d <afp-matching-Isabelle2025-RC3>/thys \

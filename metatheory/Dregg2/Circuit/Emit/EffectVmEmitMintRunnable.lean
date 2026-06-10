@@ -29,13 +29,13 @@ This module amplifies mint to full-state via the VALIDATED RECIPE
 ## HONEST PRECONDITION-GAP NOTE (recorded for the audit wave, per the task brief)
 
 The wide descriptor binds the FULL post-state, but — exactly as the per-cell `EffectVmEmitMint` already
-states in its HONEST BOUNDARY — the mint `(cell, asset)` index + the `mintAdmit` AUTHORITY / non-negativity
+states in its BOUNDARY — the mint `(cell, asset)` index + the `mintAdmit` AUTHORITY / non-negativity
 / destination-liveness GUARD have NO row column: they are executor-side preconditions of `recCMintAsset`
 that are NOT in-circuit conjuncts of `mintVmDescriptor`. This module does not widen the gate set (that is
 the named, deferred systematic audit wave); it lifts the EXISTING gates to full-state. The named residual
 (the global supply total, a turn-level cross-cell accumulator) is unchanged and unaffected by this lift.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The sole crypto carrier is the
 NAMED `Poseidon2SpongeCR` portal, entering ONLY through the generic `runnable_full_sound` / the §4 anti-ghost
@@ -198,7 +198,7 @@ theorem mint_rejects_root_tamper (amt : ℤ) (preRoots : SysRoots)
 /-! ## §5 — NON-VACUITY: the full clause is inhabited by a real mint, and refutable.
 
 `goodMintRow` (from `EffectVmEmitMint`) realizes the mint intent (`100 → 130 = 100 + 30`). We decode it to a
-concrete `(pre, post)` `CellState` pair and confirm the full clause's `CellMintSpec` is genuinely satisfied
+concrete `(pre, post)` `CellState` pair and confirm the full clause's `CellMintSpec` is satisfied
 (witness TRUE), and refute a forged post-state (witness FALSE) — pinning non-vacuity from BOTH sides. -/
 
 /-- The pre-state `goodMintRow` encodes: bal_lo 100, nonce 5, everything else 0. -/

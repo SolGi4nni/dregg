@@ -57,7 +57,7 @@ class Searchable (P : Type*) (W : Type*) where
 
 /-- **The soundness-by-verification CONTRACT, as a typeclass field (the `CryptoKernel`
 Prop-portal idiom).** A `SoundSearchable` is a search plugin that COMES WITH a soundness
-guarantee `find_sound`: whatever it returns must verify. This is genuinely an *assumption*
+guarantee `find_sound`: whatever it returns must verify. This is an *assumption*
 about the (external, untrusted-by-default) plugin — there is no in-module relation between
 an arbitrary `find` and `Verify` from which to derive it (that is exactly why the untrusted
 `Searchable` above does NOT carry it, and why `Authority.Intent` re-`Verify`s instead of

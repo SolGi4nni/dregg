@@ -7,7 +7,7 @@ scheduler*, where two cross-cell turns contend for the SAME cell, and the questi
 an atomic + live + partition-tolerant commit is possible. The design predicts a DICHOTOMY,
 and we PROVE both poles:
 
-  * **Safe fragment (PROVED, `contended_commits_confluent`).** If the two contending
+  * **Safe fragment (`contended_commits_confluent`).** If the two contending
     cross-cell turns are I-CONFLUENT on the shared cell's invariant — operationally: they
     debit *disjoint* source cells of the shared ledger, so neither version invalidates the
     other — then BOTH schedule orders commit and yield the SAME final pair of ledgers
@@ -15,7 +15,7 @@ and we PROVE both poles:
     fragment: no global order, no coordination, commit freely (`Confluence.IConfluent` /
     `Coordination.iconfluent_fragment_crossgroup_free`; BEC Thm 3.1's coordination-free side).
 
-  * **Impossibility (PROVED, `coupled_no_schedule_agnostic_commit`).** If the two turns are
+  * **Impossibility (`coupled_no_schedule_agnostic_commit`).** If the two turns are
     COUPLED — a Σ=0 settlement contending for the SAME balance that funds only ONE of them
     — then there is NO schedule-agnostic atomic commit: we EXHIBIT two adversary schedules
     whose committed states DISAGREE (one order lets `bt₁` commit and forces `bt₂` to abort;
@@ -124,7 +124,7 @@ operational shadow of I-confluence on the shared balance: the funds `bt₁` spen
 `bt₂` spends are different cells, so neither version invalidates the other. -/
 def DisjointDebits (bt₁ bt₂ : BiTurn) : Prop := bt₁.srcA ≠ bt₂.srcA
 
-/-! ## §3 — THE SAFE FRAGMENT (PROVED): disjoint contention commits schedule-agnostically.
+/-! ## §3 — THE SAFE FRAGMENT: disjoint contention commits schedule-agnostically.
 
 If the two debits are disjoint, applying `bt₁` then `bt₂` against the shared ledger leaves the
 SAME shared ledger as applying `bt₂` then `bt₁`, AND each turn's commit decision is independent
@@ -156,7 +156,7 @@ theorem applyHalfOut_frame {A A' : KernelState} {bt : BiTurn}
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; subst h; exact ⟨rfl, rfl⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **`debitFires_frame_disjoint` (PROVED).** Whether `bt₂`'s debit fires is INDEPENDENT of
+/-- **`debitFires_frame_disjoint`.** Whether `bt₂`'s debit fires is INDEPENDENT of
 whether `bt₁`'s already ran, when the two debit disjoint cells: `applyHalfOut` reads only
 `caps` (frame-stable), `amt`, `bal srcA` (untouched by a disjoint debit) and `srcA ∈ accounts`
 (frame-stable). So the scheduler cannot use `bt₁` to flip `bt₂`'s admissibility. -/
@@ -170,7 +170,7 @@ theorem debitFires_frame_disjoint {A A' : KernelState} {bt₁ bt₂ : BiTurn}
   rw [hcaps, hbal, hacc]
   split <;> rfl
 
-/-- **`applyHalfOut_comm_disjoint` (PROVED).** Two committed debits on DISJOINT cells COMMUTE on
+/-- **`applyHalfOut_comm_disjoint`.** Two committed debits on DISJOINT cells COMMUTE on
 the shared ledger: debiting `srcA₁` then `srcA₂` yields the same `bal` function (pointwise) as
 the reverse, and the same `accounts`/`caps`. The cornerstone of safe-fragment confluence. -/
 theorem applyHalfOut_comm_disjoint {A A₁ A₁₂ A₂ A₂₁ : KernelState} {bt₁ bt₂ : BiTurn}
@@ -234,7 +234,7 @@ theorem applyHalfOut_comm_disjoint {A A₁ A₁₂ A₂ A₂₁ : KernelState} {
   · rw [(applyHalfOut_frame h12).2, (applyHalfOut_frame h1).2,
         (applyHalfOut_frame h21).2, (applyHalfOut_frame h2).2]
 
-/-- **KEYSTONE — `contended_commits_confluent` (PROVED).** THE SAFE FRAGMENT. When the two
+/-- **KEYSTONE — `contended_commits_confluent`.** THE SAFE FRAGMENT. When the two
 contending cross-cell turns debit DISJOINT cells of the shared ledger (the operational shadow
 of I-confluence on the shared balance), AND both turns commit when run first (so the scheduler
 cannot abort either), then the two schedules `fst12` and `fst21` produce:
@@ -288,7 +288,7 @@ not jointly overdraw a single cell. The "at most one of two contending spends pe
 is the `card ≤ 1`-shape falsifier of `Confluence.cardLeOne_not_iconfluent`: coupled spends on ONE
 cell are NOT I-confluent and must escalate, while disjoint spends are. -/
 
-/-- **`disjoint_is_iconfluent_fragment` (PROVED).** The safe fragment is the I-confluent one. We
+/-- **`disjoint_is_iconfluent_fragment`.** The safe fragment is the I-confluent one. We
 witness the bridge concretely: the grow-only `True` invariant (disjoint, independent writes) IS
 `Confluence.IConfluent` — the classifier that lets disjoint contention commit cross-group-free,
 exactly `Coordination.iconfluent_fragment_crossgroup_free`. Disjoint debits never co-consume a
@@ -297,7 +297,7 @@ theorem disjoint_is_iconfluent_fragment :
     Dregg2.Confluence.IConfluent (S := Finset ℕ) (fun _ => True) :=
   Dregg2.Confluence.top_iconfluent
 
-/-! ## §5 — THE IMPOSSIBILITY (PROVED): coupled contention has NO schedule-agnostic commit.
+/-! ## §5 — THE IMPOSSIBILITY: coupled contention has NO schedule-agnostic commit.
 
 The COUPLED case: two cross-cell turns that BOTH debit the SAME shared cell, whose balance funds
 exactly ONE of them (a Σ=0 settlement contending for one pot). We exhibit a concrete shared
@@ -352,7 +352,7 @@ theorem fst21_commits_two_aborts_one :
     (runSchedule potA potB potB coupled₁ coupled₂ .fst21).c₂.isSome = true := by
   decide
 
-/-- **`coupled_schedules_disagree` (PROVED).** The two adversary schedules produce DIFFERENT
+/-- **`coupled_schedules_disagree`.** The two adversary schedules produce DIFFERENT
 committed outcomes: `fst12` commits turn `1` and aborts turn `2`; `fst21` does the reverse. The
 committed `(c₁.isSome, c₂.isSome)` pair is `(true, false)` under one schedule and `(false, true)`
 under the other — they are not equal. The adversary's order bit is OBSERVABLE in the commit set. -/
@@ -364,7 +364,7 @@ theorem coupled_schedules_disagree :
      (runSchedule potA potB potB coupled₁ coupled₂ .fst21).c₂.isSome) := by
   decide
 
-/-- **KEYSTONE — `coupled_no_schedule_agnostic_commit` (PROVED).** THE IMPOSSIBILITY, sharply.
+/-- **KEYSTONE — `coupled_no_schedule_agnostic_commit`.** THE IMPOSSIBILITY, sharply.
 
 There is NO schedule-agnostic atomic commit for coupled contention: there exist a shared ledger,
 two credit ledgers, and two cross-cell turns contending for the SAME pot such that NO function
@@ -397,7 +397,7 @@ two `60`-spends can stand" is the `card ≤ 1`-shape invariant whose concurrent 
 `Confluence.cardLeOne_not_iconfluent`. `nonpairwise_escalation` then EXHIBITS the forced clashing
 pair: escalation to consensus is forced by an exhibited counterexample, not declared. -/
 
-/-- **`coupled_is_nonconfluent_must_escalate` (PROVED).** The coupled fragment is NOT I-confluent
+/-- **`coupled_is_nonconfluent_must_escalate`.** The coupled fragment is NOT I-confluent
 and is FORCED to escalate. We exhibit the bridge to the metatheory classifier: the contended pot
 has the `card ≤ 1` shape (at most one spend may stand), which is NOT `Confluence.IConfluent`
 (`cardLeOne_not_iconfluent`), and `nonpairwise_escalation` produces the concrete clashing pair
@@ -411,15 +411,15 @@ theorem coupled_is_nonconfluent_must_escalate :
   refine ⟨Dregg2.Confluence.cardLeOne_not_iconfluent, ?_⟩
   exact Dregg2.Confluence.nonpairwise_escalation _ Dregg2.Confluence.cardLeOne_not_iconfluent
 
-/-! ## §7 — The dichotomy is real: the two fragments are genuinely different.
+/-! ## §7 — The dichotomy is real: the two fragments are different.
 
 The safe fragment (`DisjointDebits`, I-confluent) and the coupled fragment (`¬ DisjointDebits`,
 `¬ IConfluent`) are not the same — the running coupled example is in the second and not the
 first. So the dichotomy classifies a real distinction, not a vacuous one. -/
 
-/-- **`dichotomy_nonvacuous` (PROVED).** The coupled running example lies OUTSIDE the safe
+/-- **`dichotomy_nonvacuous`.** The coupled running example lies OUTSIDE the safe
 fragment yet IS a real contended scenario (both turns individually fire on the fresh pot). So the
-classifier `DisjointDebits` genuinely splits commit-freely from must-escalate; neither side is
+classifier `DisjointDebits` splits commit-freely from must-escalate; neither side is
 vacuous. -/
 theorem dichotomy_nonvacuous :
     ¬ DisjointDebits coupled₁ coupled₂ ∧

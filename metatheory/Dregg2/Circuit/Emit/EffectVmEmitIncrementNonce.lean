@@ -30,7 +30,7 @@ the runtime row's `state.NONCE` is the per-cell sequence bookkeeping that ticks 
 runtime convention, exactly as every other graduated frozen-frame effect), distinct from the universe-A
 cell-record `nonce` field write (off-row).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR = NAMED hypothesis. No sorry /
 := True / native_decide / rfl-bridge. Imports read-only.
@@ -384,7 +384,7 @@ FROZEN, the nonce TICKS by 1) from the descriptor; (b) the post-state published 
 (bound + anti-ghosted on all 13 absorbed columns via `incNonceDescriptor_commit_binds_state`); and
 (c) AGREEMENT with the executor's post-state on the WHOLE conserved-economic `cellProjN` block
 (balLo/balHi/fields/cap/reserved). The nonce-carrier boundary (on-trace seq-nonce TICK vs the
-`nonce_write_is_out_of_row` record-nonce write) is the named, honest residual — both monotone nonce
+`nonce_write_is_out_of_row` record-nonce write) is the named, residual — both monotone nonce
 advances, NOT a soundness gap. This is the transfer class-A capstone shape (`*_full_sound` +
 `*_commit_binds_state` + `unify_*_exec`), per cell. -/
 theorem incNonceDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hnoop : env.loc sel.NOOP = 0)

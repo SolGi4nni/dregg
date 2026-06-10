@@ -47,7 +47,7 @@ def causalAfterVk : Nat := 0xCA05A  -- "causal-after"
 /-- The stable `vk` for the `monotoneOverForks(val)` guard atom — its named slot. -/
 def monotoneForkVk : Nat := 0x709E  -- "mono-fork"
 
-/-- **`causalAfter_vk_ne_monotoneFork_vk` (PROVED) — the two named atoms never collide.** Their `vk`
+/-- **`causalAfter_vk_ne_monotoneFork_vk` — the two named atoms never collide.** Their `vk`
 constants are distinct, so installing both on one registry keeps them in separate dispatch slots
 (`Predicate.custom_distinct_vk`): a `causally_after` proof can never be misrouted to the
 `monotone_over_forks` verifier, nor vice-versa. -/
@@ -69,7 +69,7 @@ def installCausalAfter (base : Registry GateStmt ChainWit) (B : Lace) (E : Block
 /-- The named kind the `causally_after` atom dispatches at (sugar for `.custom causalAfterVk`). -/
 abbrev causalAfterKind : WitnessedKind := .custom causalAfterVk
 
-/-- **`causalAfter_dispatch` (PROVED)** — the named registry runs EXACTLY the CausalGuard verifier at
+/-- **`causalAfter_dispatch`** — the named registry runs EXACTLY the CausalGuard verifier at
 its kind: `registryVerify (installCausalAfter base B E) causalAfterKind gate chain
 = causallyAfterVerifier B E gate chain`. The named wrapper is a faithful re-exposure, not a new
 checker. -/
@@ -80,7 +80,7 @@ theorem causalAfter_dispatch (base : Registry GateStmt ChainWit) (B : Lace) (E g
   unfold registryVerify installCausalAfter causalAfterKind
   rw [if_pos rfl]
 
-/-- **`causalAfter_named_denotes` (PROVED) — the wrapper DENOTES the CausalGuard semantics.** When the
+/-- **`causalAfter_named_denotes` — the wrapper DENOTES the CausalGuard semantics.** When the
 NAMED-kind registry accepts a gate (with any witness chain), the gate causally follows `E` in the
 happened-before order: `CausalAfter B E gate`. The named slot carries the identical modality the raw
 atom does — promoting it to a name changes the ergonomics, never the meaning. -/
@@ -90,7 +90,7 @@ theorem causalAfter_named_denotes (base : Registry GateStmt ChainWit) (B : Lace)
     CausalAfter B E gate :=
   causallyAfter_denotes_precedes B E gate chain ((causalAfter_dispatch base B E gate chain) ▸ h)
 
-/-- **`causalAfter_named_discharges` (PROVED) — soundness-by-verification through the named kind.** An
+/-- **`causalAfter_named_discharges` — soundness-by-verification through the named kind.** An
 accepted causal chain at the named kind discharges the predicate via `registry_sound`: the named
 extension is a genuine registry plugin, inheriting the keystone unchanged. -/
 theorem causalAfter_named_discharges (base : Registry GateStmt ChainWit) (B : Lace) (E gate : Block)
@@ -100,7 +100,7 @@ theorem causalAfter_named_discharges (base : Registry GateStmt ChainWit) (B : La
       (verifiableOfRegistry (installCausalAfter base B E) causalAfterKind) gate chain :=
   registry_sound (installCausalAfter base B E) causalAfterKind gate chain h
 
-/-- **`causalAfter_named_cannot_forge` (PROVED) — the named gate is the sole authority.** No prover can
+/-- **`causalAfter_named_cannot_forge` — the named gate is the sole authority.** No prover can
 make the named atom accept a gate the in-TCB causal check rejects: if `causallyAfterVerifier B E gate
 chain = false`, the named-kind dispatch rejects for every prover. A gate that does not causally follow
 `E` is inadmissible at the named kind, exactly as at the raw atom. -/
@@ -130,7 +130,7 @@ def installMonotoneFork (base : Registry Block Block) (B : Lace) (val : Block �
 /-- The named kind the `monotone_over_forks` atom dispatches at. -/
 abbrev monotoneForkKind : WitnessedKind := .custom monotoneForkVk
 
-/-- **`monotoneFork_dispatch` (PROVED)** — the named registry runs EXACTLY the per-edge monotone
+/-- **`monotoneFork_dispatch`** — the named registry runs EXACTLY the per-edge monotone
 verifier at its kind. The named wrapper is a faithful re-exposure of `monotoneStepVerifier`. -/
 theorem monotoneFork_dispatch (base : Registry Block Block) (B : Lace) (val : Block → Nat)
     (a b : Block) :
@@ -139,7 +139,7 @@ theorem monotoneFork_dispatch (base : Registry Block Block) (B : Lace) (val : Bl
   unfold registryVerify installMonotoneFork monotoneForkKind
   rw [if_pos rfl]
 
-/-- **`monotoneFork_named_denotes` (PROVED) — the wrapper DENOTES the CausalGuard semantics.** An
+/-- **`monotoneFork_named_denotes` — the wrapper DENOTES the CausalGuard semantics.** An
 accepted step at the NAMED kind is a real, non-regressing ack edge: `precedes B a b ∧ val a ≤ val b`.
 The named slot carries the identical local-monotonicity modality `monotoneStepVerifier` does. -/
 theorem monotoneFork_named_denotes (base : Registry Block Block) (B : Lace) (val : Block → Nat)
@@ -148,7 +148,7 @@ theorem monotoneFork_named_denotes (base : Registry Block Block) (B : Lace) (val
     precedes B a b ∧ val a ≤ val b :=
   monotoneStep_sound B val a b ((monotoneFork_dispatch base B val a b) ▸ h)
 
-/-- **`monotoneFork_named_implies_global` (PROVED) — every named-kind edge ⇒ global monotonicity.** If
+/-- **`monotoneFork_named_implies_global` — every named-kind edge ⇒ global monotonicity.** If
 EVERY direct ack edge is accepted by the named `monotone_over_forks(val)` kind, then `val` is monotone
 along the WHOLE happened-before order (`MonotoneOverForks B val`). The named extension installs the
 global causal grow-only property: each accepted edge denotes a local non-regression
@@ -183,7 +183,7 @@ def emptyReg {Stmt Wit : Type} : Registry Stmt Wit := fun _ => none
 #guard (registryVerify (installCausalAfter emptyReg demoLace CommitReveal.commit) monotoneForkKind
         CommitReveal.honestReveal CommitReveal.honestChain == false)              -- true (not consulted)
 
-/-- **`named_commit_reveal_accepted` (PROVED) — the headline at the named kind.** The honest reveal is
+/-- **`named_commit_reveal_accepted` — the headline at the named kind.** The honest reveal is
 admitted at the NAMED `causalAfter` kind, and its denotation is the lightcone fact
 `CausalAfter demoLace commit honestReveal`. The named ergonomic surface carries the full guarantee. -/
 theorem named_commit_reveal_accepted :
@@ -194,7 +194,7 @@ theorem named_commit_reveal_accepted :
   exact causalAfter_named_denotes emptyReg demoLace CommitReveal.commit CommitReveal.honestReveal
     CommitReveal.honestChain (by decide)
 
-/-- **`named_commit_reveal_rejected` (PROVED) — the named-kind teeth.** The concurrent fork reveal is
+/-- **`named_commit_reveal_rejected` — the named-kind teeth.** The concurrent fork reveal is
 rejected at the NAMED kind for EVERY witness chain — a reveal that never observed its commit is
 inadmissible whether plumbed raw or by name. -/
 theorem named_commit_reveal_rejected (chain : ChainWit) :

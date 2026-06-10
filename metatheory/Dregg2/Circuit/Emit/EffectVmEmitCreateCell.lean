@@ -8,10 +8,10 @@ receipt, and freezes the global side-tables. Its FULL universe-A soundness is
 layer, all 18 `RecordKernelState` components + log).
 
 This module emits the EffectVM-ROW (the running `EffectVmP3Air` layout) face of `createCell` and
-connects it to that universe-A guarantee through a `cellProj`-style projection — honestly naming the
+connects it to that universe-A guarantee through a `cellProj`-style projection — naming the
 LARGE lifecycle side-effect the per-row circuit CANNOT see.
 
-## What the EffectVM row CAN pin (finding-#2, stated honestly)
+## What the EffectVM row CAN pin (finding-#2, stated
 
 The EffectVM row carries ONLY a cell's 14-column economic state-block:
 `{bal_lo, bal_hi, nonce, field[0..7], cap_root, state_commit, reserved}`. For `createCell`, the cell
@@ -23,7 +23,7 @@ the row witnesses is `newCell`, whose post-block is the BORN-EMPTY ZERO block (`
     whole-state tooth — `createCellHashSites` are the same 4 ordered GROUP-4 `H4` sites the running
     prover lays for every row).
 
-## What the EffectVM row CANNOT enforce (the honest boundary — NOT papered)
+## What the EffectVM row CANNOT enforce (the boundary)
 
 The HEART of `createCell` is OFF-ROW side-state the 14-column block does NOT carry by named offset:
 
@@ -37,7 +37,7 @@ These are exactly the components `createCellA_full_sound`/`CreateCellSpec` enfor
 row does NOT. We connect the ONE overlap (the new cell's ECONOMIC block is born-empty zero, hence
 `balOf (newCell-cell) = 0`) and FLAG the rest as off-row (`createCell_offrow_unenforced`).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; Poseidon2 CR enters ONLY
 as the named `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`. Imports are
@@ -268,7 +268,7 @@ theorem createCell_row_matches_executor (env : VmRowEnv) (pre post : CellState)
   · rw [eRes, ← hsaRes]; exact hRes
   · intro i; rw [eFld i, ← hsaF i]; exact hFld i.val i.isLt
 
-/-! ## §9 — THE HONEST BOUNDARY: the LARGE off-row side-effect the per-row circuit cannot enforce.
+/-! ## §9 — THE BOUNDARY: the LARGE off-row side-effect the per-row circuit cannot enforce.
 
 `CreateCellSpec` enforces FOUR things the EffectVM row does NOT carry:
   * `accounts` growth (`insert newCell`);

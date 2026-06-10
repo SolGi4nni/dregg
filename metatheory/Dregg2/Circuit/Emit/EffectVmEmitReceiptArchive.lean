@@ -34,7 +34,7 @@ holds, the projected post-`lifecycle` of the touched `cell` is EXACTLY `1` — t
 descriptor pins. So the runnable `field[1]` column transition IS universe-A's `lifecycle`-write
 transition; not a fourth spec.
 
-## HONEST BOUNDARY (precise — do NOT over-read)
+## BOUNDARY (precise — do NOT over-read)
 
   * **IR GAP — the LOG is not an EffectVM column.** `receiptArchiveA` GROWS the receipt log by one row;
     the EffectVM row layout (186 cols) has NO log column / no log-hash site. So the runnable descriptor
@@ -57,7 +57,7 @@ transition; not a fourth spec.
 
   * `state.RESERVED` is NOT absorbed by any hash-site (inherited finding from the transfer keystone).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`. No `sorry`, no `:= True`, no `native_decide`, no

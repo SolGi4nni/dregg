@@ -40,7 +40,7 @@ We prove, over the whole cross-cell tree:
   * **`crossForest_conserves`** — a committed cross-cell forest preserves the JOINT family total
     `Σ_node total (cells node)` — GIVEN the N-ary cross-cell CG-5 Σ=0 binding `Σ_node δ = 0` (an
     explicit HYPOTHESIS, never derived), reusing `ForestLTS`'s telescoping shape EXACTLY. The Σ=0
-    binding is genuinely load-bearing (`crossForest_needs_binding`).
+    binding is load-bearing (`crossForest_needs_binding`).
   * **`crossForest_attests`** — a committed cross-cell forest attests the four `StepInv` conjuncts
     over the whole tree: Conservation (the JOINT total, binding-carried) ∧ Authority (every node
     grounded in its own cell's authority graph) ∧ ChainLink (every node's source cell is the one
@@ -200,14 +200,14 @@ parent's authority — so NO child, on any cell, gains authority the parent lack
 STRUCTURAL fact about the forest data — it holds of every well-formed cross-cell forest, committed
 or not (the discipline is built into the delegation). FULLY GENERAL over the tree. -/
 
-/-- **`edge_no_amplify` — PROVED (the per-edge Granovetter law).** A single cross-cell delegation
+/-- **`edge_no_amplify` (the per-edge Granovetter law).** A single cross-cell delegation
 edge is non-amplifying: the cap delegated to the child (`attenuate keep parentCap`) confers ≤ the
-parent's authority. This is `Caps.derive_no_amplify` — reused verbatim, never faked. -/
+parent's authority. This is `Caps.derive_no_amplify` — reused verbatim. -/
 theorem edge_no_amplify (keep : List Auth) (parentCap : Cap) :
     capAuthConferred (attenuate keep parentCap) ⊆ capAuthConferred parentCap :=
   derive_no_amplify keep parentCap
 
-/-- **`crossForest_no_amplify` — THE CROSS-CELL FOREST GRANOVETTER LAW (PROVED).** EVERY cross-cell
+/-- **`crossForest_no_amplify` — THE CROSS-CELL FOREST GRANOVETTER LAW.** EVERY cross-cell
 delegation edge of the forest is non-amplifying: for each `(keep, parentCap)` edge, the cap handed
 to the child confers ≤ the parent's authority (`derive_no_amplify`). No child anywhere in the tree
 — on any cell, at any nesting depth — gains authority the parent lacked: *only connectivity begets
@@ -231,7 +231,7 @@ telescoping is REUSED VERBATIM:
 and the binding `Σ_i δ i = 0` kills the second sum. This is the cross-cell direction the
 intra-cell `TurnForest.execForest_conserves` could DERIVE but here cannot. -/
 
-/-- **`crossForest_conserves` — THE N-ARY CROSS-CELL CG-5 KEYSTONE (PROVED, binding LOAD-BEARING).**
+/-- **`crossForest_conserves` — THE N-ARY CROSS-CELL CG-5 KEYSTONE (binding LOAD-BEARING).**
 A committed cross-cell forest preserves the JOINT family total `Σ_node total (cells node)` — GIVEN
 the N-ary cross-cell CG-5 Σ=0 binding `Σ_node δ = 0` (an explicit HYPOTHESIS, NEVER derived). Reuses
 `ForestLTS.forestApply_cg5_conserves` (the `Finset.sum` telescoping) over the flattened `Fin n`
@@ -267,7 +267,7 @@ def fullCrossForestInv (f : CrossCellForest) (cellOf : CellId → KernelState) (
   forestAbsStep (crossForestTurn f sid)
     (forestAbsOf (crossForestCells f cellOf)) (forestAbsOf cells')
 
-/-- **`crossForest_attests` — THE CROSS-CELL FOREST IS STEP-COMPLETE BY CONSTRUCTION (PROVED).**
+/-- **`crossForest_attests` — THE CROSS-CELL FOREST IS STEP-COMPLETE BY CONSTRUCTION.**
 Every committed cross-cell forest, UNDER the N-ary cross-cell CG-5 Σ=0 binding `Σ_node δ = 0`,
 attests the FULL N-ary cross-cell `StepInv` over the WHOLE tree: Conservation (JOINT total,
 binding-carried) ∧ Authority frame on every node (`applyForestHalf_caps`) ∧ Grounding on every node
@@ -281,7 +281,7 @@ theorem crossForest_attests (f : CrossCellForest) (cellOf : CellId → KernelSta
     fullCrossForestInv f cellOf sid cells' :=
   forestAbsStep_forward (crossForestCells f cellOf) cells' (crossForestTurn f sid) hbind h
 
-/-- **Conservation conjunct, projected — PROVED.** A committed cross-cell forest (under the binding)
+/-- **Conservation conjunct, projected.** A committed cross-cell forest (under the binding)
 preserves the JOINT family total at the abstract level (`forestJointBalance`). The cross-cell CG-5
 read out of the attestation. -/
 theorem crossForest_attests_conserves (f : CrossCellForest) (cellOf : CellId → KernelState)
@@ -292,7 +292,7 @@ theorem crossForest_attests_conserves (f : CrossCellForest) (cellOf : CellId →
       = forestJointBalance (forestAbsOf (crossForestCells f cellOf)) :=
   (crossForest_attests f cellOf sid cells' hbind h).1
 
-/-- **Grounding conjunct, projected — PROVED.** Every node of a committed cross-cell forest is
+/-- **Grounding conjunct, projected.** Every node of a committed cross-cell forest is
 grounded in its OWN cell's authority graph (ownership ∨ `Graph.has`). The Granovetter grounding leg:
 each node's half passed the authority gate on its source cell, AND (by `crossForest_no_amplify`)
 every delegated child cap was ≤ its parent's — so authority only ever flows DOWN the tree, across
@@ -309,7 +309,7 @@ theorem crossForest_all_grounded (f : CrossCellForest) (cellOf : CellId → Kern
 /-! ## §7 — The N-ary cross-cell Σ=0 binding is GENUINELY load-bearing (non-vacuity of the rule). -/
 
 /-- **`crossForest_needs_binding` — the N-ary cross-cell CG-5 Σ=0 binding is a GENUINE restriction
-(PROVED).** There is a family of cross-cell forest half-deltas that do NOT sum to zero (over `Bool`,
+.** There is a family of cross-cell forest half-deltas that do NOT sum to zero (over `Bool`,
 deltas `1` and `2`, summing to `3 ≠ 0`) — excluded by the cross-cell Σ=0 identity every committed-
 and-conserving cross-cell forest satisfies. So cross-cell forest admissibility is strictly MORE than
 per-cell soundness: the binding carves a proper subobject and must be HYPOTHESIZED, never derived.
@@ -333,7 +333,7 @@ edge (parent → child, cross-cell) is non-amplifying by `derive_no_amplify`. Th
 `ForestLTS.biToForest`, reused. -/
 def crossForestBilateral (bt : BiTurn) : ForestTurn (Fin 2) := biToForest bt
 
-/-- **`crossForest_bilateral_balanced` — the bilateral cross-cell Σ=0 binding (PROVED).** The
+/-- **`crossForest_bilateral_balanced` — the bilateral cross-cell Σ=0 binding.** The
 2-cell cross-cell forest's N-ary Σ=0 binding IS the bilateral `JointCell.halves_sum_zero`:
 `Σ_{Fin 2} δ = halfA bt + halfB bt = 0`. So the bilateral parent→child cross-cell delegation's CG-5
 binding is exactly the `Fin 2` slice of the N-ary cross-cell Σ=0. Reuses
@@ -342,7 +342,7 @@ theorem crossForest_bilateral_balanced (bt : BiTurn) :
     ∑ i, (crossForestBilateral bt).δ i = 0 :=
   biToForest_balanced bt
 
-/-- **`crossForest_bilateral_conserves` — the BILATERAL cross-cell CG-5 (PROVED).** A committed
+/-- **`crossForest_bilateral_conserves` — the BILATERAL cross-cell CG-5.** A committed
 bilateral cross-cell forest (parent on cell A, delegated child on cell B) preserves the JOINT
 two-cell total `Σ_{Fin 2} total (cells i)` — GIVEN the bilateral Σ=0 binding (here SUPPLIED for free
 by `crossForest_bilateral_balanced`, the `halves_sum_zero` of the underlying `BiTurn`). The smallest
@@ -353,7 +353,7 @@ theorem crossForest_bilateral_conserves (bt : BiTurn)
     ∑ i, total (cells' i) = ∑ i, total (cells i) :=
   forestApply_cg5_conserves (crossForest_bilateral_balanced bt) h
 
-/-- **`crossForest_bilateral_refines_crossAbs` — the bilateral cross-cell square (PROVED).** The
+/-- **`crossForest_bilateral_refines_crossAbs` — the bilateral cross-cell square.** The
 bilateral cross-cell forest step ENTAILS the bilateral cross-cell abstract LTS edge
 `CrossCellLTS.crossAbsStep` over the two cells — the `Fin 2` instance of the N-ary cross-cell square.
 So the genuine smallest cross-cell forest IS the bilateral cross-cell LTS edge. Reuses
@@ -482,7 +482,7 @@ The CROSS-CELL nested call-FOREST residue (`TurnForest §9 OPEN`) is CLOSED:
     violates the binding — NOT conserved, witnessing the binding is load-bearing;
     `badChildCrossForest`/`badRootCrossForest` rejected, fail-closed), axiom-clean.
 
-HONEST: unlike the intra-cell `TurnForest.execForest_conserves` (which DERIVED conservation because
+unlike the intra-cell `TurnForest.execForest_conserves` (which DERIVED conservation because
 every node was an intra-cell balance turn on the ONE record cell), the cross-cell forest's CG-5 is
 the inviolable cross-cell Σ=0 binding `Σ_node δ = 0`, carried as an explicit HYPOTHESIS exactly as
 `Proof/ForestLTS.lean` / `Exec/JointCell.lean` carry it. The tree is flattened (pre-order) to its

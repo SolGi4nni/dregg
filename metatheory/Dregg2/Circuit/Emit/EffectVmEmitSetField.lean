@@ -23,7 +23,7 @@ transfer's amount column plays), and FREEZE every other state-block column — `
 `nonce`, `cap_root`, `reserved`, and the OTHER seven field columns. So the descriptor pins the WHOLE
 per-cell post-block: one field moved to the written value, the rest literally frozen.
 
-## What is bound (class A) vs the honest boundary (named, NOT papered)
+## What is bound (class A) vs the boundary (named)
 
   * BOUND + anti-ghosted (the 13 absorbed columns): `fields[slot]_after = VALUE` (the move) AND
     every other state-block column frozen. Tampering ANY of them moves `state_commit` ⇒ UNSAT
@@ -31,7 +31,7 @@ per-cell post-block: one field moved to the written value, the rest literally fr
   * UNIFIED to the executor: `unify_setField_exec` welds the descriptor's bound block to
     `execFullA`'s `SetFieldSpec` post-state (the conserved `balLo` frozen; the written slot's value
     is the executor's `fieldOf (slotName slot) (cell)`).
-  * THE HONEST BOUNDARY (named, the same shape transfer's nonce/turn-layer residual has): the
+  * THE BOUNDARY (named, the same shape transfer's nonce/turn-layer residual has): the
     executor's `SetFieldSpec` ALSO carries (a) the caveat+authority+membership+liveness GUARD (the
     executor's domain restriction — `SetFieldGuard`, NOT a per-row state-block fact; it is the
     record-layer guard the `SetFieldCommit` corner welds) and (b) the one-row receipt LOG append (off
@@ -40,7 +40,7 @@ per-cell post-block: one field moved to the written value, the rest literally fr
     + the frozen frame — the per-cell STATE transition — is fully bound; the guard and the log are
     the executor/record-layer legs, cited.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; Poseidon2 CR enters
 ONLY as the named `Poseidon2SpongeCR` hypothesis. No `sorry`, no `:= True`, no `native_decide`.

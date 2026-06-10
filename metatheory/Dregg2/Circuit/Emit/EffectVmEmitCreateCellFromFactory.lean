@@ -18,7 +18,7 @@ by `FactoryEntry.conforms ⇒ initialFieldsNoBalance`), so the cell's ECONOMIC b
 measure) is the ZERO value. The row pins the post-block is the born-empty ZERO economic block, bound
 into the published `state_commit` under Poseidon2 CR.
 
-## What the EffectVM row CANNOT enforce (the honest boundary)
+## What the EffectVM row CANNOT enforce (the boundary)
 
 The HEART of `createCellFromFactory` is OFF-ROW:
   * the factory `initialFields` + program-VK installed into the minted cell's RECORD — these map into
@@ -32,7 +32,7 @@ These live ONLY in `createCellFromFactoryA_full_sound`/`CreateFromFactorySpec`; 
 of them. We connect the ONE overlap (the minted cell's ECONOMIC balance is 0) and FLAG the rest as
 off-row.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY as the named
 hypothesis. No `sorry`, no `:= True`, no `native_decide`. Read-only imports.
@@ -262,7 +262,7 @@ theorem factory_row_matches_executor (env : VmRowEnv) (pre post : CellState)
   · rw [eRes, ← hsaRes]; exact hRes
   · intro i; rw [eFld i, ← hsaF i]; exact hFld i.val i.isLt
 
-/-! ## §10 — THE HONEST BOUNDARY: the LARGE off-row side-effect.
+/-! ## §10 — THE BOUNDARY: the LARGE off-row side-effect.
 
 `CreateFromFactorySpec` enforces FIVE things the EffectVM row does NOT carry: the factory
 `initialFields`/program-VK install into the cell record, the `slotCaveats` install, `accounts` growth,

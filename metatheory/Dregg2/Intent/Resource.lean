@@ -99,7 +99,7 @@ theorem Converts.tensorRight [Category.{v} R] [MonoidalCategory.{v} R] {a c : R}
 The smallest honest instance. A resource is a BUNDLE: counts `(gold, art)` of two asset kinds, as a
 multiplicative `CommMonoid` (so it hosts mathlib's `Discrete` symmetric monoidal structure; `*` =
 bundle union, `1` = the empty bundle). In the DISCRETE category morphisms are equalities, so
-convertibility is EXACT (a bundle converts only to itself). Minimal but genuinely two-sided:
+convertibility is EXACT (a bundle converts only to itself). Minimal but two-sided:
 
   * a real fill exists (the identity conversion when `offered = wanted`);
   * TEETH — an unequal want is UNFILLABLE (`¬ Converts goldᴮ artᴮ`).

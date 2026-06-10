@@ -122,7 +122,7 @@ def setTargetNode (cred : Authorization Dg Pf) (newTarget : Int) : DForest :=
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** A gated forest with NO children
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** A gated forest with NO children
 runs EXACTLY its root gated node step: `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`. (Both
 branches of `execFullForestG`'s match collapse because `execFullChildrenG _ s' [] = some s'`.) This is
 the bridge through which every nameservice op's `none`/`some` is read off `execFullAGated` directly. -/
@@ -165,7 +165,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §5 — END-USER THEOREM 1: a FORGED credential ⇒ the whole gated turn REJECTS. -/
 
-/-- **`ns_forged_credential_rejected` — PROVED.** A nameservice op (any slot/value) presented with a
+/-- **`ns_forged_credential_rejected`.** A nameservice op (any slot/value) presented with a
 FORGED credential is rejected by the production turn entry: `execFullForestG s (nsNode forgedCred …) =
 none`, for EVERY pre-state `s`. The §8 credential leg fail-closes ⇒ the whole forest rolls back —
 nobody can register/renew/transfer/revoke/retarget without a genuine credential. -/
@@ -197,7 +197,7 @@ theorem ns_good_node_runs_write (s : RecChainedState) (slot : FieldName) (value 
       = stateStepGuarded s slot registryActor registryCell value := by
   rw [execFullForestG_nsNode, if_pos hgate]
 
-/-- **`ns_name_squat_impossible` — PROVED (END-USER THEOREM 2).** If the registry's `name` slot already
+/-- **`ns_name_squat_impossible` (END-USER THEOREM 2).** If the registry's `name` slot already
 holds a DIFFERENT non-zero binding (the name is taken: `WriteOnce`, `old ≠ 0`, `value ≠ old`), then a
 register over it is rejected by the executor — `execFullForestG s (registerNode goodCred value) = none`
 — EVEN with a genuine credential. No squatter can overwrite a registered name. NON-VACUOUS: the
@@ -209,7 +209,7 @@ theorem ns_name_squat_impossible (s : RecChainedState) (value : Int)
   rw [registerNode, ns_good_node_runs_write s nameSlot value hgate]
   exact stateStepGuarded_caveat_violation_fails s nameSlot registryActor registryCell value hsquat
 
-/-- **`ns_rent_cannot_shorten` — PROVED (END-USER THEOREM 3).** If the `Monotonic expiry` caveat rejects
+/-- **`ns_rent_cannot_shorten` (END-USER THEOREM 3).** If the `Monotonic expiry` caveat rejects
 the new lease (`caveatsAdmit = false`, i.e. `newExpiry < old`), a renew is rejected —
 `execFullForestG s (renewNode goodCred newExpiry) = none` — EVEN with a genuine credential. Rent can
 only be EXTENDED, never silently clawed back. -/
@@ -220,7 +220,7 @@ theorem ns_rent_cannot_shorten (s : RecChainedState) (newExpiry : Int)
   rw [renewNode, ns_good_node_runs_write s expirySlot newExpiry hgate]
   exact stateStepGuarded_caveat_violation_fails s expirySlot registryActor registryCell newExpiry hshort
 
-/-- **`ns_revoke_permanent` — PROVED (END-USER THEOREM 4).** If the `revoked` tombstone is already set
+/-- **`ns_revoke_permanent` (END-USER THEOREM 4).** If the `revoked` tombstone is already set
 (the `WriteOnce revoked` caveat rejects a second, different write: `caveatsAdmit = false`), a second
 revoke is rejected — `execFullForestG s (revokeNode goodCred tombstone) = none`. Once revoked, a name
 is revoked FOREVER; no one can lift or move the tombstone. -/
@@ -244,7 +244,7 @@ theorem nsNode_delta_zero (cred : Authorization Dg Pf) (slot : FieldName) (value
     turnLedgerDeltaAsset ((lowerForestG (nsNode cred slot value)).map Prod.snd) b = 0 := by
   simp [nsNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`ns_register_conserves` — PROVED (END-USER THEOREM 5).** A COMMITTED nameservice turn preserves
+/-- **`ns_register_conserves` (END-USER THEOREM 5).** A COMMITTED nameservice turn preserves
 EVERY asset's total supply: `recTotalAsset s'.kernel b = recTotalAsset s.kernel b`,
 for every asset `b`. The registry write touches metadata, never balance — so a name registration moves
 no money. A one-liner off `execFullForestG_conserves_per_asset` with the `SetField`-is-balance-neutral

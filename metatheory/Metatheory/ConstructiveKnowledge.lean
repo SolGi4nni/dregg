@@ -101,7 +101,7 @@ instance (k : Knower P W) (X : Claim P) (w : W) :
 
 /-- **Realizability soundness of the untrusted searcher (`§0`).** The ONLY guarantee
 demanded of the prover plugin: *whatever it returns must verify.* If a knower's untrusted
-`find` produces a witness `w` for `X`, then `X` is genuinely `Holds` — search is sound by
+`find` produces a witness `w` for `X`, then `X` is `Holds` — search is sound by
 verification (no completeness, no termination). This lifts `Dregg2.Laws.search_sound` to
 the `Knower`/`Holds` reading: the untrusted side can only ever *establish* real knowledge,
 never fake it, because its output is funnelled through the trusted `Verify`. -/
@@ -121,7 +121,7 @@ theorem find_realizes (k : Knower P W) (X : Claim P) (w : W)
 -- contracted searcher (`[SoundSearchable P W]`) discharges `hsound` via `search_sound`.
 #assert_axioms find_realizes
 
-/-- **Realizability closure under the verify seam — PROVED, kernel-clean.** Holding is
+/-- **Realizability closure under the verify seam.** Holding is
 *closed under the `Verify` seam*: if a knower already verifies a witness `w` for `X`
 (`Discharged (stmt X) w`), then it `Holds X`. Trivially the converse direction holds too,
 so holding **is exactly** "a discharging witness exists." This is the load-bearing fact
@@ -131,7 +131,7 @@ theorem holds_iff_discharged_witness {P W : Type u} [Verifiable P W] (X : Claim 
     Holds (W := W) X ↔ ∃ w : W, Discharged (P := P) (W := W) X.stmt w :=
   Iff.rfl
 
-/-- **Monotonicity of knowledge along witness implication — PROVED, kernel-clean.** If
+/-- **Monotonicity of knowledge along witness implication.** If
 demonstrating `X` is *at least as hard* as demonstrating `Y` — every witness that
 discharges `X` also discharges `Y` — then holding `X` confers holding `Y`. This is the
 realizability reading of entailment between claims: a realizer for the stronger claim is a
@@ -183,7 +183,7 @@ epistemic positions with a partial order `learns` — `a ⊑ b` means *"a verifi
 distinguished positions the ZK law needs: `acceptancePos` (a witnessed/ZK predicate's
 verifier sits here) and `contentPos` (where the witness content would be revealed), with
 the **separation hypothesis** `accept_below_content : acceptancePos ⊑ contentPos` and
-`accept_ne_content` that they are genuinely distinct positions.
+`accept_ne_content` that they are distinct positions.
 
 This is candidate-independent: any concrete disclosure lattice (the 4-kind one above, a
 richer differential-privacy grade, …) instantiates it. -/
@@ -194,7 +194,7 @@ structure Disclosure (E : Type u) [PartialOrder E] where
   contentPos : E
   /-- Acceptance discloses strictly less than content: `acceptance ⊑ content`. -/
   accept_le_content : acceptancePos ≤ contentPos
-  /-- …and is genuinely a *different* position (the boundary is non-trivial). -/
+  /-- …and is a *different* position (the boundary is non-trivial). -/
   accept_ne_content : acceptancePos ≠ contentPos
 
 /-- **`verifier_learns_only_acceptance` — the ZK / epistemic-boundary law (`§6`).**
@@ -205,7 +205,7 @@ content*. Formally `acceptancePos < contentPos` — acceptance is dominated by c
 distinct, so the verifier provably does **not** reach the content position.
 
 This rests on the `Disclosure` separation hypothesis (a *parameter*, the abstract
-indistinguishability assumption — see the OPEN note), NOT on an axiom. The honest content:
+indistinguishability assumption — see the OPEN note), NOT on an axiom. The content:
 *given that acceptance and content are distinct positions with `acceptance ⊑ content`, a
 verifier confined to `acceptance` is strictly below content* — i.e. the zero-knowledge
 verifier never climbs to the witness content. -/
@@ -214,7 +214,7 @@ theorem verifier_learns_only_acceptance
     D.acceptancePos < D.contentPos :=
   lt_of_le_of_ne D.accept_le_content D.accept_ne_content
 
-/-- **The complementary reading: content is unreachable from acceptance — PROVED.** A
+/-- **The complementary reading: content is unreachable from acceptance.** A
 verifier at the acceptance position is **not** at (and not above) the content position:
 `¬ contentPos ≤ acceptancePos`. This is the "learns NOT the witness content" half stated
 directly: were the verifier able to reach content, antisymmetry would force
@@ -228,7 +228,7 @@ theorem content_not_reached_from_acceptance
 /-
 OPEN (`§6`, the abstract ZK indistinguishability). The law above pins the *epistemic
 position* faithfully — a ZK verifier sits strictly below witness content in the disclosure
-order. The remaining, genuinely-cryptographic obligation is that this order *reflects an
+order. The remaining, cryptographic obligation is that this order *reflects an
 actual indistinguishability*: that no efficient verifier can computationally distinguish a
 real witness from a simulated one, so "occupies `acceptancePos`" entails "gains zero
 extractable knowledge of the witness." That is a **circuit/cryptographic** obligation
@@ -263,7 +263,7 @@ of acts; "narrower"). Attenuation — taking a caveat, a facet subset — is exa
 it governs a *single edge's rights*, and is NOT the whole authority law. -/
 abbrev Rights (R : Type u) := R
 
-/-- **Attenuation = meet-narrowing — PROVED, kernel-clean (`§3`, the restrictive half).**
+/-- **Attenuation = meet-narrowing (`§3`, the restrictive half).**
 Narrowing rights by a caveat `c` (`r ⊓ c`) never exceeds the original: `r ⊓ c ≤ r`. This
 is the meet-semilattice "narrow-only" rule for ONE edge's rights — a sub-rule, explicitly
 *not* the system law and *not* a Heyting residual `⇨` (no implication is taken; this is
@@ -283,7 +283,7 @@ production is itself bounded by held connectivity. -/
 def Confers {R : Type u} [Preorder R] (held conferred : Rights R) : Prop :=
   conferred ≤ held
 
-/-- **Conferral is bounded by held authority — PROVED, kernel-clean (`§3`).** The
+/-- **Conferral is bounded by held authority (`§3`).** The
 direction of the non-amplification invariant that is *provable in the meet-semilattice
 fragment*: a conferred edge never carries more than the introducer holds. (`apply_introduce`
 non-amplification: amplification denied.) -/
@@ -291,7 +291,7 @@ theorem confer_no_amplify {R : Type u} [Preorder R] {held conferred : Rights R}
     (h : Confers held conferred) : conferred ≤ held :=
   h
 
-/-- **Conferral composed with attenuation stays bounded — PROVED, kernel-clean (`§3`).**
+/-- **Conferral composed with attenuation stays bounded (`§3`).**
 The generative and restrictive halves *compose without breaking the discipline*: if you
 may confer `held`, you may confer any attenuation `held ⊓ c` of it, and the result is still
 `≤ held`. This is the faithful "generative produces, restrictive narrows, the bound holds
@@ -308,7 +308,7 @@ already held in `state` (carried over) **or** is conferred from some right held 
 def Produces {R : Type u} [Preorder R] (state state' : Rights R → Prop) : Prop :=
   ∀ r', state' r' → state r' ∨ ∃ held, state held ∧ Confers held r'
 
-/-- **One step never forges authority — PROVED, kernel-clean (`§3`).** The single-step
+/-- **One step never forges authority (`§3`).** The single-step
 core of *"only connectivity begets connectivity"*: after one authorized `Produces` step,
 every newly-held right `r'` traces to held authority — either it was already held, or it is
 `≤` some previously-held right (conferred, non-amplifying). No right is conjured from
@@ -336,7 +336,7 @@ another held fact to yield access neither names alone: `unsealer ⊗ box ⊢ con
 needs the amplifier algebra (a `⊗` on rights) not modelled here. It is left OPEN — *not*
 because the metatheory is unsure of it, but because faithfully stating the amplifier `⊗`
 and the receipt-disclosure typing (`Generative` acts forced on-chain, un-strippable) is a
-module of its own. The honest residue here is the *step* law `no_forge_step` plus the
+module of its own. The residue here is the *step* law `no_forge_step` plus the
 `Produces` relation that the closure quantifies over. -/
 
 #assert_axioms attenuate_narrows
@@ -389,7 +389,7 @@ theorem knowledge_does_not_drift
   stepComplete_preserves Impl conservation authority chainLink obsAdvance
     Knows hsc hpres hlife hx
 
-/-- **A knower never drifts from its own truth — PROVED, kernel-clean (`§2`, `§4`).** The
+/-- **A knower never drifts from its own truth (`§2`, `§4`).** The
 reflexive form of coinductive soundness (`Boundary.sound_refl`) read as knowledge: *every
 knower is sound relative to itself* — its observed knowledge is bisimilar to the golden
 oracle that is *itself*, so along the trivial bisimulation it agrees with the truth it

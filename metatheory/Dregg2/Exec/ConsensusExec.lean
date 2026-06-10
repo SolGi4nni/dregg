@@ -44,11 +44,11 @@ never Lean-proved crypto) ↦ **fold `recCexec`** over the decoded turns from a 
      a wave that DISAGREE are impossible, so the per-wave anchor (hence the executed state derived
      from it) is unique. This rides `Proof.CordialMiners.cordial_no_conflicting_final_leaders`.
    * **REJECTION TOOTH** `tampered_order_diverges` — if an adversary swaps one finalized turn for a
-     different one (tampers the order at a position), the executed states genuinely DIVERGE on a
+     different one (tampers the order at a position), the executed states DIVERGE on a
      witnessing instance: equal-execution is NOT vacuous, it is a real constraint a tampered order
      fails. (The anti-ghost tooth: finalization-order determinism has teeth.)
 
-## HONEST SCOPE (named carried hypotheses, with the fault model explicit — NOT bare sorries)
+## SCOPE (named carried hypotheses, with the fault model explicit — NOT bare sorries)
 
 * The finalized **order itself** is taken as a given `List Block` whose committed-leader anchors
   satisfy `Proof.CordialMiners.Committed`. We do NOT re-derive the `tau` linearization fixpoint
@@ -146,7 +146,7 @@ already-proved run-level theorems (`recChained_run_conserves`, `recChained_sound
 finalized execution. This is the load-bearing identification: *the finalized order drives a
 well-defined run of the verified cell*. -/
 
-/-- **`finalized_run` (PROVED — the part-(a) keystone).** A successful `executeFinalized s0 turns =
+/-- **`finalized_run` (the part-(a) keystone).** A successful `executeFinalized s0 turns =
 some s'` IS a `Run recChainedSystem s0 s'`: each fold step is a `recCexec` commit, i.e. a
 `recChainedSystem.Step`. So the finalized order yields a *well-defined executed run* of the verified
 record cell — consensus's output is a legal input to the proved executor, end to end. -/
@@ -171,7 +171,7 @@ theorem finalized_run {s0 s' : RecChainedState} :
       have hs : recChainedSystem.Step s0 s1 := ⟨t, hstep⟩
       exact Run.step (S := recChainedSystem) hs (ih h)
 
-/-- **`finalized_conserves` (PROVED — KEYSTONE).** Value is conserved across the WHOLE finalized
+/-- **`finalized_conserves` (KEYSTONE).** Value is conserved across the WHOLE finalized
 execution: the total over the content-addressed ledger at the executed endpoint equals the genesis
 total. The finalized order — however long, whatever turns — can neither mint nor burn. Rides
 `RecordKernel.recChained_run_conserves` over the `finalized_run`. -/
@@ -180,7 +180,7 @@ theorem finalized_conserves {s0 s' : RecChainedState} (turns : List Turn)
     recTotal s'.kernel = recTotal s0.kernel :=
   recChained_run_conserves (finalized_run turns h)
 
-/-- **`finalized_sound` (PROVED).** Any state-predicate `Good` preserved by every step that attests
+/-- **`finalized_sound`.** Any state-predicate `Good` preserved by every step that attests
 `recFullStepInv` holds at the executed endpoint of the finalized order, given it held at genesis.
 The step-completeness invariant lifted to the *finalized* run — `recChained_sound` driven by
 consensus. -/
@@ -190,7 +190,7 @@ theorem finalized_sound (Good : RecChainedState → Prop)
     (h : executeFinalized s0 turns = some s') (hs0 : Good s0) : Good s' :=
   recChained_sound Good hpres (finalized_run turns h) hs0
 
-/-- **`executeOrder_conserves` (PROVED)** — the order-level conservation: executing a finalized
+/-- **`executeOrder_conserves`** — the order-level conservation: executing a finalized
 ORDER (decode + fold) conserves the ledger total. The headline part-(a) consequence on the real
 `FinalizedOrder` input. -/
 theorem executeOrder_conserves {S : CordialState} {cfg : Finality.Config}
@@ -205,7 +205,7 @@ theorem executeOrder_conserves {S : CordialState} {cfg : Finality.Config}
 "no two conflicting finalized states" — two replicas that finalize the same order compute the same
 state. (The consensus-side, that the order itself cannot fork at a committed leader, is §6.) -/
 
-/-- **`finalized_execution_agreement` (PROVED — the determinism tooth).** Two replicas executing the
+/-- **`finalized_execution_agreement` (the determinism tooth).** Two replicas executing the
 SAME finalized turn order from the same genesis reach the SAME state — `executeFinalized` is a
 function. No two honest replicas with a common finalized prefix can disagree on the resulting state.
 (Trivial as Lean — `executeFinalized` is a `def` — but it is the load-bearing *statement*: execution
@@ -215,7 +215,7 @@ theorem finalized_execution_agreement (s0 : RecChainedState) (turns : List Turn)
     (h₁ : executeFinalized s0 turns = r₁) (h₂ : executeFinalized s0 turns = r₂) :
     r₁ = r₂ := by rw [← h₁, ← h₂]
 
-/-- **`executeOrder_agreement` (PROVED).** The order-level determinism: executing the same
+/-- **`executeOrder_agreement`.** The order-level determinism: executing the same
 `FinalizedOrder` with the same decoder from the same genesis gives the same result. Equal finalized
 orders ⇒ equal executed states. -/
 theorem executeOrder_agreement {S : CordialState} {cfg : Finality.Config}
@@ -235,7 +235,7 @@ Together: if two replicas both finalize a wave, they anchor the SAME leader (i),
 orders agree at that anchor, so (by ii) their executed states agree — there are NO two conflicting
 finalized states. -/
 
-/-- **`no_conflicting_finalized_anchor` (PROVED — the consensus half of the safety tooth).** Two
+/-- **`no_conflicting_finalized_anchor` (the consensus half of the safety tooth).** Two
 committed leaders `l₁ l₂` anchoring the same wave-position cannot be DISTINCT under the honest
 DAG-BFT model (`n > 3f`, `≤ f` Byzantine ratifiers, honest-one-ratification): they are the SAME
 block. Rides `Proof.CordialMiners.cordial_agreement_via_bft` — the `n > 3f` quorum-intersection core.
@@ -248,7 +248,7 @@ theorem no_conflicting_finalized_anchor
     l₁ = l₂ :=
   cordial_agreement_via_bft S cfg l₁ l₂ sr₁ sr₂ M hid_inj
 
-/-- **`no_conflicting_finalized_state` (PROVED — THE SAFETY TOOTH).** No two conflicting finalized
+/-- **`no_conflicting_finalized_state` (THE SAFETY TOOTH).** No two conflicting finalized
 states. Suppose two replicas finalize the same wave with anchors `l₁`, `l₂`, and they CONFLICT
 (`l₁ ≠ l₂`). Under the honest DAG-BFT model this is a CONTRADICTION (`cordial_no_conflicting_final_-
 leaders`): a wave anchors at most one leader. Hence the finalized anchor — and the executed state
@@ -266,7 +266,7 @@ theorem no_conflicting_finalized_state
     False :=
   cordial_no_conflicting_final_leaders S cfg l₁ l₂ hconflict sr₁ sr₂ M honest_one_ratification hid_inj
 
-/-- **`no_conflicting_finalized_state_from_lace` (PROVED) — the lace-read form.** The same safety
+/-- **`no_conflicting_finalized_state_from_lace` — the lace-read form.** The same safety
 tooth with the ratifying quorum READ OFF THE BLOCKLACE (`Committed = superRatifiedFromLace`, the
 lace exhibits the `≥ n−f` `ratifyingVoters` count) rather than supplied as a vote field. Two
 *distinct* committed anchors over the real lace are a contradiction under the honest model. This is
@@ -284,7 +284,7 @@ theorem no_conflicting_finalized_state_from_lace
 
 The determinism statement (§5) would be hollow if every order executed to the same state regardless.
 It does not: a TAMPERED order — one finalized turn swapped for a *different* one at a committed
-position — genuinely DIVERGES from the honest order on a witnessing instance. This is the anti-ghost
+position — DIVERGES from the honest order on a witnessing instance. This is the anti-ghost
 tooth: finalization-order determinism HAS TEETH; equal-execution is a real constraint a tampered
 order fails. -/
 
@@ -308,7 +308,7 @@ def tamperedTurn : Turn := { actor := 0, src := 0, dst := 1, amt := 40 }
 no `DecidableEq`, so we witness divergence through the ledger projection it commits to). -/
 def cell1Bal (r : Option RecChainedState) : Option Int := r.map (fun s => balOf (s.kernel.cell 1))
 
-/-- **`tampered_order_diverges` (PROVED — THE REJECTION TOOTH).** Executing the honest finalized
+/-- **`tampered_order_diverges` (THE REJECTION TOOTH).** Executing the honest finalized
 order `[honestTurn]` and the tampered order `[tamperedTurn]` from the same genesis yields a DIFFERENT
 observable executed state (cell `1`'s balance is `10` honest vs `40` tampered): the tooth witnesses
 that finalization-order determinism is non-vacuous — a different finalized turn produces a different
@@ -319,14 +319,14 @@ theorem tampered_order_diverges :
       ≠ cell1Bal (executeFinalized teethGenesis [tamperedTurn]) := by
   decide
 
-/-- **`honest_order_executes` (PROVED — non-vacuity of the bridge).** The honest finalized order
+/-- **`honest_order_executes` (non-vacuity of the bridge).** The honest finalized order
 actually COMMITS (is not fail-closed away): `executeFinalized teethGenesis [honestTurn]` is `some`.
 So `finalized_run`/`finalized_conserves` apply to a REAL non-empty finalized execution, not a vacuous
 `none`. -/
 theorem honest_order_executes :
     (executeFinalized teethGenesis [honestTurn]).isSome = true := by decide
 
-/-- **The honest finalized execution conserves (PROVED demo).** Folding the honest order conserves
+/-- **The honest finalized execution conserves (demo).** Folding the honest order conserves
 the ledger total `100` (cell-0 debit `10` = cell-1 credit `10`). The part-(a) conservation, on a
 concrete finalized order. -/
 theorem honest_order_conserves :

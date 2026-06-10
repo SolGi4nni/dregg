@@ -147,7 +147,7 @@ theorem introduceStep_factors {s s' : RecChainedState} {introducer recipient tar
   | none => rw [hd] at h; exact absurd h (by simp)
   | some k' => rw [hd] at h; simp only [Option.some.injEq] at h; exact ⟨k', rfl, h.symm⟩
 
-/-- **(b-balance) `introduce_conserves` — PROVED.** An introduction is conservation-trivial: the
+/-- **(b-balance) `introduce_conserves`.** An introduction is conservation-trivial: the
 `balance` total `recTotal` is UNCHANGED (it edits only `caps`). The dual frame, via
 `recKDelegate_frame`. -/
 theorem introduce_conserves {s s' : RecChainedState} {introducer recipient target : Label}
@@ -156,7 +156,7 @@ theorem introduce_conserves {s s' : RecChainedState} {introducer recipient targe
   obtain ⟨k', hd, hs'⟩ := introduceStep_factors h
   subst hs'; exact (recKDelegate_frame s.kernel k' introducer recipient target hd).1
 
-/-- **(d) `introduce_addEdge` — PROVED.** A committed introduction edits the reconstructed authority
+/-- **(d) `introduce_addEdge`.** A committed introduction edits the reconstructed authority
 graph by EXACTLY adding the edge `recipient ⟶ ⟨target,()⟩` — `Spec.Introduce.result` verbatim, via
 `recKDelegate_execGraph`. (The connectivity skeleton — rights `Unit`.) -/
 theorem introduce_addEdge {s s' : RecChainedState} {introducer recipient target : Label}
@@ -172,7 +172,7 @@ theorem introduce_addEdge {s s' : RecChainedState} {introducer recipient target 
     exact recKDelegate_execGraph s.kernel.caps introducer recipient target hg
   · rw [if_neg hg] at hd; exact absurd hd (by simp)
 
-/-- **(c) `introduce_authorized` — PROVED.** A committed introduction HOLDS the Granovetter source
+/-- **(c) `introduce_authorized`.** A committed introduction HOLDS the Granovetter source
 edge: the introducer holds the Spec edge `introducer ⟶ ⟨target,()⟩` on `execGraph` (only
 connectivity begets connectivity), via `recKDelegate_grounds`. -/
 theorem introduce_authorized {s s' : RecChainedState} {introducer recipient target : Label}
@@ -187,7 +187,7 @@ The connectivity lemmas above abstract rights to `Unit`. The HEADLINE authority 
 `is_attenuation(held, granted)`, "amplification denied" — is about the REAL rights, so we state it
 over the executable `Authority.Cap` (`ECap`) and its `capAuthConferred : ECap → List Auth`. The
 conferred cap of a faithful introduction is `attenuate keep held` for a cap `held` the introducer
-genuinely holds; `attenuate_subset` then gives `granted ⊆ held` over `List Auth` — two DIFFERENT
+holds; `attenuate_subset` then gives `granted ⊆ held` over `List Auth` — two DIFFERENT
 caps, a real lattice, with TEETH (an amplifying `granted` is not an `attenuate` of any held cap). -/
 
 /-- **`IsNonAmplifying held granted`** — the genuine non-amplification predicate over the REAL rights
@@ -197,7 +197,7 @@ amplifying grant (`granted ⊄ held`) makes this FALSE — the predicate has tee
 def IsNonAmplifying (held granted : ECap) : Prop :=
   capAuthConferred granted ⊆ capAuthConferred held
 
-/-- **(b-authority) `introduce_non_amplifying` — THE HEADLINE (PROVED, GENUINE).** The conferred cap
+/-- **(b-authority) `introduce_non_amplifying` — THE HEADLINE (GENUINE).** The conferred cap
 of an introduction — the introducer's held cap, ATTENUATED to `keep` — confers a GENUINE `List Auth`
 SUBSET of the held cap's authority: `capAuthConferred (attenuate keep held) ⊆ capAuthConferred held`,
 via `attenuate_subset`. This compares the GRANTED rights against the (different) HELD rights over the
@@ -208,7 +208,7 @@ theorem introduce_non_amplifying (held : ECap) (keep : List Auth) :
     IsNonAmplifying held (attenuate keep held) :=
   Dregg2.Exec.attenuate_subset keep held
 
-/-- **`introduce_grounded_and_non_amplifying` — the FULL Granovetter discipline (PROVED).** A
+/-- **`introduce_grounded_and_non_amplifying` — the FULL Granovetter discipline.** A
 committed introduction (a) GROUNDS in held connectivity — the introducer already held the Spec source
 edge `introducer ⟶ ⟨target,()⟩` (no reachability conjured) — AND (b) the rights it confers are a
 genuine attenuation of a held cap (`IsNonAmplifying held (attenuate keep held)`). Both the
@@ -221,7 +221,7 @@ theorem introduce_grounded_and_non_amplifying
     ∧ IsNonAmplifying held (attenuate keep held) :=
   ⟨introduce_authorized h, introduce_non_amplifying held keep⟩
 
-/-- **`amplifying_grant_rejected` — THE TEETH (PROVED).** The non-amplification predicate genuinely
+/-- **`amplifying_grant_rejected` — THE TEETH.** The non-amplification predicate
 DISCRIMINATES: a `granted` cap conferring an authority `a` that the `held` cap does NOT confer is
 REJECTED (`¬ IsNonAmplifying held granted`). So an amplifying grant fails the gate — the predicate is
 not vacuously true. Concretely, if `granted` confers some `a ∉ capAuthConferred held`, then
@@ -232,7 +232,7 @@ theorem amplifying_grant_rejected (held granted : ECap) (a : Auth)
   intro hsub
   exact hheld (hsub hgranted)
 
-/-- **(d) `introduce_chainlink` — PROVED.** An introduction appends EXACTLY its authority receipt,
+/-- **(d) `introduce_chainlink`.** An introduction appends EXACTLY its authority receipt,
 newest-first. -/
 theorem introduce_chainlink {s s' : RecChainedState} {introducer recipient target : Label}
     (h : introduceStep s introducer recipient target = some s') :
@@ -252,13 +252,13 @@ commits. -/
 def revokeDelegationStep (s : RecChainedState) (holder target : Label) : RecChainedState :=
   { kernel := recKRevokeTarget s.kernel holder target, log := authReceipt holder :: s.log }
 
-/-- **(b-balance) `revokeDelegation_conserves` — PROVED.** Conservation-trivial: `recTotal`
+/-- **(b-balance) `revokeDelegation_conserves`.** Conservation-trivial: `recTotal`
 UNCHANGED (edits only `caps`), via `recKRevokeTarget_frame`. -/
 theorem revokeDelegation_conserves (s : RecChainedState) (holder target : Label) :
     recTotal (revokeDelegationStep s holder target).kernel = recTotal s.kernel :=
   (recKRevokeTarget_frame s.kernel holder target).1
 
-/-- **(d) `revokeDelegation_removeEdge` — PROVED.** A revocation edits the reconstructed graph by
+/-- **(d) `revokeDelegation_removeEdge`.** A revocation edits the reconstructed graph by
 EXACTLY removing the edge `holder ⟶ ⟨target,()⟩` — `Spec.Revoke.result` verbatim, via
 `recKRevokeTarget_execGraph`. -/
 theorem revokeDelegation_removeEdge (s : RecChainedState) (holder target : Label) :
@@ -266,7 +266,7 @@ theorem revokeDelegation_removeEdge (s : RecChainedState) (holder target : Label
       = removeEdge (execGraph s.kernel.caps) holder (⟨target, ()⟩ : Spec.Cap Label ExecRights) :=
   recKRevokeTarget_execGraph s.kernel.caps holder target
 
-/-- **(b-authority) `revokeDelegation_non_amplifying` — THE HEADLINE (PROVED).** Revocation is
+/-- **(b-authority) `revokeDelegation_non_amplifying` — THE HEADLINE.** Revocation is
 non-amplifying *a fortiori*: it can ONLY REMOVE an edge, never add one. Concretely, the post-graph's
 edge set is a sub-relation of the pre-graph's: every edge present after the revoke was present
 before (`removeEdge G … ⊆ G`). Authority strictly shrinks. -/
@@ -277,7 +277,7 @@ theorem revokeDelegation_non_amplifying (s : RecChainedState) (holder target : L
   rw [revokeDelegation_removeEdge] at hpost
   exact hpost.1
 
-/-- **`revokeDelegation_only_subtracts` — PROVED (the removeEdge containment, honestly named).**
+/-- **`revokeDelegation_only_subtracts` (the removeEdge containment, named).**
 Revocation requires no positive authority — it can ONLY subtract — so its integrity content is the
 sub-relation containment (every post-edge was a pre-edge). This is NOT an "authorization" obligation
 (no held-cap premise); it is the fail-open "revocation always commits, only removes" face. Named for
@@ -288,8 +288,8 @@ theorem revokeDelegation_only_subtracts (s : RecChainedState) (holder target : L
       → execGraph s.kernel.caps h c :=
   fun h c => revokeDelegation_non_amplifying s holder target h c
 
-/-- **(c) `revokeDelegation_authorized` — PROVED (with a GENUINE held-edge premise).** A revocation is
-EFFECTIVE on an edge the holder genuinely HELD: under the precondition that `holder` held the Spec edge
+/-- **(c) `revokeDelegation_authorized` (with a GENUINE held-edge premise).** A revocation is
+EFFECTIVE on an edge the holder HELD: under the precondition that `holder` held the Spec edge
 `holder ⟶ ⟨target,()⟩` before the revoke (`hheld`), the revoke transitions that edge from PRESENT to
 ABSENT — the holder DID reach `target` (the consumed premise) and no longer does. The premise `hheld`
 is load-bearing: it is the "the actor held the edge being revoked" fact the honest name promises
@@ -308,7 +308,7 @@ theorem revokeDelegation_authorized (s : RecChainedState) (holder target : Label
   rintro ⟨_, hne⟩
   exact hne ⟨rfl, rfl⟩
 
-/-- **(d) `revokeDelegation_chainlink` — PROVED.** Appends exactly its authority receipt. -/
+/-- **(d) `revokeDelegation_chainlink`.** Appends exactly its authority receipt. -/
 theorem revokeDelegation_chainlink (s : RecChainedState) (holder target : Label) :
     (revokeDelegationStep s holder target).log = authReceipt holder :: s.log := rfl
 
@@ -333,12 +333,12 @@ def attenuateStep (s : RecChainedState) (actor : Label) (idx : Nat) (keep : List
   { kernel := { s.kernel with caps := attenuateSlot s.kernel.caps actor idx keep },
     log := authReceipt actor :: s.log }
 
-/-- **(b-balance) `attenuate_conserves` — PROVED.** Conservation-trivial: editing `caps` leaves the
+/-- **(b-balance) `attenuate_conserves`.** Conservation-trivial: editing `caps` leaves the
 `balance` field (hence `recTotal`) untouched (`recTotal` reads only `accounts`/`cell`). -/
 theorem attenuate_conserves (s : RecChainedState) (actor : Label) (idx : Nat) (keep : List Auth) :
     recTotal (attenuateStep s actor idx keep).kernel = recTotal s.kernel := rfl
 
-/-- **(b-authority) `attenuate_non_amplifying` — THE HEADLINE (PROVED).** The narrowed cap confers a
+/-- **(b-authority) `attenuate_non_amplifying` — THE HEADLINE.** The narrowed cap confers a
 SUBSET of the original cap's authority: `capAuthConferred (attenuate keep c) ⊆ capAuthConferred c`,
 via `Caps.attenuate_subset`. The actor gains NOTHING; it may only lose authority — the executable
 `is_narrower_or_equal` of `attenuate_in_place` (widening denied). -/
@@ -346,7 +346,7 @@ theorem attenuate_non_amplifying (keep : List Auth) (c : ECap) :
     capAuthConferred (attenuate keep c) ⊆ capAuthConferred c :=
   Dregg2.Exec.attenuate_subset keep c
 
-/-- **(c) `attenuate_authorized` — PROVED.** Attenuation acts on the actor's OWN slot: no
+/-- **(c) `attenuate_authorized`.** Attenuation acts on the actor's OWN slot: no
 cross-cell authority is needed (you may always narrow your own caps). The post-state edits only the
 `actor`'s slot; every OTHER holder's slot is untouched — so attenuation confers no authority on
 anyone else (the confinement face of "you can only narrow what you hold"). -/
@@ -355,7 +355,7 @@ theorem attenuate_authorized (s : RecChainedState) (actor : Label) (idx : Nat) (
     (attenuateStep s actor idx keep).kernel.caps l = s.kernel.caps l := by
   simp only [attenuateStep, attenuateSlot, if_neg hl]
 
-/-- **(d) `attenuate_metadata` — PROVED.** The cap edit is confined to the actor's slot AND the chain
+/-- **(d) `attenuate_metadata`.** The cap edit is confined to the actor's slot AND the chain
 extends by exactly the authority receipt. -/
 theorem attenuate_metadata (s : RecChainedState) (actor : Label) (idx : Nat) (keep : List Auth) :
     (∀ l, l ≠ actor → (attenuateStep s actor idx keep).kernel.caps l = s.kernel.caps l)
@@ -376,19 +376,19 @@ to `target` (the GC of a remote reference), then appends the receipt. Always com
 def dropRefStep (s : RecChainedState) (holder target : Label) : RecChainedState :=
   { kernel := recKRevokeTarget s.kernel holder target, log := authReceipt holder :: s.log }
 
-/-- **(b-balance) `dropRef_conserves` — PROVED.** Conservation-trivial. -/
+/-- **(b-balance) `dropRef_conserves`.** Conservation-trivial. -/
 theorem dropRef_conserves (s : RecChainedState) (holder target : Label) :
     recTotal (dropRefStep s holder target).kernel = recTotal s.kernel :=
   (recKRevokeTarget_frame s.kernel holder target).1
 
-/-- **(d) `dropRef_removeEdge` — PROVED.** The GC edit removes EXACTLY the edge
+/-- **(d) `dropRef_removeEdge`.** The GC edit removes EXACTLY the edge
 `holder ⟶ ⟨target,()⟩` — `removeEdge`. -/
 theorem dropRef_removeEdge (s : RecChainedState) (holder target : Label) :
     execGraph (dropRefStep s holder target).kernel.caps
       = removeEdge (execGraph s.kernel.caps) holder (⟨target, ()⟩ : Spec.Cap Label ExecRights) :=
   recKRevokeTarget_execGraph s.kernel.caps holder target
 
-/-- **(b-authority) `dropRef_non_amplifying` — THE HEADLINE (PROVED).** Dropping a reference can ONLY
+/-- **(b-authority) `dropRef_non_amplifying` — THE HEADLINE.** Dropping a reference can ONLY
 remove an edge: the post-graph is a sub-relation of the pre-graph. No authority is gained. -/
 theorem dropRef_non_amplifying (s : RecChainedState) (holder target : Label)
     (h : Label) (c : Spec.Cap Label ExecRights)
@@ -396,13 +396,13 @@ theorem dropRef_non_amplifying (s : RecChainedState) (holder target : Label)
     execGraph s.kernel.caps h c := by
   rw [dropRef_removeEdge] at hpost; exact hpost.1
 
-/-- **(c) `dropRef_authorized` — PROVED.** DropRef needs no positive authority (a holder may always
+/-- **(c) `dropRef_authorized`.** DropRef needs no positive authority (a holder may always
 drop its OWN reference): the obligation is the removeEdge shape (cannot grant). -/
 theorem dropRef_authorized (s : RecChainedState) (holder target : Label) :
     ∀ h c, execGraph (dropRefStep s holder target).kernel.caps h c → execGraph s.kernel.caps h c :=
   fun h c => dropRef_non_amplifying s holder target h c
 
-/-- **(d) `dropRef_chainlink` — PROVED.** Appends exactly its authority receipt. -/
+/-- **(d) `dropRef_chainlink`.** Appends exactly its authority receipt. -/
 theorem dropRef_chainlink (s : RecChainedState) (holder target : Label) :
     (dropRefStep s holder target).log = authReceipt holder :: s.log := rfl
 
@@ -432,13 +432,13 @@ theorem exerciseStep_factors {s s' : RecChainedState} {actor target : Label}
   · rw [if_pos hg] at h; simp only [Option.some.injEq] at h; exact ⟨hg, h.symm⟩
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **(b-balance) `exercise_conserves` — PROVED.** Conservation-trivial: exercising edits nothing in
+/-- **(b-balance) `exercise_conserves`.** Conservation-trivial: exercising edits nothing in
 the kernel state (only the receipt log). -/
 theorem exercise_conserves {s s' : RecChainedState} {actor target : Label}
     (h : exerciseStep s actor target = some s') : recTotal s'.kernel = recTotal s.kernel := by
   obtain ⟨_, hs'⟩ := exerciseStep_factors h; subst hs'; rfl
 
-/-- **(c) `exercise_authorized` — PROVED.** A committed exercise HOLDS the source edge: the actor
+/-- **(c) `exercise_authorized`.** A committed exercise HOLDS the source edge: the actor
 holds `actor ⟶ ⟨target,()⟩` on `execGraph` — the resolved c-list slot. Only the holder of the cap
 may exercise it. -/
 theorem exercise_authorized {s s' : RecChainedState} {actor target : Label}
@@ -447,7 +447,7 @@ theorem exercise_authorized {s s' : RecChainedState} {actor target : Label}
   obtain ⟨hg, _⟩ := exerciseStep_factors h
   rw [execGraph_eq_any]; exact hg
 
-/-- **(d) `exercise_graph_unchanged` — PROVED.** Exercising a cap leaves the reconstructed authority
+/-- **(d) `exercise_graph_unchanged`.** Exercising a cap leaves the reconstructed authority
 graph UNCHANGED — it reads the c-list, never edits it. The authority frame condition for the
 graph-preserving effects. -/
 theorem exercise_graph_unchanged {s s' : RecChainedState} {actor target : Label}
@@ -455,7 +455,7 @@ theorem exercise_graph_unchanged {s s' : RecChainedState} {actor target : Label}
     execGraph s'.kernel.caps = execGraph s.kernel.caps := by
   obtain ⟨_, hs'⟩ := exerciseStep_factors h; subst hs'; rfl
 
-/-- **`exercise_holds_real_cap` — PROVED.** A committed exercise WITNESSES a concrete held cap: the
+/-- **`exercise_holds_real_cap`.** A committed exercise WITNESSES a concrete held cap: the
 actor holds, in its real c-list, an `Authority.Cap` `held` that confers connectivity to `target`.
 This recovers the REAL cap (with its `List Auth` rights) behind the `Unit`-skeleton edge — the seam
 the genuine rights non-amplification reads. -/
@@ -467,7 +467,7 @@ theorem exercise_holds_real_cap {s s' : RecChainedState} {actor target : Label}
   obtain ⟨held, hmem, hconf⟩ := hg
   exact ⟨held, hmem, hconf⟩
 
-/-- **(b-authority) `exercise_non_amplifying` — THE HEADLINE (PROVED, GENUINE).** Exercising a cap
+/-- **(b-authority) `exercise_non_amplifying` — THE HEADLINE (GENUINE).** Exercising a cap
 confers NO new authority, on TWO faithful axes:
 
   * **connectivity** — the post-graph EQUALS the pre-graph (the exercise reads, never edits, the
@@ -475,7 +475,7 @@ confers NO new authority, on TWO faithful axes:
   * **rights** — the actor holds a concrete cap `held` and every authority `a` it can exercise is
     BOUNDED BY that held cap's REAL `List Auth` (`a ∈ capAuthConferred held`). The exercise is
     `IsNonAmplifying held held` over the real lattice: it confers exactly — never more than — the held
-    cap's authority. (An auth NOT in `capAuthConferred held` is genuinely out of reach — the bound has
+    cap's authority. (An auth NOT in `capAuthConferred held` is out of reach — the bound has
     teeth via `amplifying_grant_rejected`.) -/
 theorem exercise_non_amplifying {s s' : RecChainedState} {actor target : Label}
     (h : exerciseStep s actor target = some s') :
@@ -486,12 +486,12 @@ theorem exercise_non_amplifying {s s' : RecChainedState} {actor target : Label}
    let ⟨held, hmem, hconf⟩ := exercise_holds_real_cap h
    ⟨held, hmem, hconf, fun _ ha => ha⟩⟩
 
-/-- **(d) `exercise_chainlink` — PROVED.** Appends exactly its authority receipt. -/
+/-- **(d) `exercise_chainlink`.** Appends exactly its authority receipt. -/
 theorem exercise_chainlink {s s' : RecChainedState} {actor target : Label}
     (h : exerciseStep s actor target = some s') : s'.log = authReceipt actor :: s.log := by
   obtain ⟨_, hs'⟩ := exerciseStep_factors h; subst hs'; rfl
 
-/-- **Fail-closed — PROVED.** Without a held edge to `target`, no exercise commits. The confinement
+/-- **Fail-closed.** Without a held edge to `target`, no exercise commits. The confinement
 core for ExerciseViaCapability. -/
 theorem exercise_unheld_fails (s : RecChainedState) (actor target : Label)
     (h : (s.kernel.caps actor).any (fun cap => confersEdgeTo target cap) = false) :
@@ -512,7 +512,7 @@ variable {CellId Rights : Type*} [SemilatticeInf Rights] [OrderTop Rights]
 
 open Dregg2.Exec.CapTP (HandoffCert HandoffValid handoff_is_introduce handoff_non_amplifying)
 
-/-- **(a)+(e) `validateHandoff_is_introduce` — PROVED.** A `HandoffValid` certificate (connectivity,
+/-- **(a)+(e) `validateHandoff_is_introduce`.** A `HandoffValid` certificate (connectivity,
 A holds the cap, target consents, plus the §8 two-signature `attested` portal) IS a Granovetter
 `Spec.Introduce` step on the abstract capability graph — the forward-sim's `AbsStep` for the handoff:
 the abstract graph moves by `addEdge` (`cert.post`). Reuses `CapTP.handoff_is_introduce`. -/
@@ -523,7 +523,7 @@ theorem validateHandoff_is_introduce
     Introduce G consents cert.introducer cert.recipient cert.held cert.granted (cert.post G) :=
   handoff_is_introduce hv
 
-/-- **(b-authority) `validateHandoff_non_amplifying` — THE HEADLINE (PROVED).** The conferred
+/-- **(b-authority) `validateHandoff_non_amplifying` — THE HEADLINE.** The conferred
 (granted) cap is `≤` the introducer's held cap on the rights order: `granted.rights ≤ held.rights`.
 EXACTLY the `is_attenuation(held, granted)` check `AuthModes.captp_granted_le_held` certifies — the
 non-amplification dregg1's `verify_captp_delivered` was MISSING. Reuses `CapTP.handoff_non_amplifying`.
@@ -553,17 +553,17 @@ def refreshStep (s : RecChainedState) (child : Label) (idx : Nat) (keep : List A
     RecChainedState :=
   attenuateStep s child idx keep
 
-/-- **(b) `refresh_non_amplifying` — THE HEADLINE (PROVED).** A refresh re-snapshots via attenuation,
+/-- **(b) `refresh_non_amplifying` — THE HEADLINE.** A refresh re-snapshots via attenuation,
 so the refreshed cap confers a SUBSET of the original — never more. Reuses `attenuate_subset`. -/
 theorem refresh_non_amplifying (keep : List Auth) (c : ECap) :
     capAuthConferred (attenuate keep c) ⊆ capAuthConferred c :=
   Dregg2.Exec.attenuate_subset keep c
 
-/-- **(b-balance) `refresh_conserves` — PROVED.** Conservation-trivial (it is an `attenuateStep`). -/
+/-- **(b-balance) `refresh_conserves`.** Conservation-trivial (it is an `attenuateStep`). -/
 theorem refresh_conserves (s : RecChainedState) (child : Label) (idx : Nat) (keep : List Auth) :
     recTotal (refreshStep s child idx keep).kernel = recTotal s.kernel := rfl
 
-/-- **(c)+(d) `refresh_confined` — PROVED.** A refresh edits only the child's OWN slot (self-refresh)
+/-- **(c)+(d) `refresh_confined`.** A refresh edits only the child's OWN slot (self-refresh)
 and appends exactly the receipt. -/
 theorem refresh_confined (s : RecChainedState) (child : Label) (idx : Nat) (keep : List Auth) :
     (∀ l, l ≠ child → (refreshStep s child idx keep).kernel.caps l = s.kernel.caps l)
@@ -575,7 +575,7 @@ permission gate is a predicate `Label → Bool` (who it admits). The SOUND `SetP
 the gate with one whose admit-set is a SUBSET of the old. We capture exactly this obligation. -/
 def NarrowsGate (old new : Label → Bool) : Prop := ∀ l, new l = true → old l = true
 
-/-- **(b-authority) `setPermissions_non_amplifying` — THE HEADLINE (PROVED).** A sound
+/-- **(b-authority) `setPermissions_non_amplifying` — THE HEADLINE.** A sound
 `SetPermissions` only NARROWS the cell's permission gate: anyone the new gate admits, the old gate
 already admitted (`NarrowsGate old new`). So the gate replacement confers no NEW access — the
 admit-set strictly shrinks (or holds). The `apply.rs` "SetPermissions applied LAST + checks use
@@ -584,7 +584,7 @@ theorem setPermissions_non_amplifying {old new : Label → Bool}
     (h : NarrowsGate old new) (l : Label) (hadmit : new l = true) : old l = true :=
   h l hadmit
 
-/-- **`setPermissions_identity_narrows` — PROVED (non-vacuity of `NarrowsGate`).** Replacing a gate
+/-- **`setPermissions_identity_narrows` (non-vacuity of `NarrowsGate`).** Replacing a gate
 with itself is a (trivial) narrowing — the boundary case showing `NarrowsGate` is inhabited and the
 no-op is admitted. -/
 theorem setPermissions_identity_narrows (g : Label → Bool) : NarrowsGate g g := fun _ h => h
@@ -608,7 +608,7 @@ structure AbstractA where
 def absA (s : RecChainedState) : AbstractA :=
   { balanceTotal := recTotal s.kernel, authGraph := execGraph s.kernel.caps }
 
-/-- **`introduce_forward_sim` — THE REFINEMENT (PROVED).** A committed introduction is matched by an
+/-- **`introduce_forward_sim` — THE REFINEMENT.** A committed introduction is matched by an
 abstract step: the abstract `balance` total is CONSERVED, and the abstract authority graph moves by
 EXACTLY `addEdge … recipient ⟨target,()⟩` (the `Spec.Introduce.result` bottom edge). The record-world
 forward-simulation square for Introduce. -/
@@ -621,7 +621,7 @@ theorem introduce_forward_sim {s s' : RecChainedState} {introducer recipient tar
   · unfold conservedInDomain absA; rw [introduce_conserves h]; simp
   · simp only [absA]; exact introduce_addEdge h
 
-/-- **`revokeDelegation_forward_sim` — THE REFINEMENT (PROVED).** A committed revocation conserves
+/-- **`revokeDelegation_forward_sim` — THE REFINEMENT.** A committed revocation conserves
 the abstract balance and moves the abstract graph by EXACTLY `removeEdge … holder ⟨target,()⟩`
 (`Spec.Revoke.result`). -/
 theorem revokeDelegation_forward_sim (s : RecChainedState) (holder target : Label) :
@@ -633,7 +633,7 @@ theorem revokeDelegation_forward_sim (s : RecChainedState) (holder target : Labe
   · unfold conservedInDomain absA; rw [revokeDelegation_conserves]; simp
   · simp only [absA]; exact revokeDelegation_removeEdge s holder target
 
-/-- **`exercise_forward_sim` — THE REFINEMENT (PROVED).** A committed exercise conserves the abstract
+/-- **`exercise_forward_sim` — THE REFINEMENT.** A committed exercise conserves the abstract
 balance and leaves the abstract authority graph FIXED (identity edit — the graph-preserving regime). -/
 theorem exercise_forward_sim {s s' : RecChainedState} {actor target : Label}
     (h : exerciseStep s actor target = some s') :
@@ -646,7 +646,7 @@ theorem exercise_forward_sim {s s' : RecChainedState} {actor target : Label}
 /-! ## §9 — Axiom-hygiene tripwires (the honesty pins over every authority-edit keystone).
 
 Whitelist exactly `{propext, Classical.choice, Quot.sound}` — no `sorryAx`/`admit`/`axiom`/
-`native_decide`. Every per-effect non-amplification + the forward-sim squares are genuinely proved. -/
+`native_decide`. Every per-effect non-amplification + the forward-sim squares are proved. -/
 
 #assert_axioms introduceStep_factors
 #assert_axioms introduce_conserves
@@ -726,7 +726,7 @@ def as0 : RecChainedState :=
 example : IsNonAmplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])
     (attenuate [Auth.read] (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])) :=
   introduce_non_amplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write]) [Auth.read]
--- ...and an AMPLIFYING grant is genuinely REJECTED: a `node 9` cap confers `[control]`, which the
+-- ...and an AMPLIFYING grant is REJECTED: a `node 9` cap confers `[control]`, which the
 -- held `endpoint 9 [read, write]` cap does NOT confer — so it FAILS the non-amplification predicate.
 example : ¬ IsNonAmplifying (Dregg2.Authority.Cap.endpoint 9 [Auth.read, Auth.write])
     (Dregg2.Authority.Cap.node 9) :=

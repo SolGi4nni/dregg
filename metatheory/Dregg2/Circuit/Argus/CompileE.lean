@@ -3,7 +3,7 @@
 
 `CompileFold.lean` proved the D2 UNLOCK: the circuit reading is a genuine fold (`compileFold =
 foldStmt compileAlgebra`), so executor⟺circuit agreement on ALL terms rides initiality
-(`interp_compile_agree_of_generators`). But its §Coda recorded the ONE honest residual (the §M
+(`interp_compile_agree_of_generators`). But its §Coda recorded the ONE residual (the §M
 opaque-leaf finding): `compileAlgebra`'s LEAF descriptors all come out `skipDescriptor`, because a
 fold over `RecStmt` sees only each constructor's OPAQUE closure (`leaf : RecordKernelState → CellId
 → Value`) and CANNOT recover the concrete per-effect gate polynomials of
@@ -35,7 +35,7 @@ The collapse is then GENUINELY rich: any two readings that are folds of the SAME
 agree on every annotated term, and the leaf agreement they collapse to is on `transferVmDescriptor`
 vs `mintVmDescriptor` vs … — NOT all `skipDescriptor`. The §Coda residual is closed, not papered.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` clean (the standard three kernel axioms only); no `sorry`, no `:= True`, no
 `native_decide`. This file owns ONLY its own declarations; it imports the descriptor layer + the
@@ -111,7 +111,7 @@ theorem foldStmtE_isHom {α : Type} (alg : StmtEAlgebra α) : IsFoldEHom alg (fo
 
 #assert_axioms foldStmtE_isHom
 
-/-- **`foldStmtE_unique` — UNIQUENESS OF THE ANNOTATED FOLD (initiality, PROVED).** Any `Σ`-algebra
+/-- **`foldStmtE_unique` — UNIQUENESS OF THE ANNOTATED FOLD (initiality).** Any `Σ`-algebra
 homomorphism `f` for `alg` EQUALS the canonical fold `foldStmtE alg` on EVERY annotated term. ONE
 induction; every downstream agreement is a corollary with no further induction. -/
 theorem foldStmtE_unique {α : Type} (alg : StmtEAlgebra α) (f : RecStmtE → α)
@@ -132,9 +132,9 @@ descriptors (next section), so the agreement it collapses to is on rich leaves (
 not all-`skip`. -/
 
 /-- **`compileE_agree_by_initiality` — TWO folds of the same annotated algebra AGREE on every term
-(PROVED).** The N²→1 collapse for the EFFECT-ANNOTATED IR: agreement on ALL annotated terms follows
+.** The N²→1 collapse for the EFFECT-ANNOTATED IR: agreement on ALL annotated terms follows
 from each being a `Σ`-algebra homomorphism, by uniqueness — not from any per-effect differential.
-With the rich `compileEAlgebra` (`§5`) this collapse genuinely covers the per-effect content. -/
+With the rich `compileEAlgebra` (`§5`) this collapse covers the per-effect content. -/
 theorem compileE_agree_by_initiality {α : Type} (alg : StmtEAlgebra α) (f g : RecStmtE → α)
     (hf : IsFoldEHom alg f) (hg : IsFoldEHom alg g) : f = g := by
   rw [foldStmtE_unique alg f hf, foldStmtE_unique alg g hg]
@@ -173,7 +173,7 @@ homomorphism `RecStmtE → EffectVmDescriptor` induced by `compileEAlgebra`. Its
 genuine per-effect descriptors; it rides initiality. -/
 def compileEFold : RecStmtE → EffectVmDescriptor := foldStmtE compileEAlgebra
 
-/-- **`compileEFold` IS a `Σ`-algebra homomorphism (PROVED).** -/
+/-- **`compileEFold` IS a `Σ`-algebra homomorphism.** -/
 theorem compileEFold_isHom : IsFoldEHom compileEAlgebra compileEFold :=
   foldStmtE_isHom compileEAlgebra
 
@@ -184,7 +184,7 @@ theorem compileEFold_isHom : IsFoldEHom compileEAlgebra compileEFold :=
 theorem compileEFold_seqE (s t : RecStmtE) :
     compileEFold (.seqE s t) = seqDescr (compileEFold s) (compileEFold t) := rfl
 
-/-- **`compileEFold_collapse` — the collapse, DISCHARGED (PROVED).** Any annotated circuit reading
+/-- **`compileEFold_collapse` — the collapse, DISCHARGED.** Any annotated circuit reading
 `comp` that is a `Σ`-algebra homomorphism of `compileEAlgebra` EQUALS `compileEFold` on EVERY
 annotated term — so two such readings agree everywhere by initiality, and the leaves they agree on
 are the GENUINE per-effect descriptors. -/
@@ -224,7 +224,7 @@ theorem compileEFold_leaf_other :
 #assert_axioms compileEFold_leaf_mint
 #assert_axioms compileEFold_leaf_burn
 
-/-- **`compileEFold_leaves_rich` — the leaves are NO LONGER ALL-SKIP (PROVED).** The transfer / mint
+/-- **`compileEFold_leaves_rich` — the leaves are NOT ALL-SKIP.** The transfer / mint
 / burn leaves carry 36 / 34 / 35 constraints respectively (none zero), so each DIFFERS from the
 empty `skipDescriptor`. This is the closure of the §Coda residual: the annotated fold's leaves are
 GENUINE per-effect circuits, not the opaque-closure `skipDescriptor`. -/
@@ -251,7 +251,7 @@ theorem compileEFold_leaves_rich :
 
 #assert_axioms compileEFold_leaves_rich
 
-/-- **`compileEFold_leaves_distinct` — transfer ≠ mint ≠ burn AS CIRCUITS (PROVED).** The three
+/-- **`compileEFold_leaves_distinct` — transfer ≠ mint ≠ burn AS CIRCUITS.** The three
 same-shaped supply/transfer effects (which a `RecStmt` fold provably could NOT separate —
 `Compile.compile_collapses_mint_burn_to_transfer`) now compile to THREE distinct descriptors on the
 annotated fold (36 vs 34 vs 35 constraints). This is the recovery the annotation buys: the tag
@@ -289,14 +289,14 @@ carry real, distinct content. -/
 /-- The transfer-then-mint compound, as an annotated term. -/
 def transferThenMint : RecStmtE := .seqE (.leaf .transfer) (.leaf .mint)
 
-/-- **`compileEFold_transferThenMint` — the forced compound value (PROVED).** `compileEFold` of the
+/-- **`compileEFold_transferThenMint` — the forced compound value.** `compileEFold` of the
 transfer-then-mint term is `seqDescr transferVmDescriptor mintVmDescriptor` — the conjunction of the
 two DISTINCT sub-circuits on the shared row window. -/
 theorem compileEFold_transferThenMint :
     compileEFold transferThenMint = seqDescr transferVmDescriptor mintVmDescriptor := rfl
 
 /-- **`compileEFold_collapse_constrains_rich` — the collapse is NON-VACUOUS ON RICH CONTENT
-(PROVED).** Any hom `comp` of `compileEAlgebra` is FORCED, on the compound transfer-then-mint term,
+.** Any hom `comp` of `compileEAlgebra` is FORCED, on the compound transfer-then-mint term,
 to equal `compileEFold` there — and that value is the genuine `seqDescr` of two DISTINCT effect
 descriptors (`transferVmDescriptor`, `mintVmDescriptor`). So uniqueness bites on a non-atomic term
 whose leaves are NOT skip and NOT equal — the corrected compositional reading that ALSO carries the
@@ -308,7 +308,7 @@ theorem compileEFold_collapse_constrains_rich (comp : RecStmtE → EffectVmDescr
 
 #assert_axioms compileEFold_collapse_constrains_rich
 
-/-- **`transferThenMint_nontrivial` — the forced compound is a REAL conjunction (PROVED).** The
+/-- **`transferThenMint_nontrivial` — the forced compound is a REAL conjunction.** The
 transfer-then-mint descriptor carries 36 + 34 = 70 constraints (the two leaves' gate sets,
 conjoined via `seqDescr`'s append) — strictly more than EITHER leaf alone and far from the empty
 `skipDescriptor`. So the non-vacuity witness pins genuine, distinct per-effect content, closing the
@@ -347,7 +347,7 @@ theorem transferThenMint_nontrivial :
   * **Non-vacuous on rich content**: the collapse FORCES the transfer-then-mint compound to
     `seqDescr transferVmDescriptor mintVmDescriptor` (`compileEFold_collapse_constrains_rich`), a
     genuine conjunction of TWO DISTINCT effect descriptors (70 constraints,
-    `transferThenMint_nontrivial`) — leaves no longer all-skip, the corrected compositional reading
+    `transferThenMint_nontrivial`) — the compositional reading
     carrying the real per-effect circuit.
 -/
 

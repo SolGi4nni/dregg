@@ -95,7 +95,7 @@ theorem replayFrom_conserves :
 
 From a checkpoint we restore the cell and drive it down two different admissible turn-suffixes. Both
 continuations are valid (step-complete by `cexec_attests`), both conserve the snapshot's badge, and
-they genuinely diverge while sharing the restored prefix. Time-travel + branch as a theorem. -/
+they diverge while sharing the restored prefix. Time-travel + branch as a theorem. -/
 
 /-- **`fork_branches_from_shared_snapshot`** — restoring a checkpoint and running two turn-suffixes
 both depart from the same re-seeded prefix: the two branches are forks of one cell. -/
@@ -132,7 +132,7 @@ theorem time_travel_fork_agree_obs {s a b : ChainedState} {ts₁ ts₂ : List Tu
 
 /-- **`time_travel_fork_sound`** — each forked continuation is bisimilar to the conservation oracle
 from its reached state (`Cell.livingCell_sound` holds at both `a` and `b`). Time-travel-and-branch
-produces two genuinely sound cells. -/
+produces two sound cells. -/
 theorem time_travel_fork_sound {s a b : ChainedState} {ts₁ ts₂ : List Turn}
     (_ha : replayFrom (restore (checkpoint s)) ts₁ = some a)
     (_hb : replayFrom (restore (checkpoint s)) ts₂ = some b) :
@@ -224,7 +224,7 @@ example : replayFrom (restore (checkpoint cell0)) [turn0] = replayFrom cell0 [tu
 #guard ((replayFrom (restore (checkpoint cell0)) [turn0]).map cellObs) == some 105  --  some 105
 #guard ((replayFrom (restore (checkpoint cell0)) ([] : List Turn)).map cellObs) == some 105  --  some 105 (badge agrees)
 
-/-- The fork genuinely DIVERGES on state (the two branches differ) while AGREEING on the badge — the
+/-- The fork DIVERGES on state (the two branches differ) while AGREEING on the badge — the
 non-vacuity witness for `time_travel_fork`: it is not the trivial case where both suffixes coincide. -/
 example :
     (replayFrom (restore (checkpoint cell0)) [turn0]).map (fun s => s.log.length)

@@ -31,7 +31,7 @@ row. NO balance move, NO cap edit, and — critically — NO edit of the `k.life
 INDEPENDENT declarative full-state spec EXACTLY (both directions), enumerating ALL 17 kernel fields +
 the `log` so no ghost field can be silently mutated.
 
-## A subtlety re `receiptArchiveA` (recorded honestly, NOT a gap)
+## A subtlety re `receiptArchiveA` (recorded, NOT a gap)
 
 `receiptArchiveA` writes the `"lifecycle"` RECORD FIELD — i.e. it sets slot `"lifecycle"` inside the
 `cell` MAP's record at index `cell`. This is a DIFFERENT object from `RecordKernelState.lifecycle`,
@@ -110,7 +110,7 @@ theorem auditCellMap_eq_writeField (k : RecordKernelState) (cell : CellId) (f : 
 `recTransfer_correct` analog). An audit write to a slot `f` DISTINCT from `balance` (a) sets `cell`'s
 slot `f` to exactly `1`, (b) leaves `cell`'s conserved `balance` field untouched (the regime's
 balance-Δ=0 obligation, via the non-interference of a distinct slot), and (c) leaves every OTHER
-cell's whole record untouched. So the spec's `cell`-clause genuinely encodes write ∧ balance-frame ∧
+cell's whole record untouched. So the spec's `cell`-clause encodes write ∧ balance-frame ∧
 cell-frame, rather than blindly trusting the helper. -/
 theorem auditCellWrite_correct (k : RecordKernelState) (cell : CellId) (f : FieldName)
     (hf : f ≠ balanceField) :
@@ -322,14 +322,14 @@ theorem receiptArchiveA_admits_guard {s s' : RecChainedState} {actor cell : Cell
     auditGuard s actor cell :=
   ((execFullA_receiptArchiveA_iff_spec s actor cell s').mp h).1
 
-/-! ## §7 — NON-VACUITY: the guard genuinely REJECTS bad inputs (fail-closed teeth).
+/-! ## §7 — NON-VACUITY: the guard REJECTS bad inputs (fail-closed teeth).
 
 A spec the executor meets vacuously (the arm accepts everything) is worthless. These exhibit each
 arm as a genuine gate: an unauthorized actor, a non-account `cell`, and a non-Live cell each make the
 arm FAIL CLOSED (`= none`), so no spec post-state exists. Both variants share the gate, so we prove
 the rejections for `refusalA` and lift `receiptArchiveA` via the same `stateStep` `if_neg`. -/
 
-/-- **`refusalA_rejects_unauthorized` — PROVED.** If the actor does NOT hold authority over `cell`
+/-- **`refusalA_rejects_unauthorized`.** If the actor does NOT hold authority over `cell`
 (`stateAuthB = false`, the cross-cell SetState refusal authority leg failing), the arm fails closed. -/
 theorem refusalA_rejects_unauthorized (s : RecChainedState) (actor cell : CellId)
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
@@ -340,7 +340,7 @@ theorem refusalA_rejects_unauthorized (s : RecChainedState) (actor cell : CellId
   rintro ⟨hauth, _, _⟩
   rw [hbad] at hauth; exact absurd hauth (by simp)
 
-/-- **`refusalA_rejects_nonaccount` — PROVED.** If `cell` is not a live account, the arm fails closed. -/
+/-- **`refusalA_rejects_nonaccount`.** If `cell` is not a live account, the arm fails closed. -/
 theorem refusalA_rejects_nonaccount (s : RecChainedState) (actor cell : CellId)
     (hbad : cell ∉ s.kernel.accounts) :
     execFullA s (.refusalA actor cell) = none := by
@@ -349,7 +349,7 @@ theorem refusalA_rejects_nonaccount (s : RecChainedState) (actor cell : CellId)
   rw [if_neg]
   rintro ⟨_, hmem, _⟩; exact hbad hmem
 
-/-- **`refusalA_rejects_nonlive` — PROVED.** If `cell`'s lifecycle does NOT admit effects
+/-- **`refusalA_rejects_nonlive`.** If `cell`'s lifecycle does NOT admit effects
 (sealed/destroyed — the R6 gate), the arm fails closed: a refusal commitment cannot be stamped into a
 dead cell. -/
 theorem refusalA_rejects_nonlive (s : RecChainedState) (actor cell : CellId)
@@ -361,7 +361,7 @@ theorem refusalA_rejects_nonlive (s : RecChainedState) (actor cell : CellId)
   rintro ⟨_, _, hlive⟩
   rw [hbad] at hlive; exact absurd hlive (by simp)
 
-/-- **`receiptArchiveA_rejects_unauthorized` — PROVED.** -/
+/-- **`receiptArchiveA_rejects_unauthorized`.** -/
 theorem receiptArchiveA_rejects_unauthorized (s : RecChainedState) (actor cell : CellId)
     (hbad : stateAuthB s.kernel.caps actor cell = false) :
     execFullA s (.receiptArchiveA actor cell) = none := by
@@ -371,7 +371,7 @@ theorem receiptArchiveA_rejects_unauthorized (s : RecChainedState) (actor cell :
   rintro ⟨hauth, _, _⟩
   rw [hbad] at hauth; exact absurd hauth (by simp)
 
-/-- **`receiptArchiveA_rejects_nonlive` — PROVED.** A receipt-archive commitment cannot be stamped
+/-- **`receiptArchiveA_rejects_nonlive`.** A receipt-archive commitment cannot be stamped
 into a sealed/destroyed cell. -/
 theorem receiptArchiveA_rejects_nonlive (s : RecChainedState) (actor cell : CellId)
     (hbad : cellLive s.kernel cell = false) :

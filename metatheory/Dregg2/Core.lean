@@ -186,7 +186,7 @@ theorem burn_delta
   rw [h, cons.burn_pure, add_zero] at hs
   exact hs
 
-/-- **General no-clone (the linearity core), abstraction-level — PROVED, kernel-clean.**
+/-- **General no-clone (the linearity core), abstraction-level.**
 
 The pure-algebra heart of "no free copy", stated over an *arbitrary* object type `Obj`
 with ANY monoid-valued measure `count`, ANY `tensor`, the additivity law
@@ -210,7 +210,7 @@ theorem noClone_of_invariant_tensor {M : Type u} [AddCommMonoid M] [IsCancelAdd 
   rw [tensor_add A A] at hinv
   exact left_eq_add.mp hinv
 
-/-- **No free copy (the linearity / "withholding" law) — PROVED.** A comonoid copy map
+/-- **No free copy (the linearity / "withholding" law).** A comonoid copy map
 `Δ : A ⟶ A ⊗ A` that is *conservation-respecting* (an `ordinary` turn — one that neither
 mints nor burns) would force `count A = count A + count A` (by `conservation_ordinary` into
 `tensor A A`, then `tensor_add`). In a **cancellative** commutative monoid that equation

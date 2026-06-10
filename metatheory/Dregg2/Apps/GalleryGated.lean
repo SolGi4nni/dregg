@@ -114,7 +114,7 @@ def setMetadataNode (cred : Authorization Dg Pf) (newMeta : Int) : DForest :=
 
 /-! ## §3 — The leaf-collapse bridge: a childless gated forest runs EXACTLY its single gated node. -/
 
-/-- **`execFullForestG_leaf` — PROVED (the load-bearing collapse).** A gated forest with NO children
+/-- **`execFullForestG_leaf` (the load-bearing collapse).** A gated forest with NO children
 runs EXACTLY its root gated node step: `execFullForestG s ⟨na, a, []⟩ = execFullAGated s na a`. (Both
 branches of `execFullForestG`'s match collapse because `execFullChildrenG _ s' [] = some s'`.) This is
 the bridge through which every gallery op's `none`/`some` is read off `execFullAGated` directly. -/
@@ -157,7 +157,7 @@ theorem gateOK_forged_false (s : RecChainedState) : gateOK (mkAuth forgedCred []
 
 /-! ## §5 — END-USER THEOREM 1: a FORGED credential ⇒ the whole gated turn REJECTS. -/
 
-/-- **`gallery_forged_rejected` — PROVED (END-USER THEOREM 1).** A gallery op (any slot/value) presented
+/-- **`gallery_forged_rejected` (END-USER THEOREM 1).** A gallery op (any slot/value) presented
 with a FORGED credential is rejected by the production turn entry: `execFullForestG s (galNode forgedCred
 …) = none`, for EVERY pre-state `s`. The §8 credential leg fail-closes ⇒ the whole forest rolls back —
 nobody can mint/transfer/edit a gallery artwork without a genuine credential. -/
@@ -178,7 +178,7 @@ The gate's REVOCATION leg reads the COMMITTED revocation registry `s.kernel.revo
 adversary-uncontrollable). If the node's nullifier `na.credNul` sits there, `gateOK = false` and the
 whole forest rolls back — single-machine ⇒ immediate revocation. -/
 
-/-- **`gallery_revoked_rejected` — PROVED (END-USER THEOREM 2).** A gallery op whose credential nullifier
+/-- **`gallery_revoked_rejected` (END-USER THEOREM 2).** A gallery op whose credential nullifier
 is in the committed revocation registry (`s.kernel.revoked.contains (mkAuth cred []).credNul = true`) is
 rejected: `execFullForestG s (galNode cred slot value) = none`, for EVERY pre-state and ANY op. A revoked
 artist (or stolen key) can mint/transfer NOTHING, no matter how valid the signature. -/
@@ -207,7 +207,7 @@ theorem gallery_good_node_runs_write (s : RecChainedState) (slot : FieldName) (v
       = stateStepGuarded s slot galleryActor artworkCell value := by
   rw [execFullForestG_galNode, if_pos hgate]
 
-/-- **`gallery_item_immutable` — PROVED (END-USER THEOREM 3).** If the artwork's `item` slot already
+/-- **`gallery_item_immutable` (END-USER THEOREM 3).** If the artwork's `item` slot already
 holds a DIFFERENT non-zero binding (the artwork id is taken: `WriteOnce`, `old ≠ 0`, `value ≠ old`),
 then a re-mint over it is rejected by the executor — `execFullForestG s (mintNode goodCred value) = none`
 — EVEN with a genuine credential. No one can re-mint over a registered artwork id (`AlreadyRegistered`).
@@ -233,7 +233,7 @@ theorem galNode_delta_zero (cred : Authorization Dg Pf) (slot : FieldName) (valu
     turnLedgerDeltaAsset ((lowerForestG (galNode cred slot value)).map Prod.snd) b = 0 := by
   simp [galNode, lowerForestG, lowerChildrenG, turnLedgerDeltaAsset, ledgerDeltaAsset]
 
-/-- **`gallery_conserves` — PROVED (END-USER THEOREM 4).** A COMMITTED gallery turn preserves EVERY
+/-- **`gallery_conserves` (END-USER THEOREM 4).** A COMMITTED gallery turn preserves EVERY
 asset's total supply: `recTotalAsset s'.kernel b = recTotalAsset s.kernel b`, for
 every asset `b`. The artwork write touches metadata, never balance — so a mint/transfer/edit moves no
 money. A one-liner off `execFullForestG_conserves_per_asset` with the `SetField`-is-balance-neutral

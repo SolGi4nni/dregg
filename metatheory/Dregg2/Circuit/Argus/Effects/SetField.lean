@@ -25,7 +25,7 @@ chain `log`, and leaves EVERYTHING ELSE literally unchanged.
 
 ## THE IR ENCODING — a SINGLE-CELL field write, gated by the four-conjunct kernel guard.
 
-CRUCIAL observation that makes this an honest weld (not a fake): EVERY conjunct of the `stateStepGuarded`
+CRUCIAL observation that makes this an weld (not a fake): EVERY conjunct of the `stateStepGuarded`
 guard reads ONLY `RecordKernelState` — `caveatsAdmit k …`, `stateAuthB k.caps …`, `cell ∈ k.accounts`,
 `cellLive k …`. And `writeField k f cell (.int v)` is a PURE `RecordKernelState → RecordKernelState`
 single-cell map. So the kernel-state transition of `setFieldA` is exactly a `guard`-then-`setCell`
@@ -37,7 +37,7 @@ The receipt-LOG append is NOT a `RecordKernelState` field (it lives in the CHAIN
 = ⟨kernel, log⟩`), so the IR term — which transforms `RecordKernelState` — captures the KERNEL transition
 exactly; the log prepend is the chained layer's extra row. This is the honest KERNEL-vs-CHAINED divergence,
 carried EXPLICITLY (the §3 lift produces `{ kernel := k', log := <receipt> :: s.log }`, the log row named
-in full — NOT papered), the same shape BalanceA's §3 dst-liveness side-condition has.
+in full), the same shape BalanceA's §3 dst-liveness side-condition has.
 
 ## THE COMPILE WELD — the FULL-STATE `setfield_circuit_full_sound` (the STRONGER surface, preferred).
 
@@ -318,7 +318,7 @@ theorem setField_compile_sound
 
 #assert_axioms setField_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely WRITES the slot (the write is observable), the slot READS
+/-! ## §5 — NON-VACUITY: the IR term WRITES the slot (the write is observable), the slot READS
 BACK the written value, the OTHER fields/cells are FROZEN, and the four-conjunct gate REJECTS forged inputs
 (fail-closed, each leg).
 

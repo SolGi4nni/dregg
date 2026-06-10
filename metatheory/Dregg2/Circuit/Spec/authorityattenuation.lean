@@ -25,7 +25,7 @@ lifecycle deathCert delegate delegations sealedBoxes` — so the FRAME enumerate
 kernel fields plus the kernel↔kernel `caps` rewrite, plus the `log` head-cons. NO frame clause names
 the executor (`execFullA`/`recCDelegateAtten`/`attenuateStepA`/`recKDelegateAtten`); the post-`caps`
 clauses use only the PURE cap helpers (`grant`/`attenuate`/`heldCapTo`/`attenuateSlotF`), so the spec
-is genuinely independent of the executor it validates.
+is independent of the executor it validates.
 
 The `→` direction of each `…_iff_spec` VALIDATES the executor against the independent spec: all 17
 kernel fields + the log are checked, so had the arm silently mutated `bal`/`nullifiers`/`revoked`/…
@@ -64,7 +64,7 @@ analog). On commit, `delegateAttenA` rewrites the cap table to `grant caps rec (
   (b) the attenuated cap's REAL conferred rights are `⊆` the held cap's (genuine non-amplification,
       `is_attenuation(held, granted)`, NOT a `()≤()` collapse);
   (c) every OTHER holder's slot is LITERALLY untouched.
-So the spec's `s'.kernel.caps = grant …` clause genuinely encodes grant ∧ attenuation ∧ slot-frame,
+So the spec's `s'.kernel.caps = grant …` clause encodes grant ∧ attenuation ∧ slot-frame,
 rather than blindly trusting the helper. -/
 theorem delegateAttenCaps_correct (caps : Caps) (del rec t : CellId) (keep : List Auth) :
     (attenuate keep (heldCapTo caps del t)
@@ -210,7 +210,7 @@ The whole point of the attenuation family is that authority only SHRINKS-or-stay
 extract that from the executor⟺spec equivalence (so they hold of the REAL committed step). -/
 
 /-- **`delegateAtten_spec_non_amplifying`** — from a committed `delegateAttenA`, the recipient gains a
-cap that (a) is genuinely IN its post-state slot and (b) whose REAL conferred rights are `⊆` the
+cap that (a) is IN its post-state slot and (b) whose REAL conferred rights are `⊆` the
 delegator's held cap (genuine `is_attenuation`). Read off the spec's `caps` clause (which the
 committed step pins via `delegateAtten_iff_spec`) + `delegateAttenCaps_correct`. -/
 theorem delegateAtten_spec_non_amplifying (s : RecChainedState) (del rec t : CellId)
@@ -251,7 +251,7 @@ fails) makes `execFullA` return `none` — the forged/unauthorized delegation ca
 the soundness content (matching `Transfer.lean`'s `rejects_unauthorized`): the spec is worthless if
 it accepted bad inputs. -/
 
-/-- **`delegateAtten_rejects_ungrounded` — PROVED.** A `delegateAttenA` over a pre-state where the
+/-- **`delegateAtten_rejects_ungrounded`.** A `delegateAttenA` over a pre-state where the
 delegator `del` holds NO cap conferring an edge to `t` (`¬ DelegateAttenGuard`) is REJECTED by the
 executor (`= none`): no `s'` is produced. An ungrounded ("only connectivity begets connectivity"
 premise violated) delegation cannot commit. -/

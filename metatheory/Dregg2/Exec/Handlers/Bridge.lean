@@ -104,7 +104,7 @@ build — so these pins certify that bridge lock/finalize/cancel/pipelined-send 
 
 #assert_axioms pipelinedSendA
 
-/-! ## §DEFER — honest scope of this batch.
+/-! ## §DEFER — scope of this batch.
 
 F1b: the §8 confirmation-receipt portal, the bridge TIMEOUT gate, and the relayer-finalize path all
 moved WITH the lock/finalize/cancel semantics into the bridge-cell contract (`Apps/BridgeCell.lean`);

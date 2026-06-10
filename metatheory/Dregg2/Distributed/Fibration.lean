@@ -33,7 +33,7 @@ reindexing of the guarantee. (We adopt the framing; we do not re-derive the 16-m
 1. **Revocation** — the FIRST concrete instance, reused verbatim from `Revocation.lean`:
    `eventual_bounded_revocation` is the fibre over a *distributed* base point (window `= delay`);
    `immediate_revocation` (n=1 / instantaneous) is the **terminal-fibre collapse** (window `= 0`);
-   `tightness_tooth` is the **negative tooth** (the window is genuinely non-empty distributed).
+   `tightness_tooth` is the **negative tooth** (the window is non-empty distributed).
 2. **Conservation** — the terminal fibre is `Exec.Unified.unified_ledger_conserves` (n=1 ledger
    exactly conserves: window `0`). Its *distributed* bound — by how much a partition can transiently
    skew the visible total before reconciliation — is **not yet derived in Lean**, so it is carried as
@@ -45,7 +45,7 @@ reindexing of the guarantee. (We adopt the framing; we do not re-derive the 16-m
 
 The honesty discipline: a fibre whose distributed bound is not yet a theorem is a **named open**, not
 a vacuity. The `lift` functor is real precisely because (a) it has a non-vacuity witness (a deployment
-where the bound is positive) AND (b) a negative tooth (a deployment where the guarantee genuinely
+where the bound is positive) AND (b) a negative tooth (a deployment where the guarantee
 weakens — the same `tightness_tooth` instance, re-read as "the fibre over this base point is strictly
 weaker than the terminal fibre").
 
@@ -239,7 +239,7 @@ theorem lift_from_apex {P : B → Time → Prop} (F : Fibre P) (src dst : B) (hs
   exact F.holdsAfter dst t ht
 
 /-- **`lift_monotone_into_apex`** — reindexing INTO an apex point recovers the terminal fibre: the
-lifted window is `0`. Composed with `lift_from_apex` this says the apex is genuinely terminal (every
+lifted window is `0`. Composed with `lift_from_apex` this says the apex is terminal (every
 lift into it lands at window `0`). -/
 theorem lift_monotone_into_apex {P : B → Time → Prop} (F : Fibre P) (dst : B) (hdst : IsApex dst) :
     liftedBound F dst = 0 :=
@@ -295,7 +295,7 @@ than the terminal fibre (where it would be `0` and unhonored). This is `tightnes
 through the fibration lens. -/
 
 /-- The distributed base point built on `Revocation.toothTopology` (two nodes, cross-delay `5`),
-dregg's real fault model, computational crypto — a genuinely non-apex deployment. -/
+dregg's real fault model, computational crypto — a non-apex deployment. -/
 def distBase : B :=
   { topo := toothTopology, fault := FaultModel.dregg, crypto := CryptoStrength.computational }
 
@@ -307,8 +307,8 @@ theorem distBase_not_apex : ¬ IsApex distBase := by
 
 /-- **THE NEGATIVE TOOTH (fibration is a real constraint).** Over the distributed base point
 `distBase`, the revocation fibre's window is strictly positive (`= 5 > 0`) AND the credential — though
-genuinely revoked — is STILL HONORED at an elapsed time inside the window. So the fibre over
-`distBase` is strictly weaker than the terminal fibre: the guarantee genuinely degrades off the apex.
+revoked — is STILL HONORED at an elapsed time inside the window. So the fibre over
+`distBase` is strictly weaker than the terminal fibre: the guarantee degrades off the apex.
 Reuses `tightness_tooth` (`honors … 1 4 … = true`, with `t = τ + elapsed = 0 + 4`). -/
 theorem fibre_weakens_offApex :
     -- (a) the fibre's window at the distributed point is strictly positive
@@ -332,7 +332,7 @@ theorem fibre_weakens_offApex :
 `lift` is not a trivial identity: there is a deployment where the window is positive (Tooth, §6) AND a
 deployment (apex) where it collapses to `0` with the property holding everywhere. Together they show
 `lift` *moves* the bound — both a witness where the guarantee is strong (apex, window `0`) and one
-where it is genuinely weaker (distributed, window `5`, honored inside). -/
+where it is weaker (distributed, window `5`, honored inside). -/
 
 /-- An apex instance: the single-node instantaneous topology `Revocation.toothTopologyInstant` gives an
 apex base point where the revocation fibre's window is `0` and the credential is unhonored at every
@@ -343,7 +343,7 @@ def apexBase : B :=
 theorem apexBase_isApex : IsApex apexBase :=
   ⟨fun _ _ => rfl, rfl, rfl⟩
 
-/-- **NON-VACUITY, assembled.** `lift` genuinely transports the bound:
+/-- **NON-VACUITY, assembled.** `lift` transports the bound:
 * over `apexBase` (terminal) the window is `0` and the cred is unhonored at every elapsed time;
 * over `distBase` (distributed) the window is `5 > 0` and the cred is *honored* inside it.
 So the revocation fibre is a real section that *weakens* off the apex — the fibration discriminates

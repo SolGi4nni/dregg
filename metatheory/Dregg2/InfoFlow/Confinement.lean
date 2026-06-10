@@ -35,7 +35,7 @@ re-abstraction.
   confined actor's committed turn cannot LOWER an attacker cell's balance below where a pure credit
   would leave it — restated cleanly: it cannot debit, so the attacker's own cells are never the `src`.
 
-## What is OPEN / a real COVERT CHANNEL (characterized honestly, with a refutation witness)
+## What is OPEN / a real COVERT CHANNEL (characterized, with a refutation witness)
 
 * **§5 THE \*-PROPERTY LEAK** (`confined_can_credit_attacker`, `full_noninterference_fails`): full
   noninterference is **FALSE** for this cap model, and we PROVE it false with an explicit witness. The
@@ -128,7 +128,7 @@ theorem transferBal_off_view (bal : CellId → ℤ) (src dst : CellId) (amt : �
   have hcd : c ≠ dst := fun h => hdst (h ▸ hc)
   rw [if_neg hcs, if_neg hcd]
 
-/-! ## §3 — THE FRAME LAW (PROVED): an off-view turn is invisible to the attacker.
+/-! ## §3 — THE FRAME LAW: an off-view turn is invisible to the attacker.
 
 If a committed turn touches neither attacker cell (`src ∉ A`, `dst ∉ A`), the attacker view is
 unchanged. The honest "if you don't touch it, the observer can't tell" half of confinement. -/
@@ -162,7 +162,7 @@ theorem view_frame_inhabited :
   obtain ⟨k', hk'⟩ := Option.isSome_iff_exists.mp (by decide : (exec s0 t1).isSome)
   exact ⟨s0, k', t1, {2}, by decide, by decide, hk', view_frame {2} (by decide) (by decide) hk'⟩
 
-/-! ## §4 — THE CAP TOOTH (PROVED): a confined cell cannot DEBIT an attacker cell.
+/-! ## §4 — THE CAP TOOTH: a confined cell cannot DEBIT an attacker cell.
 
 We define **confinement** in cap terms: an actor is confined w.r.t. the attacker frontier `A` if it
 owns no attacker cell *and* holds no capability (`node a` or `endpoint a` carrying `write`) reaching
@@ -268,7 +268,7 @@ which it is authorized over by ownership). `src = 0 ∉ A`, but `dst = 1 ∈ A`.
 def depositTurn : Turn := { actor := 0, src := 0, dst := 1, amt := 30 }
 
 /-- **Cell `0` IS confined away from the attacker frontier `{1}`** (empty caps ⇒ no reaching cap; and
-`0 ∉ {1}`). The hypothesis of §4 is genuinely met by this actor. -/
+`0 ∉ {1}`). The hypothesis of §4 is met by this actor. -/
 theorem confinedActor_confined : Confined attackerFrontier kBase.caps confinedActor := by
   refine ⟨by decide, ?_⟩
   intro a ha hreach
@@ -315,7 +315,7 @@ theorem full_noninterference_fails :
     ∃ k', exec kBase depositTurn = some k' ∧ ¬ viewEq attackerFrontier kBase k' :=
   ⟨confinedActor_confined, confined_can_credit_attacker⟩
 
-/-! ## §6 — THE TURN-EXISTENCE / REFUSAL SIDE CHANNEL (characterized honestly).
+/-! ## §6 — THE TURN-EXISTENCE / REFUSAL SIDE CHANNEL (characterized).
 
 Even a state-indistinguishability relation like `viewEq` cannot see *whether* a turn commits. The
 kernel's `exec` returns `none` (refusal) or `some` (commit), and the refusal can branch on the confined

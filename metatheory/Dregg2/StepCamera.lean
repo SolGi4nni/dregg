@@ -273,7 +273,7 @@ theorem discrete_camera_of_RA (R : Type u)
 
 /-! ## The higher-order obligation that forces step-indexing -/
 
-/-- **`Later n` agreement is congruent under `Eqv n` (the guard lemma) — PROVED.** If
+/-- **`Later n` agreement is congruent under `Eqv n` (the guard lemma).** If
 `x ≡{n}≡ y`, then `x` and `y` are `▶`-related to the *same* points: `Later n x z ↔ Later n y z`.
 At `n + 1` this is `Eqv n x z ↔ Eqv n y z`, which follows from `Eqv (n+1) x y` by
 `eqv_mono` (down to depth `n`) + symmetry/transitivity. This is the engine that makes a
@@ -294,7 +294,7 @@ of the *same* algebra (a cap whose validity asserts another cell maintains an in
 `Q : R → Prop`). The law: for such a validity `v` to be **non-expansive** (hence to live in a
 camera and admit a guarded fixpoint), it suffices that the inner quantification be `▶`-GUARDED
 — `v x ↔ ∀ y, Later n x y → Q y`. Under that guard, `v` is non-expansive at *every* depth `n`,
-INCLUDING the contractive successor depths `n + 1` where the guard genuinely decrements
+INCLUDING the contractive successor depths `n + 1` where the guard decrements
 (`Later (n+1) = Eqv n`) and the observer compares futures at depth `n`, not the degenerate
 `Later 0 = True`.
 

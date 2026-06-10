@@ -7,7 +7,7 @@
   > --   Reason: cross-vat reference cycles cannot be decided dead by one vat (CellLiveness's
   > --   death_is_timed_out / cross-vat-cycle impossibility); needs a cross-vat lease model.
 
-This module supplies that cross-vat lease model and closes the OPEN *honestly* — NOT by
+This module supplies that cross-vat lease model and closes the OPEN — NOT by
 faking a "decide dead across vats" theorem (that decision is **impossible**, and
 `Liveness.dead_undecidable` PROVES it), but by REALIZING the only sound resolution the design
 and `Liveness` already endorse: **lease-based reclaim**. An exported cap's local import
@@ -84,7 +84,7 @@ def renew {CellId Rights : Type*} (lh : LeasedHandle CellId Rights) (now maxIdle
 
 /-! ## §2 — The two reclaim laws: expired ⇒ reclaimable, renewed ⇒ NOT reclaimed. -/
 
-/-- **`captp_gc_by_lease` (PROVED) — an expired-lease import handle is reclaimable.**
+/-- **`captp_gc_by_lease` — an expired-lease import handle is reclaimable.**
 If the handle's lease has lapsed at `now` (`leaseExpired lh.lease now = true` — the
 `stale_exports` idle window has elapsed), then the handle IS `Reclaimable`. This is the sound
 distributed-GC trigger that CLOSES the `Exec.CapTP` §4 OPEN: reclamation is driven by lease
@@ -97,7 +97,7 @@ theorem captp_gc_by_lease {CellId Rights : Type*}
     Reclaimable lh now = true :=
   hexp
 
-/-- **`captp_no_premature_reclaim` (PROVED) — a current-lease handle is NOT reclaimed.**
+/-- **`captp_no_premature_reclaim` — a current-lease handle is NOT reclaimed.**
 Fail-closed safety: if the handle's lease has NOT yet lapsed at `now`
 (`leaseExpired lh.lease now = false` — the holder is still within its idle window), then the
 handle is NOT `Reclaimable`. The runtime never reclaims a handle whose lease is current, so a
@@ -109,7 +109,7 @@ theorem captp_no_premature_reclaim {CellId Rights : Type*}
     Reclaimable lh now = false :=
   hcur
 
-/-- **`captp_renewed_not_reclaimed` (PROVED) — a leased-AND-renewed handle is NOT reclaimed.**
+/-- **`captp_renewed_not_reclaimed` — a leased-AND-renewed handle is NOT reclaimed.**
 The headline no-premature-reclaim law on RENEWAL: renewing a handle at block `now` with a
 positive idle window (`0 < maxIdle`) yields a handle that is NOT reclaimable at `now`. Renewal
 (`record_export_with_session` bumping `last_activity = now`, `gc.rs:136`) sets the lease to
@@ -132,12 +132,12 @@ PROVED impossibility of `Liveness`: deadness is undecidable (`dead_undecidable`)
 local collector NEVER reclaims a cross-vat cycle (`crossvat_cycle_leaks`). We connect both
 here: the leak is a CONSEQUENCE of soundness, and lease-reclaim is the honest workaround. -/
 
-/-- **`captp_cycle_leak_is_the_price` (PROVED, reuses `Liveness.crossvat_cycle_leaks`).**
+/-- **`captp_cycle_leak_is_the_price` (reuses `Liveness.crossvat_cycle_leaks`).**
 The cross-vat reference CYCLE leaks under any sound local-evidence collector: given a
 `SoundLocalCollector` and a `CrossVatCycle g a b`, the collector reclaims NEITHER node by
 reachability (`collect g a = false ∧ collect g b = false`). Each node pins the other's
 refcount ≥ 1 forever, so the only sound local trigger (`refcountZero`) never fires — yet both
-cells are genuinely dead. This is precisely WHY CapTP cannot close its §4 GC by proven-death:
+cells are dead. This is precisely WHY CapTP cannot close its §4 GC by proven-death:
 no sound vat-local collector can decide the cycle dead. The leak is the PROVED PRICE of
 soundness, not a bug — and lease expiry (`captp_gc_by_lease`) is the only honest reclaim. -/
 theorem captp_cycle_leak_is_the_price
@@ -146,7 +146,7 @@ theorem captp_cycle_leak_is_the_price
     col.collect g a = false ∧ col.collect g b = false :=
   crossvat_cycle_leaks col g a b hcyc
 
-/-- **`captp_death_undecidable_so_lease` (PROVED, reuses `Liveness.dead_undecidable`) — the
+/-- **`captp_death_undecidable_so_lease` (reuses `Liveness.dead_undecidable`) — the
 deep reason lease-reclaim is forced.** There is NO computable procedure deciding deadness of
 the gadget cell across the halting-reduction family: a computable decider would solve the
 halting problem. So CapTP distributed GC CANNOT be "decide dead, then reclaim" — that decision
@@ -160,7 +160,7 @@ theorem captp_death_undecidable_so_lease (n : ℕ) :
         (∀ c : Nat.Partrec.Code, d c = true ↔ Dead (haltGraph ((Nat.Partrec.Code.eval c n).Dom)) 1) :=
   dead_undecidable n
 
-/-- **`captp_leaked_handle_reclaimed_by_lease` (PROVED, reuses `Liveness.leak_bounded_by_lease`)
+/-- **`captp_leaked_handle_reclaimed_by_lease` (reuses `Liveness.leak_bounded_by_lease`)
 — the leak is bounded, not forever.** A leaked cross-vat-cycle node, never reachability-
 collected (`captp_cycle_leak_is_the_price`), is STILL reclaimed at the operational `Live` level
 once its lease lapses: a dead cycle node past its lease is not `Live`. So an import handle on a
@@ -269,7 +269,7 @@ force a premature `CanRevoke`. This is the proof that WOULD HAVE CAUGHT the F-11
 old session-free `process_drop` decremented regardless, so this law would have been FALSE for
 it. -/
 
-/-- **`captp_drop_requires_minting_session` (PROVED) — F-11 safety.**
+/-- **`captp_drop_requires_minting_session` — F-11 safety.**
 A DropRef whose session `reqSession` minted no refs on this holder (`b reqSession = 0` — the
 session-free legacy path, or any wrong/forged session) leaves the buckets COMPLETELY UNCHANGED.
 No bucket is decremented, so no victim ref is reclaimed. Catches F-11: the pre-fix session-free
@@ -280,7 +280,7 @@ theorem captp_drop_requires_minting_session (b : Buckets) (reqSession : Nat)
   unfold applyDrop dropAuthorized
   simp [hUnauth]
 
-/-- **`captp_unauth_drop_preserves_bucket` (PROVED) — F-11, per-victim form.**
+/-- **`captp_unauth_drop_preserves_bucket` — F-11, per-victim form.**
 The concrete victim consequence: an unauthorized drop (`b reqSession = 0`) preserves the VICTIM
 session's bucket exactly. A victim's still-wanted refs survive a session-free drop attempt —
 the premature-reclaim door is shut. -/
@@ -297,7 +297,7 @@ via `mintUnder`) can never let the new session drop refs the ORIGINAL session mi
 the original session's right to drop its own. This is the F-12 per-ref scoping the pre-fix
 holder-scoped `session_id` violated. -/
 
-/-- **`captp_drop_scoped_to_session` (PROVED) — F-12 scoping.**
+/-- **`captp_drop_scoped_to_session` — F-12 scoping.**
 A drop carrying `reqSession` leaves every OTHER session's bucket (`other ≠ reqSession`) exactly
 as it was, authorized or not. A session can only ever reach its own bucket. -/
 theorem captp_drop_scoped_to_session (b : Buckets) (reqSession other : Nat)
@@ -306,7 +306,7 @@ theorem captp_drop_scoped_to_session (b : Buckets) (reqSession other : Nat)
   unfold applyDrop dropUnder
   by_cases h : dropAuthorized b reqSession <;> simp [h, hne]
 
-/-- **`captp_reexport_preserves_original_session` (PROVED) — F-12 under re-export.**
+/-- **`captp_reexport_preserves_original_session` — F-12 under re-export.**
 A re-export under a NEW session `newS` (minting into `newS`'s bucket) followed by a drop on
 that new session leaves the ORIGINAL session `origS`'s bucket UNCHANGED (`origS ≠ newS`). The
 original session keeps every ref it minted; the new session's activity cannot touch them. This
@@ -318,7 +318,7 @@ theorem captp_reexport_preserves_original_session
   unfold mintUnder
   simp [hne]
 
-/-- **`captp_authorized_drop_decrements_own_bucket` (PROVED) — liveness companion.**
+/-- **`captp_authorized_drop_decrements_own_bucket` — liveness companion.**
 The dual of the safety laws: an AUTHORIZED drop (the minting session, `0 < b reqSession`) DOES
 decrement its OWN bucket by one. The genuine holder retains the ability to drop the refs it
 minted — session validation is not vacuously fail-closed (it lets the real holder through). -/

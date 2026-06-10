@@ -75,9 +75,9 @@ theorem total_grant (k : KernelState) (holder : CellId) (c : Cap) :
 theorem total_revoke (k : KernelState) (holder : CellId) (c : Cap) :
     total { k with caps := revoke k.caps holder c } = total k := rfl
 
-/-! ## The unified conservation / ledger law (PROVED). -/
+/-! ## The unified conservation / ledger law. -/
 
-/-- **Unified conservation — PROVED.** Every committed `step` moves `total` by exactly
+/-- **Unified conservation.** Every committed `step` moves `total` by exactly
 `delta op`. The single law subsuming `exec_conserves` (`delta = 0`), `execMint_delta`
 (`+amt`), `execBurn_delta` (`-amt`), and the two cap-op conservations (`delta = 0`). Proved
 by `cases op`, reusing each primitive's already-proven fact. -/
@@ -113,16 +113,16 @@ def Conserving : KernelOp → Prop
   | .grantCap _ _     => True
   | .revokeCap _ _    => True
 
-/-- A conserving op has zero delta — PROVED (by `cases`). -/
+/-- A conserving op has zero delta (by `cases`). -/
 theorem delta_eq_zero_of_conserving (op : KernelOp) (hc : Conserving op) : delta op = 0 := by
   cases op <;> simp_all [Conserving, delta]
 
-/-- **A conserving step preserves `total` — PROVED** (corollary of `step_delta`). -/
+/-- **A conserving step preserves `total`** (corollary of `step_delta`). -/
 theorem step_conserves (k k' : KernelState) (op : KernelOp)
     (hc : Conserving op) (h : step k op = some k') : total k' = total k := by
   rw [step_delta k k' op h, delta_eq_zero_of_conserving op hc, add_zero]
 
-/-! ## The unified `Execution.System` and whole-run laws (PROVED). -/
+/-! ## The unified `Execution.System` and whole-run laws. -/
 
 /-- **The unified system:** a step is any committed `KernelOp` — one transition relation
 covering transfer/mint/burn/grant/revoke, replacing the bespoke `kernelSystem`. -/
@@ -136,7 +136,7 @@ def conservingSystem : System where
   Config := KernelState
   Step k k' := ∃ op, Conserving op ∧ step k op = some k'
 
-/-- **Conservation across a whole conserving run — PROVED** (lifting `step_conserves` via
+/-- **Conservation across a whole conserving run** (lifting `step_conserves` via
 `Execution.invariant_run`): if every step uses a conserving op, `total` is invariant over
 the entire execution. -/
 theorem unified_run_conserves {k k' : KernelState} (hrun : Run conservingSystem k k') :
@@ -162,7 +162,7 @@ inductive Trace : KernelState → List KernelOp → KernelState → Prop where
 /-- The net ledger delta of a trace = sum of the per-op deltas. -/
 def traceDelta (ops : List KernelOp) : ℤ := (ops.map delta).sum
 
-/-- **The unified ledger law — PROVED.** Across ANY traced run, the final total equals the
+/-- **The unified ledger law.** Across ANY traced run, the final total equals the
 initial total plus the net of all deltas (mints add, burns subtract, the rest contribute
 `0`): `total k'' = total k + traceDelta ops`. The single equation governing the whole
 mint/burn/transfer/cap-op execution. Proved by induction on the trace, reusing
@@ -176,7 +176,7 @@ theorem unified_ledger {k k'' : KernelState} {ops : List KernelOp}
       simp only [traceDelta, List.map_cons, List.sum_cons]
       ring
 
-/-- **Conservation as a corollary of the ledger — PROVED.** If a traced run fires only
+/-- **Conservation as a corollary of the ledger.** If a traced run fires only
 conserving ops (`traceDelta = 0`), `total` is preserved. -/
 theorem unified_ledger_conserves {k k'' : KernelState} {ops : List KernelOp}
     (htr : Trace k ops k'') (hzero : traceDelta ops = 0) : total k'' = total k := by

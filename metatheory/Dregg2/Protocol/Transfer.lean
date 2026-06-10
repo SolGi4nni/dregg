@@ -142,7 +142,7 @@ def channel : System where
 /-- Total supply held across the channel. -/
 def total (s : Acct × Acct) : Nat := s.1.bal + s.2.bal
 
-/-- **Every channel step conserves total supply — PROVED** (both directions, from
+/-- **Every channel step conserves total supply** (both directions, from
 `transfer_conserves`). -/
 theorem channel_step_conserves {s t : Acct × Acct} (h : channel.Step s t) :
     total t = total s := by

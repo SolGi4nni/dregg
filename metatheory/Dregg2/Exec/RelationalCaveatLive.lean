@@ -43,7 +43,7 @@ The single fact that makes the Rust arm a faithful transcription: the Lean evalu
 record IFF the cross-slot inequality `record[index] ≤ record[other] + delta` holds — exactly the
 `lhs ≤ rhs` the Rust executor decides. -/
 
-/-- **`relCaveat_eval_iff_le` — PROVED.** The Lean evaluator `RelCaveat.eval` accepts `rec` IFF
+/-- **`relCaveat_eval_iff_le`.** The Lean evaluator `RelCaveat.eval` accepts `rec` IFF
 `fieldOf index rec ≤ fieldOf other rec + delta`. This is the EXACT predicate the running Rust
 `evaluate_constraint_full` arm decides (`lhs ≤ rhs`, `rhs = other + delta`). The two transcriptions
 agree on admit and reject. -/
@@ -53,7 +53,7 @@ theorem relCaveat_eval_iff_le (index other : FieldName) (delta : Int) (rec : Val
   unfold RelCaveat.eval
   rw [decide_eq_true_iff]
 
-/-- **`relCaveat_reject_iff_gt` — PROVED.** The contrapositive face the executor's fail-closed
+/-- **`relCaveat_reject_iff_gt`.** The contrapositive face the executor's fail-closed
 branch takes: the Lean evaluator REJECTS `rec` IFF `fieldOf index rec > fieldOf other rec + delta`
 — exactly the Rust `lhs > rhs` violation branch. -/
 theorem relCaveat_reject_iff_gt (index other : FieldName) (delta : Int) (rec : Value) :
@@ -74,7 +74,7 @@ abbrev qHead : FieldName := "queue.head_seq"
 abbrev qTail : FieldName := "queue.tail_seq"
 abbrev qCap  : FieldName := "queue.capacity"
 
-/-- **`queue_capacity_enforced_live` — PROVED (instantiated).** A committed relationally-guarded
+/-- **`queue_capacity_enforced_live` (instantiated).** A committed relationally-guarded
 write whose caveat list carries the queue capacity atom lands in a post-record respecting the
 capacity bound `head − tail ≤ cap`. The cross-slot invariant the Rust executor now enforces, pinned
 at the concrete queue layout. -/
@@ -85,7 +85,7 @@ theorem queue_capacity_enforced_live {s s' : RecChainedState} {f : FieldName}
     capacityOk (s'.kernel.cell target) qHead qTail qCap :=
   relStateStepGuarded_capacity_enforced recCavs hmem h
 
-/-- **`queue_underflow_eval_live` — PROVED.** The no-underflow atom `fieldLteOther tail head 0`
+/-- **`queue_underflow_eval_live`.** The no-underflow atom `fieldLteOther tail head 0`
 accepts a record IFF `tail ≤ head` — the dual cross-slot bound the Rust executor enforces. -/
 theorem queue_underflow_eval_live (rec : Value) :
     (RelCaveat.fieldLteOther qTail qHead 0).eval rec = true ↔ noUnderflow rec qHead qTail :=

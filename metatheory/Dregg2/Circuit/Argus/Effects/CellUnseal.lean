@@ -64,7 +64,7 @@ Live, the log grows by one receipt, every OTHER kernel field frozen), keyed on t
 directions). This is the strictly-stronger `BalanceA`/`CellSeal` surface (whole-state full-function
 digest), not the per-cell EffectVM/`cellProj` surface transfer/delegate live on.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the
 whole-function-digest assumption enters ONLY inside the reused `cellUnsealA_full_sound` (its
@@ -163,8 +163,8 @@ over `RecChainedState` (kernel + receipt log) — the arm `execFullA s (.cellUns
 cellUnsealChainA s actor cell`. The §2 cornerstone is over the KERNEL side only. The chained layer is
 exactly the §2 kernel flip PLUS the runtime receipt-log prepend `cellLifecycleReceipt actor cell :: s.log`
 — the runtime piece the `RecordKernelState`-level `interp` structurally cannot emit. We bridge faithfully,
-naming the receipt-row prepend EXPLICITLY in the chained post-state (the honest kernel-vs-runtime divergence
-— NOT papered). -/
+naming the receipt-row prepend EXPLICITLY in the chained post-state (the kernel-vs-runtime divergence
+). -/
 
 /-- **`interp_cellUnsealStmt_chained` — the IR term's KERNEL executor, lifted to the chained `execFullA`.**
 When the §2 cornerstone commits on the kernel (`interp (cellUnsealStmt actor cell) s.kernel = some k'`), the
@@ -270,7 +270,7 @@ theorem cellUnseal_compile_sound
 
 #assert_axioms cellUnseal_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely UNSEALS the cell (lifecycle flip observable), preserves every
+/-! ## §5 — NON-VACUITY: the IR term UNSEALS the cell (lifecycle flip observable), preserves every
 other field (frame), and the gate REJECTS forged / non-Sealed inputs (fail-closed).
 
 The cornerstone/weld would be hollow if cellUnseal never committed, if the flip were a no-op, or if the gate
@@ -290,7 +290,7 @@ def kU0 : RecordKernelState :=
     lifecycle := fun c => if c = 0 then lcSealed else lcLive }
 
 /-- **NON-VACUITY (the UNSEAL is OBSERVABLE).** The committed unseal FLIPS cell `0`'s lifecycle discriminant
-from Sealed (`1`) back to Live (`0`) — the cell genuinely transitions (the `setLifecycle` flip is real, not
+from Sealed (`1`) back to Live (`0`) — the cell transitions (the `setLifecycle` flip is real, not
 a no-op). -/
 theorem cellUnsealStmt_unseals :
     (interp (cellUnsealStmt 0 0) kU0).map (fun k => k.lifecycle 0) = some lcLive := by
@@ -298,7 +298,7 @@ theorem cellUnsealStmt_unseals :
   decide
 
 /-- **NON-VACUITY (the cell ACTUALLY commits).** The unseal of a Sealed, self-owned cell COMMITS (`isSome`)
-— the 2-conjunct gate genuinely admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
+— the 2-conjunct gate admits. (Pins that the weld's `hexec` hypothesis is satisfiable.) -/
 theorem cellUnsealStmt_commits :
     (interp (cellUnsealStmt 0 0) kU0).isSome = true := by
   rw [interp_cellUnsealStmt_eq_kernel]

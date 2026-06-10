@@ -35,7 +35,7 @@ def listDigest {α : Type u} (LE : α → ℤ) (compressN : List ℤ → ℤ) (x
 the list analog of `cellLeafInjective`). Carried, never proved here. -/
 def listLeafInjective {α : Type u} (LE : α → ℤ) : Prop := Function.Injective LE
 
-/-! ## §2 — the binding lemma (PROVED from the realizable Poseidon-CR set). -/
+/-! ## §2 — the binding lemma (from the realizable Poseidon-CR set). -/
 
 /-- **`ListDigestBindsList` — the bottleneck-breaker.** Equal list digests force the WHOLE lists
 equal: `compressNInjective` ⇒ the mapped leaf-lists are equal; the injective leaf encoder ⇒ the

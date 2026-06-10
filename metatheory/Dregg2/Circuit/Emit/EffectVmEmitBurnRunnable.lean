@@ -28,7 +28,7 @@ exactly as `transferRunnableSpec` is the worked reference):
 
 ## HONEST NOTES (recorded for the audit wave, per the task brief)
 
-  * PRECONDITION GAP — as the per-cell `EffectVmEmitBurn` HONEST BOUNDARY already states, the burn `(cell,
+  * PRECONDITION GAP — as the per-cell `EffectVmEmitBurn` BOUNDARY already states, the burn `(cell,
     asset)` index + the AUTHORITY / non-negativity / availability / liveness GUARD (`BurnGuard`) of
     `recCBurnAsset` have NO row column: they are executor-side preconditions NOT in-circuit conjuncts of
     `burnVmDescriptor`. This module lifts the EXISTING gate set to full-state; it does NOT add those guards
@@ -40,7 +40,7 @@ exactly as `transferRunnableSpec` is the worked reference):
     `EffectVmEmitBurn.exec_nonce_is_frozen_not_ticked` (the runtime-counter vs ledger-nonce gap, already
     named there, unchanged by this lift).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. The sole crypto carrier is the
 NAMED `Poseidon2SpongeCR` portal, entering ONLY through the generic `runnable_full_sound` / the §4 anti-ghost.
@@ -199,7 +199,7 @@ theorem burn_rejects_root_tamper (amt : ℤ) (preRoots : SysRoots)
 
 `goodBurnRow` (from `EffectVmEmitBurn`) realizes the burn intent (`100 → 70` debit, nonce `5 → 6`). We
 decode it to a concrete `(pre, post)` `CellState` pair and confirm the full clause's `CellBurnSpec` is
-genuinely satisfied (witness TRUE), and refute a forged post-state (witness FALSE). -/
+satisfied (witness TRUE), and refute a forged post-state (witness FALSE). -/
 
 /-- The pre-state `goodBurnRow` encodes: bal_lo 100, nonce 5, everything else 0. -/
 def goodBurnPre : CellState :=

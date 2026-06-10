@@ -40,7 +40,7 @@ variable {Obs AdmissibleTurn : Type u}
 / `fst21`) over two turns. The coinductive adversary is the UNBOUNDED generalisation: an
 infinite **stream of turns** `Sched = ℕ → AdmissibleTurn`, presenting one overlapping cross-cell
 turn to the live coalgebra at each tick. This is exactly "the interleaving the coinductive
-`Boundary.TurnCoalg` would unfold" (ContendedCrossCell §1), no longer specialised to two edges. -/
+`Boundary.TurnCoalg` would unfold" (ContendedCrossCell §1), not specialised to two edges. -/
 
 /-- **`Sched`** — an infinite adversarial schedule: a stream of admissible turns, one fed to the
 coalgebra per tick. The adversary controls the WHOLE stream; the question is whether the running
@@ -90,7 +90,7 @@ coinductive ObsBisim (Impl Spec : TurnCoalg Obs AdmissibleTurn)
       ObsBisim Impl Spec sImpl sSpec (n + 1) (Impl.next x (sImpl n)) (Spec.next y (sSpec n)) →
       ObsBisim Impl Spec sImpl sSpec n x y
 
-/-! ## §3 — THE SAFE FRAGMENT, LIFTED (PROVED): a bisimulation makes the trajectories
+/-! ## §3 — THE SAFE FRAGMENT, LIFTED: a bisimulation makes the trajectories
 `ObsBisim` forever.
 
 The finite safe-fragment base case (`ContendedCrossCell.contended_commits_confluent`) says: when
@@ -106,7 +106,7 @@ running-pair family `(traj Impl x s n, traj Spec y s n)` as a post-fixpoint of t
 generator (native `coinductive` corecursion: the recursive occurrence is guarded by the `+1`
 schedule tick, so productive). -/
 
-/-- **Helper — the running pair stays in the bisimulation forever (PROVED by `Nat` induction).**
+/-- **Helper — the running pair stays in the bisimulation forever (by `Nat` induction).**
 If `R` is a `Boundary.IsBisim` relating `x y`, then along ANY single schedule `s` the running
 trajectory pair `(traj Impl x s n, traj Spec y s n)` is `R`-related at every index `n`. This is the
 finite per-step dichotomy threaded through the unbounded stream (each step uses `IsBisim.step_rel`,
@@ -124,7 +124,7 @@ theorem rel_traj_of_bisim
       have := hR.step_rel (traj Impl x s k) (traj Spec y s k) ih (s k)
       simpa [Boundary.Later, traj_succ] using this
 
-/-- **KEYSTONE — `obsBisim_traj_of_bisim` (PROVED).** CONFLUENCE-UP-TO-BISIMULATION over the
+/-- **KEYSTONE — `obsBisim_traj_of_bisim`.** CONFLUENCE-UP-TO-BISIMULATION over the
 unbounded adversarial schedule. If the implementation cell `x` and the golden-oracle cell `y` are
 related by a `Boundary.IsBisim` (the lifted finite safe-fragment base case — I-confluent contention
 gives schedule-agnostic commit, i.e. observation-agreement with related successors), then driving
@@ -158,7 +158,7 @@ theorem obsBisim_traj_of_bisim
   · -- the invariant holds at the start index `n` for the trajectory points.
     exact ⟨rfl, rfl, rel_traj_of_bisim hR hxy s n⟩
 
-/-- **`obsStream_eq_of_bisim` (PROVED).** The directly-observable payoff of confluence-up-to-
+/-- **`obsStream_eq_of_bisim`.** The directly-observable payoff of confluence-up-to-
 bisimulation: along the unbounded adversarial schedule, the implementation's observation stream
 EQUALS the golden-oracle's observation stream at every tick. The vat boundary cannot tell the
 running multi-cell configuration apart from the oracle no matter how the adversary interleaves —
@@ -179,7 +179,7 @@ step-complete implementation carries any `StepInv`-preserved safety predicate `G
 ENTIRE unbounded trajectory. This reuses `Boundary.stepComplete_preserves` over `inducedSystem`,
 specialised to the schedule-trajectory (every trajectory point is reachable in `inducedSystem`). -/
 
-/-- Every trajectory point is reachable in the induced transition system (PROVED) — the bridge from
+/-- Every trajectory point is reachable in the induced transition system — the bridge from
 the schedule-stream `traj` to `Boundary.inducedSystem` / `Execution.Run`. -/
 theorem run_traj (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
     (s : Sched AdmissibleTurn) :
@@ -191,7 +191,7 @@ theorem run_traj (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
       refine Execution.Run.snoc (S := inducedSystem Impl) ih ?_
       exact ⟨s k, rfl⟩
 
-/-- **KEYSTONE — `stepComplete_carries_infinite` (PROVED).** A step-complete implementation carries
+/-- **KEYSTONE — `stepComplete_carries_infinite`.** A step-complete implementation carries
 any `StepInv`-preserved safety predicate `Good` along the WHOLE infinite adversarial schedule: if
 `Good` holds at the start `x`, it holds at every trajectory point `traj Impl x s n`, for every
 adversary stream `s`. No drifting future across the unbounded interleaving — the safety face of the
@@ -226,10 +226,10 @@ theorem safe_fragment_iconfluent :
     Dregg2.Confluence.IConfluent (S := Finset ℕ) (fun _ => True) :=
   Dregg2.Confluence.top_iconfluent
 
-/-- **`obsBisim_refl` (PROVED) — the lift is NON-VACUOUS.** Every live cell, driven by ANY adversary
+/-- **`obsBisim_refl` — the lift is NON-VACUOUS.** Every live cell, driven by ANY adversary
 schedule, is `ObsBisim` to itself at every index: the reflexive bisimulation `Boundary.bisim_eq`
 (equality is a bisimulation) lifts to the coinductive `ObsBisim` along the unbounded interleaving.
-So the greatest fixpoint `ObsBisim` is genuinely inhabited — the safe-fragment lift is not the
+So the greatest fixpoint `ObsBisim` is inhabited — the safe-fragment lift is not the
 trivially-false predicate, and self-confluence holds under every adversary. -/
 theorem obsBisim_refl (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
     (s : Sched AdmissibleTurn) :
@@ -259,7 +259,7 @@ theorem obsBisim_refl (Impl : TurnCoalg Obs AdmissibleTurn) (x : Impl.Carrier)
     any `StepInv`-preserved `Good` along the whole unbounded trajectory via
     `Boundary.stepComplete_preserves` over `inducedSystem`.
 
-  * **Non-vacuous (`obsBisim_refl`):** `ObsBisim` is genuinely inhabited; `safe_fragment_iconfluent`
+  * **Non-vacuous (`obsBisim_refl`):** `ObsBisim` is inhabited; `safe_fragment_iconfluent`
     ties the supplied relation back to `Confluence.IConfluent`.
 
   * **General case (`obsBisim_of_uptoComm`, §8):** derives `ObsBisim` WITHOUT being handed a
@@ -311,7 +311,7 @@ def obsGen (Impl Spec : TurnCoalg Obs AdmissibleTurn) (s : Sched AdmissibleTurn)
     intro Q Q' hQ p q ⟨hobs, hsucc⟩
     exact ⟨hobs, hQ _ _ hsucc⟩
 
-/-- **`obsBisim_of_paco` (PROVED) — the Paco fixpoint refines the native `ObsBisim`.** A diagonal
+/-- **`obsBisim_of_paco` — the Paco fixpoint refines the native `ObsBisim`.** A diagonal
 point in `paco (obsGen …) ⊥` yields `ObsBisim` at that index, via `ObsBisim.coinduct`: the diagonal
 `paco`-membership is itself the bare post-fixpoint the native principle wants (one `paco_unfold` per
 tick re-exposes obs-agreement and the next-tick membership; `upaco _ ⊥ = paco _ ⊥`). -/
@@ -352,7 +352,7 @@ theorem le_commClo (Impl Spec : TurnCoalg Obs AdmissibleTurn) (Q : Rel (DiagPt I
     Q ≤ commClo Impl Spec Q :=
   fun p q hQ => ⟨p, q, rfl, rfl, hQ⟩
 
-/-- **`commClo_compatible` (PROVED) — the up-to-commutation closure is `Compatible` with `obsGen`.**
+/-- **`commClo_compatible` — the up-to-commutation closure is `Compatible` with `obsGen`.**
 `commClo (obsGen Q) ≤ obsGen (commClo Q)`: rewriting the endpoints of an `obsGen`-step by state
 equalities preserves obs-agreement (equal states ⇒ equal observations) and lands the successor in
 `commClo Q` (the same equalities push through the guarded successor). This is the soundness
@@ -367,7 +367,7 @@ theorem commClo_compatible (Impl Spec : TurnCoalg Obs AdmissibleTurn) (s : Sched
   -- successor lands in commClo Q via the reflexive (identity) rewrite.
   exact ⟨diagSucc Impl Spec s p, diagSucc Impl Spec s q, rfl, rfl, hsucc⟩
 
-/-- **`obsBisim_of_uptoComm` (PROVED) — THE GENERAL CASE, the §7 OPEN CLOSED.**
+/-- **`obsBisim_of_uptoComm` — THE GENERAL CASE, the §7 OPEN CLOSED.**
 
 We are NOT handed a global `Boundary.IsBisim`. We are handed only a *bisimulation up to the
 commutation closure* `R`: for `R`-related diagonal points, (i) the observations agree now, and

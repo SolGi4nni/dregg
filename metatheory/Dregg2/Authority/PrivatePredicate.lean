@@ -209,7 +209,7 @@ def WitnessedRange.check {Digest Proof : Type}
 accepted range proof DISCHARGES the range claim's predicate at the registry's `custom vk`
 seam — directly from `Authority.Predicate.registry_sound`. The prover (range-proof producer)
 is untrusted; only the in-TCB oracle decides. The crypto content (that acceptance means the
-committed value is genuinely in `[lo,hi]`) is the §8 oracle's obligation, NOT a Lean law. -/
+committed value is in `[lo,hi]`) is the §8 oracle's obligation, NOT a Lean law. -/
 theorem witnessed_range_is_sound {Digest Proof : Type}
     (w : WitnessedRange Digest Proof) (proof : Proof)
     (haccept : w.check proof = true) :
@@ -257,7 +257,7 @@ def PrivPred.holds {Digest Proof : Type} [AddCommGroup Digest] [CryptoPrimitives
         | some _, none => False)
     ∧ p.clear.eval p.cleartext = true
 
-/-- **`privPred_composes` — PROVED.** The composed `holds` decomposes EXACTLY into its three
+/-- **`privPred_composes`.** The composed `holds` decomposes EXACTLY into its three
 fragment checks: the homomorphic affine-= part, the witnessed-range part, and the cleartext
 part — conjoined, no fragment lost, no fragment doubled. The composition is faithful. -/
 theorem privPred_composes {Digest Proof : Type} [AddCommGroup Digest] [CryptoPrimitives Digest]
@@ -271,7 +271,7 @@ theorem privPred_composes {Digest Proof : Type} [AddCommGroup Digest] [CryptoPri
         ∧ p.clear.eval p.cleartext = true :=
   Iff.rfl
 
-/-- **`privPred_affine_is_homomorphic` — PROVED.** Holding a `PrivPred` ENTAILS its affine
+/-- **`privPred_affine_is_homomorphic`.** Holding a `PrivPred` ENTAILS its affine
 fragment passes the homomorphic check — so (with matching blindings + binding) the hidden
 balances conserve, verified from the commitments alone. The keystone wired into the
 composition: a satisfied private predicate carries private conservation. -/
@@ -281,7 +281,7 @@ theorem privPred_affine_is_homomorphic {Digest Proof : Type} [AddCommGroup Diges
     p.affine.homCheck (Digest := Digest) :=
   h.1
 
-/-- **`privPred_range_discharged` — PROVED.** If a `PrivPred` with a range fragment holds
+/-- **`privPred_range_discharged`.** If a `PrivPred` with a range fragment holds
 (with a supplied proof), that proof DISCHARGES the range claim — the §8 oracle accepted, so
 the committed value's range relation is soundly attested (`witnessed_range_is_sound`). -/
 theorem privPred_range_discharged {Digest Proof : Type} [AddCommGroup Digest] [CryptoPrimitives Digest]
@@ -331,16 +331,16 @@ levels. The dial position the whole private predicate occupies. -/
 def PrivPred.disclosure {Digest Proof : Type} (p : PrivPred Digest Proof) : Dial :=
   affineDisclosure ⊔ rangeDisclosure ⊔ clearDisclosure p.clear
 
-/-- **`affine_reveals_nothing` — PROVED.** The homomorphic affine-= fragment sits at the dial
+/-- **`affine_reveals_nothing`.** The homomorphic affine-= fragment sits at the dial
 FLOOR (`⊥`): it reveals nothing beyond the commitments. Private conservation is a
 zero-disclosure check. -/
 theorem affine_reveals_nothing : affineDisclosure = (⊥ : Dial) := rfl
 
-/-- **`range_reveals_only_truth_bit` — PROVED.** The witnessed-range fragment sits at the dial
+/-- **`range_reveals_only_truth_bit`.** The witnessed-range fragment sits at the dial
 FLOOR (`⊥`): a range proof reveals only the relation's truth bit, nothing of the value. -/
 theorem range_reveals_only_truth_bit : rangeDisclosure = (⊥ : Dial) := rfl
 
-/-- **`fully_committed_privpred_is_at_floor` — PROVED.** A `PrivPred` whose cleartext fragment
+/-- **`fully_committed_privpred_is_at_floor`.** A `PrivPred` whose cleartext fragment
 is trivial (`top` — reads no slot) sits at the dial FLOOR: every fragment is at
 `acceptanceOnly`, so the join is `acceptanceOnly`. The proof reveals ONLY that the relation
 holds — selective disclosure in its purest form: enforcement without surveillance. -/
@@ -352,7 +352,7 @@ theorem fully_committed_privpred_is_at_floor {Digest Proof : Type}
   show (Dial.acceptanceOnly ⊔ Dial.acceptanceOnly) ⊔ Dial.acceptanceOnly = Dial.acceptanceOnly
   simp
 
-/-- **`cleartext_fragment_discloses_slots` — PROVED.** A non-trivial cleartext fragment (any
+/-- **`cleartext_fragment_discloses_slots`.** A non-trivial cleartext fragment (any
 affine/Boolean shape) discloses its slots — its fragment level is `fullDisclosure` (`⊤`), and
 so the whole `PrivPred`'s disclosure is `fullDisclosure`. The honest cost: reading cleartext
 slots is full disclosure of those slots, however private the committed fragments remain. -/
@@ -392,7 +392,7 @@ def privPred_disclose_schedule {Digest Proof : Type}
     accepts := fun _ => Discharged w.claim proof
     accepts_eq := fun _ => Iff.rfl }
 
-/-- **`privPred_floor_reveals_only_truth` — PROVED.** The disclosure dial's FLOOR (`⊥`) for a
+/-- **`privPred_floor_reveals_only_truth`.** The disclosure dial's FLOOR (`⊥`) for a
 range-bearing `PrivPred` accepts IFF the witnessed-range oracle discharges the claim. So at the
 zero-knowledge floor the verifier learns ONLY that the relation holds — the selective-disclosure
 property, routed through the unified `Metatheory.Dial` (`accepts_bot_iff_discharged`). -/
@@ -437,7 +437,7 @@ def inflating : PrivAffineEq :=
 #guard balanced.insCommit (Digest := Int) == balanced.outsCommit (Digest := Int)   -- 8 == 8
 #guard !(decide (inflating.insCommit (Digest := Int) = inflating.outsCommit (Digest := Int)))  -- 8 ≠ 12
 
-/-- **`conservation_passes_privately` — PROVED.** The balanced hidden split PASSES the
+/-- **`conservation_passes_privately`.** The balanced hidden split PASSES the
 homomorphic check: `Σ commit(ins) = Σ commit(outs)` over `ℤ`, certifying value conservation
 from the commitments alone (`8 = 8`), no value disclosed. -/
 theorem conservation_passes_privately :
@@ -445,7 +445,7 @@ theorem conservation_passes_privately :
   unfold PrivAffineEq.homCheck PrivAffineEq.insCommit PrivAffineEq.outsCommit balanced
   decide
 
-/-- **`inflation_caught_privately` — PROVED (the keystone, witnessed).** The INFLATING split
+/-- **`inflation_caught_privately` (the keystone, witnessed).** The INFLATING split
 FAILS the homomorphic check — `Σ commit(ins) ≠ Σ commit(outs)` (`8 ≠ 12`) — so the executor
 REJECTS the inflation reading ONLY the commitments, WITHOUT opening a single value or blinding.
 Enforcement of conservation of hidden balances, with zero disclosure. -/
@@ -454,11 +454,11 @@ theorem inflation_caught_privately :
   unfold PrivAffineEq.homCheck PrivAffineEq.insCommit PrivAffineEq.outsCommit inflating
   decide
 
-/-- **`private_conservation_keystone_nonvacuous` — PROVED.** The keystone
+/-- **`private_conservation_keystone_nonvacuous`.** The keystone
 `private_conservation_checks_homomorphically` is non-vacuous on the reference: at the balanced
 split (matching blindings) the homomorphic check holds AND collapses to the
 commitment-of-sums equation; the SAME instantiation on the inflating split FAILS — so the
-keystone genuinely discriminates conservation from inflation, privately. -/
+keystone discriminates conservation from inflation, privately. -/
 theorem private_conservation_keystone_nonvacuous :
     (balanced.homCheck (Digest := Int)) ∧ ¬ inflating.homCheck (Digest := Int) :=
   ⟨conservation_passes_privately, inflation_caught_privately⟩
@@ -487,7 +487,7 @@ def outOfRange : WitnessedRange Int Int := { reg := toyRangeReg, vk := 7, claim 
 #guard inRange.check 5 == true
 #guard outOfRange.check 42 == false
 
-/-- **`range_accepts_in_range` — PROVED.** The witnessed-range oracle ACCEPTS the in-range
+/-- **`range_accepts_in_range`.** The witnessed-range oracle ACCEPTS the in-range
 value, discharging the range claim (`witnessed_range_is_sound`): the committed value's range
 relation is soundly attested, revealing only the truth bit. -/
 theorem range_accepts_in_range :
@@ -495,9 +495,9 @@ theorem range_accepts_in_range :
       (verifiableOfRegistry inRange.reg (.custom inRange.vk)) inRange.claim 5 :=
   witnessed_range_is_sound inRange 5 (by decide)
 
-/-- **`range_rejects_out_of_range` — PROVED (non-vacuity, witnessed).** The witnessed-range
+/-- **`range_rejects_out_of_range` (non-vacuity, witnessed).** The witnessed-range
 oracle REJECTS the out-of-range committed value (`42 ∉ [0,10]`): `check = false`, so no proof
-discharges the claim. The range fragment genuinely DISCRIMINATES — it is not a vacuous
+discharges the claim. The range fragment DISCRIMINATES — it is not a vacuous
 `:= True` accept. -/
 theorem range_rejects_out_of_range :
     outOfRange.check 42 = false := by decide
@@ -513,7 +513,7 @@ def fullyPrivate : PrivPred Int Int :=
     clear := .top
     cleartext := .record [] }
 
-/-- **`fullyPrivate_holds` — PROVED.** The composed fully-private predicate HOLDS with the
+/-- **`fullyPrivate_holds`.** The composed fully-private predicate HOLDS with the
 in-range proof: the homomorphic conservation check passes (`8 = 8`), the witnessed-range oracle
 accepts (`5 ∈ [0,10]`), and the trivial cleartext fragment is `true`. A private predicate
 satisfied entirely over committed values. -/
@@ -523,14 +523,14 @@ theorem fullyPrivate_holds :
   show inRange.check 5 = true
   decide
 
-/-- **`fullyPrivate_at_dial_floor` — PROVED.** The fully-private predicate sits at the dial
+/-- **`fullyPrivate_at_dial_floor`.** The fully-private predicate sits at the dial
 FLOOR (`⊥`): the proof reveals ONLY that the relation holds — conservation of a hidden balance
 plus a range bound, enforced with zero surveillance of the values. -/
 theorem fullyPrivate_at_dial_floor :
     fullyPrivate.disclosure = (⊥ : Dial) :=
   fully_committed_privpred_is_at_floor fullyPrivate rfl
 
-/-- **`inflating_privpred_fails` — PROVED.** Swapping the balanced affine fragment for the
+/-- **`inflating_privpred_fails`.** Swapping the balanced affine fragment for the
 INFLATING one makes the composed predicate FAIL — the inflation is caught in the homomorphic
 fragment, privately, even though the range + cleartext fragments would pass. The composition
 inherits the keystone's private-inflation rejection. -/

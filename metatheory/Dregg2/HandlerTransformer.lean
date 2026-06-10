@@ -10,7 +10,7 @@ transitive relation) — and proves two dregg objects instantiate it: (1) the ca
 and (2) the proof-forest gluing surface via `chainLinked` continuity. The general theorem
 `safe_transformer_composes` lifts `SafeStep.trans` through transformer composition; it is
 instantiated on both. Teeth: `overshare_rejected` exhibits an over-sharing `Auth ℕ` transformer
-genuinely refused; `sheaf_rejects_disagreeing_verifier` breaks the gluing hypothesis.
+refused; `sheaf_rejects_disagreeing_verifier` breaks the gluing hypothesis.
 
 OPEN: the keystone weld — that `Fpu`-preservation IS the gluing condition (one law, not two
 instances of one preorder) — is not proved. Camera and proof-forest carriers differ; the forest
@@ -163,7 +163,7 @@ theorem conservation_is_safe_transformer (a f f' : M)
 
 end CameraInstance
 
-/-! ### TEETH: an unsafe transformer is genuinely rejected.
+/-! ### TEETH: an unsafe transformer is rejected.
 
 The `Excl` (NFT) camera cannot host a rejecting witness: every composition in `Excl` is
 `invalid` (`excl_op_never_valid`), so `Fpu` is vacuously true for every `Excl`-transformer.
@@ -188,7 +188,7 @@ def overshareTransformer : HandlerTransformer (Auth Nat) :=
 
 /-- The over-sharing transformer is NOT `Safe` on `Auth ℕ`. Witness: frame `(none, 0)` is
 valid at pre-state `(some 2, 0)` but not at post-state `(some 2, 3)` (`3` does not fit in `2`),
-so `Fpu (some 2, 0) (some 2, 3)` fails — the safe-composition law genuinely refuses this
+so `Fpu (some 2, 0) (some 2, 3)` fails — the safe-composition law refuses this
 transformer. -/
 theorem overshare_rejected : ¬ Safe overshareTransformer := by
   -- Safe would give Fpu (some 2,0) (act (some 2,0)) = Fpu (some 2,0) (some 2,3).
@@ -264,7 +264,7 @@ def SheafLocallyValid {Verifier Statement Proof VSecret : Type}
   ∀ n ∈ pf.nodes, DischargedFor (VSecret := VSecret)
     (sec.verifierOf n) (sec.stmtOf n) (sec.proofOf n)
 
-/-- **`proofForest_sheaf_sound` — THE SHEAF-OF-VERIFIERS GLUING (G2, PROVED).** Generalizes
+/-- **`proofForest_sheaf_sound` — THE SHEAF-OF-VERIFIERS GLUING (G2).** Generalizes
 `proofForest_sound`: if (P') every node discharges its OWN verifier's verdict
 (`SheafLocallyValid` — the heterogeneous per-party fibre, facet 5), (L) the forest is `Linked`,
 AND (bridge) the per-verifier local validity entails the per-node `StepProofValid` (the §8 seam
@@ -289,12 +289,12 @@ theorem proofForest_sheaf_sound {Verifier Statement Proof VSecret : Type}
 
 /-! ### TEETH for the sheaf: a disagreeing verifier breaks the local section. -/
 
-/-- **`sheaf_rejects_disagreeing_verifier` (PROVED — the sheaf teeth).** There is a node
+/-- **`sheaf_rejects_disagreeing_verifier` (the sheaf teeth).** There is a node
 assignment (a node checked by the outsider `vOther`, presenting `v0`'s designated transcript)
 for which the per-party local-validity condition `DischargedFor` is FALSE — so the sheaf gluing
 hypothesis `SheafLocallyValid` cannot be met, and the global section is not derivable. This is
 the `dial_endpoints_distinct` separation biting the gluing: handlers that DISAGREE on the
-overlap (verifier `vOther` vs the transcript designated for `v0`) genuinely fail to glue. -/
+overlap (verifier `vOther` vs the transcript designated for `v0`) fail to glue. -/
 theorem sheaf_rejects_disagreeing_verifier :
     ¬ DischargedFor (VSecret := Reference.VSec)
         Reference.V.vOther 7 Reference.designatedProof := by
@@ -349,7 +349,7 @@ example : Safe ((idTransformer (R := Auth Nat)).comp idTransformer) :=
 
 /-! ## §9 — Verdict.
 
-What genuinely unified: `SafeStep` is one preorder; the camera's `Fpu` instantiates it literally
+What unified: `SafeStep` is one preorder; the camera's `Fpu` instantiates it literally
 (`instSafeStepFpu`). `safe_transformer_composes` subsumes `Fpu.trans` for transformers;
 `conservation_is_safe_transformer` shows `conservation_is_fpu` is a literal safe-transformer
 instance. `proofForest_sheaf_sound` generalizes `proofForest_sound` to a per-node

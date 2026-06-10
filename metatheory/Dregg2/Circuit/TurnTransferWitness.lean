@@ -21,7 +21,7 @@ root. This module closes BOTH gaps for a transfer-only forest:
        * **root-binding gates** (`rootBindGate`): force `vPreRoot`/`vPostRoot` to equal the CONCRETE
          combiner `cmbConcrete (compressConcrete frame moved) rest` of the step's own digest children.
          The combiner is `a·M + b` (`M = 1000000`), an `Expr` over wires `13..18` — so wires `11`/`12`
-         are NO LONGER free; a tampered post-root makes the gate FALSE (a real UNSAT).
+         are NOT free; a tampered post-root makes the gate FALSE (a real UNSAT).
        * **chain gates** (`chainGate`): force the post-state of step `i` to be the pre-state of step
          `i+1` — the turn-independent full-cell sponge `allCellDig` of the shared kernel `k₁` carried
          on both sides, plus the rest digest. A silent state swap between the two effects is rejected.
@@ -175,8 +175,8 @@ def combineExpr (frame moved rest : Var) : Expr :=
   .add (.mul (.add (.mul (.var frame) (.const combM)) (.var moved)) (.const combM)) (.var rest)
 
 /-- **Root-binding gate** for a step block at offset `n`: `vPreRoot` = combiner of (framePre,
-movedPre, restPre); `vPostRoot` = combiner of (framePost, movedPost, restPost). CLOSES the caveat —
-the formerly-free root wires `11+n`/`12+n` are now FORCED to the concrete `recStateCommit` of the
+movedPre, restPre); `vPostRoot` = combiner of (framePost, movedPost, restPost). The root wires
+`11+n`/`12+n` are FORCED to the concrete `recStateCommit` of the
 boundary kernels (tamper the post-root ⇒ this gate is FALSE ⇒ UNSAT). -/
 def rootBindGates (n : Nat) : ConstraintSystem :=
   [ { lhs := .var (vPreRoot + n),

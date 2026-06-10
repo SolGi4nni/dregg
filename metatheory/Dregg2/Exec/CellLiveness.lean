@@ -21,7 +21,7 @@ simultaneously (`study-gc.md §3,§5`):
   2. **`death_is_timed_out` (THE KEYSTONE)** — we NEVER decide the global, non-co-witnessable
      "dead". We replace it with the locally-decidable "lease lapsed": `collect c` exactly when
      `c` is refcount-locally-collectible AND its lease has expired, and that decision is sound
-     (it un-`Live`s only genuinely-dead, lease-lapsed cells). This times death out; it does
+     (it un-`Live`s only dead, lease-lapsed cells). This times death out; it does
      not decide it.
   3. **`gc_safety_is_local`** — the collection trigger needs NO consensus: it reads only the
      dropper's own inbound edges (refcount-zero), never any peer's hidden internal state.
@@ -30,7 +30,7 @@ simultaneously (`study-gc.md §3,§5`):
      lease expiry alone. This is the FIND/VERIFY seam, the same seam as everywhere in dregg2.
 
 The collector is computable and its soundness is proved. The genuine impossibilities are stated
-honestly as `-- OPEN:` notes pointing at the obligations of `Liveness`, never weakened to close.
+as `-- OPEN:` notes pointing at the obligations of `Liveness`, never weakened to close.
 -/
 import Dregg2.Liveness
 
@@ -89,7 +89,7 @@ theorem reachable_keeps_live
 /-! ## 2. THE KEYSTONE — death is TIMED OUT, not decided -/
 
 /-- **`death_is_timed_out` — THE KEYSTONE.** A cell is soundly collectible via LEASE EXPIRY: if
-the cell is genuinely `Dead` (the global, non-co-witnessable predicate) AND its lease has lapsed,
+the cell is `Dead` (the global, non-co-witnessable predicate) AND its lease has lapsed,
 then it is NOT `liveCell`, so collecting it is sound. Crucially, the *operational* hypothesis the
 runtime can actually check is only `leaseExpired = true` (locally decidable) — the global `Dead`
 appears as a semantic side-condition we never compute. This is the move that converts a
@@ -175,7 +175,7 @@ theorem crossvat_leak_reclaimed_by_lease
 -- tier-3 graph-privacy the design exists to provide. dregg2 ships this leak in full and bounds
 -- it ONLY by lease expiry (`crossvat_leak_reclaimed_by_lease`). We do NOT add a cycle collector.
 
--- OPEN: "dead" is genuinely not globally decidable. `Liveness.dead_undecidable` states (with an
+-- OPEN: "dead" is not globally decidable. `Liveness.dead_undecidable` states (with an
 -- honest `sorry`, its residual obligation a Turing-reduction needing a computability model not in
 -- the imported modules) that NO uniform `decide : LivenessGraph → CellId → Bool` soundly and
 -- completely decides `Dead`. We deliberately import that fact rather than re-attempt it, and we

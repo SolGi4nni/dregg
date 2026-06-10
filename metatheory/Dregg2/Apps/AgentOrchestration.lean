@@ -216,7 +216,7 @@ theorem gate_committed_implies_credential_and_caveats (s' : RecChainedState)
 /-- **`forged_credential_denied`** — a node whose credential does not pass the §8 portal is denied:
 the whole forest rejects, even if the caps would otherwise admit. `execFullForestG_unauthorized_fails`
 with `gateOK = false` because `credentialValidG = false`. Non-vacuous: the forged credential
-genuinely fails the portal. -/
+fails the portal. -/
 theorem forged_credential_denied :
     execFullForestG world forgedCredForestG = none := by
   apply execFullForestG_unauthorized_fails
@@ -227,7 +227,7 @@ theorem forged_credential_denied :
   simp only [gateOK, hcred, Bool.false_and]
 
 /-- **`false_caveat_denied`** — a node whose caveat does not discharge on the pre-state is denied.
-Non-vacuous: the false caveat (cell 0 holds ≥ 10000 of asset 0, but it holds 100) genuinely fails. -/
+Non-vacuous: the false caveat (cell 0 holds ≥ 10000 of asset 0, but it holds 100) fails. -/
 theorem false_caveat_denied :
     execFullForestG world falseCaveatForestG = none := by
   apply execFullForestG_unauthorized_fails
@@ -294,7 +294,7 @@ theorem orchestration_each_attests (s' : RecChainedState)
       ∃ sa sa', execFullA sa fa = some sa' ∧ fullActionInvA sa fa sa' :=
   execFullForestA_each_attests world s' orchestration h
 
-/-- **`orchestration_runs`** — the whole assembled orchestration genuinely commits (`isSome`): the
+/-- **`orchestration_runs`** — the whole assembled orchestration commits (`isSome`): the
 conservation/no-amplify/attestation theorems are not vacuously quantified over a never-committing
 forest — there is a post-state. -/
 theorem orchestration_runs : (execFullForestA world orchestration).isSome = true := by decide

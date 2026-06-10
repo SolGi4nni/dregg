@@ -260,7 +260,7 @@ auto-resolution) witnessing the bridge / verify-sound / cascade end-to-end. Not 
 
 namespace Reference
 
-/-- A concrete window/time over `ℤ`: window `[10, 20]`, event time `15` — genuinely inside. -/
+/-- A concrete window/time over `ℤ`: window `[10, 20]`, event time `15` — inside. -/
 def sampleStmt : Statement := { lo := 10, hi := 20, t := 15 }
 
 /-- Non-vacuity of the BRIDGE: `15 ∈ [10, 20]`, so a satisfying trace exists (via `temporal_complete`,

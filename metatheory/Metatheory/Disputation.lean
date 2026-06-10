@@ -53,13 +53,13 @@ off a vote. `R_witness` is defined only where a certificate can exist (the *cert
 exactly how it sidesteps the aggregation impossibility. -/
 def upheld (X : Claim P) : Prop := Holds (W := W) X
 
-/-- **`upheld_iff_witness` — the verdict IS the witness (PROVED).** Upholding a claim is exactly the
+/-- **`upheld_iff_witness` — the verdict IS the witness.** Upholding a claim is exactly the
 existence of a discharging witness; no assertion or majority can manufacture it. -/
 theorem upheld_iff_witness (X : Claim P) :
     upheld (W := W) X ↔ ∃ w : W, Discharged (P := P) (W := W) X.stmt w :=
   holds_iff_discharged_witness X
 
-/-- **`verdict_is_honest_distributed_knowledge` — witness-determined, not vote-determined (PROVED).**
+/-- **`verdict_is_honest_distributed_knowledge` — witness-determined, not vote-determined.**
 The verdict equals exactly what the honest group can DISTRIBUTEDLY KNOW: `upheld X` iff, for some
 offered witness, the honest agents have distributed knowledge of its discharge. The adjudicated outcome
 is the realizability fact (`R_witness`), not an aggregation of opinions. -/
@@ -71,7 +71,7 @@ theorem verdict_is_honest_distributed_knowledge (X : Claim P) :
   · rintro ⟨w₀, hk⟩
     exact F.honest_dist_knowledge_iff_holds X w₀ ⟨hk, fun i _ => F.indist_refl i F.actual⟩
 
-/-- **`byzantine_majority_cannot_uphold` — the aggregation-impossibility ESCAPE (PROVED).** If a claim
+/-- **`byzantine_majority_cannot_uphold` — the aggregation-impossibility ESCAPE.** If a claim
 does NOT hold (no witness exists), then NO offered witness lets the honest group distributedly know it —
 a Byzantine majority cannot vote it into the verdict. `R_witness` is dictatorship-proof on the
 certifiable domain *precisely because it is not an aggregation*: it reads a certificate, it does not

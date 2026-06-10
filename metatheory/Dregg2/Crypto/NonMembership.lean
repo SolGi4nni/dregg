@@ -110,7 +110,7 @@ def presentAt (compress : Digest → Digest → Digest) (root x : Digest) : Prop
   MerkleMembers compress root x
 
 /-- **`NonMember compress root leaves e`** — the non-membership STATEMENT relation: relative to a
-sorted committed leaf list with the given Merkle root, the element `e` is genuinely absent. We state
+sorted committed leaf list with the given Merkle root, the element `e` is absent. We state
 it positively as "the leaf list is sorted, its root is `root`, and `e ∉ leaves`" — the relation the
 verifier's accepting bit must certify. -/
 def NonMember (leaves : List Digest) (e : Digest) : Prop :=
@@ -257,7 +257,7 @@ class NonMembershipVerifierKernel (Digest : Type u) (Proof : Type u) [LinearOrde
 variable {Proof : Type u}
 
 /-- **`nonmembership_verify_sound`** — given `extractable`, an accepted non-membership proof proves
-the element is genuinely absent: `verify stmt proof = true  →  ∃ leaves, NonMember leaves stmt.elem`.
+the element is absent: `verify stmt proof = true → ∃ leaves, NonMember leaves stmt.elem`.
 Derived by composing `extract` with `nonmembership_bridge`'s soundness half; never assumed. -/
 theorem nonmembership_verify_sound [K : NonMembershipVerifierKernel Digest Proof]
     (hext : K.extractable) (stmt : Statement Digest) (proof : Proof)
@@ -456,7 +456,7 @@ toy "2 is absent" claim). -/
 def absentStmt : Statement Int := { root := 2, elem := 2 }
 
 /-- Non-vacuity of `nonmembership_verify_sound`: at the reference kernel an accepted proof yields a
-committed list from which `stmt.elem = 2` is genuinely absent. -/
+committed list from which `stmt.elem = 2` is absent. -/
 example : ∃ leaves : List Int, NonMember leaves absentStmt.elem :=
   nonmembership_verify_sound (K := refKernel) trivial absentStmt 0 (by decide)
 

@@ -207,7 +207,7 @@ theorem runOrder_abort (nodes : List Node) (i : Nat) (rest : List Nat)
     runOrder nodes (i :: rest) s slots = none := by
   simp only [runOrder, hlk, hfail]
 
-/-- **`condTurn_atomic` — PROVED (all-or-nothing).** If the batch executor returns `none` (any node
+/-- **`condTurn_atomic` (all-or-nothing).** If the batch executor returns `none` (any node
 failed, or a cycle), then NO post-state is produced: the result is exactly `none`, so the input state
 `s` is untouched — there is no partial commit. This is the executable shadow of dregg1's
 `Pipeline.atomic` "if ANY turn fails, ALL previously committed turns are rolled back": in the pure
@@ -258,7 +258,7 @@ theorem runOrder_ledger :
               simp only [List.filterMap_cons, hlk, List.map_cons, List.sum_cons]
               ring
 
-/-- **`condTurn_conserves` — PROVED (batch conservation).** A committed conditional turn whose every
+/-- **`condTurn_conserves` (batch conservation).** A committed conditional turn whose every
 committed node has zero net ledger delta (balance/authority-only turns, or balanced mint/burn within
 each turn) PRESERVES the conserved `recTotal` across the whole all-or-nothing batch: `recTotal
 s'.kernel = recTotal s.kernel`. This is the Σ-over-committed-turns conservation, reusing
@@ -326,7 +326,7 @@ theorem runOrder_filled_stays :
               exact runOrder_filled_stays nodes rest s1 s' (slots.fill i) slots' h j
                 (Slots.fill_mono slots i j hj)
 
-/-- **`runOrder` fills as it commits (PROVED).** After a committed `runOrder` over `order`, every node
+/-- **`runOrder` fills as it commits.** After a committed `runOrder` over `order`, every node
 index in `order` has had its slot filled in the final environment — producers' outputs are forwarded.
 We prove the monotone fact: any slot already filled in the input stays filled, and every emitted index
 is filled by the end. -/
@@ -397,7 +397,7 @@ theorem kahnLoopImpl_respects :
                 exact List.mem_append.mpr (Or.inl hpe)
             exact kahnLoopImpl_respects fuel n edges (emitted ++ [i]) order h hinv'
 
-/-- **`condTurn_dependency_sound` — PROVED (topo-order respected; no use-before-define).** For a
+/-- **`condTurn_dependency_sound` (topo-order respected; no use-before-define).** For a
 committed conditional turn, the emitted run `order` respects EVERY `EventualRef` dependency edge: for
 each edge `(consumer, producer)`, if the consumer appears in the order then so does the producer
 (`order.contains producer`). Combined with `runOrder_fills` (a node fills its slot as it commits) and
@@ -414,7 +414,7 @@ theorem condTurn_dependency_sound (b : ConditionalBatch) (s s' : RecChainedState
   exact kahnLoopImpl_respects b.size b.size b.edges [] order hto
     (by intro c p _ hc; exact absurd hc (List.not_mem_nil))
 
-/-- **The slot-resolution corollary (PROVED): every awaited producer's slot is filled in the batch
+/-- **The slot-resolution corollary: every awaited producer's slot is filled in the batch
 outputs.** For a committed batch, if a consumer `c` in the run order awaits producer `p` (edge
 `(c,p)`), then `p`'s output slot is filled in the final `Outputs` — the `EventualRef` resolves. This
 is `condTurn_dependency_sound` pushed through `runOrder_fills`: producer precedes consumer ⇒ producer
@@ -437,7 +437,7 @@ theorem condTurn_eventualref_resolved (b : ConditionalBatch) (s s' : RecChainedS
 /-! ## §8 — `condTurn_forward_sim`: the batch refines a SEQUENCE of abstract steps.
 
 `Spec.ExecRefinement` leaves the abstract small-step relation `AbsStep` OPEN (its §4 OPEN comment),
-and `Exec/EffectTransfer.lean` DISCHARGES it for the Transfer slice with a genuinely constraining
+and `Exec/EffectTransfer.lean` DISCHARGES it for the Transfer slice with a constraining
 `AbsStep a a' := conservedInDomain Domain.balance [a'.balanceTotal - a.balanceTotal] ∧ a'.authGraph
 = a.authGraph`. We mirror its CONSERVATION conjunct — the part a batch node provably carries — as the
 per-node `CondAbsStep`: the conserved `balance`-domain measure must NOT move (`recTotal` is unchanged
@@ -450,7 +450,7 @@ dregg1's `Paired`/conservative regime) is then matched by a *chain* of REAL abst
 committed node (the executor-axis bottom edge). The authority-graph conjunct is NOT demanded per
 node: a batch node is a general `List FullAction` that MAY delegate/revoke (it edits `execGraph`), so
 unlike Transfer it is not connectivity-preserving in general — we keep the conservation conjunct,
-which is the genuinely-tracked content, rather than overclaiming graph-invariance. -/
+which is the tracked content, rather than overclaiming graph-invariance. -/
 
 /-- **`CondAbsStep a a'`** — the record-world abstract step, the CONSERVATION conjunct of
 `EffectTransfer.AbsStep`: the conserved `balance`-domain delta `[a' - a]` nets to `0`
@@ -461,19 +461,19 @@ relation: any pair with `a' ≠ a` is NOT a `CondAbsStep` (the conserved total m
 vacuous `∃ δ, a' = a + δ`. -/
 def CondAbsStep (a a' : ℤ) : Prop := conservedInDomain Domain.balance [a' - a]
 
-/-- **The predicate has TEETH (PROVED):** `CondAbsStep a a'` holds IFF `a' = a` — a step that moves
+/-- **The predicate has TEETH:** `CondAbsStep a a'` holds IFF `a' = a` — a step that moves
 the conserved balance total is REJECTED. Contrast the old `∃ δ, a' = a + δ`, which held for every
 pair. This is the de-vacuification witness: `CondAbsStep` constrains. -/
 theorem condAbsStep_iff_eq (a a' : ℤ) : CondAbsStep a a' ↔ a' = a := by
   unfold CondAbsStep conservedInDomain
   simp [sub_eq_zero]
 
-/-- A non-step is genuinely rejected: if the conserved total moved (`a' ≠ a`), it is NOT a
+/-- A non-step is rejected: if the conserved total moved (`a' ≠ a`), it is NOT a
 `CondAbsStep`. The old `∃ δ` predicate could never produce this fact. -/
 theorem not_condAbsStep_of_ne (a a' : ℤ) (h : a' ≠ a) : ¬ CondAbsStep a a' := by
   rw [condAbsStep_iff_eq]; exact h
 
-/-- **A committed CONSERVING node IS a `CondAbsStep` (PROVED).** A single batch node whose net ledger
+/-- **A committed CONSERVING node IS a `CondAbsStep`.** A single batch node whose net ledger
 delta is `0` (a balance/authority-only turn — dregg1's `Paired`/conservative regime, the same regime
 `condTurn_conserves` assumes) leaves the conserved `recTotal` unchanged, so it satisfies the
 constraining `CondAbsStep` on the measure. A node that mints/burns (nonzero delta) is NOT a
@@ -491,11 +491,11 @@ def AbsChain : List ℤ → Prop
   | [_]           => True
   | a :: a' :: rest => CondAbsStep a a' ∧ AbsChain (a' :: rest)
 
-/-- **`runOrder_abschain` (PROVED).** A committed `runOrder` over a batch each of whose committed
+/-- **`runOrder_abschain`.** A committed `runOrder` over a batch each of whose committed
 nodes conserves (net ledger delta `0` — the `Paired`/conservative regime) produces a chain of
 conserved-measure waypoints (the `recTotal` after each prefix) that forms an `AbsChain`: every
 consecutive node-commit is a REAL `CondAbsStep` (the balance total provably did NOT move, so the
-constraining predicate is genuinely satisfied at each edge, not vacuously). So the conserving batch
+constraining predicate is satisfied at each edge, not vacuously). So the conserving batch
 refines a sequence of constraining abstract steps. The per-node conservation hypothesis is the
 already-available `runOrder_ledger`/`execFullTurn_ledger` fact in the regime `condTurn_conserves`
 assumes — wired into the now-constraining `CondAbsStep`. -/
@@ -545,19 +545,19 @@ theorem runOrder_abschain :
                     subst this
                     exact ⟨hstep, hchain⟩
 
-/-- **`condTurn_forward_sim` — PROVED (refinement of a sequence of CONSTRAINING abstract steps).** A
+/-- **`condTurn_forward_sim` (refinement of a sequence of CONSTRAINING abstract steps).** A
 committed conditional turn each of whose committed nodes conserves (net ledger delta `0` — the
 `Paired`/conservative regime `condTurn_conserves` works in) is matched by a *chain* of REAL abstract
 steps `CondAbsStep` on the conserved `recTotal` measure: there is a list of waypoints starting at the
 pre-state measure, ending at the post-state measure, with every consecutive pair an abstract step
 (one per committed node). Because `CondAbsStep a a'` now means `conservedInDomain Domain.balance
-[a' - a]` (i.e. `a' = a`, the genuinely-constraining balance-domain law `EffectTransfer.AbsStep`
+[a' - a]` (i.e. `a' = a`, the constraining balance-domain law `EffectTransfer.AbsStep`
 carries — NOT the old `∃ δ` true-for-any-pair), this is a CONTENTFUL refinement: each waypoint edge
 witnesses that the conserved total did not move, and a non-conserving step would be REJECTED. This is
 the executor-axis bottom edge of the refinement square — `Spec.ExecRefinement`'s OPEN `AbsStep`,
 realized for the BATCH executor over the conserved-measure projection: `execConditionalTurn` refines
 a sequence of `CondAbsStep`s. The conservation hypothesis is the per-node form of the `hzero` that
-`condTurn_conserves` already takes; on a batch that mints/burns net-nonzero the chain genuinely does
+`condTurn_conserves` already takes; on a batch that mints/burns net-nonzero the chain does
 NOT exist (the bottom edge has teeth). -/
 theorem condTurn_forward_sim (b : ConditionalBatch) (s s' : RecChainedState) (o : Outputs)
     (h : execConditionalTurn b s = some (s', o))
@@ -585,7 +585,7 @@ the producer index that filled it. -/
 def awaitEdge {S : Type} (p : Nat) (kont : Await.OneShot Nat S) : Await.AwaitCore Nat Nat S :=
   { promise := p, kont := kont }
 
-/-- **`awaitEdge_is_await` (PROVED).** Every dependency edge's `awaitEdge` has the producer index as
+/-- **`awaitEdge_is_await`.** Every dependency edge's `awaitEdge` has the producer index as
 its awaited promise — i.e. the `EventualRef` read IS an `Await.Op.await` on the producer's slot. The
 core's continuation is the consumer's resumption, captured one-shot exactly as `Await`'s `AwaitCore`
 specifies. This ties the executor's slot-forwarding to `Await.lean`'s handler semantics: forwarding =
@@ -594,7 +594,7 @@ theorem awaitEdge_is_await {S : Type} (p : Nat) (kont : Await.OneShot Nat S) :
     (awaitEdge p kont).promise = p ∧ (awaitEdge p kont).kont = kont :=
   ⟨rfl, rfl⟩
 
-/-- **The producer-commit ↔ handler-commit bridge (PROVED).** When a producer commits (its slot fills),
+/-- **The producer-commit ↔ handler-commit bridge.** When a producer commits (its slot fills),
 the awaiting consumer's continuation is resumed EXACTLY ONCE — modeled by `Await`'s turn-as-rollback
 handler taking the `commit` arm. Reusing `Await.commit_resumes_once`: the await op's handler, on a
 commit decision, equals `OneShot.resume` of the captured continuation. So slot-forwarding in

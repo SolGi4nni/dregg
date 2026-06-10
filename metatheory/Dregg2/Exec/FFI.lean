@@ -65,7 +65,7 @@ We marshal the `balance` FIELD as the scalar at the boundary — the FFI signatu
 10k/10k differential oracle need no signature change — while the PROVED function underneath is now
 `RecordKernel.recKExec` over the real record cell. By `recKExec_conserves` the returned total equals
 `balA + balB` (conserved over the `balance` field). This turns the scalar PoC into the actual
-record-cell migration ratchet, with the marshalling honestly limited to the `balance` field. -/
+record-cell migration ratchet, with the marshalling limited to the `balance` field. -/
 @[export dregg_record_kernel_transfer_total]
 def recordTransferTotal (balA balB amt : UInt64) : UInt64 :=
   let k : RecordKernelState :=
@@ -2769,7 +2769,7 @@ def parseWTurn (fuel : Nat) (cs : PState) : Option (WTurn × PState) := do
 
 /-- Host-default **proposer** cell credited 50% of the turn fee (`self.proposer_cell`). Reserved
 system-proposer cell, distinguished from the host treasury and any plausible agent so the 50/30 fee
-distribution genuinely fires on the default path. -/
+distribution fires on the default path. -/
 def hostProposerCell : CellId := 0xF00
 
 /-- Host-default **treasury** cell credited 30% of the turn fee (`self.treasury_cell`). Reserved
@@ -2778,9 +2778,9 @@ def hostTreasuryCell : CellId := 0xF01
 
 /-! ### §W-HOST — the HOST/NODE-fed admission context (boundary-P1 bug 1).
 
-Previously `admCtxOfTurn` derived `now`/`budget`/`frozen`/`storedHead` from the UNTRUSTED turn
-envelope: `now := validUntil` made the expiry gate `now ≤ validUntil` (= `validUntil ≤ validUntil`)
-VACUOUS, an attacker set its own `budget`/freeze-set/receipt-head. The clock, budget, freeze-set and
+Deriving `now`/`budget`/`frozen`/`storedHead` from the UNTRUSTED turn envelope would be unsound:
+`now := validUntil` makes the expiry gate `now ≤ validUntil` (= `validUntil ≤ validUntil`)
+VACUOUS, and an attacker sets its own `budget`/freeze-set/receipt-head. The clock, budget, freeze-set and
 the agent's stored receipt-head are NODE STATE — they MUST be fed by the host (`self.current_timestamp`
 / `self.silo_budget` / `self.frozen_cells` / `self.receipt_heads[agent]`), NOT chosen by the turn.
 
@@ -2860,7 +2860,7 @@ def admCtxOfTurn (t : WTurn) : AdmCtx :=
   { now := t.validUntil, blockHeight := t.blockHeight, frozen := [], storedHead := prevReceiptOf t.prevHash,
     budget := 1000000000, proposer := some hostProposerCell, treasury := some hostTreasuryCell }
 
-/-- **`admCtxOfTurn_expiry_vacuous` — WHY the old path was bug-1 (PROVED).** When `block_height = 0`
+/-- **`admCtxOfTurn_expiry_vacuous` — WHY the old path was bug-1.** When `block_height = 0`
 the turn-derived context sets `now := validUntil`, so the expiry clock equals the claimed deadline:
 `admissionClock (admCtxOfTurn t) ≤ t.validUntil` is `validUntil ≤ validUntil` = ALWAYS TRUE. The turn
 chose its own clock ⇒ the expiry gate could never fire. The fix routes the clock through
@@ -3088,7 +3088,7 @@ pull in `Classical.choice`/`Quot.sound`; a `sorryAx` here would FAIL the build).
 
 /-! ## §W9 — NON-VACUOUS round-trip THEOREMS (the codec teeth; FILL J's leading edge).
 
-The codec is TCB (FILL J adds the FULL parse∘encode theorem). Here we prove TWO genuinely
+The codec is TCB (FILL J adds the FULL parse∘encode theorem). Here we prove TWO
 non-vacuous round-trip facts — the leading edge of that work, stating real TEETH:
 
   1. **The ByteArray32 digest field is LOSSLESS on the full 256-bit range** — `ofHex32 (toHex32 n) =
@@ -3100,7 +3100,7 @@ non-vacuous round-trip facts — the leading edge of that work, stating real TEE
      `execFullForestA (eraseAuth f)` to the wire tree's actions — the credential decoration is
      ledger-orthogonal, the teeth that make the auth a pure TRANSPORT (no action added/dropped). -/
 
-/-- **`toHex32_length` — PROVED (the `[u8;32]` WIDTH pin).** `toHex32 n` is ALWAYS exactly 64 chars,
+/-- **`toHex32_length` (the `[u8;32]` WIDTH pin).** `toHex32 n` is ALWAYS exactly 64 chars,
 for EVERY `n` — the dregg1 `[u8;32]` digest width, independent of the value. NON-VACUOUS: a
 decimal-`Nat` encoding (the narrow codec) would vary in length; THIS one is width-pinned. -/
 theorem toHex32_length (n : Nat) : (toHex32 n).toList.length = 64 := by
@@ -3139,7 +3139,7 @@ ungated `FullForest.execFullForestA (eraseAuth root)` — it ERASES the per-node
 fires the auth GATE. THIS section wires the C entry to the REAL gated executor
 `FullForestAuth.execFullForestG` (META-FILL D): per node the 3-part FAIL-CLOSED gate `credentialValid ∧
 capAuthorityG ∧ caveatsDischarged` fires IN FRONT of `execFullA`, then `execFullForestG` runs the gated
-tree all-or-nothing. The wire's per-node credential (the WHO) is no longer a dead decoration — it GATES.
+tree all-or-nothing. The wire's per-node credential (the WHO) is not decoration — it GATES.
 
 ## What the gate executes, and why this is faithful
 
@@ -3185,7 +3185,7 @@ The wire caveat `[tier,cell,asset,min]` becomes a `GatedCaveat` whose `tier` is 
 `DriftStable.DriftTier` and whose `check` reads `s.kernel.bal cell asset ≥ min` on the pre-state — the
 SAME shape as `FullForestAuth.Demo.trueCaveat`/`falseCaveat`. A `.coordinated` (tier 3) caveat
 fail-closes intra-cell (`GatedCaveat.holds` routes it to `CrossCaveat`). With this lift the gate's
-`caveatsDischarged` leg consults the TRANSPORTED caveat — no longer admit-by-construction. -/
+`caveatsDischarged` leg consults the TRANSPORTED caveat — not admit-by-construction. -/
 
 /-- Decode the wire tier ordinal to a `DriftStable.DriftTier` (`>3` clamps to `.monotone`, but the
 parser already rejects `tier>3`). -/
@@ -3291,7 +3291,7 @@ and `ok:0` — the rollback is observable. On a malformed wire we fail-closed to
 -- (`execFullTurnStep`/`execFullTurnWide`) are de-exported Lean-side references; the `dregg_kernel_*` /
 -- `dregg_record_*` exports are TEST-ONLY differential oracles (single steps, not turns).
 -- boundary-P1 (bugs 1+2): the admission context is HOST-FED (`admCtxOfHost w.host`, NODE state — the
--- turn no longer sets its own clock/budget/freeze/head), and the result is the THREE-WAY status
+-- turn does not set its own clock/budget/freeze/head), and the result is the THREE-WAY status
 -- (`encodeWStatusOut`) — `ok:1`/`status:2` fires ONLY when the gated forest BODY actually committed.
 -- A forged-credential turn rolls the body back ⇒ `status:1` (prologue charged as anti-spam, turn
 -- REJECTED), never `ok:1`.
@@ -3381,13 +3381,13 @@ def forgedGatedTurn : WTurn :=
 /-- The wire for the forged-credential turn (admissible prologue, gated body rolls back). -/
 def forgedGatedInput : String := encodeWWire { state := wideDemoState, turn := forgedGatedTurn }
 
--- ★ BUG-2 TOOTH ★ the FORGED-credential turn is NO LONGER `ok:1`. The gated forest body rolls back
+-- ★ BUG-2 TOOTH ★ the FORGED-credential turn is NOT `ok:1`. The gated forest body rolls back
 -- (forged WHO ⇒ `execFullForestG = none`); the admission prologue is committed (fee/nonce) as
 -- anti-spam, so the status is `1` (prologue-committed-body-failed) and `ok:0` — the turn is REJECTED,
--- never reported as committed. (Previously this `#guard` asserted `wireOk1` — that WAS the bug.)
+-- never reported as committed.
 #guard (wireOk0 (execFullForestAuthStep forgedGatedInput))
 #guard (wireStatusIs 1 (execFullForestAuthStep forgedGatedInput))  --  prologue-committed-body-failed
--- the GENUINE-credential turn, by contrast, IS `status:2`/`ok:1` (body genuinely commits):
+-- the GENUINE-credential turn, by contrast, IS `status:2`/`ok:1` (body commits):
 #guard (wireOk1 (execFullForestAuthStep gatedDemoInput))
 #guard (wireStatusIs 2 (execFullForestAuthStep gatedDemoInput))  --  body-committed
 -- ...whereas the UNGATED §W7 export would COMMIT the very same transfer (the credential is dead there):
@@ -3441,7 +3441,7 @@ This is the proof the SOUNDNESS GAP is closed: a gated turn carrying a within-ce
 PRE-STATE VIOLATES ROLLS BACK over `dregg_exec_full_forest_auth` (ok:0, state echoed), while the SAME
 turn — same wire path, same genuine credential, same transfer — with the caveat SATISFIED COMMITS
 (ok:1). The ONLY difference between the two wires is the caveat's `min` threshold, so this is the
-same-wire contrast that proves `caveatsDischarged` now has REAL teeth over `@[export]` — no longer
+same-wire contrast that proves `caveatsDischarged` has REAL teeth over `@[export]` — not
 admit-by-construction. (Mirrors the forged-credential teeth above, but for the CAVEAT leg.)
 
 The wire pre-state (`wideDemoState`) has cell 0 holding 100 of asset 0. A caveat `[0,0,0,M]` (tier
@@ -3499,13 +3499,13 @@ def cavePre : RecChainedState :=
               , caps := fun _ => [], bal := fun c a => if c = 0 ∧ a = 0 then 100 else 0 }
     log := [] }
 
-/-- **`caveat_teeth_same_wire` — THE SOUNDNESS-GAP-CLOSED THEOREM (PROVED, non-vacuous).** Over the SAME
+/-- **`caveat_teeth_same_wire` — THE SOUNDNESS-GAP-CLOSED THEOREM (non-vacuous).** Over the SAME
 pre-state `cavePre` (cell 0 holds 100 of asset 0) and the SAME genuine-credential transfer, the gate's
 caveat leg of the VIOLATED-caveat turn FAILS (`caveatsDischarged = false`, the wire caveat needed cell 0
 ≥ 10000) while the SATISFIED-caveat turn's leg HOLDS (`caveatsDischarged = true`, it needed cell 0 ≥ 0).
 Both nodes are produced by `liftForestG` from a real `WForest` (the wire→gate lift), read on the
 IDENTICAL pre-state — the ONLY difference is the TRANSPORTED caveat's `min`. This proves
-`caveatsDischarged` CONSULTS the transported caveat (it is NO LONGER admit-by-construction): a
+`caveatsDischarged` CONSULTS the transported caveat (NOT admit-by-construction): a
 wire-violated caveat makes the gate fail-closed; a satisfied one discharges. The export's
 all-or-nothing rollback (`execFullForestAuthStep`, witnessed by the `#guard`s above on the FULL
 `parseWWire`/`stateOfWState` path) rides exactly this contrast. -/
@@ -3515,7 +3515,7 @@ theorem caveat_teeth_same_wire :
     caveatsDischarged (liftForestG (caveatTurn 0 10000).root).auth cavePre = false := by
   refine ⟨?_, ?_⟩ <;> rfl
 
-/-- **`caveat_teeth_coordinated` — the CROSS-CELL caveat fail-closure (PROVED).** A `coordinated` (tier
+/-- **`caveat_teeth_coordinated` — the CROSS-CELL caveat fail-closure.** A `coordinated` (tier
 3) transported caveat fail-closes the gate EVEN THOUGH its balance bound (cell 0 ≥ 0) TRIVIALLY HOLDS —
 `GatedCaveat.holds` routes the coordinated tier to `CrossCaveat` (the dregg1 `authorize.rs:1608`
 cross-cell-hole foreclosure). The wire CANNOT smuggle a cross-cell read through the intra-cell gate. -/
@@ -3536,7 +3536,7 @@ pinned `.unchecked`, admitting BOTH). -/
 
 /-- The delegation pre-state: `wideDemoState` PLUS cell 0 holding `.endpoint 1 [read, write]` (the cap
 the root, acting on cell 0, hands off to the child). This makes the EXECUTED delegation handoff
-(`delegateAttenA`) succeed on the non-amplifying edge — so the body genuinely COMMITS the child rather
+(`delegateAttenA`) succeed on the non-amplifying edge — so the body COMMITS the child rather
 than aborting on a missing-cap install (which would mask the WHAT-leg contrast). -/
 def delegState : WState :=
   { wideDemoState with caps := [(0, [.endpoint 1 [.read, .write], .node 0]), (9, [.node 0])] }
@@ -3597,11 +3597,11 @@ def delegBodyLoglen (input : String) : Option Nat :=
                    | [] => false
        | none => false))  --  true (genuine credential; the cap leg is the load-bearing teeth)
 
-/-- **`capauth_teeth_same_wire` — THE A1 SOUNDNESS-GAP-CLOSED THEOREM (PROVED, non-vacuous).** Over the
+/-- **`capauth_teeth_same_wire` — THE A1 SOUNDNESS-GAP-CLOSED THEOREM (non-vacuous).** Over the
 SAME wire path and credential, the lifted tree's CHILD node's WHAT leg ADMITS the non-amplifying edge
 (`[read] ⊆ {read, write}`) and REJECTS the amplifying one (`{read, write} ⊄ {read}`). The ONLY difference
 is the child edge's `keep`/`parentCap` rights. This proves `capAuthorityG` CONSULTS the transported
-delegation rights (NO LONGER admit-by-construction): an amplifying delegation makes the gate fail-closed
+delegation rights (NOT admit-by-construction): an amplifying delegation makes the gate fail-closed
 over `ExecAuth`. The export's all-or-nothing rollback rides exactly this contrast. -/
 theorem capauth_teeth_same_wire :
     capAuthorityG (match (liftForestG (delegTurn [Auth.read]
@@ -3684,7 +3684,7 @@ def execHandlerTurnStep (input : String) : String :=
 
 /-! ### §WG-eval-hostexpiry — ★ BUG-1 TOOTH ★ host-fed clock REJECTS a past-expiry turn.
 
-The expiry gate is NO LONGER vacuous: the host supplies `now`, checked against the turn's CLAIMED
+The expiry gate is NOT vacuous: the host supplies `now`, checked against the turn's CLAIMED
 `valid_until`. The SAME genuine turn (`gatedDemoTurn`, `valid_until = 1000`) over a host whose clock
 is AFTER expiry (`now = 2000`) is REJECTED (status:0, no edit), while over a host clock BEFORE expiry
 (`now = 0`) it COMMITS — the ONLY difference is the HOST-fed `now`, which the turn cannot set. -/
@@ -3703,7 +3703,7 @@ def liveHostInput : String :=
 #guard (wireOk1 (execFullForestAuthStep liveHostInput))
 #guard (wireStatusIs 2 (execFullForestAuthStep liveHostInput))  --  body-committed
 
-/-- **`host_clock_rejects_past_expiry` — THE BUG-1 THEOREM (PROVED, non-vacuous).** Over the SAME
+/-- **`host_clock_rejects_past_expiry` — THE BUG-1 THEOREM (non-vacuous).** Over the SAME
 header (claimed `validUntil = some 1000`), an admission context whose host clock is PAST expiry
 (`now = 2000`, no block-height) makes the turn INADMISSIBLE, while a context whose clock is before
 expiry (`now = 0`) leaves the expiry gate passable. The clock is the HOST'S — the turn cannot make
@@ -3718,7 +3718,7 @@ theorem host_clock_rejects_past_expiry (h : TurnHdr) (s : RecChainedState)
 
 #assert_axioms host_clock_rejects_past_expiry
 
-/-- **`host_budget_rejects_overbudget` — bug-1 budget TOOTH (PROVED).** A turn whose fee exceeds the
+/-- **`host_budget_rejects_overbudget` — bug-1 budget TOOTH.** A turn whose fee exceeds the
 HOST-fed silo budget is inadmissible — the budget is the host's, not the turn's. -/
 theorem host_budget_rejects_overbudget (h : TurnHdr) (s : RecChainedState)
     (hfee : h.fee = 100) :

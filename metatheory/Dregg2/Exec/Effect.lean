@@ -144,27 +144,27 @@ def delta : CellEffect → Int
   | .incrementNonce _    => 0
   | .createCell _ _      => 0
 
-/-! ## The per-effect disclosure law (PROVED): `delta ≠ 0` ⇔ disclosed mint/burn. -/
+/-! ## The per-effect disclosure law: `delta ≠ 0` ⇔ disclosed mint/burn. -/
 
-/-- A `mint` is the `generative` disclosure — PROVED (definitional). -/
+/-- A `mint` is the `generative` disclosure (definitional). -/
 theorem mint_is_generative (cell : EffCellId) (amt : Int) :
     linearity (.mint cell amt) = .generative := rfl
 
-/-- A `burn` is the `annihilative` disclosure — PROVED (definitional). -/
+/-- A `burn` is the `annihilative` disclosure (definitional). -/
 theorem burn_is_annihilative (cell : EffCellId) (amt : Int) :
     linearity (.burn cell amt) = .annihilative := rfl
 
-/-- **A neutral-delta effect is never a disclosed non-conservation — PROVED.** If an effect's
+/-- **A neutral-delta effect is never a disclosed non-conservation.** If an effect's
 linearity does NOT disclose a non-conservation, then its delta is `0`: the conservative,
 monotonic, terminal and neutral effects all leave the total untouched. (By exhaustive `cases`.) -/
 theorem delta_zero_of_not_disclosed (e : CellEffect)
     (h : disclosesNonConservation (linearity e) = false) : delta e = 0 := by
   cases e <;> simp_all [linearity, delta, disclosesNonConservation]
 
-/-- **The disclosure is FORCED — PROVED.** Any effect that moves the conserved total is a
+/-- **The disclosure is FORCED.** Any effect that moves the conserved total is a
 disclosed non-conservation: `delta e ≠ 0 → disclosesNonConservation (linearity e)`. The
 contrapositive is `delta_zero_of_not_disclosed`; so an undisclosed (conservative/monotonic/
-terminal/neutral) effect provably cannot move the total. (The converse fails *honestly*: a
+terminal/neutral) effect provably cannot move the total. (The converse fails: a
 mint/burn of amount `0` discloses a non-conservation while contributing `delta 0`, so disclosure
 is necessary but the *amount* may be zero — see `disclosed_iff_mint_or_burn` for the structural
 characterization that IS a bi-implication.) -/
@@ -174,7 +174,7 @@ theorem moves_total_disclosed (e : CellEffect)
   simp only [Bool.not_eq_true] at hd
   exact hne (delta_zero_of_not_disclosed e hd)
 
-/-- **The disclosed classes are EXACTLY the mint/burn effects — PROVED (bi-implication).** An
+/-- **The disclosed classes are EXACTLY the mint/burn effects (bi-implication).** An
 effect discloses a non-conservation iff it is structurally a `mint` (generative) or a `burn`
 (annihilative). This is the clean two-way characterization the amount-sensitive
 `moves_total_disclosed` cannot give. -/
@@ -201,7 +201,7 @@ theorem disclosed_non_conservation (e : CellEffect) :
   · intro ha
     cases e <;> simp_all [linearity, delta]
 
-/-! ## The folded per-class ledger law over a turn's effect list (PROVED).
+/-! ## The folded per-class ledger law over a turn's effect list.
 
 A *turn* fires an ordered list of effects; its net contribution to the conserved total is the
 fold `Σ (effects.map delta)`. This mirrors `Unified.traceDelta` / `MultiAsset`'s sum shape, but
@@ -215,7 +215,7 @@ def turnDelta (effects : List CellEffect) : Int := (effects.map delta).sum
 burn). Stated as a `Prop` over the list so it lifts cleanly through the fold. -/
 def AllNeutral (effects : List CellEffect) : Prop := ∀ e ∈ effects, delta e = 0
 
-/-- A neutral turn has folded delta `0` — PROVED by induction over the effect list (mirrors the
+/-- A neutral turn has folded delta `0` — by induction over the effect list (mirrors the
 `MultiAsset` / `unified_ledger` induction shape). -/
 theorem turnDelta_neutral (effects : List CellEffect) (h : AllNeutral effects) :
     turnDelta effects = 0 := by
@@ -248,13 +248,13 @@ theorem conservation_of_effects (total : Int) (effects : List CellEffect) :
       rw [List.foldl_cons, ih (total + delta e), List.map_cons, List.sum_cons]
       ring
 
-/-- **Conservation of a neutral turn — PROVED** (the headline corollary). A turn whose effects
+/-- **Conservation of a neutral turn** (the headline corollary). A turn whose effects
 are all conservation-neutral (`delta 0`) preserves the conserved total exactly. -/
 theorem neutral_turn_conserves (total : Int) (effects : List CellEffect)
     (h : AllNeutral effects) : applyTurn total effects = total := by
   rw [conservation_of_effects, turnDelta_neutral effects h, add_zero]
 
-/-- **A pure-transfer turn conserves — PROVED.** A turn of only `transfer` effects (all
+/-- **A pure-transfer turn conserves.** A turn of only `transfer` effects (all
 `conservative`, all `delta 0`) preserves the total — the paired-sibling law at the fold level. -/
 theorem transfers_conserve (total : Int) (effects : List CellEffect)
     (h : ∀ e ∈ effects, ∃ s d a, e = .transfer s d a) :

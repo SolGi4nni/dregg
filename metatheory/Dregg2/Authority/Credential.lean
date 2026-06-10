@@ -3,7 +3,7 @@
 
 A credential is a keys-as-caps attestation — a claim about a subject issued by an issuer over a
 schema, carrying an `attestation : Proof` (a signature / STARK). A holder presents it; a verifier
-admits it iff (a) the attestation passes the §8 oracle (`CryptoKernel.verify` — it was genuinely
+admits it iff (a) the attestation passes the §8 oracle (`CryptoKernel.verify` — it was
 issued) AND (b) the credential is not revoked (non-membership in the revocation set). Revocation is
 the lone consensus seam: a negative discharge against an attested revocation root. Only root-epoch
 agreement is global; everything else is local.
@@ -184,10 +184,10 @@ theorem revoke_blocks_verify [AddCommGroup Digest] [CryptoKernel Digest Proof]
   rw [isRevoked_revoke!]
   simp
 
-/-- **Companion (PROVED): the un-revoked direction.** If the id is *not* revoked, `verify` is
+/-- **Companion: the un-revoked direction.** If the id is *not* revoked, `verify` is
 governed entirely by the §8 oracle — it accepts iff the attestation does. So before any revocation,
 the credential is admissible exactly when issued; revocation is the only thing that can take a
-genuinely-issued credential out of admissibility. -/
+issued credential out of admissibility. -/
 theorem verify_unrevoked_iff_issued [AddCommGroup Digest] [CryptoKernel Digest Proof]
     (rev : RevocationSet) (cred : VC Digest Proof)
     (h : isRevoked rev cred = false) :
@@ -256,7 +256,7 @@ private def goodAttestation (issuer schema subject claim : Nat) : Crypto.Referen
   issuerStmt (Digest := Crypto.Reference.D) (Proof := Crypto.Reference.P)
     { issuer := issuer, schema := schema, subject := subject, claim := claim, attestation := 0 }
 
-/-- A genuinely-issued credential: subject 42, claim 7, under schema 1 by issuer 99. -/
+/-- A issued credential: subject 42, claim 7, under schema 1 by issuer 99. -/
 private def goodCred : VC Crypto.Reference.D Crypto.Reference.P :=
   issue 99 1 42 7 (goodAttestation 99 1 42 7)
 

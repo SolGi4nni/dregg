@@ -10,7 +10,7 @@
 
 The register names the risk precisely: the IR has `guard`s and an EFFECTFUL interpretation,
 so a plain initial-algebra-in-`Type` may not fit — it likely needs a Freyd / graded-monad /
-Kleisli shape. This file finds out HONESTLY and delivers the precise verdict.
+Kleisli shape. This file finds out and delivers the precise verdict.
 
 ## What `interp`'s real signature forces (the categorical home)
 
@@ -39,7 +39,7 @@ constructor, its Kleisli operation. THAT uniqueness is what R9 wants.
 
 ## The VERDICT: **PARTIAL.**
 
-  * (PASS half) **Initiality genuinely holds for the term algebra, and `interp` IS the unique
+  * (PASS half) **Initiality holds for the term algebra, and `interp` IS the unique
     fold.** We reify the choice of "one Kleisli operation per constructor" as a `StmtAlgebra`
     (`§1`), define the induced fold `foldStmt` (`§2`), prove `interp` IS that fold for the
     canonical `interpAlgebra` (`interp_eq_fold`, `§3`), and prove **uniqueness of the fold**:
@@ -47,7 +47,7 @@ constructor, its Kleisli operation. THAT uniqueness is what R9 wants.
     (`fold_unique`, `§4`). The payoff theorem `agree_by_initiality` (`§5`) is the N²→1 collapse
     IN ITS HONEST FORM: two readings that are BOTH folds of the SAME algebra are equal on EVERY
     term — no per-term/per-effect induction, by uniqueness alone. Non-vacuity: `fold_unique`
-    genuinely CONSTRAINS — it forces agreement on a COMPOUND `seq` term from agreement on the
+    CONSTRAINS — it forces agreement on a COMPOUND `seq` term from agreement on the
     constructors (`fold_unique_constrains`, `§6`).
 
   * (the OBSTRUCTION — why not full PASS) **The CURRENT `compile` (`Argus/Compile.lean:116`) is
@@ -76,7 +76,7 @@ ALL terms from agreement on the ~20 constructors, NOT N² per-effect lemmas. The
 deliverable is the precise gate: **the collapse is structural, not per-effect, the moment both
 readings are folds; the one obstruction is the current non-compositional `compile` shape.**
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` clean below (the standard three kernel axioms only — `propext`,
 `Classical.choice`, `Quot.sound`); no `sorry`, no `:= True`, no `native_decide`. This file owns
@@ -194,7 +194,7 @@ def interpAlgebra : StmtAlgebra StateK where
   allocCellOp      := fun n k => some (createCellIntoAsset k (n k))
   seqOp            := kleisliSeq
 
-/-- **`interp_eq_fold` — the executor reading IS the fold of `interpAlgebra` (PROVED).** `interp`
+/-- **`interp_eq_fold` — the executor reading IS the fold of `interpAlgebra`.** `interp`
 factors through the catamorphism: it is the unique `Σ`-algebra homomorphism `RecStmt → StateK`
 induced by `interpAlgebra`. This is the formal content of "`interp` is a fold landing in the
 Kleisli category" — the home the register predicted. -/
@@ -261,7 +261,7 @@ theorem foldStmt_isHom {α : Type} (alg : StmtAlgebra α) : IsFoldHom alg (foldS
   onAllocCell _ := rfl
   onSeq _ _ := rfl
 
-/-- **`fold_unique` — UNIQUENESS OF THE FOLD (initiality, PROVED).** Any `Σ`-algebra homomorphism
+/-- **`fold_unique` — UNIQUENESS OF THE FOLD (initiality).** Any `Σ`-algebra homomorphism
 `f` for `alg` EQUALS the canonical fold `foldStmt alg` on EVERY term. This is the universal
 property of the initial algebra `RecStmt`: the fold is the UNIQUE hom out of it. ONE induction;
 every downstream agreement is a corollary with no further induction. -/
@@ -296,10 +296,10 @@ theorem fold_unique {α : Type} (alg : StmtAlgebra α) (f : RecStmt → α) (hf 
 
 If TWO readings `f`, `g` are BOTH homomorphisms of the SAME algebra, they are EQUAL on every term
 — by `fold_unique` applied twice (both equal the canonical fold), with NO per-term induction. This
-is the R9 collapse in the form that genuinely holds: the moment two readings are folds of one
+is the R9 collapse in the form that holds: the moment two readings are folds of one
 algebra, their agreement on all terms is FREE. -/
 
-/-- **`agree_by_initiality` — TWO folds of the same algebra AGREE on every term (PROVED).** The
+/-- **`agree_by_initiality` — TWO folds of the same algebra AGREE on every term.** The
 honest form of the N²→1 collapse: agreement on ALL terms follows from each being a `Σ`-algebra
 homomorphism, by uniqueness — not from any per-effect / per-term differential. -/
 theorem agree_by_initiality {α : Type} (alg : StmtAlgebra α) (f g : RecStmt → α)
@@ -321,10 +321,10 @@ algebra on the CONSTRUCTORS forces agreement on a COMPOUND `seq` term — the ge
 initiality (the recursive node is pinned by the leaf agreements + the `seq` law). We use the
 `interpAlgebra` and a real two-level term. -/
 
-/-- **`fold_unique_constrains` — initiality is NON-VACUOUS (PROVED).** A homomorphism `f` of
+/-- **`fold_unique_constrains` — initiality is NON-VACUOUS.** A homomorphism `f` of
 `interpAlgebra` is FORCED to equal `interp` on the COMPOUND term `seq (guard φ) (setCell T leaf)`
 (the transfer SHAPE) — its value is determined by the leaf operations and the `seq`/Kleisli law,
-exactly the constraint `fold_unique` imposes. So uniqueness genuinely bites on a non-atomic term,
+exactly the constraint `fold_unique` imposes. So uniqueness bites on a non-atomic term,
 not just the generators. -/
 theorem fold_unique_constrains (f : RecStmt → StateK) (hf : IsFoldHom interpAlgebra f)
     (φ : RecordKernelState → Bool) (T : Finset CellId)
@@ -334,7 +334,7 @@ theorem fold_unique_constrains (f : RecStmt → StateK) (hf : IsFoldHom interpAl
 
 #assert_axioms fold_unique_constrains
 
-/-- **The compound value is genuinely the Kleisli composite (PROVED) — the constraint is REAL.**
+/-- **The compound value is the Kleisli composite — the constraint is REAL.**
 The forced value of the transfer-shape term is `guard φ` Kleisli-composed with `setCell` — a
 two-level term whose meaning is NOT either leaf alone. This exhibits that `fold_unique` pins a
 COMPOSITE, witnessing non-vacuity concretely. -/
@@ -390,7 +390,7 @@ theorem transfer_ne_skip :
   simp only [skipDescriptor, List.length_nil] at hc
   exact absurd hc (by decide)
 
-/-- **`compile_not_a_seq_hom` — THE OBSTRUCTION (PROVED).** There is NO binary descriptor-combiner
+/-- **`compile_not_a_seq_hom` — THE OBSTRUCTION.** There is NO binary descriptor-combiner
 `⊕` making the CURRENT `compile` respect `seq`. If some `⊕` did (`compile (.seq s t) = compile s ⊕
 compile t` for all `s t`), then:
 
@@ -439,7 +439,7 @@ fold, `agree_by_initiality` discharges executor⟺circuit agreement on ALL terms
 the constructors — the N²→1 collapse. We state the contract (no claim that the current `compile`
 meets it — `compile_not_a_seq_hom` proves it does NOT). -/
 
-/-- **`fold_compile_would_collapse` — the GATE to full PASS (PROVED, conditional).** IF a circuit
+/-- **`fold_compile_would_collapse` — the GATE to full PASS (conditional).** IF a circuit
 reading `comp` is a `Σ`-algebra homomorphism of SOME descriptor-algebra `compAlg`, AND a circuit
 reading `comp'` is a homomorphism of the SAME algebra, then they AGREE on every term by initiality
 — NO per-effect proof. This is the precise statement of what retiring the per-effect differential

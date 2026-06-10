@@ -38,7 +38,7 @@ balance descriptor or the escrow-root descriptor.
      frozen economic frame AND the GENUINE in-row `cap_root` recompute, which (via the OFF-ROW connector
      `unify_revoke`, cited) binds the `caps` edge-removal the IR term's executor produces.
 
-## HONEST SURFACE + THE KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
+## SURFACE + THE KERNEL-vs-RUNTIME DIVERGENCE (precise — do NOT over-read)
 
 This weld lives on the cap family's HONEST boundary, which has THREE layers that must be kept distinct:
 
@@ -77,7 +77,7 @@ This weld lives on the cap family's HONEST boundary, which has THREE layers that
     which frames the registries); routing the running RevokeDelegation descriptor onto the full step (so
     the circuit BINDS the epoch advance) is the scoped circuit follow-up (`revoke_DELEG_epoch_residual`).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both theorems ⊆ {propext, Classical.choice, Quot.sound}. No `sorry`, no `:= True`
 vacuity, no weakening-that-just-typechecks. Poseidon2 CR enters ONLY via the cited
@@ -132,7 +132,7 @@ theorem interp_revokeDelegationStmt_eq_recKRevokeTarget (holder t : CellId) (k :
 
 #assert_axioms interp_revokeDelegationStmt_eq_recKRevokeTarget
 
-/-! ## §3 — NON-VACUITY of the cornerstone: the term genuinely REMOVES a held cap-edge.
+/-! ## §3 — NON-VACUITY of the cornerstone: the term REMOVES a held cap-edge.
 
 The cornerstone would be hollow if `revokeDelegationStmt` never changed `caps`. On a kernel where
 holder `0` holds a `node 7` cap (an edge to `7`), the term runs (unconditionally) and `0`'s slot loses
@@ -246,7 +246,7 @@ Then:
     executor produces (`D (removeEdgeCaps …)`, §4.1) is the value that recomputed root digests, via the
     OFF-ROW connector `unify_revoke` (`EffectVmEmitRevokeDelegation §9`, cited).
 
-So the class-A circuit the prover runs for revokeDelegation pins the per-cell frozen frame AND genuinely
+So the class-A circuit the prover runs for revokeDelegation pins the per-cell frozen frame AND
 recomputes the bound cap-graph edge-mutation root that the IR term's executor (`recKRevokeTarget`)
 produces — the template generalizes to the CAP-GRAPH family.
 
@@ -301,7 +301,7 @@ The weld would be worthless if `compileRevoke` were an inert/empty descriptor. I
 gates + 14 transition + 4 boundary = 30 constraints AND the 6 hash-sites (2 genuine cap-root-recompute
 sites + 4 GROUP-4 commitment sites), with NO opaque `cap_root`-move parameter gate. An empty placeholder
 would have 0/0. So `revokeDelegation_compile_sound` is a statement about a REAL class-A circuit with a
-genuinely-recomputed cap-graph root. -/
+recomputed cap-graph root. -/
 
 /-- The compiled revokeDelegation circuit is the NON-trivial class-A genuine descriptor: it carries the
 12+14+4 = 30 constraints / 2+4 = 6 hash-sites of the audited genuine cap-root descriptor (an empty
@@ -329,8 +329,7 @@ ONLY onto the delegation arm, NOT in the shared cap-edge `recKRevokeTarget` (tha
 carries `delegationEpoch`/`delegationEpochAt`, and `recKRevokeDelegationFull = recKRevokeDelegationEpoch
 ∘ recKRevokeTarget` performs ALL THREE, balance-neutrally.
 
-These theorems now PROVE the faithful behavior (no longer "the kernel does NOT model the epoch" — they
-assert it DOES): the full delegation-revoke step bumps the parent's epoch (+1), clears the child's
+These theorems PROVE the faithful behavior: the full delegation-revoke step bumps the parent's epoch (+1), clears the child's
 snapshot, and renders the child's delegation STALE under the light-client freshness check
 `delegationStale` (so a revoked delegation cannot be replayed — the unfoolability the epoch buys). The
 shared cap-edge `recKRevokeTarget` (the leg THIS weld's descriptor binds) still freezes the registries;
@@ -340,7 +339,7 @@ the faithful full step is the composite. -/
 faithful full delegation-revoke kernel step `recKRevokeDelegationFull k parent child` MODELS the Rust
 runtime's epoch semantics: it (2) bumps the PARENT's `delegationEpoch` by EXACTLY `+1` (`apply.rs:3069`)
 AND (3) clears the CHILD's `delegations` snapshot to `[]` plus resets its epoch stamp `delegationEpochAt`
-to `0` (`apply.rs:3080`). No longer an under-model — the three runtime effects (cap edge + epoch bump +
+to `0` (`apply.rs:3080`). The three runtime effects (cap edge + epoch bump +
 snapshot clear) are all modeled. The cap-edge leg is unchanged (`recKRevokeDelegationFull_caps`). -/
 theorem revokeKernel_models_runtime_epoch (k : RecordKernelState) (parent child : CellId) :
     (recKRevokeDelegationFull k parent child).delegationEpoch parent = k.delegationEpoch parent + 1
@@ -364,7 +363,7 @@ def kDeleg : RecordKernelState :=
 faithful delegation revoke (parent `0` revokes child `7`), the child's snapshot is CLEARED (`[]`) and the
 freshness check `delegationStale` now returns `true` for child `7` — a light client would REJECT the
 (revoked) delegation, exactly the unfoolability the epoch buys. A flag-flip / under-model could not
-witness this: the parent epoch genuinely advanced past the child's stamp. -/
+witness this: the parent epoch advanced past the child's stamp. -/
 theorem revokeKernel_stales_child_delegation :
     (recKRevokeDelegationFull kDeleg 0 7).delegations 7 = []
     ∧ delegationStale (recKRevokeDelegationFull kDeleg 0 7) 7 = true := by

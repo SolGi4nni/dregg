@@ -26,11 +26,11 @@ non-equivocation backbone of using a BLS QC as a consensus certificate at `n > 1
   (it is about disjoint reconfig quorums of distinct old members; this is about an honest signer existing
   inside ONE BLS aggregate's selected set against a named corruption set `B`).
 
-## The honest primitive boundary
+## The primitive boundary
 
 The fact that `selected` is a genuine set of members who signed `msg` is the content of the named
 irreducible BLS/SNARK primitives, DISCHARGED via `Crypto.BlsThreshold`'s `SnarkContract` / `BlsContract`
-hypotheses — NEVER faked `:= True`. What is PROVED here (pure finite combinatorics, no crypto) is the
+hypotheses `:= True`. What is PROVED here (pure finite combinatorics, no crypto) is the
 distributed consequence: honest-signer presence and pairwise honest-signer overlap under `|B| ≤ ⌊n/3⌋`.
 
 `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); NO `sorry`/`:=True`/`native_decide`.
@@ -68,7 +68,7 @@ def faultBudget (n : ℕ) : ℕ := n / 3
 `lib.rs:155-160`). Pins the two REUSED Rust formulas to each other. -/
 theorem quorumThreshold_eq_sub (n : ℕ) : quorumThreshold n = n - faultBudget n := rfl
 
-/-- **`quorum_gt_faultBudget`** (PROVED) — a quorum is STRICTLY larger than the corruption budget for
+/-- **`quorum_gt_faultBudget`** — a quorum is STRICTLY larger than the corruption budget for
 `n ≥ 1`: `n − ⌊n/3⌋ > ⌊n/3⌋`. This is the distributed safety backbone: a set of `quorumThreshold n`
 members can never be contained in any corruption set of size `≤ faultBudget n`. -/
 theorem quorum_gt_faultBudget (n : ℕ) (hn : 1 ≤ n) :
@@ -95,7 +95,7 @@ theorem strictBft_iff (n : ℕ) : StrictBft n ↔ ¬ (3 ∣ n) := by
     · exact hlt
     · exfalso; exact h ⟨n / 3, by omega⟩
 
-/-- **`quorum_overlap_gt_faultBudget`** (PROVED, under `StrictBft`) — the inclusion–exclusion margin:
+/-- **`quorum_overlap_gt_faultBudget`** (under `StrictBft`) — the inclusion–exclusion margin:
 two quorums each omit at most `faultBudget n` honest spots, and together exceed `n`, so they must share
 more than the corruption budget. `2·quorumThreshold n − n > faultBudget n`. Under `StrictBft` (`n > 3f`)
 this holds; it is FALSE at `n = 3f` exactly — which is precisely why robust BFT demands `n ≥ 3f+1`. -/
@@ -151,7 +151,7 @@ def Corruption.honest {C : Committee PK} (B : Corruption C) : Finset ℕ :=
 /-! ## §4 — THE DISTRIBUTED SOUNDNESS THEOREMS (proved; pure finite combinatorics on top of the
 single-cert `SnarkContract`). -/
 
-/-- **`quorum_size_exceeds_faultBudget`** (PROVED) — an accepting equal-weight cert at the canonical
+/-- **`quorum_size_exceeds_faultBudget`** — an accepting equal-weight cert at the canonical
 quorum threshold selects MORE members than the corruption budget. From `quorum_weight_suffices`
 (`Crypto.BlsThreshold`) we get `selectedWeight selected ≥ threshold`; with equal weight that is
 `|selected| ≥ threshold`; at `threshold = quorumThreshold n` and `quorum_gt_faultBudget` we get
@@ -169,7 +169,7 @@ theorem quorum_size_exceeds_faultBudget
     quorum_gt_faultBudget _ hn
   omega
 
-/-- **`quorum_has_honest_signer`** (PROVED — the NON-FORGEABILITY backbone at `n > 1`). An accepting
+/-- **`quorum_has_honest_signer`** (the NON-FORGEABILITY backbone at `n > 1`). An accepting
 equal-weight QC at quorum threshold, against ANY corruption set `B` with `|B| ≤ faultBudget n`, has at
 least one HONEST signer: a member `i ∈ selected ∩ honest`. So a QC CANNOT be produced by the corrupt set
 alone — the adversary, holding only `≤ ⌊n/3⌋` keys, cannot gather a quorum. This is the distributed
@@ -197,7 +197,7 @@ theorem quorum_has_honest_signer
   simp only [Corruption.honest, Finset.mem_sdiff]
   exact ⟨hi_mem, hi_notcorr⟩
 
-/-- **`two_quorums_share_member`** (PROVED) — two accepting equal-weight QCs over the SAME committee at
+/-- **`two_quorums_share_member`** — two accepting equal-weight QCs over the SAME committee at
 quorum threshold share a committee member: `selected₁ ∩ selected₂ ≠ ∅`. Inclusion–exclusion:
 `|S₁| + |S₂| ≥ 2·quorumThreshold n > n ≥ |S₁ ∪ S₂|`. This is the BLS-QC analogue of EpochReconfig's
 `quorums_intersect`, but at the Finset level over the SAME committee's signer sets (not reconfig
@@ -237,7 +237,7 @@ theorem two_quorums_share_member
   rw [hempty, Finset.card_empty] at hie
   omega
 
-/-- **`two_quorums_share_honest_member`** (PROVED — the NON-EQUIVOCATION backbone). Two accepting
+/-- **`two_quorums_share_honest_member`** (the NON-EQUIVOCATION backbone). Two accepting
 equal-weight QCs over the same committee at quorum threshold, against ANY corruption set `B`, share an
 HONEST member: `∃ i ∈ selected₁ ∩ selected₂ ∩ honest`. The shared signer cannot be entirely accounted
 for by the corrupt set, because the forced overlap `2·quorumThreshold n − n` strictly exceeds
@@ -288,7 +288,7 @@ theorem two_quorums_share_honest_member
   simp only [Corruption.honest, Finset.mem_sdiff]
   exact ⟨hi_mem, hi_notcorr⟩
 
-/-- **`no_equivocating_qcs`** (PROVED — the per-slot single-decision theorem). If NO honest member
+/-- **`no_equivocating_qcs`** (the per-slot single-decision theorem). If NO honest member
 signs two distinct/conflicting messages (`hHonestNoDouble`: the honest-member protocol discipline — an
 honest validator votes once per slot), then two accepting QCs over the same committee for DISTINCT
 messages at quorum threshold are IMPOSSIBLE. So at most ONE message gets a QC per slot: the BLS QC is a

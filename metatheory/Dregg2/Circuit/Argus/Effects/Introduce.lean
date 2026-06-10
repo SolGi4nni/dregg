@@ -22,7 +22,7 @@ whose KERNEL step is `recKDelegate s.kernel intro rec t` (`AuthTurn.lean:79`):
 
 ## HOW NON-AMPLIFICATION IS WITNESSED — IN-BAND, by the held-cap COPY (NOT a handoff-cert hypothesis)
 
-This is the trustless crown, and the honest answer for PLAIN `introduceA` is structural, not a named
+This is the trustless crown, and the answer for PLAIN `introduceA` is structural, not a named
 assumption: the executor grants the recipient the introducer's held cap **verbatim** (`heldCapTo …`,
 copied UNCHANGED — it does NOT attenuate). So the granted cap confers EXACTLY the held cap's authority,
 `capAuthConferred granted = capAuthConferred held`, and therefore `IsNonAmplifyingF held granted`
@@ -56,9 +56,9 @@ tag `capOp.INTRODUCE` carried in the leaf (the Granovetter introduction grant). 
 is BOUND, not papered (`introduceGenuine_binds_edge`: tampering any edge field — holder/target/rights/op
 — moves `cap_root`, moves `state_commit` ⇒ UNSAT).
 
-## HONEST SURFACE — what the weld DOES and does NOT pin (do NOT over-read)
+## SURFACE — what the weld DOES and does NOT pin (do NOT over-read)
 
-The weld concludes TWO legs, the per-cell honest surface the cap family lives on:
+The weld concludes TWO legs, the per-cell surface the cap family lives on:
 
   * **frame-freeze leg (per-cell):** the circuit's pinned post-state `post` AGREES with the executor's
     per-cell projection `cellProj k' c` on the WHOLE frame (balLo/balHi/nonce/fields/reserved) — because
@@ -81,7 +81,7 @@ The weld concludes TWO legs, the per-cell honest surface the cap family lives on
   + `grant`); the circuit produces the genuine in-row advance of its edge. That edge-vs-whole-function
   boundary is faithful, stated, not hidden — exactly the boundary `EffectVmEmitIntroduce §9/§25` draws.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on both theorems ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR enters ONLY
 via the named `Poseidon2SpongeCR` hypothesis (inside the cited anti-ghost `introduceGenuine_binds_edge`,
@@ -179,7 +179,7 @@ record that the grant LANDS in the recipient's slot (so the non-amplification is
 installed, not a phantom). This is the in-band rendering of the §B `granted ≤ held` lattice gate,
 saturated because the grant IS a copy. -/
 
-/-- **`introduce_non_amplifying` — THE TRUSTLESS CROWN (PROVED, in-band).** The cap `introduceA` grants
+/-- **`introduce_non_amplifying` — THE TRUSTLESS CROWN (in-band).** The cap `introduceA` grants
 the recipient — the introducer's held cap to `t` COPIED unchanged — is NON-AMPLIFYING against that held
 cap over the real `List Auth` authority lattice: `capAuthConferred granted ⊆ capAuthConferred held`. It
 holds because the granted cap IS the held cap (`granted = held`), so the inclusion is reflexive — the
@@ -267,7 +267,7 @@ Then:
     `introduceGenuine_binds_edge`). The OP tag is `capOp.INTRODUCE` (the Granovetter introduction grant).
 
 So the genuine class-A circuit the prover runs for introduceA pins the per-cell frozen state the IR
-term's executor produces AND genuinely recomputes the bound cap-edge — the template generalizes to a
+term's executor produces AND recomputes the bound cap-edge — the template generalizes to a
 cap-graph (slot-table) effect. (Non-amplification is enforced IN-BAND by the held-cap copy, §3 — NOT a
 circuit leg and NOT a handoff-cert hypothesis for this local introduce.) -/
 theorem introduce_compile_sound
@@ -308,7 +308,7 @@ theorem introduce_compile_sound
 
 #assert_axioms introduce_compile_sound
 
-/-! ## §6 — NON-VACUITY: the introduce term genuinely INSTALLS the edge, and the connectivity gate has TEETH.
+/-! ## §6 — NON-VACUITY: the introduce term INSTALLS the edge, and the connectivity gate has TEETH.
 
 The cornerstone would be hollow if `introduceStmt` never committed, or if the connectivity gate were
 inert. Neither: on a three-cell kernel where the introducer `0` holds `node 7` (connectivity to target
@@ -326,7 +326,7 @@ def kI : RecordKernelState :=
 
 /-- **NON-VACUITY (witness TRUE — the edge install is real).** Introducing recipient `1` to target `7`
 from the connected introducer `0` COMMITS and lands the `node 7` cap in `1`'s slot — the cap-graph write
-genuinely edits the slot-table (the held-cap copy is real, not a no-op). -/
+edits the slot-table (the held-cap copy is real, not a no-op). -/
 theorem introduceStmt_installs_edge :
     (interp (introduceStmt 0 1 7) kI).map (fun k => k.caps 1) = some [Cap.node 7] := by
   rw [interp_introduceStmt_eq_recKDelegate]
@@ -334,7 +334,7 @@ theorem introduceStmt_installs_edge :
 
 /-- **NON-VACUITY (witness FALSE / the Granovetter connectivity TEETH).** An introducer with NO
 connectivity to target `7` (`5`, holding nothing) cannot introduce it — the term REJECTS (`interp =
-none`), fail-closed. So `introduceGate` is genuinely load-bearing: "only connectivity begets
+none`), fail-closed. So `introduceGate` is load-bearing: "only connectivity begets
 connectivity", two-valued, not a no-op that always commits. -/
 theorem introduceStmt_rejects_unconnected :
     interp (introduceStmt 5 1 7) kI = none := by

@@ -22,7 +22,7 @@ frozen-roots witness; (4) `fullClause` = `CellIncNonceSpec` ∧ `postRoots = pre
 applies) + the carried frozen-roots fact. The crypto/anti-ghost is discharged ONCE in the generic
 theorem; per-effect is just the decode.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem; Poseidon2 CR enters ONLY
 through the generic `runnable_full_sound`/`runnable_full_commit_binds` (the named `Poseidon2SpongeCR`

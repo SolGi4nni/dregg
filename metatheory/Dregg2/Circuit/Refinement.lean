@@ -19,7 +19,7 @@ it governs every circuit-accepted step — the "no value forged" guarantee desce
 
 The circuit⟺spec direction carries exactly the realizable Poseidon collision-resistance portals
 (`compressInjective`/`compressNInjective`/`cellLeafInjective`/`RestHashIffFrame`) + the
-`AccountsWF` well-formedness invariant (PROVED preserved in `StateCommit`) — NOT the impossible
+`AccountsWF` well-formedness invariant (preserved in `StateCommit`) — NOT the impossible
 sum-injectivity that the de-portaling removed.
 -/
 import Dregg2.Circuit.StateCommit
@@ -91,7 +91,7 @@ variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ) (cmb :
 abbrev circuitStep : StepRel RecordKernelState Turn RecordKernelState :=
   fun k t k' => satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k')
 
-/-! ## §3 — The refinements (PROVED). -/
+/-! ## §3 — The refinements. -/
 
 /-- **`exec_equiv_spec` — the EXECUTABLE kernel and the abstract spec coincide** (l4v data refinement,
 both directions): `recKExec_iff_spec`. The executor admits exactly the spec'd transitions. -/

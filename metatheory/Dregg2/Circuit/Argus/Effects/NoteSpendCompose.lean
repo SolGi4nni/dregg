@@ -5,7 +5,7 @@ welded into the Argus IR.
 `Argus/Effects/NoteSpend.lean` welded the BASE noteSpend non-membership: `noteSpendStmt nf =
 insFresh (fun _ => nf)`, whose `interp` IS the kernel double-spend gate `noteSpendNullifier`
 (`nf ∉ nullifiers ⇒ insert; else fail-closed`), with the no-double-spend carried INLINE in the term
-(`noteSpendStmt_no_double_spend`). This module welds the genuinely-composed sibling the executor
+(`noteSpendStmt_no_double_spend`). This module welds the composed sibling the executor
 actually runs — the arm `execFullA s (.noteSpendA nf actor spendProof) = noteSpendChainA s nf actor
 spendProof` (`TurnExecutorFull.lean:3845`) — which WRAPS the base noteSpend in TWO additional pieces
 the base term does not carry:
@@ -53,7 +53,7 @@ follow that exact two-part discipline:
     WHOLE post-state — strictly stronger than a per-cell projection (this PREFERS the Surface2
     full_sound surface, as the task directs).
 
-## What the weld pins vs. assumes (HONEST SURFACE — do NOT over-read)
+## What the weld pins vs. assumes (SURFACE — do NOT over-read)
 
 The conclusion `st' = { kernel := k', log := escrowReceiptA actor :: st.log }` is the FULL agreement:
 the circuit-pinned chained post-state IS the chained post-state the IR term's executor produces (the
@@ -140,7 +140,7 @@ The whole point of the composition is that it adds the §8 proof gate ON TOP of 
 gate — so the term must fail-close on EITHER a missing proof OR a stale nullifier, and commit only
 when BOTH hold. We pin all three. -/
 
-/-- **`noteSpendComposeStmt_requires_proof` — PROVED (the §8 proof teeth, in the term).** WITHOUT the
+/-- **`noteSpendComposeStmt_requires_proof` (the §8 proof teeth, in the term).** WITHOUT the
 spending proof (`spendProof = false`), the composed term fail-closes (`= none`) — EVEN on a fresh
 nullifier. The outer §8 gate the base `noteSpendStmt` lacked, now enforced by the term's own `interp`.
 -/
@@ -150,7 +150,7 @@ theorem noteSpendComposeStmt_requires_proof (nf : Nat) (k : RecordKernelState)
   rw [interp_noteSpendComposeStmt_eq_kStep]
   simp only [noteSpendComposeKStep, hp, if_neg (by decide : ¬ (false = true))]
 
-/-- **`noteSpendComposeStmt_no_double_spend` — PROVED (the base non-membership SURVIVES composition).**
+/-- **`noteSpendComposeStmt_no_double_spend` (the base non-membership SURVIVES composition).**
 If the composed term COMMITS, the spent nullifier was NOT already in the set (`nf ∉ k.nullifiers`) —
 the base double-spend guarantee is PRESERVED under the §8-proof wrapper (the composition does not
 weaken it). -/
@@ -166,7 +166,7 @@ theorem noteSpendComposeStmt_no_double_spend {nf : Nat} {spendProof : Bool}
     exact Dregg2.Circuit.Argus.noteSpendStmt_no_double_spend h
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-- **`noteSpendComposeStmt_commits_iff` — PROVED (the composition criterion: BOTH gates).** The
+/-- **`noteSpendComposeStmt_commits_iff` (the composition criterion: BOTH gates).** The
 composed term COMMITS IFF the §8 proof verified AND the nullifier is fresh — the two gates are jointly
 necessary and sufficient, the kernel-level shadow of `execFullA_noteSpend_commits_iff`. -/
 theorem noteSpendComposeStmt_commits_iff (nf : Nat) (spendProof : Bool) (k : RecordKernelState) :
@@ -317,7 +317,7 @@ theorem noteSpendCompose_compile_sound
 #assert_axioms noteSpendSpec_unique
 #assert_axioms noteSpendCompose_compile_sound
 
-/-! ## §4 — NON-VACUITY: the composed term genuinely INSERTS under the proof gate, and fail-closes on
+/-! ## §4 — NON-VACUITY: the composed term INSERTS under the proof gate, and fail-closes on
 EACH of the two gates (stale nullifier, missing proof). Plus the welded descriptor is the genuine
 full-state one (not the empty placeholder).
 
@@ -329,7 +329,7 @@ set) exercises a real proof-gated insert; the rejection lemmas show BOTH gates f
 def kNSC : RecordKernelState :=
   { accounts := {0, 1}, cell := fun _ => .record [], caps := fun _ => [], nullifiers := [] }
 
--- The composed term is genuinely two-gated, three-way non-vacuous:
+-- The composed term is two-gated, three-way non-vacuous:
 -- a fresh nullifier WITH a valid proof COMMITS; a stale nullifier is REJECTED; a missing proof is
 -- REJECTED even on a fresh nullifier.
 #guard ((interp (noteSpendComposeStmt 7 true) kNSC).isSome)                       -- fresh ∧ proof ⇒ commit

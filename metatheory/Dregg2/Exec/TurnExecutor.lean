@@ -123,7 +123,7 @@ def execTurn (s : RecChainedState) : TxTurn → Option RecChainedState
 
 /-! ## §3 — Authority: fail-closed across the whole transaction. -/
 
-/-- **`execTurn_unauthorized_fails` — PROVED (fail-closed).** If the FIRST action's move is
+/-- **`execTurn_unauthorized_fails` (fail-closed).** If the FIRST action's move is
 unauthorized, the whole turn rejects (no partial commit). Reuses `recKExec_unauthorized_fails` —
 the same authority gate as the per-step kernel, now guarding the transaction head. -/
 theorem execTurn_unauthorized_fails (s : RecChainedState) (a : Action) (rest : TxTurn)
@@ -161,7 +161,7 @@ theorem execTurn_each_attests :
         · -- `b` is in the tail: recurse on the committed sub-turn.
           exact execTurn_each_attests s1 s' rest hexec b hbrest
 
-/-- **Authority conjunct, aggregate — PROVED.** Every action of a committed turn was authorized
+/-- **Authority conjunct, aggregate.** Every action of a committed turn was authorized
 (`authorizedB` true at the state it ran against). The whole-turn `Authority` conjunct of
 `fullStepInv`, generalizing `recKExec_authorized` over the Action list. -/
 theorem execTurn_all_authorized (s s' : RecChainedState) (tt : TxTurn)
@@ -178,7 +178,7 @@ transaction is a fold of such steps, so `recTotal` is preserved END-TO-END. This
 `Conservation` conjunct of step-completeness over the multi-action turn — the executable
 realization of the per-domain `excess == 0` gate. -/
 
-/-- **`execTurn_conserves` — PROVED (Conservation conjunct, whole turn).** A committed turn
+/-- **`execTurn_conserves` (Conservation conjunct, whole turn).** A committed turn
 preserves the total balance field across the live accounts: `recTotal s'.kernel = recTotal
 s.kernel`. Reuses `recKExec_conserves` step-by-step, folded over the Action list. The replacement's
 conservation: every committed transaction conserves, BY CONSTRUCTION. -/
@@ -203,7 +203,7 @@ theorem execTurn_conserves :
 contribution. The conservation gate reads the *net* of these (dregg1's per-domain `excess`). -/
 def turnBalanceDeltas (tt : TxTurn) : List ℤ := tt.map Action.balanceChange
 
-/-- **`execTurn_balance_domain_conserves` — PROVED (per-domain Σ = 0).** A committed turn nets to
+/-- **`execTurn_balance_domain_conserves` (per-domain Σ = 0).** A committed turn nets to
 `0` in the `balance` domain: the sum of the per-action *net balance-field deltas* across the turn
 is `0` (`recTotal` unchanged ⇒ `Spec.conservedInDomain Domain.balance` on the realized deltas). We
 witness the conserved domain with the realized total-delta singleton `[recTotal s' − recTotal s]`,
@@ -235,7 +235,7 @@ log`.) This is the ChainLink carrier — it pins the exact append. -/
 def turnLog (tt : TxTurn) (prior : List Turn) : List Turn :=
   (tt.map Action.move).reverse ++ prior
 
-/-- ChainLink — PROVED: a committed turn extends the receipt chain by exactly its moves
+/-- ChainLink — a committed turn extends the receipt chain by exactly its moves
 (newest-first), with no fork or rewrite. The multi-action generalization of `recCexec`'s
 `chainP`/`s'.log = t :: s.log`. -/
 theorem execTurn_chainlink :
@@ -256,7 +256,7 @@ theorem execTurn_chainlink :
         rw [htail, hhead]
         simp [turnLog, List.append_assoc]
 
-/-- ObsAdvance — PROVED: a committed turn grows the chain by exactly the action count, so a
+/-- ObsAdvance — a committed turn grows the chain by exactly the action count, so a
 replayed turn (which would have to re-append the same moves) is detectable. The multi-action
 generalization of `recCexec`'s `obsP`/`length = length + 1`. -/
 theorem execTurn_obsadvance (s s' : RecChainedState) (tt : TxTurn)
@@ -277,7 +277,7 @@ def fullTurnInv (s : RecChainedState) (tt : TxTurn) (s' : RecChainedState) : Pro
   -- ObsAdvance: the chain grew by exactly the action count (replay-detectable).
   s'.log.length = s.log.length + tt.length
 
-/-- **`execTurn_attests` — THE REPLACEMENT IS STEP-COMPLETE BY CONSTRUCTION (PROVED).** Every
+/-- **`execTurn_attests` — THE REPLACEMENT IS STEP-COMPLETE BY CONSTRUCTION.** Every
 committed turn attests the FULL `StepInv` over the WHOLE multi-`Action` transaction: Conservation
 (balance field) ∧ Authority (every action) ∧ ChainLink ∧ ObsAdvance. This generalizes
 `recCexec_attests` from one op to the Action forest (linear list); the four conjuncts are exactly
@@ -290,7 +290,7 @@ theorem execTurn_attests {s s' : RecChainedState} {tt : TxTurn} (h : execTurn s 
   , execTurn_chainlink s s' tt h
   , execTurn_obsadvance s s' tt h ⟩
 
-/-- **End-to-end soundness along a multi-turn run — PROVED.** Any state-predicate `Good` preserved
+/-- **End-to-end soundness along a multi-turn run.** Any state-predicate `Good` preserved
 by every committed turn (under `fullTurnInv`) holds after a chain of committed turns. The
 transaction-level analog of `recChained_sound`: step-completeness of the REPLACEMENT lifts to
 whole-execution safety. -/

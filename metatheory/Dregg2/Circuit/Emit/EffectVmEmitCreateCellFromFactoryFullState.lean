@@ -14,7 +14,7 @@ WIDE-descriptor witness pins the FULL 17-field declarative post-state — the pe
 The factory writes only NON-`balance` record fields (no economic-column counterpart); the cross-cell
 `accounts` GROW is the TURN-COMPOSITION layer fact. The §RECIPE applied to createCellFromFactory.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR only via the generic theorems.
 No `sorry`/`:= True`/`native_decide`. `fullClause` NON-VACUOUS. Read-only imports; owns only itself.

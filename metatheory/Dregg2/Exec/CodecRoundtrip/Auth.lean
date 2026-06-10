@@ -218,7 +218,7 @@ theorem parseAuthW_flat (a : AuthW) (rest : PState) (fuel : Nat)
 expose the `","`-prefixed head the cons-recursive `parseAuthLoopW` peels. So — unlike §5, whose
 `encodeFieldsTailW` was already cons-recursive at the FFI site — we must NORMALIZE the fold. The
 accumulator-pull-out lemma (`foldl_authtail`) turns it into the clean `',' :: enc b ++ tail` shape. This
-is the one genuinely-new structural lemma with no §5 analogue. -/
+is the one new structural lemma with no §5 analogue. -/
 
 /-- Every `encodeAuthW` arm opens with `'{'` — the head char that makes `lit "[]"` fail on a `[{`-led
 list body. (`String ++` is opaque to defeq, so the head is exposed via `String.toList_append` + a

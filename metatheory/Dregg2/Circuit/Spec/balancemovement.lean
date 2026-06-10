@@ -43,7 +43,7 @@ while the chained log gets `t` prepended.
 
   * `recTransferBal_correct` — the post-`bal` ledger helper validated DECLARATIVELY (debit at
     (src,a), credit at (dst,a), every other (cell,asset) untouched), so the spec's
-    `bal = recTransferBal …` clause genuinely encodes debit ∧ credit ∧ ledger-frame.
+    `bal = recTransferBal …` clause encodes debit ∧ credit ∧ ledger-frame.
 
   * Non-vacuity: `…_rejects_unauthorized`, `…_rejects_overdraft`, `…_rejects_self`,
     `…_rejects_dead_src` — each forged input fails a guard leg ⇒ the executor returns `none` ⇒ no
@@ -217,7 +217,7 @@ theorem balanceMovement_other_untouched (st : RecChainedState) (t : Turn) (a : A
 A spec a worthless executor could meet (accept everything) would be vacuous. Here each forged input
 fails a guard conjunct ⇒ `execFullA st (.balanceA t a) = none` ⇒ no spec post-state exists. -/
 
-/-- **`balanceMovement_rejects_unauthorized` — PROVED.** An unauthorized actor's movement does NOT
+/-- **`balanceMovement_rejects_unauthorized`.** An unauthorized actor's movement does NOT
 commit (the AUTHORITY leg fails) ⇒ no `st'` satisfies the spec. -/
 theorem balanceMovement_rejects_unauthorized (st : RecChainedState) (t : Turn) (a : AssetId)
     (hbad : authorizedB st.kernel.caps t = false) :
@@ -229,7 +229,7 @@ theorem balanceMovement_rejects_unauthorized (st : RecChainedState) (t : Turn) (
     rw [if_neg (by rw [hbad]; rintro ⟨h, _⟩; exact absurd h (by simp))]
   · rw [if_neg hadm]
 
-/-- **`balanceMovement_rejects_overdraft` — PROVED.** A movement of more than the source holds in
+/-- **`balanceMovement_rejects_overdraft`.** A movement of more than the source holds in
 asset `a` (`¬ t.amt ≤ k.bal t.src a`) does NOT commit (the AVAILABILITY leg fails). -/
 theorem balanceMovement_rejects_overdraft (st : RecChainedState) (t : Turn) (a : AssetId)
     (hbad : ¬ t.amt ≤ st.kernel.bal t.src a) :
@@ -241,7 +241,7 @@ theorem balanceMovement_rejects_overdraft (st : RecChainedState) (t : Turn) (a :
     rw [if_neg (by rintro ⟨_, _, h, _⟩; exact hbad h)]
   · rw [if_neg hadm]
 
-/-- **`balanceMovement_rejects_self` — PROVED.** A self-movement (`src = dst`) does NOT commit (the
+/-- **`balanceMovement_rejects_self`.** A self-movement (`src = dst`) does NOT commit (the
 DISTINCTNESS leg fails) — no value can be conjured by moving to oneself. -/
 theorem balanceMovement_rejects_self (st : RecChainedState) (t : Turn) (a : AssetId)
     (hbad : t.src = t.dst) :
@@ -253,7 +253,7 @@ theorem balanceMovement_rejects_self (st : RecChainedState) (t : Turn) (a : Asse
     rw [if_neg (by rintro ⟨_, _, _, h, _⟩; exact h hbad)]
   · rw [if_neg hadm]
 
-/-- **`balanceMovement_rejects_dead_src` — PROVED.** A movement out of a non-account source does NOT
+/-- **`balanceMovement_rejects_dead_src`.** A movement out of a non-account source does NOT
 commit (the source-LIVENESS leg fails). -/
 theorem balanceMovement_rejects_dead_src (st : RecChainedState) (t : Turn) (a : AssetId)
     (hbad : t.src ∉ st.kernel.accounts) :
@@ -265,7 +265,7 @@ theorem balanceMovement_rejects_dead_src (st : RecChainedState) (t : Turn) (a : 
     rw [if_neg (by rintro ⟨_, _, _, _, h, _⟩; exact hbad h)]
   · rw [if_neg hadm]
 
-/-- **`balanceMovement_rejects_sealed_dst` — PROVED (R1).** A transfer into a non-Live destination
+/-- **`balanceMovement_rejects_sealed_dst` (R1).** A transfer into a non-Live destination
 (Sealed/Destroyed ⇒ `acceptsEffects = false`) does NOT commit. -/
 theorem balanceMovement_rejects_sealed_dst (st : RecChainedState) (t : Turn) (a : AssetId)
     (hbad : acceptsEffects st.kernel t.dst = false) :

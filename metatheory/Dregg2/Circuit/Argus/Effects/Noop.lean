@@ -52,7 +52,7 @@ would NOT pin a non-freezing post-state), so the surface is stated, not hidden.
       executor meaning is bare `id`, because the executor has no noop action).
 
   (2) **Chained-runtime freeze:** `noopStmt_chained_freezes` — lifted to `RecChainedState`, the no-op
-      freezes BOTH the kernel AND the observation log (a TOTAL no-op — the honest contrast with
+      freezes BOTH the kernel AND the observation log (a TOTAL no-op — the contrast with
       `EmitEvent`, whose runtime ticks the log; the no-op ticks nothing).
 
   (3) **Compile weld against `skipDescriptor` DIRECTLY:** `noop_compile_sound` — any satisfying witness of
@@ -61,11 +61,11 @@ would NOT pin a non-freezing post-state), so the surface is stated, not hidden.
       state freeze (`k' = k`), which IS the no-op's complete specification. The honest empty-circuit
       surface is carried as an explicit divergence clause.
 
-## HONEST SURFACE.
+## SURFACE.
 
 The welded conclusion pins the WHOLE post-state — but trivially: `k' = k` (every field frozen), the
 strongest possible *for a no-op* and yet carrying NO crypto binding, because the descriptor is the empty
-AIR. The honest caveats, all named (not papered): (a) the executor side refines bare `id`, NOT a named
+AIR. The caveats, all named (not papered): (a) the executor side refines bare `id`, NOT a named
 verified kernel step, because the executor's op-set has no noop action; (b) the circuit is the empty
 descriptor, so its soundness is the trivial freeze-agreement, sound ONLY because the executor freezes —
 proved non-vacuously by `noop_skipDescriptor_unsound_without_freeze`. No nonce-tick divergence (the no-op
@@ -132,7 +132,7 @@ its term to `st.kernel` returns `st.kernel`, so the full chained state (kernel +
 
 /-- **`noopStmt_chained_freezes` — the no-op freezes the WHOLE chained state.** Running the no-op term on
 `st.kernel` returns `st.kernel` (the §2 cornerstone), so the chained state — kernel AND observation log —
-is frozen: the honest contrast with `EmitEvent`'s runtime log-tick. There is no runtime divergence to
+is frozen: the contrast with `EmitEvent`'s runtime log-tick. There is no runtime divergence to
 carry: the no-op is TOTAL (it advances neither the kernel nor the log). -/
 theorem noopStmt_chained_freezes (st : RecChainedState) :
     interp noopStmt st.kernel = some st.kernel
@@ -216,13 +216,13 @@ theorem noop_compile_sound
 
 /-! ## §4 — NON-VACUITY: the freeze is OBSERVABLE on real content, the welded circuit is the GENUINE empty
 descriptor (not a runnable one masquerading), AND the empty descriptor would be UNSOUND for any non-
-freezing effect (so the soundness above is specific to the no-op's freeze, the honest surface made
+freezing effect (so the soundness above is specific to the no-op's freeze, the surface made
 precise).
 
 The cornerstone/weld would be hollow if the "frozen state" claim were vacuous, or if `skipDescriptor`
 secretly carried constraints. A concrete kernel `kN` with NON-trivial content (a cap graph, a populated
 balance, a non-empty escrow store, a non-default lifecycle) is frozen byte-for-byte by the term; and the
-empty-descriptor / would-be-unsound teeth pin the honest surface. -/
+empty-descriptor / would-be-unsound teeth pin the surface. -/
 
 /-- A concrete kernel with NON-trivial content in several components: cells 0,1 live; cell 0 holds 30 of
 asset 0 on the per-asset ledger; cell 0 holds a `node 1` cap; one live swiss record; cell 0's lifecycle
@@ -245,7 +245,7 @@ def kNempty : RecordKernelState :=
 
 /-- **NON-VACUITY (the freeze is OBSERVABLE on real content).** Running the no-op term on the content-rich
 `kN` returns `kN` LITERALLY — the post-state IS the input across the cap graph, the per-asset ledger, the
-revoked registry, and the lifecycle registry. The whole-state freeze is real (the term genuinely admits and
+revoked registry, and the lifecycle registry. The whole-state freeze is real (the term admits and
 preserves everything), not a vacuity over an empty state. -/
 theorem noopStmt_freezes_content : interp noopStmt kN = some kN := interp_noopStmt_eq_id kN
 
@@ -259,7 +259,7 @@ theorem noopStmt_freezes_content : interp noopStmt kN = some kN := interp_noopSt
 #guard ((interp noopStmt kN).map (fun k => k.caps 0)) == some [Dregg2.Authority.Cap.node 1]  -- cap graph frozen
 
 /-- **NON-VACUITY (the welded circuit is the GENUINE empty descriptor).** `compile noopStmt` is
-`skipDescriptor`, which carries ZERO constraints, ZERO hash sites, ZERO ranges — it is genuinely the
+`skipDescriptor`, which carries ZERO constraints, ZERO hash sites, ZERO ranges — it is the
 empty AIR, not a runnable descriptor masquerading. So `noop_compile_sound` is a statement about the
 honest empty circuit (the faithful no-op circuit), and the no-op is NOT secretly compiled to some
 effect's runnable circuit. -/
@@ -272,7 +272,7 @@ theorem compile_noopStmt_is_empty :
 
 #assert_axioms compile_noopStmt_is_empty
 
-/-- **The honest surface, made precise: `skipDescriptor` is sound for the no-op ONLY because the no-op
+/-- **The surface, made precise: `skipDescriptor` is sound for the no-op ONLY because the no-op
 freezes.** The empty descriptor pins NOTHING about the post-state — it is satisfied by EVERY witness
 (`skipDescriptor_satisfied_any`), in particular by a witness whose own intended post-state DIFFERS from
 the input. So a satisfying witness of `skipDescriptor` does NOT, on its own, force `k' = k`: that comes

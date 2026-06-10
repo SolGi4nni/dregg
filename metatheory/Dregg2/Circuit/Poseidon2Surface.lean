@@ -43,7 +43,7 @@ open Dregg2.Circuit.ListCommit (listLeafInjective)
 open Dregg2.Circuit.Poseidon2Binding
 open Dregg2.Exec
 
-/-! ## §0 — the two carriers (the honest split).
+/-! ## §0 — the two carriers (the split).
 
   * **`p2sponge`** (§1) — the ABSTRACT real Poseidon2 sponge: an opaque `List ℤ → ℤ` whose ONLY property
     is the NAMED crypto assumption `Poseidon2Binding.Poseidon2SpongeCR p2sponge`, tagged at the REAL
@@ -57,7 +57,7 @@ open Dregg2.Exec
     `BoundedBy` (every leaf is a digit in `[0, refBase)`) — a REAL theorem `refP2_injOn`, NOT the
     unrealizable injectivity of a `+`-fold — and i64-safe. The `#guard` non-vacuity demos (honest SAT /
     forged UNSAT) `decide` over `refP2`, discharging `BoundedBy` on the concrete demo lists by `decide`.
-    So the runnable prove+verify is over a genuinely-injective sponge while the field-reduced REAL hash's
+    So the runnable prove+verify is over an injective sponge while the field-reduced REAL hash's
     CR is the abstract carrier. -/
 
 /-! ## §1 — the ABSTRACT real Poseidon2 sponge + its NAMED collision-resistance carrier.
@@ -157,7 +157,7 @@ def refP2 : List ℤ → ℤ := fun xs => hornerOf (xs.length : ℤ) xs
 /-- **`refP2_injOn`** — the reference sponge is GENUINELY injective on `BoundedBy` lists: equal Horner
 folds (with the length seed) force the lists equal. PROVED by `hornerOf_window` digit-separation: the
 length seeds must agree (top window), then the low digits (`emod refBase`) peel off one at a time. This
-is the honest content the toy folds *claimed*: a binding commitment, not a `+`-fold. -/
+is the content the toy folds *claimed*: a binding commitment, not a `+`-fold. -/
 theorem refP2_injOn : ∀ xs ys : List ℤ, BoundedBy xs → BoundedBy ys →
     refP2 xs = refP2 ys → xs = ys := by
   -- First: equal `refP2` ⇒ equal lengths (the length seed dominates via the window bound).
@@ -242,7 +242,7 @@ theorem refP2_injOn : ∀ xs ys : List ℤ, BoundedBy xs → BoundedBy ys →
         exact mul_right_cancel₀ hmodB this
       exact ⟨hsab, by rw [hab, hrest]⟩
 
-/-- **`refP2_digest_binds`** — the COMPUTABLE reference digest is genuinely binding on the bounded demo
+/-- **`refP2_digest_binds`** — the COMPUTABLE reference digest is binding on the bounded demo
 domain: equal `p2Digest refP2 enc`s over an injective leaf encoder whose encodings land in `BoundedBy`
 force the WHOLE lists equal. This is the concrete (non-vacuity) shadow of `p2Digest_binds`, with the
 named CR replaced by the PROVED `refP2_injOn`. -/
@@ -257,7 +257,7 @@ theorem refP2_digest_binds {α : Type} (enc : α → ℤ) (henc : Function.Injec
 
 The abstract `p2sponge` carrying `Poseidon2SpongeCR` is the REAL hash *provided* it is realized at the
 real p3-poseidon2-circuit-air parameters. `Poseidon2Binding.Reference.refRealizedSponge` is a concrete
-INHABITANT of `Poseidon2RealizedSponge` tagged at `babyBearD4W16` (with a genuinely-injective CR
+INHABITANT of `Poseidon2RealizedSponge` tagged at `babyBearD4W16` (with an injective CR
 carrier), so the bridge is NON-VACUOUS: a sponge realizing the real fast circuit's parameters with the
 required CR exists. The witness modules cite THIS as the documented pointee of their `Poseidon2SpongeCR`
 hypothesis. -/
@@ -326,7 +326,7 @@ def encEscrowRec (r : EscrowRecord) : List ℤ :=
 
 /-- **`encTurnRec t`** — field-binding `List ℤ` for a receipt `Turn`: `actor, src, dst, amt`. The toy
 `lhConcrete` DROPPED `src`/`dst` (`acc*10⁶ + actor + amt`); this binds the full receipt, so two chains
-differing only in `src`/`dst` no longer collide. -/
+differing only in `src`/`dst` do not collide. -/
 def encTurnRec (t : Turn) : List ℤ := [(t.actor : ℤ), (t.src : ℤ), (t.dst : ℤ), t.amt]
 
 /-- **`recListDigest enc xs`** — the `refP2` digest of a record LIST: length-prefix each record block by

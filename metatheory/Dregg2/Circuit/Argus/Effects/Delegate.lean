@@ -9,7 +9,7 @@ term's executor produces.
 
 This module welds the GRANOVETTER DELEGATE — the first CAP-GRAPH effect — in the SAME method, in a
 disjoint file (it imports the Argus IR + the audited `delegate` emitter read-only and owns only its own
-declarations). The genuinely different shape, and the point of this de-risk, is that `delegate` mutates
+declarations). The different shape, and the point of this de-risk, is that `delegate` mutates
 the CAP GRAPH (`caps : Label → List Cap`) rather than any per-cell balance/side-table: it installs ONE
 cap-graph edge (the delegator's held `t`-conferring cap, copied to the recipient), and the circuit binds
 it through a GENUINELY-RECOMPUTED `cap_root` (the cap-table digest column), not a per-cell ledger move.
@@ -57,10 +57,10 @@ the real structural non-amplification as `delegateStmt_non_amplifying` (§5), th
     `.any confersEdgeTo` connectivity premise, the post-`caps` is `grant … (heldCapTo …)` (a verbatim
     COPY), NO `granted ≤ held` comparison. `checkLe` (`Argus/Stmt.lean:76`, `Int`-valued) is INAPPLICABLE.
     (The `checkLe`-expressible non-amplification lives in the *attenuating* sibling `recKDelegateAtten`
-    (`AuthTurn.lean:97`), whose `attenuate keep …` genuinely narrows — `attenuate_confRights_le` — that is
+    (`AuthTurn.lean:97`), whose `attenuate keep …` narrows — `attenuate_confRights_le` — that is
     a `confRights`-lattice `≤`, still NOT `Int`; a separate weld's concern, not this unattenuated one.)
 
-## What the weld pins (HONEST SURFACE — do NOT over-read)
+## What the weld pins (SURFACE — do NOT over-read)
 
 The circuit side is the AUDITED genuine class-A `delegateVmDescriptorGenuine` + `delegateGenuine_sound`
 (`EffectVmEmitDelegate §G`, itself the shared cap-root-recompute primitive `EffectVmEmitCapRoot`), which
@@ -88,12 +88,12 @@ post-`caps` map (the cornerstone + `recDelegateCaps`); the genuine circuit produ
 the bound edge that the published commitment binds. That is the faithful boundary, stated, not hidden — the
 SAME per-cell + genuine-side-table-root surface the escrow welds live on, now for the cap graph.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on the cornerstone + the weld ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR
 enters ONLY inside the reused emitter (not in the welded conclusion's statement). No `sorry`, no `:= True`,
-no `native_decide`, no `rfl`-posing-as-bridge. Non-vacuity teeth: the IR term genuinely INSTALLS the edge
-(observable cap-graph write), genuinely REJECTS an unconnected delegator (fail-closed), is genuinely
+no `native_decide`, no `rfl`-posing-as-bridge. Non-vacuity teeth: the IR term INSTALLS the edge
+(observable cap-graph write), REJECTS an unconnected delegator (fail-closed), is
 NON-AMPLIFYING (copies the held cap), and the welded descriptor is the genuine class-A one (12 frame gates +
 6 hash-sites: 2 cap-root-recompute + 4 commitment), not the inert placeholder. Imports are read-only; this
 file owns only itself.
@@ -229,7 +229,7 @@ Then:
     post-`caps` IS that installed grant map (`recKDelegate_installs_caps`).
 
 So the genuine class-A circuit the prover runs for delegate pins the per-cell frozen state the IR term's
-executor produces AND genuinely recomputes the bound cap-graph edge — the template generalizes to a
+executor produces AND recomputes the bound cap-graph edge — the template generalizes to a
 CAP-GRAPH effect (a single `caps` write bound through a recomputed `cap_root`). -/
 theorem delegate_compile_sound
     (hash : List ℤ → ℤ) (env : VmRowEnv)
@@ -267,8 +267,8 @@ theorem delegate_compile_sound
 
 #assert_axioms delegate_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely INSTALLS the edge (observable cap-graph write), genuinely
-REJECTS an unconnected delegator (fail-closed), is genuinely NON-AMPLIFYING (the §NON-AMPLIFICATION witness),
+/-! ## §5 — NON-VACUITY: the IR term INSTALLS the edge (observable cap-graph write),
+REJECTS an unconnected delegator (fail-closed), is NON-AMPLIFYING (the §NON-AMPLIFICATION witness),
 and the welded descriptor is the genuine class-A one (not the inert placeholder). -/
 
 /-- A concrete two-account kernel where the delegator (cell `0`) HOLDS a `node 1` cap (an edge to `1`), the

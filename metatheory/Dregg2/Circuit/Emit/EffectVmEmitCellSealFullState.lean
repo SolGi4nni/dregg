@@ -15,7 +15,7 @@ cellSeal's lifecycle Live→Sealed flip is OFF the per-row state block (its SOUN
 now BINDS all 8 roots, so a prover CANNOT tamper any side-table root while keeping the published
 `NEW_COMMIT` (the anti-ghost tooth bites on all 17). The §RECIPE applied to cellSeal.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY through the generic
 `runnable_full_sound`/`runnable_full_commit_binds` (the named `Poseidon2SpongeCR` portal). No `sorry`, no

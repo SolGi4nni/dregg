@@ -5,7 +5,7 @@ The l4v `spec/design` analog: a concrete, **computable** kernel whose `exec` fun
 actually runs a turn, checking BOTH the resource law (conservation) AND authority (the
 capability/integrity check), fail-closed. Where `Spec/Abstract` (Core, Authority, Boundary)
 states the *laws*, here we build the *machine* and **prove it satisfies them**:
-- `exec_conserves` — Law 1 (`Core` conservation) holds of every committed turn (PROVED);
+- `exec_conserves` — Law 1 (`Core` conservation) holds of every committed turn;
 - `exec_authorized` — no state change without authority (the integrity/confinement core);
 - `kernel_run_conserves` — conservation across an ARBITRARY kernel execution (via
   `Execution.invariant_run`).
@@ -77,7 +77,7 @@ def exec (k : KernelState) (turn : Turn) : Option KernelState :=
 `Core.Conservation` measure). -/
 def total (k : KernelState) : ℤ := ∑ c ∈ k.accounts, k.bal c
 
-/-! ## The kernel satisfies the abstract laws (the refinement, PROVED). -/
+/-! ## The kernel satisfies the abstract laws (the refinement). -/
 
 /-- Sum of a single-point indicator over a set containing the point. -/
 theorem sum_indicator (acc : Finset CellId) (a : CellId) (v : ℤ) (ha : a ∈ acc) :
@@ -119,7 +119,7 @@ theorem exec_conserves (k k' : KernelState) (turn : Turn) (h : exec k turn = som
   · rw [if_neg hg] at h
     exact absurd h (by simp)
 
-/-- **No state change without authority — PROVED** (the integrity/confinement core: the
+/-- **No state change without authority** (the integrity/confinement core: the
 kernel never moves a cell's resource on behalf of an unauthorized actor; the concrete
 shadow of `Authority.Integrity` / l4v `call_kernel_integrity`). -/
 theorem exec_authorized (k k' : KernelState) (turn : Turn) (h : exec k turn = some k') :
@@ -130,7 +130,7 @@ theorem exec_authorized (k k' : KernelState) (turn : Turn) (h : exec k turn = so
   · exact hg.1
   · rw [if_neg hg] at h; exact absurd h (by simp)
 
-/-- **Fail-closed — PROVED.** An unauthorized turn does NOT commit. -/
+/-- **Fail-closed.** An unauthorized turn does NOT commit. -/
 theorem exec_unauthorized_fails (k : KernelState) (turn : Turn)
     (h : authorizedB k.caps turn = false) : exec k turn = none := by
   unfold exec
@@ -145,7 +145,7 @@ def kernelSystem : System where
   Config := KernelState
   Step k k' := ∃ turn, exec k turn = some k'
 
-/-- **Conservation across an ENTIRE kernel run — PROVED** (`Execution.invariant_run`
+/-- **Conservation across an ENTIRE kernel run** (`Execution.invariant_run`
 lifting `exec_conserves`); the kernel-level analog of `channel_run_conserves`. -/
 theorem kernel_run_conserves {k k' : KernelState} (hrun : Run kernelSystem k k') :
     total k' = total k := by

@@ -49,17 +49,17 @@ That is decidable and `#eval`-able, so the curvature screen checks `min(g(0), g(
 
 **STRICT GENERALIZATION of the affine screen.** With `κ = 0` the envelope is exactly the
 affine lower line and the screen reduces to the affine endpoint check (`affine_is_curv_zero`).
-With `κ > 0` it is genuinely STRONGER: the teeth (`§4`) exhibit a curved separation that clears
+With `κ > 0` it is STRONGER: the teeth (`§4`) exhibit a curved separation that clears
 at both endpoints AND at the affine interior vertex, yet is correctly REJECTED because the
 curvature drop `½·κ·t²` breaches the threshold mid-step — a breach the affine screen, and an
 endpoint sampler, both miss.
 
-**THE RESIDUAL (stated precisely, never faked).** This module is sound for any `sepFn` meeting
+**THE RESIDUAL (stated precisely).** This module is sound for any `sepFn` meeting
 the explicit curvature-envelope hypothesis `hcurv`. It does NOT itself DERIVE the constant `κ`
 from the CW mean motion `n` (that quantitative `κ = O(n²·scale)` derivation, the `s''` bound on
 the genuine CW solution, would need a ℝ-analysis development of the CW matrix exponential and
 is OUT OF SCOPE — exactly as `coarseClear` does not derive `vmax` from the dynamics either).
-What is CLOSED: the curvature screen is genuinely sound for a CURVED (non-affine) trajectory
+What is CLOSED: the curvature screen is sound for a CURVED (non-affine) trajectory
 under a stated `κ` envelope, and strictly generalizes the affine screen. That is the OPEN's
 "curvature-aware screen … recovering an exact continuous guarantee without assuming affinity."
 -/
@@ -86,7 +86,7 @@ def envelope (sep0 slope κ t : ℚ) : ℚ := sep0 + slope * t - κ * t ^ 2 / 2
 @[simp] theorem envelope_zero (sep0 slope κ : ℚ) : envelope sep0 slope κ 0 = sep0 := by
   unfold envelope; ring
 
-/-- **The envelope is CONCAVE over `[0,T]`: its minimum is at an ENDPOINT (PROVED).**
+/-- **The envelope is CONCAVE over `[0,T]`: its minimum is at an ENDPOINT.**
 For `κ ≥ 0` and any `t ∈ [0,T]`, `g(t) ≥ min(g(0), g(T))`. This is the curvature analogue of
 `OrbitalScreen.sepSq_min_at_tca`: where the affine (upward) parabola took its min at an
 interior vertex, the concave envelope takes its min at the boundary, so the two endpoint values
@@ -169,7 +169,7 @@ bound. Decidable and runnable. -/
 def curvScreen (sep0 slope κ T thr : ℚ) : Bool :=
   decide (thr ≤ envelope sep0 slope κ 0 ∧ thr ≤ envelope sep0 slope κ T)
 
-/-- **`curv_screen_sound` — THE KEYSTONE (PROVED).** The honest curvature screen, in the exact
+/-- **`curv_screen_sound` — THE KEYSTONE.** The honest curvature screen, in the exact
 shape of `coarse_clear_imp_lipschitz_clear`: given an ARBITRARY relative-separation function
 `sepFn : ℚ → ℚ` (NOT assumed affine) that meets the explicit **curvature-envelope hypothesis**
 
@@ -177,7 +177,7 @@ shape of `coarse_clear_imp_lipschitz_clear`: given an ARBITRARY relative-separat
 
 (the Taylor/CW second-order lower bound `sepFn t ≥ sep0 + slope·t − ½·κ·t²`, with `κ ≥ 0` the
 second-derivative bound — see header), if `curvScreen … = true` then `thr ≤ sepFn t` for EVERY
-`t ∈ [0,T]`. Sound for a CURVED (non-affine) trajectory; `κ` is the honest hypothesis. -/
+`t ∈ [0,T]`. Sound for a CURVED (non-affine) trajectory; `κ` is the hypothesis. -/
 theorem curv_screen_sound
     (sep0 slope κ T thr : ℚ) (hκ : 0 ≤ κ)
     (sepFn : ℚ → ℚ)
@@ -195,7 +195,7 @@ theorem curv_screen_sound
     envelope_ge_min_endpoints sep0 slope κ T hκ t h0 hT
   exact le_trans (le_trans hmin henv) (hcurv t h0 hT)
 
-/-- **`curv_screen_imp_no_conjunction` — the negative form (PROVED).** A `clear` verdict from
+/-- **`curv_screen_imp_no_conjunction` — the negative form.** A `clear` verdict from
 the curvature screen means there is NO continuous time in the step at which the curved pair is
 in conjunction (separation strictly below threshold). The referee-facing form: "clear ⇒ no
 conjunction anywhere in the step, for any trajectory meeting the κ envelope." -/
@@ -217,7 +217,7 @@ affine check passes, the `κ = 0` curvature screen passes, and vice versa. Turni
 only TIGHTENS it — never loosens — which is exactly what "strictly generalizes" means here. -/
 
 /-- **`affine_is_curv_zero` — the curvature screen specializes to the affine line check
-(PROVED).** With `κ = 0` the envelope is the affine lower line `sep0 + slope·t`, so `curvScreen`
+.** With `κ = 0` the envelope is the affine lower line `sep0 + slope·t`, so `curvScreen`
 reduces to "both affine endpoints clear `thr`". Hence the affine screen is the `κ = 0` case and
 the curvature screen strictly generalizes it (any `κ > 0` only adds the concavity drop). -/
 theorem affine_is_curv_zero (sep0 slope T thr : ℚ) :
@@ -238,7 +238,7 @@ separation `sepFn` whose:
   * curvature envelope `sep0 + slope·t − ½·κ·t²` DROPS below `thr` mid-step;
   * actual value `sepFn` realizes that drop, with a genuine mid-step conjunction.
 Then `curvScreen` correctly returns `false`, and `sepFn` meets the envelope hypothesis. So the
-curvature screen is genuinely STRONGER than the affine screen on a curved case.
+curvature screen is STRONGER than the affine screen on a curved case.
 
 Concretely: `sep0 = 10`, `slope = 0` (the affine part is the CONSTANT line `10`, well clear of
 `thr = 6` everywhere), `κ = 2`, `T = 4`. Affine endpoints/vertex all read `10 ≥ 6` ⇒ affine
@@ -261,7 +261,7 @@ of the constant-`10` affine part. It is C² with `s'' = −2`, so `|s''| = 2 = �
 curvature hypothesis with equality (the worst-case curved trajectory). -/
 def teethSepFn (t : ℚ) : ℚ := 10 - t ^ 2
 
-/-- **The affine screen / endpoint sampler is FOOLED on the curved pair (PROVED).** With the
+/-- **The affine screen / endpoint sampler is FOOLED on the curved pair.** With the
 affine (κ=0) screen, both endpoints of the affine part read `10 ≥ 6`, so it says "clear". -/
 theorem teeth_affine_says_clear :
     curvScreen teethSep0 teethSlope 0 teethT teethThr = true := by
@@ -280,24 +280,24 @@ theorem teeth_meets_envelope :
   apply le_of_eq
   ring
 
-/-- **But there IS a real mid-step conjunction on the curved pair (PROVED).** At `t = 3`,
+/-- **But there IS a real mid-step conjunction on the curved pair.** At `t = 3`,
 `sepFn 3 = 10 − 9 = 1 < 6` — a genuine conjunction that the FLAT affine part (constant `10`)
 entirely misses. -/
 theorem teeth_midstep_conjunction :
     teethSepFn 3 < teethThr := by
   unfold teethSepFn teethThr; norm_num
 
-/-- **THE TEETH — the CURVATURE screen REJECTS the curved pair (PROVED).** With the honest
+/-- **THE TEETH — the CURVATURE screen REJECTS the curved pair.** With the honest
 `κ = 2`, the envelope at the endpoint `t = T = 4` is `10 − ½·2·16 = −6 < 6`, so `curvScreen`
 returns `false`. The affine screen (`teeth_affine_says_clear`) and an endpoint sampler BOTH said
-"clear" — the curvature screen is genuinely STRONGER: it is sound against the second-order drop
+"clear" — the curvature screen is STRONGER: it is sound against the second-order drop
 that the affine model cannot see. -/
 theorem teeth_curv_rejects :
     curvScreen teethSep0 teethSlope teethKappa teethT teethThr = false := by
   unfold curvScreen envelope teethSep0 teethSlope teethKappa teethT teethThr
   norm_num
 
-/-- **Soundness instantiated on the teeth (PROVED).** Sanity check that the negative form fires:
+/-- **Soundness instantiated on the teeth.** Sanity check that the negative form fires:
 because `curvScreen … = false`, we can't apply `curv_screen_sound`; instead we exhibit directly
 that the screen would have been UNSOUND to clear — the realized conjunction at `t = 3` is inside
 the step and breaches the threshold, matching the screen's correct `false`. -/
@@ -308,7 +308,7 @@ theorem teeth_conjunction_in_step :
 
 /-! ## 5. build-enforced witnesses — the curvature screen, runnable. -/
 
--- A genuinely-clear curved pair: sep0=10, slope=0, κ=1, T=2 → envelope min = 10 − ½·1·4 = 8 ≥ 6.
+-- A clear curved pair: sep0=10, slope=0, κ=1, T=2 → envelope min = 10 − ½·1·4 = 8 ≥ 6.
 #guard curvScreen 10 0 1 2 6                                    -- (small curvature drop; still clear)
 -- The teeth pair: affine (κ=0) says clear, curvature (κ=2) says NOT clear.
 #guard curvScreen teethSep0 teethSlope 0 teethT teethThr        -- (affine: FOOLED)

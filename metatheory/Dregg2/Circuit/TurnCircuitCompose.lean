@@ -80,7 +80,7 @@ lemmas + non-vacuity teeth:
 
   * `macaroonChainBinds` (was `hole_turn_macaroon_chain`): the witness `authChain` digest IS the
     left-fold of the per-step witness digests under `compress` from a `baseAuth` seed — the macaroon
-    caveat-chain column, no longer a free `ℤ`. A witness whose `authChain` is NOT this fold fails the
+    caveat-chain column, not a free `ℤ`. A witness whose `authChain` is NOT this fold fails the
     gate (`macaroon_chain_teeth`).
   * `multiStepGlueAligned` (was `hole_turn_multi_step_glue`): the composed circuit length equals the
     sum of per-step constraint widths AND the descriptor count matches the witness step count — the
@@ -133,7 +133,7 @@ def hole_turn_root_compress_binding
 
 Consume a `TurnEmittedChain` (whose `root_chain` field IS `turnWitnessSatisfies`) and the now-genuine
 root-binding portal: the step-root fold reaching `postRoot` is forced to equal the GENUINE
-`recStateCommit` of `s'.kernel`. The root chain is no longer decorative — it equates the prover's
+`recStateCommit` of `s'.kernel`. The root chain is not decorative — it equates the prover's
 folded post-root with the real post-state commitment. -/
 theorem turn_root_binds_post_commitment
     (lookup : DescriptorLookup)
@@ -150,7 +150,7 @@ theorem turn_root_binds_post_commitment
 
 /-- **`multiStepGlueAligned`** (was `hole_turn_multi_step_glue`) — the composed circuit length equals
 the sum of per-step constraint widths AND the descriptor count matches the witness step count. The
-multi-step wire-alignment invariant, no longer opaque. -/
+multi-step wire-alignment invariant, not opaque. -/
 def multiStepGlueAligned
     (steps : List EmittedDescriptor) (w : TurnWitness) : Prop :=
   (turnCircuitOfEmitted steps).length = (steps.map (fun d => (decodeE d).length)).sum ∧

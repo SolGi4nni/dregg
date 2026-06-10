@@ -117,7 +117,7 @@ theorem witnessOf_get (k : RecordKernelState) (t : Turn) (k' : RecordKernelState
 The witness generator is SOUND: running the executor and laying out the witness yields a SATISFYING
 full-state assignment, AND that satisfying assignment proves the 18-field `TransferSpec`. We state both
 halves at the ABSTRACT `CommitSurface` level (carrying the standard Poseidon-CR portals as hypotheses,
-exactly as `transfer_circuit_full_sound`/`_complete` do) — this is the honest soundness form; the
+exactly as `transfer_circuit_full_sound`/`_complete` do) — this is the soundness form; the
 CONCRETE surface below is the toy that makes the specific `#guard`s decide, not a CR hash. -/
 
 variable (CH : CellId → Value → ℤ) (RH : RecordKernelState → ℤ) (cmb : ℤ → ℤ → ℤ)

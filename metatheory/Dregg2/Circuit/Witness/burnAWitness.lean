@@ -113,7 +113,7 @@ def goodArgsC : BurnArgs := { actor := 0, cell := 0, a := 0, amt := 30 }
 
 def goodPostC : RecChainedState := (recCBurnAsset sC0 0 0 0 30).getD sC0
 
-/-- THE FORGERY: cell 0 honestly debited (70), but bystander cell 2 minted 50 → 999. -/
+/-- THE FORGERY: cell 0 debited (70), but bystander cell 2 minted 50 → 999. -/
 def forgedBalC : CellId → AssetId → ℤ :=
   fun c a => if a = 0 then (if c = 0 then 70 else if c = 1 then 5 else if c = 2 then 999 else 0) else 0
 

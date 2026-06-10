@@ -28,7 +28,7 @@ scales-to-zero special case, NOT the target):
 plain `Nat` scalar — the `ExportEntry.total_refs == Σ holders` invariant, `gc.rs:198–201`):
 `bridge_processDrop_tracks_refcount` proves the accept-path decrement is unit-exact and
 `bridge_last_ref_iff` aligns `canRevoke` with GC-at-zero (subset `{propext, Classical.choice,
-Quot.sound}`, key-uniqueness `NoDupFeds` carried honestly as the `gc.rs` `HashMap` invariant).
+Quot.sound}`, key-uniqueness `NoDupFeds` carried as the `gc.rs` `HashMap` invariant).
 
 The Rust differential corpus (`gcDifferentialCorpus`) mirrors the `gc.rs` / redteam session tests
 after the F-11/F-12 fix: `byzantine_node_different_session_cannot_drop_others_refs`,
@@ -44,7 +44,7 @@ session's drop rights; each session drops only the refs it minted).
 Crypto note: session IDs here are MODELLED as opaque `Nat` tokens whose unforgeability is an
 EXTERNAL assumption (a session id is minted by `CapHello` and is unguessable to a Byzantine peer).
 We do NOT model the handshake; the theorem is "GIVEN the adversary cannot present the victim's
-session id, it cannot drop the victim's ref" — `SessionUnforgeable` names that hypothesis honestly.
+session id, it cannot drop the victim's ref" — `SessionUnforgeable` names that hypothesis.
 -/
 import Dregg2.Exec.TurnExecutorFull
 import Dregg2.Exec.CapTPGC
@@ -156,7 +156,7 @@ def processDrop (t : HolderTable) (fed : Fed) (sess : Session) : DropResult × H
 
 /-! ### §2a — the session check is a NO-OP when the session minted nothing (the core invariant). -/
 
-/-- **`wrong_session_no_op` (PROVED) — a drop on a session that minted no ref here does NOT touch the
+/-- **`wrong_session_no_op` — a drop on a session that minted no ref here does NOT touch the
 table.** If the holder `fed` exists but the presented session `s'` has an EMPTY bucket on it
 (`sessionCount rc s' = 0`), `processDrop` returns `(invalid, t)` — the table is RETURNED UNCHANGED.
 This is the exact `gc.rs` per-session guard (`match sessions.get_mut(&session) { Some(b) if *b > 0
@@ -171,7 +171,7 @@ theorem wrong_session_no_op (t : HolderTable) (fed : Fed) (rc : HolderRef)
   rw [hf]
   simp only [if_pos hzero]
 
-/-- **`wrong_session_preserves_total` (PROVED) — `total_refs` is UNCHANGED by a no-bucket drop.**
+/-- **`wrong_session_preserves_total` — `total_refs` is UNCHANGED by a no-bucket drop.**
 The corollary the Rust test `byzantine_node_different_session_cannot_drop_others_refs` asserts: a
 wrong-session drop leaves `totalRefs` exactly as it was. Follows from `wrong_session_no_op`. -/
 theorem wrong_session_preserves_total (t : HolderTable) (fed : Fed) (rc : HolderRef)
@@ -196,7 +196,7 @@ present sessions it owns — under which the victim minted nothing.) -/
 def SessionUnforgeable (t : HolderTable) (victim : Fed) (byzSession : Session) : Prop :=
   ∀ rc : HolderRef, findHolder t victim = some rc → sessionCount rc byzSession = 0
 
-/-- **`byzantine_cannot_drop_victim_ref` (PROVED, n>1) — the headline Byzantine theorem.**
+/-- **`byzantine_cannot_drop_victim_ref` (n>1) — the headline Byzantine theorem.**
 THE security property modelled from `gc.rs:670`'s
 `byzantine_node_different_session_cannot_drop_others_refs`, at `n = 2` holders. GIVEN the byzantine
 peer cannot forge a session under which the victim minted a ref (`SessionUnforgeable`), a `DropRef`
@@ -216,9 +216,9 @@ theorem byzantine_cannot_drop_victim_ref
 
 A fail-closed model that rejected EVERYTHING would trivially satisfy §2b. We prove the dual: the
 honest holder, presenting a session under which it DID mint a ref, CAN decrement that ref — so the
-rejection in §2b is genuinely SESSION-SCOPED, not a blanket refusal. -/
+rejection in §2b is SESSION-SCOPED, not a blanket refusal. -/
 
-/-- **`right_session_decrements` (PROVED) — the honest holder drops its OWN ref.** With a session
+/-- **`right_session_decrements` — the honest holder drops its OWN ref.** With a session
 whose bucket is non-empty (`0 < sessionCount rc sess`), the drop succeeds and the post-table is
 exactly `decHolderSession t fed sess`. Witnesses that `processDrop` is NOT vacuously fail-closed. -/
 theorem right_session_decrements (t : HolderTable) (fed : Fed) (rc : HolderRef)
@@ -302,7 +302,7 @@ theorem decHolder_not_mem (t : HolderTable) (fed : Fed) (sess : Session)
   unfold decHolderSession
   rw [decHolderMap_not_mem t fed sess hnm, decHolderFilter_not_mem t fed hnm]
 
-/-- **`totalRefs_pos_of_findHolder` (PROVED)** — a present holder with positive count makes the SUM
+/-- **`totalRefs_pos_of_findHolder`** — a present holder with positive count makes the SUM
 positive. The arithmetic that proves the tail recursion of the unit-exact decrement does not
 under-flow. -/
 theorem totalRefs_pos_of_findHolder (t : HolderTable) (fed : Fed) (rc : HolderRef)
@@ -321,7 +321,7 @@ theorem totalRefs_pos_of_findHolder (t : HolderTable) (fed : Fed) (rc : HolderRe
       have hrec := ih (by simp only [findHolder]; exact hf)
       rw [htot]; omega
 
-/-- **`decHolder_pred_total` (PROVED) — the per-holder decrement is UNIT-exact.** Given key-uniqueness
+/-- **`decHolder_pred_total` — the per-holder decrement is UNIT-exact.** Given key-uniqueness
 (`NoDupFeds`), if `fed` is present with positive count, `decHolderSession t fed sess` lowers
 `totalRefs` by EXACTLY one. The per-session bucket detail is invisible to `totalRefs` (which sums the
 holder `count`s), so the arithmetic is the same unit-exact decrement as before the F-12 refactor —
@@ -396,12 +396,12 @@ per-holder fact — a FULL equality the joint-step lemma below PRESERVES under a
 def SwissHoldersCoherent (refc : Nat) (t : HolderTable) : Prop :=
   refc = totalRefs t
 
-/-- **`bridge_accept_preserves_coherence` (PROVED) — the WELD, §2-side.** Coherence between the
+/-- **`bridge_accept_preserves_coherence` — the WELD, §2-side.** Coherence between the
 scalar refcount and the per-holder sum is PRESERVED across an accepting drop: if `refc = totalRefs t`
 and `fed` is a present, positive holder under a key-unique table, then after §2's `decHolder` the
 DECREMENTED scalar `refc - 1` still equals `totalRefs (decHolder t fed)`. The scalar `-1` that
 the scalar decrement writes is EXACTLY the per-holder sum after the holder drop — the two models move in
-lockstep, no longer two disconnected halves. -/
+lockstep, not two disconnected halves. -/
 theorem bridge_accept_preserves_coherence (refc : Nat) (t : HolderTable) (fed : Fed) (rc : HolderRef)
     (sess : Session) (hnd : NoDupFeds t) (hf : findHolder t fed = some rc) (hpos : 0 < rc.count)
     (hco : SwissHoldersCoherent refc t) :
@@ -409,7 +409,7 @@ theorem bridge_accept_preserves_coherence (refc : Nat) (t : HolderTable) (fed : 
   unfold SwissHoldersCoherent at hco ⊢
   rw [hco, decHolder_pred_total t fed rc sess hnd hf hpos]
 
-/-- **`bridge_last_ref_iff` (PROVED) — the GC boundary agrees across the two models.** Under
+/-- **`bridge_last_ref_iff` — the GC boundary agrees across the two models.** Under
 coherence and an accepting drop, §2's per-holder sum hits `0` (the `canRevoke` verdict's
 `totalRefs t' = 0` condition, `gc.rs:201`) IF AND ONLY IF the scalar hits `0` (the GC boundary's
 remove branch condition `e.refcount - 1 = 0`). So §2's `canRevoke` and §1's GC-at-zero reclaim
@@ -427,7 +427,7 @@ The lemmas above are stated over `decHolder` (the structured drop) and the scala
 that `decHolder` IS the table `processDrop` returns on its accept path — so the bridge holds over
 the ACTUAL `gc.rs` verdict function (§2), not just its decomposition. -/
 
-/-- **`processDrop_accept_table` (PROVED) — the accept path returns `decHolderSession`.** When the
+/-- **`processDrop_accept_table` — the accept path returns `decHolderSession`.** When the
 session `sess` has a non-empty bucket on a present holder, `processDrop`'s post-table is exactly
 `decHolderSession t fed sess`. This pins the bridge's structured drop to the real `gc.rs` verdict
 function's output. -/
@@ -436,7 +436,7 @@ theorem processDrop_accept_table (t : HolderTable) (fed : Fed) (rc : HolderRef) 
     (processDrop t fed sess).2 = decHolderSession t fed sess :=
   right_session_decrements t fed rc hf sess hpos
 
-/-- **`bridge_processDrop_tracks_refcount` (PROVED) — THE bridge over the real functions.** Given
+/-- **`bridge_processDrop_tracks_refcount` — THE bridge over the real functions.** Given
 coherence (`refc = totalRefs t`), key-uniqueness, a present holder with positive total `count`, and a
 session whose bucket on it is non-empty, §2's `processDrop` accept-path post-table has `totalRefs`
 equal to the DECREMENTED §1 scalar `refc - 1`. This is `gcDropTotal` made real: the §2 per-holder
@@ -548,10 +548,10 @@ drop rights, and a session must not drop refs another session minted). They live
 the faithful model of the fixed `gc.rs` — exactly the refcount-drop path the lease-only proof was
 blind to. -/
 
-/-- **`f11_session_free_drop_denied` (PROVED) — F-11 closed.** A session under which the holder
+/-- **`f11_session_free_drop_denied` — F-11 closed.** A session under which the holder
 minted NO ref (`sessionCount rc sess = 0`) — a forged, stale, or "session 0 / no session" credential
 — cannot reclaim: the drop is `invalid` and `total_refs` is unchanged. This is the headline F-11
-law: the session-free reclaim door is shut at the model level, so a blind lease proof can no longer
+law: the session-free reclaim door is shut at the model level, so a blind lease proof cannot
 hide the gap. -/
 theorem f11_session_free_drop_denied (t : HolderTable) (fed : Fed) (rc : HolderRef) (sess : Session)
     (hf : findHolder t fed = some rc) (hzero : sessionCount rc sess = 0) :
@@ -559,7 +559,7 @@ theorem f11_session_free_drop_denied (t : HolderTable) (fed : Fed) (rc : HolderR
   refine ⟨?_, wrong_session_preserves_total t fed rc hf sess hzero⟩
   rw [wrong_session_no_op t fed rc hf sess hzero]
 
-/-- **`f12_reexport_preserves_original_session_rights` (PROVED) — F-12 closed (half 1).** A
+/-- **`f12_reexport_preserves_original_session_rights` — F-12 closed (half 1).** A
 re-export under a NEW session does not strip the ORIGINAL session's bucket: if the original session
 `s₀` had a positive bucket, it STILL has the same positive bucket after the new session `s₁ ≠ s₀`
 mints a ref. So the original session retains the right to drop the refs it minted. (Modelled as: the
@@ -576,7 +576,7 @@ theorem f12_reexport_preserves_original_session_rights
   have : (s₁ == s₀) = false := by simpa using hne
   rw [this]
 
-/-- **`f12_session_drops_only_its_own` (PROVED) — F-12 closed (half 2).** A drop on a holder with two
+/-- **`f12_session_drops_only_its_own` — F-12 closed (half 2).** A drop on a holder with two
 session buckets touches ONLY the named session: the OTHER session's bucket is left intact, so the new
 session can never reclaim a ref the original session minted, and vice-versa. We witness this on the
 concrete `reexportTable`: dropping session 99 leaves federation 10's session-7 bucket = 2 untouched. -/
@@ -596,7 +596,7 @@ theorem coherent_demo : SwissHoldersCoherent 2 demoTable := by
   unfold SwissHoldersCoherent; decide
 
 /-- Coherence FAILS when the scalar disagrees with the sum (`3 ≠ totalRefs demoTable = 2`) — the
-predicate genuinely constrains, it is not `True`. -/
+predicate constrains, it is not `True`. -/
 theorem not_coherent_demo : ¬ SwissHoldersCoherent 3 demoTable := by
   unfold SwissHoldersCoherent; decide
 

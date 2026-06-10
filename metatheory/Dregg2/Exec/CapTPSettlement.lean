@@ -130,7 +130,7 @@ def settle (k : KernelState) (b : SuspendedBatch) : Option KernelState :=
 
 /-! ## §4 — No premature settlement: an unsettled (under-consented) batch mutates NOTHING. -/
 
-/-- **`unsettled_freezes_state` (PROVED)** — a batch whose distributed exchange has NOT converged
+/-- **`unsettled_freezes_state`** — a batch whose distributed exchange has NOT converged
 settles to the UNCHANGED state. No mutation commits before consent is complete: the partial,
 suspended computation holds the mutations in escrow, touching neither `caps` nor `bal`, until every
 required party has approved. This is the no-premature-settlement keystone. -/
@@ -140,7 +140,7 @@ theorem unsettled_freezes_state (k : KernelState) (b : SuspendedBatch)
   unfold settle
   rw [hno]; rfl
 
-/-- **`missing_party_blocks_settlement` (PROVED)** — if any required party has NOT contributed a
+/-- **`missing_party_blocks_settlement`** — if any required party has NOT contributed a
 valid approval, consent is incomplete and the batch stays suspended (no mutation). A single
 withholding participant blocks the whole settlement — the threshold is unanimity over the required
 parties, so the exchange cannot settle behind a party's back. -/
@@ -157,7 +157,7 @@ theorem missing_party_blocks_settlement (k : KernelState) (b : SuspendedBatch)
 
 /-! ## §5 — Settlement is the verified drain (atomic + per-mutation re-authorized). -/
 
-/-- **`settle_complete_is_drain` (PROVED)** — once the distributed exchange converges, settling IS
+/-- **`settle_complete_is_drain`** — once the distributed exchange converges, settling IS
 draining the whole batch through the verified executor. So multi-party consent does NOT bypass the
 per-mutation authority check: every mutation in the settled batch is STILL re-authorized by `exec`
 at commit (consent GATES the drain; the drain re-witnesses each turn). Atomic: `drainAll` is all-
@@ -167,7 +167,7 @@ theorem settle_complete_is_drain (k : KernelState) (b : SuspendedBatch)
     settle k b = drainAll k b.mutations := by
   unfold settle; rw [hc]; rfl
 
-/-- **`settle_atomic_aborts_on_unauthorized` (PROVED)** — even with COMPLETE consent, a forged
+/-- **`settle_atomic_aborts_on_unauthorized`** — even with COMPLETE consent, a forged
 mutation buried in the batch aborts the WHOLE settlement. If the first mutation is unauthorized
 (the executor will reject it), the consented settle returns `none` — nothing commits. So the
 distributed authorization exchange's consent cannot launder an over-authorized mutation past the
@@ -182,7 +182,7 @@ theorem settle_atomic_aborts_on_unauthorized (k : KernelState) (b : SuspendedBat
 
 /-! ## §6 — No authority amplification through the multi-party exchange. -/
 
-/-- **`settle_preserves_caps` (PROVED) — the headline: the distributed exchange cannot amplify
+/-- **`settle_preserves_caps` — the headline: the distributed exchange cannot amplify
 authority.** A settled batch — no matter how elaborate the multi-party authorization exchange that
 gated it — never grows the capability table. We split: incomplete consent leaves the state (and so
 `caps`) literally unchanged; complete consent settles via `drainAll`, which preserves `caps`
@@ -198,7 +198,7 @@ theorem settle_preserves_caps (k k' : KernelState) (b : SuspendedBatch)
   · rw [if_neg hc] at h
     simp only [Option.some.injEq] at h; subst h; rfl
 
-/-- **`settle_conserves` (PROVED)** — a settled batch conserves total supply: incomplete consent
+/-- **`settle_conserves`** — a settled batch conserves total supply: incomplete consent
 is a no-op (trivially conserving), and a complete-consent settle drains through `exec`, which
 conserves each turn (`drainAll_conserves`). The distributed exchange neither mints nor burns. -/
 theorem settle_conserves (k k' : KernelState) (b : SuspendedBatch)
@@ -212,7 +212,7 @@ theorem settle_conserves (k k' : KernelState) (b : SuspendedBatch)
 
 /-! ## §7 — The consent layer's own anti-ghost tooth + monotone accumulation. -/
 
-/-- **`forged_approval_does_not_count` (PROVED)** — an approval from a party the batch does NOT
+/-- **`forged_approval_does_not_count`** — an approval from a party the batch does NOT
 require is DISCARDED: `addApproval` leaves the batch unchanged. So a non-participant cannot advance
 the distributed exchange toward settlement by submitting a consent — only the required parties'
 approvals accumulate. The anti-ghost tooth at the consent layer. -/
@@ -222,7 +222,7 @@ theorem forged_approval_does_not_count (b : SuspendedBatch) (a : Approval)
   unfold SuspendedBatch.addApproval
   rw [if_neg hno]
 
-/-- **`addApproval_monotone` (PROVED)** — consent accumulates monotonically: if a party `p` had
+/-- **`addApproval_monotone`** — consent accumulates monotonically: if a party `p` had
 already approved the batch, it STILL has approved after admitting any further approval `a`. The
 distributed exchange only converges — adding consent never retracts a prior one. -/
 theorem addApproval_monotone (b : SuspendedBatch) (a : Approval) {p : Label}
@@ -236,7 +236,7 @@ theorem addApproval_monotone (b : SuspendedBatch) (a : Approval) {p : Label}
     exact Or.inr hp
   · rw [if_neg hreq]; exact hp
 
-/-- **`consent_monotone` (PROVED)** — convergence is monotone at the THRESHOLD too: if the exchange
+/-- **`consent_monotone`** — convergence is monotone at the THRESHOLD too: if the exchange
 had already converged (`consentComplete`), it stays converged after any further approval. So once
 all required parties have approved, no later message can un-settle the batch — the exchange is a
 ratchet toward settlement. -/

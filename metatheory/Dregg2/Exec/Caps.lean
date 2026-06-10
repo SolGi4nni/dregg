@@ -103,9 +103,9 @@ def invoke (caps : Caps) (holder target : Label) (auth : Auth) : Bool :=
      | .endpoint t rights => (t == target) && rights.contains auth
      | _ => false))
 
-/-! ## The cap-system soundness guarantees (PROVED) -/
+/-! ## The cap-system soundness guarantees -/
 
-/-- **`attenuate_subset` — PROVED.** Attenuation only narrows: the authority conferred by
+/-- **`attenuate_subset`.** Attenuation only narrows: the authority conferred by
 the attenuated cap is a sublist (hence ⊆) of the parent's. This is the concrete,
 list-level realization of `LossyMorphism`'s `in_le`/`out_le` (attenuation-only). -/
 theorem attenuate_subset (keep : List Auth) (c : Cap) :
@@ -119,14 +119,14 @@ theorem attenuate_subset (keep : List Auth) (c : Cap) :
   | node t => simp [attenuate, capAuthConferred]
   | null   => simp [attenuate, capAuthConferred]
 
-/-- **`derive_no_amplify` — PROVED.** A derived cap confers ≤ the parent's authority: the
+/-- **`derive_no_amplify`.** A derived cap confers ≤ the parent's authority: the
 holder gains nothing it could not already have been granted directly, and never more than
 `c` itself confers. (Corollary of `attenuate_subset`: `derive` grants `attenuate keep c`.) -/
 theorem derive_no_amplify (keep : List Auth) (c : Cap) :
     capAuthConferred (attenuate keep c) ⊆ capAuthConferred c :=
   attenuate_subset keep c
 
-/-- **`attenuate_confRights_le` — PROVED.** Attenuation narrows the REAL conferred rights in the
+/-- **`attenuate_confRights_le`.** Attenuation narrows the REAL conferred rights in the
 `ExecAuth` lattice: `confRights (attenuate keep c) ≤ confRights c`. This is `attenuate_subset`
 lifted from `List Auth ⊆` to the `Finset Auth` `≤` — the genuine non-amplification inequality
 (`is_attenuation`, `granted ⊆ held`), NOT a `()≤()` collapse. -/
@@ -138,7 +138,7 @@ theorem attenuate_confRights_le (keep : List Auth) (c : Cap) :
   rw [confRights, List.mem_toFinset]
   exact attenuate_subset keep c ha
 
-/-- **`revoke_removes` — PROVED.** After `revoke caps holder c`, the holder no longer holds
+/-- **`revoke_removes`.** After `revoke caps holder c`, the holder no longer holds
 `c` in its slot. (The fail-closed counterpart of `grant`: removed authority is gone.) -/
 theorem revoke_removes (caps : Caps) (holder : Label) (c : Cap) :
     c ∉ (revoke caps holder c) holder := by
@@ -148,20 +148,20 @@ theorem revoke_removes (caps : Caps) (holder : Label) (c : Cap) :
   have hne : (decide (c ≠ c)) = true := (List.mem_filter.mp hc).2
   simp at hne
 
-/-- **`grant_adds` — PROVED** (companion sanity fact): after `grant`, the holder holds the
+/-- **`grant_adds`** (companion sanity fact): after `grant`, the holder holds the
 cap. Shows `grant`/`revoke` are genuine inverses on slot membership. -/
 theorem grant_adds (caps : Caps) (holder : Label) (c : Cap) :
     c ∈ (grant caps holder c) holder := by
   simp only [grant, if_true]
   exact List.mem_cons_self
 
-/-- **`grant_other_untouched` — PROVED**: granting to `holder` leaves every other slot's
+/-- **`grant_other_untouched`**: granting to `holder` leaves every other slot's
 caps exactly as they were (no ambient authority leaks to bystanders). -/
 theorem grant_other_untouched (caps : Caps) (holder l : Label) (c : Cap) (h : l ≠ holder) :
     (grant caps holder c) l = caps l := by
   simp only [grant, if_neg h]
 
-/-- **`revoke_subset` — PROVED**: revoke only removes — the post-state slot is a sublist of
+/-- **`revoke_subset`**: revoke only removes — the post-state slot is a sublist of
 the pre-state slot, so revocation never grows authority. -/
 theorem revoke_subset (caps : Caps) (holder l : Label) (c : Cap) :
     (revoke caps holder c) l ⊆ caps l := by

@@ -144,7 +144,7 @@ def auction : GlobalType := dregg_choreo {
   }
 }
 
-/-- **The auction elaborates to exactly its `.choice` `GlobalType` — PROVED by `rfl`.** -/
+/-- **The auction elaborates to exactly its `.choice` `GlobalType` — by `rfl`.** -/
 theorem auction_eq :
     auction = GlobalType.choice 0 1 [(1, GlobalType.done), (2, GlobalType.done)] := rfl
 
@@ -233,7 +233,7 @@ def pingLoop : GlobalType := dregg_choreo {
     var loop
 }
 
-/-- **The recursive loop elaborates to exactly its `.mu`/`.var` `GlobalType` — PROVED by `rfl`.** -/
+/-- **The recursive loop elaborates to exactly its `.mu`/`.var` `GlobalType` — by `rfl`.** -/
 theorem pingLoop_eq :
     pingLoop = GlobalType.mu 0 (GlobalType.comm 0 1 30 (GlobalType.var 0)) := rfl
 

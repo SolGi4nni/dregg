@@ -7,7 +7,7 @@ import Mathlib.RingTheory.Int.Basic
 
 This is a **proof-of-method spike**: it shows that Lean can speak directly about the
 constraint polynomials of the *real* circuit (`circuit/src/effect_vm/air.rs`) and prove,
-rigorously and honestly, both **what the constraint guarantees** and **what it does not**.
+rigorously and, both **what the constraint guarantees** and **what it does not**.
 
 ## The exact real constraint (air.rs:473–486, verified against source)
 
@@ -210,7 +210,7 @@ theorem transfer_underflow_attack :
   `def`, a one-line `ring` rewrite, and the shared `eq_zero_of_dvd_of_abs_lt` lemma — call it a
   dozen lines. The 54-effect bill is dominated by *non-linear* / *commitment* constraints
   (Poseidon2, Merkle, lookups), not by the affine balance algebra modeled here.
-* **Honest scope: the spike also *prices the gaps*.** The same machinery that proves soundness
+* **Scope: the spike also *prices the gaps*.** The same machinery that proves soundness
   proves the **underflow attack** as a theorem — so doing this for all 54 effects yields, for
   free, a precise ledger of which guarantees are in-circuit vs. off-circuit (executor / future
   W9-RANGECHECK). That dual ability — prove the guarantee AND exhibit the gap — is the real

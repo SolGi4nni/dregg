@@ -22,7 +22,7 @@ property* lives: that an untrusted relay is a delay/drop channel and nothing mor
 ## The honest crypto seam (exactly as `Authority.Blocklace`'s `signed` bit).
 
 We do NOT re-derive X25519 / HKDF / ChaCha20-Poly1305 in Lean — those are the §8 oracle, the
-Rust/vetted-crate obligation, carried HONESTLY as a record field + named hypotheses, the same
+Rust/vetted-crate obligation, carried as a record field + named hypotheses, the same
 way `Blocklace.Block.signed : Bool` carries the Ed25519 discharge:
 
   * a `Box` carries its `recipient` (the destination it was sealed to), its opaque `cipher`
@@ -37,7 +37,7 @@ way `Blocklace.Block.signed : Bool` carries the Ed25519 discharge:
     sees only `(recipient, cipher, ephemeral, queued_at, ttl)` — routing metadata + opaque
     bytes. This projection is the model-level statement of CHOSEN-PLAINTEXT confidentiality: the
     relay's observable carries no function of the plaintext. (Length leakage is the residual
-    metadata channel, named honestly in §6, not papered over.)
+    metadata channel, named in §6, not papered over.)
 
 ## The security properties, proved at n > 1 destinations over the EXECUTABLE relay.
 
@@ -160,14 +160,14 @@ def relayView (b : Box) : Dest × EphKey × Nat × Nat × Nat :=
 
 /-! ## §3 — Tooth 1: the relay is confined to its view (cannot READ). -/
 
-/-- **`relayView_erases_plaintext` (PROVED)** — the relay view does not mention `sealed`: a box
+/-- **`relayView_erases_plaintext`** — the relay view does not mention `sealed`: a box
 and the same box with a DIFFERENT plaintext (but identical metadata + ciphertext) have the
 IDENTICAL relay view. So no relay decision can depend on the plaintext. -/
 theorem relayView_erases_plaintext (b : Box) (p' : Plain) :
     relayView { b with sealed := p' } = relayView b := by
   rfl
 
-/-- **`relay_view_independent_of_plaintext` (PROVED) — confidentiality.** If two boxes agree on
+/-- **`relay_view_independent_of_plaintext` — confidentiality.** If two boxes agree on
 all relay-visible fields, they have the SAME relay view regardless of their plaintexts. An
 adversarial relay cannot distinguish — let alone read — the plaintext from what it observes. -/
 theorem relay_view_independent_of_plaintext (b₁ b₂ : Box)
@@ -178,7 +178,7 @@ theorem relay_view_independent_of_plaintext (b₁ b₂ : Box)
 
 /-! ## §4 — Tooth 2: the relay cannot FORGE or RE-ADDRESS. -/
 
-/-- **`readdressed_box_undeliverable` (PROVED)** — a relay that REWRITES a box's `recipient` from
+/-- **`readdressed_box_undeliverable`** — a relay that REWRITES a box's `recipient` from
 `d` to a victim `d' ≠ d` produces a box that decrypts to `none` for the victim: the AEAD
 associated-data binding (recipient is authenticated) makes a re-addressed box fail its tag. The
 relay cannot redirect a message to a destination it was not sealed to. -/
@@ -190,7 +190,7 @@ theorem readdressed_box_undeliverable (b : Box) (victim : Dest)
     rintro ⟨he, _⟩; exact hne he.symm
   simp [this]
 
-/-- **`forged_box_rejected` (PROVED)** — a box whose AEAD tag does NOT verify (`intact = false`:
+/-- **`forged_box_rejected`** — a box whose AEAD tag does NOT verify (`intact = false`:
 tampered ciphertext, or a box the relay fabricated without the key) decrypts to `none` for
 EVERYONE, including the bound recipient. The relay cannot manufacture a box that any holder
 accepts. (The model of ChaCha20-Poly1305 INT-CTXT: without the key, no valid tag.) -/
@@ -228,7 +228,7 @@ def expire (R : Relay) (now : Nat) : Relay :=
 
 /-! ## §6 — Tooth 3: delay is a permutation, drop is a sub-multiset. -/
 
-/-- **`drain_is_reorder` (PROVED)** — every box the relay delivers to `d` was a box stored on the
+/-- **`drain_is_reorder`** — every box the relay delivers to `d` was a box stored on the
 relay (no injection): the drained list is a SUBSET of the relay store. A relay cannot deliver a
 box no sender enqueued. -/
 theorem drain_is_reorder (R : Relay) (d : Dest) : ∀ b ∈ drainFor R d, b ∈ R := by
@@ -236,7 +236,7 @@ theorem drain_is_reorder (R : Relay) (d : Dest) : ∀ b ∈ drainFor R d, b ∈ 
   unfold drainFor at hb
   exact List.mem_of_mem_filter hb
 
-/-- **`relay_only_delays_or_drops` (PROVED)** — every box delivered to `d` is addressed to `d`
+/-- **`relay_only_delays_or_drops`** — every box delivered to `d` is addressed to `d`
 (`recipient = d`): the relay cannot mis-route a box to a destination it was not sealed to (it can
 only delay or drop the ones it has). Together with §4's `readdressed_box_undeliverable`, even a
 mis-routed copy would be undeliverable. -/
@@ -247,14 +247,14 @@ theorem relay_only_delays_or_drops (R : Relay) (d : Dest) :
   have := List.of_mem_filter hb
   simpa using this
 
-/-- **`expire_is_submultiset` (PROVED)** — expiry only SHRINKS the relay store: every surviving
+/-- **`expire_is_submultiset`** — expiry only SHRINKS the relay store: every surviving
 box was already present, and (since `filter` preserves order/multiplicity) the survivors are a
 sublist. The relay's "drop" power can delete boxes but never add or alter them. -/
 theorem expire_is_submultiset (R : Relay) (now : Nat) : (expire R now).Sublist R := by
   unfold expire; exact List.filter_sublist
 
-/-- **`expired_box_gone` (PROVED)** — a box whose TTL has elapsed (`now - queuedAt ≥ ttl`) is NOT
-in the post-expiry store: the relay genuinely drops it. (Liveness bound, not a forgery tooth —
+/-- **`expired_box_gone`** — a box whose TTL has elapsed (`now - queuedAt ≥ ttl`) is NOT
+in the post-expiry store: the relay drops it. (Liveness bound, not a forgery tooth —
 the relay's drop is real, modeling DoS-bounded storage.) -/
 theorem expired_box_gone (R : Relay) (now : Nat) (b : Box) (hold : ¬ now - b.queuedAt < b.ttl) :
     b ∉ expire R now := by
@@ -266,7 +266,7 @@ theorem expired_box_gone (R : Relay) (now : Nat) (b : Box) (hold : ¬ now - b.qu
 
 /-! ## §7 — Tooth 4: at n > 1 destinations, only the bound recipient reads. -/
 
-/-- **`decrypt_only_recipient` (PROVED)** — if `holder` successfully decrypts box `b`, then
+/-- **`decrypt_only_recipient`** — if `holder` successfully decrypts box `b`, then
 `holder` IS the bound recipient. Confidentiality at the n-destination relay: a successful decrypt
 WITNESSES that the holder is exactly who the box was sealed to. -/
 theorem decrypt_only_recipient (b : Box) (holder : Dest) (p : Plain)
@@ -276,7 +276,7 @@ theorem decrypt_only_recipient (b : Box) (holder : Dest) (p : Plain)
   · exact hcond.1
   · rw [if_neg hcond] at h; exact absurd h (by simp)
 
-/-- **`wrong_recipient_fails` (PROVED)** — at n > 1, a box sealed to `d` is OPAQUE to every other
+/-- **`wrong_recipient_fails`** — at n > 1, a box sealed to `d` is OPAQUE to every other
 destination `d' ≠ d`: `decrypt b d' = none`. The relay serving many destinations does not let one
 destination read another's mail. -/
 theorem wrong_recipient_fails (b : Box) (d' : Dest) (hne : d' ≠ b.recipient) :
@@ -285,7 +285,7 @@ theorem wrong_recipient_fails (b : Box) (d' : Dest) (hne : d' ≠ b.recipient) :
   have : ¬ (d' = b.recipient ∧ b.intact = true) := fun h => hne h.1
   simp [this]
 
-/-- **`recipient_recovers` (PROVED) — round-trip / correctness.** The bound recipient of an intact
+/-- **`recipient_recovers` — round-trip / correctness.** The bound recipient of an intact
 box recovers exactly the sealed plaintext. (The Rust round-trip test, abstractly.) -/
 theorem recipient_recovers (b : Box) (hi : b.intact = true) :
     decrypt b b.recipient = some b.sealed := by
@@ -310,14 +310,14 @@ def deliverDecrypted (R : Relay) (d : Dest) (k : KernelState) : Option KernelSta
   let sends := boxes.filterMap (fun b => decrypt b d)
   drainAll k sends
 
-/-- **`deliver_runs_verified_exec` (PROVED)** — delivery is DEFINED as draining the decrypted
+/-- **`deliver_runs_verified_exec`** — delivery is DEFINED as draining the decrypted
 sends through the verified executor. There is no side-channel install: the recipient's only way to
 act on a delivered box is to run its payload through `exec`. -/
 theorem deliver_runs_verified_exec (R : Relay) (d : Dest) (k : KernelState) :
     deliverDecrypted R d k = drainAll k ((drainFor R d).filterMap (fun b => decrypt b d)) := by
   rfl
 
-/-- **`relay_cannot_inject_authority` (PROVED) — the headline.** Delivering a batch of boxes
+/-- **`relay_cannot_inject_authority` — the headline.** Delivering a batch of boxes
 NEVER grows the capability table: the post-delivery `caps` equals the pre-delivery `caps`. So
 whatever the relay did — reorder, drop, attempt to forge or re-address (forged/re-addressed boxes
 decrypt to `none` and are filtered out before they ever reach `exec`) — it CANNOT inject authority
@@ -329,14 +329,14 @@ theorem relay_cannot_inject_authority (R : Relay) (d : Dest) (k k' : KernelState
   unfold deliverDecrypted at h
   exact drainAll_preserves_caps k k' _ h
 
-/-- **`forged_delivery_is_dropped` (PROVED)** — a forged box (`intact = false`) the relay slipped
+/-- **`forged_delivery_is_dropped`** — a forged box (`intact = false`) the relay slipped
 into the store contributes NOTHING to delivery: it decrypts to `none` and is filtered out before
 the drain, so it cannot even be PRESENTED to the executor. The relay's forged box is inert. -/
 theorem forged_delivery_is_dropped (b : Box) (d : Dest) (hforged : b.intact = false) :
     decrypt b d = none :=
   forged_box_rejected b d hforged
 
-/-- **`delivered_over_authorized_send_aborts` (PROVED) — anti-ghost at delivery.** Even a properly
+/-- **`delivered_over_authorized_send_aborts` — anti-ghost at delivery.** Even a properly
 sealed, intact box can carry an over-authorized send; if the FIRST decrypted send is not
 authorized against the recipient's caps, the whole delivery aborts to `none` — nothing commits.
 Sealing a box correctly does NOT grant its payload authority; the executor still fires. Rides

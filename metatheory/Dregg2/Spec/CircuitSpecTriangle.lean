@@ -207,7 +207,7 @@ def intentTransfer (bal : CellId → AssetId → ℤ) (src dst : CellId) (a : As
     CellId → AssetId → ℤ :=
   intentCredit (intentDebit bal src a amt) dst a amt
 
-/-- **`intentTransfer_eq_recTransferBal` (PROVED — genuine independent-function equality).** The
+/-- **`intentTransfer_eq_recTransferBal` (genuine independent-function equality).** The
 intent debit-src-credit-dst move coincides pointwise with the executor's `recTransferBal`. Two
 INDEPENDENTLY-written ledger functions proven EQUAL: the intent (debit `src`, credit `dst`) lands on
 exactly the columns `recTransferBal` moves. It would be FALSE if `recTransferBal` debited `dst`,
@@ -431,7 +431,7 @@ theorem attenuate_circuit_rejects_wrong_caps
 open Dregg2.Circuit.Inst.Revoke (RevokeArgs revokeE revoke_full_sound)
 open Dregg2.Circuit.Spec.AuthorityRevocation (RevokeSpec removeEdgeCaps)
 
-/-- **`intentRevokeCaps_eq_removeEdgeCaps` (PROVED — definitional identity).** The intent revoke
+/-- **`intentRevokeCaps_eq_removeEdgeCaps` (definitional identity).** The intent revoke
 filter is EXACTLY the circuit spec's `removeEdgeCaps`. Two independently-written cap functions proven
 EQUAL (FALSE if either filtered the wrong slot or wrong target). -/
 theorem intentRevokeCaps_eq_removeEdgeCaps (caps : Caps) (holder t : CellId) :
@@ -483,7 +483,7 @@ def intentSetCellField (cells : CellId → Value) (cell : CellId) (f : FieldName
 open Dregg2.Circuit.Inst.SetPermissionsA (SetPermissionsArgs setPermissionsE setPermissionsA_full_sound)
 open Dregg2.Circuit.Spec.CellStatePermissions (SetPermissionsSpec setPermsCellMap)
 
-/-- **`setPermsCellMap_eq_intent` (PROVED — definitional identity).** The circuit's validated
+/-- **`setPermsCellMap_eq_intent` (definitional identity).** The circuit's validated
 permissions cell-map IS the intent single-slot write at `f = permsField`. -/
 theorem setPermsCellMap_eq_intent (k : RecordKernelState) (cell : CellId) (p : Int) :
     setPermsCellMap k cell p = intentSetCellField k.cell cell permsField p := rfl
@@ -519,7 +519,7 @@ theorem setPermissions_circuit_rejects_wrong_cell
 open Dregg2.Circuit.Inst.SetVKA (SetVKArgs setVKE setVKA_full_sound)
 open Dregg2.Circuit.Spec.CellStateVK (SetVKSpec setVKCellMap)
 
-/-- **`setVKCellMap_eq_intent` (PROVED).** The validated verification-key cell-map IS the intent
+/-- **`setVKCellMap_eq_intent`.** The validated verification-key cell-map IS the intent
 single-slot write at `f = vkField`. -/
 theorem setVKCellMap_eq_intent (k : RecordKernelState) (cell : CellId) (vk : Int) :
     setVKCellMap k cell vk = intentSetCellField k.cell cell vkField vk := rfl
@@ -553,7 +553,7 @@ theorem setVK_circuit_rejects_wrong_cell
 open Dregg2.Circuit.Inst.IncrementNonceA (IncrementNonceArgs incrementNonceE incrementNonceA_full_sound)
 open Dregg2.Circuit.Spec.CellStateMonotone (IncrementNonceSpec incNonceCellMap)
 
-/-- **`incNonceCellMap_eq_intent` (PROVED).** The validated nonce cell-map IS the intent single-slot
+/-- **`incNonceCellMap_eq_intent`.** The validated nonce cell-map IS the intent single-slot
 write at `f = nonceField`. -/
 theorem incNonceCellMap_eq_intent (k : RecordKernelState) (cell : CellId) (n : Int) :
     incNonceCellMap k cell n = intentSetCellField k.cell cell nonceField n := rfl
@@ -734,7 +734,7 @@ my full reach"); the SAME `grant`-of-held-cap the circuit's `recDelegateCaps` in
 def intentIntroduceCaps (caps : Caps) (del rec t : CellId) : Caps :=
   grant caps rec (heldCapTo caps del t)
 
-/-- **`intentIntroduceCaps_eq_recDelegateCaps` (PROVED — definitional identity).** -/
+/-- **`intentIntroduceCaps_eq_recDelegateCaps` (definitional identity).** -/
 theorem intentIntroduceCaps_eq_recDelegateCaps (caps : Caps) (del rec t : CellId) :
     intentIntroduceCaps caps del rec t = recDelegateCaps caps del rec t := rfl
 
@@ -824,7 +824,7 @@ frozen; the intent is the receipt-chain advance). We pin each. -/
 open Dregg2.Circuit.Inst.ReceiptArchiveA (ReceiptArchiveArgs receiptArchiveE receiptArchiveA_full_sound)
 open Dregg2.Circuit.Spec.CellStateAudit (ReceiptArchiveSpec RefusalSpec auditCellMap)
 
-/-- **`auditCellMap_eq_intent` (PROVED).** The audit cell-map IS the intent slot-write of the marker
+/-- **`auditCellMap_eq_intent`.** The audit cell-map IS the intent slot-write of the marker
 `.int 1` at field `f` (an instance of §7's `intentSetCellField`). -/
 theorem auditCellMap_eq_intent (k : RecordKernelState) (cell : CellId) (f : FieldName) :
     auditCellMap k cell f = intentSetCellField k.cell cell f 1 := rfl

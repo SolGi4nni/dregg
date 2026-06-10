@@ -41,14 +41,14 @@ state_constraints:
 
 ## The four queue-safety keystones (mirroring escrow/obligation's four)
 
-  (a) NO OVERFLOW              — PROVED: an enqueue from a state respecting `head − tail ≤ cap`,
+  (a) NO OVERFLOW — an enqueue from a state respecting `head − tail ≤ cap`,
       with room (`occupancy < cap`), lands STILL respecting it; a FULL queue's enqueue fail-closes.
       THIS is the keystone that the relational caveat unlocks.
-  (b) NO UNDERFLOW / FIFO      — PROVED: `tail ≤ head` preserved by both ops; an EMPTY queue's
+  (b) NO UNDERFLOW / FIFO — `tail ≤ head` preserved by both ops; an EMPTY queue's
       dequeue fail-closes; FIFO order is the factory FIFO shadow (`qbuf_fifo_order`, §6).
-  (c) SENDER-AUTH ON ENQUEUE   — PROVED: an enqueue by an actor ∉ the sender set fail-closes (the
+  (c) SENDER-AUTH ON ENQUEUE — an enqueue by an actor ∉ the sender set fail-closes (the
       `SenderAuthorized` caveat verbatim).
-  (d) CONSERVATION (value queue) — PROVED, inherited from `recKExecAsset_conserves_per_asset`: a
+  (d) CONSERVATION (value queue), inherited from `recKExecAsset_conserves_per_asset`: a
       deposit-queue's value moves by an ordinary per-asset move; order ops are bal-neutral.
 
 ## Non-vacuity
@@ -124,7 +124,7 @@ def queueRelCaveats (postTail : Int) : List RelCaveat :=
   [ RelCaveat.fieldLteOther headSeqField capacityField postTail   -- capacity: head ≤ cap + tail
   , RelCaveat.fieldLteOther tailSeqField headSeqField 0 ]          -- no-underflow: tail ≤ head
 
-/-- **`queueFactory_conforms` — PROVED.** The queue factory's OWN published EMPTY initial state
+/-- **`queueFactory_conforms`.** The queue factory's OWN published EMPTY initial state
 satisfies its OWN `SlotCaveat`s (a well-formed factory cannot publish an invariant-violating
 genesis). -/
 theorem queueFactory_conforms (cap owner : Int) (senders : List CellId) :
@@ -161,7 +161,7 @@ The cross-slot bounds are tied to the LIVE `RelCaveat.fieldLteOther` evaluator �
 proved `RelationalCaveat.fieldLteOther_expresses_capacity`/`_underflow` over the queue cell's record
 and the concrete `"queue.*"` field layout, so the bound this module enforces IS the live atom. -/
 
-/-- **`relcav_expresses_capacity` — PROVED (instantiated).** The live capacity atom on the queue
+/-- **`relcav_expresses_capacity` (instantiated).** The live capacity atom on the queue
 cell's record is EXACTLY the capacity invariant `head − tail ≤ cap`. -/
 theorem relcav_expresses_capacity (k : RecordKernelState) (e : CellId) :
     (RelCaveat.fieldLteOther headSeqField capacityField (qTail k e)).eval (k.cell e) = true
@@ -171,7 +171,7 @@ theorem relcav_expresses_capacity (k : RecordKernelState) (e : CellId) :
   unfold capacityOk at h
   exact h
 
-/-- **`relcav_expresses_underflow` — PROVED (instantiated).** The live no-underflow atom on the
+/-- **`relcav_expresses_underflow` (instantiated).** The live no-underflow atom on the
 queue cell's record is EXACTLY `tail ≤ head`. -/
 theorem relcav_expresses_underflow (k : RecordKernelState) (e : CellId) :
     (RelCaveat.fieldLteOther tailSeqField headSeqField 0).eval (k.cell e) = true
@@ -374,7 +374,7 @@ def qbufDequeue (buf : List Nat) : Option (Nat × List Nat) :=
   | []      => none
   | m :: ms => some (m, ms)
 
-/-- **FIFO ORDER — PROVED (the load-bearing non-vacuity).** Enqueue `a` then `b` into ANY buffer,
+/-- **FIFO ORDER (the load-bearing non-vacuity).** Enqueue `a` then `b` into ANY buffer,
 then dequeue: the FIRST dequeue returns the OLDEST waiting message, and `a` stays ahead of `b` —
 order is PRESERVED exactly because enqueue appends to the back and dequeue removes the front. -/
 theorem qbuf_fifo_order (buf : List Nat) (a b : Nat) :
@@ -475,7 +475,7 @@ def mintQueueCell (s : RecChainedState) (actor qCell : CellId) (vk : Int) :
     Option RecChainedState :=
   createCellFromFactoryChainA s actor qCell vk
 
-/-- **`mintQueueCell_installs_caveats` — PROVED.** A minted queue cell carries EXACTLY the factory's
+/-- **`mintQueueCell_installs_caveats`.** A minted queue cell carries EXACTLY the factory's
 caveats — the immutables + monotone counters + sender gate — installed by the executor, so
 `stateStepGuarded` enforces them on every later `SetField`. -/
 theorem mintQueueCell_installs_caveats {s s' : RecChainedState} {actor qCell : CellId}
@@ -488,7 +488,7 @@ theorem mintQueueCell_installs_caveats {s s' : RecChainedState} {actor qCell : C
   rw [← (Option.some.injEq _ _).mp hfind] at hcav
   exact hcav
 
-/-- **`mintQueueCell_caveats` — PROVED.** When the registry IS `queueRegistry vk …`, the minted cell
+/-- **`mintQueueCell_caveats`.** When the registry IS `queueRegistry vk …`, the minted cell
 concretely carries the queue factory's caveats. -/
 theorem mintQueueCell_caveats {s s' : RecChainedState} {actor qCell : CellId} {vk : Int}
     {cap owner : Int} {senders : List CellId}
@@ -499,20 +499,20 @@ theorem mintQueueCell_caveats {s s' : RecChainedState} {actor qCell : CellId} {v
     rw [hreg]; exact queueRegistry_finds vk.toNat cap owner senders
   exact mintQueueCell_installs_caveats _ hfind h
 
-/-- **`mintQueueCell_neutral` — PROVED.** Minting a queue cell is conservation-NEUTRAL for every
+/-- **`mintQueueCell_neutral`.** Minting a queue cell is conservation-NEUTRAL for every
 asset (the cell is born EMPTY; any deposit is a SEPARATE ordinary move). -/
 theorem mintQueueCell_neutral {s s' : RecChainedState} {actor qCell : CellId} {vk : Int}
     (b : AssetId) (h : mintQueueCell s actor qCell vk = some s') :
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   createCellFromFactoryChainA_neutral b h
 
-/-- **`mintQueueCell_grows_accounts` — PROVED.** A minted queue cell IS a live account. -/
+/-- **`mintQueueCell_grows_accounts`.** A minted queue cell IS a live account. -/
 theorem mintQueueCell_grows_accounts {s s' : RecChainedState} {actor qCell : CellId} {vk : Int}
     (h : mintQueueCell s actor qCell vk = some s') :
     qCell ∈ s'.kernel.accounts :=
   createCellFromFactoryChainA_grows_accounts h
 
-/-- **`mintQueueCell_unknown_factory_fails` — PROVED (fail-closed).** Minting against an unknown
+/-- **`mintQueueCell_unknown_factory_fails` (fail-closed).** Minting against an unknown
 factory key never mints. -/
 theorem mintQueueCell_unknown_factory_fails (s : RecChainedState) (actor qCell : CellId)
     (vk : Int) (h : findFactory s.kernel.factories vk.toNat = none) :

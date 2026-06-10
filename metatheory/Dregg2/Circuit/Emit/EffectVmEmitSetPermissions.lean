@@ -23,13 +23,13 @@ passthrough+tick.
   * the cell's economic block (bal/fields/cap/reserved) is FROZEN; the nonce TICKS by 1;
   * the post-state is bound into `state_commit` (GROUP-4) and published as `NEW_COMMIT`.
 
-## What the EffectVM row CANNOT enforce (the honest boundary)
+## What the EffectVM row CANNOT enforce (the boundary)
 
   * the actual `permissions` slot write + the self-targeted receipt — they ride `params[0]` +
     `effects_hash` OFF the per-row state block. The write soundness lives in universe-A's
     `SetPermissionsSpec` (cited via the §connector); the runnable row pins the conserved frame + tick.
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} on every theorem. Poseidon2 CR enters ONLY as
 the NAMED hypothesis `Poseidon2SpongeCR hash`. No `sorry`, no `:= True`, no `native_decide`, no

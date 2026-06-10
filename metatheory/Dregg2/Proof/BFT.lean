@@ -100,7 +100,7 @@ Two stages, exactly the Malkhi–Reiter / Li–Lesani argument:
 2. **The contradiction** (`bft_safety`): that honest witness voted for both `b₁` and `b₂`;
    honest-vote-once forces `b₁ = b₂`, contradicting `b₁ ≠ b₂`. -/
 
-/-- **Honest-witness quorum intersection (PROVED).** The strong form of
+/-- **Honest-witness quorum intersection.** The strong form of
 `World.quorum_intersection_safety`: under the model's `n > 3f` + `≤ f` Byzantine + the BFT
 quorum threshold `n − f` (each block reached `n − f` distinct voters), the two quorums share a
 voter that is **honest** (`¬ Byzantine`). This is the quorum-systems *consistency* property:
@@ -113,7 +113,7 @@ theorem honest_witness_in_intersection
     (b₁ b₂ : Nat)
     -- the BFT quorum threshold: each block was endorsed by at least `n − f` distinct voters.
     -- (This is the `2f+1`-of-`3f+1` quorum, STRICTLY larger than `halfQuorum = (n+f)/2+1`;
-    --  the honest-witness genuinely needs this bigger quorum — see the file header.)
+    -- the honest-witness needs this bigger quorum — see the file header.)
     (hq1 : cfg.n - cfg.f ≤ (votersFor votes b₁).length)
     (hq2 : cfg.n - cfg.f ≤ (votersFor votes b₂).length) :
     ∃ voter, ¬ M.Byzantine voter ∧

@@ -65,7 +65,7 @@ def cwmPhaseForest (actor : CellId) (cur : Nat) : FullForestA :=
 
 /-! ## §A — Predicate-level one-step lemmas (DAG + clearance). -/
 
-/-- **`cwm_illegal_dag_rejected` (PROVED)** — completing a step before its prerequisites is
+/-- **`cwm_illegal_dag_rejected`** — completing a step before its prerequisites is
 rejected (`none`). -/
 theorem cwm_illegal_dag_rejected (m : WorkflowMandate) (s : CwmRuntime) (stepId : Nat)
     (hdag : stepAdmissible m stepId (completedOf s.cursor) = false) :
@@ -81,7 +81,7 @@ theorem cwm_illegal_dag_rejected (m : WorkflowMandate) (s : CwmRuntime) (stepId 
   · simp only [hlen, ↓reduceIte]
     exact Or.inl trivial
 
-/-- **`cwm_clearance_violation_rejected` (PROVED)** — insufficient compartment clearance is
+/-- **`cwm_clearance_violation_rejected`** — insufficient compartment clearance is
 rejected (`none`). -/
 theorem cwm_clearance_violation_rejected (m : WorkflowMandate) (s : CwmRuntime)
     (hadm : stepAdmissible m s.cursor (completedOf s.cursor) = true)
@@ -127,7 +127,7 @@ theorem cwmStep_preserves_WF (m : WorkflowMandate) (s : CwmRuntime) (op : CwmOp)
   | some s' => simp only [Option.getD_some]; exact cwmAdvanceM_preserves_WF m s s' hwf hp
   | none    => simp only [Option.getD_none]; exact hwf
 
-/-- **`cwm_step_legal_forever` (PROVED) — THE HEADLINE:** from any well-formed start, along the
+/-- **`cwm_step_legal_forever` — THE HEADLINE:** from any well-formed start, along the
 ENTIRE unbounded stream of admitted charter ticks — under EVERY adversarial schedule — the mandate
 cursor stays within the charter. Step-tracking induction (abstract face of `livingCellA_carries`). -/
 theorem cwm_step_legal_forever (m : WorkflowMandate) (s : CwmRuntime) (hinit : s.WF m) (sched : CwmSched) :
@@ -141,7 +141,7 @@ theorem cwm_step_legal_forever (m : WorkflowMandate) (s : CwmRuntime) (hinit : s
 
 /-! ## §B — REAL executor teeth + conservation crown. -/
 
-/-- **`cwm_illegal_dag_rejected_exec` (PROVED)** — an illegal cursor jump is rejected by the
+/-- **`cwm_illegal_dag_rejected_exec`** — an illegal cursor jump is rejected by the
 `MonotonicSequence` caveat on `step_cursor`. -/
 theorem cwm_illegal_dag_rejected_exec (s : RecChainedState) (actor : CellId) (target : Int)
     (hseq : caveatsAdmit s.kernel stepCursorSlot actor mandateCell target = false) :
@@ -160,7 +160,7 @@ running admission and the off-line predicate decide the SAME thing. -/
 /-- The committed cursor read off the mandate cell, as a `Nat`. -/
 def cwmCursorNat (k : RecordKernelState) : Nat := (fieldOf stepCursorSlot (k.cell mandateCell)).toNat
 
-/-- **`cwm_caveatsAdmit_eq_table` — PROVED.** On a cell carrying `mandateCaveats`, the executor's
+/-- **`cwm_caveatsAdmit_eq_table`.** On a cell carrying `mandateCaveats`, the executor's
 `caveatsAdmit` on a `step_cursor` write is exactly `cwmAdmitTable`-membership of `(old, new)`. -/
 theorem cwm_caveatsAdmit_eq_table (k : RecordKernelState)
     (hprog : k.slotCaveats mandateCell = mandateCaveats) (actor : CellId) (new : Int) :
@@ -173,7 +173,7 @@ theorem cwm_caveatsAdmit_eq_table (k : RecordKernelState)
   rw [hf]
   simp only [List.all_cons, List.all_nil, Bool.and_true, SlotCaveat.eval]
 
-/-- **`cwm_commit_iff_admit` — PROVED (the COMMIT-IFF-ADMIT value frame, predicate↔executor).** On a
+/-- **`cwm_commit_iff_admit` (the COMMIT-IFF-ADMIT value frame, predicate↔executor).** On a
 mandate cell whose committed cursor is `c` (`< steps.length`), the executor's caveat gate on a
 `c → c+1` write COMMITS (admits) IFF `cwmAdvanceM` admits at cursor `c`. The off-line admission
 predicate and the running executor decide the SAME transitions. -/
@@ -196,7 +196,7 @@ theorem cwm_advance_conserves {s s' : RecChainedState} (actor : CellId) (target 
   execFullForestA_conserves_per_asset s s' (cwmExecAdvance actor target) b h
     (cwmExecAdvance_delta_zero actor target b)
 
-/-- **`cwm_pay_supply_forever` (PROVED) — APP SEMANTICS (ungated crown).** Along EVERY adversarial
+/-- **`cwm_pay_supply_forever` — APP SEMANTICS (ungated crown).** Along EVERY adversarial
 schedule on the real living cell, payment asset combined supply never drifts. -/
 theorem cwm_pay_supply_forever (s0 : RecChainedState) (sched : SchedA) :
     ∀ n, recTotalAsset (trajA s0 sched n).kernel payAsset =
@@ -271,7 +271,7 @@ def cwmClearanceOK (k : RecordKernelState) : Bool :=
   else
     false
 
-/-- **`cwmWF_traj_carries` (PROVED) — NON-VACUOUS carry.** A committed forest keeps the mandate cell live
+/-- **`cwmWF_traj_carries` — NON-VACUOUS carry.** A committed forest keeps the mandate cell live
 AND its published caveat program installed. The generic frame
 `StorageGatewayMandate.execFullForestA_progLive_preserved` instantiated at `mandateCell`/`mandateCaveats`. -/
 theorem cwmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
@@ -280,7 +280,7 @@ theorem cwmWF_traj_carries (s s' : RecChainedState) (cf : FullForestA)
   exact Dregg2.Apps.StorageGatewayMandate.execFullForestA_progLive_preserved
     s s' cf mandateCell mandateCaveats h hlive hprog
 
-/-- **`cwmCompartment_traj_carries` (PROVED) — NON-VACUOUS carry.** Same generic frame: the compartment
+/-- **`cwmCompartment_traj_carries` — NON-VACUOUS carry.** Same generic frame: the compartment
 binding's enforcement (live cell + installed immutable-anchor caveat program) persists along every forest. -/
 theorem cwmCompartment_traj_carries (s s' : RecChainedState) (cf : FullForestA) (comp : Int)
     (h : execFullForestA s cf = some s') (hcomp : cwmInCompartment s.kernel comp) :
@@ -294,7 +294,7 @@ theorem cwm_mandateCaveats_has_immutable_anchor :
     (.immutable commitmentAnchorSlot : SlotCaveat) ∈ mandateCaveats := by
   simp [mandateCaveats]
 
-/-- **`cwmCompartmentStrong_traj_carries` (PROVED) — the VALUE-PINNING carry.** A committed forest that
+/-- **`cwmCompartmentStrong_traj_carries` — the VALUE-PINNING carry.** A committed forest that
 is anchor-safe for the mandate cell (no `makeSovereign` aimed at it) preserves the LITERAL compartment
 binding `cwmAnchor = comp`, not merely program-liveness — via the shared
 `StorageGatewayMandate.execFullForestA_anchorOf_preserved` frame. Requires the program installed (to

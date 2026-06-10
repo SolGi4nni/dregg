@@ -101,7 +101,7 @@ theorem view_indep_of_witness (s : Z.S) (w₁ w₂ : Z.W) :
     Z.view s w₁ = Z.view s w₂ := by
   rw [Z.hperf s w₁, Z.hperf s w₂]
 
-/-- **The view is a function of the statement alone — PROVED, kernel-clean.** Equivalently:
+/-- **The view is a function of the statement alone.** Equivalently:
 the real view factors through the simulator, so it is a function `S → V` with the witness
 projected away entirely. This is the strongest information-theoretic statement of "the view
 carries zero information about the witness": there is a witness-free `g = Z.sim` with
@@ -160,7 +160,7 @@ def discloseAt (s : Z.S) (w : Z.W) : DiscloseAt Z.V Z.S Z.W where
   accepts _ := Dregg2.Laws.Discharged s w
   accepts_eq := by intro _; exact Iff.rfl
 
-/-- **The floor leaks the witness-free simulation — PROVED, kernel-clean.** The information
+/-- **The floor leaks the witness-free simulation.** The information
 the verifier learns at the ZK bottom `⊥ = acceptanceOnly` is exactly `Z.sim s`: a value
 produced WITHOUT the witness. This is the information-theoretic discharge of the
 `Disclosure` separation parameter — the floor's leaked information is witness-free. -/
@@ -168,7 +168,7 @@ theorem floor_leaks_simulation (s : Z.S) (w : Z.W) :
     (Z.discloseAt s w).leaked ⊥ = Z.sim s :=
   rfl
 
-/-- **The floor leak is INDEPENDENT of the witness — PROVED, kernel-clean.** For a fixed
+/-- **The floor leak is INDEPENDENT of the witness.** For a fixed
 statement, the information leaked at the ZK floor is the same whichever witness the prover
 held: `(discloseAt s w₁).leaked ⊥ = (discloseAt s w₂).leaked ⊥`. This is
 `view_indep_of_witness` transported onto the repo's `DiscloseAt.leaked ⊥` — the precise
@@ -178,7 +178,7 @@ theorem floor_leak_witness_independent (s : Z.S) (w₁ w₂ : Z.W) :
     (Z.discloseAt s w₁).leaked ⊥ = (Z.discloseAt s w₂).leaked ⊥ :=
   rfl
 
-/-- **The real view AND the floor leak agree — PROVED, kernel-clean.** The bridge is
+/-- **The real view AND the floor leak agree.** The bridge is
 literal: the actual verifier view `Z.view s w` equals the information leaked at the dial
 floor, `(discloseAt s w).leaked ⊥` (both equal `Z.sim s` under `hperf`). So "what the
 verifier really sees" and "what the dial floor discloses" are the *same* witness-free value
@@ -221,7 +221,7 @@ theorem fragment_grounds_dial_bottom [Dregg2.Laws.Verifiable Z.S Z.W] (s : Z.S) 
     (Z.discloseAt s w₁).leaked ⊥ = (Z.discloseAt s w₂).leaked ⊥ :=
   ⟨zk_is_dial_bottom, rfl⟩
 
-/-- **The acceptance bit at the floor is the verify-seam check — PROVED, kernel-clean.**
+/-- **The acceptance bit at the floor is the verify-seam check.**
 Re-stating, for the `PerfectZK`-induced schedule, the repo lemma
 `DiscloseAt.accepts_bot_iff_discharged`: the single bit at the ZK floor is exactly
 `Discharged pred wit`. So the floor discloses ONLY acceptance (one bit, position-independent
@@ -236,7 +236,7 @@ end PerfectZK
 #assert_axioms PerfectZK.fragment_grounds_dial_bottom
 #assert_axioms PerfectZK.floor_bit_iff_discharged
 
-/-! # §3. TEETH — non-vacuity: the perfect-ZK law genuinely holds AND genuinely fails.
+/-! # §3. TEETH — non-vacuity: the perfect-ZK law holds AND fails.
 
 `hperf` is a *real constraint*, not always-true. We exhibit:
   * `otp : PerfectZK` — a one-time-pad / perfectly-hiding commitment toy: the view is a
@@ -288,7 +288,7 @@ theorem leaky_view_indep_FAILS :
   intro h
   exact Bool.noConfusion (h () true false)
 
-/-- **No simulator can perfect-hide the leaky view — PROVED, kernel-clean.** The sharpest
+/-- **No simulator can perfect-hide the leaky view.** The sharpest
 form of the teeth: there is NO function `sim : Unit → Bool` for which the leaky view equals
 a witness-free simulation. Any such `sim` would make the view witness-independent, which
 `leaky_view_indep_FAILS` refutes. So one cannot package `leakyView` as a `PerfectZK` — the
@@ -364,7 +364,7 @@ def fieldZK (vis : FieldVisibility Name) : PerfectZK where
     field_projection_hides_private vis (assemble vis s w) s
       (fun n h => assemble_pub_eq vis s w n h)
 
-/-- **The real instance's witness-independence IS `field_projection_hides_private` — PROVED,
+/-- **The real instance's witness-independence IS `field_projection_hides_private`,
 kernel-clean.** For the field-tier `PerfectZK`, any two private witnesses `w₁ w₂` (any two
 private-field assignments) yield the *same* public view: the verifier provably learns nothing
 about the private fields. This is `PerfectZK.view_indep_of_witness` discharged by the real
@@ -374,7 +374,7 @@ theorem fieldZK_view_indep (vis : FieldVisibility Name) (s w₁ w₂ : State Nam
     (fieldZK vis).view s w₁ = (fieldZK vis).view s w₂ :=
   (fieldZK vis).view_indep_of_witness s w₁ w₂
 
-/-- **The real view factors through the statement — PROVED, kernel-clean.** The field-tier
+/-- **The real view factors through the statement.** The field-tier
 view is a function of the public statement alone (the witness-free `sim = project · vis`); the
 private fields are projected away entirely. `PerfectZK.view_factors_through_statement` on the
 real instance. -/
@@ -383,11 +383,11 @@ theorem fieldZK_factors (vis : FieldVisibility Name) :
       ∀ (s w : State Name V), (fieldZK vis).view s w = g s :=
   (fieldZK vis).view_factors_through_statement
 
-/-! ### Non-vacuity of the REAL instance: a `priv` field genuinely hides a differing witness. -/
+/-! ### Non-vacuity of the REAL instance: a `priv` field hides a differing witness. -/
 
-/-- **The real instance has teeth (information genuinely hidden) — PROVED, kernel-clean.**
+/-- **The real instance has teeth (information hidden).**
 With a field name `n` marked `priv` and two DIFFERING private values `a ≠ b`, the two assembled
-states genuinely disagree at `n` (`assemble … (update s n a) n = a ≠ b = assemble … (update s n
+states disagree at `n` (`assemble … (update s n a) n = a ≠ b = assemble … (update s n
 b) n`), YET their views coincide — the projection drops the private coordinate. So the hiding
 is real content: the underlying witnessed states differ at the private field, but the verifier's
 view cannot tell. This is the dual of `leaky_no_simulator` (there NO simulator existed); here a
@@ -395,7 +395,7 @@ genuine simulator (the real `project`) makes the differing-witness views identic
 theorem fieldZK_hides_differing_private
     [DecidableEq Name] (n : Name) (a b : V) (hab : a ≠ b) (s : State Name V)
     (vis : FieldVisibility Name) (hpriv : vis n = Visibility.priv) :
-    -- the assembled states genuinely differ at the private field `n`...
+    -- the assembled states differ at the private field `n`...
     assemble vis s (Function.update s n a) n
         ≠ assemble vis s (Function.update s n b) n ∧
     -- ...yet the verifier's views are identical (the private coordinate is dropped).

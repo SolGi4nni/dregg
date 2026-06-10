@@ -89,7 +89,7 @@ other index whole-preserved. We state that map POINTWISE and validate it with
 trusted), the `makeSovereignA` analog of `Transfer.recTransfer_correct`: at the target, the rebound
 cell IS exactly the commitment-only record (the readable record is GONE, only the commitment of the
 WHOLE pre-state value remains); every OTHER cell's whole record is untouched. So the spec's
-`sovereignRebind` clause genuinely encodes drop-readable-state ∧ install-commitment ∧ cell-frame. -/
+`sovereignRebind` clause encodes drop-readable-state ∧ install-commitment ∧ cell-frame. -/
 theorem sovereignRebindMap_correct (base : CellId → Value) (target : CellId) :
     sovereignRebind base target target
         = .record [(commitmentField, .dig (stateCommitment (base target)))]

@@ -25,7 +25,7 @@ preimage, so the published digest fixes the post component / frame / log uniquel
 
 NON-VACUITY: `effect2_extract_rejects_*` — a trace whose digest wires are PI-bound but whose state
 VIOLATES the apex (wrong component / tampered frame / forged log) is UNSAT. This is the anti-ghost
-tooth: the extractor genuinely constrains.
+tooth: the extractor constrains.
 -/
 import Dregg2.Circuit.EffectCommit2
 import Dregg2.Circuit.Poseidon2Binding
@@ -161,7 +161,7 @@ WHOLE post-state: `E.apex pre args post`. The witness is NOT assumed equal to `e
 wires — the adversary keeps the root wires `64/65` and every `w ≥ 72`. The needed digest-wire agreement
 is exactly what a real verifier's public-input/boundary check enforces against the committed root
 (grounded injective by Poseidon2 CR, `Poseidon2Binding`), so this is the genuine ZK soundness
-obligation, no longer smuggled in as a free `hEnc`. -/
+obligation, not smuggled in as a free `hEnc`. -/
 theorem effect2_extract {St Args : Type} (S : Surface2) (E : EffectSpec2 St Args)
     (hRestF : RestFrameDecodes2 S E) (hLog : logHashInjective S.LH) (hGuard : GuardDecodes2 E)
     (pre : St) (args : Args) (post : St) (a : Assignment)
@@ -203,7 +203,7 @@ theorem extract_component_unique {St Args : Type} (S : Surface2) (E : EffectSpec
   rw [← hPI₁.2.2.2.1, ← hPI₂.2.2.2.1]
 
 /-! ## §5 — NON-VACUITY: anti-ghost teeth. A PI-bound trace whose claimed state VIOLATES the apex is
-UNSAT. The extractor genuinely CONSTRAINS — a forged/tampered state cannot have a satisfying PI-bound
+UNSAT. The extractor CONSTRAINS — a forged/tampered state cannot have a satisfying PI-bound
 witness. -/
 
 /-- **`effect2_extract_rejects_frame_tamper`** — a claimed `post` whose untouched-field frame predicate
@@ -244,7 +244,7 @@ theorem effect2_extract_rejects_log_forge {St Args : Type} (S : Surface2) (E : E
     (satisfiedE2_of_PIBindsDigests S E pre args post a hPI).mp hsat
   exact effectCircuit2_rejects_log_forge S E hLog pre args post htamper hsat'
 
-/-! ## §5b — CONCRETE non-vacuity: the gates genuinely reject. A tampered trace whose component digest
+/-! ## §5b — CONCRETE non-vacuity: the gates reject. A tampered trace whose component digest
 wire (`68`) disagrees with its expected wire (`69`) FAILS `cE2Bind` — UNSAT — so satisfaction is NOT
 vacuously true; it really pins `compDigPost = compDigExpected`. These are decidable `#guard`s over the
 two gates the extractor's component/log teeth rely on. -/

@@ -42,7 +42,7 @@ open Dregg2.Exec.FullForest
 
 /-! ## Step 1 — `livingCellA_carries`: the PARAMETRIC trajectory-invariant carry (THE general crown). -/
 
-/-- **`livingCellA_carries` (PROVED) — the parametric crown.** Let `Good` be ANY predicate on the real
+/-- **`livingCellA_carries` — the parametric crown.** Let `Good` be ANY predicate on the real
 kernel state `RecChainedState`. If `Good` is preserved by a SINGLE living-cell step (`hpres : ∀ s cf,
 Good s → Good (cellNextA s cf)` — the app's one-step obligation, dischargeable from the executor's
 per-step correctness `fullActionInvA` / the `Exec/FullForest` theorems), then `Good` holds at EVERY
@@ -67,7 +67,7 @@ theorem livingCellA_carries (Good : RecChainedState → Prop)
 
 /-! ## Step 2 — conservation as the TRIVIAL instance (the crown subsumes the CellReal warmup). -/
 
-/-- **`livingCellA_obs_invariant'` (PROVED) — conservation, re-derived THROUGH the parametric carry.**
+/-- **`livingCellA_obs_invariant'` — conservation, re-derived THROUGH the parametric carry.**
 The per-asset badge `cellObsA` never drifts along the unbounded trajectory — identical to
 `CellReal.livingCellA_obs_invariant`, but obtained as the `Good := (cellObsA · = cellObsA s)` instance
 of `livingCellA_carries`, with the one-step obligation discharged by the proved `cellObsA_next`. This
@@ -86,7 +86,7 @@ is a NON-conservation property: its proof reads the executor's **ChainLink/ObsAd
 log grows by exactly one `fullReceiptA` row each committed step), NEVER the per-asset conservation
 measure `recTotalAsset`. It is THE TEMPLATE for userspace verification on this cell. -/
 
-/-- **The turn-level log-monotone lemma (PROVED).** A committed per-asset full-turn never SHRINKS the
+/-- **The turn-level log-monotone lemma.** A committed per-asset full-turn never SHRINKS the
 receipt log: `s.log.length ≤ s'.log.length`. Proved by induction on the action list — each committed
 `execFullA` step only EXTENDS the log (`execFullA_log_suffix`: `s.log <:+ s1.log`, append-only — one
 row for non-recursive kinds, `1 + |inner|` for a committed exercise), so the length is monotone; the
@@ -108,7 +108,7 @@ theorem execFullTurnA_logMono :
           have hhead : s.log.length ≤ s1.log.length := (execFullA_log_suffix s s1 a ha).length_le
           exact le_trans hhead (execFullTurnA_logMono s1 s' rest h)
 
-/-- **`execFullForestA_logMono` — the forest-level log-monotone lemma (PROVED).** A committed
+/-- **`execFullForestA_logMono` — the forest-level log-monotone lemma.** A committed
 full-FOREST never shrinks the receipt log. Read straight through the pre-order bridge
 `execFullForestA_eq_execFullTurnA` into the turn-level `execFullTurnA_logMono`. NON-conservation: it
 asserts the audit chain only grows, using the executor's ChainLink/ObsAdvance shape — not the measure. -/
@@ -117,7 +117,7 @@ theorem execFullForestA_logMono (s s' : RecChainedState) (f : FullForestA)
   rw [execFullForestA_eq_execFullTurnA] at h
   exact execFullTurnA_logMono s s' (lowerForestA f) h
 
-/-- **`livingCellA_logMono` (PROVED) — THE userspace-verification payoff: the audit log is append-only
+/-- **`livingCellA_logMono` — THE userspace-verification payoff: the audit log is append-only
 FOREVER.** Along the ENTIRE unbounded adversarial trajectory, the receipt log NEVER shrinks below its
 initial length: `s.log.length ≤ (trajA s sched n).log.length` at EVERY index `n`. This is the OS
 non-repudiation / auditability invariant — *"the log is the truth, never rewritten"* — and it is a
@@ -130,7 +130,7 @@ the state — and thus the log — UNCHANGED).
 (discharged from `fullActionInvA` / the `Exec/FullForest` theorems wherever it needs the executor's
 correctness) and `livingCellA_carries` hands back `∀ n, Good (trajA …)` — *"holds forever under any
 schedule"*. Conservation is the instance `Good := badge-constant` (the per-asset measure); THIS is the
-instance `Good := log-append-only` — a genuinely NON-conservation safety, the auditability /
+instance `Good := log-append-only` — a NON-conservation safety, the auditability /
 non-repudiation invariant the per-asset measure cannot express. The coinductive cell is therefore
 ENOUGH for userspace verification, not merely for conservation. -/
 theorem livingCellA_logMono (s : RecChainedState) (sched : SchedA) :
@@ -153,7 +153,7 @@ theorem livingCellA_logMono (s : RecChainedState) (sched : SchedA) :
 The append-only invariant would be vacuous if no turn ever appended. `CellReal.transferCF` (actor 0
 transfers 30 of asset 0 from cell 0 to cell 1, a real commit on `fma0`) appends exactly one
 `fullReceiptA` row: the log goes `0 → 1`. So `livingCellA_logMono` is non-trivially true (it bounds a
-strictly-growing quantity), and `livingCellA_carries` is exercised by a property that genuinely moves. -/
+strictly-growing quantity), and `livingCellA_carries` is exercised by a property that moves. -/
 
 #guard ((execFullForestA fma0 transferCF.1).map (fun s' => s'.log.length)) == some 1  --  some 1 (grew from 0)
 #guard (fma0.log.length) == 0  --  0   (BEFORE — strictly less)

@@ -1,21 +1,16 @@
 /-
-# Dregg2.Circuit.Argus.Effects.CreateCell — `CreateCell` welded into the Argus IR (the structural
-account-allocation obstruction RESOLVED).
+# Dregg2.Circuit.Argus.Effects.CreateCell — `CreateCell` welded into the Argus IR.
 
-## THE OBSTRUCTION — NOW RESOLVED by `allocCell`.
+## THE STRUCTURAL-ALLOC PRIMITIVE: `allocCell`.
 
-This module formerly proved a GENUINE PROVEN obstruction (`no_argus_term_captures_createCell`): every
-`RecStmt` term FROZE the `accounts : Finset CellId` index set (a structural frame theorem by induction
-over all constructors), while `CreateCell` STRICTLY GROWS it (`createCellIntoAsset` inserts the fresh
-id), so no Argus term could capture `createCellChainA`. The IR genuinely lacked a structural-alloc
-primitive — exactly the missing constructor the obstruction named.
-
-That primitive is now in the IR: `Argus/Stmt.lean` gained `RecStmt.allocCell (n : RecordKernelState →
-CellId)`, whose `interp` clause produces EXACTLY the verified kernel allocator `createCellIntoAsset k
-(n k)` (grow `accounts := insert (n k) accounts` + reset every born-empty per-cell slot at `n k`). It
-is the ONE `interp` clause that changes `accounts`, and it is unconditional (the freshness +
-privileged-creation gate rides a preceding `guard`, the same `seq (guard …) (move)` shape every other
-effect term uses). So the CreateCell weld is now ACHIEVABLE, and this module carries it.
+Every other `RecStmt` constructor FREEZES the `accounts : Finset CellId` index set, while `CreateCell`
+STRICTLY GROWS it (`createCellIntoAsset` inserts the fresh id) — so capturing `createCellChainA`
+requires a dedicated structural-alloc primitive. That primitive is `RecStmt.allocCell
+(n : RecordKernelState → CellId)` (`Argus/Stmt.lean`), whose `interp` clause produces EXACTLY the
+verified kernel allocator `createCellIntoAsset k (n k)` (grow `accounts := insert (n k) accounts` +
+reset every born-empty per-cell slot at `n k`). It is the ONE `interp` clause that changes `accounts`,
+and it is unconditional (the freshness + privileged-creation gate rides a preceding `guard`, the same
+`seq (guard …) (move)` shape every other effect term uses).
 
 ## THE EXECUTOR (what the faithful term captures EXACTLY)
 
@@ -35,8 +30,8 @@ that id. `createCellStmt` is `seq (guard <gate>) (allocCell (fun _ => newCell))`
 ## WHAT THIS MODULE PROVES (mirroring `Effects/BalanceA.lean` — the full-state-weld template)
 
   1. `interp_createCellStmt_eq_createCellK` — THE CORNERSTONE (executor-refinement): `interp` of the
-     createCell term IS the raw-kernel allocator (gate, then `createCellIntoAsset`) — now POSSIBLE
-     because `allocCell` grows `accounts`. The exact resolution of the old obstruction.
+     createCell term IS the raw-kernel allocator (gate, then `createCellIntoAsset`) — possible
+     exactly because `allocCell` grows `accounts`.
   2. `interp_createCellStmt_chained` — the cornerstone lifted to the chained `execFullA`/`createCellChainA`
      (clean — the `createCellA` arm has no extra dst-liveness gate, unlike balanceA).
   3. `createCell_compile_sound` — THE COMPILE WELD against `createCellA`'s OWN full-state v2 `Surface2`
@@ -44,10 +39,10 @@ that id. `createCellStmt` is `seq (guard <gate>) (allocCell (fun _ => newCell))`
      witness of the circuit AGREES with the WHOLE post-state the IR term's executor produces — the full
      `CreateCellSpec` (all 18 components: `accounts` grown, `bal`/born-empty slots reset, `log` extended,
      every global side-table frozen). Honest full-state surface, DIRECTLY against the term.
-  4. Non-vacuity teeth: a concrete create genuinely grows `accounts` (fresh id absent BEFORE, present
+  4. Non-vacuity teeth: a concrete create grows `accounts` (fresh id absent BEFORE, present
      AFTER); the gate REJECTS an unauthorized creation and a re-mint of a live id (fail-closed).
 
-## Honesty
+## Axiom hygiene
 
 `#assert_axioms` on every headline theorem ⊆ {propext, Classical.choice, Quot.sound}; the whole-function
 / Poseidon-CR digest assumptions enter ONLY inside the reused `createCellA_full_sound` (its injectivity
@@ -117,10 +112,9 @@ theorem createCellGuard_iff (actor newCell : CellId) (k : RecordKernelState) :
 /-- **The cornerstone (structural allocation).** `interp` of the createCell term IS the raw-kernel
 allocator: it commits to `createCellIntoAsset k newCell` exactly when the gate (`createCellAdmit`)
 holds, and rejects otherwise — the same partial function `createCellChainA` runs on the kernel, by
-construction. This is the executor-refinement the old obstruction proved was UNACHIEVABLE with the
-frozen-`accounts` IR; `allocCell` lifts it. The §A′ allocator's `interp` (`some (createCellIntoAsset k
-(n k))`) is what makes the post `accounts` STRICTLY GROW — the very change §1's old frame theorem
-proved no term could produce. -/
+construction. The §A′ allocator's `interp` (`some (createCellIntoAsset k
+(n k))`) is what makes the post `accounts` STRICTLY GROW — the change no frozen-`accounts`
+constructor can produce. -/
 theorem interp_createCellStmt_eq_createCellK (actor newCell : CellId) (k : RecordKernelState) :
     interp (createCellStmt actor newCell) k
       = if createCellAdmit k actor newCell then some (createCellIntoAsset k newCell) else none := by
@@ -261,7 +255,7 @@ theorem createCell_compile_sound
 
 #assert_axioms createCell_compile_sound
 
-/-! ## §5 — NON-VACUITY: the IR term genuinely GROWS `accounts` (the very effect the old obstruction
+/-! ## §5 — NON-VACUITY: the IR term GROWS `accounts` (the very effect the old obstruction
 proved no term could have), and the gate REJECTS forged inputs (fail-closed).
 
 The cornerstone/weld would be hollow if createCell never committed, if the allocation were a no-op, or
@@ -277,7 +271,7 @@ def kCC : RecordKernelState :=
     cell := fun _ => .record [("balance", .int 0)]
     caps := fun l => if l = 0 then [Dregg2.Authority.Cap.node 2] else [] }
 
--- The create of FRESH cell `2` by privileged actor `0` genuinely COMMITS (non-vacuous gate)…
+-- The create of FRESH cell `2` by privileged actor `0` COMMITS (non-vacuous gate)…
 #guard (interp (createCellStmt 0 2) kCC).isSome
 -- …and the growth is OBSERVABLE: cell `2` is ABSENT before and PRESENT after (the structural alloc).
 #guard ¬ (2 ∈ kCC.accounts)
@@ -289,7 +283,7 @@ def kCC : RecordKernelState :=
 -- A RE-MINT of a live id (cell 1 ∈ accounts) is REJECTED:
 #guard (interp (createCellStmt 0 1) kCC).isNone
 
-/-- **`createCellStmt_grows_accounts` — the IR term genuinely GROWS `accounts` (PROVED, non-vacuous).**
+/-- **`createCellStmt_grows_accounts` — the IR term GROWS `accounts` (non-vacuous).**
 On the concrete kernel `kCC`, the create of fresh cell `2` by privileged actor `0` COMMITS, and the
 committed post-state has cell `2` as a live account (PRESENT after) while it was ABSENT before. This is
 EXACTLY the `accounts`-change the module's former obstruction theorem proved no `RecStmt` term could
