@@ -13,7 +13,7 @@ use clap_complete::Shell;
 
 use commands::{
     bounty, cap, cell, cipherclerk, demo, directory, doctor, federation, name, namespace, node,
-    proof, route, storage, turn, voting,
+    polis, proof, route, storage, turn, voting,
 };
 
 /// Dragon's Egg -- sovereign cell-based compute substrate.
@@ -87,6 +87,16 @@ enum Commands {
     Name {
         #[command(subcommand)]
         command: name::NameCommand,
+    },
+
+    /// Polis governance: inspect council proposal cells (read-only).
+    ///
+    /// Decodes the `starbridge-polis` council machine straight from the
+    /// node's public cell read: state, staged proposal hash, approvals,
+    /// certified-threshold flag. See `dregg polis council --help`.
+    Polis {
+        #[command(subcommand)]
+        command: polis::PolisCommand,
     },
 
     /// Privacy-voting: open / tally / close / show factory-born poll cells.
@@ -248,6 +258,7 @@ async fn main() {
         Commands::Cell { command } => cell::run(command, &cfg, &ctx).await,
         Commands::Turn { command } => turn::run(command, &cfg, &ctx).await,
         Commands::Name { command } => name::run(command, &cfg, &ctx).await,
+        Commands::Polis { command } => polis::run(command, &cfg, &ctx).await,
         Commands::Voting { command } => voting::run(command, &cfg, &ctx).await,
         Commands::Bounty { command } => bounty::run(command, &cfg, &ctx).await,
         Commands::Demo {

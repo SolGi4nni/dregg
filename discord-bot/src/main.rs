@@ -81,6 +81,7 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     "gov-vote",
     "gov-status",
     "gov-routes",
+    "council-status",
     "name-register",
     "name-resolve",
     "name-whois",
@@ -172,6 +173,7 @@ impl EventHandler for Handler {
             commands::governance::register_vote(),
             commands::governance::register_status(),
             commands::governance::register_routes(),
+            commands::polis::register_council_status(),
             // ─── Name service commands ──────────────────────────────────────
             commands::names::register_register(),
             commands::names::register_resolve(),
@@ -247,6 +249,10 @@ impl EventHandler for Handler {
                 }
                 "gov-routes" => {
                     commands::governance::handle_routes(&ctx, &command, &self.state).await
+                }
+                // ─── Polis governance (starbridge-polis) ─────────────────────
+                "council-status" => {
+                    commands::polis::handle_council_status(&ctx, &command, &self.state).await
                 }
                 // ─── Name service commands ──────────────────────────────────
                 "name-register" => {

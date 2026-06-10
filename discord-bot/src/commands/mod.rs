@@ -24,6 +24,7 @@ pub mod captp;
 pub mod dashboard;
 pub mod federation;
 pub mod governance;
+pub mod polis;
 pub mod handoff;
 pub mod intent;
 pub mod names;

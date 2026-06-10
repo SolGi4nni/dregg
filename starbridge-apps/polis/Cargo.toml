@@ -1,0 +1,21 @@
+[package]
+name = "starbridge-polis"
+version = "0.1.0"
+edition = "2024"
+description = "Starbridge polis layer — governance cells (council M-of-N, constitution-as-program, forward-certified amendments) and budgeted agent-orchestration worker mandates, as factory-born cells whose StateConstraint programs ARE the enforced state machines."
+
+# The polis layer follows the settlement-blueprint pattern
+# (`cell/src/blueprint.rs`, frozen reference): per-charter content-addressed
+# `FactoryDescriptor`s whose `state_constraints` are installed for life on the
+# born cell and re-evaluated by the executor on EVERY turn that touches it.
+# Turn builders live in `dregg_sdk::polis`; end-to-end teeth on the real
+# `TurnExecutor` live in `sdk/tests/polis_*_e2e.rs`.
+
+[dependencies]
+dregg-cell = { path = "../../cell", default-features = false }
+
+blake3 = "1"
+postcard = { version = "1", features = ["alloc"] }
+
+[lints]
+workspace = true

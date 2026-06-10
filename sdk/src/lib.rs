@@ -114,6 +114,7 @@ pub mod discovery;
 pub mod embed;
 pub mod error;
 pub mod factories;
+pub mod polis;
 pub mod full_turn_proof;
 pub mod mnemonic;
 #[cfg(feature = "captp")]

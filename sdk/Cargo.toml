@@ -13,6 +13,7 @@ description = "Agent SDK and cipherclerk for the dregg federation — token mana
 dregg-types = { path = "../types" }
 dregg-cell = { path = "../cell" }
 dregg-turn = { path = "../turn" }
+starbridge-polis = { path = "../starbridge-apps/polis" }
 dregg-bridge = { path = "../bridge" }
 # `lean-producer` feature: THE SWAP producer-mode path. Brings in the verified
 # Lean executor (via `dregg-turn/lean-shadow` → `dregg_turn::lean_apply`) and the

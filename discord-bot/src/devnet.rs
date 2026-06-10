@@ -49,6 +49,10 @@ pub struct CellDetails {
     pub provenance: Option<String>,
     #[serde(default)]
     pub created_by_factory: Option<String>,
+    /// Per-slot field values (64-hex strings), when the node exposes them
+    /// (`/api/cell/{id}` does). `default` keeps older node responses valid.
+    #[serde(default)]
+    pub fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

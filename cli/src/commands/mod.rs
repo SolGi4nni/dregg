@@ -9,6 +9,7 @@ pub mod federation;
 pub mod name;
 pub mod namespace;
 pub mod node;
+pub mod polis;
 pub mod proof;
 pub mod route;
 pub mod storage;
