@@ -889,6 +889,44 @@ pub struct SignedTurn {
     pub signer: PublicKey,
 }
 
+/// A signed action paired with the clerk's faithful explanation of what it
+/// does — the anti-blind-signing carrier.
+///
+/// The clerk produces this so a UI can show the citizen *exactly* what they are
+/// about to authorize (`explanation`) alongside the action it will sign
+/// (`action`). The explanation is the third reading of the same term
+/// (see [`crate::explain`]): it is total (never panics) and
+/// injective-on-semantics (two actions with different effect-semantics get
+/// different explanations), so the screen cannot misstate the turn.
+///
+/// Signing semantics are unchanged: `action` is exactly the action
+/// [`AgentCipherclerk::sign_action`] would return; the `explanation` is a
+/// faithful rendering derived from it, carried so the caller never has to sign
+/// blind.
+#[derive(Clone, Debug)]
+pub struct ExplainedSignedAction {
+    /// The signed action (identical to the output of
+    /// [`AgentCipherclerk::sign_action`]).
+    pub action: dregg_turn::action::Action,
+    /// The clerk's faithful, total explanation of `action` — what the citizen
+    /// is being asked to authorize.
+    pub explanation: String,
+}
+
+/// A signed turn paired with the clerk's faithful explanation of the whole
+/// call forest — the turn-level anti-blind-signing carrier.
+///
+/// See [`ExplainedSignedAction`]. Signing semantics are unchanged: `signed` is
+/// exactly what [`AgentCipherclerk::sign_turn`] produces.
+#[derive(Clone, Debug)]
+pub struct ExplainedSignedTurn {
+    /// The signed turn (identical to the output of
+    /// [`AgentCipherclerk::sign_turn`]).
+    pub signed: SignedTurn,
+    /// The clerk's faithful, total explanation of the entire turn.
+    pub explanation: String,
+}
+
 /// The agent cipherclerk: manages identity, tokens, and signing.
 ///
 /// This is the core credential holder that every agent carries. It provides:
@@ -2626,6 +2664,61 @@ impl AgentCipherclerk {
             authorization: Authorization::from_sig_bytes(sig.to_bytes()),
             ..unsigned
         }
+    }
+
+    /// Explain an [`Action`](dregg_turn::action::Action) — the clerk stating,
+    /// faithfully, what an action does *before* it is signed.
+    ///
+    /// This is a thin, total wrapper over [`crate::explain::explain_action`].
+    /// The rendering is the third reading of the term alongside execute and
+    /// prove: it never panics (totality) and carries a canonical `[sem …]`
+    /// digest tag, so two actions with different effect-semantics get different
+    /// explanations (injectivity-on-semantics). It does not authorize or sign
+    /// anything — it only describes.
+    ///
+    /// A citizen's UI shows this string to answer "what am I about to
+    /// authorize?" so the citizen never signs blind.
+    pub fn explain_action(&self, action: &dregg_turn::action::Action) -> String {
+        crate::explain::explain_action(action)
+    }
+
+    /// Explain an entire [`Turn`] — what the whole call forest does — before it
+    /// is signed. Thin, total wrapper over [`crate::explain::explain_turn`].
+    pub fn explain_turn(&self, turn: &Turn) -> String {
+        crate::explain::explain_turn(turn)
+    }
+
+    /// Sign an action *and* return the clerk's faithful explanation of it, so a
+    /// UI can show the citizen exactly what they are authorizing — the
+    /// anti-blind-signing path.
+    ///
+    /// This is [`sign_action`](Self::sign_action) with the explanation
+    /// surfaced: signing semantics are identical (the `action` field equals
+    /// what `sign_action` would return), and the `explanation` is rendered from
+    /// the signed action so the caller can display "this is what you are about
+    /// to authorize" next to it.
+    pub fn explain_and_sign_action(
+        &self,
+        action: dregg_turn::action::Action,
+        federation_id: &[u8; 32],
+    ) -> ExplainedSignedAction {
+        let signed = self.sign_action(action, federation_id);
+        let explanation = crate::explain::explain_action(&signed);
+        ExplainedSignedAction {
+            action: signed,
+            explanation,
+        }
+    }
+
+    /// Sign a turn *and* return the clerk's faithful explanation of the whole
+    /// call forest — the turn-level anti-blind-signing path.
+    ///
+    /// [`sign_turn`](Self::sign_turn) with the explanation surfaced. Signing
+    /// semantics are unchanged: `signed` equals what `sign_turn` would produce.
+    pub fn explain_and_sign_turn(&self, turn: &Turn) -> ExplainedSignedTurn {
+        let explanation = crate::explain::explain_turn(turn);
+        let signed = self.sign_turn(turn);
+        ExplainedSignedTurn { signed, explanation }
     }
 
     /// Build a self-signed single-effect [`Action`](dregg_turn::action::Action)
@@ -8713,6 +8806,139 @@ mod tests {
 
         vk.verify_strict(&msg, &sig)
             .expect("queue signature must verify against cipherclerk pubkey");
+    }
+
+    /// The clerk's anti-blind-signing seam, exercised end-to-end through the
+    /// cipherclerk:
+    ///
+    /// 1. a representative action's clerk-produced explanation is non-empty and
+    ///    carries the faithfulness tag (totality + the citizen actually sees
+    ///    something to authorize);
+    /// 2. the explanation is total over a corpus of every effect variant
+    ///    wrapped in clerk-built actions (no panic);
+    /// 3. two actions with *different* effect-semantics get *different*
+    ///    explanations from the clerk (the injectivity property, surfaced
+    ///    through `explain_action`); and
+    /// 4. `explain_and_sign_action` surfaces the explanation while leaving
+    ///    signing semantics identical to `sign_action`.
+    #[test]
+    fn clerk_explanation_is_total_nonempty_and_semantics_injective() {
+        use dregg_turn::action::Effect;
+
+        let cclerk = AgentCipherclerk::new();
+        let fed = [7u8; 32];
+        let cell = cclerk.cell_id("default");
+
+        // (1) A representative action explains to non-empty, tagged text.
+        let rep = cclerk.make_action(
+            cell,
+            "transfer",
+            vec![Effect::Transfer {
+                from: cell,
+                to: cclerk.cell_id("other"),
+                amount: 5,
+            }],
+            &fed,
+        );
+        let rep_text = cclerk.explain_action(&rep);
+        assert!(!rep_text.is_empty(), "clerk explanation must be non-empty");
+        assert!(
+            rep_text.contains("[sem "),
+            "clerk explanation must carry the faithfulness tag: {rep_text}"
+        );
+
+        // (2) Totality over a corpus of distinct effects, each wrapped in a
+        // clerk-built (signed) action. No panic, all non-empty.
+        let corpus: Vec<Effect> = vec![
+            Effect::IncrementNonce { cell },
+            Effect::Transfer {
+                from: cell,
+                to: cclerk.cell_id("other"),
+                amount: 1,
+            },
+            Effect::Transfer {
+                from: cell,
+                to: cclerk.cell_id("other"),
+                amount: 2, // differs only in amount — distinct semantics
+            },
+            Effect::SetField {
+                cell,
+                index: 0,
+                value: [9u8; 32],
+            },
+            Effect::EmitEvent {
+                cell,
+                event: dregg_turn::action::Event {
+                    topic: [3u8; 32],
+                    data: vec![],
+                },
+            },
+            Effect::MakeSovereign { cell },
+        ];
+        let actions: Vec<_> = corpus
+            .iter()
+            .cloned()
+            .map(|e| cclerk.make_action(cell, "op", vec![e], &fed))
+            .collect();
+        let texts: Vec<String> = actions.iter().map(|a| cclerk.explain_action(a)).collect();
+        for t in &texts {
+            assert!(!t.is_empty());
+            assert!(t.contains("[sem "));
+        }
+
+        // (3) Injectivity-on-semantics through the clerk: distinct action
+        // hashes ⇒ distinct clerk explanations. (Authorization is identical
+        // here — a real signature over each action's own bytes — so any
+        // difference is in effect-semantics.)
+        for (i, a) in actions.iter().enumerate() {
+            for (j, b) in actions.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                if a.hash() != b.hash() {
+                    assert_ne!(
+                        texts[i], texts[j],
+                        "actions #{i}/#{j} differ in semantics but clerk explained identically"
+                    );
+                }
+            }
+        }
+
+        // Spot-check: the two transfers that differ only in amount get
+        // different explanations even though they share method/auth/target.
+        assert_ne!(
+            cclerk.explain_action(&actions[1]),
+            cclerk.explain_action(&actions[2]),
+            "amount-only difference must change the clerk's explanation"
+        );
+
+        // (4) explain_and_sign_action surfaces the explanation without
+        // changing signing semantics: the signed action equals what
+        // sign_action would have produced, and the carried explanation matches
+        // explain_action of that signed action.
+        let unsigned = cclerk.make_action(
+            cell,
+            "transfer",
+            vec![Effect::Transfer {
+                from: cell,
+                to: cclerk.cell_id("other"),
+                amount: 5,
+            }],
+            &fed,
+        );
+        let explained = cclerk.explain_and_sign_action(unsigned.clone(), &fed);
+        let signed = cclerk.sign_action(unsigned, &fed);
+        assert_eq!(
+            explained.action.hash(),
+            signed.hash(),
+            "explain_and_sign_action must not change signing semantics"
+        );
+        assert_eq!(
+            explained.explanation,
+            cclerk.explain_action(&explained.action),
+            "carried explanation must be the faithful rendering of the signed action"
+        );
+        assert!(!explained.explanation.is_empty());
     }
 }
 
