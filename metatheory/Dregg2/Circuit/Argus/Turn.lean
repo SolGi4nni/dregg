@@ -611,6 +611,7 @@ theorem commitPrologueV_bal_frame (s : RecChainedState) (agent : CellId) (fa : A
     (commitPrologueV s agent fa fee).kernel.bal c' b = s.kernel.bal c' b := by
   unfold commitPrologueV
   rw [creditBalV_bal_frame _ _ _ _ _ _ h]
+  rfl
 
 /-- The W1 prologue's aggregate law: the combined measure drops by the fee at the fee asset only. -/
 theorem commitPrologueV_measure (s : RecChainedState) (agent : CellId) (fa : AssetId) (fee : Int)
@@ -830,8 +831,8 @@ theorem runTurnV_preserves_exact (ctx : AdmCtx) (h : TurnHdr) (st : RecStmt)
       commitPrologueV_measure s h.agent fa h.fee (admissibleV_extract hadm).1 b]
   have hzero := hex b
   by_cases hb : b = fa
-  · rw [if_pos hb, if_pos hb]; omega
-  · rw [if_neg hb, if_neg hb]; omega
+  · rw [if_pos hb]; omega
+  · rw [if_neg hb]; omega
 
 end ValueUnify
 
