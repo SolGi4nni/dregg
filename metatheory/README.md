@@ -35,40 +35,38 @@ witness that verifies* — never merely to assert. Everything below is a project
 >   [authority / capability / caveat model](docs/guides/authority.md).
 
 Toolchain `leanprover/lean4:v4.30.0`; mathlib via a local `path` require. **It builds**:
-`lake build` ⇒ **0 errors** (last finalize pass: 3198 jobs over the circuit-emit + turn subset,
-green; warnings only — re-run `lake build` for the current full count). The Abstract Spec, the
+`lake build` ⇒ **0 errors** (the Argus anchor `Dregg2.Circuit.Argus` builds green at ~3.3K jobs;
+re-run `lake build` for the current full count). The Abstract Spec, the
 `Spec` middle layer, the executor core, and every `#assert_axioms`-pinned keystone are
 **`sorry`-free and kernel-clean** throughout — open obligations (the §8 crypto laws, the verify/find
 seam's *find* side) enter as explicit interface assumptions, never `sorry`s.
 
-**Verifiable execution is real — but the circuit's per-effect assurance is uneven, and the
-honest state matters.** Every effect carries an executor-derived witness → a real Plonky3 STARK
-`prove`/`verify` with forged-state rejection (`Dregg2/Circuit/Emit/*` + `Circuit/Witness/*`,
-the anti-ghost tooth makes tampering any of the descriptor's **13 absorbed state-block columns**
-UNSAT). But assurance is **not uniform**, and the count is *not* a completion count
-([`docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md`](docs/rebuild/_CIRCUIT-ASSURANCE-PER-EFFECT.md)
-is the finalized per-effect ledger):
+**Verifiable execution is real, and the per-effect assurance is now unified under one IR.**
+Every effect is a term of the **Argus IR** (`Dregg2/Circuit/Argus/*`): one reified term whose
+`interp` **is** the verified executor and whose `compile` **is** the runnable circuit, proven to
+agree — so the circuit cannot drift from what the system does. ~45 effects are welded across every
+shape; the whole library builds as one coherent anchor (`lake build Dregg2.Circuit.Argus`). Each
+weld carries an executor-derived witness → a real Plonky3 STARK `prove`/`verify` with forged-state
+rejection (the anti-ghost tooth makes tampering an absorbed state-block column UNSAT).
 
-- **`transfer` is the genuine class-A keystone** — `satisfiedVm transferDescriptor ⟹` the full
-  per-cell post-state, every touched column anti-ghosted, welded to the verified executor
-  `recKExec` (`Circuit/Emit/EffectVmEmitTransferSound.transferDescriptor_full_sound`).
-- **~12 of ~56 effects** now meet that from-scratch class-A bar: transfer + the **economic
-  family** (mint, burn, the escrow/bridge-escrow family — promoted by `EffectVmEmitEscrowRoot`'s
-  *genuine in-row* root recompute that replaced the old opaque additive step).
-- **The other ~40 are class C (economic/frame-leg-only)**: the descriptor binds + anti-ghosts the
-  *frozen frame* and a balance/nonce leg, **but the field/side-table that IS the effect** —
-  cap-table mutation, nullifier insert, note-commitment insert, seal write, cell-table insert —
-  **is not bound by the deployed row's `state_commit`** (it rides `params`/`effects_hash`/a
-  separate record-layer root). *Conservation ≠ correctness.* The per-effect files **prove** these
-  gaps (`*_out_of_row`, `*_is_turn_property`) rather than papering them.
+The agreement is no longer a per-effect grind: `compile` is now a **fold** over the IR
+(`Circuit/Argus/CompileFold`), so executor⟺circuit agreement rides **initiality** — agreement on
+the finite set of constructors gives agreement on *all* terms (the N²→1 collapse). The
+effect-annotated fold (`Circuit/Argus/CompileE`) carries the genuine per-effect circuits at the
+leaves (transfer, mint, burn each their own, proven distinct), welded to the existing per-effect
+soundness. `transfer` remains the worked class-A keystone (`satisfiedVm transferDescriptor ⟹` the
+full per-cell post-state, welded to `recKExec`); the IR generalizes that shape across the catalog.
 
 Whole-turn proofs bind a turn's effects to **one authenticated state root** (per cell); the node
-commit path proves every finalized turn under `--prove-turns`; and the l4v **data refinement**
+commit path proves every finalized turn under `--prove-turns`; the l4v **data refinement**
 (`Exec/ConcreteKernel`, HashMap-backed) is *proved* to transfer the abstract soundness to an
-efficient runtime. The honest frontier is the **executable boundary** (FFI admission context
-host-fed; success-bit distinguishes a committed body from a fee-only prologue; one ungated handler
-export fenced), **the class-C circuit gaps above**, and **the swap** (making the verified executor
-*be* the runtime). All tracked, not hidden — see `docs/rebuild/`.
+efficient runtime. The honest floor is the **§8 crypto portals** (named interface assumptions —
+Poseidon2/BLAKE3/ed25519, the verify/find seam's *find* side) and **the swap** (making the
+verified executor *be* the runtime). The forward design that consolidates all of this — the
+8-verb kernel, the four substances, the guard-algebra uplift, the staged reduction — is
+[`docs/DREGG3.md`](../docs/DREGG3.md) + [`docs/DREGG3-MARATHON.md`](../docs/DREGG3-MARATHON.md),
+which restructure the five guarantees (Authority · Conservation · Integrity · Freshness ·
+Unfoolability) into one assurance case organized by guarantee rather than by date.
 
 **Distributed protocols are now verified, not just modeled.** The federation is *Secure-Scuttlebutt-
 on-crack* — a **blocklace** (block-DAG-lace) where each author's blocks form a **strand** (an SSB
