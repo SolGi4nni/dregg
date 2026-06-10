@@ -3201,19 +3201,30 @@ theorem genesis_exactConservation (k : RecordKernelState) (hbal : k.bal = fun _ 
   rw [hbal, hesc]
   simp
 
-/-- Shape of a committed per-asset transfer (gate-peeled): the post-state is the `recTransferBal`
-write on `bal`, every other component untouched. -/
-private theorem recKExecAsset_shape {k k' : RecordKernelState} {t : Turn} {a : AssetId}
+/-- **Gate + shape of a committed per-asset transfer (the public peel).** A committed
+`recKExecAsset` proves its full admission conjunction AND pins the post-state to exactly the
+`recTransferBal` write on `bal` (every other component untouched). The bridge every downstream
+value-law proof reuses. -/
+theorem recKExecAsset_committed {k k' : RecordKernelState} {t : Turn} {a : AssetId}
     (h : recKExecAsset k t a = some k') :
-    k' = { k with bal := recTransferBal k.bal t.src t.dst a t.amt } := by
+    (authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
+      ∧ t.src ≠ t.dst ∧ t.src ∈ k.accounts ∧ t.dst ∈ k.accounts)
+    ∧ k' = { k with bal := recTransferBal k.bal t.src t.dst a t.amt } := by
   unfold recKExecAsset at h
   by_cases hg : authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
       ∧ t.src ≠ t.dst ∧ t.src ∈ k.accounts ∧ t.dst ∈ k.accounts
   · rw [if_pos hg] at h
     simp only [Option.some.injEq] at h
-    exact h.symm
+    exact ⟨hg, h.symm⟩
   · rw [if_neg hg] at h
     exact absurd h (by simp)
+
+/-- Shape of a committed per-asset transfer (gate-peeled): the post-state is the `recTransferBal`
+write on `bal`, every other component untouched. -/
+theorem recKExecAsset_shape {k k' : RecordKernelState} {t : Turn} {a : AssetId}
+    (h : recKExecAsset k t a = some k') :
+    k' = { k with bal := recTransferBal k.bal t.src t.dst a t.amt } :=
+  (recKExecAsset_committed h).2
 
 /-- **TRANSFER preserves the value law** — instantiates `recKExecAsset_conserves_per_asset` (the
 per-asset keystone): the moved column's debit/credit cancel; every other column is untouched; the

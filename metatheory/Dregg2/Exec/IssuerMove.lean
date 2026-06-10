@@ -335,7 +335,6 @@ theorem issuerMint_pointwise_vs_credit {k kL kI : RecordKernelState} {actor cell
       have hcc : ¬ (c = cell ∧ a = a) := fun hp => hne (hci.symm.trans hp.1)
       rw [if_pos (show a = a from rfl), if_pos hci, if_neg hcc,
           if_pos (show c = issuerSelf a ∧ a = a from ⟨hci, rfl⟩)]
-      ring
     · by_cases hcc : c = cell
       · -- c is the recipient: the credit is IDENTICAL on both sides.
         rw [if_pos (show a = a from rfl), if_neg hci, if_pos hcc,

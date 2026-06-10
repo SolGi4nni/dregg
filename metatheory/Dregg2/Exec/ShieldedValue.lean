@@ -243,4 +243,465 @@ theorem refVC_conservation_witness :
 
 #assert_axioms refVC_conservation_witness
 
+/-! ## §6 — E4 (W1): the TYPED NOTE LEDGER + the pool-cell invariant, over the REAL kernel.
+
+The R2 probe (`Substrate/IssuerSupplyProbe.lean §5`) proved the shielded pool-cell candidate's
+LEDGER half and found its VALUE-BINDING half NOT REPRESENTABLE: `commitments : List Nat` carries no
+`(asset, value)` content, and `noteSpendNullifier` takes only the nullifier — so the unshield
+amount was a FREE parameter (the probe's `#guard` drained a pool with ZERO notes).
+`Substrate/IssuerLedger.lean §2` stated the repair at the model level (asset-typed notes + an
+amount gate), with the inventory bookkeeping carried as HYPOTHESES. THIS section lands E4 in the
+kernel, with verbs that DO their own bookkeeping:
+
+  * **`NoteRecord`** — the PARALLEL TYPED LEDGER entry, keyed by commitment: `cm` (the inserted
+    Pedersen commitment — for a bound note, EXACTLY `commit value blinding`, the §3 weld), `nf`
+    (the spend nullifier the portal derives from the note), `asset`, `value`. The bare
+    `commitments : List Nat` set stays wire-compatible; the typed ledger runs beside it.
+  * **`ShieldedState`** — the kernel state + the typed note inventory.
+  * **`shieldK`** — transfer `nt.value` of `a` from `src` into the pool pseudo-cell `poolOf a`
+    COMPOSED with the value-bound commitment insert (`noteCreateBound`, §3) AND the typed-ledger
+    append — gated on nullifier freshness (the note is born unspent and uniquely spendable).
+  * **`unshieldK`** — look the note up BY NULLIFIER (fail-closed if absent), spend the nullifier
+    (fail-closed on double-spend), transfer **exactly the note's value** of **exactly the note's
+    asset** pool → `dst`. THE AMOUNT IS NOT A PARAMETER: `unshield.amt = value(spent note)` holds
+    BY CONSTRUCTION, and `unshield_value_binding` states it as a theorem over the committed step.
+  * **`PoolInvariant`** — `bal (poolOf a) a = Σ value(unspent a-notes)` (+ nullifier-distinctness
+    of the inventory), PRESERVED by both verbs (`shieldK_preserves_pool` /
+    `unshieldK_preserves_pool`): the pool can NEVER be drained beyond its notes. The probe's
+    zero-note drain now FAILS-CLOSED (`#guard` below).
+  * Both verbs also preserve `ExactConservation` (the W1 value law) — the ledger half.
+
+The circuit constraint (the Mina-excess / `balance_change` leg binding the in-circuit nullifier to
+the disclosed amount) lands with the W1 VK rotation; this is the kernel-truth it must mirror. -/
+
+/-- **A typed note-ledger entry (E4)** — the `(asset, value)` content whose absence made the
+value-binding unrepresentable, keyed by the inserted commitment and spendable by its nullifier. -/
+structure NoteRecord where
+  /-- The note commitment (the entry's key; for a bound note, `commit value blinding` — §3). -/
+  cm    : Nat
+  /-- The spend nullifier (derived from the note behind the §8 portal; consumed on unshield). -/
+  nf    : Nat
+  /-- The asset the note is denominated in (E4's missing field). -/
+  asset : AssetId
+  /-- The note's hidden value (range-witnessed at creation via `BoundNote.rangeValid`). -/
+  value : ℤ
+  deriving Repr
+
+/-- **The shielded kernel state**: the real kernel + the parallel typed note ledger. (The rotation
+folds `notes` into `RecordKernelState` with the commitment-shape bump; until then the pair is the
+shielded executor state.) -/
+structure ShieldedState where
+  kernel : RecordKernelState
+  notes  : List NoteRecord := []
+
+/-- The total UNSPENT value of asset `a` over a note inventory, against a nullifier set: the sum of
+`value` over the `a`-notes whose nullifier is not yet consumed. -/
+def unspentValueIn (notes : List NoteRecord) (nulls : List Nat) (a : AssetId) : ℤ :=
+  ((notes.filter (fun n => decide (n.asset = a ∧ n.nf ∉ nulls))).map NoteRecord.value).sum
+
+/-- The unspent value of asset `a` in a shielded state (against the kernel's nullifier set). -/
+def unspentValue (s : ShieldedState) (a : AssetId) : ℤ :=
+  unspentValueIn s.notes s.kernel.nullifiers a
+
+/-- The inventory's nullifiers are pairwise distinct — each note is spendable by exactly one
+nullifier, and a spend retires exactly one note (maintained by `shieldK`'s freshness gate). -/
+def NotesDistinct (s : ShieldedState) : Prop :=
+  s.notes.Pairwise (fun m n => m.nf ≠ n.nf)
+
+section PoolLedger
+
+variable (poolOf : AssetId → CellId)
+
+/-- **`PoolInvariant` — THE POOL↔NOTES INVARIANT (E4), over the real kernel.** The pool
+pseudo-cell's transparent balance equals the total unspent hidden value, per asset — plus the
+nullifier-distinctness that makes a spend retire exactly one note. While this holds, every
+withdrawal must spend a live note worth exactly what it takes: the pool is undrainable beyond its
+notes. -/
+def PoolInvariant (s : ShieldedState) : Prop :=
+  NotesDistinct s ∧ ∀ a : AssetId, s.kernel.bal (poolOf a) a = unspentValue s a
+
+/-- **`shieldK` — SHIELD (the kernel verb).** Transfer `nt.value` of `a` from `src` into the pool
+pseudo-cell (the EXISTING `recKExecAsset` — authority/availability/liveness gates included), insert
+the value-bound commitment (`noteCreateBound`, the §3 weld), and append the typed record binding
+`commit value blinding ↔ (nf, a, value)`. Gated on nullifier freshness: `nf` must be unused by the
+inventory AND unconsumed — the note is born unspent, uniquely spendable. -/
+def shieldK (vc : ValueCommitment) (s : ShieldedState) (actor src : CellId) (a : AssetId)
+    (nt : BoundNote) (nf : Nat) : Option ShieldedState :=
+  if (∀ n ∈ s.notes, n.nf ≠ nf) ∧ nf ∉ s.kernel.nullifiers then
+    (recKExecAsset s.kernel { actor := actor, src := src, dst := poolOf a, amt := nt.value } a).map
+      (fun k₁ =>
+        { kernel := noteCreateBound vc k₁ nt
+          notes  := { cm := nt.commitment vc, nf := nf, asset := a, value := nt.value }
+                      :: s.notes })
+  else none
+
+/-- **`unshieldK` — UNSHIELD (the kernel verb).** Look the spent note up BY NULLIFIER (fail-closed
+if no such note — the probe's zero-note drain dies here), consume the nullifier (fail-closed on
+double-spend), and transfer **the note's own value, in the note's own asset**, pool → `dst`. The
+amount is NOT a parameter: the value-binding `unshield.amt = value(spent note)` holds by
+construction (`unshield_value_binding`). -/
+def unshieldK (s : ShieldedState) (nf : Nat) (dst : CellId) : Option ShieldedState :=
+  match s.notes.find? (fun n => n.nf == nf) with
+  | some n =>
+      match noteSpendNullifier s.kernel nf with
+      | some k₁ =>
+          (recKExecAsset k₁
+              { actor := poolOf n.asset, src := poolOf n.asset, dst := dst, amt := n.value }
+              n.asset).map
+            (fun k₂ => { kernel := k₂, notes := s.notes })
+      | none => none
+  | none => none
+
+/-! ### §6.1 — peel lemmas. -/
+
+/-- Gate + shape of a committed nullifier spend. -/
+private theorem noteSpend_committed {k k' : RecordKernelState} {nf : Nat}
+    (h : noteSpendNullifier k nf = some k') :
+    nf ∉ k.nullifiers ∧ k' = { k with nullifiers := nf :: k.nullifiers } := by
+  unfold noteSpendNullifier at h
+  by_cases hin : nf ∈ k.nullifiers
+  · rw [if_pos hin] at h; exact absurd h (by simp)
+  · rw [if_neg hin] at h
+    simp only [Option.some.injEq] at h
+    exact ⟨hin, h.symm⟩
+
+/-- A committed `unshieldK`, fully peeled: the found note, its membership + nullifier match, the
+pre-spend freshness, and the post-state shape (nullifier consumed, then the pool→dst transfer of
+the note's value in the note's asset), plus the transfer's `pool ≠ dst` gate. -/
+private theorem unshieldK_committed {s s' : ShieldedState} {nf : Nat} {dst : CellId}
+    (h : unshieldK poolOf s nf dst = some s') :
+    ∃ n, s.notes.find? (fun m => m.nf == nf) = some n
+      ∧ nf ∉ s.kernel.nullifiers
+      ∧ poolOf n.asset ≠ dst
+      ∧ s'.notes = s.notes
+      ∧ s'.kernel = { s.kernel with
+          nullifiers := nf :: s.kernel.nullifiers
+          bal := recTransferBal s.kernel.bal (poolOf n.asset) dst n.asset n.value } := by
+  unfold unshieldK at h
+  cases hfind : s.notes.find? (fun m => m.nf == nf) with
+  | none => rw [hfind] at h; exact absurd h (by simp)
+  | some n =>
+      rw [hfind] at h
+      cases hns : noteSpendNullifier s.kernel nf with
+      | none => rw [hns] at h; exact absurd h (by simp)
+      | some k₁ =>
+          rw [hns] at h
+          rw [Option.map_eq_some_iff] at h
+          obtain ⟨k₂, hk₂, hs'⟩ := h
+          subst hs'
+          obtain ⟨hfresh, hk₁⟩ := noteSpend_committed hns
+          obtain ⟨hgate, hshape⟩ := recKExecAsset_committed hk₂
+          refine ⟨n, hfind, hfresh, hgate.2.2.2.1, rfl, ?_⟩
+          show k₂ = _
+          rw [hshape, hk₁]
+
+/-! ### §6.2 — THE E4 KEYSTONE: the unshield amount IS the spent note's value (over the REAL step). -/
+
+/-- **`unshield_value_binding` — THE E4 KEYSTONE (PROVED, by construction + committed step).** A
+committed unshield spent a note that IS IN the inventory, whose nullifier IS the consumed one, and
+the transparent legs moved EXACTLY that note's value in EXACTLY that note's asset: `dst` is
+credited `n.value` and the pool of `n.asset` is debited `n.value`. The Mina-excess /
+`balance_change` obligation as a theorem over executed kernel state — the amount cannot diverge
+from the spent note because it is not even a degree of freedom. -/
+theorem unshield_value_binding {s s' : ShieldedState} {nf : Nat} {dst : CellId}
+    (h : unshieldK poolOf s nf dst = some s') :
+    ∃ n ∈ s.notes, n.nf = nf
+      ∧ s'.kernel.bal dst n.asset = s.kernel.bal dst n.asset + n.value
+      ∧ s'.kernel.bal (poolOf n.asset) n.asset
+          = s.kernel.bal (poolOf n.asset) n.asset - n.value := by
+  obtain ⟨n, hfind, _, hne, _, hker⟩ := unshieldK_committed poolOf h
+  have hmem : n ∈ s.notes := List.mem_of_find?_eq_some hfind
+  have hnf : n.nf = nf := by
+    have := List.find?_some hfind
+    simpa using this
+  refine ⟨n, hmem, hnf, ?_, ?_⟩
+  · rw [hker]
+    show recTransferBal s.kernel.bal (poolOf n.asset) dst n.asset n.value dst n.asset
+        = s.kernel.bal dst n.asset + n.value
+    unfold recTransferBal
+    rw [if_pos rfl, if_neg (Ne.symm hne), if_pos rfl]
+  · rw [hker]
+    show recTransferBal s.kernel.bal (poolOf n.asset) dst n.asset n.value (poolOf n.asset) n.asset
+        = s.kernel.bal (poolOf n.asset) n.asset - n.value
+    unfold recTransferBal
+    rw [if_pos rfl, if_pos rfl]
+
+/-! ### §6.3 — the inventory bookkeeping lemmas (the sums move by exactly the note). -/
+
+/-- Unspent value over a cons: the head contributes its value iff it matches the asset and is
+unspent. -/
+private theorem unspentValueIn_cons (n : NoteRecord) (notes : List NoteRecord)
+    (nulls : List Nat) (b : AssetId) :
+    unspentValueIn (n :: notes) nulls b
+      = (if n.asset = b ∧ n.nf ∉ nulls then n.value else 0) + unspentValueIn notes nulls b := by
+  unfold unspentValueIn
+  rw [List.filter_cons]
+  by_cases hn : n.asset = b ∧ n.nf ∉ nulls
+  · rw [if_pos (by simpa using hn), if_pos hn]
+    simp only [List.map_cons, List.sum_cons]
+  · rw [if_neg (by simpa using hn), if_neg hn, zero_add]
+
+/-- Inserting a nullifier NONE of the inventory carries leaves every unspent sum unchanged. -/
+private theorem unspentValueIn_insert_fresh (notes : List NoteRecord) (nulls : List Nat)
+    (nf : Nat) (hfresh : ∀ n ∈ notes, n.nf ≠ nf) (b : AssetId) :
+    unspentValueIn notes (nf :: nulls) b = unspentValueIn notes nulls b := by
+  unfold unspentValueIn
+  congr 1
+  apply List.filter_congr
+  intro n hn
+  have hne : n.nf ≠ nf := hfresh n hn
+  apply decide_eq_decide.mpr
+  constructor
+  · rintro ⟨h1, h2⟩
+    exact ⟨h1, fun hm => h2 (List.mem_cons_of_mem _ hm)⟩
+  · rintro ⟨h1, h2⟩
+    refine ⟨h1, fun hm => ?_⟩
+    rcases List.mem_cons.mp hm with he | hm'
+    · exact hne he
+    · exact h2 hm'
+
+/-- **The spend bookkeeping (PROVED).** Consuming the nullifier of the (unique, by distinctness)
+note `find?` locates drops that note's asset's unspent sum by exactly the note's value, and leaves
+every other asset's sum unchanged. -/
+private theorem unspentValueIn_spend (notes : List NoteRecord) (nulls : List Nat) (nf : Nat)
+    (n : NoteRecord) (hfind : notes.find? (fun m => m.nf == nf) = some n)
+    (hdist : notes.Pairwise (fun m m' => m.nf ≠ m'.nf)) (hns : nf ∉ nulls) (b : AssetId) :
+    unspentValueIn notes (nf :: nulls) b
+      = unspentValueIn notes nulls b - (if n.asset = b then n.value else 0) := by
+  induction notes with
+  | nil => exact absurd hfind (by simp)
+  | cons m rest ih =>
+      obtain ⟨hhead, htail⟩ := List.pairwise_cons.mp hdist
+      by_cases hm : (m.nf == nf) = true
+      · -- the head IS the spent note.
+        rw [List.find?_cons_of_pos _ hm] at hfind
+        injection hfind with hmn
+        rw [← hmn]
+        have hmnf : m.nf = nf := by simpa using hm
+        have hrest_fresh : ∀ x ∈ rest, x.nf ≠ nf := fun x hx => by
+          have := hhead x hx
+          rw [hmnf] at this
+          exact this.symm
+        rw [unspentValueIn_cons, unspentValueIn_cons,
+            unspentValueIn_insert_fresh rest nulls nf hrest_fresh b]
+        have hin : m.nf ∈ nf :: nulls := by rw [hmnf]; exact List.mem_cons_self
+        rw [if_neg (fun hp => hp.2 hin)]
+        by_cases hb : m.asset = b
+        · rw [if_pos ⟨hb, by rw [hmnf]; exact hns⟩, if_pos hb]
+          ring
+        · rw [if_neg (fun hp => hb hp.1), if_neg hb]
+          ring
+      · -- the head is NOT the spent note: its membership is identical on both sides; recurse.
+        rw [List.find?_cons_of_neg _ hm] at hfind
+        have hmnf : m.nf ≠ nf := by simpa using hm
+        have hiff : (m.asset = b ∧ m.nf ∉ nf :: nulls) ↔ (m.asset = b ∧ m.nf ∉ nulls) := by
+          constructor
+          · rintro ⟨h1, h2⟩
+            exact ⟨h1, fun hmem => h2 (List.mem_cons_of_mem _ hmem)⟩
+          · rintro ⟨h1, h2⟩
+            refine ⟨h1, fun hmem => ?_⟩
+            rcases List.mem_cons.mp hmem with he | hmem'
+            · exact hmnf he
+            · exact h2 hmem'
+        rw [unspentValueIn_cons, unspentValueIn_cons,
+            if_congr hiff rfl rfl, ih hfind htail]
+        ring
+
+/-! ### §6.4 — THE CUSTODY KEYSTONES: `PoolInvariant` is preserved (the pool is undrainable). -/
+
+/-- **`shieldK_preserves_pool` (PROVED).** A committed shield credits the pool of `a` by exactly
+the created note's value AND appends that note unspent — both sides of the pool↔notes equation rise
+together; every other asset's pool column and inventory slice are untouched. Distinctness is
+maintained by the freshness gate. -/
+theorem shieldK_preserves_pool {vc : ValueCommitment} {s s' : ShieldedState} {actor src : CellId}
+    {a : AssetId} {nt : BoundNote} {nf : Nat}
+    (h : shieldK poolOf vc s actor src a nt nf = some s')
+    (hinv : PoolInvariant poolOf s) : PoolInvariant poolOf s' := by
+  unfold shieldK at h
+  by_cases hg : (∀ n ∈ s.notes, n.nf ≠ nf) ∧ nf ∉ s.kernel.nullifiers
+  · rw [if_pos hg] at h
+    rw [Option.map_eq_some_iff] at h
+    obtain ⟨k₁, hk₁, hs'⟩ := h
+    subst hs'
+    obtain ⟨hgate, hshape⟩ := recKExecAsset_committed hk₁
+    have hne : src ≠ poolOf a := hgate.2.2.2.1
+    constructor
+    · -- distinctness: the appended nf is fresh by the gate.
+      show ({ cm := nt.commitment vc, nf := nf, asset := a, value := nt.value }
+              :: s.notes).Pairwise (fun m n => m.nf ≠ n.nf)
+      exact List.pairwise_cons.mpr ⟨fun n hn => (hg.1 n hn).symm, hinv.1⟩
+    · intro b
+      -- post kernel: noteCreateBound only inserts a commitment — bal/nullifiers are k₁'s; and
+      -- k₁ is the recTransferBal write on s.kernel.
+      have hbal : (noteCreateBound vc k₁ nt).bal
+          = recTransferBal s.kernel.bal src (poolOf a) a nt.value := by
+        rw [hshape]
+      have hnulls : (noteCreateBound vc k₁ nt).nullifiers = s.kernel.nullifiers := by
+        rw [hshape]
+      show (noteCreateBound vc k₁ nt).bal (poolOf b) b
+          = unspentValueIn ({ cm := nt.commitment vc, nf := nf, asset := a, value := nt.value }
+              :: s.notes) (noteCreateBound vc k₁ nt).nullifiers b
+      rw [hbal, hnulls, unspentValueIn_cons]
+      dsimp only
+      rcases eq_or_ne b a with hba | hba
+      · -- the shielded asset: pool credited + the new note enters the unspent sum.
+        rw [hba]
+        show recTransferBal s.kernel.bal src (poolOf a) a nt.value (poolOf a) a = _
+        unfold recTransferBal
+        rw [if_pos rfl, if_neg (Ne.symm hne), if_pos rfl,
+            if_pos (show a = a ∧ nf ∉ s.kernel.nullifiers from ⟨rfl, hg.2⟩)]
+        have := hinv.2 a
+        unfold unspentValue at this
+        omega
+      · -- another asset: pool column untouched, new note filtered out.
+        rw [recTransferBal_untouched s.kernel.bal src (poolOf a) a b nt.value hba (poolOf b),
+            if_neg (fun hp => hba hp.1.symm), zero_add]
+        exact hinv.2 b
+  · rw [if_neg hg] at h
+    exact absurd h (by simp)
+
+/-- **`unshieldK_preserves_pool` (PROVED) — THE POOL IS UNDRAINABLE.** A committed unshield debits
+the pool of the spent note's asset by exactly the note's value, and the note (the UNIQUE one with
+that nullifier, by distinctness) leaves the unspent sum — the equation is maintained; every other
+asset is untouched. With `PoolInvariant` carried, no sequence of shields/unshields can take more
+out of a pool than its live notes back. -/
+theorem unshieldK_preserves_pool {s s' : ShieldedState} {nf : Nat} {dst : CellId}
+    (h : unshieldK poolOf s nf dst = some s')
+    (hinv : PoolInvariant poolOf s) : PoolInvariant poolOf s' := by
+  obtain ⟨n, hfind, hfresh, hne, hnotes, hker⟩ := unshieldK_committed poolOf h
+  constructor
+  · show (s'.notes).Pairwise (fun m n => m.nf ≠ n.nf)
+    rw [hnotes]
+    exact hinv.1
+  · intro b
+    show s'.kernel.bal (poolOf b) b = unspentValue s' b
+    unfold unspentValue
+    rw [hnotes, hker]
+    show recTransferBal s.kernel.bal (poolOf n.asset) dst n.asset n.value (poolOf b) b
+        = unspentValueIn s.notes (nf :: s.kernel.nullifiers) b
+    rw [unspentValueIn_spend s.notes s.kernel.nullifiers nf n hfind hinv.1 hfresh b]
+    rcases eq_or_ne b n.asset with rfl | hba
+    · -- the spent asset: pool debited by the note's value; the note leaves the unspent sum.
+      unfold recTransferBal
+      rw [if_pos rfl, if_pos rfl, if_pos rfl]
+      have := hinv.2 n.asset
+      unfold unspentValue at this
+      omega
+    · -- another asset: pool column untouched, the spent note was not in this slice.
+      rw [recTransferBal_untouched s.kernel.bal (poolOf n.asset) dst n.asset b n.value hba
+            (poolOf b),
+          if_neg (fun hp => hba hp.symm), sub_zero]
+      exact hinv.2 b
+
+/-! ### §6.5 — the LEDGER half: both verbs preserve the W1 value law. -/
+
+/-- **SHIELD preserves `ExactConservation`** — the transparent leg is a transfer
+(`recKExecAsset_preserves_exact`), the value-bound commitment insert is neutral
+(`noteCreateCommitment_preserves_exact`). -/
+theorem shieldK_preserves_exact {vc : ValueCommitment} {s s' : ShieldedState} {actor src : CellId}
+    {a : AssetId} {nt : BoundNote} {nf : Nat}
+    (h : shieldK poolOf vc s actor src a nt nf = some s')
+    (hex : ExactConservation s.kernel) : ExactConservation s'.kernel := by
+  unfold shieldK at h
+  by_cases hg : (∀ n ∈ s.notes, n.nf ≠ nf) ∧ nf ∉ s.kernel.nullifiers
+  · rw [if_pos hg] at h
+    rw [Option.map_eq_some_iff] at h
+    obtain ⟨k₁, hk₁, hs'⟩ := h
+    rw [← hs']
+    show ExactConservation (noteCreateBound vc k₁ nt)
+    exact noteCreateCommitment_preserves_exact k₁ _ (recKExecAsset_preserves_exact hk₁ hex)
+  · rw [if_neg hg] at h
+    exact absurd h (by simp)
+
+/-- **UNSHIELD preserves `ExactConservation`** — the nullifier insert is neutral, the pool→dst leg
+is a transfer. -/
+theorem unshieldK_preserves_exact {s s' : ShieldedState} {nf : Nat} {dst : CellId}
+    (h : unshieldK poolOf s nf dst = some s')
+    (hex : ExactConservation s.kernel) : ExactConservation s'.kernel := by
+  unfold unshieldK at h
+  cases hfind : s.notes.find? (fun m => m.nf == nf) with
+  | none => rw [hfind] at h; exact absurd h (by simp)
+  | some n =>
+      rw [hfind] at h
+      cases hns : noteSpendNullifier s.kernel nf with
+      | none => rw [hns] at h; exact absurd h (by simp)
+      | some k₁ =>
+          rw [hns] at h
+          rw [Option.map_eq_some_iff] at h
+          obtain ⟨k₂, hk₂, hs'⟩ := h
+          rw [← hs']
+          exact recKExecAsset_preserves_exact hk₂ (noteSpendNullifier_preserves_exact hns hex)
+
+end PoolLedger
+
+#assert_axioms unshield_value_binding
+#assert_axioms shieldK_preserves_pool
+#assert_axioms unshieldK_preserves_pool
+#assert_axioms shieldK_preserves_exact
+#assert_axioms unshieldK_preserves_exact
+
+/-! ### §6.6 — non-vacuity (`#guard`): the probe's drain is CLOSED; the roundtrip works.
+
+Pool registry: every asset's pool is cell 3. User cell 2 holds 4 of asset 0; pool empty; no notes.
+The probe's `kPool` drain (an unshield against ZERO notes) now FAILS-CLOSED; the legitimate
+shield→unshield roundtrip moves exactly the note's value both ways and refuses the double-spend. -/
+
+/-- Demo pool registry: every asset's pool is cell 3. -/
+def poolDemo : AssetId → CellId := fun _ => 3
+
+/-- A shielded genesis: user 2 holds 4 of asset 0; pool 3 empty; NO notes, NO nullifiers. -/
+def sShield0 : ShieldedState :=
+  { kernel :=
+      { accounts := {2, 3}
+        cell := fun _ => Value.record [("balance", Value.int 0)]
+        caps := fun _ => []
+        bal := fun c a => if c = 2 ∧ a = 0 then 4 else 0 } }
+
+/-- The probe's drain target: pool 3 holds 10 of asset 0 — but ZERO notes back it. -/
+def sPoolUnbacked : ShieldedState :=
+  { kernel :=
+      { accounts := {2, 3}
+        cell := fun _ => Value.record [("balance", Value.int 0)]
+        caps := fun _ => []
+        bal := fun c a => if c = 3 ∧ a = 0 then 10 else 0 } }
+
+-- THE PROBE'S HOLE, CLOSED: the zero-note drain (`IssuerSupplyProbe` §8 committed it) now REFUSES —
+-- there is no note to spend, so there is no amount to withdraw.
+#guard ((unshieldK poolDemo sPoolUnbacked 99 2).isNone)
+-- ...and the unbacked pool is exactly a `PoolInvariant` violation, witnessed at asset 0 (10 ≠ 0):
+#guard ((sPoolUnbacked.kernel.bal (poolDemo 0) 0
+          == unspentValueIn sPoolUnbacked.notes sPoolUnbacked.kernel.nullifiers 0) == false)
+
+/-- The roundtrip's shield: user 2 shields `note3` (value 3, blinding 2 ⇒ commitment 5 under
+`refVC`) of asset 0 under nullifier 99. -/
+def sShielded : Option ShieldedState := shieldK poolDemo refVC sShield0 2 2 0 note3 99
+
+-- SHIELD commits: pool 3 gains exactly the note's value (3); the typed ledger binds
+-- commitment 5 ↔ (nf 99, asset 0, value 3); the bare commitment set gains 5 (wire-compatible).
+#guard (sShielded.isSome)
+#guard (sShielded.map (fun s => (s.kernel.bal 3 0, s.kernel.bal 2 0))) == some (3, 1)
+#guard (sShielded.map (fun s => s.notes.map (fun n => (n.cm, n.nf, n.asset, n.value))))
+        == some [(5, 99, 0, 3)]
+#guard (sShielded.map (fun s => s.kernel.commitments.contains 5)) == some true
+-- the pool↔notes equation holds after the shield (both sides 3):
+#guard (sShielded.map (fun s =>
+          s.kernel.bal (poolDemo 0) 0 == unspentValueIn s.notes s.kernel.nullifiers 0))
+        == some true
+-- UNSHIELD by nullifier: dst 2 is credited EXACTLY the note's value (no amount parameter exists);
+-- the pool returns to 0 and the equation holds again (the note left the unspent sum).
+#guard ((sShielded.bind (fun s => unshieldK poolDemo s 99 2)).map
+          (fun s => (s.kernel.bal 3 0, s.kernel.bal 2 0))) == some (0, 4)
+#guard ((sShielded.bind (fun s => unshieldK poolDemo s 99 2)).map
+          (fun s => s.kernel.bal (poolDemo 0) 0
+              == unspentValueIn s.notes s.kernel.nullifiers 0)) == some true
+-- DOUBLE-SPEND refused: the same nullifier cannot be unshielded twice.
+#guard ((sShielded.bind (fun s => unshieldK poolDemo s 99 2)
+          |>.bind (fun s => unshieldK poolDemo s 99 2)).isNone)
+-- the SHIELD freshness gate: re-shielding under a consumed/used nullifier refuses (each note is
+-- uniquely spendable).
+#guard ((sShielded.bind (fun s => shieldK poolDemo refVC s 2 2 0 note3 99)).isNone)
+-- the value law rides the whole roundtrip: every committed state sums to the genesis supply.
+#guard ((sShielded.bind (fun s => unshieldK poolDemo s 99 2)).map
+          (fun s => recTotalAssetWithEscrow s.kernel 0)) == some 4
+
 end Dregg2.Exec.ShieldedValue
