@@ -113,6 +113,7 @@ pub mod discovery;
 #[cfg(feature = "network")]
 pub mod embed;
 pub mod error;
+pub mod factories;
 pub mod full_turn_proof;
 pub mod mnemonic;
 #[cfg(feature = "captp")]
@@ -148,6 +149,11 @@ pub use committed_turn::{
     CommittedNoteInput, CommittedNoteOutput, CommittedTurnBuilder, OwnedNote,
 };
 pub use error::SdkError;
+pub use factories::{
+    ADOPT_TURN_FEE, SettlementCellPlan, bridge_lock_cell, cancel_bridge, create_escrow_cell,
+    create_obligation_cell, finalize_bridge, fulfill_obligation, party_field, refund_escrow,
+    release_escrow, slash_obligation,
+};
 pub use runtime::{AgentRuntime, SubAgent};
 
 /// Short alias for [`AgentCipherclerk`] — the "capability clerk" handle.

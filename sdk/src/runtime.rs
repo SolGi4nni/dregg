@@ -331,6 +331,17 @@ impl AgentRuntime {
         self.executor.set_local_federation_id(id);
     }
 
+    /// Set the block height the embedded executor evaluates time-gated
+    /// program constraints against (`TemporalGate` and friends, via
+    /// `EvalContext.block_height`).
+    ///
+    /// A node-driven executor gets this from consensus; a local runtime
+    /// defaults to 0. The settlement-cell timeout/deadline gates built by
+    /// [`crate::factories`] read this height.
+    pub fn set_block_height(&mut self, height: u64) {
+        self.executor.set_block_height(height);
+    }
+
     /// Deploy a [`FactoryDescriptor`] into this runtime's executor.
     ///
     /// Once deployed, an `Effect::CreateCellFromFactory` referencing the
@@ -552,6 +563,170 @@ impl AgentRuntime {
                 // Append the receipt to the cipherclerk's chain (write lock).
                 // Strict mode: surface fork detection as an SdkError instead of
                 // silently rewriting the receipt's `previous_receipt_hash`.
+                self.cipherclerk
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .append_receipt(receipt.clone())?;
+                Ok(receipt)
+            }
+            TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
+            TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
+            TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),
+        }
+    }
+
+    /// Build a single-root [`CallForest`] whose action targets `target`,
+    /// signed with this runtime's cipherclerk key over the canonical signing
+    /// message. The executor verifies the signature against the TARGET cell's
+    /// `owner_pubkey`, so the resulting action only authorizes for cells this
+    /// runtime's key owns (its own agent cell, or cells it created with its
+    /// key as `owner_pubkey` — e.g. factory-born settlement cells).
+    fn signed_single_action_forest(&self, target: CellId, effects: Vec<Effect>) -> CallForest {
+        let action_unsigned = Action {
+            target,
+            method: symbol("execute"),
+            args: Vec::new(),
+            authorization: Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let message = TurnExecutor::compute_signing_message(
+            &action_unsigned,
+            &self.executor.local_federation_id,
+        );
+        let sig = self
+            .cipherclerk
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .sign_bytes(&message);
+        let action_signed = Action {
+            authorization: Authorization::from_sig_bytes(sig.0),
+            ..action_unsigned
+        };
+        let mut forest = CallForest::new();
+        forest.add_root(action_signed);
+        forest
+    }
+
+    /// Execute effects in a turn whose agent (and action target) is `cell`
+    /// rather than this runtime's own agent cell — `cell` PAYS `fee` from its
+    /// own balance, and `fee` is the turn's computron budget.
+    ///
+    /// The action is signed with this runtime's cipherclerk key, so this only
+    /// commits for cells whose `owner_pubkey` IS this runtime's public key
+    /// (the executor verifies the Ed25519 signature against the target cell's
+    /// key). The canonical use is the one-time capability bootstrap of a
+    /// factory-born cell (see [`crate::factories`]): the cell self-grants its
+    /// creator a c-list capability, after which the creator drives it with
+    /// ordinary agent-paid turns via [`Self::execute_on`].
+    ///
+    /// Differences from [`Self::execute`]:
+    /// * `turn.agent = cell` — the turn nonce is the CELL's on-ledger replay
+    ///   counter (read fresh under the ledger lock), not the runtime's;
+    /// * `fee` is debited from the CELL (budget for the turn's computrons);
+    /// * the receipt is returned but NOT appended to the runtime's receipt
+    ///   chain (it belongs to `cell`'s history, not the agent's).
+    #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
+    pub fn execute_as(
+        &self,
+        cell: CellId,
+        effects: Vec<Effect>,
+        fee: u64,
+    ) -> Result<TurnReceipt, SdkError> {
+        let forest = self.signed_single_action_forest(cell, effects);
+        let mut ledger = self.ledger.lock().unwrap();
+        // The turn nonce must equal the agent CELL's on-ledger replay counter.
+        let nonce = ledger
+            .get(&cell)
+            .ok_or(SdkError::Turn(dregg_turn::TurnError::CellNotFound {
+                id: cell,
+            }))?
+            .state
+            .nonce();
+        let turn = Turn {
+            agent: cell,
+            nonce,
+            call_forest: forest,
+            fee,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        match self.run_turn(&turn, &mut ledger) {
+            TurnResult::Committed { receipt, .. } => Ok(receipt),
+            TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
+            TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
+            TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),
+        }
+    }
+
+    /// Execute effects in an ordinary agent turn (this runtime's agent pays
+    /// the fee) whose ACTION TARGETS `target` instead of the agent cell.
+    ///
+    /// This is the production shape for driving a cell the agent administers
+    /// (the node's app-cell ingress uses it for factory-born cells): the
+    /// action is signed with this runtime's key and the executor verifies it
+    /// against `target`'s `owner_pubkey`, per-effect checks ride on
+    /// `effect.cell == action.target`, and the parent gate requires the agent
+    /// to hold a c-list capability on `target` (bootstrap one via the cell's
+    /// self-grant — see [`crate::factories`] `adopt_effects`). The target
+    /// cell's installed `CellProgram` decides whether the transition commits.
+    #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
+    pub fn execute_on(
+        &self,
+        target: CellId,
+        effects: Vec<Effect>,
+    ) -> Result<TurnReceipt, SdkError> {
+        let forest = self.signed_single_action_forest(target, effects);
+        let mut ledger = self.ledger.lock().unwrap();
+        let nonce = {
+            let mut n = self.nonce.lock().unwrap();
+            let current = *n;
+            *n += 1;
+            current
+        };
+        let previous_receipt_hash = self
+            .cipherclerk
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .receipt_head()
+            .map(|r| r.receipt_hash());
+        let turn = Turn {
+            agent: self.cell_id,
+            nonce,
+            call_forest: forest,
+            fee: 10_000,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        match self.run_turn(&turn, &mut ledger) {
+            TurnResult::Committed { receipt, .. } => {
+                drop(ledger);
                 self.cipherclerk
                     .write()
                     .unwrap_or_else(|e| e.into_inner())

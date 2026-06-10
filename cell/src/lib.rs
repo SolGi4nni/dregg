@@ -24,6 +24,7 @@
 //! - An optional verification key for ZK proof validation
 //! - Token domain membership and delegation hierarchy
 
+pub mod blueprint;
 pub mod capability;
 #[cfg(feature = "crypto")]
 pub mod capability_proof;
@@ -69,6 +70,11 @@ pub mod vk_v2;
 mod tests;
 
 // Re-exports for convenience.
+pub use blueprint::{
+    BlueprintError, BridgeTerms, EscrowTerms, ObligationTerms, bridge_cell_program,
+    bridge_factory_descriptor, escrow_cell_program, escrow_factory_descriptor,
+    obligation_cell_program, obligation_factory_descriptor,
+};
 pub use capability::{
     AttenuatedCap, CapabilityCaveat, CapabilityRef, CapabilitySet, is_attenuation,
 };
