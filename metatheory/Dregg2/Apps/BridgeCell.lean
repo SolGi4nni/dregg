@@ -67,13 +67,13 @@ These RE-USE the escrow factory probe's already-proved keystones VERBATIM — th
 + value in `bal`), so feeding the factory-install facts in lifts them with no re-proof. That is the
 witness that the factory is a FAITHFUL replacement for the bridge verbs (§DELETION).
 
-NEW file only. Imports the escrow factory probe + the escrow factory (for the live mint executor +
-the lifted keystones) + the W1 issuer ledger (for `canonical_bridge_law`, the bridge-pot framing).
-Does NOT touch any shared mod/import file. `#assert_axioms`-pinned to
+NEW file only. Imports the escrow factory + the W1 issuer-supply probe (for the bridge-POT exact-ledger
+law `bridgeFinalizeToPot_preserves_exact` + the `bridgeFinalize_breaks_exact` non-vacuity tooth — the
+bridge-pot framing). Does NOT touch any shared mod/import file. `#assert_axioms`-pinned to
 `{propext, Classical.choice, Quot.sound}` — no sorry, no `:= True`. Land-before-kill: nothing deleted.
 -/
 import Dregg2.Apps.EscrowFactory
-import Dregg2.Substrate.IssuerLedger
+import Dregg2.Substrate.IssuerSupplyProbe
 
 namespace Dregg2.Apps.BridgeCell
 
@@ -369,29 +369,31 @@ def bridgeLocked : Option RecordKernelState :=
 /-! ## §6 — the W1 BRIDGE-POT framing (the conservation contrast, made explicit).
 
 The factory-born finalize settles to the bridge-pot cell, so it is conservation-EXACT — exactly the W1
-repair `Dregg2.Substrate.IssuerLedger.canonical_bridge_law` made for the verb-era bridge. We re-export
-that canonical law here so the cell-program and the verb-era pot law sit side by side: BOTH say "settle
-the finalized value to the pot cell and the per-asset ledger stays exact", and the cell-program path
-gets it from the ORDINARY move law (`finalize_conserves`) with no bespoke combined measure. -/
+repair the issuer-supply probe made for the verb-era bridge (modelling the foreign chain's custody as a
+pot CELL instead of an off-ledger drop). We re-export the probe's pot law here so the cell-program and
+the verb-era pot law sit side by side: BOTH say "settle the finalized value to the pot cell and the
+per-asset ledger stays EXACT", and the cell-program path gets it from the ORDINARY move law
+(`finalize_conserves`) with NO bespoke combined measure. (`ExactLedger` = the per-asset exact
+conservation invariant `∀ a, recTotalAssetWithEscrow k a = 0`, the W1 forward-model value law.) -/
 
-/-- **`potted_finalize_is_exact` — the verb-era W1 bridge-pot law, re-exported.** The canonical W1
-result that the verb-era `bridgeFinalizeToPotK` settles to a pot cell preserving the exact per-asset
-ledger. The cell-program `finalize_conserves` above is the SAME guarantee on the factory-born cell,
-inherited from the plain move law instead of the combined-measure pot theorem. -/
+open Dregg2.Substrate.IssuerSupplyProbe (ExactLedger)
+
+/-- **`potted_finalize_is_exact` — the verb-era W1 bridge-pot law, re-exported.** The W1 result that the
+verb-era `bridgeFinalizeToPotK` settles to a pot cell preserving the EXACT per-asset ledger. The
+cell-program `finalize_conserves` above is the SAME guarantee on the factory-born cell, inherited from
+the plain move law instead of the combined-measure pot theorem. -/
 theorem potted_finalize_is_exact {pot : CellId} {k k' : RecordKernelState} {id : Nat}
     (h : Dregg2.Substrate.IssuerSupplyProbe.bridgeFinalizeToPotK pot k id = some k')
-    (hc : Dregg2.Substrate.IssuerLedger.ConservedLedger k) :
-    Dregg2.Substrate.IssuerLedger.ConservedLedger k' :=
-  Dregg2.Substrate.IssuerLedger.canonical_bridge_law h hc
+    (hex : ExactLedger k) : ExactLedger k' :=
+  Dregg2.Substrate.IssuerSupplyProbe.bridgeFinalizeToPot_preserves_exact h hex
 
 /-- **`verb_finalize_breaks_exact` — the NON-VACUITY contrast (re-exported W1 tooth).** The verb-era
 `bridgeFinalizeKAsset` (the disclosed outflow, NOT settled to a pot) provably BREAKS the exact ledger —
 so the bridge-pot / bridge-cell settle is a genuine REPAIR, not a relabeling. -/
 theorem verb_finalize_breaks_exact {k k' : RecordKernelState} {id : Nat} {asset : AssetId}
     {amount : ℤ} (h : Dregg2.Exec.bridgeFinalizeKAsset k id asset amount = some k') (hnz : amount ≠ 0)
-    (hc : Dregg2.Substrate.IssuerLedger.ConservedLedger k) :
-    ¬ Dregg2.Substrate.IssuerLedger.ConservedLedger k' :=
-  Dregg2.Substrate.IssuerLedger.oldBridge_breaks_conservation h hnz hc
+    (hex : ExactLedger k) : ¬ ExactLedger k' :=
+  Dregg2.Substrate.IssuerSupplyProbe.bridgeFinalize_breaks_exact h hnz hex
 
 /-! ## §7 — Axiom hygiene. -/
 
