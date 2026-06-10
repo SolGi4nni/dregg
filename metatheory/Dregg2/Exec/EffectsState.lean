@@ -324,6 +324,20 @@ theorem state_conserves {s s' : RecChainedState} {f : FieldName} {actor target :
   subst hs'
   exact writeField_recTotal s.kernel f target v hf
 
+/-- **`stateStep_preserves_exact` — the metadata regime preserves the W1 value law (PROVED).** A
+committed Neutral/Monotonic/Terminal field write leaves `ExactConservation` (the per-asset exact law,
+`RecordKernel §VALUE-UNIFY`) intact: `writeField` edits only the `cell` record map, never the
+per-asset `bal` ledger nor the `escrows` holding-store, so `recTotalAssetWithEscrow` is definitionally
+unchanged at every asset. -/
+theorem stateStep_preserves_exact {s s' : RecChainedState} {f : FieldName} {actor target : CellId}
+    {v : Value} (h : stateStep s f actor target v = some s')
+    (hex : ExactConservation s.kernel) : ExactConservation s'.kernel := by
+  obtain ⟨_, hs'⟩ := stateStep_factors h
+  subst hs'
+  exact hex
+
+#assert_axioms stateStep_preserves_exact
+
 /-- **`state_balance_domain` — PROVED (per-domain Σ = 0).** The realized balance-domain delta of a
 committed Neutral/metadata effect nets to `0` (`Spec.conservedInDomain Domain.balance`) — the
 executable shadow of dregg1's `excess == 0` gate for the non-conserving-but-balance-neutral colors. -/

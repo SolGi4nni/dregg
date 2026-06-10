@@ -3159,4 +3159,268 @@ def rms0 : RecordKernelState :=
 -- moving asset 0 cannot inflate asset 1's supply — the scalar-laundering attack is unrepresentable:
 #guard ((recKExecAsset rms0 rt1 0).map (fun k => (k.bal 0 0, k.bal 0 1, k.bal 1 0, k.bal 1 1))) == some (70, 7, 35, 0)  -- some (70, 7, 35, 0)
 
+/-! ## §VALUE-UNIFY — `ExactConservation`: THE per-asset value law of the kernel (W1, DREGG3 R2).
+
+The R2 probe (`Dregg2/Substrate/IssuerSupplyProbe.lean`, standalone) established the issuer-supply
+value law: `AssetId := issuer CellId`, the issuer carries −supply in a negative-capable well, and
+conservation is `∀ a, Σ_{c ∈ accounts} bal c a (+ the transitional escrow holding-store term) = 0`
+EXACTLY — no modulo-burn, no bridge-outflow exemption, no mint inflation. `Substrate/IssuerLedger.lean`
+promoted it to the canonical forward model. THIS section lands the law in the REAL kernel (in the
+anchor, over the real step functions):
+
+  * `ExactConservation` — the law itself (transitional form: the `escrowHeldAsset` term is
+    load-bearing until S3 turns escrows into pot-cells; then it collapses to the pure cell-sum);
+  * a preservation theorem for EVERY value-touching kernel verb in this file (each instantiating the
+    existing per-asset conservation keystone — a quantity preserved is a zero preserved);
+  * `bridgeFinalizeToPotK` — the REPAIRED bridge finalize (settle the locked value to a bridge-pot
+    CELL = the foreign chain's custody, instead of dropping it off-ledger), with its preservation
+    theorem and the non-vacuity tooth that the legacy `bridgeFinalizeKAsset` provably BREAKS the law.
+    The legacy verb stays in-tree for the deployed circuit weld until the W1 VK rotation swaps the
+    dispatch.
+
+Mint/burn-as-issuer-moves land beside the executor (`Dregg2/Exec/IssuerMove.lean`); the per-asset fee
+quadruple lands on the turn wrapper (`Dregg2/Circuit/Argus/Turn.lean §6'`); the E4 shielded
+value-binding lands in `Dregg2/Exec/ShieldedValue.lean`. -/
+
+/-- **THE VALUE LAW (W1, transitional form).** Per asset: cell-ledger sum + escrow-parked value = 0.
+The issuer of each asset is an ordinary live account whose well runs NEGATIVE by exactly the
+circulating supply (`IssuerSupplyProbe.issuerView_exact` proves the issuer-supply view satisfies this
+BY CONSTRUCTION). The escrow term is the OFF-LEDGER holding-store (`escrows : List EscrowRecord`) —
+value parked outside any cell until the S3 storage-as-cell-programs migration makes escrows
+pot-cells, at which point the law collapses to `∀ a, recTotalAsset k a = 0`. -/
+def ExactConservation (k : RecordKernelState) : Prop :=
+  ∀ a : AssetId, recTotalAssetWithEscrow k a = 0
+
+/-- **GENESIS is exact.** Any state with the empty `bal` ledger and no parked escrows satisfies the
+law — `Σ 0 = 0` at every asset. Live accounts (issuers, pots, users) may already exist; only value
+must not. -/
+theorem genesis_exactConservation (k : RecordKernelState) (hbal : k.bal = fun _ _ => 0)
+    (hesc : k.escrows = []) : ExactConservation k := by
+  intro a
+  unfold recTotalAssetWithEscrow recTotalAsset escrowHeldAsset
+  rw [hbal, hesc]
+  simp
+
+/-- Shape of a committed per-asset transfer (gate-peeled): the post-state is the `recTransferBal`
+write on `bal`, every other component untouched. -/
+private theorem recKExecAsset_shape {k k' : RecordKernelState} {t : Turn} {a : AssetId}
+    (h : recKExecAsset k t a = some k') :
+    k' = { k with bal := recTransferBal k.bal t.src t.dst a t.amt } := by
+  unfold recKExecAsset at h
+  by_cases hg : authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
+      ∧ t.src ≠ t.dst ∧ t.src ∈ k.accounts ∧ t.dst ∈ k.accounts
+  · rw [if_pos hg] at h
+    simp only [Option.some.injEq] at h
+    exact h.symm
+  · rw [if_neg hg] at h
+    exact absurd h (by simp)
+
+/-- **TRANSFER preserves the value law** — instantiates `recKExecAsset_conserves_per_asset` (the
+per-asset keystone): the moved column's debit/credit cancel; every other column is untouched; the
+escrow store never moves on a `bal` write. -/
+theorem recKExecAsset_preserves_exact {k k' : RecordKernelState} {t : Turn} {a : AssetId}
+    (h : recKExecAsset k t a = some k') (hex : ExactConservation k) : ExactConservation k' := by
+  intro b
+  have hbal := recKExecAsset_conserves_per_asset k k' t a h b
+  have hesc : escrowHeldAsset k' b = escrowHeldAsset k b := by
+    rw [recKExecAsset_shape h]; rfl
+  unfold recTotalAssetWithEscrow
+  rw [hbal, hesc]
+  exact hex b
+
+/-- **FRESH-CELL CREATION preserves the value law** — instantiates `recTotalAsset_insert_fresh`
+(account-growth neutrality). Creating issuer cells / pot cells / user cells before circulation keeps
+the invariant; born-empty is load-bearing. -/
+theorem createCellIntoAsset_preserves_exact (k : RecordKernelState) (newCell : CellId)
+    (hfresh : newCell ∉ k.accounts) (hex : ExactConservation k) :
+    ExactConservation (createCellIntoAsset k newCell) := by
+  intro b
+  unfold recTotalAssetWithEscrow
+  rw [recTotalAsset_insert_fresh k newCell b hfresh]
+  have hesc : escrowHeldAsset (createCellIntoAsset k newCell) b = escrowHeldAsset k b := rfl
+  rw [hesc]
+  exact hex b
+
+/-- **ESCROW CREATE preserves the value law** — instantiates
+`escrow_create_conserves_combined_per_asset` (the bal-debit is parked into the holding-store; the
+combined measure is fixed at every asset). -/
+theorem createEscrowKAsset_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    {actor creator recipient : CellId} {asset : AssetId} {amount : ℤ}
+    (h : createEscrowKAsset k id actor creator recipient asset amount = some k')
+    (hex : ExactConservation k) : ExactConservation k' := fun b => by
+  rw [escrow_create_conserves_combined_per_asset b h]
+  exact hex b
+
+/-- **ESCROW RELEASE preserves the value law** — instantiates
+`releaseEscrowKAsset_conserves_combined_per_asset`. -/
+theorem releaseEscrowKAsset_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    (h : releaseEscrowKAsset k id = some k') (hex : ExactConservation k) :
+    ExactConservation k' := fun b => by
+  rw [releaseEscrowKAsset_conserves_combined_per_asset b h]
+  exact hex b
+
+/-- **ESCROW REFUND preserves the value law** — instantiates
+`refundEscrowKAsset_conserves_combined_per_asset`. -/
+theorem refundEscrowKAsset_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    (h : refundEscrowKAsset k id = some k') (hex : ExactConservation k) :
+    ExactConservation k' := fun b => by
+  rw [refundEscrowKAsset_conserves_combined_per_asset b h]
+  exact hex b
+
+/-- **BRIDGE LOCK preserves the value law** — instantiates
+`bridge_lock_conserves_combined_per_asset`. -/
+theorem bridgeLockKAsset_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    {actor originator destination : CellId} {asset : AssetId} {amount : ℤ}
+    (h : bridgeLockKAsset k id actor originator destination asset amount = some k')
+    (hex : ExactConservation k) : ExactConservation k' := fun b => by
+  rw [bridge_lock_conserves_combined_per_asset b h]
+  exact hex b
+
+/-- **BRIDGE CANCEL preserves the value law** — instantiates
+`bridge_cancel_conserves_combined_per_asset`. -/
+theorem bridgeCancelKAsset_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    (h : bridgeCancelKAsset k id = some k') (hex : ExactConservation k) :
+    ExactConservation k' := fun b => by
+  rw [bridge_cancel_conserves_combined_per_asset b h]
+  exact hex b
+
+/-- **NOTE CREATE preserves the value law** — the commitment insert is bal/escrow-neutral
+(`noteCreate_recTotalAsset`). -/
+theorem noteCreateCommitment_preserves_exact (k : RecordKernelState) (cm : Nat)
+    (hex : ExactConservation k) : ExactConservation (noteCreateCommitment k cm) := fun b => by
+  unfold recTotalAssetWithEscrow
+  rw [(noteCreate_recTotalAsset k cm b).1, (noteCreate_recTotalAsset k cm b).2]
+  exact hex b
+
+/-- **NOTE SPEND (nullifier insert) preserves the value law** — it touches only `nullifiers`. -/
+theorem noteSpendNullifier_preserves_exact {k k' : RecordKernelState} {nf : Nat}
+    (h : noteSpendNullifier k nf = some k') (hex : ExactConservation k) :
+    ExactConservation k' := by
+  unfold noteSpendNullifier at h
+  by_cases hin : nf ∈ k.nullifiers
+  · rw [if_pos hin] at h
+    exact absurd h (by simp)
+  · rw [if_neg hin] at h
+    simp only [Option.some.injEq] at h
+    subst h
+    exact hex
+
+/-- **QUEUE DEPOSIT (enqueue-with-deposit) preserves the value law** — instantiates
+`queueEnqueueDepositK_conserves_combined` (the sender's bal-debit parks into the deposit escrow). -/
+theorem queueEnqueueDepositK_preserves_exact {k k' : RecordKernelState} {id m : Nat}
+    {sender owner : CellId} {depId : Nat} {dAsset : AssetId} {deposit : ℤ}
+    (h : queueEnqueueDepositK k id m sender owner depId dAsset deposit = some k')
+    (hex : ExactConservation k) : ExactConservation k' := fun b => by
+  rw [queueEnqueueDepositK_conserves_combined h b]
+  exact hex b
+
+/-- **QUEUE DEQUEUE-REFUND preserves the value law** — instantiates
+`queueDequeueRefundK_conserves_combined` (the parked deposit settles back onto the ledger). -/
+theorem queueDequeueRefundK_preserves_exact {k k' : RecordKernelState} {id : Nat}
+    {actor : CellId} {depId mh : Nat}
+    (h : queueDequeueRefundK k id actor depId = some (k', mh))
+    (hex : ExactConservation k) : ExactConservation k' := fun b => by
+  rw [queueDequeueRefundK_conserves_combined h b]
+  exact hex b
+
+/-! ### §VALUE-UNIFY (bridge) — `bridgeFinalizeToPotK`: the bridge outflow dies in a pot-cell.
+
+`bridgeFinalizeKAsset` (the legacy finalize above) resolves the bridge record WITHOUT settling the
+parked value anywhere — the one disclosed conservation exemption among the kernel verbs
+(`bridgeFinalizeKAsset_moves_combined_per_asset`'s honest drop). The W1 repair models the foreign
+chain's custody as a BRIDGE-POT CELL and SETTLES the locked value to it — the same pot-cell move that
+kills fee-burn (`Argus/Turn.lean §6'`). After this verb, NO kernel verb needs a conservation
+exemption. The legacy verb stays for the deployed circuit weld (`Circuit/Argus/Effects/
+BridgeFinalize.lean`) until the W1 VK rotation swaps the dispatch arm. -/
+
+/-- **`bridgeFinalizeToPotK` — the REPAIRED bridge finalize**: settle the locked value to the
+bridge-pot cell `pot` (the foreign chain's custody, modelled as a cell whose program is the bridge
+policy). Same fail-closed gates as the legacy finalize (an unresolved BRIDGE record must exist),
+plus pot liveness (the settle-liveness discipline; pots are genesis cells, E6). -/
+def bridgeFinalizeToPotK (pot : CellId) (k : RecordKernelState) (id : Nat) :
+    Option RecordKernelState :=
+  match k.escrows.find? (fun r => decide (r.id = id ∧ r.resolved = false)) with
+  | some r =>
+      if r.bridge = true ∧ pot ∈ k.accounts ∧ cellLifecycleLive k pot = true then
+        some (settleEscrowRawAsset k id pot r.asset r.amount)
+      else none
+  | none => none
+
+/-- **BRIDGE FINALIZE-TO-POT preserves the value law** — instantiates
+`escrow_settle_conserves_combined_per_asset` with the pot as settle target. With fee-burn and the
+bridge outflow both potted, the value law carries NO exemptions. -/
+theorem bridgeFinalizeToPotK_preserves_exact {pot : CellId} {k k' : RecordKernelState} {id : Nat}
+    (h : bridgeFinalizeToPotK pot k id = some k') (hex : ExactConservation k) :
+    ExactConservation k' := by
+  unfold bridgeFinalizeToPotK at h
+  cases hfind : k.escrows.find? (fun r => decide (r.id = id ∧ r.resolved = false)) with
+  | none =>
+      rw [hfind] at h
+      exact absurd h (by simp)
+  | some r =>
+      rw [hfind] at h
+      simp only at h
+      by_cases hg : r.bridge = true ∧ pot ∈ k.accounts ∧ cellLifecycleLive k pot = true
+      · rw [if_pos hg] at h
+        simp only [Option.some.injEq] at h
+        subst h
+        intro b
+        rw [escrow_settle_conserves_combined_per_asset k id pot r b hg.2.1 hfind]
+        exact hex b
+      · rw [if_neg hg] at h
+        exact absurd h (by simp)
+
+/-- **NON-VACUITY TOOTH: the LEGACY bridge finalize provably BREAKS the value law** (the disclosed
+off-ledger outflow, instantiated against exactness). This is what makes `bridgeFinalizeToPotK` a
+REPAIR, not a relabeling — and the reason the rotation must swap the dispatch arm. -/
+theorem bridgeFinalizeKAsset_breaks_exact {k k' : RecordKernelState} {id : Nat} {asset : AssetId}
+    {amount : ℤ} (h : bridgeFinalizeKAsset k id asset amount = some k') (hnz : amount ≠ 0)
+    (hex : ExactConservation k) : ¬ ExactConservation k' := by
+  intro hex'
+  have hd := bridgeFinalizeKAsset_moves_combined_per_asset asset h
+  rw [if_pos rfl] at hd
+  have h0 := hex asset
+  have h1 := hex' asset
+  omega
+
+/-! ### §VALUE-UNIFY — axiom hygiene. -/
+
+#assert_axioms genesis_exactConservation
+#assert_axioms recKExecAsset_preserves_exact
+#assert_axioms createCellIntoAsset_preserves_exact
+#assert_axioms createEscrowKAsset_preserves_exact
+#assert_axioms releaseEscrowKAsset_preserves_exact
+#assert_axioms refundEscrowKAsset_preserves_exact
+#assert_axioms bridgeLockKAsset_preserves_exact
+#assert_axioms bridgeCancelKAsset_preserves_exact
+#assert_axioms noteCreateCommitment_preserves_exact
+#assert_axioms noteSpendNullifier_preserves_exact
+#assert_axioms queueEnqueueDepositK_preserves_exact
+#assert_axioms queueDequeueRefundK_preserves_exact
+#assert_axioms bridgeFinalizeToPotK_preserves_exact
+#assert_axioms bridgeFinalizeKAsset_breaks_exact
+
+/-! ### §VALUE-UNIFY — non-vacuity (`#guard`): the pot repair, witnessed.
+
+`brg0`/`brgLocked` (the §BRIDGE fixtures above): cell 0 locked 30 of asset 1 into bridge record 9.
+The LEGACY finalize commits and the combined measure at asset 1 genuinely DROPS by 30 (the
+exemption); the POT finalize settles the same 30 into pot-cell 1 and the combined measure is FIXED. -/
+
+-- The locked state: combined measure at asset 1 is the pre-lock supply (the park is combined-neutral).
+#guard ((brgLocked.map (fun k => recTotalAssetWithEscrow k 1))
+        == (some (recTotalAssetWithEscrow brg0 1)))
+-- LEGACY finalize: commits, and the combined measure DROPS by exactly the disclosed 30 (the exemption):
+#guard ((brgLocked.bind (fun k => bridgeFinalizeKAsset k 9 1 30)).map
+          (fun k => recTotalAssetWithEscrow k 1))
+        == (some (recTotalAssetWithEscrow brg0 1 - 30))
+-- POT finalize: commits against the SAME state, and the combined measure is EXACTLY preserved:
+#guard ((brgLocked.bind (fun k => bridgeFinalizeToPotK 1 k 9)).map
+          (fun k => recTotalAssetWithEscrow k 1))
+        == (some (recTotalAssetWithEscrow brg0 1))
+-- ...the 30 lands IN the pot cell 1's ledger column (custody-as-cell, not off-ledger):
+#guard ((brgLocked.bind (fun k => bridgeFinalizeToPotK 1 k 9)).map (fun k => k.bal 1 1))
+        == some 30
+-- fail-closed: a pot that is NOT a live account refuses the settle (E6 pot-genesis discipline):
+#guard ((brgLocked.bind (fun k => bridgeFinalizeToPotK 99 k 9)).isNone)
+
 end Dregg2.Exec
