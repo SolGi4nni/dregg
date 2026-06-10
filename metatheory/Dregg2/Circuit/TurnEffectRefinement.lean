@@ -227,11 +227,6 @@ def fullActionCircuitStep
       revokeCircuitStep S D_caps hD_caps st ⟨holder, t⟩ st'
   | .sealA pid actor payload =>
       sealCircuitStep S LE_sealed cN hN hLE_sealed st ⟨pid, actor, payload⟩ st'
-  -- dregg3 F2a: the queue family's Inst circuits are DELETED (VerbRegistry `.factory .queue`;
-  -- the behavior is the verified `Dregg2/Apps/QueueFactory` et al). Until F2b removes the
-  -- constructors these arms carry the explicit hole portal.
-  | .queueEnqueueA id m actor cell =>
-      hole_circuit_step st (.queueEnqueueA id m actor cell) st'
   | .setFieldA actor cell f v =>
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       setFieldCircuitStep CS st ⟨actor, cell, f, v⟩ st'
@@ -270,16 +265,6 @@ def fullActionCircuitStep
   | .receiptArchiveA actor cell =>
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       receiptArchiveCircuitStep CS st ⟨actor, cell⟩ st'
-  | .queueAllocateA id actor cell cap =>
-      hole_circuit_step st (.queueAllocateA id actor cell cap) st'
-  | .queueDequeueA id actor cell =>
-      hole_circuit_step st (.queueDequeueA id actor cell) st'
-  | .queueResizeA id newCap actor cell =>
-      hole_circuit_step st (.queueResizeA id newCap actor cell) st'
-  | .queueAtomicTxA actor ops =>
-      hole_circuit_step st (.queueAtomicTxA actor ops) st'
-  | .queuePipelineStepA srcId owner sinkCells sinkIds =>
-      hole_circuit_step st (.queuePipelineStepA srcId owner sinkCells sinkIds) st'
   | .pipelinedSendA actor =>
       AccountsWF st.kernel ∧ AccountsWF st'.kernel ∧
       pipelinedSendCircuitStep CS st ⟨actor⟩ st'
@@ -528,14 +513,9 @@ theorem fullAction_circuit_refines_spec
       simp only [fullActionStep]
       rcases h with ⟨hwf, hwf', hc⟩
       exact receiptArchive_circuit_refines_spec CS hCSN hCSL hRestFrame hLogCS st _ st' hwf hwf' hc
-  -- dregg3 F2a: the queue-family circuit arms ARE the explicit hole portal, so refinement is
+  -- dregg3 F2b: the queue-family constructors are GONE — the circuit dispatch is TOTAL over the
+  -- 38 survivors (no hole-portal arm left).
   -- the portal fallback (the constructors die in F2b).
-  | .queueAllocateA _ _ _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
-  | .queueEnqueueA _ _ _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
-  | .queueDequeueA _ _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
-  | .queueResizeA _ _ _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
-  | .queueAtomicTxA _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
-  | .queuePipelineStepA _ _ _ _ => exact hole_fullAction_circuit_refines_spec_fallback _ h
   | .pipelinedSendA actor =>
       simp only [fullActionStep]
       rcases h with ⟨hwf, hwf', hc⟩

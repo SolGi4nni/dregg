@@ -45,7 +45,7 @@ state_constraints:
       with room (`occupancy < cap`), lands STILL respecting it; a FULL queue's enqueue fail-closes.
       THIS is the keystone that the relational caveat unlocks.
   (b) NO UNDERFLOW / FIFO      — PROVED: `tail ≤ head` preserved by both ops; an EMPTY queue's
-      dequeue fail-closes; FIFO order is the kernel's REAL buffer (`qbuf_fifo_order`).
+      dequeue fail-closes; FIFO order is the factory FIFO shadow (`qbuf_fifo_order`, §6).
   (c) SENDER-AUTH ON ENQUEUE   — PROVED: an enqueue by an actor ∉ the sender set fail-closes (the
       `SenderAuthorized` caveat verbatim).
   (d) CONSERVATION (value queue) — PROVED, inherited from `recKExecAsset_conserves_per_asset`: a
@@ -355,10 +355,40 @@ theorem enqueue_preserves_no_underflow {k k' : RecordKernelState} {e actor : Cel
   unfold qNoUnderflow at *
   rw [hh, ht]; omega
 
-/-- **FIFO ORDER — carried from the kernel's REAL buffer (`RecordKernel.qbuf_fifo_order`).** The
-order discipline (head removes the front, tail appends the back, `a`-before-`b` preserved) is the
-PROVED `qbufEnqueue`/`qbufDequeue` mechanism — the sequence counters here are the cell-field SHADOW
-of that buffer (head_seq = total appended, tail_seq = total removed). -/
+/-! ### The FIFO-order SHADOW (F2b: moved HERE from `RecordKernel` — the factory owns it now).
+
+F2b deleted the kernel queue side-table (`RecordKernelState.queues`) and its `qbuf*` STATE
+mechanism; per this module's §DELETION note, the `qbuf*` buffer accounting is RETAINED only as
+the authenticated FIFO-order SHADOW — the `message_root` commitment is the §8 crypto portal and
+the sequence counters (head_seq = total appended, tail_seq = total removed) are the cell-field
+truth. The pure buffer spec + the order theorem live with the factory story, not the kernel. -/
+
+/-- **Enqueue into the shadow buffer (the FIFO APPEND).** `buffer ++ [m]` — the new message goes
+to the BACK (tail), behind every message already waiting. -/
+def qbufEnqueue (buf : List Nat) (m : Nat) : List Nat := buf ++ [m]
+
+/-- **Dequeue from the shadow buffer (the FIFO REMOVE-FROM-FRONT).** Returns `(head, rest)` — the
+FRONT message (the oldest waiting) and the remaining buffer; `none` when empty. -/
+def qbufDequeue (buf : List Nat) : Option (Nat × List Nat) :=
+  match buf with
+  | []      => none
+  | m :: ms => some (m, ms)
+
+/-- **FIFO ORDER — PROVED (the load-bearing non-vacuity).** Enqueue `a` then `b` into ANY buffer,
+then dequeue: the FIRST dequeue returns the OLDEST waiting message, and `a` stays ahead of `b` —
+order is PRESERVED exactly because enqueue appends to the back and dequeue removes the front. -/
+theorem qbuf_fifo_order (buf : List Nat) (a b : Nat) :
+    qbufDequeue (qbufEnqueue (qbufEnqueue buf a) b) =
+      (match qbufDequeue buf with
+       | some (h, rest) => some (h, qbufEnqueue (qbufEnqueue rest a) b)
+       | none           => some (a, [b])) := by
+  cases buf with
+  | nil      => rfl
+  | cons h t => rfl
+
+/-- **FIFO ORDER — the queue-safety contract name.** The order discipline (head removes the
+front, tail appends the back, `a`-before-`b` preserved) — the sequence counters here are the
+cell-field SHADOW of this buffer. -/
 theorem fifo_order_holds (buf : List Nat) (a b : Nat) :
     qbufDequeue (qbufEnqueue (qbufEnqueue buf a) b) =
       (match qbufDequeue buf with
@@ -550,7 +580,7 @@ abbrev qrelCap : List RelCaveat := [ RelCaveat.fieldLteOther headSeqField capaci
 -- (vii) UNDERFLOW REJECTED: dequeue the one message, then a SECOND dequeue on the EMPTY queue fails (KEYSTONE b):
 #guard (((queueDequeue qWorld 0 1 55).bind (fun s => queueDequeue s 0 1 44)).isSome) == false
 
--- (viii) FIFO order (the kernel's real buffer): enqueue a then b, dequeue ⇒ a first (the OLDER):
+-- (viii) FIFO order (the factory FIFO shadow): enqueue a then b, dequeue ⇒ a first (the OLDER):
 #guard (qbufDequeue (qbufEnqueue (qbufEnqueue [] 10) 20)) == some (10, [20])
 
 -- (ix) the factory conforms (its empty genesis is invariant-clean):

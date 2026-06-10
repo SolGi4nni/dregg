@@ -170,8 +170,7 @@ theorem enliven_preserves_nonCaps_frame (s s' : RecChainedState) (sw : Nat) (act
     s'.kernel.accounts = s.kernel.accounts ∧ s'.kernel.cell = s.kernel.cell
       ∧ s'.kernel.escrows = s.kernel.escrows ∧ s'.kernel.nullifiers = s.kernel.nullifiers
       ∧ s'.kernel.revoked = s.kernel.revoked ∧ s'.kernel.commitments = s.kernel.commitments
-      ∧ s'.kernel.bal = s.kernel.bal ∧ s'.kernel.queues = s.kernel.queues
-      ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats ∧ s'.kernel.factories = s.kernel.factories
+      ∧ s'.kernel.bal = s.kernel.bal ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats ∧ s'.kernel.factories = s.kernel.factories
       ∧ s'.kernel.lifecycle = s.kernel.lifecycle ∧ s'.kernel.deathCert = s.kernel.deathCert
       ∧ s'.kernel.delegate = s.kernel.delegate ∧ s'.kernel.delegations = s.kernel.delegations
       ∧ s'.kernel.sealedBoxes = s.kernel.sealedBoxes := by

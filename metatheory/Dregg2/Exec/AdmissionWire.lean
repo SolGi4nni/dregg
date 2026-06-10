@@ -65,23 +65,12 @@ def actionWriteSet : FullActionA → List CellId
   | .makeSovereignA _ cell => [cell]
   | .refusalA _ cell      => [cell]
   | .receiptArchiveA _ cell => [cell]
-  | .queueAllocateA _ _ cell _ => [cell]
-  | .queueEnqueueA _ _ _ cell => [cell]
-  | .queueDequeueA _ _ cell => [cell]
-  | .queueResizeA _ _ _ cell => [cell]
   | .exportSturdyRefA _ _ exporter _ _ => [exporter]
   | .enlivenRefA _ _ exporter _ => [exporter]
   | .swissHandoffA _ _ _ exporter => [exporter]
   | .swissDropA _ _ exporter => [exporter]
   | .cellSealA _ cell      => [cell]
   | .cellUnsealA _ cell    => [cell]
-  | .queueAtomicTxA actor ops =>
-      addAll (ops.flatMap fun op =>
-        match op with
-        | .enqueue _ _ _ c => [c]
-        | .dequeue _ _ c => [c]) [actor]
-  | .queuePipelineStepA _ owner sinkCells _ =>
-      addUnique owner (sinkCells.foldl (fun acc c => addUnique c acc) [])
   | .pipelinedSendA actor => [actor]
   | .cellDestroyA _ cell _ => [cell]
   | .refreshDelegationA actor child => [actor, child]

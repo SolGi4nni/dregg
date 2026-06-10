@@ -225,15 +225,16 @@ balance, a non-empty escrow store, a non-default lifecycle) is frozen byte-for-b
 empty-descriptor / would-be-unsound teeth pin the honest surface. -/
 
 /-- A concrete kernel with NON-trivial content in several components: cells 0,1 live; cell 0 holds 30 of
-asset 0 on the per-asset ledger; cell 0 holds a `node 1` cap; one live queue record; cell 0's lifecycle
-is Sealed (1). The no-op must freeze ALL of this. (F1b: the kernel escrow store is gone, so the
-populated side-table witness is the `queues` record instead.) -/
+asset 0 on the per-asset ledger; cell 0 holds a `node 1` cap; one live swiss record; cell 0's lifecycle
+is Sealed (1). The no-op must freeze ALL of this. (F1b: the kernel escrow store is gone; F2b: the
+kernel queue side-table too — the populated side-table witness is a `swiss` record now, at the same
+non-vacuity strength.) -/
 def kN : RecordKernelState :=
   { accounts := {0, 1}
     cell := fun _ => .record [("balance", .int 0)]
     caps := fun l => if l = 0 then [Dregg2.Authority.Cap.node 1] else []
     bal := fun c a => if c = 0 ∧ a = 0 then 30 else 0
-    queues := [{ id := 7, owner := 0, capacity := 4, buffer := [30] }]
+    swiss := [{ swiss := 7, exporter := 0, target := 1, rights := [], refcount := 1, cert := none }]
     lifecycle := fun c => if c = 0 then 1 else 0 }
 
 /-- A SECOND, DISTINCT kernel for the would-be-unsound tooth: the empty per-asset ledger (every default),
@@ -244,7 +245,7 @@ def kNempty : RecordKernelState :=
 
 /-- **NON-VACUITY (the freeze is OBSERVABLE on real content).** Running the no-op term on the content-rich
 `kN` returns `kN` LITERALLY — the post-state IS the input across the cap graph, the per-asset ledger, the
-queue side-table, and the lifecycle registry. The whole-state freeze is real (the term genuinely admits and
+swiss side-table, and the lifecycle registry. The whole-state freeze is real (the term genuinely admits and
 preserves everything), not a vacuity over an empty state. -/
 theorem noopStmt_freezes_content : interp noopStmt kN = some kN := interp_noopStmt_eq_id kN
 
@@ -253,7 +254,7 @@ theorem noopStmt_freezes_content : interp noopStmt kN = some kN := interp_noopSt
 -- Spot-check, via the post-state, that the rich components survive the no-op verbatim (the freeze is a
 -- real preservation of populated state, not a no-op over a blank one). Each reads a NON-default value.
 #guard ((interp noopStmt kN).map (fun k => k.bal 0 0)) == some 30                    -- ledger frozen
-#guard ((interp noopStmt kN).map (fun k => k.queues.length)) == some 1               -- queue table frozen
+#guard ((interp noopStmt kN).map (fun k => k.swiss.length)) == some 1                -- swiss table frozen
 #guard ((interp noopStmt kN).map (fun k => k.lifecycle 0)) == some 1                 -- lifecycle frozen
 #guard ((interp noopStmt kN).map (fun k => k.caps 0)) == some [Dregg2.Authority.Cap.node 1]  -- cap graph frozen
 

@@ -1076,3 +1076,37 @@ fn refund_escrow_falls_back_factory_dissolved() {
     assert!(!lean_shadow::producer_mappable_effects().contains(&"RefundEscrow"));
     assert!(!lean_shadow::producer_root_gap_effects().contains(&"RefundEscrow"));
 }
+
+#[test]
+fn queue_allocate_falls_back_factory_dissolved() {
+    if skip_no_lean() {
+        return;
+    }
+    // FACTORY-DISSOLVED (F2b): the queue verb family (QueueAllocate/Enqueue/Dequeue/Resize/
+    // AtomicTx/PipelineStep) died with the kernel queue side-table — queue behavior is a
+    // factory-born cell program (Dregg2/Apps/{QueueFactory,InboxFactory,PubsubFactory}, the
+    // capacity/no-underflow bounds enforced by the LIVE relational caveat). The verified kernel
+    // no longer parses the queue wire actions, so a turn carrying one refuses LOUDLY at the wire
+    // (malformed-wire sentinel) and falls back to the Rust executor during the transitional
+    // window — never a silent state install. The family exits every producer list.
+    let (pre, a_id, _b_id) = two_open_cells();
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::QueueAllocate { capacity: 4, program_vk: None },
+    );
+    match diff(pre, turn, &[a_id]) {
+        Ok(()) => panic!(
+            "QueueAllocate unexpectedly round-tripped — factory dissolution means the verified \
+             kernel must not parse it"
+        ),
+        Err(why) => assert!(
+            why.contains("malformed-wire") || why.contains("decode failed"),
+            "QueueAllocate must refuse loudly at the wire (factory-dissolved), got: {why}"
+        ),
+    }
+    assert!(!lean_shadow::producer_mappable_effects().contains(&"QueueAllocate"));
+    assert!(!lean_shadow::producer_root_agreeing_effects().contains(&"QueueAllocate"));
+    assert!(!lean_shadow::producer_root_gap_effects().contains(&"QueueAllocate"));
+}

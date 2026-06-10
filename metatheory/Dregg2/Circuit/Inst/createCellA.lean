@@ -46,7 +46,7 @@ are digest-bound; only global side-tables ride the rest hash. -/
 def RestIffNoAccountsBalBorn (RH : RecordKernelState → ℤ) : Prop :=
   ∀ k k' : RecordKernelState, RH k = RH k' ↔
     (k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt)
@@ -114,7 +114,7 @@ def createCellE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
   logUpdate    := some (fun s args => createReceipt args.actor args.newCell :: s.log)
   restFrame    := fun k k' =>
     (k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt)

@@ -217,16 +217,9 @@ def nameRegisteredContract (name owner : Dregg2.Apps.NameService.Name) : Contrac
     | none    => simp only [Option.getD_none]; exact h
   shape := .membership
 
-def subWFContract : Contract where
-  Inv s := Dregg2.Apps.Subscription.subWF s.kernel
-  step_ob a cf h := by
-    rw [CellExecutor.kernelForest_next_eq]
-    unfold cellNextA
-    cases hc : execFullForestA a cf.1 with
-    | some a' => simp only [Option.getD_some]
-                 exact Dregg2.Apps.Subscription.execFullForestA_subWF_preserved a a' cf.1 hc h
-    | none    => simp only [Option.getD_none]; exact h
-  shape := .other
+-- F2b: `subWFContract` (the Subscription living-cell capacity invariant over the kernel `queues`
+-- side-table) died with the queue verb family — the living-cell queue safety is the factory story
+-- (`Apps/QueueFactory.lean` relational-caveat keystones).
 
 
 
@@ -278,8 +271,7 @@ noncomputable def nullifierPersists (nf : Nat) : Contract :=
 noncomputable def nameRegisteredContract (name owner : Dregg2.Apps.NameService.Name) : Contract :=
   liftFromKernelForest (KernelForest.nameRegisteredContract name owner)
 
-noncomputable def subWFContract : Contract :=
-  liftFromKernelForest KernelForest.subWFContract
+-- F2b: the production `subWFContract` lift died with the kernel queue side-table (factory story).
 
 noncomputable def subsetNullifiersContract (base : List Nat) : Contract :=
   liftFromKernelForest (KernelForest.subsetNullifiersContract base)
@@ -309,9 +301,6 @@ example (s : RecChainedState) (name owner : Dregg2.Apps.NameService.Name)
     ∀ n, Dregg2.Apps.NameService.isRegistered (trajG s sched n) name owner = true :=
   (nameRegisteredContract name owner).forever hinit sched
 
-example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
-  subWFContract.forever hinit sched
 
 /-! ## §3′ — Using a contract: `forever` / `always` are method calls, not re-proofs.
 
@@ -363,10 +352,6 @@ theorem nameservice_registration_forever_production (s : RecChainedState)
     ∀ n, Dregg2.Apps.NameService.isRegistered (trajG s sched n) name owner = true :=
   (nameRegisteredContract name owner).forever hinit sched
 
-theorem subscription_wellformed_forever_production (s : RecChainedState)
-    (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
-  subWFContract.forever hinit sched
 
 theorem asset_conserved_forever_production (s0 : RecChainedState) (a : AssetId) (sched : SchedG) :
     ∀ n, cellObsA (trajG s0 sched n) a = cellObsA s0 a :=
@@ -399,29 +384,20 @@ theorem revoked_pay_safety_forever (credNul : Nat) (s0 : RecChainedState) (payAs
          cellObsA (trajG s sched n) payAsset = cellObsA s0 payAsset :=
   (revokedPaySafety credNul s0 payAsset).forever (And.intro hrev hpay) sched
 
-/-- **Subscription well-formedness ∩ revocation persistence** — queue capacity safety composed with
-the identity revocation registry shape (`subWF` + `revokedPersists`). -/
-noncomputable def subWFAndRevoked (credNul : Nat) : Contract :=
-  composeContracts subWFContract (revokedPersists credNul)
+/-- **Note-commitment persistence ∩ revocation persistence** — a composed-contract example over two
+side-table shapes (replacing the F2b-retired subscription composition; same `composeContracts`
+mechanism, both conjuncts real). -/
+noncomputable def commitmentsAndRevoked (com0 : List Nat) (credNul : Nat) : Contract :=
+  composeContracts (subsetCommitmentsContract com0) (revokedPersists credNul)
 
-/-- **`subscription_and_revoked_forever` — COMPOSED PRODUCTION CROWN.** From a well-formed queue
-kernel AND an initially-revoked credential, BOTH invariants hold at every `trajG` index. -/
-theorem subscription_and_revoked_forever (credNul : Nat) (s : RecChainedState)
-    (hsub : Dregg2.Apps.Subscription.subWF s.kernel) (hrev : credNul ∈ s.kernel.revoked)
+/-- **`commitments_and_revoked_forever` — COMPOSED PRODUCTION CROWN.** From an initially-held
+commitment set AND an initially-revoked credential, BOTH invariants hold at every `trajG` index. -/
+theorem commitments_and_revoked_forever (com0 : List Nat) (credNul : Nat) (s : RecChainedState)
+    (hcom : com0 ⊆ s.kernel.commitments) (hrev : credNul ∈ s.kernel.revoked)
     (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel ∧
+    ∀ n, com0 ⊆ (trajG s sched n).kernel.commitments ∧
          credNul ∈ (trajG s sched n).kernel.revoked :=
-  (subWFAndRevoked credNul).forever (And.intro hsub hrev) sched
-
-/-- **`subscription_and_conserved_forever` — subscription ∩ log-monotone (second invariant example).** -/
-noncomputable def subWFAndLogMono (s0 : RecChainedState) : Contract :=
-  composeContracts subWFContract (logAppendOnly s0)
-
-theorem subscription_and_log_mono_forever (s0 : RecChainedState) (sched : SchedG)
-    (hsub : Dregg2.Apps.Subscription.subWF s0.kernel) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s0 sched n).kernel ∧
-         s0.log.length ≤ (trajG s0 sched n).log.length :=
-  (subWFAndLogMono s0).forever (And.intro hsub (le_refl s0.log.length)) sched
+  (commitmentsAndRevoked com0 credNul).forever (And.intro hcom hrev) sched
 
 /-! ## §4 — Non-vacuity guards — the contracts are substantive and the tag carries distinct info.
 
@@ -447,10 +423,6 @@ contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying da
           Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner) == some true)
 #guard ((KernelForest.nameRegisteredContract Dregg2.Apps.NameService.aliceName
           Dregg2.Apps.NameService.aliceOwner).shape == SafetyShape.membership)
-#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
-          (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity))) == some true)
-#guard (KernelForest.subWFContract.shape == SafetyShape.other)
-#guard ((KernelForest.nameRegisteredContract 1 100).shape ≠ KernelForest.subWFContract.shape)
 
 /-! ## §5 — Axiom hygiene — the contract object + its methods + the instances, kernel-triple clean. -/
 
@@ -465,19 +437,15 @@ contracts carry three DISTINCT `SafetyShape`s, so the tag is real classifying da
 #assert_axioms revokedPersists
 #assert_axioms nullifierPersists
 #assert_axioms nameRegisteredContract
-#assert_axioms subWFContract
 #assert_axioms identity_revoked_forever_production
 #assert_axioms spent_note_never_respent_production
 #assert_axioms no_double_spend_production
 #assert_axioms commitments_persist_production
 #assert_axioms nameservice_registration_forever_production
-#assert_axioms subscription_wellformed_forever_production
 #assert_axioms log_mono_forever_production
 #assert_axioms revokedPaySafety
 #assert_axioms revoked_pay_safety_forever
-#assert_axioms subWFAndRevoked
-#assert_axioms subscription_and_revoked_forever
-#assert_axioms subWFAndLogMono
-#assert_axioms subscription_and_log_mono_forever
+#assert_axioms commitmentsAndRevoked
+#assert_axioms commitments_and_revoked_forever
 
 end Dregg2.Verify

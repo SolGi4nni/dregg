@@ -157,7 +157,7 @@ theorem recordKernelState_ext {k k' : RecordKernelState}
     (haccounts : k.accounts = k'.accounts) (hcell : k.cell = k'.cell) (hcaps : k.caps = k'.caps)
     (hnullifiers : k.nullifiers = k'.nullifiers)
     (hrevoked : k.revoked = k'.revoked) (hcommitments : k.commitments = k'.commitments)
-    (hbal : k.bal = k'.bal) (hqueues : k.queues = k'.queues) (hswiss : k.swiss = k'.swiss)
+    (hbal : k.bal = k'.bal) (hswiss : k.swiss = k'.swiss)
     (hslotCaveats : k.slotCaveats = k'.slotCaveats) (hfactories : k.factories = k'.factories)
     (hlifecycle : k.lifecycle = k'.lifecycle) (hdeathCert : k.deathCert = k'.deathCert)
     (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)

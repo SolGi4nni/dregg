@@ -139,7 +139,6 @@ def CreateSealPairSpec (s : RecChainedState) (pid : Nat) (actor sealerHolder uns
   ∧ s'.kernel.revoked = s.kernel.revoked
   ∧ s'.kernel.commitments = s.kernel.commitments
   ∧ s'.kernel.bal = s.kernel.bal
-  ∧ s'.kernel.queues = s.kernel.queues
   ∧ s'.kernel.swiss = s.kernel.swiss
   ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats
   ∧ s'.kernel.factories = s.kernel.factories
@@ -169,13 +168,13 @@ theorem createSealPair_iff_spec (s : RecChainedState) (pid : Nat)
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hcaps, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcaps, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16⟩
       -- reconstruct `s'` from its (kernel field-by-field) + log spec.
       obtain ⟨k', log'⟩ := s'
-      obtain ⟨acc, cell, caps, nul, rev, com, bal, q, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
-      simp only at hcaps hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
-      subst hcaps hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      obtain ⟨acc, cell, caps, nul, rev, com, bal, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
+      simp only at hcaps hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
+      subst hcaps hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
       rfl
   · rw [if_neg hg]
     constructor
@@ -240,7 +239,7 @@ theorem createSealPair_spec_balance_neutral (s : RecChainedState) (pid : Nat)
     ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt := by
   have hspec := (createSealPair_iff_spec s pid actor sealerHolder unsealerHolder s').mp h
   exact ⟨hspec.2.2.2.2.2.2.2.2.1, hspec.2.2.2.1,
-         hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2⟩
+         hspec.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2.2⟩
 
 /-! ## §3 — non-vacuity: the gate is REAL (an unauthorized pair-create is REJECTED).
 

@@ -63,7 +63,7 @@ def openFronts : List OpenFront := [
   , ⟨"receiptArchiveA_circuit", .w3_diamond, some "receiptArchiveA", "v1 Inst diamond"⟩
   -- (F2a) the queue-family fronts (allocate/enqueue/dequeue/resize/atomicTx/pipelineStep)
   -- REMOVED: the family dissolved into the verified `Dregg2/Apps/QueueFactory` et al
-  -- (VerbRegistry `.factory .queue`); the kernel constructors die in F2b.
+  -- (VerbRegistry `.factory .queue`); (F2b) the kernel constructors are now GONE too.
   , ⟨"pipelinedSendA_circuit", .w3_diamond, some "pipelinedSendA", "v1 hold-gate diamond"⟩
   , ⟨"exportSturdyRefA_circuit", .w3_diamond, some "exportSturdyRefA", "swiss export diamond"⟩
   , ⟨"enlivenRefA_circuit", .w3_diamond, some "enlivenRefA", "v2 Inst diamond"⟩

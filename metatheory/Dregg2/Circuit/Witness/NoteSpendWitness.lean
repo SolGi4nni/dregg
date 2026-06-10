@@ -49,7 +49,7 @@ def nulDigConcrete : List Nat → ℤ :=
 /-- Concrete rest hash: a field-count of the non-`nullifiers` components. -/
 def rhConcrete : RecordKernelState → ℤ :=
   fun k => (k.accounts.card : ℤ) + (k.commitments.length : ℤ) * 7
-            + (k.queues.length : ℤ) * 17
+            + (k.swiss.length : ℤ) * 17
 
 /-- Concrete log hash: the REAL `Poseidon2Surface.refP2` sponge over the FULL `encTurnRec` (binds
 `src`/`dst`, which the OLD `lhConcrete` DROPPED). CR-grounded on the real `babyBearD4W16` Poseidon2. -/
@@ -73,7 +73,7 @@ def noteSpendEConcrete : EffectSpec2 RecChainedState NoteSpendArgs where
   restFrame    := fun k k' =>
     (k'.accounts = k.accounts ∧ k'.cell = k.cell ∧ k'.caps = k.caps
       ∧ k'.bal = k.bal ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.sealedBoxes = k.sealedBoxes

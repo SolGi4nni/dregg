@@ -236,17 +236,10 @@ fn build_corpus() -> Vec<CorpusCase> {
 
     // ---- GAP-shrink batch: newly-projected effects (was the swap surface) ----
     //
-    // QueueAllocate (FUNDED): a self-targeted allocate on a cell with balance ≥ capacity. apply.rs
-    // commits (the actor can pay the `capacity` cost AND owns the queue cell); the verified
-    // `queueAllocateChainA` commits (self-authority `stateAuthB` passes, the fresh queue id is
-    // novel so `queueAllocateK` inserts). The marshaller assigns the fresh queue id ABOVE the
-    // snapshot range so it never collides. AGREE. (The verified queue model is bal-neutral — it
-    // does not debit `capacity` — so the agreement is on the COMMIT bit, which matches in the
-    // funded case; an UNDER-funded allocate is a characterised model difference, not added here.)
-    case!("QueueAllocate/funded", 100, 100, |a, _b| {
-        let _ = a;
-        vec![Effect::QueueAllocate { capacity: 4, program_vk: None }]
-    });
+    // (F2b: the QueueAllocate/funded corpus case died with the FACTORY-DISSOLVED queue family —
+    // the verified kernel no longer parses queue wire actions; queue behavior is the factory
+    // story, Dregg2/Apps/QueueFactory et al. The loud wire refusal is pinned in
+    // lean_state_producer_coverage::queue_falls_back_factory_dissolved.)
 
     // GrantCapability (SELF-grant, with a self-cap held): the agent grants ITSELF a cap on itself.
     // apply.rs commits (self-grant `cap.target == from` skips the c-list lookup — the action
@@ -553,16 +546,9 @@ fn rust_lean_divergence_finder() {
              REJECT without one (Burn); a gate that only ever agrees or only ever diverges is \
              vacuous."
         );
-        // GAP-SHRINK TOOTH (QueueAllocate): the funded self-allocate must AGREE — the verified
-        // `queueAllocateChainA` commits (self-authority + novel id) exactly as apply.rs commits
-        // the funded allocate. This pins QueueAllocate as MODELLED-AND-AGREEING (it left the GAP).
-        let qa_agree = per_effect.get("QueueAllocate").map(|s| s.agree).unwrap_or(0);
-        assert!(
-            qa_agree >= 1,
-            "QueueAllocate GAP-shrink TOOTH failed — the funded self-allocate must AGREE between \
-             apply.rs and the verified queueAllocateChainA (got agree={qa_agree}). QueueAllocate \
-             is now projected to the wire; it must be modelled-and-agreeing, not a GAP."
-        );
+        // (F2b: the QueueAllocate GAP-shrink tooth died with the FACTORY-DISSOLVED queue family —
+        // see lean_state_producer_coverage::queue_falls_back_factory_dissolved for the loud
+        // wire-refusal tooth that replaced it.)
         // NOTESPEND DRIFT-RESOLVED TOOTH: the proofless spend (empty `spending_proof` ⇒ wire flag
         // 0) must AGREE — apply.rs rejects ("missing spending proof") AND the verified
         // `noteSpendChainA` rejects (`noteSpendChainA_fails_without_proof`). Before the §8 flag was
@@ -691,9 +677,10 @@ fn write_ledger_markdown(
          the verified `noteSpendChainA` (the proved `noteSpendChainA_fails_without_proof` teeth), so \
          they AGREE. The proof BYTES + STARK Merkle-membership stay the circuit's concern; only the \
          proof-PRESENCE bit (which the commit decision turns on) crosses the wire.\n\n\
-         2c. **QueueAllocate / GrantCapability — newly PROJECTED (GAP shrunk).** `QueueAllocate` \
-         crosses as `qalloc` (self-authority gate + fresh queue id ⇒ funded self-allocate AGREES \
-         with apply.rs). `GrantCapability` crosses as `del` (`recKDelegate`, gated on the delegator \
+         2c. **GrantCapability — newly PROJECTED (GAP shrunk).** (F2b: QueueAllocate is \
+         FACTORY-DISSOLVED — the verified kernel no longer parses queue wire actions; the loud \
+         refusal is pinned in lean_state_producer_coverage.) \
+         `GrantCapability` crosses as `del` (`recKDelegate`, gated on the delegator \
          holding the cap-target edge): a self-grant on a cell holding a self-`node` cap COMMITS in \
          both (AGREE); a self-grant on an empty c-list is REJECTED by the verified gate while \
          apply.rs short-circuits the self-grant (a safe-direction model difference, two-sided tooth).\n\n\

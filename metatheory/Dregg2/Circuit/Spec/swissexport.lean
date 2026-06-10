@@ -135,7 +135,6 @@ def ExportSpec (s : RecChainedState) (sw : Nat) (actor exporter target : CellId)
   ∧ s'.kernel.revoked = s.kernel.revoked
   ∧ s'.kernel.commitments = s.kernel.commitments
   ∧ s'.kernel.bal = s.kernel.bal
-  ∧ s'.kernel.queues = s.kernel.queues
   ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats
   ∧ s'.kernel.factories = s.kernel.factories
   ∧ s'.kernel.lifecycle = s.kernel.lifecycle
@@ -176,13 +175,13 @@ theorem export_iff_spec (s : RecChainedState) (sw : Nat) (actor exporter target 
         · intro h
           simp only [Option.some.injEq] at h
           subst h
-          refine ⟨⟨hauth, hf, hr⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-        · rintro ⟨_, hsw, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩
+          refine ⟨⟨hauth, hf, hr⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+        · rintro ⟨_, hsw, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16⟩
           -- reconstruct `s'` from its (kernel field-by-field) + log spec.
           obtain ⟨k', log'⟩ := s'
-          obtain ⟨acc, cell, caps, nul, rev, com, bal, q, sw', sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
-          simp only [exportRecord, exportReceipt] at hsw hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
-          subst hsw hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+          obtain ⟨acc, cell, caps, nul, rev, com, bal, sw', sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
+          simp only [exportRecord, exportReceipt] at hsw hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
+          subst hsw hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
           rfl
       · -- non-amplification fails ⇒ `none`.
         rw [if_neg hr]

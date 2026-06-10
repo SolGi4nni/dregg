@@ -130,7 +130,6 @@ def RevokeSpec (st : RecChainedState) (holder t : CellId) (st' : RecChainedState
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
   ∧ st'.kernel.bal = st.kernel.bal
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
@@ -155,20 +154,19 @@ theorem recCRevoke_iff_spec (st : RecChainedState) (holder t : CellId) (st' : Re
   unfold RevokeSpec
   constructor
   · intro h; subst h
-    refine ⟨trivial, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-           rfl, rfl, rfl⟩
+    refine ⟨trivial, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
     exact removeEdgeCaps_correct st.kernel holder t
-  · rintro ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hq, hsw, hsc, hfac, hlif,
+  · rintro ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsw, hsc, hfac, hlif,
            hdc, hdel, hdels, hsb, hde, hdea⟩
     -- `st'` is the spec'd full post-state: rebuild the committed `RecChainedState` field-by-field.
     -- The `caps` post (`removeEdgeCaps`) is the executor's `recKRevokeTarget` post (§1), so
     -- `recCRevoke st holder t` has EXACTLY `st'`'s fields. Destructure `st'` so each spec field hyp
     -- has a fresh field VAR to `subst`.
     obtain ⟨k', log'⟩ := st'
-    obtain ⟨acc', cell', caps', null', rev', com', bal', q', sw', sc', fac', lif', dc', del',
+    obtain ⟨acc', cell', caps', null', rev', com', bal', sw', sc', fac', lif', dc', del',
             dels', sb', de', dea'⟩ := k'
     rw [← removeEdgeCaps_correct st.kernel holder t] at hcaps
-    subst hacc hcell hcaps hnull hrev hcom hbal hq hsw hsc hfac hlif hdc hdel hdels hsb hlog
+    subst hacc hcell hcaps hnull hrev hcom hbal hsw hsc hfac hlif hdc hdel hdels hsb hlog
       hde hdea
     rfl
 

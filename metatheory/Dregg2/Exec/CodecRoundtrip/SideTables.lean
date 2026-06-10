@@ -11,7 +11,6 @@ namespace Dregg2.Exec.CodecRoundtrip
 open Dregg2.Exec
 open Dregg2.Exec.FFI
 open Dregg2.Exec.FFI.Wide
-open Dregg2.Exec.TurnExecutorFull (QueueTxOpA)
 
 /-! ## §8 — the narrow `AUTHS` list (`parseAuths`) roundtrip — the INPUT-LENGTH-FUEL `let rec` loop
 pattern (the gateway reused by every remaining FILL-J production: `parseNats`/`parseEscrow`/`parseQueue`/

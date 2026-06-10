@@ -119,90 +119,7 @@ theorem noteSpendNullifier_commitments {k k' : RecordKernelState} {nf : Nat}
   · exact absurd h (by simp)
   · obtain ⟨rfl⟩ := h; rfl
 
-/-- Queue allocate leaves `commitments` unchanged (edits only `queues`). -/
-theorem queueAllocateK_commitments {k k' : RecordKernelState} {id : Nat} {owner : CellId} {capacity : Nat}
-    (h : queueAllocateK k id owner capacity = some k') : k'.commitments = k.commitments := by
-  unfold queueAllocateK at h; split at h
-  · exact absurd h (by simp)
-  · obtain ⟨rfl⟩ := h; rfl
-
-/-- Bare queue enqueue leaves `commitments` unchanged (edits only `queues`). -/
-theorem queueEnqueueK_commitments {k k' : RecordKernelState} {id m : Nat}
-    (h : queueEnqueueK k id m = some k') : k'.commitments = k.commitments := by
-  unfold queueEnqueueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · obtain ⟨rfl⟩ := h; rfl
-    · exact absurd h (by simp)
-
-/-- Bare queue dequeue leaves `commitments` unchanged (edits only `queues`). -/
-theorem queueDequeueK_commitments {k k' : RecordKernelState} {id : Nat} {actor : CellId} {mh : Nat}
-    (h : queueDequeueK k id actor = some (k', mh)) : k'.commitments = k.commitments := by
-  unfold queueDequeueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · split at h
-      · exact absurd h (by simp)
-      · simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨he, _⟩ := h; subst he; rfl
-    · exact absurd h (by simp)
-
-/-- Queue resize leaves `commitments` unchanged (edits only `queues`). -/
-theorem queueResizeK_commitments {k k' : RecordKernelState} {id newCap : Nat}
-    (h : queueResizeK k id newCap = some k') : k'.commitments = k.commitments := by
-  unfold queueResizeK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · obtain ⟨rfl⟩ := h; rfl
-    · exact absurd h (by simp)
-
-/-- WAVE 4: one atomic-batch sub-op leaves `commitments` unchanged (the deposit-park frames it via the
-escrow-create / settle bodies; the FIFO move via the queue bodies). -/
-theorem queueTxOpStepA_commitments {s s' : RecChainedState} {op : QueueTxOpA}
-    (h : queueTxOpStepA s op = some s') : s'.kernel.commitments = s.kernel.commitments := by
-  cases op with
-  | enqueue id m actor cell =>
-      simp only [queueTxOpStepA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => commit_subst h hk; exact queueEnqueueK_commitments hk
-      · exact absurd h (by simp)
-  | dequeue id actor cell =>
-      simp only [queueTxOpStepA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p
-                    rw [hk] at h
-                    simp only [Option.some.injEq] at h
-                    subst h
-                    exact queueDequeueK_commitments hk
-      · exact absurd h (by simp)
-
-/-- WAVE 4: the ALL-OR-NOTHING atomic batch leaves `commitments` unchanged (induction over the sub-ops). -/
-theorem queueAtomicTxChainA_commitments {s s' : RecChainedState} {ops : List QueueTxOpA}
-    (h : queueAtomicTxChainA s ops = some s') : s'.kernel.commitments = s.kernel.commitments := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; rfl
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none => rw [hop] at h; exact absurd h (by simp)
-      | some s1 => rw [hop] at h; rw [ih h, queueTxOpStepA_commitments hop]
-
-/-- WAVE 4: the pipeline fan-out enqueue fold leaves `commitments` unchanged (each `queueEnqueueK` frames it). -/
-theorem pipelineFanoutK_commitments {k k' : RecordKernelState} {actor : CellId} {m : Nat}
-    {sinks : List CellId} {sids : List Nat}
-    (h : pipelineFanoutK k actor m sinks sids = some k') : k'.commitments = k.commitments := by
-  induction sinks generalizing k sids with
-  | nil => cases sids <;> (simp only [pipelineFanoutK, Option.some.injEq] at h; subst h; rfl)
-  | cons sink rest ih =>
-      cases sids with
-      | nil => simp only [pipelineFanoutK] at h; exact absurd h (by simp)
-      | cons sid sids' =>
-          simp only [pipelineFanoutK] at h; split at h
-          · cases hq : queueEnqueueK k sid m with
-            | none => rw [hq] at h; exact absurd h (by simp)
-            | some k1 => rw [hq] at h; rw [ih h, queueEnqueueK_commitments hq]
-          · exact absurd h (by simp)
+-- (F2b: the queue-family `_commitments` frame helpers died with the queue verb family.)
 
 /-- Swiss export leaves `commitments` unchanged (edits only `swiss`). -/
 theorem swissExportK_commitments {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
@@ -389,46 +306,6 @@ theorem execFullA_commitments_grow (s s' : RecChainedState) (fa : FullActionA)
   | receiptArchiveA actor cell =>
       simp only [execFullA] at h; obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
       exact subset_of_commitments_eq (writeField_commitments _ _ _ _)
-  | queueAllocateA id actor cell cap =>
-      simp only [execFullA, queueAllocateChainA] at h; split at h
-      · cases hk : queueAllocateK s.kernel id actor cap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => commit_subst h hk; exact subset_of_commitments_eq (queueAllocateK_commitments hk)
-      · exact absurd h (by simp)
-  | queueEnqueueA id m actor cell =>
-      simp only [execFullA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => commit_subst h hk; exact subset_of_commitments_eq (queueEnqueueK_commitments hk)
-      · exact absurd h (by simp)
-  | queueDequeueA id actor cell =>
-      simp only [execFullA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p
-                    rw [hk] at h
-                    obtain ⟨rfl⟩ := h
-                    exact subset_of_commitments_eq (queueDequeueK_commitments hk)
-      · exact absurd h (by simp)
-  | queueResizeA id newCap actor cell =>
-      simp only [execFullA, queueResizeChainA] at h; split at h
-      · cases hk : queueResizeK s.kernel id newCap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => commit_subst h hk; exact subset_of_commitments_eq (queueResizeK_commitments hk)
-      · exact absurd h (by simp)
-  -- §MA-queue-batch (WAVE 4): the atomic batch / pipeline step edit only `queues`/`escrows`/`bal` (the
-  -- deposit park, the FIFO move), never `commitments` (the witness lemmas + frame helpers); pipelinedSend
-  -- edits NOTHING.
-  | queueAtomicTxA actor ops =>
-      simp only [execFullA] at h
-      obtain ⟨s1, hf, _, hk⟩ := queueAtomicTxA_atomic_witness h
-      rw [show s'.kernel.commitments = s1.kernel.commitments from by rw [hk]]
-      exact subset_of_commitments_eq (queueAtomicTxChainA_commitments hf)
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA] at h
-      obtain ⟨k1, mh, hd, hfo⟩ := queuePipelineStepA_routing_witness h
-      exact subset_of_commitments_eq
-        ((pipelineFanoutK_commitments hfo).trans (queueDequeueK_commitments hd))
   | pipelinedSendA actor =>
       simp only [execFullA, Option.some.injEq] at h; subst h; exact subset_of_commitments_eq rfl
   | exportSturdyRefA sw actor exporter target rights =>

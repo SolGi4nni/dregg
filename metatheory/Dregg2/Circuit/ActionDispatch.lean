@@ -7,9 +7,9 @@
 dregg3 F1a: the escrow / obligation / bridge-Lock/Finalize/Cancel families lost their spec
 modules (deleted; they re-land as verified factory cell-programs in `Dregg2/Apps/`); their
 arms carry the executor equation verbatim until F1b removes the kernel constructors.
-dregg3 F2a: the queue family (allocate/enqueue/dequeue/resize/atomicTx/pipelineStep) lost its
-spec modules the same way (VerbRegistry: `.factory .queue`; behavior = `Dregg2/Apps/QueueFactory`
-et al); their six arms carry the executor equation verbatim until F2b removes the constructors.
+dregg3 F2a+F2b: the queue family (allocate/enqueue/dequeue/resize/atomicTx/pipelineStep) lost its
+spec modules AND its `FullActionA` constructors (VerbRegistry: `.factory .queue`; behavior =
+`Dregg2/Apps/QueueFactory` et al — the factory story).
 
 ## Executor shape (`TurnExecutorFull.lean:3665`)
 
@@ -142,12 +142,6 @@ def actionTag : FullActionA → Nat
   | .makeSovereignA _ _ => 38
   | .refusalA _ _ => 39
   | .receiptArchiveA _ _ => 40
-  | .queueAllocateA _ _ _ _ => 41
-  | .queueEnqueueA _ _ _ _ => 42
-  | .queueDequeueA _ _ _ => 43
-  | .queueResizeA _ _ _ _ => 44
-  | .queueAtomicTxA _ _ => 45
-  | .queuePipelineStepA _ _ _ _ => 46
   | .pipelinedSendA _ => 47
   | .exportSturdyRefA _ _ _ _ _ => 48
   | .enlivenRefA _ _ _ _ => 49
@@ -251,22 +245,8 @@ mutual
         RefusalSpec st actor cell st'
     | .receiptArchiveA actor cell =>
         ReceiptArchiveSpec st actor cell st'
-    -- dregg3 F2a: the queue family LOST its declarative spec layer (deleted with the per-effect
-    -- circuit strata; the behavior is the verified `Dregg2/Apps/QueueFactory` et al). Until F2b
-    -- removes the `FullActionA` constructors, these six arms carry the executor equation
-    -- VERBATIM — an honest "no independent spec" marker, not a triangle claim.
-    | .queueAllocateA id actor cell cap =>
-        execFullA st (.queueAllocateA id actor cell cap) = some st'
-    | .queueEnqueueA id m actor cell =>
-        execFullA st (.queueEnqueueA id m actor cell) = some st'
-    | .queueDequeueA id actor cell =>
-        execFullA st (.queueDequeueA id actor cell) = some st'
-    | .queueResizeA id newCap actor cell =>
-        execFullA st (.queueResizeA id newCap actor cell) = some st'
-    | .queueAtomicTxA actor ops =>
-        execFullA st (.queueAtomicTxA actor ops) = some st'
-    | .queuePipelineStepA srcId owner sinkCells sinkIds =>
-        execFullA st (.queuePipelineStepA srcId owner sinkCells sinkIds) = some st'
+    -- dregg3 F2b: the queue-family constructors are GONE (the behavior is the verified
+    -- `Dregg2/Apps/QueueFactory` et al — the factory story).
     | .pipelinedSendA actor =>
         PipelinedSendSpec st actor st'
     | .exportSturdyRefA sw actor exporter target rights =>
@@ -501,14 +481,6 @@ mutual
     | .receiptArchiveA actor cell => by
       simp only [fullActionStep, execFullA]
       exact execFullA_receiptArchiveA_iff_spec st actor cell st'
-    -- dregg3 F2a: the queue-family arms carry the executor equation verbatim (see
-    -- `fullActionStep`); the iff is definitional until F2b deletes the constructors.
-    | .queueAllocateA _ _ _ _ => Iff.rfl
-    | .queueEnqueueA _ _ _ _ => Iff.rfl
-    | .queueDequeueA _ _ _ => Iff.rfl
-    | .queueResizeA _ _ _ _ => Iff.rfl
-    | .queueAtomicTxA _ _ => Iff.rfl
-    | .queuePipelineStepA _ _ _ _ => Iff.rfl
     | .pipelinedSendA actor => by
       simp only [fullActionStep, execFullA]
       exact execFullA_pipelinedSend_iff_spec st actor st'

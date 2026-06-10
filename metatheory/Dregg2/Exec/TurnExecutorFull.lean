@@ -2047,556 +2047,6 @@ theorem noteSpendChainA_requires_proof {s s' : RecChainedState} {nf : Nat} {acto
     · exact ⟨hp, hin⟩
   · rw [if_neg hp] at h; exact absurd h (by simp)
 
-/-! ### §MA-queue — the REAL ring-buffer FIFO queue effects (Wave-7 de-THIN). The chained wrappers over
-`RecordKernel`'s `queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK`, EACH composed with a
-REAL `stateAuthB actor cell` authority gate over the queue's representing cell (dregg1's writer-ACL /
-owner gate, `apply.rs:3334,3433`) — fail-closed if the actor lacks authority. The kernel transition
-carries the FIFO/capacity/owner/emptiness gates; the chained wrapper adds the c-list authority gate and
-the receipt-chain row. ALL FOUR are balance-NEUTRAL: queues hold MESSAGES, never balance. -/
-
-/-- **Chained queue allocate** — gate on `stateAuthB actor cell` (the actor may create a queue on its
-cell) AND run `queueAllocateK` (fail-closed on a duplicate id). -/
-def queueAllocateChainA (s : RecChainedState) (id : Nat) (actor cell : CellId) (capacity : Nat) :
-    Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor cell = true then
-    match queueAllocateK s.kernel id actor capacity with
-    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
-    | none    => none
-  else none
-
-/-- **Chained queue enqueue** — gate on `stateAuthB actor cell` (the writer-ACL gate, `apply.rs:3334`)
-AND run `queueEnqueueK` (APPEND to the tail; fail-closed if absent OR FULL, `apply.rs:3348`). F1b: the
-Wave-8 refundable anti-spam deposit-park is GONE with the kernel escrow holding-store it parked into
-(anti-spam deposits are a FACTORY concern in the F2 queue migration) — the enqueue is bal-NEUTRAL
-again, the FIFO automaton unchanged. The receipt is the zero-amount queue metadata row. -/
-def queueEnqueueChainA (s : RecChainedState) (id : Nat) (m : Nat) (actor cell : CellId) :
-    Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true then
-    match queueEnqueueK s.kernel id m with
-    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
-    | none    => none
-  else none
-
-/-- **Chained queue dequeue** — gate on `stateAuthB actor cell` (the c-list read) AND run
-`queueDequeueK` with `actor` as the dequeuer (REMOVE-FROM-FRONT in FIFO order; fail-closed if absent,
-NOT the owner `apply.rs:3433`, OR EMPTY `apply.rs:3444`). F1b: the deposit refund is GONE with the
-deposit park — bal-NEUTRAL. The dequeued head message surfaces in the kernel transition's `Nat`; the
-receipt is the zero-amount queue metadata row. -/
-def queueDequeueChainA (s : RecChainedState) (id : Nat) (actor cell : CellId) :
-    Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true then
-    match queueDequeueK s.kernel id actor with
-    | some (k', _) => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
-    | none         => none
-  else none
-
-/-- **Chained queue resize** — gate on `stateAuthB actor cell` AND run `queueResizeK` (fail-closed if
-absent OR shrinking below the current occupancy, `apply.rs:3534`). -/
-def queueResizeChainA (s : RecChainedState) (id : Nat) (newCap : Nat) (actor cell : CellId) :
-    Option RecChainedState :=
-  if stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true then
-    match queueResizeK s.kernel id newCap with
-    | some k' => some { kernel := k', log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }
-    | none    => none
-  else none
-
-/-- **`queueChainA_factors` — PROVED.** A committed queue chained step (allocate/enqueue/dequeue/resize)
-implies the actor was authorized over the queue cell AND the kernel transition committed. The bridge the
-authority + bal-neutrality keystones reuse. Stated generically over the kernel `Option` result. -/
-theorem queueEnqueueChainA_authorized {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
-    (h : queueEnqueueChainA s id m actor cell = some s') :
-    stateAuthB s.kernel.caps actor cell = true := by
-  unfold queueEnqueueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · exact hg.1
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueDequeueChainA_authorized {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
-    (h : queueDequeueChainA s id actor cell = some s') :
-    stateAuthB s.kernel.caps actor cell = true := by
-  unfold queueDequeueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · exact hg.1
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueAllocateChainA_authorized {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
-    (h : queueAllocateChainA s id actor cell cap = some s') :
-    stateAuthB s.kernel.caps actor cell = true := by
-  unfold queueAllocateChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true
-  · exact hg
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueResizeChainA_authorized {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
-    (h : queueResizeChainA s id newCap actor cell = some s') :
-    stateAuthB s.kernel.caps actor cell = true := by
-  unfold queueResizeChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · exact hg.1
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-/-- **`queueEnqueueChainA_balNeutral` — PROVED.** A committed enqueue leaves the per-asset measure
-UNCHANGED ∀ asset (the FIFO append touches only `queues`; F1b removed the deposit park). -/
-theorem queueEnqueueChainA_balNeutral {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
-    (h : queueEnqueueChainA s id m actor cell = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queueEnqueueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueEnqueueK s.kernel id m with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' =>
-        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-        exact queueEnqueueK_balNeutral hk b
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueDequeueChainA_balNeutral {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
-    (h : queueDequeueChainA s id actor cell = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queueDequeueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueDequeueK s.kernel id actor with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some kr =>
-        obtain ⟨k', m⟩ := kr
-        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-        exact queueDequeueK_balNeutral hk b
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueAllocateChainA_balNeutral {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
-    (h : queueAllocateChainA s id actor cell cap = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queueAllocateChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueAllocateK s.kernel id actor cap with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' =>
-        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-        exact queueAllocateK_balNeutral hk b
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueResizeChainA_balNeutral {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
-    (h : queueResizeChainA s id newCap actor cell = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queueResizeChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueResizeK s.kernel id newCap with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' =>
-        rw [hk] at h; simp only [Option.some.injEq] at h; subst h
-        exact queueResizeK_balNeutral hk b
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-/-- **`queueEnqueueChainA_chainlink` — PROVED.** A committed enqueue appends EXACTLY one receipt row
-(the zero-amount queue metadata row). -/
-theorem queueEnqueueChainA_chainlink {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
-    (h : queueEnqueueChainA s id m actor cell = some s') :
-    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
-  unfold queueEnqueueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueEnqueueK s.kernel id m with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueDequeueChainA_chainlink {s s' : RecChainedState} {id : Nat} {actor cell : CellId}
-    (h : queueDequeueChainA s id actor cell = some s') :
-    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
-  unfold queueDequeueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueDequeueK s.kernel id actor with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some kr => obtain ⟨k', m⟩ := kr; rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueAllocateChainA_chainlink {s s' : RecChainedState} {id : Nat} {actor cell : CellId} {cap : Nat}
-    (h : queueAllocateChainA s id actor cell cap = some s') :
-    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
-  unfold queueAllocateChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueAllocateK s.kernel id actor cap with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-theorem queueResizeChainA_chainlink {s s' : RecChainedState} {id newCap : Nat} {actor cell : CellId}
-    (h : queueResizeChainA s id newCap actor cell = some s') :
-    s'.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log := by
-  unfold queueResizeChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · rw [if_pos hg] at h
-    cases hk : queueResizeK s.kernel id newCap with
-    | none    => rw [hk] at h; exact absurd h (by simp)
-    | some k' => rw [hk] at h; simp only [Option.some.injEq] at h; subst h; rfl
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-/-! ### §D3 — QUEUE-CELL LIFECYCLE-LIVENESS TEETH (the queue's owning cell must be Live).
-
-The queue effects write/credit the queue's OWNING `cell` (the writer-ACL / owner cell, dregg1's
-`apply.rs:3334`/`:3433`/`:3534`) and previously gated ONLY on `stateAuthB actor cell` (the c-list
-authority) — so a queue on a SEALED/Destroyed owning cell would still enqueue/dequeue/resize, bypassing
-`cellSeal`. The `acceptsEffects s.kernel cell` conjunct (the SAME lifecycle gate as the R6 field write
-and the `cellSeal` state machine) closes that: a queue op whose owning cell is not lifecycle-live now
-FAILS CLOSED. The atomic batch inherits it (each sub-op routes through the gated chained step). -/
-
-/-- **`queueEnqueueChainA_lifecycle_live` — PROVED.** A committed enqueue's owning cell was lifecycle-live
-(`acceptsEffects`, the D3 queue gate). -/
-theorem queueEnqueueChainA_lifecycle_live {s s' : RecChainedState} {id m : Nat} {actor cell : CellId}
-    (h : queueEnqueueChainA s id m actor cell = some s') :
-    acceptsEffects s.kernel cell = true := by
-  unfold queueEnqueueChainA at h
-  by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ acceptsEffects s.kernel cell = true
-  · exact hg.2
-  · rw [if_neg hg] at h; exact absurd h (by simp)
-
-/-- **`queueEnqueueChainA_nonlive_fails` — PROVED (FAIL-CLOSED, the D3 queue-enqueue teeth).** An enqueue
-onto a queue whose owning cell is NOT lifecycle-live (Sealed/Destroyed) does NOT commit — even with c-list
-authority. A frozen cell's queue rejects new messages/deposits. -/
-theorem queueEnqueueChainA_nonlive_fails (s : RecChainedState) (id m : Nat) (actor cell : CellId)
-    (h : acceptsEffects s.kernel cell = false) :
-    queueEnqueueChainA s id m actor cell = none := by
-  unfold queueEnqueueChainA
-  rw [if_neg]; intro hg; rw [h] at hg; exact absurd hg.2 (by simp)
-
-/-- **`queueDequeueChainA_nonlive_fails` — PROVED (FAIL-CLOSED, the D3 queue-dequeue teeth).** A dequeue
-from a queue whose owning cell is NOT lifecycle-live does NOT commit (the refund-credit cannot land on a
-frozen cell's queue). -/
-theorem queueDequeueChainA_nonlive_fails (s : RecChainedState) (id : Nat) (actor cell : CellId)
-    (h : acceptsEffects s.kernel cell = false) :
-    queueDequeueChainA s id actor cell = none := by
-  unfold queueDequeueChainA
-  rw [if_neg]; intro hg; rw [h] at hg; exact absurd hg.2 (by simp)
-
-/-- **`queueResizeChainA_nonlive_fails` — PROVED (FAIL-CLOSED, the D3 queue-resize teeth).** A resize of a
-queue whose owning cell is NOT lifecycle-live does NOT commit. -/
-theorem queueResizeChainA_nonlive_fails (s : RecChainedState) (id newCap : Nat) (actor cell : CellId)
-    (h : acceptsEffects s.kernel cell = false) :
-    queueResizeChainA s id newCap actor cell = none := by
-  unfold queueResizeChainA
-  rw [if_neg]; intro hg; rw [h] at hg; exact absurd hg.2 (by simp)
-
-#assert_axioms queueEnqueueChainA_lifecycle_live
-#assert_axioms queueEnqueueChainA_nonlive_fails
-#assert_axioms queueDequeueChainA_nonlive_fails
-#assert_axioms queueResizeChainA_nonlive_fails
-
-/-! ### §MA-queue-batch — WAVE 4: the ATOMIC cross-queue transaction + the PIPELINE fan-out step
-(`QueueAtomicTx`/`QueuePipelineStep`, dregg1 `apply.rs:3586`/`:3747`). The atomic batch executes a LIST
-of `QueueTxOp::{Enqueue,Dequeue}` ALL-OR-NOTHING against one or more queues (dregg1's journal-rollback
-discipline, `apply.rs:3592` "On any failure, the journal handles rollback for the entire action"); the
-pipeline step DEQUEUES the FIFO head from a source queue (owner-only) and RE-ENQUEUES it into each sink
-(ACL-checked — `apply.rs:3812` BUG#114 sink-auth gate). Both ride the SAME proven chained queue kernel
-ops (`queueDequeueK`/`queueEnqueueK`), so the FIFO order, capacity bound, owner gate, and per-asset
-bal-neutrality are INHERITED — NOT re-modelled. -/
-
-/-- **A single atomic-batch sub-op** (dregg1 `QueueTxOp`, `action.rs:1447`). Each is exactly the
-chained queue step it routes to (`queueEnqueueChainA`/`queueDequeueChainA`), so the batch is a
-SEQUENCING of proven steps, never a new automaton. F1b: the deposit/refund legs are GONE with the
-kernel escrow holding-store (anti-spam deposits re-land as a factory concern in F2). -/
-inductive QueueTxOpA where
-  /-- `QueueTxOp::Enqueue { queue, message_hash }` (`action.rs:1449`): append `m` to queue `id`,
-  writer-ACL gated. -/
-  | enqueue (id m : Nat) (actor cell : CellId)
-  /-- `QueueTxOp::Dequeue { queue }` (`action.rs:1456`): remove-from-front of queue `id`, owner gated. -/
-  | dequeue (id : Nat) (actor cell : CellId)
-  deriving Repr, DecidableEq
-
-/-- **Run ONE atomic-batch sub-op** — route to the already-proven authority-gated chained queue step.
-The sub-op's OWN fail-closed gate (writer-ACL / owner / FULL / EMPTY) lives in the chained step;
-this is just the discriminant. -/
-def queueTxOpStepA (s : RecChainedState) : QueueTxOpA → Option RecChainedState
-  | .enqueue id m actor cell => queueEnqueueChainA s id m actor cell
-  | .dequeue id actor cell   => queueDequeueChainA s id actor cell
-
-/-- **`queueTxOpStepA_balNeutral` — PROVED.** Each atomic sub-op is COMBINED-conserving per asset (the
-deposit park / refund moves the bare ledger but the combined measure is fixed) — read off the chained
-queue step's `balNeutral`. -/
-theorem queueTxOpStepA_balNeutral {s s' : RecChainedState} {op : QueueTxOpA}
-    (h : queueTxOpStepA s op = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  cases op with
-  | enqueue id m actor cell => exact queueEnqueueChainA_balNeutral h b
-  | dequeue id actor cell   => exact queueDequeueChainA_balNeutral h b
-
-/-- **The ALL-OR-NOTHING atomic batch** (dregg1 `apply_queue_atomic_tx`, `apply.rs:3586`). Fold the
-sub-ops left-to-right through the chained-state `Option` monad: the batch COMMITS iff EVERY sub-op
-commits (each against the result of the prior). ANY sub-op failing ⇒ the WHOLE fold is `none` ⇒ the
-batch rolls back (dregg1's journal-rollback for the entire action). The atomicity is the property: the
-post-state is `some` exactly when the entire sequence would commit. -/
-def queueAtomicTxChainA (s : RecChainedState) : List QueueTxOpA → Option RecChainedState
-  | []        => some s
-  | op :: ops =>
-      match queueTxOpStepA s op with
-      | some s' => queueAtomicTxChainA s' ops
-      | none    => none
-
-/-- **`queueAtomicTxChainA_balNeutral` — PROVED (the atomic batch is COMBINED-conserving per asset).**
-A committed batch preserves `recTotalAsset` at EVERY asset: each sub-op is combined-neutral,
-and the fold composes them. By induction on the op list. -/
-theorem queueAtomicTxChainA_balNeutral {s s' : RecChainedState} {ops : List QueueTxOpA}
-    (h : queueAtomicTxChainA s ops = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; rfl
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none    => rw [hop] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hop] at h
-          rw [ih h, queueTxOpStepA_balNeutral hop b]
-
-/-- **`queueAtomicTxChainA_atomic_rollback` — PROVED (THE ATOMICITY TEETH).** If ANY prefix of the
-batch fails (`queueTxOpStepA … = none` at some step), the WHOLE batch is `none` — no partial commit.
-Concretely: a batch with a failing sub-op SOMEWHERE never returns `some`. We state it for the head and
-the general "a failing op in the sequence aborts": once the fold hits a `none`, every extension is
-`none`. -/
-theorem queueAtomicTxChainA_head_fails {s : RecChainedState} {op : QueueTxOpA} {rest : List QueueTxOpA}
-    (h : queueTxOpStepA s op = none) :
-    queueAtomicTxChainA s (op :: rest) = none := by
-  simp only [queueAtomicTxChainA, h]
-
-/-- **`queueTxOpStepA_nonlive_fails` — PROVED (FAIL-CLOSED, the D3 atomic-sub-op teeth).** A single atomic
-sub-op (enqueue/dequeue) whose touched queue's owning `cell` is NOT lifecycle-live does NOT commit — the
-batch sub-op inherits the D3 queue gate. -/
-theorem queueTxOpStepA_nonlive_fails (s : RecChainedState) (op : QueueTxOpA)
-    (hcell : ∀ id m actor cell,
-              op = .enqueue id m actor cell → acceptsEffects s.kernel cell = false)
-    (hcell2 : ∀ id actor cell,
-              op = .dequeue id actor cell → acceptsEffects s.kernel cell = false) :
-    queueTxOpStepA s op = none := by
-  cases op with
-  | enqueue id m actor cell =>
-      exact queueEnqueueChainA_nonlive_fails s id m actor cell (hcell id m actor cell rfl)
-  | dequeue id actor cell =>
-      exact queueDequeueChainA_nonlive_fails s id actor cell (hcell2 id actor cell rfl)
-
-/-- **`queueAtomicTxChainA_nonlive_head_fails` — PROVED (the D3 atomic-batch teeth).** An atomic batch
-whose HEAD sub-op enqueues onto a queue with a non-live owning cell ROLLS BACK ENTIRELY (`none`) — the
-all-or-nothing discipline cascades the D3 liveness gate to the whole transaction. -/
-theorem queueAtomicTxChainA_nonlive_head_fails (s : RecChainedState)
-    (id m : Nat) (actor cell : CellId)
-    (rest : List QueueTxOpA) (h : acceptsEffects s.kernel cell = false) :
-    queueAtomicTxChainA s (.enqueue id m actor cell :: rest) = none :=
-  queueAtomicTxChainA_head_fails (s := s)
-    (queueEnqueueChainA_nonlive_fails s id m actor cell h)
-
-#assert_axioms queueTxOpStepA_nonlive_fails
-#assert_axioms queueAtomicTxChainA_nonlive_head_fails
-
-/-- **`queueAtomicTxChainA_commits_iff_all` — PROVED (the all-or-nothing characterization).** The batch
-commits iff the fold threads a `some` through every sub-op. For a `cons`, it commits iff the head
-commits AND the tail commits against the head's result — so a single failing sub-op anywhere collapses
-the whole batch (atomicity). -/
-theorem queueAtomicTxChainA_commits_iff_all {s s' : RecChainedState} {op : QueueTxOpA}
-    {rest : List QueueTxOpA} :
-    queueAtomicTxChainA s (op :: rest) = some s'
-      ↔ ∃ s1, queueTxOpStepA s op = some s1 ∧ queueAtomicTxChainA s1 rest = some s' := by
-  simp only [queueAtomicTxChainA]
-  cases hop : queueTxOpStepA s op with
-  | none    => simp [hop]
-  | some s1 => simp [hop]
-
-/-- **The chained ATOMIC-TX step** — run the batch all-or-nothing AND, on success, extend the receipt
-chain by ONE batch-commit row on the `actor` (the metadata clock row; the per-op moves already landed in
-the per-op receipts inside the fold; the batch-commit row marks the transaction boundary). Fail-closed
-if the batch rolls back. -/
-def queueAtomicTxA (s : RecChainedState) (actor : CellId) (ops : List QueueTxOpA) :
-    Option RecChainedState :=
-  match queueAtomicTxChainA s ops with
-  | some s' => some { kernel := s'.kernel, log := escrowReceiptA actor :: s'.log }
-  | none    => none
-
-/-- **`queueAtomicTxA_balNeutral` — PROVED.** The chained atomic-tx step is COMBINED-conserving per
-asset (the batch fold is, and the receipt row is bal-neutral). -/
-theorem queueAtomicTxA_balNeutral {s s' : RecChainedState} {actor : CellId} {ops : List QueueTxOpA}
-    (h : queueAtomicTxA s actor ops = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queueAtomicTxA at h
-  cases hf : queueAtomicTxChainA s ops with
-  | none    => rw [hf] at h; exact absurd h (by simp)
-  | some s1 =>
-      rw [hf] at h; simp only [Option.some.injEq] at h; subst h
-      show recTotalAsset s1.kernel b = _
-      exact queueAtomicTxChainA_balNeutral hf b
-
-/-- **`queueAtomicTxA_chainlink` — PROVED.** A committed atomic-tx appends the batch-commit row on the
-`actor` ATOP the per-op fold's log — so the pre-log is a suffix and the `actor` row is recorded. -/
-theorem queueAtomicTxChainA_log_suffix {s s' : RecChainedState} {ops : List QueueTxOpA}
-    (h : queueAtomicTxChainA s ops = some s') : s.log <:+ s'.log := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; exact List.suffix_refl _
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none    => rw [hop] at h; exact absurd h (by simp)
-      | some s1 =>
-          rw [hop] at h
-          have hstep : s.log <:+ s1.log := by
-            cases op with
-            | enqueue id m actor cell =>
-                rw [queueEnqueueChainA_chainlink hop]; exact List.suffix_cons _ _
-            | dequeue id actor cell =>
-                rw [queueDequeueChainA_chainlink hop]; exact List.suffix_cons _ _
-          exact hstep.trans (ih h)
-
-theorem queueAtomicTxA_chainlink {s s' : RecChainedState} {actor : CellId} {ops : List QueueTxOpA}
-    (h : queueAtomicTxA s actor ops = some s') :
-    s.log <:+ s'.log ∧ escrowReceiptA actor ∈ s'.log := by
-  unfold queueAtomicTxA at h
-  cases hf : queueAtomicTxChainA s ops with
-  | none    => rw [hf] at h; exact absurd h (by simp)
-  | some s1 =>
-      rw [hf] at h; simp only [Option.some.injEq] at h; subst h
-      exact ⟨(queueAtomicTxChainA_log_suffix hf).trans (List.suffix_cons _ _), List.mem_cons_self⟩
-
-theorem queueAtomicTxA_obsadvance {s s' : RecChainedState} {actor : CellId} {ops : List QueueTxOpA}
-    (h : queueAtomicTxA s actor ops = some s') : s.log.length < s'.log.length := by
-  unfold queueAtomicTxA at h
-  cases hf : queueAtomicTxChainA s ops with
-  | none    => rw [hf] at h; exact absurd h (by simp)
-  | some s1 =>
-      rw [hf] at h; simp only [Option.some.injEq] at h; subst h
-      show s.log.length < (escrowReceiptA actor :: s1.log).length
-      rw [List.length_cons]
-      exact Nat.lt_succ_of_le (queueAtomicTxChainA_log_suffix hf).length_le
-
-/-! ### §MA-queue-pipeline — WAVE 4: the PIPELINE fan-out step (dregg1 `apply_queue_pipeline_step`,
-`apply.rs:3747`). DEQUEUE the FIFO head from a source queue (owner-only, `apply.rs:3754`) and RE-ENQUEUE
-the moved head message into EACH sink (ACL-checked per sink, `apply.rs:3812` BUG#114 sink-auth gate). A
-fan-out routing: one message in, one copy into each sink. ALL balance-NEUTRAL — the pipeline moves
-MESSAGES, never balance. -/
-
-/-- **Enqueue the moved message `m` into each sink in `sinks`** — fold `queueEnqueueK` over the sinks
-ALL-OR-NOTHING, gated per sink on `stateAuthB actor sink` (the sink writer-ACL, `apply.rs:3823`). ANY
-sink absent / FULL / unauthorized ⇒ the whole fan-out is `none` (atomic with the source dequeue). -/
-def pipelineFanoutK (k : RecordKernelState) (actor : CellId) (m : Nat) :
-    List CellId → List Nat → Option RecordKernelState
-  | [], _ => some k
-  | sink :: sinks, sid :: sids =>
-      if stateAuthB k.caps actor sink = true then
-        match queueEnqueueK k sid m with
-        | some k' => pipelineFanoutK k' actor m sinks sids
-        | none    => none
-      else none
-  | _ :: _, [] => none
-
-/-- **`pipelineFanoutK_balNeutral` — PROVED.** The fan-out enqueue fold is balance-NEUTRAL (each
-`queueEnqueueK` touches only `queues`) — `recTotalAsset` fixed ∀ asset. -/
-theorem pipelineFanoutK_balNeutral {k k' : RecordKernelState} {actor : CellId} {m : Nat}
-    {sinks : List CellId} {sids : List Nat}
-    (h : pipelineFanoutK k actor m sinks sids = some k') (b : AssetId) :
-    recTotalAsset k' b = recTotalAsset k b := by
-  induction sinks generalizing k sids with
-  | nil => cases sids <;> (simp only [pipelineFanoutK, Option.some.injEq] at h; subst h; rfl)
-  | cons sink rest ih =>
-      cases sids with
-      | nil => simp only [pipelineFanoutK] at h; exact absurd h (by simp)
-      | cons sid sids' =>
-          simp only [pipelineFanoutK] at h
-          by_cases hg : stateAuthB k.caps actor sink = true
-          · rw [if_pos hg] at h
-            cases hq : queueEnqueueK k sid m with
-            | none    => rw [hq] at h; exact absurd h (by simp)
-            | some k1 =>
-                rw [hq] at h
-                rw [ih h, queueEnqueueK_balNeutral hq b]
-          · rw [if_neg hg] at h; exact absurd h (by simp)
-
-/-- **The chained PIPELINE-STEP** (dregg1 `apply_queue_pipeline_step`, `apply.rs:3747`). DEQUEUE the
-head of source queue `srcId` (owner-only via `queueDequeueK` with `owner` as the dequeuer; fail-closed if
-absent / not-owner / EMPTY — `apply.rs:3754`/`:3766`) and RE-ENQUEUE that moved head into EACH sink (the
-fan-out, each sink ACL-gated; fail-closed if absent / FULL / unauthorized — `apply.rs:3812`). The
-`sinkCells`/`sinkIds` are paired position-wise (the representing cell + the queue id of each sink).
-Balance-NEUTRAL; the receipt row records the routing on the `owner` (the source dequeuer). -/
-def queuePipelineStepA (s : RecChainedState) (srcId : Nat) (owner : CellId)
-    (sinkCells : List CellId) (sinkIds : List Nat) : Option RecChainedState :=
-  match queueDequeueK s.kernel srcId owner with
-  | some (k1, m) =>
-      match pipelineFanoutK k1 owner m sinkCells sinkIds with
-      | some k2 => some { kernel := k2, log := { actor := owner, src := owner, dst := owner, amt := 0 } :: s.log }
-      | none    => none
-  | none => none
-
-/-- **`queuePipelineStepA_balNeutral` — PROVED.** The pipeline step is COMBINED-conserving per asset:
-the source dequeue is bal-neutral and the sink fan-out is bal-neutral, so the combined measure is fixed
-∀ asset. -/
-theorem queuePipelineStepA_balNeutral {s s' : RecChainedState} {srcId : Nat} {owner : CellId}
-    {sinkCells : List CellId} {sinkIds : List Nat}
-    (h : queuePipelineStepA s srcId owner sinkCells sinkIds = some s') (b : AssetId) :
-    recTotalAsset s'.kernel b = recTotalAsset s.kernel b := by
-  unfold queuePipelineStepA at h
-  cases hd : queueDequeueK s.kernel srcId owner with
-  | none    => simp only [hd] at h; exact absurd h (by simp)
-  | some kr =>
-      obtain ⟨k1, m⟩ := kr
-      simp only [hd] at h
-      cases hf : pipelineFanoutK k1 owner m sinkCells sinkIds with
-      | none    => simp only [hf] at h; exact absurd h (by simp)
-      | some k2 =>
-          simp only [hf, Option.some.injEq] at h; subst h
-          show recTotalAsset k2 b = recTotalAsset s.kernel b
-          rw [pipelineFanoutK_balNeutral hf b, queueDequeueK_balNeutral hd b]
-
-/-- **`queuePipelineStepA_chainlink` — PROVED.** A committed pipeline step appends EXACTLY one routing
-row on the `owner` (the source dequeuer). -/
-theorem queuePipelineStepA_chainlink {s s' : RecChainedState} {srcId : Nat} {owner : CellId}
-    {sinkCells : List CellId} {sinkIds : List Nat}
-    (h : queuePipelineStepA s srcId owner sinkCells sinkIds = some s') :
-    s'.log = { actor := owner, src := owner, dst := owner, amt := 0 } :: s.log := by
-  unfold queuePipelineStepA at h
-  cases hd : queueDequeueK s.kernel srcId owner with
-  | none    => simp only [hd] at h; exact absurd h (by simp)
-  | some kr =>
-      obtain ⟨k1, m⟩ := kr
-      simp only [hd] at h
-      cases hf : pipelineFanoutK k1 owner m sinkCells sinkIds with
-      | none    => simp only [hf] at h; exact absurd h (by simp)
-      | some k2 => simp only [hf, Option.some.injEq] at h; subst h; rfl
-
-/-- **`queueAtomicTxA_atomic_witness` — PROVED (the ATOMICITY witness).** A committed atomic-tx step
-factors as the all-or-nothing batch fold `queueAtomicTxChainA s ops = some s1` (EVERY sub-op committed)
-plus the batch-commit receipt row on the `actor`. This is the step-completeness obligation the
-`fullActionInvA` arm carries: the committed post-state IS the threaded fold. -/
-theorem queueAtomicTxA_atomic_witness {s s' : RecChainedState} {actor : CellId} {ops : List QueueTxOpA}
-    (h : queueAtomicTxA s actor ops = some s') :
-    ∃ s1, queueAtomicTxChainA s ops = some s1 ∧
-          s'.log = escrowReceiptA actor :: s1.log ∧ s'.kernel = s1.kernel := by
-  unfold queueAtomicTxA at h
-  cases hf : queueAtomicTxChainA s ops with
-  | none    => rw [hf] at h; exact absurd h (by simp)
-  | some s1 =>
-      rw [hf] at h; simp only [Option.some.injEq] at h; subst h
-      exact ⟨s1, rfl, rfl, rfl⟩
-
-/-- **`queuePipelineStepA_routing_witness` — PROVED (the FAN-OUT routing witness).** A committed
-pipeline step factors as the source-queue dequeue (`queueDequeueK = some (k1, m)`, owner-gated, the
-moved FIFO head `m`) THEN the sink fan-out (`pipelineFanoutK k1 owner m … = some s'.kernel`, each sink
-ACL-gated). The committed post-kernel IS the source-dequeue-then-fan-out — the step-completeness
-obligation the `fullActionInvA` arm carries (NOT `True`; the message GENUINELY MOVED source→sinks). -/
-theorem queuePipelineStepA_routing_witness {s s' : RecChainedState} {srcId : Nat} {owner : CellId}
-    {sinkCells : List CellId} {sinkIds : List Nat}
-    (h : queuePipelineStepA s srcId owner sinkCells sinkIds = some s') :
-    ∃ k1 m, queueDequeueK s.kernel srcId owner = some (k1, m) ∧
-            pipelineFanoutK k1 owner m sinkCells sinkIds = some s'.kernel := by
-  unfold queuePipelineStepA at h
-  cases hd : queueDequeueK s.kernel srcId owner with
-  | none    => simp only [hd] at h; exact absurd h (by simp)
-  | some kr =>
-      obtain ⟨k1, m⟩ := kr
-      simp only [hd] at h
-      cases hf : pipelineFanoutK k1 owner m sinkCells sinkIds with
-      | none    => simp only [hf] at h; exact absurd h (by simp)
-      | some k2 =>
-          simp only [hf, Option.some.injEq] at h; subst h
-          exact ⟨k1, m, rfl, hf⟩
-
 /-! ### §MA-swiss — the REAL CapTP export/enliven/handoff/GC swiss-table effects (Wave-8 de-THIN). The
 chained wrappers over `RecordKernel`'s `swissExportK`/`swissEnlivenK`/`swissHandoffK`/`swissDropK`, EACH
 composed with a REAL `stateAuthB actor exporter` authority gate over the exporting/holding cell (dregg1's
@@ -2930,48 +2380,6 @@ inductive FullActionA where
   A LOG/field operation. Authority: dregg1 requires checkpoint cell_id = action_target (`stateAuthB
   actor cell`). Terminal. bal-NEUTRAL. -/
   | receiptArchiveA (actor cell : CellId)
-  -- §MA-queue: the 4 REAL ring-buffer FIFO QUEUE effects (Wave-7 de-THIN). Each touches ONLY the queue
-  -- side-table (`queues`), NEVER the `bal` ledger — queues hold MESSAGES (content hashes / capability
-  -- invocations, `CapInbox`), NOT balance — so `ledgerDeltaAsset = 0` for EVERY asset (bal-NEUTRAL).
-  -- The FIFO ORDER + capacity bound + emptiness fail-closed are the REAL automaton (`qbufEnqueue`/
-  -- `qbufDequeue` + the kernel `queue*K` transitions), PROVED — a flag/no-op shadow would have NO order
-  -- and NO bound (the GROUND-STORAGE de-THIN requirement).
-  /-- `QueueAllocate { capacity, program_vk }` (dregg1 `apply_queue_allocate`, `apply.rs:3227`): create a
-  fresh queue (id `id`, owner = `cell`'s actor) with `capacity` and an EMPTY buffer. Authority: `actor`
-  holds authority over the queue's representing `cell` (`stateAuthB`). Generative. bal-NEUTRAL. -/
-  | queueAllocateA  (id : Nat) (actor cell : CellId) (capacity : Nat)
-  /-- `QueueEnqueue { queue, message_hash }` (dregg1 `apply_queue_enqueue`, `apply.rs:3310`):
-  APPEND message hash `m` to the TAIL of queue `id`'s FIFO buffer. Fail-closed if the queue is absent
-  OR FULL (`apply.rs:3348`). Authority: `actor` holds authority over the queue `cell` (the writer-ACL
-  gate, `apply.rs:3334`). F1b: the Wave-8 refundable anti-spam deposit-park is GONE with the kernel
-  escrow holding-store (a factory concern in the F2 queue migration) — bal-NEUTRAL. -/
-  | queueEnqueueA   (id : Nat) (m : Nat) (actor cell : CellId)
-  /-- `QueueDequeue { queue }` (dregg1 `apply_queue_dequeue`, `apply.rs:3420`): REMOVE-FROM-FRONT of
-  queue `id`'s FIFO buffer (the OLDEST waiting message). Fail-closed if absent, the actor is NOT the
-  queue owner (`apply.rs:3433`), OR the buffer is EMPTY (`apply.rs:3444`). Authority: `actor` holds
-  authority over the queue `cell` AND is the kernel-level owner. F1b: the deposit refund is GONE with
-  the deposit park — bal-NEUTRAL. -/
-  | queueDequeueA   (id : Nat) (actor cell : CellId)
-  /-- `QueueResize { queue, new_capacity }` (dregg1 `apply_queue_resize`, `apply.rs:3507`): change queue
-  `id`'s capacity to `newCap`. Fail-closed if absent OR shrinking below the current occupancy
-  (`apply.rs:3534`, "can't shrink below current occupancy"). Authority: `actor` holds authority over the
-  queue `cell`. Generative. bal-NEUTRAL. -/
-  | queueResizeA    (id : Nat) (newCap : Nat) (actor cell : CellId)
-  -- §MA-queue-batch (WAVE 4): the ATOMIC cross-queue transaction + the PIPELINE fan-out step.
-  /-- `QueueAtomicTx { operations }` (dregg1 `apply_queue_atomic_tx`, `apply.rs:3586`): execute a BATCH
-  of `QueueTxOp::{Enqueue,Dequeue}` ALL-OR-NOTHING against one or more queues. The batch COMMITS iff
-  EVERY sub-op commits (each against the prior's result); ANY sub-op failing ⇒ the WHOLE batch rolls back
-  (dregg1's journal-rollback, `apply.rs:3592`). The ATOMICITY is the proven property
-  (`queueAtomicTxChainA_commits_iff_all`). Each sub-op is the proven combined-conserving chained queue
-  step, so the batch is combined-conserving. Conservative. -/
-  | queueAtomicTxA  (actor : CellId) (ops : List QueueTxOpA)
-  /-- `QueuePipelineStep { pipeline_id, source, sinks }` (dregg1 `apply_queue_pipeline_step`,
-  `apply.rs:3747`): DEQUEUE the FIFO head from a source queue `srcId` (owner-only, `apply.rs:3754`) and
-  RE-ENQUEUE the moved head message into EACH sink (each ACL-checked per-sink, `apply.rs:3812` BUG#114
-  sink-auth gate). Fan-out routing: one message in, one copy into each sink. Fail-closed if the source is
-  absent / not-owned / EMPTY, or any sink absent / FULL / unauthorized. `sinkCells`/`sinkIds` pair the
-  representing cell + queue id of each sink position-wise. bal-NEUTRAL (moves messages, not balance). -/
-  | queuePipelineStepA (srcId : Nat) (owner : CellId) (sinkCells : List CellId) (sinkIds : List Nat)
   /-- `PipelinedSend { target : EventualRef, action }` (dregg1 `apply_pipelined_send`, `apply.rs:2657`):
   E-style PROMISE PIPELINING — dispatch an `action` to the RESULT of a prior turn (an `EventualRef` slot
   the producer fills). dregg1's `apply_pipelined_send` is a HARD ERROR at apply time (`apply.rs:2663`
@@ -3084,17 +2492,7 @@ def ledgerDeltaAsset : FullActionA → AssetId → ℤ
   | .makeSovereignA _ _,          _ => 0
   | .refusalA _ _,                _ => 0
   | .receiptArchiveA _ _,         _ => 0
-  -- §MA-queue: the 4 queue effects touch ONLY the `queues` side-table (messages, not balance), NEVER
-  -- `bal`/`escrows` — so `0` for EVERY asset (balance-NEUTRAL; `recTotalAsset` UNCHANGED).
-  | .queueAllocateA _ _ _ _,      _ => 0
-  | .queueEnqueueA _ _ _ _,       _ => 0
-  | .queueDequeueA _ _ _,         _ => 0
-  | .queueResizeA _ _ _ _,        _ => 0
-  -- §MA-queue-batch (WAVE 4): the atomic batch sequences combined-conserving sub-ops (each `0`), so its
-  -- combined delta is `0`; the pipeline step moves a MESSAGE source→sinks (no balance) ⇒ `0`; the
-  -- pipelined-send apply-time effect is NEUTRAL (the resolved action already ran) ⇒ `0`.
-  | .queueAtomicTxA _ _,          _ => 0
-  | .queuePipelineStepA _ _ _ _,  _ => 0
+  -- the pipelined-send apply-time effect is NEUTRAL (the resolved action already ran) ⇒ `0`.
   | .pipelinedSendA _,            _ => 0
   -- §MA-swiss: the 4 CapTP swiss-table effects move REFERENCES, never balance ⇒ `0` at every asset.
   | .exportSturdyRefA _ _ _ _ _, _ => 0
@@ -3119,7 +2517,7 @@ pass via a sibling `write` cap) yet must REJECT a `write`/`grant`-facet inner ef
 semantics the handler agrees with — no weaker. -/
 
 /-- **The facet an inner effect EXERCISES** (the R4 mask key, dregg1 `Effect::required_facet`). Mutating
-effects (transfer/mint/burn/state-write/escrow/bridge/queue/note/seal/lifecycle/supply) demand `write`;
+effects (transfer/mint/burn/state-write/escrow/bridge/note/seal/lifecycle/supply) demand `write`;
 authority-granting effects (delegate/introduce/attenuate/dropRef/revoke/validateHandoff/swiss-export)
 demand `grant`; a NESTED exercise demands the privileged `control`. A `read`-only cap admits NONE of
 these (every dregg2 effect mutates or grants) — the faithful contrast the §TEETH exercise. -/
@@ -3145,12 +2543,6 @@ def requiredFacetA : FullActionA → Authority.Auth
   | .makeSovereignA _ _      => Authority.Auth.write
   | .refusalA _ _            => Authority.Auth.write
   | .receiptArchiveA _ _     => Authority.Auth.write
-  | .queueAllocateA _ _ _ _  => Authority.Auth.write
-  | .queueEnqueueA _ _ _ _   => Authority.Auth.write
-  | .queueDequeueA _ _ _     => Authority.Auth.write
-  | .queueResizeA _ _ _ _    => Authority.Auth.write
-  | .queueAtomicTxA _ _      => Authority.Auth.write
-  | .queuePipelineStepA _ _ _ _ => Authority.Auth.write
   | .pipelinedSendA _        => Authority.Auth.write
   | .cellSealA _ _           => Authority.Auth.write
   | .cellUnsealA _ _         => Authority.Auth.write
@@ -3267,17 +2659,8 @@ def execFullA (s : RecChainedState) : FullActionA → Option RecChainedState
   | .makeSovereignA actor cell    => makeSovereignStep s actor cell
   | .refusalA actor cell          => stateStep s refusalField actor cell (.int 1)
   | .receiptArchiveA actor cell   => stateStep s lifecycleField actor cell (.int 1)
-  -- §MA-queue: the 4 queue effects route to the chained ring-buffer FIFO steps (authority-gated +
-  -- the kernel-level capacity/owner/emptiness gates). The REAL FIFO automaton, NOT a flag.
-  | .queueAllocateA id actor cell cap   => queueAllocateChainA s id actor cell cap
-  | .queueEnqueueA id m actor cell => queueEnqueueChainA s id m actor cell
-  | .queueDequeueA id actor cell   => queueDequeueChainA s id actor cell
-  | .queueResizeA id newCap actor cell  => queueResizeChainA s id newCap actor cell
-  -- §MA-queue-batch (WAVE 4): the atomic batch folds its sub-ops ALL-OR-NOTHING; the pipeline step
-  -- dequeues source→fan-out sinks; pipelinedSend's apply-time effect is NEUTRAL (a clock row, the
-  -- resolved action already ran — dregg1's apply-time no-op, the resolution is `ConditionalTurn`).
-  | .queueAtomicTxA actor ops           => queueAtomicTxA s actor ops
-  | .queuePipelineStepA srcId owner sinkCells sinkIds => queuePipelineStepA s srcId owner sinkCells sinkIds
+  -- pipelinedSend's apply-time effect is NEUTRAL (a clock row, the resolved action already ran —
+  -- dregg1's apply-time no-op, the resolution is `ConditionalTurn`).
   | .pipelinedSendA actor               => some { kernel := s.kernel, log := escrowReceiptA actor :: s.log }
   -- §MA-swiss: the 4 CapTP swiss-table effects route to the authority-gated swiss registry steps.
   | .exportSturdyRefA sw actor exporter target rights => swissExportChainA s sw actor exporter target rights
@@ -3500,7 +2883,7 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       simp only [noteCreateChainA, noteCreateCommitment, recTotalAsset]; ring
   -- §MA-seal (Wave-3 DE-SHADOW): seal/unseal/createSealPair MOVE capabilities (edit `caps`/`sealedBoxes`)
   -- — `bal` AND `escrows` fixed, so the COMBINED measure is UNCHANGED for EVERY asset (balance-NEUTRAL),
-  -- read off the chained balNeutral lemmas (exactly as the swiss/queue arms).
+  -- read off the chained balNeutral lemmas (exactly as the swiss arms).
   | sealA pid actor payload =>
       simp only [execFullA, ledgerDeltaAsset] at h ⊢
       rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
@@ -3533,43 +2916,8 @@ theorem execFullA_ledger_per_asset (s s' : RecChainedState) (fa : FullActionA) (
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'
       show recTotalAsset (writeField s.kernel lifecycleField cell (.int 1)) b = recTotalAsset s.kernel b + 0
       rw [writeField_recTotalAsset s.kernel lifecycleField cell (.int 1) b]; ring
-  -- §MA-queue: each queue effect is balance-NEUTRAL — read the COMBINED measure off the chained
-  -- balNeutral lemma (`recTotalAsset s'.kernel b = recTotalAsset s.kernel b`), and
-  -- `ledgerDeltaAsset = 0`. The FIFO/capacity/owner gates live in the kernel transition; here the move
-  -- is `+0` at every asset (queues hold messages, not balance).
-  | queueAllocateA id actor cell cap =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queueAllocateChainA_balNeutral h b]
-      simp only [recTotalAsset]; ring
-  | queueEnqueueA id m actor cell =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queueEnqueueChainA_balNeutral h b]
-      simp only [recTotalAsset]; ring
-  | queueDequeueA id actor cell =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queueDequeueChainA_balNeutral h b]
-      simp only [recTotalAsset]; ring
-  | queueResizeA id newCap actor cell =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queueResizeChainA_balNeutral h b]
-      simp only [recTotalAsset]; ring
-  -- §MA-queue-batch (WAVE 4): the atomic batch / pipeline step / pipelined-send are all combined-NEUTRAL
-  -- (read off `queueAtomicTxA_balNeutral` / `queuePipelineStepA_balNeutral`; pipelinedSend leaves the
-  -- kernel UNCHANGED — only a clock row), and `ledgerDeltaAsset = 0`.
-  | queueAtomicTxA actor ops =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queueAtomicTxA_balNeutral h b]
-      simp only [recTotalAsset]; ring
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA, ledgerDeltaAsset] at h ⊢
-      rw [show recTotalAsset s'.kernel b = recTotalAsset s.kernel b from
-            queuePipelineStepA_balNeutral h b]
-      simp only [recTotalAsset]; ring
+  -- pipelined-send is combined-NEUTRAL (it leaves the kernel UNCHANGED — only a clock row),
+  -- and `ledgerDeltaAsset = 0`.
   | pipelinedSendA actor =>
       simp only [execFullA, ledgerDeltaAsset, Option.some.injEq] at h ⊢
       subst h; simp only [recTotalAsset]; ring
@@ -3768,17 +3116,7 @@ def fullReceiptA (s : RecChainedState) : FullActionA → Turn
   | .makeSovereignA actor cell       => { actor := actor, src := cell, dst := cell, amt := 0 }
   | .refusalA actor cell             => { actor := actor, src := cell, dst := cell, amt := 0 }
   | .receiptArchiveA actor cell      => { actor := actor, src := cell, dst := cell, amt := 0 }
-  -- §MA-queue: each queue effect appends a balance-`0` self-`Turn` on the queue `cell` (F1b: the
-  -- deposit/refund receipt rows died with the deposit park). The message lives in the FIFO buffer.
-  | .queueAllocateA _ actor cell _   => { actor := actor, src := cell, dst := cell, amt := 0 }
-  | .queueEnqueueA _ _ actor cell    => { actor := actor, src := cell, dst := cell, amt := 0 }
-  | .queueDequeueA _ actor cell      => { actor := actor, src := cell, dst := cell, amt := 0 }
-  | .queueResizeA _ _ actor cell     => { actor := actor, src := cell, dst := cell, amt := 0 }
-  -- §MA-queue-batch (WAVE 4): the atomic batch appends a batch-commit row on the `actor` (the per-op
-  -- rows landed inside the fold); the pipeline step a routing row on the `owner` (the source dequeuer);
-  -- pipelinedSend a clock row on the `actor` (the apply-time neutral marker).
-  | .queueAtomicTxA actor _          => escrowReceiptA actor
-  | .queuePipelineStepA _ owner _ _  => { actor := owner, src := owner, dst := owner, amt := 0 }
+  -- pipelinedSend appends a clock row on the `actor` (the apply-time neutral marker).
   | .pipelinedSendA actor            => escrowReceiptA actor
   -- §MA-swiss: each swiss-table effect appends a balance-`0` self-`Turn` on the exporting `exporter`
   -- cell (the metadata clock row; the swiss entry lives in the off-ledger registry, not the receipt).
@@ -3794,18 +3132,17 @@ def fullReceiptA (s : RecChainedState) : FullActionA → Turn
   | .refreshDelegationA actor child  => { actor := actor, src := child, dst := child, amt := 0 }
 
 /-- **`execFullA_chainlinkExact` — PROVED (the one-row chainlink for every NON-recursive kind).** A
-committed NON-exercise, NON-atomic-batch `FullActionA` extends the receipt chain by EXACTLY its
+committed NON-exercise `FullActionA` extends the receipt chain by EXACTLY its
 `fullReceiptA`, newest-first, with no fork or rewrite. `exerciseA` is excluded (`hne`) because it
-RECURSES, and `queueAtomicTxA` (`hnb`) because it FOLDS a BATCH — both grow the log by their own receipt
-PLUS the sub-effects' rows (the honest append-only suffix, captured by `execFullA_chainlink` below). The
+RECURSES — it grows the log by its own receipt PLUS the sub-effects' rows (the honest append-only
+suffix, captured by `execFullA_chainlink` below). F2b: the `queueAtomicTxA` batch exclusion (`hnb`)
+died with the queue family — the statement got STRONGER (one fewer carve-out). The
 per-action generalization across the per-asset op-set (asset-orthogonal: it touches only the `log`). -/
 theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
     (hne : ∀ a t inner, fa ≠ .exerciseA a t inner)
-    (hnb : ∀ actor ops, fa ≠ .queueAtomicTxA actor ops)
     (h : execFullA s fa = some s') : s'.log = fullReceiptA s fa :: s.log := by
   cases fa with
   | exerciseA a t inner => exact absurd rfl (hne a t inner)
-  | queueAtomicTxA actor ops => exact absurd rfl (hnb actor ops)
   | balanceA t a =>
       simp only [execFullA, recCexecAsset, fullReceiptA] at h ⊢
       by_cases hadm : acceptsEffects s.kernel t.dst
@@ -3928,19 +3265,7 @@ theorem execFullA_chainlinkExact (s s' : RecChainedState) (fa : FullActionA)
   | receiptArchiveA actor cell =>
       simp only [execFullA, fullReceiptA] at h ⊢
       obtain ⟨_, hs'⟩ := stateStep_factors h; subst hs'; rfl
-  -- §MA-queue: each queue chained step appends EXACTLY its `fullReceiptA` row (the chainlink lemma).
-  | queueAllocateA id actor cell cap =>
-      simp only [execFullA, fullReceiptA] at h ⊢; exact queueAllocateChainA_chainlink h
-  | queueEnqueueA id m actor cell =>
-      simp only [execFullA, fullReceiptA] at h ⊢; exact queueEnqueueChainA_chainlink h
-  | queueDequeueA id actor cell =>
-      simp only [execFullA, fullReceiptA] at h ⊢; exact queueDequeueChainA_chainlink h
-  | queueResizeA id newCap actor cell =>
-      simp only [execFullA, fullReceiptA] at h ⊢; exact queueResizeChainA_chainlink h
-  -- §MA-queue-batch (WAVE 4): the pipeline step appends the `owner` routing row (the chainlink lemma);
-  -- pipelinedSend the `actor` clock row. (queueAtomicTxA is excluded — `hnb` — it folds a BATCH.)
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA, fullReceiptA] at h ⊢; exact queuePipelineStepA_chainlink h
+  -- pipelinedSend appends the `actor` clock row.
   | pipelinedSendA actor =>
       simp only [execFullA, fullReceiptA, Option.some.injEq] at h ⊢; subst h; rfl
   | exportSturdyRefA sw actor exporter target rights =>
@@ -3988,16 +3313,9 @@ theorem execFullA_log_suffix (s s' : RecChainedState) (fa : FullActionA)
           have hstep : s.log <:+ s1.log := by rw [hs1]; exact List.suffix_cons _ _
           exact hstep.trans (execInnerA_log_suffix s1 s' inner h)
     · rw [if_neg hf] at h; exact absurd h (by simp)
-  · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
-    · -- §MA-queue-batch (WAVE 4): the atomic batch folds its sub-ops then prepends the commit row —
-      -- append-only (the fold's suffix-extension carried by `queueAtomicTxA_chainlink`).
-      obtain ⟨actor, ops, rfl⟩ := hbatch
-      simp only [execFullA] at h
-      exact (queueAtomicTxA_chainlink h).1
-    · -- non-exercise, non-batch: extend by exactly one row.
-      rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩)
-            (fun actor ops heq => hbatch ⟨actor, ops, heq⟩) h]
-      exact List.suffix_cons _ _
+  · -- non-exercise: extend by exactly one row.
+    rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩) h]
+    exact List.suffix_cons _ _
 
 theorem execInnerA_log_suffix (s s' : RecChainedState) (inner : List FullActionA)
     (h : execInnerA s inner = some s') : s.log <:+ s'.log := by
@@ -4039,14 +3357,8 @@ theorem execFullA_chainlink (s s' : RecChainedState) (fa : FullActionA)
             rw [hs1]; exact List.mem_cons_self
           exact (execInnerA_log_suffix s1 s' inner h).mem hmem
     · rw [if_neg hf] at h; exact absurd h (by simp)
-  · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
-    · -- §MA-queue-batch (WAVE 4): the batch-commit row IS `fullReceiptA (queueAtomicTxA …)`, recorded.
-      obtain ⟨actor, ops, rfl⟩ := hbatch
-      simp only [execFullA, fullReceiptA] at h ⊢
-      exact (queueAtomicTxA_chainlink h).2
-    · rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩)
-            (fun actor ops heq => hbatch ⟨actor, ops, heq⟩) h]
-      exact List.mem_cons_self
+  · rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩) h]
+    exact List.mem_cons_self
 
 /-- **`execFullA_obsadvance` — PROVED.** A committed `FullActionA` STRICTLY grows the chain (≥ one row),
 so a replayed action (which would re-append its receipt) is detectable. Non-recursive kinds grow by
@@ -4067,14 +3379,9 @@ theorem execFullA_obsadvance (s s' : RecChainedState) (fa : FullActionA)
             rw [hs1, List.length_cons]; exact Nat.lt_succ_self _
           exact Nat.lt_of_lt_of_le h1 (execInnerA_log_suffix s1 s' inner h).length_le
     · rw [if_neg hf] at h; exact absurd h (by simp)
-  · by_cases hbatch : ∃ actor ops, fa = .queueAtomicTxA actor ops
-    · -- §MA-queue-batch (WAVE 4): the batch grows by ≥ 1 row (the commit row over the fold's suffix).
-      obtain ⟨actor, ops, rfl⟩ := hbatch
-      simp only [execFullA] at h
-      exact queueAtomicTxA_obsadvance h
-    · rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩)
-            (fun actor ops heq => hbatch ⟨actor, ops, heq⟩) h, List.length_cons]
-      exact Nat.lt_succ_self _
+  · rw [execFullA_chainlinkExact s s' fa (fun a t inner heq => hex ⟨a, t, inner, heq⟩) h,
+        List.length_cons]
+    exact Nat.lt_succ_self _
 
 /-- **Per-asset balance authorized — PROVED.** A committed per-asset transfer was authorized
 (`authorizedB` at the pre-state), via `recKExecAsset_authorized`. -/
@@ -4336,41 +3643,6 @@ theorem execFullA_receiptArchiveA_authorized (s s' : RecChainedState) (actor cel
     (h : execFullA s (.receiptArchiveA actor cell) = some s') :
     stateAuthB s.kernel.caps actor cell = true :=
   state_authorized (by simpa only [execFullA] using h)
-
-/-! ### §MA-queue authority obligations — the 4 ring-buffer FIFO queue effects carry their REAL
-`stateAuthB actor cell` authority gate over the queue's representing cell (dregg1's writer-ACL / owner
-gate, `apply.rs:3334,3433`). NON-VACUOUS: an actor without authority over the queue cell cannot commit
-(witnessed by the fail-closed `#eval`s + `queueDequeueK_wrong_owner_rejects`). The FIFO ORDER + capacity
-bound + emptiness gate are the SEPARATE kernel-level obligation (`qbuf_fifo_order` /
-`queueEnqueueK_full_rejects` / `queueDequeueK_empty_rejects`). Every conjunct has teeth, NOT `True`. -/
-
-/-- **`queueAllocateA` authorized — PROVED.** A committed allocate implies the actor held authority over
-the queue's representing `cell`. -/
-theorem execFullA_queueAllocateA_authorized (s s' : RecChainedState) (id : Nat) (actor cell : CellId) (cap : Nat)
-    (h : execFullA s (.queueAllocateA id actor cell cap) = some s') :
-    stateAuthB s.kernel.caps actor cell = true :=
-  queueAllocateChainA_authorized (by simpa only [execFullA] using h)
-
-/-- **`queueEnqueueA` authorized — PROVED.** A committed enqueue implies the actor held authority over
-the queue `cell` (dregg1's writer-ACL gate). -/
-theorem execFullA_queueEnqueueA_authorized (s s' : RecChainedState) (id m : Nat) (actor cell : CellId)
-    (h : execFullA s (.queueEnqueueA id m actor cell) = some s') :
-    stateAuthB s.kernel.caps actor cell = true :=
-  queueEnqueueChainA_authorized (by simpa only [execFullA] using h)
-
-/-- **`queueDequeueA` authorized — PROVED.** A committed dequeue implies the actor held authority over
-the queue `cell` (AND was the kernel-level owner — the `queueDequeueK` `actor = owner` gate). -/
-theorem execFullA_queueDequeueA_authorized (s s' : RecChainedState) (id : Nat) (actor cell : CellId)
-    (h : execFullA s (.queueDequeueA id actor cell) = some s') :
-    stateAuthB s.kernel.caps actor cell = true :=
-  queueDequeueChainA_authorized (by simpa only [execFullA] using h)
-
-/-- **`queueResizeA` authorized — PROVED.** A committed resize implies the actor held authority over the
-queue `cell`. -/
-theorem execFullA_queueResizeA_authorized (s s' : RecChainedState) (id newCap : Nat) (actor cell : CellId)
-    (h : execFullA s (.queueResizeA id newCap actor cell) = some s') :
-    stateAuthB s.kernel.caps actor cell = true :=
-  queueResizeChainA_authorized (by simpa only [execFullA] using h)
 
 /-! ### §MA-swiss authority obligations — the 4 CapTP swiss-table effects carry their REAL
 `stateAuthB actor exporter` authority gate over the exporting/holding cell (dregg1's holder-of-the-cap /
@@ -4872,39 +4144,8 @@ def fullActionInvA (s : RecChainedState) (fa : FullActionA) (s' : RecChainedStat
    | .receiptArchiveA actor cell =>
        stateAuthB s.kernel.caps actor cell = true ∧
        effectLinearity .receiptArchive = LinearityClass.Terminal
-   -- §MA-queue: the 4 ring-buffer FIFO queue effects carry their REAL `stateAuthB actor cell` authority
-   -- gate over the queue's representing cell (dregg1's writer-ACL / owner gate) ∧ their catalog COLORING
-   -- (the faithful-mirror tripwire: queueAllocate/queueResize Generative, queueEnqueue/queueDequeue
-   -- Conservative). The FIFO ORDER + capacity bound + emptiness gate are the SEPARATE kernel-level
-   -- obligation (`qbuf_fifo_order` / `queueEnqueueK_full_rejects` / `queueDequeueK_empty_rejects`, in
-   -- `RecordKernel`). Every conjunct has teeth, NOT `True`.
-   | .queueAllocateA _ actor cell _ =>
-       stateAuthB s.kernel.caps actor cell = true ∧
-       effectLinearity .queueAllocate = LinearityClass.Generative
-   | .queueEnqueueA _ _ actor cell =>
-       stateAuthB s.kernel.caps actor cell = true ∧
-       effectLinearity .queueEnqueue = LinearityClass.Conservative
-   | .queueDequeueA _ actor cell =>
-       stateAuthB s.kernel.caps actor cell = true ∧
-       effectLinearity .queueDequeue = LinearityClass.Conservative
-   | .queueResizeA _ _ actor cell =>
-       stateAuthB s.kernel.caps actor cell = true ∧
-       effectLinearity .queueResize = LinearityClass.Generative
-   -- §MA-queue-batch (WAVE 4): the atomic batch carries the ATOMICITY witness — the committed post-state
-   -- IS the all-or-nothing fold of the sub-ops over `s` (`queueAtomicTxChainA s ops = some s'` modulo the
-   -- batch-commit receipt row, so EVERY sub-op committed; a failing sub-op would have collapsed the whole
-   -- batch) ∧ the `Conservative` coloring. The pipeline step carries the source-dequeue + fan-out witness
-   -- (the committed post-kernel IS the source dequeue then the sink fan-out) ∧ the `Conservative`
-   -- coloring. pipelinedSend carries the apply-time NEUTRAL coloring (the `EventualRef` resolution is the
-   -- SEPARATE `ConditionalTurn` batch — authority-free at apply, dregg1's apply-time no-op). Teeth, not `True`.
-   | .queueAtomicTxA actor ops =>
-       (∃ s1, queueAtomicTxChainA s ops = some s1 ∧
-              s'.log = escrowReceiptA actor :: s1.log ∧ s'.kernel = s1.kernel) ∧
-       effectLinearity .queueAtomicTx = LinearityClass.Conservative
-   | .queuePipelineStepA srcId owner sinkCells sinkIds =>
-       (∃ k1 m, queueDequeueK s.kernel srcId owner = some (k1, m) ∧
-                pipelineFanoutK k1 owner m sinkCells sinkIds = some s'.kernel) ∧
-       effectLinearity .queuePipelineStep = LinearityClass.Conservative
+   -- pipelinedSend carries the apply-time NEUTRAL coloring (the `EventualRef` resolution is the
+   -- SEPARATE `ConditionalTurn` batch — authority-free at apply, dregg1's apply-time no-op).
    | .pipelinedSendA _ =>
        effectLinearity .pipelinedSend = LinearityClass.Neutral
    -- §MA-swiss: the 4 CapTP swiss-table effects carry their REAL `stateAuthB actor exporter` authority
@@ -5032,23 +4273,7 @@ theorem execFullA_attests_per_asset {s s' : RecChainedState} {fa : FullActionA}
   | makeSovereignA actor cell => exact ⟨execFullA_makeSovereignA_authorized s s' actor cell h, rfl⟩
   | refusalA actor cell => exact ⟨execFullA_refusalA_authorized s s' actor cell h, rfl⟩
   | receiptArchiveA actor cell => exact ⟨execFullA_receiptArchiveA_authorized s s' actor cell h, rfl⟩
-  -- §MA-queue: discharge each queue effect's (REAL `stateAuthB` authority gate ∧ the catalog coloring).
-  | queueAllocateA id actor cell cap =>
-      exact ⟨execFullA_queueAllocateA_authorized s s' id actor cell cap h, rfl⟩
-  | queueEnqueueA id m actor cell =>
-      exact ⟨execFullA_queueEnqueueA_authorized s s' id m actor cell h, rfl⟩
-  | queueDequeueA id actor cell =>
-      exact ⟨execFullA_queueDequeueA_authorized s s' id actor cell h, rfl⟩
-  | queueResizeA id newCap actor cell =>
-      exact ⟨execFullA_queueResizeA_authorized s s' id newCap actor cell h, rfl⟩
-  -- §MA-queue-batch (WAVE 4): discharge the atomic batch's ATOMICITY witness ∧ coloring; the pipeline
-  -- step's source-dequeue + fan-out routing witness ∧ coloring; pipelinedSend's apply-time Neutral coloring.
-  | queueAtomicTxA actor ops =>
-      simp only [execFullA] at h
-      exact ⟨queueAtomicTxA_atomic_witness h, rfl⟩
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA] at h
-      exact ⟨queuePipelineStepA_routing_witness h, rfl⟩
+  -- pipelinedSend: the apply-time Neutral coloring.
   | pipelinedSendA actor => exact rfl
   -- §MA-swiss: discharge each swiss effect's (REAL `stateAuthB` authority gate ∧ the catalog coloring).
   | exportSturdyRefA sw actor exporter target rights =>
@@ -5167,30 +4392,6 @@ theorem execFullTurnA_each_attests :
 #assert_axioms makeSovereignStep_balance_unreadable
 #assert_axioms makeSovereignStep_fields_dropped
 #assert_axioms makeSovereignStep_commitment_present
--- §MA-queue (Wave 7 de-THIN): the 4 REAL ring-buffer FIFO queue effects (queueAllocate/queueEnqueue/
--- queueDequeue/queueResize). Each carries its REAL `stateAuthB` authority gate over the queue cell
--- AND its bal-neutrality / chainlink — all pinned kernel-clean. The FIFO ORDER + capacity bound +
--- emptiness fail-closed are PROVED in `RecordKernel` (`qbuf_fifo_order` / `queueEnqueueK_full_rejects` /
--- `queueDequeueK_empty_rejects`, with their own `#assert_axioms`). The de-THIN content a flag-only
--- model lacks: NO order, NO bound. The keystone `execFullA_attests_per_asset` (re-extended above)
--- carries ALL into the forest by construction (FullForestA spine UNCHANGED — only `targetOf` gains arms).
-#assert_axioms execFullA_queueAllocateA_authorized
-#assert_axioms execFullA_queueEnqueueA_authorized
-#assert_axioms execFullA_queueDequeueA_authorized
-#assert_axioms execFullA_queueResizeA_authorized
-#assert_axioms queueEnqueueChainA_balNeutral
-#assert_axioms queueDequeueChainA_balNeutral
-#assert_axioms queueEnqueueChainA_chainlink
--- WAVE 4: the ATOMIC batch (all-or-nothing fold) + the PIPELINE fan-out step. The atomicity,
--- bal-neutrality, and routing-witness keystones pinned kernel-clean.
-#assert_axioms queueAtomicTxChainA_balNeutral
-#assert_axioms queueAtomicTxChainA_commits_iff_all
-#assert_axioms queueAtomicTxChainA_head_fails
-#assert_axioms queueAtomicTxA_balNeutral
-#assert_axioms queueAtomicTxA_atomic_witness
-#assert_axioms pipelineFanoutK_balNeutral
-#assert_axioms queuePipelineStepA_balNeutral
-#assert_axioms queuePipelineStepA_routing_witness
 -- Wave-8 §MA-swiss: the 4 REAL CapTP swiss-table effects (export/enliven/handoff/drop) on the per-asset
 -- dispatch. Each carries its REAL `stateAuthB actor exporter` authority gate over the exporting cell ∧
 -- the catalog coloring; the membership / non-amplification / refcount-GC are PROVED in `RecordKernel`
@@ -5884,65 +5085,22 @@ def fac0S : RecChainedState :=
 -- A legit non-negative `vk` against the original (key-42) registry still works unchanged:
 #guard ((execFullA facS (.createCellFromFactoryA 0 5 42)).isSome)  --  true
 
-/-! ### §MA-queue-batch #eval (WAVE 4) — the ATOMIC cross-queue transaction + the PIPELINE fan-out step
-on the executed dispatch. The atomic batch is ALL-OR-NOTHING (a single failing sub-op rolls back the
-WHOLE batch); the pipeline step DEQUEUES a source head and RE-ENQUEUES it into each sink (fan-out
-routing). Fixture `fmaQ`: actor 0 owns/holds caps over cells {0,1,2}, with THREE queues — source `q=10`
-(owner 0, capacity 3, holding the FIFO message `[111]`), sinks `q=11`/`q=12` (owner 0, capacity 3,
-EMPTY). All balance-neutral (queues hold messages, not balance). -/
+/-! ### §MA-pipelined-send #eval — the apply-time NEUTRAL marker on the executed dispatch.
+(F2b: the queue atomic-batch / pipeline-step fixtures died with the queue verb family — queue
+behavior is the factory story, `Apps/{QueueFactory,InboxFactory,PubsubFactory}.lean`.) -/
 
-def fmaQ : RecChainedState :=
+def fmaP : RecChainedState :=
   { kernel :=
       { accounts := {0, 1, 2}
         cell := fun _ => .record [("balance", .int 0)]
         caps := fun l => if l = 0 then [Cap.node 0, Cap.node 1, Cap.node 2] else []
-        bal := fun c a => if c = 0 ∧ a = 0 then 50 else 0
-        queues :=
-          [ { id := 10, owner := 0, capacity := 3, buffer := [111] }
-          , { id := 11, owner := 0, capacity := 3, buffer := [] }
-          , { id := 12, owner := 0, capacity := 3, buffer := [] } ] }
+        bal := fun c a => if c = 0 ∧ a = 0 then 50 else 0 }
     log := [] }
-
--- ★ ATOMIC BATCH — ALL SUCCEED: enqueue 222 into q=10 THEN dequeue from q=10.
---   Both sub-ops commit ⇒ the batch COMMITS. (The 222 enqueues to the tail, then the head 111 dequeues.)
-#guard ((queueAtomicTxA fmaQ 0
-        [ .enqueue 10 222 0 0, .dequeue 10 0 0 ]).isSome)  --  true — all-or-nothing COMMITS
-
--- ★★ ATOMICITY TEETH — ONE FAILING SUB-OP ROLLS BACK ALL: the SAME first enqueue, but the second sub-op
---   dequeues from a NON-EXISTENT queue id 99 (fail-closed). The WHOLE batch is `none` — the first
---   enqueue is ROLLED BACK (no partial commit), exactly dregg1's journal-rollback for the entire action:
-#guard ((queueAtomicTxA fmaQ 0
-        [ .enqueue 10 222 0 0, .dequeue 99 0 0 ]).isSome) == false  --  false — ATOMIC ROLLBACK
--- ...and a failing sub-op FIRST also collapses the batch (the second never runs — the fold short-circuits):
-#guard ((queueAtomicTxA fmaQ 0
-        [ .dequeue 99 0 0, .enqueue 10 222 0 0 ]).isSome) == false  --  false — head failure aborts
--- ...the all-or-nothing is balance-neutral when it commits (the COMBINED measure is FIXED ∀ asset):
-#guard ((queueAtomicTxA fmaQ 0 [ .enqueue 10 222 0 0, .dequeue 10 0 0 ]).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (50, 0)  --  some (50, 0) — CONSERVED
-
--- ★ PIPELINE STEP — MOVE SOURCE→SINKS: dequeue the head 111 from source q=10 and fan it out into sinks
---   q=11 and q=12. The source LOSES the message (buffer [111] → []); EACH sink GAINS it (buffer [] → [111]):
-#guard ((queuePipelineStepA fmaQ 10 0 [1, 2] [11, 12]).isSome)  --  true — routing COMMITS
-#guard ((queuePipelineStepA fmaQ 10 0 [1, 2] [11, 12]).map
-        (fun s => ((findQueue s.kernel.queues 10).map (·.buffer),
-                   (findQueue s.kernel.queues 11).map (·.buffer),
-                   (findQueue s.kernel.queues 12).map (·.buffer)))) == some (some [], some [111], some [111])  --  some (some [], some [111], some [111]) — MOVED source→sinks
--- ...the pipeline step is balance-NEUTRAL (the COMBINED measure is FIXED ∀ asset — moves a MESSAGE, not balance):
-#guard ((queuePipelineStepA fmaQ 10 0 [1, 2] [11, 12]).map
-        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (50, 0)  --  some (50, 0) — CONSERVED
-
--- ★★ PIPELINE TEETH — source EMPTY rejects (the FIFO emptiness gate): route from q=11 (empty) ⇒ `none`:
-#guard ((queuePipelineStepA fmaQ 11 0 [2] [12]).isSome) == false  --  false — empty source rejected
--- ...and a SINK the owner does NOT control is rejected (the BUG#114 sink-ACL gate): actor 0 holds no cap
---   to cell 5, so fanning into a sink represented by cell 5 fail-closes:
-#guard ((queuePipelineStepA fmaQ 10 0 [5] [11]).isSome) == false  --  false — unauthorized sink rejected
--- ...and a NON-OWNER source dequeue is rejected: cell 1 is not the owner of q=10 ⇒ `none`:
-#guard ((queuePipelineStepA fmaQ 10 1 [1] [11]).isSome) == false  --  false — non-owner source rejected
 
 -- ★ PIPELINED-SEND — the apply-time NEUTRAL marker (the EventualRef resolution is `ConditionalTurn`'s
 --   batch; AT apply the resolved action already ran, so this is a balance-neutral clock row that COMMITS):
-#guard ((execFullA fmaQ (.pipelinedSendA 0)).isSome)  --  true — apply-time neutral commits
-#guard ((execFullA fmaQ (.pipelinedSendA 0)).map
+#guard ((execFullA fmaP (.pipelinedSendA 0)).isSome)  --  true — apply-time neutral commits
+#guard ((execFullA fmaP (.pipelinedSendA 0)).map
         (fun s => (recTotalAsset s.kernel 0, s.log.length))) == some (50, 1)  --  some (50, 1) — NEUTRAL + one clock row
 
 end Dregg2.Exec.TurnExecutorFull

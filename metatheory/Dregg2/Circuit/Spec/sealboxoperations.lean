@@ -183,7 +183,6 @@ def SealSpec (st : RecChainedState) (pid : Nat) (actor : CellId) (payload : Cap)
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
   ∧ st'.kernel.bal = st.kernel.bal
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
@@ -210,7 +209,6 @@ def UnsealSpec (st : RecChainedState) (pid : Nat) (actor recipient : CellId) (bo
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
   ∧ st'.kernel.bal = st.kernel.bal
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
@@ -240,14 +238,13 @@ theorem sealChainA_iff_spec (st : RecChainedState) (pid : Nat) (actor : CellId) 
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-             rfl, rfl⟩
-    · rintro ⟨_, hsb, hlog, hacc, hcell, hcaps, hnull, hrev, hcom, hbal, hq, hsw, hsc, hfac,
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hsb, hlog, hacc, hcell, hcaps, hnull, hrev, hcom, hbal, hsw, hsc, hfac,
              hlif, hdc, hdel, hdels, hde, hdea⟩
       obtain ⟨k', log'⟩ := st'
-      obtain ⟨acc', cell', caps', null', rev', com', bal', q', sw', sc', fac', lif', dc', del',
+      obtain ⟨acc', cell', caps', null', rev', com', bal', sw', sc', fac', lif', dc', del',
               dels', sb', de', dea'⟩ := k'
-      subst hacc hcell hcaps hnull hrev hcom hbal hq hsw hsc hfac hlif hdc hdel hdels hsb hlog
+      subst hacc hcell hcaps hnull hrev hcom hbal hsw hsc hfac hlif hdc hdel hdels hsb hlog
         hde hdea
       rfl
   · rw [if_neg hg]
@@ -272,16 +269,16 @@ theorem unsealChainA_iff_spec (st : RecChainedState) (pid : Nat) (actor recipien
       -- the executor writes `grant st.kernel.caps recipient box.payload`; `grantedCaps` IS `grant`.
       -- `rw […, hbox]` above already rewrote the goal's `findSealedBox … = some box` to `some box =
       -- some box`, so the unsealAdmitGuard's box conjunct is discharged by `rfl`.
-      refine ⟨⟨hg, rfl⟩, (grantedCaps_eq_grant _ _ _).symm, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+      refine ⟨⟨hg, rfl⟩, (grantedCaps_eq_grant _ _ _).symm, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
              rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨⟨_, _⟩, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hq, hsw, hsc, hfac,
+    · rintro ⟨⟨_, _⟩, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsw, hsc, hfac,
              hlif, hdc, hdel, hdels, hsb, hde, hdea⟩
       obtain ⟨k', log'⟩ := st'
-      obtain ⟨acc', cell', caps', null', rev', com', bal', q', sw', sc', fac', lif', dc', del',
+      obtain ⟨acc', cell', caps', null', rev', com', bal', sw', sc', fac', lif', dc', del',
               dels', sb', de', dea'⟩ := k'
       -- the spec's `caps` post is `grantedCaps`; rewrite it to the executor's `grant` form.
       rw [grantedCaps_eq_grant] at hcaps
-      subst hacc hcell hcaps hnull hrev hcom hbal hq hsw hsc hfac hlif hdc hdel hdels hsb hlog
+      subst hacc hcell hcaps hnull hrev hcom hbal hsw hsc hfac hlif hdc hdel hdels hsb hlog
         hde hdea
       rfl
   · rw [if_neg hg]
@@ -367,7 +364,7 @@ theorem unseal_preserves_box_store (st : RecChainedState) (pid : Nat) (actor rec
     (box : SealedBoxRecord) (st' : RecChainedState)
     (h : UnsealSpec st pid actor recipient box st') :
     st'.kernel.sealedBoxes = st.kernel.sealedBoxes := by
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hsb, _, _⟩ := h
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hsb, _, _⟩ := h
   exact hsb
 
 /-- **`unseal_preserves_other_holders` — PROVED.** Any holder `l ≠ recipient` keeps its cap-list

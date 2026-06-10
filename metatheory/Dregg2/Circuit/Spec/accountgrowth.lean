@@ -72,7 +72,7 @@ private theorem recordKernel_eq_of_fields {k k' : RecordKernelState}
     (haccounts : k.accounts = k'.accounts) (hcell : k.cell = k'.cell) (hcaps : k.caps = k'.caps)
     (hnullifiers : k.nullifiers = k'.nullifiers)
     (hrevoked : k.revoked = k'.revoked) (hcommitments : k.commitments = k'.commitments)
-    (hbal : k.bal = k'.bal) (hqueues : k.queues = k'.queues) (hswiss : k.swiss = k'.swiss)
+    (hbal : k.bal = k'.bal) (hswiss : k.swiss = k'.swiss)
     (hslotCaveats : k.slotCaveats = k'.slotCaveats) (hfactories : k.factories = k'.factories)
     (hlifecycle : k.lifecycle = k'.lifecycle) (hdeathCert : k.deathCert = k'.deathCert)
     (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)
@@ -183,7 +183,6 @@ def CreateCellSpec (st : RecChainedState) (actor newCell : CellId) (st' : RecCha
   ∧ st'.kernel.nullifiers = st.kernel.nullifiers
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.factories = st.kernel.factories
   ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
@@ -207,17 +206,17 @@ theorem createCellChainA_iff_spec (st : RecChainedState) (actor newCell : CellId
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      refine ⟨hg, rfl, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      refine ⟨hg, rfl, ?_, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
       · dsimp only [bornEmptyAt]
         refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
       · simp only [createReceipt]
-    · rintro ⟨_, hacc, hborn, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9⟩
+    · rintro ⟨_, hacc, hborn, hlog, h1, h2, h3, h4, h5, h6, h7, h8⟩
       obtain ⟨k', lg'⟩ := st'
-      obtain ⟨acc, cl, cp, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb, dge, dgea⟩ := k'
+      obtain ⟨acc, cl, cp, nl, rv, cm, bl, sw, sc, fc, lc, dc, dl, dn, sb, dge, dgea⟩ := k'
       dsimp only [bornEmptyAt] at hborn
       obtain ⟨hcl, hcp, hdel, hdgs, hsc, hlif, hdc, hbal⟩ := hborn
-      simp only at hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9
-      subst hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9
+      simp only at hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8
+      subst hacc hcl hcp hdel hdgs hsc hlif hdc hbal hlog h1 h2 h3 h4 h5 h6 h7 h8
       rfl
   · rw [if_neg hg]
     constructor
@@ -387,7 +386,6 @@ def SpawnSpec (st : RecChainedState) (actor child target : CellId) (st' : RecCha
   ∧ st'.kernel.nullifiers = st.kernel.nullifiers
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.factories = st.kernel.factories
   ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes
@@ -415,7 +413,7 @@ theorem spawnChainA_iff_spec (st : RecChainedState) (actor child target : CellId
         simp only [Option.some.injEq] at h
         subst h
         refine ⟨⟨hg.1, hg.2, hc⟩, rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, rfl, rfl,
-               rfl, rfl, rfl, rfl, rfl⟩
+               rfl, rfl, rfl, rfl⟩
         · funext c; by_cases hc' : c = child <;> simp [hc']
         · funext c; by_cases hc' : c = child <;> simp [hc']
         · funext c; by_cases hc' : c = child <;> simp [hc']
@@ -426,12 +424,12 @@ theorem spawnChainA_iff_spec (st : RecChainedState) (actor child target : CellId
         · funext c; by_cases hc' : c = child <;> simp [hc', spawnDelegationsMap]
         · simp only [createReceipt]
       · rintro ⟨⟨he, ht, hca⟩, hacc, hcl, hsc, hlif, hdc, hbal, hcaps, hdel, hdgs, hlog, h2,
-                h3, h4, h5, h6, h7, h8, hde, hdea⟩
+                h3, h4, h5, h6, h7, hde, hdea⟩
         simp only [Option.some.injEq]
         obtain ⟨k', lg'⟩ := st'
-        obtain ⟨acc, cl, cp, nl, rv, cm, bl, qs, sw, sc, fc, lc, dc, dl, dn, sb, dge, dgea⟩ := k'
-        simp only at hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h2 h3 h4 h5 h6 h7 h8 hde hdea
-        subst hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h2 h3 h4 h5 h6 h7 h8 hde hdea
+        obtain ⟨acc, cl, cp, nl, rv, cm, bl, sw, sc, fc, lc, dc, dl, dn, sb, dge, dgea⟩ := k'
+        simp only at hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h2 h3 h4 h5 h6 h7 hde hdea
+        subst hacc hcl hsc hlif hdc hbal hcaps hdel hdgs hlog h2 h3 h4 h5 h6 h7 hde hdea
         rfl
     · rw [if_neg hc]
       constructor

@@ -320,7 +320,7 @@ theorem unify_pipelinedSend (D : List SwissRecord → ℤ)
     (s : RecChainedState) (actor : CellId) (s' : RecChainedState)
     (hspec : PipelinedSendSpec s actor s') :
     swissRootProj D s'.kernel = swissRootProj D s.kernel := by
-  obtain ⟨_, _, _, _, _, _, _, _, _, hSw, _⟩ := hspec
+  obtain ⟨_, _, _, _, _, _, _, _, hSw, _⟩ := hspec
   show D s'.kernel.swiss = D s.kernel.swiss
   rw [hSw]
 

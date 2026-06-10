@@ -109,20 +109,11 @@ example (s : RecChainedState) (name owner : Dregg2.Apps.NameService.Name)
     ∀ n, Dregg2.Apps.NameService.isRegistered (trajG s sched n) name owner = true :=
   nameservice_registration_forever_production s name owner hinit sched
 
-/-! ## §5 — Subscription on `trajG`. -/
+/-! ## §5 — Subscription on `trajG`.
 
-theorem subscription_wellformed_foreverG_via_contract (s : RecChainedState)
-    (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
-  subWFContract.forever hinit sched
-
-example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
-  subscription_wellformed_foreverG_via_contract s hinit sched
-
-example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedG) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajG s sched n).kernel :=
-  subscription_wellformed_forever_production s hinit sched
+F2b: the `subWF` queue-capacity crown moved to the factory story (`Apps/QueueFactory.lean`)
+with the kernel queue side-table's deletion; the gated subscription app's surviving production
+crowns are in `Apps/SubscriptionGated.lean` (`sub_pay_conserved_forever` et al). -/
 
 /-! ## §5b — ComputeExchange: payment conservation on `trajG`. -/
 
@@ -303,7 +294,6 @@ example (s : RecChainedState) (sched : SchedG) :
 #guard (Dregg2.Apps.NameService.afterRegister.map
           (fun s => Dregg2.Apps.NameService.isRegistered s
             Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner) == some true)
-#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).isSome)
 #guard (SafetyShape.membership == SafetyShape.membership)
 #guard (SafetyShape.other == SafetyShape.other)
 
@@ -315,7 +305,6 @@ example (s : RecChainedState) (sched : SchedG) :
 #assert_axioms no_double_spendG_via_contract
 #assert_axioms commitments_persistG_via_contract
 #assert_axioms nameservice_registration_foreverG_via_contract
-#assert_axioms subscription_wellformed_foreverG_via_contract
 #assert_axioms cx_pay_conserved_foreverG_via_contract
 #assert_axioms cwm_pay_conserved_foreverG_via_contract
 #assert_axioms cwm_safety_foreverG_via_contract

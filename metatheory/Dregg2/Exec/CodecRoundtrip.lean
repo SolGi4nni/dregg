@@ -78,10 +78,6 @@ Quot.sound}`. -/
 #assert_axioms parseActionW_roundtrip
 #assert_axioms parseActionW_setfield
 #assert_axioms parseNatsW_encode
-#assert_axioms parseQueueTxOp_encode
-#assert_axioms parseQueueTxOps_encode
-#assert_axioms parseActionW_qatomic
-#assert_axioms parseActionW_qpipe
 #assert_axioms parseAuths_encode
 #assert_axioms parseNats_encode
 #assert_axioms parseBal_encode

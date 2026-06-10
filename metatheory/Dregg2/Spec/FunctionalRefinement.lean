@@ -6,7 +6,7 @@ the independently-specified output (output-uniqueness, not merely "the result sa
 
 A `RecordProgram`/`CellProgram` is a **constraint**: `admits (old, new)` accepts or rejects a
 *candidate* pair — it does NOT name or derive the intended `new`. The next state is computed by a
-*separate* op language (`applyOp`, the escrow/queue kernel ops), which has had NO declarative spec
+*separate* op language (`applyOp`, the side-table kernel ops), which has had NO declarative spec
 it is proven to refine. So far we prove:
 
   * `recExec_admitted`   — "the committed result satisfies my predicate" (`admits old new`), and
@@ -18,8 +18,7 @@ commits to EXACTLY the post-state my protocol intent prescribes, and rejects eve
 — existed only for the transfer beachhead, not the ~43 effects.
 
 This module establishes that stronger property for the **escrow family** (create / release / refund)
-as the validated REFERENCE PATTERN, and pushes it to a **second family** (queue FIFO
-allocate / enqueue / dequeue). For each effect we:
+as the validated REFERENCE PATTERN, and pushes it across the surviving families. For each effect we:
 
   1. Write an **INDEPENDENT declarative reference function** in plain Lean — `escrowCreateSpec`,
      `escrowReleaseSpec`, … : the post-state, named *from protocol intent* (the asset ledger moves;
@@ -41,7 +40,7 @@ allocate / enqueue / dequeue). For each effect we:
      executor refuses while accepting the spec's output).
 
 `#assert_axioms`-clean, no `sorry`, no `:= True`. Imports the escrow handlers (`createEscrowStep`,
-`releaseStep`, `refundStep` — the actor-gated R2 steps) and the kernel queue ops.
+`releaseStep`, `refundStep` — the actor-gated R2 steps).
 -/
 import Dregg2.Exec.Handlers.Escrow
 import Dregg2.Exec.Handlers.StateSupply
@@ -49,7 +48,6 @@ import Dregg2.Exec.Handlers.Authority
 import Dregg2.Exec.Handlers.Seal
 import Dregg2.Exec.Handlers.Lifecycle
 import Dregg2.Exec.Handlers.Bridge
-import Dregg2.Exec.Handlers.Queue
 import Dregg2.Exec.Handlers.Exercise
 
 namespace Dregg2.Spec.FunctionalRefinement
@@ -106,131 +104,13 @@ them — the escrow functional story lives in the factory contract (`Apps/Escrow
 whose deposit/release/refund are ordinary `bal` moves with their own proved keystones. The
 reference PATTERN below (independent spec + triangle + anti-ghost) survives on every other family. -/
 
-/-! ## §3 — SECOND FAMILY: QUEUE FIFO (allocate / enqueue / dequeue) — the same triangle.
+/-! ## §3 — (F2b) the QUEUE FIFO triangles are GONE with the kernel queue side-table.
 
-The queue ops (`queueAllocateK`/`queueEnqueueK`/`queueDequeueK`) are a SEPARATE side-table family. We
-give each an INDEPENDENT intent spec over the buffer and prove the triangle + anti-ghost tooth, so the
-escrow REFERENCE PATTERN is shown to amplify to a structurally-different effect (a list-FIFO automaton,
-not a per-asset ledger). -/
-
-/-- **`queueAllocateSpec` — the INDEPENDENT post-state of an allocate.** A fresh queue record
-`{id, owner, capacity, buffer := []}` is prepended; all else fixed. -/
-def queueAllocateSpec (k : RecordKernelState) (id : Nat) (owner : CellId) (capacity : Nat) :
-    RecordKernelState :=
-  { k with queues := { id := id, owner := owner, capacity := capacity, buffer := [] } :: k.queues }
-
-/-- **THE QUEUE-ALLOCATE TRIANGLE (PROVED, FULL BICONDITIONAL).** `queueAllocateK` commits EXACTLY the
-intent post-state iff the id is fresh. -/
-theorem queueAllocate_triangle (k k' : RecordKernelState) (id : Nat) (owner : CellId) (capacity : Nat) :
-    queueAllocateK k id owner capacity = some k' ↔
-      (findQueue k.queues id = none ∧ k' = queueAllocateSpec k id owner capacity) := by
-  unfold queueAllocateK queueAllocateSpec
-  constructor
-  · intro h
-    cases hf : findQueue k.queues id with
-    | some q => rw [hf] at h; exact absurd h (by simp)
-    | none   => rw [hf] at h; simp only [Option.some.injEq] at h; exact ⟨rfl, h.symm⟩
-  · rintro ⟨hf, hk⟩; rw [hf, hk]
-
-/-- **ANTI-GHOST TOOTH (queue allocate, PROVED).** -/
-theorem queueAllocate_antighost (k k'' : RecordKernelState) (id : Nat) (owner : CellId) (capacity : Nat)
-    (hne : k'' ≠ queueAllocateSpec k id owner capacity) :
-    queueAllocateK k id owner capacity ≠ some k'' := by
-  intro h
-  exact hne ((queueAllocate_triangle k k'' id owner capacity).mp h).2
-
-/-- **`queueEnqueueSpec` — the INDEPENDENT post-state of an enqueue over the found queue `q`.** The
-message `m` is APPENDED to the back of `q`'s buffer (`qbufEnqueue` = FIFO tail-append); the queue record
-is replaced in place; all else fixed. Written from intent ("the new message waits BEHIND those already
-queued"). -/
-def queueEnqueueSpec (k : RecordKernelState) (id : Nat) (q : QueueRecord) (m : Nat) :
-    RecordKernelState :=
-  { k with queues := replaceQueue k.queues id { q with buffer := qbufEnqueue q.buffer m } }
-
-/-- **THE QUEUE-ENQUEUE TRIANGLE (PROVED, FULL BICONDITIONAL).** `queueEnqueueK` commits EXACTLY the
-intent post-state iff the queue is found AND not full. The output appends to the TAIL (FIFO) — a
-candidate that prepended, or replaced the wrong queue, is excluded. -/
-theorem queueEnqueue_triangle (k k' : RecordKernelState) (id m : Nat) :
-    queueEnqueueK k id m = some k' ↔
-      (∃ q, findQueue k.queues id = some q ∧ q.buffer.length < q.capacity ∧
-            k' = queueEnqueueSpec k id q m) := by
-  unfold queueEnqueueK queueEnqueueSpec
-  constructor
-  · intro h
-    cases hf : findQueue k.queues id with
-    | none   => rw [hf] at h; exact absurd h (by simp)
-    | some q =>
-        rw [hf] at h; simp only at h
-        by_cases hc : q.buffer.length < q.capacity
-        · rw [if_pos hc] at h; simp only [Option.some.injEq] at h
-          exact ⟨q, rfl, hc, h.symm⟩
-        · rw [if_neg hc] at h; exact absurd h (by simp)
-  · rintro ⟨q, hf, hc, hk⟩; rw [hf]; simp only; rw [if_pos hc, hk]
-
-/-- **ANTI-GHOST TOOTH (queue enqueue, PROVED).** Once the found queue `q` is fixed, any candidate
-`k'' ≠ queueEnqueueSpec k id q m` is REJECTED — the executor will not commit a buffer that isn't the
-intent's tail-append. -/
-theorem queueEnqueue_antighost (k k'' : RecordKernelState) (id m : Nat) (q : QueueRecord)
-    (hf : findQueue k.queues id = some q) (hne : k'' ≠ queueEnqueueSpec k id q m) :
-    queueEnqueueK k id m ≠ some k'' := by
-  intro h
-  obtain ⟨q', hf', _, hk⟩ := (queueEnqueue_triangle k k'' id m).mp h
-  rw [hf] at hf'; simp only [Option.some.injEq] at hf'; subst hf'
-  exact hne hk
-
-/-- **`queueDequeueSpec` — the INDEPENDENT post-state of a dequeue over found queue `q` with buffer
-`m :: rest`.** The FRONT message `m` (the OLDEST waiting) is removed; the queue record is replaced with
-`rest`; all else fixed. The dequeued message is `m`. Written from intent ("the oldest message leaves
-first"). -/
-def queueDequeueSpec (k : RecordKernelState) (id : Nat) (q : QueueRecord) (rest : List Nat) :
-    RecordKernelState :=
-  { k with queues := replaceQueue k.queues id { q with buffer := rest } }
-
-/-- **THE QUEUE-DEQUEUE TRIANGLE (PROVED, FULL BICONDITIONAL).** `queueDequeueK` commits EXACTLY the
-intent post-state AND returns EXACTLY the front message iff the queue is found, the actor is the owner,
-and the buffer is non-empty (`m :: rest`). The output removes the FRONT (FIFO) — a candidate that
-removed the tail, or returned the wrong message, is excluded. This pins BOTH the post-state and the
-returned message (a richer codomain — `RecordKernelState × Nat`). -/
-theorem queueDequeue_triangle (k k' : RecordKernelState) (id : Nat) (actor : CellId) (m : Nat) :
-    queueDequeueK k id actor = some (k', m) ↔
-      (∃ q rest, findQueue k.queues id = some q ∧ actor = q.owner ∧ q.buffer = m :: rest ∧
-                 k' = queueDequeueSpec k id q rest) := by
-  unfold queueDequeueK queueDequeueSpec
-  constructor
-  · intro h
-    cases hf : findQueue k.queues id with
-    | none   => rw [hf] at h; exact absurd h (by simp)
-    | some q =>
-        rw [hf] at h; simp only at h
-        by_cases ho : actor = q.owner
-        · rw [if_pos ho] at h
-          cases hb : q.buffer with
-          | nil      => have hd : qbufDequeue q.buffer = none := by rw [hb]; rfl
-                        rw [hd] at h; exact absurd h (by simp)
-          | cons x xs =>
-              have hd : qbufDequeue q.buffer = some (x, xs) := by rw [hb]; rfl
-              rw [hd] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h
-              obtain ⟨hk, hm⟩ := h; subst hm
-              exact ⟨q, xs, rfl, ho, hb, hk.symm⟩
-        · rw [if_neg ho] at h; exact absurd h (by simp)
-  · rintro ⟨q, rest, hf, ho, hb, hk⟩
-    rw [hf]; simp only; rw [if_pos ho]
-    have hd : qbufDequeue q.buffer = some (m, rest) := by rw [hb]; rfl
-    rw [hd, hk]
-
-/-- **ANTI-GHOST TOOTH (queue dequeue, PROVED).** Once the found queue `q` (with buffer `m :: rest`)
-is fixed, any candidate post-state `k'' ≠ queueDequeueSpec k id q rest` is REJECTED — the executor will
-not commit a buffer that isn't the intent's front-removal. -/
-theorem queueDequeue_antighost (k k'' : RecordKernelState) (id : Nat) (actor : CellId) (m : Nat)
-    (q : QueueRecord) (rest : List Nat)
-    (hf : findQueue k.queues id = some q) (hb : q.buffer = m :: rest)
-    (hne : k'' ≠ queueDequeueSpec k id q rest) :
-    queueDequeueK k id actor ≠ some (k'', m) := by
-  intro h
-  obtain ⟨q', rest', hf', _, hb', hk⟩ := (queueDequeue_triangle k k'' id actor m).mp h
-  rw [hf] at hf'; simp only [Option.some.injEq] at hf'; subst hf'
-  rw [hb] at hb'; simp only [List.cons.injEq] at hb'; obtain ⟨_, hr⟩ := hb'; subst hr
-  exact hne hk
+The allocate/enqueue/dequeue triangles rode on `queueAllocateK`/`queueEnqueueK`/`queueDequeueK`
+and the `queues` side-table; F2b deleted them — the queue functional story lives in the factory
+contract (`Apps/QueueFactory.lean`, with `Apps/{InboxFactory,PubsubFactory}.lean`), whose
+enqueue/dequeue are gated `setField` writes with their own proved keystones (capacity /
+no-underflow / sender-auth / FIFO-order shadow). -/
 
 /-! ## §4 — NON-VACUITY TEETH (`#guard`): concrete witness TRUE and ghost REJECTED.
 
@@ -247,37 +127,13 @@ def fx : RecordKernelState :=
 -- Since `RecordKernelState` carries function fields it has no `BEq`; we witness the triangles via
 -- DECIDABLE OBSERVATIONS (balances, buffer order, isSome) — `RecordKernelState`-equality itself is
 -- proved/refuted by the triangle theorems + anti-ghost teeth above, which is the real content.
--- (F1b: the escrow create/settle teeth left with the kernel escrow store — see `Apps/EscrowFactory`.)
-
--- QUEUE allocate commits a fresh empty queue (id 7, owner 0, cap 2).
-#guard (queueAllocateK fx 7 0 2).isSome
-#guard (((queueAllocateK fx 7 0 2).bind (fun k => (findQueue k.queues 7))).map
-          (fun q => (q.owner, q.capacity, q.buffer)) == some (0, 2, ([] : List Nat)))
--- ENQUEUE a(100) then b(200), then DEQUEUE returns the FRONT (a=100) — the FIFO order the triangle pins.
-#guard (match queueAllocateK fx 7 0 2 with
-        | some k1 => match queueEnqueueK k1 7 100 with
-            | some k2 => match queueEnqueueK k2 7 200 with
-                | some k3 => (queueDequeueK k3 7 0).map (·.2) == some 100  -- front = a = 100 (FIFO, not LIFO)
-                | none => false
-            | none => false
-        | none => false)
--- ENQUEUE anti-ghost: a NON-OWNER cannot dequeue (the gate refuses); a FULL queue refuses enqueue.
-#guard (match queueAllocateK fx 7 0 1 with  -- capacity 1
-        | some k1 => match queueEnqueueK k1 7 100 with
-            | some k2 => (queueEnqueueK k2 7 200).isNone  -- full ⇒ refused
-            | none => false
-        | none => false)
+-- (F1b: the escrow create/settle teeth left with the kernel escrow store — see `Apps/EscrowFactory`;
+-- F2b: the queue FIFO teeth left with the kernel queue side-table — see `Apps/QueueFactory`.)
 
 /-! ## §5 — Axiom-hygiene pins. Every triangle + anti-ghost rests only on the kernel axioms. -/
 
 #assert_axioms intentDebit_eq_credit
 #assert_axioms intentCredit_eq_credit
-#assert_axioms queueAllocate_triangle
-#assert_axioms queueAllocate_antighost
-#assert_axioms queueEnqueue_triangle
-#assert_axioms queueEnqueue_antighost
-#assert_axioms queueDequeue_triangle
-#assert_axioms queueDequeue_antighost
 
 /-! ## §6 — THIRD FAMILY: VALUE SUPPLY (mint / burn) — the per-asset supply triangle.
 
@@ -746,7 +602,7 @@ theorem stateWrite_antighost (k k'' : RecordKernelState) (a : StateWriteArgs)
 its post-state is FULLY transparent on `k.cell`. Reading the code, it REPLACES exactly `target`'s cell
 record with the commitment-only literal `.record [(commitmentField, .dig (stateCommitment (k.cell
 target)))]`, leaving EVERY OTHER cell's record and ALL other `RecordKernelState` fields
-(`bal`/`accounts`/`caps`/`escrows`/`queues`/`swiss`/`commitments`/`nullifiers`/lifecycle/…) literally
+(`bal`/`accounts`/`caps`/`swiss`/`commitments`/`nullifiers`/lifecycle/…) literally
 untouched. The ONLY genuinely-irreducible carrier inside is the SCALAR digest `stateCommitment (k.cell
 target)` (the §8 commitment hash of the old record — a structural Nat fold). So we write the spec
 TRANSPARENTLY as an explicit `{ k with cell := <commitment-only stub at target, prior cells elsewhere> }`
@@ -763,7 +619,7 @@ def sovereignStub (k : RecordKernelState) (target : CellId) : Value :=
 /-- **`makeSovereignSpec` — the INDEPENDENT declarative post-state of a make-sovereign (TRANSPARENT).**
 EXACTLY `target`'s cell record becomes the commitment-only `sovereignStub` (its readable record dropped
 behind the §8 state commitment); EVERY OTHER cell's record AND every other field
-(bal/caps/escrows/accounts/queues/swiss/commitments/nullifiers/lifecycle) untouched. Written field-by-field
+(bal/caps/accounts/swiss/commitments/nullifiers/lifecycle) untouched. Written field-by-field
 from intent ("THIS cell's readable record is replaced by a commitment-only stub; nothing else moves"),
 NOT as `makeSovereignKernel`. -/
 def makeSovereignSpec (k : RecordKernelState) (a : MakeSovereignArgs) : RecordKernelState :=
@@ -1456,126 +1312,12 @@ theorem dropRef_antighost (k k'' : RecordKernelState) (holder target : CellId)
   intro h
   exact hne ((dropRef_triangle k k'' holder target).mp h)
 
-/-! ## §19 — TWELFTH FAMILY: QUEUE EXTRAS (resize / atomicTx / pipelineStep) — capacity + routing triangle.
+/-! ## §19 — (F2b) the QUEUE EXTRAS triangles are GONE with the queue verb family.
 
-The remaining queue handlers (`Handlers.Queue.resizeStep`/`atomicTxStep`/`pipelineStep`) round out the
-§3 FIFO family. Resize changes a queue's CAPACITY (a transparent in-place record edit, gated below current
-occupancy); atomicTx folds an ALL-OR-NOTHING deposit-batch; pipelineStep DEQUEUEs a source head and
-fans it out to ACL-checked sinks. Resize gets a TRANSPARENT field-by-field spec + full triangle + tooth.
-atomicTx/pipeline are ROUTING FOLDS — their spec is the TRANSPARENT fold itself (`queueAtomicTxChainK` /
-the dequeue-then-fanout composition, the actual operation, not an opaque mirror), with a triangle pinning
-output-uniqueness + the gate. -/
-
-open Dregg2.Exec.Handlers.Queue
-  (ResizeArgs resizeStep AtomicTxArgs atomicTxStep queueAtomicTxChainK
-   PipelineArgs pipelineStep)
-open Dregg2.Exec.TurnExecutorFull (pipelineFanoutK)
-
-/-- **`queueResizeSpec` — the INDEPENDENT post-state of a queue resize over found queue `q` (TRANSPARENT).**
-The queue record's `capacity` is set to `a.capacity` in place (`replaceQueue`); the buffer and every other
-field untouched. Written from intent ("change THIS queue's capacity, keep its contents"). -/
-def queueResizeSpec (k : RecordKernelState) (a : ResizeArgs) (q : QueueRecord) : RecordKernelState :=
-  { k with queues := replaceQueue k.queues a.id { q with capacity := a.capacity } }
-
-/-- The queue-resize gate: the actor holds authority over the owner AND the owner is Live. -/
-def queueResizeGate (k : RecordKernelState) (a : ResizeArgs) : Prop :=
-  stateAuthB k.caps a.actor a.owner = true ∧ acceptsEffects k a.owner = true
-
-/-- **THE QUEUE-RESIZE TRIANGLE (PROVED, FULL BICONDITIONAL).** `resizeStep k a = some k'` IFF the gate
-(authority + owner-Live) holds, a found queue `q` exists whose current occupancy fits the new capacity
-(`q.buffer.length ≤ a.capacity` — no shrink below contents), AND `k' = queueResizeSpec k a q`. The `→`
-pins the unique TRANSPARENT post-state (the in-place capacity edit) AND surfaces the no-truncation gate;
-the `←` is completeness. -/
-theorem queueResize_triangle (k k' : RecordKernelState) (a : ResizeArgs) :
-    resizeStep k a = some k' ↔
-      (queueResizeGate k a ∧ ∃ q, findQueue k.queues a.id = some q ∧
-            q.buffer.length ≤ a.capacity ∧ k' = queueResizeSpec k a q) := by
-  unfold resizeStep queueResizeGate queueResizeSpec queueResizeK
-  constructor
-  · intro h
-    by_cases hg : stateAuthB k.caps a.actor a.owner && acceptsEffects k a.owner
-    · rw [if_pos hg] at h
-      simp only [Bool.and_eq_true] at hg
-      cases hf : findQueue k.queues a.id with
-      | none => rw [hf] at h; exact absurd h (by simp)
-      | some q =>
-          rw [hf] at h; simp only at h
-          by_cases hc : q.buffer.length ≤ a.capacity
-          · rw [if_pos hc] at h; simp only [Option.some.injEq] at h
-            exact ⟨⟨hg.1, hg.2⟩, q, rfl, hc, h.symm⟩
-          · rw [if_neg hc] at h; exact absurd h (by simp)
-    · rw [if_neg hg] at h; exact absurd h (by simp)
-  · rintro ⟨⟨hauth, hlive⟩, q, hf, hc, hk⟩
-    rw [if_pos (by simp [hauth, hlive]), hf]; simp only; rw [if_pos hc, hk]
-
-/-- **ANTI-GHOST TOOTH (queue resize, PROVED).** Once the found queue `q` is fixed, any candidate
-`k'' ≠ queueResizeSpec k a q` is REJECTED — a resize that edited the WRONG queue, the WRONG capacity, or
-mutated the buffer is excluded. -/
-theorem queueResize_antighost (k k'' : RecordKernelState) (a : ResizeArgs) (q : QueueRecord)
-    (hf : findQueue k.queues a.id = some q) (hne : k'' ≠ queueResizeSpec k a q) :
-    resizeStep k a ≠ some k'' := by
-  intro h
-  obtain ⟨_, q', hf', _, hk⟩ := (queueResize_triangle k k'' a).mp h
-  rw [hf] at hf'; simp only [Option.some.injEq] at hf'; subst hf'
-  exact hne hk
-
-/-- **`atomicTxSpec` — the INDEPENDENT post-state of an all-or-nothing deposit batch (TRANSPARENT).** The
-post-state is EXACTLY the all-or-nothing fold of the sub-op list (`queueAtomicTxChainK k a.ops`) — the
-transparent operation, threaded through the `Option` monad (commit iff EVERY sub-op commits; any failure
-rolls back). This is intent ("run these deposit ops atomically"), written as the FOLD, not as an opaque
-`atomicTxStep` (the fold is the actual transparent computation, each sub-op carrying its own gate). -/
-def atomicTxSpec (k : RecordKernelState) (a : AtomicTxArgs) : Option RecordKernelState :=
-  queueAtomicTxChainK k a.ops
-
-/-- **THE ATOMIC-TX TRIANGLE (PROVED, FULL BICONDITIONAL — output-uniqueness).** `atomicTxStep k a = k''`
-IFF `k'' = atomicTxSpec k a` (the transparent all-or-nothing fold). Output-uniqueness: a commit pins
-EXACTLY the fold result. The gate is internal to the fold (each sub-op fail-closes on its own ACL/binding
-gate), so the content is the `=` to the transparent fold — a candidate result that is not the fold's
-output (a partial commit on a failing batch, a re-ordered fold) is excluded. -/
-theorem atomicTx_triangle (k : RecordKernelState) (a : AtomicTxArgs) (k'' : Option RecordKernelState) :
-    atomicTxStep k a = k'' ↔ k'' = atomicTxSpec k a := by
-  unfold atomicTxStep atomicTxSpec
-  constructor
-  · intro h; exact h.symm
-  · intro h; exact h.symm
-
-/-- **ANTI-GHOST TOOTH (atomic tx, PROVED).** Any candidate result `k'' ≠ atomicTxSpec k a` is REJECTED —
-the batch commits EXACTLY the all-or-nothing fold; a partial commit on a failing batch (the rollback
-violated) or a re-ordered application is excluded. -/
-theorem atomicTx_antighost (k : RecordKernelState) (a : AtomicTxArgs) (k'' : Option RecordKernelState)
-    (hne : k'' ≠ atomicTxSpec k a) : atomicTxStep k a ≠ k'' := by
-  intro h
-  exact hne ((atomicTx_triangle k a k'').mp h)
-
-/-- **`pipelineSpec` — the INDEPENDENT post-state of a pipeline fan-out (TRANSPARENT).** The post-state is
-EXACTLY the source-dequeue-then-fan-out composition: DEQUEUE the source head (owner-gated, FIFO) then
-RE-ENQUEUE the moved head into each ACL-checked sink (`pipelineFanoutK`). Written from intent ("route the
-source FIFO head out to the sinks"), as the transparent dequeue⨾fanout, fail-closed if the source dequeue
-fails OR any sink rejects. -/
-def pipelineSpec (k : RecordKernelState) (a : PipelineArgs) : Option RecordKernelState :=
-  match queueDequeueK k a.srcId a.owner with
-  | some (k1, m) => pipelineFanoutK k1 a.owner m a.sinkCells a.sinkIds
-  | none         => none
-
-/-- **THE PIPELINE-STEP TRIANGLE (PROVED, FULL BICONDITIONAL — output-uniqueness).** `pipelineStep k a =
-k''` IFF `k'' = pipelineSpec k a` (the transparent dequeue⨾fanout). Output-uniqueness: a commit pins
-EXACTLY the routed post-state — a candidate that dequeued the WRONG (non-FIFO) head, skipped a sink, or
-routed to the wrong sink is excluded. The owner-dequeue + per-sink ACL gates are internal to the
-composition. -/
-theorem pipeline_triangle (k : RecordKernelState) (a : PipelineArgs) (k'' : Option RecordKernelState) :
-    pipelineStep k a = k'' ↔ k'' = pipelineSpec k a := by
-  unfold pipelineStep pipelineSpec
-  constructor
-  · intro h; exact h.symm
-  · intro h; exact h.symm
-
-/-- **ANTI-GHOST TOOTH (pipeline step, PROVED).** Any candidate result `k'' ≠ pipelineSpec k a` is
-REJECTED — the pipeline routes EXACTLY the FIFO head to the ACL-checked sinks; a non-FIFO dequeue, a
-skipped sink, or a mis-routed message is excluded. -/
-theorem pipeline_antighost (k : RecordKernelState) (a : PipelineArgs) (k'' : Option RecordKernelState)
-    (hne : k'' ≠ pipelineSpec k a) : pipelineStep k a ≠ k'' := by
-  intro h
-  exact hne ((pipeline_triangle k a k'').mp h)
+The resize/atomicTx/pipeline triangles rode on the `Handlers.Queue` batch and the kernel queue
+side-table; F2b deleted them — capacity/no-underflow are LIVE relational caveats on the
+factory-born queue cell (`Apps/QueueFactory.lean` keystones a/b), and routing folds are ordinary
+gated `setField` writes there. -/
 
 /-! ## §20 — THIRTEENTH FAMILY: EXERCISE (inner-turn recursion) — the sub-forest triangle.
 
@@ -1673,31 +1415,6 @@ def cfx : RecordKernelState :=
 -- dropRef leaves OTHER slots (cell 1) untouched.
 #guard ((recKRevokeTarget cfx 0 7).caps 1) == ([] : List Dregg2.Authority.Cap)
 
-/-- Queue fixture: cell 0 holds a `node 0` self-cap, Live; a queue id 7 owner 0 capacity 3 with buffer [11]. -/
-def qfx : RecordKernelState :=
-  { accounts := {0}
-    cell := fun _ => .record [("balance", .int 0)]
-    caps := fun c => if c = 0 then [Dregg2.Authority.Cap.node 0] else []
-    bal := fun _ _ => 0
-    queues := [{ id := 7, owner := 0, capacity := 3, buffer := [11] }] }
-
--- QUEUE RESIZE: owner 0 resizes queue 7 to capacity 5 ⇒ capacity becomes 5, buffer [11] kept.
-#guard (resizeStep qfx { actor := 0, id := 7, capacity := 5, owner := 0 }).isSome
-#guard (((resizeStep qfx { actor := 0, id := 7, capacity := 5, owner := 0 }).bind (fun k => findQueue k.queues 7)).map
-          (fun q => (q.capacity, q.buffer))) == some (5, [11])
--- a SHRINK below occupancy (capacity 0 < buffer length 1) is REJECTED (no truncation).
-#guard ((resizeStep qfx { actor := 0, id := 7, capacity := 0, owner := 0 }).isSome) == false
--- an UNAUTHORIZED resize (actor 1 holds no cap over owner 0) is REJECTED.
-#guard ((resizeStep qfx { actor := 1, id := 7, capacity := 5, owner := 0 }).isSome) == false
--- ATOMIC-TX: the empty batch is the identity (commits, no move). The `= atomicTxSpec` equality is the
--- PROVED `atomicTx_triangle` (RecordKernelState has function fields ⇒ no BEq; the theorem is the content).
-#guard (atomicTxStep qfx { actor := 0, ops := [] }).isSome
--- PIPELINE: a no-sink pipeline = the bare source dequeue (commits, head 11 leaves); pinned by
--- `pipeline_triangle` to the transparent dequeue⨾fanout. The dequeued head's queue buffer is now empty.
-#guard (pipelineStep qfx { srcId := 7, owner := 0, sinkCells := [], sinkIds := [] }).isSome
-#guard ((pipelineStep qfx { srcId := 7, owner := 0, sinkCells := [], sinkIds := [] }).bind
-          (fun k => findQueue k.queues 7)).map (·.buffer) == some ([] : List Nat)
-
 /-- Exercise fixture: cells 0,1,2 accounts; cell 0 holds a `node 2` full-facet cap to target 2; all Live. -/
 def efx : RecordKernelState :=
   { accounts := {0, 1, 2}
@@ -1712,7 +1429,7 @@ def efx : RecordKernelState :=
 -- an exercise by an actor WITHOUT an edge to the target (cell 1 holds nothing) is REJECTED (hold-gate).
 #guard ((exerciseStep efx { actor := 1, target := 2, inner := [] }).isSome) == false
 
-/-! ## §21 — Axiom-hygiene pins for the FOUR new Part-B families (bridge / swiss / queue-extras / exercise). -/
+/-! ## §21 — Axiom-hygiene pins for the Part-B families (swiss / introduce-dropRef / exercise). -/
 
 #assert_axioms swissExport_triangle
 #assert_axioms swissExport_antighost
@@ -1726,12 +1443,6 @@ def efx : RecordKernelState :=
 #assert_axioms introduce_antighost
 #assert_axioms dropRef_triangle
 #assert_axioms dropRef_antighost
-#assert_axioms queueResize_triangle
-#assert_axioms queueResize_antighost
-#assert_axioms atomicTx_triangle
-#assert_axioms atomicTx_antighost
-#assert_axioms pipeline_triangle
-#assert_axioms pipeline_antighost
 #assert_axioms exercise_triangle
 #assert_axioms exercise_antighost
 

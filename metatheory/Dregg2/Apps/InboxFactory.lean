@@ -42,7 +42,7 @@ state_constraints:
   (a) NO OVERFLOW            — PROVED: a deliver from a state respecting `head − tail ≤ cap`, with
       room, lands STILL respecting it; a FULL inbox's deliver fail-closes.
   (b) NO UNDERFLOW / SEQUENCED — PROVED: `tail ≤ head` preserved; an EMPTY inbox's consume
-      fail-closes; sequenced order is the kernel's REAL buffer (`qbuf_fifo_order`).
+      fail-closes; sequenced order is the factory FIFO shadow (`qbuf_fifo_order`).
   (c) SENDER-AUTH ON DELIVER  — PROVED: a deliver by an actor ∉ the sender set fail-closes;
       OWNER-ONLY CONSUME — PROVED: a consume by a non-owner fail-closes.
   (NO KEYSTONE d: an inbox carries no value; `deliver_bal_neutral`/`consume_bal_neutral` witness
@@ -62,11 +62,14 @@ no `native_decide`.
 -/
 import Dregg2.Exec.RelationalCaveat
 import Dregg2.Exec.TurnExecutorFull
+import Dregg2.Apps.QueueFactory
 
 namespace Dregg2.Apps.InboxFactory
 
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
+-- F2b: the FIFO-order shadow lives with the queue-factory story (the kernel `qbuf*` is gone).
+open Dregg2.Apps.QueueFactory (qbufEnqueue qbufDequeue qbuf_fifo_order)
 open Dregg2.Exec.RelationalCaveat (RelCaveat relStateStepGuarded relCaveatsAdmit
   fieldLteOther_expresses_capacity fieldLteOther_expresses_underflow capacityOk noUnderflow)
 open Dregg2.Exec.EffectsState (setField fieldOf setField_fieldOf)
@@ -333,7 +336,8 @@ theorem deliver_preserves_no_underflow {k k' : RecordKernelState} {e actor : Cel
   unfold iNoUnderflow at *
   rw [hh, ht]; omega
 
-/-- **SEQUENCED ORDER — carried from the kernel's REAL buffer (`RecordKernel.qbuf_fifo_order`).** -/
+/-- **SEQUENCED ORDER — carried from the factory FIFO shadow (`Apps.QueueFactory.qbuf_fifo_order`;
+F2b moved it there from the deleted kernel buffer).** -/
 theorem sequenced_order_holds (buf : List Nat) (a b : Nat) :
     qbufDequeue (qbufEnqueue (qbufEnqueue buf a) b) =
       (match qbufDequeue buf with
@@ -529,7 +533,7 @@ abbrev inrelCap : List RelCaveat := [ RelCaveat.fieldLteOther headSeqField capac
 -- (viii) UNDERFLOW REJECTED: consume the one message, then a SECOND consume on the EMPTY inbox fails (KEYSTONE b):
 #guard (((inboxConsume inWorld 0 1 55).bind (fun s => inboxConsume s 0 1 44)).isSome) == false
 
--- (ix) sequenced order (the kernel's real buffer): deliver a then b, consume ⇒ a first (the OLDER):
+-- (ix) sequenced order (the factory FIFO shadow): deliver a then b, consume ⇒ a first (the OLDER):
 #guard (qbufDequeue (qbufEnqueue (qbufEnqueue [] 10) 20)) == some (10, [20])
 
 -- (x) the factory conforms (its empty genesis is invariant-clean):

@@ -186,7 +186,7 @@ theorem stateCommit_binds_cells_and_rest
       ∧ (k.cell t.src = k'.cell t.src ∧ k.cell t.dst = k'.cell t.dst)
       ∧ (k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
           ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-          ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+          ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
           ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.sealedBoxes = k.sealedBoxes
@@ -228,7 +228,7 @@ theorem setFieldCommit_binds_all
       ∧ k.cell cell = k'.cell cell
       ∧ (k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
           ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-          ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+          ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
           ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.sealedBoxes = k.sealedBoxes
@@ -281,7 +281,7 @@ theorem crossbind_rest_agree (hRest : RestHashIffFrame RH)
     (k k' : RecordKernelState) (hPI : RH k = RH k') :
     k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
       ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.sealedBoxes = k.sealedBoxes
@@ -315,7 +315,7 @@ theorem crossbind_circuit_exec_same_state
     (∀ c ∈ S, k.cell c = k'.cell c)
       ∧ (k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
           ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-          ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+          ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
           ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.sealedBoxes = k.sealedBoxes

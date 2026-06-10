@@ -124,7 +124,6 @@ def BalanceMovementSpec (st : RecChainedState) (t : Turn) (a : AssetId) (st' : R
   ∧ st'.kernel.nullifiers = st.kernel.nullifiers
   ∧ st'.kernel.revoked = st.kernel.revoked
   ∧ st'.kernel.commitments = st.kernel.commitments
-  ∧ st'.kernel.queues = st.kernel.queues
   ∧ st'.kernel.swiss = st.kernel.swiss
   ∧ st'.kernel.slotCaveats = st.kernel.slotCaveats
   ∧ st'.kernel.factories = st.kernel.factories
@@ -154,13 +153,13 @@ theorem recCexecAsset_iff_spec (st : RecChainedState) (t : Turn) (a : AssetId) (
         simp only [Option.some.injEq] at h
         subst h
         rcases hg with ⟨ha, hnn, havail, hne, hsrc, hdst⟩
-        exact ⟨⟨ha, hnn, havail, hne, hsrc, hdst, hadm⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        exact ⟨⟨ha, hnn, havail, hne, hsrc, hdst, hadm⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
                rfl, rfl, rfl, rfl⟩
-      · rintro ⟨hguard, hbal, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩
+      · rintro ⟨hguard, hbal, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16⟩
         obtain ⟨k', l'⟩ := st'
-        obtain ⟨acc, cell, caps, nul, rev, com, bal, q, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
-        simp only at hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
-        subst hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+        obtain ⟨acc, cell, caps, nul, rev, com, bal, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
+        simp only at hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
+        subst hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
         rfl
     · rw [if_pos hadm, if_neg hg]
       constructor

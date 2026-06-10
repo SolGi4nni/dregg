@@ -369,13 +369,14 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
         "CellDestroy",
         "Burn",
         "RevokeCapability",
-        "QueueAllocate",
         "GrantCapability",
         "AttenuateCapability",
         "Introduce",
-        // §FACTORY-DISSOLVED families (escrow/obligation): the verified kernel no longer parses
-        // their wire actions — their semantics live in factory-born cells (cell::blueprint +
-        // sdk::factories, the Lean contracts in Dregg2/Apps/{EscrowFactory,ObligationFactory}).
+        // §FACTORY-DISSOLVED families (escrow/obligation; F2b: + the queue family
+        // QueueAllocate/QueueEnqueue/QueueDequeue/QueueResize/QueueAtomicTx/QueuePipelineStep):
+        // the verified kernel no longer parses their wire actions — their semantics live in
+        // factory-born cells (cell::blueprint + sdk::factories, the Lean contracts in
+        // Dregg2/Apps/{EscrowFactory,ObligationFactory,QueueFactory,InboxFactory,PubsubFactory}).
         // A turn carrying one falls back to the Rust executor LOUDLY (malformed-wire sentinel)
         // during the transitional window; the Effect variants die wholesale in the verb lockstep.
     ]
@@ -390,8 +391,7 @@ pub fn producer_mappable_effects() -> &'static [&'static str] {
 /// Every entry is pinned by a round-trip differential test; an entry whose test stops agreeing FAILS
 /// the suite, forcing it into [`producer_root_gap_effects`]. NoteSpend/NoteCreate edit the note SET
 /// (a side-table OFF the cell merkle root) and leave cell commitment fields untouched, so they
-/// agree on the cell-ledger `.root()`. QueueAllocate's structural insert is likewise off the cell
-/// root and bal-neutral in the funded case.
+/// agree on the cell-ledger `.root()`.
 pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
     &[
         "SetField",
@@ -403,7 +403,8 @@ pub fn producer_root_agreeing_effects() -> &'static [&'static str] {
         "RefreshDelegation",
         "Burn",
         "RevokeCapability",
-        "QueueAllocate",
+        // (F2b: QueueAllocate left this set with the FACTORY-DISSOLVED queue family — the verified
+        // kernel no longer parses queue wire actions; queue behavior is the factory story.)
         // CAP-FIDELITY ROOT-GAP CLOSE (the cap-reshape lever). GrantCapability / Introduce /
         // AttenuateCapability are now root-AGREEING: the verified kernel DECIDES the commit bit (the
         // delegator/introducer must hold the edge; the attenuation must be a monotone narrowing —

@@ -17,7 +17,7 @@ open Dregg2.Authority (Auth)
 theorem recKernel_ext {k k' : RecordKernelState}
     (h1 : k'.accounts = k.accounts) (h2 : k'.cell = k.cell) (h3 : k'.caps = k.caps)
     (h4 : k'.nullifiers = k.nullifiers) (h5 : k'.revoked = k.revoked)
-    (h6 : k'.commitments = k.commitments) (h7 : k'.bal = k.bal) (h8 : k'.queues = k.queues)
+    (h6 : k'.commitments = k.commitments) (h7 : k'.bal = k.bal) 
     (h9 : k'.swiss = k.swiss) (h10 : k'.slotCaveats = k.slotCaveats)
     (h11 : k'.factories = k.factories) (h12 : k'.lifecycle = k.lifecycle)
     (h13 : k'.deathCert = k.deathCert) (h14 : k'.delegate = k.delegate)
@@ -25,22 +25,21 @@ theorem recKernel_ext {k k' : RecordKernelState}
     (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt) :
     k' = k := by
   cases k; cases k'
-  simp only at h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18
-  subst h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18
+  simp only at h1 h2 h3 h4 h5 h6 h7 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18
+  subst h1 h2 h3 h4 h5 h6 h7 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18
   rfl
 
 theorem withSwiss_preserves_rest (k : RecordKernelState) (ss : List SwissRecord) :
     let k' := { k with swiss := ss }
     k'.accounts = k.accounts ∧ k'.cell = k.cell ∧ k'.caps = k.caps
       ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.bal = k.bal ∧ k'.queues = k.queues
-      ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
+      ∧ k'.commitments = k.commitments ∧ k'.bal = k.bal ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt := by
   dsimp
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 theorem withSwiss_bal_accounts (k : RecordKernelState) (ss : List SwissRecord) :
     ({ k with swiss := ss }).bal = k.bal ∧
@@ -58,8 +57,7 @@ theorem restFrame_of_withSwiss {k k' : RecordKernelState} {ss : List SwissRecord
     (h : k' = { k with swiss := ss }) :
     k'.accounts = k.accounts ∧ k'.cell = k.cell ∧ k'.caps = k.caps
       ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.bal = k.bal ∧ k'.queues = k.queues
-      ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
+      ∧ k'.commitments = k.commitments ∧ k'.bal = k.bal ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch

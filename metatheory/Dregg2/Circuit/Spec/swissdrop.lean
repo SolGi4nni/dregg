@@ -221,7 +221,7 @@ def DropSpecFull (s : RecChainedState) (sw : Nat) (actor exporter : CellId)
   ∧ s'.kernel.caps = s.kernel.caps
   ∧ s'.kernel.nullifiers = s.kernel.nullifiers ∧ s'.kernel.revoked = s.kernel.revoked
   ∧ s'.kernel.commitments = s.kernel.commitments ∧ s'.kernel.bal = s.kernel.bal
-  ∧ s'.kernel.queues = s.kernel.queues ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats
+  ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats
   ∧ s'.kernel.factories = s.kernel.factories ∧ s'.kernel.lifecycle = s.kernel.lifecycle
   ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
   ∧ s'.kernel.delegations = s.kernel.delegations ∧ s'.kernel.sealedBoxes = s.kernel.sealedBoxes
@@ -251,16 +251,15 @@ theorem execFullA_drop_iff_specFull (s : RecChainedState) (sw : Nat) (actor expo
     subst hs'
     refine ⟨⟨hauth, e, hf, hpos⟩, ⟨e, hf, hpos, ?_⟩, rfl, ?_⟩
     · rw [hkeq]
-    · rw [hkeq]; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-        rfl, rfl⟩
-  · rintro ⟨hg, ⟨e, hf, hpos, hsw⟩, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13,
+    · rw [hkeq]; exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · rintro ⟨hg, ⟨e, hf, hpos, hsw⟩, hlog, h1, h2, h3, h4, h5, h6, h7, h9, h10, h11, h12, h13,
       h14, h15, h16, h17⟩
     refine ⟨hg, ⟨{ s.kernel with swiss := dropSwissPost s.kernel.swiss sw e }, ?_, ?_⟩⟩
     · exact (dropSwissUpdate_eq_k s.kernel sw _).mp (dropSwissPost_eq_update s.kernel.swiss sw e hf hpos)
     · obtain ⟨k', lg'⟩ := s'
-      simp only at hsw hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      simp only at hsw hlog h1 h2 h3 h4 h5 h6 h7 h9 h10 h11 h12 h13 h14 h15 h16 h17
       have hke : k' = { s.kernel with swiss := dropSwissPost s.kernel.swiss sw e } :=
-        recKernel_ext h1 h2 h3 h4 h5 h6 h7 (h8.trans rfl) hsw h9 h10 h11 h12 h13 h14 h15 h16 h17
+        recKernel_ext h1 h2 h3 h4 h5 h6 h7 hsw h9 h10 h11 h12 h13 h14 h15 h16 h17
       subst hke hlog; rfl
 
 /-- **The strengthening is REAL (DropSpec ≡ DropSpecFull).** The weak executor-delegating spec and the

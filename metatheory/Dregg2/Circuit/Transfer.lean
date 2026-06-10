@@ -362,7 +362,7 @@ def TransferSpec (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) : P
   ∧ k'.cell = recTransfer k.cell t.src t.dst t.amt
   ∧ k'.accounts = k.accounts ∧ k'.caps = k.caps ∧ k'.bal = k.bal
   ∧ k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-  ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+  ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
   ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
   ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
   ∧ k'.sealedBoxes = k.sealedBoxes
@@ -383,12 +383,10 @@ theorem recKExec_iff_spec (k : RecordKernelState) (t : Turn) (k' : RecordKernelS
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-        rfl, rfl⟩
-    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
-        h17⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16⟩
       cases k'
-      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
       rfl
   · rw [if_neg hg]
     constructor

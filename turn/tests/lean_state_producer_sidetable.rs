@@ -1,27 +1,16 @@
 //! lean_state_producer_sidetable.rs — THE SWAP state-producer differential for the OFF-LEDGER
-//! HOLDING-STORE families (escrow-create, obligation-create).
+//! HOLDING-STORE families (escrow-create, obligation-create) — now FACTORY-DISSOLVED.
 //!
-//! `lean_state_producer_widen.rs` pinned the cell-state effect families (Transfer / SetField / Burn /
-//! IncrementNonce / Revoke) and the lifecycle / cap-fidelity SWAP-GAPS. This file extends the producer
-//! differential to the SIDE-TABLE CREATE families — the ones that LOCK value into an OFF-LEDGER store
-//! (`self.escrows` / `self.obligations`) that does NOT feed `cell::Ledger::root()` — and PINS that they
-//! ROUND-TRIP through the verified Lean producer with ZERO post-state divergence.
-//!
-//! # Why these round-trip on `.root()` despite touching a side-table
-//!
-//! `cell::Ledger::root()` hashes ONLY the cells (`compute_canonical_state_commitment` per cell). The
-//! escrow / obligation records live in the executor's OWN tables, NOT in the `Ledger`, so they are
-//! invisible to `.root()`. The ONLY cell-commitment field either family touches is the locker's asset-0
-//! BALANCE:
-//!   * `apply_create_escrow` (`apply.rs:1674`) DEBITS the creator's balance by `amount`
-//!     (`set_balance(old - amount)`) and parks an unresolved `EscrowRecord` off-root;
-//!   * `apply_create_obligation` (`apply.rs:1337`) DEBITS the obligor's (= action target's) balance by
-//!     `stake_amount` and parks an `ObligationRecord` off-root.
-//! The verified `createEscrowKAsset` / `createObligationA` (dispatch-aliased to `createEscrowChainA`) do
-//! the SAME single-cell asset-0 DEBIT (`recBalCreditCell k.bal creator 0 (-amount)`) and park the record
-//! off-root. The `bal` side-table carries the debit, so the reconstituted creator/obligor balance matches
-//! Rust exactly, and every OTHER cell field is untouched — so `.root()` AGREES. This is the holding-store
-//! analog of the `bal`-only round-trip the Transfer/Burn families already exercise.
+//! F1b deleted the kernel escrow holding-store (`RecordKernelState.escrows` and the escrow/
+//! obligation kernel ops): the verified kernel no longer PARSES the `cesc`/`cobl` wire actions —
+//! their semantics live in factory-born cells (the Lean contracts in
+//! `Dregg2/Apps/{EscrowFactory,ObligationFactory}`). This file's old round-trip pins are
+//! therefore INVERTED into the transitional-honesty shape (the same move
+//! `lean_state_producer_coverage`'s `*_falls_back_factory_dissolved` tests made): a turn carrying
+//! a CreateEscrow/CreateObligation refuses LOUDLY at the wire (malformed-wire sentinel) and falls
+//! back to the Rust executor — never a silent state install. The Rust executor's commit (the
+//! transitional fallback semantics) is still asserted so the fallback path stays exercised; the
+//! family dies wholesale in the verb lockstep.
 //!
 //! Requires the linked Lean archive (`lean-shadow` + `lean_available()`); self-skips when absent.
 
@@ -171,21 +160,19 @@ fn skip_no_lean() -> bool {
 }
 
 // =====================================================================================
-// ROUND-TRIP — the holding-store CREATE families lock value into an OFF-ROOT store while
-// debiting only the locker's asset-0 balance (carried by `bal`), so the reconstituted
-// ledger AGREES on full cell state + cap_root + `.root()`.
+// FACTORY-DISSOLVED — the holding-store CREATE families refuse LOUDLY at the wire (the
+// verified kernel does not parse them); the Rust executor remains the transitional
+// fallback. No silent state install.
 // =====================================================================================
 
 #[test]
-fn create_escrow_round_trips() {
+fn create_escrow_falls_back_factory_dissolved_sidetable() {
     if skip_no_lean() {
         return;
     }
-    // A self-create escrow: `actor == creator` short-circuits the verified `authorizedB` (`actor == src`
-    // ⇒ true), matching Rust's self-targeted lock; the creator's balance ≥ amount and a non-null,
-    // unused id make BOTH executors commit. The lock DEBITS the creator's asset-0 balance by `amount`
-    // (carried by `bal`) and parks an off-root `EscrowRecord` — so the reconstituted ledger agrees on
-    // balance, cap_root, and `.root()`. The recipient must EXIST (Rust requires it) — it does.
+    // FACTORY-DISSOLVED (F1b): the verified kernel does not parse `cesc`. The Rust executor still
+    // commits the lock during the transitional window (the fallback semantics, asserted below);
+    // the verified producer path must refuse LOUDLY at the wire.
     let creator = make_open_cell(1, 100);
     let recipient = make_open_cell(2, 5);
     let creator_id = creator.id();
@@ -218,20 +205,26 @@ fn create_escrow_round_trips() {
         "Rust must have debited the creator by the escrow amount"
     );
 
-    diff(pre, turn, &[creator_id, recipient_id])
-        .expect("CreateEscrow must round-trip through the verified producer");
+    match diff(pre, turn, &[creator_id, recipient_id]) {
+        Ok(()) => panic!(
+            "CreateEscrow unexpectedly round-tripped — factory dissolution means the verified \
+             kernel must not parse it"
+        ),
+        Err(why) => assert!(
+            why.contains("malformed-wire") || why.contains("decode failed"),
+            "CreateEscrow must refuse loudly at the wire (factory-dissolved), got: {why}"
+        ),
+    }
 }
 
 #[test]
-fn create_obligation_round_trips() {
+fn create_obligation_falls_back_factory_dissolved_sidetable() {
     if skip_no_lean() {
         return;
     }
-    // CreateObligation locks a BOND: dregg1 debits the obligor (= action target) by `stake_amount` and
-    // parks an off-root `ObligationRecord`; the verified `createObligationA` dispatch-aliases to
-    // `createEscrowChainA` (the SAME single-cell debit + record insert). Self-targeted (obligor = actor)
-    // passes `authorizedB`; the beneficiary must exist (it does). Only the obligor's asset-0 balance
-    // moves (carried by `bal`), the record is off-root — so the reconstituted ledger agrees on `.root()`.
+    // FACTORY-DISSOLVED (F1b), as CreateEscrow above (contracts in Dregg2/Apps/ObligationFactory).
+    // Rust still commits the bond during the transitional window; the verified producer path must
+    // refuse LOUDLY at the wire.
     let obligor = make_open_cell(3, 100);
     let beneficiary = make_open_cell(4, 5);
     let obligor_id = obligor.id();
@@ -265,6 +258,14 @@ fn create_obligation_round_trips() {
         "Rust must have debited the obligor by the stake amount"
     );
 
-    diff(pre, turn, &[obligor_id, beneficiary_id])
-        .expect("CreateObligation must round-trip through the verified producer");
+    match diff(pre, turn, &[obligor_id, beneficiary_id]) {
+        Ok(()) => panic!(
+            "CreateObligation unexpectedly round-tripped — factory dissolution means the verified \
+             kernel must not parse it"
+        ),
+        Err(why) => assert!(
+            why.contains("malformed-wire") || why.contains("decode failed"),
+            "CreateObligation must refuse loudly at the wire (factory-dissolved), got: {why}"
+        ),
+    }
 }

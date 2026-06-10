@@ -174,7 +174,7 @@ theorem CapsConfined.of_createCell {U : List Auth} {s s' : RecChainedState} {act
 
 /-! ### The kernel-function caps-frame lemmas: every NON-authority kernel transition FRAMES `caps`.
 
-Each `RecordKernel`/supply transition writes a NON-`caps` field (`bal`/`escrows`/`queues`/`swiss`/
+Each `RecordKernel`/supply transition writes a NON-`caps` field (`bal`/`swiss`/
 `nullifiers`/`commitments`/`cell`) via a record update `{ k with field := … }`, so the cap table is
 literally unchanged on every committed branch. Proved by the uniform `unfold; split; subst; rfl` shape
 (the raw helpers unfold to record-update literals whose `.caps` projection is `rfl`). These are the
@@ -203,38 +203,6 @@ theorem noteSpendNullifier_caps {k k' : RecordKernelState} {nf : Nat}
   unfold noteSpendNullifier at h; split at h
   · exact absurd h (by simp)
   · option_inj at h; rcases h with ⟨rfl⟩; rfl
-
-theorem queueAllocateK_caps {k k' : RecordKernelState} {id : Nat} {owner : CellId} {capacity : Nat}
-    (h : queueAllocateK k id owner capacity = some k') : k'.caps = k.caps := by
-  unfold queueAllocateK at h; split at h
-  · exact absurd h (by simp)
-  · option_inj at h; rcases h with ⟨rfl⟩; rfl
-
-theorem queueEnqueueK_caps {k k' : RecordKernelState} {id m : Nat}
-    (h : queueEnqueueK k id m = some k') : k'.caps = k.caps := by
-  unfold queueEnqueueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
-
-theorem queueDequeueK_caps {k : RecordKernelState} {id : Nat} {actor : CellId} {p : RecordKernelState × Nat}
-    (h : queueDequeueK k id actor = some p) : p.1.caps = k.caps := by
-  unfold queueDequeueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · split at h
-      · exact absurd h (by simp)
-      · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
-
-theorem queueResizeK_caps {k k' : RecordKernelState} {id newCap : Nat}
-    (h : queueResizeK k id newCap = some k') : k'.caps = k.caps := by
-  unfold queueResizeK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
 
 theorem swissExportK_caps {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
     {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') :
@@ -295,128 +263,6 @@ theorem noteSpendNullifier_sealedBoxes {k k' : RecordKernelState} {nf : Nat}
   unfold noteSpendNullifier at h; split at h
   · exact absurd h (by simp)
   · option_inj at h; rcases h with ⟨rfl⟩; rfl
-
-theorem queueAllocateK_sealedBoxes {k k' : RecordKernelState} {id : Nat} {owner : CellId} {capacity : Nat}
-    (h : queueAllocateK k id owner capacity = some k') : k'.sealedBoxes = k.sealedBoxes := by
-  unfold queueAllocateK at h; split at h
-  · exact absurd h (by simp)
-  · option_inj at h; rcases h with ⟨rfl⟩; rfl
-
-theorem queueEnqueueK_sealedBoxes {k k' : RecordKernelState} {id m : Nat}
-    (h : queueEnqueueK k id m = some k') : k'.sealedBoxes = k.sealedBoxes := by
-  unfold queueEnqueueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
-
-theorem queueDequeueK_sealedBoxes {k : RecordKernelState} {id : Nat} {actor : CellId} {p : RecordKernelState × Nat}
-    (h : queueDequeueK k id actor = some p) : p.1.sealedBoxes = k.sealedBoxes := by
-  unfold queueDequeueK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · split at h
-      · exact absurd h (by simp)
-      · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
-
-theorem queueResizeK_sealedBoxes {k k' : RecordKernelState} {id newCap : Nat}
-    (h : queueResizeK k id newCap = some k') : k'.sealedBoxes = k.sealedBoxes := by
-  unfold queueResizeK at h; split at h
-  · exact absurd h (by simp)
-  · split at h
-    · option_inj at h; rcases h with ⟨rfl⟩; rfl
-    · exact absurd h (by simp)
-
-/-! ### WAVE 4 — the new queue-batch / pipeline-step / pipelined-send chained-step `caps` + `sealedBoxes`
-frame helpers (the atomic batch + fan-out edit only `queues`/`escrows`/`bal`, never `caps`/`sealedBoxes`;
-pipelinedSend edits NOTHING). -/
-
-theorem queueTxOpStepA_caps {s s' : RecChainedState} {op : QueueTxOpA}
-    (h : queueTxOpStepA s op = some s') : s'.kernel.caps = s.kernel.caps := by
-  cases op with
-  | enqueue id m actor cell =>
-      simp only [queueTxOpStepA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueEnqueueK_caps hk
-      · exact absurd h (by simp)
-  | dequeue id actor cell =>
-      simp only [queueTxOpStepA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p
-                    rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
-                    exact queueDequeueK_caps (p := (k', mh)) hk
-      · exact absurd h (by simp)
-
-theorem queueAtomicTxChainA_caps {s s' : RecChainedState} {ops : List QueueTxOpA}
-    (h : queueAtomicTxChainA s ops = some s') : s'.kernel.caps = s.kernel.caps := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; rfl
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none => rw [hop] at h; exact absurd h (by simp)
-      | some s1 => rw [hop] at h; rw [ih h, queueTxOpStepA_caps hop]
-
-theorem pipelineFanoutK_caps {k k' : RecordKernelState} {actor : CellId} {m : Nat}
-    {sinks : List CellId} {sids : List Nat}
-    (h : pipelineFanoutK k actor m sinks sids = some k') : k'.caps = k.caps := by
-  induction sinks generalizing k sids with
-  | nil => cases sids <;> (simp only [pipelineFanoutK, Option.some.injEq] at h; subst h; rfl)
-  | cons sink rest ih =>
-      cases sids with
-      | nil => simp only [pipelineFanoutK] at h; exact absurd h (by simp)
-      | cons sid sids' =>
-          simp only [pipelineFanoutK] at h; split at h
-          · cases hq : queueEnqueueK k sid m with
-            | none => rw [hq] at h; exact absurd h (by simp)
-            | some k1 => rw [hq] at h; rw [ih h, queueEnqueueK_caps hq]
-          · exact absurd h (by simp)
-
-theorem queueTxOpStepA_sealedBoxes {s s' : RecChainedState} {op : QueueTxOpA}
-    (h : queueTxOpStepA s op = some s') : s'.kernel.sealedBoxes = s.kernel.sealedBoxes := by
-  cases op with
-  | enqueue id m actor cell =>
-      simp only [queueTxOpStepA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueEnqueueK_sealedBoxes hk
-      · exact absurd h (by simp)
-  | dequeue id actor cell =>
-      simp only [queueTxOpStepA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p
-                    rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
-                    exact queueDequeueK_sealedBoxes (p := (k', mh)) hk
-      · exact absurd h (by simp)
-
-theorem queueAtomicTxChainA_sealedBoxes {s s' : RecChainedState} {ops : List QueueTxOpA}
-    (h : queueAtomicTxChainA s ops = some s') : s'.kernel.sealedBoxes = s.kernel.sealedBoxes := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; rfl
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none => rw [hop] at h; exact absurd h (by simp)
-      | some s1 => rw [hop] at h; rw [ih h, queueTxOpStepA_sealedBoxes hop]
-
-theorem pipelineFanoutK_sealedBoxes {k k' : RecordKernelState} {actor : CellId} {m : Nat}
-    {sinks : List CellId} {sids : List Nat}
-    (h : pipelineFanoutK k actor m sinks sids = some k') : k'.sealedBoxes = k.sealedBoxes := by
-  induction sinks generalizing k sids with
-  | nil => cases sids <;> (simp only [pipelineFanoutK, Option.some.injEq] at h; subst h; rfl)
-  | cons sink rest ih =>
-      cases sids with
-      | nil => simp only [pipelineFanoutK] at h; exact absurd h (by simp)
-      | cons sid sids' =>
-          simp only [pipelineFanoutK] at h; split at h
-          · cases hq : queueEnqueueK k sid m with
-            | none => rw [hq] at h; exact absurd h (by simp)
-            | some k1 => rw [hq] at h; rw [ih h, queueEnqueueK_sealedBoxes hq]
-          · exact absurd h (by simp)
 
 theorem swissExportK_sealedBoxes {k k' : RecordKernelState} {sw : Nat} {exporter target : CellId}
     {rights : List Auth} (h : swissExportK k sw exporter target rights = some k') :
@@ -574,42 +420,6 @@ theorem execFullA_sealedBoxes_frame (s s' : RecChainedState) (fa : FullActionA)
       obtain ⟨_, hs'⟩ := stateStep_factors (by simpa only [execFullA] using h); subst hs'; rfl
   | receiptArchiveA actor cell =>
       obtain ⟨_, hs'⟩ := stateStep_factors (by simpa only [execFullA] using h); subst hs'; rfl
-  | queueAllocateA id actor cell cap =>
-      simp only [execFullA, queueAllocateChainA] at h; split at h
-      · cases hk : queueAllocateK s.kernel id actor cap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueAllocateK_sealedBoxes hk
-      · exact absurd h (by simp)
-  | queueEnqueueA id m actor cell =>
-      simp only [execFullA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueEnqueueK_sealedBoxes hk
-      · exact absurd h (by simp)
-  | queueDequeueA id actor cell =>
-      simp only [execFullA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p; rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
-                    exact queueDequeueK_sealedBoxes (p := (k', mh)) hk
-      · exact absurd h (by simp)
-  | queueResizeA id newCap actor cell =>
-      simp only [execFullA, queueResizeChainA] at h; split at h
-      · cases hk : queueResizeK s.kernel id newCap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueResizeK_sealedBoxes hk
-      · exact absurd h (by simp)
-  -- §MA-queue-batch (WAVE 4): the atomic batch / pipeline step edit `queues`/`escrows`/`bal`, never
-  -- `sealedBoxes` (the witness lemmas + frame helpers); pipelinedSend edits NOTHING.
-  | queueAtomicTxA actor ops =>
-      simp only [execFullA] at h
-      obtain ⟨s1, hf, _, hk⟩ := queueAtomicTxA_atomic_witness h
-      rw [show s'.kernel.sealedBoxes = s1.kernel.sealedBoxes from by rw [hk]]
-      exact queueAtomicTxChainA_sealedBoxes hf
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA] at h
-      obtain ⟨k1, mh, hd, hfo⟩ := queuePipelineStepA_routing_witness h
-      exact (pipelineFanoutK_sealedBoxes hfo).trans (queueDequeueK_sealedBoxes hd)
   | pipelinedSendA actor =>
       simp only [execFullA, Option.some.injEq] at h; subst h; rfl
   | exportSturdyRefA sw actor exporter target rights =>
@@ -688,7 +498,7 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
     (hboxes : ∀ box ∈ s.kernel.sealedBoxes, ∀ a ∈ capAuthConferred box.payload, a ∈ U) :
     CapsConfined U s'.kernel.caps := by
   cases fa with
-  -- ===== balance / supply / state / escrow / queue / swiss / note / bridge: FRAME `caps`. =====
+  -- ===== balance / supply / state / swiss / note / bridge: FRAME `caps`. =====
   | balanceA t a =>
       refine CapsConfined.of_caps_eq ?_ hpre
       obtain ⟨_, ⟨k', hk, hs'⟩⟩ := recCexecAsset_factors t a (by simpa only [execFullA] using h)
@@ -887,53 +697,6 @@ theorem execFullA_confine {U : List Auth} (hctrl : Auth.control ∈ U)
       exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
   | receiptArchiveA actor cell =>
       exact CapsConfined.of_caps_eq (state_caps_unchanged (by simpa only [execFullA] using h)) hpre
-  -- ===== queue: FRAME caps (the chain steps are gated by `if stateAuthB …`; peel + kernel caps lemma). =====
-  | queueAllocateA id actor cell cap =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA, queueAllocateChainA] at h
-      split at h
-      · cases hk : queueAllocateK s.kernel id actor cap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueAllocateK_caps hk
-      · exact absurd h (by simp)
-  | queueEnqueueA id m actor cell =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA, queueEnqueueChainA] at h
-      split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueEnqueueK_caps hk
-      · exact absurd h (by simp)
-  | queueDequeueA id actor cell =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA, queueDequeueChainA] at h
-      split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some p => obtain ⟨k', mh⟩ := p; rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩
-                    exact queueDequeueK_caps (p := (k', mh)) hk
-      · exact absurd h (by simp)
-  | queueResizeA id newCap actor cell =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA, queueResizeChainA] at h
-      split at h
-      · cases hk : queueResizeK s.kernel id newCap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => rw [hk] at h; option_inj at h; rcases h with ⟨rfl⟩; exact queueResizeK_caps hk
-      · exact absurd h (by simp)
-  -- §MA-queue-batch (WAVE 4): the atomic batch / pipeline step FRAME `caps` (edit `queues`/`escrows`/
-  -- `bal`, never `caps` — the witness lemmas + frame helpers); pipelinedSend edits NOTHING.
-  | queueAtomicTxA actor ops =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA] at h
-      obtain ⟨s1, hf, _, hk⟩ := queueAtomicTxA_atomic_witness h
-      rw [show s'.kernel.caps = s1.kernel.caps from by rw [hk]]
-      exact queueAtomicTxChainA_caps hf
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      refine CapsConfined.of_caps_eq ?_ hpre
-      simp only [execFullA] at h
-      obtain ⟨k1, mh, hd, hfo⟩ := queuePipelineStepA_routing_witness h
-      exact (pipelineFanoutK_caps hfo).trans (queueDequeueK_caps hd)
   | pipelinedSendA actor =>
       refine CapsConfined.of_caps_eq ?_ hpre
       simp only [execFullA, Option.some.injEq] at h; subst h; rfl

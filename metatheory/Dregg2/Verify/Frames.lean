@@ -206,10 +206,6 @@ attribute [aesop safe apply (rule_sets := [Dregg2])]
   recKDelegate_commitments
   recKDelegateAtten_commitments
   noteSpendNullifier_commitments
-  queueAllocateK_commitments
-  queueEnqueueK_commitments
-  queueDequeueK_commitments
-  queueResizeK_commitments
   swissExportK_commitments
   swissEnlivenK_commitments
   swissHandoffK_commitments

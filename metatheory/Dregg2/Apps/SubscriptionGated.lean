@@ -22,13 +22,12 @@ Mirrors the green `NameserviceGated`/`IdentityGated` template.
 
 ## App-level semantics (Hatchery bridge — §4b)
 
-Per-op teeth (forged/replay/skip rejection) are obligations; `sub_queue_wellformed_forever` is the
-production payoff: along `trajG`, no subscription queue ever exceeds capacity — the same headline as
-`Apps.Subscription.subscription_wellformed_forever`, wired through `subWFContract`.
-
-**Composability (§4c):** `subWF` composes with other Hatchery shapes via `CellContract.composeContracts`
-— see `Verify/Contract.lean` (`subWFAndRevoked`, `subWFAndLogMono`). `sub_queue_and_pay_conserved_forever`
-is the gated-app witness: queue well-formedness + per-asset conservation, one composed `.forever`.
+Per-op teeth (forged/replay/skip rejection) are obligations; the production payoff is
+`sub_pay_conserved_forever`: along `trajG` the payment-asset supply stays fixed (the
+`assetConserved` Hatchery shape). F2b: the `subWF` living-cell capacity headline moved to the
+FACTORY story (`Apps/QueueFactory.lean` relational-caveat keystones) with the kernel queue
+side-table's deletion — the gated SetField path here (MonotonicSequence, no replay / no skip)
+is exactly the factory-born consume verb.
 -/
 import Dregg2.Exec.GatedForestCfg
 import Dregg2.Exec.CellExecutor
@@ -40,9 +39,7 @@ namespace Dregg2.Apps.SubscriptionGated
 
 open Dregg2.Exec
 open Dregg2.Exec (cellObsA trajG SchedG)
-open Dregg2.Apps.Subscription (subWF)
-open Dregg2.Verify (subscription_wellformed_forever_production composeContracts
-  subscription_and_revoked_forever assetConserved subWFContract)
+open Dregg2.Verify (composeContracts assetConserved logAppendOnly)
 open Dregg2.Verify.Production (Contract Sched)
 open Dregg2.Exec.TurnExecutorFull
 open Dregg2.Exec.FullForest
@@ -127,37 +124,30 @@ theorem sub_op_conserves (s s' : RecChainedState) (cred : Authorization Dg Pf) (
     recTotalAsset s'.kernel b = recTotalAsset s.kernel b :=
   execFullForestG_conserves_per_asset s s' (subNode cred value) b h (subNode_delta_zero cred value b)
 
-/-! ## §4b — Hatchery bridge: queue well-formedness forever on `trajG`. -/
+/-! ## §4b — Hatchery bridge: payment-asset conservation forever on `trajG`.
 
-/-- **`sub_queue_wellformed_forever` — APP SEMANTICS (production crown).** From a well-formed start
-(`subWF` — every queue's buffer length ≤ capacity), along EVERY adversarial production schedule, no
-subscription queue ever overflows. The gated consume-step teeth enforce replay/skip rejection; this
-theorem carries the capacity headline the dregg1 subscription cell is FOR. -/
-theorem sub_queue_wellformed_forever (s : RecChainedState) (hinit : subWF s.kernel) (sched : SchedG) :
-    ∀ n, subWF (trajG s sched n).kernel :=
-  subscription_wellformed_forever_production s hinit sched
+(F2b: the `subWF` queue-capacity crown moved to the factory story with the kernel queue
+side-table's deletion — `Apps/QueueFactory.lean`.) -/
 
-/-! ## §4c — Composability: `subWF` ∩ another Hatchery invariant on `trajG`. -/
+/-- **`sub_pay_conserved_forever` — APP SEMANTICS (production crown).** Along EVERY adversarial
+production schedule, the subscription cell's payment-asset supply stays fixed. -/
+theorem sub_pay_conserved_forever (s0 : RecChainedState) (a : AssetId) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) a = cellObsA s0 a :=
+  (assetConserved s0 a).forever rfl sched
 
-/-- **Subscription queue safety ∩ per-asset conservation** — composed contract for a gated subscription
-cell whose payment ledger must also stay fixed. -/
-noncomputable def subWFPaySafety (s0 : RecChainedState) (a : AssetId) : Contract :=
-  composeContracts subWFContract (assetConserved s0 a)
+/-! ## §4c — Composability: conservation ∩ log-monotonicity on `trajG`. -/
 
-/-- **`sub_queue_and_pay_conserved_forever` — COMPOSED PRODUCTION CROWN.** Well-formed queues AND
-fixed payment-asset supply, at every `trajG` index — one composed `.forever`, no hand carry proof. -/
-theorem sub_queue_and_pay_conserved_forever (s0 : RecChainedState) (a : AssetId) (s : RecChainedState)
-    (hsub : subWF s.kernel) (hpay : cellObsA s a = cellObsA s0 a) (sched : SchedG) :
-    ∀ n, subWF (trajG s sched n).kernel ∧
-         cellObsA (trajG s sched n) a = cellObsA s0 a :=
-  (subWFPaySafety s0 a).forever (And.intro hsub hpay) sched
+/-- **Per-asset conservation ∩ log append-only** — composed contract for a gated subscription cell:
+the payment ledger stays fixed AND the audit log only grows. -/
+noncomputable def subPayLogSafety (s0 : RecChainedState) (a : AssetId) : Contract :=
+  composeContracts (assetConserved s0 a) (logAppendOnly s0)
 
-/-- Re-export the canonical `subWF ∩ revoked` composed crown from `Verify/Contract` (identity registry
-+ subscription capacity, one object). -/
-theorem sub_queue_and_revoked_forever (credNul : Nat) (s : RecChainedState)
-    (hsub : subWF s.kernel) (hrev : credNul ∈ s.kernel.revoked) (sched : SchedG) :
-    ∀ n, subWF (trajG s sched n).kernel ∧ credNul ∈ (trajG s sched n).kernel.revoked :=
-  subscription_and_revoked_forever credNul s hsub hrev sched
+/-- **`sub_pay_and_log_mono_forever` — COMPOSED PRODUCTION CROWN.** Fixed payment-asset supply AND a
+monotone audit log, at every `trajG` index — one composed `.forever`, no hand carry proof. -/
+theorem sub_pay_and_log_mono_forever (s0 : RecChainedState) (a : AssetId) (sched : SchedG) :
+    ∀ n, cellObsA (trajG s0 sched n) a = cellObsA s0 a ∧
+         s0.log.length ≤ (trajG s0 sched n).log.length :=
+  (subPayLogSafety s0 a).forever (And.intro rfl (le_refl s0.log.length)) sched
 
 /-! ## Non-vacuity: a concrete subscription-cell state (seq currently = 5) + `#guard` witnesses. -/
 
@@ -196,9 +186,8 @@ def sub0 : RecChainedState :=
 #assert_axioms sub_nonsequential_rejected
 #assert_axioms subNode_delta_zero
 #assert_axioms sub_op_conserves
-#assert_axioms sub_queue_wellformed_forever
-#assert_axioms subWFPaySafety
-#assert_axioms sub_queue_and_pay_conserved_forever
-#assert_axioms sub_queue_and_revoked_forever
+#assert_axioms sub_pay_conserved_forever
+#assert_axioms subPayLogSafety
+#assert_axioms sub_pay_and_log_mono_forever
 
 end Dregg2.Apps.SubscriptionGated

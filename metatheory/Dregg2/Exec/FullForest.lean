@@ -158,16 +158,7 @@ def targetOf : FullActionA → CellId
   | .makeSovereignA _ cell                  => cell
   | .refusalA _ cell                        => cell
   | .receiptArchiveA _ cell                 => cell
-  -- §MA-queue: the 4 ring-buffer FIFO queue effects act on the queue's representing `cell` (the
-  -- `stateAuthB`-gated node the chained step touches).
-  | .queueAllocateA _ _ cell _              => cell
-  | .queueEnqueueA _ _ _ cell               => cell
-  | .queueDequeueA _ _ cell                 => cell
-  | .queueResizeA _ _ _ cell                => cell
-  -- §MA-queue-batch (WAVE 4): the atomic batch + pipelinedSend act on the `actor` (the batch-commit /
-  -- apply-time node); the pipeline step on the source-queue `owner` (the dequeuer the routing roots at).
-  | .queueAtomicTxA actor _                 => actor
-  | .queuePipelineStepA _ owner _ _         => owner
+  -- pipelinedSend acts on the `actor` (the apply-time node).
   | .pipelinedSendA actor                   => actor
   -- §MA-swiss: the 4 CapTP swiss-table effects act on the exporting/holding `exporter` cell (the
   -- `stateAuthB`-gated node the chained step touches).

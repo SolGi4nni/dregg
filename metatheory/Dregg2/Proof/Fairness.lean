@@ -160,13 +160,6 @@ def affectedOf : FullActionA → List CellId
   | .sealA _ actor _           => [actor]
   | .unsealA _ actor recipient => [actor, recipient]
   | .createSealPairA _ actor sealerHolder unsealerHolder => [actor, sealerHolder, unsealerHolder]
-  -- queues (the FIFO side-table cell).
-  | .queueAllocateA _ actor cell _ => [actor, cell]
-  | .queueEnqueueA _ _ actor cell => [actor, cell]
-  | .queueDequeueA _ actor cell => [actor, cell]
-  | .queueResizeA _ _ actor cell => [actor, cell]
-  | .queueAtomicTxA actor _     => [actor]
-  | .queuePipelineStepA _ owner sinkCells _ => owner :: sinkCells
   | .pipelinedSendA actor       => [actor]
   -- swiss-table (CapTP export/handoff/GC).
   | .exportSturdyRefA _ actor exporter target _ => [actor, exporter, target]

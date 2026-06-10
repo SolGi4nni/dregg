@@ -73,7 +73,8 @@ state_constraints:
       full queue's enqueue fail-closes.
   (b) NO UNDERFLOW / FIFO ORDER — PROVED: `tail ≤ head` preserved; a dequeue on an EMPTY queue
       (`head = tail`) fail-closes; FIFO order is the `qbuf_fifo_order` mechanism (head removes
-      the front, tail appends the back) carried verbatim from the kernel's REAL buffer.
+      the front, tail appends the back) carried verbatim from the factory FIFO shadow
+      (`Apps.QueueFactory.qbuf_fifo_order`; F2b moved it there from the deleted kernel buffer).
   (c) SENDER-AUTH ON ENQUEUE — PROVED: an enqueue by an actor NOT in the sender set fail-closes
       (the `SenderAuthorized` caveat / the publish gate).
   (d) CONSERVATION (value queue) — PROVED, inherited from `recKExecAsset_conserves_per_asset`:
@@ -95,11 +96,14 @@ Every keystone `#assert_axioms`-pinned to `{propext, Classical.choice, Quot.soun
 -/
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.EffectsState
+import Dregg2.Apps.QueueFactory
 
 namespace Dregg2.Verify.QueueFactoryProbe
 
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState (setField fieldOf setField_fieldOf)
+-- F2b: the FIFO-order shadow lives with the factory story (the kernel `qbuf*` is gone).
+open Dregg2.Apps.QueueFactory (qbufEnqueue qbufDequeue qbuf_fifo_order)
 
 /-! ## §1 — The queue-cell SLOT layout (field names). -/
 
@@ -379,7 +383,7 @@ theorem full_queue_enqueue_rejected (k : RecordKernelState) (e actor : CellId)
 /-! ## §8 — KEYSTONE (b): NO UNDERFLOW / FIFO ORDER.
 
 `tail ≤ head` is preserved by both ops, and an EMPTY queue rejects dequeue. The FIFO ORDER itself
-is the kernel's REAL buffer mechanism (`qbuf_fifo_order`, `RecordKernel.lean`): enqueue appends to
+is the factory FIFO shadow (`qbuf_fifo_order`, `Apps/QueueFactory.lean`; F2b): enqueue appends to
 the back, dequeue removes the front — order `a`-before-`b` preserved. We carry that proved fact
 and add the sequence-counter underflow guard. -/
 
@@ -435,7 +439,8 @@ theorem enqueue_preserves_no_underflow {k k' : RecordKernelState} {e actor : Cel
   unfold qNoUnderflow at *
   rw [hh, ht]; omega
 
-/-- **FIFO ORDER — carried from the kernel's REAL buffer (`RecordKernel.qbuf_fifo_order`).** The
+/-- **FIFO ORDER — carried from the factory FIFO shadow (`Apps.QueueFactory.qbuf_fifo_order`;
+F2b moved it there from the deleted kernel buffer).** The
 order discipline (head removes the front, tail appends the back, `a`-before-`b` preserved) is the
 PROVED `qbufEnqueue`/`qbufDequeue` mechanism — the sequence counters here are the cell-field
 SHADOW of that buffer (head_seq = total appended, tail_seq = total removed). We re-expose the
@@ -575,7 +580,7 @@ abbrev qsenders : List CellId := [3, 4]
 --       now-EMPTY queue is rejected (no-underflow bound bites — KEYSTONE b):
 #guard (((queueDequeue qworld 0 1 55).bind (fun s => queueDequeue s 0 1 44)).isSome) == false
 
--- (viii) FIFO order (the kernel's real buffer): enqueue a then b, dequeue ⇒ a first (the OLDER):
+-- (viii) FIFO order (the factory FIFO shadow): enqueue a then b, dequeue ⇒ a first (the OLDER):
 #guard (qbufDequeue (qbufEnqueue (qbufEnqueue [] 10 |>.reverse.reverse) 20)) == some (10, [20])
 
 -- (ix) the factory conforms (its empty genesis is invariant-clean):
@@ -606,7 +611,7 @@ vocabulary CANNOT express:
     NEEDS `FieldLteOther` (the others reuse existing atoms).
   * KEYSTONE (b) NO UNDERFLOW / FIFO — PROVED (`dequeue_preserves_no_underflow` +
     `empty_queue_dequeue_rejected` + `enqueue_preserves_no_underflow`; FIFO ORDER carried from the
-    kernel's REAL buffer `qbuf_fifo_order` via `fifo_order_holds`). The `tail ≤ head` half ALSO
+    factory FIFO shadow `qbuf_fifo_order` via `fifo_order_holds`). The `tail ≤ head` half ALSO
     needs `FieldLteOther`; the empty-fail-closed + order are existing mechanism.
   * KEYSTONE (c) SENDER-AUTH — PROVED (`enqueue_requires_sender_auth`), and it IS the EXISTING
     `SenderAuthorized` atom verbatim (`enqueue_matches_senderAuthorized_caveat`). No new atom.

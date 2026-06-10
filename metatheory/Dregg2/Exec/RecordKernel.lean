@@ -257,94 +257,34 @@ structure EscrowRecord where
   queueMsg  : Option Nat := none
 deriving DecidableEq, Repr
 
-/-! ### The QUEUE side-table: a REAL ring-buffer FIFO automaton (dregg1's `MerkleQueue` / `CapInbox`).
+/-! ### `QueueRecord` — TRANSITIONAL wire-codec type (the kernel queue side-table is GONE).
 
-dregg1's queue (`turn/src/executor/apply.rs:3310 apply_queue_enqueue` / `:3420 apply_queue_dequeue`;
-the data-structure substrate `storage/src/queue.rs:16 MerkleQueue`) is a FIFO buffer: enqueue APPENDS a
-message hash to the tail and REJECTS fail-closed when `current_len >= capacity` (`apply.rs:3348`);
-dequeue REMOVES-FROM-FRONT in FIFO order and REJECTS fail-closed when `current_len == 0`
-(`apply.rs:3444`). dregg1's *cell-field* encoding stores only a head pointer + a tail pointer (two
-`[u8;32]` slots), and EXPLICITLY DOCUMENTS a FIFO-advancement GAP — "the head cannot be advanced to the
-next message hash without out-of-band knowledge of the message sequence … head lags by one until the
-queue drains" (`apply.rs:3466-3481`). The `MerkleQueue` substrate (`queue.rs:16`) carries the FULL
-ordered `Vec<QueueEntry>` + a `head: usize`, which IS the real FIFO, but its `verify_dequeue_proof` is
-flagged a non-real prototype in the Rust itself (`queue.rs:416-426`). We model the REAL mechanism that
-substrate intends — the de-THIN requirement — by carrying the FULL ordered `buffer : List Nat` of
-message hashes (front = head = next-to-dequeue, back = tail = most-recently-enqueued). A `List` is a
-ring-buffer up to representation; its head/tail give us exactly the FIFO order to PROVE (no advancement
-gap, no two-pointer approximation). The queue holds MESSAGES (content hashes / capability invocations,
-`CapInbox`), NOT balance — so it is balance-NEUTRAL (`recTotalAsset` UNCHANGED ∀ asset). -/
+F2b removed the kernel queue side-table (`RecordKernelState.queues`) and its kernel ops
+(`queueAllocateK`/`queueEnqueueK`/`queueDequeueK`/`queueResizeK` and the `qbuf*` FIFO buffer
+spec) — queue/inbox/pubsub semantics live in proven factory cells
+(`Apps/{QueueFactory,InboxFactory,PubsubFactory}.lean`): the queue is a minted CELL whose
+head/tail/capacity/owner/sender_set/message_root are SLOTS, gated by `SlotCaveat`
+(Immutable + MonotonicSequence + SenderAuthorized) plus the LIVE cross-slot relational caveat
+`RelCaveat.fieldLteOther` (capacity / no-underflow). The FIFO-order shadow (`qbufEnqueue`/
+`qbufDequeue` + `qbuf_fifo_order`) now lives with the factory story in `Apps/QueueFactory.lean`.
+The TYPE stays for the transitional window ONLY: the FFI `WState` codec keeps its `queues` field
+byte-identical (wire-compat with the deployed Rust until the lockstep cutover, where these
+effects die wholesale — same `EscrowRecord` precedent above). -/
 
-/-- **`QueueRecord`** — one entry of the queue side-table, keyed by `id` (dregg1's queue cell id,
-modelled as a `Nat` key), carrying the queue `owner` (only the owner may dequeue — `apply.rs:3433`), the
-`capacity` (the max occupancy — `apply.rs:3324`), and the REAL `buffer : List Nat` of message hashes in
-FIFO order (front = head = next-to-dequeue). The occupancy is `buffer.length`; the capacity bound is
-`buffer.length ≤ capacity`. dregg1's anti-spam `deposit` lives on the cell ledger (the `EffectsPaired`
-deposit flow) — orthogonal to the ORDER mechanism modelled here. -/
+/-- **`QueueRecord`** — one entry of dregg1's off-ledger queue side-table, keyed by `id` (dregg1's
+queue cell id, modelled as a `Nat` key), carrying the queue `owner`, the `capacity`, and the
+ordered `buffer : List Nat` of message hashes in FIFO order. TRANSITIONAL: kept ONLY for the FFI
+`WState` wire codec (see the section note above). -/
 structure QueueRecord where
   /-- the queue id (dregg1's queue cell `CellId`, modelled as a `Nat` key). -/
   id       : Nat
-  /-- the queue owner — only the owner may dequeue (`apply.rs:3433`). -/
+  /-- the queue owner. -/
   owner    : CellId
-  /-- the queue capacity — enqueue rejects fail-closed when occupancy reaches it (`apply.rs:3348`). -/
+  /-- the queue capacity. -/
   capacity : Nat
-  /-- **The REAL FIFO buffer**: the ordered list of message hashes, front = head = next-to-dequeue, back
-  = tail = most-recently-enqueued. Enqueue APPENDS to the back; dequeue REMOVES the front. The occupancy
-  is `buffer.length`. This is the de-THIN content — a flag/no-op model would have NO order and NO bound. -/
+  /-- the ordered list of message hashes, front = head = next-to-dequeue. -/
   buffer   : List Nat := []
 deriving DecidableEq, Repr
-
-/-- **Enqueue into the buffer (the FIFO APPEND).** `buffer ++ [m]` — the new message goes to the BACK
-(tail), behind every message already waiting. Fail-closed at capacity is enforced at the kernel
-transition (`queueEnqueueK`); this is the raw order operation. -/
-def qbufEnqueue (buf : List Nat) (m : Nat) : List Nat := buf ++ [m]
-
-/-- **Dequeue from the buffer (the FIFO REMOVE-FROM-FRONT).** Returns `(head, rest)` — the FRONT message
-(the oldest waiting) and the remaining buffer. `none` when empty (fail-closed at the kernel transition). -/
-def qbufDequeue (buf : List Nat) : Option (Nat × List Nat) :=
-  match buf with
-  | []      => none
-  | m :: ms => some (m, ms)
-
-/-- **FIFO ORDER — PROVED (the load-bearing non-vacuity).** Enqueue `a` then `b` into ANY buffer, then
-dequeue: the FIRST dequeue returns `a` (the older), and dequeuing the remainder returns `b`. Order is
-PRESERVED — `a` before `b` — exactly because enqueue appends to the back and dequeue removes the front.
-A flag/no-op model could not state this (no order); a two-pointer cell-field model (dregg1's
-`apply.rs`) cannot prove it past the 0→1 transition (the documented advancement gap). The full `List`
-buffer can. -/
-theorem qbuf_fifo_order (buf : List Nat) (a b : Nat) :
-    qbufDequeue (qbufEnqueue (qbufEnqueue buf a) b) =
-      (match qbufDequeue buf with
-       | some (h, rest) => some (h, qbufEnqueue (qbufEnqueue rest a) b)
-       | none           => some (a, [b])) := by
-  cases buf with
-  | nil      => rfl
-  | cons h t => rfl
-
-/-- **FIFO ORDER on the EMPTY buffer — PROVED (the witnessed `a`-then-`b` instance).** Starting empty,
-enqueue `a` then `b`, dequeue → `a` (the older) with `[b]` remaining; dequeue the remainder → `b`. The
-concrete order witness the `#eval` exhibits. -/
-theorem qbuf_fifo_empty (a b : Nat) :
-    qbufDequeue (qbufEnqueue (qbufEnqueue [] a) b) = some (a, [b]) ∧
-      qbufDequeue [b] = some (b, []) := ⟨rfl, rfl⟩
-
-/-- **EMPTY DEQUEUE fail-closed — PROVED.** Dequeue on the empty buffer is rejected (`none`). The
-emptiness gate that the kernel transition lifts to `none`. -/
-theorem qbuf_empty_dequeue : qbufDequeue ([] : List Nat) = none := rfl
-
-/-- **ENQUEUE grows occupancy by one — PROVED.** The occupancy `buffer.length` after an enqueue is
-exactly one more than before (the counter the capacity bound tracks). -/
-theorem qbuf_enqueue_length (buf : List Nat) (m : Nat) :
-    (qbufEnqueue buf m).length = buf.length + 1 := by
-  simp [qbufEnqueue]
-
-/-- **DEQUEUE shrinks occupancy by one — PROVED.** When dequeue succeeds, the occupancy drops by one. -/
-theorem qbuf_dequeue_length {buf : List Nat} {h : Nat} {rest : List Nat}
-    (heq : qbufDequeue buf = some (h, rest)) : buf.length = rest.length + 1 := by
-  cases buf with
-  | nil      => simp [qbufDequeue] at heq
-  | cons x t => simp only [qbufDequeue, Option.some.injEq, Prod.mk.injEq] at heq
-                obtain ⟨_, hr⟩ := heq; subst hr; simp
 
 /-! ### The SWISS-TABLE side-table — a REAL CapTP export/enliven/handoff/GC registry (Wave-8 de-THIN).
 
@@ -404,15 +344,6 @@ a SUBSET of the entry's exported `rights` — a sturdy ref must NOT grant author
 (`AuthRequired::is_narrower_or_equal`, `apply.rs:3917`, `:3999`). Modelled as list-subset over `Auth`. -/
 def rightsNarrowerOrEqual (claimed entry : List Auth) : Bool :=
   claimed.all (fun a => entry.contains a)
-
-/-- Look up a queue record by id in the side-table (the first match), `none` if absent. -/
-def findQueue (qs : List QueueRecord) (id : Nat) : Option QueueRecord :=
-  qs.find? (fun q => q.id == id)
-
-/-- Replace the queue record with the given `id` by `q'` (the first match), leaving others untouched.
-The side-table update primitive shared by enqueue/dequeue/resize. -/
-def replaceQueue (qs : List QueueRecord) (id : Nat) (q' : QueueRecord) : List QueueRecord :=
-  qs.map (fun q => if q.id == id then q' else q)
 
 /-! ## §SEAL — the sealed-box holding-store (Wave-3 de-shadow of `apply_seal`/`apply_unseal`).
 
@@ -491,19 +422,12 @@ structure RecordKernelState where
   transition (`§MULTI-ASSET`) preserves; the scalar `balance` field is its legacy asset-view, and
   the executable `FullAction` dispatch migrates onto `bal` (`DREGG2-GAP-MAP.md FILL 1`). -/
   bal        : CellId → AssetId → ℤ := fun _ _ => 0
-  /-- **The QUEUE side-table** (Wave-7 de-THIN): the list of live queue records, each carrying its REAL
-  ordered FIFO `buffer : List Nat` of message hashes (`QueueRecord`). Queues hold MESSAGES, NOT balance,
-  so this is balance-NEUTRAL — `recTotalAsset` is UNCHANGED ∀ asset (it reads `bal`,
-  never `queues`). DEFAULTS EMPTY (the additive extension, exactly as `nullifiers`/
-  `commitments` were added). The FIFO ORDER + capacity bound + empty-fail-closed are PROVED off
-  `qbufEnqueue`/`qbufDequeue` (the de-THIN non-vacuity a flag-only model lacks). -/
-  queues     : List QueueRecord := []
   /-- **The SWISS-TABLE side-table** (Wave-8 de-THIN): the CapTP export/enliven/handoff/GC registry — a
   list of live `SwissRecord` entries, each keyed by its swiss number, carrying the exported cap's
   `rights` + a `refcount` (the GC counter) + the bound handoff `cert`. The swiss-table moves REFERENCES
   (capability routing), NOT balance — so it is balance-NEUTRAL (`recTotalAsset` is UNCHANGED
   ∀ asset; it reads `bal`, never `swiss`). DEFAULTS EMPTY (the additive extension, exactly as
-  `nullifiers`/`commitments`/`queues` were added). Export INSERTS, enliven LOOKS-UP-fail-closed
+  `nullifiers`/`commitments` were added). Export INSERTS, enliven LOOKS-UP-fail-closed
   + validates non-amplification, handoff binds the cert, the refcount tracks live refs (GC at 0) — the
   REAL mechanism a flag-shadow lacks. -/
   swiss      : List SwissRecord := []
@@ -515,7 +439,7 @@ structure RecordKernelState where
   published app-safety REAL — `nameservice` `Immutable`-owner = *registered forever*, enforced BY THE
   EXECUTOR. Caveats touch NO balance, so this is balance-NEUTRAL (`recTotalAsset` reads
   `bal`, never `slotCaveats`). DEFAULTS EMPTY (the additive extension, exactly as
-  `nullifiers`/`commitments`/`queues`/`swiss` were added — a cell with no factory-bound
+  `nullifiers`/`commitments`/`swiss` were added — a cell with no factory-bound
   caveats writes freely, recovering the prior unguarded semantics). -/
   slotCaveats : CellId → List SlotCaveat := fun _ => []
   /-- **The PUBLISHED FACTORY REGISTRY** (dregg1's `self.factory_registry`, `cell/src/factory.rs`):
@@ -1181,182 +1105,6 @@ theorem noteCreate_inserts (k : RecordKernelState) (cm : Nat) :
 ledger. -/
 theorem noteCreate_recTotalAsset (k : RecordKernelState) (cm : Nat) (b : AssetId) :
     recTotalAsset (noteCreateCommitment k cm) b = recTotalAsset k b := rfl
-
-/-! ## §QUEUE — the kernel-level ring-buffer FIFO transitions (Wave-7 de-THIN).
-
-The queue side-table transitions, each FAIL-CLOSED exactly where dregg1 fails closed: allocate creates a
-fresh record (rejecting a duplicate id); enqueue APPENDS to the tail and REJECTS at capacity
-(`apply.rs:3348`); dequeue REMOVES-FROM-FRONT and REJECTS when empty (`apply.rs:3444`); resize grows the
-capacity (rejecting a shrink below the current occupancy, `apply.rs` `QueueResize` "can't shrink below
-current occupancy"). All FOUR are balance-NEUTRAL — they touch ONLY `queues`, never `bal`.
-
-F1b: the Wave-8 REFUNDABLE-DEPOSIT composition (`queueEnqueueDepositK`/`queueDequeueRefundK` and the
-P0-1 deposit-binding gates) is GONE with the kernel escrow holding-store it parked into — anti-spam
-deposits are a FACTORY concern in the F2 queue-family migration. The FIFO automaton below (order +
-capacity + owner + emptiness, the de-THIN content) is the surviving queue kernel machinery. -/
-
-/-- **`queueAllocateK`** — create a fresh queue `id` with `owner`/`capacity` and an EMPTY buffer.
-Fail-closed if the id already exists (no duplicate queue). dregg1's `apply_queue_allocate` derives a
-fresh queue cell. balance-NEUTRAL. -/
-def queueAllocateK (k : RecordKernelState) (id : Nat) (owner : CellId) (capacity : Nat) :
-    Option RecordKernelState :=
-  match findQueue k.queues id with
-  | some _ => none
-  | none   => some { k with queues := { id := id, owner := owner, capacity := capacity, buffer := [] } :: k.queues }
-
-/-- **`queueEnqueueK`** — APPEND `m` to the tail of queue `id`'s buffer. Fail-closed if the queue is
-absent OR FULL (`buffer.length ≥ capacity`, dregg1 `apply.rs:3348`). balance-NEUTRAL. -/
-def queueEnqueueK (k : RecordKernelState) (id : Nat) (m : Nat) : Option RecordKernelState :=
-  match findQueue k.queues id with
-  | none   => none
-  | some q =>
-      if q.buffer.length < q.capacity then
-        some { k with queues := replaceQueue k.queues id { q with buffer := qbufEnqueue q.buffer m } }
-      else
-        none
-
-/-- **`queueDequeueK`** — REMOVE-FROM-FRONT of queue `id`'s buffer, gated on `actor = owner` (only the
-owner may dequeue, dregg1 `apply.rs:3433`). Fail-closed if the queue is absent, the actor is not the
-owner, OR the queue is EMPTY (`apply.rs:3444`). Returns the post-state AND the dequeued head message (the
-FIFO order witness). balance-NEUTRAL. -/
-def queueDequeueK (k : RecordKernelState) (id : Nat) (actor : CellId) :
-    Option (RecordKernelState × Nat) :=
-  match findQueue k.queues id with
-  | none   => none
-  | some q =>
-      if actor = q.owner then
-        match qbufDequeue q.buffer with
-        | none            => none
-        | some (m, rest)  =>
-            some ({ k with queues := replaceQueue k.queues id { q with buffer := rest } }, m)
-      else
-        none
-
-/-- **`queueResizeK`** — change queue `id`'s capacity to `newCap`. Fail-closed if the queue is absent OR
-the new capacity is below the current occupancy ("can't shrink below current occupancy",
-`apply.rs:3534`). balance-NEUTRAL. -/
-def queueResizeK (k : RecordKernelState) (id : Nat) (newCap : Nat) : Option RecordKernelState :=
-  match findQueue k.queues id with
-  | none   => none
-  | some q =>
-      if q.buffer.length ≤ newCap then
-        some { k with queues := replaceQueue k.queues id { q with capacity := newCap } }
-      else
-        none
-
-/-- **`queueAllocateK_balNeutral` — PROVED.** Allocate leaves `recTotalAsset` UNCHANGED ∀ asset: it
-grows only `queues`, never `bal`. -/
-theorem queueAllocateK_balNeutral {k k' : RecordKernelState} {id : Nat} {owner : CellId} {capacity : Nat}
-    (h : queueAllocateK k id owner capacity = some k') (b : AssetId) :
-    recTotalAsset k' b = recTotalAsset k b := by
-  unfold queueAllocateK at h
-  cases hf : findQueue k.queues id with
-  | some q => simp only [hf] at h; exact absurd h (by simp)
-  | none   => simp only [hf] at h; simp only [Option.some.injEq] at h; subst h; rfl
-
-/-- **`queueEnqueueK_balNeutral` — PROVED.** Enqueue is balance-NEUTRAL (touches only `queues`). -/
-theorem queueEnqueueK_balNeutral {k k' : RecordKernelState} {id m : Nat}
-    (h : queueEnqueueK k id m = some k') (b : AssetId) :
-    recTotalAsset k' b = recTotalAsset k b := by
-  unfold queueEnqueueK at h
-  cases hf : findQueue k.queues id with
-  | none   => simp only [hf] at h; exact absurd h (by simp)
-  | some q =>
-      simp only [hf] at h
-      by_cases hc : q.buffer.length < q.capacity
-      · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h; rfl
-      · rw [if_neg hc] at h; exact absurd h (by simp)
-
-/-- **`queueDequeueK_balNeutral` — PROVED.** Dequeue is balance-NEUTRAL (touches only `queues`). -/
-theorem queueDequeueK_balNeutral {k k' : RecordKernelState} {id : Nat} {actor : CellId} {m : Nat}
-    (h : queueDequeueK k id actor = some (k', m)) (b : AssetId) :
-    recTotalAsset k' b = recTotalAsset k b := by
-  unfold queueDequeueK at h
-  cases hf : findQueue k.queues id with
-  | none   => simp only [hf] at h; exact absurd h (by simp)
-  | some q =>
-      simp only [hf] at h
-      by_cases ho : actor = q.owner
-      · rw [if_pos ho] at h
-        cases hd : qbufDequeue q.buffer with
-        | none           => rw [hd] at h; exact absurd h (by simp)
-        | some hr        =>
-            obtain ⟨hm, rest⟩ := hr
-            rw [hd] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h
-            obtain ⟨hk, _⟩ := h; subst hk; rfl
-      · rw [if_neg ho] at h; exact absurd h (by simp)
-
-/-- **`queueResizeK_balNeutral` — PROVED.** Resize is balance-NEUTRAL (touches only `queues`). -/
-theorem queueResizeK_balNeutral {k k' : RecordKernelState} {id newCap : Nat}
-    (h : queueResizeK k id newCap = some k') (b : AssetId) :
-    recTotalAsset k' b = recTotalAsset k b := by
-  unfold queueResizeK at h
-  cases hf : findQueue k.queues id with
-  | none   => simp only [hf] at h; exact absurd h (by simp)
-  | some q =>
-      simp only [hf] at h
-      by_cases hc : q.buffer.length ≤ newCap
-      · rw [if_pos hc] at h; simp only [Option.some.injEq] at h; subst h; rfl
-      · rw [if_neg hc] at h; exact absurd h (by simp)
-
-
-/-- **`queueEnqueueK_full_rejects` — PROVED (the CAPACITY BOUND, fail-closed).** Enqueue into a FULL
-queue (`buffer.length ≥ capacity`) returns `none`. The bound a flag-only model could not enforce. -/
-theorem queueEnqueueK_full_rejects (k : RecordKernelState) (id m : Nat) (q : QueueRecord)
-    (hf : findQueue k.queues id = some q) (hfull : q.capacity ≤ q.buffer.length) :
-    queueEnqueueK k id m = none := by
-  simp only [queueEnqueueK, hf]; rw [if_neg (by omega)]
-
-/-- **`queueDequeueK_empty_rejects` — PROVED (EMPTY fail-closed).** Dequeue from an EMPTY queue
-(`buffer = []`), by its owner, returns `none`. The emptiness gate. -/
-theorem queueDequeueK_empty_rejects (k : RecordKernelState) (id : Nat) (q : QueueRecord)
-    (hf : findQueue k.queues id = some q) (hempty : q.buffer = []) :
-    queueDequeueK k id q.owner = none := by
-  simp only [queueDequeueK, hf, if_pos, hempty, qbufDequeue]
-
-/-- **`queueDequeueK_wrong_owner_rejects` — PROVED (the AUTHORITY gate, fail-closed).** A non-owner
-dequeue returns `none` (dregg1 `apply.rs:3433`: only the queue owner may dequeue). REAL gate, not `True`. -/
-theorem queueDequeueK_wrong_owner_rejects (k : RecordKernelState) (id : Nat) (actor : CellId)
-    (q : QueueRecord) (hf : findQueue k.queues id = some q) (hne : actor ≠ q.owner) :
-    queueDequeueK k id actor = none := by
-  simp only [queueDequeueK, hf]; rw [if_neg hne]
-
-/-! ## §QUEUE runs (`#eval`) — the FIFO order + capacity + emptiness have TEETH. -/
-
-/-- A kernel with one queue (id 7, owner 0, capacity 2, empty). -/
-def kq0 : RecordKernelState :=
-  { accounts := {0}
-    cell := fun _ => .record [("balance", .int 0)]
-    caps := fun _ => []
-    queues := [{ id := 7, owner := 0, capacity := 2, buffer := [] }] }
-
--- FIFO ORDER WITNESS: enqueue 111 then 222; dequeue → 111 (the OLDER); dequeue remainder → 222.
-#guard ((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222) |>.map (fun k =>
-        (findQueue k.queues 7).map (·.buffer))) == some (some [111, 222])  --  some (some [111, 222]) — FIFO order, tail-appended
-#guard (((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
-        (fun k => (queueDequeueK k 7 0).map Prod.snd)) == some 111  --  some 111 — head dequeued FIRST (the older)
-#guard ((((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
-        (fun k => (queueDequeueK k 7 0).map Prod.fst)).bind
-        (fun k => (queueDequeueK k 7 0).map Prod.snd)) == some 222  --  some 222 — then the younger (FIFO preserved)
--- CAPACITY BOUND: a 3rd enqueue into the (cap-2) full queue is REJECTED.
-#guard ((((queueEnqueueK kq0 7 111).bind (fun k => queueEnqueueK k 7 222)).bind
-        (fun k => queueEnqueueK k 7 333)).isSome) == false  --  false — full ⇒ none (capacity bound)
--- EMPTY fail-closed: dequeue the empty queue ⇒ none.
-#guard ((queueDequeueK kq0 7 0).isSome) == false  --  false — empty ⇒ none
--- AUTHORITY gate: a non-owner (cell 1) dequeue ⇒ none even when non-empty.
-#guard (((queueEnqueueK kq0 7 111).bind (fun k => (queueDequeueK k 7 1).map Prod.snd))).isNone  --  none — wrong owner ⇒ none
--- bal-NEUTRAL: the combined per-asset measure is UNTOUCHED by enqueue (and dequeue).
-#guard (((queueEnqueueK kq0 7 111).map (fun k => recTotalAsset k 0))) == some 0  --  some 0 — UNCHANGED (queues hold messages, not balance)
-
-#assert_axioms qbuf_fifo_order
-#assert_axioms qbuf_fifo_empty
-#assert_axioms qbuf_empty_dequeue
-#assert_axioms queueEnqueueK_full_rejects
-#assert_axioms queueDequeueK_empty_rejects
-#assert_axioms queueDequeueK_wrong_owner_rejects
-#assert_axioms queueEnqueueK_balNeutral
-#assert_axioms queueDequeueK_balNeutral
-
 
 /-! ## §SWISS — the kernel-level CapTP export/enliven/handoff/GC swiss-table transitions (Wave-8 de-THIN).
 

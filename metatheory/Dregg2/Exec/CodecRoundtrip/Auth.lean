@@ -10,7 +10,6 @@ namespace Dregg2.Exec.CodecRoundtrip
 open Dregg2.Exec
 open Dregg2.Exec.FFI
 open Dregg2.Exec.FFI.Wide
-open Dregg2.Exec.TurnExecutorFull (QueueTxOpA)
 
 /-! ## §6 — the `Authorization` (WHO) decoder roundtrip (FILL-J production (b): the 10-variant sum +
 the recursive `oneOf` candidate list).

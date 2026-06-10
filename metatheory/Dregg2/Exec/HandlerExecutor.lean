@@ -12,7 +12,7 @@ The five deliverables:
   1. **`masterRegistry`** (`§2`) — the coproduct `Registry = List PackedHandler` packing ALL the proved
      handlers across the seven files (transfer / mint / burn / state-write / createCell / escrow /
      release / refund / note / seal / unseal / seal-pair / swiss-export/enliven/handoff/drop / delegate /
-     attenuate / revoke / queue-allocate/enqueue/dequeue/resize/atomic/pipeline / bridge-lock/finalize/
+     attenuate / revoke / bridge-lock/finalize/
      cancel / pipelined-send / exercise). Every entry's obligation proofs are a TYPING condition on entry.
 
   2. **`toClosedEffect`** (`§3`) — the TOTAL map `FullActionA → ClosedEffect` mapping each of the 56
@@ -48,11 +48,9 @@ import Dregg2.Exec.Handlers.StateSupply
 import Dregg2.Exec.Handlers.Escrow
 import Dregg2.Exec.Handlers.Seal
 import Dregg2.Exec.Handlers.Authority
-import Dregg2.Exec.Handlers.Queue
 import Dregg2.Exec.Handlers.Bridge
 import Dregg2.Exec.Handlers.Exercise
 import Dregg2.Exec.Handlers.Lifecycle
-import Dregg2.Exec.QueueCutover
 
 namespace Dregg2.Exec.HandlerExecutor
 
@@ -62,15 +60,11 @@ open Dregg2.Exec.Handler
 open Dregg2.Exec.TurnExecutorFull
   (acceptsEffects lcLive lcSealed lcDestroyed setLifecycle parentClist cellSealChainA cellUnsealChainA
    cellDestroyChainA refreshDelegationChainA emitStep execFullA execInnerA exerciseStepA FullActionA
-   QueueTxOpA
    recCDelegate recCDelegateAtten attenuateStepA
    createCellChainA
    noteSpendChainA noteCreateChainA
    createSealPairChainA sealChainA unsealChainA
    swissExportChainA swissEnlivenChainA swissHandoffChainA swissDropChainA
-   queueAllocateChainA queueEnqueueChainA queueDequeueChainA
-   queueAtomicTxChainA queueAtomicTxA
-   queueResizeChainA pipelineFanoutK
    permsField vkField refusalField
    authReceipt escrowReceiptA sealerCap unsealerCap holdsSealCapFor)
 open Dregg2.Exec.EffectsState (stateAuthB stateStep stateStepGuarded cellLive caveatsAdmit writeField)
@@ -82,13 +76,9 @@ open Dregg2.Exec.Handlers.StateSupply
 open Dregg2.Exec.Handlers.Escrow
 open Dregg2.Exec.Handlers.Seal
 open Dregg2.Exec.Handlers.Authority
-open Dregg2.Exec.Handlers.Queue
 open Dregg2.Exec.Handlers.Bridge
 open Dregg2.Exec.Handlers.Exercise
 open Dregg2.Exec.Handlers.Lifecycle
-open Dregg2.Exec.QueueCutover (txOpToK txOpsToK QueueAtomicTxGateFold queueAtomicTx_hchain_of_gateFold
-  queueAtomicTxChainK_of_gateFold queueAtomicTxChainA_of_gateFold)
-open Dregg2.Exec.Handlers.Queue (queueAtomicTxChainK atomicTxStep)
 
 /-! ## §1 — Pretty names for the master registry indices (the audit-trail tags).
 
@@ -123,9 +113,6 @@ def masterRegistry : Registry :=
   , ⟨DelegateArgs, delegateAttenH⟩
   , ⟨AttenuateArgs, attenuateH⟩
   , ⟨RevokeArgs, revokeDelegationH⟩, ⟨RevokeArgs, dropRefH⟩, ⟨RevokeArgs, revokeH⟩
-  -- §queue (Queue)
-  , ⟨AllocateArgs, queueAllocateA⟩, ⟨EnqueueArgs, queueEnqueueA⟩, ⟨DequeueArgs, queueDequeueA⟩
-  , ⟨ResizeArgs, queueResizeA⟩, ⟨AtomicTxArgs, queueAtomicTxA⟩, ⟨PipelineArgs, queuePipelineStepA⟩
   -- §bridge (Bridge batch; F1b: the bridge-LFC handlers are GONE — the bridge cell owns them)
   , ⟨PipelinedSendArgs, pipelinedSendA⟩
   -- §exercise (Exercise — the recursive sub-effect forest)
@@ -137,11 +124,12 @@ def masterRegistry : Registry :=
   , ⟨RefreshDelegationArgs, refreshDelegationH⟩
   , ⟨EmitEventArgs, emitEventH⟩ ]
 
-/-- The master registry packs 38 distinct handler ENTRIES (the F1b op-set constructors collapse onto
+/-- The master registry packs 32 distinct handler ENTRIES (the F1b op-set constructors collapse onto
 these via the aliasing of `toClosedEffect` — introduce/validateHandoff↔delegateAtten, bridgeMint↔mint,
 factory/spawn↔createCell, dropRef/revokeDelegation↔revoke; F1b: the escrow/obligation/bridge-LFC
-entries are GONE with the kernel holding-store). -/
-theorem masterRegistry_length : masterRegistry.length = 38 := rfl
+entries are GONE with the kernel holding-store; F2b: the queue-family entries are GONE — queue
+behavior is the factory story, `Apps/{QueueFactory,InboxFactory,PubsubFactory}.lean`). -/
+theorem masterRegistry_length : masterRegistry.length = 32 := rfl
 
 /-! ## §3 — `toClosedEffect`: the TOTAL `FullActionA → ClosedEffect` dispatch (56/56 constructors).
 
@@ -157,9 +145,7 @@ The lifecycle/emit family (`emitEventA` / `cellSealA` / `cellUnsealA` / `cellDes
 `refreshDelegationA`) routes to the dedicated `Lifecycle` handlers (real `lifecycle`/`deathCert`/
 `delegations` side-table edits + authority-free emit membership gate). The seven named-field writes
 (`setFieldA` / `incrementNonceA` / `setPermissionsA` / `setVKA` / `makeSovereignA` / `refusalA` /
-`receiptArchiveA`) map onto the GENERIC live-gated `stateWriteH`. The queue-atomic-tx
-`QueueTxOpA` discriminant is projected onto the handler's executable core (the
-`QueueTxOpK` sub-op list) — documented at each arm. -/
+`receiptArchiveA`) map onto the GENERIC live-gated `stateWriteH`. -/
 
 /-- **`toClosedEffect`** — the TOTAL dispatch map (every one of the 56 `FullActionA` constructors). Each
 arm reuses its batch's `ClosedEffect` builder, so the looked-up handler's obligation proofs are carried.
@@ -209,14 +195,6 @@ def toClosedEffect : FullActionA → ClosedEffect
   | .makeSovereignA actor cell    => makeSovereignEffect actor cell
   | .refusalA actor cell          => refusalEffect actor cell
   | .receiptArchiveA actor cell   => receiptArchiveEffect actor cell 1
-  -- §queue
-  | .queueAllocateA id actor cell cap   => allocateEffect actor id cell cap
-  | .queueEnqueueA id m actor cell      => enqueueEffect id m actor cell
-  | .queueDequeueA id actor cell        => dequeueEffect id actor cell
-  | .queueResizeA id newCap actor cell  => resizeEffect actor id newCap cell
-  | .queueAtomicTxA actor ops           => atomicTxEffect actor (txOpsToK ops)
-  | .queuePipelineStepA srcId owner sinkCells sinkIds =>
-      pipelineEffect srcId owner sinkCells sinkIds
   | .pipelinedSendA actor               => pipelinedSendEffect actor
   -- §swiss
   | .exportSturdyRefA sw actor exporter target rights =>
@@ -945,7 +923,7 @@ theorem handler_refines_execFullA_emitEvent (s s' : RecChainedState) (actor cell
     simp only [execFullA, if_pos hmem, emitStep]
   · rw [if_neg hmem] at hstep; exact absurd hstep (by simp)
 
-/-! ### §6.5 — AUTHORITY / SEAL / SWISS / QUEUE (mechanical strengthening; handler gates only narrow). -/
+/-! ### §6.5 — AUTHORITY / SEAL / SWISS (mechanical strengthening; handler gates only narrow). -/
 
 private theorem auth_mem_allAuths : ∀ a : Auth, allAuths.contains a = true := by
   intro a; cases a <;> decide
@@ -1203,192 +1181,8 @@ theorem handler_refines_execFullA_swissDrop (s s' : RecChainedState) (sw : Nat)
     unfold swissDropChainA
     rw [if_pos hg, hstep]
   · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
-
-theorem handler_refines_execFullA_queueResize (s s' : RecChainedState) (id newCap : Nat)
-    (actor owner : CellId) (h : execHandlerOne (.queueResizeA id newCap actor owner) s = some s') :
-    ∃ s'', execFullA s (.queueResizeA id newCap actor owner) = some s'' ∧ s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queueResizeA id newCap actor owner) s s' h
-  rw [toClosedEffect] at hstep
-  change resizeStep s.kernel { actor := actor, id := id, capacity := newCap, owner := owner }
-    = some s'.kernel at hstep
-  unfold resizeStep at hstep
-  by_cases hg : stateAuthB s.kernel.caps actor owner && acceptsEffects s.kernel owner
-  · rw [if_pos hg] at hstep
-    simp only [Bool.and_eq_true] at hg
-    have hk : queueResizeK s.kernel id newCap = some s'.kernel := hstep
-    refine ⟨{ kernel := s'.kernel,
-              log := { actor := actor, src := owner, dst := owner, amt := 0 } :: s.log }, ?_, rfl⟩
-    show queueResizeChainA s id newCap actor owner = _
-    unfold queueResizeChainA
-    rw [if_pos hg, hk]
-  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
-
-theorem handler_refines_execFullA_queuePipeline (s s' : RecChainedState) (srcId : Nat) (owner : CellId)
-    (sinkCells : List CellId) (sinkIds : List Nat)
-    (h : execHandlerOne (.queuePipelineStepA srcId owner sinkCells sinkIds) s = some s') :
-    ∃ s'', execFullA s (.queuePipelineStepA srcId owner sinkCells sinkIds) = some s'' ∧
-      s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queuePipelineStepA srcId owner sinkCells sinkIds) s s' h
-  rw [toClosedEffect] at hstep
-  change Dregg2.Exec.Handlers.Queue.pipelineStep s.kernel
-    { srcId := srcId, owner := owner, sinkCells := sinkCells, sinkIds := sinkIds } = some s'.kernel at hstep
-  unfold Dregg2.Exec.Handlers.Queue.pipelineStep at hstep
-  simp only [PipelineArgs.srcId, PipelineArgs.owner, PipelineArgs.sinkCells, PipelineArgs.sinkIds] at hstep
-  cases hd : queueDequeueK s.kernel srcId owner with
-  | none => rw [hd] at hstep; exact absurd hstep (by simp)
-  | some pr =>
-      rcases pr with ⟨k1, m⟩
-      rw [hd] at hstep
-      cases hf : pipelineFanoutK k1 owner m sinkCells sinkIds with
-      | none => simp only [hf] at hstep; exact absurd hstep (by simp)
-      | some k2 =>
-          simp only [hf] at hstep
-          refine ⟨{ kernel := s'.kernel,
-                    log := { actor := owner, src := owner, dst := owner, amt := 0 } :: s.log },
-                  ?_, rfl⟩
-          simp only [execFullA, Dregg2.Exec.TurnExecutorFull.queuePipelineStepA, hd, hf, hstep]
-
-/-! ### §6.6 — QUEUE honest-path refinements (deferred frontier: gate/owner alignment).
-
-The handler and `execFullA` disagree on queue *metadata* (receipt rows, owner slot in `QueueRecord`,
-writer-ACL vs self-ACL) when `actor ≠ cell`. On the **honest production path** (`actor = cell` for
-allocate/enqueue; chain gates explicit for dequeue/atomic), handler-commits ⊆ execFullA-commits with
-identical kernels. -/
-
-/-- **`handler_refines_execFullA_queueAllocate` — CLOSED, UNCONDITIONAL (no `actor = cell`).** The
-handler now stores the queue owner as `actor` (the §3.1 alignment in `Handlers.Queue.allocateStep`,
-`queueAllocateK … actor …`), EXACTLY as `execFullA`'s `queueAllocateChainA` does — so a committed
-handler allocate refines `execFullA` to the SAME kernel for ANY `actor`/`cell`. The handler ADDS the
-`acceptsEffects cell` live-cell gate (strengthening). -/
-theorem handler_refines_execFullA_queueAllocate (s s' : RecChainedState) (id : Nat) (actor cell : CellId)
-    (cap : Nat)
-    (h : execHandlerOne (.queueAllocateA id actor cell cap) s = some s') :
-    ∃ s'', execFullA s (.queueAllocateA id actor cell cap) = some s'' ∧ s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queueAllocateA id actor cell cap) s s' h
-  rw [toClosedEffect] at hstep
-  change allocateStep s.kernel { actor := actor, id := id, gateCell := cell, capacity := cap }
-    = some s'.kernel at hstep
-  unfold allocateStep at hstep
-  by_cases hg : stateAuthB s.kernel.caps actor cell && acceptsEffects s.kernel cell
-  · rw [if_pos hg] at hstep
-    simp only [Bool.and_eq_true] at hg
-    have hk : queueAllocateK s.kernel id actor cap = some s'.kernel := hstep
-    refine ⟨{ kernel := s'.kernel,
-              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, rfl⟩
-    show queueAllocateChainA s id actor cell cap = _
-    unfold queueAllocateChainA
-    rw [if_pos hg.1, hk]
-  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
-
-/-- **`handler_refines_execFullA_queueEnqueue` — UNCONDITIONAL (F1b deposit-free).** The handler's
-writer-ACL + live-cell gate is EXACTLY `queueEnqueueChainA`'s gate, so a committed handler enqueue
-refines `execFullA` on the same kernel for ANY `actor`/`cell`. -/
-theorem handler_refines_execFullA_queueEnqueue (s s' : RecChainedState) (id m : Nat) (actor cell : CellId)
-    (h : execHandlerOne (.queueEnqueueA id m actor cell) s = some s') :
-    ∃ s'', execFullA s (.queueEnqueueA id m actor cell) = some s'' ∧
-      s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queueEnqueueA id m actor cell) s s' h
-  rw [toClosedEffect] at hstep
-  change enqueueStep s.kernel { id := id, m := m, actor := actor, cell := cell }
-    = some s'.kernel at hstep
-  unfold enqueueStep at hstep
-  by_cases hg : stateAuthB s.kernel.caps actor cell && acceptsEffects s.kernel cell
-  · rw [if_pos hg] at hstep
-    simp only [Bool.and_eq_true] at hg
-    refine ⟨{ kernel := s'.kernel,
-              log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, rfl⟩
-    show queueEnqueueChainA s id m actor cell = _
-    unfold queueEnqueueChainA
-    rw [if_pos hg, hstep]
-  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
-
-/-- **`hole_queue_actor_ne_cell`.** The `actor ≠ cell` case (the owner
-metadata once diverged: handler stored owner = `cell`, `execFullA` stored owner = `actor`). The handler is
-now ALIGNED to store owner = `actor`, so kernel agreement holds UNCONDITIONALLY — the `actor ≠ cell`
-case is just the general `handler_refines_execFullA_queueAllocate` (the `_hne` hypothesis is no longer
-needed). -/
-theorem hole_queue_actor_ne_cell (s s' : RecChainedState) (id : Nat) (actor cell : CellId) (cap : Nat)
-    (_hne : actor ≠ cell)
-    (h : execHandlerOne (.queueAllocateA id actor cell cap) s = some s') :
-    ∃ s'', execFullA s (.queueAllocateA id actor cell cap) = some s'' ∧ s''.kernel = s'.kernel :=
-  handler_refines_execFullA_queueAllocate s s' id actor cell cap h
-
-/-- **`handler_refines_execFullA_queueDequeue` — UNCONDITIONAL (F1b deposit-free).** The handler's
-c-list + live-cell gate is EXACTLY `queueDequeueChainA`'s gate (the OWNER gate lives in
-`queueDequeueK` itself), so a committed handler dequeue refines `execFullA` on the same kernel. -/
-theorem handler_refines_execFullA_queueDequeue (s s' : RecChainedState) (id : Nat) (actor cell : CellId)
-    (h : execHandlerOne (.queueDequeueA id actor cell) s = some s') :
-    ∃ s'', execFullA s (.queueDequeueA id actor cell) = some s'' ∧
-      s''.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queueDequeueA id actor cell) s s' h
-  rw [toClosedEffect] at hstep
-  change dequeueBindStep s.kernel { id := id, actor := actor, cell := cell } = some s'.kernel at hstep
-  unfold dequeueBindStep at hstep
-  by_cases hg : stateAuthB s.kernel.caps actor cell && acceptsEffects s.kernel cell
-  · rw [if_pos hg] at hstep
-    simp only [Bool.and_eq_true] at hg
-    cases hk : queueDequeueK s.kernel id actor with
-    | none => rw [hk] at hstep; exact absurd hstep (by simp)
-    | some pr =>
-        obtain ⟨k1, mh⟩ := pr
-        rw [hk] at hstep
-        simp only [Option.map_some, Option.some.injEq] at hstep
-        subst hstep
-        refine ⟨{ kernel := s'.kernel,
-                  log := { actor := actor, src := cell, dst := cell, amt := 0 } :: s.log }, ?_, rfl⟩
-        show queueDequeueChainA s id actor cell = _
-        unfold queueDequeueChainA
-        rw [if_pos hg, hk]
-  · rw [if_neg hg] at hstep; exact absurd hstep (by simp)
-
-/-- **`handler_refines_execFullA_queueAtomicTx`** — when the chained atomic batch WOULD commit with the
-same kernel (`hchain`), a handler bare-kernel batch commit refines `queueAtomicTxA`. Discharges the
-documented gate mismatch: the handler fold skips per-op writer-ACL receipts; the hypothesis carries
-the chained path's gate bundle. -/
-theorem handler_refines_execFullA_queueAtomicTx (s s' : RecChainedState) (actor : CellId)
-    (ops : List QueueTxOpA)
-    (hchain : ∃ s1, queueAtomicTxChainA s ops = some s1 ∧ s1.kernel = s'.kernel)
-    (h : execHandlerOne (.queueAtomicTxA actor ops) s = some s') :
-    ∃ s'', execFullA s (.queueAtomicTxA actor ops) = some s'' ∧ s''.kernel = s'.kernel := by
-  obtain ⟨s1, hfold, hk⟩ := hchain
-  have _hstep := execHandlerOne_kernel (.queueAtomicTxA actor ops) s s' h
-  refine ⟨{ kernel := s'.kernel, log := escrowReceiptA actor :: s1.log }, ?_, rfl⟩
-  have hgoal :
-      Dregg2.Exec.TurnExecutorFull.queueAtomicTxA s actor ops =
-        some { kernel := s'.kernel, log := escrowReceiptA actor :: s1.log } := by
-    unfold Dregg2.Exec.TurnExecutorFull.queueAtomicTxA
-    rw [hfold]
-    simp [hk]
-  show execFullA s (.queueAtomicTxA actor ops) = _
-  simp only [execFullA, hgoal]
-
-/-- Handler atomic-tx commit + gate-fold witness ⇒ the chained fold's end kernel agrees with the
-handler's (via `queueAtomicTxChainK_of_gateFold`). -/
-theorem handler_queueAtomicTx_kernel_eq_of_gateFold (s s' : RecChainedState) (actor : CellId)
-    (ops : List QueueTxOpA) (s₁ : RecChainedState)
-    (hg : QueueAtomicTxGateFold s ops s₁)
-    (h : execHandlerOne (.queueAtomicTxA actor ops) s = some s') :
-    s₁.kernel = s'.kernel := by
-  have hstep := execHandlerOne_kernel (.queueAtomicTxA actor ops) s s' h
-  rw [toClosedEffect] at hstep
-  have hHandler : queueAtomicTxChainK s.kernel (txOpsToK ops) = some s'.kernel := by
-    simpa [atomicTxStep, AtomicTxArgs.ops] using hstep
-  have hChain := queueAtomicTxChainK_of_gateFold hg
-  exact Option.some.inj (by rw [← hChain, hHandler])
-
-/-- **`handler_refines_execFullA_queueAtomicTx_strong`** — when the per-op chained gate bundle holds at
-every step of the batch fold (`hg`), a handler bare-kernel batch commit refines `queueAtomicTxA`
-WITHOUT an explicit `hchain` hypothesis: the gate-fold witness discharges it via
-`queueAtomicTxChainK_of_gateFold`. -/
-theorem handler_refines_execFullA_queueAtomicTx_strong (s s' : RecChainedState) (actor : CellId)
-    (ops : List QueueTxOpA) (s₁ : RecChainedState)
-    (hg : QueueAtomicTxGateFold s ops s₁)
-    (h : execHandlerOne (.queueAtomicTxA actor ops) s = some s') :
-    ∃ s'', execFullA s (.queueAtomicTxA actor ops) = some s'' ∧ s''.kernel = s'.kernel := by
-  have hk := handler_queueAtomicTx_kernel_eq_of_gateFold s s' actor ops s₁ hg h
-  have hchain : ∃ s₂, queueAtomicTxChainA s ops = some s₂ ∧ s₂.kernel = s'.kernel :=
-    ⟨s₁, queueAtomicTxChainA_of_gateFold hg, hk⟩
-  exact handler_refines_execFullA_queueAtomicTx s s' actor ops hchain h
+-- F2b: the §6.6 QUEUE honest-path refinements died with the queue verb family (queue behavior is
+-- the factory story, `Apps/{QueueFactory,InboxFactory,PubsubFactory}.lean`).
 
 /-! ### §6.7 — EXERCISE: inner-turn hypothesis (the `exerciseA` / `execInnerA` bridge).
 
@@ -1544,19 +1338,10 @@ seven batches the registry packs — would FAIL these pins (and the build). -/
 #assert_axioms handler_refines_execFullA_enlivenRef
 #assert_axioms handler_refines_execFullA_swissHandoff
 #assert_axioms handler_refines_execFullA_swissDrop
-#assert_axioms handler_refines_execFullA_queueResize
-#assert_axioms handler_refines_execFullA_queuePipeline
-#assert_axioms handler_refines_execFullA_queueAllocate
-#assert_axioms hole_queue_actor_ne_cell
 #assert_axioms hole_handler_makeSovereign
 #assert_axioms handler_refines_execFullA_makeSovereign
 #assert_axioms hole_handler_receiptArchive
 #assert_axioms handler_refines_execFullA_receiptArchive
-#assert_axioms handler_refines_execFullA_queueEnqueue
-#assert_axioms handler_refines_execFullA_queueDequeue
-#assert_axioms handler_refines_execFullA_queueAtomicTx
-#assert_axioms handler_queueAtomicTx_kernel_eq_of_gateFold
-#assert_axioms handler_refines_execFullA_queueAtomicTx_strong
 #assert_axioms handler_refines_execFullA_exercise
 
 /-! ## §DEFER — honest scope of THIS cutover keystone (additive; the call-site switch is mechanical).
@@ -1573,19 +1358,14 @@ Deliberately OUT of this file (documented, NOT a silent gap):
     lock/finalize/cancel/pipelinedSend, state-write R6 (incrementNonce/setPermissions/setVK/refusal;
     `setField` under discharged `caveatsAdmit`), committed-escrow under `hidingProof = true`, the
     lifecycle family, authority (delegate/delegateAtten/introduce/validateHandoff/attenuate/revoke/
-    dropRef/revokeDelegation), seal/swiss, and the full queue family on **honest paths**: allocate/
-    enqueue under `actor = cell`; dequeue under explicit writer-ACL + owner-liveness (`hg`); atomic-tx
-    when the chained fold reaches the same kernel (`hchain` — now discharged by
-    `handler_refines_execFullA_queueAtomicTx_strong` when the per-op `QueueAtomicTxGateFold` witness
-    holds; see `Dregg2.Exec.QueueCutover`).
-    NOW CLOSED (§6.3b / §6.6): `makeSovereignA` (handler ALIGNED to the `makeSovereignKernel`
+    dropRef/revokeDelegation), and seal/swiss. (F2b: the queue-family refinements died with the
+    queue verbs — queue behavior is the factory story.)
+    NOW CLOSED (§6.3b): `makeSovereignA` (handler ALIGNED to the `makeSovereignKernel`
     commitment-rebind — `hole_handler_makeSovereign`), `receiptArchiveA` (handler ALIGNED to the
-    `"lifecycle"` field write — `hole_handler_receiptArchive`), and UNCONDITIONAL queue allocate (handler
-    now stores owner = `actor` like `execFullA`, so `hole_queue_actor_ne_cell` is just the general
-    `handler_refines_execFullA_queueAllocate` — no `actor = cell` needed).
+    `"lifecycle"` field write — `hole_handler_receiptArchive`).
     REMAINING: `spawnA` / `createCellFromFactoryA` **full** `spawnChainA`/`createCellFromFactoryChainA`
     metadata (the born-empty `createCellA` core is now covered by
-    `handler_refines_execFullA_{spawn,createCellFromFactory}`), queue enqueue when `actor ≠ cell`. For
+    `handler_refines_execFullA_{spawn,createCellFromFactory}`). For
     `exerciseA`, kernel agreement is on the **inner-turn honest path**
     (`handler_refines_execFullA_exercise` + `hinner`); the R4 facet-mask still narrows handler-commits.
 
@@ -1598,10 +1378,9 @@ Deliberately OUT of this file (documented, NOT a silent gap):
     now PROVED through, not carried open. (`#eval §TEETH-R6`: `execFullA` now returns `none` on the
     Sealed-cell write, matching the handler.)
 
-  * **The committed-escrow `hidingProof` / queue-atomic `QueueTxOpA` projections.** `toClosedEffect` maps
+  * **The committed-escrow `hidingProof` projection.** `toClosedEffect` maps
     the committed escrow onto the plain escrow lock (the §8 Pedersen hiding portal is off the executable
-    ledger) and projects `QueueTxOpA` onto the bare-kernel `QueueTxOpK` (the chained receipt row lives in
-    `RecChainedState`, off the kernel algebra). These are the documented executable cores; the portal /
+    ledger). This is the documented executable core; the portal /
     receipt faces fold on at the cutover, unchanged in the conservation accounting.
 -/
 

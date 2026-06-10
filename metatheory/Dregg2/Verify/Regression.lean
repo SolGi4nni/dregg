@@ -38,18 +38,17 @@ For each crown we do three things:
 | `Exec.livingCellA_no_double_spend`  (CellNullifier `⊆` crown)         | `subsetRegistryContract nullifiers` `.forever` |
 | `Exec.livingCellA_commitments_persist`  (CellCommit `⊆` crown)        | `subsetRegistryContract commitments` `.forever` |
 | `Apps.NameService.nameservice_registration_forever`                   | `nameRegisteredContract` (`CellContract`) `.forever` |
-| `Apps.Subscription.subscription_wellformed_forever`                   | `subWFContract` (`CellContract`) `.forever` |
 
 Two crowns (the `⊆`-shaped no-double-spend / commitment-persistence) are stated over a baseline LIST
 `com0`/`nul0` rather than the single-element membership the catalog macro covers; for those we build the
 analogous first-class `CellContract` (`subsetRegistryContract`) on top of the SAME registered forest-grow
 lemmas the macro uses (`execFullForestA_{nullifiers,commitments}_grow`) — Tier 3 generalizing the Tier-4
 shape over a subset baseline. NameService (`isRegistered · = true`, a `commitments.contains` boolean) and
-Subscription (`subWF ·.kernel`, a `∀ q ∈ queues` bound) are likewise NOT one of the four bare catalog
+Subscription (F2b: retired to the factory story) are likewise NOT one of the four bare catalog
 shapes; each is reproduced via the `CellContract` DEFINED in `Verify/Contract.lean §3a` (the H3
-three-apps gate — `nameRegisteredContract` / `subWFContract`, in scope here through the import chain)
+three-apps gate — `nameRegisteredContract`, in scope here through the import chain)
 whose `step_ob` is the app's own one-step lemma (`nameservice_step_preserves` /
-`execFullForestA_subWF_preserved`) — demonstrating the Tier-3 object absorbs app-specific invariants the
+the app's own one-step lemma) — demonstrating the Tier-3 object absorbs app-specific invariants the
 bare catalog does not template, while STILL handing back `forever` for free. NONE is faked: every
 `step_ob` is a real proof term over the shipped executor.
 
@@ -205,35 +204,11 @@ example (s : RecChainedState) (name owner : Dregg2.Apps.NameService.Name)
     ∀ n, Dregg2.Apps.NameService.isRegistered (trajA s sched n) name owner = true :=
   Dregg2.Apps.NameService.nameservice_registration_forever s name owner hinit sched
 
-/-! ## §5 — Subscription: `subWFContract` reproduces "no queue ever over capacity, forever".
+/-! ## §5 — Subscription.
 
-`Apps.Subscription.subscription_wellformed_forever` (`Apps/Subscription.lean:819`) — *from a well-formed
-start, every subscription stays within capacity at every index of every trajectory* (dregg1's in-flight
-bound, `head − tail ≤ capacity`). The invariant `subWF ·.kernel` is a `∀ q ∈ queues, q.buffer.length ≤
-q.capacity` bound — a field-relational shape (`HATCHERY.md §138`-flavored) NOT among the four bare
-catalog macros, so we reproduce it as a first-class `CellContract` whose `step_ob` is the app's OWN
-one-step lemma `execFullForestA_subWF_preserved`. -/
-
--- `subWFContract` is the single source of truth in `Verify/Contract.lean §3a` (the H3 three-apps
--- gate); in scope here via `Regression → Catalog → Contract`. Reused for the both-directions witness.
-
-/-- **REPRODUCED — `Apps.Subscription.subscription_wellformed_forever`** via the contract `.forever`.
-Identical statement; no hand temporal proof. -/
-theorem subscription_wellformed_forever_via_contract (s : RecChainedState)
-    (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedA) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajA s sched n).kernel :=
-  KernelForest.subWFContract.forever hinit sched
-
-/-- Regression-equality (→): our reproduction discharges the shipped crown's type. -/
-example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedA) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajA s sched n).kernel :=
-  subscription_wellformed_forever_via_contract s hinit sched
-
-/-- Regression-equality (←): the SHIPPED `Apps.Subscription.subscription_wellformed_forever` discharges
-our type — same proposition. -/
-example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) (sched : SchedA) :
-    ∀ n, Dregg2.Apps.Subscription.subWF (trajA s sched n).kernel :=
-  Dregg2.Apps.Subscription.subscription_wellformed_forever s hinit sched
+F2b: the `subWF` queue-capacity crown (`subscription_wellformed_forever`) moved to the factory
+story (`Apps/QueueFactory.lean` relational-caveat keystones) with the kernel queue side-table's
+deletion — there is no kernel-level `queues` invariant left to reproduce. -/
 
 /-! ## §6 — Non-vacuity guards — the reproduced crowns bind quantities that genuinely move. -/
 
@@ -249,15 +224,7 @@ example (s : RecChainedState) (hinit : Dregg2.Apps.Subscription.subWF s.kernel) 
 #guard (Dregg2.Apps.NameService.afterRegister.map
           (fun s => Dregg2.Apps.NameService.isRegistered s
             Dregg2.Apps.NameService.aliceName Dregg2.Apps.NameService.aliceOwner) == some true)
-#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).isSome)
-#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).map
-          (fun s => s.kernel.queues.all (fun q => decide (q.buffer.length ≤ q.capacity))) == some true)
-#guard ((execFullForestA fmaDeleg Dregg2.Apps.Subscription.subForest).bind
-          (fun s => (Dregg2.Exec.findQueue s.kernel.queues 7).map (fun q => (q.buffer, q.capacity)))
-          == some ([111], 2))
 #guard ((KernelForest.subsetNullifiersContract [77]).shape == SafetyShape.membership)
-#guard (KernelForest.subWFContract.shape == SafetyShape.other)
-#guard ((KernelForest.subsetNullifiersContract [77]).shape ≠ KernelForest.subWFContract.shape)
 
 /-! ## §7 — Axiom hygiene — every reproduced crown pinned to the kernel triple `{propext, Classical.choice, Quot.sound}`.
 
@@ -270,6 +237,5 @@ kernel-checked terms — the H4 gate's hygiene requirement. -/
 #assert_axioms no_double_spend_via_contract
 #assert_axioms commitments_persist_via_contract
 #assert_axioms nameservice_registration_forever_via_contract
-#assert_axioms subscription_wellformed_forever_via_contract
 
 end Dregg2.Verify

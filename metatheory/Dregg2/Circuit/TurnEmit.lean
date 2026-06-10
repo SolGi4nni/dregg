@@ -558,9 +558,6 @@ theorem step_emitted_refines_fullActionStep
       simp only [fullActionStep]
       exact seal_emitted_refines_spec S LE_sealed cN hN hLE_sealed hRestSealed hLog st { pid, actor, payload } st'
         ((seal_emitted_equiv_circuit S LE_sealed cN hN hLE_sealed st { pid, actor, payload } st').mpr hcircuit)
-  -- dregg3 F2a: the queue-family circuit arms ARE the explicit hole portal (`fullActionStep`
-  -- verbatim, the executor equation), so the refinement is the circuit hypothesis itself.
-  | .queueEnqueueA _ _ _ _ => exact hcircuit
   | .emitEventA actor cell topic data =>
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩
@@ -644,11 +641,6 @@ theorem step_emitted_refines_fullActionStep
       rcases hcircuit with ⟨hwf, hwf', hc⟩
       exact receiptArchiveA_emitted_refines_spec CS hCSN hCSL hRestFrame hLogCS st ⟨actor, cell⟩ st' hwf hwf'
         ((effect1_emitted_equiv_circuit_local CS receiptArchiveE receiptArchiveAAirName st ⟨actor, cell⟩ st').mpr hc)
-  | .queueAllocateA _ _ _ _ => exact hcircuit
-  | .queueDequeueA _ _ _ => exact hcircuit
-  | .queueResizeA _ _ _ _ => exact hcircuit
-  | .queueAtomicTxA _ _ => exact hcircuit
-  | .queuePipelineStepA _ _ _ _ => exact hcircuit
   | .pipelinedSendA actor =>
       simp only [fullActionStep]
       rcases hcircuit with ⟨hwf, hwf', hc⟩

@@ -11,7 +11,6 @@ namespace Dregg2.Exec.CodecRoundtrip
 open Dregg2.Exec
 open Dregg2.Exec.FFI
 open Dregg2.Exec.FFI.Wide
-open Dregg2.Exec.TurnExecutorFull (QueueTxOpA)
 
 /-! ## §14 — the WIDE STATE record (`parseWState`) roundtrip — THE STATE DECODER (the differential's
 core). The 11-field `do`-block assembling every side-table proved above: cells (§12), caps (§13),

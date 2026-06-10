@@ -27,84 +27,14 @@ open Dregg2.Authority
 open Dregg2.Exec.EffectsState (stateStep stateStep_factors stateStepGuarded_eq)
 open Dregg2.Tactics
 
-/-! ## Step 0 — nullifier-frame lemmas for the DEEPLY-NESTED kernel ops (queue-deposit + swiss).
+/-! ## Step 0 — nullifier-frame lemmas for the DEEPLY-NESTED kernel ops (swiss).
 
-Five kernel ops nest a `match … | some k₁ => if … then some (rawOp k₁ …)`-style body too deep to
-`unfold`+`split` cleanly inline in the dispatch. Each touches ONLY `queues`/`swiss`/`bal`/`escrows`
-(never `nullifiers`), so a committed step leaves `nullifiers` literally unchanged. We hoist those five
+These kernel ops nest a `match … | some k₁ => if … then some …`-style body too deep to
+`unfold`+`split` cleanly inline in the dispatch. Each touches ONLY `swiss`
+(never `nullifiers`), so a committed step leaves `nullifiers` literally unchanged. We hoist them
 to named `private` frame lemmas (proven by the same nested `split` + `rfl`-projection) and reference
-them from the dispatch, keeping every arm uniform. -/
-
-/-- `queueEnqueueDepositK` commits via `queueEnqueueK` (queues-only) then `createEscrowRawAsset`
-(bal/escrows-only) — `nullifiers` untouched. -/
-private theorem queueEnqueueK_nullifiers (k : RecordKernelState) (id m : Nat) (k₁ : RecordKernelState)
-    (hq : queueEnqueueK k id m = some k₁) : k₁.nullifiers = k.nullifiers := by
-  unfold queueEnqueueK at hq; split at hq
-  · exact absurd hq (by simp)
-  · split at hq
-    · injection hq with hq; subst hq; rfl
-    · exact absurd hq (by simp)
-
-/-- `queueDequeueK` is queues-only — `nullifiers` untouched. -/
-private theorem queueDequeueK_nullifiers (k : RecordKernelState) (id : Nat) (actor : CellId)
-    (k₁ : RecordKernelState) (mh : Nat) (hq : queueDequeueK k id actor = some (k₁, mh)) :
-    k₁.nullifiers = k.nullifiers := by
-  unfold queueDequeueK at hq; split at hq
-  · exact absurd hq (by simp)
-  · split at hq
-    · split at hq
-      · exact absurd hq (by simp)
-      · option_inj at hq; obtain ⟨hq, _⟩ := hq; subst hq; rfl
-    · exact absurd hq (by simp)
-
-/-- WAVE 4: one atomic-batch sub-op leaves `nullifiers` untouched (the deposit-park / FIFO frame). -/
-private theorem queueTxOpStepA_nullifiers (s s' : RecChainedState) (op : QueueTxOpA)
-    (h : queueTxOpStepA s op = some s') : s'.kernel.nullifiers = s.kernel.nullifiers := by
-  cases op with
-  | enqueue id m actor cell =>
-      simp only [queueTxOpStepA, queueEnqueueChainA] at h; split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' => commit_subst h hk
-                     exact queueEnqueueK_nullifiers s.kernel id m k' hk
-      · exact absurd h (by simp)
-  | dequeue id actor cell =>
-      simp only [queueTxOpStepA, queueDequeueChainA] at h; split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some kp => obtain ⟨k', mhd⟩ := kp
-                     rw [hk] at h
-                     simp only [Option.some.injEq] at h
-                     subst h
-                     exact queueDequeueK_nullifiers s.kernel id actor k' mhd hk
-      · exact absurd h (by simp)
-
-/-- WAVE 4: the ALL-OR-NOTHING atomic batch leaves `nullifiers` untouched (induction over the sub-ops). -/
-private theorem queueAtomicTxChainA_nullifiers (s s' : RecChainedState) (ops : List QueueTxOpA)
-    (h : queueAtomicTxChainA s ops = some s') : s'.kernel.nullifiers = s.kernel.nullifiers := by
-  induction ops generalizing s with
-  | nil => simp only [queueAtomicTxChainA, Option.some.injEq] at h; subst h; rfl
-  | cons op rest ih =>
-      simp only [queueAtomicTxChainA] at h
-      cases hop : queueTxOpStepA s op with
-      | none => rw [hop] at h; exact absurd h (by simp)
-      | some s1 => simp only [hop] at h; rw [ih s1 h, queueTxOpStepA_nullifiers _ _ _ hop]
-
-/-- WAVE 4: the pipeline fan-out enqueue fold leaves `nullifiers` untouched (each `queueEnqueueK` frames it). -/
-private theorem pipelineFanoutK_nullifiers (k k' : RecordKernelState) (actor : CellId) (m : Nat)
-    (sinks : List CellId) (sids : List Nat)
-    (h : pipelineFanoutK k actor m sinks sids = some k') : k'.nullifiers = k.nullifiers := by
-  induction sinks generalizing k sids with
-  | nil => cases sids <;> (simp only [pipelineFanoutK, Option.some.injEq] at h; subst h; rfl)
-  | cons sink rest ih =>
-      cases sids with
-      | nil => simp only [pipelineFanoutK] at h; exact absurd h (by simp)
-      | cons sid sids' =>
-          simp only [pipelineFanoutK] at h; split at h
-          · cases hq : queueEnqueueK k sid m with
-            | none => rw [hq] at h; exact absurd h (by simp)
-            | some k1 => simp only [hq] at h; rw [ih k1 sids' h, queueEnqueueK_nullifiers k sid m k1 hq]
-          · exact absurd h (by simp)
+them from the dispatch, keeping every arm uniform. (F2b: the queue-family helpers died with the
+queue verb family.) -/
 
 /-- `swissEnlivenK` commits to `{ k with swiss := … }` — `nullifiers` untouched. -/
 private theorem swissEnlivenK_nullifiers (k : RecordKernelState) (sw : Nat) (claimed : List Auth)
@@ -376,87 +306,11 @@ theorem execFullA_nullifiers_grow (s s' : RecChainedState) (fa : FullActionA)
   | refreshDelegationA actor child =>
       simp only [execFullA] at h
       obtain ⟨_, hs'⟩ := refreshDelegationChainA_factors h; subst hs'; exact List.Subset.refl _
-  -- §queue — four ring-buffer effects, each `if stateAuthB … then match queueK … | some k' => …`
-  -- (kernel updates `queues`, never `nullifiers`). Gate-peel the outer `if`, then cases the kernel op.
-  | queueAllocateA id actor cell cap =>
-      simp only [execFullA, queueAllocateChainA] at h
-      split at h
-      · cases hk : queueAllocateK s.kernel id actor cap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' =>
-            commit_subst h hk
-            show s.kernel.nullifiers ⊆ k'.nullifiers
-            have hn : k'.nullifiers = s.kernel.nullifiers := by
-              -- queueAllocateK = `match findQueue | some _ => none | none => some {k with queues:=…}`.
-              unfold queueAllocateK at hk; split at hk
-              · exact absurd hk (by simp)
-              · injection hk with hk; subst hk; rfl
-            exact hn ▸ List.Subset.refl _
-      · exact absurd h (by simp)
-  | queueEnqueueA id m actor cell =>
-      simp only [execFullA, queueEnqueueChainA] at h
-      split at h
-      · cases hk : queueEnqueueK s.kernel id m with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' =>
-            commit_subst h hk
-            show s.kernel.nullifiers ⊆ k'.nullifiers
-            have hn : k'.nullifiers = s.kernel.nullifiers :=
-              queueEnqueueK_nullifiers s.kernel id m k' hk
-            exact hn ▸ List.Subset.refl _
-      · exact absurd h (by simp)
-  | queueDequeueA id actor cell =>
-      simp only [execFullA, queueDequeueChainA] at h
-      split at h
-      · cases hk : queueDequeueK s.kernel id actor with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some kp =>
-            obtain ⟨k', mhd⟩ := kp
-            rw [hk] at h
-            obtain ⟨rfl⟩ := h
-            show s.kernel.nullifiers ⊆ k'.nullifiers
-            have hn : k'.nullifiers = s.kernel.nullifiers :=
-              queueDequeueK_nullifiers s.kernel id actor k' mhd hk
-            exact hn ▸ List.Subset.refl _
-      · exact absurd h (by simp)
-  | queueResizeA id newCap actor cell =>
-      simp only [execFullA, queueResizeChainA] at h
-      split at h
-      · cases hk : queueResizeK s.kernel id newCap with
-        | none => rw [hk] at h; exact absurd h (by simp)
-        | some k' =>
-            commit_subst h hk
-            show s.kernel.nullifiers ⊆ k'.nullifiers
-            have hn : k'.nullifiers = s.kernel.nullifiers := by
-              -- queueResizeK = `match findQueue | none => none | some q => if … then some {…} else none`.
-              unfold queueResizeK at hk
-              split at hk
-              · exact absurd hk (by simp)
-              · split at hk
-                · injection hk with hk; subst hk; rfl
-                · exact absurd hk (by simp)
-            exact hn ▸ List.Subset.refl _
-      · exact absurd h (by simp)
-  -- §MA-queue-batch (WAVE 4): the atomic batch / pipeline step edit `queues`/`escrows`/`bal`, never
-  -- `nullifiers` (the witness lemmas + frame helpers); pipelinedSend edits NOTHING.
-  | queueAtomicTxA actor ops =>
-      simp only [execFullA] at h
-      obtain ⟨s1, hf, _, hk⟩ := queueAtomicTxA_atomic_witness h
-      show s.kernel.nullifiers ⊆ s'.kernel.nullifiers
-      rw [show s'.kernel.nullifiers = s1.kernel.nullifiers from by rw [hk]]
-      exact (queueAtomicTxChainA_nullifiers s s1 ops hf) ▸ List.Subset.refl _
-  | queuePipelineStepA srcId owner sinkCells sinkIds =>
-      simp only [execFullA] at h
-      obtain ⟨k1, mh, hd, hfo⟩ := queuePipelineStepA_routing_witness h
-      show s.kernel.nullifiers ⊆ s'.kernel.nullifiers
-      have hn : s'.kernel.nullifiers = s.kernel.nullifiers :=
-        (pipelineFanoutK_nullifiers k1 s'.kernel owner mh sinkCells sinkIds hfo).trans
-          (queueDequeueK_nullifiers s.kernel srcId owner k1 mh hd)
-      exact hn ▸ List.Subset.refl _
+  -- pipelinedSend edits NOTHING (kernel literally unchanged).
   | pipelinedSendA actor =>
       simp only [execFullA, Option.some.injEq] at h; subst h; exact List.Subset.refl _
   -- §swiss — four CapTP swiss-table effects, each `if stateAuthB … then match swissK … | some k' => …`
-  -- (kernel updates `swiss`, never `nullifiers`). Gate-peel + cases, as the queue arms.
+  -- (kernel updates `swiss`, never `nullifiers`). Gate-peel the outer `if`, then cases the kernel op.
   | exportSturdyRefA sw actor exporter target rights =>
       simp only [execFullA, swissExportChainA] at h
       split at h

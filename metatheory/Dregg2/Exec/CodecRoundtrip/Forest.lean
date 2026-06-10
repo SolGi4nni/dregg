@@ -11,7 +11,6 @@ namespace Dregg2.Exec.CodecRoundtrip
 open Dregg2.Exec
 open Dregg2.Exec.FFI
 open Dregg2.Exec.FFI.Wide
-open Dregg2.Exec.TurnExecutorFull (QueueTxOpA)
 
 /-! ## §15 — the RECURSIVE action-TREE (`parseForestW`/`parseChildrenW`) roundtrip — FILL-J production
 (the call-FOREST + delegation edges). THE hardest production: a four-way mutual recursion (`parseForestW`

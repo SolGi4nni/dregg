@@ -48,7 +48,7 @@ theorem propBit_eq_one {p : Prop} [Decidable p] : Circuit.propBit p = 1 ↔ p :=
 def RestIffNoFactoryTouched (RH : RecordKernelState → ℤ) : Prop :=
   ∀ k k' : RecordKernelState, RH k = RH k' ↔
     (k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt)
@@ -169,7 +169,7 @@ def createFromFactoryE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
   logUpdate    := some (fun s args => factoryReceipt args.actor args.newCell :: s.log)
   restFrame    := fun k k' =>
     (k'.nullifiers = k.nullifiers ∧ k'.revoked = k.revoked
-      ∧ k'.commitments = k.commitments ∧ k'.queues = k.queues ∧ k'.swiss = k.swiss
+      ∧ k'.commitments = k.commitments ∧ k'.swiss = k.swiss
       ∧ k'.factories = k.factories ∧ k'.sealedBoxes = k.sealedBoxes
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt)
@@ -252,7 +252,6 @@ def CreateFromFactoryCircuitSpec (st : RecChainedState) (actor newCell : CellId)
     ∧ st'.kernel.nullifiers = st.kernel.nullifiers
     ∧ st'.kernel.revoked = st.kernel.revoked
     ∧ st'.kernel.commitments = st.kernel.commitments
-    ∧ st'.kernel.queues = st.kernel.queues
     ∧ st'.kernel.swiss = st.kernel.swiss
     ∧ st'.kernel.factories = st.kernel.factories
     ∧ st'.kernel.sealedBoxes = st.kernel.sealedBoxes

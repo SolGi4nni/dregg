@@ -123,7 +123,6 @@ def SetFieldSpec (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v 
   ∧ s'.kernel.revoked = s.kernel.revoked
   ∧ s'.kernel.commitments = s.kernel.commitments
   ∧ s'.kernel.bal = s.kernel.bal
-  ∧ s'.kernel.queues = s.kernel.queues
   ∧ s'.kernel.swiss = s.kernel.swiss
   ∧ s'.kernel.slotCaveats = s.kernel.slotCaveats
   ∧ s'.kernel.factories = s.kernel.factories
@@ -186,16 +185,16 @@ theorem execFullA_setFieldA_iff_spec
   constructor
   · rintro ⟨hg, hs'⟩
     subst hs'
-    refine ⟨hg, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨hg, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · exact (setFieldCellMap_eq_writeField s.kernel cell f v).symm
     all_goals rfl
-  · rintro ⟨hg, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩
+  · rintro ⟨hg, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16⟩
     refine ⟨hg, ?_⟩
     -- rebuild s' field-by-field: the touched cell map, the log, and the 16 frame fields, then η.
     obtain ⟨k', lg'⟩ := s'
-    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, qs, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
-    simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
-    subst hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, sw, sc, fac, lc, dc, dg, dgs, sb, dge, dgea⟩ := k'
+    simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
+    subst hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
     -- the touched cell map: rewrite the declarative map to the executor's writeField form.
     rw [setFieldCellMap_eq_writeField] at hcell
     subst hcell
