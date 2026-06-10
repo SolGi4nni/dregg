@@ -62,6 +62,7 @@ const PAGES = {
   cells:        { tag: 'dregg-cell-list',    uri: () => 'dregg://cell-list/all' },
   receipts:     { tag: 'dregg-receipt-list', uri: () => 'dregg://receipt-list/all' },
   turns:        { tag: 'dregg-receipt-list', uri: () => 'dregg://receipt-list/all' },
+  history:      { custom: 'history' },
   capabilities: { tag: 'dregg-capability-list', uri: () => 'dregg://capability-list/0' },
   intents:      { custom: 'intents' },
   federation:   { tag: 'dregg-federation-list', uri: () => 'dregg://federation-list/all' },
@@ -70,6 +71,7 @@ const PAGES = {
 
 // Map a parsed dregg:// kind to the nav page that hosts its inspector.
 const KIND_TO_PAGE = {
+  'cell-history': 'history',
   cell: 'cells',
   receipt: 'receipts',
   turn: 'turns',
@@ -104,6 +106,8 @@ let appEl = null;          // the single <dregg-app>
 let currentPage = 'overview';
 let connected = false;
 let livenessTimer = null;
+let sampleMode = false;    // OPT-IN labeled sample snapshot (devnet unreachable)
+let everConnected = false;
 
 function latestHeight() {
   try {
@@ -135,18 +139,88 @@ function whenDreggUi() {
 function setConnection(state) {
   const el = document.getElementById('connection-status');
   if (!el) return;
-  el.classList.remove('connected', 'error');
+  el.classList.remove('connected', 'error', 'sample');
   const label = el.querySelector('.ex-connection__label');
   if (state === 'connected') {
     el.classList.add('connected');
     if (label) label.textContent = 'connected';
   } else if (state === 'connecting') {
     if (label) label.textContent = 'connecting…';
+  } else if (state === 'sample') {
+    el.classList.add('sample');
+    if (label) label.textContent = 'SAMPLE DATA';
   } else {
     el.classList.add('error');
     if (label) label.textContent = 'offline';
   }
   connected = state === 'connected';
+  if (connected) everConnected = true;
+  updateSampleBanner(state);
+}
+
+// ---------------------------------------------------------------------------
+// Sample mode: clearly-labeled offline fallback. The banner appears when the
+// node is unreachable; entering sample mode is a USER ACTION (never a silent
+// substitution) and the chrome stays loudly labeled the whole time.
+// ---------------------------------------------------------------------------
+function updateSampleBanner(state) {
+  const banner = document.getElementById('sample-banner');
+  if (!banner) return;
+  const text = document.getElementById('sample-banner-text');
+  const enter = document.getElementById('sample-enter-btn');
+  const exit = document.getElementById('sample-exit-btn');
+  if (sampleMode) {
+    banner.hidden = false;
+    banner.classList.add('is-sample');
+    if (text) text.innerHTML =
+      '<strong>SAMPLE MODE</strong> — everything below is a static, labeled snapshot. ' +
+      'Nothing comes from a node.';
+    if (enter) enter.hidden = true;
+    if (exit) exit.hidden = false;
+  } else if (state === 'offline' || state === 'error') {
+    banner.hidden = false;
+    banner.classList.remove('is-sample');
+    if (enter) enter.hidden = false;
+    if (exit) exit.hidden = true;
+  } else {
+    banner.hidden = true;
+  }
+}
+
+async function enterSampleMode() {
+  const { createSampleRuntime } = await import('./sample-data.js');
+  if (runtime && runtime.destroy) { try { runtime.destroy(); } catch {} }
+  stopLiveness();
+  sampleMode = true;
+  runtime = createSampleRuntime({ signals: api });
+  if (appEl) appEl.runtime = runtime;
+  setConnection('sample');
+  const metaEl = document.getElementById('devnet-node-meta');
+  const urlEl = document.getElementById('devnet-node-url');
+  if (urlEl) urlEl.textContent = 'SAMPLE SNAPSHOT (no node)';
+  if (metaEl) metaEl.textContent = 'static labeled sample — not live data';
+  // Remount the current page against the sample runtime.
+  document.querySelectorAll('.ex-page .ex-detail-slot').forEach((d) => d.replaceChildren());
+  remountAll();
+  navigateTo(currentPage);
+}
+
+async function exitSampleMode() {
+  sampleMode = false;
+  setConnection('connecting');
+  await buildRuntime();
+  startLiveness();
+  document.querySelectorAll('.ex-page .ex-detail-slot').forEach((d) => d.replaceChildren());
+  remountAll();
+  navigateTo(currentPage);
+}
+
+// Force list-page inspectors + overview tiles to remount against the current
+// runtime (they read `.runtime` from <dregg-app> at mount time).
+function remountAll() {
+  const grid = document.getElementById('overview-inspectors');
+  if (grid) { grid.dataset.mounted = 'false'; grid.replaceChildren(); }
+  document.querySelectorAll('[id^="mount-"]').forEach((m) => m.replaceChildren());
 }
 
 /**
@@ -156,18 +230,36 @@ function setConnection(state) {
  * a failed probe shows "offline".
  */
 async function probeLiveness() {
+  if (sampleMode) return; // chrome stays loudly SAMPLE until the user exits
   const base = getNodeUrl().replace(/\/+$/, '');
+  const probe = (path, ms = 6000) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms);
+    return fetch(`${base}${path}`, { headers: { Accept: 'application/json' }, signal: ctl.signal })
+      .finally(() => clearTimeout(t));
+  };
   try {
-    const res = await fetch(`${base}/status`, { headers: { Accept: 'application/json' } });
+    const res = await probe('/status');
     setConnection(res.ok ? 'connected' : 'offline');
     if (res.ok) {
       const status = await res.json().catch(() => null);
       updateStatusChrome(status);
+      return;
     }
-  } catch {
-    setConnection('offline');
-    updateStatusChrome(null);
-  }
+  } catch { /* fall through to the cheap-route fallback */ }
+  // /status can be slow on a busy node (it walks the DAG); a cheap API route
+  // is still an honest liveness signal — connected, but without status meta.
+  try {
+    const res = await probe('/api/cells', 6000);
+    if (res.ok) {
+      setConnection('connected');
+      const metaEl = document.getElementById('devnet-node-meta');
+      if (metaEl) metaEl.textContent = 'connected (status endpoint slow — height unavailable)';
+      return;
+    }
+  } catch { /* genuinely unreachable */ }
+  setConnection('offline');
+  updateStatusChrome(null);
 }
 
 function updateStatusChrome(status) {
@@ -280,6 +372,7 @@ export function navigateTo(page) {
   const mount = document.getElementById(`mount-${page}`);
   if (!mount) return;
   if (def.custom === 'intents') { renderIntentList(mount); return; }
+  if (def.custom === 'history') { renderHistoryPage(); return; }
   if (def.uri) mountInspector(mount, def.uri());
 }
 
@@ -320,11 +413,12 @@ function resolveSearch(raw) {
   if (!q) return null;
   if (isRef(q)) return q;
 
-  const shorthand = /^(cell|receipt|turn|block|intent|federation|capability|token)\/(.+)$/i.exec(q);
+  const shorthand = /^(cell|receipt|turn|block|intent|federation|capability|token|history)\/(.+)$/i.exec(q);
   if (shorthand) {
     const kind = shorthand[1].toLowerCase();
     const id = shorthand[2];
     if (kind === 'block') return `dregg://block/0/${id}`;
+    if (kind === 'history') return `dregg://cell-history/${id}`;
     return `dregg://${kind}/${id}`;
   }
 
@@ -352,6 +446,48 @@ function resolveHash(hash) {
     }
   } catch {}
   return `dregg://cell/${hash}`;
+}
+
+// ---------------------------------------------------------------------------
+// Time travel: cell picker + <dregg-cell-history> mount. The datalist is fed
+// live from the runtime's cell list; entering a 64-hex id works regardless.
+// ---------------------------------------------------------------------------
+function renderHistoryPage() {
+  const input = document.getElementById('history-cell-input');
+  const datalist = document.getElementById('history-cell-options');
+  const btn = document.getElementById('history-walk-btn');
+  if (!input || !btn) return;
+
+  // Refresh the known-cells datalist from the live runtime.
+  if (datalist) {
+    datalist.replaceChildren();
+    try {
+      const cells = runtime?.listCells?.().value || [];
+      for (const c of cells.slice(0, 60)) {
+        const id = c.cell_id || c.id;
+        if (!id) continue;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.label = `${String(id).slice(0, 16)}… (balance ${c.balance ?? '?'})`;
+        datalist.appendChild(opt);
+      }
+    } catch {}
+  }
+
+  if (btn.dataset.wired !== 'true') {
+    btn.dataset.wired = 'true';
+    const walk = () => {
+      const id = (input.value || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{6,64}$/.test(id)) {
+        input.classList.add('is-bad');
+        setTimeout(() => input.classList.remove('is-bad'), 1200);
+        return;
+      }
+      openUri(`dregg://cell-history/${id}`);
+    };
+    btn.addEventListener('click', walk);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') walk(); });
+  }
 }
 
 function runSearch(raw) {
@@ -474,6 +610,14 @@ function wireChrome() {
     }
   });
 
+  // Sample-mode banner buttons (offline fallback — opt-in, loudly labeled).
+  document.getElementById('sample-enter-btn')?.addEventListener('click', () => {
+    enterSampleMode().catch((e) => console.error('[explorer] sample mode failed', e));
+  });
+  document.getElementById('sample-exit-btn')?.addEventListener('click', () => {
+    exitSampleMode().catch((e) => console.error('[explorer] reconnect failed', e));
+  });
+
   wireSettings();
 }
 
@@ -514,9 +658,11 @@ function wireSettings() {
     if (urlInput) setNodeUrl(urlInput.value);
     if (autoToggle) localStorage.setItem(AUTO_REFRESH_KEY, autoToggle.checked ? 'true' : 'false');
     close();
+    sampleMode = false; // saving a node URL always returns to live mode
     setConnection('connecting');
     await buildRuntime();
     startLiveness();
+    remountAll();
     navigateTo(currentPage);
   });
 }

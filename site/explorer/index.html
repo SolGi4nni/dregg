@@ -89,6 +89,9 @@
         <button class="ex-nav__item" data-page="receipts">
           <span class="ex-nav__icon">&#9830;</span><span class="ex-nav__label">Receipts</span>
         </button>
+        <button class="ex-nav__item" data-page="history">
+          <span class="ex-nav__icon">&#8630;</span><span class="ex-nav__label">Time travel</span>
+        </button>
         <button class="ex-nav__item" data-page="capabilities">
           <span class="ex-nav__icon">&#8669;</span><span class="ex-nav__label">Capabilities</span>
         </button>
@@ -112,6 +115,17 @@
 
     <!-- Main content area -->
     <main class="ex-main" id="ex-main">
+      <!-- Offline / sample-mode banner (hidden until the node is unreachable;
+           sample mode is OPT-IN and loudly labeled — never silent substitution) -->
+      <div class="ex-sample-banner" id="sample-banner" hidden>
+        <span class="ex-sample-banner__text" id="sample-banner-text">
+          Devnet unreachable. You can browse a clearly-labeled <strong>static sample snapshot</strong>
+          to explore the inspector surfaces — nothing shown in sample mode comes from a node.
+        </span>
+        <button class="btn btn-secondary" id="sample-enter-btn">Browse sample snapshot</button>
+        <button class="btn btn-secondary" id="sample-exit-btn" hidden>Exit sample mode &amp; reconnect</button>
+      </div>
+
       <!-- Overview -->
       <section class="ex-page active" id="page-overview">
         <div class="ex-page__header">
@@ -166,6 +180,25 @@
         </div>
         <div id="mount-receipts"></div>
         <div id="detail-receipts" class="ex-detail-slot"></div>
+      </section>
+
+      <!-- Time travel: walk a cell's receipt chain backward -->
+      <section class="ex-page" id="page-history">
+        <div class="ex-page__header">
+          <h2>Time travel</h2>
+          <p>Pick a cell and walk its receipt chain backward via <code>&lt;dregg-cell-history&gt;</code>:
+             each step shows the pre&nbsp;&rarr;&nbsp;post state commitments (the receipt binds the whole
+             post-state), the turn's effects, and its proof/witness status. The node serves historical
+             <em>commitments</em> — the canonical objects a verifier checks — not historical slot values.</p>
+        </div>
+        <div class="ex-history-picker" id="history-picker">
+          <input type="text" id="history-cell-input" class="ex-search__input" list="history-cell-options"
+                 placeholder="64-hex cell id (or pick a known cell)…" autocomplete="off" spellcheck="false">
+          <datalist id="history-cell-options"></datalist>
+          <button class="btn btn-primary" id="history-walk-btn">Walk the chain</button>
+        </div>
+        <div id="mount-history"></div>
+        <div id="detail-history" class="ex-detail-slot"></div>
       </section>
 
       <!-- Capabilities -->

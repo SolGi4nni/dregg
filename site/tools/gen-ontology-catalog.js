@@ -425,6 +425,35 @@ function normalizeRustType(t) {
     .trim();
 }
 
+/**
+ * Extract the `## What the program CANNOT see` bullets from
+ * `cell/src/blueprint.rs` module docs — the canonical, source-stated
+ * expressibility limits of the constraint grammar (what stays operator/SDK
+ * discipline rather than program-enforced). Quoted from source so the Studio's
+ * "enforced vs discipline" panel cannot drift into hand-set claims.
+ */
+function parseExpressibilityLimits() {
+  const F_BLUEPRINT = path.join(REPO_ROOT, 'cell', 'src', 'blueprint.rs');
+  const src = read(F_BLUEPRINT);
+  const start = src.indexOf('## What the program CANNOT see');
+  if (start < 0) return [];
+  const lines = src.slice(start).split('\n');
+  const items = [];
+  let cur = null;
+  for (const raw of lines.slice(1)) {
+    if (!raw.trim().startsWith('//!')) break; // end of the doc block
+    const l = raw.replace(/^\s*\/\/!\s?/, '');
+    if (/^\s*\*\s+/.test(l)) {
+      if (cur) items.push(cur.replace(/\s+/g, ' ').trim());
+      cur = l.replace(/^\s*\*\s+/, '');
+    } else if (cur && l.trim()) {
+      cur += ' ' + l.trim();
+    }
+  }
+  if (cur) items.push(cur.replace(/\s+/g, ' ').trim());
+  return items;
+}
+
 function buildPredicate() {
   const prog = read(F_PROGRAM);
   const view = read(F_VIEW);
@@ -432,6 +461,12 @@ function buildPredicate() {
   const cellProgram = parseEnumVariants(sliceEnum(prog, 'CellProgram'));
   const guards = parseEnumVariants(sliceEnum(prog, 'TransitionGuard'));
   const constraints = parseEnumVariants(sliceEnum(prog, 'StateConstraint'));
+  // SimpleStateConstraint membership: only these kinds may nest inside
+  // `AnyOf` / `Implies` / `Not` (the state-guarded-literal pattern the
+  // settlement blueprints use). Parsed from the canonical enum, not assumed.
+  const simpleKinds = new Set(
+    parseEnumVariants(sliceEnum(prog, 'SimpleStateConstraint')).map((v) => v.name)
+  );
 
   // Cross-check: every canonical StateConstraint variant must have a JSON
   // projection in StateConstraintView (else the instance inspector can't show
@@ -458,6 +493,7 @@ function buildPredicate() {
     semantics: c.doc,
     in_view: viewVariants.has(c.name),
     locally_evaluable: LOCALLY_EVALUABLE.has(c.name),
+    simple: simpleKinds.has(c.name),
   }));
 
   return {
@@ -479,10 +515,14 @@ function buildPredicate() {
     coverage: {
       constraints_in_view: enrichedConstraints.filter((c) => c.in_view).length,
       locally_evaluable: enrichedConstraints.filter((c) => c.locally_evaluable).length,
+      simple: enrichedConstraints.filter((c) => c.simple).length,
       missing_from_view: missingFromView,
       extra_in_view: extraInView,
     },
     constraints: enrichedConstraints,
+    // The source-stated limits of the grammar (cell/src/blueprint.rs module
+    // docs): what stays SDK/operator discipline rather than program-enforced.
+    expressibility_limits: parseExpressibilityLimits(),
   };
 }
 
@@ -632,6 +672,162 @@ function buildSubmit(effects) {
   };
 }
 
+// ===========================================================================
+// ASSURANCE CASE catalog — the trust-tier data for proof badges.
+//
+// Source of truth: `metatheory/Dregg2/AssuranceCase.lean` — the assurance case
+// organized BY GUARANTEE. We parse (never restate):
+//   * the ASSUMPTION FLOOR (the named cryptographic / liveness carriers — the
+//     ONLY out-of-kernel assumptions any guarantee rests on),
+//   * each `## Guarantee X — TITLE` section: its one-line statement, its
+//     keystone DAG (the backticked theorem names + prose), its per-guarantee
+//     crypto floor, its apex aggregation theorem, and the `#assert_axioms`
+//     pin list beneath it.
+// Every pinned name is machine-checked by Lean to rest ONLY on the kernel
+// triple (collectAxioms = {propext, Classical.choice, Quot.sound}); a pin
+// fails the metatheory build otherwise. So a UI badge driven by this catalog
+// is reporting Lean's own axiom audit, not a hand-set label.
+// ===========================================================================
+
+const F_ASSURANCE = path.join(META, 'Dregg2', 'AssuranceCase.lean');
+const OUT_ASSURANCE = path.join(SITE_DIR, 'src', '_includes', 'studio', 'assurance-catalog.generated.json');
+
+/** Flatten run-on doc lines into single-space prose. */
+function flatten(s) {
+  return String(s || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Parse the numbered assumption-floor items from the module docstring. */
+function parseAssumptionFloor(doc) {
+  const start = doc.indexOf('## The assumption floor');
+  if (start < 0) throw new Error('assumption floor heading not found');
+  const end = doc.indexOf('## The five guarantees');
+  const block = doc.slice(start, end < 0 ? doc.length : end);
+  const items = [];
+  const re = /^\s*(\d+)\.\s+\*\*([^*]+)\*\*\s*—\s*([\s\S]*?)(?=^\s*\d+\.\s+\*\*|^\s*$\n^\s*\S|\n\n[A-Z])/gm;
+  let m;
+  while ((m = re.exec(block)) !== null) {
+    items.push({ index: Number(m[1]), name: m[2].trim(), detail: flatten(m[3]) });
+  }
+  return items;
+}
+
+/** Parse the five-guarantees summary list (A.–E. lines) from the docstring. */
+function parseGuaranteeSummaries(doc) {
+  const start = doc.indexOf('## The five guarantees');
+  if (start < 0) return {};
+  const block = doc.slice(start);
+  const out = {};
+  const re = /^\s*([A-Z])\.\s+\*\*([^*]+)\*\*\s*—\s*([\s\S]*?)(?=^\s*[A-Z]\.\s+\*\*|\n-\/|$)/gm;
+  let m;
+  while ((m = re.exec(block)) !== null) {
+    out[m[1]] = { title: m[2].trim(), summary: flatten(m[3]) };
+  }
+  return out;
+}
+
+/** Parse the per-guarantee `/-! … ## Guarantee X — TITLE … -/` sections. */
+function parseGuaranteeSections(src) {
+  const sections = [];
+  const headRe = /\/-!\s*=+\s*\n## Guarantee ([A-Z])\s*—\s*([^\n]+)\n([\s\S]*?)=+\s*-\//g;
+  let m;
+  while ((m = headRe.exec(src)) !== null) {
+    const letter = m[1];
+    const title = m[2].trim();
+    const body = m[3];
+
+    // The italic one-line statement: the first `*…*` paragraph. Sections
+    // written as prose (no italic line, e.g. Guarantee R) fall back to their
+    // first paragraph.
+    const stmt = body.match(/^\s*\*([\s\S]*?)\*\s*$/m);
+    const firstPara = flatten((body.split(/\n\s*\n/).find((p) => flatten(p)) || ''));
+
+    // DAG bullets: `• \`Name\` — prose` (multi-line until the next bullet /
+    // blank line / `Floor:`).
+    const keystones = [];
+    const dagStart = body.indexOf('DAG:');
+    const floorStart = body.search(/\nFloor:/);
+    if (dagStart >= 0) {
+      const dagBlock = body.slice(dagStart, floorStart > dagStart ? floorStart : body.length);
+      const bulletRe = /•\s*`([^`]+)`\s*([\s\S]*?)(?=\n\s*•|$)/g;
+      let b;
+      while ((b = bulletRe.exec(dagBlock)) !== null) {
+        keystones.push({ name: b[1].trim(), summary: flatten(b[2].replace(/^—\s*/, '')) });
+      }
+    }
+
+    // `Floor:` usually opens a paragraph; prose sections may carry it inline.
+    const floorM = (floorStart >= 0 ? body.slice(floorStart) : body).match(/Floor:\s*([\s\S]*)/);
+
+    // The tail after this section header (apex theorem + pins) runs until the
+    // next `/-!` block or EOF.
+    const tailStart = headRe.lastIndex;
+    const nextBlock = src.indexOf('/-!', tailStart);
+    const tail = src.slice(tailStart, nextBlock < 0 ? src.length : nextBlock);
+    const apexM = tail.match(/\ntheorem\s+([A-Za-z0-9_']+)/);
+    const pins = [];
+    const pinRe = /#assert_axioms\s+([A-Za-z0-9_.']+)/g;
+    let p;
+    while ((p = pinRe.exec(tail)) !== null) pins.push(p[1]);
+
+    sections.push({
+      letter,
+      title,
+      statement: stmt ? flatten(stmt[1]) : firstPara,
+      floor: floorM ? flatten(floorM[1]) : '',
+      apex_theorem: apexM ? apexM[1] : null,
+      keystones,
+      pins,
+    });
+  }
+  return sections;
+}
+
+function buildAssurance() {
+  const src = read(F_ASSURANCE);
+  // The module docstring: the first `/-` … `-/` block.
+  const docM = src.match(/\/-\n([\s\S]*?)\n-\//);
+  if (!docM) throw new Error('AssuranceCase module docstring not found');
+  const doc = docM[1];
+
+  // The kernel axiom triple, parsed from the docstring's own statement.
+  const tripleM = doc.match(/kernel triple\s*\n?\s*`\{([^}]*)\}`/);
+  const kernelTriple = tripleM
+    ? tripleM[1].split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  const floor = parseAssumptionFloor(doc);
+  const summaries = parseGuaranteeSummaries(doc);
+  const sections = parseGuaranteeSections(src);
+  for (const s of sections) {
+    if (summaries[s.letter]) s.summary = summaries[s.letter].summary;
+  }
+
+  return {
+    schema: 'dregg-assurance-catalog-v1',
+    generated_from: [
+      'metatheory/Dregg2/AssuranceCase.lean (the assurance case BY GUARANTEE: statements, keystone DAGs, crypto floors, #assert_axioms pins)',
+    ],
+    note:
+      'AUTOGENERATED by site/tools/gen-ontology-catalog.js from the verified ' +
+      'Lean assurance case. Every name in `pins` is #assert_axioms-certified: ' +
+      'the Lean build FAILS unless its full collectAxioms set is exactly the ' +
+      'kernel triple below (in particular, no sorryAx). The assumption_floor ' +
+      'entries are the ONLY out-of-kernel carriers (Prop-portals, never axioms). ' +
+      'Do not edit by hand — regenerate; a drift check (--check) fails if stale.',
+    kernel_axiom_triple: kernelTriple,
+    assumption_floor: floor,
+    guarantee_count: sections.length,
+    coverage: {
+      guarantees_with_apex: sections.filter((s) => s.apex_theorem).length,
+      guarantees_with_pins: sections.filter((s) => s.pins.length).length,
+      total_pins: sections.reduce((n, s) => n + s.pins.length, 0),
+      total_keystones: sections.reduce((n, s) => n + s.keystones.length, 0),
+    },
+    guarantees: sections,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Build the catalog.
 // ---------------------------------------------------------------------------
@@ -737,9 +933,22 @@ function main() {
   if (scov.missing_ctor.length)
     process.stderr.write(`  ⚠ submit kinds with NO ontology ctor: ${scov.missing_ctor.join(', ')}\n`);
 
+  // --- Assurance case (Lean Dregg2/AssuranceCase.lean) ---------------------
+  const assurance = buildAssurance();
+  const assuranceText = render(assurance);
+  const acov = assurance.coverage;
+  process.stderr.write(
+    `  assurance case: ${assurance.guarantee_count} guarantees · ` +
+      `${acov.total_keystones} keystones · ${acov.total_pins} axiom pins · ` +
+      `floor ${assurance.assumption_floor.length} carriers · ` +
+      `kernel triple [${assurance.kernel_axiom_triple.join(', ')}]\n`
+  );
+  if (acov.guarantees_with_apex < assurance.guarantee_count)
+    process.stderr.write(`  ⚠ guarantees without an apex theorem: ${assurance.guarantees.filter((g) => !g.apex_theorem).map((g) => g.letter).join(', ')}\n`);
+
   if (check) {
     let stale = false;
-    for (const [file, want] of [[OUT, text], [OUT_PRED, predText], [OUT_SUBMIT, submitText]]) {
+    for (const [file, want] of [[OUT, text], [OUT_PRED, predText], [OUT_SUBMIT, submitText], [OUT_ASSURANCE, assuranceText]]) {
       const actual = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       if (actual !== want) {
         console.error(
@@ -760,6 +969,8 @@ function main() {
   process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT_PRED)}\n`);
   fs.writeFileSync(OUT_SUBMIT, submitText);
   process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT_SUBMIT)}\n`);
+  fs.writeFileSync(OUT_ASSURANCE, assuranceText);
+  process.stderr.write(`  wrote ${path.relative(REPO_ROOT, OUT_ASSURANCE)}\n`);
 }
 
 main();

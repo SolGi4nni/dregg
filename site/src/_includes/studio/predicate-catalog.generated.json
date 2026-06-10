@@ -99,11 +99,13 @@
       "semantics": "Conjunction — match if every child matches."
     }
   ],
-  "constraint_count": 37,
+  "constraint_count": 38,
   "coverage": {
     "constraints_in_view": 29,
     "locally_evaluable": 15,
+    "simple": 11,
     "missing_from_view": [
+      "FieldLteOther",
       "MemberOf",
       "PrefixOf",
       "InRangeTwoSided",
@@ -130,7 +132,8 @@
       ],
       "semantics": "Field at index must equal value.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "FieldGte",
@@ -146,7 +149,8 @@
       ],
       "semantics": "Field at index must be >= value (unsigned big-endian comparison).",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "FieldLte",
@@ -162,7 +166,8 @@
       ],
       "semantics": "Field at index must be <= value (unsigned big-endian comparison).",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "FieldLteField",
@@ -178,7 +183,29 @@
       ],
       "semantics": "Field at `left_index` must be <= field at `right_index` in the same post-state.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
+    },
+    {
+      "name": "FieldLteOther",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        },
+        {
+          "name": "other",
+          "type": "u8"
+        },
+        {
+          "name": "delta",
+          "type": "i64"
+        }
+      ],
+      "semantics": "Field at `index` must be `<= field at `other` + delta` in the same post-state (`new[index] <= new[other] + delta`, signed).",
+      "in_view": false,
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "SumEquals",
@@ -194,7 +221,8 @@
       ],
       "semantics": "Sum of fields at indices must equal value (intra-cell conservation).",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "WriteOnce",
@@ -206,7 +234,8 @@
       ],
       "semantics": "Slot must transition only from `FIELD_ZERO` to any non-zero value; after the first write, the slot is frozen.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "Immutable",
@@ -218,7 +247,8 @@
       ],
       "semantics": "Slot value is read-only after initialization.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "Monotonic",
@@ -230,7 +260,8 @@
       ],
       "semantics": "`new[i] >= old[i]` (unsigned big-endian).",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "StrictMonotonic",
@@ -242,7 +273,8 @@
       ],
       "semantics": "`new[i] > old[i]` strictly.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": true
     },
     {
       "name": "BoundedBy",
@@ -258,7 +290,8 @@
       ],
       "semantics": "`slot[index]` may only be set (i.e.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": true
     },
     {
       "name": "FieldDelta",
@@ -274,7 +307,8 @@
       ],
       "semantics": "`new[index] == old[index] + delta` (modular field arithmetic).",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "FieldDeltaInRange",
@@ -294,7 +328,8 @@
       ],
       "semantics": "`new[index] in [old[index] + min_delta, old[index] + max_delta]`.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "FieldGteHeight",
@@ -310,7 +345,8 @@
       ],
       "semantics": "`new[index] >= ctx.block_height + offset`.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": true
     },
     {
       "name": "FieldLteHeight",
@@ -326,7 +362,8 @@
       ],
       "semantics": "`new[index] <= ctx.block_height + offset`.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": true
     },
     {
       "name": "SumEqualsAcross",
@@ -342,7 +379,8 @@
       ],
       "semantics": "Intra-cell conservation across the transition: `sum(new[input_fields]) == sum(old[input_fields]) + sum(new[output_fields])`.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "SenderAuthorized",
@@ -354,7 +392,8 @@
       ],
       "semantics": "The turn's sender must be in an authorized set.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "CapabilityUniqueness",
@@ -366,7 +405,8 @@
       ],
       "semantics": "`slot[cap_set_root_slot]` is a per-cell capability-set root and must encode at most one live capability of the named kind.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "RateLimit",
@@ -382,7 +422,8 @@
       ],
       "semantics": "Sender may mutate this cell at most `max_per_epoch` times per `epoch_duration` blocks.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "RateLimitBySum",
@@ -402,7 +443,8 @@
       ],
       "semantics": "Sum-based rate limit: the *value* added to `slot_index` over a window of `epoch_duration` blocks cannot exceed `max_sum_per_epoch`.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "TemporalGate",
@@ -418,7 +460,8 @@
       ],
       "semantics": "Mutation is rejected unless `ctx.block_height` is in `[not_before, not_after]`.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": true
     },
     {
       "name": "PreimageGate",
@@ -434,7 +477,8 @@
       ],
       "semantics": "The action must reveal a preimage whose hash equals `slot[commitment_index]`.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "MonotonicSequence",
@@ -446,7 +490,8 @@
       ],
       "semantics": "`slot[seq_index] == old[seq_index] + 1`.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "AllowedTransitions",
@@ -462,7 +507,8 @@
       ],
       "semantics": "`(old[slot_index], new[slot_index])` must appear in the explicit allow-list `allowed`.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "TemporalPredicate",
@@ -478,7 +524,8 @@
       ],
       "semantics": "Witness-attached temporal-predicate proof.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "BoundDelta",
@@ -502,7 +549,8 @@
       ],
       "semantics": "Cross-cell binding pair to γ.2: this cell's `local_slot` delta must match `peer_cell`'s `peer_slot` delta under the named .",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "AnyOf",
@@ -514,7 +562,8 @@
       ],
       "semantics": "Single-level disjunction: at least one of `variants` must hold.",
       "in_view": true,
-      "locally_evaluable": true
+      "locally_evaluable": true,
+      "simple": false
     },
     {
       "name": "Witnessed",
@@ -526,7 +575,8 @@
       ],
       "semantics": "A witness-attached predicate (DFA classification, temporal-DSL proof, blinded-set non-revocation, bridge predicate, custom AIR…).",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "Renounced",
@@ -538,7 +588,8 @@
       ],
       "semantics": "**Categorical dual of : proof of non-holding / non-membership.** A *renunciation* slot caveat — the action's sender must verifiably *NOT* be in the `set`'s sorted Merkle leaf set.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "MemberOf",
@@ -554,7 +605,8 @@
       ],
       "semantics": "**Value allowlist:** `new[index]` must be one of `set` (the one-sided value membership the pair-table `AllowedTransitions` cannot express).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "PrefixOf",
@@ -570,7 +622,8 @@
       ],
       "semantics": "**Namespace / path prefix containment:** the ordered scalar path read from `seg_indices` (each a slot read as big-endian u64) must START WITH `prefix`.",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "InRangeTwoSided",
@@ -590,7 +643,8 @@
       ],
       "semantics": "**Two-sided absolute band:** `lo <= new[index] <= hi` (the ABSOLUTE counterpart to the RELATIVE `FieldDeltaInRange`).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "DeltaBounded",
@@ -606,7 +660,8 @@
       ],
       "semantics": "**Real two-sided delta:** `|new[index] - old[index]| <= d` (symmetric; the legacy delta variants are one-sided or relative-range).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "AffineLe",
@@ -622,7 +677,8 @@
       ],
       "semantics": "**Affine inequality:** `Σ kᵢ·new[fᵢ] <= c` over named slots (`terms : Vec<(i64 coefficient, u8 slot)>`).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "AffineEq",
@@ -638,7 +694,8 @@
       ],
       "semantics": "**Affine equation:** `Σ kᵢ·new[fᵢ] = c`.",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "Reachable",
@@ -658,7 +715,8 @@
       ],
       "semantics": "**DAG reachability / prerequisite:** the label read from `new[from_index]` must reach `to_label` in the reachability `edges` (reflexive-transitive closure).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "AllOf",
@@ -670,7 +728,8 @@
       ],
       "semantics": "**n-ary conjunction** over `SimpleStateConstraint`s — the `allOf` the legacy 2-level grammar lacked (it had only single-level `AnyOf`).",
       "in_view": false,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     },
     {
       "name": "Custom",
@@ -690,7 +749,12 @@
       ],
       "semantics": "DSL-authored predicate.",
       "in_view": true,
-      "locally_evaluable": false
+      "locally_evaluable": false,
+      "simple": false
     }
+  ],
+  "expressibility_limits": [
+    "The cell `balance` is sealed (not one of the 8 slots), so \"resolve drains the full balance\" and \"the payout goes to the published counterparty\" are NOT program-enforced; they are enforced by the SDK builders (`dregg_sdk::factories`) constructing the only sensible turn, and by the kernel move law (a `Transfer` conserves and fail-closes). This mirrors the Lean contracts, where the settle target is an argument of `escrowRelease`/`obSettle` rather than a checked field.",
+    "The committed-escrow knowledge gate (release on a HASH-PREIMAGE reveal) needs `PreimageGate` under a state guard, which the current constraint grammar cannot express (`PreimageGate` is not a `SimpleStateConstraint`, so it cannot sit inside `AnyOf`/`Implies`). The cleartext witness-equality gate below is exactly the Lean `EscrowFactory` contract; the committed variant is kernel-design feedback for the dregg3 constraint grammar."
   ]
 }

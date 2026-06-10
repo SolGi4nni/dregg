@@ -4,6 +4,33 @@
 <link rel="stylesheet" href="/_includes/studio/starbridge.css">
 
 <main class="sb">
+  <!-- The workbench narrative: one continuum, honest about what's live. -->
+  <section class="sb__manifesto" id="sb-manifesto">
+    <div class="sb__manifesto-inner">
+      <div class="sb__manifesto-lede">
+        <strong>Starbridge is the polis IDE</strong> — one workbench over a living dregg federation,
+        in three connected surfaces:
+        <a href="/explorer/">Explorer</a> (browse a live devnet — cells, receipts with witness/proof
+        status, receipt <em>time travel</em> per cell; offline it offers a loudly-labeled sample
+        snapshot, never silent fakes) ·
+        <a href="/playground/#turn-workbench">Playground</a> (drive the real in-browser wasm executor:
+        stage a turn by <em>verb</em>, read the verified-Lean explanation before running, prove it
+        with a real STARK, or submit the thin-HTTP fragment to a node) ·
+        <a href="/studio.html">Studio</a> (author turns, predicates, and <em>factories</em> from
+        generated-from-source catalogs — proof badges come from Lean's own axiom audit, never
+        hand-set). This page is the inspector workbench that ties them together: every object is a
+        <code>dregg://</code> URI rendered by the same platform inspectors everywhere.
+      </div>
+      <div class="sb__manifesto-honest">
+        Live tonight: in-browser wasm runtime · remote read-only node connect · generated
+        ontology/predicate/assurance catalogs · factory authoring + export.
+        Not yet: browser blocklace sync (node HTTP only) · SDK signed-envelope submit from the
+        browser (thin-HTTP fragment only).
+      </div>
+      <button class="sb__manifesto-dismiss" id="sb-manifesto-dismiss" type="button" title="hide">×</button>
+    </div>
+  </section>
+
   <header class="sb__topbar">
     <div class="sb__topbar-row">
       <div class="sb__brand" aria-label="Starbridge">
@@ -199,6 +226,29 @@
     </div>
   </div>
 </main>
+
+<style>
+  .sb__manifesto { border-bottom: 1px solid var(--line); background: var(--bg-raised); }
+  .sb__manifesto-inner { position: relative; padding: 10px 38px 10px 14px; }
+  .sb__manifesto-lede { font-size: 0.78rem; line-height: 1.55; color: var(--fg-dim); }
+  .sb__manifesto-lede strong { color: var(--fg); }
+  .sb__manifesto-lede a { color: var(--accent-bright, #8fddff); }
+  .sb__manifesto-honest { margin-top: 5px; font-size: 0.7rem; color: var(--fg-dim); }
+  .sb__manifesto-dismiss { position: absolute; top: 6px; right: 8px; background: none; border: 0;
+    color: var(--fg-dim); font-size: 1rem; cursor: pointer; }
+  .sb__manifesto-dismiss:hover { color: var(--fg); }
+</style>
+<script>
+  (function () {
+    var KEY = 'dregg_sb_manifesto_dismissed';
+    var el = document.getElementById('sb-manifesto');
+    try { if (localStorage.getItem(KEY) === '1' && el) el.style.display = 'none'; } catch (e) {}
+    document.getElementById('sb-manifesto-dismiss')?.addEventListener('click', function () {
+      if (el) el.style.display = 'none';
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+  })();
+</script>
 
 <script type="module" src="/_includes/runtime-bootstrap.js"></script>
 <script type="module" src="/_includes/studio/starbridge.js"></script>

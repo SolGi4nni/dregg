@@ -378,6 +378,29 @@ export async function createRemoteRuntime({ signals, baseUrl }) {
     return receiptListSignal;
   }
 
+  // Per-cell receipt history (the time-travel surface). The node filters
+  // server-side via /api/starbridge/receipts?cell=<id> (matches agent +
+  // touched cells); we keep one signal per cell, refreshed on every poll so
+  // the timeline stays live. Falls back to nothing (empty signal) when the
+  // starbridge route is absent — the inspector then filters listReceipts().
+  const cellReceiptSignals = new Map();
+  function listCellReceipts(cellId) {
+    const id = String(cellId || '').toLowerCase();
+    if (!cellReceiptSignals.has(id)) {
+      const sig = signal(null); // null = not-yet-fetched (distinguish from [])
+      cellReceiptSignals.set(id, sig);
+      const refresh = async () => {
+        const data = await getJSON(`/api/starbridge/receipts?cell=${encodeURIComponent(id)}&limit=200`);
+        if (destroyed) return;
+        if (data) sig.value = normalizeReceipts(data);
+        else if (sig.value === null) sig.value = [];
+      };
+      refresh();
+      events.addEventListener('poll', refresh);
+    }
+    return cellReceiptSignals.get(id);
+  }
+
   function getReceipt(id) {
     if (!receiptSignals.has(id)) {
       receiptSignals.set(id, signal(findReceipt(cachedReceipts, id)));
@@ -532,6 +555,7 @@ export async function createRemoteRuntime({ signals, baseUrl }) {
     getCell,
     listCells,
     listReceipts,
+    listCellReceipts,
     getReceipt,
     getTurn,
     listIntents,

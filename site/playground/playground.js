@@ -20,6 +20,7 @@ import { initSandbox } from './sections/sandbox.js';
 import { initEffectVm } from './sections/effect-vm.js';
 import { initBlocklaceSim } from './sections/blocklace-sim.js';
 import { initCircuitPlayground } from './sections/circuit-playground.js';
+import { initTurnWorkbench } from './sections/turn-workbench.js';
 
 // New-world sections
 import { initThemeToggle } from './sections/theme-toggle.js';
@@ -128,7 +129,7 @@ const PLAYGROUND_SCENARIOS = [
     lede: 'Core browser-local primitives: tokens, proofs, commitments, policy, notes, and delegation.',
     starbridgeHref: '/starbridge/?at=dregg://attenuated-token/demo',
     starbridgeLabel: 'Open token inspector in Starbridge',
-    sections: ['overview', 'tokens', 'proofs', 'merkle', 'datalog', 'notes', 'capabilities'],
+    sections: ['overview', 'turn-workbench', 'tokens', 'proofs', 'merkle', 'datalog', 'notes', 'capabilities'],
   },
   {
     id: 'federation',
@@ -386,6 +387,7 @@ async function main() {
   initEffectVm(wasmExports);
   initBlocklaceSim(wasmExports);
   initCircuitPlayground(wasmExports);
+  initTurnWorkbench(wasmExports);
   initThemeToggle();
   initBlindedQueues(wasmExports);
   initProgrammableQueues(wasmExports);
