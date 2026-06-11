@@ -52,7 +52,40 @@ These are theorems in the tree, not aspirations:
    are enacted; dregg's are attested. This is the operational content of
    "constructive knowledge = an exhibitable witness."
 
-## What is NOT proved — the exact gap
+## STATUS (2026-06-11): machinery + the live-gate weld landed; the INTERESTING test is still open
+
+`Dregg2/Calculus/Biorthogonality.lean` landed the generic orthogonality core
+(the Galois duality, `S^⊥⊥⊥ = S^⊥`, orthogonals-are-behaviours) and one real
+weld worth keeping: **`caveatsAdmit_is_orthogonality` (`Iff.rfl`)** — the
+deployed fail-closed gate IS orthogonality-set membership, and every committed
+reduction lands in a behaviour.
+
+But the family it proved closed — the literal/order atoms (senderIs/balanceGe/
+fieldEquals/…) — is the **trivial** case, and we should not oversell it: those
+atoms are old-state-blind point-tests, so a guard is structurally a *rectangle*
+(a product of half-spaces), and rectangles are biorthogonally closed under
+almost any orthogonality relation. The closure "doing work" there is only it
+capturing old-twiddled variants — an artifact of the tests being weak, not of
+biorthogonality being the right lens. **This tested the machinery, not the
+thesis.** The two questions that decide whether the bridge is load-bearing or
+decorative are both still open:
+
+1. **The tensor / linearity (the prize).** Is conservation (Σδ=0 over PAIRED
+   writes — a relational resource constraint) a behaviour under the tensor
+   `(A^⊥ ∪ B^⊥)^⊥`? If yes, the substructural/linear heart is *recovered from
+   orthogonality* rather than assumed. If no, biorthogonality misses the
+   resource layer. THIS is the real test.
+2. **Does the coordination grading EMERGE?** The point of "derive, not
+   assemble" is whether `modality_price` (the I-confluence tier) is a property
+   of the behaviour structure (e.g. monotone guard ⟺ behaviour closed under
+   directed union) versus a grading stapled onto `^⊥`. If it doesn't emerge,
+   the tier is still a grab-bag wearing a Girard hat.
+
+The interesting families to push closure on are therefore NOT the literals but
+the relational ones: conservation (tensor), the temporal/until-since (behaviours
+over traces), and the epistemic K/E/D/C (orthogonality over who-can-refute).
+
+## What is NOT proved — the exact gap (pre-S1/S2; retained for the conjecture statement)
 
 Transcendental syntax *defines* a type as a **biorthogonally-closed
 behaviour**: a set of objects `B` equal to its own double-orthogonal,
