@@ -427,3 +427,24 @@ in the agreement triangle depends on it.
 * **S4 — surface polish**: `dregg_program`-equivalent sugar in the Rust SDK
   builders; `dregg explain` renders core terms with cost verdicts; the
   deploy path accepts core terms end-to-end.
+
+---
+
+## AMENDMENT (ember, 2026-06-11 — supersedes any contrary reading above)
+
+**Zero Rust-authored constraints or AIRs, ever. All circuits and all constraint
+semantics are EMITTED FROM LEAN and represented formally.** Where this document
+frames a "differential" between a Rust evaluator and the Lean semantics, read
+that as a TRANSITIONAL check only — never the architecture. The end state:
+
+- The Lean kernel is already the program evaluator: `stateStepGuarded` runs
+  inside `execFullForestG`, which IS the node's state producer. The Rust
+  `evaluate_constraint_full` is legacy-executor machinery that dies with the
+  remainder of THE SWAP — it is not a peer semantics to be reconciled.
+- The constraint language is DEFINED in Lean and EMITTED (the descriptor
+  pattern: Lean emits, Rust interprets, a byte-pinned registry gates drift).
+  `cell/src/program.rs`'s grammar is a deserialization target for the emitted
+  form, not an independent definition.
+- Circuit readings of program predicates are Lean-emitted descriptors like
+  every other circuit. No hand-written AIR is ever the answer to a coverage
+  gap; the answer is emitting the descriptor from the proved Lean module.
