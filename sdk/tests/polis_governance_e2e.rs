@@ -26,7 +26,8 @@ use dregg_sdk::polis::{
     create_council_proposal, create_council_proposal_under, enact_amendment, execute_proposal,
     inspect_council, propose, propose_amendment, reject_proposal, supersede_constitution,
 };
-use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect, SdkError, TurnReceipt};
+use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect, SdkError};
+use dregg_turn::TurnReceipt;
 use dregg_turn::TurnError;
 use starbridge_polis::STATE_SLOT;
 use starbridge_polis::constitution::{

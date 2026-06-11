@@ -30,6 +30,10 @@ dregg-wire = { path = "../wire", optional = true }
 dregg-captp = { path = "../captp", optional = true }
 dregg-circuit = { path = "../circuit" }
 dregg-commit = { path = "../commit" }
+# The light-client artifact (`AttestedHistory`) — the SDK's second
+# user-facing noun. Pure verifier; rides the dregg-circuit recursion
+# feature the SDK already carries.
+dregg-lightclient = { path = "../lightclient" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
 dregg-dsl-tests = { path = "../dregg-dsl-tests" }
 dregg-intent = { path = "../intent" }

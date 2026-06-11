@@ -121,7 +121,13 @@ pub mod mnemonic;
 pub mod names;
 pub mod polis;
 pub mod privacy;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod profiles;
+pub mod program;
+pub mod raw;
+pub mod receipt;
 pub mod runtime;
+pub mod turns;
 pub mod verify;
 pub mod witness_artifact;
 pub mod wordlist;
@@ -138,117 +144,119 @@ pub mod cclerk {
     pub use crate::cipherclerk::*;
 }
 
-// Re-export primary types at crate root for convenience.
-pub use cipherclerk::{
-    AgentCipherclerk, AuthorizationPresentation, ChainAppendError, DelegatedToken,
-    DelegationAuthority, DisclosureSpec, FactDisclosure, FactIndex, HeldToken, LocalDelegation,
-    OwnedStealthNote, SignedTurn, VerificationMode,
+// ============================================================================
+// THE PUBLIC SURFACE — two nouns, one authorized turn shape.
+//
+//   Identity (AgentCipherclerk / a named profile) → AgentRuntime::turn()
+//     → typed verbs (.transfer/.write/.grant/…) → .sign() → .submit()
+//     → Receipt
+//
+// and, for trusting a whole history at once, AttestedHistory (the
+// light-client artifact). Everything below the "plumbing" line is the
+// machinery these are made of — public modules, but not the headline.
+// ============================================================================
+
+/// **Noun 1**: proof-of-execution for one committed turn, with the composed
+/// STARK lazily attached. See [`receipt`].
+pub use receipt::{Receipt, TurnProof};
+
+/// **Noun 2**: the light-client artifact — the verdict from verifying ONE
+/// succinct whole-history aggregate (re-witnessing nothing), plus its
+/// verifier entry points and trust-anchor type.
+pub use dregg_lightclient::{
+    AttestedHistory, FinalityCert, FinalizedAttestation, verify_finalized_history, verify_history,
 };
-#[cfg(feature = "network")]
-pub use client::{PresentationResult, RevocationStatus, SiloClient};
-pub use committed_turn::{
-    CommittedNoteInput, CommittedNoteOutput, CommittedTurnBuilder, OwnedNote,
-};
+
+/// The authorized turn flow: `runtime.turn()` opens a [`turns::TurnBuilder`];
+/// `.sign()` yields a [`turns::AuthorizedTurn`]; `.submit()` a [`Receipt`].
+pub use turns::{AuthorizedTurn, TurnBuilder};
+
+// The identity, its runtime, and the effect vocabulary the verbs speak.
+pub use cipherclerk::{AgentCipherclerk, SignedTurn};
+pub use dregg_cell::{CellId, Ledger};
+pub use dregg_turn::Effect;
+pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
-pub use factories::{
-    ADOPT_TURN_FEE, SettlementCellPlan, bridge_lock_cell, cancel_bridge, create_escrow_cell,
-    create_obligation_cell, finalize_bridge, fulfill_obligation, party_field, refund_escrow,
-    release_escrow, slash_obligation,
-};
 pub use runtime::{AgentRuntime, SubAgent};
+
+// Receipt-chain verification (the chain the Receipt noun links into).
+pub use dregg_turn::{
+    VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
+};
 
 /// Short alias for [`AgentCipherclerk`] — the "capability clerk" handle.
 ///
 /// Use in tight scopes where the full name would dominate signatures.
 pub use cipherclerk::AgentCipherclerk as AgentCClerk;
 
-/// Legacy alias for [`AgentCipherclerk`].
-///
-/// Preserved while downstream consumers (apps, starbridge-apps, the
-/// discord bot, the extension cipherclerk) migrate. New code should reach
-/// for [`AgentCipherclerk`] (or the short [`AgentCClerk`] alias).
-// pub use cipherclerk::AgentCipherclerk as AgentCipherclerk; // already re-exported above
+// ============================================================================
+// PLUMBING RE-EXPORTS (compatibility surface).
+//
+// Kept at root because deployed consumers (node, wasm, app-framework,
+// teasting, discord-bot) name them here. New code should prefer the module
+// paths (`cipherclerk::`, `full_turn_proof::`, `verify::`, …). Raw
+// `Action`/`Turn` construction — including the genesis-only
+// `Authorization::Unchecked` — lives ONLY behind the sealed [`raw`] module.
+// ============================================================================
 
-// Re-export commonly needed types from dependencies so users don't need
-// to add them separately.
-pub use dregg_cell::{CellId, Ledger};
-pub use dregg_circuit::{BabyBear, IvcProof, verify_ivc};
-pub use dregg_token::{Attenuation, AuthRequest, AuthToken};
-pub use dregg_turn::{Effect, Turn, TurnBuilder, TurnReceipt, WitnessedReceipt};
-pub use dregg_turn::{
-    VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
+pub use cipherclerk::{
+    AuthorizationPresentation, ChainAppendError, DelegatedToken, DelegationAuthority,
+    DisclosureSpec, FactDisclosure, FactIndex, HeldToken, LocalDelegation, OwnedStealthNote,
+    VerificationMode,
 };
-pub use dregg_types::{PublicKey, Signature};
+#[cfg(feature = "network")]
+pub use client::{PresentationResult, RevocationStatus, SiloClient};
+pub use dregg_token::{Attenuation, AuthRequest, AuthToken};
 
-// Re-export verifier types from the bridge layer for standalone proof verification.
-pub use dregg_bridge::present::BridgePresentationProof;
-pub use dregg_bridge::verifier::StarkProofVerifier;
-pub use dregg_circuit::PresentationVerification;
+// The factory/polis plan builders (authorized by construction: they emit
+// effect lists that ride `runtime.turn().effects(..)` / the execute paths).
+pub use factories::{
+    ADOPT_TURN_FEE, SettlementCellPlan, bridge_lock_cell, cancel_bridge, create_escrow_cell,
+    create_obligation_cell, finalize_bridge, fulfill_obligation, party_field, refund_escrow,
+    release_escrow, slash_obligation,
+};
 
-// Re-export mnemonic generation at crate root for convenience.
+// Mnemonic generation for identity backup.
 pub use mnemonic::generate_mnemonic;
 
-// Re-export privacy primitives for stealth addresses, value commitments, and encrypted intents.
-pub use dregg_cell::stealth::{
-    StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress,
-};
-pub use dregg_cell::value_commitment::{
-    BulletproofRangeProof, ConservationProof, FullConservationProof, ValueCommitment,
-    ValueCommitmentBytes,
-};
-pub use dregg_intent::sse::EncryptedIntent;
-
-// Re-export the no-IO embed layer for service integration.
+// The no-IO embed layer for service integration.
 #[cfg(feature = "network")]
 pub use embed::{DreggEngine, EmbedError, EngineConfig, WireCodec};
 
-// Re-export privacy API types at crate root for convenience.
-pub use privacy::{
-    AccumulatorNonMembershipProof, AnonymousPresentation, NonRevocationProof, NoteSecret,
-    NoteTransferProof, UnlinkablePredicateProof, verify_accumulator_non_membership,
-    verify_anonymous_presentation, verify_non_revocation_proof, verify_note_spending,
-};
-
-// Re-export full turn proof composition API.
+// Full-turn proof prove/verify entry points + witness types the node's
+// proving pool names at root. The REST of the proof composition API is
+// plumbing: reach it via [`full_turn_proof`]. (User code wants
+// [`Receipt::proof`] / [`TurnProof`], not these.)
 pub use full_turn_proof::{
-    AuthorizationWitness, CapMembershipExpectation, CapMembershipWitness, FullTurnProof,
-    FullTurnVerifyError, FullTurnWitness, MembershipWitness, NonRevocationWitness,
-    TurnProofComponents, prove_full_turn, prove_turn_self_sovereign, prove_turn_with_auth,
-    revalidate_turn_self_sovereign, verify_full_turn, verify_full_turn_bound,
+    CapMembershipExpectation, CapMembershipWitness, FullTurnProof, FullTurnVerifyError,
+    FullTurnWitness, NonRevocationWitness, prove_full_turn, prove_turn_self_sovereign,
+    verify_full_turn, verify_full_turn_bound,
 };
 
-// Re-export discharge gateway client functions.
-#[cfg(feature = "network")]
-pub use discharge::{authorize_with_discharges, extract_third_party_tickets, obtain_discharge};
-
-// Re-export standalone verification functions.
-#[cfg(any(test, feature = "dev"))]
-pub use verify::verify_any_tier;
-pub use verify::{
-    build_federation_tree, verify_authorization_proof, verify_committed_threshold,
-    verify_disclosure_presentation, verify_production, verify_selective_disclosure,
-    verify_selective_presentation, verify_validated_ivc_proof,
-};
+// Receipt-witness artifact codecs (app-framework re-exports these).
 pub use witness_artifact::{
     WITNESSED_RECEIPT_ARTIFACT_FORMAT, decode_witnessed_receipt_artifact,
     decode_witnessed_receipt_artifact_hex, encode_witnessed_receipt_artifact,
 };
 
-// Re-export proof tier types for downstream use.
-pub use dregg_circuit::{CryptographicProof, ProofTier, VerifiedProof};
+// Discharge gateway client functions.
+#[cfg(feature = "network")]
+pub use discharge::{authorize_with_discharges, extract_third_party_tickets, obtain_discharge};
 
-// Re-export name resolution types for the petname system.
+// Standalone credential verification the node/teasting name at root; the
+// rest lives in [`verify`].
+#[cfg(any(test, feature = "dev"))]
+pub use verify::verify_any_tier;
+pub use verify::{verify_authorization_proof, verify_committed_threshold};
+
+// Name resolution types for the petname system.
 #[cfg(feature = "captp")]
 pub use names::{
     CipherclerkNames, EdgeNameEntry, NameError, NameProvenance, NameResolver, PetnameDb,
     PetnameEntry, ProposedNameEntry, ResolvedName, WhoisResult,
 };
 
-/// Legacy alias for [`CipherclerkNames`].
-#[cfg(feature = "captp")]
-// pub use names::CipherclerkNames as CipherclerkNames; // already re-exported above
-
-// Re-export CapTP client types for capability sharing and pipelining.
+// CapTP client types for capability sharing and pipelining.
 #[cfg(feature = "captp")]
 pub use captp_client::{CapTpClient, CapTpConfig, EventualRef, LiveRef};
 #[cfg(feature = "captp")]

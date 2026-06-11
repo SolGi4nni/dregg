@@ -31,14 +31,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+// The unauthorized turn shape comes from the SDK's SEALED raw module (the
+// genesis/plumbing escape hatch — see `dregg_sdk::raw`): this test exercises
+// the producer's ownership-authority arm, which deliberately presents no
+// credential.
+use dregg_sdk::raw::{self, CallForest, Turn};
 use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect};
 use dregg_turn::lean_apply::{self, ProducerOutcome};
-use dregg_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, TurnExecutor, turn::Turn,
-};
+use dregg_turn::{ComputronCosts, TurnExecutor};
 
-/// All-`None` permissions so authority is by ownership (`Authorization::Unchecked`) — the shape the
-/// verified producer's wire model accepts without a signature leg, matching the node producer test.
+/// All-`None` permissions so authority is by ownership (the sealed-raw
+/// no-credential shape) — the shape the verified producer's wire model
+/// accepts without a signature leg, matching the node producer test.
 fn open_permissions() -> Permissions {
     Permissions {
         send: AuthRequired::None,
@@ -63,18 +67,7 @@ fn make_open_cell(seed: u8, balance: u64) -> Cell {
 
 fn single_effect_turn(agent: CellId, target: CellId, nonce: u64, effect: Effect) -> Turn {
     let mut forest = CallForest::new();
-    let action = Action {
-        target,
-        method: [0u8; 32],
-        args: vec![],
-        authorization: Authorization::Unchecked,
-        preconditions: Default::default(),
-        effects: vec![effect],
-        may_delegate: DelegationMode::None,
-        commitment_mode: Default::default(),
-        balance_change: None,
-        witness_blobs: vec![],
-    };
+    let action = raw::unsigned_action(target, [0u8; 32], vec![effect]);
     forest.add_root(action);
     Turn {
         agent,

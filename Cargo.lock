@@ -1918,9 +1918,6 @@ dependencies = [
 name = "dregg-circuit"
 version = "0.1.0"
 dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-poly",
  "blake3",
  "criterion",
  "dregg-bridge",
@@ -1931,11 +1928,7 @@ dependencies = [
  "dregg-trace",
  "dregg-turn",
  "getrandom 0.3.4",
- "groupmap",
  "itertools 0.14.0",
- "kimchi",
- "mina-curves",
- "mina-poseidon",
  "p3-air",
  "p3-baby-bear",
  "p3-batch-stark",
@@ -1957,10 +1950,8 @@ dependencies = [
  "p3-symmetric",
  "p3-uni-stark",
  "p3-util",
- "poly-commitment",
  "postcard",
  "rand 0.10.1",
- "rand_core 0.6.4",
  "rmp-serde",
  "serde",
  "serde_json",
@@ -1979,6 +1970,9 @@ dependencies = [
  "console",
  "dialoguer",
  "dirs",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "hex",
  "indicatif",
  "reqwest",
  "serde",
@@ -1987,6 +1981,7 @@ dependencies = [
  "tokio",
  "toml",
  "urlencoding",
+ "zeroize",
 ]
 
 [[package]]
@@ -2540,6 +2535,7 @@ dependencies = [
  "dregg-dsl-tests",
  "dregg-intent",
  "dregg-lean-ffi",
+ "dregg-lightclient",
  "dregg-macaroon",
  "dregg-token",
  "dregg-trace",
@@ -3893,11 +3889,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "internal-tracing"
-version = "0.7.0"
-source = "git+https://github.com/o1-labs/proof-systems?rev=36a8b510#36a8b510cd34b9bd350e04989c87280f99e21e37"
-
-[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4047,39 +4038,6 @@ dependencies = [
  "log",
  "secret-service",
  "zeroize",
-]
-
-[[package]]
-name = "kimchi"
-version = "0.7.0"
-source = "git+https://github.com/o1-labs/proof-systems?rev=36a8b510#36a8b510cd34b9bd350e04989c87280f99e21e37"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-poly",
- "ark-serialize",
- "blake2",
- "groupmap",
- "hex",
- "internal-tracing",
- "itertools 0.12.1",
- "log",
- "mina-curves",
- "mina-poseidon",
- "num-bigint",
- "num-integer",
- "o1-utils",
- "poly-commitment",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "rayon",
- "rmp-serde",
- "serde",
- "serde_with",
- "sha2 0.10.9",
- "strum 0.27.2",
- "strum_macros 0.26.4",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4741,8 +4699,8 @@ dependencies = [
  "p3-util",
  "rand 0.10.1",
  "serde",
- "strum 0.28.0",
- "strum_macros 0.28.0",
+ "strum",
+ "strum_macros",
  "thiserror 2.0.18",
  "tracing",
  "unroll",
@@ -4781,7 +4739,7 @@ dependencies = [
  "p3-util",
  "rand 0.10.1",
  "serde",
- "strum 0.28.0",
+ "strum",
  "thiserror 2.0.18",
  "tracing",
  "unroll",
@@ -7094,28 +7052,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "strum"
-version = "0.27.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-
-[[package]]
-name = "strum"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-
-[[package]]
-name = "strum_macros"
-version = "0.26.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "rustversion",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "strum_macros"

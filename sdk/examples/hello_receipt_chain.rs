@@ -4,39 +4,48 @@
 //! primitive in isolation (the `two-ai-handoff` demo is the full production
 //! reference; this is the "what does a dregg receipt actually look like" demo).
 //!
-//! It shows the whole loop with no moving parts beyond the SDK:
+//! It shows the whole loop with no moving parts beyond the SDK — the one
+//! public turn shape, `Identity → .turn() → typed verbs → .sign() → .submit()`:
 //!   1. create an agent (a fresh Ed25519 identity + its cell in a local ledger),
-//!   2. submit ONE turn carrying a single `Effect::SetField`,
-//!   3. get back a `TurnReceipt`, printed as JSON — this is the exact shape an
-//!      external team should pin a dregg-compatible shim to,
+//!   2. build, sign and submit ONE turn carrying a single `write` (SetField),
+//!   3. get back a `Receipt` (deref's to the wire `TurnReceipt`), printed as
+//!      JSON — this is the exact shape an external team should pin a
+//!      dregg-compatible shim to,
 //!   4. read the agent's receipt chain (one entry, whose `receipt_hash` is the
 //!      tip and becomes the next turn's `previous_receipt_hash`).
 //!
 //! Run:
 //!   cargo run -p dregg-sdk --example hello_receipt_chain
 
-use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect};
+use dregg_sdk::{AgentCipherclerk, AgentRuntime};
 
 fn main() {
     // 1. Create an agent. `AgentRuntime` wraps the cipherclerk, a local in-memory
     //    ledger seeded with this agent's cell, and a `TurnExecutor`.
+    //    (With a named profile from `dregg id create`, this is
+    //    `AgentRuntime::from_active_profile("hello")` instead.)
     let cclerk = AgentCipherclerk::new();
     let runtime = AgentRuntime::new_simple(cclerk, "hello");
     println!("agent cell id: {}", runtime.cell_id());
 
-    // 2. Submit ONE turn with a single effect: set state slot 0.
+    // 2. Build, sign, and submit ONE turn: write state slot 0.
     //    A cell has 8 state slots (indices 0..=7), each a 32-byte field element.
-    //    Numeric values live in the low bytes (big-endian), so 42 -> last byte.
-    let mut value = [0u8; 32];
-    value[31] = 42;
+    //    `.sign()` binds the act to this identity's key (an unauthorized act is
+    //    inexpressible on this surface); `.submit()` executes it.
+    let signed = runtime
+        .turn()
+        .write_u64(0, 42)
+        .sign()
+        .expect("signing a staged turn with this runtime's own key");
 
-    let receipt = runtime
-        .execute(vec![Effect::SetField {
-            cell: runtime.cell_id(),
-            index: 0,
-            value,
-        }])
-        .expect("a SetField turn on the agent's own cell should commit");
+    // Before submitting, the clerk will faithfully explain what was signed
+    // (the anti-blind-signing reading).
+    println!("\n--- What am I about to authorize? ---");
+    println!("{}", signed.explain());
+
+    let receipt = signed
+        .submit()
+        .expect("a write turn on the agent's own cell should commit");
 
     // 3. The receipt. This struct (serialized here as JSON) is dregg's canonical
     //    proof-of-execution shape: turn/effects hashes, pre/post state roots, the

@@ -9,11 +9,12 @@
 mod common;
 
 use dregg_cell::{AuthRequired, Cell, Ledger, Permissions};
+// The credential-free turn body comes from the SDK's SEALED raw module
+// (`dregg_sdk::raw`): the encrypted-envelope tests need a minimal
+// no-credential action on an open-permission fixture cell.
 use dregg_sdk::CellId;
-use dregg_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, EncryptedTurnError, Turn,
-    TurnExecutor,
-};
+use dregg_sdk::raw::{self, CallForest, Turn};
+use dregg_turn::{ComputronCosts, EncryptedTurnError, TurnExecutor};
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal Turn for the given agent
@@ -34,18 +35,7 @@ fn open_permissions() -> Permissions {
 
 fn empty_turn(agent: CellId) -> Turn {
     let mut forest = CallForest::new();
-    let action = Action {
-        target: agent,
-        method: [0u8; 32],
-        args: vec![],
-        authorization: Authorization::Unchecked,
-        preconditions: Default::default(),
-        effects: vec![],
-        may_delegate: DelegationMode::None,
-        commitment_mode: Default::default(),
-        balance_change: None,
-        witness_blobs: vec![],
-    };
+    let action = raw::unsigned_action(agent, [0u8; 32], vec![]);
     forest.add_root(action);
     Turn {
         agent,

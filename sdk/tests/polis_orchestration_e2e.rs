@@ -16,7 +16,8 @@ use dregg_sdk::polis::{
     GovernanceCellPlan, WorkerMandate, activate_worker, revoke_worker, spawn_worker_mandate,
     tool_scope_commitment, worker_factory_descriptor, worker_spend,
 };
-use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect, SdkError, TurnReceipt};
+use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect, SdkError};
+use dregg_turn::TurnReceipt;
 use dregg_turn::TurnError;
 use starbridge_polis::STATE_SLOT;
 use starbridge_polis::mandate::{STATE_ACTIVE, STATE_REVOKED, TOOL_SCOPE_SLOT};

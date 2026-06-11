@@ -323,9 +323,9 @@ pub fn explain_turn(turn: &Turn) -> String {
 mod tests {
     use super::*;
     use dregg_cell::permissions::AuthRequired;
-    use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions};
+    use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier};
     use dregg_turn::action::{Event, RefusalReason};
-    use dregg_turn::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
+    use dregg_turn::{Action, Authorization, Effect};
 
     fn cid(n: u8) -> CellId {
         CellId([n; 32])
@@ -529,18 +529,9 @@ mod tests {
     }
 
     fn sample_action(effects: Vec<Effect>) -> Action {
-        Action {
-            target: cid(1),
-            method: [0u8; 32],
-            args: vec![],
-            authorization: Authorization::Unchecked,
-            preconditions: Preconditions::default(),
-            effects,
-            may_delegate: DelegationMode::None,
-            commitment_mode: CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-        }
+        // Sealed-raw scaffold: explain never signs or authorizes — the
+        // fixture only needs an action body to render.
+        crate::raw::unsigned_action(cid(1), [0u8; 32], effects)
     }
 
     /// TOTALITY: every effect in the corpus renders to a non-empty string and

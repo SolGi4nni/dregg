@@ -68,7 +68,29 @@ dregg node status
 ```
 
 `dregg doctor` health-checks the whole client surface; `dregg --help` lists
-the verbs (cell, turn, name, polis, voting, bounty, cap, proof, …).
+the verbs (id, cell, turn, name, polis, voting, bounty, cap, proof, …).
+
+Give yourself a named identity (a fresh Ed25519 key in
+`~/.dregg/profiles/<name>.json`, mode 0600 — the SDK picks the active one up
+automatically via `AgentRuntime::from_active_profile`):
+
+```sh
+dregg id create ember
+dregg id use ember
+dregg id list
+```
+
+```text
+=== Identity Profiles ===
++---------+-----------------------+
+| Name    | Public key            |
++=================================+
+| * ember | 72cf3c9bcc58...466e6b |
++---------+-----------------------+
+  Active: ember (persistent default)
+```
+
+`DREGG_PROFILE=<name>` overrides the persistent default per-shell.
 
 ## 3. Sign a real turn
 

@@ -6,6 +6,7 @@ pub mod demo;
 pub mod directory;
 pub mod doctor;
 pub mod federation;
+pub mod id;
 pub mod name;
 pub mod namespace;
 pub mod node;

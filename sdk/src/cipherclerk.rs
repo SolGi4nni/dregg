@@ -2749,19 +2749,7 @@ impl AgentCipherclerk {
         effects: Vec<Effect>,
         federation_id: &[u8; 32],
     ) -> dregg_turn::action::Action {
-        use dregg_turn::action::{Action, Authorization, DelegationMode};
-        let unsigned = Action {
-            target,
-            method: dregg_turn::action::symbol(method),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects,
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
-            witness_blobs: vec![],
-        };
+        let unsigned = crate::raw::unsigned_action_named(target, method, effects);
         self.sign_action(unsigned, federation_id)
     }
 
@@ -4579,18 +4567,15 @@ impl AgentCipherclerk {
         let nonce = self.receipt_chain.len() as u64;
 
         let mut forest = dregg_turn::forest::CallForest::new();
-        let action = dregg_turn::Action {
-            target: agent_cell,
-            method: dregg_turn::action::symbol("make_sovereign"),
-            args: Vec::new(),
-            authorization: dregg_turn::Authorization::Unchecked,
-            effects: vec![Effect::MakeSovereign { cell: agent_cell }],
-            preconditions: dregg_cell::Preconditions::default(),
-            may_delegate: dregg_turn::DelegationMode::None,
-            commitment_mode: dregg_turn::CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-        };
+        // Built UNAUTHORIZED via the sealed raw scaffold: the returned turn
+        // is a skeleton the CALLER signs before submission (see the doc
+        // above), and sovereign authority is ultimately the witness/proof
+        // attached on the sovereign execute paths — not a signature leg.
+        let action = crate::raw::unsigned_action_named(
+            agent_cell,
+            "make_sovereign",
+            vec![Effect::MakeSovereign { cell: agent_cell }],
+        );
         forest.add_root(action);
 
         let turn = Turn {
@@ -4729,18 +4714,10 @@ impl AgentCipherclerk {
         let nonce = self.receipt_chain.len() as u64;
 
         let mut forest = dregg_turn::forest::CallForest::new();
-        let action = dregg_turn::Action {
-            target: agent_cell,
-            method: dregg_turn::action::symbol("sovereign_execute"),
-            args: Vec::new(),
-            authorization: dregg_turn::Authorization::Unchecked,
-            effects,
-            preconditions: dregg_cell::Preconditions::default(),
-            may_delegate: dregg_turn::DelegationMode::None,
-            commitment_mode: dregg_turn::CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-        };
+        // Sealed-raw scaffold: a sovereign turn's authority is the attached
+        // sovereign WITNESS (verified against the cell's commitment), not a
+        // signature leg — there is deliberately no credential here.
+        let action = crate::raw::unsigned_action_named(agent_cell, "sovereign_execute", effects);
         forest.add_root(action);
 
         let mut turn = Turn {
@@ -5025,18 +5002,14 @@ impl AgentCipherclerk {
         let agent_cell = *cell_id;
         let nonce = self.receipt_chain.len() as u64;
         let mut forest = dregg_turn::forest::CallForest::new();
-        let action = dregg_turn::Action {
-            target: agent_cell,
-            method: dregg_turn::action::symbol("sovereign_execute_proven"),
-            args: Vec::new(),
-            authorization: dregg_turn::Authorization::Unchecked,
-            effects: effects.clone(),
-            preconditions: dregg_cell::Preconditions::default(),
-            may_delegate: dregg_turn::DelegationMode::None,
-            commitment_mode: dregg_turn::CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-        };
+        // Sealed-raw scaffold: a proof-carrying sovereign turn's authority
+        // is the attached STARK (the executor verifies it against the
+        // cell's commitment) — there is deliberately no signature leg.
+        let action = crate::raw::unsigned_action_named(
+            agent_cell,
+            "sovereign_execute_proven",
+            effects.clone(),
+        );
         forest.add_root(action);
 
         let mut turn = Turn {

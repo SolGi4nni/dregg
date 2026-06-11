@@ -24,6 +24,15 @@ bs58 = "0.5"
 dirs = "5"
 urlencoding = "2"
 shellexpand = "3"
+# `dregg id` profile store: key generation + the SDK-matching derivation
+# (blake3::derive_key("dregg/0", seed) → Ed25519). Kept dependency-light on
+# purpose — the CLI replicates the derivation instead of pulling the whole
+# workspace via dregg-sdk; the golden-vector test (mirrored in
+# sdk/src/profiles.rs) pins the two together.
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = { workspace = true }
+hex = "0.4"
+zeroize = { workspace = true }
 
 [lints]
 workspace = true

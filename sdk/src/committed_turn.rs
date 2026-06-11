@@ -15,7 +15,7 @@ use dregg_cell::CellId;
 use dregg_cell::note::{NoteCommitment, Nullifier};
 use dregg_cell::{BulletproofRangeProof, ValueCommitment, prove_conservation_with_range};
 use dregg_turn::Turn;
-use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
+use dregg_turn::action::Effect;
 use dregg_turn::forest::CallForest;
 
 use crate::error::SdkError;
@@ -226,18 +226,12 @@ impl CommittedTurnBuilder {
         let mut all_effects: Vec<Effect> = spend_effects;
         all_effects.extend(create_effects.into_iter().map(|(e, _rp)| e));
 
-        let action = Action {
-            target: agent_cell,
-            method: symbol("committed_transfer"),
-            args: Vec::new(),
-            authorization: Authorization::Unchecked,
-            preconditions: Default::default(),
-            effects: all_effects,
-            may_delegate: DelegationMode::None,
-            commitment_mode: CommitmentMode::Full,
-            balance_change: None,
-            witness_blobs: vec![],
-        };
+        // Sealed-raw scaffold: a committed transfer's authority is the note
+        // SPEND PROOFS (nullifier + ownership ZK, verified per-effect by the
+        // executor) — the privacy path deliberately carries no signature leg
+        // that would link the spender. CommitmentMode::Full is the raw
+        // scaffold's default.
+        let action = crate::raw::unsigned_action_named(agent_cell, "committed_transfer", all_effects);
 
         let mut call_forest = CallForest::new();
         call_forest.add_root(action);

@@ -81,7 +81,7 @@ pub struct GovernanceCellPlan {
 /// the per-family open turn). `endowment` is what remains in the cell after
 /// the adopt turn burns its fee: a council treasury, a worker's budget
 /// slice, or 0.
-fn bootstrap_plan(
+pub(crate) fn bootstrap_plan(
     descriptor: FactoryDescriptor,
     owner_pubkey: [u8; 32],
     token_id: [u8; 32],

@@ -114,7 +114,7 @@ fn deploy_and_open(runtime: &mut AgentRuntime, plan: &SettlementCellPlan) {
 }
 
 /// Assert an executor-level cell-program rejection (NOT an SDK-side error).
-fn assert_program_violation(result: Result<dregg_sdk::TurnReceipt, SdkError>, what: &str) {
+fn assert_program_violation(result: Result<dregg_turn::TurnReceipt, SdkError>, what: &str) {
     match result {
         Err(SdkError::Turn(TurnError::ProgramViolation { .. })) => {}
         Err(other) => panic!("{what}: expected ProgramViolation, got {other:?}"),
@@ -127,7 +127,7 @@ fn assert_program_violation(result: Result<dregg_sdk::TurnReceipt, SdkError>, wh
 /// can fail on the already-drained balance BEFORE the program gate runs —
 /// either gate stops the double spend; the program-specific tooth is proven
 /// separately on a balance-free transition attempt.
-fn assert_rejected(result: Result<dregg_sdk::TurnReceipt, SdkError>, what: &str) {
+fn assert_rejected(result: Result<dregg_turn::TurnReceipt, SdkError>, what: &str) {
     assert!(
         result.is_err(),
         "{what}: expected the EXECUTOR to reject, but the turn committed"

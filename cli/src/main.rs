@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use commands::{
-    bounty, cap, cell, cipherclerk, demo, directory, doctor, federation, name, namespace, node,
+    bounty, cap, cell, cipherclerk, demo, directory, doctor, federation, id, name, namespace, node,
     polis, proof, route, storage, turn, voting,
 };
 
@@ -68,6 +68,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Named identity profiles (create, list, use).
+    ///
+    /// An identity is a name you chose, not a hex key you pasted. Profiles
+    /// live in `~/.dregg/profiles/` (key material, mode 0600) and the SDK
+    /// picks the active one up automatically
+    /// (`AgentCipherclerk::from_active_profile`). `DREGG_PROFILE` overrides
+    /// the persistent default per-shell.
+    Id {
+        #[command(subcommand)]
+        command: id::IdCommand,
+    },
+
     /// Cell inspection and manipulation.
     Cell {
         #[command(subcommand)]
@@ -255,6 +267,7 @@ async fn main() {
     }
 
     let result = match cli.command {
+        Commands::Id { command } => id::run(command, &cfg, &ctx).await,
         Commands::Cell { command } => cell::run(command, &cfg, &ctx).await,
         Commands::Turn { command } => turn::run(command, &cfg, &ctx).await,
         Commands::Name { command } => name::run(command, &cfg, &ctx).await,
