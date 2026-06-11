@@ -53,9 +53,34 @@ key `~/.ssh/negneg-cq.pem`, token in `/etc/dregg/node.env` there).
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## ⚑ EPOCH RESUME (2026-06-11 afternoon, for the 5:10pm full-bore session)
+## ⚑ EPOCH STATUS (2026-06-11 evening — FOUR PIECES LANDED, flag-day deferred)
 
-THE EPOCH (docs/EPOCH-DESIGN.md) ran as workflow wf_fe4bbe0a-596. Foundations
+THE EPOCH (docs/EPOCH-DESIGN.md) — boundary/interior proving. LANDED + pushed:
+- `6f23f5467` **foundations** (Lean): Blum MemoryChecking (memcheck_sound),
+  DescriptorIR2 (the five tables), EffectVmEmitV2 re-anchor (graduateV1
+  sound/complete/faithful + Attenuate = cap-crown phase-B circuit leg), MMR
+  receipt index (positional non-omission). Anchor green 3869 jobs.
+- `b3ab169c1` **interpreter**: circuit/src/descriptor_ir2.rs — the IR v2
+  multi-table batch-STARK assembly, recursion-gated + ADDITIVE (live v1 path
+  untouched). cargo check -p dregg-circuit green.
+- `ac01f9b7b` **signed wells**: i64 balance value-model + genesis-as-issuer-
+  moves + fees-as-moves + the full consumer sweep (sdk/node/wasm/tests/…, all
+  checked conversions, no silent well-wraps). guarantee B now holds over the
+  DEPLOYED chain; AssuranceCase deployment-correspondence legs CLOSED. cargo
+  check green across all in-scope crates.
+
+STILL DEFERRED (the flag-day — would orphan the live v1 path until the relayout
+lands; do as ONE VK epoch): registers 8→16 + FactoryDescriptor.fields · RESERVED
+removal + 186→159 compaction · descriptor IR-v2 REGEN (EmitAllJson still emits
+v1; the 26 v2 descriptors live in EffectVmEmitV2.v2Registry) + VK bump · PI v3
+(committed-height column + rateBound/challengeWindow tags) · heap_root register.
+The IR-v2 interpreter is ready and waiting for this. THEN the persvati gauntlet.
+KNOWN: dregg-tests (#167) has PRE-EXISTING retired-verb breakage (blocks a bare
+`cargo check --workspace`); unrelated to the epoch.
+
+## ⚑ (historical) EPOCH RESUME (2026-06-11 afternoon)
+
+THE EPOCH ran as workflow wf_fe4bbe0a-596. Foundations
 phase COMPLETE + COMMITTED; interpreter + regen hit the session limit.
 
 - **COMMITTED + pushed** (head `e09789807`): the Lean foundations
