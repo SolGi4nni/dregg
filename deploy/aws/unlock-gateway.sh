@@ -24,7 +24,7 @@ write_token_env() {
   mv "$tmp" "$file"
 }
 
-for _ in $(seq 1 20); do
+for _ in $(seq 1 90); do
   response="$(jq -n --arg passphrase "$DEVNET_PASSWORD" '{passphrase:$passphrase}' \
     | curl -fsS -X POST \
       -H "content-type: application/json" \
