@@ -52,38 +52,58 @@ These are theorems in the tree, not aspirations:
    are enacted; dregg's are attested. This is the operational content of
    "constructive knowledge = an exhibitable witness."
 
-## STATUS (2026-06-11): machinery + the live-gate weld landed; the INTERESTING test is still open
+## STATUS (2026-06-11): both deciding questions ANSWERED — the bridge is load-bearing on the linear face
 
-`Dregg2/Calculus/Biorthogonality.lean` landed the generic orthogonality core
-(the Galois duality, `S^⊥⊥⊥ = S^⊥`, orthogonals-are-behaviours) and one real
-weld worth keeping: **`caveatsAdmit_is_orthogonality` (`Iff.rfl`)** — the
-deployed fail-closed gate IS orthogonality-set membership, and every committed
-reduction lands in a behaviour.
+`Dregg2/Calculus/Biorthogonality.lean` holds the generic orthogonality core
+(the Galois duality, `S^⊥⊥⊥ = S^⊥`, orthogonals-are-behaviours) and the live
+weld **`caveatsAdmit_is_orthogonality` (`Iff.rfl`)** — the deployed fail-closed
+gate IS orthogonality-set membership, and every committed reduction lands in a
+behaviour. The literal/order closure there is the *trivial* (rectangular) case:
+it tested the machinery, not the thesis.
 
-But the family it proved closed — the literal/order atoms (senderIs/balanceGe/
-fieldEquals/…) — is the **trivial** case, and we should not oversell it: those
-atoms are old-state-blind point-tests, so a guard is structurally a *rectangle*
-(a product of half-spaces), and rectangles are biorthogonally closed under
-almost any orthogonality relation. The closure "doing work" there is only it
-capturing old-twiddled variants — an artifact of the tests being weak, not of
-biorthogonality being the right lens. **This tested the machinery, not the
-thesis.** The two questions that decide whether the bridge is load-bearing or
-decorative are both still open:
+`Dregg2/Calculus/BiorthTensor.lean` settles the two deciding questions:
 
-1. **The tensor / linearity (the prize).** Is conservation (Σδ=0 over PAIRED
-   writes — a relational resource constraint) a behaviour under the tensor
-   `(A^⊥ ∪ B^⊥)^⊥`? If yes, the substructural/linear heart is *recovered from
-   orthogonality* rather than assumed. If no, biorthogonality misses the
-   resource layer. THIS is the real test.
-2. **Does the coordination grading EMERGE?** The point of "derive, not
-   assemble" is whether `modality_price` (the I-confluence tier) is a property
-   of the behaviour structure (e.g. monotone guard ⟺ behaviour closed under
-   directed union) versus a grading stapled onto `^⊥`. If it doesn't emerge,
-   the tier is still a grab-bag wearing a Girard hat.
+1. **The tensor / linearity: CONDITIONAL YES, boundary exact.** The tensor
+   lives over the COMPOSITE universe (`A ⊗ B = (A ⊙ B)^⊥⊥`, stella §69.35–36;
+   the same-universe `(A^⊥ ∪ B^⊥)^⊥` is the additive `&` — `orth_union_is_with`).
+   Conservation (Σδ=0 over the `move` verb's paired writes) is **NOT** a
+   behaviour under ANY per-component (rectangular) test family, over any test
+   type — `conservation_not_behaviour_rectangular`, via the one-line generic
+   mix law `rect_mix_in_biorth`; instantiated at the live paired-`SlotCaveat`
+   gate. It **IS** a behaviour the moment the deployed pair observable (the
+   `valTotal` Σδ comparator of `move_conserves`) is fielded as a test —
+   `conservation_is_behaviour` — and is then EXACTLY the closure of the
+   matched-delta tensors, `Cons = (⋃ₖ Δₖ ⊙ Δ₋ₖ)^⊥⊥`
+   (`conservation_eq_closure_of_matched_tensors`). Headline:
+   `linearity_recovered_from_orthogonality` — linearity is recovered from
+   orthogonality IFF the test side may CORRELATE the pair. The resource law
+   lies outside every per-turn testing fragment (the fact/fiction line of
+   `docs/EPISTEMIC-DATALOG.md`, made formal) and exactly at the deployed
+   composite observable.
+2. **The coordination grading: PARTIAL — and the conjectured form REFUTED.**
+   The tier IS a structural property of the behaviour: coordination-free ⟺ the
+   admission set is closed under PAIRWISE joins (`free_iff_joinClosed`,
+   definitionally `IConfluent`). It EMERGES soundly through `^⊥`: join-stable
+   tests yield join-closed orthogonals (`coOrth_joinClosed`), so a guard
+   presented as `X^⊥` over join-stable tests is proved free
+   (`behaviour_grade_sound`; the monotone pole re-derived purely from the
+   presentation, `markGuard_grade_emerges`). The grade is NOT complete
+   (`grading_incomplete`): it is a sound type discipline on `^⊥` (upper bound
+   on cost), not a semantic readout. And the CALM/Scott-flavored form —
+   "free ⟺ closed under directed union" — is FALSE on the deployed lattices:
+   every nonempty directed set with a LUB in `Budget` attains it
+   (`budget_directed_lub_attained`), so directed-closure is vacuous
+   (`directedLubClosed_vacuous`) while the bounded `budgetGuard` forces
+   ordering (`directed_conjecture_refuted`). Coordination prices DIVERGENT
+   (incomparable) replicas, not growing views.
 
-The interesting families to push closure on are therefore NOT the literals but
-the relational ones: conservation (tensor), the temporal/until-since (behaviours
-over traces), and the epistemic K/E/D/C (orthogonality over who-can-refute).
+**The honest bottom line:** the bridge is load-bearing for the linear face —
+conservation is forced by the orthogonality once (and only once) the testing
+language is composite, and the boundary theorem is two-sided. The coordination
+grading is half-derived: sound through `^⊥`, semantically completed by the
+join. Remaining relational families to push closure on: the temporal
+until-since (behaviours over traces) and the epistemic K/E/D/C (orthogonality
+over who-can-refute).
 
 ## What is NOT proved — the exact gap (pre-S1/S2; retained for the conjecture statement)
 
