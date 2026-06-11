@@ -1,0 +1,37 @@
+[package]
+name = "dregg-sdk-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Python (pyo3) binding for the dregg SDK's two-noun surface: Identity → turn → sign → submit → Receipt"
+
+[lib]
+# The Python extension module is `import dregg`.
+name = "dregg"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Authorization-first SDK surface only. `default-features = false` drops the
+# `network`/`captp`/`federation-client` features (tokio, quinn, dregg-wire,
+# dregg-captp, reqwest) — the Python binding does its own blocking HTTP via
+# ureq. The always-on modules we ride: cipherclerk, profiles, turns/raw,
+# receipt, program, explain. The `lean-producer` feature (the Lean FFI
+# archive link) is default-OFF in dregg-sdk and stays off here.
+dregg-sdk = { path = "../sdk", default-features = false }
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
+
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
+ureq = { version = "2.12", features = ["json"] }
+postcard = { version = "1", features = ["use-std"] }
+serde_json = { workspace = true }
+hex = "0.4"
+blake3 = "1"
+
+[lints]
+workspace = true

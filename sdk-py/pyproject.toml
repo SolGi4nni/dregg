@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "dregg"
+description = "Python SDK for the dregg federation: Identity → turn → sign → submit → Receipt"
+requires-python = ">=3.10"
+license = { text = "AGPL-3.0-or-later" }
+dynamic = ["version"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.urls]
+Homepage = "https://dregg.dev"
+Repository = "https://github.com/emberian/dregg"
+
+[tool.maturin]
+# The pyo3 [lib] name is already `dregg`; the wheel ships that single
+# extension module.
+module-name = "dregg"
+bindings = "pyo3"
+# This crate lives inside the dregg workspace; maturin must resolve the
+# workspace root for path deps.
+manifest-path = "Cargo.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
