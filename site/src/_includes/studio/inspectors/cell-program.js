@@ -68,7 +68,14 @@ function chipColors(kind) {
     // Auth / sender / capability
     case 'SenderAuthorized':
     case 'CapabilityUniqueness':
+    case 'SenderIs':
+    case 'SenderInSlot':
       return 'background:color-mix(in srgb,#c86060 20%,var(--bg-raised));color:#e08888';
+
+    // Own-balance bounds (the sealed CellState::balance, not a slot)
+    case 'BalanceGte':
+    case 'BalanceLte':
+      return 'background:color-mix(in srgb,#3f9c6b 22%,var(--bg-raised));color:#6fcf97';
 
     // Rate limiting
     case 'RateLimit':
@@ -91,6 +98,7 @@ function chipColors(kind) {
 
     // Custom / unknown
     // value-set / structure / arithmetic / DAG atoms (policy-combinator core)
+    case 'FieldLteField':
     case 'FieldLteOther':
     case 'MemberOf':
     case 'PrefixOf':
@@ -167,6 +175,11 @@ function constraintSummary(c) {
     case 'TemporalPredicate': return `witness[${c.witness_index}] dsl=${shortHex(c.dsl_hash,8)}`;
     case 'Witnessed':      return `${c.predicate_kind} commitment=${shortHex(c.commitment,8)}`;
     case 'Renounced':      return `${c.set_kind} commitment=${shortHex(c.commitment,8)}`;
+    case 'SenderIs':       return `sender = ${shortHex(c.pk, 10)}`;
+    case 'SenderInSlot':   return `sender = slot[${c.index}]`;
+    case 'BalanceGte':     return `own balance ≥ ${c.min}`;
+    case 'BalanceLte':     return `own balance ≤ ${c.max}`;
+    case 'FieldLteField':  return `slot[${c.left_index}] ≤ slot[${c.right_index}]`;
     case 'FieldLteOther': {
       const d = Number(c.delta);
       const tail = d === 0 ? '' : d > 0 ? ` + ${d}` : ` − ${Math.abs(d)}`;
@@ -217,18 +230,11 @@ class DreggStateConstraint extends HTMLElement {
       return;
     }
 
-    // Default: one row with chip + summary, expandable for AnyOf
+    // Default: one row with chip + summary; AnyOf / AllOf expand their
+    // SimpleStateConstraint variants inline (rendered manually — custom
+    // elements with JS-property state don't survive outerHTML).
     let extra = '';
-    if (c.kind === 'AnyOf' && Array.isArray(c.variants) && c.variants.length) {
-      extra = `<ul class="dregg-sc__anyof">` +
-        c.variants.map(v => {
-          const el = document.createElement('dregg-state-constraint');
-          el.setAttribute('mode', 'compact');
-          el.constraint = v;
-          return `<li>${el.outerHTML}</li>`;
-        }).join('') +
-        `</ul>`;
-      // Can't use outerHTML for custom elements with JS state, so we render manually:
+    if ((c.kind === 'AnyOf' || c.kind === 'AllOf') && Array.isArray(c.variants) && c.variants.length) {
       extra = `<ul class="dregg-sc__anyof">` +
         c.variants.map(v => {
           const ch = chipColors(v.kind);

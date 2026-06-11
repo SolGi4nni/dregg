@@ -142,6 +142,21 @@
             <div class="devnet-brief__meta" id="devnet-node-meta">connecting…</div>
           </div>
         </div>
+        <!-- Live receipt stream: the same SSE-with-poll-fallback link the
+             Starbridge shell uses (shell/node-link.js). The mode badge states
+             which transport is actually feeding the list — never a fabricated
+             "live". Every row cross-links into the receipt / cell inspectors. -->
+        <div class="ex-receipt-stream" id="receipt-stream">
+          <div class="ex-receipt-stream__head">
+            <h3>Receipt stream</h3>
+            <span class="ex-receipt-stream__mode" id="receipt-stream-mode" data-mode="off">off</span>
+          </div>
+          <ul class="ex-receipt-stream__list" id="receipt-stream-list" aria-live="polite"></ul>
+          <p class="ex-receipt-stream__note" id="receipt-stream-note">
+            Committed turns as the node announces them (<code>/api/events/stream</code> SSE,
+            honest poll fallback). Each entry links to its receipt — receipts carry the proof view.
+          </p>
+        </div>
         <div class="overview-sections" id="overview-inspectors"></div>
       </section>
 

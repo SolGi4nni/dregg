@@ -451,7 +451,7 @@ export function initMarketplace(wasm) {
       centerLabel: 'Resolution',
       center: `Timeout-based dispute:\n1. Deadline passed\n2. No valid result commitment\n3. Automatic refund triggered\n4. Provider reputation penalized\n\nNo human arbitration needed`,
       rightLabel: 'Guarantees',
-      right: `The escrow contract has clear rules:\n\n- Deliver before deadline -> get paid\n- Miss deadline -> funds return to client\n\nThis is enforced by the consensus protocol.\nNo party can steal funds.\nNo party can block refunds.\n\nReputation scores are on-chain and permanent.`,
+      right: `The escrow cell's program has clear rules:\n\n- Deliver before deadline -> get paid\n- Miss deadline -> funds return to client\n\nEscrow is a factory pattern, not a kernel verb:\nthe cell's own program (temporal gate + balance\nbound) enforces this on every turn.\nNo party can steal funds.\nNo party can block refunds.\n\nReputation scores are on-chain and permanent.`,
       footer: `Dispute resolved. Provider ${winner.provider} reputation: ${mktState.reputation[winner.provider - 1]}`,
     });
 

@@ -174,6 +174,17 @@ async function run() {
   check('offline → cell-list shows honest empty state',
     offlineEmpty.includes('no cells'), offlineEmpty.slice(0, 60));
 
+  // Receipt stream chrome (shell node-link): present, honestly labeled when
+  // there is no stream, and never fabricating receipt rows.
+  const stream = await page.evaluate(() => ({
+    mode: document.getElementById('receipt-stream-mode')?.dataset.mode || null,
+    label: document.getElementById('receipt-stream-mode')?.textContent || '',
+    rows: document.querySelectorAll('#receipt-stream-list .ex-receipt-stream__row').length,
+    empty: (document.querySelector('#receipt-stream-list .ex-receipt-stream__empty')?.textContent || '').length > 0,
+  }));
+  check('offline → receipt stream mode badge says no stream', stream.mode === 'off', `${stream.mode} (${stream.label})`);
+  check('offline → no fabricated receipt-stream rows', stream.rows === 0 && stream.empty, `${stream.rows} rows`);
+
   check('no uncaught page errors', pageErrors.length === 0, pageErrors.join(' | '));
 
   await browser.close();

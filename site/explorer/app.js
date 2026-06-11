@@ -15,6 +15,7 @@
  */
 
 import { createRemoteRuntime } from '../_includes/studio/runtime-remote.js';
+import { createNodeLink } from '../_includes/studio/shell/node-link.js';
 import { parseRef, isRef } from '../_includes/studio/uri.js';
 import { classifyConstraints, constraintsOf } from '../_includes/studio/polis-decode.js';
 // Side-effect import: registers every <dregg-*> inspector custom element and
@@ -114,6 +115,7 @@ let connected = false;
 let livenessTimer = null;
 let sampleMode = false;    // OPT-IN labeled sample snapshot (devnet unreachable)
 let everConnected = false;
+let nodeLink = null;       // shell node-link: SSE receipt stream + poll fallback
 
 function latestHeight() {
   try {
@@ -197,7 +199,9 @@ async function enterSampleMode() {
   const { createSampleRuntime } = await import('./sample-data.js');
   if (runtime && runtime.destroy) { try { runtime.destroy(); } catch {} }
   stopLiveness();
+  stopReceiptStream();
   sampleMode = true;
+  paintReceiptStream(null); // honest "no live stream" label
   runtime = createSampleRuntime({ signals: api });
   if (appEl) appEl.runtime = runtime;
   setConnection('sample');
@@ -216,6 +220,7 @@ async function exitSampleMode() {
   setConnection('connecting');
   await buildRuntime();
   startLiveness();
+  startReceiptStream();
   document.querySelectorAll('.ex-page .ex-detail-slot').forEach((d) => d.replaceChildren());
   remountAll();
   navigateTo(currentPage);
@@ -307,6 +312,74 @@ function startLiveness() {
 }
 function stopLiveness() {
   if (livenessTimer) { clearInterval(livenessTimer); livenessTimer = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Receipt stream — the SAME node link the Starbridge shell uses
+// (_includes/studio/shell/node-link.js): SSE on /api/events/stream with
+// Last-Event-ID resume, honest poll fallback on /api/events, and a surfaced
+// mode so the badge never claims a fabricated "live". Rows cross-link into
+// the platform inspectors via the existing data-dregg-uri click delegation.
+// ---------------------------------------------------------------------------
+const STREAM_MODE_LABEL = {
+  sse: 'live · SSE',
+  poll: 'polling /api/events',
+  off: 'no stream',
+  sample: 'sample mode — no live stream',
+};
+
+function paintReceiptStream(state) {
+  const modeEl = document.getElementById('receipt-stream-mode');
+  const listEl = document.getElementById('receipt-stream-list');
+  if (!modeEl || !listEl) return;
+  const mode = sampleMode ? 'sample' : (state?.streamMode || 'off');
+  modeEl.textContent = STREAM_MODE_LABEL[mode] || mode;
+  modeEl.dataset.mode = mode;
+
+  const events = sampleMode ? [] : (state?.events || []);
+  listEl.replaceChildren();
+  if (!events.length) {
+    const li = document.createElement('li');
+    li.className = 'ex-receipt-stream__empty';
+    li.textContent = sampleMode
+      ? 'Sample mode is a static snapshot — there is no live stream to show.'
+      : (mode === 'off'
+        ? 'No event stream from this node (endpoint unreachable). The list fills as soon as the SSE stream or the poll fallback connects.'
+        : 'Connected — waiting for the first committed turn.');
+    listEl.appendChild(li);
+    return;
+  }
+  for (const ev of events.slice(0, 12)) {
+    const li = document.createElement('li');
+    li.className = 'ex-receipt-stream__row';
+    const receiptUri = `dregg://receipt/${ev.receiptHash || ev.turnHash}`;
+    const cellLinks = ev.cells.slice(0, 3).map((c) =>
+      `<a data-dregg-uri="dregg://cell/${escapeHtml(c)}" href="?at=${encodeURIComponent(`dregg://cell/${c}`)}"><code>${escapeHtml(String(c).slice(0, 10))}…</code></a>`
+    ).join(' ');
+    li.innerHTML =
+      `<span class="ex-receipt-stream__height">#${escapeHtml(String(ev.height || '?'))}</span>` +
+      `<a class="ex-receipt-stream__hash" data-dregg-uri="${escapeHtml(receiptUri)}" ` +
+        `href="?at=${encodeURIComponent(receiptUri)}" title="${escapeHtml(ev.turnHash)}">` +
+        `<code>${escapeHtml(String(ev.turnHash).slice(0, 16))}…</code></a>` +
+      `<span class="ex-receipt-stream__kinds">${escapeHtml((ev.kinds || []).slice(0, 4).join(' · ') || 'turn')}</span>` +
+      `<span class="ex-receipt-stream__cells">${cellLinks}</span>` +
+      `<span class="ex-receipt-stream__proof" data-proved="${ev.hasProof ? 'yes' : 'no'}">` +
+        `${ev.hasProof ? 'proof ✓' : 'no proof yet'}</span>`;
+    listEl.appendChild(li);
+  }
+}
+
+function stopReceiptStream() {
+  if (nodeLink) { try { nodeLink.stop(); } catch {} nodeLink = null; }
+}
+
+function startReceiptStream() {
+  stopReceiptStream();
+  if (sampleMode) { paintReceiptStream(null); return; }
+  nodeLink = createNodeLink(getNodeUrl());
+  nodeLink.onChange(paintReceiptStream);
+  nodeLink.start();
+  paintReceiptStream(nodeLink.state);
 }
 
 // ---------------------------------------------------------------------------
@@ -771,6 +844,7 @@ function wireSettings() {
     setConnection('connecting');
     await buildRuntime();
     startLiveness();
+    startReceiptStream();
     remountAll();
     navigateTo(currentPage);
   });
@@ -792,6 +866,7 @@ export async function boot() {
   await buildRuntime();
   wireChrome();
   startLiveness();
+  startReceiptStream();
 
   // Deep link: ?at=dregg://... or /explorer/<kind>/<id> path.
   const params = new URLSearchParams(window.location.search);

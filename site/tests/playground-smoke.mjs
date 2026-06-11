@@ -117,6 +117,24 @@ async function run() {
   });
   check('datalog → <dregg-predicate> editor renders', predicateOk);
 
+  // Programmable queues: the admission policy is the REAL constraint grammar,
+  // rendered by the platform <dregg-cell-program> inspector — incl. the
+  // post-uplift atoms (SenderIs / BalanceGte / PreimageGate / FieldLteOther).
+  await page.evaluate(() => { location.hash = '#programmable-queues'; });
+  await page.waitForSelector('#section-programmable-queues dregg-cell-program', { timeout: 15000 });
+  await page.waitForFunction(() => {
+    const el = document.querySelector('#section-programmable-queues dregg-cell-program');
+    return el && /SenderIs/.test(el.textContent);
+  }, { timeout: 15000 }).catch(() => {});
+  const queueProgram = await page.evaluate(() => {
+    const el = document.querySelector('#section-programmable-queues dregg-cell-program');
+    return el ? el.textContent : '';
+  });
+  check('programmable-queues → real grammar via <dregg-cell-program>',
+    /SenderIs/.test(queueProgram) && /BalanceGte/.test(queueProgram) &&
+    /PreimageGate/.test(queueProgram) && /FieldLteOther/.test(queueProgram),
+    queueProgram.replace(/\s+/g, ' ').slice(0, 100));
+
   // Proofs: <dregg-proof> bound to the seeded turn, with a trust-tier badge.
   await page.evaluate(() => { location.hash = '#proofs'; });
   await page.waitForSelector('#section-proofs dregg-proof', { timeout: 10000 });

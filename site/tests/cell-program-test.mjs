@@ -173,6 +173,14 @@ async function run() {
       },
       { kind: 'Not',                inner: { kind: 'Monotonic', index: 5 } },
       { kind: 'Custom',             ir_hash: 'aabb000000000000000000000000000000000000000000000000000000000000', descriptor_debug: 'custom_constraint_v1' },
+      // Sender-binding + own-balance atoms (the append-only grammar uplift)
+      // and the cross-slot post-state bound — view shapes per
+      // cell/src/program.rs StateConstraintView.
+      { kind: 'SenderIs',           pk: 'ab12000000000000000000000000000000000000000000000000000000000000' },
+      { kind: 'SenderInSlot',       index: 1 },
+      { kind: 'BalanceGte',         min: 5 },
+      { kind: 'BalanceLte',         max: 0 },
+      { kind: 'FieldLteField',      left_index: 0, right_index: 1 },
     ],
   };
 
@@ -186,7 +194,7 @@ async function run() {
 
   await page.waitForFunction(() => {
     const el = document.getElementById('test-cp-all-variants');
-    return el && el.querySelectorAll('dregg-state-constraint').length >= 38;
+    return el && el.querySelectorAll('dregg-state-constraint').length >= 43;
   }, { timeout: 5000 });
 
   const allVariantChips = await page.$$eval('#test-cp-all-variants .dregg-sc__chip', chips =>
@@ -205,6 +213,7 @@ async function run() {
     'FieldLteOther', 'MemberOf', 'PrefixOf', 'InRangeTwoSided', 'DeltaBounded',
     'AffineLe', 'AffineEq', 'Reachable', 'AllOf', 'Not',
     'Custom',
+    'SenderIs', 'SenderInSlot', 'BalanceGte', 'BalanceLte', 'FieldLteField',
   ];
 
   const missing = expectedVariants.filter(v => !allVariantChips.includes(v));
@@ -224,6 +233,36 @@ async function run() {
     throw new Error('TEST FAILED: AffineLe summary should render the threshold terms (2·slot[2] … ≤ 0)');
   }
   console.log('[test 4b] PASS: AffineLe renders its coefficients + bound.');
+
+  // The sender-binding + own-balance atoms render their semantic payloads in
+  // human terms (not just chips): sender = pk / sender = slot[i] / own balance.
+  const atomSummaries = await page.$eval('#test-cp-all-variants', el => {
+    const rows = [...el.querySelectorAll('dregg-state-constraint')];
+    const find = (kind) => rows.find(r => r.querySelector('.dregg-sc__chip')?.textContent.trim() === kind)?.textContent || '';
+    return {
+      senderIs: find('SenderIs'),
+      senderInSlot: find('SenderInSlot'),
+      balanceGte: find('BalanceGte'),
+      balanceLte: find('BalanceLte'),
+      fieldLteField: find('FieldLteField'),
+    };
+  });
+  console.log('[test 4c] uplift-atom rows:', JSON.stringify(atomSummaries));
+  if (!atomSummaries.senderIs.includes('sender = ab12')) throw new Error('TEST FAILED: SenderIs should render "sender = <pk>"');
+  if (!atomSummaries.senderInSlot.includes('sender = slot[1]')) throw new Error('TEST FAILED: SenderInSlot should render "sender = slot[1]"');
+  if (!atomSummaries.balanceGte.includes('own balance ≥ 5')) throw new Error('TEST FAILED: BalanceGte should render "own balance ≥ 5"');
+  if (!atomSummaries.balanceLte.includes('own balance ≤ 0')) throw new Error('TEST FAILED: BalanceLte should render "own balance ≤ 0"');
+  if (!atomSummaries.fieldLteField.includes('slot[0] ≤ slot[1]')) throw new Error('TEST FAILED: FieldLteField should render the cross-slot bound');
+  console.log('[test 4c] PASS: SenderIs / SenderInSlot / BalanceGte / BalanceLte / FieldLteField render in human terms.');
+
+  // AllOf expands its variants inline (same affordance AnyOf has).
+  const allOfNested = await page.$eval('#test-cp-all-variants', el => {
+    const rows = [...el.querySelectorAll('dregg-state-constraint')];
+    const row = rows.find(r => r.querySelector('.dregg-sc__chip')?.textContent.trim() === 'AllOf');
+    return row ? row.querySelectorAll('.dregg-sc__anyof li').length : -1;
+  });
+  if (allOfNested < 2) throw new Error(`TEST FAILED: AllOf should expand its 2 variants inline (got ${allOfNested})`);
+  console.log('[test 4d] PASS: AllOf expands its variants inline.');
 
   // ─── Test 5: Cases program ──────────────────────────────────────────────────
   const casesProgram = {

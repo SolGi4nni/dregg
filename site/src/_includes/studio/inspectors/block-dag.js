@@ -553,6 +553,9 @@ class DreggBlockDag extends InspectorBase {
         this.dispatchEvent(new CustomEvent('dregg:navigate', {
           bubbles: true,
           composed: true,
+          // cancelable matches InspectorBase: an in-page handler can
+          // preventDefault() to stop the image-shell cross-surface router.
+          cancelable: true,
           detail: { uri: g.dataset.uri },
         }));
       });

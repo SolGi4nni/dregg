@@ -36,18 +36,34 @@ async function run() {
     if (msg.type() === 'error') errors.push(`[console.error] ${msg.text()}`);
   });
 
-  console.log('[test] Navigating to /studio ...');
-  await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
+  console.log('[test] Navigating to /playground/ ...');
+  await page.goto(`${BASE}/playground/`, { waitUntil: 'domcontentloaded' });
 
   // Wait for Preact/signals + dreggUi ready
   await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
   console.log('[test] dreggUi ready.');
 
-  // Wait for wasm runtime attached to <dregg-app#app>
+  // The old /studio sim page became the IDE (it no longer mounts a
+  // <dregg-app id="app"> wasm runtime); the playground hosts the seeded
+  // in-memory wasm runtime (studio-embed). Wait for it, then anchor a
+  // dedicated <dregg-app id="app"> on the same runtime for the mounts below.
   await page.waitForFunction(() => {
-    const app = document.getElementById('app');
-    return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
-  }, { timeout: 20000 });
+    const apps = [...document.querySelectorAll('dregg-app')];
+    return apps.some(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+  }, { timeout: 30000 });
+  await page.evaluate(async () => {
+    const src = [...document.querySelectorAll('dregg-app')]
+      .find(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+    // Fresh runtime on the same wasm: the playground's shared runtime is
+    // already seeded (its faucet is mostly spent); tests want full genesis.
+    const mod = await import('/_includes/studio/runtime-in-memory.js');
+    const fresh = await mod.createInMemoryRuntime({ wasm: src.runtime._wasm, signals: window.dreggUi });
+    const anchor = document.createElement('dregg-app');
+    anchor.setAttribute('id', 'app');
+    document.body.appendChild(anchor);
+    anchor.runtime = fresh;
+  });
+  console.log('[test] seeded runtime anchored on <dregg-app#app>.');
   console.log('[test] wasm runtime attached.');
 
   // Inject predicate.js as a module

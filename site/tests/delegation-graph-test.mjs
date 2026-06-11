@@ -29,18 +29,34 @@ async function run() {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
 
-  console.log('[test] Navigating to studio...');
-  await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
+  console.log('[test] Navigating to /playground/ ...');
+  await page.goto(`${BASE}/playground/`, { waitUntil: 'domcontentloaded' });
 
   // Wait for dregg:ready (wasm + Preact signals loaded)
-  await page.waitForFunction(() => !!window.dregg, { timeout: 15000 });
+  await page.waitForFunction(() => !!window.dreggUi, { timeout: 15000 });
   console.log('[test] dregg:ready fired.');
 
-  // Wait for the runtime to be attached to <dregg-app id="app">
+  // The old /studio sim page became the IDE (it no longer mounts a
+  // <dregg-app id="app"> wasm runtime); the playground hosts the seeded
+  // in-memory wasm runtime (studio-embed). Wait for it, then anchor a
+  // dedicated <dregg-app id="app"> on the same runtime for the mounts below.
   await page.waitForFunction(() => {
-    const app = document.getElementById('app');
-    return app && app.runtime;
-  }, { timeout: 10000 });
+    const apps = [...document.querySelectorAll('dregg-app')];
+    return apps.some(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+  }, { timeout: 30000 });
+  await page.evaluate(async () => {
+    const src = [...document.querySelectorAll('dregg-app')]
+      .find(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+    // Fresh runtime on the same wasm: the playground's shared runtime is
+    // already seeded (its faucet is mostly spent); tests want full genesis.
+    const mod = await import('/_includes/studio/runtime-in-memory.js');
+    const fresh = await mod.createInMemoryRuntime({ wasm: src.runtime._wasm, signals: window.dreggUi });
+    const anchor = document.createElement('dregg-app');
+    anchor.setAttribute('id', 'app');
+    document.body.appendChild(anchor);
+    anchor.runtime = fresh;
+  });
+  console.log('[test] seeded runtime anchored on <dregg-app#app>.');
   console.log('[test] runtime attached.');
 
   // Inject delegation-graph.js (it's not in the studio barrel yet after a cold
@@ -54,14 +70,15 @@ async function run() {
   // We drive the runtime directly from page.evaluate so we don't depend on
   // studio.html button layout staying stable.
 
-  const setupResult = await page.evaluate(() => {
+  const setupResult = await page.evaluate(async () => {
     const runtime = document.getElementById('app').runtime;
     // Genesis agent (alice) gets a large balance; bob and carol start at 0.
     // Each non-genesis agent creation costs GENESIS_MINT_FEE (2000) from alice.
     // With 3 agents: alice spends 2000 × 2 = 4000 in fees, so 10000 is plenty.
-    const alice = runtime.createAgent('alice', 10000);
-    const bob   = runtime.createAgent('bob',   0);
-    const carol = runtime.createAgent('carol', 0);
+    // (the in-memory runtime's mutators are async — await each)
+    const alice = await runtime.createAgent('alice', 10000);
+    const bob   = await runtime.createAgent('bob',   0);
+    const carol = await runtime.createAgent('carol', 0);
 
     // Use runtime._wasm.grant_capability directly — this is the canonical path
     // for adding edges to the delegation graph without needing signed turns.
@@ -144,7 +161,9 @@ async function run() {
   const navigateDetail = await page.evaluate(async () => {
     return new Promise((resolve) => {
       const el = document.getElementById('test-pdg-default');
-      el.addEventListener('dregg:navigate', (e) => resolve(e.detail), { once: true });
+      // preventDefault: stop the image-shell cross-surface router from
+      // navigating the page away (the event is cancelable, per InspectorBase).
+      el.addEventListener('dregg:navigate', (e) => { e.preventDefault(); resolve(e.detail); }, { once: true });
       // Find first .pdg-node circle and dispatch a click on it
       const nodeGroup = el.querySelector('.pdg-node');
       if (nodeGroup) nodeGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));

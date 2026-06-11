@@ -272,14 +272,15 @@ export function programBadge(program, constraints = programConstraints(program))
 }
 
 export function hasConstraint(constraints, matcher) {
-  return constraints.some(c => matcher(c) || (c.kind === 'AnyOf' && (c.variants || []).some(matcher)));
+  return constraints.some(c => matcher(c) ||
+    ((c.kind === 'AnyOf' || c.kind === 'AllOf') && (c.variants || []).some(matcher)));
 }
 
 export function caveatSummaries(constraints, wanted = []) {
   const flat = [];
   for (const c of constraints) {
     flat.push(c);
-    if (c.kind === 'AnyOf') flat.push(...(c.variants || []));
+    if (c.kind === 'AnyOf' || c.kind === 'AllOf') flat.push(...(c.variants || []));
   }
   return flat
     .filter(c => !wanted.length || wanted.includes(c.kind) || wanted.some(w => String(c.predicate_kind || '').includes(w)))
@@ -299,6 +300,12 @@ export function caveatSummaries(constraints, wanted = []) {
         case 'Witnessed': return `Witnessed ${c.predicate_kind || 'predicate'} ${shortHex(c.commitment, 10)}`;
         case 'PreimageGate': return `PreimageGate slot[${c.commitment_index}] ${c.hash_kind || ''}`.trim();
         case 'TemporalGate': return `TemporalGate ${c.not_before ?? '*'}..${c.not_after ?? '*'}`;
+        case 'SenderIs': return `SenderIs sender = ${shortHex(c.pk, 10)}`;
+        case 'SenderInSlot': return `SenderInSlot sender = slot[${c.index}]`;
+        case 'BalanceGte': return `BalanceGte own balance >= ${c.min}`;
+        case 'BalanceLte': return `BalanceLte own balance <= ${c.max}`;
+        case 'FieldLteField': return `FieldLteField slot[${c.left_index}] <= slot[${c.right_index}]`;
+        case 'FieldLteOther': return `FieldLteOther slot[${c.index}] <= slot[${c.other}]${c.delta ? ` + ${c.delta}` : ''}`;
         default: return c.kind;
       }
     });

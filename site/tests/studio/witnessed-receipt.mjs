@@ -4,16 +4,19 @@
  * Run with:
  *   node tests/studio/witnessed-receipt.mjs
  *
- * Requires dist/ to be served on port 4818 (or 8080):
- *   npx serve dist -l 4818
+ * Requires dist/ to be served on port 8080:
+ *   npx serve dist -l 8080
  *
  * What this test does:
- *  1. Navigates to /studio.html (has wasm + in-memory runtime + dregg-app#app)
- *  2. Waits for wasm init and runtime-ready
+ *  1. Navigates to /playground/ (the surface that hosts the seeded wasm
+ *     in-memory runtime — the old /studio.html sim page became the IDE and
+ *     no longer mounts a <dregg-app#app>)
+ *  2. Waits for the shared studio-embed runtime, then anchors a fresh
+ *     <dregg-app id="app"> on it for the inspector mounts
  *  3. Creates an agent, executes a turn to generate a turn_hash → receipt
- *  4. Injects witnessed-receipt.js + its dependencies (proof.js, receipt.js)
+ *  4. Injects witnessed-receipt.js (receipt/proof come from the barrel)
  *  5. Mounts <dregg-witnessed-receipt uri="dregg://receipt/<hash>">
- *  6. Verifies scope-0 + Placeholder tier render (sim runtime → no proof_view)
+ *  6. Verifies a scope badge + trust-tier badge render
  *  7. Verifies embedded <dregg-receipt> and <dregg-proof> mount correctly
  *  8. Tests compact mode output
  */
@@ -33,28 +36,47 @@ async function run() {
     if (msg.type() === 'error') errors.push(`[console.error] ${msg.text()}`);
   });
 
-  console.log('[test] Navigating to /studio ...');
-  await page.goto(`${BASE}/studio`, { waitUntil: 'domcontentloaded' });
+  console.log('[test] Navigating to /playground/ ...');
+  await page.goto(`${BASE}/playground/`, { waitUntil: 'domcontentloaded' });
 
   // Wait for dreggUi:ready (Preact + signals loaded; dist uses window.dreggUi)
   await page.waitForFunction(() => !!window.dreggUi, { timeout: 20000 });
   console.log('[test] dreggUi:ready fired.');
 
-  // Wait for the wasm runtime to be attached to the app element
+  // Wait for the shared seeded wasm runtime (studio-embed attaches it to every
+  // section's <dregg-app>), then anchor a dedicated <dregg-app id="app"> for
+  // this test's mounts.
   await page.waitForFunction(() => {
-    const app = document.getElementById('app');
-    return app && app.runtime && app.runtime._wasm && app.runtime._handle != null;
-  }, { timeout: 20000 });
-  console.log('[test] runtime attached to <dregg-app#app>.');
+    const apps = [...document.querySelectorAll('dregg-app')];
+    return apps.some(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+  }, { timeout: 30000 });
+  await page.evaluate(async () => {
+    const src = [...document.querySelectorAll('dregg-app')]
+      .find(a => a.runtime && a.runtime._wasm && a.runtime._handle != null);
+    // Fresh runtime on the same wasm: the playground's shared runtime is
+    // already seeded (its faucet is mostly spent); tests want full genesis.
+    const mod = await import('/_includes/studio/runtime-in-memory.js');
+    const fresh = await mod.createInMemoryRuntime({ wasm: src.runtime._wasm, signals: window.dreggUi });
+    const anchor = document.createElement('dregg-app');
+    anchor.setAttribute('id', 'app');
+    document.body.appendChild(anchor);
+    anchor.runtime = fresh;
+  });
+  console.log('[test] seeded runtime anchored on <dregg-app#app>.');
 
   // ─── Step 1: create agent + execute a turn ──────────────────────────────────
   const turnHash = await page.evaluate(async () => {
     const rt = document.getElementById('app').runtime;
-    const alice = await rt.createAgent('alice', 5000n);
+    // Modest amounts: the playground's seeding already spent most of the
+    // shared faucet cell, so stay within what's left (createAgent draws the
+    // initial balance from it; the empty turn's computron budget needs 1000).
+    const alice = await rt.createAgent('alice', 300n);
     if (!alice || alice.agent_index == null) {
       return { error: 'createAgent failed: ' + JSON.stringify(alice) };
     }
-    const turnResult = await rt.executeTurn(alice.agent_index, [], 1000);
+    // Computron limit must cover the empty turn's ~100 used AND fit within
+    // alice's balance (the executor requires balance >= limit upfront).
+    const turnResult = await rt.executeTurn(alice.agent_index, [], 300);
     if (!turnResult) return { error: 'executeTurn returned null' };
     if (turnResult.status !== 'committed') {
       return { error: 'executeTurn not committed: ' + JSON.stringify(turnResult) };
