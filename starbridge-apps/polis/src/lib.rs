@@ -56,16 +56,20 @@
 //! of the polis semantics are therefore **not program-enforced**; each is
 //! listed with what carries it instead:
 //!
-//! 1. **Member ↔ approval-slot sender binding.** The program cannot see which
-//!    key signed the turn (no per-slot sender predicate; `SenderAuthorized`
-//!    is whole-cell and witness-blob-driven, and would also gate the
-//!    operator's own propose/execute turns). What IS enforced: each approval
-//!    is a distinct slot, bounded to {0,1}, monotone (no un-approve), and
-//!    gated on a staged proposal — so the approval COUNT is over distinct
-//!    member slots by construction, and double-approving one slot cannot
-//!    reach the threshold. WHO may flip slot *i* is carried by capability
-//!    possession (only cap holders can drive the cell at all) + operator
-//!    discipline; receipts record the signer for audit.
+//! 1. **Member ↔ approval-slot sender binding — DISSOLVED** (turn-context
+//!    atoms, `docs/CELL-PROGRAM-LANGUAGE.md` §3). A charter built with
+//!    [`council::CouncilCharter::with_member_keys`] installs, per member,
+//!    `AnyOf[Immutable{approval_slot_i}, SenderIs{member_keys[i]}]`: slot
+//!    *i* flips only in a turn whose SENDER is member *i*. A stolen/shared
+//!    capability no longer suffices to flip another member's slot, and the
+//!    operator cannot relay approvals (the e2e
+//!    `approval_slots_are_actor_bound` is the executor-level tooth).
+//!    Charters without published keys keep the legacy carry: capability
+//!    possession + operator discipline, receipts recording the signer.
+//!    What is enforced either way: each approval is a distinct slot,
+//!    bounded to {0,1}, monotone (no un-approve), and gated on a staged
+//!    proposal — the approval COUNT is over distinct member slots by
+//!    construction.
 //! 2. **Cross-cell reads.** A proposal/amendment cell cannot read the
 //!    constitution cell's parameters. The honest pattern (used here):
 //!    constitutional parameters are COPIED into dependent descriptors at
@@ -86,12 +90,14 @@
 //!    superseded cell is terminally inert. The ceremony ordering is carried
 //!    by the receipt chain (amendment ENACT receipt precedes the supersede
 //!    receipt) — the forward certification.
-//! 5. **Worker slice as a numeric cap.** The cell `balance` is sealed from
-//!    `StateConstraint` (not one of the 8 slots), so "spent ≤ slice" is not a
-//!    program predicate; it is the kernel conservation law: the worker is
-//!    funded with EXACTLY its slice, and a spend exceeding the remaining
-//!    balance cannot commit. The pinned `SLICE` slot publishes the slice for
-//!    audit; it is not the enforcement.
+//! 5. **Worker slice as a numeric cap.** "Spent ≤ slice" is the kernel
+//!    conservation law: the worker is funded with EXACTLY its slice, and a
+//!    spend exceeding the remaining balance cannot commit. The pinned
+//!    `SLICE` slot publishes the slice for audit; it is not the enforcement.
+//!    (The balance is no longer sealed from the grammar — `BalanceGte` /
+//!    `BalanceLte` atoms exist (`docs/CELL-PROGRAM-LANGUAGE.md` §3) for
+//!    programs that want explicit floors/drain teeth; the mandate keeps
+//!    conservation as its enforcement because it is already exact.)
 //! 6. **Tool-scope semantics.** The mandate's tool scope is a pinned 32-byte
 //!    commitment (e.g. the hash of the allowed tool list). The program cannot
 //!    decode which "tool" a turn used; per-tool gating lives at the MCP
@@ -128,8 +134,15 @@ pub enum PolisError {
     TooManyMembers { got: usize, max: usize },
     /// Threshold must satisfy `1 <= threshold <= members.len()`.
     ThresholdOutOfRange { threshold: u64, members: usize },
-    /// Duplicate member ids would let one member fill two approval slots.
+    /// Duplicate member ids (or duplicate member keys) would let one
+    /// member fill two approval slots.
     DuplicateMember,
+    /// An actor-bound charter must publish exactly one signing key per
+    /// member (charter order).
+    MemberKeyCountMismatch { keys: usize, members: usize },
+    /// A zero member key can never match a real turn sender — that member
+    /// could never approve; rejected at build (fail-closed).
+    ZeroMemberKey { index: usize },
     /// Member index out of range for this charter.
     BadMemberIndex { index: usize, members: usize },
     /// An amendment must stage a nonzero successor-constitution hash (a zero
@@ -141,9 +154,9 @@ pub enum PolisError {
     ZeroThresholdParam,
     /// A proposal treasury exceeding the constitutional cap. Enforced
     /// fail-closed at descriptor build by the SDK's constitution-governed
-    /// builders (the balance is sealed from `StateConstraint` — lib docs
-    /// gap 5 — so the cap is a builder gate, not a program gate; documented,
-    /// not shimmed).
+    /// builders (a build gate; a `BalanceLte { max: treasury_cap }`
+    /// program tooth is now expressible — `docs/CELL-PROGRAM-LANGUAGE.md`
+    /// §3 — and is the natural descriptor evolution).
     EndowmentExceedsTreasuryCap { endowment: u64, cap: u64 },
     /// A worker mandate with a zero budget slice can do nothing; rejected so
     /// a forgotten slice fails loudly at build, not silently at spend.
@@ -168,6 +181,13 @@ impl std::fmt::Display for PolisError {
                 "threshold {threshold} out of range for {members} members (need 1 <= M <= N)"
             ),
             PolisError::DuplicateMember => write!(f, "council members must be distinct"),
+            PolisError::MemberKeyCountMismatch { keys, members } => write!(
+                f,
+                "actor-bound charter publishes {keys} member keys for {members} members"
+            ),
+            PolisError::ZeroMemberKey { index } => {
+                write!(f, "member {index} has the all-zero signing key")
+            }
             PolisError::BadMemberIndex { index, members } => {
                 write!(f, "member index {index} out of range ({members} members)")
             }
@@ -362,9 +382,42 @@ pub mod council {
         pub members: Vec<CellId>,
         /// Approvals required to certify (`1 <= threshold <= members.len()`).
         pub threshold: u64,
+        /// **Actor-bound approvals** (dissolves expressibility gap 1):
+        /// when present, member `i`'s signing key — and the program gains,
+        /// per member, the slot caveat
+        /// `AnyOf[Immutable{approval_slot_i}, SenderIs{member_keys[i]}]`:
+        /// approval slot `i` can only ever be flipped by a turn whose
+        /// SENDER is member `i`. Capability possession alone no longer
+        /// suffices; the operator cannot relay approvals. Must be the same
+        /// length as `members` (charter order). `None` = the legacy
+        /// capability-possession charter (gap 1 documented, not enforced).
+        pub member_keys: Option<Vec<[u8; 32]>>,
     }
 
     impl CouncilCharter {
+        /// An unbound (legacy) charter: membership + threshold only.
+        pub fn new(members: Vec<CellId>, threshold: u64) -> Self {
+            Self {
+                members,
+                threshold,
+                member_keys: None,
+            }
+        }
+
+        /// An actor-bound charter: approval slot `i` is flippable only by
+        /// the sender holding `member_keys[i]`.
+        pub fn with_member_keys(
+            members: Vec<CellId>,
+            threshold: u64,
+            member_keys: Vec<[u8; 32]>,
+        ) -> Self {
+            Self {
+                members,
+                threshold,
+                member_keys: Some(member_keys),
+            }
+        }
+
         /// Fail-closed validation (see [`PolisError`]).
         pub fn validate(&self) -> Result<(), PolisError> {
             if self.members.is_empty() {
@@ -387,6 +440,24 @@ pub mod council {
                     return Err(PolisError::DuplicateMember);
                 }
             }
+            if let Some(keys) = &self.member_keys {
+                if keys.len() != self.members.len() {
+                    return Err(PolisError::MemberKeyCountMismatch {
+                        keys: keys.len(),
+                        members: self.members.len(),
+                    });
+                }
+                for (i, k) in keys.iter().enumerate() {
+                    if *k == [0u8; 32] {
+                        // A zero key can never match a real sender; that
+                        // member could never approve. Fail loudly at build.
+                        return Err(PolisError::ZeroMemberKey { index: i });
+                    }
+                    if keys[..i].contains(k) {
+                        return Err(PolisError::DuplicateMember);
+                    }
+                }
+            }
             Ok(())
         }
 
@@ -402,17 +473,40 @@ pub mod council {
         }
 
         /// The published membership commitment:
-        /// `blake3("dregg-polis:council-members v1", threshold ‖ memberᵢ…)`.
-        /// Pinned into [`MEMBERS_COMMIT_SLOT`] once the cell leaves DRAFT, so
-        /// the cell itself publishes which membership gates it.
+        /// `blake3("dregg-polis:council-members v1", threshold ‖ memberᵢ…)`
+        /// for unbound charters; actor-bound charters commit under the v2
+        /// domain and additionally bind every member signing key, so an
+        /// actor-bound and an unbound charter over the same cells can
+        /// never alias. Pinned into [`MEMBERS_COMMIT_SLOT`] once the cell
+        /// leaves DRAFT, so the cell itself publishes which membership
+        /// (and which keys) gate it.
         pub fn members_commitment(&self) -> FieldElement {
-            let mut hasher = blake3::Hasher::new_derive_key("dregg-polis:council-members v1");
-            hasher.update(&self.threshold.to_be_bytes());
-            hasher.update(&(self.members.len() as u64).to_be_bytes());
-            for m in &self.members {
-                hasher.update(m.as_bytes());
+            match &self.member_keys {
+                None => {
+                    let mut hasher =
+                        blake3::Hasher::new_derive_key("dregg-polis:council-members v1");
+                    hasher.update(&self.threshold.to_be_bytes());
+                    hasher.update(&(self.members.len() as u64).to_be_bytes());
+                    for m in &self.members {
+                        hasher.update(m.as_bytes());
+                    }
+                    *hasher.finalize().as_bytes()
+                }
+                Some(keys) => {
+                    let mut hasher = blake3::Hasher::new_derive_key(
+                        "dregg-polis:council-members v2 actor-bound",
+                    );
+                    hasher.update(&self.threshold.to_be_bytes());
+                    hasher.update(&(self.members.len() as u64).to_be_bytes());
+                    for m in &self.members {
+                        hasher.update(m.as_bytes());
+                    }
+                    for k in keys {
+                        hasher.update(k);
+                    }
+                    *hasher.finalize().as_bytes()
+                }
             }
-            *hasher.finalize().as_bytes()
         }
     }
 
@@ -516,6 +610,25 @@ pub mod council {
                 index: slot,
                 witness_index: PROPOSAL_HASH_SLOT,
             });
+        }
+        // ── actor-bound approvals (gap 1 DISSOLVED when keys are
+        //    published): approval slot i may change ONLY in a turn whose
+        //    sender is member i's key. `Immutable` admits every turn that
+        //    leaves the slot alone (propose / certify / execute / other
+        //    members' approvals); flipping the slot demands the bound
+        //    sender. Capability possession alone can no longer flip
+        //    another member's slot. ──
+        if let Some(keys) = &charter.member_keys {
+            for (i, key) in keys.iter().enumerate() {
+                cs.push(StateConstraint::AnyOf {
+                    variants: vec![
+                        SimpleStateConstraint::Immutable {
+                            index: FIRST_APPROVAL_SLOT + i as u8,
+                        },
+                        SimpleStateConstraint::SenderIs { pk: *key },
+                    ],
+                });
+            }
         }
         // ── non-member approval slots are pinned zero: an approval outside
         //    the charter's membership CANNOT exist ──
@@ -1024,14 +1137,14 @@ mod tests {
     }
 
     fn charter_2of3() -> CouncilCharter {
-        CouncilCharter {
-            members: vec![
+        CouncilCharter::new(
+            vec![
                 CellId::from_bytes([0x11; 32]),
                 CellId::from_bytes([0x22; 32]),
                 CellId::from_bytes([0x33; 32]),
             ],
-            threshold: 2,
-        }
+            2,
+        )
     }
 
     /// Post-propose state: hash staged, membership commitment published.
@@ -1164,10 +1277,7 @@ mod tests {
 
     #[test]
     fn council_non_member_slot_pinned() {
-        let c = CouncilCharter {
-            members: charter_2of3().members[..2].to_vec(),
-            threshold: 2,
-        };
+        let c = CouncilCharter::new(charter_2of3().members[..2].to_vec(), 2);
         let p = council_cell_program(&c).unwrap();
         let proposed = proposed_state(&c, field_from_u64(7));
         let mut bad = proposed.clone();
@@ -1175,6 +1285,92 @@ mod tests {
         assert!(
             eval(&p, &bad, Some(&proposed), 0).is_err(),
             "non-member slot is pinned zero"
+        );
+    }
+
+    /// Actor-bound approvals (gap 1 dissolved): with published member
+    /// keys, approval slot i flips ONLY when the turn sender is member i.
+    #[test]
+    fn council_approval_slots_are_actor_bound() {
+        let key_a = [0xA1u8; 32];
+        let key_b = [0xB2u8; 32];
+        let c = CouncilCharter::with_member_keys(
+            vec![
+                CellId::from_bytes([0x11; 32]),
+                CellId::from_bytes([0x22; 32]),
+            ],
+            2,
+            vec![key_a, key_b],
+        );
+        let p = council_cell_program(&c).unwrap();
+        let proposed = proposed_state(&c, field_from_u64(7));
+
+        let eval_as = |new: &CellState, old: &CellState, sender: [u8; 32]| {
+            let ctx = EvalContext {
+                sender: Some(sender),
+                ..ctx_at(0)
+            };
+            p.evaluate_full(
+                new,
+                Some(old),
+                Some(&ctx),
+                &TransitionMeta::wildcard(),
+                &WitnessBundle::empty(),
+            )
+        };
+
+        // Member A flips A's slot: admitted.
+        let mut a_approves = proposed.clone();
+        a_approves.fields[FIRST_APPROVAL_SLOT as usize] = field_from_u64(1);
+        assert!(eval_as(&a_approves, &proposed, key_a).is_ok());
+        // Member B flips A's slot (a member with a real capability, the
+        // wrong identity): rejected.
+        assert!(
+            eval_as(&a_approves, &proposed, key_b).is_err(),
+            "B cannot flip A's approval slot"
+        );
+        // A non-member key flips B's slot: rejected.
+        let mut b_approves = proposed.clone();
+        b_approves.fields[(FIRST_APPROVAL_SLOT + 1) as usize] = field_from_u64(1);
+        assert!(eval_as(&b_approves, &proposed, [0xEE; 32]).is_err());
+        // Member B flips B's slot: admitted.
+        assert!(eval_as(&b_approves, &proposed, key_b).is_ok());
+        // A turn not touching approval slots (e.g. the certify step after
+        // both approvals) is admitted regardless of sender identity.
+        let mut both = proposed.clone();
+        both.fields[FIRST_APPROVAL_SLOT as usize] = field_from_u64(1);
+        both.fields[(FIRST_APPROVAL_SLOT + 1) as usize] = field_from_u64(1);
+        let mut certified = both.clone();
+        certified.fields[APPROVED_FLAG_SLOT as usize] = field_from_u64(1);
+        certified.fields[STATE_SLOT as usize] = field_from_u64(STATE_APPROVED);
+        assert!(eval_as(&certified, &both, [0xEE; 32]).is_ok());
+
+        // Build-time fail-closed teeth.
+        assert_eq!(
+            CouncilCharter::with_member_keys(c.members.clone(), 2, vec![key_a])
+                .validate()
+                .unwrap_err(),
+            PolisError::MemberKeyCountMismatch {
+                keys: 1,
+                members: 2
+            }
+        );
+        assert_eq!(
+            CouncilCharter::with_member_keys(c.members.clone(), 2, vec![key_a, [0u8; 32]])
+                .validate()
+                .unwrap_err(),
+            PolisError::ZeroMemberKey { index: 1 }
+        );
+        assert_eq!(
+            CouncilCharter::with_member_keys(c.members.clone(), 2, vec![key_a, key_a])
+                .validate()
+                .unwrap_err(),
+            PolisError::DuplicateMember
+        );
+        // Bound and unbound charters over the same cells never alias.
+        assert_ne!(
+            c.members_commitment(),
+            CouncilCharter::new(c.members.clone(), 2).members_commitment()
         );
     }
 

@@ -336,7 +336,16 @@ pub fn project_slot_caveat_manifest(
             | dregg_cell::StateConstraint::AffineEq { .. }
             | dregg_cell::StateConstraint::Reachable { .. }
             | dregg_cell::StateConstraint::AllOf { .. }
-            | dregg_cell::StateConstraint::Custom { .. } => None,
+            | dregg_cell::StateConstraint::Custom { .. }
+            // Turn-context atoms (CELL-PROGRAM-LANGUAGE.md §3): sender +
+            // own-balance reads. The sender pk and the sealed balance are
+            // not state-column data in the current AIR layout, so these
+            // stay executor-enforced (no SlotCaveat projection) until the
+            // context columns land (layout rotation, doc §6).
+            | dregg_cell::StateConstraint::SenderIs { .. }
+            | dregg_cell::StateConstraint::SenderInSlot { .. }
+            | dregg_cell::StateConstraint::BalanceGte { .. }
+            | dregg_cell::StateConstraint::BalanceLte { .. } => None,
         };
         if let Some(e) = entry {
             entries[count] = e;

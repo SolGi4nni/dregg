@@ -2138,6 +2138,21 @@ impl TurnExecutor {
                         push(out, *from);
                         push(out, *to);
                     }
+                    // SECURITY: a `SetField` must name the cell it mutates so
+                    // the per-action cell-program gate snapshots + re-checks
+                    // that cell. For a DIRECT SetField `effect.cell ==
+                    // action.target` (separately enforced), so the target
+                    // snapshot already covered it — but a SetField nested in
+                    // `ExerciseViaCapability::inner_effects` targets the CAP
+                    // target, NOT the action target. Before this arm existed,
+                    // such writes were applied WITHOUT the touched cell's
+                    // program ever being evaluated: any capability holder
+                    // could rewrite a pinned slot / step a settled state
+                    // machine by wrapping the write in an exercise. (Caught
+                    // by `approval_slots_are_actor_bound` — the polis e2e's
+                    // stolen-capability leg.)
+                    Effect::SetField { cell, .. } => push(out, *cell),
+                    Effect::IncrementNonce { cell } => push(out, *cell),
                     Effect::GrantCapability { from, to, .. } => {
                         push(out, *from);
                         push(out, *to);

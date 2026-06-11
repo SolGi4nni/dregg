@@ -152,6 +152,16 @@ fn producer_actually_runs_not_fallback() {
             "turn was NOT eligible for the verified producer (a marshaller gap): {reason}; the SDK \
              producer surface cannot be exercised — fix the gap, do not weaken the test"
         ),
+        ProducerOutcome::CoveredDivergence {
+            lean_committed,
+            rust_committed,
+            lean_root,
+            rust_root,
+        } => panic!(
+            "PRODUCER DIVERGENCE on the COVERED path (a real soundness finding; the conservative \
+             Rust state was kept): lean_committed={lean_committed} rust_committed={rust_committed} \
+             lean_root={lean_root:?} rust_root={rust_root:?}"
+        ),
     }
 
     // Post-state: A funded 100 - 30 = 70, B 5 + 30 = 35 (asset-0 balances installed from the Lean

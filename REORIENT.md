@@ -53,10 +53,18 @@ key `~/.ssh/negneg-cq.pem`, token in `/etc/dregg/node.env` there).
 - **Memory**: `~/.claude/projects/-Users-ember-dev-breadstuffs/memory/` —
   `project-refinement-epoch.md` is the live resume file; MEMORY.md is the index.
 
-## State of the world (2026-06-11 ~01:00)
+## State of the world (2026-06-11, refinement night)
 
-- main @ `32537eeda`, ~38 commits this arc, all pushed. **GitHub Pages: GREEN**
-  (wasm root-fixed, zero fallbacks, drift gates honest).
+- main @ `d97b37d1f`, all pushed. **GitHub Pages: GREEN**.
+- LANDED tonight: proof economics #161 (`c053ede33`, docs/PROOF-ECONOMICS.md —
+  452 KiB per-turn = 92% FRI openings, 85% hash-site aux; ROOT is the external
+  artifact) · README rewritten to teach what-is (`4c4172e04`) · **recursion config
+  PRODUCTION strength** (`e1d6d1d26`: q=38+14 PoW = 128-bit conjectured, ROOT
+  502 KiB / 16 ms / K-independent, in-circuit PoW check) · **THE HEAP Lean
+  foundation** (`d97b37d1f`: Substrate/Heap.lean + HeapKernel.lean, root_injective
+  anti-ghost, balance-neutral guarded step; splice plan in task #165 metadata).
+- STILL RUNNING: language uplift (keystone) · devnet quality #159 ·
+  graduate-all-selectors + DELETE hand-AIR fallback + kimchi/pickles backends.
 - Devnet: dregg3 semantics live; `state_producer: lean`; quiescent block production
   (mutation-driven + 120s heartbeat); CORS single-header; solo node (n=3 is a filed
   wave-R2 item). KNOWN GAPS (task #159, lane running): proofs never attach

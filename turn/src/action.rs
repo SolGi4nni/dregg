@@ -5,7 +5,7 @@
 //! preconditions, and produces effects.
 
 use dregg_cell::lifecycle::{ArchivalAttestation, DeathCertificate};
-use dregg_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
+use dregg_cell::note_bridge::PortableNoteProof;
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::predicate::WitnessedPredicate;
 use dregg_cell::state::FieldElement;

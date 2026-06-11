@@ -1825,7 +1825,7 @@ pub struct CredentialSetMembershipProof {
     /// is `(sibling, holder_is_right_child)`: when `is_right` is true the
     /// running hash is the *right* child and `sibling` the left, else the
     /// running hash is the left child.
-    pub merkle_path: Vec<(([u8; 32]), bool)>,
+    pub merkle_path: Vec<([u8; 32], bool)>,
     /// Sorted-neighbor non-membership witness proving `holder` is absent
     /// from `revocation_root`.
     pub non_revocation: NonMembershipNeighborProof,

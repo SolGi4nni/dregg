@@ -5,7 +5,6 @@
 //! is simply dropped (zero cost). On failure, the journal is replayed in reverse
 //! to restore the ledger to its exact pre-turn state.
 
-use std::collections::HashMap;
 use std::sync::Mutex;
 
 use dregg_cell::{

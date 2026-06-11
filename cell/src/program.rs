@@ -529,6 +529,60 @@ pub enum SimpleStateConstraint {
     /// short-circuit / fail-closed invariants above, so the type system
     /// shapes against it.
     Not(Box<SimpleStateConstraint>),
+
+    // ─── Turn-context atoms (CELL-PROGRAM-LANGUAGE.md §3) ───
+    //
+    // The executor evaluates every cell program with an `EvalContext`
+    // carrying the turn's sender (the acting parent cell's public key)
+    // and with the full post-state `CellState` (which carries the
+    // cell's own balance). These atoms make that already-plumbed
+    // context PROGRAM-READABLE. They live in `SimpleStateConstraint`
+    // (not only the outer enum) so they compose under `AnyOf` / `Not`
+    // / `Implies` — the per-slot actor binding the polis council needs
+    // is literally `AnyOf[Immutable{slot_i}, SenderIs{member_i}]`.
+    //
+    // NEW VARIANTS ARE APPEND-ONLY: postcard encodes the enum by
+    // variant index, so existing serialized programs (and their
+    // content addresses) are untouched by these additions.
+    /// **Sender binding (literal):** the turn's sender (the acting
+    /// cell's public key, from `EvalContext::sender`) must equal `pk`.
+    /// Fail-closed: a missing sender (system turn / no context) is
+    /// `MissingContextField`, not a pass. Under `AnyOf` with an
+    /// `Immutable{slot}` guard this is the per-slot actor binding
+    /// (polis gap 5).
+    SenderIs {
+        pk: [u8; 32],
+    },
+    /// **Sender binding (slot-held):** the turn's sender must equal the
+    /// 32-byte identity stored in `new[index]`. The dynamic-owner
+    /// variant of [`Self::SenderIs`]: bind the slot with `Immutable` /
+    /// `WriteOnce` and the cell carries its own controller identity.
+    SenderInSlot {
+        index: u8,
+    },
+    /// **Own-balance floor:** the cell's post-turn balance (the sealed
+    /// `CellState::balance`, NOT one of the 8 slots) must be
+    /// `>= min`. Dissolves the "programs can't see their own balance"
+    /// gap (blueprint gap 2): solvency floors, fee-reserve guards.
+    BalanceGte {
+        min: u64,
+    },
+    /// **Own-balance ceiling:** the cell's post-turn balance must be
+    /// `<= max`. `BalanceLte { max: 0 }` under a terminal-state guard
+    /// is the "resolve drains the full balance" tooth — program-
+    /// enforced, not builder-shape.
+    BalanceLte {
+        max: u64,
+    },
+    /// **Composable preimage gate** (blueprint gap 1): identical
+    /// semantics to [`StateConstraint::PreimageGate`], admitted here so
+    /// the knowledge gate can sit under `AnyOf` / `Implies` — e.g. the
+    /// committed-escrow `state == RELEASED ⇒ reveal(preimage of
+    /// slot[commitment])`.
+    PreimageGate {
+        commitment_index: u8,
+        hash_kind: HashKind,
+    },
 }
 
 impl SimpleStateConstraint {
@@ -898,6 +952,23 @@ pub enum StateConstraint {
         /// Declared read-set — what the predicate touches.
         reads: ReadSet,
     },
+
+    // ─── Turn-context atoms (CELL-PROGRAM-LANGUAGE.md §3) — the
+    //     top-level lifts of the `SimpleStateConstraint` context atoms.
+    //     APPEND-ONLY: postcard variant indices of all prior variants
+    //     are preserved. ───
+    /// The turn's sender (acting cell's public key) must equal `pk`.
+    /// See [`SimpleStateConstraint::SenderIs`].
+    SenderIs { pk: [u8; 32] },
+    /// The turn's sender must equal the identity held in `new[index]`.
+    /// See [`SimpleStateConstraint::SenderInSlot`].
+    SenderInSlot { index: u8 },
+    /// The cell's own post-turn balance must be `>= min`.
+    /// See [`SimpleStateConstraint::BalanceGte`].
+    BalanceGte { min: u64 },
+    /// The cell's own post-turn balance must be `<= max`.
+    /// See [`SimpleStateConstraint::BalanceLte`].
+    BalanceLte { max: u64 },
 }
 
 /// Error from evaluating a cell program.
@@ -2328,6 +2399,60 @@ fn evaluate_constraint_full(
                 }
             })
         }
+
+        // ─── Turn-context atoms (CELL-PROGRAM-LANGUAGE.md §3) ───
+        StateConstraint::SenderIs { pk } => {
+            let ctx = ctx.ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            let sender = ctx
+                .sender
+                .as_ref()
+                .ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            if sender != pk {
+                return violated(
+                    constraint,
+                    "turn sender is not the bound identity (SenderIs)".into(),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::SenderInSlot { index } => {
+            let idx = check_index(*index)?;
+            let ctx = ctx.ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            let sender = ctx
+                .sender
+                .as_ref()
+                .ok_or(ProgramError::MissingContextField { field: "sender" })?;
+            if sender != &new_state.fields[idx] {
+                return violated(
+                    constraint,
+                    format!("turn sender does not match the identity held in slot[{idx}]"),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::BalanceGte { min } => {
+            let bal = new_state.balance();
+            if bal < *min {
+                return violated(
+                    constraint,
+                    format!("cell balance {bal} < required minimum {min}"),
+                );
+            }
+            Ok(())
+        }
+
+        StateConstraint::BalanceLte { max } => {
+            let bal = new_state.balance();
+            if bal > *max {
+                return violated(
+                    constraint,
+                    format!("cell balance {bal} > allowed maximum {max}"),
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -2411,6 +2536,19 @@ fn lift_simple(s: &SimpleStateConstraint) -> StateConstraint {
                  route through evaluate_simple_constraint instead"
             );
         }
+        SimpleStateConstraint::SenderIs { pk } => StateConstraint::SenderIs { pk: *pk },
+        SimpleStateConstraint::SenderInSlot { index } => {
+            StateConstraint::SenderInSlot { index: *index }
+        }
+        SimpleStateConstraint::BalanceGte { min } => StateConstraint::BalanceGte { min: *min },
+        SimpleStateConstraint::BalanceLte { max } => StateConstraint::BalanceLte { max: *max },
+        SimpleStateConstraint::PreimageGate {
+            commitment_index,
+            hash_kind,
+        } => StateConstraint::PreimageGate {
+            commitment_index: *commitment_index,
+            hash_kind: *hash_kind,
+        },
     }
 }
 
@@ -2805,6 +2943,22 @@ pub enum StateConstraintView {
         ir_hash: String,
         descriptor_debug: String,
     },
+    /// Turn sender must equal the bound public key (64-hex).
+    SenderIs {
+        pk: String,
+    },
+    /// Turn sender must equal the identity held in `new[index]`.
+    SenderInSlot {
+        index: u8,
+    },
+    /// The cell's own post-turn balance must be `>= min`.
+    BalanceGte {
+        min: u64,
+    },
+    /// The cell's own post-turn balance must be `<= max`.
+    BalanceLte {
+        max: u64,
+    },
 }
 
 impl CellProgram {
@@ -3162,6 +3316,12 @@ impl StateConstraint {
                 ir_hash: view_hex(ir_hash),
                 descriptor_debug: format!("{descriptor:?}"),
             },
+            StateConstraint::SenderIs { pk } => StateConstraintView::SenderIs { pk: view_hex(pk) },
+            StateConstraint::SenderInSlot { index } => {
+                StateConstraintView::SenderInSlot { index: *index }
+            }
+            StateConstraint::BalanceGte { min } => StateConstraintView::BalanceGte { min: *min },
+            StateConstraint::BalanceLte { max } => StateConstraintView::BalanceLte { max: *max },
         }
     }
 }
@@ -3225,6 +3385,28 @@ impl SimpleStateConstraint {
             },
             SimpleStateConstraint::Not(inner) => StateConstraintView::Not {
                 inner: Box::new(inner.to_view()),
+            },
+            SimpleStateConstraint::SenderIs { pk } => {
+                StateConstraintView::SenderIs { pk: view_hex(pk) }
+            }
+            SimpleStateConstraint::SenderInSlot { index } => {
+                StateConstraintView::SenderInSlot { index: *index }
+            }
+            SimpleStateConstraint::BalanceGte { min } => {
+                StateConstraintView::BalanceGte { min: *min }
+            }
+            SimpleStateConstraint::BalanceLte { max } => {
+                StateConstraintView::BalanceLte { max: *max }
+            }
+            SimpleStateConstraint::PreimageGate {
+                commitment_index,
+                hash_kind,
+            } => StateConstraintView::PreimageGate {
+                commitment_index: *commitment_index,
+                hash_kind: match hash_kind {
+                    HashKind::Poseidon2 => "Poseidon2".to_string(),
+                    HashKind::Blake3 => "Blake3".to_string(),
+                },
             },
         }
     }
@@ -4303,6 +4485,207 @@ mod tests {
             .expect("proof at witness_index+1 accepts via stub verifier");
     }
 
+    // ─── Turn-context atoms (CELL-PROGRAM-LANGUAGE.md §3) ───
+
+    /// The polis council shape: "approval slot 3 may change only if the
+    /// turn's sender is member A" — `AnyOf[Immutable{3}, SenderIs{a}]`.
+    /// This is THE per-slot actor binding (polis gap 5) at the program
+    /// level.
+    #[test]
+    fn sender_is_binds_slot_to_actor() {
+        let member_a = [0xAAu8; 32];
+        let member_b = [0xBBu8; 32];
+        let program = CellProgram::Predicate(vec![StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable { index: 3 },
+                SimpleStateConstraint::SenderIs { pk: member_a },
+            ],
+        }]);
+        let old = CellState::new(0);
+        let mut flipped = old.clone();
+        flipped.fields[3] = field_from_u64(1);
+
+        // Member A flips their own slot: admitted.
+        assert!(
+            program
+                .evaluate(&flipped, Some(&old), Some(&ctx_sender(member_a, 0)))
+                .is_ok(),
+            "the bound actor may flip the slot"
+        );
+        // Member B (a real key, a real capability — just NOT the bound
+        // identity) flips A's slot: rejected.
+        assert!(
+            program
+                .evaluate(&flipped, Some(&old), Some(&ctx_sender(member_b, 0)))
+                .is_err(),
+            "another actor cannot flip the bound slot"
+        );
+        // A turn by member B that does NOT touch the slot: admitted via
+        // the Immutable disjunct (propose/certify/execute stay open).
+        assert!(
+            program
+                .evaluate(&old, Some(&old), Some(&ctx_sender(member_b, 0)))
+                .is_ok(),
+            "untouched slot admits any sender"
+        );
+        // No sender in context while flipping: fail-closed.
+        assert!(
+            program
+                .evaluate(&flipped, Some(&old), Some(&ctx_at(5)))
+                .is_err(),
+            "missing sender fails closed"
+        );
+    }
+
+    #[test]
+    fn sender_in_slot_binds_to_slot_held_identity() {
+        let owner = [0x11u8; 32];
+        let thief = [0x22u8; 32];
+        let program = CellProgram::Predicate(vec![StateConstraint::SenderInSlot { index: 2 }]);
+        let mut state = CellState::new(0);
+        state.fields[2] = owner;
+        assert!(
+            program
+                .evaluate(&state, None, Some(&ctx_sender(owner, 0)))
+                .is_ok()
+        );
+        assert!(
+            program
+                .evaluate(&state, None, Some(&ctx_sender(thief, 0)))
+                .is_err()
+        );
+        // Out-of-range slot: structural error, not a pass.
+        let bad = CellProgram::Predicate(vec![StateConstraint::SenderInSlot { index: 99 }]);
+        assert!(matches!(
+            bad.evaluate(&state, None, Some(&ctx_sender(owner, 0))),
+            Err(ProgramError::InvalidFieldIndex { index: 99 })
+        ));
+    }
+
+    /// Balance atoms read the cell's own sealed balance — the
+    /// "resolve drains the full balance" tooth becomes program-enforced:
+    /// `state == RESOLVED ⇒ balance == 0` as
+    /// `AnyOf[Not(state==RESOLVED), BalanceLte{0}]`.
+    #[test]
+    fn balance_atoms_see_own_balance() {
+        let resolved = field_from_u64(2);
+        let drain_tooth = CellProgram::Predicate(vec![StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::FieldEquals {
+                    index: 0,
+                    value: resolved,
+                })),
+                SimpleStateConstraint::BalanceLte { max: 0 },
+            ],
+        }]);
+        // Resolved with a drained balance: admitted.
+        let mut drained = CellState::new(0);
+        drained.fields[0] = resolved;
+        drained.set_balance(0);
+        assert!(drain_tooth.evaluate(&drained, None, None).is_ok());
+        // Resolved while still holding value: rejected (stranded /
+        // partially-drained settlement cannot commit).
+        let mut holding = drained.clone();
+        holding.set_balance(40);
+        assert!(drain_tooth.evaluate(&holding, None, None).is_err());
+        // Not resolved: balance unconstrained.
+        let mut open = CellState::new(0);
+        open.fields[0] = field_from_u64(1);
+        open.set_balance(40);
+        assert!(drain_tooth.evaluate(&open, None, None).is_ok());
+
+        // Solvency floor: BalanceGte.
+        let floor = CellProgram::Predicate(vec![StateConstraint::BalanceGte { min: 10 }]);
+        let mut funded = CellState::new(0);
+        funded.set_balance(10);
+        assert!(floor.evaluate(&funded, None, None).is_ok());
+        funded.set_balance(9);
+        assert!(floor.evaluate(&funded, None, None).is_err());
+    }
+
+    /// Blueprint gap 1: the committed-value knowledge gate under a state
+    /// guard — `state == RELEASED ⇒ PreimageGate` — now expressible
+    /// because `PreimageGate` is a `SimpleStateConstraint`.
+    #[test]
+    fn preimage_gate_composes_under_state_guard() {
+        let released = field_from_u64(2);
+        let preimage = [0x5Au8; 32];
+        let commitment = *blake3::hash(&preimage).as_bytes();
+        let gate = CellProgram::Predicate(vec![StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::FieldEquals {
+                    index: 0,
+                    value: released,
+                })),
+                SimpleStateConstraint::PreimageGate {
+                    commitment_index: 4,
+                    hash_kind: HashKind::Blake3,
+                },
+            ],
+        }]);
+        let mut state = CellState::new(0);
+        state.fields[0] = released;
+        state.fields[4] = commitment;
+
+        let blobs = [WitnessBlobView {
+            kind: WitnessKindTag::Preimage32,
+            bytes: &preimage,
+        }];
+        let with_reveal = WitnessBundle {
+            blobs: &blobs,
+            registry: None,
+        };
+        // Release with the correct reveal: admitted.
+        assert!(
+            gate.evaluate_full(
+                &state,
+                None,
+                None,
+                &TransitionMeta::wildcard(),
+                &with_reveal
+            )
+            .is_ok()
+        );
+        // Release without a reveal: rejected (fail-closed inside AnyOf).
+        assert!(
+            gate.evaluate_full(
+                &state,
+                None,
+                None,
+                &TransitionMeta::wildcard(),
+                &WitnessBundle::empty()
+            )
+            .is_err()
+        );
+        // Wrong preimage: rejected.
+        let wrong = [0x66u8; 32];
+        let blobs_wrong = [WitnessBlobView {
+            kind: WitnessKindTag::Preimage32,
+            bytes: &wrong,
+        }];
+        let with_wrong = WitnessBundle {
+            blobs: &blobs_wrong,
+            registry: None,
+        };
+        assert!(
+            gate.evaluate_full(&state, None, None, &TransitionMeta::wildcard(), &with_wrong)
+                .is_err()
+        );
+        // Not released: the gate is dormant, no reveal needed.
+        let mut open = state.clone();
+        open.fields[0] = field_from_u64(1);
+        assert!(
+            gate.evaluate_full(
+                &open,
+                None,
+                None,
+                &TransitionMeta::wildcard(),
+                &WitnessBundle::empty()
+            )
+            .is_ok()
+        );
+    }
+
     /// VIEW-PROJECTION TOTALITY PIN — the live-view seam must never reopen.
     ///
     /// Constructs one instance of EVERY `StateConstraint` variant (and every
@@ -4576,6 +4959,10 @@ mod tests {
                 },
                 "Custom",
             ),
+            (StateConstraint::SenderIs { pk: [7u8; 32] }, "SenderIs"),
+            (StateConstraint::SenderInSlot { index: 2 }, "SenderInSlot"),
+            (StateConstraint::BalanceGte { min: 10 }, "BalanceGte"),
+            (StateConstraint::BalanceLte { max: 0 }, "BalanceLte"),
         ];
 
         // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -4620,7 +5007,11 @@ mod tests {
                 | StateConstraint::AffineEq { .. }
                 | StateConstraint::Reachable { .. }
                 | StateConstraint::AllOf { .. }
-                | StateConstraint::Custom { .. } => {}
+                | StateConstraint::Custom { .. }
+                | StateConstraint::SenderIs { .. }
+                | StateConstraint::SenderInSlot { .. }
+                | StateConstraint::BalanceGte { .. }
+                | StateConstraint::BalanceLte { .. } => {}
             }
         }
 
@@ -4718,6 +5109,23 @@ mod tests {
                 SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::WriteOnce { index: 0 })),
                 "Not",
             ),
+            (
+                SimpleStateConstraint::SenderIs { pk: [7u8; 32] },
+                "SenderIs",
+            ),
+            (
+                SimpleStateConstraint::SenderInSlot { index: 2 },
+                "SenderInSlot",
+            ),
+            (SimpleStateConstraint::BalanceGte { min: 10 }, "BalanceGte"),
+            (SimpleStateConstraint::BalanceLte { max: 0 }, "BalanceLte"),
+            (
+                SimpleStateConstraint::PreimageGate {
+                    commitment_index: 4,
+                    hash_kind: HashKind::Blake3,
+                },
+                "PreimageGate",
+            ),
         ];
         for (sc, expected_kind) in &simples {
             match sc {
@@ -4732,7 +5140,12 @@ mod tests {
                 | SimpleStateConstraint::FieldGteHeight { .. }
                 | SimpleStateConstraint::FieldLteHeight { .. }
                 | SimpleStateConstraint::TemporalGate { .. }
-                | SimpleStateConstraint::Not(_) => {}
+                | SimpleStateConstraint::Not(_)
+                | SimpleStateConstraint::SenderIs { .. }
+                | SimpleStateConstraint::SenderInSlot { .. }
+                | SimpleStateConstraint::BalanceGte { .. }
+                | SimpleStateConstraint::BalanceLte { .. }
+                | SimpleStateConstraint::PreimageGate { .. } => {}
             }
             let json = serde_json::to_value(sc.to_view()).expect("simple view serializes");
             assert_eq!(

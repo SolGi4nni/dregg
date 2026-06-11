@@ -91,11 +91,19 @@
 //!   Lean contracts, where the settle target is an argument of
 //!   `escrowRelease`/`obSettle` rather than a checked field.
 //! * The committed-escrow knowledge gate (release on a HASH-PREIMAGE reveal)
-//!   needs `PreimageGate` under a state guard, which the current constraint
-//!   grammar cannot express (`PreimageGate` is not a `SimpleStateConstraint`,
-//!   so it cannot sit inside `AnyOf`/`Implies`). The cleartext witness-equality
-//!   gate below is exactly the Lean `EscrowFactory` contract; the committed
-//!   variant is kernel-design feedback for the dregg3 constraint grammar.
+//!   is now EXPRESSIBLE: `PreimageGate` is a `SimpleStateConstraint`
+//!   (`docs/CELL-PROGRAM-LANGUAGE.md` §4), so `when_state(RESOLVED_A,
+//!   PreimageGate { commitment_index: CONDITION_SLOT, .. })` composes — see
+//!   `cell::program::tests::preimage_gate_composes_under_state_guard` and the
+//!   Lean `committedRelease` twin (`Dregg2/Exec/Program.lean`). The cleartext
+//!   witness-equality gate below remains the Lean `EscrowFactory` contract;
+//!   a committed-deal blueprint is the natural next variant.
+//! * The "resolve drains the full balance" tooth is likewise now expressible
+//!   (`BalanceLte { max: 0 }` under the terminal-state guards — the
+//!   `balance_atoms_see_own_balance` pin). The published settlement
+//!   blueprints keep the Lean-twin constraint set verbatim; adding the drain
+//!   tooth is a descriptor evolution to land together with its Lean keystone
+//!   (one semantics, both sides — see `docs/CELL-PROGRAM-LANGUAGE.md` §9).
 
 use crate::cell::CellMode;
 use crate::factory::{CapTarget, CapTemplate, ChildVkStrategy, FactoryDescriptor};

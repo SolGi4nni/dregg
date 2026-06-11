@@ -181,10 +181,20 @@ pub fn council_charter_from_constitution(
     constitution: &ConstitutionParams,
     members: Vec<CellId>,
 ) -> CouncilCharter {
-    CouncilCharter {
-        members,
-        threshold: constitution.council_threshold,
-    }
+    CouncilCharter::new(members, constitution.council_threshold)
+}
+
+/// [`council_charter_from_constitution`] with **actor-bound approvals**
+/// (`docs/CELL-PROGRAM-LANGUAGE.md` §3, polis gap 1 dissolved): publish one
+/// signing key per member and the installed program rejects any turn that
+/// flips approval slot `i` unless its SENDER is `member_keys[i]` — a stolen
+/// capability cannot vote, and the operator cannot relay approvals.
+pub fn council_charter_from_constitution_bound(
+    constitution: &ConstitutionParams,
+    members: Vec<CellId>,
+    member_keys: Vec<[u8; 32]>,
+) -> CouncilCharter {
+    CouncilCharter::with_member_keys(members, constitution.council_threshold, member_keys)
 }
 
 /// Plan a constitution-governed proposal cell: the charter threshold comes
@@ -241,10 +251,14 @@ pub fn propose(cell: CellId, charter: &CouncilCharter, action_hash: FieldElement
 /// slot to 1.
 ///
 /// **Safety contract**: the slot is `{0,1}` and monotone (approve-once; no
-/// un-approve), admitted only while a proposal is staged. **Gap 1 (see
-/// `starbridge_polis` lib docs)**: the program cannot verify the SIGNER is
-/// member `member_index` — slot↔member binding is capability possession +
-/// operator discipline; the receipt records the signer for audit.
+/// un-approve), admitted only while a proposal is staged. For an
+/// **actor-bound** charter ([`CouncilCharter::with_member_keys`] /
+/// [`council_charter_from_constitution_bound`]) the program ADDITIONALLY
+/// rejects the turn unless its sender is member `member_index`'s published
+/// key — so this turn only commits when executed by that member's own
+/// runtime. For a legacy (unbound) charter, slot↔member binding remains
+/// capability possession + operator discipline; the receipt records the
+/// signer for audit.
 pub fn approve(
     cell: CellId,
     charter: &CouncilCharter,
@@ -394,10 +408,7 @@ pub fn amendment_terms(
 ) -> Result<AmendmentTerms, PolisError> {
     let successor_descriptor = constitution_factory_descriptor(successor)?;
     Ok(AmendmentTerms {
-        charter: CouncilCharter {
-            members,
-            threshold: current.council_threshold,
-        },
+        charter: CouncilCharter::new(members, current.council_threshold),
         new_constitution_hash: successor_descriptor.hash(),
         enact_not_before: propose_height + current.amendment_delay,
     })

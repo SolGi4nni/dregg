@@ -44,10 +44,12 @@ use starbridge_polis::council::{
 /// A runtime + its agent's cell id + three zero-balance member cells.
 ///
 /// The polis cells are owned by the AGENT's key and the agent is the
-/// operator + funder. Members are separate cells: in this harness the
-/// operator relays member approvals (gap 1 in the `starbridge_polis` docs —
-/// the program cannot bind approval slots to signers; what the tests prove
-/// is everything the PROGRAM enforces).
+/// operator + funder. Members are separate cells: in this LEGACY harness
+/// (unbound charters — no `member_keys`) the operator relays member
+/// approvals; what these tests prove is everything the PROGRAM enforces for
+/// that charter shape. The ACTOR-BOUND charter — where the program itself
+/// binds each approval slot to its member's signing key — is exercised by
+/// `approval_slots_are_actor_bound` below with three sovereign runtimes.
 fn harness(domain: &str) -> (AgentRuntime, CellId, Vec<CellId>) {
     let runtime = AgentRuntime::new_simple(AgentCipherclerk::new(), domain);
     let agent = runtime.cell_id();
@@ -129,10 +131,7 @@ fn set_field(cell: CellId, slot: u8, value: [u8; 32]) -> Vec<Effect> {
 }
 
 fn charter(members: &[CellId], threshold: u64) -> CouncilCharter {
-    CouncilCharter {
-        members: members.to_vec(),
-        threshold,
-    }
+    CouncilCharter::new(members.to_vec(), threshold)
 }
 
 // =============================================================================
@@ -542,6 +541,193 @@ fn council_proposal_staging_teeth() {
             set_field(plan.cell_id, STATE_SLOT, field_from_u64(STATE_PROPOSED)),
         ),
         "reviving a rejected proposal",
+    );
+}
+
+/// **Approval slots are ACTOR-BOUND** (`starbridge_polis` gap 1 DISSOLVED —
+/// turn-context atoms, `docs/CELL-PROGRAM-LANGUAGE.md` §3).
+///
+/// A charter built with `CouncilCharter::with_member_keys` installs, per
+/// member, `AnyOf[Immutable{approval_slot_i}, SenderIs{member_keys[i]}]`.
+/// This test runs THREE sovereign identities (own signing keys, own agent
+/// cells) against one shared ledger and asserts, on the REAL executor:
+///
+///   * a member with a genuinely-granted capability on the proposal cell
+///     still cannot flip ANOTHER member's approval slot (the "stolen
+///     capability" shape — capability possession no longer suffices);
+///   * a NON-member with a granted capability cannot flip any approval slot;
+///   * the operator cannot relay another member's approval;
+///   * each member CAN flip their own slot, and the ceremony turns that
+///     touch no approval slot (propose / certify) stay open.
+#[test]
+fn approval_slots_are_actor_bound() {
+    use dregg_cell::{AuthRequired, CapabilityRef};
+    use std::sync::{Arc, RwLock};
+
+    let mut runtime = AgentRuntime::new_simple(AgentCipherclerk::new(), "polis-actor-bound");
+    let agent = runtime.cell_id();
+    let operator_pk = agent_pubkey(&runtime);
+
+    // Two more sovereign identities joining the SAME ledger: member B and a
+    // non-member. Each runs its own runtime over its own signing key; the
+    // agent cell is inserted into the shared ledger with turn-fee balance.
+    let join = |domain: &str| -> AgentRuntime {
+        let rt = AgentRuntime::with_ledger(
+            Arc::new(RwLock::new(AgentCipherclerk::new())),
+            domain,
+            runtime.ledger().clone(),
+        );
+        let cell = Cell::with_balance(
+            agent_pubkey(&rt),
+            *blake3::hash(domain.as_bytes()).as_bytes(),
+            200_000,
+        );
+        assert_eq!(cell.id(), rt.cell_id(), "joined agent cell id must match");
+        runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .insert_cell(cell)
+            .expect("fresh joined agent cell");
+        rt
+    };
+    let member_b = join("polis-actor-bound-member-b");
+    let outsider = join("polis-actor-bound-outsider");
+    let member_b_pk = agent_pubkey(&member_b);
+
+    // The actor-bound charter: members are the operator + B, keys published.
+    let charter = CouncilCharter::with_member_keys(
+        vec![agent, member_b.cell_id()],
+        2,
+        vec![operator_pk, member_b_pk],
+    );
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x06; 32],
+        agent,
+        agent,
+        0,
+    )
+    .expect("valid actor-bound charter");
+
+    // Bootstrap by hand so the ONE adopt turn (the cell-agent turn) grants a
+    // capability on the proposal cell to the operator AND to member B AND to
+    // the outsider — the legitimate-grant stand-in for a stolen/shared
+    // capability: all three genuinely HOLD a real capability afterward.
+    let grant_to = |to: CellId| Effect::GrantCapability {
+        from: plan.cell_id,
+        to,
+        cap: CapabilityRef {
+            target: plan.cell_id,
+            slot: 0,
+            permissions: AuthRequired::Signature,
+            breadstuff: None,
+            expires_at: None,
+            allowed_effects: None,
+            stored_epoch: None,
+        },
+    };
+    runtime.deploy_factory(plan.descriptor.clone());
+    runtime
+        .execute(plan.create_effects.clone())
+        .expect("create turn (factory birth) must commit");
+    runtime
+        .execute(plan.fund_effects.clone())
+        .expect("fund turn must commit");
+    runtime
+        .execute(vec![Effect::Transfer {
+            from: agent,
+            to: plan.cell_id,
+            amount: 2 * ADOPT_TURN_FEE,
+        }])
+        .expect("top up the wider adopt turn's budget");
+    let mut adopt = plan.adopt_effects.clone();
+    adopt.push(grant_to(member_b.cell_id()));
+    adopt.push(grant_to(outsider.cell_id()));
+    runtime
+        .execute_as(plan.cell_id, adopt, 3 * ADOPT_TURN_FEE)
+        .expect("adopt turn granting operator + member B + outsider");
+
+    // Propose (operator turn; touches no approval slot): admitted.
+    runtime
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()),
+        )
+        .expect("propose");
+
+    // Non-owner holders drive the proposal cell by EXERCISING their granted
+    // capability (the c-list path; the action itself is signed by the
+    // holder's own key, so the SENDER the program sees is the holder).
+    let exercise = |holder: &AgentRuntime, effects: Vec<Effect>| {
+        let cap_slot = runtime
+            .ledger()
+            .lock()
+            .unwrap()
+            .get(&holder.cell_id())
+            .expect("holder agent cell")
+            .capabilities
+            .lookup_by_target(&plan.cell_id)
+            .expect("granted capability installed in the holder's c-list")
+            .slot;
+        holder.execute(vec![Effect::ExerciseViaCapability {
+            cap_slot,
+            inner_effects: effects,
+        }])
+    };
+
+    // Member B holds a real capability — but flipping the OPERATOR's
+    // approval slot is rejected by the program: B is not the bound sender.
+    assert_program_violation(
+        exercise(&member_b, approve(plan.cell_id, &charter, 0).unwrap()),
+        "member B flipping member 0's approval slot",
+    );
+    // The outsider holds a real capability — every approval slot rejects.
+    assert_program_violation(
+        exercise(&outsider, approve(plan.cell_id, &charter, 0).unwrap()),
+        "non-member flipping member 0's approval slot",
+    );
+    assert_program_violation(
+        exercise(&outsider, approve(plan.cell_id, &charter, 1).unwrap()),
+        "non-member flipping member 1's approval slot",
+    );
+    // The OPERATOR (cell owner, signature-authorized) cannot relay member
+    // B's approval either.
+    assert_program_violation(
+        runtime.execute_on(plan.cell_id, approve(plan.cell_id, &charter, 1).unwrap()),
+        "operator relaying member B's approval",
+    );
+
+    // Each member flips their OWN slot: admitted.
+    runtime
+        .execute_on(plan.cell_id, approve(plan.cell_id, &charter, 0).unwrap())
+        .expect("member 0 (operator) approves their own slot");
+    exercise(&member_b, approve(plan.cell_id, &charter, 1).unwrap())
+        .expect("member B approves their own slot");
+
+    // Certify (touches no approval slot): admitted for the operator, and
+    // the threshold gate sees two DISTINCT, actor-bound approvals.
+    runtime
+        .execute_on(plan.cell_id, certify_approval(plan.cell_id))
+        .expect("certify at 2-of-2 actor-bound approvals");
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_APPROVED)
+    );
+    let fields = runtime
+        .ledger()
+        .lock()
+        .unwrap()
+        .get(&plan.cell_id)
+        .unwrap()
+        .state
+        .fields;
+    let status = inspect_council(&charter, &fields);
+    assert_eq!(status.approvals, vec![true, true]);
+    assert!(
+        status.members_commit_matches,
+        "the cell publishes its ACTOR-BOUND charter (v2 commitment)"
     );
 }
 

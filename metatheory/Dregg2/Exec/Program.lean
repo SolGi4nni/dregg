@@ -92,6 +92,30 @@ inductive SimpleConstraint where
   /-- **Negation** (the Heyting `¬`) — accept iff `inner` rejects. Unboxed inner ⇒ no
   unbounded nesting (`dregg2 §1.5` Heyting fragment). -/
   | not         : SimpleConstraint → SimpleConstraint
+  /-- **`senderIs k`** — turn-context atom (`docs/CELL-PROGRAM-LANGUAGE.md` §3): the turn's
+  SENDER (the acting cell's identity, carried in `TurnCtx.sender`) must equal `k`. Mirrors
+  `SimpleStateConstraint::SenderIs { pk }` (`cell/src/program.rs`). Composing it under `anyOf`
+  with `immutable f` yields the per-slot ACTOR BINDING (`anyOf [immutable f, senderIs k]`:
+  slot `f` flips only in a turn sent by `k` — the polis council's approval-slot tooth).
+  FAIL-CLOSED in the ctx-less evaluator (mirrors Rust `MissingContextField`). -/
+  | senderIs    (k : Int)
+  /-- **`senderInField f`** — the turn's sender must equal the identity HELD in `new[f]`
+  (the dynamic-owner binding; pin `f` with `immutable`/`writeOnce` and the cell carries its
+  own controller). Mirrors `SimpleStateConstraint::SenderInSlot`. Fail-closed without ctx. -/
+  | senderInField (f : FieldName)
+  /-- **`balanceGe v`** — the cell's OWN post-turn balance (the sealed kernel balance, NOT a
+  record field) must be `≥ v`. Mirrors `SimpleStateConstraint::BalanceGte`. -/
+  | balanceGe   (v : Int)
+  /-- **`balanceLe v`** — the cell's own post-turn balance must be `≤ v`. `balanceLe 0` under
+  a terminal-state guard is the "resolve drains the full balance" tooth. Mirrors
+  `SimpleStateConstraint::BalanceLte`. -/
+  | balanceLe   (v : Int)
+  /-- **`preimageGate f`** — the turn must reveal a preimage whose HASH (computed by the §8
+  crypto portal, carried as `TurnCtx.revealedHash`) equals the commitment held in `new[f]`.
+  The `SimpleConstraint` placement is the point: the knowledge gate composes under
+  `anyOf`/`not` (committed-escrow `state = RELEASED ⇒ reveal`). Mirrors
+  `SimpleStateConstraint::PreimageGate`. -/
+  | preimageGate (f : FieldName)
   deriving Repr
 
 /-- **The full state-constraint catalog** — simple constraints plus the cross-slot,
@@ -201,6 +225,16 @@ def evalSimple : SimpleConstraint → Value → Value → Bool
                                     | some a, some b => intLe (-d) (b - a) && intLe (b - a) d
                                     | _, _ => false
   | .not c,             old, new => !(evalSimple c old new)
+  -- Turn-context atoms: the ctx-LESS evaluator has no sender / balance /
+  -- revealed-hash in scope, so every context atom FAILS CLOSED here —
+  -- exactly the Rust evaluator's `MissingContextField` rejection when no
+  -- `EvalContext` is supplied. The ctx-aware semantics live in
+  -- `evalSimpleCtx` below; `evalSimpleCtx_empty` proves the two agree.
+  | .senderIs _,        _,   _   => false
+  | .senderInField _,   _,   _   => false
+  | .balanceGe _,       _,   _   => false
+  | .balanceLe _,       _,   _   => false
+  | .preimageGate _,    _,   _   => false
 
 /-- **Evaluate a full state constraint** against `(old, new)`. -/
 def evalConstraint : StateConstraint → Value → Value → Bool
@@ -605,5 +639,274 @@ example : evalConstraint (.reachable workflowDag "step" (Label.id 1)) (.record [
 #assert_axioms evalConstraint_affineLe_iff
 #assert_axioms evalConstraint_affineEq_iff
 #assert_axioms evalConstraint_reachable_sound
+
+/-! ## Turn-context evaluation (`docs/CELL-PROGRAM-LANGUAGE.md` §3).
+
+The Rust executor evaluates every cell program with an `EvalContext` (the turn's sender = the
+acting cell's public key, the height, the epoch) and against the post-state `CellState`, whose
+SEALED balance rides along. `TurnCtx` mirrors exactly the slice of that context the new
+turn-context atoms read; `evalSimpleCtx` / `evalConstraintCtx` / `RecordProgram.admitsCtx` are
+the ctx-aware evaluators (mirroring `evaluate_constraint_full` with `Some(ctx)`,
+`cell/src/program.rs`). The ctx-less `evalSimple` above remains the `TurnCtx.empty` special
+case — `evalSimpleCtx_empty` is the conservative-extension keystone, so every existing theorem
+over `evalSimple`/`admits` (the guard-theorem family, `stateStepGuarded_*` via `caveatsAdmit`)
+is untouched and the new atoms ONLY ADD admissibility distinctions when a context is present. -/
+
+/-- The turn-context slice the context atoms read. `sender` = the acting cell's identity
+(`EvalContext::sender`); `balance` = the touched cell's own post-turn sealed balance
+(`CellState::balance`); `revealedHash` = the §8-portal hash of the turn's revealed preimage
+(`WitnessKindTag::Preimage32` after hashing). Every field is `Option` — absence FAILS CLOSED. -/
+structure TurnCtx where
+  sender       : Option Int := none
+  balance      : Option Int := none
+  revealedHash : Option Int := none
+  deriving Repr
+
+/-- The empty context: every context atom fails closed under it. -/
+def TurnCtx.empty : TurnCtx := {}
+
+/-- **Ctx-aware simple-constraint evaluation.** Context atoms read `ctx`; every ctx-free atom
+delegates to `evalSimple` (definitionally — the delegation IS the proof obligation discharged
+by `evalSimpleCtx_empty`). Fail-closed throughout. -/
+def evalSimpleCtx (ctx : TurnCtx) : SimpleConstraint → Value → Value → Bool
+  | .senderIs k,        _,   _   => ctx.sender == some k
+  | .senderInField f,   _,   new => match ctx.sender, new.scalar f with
+                                    | some s, some v => s == v
+                                    | _,      _      => false
+  | .balanceGe v,       _,   _   => match ctx.balance with
+                                    | some b => intLe v b
+                                    | none   => false
+  | .balanceLe v,       _,   _   => match ctx.balance with
+                                    | some b => intLe b v
+                                    | none   => false
+  | .preimageGate f,    _,   new => match ctx.revealedHash, new.scalar f with
+                                    | some h, some c => h == c
+                                    | _,      _      => false
+  | .not c,             old, new => !(evalSimpleCtx ctx c old new)
+  | c,                  old, new => evalSimple c old new
+
+/-- **Ctx-aware constraint evaluation**: `simple`/`anyOf` thread the context; every other
+variant is context-free and delegates to `evalConstraint`. -/
+def evalConstraintCtx (ctx : TurnCtx) : StateConstraint → Value → Value → Bool
+  | .simple c,  old, new => evalSimpleCtx ctx c old new
+  | .anyOf vs,  old, new => vs.any (fun c => evalSimpleCtx ctx c old new)
+  | c,          old, new => evalConstraint c old new
+
+/-- **Ctx-aware admissibility** — `RecordProgram.admits` with the turn context threaded
+through every constraint evaluation. Same default-deny structure. -/
+def RecordProgram.admitsCtx (p : RecordProgram) (ctx : TurnCtx) (method : Nat)
+    (old new : Value) : Bool :=
+  match p with
+  | .none          => true
+  | .predicate cs  => cs.all (fun c => evalConstraintCtx ctx c old new)
+  | .cases tcs     =>
+      match tcs.filter (fun tc => tc.guard.matches method old new) with
+      | []      => false
+      | m :: ms =>
+          (m :: ms).all (fun tc => tc.constraints.all (fun c => evalConstraintCtx ctx c old new))
+  | .circuit _     => false
+
+/-! ### Conservative extension: the empty context recovers the ctx-less evaluator. -/
+
+/-- **`evalSimpleCtx_empty`.** Under the empty context, the ctx-aware evaluator IS the
+ctx-less one on every constraint: context atoms fail closed on both sides, ctx-free atoms
+delegate definitionally, `not` recurses. The existing guard-theorem family is untouched. -/
+theorem evalSimpleCtx_empty (c : SimpleConstraint) (o n : Value) :
+    evalSimpleCtx TurnCtx.empty c o n = evalSimple c o n := by
+  induction c with
+  | not c ih => simp only [evalSimpleCtx, evalSimple]; rw [ih]
+  | _ => rfl
+
+/-- `evalConstraintCtx` under the empty context is `evalConstraint`. -/
+theorem evalConstraintCtx_empty (c : StateConstraint) (o n : Value) :
+    evalConstraintCtx TurnCtx.empty c o n = evalConstraint c o n := by
+  cases c with
+  | simple s =>
+      simpa only [evalConstraintCtx, evalConstraint] using evalSimpleCtx_empty s o n
+  | anyOf vs =>
+      simp only [evalConstraintCtx, evalConstraint]
+      exact congrArg vs.any (funext fun s => evalSimpleCtx_empty s o n)
+  | _ => rfl
+
+/-- `admitsCtx` under the empty context is `admits` — the guard-evaluation theorem family
+(`admits_predicate`, default-deny, …) lifts to the ctx-aware gate verbatim. -/
+theorem admitsCtx_empty (p : RecordProgram) (m : Nat) (o n : Value) :
+    p.admitsCtx TurnCtx.empty m o n = p.admits m o n := by
+  have h : (fun c => evalConstraintCtx TurnCtx.empty c o n)
+         = (fun c => evalConstraint c o n) :=
+    funext fun c => evalConstraintCtx_empty c o n
+  cases p with
+  | none        => rfl
+  | predicate cs =>
+      simp only [RecordProgram.admitsCtx, RecordProgram.admits, h]
+  | cases tcs   =>
+      simp only [RecordProgram.admitsCtx, RecordProgram.admits, h]
+  | circuit hsh => rfl
+
+/-! ### Context-atom admit characterizations (each PROVED, each non-vacuous). -/
+
+/-- **`senderIs` admit-char.** Admits IFF the context carries EXACTLY the bound sender. -/
+theorem evalSimpleCtx_senderIs_iff (ctx : TurnCtx) (k : Int) (o n : Value) :
+    evalSimpleCtx ctx (.senderIs k) o n = true ↔ ctx.sender = some k := by
+  simp [evalSimpleCtx]
+
+/-- **`senderInField` admit-char.** Admits IFF the sender is present AND equals the identity
+held in `new[f]` (fail-closed on either absence). -/
+theorem evalSimpleCtx_senderInField_iff (ctx : TurnCtx) (f : FieldName) (o n : Value) :
+    evalSimpleCtx ctx (.senderInField f) o n = true ↔
+      ∃ s, ctx.sender = some s ∧ n.scalar f = some s := by
+  unfold evalSimpleCtx
+  cases hs : ctx.sender with
+  | none   => simp
+  | some s =>
+    cases hv : n.scalar f with
+    | none   => simp
+    | some v =>
+      simp only [beq_iff_eq, Option.some.injEq]
+      constructor
+      · rintro rfl; exact ⟨s, rfl, rfl⟩
+      · rintro ⟨x, rfl, rfl⟩; rfl
+
+/-- **`balanceGe` admit-char.** Admits IFF the cell's own balance is present and `≥ v`. -/
+theorem evalSimpleCtx_balanceGe_iff (ctx : TurnCtx) (v : Int) (o n : Value) :
+    evalSimpleCtx ctx (.balanceGe v) o n = true ↔
+      ∃ b, ctx.balance = some b ∧ v ≤ b := by
+  unfold evalSimpleCtx
+  cases hb : ctx.balance with
+  | none   => simp
+  | some b => simp [intLe, decide_eq_true_eq]
+
+/-- **`balanceLe` admit-char.** Admits IFF the cell's own balance is present and `≤ v`. -/
+theorem evalSimpleCtx_balanceLe_iff (ctx : TurnCtx) (v : Int) (o n : Value) :
+    evalSimpleCtx ctx (.balanceLe v) o n = true ↔
+      ∃ b, ctx.balance = some b ∧ b ≤ v := by
+  unfold evalSimpleCtx
+  cases hb : ctx.balance with
+  | none   => simp
+  | some b => simp [intLe, decide_eq_true_eq]
+
+/-- **`preimageGate` admit-char.** Admits IFF a reveal was hashed AND the hash equals the
+commitment held in `new[f]`. -/
+theorem evalSimpleCtx_preimageGate_iff (ctx : TurnCtx) (f : FieldName) (o n : Value) :
+    evalSimpleCtx ctx (.preimageGate f) o n = true ↔
+      ∃ h, ctx.revealedHash = some h ∧ n.scalar f = some h := by
+  unfold evalSimpleCtx
+  cases hh : ctx.revealedHash with
+  | none   => simp
+  | some h =>
+    cases hc : n.scalar f with
+    | none   => simp
+    | some c =>
+      simp only [beq_iff_eq, Option.some.injEq]
+      constructor
+      · rintro rfl; exact ⟨h, rfl, rfl⟩
+      · rintro ⟨x, rfl, rfl⟩; rfl
+
+/-! ### THE actor-bound approval keystone (polis gap 5 → dissolved).
+
+`anyOf [immutable f, senderIs k]` is the per-slot actor binding the polis council installs per
+member: a turn LEAVING slot `f` alone is admitted for any sender (propose / certify / other
+members' approvals), but FLIPPING `f` demands the turn's sender BE `k`. Capability possession
+alone can no longer flip another member's slot — mirrored end-to-end by the Rust e2e
+`approval_slots_are_actor_bound` (`sdk/tests/polis_governance_e2e.rs`). -/
+
+/-- The bound member flips their own slot: admitted (regardless of the slot delta). -/
+theorem actorBound_owner_flips (k : Int) (f : FieldName) (ctx : TurnCtx) (o n : Value)
+    (hs : ctx.sender = some k) :
+    evalConstraintCtx ctx (.anyOf [.immutable f, .senderIs k]) o n = true := by
+  simp [evalConstraintCtx, evalSimpleCtx, hs]
+
+/-- **The negative tooth**: a turn that CHANGES slot `f` (the `immutable` disjunct rejects)
+with any sender other than `k` (or no sender) is REJECTED. A stolen capability cannot vote. -/
+theorem actorBound_flip_requires_sender (k : Int) (f : FieldName) (ctx : TurnCtx) (o n : Value)
+    (hflip : evalSimple (.immutable f) o n = false)
+    (hs : ctx.sender ≠ some k) :
+    evalConstraintCtx ctx (.anyOf [.immutable f, .senderIs k]) o n = false := by
+  have himm : evalSimpleCtx ctx (.immutable f) o n = false := hflip
+  have hsend : evalSimpleCtx ctx (.senderIs k) o n = false := by
+    show (ctx.sender == some k) = false
+    exact beq_eq_false_iff_ne.mpr hs
+  simp [evalConstraintCtx, himm, hsend]
+
+/-- A turn leaving slot `f` untouched is admitted for ANY sender (the ceremony turns —
+propose / certify / execute — stay open under the binding). -/
+theorem actorBound_untouched_open (k : Int) (f : FieldName) (ctx : TurnCtx) (o n : Value)
+    (huntouched : evalSimple (.immutable f) o n = true) :
+    evalConstraintCtx ctx (.anyOf [.immutable f, .senderIs k]) o n = true := by
+  have himm : evalSimpleCtx ctx (.immutable f) o n = true := huntouched
+  simp [evalConstraintCtx, himm]
+
+/-! ### It runs — non-vacuity pairs for every context atom (`by decide`-free `#guard`s). -/
+
+/-- The polis approval binding: slot `approve_a` flips only for sender 17. -/
+def councilBound : StateConstraint := .anyOf [.immutable "approve_a", .senderIs 17]
+
+-- Member 17 flips their own slot: ADMITTED.
+#guard evalConstraintCtx { sender := some 17 } councilBound
+  (.record [("approve_a", .int 0)]) (.record [("approve_a", .int 1)])
+-- Member 99 (a real identity, a real capability — NOT the bound one): REJECTED.
+#guard evalConstraintCtx { sender := some 99 } councilBound
+  (.record [("approve_a", .int 0)]) (.record [("approve_a", .int 1)]) == false
+-- A turn that leaves the slot alone: ADMITTED for anyone (ceremony turns stay open).
+#guard evalConstraintCtx { sender := some 99 } councilBound
+  (.record [("approve_a", .int 0)]) (.record [("approve_a", .int 0)])
+-- No sender in context while flipping: REJECTED (fail-closed).
+#guard evalConstraintCtx {} councilBound
+  (.record [("approve_a", .int 0)]) (.record [("approve_a", .int 1)]) == false
+
+-- senderInField: the slot-held controller identity.
+#guard evalSimpleCtx { sender := some 5 } (.senderInField "owner")
+  (.record []) (.record [("owner", .int 5)])
+#guard evalSimpleCtx { sender := some 6 } (.senderInField "owner")
+  (.record []) (.record [("owner", .int 5)]) == false
+
+/-- The drain tooth (blueprint gap 2): `state = 2 (RESOLVED) ⇒ balance ≤ 0`. -/
+def drainTooth : StateConstraint := .anyOf [.not (.fieldEquals "state" 2), .balanceLe 0]
+
+-- Resolved + drained: ADMITTED.
+#guard evalConstraintCtx { balance := some 0 } drainTooth (.record []) (.record [("state", .int 2)])
+-- Resolved while still holding value: REJECTED (value cannot be stranded).
+#guard evalConstraintCtx { balance := some 40 } drainTooth
+  (.record []) (.record [("state", .int 2)]) == false
+-- Open: balance unconstrained.
+#guard evalConstraintCtx { balance := some 40 } drainTooth (.record []) (.record [("state", .int 1)])
+
+-- balanceGe: the solvency floor.
+#guard evalSimpleCtx { balance := some 10 } (.balanceGe 10) (.record []) (.record [])
+#guard evalSimpleCtx { balance := some 9 } (.balanceGe 10) (.record []) (.record []) == false
+#guard evalSimpleCtx {} (.balanceGe 0) (.record []) (.record []) == false  -- fail-closed
+
+/-- The committed-escrow gate (blueprint gap 1): `state = 2 (RELEASED) ⇒ reveal the preimage
+of the commitment held in `commit`.` Composable BECAUSE `preimageGate` is a simple atom. -/
+def committedRelease : StateConstraint := .anyOf [.not (.fieldEquals "state" 2), .preimageGate "commit"]
+
+-- Release with the correct reveal: ADMITTED.
+#guard evalConstraintCtx { revealedHash := some 77 } committedRelease
+  (.record []) (.record [("state", .int 2), ("commit", .int 77)])
+-- Release without a reveal: REJECTED.
+#guard evalConstraintCtx {} committedRelease
+  (.record []) (.record [("state", .int 2), ("commit", .int 77)]) == false
+-- Release with the WRONG reveal: REJECTED.
+#guard evalConstraintCtx { revealedHash := some 5 } committedRelease
+  (.record []) (.record [("state", .int 2), ("commit", .int 77)]) == false
+-- Not releasing: the gate is dormant.
+#guard evalConstraintCtx {} committedRelease
+  (.record []) (.record [("state", .int 1), ("commit", .int 77)])
+
+-- The conservative extension, witnessed computably on a context atom and a legacy atom.
+#guard evalSimpleCtx TurnCtx.empty (.senderIs 17) (.record []) (.record []) == evalSimple (.senderIs 17) (.record []) (.record [])
+#guard evalSimpleCtx TurnCtx.empty (.monotonic "n") (.record [("n", .int 1)]) (.record [("n", .int 2)]) == evalSimple (.monotonic "n") (.record [("n", .int 1)]) (.record [("n", .int 2)])
+
+#assert_axioms evalSimpleCtx_empty
+#assert_axioms evalConstraintCtx_empty
+#assert_axioms admitsCtx_empty
+#assert_axioms evalSimpleCtx_senderIs_iff
+#assert_axioms evalSimpleCtx_senderInField_iff
+#assert_axioms evalSimpleCtx_balanceGe_iff
+#assert_axioms evalSimpleCtx_balanceLe_iff
+#assert_axioms evalSimpleCtx_preimageGate_iff
+#assert_axioms actorBound_owner_flips
+#assert_axioms actorBound_flip_requires_sender
+#assert_axioms actorBound_untouched_open
 
 end Dregg2.Exec
