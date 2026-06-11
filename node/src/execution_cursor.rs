@@ -114,10 +114,20 @@ impl ExecutionCursor {
     /// This is the load-bearing mechanism: a set difference walked in the
     /// CURRENT order, immune to mid-prefix insertion (TauPrefixMonotone).
     pub fn pending(&self, ordered: &[BlockId]) -> Vec<BlockId> {
-        // ── CURRENT (pre-fix) semantics: bare index slice, extracted verbatim
-        // from poll_finalized_blocks. Replaced below by identity tracking.
-        let cut = self.served.len().min(ordered.len());
-        ordered[cut..].to_vec()
+        // Identity tracking (the load-bearing fix this module exists for): the
+        // finalized blocks not yet executed, walked in the CURRENT tau order.
+        // A bare `ordered[served.len()..]` index slice is UNSOUND under the
+        // TauPrefixMonotone counterexample (a mid-prefix insertion shifts the
+        // already-executed region, causing re-execution of a block past the
+        // cursor AND skipping a finalized block that fell behind it). Walking a
+        // set difference by id is immune: a late mid-prefix block surfaces as a
+        // fresh pending entry (executes once, late), and nothing in `executed`
+        // is ever re-served.
+        ordered
+            .iter()
+            .filter(|id| !self.executed.contains(id))
+            .copied()
+            .collect()
     }
 
     /// Observability (the `stableCheck` signal, conclusion-level): record the
