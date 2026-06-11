@@ -30,7 +30,6 @@ use dregg_captp::{
     PipelinedAction, PipelinedMessage, SwissTable, validate_handoff,
 };
 
-
 // =============================================================================
 // Proof Verifier Trait
 // =============================================================================
@@ -1245,7 +1244,6 @@ pub struct SiloServer {
     /// Graceful shutdown coordinator.
     shutdown: Arc<ShutdownCoordinator>,
 }
-
 
 /// Events logged by the server for diagnostics.
 #[derive(Clone, Debug)]
@@ -3706,9 +3704,10 @@ mod tests {
         // Simulate DropRef from recipient's federation -> cleans up.
         // The introduction export was minted under session 0 (no active session in
         // this test), so the DropRef presents session 0 (F-11: session mandatory).
-        let result = captp
-            .export_gc
-            .process_drop_with_session(target_cell, recipient_federation, 0);
+        let result =
+            captp
+                .export_gc
+                .process_drop_with_session(target_cell, recipient_federation, 0);
         assert_eq!(result, DropResult::CanRevoke);
     }
 

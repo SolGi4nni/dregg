@@ -192,14 +192,12 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
                     *target = *resolved;
                 }
             }
-            
+
             // ExerciseViaCapability: recurse into inner_effects for rewriting.
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 rewrite_effect_targets(inner_effects, placeholder, resolved);
             }
             // CapTP variants have mutable CellId fields (target, bearer):
-            
-            
             Effect::Refusal { cell, .. } => {
                 if cell == placeholder {
                     *cell = *resolved;
@@ -245,9 +243,7 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             | Effect::RefreshDelegation
             | Effect::RevokeDelegation { .. }
             | Effect::MakeSovereign { .. }
-            | Effect::CreateCellFromFactory { .. } => {}
-            // These effects don't have mutable CellId fields needing rewrite:
-            
+            | Effect::CreateCellFromFactory { .. } => {} // These effects don't have mutable CellId fields needing rewrite:
         }
     }
 }

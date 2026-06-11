@@ -258,10 +258,8 @@ impl PersistentStore {
                 let mut idx_turn = write_txn.open_table(tables::IDX_TURN_BY_HASH)?;
                 idx_turn.insert(&stored_record.turn_hash, assigned)?;
 
-                let hc_key = CommitRecord::height_creator_key(
-                    stored_record.height,
-                    &stored_record.creator,
-                );
+                let hc_key =
+                    CommitRecord::height_creator_key(stored_record.height, &stored_record.creator);
                 let mut idx_hc = write_txn.open_table(tables::IDX_TURN_BY_HEIGHT_CREATOR)?;
                 idx_hc.insert(hc_key.as_slice(), assigned)?;
 
@@ -535,8 +533,7 @@ impl PersistentStore {
                 "turn_by_hash",
                 &mut report,
             )?;
-            let hc_key =
-                CommitRecord::height_creator_key(record.height, &record.creator);
+            let hc_key = CommitRecord::height_creator_key(record.height, &record.creator);
             match idx_hc.get(hc_key.as_slice())? {
                 Some(g) if g.value() == ordinal => {}
                 Some(g) => report.mismatched_entries.push(format!(
@@ -570,9 +567,9 @@ impl PersistentStore {
                 entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
             let ordinal = entry.1.value();
             if log.get(ordinal)?.is_none() {
-                report
-                    .orphan_entries
-                    .push(format!("turn_by_height_creator -> missing ordinal {ordinal}"));
+                report.orphan_entries.push(format!(
+                    "turn_by_height_creator -> missing ordinal {ordinal}"
+                ));
             }
         }
 
@@ -665,8 +662,7 @@ impl PersistentStore {
             for record in &records {
                 idx_receipt.insert(&record.receipt_hash, record.ordinal)?;
                 idx_turn.insert(&record.turn_hash, record.ordinal)?;
-                let hc_key =
-                    CommitRecord::height_creator_key(record.height, &record.creator);
+                let hc_key = CommitRecord::height_creator_key(record.height, &record.creator);
                 idx_hc.insert(hc_key.as_slice(), record.ordinal)?;
                 for cell in &record.touched_cells {
                     let cell_bytes = postcard::to_stdvec(cell)
@@ -699,9 +695,10 @@ fn check_hash_index(
             hex32(key),
             g.value()
         )),
-        None => report
-            .missing_entries
-            .push(format!("{name}({}) missing for ordinal {ordinal}", hex32(key))),
+        None => report.missing_entries.push(format!(
+            "{name}({}) missing for ordinal {ordinal}",
+            hex32(key)
+        )),
     }
     Ok(())
 }
@@ -831,7 +828,11 @@ mod tests {
         // Re-apply ordinal 0 with the SAME turn hash: no-op success.
         let assigned = store.commit_finalized_turn(0, &rec0).unwrap();
         assert_eq!(assigned, 0);
-        assert_eq!(store.commit_cursor().unwrap(), 2, "cursor must not regress/advance");
+        assert_eq!(
+            store.commit_cursor().unwrap(),
+            2,
+            "cursor must not regress/advance"
+        );
 
         // Re-apply ordinal 0 with a DIFFERENT turn hash: integrity error.
         let mut tampered = rec0.clone();

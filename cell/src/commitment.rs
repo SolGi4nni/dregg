@@ -466,8 +466,7 @@ fn auth_required_to_tag(auth: &AuthRequired) -> dregg_circuit::field::BabyBear {
 pub fn compute_canonical_capability_root_felt(
     caps: &CapabilitySet,
 ) -> dregg_circuit::field::BabyBear {
-    let leaves: Vec<dregg_circuit::cap_root::CapLeaf> =
-        caps.iter().map(cap_ref_to_leaf).collect();
+    let leaves: Vec<dregg_circuit::cap_root::CapLeaf> = caps.iter().map(cap_ref_to_leaf).collect();
     dregg_circuit::cap_root::compute_capability_root(leaves)
 }
 
@@ -747,12 +746,18 @@ mod tests {
         let mid = after;
         assert!(cell.state.set_field_ext(9, [7u8; 32]));
         let after2 = compute_canonical_state_commitment(&cell);
-        assert_ne!(mid, after2, "a distinct map entry must move the commitment again");
+        assert_ne!(
+            mid, after2,
+            "a distinct map entry must move the commitment again"
+        );
 
         // Tampering a committed value at the same key also moves it.
         assert!(cell.state.set_field_ext(8, [43u8; 32]));
         let tampered = compute_canonical_state_commitment(&cell);
-        assert_ne!(after2, tampered, "tampering a map value must move the commitment");
+        assert_ne!(
+            after2, tampered,
+            "tampering a map value must move the commitment"
+        );
     }
 
     /// `_RECORD-LAYER-UPGRADE.md` **STAGE 3** (the side-table absorb): the
@@ -787,21 +792,35 @@ mod tests {
 
         // A DISTINCT side-table root (nullifier) moves it again.
         let mid = after;
-        assert!(cell.state.set_system_root(system_root::NULLIFIER, [7u8; 32]));
+        assert!(
+            cell.state
+                .set_system_root(system_root::NULLIFIER, [7u8; 32])
+        );
         let after2 = compute_canonical_state_commitment(&cell);
-        assert_ne!(mid, after2, "a distinct side-table root must move the commitment again");
+        assert_ne!(
+            mid, after2,
+            "a distinct side-table root must move the commitment again"
+        );
 
         // ANTI-GHOST: tampering the SAME side-table root (e.g. an attacker
         // dropping an escrow → a different root) moves it.
         assert!(cell.state.set_system_root(system_root::ESCROW, [99u8; 32]));
         let tampered = compute_canonical_state_commitment(&cell);
-        assert_ne!(after2, tampered, "tampering a side-table root must move the commitment");
+        assert_ne!(
+            after2, tampered,
+            "tampering a side-table root must move the commitment"
+        );
 
         // Every kernel index is distinct and addresses a distinct sub-block cell.
         let idxs = [
-            system_root::ESCROW, system_root::QUEUE, system_root::REFCOUNT,
-            system_root::STURDYREF, system_root::DELEG, system_root::NULLIFIER,
-            system_root::COMMIT, system_root::SEALED_BOXES,
+            system_root::ESCROW,
+            system_root::QUEUE,
+            system_root::REFCOUNT,
+            system_root::STURDYREF,
+            system_root::DELEG,
+            system_root::NULLIFIER,
+            system_root::COMMIT,
+            system_root::SEALED_BOXES,
         ];
         // `dedup` is a `Vec` method (not available on a fixed-size array), so
         // collect into a `Vec` first. (This test module only began compiling
@@ -811,7 +830,11 @@ mod tests {
         let mut sorted = idxs.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), crate::state::N_SYSTEM_ROOTS, "indices distinct & cover the block");
+        assert_eq!(
+            sorted.len(),
+            crate::state::N_SYSTEM_ROOTS,
+            "indices distinct & cover the block"
+        );
     }
 
     /// `_RECORD-LAYER-UPGRADE.md` **STAGE 3 backward-compat keystone** (the no-op
@@ -823,25 +846,39 @@ mod tests {
     /// `SystemRoots.legacy_commitS_absorbs_empty_roots`.
     #[test]
     fn legacy_cells_share_system_roots_contribution() {
-        use crate::state::{empty_system_roots_digest, system_root, FIELD_ZERO};
+        use crate::state::{FIELD_ZERO, empty_system_roots_digest, system_root};
 
         // (a) a fresh cell is a legacy cell (all-zero sub-block).
         let fresh = Cell::new(test_key(7), test_token(11));
-        assert_eq!(fresh.state.system_roots_digest(), empty_system_roots_digest());
+        assert_eq!(
+            fresh.state.system_roots_digest(),
+            empty_system_roots_digest()
+        );
         let c_fresh = compute_canonical_state_commitment(&fresh);
 
         // (b) a cell whose sub-block was populated then DRAINED back to all-zero:
         // the digest returns to the same constant, so its commitment is byte-
         // identical to (a).
         let mut drained = Cell::new(test_key(7), test_token(11));
-        assert!(drained.state.set_system_root(system_root::QUEUE, [99u8; 32]));
+        assert!(
+            drained
+                .state
+                .set_system_root(system_root::QUEUE, [99u8; 32])
+        );
         assert_ne!(
             drained.state.system_roots_digest(),
             empty_system_roots_digest(),
             "populated: digest differs from empty (non-vacuous)"
         );
-        assert!(drained.state.set_system_root(system_root::QUEUE, FIELD_ZERO));
-        assert_eq!(drained.state.system_roots_digest(), empty_system_roots_digest());
+        assert!(
+            drained
+                .state
+                .set_system_root(system_root::QUEUE, FIELD_ZERO)
+        );
+        assert_eq!(
+            drained.state.system_roots_digest(),
+            empty_system_roots_digest()
+        );
         let c_drained = compute_canonical_state_commitment(&drained);
         assert_eq!(
             c_fresh, c_drained,

@@ -628,8 +628,8 @@ mod tests {
     fn poseidon2_plonky3_cross_check_kat() {
         use crate::field::BABYBEAR_P;
         use crate::plonky3_prover::{from_p3, to_p3};
-        use p3_baby_bear::default_babybear_poseidon2_16;
         use p3_baby_bear::BabyBear as P3BabyBear;
+        use p3_baby_bear::default_babybear_poseidon2_16;
         use p3_symmetric::Permutation;
 
         let perm = default_babybear_poseidon2_16();

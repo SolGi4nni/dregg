@@ -193,7 +193,11 @@ fn is_hash(c: &ConstraintExpr) -> bool {
 
 /// Number of Poseidon2 hash constraints in a descriptor (= number of aux blocks).
 fn hash_count(dsl: &DslCircuit) -> usize {
-    dsl.descriptor.constraints.iter().filter(|c| is_hash(c)).count()
+    dsl.descriptor
+        .constraints
+        .iter()
+        .filter(|c| is_hash(c))
+        .count()
 }
 
 /// An interior-row boundary `trace[k][col] == target` where `k` is an absolute
@@ -213,7 +217,11 @@ fn interior_boundaries(dsl: &DslCircuit) -> Vec<InteriorBoundary> {
     let mut out = Vec::new();
     for b in &dsl.descriptor.boundaries {
         match b {
-            BoundaryDef::PiBinding { row: BoundaryRow::Index(k), col, pi_index } if *k != 0 => {
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::Index(k),
+                col,
+                pi_index,
+            } if *k != 0 => {
                 out.push(InteriorBoundary {
                     row: *k,
                     col: *col,
@@ -221,7 +229,11 @@ fn interior_boundaries(dsl: &DslCircuit) -> Vec<InteriorBoundary> {
                     fixed: BabyBear::ZERO,
                 });
             }
-            BoundaryDef::Fixed { row: BoundaryRow::Index(k), col, value } if *k != 0 => {
+            BoundaryDef::Fixed {
+                row: BoundaryRow::Index(k),
+                col,
+                value,
+            } if *k != 0 => {
                 out.push(InteriorBoundary {
                     row: *k,
                     col: *col,
@@ -278,7 +290,11 @@ fn hash_input_state<AB: AirBuilder>(
             st[5] = AB::Expr::from_u64(0xFACF);
             st[6] = AB::Expr::ONE;
         }
-        ConstraintExpr::Hash2to1 { input_col_a, input_col_b, .. } => {
+        ConstraintExpr::Hash2to1 {
+            input_col_a,
+            input_col_b,
+            ..
+        } => {
             st[0] = local[*input_col_a].into();
             st[1] = local[*input_col_b].into();
             st[4] = AB::Expr::from_u64(2); // arity tag (matches hash_2_to_1)
@@ -319,7 +335,11 @@ fn hash_input_state_concrete(c: &ConstraintExpr, row: &[BabyBear]) -> [BabyBear;
             st[5] = BabyBear::new(0xFACF);
             st[6] = BabyBear::ONE;
         }
-        ConstraintExpr::Hash2to1 { input_col_a, input_col_b, .. } => {
+        ConstraintExpr::Hash2to1 {
+            input_col_a,
+            input_col_b,
+            ..
+        } => {
             st[0] = row[*input_col_a];
             st[1] = row[*input_col_b];
             st[4] = BabyBear::new(2);
@@ -339,11 +359,7 @@ fn hash_input_state_concrete(c: &ConstraintExpr, row: &[BabyBear]) -> [BabyBear;
 /// Symbolically evaluate an algebraic constraint to an `AB::Expr`, mirroring
 /// `ConstraintExpr::evaluate_with_tables` term-for-term. Panics only on a
 /// non-algebraic form, which `try_from_dsl` has already rejected.
-fn eval_expr<AB: AirBuilder>(
-    c: &ConstraintExpr,
-    local: &[AB::Var],
-    next: &[AB::Var],
-) -> AB::Expr {
+fn eval_expr<AB: AirBuilder>(c: &ConstraintExpr, local: &[AB::Var], next: &[AB::Var]) -> AB::Expr {
     // helper closures
     let col = |i: usize| -> AB::Expr { local[i].into() };
     let one = AB::Expr::ONE;
@@ -358,7 +374,10 @@ fn eval_expr<AB: AirBuilder>(
             // constraint vector aligned without double-counting.
             AB::Expr::ZERO
         }
-        ConstraintExpr::Transition { next_col, local_col } => {
+        ConstraintExpr::Transition {
+            next_col,
+            local_col,
+        } => {
             // Transition references `next`; emit (next[next_col] - local[local_col]).
             let n: AB::Expr = next[*next_col].into();
             n - col(*local_col)
@@ -374,12 +393,14 @@ fn eval_expr<AB: AirBuilder>(
             }
             sum
         }
-        ConstraintExpr::Gated { selector_col, inner } => {
-            col(*selector_col) * eval_expr::<AB>(inner, local, next)
-        }
-        ConstraintExpr::InvertedGated { selector_col, inner } => {
-            (one.clone() - col(*selector_col)) * eval_expr::<AB>(inner, local, next)
-        }
+        ConstraintExpr::Gated {
+            selector_col,
+            inner,
+        } => col(*selector_col) * eval_expr::<AB>(inner, local, next),
+        ConstraintExpr::InvertedGated {
+            selector_col,
+            inner,
+        } => (one.clone() - col(*selector_col)) * eval_expr::<AB>(inner, local, next),
         ConstraintExpr::Squared { inner } => {
             let v = eval_expr::<AB>(inner, local, next);
             v.clone() * v
@@ -452,8 +473,7 @@ where
                 // aux block; digest bound to the output column.
                 c if is_hash(c) => {
                     let base = self.base_width + hash_block * POSEIDON2_PERM_AUX_COLS;
-                    let aux: Vec<AB::Var> =
-                        local[base..base + POSEIDON2_PERM_AUX_COLS].to_vec();
+                    let aux: Vec<AB::Var> = local[base..base + POSEIDON2_PERM_AUX_COLS].to_vec();
                     let input = hash_input_state::<AB>(c, &local);
                     let digest = poseidon2_permute_expr::<AB>(builder, input, &aux);
                     let out: AB::Expr = local[hash_output_col(c)].into();
@@ -560,7 +580,11 @@ fn interior_boundaries_from_descriptor(
     let mut out = Vec::new();
     for b in &desc.boundaries {
         match b {
-            BoundaryDef::PiBinding { row: BoundaryRow::Index(k), col, pi_index } if *k != 0 => {
+            BoundaryDef::PiBinding {
+                row: BoundaryRow::Index(k),
+                col,
+                pi_index,
+            } if *k != 0 => {
                 out.push(EvalInteriorBoundary {
                     row: *k,
                     col: *col,
@@ -568,7 +592,11 @@ fn interior_boundaries_from_descriptor(
                     fixed: BabyBear::ZERO,
                 });
             }
-            BoundaryDef::Fixed { row: BoundaryRow::Index(k), col, value } if *k != 0 => {
+            BoundaryDef::Fixed {
+                row: BoundaryRow::Index(k),
+                col,
+                value,
+            } if *k != 0 => {
                 out.push(EvalInteriorBoundary {
                     row: *k,
                     col: *col,
@@ -653,8 +681,10 @@ pub fn prove_dsl_p3(
     // Self-verify (the audited verifier must accept what we just proved).
     let airs = vec![air];
     let pvs = vec![pis];
-    verify_batch(&config, &airs, &proof, &pvs, common).map_err(|e| DslP3Error::VerificationFailed {
-        reason: format!("{e:?}"),
+    verify_batch(&config, &airs, &proof, &pvs, common).map_err(|e| {
+        DslP3Error::VerificationFailed {
+            reason: format!("{e:?}"),
+        }
     })?;
     Ok(proof)
 }
@@ -761,8 +791,16 @@ mod tests {
             trace_width: 2,
             max_degree: 2,
             columns: vec![
-                ColumnDef { name: "balance".into(), index: 0, kind: ColumnKind::Value },
-                ColumnDef { name: "dir".into(), index: 1, kind: ColumnKind::Binary },
+                ColumnDef {
+                    name: "balance".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "dir".into(),
+                    index: 1,
+                    kind: ColumnKind::Binary,
+                },
             ],
             constraints: vec![
                 // direction is boolean
@@ -832,13 +870,24 @@ mod tests {
             trace_width: 2,
             max_degree: 1,
             columns: vec![
-                ColumnDef { name: "x".into(), index: 0, kind: ColumnKind::Value },
-                ColumnDef { name: "y".into(), index: 1, kind: ColumnKind::Value },
+                ColumnDef {
+                    name: "x".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "y".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
             ],
             constraints: vec![ConstraintExpr::Polynomial {
                 // 2*c0 + (-1)*c1 == 0  →  c1 = 2*c0. (-1) mod p = BABYBEAR_P - 1.
                 terms: vec![
-                    PolyTerm { coeff: BabyBear::new(2), col_indices: vec![0] },
+                    PolyTerm {
+                        coeff: BabyBear::new(2),
+                        col_indices: vec![0],
+                    },
                     PolyTerm {
                         coeff: BabyBear::new(crate::field::BABYBEAR_P - 1),
                         col_indices: vec![1],
@@ -868,7 +917,10 @@ mod tests {
             vec![BabyBear::new(9), BabyBear::new(18)],
         ];
         let res = prove_dsl_p3(&dsl, &bad_trace, &[]);
-        assert!(res.is_err(), "trace violating y=2x must not produce a verifying p3 proof");
+        assert!(
+            res.is_err(),
+            "trace violating y=2x must not produce a verifying p3 proof"
+        );
     }
 
     /// REAL Poseidon2 in-circuit hashing through the audited p3 verifier: a
@@ -883,9 +935,21 @@ mod tests {
             trace_width: 3, // [a, b, out]
             max_degree: 7,  // Poseidon2 S-box
             columns: vec![
-                ColumnDef { name: "a".into(), index: 0, kind: ColumnKind::Value },
-                ColumnDef { name: "b".into(), index: 1, kind: ColumnKind::Value },
-                ColumnDef { name: "out".into(), index: 2, kind: ColumnKind::Hash },
+                ColumnDef {
+                    name: "a".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "b".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "out".into(),
+                    index: 2,
+                    kind: ColumnKind::Hash,
+                },
             ],
             constraints: vec![ConstraintExpr::Hash2to1 {
                 output_col: 2,
@@ -933,11 +997,31 @@ mod tests {
             trace_width: 5, // [pred, t0, t1, t2, out]
             max_degree: 7,  // Poseidon2 S-box
             columns: vec![
-                ColumnDef { name: "pred".into(), index: 0, kind: ColumnKind::Value },
-                ColumnDef { name: "t0".into(), index: 1, kind: ColumnKind::Value },
-                ColumnDef { name: "t1".into(), index: 2, kind: ColumnKind::Value },
-                ColumnDef { name: "t2".into(), index: 3, kind: ColumnKind::Value },
-                ColumnDef { name: "out".into(), index: 4, kind: ColumnKind::Hash },
+                ColumnDef {
+                    name: "pred".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "t0".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "t1".into(),
+                    index: 2,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "t2".into(),
+                    index: 3,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "out".into(),
+                    index: 4,
+                    kind: ColumnKind::Hash,
+                },
             ],
             constraints: vec![ConstraintExpr::Hash {
                 output_col: 4,
@@ -981,7 +1065,11 @@ mod tests {
             name: "dsl_p3_interior_row".to_string(),
             trace_width: 1, // [v]
             max_degree: 2,
-            columns: vec![ColumnDef { name: "v".into(), index: 0, kind: ColumnKind::Value }],
+            columns: vec![ColumnDef {
+                name: "v".into(),
+                index: 0,
+                kind: ColumnKind::Value,
+            }],
             constraints: vec![],
             boundaries: vec![BoundaryDef::PiBinding {
                 row: BoundaryRow::Index(2), // INTERIOR row
@@ -1003,7 +1091,8 @@ mod tests {
         let pis = vec![BabyBear::new(777)];
         let proof = prove_dsl_p3(&dsl, &trace, &pis)
             .expect("honest interior-row binding must prove+verify through audited p3");
-        verify_dsl_p3(&dsl, &proof, &pis).expect("audited p3 verify accepts honest interior binding");
+        verify_dsl_p3(&dsl, &proof, &pis)
+            .expect("audited p3 verify accepts honest interior binding");
 
         // ANTI-GHOST: a forged PI[0] (claim row 2 == 999) must be rejected.
         let forged_pis = vec![BabyBear::new(999)];

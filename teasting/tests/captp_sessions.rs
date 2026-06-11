@@ -133,7 +133,6 @@ fn test_export_and_enliven_sturdy_ref() {
 // Test 3: GC - Fed B drops ref -> Fed A's export count decrements
 // =============================================================================
 
-
 // =============================================================================
 // Test 4: Pipeline - Fed B sends 3 pipelined actions to Fed A, all resolve
 // =============================================================================

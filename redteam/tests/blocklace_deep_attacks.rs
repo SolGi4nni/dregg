@@ -21,7 +21,7 @@
 //!    restores (DEEP 5c).
 
 use dregg_blocklace::finality::{
-    Block, BlockError, Blocklace, BlockId, CheckpointData, MembershipAction, Payload,
+    Block, BlockError, BlockId, Blocklace, CheckpointData, MembershipAction, Payload,
 };
 use ed25519_dalek::ed25519::signature::Signer as _;
 use ed25519_dalek::SigningKey as DalekKey;
@@ -81,16 +81,17 @@ fn deep_different_seq_fork_is_detected() {
     let arm_a = Block::new(&me, 1, Payload::Data(vec![0xAA]), vec![b0.id()]);
     let arm_b = Block::new(&me, 2, Payload::Data(vec![0xBB]), vec![b0.id()]);
 
-    lace.receive_block(arm_a).expect("armA accepted (first arm)");
+    lace.receive_block(arm_a)
+        .expect("armA accepted (first arm)");
     let r = lace.receive_block(arm_b);
 
     match r {
         Err(BlockError::Equivocation { creator, .. }) => {
             assert_eq!(creator, me.verifying_key().to_bytes());
         }
-        other => panic!(
-            "FINDING: different-seq fork NOT detected (seq heuristic regressed): {other:?}"
-        ),
+        other => {
+            panic!("FINDING: different-seq fork NOT detected (seq heuristic regressed): {other:?}")
+        }
     }
     assert!(
         lace.is_equivocator(&me.verifying_key().to_bytes()),
@@ -333,7 +334,10 @@ fn finding_from_checkpoint_admits_dangling_predecessor() {
          (dangling predecessor) — it admitted one"
     );
     assert!(
-        restore.as_ref().err().is_some_and(|e| e.contains("causally closed")),
+        restore
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.contains("causally closed")),
         "rejection must be the closure error, got: {:?}",
         restore.err()
     );

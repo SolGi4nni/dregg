@@ -796,7 +796,10 @@ const DEBIT_PAYLOAD_MIN_SIZE: usize = 1 + 32 + 8;
 /// iff `amount ≤ remaining`, subtract on accept, reject otherwise (first-come-wins). Returns the
 /// per-debit accept verdicts (in order) and the final remaining balance — byte-for-byte the gate's
 /// semantics, kept distinct so it can be cross-checked against the Lean verdict.
-fn resolve_ordered_native(balance: ResourceAmount, amounts: &[ResourceAmount]) -> (Vec<bool>, ResourceAmount) {
+fn resolve_ordered_native(
+    balance: ResourceAmount,
+    amounts: &[ResourceAmount],
+) -> (Vec<bool>, ResourceAmount) {
     let mut remaining = balance;
     let mut verdicts = Vec::with_capacity(amounts.len());
     for &amount in amounts {

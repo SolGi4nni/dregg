@@ -105,7 +105,10 @@ fn a2_populated_clist_cell_equals_circuit() {
     let t3 = CellId::derive_raw(&[3u8; 32], &[3u8; 32]);
 
     // (a) a signature cap with full effect mask, no expiry, no breadstuff.
-    let s1 = cell.capabilities.grant(t1, AuthRequired::Signature).unwrap();
+    let s1 = cell
+        .capabilities
+        .grant(t1, AuthRequired::Signature)
+        .unwrap();
     // (b) a proof cap with an expiry.
     let s2 = cell
         .capabilities
@@ -251,7 +254,10 @@ fn a2_with_capability_root_round_trips_into_commitment() {
     let real_root = dregg_cell::compute_canonical_capability_root_felt(&cell.capabilities);
 
     let seeded = dregg_circuit::CellState::with_capability_root(100_000, 0, real_root);
-    assert_eq!(seeded.capability_root, real_root, "with_capability_root must carry the real root");
+    assert_eq!(
+        seeded.capability_root, real_root,
+        "with_capability_root must carry the real root"
+    );
 
     let empty_state = dregg_circuit::CellState::new(100_000, 0);
     assert_ne!(

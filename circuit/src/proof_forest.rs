@@ -239,8 +239,8 @@ pub fn verify_forest(forest: &ProofForest) -> Result<(), ForestError> {
 // differential guard until every consumer + the non-graduated selectors are cut
 // over (then the hand-AIR retires).
 
-use crate::effect_vm_p3_full_air::EffectVmP3Proof;
 use crate::effect_vm_descriptors::descriptor_for_selector;
+use crate::effect_vm_p3_full_air::EffectVmP3Proof;
 use crate::lean_descriptor_air::{parse_vm_descriptor, verify_vm_descriptor};
 
 /// The cutover-ready selectors whose descriptors the differential harness has
@@ -326,11 +326,9 @@ fn verify_descriptor_node_selector_bound(node: &DescriptorForestNode) -> Result<
     }
     match bound.as_slice() {
         [only] => Ok(*only),
-        [] => Err(
-            "descriptor forest node verified under NO cutover selector \
+        [] => Err("descriptor forest node verified under NO cutover selector \
              (not a graduated descriptor proof)"
-                .into(),
-        ),
+            .into()),
         multi => Err(format!(
             "descriptor forest node verified under MULTIPLE cutover selectors {multi:?} \
              — selector binding ambiguous, rejecting"
@@ -432,13 +430,19 @@ mod descriptor_tests {
         let s0 = CellState::new(100, 0);
         let node0 = prove_descriptor_step(
             &s0,
-            &[Effect::Transfer { amount: 30, direction: 0 }],
+            &[Effect::Transfer {
+                amount: 30,
+                direction: 0,
+            }],
             sel::TRANSFER,
         );
         let s1 = apply_transfer(&s0, 30, 0);
         let node1 = prove_descriptor_step(
             &s1,
-            &[Effect::Transfer { amount: 10, direction: 1 }],
+            &[Effect::Transfer {
+                amount: 10,
+                direction: 1,
+            }],
             sel::TRANSFER,
         );
 
@@ -464,17 +468,27 @@ mod descriptor_tests {
         let s0 = CellState::new(100, 0);
         let node0 = prove_descriptor_step(
             &s0,
-            &[Effect::Transfer { amount: 30, direction: 0 }],
+            &[Effect::Transfer {
+                amount: 30,
+                direction: 0,
+            }],
             sel::TRANSFER,
         );
         // Step 1 starts from an UNRELATED state, so its OLD_COMMIT != step0 NEW_COMMIT.
         let s1_wrong = CellState::new(999, 1);
         let node1 = prove_descriptor_step(
             &s1_wrong,
-            &[Effect::Transfer { amount: 10, direction: 1 }],
+            &[Effect::Transfer {
+                amount: 10,
+                direction: 1,
+            }],
             sel::TRANSFER,
         );
-        assert_ne!(node0.new_commit(), node1.old_commit(), "link must be broken");
+        assert_ne!(
+            node0.new_commit(),
+            node1.old_commit(),
+            "link must be broken"
+        );
 
         // Both individually valid through the descriptor interpreter.
         verify_descriptor_node_selector_bound(&node0).expect("node0 valid");
@@ -508,7 +522,11 @@ mod descriptor_tests {
         );
         let bound = verify_descriptor_node_selector_bound(&node)
             .expect("burn descriptor node must verify selector-bound");
-        assert_eq!(bound, sel::BURN, "must bind to BURN and no other cutover selector");
+        assert_eq!(
+            bound,
+            sel::BURN,
+            "must bind to BURN and no other cutover selector"
+        );
     }
 }
 
@@ -652,8 +670,9 @@ mod tests {
             nodes: vec![node0, node1],
             edges: vec![LinkEdge { from: 0, to: 1 }],
         };
-        let err = verify_forest(&forest)
-            .expect_err("forest with a broken link must be rejected even though both proofs are valid");
+        let err = verify_forest(&forest).expect_err(
+            "forest with a broken link must be rejected even though both proofs are valid",
+        );
 
         match err {
             ForestError::LinkBroken { edge, .. } => {

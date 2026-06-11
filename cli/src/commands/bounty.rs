@@ -276,11 +276,7 @@ async fn payout(
     Ok(())
 }
 
-async fn show(
-    cfg: &Config,
-    ctx: &Context,
-    cell: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn show(cfg: &Config, ctx: &Context, cell: &str) -> Result<(), Box<dyn std::error::Error>> {
     let detail = get_json(cfg, &format!("/api/cell/{cell}")).await?;
     let found = detail["found"].as_bool().unwrap_or(false);
     let fields = detail["fields"].as_array().cloned().unwrap_or_default();

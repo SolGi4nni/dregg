@@ -240,7 +240,10 @@ async fn handle_submit(ctx: &Context, command: &CommandInteraction, state: &BotS
         edit_embed(
             ctx,
             command,
-            embeds::warning_embed("Missing Artifact", "Provide the URI of your submitted work."),
+            embeds::warning_embed(
+                "Missing Artifact",
+                "Provide the URI of your submitted work.",
+            ),
         )
         .await;
         return;
@@ -358,7 +361,12 @@ async fn resolve_cell(ctx: &Context, command: &CommandInteraction) -> Option<Bou
             hex: hex::encode(bytes),
         }),
         Err(msg) => {
-            edit_embed(ctx, command, embeds::warning_embed("Invalid Bounty Cell", &msg)).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::warning_embed("Invalid Bounty Cell", &msg),
+            )
+            .await;
             None
         }
     }
@@ -376,11 +384,13 @@ async fn require_hosted(
         .get_user_identity(&command.user.id.get().to_string())
         .await
     {
-        Ok(Some(identity)) if identity.mode == IdentityMode::Hosted => Some(UserCipherclerk::derive(
-            &state.config.bot_secret,
-            command.user.id.get(),
-            state.federation_id_bytes,
-        )),
+        Ok(Some(identity)) if identity.mode == IdentityMode::Hosted => {
+            Some(UserCipherclerk::derive(
+                &state.config.bot_secret,
+                command.user.id.get(),
+                state.federation_id_bytes,
+            ))
+        }
         Ok(Some(_)) => {
             edit_embed(
                 ctx,
@@ -406,13 +416,24 @@ async fn require_hosted(
             None
         }
         Err(e) => {
-            edit_embed(ctx, command, embeds::error_embed("Database Error", &e.to_string())).await;
+            edit_embed(
+                ctx,
+                command,
+                embeds::error_embed("Database Error", &e.to_string()),
+            )
+            .await;
             None
         }
     }
 }
 
-async fn record(state: &BotState, command: &CommandInteraction, action: &str, cell_hex: &str, status: &str) {
+async fn record(
+    state: &BotState,
+    command: &CommandInteraction,
+    action: &str,
+    cell_hex: &str,
+    status: &str,
+) {
     let actor = command.user.id.get().to_string();
     let guild = command.guild_id.map(|g| g.get().to_string());
     let _ = state
@@ -443,10 +464,12 @@ fn sub_string(command: &CommandInteraction, name: &str) -> Option<String> {
     let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
         return None;
     };
-    opts.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-        CommandDataOptionValue::String(s) => Some(s.clone()),
-        _ => None,
-    })
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::String(s) => Some(s.clone()),
+            _ => None,
+        })
 }
 
 fn sub_integer(command: &CommandInteraction, name: &str) -> Option<i64> {
@@ -454,10 +477,12 @@ fn sub_integer(command: &CommandInteraction, name: &str) -> Option<i64> {
     let CommandDataOptionValue::SubCommand(opts) = &sub.value else {
         return None;
     };
-    opts.iter().find(|o| o.name == name).and_then(|o| match &o.value {
-        CommandDataOptionValue::Integer(i) => Some(*i),
-        _ => None,
-    })
+    opts.iter()
+        .find(|o| o.name == name)
+        .and_then(|o| match &o.value {
+            CommandDataOptionValue::Integer(i) => Some(*i),
+            _ => None,
+        })
 }
 
 fn parse_cell_bytes(input: &str) -> Result<[u8; 32], String> {

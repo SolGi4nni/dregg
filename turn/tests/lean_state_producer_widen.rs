@@ -121,8 +121,12 @@ fn single_effect_turn(agent: CellId, target: CellId, nonce: u64, effect: Effect)
 /// divergence. The cap-root comparison is what makes delegate/revoke round-trips meaningful.
 fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result<(), String> {
     for id in ids {
-        let r = rust.get(id).ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
-        let l = lean.get(id).ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
+        let r = rust
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
+        let l = lean
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
         if r.state.balance() != l.state.balance() {
             return Err(format!(
                 "balance divergence on {id:?}: rust={} lean={}",
@@ -148,7 +152,9 @@ fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result
         let rc = dregg_cell::compute_canonical_capability_root(&r.capabilities);
         let lc = dregg_cell::compute_canonical_capability_root(&l.capabilities);
         if rc != lc {
-            return Err(format!("cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"));
+            return Err(format!(
+                "cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"
+            ));
         }
     }
     let rr = rust.root();
@@ -167,7 +173,9 @@ fn diff(pre: Ledger, turn: Turn, ids: &[CellId]) -> Result<(), String> {
     let mut rust_ledger = pre.clone();
     let rust_result = executor.execute(&turn, &mut rust_ledger);
     if !rust_result.is_committed() {
-        return Err(format!("legacy Rust executor did not commit: {rust_result:?}"));
+        return Err(format!(
+            "legacy Rust executor did not commit: {rust_result:?}"
+        ));
     }
 
     let host = ShadowHostCtx::diag();
@@ -215,7 +223,16 @@ fn burn_refused_under_issuer_supply() {
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
 
-    let turn = single_effect_turn(a_id, a_id, 0, Effect::Burn { target: a_id, slot: 0, amount: 40 });
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::Burn {
+            target: a_id,
+            slot: 0,
+            amount: 40,
+        },
+    );
     assert!(
         diff(pre, turn, &[a_id]).is_err(),
         "W1 regression: the verified producer COMMITTED a supply-destroying scalar burn — under \
@@ -255,8 +272,15 @@ fn revoke_on_empty_clist_round_trips() {
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
 
-    let turn =
-        single_effect_turn(a_id, a_id, 0, Effect::RevokeCapability { cell: a_id, slot: 0 });
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::RevokeCapability {
+            cell: a_id,
+            slot: 0,
+        },
+    );
     diff(pre, turn, &[a_id]).expect("Revoke on empty c-list must round-trip");
 }
 
@@ -288,8 +312,22 @@ fn two_effect_forest_round_trips() {
         balance_change: None,
         witness_blobs: vec![],
     };
-    forest.add_root(mk(a_id, Effect::Transfer { from: a_id, to: b_id, amount: 25 }));
-    forest.add_root(mk(a_id, Effect::SetField { cell: a_id, index: 6, value: field_from_u64(7) }));
+    forest.add_root(mk(
+        a_id,
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 25,
+        },
+    ));
+    forest.add_root(mk(
+        a_id,
+        Effect::SetField {
+            cell: a_id,
+            index: 6,
+            value: field_from_u64(7),
+        },
+    ));
     let turn = Turn {
         agent: a_id,
         nonce: 0,
@@ -334,13 +372,23 @@ fn cell_seal_round_trips_lifecycle_closed() {
     let mut pre = Ledger::new();
     pre.insert_cell(a).unwrap();
 
-    let turn =
-        single_effect_turn(a_id, a_id, 0, Effect::CellSeal { target: a_id, reason: [9u8; 32] });
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::CellSeal {
+            target: a_id,
+            reason: [9u8; 32],
+        },
+    );
 
     // Confirm Rust really sealed with the full payload (so the close is about the payload bytes).
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
-    assert!(executor.execute(&turn, &mut rust_ledger).is_committed(), "Rust CellSeal should commit");
+    assert!(
+        executor.execute(&turn, &mut rust_ledger).is_committed(),
+        "Rust CellSeal should commit"
+    );
     assert!(
         matches!(
             rust_ledger.get(&a_id).unwrap().lifecycle,
@@ -373,8 +421,15 @@ fn unauthorized_cross_cell_seal_rejected_by_both() {
     pre.insert_cell(b).unwrap();
 
     // Action targets A, but the seal aims at B — the unauthorized cross-cell mutation.
-    let turn =
-        single_effect_turn(a_id, a_id, 0, Effect::CellSeal { target: b_id, reason: [9u8; 32] });
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::CellSeal {
+            target: b_id,
+            reason: [9u8; 32],
+        },
+    );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
@@ -383,16 +438,25 @@ fn unauthorized_cross_cell_seal_rejected_by_both() {
         "Rust must REJECT a cross-cell seal"
     );
     assert!(
-        matches!(rust_ledger.get(&b_id).unwrap().lifecycle, CellLifecycle::Live),
+        matches!(
+            rust_ledger.get(&b_id).unwrap().lifecycle,
+            CellLifecycle::Live
+        ),
         "the rejected seal must not move B's lifecycle"
     );
 
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the cross-cell seal");
     assert!(
-        matches!(lean_ledger.get(&b_id).unwrap().lifecycle, CellLifecycle::Live),
+        !lean_committed,
+        "the verified gate must also REJECT the cross-cell seal"
+    );
+    assert!(
+        matches!(
+            lean_ledger.get(&b_id).unwrap().lifecycle,
+            CellLifecycle::Live
+        ),
         "the reconstituted ledger must not carry a fabricated Sealed payload"
     );
     ledgers_agree(&mut rust_ledger, &mut lean_ledger, &[a_id, b_id])
@@ -427,7 +491,10 @@ fn cell_destroy_round_trips_lifecycle_closed() {
         a_id,
         a_id,
         0,
-        Effect::CellDestroy { target: a_id, certificate: cert },
+        Effect::CellDestroy {
+            target: a_id,
+            certificate: cert,
+        },
     );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -480,7 +547,10 @@ fn unauthorized_cross_cell_destroy_rejected_by_both() {
         a_id,
         a_id,
         0,
-        Effect::CellDestroy { target: b_id, certificate: cert },
+        Effect::CellDestroy {
+            target: b_id,
+            certificate: cert,
+        },
     );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -493,9 +563,15 @@ fn unauthorized_cross_cell_destroy_rejected_by_both() {
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the cross-cell destroy");
     assert!(
-        matches!(lean_ledger.get(&b_id).unwrap().lifecycle, CellLifecycle::Live),
+        !lean_committed,
+        "the verified gate must also REJECT the cross-cell destroy"
+    );
+    assert!(
+        matches!(
+            lean_ledger.get(&b_id).unwrap().lifecycle,
+            CellLifecycle::Live
+        ),
         "the reconstituted ledger must not carry a fabricated Destroyed commitment"
     );
     ledgers_agree(&mut rust_ledger, &mut lean_ledger, &[a_id, b_id])
@@ -531,15 +607,19 @@ fn cell_unseal_round_trips() {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
     assert!(
-        executor.execute(
-            &single_effect_turn(a_id, a_id, 0, Effect::CellUnseal { target: a_id }),
-            &mut rust_ledger
-        )
-        .is_committed(),
+        executor
+            .execute(
+                &single_effect_turn(a_id, a_id, 0, Effect::CellUnseal { target: a_id }),
+                &mut rust_ledger
+            )
+            .is_committed(),
         "Rust CellUnseal should commit"
     );
     assert!(
-        matches!(rust_ledger.get(&a_id).unwrap().lifecycle, CellLifecycle::Live),
+        matches!(
+            rust_ledger.get(&a_id).unwrap().lifecycle,
+            CellLifecycle::Live
+        ),
         "Rust must have unsealed the cell back to Live"
     );
 
@@ -581,7 +661,11 @@ fn grant_capability_round_trips_cap_fidelity_closed() {
         a_id,
         a_id,
         0,
-        Effect::GrantCapability { from: a_id, to: b_id, cap: cap.clone() },
+        Effect::GrantCapability {
+            from: a_id,
+            to: b_id,
+            cap: cap.clone(),
+        },
     );
 
     // Confirm Rust granted the FULL (non-None, breadstuff'd) cap to B (so the round-trip is
@@ -633,18 +717,33 @@ fn grant_capability_amplification_does_not_install_divergent_state() {
         allowed_effects: None,
         stored_epoch: None,
     };
-    let turn = single_effect_turn(a_id, a_id, 0, Effect::GrantCapability { from: a_id, to: b_id, cap });
+    let turn = single_effect_turn(
+        a_id,
+        a_id,
+        0,
+        Effect::GrantCapability {
+            from: a_id,
+            to: b_id,
+            cap,
+        },
+    );
 
     // Rust rejects (A holds no cap to C). The Lean producer reconstitutes the unchanged pre-state.
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
     let committed = executor.execute(&turn, &mut rust_ledger).is_committed();
-    assert!(!committed, "cross-cell grant without a held edge must be REJECTED by Rust");
+    assert!(
+        !committed,
+        "cross-cell grant without a held edge must be REJECTED by Rust"
+    );
 
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the forged grant");
+    assert!(
+        !lean_committed,
+        "the verified gate must also REJECT the forged grant"
+    );
     // Both rolled back: the reconstituted ledger == the Rust (rolled-back) ledger, cap_root intact.
     ledgers_agree(&mut rust_ledger, &mut lean_ledger, &[a_id, b_id, c_id])
         .expect("a rejected grant leaves all c-lists at their pre-state (no fabricated cap_root)");
@@ -742,7 +841,9 @@ fn introduce_round_trips_cap_fidelity_closed() {
     if executor.execute(&turn, &mut rust_ledger).is_committed() {
         let r_caps = &rust_ledger.get(&r_id).unwrap().capabilities;
         assert!(
-            r_caps.iter().any(|c| c.target == t_id && c.expires_at.is_some()),
+            r_caps
+                .iter()
+                .any(|c| c.target == t_id && c.expires_at.is_some()),
             "Rust must have introduced a (host-expiry) cap over T into R"
         );
         // Only assert the round-trip when Rust ALSO commits (the verified gate is the

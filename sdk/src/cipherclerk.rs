@@ -2718,7 +2718,10 @@ impl AgentCipherclerk {
     pub fn explain_and_sign_turn(&self, turn: &Turn) -> ExplainedSignedTurn {
         let explanation = crate::explain::explain_turn(turn);
         let signed = self.sign_turn(turn);
-        ExplainedSignedTurn { signed, explanation }
+        ExplainedSignedTurn {
+            signed,
+            explanation,
+        }
     }
 
     /// Build a self-signed single-effect [`Action`](dregg_turn::action::Action)
@@ -5236,11 +5239,7 @@ impl AgentCipherclerk {
                         value: *value,
                     });
                 }
-                
-                
-                
-                
-                
+
                 Effect::MakeSovereign { cell } if cell == cell_id => {
                     vm_effects.push(VmEffect::MakeSovereign);
                 }
@@ -5445,7 +5444,6 @@ impl AgentCipherclerk {
                 }
 
                 // -- Sealing / sovereign / factory (already handled above except CreateSealPair)
-                
 
                 // -- Delegation -------------------------------------------------
                 Effect::SpawnWithDelegation {
@@ -5489,9 +5487,6 @@ impl AgentCipherclerk {
                         value_full: portable_proof.value,
                     });
                 }
-                
-                
-                
 
                 // -- Introduce / pipelined send ---------------------------------
                 Effect::Introduce {
@@ -5533,12 +5528,6 @@ impl AgentCipherclerk {
                 }
 
                 // -- Escrow (CRITICAL: locked value) ----------------------------
-                
-                
-                
-                
-                
-                
 
                 // -- ExerciseViaCapability -------------------------------------
                 Effect::ExerciseViaCapability {
@@ -5557,18 +5546,8 @@ impl AgentCipherclerk {
                 }
 
                 // -- Queue ops -------------------------------------------------
-                
-                
-                
-                
-                
-                
 
                 // -- CapTP runtime effects (CRITICAL: cap authority) -----------
-                
-                
-                
-                
 
                 // -- Refusal (evidence-of-absence) ----------------------------
                 Effect::Refusal {
@@ -6375,7 +6354,6 @@ impl AgentCipherclerk {
             .as_mut()
             .ok_or(SdkError::CapTpNotConfigured)
     }
-
 }
 
 /// Encode bytes to hex string (used by federation registration methods).
@@ -8117,7 +8095,6 @@ mod tests {
     fn root_action(turn: &Turn) -> &dregg_turn::action::Action {
         &turn.call_forest.roots[0].action
     }
-    
 
     // (The queue-allocation signature tests died with the queue family in the
     // verb lockstep. Their properties live on against surviving methods:

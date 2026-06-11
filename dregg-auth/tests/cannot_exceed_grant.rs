@@ -26,7 +26,11 @@ fn grant_allows_its_own_tools() {
 
     for tool in ["read", "pr-create"] {
         let d = verify_offline(&encoded, &pk, &Request::tool(tool).at(T0));
-        assert!(d.allowed(), "tool `{tool}` should be allowed: {}", d.reason());
+        assert!(
+            d.allowed(),
+            "tool `{tool}` should be allowed: {}",
+            d.reason()
+        );
     }
 }
 
@@ -113,7 +117,11 @@ fn offline_verification_needs_only_the_public_key() {
     drop(root); // the issuer is GONE; only (encoded, pubkey_hex) strings remain.
 
     let d = verify_offline(&encoded, &pubkey_hex, &Request::tool("read").at(T0));
-    assert!(d.allowed(), "public-key-only verify must succeed: {}", d.reason());
+    assert!(
+        d.allowed(),
+        "public-key-only verify must succeed: {}",
+        d.reason()
+    );
 
     let d2 = verify_offline(&encoded, &pubkey_hex, &Request::tool("write").at(T0));
     assert!(!d2.allowed(), "and still deny out-of-grant tools");
@@ -130,8 +138,15 @@ fn wrong_public_key_is_rejected() {
         .unwrap();
 
     // Verifying under a DIFFERENT root key must fail the signature chain.
-    let d = verify_offline(&encoded, &impostor.public_key_hex(), &Request::tool("read").at(T0));
-    assert!(!d.allowed(), "a token must not verify under the wrong root key");
+    let d = verify_offline(
+        &encoded,
+        &impostor.public_key_hex(),
+        &Request::tool("read").at(T0),
+    );
+    assert!(
+        !d.allowed(),
+        "a token must not verify under the wrong root key"
+    );
 }
 
 #[test]
@@ -164,7 +179,11 @@ fn rate_is_carried_as_metadata() {
 fn mcp_gate_admits_and_denies_with_receipts() {
     let root = Root::generate();
     let encoded = root
-        .issue(&Grant::new("ci-bot").tools(["read", "pr-create"]).until(FRIDAY))
+        .issue(
+            &Grant::new("ci-bot")
+                .tools(["read", "pr-create"])
+                .until(FRIDAY),
+        )
         .unwrap()
         .encode()
         .unwrap();
@@ -174,12 +193,23 @@ fn mcp_gate_admits_and_denies_with_receipts() {
     // Admitted call → receipt says ALLOW and recovers the subject.
     let ok = gate.admit(
         &encoded,
-        &ToolCall::new("pr-create").arg("repo", "acme/widgets").at(T0),
+        &ToolCall::new("pr-create")
+            .arg("repo", "acme/widgets")
+            .at(T0),
     );
-    assert!(ok.admitted(), "granted tool should be admitted: {}", ok.receipt.reason);
+    assert!(
+        ok.admitted(),
+        "granted tool should be admitted: {}",
+        ok.receipt.reason
+    );
     assert!(ok.receipt.line().contains("ALLOW"));
     assert_eq!(ok.receipt.subject.as_deref(), Some("ci-bot"));
-    assert!(ok.receipt.args.iter().any(|a| a.contains("repo=acme/widgets")));
+    assert!(
+        ok.receipt
+            .args
+            .iter()
+            .any(|a| a.contains("repo=acme/widgets"))
+    );
 
     // Denied call → receipt says DENY, still auditable.
     let bad = gate.admit(&encoded, &ToolCall::new("delete-repo").at(T0));

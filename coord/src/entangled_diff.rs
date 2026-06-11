@@ -121,9 +121,7 @@ mod atomicity_diff {
     use crate::atomic::{AtomicForest, Coordinator, Decision, Vote};
     use dregg_cell::preconditions::CellStatePrecondition;
     use dregg_cell::{Cell, CellId, Ledger, Preconditions};
-    use dregg_turn::action::{
-        Action, Authorization, CommitmentMode, DelegationMode, Effect,
-    };
+    use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
     use dregg_turn::{CallForest, ComputronCosts};
     use std::collections::HashMap;
 
@@ -260,12 +258,34 @@ mod atomicity_diff {
                 .collect(),
         };
         let lean_legs = vec![
-            LeanLeg { actor: 0, src: 0, dst: 1, amt: amt01 as i64 },
-            LeanLeg { actor: 1, src: 1, dst: 2, amt: amt12 as i64 },
-            LeanLeg { actor: 2, src: 2, dst: 0, amt: amt20 as i64 },
+            LeanLeg {
+                actor: 0,
+                src: 0,
+                dst: 1,
+                amt: amt01 as i64,
+            },
+            LeanLeg {
+                actor: 1,
+                src: 1,
+                dst: 2,
+                amt: amt12 as i64,
+            },
+            LeanLeg {
+                actor: 2,
+                src: 2,
+                dst: 0,
+                amt: amt20 as i64,
+            },
         ];
 
-        (ledger, af, signing_keys, participant_keys, lean_state, lean_legs)
+        (
+            ledger,
+            af,
+            signing_keys,
+            participant_keys,
+            lean_state,
+            lean_legs,
+        )
     }
 
     /// Run the real 2PC: every participant evaluates the proposal and votes; return whether the
@@ -291,7 +311,11 @@ mod atomicity_diff {
         for i in 0..3 {
             let nid = node_id((i + 1) as u8);
             let vote = if precond_ok[i] {
-                Vote::yes(Vote::sign_yes(&prop.proposal_id, &af.hash, &signing_keys[i]))
+                Vote::yes(Vote::sign_yes(
+                    &prop.proposal_id,
+                    &af.hash,
+                    &signing_keys[i],
+                ))
             } else {
                 Vote::no(
                     "precondition failed",
@@ -311,8 +335,7 @@ mod atomicity_diff {
     /// agree the whole forest commits.
     #[test]
     fn diff_atomic_commit_all() {
-        let (_, af, sks, pks, lean_state, lean_legs) =
-            setup_three_party(100, 50, 20, 30, 10, 5);
+        let (_, af, sks, pks, lean_state, lean_legs) = setup_three_party(100, 50, 20, 30, 10, 5);
 
         // Lean: all-or-none fold commits.
         let lean_out = lean_state.joint_apply_all(&lean_legs);
@@ -337,8 +360,7 @@ mod atomicity_diff {
     /// partial commit on either side — all-or-none.
     #[test]
     fn diff_atomic_abort_one_leg_fails() {
-        let (_, af, sks, pks, lean_state, lean_legs) =
-            setup_three_party(100, 50, 20, 30, 999, 5);
+        let (_, af, sks, pks, lean_state, lean_legs) = setup_three_party(100, 50, 20, 30, 999, 5);
 
         // Lean: the 2nd leg's availability gate fails ⇒ whole fold is `none`.
         let lean_out = lean_state.joint_apply_all(&lean_legs);
@@ -358,11 +380,11 @@ mod atomicity_diff {
     fn diff_atomic_no_partial_commit_sweep() {
         // (amt01, amt12, amt20, precond_ok_per_leg) — feasibility matches the per-leg availability.
         let cases: &[(u64, u64, u64)] = &[
-            (30, 10, 5),    // all feasible
-            (200, 10, 5),   // leg 0 overdraws (cell 0 has 100)
-            (30, 100, 5),   // leg 1 overdraws (cell 1 has 50)
-            (30, 10, 99),   // leg 2 overdraws (cell 2 has 20)
-            (0, 0, 0),      // degenerate: src == authorized, amt 0 (but src==dst? no, distinct)
+            (30, 10, 5),  // all feasible
+            (200, 10, 5), // leg 0 overdraws (cell 0 has 100)
+            (30, 100, 5), // leg 1 overdraws (cell 1 has 50)
+            (30, 10, 99), // leg 2 overdraws (cell 2 has 20)
+            (0, 0, 0),    // degenerate: src == authorized, amt 0 (but src==dst? no, distinct)
         ];
         for &(a01, a12, a20) in cases {
             let (_, af, sks, pks, lean_state, lean_legs) =
@@ -447,7 +469,10 @@ mod shared_budget_diff {
 
             // The proved Lean safety properties hold on the live table at every step:
             for a in &lean {
-                assert!(a.spent <= a.ceiling, "per-agent non-overspend (tryDebit_invariant)");
+                assert!(
+                    a.spent <= a.ceiling,
+                    "per-agent non-overspend (tryDebit_invariant)"
+                );
             }
             assert!(
                 lean_total_spent <= total_ceilings,

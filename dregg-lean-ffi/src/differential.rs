@@ -111,7 +111,11 @@ fn main() -> ExitCode {
         // `amt` spans both the available (<= balA) and over-draw (> balA) regimes.
         let amt = rng.next_bounded();
         // Actor 0 a third of the time (authorized), otherwise an arbitrary id.
-        let actor = if rng.next_u64() % 3 == 0 { 0 } else { rng.next_u64() };
+        let actor = if rng.next_u64() % 3 == 0 {
+            0
+        } else {
+            rng.next_u64()
+        };
 
         let lean_total = unsafe { dregg_kernel_transfer_total(bal_a, bal_b, amt) };
         let lean_auth = unsafe { dregg_kernel_authorized(actor) };

@@ -336,7 +336,8 @@ fn parse_field_element(s: &str) -> Result<[u8; 32], String> {
     let scalar = if let Some(hex) = t.strip_prefix("0x") {
         u64::from_str_radix(hex, 16).map_err(|_| format!("invalid hex scalar: {s}"))?
     } else {
-        t.parse::<u64>().map_err(|_| format!("invalid scalar: {s}"))?
+        t.parse::<u64>()
+            .map_err(|_| format!("invalid scalar: {s}"))?
     };
     let mut out = [0u8; 32];
     out[..8].copy_from_slice(&scalar.to_le_bytes());
@@ -374,10 +375,7 @@ fn build_effect(spec: TurnEffectSpec, default_cell: CellId) -> Result<dregg_turn
                 data.iter().map(|w| parse_field_element(w)).collect();
             Effect::EmitEvent {
                 cell: resolve(cell)?,
-                event: dregg_turn::action::Event::new(
-                    dregg_turn::action::symbol(&topic),
-                    words?,
-                ),
+                event: dregg_turn::action::Event::new(dregg_turn::action::symbol(&topic), words?),
             }
         }
         TurnEffectSpec::IncrementNonce { cell } => Effect::IncrementNonce {
@@ -1280,9 +1278,7 @@ impl RateLimiter {
     /// that, behind the devnet's reverse proxy, the limiter keys on the real
     /// external client instead of degenerating into one global bucket.
     fn client_ip(&self, socket_ip: IpAddr, headers: &axum::http::HeaderMap) -> IpAddr {
-        let xff = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok());
+        let xff = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
         resolve_client_ip(socket_ip, xff, &self.trusted_proxies)
     }
 
@@ -1857,8 +1853,7 @@ async fn get_status(State(state): State<NodeState>) -> Json<StatusResponse> {
     // The DEFAULT-ON producer INSTALLS verified state only for the swap-safe (root-agreeing) set;
     // report that, not the wider "merely mappable" surface, so the status is honest about what the
     // verified executor actually commits.
-    let producer_covered_effects =
-        dregg_turn::lean_shadow::producer_root_agreeing_effects().len();
+    let producer_covered_effects = dregg_turn::lean_shadow::producer_root_agreeing_effects().len();
 
     Json(StatusResponse {
         healthy,
@@ -1903,7 +1898,12 @@ async fn get_producer_status(State(state): State<NodeState>) -> Json<ProducerSta
         .collect();
     let total_effect_kinds = dregg_turn::lean_shadow::all_effect_kinds().len();
 
-    let state_producer = if lean_producer_enabled { "lean" } else { "rust" }.to_string();
+    let state_producer = if lean_producer_enabled {
+        "lean"
+    } else {
+        "rust"
+    }
+    .to_string();
 
     let summary = if lean_producer_enabled {
         format!(
@@ -2550,7 +2550,10 @@ async fn post_submit_turn(
             }
         }
         // `make_action` produces a real per-action ed25519 signature.
-        actions.push(s.cclerk.make_action(target, &method, effects, &federation_id));
+        actions.push(
+            s.cclerk
+                .make_action(target, &method, effects, &federation_id),
+        );
     }
 
     let call_forest = {
@@ -3474,12 +3477,7 @@ async fn get_cell_detail(
                 dregg_cell::CellProgram::Circuit { .. } => "Circuit".to_string(),
             },
             program: cell.program.to_view(),
-            fields: cell
-                .state
-                .fields
-                .iter()
-                .map(|f| hex_encode(f))
-                .collect(),
+            fields: cell.state.fields.iter().map(|f| hex_encode(f)).collect(),
         })),
         None => Ok(Json(CellDetailResponse {
             id,
@@ -5846,8 +5844,7 @@ async fn post_faucet(
     let faucet_pubkey = faucet_public_key();
     let faucet_cell_id = dregg_cell::CellId::derive_raw(&faucet_pubkey, &FAUCET_TOKEN_ID);
     if s.ledger.get(&faucet_cell_id).is_none() {
-        let faucet_cell =
-            dregg_cell::Cell::with_balance(faucet_pubkey, FAUCET_TOKEN_ID, 1_000_000);
+        let faucet_cell = dregg_cell::Cell::with_balance(faucet_pubkey, FAUCET_TOKEN_ID, 1_000_000);
         let _ = s.ledger.insert_cell(faucet_cell);
     }
 
@@ -5890,9 +5887,9 @@ async fn post_faucet(
     // path committed operator turns use. This replaces the old direct
     // `ledger.apply_delta` write, which mutated only this node's local ledger
     // and never replicated (so a peer never saw the faucet grant).
-    let faucet_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(
-        zeroize::Zeroizing::new(faucet_signing_key().to_bytes()),
-    );
+    let faucet_cclerk = dregg_sdk::AgentCipherclerk::from_key_bytes(zeroize::Zeroizing::new(
+        faucet_signing_key().to_bytes(),
+    ));
     let transfer = dregg_turn::Effect::Transfer {
         from: faucet_cell_id,
         to: recipient_cell_id,
@@ -5969,7 +5966,9 @@ async fn post_faucet(
             let turn_data_for_gossip = turn_data.clone();
             if let Some(gossip) = state.gossip().await {
                 tokio::spawn(async move {
-                    gossip.gossip_turn(turn_hash_bytes, turn_data_for_gossip).await;
+                    gossip
+                        .gossip_turn(turn_hash_bytes, turn_data_for_gossip)
+                        .await;
                 });
             }
             if let Some(blocklace) = state.blocklace().await {
@@ -6723,15 +6722,11 @@ fn effect_cells(effect: &dregg_turn::Effect) -> Vec<String> {
         | Effect::MakeSovereign { cell }
         | Effect::Refusal { cell, .. }
         | Effect::AttenuateCapability { cell, .. } => vec![hex_encode(&cell.0)],
-        
+
         Effect::SetPermissions { cell, .. } | Effect::SetVerificationKey { cell, .. } => {
             vec![hex_encode(&cell.0)]
         }
-        
-        
-        
-        
-        
+
         _ => Vec::new(),
     }
 }
@@ -7191,8 +7186,11 @@ mod tests {
             dregg_circuit::stark::try_prove(&air, &revalidated.trace, &revalidated.public_inputs)
                 .expect("revalidated witness must prove");
         let proof_bytes = dregg_circuit::stark::proof_to_bytes(&proof);
-        let public_inputs_u32: Vec<u32> =
-            revalidated.public_inputs.iter().map(|f| f.as_u32()).collect();
+        let public_inputs_u32: Vec<u32> = revalidated
+            .public_inputs
+            .iter()
+            .map(|f| f.as_u32())
+            .collect();
         let witnessed = dregg_turn::WitnessedReceipt::from_components(
             receipt.clone(),
             proof_bytes,
@@ -7217,7 +7215,10 @@ mod tests {
     fn http_witness_revalidation_rejects_tampered_trace() {
         use dregg_circuit::effect_vm::{CellState, Effect as VmEffect, generate_effect_vm_trace};
         let initial = CellState::new(10_000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let (mut trace, mut pis) = generate_effect_vm_trace(&initial, &effects);
         pis[dregg_circuit::effect_vm::pi::IS_AGENT_CELL] = dregg_circuit::BabyBear::ONE;
 
@@ -7906,9 +7907,18 @@ mod tests {
             let k1 = resolve_client_ip(attacker, Some("1.2.3.4"), trusted);
             let k2 = resolve_client_ip(attacker, Some("5.6.7.8"), trusted);
             let k3 = resolve_client_ip(attacker, Some("9.9.9.9, 8.8.8.8"), trusted);
-            assert_eq!(k1, attacker, "F-1 regressed: untrusted XFF spoof moved the key");
-            assert_eq!(k2, attacker, "F-1 regressed: rotating XFF minted a fresh bucket");
-            assert_eq!(k3, attacker, "F-1 regressed: untrusted multi-hop XFF honored");
+            assert_eq!(
+                k1, attacker,
+                "F-1 regressed: untrusted XFF spoof moved the key"
+            );
+            assert_eq!(
+                k2, attacker,
+                "F-1 regressed: rotating XFF minted a fresh bucket"
+            );
+            assert_eq!(
+                k3, attacker,
+                "F-1 regressed: untrusted multi-hop XFF honored"
+            );
         }
         eprintln!("[API ATTACK / F-1] untrusted X-Forwarded-For spoof ignored: DEFENDED");
     }
@@ -7944,11 +7954,8 @@ mod tests {
     #[tokio::test]
     async fn f1_real_limiter_isolates_proxied_clients_defended() {
         let proxy = ip(10, 0, 0, 1);
-        let limiter = RateLimiter::with_proxies(
-            3,
-            60,
-            TrustedProxies::from_strings([proxy.to_string()]),
-        );
+        let limiter =
+            RateLimiter::with_proxies(3, 60, TrustedProxies::from_strings([proxy.to_string()]));
 
         let mut alice_hdr = axum::http::HeaderMap::new();
         alice_hdr.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
@@ -7987,7 +7994,9 @@ mod tests {
         let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Ensure the opt-in is OFF for this test regardless of ambient env.
         // SAFETY: test-local env scrub, serialized by F8_ENV_LOCK.
-        unsafe { std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS"); }
+        unsafe {
+            std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS");
+        }
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(tmp.path(), vec![]).expect("node state");
@@ -8004,7 +8013,12 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = response.into_body().collect().await.expect("body").to_bytes();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
 
         // FINDING (pre-fix): both counters present on the wire.
@@ -8017,7 +8031,10 @@ mod tests {
             "F-8 regressed: /status leaks revocation_count (private-activity volume): {json}"
         );
         // The coarse public liveness signal must still be present.
-        assert!(json.get("healthy").is_some(), "/status must still report liveness");
+        assert!(
+            json.get("healthy").is_some(),
+            "/status must still report liveness"
+        );
         assert!(json.get("consensus_live").is_some());
         eprintln!("[API ATTACK / F-8] /status withholds private-activity counters: DEFENDED");
     }
@@ -8029,7 +8046,9 @@ mod tests {
     #[tokio::test]
     async fn f8_opt_in_re_exposes_counts_control() {
         let _guard = F8_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { std::env::set_var("DREGG_STATUS_EXPOSE_COUNTS", "1"); }
+        unsafe {
+            std::env::set_var("DREGG_STATUS_EXPOSE_COUNTS", "1");
+        }
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let state = NodeState::new(tmp.path(), vec![]).expect("node state");
@@ -8045,7 +8064,12 @@ mod tests {
             )
             .await
             .expect("response");
-        let body = response.into_body().collect().await.expect("body").to_bytes();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).expect("status json");
 
         assert!(
@@ -8054,7 +8078,9 @@ mod tests {
         );
 
         // Restore the default-off posture for any later test.
-        unsafe { std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS"); }
+        unsafe {
+            std::env::remove_var("DREGG_STATUS_EXPOSE_COUNTS");
+        }
         eprintln!("[API CONTROL / F-8] opt-in re-exposes counters (gate is non-vacuous)");
     }
 }

@@ -18,6 +18,7 @@
 
 use dregg_cell::{Cell, CellId, field_from_u64};
 use dregg_sdk::factories::ADOPT_TURN_FEE;
+use dregg_sdk::polis::PolisError;
 use dregg_sdk::polis::{
     AmendmentTerms, ConstitutionParams, CouncilCharter, GovernanceCellPlan, ProposalState,
     activate_constitution, amendment_terms, approve, certify_approval,
@@ -25,16 +26,15 @@ use dregg_sdk::polis::{
     create_council_proposal, create_council_proposal_under, enact_amendment, execute_proposal,
     inspect_council, propose, propose_amendment, reject_proposal, supersede_constitution,
 };
-use dregg_sdk::polis::PolisError;
 use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect, SdkError, TurnReceipt};
 use dregg_turn::TurnError;
 use starbridge_polis::STATE_SLOT;
+use starbridge_polis::constitution::{
+    COUNCIL_THRESHOLD_SLOT, STATE_ACTIVE, STATE_SUPERSEDED, SUCCESSOR_HASH_SLOT,
+};
 use starbridge_polis::council::{
     APPROVED_FLAG_SLOT, FIRST_APPROVAL_SLOT, PROPOSAL_HASH_SLOT, STATE_APPROVED, STATE_EXECUTED,
     STATE_PROPOSED, STATE_REJECTED,
-};
-use starbridge_polis::constitution::{
-    COUNCIL_THRESHOLD_SLOT, STATE_ACTIVE, STATE_SUPERSEDED, SUCCESSOR_HASH_SLOT,
 };
 
 // =============================================================================
@@ -146,17 +146,31 @@ fn charter(members: &[CellId], threshold: u64) -> CouncilCharter {
 fn council_two_of_three_lifecycle_with_threshold_gate() {
     let (mut runtime, agent, members) = harness("polis-council-lifecycle");
     let charter = charter(&members, 2);
-    let plan = create_council_proposal(&charter, agent_pubkey(&runtime), [0x01; 32], agent, agent, 100)
-        .expect("valid charter");
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x01; 32],
+        agent,
+        agent,
+        100,
+    )
+    .expect("valid charter");
     bootstrap(&mut runtime, &plan);
-    assert_eq!(balance_of(&runtime, plan.cell_id), 100, "proposal treasury funded");
+    assert_eq!(
+        balance_of(&runtime, plan.cell_id),
+        100,
+        "proposal treasury funded"
+    );
 
     // Propose: stage the action hash.
     let action_hash = *blake3::hash(b"pay the grantee 100").as_bytes();
     runtime
         .execute_on(plan.cell_id, propose(plan.cell_id, &charter, action_hash))
         .expect("propose must commit");
-    assert_eq!(slot_of(&runtime, plan.cell_id, STATE_SLOT), field_from_u64(STATE_PROPOSED));
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_PROPOSED)
+    );
 
     // One approval is not the threshold: certification is REJECTED BY THE
     // EXECUTOR (the AffineLe gate), not by any SDK check.
@@ -169,11 +183,21 @@ fn council_two_of_three_lifecycle_with_threshold_gate() {
     );
 
     // Legibility: read the machine back out of the ledger.
-    let fields = runtime.ledger().lock().unwrap().get(&plan.cell_id).unwrap().state.fields;
+    let fields = runtime
+        .ledger()
+        .lock()
+        .unwrap()
+        .get(&plan.cell_id)
+        .unwrap()
+        .state
+        .fields;
     let status = inspect_council(&charter, &fields);
     assert_eq!(status.state, ProposalState::Proposed);
     assert_eq!(status.proposal_hash, action_hash);
-    assert!(status.members_commit_matches, "the cell publishes its charter");
+    assert!(
+        status.members_commit_matches,
+        "the cell publishes its charter"
+    );
     assert_eq!(status.approvals, vec![true, false, false]);
     assert_eq!((status.approval_count, status.threshold), (1, 2));
     assert!(!status.certified);
@@ -185,7 +209,10 @@ fn council_two_of_three_lifecycle_with_threshold_gate() {
     runtime
         .execute_on(plan.cell_id, certify_approval(plan.cell_id))
         .expect("certify at threshold must commit");
-    assert_eq!(slot_of(&runtime, plan.cell_id, STATE_SLOT), field_from_u64(STATE_APPROVED));
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_APPROVED)
+    );
 
     // Execute: the EXECUTED step and the proposed action ride one turn.
     let grantee = members[2]; // any payable cell
@@ -202,12 +229,26 @@ fn council_two_of_three_lifecycle_with_threshold_gate() {
             ),
         )
         .expect("execute at APPROVED must commit");
-    assert_eq!(slot_of(&runtime, plan.cell_id, STATE_SLOT), field_from_u64(STATE_EXECUTED));
-    assert_eq!(balance_of(&runtime, grantee), 100, "treasury paid exactly once");
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_EXECUTED)
+    );
+    assert_eq!(
+        balance_of(&runtime, grantee),
+        100,
+        "treasury paid exactly once"
+    );
     assert_eq!(balance_of(&runtime, plan.cell_id), 0);
 
     // Final legibility check: the executed proposal reads back as such.
-    let fields = runtime.ledger().lock().unwrap().get(&plan.cell_id).unwrap().state.fields;
+    let fields = runtime
+        .ledger()
+        .lock()
+        .unwrap()
+        .get(&plan.cell_id)
+        .unwrap()
+        .state
+        .fields;
     let status = inspect_council(&charter, &fields);
     assert_eq!(status.state, ProposalState::Executed);
     assert!(status.certified);
@@ -233,7 +274,10 @@ fn constitution_governed_proposal() {
             agent,
             1_001,
         ),
-        Err(PolisError::EndowmentExceedsTreasuryCap { endowment: 1_001, cap: 1_000 })
+        Err(PolisError::EndowmentExceedsTreasuryCap {
+            endowment: 1_001,
+            cap: 1_000
+        })
     ));
 
     // Under the cap: the charter is the constitutional one, and the
@@ -252,15 +296,25 @@ fn constitution_governed_proposal() {
     assert_eq!(charter.threshold, v1.council_threshold);
     assert_eq!(
         plan.descriptor.hash(),
-        create_council_proposal(&charter, agent_pubkey(&runtime), [0x40; 32], agent, agent, 0)
-            .unwrap()
-            .descriptor
-            .hash(),
+        create_council_proposal(
+            &charter,
+            agent_pubkey(&runtime),
+            [0x40; 32],
+            agent,
+            agent,
+            0
+        )
+        .unwrap()
+        .descriptor
+        .hash(),
         "the governed proposal runs the constitutional council's program"
     );
     bootstrap(&mut runtime, &plan);
     runtime
-        .execute_on(plan.cell_id, propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()))
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()),
+        )
         .expect("propose under the constitution");
     runtime
         .execute_on(plan.cell_id, approve(plan.cell_id, &charter, 0).unwrap())
@@ -278,12 +332,22 @@ fn constitution_governed_proposal() {
 fn council_no_double_execute() {
     let (mut runtime, agent, members) = harness("polis-council-double");
     let charter = charter(&members, 1);
-    let plan = create_council_proposal(&charter, agent_pubkey(&runtime), [0x02; 32], agent, agent, 0)
-        .expect("valid charter");
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x02; 32],
+        agent,
+        agent,
+        0,
+    )
+    .expect("valid charter");
     bootstrap(&mut runtime, &plan);
 
     runtime
-        .execute_on(plan.cell_id, propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()))
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()),
+        )
         .expect("propose");
     runtime
         .execute_on(plan.cell_id, approve(plan.cell_id, &charter, 0).unwrap())
@@ -324,8 +388,15 @@ fn council_no_double_execute() {
 fn council_approval_teeth() {
     let (mut runtime, agent, members) = harness("polis-council-approvals");
     let charter = charter(&members, 2);
-    let plan = create_council_proposal(&charter, agent_pubkey(&runtime), [0x03; 32], agent, agent, 0)
-        .expect("valid charter");
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x03; 32],
+        agent,
+        agent,
+        0,
+    )
+    .expect("valid charter");
     bootstrap(&mut runtime, &plan);
 
     // Approve before propose: rejected.
@@ -335,7 +406,10 @@ fn council_approval_teeth() {
     );
 
     runtime
-        .execute_on(plan.cell_id, propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()))
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()),
+        )
         .expect("propose");
 
     // Member 0 approves twice (idempotent slot write) — still ONE approver.
@@ -376,11 +450,21 @@ fn council_approval_teeth() {
 fn council_non_member_approval_rejected() {
     let (mut runtime, agent, members) = harness("polis-council-nonmember");
     let charter = charter(&members[..2], 2);
-    let plan = create_council_proposal(&charter, agent_pubkey(&runtime), [0x04; 32], agent, agent, 0)
-        .expect("valid charter");
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x04; 32],
+        agent,
+        agent,
+        0,
+    )
+    .expect("valid charter");
     bootstrap(&mut runtime, &plan);
     runtime
-        .execute_on(plan.cell_id, propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()))
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"act").as_bytes()),
+        )
         .expect("propose");
 
     // The would-be "member 2" slot is pinned zero for a 2-member charter.
@@ -410,18 +494,32 @@ fn council_non_member_approval_rejected() {
 fn council_proposal_staging_teeth() {
     let (mut runtime, agent, members) = harness("polis-council-staging");
     let charter = charter(&members, 2);
-    let plan = create_council_proposal(&charter, agent_pubkey(&runtime), [0x05; 32], agent, agent, 0)
-        .expect("valid charter");
+    let plan = create_council_proposal(
+        &charter,
+        agent_pubkey(&runtime),
+        [0x05; 32],
+        agent,
+        agent,
+        0,
+    )
+    .expect("valid charter");
     bootstrap(&mut runtime, &plan);
     runtime
-        .execute_on(plan.cell_id, propose(plan.cell_id, &charter, *blake3::hash(b"v1").as_bytes()))
+        .execute_on(
+            plan.cell_id,
+            propose(plan.cell_id, &charter, *blake3::hash(b"v1").as_bytes()),
+        )
         .expect("propose");
 
     // Re-staging a different action hash: rejected (WriteOnce).
     assert_program_violation(
         runtime.execute_on(
             plan.cell_id,
-            set_field(plan.cell_id, PROPOSAL_HASH_SLOT, *blake3::hash(b"v2").as_bytes()),
+            set_field(
+                plan.cell_id,
+                PROPOSAL_HASH_SLOT,
+                *blake3::hash(b"v2").as_bytes(),
+            ),
         ),
         "swapping the staged proposal hash",
     );
@@ -430,7 +528,10 @@ fn council_proposal_staging_teeth() {
     runtime
         .execute_on(plan.cell_id, reject_proposal(plan.cell_id))
         .expect("reject commits");
-    assert_eq!(slot_of(&runtime, plan.cell_id, STATE_SLOT), field_from_u64(STATE_REJECTED));
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_REJECTED)
+    );
     assert_program_violation(
         runtime.execute_on(plan.cell_id, approve(plan.cell_id, &charter, 0).unwrap()),
         "approval on a rejected proposal",
@@ -479,7 +580,10 @@ fn constitution_params_immutable() {
     runtime
         .execute_on(plan.cell_id, activate_constitution(plan.cell_id, &params))
         .expect("activation writes the published params");
-    assert_eq!(slot_of(&runtime, plan.cell_id, STATE_SLOT), field_from_u64(STATE_ACTIVE));
+    assert_eq!(
+        slot_of(&runtime, plan.cell_id, STATE_SLOT),
+        field_from_u64(STATE_ACTIVE)
+    );
 
     // Tampering with the council threshold: rejected by the program.
     assert_program_violation(
@@ -493,7 +597,11 @@ fn constitution_params_immutable() {
     assert_program_violation(
         runtime.execute_on(
             plan.cell_id,
-            set_field(plan.cell_id, SUCCESSOR_HASH_SLOT, *blake3::hash(b"x").as_bytes()),
+            set_field(
+                plan.cell_id,
+                SUCCESSOR_HASH_SLOT,
+                *blake3::hash(b"x").as_bytes(),
+            ),
         ),
         "successor hash while still active",
     );
@@ -558,7 +666,10 @@ fn amendment_full_ceremony_forward_certified() {
         .expect("valid amendment");
     bootstrap(&mut runtime, &amend_plan);
     runtime
-        .execute_on(amend_plan.cell_id, propose_amendment(amend_plan.cell_id, &terms))
+        .execute_on(
+            amend_plan.cell_id,
+            propose_amendment(amend_plan.cell_id, &terms),
+        )
         .expect("amendment proposed");
 
     // (The "staging a hash other than the published successor is rejected"
@@ -686,7 +797,10 @@ fn amendment_enact_without_threshold_rejected() {
         .execute_on(plan.cell_id, propose_amendment(plan.cell_id, &terms))
         .expect("proposed");
     runtime
-        .execute_on(plan.cell_id, approve(plan.cell_id, &terms.charter, 0).unwrap())
+        .execute_on(
+            plan.cell_id,
+            approve(plan.cell_id, &terms.charter, 0).unwrap(),
+        )
         .expect("one approval");
 
     runtime.set_block_height(2_000); // far past the cooling gate

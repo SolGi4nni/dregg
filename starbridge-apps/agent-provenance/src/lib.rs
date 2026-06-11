@@ -278,7 +278,10 @@ pub fn build_advance_head_action(
         },
         Effect::EmitEvent {
             cell: log_cell,
-            event: Event::new(symbol("provenance-head-advanced"), vec![field_from_u64(new_head)]),
+            event: Event::new(
+                symbol("provenance-head-advanced"),
+                vec![field_from_u64(new_head)],
+            ),
         },
     ];
     cipherclerk.make_action(log_cell, "advance_head", effects)
@@ -357,18 +360,18 @@ mod tests {
         let d = provenance_factory_descriptor();
         // HEAD is Monotonic.
         assert!(
-            d.state_constraints
-                .iter()
-                .any(|c| matches!(c, StateConstraint::Monotonic { index } if *index == HEAD_SLOT as u8)),
+            d.state_constraints.iter().any(
+                |c| matches!(c, StateConstraint::Monotonic { index } if *index == HEAD_SLOT as u8)
+            ),
             "HEAD slot must be Monotonic"
         );
         // every entry slot is WriteOnce.
         for i in 0..ENTRY_CAPACITY {
             let idx = entry_slot(i);
             assert!(
-                d.state_constraints
-                    .iter()
-                    .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)),
+                d.state_constraints.iter().any(
+                    |c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)
+                ),
                 "expected WriteOnce on entry slot {idx}"
             );
         }
@@ -379,7 +382,10 @@ mod tests {
     fn child_program_vk_is_canonical_recipe() {
         let expected = canonical_program_vk(&provenance_cell_program());
         assert_eq!(provenance_child_program_vk(), expected);
-        assert_eq!(provenance_factory_descriptor().child_program_vk, Some(expected));
+        assert_eq!(
+            provenance_factory_descriptor().child_program_vk,
+            Some(expected)
+        );
     }
 
     // ── The hash chain + verifier ────────────────────────────────────────
@@ -391,7 +397,10 @@ mod tests {
             .map(|c| claim_digest(c.as_bytes()))
             .collect();
         let committed = entry_digests(&claims);
-        assert!(verify_chain(&claims, &committed), "honest chain must verify");
+        assert!(
+            verify_chain(&claims, &committed),
+            "honest chain must verify"
+        );
     }
 
     #[test]
@@ -589,13 +598,17 @@ mod tests {
             owner_pubkey: owner,
         };
         let birth = cclerk.create_from_factory(PROVENANCE_FACTORY_VK, owner, token, params);
-        exec.submit_turn(&birth).expect("provenance log birth commits");
+        exec.submit_turn(&birth)
+            .expect("provenance log birth commits");
 
         let log = CellId::derive_raw(&owner, &token);
 
         // The born cell must carry the slot caveats as its program.
         let has_program = exec.with_ledger_mut(|ledger| {
-            ledger.get(&log).map(|c| !c.program.is_none()).unwrap_or(false)
+            ledger
+                .get(&log)
+                .map(|c| !c.program.is_none())
+                .unwrap_or(false)
         });
         assert!(has_program, "factory-born log must carry a CellProgram");
 
@@ -610,10 +623,14 @@ mod tests {
 
         // Append a 3-entry provenance chain. Each append's `prev` is the digest
         // committed by the previous append (the chain link).
-        let claims: Vec<FieldElement> = ["model:reasoning-step-1", "tool-call:web.search(...)", "final:answer"]
-            .iter()
-            .map(|c| claim_digest(c.as_bytes()))
-            .collect();
+        let claims: Vec<FieldElement> = [
+            "model:reasoning-step-1",
+            "tool-call:web.search(...)",
+            "final:answer",
+        ]
+        .iter()
+        .map(|c| claim_digest(c.as_bytes()))
+        .collect();
         let honest = entry_digests(&claims);
 
         let mut prev = GENESIS_PREV;
@@ -626,9 +643,14 @@ mod tests {
         // The committed entries must read back EXACTLY the honest chain digests.
         let committed: Vec<FieldElement> = exec.with_ledger_mut(|ledger| {
             let cell = ledger.get(&log).expect("log cell exists");
-            (0..claims.len()).map(|i| cell.state.fields[entry_slot(i)]).collect()
+            (0..claims.len())
+                .map(|i| cell.state.fields[entry_slot(i)])
+                .collect()
         });
-        assert_eq!(committed, honest, "committed entries must equal the honest chain");
+        assert_eq!(
+            committed, honest,
+            "committed entries must equal the honest chain"
+        );
 
         // The provenance chain VERIFIES against the published claims.
         assert!(
@@ -660,10 +682,12 @@ mod tests {
         );
 
         // ...and the committed entry is UNCHANGED after the rejected tamper.
-        let still: FieldElement = exec.with_ledger_mut(|ledger| {
-            ledger.get(&log).unwrap().state.fields[entry_slot(0)]
-        });
-        assert_eq!(still, honest[0], "committed entry must survive the rejected tamper");
+        let still: FieldElement =
+            exec.with_ledger_mut(|ledger| ledger.get(&log).unwrap().state.fields[entry_slot(0)]);
+        assert_eq!(
+            still, honest[0],
+            "committed entry must survive the rejected tamper"
+        );
     }
 
     #[test]

@@ -633,8 +633,14 @@ mod tests {
         // convergence: each ends much closer to INITIAL than it started.
         let hi1 = sb.score_of(&hi).unwrap();
         let lo1 = sb.score_of(&lo).unwrap();
-        assert!(hi1 < hi0 && hi1 > INITIAL_SCORE, "hi decays down toward INITIAL");
-        assert!(lo1 > lo0 && lo1 < INITIAL_SCORE, "lo decays up toward INITIAL");
+        assert!(
+            hi1 < hi0 && hi1 > INITIAL_SCORE,
+            "hi decays down toward INITIAL"
+        );
+        assert!(
+            lo1 > lo0 && lo1 < INITIAL_SCORE,
+            "lo decays up toward INITIAL"
+        );
         // Closed >= 90% of the gap to INITIAL (1 - 0.95^50 ≈ 0.923).
         assert!((hi1 - INITIAL_SCORE).abs() < 0.1 * (hi0 - INITIAL_SCORE).abs());
         assert!((lo1 - INITIAL_SCORE).abs() < 0.1 * (lo0 - INITIAL_SCORE).abs());
@@ -749,10 +755,7 @@ mod tests {
     fn select_eager_empty_inputs() {
         let sb = PeerScoreboard::new();
         assert!(sb.select_eager(&[], 3).is_empty());
-        assert!(
-            sb.select_eager(&[addr(10, 0, 0, 1, 9000)], 0)
-                .is_empty()
-        );
+        assert!(sb.select_eager(&[addr(10, 0, 0, 1, 9000)], 0).is_empty());
     }
 
     // ─── Request backoff ────────────────────────────────────────────────────
@@ -783,7 +786,10 @@ mod tests {
                 grants += 1;
             }
         }
-        assert!(grants >= 4, "backoff must keep eventually granting (liveness)");
+        assert!(
+            grants >= 4,
+            "backoff must keep eventually granting (liveness)"
+        );
         assert!(bo.attempts(&1) >= 4);
     }
 
@@ -795,7 +801,10 @@ mod tests {
         assert!(!bo.should_request(3)); // deep in backoff
         bo.clear(&3);
         assert_eq!(bo.attempts(&3), 0);
-        assert!(bo.should_request(3), "cleared key requests immediately again");
+        assert!(
+            bo.should_request(3),
+            "cleared key requests immediately again"
+        );
     }
 
     #[test]

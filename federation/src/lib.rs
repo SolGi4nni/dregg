@@ -64,6 +64,14 @@
 /// distinct-rooted-vouched, or ≥`min_bond` bonded) are finalizable; bonded equivocators are
 /// slashed. Faithful mirror of the verified Lean `Dregg2.Distributed.StrandAdmission`.
 pub mod admission;
+/// Differential: the verified Lean `Dregg2.Distributed.BlsQuorumCert` model ⟺ this crate's real BLS
+/// aggregate-verify. Pins `faultBudget`/`quorumThreshold` against `fault_tolerance`/`quorum_threshold`
+/// (exhaustive `0..=512` sweep + `StrictBft ⇔ 3∤n`), and drives the REAL `hints` weighted-threshold
+/// aggregation to witness the distributed claims: a corrupt-only set (`|B| ≤ f < quorum`) cannot
+/// produce a verifying QC, an honest quorum does, and two quorums over the same committee overlap in
+/// more than `f` members (so a shared honest signer exists — the no-equivocation backbone). Test-only.
+#[cfg(test)]
+mod bls_quorum_diff;
 pub mod checkpoint;
 /// Differential: the verified Lean `Dregg2.Distributed.CheckpointPrune` model ⟺ this crate's real
 /// checkpoint-prune arc (the `RetentionPolicy::would_prune` predicate transcribed from
@@ -85,14 +93,6 @@ pub mod receipt;
 pub mod revocation;
 pub mod solo;
 pub mod threshold;
-/// Differential: the verified Lean `Dregg2.Distributed.BlsQuorumCert` model ⟺ this crate's real BLS
-/// aggregate-verify. Pins `faultBudget`/`quorumThreshold` against `fault_tolerance`/`quorum_threshold`
-/// (exhaustive `0..=512` sweep + `StrictBft ⇔ 3∤n`), and drives the REAL `hints` weighted-threshold
-/// aggregation to witness the distributed claims: a corrupt-only set (`|B| ≤ f < quorum`) cannot
-/// produce a verifying QC, an honest quorum does, and two quorums over the same committee overlap in
-/// more than `f` members (so a shared honest signer exists — the no-equivocation backbone). Test-only.
-#[cfg(test)]
-mod bls_quorum_diff;
 pub mod threshold_decrypt;
 /// Differential: the verified Lean `Dregg2.Distributed.ThresholdDecrypt` model ⟺ this crate's real
 /// `threshold_decrypt` (GF(256) field, Shamir/Lagrange reconstruction, the combine gate). Test-only.

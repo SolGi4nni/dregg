@@ -304,10 +304,8 @@ fn parse_until(s: &str) -> Result<i64, CliError> {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        let (num, unit) = rel.split_at(
-            rel.find(|c: char| !c.is_ascii_digit())
-                .unwrap_or(rel.len()),
-        );
+        let (num, unit) =
+            rel.split_at(rel.find(|c: char| !c.is_ascii_digit()).unwrap_or(rel.len()));
         let n: i64 = num
             .parse()
             .map_err(|_| CliError::Usage(format!("bad duration `{s}` (want e.g. +7d)")))?;
@@ -325,8 +323,11 @@ fn parse_until(s: &str) -> Result<i64, CliError> {
         };
         return Ok(now + secs);
     }
-    s.parse::<i64>()
-        .map_err(|_| CliError::Usage(format!("`{s}` is not a unix timestamp or +<n><unit> offset")))
+    s.parse::<i64>().map_err(|_| {
+        CliError::Usage(format!(
+            "`{s}` is not a unix timestamp or +<n><unit> offset"
+        ))
+    })
 }
 
 // =============================================================================

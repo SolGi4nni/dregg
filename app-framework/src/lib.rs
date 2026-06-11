@@ -86,7 +86,6 @@ pub mod cclerk {
 /// Fill constraints for partial intent fulfillment.
 pub use dregg_intent::FillConstraints;
 
-
 /// Predicate types for qualification proofs.
 pub use dregg_circuit::PredicateType;
 

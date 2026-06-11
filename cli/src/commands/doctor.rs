@@ -98,7 +98,10 @@ async fn check_producer(cfg: &Config) -> Check {
         Ok(data) => {
             let lean = data["lean_producer_enabled"].as_bool().unwrap_or(false);
             let proving = data["full_turn_proving"].as_bool().unwrap_or(false);
-            let covered = data["covered_effects"].as_array().map(|a| a.len()).unwrap_or(0);
+            let covered = data["covered_effects"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0);
             let total = data["total_effect_kinds"].as_u64().unwrap_or(0);
             let detail = if lean {
                 format!(

@@ -45,7 +45,10 @@ fn default_routes_transfer_through_descriptor_and_verifies() {
     }
 
     let initial = CellState::new(1000, 0);
-    let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![VmEffect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let proof = prove_turn_self_sovereign(&initial, &effects, [0xABu8; 32])
         .expect("default (descriptor-prover) transfer proof should generate");
     assert!(proof.components.has_state_transition);
@@ -93,8 +96,14 @@ fn default_routes_homogeneous_multi_effect_turn_through_descriptor() {
 
     let initial = CellState::new(1000, 0);
     let effects = vec![
-        VmEffect::Transfer { amount: 100, direction: 1 },
-        VmEffect::Transfer { amount: 50, direction: 1 },
+        VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
+        VmEffect::Transfer {
+            amount: 50,
+            direction: 1,
+        },
     ];
     let proof = prove_turn_self_sovereign(&initial, &effects, [0xD0u8; 32])
         .expect("homogeneous multi-effect descriptor proof should generate");
@@ -123,7 +132,10 @@ fn heterogeneous_turn_falls_back_to_hand_air_and_verifies() {
 
     let initial = CellState::new(1000, 0);
     let effects = vec![
-        VmEffect::Transfer { amount: 100, direction: 1 },
+        VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
         VmEffect::Burn {
             target_hash: BabyBear::new(0xB0B),
             amount_lo: BabyBear::new(50),
@@ -153,7 +165,10 @@ fn opt_out_zero_uses_hand_air_and_still_verifies() {
     }
 
     let initial = CellState::new(1000, 0);
-    let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![VmEffect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let proof = prove_turn_self_sovereign(&initial, &effects, [0xABu8; 32]);
 
     // SAFETY: own-process test binary.
@@ -177,7 +192,10 @@ fn verification_is_env_independent_both_directions() {
     let _g = FLAG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let initial = CellState::new(1000, 0);
-    let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![VmEffect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let (old_commit, new_commit) = expected_after_transfer_out(&initial, 100);
 
     // Direction 1: prove with the DEFAULT (descriptor prover) …
@@ -226,7 +244,10 @@ fn non_graduated_effect_falls_back_and_verifies() {
     }
 
     let initial = CellState::new(1000, 0);
-    let effects = vec![VmEffect::SetField { field_idx: 0, value: BabyBear::new(0x42) }];
+    let effects = vec![VmEffect::SetField {
+        field_idx: 0,
+        value: BabyBear::new(0x42),
+    }];
     let proof = prove_turn_self_sovereign(&initial, &effects, [0xF1u8; 32])
         .expect("non-graduated SetField turn must prove via the hand-AIR fallback");
 

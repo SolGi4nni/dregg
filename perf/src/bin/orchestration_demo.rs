@@ -42,11 +42,11 @@
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use dregg_intent::verified_settle::{settle_ring_verified, VerifiedLedger, VerifiedLeg};
+use dregg_intent::verified_settle::{VerifiedLedger, VerifiedLeg, settle_ring_verified};
 use dregg_sdk::{AgentCipherclerk, AgentRuntime, Effect};
 use dregg_token::Attenuation;
-use dregg_turn::action::{symbol, Event};
 use dregg_turn::TurnError;
+use dregg_turn::action::{Event, symbol};
 
 /// A provenance-trail "work record" effect: a worker emits an event naming the
 /// job it did. Unlike `IncrementNonce`, this does NOT itself advance the cell's
@@ -56,7 +56,10 @@ use dregg_turn::TurnError;
 fn work_record(cell: dregg_sdk::CellId, job: &str) -> Effect {
     Effect::EmitEvent {
         cell,
-        event: Event { topic: symbol(job), data: Vec::new() },
+        event: Event {
+            topic: symbol(job),
+            data: Vec::new(),
+        },
     }
 }
 
@@ -99,16 +102,22 @@ fn main() {
     // -----------------------------------------------------------------------
     println!("2. ATTENUATED DELEGATION — parent spawns two workers scoped to `execute`");
     let scope = ["execute"];
-    let (worker_a, _) = timed("spawn worker A (attenuated, executor-enforced mandate)", || {
-        parent
-            .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &scope)
-            .expect("spawn worker A")
-    });
-    let (worker_b, _) = timed("spawn worker B (attenuated, executor-enforced mandate)", || {
-        parent
-            .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &scope)
-            .expect("spawn worker B")
-    });
+    let (worker_a, _) = timed(
+        "spawn worker A (attenuated, executor-enforced mandate)",
+        || {
+            parent
+                .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &scope)
+                .expect("spawn worker A")
+        },
+    );
+    let (worker_b, _) = timed(
+        "spawn worker B (attenuated, executor-enforced mandate)",
+        || {
+            parent
+                .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &scope)
+                .expect("spawn worker B")
+        },
+    );
     assert_eq!(worker_a.cap_methods(), &["execute".to_string()]);
     assert_eq!(worker_b.cap_methods(), &["execute".to_string()]);
     assert!(
@@ -125,11 +134,14 @@ fn main() {
     // 3a. IN-SCOPE turn COMMITS — the executor admits the worker's credential.
     // -----------------------------------------------------------------------
     println!("3a. EXECUTOR-ENFORCED MANDATE — worker A's in-scope `execute` turn COMMITS");
-    let (receipt_a1, _) = timed("worker A submits in-scope turn (executor admits the credential)", || {
-        worker_a
-            .execute(vec![work_record(worker_a.cell_id(), "summarize-doc")])
-            .expect("in-scope worker turn must be authorized by the executor's token path")
-    });
+    let (receipt_a1, _) = timed(
+        "worker A submits in-scope turn (executor admits the credential)",
+        || {
+            worker_a
+                .execute(vec![work_record(worker_a.cell_id(), "summarize-doc")])
+                .expect("in-scope worker turn must be authorized by the executor's token path")
+        },
+    );
     println!(
         "     committed: {} action(s), post-state {}…\n",
         receipt_a1.action_count,
@@ -151,12 +163,15 @@ fn main() {
     let worker_c = parent
         .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &scope)
         .expect("spawn worker C (fresh, for the over-scope tooth)");
-    let (rejection, _) = timed("worker (scoped to {execute}) attempts an over-scope `transfer` turn", || {
-        worker_c.execute_method(
-            "transfer",
-            vec![work_record(worker_c.cell_id(), "exfiltrate-funds")],
-        )
-    });
+    let (rejection, _) = timed(
+        "worker (scoped to {execute}) attempts an over-scope `transfer` turn",
+        || {
+            worker_c.execute_method(
+                "transfer",
+                vec![work_record(worker_c.cell_id(), "exfiltrate-funds")],
+            )
+        },
+    );
     match rejection {
         Err(dregg_sdk::SdkError::Turn(TurnError::TokenInsufficientCapability { .. })) => {
             println!(
@@ -222,14 +237,25 @@ fn main() {
 
     let award = vec![
         // leg 1: winner A pays its 40-credit bid to the seller
-        VerifiedLeg { from: a, to: seller, asset: credit, amount: 40 },
+        VerifiedLeg {
+            from: a,
+            to: seller,
+            asset: credit,
+            amount: 40,
+        },
         // leg 2: the seller delivers the slot-token to the winner
-        VerifiedLeg { from: seller, to: a, asset: slot, amount: 1 },
+        VerifiedLeg {
+            from: seller,
+            to: a,
+            asset: slot,
+            amount: 1,
+        },
     ];
 
-    let (settled, _) = timed("settle 2-leg award ring (verified, atomic, conserving)", || {
-        settle_ring_verified(&k0, &award).expect("a well-formed award ring must settle")
-    });
+    let (settled, _) = timed(
+        "settle 2-leg award ring (verified, atomic, conserving)",
+        || settle_ring_verified(&k0, &award).expect("a well-formed award ring must settle"),
+    );
     assert_eq!(
         settled.total_asset(&credit),
         total_credit_before,
@@ -250,9 +276,19 @@ fn main() {
     //     not hold) is REJECTED fail-closed by the verified gate.
     println!("5b. ANTI-TAMPER — a value-leaking ring is REJECTED fail-closed");
     let tampered = vec![
-        VerifiedLeg { from: a, to: seller, asset: credit, amount: 40 },
+        VerifiedLeg {
+            from: a,
+            to: seller,
+            asset: credit,
+            amount: 40,
+        },
         // leg 2 tampered: deliver TWO slot-tokens when the seller holds only one
-        VerifiedLeg { from: seller, to: a, asset: slot, amount: 2 },
+        VerifiedLeg {
+            from: seller,
+            to: a,
+            asset: slot,
+            amount: 2,
+        },
     ];
     let (rejected_settle, _) = timed("attempt a value-leaking award ring", || {
         settle_ring_verified(&k0, &tampered)
@@ -266,7 +302,9 @@ fn main() {
         rejected_settle.unwrap_err()
     );
 
-    println!("=== orchestration loop complete: embodied → delegated → enforced → chained → settled ===");
+    println!(
+        "=== orchestration loop complete: embodied → delegated → enforced → chained → settled ==="
+    );
     println!(
         "    every leg ran through the production SDK + verified-settle path; \
          the polis loop is RUNNABLE and MEASURED, not asserted.\n"

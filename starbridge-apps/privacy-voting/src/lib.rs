@@ -473,18 +473,18 @@ mod tests {
         // Question + closed are write-once.
         for idx in [QUESTION_HASH_SLOT, CLOSED_SLOT] {
             assert!(
-                d.state_constraints
-                    .iter()
-                    .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)),
+                d.state_constraints.iter().any(
+                    |c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)
+                ),
                 "expected WriteOnce on slot {idx}"
             );
         }
         // Three tally slots are monotone.
         for idx in [TALLY_YES_SLOT, TALLY_NO_SLOT, TALLY_ABSTAIN_SLOT] {
             assert!(
-                d.state_constraints
-                    .iter()
-                    .any(|c| matches!(c, StateConstraint::Monotonic { index } if *index == idx as u8)),
+                d.state_constraints.iter().any(
+                    |c| matches!(c, StateConstraint::Monotonic { index } if *index == idx as u8)
+                ),
                 "expected Monotonic on slot {idx}"
             );
         }
@@ -495,9 +495,9 @@ mod tests {
     fn ballot_factory_makes_vote_write_once() {
         let d = ballot_factory_descriptor();
         assert!(
-            d.state_constraints
-                .iter()
-                .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == VOTE_SLOT as u8)),
+            d.state_constraints.iter().any(
+                |c| matches!(c, StateConstraint::WriteOnce { index } if *index == VOTE_SLOT as u8)
+            ),
             "ballot VOTE slot must be WriteOnce (one vote per ballot cell)"
         );
         assert_eq!(d.state_constraints.len(), 2);
@@ -742,8 +742,11 @@ mod tests {
             .expect("open poll commits");
 
         // Record a YES tally bump 0 -> 1: accepted (monotone increase).
-        exec.submit_action(&cclerk, build_record_tally_action(&cclerk, poll, VOTE_YES, 1))
-            .expect("tally bump commits");
+        exec.submit_action(
+            &cclerk,
+            build_record_tally_action(&cclerk, poll, VOTE_YES, 1),
+        )
+        .expect("tally bump commits");
 
         // Attempt to shrink the YES tally 1 -> 0: rejected by Monotonic caveat.
         let shrink = build_record_tally_action(&cclerk, poll, VOTE_YES, 0);

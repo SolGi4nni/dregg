@@ -217,7 +217,6 @@ fn test_stale_messages_after_teardown() {
 // Test 4: DropRef arrives before EnlivenRef (temporal inversion)
 // =============================================================================
 
-
 // =============================================================================
 // Test 5: Concurrent writes to same directory entry — CAS semantics
 // =============================================================================

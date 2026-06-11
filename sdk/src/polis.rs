@@ -41,13 +41,11 @@ use dregg_cell::{
 };
 use dregg_turn::Effect;
 
+pub use starbridge_polis::constitution::{ConstitutionParams, constitution_factory_descriptor};
 pub use starbridge_polis::council::{
     AmendmentTerms, CouncilCharter, CouncilStatus, ProposalState, STATE_APPROVED, STATE_DRAFT,
     STATE_EXECUTED, STATE_PROPOSED, STATE_REJECTED, amendment_factory_descriptor,
     council_factory_descriptor, inspect_council,
-};
-pub use starbridge_polis::constitution::{
-    ConstitutionParams, constitution_factory_descriptor,
 };
 pub use starbridge_polis::mandate::{
     WorkerMandate, tool_scope_commitment, worker_factory_descriptor,
@@ -230,7 +228,11 @@ pub fn create_council_proposal_under(
 pub fn propose(cell: CellId, charter: &CouncilCharter, action_hash: FieldElement) -> Vec<Effect> {
     vec![
         set(cell, council::PROPOSAL_HASH_SLOT, action_hash),
-        set(cell, council::MEMBERS_COMMIT_SLOT, charter.members_commitment()),
+        set(
+            cell,
+            council::MEMBERS_COMMIT_SLOT,
+            charter.members_commitment(),
+        ),
         set(cell, STATE_SLOT, field_from_u64(council::STATE_PROPOSED)),
     ]
 }
@@ -287,7 +289,11 @@ pub fn execute_proposal(cell: CellId, action_effects: Vec<Effect>) -> Vec<Effect
 
 /// Build the reject turn: step PROPOSED → REJECTED (terminal, inert).
 pub fn reject_proposal(cell: CellId) -> Vec<Effect> {
-    vec![set(cell, STATE_SLOT, field_from_u64(council::STATE_REJECTED))]
+    vec![set(
+        cell,
+        STATE_SLOT,
+        field_from_u64(council::STATE_REJECTED),
+    )]
 }
 
 // =============================================================================
@@ -323,7 +329,11 @@ pub fn create_constitution(
 /// descriptor's published literal.
 pub fn activate_constitution(cell: CellId, params: &ConstitutionParams) -> Vec<Effect> {
     vec![
-        set(cell, constitution::VERSION_SLOT, field_from_u64(params.version)),
+        set(
+            cell,
+            constitution::VERSION_SLOT,
+            field_from_u64(params.version),
+        ),
         set(
             cell,
             constitution::COUNCIL_THRESHOLD_SLOT,
@@ -334,7 +344,11 @@ pub fn activate_constitution(cell: CellId, params: &ConstitutionParams) -> Vec<E
             constitution::AMENDMENT_DELAY_SLOT,
             field_from_u64(params.amendment_delay),
         ),
-        set(cell, constitution::TREASURY_CAP_SLOT, field_from_u64(params.treasury_cap)),
+        set(
+            cell,
+            constitution::TREASURY_CAP_SLOT,
+            field_from_u64(params.treasury_cap),
+        ),
         set(cell, STATE_SLOT, field_from_u64(constitution::STATE_ACTIVE)),
     ]
 }
@@ -349,7 +363,11 @@ pub fn activate_constitution(cell: CellId, params: &ConstitutionParams) -> Vec<E
 pub fn supersede_constitution(cell: CellId, successor_hash: FieldElement) -> Vec<Effect> {
     vec![
         set(cell, constitution::SUCCESSOR_HASH_SLOT, successor_hash),
-        set(cell, STATE_SLOT, field_from_u64(constitution::STATE_SUPERSEDED)),
+        set(
+            cell,
+            STATE_SLOT,
+            field_from_u64(constitution::STATE_SUPERSEDED),
+        ),
     ]
 }
 
@@ -467,7 +485,11 @@ pub fn activate_worker(cell: CellId, mandate: &WorkerMandate) -> Vec<Effect> {
     vec![
         set(cell, mandate::SLICE_SLOT, field_from_u64(mandate.slice)),
         set(cell, mandate::TOOL_SCOPE_SLOT, mandate.tool_scope),
-        set(cell, mandate::ORCHESTRATOR_SLOT, party_field(mandate.orchestrator)),
+        set(
+            cell,
+            mandate::ORCHESTRATOR_SLOT,
+            party_field(mandate.orchestrator),
+        ),
         set(cell, mandate::WORKER_TAG_SLOT, mandate.worker_tag),
         set(cell, STATE_SLOT, field_from_u64(mandate::STATE_ACTIVE)),
     ]

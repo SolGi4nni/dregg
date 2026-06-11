@@ -17,9 +17,7 @@
 //!     outcome (`test_prover_cannot_learn_threshold` lifted): two different thresholds produce
 //!     structurally identical garbled circuits, and the proof's public surface is output-only.
 
-use dregg_circuit::dsl::garbled::{
-    prove_private_threshold_dsl, verify_private_threshold_dsl,
-};
+use dregg_circuit::dsl::garbled::{prove_private_threshold_dsl, verify_private_threshold_dsl};
 use dregg_circuit::garbled::{
     COMPARISON_BITS, GarbledCircuit, GarblingSecrets, WireLabel, evaluate_garbled_circuit,
     garble_comparison_circuit, hash_label,
@@ -52,7 +50,10 @@ fn private_settle(a: u32, b: u32) -> (GarbledCircuit, GarblingSecrets, bool) {
 fn correctness_admit_when_condition_holds() {
     // Settlement admissible: counterparty value 150 meets private threshold 100.
     let (_c, _s, bit) = private_settle(100, 150);
-    assert!(bit, "150 >= 100: the joint private condition holds, settlement admits");
+    assert!(
+        bit,
+        "150 >= 100: the joint private condition holds, settlement admits"
+    );
 
     // Boundary equality also admits.
     let (_c, _s, bit_eq) = private_settle(100, 100);
@@ -63,7 +64,10 @@ fn correctness_admit_when_condition_holds() {
 fn correctness_reject_when_condition_fails() {
     // Settlement NOT admissible: counterparty value 50 is below the private threshold 100.
     let (_c, _s, bit) = private_settle(100, 50);
-    assert!(!bit, "50 < 100: the joint private condition fails, settlement does not admit");
+    assert!(
+        !bit,
+        "50 < 100: the joint private condition fails, settlement does not admit"
+    );
 }
 
 #[test]
@@ -73,8 +77,15 @@ fn input_privacy_threshold_circuit_is_indistinguishable() {
     // observer in party B's seat cannot read A's threshold off the circuit it receives.
     let (c1, _) = garble_comparison_circuit(100, COMPARISON_BITS);
     let (c2, _) = garble_comparison_circuit(200, COMPARISON_BITS);
-    assert_eq!(c1.gates.len(), c2.gates.len(), "gate count independent of the secret threshold");
-    assert_eq!(c1.topology, c2.topology, "topology independent of the secret threshold");
+    assert_eq!(
+        c1.gates.len(),
+        c2.gates.len(),
+        "gate count independent of the secret threshold"
+    );
+    assert_eq!(
+        c1.topology, c2.topology,
+        "topology independent of the secret threshold"
+    );
 }
 
 #[test]

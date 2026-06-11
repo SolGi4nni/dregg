@@ -158,7 +158,10 @@ impl std::fmt::Display for PolisError {
         match self {
             PolisError::NoMembers => write!(f, "council charter must list at least one member"),
             PolisError::TooManyMembers { got, max } => {
-                write!(f, "council charter lists {got} members; slot grammar holds at most {max}")
+                write!(
+                    f,
+                    "council charter lists {got} members; slot grammar holds at most {max}"
+                )
             }
             PolisError::ThresholdOutOfRange { threshold, members } => write!(
                 f,
@@ -169,7 +172,10 @@ impl std::fmt::Display for PolisError {
                 write!(f, "member index {index} out of range ({members} members)")
             }
             PolisError::ZeroAmendmentHash => {
-                write!(f, "amendment must stage a nonzero successor-constitution hash")
+                write!(
+                    f,
+                    "amendment must stage a nonzero successor-constitution hash"
+                )
             }
             PolisError::ZeroVersion => write!(f, "constitution version must be >= 1"),
             PolisError::ZeroThresholdParam => {
@@ -208,7 +214,10 @@ fn pin_term(slot: u8, lit: FieldElement) -> StateConstraint {
     StateConstraint::AnyOf {
         variants: vec![
             state_is(0),
-            SimpleStateConstraint::FieldEquals { index: slot, value: lit },
+            SimpleStateConstraint::FieldEquals {
+                index: slot,
+                value: lit,
+            },
         ],
     }
 }
@@ -426,15 +435,32 @@ pub mod council {
                 allowed: vec![
                     (field_from_u64(STATE_DRAFT), field_from_u64(STATE_DRAFT)),
                     (field_from_u64(STATE_DRAFT), field_from_u64(STATE_PROPOSED)),
-                    (field_from_u64(STATE_PROPOSED), field_from_u64(STATE_PROPOSED)),
-                    (field_from_u64(STATE_PROPOSED), field_from_u64(STATE_REJECTED)),
-                    (field_from_u64(STATE_PROPOSED), field_from_u64(STATE_APPROVED)),
-                    (field_from_u64(STATE_APPROVED), field_from_u64(STATE_APPROVED)),
-                    (field_from_u64(STATE_APPROVED), field_from_u64(STATE_EXECUTED)),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_PROPOSED),
+                    ),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_REJECTED),
+                    ),
+                    (
+                        field_from_u64(STATE_PROPOSED),
+                        field_from_u64(STATE_APPROVED),
+                    ),
+                    (
+                        field_from_u64(STATE_APPROVED),
+                        field_from_u64(STATE_APPROVED),
+                    ),
+                    (
+                        field_from_u64(STATE_APPROVED),
+                        field_from_u64(STATE_EXECUTED),
+                    ),
                 ],
             },
             // ── one proposal per cell; any state step requires a staged hash ──
-            StateConstraint::WriteOnce { index: PROPOSAL_HASH_SLOT },
+            StateConstraint::WriteOnce {
+                index: PROPOSAL_HASH_SLOT,
+            },
             StateConstraint::BoundedBy {
                 index: STATE_SLOT,
                 witness_index: PROPOSAL_HASH_SLOT,
@@ -443,8 +469,13 @@ pub mod council {
             pin_term(MEMBERS_COMMIT_SLOT, charter.members_commitment()),
             // ── the certification flag: a monotone bit, armable only with a
             //    staged proposal ──
-            StateConstraint::MemberOf { index: APPROVED_FLAG_SLOT, set: vec![0, 1] },
-            StateConstraint::Monotonic { index: APPROVED_FLAG_SLOT },
+            StateConstraint::MemberOf {
+                index: APPROVED_FLAG_SLOT,
+                set: vec![0, 1],
+            },
+            StateConstraint::Monotonic {
+                index: APPROVED_FLAG_SLOT,
+            },
             StateConstraint::BoundedBy {
                 index: APPROVED_FLAG_SLOT,
                 witness_index: PROPOSAL_HASH_SLOT,
@@ -476,7 +507,10 @@ pub mod council {
         //    admitted only with a staged proposal ──
         for i in 0..n {
             let slot = FIRST_APPROVAL_SLOT + i as u8;
-            cs.push(StateConstraint::MemberOf { index: slot, set: vec![0, 1] });
+            cs.push(StateConstraint::MemberOf {
+                index: slot,
+                set: vec![0, 1],
+            });
             cs.push(StateConstraint::Monotonic { index: slot });
             cs.push(StateConstraint::BoundedBy {
                 index: slot,
@@ -749,17 +783,25 @@ pub mod constitution {
                     (field_from_u64(STATE_UNINIT), field_from_u64(STATE_UNINIT)),
                     (field_from_u64(STATE_UNINIT), field_from_u64(STATE_ACTIVE)),
                     (field_from_u64(STATE_ACTIVE), field_from_u64(STATE_ACTIVE)),
-                    (field_from_u64(STATE_ACTIVE), field_from_u64(STATE_SUPERSEDED)),
+                    (
+                        field_from_u64(STATE_ACTIVE),
+                        field_from_u64(STATE_SUPERSEDED),
+                    ),
                 ],
             },
             // ── the constitutional parameters: pinned for life ──
             pin_term(VERSION_SLOT, field_from_u64(params.version)),
-            pin_term(COUNCIL_THRESHOLD_SLOT, field_from_u64(params.council_threshold)),
+            pin_term(
+                COUNCIL_THRESHOLD_SLOT,
+                field_from_u64(params.council_threshold),
+            ),
             pin_term(AMENDMENT_DELAY_SLOT, field_from_u64(params.amendment_delay)),
             pin_term(TREASURY_CAP_SLOT, field_from_u64(params.treasury_cap)),
             // ── supersession provenance: written exactly once, only at the
             //    supersede step ──
-            StateConstraint::WriteOnce { index: SUCCESSOR_HASH_SLOT },
+            StateConstraint::WriteOnce {
+                index: SUCCESSOR_HASH_SLOT,
+            },
             when_state(
                 STATE_ACTIVE,
                 SimpleStateConstraint::FieldEquals {
@@ -785,7 +827,9 @@ pub mod constitution {
     pub fn constitution_cell_program(
         params: &ConstitutionParams,
     ) -> Result<CellProgram, PolisError> {
-        Ok(CellProgram::Predicate(constitution_state_constraints(params)?))
+        Ok(CellProgram::Predicate(constitution_state_constraints(
+            params,
+        )?))
     }
 
     /// **The constitution factory (per-version, content-addressed).** Births
@@ -945,8 +989,8 @@ pub mod mandate {
 
 #[cfg(test)]
 mod tests {
-    use super::council::*;
     use super::constitution::*;
+    use super::council::*;
     use super::mandate::*;
     use super::*;
     use dregg_cell::preconditions::EvalContext;
@@ -1005,13 +1049,19 @@ mod tests {
         c.threshold = 4;
         assert_eq!(
             council_state_constraints(&c),
-            Err(PolisError::ThresholdOutOfRange { threshold: 4, members: 3 })
+            Err(PolisError::ThresholdOutOfRange {
+                threshold: 4,
+                members: 3
+            })
         );
         c.threshold = 0;
         assert!(council_state_constraints(&c).is_err());
         c = charter_2of3();
         c.members[2] = c.members[0];
-        assert_eq!(council_state_constraints(&c), Err(PolisError::DuplicateMember));
+        assert_eq!(
+            council_state_constraints(&c),
+            Err(PolisError::DuplicateMember)
+        );
         c = charter_2of3();
         c.members.push(CellId::from_bytes([0x44; 32]));
         assert!(matches!(
@@ -1027,7 +1077,10 @@ mod tests {
         let born = CellState::new(0);
         assert!(eval(&p, &born, None, 0).is_ok(), "all-zero birth must pass");
         let proposed = proposed_state(&c, field_from_u64(0xAC7A));
-        assert!(eval(&p, &proposed, Some(&born), 0).is_ok(), "propose must pass");
+        assert!(
+            eval(&p, &proposed, Some(&born), 0).is_ok(),
+            "propose must pass"
+        );
     }
 
     #[test]
@@ -1037,7 +1090,10 @@ mod tests {
         let born = CellState::new(0);
         let mut bad = born.clone();
         bad.fields[FIRST_APPROVAL_SLOT as usize] = field_from_u64(1);
-        assert!(eval(&p, &bad, Some(&born), 0).is_err(), "BoundedBy must bite");
+        assert!(
+            eval(&p, &bad, Some(&born), 0).is_err(),
+            "BoundedBy must bite"
+        );
     }
 
     #[test]
@@ -1051,14 +1107,20 @@ mod tests {
         assert!(eval(&p, &one, Some(&proposed), 0).is_ok());
         let mut armed_early = one.clone();
         armed_early.fields[APPROVED_FLAG_SLOT as usize] = field_from_u64(1);
-        assert!(eval(&p, &armed_early, Some(&one), 0).is_err(), "1 < M=2 must reject");
+        assert!(
+            eval(&p, &armed_early, Some(&one), 0).is_err(),
+            "1 < M=2 must reject"
+        );
         // Second approval, then arming passes; APPROVED requires the flag.
         let mut two = one.clone();
         two.fields[(FIRST_APPROVAL_SLOT + 1) as usize] = field_from_u64(1);
         let mut armed = two.clone();
         armed.fields[APPROVED_FLAG_SLOT as usize] = field_from_u64(1);
         armed.fields[STATE_SLOT as usize] = field_from_u64(STATE_APPROVED);
-        assert!(eval(&p, &armed, Some(&two), 0).is_ok(), "2 >= M=2 must pass");
+        assert!(
+            eval(&p, &armed, Some(&two), 0).is_ok(),
+            "2 >= M=2 must pass"
+        );
         // APPROVED without the flag: rejected.
         let mut no_flag = two.clone();
         no_flag.fields[STATE_SLOT as usize] = field_from_u64(STATE_APPROVED);
@@ -1079,7 +1141,10 @@ mod tests {
         assert!(eval(&p, &again, Some(&one), 0).is_ok());
         let mut armed = again.clone();
         armed.fields[APPROVED_FLAG_SLOT as usize] = field_from_u64(1);
-        assert!(eval(&p, &armed, Some(&again), 0).is_err(), "still 1 distinct approver");
+        assert!(
+            eval(&p, &armed, Some(&again), 0).is_err(),
+            "still 1 distinct approver"
+        );
     }
 
     #[test]
@@ -1091,17 +1156,26 @@ mod tests {
         one.fields[FIRST_APPROVAL_SLOT as usize] = field_from_u64(1);
         let mut retracted = one.clone();
         retracted.fields[FIRST_APPROVAL_SLOT as usize] = FIELD_ZERO;
-        assert!(eval(&p, &retracted, Some(&one), 0).is_err(), "Monotonic must bite");
+        assert!(
+            eval(&p, &retracted, Some(&one), 0).is_err(),
+            "Monotonic must bite"
+        );
     }
 
     #[test]
     fn council_non_member_slot_pinned() {
-        let c = CouncilCharter { members: charter_2of3().members[..2].to_vec(), threshold: 2 };
+        let c = CouncilCharter {
+            members: charter_2of3().members[..2].to_vec(),
+            threshold: 2,
+        };
         let p = council_cell_program(&c).unwrap();
         let proposed = proposed_state(&c, field_from_u64(7));
         let mut bad = proposed.clone();
         bad.fields[(FIRST_APPROVAL_SLOT + 2) as usize] = field_from_u64(1); // 3rd slot, 2-member charter
-        assert!(eval(&p, &bad, Some(&proposed), 0).is_err(), "non-member slot is pinned zero");
+        assert!(
+            eval(&p, &bad, Some(&proposed), 0).is_err(),
+            "non-member slot is pinned zero"
+        );
     }
 
     #[test]
@@ -1111,7 +1185,10 @@ mod tests {
         let proposed = proposed_state(&c, field_from_u64(7));
         let mut swapped = proposed.clone();
         swapped.fields[PROPOSAL_HASH_SLOT as usize] = field_from_u64(8);
-        assert!(eval(&p, &swapped, Some(&proposed), 0).is_err(), "WriteOnce must bite");
+        assert!(
+            eval(&p, &swapped, Some(&proposed), 0).is_err(),
+            "WriteOnce must bite"
+        );
     }
 
     #[test]
@@ -1149,8 +1226,14 @@ mod tests {
         certified.fields[STATE_SLOT as usize] = field_from_u64(STATE_APPROVED);
         let mut enacted = certified.clone();
         enacted.fields[STATE_SLOT as usize] = field_from_u64(STATE_EXECUTED);
-        assert!(eval(&p, &enacted, Some(&certified), 499).is_err(), "height 499 < 500");
-        assert!(eval(&p, &enacted, Some(&certified), 500).is_ok(), "height 500 >= 500");
+        assert!(
+            eval(&p, &enacted, Some(&certified), 499).is_err(),
+            "height 499 < 500"
+        );
+        assert!(
+            eval(&p, &enacted, Some(&certified), 500).is_ok(),
+            "height 500 >= 500"
+        );
     }
 
     #[test]
@@ -1163,13 +1246,19 @@ mod tests {
         let p = amendment_cell_program(&terms).unwrap();
         let born = CellState::new(0);
         let wrong = proposed_state(&terms.charter, field_from_u64(0xBAD));
-        assert!(eval(&p, &wrong, Some(&born), 0).is_err(), "staging a different hash rejected");
+        assert!(
+            eval(&p, &wrong, Some(&born), 0).is_err(),
+            "staging a different hash rejected"
+        );
         let right = proposed_state(&terms.charter, terms.new_constitution_hash);
         assert!(eval(&p, &right, Some(&born), 0).is_ok());
         // Zero hash rejected at build.
         let mut z = terms.clone();
         z.new_constitution_hash = FIELD_ZERO;
-        assert_eq!(amendment_state_constraints(&z), Err(PolisError::ZeroAmendmentHash));
+        assert_eq!(
+            amendment_state_constraints(&z),
+            Err(PolisError::ZeroAmendmentHash)
+        );
     }
 
     fn params_v1() -> ConstitutionParams {
@@ -1197,12 +1286,23 @@ mod tests {
         let p = constitution_cell_program(&params).unwrap();
         let born = CellState::new(0);
         let active = active_constitution(&params);
-        assert!(eval(&p, &active, Some(&born), 0).is_ok(), "activate writes the params");
+        assert!(
+            eval(&p, &active, Some(&born), 0).is_ok(),
+            "activate writes the params"
+        );
         // ANY parameter edit on the active cell is rejected.
-        for slot in [VERSION_SLOT, COUNCIL_THRESHOLD_SLOT, AMENDMENT_DELAY_SLOT, TREASURY_CAP_SLOT] {
+        for slot in [
+            VERSION_SLOT,
+            COUNCIL_THRESHOLD_SLOT,
+            AMENDMENT_DELAY_SLOT,
+            TREASURY_CAP_SLOT,
+        ] {
             let mut bad = active.clone();
             bad.fields[slot as usize] = field_from_u64(9_999);
-            assert!(eval(&p, &bad, Some(&active), 0).is_err(), "param slot {slot} must be pinned");
+            assert!(
+                eval(&p, &bad, Some(&active), 0).is_err(),
+                "param slot {slot} must be pinned"
+            );
         }
     }
 
@@ -1224,7 +1324,10 @@ mod tests {
         superseded.fields[SUCCESSOR_HASH_SLOT as usize] = field_from_u64(0xDEED);
         superseded.fields[STATE_SLOT as usize] = field_from_u64(constitution::STATE_SUPERSEDED);
         assert!(eval(&p, &superseded, Some(&active), 0).is_ok());
-        assert!(eval(&p, &superseded, Some(&superseded), 0).is_err(), "terminal: inert");
+        assert!(
+            eval(&p, &superseded, Some(&superseded), 0).is_err(),
+            "terminal: inert"
+        );
         let mut resurrect = superseded.clone();
         resurrect.fields[STATE_SLOT as usize] = field_from_u64(constitution::STATE_ACTIVE);
         assert!(eval(&p, &resurrect, Some(&superseded), 0).is_err());
@@ -1250,10 +1353,16 @@ mod tests {
         // Scope / slice rewrites rejected.
         let mut bad = active.clone();
         bad.fields[TOOL_SCOPE_SLOT as usize] = field_from_u64(0xEEEE);
-        assert!(eval(&p, &bad, Some(&active), 0).is_err(), "tool scope pinned");
+        assert!(
+            eval(&p, &bad, Some(&active), 0).is_err(),
+            "tool scope pinned"
+        );
         let mut inflated = active.clone();
         inflated.fields[SLICE_SLOT as usize] = field_from_u64(9_999);
-        assert!(eval(&p, &inflated, Some(&active), 0).is_err(), "slice pinned");
+        assert!(
+            eval(&p, &inflated, Some(&active), 0).is_err(),
+            "slice pinned"
+        );
         // Revoke, then inert (no re-activate, no touch).
         let mut revoked = active.clone();
         revoked.fields[STATE_SLOT as usize] = field_from_u64(mandate::STATE_REVOKED);
@@ -1264,11 +1373,17 @@ mod tests {
         assert!(eval(&p, &reactivated, Some(&revoked), 0).is_err());
         // Build-time fail-closed.
         assert_eq!(
-            worker_state_constraints(&WorkerMandate { slice: 0, ..m.clone() }),
+            worker_state_constraints(&WorkerMandate {
+                slice: 0,
+                ..m.clone()
+            }),
             Err(PolisError::ZeroSlice)
         );
         assert_eq!(
-            worker_state_constraints(&WorkerMandate { tool_scope: FIELD_ZERO, ..m }),
+            worker_state_constraints(&WorkerMandate {
+                tool_scope: FIELD_ZERO,
+                ..m
+            }),
             Err(PolisError::ZeroToolScope)
         );
     }
@@ -1282,7 +1397,10 @@ mod tests {
         let mut c2 = charter_2of3();
         c2.threshold = 3;
         let c = council_factory_descriptor(&c2).unwrap();
-        assert_ne!(a.factory_vk, c.factory_vk, "different threshold → different factory");
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "different threshold → different factory"
+        );
         // Amendment vs council with identical members: domain tags separate.
         let amend = amendment_factory_descriptor(&AmendmentTerms {
             charter: charter_2of3(),

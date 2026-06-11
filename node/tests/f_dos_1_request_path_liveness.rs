@@ -50,7 +50,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dregg_circuit::BabyBear;
-use dregg_circuit::effect_vm::{CellState, Effect as VmEffect, EffectVmAir, generate_effect_vm_trace};
+use dregg_circuit::effect_vm::{
+    CellState, Effect as VmEffect, EffectVmAir, generate_effect_vm_trace,
+};
 use dregg_circuit::effect_vm_p3_full_air::bespoke_air_accepts;
 use tokio::sync::RwLock;
 
@@ -70,7 +72,10 @@ fn revalidation_alphas() -> [BabyBear; 4] {
 /// derives from the actor's pre-state.
 fn honest_transfer_witness() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let st = CellState::new(100_000, 0);
-    let effects = vec![VmEffect::Transfer { amount: 50, direction: 1 }];
+    let effects = vec![VmEffect::Transfer {
+        amount: 50,
+        direction: 1,
+    }];
     let (trace, mut pis) = generate_effect_vm_trace(&st, &effects);
     // The agent-cell tag the verifier's single-proof replay binding requires
     // (matches `revalidate_http_witness`).
@@ -123,8 +128,8 @@ async fn submit_old_inline_prove(
     // for the whole prove time.
     let mut s = state.write().await;
     let air = EffectVmAir::new(trace.len());
-    let _proof = dregg_circuit::stark::try_prove(&air, &trace, &pis)
-        .expect("honest transfer proves");
+    let _proof =
+        dregg_circuit::stark::try_prove(&air, &trace, &pis).expect("honest transfer proves");
     s.committed += 1;
     drop(s);
     t0.elapsed()
@@ -191,7 +196,10 @@ async fn submit_new_revalidate_then_async_prove(
         }
     });
 
-    Ok(CommitAck { ack_latency, proven })
+    Ok(CommitAck {
+        ack_latency,
+        proven,
+    })
 }
 
 // ===========================================================================
@@ -243,7 +251,10 @@ async fn f_dos_1_old_path_wedges_new_path_stays_live() {
     ));
     tokio::time::sleep(Duration::from_millis(40)).await;
     let height_before_new = state_new.read().await.height;
-    assert!(height_before_new > 0, "sanity: producer live before NEW submit");
+    assert!(
+        height_before_new > 0,
+        "sanity: producer live before NEW submit"
+    );
 
     let ack = submit_new_revalidate_then_async_prove(state_new.clone(), trace.clone(), pis.clone())
         .await
@@ -263,13 +274,24 @@ async fn f_dos_1_old_path_wedges_new_path_stays_live() {
     // -------- Report (the before/after the task asks for) --------
     eprintln!("\n==================== F-DOS-1 defence ====================");
     eprintln!("  OLD path (prove under the state-write lock — the wedge):");
-    eprintln!("    commit-ack latency        : {:>8.1} ms", old_ack.as_secs_f64() * 1e3);
+    eprintln!(
+        "    commit-ack latency        : {:>8.1} ms",
+        old_ack.as_secs_f64() * 1e3
+    );
     eprintln!("    blocks produced DURING submit: {blocks_during_old_submit}  (producer STARVED)");
     eprintln!("  NEW path (revalidate fast, prove async off-lock):");
-    eprintln!("    Tentative commit-ack latency : {:>8.3} ms", ack.ack_latency.as_secs_f64() * 1e3);
-    eprintln!("    blocks during {:.0} ms window  : {blocks_during_new_window}  (producer LIVE)",
-        (old_ack + Duration::from_millis(100)).as_secs_f64() * 1e3);
-    eprintln!("    height advanced even by ack-time: {} -> {}", height_before_new, height_at_ack_new);
+    eprintln!(
+        "    Tentative commit-ack latency : {:>8.3} ms",
+        ack.ack_latency.as_secs_f64() * 1e3
+    );
+    eprintln!(
+        "    blocks during {:.0} ms window  : {blocks_during_new_window}  (producer LIVE)",
+        (old_ack + Duration::from_millis(100)).as_secs_f64() * 1e3
+    );
+    eprintln!(
+        "    height advanced even by ack-time: {} -> {}",
+        height_before_new, height_at_ack_new
+    );
     eprintln!("    async STARK proof attached (Proven): {proven_eventually}");
     eprintln!("=========================================================\n");
 
@@ -334,15 +356,18 @@ async fn f_dos_1_new_path_rejects_tampered_witness_before_commit() {
 
     // Honest witness commits.
     let state = Arc::new(RwLock::new(NodeStateStub::default()));
-    let ok = submit_new_revalidate_then_async_prove(state.clone(), trace.clone(), pis.clone()).await;
-    assert!(ok.is_ok(), "honest witness must pass direct revalidation and commit");
+    let ok =
+        submit_new_revalidate_then_async_prove(state.clone(), trace.clone(), pis.clone()).await;
+    assert!(
+        ok.is_ok(),
+        "honest witness must pass direct revalidation and commit"
+    );
     assert_eq!(state.read().await.committed, 1, "honest turn is committed");
 
     // Tamper an interior trace cell — the forged witness violates the AIR.
     trace[0][0] = trace[0][0] + BabyBear::new(1);
     let state2 = Arc::new(RwLock::new(NodeStateStub::default()));
-    let rejected =
-        submit_new_revalidate_then_async_prove(state2.clone(), trace, pis).await;
+    let rejected = submit_new_revalidate_then_async_prove(state2.clone(), trace, pis).await;
     assert!(
         rejected.is_err(),
         "F-DOS-1 soundness: a tampered witness MUST be rejected by direct revalidation \

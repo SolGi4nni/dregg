@@ -48,7 +48,11 @@ pub fn verified_happened_before(
 /// endpoint absent from the DAG) so [`verified_happened_before`] falls back to the native Rust.
 /// Built `--features lean-gate`; a stub returning `None` otherwise.
 #[cfg(feature = "lean-gate")]
-fn lean_happened_before(dag: &CausalDag, ancestor: &[u8; 32], descendant: &[u8; 32]) -> Option<bool> {
+fn lean_happened_before(
+    dag: &CausalDag,
+    ancestor: &[u8; 32],
+    descendant: &[u8; 32],
+) -> Option<bool> {
     use std::collections::HashMap;
 
     if !dregg_lean_ffi::distributed_exports_available() {
@@ -57,8 +61,7 @@ fn lean_happened_before(dag: &CausalDag, ancestor: &[u8; 32], descendant: &[u8; 
     // Intern: id = topological position (a linear extension of happened-before, so deps always carry
     // a strictly-smaller id — exactly the insertion-order discipline the Lean DAG `wf` expects).
     let order = dag.topological_order();
-    let id_of: HashMap<[u8; 32], usize> =
-        order.iter().enumerate().map(|(i, h)| (*h, i)).collect();
+    let id_of: HashMap<[u8; 32], usize> = order.iter().enumerate().map(|(i, h)| (*h, i)).collect();
     let a_id = *id_of.get(ancestor)?;
     let b_id = *id_of.get(descendant)?;
 

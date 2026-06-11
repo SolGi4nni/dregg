@@ -52,13 +52,13 @@ use dregg_circuit::dsl::derivation::{
     derivation_circuit_descriptor, prove_derivation_p3, verify_derivation_p3,
 };
 use dregg_circuit::dsl::dsl_p3_air::DslP3Proof;
+use dregg_circuit::dsl::dsl_p3_air::{prove_dsl_p3, verify_dsl_p3};
 use dregg_circuit::dsl::revocation::{
     DslRevocationTree, non_revocation_circuit_descriptor, prove_non_revocation_p3,
     verify_non_revocation_p3,
 };
-use dregg_circuit::dsl::dsl_p3_air::{prove_dsl_p3, verify_dsl_p3};
-use dregg_circuit::effect_vm::{self, CellState, Effect as VmEffectKind, generate_effect_vm_trace};
 use dregg_circuit::effect_vm::columns::sel;
+use dregg_circuit::effect_vm::{self, CellState, Effect as VmEffectKind, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::effect_vm_p3_full_air::{
     EffectVmP3Proof, prove_effect_vm_p3, verify_effect_vm_p3,
@@ -348,7 +348,12 @@ pub fn effect_action_binding(effects: &[effect_vm::Effect]) -> BabyBear {
     let effects_commit = effect_vm::compute_effects_hash(effects).0;
     hash_fact(
         BabyBear::new(ALLOW_PREDICATE),
-        &[effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        &[
+            effects_commit,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
     )
 }
 
@@ -364,7 +369,12 @@ fn effect_action_binding_from_effect_pi(effect_pi: &[BabyBear]) -> BabyBear {
     let effects_commit = effect_pi[effect_vm::pi::EFFECTS_HASH_BASE];
     hash_fact(
         BabyBear::new(ALLOW_PREDICATE),
-        &[effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        &[
+            effects_commit,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
     )
 }
 
@@ -927,8 +937,7 @@ pub fn prove_full_turn(witness: &FullTurnWitness) -> Result<FullTurnProof, SdkEr
     // `verify_full_turn`. Each attached sub-proof is independently re-verified
     // in `verify_full_turn`, superseding the bespoke valid-flag binding the old
     // `ComposedDslCircuit` main proof carried.
-    let (main_circuit, main_trace, main_pi) =
-        build_pi_binding_p3(&all_public_inputs);
+    let (main_circuit, main_trace, main_pi) = build_pi_binding_p3(&all_public_inputs);
     let main_proof_p3_proof = prove_dsl_p3(&main_circuit, &main_trace, &main_pi)
         .map_err(|e| SdkError::InvalidWitness(format!("composition p3 main proof failed: {e}")))?;
     let main_proof_p3_bytes = postcard::to_allocvec(&main_proof_p3_proof)
@@ -1082,10 +1091,10 @@ pub fn verify_full_turn_bound(
             "full-turn proof is missing the audited p3 main proof".into(),
         )
     })?;
-    let main_p3: dregg_circuit::dsl::dsl_p3_air::DslP3Proof =
-        postcard::from_bytes(main_p3_bytes).map_err(|e| {
-            FullTurnVerifyError::MainProofInvalid(format!("p3 main proof deserialize: {e}"))
-        })?;
+    let main_p3: dregg_circuit::dsl::dsl_p3_air::DslP3Proof = postcard::from_bytes(main_p3_bytes)
+        .map_err(|e| {
+        FullTurnVerifyError::MainProofInvalid(format!("p3 main proof deserialize: {e}"))
+    })?;
     let (main_circuit, _t, main_pi) = build_pi_binding_p3(&proof.composed.public_inputs);
     verify_dsl_p3(&main_circuit, &main_p3, &main_pi)
         .map_err(|e| FullTurnVerifyError::MainProofInvalid(format!("{e}")))?;
@@ -1124,13 +1133,12 @@ pub fn verify_full_turn_bound(
             // real Poseidon2 gadget, so a forged auth / membership / freshness
             // witness is UNSAT (see the anti-ghost tests in each AIR).
             "authorization" => {
-                let p3: DslP3Proof =
-                    postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
-                        FullTurnVerifyError::SubProofDeserialize {
-                            index: i,
-                            reason: format!("authorization p3 deserialize: {e}"),
-                        }
-                    })?;
+                let p3: DslP3Proof = postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
+                    FullTurnVerifyError::SubProofDeserialize {
+                        index: i,
+                        reason: format!("authorization p3 deserialize: {e}"),
+                    }
+                })?;
                 verify_derivation_p3(&p3, &attached.sub_public_inputs)
             }
             "membership" => {
@@ -1141,63 +1149,52 @@ pub fn verify_full_turn_bound(
                             reason: format!("membership p3 deserialize: {e}"),
                         }
                     })?;
-                verify_membership_p3(&p3, &attached.sub_public_inputs)
-                    .map_err(|e| format!("{e}"))
+                verify_membership_p3(&p3, &attached.sub_public_inputs).map_err(|e| format!("{e}"))
             }
             "non-revocation" => {
-                let p3: DslP3Proof =
-                    postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
-                        FullTurnVerifyError::SubProofDeserialize {
-                            index: i,
-                            reason: format!("non-revocation p3 deserialize: {e}"),
-                        }
-                    })?;
+                let p3: DslP3Proof = postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
+                    FullTurnVerifyError::SubProofDeserialize {
+                        index: i,
+                        reason: format!("non-revocation p3 deserialize: {e}"),
+                    }
+                })?;
                 // Non-revocation PI is [revocation_root, queried_item]. Both are
                 // bound in-circuit; the queried item must be carried so the
                 // audited verifier re-binds it (a freshness proof for a different
                 // item is UNSAT under this item).
-                let root = attached
-                    .sub_public_inputs
-                    .first()
-                    .copied()
-                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                let root = attached.sub_public_inputs.first().copied().ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
                         "non-revocation PI missing revocation_root".into(),
-                    ))?;
-                let queried_item = attached
-                    .sub_public_inputs
-                    .get(1)
-                    .copied()
-                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                    )
+                })?;
+                let queried_item = attached.sub_public_inputs.get(1).copied().ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
                         "non-revocation PI missing queried_item (pi[1])".into(),
-                    ))?;
+                    )
+                })?;
                 verify_non_revocation_p3(&p3, root, queried_item)
             }
             "cap-membership" => {
-                let p3: DslP3Proof =
-                    postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
-                        FullTurnVerifyError::SubProofDeserialize {
-                            index: i,
-                            reason: format!("cap-membership p3 deserialize: {e}"),
-                        }
-                    })?;
+                let p3: DslP3Proof = postcard::from_bytes(&attached.proof_bytes).map_err(|e| {
+                    FullTurnVerifyError::SubProofDeserialize {
+                        index: i,
+                        reason: format!("cap-membership p3 deserialize: {e}"),
+                    }
+                })?;
                 // Cap-membership PI is [leaf_digest, cap_root]; both bound
                 // in-circuit (row-0 / last-row boundaries). Carrying both to
                 // the audited verifier re-binds them (a proof for a different
                 // leaf or tree is UNSAT under these PIs).
-                let leaf_digest = attached
-                    .sub_public_inputs
-                    .first()
-                    .copied()
-                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                let leaf_digest = attached.sub_public_inputs.first().copied().ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
                         "cap-membership PI missing leaf_digest (pi[0])".into(),
-                    ))?;
-                let cap_root = attached
-                    .sub_public_inputs
-                    .get(1)
-                    .copied()
-                    .ok_or_else(|| FullTurnVerifyError::MalformedPublicInputs(
+                    )
+                })?;
+                let cap_root = attached.sub_public_inputs.get(1).copied().ok_or_else(|| {
+                    FullTurnVerifyError::MalformedPublicInputs(
                         "cap-membership PI missing cap_root (pi[1])".into(),
-                    ))?;
+                    )
+                })?;
                 verify_cap_membership_p3(&p3, leaf_digest, cap_root)
             }
             other => Err(format!("unknown sub-proof label: {}", other)),
@@ -1388,7 +1385,9 @@ pub fn verify_full_turn_bound(
                 .sub_proofs
                 .iter()
                 .find(|sp| sp.label == "non-revocation")
-                .ok_or(FullTurnVerifyError::MissingComponent("non-revocation".into()))?;
+                .ok_or(FullTurnVerifyError::MissingComponent(
+                    "non-revocation".into(),
+                ))?;
             // Non-revocation PI is [revocation_root].
             let proof_root = revoc_sub
                 .sub_public_inputs
@@ -1438,16 +1437,14 @@ pub fn verify_full_turn_bound(
                 .sub_proofs
                 .iter()
                 .find(|sp| sp.label == "non-revocation")
-                .ok_or(FullTurnVerifyError::MissingComponent("non-revocation".into()))?;
-            let proven_item = revoc_sub
-                .sub_public_inputs
-                .get(1)
-                .copied()
-                .ok_or_else(|| {
-                    FullTurnVerifyError::MalformedPublicInputs(
-                        "non-revocation PI missing queried_item (pi[1])".into(),
-                    )
-                })?;
+                .ok_or(FullTurnVerifyError::MissingComponent(
+                    "non-revocation".into(),
+                ))?;
+            let proven_item = revoc_sub.sub_public_inputs.get(1).copied().ok_or_else(|| {
+                FullTurnVerifyError::MalformedPublicInputs(
+                    "non-revocation PI missing queried_item (pi[1])".into(),
+                )
+            })?;
             if proven_item != effect_nullifier {
                 return Err(FullTurnVerifyError::NullifierMismatch {
                     proven_item,
@@ -1488,25 +1485,19 @@ pub fn verify_full_turn_bound(
             .sub_proofs
             .iter()
             .find(|sp| sp.label == "cap-membership")
-            .ok_or(FullTurnVerifyError::MissingComponent("cap-membership".into()))?;
-        let proof_leaf_digest = cap_sub
-            .sub_public_inputs
-            .first()
-            .copied()
-            .ok_or_else(|| {
-                FullTurnVerifyError::MalformedPublicInputs(
-                    "cap-membership PI missing leaf_digest (pi[0])".into(),
-                )
-            })?;
-        let proof_cap_root = cap_sub
-            .sub_public_inputs
-            .get(1)
-            .copied()
-            .ok_or_else(|| {
-                FullTurnVerifyError::MalformedPublicInputs(
-                    "cap-membership PI missing cap_root (pi[1])".into(),
-                )
-            })?;
+            .ok_or(FullTurnVerifyError::MissingComponent(
+                "cap-membership".into(),
+            ))?;
+        let proof_leaf_digest = cap_sub.sub_public_inputs.first().copied().ok_or_else(|| {
+            FullTurnVerifyError::MalformedPublicInputs(
+                "cap-membership PI missing leaf_digest (pi[0])".into(),
+            )
+        })?;
+        let proof_cap_root = cap_sub.sub_public_inputs.get(1).copied().ok_or_else(|| {
+            FullTurnVerifyError::MalformedPublicInputs(
+                "cap-membership PI missing cap_root (pi[1])".into(),
+            )
+        })?;
         if proof_cap_root != expected.cap_root {
             return Err(FullTurnVerifyError::CapRootMismatch {
                 expected: expected.cap_root,
@@ -1762,7 +1753,12 @@ pub fn derivation_authorizing_effects(
         body_fact_hashes: vec![capability_fact_hash],
         substitution: vec![effects_commit],
         derived_predicate: allow_pred,
-        derived_terms: [effects_commit, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
+        derived_terms: [
+            effects_commit,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ],
         not_after_height: BabyBear::ZERO,
         org_id_hash: BabyBear::ZERO,
         budget_remaining: BabyBear::ZERO,
@@ -1885,9 +1881,7 @@ fn build_pi_binding_p3(
     Vec<Vec<BabyBear>>,
     Vec<BabyBear>,
 ) {
-    use dregg_circuit::dsl::circuit::{
-        ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
-    };
+    use dregg_circuit::dsl::circuit::{ColumnDef, ColumnKind, ConstraintExpr, DslCircuit};
 
     const MIN_ROWS: usize = 4; // power-of-two; matches the DSL p3 reference traces.
     let n = pis.len();
@@ -2060,7 +2054,10 @@ mod tests {
         use dregg_circuit::effect_vm::pi as vmpi;
 
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let turn_hash = [0x5Au8; 32];
 
         let mut proof = prove_turn_self_sovereign(&initial, &effects, turn_hash)
@@ -2106,7 +2103,10 @@ mod tests {
         use dregg_circuit::poseidon2::hash_many;
 
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
 
         // Membership witness: a leaf genuinely in a depth-4 Merkle tree.
         let leaf = BabyBear::new(424242);
@@ -2149,8 +2149,9 @@ mod tests {
         expected_final.refresh_commitment();
         let new_commit = expected_final.state_commitment;
 
-        verify_full_turn(&proof, old_commit, new_commit)
-            .expect("full turn with membership + non-revocation must verify on the audited p3 path");
+        verify_full_turn(&proof, old_commit, new_commit).expect(
+            "full turn with membership + non-revocation must verify on the audited p3 path",
+        );
     }
 
     /// FRESHNESS / no-double-spend — binding (a), HONEST: a full turn whose
@@ -2162,7 +2163,10 @@ mod tests {
         use dregg_circuit::poseidon2::hash_many;
 
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
 
         // THE canonical published nullifier accumulator for this turn.
         let revoked: Vec<BabyBear> = (1..=20u32)
@@ -2214,7 +2218,10 @@ mod tests {
         use dregg_circuit::poseidon2::hash_many;
 
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
 
         // THE canonical accumulator the verifier expects (the item IS revoked in it).
         let spent = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
@@ -2254,8 +2261,8 @@ mod tests {
             cap_membership: None,
             turn_hash: [0x92u8; 32],
         };
-        let proof =
-            prove_full_turn(&witness).expect("proof generates (the forgery is a verify-time property)");
+        let proof = prove_full_turn(&witness)
+            .expect("proof generates (the forgery is a verify-time property)");
 
         let old_commit = initial.state_commitment;
         let mut expected_final = initial.clone();
@@ -2265,7 +2272,8 @@ mod tests {
         let new_commit = expected_final.state_commitment;
 
         // With the canonical root pinned, the prover-chosen root is rejected.
-        let result = verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None);
+        let result =
+            verify_full_turn_bound(&proof, old_commit, new_commit, Some(canonical_root), None);
         match result {
             Err(FullTurnVerifyError::RevocationRootMismatch { expected, got }) => {
                 assert_eq!(expected, canonical_root);
@@ -2346,7 +2354,10 @@ mod tests {
         // This turn's spent nullifier — a value known fresh against the tree
         // below (the same item the binding-(a) tests prove non-membership for).
         let nullifier = hash_many(&[BabyBear::new(0xBEEF), BabyBear::new(0xCAFE)]);
-        let effects = vec![VmEffect::NoteSpend { nullifier, value: 500 }];
+        let effects = vec![VmEffect::NoteSpend {
+            nullifier,
+            value: 500,
+        }];
 
         // A revocation accumulator in which the nullifier is NOT yet present
         // (the note has not been spent before — it is fresh).
@@ -2378,7 +2389,8 @@ mod tests {
             .find(|sp| sp.label == "effect-vm")
             .unwrap();
         assert_eq!(
-            eff.sub_public_inputs[vmpi::NOTESPEND_NULLIFIER], nullifier,
+            eff.sub_public_inputs[vmpi::NOTESPEND_NULLIFIER],
+            nullifier,
             "precondition: the spend turn surfaces its nullifier into PI[NOTESPEND_NULLIFIER]",
         );
 
@@ -2410,7 +2422,10 @@ mod tests {
         let initial = CellState::new(1000, 0);
         // This turn spends nullifier N.
         let nullifier = hash_many(&[BabyBear::new(0x0_7E), BabyBear::new(0x5EED)]);
-        let effects = vec![VmEffect::NoteSpend { nullifier, value: 500 }];
+        let effects = vec![VmEffect::NoteSpend {
+            nullifier,
+            value: 500,
+        }];
 
         // The prover proves freshness for a DIFFERENT item M (not the nullifier),
         // which is genuinely absent from the accumulator — an internally-sound
@@ -2461,9 +2476,9 @@ mod tests {
                  nullifier N whose freshness was proven for a DIFFERENT item M — the \
                  counterfeiting hole is OPEN!"
             ),
-            Err(other) => panic!(
-                "expected NullifierMismatch (the binding-b tooth), got: {other:?}",
-            ),
+            Err(other) => {
+                panic!("expected NullifierMismatch (the binding-b tooth), got: {other:?}",)
+            }
         }
     }
 
@@ -2474,7 +2489,10 @@ mod tests {
     #[test]
     fn auth_bound_turn_with_matching_effect_verifies() {
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let old_commit = initial.state_commitment;
 
         // The actor's capability evidence lives at the cell's fact-tree root
@@ -2493,9 +2511,8 @@ mod tests {
         expected_final.refresh_commitment();
         let new_commit = expected_final.state_commitment;
 
-        verify_full_turn(&proof, old_commit, new_commit).expect(
-            "honest auth-bound turn must verify (derivation concludes Allow(this effect))",
-        );
+        verify_full_turn(&proof, old_commit, new_commit)
+            .expect("honest auth-bound turn must verify (derivation concludes Allow(this effect))");
     }
 
     /// ANTI-FORGERY (the gap this closes): a turn whose authorization proof
@@ -2512,9 +2529,15 @@ mod tests {
         let old_commit = initial.state_commitment;
 
         // The turn the Effect-VM proof actually performs: transfer 100 out.
-        let effects_a = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects_a = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         // A DIFFERENT effect the malicious authorization is really for: transfer 500.
-        let effects_b = vec![VmEffect::Transfer { amount: 500, direction: 1 }];
+        let effects_b = vec![VmEffect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
         // Sanity: the two effects have distinct in-circuit commitments.
         assert_ne!(
             effect_vm::compute_effects_hash(&effects_a).0,
@@ -2560,7 +2583,10 @@ mod tests {
         use dregg_circuit::dsl::membership::create_test_witness as merkle_test_witness;
 
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let leaf = BabyBear::new(555111);
         let (siblings, positions, _root) = merkle_test_witness(leaf, 4);
 

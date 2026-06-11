@@ -43,8 +43,8 @@
 
 use crate::cap_root::CAP_TREE_DEPTH;
 use crate::dsl::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
-    DslCircuit, PolyTerm,
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
+    PolyTerm,
 };
 use crate::field::BabyBear;
 use crate::poseidon2::hash_fact;
@@ -308,7 +308,11 @@ mod tests {
         let (proof, pis) = prove_cap_membership_p3(target.digest(), &siblings, &directions)
             .expect("honest cap membership must prove+verify through audited p3");
         assert_eq!(pis[pi::LEAF_DIGEST], target.digest());
-        assert_eq!(pis[pi::CAP_ROOT], tree.root(), "published root IS the canonical root");
+        assert_eq!(
+            pis[pi::CAP_ROOT],
+            tree.root(),
+            "published root IS the canonical root"
+        );
         verify_cap_membership_p3(&proof, target.digest(), tree.root())
             .expect("audited p3 verify accepts the honest membership");
     }
@@ -354,7 +358,11 @@ mod tests {
         siblings[3] = siblings[3] + BabyBear::new(1);
         let (proof, pis) = prove_cap_membership_p3(target.digest(), &siblings, &directions)
             .expect("the tampered path still proves membership in SOME tree");
-        assert_ne!(pis[pi::CAP_ROOT], tree.root(), "tampered path tops a different root");
+        assert_ne!(
+            pis[pi::CAP_ROOT],
+            tree.root(),
+            "tampered path tops a different root"
+        );
         assert!(
             verify_cap_membership_p3(&proof, target.digest(), tree.root()).is_err(),
             "SOUNDNESS: a path that does not reach the canonical root MUST be rejected"
@@ -367,8 +375,10 @@ mod tests {
     fn malformed_witness_is_refused() {
         let (_, target, siblings, mut directions) = real_tree_witness();
         // Wrong length.
-        assert!(generate_cap_membership_trace(target.digest(), &siblings[..4], &directions[..4])
-            .is_err());
+        assert!(
+            generate_cap_membership_trace(target.digest(), &siblings[..4], &directions[..4])
+                .is_err()
+        );
         // Non-binary direction bit.
         directions[0] = 2;
         assert!(generate_cap_membership_trace(target.digest(), &siblings, &directions).is_err());

@@ -128,4 +128,3 @@ fn bridge_mint_high_bit_tampering_changes_pi() {
         ..effect_vm::pi::BRIDGE_MINT_VALUE_LIMBS_BASE + effect_vm::pi::BRIDGE_MINT_VALUE_LIMBS_LEN];
     assert_ne!(h_slice, t_slice);
 }
-

@@ -131,8 +131,11 @@ mod ffi {
     use std::os::raw::c_char;
 
     extern "C" {
-        fn dregg_strand_admit_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize)
-            -> usize;
+        fn dregg_strand_admit_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
     }
 
     pub fn strand_admit_present() -> bool {
@@ -392,22 +395,46 @@ mod ffi_dist {
     }
 
     pub fn lean_captp_validate_handoff(wire: &str) -> Result<String, String> {
-        run(dregg_captp_validate_handoff_str, wire, "dregg_captp_validate_handoff_str")
+        run(
+            dregg_captp_validate_handoff_str,
+            wire,
+            "dregg_captp_validate_handoff_str",
+        )
     }
     pub fn lean_captp_process_drop(wire: &str) -> Result<String, String> {
-        run(dregg_captp_process_drop_str, wire, "dregg_captp_process_drop_str")
+        run(
+            dregg_captp_process_drop_str,
+            wire,
+            "dregg_captp_process_drop_str",
+        )
     }
     pub fn lean_captp_pipeline_resolve(wire: &str) -> Result<String, String> {
-        run(dregg_captp_pipeline_resolve_str, wire, "dregg_captp_pipeline_resolve_str")
+        run(
+            dregg_captp_pipeline_resolve_str,
+            wire,
+            "dregg_captp_pipeline_resolve_str",
+        )
     }
     pub fn lean_coord_2pc_decide(wire: &str) -> Result<String, String> {
-        run(dregg_coord_2pc_decide_str, wire, "dregg_coord_2pc_decide_str")
+        run(
+            dregg_coord_2pc_decide_str,
+            wire,
+            "dregg_coord_2pc_decide_str",
+        )
     }
     pub fn lean_coord_causal_order(wire: &str) -> Result<String, String> {
-        run(dregg_coord_causal_order_str, wire, "dregg_coord_causal_order_str")
+        run(
+            dregg_coord_causal_order_str,
+            wire,
+            "dregg_coord_causal_order_str",
+        )
     }
     pub fn lean_coord_shared_budget(wire: &str) -> Result<String, String> {
-        run(dregg_coord_shared_budget_str, wire, "dregg_coord_shared_budget_str")
+        run(
+            dregg_coord_shared_budget_str,
+            wire,
+            "dregg_coord_shared_budget_str",
+        )
     }
 }
 
@@ -417,7 +444,9 @@ mod ffi_dist {
         false
     }
     fn unavailable(name: &str) -> Result<String, String> {
-        Err(format!("{name} not exported by the linked archive (rebuild to enable)"))
+        Err(format!(
+            "{name} not exported by the linked archive (rebuild to enable)"
+        ))
     }
     pub fn lean_captp_validate_handoff(_wire: &str) -> Result<String, String> {
         unavailable("dregg_captp_validate_handoff")
@@ -472,7 +501,11 @@ mod tests {
                     11:1:1:10.20.30|21:2:1:10.20.30|31:3:1:10.20.30|\
                     12:1:2:11.21.31|22:2:2:11.21.31|32:3:2:11.21.31";
         let order = verified_tau_order(wire).expect("raw-order gate ran");
-        assert_eq!(order.len(), 9, "3-node lace finalizes a nine-id total order");
+        assert_eq!(
+            order.len(),
+            9,
+            "3-node lace finalizes a nine-id total order"
+        );
         // the order is a permutation of all nine present ids (the verified `tauOrder` emits exactly
         // the finalized ids, no dups, all present).
         let mut sorted = order.clone();
@@ -483,7 +516,9 @@ mod tests {
             "the verified total order is exactly the nine present blocks"
         );
         // a malformed wire is fail-closed to an EMPTY order (ERR ⇒ []).
-        assert!(verified_tau_order("not a wire").expect("gate ran on garbage").is_empty());
+        assert!(verified_tau_order("not a wire")
+            .expect("gate ran on garbage")
+            .is_empty());
     }
 
     #[test]
@@ -503,14 +538,15 @@ mod tests {
     #[test]
     fn verified_gate_matches_feddemo() {
         if !strand_admit_available() {
-            eprintln!("SKIP: Lean strand-admit export not linked (strand_admit_available()==false)");
+            eprintln!(
+                "SKIP: Lean strand-admit export not linked (strand_admit_available()==false)"
+            );
             return;
         }
         // fedDemo, with 0-based participant indices: seeds {0,1}, vouch 0->2, 1->2, bonds 3:100, 4:50.
         let base = "N=2;m=100;S=0,1;V=0:2,1:2;Bo=3:100,4:50";
-        let admit = |q: u32| -> bool {
-            verified_admits(&format!("{base};q={q}")).expect("gate ran")
-        };
+        let admit =
+            |q: u32| -> bool { verified_admits(&format!("{base};q={q}")).expect("gate ran") };
         assert!(admit(0), "seed 0 admitted");
         assert!(admit(1), "seed 1 admitted");
         assert!(admit(2), "vouched strand admitted");
@@ -561,14 +597,29 @@ mod tests {
             shadow_captp_pipeline_resolve("Q=100,101;e=f").expect("pipeline gate ran"),
             "D=100,101;q=0"
         );
-        assert_eq!(shadow_captp_pipeline_resolve("Q=100,101;e=b").expect("ran"), "D=;q=0");
+        assert_eq!(
+            shadow_captp_pipeline_resolve("Q=100,101;e=b").expect("ran"),
+            "D=;q=0"
+        );
 
         // §4 2PC decide: 3-of-3 all yes ⇒ Commit; 2 yes 1 no ⇒ Abort; 2 yes 0 no ⇒ Pending.
-        assert_eq!(verified_2pc_decide("y=3;n=0;N=3;t=3").expect("2pc gate ran"), Decision2pc::Commit);
-        assert_eq!(verified_2pc_decide("y=2;n=1;N=3;t=3").expect("ran"), Decision2pc::Abort);
-        assert_eq!(verified_2pc_decide("y=2;n=0;N=3;t=3").expect("ran"), Decision2pc::Pending);
+        assert_eq!(
+            verified_2pc_decide("y=3;n=0;N=3;t=3").expect("2pc gate ran"),
+            Decision2pc::Commit
+        );
+        assert_eq!(
+            verified_2pc_decide("y=2;n=1;N=3;t=3").expect("ran"),
+            Decision2pc::Abort
+        );
+        assert_eq!(
+            verified_2pc_decide("y=2;n=0;N=3;t=3").expect("ran"),
+            Decision2pc::Pending
+        );
         // malformed ⇒ fail-safe Pending.
-        assert_eq!(verified_2pc_decide("garbage").expect("ran"), Decision2pc::Pending);
+        assert_eq!(
+            verified_2pc_decide("garbage").expect("ran"),
+            Decision2pc::Pending
+        );
 
         // §5 causal order on chain 1→2→3: 1 happened-before 3 (transitive); 3 NOT before 1.
         let chain = "G=1:|2:1|3:2";
@@ -583,6 +634,9 @@ mod tests {
             "R=1,1,0;b=200;a=800"
         );
         // a single over-budget debit is rejected, balance untouched.
-        assert_eq!(shadow_coord_shared_budget("B=100;D=200").expect("ran"), "R=0;b=100;a=0");
+        assert_eq!(
+            shadow_coord_shared_budget("B=100;D=200").expect("ran"),
+            "R=0;b=100;a=0"
+        );
     }
 }

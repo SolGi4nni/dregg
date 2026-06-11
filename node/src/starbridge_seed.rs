@@ -78,8 +78,8 @@ pub fn seed_starbridge_factory_cells_with_operator(
     // Derive the operator's agent cell id the same way `api.rs` (the
     // `/turn/submit` path) and `executor_setup::local_agent_cell` do, so the cap
     // we grant lands on the cell the live ingress actually acts as.
-    let operator_cell = operator
-        .map(|pk| CellId::derive_raw(&pk, blake3::hash(b"default").as_bytes()));
+    let operator_cell =
+        operator.map(|pk| CellId::derive_raw(&pk, blake3::hash(b"default").as_bytes()));
     let entries = match parse_starbridge_cells(genesis) {
         Some(entries) if !entries.is_empty() => entries,
         _ => return StarbridgeSeedStats::default(),
@@ -237,10 +237,7 @@ fn seed_one_cell(
     let owner_key = match load_agent_secret_key(data_dir, &entry.owner_agent) {
         Some(key) => key,
         None => {
-            return SeedOutcome::Skipped(format!(
-                "cannot read agent-{}.key",
-                entry.owner_agent
-            ));
+            return SeedOutcome::Skipped(format!("cannot read agent-{}.key", entry.owner_agent));
         }
     };
 
@@ -281,16 +278,23 @@ fn seed_one_cell(
         owner_pubkey,
     };
 
-    let mut turn = app_cclerk.shared_cipherclerk().read().unwrap().create_from_factory(
-        issuer_cell,
-        factory_vk,
-        owner_pubkey,
-        token_id,
-        params,
-        &federation_id,
-    );
+    let mut turn = app_cclerk
+        .shared_cipherclerk()
+        .read()
+        .unwrap()
+        .create_from_factory(
+            issuer_cell,
+            factory_vk,
+            owner_pubkey,
+            token_id,
+            params,
+            &federation_id,
+        );
     turn.fee = 2_000;
-    turn.nonce = ledger.get(&issuer_cell).map(|c| c.state.nonce()).unwrap_or(0);
+    turn.nonce = ledger
+        .get(&issuer_cell)
+        .map(|c| c.state.nonce())
+        .unwrap_or(0);
     // Link to the issuer's prior seed receipt (if any) so the executor's
     // per-agent receipt chain validates. The first turn from this issuer carries
     // `None` (genesis chain head); each subsequent one links to the last commit.
@@ -315,9 +319,7 @@ fn seed_one_cell(
 /// → the required value. The value chosen for `NonZero` is just a non-zero
 /// placeholder; the app's first turn overwrites it with the real (hashed)
 /// value under the cell program's perpetual caveats.
-fn synth_initial_fields(
-    constraints: &[dregg_cell::FieldConstraint],
-) -> Vec<(u32, u64)> {
+fn synth_initial_fields(constraints: &[dregg_cell::FieldConstraint]) -> Vec<(u32, u64)> {
     use dregg_cell::FieldConstraint;
     let mut fields: BTreeMap<u32, u64> = BTreeMap::new();
     for c in constraints {
@@ -325,7 +327,9 @@ fn synth_initial_fields(
             FieldConstraint::NonZero { field_index } => {
                 fields.entry(*field_index).or_insert(1);
             }
-            FieldConstraint::Range { field_index, min, .. } => {
+            FieldConstraint::Range {
+                field_index, min, ..
+            } => {
                 fields.insert(*field_index, (*min).max(1));
             }
             FieldConstraint::Equality { field_index, value } => {

@@ -10,7 +10,7 @@
 //! pipelined call WITHOUT a verifiable sender binding, so a receiver cannot pin
 //! the `authorization` to a concrete originator.
 
-use dregg_captp::{CrossFedPipelineBridge, PipelinedAction, PipelineWireMessage};
+use dregg_captp::{CrossFedPipelineBridge, PipelineWireMessage, PipelinedAction};
 use dregg_types::FederationId;
 use dregg_wire::prelude::CapTpState;
 
@@ -115,7 +115,10 @@ fn configured_bridge_binds_sender_through_chain() {
             PipelineWireMessage::PipelineToPromise {
                 sender_federation, ..
             } => {
-                assert_eq!(*sender_federation, me, "every chain leg binds the real sender");
+                assert_eq!(
+                    *sender_federation, me,
+                    "every chain leg binds the real sender"
+                );
                 assert_ne!(*sender_federation, FederationId([0u8; 32]));
             }
             _ => panic!("expected PipelineToPromise"),

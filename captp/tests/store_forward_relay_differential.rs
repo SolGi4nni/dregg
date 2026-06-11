@@ -23,8 +23,8 @@
 //!   * change the Lean model → its `decide` trips at Lean build AND the rows here no longer
 //!     match → re-exposing the Rust drift.
 
-use dregg_captp::store_forward::{MessageRelay, MessagePriority, QueuedMessage, RelayError};
 use dregg_captp::FederationId;
+use dregg_captp::store_forward::{MessagePriority, MessageRelay, QueuedMessage, RelayError};
 
 fn dest(n: u8) -> FederationId {
     FederationId([n; 32])
@@ -68,40 +68,81 @@ fn relay_accounting_matches_lean_corpus() {
 
     // .enq d0 label10 qa0 ttl5  → ok
     let ok = relay.enqueue(qmsg(d0, 10, 0, 5)).is_ok();
-    got.push((ok as u64, relay.total_stored() as u64, relay.pending_count(&d0) as u64));
+    got.push((
+        ok as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d0) as u64,
+    ));
 
     // .enq d0 label11 qa0 ttl5  → ok
     let ok = relay.enqueue(qmsg(d0, 11, 0, 5)).is_ok();
-    got.push((ok as u64, relay.total_stored() as u64, relay.pending_count(&d0) as u64));
+    got.push((
+        ok as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d0) as u64,
+    ));
 
     // .enq d0 label12 qa0 ttl5  → REJECT (QueueFull, depth 2)
     let verdict = relay.enqueue(qmsg(d0, 12, 0, 5));
-    assert!(matches!(verdict, Err(RelayError::QueueFull { .. })), "depth cap reject");
-    got.push((verdict.is_ok() as u64, relay.total_stored() as u64, relay.pending_count(&d0) as u64));
+    assert!(
+        matches!(verdict, Err(RelayError::QueueFull { .. })),
+        "depth cap reject"
+    );
+    got.push((
+        verdict.is_ok() as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d0) as u64,
+    ));
 
     // .enq d1 label20 qa0 ttl3  → ok (total now 3 = cap)
     let ok = relay.enqueue(qmsg(d1, 20, 0, 3)).is_ok();
-    got.push((ok as u64, relay.total_stored() as u64, relay.pending_count(&d1) as u64));
+    got.push((
+        ok as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d1) as u64,
+    ));
 
     // .enq d1 label21 qa0 ttl3  → REJECT (StorageFull, total cap 3)
     let verdict = relay.enqueue(qmsg(d1, 21, 0, 3));
-    assert!(matches!(verdict, Err(RelayError::StorageFull { .. })), "total cap reject");
-    got.push((verdict.is_ok() as u64, relay.total_stored() as u64, relay.pending_count(&d1) as u64));
+    assert!(
+        matches!(verdict, Err(RelayError::StorageFull { .. })),
+        "total cap reject"
+    );
+    got.push((
+        verdict.is_ok() as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d1) as u64,
+    ));
 
     // .enq d0 label13 qa0 ttl0  → REJECT (InvalidTtl)
     let verdict = relay.enqueue(qmsg(d0, 13, 0, 0));
-    assert!(matches!(verdict, Err(RelayError::InvalidTtl)), "ttl=0 reject");
-    got.push((verdict.is_ok() as u64, relay.total_stored() as u64, relay.pending_count(&d0) as u64));
+    assert!(
+        matches!(verdict, Err(RelayError::InvalidTtl)),
+        "ttl=0 reject"
+    );
+    got.push((
+        verdict.is_ok() as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d0) as u64,
+    ));
 
     // .drn d0  → 2 msgs (FIFO), total 1
     let drained = relay.drain(&d0);
     let labels: Vec<u64> = drained.iter().map(|m| m.causal_sequence).collect();
     assert_eq!(labels, vec![10, 11], "drain is FIFO oldest-first");
-    got.push((drained.len() as u64, relay.total_stored() as u64, relay.pending_count(&d0) as u64));
+    got.push((
+        drained.len() as u64,
+        relay.total_stored() as u64,
+        relay.pending_count(&d0) as u64,
+    ));
 
     // .exp 100  → d1 msg (qa 0, ttl 3 ⇒ 100-0 ≥ 3) expires; total 0, active destinations 0
     let expired = relay.expire(100);
-    got.push((expired as u64, relay.total_stored() as u64, relay.active_destinations() as u64));
+    got.push((
+        expired as u64,
+        relay.total_stored() as u64,
+        relay.active_destinations() as u64,
+    ));
 
     assert_eq!(
         got, expected,
@@ -123,7 +164,11 @@ fn drain_is_fifo_and_clears() {
     let labels: Vec<u64> = drained.iter().map(|m| m.causal_sequence).collect();
     assert_eq!(labels, vec![1, 2, 3], "FIFO insertion order");
     assert_eq!(relay.pending_count(&d), 0, "drain clears the queue");
-    assert_eq!(relay.total_stored(), 0, "total decremented by drained count");
+    assert_eq!(
+        relay.total_stored(),
+        0,
+        "total decremented by drained count"
+    );
 
     // a re-drain delivers nothing.
     assert!(relay.drain(&d).is_empty());
@@ -134,13 +179,17 @@ fn drain_is_fifo_and_clears() {
 fn expire_drops_stale_and_keeps_fresh() {
     let mut relay = MessageRelay::new(8, 8);
     let d = dest(5);
-    relay.enqueue(qmsg(d, 1, 0, 3)).unwrap();   // expires at height 3
+    relay.enqueue(qmsg(d, 1, 0, 3)).unwrap(); // expires at height 3
     relay.enqueue(qmsg(d, 2, 0, 100)).unwrap(); // long-lived
 
     // at height 50: msg 1 (0+3 ≤ 50) drops; msg 2 survives.
     let expired = relay.expire(50);
     assert_eq!(expired, 1, "exactly the stale message expired");
-    assert_eq!(relay.total_stored(), 1, "total decremented by expired count");
+    assert_eq!(
+        relay.total_stored(),
+        1,
+        "total decremented by expired count"
+    );
     let survivors: Vec<u64> = relay.drain(&d).iter().map(|m| m.causal_sequence).collect();
     assert_eq!(survivors, vec![2], "only the fresh message survives");
 }

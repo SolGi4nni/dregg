@@ -89,7 +89,10 @@ fn step(msg: &str) {
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -139,16 +142,18 @@ fn worker_request(name: &str, service: &str, action: &str, budget: u64) -> AuthR
 
 fn main() {
     println!();
-    println!("{BOLD}{MAGENTA}╔════════════════════════════════════════════════════════════════╗{RESET}");
-    println!("{BOLD}{MAGENTA}║      dregg · MULTI-AGENT ORCHESTRATION — LIVE EXECUTION         ║{RESET}");
-    println!("{BOLD}{MAGENTA}╚════════════════════════════════════════════════════════════════╝{RESET}");
+    println!(
+        "{BOLD}{MAGENTA}╔════════════════════════════════════════════════════════════════╗{RESET}"
+    );
+    println!(
+        "{BOLD}{MAGENTA}║      dregg · MULTI-AGENT ORCHESTRATION — LIVE EXECUTION         ║{RESET}"
+    );
+    println!(
+        "{BOLD}{MAGENTA}╚════════════════════════════════════════════════════════════════╝{RESET}"
+    );
     println!();
-    println!(
-        "  {DIM}An orchestrator spawns least-privilege workers. Capabilities are{RESET}"
-    );
-    println!(
-        "  {DIM}cryptographic, budgets are gated, every turn is receipted. Watch the{RESET}"
-    );
+    println!("  {DIM}An orchestrator spawns least-privilege workers. Capabilities are{RESET}");
+    println!("  {DIM}cryptographic, budgets are gated, every turn is receipted. Watch the{RESET}");
     println!("  {DIM}security properties enforce themselves — no printf theater.{RESET}");
 
     let demo_start = Instant::now();
@@ -257,11 +262,17 @@ fn main() {
         );
 
         println!("  {BOLD}{name}{RESET}");
-        detail(&format!("cell      {}", short_hex(agent.cell_id().as_bytes())));
+        detail(&format!(
+            "cell      {}",
+            short_hex(agent.cell_id().as_bytes())
+        ));
         detail(&format!("scope     service={service} perm={perm}"));
         detail(&format!("budget    {budget} computrons / 1h"));
         detail("window    [now-60s, now+3600s]   confine_user matches identity");
-        ok(&format!("spawned · token {} · capability verified", agent.token().id()));
+        ok(&format!(
+            "spawned · token {} · capability verified",
+            agent.token().id()
+        ));
         println!();
 
         workers.push(Worker {
@@ -285,7 +296,9 @@ fn main() {
     println!(
         "  {DIM}Every worker commits a turn to the SHARED ledger via its own sub-agent{RESET}"
     );
-    println!("  {DIM}runtime. The receipt + computron cost come straight from the executor.{RESET}");
+    println!(
+        "  {DIM}runtime. The receipt + computron cost come straight from the executor.{RESET}"
+    );
     println!();
 
     for w in workers.iter_mut() {
@@ -384,12 +397,17 @@ fn main() {
     println!(
         "  {DIM}slice, debit it down to the floor, then watch the next debit get rejected{RESET}"
     );
-    println!("  {DIM}BEFORE any state change — and the speculative debit roll back cleanly.{RESET}");
+    println!(
+        "  {DIM}BEFORE any state change — and the speculative debit roll back cleanly.{RESET}"
+    );
     println!();
 
     // REAL: a BudgetGate with a 3000-computron slice (the compute-worker's budget).
     let mut gate = BudgetGate::new(7, BudgetSlice::new(3000));
-    detail(&format!("compute-worker slice ceiling = {}", gate.slice.remaining()));
+    detail(&format!(
+        "compute-worker slice ceiling = {}",
+        gate.slice.remaining()
+    ));
 
     // Burn it down with three real debits.
     for (i, amount) in [1200u64, 1200, 500].into_iter().enumerate() {
@@ -486,7 +504,10 @@ fn main() {
     // =====================================================================
     // SCENE 6 — ZK SELECTIVE DISCLOSURE
     // =====================================================================
-    scene(6, "ZERO-KNOWLEDGE — prove one fact, hide identity & the rest");
+    scene(
+        6,
+        "ZERO-KNOWLEDGE — prove one fact, hide identity & the rest",
+    );
     println!(
         "  {DIM}A worker must prove to a third party 'I can access api/v1/users' WITHOUT{RESET}"
     );
@@ -546,10 +567,7 @@ fn main() {
             detail("hidden: billing grant · admin grant · budget · session identity");
         }
         Ok(other) => {
-            zk(&format!(
-                "authorized · selective mode  ({:.2}ms)",
-                gen_ms
-            ));
+            zk(&format!("authorized · selective mode  ({:.2}ms)", gen_ms));
             detail(&format!(
                 "presentation kind: {:?}",
                 std::mem::discriminant(&other)
@@ -557,7 +575,9 @@ fn main() {
         }
         Err(e) => {
             // Honest fallback — still a real call, just narrate the outcome.
-            zk(&format!("selective-disclosure path returned: {e} ({gen_ms:.2}ms)"));
+            zk(&format!(
+                "selective-disclosure path returned: {e} ({gen_ms:.2}ms)"
+            ));
         }
     }
 
@@ -572,9 +592,7 @@ fn main() {
             ));
         }
         _ => {
-            zk(&format!(
-                "fully-private mode available  ({priv_ms:.2}ms)"
-            ));
+            zk(&format!("fully-private mode available  ({priv_ms:.2}ms)"));
         }
     }
     pause(350);
@@ -589,7 +607,9 @@ fn main() {
     println!(
         "  {DIM}that anyone can re-verify — `verify_receipt_chain` checks genesis, hash{RESET}"
     );
-    println!("  {DIM}linkage, and state continuity. We verify each worker, then a longer chain.{RESET}");
+    println!(
+        "  {DIM}linkage, and state continuity. We verify each worker, then a longer chain.{RESET}"
+    );
     println!();
 
     let mut total_turns = 0usize;
@@ -673,16 +693,26 @@ fn main() {
         workers.len() + 1,
         total_turns
     );
-    println!(
-        "  {DIM}every action capability-checked · budget-gated · receipted{RESET}"
-    );
+    println!("  {DIM}every action capability-checked · budget-gated · receipted{RESET}");
     println!();
-    println!("  {GREEN}✓{RESET} least privilege   {DIM}workers spawned with one service each{RESET}");
-    println!("  {RED}✗{RESET} overreach         {DIM}out-of-scope cap-check denied (real Datalog){RESET}");
-    println!("  {YELLOW}⚠{RESET} budget gate       {DIM}overflow rejected pre-commit, rolled back{RESET}");
-    println!("  {RED}✗{RESET} revocation        {DIM}closed-window credential denied instantly{RESET}");
-    println!("  {CYAN}◆{RESET} zero-knowledge    {DIM}one fact proven, identity + rest hidden{RESET}");
-    println!("  {GREEN}✓{RESET} audit trail       {DIM}receipt chains verified cryptographically{RESET}");
+    println!(
+        "  {GREEN}✓{RESET} least privilege   {DIM}workers spawned with one service each{RESET}"
+    );
+    println!(
+        "  {RED}✗{RESET} overreach         {DIM}out-of-scope cap-check denied (real Datalog){RESET}"
+    );
+    println!(
+        "  {YELLOW}⚠{RESET} budget gate       {DIM}overflow rejected pre-commit, rolled back{RESET}"
+    );
+    println!(
+        "  {RED}✗{RESET} revocation        {DIM}closed-window credential denied instantly{RESET}"
+    );
+    println!(
+        "  {CYAN}◆{RESET} zero-knowledge    {DIM}one fact proven, identity + rest hidden{RESET}"
+    );
+    println!(
+        "  {GREEN}✓{RESET} audit trail       {DIM}receipt chains verified cryptographically{RESET}"
+    );
     println!();
     println!("  {DIM}total wall time {total_ms:.0}ms (includes stage pacing){RESET}");
     println!("{BOLD}{MAGENTA}{rule}{RESET}");

@@ -106,10 +106,8 @@ pub async fn handle_faucet(ctx: &Context, command: &CommandInteraction, state: &
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed(
-                "Faucet Error",
-                &e.user_message("request faucet tokens"),
-            );
+            let embed =
+                embeds::error_embed("Faucet Error", &e.user_message("request faucet tokens"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

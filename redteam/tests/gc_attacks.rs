@@ -82,7 +82,9 @@ fn finding_legacy_process_drop_bypasses_session_byzantine_defense() {
     );
     assert_eq!(mgr.get(&cell()).unwrap().total_refs, 1);
 
-    eprintln!("[GC ATTACK 2 / F-11] legacy session-free process_drop: DEFENDED (denied, fail-closed)");
+    eprintln!(
+        "[GC ATTACK 2 / F-11] legacy session-free process_drop: DEFENDED (denied, fail-closed)"
+    );
 }
 
 // ===========================================================================
@@ -170,7 +172,9 @@ fn new_session_cannot_overdrop_into_original_sessions_refs() {
         2,
         "F-12 regressed: session 99 reclaimed the victim's session-10 refs"
     );
-    eprintln!("[GC ATTACK 3b / F-12] new session cannot over-drop into another session's refs: DEFENDED");
+    eprintln!(
+        "[GC ATTACK 3b / F-12] new session cannot over-drop into another session's refs: DEFENDED"
+    );
 }
 
 // ===========================================================================
@@ -183,7 +187,10 @@ fn attack_overdrop_does_not_underflow_or_overrevoke() {
     let mut mgr = ExportGcManager::new();
     mgr.record_export_with_session(cell(), fed_a(), 100, 10);
     // First drop is legitimate -> CanRevoke (count hits 0, holder removed).
-    assert_eq!(mgr.process_drop_with_session(cell(), fed_a(), 10), DropResult::CanRevoke);
+    assert_eq!(
+        mgr.process_drop_with_session(cell(), fed_a(), 10),
+        DropResult::CanRevoke
+    );
     // Second drop: holder gone -> Invalid (NOT an underflow panic, NOT a re-revoke).
     let r = mgr.process_drop_with_session(cell(), fed_a(), 10);
     assert_eq!(r, DropResult::Invalid);

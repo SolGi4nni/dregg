@@ -841,7 +841,10 @@ pub enum StateConstraint {
     /// The canonical nameservice "register a subdomain only under an owned
     /// namespace" policy. Mirrors Lean `SimpleConstraint.prefixOf`. Fail-closed:
     /// a path shorter than `prefix` is rejected.
-    PrefixOf { seg_indices: Vec<u8>, prefix: Vec<u64> },
+    PrefixOf {
+        seg_indices: Vec<u8>,
+        prefix: Vec<u64>,
+    },
 
     /// **Two-sided absolute band:** `lo <= new[index] <= hi` (the ABSOLUTE
     /// counterpart to the RELATIVE `FieldDeltaInRange`). Mirrors Lean
@@ -878,7 +881,9 @@ pub enum StateConstraint {
     /// **n-ary conjunction** over `SimpleStateConstraint`s — the `allOf` the
     /// legacy 2-level grammar lacked (it had only single-level `AnyOf`). Mirrors
     /// the Lean `Pred.allOf` Boolean layer. Empty `AllOf` admits (vacuous AND).
-    AllOf { variants: Vec<SimpleStateConstraint> },
+    AllOf {
+        variants: Vec<SimpleStateConstraint>,
+    },
 
     // ─── Escape hatch ───
     /// DSL-authored predicate. The executor evaluates by hash lookup in
@@ -2887,9 +2892,7 @@ fn renounced_set_view(set: &RenouncedSet) -> (String, String) {
             format!("PublicRoot(slot={set_root_index})"),
             "from_slot".to_string(),
         ),
-        RenouncedSet::BlindedSet { commitment } => {
-            ("BlindedSet".to_string(), view_hex(commitment))
-        }
+        RenouncedSet::BlindedSet { commitment } => ("BlindedSet".to_string(), view_hex(commitment)),
     }
 }
 
@@ -3088,7 +3091,10 @@ impl StateConstraint {
                 delta_relation: format!("{delta_relation:?}"),
             },
             StateConstraint::AnyOf { variants } => StateConstraintView::AnyOf {
-                variants: variants.iter().map(SimpleStateConstraint::to_view).collect(),
+                variants: variants
+                    .iter()
+                    .map(SimpleStateConstraint::to_view)
+                    .collect(),
             },
             StateConstraint::Witnessed { wp } => StateConstraintView::Witnessed {
                 predicate_kind: witnessed_predicate_kind_view(&wp.kind),
@@ -3143,7 +3149,10 @@ impl StateConstraint {
                 edges: edges.clone(),
             },
             StateConstraint::AllOf { variants } => StateConstraintView::AllOf {
-                variants: variants.iter().map(SimpleStateConstraint::to_view).collect(),
+                variants: variants
+                    .iter()
+                    .map(SimpleStateConstraint::to_view)
+                    .collect(),
             },
             StateConstraint::Custom {
                 ir_hash,
@@ -4311,40 +4320,90 @@ mod tests {
 
         let fe = field_from_u64(7);
         let all: Vec<(StateConstraint, &str)> = vec![
-            (StateConstraint::FieldEquals { index: 0, value: fe }, "FieldEquals"),
-            (StateConstraint::FieldGte { index: 0, value: fe }, "FieldGte"),
-            (StateConstraint::FieldLte { index: 0, value: fe }, "FieldLte"),
             (
-                StateConstraint::FieldLteField { left_index: 0, right_index: 1 },
+                StateConstraint::FieldEquals {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldEquals",
+            ),
+            (
+                StateConstraint::FieldGte {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldGte",
+            ),
+            (
+                StateConstraint::FieldLte {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldLte",
+            ),
+            (
+                StateConstraint::FieldLteField {
+                    left_index: 0,
+                    right_index: 1,
+                },
                 "FieldLteField",
             ),
             (
-                StateConstraint::FieldLteOther { index: 0, other: 1, delta: -3 },
+                StateConstraint::FieldLteOther {
+                    index: 0,
+                    other: 1,
+                    delta: -3,
+                },
                 "FieldLteOther",
             ),
             (
-                StateConstraint::SumEquals { indices: vec![0, 1], value: fe },
+                StateConstraint::SumEquals {
+                    indices: vec![0, 1],
+                    value: fe,
+                },
                 "SumEquals",
             ),
             (StateConstraint::WriteOnce { index: 1 }, "WriteOnce"),
             (StateConstraint::Immutable { index: 1 }, "Immutable"),
             (StateConstraint::Monotonic { index: 1 }, "Monotonic"),
-            (StateConstraint::StrictMonotonic { index: 1 }, "StrictMonotonic"),
             (
-                StateConstraint::BoundedBy { index: 1, witness_index: 2 },
+                StateConstraint::StrictMonotonic { index: 1 },
+                "StrictMonotonic",
+            ),
+            (
+                StateConstraint::BoundedBy {
+                    index: 1,
+                    witness_index: 2,
+                },
                 "BoundedBy",
             ),
-            (StateConstraint::FieldDelta { index: 1, delta: fe }, "FieldDelta"),
             (
-                StateConstraint::FieldDeltaInRange { index: 1, min_delta: fe, max_delta: fe },
+                StateConstraint::FieldDelta {
+                    index: 1,
+                    delta: fe,
+                },
+                "FieldDelta",
+            ),
+            (
+                StateConstraint::FieldDeltaInRange {
+                    index: 1,
+                    min_delta: fe,
+                    max_delta: fe,
+                },
                 "FieldDeltaInRange",
             ),
             (
-                StateConstraint::FieldGteHeight { index: 1, offset: 0 },
+                StateConstraint::FieldGteHeight {
+                    index: 1,
+                    offset: 0,
+                },
                 "FieldGteHeight",
             ),
             (
-                StateConstraint::FieldLteHeight { index: 1, offset: 0 },
+                StateConstraint::FieldLteHeight {
+                    index: 1,
+                    offset: 0,
+                },
                 "FieldLteHeight",
             ),
             (
@@ -4356,16 +4415,23 @@ mod tests {
             ),
             (
                 StateConstraint::SenderAuthorized {
-                    set: AuthorizedSet::BlindedSet { commitment: [9u8; 32] },
+                    set: AuthorizedSet::BlindedSet {
+                        commitment: [9u8; 32],
+                    },
                 },
                 "SenderAuthorized",
             ),
             (
-                StateConstraint::CapabilityUniqueness { cap_set_root_slot: 3 },
+                StateConstraint::CapabilityUniqueness {
+                    cap_set_root_slot: 3,
+                },
                 "CapabilityUniqueness",
             ),
             (
-                StateConstraint::RateLimit { max_per_epoch: 4, epoch_duration: 100 },
+                StateConstraint::RateLimit {
+                    max_per_epoch: 4,
+                    epoch_duration: 100,
+                },
                 "RateLimit",
             ),
             (
@@ -4377,7 +4443,10 @@ mod tests {
                 "RateLimitBySum",
             ),
             (
-                StateConstraint::TemporalGate { not_before: Some(5), not_after: None },
+                StateConstraint::TemporalGate {
+                    not_before: Some(5),
+                    not_after: None,
+                },
                 "TemporalGate",
             ),
             (
@@ -4399,7 +4468,10 @@ mod tests {
                 "AllowedTransitions",
             ),
             (
-                StateConstraint::TemporalPredicate { witness_index: 0, dsl_hash: [1u8; 32] },
+                StateConstraint::TemporalPredicate {
+                    witness_index: 0,
+                    dsl_hash: [1u8; 32],
+                },
                 "TemporalPredicate",
             ),
             (
@@ -4415,9 +4487,10 @@ mod tests {
                 StateConstraint::AnyOf {
                     variants: vec![
                         SimpleStateConstraint::Monotonic { index: 0 },
-                        SimpleStateConstraint::Not(Box::new(
-                            SimpleStateConstraint::FieldEquals { index: 0, value: fe },
-                        )),
+                        SimpleStateConstraint::Not(Box::new(SimpleStateConstraint::FieldEquals {
+                            index: 0,
+                            value: fe,
+                        })),
                     ],
                 },
                 "AnyOf",
@@ -4435,29 +4508,50 @@ mod tests {
             ),
             (
                 StateConstraint::Renounced {
-                    set: RenouncedSet::BlindedSet { commitment: [4u8; 32] },
+                    set: RenouncedSet::BlindedSet {
+                        commitment: [4u8; 32],
+                    },
                 },
                 "Renounced",
             ),
             (
-                StateConstraint::MemberOf { index: 0, set: vec![1, 2, 3] },
+                StateConstraint::MemberOf {
+                    index: 0,
+                    set: vec![1, 2, 3],
+                },
                 "MemberOf",
             ),
             (
-                StateConstraint::PrefixOf { seg_indices: vec![0, 1], prefix: vec![42] },
+                StateConstraint::PrefixOf {
+                    seg_indices: vec![0, 1],
+                    prefix: vec![42],
+                },
                 "PrefixOf",
             ),
             (
-                StateConstraint::InRangeTwoSided { index: 0, lo: 1, hi: 9 },
+                StateConstraint::InRangeTwoSided {
+                    index: 0,
+                    lo: 1,
+                    hi: 9,
+                },
                 "InRangeTwoSided",
             ),
-            (StateConstraint::DeltaBounded { index: 0, d: 5 }, "DeltaBounded"),
             (
-                StateConstraint::AffineLe { terms: vec![(2, 2), (-1, 3)], c: 0 },
+                StateConstraint::DeltaBounded { index: 0, d: 5 },
+                "DeltaBounded",
+            ),
+            (
+                StateConstraint::AffineLe {
+                    terms: vec![(2, 2), (-1, 3)],
+                    c: 0,
+                },
                 "AffineLe",
             ),
             (
-                StateConstraint::AffineEq { terms: vec![(1, 0), (1, 1)], c: 10 },
+                StateConstraint::AffineEq {
+                    terms: vec![(1, 0), (1, 1)],
+                    c: 10,
+                },
                 "AffineEq",
             ),
             (
@@ -4542,30 +4636,82 @@ mod tests {
 
         // Semantic-payload spot checks for the newly projected variants —
         // a live council cell must self-describe its threshold M.
-        let affine = StateConstraint::AffineLe { terms: vec![(2, 2), (-1, 3), (-1, 4)], c: 0 };
+        let affine = StateConstraint::AffineLe {
+            terms: vec![(2, 2), (-1, 3), (-1, 4)],
+            c: 0,
+        };
         let j = serde_json::to_value(affine.to_view()).unwrap();
         assert_eq!(j["terms"][0][0], 2, "AffineLe view carries coefficients");
         assert_eq!(j["terms"][0][1], 2, "AffineLe view carries slot indices");
         assert_eq!(j["c"], 0, "AffineLe view carries the bound");
 
-        let member = StateConstraint::MemberOf { index: 6, set: vec![10, 20] };
+        let member = StateConstraint::MemberOf {
+            index: 6,
+            set: vec![10, 20],
+        };
         let j = serde_json::to_value(member.to_view()).unwrap();
-        assert_eq!(j["set"], serde_json::json!([10, 20]), "MemberOf view carries the allowed set");
+        assert_eq!(
+            j["set"],
+            serde_json::json!([10, 20]),
+            "MemberOf view carries the allowed set"
+        );
 
         // SimpleStateConstraint totality (incl. the structural Not view).
         let simples: Vec<(SimpleStateConstraint, &str)> = vec![
-            (SimpleStateConstraint::FieldEquals { index: 0, value: fe }, "FieldEquals"),
-            (SimpleStateConstraint::FieldGte { index: 0, value: fe }, "FieldGte"),
-            (SimpleStateConstraint::FieldLte { index: 0, value: fe }, "FieldLte"),
+            (
+                SimpleStateConstraint::FieldEquals {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldEquals",
+            ),
+            (
+                SimpleStateConstraint::FieldGte {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldGte",
+            ),
+            (
+                SimpleStateConstraint::FieldLte {
+                    index: 0,
+                    value: fe,
+                },
+                "FieldLte",
+            ),
             (SimpleStateConstraint::WriteOnce { index: 0 }, "WriteOnce"),
             (SimpleStateConstraint::Immutable { index: 0 }, "Immutable"),
             (SimpleStateConstraint::Monotonic { index: 0 }, "Monotonic"),
-            (SimpleStateConstraint::StrictMonotonic { index: 0 }, "StrictMonotonic"),
-            (SimpleStateConstraint::BoundedBy { index: 0, witness_index: 1 }, "BoundedBy"),
-            (SimpleStateConstraint::FieldGteHeight { index: 0, offset: 1 }, "FieldGteHeight"),
-            (SimpleStateConstraint::FieldLteHeight { index: 0, offset: 1 }, "FieldLteHeight"),
             (
-                SimpleStateConstraint::TemporalGate { not_before: None, not_after: Some(9) },
+                SimpleStateConstraint::StrictMonotonic { index: 0 },
+                "StrictMonotonic",
+            ),
+            (
+                SimpleStateConstraint::BoundedBy {
+                    index: 0,
+                    witness_index: 1,
+                },
+                "BoundedBy",
+            ),
+            (
+                SimpleStateConstraint::FieldGteHeight {
+                    index: 0,
+                    offset: 1,
+                },
+                "FieldGteHeight",
+            ),
+            (
+                SimpleStateConstraint::FieldLteHeight {
+                    index: 0,
+                    offset: 1,
+                },
+                "FieldLteHeight",
+            ),
+            (
+                SimpleStateConstraint::TemporalGate {
+                    not_before: None,
+                    not_after: Some(9),
+                },
                 "TemporalGate",
             ),
             (
@@ -4601,6 +4747,9 @@ mod tests {
             value: fe,
         }));
         let j = serde_json::to_value(not.to_view()).unwrap();
-        assert_eq!(j["inner"]["kind"], "FieldEquals", "Not view nests its inner view");
+        assert_eq!(
+            j["inner"]["kind"], "FieldEquals",
+            "Not view nests its inner view"
+        );
     }
 }

@@ -181,7 +181,6 @@ fn cell_seal_widened_target_yields_distinct_public_inputs() {
     assert_eq!(&h4_a[..], eh_a);
 }
 
-
 #[test]
 fn grant_capability_widened_entry_yields_distinct_public_inputs() {
     // effect-vm-hash-widen lane (second batch): GrantCapability.cap_entry is

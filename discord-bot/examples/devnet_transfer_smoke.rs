@@ -27,7 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // node: blake3(node_operator_pubkey). On a full federated devnet this is the
     // configured federation id; the bot is given the matching FED_ID env.
     let fed: [u8; 32] = match std::env::var("FED_ID") {
-        Ok(h) => hex::decode(&h)?.try_into().expect("FED_ID must be 32 bytes"),
+        Ok(h) => hex::decode(&h)?
+            .try_into()
+            .expect("FED_ID must be 32 bytes"),
         Err(_) => {
             let id: serde_json::Value = client
                 .get(format!("{base}/api/node/identity"))
@@ -35,7 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await?
                 .json()
                 .await?;
-            let pk_hex = id.get("public_key").and_then(|v| v.as_str()).expect("node identity");
+            let pk_hex = id
+                .get("public_key")
+                .and_then(|v| v.as_str())
+                .expect("node identity");
             let pk: [u8; 32] = hex::decode(pk_hex)?.try_into().unwrap();
             *blake3::hash(&pk).as_bytes()
         }
@@ -128,6 +133,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?
         .json()
         .await?;
-    println!("recipient balance after: {}", recip.get("balance").unwrap_or(&serde_json::Value::Null));
+    println!(
+        "recipient balance after: {}",
+        recip.get("balance").unwrap_or(&serde_json::Value::Null)
+    );
     Ok(())
 }

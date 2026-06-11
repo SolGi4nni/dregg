@@ -121,7 +121,10 @@ fn multi_holder_last_drop_triggers_can_revoke() {
     );
 
     // Drop from an already-dropped federation → Invalid.
-    assert_eq!(export_gc.process_drop_with_session(cap, fed(0x01), 0), DropResult::Invalid);
+    assert_eq!(
+        export_gc.process_drop_with_session(cap, fed(0x01), 0),
+        DropResult::Invalid
+    );
 }
 
 // =============================================================================

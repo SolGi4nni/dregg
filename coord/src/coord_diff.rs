@@ -116,7 +116,11 @@ struct LeanCert {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LeanRebOutcome {
-    Ok { total_spent: u64, new_balance: u64, new_version: u64 },
+    Ok {
+        total_spent: u64,
+        new_balance: u64,
+        new_version: u64,
+    },
     IncompleteCertificates,
     VersionMismatch,
     DuplicateCertificate,
@@ -166,7 +170,11 @@ fn lean_rebalance(
         cert_spent + missing * ceil
     };
     let new_balance = if total > balance { 0 } else { balance - total };
-    LeanRebOutcome::Ok { total_spent: total, new_balance, new_version: version + 1 }
+    LeanRebOutcome::Ok {
+        total_spent: total,
+        new_balance,
+        new_version: version + 1,
+    }
 }
 
 // ═══════════════════════ Differential 1: causal happened-before partial order ═══════════════════
@@ -196,12 +204,8 @@ mod causal_order_diff {
         dag.insert(h(4), &[h(2), h(3)]).unwrap();
 
         // Lean mirror: the same (hash → deps) topology over u64 ids.
-        let deps: HashMap<u64, Vec<u64>> = HashMap::from([
-            (1u64, vec![]),
-            (2, vec![1]),
-            (3, vec![1]),
-            (4, vec![2, 3]),
-        ]);
+        let deps: HashMap<u64, Vec<u64>> =
+            HashMap::from([(1u64, vec![]), (2, vec![1]), (3, vec![1]), (4, vec![2, 3])]);
 
         // AGREEMENT over every ordered pair in {1,2,3,4}.
         for a in 1u64..=4 {
@@ -245,12 +249,8 @@ mod causal_order_diff {
         dag.insert(h(3), &[h(1)]).unwrap();
         dag.insert(h(4), &[h(2), h(3)]).unwrap();
 
-        let deps: HashMap<u64, Vec<u64>> = HashMap::from([
-            (1u64, vec![]),
-            (2, vec![1]),
-            (3, vec![1]),
-            (4, vec![2, 3]),
-        ]);
+        let deps: HashMap<u64, Vec<u64>> =
+            HashMap::from([(1u64, vec![]), (2, vec![1]), (3, vec![1]), (4, vec![2, 3])]);
 
         let order = dag.topological_order();
         let pos = |x: u64| order.iter().position(|t| t == &h(x)).unwrap();
@@ -293,8 +293,8 @@ mod causal_order_diff {
 mod two_phase_commit_diff {
     use super::*;
     use crate::atomic::{AtomicForest, Coordinator, Decision, Vote};
-    use dregg_cell::{Cell, CellId, Ledger, Preconditions};
     use dregg_cell::preconditions::CellStatePrecondition;
+    use dregg_cell::{Cell, CellId, Ledger, Preconditions};
     use dregg_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
     use dregg_turn::{CallForest, ComputronCosts};
     use std::collections::HashMap;
@@ -345,7 +345,12 @@ mod two_phase_commit_diff {
 
     /// Build a 3-participant atomic forest + register keys, returning the forest, signing keys,
     /// and pubkey map. The threshold is the coordinator's; participants vote per `precond_ok`.
-    fn setup() -> (Ledger, AtomicForest, Vec<[u8; 32]>, HashMap<[u8; 32], [u8; 32]>) {
+    fn setup() -> (
+        Ledger,
+        AtomicForest,
+        Vec<[u8; 32]>,
+        HashMap<[u8; 32], [u8; 32]>,
+    ) {
         let mut ledger = Ledger::new();
         let id0 = ledger.insert_cell(permissive_cell(1, 100)).unwrap();
         let id1 = ledger.insert_cell(permissive_cell(2, 50)).unwrap();
@@ -357,9 +362,36 @@ mod two_phase_commit_diff {
         forest.add_root(transfer_action(id2, id0, 5));
 
         let preconditions = vec![
-            (id0, Preconditions { cell_state: Some(CellStatePrecondition { min_balance: Some(30), ..Default::default() }), ..Default::default() }),
-            (id1, Preconditions { cell_state: Some(CellStatePrecondition { min_balance: Some(10), ..Default::default() }), ..Default::default() }),
-            (id2, Preconditions { cell_state: Some(CellStatePrecondition { min_balance: Some(5),  ..Default::default() }), ..Default::default() }),
+            (
+                id0,
+                Preconditions {
+                    cell_state: Some(CellStatePrecondition {
+                        min_balance: Some(30),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
+            (
+                id1,
+                Preconditions {
+                    cell_state: Some(CellStatePrecondition {
+                        min_balance: Some(10),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
+            (
+                id2,
+                Preconditions {
+                    cell_state: Some(CellStatePrecondition {
+                        min_balance: Some(5),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ),
         ];
 
         let af = AtomicForest::new(
@@ -483,7 +515,7 @@ mod two_phase_commit_diff {
 
 mod shared_budget_diff {
     use super::*;
-    use crate::shared_budget::{encode_debit_payload, ResourceState, SharedResourceBudget};
+    use crate::shared_budget::{ResourceState, SharedResourceBudget, encode_debit_payload};
     use dregg_blocklace::finality::{Block as BlocBlock, Blocklace, Payload};
     use dregg_cell::CellId;
 
@@ -506,12 +538,24 @@ mod shared_budget_diff {
     fn diff_ceiling_formula() {
         for &(balance, f) in &[(10000u64, 1u64), (10000, 2), (3000, 1), (5000, 0), (200, 1)] {
             let n = (2 * f + 1) as usize;
-            let budget = SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), balance, agents(n), f as usize).unwrap();
+            let budget = SharedResourceBudget::new(
+                CellId::from_bytes([0xBB; 32]),
+                balance,
+                agents(n),
+                f as usize,
+            )
+            .unwrap();
             let real = budget.compute_allowance_ceiling();
             let lean = lean_ceiling(balance, f);
-            assert_eq!(real, lean, "ceiling mismatch for (balance={balance}, f={f})");
+            assert_eq!(
+                real, lean,
+                "ceiling mismatch for (balance={balance}, f={f})"
+            );
             // ceiling_le_balance (the Lean theorem) holds on the real value.
-            assert!(real <= balance, "ceiling exceeds balance — ceiling_le_balance violated");
+            assert!(
+                real <= balance,
+                "ceiling exceeds balance — ceiling_le_balance violated"
+            );
         }
     }
 
@@ -526,14 +570,18 @@ mod shared_budget_diff {
     fn diff_resolve_with_ordering_conserves() {
         let ags = agents(3);
         let mut budget =
-            SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1).unwrap();
+            SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1)
+                .unwrap();
         let resource_id = [0xBB; 32];
 
         // Phase 1: three optimistic debits of 400 each → overspend (1200 > 1000).
         for &a in &ags {
             let _ = budget.try_optimistic_debit(a, 400, [0u8; 32]);
         }
-        assert!(budget.is_overspent(), "scenario must overspend to exercise resolution");
+        assert!(
+            budget.is_overspent(),
+            "scenario must overspend to exercise resolution"
+        );
 
         // Build a blocklace with one debit block per agent (the tau-ordered conflict set).
         let sk = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
@@ -541,7 +589,12 @@ mod shared_budget_diff {
         let mut ids = Vec::new();
         for a in &ags {
             let ska = ed25519_dalek::SigningKey::from_bytes(a.as_bytes());
-            let block = BlocBlock::new(&ska, 1, Payload::Turn(encode_debit_payload(&resource_id, 400)), vec![]);
+            let block = BlocBlock::new(
+                &ska,
+                1,
+                Payload::Turn(encode_debit_payload(&resource_id, 400)),
+                vec![],
+            );
             ids.push(block.id());
             blocklace.receive_block(block).unwrap();
         }
@@ -551,15 +604,24 @@ mod shared_budget_diff {
         budget.resolve_with_ordering(&ids, &blocklace, &resource_id);
 
         // Real verdicts: A accepted, B accepted, C rejected (first-come-wins under tau).
-        let real_verdicts: Vec<bool> = ids.iter().map(|id| budget.is_accepted(id).unwrap()).collect();
+        let real_verdicts: Vec<bool> = ids
+            .iter()
+            .map(|id| budget.is_accepted(id).unwrap())
+            .collect();
         let real_remaining = budget.total_balance;
 
         // Lean mirror: resolveOrdered 1000 [400, 400, 400].
         let (lean_verdicts, lean_remaining) = lean_resolve_ordered(1000, &[400, 400, 400]);
 
         // AGREEMENT: per-debit verdicts and the final remaining balance match.
-        assert_eq!(real_verdicts, lean_verdicts, "tau-resolution verdict mismatch");
-        assert_eq!(real_remaining, lean_remaining, "post-resolution balance mismatch");
+        assert_eq!(
+            real_verdicts, lean_verdicts,
+            "tau-resolution verdict mismatch"
+        );
+        assert_eq!(
+            real_remaining, lean_remaining,
+            "post-resolution balance mismatch"
+        );
 
         // TAU-RESOLUTION CONSERVATION (the Lean keystone): Σ accepted ≤ starting balance.
         let accepted_sum: u64 = lean_verdicts
@@ -567,7 +629,10 @@ mod shared_budget_diff {
             .zip([400u64, 400, 400])
             .filter_map(|(&ok, amt)| ok.then_some(amt))
             .sum();
-        assert!(accepted_sum <= 1000, "accepted debits exceeded the balance — conservation broken");
+        assert!(
+            accepted_sum <= 1000,
+            "accepted debits exceeded the balance — conservation broken"
+        );
         assert_eq!(accepted_sum, 800);
         assert_eq!(real_remaining, 200);
 
@@ -586,7 +651,8 @@ mod shared_budget_diff {
     fn diff_resolve_all_fit_accepts_all() {
         let ags = agents(3);
         let mut budget =
-            SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1).unwrap();
+            SharedResourceBudget::new(CellId::from_bytes([0xBB; 32]), 1000, ags.clone(), 1)
+                .unwrap();
         let resource_id = [0xBB; 32];
 
         let sk = ed25519_dalek::SigningKey::from_bytes(&[0x88; 32]);
@@ -594,14 +660,22 @@ mod shared_budget_diff {
         let mut ids = Vec::new();
         for a in &ags {
             let ska = ed25519_dalek::SigningKey::from_bytes(a.as_bytes());
-            let block = BlocBlock::new(&ska, 1, Payload::Turn(encode_debit_payload(&resource_id, 300)), vec![]);
+            let block = BlocBlock::new(
+                &ska,
+                1,
+                Payload::Turn(encode_debit_payload(&resource_id, 300)),
+                vec![],
+            );
             ids.push(block.id());
             blocklace.receive_block(block).unwrap();
         }
         budget.escalate(ids.clone());
         budget.resolve_with_ordering(&ids, &blocklace, &resource_id);
 
-        let real_verdicts: Vec<bool> = ids.iter().map(|id| budget.is_accepted(id).unwrap()).collect();
+        let real_verdicts: Vec<bool> = ids
+            .iter()
+            .map(|id| budget.is_accepted(id).unwrap())
+            .collect();
         let (lean_verdicts, lean_remaining) = lean_resolve_ordered(1000, &[300, 300, 300]);
         assert_eq!(real_verdicts, lean_verdicts);
         assert_eq!(real_verdicts, vec![true, true, true]);
@@ -642,7 +716,9 @@ mod stingray_cert_reconcile_diff {
         *blake3::hash(silo).as_bytes()
     }
     fn pubkey(sk: &[u8; 32]) -> [u8; 32] {
-        ed25519_dalek::SigningKey::from_bytes(sk).verifying_key().to_bytes()
+        ed25519_dalek::SigningKey::from_bytes(sk)
+            .verifying_key()
+            .to_bytes()
     }
     fn register_all(coord: &mut StingrayCounter) {
         for silo in coord.silos.clone() {
@@ -664,7 +740,9 @@ mod stingray_cert_reconcile_diff {
                 new_version: coord.version,
             },
             Err(e) => match e {
-                BudgetError::IncompleteCertificates { .. } => LeanRebOutcome::IncompleteCertificates,
+                BudgetError::IncompleteCertificates { .. } => {
+                    LeanRebOutcome::IncompleteCertificates
+                }
                 BudgetError::VersionMismatch { .. } => LeanRebOutcome::VersionMismatch,
                 BudgetError::DuplicateCertificate { .. } => LeanRebOutcome::DuplicateCertificate,
                 BudgetError::CertificateExceedsCeiling { .. } => LeanRebOutcome::CertExceedsCeiling,
@@ -689,22 +767,37 @@ mod stingray_cert_reconcile_diff {
         let ss = silos(4);
         let mut coord = StingrayCounter::new(agent(), 1000, ss.clone(), 1).unwrap();
         register_all(&mut coord);
-        coord.try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes()).unwrap();
+        coord
+            .try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes())
+            .unwrap();
         let cert_a = signed_cert(&coord, &ss, 0);
 
         // Lean model: 1 cert (silo 0, spent 50), partial mode, ceiling 666, 3 missing → 50 + 3*666.
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
-            &[LeanCert { silo: 0, version: 0, spent: 50, sig_ok: true }],
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
+            &[LeanCert {
+                silo: 0,
+                version: 0,
+                spent: 50,
+                sig_ok: true,
+            }],
             false,
         );
-        let real = real_outcome(
-            coord.rebalance_partial(&[cert_a]),
-            &coord,
-        );
+        let real = real_outcome(coord.rebalance_partial(&[cert_a]), &coord);
         assert_eq!(real, lean);
         // The Byzantine-conservative reconstruction: 50 + 3*666 = 2048.
-        assert_eq!(lean, LeanRebOutcome::Ok { total_spent: 2048, new_balance: 0, new_version: 1 });
+        assert_eq!(
+            lean,
+            LeanRebOutcome::Ok {
+                total_spent: 2048,
+                new_balance: 0,
+                new_version: 1
+            }
+        );
     }
 
     // ── §9(2) full-mode quorum completeness gate (`test_rebalance_rejects_incomplete_certificates`) ──
@@ -713,12 +806,23 @@ mod stingray_cert_reconcile_diff {
         let ss = silos(4);
         let mut coord = StingrayCounter::new(agent(), 1000, ss.clone(), 1).unwrap();
         register_all(&mut coord);
-        coord.try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes()).unwrap();
+        coord
+            .try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes())
+            .unwrap();
         let cert_a = signed_cert(&coord, &ss, 0);
 
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
-            &[LeanCert { silo: 0, version: 0, spent: 50, sig_ok: true }],
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
+            &[LeanCert {
+                silo: 0,
+                version: 0,
+                spent: 50,
+                sig_ok: true,
+            }],
             true,
         );
         let real = real_outcome(coord.rebalance(&[cert_a]), &coord);
@@ -732,13 +836,24 @@ mod stingray_cert_reconcile_diff {
         let ss = silos(4);
         let mut coord = StingrayCounter::new(agent(), 1000, ss.clone(), 1).unwrap();
         register_all(&mut coord);
-        coord.try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes()).unwrap();
+        coord
+            .try_debit(ss[0], 50, *blake3::hash(b"d").as_bytes())
+            .unwrap();
         let mut cert = signed_cert(&coord, &ss, 0);
         cert.version = 99; // stale / wrong epoch
 
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
-            &[LeanCert { silo: 0, version: 99, spent: 50, sig_ok: true }],
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
+            &[LeanCert {
+                silo: 0,
+                version: 99,
+                spent: 50,
+                sig_ok: true,
+            }],
             false,
         );
         let real = real_outcome(coord.rebalance_partial(&[cert]), &coord);
@@ -762,8 +877,17 @@ mod stingray_cert_reconcile_diff {
             signature: [0u8; 64],
         };
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
-            &[LeanCert { silo: 0, version: 0, spent: 9999, sig_ok: false }],
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
+            &[LeanCert {
+                silo: 0,
+                version: 0,
+                spent: 9999,
+                sig_ok: false,
+            }],
             false,
         );
         let real = real_outcome(coord.rebalance_partial(&[cert]), &coord);
@@ -787,8 +911,17 @@ mod stingray_cert_reconcile_diff {
             signature: [0u8; 64],
         };
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
-            &[LeanCert { silo: 0, version: 0, spent: 50, sig_ok: false }],
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
+            &[LeanCert {
+                silo: 0,
+                version: 0,
+                spent: 50,
+                sig_ok: false,
+            }],
             false,
         );
         let real = real_outcome(coord.rebalance_partial(&[cert]), &coord);
@@ -804,25 +937,63 @@ mod stingray_cert_reconcile_diff {
         register_all(&mut coord);
         let mut certs = Vec::new();
         for i in 0..4 {
-            coord.try_debit(ss[i], 100, *blake3::hash(&[i as u8]).as_bytes()).unwrap();
+            coord
+                .try_debit(ss[i], 100, *blake3::hash(&[i as u8]).as_bytes())
+                .unwrap();
             certs.push(signed_cert(&coord, &ss, i));
         }
         let lean = lean_rebalance(
-            4, &[0, 1, 2, 3], 0, 1000, 1,
+            4,
+            &[0, 1, 2, 3],
+            0,
+            1000,
+            1,
             &[
-                LeanCert { silo: 0, version: 0, spent: 100, sig_ok: true },
-                LeanCert { silo: 1, version: 0, spent: 100, sig_ok: true },
-                LeanCert { silo: 2, version: 0, spent: 100, sig_ok: true },
-                LeanCert { silo: 3, version: 0, spent: 100, sig_ok: true },
+                LeanCert {
+                    silo: 0,
+                    version: 0,
+                    spent: 100,
+                    sig_ok: true,
+                },
+                LeanCert {
+                    silo: 1,
+                    version: 0,
+                    spent: 100,
+                    sig_ok: true,
+                },
+                LeanCert {
+                    silo: 2,
+                    version: 0,
+                    spent: 100,
+                    sig_ok: true,
+                },
+                LeanCert {
+                    silo: 3,
+                    version: 0,
+                    spent: 100,
+                    sig_ok: true,
+                },
             ],
             true,
         );
         let real = real_outcome(coord.rebalance(&certs), &coord);
         assert_eq!(real, lean);
         // Reconstruction = Σ spend = 400; balance 600; version bumped 0→1 (no-replay boundary).
-        assert_eq!(lean, LeanRebOutcome::Ok { total_spent: 400, new_balance: 600, new_version: 1 });
+        assert_eq!(
+            lean,
+            LeanRebOutcome::Ok {
+                total_spent: 400,
+                new_balance: 600,
+                new_version: 1
+            }
+        );
         // CONSERVATION (rebalance_conserves_on_exact): new_balance + total = old_balance.
-        if let LeanRebOutcome::Ok { total_spent, new_balance, .. } = lean {
+        if let LeanRebOutcome::Ok {
+            total_spent,
+            new_balance,
+            ..
+        } = lean
+        {
             assert_eq!(new_balance + total_spent, 1000);
         }
     }

@@ -115,7 +115,11 @@ fn clockdag_transfer_proves_and_verifies() {
     for alpha_val in [7u32, 13, 101, 997] {
         let alpha = BabyBear::new(alpha_val);
         let c = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &pi_vec, alpha);
-        assert_eq!(c, BabyBear::ZERO, "transfer constraint nonzero alpha={alpha_val}");
+        assert_eq!(
+            c,
+            BabyBear::ZERO,
+            "transfer constraint nonzero alpha={alpha_val}"
+        );
     }
 
     let t0 = Instant::now();
@@ -135,7 +139,8 @@ fn clockdag_transfer_proves_and_verifies() {
     // The proof ATTESTS the mutual-credit debit: net delta = -30_000_000.
     let delta = extract_net_delta(&pi_vec).unwrap();
     assert_eq!(
-        delta, -(A_OUT_T1 as i64),
+        delta,
+        -(A_OUT_T1 as i64),
         "proof must attest a -30M micro debit (the kind=0 sender leg)"
     );
 
@@ -149,7 +154,9 @@ fn clockdag_transfer_proves_and_verifies() {
 
     println!(
         "[clockdag] TRANSFER (A→B 30M, kind=0): proved in {:?}, proof {} bytes, attested Δ={}",
-        dt, bytes.len(), delta
+        dt,
+        bytes.len(),
+        delta
     );
 }
 
@@ -158,7 +165,6 @@ fn clockdag_transfer_proves_and_verifies() {
 //    → dregg2 paired escrow effects → real STARK proofs.
 //    (Model.lean `clockdag_htlc_atomic` / `joint_cg5_conserves`.)
 // ─────────────────────────────────────────────────────────────────────────────
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. A multi-step ClockDAG FLOW as a PROOF-CARRYING FOREST: account A's three
@@ -180,26 +186,32 @@ fn build_a_transfer_flow() -> (ProofForest, Vec<(std::time::Duration, usize)>, u
     let s0 = CellState::new(bal0, 0);
     let (node0, s1, t0, sz0) = prove_clockdag_step(
         &s0,
-        &[Effect::Transfer { amount: A_OUT_T1, direction: 1 }],
+        &[Effect::Transfer {
+            amount: A_OUT_T1,
+            direction: 1,
+        }],
         bal1,
     );
     let (node1, s2, t1, sz1) = prove_clockdag_step(
         &s1,
-        &[Effect::Transfer { amount: A_OUT_T2, direction: 1 }],
+        &[Effect::Transfer {
+            amount: A_OUT_T2,
+            direction: 1,
+        }],
         bal2,
     );
     let (node2, _s3, t2, sz2) = prove_clockdag_step(
         &s2,
-        &[Effect::Transfer { amount: A_OUT_T3, direction: 1 }],
+        &[Effect::Transfer {
+            amount: A_OUT_T3,
+            direction: 1,
+        }],
         bal3,
     );
 
     let forest = ProofForest {
         nodes: vec![node0, node1, node2],
-        edges: vec![
-            LinkEdge { from: 0, to: 1 },
-            LinkEdge { from: 1, to: 2 },
-        ],
+        edges: vec![LinkEdge { from: 0, to: 1 }, LinkEdge { from: 1, to: 2 }],
     };
     (forest, vec![(t0, sz0), (t1, sz1), (t2, sz2)], bal3)
 }
@@ -262,7 +274,10 @@ fn clockdag_transfer_flow_forest_verifies_and_matches_golden() {
     println!(
         "[clockdag] FOREST (3-leg flow 100M→70M→50M→40M): verified; \
          total prove {:?} ({} legs), ~{} bytes/proof; final A balance = {} micro == golden 40M ✓",
-        total_time, timings.len(), avg_size, final_balance
+        total_time,
+        timings.len(),
+        avg_size,
+        final_balance
     );
 }
 
@@ -276,14 +291,26 @@ fn clockdag_transfer_flow_forest_verifies_and_matches_golden() {
 fn clockdag_tampered_flow_link_rejected() {
     // Leg 0: A 100M → 70M (honest).
     let s0 = CellState::new(A_GENESIS_MICRO, 0);
-    let (node0, _s1, _t0, _sz0) =
-        prove_clockdag_step(&s0, &[Effect::Transfer { amount: A_OUT_T1, direction: 1 }], 70_000_000);
+    let (node0, _s1, _t0, _sz0) = prove_clockdag_step(
+        &s0,
+        &[Effect::Transfer {
+            amount: A_OUT_T1,
+            direction: 1,
+        }],
+        70_000_000,
+    );
 
     // Leg 1 starts from an UNRELATED balance (999M, not the 70M leg 0 produced):
     // a forged continuation. The proof itself is perfectly valid.
     let s1_wrong = CellState::new(999_000_000, 1);
-    let (node1, _s2, _t1, _sz1) =
-        prove_clockdag_step(&s1_wrong, &[Effect::Transfer { amount: A_OUT_T2, direction: 1 }], 979_000_000);
+    let (node1, _s2, _t1, _sz1) = prove_clockdag_step(
+        &s1_wrong,
+        &[Effect::Transfer {
+            amount: A_OUT_T2,
+            direction: 1,
+        }],
+        979_000_000,
+    );
 
     // Precondition: the link is genuinely broken.
     assert_ne!(
@@ -315,9 +342,7 @@ fn clockdag_tampered_flow_link_rejected() {
                  (both leg proofs individually valid) — composition soundness holds ✓"
             );
         }
-        other => panic!(
-            "expected LinkBroken (composition-soundness rejection), got {other:?}"
-        ),
+        other => panic!("expected LinkBroken (composition-soundness rejection), got {other:?}"),
     }
 }
 
@@ -350,10 +375,22 @@ fn clockdag_double_spend_fork_not_a_chain() {
     // Both forks debit 60M from the SAME pre-state (A @ 100M). Each is a valid,
     // real STARK proof on its own — and stays within the credit limit (40M ≥ -100M).
     let pre = CellState::new(genesis, 0);
-    let (fork_b, _s, _t, _z) =
-        prove_clockdag_step(&pre, &[Effect::Transfer { amount: spend, direction: 1 }], genesis - spend);
-    let (fork_c, _s2, _t2, _z2) =
-        prove_clockdag_step(&pre, &[Effect::Transfer { amount: spend, direction: 1 }], genesis - spend);
+    let (fork_b, _s, _t, _z) = prove_clockdag_step(
+        &pre,
+        &[Effect::Transfer {
+            amount: spend,
+            direction: 1,
+        }],
+        genesis - spend,
+    );
+    let (fork_c, _s2, _t2, _z2) = prove_clockdag_step(
+        &pre,
+        &[Effect::Transfer {
+            amount: spend,
+            direction: 1,
+        }],
+        genesis - spend,
+    );
 
     // SPEC §6 fork structure: both forks share the SAME OLD_COMMIT (they branch
     // from one parent) — they are incomparable, not a chain.

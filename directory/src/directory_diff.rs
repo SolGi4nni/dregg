@@ -28,10 +28,10 @@
 
 #![cfg(test)]
 
+use crate::ResourceHandle;
 use crate::directory::{
     Directory, DirectoryEntry, DirectoryError, EntryKind, InMemoryDirectory, Version,
 };
-use crate::ResourceHandle;
 
 // ───────────────────────────── Lean-mirror model (a tiny Rust transcription) ─────────────────────────────
 //
@@ -76,7 +76,10 @@ enum LeanRev {
 
 impl LeanDir {
     fn get(&self, name: u64) -> Option<&LeanEntry> {
-        self.entries.iter().find(|(n, _)| *n == name).map(|(_, e)| e)
+        self.entries
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, e)| e)
     }
 
     /// `DirectoryLaws.register` — idempotent exact-match / conflict / bind-new, in source order.
@@ -91,7 +94,13 @@ impl LeanDir {
         self.version = v;
         self.entries.push((
             name,
-            LeanEntry { handle, kind, version: v, revoked: false, expires_at: None },
+            LeanEntry {
+                handle,
+                kind,
+                version: v,
+                revoked: false,
+                expires_at: None,
+            },
         ));
         LeanReg::Ok(v)
     }
@@ -104,7 +113,11 @@ impl LeanDir {
                 if e.revoked {
                     LeanLookup::Revoked
                 } else if let Some(exp) = e.expires_at {
-                    if h > exp { LeanLookup::Expired } else { LeanLookup::Found }
+                    if h > exp {
+                        LeanLookup::Expired
+                    } else {
+                        LeanLookup::Found
+                    }
                 } else {
                     LeanLookup::Found
                 }
@@ -180,17 +193,34 @@ fn diff_register_monotone_idempotent_conflict() {
     let lv = lean.register(1, 1, 0);
     assert_eq!(rv, 1, "real: idempotent returns existing version");
     assert_eq!(lv, LeanReg::Ok(1));
-    assert_eq!(real.version(), before_real, "real: idempotent did NOT bump version");
-    assert_eq!(lean.version, before_real, "lean: idempotent did NOT bump version");
+    assert_eq!(
+        real.version(),
+        before_real,
+        "real: idempotent did NOT bump version"
+    );
+    assert_eq!(
+        lean.version, before_real,
+        "lean: idempotent did NOT bump version"
+    );
 
     // conflict: a DIFFERENT handle to the live name → AlreadyRegistered, no mutation.
     let before_real = real.version();
     let re = real.register("alice", entry(handle(2), None)).unwrap_err();
     let le = lean.register(1, 2 /*different handle*/, 0);
-    assert!(matches!(re, DirectoryError::AlreadyRegistered(_)), "real: conflict rejected");
+    assert!(
+        matches!(re, DirectoryError::AlreadyRegistered(_)),
+        "real: conflict rejected"
+    );
     assert_eq!(le, LeanReg::Conflict, "lean agrees: conflict");
-    assert_eq!(real.version(), before_real, "real: conflict did NOT mutate version");
-    assert_eq!(lean.version, before_real, "lean: conflict did NOT mutate version");
+    assert_eq!(
+        real.version(),
+        before_real,
+        "real: conflict did NOT mutate version"
+    );
+    assert_eq!(
+        lean.version, before_real,
+        "lean: conflict did NOT mutate version"
+    );
 
     // version monotone across every op so far: counter only ever climbed.
     assert!(real.version() >= 1 && lean.version >= 1);
@@ -211,7 +241,11 @@ fn diff_lookup_resolves_iff() {
     real.register("svc", entry(handle(3), None)).unwrap();
     lean.register(7, 3, 0);
     for h in [0u64, 1, 100, u64::MAX] {
-        assert_eq!(real_resolves(&real, "svc", h), lean.resolves(7, h), "resolve agrees @ {h}");
+        assert_eq!(
+            real_resolves(&real, "svc", h),
+            lean.resolves(7, h),
+            "resolve agrees @ {h}"
+        );
         assert!(real_resolves(&real, "svc", h), "no-expiry: resolves @ {h}");
     }
 
@@ -219,12 +253,27 @@ fn diff_lookup_resolves_iff() {
     real.register("rent", entry(handle(4), Some(150))).unwrap();
     // mirror the expiry in the Lean dir (register has no expiry param; set it directly).
     lean.register(8, 4, 0);
-    lean.entries.iter_mut().find(|(n, _)| *n == 8).unwrap().1.expires_at = Some(150);
+    lean.entries
+        .iter_mut()
+        .find(|(n, _)| *n == 8)
+        .unwrap()
+        .1
+        .expires_at = Some(150);
     for h in [0u64, 150, 151, 200] {
-        assert_eq!(real_resolves(&real, "rent", h), lean.resolves(8, h), "expiry resolve agrees @ {h}");
+        assert_eq!(
+            real_resolves(&real, "rent", h),
+            lean.resolves(8, h),
+            "expiry resolve agrees @ {h}"
+        );
     }
-    assert!(real_resolves(&real, "rent", 150), "at boundary: still resolves");
-    assert!(!real_resolves(&real, "rent", 200), "past expiry: not resolved");
+    assert!(
+        real_resolves(&real, "rent", 150),
+        "at boundary: still resolves"
+    );
+    assert!(
+        !real_resolves(&real, "rent", 200),
+        "past expiry: not resolved"
+    );
 }
 
 // ═══════════════════════ Differential 3: revoke_is_final + revoke_version_monotone + tombstone-lock ═══════════════════════
@@ -248,10 +297,16 @@ fn diff_revoke_is_final_and_monotone() {
 
     // revoke_is_final: never resolves again at ANY height (the monotone unbind tombstone).
     for h in [0u64, 100, u64::MAX] {
-        assert!(!real_resolves(&real, "bob", h), "real: revoked never resolves @ {h}");
+        assert!(
+            !real_resolves(&real, "bob", h),
+            "real: revoked never resolves @ {h}"
+        );
         assert!(!lean.resolves(11, h), "lean: revoked never resolves @ {h}");
     }
-    assert!(matches!(real.lookup("bob", 100), Err(DirectoryError::Revoked(_))), "real: Revoked error");
+    assert!(
+        matches!(real.lookup("bob", 100), Err(DirectoryError::Revoked(_))),
+        "real: Revoked error"
+    );
 
     // revoke is idempotent: a second revoke is a no-op (version stable).
     let before = real.version();
@@ -259,14 +314,25 @@ fn diff_revoke_is_final_and_monotone() {
     let lv = lean.revoke(11);
     assert_eq!(rv, before, "real: idempotent revoke, version unchanged");
     assert_eq!(lv, LeanRev::Ok(before));
-    assert_eq!(real.version(), before, "real: double-revoke did NOT bump version");
+    assert_eq!(
+        real.version(),
+        before,
+        "real: double-revoke did NOT bump version"
+    );
     assert_eq!(lean.version, before);
 
     // revoke_then_register_conflicts: a revoked name cannot be re-bound by a plain register.
     let re = real.register("bob", entry(handle(5), None)).unwrap_err();
     let le = lean.register(11, 5, 0);
-    assert!(matches!(re, DirectoryError::AlreadyRegistered(_)), "real: tombstone conflict-locks rebind");
-    assert_eq!(le, LeanReg::Conflict, "lean agrees: tombstone conflict-locks rebind");
+    assert!(
+        matches!(re, DirectoryError::AlreadyRegistered(_)),
+        "real: tombstone conflict-locks rebind"
+    );
+    assert_eq!(
+        le,
+        LeanReg::Conflict,
+        "lean agrees: tombstone conflict-locks rebind"
+    );
 
     // revoking an absent name → NotFound, both.
     let re = real.revoke("nope").unwrap_err();
@@ -293,7 +359,11 @@ fn diff_op_sequence_grid_agrees() {
         let rv = real.register(rn, entry(handle(i as u8 + 1), None)).unwrap();
         let lv = lean.register(*ln, i as u64 + 1, 0);
         assert_eq!(LeanReg::Ok(rv), lv, "bind {rn} agrees");
-        assert_eq!(real.version(), lean.version, "version agrees after binding {rn}");
+        assert_eq!(
+            real.version(),
+            lean.version,
+            "version agrees after binding {rn}"
+        );
     }
 
     // revoke the middle one.
@@ -397,7 +467,10 @@ fn table_b() -> dregg_dfa::router::RouteTable {
 fn diff_governance_commit_swap_binding() {
     let mut real = DfaRoutedDirectory::new(table_a());
     let active0 = id_u64(real.active_table_id());
-    let mut lean = LeanGovDir { active_id: active0, pending: None };
+    let mut lean = LeanGovDir {
+        active_id: active0,
+        pending: None,
+    };
 
     // commit with nothing staged → NoPending, both, no mutation.
     let before = real.active_table_id();
@@ -405,15 +478,26 @@ fn diff_governance_commit_swap_binding() {
     assert_eq!(le, LeanSwap::NoPending, "lean: no pending");
     let re = real.commit_swap(RouteTableId([0xAB; 32]));
     assert!(re.is_err(), "real: commit with nothing staged is rejected");
-    assert_eq!(real.active_table_id(), before, "real: active unchanged when no pending");
+    assert_eq!(
+        real.active_table_id(),
+        before,
+        "real: active unchanged when no pending"
+    );
 
     // propose stages table_b without changing the active table (propose_preserves_active).
     let staged = real.propose_swap(table_b());
     let staged_u = id_u64(staged);
     lean.propose(staged_u);
     assert!(real.has_pending_swap(), "real: pending staged");
-    assert_eq!(id_u64(real.active_table_id()), active0, "real: active unchanged after propose");
-    assert_eq!(lean.active_id, active0, "lean: active unchanged after propose");
+    assert_eq!(
+        id_u64(real.active_table_id()),
+        active0,
+        "real: active unchanged after propose"
+    );
+    assert_eq!(
+        lean.active_id, active0,
+        "lean: active unchanged after propose"
+    );
     assert_eq!(lean.pending, Some(staged_u));
 
     // WRONG commitment → mismatch, active + pending BOTH preserved (commit_swap_mismatch_preserves_active).
@@ -425,17 +509,44 @@ fn diff_governance_commit_swap_binding() {
     assert_eq!(le, LeanSwap::Mismatch, "lean: wrong commitment rejected");
     let re = real.commit_swap(bad);
     assert!(re.is_err(), "real: wrong governance commitment rejected");
-    assert_eq!(id_u64(real.active_table_id()), active0, "real: mismatch did NOT change active");
-    assert!(real.has_pending_swap(), "real: mismatch preserved the pending proposal");
+    assert_eq!(
+        id_u64(real.active_table_id()),
+        active0,
+        "real: mismatch did NOT change active"
+    );
+    assert!(
+        real.has_pending_swap(),
+        "real: mismatch preserved the pending proposal"
+    );
 
     // RIGHT commitment → committed, active becomes the staged table, pending cleared
     // (commit_swap_match_activates + commit_swap_requires_matching_commitment).
     let le = lean.commit_swap(staged_u);
-    assert_eq!(le, LeanSwap::Committed(staged_u), "lean: matching commitment commits");
-    let committed = real.commit_swap(staged).expect("real: matching governance commitment commits");
-    assert_eq!(id_u64(committed), staged_u, "real ⟺ lean: committed id agrees");
-    assert_eq!(id_u64(real.active_table_id()), staged_u, "real: active is now the staged table");
-    assert_eq!(lean.active_id, staged_u, "lean: active is now the staged table");
-    assert!(!real.has_pending_swap(), "real: pending cleared after commit");
+    assert_eq!(
+        le,
+        LeanSwap::Committed(staged_u),
+        "lean: matching commitment commits"
+    );
+    let committed = real
+        .commit_swap(staged)
+        .expect("real: matching governance commitment commits");
+    assert_eq!(
+        id_u64(committed),
+        staged_u,
+        "real ⟺ lean: committed id agrees"
+    );
+    assert_eq!(
+        id_u64(real.active_table_id()),
+        staged_u,
+        "real: active is now the staged table"
+    );
+    assert_eq!(
+        lean.active_id, staged_u,
+        "lean: active is now the staged table"
+    );
+    assert!(
+        !real.has_pending_swap(),
+        "real: pending cleared after commit"
+    );
     assert_eq!(lean.pending, None, "lean: pending cleared after commit");
 }

@@ -130,9 +130,18 @@ mod tests {
     /// On a fallback build (or with the gate off), the authoritative decision is just the Rust one.
     #[test]
     fn falls_back_to_rust_when_no_wire() {
-        assert_eq!(authoritative_decision(Decision::Commit, None), Decision::Commit);
-        assert_eq!(authoritative_decision(Decision::Abort, None), Decision::Abort);
-        assert_eq!(authoritative_decision(Decision::Pending, None), Decision::Pending);
+        assert_eq!(
+            authoritative_decision(Decision::Commit, None),
+            Decision::Commit
+        );
+        assert_eq!(
+            authoritative_decision(Decision::Abort, None),
+            Decision::Abort
+        );
+        assert_eq!(
+            authoritative_decision(Decision::Pending, None),
+            Decision::Pending
+        );
     }
 
     /// THE LIVE 2PC GATE DIFFERENTIAL — when the Lean export is linked, the authoritative verdict for

@@ -14,7 +14,6 @@ use dregg_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions
 use dregg_cell::{ValueCommitment, ValueCommitmentBytes};
 use serde::{Deserialize, Serialize};
 
-
 /// How much of the turn an action's signer commits to.
 ///
 /// This controls what goes into the signing message:
@@ -1373,12 +1372,7 @@ impl Effect {
         match self {
             // -- Conservative: paired-delta resource moves. --
             Effect::Transfer { .. } => LinearityClass::Conservative,
-            
-            
-            
-            
-            
-            
+
             // Notes spent-and-created together must conserve value; the
             // executor's conservation checker enforces this across
             // sibling spend/create pairs in the same turn.
@@ -1386,36 +1380,28 @@ impl Effect {
             Effect::NoteCreate { .. } => LinearityClass::Conservative,
             // Obligation creation locks stake; fulfillment returns it;
             // slash transfers it. Each is a conservative move.
-            
-            
-            
+
             // Queue enqueue/dequeue pair: the message moves; the
             // deposit moves with it (paid on enqueue, refunded on
             // dequeue).
-            
-            
+
             // Atomic queue transactions and pipeline steps batch
             // conservative moves; the executor enforces all-or-nothing.
-            
-            
+
             // Bridge phases form a cross-federation conservative
             // schedule: lock+finalize is the dual of mint on the other
             // side; cancel is a roll-back; lock-without-finalize is
             // value-locking, not value-creation.
-            
-            
-            
 
             // -- Monotonic: scalar counters / refcounts going up. --
             Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
             // ExportSturdyRef bumps the cell's export counter
             // (state.fields[7]); EnlivenRef bumps the entry's use-count
             // (state.fields[6]).
-            
-            
+
             // ValidateHandoff consumes a one-shot leaf — monotonic
             // because the leaf-consumed counter only grows.
-            
+
             // Refusals bump the cell's nonce and append to the
             // refusal-log slot; both monotonic.
             Effect::Refusal { .. } => LinearityClass::Monotonic,
@@ -1425,7 +1411,7 @@ impl Effect {
             Effect::RevokeDelegation { .. } => LinearityClass::Terminal,
             // DropRef decrements a refcount; once dropped, the bearer
             // cannot "un-drop" (a new export creates a fresh ref).
-            
+
             // Cell destroy is the canonical terminal — once Destroyed
             // the cell cannot transition to any other state
             // (CellLifecycle::is_terminal).
@@ -1459,14 +1445,11 @@ impl Effect {
             Effect::CreateCell { .. } => LinearityClass::Generative,
             Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
             Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
-            
-            
+
             // CreateSealPair and Seal generate fresh sealer/unsealer
             // capability handles; the unsealing path is the dual but
             // the creation is generative.
-            
-            
-            
+
             // Grant and Introduce mint new capability slots in the
             // recipient's c-list; from the receiving cell's POV
             // these are generative.
@@ -1646,9 +1629,7 @@ impl Effect {
                     }
                 }
             }
-            
-            
-            
+
             Effect::BridgeMint { portable_proof } => {
                 hasher.update(&[21u8]);
                 hasher.update(&portable_proof.nullifier);
@@ -1658,9 +1639,7 @@ impl Effect {
                 hasher.update(&portable_proof.source_root.merkle_root);
                 hasher.update(&portable_proof.source_root.height.to_le_bytes());
             }
-            
-            
-            
+
             Effect::Introduce {
                 introducer,
                 recipient,
@@ -1699,15 +1678,7 @@ impl Effect {
                 hasher.update(&target.output_slot.to_le_bytes());
                 hasher.update(&action.hash());
             }
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::SpawnWithDelegation {
                 child_public_key,
                 child_token_id,
@@ -1788,17 +1759,8 @@ impl Effect {
                 }
                 hasher.update(&params.owner_pubkey);
             }
-            
-            
-            
-            
-            
-            
+
             // ── CapTP runtime effects (Stage 7 / P1.A) ────────────────────
-            
-            
-            
-            
             Effect::CellSeal { target, reason } => {
                 hasher.update(&[48u8]);
                 hasher.update(target.as_bytes());
@@ -1949,29 +1911,18 @@ impl Effect {
                     + value_commitment.map_or(0, |_| 32)
                     + range_proof.as_ref().map_or(0, |rp| rp.len()) // commitment + value + asset_type + ciphertext + opt vc + opt rp
             }
-            
-            
-            
+
             Effect::BridgeMint { portable_proof } => {
                 32 + 32 + 8 + 8 + portable_proof.spending_proof.len() // nullifier + commitment + value + asset + proof
             }
-            
-            
-             // nullifier
+
+            // nullifier
             Effect::PipelinedSend { .. } => 32 + 4 + 32,
             Effect::Introduce { .. } => 97,
             Effect::SpawnWithDelegation { .. } => 32 + 32 + 8,
             Effect::RefreshDelegation => 0,
             Effect::RevokeDelegation { .. } => 32,
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 4 + inner_effects.iter().map(|e| e.data_bytes()).sum::<usize>()
             }
@@ -1985,17 +1936,16 @@ impl Effect {
                     + params.initial_caps.len() * 34
                     + 32
             }
-            
-             // queue + message_hash + deposit
-                      // queue
-                   // queue + new_capacity
-            
-            
+
+            // queue + message_hash + deposit
+            // queue
+            // queue + new_capacity
+
             // CapTP runtime effects: small fixed-size blobs.
-             // swiss + target + perms (1 byte + opt 32-byte vk_hash for Custom)
-             // swiss + bearer + expected_cell_id + perms
-                               // ref_id
-             // cert_hash + recipient_pk + introducer_pk
+            // swiss + target + perms (1 byte + opt 32-byte vk_hash for Custom)
+            // swiss + bearer + expected_cell_id + perms
+            // ref_id
+            // cert_hash + recipient_pk + introducer_pk
             // Refusal: cell + commitment + reason-discriminant (+ opt 32-byte
             // custom reason hash) + u32 witness index.
             Effect::Refusal { refusal_reason, .. } => {
@@ -2047,8 +1997,7 @@ impl Effect {
             Effect::SetVerificationKey { .. } => dregg_cell::EFFECT_SET_VERIFICATION_KEY,
             Effect::NoteSpend { .. } => dregg_cell::EFFECT_NOTE_SPEND,
             Effect::NoteCreate { .. } => dregg_cell::EFFECT_NOTE_CREATE,
-            
-            
+
             Effect::Introduce { .. } | Effect::PipelinedSend { .. } => dregg_cell::EFFECT_INTRODUCE,
             Effect::BridgeMint { .. } => dregg_cell::EFFECT_BRIDGE_OPS,
             Effect::SpawnWithDelegation { .. }
@@ -2057,8 +2006,7 @@ impl Effect {
             Effect::ExerciseViaCapability { .. } => dregg_cell::EFFECT_ALL,
             Effect::MakeSovereign { .. } => dregg_cell::EFFECT_SOVEREIGN_OPS,
             Effect::CreateCellFromFactory { .. } => dregg_cell::EFFECT_CREATE_CELL,
-            
-            
+
             Effect::Refusal { .. } => dregg_cell::EFFECT_REFUSAL,
             Effect::CellSeal { .. }
             | Effect::CellUnseal { .. }

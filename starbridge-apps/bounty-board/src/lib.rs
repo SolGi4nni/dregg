@@ -411,9 +411,9 @@ mod tests {
             SUBMISSION_HASH_SLOT,
         ] {
             assert!(
-                d.state_constraints
-                    .iter()
-                    .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)),
+                d.state_constraints.iter().any(
+                    |c| matches!(c, StateConstraint::WriteOnce { index } if *index == idx as u8)
+                ),
                 "expected WriteOnce on slot {idx}"
             );
         }
@@ -431,10 +431,7 @@ mod tests {
     fn child_program_vk_is_canonical_recipe() {
         let expected = canonical_program_vk(&bounty_cell_program());
         assert_eq!(bounty_child_program_vk(), expected);
-        assert_eq!(
-            bounty_factory_descriptor().child_program_vk,
-            Some(expected)
-        );
+        assert_eq!(bounty_factory_descriptor().child_program_vk, Some(expected));
     }
 
     // ── Slot-caveat evaluation (executor-side regression) ────────────────
@@ -648,8 +645,11 @@ mod tests {
         });
 
         // Post → Claim → Submit → Payout: the legal lifecycle is accepted.
-        exec.submit_action(&cclerk, build_post_action(&cclerk, bounty, "fix the bug", 500))
-            .expect("post commits");
+        exec.submit_action(
+            &cclerk,
+            build_post_action(&cclerk, bounty, "fix the bug", 500),
+        )
+        .expect("post commits");
         exec.submit_action(&cclerk, build_claim_action(&cclerk, bounty, "bob"))
             .expect("claim commits");
 

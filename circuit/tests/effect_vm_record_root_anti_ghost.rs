@@ -88,14 +88,24 @@ fn record_descriptor_binds_fields_root_and_rejects_map_tamper() {
     // A single honest transfer turn — the record descriptor shares transfer's per-row gates,
     // so a transfer trace is its honest base witness.
     let st = CellState::new(100_000, 0);
-    let effects = vec![Effect::Transfer { amount: 50, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 50,
+        direction: 1,
+    }];
     let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
-    assert_eq!(base_trace[0].len(), 186, "canonical 186-col layout (width-neutral)");
+    assert_eq!(
+        base_trace[0].len(),
+        186,
+        "canonical 186-col layout (width-neutral)"
+    );
 
     let json = descriptor_for_name("dregg-effectvm-record-v1")
         .expect("record descriptor must be registered");
     let desc = parse_vm_descriptor(json).expect("record descriptor must parse");
-    assert_eq!(desc.trace_width, 186, "record descriptor is width-neutral (186)");
+    assert_eq!(
+        desc.trace_width, 186,
+        "record descriptor is width-neutral (186)"
+    );
     let dpis = &pis[..desc.public_input_count];
     let last = base_trace.len() - 1;
 

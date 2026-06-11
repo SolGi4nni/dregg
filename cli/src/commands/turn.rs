@@ -456,14 +456,18 @@ fn build_one_effect(kind: &str) -> Result<serde_json::Value, Box<dyn std::error:
     use serde_json::json;
     let eff = match kind {
         "transfer" => {
-            let to: String = Input::new().with_prompt("Recipient cell id").interact_text()?;
+            let to: String = Input::new()
+                .with_prompt("Recipient cell id")
+                .interact_text()?;
             let amount: u64 = Input::new()
                 .with_prompt("Amount (computrons)")
                 .interact_text()?;
             json!({ "kind": "transfer", "to": to, "amount": amount })
         }
         "set_field" => {
-            let index: usize = Input::new().with_prompt("State slot index").interact_text()?;
+            let index: usize = Input::new()
+                .with_prompt("State slot index")
+                .interact_text()?;
             let value: String = Input::new()
                 .with_prompt("Value (decimal / 0x-hex / 64-char field element)")
                 .interact_text()?;

@@ -22,16 +22,12 @@ impl TurnExecutor {
             Effect::NoteCreate { .. } => self.costs.effect_base,
             Effect::BridgeMint { .. } => self.costs.proof_verify, // bridge mints verify a STARK proof
             Effect::PipelinedSend { .. } => self.costs.effect_base,
-            
-            
-            
+
             Effect::Introduce { .. } => self.costs.effect_base,
             Effect::SpawnWithDelegation { .. } => self.costs.create_cell,
             Effect::RefreshDelegation => self.costs.effect_base,
             Effect::RevokeDelegation { .. } => self.costs.effect_base,
-            
-            
-            
+
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 // Base cost + cost of each inner effect
                 inner_effects
@@ -39,15 +35,14 @@ impl TurnExecutor {
                     .map(|e| self.compute_effect_cost(e))
                     .sum::<u64>()
             }
-            
-            
+
             Effect::MakeSovereign { .. } => self.costs.effect_base,
             Effect::CreateCellFromFactory { .. } => self.costs.create_cell,
-            
+
             // CapTP runtime effects (P1.A): each is a simple state bump
             // (counter / use_count / refcount) plus a federation-mirror
             // hook on commit; cost is one effect_base.
-            
+
             // Refusal: a non-action attestation. Cost is effect_base plus
             // proof-verify (the carried non-action witness goes through
             // the witnessed-predicate registry).
@@ -580,8 +575,7 @@ impl TurnExecutor {
                 | JournalEntry::NoteCreate { .. }
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
-                | JournalEntry::NoteNullifierInserted { .. }
-                 => {}
+                | JournalEntry::NoteNullifierInserted { .. } => {}
                 // Lifecycle / capability narrowing: rollback-only — no
                 // separate LedgerDelta field today. On commit the cell's
                 // CellLifecycle / CapabilityRef change is read off the
@@ -951,7 +945,7 @@ impl TurnExecutor {
                     });
                     *slot_counter += 1;
                 }
-                
+
                 _ => {}
             }
         }

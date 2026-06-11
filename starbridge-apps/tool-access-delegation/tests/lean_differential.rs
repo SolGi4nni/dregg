@@ -10,7 +10,7 @@
 //! so the formal `tool_invocation_commit_iff_admit` / `tool_invocation_*_rejected` guarantees actually
 //! describe what the deployed app enforces.
 
-use starbridge_tool_access_delegation::{admit_table, deleg_admit, deleg_corpus, Grant};
+use starbridge_tool_access_delegation::{Grant, admit_table, deleg_admit, deleg_corpus};
 
 /// The Lean `demoGrant`: tool 77, rate 3, deadline 100.
 const DEMO: Grant = Grant {
@@ -70,9 +70,19 @@ fn scope_tooth_bites() {
 fn corpus_is_non_vacuous() {
     // The corpus contains BOTH true and false (it is neither all-admit nor all-reject).
     let c = deleg_corpus(&DEMO, 50, 77);
-    assert!(c.iter().any(|&b| b), "corpus has no admitted cell (vacuous-reject)");
-    assert!(c.iter().any(|&b| !b), "corpus has no rejected cell (vacuous-admit)");
-    assert_eq!(c.iter().filter(|&&b| b).count(), 3, "exactly 3 legal advances");
+    assert!(
+        c.iter().any(|&b| b),
+        "corpus has no admitted cell (vacuous-reject)"
+    );
+    assert!(
+        c.iter().any(|&b| !b),
+        "corpus has no rejected cell (vacuous-admit)"
+    );
+    assert_eq!(
+        c.iter().filter(|&&b| b).count(),
+        3,
+        "exactly 3 legal advances"
+    );
 }
 
 /// Sweep a range of grants and confirm the Rust admission is exactly the folded policy on every cell —

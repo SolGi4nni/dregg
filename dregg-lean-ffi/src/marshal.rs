@@ -71,11 +71,17 @@ impl std::fmt::Display for MarshalError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MarshalError::NonNatField { field } => {
-                write!(f, "wire-Nat field `{field}` was negative (grammar needs Nat)")
+                write!(
+                    f,
+                    "wire-Nat field `{field}` was negative (grammar needs Nat)"
+                )
             }
             MarshalError::AuthTagOutOfRange(t) => write!(f, "AUTHS tag {t} > 6 (Auth is 0..6)"),
             MarshalError::MissingEnvelopeField { field } => {
-                write!(f, "Turn envelope field `{field}` required by wire grammar is absent")
+                write!(
+                    f,
+                    "Turn envelope field `{field}` required by wire grammar is absent"
+                )
             }
         }
     }
@@ -286,24 +292,45 @@ pub enum WireAuth {
     /// {"pf":["H64",P,N,N]} — proof(vk, proofBytes, boundAction, boundResource).
     /// NOTE: `bound_action`/`bound_resource` are Nat here; the dregg1 `Authorization::Proof`
     /// carries them as Strings — `String -> Nat` is LOSSY/irreversible (GAP, see module doc).
-    Proof { vk: Digest, proof: u64, bound_action: u64, bound_resource: u64 },
+    Proof {
+        vk: Digest,
+        proof: u64,
+        bound_action: u64,
+        bound_resource: u64,
+    },
     /// {"bread":[N]} — breadstuff(token).
     Breadstuff { token: u64 },
     /// {"bearer":["H64",P,B]} — bearer(delegMsg, delegSig, starkDelegation).
     /// GAP: the full `BearerCapProof` collapses to (delegMsg, delegSig, starkBool); the
     /// SignedDelegation|StarkDelegation distinction is the ONLY bit that survives.
-    Bearer { deleg_msg: Digest, deleg_sig: u64, stark: bool },
+    Bearer {
+        deleg_msg: Digest,
+        deleg_sig: u64,
+        stark: bool,
+    },
     /// {"unchecked":0} — TAG-ONLY literal.
     Unchecked,
     /// {"captp":["H64","H64",P,P]} — capTpDelivered(introMsg, senderMsg, introSig, senderSig).
-    CapTpDelivered { intro_msg: Digest, sender_msg: Digest, intro_sig: u64, sender_sig: u64 },
+    CapTpDelivered {
+        intro_msg: Digest,
+        sender_msg: Digest,
+        intro_sig: u64,
+        sender_sig: u64,
+    },
     /// {"custom":["H64",P]} — custom(kindStmt, proofBytes). `kind_stmt` is a full 256-bit digest
     /// (the witnessed-predicate commitment — the credential WHO-leg the gate reads).
     Custom { kind_stmt: Digest, proof: u64 },
     /// {"oneof":[[AUTH(,AUTH)*],N]} — oneOf(candidates, proofIndex). RECURSES.
-    OneOf { candidates: Vec<WireAuth>, proof_index: u64 },
+    OneOf {
+        candidates: Vec<WireAuth>,
+        proof_index: u64,
+    },
     /// {"stealth":["H64","H64",P]} — stealth(oneTimePk, ephemeralPk, sig).
-    Stealth { one_time_pk: Digest, ephemeral_pk: Digest, sig: u64 },
+    Stealth {
+        one_time_pk: Digest,
+        ephemeral_pk: Digest,
+        sig: u64,
+    },
     /// {"token":["H64",P]} — token(issuerKey, sig). `issuer_key` is a full 256-bit digest
     /// (the biscuit issuer pubkey / macaroon root anchor the gate authenticates).
     /// GAP: the dregg1 `Token` `encoded`/`discharges` blobs are DROPPED (the issuer key + sig
@@ -320,7 +347,10 @@ pub fn auth_biscuit_issuer(issuer_key: Digest) -> WireAuth {
 /// Map dregg1 `CellScopedMacaroon` to the wire `custom` arm (the cell-scoped root anchor
 /// crosses as the `kind_stmt` digest; the encoded caveat-blob is dropped at the seam).
 pub fn auth_cell_macaroon(cell: Digest) -> WireAuth {
-    WireAuth::Custom { kind_stmt: cell, proof: 0 }
+    WireAuth::Custom {
+        kind_stmt: cell,
+        proof: 0,
+    }
 }
 
 // ===================================================================
@@ -346,35 +376,86 @@ pub struct WireCaveat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WireAction {
     /// {"bal":[actor,src,dst,amt,asset]}  (amt SIGNED, asset LAST)
-    Balance { actor: u64, src: u64, dst: u64, amt: i128, asset: u64 },
+    Balance {
+        actor: u64,
+        src: u64,
+        dst: u64,
+        amt: i128,
+        asset: u64,
+    },
     /// {"del":[delegator,recipient,t]}
-    Delegate { delegator: u64, recipient: u64, t: u64 },
+    Delegate {
+        delegator: u64,
+        recipient: u64,
+        t: u64,
+    },
     /// {"rev":[holder,t]}
     Revoke { holder: u64, t: u64 },
     /// {"mint":[actor,cell,asset,amt]}
-    Mint { actor: u64, cell: u64, asset: u64, amt: i128 },
+    Mint {
+        actor: u64,
+        cell: u64,
+        asset: u64,
+        amt: i128,
+    },
     /// {"burn":[actor,cell,asset,amt]}
-    Burn { actor: u64, cell: u64, asset: u64, amt: i128 },
+    Burn {
+        actor: u64,
+        cell: u64,
+        asset: u64,
+        amt: i128,
+    },
     /// {"setfield":[actor,cell,"FIELD",v]}  (v SIGNED)
-    SetField { actor: u64, cell: u64, field: String, v: i128 },
+    SetField {
+        actor: u64,
+        cell: u64,
+        field: String,
+        v: i128,
+    },
     /// {"emit":[actor,cell,topic,data]}  (topic,data SIGNED)
-    Emit { actor: u64, cell: u64, topic: i128, data: i128 },
+    Emit {
+        actor: u64,
+        cell: u64,
+        topic: i128,
+        data: i128,
+    },
     /// {"incnonce":[actor,cell,newNonce]}  (newNonce SIGNED)
-    IncNonce { actor: u64, cell: u64, new_nonce: i128 },
+    IncNonce {
+        actor: u64,
+        cell: u64,
+        new_nonce: i128,
+    },
     /// {"setperms":[actor,cell,perms]}  (perms SIGNED)
     SetPerms { actor: u64, cell: u64, perms: i128 },
     /// {"setvk":[actor,cell,vk]}  (vk SIGNED)
     SetVk { actor: u64, cell: u64, vk: i128 },
     /// {"introduce":[introducer,recipient,target]}
-    Introduce { introducer: u64, recipient: u64, target: u64 },
+    Introduce {
+        introducer: u64,
+        recipient: u64,
+        target: u64,
+    },
     /// {"delatten":[delegator,recipient,target,AUTHS]}
-    DelegateAtten { delegator: u64, recipient: u64, target: u64, keep: Vec<Auth> },
+    DelegateAtten {
+        delegator: u64,
+        recipient: u64,
+        target: u64,
+        keep: Vec<Auth>,
+    },
     /// {"atten":[actor,idx,AUTHS]}
-    Attenuate { actor: u64, idx: u64, keep: Vec<Auth> },
+    Attenuate {
+        actor: u64,
+        idx: u64,
+        keep: Vec<Auth>,
+    },
     /// {"revdel":[holder,target]}
     RevokeDelegation { holder: u64, target: u64 },
     /// {"exercise":[actor,target,[inner;...]]}  (inner `;`-joined inside `[ ]`)
-    Exercise { actor: u64, target: u64, inner: Vec<WireAction> },
+    Exercise {
+        actor: u64,
+        target: u64,
+        inner: Vec<WireAction>,
+    },
     /// {"createcell":[actor,newCell]}
     CreateCell { actor: u64, new_cell: u64 },
     /// {"createcellfactory":[actor,newCell,vk]}
@@ -382,12 +463,21 @@ pub enum WireAction {
     /// {"spawn":[actor,child,target]}
     Spawn { actor: u64, child: u64, target: u64 },
     /// {"bmint":[actor,cell,asset,value]}  (value SIGNED)
-    BridgeMint { actor: u64, cell: u64, asset: u64, value: i128 },
+    BridgeMint {
+        actor: u64,
+        cell: u64,
+        asset: u64,
+        value: i128,
+    },
     /// {"nspend":[nf,actor,sp]} — `sp` is the §8 note-spending-proof witness flag (0/1; the Lean
     /// parser fail-closes on `sp ≤ 1` and `noteSpendChainA` REJECTS when `sp = 0`, the proved
     /// `noteSpendChainA_fails_without_proof` teeth). The marshaller sets `sp = 1` iff the dregg1
     /// effect carried a non-empty `spending_proof`.
-    NoteSpend { nf: u64, actor: u64, spend_proof: bool },
+    NoteSpend {
+        nf: u64,
+        actor: u64,
+        spend_proof: bool,
+    },
     /// {"ncreate":[cm,actor]}
     NoteCreate { cm: u64, actor: u64 },
     /// {"sov":[actor,cell]}
@@ -401,7 +491,11 @@ pub enum WireAction {
     /// {"cunseal":[actor,cell]}
     CellUnseal { actor: u64, cell: u64 },
     /// {"cdestroy":[actor,cell,ch]}
-    CellDestroy { actor: u64, cell: u64, cert_hash: u64 },
+    CellDestroy {
+        actor: u64,
+        cell: u64,
+        cert_hash: u64,
+    },
     /// {"rdel":[actor,child]}
     RefreshDelegation { actor: u64, child: u64 },
     /// {"psend":[actor]}
@@ -478,7 +572,13 @@ impl WireHostCtx {
     /// large budget) for round-trips/tests. The PRODUCTION node MUST override every field from
     /// its own state — the security of bug-1 is that these come from the node, not the wire.
     pub fn diag() -> Self {
-        WireHostCtx { now: 0, block_height: 0, frozen: vec![], stored_head: 0, budget: 1_000_000_000 }
+        WireHostCtx {
+            now: 0,
+            block_height: 0,
+            frozen: vec![],
+            stored_head: 0,
+            budget: 1_000_000_000,
+        }
     }
 }
 
@@ -708,7 +808,12 @@ fn encode_auth(a: &WireAuth, out: &mut String) {
             push_nat(out, *sig);
             out.push_str("]}");
         }
-        WireAuth::Proof { vk, proof, bound_action, bound_resource } => {
+        WireAuth::Proof {
+            vk,
+            proof,
+            bound_action,
+            bound_resource,
+        } => {
             out.push_str("{\"pf\":[");
             push_dig(out, vk);
             out.push(',');
@@ -724,7 +829,11 @@ fn encode_auth(a: &WireAuth, out: &mut String) {
             push_nat(out, *token);
             out.push_str("]}");
         }
-        WireAuth::Bearer { deleg_msg, deleg_sig, stark } => {
+        WireAuth::Bearer {
+            deleg_msg,
+            deleg_sig,
+            stark,
+        } => {
             out.push_str("{\"bearer\":[");
             push_dig(out, deleg_msg);
             out.push(',');
@@ -734,7 +843,12 @@ fn encode_auth(a: &WireAuth, out: &mut String) {
             out.push_str("]}");
         }
         WireAuth::Unchecked => out.push_str("{\"unchecked\":0}"),
-        WireAuth::CapTpDelivered { intro_msg, sender_msg, intro_sig, sender_sig } => {
+        WireAuth::CapTpDelivered {
+            intro_msg,
+            sender_msg,
+            intro_sig,
+            sender_sig,
+        } => {
             out.push_str("{\"captp\":[");
             push_dig(out, intro_msg);
             out.push(',');
@@ -752,7 +866,10 @@ fn encode_auth(a: &WireAuth, out: &mut String) {
             push_nat(out, *proof);
             out.push_str("]}");
         }
-        WireAuth::OneOf { candidates, proof_index } => {
+        WireAuth::OneOf {
+            candidates,
+            proof_index,
+        } => {
             out.push_str("{\"oneof\":[[");
             for (i, c) in candidates.iter().enumerate() {
                 if i > 0 {
@@ -764,7 +881,11 @@ fn encode_auth(a: &WireAuth, out: &mut String) {
             push_nat(out, *proof_index);
             out.push_str("]}");
         }
-        WireAuth::Stealth { one_time_pk, ephemeral_pk, sig } => {
+        WireAuth::Stealth {
+            one_time_pk,
+            ephemeral_pk,
+            sig,
+        } => {
             out.push_str("{\"stealth\":[");
             push_dig(out, one_time_pk);
             out.push(',');
@@ -837,7 +958,13 @@ fn encode_inner_actions(actions: &[WireAction], out: &mut String) {
 fn encode_action(a: &WireAction, out: &mut String) {
     // Helper macros emit `{"tag":[ ... ]}` with mixed Nat/Int/AUTHS/String args, comma-joined.
     match a {
-        WireAction::Balance { actor, src, dst, amt, asset } => {
+        WireAction::Balance {
+            actor,
+            src,
+            dst,
+            amt,
+            asset,
+        } => {
             out.push_str("{\"bal\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -850,7 +977,11 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *asset);
             out.push_str("]}");
         }
-        WireAction::Delegate { delegator, recipient, t } => {
+        WireAction::Delegate {
+            delegator,
+            recipient,
+            t,
+        } => {
             out.push_str("{\"del\":[");
             push_nat(out, *delegator);
             out.push(',');
@@ -866,7 +997,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *t);
             out.push_str("]}");
         }
-        WireAction::Mint { actor, cell, asset, amt } => {
+        WireAction::Mint {
+            actor,
+            cell,
+            asset,
+            amt,
+        } => {
             out.push_str("{\"mint\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -877,7 +1013,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *amt);
             out.push_str("]}");
         }
-        WireAction::Burn { actor, cell, asset, amt } => {
+        WireAction::Burn {
+            actor,
+            cell,
+            asset,
+            amt,
+        } => {
             out.push_str("{\"burn\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -888,7 +1029,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *amt);
             out.push_str("]}");
         }
-        WireAction::SetField { actor, cell, field, v } => {
+        WireAction::SetField {
+            actor,
+            cell,
+            field,
+            v,
+        } => {
             out.push_str("{\"setfield\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -899,7 +1045,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *v);
             out.push_str("]}");
         }
-        WireAction::Emit { actor, cell, topic, data } => {
+        WireAction::Emit {
+            actor,
+            cell,
+            topic,
+            data,
+        } => {
             out.push_str("{\"emit\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -910,7 +1061,11 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *data);
             out.push_str("]}");
         }
-        WireAction::IncNonce { actor, cell, new_nonce } => {
+        WireAction::IncNonce {
+            actor,
+            cell,
+            new_nonce,
+        } => {
             out.push_str("{\"incnonce\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -937,7 +1092,11 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *vk);
             out.push_str("]}");
         }
-        WireAction::Introduce { introducer, recipient, target } => {
+        WireAction::Introduce {
+            introducer,
+            recipient,
+            target,
+        } => {
             out.push_str("{\"introduce\":[");
             push_nat(out, *introducer);
             out.push(',');
@@ -946,7 +1105,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *target);
             out.push_str("]}");
         }
-        WireAction::DelegateAtten { delegator, recipient, target, keep } => {
+        WireAction::DelegateAtten {
+            delegator,
+            recipient,
+            target,
+            keep,
+        } => {
             out.push_str("{\"delatten\":[");
             push_nat(out, *delegator);
             out.push(',');
@@ -966,7 +1130,7 @@ fn encode_action(a: &WireAction, out: &mut String) {
             encode_auths(keep, out);
             out.push_str("]}");
         }
-        
+
         WireAction::RevokeDelegation { holder, target } => {
             out.push_str("{\"revdel\":[");
             push_nat(out, *holder);
@@ -974,8 +1138,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *target);
             out.push_str("]}");
         }
-        
-        WireAction::Exercise { actor, target, inner } => {
+
+        WireAction::Exercise {
+            actor,
+            target,
+            inner,
+        } => {
             out.push_str("{\"exercise\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -991,7 +1159,11 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *new_cell);
             out.push_str("]}");
         }
-        WireAction::CreateCellFromFactory { actor, new_cell, vk } => {
+        WireAction::CreateCellFromFactory {
+            actor,
+            new_cell,
+            vk,
+        } => {
             out.push_str("{\"createcellfactory\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -1000,7 +1172,11 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *vk);
             out.push_str("]}");
         }
-        WireAction::Spawn { actor, child, target } => {
+        WireAction::Spawn {
+            actor,
+            child,
+            target,
+        } => {
             out.push_str("{\"spawn\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -1009,7 +1185,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *target);
             out.push_str("]}");
         }
-        WireAction::BridgeMint { actor, cell, asset, value } => {
+        WireAction::BridgeMint {
+            actor,
+            cell,
+            asset,
+            value,
+        } => {
             out.push_str("{\"bmint\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -1020,13 +1201,12 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_int(out, *value);
             out.push_str("]}");
         }
-        
-        
-        
-        
-        
-        
-        WireAction::NoteSpend { nf, actor, spend_proof } => {
+
+        WireAction::NoteSpend {
+            nf,
+            actor,
+            spend_proof,
+        } => {
             out.push_str("{\"nspend\":[");
             push_nat(out, *nf);
             out.push(',');
@@ -1036,29 +1216,18 @@ fn encode_action(a: &WireAction, out: &mut String) {
             out.push_str("]}");
         }
         WireAction::NoteCreate { cm, actor } => emit_id_actor("ncreate", *cm, *actor, out),
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         WireAction::MakeSovereign { actor, cell } => emit_id_actor("sov", *actor, *cell, out),
         WireAction::Refusal { actor, cell } => emit_id_actor("refusal", *actor, *cell, out),
         WireAction::ReceiptArchive { actor, cell } => emit_id_actor("rarchive", *actor, *cell, out),
-        
-        
-        
-        
-        
-        
-        
-        
+
         WireAction::CellSeal { actor, cell } => emit_id_actor("cseal", *actor, *cell, out),
         WireAction::CellUnseal { actor, cell } => emit_id_actor("cunseal", *actor, *cell, out),
-        WireAction::CellDestroy { actor, cell, cert_hash } => {
+        WireAction::CellDestroy {
+            actor,
+            cell,
+            cert_hash,
+        } => {
             out.push_str("{\"cdestroy\":[");
             push_nat(out, *actor);
             out.push(',');
@@ -1067,9 +1236,10 @@ fn encode_action(a: &WireAction, out: &mut String) {
             push_nat(out, *cert_hash);
             out.push_str("]}");
         }
-        WireAction::RefreshDelegation { actor, child } => emit_id_actor("rdel", *actor, *child, out),
-        
-        
+        WireAction::RefreshDelegation { actor, child } => {
+            emit_id_actor("rdel", *actor, *child, out)
+        }
+
         WireAction::PipelinedSend { actor } => {
             out.push_str("{\"psend\":[");
             push_nat(out, *actor);
@@ -1308,30 +1478,88 @@ fn encode_cell_nats(entries: &[(u64, u64)], out: &mut String) {
 /// ONE representative per Lean `allActions` arm — the 29-arm demo set.
 pub fn all_action_arms_demo() -> Vec<WireAction> {
     vec![
-        WireAction::Balance { actor: 1, src: 2, dst: 3, amt: -4, asset: 5 },
-        WireAction::Delegate { delegator: 6, recipient: 7, t: 8 },
+        WireAction::Balance {
+            actor: 1,
+            src: 2,
+            dst: 3,
+            amt: -4,
+            asset: 5,
+        },
+        WireAction::Delegate {
+            delegator: 6,
+            recipient: 7,
+            t: 8,
+        },
         WireAction::Revoke { holder: 9, t: 10 },
-        WireAction::Mint { actor: 11, cell: 12, asset: 13, amt: -14 },
-        WireAction::Burn { actor: 15, cell: 16, asset: 17, amt: 18 },
-        WireAction::SetField { actor: 19, cell: 20, field: "balance".into(), v: -21 },
-        WireAction::Emit { actor: 22, cell: 23, topic: -24, data: 25 },
-        WireAction::IncNonce { actor: 26, cell: 27, new_nonce: -28 },
-        WireAction::SetPerms { actor: 29, cell: 30, perms: -31 },
-        WireAction::SetVk { actor: 32, cell: 33, vk: -34 },
-        WireAction::Introduce { introducer: 35, recipient: 36, target: 37 },
+        WireAction::Mint {
+            actor: 11,
+            cell: 12,
+            asset: 13,
+            amt: -14,
+        },
+        WireAction::Burn {
+            actor: 15,
+            cell: 16,
+            asset: 17,
+            amt: 18,
+        },
+        WireAction::SetField {
+            actor: 19,
+            cell: 20,
+            field: "balance".into(),
+            v: -21,
+        },
+        WireAction::Emit {
+            actor: 22,
+            cell: 23,
+            topic: -24,
+            data: 25,
+        },
+        WireAction::IncNonce {
+            actor: 26,
+            cell: 27,
+            new_nonce: -28,
+        },
+        WireAction::SetPerms {
+            actor: 29,
+            cell: 30,
+            perms: -31,
+        },
+        WireAction::SetVk {
+            actor: 32,
+            cell: 33,
+            vk: -34,
+        },
+        WireAction::Introduce {
+            introducer: 35,
+            recipient: 36,
+            target: 37,
+        },
         WireAction::DelegateAtten {
             delegator: 35,
             recipient: 36,
             target: 37,
             keep: vec![Auth::Read, Auth::Write],
         },
-        WireAction::Attenuate { actor: 38, idx: 39, keep: vec![Auth::Read, Auth::Write] },
-        WireAction::RevokeDelegation { holder: 42, target: 43 },
+        WireAction::Attenuate {
+            actor: 38,
+            idx: 39,
+            keep: vec![Auth::Read, Auth::Write],
+        },
+        WireAction::RevokeDelegation {
+            holder: 42,
+            target: 43,
+        },
         WireAction::Exercise {
             actor: 47,
             target: 48,
             inner: vec![
-                WireAction::Emit { actor: 200, cell: 201, topic: -202, data: 203 },
+                WireAction::Emit {
+                    actor: 200,
+                    cell: 201,
+                    topic: -202,
+                    data: 203,
+                },
                 WireAction::SetField {
                     actor: 204,
                     cell: 205,
@@ -1340,19 +1568,61 @@ pub fn all_action_arms_demo() -> Vec<WireAction> {
                 },
             ],
         },
-        WireAction::CreateCell { actor: 49, new_cell: 50 },
-        WireAction::CreateCellFromFactory { actor: 250, new_cell: 251, vk: -252 },
-        WireAction::Spawn { actor: 51, child: 52, target: 53 },
-        WireAction::BridgeMint { actor: 54, cell: 55, asset: 56, value: -57 },
-        WireAction::NoteSpend { nf: 74, actor: 75, spend_proof: true },
+        WireAction::CreateCell {
+            actor: 49,
+            new_cell: 50,
+        },
+        WireAction::CreateCellFromFactory {
+            actor: 250,
+            new_cell: 251,
+            vk: -252,
+        },
+        WireAction::Spawn {
+            actor: 51,
+            child: 52,
+            target: 53,
+        },
+        WireAction::BridgeMint {
+            actor: 54,
+            cell: 55,
+            asset: 56,
+            value: -57,
+        },
+        WireAction::NoteSpend {
+            nf: 74,
+            actor: 75,
+            spend_proof: true,
+        },
         WireAction::NoteCreate { cm: 76, actor: 77 },
-        WireAction::MakeSovereign { actor: 109, cell: 110 },
-        WireAction::Refusal { actor: 111, cell: 112 },
-        WireAction::ReceiptArchive { actor: 113, cell: 114 },
-        WireAction::CellSeal { actor: 149, cell: 150 },
-        WireAction::CellUnseal { actor: 151, cell: 152 },
-        WireAction::CellDestroy { actor: 153, cell: 154, cert_hash: 155 },
-        WireAction::RefreshDelegation { actor: 156, child: 157 },
+        WireAction::MakeSovereign {
+            actor: 109,
+            cell: 110,
+        },
+        WireAction::Refusal {
+            actor: 111,
+            cell: 112,
+        },
+        WireAction::ReceiptArchive {
+            actor: 113,
+            cell: 114,
+        },
+        WireAction::CellSeal {
+            actor: 149,
+            cell: 150,
+        },
+        WireAction::CellUnseal {
+            actor: 151,
+            cell: 152,
+        },
+        WireAction::CellDestroy {
+            actor: 153,
+            cell: 154,
+            cert_hash: 155,
+        },
+        WireAction::RefreshDelegation {
+            actor: 156,
+            child: 157,
+        },
         WireAction::PipelinedSend { actor: 177 },
     ]
 }
@@ -1435,7 +1705,12 @@ pub fn unmarshal_result(s: &str) -> Result<TurnResult, UnmarshalError> {
     if !ok && state.is_empty_sentinel() {
         return Err(UnmarshalError::MalformedWireSentinel);
     }
-    Ok(TurnResult { committed: ok, state, loglen, status })
+    Ok(TurnResult {
+        committed: ok,
+        state,
+        loglen,
+        status,
+    })
 }
 
 // ---- the strict recursive-descent parser (mirrors FFI.lean lit/parseInt/parseNat) ----
@@ -1447,7 +1722,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(s: &'a str) -> Self {
-        Parser { s: s.as_bytes(), i: 0 }
+        Parser {
+            s: s.as_bytes(),
+            i: 0,
+        }
     }
     fn err(&self, why: String) -> UnmarshalError {
         UnmarshalError::OutputParse { at: self.i, why }
@@ -1485,7 +1763,8 @@ impl<'a> Parser<'a> {
             return Err("expected digits".into());
         }
         let txt = std::str::from_utf8(&self.s[start..self.i]).map_err(|e| e.to_string())?;
-        txt.parse::<i128>().map_err(|e| format!("bad int `{txt}`: {e}"))
+        txt.parse::<i128>()
+            .map_err(|e| format!("bad int `{txt}`: {e}"))
     }
     fn nat(&mut self) -> Result<u64, String> {
         let v = self.int()?;
@@ -1808,7 +2087,12 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
         p.lit(",")?;
         let buffer = parse_nats(p)?;
         p.lit("]")?;
-        Ok(WireQueue { id, owner, capacity, buffer })
+        Ok(WireQueue {
+            id,
+            owner,
+            capacity,
+            buffer,
+        })
     })
     .map_err(|e| map(e, p))?;
     // swiss
@@ -1835,7 +2119,14 @@ fn parse_wstate(p: &mut Parser) -> Result<WireState, UnmarshalError> {
             return Err("expected {\"none\":0} or {\"some\":N}".into());
         };
         p.lit("]")?;
-        Ok(WireSwiss { swiss, exporter, target, rights, refcount, cert })
+        Ok(WireSwiss {
+            swiss,
+            exporter,
+            target,
+            rights,
+            refcount,
+            cert,
+        })
     })
     .map_err(|e| map(e, p))?;
     // revoked (the 9th field)

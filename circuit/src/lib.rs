@@ -161,15 +161,15 @@ pub mod poseidon2;
 #[allow(deprecated)]
 pub mod presentation;
 
-#[allow(deprecated)]
-pub mod committed_threshold;
-pub mod effect_vm;
 /// The canonical, openable capability-set commitment: a sorted Poseidon2 binary
 /// Merkle tree over a cell's c-list. The SINGLE source of truth for the
 /// `cap_root` value — `dregg-cell`'s `compute_canonical_capability_root` calls
 /// it, and the EffectVM circuit seeds its `cap_root` column from the same value
 /// (cap Phase A). Pure Poseidon2 (no plonky3): available in the `mock` build.
 pub mod cap_root;
+#[allow(deprecated)]
+pub mod committed_threshold;
+pub mod effect_vm;
 /// The Lean-emitted EffectVM descriptor registry: every verified-by-construction
 /// `EffectVmDescriptor` JSON, keyed by selector index, with an anti-drift
 /// fingerprint guard. Foundation for the EffectVM circuit cutover.
@@ -253,11 +253,11 @@ pub mod effect_vm_p3_full_air;
 pub mod membership_adjacency_air;
 
 pub mod backends;
+#[cfg(feature = "recursion")]
+pub mod ivc_turn_chain;
 pub mod joint_turn_aggregation;
 #[cfg(feature = "recursion")]
 pub mod joint_turn_recursive;
-#[cfg(feature = "recursion")]
-pub mod ivc_turn_chain;
 pub mod proof_forest;
 pub mod proof_tier;
 

@@ -190,11 +190,9 @@ pub fn check_descriptor_joint_preconditions(
         });
     }
     for (i, p) in participants.iter().enumerate() {
-        verify_descriptor_participant(p).map_err(|e| {
-            JointAggError::ParticipantProofInvalid {
-                index: i,
-                reason: e,
-            }
+        verify_descriptor_participant(p).map_err(|e| JointAggError::ParticipantProofInvalid {
+            index: i,
+            reason: e,
         })?;
     }
     let shared_tid = participants[0].shared_turn_id();
@@ -334,14 +332,27 @@ fn generate_joint_trace_unchecked(
     participants: &[JointParticipant],
     published_tid: BabyBear,
 ) -> (Vec<[BabyBear; 4]>, Vec<BabyBear>) {
-    let n = participants.len();
+    let pairs: Vec<(BabyBear, BabyBear)> = participants
+        .iter()
+        .map(|p| (p.shared_turn_id(), p.cell_commit()))
+        .collect();
+    generate_joint_trace_pairs_unchecked(&pairs, published_tid)
+}
+
+/// The pair-level core of [`generate_joint_trace_unchecked`]: one row per
+/// `(shared_turn_id, cell_commit)` pair, shared by the legacy
+/// `JointParticipant` path and the descriptor-participant Gold path (both read
+/// the SAME PI projections; only the per-cell proof type differs).
+fn generate_joint_trace_pairs_unchecked(
+    pairs: &[(BabyBear, BabyBear)],
+    published_tid: BabyBear,
+) -> (Vec<[BabyBear; 4]>, Vec<BabyBear>) {
+    let n = pairs.len();
     let padded_len = n.next_power_of_two().max(2);
     let mut trace: Vec<[BabyBear; 4]> = Vec::with_capacity(padded_len);
     let mut accumulator = BabyBear::ZERO;
 
-    for (i, p) in participants.iter().enumerate() {
-        let tid = p.shared_turn_id();
-        let commit = p.cell_commit();
+    for (i, &(tid, commit)) in pairs.iter().enumerate() {
         let idx = BabyBear::new(i as u32);
         let acc_out = hash_4_to_1(&[accumulator, tid, commit, idx]);
         trace.push([tid, commit, accumulator, acc_out]);
@@ -442,6 +453,38 @@ pub fn recursion_binding_trace(
     Ok((trace_to_matrix(&trace), pis))
 }
 
+/// The descriptor-participant analogue of [`recursion_binding_trace`]: build
+/// the [`JointTurnAggregationAir`] binding trace + public inputs for the Gold
+/// recursive path's DESCRIPTOR-backed per-cell proofs. Same host-side CG-2
+/// rejection (a disagreeing turn id errors here), same trace recipe — the
+/// projections (`shared_turn_id`, `cell_commit`) are read from the same PI
+/// positions; only the per-cell proof type differs.
+pub fn recursion_binding_trace_descriptor(
+    participants: &[&DescriptorParticipant],
+) -> Result<(RowMajorMatrix<P3BabyBear>, Vec<BabyBear>), JointAggError> {
+    if participants.len() < 2 {
+        return Err(JointAggError::TooFewParticipants {
+            count: participants.len(),
+        });
+    }
+    let shared_tid = participants[0].shared_turn_id();
+    for (i, p) in participants.iter().enumerate() {
+        if p.shared_turn_id() != shared_tid {
+            return Err(JointAggError::SharedTurnIdMismatch {
+                index: i,
+                expected: shared_tid.0,
+                found: p.shared_turn_id().0,
+            });
+        }
+    }
+    let pairs: Vec<(BabyBear, BabyBear)> = participants
+        .iter()
+        .map(|p| (p.shared_turn_id(), p.cell_commit()))
+        .collect();
+    let (trace, pis) = generate_joint_trace_pairs_unchecked(&pairs, shared_tid);
+    Ok((trace_to_matrix(&trace), pis))
+}
+
 // ============================================================================
 // Errors
 // ============================================================================
@@ -486,6 +529,22 @@ pub enum JointAggError {
         /// The verification error.
         reason: String,
     },
+    /// **The VK pin refused the root** (Gold recursive path): the root proof's
+    /// verifier-key fingerprint does not match the caller's trust anchor — a
+    /// proof of a DIFFERENT circuit (the from-scratch-prover route).
+    VkFingerprintMismatch {
+        /// The anchor fingerprint the caller expected (hex).
+        expected: String,
+        /// The fingerprint the presented root actually has (hex).
+        found: String,
+    },
+    /// **The claimed joint publics are unattested** (Gold recursive path): the
+    /// carried `shared_turn_id`/`bundle_digest` failed to verify as the public
+    /// inputs of the carried binding proof — a relabeled public claim.
+    ClaimedPublicsUnattested {
+        /// The underlying verification error.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for JointAggError {
@@ -512,6 +571,16 @@ impl core::fmt::Display for JointAggError {
             JointAggError::AggregationProofInvalid { reason } => {
                 write!(f, "aggregation proof invalid: {reason}")
             }
+            JointAggError::VkFingerprintMismatch { expected, found } => write!(
+                f,
+                "joint root verifier-key fingerprint {found} != trust anchor {expected} \
+                 (a proof of a different circuit — refused)"
+            ),
+            JointAggError::ClaimedPublicsUnattested { reason } => write!(
+                f,
+                "claimed joint publics are not attested by the carried binding proof \
+                 (relabeled shared_turn_id/bundle_digest): {reason}"
+            ),
         }
     }
 }
@@ -690,9 +759,8 @@ pub mod recursive {
             .collect();
         let matrix = RowMajorMatrix::new(values, 4);
         let inner = prove_inner_for_air(&air, matrix, &pis);
-        verify_inner_for_air(&air, &inner, &pis).map_err(|e| {
-            JointAggError::AggregationProofInvalid { reason: e }
-        })?;
+        verify_inner_for_air(&air, &inner, &pis)
+            .map_err(|e| JointAggError::AggregationProofInvalid { reason: e })?;
 
         // ONE recursive layer verifying the aggregation in-circuit.
         let rec = prove_recursive_layer_for_air(&air, &inner, &pis)
@@ -743,8 +811,7 @@ pub mod recursive {
 
             let (rec, _pis) = prove_joint_turn_recursive(&participants)
                 .expect("agreeing 2-cell joint turn must prove recursively");
-            verify_joint_turn_recursive(&rec)
-                .expect("recursive joint-turn proof must verify");
+            verify_joint_turn_recursive(&rec).expect("recursive joint-turn proof must verify");
         }
 
         /// GOLD teeth: disagreeing turn ids are rejected before any recursive
@@ -757,7 +824,9 @@ pub mod recursive {
 
             let res = prove_joint_turn_recursive(&participants);
             match res {
-                Err(JointAggError::SharedTurnIdMismatch { found, expected, .. }) => {
+                Err(JointAggError::SharedTurnIdMismatch {
+                    found, expected, ..
+                }) => {
                     assert_eq!(expected, 0xABCD);
                     assert_eq!(found, 0x1234);
                 }
@@ -879,7 +948,11 @@ mod tests {
 
         // Unchecked trace: row 1 carries 0x1234 while we publish 0xABCD.
         let (trace, pis) = generate_joint_trace_unchecked(&participants, published);
-        assert_eq!(trace[1][0], BabyBear::new(0x1234), "row 1 carries the bad tid");
+        assert_eq!(
+            trace[1][0],
+            BabyBear::new(0x1234),
+            "row 1 carries the bad tid"
+        );
         assert_eq!(pis[0], published, "published tid is the agreed one");
 
         let config = create_config();
@@ -929,13 +1002,16 @@ mod tests {
     /// descriptor path exactly as on the bespoke path.
     #[test]
     fn descriptor_participants_cg2_binding_holds() {
-        use crate::effect_vm_descriptors::descriptor_for_selector;
         use crate::effect_vm::columns::sel;
+        use crate::effect_vm_descriptors::descriptor_for_selector;
         use crate::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
 
         let make = |balance: u64, nonce: u32, turn_id: u32| -> DescriptorParticipant {
             let state = CellState::new(balance, nonce);
-            let effects = vec![Effect::Transfer { amount: 5, direction: 1 }];
+            let effects = vec![Effect::Transfer {
+                amount: 5,
+                direction: 1,
+            }];
             let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
             public_inputs[pi::TURN_HASH_BASE] = BabyBear::new(turn_id);
             let json = descriptor_for_selector(sel::TRANSFER).unwrap();
@@ -943,7 +1019,10 @@ mod tests {
             let dpis = &public_inputs[..desc.public_input_count];
             let proof = prove_vm_descriptor(&desc, &trace, dpis)
                 .expect("descriptor proves the honest transfer participant");
-            DescriptorParticipant { proof, public_inputs }
+            DescriptorParticipant {
+                proof,
+                public_inputs,
+            }
         };
 
         let p0 = make(100, 0, 0xABCD);
@@ -960,7 +1039,11 @@ mod tests {
         let q0 = make(100, 0, 0xABCD);
         let q1 = make(200, 7, 0x1234);
         match check_descriptor_joint_preconditions(&[q0, q1]) {
-            Err(JointAggError::SharedTurnIdMismatch { index, expected, found }) => {
+            Err(JointAggError::SharedTurnIdMismatch {
+                index,
+                expected,
+                found,
+            }) => {
                 assert_eq!(index, 1);
                 assert_eq!(expected, 0xABCD);
                 assert_eq!(found, 0x1234);
@@ -974,7 +1057,10 @@ mod tests {
     fn single_participant_rejected() {
         let p0 = make_participant(100, 0, 0xABCD);
         let err = expect_rejected(prove_joint_turn(vec![p0]), "one cell is not a joint turn");
-        assert!(matches!(err, JointAggError::TooFewParticipants { count: 1 }));
+        assert!(matches!(
+            err,
+            JointAggError::TooFewParticipants { count: 1 }
+        ));
     }
 
     /// (4) POSITIVE: three agreeing cells aggregate (N-ary, not just binary).

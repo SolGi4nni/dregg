@@ -387,7 +387,11 @@ mod tests {
 
         for cell in &cells {
             assert_eq!(cell.owner_agent, "alice");
-            assert_eq!(cell.factory_vk_hex.len(), 64, "factory_vk_hex must be 32 bytes");
+            assert_eq!(
+                cell.factory_vk_hex.len(),
+                64,
+                "factory_vk_hex must be 32 bytes"
+            );
             assert!(
                 !cell.uri_hint.is_empty(),
                 "uri_hint must be set for {}",

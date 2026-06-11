@@ -77,7 +77,10 @@ fn failed_enliven_freezes_table() {
 
     // An adversary guesses a DIFFERENT swiss number and fails to enliven it.
     let guessed = [0x77u8; 32];
-    assert_ne!(guessed, legit, "test setup: guessed key must differ from the minted one");
+    assert_ne!(
+        guessed, legit,
+        "test setup: guessed key must differ from the minted one"
+    );
     let verdict = table.enliven(&guessed, 100);
     assert_eq!(verdict.err(), Some(EnlivenError::NotFound));
 
@@ -110,7 +113,10 @@ fn confinement_universal_over_distinct_adversaries() {
     // n > 1: two DISTINCT adversaries, two DISTINCT guesses, neither holding a minted secret.
     let adv_a_guess = [0x01u8; 32];
     let adv_b_guess = [0x02u8; 32];
-    assert_ne!(adv_a_guess, adv_b_guess, "test setup: distinct adversary guesses (n > 1)");
+    assert_ne!(
+        adv_a_guess, adv_b_guess,
+        "test setup: distinct adversary guesses (n > 1)"
+    );
 
     for (who, guess) in [("adversary A", adv_a_guess), ("adversary B", adv_b_guess)] {
         let verdict = table.enliven(&guess, 100);
@@ -140,8 +146,14 @@ fn minted_swiss_numbers_are_high_entropy() {
          (Lean SwissUnguessable) requires unpredictable, distinct secrets"
     );
     // And neither is the all-zero / trivially-guessable sentinel.
-    assert_ne!(a, [0u8; 32], "a minted swiss must not be the trivially-guessable zero secret");
-    assert_ne!(b, [0u8; 32], "a minted swiss must not be the trivially-guessable zero secret");
+    assert_ne!(
+        a, [0u8; 32],
+        "a minted swiss must not be the trivially-guessable zero secret"
+    );
+    assert_ne!(
+        b, [0u8; 32],
+        "a minted swiss must not be the trivially-guessable zero secret"
+    );
 }
 
 /// `enliven_minted_of_some` RUNTIME TOOTH (the accept-side / non-vacuity twin). A GENUINELY exported
@@ -156,7 +168,10 @@ fn minted_swiss_does_enliven() {
         .enliven(&legit, 100)
         .expect("a genuinely-minted swiss MUST enliven (Lean enliven_minted_of_some accept side)");
     assert_eq!(entry.cell_id, target_cell());
-    assert_eq!(entry.use_count, 1, "a successful enliven bumps the refcount (the Lean refcount bump)");
+    assert_eq!(
+        entry.use_count, 1,
+        "a successful enliven bumps the refcount (the Lean refcount bump)"
+    );
 }
 
 /// COMBINED CONFINEMENT WALK. Mint one, confirm a guessed neighbour is unreachable, confirm the
@@ -170,7 +185,10 @@ fn confinement_lifecycle_walk() {
     // Neighbour (guessed) — unreachable.
     let mut neighbour = legit;
     neighbour[0] ^= 0xFF;
-    assert_eq!(table.enliven(&neighbour, 100).err(), Some(EnlivenError::NotFound));
+    assert_eq!(
+        table.enliven(&neighbour, 100).err(),
+        Some(EnlivenError::NotFound)
+    );
 
     // Minted — reachable.
     assert!(table.enliven(&legit, 100).is_ok());

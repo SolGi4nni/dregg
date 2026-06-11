@@ -16,9 +16,9 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
-    canonical_program_vk, field_from_u64, hex_encode_32, symbol,
+    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, InspectorDescriptor,
+    StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, canonical_program_vk,
+    field_from_u64, hex_encode_32, symbol,
 };
 
 // Re-export the field primitives so differential tests (and downstream callers) can build the
@@ -242,11 +242,9 @@ pub fn sgm_cell_program() -> CellProgram {
             guard: TransitionGuard::MethodIs {
                 method: symbol("storage_op"),
             },
-            constraints: vec![
-                StateConstraint::Monotonic {
-                    index: VOLUME_SPENT_SLOT,
-                },
-            ],
+            constraints: vec![StateConstraint::Monotonic {
+                index: VOLUME_SPENT_SLOT,
+            }],
         },
     ])
 }

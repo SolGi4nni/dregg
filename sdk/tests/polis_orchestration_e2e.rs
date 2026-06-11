@@ -146,7 +146,10 @@ fn orchestrate_two_workers_slices_and_revocation() {
     // The slices are the funded balances, exactly.
     assert_eq!(balance_of(&runtime, worker_a.cell_id), 30);
     assert_eq!(balance_of(&runtime, worker_b.cell_id), 20);
-    assert_eq!(slot_of(&runtime, worker_a.cell_id, STATE_SLOT), field_from_u64(STATE_ACTIVE));
+    assert_eq!(
+        slot_of(&runtime, worker_a.cell_id, STATE_SLOT),
+        field_from_u64(STATE_ACTIVE)
+    );
 
     // Provenance: each worker cell is the content-addressed image of its
     // mandate — anyone can rederive the descriptor from the published terms.
@@ -154,7 +157,10 @@ fn orchestrate_two_workers_slices_and_revocation() {
         worker_a.descriptor.hash(),
         worker_factory_descriptor(&mandate_a).unwrap().hash()
     );
-    assert_ne!(worker_a.factory_vk, worker_b.factory_vk, "distinct mandates, distinct factories");
+    assert_ne!(
+        worker_a.factory_vk, worker_b.factory_vk,
+        "distinct mandates, distinct factories"
+    );
 
     // Worker A spends within its slice.
     let spend_a1 = runtime
@@ -184,8 +190,15 @@ fn orchestrate_two_workers_slices_and_revocation() {
             revoke_worker(worker_b.cell_id, Some((orchestrator, 15))),
         )
         .expect("revoke + recovery must commit");
-    assert_eq!(slot_of(&runtime, worker_b.cell_id, STATE_SLOT), field_from_u64(STATE_REVOKED));
-    assert_eq!(balance_of(&runtime, worker_b.cell_id), 0, "remainder recovered");
+    assert_eq!(
+        slot_of(&runtime, worker_b.cell_id, STATE_SLOT),
+        field_from_u64(STATE_REVOKED)
+    );
+    assert_eq!(
+        balance_of(&runtime, worker_b.cell_id),
+        0,
+        "remainder recovered"
+    );
 
     // The revoked worker is INERT: spends, re-activation, even funding it
     // again — all rejected by the EXECUTOR. (The drained balance stops the
@@ -285,11 +298,16 @@ fn worker_mandate_terms_pinned() {
 
     // Activating with terms that differ from the published literals is also
     // rejected (a lying activation cannot commit).
-    let mandate2 = WorkerMandate { worker_tag: field_from_u64(8), ..mandate.clone() };
+    let mandate2 = WorkerMandate {
+        worker_tag: field_from_u64(8),
+        ..mandate.clone()
+    };
     let plan2 = spawn_worker_mandate(&mandate2, agent_pubkey(&runtime), [0x44; 32], orchestrator)
         .expect("valid mandate");
     runtime.deploy_factory(plan2.descriptor.clone());
-    runtime.execute(plan2.create_effects.clone()).expect("create");
+    runtime
+        .execute(plan2.create_effects.clone())
+        .expect("create");
     runtime.execute(plan2.fund_effects.clone()).expect("fund");
     runtime
         .execute_as(plan2.cell_id, plan2.adopt_effects.clone(), ADOPT_TURN_FEE)
@@ -315,12 +333,28 @@ fn worker_mandate_build_fail_closed() {
         tool_scope: tool_scope_commitment(&["search"]),
         worker_tag: field_from_u64(1),
     };
-    assert!(spawn_worker_mandate(&zero_slice, agent_pubkey(&runtime), [0x45; 32], orchestrator).is_err());
+    assert!(
+        spawn_worker_mandate(
+            &zero_slice,
+            agent_pubkey(&runtime),
+            [0x45; 32],
+            orchestrator
+        )
+        .is_err()
+    );
     let zero_scope = WorkerMandate {
         orchestrator,
         slice: 10,
         tool_scope: [0u8; 32],
         worker_tag: field_from_u64(1),
     };
-    assert!(spawn_worker_mandate(&zero_scope, agent_pubkey(&runtime), [0x46; 32], orchestrator).is_err());
+    assert!(
+        spawn_worker_mandate(
+            &zero_scope,
+            agent_pubkey(&runtime),
+            [0x46; 32],
+            orchestrator
+        )
+        .is_err()
+    );
 }

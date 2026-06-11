@@ -237,7 +237,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(27));
                 hasher_inputs.extend_from_slice(vk_hash);
             }
-            
+
             Effect::RefreshDelegation => {
                 hasher_inputs.push(BabyBear::new(29));
             }
@@ -256,7 +256,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(32));
                 hasher_inputs.extend_from_slice(spawn_hash);
             }
-            
+
             Effect::ExerciseViaCapability { exercise_hash } => {
                 hasher_inputs.push(BabyBear::new(34));
                 hasher_inputs.extend_from_slice(exercise_hash);
@@ -269,9 +269,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(36));
                 hasher_inputs.extend_from_slice(send_hash);
             }
-            
-            
-            
+
             Effect::BridgeMint {
                 value_lo,
                 mint_hash,
@@ -283,11 +281,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 let limbs = u64_to_4_limbs_16(*value_full);
                 hasher_inputs.extend_from_slice(&limbs);
             }
-            
-            
-            
-            
-            
+
             Effect::NoteSpend { nullifier, value } => {
                 hasher_inputs.push(BabyBear::new(4));
                 hasher_inputs.push(*nullifier);
@@ -302,8 +296,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(lo);
                 hasher_inputs.push(hi);
             }
-            
-            
+
             Effect::Custom {
                 program_vk_hash,
                 proof_commitment,
@@ -312,9 +305,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.extend_from_slice(program_vk_hash);
                 hasher_inputs.extend_from_slice(proof_commitment);
             }
-            
-            
-            
+
             Effect::MakeSovereign => {
                 hasher_inputs.push(BabyBear::new(12));
             }
@@ -326,16 +317,7 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(*factory_vk);
                 hasher_inputs.push(*child_vk_derived);
             }
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             // ---- Near-miss aliasing closure (#100 follow-up) ----
             // Domain-tag bytes are reserved in the selector index space
             // (46, 47, 48 — matching `sel::BURN`, `sel::CELL_DESTROY`,

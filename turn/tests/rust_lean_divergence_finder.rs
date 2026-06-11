@@ -148,7 +148,11 @@ fn build_corpus() -> Vec<CorpusCase> {
         ($label:expr, $bal_a:expr, $bal_b:expr, |$a:ident, $b:ident| $effects:expr) => {{
             let (ledger, $a, $b) = two_cell_ledger($bal_a, $bal_b);
             let turn = corpus_turn($a, 0, $effects);
-            cases.push(CorpusCase { label: $label, turn, ledger });
+            cases.push(CorpusCase {
+                label: $label,
+                turn,
+                ledger,
+            });
         }};
     }
 
@@ -163,31 +167,44 @@ fn build_corpus() -> Vec<CorpusCase> {
         to: b,
         amount: 30,
     }]);
-    case!("Transfer/overspend", 10, 100, |a, b| vec![Effect::Transfer {
-        from: a,
-        to: b,
-        amount: 9999,
-    }]);
+    case!("Transfer/overspend", 10, 100, |a, b| vec![
+        Effect::Transfer {
+            from: a,
+            to: b,
+            amount: 9999,
+        }
+    ]);
     // Same shape as the FFI `marshal_roundtrip` overspend gate (bal 100, amount 1000) to
     // pin whether the divergence tracks the NUMBERS or the marshalled side-table shape.
-    case!("Transfer/overspend2", 100, 5, |a, b| vec![Effect::Transfer {
-        from: a,
-        to: b,
-        amount: 1000,
-    }]);
-    case!("SetPermissions", 100, 100, |a, _b| vec![Effect::SetPermissions {
-        cell: a,
-        new_permissions: open_permissions(),
-    }]);
-    case!("SetVerificationKey", 100, 100, |a, _b| vec![Effect::SetVerificationKey {
-        cell: a,
-        new_vk: None,
-    }]);
+    case!("Transfer/overspend2", 100, 5, |a, b| vec![
+        Effect::Transfer {
+            from: a,
+            to: b,
+            amount: 1000,
+        }
+    ]);
+    case!("SetPermissions", 100, 100, |a, _b| vec![
+        Effect::SetPermissions {
+            cell: a,
+            new_permissions: open_permissions(),
+        }
+    ]);
+    case!("SetVerificationKey", 100, 100, |a, _b| vec![
+        Effect::SetVerificationKey {
+            cell: a,
+            new_vk: None,
+        }
+    ]);
     case!("EmitEvent", 100, 100, |a, _b| vec![Effect::EmitEvent {
         cell: a,
-        event: Event { topic: [7u8; 32], data: vec![[1u8; 32]] },
+        event: Event {
+            topic: [7u8; 32],
+            data: vec![[1u8; 32]]
+        },
     }]);
-    case!("MakeSovereign", 100, 100, |a, _b| vec![Effect::MakeSovereign { cell: a }]);
+    case!("MakeSovereign", 100, 100, |a, _b| vec![
+        Effect::MakeSovereign { cell: a }
+    ]);
     case!("NoteCreate", 100, 100, |a, _b| vec![Effect::NoteCreate {
         commitment: dregg_cell::NoteCommitment([0xBB; 32]),
         value: 0,
@@ -212,19 +229,33 @@ fn build_corpus() -> Vec<CorpusCase> {
     }]);
     // Multi-effect, all-modelled: mint-like setfield + transfer in one action.
     case!("SetField+Transfer", 100, 100, |a, b| vec![
-        Effect::SetField { cell: a, index: 2, value: field_from_u64(1) },
-        Effect::Transfer { from: a, to: b, amount: 10 },
+        Effect::SetField {
+            cell: a,
+            index: 2,
+            value: field_from_u64(1)
+        },
+        Effect::Transfer {
+            from: a,
+            to: b,
+            amount: 10
+        },
     ]);
 
     // ---- Effects WITHOUT a Lean wire model yet (expected: GAP) ----
-    case!("IncrementNonce", 100, 100, |a, _b| vec![Effect::IncrementNonce { cell: a }]);
+    case!("IncrementNonce", 100, 100, |a, _b| vec![
+        Effect::IncrementNonce { cell: a }
+    ]);
     // Burn on an OWNED, OPEN, cap-LESS cell: apply.rs commits (ownership suffices), the verified
     // `.burnA` REJECTS. W1 (issuer-supply, DREGG3 §2.2): the verified burn is a RETURN-TO-WELL —
     // an ordinary move from the holder to the asset's ISSUER cell, gated on the issuer capability.
     // The Rust scalar burn (destroy balance, no destination) has NO conserving image, so the
     // verified executor refuses it. A characterised, SAFE-direction model difference (allowlisted)
     // until the Rust value-model migration lands the native issuer well.
-    case!("Burn", 100, 100, |a, _b| vec![Effect::Burn { target: a, slot: 0, amount: 10 }]);
+    case!("Burn", 100, 100, |a, _b| vec![Effect::Burn {
+        target: a,
+        slot: 0,
+        amount: 10
+    }]);
     // Burn W1 TOOTH: the SAME burn WITH a self `node` cap. Pre-W1 this committed in Lean (the
     // recipient-shaped gate). Under issuer-supply it is a SELF-BURN of the well (`cell = asset`)
     // — the verified kernel refuses the no-move outright, cap or no cap. Both corpus burns now
@@ -234,10 +265,25 @@ fn build_corpus() -> Vec<CorpusCase> {
     {
         let (mut ledger, ida, _idb) = two_cell_ledger(100, 100);
         grant_self_cap(&mut ledger, ida);
-        let turn = corpus_turn(ida, 0, vec![Effect::Burn { target: ida, slot: 0, amount: 10 }]);
-        cases.push(CorpusCase { label: "Burn/with-cap", turn, ledger });
+        let turn = corpus_turn(
+            ida,
+            0,
+            vec![Effect::Burn {
+                target: ida,
+                slot: 0,
+                amount: 10,
+            }],
+        );
+        cases.push(CorpusCase {
+            label: "Burn/with-cap",
+            turn,
+            ledger,
+        });
     }
-    case!("CellSeal", 100, 100, |a, _b| vec![Effect::CellSeal { target: a, reason: [9u8; 32] }]);
+    case!("CellSeal", 100, 100, |a, _b| vec![Effect::CellSeal {
+        target: a,
+        reason: [9u8; 32]
+    }]);
 
     // ---- GAP-shrink batch: newly-projected effects (was the swap surface) ----
     //
@@ -267,9 +313,17 @@ fn build_corpus() -> Vec<CorpusCase> {
         let turn = corpus_turn(
             ida,
             0,
-            vec![Effect::GrantCapability { from: ida, to: ida, cap }],
+            vec![Effect::GrantCapability {
+                from: ida,
+                to: ida,
+                cap,
+            }],
         );
-        cases.push(CorpusCase { label: "GrantCapability/self-cap", turn, ledger });
+        cases.push(CorpusCase {
+            label: "GrantCapability/self-cap",
+            turn,
+            ledger,
+        });
     }
     // GrantCapability NON-VACUITY TOOTH: a self-grant on a cell WITHOUT a self-cap. apply.rs still
     // commits (the self-grant path skips the c-list lookup), but the verified `recKDelegate` gate
@@ -286,7 +340,11 @@ fn build_corpus() -> Vec<CorpusCase> {
             allowed_effects: None,
             stored_epoch: None,
         };
-        vec![Effect::GrantCapability { from: a, to: a, cap }]
+        vec![Effect::GrantCapability {
+            from: a,
+            to: a,
+            cap,
+        }]
     });
 
     // (VERB-LOCKSTEP: the CreateSealPair still-GAP case died with the Effect variant —
@@ -311,7 +369,11 @@ struct EffectStat {
     ever_modelled: bool,
 }
 
-fn classify(report: &ShadowReport, kinds: &[&'static str], stats: &mut BTreeMap<String, EffectStat>) {
+fn classify(
+    report: &ShadowReport,
+    kinds: &[&'static str],
+    stats: &mut BTreeMap<String, EffectStat>,
+) {
     for k in kinds {
         let e = stats.entry(k.to_string()).or_default();
         if report.lean_eligible {
@@ -382,7 +444,8 @@ fn rust_lean_divergence_finder() {
         };
 
         // RUN THE VERIFIED LEAN EXECUTOR over the same turn + pre-state.
-        let report = lean_shadow::shadow_report(&case.turn, &pre_ledger, rust_committed, block_height);
+        let report =
+            lean_shadow::shadow_report(&case.turn, &pre_ledger, rust_committed, block_height);
 
         classify(&report, &report.effect_kinds, &mut per_effect);
 
@@ -417,7 +480,9 @@ fn rust_lean_divergence_finder() {
 
     // ---- Emit the ledger to stdout ----
     println!("\n=== RUST↔LEAN DIVERGENCE LEDGER (shadow_on={shadow_on}) ===\n");
-    println!("Corpus turns: {total} | comparable (Lean modelled): {comparable} | DIVERGENCES: {diverged}\n");
+    println!(
+        "Corpus turns: {total} | comparable (Lean modelled): {comparable} | DIVERGENCES: {diverged}\n"
+    );
     println!("| case | effects | rust | lean | verdict |");
     println!("|------|---------|------|------|---------|");
     for r in &rows {
@@ -508,7 +573,10 @@ fn rust_lean_divergence_finder() {
              failure?). The divergence finder must actually execute the Lean executor."
         );
         assert!(
-            per_effect.get("SetField").map(|s| s.agree > 0).unwrap_or(false),
+            per_effect
+                .get("SetField")
+                .map(|s| s.agree > 0)
+                .unwrap_or(false),
             "regression: SetField no longer AGREES between apply.rs and the Lean executor \
              (this is the load-bearing modelled-and-applied path)."
         );
@@ -589,7 +657,10 @@ fn rust_lean_divergence_finder() {
         "NEW RUST↔LEAN DIVERGENCE(S) outside the known-drift allowlist: {:?} — a modelled \
          effect's commit bit now differs between apply.rs and the verified Lean executor. \
          Investigate before extending the allowlist (see the ledger).",
-        unexpected.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
+        unexpected
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -603,7 +674,9 @@ fn write_ledger_markdown(
 ) {
     // metatheory/docs/rebuild/ relative to the workspace root. CARGO_MANIFEST_DIR is `turn/`.
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let Some(root) = manifest.parent() else { return };
+    let Some(root) = manifest.parent() else {
+        return;
+    };
     let dir = root.join("metatheory").join("docs").join("rebuild");
     if std::fs::create_dir_all(&dir).is_err() {
         return;

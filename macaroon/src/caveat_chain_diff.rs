@@ -83,7 +83,11 @@ fn wire_encodings(mac: &Macaroon) -> Vec<Vec<u8>> {
 #[test]
 fn diff_replay_tag_matches_real_tail() {
     let root_key = crypto::random_key();
-    let mut mac = Macaroon::new(&root_key, b"kid-replay".to_vec(), "https://dregg.dev".into());
+    let mut mac = Macaroon::new(
+        &root_key,
+        b"kid-replay".to_vec(),
+        "https://dregg.dev".into(),
+    );
 
     // After Macaroon::new, the tail is exactly seedTag(root, nonce) (empty fold).
     let nonce_bytes = mac.nonce.encode();
@@ -111,18 +115,31 @@ fn diff_replay_tag_matches_real_tail() {
 #[test]
 fn diff_honest_chain_verifies() {
     let root_key = crypto::random_key();
-    let mut mac = Macaroon::new(&root_key, b"kid-honest".to_vec(), "https://dregg.dev".into());
+    let mut mac = Macaroon::new(
+        &root_key,
+        b"kid-honest".to_vec(),
+        "https://dregg.dev".into(),
+    );
     append_kv(&mut mac, "app", "demo");
     append_kv(&mut mac, "action", "read");
 
     // Lean `honest_chain_verifies`: seed then appends always verify on the real engine.
-    let collected = mac.verify(&root_key, &[]).expect("honest first-party chain must verify");
-    assert_eq!(collected.len(), 2, "verify collects all first-party caveats for clearing");
+    let collected = mac
+        .verify(&root_key, &[])
+        .expect("honest first-party chain must verify");
+    assert_eq!(
+        collected.len(),
+        2,
+        "verify collects all first-party caveats for clearing"
+    );
 
     // And the Lean verify (replayTag == stored tail) AGREES with the real accept.
     let nonce_bytes = mac.nonce.encode();
     let lean_verifies = lean_replay_tag(&root_key, &nonce_bytes, &wire_encodings(&mac)) == mac.tail;
-    assert!(lean_verifies, "Lean Chain.verify agrees the honest chain is well-tagged");
+    assert!(
+        lean_verifies,
+        "Lean Chain.verify agrees the honest chain is well-tagged"
+    );
 }
 
 // ═══════════════════════ Differential 3: integrity teeth (removal / tamper / wrong-key REJECTED) ═══════════════════════
@@ -140,7 +157,10 @@ fn diff_removal_breaks_tail() {
     stripped.caveats.push(mac.caveats.as_slice()[0].clone()); // drop the 2nd caveat, keep mac.tail
 
     // Real engine rejects; Lean replayTag over the stripped links ≠ the (unchanged) stored tail.
-    assert!(stripped.verify(&root_key, &[]).is_err(), "real: removed caveat rejected");
+    assert!(
+        stripped.verify(&root_key, &[]).is_err(),
+        "real: removed caveat rejected"
+    );
     let nonce_bytes = stripped.nonce.encode();
     assert_ne!(
         lean_replay_tag(&root_key, &nonce_bytes, &wire_encodings(&stripped)),
@@ -153,7 +173,11 @@ fn diff_removal_breaks_tail() {
 fn diff_tampered_caveat_rejected() {
     // Lean `forgery_requires_mac_query`: tampering a caveat's encoded bytes fails verify.
     let root_key = crypto::random_key();
-    let mut mac = Macaroon::new(&root_key, b"kid-tamper".to_vec(), "https://dregg.dev".into());
+    let mut mac = Macaroon::new(
+        &root_key,
+        b"kid-tamper".to_vec(),
+        "https://dregg.dev".into(),
+    );
     append_kv(&mut mac, "app", "demo");
 
     let mut tampered = mac.clone();
@@ -164,7 +188,10 @@ fn diff_tampered_caveat_rejected() {
         tampered.caveats.push(modified);
     }
 
-    assert!(tampered.verify(&root_key, &[]).is_err(), "real: tampered caveat rejected");
+    assert!(
+        tampered.verify(&root_key, &[]).is_err(),
+        "real: tampered caveat rejected"
+    );
     let nonce_bytes = tampered.nonce.encode();
     assert_ne!(
         lean_replay_tag(&root_key, &nonce_bytes, &wire_encodings(&tampered)),
@@ -181,7 +208,10 @@ fn diff_wrong_root_key_rejected() {
     let mut mac = Macaroon::new(&root_key, b"kid-wrong".to_vec(), "https://dregg.dev".into());
     append_kv(&mut mac, "app", "demo");
 
-    assert!(mac.verify(&wrong_key, &[]).is_err(), "real: wrong root key rejected");
+    assert!(
+        mac.verify(&wrong_key, &[]).is_err(),
+        "real: wrong root key rejected"
+    );
     // Lean: replaying from the WRONG seed yields a different tail.
     let nonce_bytes = mac.nonce.encode();
     assert_ne!(

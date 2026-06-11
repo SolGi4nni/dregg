@@ -97,13 +97,11 @@
 //!   gate below is exactly the Lean `EscrowFactory` contract; the committed
 //!   variant is kernel-design feedback for the dregg3 constraint grammar.
 
+use crate::cell::CellMode;
 use crate::factory::{CapTarget, CapTemplate, ChildVkStrategy, FactoryDescriptor};
 use crate::permissions::AuthRequired;
-use crate::program::{
-    CellProgram, SimpleStateConstraint, StateConstraint, field_from_u64,
-};
+use crate::program::{CellProgram, SimpleStateConstraint, StateConstraint, field_from_u64};
 use crate::state::{FIELD_ZERO, FieldElement};
-use crate::cell::CellMode;
 
 // =============================================================================
 // Shared slot schema (all three settlement families)
@@ -214,7 +212,10 @@ fn pin_term(slot: u8, lit: FieldElement) -> StateConstraint {
     StateConstraint::AnyOf {
         variants: vec![
             state_is(STATE_UNINIT),
-            SimpleStateConstraint::FieldEquals { index: slot, value: lit },
+            SimpleStateConstraint::FieldEquals {
+                index: slot,
+                value: lit,
+            },
         ],
     }
 }
@@ -350,7 +351,9 @@ pub struct EscrowTerms {
 /// conservation (the value moves by ordinary `Transfer`, keystone a),
 /// no-double-resolve (keystone b), release-requires-condition (keystone c),
 /// open-escrow-settleable (keystone d, witnessed by the e2e tests).
-pub fn escrow_state_constraints(terms: &EscrowTerms) -> Result<Vec<StateConstraint>, BlueprintError> {
+pub fn escrow_state_constraints(
+    terms: &EscrowTerms,
+) -> Result<Vec<StateConstraint>, BlueprintError> {
     if terms.condition == FIELD_ZERO {
         return Err(BlueprintError::ZeroCondition);
     }
@@ -468,7 +471,9 @@ pub struct BridgeTerms {
 }
 
 /// The bridge-cell constraint set for one lock (module-docs teeth 1–4).
-pub fn bridge_state_constraints(terms: &BridgeTerms) -> Result<Vec<StateConstraint>, BlueprintError> {
+pub fn bridge_state_constraints(
+    terms: &BridgeTerms,
+) -> Result<Vec<StateConstraint>, BlueprintError> {
     if terms.finality_witness == FIELD_ZERO {
         return Err(BlueprintError::ZeroCondition);
     }
@@ -564,7 +569,10 @@ mod tests {
         let t = terms();
         let p = escrow_cell_program(&t).unwrap();
         let born = CellState::new(0);
-        assert!(eval(&p, &born, None, 0).is_ok(), "all-zero birth state must pass");
+        assert!(
+            eval(&p, &born, None, 0).is_ok(),
+            "all-zero birth state must pass"
+        );
     }
 
     #[test]
@@ -582,7 +590,10 @@ mod tests {
         let born = CellState::new(0);
         let mut bad = open_state(&t);
         bad.fields[VALUE_SLOT as usize] = field_from_u64(7_000_000); // inflate the amount
-        assert!(eval(&p, &bad, Some(&born), 0).is_err(), "term pin must bite");
+        assert!(
+            eval(&p, &bad, Some(&born), 0).is_err(),
+            "term pin must bite"
+        );
     }
 
     #[test]
@@ -635,8 +646,14 @@ mod tests {
         let old = open_state(&t);
         let mut new = old.clone();
         new.fields[STATE_SLOT as usize] = field_from_u64(STATE_RESOLVED_B);
-        assert!(eval(&p, &new, Some(&old), 99).is_err(), "height 99 < timeout 100");
-        assert!(eval(&p, &new, Some(&old), 100).is_ok(), "height 100 >= timeout 100");
+        assert!(
+            eval(&p, &new, Some(&old), 99).is_err(),
+            "height 99 < timeout 100"
+        );
+        assert!(
+            eval(&p, &new, Some(&old), 100).is_ok(),
+            "height 100 >= timeout 100"
+        );
     }
 
     #[test]
@@ -675,7 +692,10 @@ mod tests {
     fn zero_condition_rejected_at_build() {
         let mut t = terms();
         t.condition = FIELD_ZERO;
-        assert_eq!(escrow_state_constraints(&t), Err(BlueprintError::ZeroCondition));
+        assert_eq!(
+            escrow_state_constraints(&t),
+            Err(BlueprintError::ZeroCondition)
+        );
     }
 
     #[test]
@@ -723,7 +743,10 @@ mod tests {
             condition: field_from_u64(42),
             deadline_height: 0,
         };
-        assert_eq!(obligation_state_constraints(&t), Err(BlueprintError::ZeroDeadline));
+        assert_eq!(
+            obligation_state_constraints(&t),
+            Err(BlueprintError::ZeroDeadline)
+        );
     }
 
     #[test]
@@ -745,7 +768,10 @@ mod tests {
 
         let mut finalized = locked.clone();
         finalized.fields[STATE_SLOT as usize] = field_from_u64(STATE_RESOLVED_A);
-        assert!(eval(&p, &finalized, Some(&locked), 0).is_err(), "no witness → rejected");
+        assert!(
+            eval(&p, &finalized, Some(&locked), 0).is_err(),
+            "no witness → rejected"
+        );
         finalized.fields[WITNESS_SLOT as usize] = t.finality_witness;
         assert!(eval(&p, &finalized, Some(&locked), 0).is_ok());
         // Cancel with zero timeout: any time while locked (Lean locked_cancellable).
@@ -763,7 +789,10 @@ mod tests {
         let mut t2 = terms();
         t2.amount = 41;
         let c = escrow_factory_descriptor(&t2).unwrap();
-        assert_ne!(a.factory_vk, c.factory_vk, "different deal → different factory");
+        assert_ne!(
+            a.factory_vk, c.factory_vk,
+            "different deal → different factory"
+        );
         // Across families, the domain tags separate identical term tuples.
         let ob = obligation_factory_descriptor(&ObligationTerms {
             bond: terms().amount,

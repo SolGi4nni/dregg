@@ -28,20 +28,29 @@ pub fn workloads() -> Vec<Workload> {
         Workload {
             name: "transfer_1effect",
             initial: CellState::new(1_000_000, 0),
-            effects: vec![Effect::Transfer { amount: 100, direction: 1 }],
+            effects: vec![Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            }],
         },
         Workload {
             name: "transfer_4effect",
             initial: CellState::new(1_000_000, 0),
             effects: (0..4)
-                .map(|i| Effect::Transfer { amount: 10, direction: (i % 2) as u32 })
+                .map(|i| Effect::Transfer {
+                    amount: 10,
+                    direction: (i % 2) as u32,
+                })
                 .collect(),
         },
         Workload {
             name: "transfer_16effect",
             initial: CellState::new(1_000_000, 0),
             effects: (0..16)
-                .map(|i| Effect::Transfer { amount: 1, direction: (i % 2) as u32 })
+                .map(|i| Effect::Transfer {
+                    amount: 1,
+                    direction: (i % 2) as u32,
+                })
                 .collect(),
         },
     ]
@@ -58,7 +67,10 @@ pub fn build_trace(w: &Workload) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
 pub fn single_transfer() -> (CellState, Vec<Effect>) {
     (
         CellState::new(1_000_000, 0),
-        vec![Effect::Transfer { amount: 100, direction: 1 }],
+        vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
     )
 }
 

@@ -55,11 +55,7 @@ fn lean_step(wire: &str) -> String {
     loop {
         let mut buf = vec![0u8; cap];
         let full = unsafe {
-            dregg_record_kernel_step_str(
-                c_in.as_ptr(),
-                buf.as_mut_ptr() as *mut c_char,
-                cap,
-            )
+            dregg_record_kernel_step_str(c_in.as_ptr(), buf.as_mut_ptr() as *mut c_char, cap)
         };
         if full == usize::MAX {
             panic!("dregg_record_kernel_step_str: unusable output buffer");
@@ -212,7 +208,10 @@ struct P<'a> {
 
 impl<'a> P<'a> {
     fn new(s: &'a str) -> Self {
-        P { s: s.as_bytes(), i: 0 }
+        P {
+            s: s.as_bytes(),
+            i: 0,
+        }
     }
     fn lit(&mut self, lit: &str) -> Result<(), String> {
         let b = lit.as_bytes();
@@ -235,7 +234,8 @@ impl<'a> P<'a> {
             self.i += 1;
         }
         let txt = std::str::from_utf8(&self.s[start..self.i]).map_err(|e| e.to_string())?;
-        txt.parse::<i64>().map_err(|e| format!("bad int `{txt}`: {e}"))
+        txt.parse::<i64>()
+            .map_err(|e| format!("bad int `{txt}`: {e}"))
     }
     fn nat(&mut self) -> Result<u64, String> {
         let v = self.int()?;
@@ -592,7 +592,10 @@ fn random_case(rng: &mut Rng, multi: bool) -> (Vec<(u64, Value)>, u64, u64, u64,
         if multi {
             Value::Record(vec![
                 ("balance".to_string(), Value::Int(rng.bal())),
-                ("nonce".to_string(), Value::Int((rng.next_u64() % 1000) as i64)),
+                (
+                    "nonce".to_string(),
+                    Value::Int((rng.next_u64() % 1000) as i64),
+                ),
                 ("owner".to_string(), Value::Dig(rng.next_u64() % 1_000_000)),
             ])
         } else {
@@ -604,17 +607,29 @@ fn random_case(rng: &mut Rng, multi: bool) -> (Vec<(u64, Value)>, u64, u64, u64,
     // amt spans both available (<= balA) and over-draw regimes.
     let amt = rng.bal();
     // Actor 0 ~1/2 the time (authorized over src 0), else arbitrary.
-    let actor = if rng.next_u64() % 2 == 0 { 0 } else { rng.next_u64() };
+    let actor = if rng.next_u64() % 2 == 0 {
+        0
+    } else {
+        rng.next_u64()
+    };
     (cells, actor, 0, 1, amt)
 }
 
 /// Build a random CAPS-bearing case (two cells, ids 0/1) exercising every authority regime:
 /// owner, held write-endpoint, held node cap, held read-only endpoint (no write), wrong-target
 /// cap, and no cap at all. Returns (cells, caps, actor, src, dst, amt).
-fn random_caps_case(rng: &mut Rng) -> (Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)>, u64, u64, u64, i64) {
+fn random_caps_case(
+    rng: &mut Rng,
+) -> (Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)>, u64, u64, u64, i64) {
     let cells = vec![
-        (0u64, Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))])),
-        (1u64, Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))])),
+        (
+            0u64,
+            Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))]),
+        ),
+        (
+            1u64,
+            Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))]),
+        ),
     ];
     let amt = rng.bal();
     // A non-owner actor (distinct from src 0). Pick a small label so holder/actor align.
@@ -624,13 +639,16 @@ fn random_caps_case(rng: &mut Rng) -> (Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)>, 
     // Choose one of 7 cap regimes for `actor`'s slot.
     let regime = rng.next_u64() % 7;
     let caps: Vec<(u64, Vec<Cap>)> = match regime {
-        0 => vec![],                                              // no caps at all
-        1 => vec![(actor, vec![])],                              // empty slot
+        0 => vec![],                                                   // no caps at all
+        1 => vec![(actor, vec![])],                                    // empty slot
         2 => vec![(actor, vec![Cap::Endpoint(0, vec![Auth::Write])])], // write on src ⇒ authz
         3 => vec![(actor, vec![Cap::Endpoint(0, vec![Auth::Read])])],  // read-only on src ⇒ deny
-        4 => vec![(actor, vec![Cap::Node(0)])],                  // node cap on src ⇒ authz
+        4 => vec![(actor, vec![Cap::Node(0)])],                        // node cap on src ⇒ authz
         5 => vec![(actor, vec![Cap::Endpoint(1, vec![Auth::Write])])], // write on WRONG target ⇒ deny
-        _ => vec![(actor, vec![Cap::Null, Cap::Endpoint(0, vec![Auth::Read, Auth::Write])])], // mixed ⇒ authz
+        _ => vec![(
+            actor,
+            vec![Cap::Null, Cap::Endpoint(0, vec![Auth::Read, Auth::Write])],
+        )], // mixed ⇒ authz
     };
     (cells, caps, actor, src, 1, amt)
 }
@@ -651,7 +669,11 @@ fn main() -> ExitCode {
     // multi-field records (balance + nonce + owner — non-balance fields must survive).
     for phase in 0..2 {
         let multi = phase == 1;
-        let label = if multi { "multi-field" } else { "single-field balance" };
+        let label = if multi {
+            "multi-field"
+        } else {
+            "single-field balance"
+        };
         let mut phase_agreed = 0usize;
 
         for i in 0..N {
@@ -744,8 +766,14 @@ fn main() -> ExitCode {
     // Explicit, named WITNESSES for the report (the two boundary cases the mission calls out):
     // (A) actor 9 (!= owner 0) holds a `write` endpoint on src 0 ⇒ COMMITS.
     let wa_cells = vec![
-        (0u64, Value::Record(vec![("balance".to_string(), Value::Int(100))])),
-        (1u64, Value::Record(vec![("balance".to_string(), Value::Int(5))])),
+        (
+            0u64,
+            Value::Record(vec![("balance".to_string(), Value::Int(100))]),
+        ),
+        (
+            1u64,
+            Value::Record(vec![("balance".to_string(), Value::Int(5))]),
+        ),
     ];
     let wa_caps = vec![(9u64, vec![Cap::Endpoint(0, vec![Auth::Write])])];
     let wa_in = encode_input_caps(&wa_cells, &wa_caps, 9, 0, 1, 30);
@@ -756,7 +784,11 @@ fn main() -> ExitCode {
         "    WITNESS A (held-cap authorized, actor 9 holds write-ep on src 0): lean ok={wa_ok} \
          ref ok={wa_ref_ok} cells_match={} -> {}",
         wa_cells_out == wa_ref_cells,
-        if witness_a_ok { "COMMIT (cross-vat held-cap authz round-trips)" } else { "FAIL" }
+        if witness_a_ok {
+            "COMMIT (cross-vat held-cap authz round-trips)"
+        } else {
+            "FAIL"
+        }
     );
 
     // (B) actor 9 holds only a READ endpoint on src 0 (no write), not owner ⇒ REJECTS.
@@ -769,7 +801,11 @@ fn main() -> ExitCode {
         "    WITNESS B (no discharging cap, actor 9 read-only on src 0): lean ok={wb_ok} \
          ref ok={wb_ref_ok} cells_unchanged={} -> {}",
         wb_cells_out == wb_ref_cells,
-        if witness_b_ok { "REJECT (fail-closed)" } else { "FAIL" }
+        if witness_b_ok {
+            "REJECT (fail-closed)"
+        } else {
+            "FAIL"
+        }
     );
     if !witness_a_ok || !witness_b_ok {
         eprintln!("WITNESS FAILURE — held-cap authorization boundary not as proved");

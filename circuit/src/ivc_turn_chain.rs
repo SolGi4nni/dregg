@@ -69,24 +69,72 @@
 //! CANNOT produce a verifying root for a forged turn — that is the tooth
 //! `ungated_prover_with_forged_post_commit_cannot_produce_a_root` bites on.
 //!
+//! ## What the verifier checks (three teeth, in order)
+//!
+//! [`verify_turn_chain_recursive`] takes the proof AND a caller-held trust
+//! anchor (a [`RecursionVk`] — the root circuit's verifier-key fingerprint,
+//! obtained once from an honest setup fold, distributed exactly like any
+//! SNARK VK) and refuses unless ALL of:
+//!
+//!   1. **VK pin** — the root proof's verifier-reconstruction inputs (table
+//!      shapes, packing, NPO manifest shape, and the preprocessed Merkle
+//!      commitment binding the root verifier circuit's op-list) fingerprint
+//!      to the anchor. This closes the from-scratch-prover route through
+//!      `verify_recursive_batch_proof`'s reconstruct-from-the-proof
+//!      discipline: a root proof of a DIFFERENT circuit no longer verifies
+//!      "as if" it were the chain fold. (Guarantee, precisely: under blake3
+//!      collision resistance + MMCS binding, the accepted root is a valid
+//!      batch-STARK of the SAME root verifier-circuit structure the anchor
+//!      was extracted from.)
+//!   2. **Claimed-publics attestation** — the carried `genesis_root` /
+//!      `final_root` / `num_turns` / `chain_digest` must verify as the public
+//!      inputs of the carried chain-binding uni-STARK
+//!      (`WholeChainProof::binding_proof`, the same statement the fold wraps
+//!      in-circuit). Fiat–Shamir binds all four PIs into that proof, so
+//!      relabeling any carried field is refused outright.
+//!   3. **The root** — `verify_recursive_batch_proof` on the single root.
+//!
 //! ## The honest residual floor (named, not hidden)
 //!
 //! - **Engine soundness** (`recursive_sound`): the wrap layer's in-circuit FRI
 //!   verifier and the root batch-STARK verifier are the plonky3 recursion
 //!   fork's; their soundness is the named crypto carrier, as everywhere else.
-//!   In particular `verify_recursive_batch_proof` reconstructs the circuit
-//!   common data FROM the proof itself — the root does not yet pin a
-//!   verifying-key fingerprint of the leaf verifier circuits, so "the root
-//!   verifies" binds the leaf statements only through the fork's
-//!   circuit/common-data discipline (part of the same named carrier).
-//! - **Public-value propagation across aggregation layers**: the fork's
-//!   `into_recursion_input::<BatchOnly>` chaining does not re-expose the inner
-//!   layers' public values at the root, so `WholeChainProof`'s
-//!   `genesis_root`/`final_root`/`chain_digest` fields are carried beside the
-//!   root proof, bound to the leaves at PROVE time (every leaf wrap fails
-//!   unless its PIs match what its proof attests — in-circuit), not re-read
-//!   from the root at VERIFY time. Closing that last seam needs the fork to
-//!   thread table public inputs up the tree.
+//! - **Child-circuit identity under the VK pin (fork follow-up, precise).**
+//!   The harness-level VK pin (tooth 1) pins the ROOT layer's circuit
+//!   structure, but the fork's aggregation circuit takes each CHILD batch
+//!   proof's preprocessed commitment as a runtime PUBLIC INPUT of the parent
+//!   circuit (`MerkleCapTargets::new` allocates `alloc_public_input_array`
+//!   targets; `CommonDataTargets::get_values` packs the child VK into the
+//!   parent's public vector), and circuit public-input VALUES live in the
+//!   constraint-free `PublicAir` main trace — `verify_all_tables` never
+//!   checks them against caller-supplied values. So a from-scratch prover is
+//!   now forced to (a) produce REAL valid batch proofs of SAME-SHAPED
+//!   circuits and (b) aggregate them through the honest-shape aggregation
+//!   circuit — but the leaf circuits' op-list identity is not yet pinned
+//!   in-band. Full closure is fork work, exactly: (i) check the circuit
+//!   public-input vector at host verification (today `verify_all_tables`
+//!   takes no public values at all), and (ii) either bake child preprocessed
+//!   commitments into the parent circuit as constants or re-expose them up
+//!   the tree as checked publics.
+//! - **Public-value propagation across aggregation layers (fork follow-up,
+//!   precise).** `into_recursion_input::<BatchOnly>` hardcodes empty
+//!   `table_public_inputs`, and the fork's `build_verifier_circuit` for the
+//!   `BatchStark` arm IGNORES them (`table_public_inputs: _`), so leaf public
+//!   values are NOT re-exposed at the root. The chain publics are bound to
+//!   the leaves at PROVE time (every wrap fails unless its PIs match what its
+//!   proof attests — in-circuit) and at VERIFY time by tooth 2's carried
+//!   binding proof. What tooth 2 does NOT give: (a) in-band linkage of the
+//!   CARRIED binding proof to the binding leaf folded INSIDE the root (an
+//!   attacker who could independently satisfy tooth 1's pinned tree could
+//!   pair it with a freshly fabricated binding proof — the binding AIR alone
+//!   attests hash-chain structure over claimed roots, not execution), and
+//!   (b) in-circuit cross-leaf equality between the binding rows'
+//!   `(old, new)` pairs and the descriptor leaves' `OLD/NEW_COMMIT` PIs
+//!   (today that equality is enforced by the prover constructing both from
+//!   the same PI vector, and per-leaf PIs are wrap-bound — but no aggregation
+//!   constraint relates two SIBLING leaves). Both need the same fork lever:
+//!   thread `table_public_inputs` through batch-to-batch chaining and check
+//!   them at the root.
 //!
 //! ## K-fold vs unbounded
 //!
@@ -122,9 +170,14 @@ use crate::lean_descriptor_air::{
 };
 use crate::plonky3_recursion_impl::recursive::{
     DreggRecursionConfig, RecursionCompatibleProof, create_recursion_backend,
-    create_recursion_config, prove_inner_for_air, verify_inner_for_air, verify_recursive_batch_proof,
+    create_recursion_config, prove_inner_for_air, recursion_vk_fingerprint, verify_inner_for_air,
+    verify_recursive_batch_proof,
 };
 use crate::poseidon2::hash_4_to_1;
+
+// Re-exported so chain consumers (the light client) name the trust-anchor type
+// from the module that defines the verification discipline around it.
+pub use crate::plonky3_recursion_impl::recursive::RecursionVk;
 
 const D: usize = 4;
 
@@ -216,6 +269,25 @@ pub enum TurnChainError {
         /// What failed.
         reason: String,
     },
+    /// **The VK pin refused the root.** The root proof's verifier-key
+    /// fingerprint (its verifier-reconstruction inputs, incl. the
+    /// preprocessed commitment binding the root circuit's op-list) does not
+    /// match the caller's trust anchor — this is a proof of a DIFFERENT
+    /// circuit, exactly the from-scratch-prover route the pin closes.
+    VkFingerprintMismatch {
+        /// The anchor fingerprint the caller expected (hex).
+        expected: String,
+        /// The fingerprint the presented root actually has (hex).
+        found: String,
+    },
+    /// **The claimed chain publics are unattested.** The carried
+    /// `genesis_root`/`final_root`/`num_turns`/`chain_digest` failed to
+    /// verify as the public inputs of the carried chain-binding proof —
+    /// a relabeled (spliced) public claim.
+    ClaimedPublicsUnattested {
+        /// The underlying verification error.
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for TurnChainError {
@@ -239,6 +311,16 @@ impl core::fmt::Display for TurnChainError {
             TurnChainError::RecursionFailed { reason } => {
                 write!(f, "recursion failed: {reason}")
             }
+            TurnChainError::VkFingerprintMismatch { expected, found } => write!(
+                f,
+                "root verifier-key fingerprint {found} != trust anchor {expected} \
+                 (a proof of a different circuit — refused)"
+            ),
+            TurnChainError::ClaimedPublicsUnattested { reason } => write!(
+                f,
+                "claimed chain publics are not attested by the carried binding proof \
+                 (relabeled genesis/final/num_turns/digest): {reason}"
+            ),
         }
     }
 }
@@ -314,18 +396,14 @@ impl<AB: AirBuilder> Air<AB> for TurnChainBindingAir {
             .assert_zero(old_root.clone() - genesis_root);
 
         // Constraint 3: last row new_root == final_root.
-        builder
-            .when_last_row()
-            .assert_zero(new_root - final_root);
+        builder.when_last_row().assert_zero(new_root - final_root);
 
         // Constraint 4: running digest chain.
         builder.when_first_row().assert_zero(acc_in.clone());
         builder
             .when_transition()
             .assert_zero(acc_out.clone() - next_acc_in);
-        builder
-            .when_last_row()
-            .assert_zero(acc_out - chain_digest);
+        builder.when_last_row().assert_zero(acc_out - chain_digest);
     }
 }
 
@@ -426,10 +504,17 @@ fn trace_to_matrix(trace: &[[BabyBear; 4]]) -> RowMajorMatrix<P3BabyBear> {
 /// trace, absent execution) FAILS here: the prover refuses the unsatisfiable
 /// trace (debug) or the self-verify rejects (release). Either way no leaf
 /// exists to wrap, so no root can be produced.
-fn prove_descriptor_leaf(
+pub(crate) fn prove_descriptor_leaf(
     turn: &FinalizedTurn,
     selector: usize,
-) -> Result<(EffectVmDescriptorAir, RecursionCompatibleProof, Vec<BabyBear>), String> {
+) -> Result<
+    (
+        EffectVmDescriptorAir,
+        RecursionCompatibleProof,
+        Vec<BabyBear>,
+    ),
+    String,
+> {
     let json = descriptor_for_selector(selector)
         .ok_or_else(|| format!("no descriptor registered for selector {selector}"))?;
     let desc = parse_vm_descriptor(json)?;
@@ -472,6 +557,12 @@ fn prove_chain_binding_leaf(
 pub struct WholeChainProof {
     /// The single root batch-STARK proof (the whole tree folded to one).
     pub root: RecursionOutput<DreggRecursionConfig>,
+    /// The chain-binding uni-STARK (the SAME statement the fold wraps
+    /// in-circuit as the binding leaf), carried so the verifier can check the
+    /// claimed publics below AGAINST A PROOF instead of trusting bare fields:
+    /// Fiat–Shamir binds `[genesis_root, final_root, num_turns, chain_digest]`
+    /// into this proof, so relabeling any of them is refused at verify time.
+    pub binding_proof: RecursionCompatibleProof,
     /// The genesis root the chain starts from.
     pub genesis_root: BabyBear,
     /// The final root the chain reaches.
@@ -480,6 +571,24 @@ pub struct WholeChainProof {
     pub chain_digest: BabyBear,
     /// Number of finalized turns folded.
     pub num_turns: usize,
+}
+
+impl WholeChainProof {
+    /// The root proof's verifier-key fingerprint (see [`RecursionVk`]).
+    ///
+    /// An HONEST SETUP party extracts this ONCE from a locally produced fold
+    /// and distributes it as the light client's trust anchor (exactly like a
+    /// SNARK VK). A VERIFIER must NEVER take the anchor from the artifact it
+    /// is verifying — [`verify_turn_chain_recursive`] recomputes this from
+    /// the presented root and compares it to the caller-held anchor.
+    ///
+    /// Note the fingerprint is a function of the root circuit SHAPE, which
+    /// varies with the tree structure (`num_turns`) and the leaf trace
+    /// heights: an anchor pins one accepted window shape; a client accepting
+    /// several window shapes holds one anchor per shape.
+    pub fn root_vk_fingerprint(&self) -> RecursionVk {
+        recursion_vk_fingerprint(&self.root.0)
+    }
 }
 
 /// Fold K finalized-turn proofs into ONE whole-chain recursive proof.
@@ -514,9 +623,8 @@ pub fn prove_turn_chain_recursive(
     // (1) host admission: descriptor-verify every turn, selector-bound.
     let mut selectors = Vec::with_capacity(turns.len());
     for (i, t) in turns.iter().enumerate() {
-        let s = verify_descriptor_participant(&t.participant).map_err(|reason| {
-            TurnChainError::TurnProofInvalid { index: i, reason }
-        })?;
+        let s = verify_descriptor_participant(&t.participant)
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
         selectors.push(s);
     }
     let refs: Vec<&FinalizedTurn> = turns.iter().collect();
@@ -574,10 +682,8 @@ fn prove_chain_core(
         Vec::with_capacity(turns.len() + 1);
 
     for (i, t) in turns.iter().enumerate() {
-        let (air, leaf_inner, leaf_pis) =
-            prove_descriptor_leaf(t, selectors[i]).map_err(|reason| {
-                TurnChainError::TurnProofInvalid { index: i, reason }
-            })?;
+        let (air, leaf_inner, leaf_pis) = prove_descriptor_leaf(t, selectors[i])
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
         let p3_pis: Vec<P3BabyBear> = leaf_pis.iter().map(|&v| to_p3(v)).collect();
         let input = RecursionInput::UniStark {
             proof: &leaf_inner,
@@ -606,12 +712,13 @@ fn prove_chain_core(
             public_inputs: p3_pis,
             preprocessed_commit: None,
         };
-        let wrapped = build_and_prove_next_layer::<DreggRecursionConfig, TurnChainBindingAir, _, D>(
-            &input, &config, &backend, &params,
-        )
-        .map_err(|e| TurnChainError::RecursionFailed {
-            reason: format!("recursive chain-binding leaf failed: {e:?}"),
-        })?;
+        let wrapped =
+            build_and_prove_next_layer::<DreggRecursionConfig, TurnChainBindingAir, _, D>(
+                &input, &config, &backend, &params,
+            )
+            .map_err(|e| TurnChainError::RecursionFailed {
+                reason: format!("recursive chain-binding leaf failed: {e:?}"),
+            })?;
         batch_leaves.push(wrapped);
     }
 
@@ -620,6 +727,7 @@ fn prove_chain_core(
 
     Ok(WholeChainProof {
         root,
+        binding_proof: binding_inner,
         genesis_root,
         final_root,
         chain_digest,
@@ -647,13 +755,16 @@ fn aggregate_tree(
         while i + 1 < proofs.len() {
             let left = proofs[i].into_recursion_input::<BatchOnly>();
             let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
-            let out =
-                build_and_prove_aggregation_layer::<DreggRecursionConfig, BatchOnly, BatchOnly, _, D>(
-                    &left, &right, config, backend, params, None,
-                )
-                .map_err(|e| TurnChainError::RecursionFailed {
-                    reason: format!("aggregation layer failed: {e:?}"),
-                })?;
+            let out = build_and_prove_aggregation_layer::<
+                DreggRecursionConfig,
+                BatchOnly,
+                BatchOnly,
+                _,
+                D,
+            >(&left, &right, config, backend, params, None)
+            .map_err(|e| TurnChainError::RecursionFailed {
+                reason: format!("aggregation layer failed: {e:?}"),
+            })?;
             next_level.push(out);
             i += 2;
         }
@@ -665,9 +776,44 @@ fn aggregate_tree(
     Ok(proofs.pop().unwrap())
 }
 
-/// Verify the whole-chain artifact: check the single root batch-STARK proof.
-/// Cost is independent of the number of folded turns.
-pub fn verify_turn_chain_recursive(proof: &WholeChainProof) -> Result<(), TurnChainError> {
+/// Verify the whole-chain artifact against a caller-held trust anchor.
+/// Cost is independent of the number of folded turns. Three teeth, in order
+/// (see the module docs for what each one guarantees, precisely):
+///
+///   1. **VK pin** — recompute the presented root's verifier-key fingerprint
+///      and compare it to `expected_vk` (the anchor an honest setup
+///      distributed). A root proof of a different circuit — the from-scratch
+///      aggregation route — is refused here, BEFORE any cryptographic check
+///      trusts the proof's self-described circuit data.
+///   2. **Claimed-publics attestation** — the carried `genesis_root` /
+///      `final_root` / `num_turns` / `chain_digest` must verify as the public
+///      inputs of the carried chain-binding proof (Fiat–Shamir binds all
+///      four). Relabeled public claims are refused.
+///   3. **The root** — the single root batch-STARK proof verifies.
+pub fn verify_turn_chain_recursive(
+    proof: &WholeChainProof,
+    expected_vk: &RecursionVk,
+) -> Result<(), TurnChainError> {
+    // (1) VK pin.
+    let found = recursion_vk_fingerprint(&proof.root.0);
+    if found != *expected_vk {
+        return Err(TurnChainError::VkFingerprintMismatch {
+            expected: expected_vk.to_hex(),
+            found: found.to_hex(),
+        });
+    }
+
+    // (2) Claimed publics, read against the carried binding proof.
+    let claimed_pis = vec![
+        proof.genesis_root,
+        proof.final_root,
+        BabyBear::new(proof.num_turns as u32),
+        proof.chain_digest,
+    ];
+    verify_inner_for_air(&TurnChainBindingAir, &proof.binding_proof, &claimed_pis)
+        .map_err(|reason| TurnChainError::ClaimedPublicsUnattested { reason })?;
+
+    // (3) The root.
     verify_recursive_batch_proof(&proof.root.0)
         .map_err(|reason| TurnChainError::RecursionFailed { reason })
 }
@@ -718,9 +864,8 @@ pub fn fold_two_turns(
     let window: [&FinalizedTurn; 2] = [running, next];
     let mut selectors = Vec::with_capacity(2);
     for (i, t) in window.iter().enumerate() {
-        let s = verify_descriptor_participant(&t.participant).map_err(|reason| {
-            TurnChainError::TurnProofInvalid { index: i, reason }
-        })?;
+        let s = verify_descriptor_participant(&t.participant)
+            .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
         selectors.push(s);
     }
     prove_chain_core(&window, &selectors)
@@ -734,9 +879,7 @@ pub fn fold_two_turns(
 mod tests {
     use super::*;
     use crate::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
-    use crate::effect_vm::{
-        CellState, EFFECT_VM_WIDTH, Effect, generate_effect_vm_trace, pi, sel,
-    };
+    use crate::effect_vm::{CellState, EFFECT_VM_WIDTH, Effect, generate_effect_vm_trace, pi, sel};
     use crate::field::BabyBear;
     use crate::lean_descriptor_air::prove_vm_descriptor;
 
@@ -820,19 +963,145 @@ mod tests {
     /// own execution trace and verified IN-CIRCUIT by the wrap layer — into ONE
     /// recursive proof that verifies. Each turn's real post-state commitment is
     /// the next turn's real pre-state commitment (genesis -> r1 -> r2 -> final).
-    /// The verifier checks only the root.
+    /// The verifier checks only the root (+ the VK pin and the carried binding
+    /// attestation).
+    ///
+    /// Piggybacked REFUSED cases (no extra proving): a mismatched VK anchor is
+    /// refused, and RELABELED carried publics (final_root / chain_digest /
+    /// num_turns / genesis_root spliced after the fold) are refused by the
+    /// claimed-publics attestation — the verify path now reads the publics
+    /// against the carried binding proof instead of trusting bare fields.
     #[test]
     fn k_fold_turn_chain_proves_and_verifies() {
         let (turns, genesis, final_root) = make_chain(1000, 0, 7, 3);
         assert_eq!(turns.len(), 3);
 
-        let whole = prove_turn_chain_recursive(&turns)
+        let mut whole = prove_turn_chain_recursive(&turns)
             .expect("a continuous 3-turn finalized chain must fold recursively");
         assert_eq!(whole.num_turns, 3);
         assert_eq!(whole.genesis_root, genesis);
         assert_eq!(whole.final_root, final_root);
 
-        verify_turn_chain_recursive(&whole).expect("the whole-chain root proof must verify");
+        // The trust anchor an honest setup would distribute.
+        let vk = whole.root_vk_fingerprint();
+        verify_turn_chain_recursive(&whole, &vk)
+            .expect("the whole-chain root proof must verify under its honest anchor");
+
+        // REFUSED: a mismatched VK anchor (the caller pinned a different circuit).
+        let mut wrong = vk;
+        wrong.0[0] ^= 0xFF;
+        match verify_turn_chain_recursive(&whole, &wrong) {
+            Err(TurnChainError::VkFingerprintMismatch { .. }) => {}
+            other => panic!("a mismatched VK anchor must be refused; got {other:?}"),
+        }
+
+        // REFUSED: relabeled final_root (splicing a foreign endpoint onto the artifact).
+        let honest_final = whole.final_root;
+        whole.final_root = honest_final + BabyBear::ONE;
+        match verify_turn_chain_recursive(&whole, &vk) {
+            Err(TurnChainError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled final_root must be refused; got {other:?}"),
+        }
+        whole.final_root = honest_final;
+
+        // REFUSED: relabeled chain_digest (claiming a different ordered history).
+        let honest_digest = whole.chain_digest;
+        whole.chain_digest = honest_digest + BabyBear::ONE;
+        match verify_turn_chain_recursive(&whole, &vk) {
+            Err(TurnChainError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled chain_digest must be refused; got {other:?}"),
+        }
+        whole.chain_digest = honest_digest;
+
+        // REFUSED: relabeled num_turns (the binding proof Fiat–Shamir-binds pv[2]
+        // even though the AIR leaves it unconstrained).
+        let honest_n = whole.num_turns;
+        whole.num_turns = honest_n + 1;
+        match verify_turn_chain_recursive(&whole, &vk) {
+            Err(TurnChainError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled num_turns must be refused; got {other:?}"),
+        }
+        whole.num_turns = honest_n;
+
+        // REFUSED: relabeled genesis_root.
+        let honest_genesis = whole.genesis_root;
+        whole.genesis_root = honest_genesis + BabyBear::ONE;
+        match verify_turn_chain_recursive(&whole, &vk) {
+            Err(TurnChainError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled genesis_root must be refused; got {other:?}"),
+        }
+        whole.genesis_root = honest_genesis;
+
+        // And the restored artifact still verifies (the refusals were the lies,
+        // not collateral damage).
+        verify_turn_chain_recursive(&whole, &vk)
+            .expect("the restored honest artifact must verify again");
+    }
+
+    /// **THE VK-PIN TOOTH (from-scratch prover, REFUSED).** Today's exact hole,
+    /// closed: `verify_recursive_batch_proof` reconstructs circuit common data
+    /// FROM the proof, so ANY valid recursive proof — here a wrap of the
+    /// unrelated `AggregationAir` — passes the bare root check. The pinned
+    /// verifier must refuse it: its verifier-key fingerprint is not the chain
+    /// fold's. Both halves are asserted: the bare engine ACCEPTS the foreign
+    /// root (showing the pin is load-bearing, not redundant), and
+    /// `verify_turn_chain_recursive` REFUSES it with `VkFingerprintMismatch`.
+    #[test]
+    fn foreign_circuit_root_is_refused_by_vk_pin() {
+        use crate::plonky3_recursion::AggregationAir;
+
+        // An honest K=2 fold (the artifact whose carried publics + binding proof
+        // the attacker will try to pair with a foreign root).
+        let (turns, _g, _f) = make_chain(1000, 0, 7, 2);
+        let mut whole =
+            prove_turn_chain_recursive(&turns).expect("the honest 2-turn chain must fold");
+        let vk = whole.root_vk_fingerprint();
+        verify_turn_chain_recursive(&whole, &vk).expect("honest artifact verifies");
+
+        // A from-scratch prover's root: a perfectly VALID recursive proof — of a
+        // DIFFERENT circuit (the AggregationAir smoke wrap).
+        let foreign = {
+            use crate::plonky3_recursion_impl::recursive::prove_recursive_layer_for_air;
+            use p3_field::PrimeCharacteristicRing;
+            let pv1 = P3BabyBear::from_u64(0xC0FFEE);
+            let rows: Vec<P3BabyBear> = vec![
+                P3BabyBear::ZERO,
+                P3BabyBear::from_u64(1),
+                P3BabyBear::from_u64(2),
+                P3BabyBear::from_u64(10),
+                P3BabyBear::from_u64(10),
+                P3BabyBear::from_u64(3),
+                P3BabyBear::from_u64(4),
+                P3BabyBear::from_u64(20),
+                P3BabyBear::from_u64(20),
+                P3BabyBear::from_u64(5),
+                P3BabyBear::from_u64(6),
+                P3BabyBear::from_u64(30),
+                P3BabyBear::from_u64(30),
+                P3BabyBear::from_u64(7),
+                P3BabyBear::from_u64(8),
+                pv1,
+            ];
+            let matrix = RowMajorMatrix::new(rows, 4);
+            let pis = vec![BabyBear::ZERO, BabyBear::new(0xC0FFEE)];
+            let air = AggregationAir;
+            let inner = prove_inner_for_air(&air, matrix, &pis);
+            prove_recursive_layer_for_air(&air, &inner, &pis)
+                .expect("the foreign AIR wraps fine — it is a VALID recursive proof")
+        };
+
+        // The bare engine check ACCEPTS the foreign root — the exact reason the
+        // pin exists.
+        verify_recursive_batch_proof(&foreign.0)
+            .expect("the bare engine accepts ANY valid recursive proof — the pre-pin hole");
+
+        // Splice the foreign root under the honest carried publics/binding.
+        whole.root = foreign;
+        match verify_turn_chain_recursive(&whole, &vk) {
+            Err(TurnChainError::VkFingerprintMismatch { .. }) => {}
+            Ok(()) => panic!("a foreign circuit's root must NOT verify as the chain fold"),
+            Err(other) => panic!("expected VkFingerprintMismatch, got {other:?}"),
+        }
     }
 
     /// TEMPORAL TOOTH (host): a turn whose real old_root != previous new_root
@@ -934,10 +1203,7 @@ mod tests {
         //     surfaces as a prover panic (debug: check_constraints refuses) or
         //     an Err (release: self-verify rejects). Either is "no root".
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_turn_chain_recursive_without_host_gate(
-                &turns,
-                &[sel::TRANSFER, sel::TRANSFER],
-            )
+            prove_turn_chain_recursive_without_host_gate(&turns, &[sel::TRANSFER, sel::TRANSFER])
         }));
         let rejected = match result {
             Ok(Ok(_)) => false, // a verifying root for a forged turn — soundness hole!
@@ -1000,10 +1266,7 @@ mod tests {
         let turns = [t0, stub_turn];
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_turn_chain_recursive_without_host_gate(
-                &turns,
-                &[sel::TRANSFER, sel::TRANSFER],
-            )
+            prove_turn_chain_recursive_without_host_gate(&turns, &[sel::TRANSFER, sel::TRANSFER])
         }));
         let rejected = match result {
             Ok(Ok(_)) => false, // a verifying root over a stub leaf — soundness hole!
@@ -1070,12 +1333,13 @@ mod tests {
     fn two_step_inductive_core_proves_and_verifies() {
         let (turns, genesis, final_root) = make_chain(1000, 0, 11, 2);
 
-        let folded = fold_two_turns(&turns[0], &turns[1])
-            .expect("a continuous pair must fold via the core");
+        let folded =
+            fold_two_turns(&turns[0], &turns[1]).expect("a continuous pair must fold via the core");
         assert_eq!(folded.num_turns, 2);
         assert_eq!(folded.genesis_root, genesis);
         assert_eq!(folded.final_root, final_root);
-        verify_turn_chain_recursive(&folded).expect("the 2-step folded proof must verify");
+        let vk = folded.root_vk_fingerprint();
+        verify_turn_chain_recursive(&folded, &vk).expect("the 2-step folded proof must verify");
     }
 
     /// fold_two_turns rejects a discontinuous pair (the inductive step refuses

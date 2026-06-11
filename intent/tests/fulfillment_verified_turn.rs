@@ -34,9 +34,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dregg_cell::predicate::{
-    InputRef, WitnessedPredicate, WitnessedPredicateKind,
-};
+use dregg_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
 use dregg_federation::threshold_decrypt::{
     KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
     threshold_encrypt,
@@ -168,8 +166,7 @@ fn pair_with_settlements(legs: &mut [Leg], settlements: &[Settlement]) {
     for (leg, s) in legs.iter_mut().zip(settlements.iter()) {
         // Data-preservation: the lowered leg's from/to/amount must equal the settlement's.
         assert_eq!(
-            leg.from,
-            s.from.0[0],
+            leg.from, s.from.0[0],
             "lowered leg `from` diverges from the settlement row"
         );
         assert_eq!(
@@ -251,11 +248,7 @@ fn drive_to_solving(
 /// `amount` from creator[i] to creator[i+1] (a chained cycle — every cell sends and receives, each
 /// asset balanced). This is the shape `RingSolver::validate_ring` emits and that
 /// `check_settlement_conservation` accepts.
-fn closed_ring_submission(
-    solver_byte: u8,
-    intents: &[Intent],
-    amount: u64,
-) -> SolverSubmission {
+fn closed_ring_submission(solver_byte: u8, intents: &[Intent], amount: u64) -> SolverSubmission {
     let participants: Vec<IntentId> = intents.iter().map(|i| i.id).collect();
     let settlements: Vec<Settlement> = intents
         .iter()
@@ -312,7 +305,9 @@ fn run_fulfillment_and_pin(n: u8, amount: u64) {
 
     // Past the challenge window, finalize → real lowered SealedTurn.
     engine.advance_height(20);
-    let output = engine.finalize().expect("finalize must produce a settlement");
+    let output = engine
+        .finalize()
+        .expect("finalize must produce a settlement");
 
     // Extract the lowered fulfillment legs and re-pair them with the solver's settlement assets.
     let mut legs = extract_transfer_legs(&output);
@@ -322,8 +317,8 @@ fn run_fulfillment_and_pin(n: u8, amount: u64) {
     // ROUTE THE FULFILLMENT THROUGH THE VERIFIED EXECUTOR: fold the lowered legs through the mirror
     // of Lean `settleRing` over a funded ledger; assert it settles fully AND conserves every asset.
     let k0 = funded_ledger(&legs);
-    let settled =
-        settle_ring(&k0, &legs).expect("the lowered fulfillment ring must settle on the verified executor");
+    let settled = settle_ring(&k0, &legs)
+        .expect("the lowered fulfillment ring must settle on the verified executor");
 
     let touched: BTreeSet<[u8; 32]> = legs.iter().map(|l| l.asset).collect();
     for a in touched {

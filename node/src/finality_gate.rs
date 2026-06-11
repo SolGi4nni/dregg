@@ -330,13 +330,20 @@ mod tests {
             verified, rust_finalized,
             "verified finality gate must agree with Rust tau on the (creator, seq) finalized set"
         );
-        assert_eq!(verified.len(), 9, "3-node lace finalizes all nine (creator, seq) blocks");
+        assert_eq!(
+            verified.len(),
+            9,
+            "3-node lace finalizes all nine (creator, seq) blocks"
+        );
 
         // The gate ADMITS each finalized block by its (pubkey, seq), exactly as
         // poll_finalized_blocks queries it.
         for (cid, seq) in &verified {
             let creator = participants[*cid as usize];
-            assert!(vf.admits(&creator, *seq), "gate must admit a verified-finalized block");
+            assert!(
+                vf.admits(&creator, *seq),
+                "gate must admit a verified-finalized block"
+            );
         }
     }
 
@@ -386,7 +393,11 @@ mod tests {
         // The verified RAW total order (node BlockIds), via the new export.
         let order = VerifiedFinality::compute_order(&lace, &participants)
             .expect("raw-order gate ran (archive present + wire non-ERR)");
-        assert_eq!(order.len(), 9, "3-node lace finalizes a nine-block total order");
+        assert_eq!(
+            order.len(),
+            9,
+            "3-node lace finalizes a nine-block total order"
+        );
 
         // Its (creator, seq) projection must EQUAL the projection gate's finalized set — the two
         // verified exports are consistent (one is the order, the other its set projection).
@@ -406,7 +417,10 @@ mod tests {
         // Every block in the verified order is admitted by the projection gate (consistency both ways).
         for id in &order {
             let b = lace.get(id).expect("ordered id is present");
-            assert!(vf.admits(&b.creator, b.seq), "ordered block must be projection-admitted");
+            assert!(
+                vf.admits(&b.creator, b.seq),
+                "ordered block must be projection-admitted"
+            );
         }
     }
 }

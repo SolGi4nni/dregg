@@ -40,17 +40,15 @@
 //! threads witnessed Grant rows through the same entry points); the CONTROL
 //! additionally does a full real-Plonky3 prove+verify roundtrip.
 
+use dregg_cell::facet::{EFFECT_ALL, EFFECT_EMIT_EVENT, EFFECT_SET_FIELD, EFFECT_TRANSFER};
 use dregg_circuit::cap_root::{
     CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf, encode_breadstuff, encode_expiry, fold_bytes32,
     slot_hash, split_effect_mask,
 };
-use dregg_circuit::effect_vm::{
-    AttenuateWitness, CellState, Effect, generate_effect_vm_trace,
-};
+use dregg_circuit::effect_vm::{AttenuateWitness, CellState, Effect, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_p3_full_air::{
     p3_air_accepts_attenuation, prove_effect_vm_p3_attenuation, verify_effect_vm_p3,
 };
-use dregg_cell::facet::{EFFECT_ALL, EFFECT_EMIT_EVENT, EFFECT_SET_FIELD, EFFECT_TRANSFER};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_many;
 
@@ -129,7 +127,10 @@ impl Scenario {
         // Sanity: the witnessed held leaf is the real committed one, and the
         // granter's tree is unchanged by the delegation.
         assert_eq!(dw.held, self.held, "membership opens the genuine held leaf");
-        assert_eq!(dw.old_root, dw.new_root, "delegating must not move the granter's tree");
+        assert_eq!(
+            dw.old_root, dw.new_root,
+            "delegating must not move the granter's tree"
+        );
         AttenuateWitness {
             held: dw.held,
             granted: dw.granted,
@@ -146,10 +147,7 @@ impl Scenario {
     /// GRANTER's `cap_root` seeded to the granter tree root (so GATE 1
     /// authenticates the held leaf against the genuine delegated-from rights).
     /// `cap_entry[0]` carries the granted leaf's digest — the AIR pins it.
-    fn base_trace(
-        &self,
-        w: &AttenuateWitness,
-    ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Effect>) {
+    fn base_trace(&self, w: &AttenuateWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Effect>) {
         self.base_trace_with_cap_entry(w, self.granted.digest())
     }
 
@@ -177,7 +175,14 @@ impl Scenario {
 /// of unrelated capabilities (so the membership path has non-trivial siblings).
 fn tree_with_held(held: CapLeaf) -> CanonicalCapTree {
     let other_a = leaf(3, 0x22, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, None, None);
-    let other_b = leaf(42, 0x33, builtin_tag(TIER_PROOF), EFFECT_TRANSFER, Some(500), None);
+    let other_b = leaf(
+        42,
+        0x33,
+        builtin_tag(TIER_PROOF),
+        EFFECT_TRANSFER,
+        Some(500),
+        None,
+    );
     CanonicalCapTree::new(vec![held, other_a, other_b], CAP_TREE_DEPTH)
 }
 
@@ -209,7 +214,10 @@ fn control_honest_grant_proves_and_verifies() {
     );
     // The structural difference from Attenuate is REAL in this fixture: the
     // granted leaf occupies a different slot key than the held leaf.
-    assert_ne!(granted.slot_hash, held.slot_hash, "cross-c-list grant: different slot keys");
+    assert_ne!(
+        granted.slot_hash, held.slot_hash,
+        "cross-c-list grant: different slot keys"
+    );
     let scn = Scenario {
         tree: tree_with_held(held),
         held,
@@ -237,7 +245,14 @@ fn control_honest_grant_proves_and_verifies() {
 /// held leaf's breadstuff is required) and an unbounded→bounded expiry.
 #[test]
 fn control_grant_with_own_breadstuff_and_bounded_expiry() {
-    let held = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_EITHER), EFFECT_ALL, None, None);
+    let held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_EITHER),
+        EFFECT_ALL,
+        None,
+        None,
+    );
     let granted = leaf(
         RECIPIENT_SLOT,
         0x11,
@@ -246,7 +261,10 @@ fn control_grant_with_own_breadstuff_and_bounded_expiry() {
         Some(900),
         Some([0x77; 32]),
     );
-    assert_ne!(granted.breadstuff, held.breadstuff, "granted carries its own breadstuff");
+    assert_ne!(
+        granted.breadstuff, held.breadstuff,
+        "granted carries its own breadstuff"
+    );
     let scn = Scenario {
         tree: tree_with_held(held),
         held,
@@ -343,13 +361,32 @@ fn forgery2_incomparable_auth_rejected_by_lattice_not_gte() {
     // FIXED so the lattice is the SOLE rejecter. This is ALSO exactly the
     // check the runtime's `apply_grant_capability` does enforce
     // (`is_attenuation`, apply.rs:646) — the circuit now carries it in-proof.
-    let held = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
-    let forged_granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_PROOF), EFFECT_ALL, Some(1000), None);
+    let held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
+    let forged_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_PROOF),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
 
     // Non-vacuity control: granted == held tier (Signature ⊑ Signature) PASSES.
-    let honest_granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
+    let honest_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn_ok = Scenario {
         tree: tree_with_held(held),
         held,
@@ -390,9 +427,22 @@ fn forgery2_incomparable_auth_rejected_by_lattice_not_gte() {
 
     // Belt: the OTHER incomparable direction (held=Proof, granted=Signature) is
     // ALSO rejected (the table omits BOTH (1,2) and (2,1)).
-    let held2 = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_PROOF), EFFECT_ALL, Some(1000), None);
-    let granted2 =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
+    let held2 = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_PROOF),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
+    let granted2 = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn2 = Scenario {
         tree: tree_with_held(held2),
         held: held2,
@@ -422,18 +472,37 @@ fn forgery3_fabricated_held_rejected_by_membership_open() {
     // then grants broad rights to an accomplice recipient. But the fake held
     // leaf is NOT in the granter's cap_root, so its membership path cannot
     // reach the seeded root ⇒ GATE 1 fails. A free held is forbidden.
-    let real_held =
-        leaf(HELD_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_SET_FIELD, Some(1000), None);
+    let real_held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_SET_FIELD,
+        Some(1000),
+        None,
+    );
     let tree = tree_with_held(real_held);
     let real_root = tree.root();
 
     // Fabricated held: same slot/target, INFLATED rights.
-    let fake_held = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_NONE), EFFECT_ALL, None, None);
+    let fake_held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_NONE),
+        EFFECT_ALL,
+        None,
+        None,
+    );
     // Granted: a broad delegation that would be a valid narrowing OF THE FAKE
     // (Either ⊑ None, EFFECT_ALL ⊆ ALL, finite ≤ None) but is an AMPLIFICATION
     // of the real held rights.
-    let granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_EITHER), EFFECT_ALL, Some(1000), None);
+    let granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_EITHER),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
 
     // Build a membership path for the fake held leaf from a DIFFERENT tree (so
     // the path is internally consistent but tops out at the WRONG root).
@@ -486,11 +555,24 @@ fn forgery4_custom_vk_mismatch_rejected_by_vk_subgate() {
     // admits Custom→Custom ONLY when vk_hashes are equal.
     let vk_a = [0xAA; 32];
     let vk_b = [0xBB; 32];
-    let held = leaf(HELD_SLOT, 0x11, custom_tag(&vk_a), EFFECT_ALL, Some(1000), None);
+    let held = leaf(
+        HELD_SLOT,
+        0x11,
+        custom_tag(&vk_a),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
 
     // Non-vacuity control: granted = Custom{a} (SAME vk) PASSES.
-    let honest_granted =
-        leaf(RECIPIENT_SLOT, 0x11, custom_tag(&vk_a), EFFECT_ALL, Some(1000), None);
+    let honest_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        custom_tag(&vk_a),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn_ok = Scenario {
         tree: tree_with_held(held),
         held,
@@ -508,8 +590,14 @@ fn forgery4_custom_vk_mismatch_rejected_by_vk_subgate() {
     );
 
     // The vk-mismatch forgery is REJECTED.
-    let forged_granted =
-        leaf(RECIPIENT_SLOT, 0x11, custom_tag(&vk_b), EFFECT_ALL, Some(1000), None);
+    let forged_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        custom_tag(&vk_b),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn = Scenario {
         tree: tree_with_held(held),
         held,
@@ -541,13 +629,32 @@ fn forgery5_expiry_extension_rejected_by_monotone_gate() {
     // mask held FIXED, so the expiry gate is the SOLE rejecter. NOTE: the
     // runtime's `grant_with_breadstuff` currently installs `expires_at: None`
     // unconditionally — the circuit gate enforces the WORTHWHILE semantics.
-    let held = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(500), None);
-    let forged_granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(900), None);
+    let held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(500),
+        None,
+    );
+    let forged_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(900),
+        None,
+    );
 
     // Non-vacuity control: shrink 500 → 400 PASSES.
-    let honest_granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(400), None);
+    let honest_granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(400),
+        None,
+    );
     let scn_ok = Scenario {
         tree: tree_with_held(held),
         held,
@@ -582,8 +689,14 @@ fn forgery5_expiry_extension_rejected_by_monotone_gate() {
 
     // And a finite→unbounded grant (granted None over a finite held) is a
     // widening ⇒ also rejected.
-    let granted_none =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, None, None);
+    let granted_none = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        None,
+        None,
+    );
     let scn_none = Scenario {
         tree: tree_with_held(held),
         held,
@@ -612,9 +725,22 @@ fn forgery6_cap_entry_digest_mismatch_rejected_by_binding_gate() {
     // attestation (what the recipient-side install consumes) would not match
     // the rights the order gates checked. The binding gate pins
     // params[0] == Poseidon2(granted leaf fields) ⇒ REJECT.
-    let held = leaf(HELD_SLOT, 0x11, builtin_tag(TIER_EITHER), EFFECT_ALL, Some(1000), None);
-    let granted =
-        leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_SET_FIELD, Some(500), None);
+    let held = leaf(
+        HELD_SLOT,
+        0x11,
+        builtin_tag(TIER_EITHER),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
+    let granted = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_SET_FIELD,
+        Some(500),
+        None,
+    );
     let scn = Scenario {
         tree: tree_with_held(held),
         held,
@@ -635,7 +761,14 @@ fn forgery6_cap_entry_digest_mismatch_rejected_by_binding_gate() {
 
     // Flip ONE field: cap_entry[0] = digest of an AMPLIFIED leaf (what a
     // dishonest granter would want the recipient install to consume).
-    let amplified = leaf(RECIPIENT_SLOT, 0x11, builtin_tag(TIER_NONE), EFFECT_ALL, None, None);
+    let amplified = leaf(
+        RECIPIENT_SLOT,
+        0x11,
+        builtin_tag(TIER_NONE),
+        EFFECT_ALL,
+        None,
+        None,
+    );
     let (t, p, e) = scn.base_trace_with_cap_entry(&w, amplified.digest());
     assert!(
         !p3_air_accepts_attenuation(&t, &p, &e),

@@ -113,7 +113,10 @@ impl ConstantsModule {
         s.push('\n');
 
         if !self.slots.is_empty() {
-            let _ = writeln!(s, "// Slot indices (mirror `pub const *_SLOT` in src/lib.rs).");
+            let _ = writeln!(
+                s,
+                "// Slot indices (mirror `pub const *_SLOT` in src/lib.rs)."
+            );
             for slot in &self.slots {
                 let _ = writeln!(s, "export const {} = {};", slot.js_name, slot.value);
             }
@@ -159,7 +162,9 @@ impl ConstantsModule {
                 .zip(actual.lines())
                 .enumerate()
                 .find(|(_, (e, a))| e != a)
-                .map(|(i, (e, a))| format!("\n  line {}:\n    expected: {e}\n    actual:   {a}", i + 1))
+                .map(|(i, (e, a))| {
+                    format!("\n  line {}:\n    expected: {e}\n    actual:   {a}", i + 1)
+                })
                 .unwrap_or_else(|| "\n  (length differs)".to_string());
             panic!(
                 "constants drift: {path:?} is stale vs the Rust source of truth.\n\

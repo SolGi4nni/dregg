@@ -445,4 +445,3 @@ fn effects_hash_reordering_produces_different_pi_rejected_cross_verify() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 7. ValidateHandoff: honest proof verifies, wrong PI root rejected.
 // ─────────────────────────────────────────────────────────────────────────────
-

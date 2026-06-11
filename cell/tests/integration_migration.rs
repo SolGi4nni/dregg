@@ -110,7 +110,8 @@ fn double_accept_is_rejected_no_double_existence() {
         .migrate_prepare(&id, FED_A, FED_B, CellMode::Hosted, 1)
         .unwrap();
 
-    dst.migrate_accept(&voucher, cell.clone(), FED_B, 2).unwrap();
+    dst.migrate_accept(&voucher, cell.clone(), FED_B, 2)
+        .unwrap();
     // A SECOND accept of the same cell at the destination must be refused: this is the
     // no-double-existence gate (a replayed voucher cannot fork the cell).
     let err = dst.migrate_accept(&voucher, cell, FED_B, 3).unwrap_err();
@@ -138,7 +139,9 @@ fn tampered_state_in_transit_is_rejected() {
     tampered.capabilities.grant(target, AuthRequired::None);
     assert_eq!(tampered.id(), id, "same identity, inflated authority");
 
-    let err = dst.migrate_accept(&voucher, tampered, FED_B, 2).unwrap_err();
+    let err = dst
+        .migrate_accept(&voucher, tampered, FED_B, 2)
+        .unwrap_err();
     assert_eq!(err, MigrationError::StateMismatch);
     assert!(dst.get(&id).is_none(), "tampered cell was not installed");
 }
@@ -156,7 +159,9 @@ fn voucher_for_other_federation_is_rejected() {
 
     // A federation that is NOT the addressed destination cannot accept the voucher.
     let wrong_fed: FederationId = [0xCC; 32];
-    let err = dst.migrate_accept(&voucher, cell, wrong_fed, 2).unwrap_err();
+    let err = dst
+        .migrate_accept(&voucher, cell, wrong_fed, 2)
+        .unwrap_err();
     assert_eq!(err, MigrationError::WrongDestination);
 }
 

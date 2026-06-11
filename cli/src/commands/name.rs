@@ -171,7 +171,7 @@ pub async fn run(
             cell,
             fee,
         } => transfer(cfg, ctx, &name, &new_owner, cell, fee).await,
-            NameCommand::Revoke { name, cell, fee } => revoke(cfg, ctx, &name, cell, fee).await,
+        NameCommand::Revoke { name, cell, fee } => revoke(cfg, ctx, &name, cell, fee).await,
     }
 }
 
@@ -205,11 +205,7 @@ pub fn revoked_tombstone_hex(name: &str) -> String {
 
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect()
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 
@@ -223,9 +219,9 @@ async fn target_cell(
     if let Some(c) = cell {
         return Ok(c);
     }
-    let ident = get_json(cfg, "/api/node/identity").await.map_err(|e| {
-        format!("could not read operator identity (is the node unlocked?): {e}")
-    })?;
+    let ident = get_json(cfg, "/api/node/identity")
+        .await
+        .map_err(|e| format!("could not read operator identity (is the node unlocked?): {e}"))?;
     ident["agent_cell"]
         .as_str()
         .map(|s| s.to_string())
@@ -271,10 +267,7 @@ fn render_turn(ctx: &Context, data: &serde_json::Value, action: &str) {
         let err = data["error"].as_str().unwrap_or(turn_hash);
         ctx.error(&format!("{action} rejected: {err}"));
     }
-    ctx.kv(
-        "Turn",
-        &crate::output::abbrev_hex(turn_hash, 8, 4),
-    );
+    ctx.kv("Turn", &crate::output::abbrev_hex(turn_hash, 8, 4));
     let lowered = proof_status.to_lowercase();
     let proof_line = match lowered.as_str() {
         "proved" => "PROVED (real STARK verified)",
@@ -330,7 +323,9 @@ async fn register(
     }
     render_turn(ctx, &data, "Registration");
     if data["accepted"].as_bool().unwrap_or(false) {
-        ctx.info(&format!("  Resolve it:  dregg name resolve {name} --cell {target}"));
+        ctx.info(&format!(
+            "  Resolve it:  dregg name resolve {name} --cell {target}"
+        ));
     }
     Ok(())
 }
@@ -499,7 +494,10 @@ async fn transfer(
         return Ok(());
     }
     ctx.header(&format!("Transfer '{name}'"));
-    ctx.kv("New owner", &crate::output::abbrev_hex(&owner_hash_hex(new_owner), 8, 4));
+    ctx.kv(
+        "New owner",
+        &crate::output::abbrev_hex(&owner_hash_hex(new_owner), 8, 4),
+    );
     render_turn(ctx, &data, "Transfer");
     Ok(())
 }

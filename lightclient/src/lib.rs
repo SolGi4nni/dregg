@@ -30,14 +30,29 @@
 //!   cannot_produce_a_root` / `ungated_prover_with_stub_leaf_cannot_produce_a_root` tamper tests in
 //!   `ivc_turn_chain`).
 //!
+//! The light client additionally holds a **trust anchor**: the [`RecursionVk`] verifier-key
+//! fingerprint of the honest root circuit, obtained once from an honest setup fold and distributed
+//! exactly like any SNARK VK (genesis/checkpoint configuration — NEVER taken from the artifact under
+//! verification). [`verify_history`] refuses unless (1) the presented root's recomputed fingerprint
+//! equals the anchor (a from-scratch prover aggregating a DIFFERENT circuit's proofs is refused
+//! here — previously the engine reconstructed circuit data from the proof itself and accepted any
+//! valid recursive proof), (2) the carried `genesis_root`/`final_root`/`num_turns`/`chain_digest`
+//! verify as the public inputs of the carried chain-binding STARK (Fiat–Shamir binds all four, so a
+//! relabeled public claim is refused — the publics are read against a proof, not trusted as bare
+//! fields), and (3) the root batch proof verifies.
+//!
 //! What remains NAMED, not discharged (the honest floor): `recursive_sound` — the recursion fork's
-//! FRI engine soundness, including its circuit/common-data discipline (the root batch proof does not
-//! yet pin a verifying-key fingerprint of the leaf verifier circuits, and aggregation layers do not
-//! re-expose leaf public values at the root, so the aggregate's public `genesis_root`/`final_root`/
-//! `chain_digest` are bound to the leaves at PROVE time — every wrap fails unless its PIs match what
-//! its proof attests, in-circuit — and carried beside the root rather than re-read from it at verify
-//! time). [`AttestedHistory`] is the `AggregateAttests` verdict under that named carrier, and
-//! [`verify_history`] is the light-client check.
+//! FRI engine soundness — plus two precisely-scoped fork follow-ups the harness pins narrow but do
+//! not close (stated in full in `circuit/src/ivc_turn_chain.rs`'s module docs): (a) the VK pin fixes
+//! the ROOT circuit's structure, but the fork's aggregation circuit takes each CHILD proof's
+//! preprocessed commitment as a runtime public input living in the constraint-free `PublicAir` trace
+//! that host verification never checks, so leaf-circuit identity is not yet pinned in-band; (b) leaf
+//! public values are not re-exposed at the root (`into_recursion_input::<BatchOnly>` passes empty
+//! `table_public_inputs` and the fork ignores them when building the aggregation circuit), so the
+//! carried binding proof is not in-band linked to the binding leaf folded INSIDE the root. Both
+//! close with the same fork lever: thread `table_public_inputs` up the tree and host-check the
+//! circuit public vector. [`AttestedHistory`] is the `AggregateAttests` verdict under that named
+//! carrier, and [`verify_history`] is the light-client check.
 //!
 //! ## Proofs are ADDITIVE ATTESTATION — and that is the POINT.
 //!
@@ -66,7 +81,7 @@
 
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::ivc_turn_chain::{
-    FinalizedTurn, TurnChainError, WholeChainProof, prove_turn_chain_recursive,
+    FinalizedTurn, RecursionVk, TurnChainError, WholeChainProof, prove_turn_chain_recursive,
     verify_turn_chain_recursive,
 };
 
@@ -112,20 +127,30 @@ impl core::fmt::Display for LightClientError {
 
 impl std::error::Error for LightClientError {}
 
-/// **THE LIGHT-CLIENT CHECK** — verify ONE succinct aggregate and obtain the whole-history
-/// attestation, re-witnessing NOTHING.
+/// **THE LIGHT-CLIENT CHECK** — verify ONE succinct aggregate against the client's trust anchor and
+/// obtain the whole-history attestation, re-witnessing NOTHING.
 ///
-/// This runs *exactly one* cryptographic check: [`verify_turn_chain_recursive`] on the aggregate's
-/// single root proof (cost independent of the number of folded turns). It does **not** re-execute any
-/// turn, re-hash any state, or inspect any per-turn leaf. On success it returns the [`AttestedHistory`]
-/// read straight off the aggregate's public commitments — the Rust embodiment of
+/// `expected_vk` is the client's trust anchor — the verifier-key fingerprint of the honest root
+/// circuit, obtained once from an honest setup fold ([`WholeChainProof::root_vk_fingerprint`] on the
+/// setup party's own artifact) and carried in the client's configuration like any SNARK VK. It must
+/// NEVER be read off the artifact being verified.
+///
+/// This runs [`verify_turn_chain_recursive`]'s three teeth (cost independent of the number of folded
+/// turns): the VK pin, the carried-publics attestation against the chain-binding proof, and the root
+/// batch-STARK verification. It does **not** re-execute any turn, re-hash any state, or inspect any
+/// per-turn leaf. On success it returns the [`AttestedHistory`] read off the aggregate's public
+/// commitments — which the binding attestation just verified against a proof — the Rust embodiment of
 /// `light_client_verifies_whole_history`'s conclusion: every turn executed correctly, the chain is
 /// correctly ordered, and `final_root` is the genuine fold of the whole history.
 ///
 /// This is additive attestation: the verification IS the trust.
-pub fn verify_history(agg: &WholeChainProof) -> Result<AttestedHistory, LightClientError> {
-    // The ONE check. Re-witnessing nothing. (Lean: `hroot : verify agg.root = true`.)
-    verify_turn_chain_recursive(agg).map_err(LightClientError::AggregateInvalid)?;
+pub fn verify_history(
+    agg: &WholeChainProof,
+    expected_vk: &RecursionVk,
+) -> Result<AttestedHistory, LightClientError> {
+    // The check: VK pin + claimed-publics attestation + the root. Re-witnessing nothing.
+    // (Lean: `hroot : verify agg.root = true`.)
+    verify_turn_chain_recursive(agg, expected_vk).map_err(LightClientError::AggregateInvalid)?;
 
     // The attestation — the public roots the verified aggregate binds. (Lean: `AggregateAttests`.)
     Ok(AttestedHistory {
@@ -139,12 +164,17 @@ pub fn verify_history(agg: &WholeChainProof) -> Result<AttestedHistory, LightCli
 /// Convenience for a prover/relayer: fold a finalized-turn chain into ONE aggregate, then light-verify
 /// it. The fold is the expensive step (done once, by whoever produced the history); `verify_history`
 /// is the cheap step every light client repeats. Returns the aggregate + its attestation.
+///
+/// As the SETUP-side entry point this self-anchors: the VK fingerprint is extracted from the locally
+/// produced fold (`agg.root_vk_fingerprint()`) — which is exactly how an honest setup MINTS the trust
+/// anchor it then distributes to light clients. A remote verifier must instead call
+/// [`verify_history`] with its configured anchor.
 pub fn fold_and_attest(
     turns: &[FinalizedTurn],
 ) -> Result<(WholeChainProof, AttestedHistory), LightClientError> {
-    let agg = prove_turn_chain_recursive(turns)
-        .map_err(LightClientError::AggregateInvalid)?;
-    let attested = verify_history(&agg)?;
+    let agg = prove_turn_chain_recursive(turns).map_err(LightClientError::AggregateInvalid)?;
+    let vk = agg.root_vk_fingerprint();
+    let attested = verify_history(&agg, &vk)?;
     Ok((agg, attested))
 }
 
@@ -288,19 +318,21 @@ pub struct FinalizedAttestation {
 /// **THE FINALIZED LIGHT-CLIENT CHECK** — verify ONE aggregate + ONE finality cert and obtain a
 /// FINALIZED whole-history attestation, re-witnessing nothing and never touching the lace.
 ///
-/// Runs exactly: (1) `verify_history` on the aggregate (one recursive STARK verify, cost independent
-/// of history length); (2) the root seam `agg.final_root == finalized_root == cert.finalized_root`;
-/// (3) the quorum check `cert.has_quorum()` (count distinct signers ≥ `2n/3 + 1`). On success returns
+/// Runs exactly: (1) `verify_history` on the aggregate against the client's trust anchor (VK pin +
+/// binding attestation + one recursive STARK verify, cost independent of history length); (2) the
+/// root seam `agg.final_root == finalized_root == cert.finalized_root`; (3) the quorum check
+/// `cert.has_quorum()` (count distinct signers ≥ `2n/3 + 1`). On success returns
 /// `FinalizedAttestation` — the Rust embodiment of `light_client_accepts_finalized_history`'s
 /// conclusion. Additive attestation: the aggregate verify + the quorum count IS the trust in the whole
 /// finalized history.
 pub fn verify_finalized_history(
     agg: &WholeChainProof,
+    expected_vk: &RecursionVk,
     finalized_root: BabyBear,
     cert: &FinalityCert,
 ) -> Result<FinalizedAttestation, FinalizedError> {
     // Leg 1+2: the succinct aggregate (re-witnessing nothing).
-    let history = verify_history(agg).map_err(|e| match e {
+    let history = verify_history(agg, expected_vk).map_err(|e| match e {
         LightClientError::AggregateInvalid(te) => FinalizedError::AggregateInvalid(te),
     })?;
 
@@ -413,15 +445,77 @@ mod tests {
         let (agg, attested) =
             fold_and_attest(&turns).expect("a continuous 3-turn chain must fold and light-verify");
 
-        assert_eq!(attested.num_turns, 3, "the light client learns ALL three turns are attested");
-        assert_eq!(attested.genesis_root, genesis, "attested genesis = real genesis root");
-        assert_eq!(attested.final_root, final_root, "attested final = real folded final root");
-        assert_eq!(attested.chain_digest, agg.chain_digest, "digest carried from the aggregate");
+        assert_eq!(
+            attested.num_turns, 3,
+            "the light client learns ALL three turns are attested"
+        );
+        assert_eq!(
+            attested.genesis_root, genesis,
+            "attested genesis = real genesis root"
+        );
+        assert_eq!(
+            attested.final_root, final_root,
+            "attested final = real folded final root"
+        );
+        assert_eq!(
+            attested.chain_digest, agg.chain_digest,
+            "digest carried from the aggregate"
+        );
 
-        // Re-verifying the SAME aggregate (a second light client) re-obtains the SAME attestation —
-        // additive attestation is idempotent + cheap.
-        let attested2 = verify_history(&agg).expect("a second light client must also verify");
-        assert_eq!(attested, attested2, "every light client obtains the same whole-history verdict");
+        // The trust anchor the honest setup distributes (extracted from ITS OWN fold).
+        let vk = agg.root_vk_fingerprint();
+
+        // Re-verifying the SAME aggregate (a second light client, holding the anchor) re-obtains
+        // the SAME attestation — additive attestation is idempotent + cheap.
+        let attested2 = verify_history(&agg, &vk).expect("a second light client must also verify");
+        assert_eq!(
+            attested, attested2,
+            "every light client obtains the same whole-history verdict"
+        );
+
+        // REFUSED: a light client whose anchor pins a DIFFERENT circuit refuses this aggregate —
+        // the VK pin is checked before anything trusts the proof's self-described circuit data.
+        let mut wrong_anchor = vk;
+        wrong_anchor.0[0] ^= 0xFF;
+        match verify_history(&agg, &wrong_anchor) {
+            Err(LightClientError::AggregateInvalid(
+                dregg_circuit::ivc_turn_chain::TurnChainError::VkFingerprintMismatch { .. },
+            )) => {}
+            other => panic!("a mismatched VK anchor must refuse the aggregate; got {other:?}"),
+        }
+    }
+
+    /// **THE ANCHOR MODEL'S LOAD-BEARING PROPERTY.** The VK fingerprint is a function of the root
+    /// CIRCUIT SHAPE, not of the folded history's content: two different histories of the same
+    /// window shape fingerprint identically, so ONE anchor distributed at setup verifies every
+    /// honest fold of that shape. (And therefore: a fingerprint mismatch really means a DIFFERENT
+    /// CIRCUIT, not merely different data — the refusal is the from-scratch-prover tooth, never a
+    /// false positive on honest history.)
+    #[test]
+    fn vk_anchor_is_circuit_shape_not_history_content() {
+        // Two DIFFERENT 2-turn histories (different balances, nonces, step sizes, hence different
+        // roots/digests) of the same window shape.
+        let (turns_a, _ga, _fa) = make_chain(1000, 0, 7, 2);
+        let (turns_b, _gb, _fb) = make_chain(5000, 9, 13, 2);
+
+        let (agg_a, _) = fold_and_attest(&turns_a).expect("history A folds");
+        let (agg_b, _) = fold_and_attest(&turns_b).expect("history B folds");
+        assert_ne!(
+            agg_a.final_root, agg_b.final_root,
+            "the histories genuinely differ"
+        );
+
+        // The anchor minted from history A's fold...
+        let anchor = agg_a.root_vk_fingerprint();
+        assert_eq!(
+            anchor,
+            agg_b.root_vk_fingerprint(),
+            "same window shape => same verifier-key fingerprint (shape, not content)"
+        );
+
+        // ...verifies history B's aggregate.
+        verify_history(&agg_b, &anchor)
+            .expect("one setup-distributed anchor must verify every honest fold of that shape");
     }
 
     /// Build a finality cert with `k_signers` DISTINCT participants over `participant_count` total,
@@ -454,39 +548,67 @@ mod tests {
 
         // n=4 ⇒ supermajority threshold = 2*4/3 + 1 = 3. A 3-signer quorum finalizes.
         let cert = make_cert(3, 4, final_root);
-        assert!(cert.has_quorum(), "3-of-4 must be a supermajority (2*4/3+1 = 3)");
+        assert!(
+            cert.has_quorum(),
+            "3-of-4 must be a supermajority (2*4/3+1 = 3)"
+        );
 
-        let attestation = verify_finalized_history(&agg, final_root, &cert)
+        let vk = agg.root_vk_fingerprint();
+        let attestation = verify_finalized_history(&agg, &vk, final_root, &cert)
             .expect("aggregate + quorum cert + seam must all hold");
 
         assert_eq!(attestation.history.num_turns, 2, "both turns attested");
-        assert_eq!(attestation.finalized_root, final_root, "the trusted root is the finalized one");
-        assert_eq!(attestation.quorum_signers, 3, "the quorum is 3 distinct signers");
+        assert_eq!(
+            attestation.finalized_root, final_root,
+            "the trusted root is the finalized one"
+        );
+        assert_eq!(
+            attestation.quorum_signers, 3,
+            "the quorum is 3 distinct signers"
+        );
     }
 
-    /// **REJECTION TOOTH 1 — tampered aggregate.** Splicing a foreign chain's public final root onto
-    /// the aggregate breaks the root seam: even with a perfectly-valid finality cert, the finalized
-    /// client REJECTS (the proven endpoint no longer matches the shown/finalized root). A valid quorum
-    /// for root B cannot launder a proof of root A.
+    /// **REJECTION TOOTH 1 — tampered aggregate.** Splicing a foreign public final root onto the
+    /// aggregate is now refused by the CLAIMED-PUBLICS ATTESTATION (the carried binding proof
+    /// Fiat–Shamir-binds the genuine final root, so the relabeled field fails verification) —
+    /// earlier and stronger than the old endpoint-seam comparison, which only bit when the shown
+    /// root happened to differ. And the seam itself still bites for an UNtampered aggregate shown
+    /// the wrong root: a valid quorum for root B cannot launder a proof of root A either way.
     #[test]
     fn finalized_light_client_rejects_tampered_aggregate() {
         let (turns, _g, final_root) = make_chain(1000, 0, 7, 2);
         let (mut agg, _att) = fold_and_attest(&turns).expect("the honest chain must fold");
+        let vk = agg.root_vk_fingerprint();
 
-        // Tamper: claim a DIFFERENT public final root than the one the aggregate actually proves.
+        // (a) Tamper: claim a DIFFERENT public final root than the one the aggregate proves.
         let other_final = final_root + BabyBear::ONE;
         assert_ne!(other_final, final_root, "the foreign root must differ");
         agg.final_root = other_final;
 
-        // A genuine quorum for the ORIGINAL finalized root — but the aggregate now proves a different
-        // endpoint, so the seam must bite.
+        // A genuine quorum for the ORIGINAL finalized root — the relabeled aggregate must be
+        // refused outright (the carried publics no longer verify against the binding proof).
         let cert = make_cert(3, 4, final_root);
-        match verify_finalized_history(&agg, final_root, &cert) {
-            Err(FinalizedError::AggregateRootMismatch { proven, shown }) => {
-                assert_eq!(proven, other_final.as_u32());
-                assert_eq!(shown, final_root.as_u32());
+        match verify_finalized_history(&agg, &vk, final_root, &cert) {
+            Err(FinalizedError::AggregateInvalid(
+                dregg_circuit::ivc_turn_chain::TurnChainError::ClaimedPublicsUnattested { .. },
+            )) => {}
+            other => panic!(
+                "a relabeled aggregate final root must be refused by the binding attestation; \
+                 got {other:?}"
+            ),
+        }
+        agg.final_root = final_root;
+
+        // (b) The seam still bites for an HONEST aggregate shown a wrong finalized root: the
+        // aggregate verifies, but its proven endpoint is not the root the client was shown.
+        let shown = final_root + BabyBear::ONE;
+        let cert_b = make_cert(3, 4, shown);
+        match verify_finalized_history(&agg, &vk, shown, &cert_b) {
+            Err(FinalizedError::AggregateRootMismatch { proven, shown: s }) => {
+                assert_eq!(proven, final_root.as_u32());
+                assert_eq!(s, shown.as_u32());
             }
-            other => panic!("a tampered aggregate root must be rejected at the seam; got {other:?}"),
+            other => panic!("a wrong shown root must be rejected at the seam; got {other:?}"),
         }
     }
 
@@ -502,9 +624,13 @@ mod tests {
 
         // 2 of 4 signers — below the supermajority threshold of 3. A forged/insufficient finality cert.
         let weak_cert = make_cert(2, 4, final_root);
-        assert!(!weak_cert.has_quorum(), "2-of-4 must NOT be a supermajority");
+        assert!(
+            !weak_cert.has_quorum(),
+            "2-of-4 must NOT be a supermajority"
+        );
 
-        match verify_finalized_history(&agg, final_root, &weak_cert) {
+        let vk = agg.root_vk_fingerprint();
+        match verify_finalized_history(&agg, &vk, final_root, &weak_cert) {
             Err(FinalizedError::NoQuorum {
                 distinct_signers,
                 threshold,
@@ -531,7 +657,8 @@ mod tests {
         let cert = make_cert(3, 4, foreign_root);
         assert!(cert.has_quorum(), "the cert itself carries a real quorum");
 
-        match verify_finalized_history(&agg, final_root, &cert) {
+        let vk = agg.root_vk_fingerprint();
+        match verify_finalized_history(&agg, &vk, final_root, &cert) {
             Err(FinalizedError::CertRootMismatch { certified, shown }) => {
                 assert_eq!(certified, foreign_root.as_u32());
                 assert_eq!(shown, final_root.as_u32());
@@ -557,49 +684,51 @@ mod tests {
             finalized_root: final_root,
         };
         assert_eq!(padded_cert.distinct_signers(), 1, "repeats count once");
-        assert!(!padded_cert.has_quorum(), "one distinct signer is not a quorum of 4");
+        assert!(
+            !padded_cert.has_quorum(),
+            "one distinct signer is not a quorum of 4"
+        );
 
-        match verify_finalized_history(&agg, final_root, &padded_cert) {
-            Err(FinalizedError::NoQuorum { distinct_signers, .. }) => {
+        let vk = agg.root_vk_fingerprint();
+        match verify_finalized_history(&agg, &vk, final_root, &padded_cert) {
+            Err(FinalizedError::NoQuorum {
+                distinct_signers, ..
+            }) => {
                 assert_eq!(distinct_signers, 1, "duplicates collapsed to one");
             }
             other => panic!("a repeat-padded sub-quorum cert must be rejected; got {other:?}"),
         }
     }
 
-    /// **THE REJECTION TOOTH (Rust witness).** A light client REFUSES a corrupted aggregate: tampering
-    /// with the root proof makes `verify_turn_chain_recursive` reject, so `verify_history` returns
-    /// `AggregateInvalid` and grants NO attestation. The succinct check has teeth — you cannot get a
-    /// whole-history attestation without a genuinely valid aggregate. (Mirror of the Lean
-    /// `tampered_aggregate_cannot_bind`: a broken aggregate cannot attest.)
+    /// **THE REJECTION TOOTH (Rust witness).** A light client REFUSES a corrupted aggregate
+    /// OUTRIGHT: splicing foreign public claims (final root + digest) onto the artifact fails the
+    /// claimed-publics attestation — the carried binding proof Fiat–Shamir-binds the genuine values,
+    /// so `verify_history` returns `AggregateInvalid(ClaimedPublicsUnattested)` and grants NO
+    /// attestation. (This used to be a SOFT tooth: the public fields were not read from any proof at
+    /// verify time, so a spliced aggregate "verified" and the test could only assert the attestation
+    /// repeated the lie. Now the lie itself is refused.) Mirror of the Lean
+    /// `tampered_aggregate_cannot_bind`: a broken aggregate cannot attest.
     #[test]
     fn light_client_rejects_corrupted_aggregate() {
         let (turns, _g, _f) = make_chain(1000, 0, 7, 2);
         let (mut agg, _attested) = fold_and_attest(&turns).expect("the honest chain must fold");
+        let vk = agg.root_vk_fingerprint();
 
         // Corrupt the PUBLIC final root + digest the aggregate claims — splice foreign public
-        // claims onto THIS aggregate's root proof, so the root proof no longer matches the
-        // (genesis, final, digest) it is paired with.
+        // claims onto THIS aggregate's root proof.
         agg.final_root = agg.final_root + BabyBear::ONE;
         agg.chain_digest = agg.chain_digest + BabyBear::ONE;
 
-        // The light client checks ONLY the succinct root; the mismatch between the spliced public
-        // claims and the proof's bound values is exactly what the verifier rejects (or the attestation
-        // it returns no longer matches the genuine endpoints). Either way the tooth bites: a tampered
-        // aggregate cannot yield a TRUTHFUL whole-history attestation.
-        match verify_history(&agg) {
-            Ok(attested) => {
-                // If the verifier accepts the root (the public fields are not bound INTO the root in
-                // this K-fold artifact), the attestation must NOT match the spliced lie: the genuine
-                // final root differs from the foreign one we spliced.
-                assert_ne!(
-                    attested.final_root, _f,
-                    "a spliced public root must not equal the genuine final root"
-                );
+        match verify_history(&agg, &vk) {
+            Err(LightClientError::AggregateInvalid(
+                dregg_circuit::ivc_turn_chain::TurnChainError::ClaimedPublicsUnattested { .. },
+            )) => {
+                // The verifier rejected outright — the publics are read against a proof now.
             }
-            Err(LightClientError::AggregateInvalid(_)) => {
-                // The verifier rejected outright — the strongest form of the tooth.
-            }
+            other => panic!(
+                "spliced public claims must be REFUSED by the claimed-publics attestation; \
+                 got {other:?}"
+            ),
         }
     }
 }

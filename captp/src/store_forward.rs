@@ -195,7 +195,11 @@ const HKDF_DOMAIN: &[u8] = b"dregg-store-forward-v2-x25519-hkdf-sha256-chacha20p
 ///
 /// `salt` and `info` carry the domain tag and both public keys so the derived
 /// key is unique to this (ephemeral, destination) pair and version.
-fn derive_aead_key(shared_secret: &[u8; 32], ephemeral_pk: &[u8; 32], dest_pk: &[u8; 32]) -> [u8; 32] {
+fn derive_aead_key(
+    shared_secret: &[u8; 32],
+    ephemeral_pk: &[u8; 32],
+    dest_pk: &[u8; 32],
+) -> [u8; 32] {
     // Salt = domain tag (RFC 5869 allows a fixed non-secret salt).
     let hk = Hkdf::<Sha256>::new(Some(HKDF_DOMAIN), shared_secret);
 
@@ -266,7 +270,13 @@ pub fn encrypt_for_destination(
     let nonce = Nonce::default(); // 96-bit all-zero
     let ad = aead_associated_data(&ephemeral_pk, dest_pk);
     let ciphertext = cipher
-        .encrypt(&nonce, Payload { msg: payload, aad: &ad })
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: payload,
+                aad: &ad,
+            },
+        )
         .expect("ChaCha20-Poly1305 encryption never fails");
 
     key.zeroize();
@@ -323,7 +333,13 @@ pub fn decrypt_from_sender(
     let nonce = Nonce::default();
     let ad = aead_associated_data(sender_ephemeral_pk, &our_pk);
     let result = cipher
-        .decrypt(&nonce, Payload { msg: ciphertext, aad: &ad })
+        .decrypt(
+            &nonce,
+            Payload {
+                msg: ciphertext,
+                aad: &ad,
+            },
+        )
         .map_err(|_| DecryptError::DecryptionFailed);
 
     key.zeroize();
@@ -1071,15 +1087,22 @@ mod tests {
         // (relay-style) keypair cannot decrypt.
         let (relay_secret, _relay_public) = test_x25519_keypair();
         assert!(
-            decrypt_from_sender(&msg.encrypted_payload, &msg.sender_ephemeral_pk, &relay_secret)
-                .is_err(),
+            decrypt_from_sender(
+                &msg.encrypted_payload,
+                &msg.sender_ephemeral_pk,
+                &relay_secret
+            )
+            .is_err(),
             "a party without bob's secret could decrypt"
         );
 
         // The legitimate recipient still recovers the plaintext.
-        let recovered =
-            decrypt_from_sender(&msg.encrypted_payload, &msg.sender_ephemeral_pk, &bob_secret)
-                .unwrap();
+        let recovered = decrypt_from_sender(
+            &msg.encrypted_payload,
+            &msg.sender_ephemeral_pk,
+            &bob_secret,
+        )
+        .unwrap();
         assert_eq!(recovered, plaintext);
     }
 
@@ -1095,7 +1118,10 @@ mod tests {
         let (eph2, ct2) = encrypt_for_destination(plaintext, &bob_public, &alice_secret);
 
         assert_ne!(eph1, eph2, "ephemeral keys must be fresh per message");
-        assert_ne!(ct1, ct2, "ciphertexts must not be identical (no nonce reuse leak)");
+        assert_ne!(
+            ct1, ct2,
+            "ciphertexts must not be identical (no nonce reuse leak)"
+        );
     }
 
     // --- Client tests ---

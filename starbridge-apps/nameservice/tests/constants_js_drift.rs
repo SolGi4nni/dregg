@@ -25,10 +25,22 @@ fn constants_js_is_in_sync_with_rust_source_of_truth() {
 fn web_constants_slots_match_pub_consts() {
     let m = starbridge_nameservice::web_constants();
     let slot = |name: &str| m.slots.iter().find(|s| s.js_name == name).map(|s| s.value);
-    assert_eq!(slot("NAME_HASH_SLOT"), Some(starbridge_nameservice::NAME_HASH_SLOT as u64));
-    assert_eq!(slot("OWNER_HASH_SLOT"), Some(starbridge_nameservice::OWNER_HASH_SLOT as u64));
-    assert_eq!(slot("EXPIRY_SLOT"), Some(starbridge_nameservice::EXPIRY_SLOT as u64));
-    assert_eq!(slot("REVOKED_SLOT"), Some(starbridge_nameservice::REVOKED_SLOT as u64));
+    assert_eq!(
+        slot("NAME_HASH_SLOT"),
+        Some(starbridge_nameservice::NAME_HASH_SLOT as u64)
+    );
+    assert_eq!(
+        slot("OWNER_HASH_SLOT"),
+        Some(starbridge_nameservice::OWNER_HASH_SLOT as u64)
+    );
+    assert_eq!(
+        slot("EXPIRY_SLOT"),
+        Some(starbridge_nameservice::EXPIRY_SLOT as u64)
+    );
+    assert_eq!(
+        slot("REVOKED_SLOT"),
+        Some(starbridge_nameservice::REVOKED_SLOT as u64)
+    );
     assert_eq!(
         slot("RESOLVE_TARGET_SLOT"),
         Some(starbridge_nameservice::RESOLVE_TARGET_SLOT as u64)

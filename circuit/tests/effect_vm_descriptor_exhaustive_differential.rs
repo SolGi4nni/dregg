@@ -64,12 +64,12 @@
 //! reject-leg (a perturbed boundary cell), both decided identically by the AIR and
 //! the reference. The generator therefore covers the WHOLE representable IR.
 
-use dregg_circuit::lean_descriptor_air::{
-    descriptor_air_accepts, EffectVmDescriptor, HashInput, LeanExpr, RangeSpec, VmConstraint,
-    VmHashSite, VmRow,
-};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::plonky3_prover::{poseidon2_permute_aux_witness, POSEIDON2_WIDTH};
+use dregg_circuit::lean_descriptor_air::{
+    EffectVmDescriptor, HashInput, LeanExpr, RangeSpec, VmConstraint, VmHashSite, VmRow,
+    descriptor_air_accepts,
+};
+use dregg_circuit::plonky3_prover::{POSEIDON2_WIDTH, poseidon2_permute_aux_witness};
 
 // ===========================================================================
 // The EffectVM layout offsets (mirror of `effect_vm/columns.rs` /
@@ -541,10 +541,7 @@ fn gen_case(rng: &mut Rng, target_accept: bool, cov: &mut Coverage) -> Case {
         boundary_specs.push((brow, i, j));
         constraints.push(VmConstraint::Boundary {
             row: brow,
-            body: LeanExpr::Add(
-                Box::new(LeanExpr::Var(i)),
-                Box::new(neg(LeanExpr::Var(j))),
-            ),
+            body: LeanExpr::Add(Box::new(LeanExpr::Var(i)), Box::new(neg(LeanExpr::Var(j)))),
         });
     }
 
@@ -683,7 +680,8 @@ fn gen_case(rng: &mut Rng, target_accept: bool, cov: &mut Coverage) -> Case {
             1 => {
                 // break a transition: bump next.before[hi] on the first window.
                 let (hi, _lo) = trans_specs[rng.below(trans_specs.len())];
-                base[1][STATE_BEFORE_BASE + hi] = base[1][STATE_BEFORE_BASE + hi] + BabyBear::new(1);
+                base[1][STATE_BEFORE_BASE + hi] =
+                    base[1][STATE_BEFORE_BASE + hi] + BabyBear::new(1);
                 // re-plant row1 site digests (the bumped cell could feed a site).
                 let mut digests: Vec<BabyBear> = Vec::with_capacity(hash_sites.len());
                 for site in &hash_sites {

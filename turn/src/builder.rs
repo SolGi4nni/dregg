@@ -730,12 +730,6 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    
-
-    
-
-    
-
     // §3.4 — Cell lifecycle ----------------------------------------------------
 
     pub fn effect_create_cell(
@@ -832,35 +826,11 @@ impl<S> ActionBuilder<S> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
-
     // §3.7 — Obligations -------------------------------------------------------
 
-    
-
-    
-
-    
-
     // §3.8 — Escrow ------------------------------------------------------------
-
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
-
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
 
     // §3.9 — Events ------------------------------------------------------------
 
@@ -873,18 +843,6 @@ impl<S> ActionBuilder<S> {
     }
 
     // §3.10 — Queues -----------------------------------------------------------
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
 }
 
 // `.build()` is only available in an `Authorized` state.

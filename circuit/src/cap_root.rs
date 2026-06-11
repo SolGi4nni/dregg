@@ -155,10 +155,7 @@ pub fn split_effect_mask(mask: u32) -> (BabyBear, BabyBear) {
 /// reserved [`NONE_SENTINEL`].
 pub fn encode_expiry(expiry: Option<u64>) -> BabyBear {
     match expiry {
-        Some(h) => hash_many(&[
-            BabyBear::new(h as u32),
-            BabyBear::new((h >> 32) as u32),
-        ]),
+        Some(h) => hash_many(&[BabyBear::new(h as u32), BabyBear::new((h >> 32) as u32)]),
         None => NONE_SENTINEL,
     }
 }
@@ -282,9 +279,7 @@ impl CanonicalCapTree {
     /// exists. The sorted-tree placement is by `slot_hash` ordering, so this
     /// is the canonical position the membership path opens.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        self.sorted_leaves
-            .iter()
-            .position(|l| l.slot_hash == key)
+        self.sorted_leaves.iter().position(|l| l.slot_hash == key)
     }
 
     /// Generate a Merkle **membership** path for the leaf at the given padded
@@ -437,7 +432,11 @@ mod tests {
         let a = empty_capability_root();
         let b = empty_capability_root();
         assert_eq!(a, b, "empty root is deterministic");
-        assert_ne!(a, BabyBear::ZERO, "empty root is NOT the ZERO default (the disjoint-seed bug)");
+        assert_ne!(
+            a,
+            BabyBear::ZERO,
+            "empty root is NOT the ZERO default (the disjoint-seed bug)"
+        );
     }
 
     /// Adding a capability moves the root (the commitment is load-bearing).
@@ -472,7 +471,10 @@ mod tests {
     fn full_32bit_mask_does_not_collide() {
         let all = compute_capability_root(vec![leaf(0, 1, 1, 0xFFFF_FFFF)]);
         let lo_only = compute_capability_root(vec![leaf(0, 1, 1, 0x0000_FFFF)]);
-        assert_ne!(all, lo_only, "high 16 bits of the mask must bind (no 30-bit truncation)");
+        assert_ne!(
+            all, lo_only,
+            "high 16 bits of the mask must bind (no 30-bit truncation)"
+        );
         let (lo, hi) = split_effect_mask(0xFFFF_FFFF);
         assert_eq!(lo.as_u32(), 0xFFFF);
         assert_eq!(hi.as_u32(), 0xFFFF);
@@ -486,10 +488,18 @@ mod tests {
         let mut other = base;
         base.breadstuff = encode_breadstuff(Some(&[7u8; 32]));
         other.breadstuff = encode_breadstuff(Some(&[9u8; 32]));
-        assert_ne!(base.digest(), other.digest(), "breadstuff must bind the leaf");
+        assert_ne!(
+            base.digest(),
+            other.digest(),
+            "breadstuff must bind the leaf"
+        );
         // And None vs Some differs.
         let none = leaf(0, 1, 1, 0x1);
-        assert_ne!(none.digest(), base.digest(), "None vs Some breadstuff must differ");
+        assert_ne!(
+            none.digest(),
+            base.digest(),
+            "None vs Some breadstuff must differ"
+        );
     }
 
     /// Distinct auth tiers bind (tier byte participates).

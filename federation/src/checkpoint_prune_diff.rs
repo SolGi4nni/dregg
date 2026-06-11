@@ -37,8 +37,8 @@
 
 #![cfg(test)]
 
-use crate::checkpoint::{create_checkpoint, verify_checkpoint, Checkpoint, CheckpointError};
-use crate::types::{generate_keypair, sign, NodeIdentity, QuorumCertificate};
+use crate::checkpoint::{Checkpoint, CheckpointError, create_checkpoint, verify_checkpoint};
+use crate::types::{NodeIdentity, QuorumCertificate, generate_keypair, sign};
 
 // ───────────────────────────── Lean model, transcribed to Rust ─────────────────────────────
 // These mirror `CheckpointPrune.lean` §1 exactly. The `RetentionPolicy` enum + `would_prune` body
@@ -87,22 +87,66 @@ fn prune_predicate_matches_config_golden() {
     // The Lean `#guard`s in CheckpointPrune.lean §1, re-run against the transcribed Rust predicate.
     // `forever_never_prunes` (config.rs:151).
     assert!(!lean_would_prune(RetentionPolicy::Forever, 0, 1_000_000));
-    assert!(!lean_would_prune(RetentionPolicy::Forever, 500_000, 1_000_000));
-    assert!(!lean_would_prune(RetentionPolicy::Forever, 1_000_000, 1_000_000));
+    assert!(!lean_would_prune(
+        RetentionPolicy::Forever,
+        500_000,
+        1_000_000
+    ));
+    assert!(!lean_would_prune(
+        RetentionPolicy::Forever,
+        1_000_000,
+        1_000_000
+    ));
     assert!(!lean_is_pruning(RetentionPolicy::Forever));
     // `rolling_window_prunes_old` (config.rs:159): tip=1000, window 100 ⇒ prune ≤ 900.
-    assert!(lean_would_prune(RetentionPolicy::RollingWindow(100), 500, 1000));
-    assert!(lean_would_prune(RetentionPolicy::RollingWindow(100), 900, 1000));
-    assert!(!lean_would_prune(RetentionPolicy::RollingWindow(100), 901, 1000));
-    assert!(!lean_would_prune(RetentionPolicy::RollingWindow(100), 1000, 1000));
+    assert!(lean_would_prune(
+        RetentionPolicy::RollingWindow(100),
+        500,
+        1000
+    ));
+    assert!(lean_would_prune(
+        RetentionPolicy::RollingWindow(100),
+        900,
+        1000
+    ));
+    assert!(!lean_would_prune(
+        RetentionPolicy::RollingWindow(100),
+        901,
+        1000
+    ));
+    assert!(!lean_would_prune(
+        RetentionPolicy::RollingWindow(100),
+        1000,
+        1000
+    ));
     // `rolling_window_zero_is_noop` (config.rs:169).
     assert!(!lean_is_pruning(RetentionPolicy::RollingWindow(0)));
-    assert!(!lean_would_prune(RetentionPolicy::RollingWindow(0), 0, 1000));
+    assert!(!lean_would_prune(
+        RetentionPolicy::RollingWindow(0),
+        0,
+        1000
+    ));
     // `until_archive_prunes_below` (config.rs:178).
-    assert!(lean_would_prune(RetentionPolicy::UntilArchive(500), 0, 1000));
-    assert!(lean_would_prune(RetentionPolicy::UntilArchive(500), 500, 1000));
-    assert!(!lean_would_prune(RetentionPolicy::UntilArchive(500), 501, 1000));
-    assert!(!lean_would_prune(RetentionPolicy::UntilArchive(500), 1000, 1000));
+    assert!(lean_would_prune(
+        RetentionPolicy::UntilArchive(500),
+        0,
+        1000
+    ));
+    assert!(lean_would_prune(
+        RetentionPolicy::UntilArchive(500),
+        500,
+        1000
+    ));
+    assert!(!lean_would_prune(
+        RetentionPolicy::UntilArchive(500),
+        501,
+        1000
+    ));
+    assert!(!lean_would_prune(
+        RetentionPolicy::UntilArchive(500),
+        1000,
+        1000
+    ));
 }
 
 #[test]
@@ -182,12 +226,16 @@ fn recover_reconstructs_full_keyset() {
 
     // RECOVERY reconstructs the FULL keyset — every pruned id recovered (Lean `recover_keyset`).
     let recovered = lean_recover_keyset(pol, 1, 2, &lace, &snapshot_ids);
-    assert_eq!(recovered, original, "prune+recover must drop NO id (recover_keyset)");
+    assert_eq!(
+        recovered, original,
+        "prune+recover must drop NO id (recover_keyset)"
+    );
 
     // Forever prunes nothing (Lean `forever_prunes_nothing`).
     let forever_tail = lean_prune_lace(RetentionPolicy::Forever, 1, 2, &lace);
     assert_eq!(forever_tail.len(), lace.len());
-    let forever_recovered = lean_recover_keyset(RetentionPolicy::Forever, 1, 2, &lace, &snapshot_ids);
+    let forever_recovered =
+        lean_recover_keyset(RetentionPolicy::Forever, 1, 2, &lace, &snapshot_ids);
     assert_eq!(forever_recovered, original);
 }
 
@@ -203,7 +251,10 @@ fn pruned_blocks_are_below_checkpoint_height() {
     let tail_ids: std::collections::BTreeSet<u64> = tail.iter().map(|&(id, _)| id).collect();
     for &(id, h) in &lace {
         if !tail_ids.contains(&id) {
-            assert!(h <= cp_height, "pruned block {id} at height {h} must be ≤ cp height {cp_height}");
+            assert!(
+                h <= cp_height,
+                "pruned block {id} at height {h} must be ≤ cp height {cp_height}"
+            );
         }
     }
 }
@@ -215,7 +266,9 @@ fn pruned_blocks_are_below_checkpoint_height() {
 fn attested_checkpoint(height: u64) -> (Checkpoint, Vec<NodeIdentity>) {
     let (signing_key, public_key) = generate_keypair();
     let members = vec![public_key.clone()];
-    let mut cp = create_checkpoint(height, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members, 1);
+    let mut cp = create_checkpoint(
+        height, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members, 1,
+    );
     let content_hash = cp.content_hash();
     let vote_msg = QuorumCertificate::vote_message(&content_hash, height, 0);
     let sig = sign(&signing_key, &vote_msg);
@@ -227,7 +280,11 @@ fn attested_checkpoint(height: u64) -> (Checkpoint, Vec<NodeIdentity>) {
         votes: vec![(0, sig)],
         threshold: 1,
     };
-    let nodes = vec![NodeIdentity { name: "v".to_string(), id: 0, public_key }];
+    let nodes = vec![NodeIdentity {
+        name: "v".to_string(),
+        id: 0,
+        public_key,
+    }];
     (cp, nodes)
 }
 
@@ -262,14 +319,21 @@ fn unattested_checkpoint_rejected() {
         votes: vec![(0, sig)],
         threshold: 1,
     };
-    let nodes = vec![NodeIdentity { name: "v".to_string(), id: 0, public_key }];
+    let nodes = vec![NodeIdentity {
+        name: "v".to_string(),
+        id: 0,
+        public_key,
+    }];
     assert_eq!(cp.verify(&nodes), Err(CheckpointError::QcMismatch));
 
     // (b) A FUTURE checkpoint (height > tip) is rejected as Stale (cannot prune below a checkpoint
     //     you have not reached). Lean: the prune only deletes at-or-below an attested height.
     let (cp_future, nodes_future) = attested_checkpoint(2000);
     match verify_checkpoint(&cp_future, &nodes_future, 1000) {
-        Err(CheckpointError::Stale { checkpoint_height, current_height }) => {
+        Err(CheckpointError::Stale {
+            checkpoint_height,
+            current_height,
+        }) => {
             assert_eq!(checkpoint_height, 2000);
             assert_eq!(current_height, 1000);
         }
@@ -281,7 +345,9 @@ fn unattested_checkpoint_rejected() {
     let (_sk_a, pk_a) = generate_keypair();
     let (sk_b, _pk_b) = generate_keypair(); // a DIFFERENT key signs.
     let members2 = vec![pk_a.clone()];
-    let mut cp2 = create_checkpoint(1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members2, 1);
+    let mut cp2 = create_checkpoint(
+        1000, [1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], members2, 1,
+    );
     let ch2 = cp2.content_hash();
     let vm2 = QuorumCertificate::vote_message(&ch2, 1000, 0);
     let forged = sign(&sk_b, &vm2); // signed by the WRONG key.
@@ -293,9 +359,16 @@ fn unattested_checkpoint_rejected() {
         votes: vec![(0, forged)],
         threshold: 1,
     };
-    let nodes2 = vec![NodeIdentity { name: "v".to_string(), id: 0, public_key: pk_a }];
+    let nodes2 = vec![NodeIdentity {
+        name: "v".to_string(),
+        id: 0,
+        public_key: pk_a,
+    }];
     assert!(
-        matches!(cp2.verify(&nodes2), Err(CheckpointError::InsufficientQuorum { .. })),
+        matches!(
+            cp2.verify(&nodes2),
+            Err(CheckpointError::InsufficientQuorum { .. })
+        ),
         "forged-signer checkpoint must fail quorum (EUF-CMA portal non-vacuous)"
     );
 }

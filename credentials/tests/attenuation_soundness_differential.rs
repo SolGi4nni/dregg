@@ -373,9 +373,7 @@ fn model_matches_real_engine() {
             let real = real_admits(real_tok, r);
             let model_v = model.admits(r);
             if real != model_v {
-                divergences.push(format!(
-                    "[{name}] real={real} model={model_v} req={r:?}"
-                ));
+                divergences.push(format!("[{name}] real={real} model={model_v} req={r:?}"));
             }
         }
     }

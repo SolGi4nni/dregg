@@ -25,7 +25,9 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 fn gated() -> bool {
-    std::env::var("DREGG_DEVNET_REDTEAM").map(|v| v == "1").unwrap_or(false)
+    std::env::var("DREGG_DEVNET_REDTEAM")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// host:port for the cleartext origin. Only used when the gate is on AND a
@@ -44,8 +46,12 @@ fn origin() -> (String, u16) {
 /// request, would itself be a FINDING (a crash) and is asserted by the caller.
 fn http(host: &str, port: u16, method: &str, path: &str, body: &[u8]) -> Option<(String, String)> {
     let mut stream = TcpStream::connect((host, port)).ok()?;
-    stream.set_read_timeout(Some(Duration::from_secs(15))).ok()?;
-    stream.set_write_timeout(Some(Duration::from_secs(15))).ok()?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .ok()?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(15)))
+        .ok()?;
     let req = format!(
         "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -75,7 +81,10 @@ fn http(host: &str, port: u16, method: &str, path: &str, body: &[u8]) -> Option<
 }
 
 fn status_code(status_line: &str) -> Option<u16> {
-    status_line.split_whitespace().nth(1).and_then(|c| c.parse().ok())
+    status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
 }
 
 #[test]
@@ -90,8 +99,16 @@ fn devnet_garbage_does_not_5xx() {
     let cases: &[(&str, &str, &[u8])] = &[
         ("POST", "/turn/submit", b"{this is not json"),
         ("POST", "/turn/submit", b"{}"),
-        ("POST", "/api/faucet", br#"{"recipient":"zz","amount":99999999999}"#),
-        ("POST", "/api/faucet", br#"{"recipient":"../../etc/passwd","amount":1}"#),
+        (
+            "POST",
+            "/api/faucet",
+            br#"{"recipient":"zz","amount":99999999999}"#,
+        ),
+        (
+            "POST",
+            "/api/faucet",
+            br#"{"recipient":"../../etc/passwd","amount":1}"#,
+        ),
         ("GET", "/api/cell/..%2F..%2Fetc%2Fpasswd", b""),
         ("POST", "/cipherclerk/mint", br#"{"amount":1000000}"#),
         ("GET", "/status", b""),
@@ -114,7 +131,11 @@ fn devnet_garbage_does_not_5xx() {
     // After the barrage, the node must still be healthy + consensus-live.
     let (st, body) = http(&host, port, "GET", "/status", b"")
         .expect("FINDING: node unreachable after adversarial barrage (DoS)");
-    assert_eq!(status_code(&st), Some(200), "node /status not 200 after barrage");
+    assert_eq!(
+        status_code(&st),
+        Some(200),
+        "node /status not 200 after barrage"
+    );
     assert!(
         body.contains("\"healthy\":true") && body.contains("\"consensus_live\":true"),
         "FINDING: node not healthy/consensus-live after adversarial barrage: {body}"
@@ -131,12 +152,14 @@ fn devnet_garbage_does_not_5xx() {
 #[test]
 fn devnet_status_withholds_private_counts_f8() {
     if !gated() {
-        eprintln!("devnet_adversarial F-8: SKIPPED (set DREGG_DEVNET_REDTEAM=1 + a plaintext origin)");
+        eprintln!(
+            "devnet_adversarial F-8: SKIPPED (set DREGG_DEVNET_REDTEAM=1 + a plaintext origin)"
+        );
         return;
     }
     let (host, port) = origin();
-    let (st, body) = http(&host, port, "GET", "/status", b"")
-        .expect("FINDING: /status unreachable");
+    let (st, body) =
+        http(&host, port, "GET", "/status", b"").expect("FINDING: /status unreachable");
     assert_eq!(status_code(&st), Some(200), "/status not 200");
 
     // The private-activity counters MUST NOT be on the public wire.
@@ -164,7 +187,9 @@ fn devnet_status_withholds_private_counts_f8() {
 #[test]
 fn devnet_rotating_xff_does_not_mint_fresh_buckets_f1() {
     if !gated() {
-        eprintln!("devnet_adversarial F-1: SKIPPED (set DREGG_DEVNET_REDTEAM=1 + a plaintext origin)");
+        eprintln!(
+            "devnet_adversarial F-1: SKIPPED (set DREGG_DEVNET_REDTEAM=1 + a plaintext origin)"
+        );
         return;
     }
     let (host, port) = origin();

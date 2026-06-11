@@ -170,7 +170,10 @@ impl LeanLookupAir {
             ranges[idx].topbit0_col = next;
             next += top_bits;
         }
-        LeanLookupAir::Query { width: next, ranges }
+        LeanLookupAir::Query {
+            width: next,
+            ranges,
+        }
     }
 
     /// The range-table provider AIR.
@@ -292,7 +295,10 @@ where
 /// rest carry `(0, 0)`. `mults[b]` is how many times byte `b` is queried across
 /// the whole batch (the table entry for `0` also absorbs the padding rows'
 /// multiplicity, which is `0` — padding rows contribute nothing).
-pub fn build_range_table_trace(height: usize, mults: &[u32; 1 << LIMB_BITS]) -> RowMajorMatrix<P3BabyBear> {
+pub fn build_range_table_trace(
+    height: usize,
+    mults: &[u32; 1 << LIMB_BITS],
+) -> RowMajorMatrix<P3BabyBear> {
     assert!(height.is_power_of_two() && height >= (1 << LIMB_BITS));
     let mut values = Vec::with_capacity(height * 2);
     for row in 0..height {
@@ -328,7 +334,8 @@ pub fn build_query_trace(
         row[i] = to_p3(crate::lean_descriptor_air::i64_to_babybear(v));
     }
     for r in ranges {
-        let field_val = crate::lean_descriptor_air::i64_to_babybear(base_assignment[r.query_col]).as_u32() as u64;
+        let field_val = crate::lean_descriptor_air::i64_to_babybear(base_assignment[r.query_col])
+            .as_u32() as u64;
         let n = num_limbs(r.bits);
         for i in 0..n {
             let byte = ((field_val >> (i * LIMB_BITS)) & 0xff) as usize;
@@ -461,7 +468,10 @@ mod tests {
         assert_eq!(logup_cols, 40);
         // The headline reduction (3×) — and crucially the win GROWS with `bits`
         // and with the NUMBER of wires sharing the one table (see below).
-        assert!(logup_cols * 3 == bit_cols, "expected exactly 3x main-aux-column reduction at 30 bits");
+        assert!(
+            logup_cols * 3 == bit_cols,
+            "expected exactly 3x main-aux-column reduction at 30 bits"
+        );
 
         // Per single 30-bit wire: 30 → 10 (3×). top_bits = 30 - 3·8 = 6.
         assert_eq!(num_limbs(30), 4);
@@ -482,7 +492,10 @@ mod tests {
             .sum();
         assert_eq!(bit_booleanity, 120);
         assert_eq!(logup_booleanity, 24);
-        assert!(logup_booleanity * 5 == bit_booleanity, "5x fewer booleanity gates");
+        assert!(
+            logup_booleanity * 5 == bit_booleanity,
+            "5x fewer booleanity gates"
+        );
 
         // The structural amortization that makes LogUp the right primitive: the
         // [0,256) range TABLE is a SINGLE column shared across ALL wires and ALL
@@ -544,9 +557,8 @@ mod tests {
         let two_pow_30: i64 = 1 << 30; // 0x4000_0000, a valid field elt but >= 2^30
         assert!(two_pow_30 >= (1 << 30));
 
-        let forged = std::panic::catch_unwind(|| {
-            prove_and_verify_range_lookup(&air, &[two_pow_30], 256)
-        });
+        let forged =
+            std::panic::catch_unwind(|| prove_and_verify_range_lookup(&air, &[two_pow_30], 256));
         match forged {
             // Debug: prover panics on the violated top-limb recomposition gate.
             Err(_) => {}

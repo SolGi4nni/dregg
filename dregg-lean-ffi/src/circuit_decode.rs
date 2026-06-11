@@ -74,7 +74,10 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     fn new(s: &'a str) -> Self {
-        Parser { s: s.as_bytes(), i: 0 }
+        Parser {
+            s: s.as_bytes(),
+            i: 0,
+        }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -129,7 +132,8 @@ impl<'a> Parser<'a> {
             }
         }
         let txt = std::str::from_utf8(&self.s[start..self.i]).map_err(|e| e.to_string())?;
-        txt.parse::<i64>().map_err(|e| format!("bad int `{txt}`: {e}"))
+        txt.parse::<i64>()
+            .map_err(|e| format!("bad int `{txt}`: {e}"))
     }
 
     fn parse_expr(&mut self) -> Result<DecodedExpr, String> {
@@ -318,12 +322,36 @@ fn expr_degree(e: &DecodedExpr) -> usize {
 /// PI shape; it is fixed by `Circuit.encode`'s variable layout.
 fn kernel_pi_layout() -> Vec<PiSlot> {
     vec![
-        PiSlot { name: "total_pre".into(), offset: 0, length_in_felts: 1 },
-        PiSlot { name: "total_post".into(), offset: 1, length_in_felts: 1 },
-        PiSlot { name: "auth_bit".into(), offset: 2, length_in_felts: 1 },
-        PiSlot { name: "len_pre".into(), offset: 3, length_in_felts: 1 },
-        PiSlot { name: "len_post".into(), offset: 4, length_in_felts: 1 },
-        PiSlot { name: "chain_ok".into(), offset: 5, length_in_felts: 1 },
+        PiSlot {
+            name: "total_pre".into(),
+            offset: 0,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "total_post".into(),
+            offset: 1,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "auth_bit".into(),
+            offset: 2,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "len_pre".into(),
+            offset: 3,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "len_post".into(),
+            offset: 4,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "chain_ok".into(),
+            offset: 5,
+            length_in_felts: 1,
+        },
     ]
 }
 
@@ -580,9 +608,7 @@ impl<'a> Parser<'a> {
     /// Parse one full-ConstraintExpr wire object (Merkle + algebraic tags).
     /// Returns `Ok(None)` for the two boundary tags (pi_binding_first/last),
     /// which the caller routes into `boundaries` rather than `constraints`.
-    fn parse_full_constraint(
-        &mut self,
-    ) -> Result<FullParse, String> {
+    fn parse_full_constraint(&mut self) -> Result<FullParse, String> {
         let tag = self.parse_tag()?;
         match tag.as_str() {
             "equality" => {
@@ -604,11 +630,9 @@ impl<'a> Parser<'a> {
                 self.expect(",\"output\":")?;
                 let output = self.parse_index()?;
                 self.expect("}")?;
-                Ok(FullParse::Constraint(DecodedConstraintExpr::Multiplication {
-                    a,
-                    b,
-                    output,
-                }))
+                Ok(FullParse::Constraint(
+                    DecodedConstraintExpr::Multiplication { a, b, output },
+                ))
             }
             "binary" => {
                 self.expect(",\"col\":")?;
@@ -663,10 +687,12 @@ impl<'a> Parser<'a> {
                 self.expect(",\"inner\":")?;
                 let inner = self.parse_full_constraint()?.into_constraint()?;
                 self.expect("}")?;
-                Ok(FullParse::Constraint(DecodedConstraintExpr::InvertedGated {
-                    selector_col,
-                    inner: Box::new(inner),
-                }))
+                Ok(FullParse::Constraint(
+                    DecodedConstraintExpr::InvertedGated {
+                        selector_col,
+                        inner: Box::new(inner),
+                    },
+                ))
             }
             "squared" => {
                 self.expect(",\"inner\":")?;
@@ -708,7 +734,10 @@ impl<'a> Parser<'a> {
                 self.expect(",\"sib_cols\":")?;
                 let sibs = self.parse_nat_array()?;
                 if sibs.len() != 3 {
-                    return Err(format!("merkle_hash sib_cols must have 3 entries, got {}", sibs.len()));
+                    return Err(format!(
+                        "merkle_hash sib_cols must have 3 entries, got {}",
+                        sibs.len()
+                    ));
                 }
                 self.expect(",\"position_col\":")?;
                 let position_col = self.parse_index()?;
@@ -811,9 +840,9 @@ impl FullParse {
     fn into_constraint(self) -> Result<DecodedConstraintExpr, String> {
         match self {
             FullParse::Constraint(c) => Ok(c),
-            FullParse::Boundary(_) => {
-                Err("boundary (pi_binding_first/last) cannot nest inside a gated/squared inner".into())
-            }
+            FullParse::Boundary(_) => Err(
+                "boundary (pi_binding_first/last) cannot nest inside a gated/squared inner".into(),
+            ),
         }
     }
 }
@@ -854,8 +883,16 @@ pub fn decode_constraint_expr(wire: &str) -> Result<DecodedConstraintExpr, Strin
 /// of `merkle_poseidon2_descriptor()`).
 fn merkle_pi_layout() -> Vec<PiSlot> {
     vec![
-        PiSlot { name: "leaf".into(), offset: 0, length_in_felts: 1 },
-        PiSlot { name: "root".into(), offset: 1, length_in_felts: 1 },
+        PiSlot {
+            name: "leaf".into(),
+            offset: 0,
+            length_in_felts: 1,
+        },
+        PiSlot {
+            name: "root".into(),
+            offset: 1,
+            length_in_felts: 1,
+        },
     ]
 }
 

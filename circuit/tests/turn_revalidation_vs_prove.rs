@@ -81,7 +81,10 @@ fn fmt_ms(secs: f64) -> String {
 fn turn_revalidation_vs_prove() {
     // --- THE turn: a single honest transfer (the verifiable-execution beachhead). ---
     let st = CellState::new(100_000, 0);
-    let effects = vec![Effect::Transfer { amount: 50, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 50,
+        direction: 1,
+    }];
 
     // Witness the prover/verifier/accept-checks all consume.
     let (trace, pis) = generate_effect_vm_trace(&st, &effects);
@@ -94,7 +97,10 @@ fn turn_revalidation_vs_prove() {
     let dpis: Vec<BabyBear> = pis[..desc.public_input_count].to_vec();
 
     // Sanity: the honest witness is accepted both ways, and proves+verifies, BEFORE we time.
-    assert!(p3_air_accepts(&trace, &pis), "honest transfer must be p3-accepted");
+    assert!(
+        p3_air_accepts(&trace, &pis),
+        "honest transfer must be p3-accepted"
+    );
     assert!(
         descriptor_air_accepts(&desc, &trace, &dpis),
         "honest transfer must be descriptor-accepted"
@@ -110,34 +116,29 @@ fn turn_revalidation_vs_prove() {
     );
 
     // Proving dominates wall-clock; give it few iters, the cheap checks many.
-    let (prove_med, prove_min, prove_n) =
-        bench(2, 20, || {
-            let p = prove_effect_vm_p3(&trace, &pis).expect("prove");
-            std::hint::black_box(&p);
-        });
+    let (prove_med, prove_min, prove_n) = bench(2, 20, || {
+        let p = prove_effect_vm_p3(&trace, &pis).expect("prove");
+        std::hint::black_box(&p);
+    });
 
-    let (verify_med, verify_min, verify_n) =
-        bench(5, 50, || {
-            verify_effect_vm_p3(&proof0, &pis).expect("verify");
-        });
+    let (verify_med, verify_min, verify_n) = bench(5, 50, || {
+        verify_effect_vm_p3(&proof0, &pis).expect("verify");
+    });
 
-    let (p3acc_med, p3acc_min, p3acc_n) =
-        bench(10, 500, || {
-            let ok = p3_air_accepts(&trace, &pis);
-            std::hint::black_box(ok);
-        });
+    let (p3acc_med, p3acc_min, p3acc_n) = bench(10, 500, || {
+        let ok = p3_air_accepts(&trace, &pis);
+        std::hint::black_box(ok);
+    });
 
-    let (descacc_med, descacc_min, descacc_n) =
-        bench(10, 500, || {
-            let ok = descriptor_air_accepts(&desc, &trace, &dpis);
-            std::hint::black_box(ok);
-        });
+    let (descacc_med, descacc_min, descacc_n) = bench(10, 500, || {
+        let ok = descriptor_air_accepts(&desc, &trace, &dpis);
+        std::hint::black_box(ok);
+    });
 
-    let (reexec_med, reexec_min, reexec_n) =
-        bench(10, 500, || {
-            let (t, p) = generate_effect_vm_trace(&st, &effects);
-            std::hint::black_box((&t, &p));
-        });
+    let (reexec_med, reexec_min, reexec_n) = bench(10, 500, || {
+        let (t, p) = generate_effect_vm_trace(&st, &effects);
+        std::hint::black_box((&t, &p));
+    });
 
     // --- Report ---
     println!();

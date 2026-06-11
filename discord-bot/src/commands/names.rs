@@ -210,10 +210,7 @@ pub async fn handle_register(ctx: &Context, command: &CommandInteraction, state:
                 .as_deref()
                 .unwrap_or("node rejected the signed nameservice action"),
         ),
-        Err(e) => embeds::error_embed(
-            "Registration Failed",
-            &e.user_message("register the name"),
-        ),
+        Err(e) => embeds::error_embed("Registration Failed", &e.user_message("register the name")),
     };
     edit_embed(ctx, command, embed).await;
 }

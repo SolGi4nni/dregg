@@ -113,15 +113,15 @@ pub mod discovery;
 #[cfg(feature = "network")]
 pub mod embed;
 pub mod error;
+pub mod explain;
 pub mod factories;
-pub mod polis;
 pub mod full_turn_proof;
 pub mod mnemonic;
 #[cfg(feature = "captp")]
 pub mod names;
+pub mod polis;
 pub mod privacy;
 pub mod runtime;
-pub mod explain;
 pub mod verify;
 pub mod witness_artifact;
 pub mod wordlist;

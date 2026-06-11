@@ -72,7 +72,10 @@ impl Node {
         // quorum_threshold 1: solo-finality semantics, matching the devnet's
         // `federation_mode: solo`. Convergence/equivocation logic is independent
         // of the threshold; the threshold only gates the Attested level.
-        Node { lace: Lace::new_simple(key(id)), id }
+        Node {
+            lace: Lace::new_simple(key(id)),
+            id,
+        }
     }
 
     /// The content-addressed finalized keyset: the set of block ids this node has
@@ -108,7 +111,9 @@ struct Inbox {
 
 impl Inbox {
     fn new() -> Self {
-        Inbox { pending: Vec::new() }
+        Inbox {
+            pending: Vec::new(),
+        }
     }
 
     /// Push a block into the node, draining any now-satisfiable orphans. Uses
@@ -121,10 +126,7 @@ impl Inbox {
             let mut progressed = false;
             let mut still_pending = Vec::new();
             for b in std::mem::take(&mut self.pending) {
-                let preds_present = b
-                    .predecessors
-                    .iter()
-                    .all(|p| node.lace.contains(p));
+                let preds_present = b.predecessors.iter().all(|p| node.lace.contains(p));
                 if preds_present {
                     // Predecessors present: feed the real reception path. An
                     // equivocation/forged-sig is REJECTED here (Err) but the
@@ -213,8 +215,15 @@ fn attack_out_of_order_delivery_converges() {
         "FINDING(CatchupConverges BROKEN): honest tip frontiers diverged under reordering"
     );
     // 12 blocks total, all honest, all admitted.
-    assert_eq!(node_fwd.keyset().len(), 12, "expected all 12 honest blocks admitted");
-    assert!(node_fwd.equivocators().is_empty(), "no equivocation in the honest run");
+    assert_eq!(
+        node_fwd.keyset().len(),
+        12,
+        "expected all 12 honest blocks admitted"
+    );
+    assert!(
+        node_fwd.equivocators().is_empty(),
+        "no equivocation in the honest run"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -354,7 +363,11 @@ fn attack_forged_signatures_rejected() {
     );
 
     // The lace must be untouched by the entire forgery barrage.
-    assert_eq!(node.keyset().len(), 0, "FINDING: forged blocks left residue in the lace");
+    assert_eq!(
+        node.keyset().len(),
+        0,
+        "FINDING: forged blocks left residue in the lace"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -392,7 +405,11 @@ fn attack_replay_is_idempotent() {
         }
     }
 
-    assert_eq!(node.keyset(), keyset_once, "FINDING: replay changed the keyset (double-count)");
+    assert_eq!(
+        node.keyset(),
+        keyset_once,
+        "FINDING: replay changed the keyset (double-count)"
+    );
     assert_eq!(node.tips(), tips_once, "FINDING: replay shifted a tip");
     assert_eq!(
         node.lace.len(),
@@ -428,19 +445,33 @@ fn attack_partition_then_heal_converges() {
     // the other's progress.
     let mut preds_a = vec![g_id];
     for seq in 1..4 {
-        let blk = Block::new(&a, seq, Payload::Turn(vec![0xA, seq as u8]), preds_a.clone());
+        let blk = Block::new(
+            &a,
+            seq,
+            Payload::Turn(vec![0xA, seq as u8]),
+            preds_a.clone(),
+        );
         preds_a = vec![blk.id()];
         let _ = left.lace.receive_block(blk);
     }
     let mut preds_b = vec![g_id];
     for seq in 1..4 {
-        let blk = Block::new(&b, seq, Payload::Turn(vec![0xB, seq as u8]), preds_b.clone());
+        let blk = Block::new(
+            &b,
+            seq,
+            Payload::Turn(vec![0xB, seq as u8]),
+            preds_b.clone(),
+        );
         preds_b = vec![blk.id()];
         let _ = right.lace.receive_block(blk);
     }
 
     // Pre-heal: the two views DIFFER (the partition is real).
-    assert_ne!(left.keyset(), right.keyset(), "partition should produce divergent views");
+    assert_ne!(
+        left.keyset(),
+        right.keyset(),
+        "partition should produce divergent views"
+    );
 
     // HEAL: exchange deltas via the real CRDT merge. Each sends the other every
     // block the other lacks.
@@ -453,8 +484,7 @@ fn attack_partition_then_heal_converges() {
         .lace
         .merge(to_right)
         .expect("merge of left's delta must succeed (causally closed)");
-    left
-        .lace
+    left.lace
         .merge(to_left)
         .expect("merge of right's delta must succeed (causally closed)");
 
@@ -465,9 +495,17 @@ fn attack_partition_then_heal_converges() {
         "FINDING(CatchupConverges BROKEN): nodes did NOT reconverge after partition heal — \
          a permanent fork survived the merge"
     );
-    assert_eq!(left.tips(), right.tips(), "FINDING: tip frontiers diverged after heal");
+    assert_eq!(
+        left.tips(),
+        right.tips(),
+        "FINDING: tip frontiers diverged after heal"
+    );
     // 1 genesis + 3 A-extensions + 3 B-extensions = 7.
-    assert_eq!(left.keyset().len(), 7, "expected the union of both partitions");
+    assert_eq!(
+        left.keyset().len(),
+        7,
+        "expected the union of both partitions"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -522,8 +560,15 @@ fn attack_flood_does_not_desync() {
         Some(honest_blocks.last().unwrap().id()),
         "FINDING: the flood corrupted the honest creator's tip"
     );
-    assert!(n1.equivocators().is_empty(), "a flood of valid blocks is not equivocation");
-    assert_eq!(n1.keyset().len(), 203, "all honest + spam blocks accounted for");
+    assert!(
+        n1.equivocators().is_empty(),
+        "a flood of valid blocks is not equivocation"
+    );
+    assert_eq!(
+        n1.keyset().len(),
+        203,
+        "all honest + spam blocks accounted for"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -616,7 +661,11 @@ fn attack_eclipse_delay_not_permanent_fork() {
         "a node cannot detect a fork whose second branch it has never received \
          (this is expected — no false positive)"
     );
-    assert_eq!(victim.tips().get(&byz_pk), Some(&fork_a.id()), "single-fork tip during eclipse");
+    assert_eq!(
+        victim.tips().get(&byz_pk),
+        Some(&fork_a.id()),
+        "single-fork tip during eclipse"
+    );
 
     // Phase 2 — ECLIPSE BROKEN: one honest peer delivers the withheld fork_b.
     // Detection must fire immediately and the tip must be withdrawn.
@@ -656,7 +705,8 @@ fn attack_sequence_rollback_rejected() {
     for seq in 0..=3u64 {
         let blk = LibBlock::new_signed(&creator, seq, preds.clone(), vec![seq as u8]);
         let id = blk.id();
-        bl.insert(blk).expect("honest monotone extension must insert");
+        bl.insert(blk)
+            .expect("honest monotone extension must insert");
         preds = vec![id];
         if seq == 3 {
             last_seq3 = Some(id);
@@ -684,7 +734,12 @@ fn attack_sequence_rollback_rejected() {
         "FINDING(StrandIntegrity monotonicity BROKEN): a lower-sequence rollback block was \
          accepted as a valid strand extension — history can be rewritten"
     );
-    if let Err(InsertError::SeqRegression { attempted, tip_sequence, .. }) = &res {
+    if let Err(InsertError::SeqRegression {
+        attempted,
+        tip_sequence,
+        ..
+    }) = &res
+    {
         assert!(
             *attempted <= *tip_sequence,
             "SeqRegression must report attempted <= tip"

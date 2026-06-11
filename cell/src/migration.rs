@@ -166,7 +166,9 @@ impl core::fmt::Display for MigrationError {
             }
             Self::StateMismatch => f.write_str("installed cell does not match voucher commitment"),
             Self::WrongDestination => f.write_str("voucher destination federation mismatch"),
-            Self::ReceiptMismatch => f.write_str("migration receipt does not match in-flight voucher"),
+            Self::ReceiptMismatch => {
+                f.write_str("migration receipt does not match in-flight voucher")
+            }
             Self::SourceNotFound(id) => write!(f, "migration source cell not found: {id}"),
             Self::IdentityBroken(id) => write!(f, "cell identity integrity broken: {id}"),
         }

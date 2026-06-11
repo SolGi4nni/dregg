@@ -20,21 +20,23 @@
 
 use std::time::Instant;
 
+use dregg_circuit::dsl::membership::create_test_witness;
 use dregg_circuit::effect_vm::{CellState, Effect, EffectVmAir, generate_effect_vm_trace, pi};
 use dregg_circuit::effect_vm_descriptors::descriptor_for_selector;
 use dregg_circuit::effect_vm_p3_full_air::{
     effect_vm_p3_width, extend_trace_with_hashes, prove_effect_vm_p3, verify_effect_vm_p3,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::lean_descriptor_air::{
-    parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor,
-};
-use dregg_circuit::merkle_air::{prove_membership_p3, verify_membership_p3, membership_public_inputs};
-use dregg_circuit::dsl::membership::create_test_witness;
-use dregg_circuit::stark;
 use dregg_circuit::joint_turn_aggregation::{
     JointParticipant, prove_joint_turn, verify_joint_turn,
 };
+use dregg_circuit::lean_descriptor_air::{
+    parse_vm_descriptor, prove_vm_descriptor, verify_vm_descriptor,
+};
+use dregg_circuit::merkle_air::{
+    membership_public_inputs, prove_membership_p3, verify_membership_p3,
+};
+use dregg_circuit::stark;
 
 use dregg_perf::{fmt_bytes, fmt_secs, single_transfer, time_mean};
 
@@ -57,9 +59,7 @@ fn main() {
     println!();
     println!("  dregg prover performance report");
     println!("  machine: {}", machine());
-    println!(
-        "  config: BabyBear, FRI log_blowup=3 (8x LDE), 50 queries, 16 PoW bits"
-    );
+    println!("  config: BabyBear, FRI log_blowup=3 (8x LDE), 50 queries, 16 PoW bits");
     println!(
         "  EffectVM AIR: base width 186, +{} Poseidon2-aux cols => full width {}",
         effect_vm_p3_width() - 186,
@@ -108,7 +108,10 @@ fn main() {
             // hand-AIR baseline for the SAME single transfer (apples to apples).
             let hand = prove_effect_vm_p3(&trace, &full_pis).expect("hand prove");
             let hand_prove = time_mean(5, || prove_effect_vm_p3(&trace, &full_pis).expect("hand"));
-            println!("  {:<32} {:>13} {:>13} {:>11}", "path", "prove", "verify", "proof");
+            println!(
+                "  {:<32} {:>13} {:>13} {:>11}",
+                "path", "prove", "verify", "proof"
+            );
             println!(
                 "  {:<32} {:>13} {:>13} {:>11}",
                 "transfer  (descriptor-interp)",
@@ -124,9 +127,7 @@ fn main() {
                 fmt_bytes(p3_proof_bytes(&hand))
             );
             let overhead = (prove / hand_prove - 1.0) * 100.0;
-            println!(
-                "  => descriptor-interpreter prove overhead vs hand-AIR: {overhead:+.1}%"
-            );
+            println!("  => descriptor-interpreter prove overhead vs hand-AIR: {overhead:+.1}%");
         } else {
             println!("  (no transfer descriptor registered — skipped)");
         }
@@ -145,7 +146,11 @@ fn main() {
         let proof = prove_effect_vm_p3(&base_trace, &pis).expect("prove");
         let verify = time_mean(30, || verify_effect_vm_p3(&proof, &pis).expect("verify"));
         println!("  {:<40} {:>13}", "stage", "time");
-        println!("  {:<40} {:>13}", "base-trace witness-gen (state->trace)", fmt_secs(wgen));
+        println!(
+            "  {:<40} {:>13}",
+            "base-trace witness-gen (state->trace)",
+            fmt_secs(wgen)
+        );
         println!(
             "  {:<40} {:>13}",
             "Poseidon2-aux extension (hash witness)",
@@ -205,7 +210,9 @@ fn main() {
         // audited p3 over the same transition
         let pproof = prove_effect_vm_p3(&trace, &pis).expect("p3 prove");
         let pprove = time_mean(5, || prove_effect_vm_p3(&trace, &pis).expect("p3 prove"));
-        let pverify = time_mean(30, || verify_effect_vm_p3(&pproof, &pis).expect("p3 verify"));
+        let pverify = time_mean(30, || {
+            verify_effect_vm_p3(&pproof, &pis).expect("p3 verify")
+        });
         println!("  {:<28} {:>13} {:>13}", "prover", "prove", "verify");
         println!(
             "  {:<28} {:>13} {:>13}",
@@ -244,7 +251,11 @@ fn main() {
             verify_full_turn(&proof, old_commit, new_commit).expect("full-turn verify")
         });
         println!("  {:<34} {:>13}", "stage", "time");
-        println!("  {:<34} {:>13}", "cold first prove (incl. warm)", fmt_secs(first));
+        println!(
+            "  {:<34} {:>13}",
+            "cold first prove (incl. warm)",
+            fmt_secs(first)
+        );
         println!("  {:<34} {:>13}", "prove (mean)", fmt_secs(prove));
         println!("  {:<34} {:>13}", "verify (mean)", fmt_secs(verify));
         println!(
@@ -260,9 +271,7 @@ fn main() {
             proof.components.has_conservation,
             proof.components.has_non_revocation
         );
-        println!(
-            "  NOTE: self-sovereign turn = EffectVM sub-proof + PI-binding main proof."
-        );
+        println!("  NOTE: self-sovereign turn = EffectVM sub-proof + PI-binding main proof.");
         println!(
             "        A turn WITH auth+membership sub-proofs adds ~ (§4 membership + derivation) on top."
         );
@@ -291,15 +300,9 @@ fn main() {
             fmt_bytes(bytes)
         );
     }
-    println!(
-        "  NOTE: silver aggregation re-verifies every per-cell proof (no recursion);"
-    );
-    println!(
-        "        verify cost grows ~linearly in cells. Gold recursive path collapses this"
-    );
-    println!(
-        "        to one succinct proof (joint_turn_recursive) at higher prove cost."
-    );
+    println!("  NOTE: silver aggregation re-verifies every per-cell proof (no recursion);");
+    println!("        verify cost grows ~linearly in cells. Gold recursive path collapses this");
+    println!("        to one succinct proof (joint_turn_recursive) at higher prove cost.");
 
     println!();
     rule();
@@ -313,20 +316,29 @@ fn effectvm_workloads() -> Vec<(&'static str, CellState, Vec<Effect>)> {
         (
             "transfer_1effect",
             CellState::new(1_000_000, 0),
-            vec![Effect::Transfer { amount: 100, direction: 1 }],
+            vec![Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            }],
         ),
         (
             "transfer_4effect",
             CellState::new(1_000_000, 0),
             (0..4)
-                .map(|i| Effect::Transfer { amount: 10, direction: (i % 2) as u32 })
+                .map(|i| Effect::Transfer {
+                    amount: 10,
+                    direction: (i % 2) as u32,
+                })
                 .collect(),
         ),
         (
             "transfer_16effect",
             CellState::new(1_000_000, 0),
             (0..16)
-                .map(|i| Effect::Transfer { amount: 1, direction: (i % 2) as u32 })
+                .map(|i| Effect::Transfer {
+                    amount: 1,
+                    direction: (i % 2) as u32,
+                })
                 .collect(),
         ),
     ]
@@ -339,7 +351,10 @@ fn build_participants(n: usize) -> Vec<JointParticipant> {
     (0..n)
         .map(|i| {
             let state = CellState::new(100 + i as u64 * 10, i as u32);
-            let effects = vec![Effect::Transfer { amount: 5, direction: 1 }];
+            let effects = vec![Effect::Transfer {
+                amount: 5,
+                direction: 1,
+            }];
             let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
             public_inputs[pi::TURN_HASH_BASE] = BabyBear::new(0xABCD);
             let air = EffectVmAir::new(trace.len());
@@ -362,5 +377,10 @@ fn machine() -> String {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| std::env::consts::ARCH.to_string());
-    format!("{model} ({} logical cores)", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0))
+    format!(
+        "{model} ({} logical cores)",
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0)
+    )
 }

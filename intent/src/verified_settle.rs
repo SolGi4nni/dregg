@@ -115,7 +115,10 @@ impl VerifiedLedger {
 pub enum VerifiedSettleError {
     /// The lowered Turn carried a different number of Transfer legs than the settlement rows it was
     /// lowered from (the lowering dropped or duplicated a leg — a `loweredRing` data-loss).
-    LegCountMismatch { transfers: usize, settlements: usize },
+    LegCountMismatch {
+        transfers: usize,
+        settlements: usize,
+    },
     /// A lowered leg's `from`/`to`/`amount` diverges from the settlement row it claims to realise
     /// (the lowering garbled a leg — the Lean `loweredLeg` data-preservation broke).
     LegDataMismatch { index: usize, detail: String },
@@ -124,7 +127,11 @@ pub enum VerifiedSettleError {
     LegRejected { index: usize, leg: VerifiedLeg },
     /// The verified post-state LEAKED value in some asset (a committed ring that did not conserve).
     /// This MUST be impossible for a committed fold (`settleRing_conserves`); surfaced fail-closed.
-    ConservationViolated { asset: [u8; 32], before: i128, after: i128 },
+    ConservationViolated {
+        asset: [u8; 32],
+        before: i128,
+        after: i128,
+    },
     /// The real Lean FFI disagreed with the in-process verified transition on a leg (commit bit or
     /// post-column). Fail-closed: the verified executor is the authority, and a drift is a bug we
     /// refuse to settle through. Carries the diverging leg + a description.
@@ -137,13 +144,19 @@ pub enum VerifiedSettleError {
 impl std::fmt::Display for VerifiedSettleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LegCountMismatch { transfers, settlements } => write!(
+            Self::LegCountMismatch {
+                transfers,
+                settlements,
+            } => write!(
                 f,
                 "lowered Turn carried {transfers} transfer legs but {settlements} settlement rows \
                  (lowering dropped/duplicated a leg)"
             ),
             Self::LegDataMismatch { index, detail } => {
-                write!(f, "lowered leg {index} diverges from its settlement row: {detail}")
+                write!(
+                    f,
+                    "lowered leg {index} diverges from its settlement row: {detail}"
+                )
             }
             Self::LegRejected { index, leg } => write!(
                 f,
@@ -151,13 +164,20 @@ impl std::fmt::Display for VerifiedSettleError {
                  ring aborts (atomicity)",
                 leg.from, leg.to, leg.amount, leg.asset[0]
             ),
-            Self::ConservationViolated { asset, before, after } => write!(
+            Self::ConservationViolated {
+                asset,
+                before,
+                after,
+            } => write!(
                 f,
                 "verified executor leaked value in asset {:02x}..: {before} before, {after} after",
                 asset[0]
             ),
             Self::FfiDivergence { index, detail } => {
-                write!(f, "Lean FFI diverged from the verified transition on leg {index}: {detail}")
+                write!(
+                    f,
+                    "Lean FFI diverged from the verified transition on leg {index}: {detail}"
+                )
             }
             Self::FfiUnavailable(e) => write!(f, "verified-executor FFI unavailable: {e}"),
         }
@@ -558,9 +578,24 @@ mod tests {
     /// A closed 3-ring A->B->C->A, each leg a distinct asset — the canonical `chainedRing3`.
     fn closed_ring3() -> Vec<VerifiedLeg> {
         vec![
-            VerifiedLeg { from: 1, to: 2, asset: asset(10), amount: 5 },
-            VerifiedLeg { from: 2, to: 3, asset: asset(11), amount: 7 },
-            VerifiedLeg { from: 3, to: 1, asset: asset(12), amount: 9 },
+            VerifiedLeg {
+                from: 1,
+                to: 2,
+                asset: asset(10),
+                amount: 5,
+            },
+            VerifiedLeg {
+                from: 2,
+                to: 3,
+                asset: asset(11),
+                amount: 7,
+            },
+            VerifiedLeg {
+                from: 3,
+                to: 1,
+                asset: asset(12),
+                amount: 9,
+            },
         ]
     }
 
@@ -596,7 +631,12 @@ mod tests {
     #[test]
     fn zero_amount_leg_is_rejected_as_a_nondistinct_or_noop() {
         // A self-transfer (from == to) fails the distinctness gate — atomicity bites.
-        let legs = vec![VerifiedLeg { from: 1, to: 1, asset: asset(10), amount: 5 }];
+        let legs = vec![VerifiedLeg {
+            from: 1,
+            to: 1,
+            asset: asset(10),
+            amount: 5,
+        }];
         let mut k0 = VerifiedLedger::new();
         k0.add_account(1);
         k0.set(1, &asset(10), 5);
@@ -607,14 +647,24 @@ mod tests {
     #[test]
     fn extract_legs_pins_lowering_data_preservation() {
         // Build a sealed turn with two transfer legs and matching settlement rows.
-        use crate::lowering::{lower, seal_plan_uniform, Intent, LoweringContext};
+        use crate::lowering::{Intent, LoweringContext, lower, seal_plan_uniform};
         use crate::solver::RingTrade;
         use dregg_cell::CellId;
         use dregg_turn::action::Authorization;
 
         let settlements = vec![
-            Settlement { from: cid(1), to: cid(2), asset: asset(10), amount: 5 },
-            Settlement { from: cid(2), to: cid(1), asset: asset(11), amount: 7 },
+            Settlement {
+                from: cid(1),
+                to: cid(2),
+                asset: asset(10),
+                amount: 5,
+            },
+            Settlement {
+                from: cid(2),
+                to: cid(1),
+                asset: asset(11),
+                amount: 7,
+            },
         ];
         let ring = RingTrade {
             participants: vec![[1u8; 32], [2u8; 32]],
@@ -653,15 +703,25 @@ mod tests {
     #[test]
     fn leg_count_mismatch_is_an_error() {
         let sealed = {
-            use crate::lowering::{lower, seal_plan_uniform, Intent, LoweringContext};
+            use crate::lowering::{Intent, LoweringContext, lower, seal_plan_uniform};
             use crate::solver::RingTrade;
             use dregg_cell::CellId;
             use dregg_turn::action::Authorization;
             let ring = RingTrade {
                 participants: vec![[1u8; 32], [2u8; 32]],
                 settlements: vec![
-                    Settlement { from: cid(1), to: cid(2), asset: asset(10), amount: 5 },
-                    Settlement { from: cid(2), to: cid(1), asset: asset(11), amount: 7 },
+                    Settlement {
+                        from: cid(1),
+                        to: cid(2),
+                        asset: asset(10),
+                        amount: 5,
+                    },
+                    Settlement {
+                        from: cid(2),
+                        to: cid(1),
+                        asset: asset(11),
+                        amount: 7,
+                    },
                 ],
                 score: 2.0,
             };
@@ -680,15 +740,21 @@ mod tests {
             )
         };
         // Pass only ONE settlement row against a TWO-leg turn.
-        let res = extract_legs(&sealed, &[Settlement {
-            from: cid(1),
-            to: cid(2),
-            asset: asset(10),
-            amount: 5,
-        }]);
+        let res = extract_legs(
+            &sealed,
+            &[Settlement {
+                from: cid(1),
+                to: cid(2),
+                asset: asset(10),
+                amount: 5,
+            }],
+        );
         assert!(matches!(
             res,
-            Err(VerifiedSettleError::LegCountMismatch { transfers: 2, settlements: 1 })
+            Err(VerifiedSettleError::LegCountMismatch {
+                transfers: 2,
+                settlements: 1
+            })
         ));
     }
 }

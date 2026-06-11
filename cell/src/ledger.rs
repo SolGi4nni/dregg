@@ -1152,7 +1152,10 @@ impl Ledger {
     }
 
     /// The voucher of an in-flight migration for `id`, if any.
-    pub fn migration_voucher_for(&self, id: &CellId) -> Option<&crate::migration::MigrationVoucher> {
+    pub fn migration_voucher_for(
+        &self,
+        id: &CellId,
+    ) -> Option<&crate::migration::MigrationVoucher> {
         self.migration_locks.get(id).map(|l| &l.voucher)
     }
 

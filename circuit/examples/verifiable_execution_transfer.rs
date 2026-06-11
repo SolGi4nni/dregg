@@ -22,8 +22,8 @@
 //! Run with: `cargo run -p dregg-circuit --example verifiable_execution_transfer`
 
 use dregg_circuit::lean_descriptor_air::{
-    prove_descriptor, prove_executor_derived_transfer, verify_descriptor, parse_descriptor,
-    STATE_DESCRIPTOR_JSON_FULLSTATE,
+    STATE_DESCRIPTOR_JSON_FULLSTATE, parse_descriptor, prove_descriptor,
+    prove_executor_derived_transfer, verify_descriptor,
 };
 
 /// Executor-derived HONEST witness (`transferWitnessVec kS0 goodTurnS`). Wires:
@@ -31,16 +31,52 @@ use dregg_circuit::lean_descriptor_air::{
 /// (unconstrained, large); 13/14 = rest digests; 15/16 = untouched-cell frame digests;
 /// 17/18/19 = moved-cell digests (pre / post / spec-expected).
 const HONEST: [i64; 20] = [
-    100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, 1000150000005000003, 1000120000035000003, 3, 3, 1000050,
-    1000050, 100000005, 70000035, 70000035,
+    100,
+    5,
+    70,
+    35,
+    30,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1000150000005000003,
+    1000120000035000003,
+    3,
+    3,
+    1000050,
+    1000050,
+    100000005,
+    70000035,
+    70000035,
 ];
 
 /// Executor-derived FORGED witness — same pre/turn, but the REAL `forgedThirdCell` post-state
 /// (cell 2 minted 50 → 999). Only the post-root (12) and the untouched-cell frame post digest
 /// (16: 1000050 → 1000999) change: the minted bystander perturbs the frame sponge, so `15 != 16`.
 const FORGED: [i64; 20] = [
-    100, 5, 70, 35, 30, 1, 1, 1, 1, 1, 1, 1000150000005000003, 1001069000035000003, 3, 3, 1000050,
-    1000999, 100000005, 70000035, 70000035,
+    100,
+    5,
+    70,
+    35,
+    30,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1000150000005000003,
+    1001069000035000003,
+    3,
+    3,
+    1000050,
+    1000999,
+    100000005,
+    70000035,
+    70000035,
 ];
 
 fn main() {
@@ -65,13 +101,19 @@ fn main() {
     }
 
     // ---- anti-ghost: forged third-cell-mint must be rejected ----
-    println!("\n[forged] executor witness (cell 2 minted 50→999) = {:?}", FORGED);
+    println!(
+        "\n[forged] executor witness (cell 2 minted 50→999) = {:?}",
+        FORGED
+    );
     assert_eq!(
         FORGED[2] + FORGED[3],
         FORGED[0] + FORGED[1],
         "the forgery still conserves the two moved balances (the projection ghost)"
     );
-    assert_ne!(FORGED[15], FORGED[16], "but the untouched-cell frame digest changed");
+    assert_ne!(
+        FORGED[15], FORGED[16],
+        "but the untouched-cell frame digest changed"
+    );
 
     let rejected = std::panic::catch_unwind(|| {
         let p = prove_descriptor(&desc, &FORGED)?;
@@ -86,6 +128,8 @@ fn main() {
         }
     }
 
-    println!("\n== Beachhead complete: the executor-derived transfer transition is verifiable, \
-              and a forged post-state is rejected end-to-end. ==");
+    println!(
+        "\n== Beachhead complete: the executor-derived transfer transition is verifiable, \
+              and a forged post-state is rejected end-to-end. =="
+    );
 }

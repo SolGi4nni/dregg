@@ -47,7 +47,13 @@ fn make_intent(seed: u8) -> Intent {
         predicate_requirements: vec![],
         strict_resource_matching: false,
     };
-    Intent::new(IntentKind::Offer, spec, CommitmentId([seed; 32]), 99999, None)
+    Intent::new(
+        IntentKind::Offer,
+        spec,
+        CommitmentId([seed; 32]),
+        99999,
+        None,
+    )
 }
 
 fn encrypt(intent: &Intent, key: &ThresholdEncryptionKey) -> EncryptedIntent {
@@ -152,8 +158,9 @@ fn run_ffi_verified(n: u8, amount: u64) {
 
     // The verified executor conserved every touched asset (the Lean `settleRing_conserves`,
     // witnessed through the REAL FFI, not a mirror).
-    let legs = dregg_intent::verified_settle::extract_legs(&output.sealed, &sub.solution[0].settlements)
-        .expect("legs extract");
+    let legs =
+        dregg_intent::verified_settle::extract_legs(&output.sealed, &sub.solution[0].settlements)
+            .expect("legs extract");
     for a in touched_assets(&legs) {
         assert_eq!(
             k1.total_asset(&a),

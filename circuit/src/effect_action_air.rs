@@ -1069,7 +1069,6 @@ mod tests {
         );
         assert!(r.is_err(), "tampered perm_disc must be rejected");
     }
-    
 
     #[test]
     fn cross_kind_proofs_do_not_verify_as_other_kinds() {
@@ -1121,7 +1120,6 @@ mod tests {
     }
 
     // ─── Additional per-Effect closures ──────────────────────────────────
-    
 
     #[test]
     fn revoke_delegation_roundtrip_and_tamper_rejected() {
@@ -1167,7 +1165,6 @@ mod tests {
         );
         assert!(r.is_err(), "tampered max_staleness must be rejected");
     }
-    
 
     #[test]
     fn exercise_via_capability_inner_count_tamper_rejected() {
@@ -1192,7 +1189,6 @@ mod tests {
         );
         assert!(r.is_err(), "tampered inner_effects_len must be rejected");
     }
-    
 
     #[test]
     fn pipelined_send_roundtrip_and_output_slot_tamper_rejected() {
@@ -1264,7 +1260,6 @@ mod tests {
         );
         assert!(r.is_err(), "tampered token_id must be rejected");
     }
-    
 
     // ─── NoteSpend / NoteCreate ─────────────────────────────────────────
     //
@@ -1546,7 +1541,6 @@ mod tests {
     }
 
     // ─── BridgeLock sibling AIR ─────────────────────────────────────────
-    
 
     // ========================================================================
     // SCHEMA_BURN tests (AIR-SOUNDNESS-AUDIT.md #75)

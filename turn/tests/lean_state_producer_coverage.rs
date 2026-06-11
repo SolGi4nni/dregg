@@ -31,12 +31,12 @@ use std::collections::HashMap;
 use dregg_cell::permissions::AuthRequired;
 use dregg_cell::state::FieldElement;
 use dregg_cell::{Cell, CellId, Ledger, NoteCommitment, Permissions, VerificationKey};
+use dregg_turn::action::{Event, RefusalReason};
 use dregg_turn::lean_apply::{self, execute_via_lean};
 use dregg_turn::lean_shadow::{
     self, ShadowHostCtx, producer_mappable_effects, producer_root_agreeing_effects,
     producer_root_gap_effects,
 };
-use dregg_turn::action::{Event, RefusalReason};
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, ProofCondition,
     TurnExecutor, turn::Turn,
@@ -138,14 +138,20 @@ fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result
                 let rc = dregg_cell::compute_canonical_capability_root(&r.capabilities);
                 let lc = dregg_cell::compute_canonical_capability_root(&l.capabilities);
                 if rc != lc {
-                    return Err(format!("cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"));
+                    return Err(format!(
+                        "cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"
+                    ));
                 }
             }
             (None, Some(_)) => {
-                return Err(format!("presence divergence on {id:?}: absent in RUST, present in LEAN"))
+                return Err(format!(
+                    "presence divergence on {id:?}: absent in RUST, present in LEAN"
+                ));
             }
             (Some(_), None) => {
-                return Err(format!("presence divergence on {id:?}: present in RUST, absent in LEAN"))
+                return Err(format!(
+                    "presence divergence on {id:?}: present in RUST, absent in LEAN"
+                ));
             }
             (None, None) => {}
         }
@@ -165,7 +171,9 @@ fn diff(pre: Ledger, turn: Turn, ids: &[CellId]) -> Result<(), String> {
     let mut rust_ledger = pre.clone();
     let rust_result = executor.execute(&turn, &mut rust_ledger);
     if !rust_result.is_committed() {
-        return Err(format!("legacy Rust executor did not commit: {rust_result:?}"));
+        return Err(format!(
+            "legacy Rust executor did not commit: {rust_result:?}"
+        ));
     }
 
     let host = ShadowHostCtx::diag();
@@ -216,7 +224,8 @@ fn coverage_lists_partition_the_mappable_set() {
     // (1) agreeing ∪ gaps == mappable
     let union: std::collections::HashSet<&str> = agreeing.union(&gaps).copied().collect();
     assert_eq!(
-        union, mappable,
+        union,
+        mappable,
         "root-agreeing ∪ root-gap must equal the mappable set; missing/extra: {:?}",
         union.symmetric_difference(&mappable).collect::<Vec<_>>()
     );
@@ -248,7 +257,10 @@ fn emit_event_root_agrees() {
         0,
         Effect::EmitEvent {
             cell: a_id,
-            event: Event { topic: field_from_u64(11), data: vec![field_from_u64(22)] },
+            event: Event {
+                topic: field_from_u64(11),
+                data: vec![field_from_u64(22)],
+            },
         },
     );
     diff(pre, turn, &[a_id]).expect("EmitEvent must round-trip (no cell-commitment mutation)");
@@ -292,7 +304,10 @@ fn revoke_delegation_round_trips_epoch_closed() {
         &single_effect_turn(a_id, a_id, 0, Effect::RevokeDelegation { child: b_id }),
         &mut rust_ledger,
     );
-    assert!(res.is_committed(), "Rust RevokeDelegation must commit on a real parent→child edge: {res:?}");
+    assert!(
+        res.is_committed(),
+        "Rust RevokeDelegation must commit on a real parent→child edge: {res:?}"
+    );
     assert_eq!(
         rust_ledger.get(&a_id).unwrap().state.delegation_epoch(),
         4,
@@ -304,7 +319,10 @@ fn revoke_delegation_round_trips_epoch_closed() {
     let host = ShadowHostCtx::diag();
     let (lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(lean_committed, "the verified revoke commits on a real parent→child edge");
+    assert!(
+        lean_committed,
+        "the verified revoke commits on a real parent→child edge"
+    );
     assert_eq!(
         lean_ledger.get(&a_id).unwrap().state.delegation_epoch(),
         4,
@@ -378,7 +396,10 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
     let executor2 = TurnExecutor::new(ComputronCosts::zero());
     let mut ledger = pre.clone();
     let (result, outcome) = produce_via_lean(&executor2, &turn, &mut ledger);
-    assert!(!result.is_committed(), "producer-mode result must match the Rust rejection");
+    assert!(
+        !result.is_committed(),
+        "producer-mode result must match the Rust rejection"
+    );
     assert_eq!(
         ledger.root(),
         rust_ledger.root(),
@@ -386,10 +407,18 @@ fn revoke_of_non_delegated_child_rejected_by_rust_surfaced_not_replayed() {
     );
     match outcome {
         // The verified gate also rejected → full agreement on the rollback.
-        ProducerOutcome::LeanProduced { committed: false, agree: true, .. } => {}
+        ProducerOutcome::LeanProduced {
+            committed: false,
+            agree: true,
+            ..
+        } => {}
         // The characterized residual: the kernel's unconditional revoke committed where Rust
         // rejected — surfaced as a divergence, Rust state kept.
-        ProducerOutcome::CoveredDivergence { lean_committed: true, rust_committed: false, .. } => {}
+        ProducerOutcome::CoveredDivergence {
+            lean_committed: true,
+            rust_committed: false,
+            ..
+        } => {}
         other => panic!(
             "a rejected revoke must either agree on the rollback or surface the commit-bit \
              residual as CoveredDivergence, got {other:?}"
@@ -450,14 +479,20 @@ fn set_permissions_round_trips_perm_struct_closed() {
         a_id,
         a_id,
         0,
-        Effect::SetPermissions { cell: a_id, new_permissions: new_perms.clone() },
+        Effect::SetPermissions {
+            cell: a_id,
+            new_permissions: new_perms.clone(),
+        },
     );
 
     // The reconstituted ledger must carry the turn's full struct, not the template's.
     let host = ShadowHostCtx::diag();
     let (lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(lean_committed, "the verified setPermissionsA gate commits the self-targeted change");
+    assert!(
+        lean_committed,
+        "the verified setPermissionsA gate commits the self-targeted change"
+    );
     assert_eq!(
         lean_ledger.get(&a_id).unwrap().permissions,
         new_perms,
@@ -494,7 +529,10 @@ fn unauthorized_cross_cell_set_permissions_rejected_by_both() {
         a_id,
         a_id,
         0,
-        Effect::SetPermissions { cell: b_id, new_permissions: new_perms },
+        Effect::SetPermissions {
+            cell: b_id,
+            new_permissions: new_perms,
+        },
     );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -507,7 +545,10 @@ fn unauthorized_cross_cell_set_permissions_rejected_by_both() {
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the unauthorized rewrite");
+    assert!(
+        !lean_committed,
+        "the verified gate must also REJECT the unauthorized rewrite"
+    );
     assert_eq!(
         lean_ledger.get(&b_id).unwrap().permissions,
         b_perms,
@@ -535,21 +576,33 @@ fn set_verification_key_round_trips_vk_struct_closed() {
         a_id,
         a_id,
         0,
-        Effect::SetVerificationKey { cell: a_id, new_vk: Some(vk) },
+        Effect::SetVerificationKey {
+            cell: a_id,
+            new_vk: Some(vk),
+        },
     );
 
     let host = ShadowHostCtx::diag();
     let (lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(lean_committed, "the verified setVKA gate commits the self-targeted change");
+    assert!(
+        lean_committed,
+        "the verified setVKA gate commits the self-targeted change"
+    );
     assert_eq!(
-        lean_ledger.get(&a_id).unwrap().verification_key.as_ref().map(|v| v.hash),
+        lean_ledger
+            .get(&a_id)
+            .unwrap()
+            .verification_key
+            .as_ref()
+            .map(|v| v.hash),
         Some(expected_hash),
         "the replay must install the exact turn-supplied VerificationKey"
     );
 
-    diff(pre, turn, &[a_id])
-        .expect("SetVerificationKey must round-trip (vk-struct root-gap closed via the turn replay)");
+    diff(pre, turn, &[a_id]).expect(
+        "SetVerificationKey must round-trip (vk-struct root-gap closed via the turn replay)",
+    );
     assert!(lean_shadow::producer_root_agreeing_effects().contains(&"SetVerificationKey"));
 }
 
@@ -576,7 +629,10 @@ fn unauthorized_cross_cell_set_verification_key_rejected_by_both() {
         a_id,
         a_id,
         0,
-        Effect::SetVerificationKey { cell: b_id, new_vk: Some(vk) },
+        Effect::SetVerificationKey {
+            cell: b_id,
+            new_vk: Some(vk),
+        },
     );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -589,7 +645,10 @@ fn unauthorized_cross_cell_set_verification_key_rejected_by_both() {
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the unauthorized vk rewrite");
+    assert!(
+        !lean_committed,
+        "the verified gate must also REJECT the unauthorized vk rewrite"
+    );
     assert!(
         lean_ledger.get(&b_id).unwrap().verification_key.is_none(),
         "the rejected rewrite must leave B's verification key unset"
@@ -617,14 +676,23 @@ fn make_sovereign_round_trips_structural_closed() {
     // Confirm Rust really removed the cell (so the close is structural, not a no-commit).
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut rust_ledger = pre.clone();
-    assert!(executor.execute(&turn, &mut rust_ledger).is_committed(), "Rust MakeSovereign commits");
-    assert!(rust_ledger.get(&a_id).is_none(), "Rust must have removed the now-sovereign cell");
+    assert!(
+        executor.execute(&turn, &mut rust_ledger).is_committed(),
+        "Rust MakeSovereign commits"
+    );
+    assert!(
+        rust_ledger.get(&a_id).is_none(),
+        "Rust must have removed the now-sovereign cell"
+    );
 
     // The reconstituted ledger must have removed the cell too (presence agreement — the leaf SET).
     let host = ShadowHostCtx::diag();
     let (lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(lean_committed, "the verified makeSovereign gate commits the self-targeted rebind");
+    assert!(
+        lean_committed,
+        "the verified makeSovereign gate commits the self-targeted rebind"
+    );
     assert!(
         lean_ledger.get(&a_id).is_none(),
         "the replay must remove the now-sovereign cell from the reconstituted ledger"
@@ -664,12 +732,18 @@ fn cross_cell_make_sovereign_rejected_by_both() {
         !executor.execute(&turn, &mut rust_ledger).is_committed(),
         "Rust must REJECT a cross-cell MakeSovereign"
     );
-    assert!(rust_ledger.get(&b_id).is_some(), "the rejected rebind must not remove B");
+    assert!(
+        rust_ledger.get(&b_id).is_some(),
+        "the rejected rebind must not remove B"
+    );
 
     let host = ShadowHostCtx::diag();
     let (mut lean_ledger, lean_committed) =
         execute_via_lean(&turn, &pre, &host).expect("producer path must run");
-    assert!(!lean_committed, "the verified gate must also REJECT the cross-cell rebind");
+    assert!(
+        !lean_committed,
+        "the verified gate must also REJECT the cross-cell rebind"
+    );
     assert!(
         lean_ledger.get(&b_id).is_some(),
         "the reconstituted ledger must keep the foreign cell — no fabricated removal"
@@ -775,7 +849,9 @@ fn attenuate_capability_round_trips_cap_fidelity_closed() {
     {
         let a_caps = &rust_ledger.get(&a_id).unwrap().capabilities;
         assert!(
-            a_caps.iter().any(|c| c.target == b_id && c.permissions == AuthRequired::Signature),
+            a_caps
+                .iter()
+                .any(|c| c.target == b_id && c.permissions == AuthRequired::Signature),
             "Rust must have narrowed A's held cap over B to Signature"
         );
     }
@@ -806,7 +882,11 @@ fn forest_is_root_agreeing_covers_transfer_not_refusal() {
         a_id,
         a_id,
         0,
-        Effect::Transfer { from: a_id, to: b_id, amount: 10 },
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 10,
+        },
     );
     assert!(
         lean_shadow::forest_is_root_agreeing(&transfer),
@@ -848,7 +928,7 @@ fn produce_via_lean_installs_verified_state_on_covered_transfer() {
     if skip_no_lean() {
         return;
     }
-    use dregg_turn::lean_apply::{produce_via_lean, ProducerOutcome};
+    use dregg_turn::lean_apply::{ProducerOutcome, produce_via_lean};
 
     let a = make_open_cell(1, 100);
     let a_id = a.id();
@@ -864,10 +944,17 @@ fn produce_via_lean_installs_verified_state_on_covered_transfer() {
         a_id,
         a_id,
         0,
-        Effect::Transfer { from: a_id, to: b_id, amount: 10 },
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 10,
+        },
     );
     let mut rust_only = pre.clone();
-    assert!(executor.execute(&turn, &mut rust_only).is_committed(), "Rust Transfer commits");
+    assert!(
+        executor.execute(&turn, &mut rust_only).is_committed(),
+        "Rust Transfer commits"
+    );
     let expected_root = rust_only.root();
 
     // Producer mode: this is the live commit-path call.
@@ -877,15 +964,30 @@ fn produce_via_lean_installs_verified_state_on_covered_transfer() {
     assert!(result.is_committed(), "producer-mode Transfer commits");
 
     match outcome {
-        ProducerOutcome::LeanProduced { agree, lean_root, rust_root, .. } => {
-            assert!(agree, "covered Transfer must agree (Lean root == Rust root)");
-            assert_eq!(lean_root, rust_root, "the two producers' roots must be equal");
+        ProducerOutcome::LeanProduced {
+            agree,
+            lean_root,
+            rust_root,
+            ..
+        } => {
+            assert!(
+                agree,
+                "covered Transfer must agree (Lean root == Rust root)"
+            );
+            assert_eq!(
+                lean_root, rust_root,
+                "the two producers' roots must be equal"
+            );
         }
         other => panic!("covered Transfer must produce LeanProduced, got {other:?}"),
     }
 
     // The COMMITTED ledger is the Lean-produced one — and it equals the Rust post-state (the swap).
-    assert_eq!(ledger.root(), expected_root, "the committed root must be the verified-producer root");
+    assert_eq!(
+        ledger.root(),
+        expected_root,
+        "the committed root must be the verified-producer root"
+    );
     assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 90);
     assert_eq!(ledger.get(&b_id).unwrap().state.balance(), 10);
 }
@@ -899,7 +1001,7 @@ fn produce_via_lean_falls_back_on_root_gap_refusal() {
     if skip_no_lean() {
         return;
     }
-    use dregg_turn::lean_apply::{produce_via_lean, ExtractError, ProducerOutcome};
+    use dregg_turn::lean_apply::{ExtractError, ProducerOutcome, produce_via_lean};
 
     let a = make_open_cell(1, 100);
     let a_id = a.id();
@@ -927,17 +1029,27 @@ fn produce_via_lean_falls_back_on_root_gap_refusal() {
     let executor2 = TurnExecutor::new(ComputronCosts::zero());
     let mut ledger = pre.clone();
     let (result, outcome) = produce_via_lean(&executor2, &turn, &mut ledger);
-    assert_eq!(result.is_committed(), rust_committed, "producer-mode result matches Rust");
+    assert_eq!(
+        result.is_committed(),
+        rust_committed,
+        "producer-mode result matches Rust"
+    );
 
     match outcome {
-        ProducerOutcome::Fallback { reason: ExtractError::RootGap { kind } } => {
+        ProducerOutcome::Fallback {
+            reason: ExtractError::RootGap { kind },
+        } => {
             assert_eq!(kind, "Refusal", "fallback must name the root-gap kind");
         }
         other => panic!("a root-gap turn must fall back with RootGap, got {other:?}"),
     }
 
     // The committed ledger is the RUST post-state (no divergent Lean root committed).
-    assert_eq!(ledger.root(), expected_root, "root-gap turn must commit the Rust post-state");
+    assert_eq!(
+        ledger.root(),
+        expected_root,
+        "root-gap turn must commit the Rust post-state"
+    );
 }
 
 // =====================================================================================
@@ -957,4 +1069,3 @@ fn two_open_cells() -> (Ledger, CellId, CellId) {
     pre.insert_cell(b).unwrap();
     (pre, a_id, b_id)
 }
-

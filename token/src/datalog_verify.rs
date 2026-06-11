@@ -2119,7 +2119,10 @@ mod tests {
             CAV_APP,
             encode_name_actions("agent-runtime", "rw"),
         ));
-        set.push(WireCaveat::new(CAV_SERVICE, encode_name_actions("compute", "rw")));
+        set.push(WireCaveat::new(
+            CAV_SERVICE,
+            encode_name_actions("compute", "rw"),
+        ));
         // Time bound (forces Rules 10-18, exercising the temporal path).
         set.push(WireCaveat::new(
             CAV_VALIDITY_WINDOW,

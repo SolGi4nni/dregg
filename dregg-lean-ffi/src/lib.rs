@@ -13,11 +13,11 @@ pub mod marshal;
 pub mod distributed_ffi;
 
 pub use distributed_ffi::{
-    Decision2pc, decode_tau_order, distributed_exports_available, shadow_captp_pipeline_resolve,
+    decode_tau_order, distributed_exports_available, shadow_captp_pipeline_resolve,
     shadow_captp_process_drop, shadow_captp_validate_handoff, shadow_coord_2pc_decide,
     shadow_coord_causal_order, shadow_coord_shared_budget, shadow_strand_admit, shadow_tau_order,
     strand_admit_available, tau_order_available, verified_2pc_decide, verified_admits,
-    verified_handoff_non_amplifying, verified_happened_before, verified_tau_order,
+    verified_handoff_non_amplifying, verified_happened_before, verified_tau_order, Decision2pc,
 };
 pub use marshal::{TurnStatus, WireState};
 
@@ -247,16 +247,28 @@ mod ffi {
     }
 
     pub fn lean_forest_auth(wire: &str) -> Result<String, String> {
-        lean_string_bridge(wire, dregg_exec_full_forest_auth_str, "dregg_exec_full_forest_auth_str")
+        lean_string_bridge(
+            wire,
+            dregg_exec_full_forest_auth_str,
+            "dregg_exec_full_forest_auth_str",
+        )
     }
 
     pub fn lean_record_kernel_step(wire: &str) -> Result<String, String> {
-        lean_string_bridge(wire, dregg_record_kernel_step_str, "dregg_record_kernel_step_str")
+        lean_string_bridge(
+            wire,
+            dregg_record_kernel_step_str,
+            "dregg_record_kernel_step_str",
+        )
     }
 
     #[cfg(dregg_handler_present)]
     pub fn lean_handler_turn(wire: &str) -> Result<String, String> {
-        lean_string_bridge(wire, dregg_exec_handler_turn_str, "dregg_exec_handler_turn_str")
+        lean_string_bridge(
+            wire,
+            dregg_exec_handler_turn_str,
+            "dregg_exec_handler_turn_str",
+        )
     }
 
     #[cfg(not(dregg_handler_present))]
@@ -276,12 +288,19 @@ mod ffi {
 
     #[cfg(dregg_finalize_gate_present)]
     pub fn lean_blocklace_finalize(wire: &str) -> Result<String, String> {
-        lean_string_bridge(wire, dregg_blocklace_finalize_str, "dregg_blocklace_finalize_str")
+        lean_string_bridge(
+            wire,
+            dregg_blocklace_finalize_str,
+            "dregg_blocklace_finalize_str",
+        )
     }
 
     #[cfg(not(dregg_finalize_gate_present))]
     pub fn lean_blocklace_finalize(_wire: &str) -> Result<String, String> {
-        Err("dregg_blocklace_finalize not exported by the linked archive (rebuild to enable)".into())
+        Err(
+            "dregg_blocklace_finalize not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
     }
 }
 

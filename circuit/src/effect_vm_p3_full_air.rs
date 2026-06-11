@@ -129,14 +129,20 @@ fn hash_sites() -> Vec<HashSite> {
         arity: 4,
     });
     // inter2 = H4(field[1..5])
-    v.push(HashSite { inputs: [fb(1), fb(2), fb(3), fb(4)], arity: 4 });
+    v.push(HashSite {
+        inputs: [fb(1), fb(2), fb(3), fb(4)],
+        arity: 4,
+    });
     // inter3 = H4(field[5], field[6], field[7], after.cap_root)
     v.push(HashSite {
         inputs: [fb(5), fb(6), fb(7), Col(STATE_AFTER_BASE + state::CAP_ROOT)],
         arity: 4,
     });
     // state_commit = H4(inter1, inter2, inter3, 0)
-    v.push(HashSite { inputs: [Digest(0), Digest(1), Digest(2), Zero], arity: 4 });
+    v.push(HashSite {
+        inputs: [Digest(0), Digest(1), Digest(2), Zero],
+        arity: 4,
+    });
 
     // ---- GrantCapability: H2(old_cap_root, cap_entry) ----  (site 4)
     v.push(HashSite {
@@ -427,7 +433,10 @@ const FACT_MARKER: u64 = 0xFACF;
 /// The output state (all `POSEIDON2_WIDTH` felts) of the permutation whose aux
 /// block begins at `block_base`: the LAST round's state, the final
 /// `POSEIDON2_WIDTH` columns of the 352-col block.
-fn perm_out_state_expr<AB: AirBuilder>(local: &[AB::Var], block_base: usize) -> [AB::Expr; POSEIDON2_WIDTH] {
+fn perm_out_state_expr<AB: AirBuilder>(
+    local: &[AB::Var],
+    block_base: usize,
+) -> [AB::Expr; POSEIDON2_WIDTH] {
     let off = block_base + POSEIDON2_PERM_AUX_COLS - POSEIDON2_WIDTH;
     core::array::from_fn(|j| local[off + j].into())
 }
@@ -455,9 +464,8 @@ where
     let s = attn_scalar_base();
     let sc = |off: usize| -> AB::Expr { local[s + off].into() };
     let hb = |i: usize| attn_hash_block(i);
-    let block_aux = |i: usize| -> Vec<AB::Var> {
-        local[hb(i)..hb(i) + POSEIDON2_PERM_AUX_COLS].to_vec()
-    };
+    let block_aux =
+        |i: usize| -> Vec<AB::Var> { local[hb(i)..hb(i) + POSEIDON2_PERM_AUX_COLS].to_vec() };
     let zero = AB::Expr::ZERO;
     let seven = AB::Expr::from_u64(7);
     let fact = AB::Expr::from_u64(FACT_MARKER);
@@ -540,7 +548,11 @@ where
             6 => one.clone(),
             _ => zero.clone(),
         });
-        new_cur = poseidon2_permute_expr::<AB>(builder, new_node_in, &block_aux(4 + CAP_TREE_DEPTH + level));
+        new_cur = poseidon2_permute_expr::<AB>(
+            builder,
+            new_node_in,
+            &block_aux(4 + CAP_TREE_DEPTH + level),
+        );
     }
 
     // ---- Raw-height encode_expiry folds: hash_many([raw, 0]) (state[4]=len=2).
@@ -636,7 +648,11 @@ fn attenuate_hash_witness(row: &[BabyBear]) -> Vec<BabyBear> {
     for level in 0..CAP_TREE_DEPTH {
         let dir = sc(DIR_BITS_BASE + level).as_u32();
         let sib = sc(SIBLINGS_BASE + level);
-        let (hl, hr) = if dir == 0 { (held_cur, sib) } else { (sib, held_cur) };
+        let (hl, hr) = if dir == 0 {
+            (held_cur, sib)
+        } else {
+            (sib, held_cur)
+        };
         let mut hin = [BabyBear::ZERO; POSEIDON2_WIDTH];
         hin[0] = hl;
         hin[1] = hr;
@@ -646,7 +662,11 @@ fn attenuate_hash_witness(row: &[BabyBear]) -> Vec<BabyBear> {
         held_cur = last_state(&haux)[0];
         held_blocks.extend(haux);
 
-        let (nl, nr) = if dir == 0 { (new_cur, sib) } else { (sib, new_cur) };
+        let (nl, nr) = if dir == 0 {
+            (new_cur, sib)
+        } else {
+            (sib, new_cur)
+        };
         let mut nin = [BabyBear::ZERO; POSEIDON2_WIDTH];
         nin[0] = nl;
         nin[1] = nr;
@@ -724,9 +744,17 @@ pub fn attenuate_scalar_block(w: &crate::effect_vm::AttenuateWitness) -> Vec<Bab
         }
     };
     bits(held.mask_lo.as_u32(), HELD_MASK_BITS_BASE, &mut b);
-    bits(held.mask_hi.as_u32(), HELD_MASK_BITS_BASE + MASK_LIMB_BITS, &mut b);
+    bits(
+        held.mask_hi.as_u32(),
+        HELD_MASK_BITS_BASE + MASK_LIMB_BITS,
+        &mut b,
+    );
     bits(granted.mask_lo.as_u32(), GRANTED_MASK_BITS_BASE, &mut b);
-    bits(granted.mask_hi.as_u32(), GRANTED_MASK_BITS_BASE + MASK_LIMB_BITS, &mut b);
+    bits(
+        granted.mask_hi.as_u32(),
+        GRANTED_MASK_BITS_BASE + MASK_LIMB_BITS,
+        &mut b,
+    );
 
     // Path siblings + directions.
     for (i, &sib) in w.siblings.iter().enumerate() {
@@ -801,13 +829,17 @@ pub fn attenuate_scalar_blocks_for(
     let mut blocks: Vec<Vec<BabyBear>> = Vec::with_capacity(trace_height);
     for eff in effects {
         match eff {
-            Effect::AttenuateCapability { phase_b: Some(w), .. } => {
+            Effect::AttenuateCapability {
+                phase_b: Some(w), ..
+            } => {
                 blocks.push(attenuate_scalar_block(w));
             }
             // Phase B2: a witnessed GrantCapability delegation row carries the
             // SAME scalar block (held membership + order-gate witness); the
             // grant-specific gates in `eval` fire on sel 3 × direction.
-            Effect::GrantCapability { phase_b: Some(w), .. } => {
+            Effect::GrantCapability {
+                phase_b: Some(w), ..
+            } => {
                 blocks.push(attenuate_scalar_block(w));
             }
             _ => blocks.push(vec![BabyBear::ZERO; attn::ATTN_SCALAR_COLS]),
@@ -835,7 +867,11 @@ pub fn prove_effect_vm_p3_attenuation(
     let full_trace = extend_trace_with_attenuation(base_trace, &scalar_blocks);
     let matrix = to_matrix(&full_trace);
     let pis: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
-    let instances = vec![StarkInstance { air: &air, trace: &matrix, public_values: pis.clone() }];
+    let instances = vec![StarkInstance {
+        air: &air,
+        trace: &matrix,
+        public_values: pis.clone(),
+    }];
     let prover_data = ProverData::from_instances(&config, &instances);
     let common = &prover_data.common;
     let proof = prove_batch(&config, &instances, &prover_data);
@@ -1044,9 +1080,7 @@ where
                     + two.clone() * direction.clone() * amount.clone()),
         );
         tb.assert_zero(s_transfer.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
-        tb.assert_zero(
-            s_transfer.clone() * direction.clone() * (direction.clone() - one.clone()),
-        );
+        tb.assert_zero(s_transfer.clone() * direction.clone() * (direction.clone() - one.clone()));
         for i in [state::CAP_ROOT, state::RESERVED] {
             tb.assert_zero(s_transfer.clone() * (sa(i) - sb(i)));
         }
@@ -1075,13 +1109,15 @@ where
         tb.assert_zero(s_setfield.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_setfield.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
         tb.assert_zero(s_setfield.clone() * (new_cap_root.clone() - old_cap_root.clone()));
-        tb.assert_zero(
-            s_setfield.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-        );
+        tb.assert_zero(s_setfield.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         // reserved bit-decomposition (UNCONDITIONAL booleanity + decomposition).
         let bbits: [AB::Expr; 8] = core::array::from_fn(|i| aux(aux_off::RESERVED_BIT_0 + i));
         let mode_bit = aux(aux_off::RESERVED_MODE);
-        for bit in bbits.iter().cloned().chain(core::iter::once(mode_bit.clone())) {
+        for bit in bbits
+            .iter()
+            .cloned()
+            .chain(core::iter::once(mode_bit.clone()))
+        {
             tb.assert_zero(bit.clone() * (bit - one.clone()));
         }
         let mut reconstructed = AB::Expr::ZERO;
@@ -1132,9 +1168,7 @@ where
         //    Attenuate gate block below (where the scalar witness is in scope). --
         let grant_dir = prm(param::GRANT_DIRECTION);
         // direction is boolean on grant rows.
-        tb.assert_zero(
-            s_grantcap.clone() * grant_dir.clone() * (grant_dir.clone() - one.clone()),
-        );
+        tb.assert_zero(s_grantcap.clone() * grant_dir.clone() * (grant_dir.clone() - one.clone()));
         // direction 0: the legacy recipient-install cap_root advance.
         tb.assert_zero(
             s_grantcap.clone()
@@ -1144,9 +1178,7 @@ where
         // direction 1: granter-side passthrough — delegating must NOT move the
         // granter's own cap_root.
         tb.assert_zero(
-            s_grantcap.clone()
-                * grant_dir.clone()
-                * (new_cap_root.clone() - old_cap_root.clone()),
+            s_grantcap.clone() * grant_dir.clone() * (new_cap_root.clone() - old_cap_root.clone()),
         );
         tb.assert_zero(s_grantcap.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_grantcap.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
@@ -1155,9 +1187,7 @@ where
         }
         // delegation rows: reserved passthrough (mirrors the Attenuate frame).
         tb.assert_zero(
-            s_grantcap.clone()
-                * grant_dir.clone()
-                * (sa(state::RESERVED) - sb(state::RESERVED)),
+            s_grantcap.clone() * grant_dir.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
         );
 
         // -- EmitEvent --
@@ -1237,8 +1267,7 @@ where
             tb.assert_zero(s_notespend.clone() * (fld_a(i) - fld_b(i)));
         }
         tb.assert_zero(
-            s_notespend.clone()
-                * (prm(param::NULLIFIER) - pv[pi::NOTESPEND_NULLIFIER].clone()),
+            s_notespend.clone() * (prm(param::NULLIFIER) - pv[pi::NOTESPEND_NULLIFIER].clone()),
         );
         // D5b NoteCreate commitment cross-binding.
         tb.assert_zero(
@@ -1247,9 +1276,7 @@ where
         );
         // D5c Burn target cross-binding.
         let s_burn = lc(sel::BURN);
-        tb.assert_zero(
-            s_burn.clone() * (prm(param::BURN_TARGET) - pv[pi::BURN_TARGET_PI].clone()),
-        );
+        tb.assert_zero(s_burn.clone() * (prm(param::BURN_TARGET) - pv[pi::BURN_TARGET_PI].clone()));
 
         // -- NoteCreate: BALANCE-NEUTRAL --
         // The note value is hidden in the commitment and is NEVER moved on the
@@ -1259,9 +1286,7 @@ where
         // descriptor (`EffectVmEmitNoteCreate`, balance-neutral) + universe-A's
         // `noteCreateA_bal_neutral`. (`p1` = value_lo stays bound into the commitment
         // cross-binding; a prior version debited it, which diverged — closed.)
-        tb.assert_zero(
-            s_notecreate.clone() * (new_bal_lo.clone() - old_bal_lo.clone()),
-        );
+        tb.assert_zero(s_notecreate.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_notecreate.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
         tb.assert_zero(s_notecreate.clone() * (new_cap_root.clone() - old_cap_root.clone()));
         for i in 0..8 {
@@ -1287,17 +1312,13 @@ where
         for i in 0..8 {
             tb.assert_zero(s_custom.clone() * (fld_a(i) - fld_b(i)));
         }
-        tb.assert_zero(
-            s_custom.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-        );
+        tb.assert_zero(s_custom.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
 
         // -- MakeSovereign --
         let s_makesov = lc(sel::MAKE_SOVEREIGN);
         let old_reserved = sb(state::RESERVED);
         let new_reserved = sa(state::RESERVED);
-        tb.assert_zero(
-            s_makesov.clone() * (new_reserved - old_reserved - AB::Expr::from_u64(256)),
-        );
+        tb.assert_zero(s_makesov.clone() * (new_reserved - old_reserved - AB::Expr::from_u64(256)));
         tb.assert_zero(s_makesov.clone() * mode_bit.clone());
         tb.assert_zero(s_makesov.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
         tb.assert_zero(s_makesov.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
@@ -1314,9 +1335,7 @@ where
         for i in 0..8 {
             tb.assert_zero(s_factory.clone() * (fld_a(i) - fld_b(i)));
         }
-        tb.assert_zero(
-            s_factory.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-        );
+        tb.assert_zero(s_factory.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
 
         // -- Burn --
         {
@@ -1331,9 +1350,7 @@ where
             for i in 0..8 {
                 tb.assert_zero(s_burn.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_burn.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_burn.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // -- CellDestroy --
@@ -1345,9 +1362,7 @@ where
             for i in 0..8 {
                 tb.assert_zero(s_cell_destroy.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_cell_destroy.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_cell_destroy.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // -- Shared cap NON-AMPLIFICATION block: PHASE B (AttenuateCapability,
@@ -1393,21 +1408,15 @@ where
             // swapping the proven slot for another). Attenuate uses params[0];
             // Grant delegation rows use params[2] (params[0] carries the granted
             // leaf digest there).
-            tb.assert_zero(
-                s_attn_cap.clone() * (prm(param::ATTN_CAP_SLOT_HASH) - w(SLOT_HASH)),
-            );
-            tb.assert_zero(
-                s_grant_del.clone() * (prm(param::GRANT_HELD_SLOT_HASH) - w(SLOT_HASH)),
-            );
+            tb.assert_zero(s_attn_cap.clone() * (prm(param::ATTN_CAP_SLOT_HASH) - w(SLOT_HASH)));
+            tb.assert_zero(s_grant_del.clone() * (prm(param::GRANT_HELD_SLOT_HASH) - w(SLOT_HASH)));
 
             // ===== GATE 2a (Attenuate): LEAF-UPDATE — new_cap_root forced by the
             // canonical move. The granted (narrowed) leaf folded up the SAME
             // sibling path MUST equal state_after.cap_root. This REPLACES the
             // pinned-digest advance: the circuit forces the sorted-tree root move,
             // not the executor.
-            tb.assert_zero(
-                s_attn_cap.clone() * (attn_d.new_root.clone() - new_cap_root.clone()),
-            );
+            tb.assert_zero(s_attn_cap.clone() * (attn_d.new_root.clone() - new_cap_root.clone()));
             // The narrower-commitment param (params[1]) is bound to the granted
             // leaf digest, so the public attestation commits to exactly the leaf
             // whose narrowed rights the gates check.
@@ -1419,12 +1428,8 @@ where
             // the granted leaf hashed the shared columns; now that the granted
             // leaf has its own slot/breadstuff columns for Grant, Attenuate pins
             // them equal explicitly): an attenuation narrows IN PLACE.
-            tb.assert_zero(
-                s_attn_cap.clone() * (w(GRANTED_SLOT_HASH) - w(SLOT_HASH)),
-            );
-            tb.assert_zero(
-                s_attn_cap.clone() * (w(GRANTED_BREADSTUFF) - w(BREADSTUFF)),
-            );
+            tb.assert_zero(s_attn_cap.clone() * (w(GRANTED_SLOT_HASH) - w(SLOT_HASH)));
+            tb.assert_zero(s_attn_cap.clone() * (w(GRANTED_BREADSTUFF) - w(BREADSTUFF)));
 
             // ===== GATE 2b (Grant delegation): GRANTED-LEAF BINDING — the public
             // cap_entry param (params[0], all 8 limbs in effects_hash) is pinned
@@ -1543,9 +1548,7 @@ where
                 // (e) vk path ⇒ both tiers Custom(5) AND granted_tag == held_tag.
                 tb.assert_zero(s.clone() * vk.clone() * (gt.clone() - AB::Expr::from_u64(5)));
                 tb.assert_zero(s.clone() * vk.clone() * (ht.clone() - AB::Expr::from_u64(5)));
-                tb.assert_zero(
-                    s.clone() * vk.clone() * (w(GRANTED_AUTH_TAG) - w(HELD_AUTH_TAG)),
-                );
+                tb.assert_zero(s.clone() * vk.clone() * (w(GRANTED_AUTH_TAG) - w(HELD_AUTH_TAG)));
 
                 // (f) tier↔tag AIRTIGHT binding (belt-and-suspenders): for EITHER
                 // side, the claimed tier is either Custom(5) OR the (built-in) tag
@@ -1587,7 +1590,9 @@ where
                 tb.assert_zero(s.clone() * g_none.clone() * (g_none.clone() - one.clone()));
                 tb.assert_zero(s.clone() * h_none.clone() * (h_none.clone() - one.clone()));
                 // None ⇒ leaf expiry == NONE_SENTINEL.
-                tb.assert_zero(s.clone() * g_none.clone() * (w(GRANTED_EXPIRY) - none_sent.clone()));
+                tb.assert_zero(
+                    s.clone() * g_none.clone() * (w(GRANTED_EXPIRY) - none_sent.clone()),
+                );
                 tb.assert_zero(s.clone() * h_none.clone() * (w(HELD_EXPIRY) - none_sent.clone()));
                 // NOT-None ⇒ leaf expiry == encode_expiry(raw) = the fold digest.
                 // (1 - none) * (leaf_expiry - fold) == 0.
@@ -1633,26 +1638,20 @@ where
             for i in 0..8 {
                 tb.assert_zero(s_cell_seal.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_cell_seal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_cell_seal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // -- CellUnseal --
         let s_cell_unseal = lc(sel::CELL_UNSEAL);
         {
-            tb.assert_zero(
-                s_cell_unseal.clone() * (prm(param::CELL_UNSEAL_TARGET) - aux(0)),
-            );
+            tb.assert_zero(s_cell_unseal.clone() * (prm(param::CELL_UNSEAL_TARGET) - aux(0)));
             tb.assert_zero(s_cell_unseal.clone() * (new_bal_lo.clone() - old_bal_lo.clone()));
             tb.assert_zero(s_cell_unseal.clone() * (new_bal_hi.clone() - old_bal_hi.clone()));
             tb.assert_zero(s_cell_unseal.clone() * (new_cap_root.clone() - old_cap_root.clone()));
             for i in 0..8 {
                 tb.assert_zero(s_cell_unseal.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_cell_unseal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_cell_unseal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // -- ReceiptArchive --
@@ -1666,9 +1665,7 @@ where
             for i in 0..8 {
                 tb.assert_zero(s_receipt_archive.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_receipt_archive.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_receipt_archive.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // -- Refusal --
@@ -1680,9 +1677,7 @@ where
             for i in 0..8 {
                 tb.assert_zero(s_refusal.clone() * (fld_a(i) - fld_b(i)));
             }
-            tb.assert_zero(
-                s_refusal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)),
-            );
+            tb.assert_zero(s_refusal.clone() * (sa(state::RESERVED) - sb(state::RESERVED)));
         }
 
         // ===== GROUP 3: transition continuity (next.before == this.after) =====
@@ -2087,7 +2082,10 @@ mod tests {
     #[test]
     fn transfer_turn_proves_and_verifies_through_audited_p3() {
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
         let proof = prove_effect_vm_p3(&trace, &pis)
             .expect("honest Effect VM turn must prove+verify through audited p3");
@@ -2099,7 +2097,10 @@ mod tests {
     #[test]
     fn forged_post_state_commit_rejected_by_audited_p3() {
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
         let proof = prove_effect_vm_p3(&trace, &pis).expect("honest proof");
 
@@ -2122,20 +2123,24 @@ mod tests {
         let initial = CellState::new(1000, 0);
         // Two effects so row 0 is a real, non-last row.
         let effects = vec![
-            VmEffect::Transfer { amount: 100, direction: 1 },
-            VmEffect::Transfer { amount: 50, direction: 0 },
+            VmEffect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            VmEffect::Transfer {
+                amount: 50,
+                direction: 0,
+            },
         ];
         let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
         assert!(trace.len() >= 2, "need a non-last row to forge");
 
         let mut forged_trace = trace.clone();
         let honest_commit = forged_trace[0][STATE_AFTER_BASE + state::STATE_COMMIT];
-        forged_trace[0][STATE_AFTER_BASE + state::STATE_COMMIT] =
-            honest_commit + BabyBear::new(1);
+        forged_trace[0][STATE_AFTER_BASE + state::STATE_COMMIT] = honest_commit + BabyBear::new(1);
 
         let outcome = std::panic::catch_unwind(|| {
-            prove_effect_vm_p3(&forged_trace, &pis)
-                .and_then(|p| verify_effect_vm_p3(&p, &pis))
+            prove_effect_vm_p3(&forged_trace, &pis).and_then(|p| verify_effect_vm_p3(&p, &pis))
         });
         let accepted = matches!(outcome, Ok(Ok(())));
         assert!(
@@ -2160,7 +2165,10 @@ mod tests {
     #[test]
     fn forged_last_row_state_commit_trace_cell_rejected_by_audited_p3() {
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
 
         // Sanity: the honest version proves+verifies.
@@ -2201,7 +2209,10 @@ mod tests {
     #[test]
     fn forged_final_balance_rejected_by_audited_p3() {
         let initial = CellState::new(1000, 0);
-        let effects = vec![VmEffect::Transfer { amount: 100, direction: 1 }];
+        let effects = vec![VmEffect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
         let (trace, pis) = generate_effect_vm_trace(&initial, &effects);
         let proof = prove_effect_vm_p3(&trace, &pis).expect("honest proof");
 

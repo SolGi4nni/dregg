@@ -24,10 +24,10 @@
 //! The Lean `Reg` keys are `Nat` (the Rust `u64` promise ids); the message label is the Lean
 //! `Nat` we stash in `PipelinedAction.method` so we can read it back from the drained `Vec`.
 
+use dregg_captp::FederationId;
 use dregg_captp::pipeline::{
     PipelineError, PipelinePromiseState, PipelineRegistry, PipelinedAction, PipelinedMessage,
 };
-use dregg_captp::FederationId;
 
 /// 0 = pending/absent, 1 = fulfilled, 2 = broken — exactly Lean `stepObs.stateTag`.
 fn state_tag(s: Option<&PipelinePromiseState>) -> u64 {
@@ -84,11 +84,19 @@ fn pipeline_registry_observable_matches_lean_corpus() {
 
     // .queue 0 100 none
     let ok = reg.pipeline_message(msg(0, 100, None)).is_ok();
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), ok));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        ok,
+    ));
 
     // .queue 0 101 (some 7)
     let ok = reg.pipeline_message(msg(0, 101, Some(7))).is_ok();
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), ok));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        ok,
+    ));
 
     // .resolve 0 42  — drains [100,101] in FIFO order, clears the queue, marks Fulfilled.
     let drained = reg.resolve_promise(0, dregg_types::CellId([42; 32]));
@@ -101,15 +109,27 @@ fn pipeline_registry_observable_matches_lean_corpus() {
         vec![100, 101],
         "resolve drains OLDEST-FIRST (FIFO) — Lean `pipelineDifferentialCorpus_drain_order`"
     );
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), true));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        true,
+    ));
 
     // .queue 0 102 none  — queue-on-fulfilled: accepted, requeues.
     let ok = reg.pipeline_message(msg(0, 102, None)).is_ok();
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), ok));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        ok,
+    ));
 
     // .breakP 0 "remote gone" — marks Broken, clears the queue.
     let _notifs = reg.break_promise(0, "remote gone".to_string());
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), true));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        true,
+    ));
 
     // .queue 0 103 none — queue-on-broken: REJECTED (`PromiseAlreadyBroken`).
     let verdict = reg.pipeline_message(msg(0, 103, None));
@@ -118,7 +138,11 @@ fn pipeline_registry_observable_matches_lean_corpus() {
         matches!(verdict, Err(PipelineError::PromiseAlreadyBroken { .. })),
         "queueing onto a broken promise must be rejected (Lean `broken_target_rejects_queue`)"
     );
-    got.push((reg.queued_count(0) as u64, state_tag(reg.promise_state(0)), ok));
+    got.push((
+        reg.queued_count(0) as u64,
+        state_tag(reg.promise_state(0)),
+        ok,
+    ));
 
     assert_eq!(
         got, expected,
@@ -147,7 +171,10 @@ fn resolve_is_fifo_and_clears() {
 
     // re-resolve drains nothing (queue already removed).
     let again = reg.resolve_promise(p, dregg_types::CellId([9; 32]));
-    assert!(again.is_empty(), "a re-resolve drains nothing — the queue was cleared");
+    assert!(
+        again.is_empty(),
+        "a re-resolve drains nothing — the queue was cleared"
+    );
 }
 
 /// Break-clears tooth: a broken promise delivers NOTHING and clears its queue — Lean
@@ -158,12 +185,20 @@ fn break_clears_and_cascades() {
     let upstream = reg.create_promise();
     let downstream = reg.create_promise();
     // a queued message whose result_promise_id is the (local) downstream promise.
-    reg.pipeline_message(msg(upstream, 1, Some(downstream))).unwrap();
+    reg.pipeline_message(msg(upstream, 1, Some(downstream)))
+        .unwrap();
 
     let notifs = reg.break_promise(upstream, "boom".to_string());
-    assert_eq!(reg.queued_count(upstream), 0, "break clears the queue (delivers nothing)");
+    assert_eq!(
+        reg.queued_count(upstream),
+        0,
+        "break clears the queue (delivers nothing)"
+    );
     assert!(
-        matches!(reg.promise_state(upstream), Some(PipelinePromiseState::Broken { .. })),
+        matches!(
+            reg.promise_state(upstream),
+            Some(PipelinePromiseState::Broken { .. })
+        ),
         "broken after break"
     );
     // the cascade broke the downstream result promise too (it was local to this registry).
@@ -172,7 +207,10 @@ fn break_clears_and_cascades() {
         "break cascades to the result promise (Lean `breakPromise` fold cascade arm)"
     );
     assert!(
-        matches!(reg.promise_state(downstream), Some(PipelinePromiseState::Broken { .. })),
+        matches!(
+            reg.promise_state(downstream),
+            Some(PipelinePromiseState::Broken { .. })
+        ),
         "the local downstream result promise is recursively broken"
     );
 }

@@ -1324,11 +1324,9 @@ fn atomic_tx_stale_root_assertion_rejected() {
 // Test 20: Circuit-level AtomicQueueTx — tampered combined_old_root fails
 // =============================================================================
 
-
 // =============================================================================
 // Test 21: Circuit-level AtomicQueueTx — balance unchanged enforced
 // =============================================================================
-
 
 // =============================================================================
 // Test 22: Atomic Queue Tx — Partial failure rollback preserves deposits

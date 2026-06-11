@@ -217,8 +217,6 @@ struct SilverScenario {
     gateway_id: CellId,
 }
 
-
-
 fn assert_bundle_rejects(
     bundle: &CrossFedReceiptBundle,
     issuer_desc: &CommitteeDescriptor,

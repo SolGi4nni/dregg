@@ -82,7 +82,14 @@ async fn identity(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error:
     ctx.header("Operator Identity");
     ctx.kv("Public key", &abbrev_hex(pubkey, 8, 4));
     ctx.kv("Agent cell", &abbrev_hex(agent_cell, 8, 4));
-    ctx.kv("Unlocked", if unlocked { "yes" } else { "no (turns cannot be signed)" });
+    ctx.kv(
+        "Unlocked",
+        if unlocked {
+            "yes"
+        } else {
+            "no (turns cannot be signed)"
+        },
+    );
     match data["agent_balance"].as_u64() {
         Some(b) => ctx.kv("Balance", &format_number(b)),
         None => ctx.kv("Balance", "(cell not yet materialized)"),
@@ -178,7 +185,10 @@ async fn producer(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error:
     let lean = data["lean_producer_enabled"].as_bool().unwrap_or(false);
     let proving = data["full_turn_proving"].as_bool().unwrap_or(false);
     let total = data["total_effect_kinds"].as_u64().unwrap_or(0);
-    let covered = data["covered_effects"].as_array().cloned().unwrap_or_default();
+    let covered = data["covered_effects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let uncovered = data["uncovered_effects"]
         .as_array()
         .cloned()
@@ -200,11 +210,19 @@ async fn producer(cfg: &Config, ctx: &Context) -> Result<(), Box<dyn std::error:
     ctx.kv("Mode flag", state_producer);
     ctx.kv(
         "Full-turn proving",
-        if proving { "on (STARK per turn)" } else { "off" },
+        if proving {
+            "on (STARK per turn)"
+        } else {
+            "off"
+        },
     );
     ctx.kv(
         "Coverage",
-        &format!("{}/{} effect kinds default to the verified producer", covered.len(), total),
+        &format!(
+            "{}/{} effect kinds default to the verified producer",
+            covered.len(),
+            total
+        ),
     );
 
     if !covered.is_empty() {

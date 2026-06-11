@@ -35,7 +35,7 @@
 
 #![cfg(test)]
 
-use crate::threshold::{generate_test_committee, FederationCommittee, MemberSecret};
+use crate::threshold::{FederationCommittee, MemberSecret, generate_test_committee};
 use crate::{fault_tolerance, quorum_threshold};
 use hints::PartialSignature;
 
@@ -48,11 +48,7 @@ fn lean_fault_budget(n: usize) -> usize {
 
 /// Lean `quorumThreshold n = n − n/3` (REUSED from `EpochReconfig`, = `quorum_threshold`, `lib.rs:155`).
 fn lean_quorum_threshold(n: usize) -> usize {
-    if n == 0 {
-        0
-    } else {
-        n - lean_fault_budget(n)
-    }
+    if n == 0 { 0 } else { n - lean_fault_budget(n) }
 }
 
 /// Lean `StrictBft n = 3·faultBudget n < n` (`BlsQuorumCert.lean §1`); `strictBft_iff` ⇔ `¬ 3∣n`.
@@ -68,7 +64,11 @@ fn fault_budget_matches_real_golden() {
     for (n, f) in [(0, 0), (1, 0), (2, 0), (3, 1), (4, 1), (7, 2), (10, 3)] {
         assert_eq!(lean_fault_budget(n), f, "lean faultBudget({n})");
         assert_eq!(fault_tolerance(n), f, "real fault_tolerance({n})");
-        assert_eq!(lean_fault_budget(n), fault_tolerance(n), "agreement at n={n}");
+        assert_eq!(
+            lean_fault_budget(n),
+            fault_tolerance(n),
+            "agreement at n={n}"
+        );
     }
 }
 
@@ -126,7 +126,12 @@ fn formulas_agree_exhaustively() {
 
 /// Helper: aggregate a QC from the given member indices over `msg`, returning whether it both
 /// aggregated AND verified against the committee.
-fn qc_from(committee: &FederationCommittee, members: &[MemberSecret], idxs: &[usize], msg: &[u8]) -> bool {
+fn qc_from(
+    committee: &FederationCommittee,
+    members: &[MemberSecret],
+    idxs: &[usize],
+    msg: &[u8],
+) -> bool {
     let shares: Vec<(usize, PartialSignature)> = idxs
         .iter()
         .map(|&i| (members[i].index, committee.sign_share(&members[i], msg)))
@@ -225,8 +230,14 @@ fn two_quorums_share_an_honest_signer() {
     let quorum_a = [0usize, 1, 2]; // signs A
     let quorum_b = [1usize, 2, 3]; // signs B
 
-    assert!(qc_from(&committee, &members, &quorum_a, msg_a), "QC over A verifies");
-    assert!(qc_from(&committee, &members, &quorum_b, msg_b), "QC over B verifies");
+    assert!(
+        qc_from(&committee, &members, &quorum_a, msg_a),
+        "QC over A verifies"
+    );
+    assert!(
+        qc_from(&committee, &members, &quorum_b, msg_b),
+        "QC over B verifies"
+    );
 
     // The signer sets overlap; the overlap exceeds the fault budget, so it contains an honest member.
     let overlap: Vec<usize> = quorum_a

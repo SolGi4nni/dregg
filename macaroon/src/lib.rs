@@ -35,8 +35,19 @@ pub mod action;
 pub mod caveat;
 #[cfg(feature = "crypto")]
 pub mod caveat_3p;
+/// Differential: the verified Lean `Dregg2.Authority.CaveatChain` FIRST-PARTY model ⟺ this crate's
+/// real HMAC chain (`Macaroon::{new, add_first_party, verify}`): replay agreement (`replayTag` ==
+/// real tail byte-for-byte), `honest_chain_verifies`, and the integrity teeth (removal / tamper /
+/// wrong-key REJECTED). Test-only. Companion to `discharge_diff` (the third-party half).
+#[cfg(all(test, feature = "crypto"))]
+mod caveat_chain_diff;
 #[cfg(feature = "crypto")]
 pub mod crypto;
+/// Differential: the verified Lean `Dregg2.Authority.MacaroonDischarge` model ⟺ this crate's real
+/// third-party discharge binding (`bind_discharge`/`verify_discharge`): replay agreement, the
+/// unbound-rejected fail-closed tooth, and no-cross-root-replay. Test-only.
+#[cfg(all(test, feature = "crypto"))]
+mod discharge_diff;
 #[cfg(feature = "crypto")]
 pub mod discharge_gateway;
 pub mod error;
@@ -44,17 +55,6 @@ pub mod error;
 pub mod format;
 #[cfg(feature = "crypto")]
 pub mod macaroon;
-/// Differential: the verified Lean `Dregg2.Authority.MacaroonDischarge` model ⟺ this crate's real
-/// third-party discharge binding (`bind_discharge`/`verify_discharge`): replay agreement, the
-/// unbound-rejected fail-closed tooth, and no-cross-root-replay. Test-only.
-#[cfg(all(test, feature = "crypto"))]
-mod discharge_diff;
-/// Differential: the verified Lean `Dregg2.Authority.CaveatChain` FIRST-PARTY model ⟺ this crate's
-/// real HMAC chain (`Macaroon::{new, add_first_party, verify}`): replay agreement (`replayTag` ==
-/// real tail byte-for-byte), `honest_chain_verifies`, and the integrity teeth (removal / tamper /
-/// wrong-key REJECTED). Test-only. Companion to `discharge_diff` (the third-party half).
-#[cfg(all(test, feature = "crypto"))]
-mod caveat_chain_diff;
 pub mod resource;
 
 // Re-export primary types at crate root.

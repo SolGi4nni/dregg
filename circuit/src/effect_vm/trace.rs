@@ -10,8 +10,7 @@ use crate::poseidon2::{hash_2_to_1, hash_4_to_1, hash_fact};
 use super::{
     AUX_BASE, CellState, EFFECT_VM_WIDTH, Effect, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
     aux_off, compute_effects_hash, compute_effects_hash_4, fill_balance_limb_bits,
-    fill_reserved_bits, param, pi, sel,
-    split_u64, u64_to_4_limbs_16,
+    fill_reserved_bits, param, pi, sel, split_u64, u64_to_4_limbs_16,
 };
 
 /// Compress a 32-byte canonical id (federation id or cell id) into 4 BabyBear
@@ -265,8 +264,7 @@ pub fn generate_effect_vm_trace_ext(
                         field_idx
                     );
                 }
-                
-                
+
                 Effect::Transfer {
                     amount, direction, ..
                 } => {
@@ -291,17 +289,11 @@ pub fn generate_effect_vm_trace_ext(
                     // Matches the verified executor (`apply_note_create`) + Lean
                     // descriptor (`EffectVmEmitNoteCreate`, balance-neutral).
                 }
-                
+
                 Effect::NoteSpend { value, .. } => {
                     running_balance = running_balance.saturating_add(*value);
                 }
-                
-                
-                
-                
-                
-                
-                
+
                 Effect::Burn {
                     amount_lo,
                     amount_full,
@@ -368,47 +360,29 @@ pub fn generate_effect_vm_trace_ext(
             Effect::GrantCapability { .. } => sel::GRANT_CAP,
             Effect::NoteSpend { .. } => sel::NOTE_SPEND,
             Effect::NoteCreate { .. } => sel::NOTE_CREATE,
-            
-            
+
             Effect::Custom { .. } => sel::CUSTOM,
-            
-            
-            
+
             Effect::MakeSovereign => sel::MAKE_SOVEREIGN,
             Effect::CreateCellFromFactory { .. } => sel::CREATE_CELL_FROM_FACTORY,
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::RevokeCapability { .. } => sel::REVOKE_CAPABILITY,
             Effect::EmitEvent { .. } => sel::EMIT_EVENT,
             Effect::SetPermissions { .. } => sel::SET_PERMISSIONS,
             Effect::SetVerificationKey { .. } => sel::SET_VERIFICATION_KEY,
-            
+
             Effect::RefreshDelegation => sel::REFRESH_DELEGATION,
             Effect::IncrementNonce => sel::INCREMENT_NONCE,
             Effect::RevokeDelegation { .. } => sel::REVOKE_DELEGATION,
             Effect::CreateCell { .. } => sel::CREATE_CELL,
             Effect::SpawnWithDelegation { .. } => sel::SPAWN_WITH_DELEGATION,
-            
+
             Effect::ExerciseViaCapability { .. } => sel::EXERCISE_VIA_CAPABILITY,
             Effect::Introduce { .. } => sel::INTRODUCE,
             Effect::PipelinedSend { .. } => sel::PIPELINED_SEND,
-            
-            
-            
+
             Effect::BridgeMint { .. } => sel::BRIDGE_MINT,
-            
-            
-            
-            
-            
+
             Effect::Burn { .. } => sel::BURN,
             Effect::CellDestroy { .. } => sel::CELL_DESTROY,
             Effect::AttenuateCapability { .. } => sel::ATTENUATE_CAPABILITY,
@@ -481,8 +455,7 @@ pub fn generate_effect_vm_trace_ext(
                     }
                     // ---- Legacy: RECIPIENT install (direction 0) ----
                     None => {
-                        let new_cap =
-                            hash_2_to_1(current_state.capability_root, cap_entry[0]);
+                        let new_cap = hash_2_to_1(current_state.capability_root, cap_entry[0]);
                         new_state.capability_root = new_cap;
                     }
                 }
@@ -530,7 +503,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = vk_hash[0];
                 new_state.nonce += 1;
             }
-            
+
             Effect::RefreshDelegation => {
                 // No params; selector alone records the intent.
                 new_state.nonce += 1;
@@ -553,7 +526,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = spawn_hash[0];
                 new_state.nonce += 1;
             }
-            
+
             Effect::ExerciseViaCapability { exercise_hash } => {
                 row[PARAM_BASE + 0] = exercise_hash[0];
                 new_state.nonce += 1;
@@ -566,9 +539,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = send_hash[0];
                 new_state.nonce += 1;
             }
-            
-            
-            
+
             Effect::BridgeMint {
                 value_lo,
                 mint_hash,
@@ -582,9 +553,7 @@ pub fn generate_effect_vm_trace_ext(
                 net_delta += value_u64 as i64;
                 new_state.nonce += 1;
             }
-            
-            
-            
+
             Effect::NoteSpend { nullifier, value } => {
                 let (val_lo, val_hi) = split_u64(*value);
                 row[PARAM_BASE + param::NULLIFIER] = *nullifier;
@@ -610,8 +579,7 @@ pub fn generate_effect_vm_trace_ext(
                 // subtracted `value`, which diverged from the executor; closed.)
                 new_state.nonce += 1;
             }
-            
-            
+
             Effect::Custom {
                 program_vk_hash,
                 proof_commitment,
@@ -635,9 +603,7 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.nonce += 1;
                 // No balance change from the Effect VM perspective.
             }
-            
-            
-            
+
             Effect::MakeSovereign => {
                 // Mode flag transitions from 0 to 1.
                 new_state.mode_flag = 1;
@@ -654,16 +620,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[AUX_BASE + 7] = *child_vk_derived;
                 new_state.nonce += 1;
             }
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::Burn {
                 target_hash,
                 amount_lo,

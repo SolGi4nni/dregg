@@ -89,8 +89,12 @@ fn single_effect_turn(agent: CellId, target: CellId, nonce: u64, effect: Effect)
 /// root) AND on `.root()`. Returns Ok(()) on full agreement or Err(why) on the first divergence.
 fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result<(), String> {
     for id in ids {
-        let r = rust.get(id).ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
-        let l = lean.get(id).ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
+        let r = rust
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
+        let l = lean
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
         if r.state.balance() != l.state.balance() {
             return Err(format!(
                 "balance divergence on {id:?}: rust={} lean={}",
@@ -116,7 +120,9 @@ fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result
         let rc = dregg_cell::compute_canonical_capability_root(&r.capabilities);
         let lc = dregg_cell::compute_canonical_capability_root(&l.capabilities);
         if rc != lc {
-            return Err(format!("cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"));
+            return Err(format!(
+                "cap_root divergence on {id:?}: rust={rc:?} lean={lc:?}"
+            ));
         }
     }
     let rr = rust.root();
@@ -133,7 +139,9 @@ fn diff(pre: Ledger, turn: Turn, ids: &[CellId]) -> Result<(), String> {
     let mut rust_ledger = pre.clone();
     let rust_result = executor.execute(&turn, &mut rust_ledger);
     if !rust_result.is_committed() {
-        return Err(format!("legacy Rust executor did not commit: {rust_result:?}"));
+        return Err(format!(
+            "legacy Rust executor did not commit: {rust_result:?}"
+        ));
     }
 
     let host = ShadowHostCtx::diag();
@@ -164,4 +172,3 @@ fn skip_no_lean() -> bool {
 // verified kernel does not parse them); the Rust executor remains the transitional
 // fallback. No silent state install.
 // =====================================================================================
-

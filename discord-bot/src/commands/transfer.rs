@@ -185,10 +185,8 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
                 .await;
         }
         Err(e) => {
-            let embed = embeds::error_embed(
-                "Transfer Failed",
-                &e.user_message("submit the transfer"),
-            );
+            let embed =
+                embeds::error_embed("Transfer Failed", &e.user_message("submit the transfer"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;

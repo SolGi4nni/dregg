@@ -510,8 +510,7 @@ impl StarkAir for EffectVmAir {
                 recomposed_lo = recomposed_lo + bit * BabyBear::new(1u32 << i);
             }
             // (2) recomposition pins new_bal_lo into [0, 2^30).
-            let c_recompose_lo =
-                recomposed_lo - local[STATE_AFTER_BASE + state::BALANCE_LO];
+            let c_recompose_lo = recomposed_lo - local[STATE_AFTER_BASE + state::BALANCE_LO];
             combined = combined + alpha_pow * c_recompose_lo;
             alpha_pow = alpha_pow * alpha;
 
@@ -524,8 +523,7 @@ impl StarkAir for EffectVmAir {
                 alpha_pow = alpha_pow * alpha;
                 recomposed_hi = recomposed_hi + bit * BabyBear::new(1u32 << i);
             }
-            let c_recompose_hi =
-                recomposed_hi - local[STATE_AFTER_BASE + state::BALANCE_HI];
+            let c_recompose_hi = recomposed_hi - local[STATE_AFTER_BASE + state::BALANCE_HI];
             combined = combined + alpha_pow * c_recompose_hi;
             alpha_pow = alpha_pow * alpha;
         }

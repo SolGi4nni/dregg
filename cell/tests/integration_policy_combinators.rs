@@ -14,8 +14,8 @@
 //! independent of any in-crate `#[cfg(test)]` module.)
 
 use dregg_cell::{
-    program::{field_from_u64, SimpleStateConstraint},
     CellProgram, CellState, StateConstraint,
+    program::{SimpleStateConstraint, field_from_u64},
 };
 
 /// `MemberOf` — Lean `roleProgram`: role ∈ {1,2,3}.
@@ -43,7 +43,10 @@ fn prefix_of_differential() {
     s.fields[0] = field_from_u64(10);
     s.fields[1] = field_from_u64(20);
     s.fields[2] = field_from_u64(7);
-    assert!(p.evaluate(&s, None, None).is_ok(), "[10,20,7] starts with [10,20]");
+    assert!(
+        p.evaluate(&s, None, None).is_ok(),
+        "[10,20,7] starts with [10,20]"
+    );
     s.fields[1] = field_from_u64(99);
     assert!(p.evaluate(&s, None, None).is_err(), "[10,99,7] ⇏ prefix");
 
@@ -155,10 +158,16 @@ fn all_of_differential() {
     s.fields[0] = field_from_u64(15);
     assert!(p.evaluate(&s, None, None).is_ok());
     s.fields[0] = field_from_u64(25);
-    assert!(p.evaluate(&s, None, None).is_err(), "25 > 20 ⇒ second conjunct fails");
+    assert!(
+        p.evaluate(&s, None, None).is_err(),
+        "25 > 20 ⇒ second conjunct fails"
+    );
 
     let p_empty = CellProgram::Predicate(vec![StateConstraint::AllOf { variants: vec![] }]);
-    assert!(p_empty.evaluate(&s, None, None).is_ok(), "empty AllOf admits (vacuous AND)");
+    assert!(
+        p_empty.evaluate(&s, None, None).is_ok(),
+        "empty AllOf admits (vacuous AND)"
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -222,9 +231,15 @@ fn field_lte_other_capacity_with_tail_delta_live() {
     let mut s = CellState::new(0);
     s.fields[Q_CAP] = field_from_u64(2);
     s.fields[Q_HEAD] = field_from_u64(3); // 3 <= cap 2 + delta 1 = 3 ⇒ admit (occupancy 2 = cap)
-    assert!(p.evaluate(&s, None, None).is_ok(), "head 3 <= cap 2 + tail 1");
+    assert!(
+        p.evaluate(&s, None, None).is_ok(),
+        "head 3 <= cap 2 + tail 1"
+    );
     s.fields[Q_HEAD] = field_from_u64(4); // 4 > 3 ⇒ reject (occupancy 3 > cap 2)
-    assert!(p.evaluate(&s, None, None).is_err(), "head 4 > cap 2 + tail 1 ⇒ reject");
+    assert!(
+        p.evaluate(&s, None, None).is_err(),
+        "head 4 > cap 2 + tail 1 ⇒ reject"
+    );
 }
 
 /// `FieldLteOther tail head 0` ≡ the NO-UNDERFLOW bound `tail <= head` through
@@ -239,9 +254,15 @@ fn field_lte_other_no_underflow_live_path() {
     let mut s = CellState::new(0);
     s.fields[Q_HEAD] = field_from_u64(1);
     s.fields[Q_TAIL] = field_from_u64(1); // tail 1 = head 1 ⇒ admit (empty queue)
-    assert!(p.evaluate(&s, None, None).is_ok(), "tail 1 <= head 1 ⇒ admit");
+    assert!(
+        p.evaluate(&s, None, None).is_ok(),
+        "tail 1 <= head 1 ⇒ admit"
+    );
     s.fields[Q_TAIL] = field_from_u64(2); // tail 2 > head 1 ⇒ reject (FIFO underflow)
-    assert!(p.evaluate(&s, None, None).is_err(), "tail 2 > head 1 ⇒ reject");
+    assert!(
+        p.evaluate(&s, None, None).is_err(),
+        "tail 2 > head 1 ⇒ reject"
+    );
 }
 
 /// SUPERSET: an empty `Predicate([])` (no relational caveat) admits an
@@ -280,7 +301,10 @@ fn field_lte_other_conjunction_live_path() {
     s.fields[Q_HEAD] = field_from_u64(2);
     s.fields[Q_TAIL] = field_from_u64(1);
     s.fields[Q_CAP] = field_from_u64(2);
-    assert!(p.evaluate(&s, None, None).is_ok(), "head 2 <= cap 2 AND tail 1 <= head 2 ⇒ admit");
+    assert!(
+        p.evaluate(&s, None, None).is_ok(),
+        "head 2 <= cap 2 AND tail 1 <= head 2 ⇒ admit"
+    );
     // Break capacity (head 3 > cap 2): rejected even though tail <= head.
     s.fields[Q_HEAD] = field_from_u64(3);
     assert!(

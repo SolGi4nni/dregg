@@ -52,11 +52,21 @@ fn deep_holder_isolation_drop_does_not_cross_decrement() {
     assert_total_refs_consistent(&mgr, &c);
 
     // B drops once on B's session.
-    assert_eq!(mgr.process_drop_with_session(c, fed(0xB), 20), DropResult::StillHeld);
+    assert_eq!(
+        mgr.process_drop_with_session(c, fed(0xB), 20),
+        DropResult::StillHeld
+    );
     // A still has exactly 2; total = 2.
     let entry = mgr.get(&c).unwrap();
-    assert_eq!(entry.holders.get(&fed(0xA)).unwrap().count, 2, "A cross-decremented!");
-    assert!(entry.holders.get(&fed(0xB)).is_none(), "B should be cleaned up at count 0");
+    assert_eq!(
+        entry.holders.get(&fed(0xA)).unwrap().count,
+        2,
+        "A cross-decremented!"
+    );
+    assert!(
+        entry.holders.get(&fed(0xB)).is_none(),
+        "B should be cleaned up at count 0"
+    );
     assert_eq!(entry.total_refs, 2);
     assert_total_refs_consistent(&mgr, &c);
     eprintln!("[GC DEEP 1] holder isolation: DEFENDED");
@@ -78,7 +88,10 @@ fn deep_no_premature_reclaim_with_remaining_holder() {
     mgr.record_export_with_session(c, fed(0xB), 100, 20);
 
     // B fully drops.
-    assert_eq!(mgr.process_drop_with_session(c, fed(0xB), 20), DropResult::StillHeld);
+    assert_eq!(
+        mgr.process_drop_with_session(c, fed(0xB), 20),
+        DropResult::StillHeld
+    );
     // A still holds → entry alive, total_refs == 1.
     assert_eq!(mgr.get(&c).unwrap().total_refs, 1);
     assert!(mgr.get(&c).unwrap().holders.contains_key(&fed(0xA)));
@@ -103,9 +116,16 @@ fn deep_cross_cell_isolation() {
     mgr.record_export_with_session(y, fed(0xA), 100, 10);
 
     // Reclaim X entirely.
-    assert_eq!(mgr.process_drop_with_session(x, fed(0xA), 10), DropResult::CanRevoke);
+    assert_eq!(
+        mgr.process_drop_with_session(x, fed(0xA), 10),
+        DropResult::CanRevoke
+    );
     // Y untouched.
-    assert_eq!(mgr.get(&y).unwrap().total_refs, 1, "FINDING: cross-cell decrement");
+    assert_eq!(
+        mgr.get(&y).unwrap().total_refs,
+        1,
+        "FINDING: cross-cell decrement"
+    );
     assert_total_refs_consistent(&mgr, &y);
     eprintln!("[GC DEEP 3] cross-cell isolation: DEFENDED");
 }
@@ -126,7 +146,10 @@ fn deep_overdrop_never_underflows() {
     mgr.record_export_with_session(c, fed(0xA), 100, 10);
 
     // First drop reclaims.
-    assert_eq!(mgr.process_drop_with_session(c, fed(0xA), 10), DropResult::CanRevoke);
+    assert_eq!(
+        mgr.process_drop_with_session(c, fed(0xA), 10),
+        DropResult::CanRevoke
+    );
     // 50 more drops: all Invalid, no underflow, no panic.
     for _ in 0..50 {
         assert_eq!(
@@ -160,12 +183,21 @@ fn deep_gc_sweep_spares_live_exports() {
     mgr.record_export_with_session(live, fed(0xA), 100, 10);
     mgr.record_export_with_session(dead, fed(0xB), 100, 20);
     // Kill `dead`.
-    assert_eq!(mgr.process_drop_with_session(dead, fed(0xB), 20), DropResult::CanRevoke);
+    assert_eq!(
+        mgr.process_drop_with_session(dead, fed(0xB), 20),
+        DropResult::CanRevoke
+    );
 
     let reaped = mgr.gc_sweep();
     assert!(reaped.contains(&dead), "dead export should be swept");
-    assert!(!reaped.contains(&live), "FINDING: live export swept (premature reclaim)");
-    assert!(mgr.get(&live).is_some(), "live export must survive the sweep");
+    assert!(
+        !reaped.contains(&live),
+        "FINDING: live export swept (premature reclaim)"
+    );
+    assert!(
+        mgr.get(&live).is_some(),
+        "live export must survive the sweep"
+    );
     assert_total_refs_consistent(&mgr, &live);
     eprintln!("[GC DEEP 5] gc_sweep spares live exports: DEFENDED");
 }
@@ -188,7 +220,10 @@ fn deep_wrong_session_reject_is_side_effect_free() {
     let before = mgr.get(&c).unwrap().total_refs;
 
     // Byzantine: A's id but the WRONG session 999.
-    assert_eq!(mgr.process_drop_with_session(c, fed(0xA), 999), DropResult::Invalid);
+    assert_eq!(
+        mgr.process_drop_with_session(c, fed(0xA), 999),
+        DropResult::Invalid
+    );
     let after = mgr.get(&c).unwrap().total_refs;
     assert_eq!(
         before, after,
@@ -213,7 +248,10 @@ fn deep_unknown_federation_drop_rejected_no_phantom() {
     let holders_before = mgr.get(&c).unwrap().holders.len();
 
     // A federation that holds nothing here.
-    assert_eq!(mgr.process_drop_with_session(c, fed(0xC), 10), DropResult::Invalid);
+    assert_eq!(
+        mgr.process_drop_with_session(c, fed(0xC), 10),
+        DropResult::Invalid
+    );
     let entry = mgr.get(&c).unwrap();
     assert_eq!(entry.total_refs, 1);
     assert_eq!(

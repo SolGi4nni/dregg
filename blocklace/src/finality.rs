@@ -1167,7 +1167,12 @@ impl Blocklace {
                 // (the live receive path returns MissingPredecessor here).
                 let example = still_pending
                     .first()
-                    .map(|b| format!("creator={:02x}{:02x}.., seq={}", b.creator[0], b.creator[1], b.seq))
+                    .map(|b| {
+                        format!(
+                            "creator={:02x}{:02x}.., seq={}",
+                            b.creator[0], b.creator[1], b.seq
+                        )
+                    })
                     .unwrap_or_default();
                 return Err(format!(
                     "checkpoint is not causally closed: {} block(s) have a dangling \

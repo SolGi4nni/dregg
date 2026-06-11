@@ -168,8 +168,8 @@ pub mod sel {
     ///   41 BridgeFinalize        42 ReleaseEscrow       43 RefundEscrow
     ///   44 ReleaseCommittedEscrow 45 RefundCommittedEscrow
     pub const RETIRED_SELECTORS: [usize; 25] = [
-        6, 7, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 28, 33, 37, 38, 39, 41, 42,
-        43, 44, 45,
+        6, 7, 9, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 28, 33, 37, 38, 39, 41, 42, 43,
+        44, 45,
     ];
 }
 

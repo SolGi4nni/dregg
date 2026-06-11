@@ -47,25 +47,47 @@ pub async fn run(
     let producer = status["state_producer"].as_str().unwrap_or("rust");
     let proving = status["full_turn_proving"].as_bool().unwrap_or(false);
     let covered = status["producer_covered_effects"].as_u64().unwrap_or(0);
-    ctx.kv("Health", if status["healthy"].as_bool().unwrap_or(false) { "healthy" } else { "unhealthy" });
+    ctx.kv(
+        "Health",
+        if status["healthy"].as_bool().unwrap_or(false) {
+            "healthy"
+        } else {
+            "unhealthy"
+        },
+    );
     ctx.kv(
         "State producer",
         &format!(
             "{} ({} effects on the verified path)",
-            if producer == "lean" { "LEAN (verified)" } else { "rust (legacy — set DREGG_LEAN_PRODUCER=1)" },
+            if producer == "lean" {
+                "LEAN (verified)"
+            } else {
+                "rust (legacy — set DREGG_LEAN_PRODUCER=1)"
+            },
             covered
         ),
     );
-    ctx.kv("Full-turn proving", if proving { "on (STARK per turn)" } else { "off" });
+    ctx.kv(
+        "Full-turn proving",
+        if proving {
+            "on (STARK per turn)"
+        } else {
+            "off"
+        },
+    );
 
     // ── 2. Unlock ───────────────────────────────────────────────────────────
     step(ctx, 2, "Unlocking the cipherclerk");
     let mut cfg = cfg.clone();
     match passphrase {
         Some(ref pass) => {
-            let unlock = post_json(&cfg, "/cipherclerk/unlock", &serde_json::json!({ "passphrase": pass }))
-                .await
-                .map_err(|e| format!("unlock failed: {e}"))?;
+            let unlock = post_json(
+                &cfg,
+                "/cipherclerk/unlock",
+                &serde_json::json!({ "passphrase": pass }),
+            )
+            .await
+            .map_err(|e| format!("unlock failed: {e}"))?;
             let token = unlock["bearer_token"].as_str().unwrap_or("").to_string();
             if token.is_empty() {
                 return Err("unlock did not return a bearer token".into());
@@ -75,7 +97,9 @@ pub async fn run(
         }
         None => {
             ctx.warn("No --passphrase given; cannot sign turns.");
-            ctx.info("  Re-run with `dregg demo --passphrase <pass>` to drive the full mutating flow.");
+            ctx.info(
+                "  Re-run with `dregg demo --passphrase <pass>` to drive the full mutating flow.",
+            );
             ctx.info("  (On a fresh node, the first unlock SETS the passphrase.)");
             return Ok(());
         }
@@ -89,7 +113,10 @@ pub async fn run(
     if pubkey.is_empty() || agent_cell.is_empty() {
         return Err("node did not return an operator identity".into());
     }
-    ctx.kv("Operator cell", &crate::output::abbrev_hex(&agent_cell, 8, 4));
+    ctx.kv(
+        "Operator cell",
+        &crate::output::abbrev_hex(&agent_cell, 8, 4),
+    );
     let faucet = post_json(
         &cfg,
         "/api/faucet",
@@ -102,7 +129,9 @@ pub async fn run(
     } else {
         let err = faucet["error"].as_str().unwrap_or("unknown");
         // Already funded is fine; only hard-fail on real errors.
-        ctx.warn(&format!("faucet: {err} (continuing — cell may already be funded)"));
+        ctx.warn(&format!(
+            "faucet: {err} (continuing — cell may already be funded)"
+        ));
     }
 
     // ── 4. Register ─────────────────────────────────────────────────────────

@@ -722,13 +722,19 @@ mod fields_map_tests {
         let root_before = s.fields_root;
         // Tamper the value at the same key.
         s.set_field_ext(8, fe(43));
-        assert_ne!(root_before, s.fields_root, "tampering a value must flip the root");
+        assert_ne!(
+            root_before, s.fields_root,
+            "tampering a value must flip the root"
+        );
         // Distinct maps cannot share a root: a drop also flips it.
         s.set_field_ext(9, fe(1));
         let two_entries = s.fields_root;
         s.fields_map.remove(&9);
         s.reseal_fields_root();
-        assert_ne!(two_entries, s.fields_root, "dropping an entry must flip the root");
+        assert_ne!(
+            two_entries, s.fields_root,
+            "dropping an entry must flip the root"
+        );
     }
 
     /// `fields_root` is deterministic and order-canonical (BTreeMap key order):

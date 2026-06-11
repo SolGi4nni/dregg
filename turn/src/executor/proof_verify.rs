@@ -221,8 +221,7 @@ impl TurnExecutor {
         //       only kicks in once a binding proof is supplied.
         //
         // Sentinel ZERO when this cell's proof carries no NoteSpend row.
-        if let Some(nullifier_bb) =
-            self.expected_notespend_nullifier_bb(cell_id, turn, &vm_effects)
+        if let Some(nullifier_bb) = self.expected_notespend_nullifier_bb(cell_id, turn, &vm_effects)
         {
             public_inputs[effect_vm::pi::NOTESPEND_NULLIFIER] = nullifier_bb;
         }
@@ -237,9 +236,7 @@ impl TurnExecutor {
         // commitment the binding proof validated against its value/asset/
         // range opening. Sentinel ZERO when this cell's proof carries no
         // NoteCreate row.
-        if let Some(commitment_bb) =
-            self.expected_notecreate_commitment_bb(turn, &vm_effects)
-        {
+        if let Some(commitment_bb) = self.expected_notecreate_commitment_bb(turn, &vm_effects) {
             public_inputs[effect_vm::pi::NOTECREATE_COMMITMENT] = commitment_bb;
         }
 
@@ -1162,9 +1159,7 @@ impl TurnExecutor {
                     vec![*value, *asset_type],
                 ))
             }
-            
-            
-            
+
             ("dregg-effect-revoke-delegation-v1", Effect::RevokeDelegation { child }) => {
                 Some((vec![*child.as_bytes()], vec![]))
             }
@@ -1237,18 +1232,13 @@ impl TurnExecutor {
     pub(super) fn extract_named_field_32b(effect: &Effect, name: &str) -> Option<[u8; 32]> {
         match (name, effect) {
             ("nullifier", Effect::NoteSpend { nullifier, .. }) => Some(nullifier.0),
-            
-            
-            
+
             ("nullifier", Effect::BridgeMint { portable_proof }) => Some(portable_proof.nullifier),
             ("note_commitment" | "commitment", Effect::NoteCreate { commitment, .. }) => {
                 Some(commitment.0)
             }
             ("note_tree_root", Effect::NoteSpend { note_tree_root, .. }) => Some(*note_tree_root),
-            
-            
-            
-            
+
             _ => None,
         }
     }
@@ -2074,8 +2064,6 @@ impl TurnExecutor {
                     // Stage 3 honest projections: AIR enforces balance changes
                     // for these variants, so they must contribute to net_delta
                     // for the PI-to-trace consistency constraint to hold.
-                    
-                    
                     Effect::BridgeMint { portable_proof } => {
                         // BridgeMint credits the actor's balance with the
                         // portable proof's declared value.

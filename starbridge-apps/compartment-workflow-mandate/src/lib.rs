@@ -19,9 +19,9 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
-    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
-    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
-    canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, InspectorDescriptor,
+    StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, canonical_program_vk,
+    field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 
 // Re-export the field type so differential tests can build the same clearance-label corpus the
@@ -130,7 +130,10 @@ pub fn step_admissible(step_id: u64, completed: &[u64], phase: WorkflowPhase) ->
     if step_id != phase.step_id() {
         return false;
     }
-    phase.prerequisites().iter().all(|need| completed.contains(need))
+    phase
+        .prerequisites()
+        .iter()
+        .all(|need| completed.contains(need))
         && !completed.contains(&step_id)
 }
 
@@ -354,7 +357,10 @@ pub fn web_constants() -> ConstantsModule {
         .slot("STEP_CURSOR_SLOT", STEP_CURSOR_SLOT as u64)
         .slot("COMMITMENT_ANCHOR_SLOT", COMMITMENT_ANCHOR_SLOT as u64)
         .slot("CHARTER_TERMINAL_SLOT", CHARTER_TERMINAL_SLOT as u64)
-        .slot("CLEARANCE_GRAPH_ROOT_SLOT", CLEARANCE_GRAPH_ROOT_SLOT as u64)
+        .slot(
+            "CLEARANCE_GRAPH_ROOT_SLOT",
+            CLEARANCE_GRAPH_ROOT_SLOT as u64,
+        )
         .slot("SPEND_POLICY_SLOT", SPEND_POLICY_SLOT as u64)
         .string("FACTORY_VK_HEX", hex_encode_32(&CWM_FACTORY_VK))
         .topic("INITIALIZED", "workflow-mandate-initialized")

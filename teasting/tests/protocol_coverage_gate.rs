@@ -39,47 +39,36 @@ fn effect_executor_coverage(e: &Effect) -> bool {
         Effect::RefreshDelegation => true, // delegation suite
         Effect::RevokeDelegation { .. } => true, // delegation suite
         Effect::BridgeMint { .. } => true, // bridge tests
-         // bridge tests
-         // #113 apply test
-         // #112 apply test
-         // obligation suite
-         // escrow suite
-         // escrow suite
-         // escrow suite
+        // bridge tests
+        // #113 apply test
+        // #112 apply test
+        // obligation suite
+        // escrow suite
+        // escrow suite
+        // escrow suite
         Effect::ExerciseViaCapability { .. } => true, // #111 apply test
-         // captp/#96 tests
-         // captp/#96 tests
-          // captp gc tests
-         // captp handoff tests
-        Effect::CellSeal { .. } => true, // integration_lifecycle
-        Effect::CellUnseal { .. } => true, // integration_lifecycle
+        // captp/#96 tests
+        // captp/#96 tests
+        // captp gc tests
+        // captp handoff tests
+        Effect::CellSeal { .. } => true,    // integration_lifecycle
+        Effect::CellUnseal { .. } => true,  // integration_lifecycle
         Effect::CellDestroy { .. } => true, // integration_destroy_terminal
-        Effect::Burn { .. } => true,     // integration_burn_receipt
+        Effect::Burn { .. } => true,        // integration_burn_receipt
         Effect::AttenuateCapability { .. } => true, // integration_attenuate_capability
         Effect::ReceiptArchive { .. } => true, // integration_attestation_archive
         // coverage_queue_effects.rs:
-        
-        
-        
-        
-        
-        
+
         // coverage_misc_effects.rs:
         Effect::NoteCreate { .. } => true,
-        
-        
-        
-        
-        
-        
-        
+
         Effect::Introduce { .. } => true,
         Effect::MakeSovereign { .. } => true,
         Effect::CreateCellFromFactory { .. } => true,
         Effect::SetPermissions { .. } => true,
         Effect::Refusal { .. } => true,
 
-         // coverage_misc_effects Seal->Unseal round-trip (#144 fixed)
+        // coverage_misc_effects Seal->Unseal round-trip (#144 fixed)
 
         // ── Not yet covered: documented blockers (#142 work-list) ────────
         Effect::NoteSpend { .. } => false, // needs the real ZK spending-proof stack

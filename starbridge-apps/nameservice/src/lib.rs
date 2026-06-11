@@ -80,10 +80,10 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
-    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
-    FieldElement, InputRef, InspectorDescriptor, StarbridgeAppContext,
-    StateConstraint, WitnessedPredicate, WitnessedPredicateKind, canonical_program_vk,
-    field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, FieldElement,
+    InputRef, InspectorDescriptor, StarbridgeAppContext, StateConstraint, WitnessedPredicate,
+    WitnessedPredicateKind, canonical_program_vk, field_from_bytes, field_from_u64, hex_encode_32,
+    symbol,
 };
 
 // =============================================================================

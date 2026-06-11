@@ -22,8 +22,8 @@
 
 use std::collections::HashMap;
 
-use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_cell::state::FieldElement;
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use dregg_turn::lean_apply::{self, execute_via_lean};
 use dregg_turn::lean_shadow::ShadowHostCtx;
 use dregg_turn::{
@@ -113,8 +113,12 @@ fn two_cell_ledger() -> (Ledger, CellId, CellId) {
 /// Returns Ok(()) on full agreement or Err(description) on the first divergence.
 fn ledgers_agree(rust: &mut Ledger, lean: &mut Ledger, ids: &[CellId]) -> Result<(), String> {
     for id in ids {
-        let r = rust.get(id).ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
-        let l = lean.get(id).ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
+        let r = rust
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from RUST ledger"))?;
+        let l = lean
+            .get(id)
+            .ok_or_else(|| format!("cell {id:?} missing from LEAN ledger"))?;
         if r.state.balance() != l.state.balance() {
             return Err(format!(
                 "balance divergence on {id:?}: rust={} lean={}",
@@ -164,7 +168,9 @@ fn run_differential(pre: Ledger, turn: Turn, ids: &[CellId]) {
         Ok(x) => x,
         Err(lean_apply::ExtractError::Ineligible) => {
             // The forest had an effect with no wire arm — cannot compare (not a divergence, a GAP).
-            panic!("turn was Lean-ineligible (a marshaller gap); cannot run the state-producer differential");
+            panic!(
+                "turn was Lean-ineligible (a marshaller gap); cannot run the state-producer differential"
+            );
         }
         Err(e) => panic!("Lean state-producer path failed: {e}"),
     };
@@ -177,7 +183,9 @@ fn run_differential(pre: Ledger, turn: Turn, ids: &[CellId]) {
     // (3) The two PRODUCERS must agree on the full post-state.
     match ledgers_agree(&mut rust_ledger, &mut lean_ledger, ids) {
         Ok(()) => {}
-        Err(why) => panic!("STATE-PRODUCER DIVERGENCE — Rust ledger ≠ Lean-reconstituted ledger: {why}"),
+        Err(why) => {
+            panic!("STATE-PRODUCER DIVERGENCE — Rust ledger ≠ Lean-reconstituted ledger: {why}")
+        }
     }
 }
 
@@ -193,7 +201,11 @@ fn transfer_lean_produced_ledger_agrees_with_rust() {
         a_id,
         a_id,
         0,
-        Effect::Transfer { from: a_id, to: b_id, amount: 30 },
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 30,
+        },
     );
     run_differential(pre, turn, &[a_id, b_id]);
 }
@@ -211,7 +223,11 @@ fn setfield_lean_produced_ledger_agrees_with_rust() {
         a_id,
         a_id,
         0,
-        Effect::SetField { cell: a_id, index: 6, value: field_from_u64(42) },
+        Effect::SetField {
+            cell: a_id,
+            index: 6,
+            value: field_from_u64(42),
+        },
     );
     run_differential(pre, turn, &[a_id, b_id]);
 }

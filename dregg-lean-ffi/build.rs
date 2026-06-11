@@ -168,7 +168,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // Persistent object cache (so the `.c`-newer-than-`.o` guard survives across cargo builds).
     let obj_dir = out_dir.join("dregg2_closure_objs");
     if let Err(e) = std::fs::create_dir_all(&obj_dir) {
-        println!("cargo:warning=dregg-lean-ffi: cannot create {} ({e})", obj_dir.display());
+        println!(
+            "cargo:warning=dregg-lean-ffi: cannot create {} ({e})",
+            obj_dir.display()
+        );
         return;
     }
 
@@ -182,8 +185,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
     // splice and (b) prune STALE cached objects whose `.c` was deleted/renamed — otherwise a
     // removed module's old `Dregg2_*.o` would keep getting spliced back in (dangling/duplicate
     // symbols). We treat such a prune as a change so the splice picks up the removal.
-    let expected: std::collections::HashSet<String> =
-        c_files.iter().map(|c| splice_obj_name(&ir_root, c)).collect();
+    let expected: std::collections::HashSet<String> = c_files
+        .iter()
+        .map(|c| splice_obj_name(&ir_root, c))
+        .collect();
     let mut pruned = false;
     if let Ok(entries) = std::fs::read_dir(&obj_dir) {
         for entry in entries.flatten() {
@@ -209,7 +214,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
             "cargo:warning=dregg-lean-ffi: compiling {} changed Dregg2 C facet(s) via leanc …",
             jobs.len()
         );
-        let ncpu = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).max(1);
+        let ncpu = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .max(1);
         let failed = std::sync::atomic::AtomicBool::new(false);
         let jobs_ref = &jobs;
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -217,7 +225,9 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
             for _ in 0..ncpu {
                 scope.spawn(|| loop {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let Some((c, obj)) = jobs_ref.get(i) else { break };
+                    let Some((c, obj)) = jobs_ref.get(i) else {
+                        break;
+                    };
                     let status = Command::new("lake")
                         .args(["env", "leanc", "-c", "-I"])
                         .arg(&inc)
@@ -231,7 +241,10 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
                         // Drop a stale/partial object so the next build retries this `.c`.
                         let _ = std::fs::remove_file(obj);
                         failed.store(true, std::sync::atomic::Ordering::SeqCst);
-                        println!("cargo:warning=dregg-lean-ffi: leanc failed on {}", c.display());
+                        println!(
+                            "cargo:warning=dregg-lean-ffi: leanc failed on {}",
+                            c.display()
+                        );
                     }
                 });
             }
@@ -569,7 +582,9 @@ fn gc_unreachable_members(archive: &Path, out_dir: &Path) {
         // `nm -A` location-prefixed forms (see `members_defining_project_initializers`):
         //   macOS/llvm: `<archive>:<member.o>: <addr> T _sym`  /  `<archive>:<member.o>:    U _sym`
         //   GNU:        `<archive>[<member.o>]: <addr> T _sym`
-        let Some((prefix, rest)) = line.split_once(": ") else { continue };
+        let Some((prefix, rest)) = line.split_once(": ") else {
+            continue;
+        };
         let prefix = prefix.trim_end_matches(']');
         let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
         if !member.ends_with(".o") {
@@ -583,9 +598,15 @@ fn gc_unreachable_members(archive: &Path, out_dir: &Path) {
         };
         members.insert(member.to_string());
         if ty == "U" || ty == "u" {
-            undef.entry(member.to_string()).or_default().insert(sym.to_string());
+            undef
+                .entry(member.to_string())
+                .or_default()
+                .insert(sym.to_string());
         } else {
-            sym_def_in.entry(sym.to_string()).or_default().insert(member.to_string());
+            sym_def_in
+                .entry(sym.to_string())
+                .or_default()
+                .insert(member.to_string());
             // Root: any member defining a `_dregg_*` FFI export (the C-ABI entry points).
             if sym.trim_start_matches('_').starts_with("dregg_") {
                 roots.insert(member.to_string());
@@ -748,7 +769,9 @@ fn members_defining_project_initializers(archive: &Path) -> std::collections::Ha
             continue;
         }
         // The location prefix is everything up to the first `: ` (space-separated from the address).
-        let Some(prefix) = line.split(": ").next() else { continue };
+        let Some(prefix) = line.split(": ").next() else {
+            continue;
+        };
         // Strip a trailing `]` (GNU bracket form), then take the basename and keep it iff it's a `.o`.
         let prefix = prefix.trim_end_matches(']');
         let member = prefix.rsplit(['/', ':', '[']).next().unwrap_or(prefix);
@@ -816,7 +839,9 @@ fn splice_objects(archive: &Path, obj_dir: &Path, out_dir: &Path) -> std::io::Re
         .filter(|p| p.extension().map(|e| e == "o").unwrap_or(false))
         .collect();
     if members.is_empty() {
-        return Err(std::io::Error::other("no .o members after extract — refusing to repack"));
+        return Err(std::io::Error::other(
+            "no .o members after extract — refusing to repack",
+        ));
     }
 
     let tmp_archive = out_dir.join("libdregg_lean.a.new");
@@ -838,7 +863,9 @@ fn splice_objects(archive: &Path, obj_dir: &Path, out_dir: &Path) -> std::io::Re
     let ranlib = Command::new("ranlib").arg(&tmp_archive).status();
     // ranlib is advisory: `ar s`/`rcs` already wrote a symbol table on most toolchains. Only warn.
     if !matches!(ranlib, Ok(s) if s.success()) {
-        println!("cargo:warning=dregg-lean-ffi: ranlib on the new archive did not succeed (continuing).");
+        println!(
+            "cargo:warning=dregg-lean-ffi: ranlib on the new archive did not succeed (continuing)."
+        );
     }
 
     std::fs::rename(&tmp_archive, archive)?;
@@ -903,7 +930,10 @@ fn main() {
         for f in &watched {
             println!("cargo:rerun-if-changed={}", f.display());
         }
-        println!("cargo:rerun-if-changed={}", meta.join("lean-toolchain").display());
+        println!(
+            "cargo:rerun-if-changed={}",
+            meta.join("lean-toolchain").display()
+        );
 
         match &sysroot_opt {
             Some(sysroot) => build_dregg2_archive(meta, sysroot, &lean_archive, &out_dir),
@@ -1073,8 +1103,13 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", crate_dir.display());
     println!("cargo:rustc-link-lib=static=dregg_lean");
     println!("cargo:rustc-link-search=native={}", lean_lib.display());
-    println!("cargo:rustc-link-search=native={}", sysroot.join("lib").display());
-    for name in ["leancpp", "Init", "Std", "Lean", "leanrt", "Lake", "gmp", "uv"] {
+    println!(
+        "cargo:rustc-link-search=native={}",
+        sysroot.join("lib").display()
+    );
+    for name in [
+        "leancpp", "Init", "Std", "Lean", "leanrt", "Lake", "gmp", "uv",
+    ] {
         println!("cargo:rustc-link-lib=static={name}");
     }
     if target_os == "macos" {

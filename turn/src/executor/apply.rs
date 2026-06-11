@@ -136,18 +136,7 @@ impl TurnExecutor {
             Effect::BridgeMint { portable_proof } => {
                 self.apply_bridge_mint(path, journal, portable_proof)
             }
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::ExerciseViaCapability {
                 cap_slot,
                 inner_effects,
@@ -160,8 +149,7 @@ impl TurnExecutor {
                 inner_effects,
             ),
             Effect::PipelinedSend { target, .. } => self.apply_pipelined_send(path, target),
-            
-            
+
             Effect::Introduce {
                 introducer,
                 recipient,
@@ -176,7 +164,7 @@ impl TurnExecutor {
                 target,
                 permissions,
             ),
-            
+
             Effect::SpawnWithDelegation {
                 child_public_key,
                 child_token_id,
@@ -213,16 +201,7 @@ impl TurnExecutor {
                 token_id,
                 params,
             ),
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
             Effect::Refusal {
                 cell,
                 offered_action_commitment,
@@ -1117,37 +1096,18 @@ impl TurnExecutor {
     // BridgeLock: Phase 1 — lock a note for conditional cross-federation transfer.
     // The note's nullifier is committed-to but NOT added to the permanent set.
     // Instead a PendingBridge record is created in pending_bridges.
-    
 
     // BridgeFinalize: Phase 3 — present a destination receipt to finalize the burn.
-    
 
     // BridgeCancel: Phase 4 — cancel a bridge after timeout (value returned to owner).
-    
 
     // Obligation effects: validate structure, enforce balance movement,
     // and record for the obligation registry.
-    
-
-    
-
-    
 
     // Escrow effects: conditional settlement with timeout refund.
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
-
     // Committed escrow effects: privacy-preserving conditional settlement.
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
 
     // ExerciseViaCapability: one-step evaluation map.
     // Look up cap_slot in actor's c-list, verify permissions, execute
@@ -1413,9 +1373,6 @@ impl TurnExecutor {
     }
 
     // === Sealer/Unsealer effects (E-style rights amplification) ===
-    
-
-    
 
     fn apply_introduce(
         &self,
@@ -1499,8 +1456,6 @@ impl TurnExecutor {
         journal.record_grant_capability(*recipient, granted_slot);
         Ok(())
     }
-
-    
 
     fn apply_spawn_with_delegation(
         &self,
@@ -1804,17 +1759,6 @@ impl TurnExecutor {
     }
 
     // ─── Queue Operations ─────────────────────────────────────────────
-    
-
-    
-
-    
-
-    
-
-    
-
-    
 
     // ─── CapTP runtime effects (Stage 7 / P1.A, P1.B) ─────────────
     //
@@ -1824,14 +1768,6 @@ impl TurnExecutor {
     // wire layer constructs a Turn with these effects and runs
     // it through `TurnExecutor::execute`.
     #[allow(clippy::too_many_arguments)]
-    
-
-    
-
-    
-
-    
-
     #[allow(clippy::too_many_arguments)]
     fn apply_refusal(
         &self,

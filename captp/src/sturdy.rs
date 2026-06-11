@@ -277,11 +277,7 @@ impl SwissTable {
     /// e.g. handoff non-amplification (F-2) — peek-validate first and only call
     /// [`enliven`](Self::enliven) on the success path, so a rejected presentation
     /// never burns a use of the introducer's swiss budget.
-    pub fn check(
-        &self,
-        swiss: &[u8; 32],
-        current_height: u64,
-    ) -> Result<SwissEntry, EnlivenError> {
+    pub fn check(&self, swiss: &[u8; 32], current_height: u64) -> Result<SwissEntry, EnlivenError> {
         let entry = self.entries.get(swiss).ok_or(EnlivenError::NotFound)?;
 
         if let Some(exp) = entry.expires_at {

@@ -75,7 +75,10 @@ fn main() -> ExitCode {
         ok = false;
     }
     if decoded.trace_width != 6 {
-        eprintln!("  FAIL: expected trace_width 6, got {}", decoded.trace_width);
+        eprintln!(
+            "  FAIL: expected trace_width 6, got {}",
+            decoded.trace_width
+        );
         ok = false;
     }
     if decoded.constraints.len() != 4 {
@@ -188,7 +191,10 @@ fn main() -> ExitCode {
         ok = false;
     }
     if merkle.trace_width != 6 {
-        eprintln!("  FAIL: expected Merkle trace_width 6, got {}", merkle.trace_width);
+        eprintln!(
+            "  FAIL: expected Merkle trace_width 6, got {}",
+            merkle.trace_width
+        );
         ok = false;
     }
     // The wire carries C2 (MerkleHash) + C3 (Transition) as constraints; C1 is
@@ -206,15 +212,25 @@ fn main() -> ExitCode {
         },
     ];
     if merkle.constraints != expected_merkle_constraints {
-        eprintln!("  FAIL: decoded Merkle constraints differ from native (C2 MerkleHash, C3 Transition)");
+        eprintln!(
+            "  FAIL: decoded Merkle constraints differ from native (C2 MerkleHash, C3 Transition)"
+        );
         eprintln!("    decoded:  {:?}", merkle.constraints);
         ok = false;
     } else {
         println!("  constraints match native (C2 MerkleHash, C3 Transition)");
     }
     let expected_merkle_boundaries = vec![
-        DecodedBoundary { row: DecodedBoundaryRow::First, col: 0, pi_index: 0 },
-        DecodedBoundary { row: DecodedBoundaryRow::Last, col: 5, pi_index: 1 },
+        DecodedBoundary {
+            row: DecodedBoundaryRow::First,
+            col: 0,
+            pi_index: 0,
+        },
+        DecodedBoundary {
+            row: DecodedBoundaryRow::Last,
+            col: 5,
+            pi_index: 1,
+        },
     ];
     if merkle.boundaries != expected_merkle_boundaries {
         eprintln!("  FAIL: decoded Merkle boundaries differ from native (PiBinding First/Last)");
@@ -228,10 +244,22 @@ fn main() -> ExitCode {
     // (`-6 -> p-6`) exactly as descriptors.rs encodes it.
     let expected_c1 = DecodedConstraintExpr::Polynomial {
         terms: vec![
-            DecodedPolyTerm { coeff: 1, col_indices: vec![4, 4, 4, 4] },
-            DecodedPolyTerm { coeff: BABYBEAR_P - 6, col_indices: vec![4, 4, 4] },
-            DecodedPolyTerm { coeff: 11, col_indices: vec![4, 4] },
-            DecodedPolyTerm { coeff: BABYBEAR_P - 6, col_indices: vec![4] },
+            DecodedPolyTerm {
+                coeff: 1,
+                col_indices: vec![4, 4, 4, 4],
+            },
+            DecodedPolyTerm {
+                coeff: BABYBEAR_P - 6,
+                col_indices: vec![4, 4, 4],
+            },
+            DecodedPolyTerm {
+                coeff: 11,
+                col_indices: vec![4, 4],
+            },
+            DecodedPolyTerm {
+                coeff: BABYBEAR_P - 6,
+                col_indices: vec![4],
+            },
         ],
     };
     if c1 != expected_c1 {
@@ -342,7 +370,10 @@ mod tests {
         );
         assert_eq!(
             m.constraints[1],
-            DecodedConstraintExpr::Transition { next_col: 0, local_col: 5 }
+            DecodedConstraintExpr::Transition {
+                next_col: 0,
+                local_col: 5
+            }
         );
         assert_eq!(m.boundaries[0].row, DecodedBoundaryRow::First);
         assert_eq!(m.boundaries[1].row, DecodedBoundaryRow::Last);
@@ -354,10 +385,22 @@ mod tests {
         // -6 must reduce to p-6, 11 stays 11, 1 stays 1.
         let expected = DecodedConstraintExpr::Polynomial {
             terms: vec![
-                DecodedPolyTerm { coeff: 1, col_indices: vec![4, 4, 4, 4] },
-                DecodedPolyTerm { coeff: BABYBEAR_P - 6, col_indices: vec![4, 4, 4] },
-                DecodedPolyTerm { coeff: 11, col_indices: vec![4, 4] },
-                DecodedPolyTerm { coeff: BABYBEAR_P - 6, col_indices: vec![4] },
+                DecodedPolyTerm {
+                    coeff: 1,
+                    col_indices: vec![4, 4, 4, 4],
+                },
+                DecodedPolyTerm {
+                    coeff: BABYBEAR_P - 6,
+                    col_indices: vec![4, 4, 4],
+                },
+                DecodedPolyTerm {
+                    coeff: 11,
+                    col_indices: vec![4, 4],
+                },
+                DecodedPolyTerm {
+                    coeff: BABYBEAR_P - 6,
+                    col_indices: vec![4],
+                },
             ],
         };
         assert_eq!(c1, expected);
@@ -404,7 +447,10 @@ mod tests {
         );
         assert_eq!(
             p.constraints[1],
-            DecodedConstraintExpr::Transition { next_col: 0, local_col: 5 }
+            DecodedConstraintExpr::Transition {
+                next_col: 0,
+                local_col: 5
+            }
         );
     }
 
@@ -429,7 +475,11 @@ mod tests {
             ),
             (
                 r#"{"t":"multiplication","a":1,"b":2,"output":4}"#,
-                DecodedConstraintExpr::Multiplication { a: 1, b: 2, output: 4 },
+                DecodedConstraintExpr::Multiplication {
+                    a: 1,
+                    b: 2,
+                    output: 4,
+                },
             ),
             (
                 r#"{"t":"binary","col":5}"#,
@@ -437,7 +487,10 @@ mod tests {
             ),
             (
                 r#"{"t":"pi_binding","col":2,"pi_index":1}"#,
-                DecodedConstraintExpr::PiBinding { col: 2, pi_index: 1 },
+                DecodedConstraintExpr::PiBinding {
+                    col: 2,
+                    pi_index: 1,
+                },
             ),
             (
                 r#"{"t":"conditional_nonzero","selector_col":1,"value_col":2,"inverse_col":3}"#,
@@ -449,7 +502,9 @@ mod tests {
             ),
             (
                 r#"{"t":"at_least_one","flag_cols":[0,1,2]}"#,
-                DecodedConstraintExpr::AtLeastOne { flag_cols: vec![0, 1, 2] },
+                DecodedConstraintExpr::AtLeastOne {
+                    flag_cols: vec![0, 1, 2],
+                },
             ),
         ];
         for (wire, expected) in cases {

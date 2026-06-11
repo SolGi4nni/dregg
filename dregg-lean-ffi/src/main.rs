@@ -39,7 +39,10 @@ fn main() {
     //     total, also 105 for these args).
     let total = unsafe { dregg_kernel_transfer_total(100, 5, 30) };
     println!("dregg_kernel_transfer_total(100, 5, 30) = {total}  (expected 105)");
-    assert_eq!(total, 105, "conservation broken: kernel returned {total}, expected 105");
+    assert_eq!(
+        total, 105,
+        "conservation broken: kernel returned {total}, expected 105"
+    );
 
     // (b) Authority check in isolation (empty cap table => authorized iff actor owns
     //     src=0, i.e. actor == 0). This is `Exec.authorizedB`, the integrity predicate

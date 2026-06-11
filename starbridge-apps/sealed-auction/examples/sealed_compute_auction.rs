@@ -8,7 +8,7 @@
 //!
 //! Run with: `cargo run -p starbridge-sealed-auction --example sealed_compute_auction`
 
-use starbridge_sealed_auction::{fund_ledger, Auction, AssetId, Bid, CellId, Phase};
+use starbridge_sealed_auction::{AssetId, Auction, Bid, CellId, Phase, fund_ledger};
 
 const PAY: AssetId = [0u8; 32];
 const TOKEN: AssetId = {
@@ -38,7 +38,10 @@ fn main() {
     for (name, bid) in [("alice", &alice), ("bob", &bob), ("carol", &carol)] {
         auction.commit(bid.seal()).unwrap();
         let s = bid.seal();
-        println!("  {name} committed seal {:02x}{:02x}{:02x}{:02x}…", s[0], s[1], s[2], s[3]);
+        println!(
+            "  {name} committed seal {:02x}{:02x}{:02x}{:02x}…",
+            s[0], s[1], s[2], s[3]
+        );
     }
     println!("  (no value is visible — no peeking, no front-running)\n");
 
@@ -65,11 +68,16 @@ fn main() {
     let bob_switched = Bid::new(BOB, 70, 0xB0B0);
     assert!(auction.reveal(bob_switched).is_err());
     println!("Tooth: bob CANNOT switch to a higher bid after peeking — the changed bid no longer");
-    println!("       matches his sealed commitment (collision-resistance binds the seal to one bid).\n");
+    println!(
+        "       matches his sealed commitment (collision-resistance binds the seal to one bid).\n"
+    );
 
     // ---- SETTLE through the verified executor ----
     let winner = auction.winner().unwrap();
-    println!("Winner: agent {} with the top bid {} (sealed-bid first-price).", winner.bidder, winner.value);
+    println!(
+        "Winner: agent {} with the top bid {} (sealed-bid first-price).",
+        winner.bidder, winner.value
+    );
 
     // Fund a ledger: bob can pay, the slot holds the compute-token, seller is live to receive.
     let ledger = fund_ledger(&[
@@ -83,15 +91,31 @@ fn main() {
 
     let (post, w) = auction.settle(&ledger).unwrap();
     println!("\nSETTLED atomically through the verified per-asset executor:");
-    println!("  seller (cell {SELLER}) was paid          : {}", post.get(SELLER, &PAY));
-    println!("  winner (cell {}) paid                  : {}", w.bidder, 100 - post.get(BOB, &PAY));
-    println!("  winner (cell {}) received compute-token: {}", w.bidder, post.get(BOB, &TOKEN));
-    println!("  slot (cell {SLOT}) delivered             : {}", 100 - post.get(SLOT, &TOKEN));
+    println!(
+        "  seller (cell {SELLER}) was paid          : {}",
+        post.get(SELLER, &PAY)
+    );
+    println!(
+        "  winner (cell {}) paid                  : {}",
+        w.bidder,
+        100 - post.get(BOB, &PAY)
+    );
+    println!(
+        "  winner (cell {}) received compute-token: {}",
+        w.bidder,
+        post.get(BOB, &TOKEN)
+    );
+    println!(
+        "  slot (cell {SLOT}) delivered             : {}",
+        100 - post.get(SLOT, &TOKEN)
+    );
 
     // Conservation: no value minted or burned.
     assert_eq!(post.total_asset(&PAY), pay_total);
     assert_eq!(post.total_asset(&TOKEN), token_total);
-    println!("\nValue-neutral: total PAY {pay_total} and total TOKEN {token_total} preserved (no mint/burn).");
+    println!(
+        "\nValue-neutral: total PAY {pay_total} and total TOKEN {token_total} preserved (no mint/burn)."
+    );
     assert_eq!(auction.phase, Phase::Settled);
     println!("\nThe award is final. ( ⌐■_■ )");
 }

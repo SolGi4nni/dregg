@@ -70,7 +70,11 @@ fn verified_drain_reorder(drained: Vec<PipelinedMessage>, fulfill: bool) -> Vec<
     let order: Vec<usize> = if d_seg.is_empty() {
         Vec::new()
     } else {
-        match d_seg.split(',').map(|p| p.parse::<usize>()).collect::<Result<Vec<_>, _>>() {
+        match d_seg
+            .split(',')
+            .map(|p| p.parse::<usize>())
+            .collect::<Result<Vec<_>, _>>()
+        {
             Ok(v) => v,
             Err(_) => return drained,
         }
@@ -1223,7 +1227,11 @@ mod tests {
             delivered[0].action.authorization, auth_bytes,
             "pipelining must not alter the authorization the sender carried"
         );
-        assert_eq!(delivered[0].sender, fed_a(), "the sender binding must survive");
+        assert_eq!(
+            delivered[0].sender,
+            fed_a(),
+            "the sender binding must survive"
+        );
         assert_eq!(delivered[0].action.method, "transfer");
     }
 
@@ -1281,7 +1289,10 @@ mod tests {
         // Break the INITIAL promise — the whole chain must cascade to broken, and
         // no step's action is ever delivered for execution.
         let notifications = reg.break_promise(initial, "remote vat crashed".into());
-        assert!(!notifications.is_empty(), "break must cascade to dependents");
+        assert!(
+            !notifications.is_empty(),
+            "break must cascade to dependents"
+        );
 
         // Every promise in the chain (including the final result) is now Broken.
         assert!(matches!(

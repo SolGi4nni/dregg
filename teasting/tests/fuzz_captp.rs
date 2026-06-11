@@ -224,7 +224,9 @@ fn apply_action(state: &mut CapState, action: &CapAction, rng: &mut Rng) {
 
             // Process drops for all exports TO this session's peer.
             for cell_id in &exported {
-                state.export_gc.process_drop_with_session(*cell_id, fed_id, 0);
+                state
+                    .export_gc
+                    .process_drop_with_session(*cell_id, fed_id, 0);
                 // Remove from holders tracking.
                 if let Some(holders) = state.export_holders.get_mut(cell_id) {
                     holders.retain(|f| *f != fed_id);
@@ -275,7 +277,9 @@ fn apply_action(state: &mut CapState, action: &CapAction, rng: &mut Rng) {
             state.sessions[*session_idx].release_export(cell_id);
 
             // Process drop in GC.
-            state.export_gc.process_drop_with_session(*cell_id, fed_id, 0);
+            state
+                .export_gc
+                .process_drop_with_session(*cell_id, fed_id, 0);
 
             // Update holders tracking.
             if let Some(holders) = state.export_holders.get_mut(cell_id) {

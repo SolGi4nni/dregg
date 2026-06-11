@@ -125,7 +125,10 @@ fn every_action_arm_marshals_cleanly() {
         // Brace balance is a cheap structural sanity check on the encoder.
         let opens = wire.matches('{').count();
         let closes = wire.matches('}').count();
-        assert_eq!(opens, closes, "unbalanced braces marshalling {arm:?}: {wire}");
+        assert_eq!(
+            opens, closes,
+            "unbalanced braces marshalling {arm:?}: {wire}"
+        );
         let bopen = wire.matches('[').count();
         let bclose = wire.matches(']').count();
         assert_eq!(bopen, bclose, "unbalanced brackets marshalling {arm:?}");

@@ -9,12 +9,13 @@
 mod api;
 mod blocklace_sync;
 mod catchup;
+pub mod config;
 mod coord_gate;
 mod finality_gate;
-pub mod config;
 // The old `bridge` module is removed. Cross-group communication now happens
 // via multi_group.rs (unified blocklace cross-references + interest-based dissemination).
 // See: `dregg-node run --groups` for multi-group participation.
+mod executor_setup;
 mod genesis;
 pub mod gossip;
 mod mcp;
@@ -23,7 +24,6 @@ pub mod multi_group;
 mod prove_pool;
 mod relay_service;
 mod routing_table;
-mod executor_setup;
 mod starbridge_seed;
 mod state;
 mod strand_admission_gate;

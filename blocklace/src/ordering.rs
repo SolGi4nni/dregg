@@ -1003,15 +1003,25 @@ mod tests {
 
         // The Lean golden vector, round-major by seq, creators {1,2,3} per round.
         let lean_golden: Vec<(u8, u64)> = vec![
-            (1, 0), (2, 0), (3, 0),
-            (1, 1), (2, 1), (3, 1),
-            (1, 2), (2, 2), (3, 2),
+            (1, 0),
+            (2, 0),
+            (3, 0),
+            (1, 1),
+            (2, 1),
+            (3, 1),
+            (1, 2),
+            (2, 2),
+            (3, 2),
         ];
 
         // ROUND-COHORT agreement: group both into cohorts of 3 (one per round/seq), sort each
         // cohort by creator (the within-round tie-break is OPEN-CM-XSORT, not load-bearing), and
         // require the cohort sequence to be identical to the Lean model's.
-        assert_eq!(projected.len(), lean_golden.len(), "same number of finalized blocks as Lean model");
+        assert_eq!(
+            projected.len(),
+            lean_golden.len(),
+            "same number of finalized blocks as Lean model"
+        );
         let cohorts = |v: &[(u8, u64)]| -> Vec<Vec<(u8, u64)>> {
             v.chunks(3)
                 .map(|c| {
@@ -1069,8 +1079,10 @@ mod tests {
         bl.insert_unverified(r2_3).unwrap();
 
         let preds_r3 = vec![r2_2_id, r2_3_id];
-        bl.insert_unverified(make_block(make_key(2), 2, preds_r3.clone(), vec![9])).unwrap();
-        bl.insert_unverified(make_block(make_key(3), 2, preds_r3.clone(), vec![10])).unwrap();
+        bl.insert_unverified(make_block(make_key(2), 2, preds_r3.clone(), vec![9]))
+            .unwrap();
+        bl.insert_unverified(make_block(make_key(3), 2, preds_r3.clone(), vec![10]))
+            .unwrap();
 
         let result = tau(&bl, &participants);
         // Agreeing with the Lean model: the equivocator (creator 1) contributes NO finalized block.

@@ -233,7 +233,7 @@ fn extract_tree_access(
             Effect::EmitEvent { cell, .. } => {
                 read_set.push(*cell);
             }
-            
+
             Effect::ExerciseViaCapability { inner_effects, .. } => {
                 // Inner effects also access cells.
                 for inner in inner_effects {

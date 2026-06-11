@@ -699,7 +699,9 @@ mod tests {
         // Create a source block in the blocklace.
         let source_block = signed_block(2, 0, vec![], b"source-proof");
         let source_id = source_block.id();
-        node.blocklace_mut().insert_unverified(source_block).unwrap();
+        node.blocklace_mut()
+            .insert_unverified(source_block)
+            .unwrap();
 
         // Forward a proof from group A to group B.
         let proof = DagDeliveredProof {
@@ -760,7 +762,9 @@ mod tests {
         // Create a source block.
         let source_block = signed_block(2, 0, vec![], b"source");
         let source_id = source_block.id();
-        node.blocklace_mut().insert_unverified(source_block).unwrap();
+        node.blocklace_mut()
+            .insert_unverified(source_block)
+            .unwrap();
 
         let forward = PendingProofForward {
             proof: DagDeliveredProof {
@@ -790,7 +794,9 @@ mod tests {
         // Create a source block.
         let source_block = signed_block(2, 0, vec![], b"source");
         let source_id = source_block.id();
-        node.blocklace_mut().insert_unverified(source_block).unwrap();
+        node.blocklace_mut()
+            .insert_unverified(source_block)
+            .unwrap();
 
         // Try to forward to a group we're not in.
         let fake_group_id = [0xFF; 32];

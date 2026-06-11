@@ -74,7 +74,9 @@ use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi};
 use dregg_circuit::effect_vm_descriptors::{
     SELECTOR_DESCRIPTORS, descriptor_for_selector, descriptor_name_for_selector,
 };
-use dregg_circuit::effect_vm_p3_full_air::{p3_air_accepts, prove_effect_vm_p3, verify_effect_vm_p3};
+use dregg_circuit::effect_vm_p3_full_air::{
+    p3_air_accepts, prove_effect_vm_p3, verify_effect_vm_p3,
+};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{
     LeanExpr, VmConstraint, descriptor_air_accepts, parse_vm_descriptor, prove_vm_descriptor,
@@ -99,30 +101,61 @@ fn honest_case_for_selector(sel: usize) -> Option<(CellState, Vec<Effect>)> {
     };
     use dregg_circuit::effect_vm::columns::sel;
     let eff = match sel {
-        s if s == sel::TRANSFER => Effect::Transfer { amount: 50, direction: 1 },
-        s if s == sel::NOTE_SPEND => Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 },
-        s if s == sel::NOTE_CREATE => Effect::NoteCreate { commitment: BabyBear::new(0x5678), value: 50 },
+        s if s == sel::TRANSFER => Effect::Transfer {
+            amount: 50,
+            direction: 1,
+        },
+        s if s == sel::NOTE_SPEND => Effect::NoteSpend {
+            nullifier: BabyBear::new(0x1234),
+            value: 100,
+        },
+        s if s == sel::NOTE_CREATE => Effect::NoteCreate {
+            commitment: BabyBear::new(0x5678),
+            value: 50,
+        },
         s if s == sel::MAKE_SOVEREIGN => Effect::MakeSovereign,
         s if s == sel::CREATE_CELL_FROM_FACTORY => Effect::CreateCellFromFactory {
             factory_vk: BabyBear::new(0x11),
             child_vk_derived: BabyBear::new(0x22),
         },
-        s if s == sel::EMIT_EVENT => Effect::EmitEvent { topic_hash: eight(0x1), payload_hash: eight(0x2) },
-        s if s == sel::SET_PERMISSIONS => Effect::SetPermissions { permissions_hash: eight(0x1) },
-        s if s == sel::SET_VERIFICATION_KEY => Effect::SetVerificationKey { vk_hash: eight(0x1) },
+        s if s == sel::EMIT_EVENT => Effect::EmitEvent {
+            topic_hash: eight(0x1),
+            payload_hash: eight(0x2),
+        },
+        s if s == sel::SET_PERMISSIONS => Effect::SetPermissions {
+            permissions_hash: eight(0x1),
+        },
+        s if s == sel::SET_VERIFICATION_KEY => Effect::SetVerificationKey {
+            vk_hash: eight(0x1),
+        },
         s if s == sel::REFRESH_DELEGATION => Effect::RefreshDelegation,
-        s if s == sel::REVOKE_DELEGATION => Effect::RevokeDelegation { child_hash: eight(0x1) },
-        s if s == sel::CREATE_CELL => Effect::CreateCell { create_hash: eight(0x1) },
-        s if s == sel::SPAWN_WITH_DELEGATION => Effect::SpawnWithDelegation { spawn_hash: eight(0x1) },
-        s if s == sel::EXERCISE_VIA_CAPABILITY => Effect::ExerciseViaCapability { exercise_hash: eight(0x1) },
-        s if s == sel::INTRODUCE => Effect::Introduce { intro_hash: eight(0x1) },
-        s if s == sel::PIPELINED_SEND => Effect::PipelinedSend { send_hash: eight(0x1) },
+        s if s == sel::REVOKE_DELEGATION => Effect::RevokeDelegation {
+            child_hash: eight(0x1),
+        },
+        s if s == sel::CREATE_CELL => Effect::CreateCell {
+            create_hash: eight(0x1),
+        },
+        s if s == sel::SPAWN_WITH_DELEGATION => Effect::SpawnWithDelegation {
+            spawn_hash: eight(0x1),
+        },
+        s if s == sel::EXERCISE_VIA_CAPABILITY => Effect::ExerciseViaCapability {
+            exercise_hash: eight(0x1),
+        },
+        s if s == sel::INTRODUCE => Effect::Introduce {
+            intro_hash: eight(0x1),
+        },
+        s if s == sel::PIPELINED_SEND => Effect::PipelinedSend {
+            send_hash: eight(0x1),
+        },
         s if s == sel::BRIDGE_MINT => Effect::BridgeMint {
             value_lo: BabyBear::new(40),
             mint_hash: BabyBear::new(0x1),
             value_full: 40,
         },
-        s if s == sel::GRANT_CAP => Effect::GrantCapability { cap_entry: eight(0x1), phase_b: None },
+        s if s == sel::GRANT_CAP => Effect::GrantCapability {
+            cap_entry: eight(0x1),
+            phase_b: None,
+        },
         s if s == sel::BURN => Effect::Burn {
             target_hash: BabyBear::new(0xB0B),
             amount_lo: BabyBear::new(75),
@@ -143,13 +176,19 @@ fn honest_case_for_selector(sel: usize) -> Option<(CellState, Vec<Effect>)> {
             // "needs richer witness" rather than a false AGREE.
             phase_b: None,
         },
-        s if s == sel::CELL_SEAL => Effect::CellSeal { target: eight(0x1), reason_hash: eight(0x2) },
+        s if s == sel::CELL_SEAL => Effect::CellSeal {
+            target: eight(0x1),
+            reason_hash: eight(0x2),
+        },
         s if s == sel::RECEIPT_ARCHIVE => Effect::ReceiptArchive {
             target: eight(0x1),
             archive_end_height: BabyBear::new(0x10),
             terminal_receipt_hash: eight(0x2),
         },
-        s if s == sel::REFUSAL => Effect::Refusal { target: eight(0x1), reason_hash: eight(0x2) },
+        s if s == sel::REFUSAL => Effect::Refusal {
+            target: eight(0x1),
+            reason_hash: eight(0x2),
+        },
         s if s == sel::INCREMENT_NONCE => Effect::IncrementNonce,
         _ => return None,
     };
@@ -183,7 +222,11 @@ fn enumerate_all_descriptor_divergences() {
         let (base_trace, pis) = match generated {
             Ok(v) => v,
             Err(_) => {
-                unconstructible.push((*sel, *name, "trace fixture panics (needs richer pre-state)"));
+                unconstructible.push((
+                    *sel,
+                    *name,
+                    "trace fixture panics (needs richer pre-state)",
+                ));
                 continue;
             }
         };
@@ -199,14 +242,22 @@ fn enumerate_all_descriptor_divergences() {
                 "[sel {sel:>2} {name}] WARN: hand-AIR REJECTED the honest witness (case not representative); \
                  desc_accepts={desc_accepts}"
             );
-            unconstructible.push((*sel, *name, "hand-AIR rejects this fixture (needs richer witness)"));
+            unconstructible.push((
+                *sel,
+                *name,
+                "hand-AIR rejects this fixture (needs richer witness)",
+            ));
             continue;
         }
         if hand_accepts && desc_accepts {
-            eprintln!("[sel {sel:>2} {name}] AGREE  (descriptor + hand-AIR both accept honest trace)");
+            eprintln!(
+                "[sel {sel:>2} {name}] AGREE  (descriptor + hand-AIR both accept honest trace)"
+            );
             agree.push((*sel, *name));
         } else {
-            eprintln!("[sel {sel:>2} {name}] DIVERGE (hand-AIR accepts, descriptor REJECTS honest trace)");
+            eprintln!(
+                "[sel {sel:>2} {name}] DIVERGE (hand-AIR accepts, descriptor REJECTS honest trace)"
+            );
             diverge.push((*sel, *name));
         }
     }
@@ -239,12 +290,18 @@ fn transfer_descriptor_interpreter_is_a_faithful_drop_in_for_the_hand_air() {
         (
             "transfer-out",
             CellState::new(100_000, 0),
-            vec![Effect::Transfer { amount: 50, direction: 1 }],
+            vec![Effect::Transfer {
+                amount: 50,
+                direction: 1,
+            }],
         ),
         (
             "transfer-in",
             CellState::new(100_000, 0),
-            vec![Effect::Transfer { amount: 50, direction: 0 }],
+            vec![Effect::Transfer {
+                amount: 50,
+                direction: 0,
+            }],
         ),
     ];
 
@@ -252,7 +309,11 @@ fn transfer_descriptor_interpreter_is_a_faithful_drop_in_for_the_hand_air() {
     for (label, st, effects) in cases {
         // -- The single witness BOTH provers consume (the 186-col base trace + PIs). --
         let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
-        assert_eq!(base_trace[0].len(), 186, "[{label}] canonical 186-col EffectVM layout");
+        assert_eq!(
+            base_trace[0].len(),
+            186,
+            "[{label}] canonical 186-col EffectVM layout"
+        );
 
         // -- Resolve the verified-by-construction descriptor for selector 1 (TRANSFER). --
         let json = descriptor_for_selector(1).expect("transfer selector must have a descriptor");
@@ -271,20 +332,28 @@ fn transfer_descriptor_interpreter_is_a_faithful_drop_in_for_the_hand_air() {
                 "[{label}] DESCRIPTOR INTERPRETER failed to PROVE the honest witness via {name}: {e}"
             )
         });
-        verify_vm_descriptor(&desc, &desc_proof, dpis)
-            .unwrap_or_else(|e| panic!("[{label}] descriptor proof failed independent verify: {e}"));
+        verify_vm_descriptor(&desc, &desc_proof, dpis).unwrap_or_else(|e| {
+            panic!("[{label}] descriptor proof failed independent verify: {e}")
+        });
 
         // (2) HAND-AIR — prove + independent verify, real Plonky3, same witness.
         let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
             .unwrap_or_else(|e| panic!("[{label}] hand-AIR failed to prove honest witness: {e:?}"));
-        verify_effect_vm_p3(&hand_proof, &pis)
-            .unwrap_or_else(|e| panic!("[{label}] hand-AIR proof failed independent verify: {e:?}"));
+        verify_effect_vm_p3(&hand_proof, &pis).unwrap_or_else(|e| {
+            panic!("[{label}] hand-AIR proof failed independent verify: {e:?}")
+        });
 
         // (3) THE DIFFERENTIAL — both accept the SAME honest witness.
         let hand_accepts = p3_air_accepts(&base_trace, &pis);
         let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(hand_accepts, "[{label}] hand-AIR rejected a witness it just PROVED");
-        assert!(desc_accepts, "[{label}] descriptor rejected a witness it just PROVED");
+        assert!(
+            hand_accepts,
+            "[{label}] hand-AIR rejected a witness it just PROVED"
+        );
+        assert!(
+            desc_accepts,
+            "[{label}] descriptor rejected a witness it just PROVED"
+        );
         assert_eq!(
             hand_accepts, desc_accepts,
             "[{label}] DIFFERENTIAL DISAGREEMENT on honest witness"
@@ -296,7 +365,10 @@ fn transfer_descriptor_interpreter_is_a_faithful_drop_in_for_the_hand_air() {
             let mut forged = pis.clone();
             forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
             let fdpis = &forged[..desc.public_input_count];
-            assert!(!p3_air_accepts(&base_trace, &forged), "[{label}] hand-AIR took forged FINAL_BAL_LO");
+            assert!(
+                !p3_air_accepts(&base_trace, &forged),
+                "[{label}] hand-AIR took forged FINAL_BAL_LO"
+            );
             assert!(
                 !descriptor_air_accepts(&desc, &base_trace, fdpis),
                 "[{label}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO"
@@ -328,7 +400,10 @@ fn transfer_descriptor_interpreter_is_a_faithful_drop_in_for_the_hand_air() {
         );
         proven += 1;
     }
-    assert_eq!(proven, 2, "both transfer directions must pass the full beachhead");
+    assert_eq!(
+        proven, 2,
+        "both transfer directions must pass the full beachhead"
+    );
 }
 
 /// GRADUATED ECONOMIC EFFECTS: burn / note_create / note_spend / bridge_mint reconciled onto the
@@ -360,13 +435,19 @@ fn economic_effects_graduated_into_cutover() {
             label: "note_create",
             sel: 5,
             st: CellState::new(100_000, 0),
-            effects: vec![Effect::NoteCreate { commitment: BabyBear::new(0x5678), value: 50 }],
+            effects: vec![Effect::NoteCreate {
+                commitment: BabyBear::new(0x5678),
+                value: 50,
+            }],
         },
         Case {
             label: "note_spend",
             sel: 4,
             st: CellState::new(100_000, 0),
-            effects: vec![Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 }],
+            effects: vec![Effect::NoteSpend {
+                nullifier: BabyBear::new(0x1234),
+                value: 100,
+            }],
         },
         Case {
             label: "bridge_mint",
@@ -383,7 +464,12 @@ fn economic_effects_graduated_into_cutover() {
     let mut graduated = 0usize;
     for c in cases {
         let (base_trace, pis) = generate_effect_vm_trace(&c.st, &c.effects);
-        assert_eq!(base_trace[0].len(), 186, "[{}] canonical 186-col layout", c.label);
+        assert_eq!(
+            base_trace[0].len(),
+            186,
+            "[{}] canonical 186-col layout",
+            c.label
+        );
         let json = descriptor_for_selector(c.sel)
             .unwrap_or_else(|| panic!("[{}] selector {} has no descriptor", c.label, c.sel));
         let name = descriptor_name_for_selector(c.sel).unwrap();
@@ -392,37 +478,66 @@ fn economic_effects_graduated_into_cutover() {
 
         // (1) DESCRIPTOR INTERPRETER — prove + independent verify, real Plonky3.
         let desc_proof = prove_vm_descriptor(&desc, &base_trace, dpis).unwrap_or_else(|e| {
-            panic!("[{}] descriptor `{name}` failed to PROVE the honest witness: {e}", c.label)
+            panic!(
+                "[{}] descriptor `{name}` failed to PROVE the honest witness: {e}",
+                c.label
+            )
         });
-        verify_vm_descriptor(&desc, &desc_proof, dpis)
-            .unwrap_or_else(|e| panic!("[{}] descriptor proof failed independent verify: {e}", c.label));
+        verify_vm_descriptor(&desc, &desc_proof, dpis).unwrap_or_else(|e| {
+            panic!(
+                "[{}] descriptor proof failed independent verify: {e}",
+                c.label
+            )
+        });
 
         // (2) HAND-AIR — prove + independent verify, same witness.
-        let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
-            .unwrap_or_else(|e| panic!("[{}] hand-AIR failed to prove honest witness: {e:?}", c.label));
+        let hand_proof = prove_effect_vm_p3(&base_trace, &pis).unwrap_or_else(|e| {
+            panic!(
+                "[{}] hand-AIR failed to prove honest witness: {e:?}",
+                c.label
+            )
+        });
         verify_effect_vm_p3(&hand_proof, &pis)
             .unwrap_or_else(|e| panic!("[{}] hand-AIR proof failed verify: {e:?}", c.label));
 
         // (3) THE DIFFERENTIAL — both accept the SAME honest witness.
         let hand_accepts = p3_air_accepts(&base_trace, &pis);
         let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(hand_accepts, "[{}] hand-AIR rejected a witness it just PROVED", c.label);
-        assert!(desc_accepts, "[{}] descriptor rejected a witness it just PROVED", c.label);
-        assert_eq!(hand_accepts, desc_accepts, "[{}] DIFFERENTIAL DISAGREEMENT", c.label);
+        assert!(
+            hand_accepts,
+            "[{}] hand-AIR rejected a witness it just PROVED",
+            c.label
+        );
+        assert!(
+            desc_accepts,
+            "[{}] descriptor rejected a witness it just PROVED",
+            c.label
+        );
+        assert_eq!(
+            hand_accepts, desc_accepts,
+            "[{}] DIFFERENTIAL DISAGREEMENT",
+            c.label
+        );
 
         // (4a) ANTI-GHOST — forged FINAL_BAL_LO is UNSAT for BOTH.
         {
             let mut forged = pis.clone();
             forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
             let fdpis = &forged[..desc.public_input_count];
-            assert!(!p3_air_accepts(&base_trace, &forged), "[{}] hand-AIR took forged bal", c.label);
+            assert!(
+                !p3_air_accepts(&base_trace, &forged),
+                "[{}] hand-AIR took forged bal",
+                c.label
+            );
             assert!(
                 !descriptor_air_accepts(&desc, &base_trace, fdpis),
-                "[{}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO", c.label
+                "[{}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO",
+                c.label
             );
             assert!(
                 prove_vm_descriptor(&desc, &base_trace, fdpis).is_err(),
-                "[{}] descriptor PROVED a forged FINAL_BAL_LO", c.label
+                "[{}] descriptor PROVED a forged FINAL_BAL_LO",
+                c.label
             );
         }
         // (4b) ANTI-GHOST — mutated last-row state-commit cell is UNSAT.
@@ -433,11 +548,13 @@ fn economic_effects_graduated_into_cutover() {
                 t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
             assert!(
                 !descriptor_air_accepts(&desc, &t, dpis),
-                "[{}] descriptor took a forged last-row state-commit cell", c.label
+                "[{}] descriptor took a forged last-row state-commit cell",
+                c.label
             );
             assert!(
                 prove_vm_descriptor(&desc, &t, dpis).is_err(),
-                "[{}] descriptor PROVED a forged state-commit cell", c.label
+                "[{}] descriptor PROVED a forged state-commit cell",
+                c.label
             );
         }
 
@@ -450,7 +567,6 @@ fn economic_effects_graduated_into_cutover() {
     }
     assert_eq!(graduated, 4, "all four economic effects must graduate");
 }
-
 
 // ============================================================================
 // DIAGNOSTIC: pinpoint the failing constraint(s) per diverging selector.
@@ -490,7 +606,9 @@ fn pinpoint_divergence_per_selector() {
         if *sel == sel::TRANSFER {
             continue;
         }
-        let Some((st, effects)) = honest_case_for_selector(*sel) else { continue };
+        let Some((st, effects)) = honest_case_for_selector(*sel) else {
+            continue;
+        };
         let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             generate_effect_vm_trace(&st, &effects)
         }));
@@ -565,7 +683,11 @@ fn pinpoint_divergence_per_selector() {
         }
         eprintln!(
             "[sel {sel:>2} {name}] DIVERGE — first failing: {}",
-            if fails.is_empty() { "(none found at row granularity — likely range/hash-site)".into() } else { fails.join("; ") }
+            if fails.is_empty() {
+                "(none found at row granularity — likely range/hash-site)".into()
+            } else {
+                fails.join("; ")
+            }
         );
     }
 }
@@ -586,7 +708,9 @@ fn classify_divergence_nonce_only_vs_deeper() {
         if *s == sel::TRANSFER {
             continue;
         }
-        let Some((st, effects)) = honest_case_for_selector(*s) else { continue };
+        let Some((st, effects)) = honest_case_for_selector(*s) else {
+            continue;
+        };
         let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             generate_effect_vm_trace(&st, &effects)
         }));
@@ -646,11 +770,17 @@ fn classify_divergence_nonce_only_vs_deeper() {
         }
     }
     eprintln!("\n==== DIVERGENCE CLASSIFICATION ====");
-    eprintln!("NONCE-TICK-ONLY (gate-level; graduate via descriptor nonce-tick re-emit) ({}):", nonce_only.len());
+    eprintln!(
+        "NONCE-TICK-ONLY (gate-level; graduate via descriptor nonce-tick re-emit) ({}):",
+        nonce_only.len()
+    );
     for (s, n) in &nonce_only {
         eprintln!("  sel {s:>2}  {n}");
     }
-    eprintln!("DEEPER (cell move/zero / param-col / off-trace side-table) ({}):", deeper.len());
+    eprintln!(
+        "DEEPER (cell move/zero / param-col / off-trace side-table) ({}):",
+        deeper.len()
+    );
     for (s, n) in &deeper {
         eprintln!("  sel {s:>2}  {n}");
     }
@@ -677,15 +807,24 @@ fn nonce_tick_patch_graduates_the_13() {
     let tick_body = || -> LeanExpr {
         let after_minus_before = LeanExpr::Add(
             Box::new(LeanExpr::Var(78)),
-            Box::new(LeanExpr::Mul(Box::new(LeanExpr::Const(-1)), Box::new(LeanExpr::Var(56)))),
+            Box::new(LeanExpr::Mul(
+                Box::new(LeanExpr::Const(-1)),
+                Box::new(LeanExpr::Var(56)),
+            )),
         );
         let one_minus_noop = LeanExpr::Add(
             Box::new(LeanExpr::Const(1)),
-            Box::new(LeanExpr::Mul(Box::new(LeanExpr::Const(-1)), Box::new(LeanExpr::Var(0)))),
+            Box::new(LeanExpr::Mul(
+                Box::new(LeanExpr::Const(-1)),
+                Box::new(LeanExpr::Var(0)),
+            )),
         );
         LeanExpr::Add(
             Box::new(after_minus_before),
-            Box::new(LeanExpr::Mul(Box::new(LeanExpr::Const(-1)), Box::new(one_minus_noop))),
+            Box::new(LeanExpr::Mul(
+                Box::new(LeanExpr::Const(-1)),
+                Box::new(one_minus_noop),
+            )),
         )
     };
 
@@ -702,7 +841,10 @@ fn nonce_tick_patch_graduates_the_13() {
         }));
         let (base_trace, pis) = match g {
             Ok(v) => v,
-            Err(_) => { still_blocked.push((s, "fixture panics".into())); continue }
+            Err(_) => {
+                still_blocked.push((s, "fixture panics".into()));
+                continue;
+            }
         };
         let mut desc = parse_vm_descriptor(descriptor_for_selector(s).unwrap()).unwrap();
         // Patch every nonce-freeze gate → nonce-tick. incrementNonce (53) binds nonce
@@ -719,7 +861,10 @@ fn nonce_tick_patch_graduates_the_13() {
         let dpis = &pis[..desc.public_input_count];
         let accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
         if !accepts {
-            still_blocked.push((s, format!("patched {patched} nonce gate(s); still rejects (deeper than nonce)")));
+            still_blocked.push((
+                s,
+                format!("patched {patched} nonce gate(s); still rejects (deeper than nonce)"),
+            ));
             continue;
         }
         // Anti-ghost: forged balance + forged state-commit must still UNSAT.
@@ -742,7 +887,11 @@ fn nonce_tick_patch_graduates_the_13() {
     }
     let _ = sel::TRANSFER;
     eprintln!("\n==== NONCE-TICK PATCH PoC ====");
-    eprintln!("GRADUATED by nonce-tick patch ({}): {:?}", graduated.len(), graduated);
+    eprintln!(
+        "GRADUATED by nonce-tick patch ({}): {:?}",
+        graduated.len(),
+        graduated
+    );
     eprintln!("STILL BLOCKED ({}):", still_blocked.len());
     for (s, why) in &still_blocked {
         eprintln!("  sel {s:>2}  {why}");
@@ -783,7 +932,7 @@ fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
         // pre-v1 FREEZE-ALL (nonce frozen + state_commit frozen, UNSAT on the honest ticked trace) onto
         // the passthrough+tick template (setPermissions shape + selectorGates 25). The Argus full-state
         // crown (`EffectVmEmitEmitEventWide`) + the §6 runnable weld were reconciled to the tick.
-        sel::EMIT_EVENT,              // 25
+        sel::EMIT_EVENT, // 25
     ];
 
     let mut graduated = 0usize;
@@ -791,7 +940,11 @@ fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
         let (st, effects) = honest_case_for_selector(s)
             .unwrap_or_else(|| panic!("[sel {s}] no honest single-effect constructor"));
         let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
-        assert_eq!(base_trace[0].len(), 186, "[sel {s}] canonical 186-col layout");
+        assert_eq!(
+            base_trace[0].len(),
+            186,
+            "[sel {s}] canonical 186-col layout"
+        );
         let json = descriptor_for_selector(s)
             .unwrap_or_else(|| panic!("[sel {s}] no descriptor registered"));
         let name = descriptor_name_for_selector(s).unwrap();
@@ -802,28 +955,42 @@ fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
         let desc_proof = prove_vm_descriptor(&desc, &base_trace, dpis).unwrap_or_else(|e| {
             panic!("[sel {s} {name}] descriptor failed to PROVE the honest witness: {e}")
         });
-        verify_vm_descriptor(&desc, &desc_proof, dpis)
-            .unwrap_or_else(|e| panic!("[sel {s} {name}] descriptor proof failed independent verify: {e}"));
+        verify_vm_descriptor(&desc, &desc_proof, dpis).unwrap_or_else(|e| {
+            panic!("[sel {s} {name}] descriptor proof failed independent verify: {e}")
+        });
 
         // (2) HAND-AIR — prove + independent verify, same witness.
-        let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
-            .unwrap_or_else(|e| panic!("[sel {s} {name}] hand-AIR failed to prove honest witness: {e:?}"));
+        let hand_proof = prove_effect_vm_p3(&base_trace, &pis).unwrap_or_else(|e| {
+            panic!("[sel {s} {name}] hand-AIR failed to prove honest witness: {e:?}")
+        });
         verify_effect_vm_p3(&hand_proof, &pis)
             .unwrap_or_else(|e| panic!("[sel {s} {name}] hand-AIR proof failed verify: {e:?}"));
 
         // (3) THE DIFFERENTIAL — both accept the SAME honest witness.
         let hand_accepts = p3_air_accepts(&base_trace, &pis);
         let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(hand_accepts, "[sel {s} {name}] hand-AIR rejected a witness it just PROVED");
-        assert!(desc_accepts, "[sel {s} {name}] descriptor rejected a witness it just PROVED");
-        assert_eq!(hand_accepts, desc_accepts, "[sel {s} {name}] DIFFERENTIAL DISAGREEMENT");
+        assert!(
+            hand_accepts,
+            "[sel {s} {name}] hand-AIR rejected a witness it just PROVED"
+        );
+        assert!(
+            desc_accepts,
+            "[sel {s} {name}] descriptor rejected a witness it just PROVED"
+        );
+        assert_eq!(
+            hand_accepts, desc_accepts,
+            "[sel {s} {name}] DIFFERENTIAL DISAGREEMENT"
+        );
 
         // (4a) ANTI-GHOST — forged FINAL_BAL_LO is UNSAT for BOTH (the last-row balance PI tooth bites).
         {
             let mut forged = pis.clone();
             forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
             let fdpis = &forged[..desc.public_input_count];
-            assert!(!p3_air_accepts(&base_trace, &forged), "[sel {s} {name}] hand-AIR took forged bal");
+            assert!(
+                !p3_air_accepts(&base_trace, &forged),
+                "[sel {s} {name}] hand-AIR took forged bal"
+            );
             assert!(
                 !descriptor_air_accepts(&desc, &base_trace, fdpis),
                 "[sel {s} {name}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO (anti-ghost WEAK)"
@@ -855,7 +1022,10 @@ fn frozen_frame_nonce_tick_effects_graduated_into_cutover() {
         );
         graduated += 1;
     }
-    assert_eq!(graduated, 12, "all 12 frozen-frame nonce-tick effects must graduate (incl. emitEvent)");
+    assert_eq!(
+        graduated, 12,
+        "all 12 frozen-frame nonce-tick effects must graduate (incl. emitEvent)"
+    );
 }
 
 /// THE SELECTOR-BINDING TOOTH (closes the `sdk/full_turn_proof.rs` SOUNDNESS NOTE). Each cutover
@@ -875,16 +1045,31 @@ fn descriptor_proof_binds_to_its_selector() {
 
     // The cutover-ready selectors the verify path tries (mirror of `full_turn_proof::CUTOVER_READY`).
     let cutover: &[usize] = &[
-        sel::TRANSFER, sel::NOTE_SPEND, sel::NOTE_CREATE, sel::BRIDGE_MINT, sel::BURN,
-        sel::CELL_SEAL, sel::CELL_DESTROY, sel::REFUSAL,
-        sel::SET_VERIFICATION_KEY, sel::SET_PERMISSIONS, sel::EXERCISE_VIA_CAPABILITY,
-        sel::PIPELINED_SEND, sel::INCREMENT_NONCE, sel::REFRESH_DELEGATION, sel::REVOKE_DELEGATION,
-        sel::INTRODUCE, sel::EMIT_EVENT,
+        sel::TRANSFER,
+        sel::NOTE_SPEND,
+        sel::NOTE_CREATE,
+        sel::BRIDGE_MINT,
+        sel::BURN,
+        sel::CELL_SEAL,
+        sel::CELL_DESTROY,
+        sel::REFUSAL,
+        sel::SET_VERIFICATION_KEY,
+        sel::SET_PERMISSIONS,
+        sel::EXERCISE_VIA_CAPABILITY,
+        sel::PIPELINED_SEND,
+        sel::INCREMENT_NONCE,
+        sel::REFRESH_DELEGATION,
+        sel::REVOKE_DELEGATION,
+        sel::INTRODUCE,
+        sel::EMIT_EVENT,
     ];
 
     // Prove the transfer honest witness under the transfer descriptor (selector 1).
     let st = CellState::new(100_000, 0);
-    let effects = vec![Effect::Transfer { amount: 50, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 50,
+        direction: 1,
+    }];
     let (base_trace, pis) = generate_effect_vm_trace(&st, &effects);
     let tdesc = parse_vm_descriptor(descriptor_for_selector(sel::TRANSFER).unwrap()).unwrap();
     let tdpis = &pis[..tdesc.public_input_count];
@@ -918,18 +1103,25 @@ fn descriptor_proof_binds_to_its_selector() {
 
     // Symmetric direction: a burn proof (selector 46) is rejected by the transfer verifier.
     let bst = CellState::new(100_000, 0);
-    let beff = vec![Effect::Burn { target_hash: BabyBear::new(0xB0B), amount_lo: BabyBear::new(75), amount_full: 75 }];
+    let beff = vec![Effect::Burn {
+        target_hash: BabyBear::new(0xB0B),
+        amount_lo: BabyBear::new(75),
+        amount_full: 75,
+    }];
     let (bt, bpis) = generate_effect_vm_trace(&bst, &beff);
     let bdesc = parse_vm_descriptor(descriptor_for_selector(sel::BURN).unwrap()).unwrap();
     let bdpis = &bpis[..bdesc.public_input_count];
-    let bproof = prove_vm_descriptor(&bdesc, &bt, bdpis).expect("burn descriptor proves honest burn");
+    let bproof =
+        prove_vm_descriptor(&bdesc, &bt, bdpis).expect("burn descriptor proves honest burn");
     verify_vm_descriptor(&bdesc, &bproof, bdpis).expect("burn descriptor verifies its OWN proof");
     let t_on_burn = &bpis[..tdesc.public_input_count.min(bpis.len())];
     assert!(
         verify_vm_descriptor(&tdesc, &bproof, t_on_burn).is_err(),
         "transfer descriptor verified a BURN proof — selector binding FAILED"
     );
-    eprintln!("SELECTOR-BINDING: a burn (sel 46) proof is REJECTED by the transfer verifier. Bidirectional binding confirmed.");
+    eprintln!(
+        "SELECTOR-BINDING: a burn (sel 46) proof is REJECTED by the transfer verifier. Bidirectional binding confirmed."
+    );
 }
 
 /// A representative HOMOGENEOUS x2 fixture for a graduated selector (the same effect,
@@ -945,17 +1137,41 @@ fn homogeneous_x2_case_for_selector(s: usize) -> Option<(CellState, Vec<Effect>)
     };
     // Second instance with DIFFERENT params (so the probe is not a row-copy artifact).
     let e2 = match s {
-        s if s == sel::TRANSFER => Effect::Transfer { amount: 30, direction: 1 },
-        s if s == sel::NOTE_SPEND => Effect::NoteSpend { nullifier: BabyBear::new(0x4321), value: 60 },
-        s if s == sel::NOTE_CREATE => Effect::NoteCreate { commitment: BabyBear::new(0x8765), value: 40 },
-        s if s == sel::EMIT_EVENT => Effect::EmitEvent { topic_hash: eight(0x3), payload_hash: eight(0x4) },
-        s if s == sel::SET_PERMISSIONS => Effect::SetPermissions { permissions_hash: eight(0x9) },
-        s if s == sel::SET_VERIFICATION_KEY => Effect::SetVerificationKey { vk_hash: eight(0x9) },
+        s if s == sel::TRANSFER => Effect::Transfer {
+            amount: 30,
+            direction: 1,
+        },
+        s if s == sel::NOTE_SPEND => Effect::NoteSpend {
+            nullifier: BabyBear::new(0x4321),
+            value: 60,
+        },
+        s if s == sel::NOTE_CREATE => Effect::NoteCreate {
+            commitment: BabyBear::new(0x8765),
+            value: 40,
+        },
+        s if s == sel::EMIT_EVENT => Effect::EmitEvent {
+            topic_hash: eight(0x3),
+            payload_hash: eight(0x4),
+        },
+        s if s == sel::SET_PERMISSIONS => Effect::SetPermissions {
+            permissions_hash: eight(0x9),
+        },
+        s if s == sel::SET_VERIFICATION_KEY => Effect::SetVerificationKey {
+            vk_hash: eight(0x9),
+        },
         s if s == sel::REFRESH_DELEGATION => Effect::RefreshDelegation,
-        s if s == sel::REVOKE_DELEGATION => Effect::RevokeDelegation { child_hash: eight(0x9) },
-        s if s == sel::EXERCISE_VIA_CAPABILITY => Effect::ExerciseViaCapability { exercise_hash: eight(0x9) },
-        s if s == sel::INTRODUCE => Effect::Introduce { intro_hash: eight(0x9) },
-        s if s == sel::PIPELINED_SEND => Effect::PipelinedSend { send_hash: eight(0x9) },
+        s if s == sel::REVOKE_DELEGATION => Effect::RevokeDelegation {
+            child_hash: eight(0x9),
+        },
+        s if s == sel::EXERCISE_VIA_CAPABILITY => Effect::ExerciseViaCapability {
+            exercise_hash: eight(0x9),
+        },
+        s if s == sel::INTRODUCE => Effect::Introduce {
+            intro_hash: eight(0x9),
+        },
+        s if s == sel::PIPELINED_SEND => Effect::PipelinedSend {
+            send_hash: eight(0x9),
+        },
         s if s == sel::BRIDGE_MINT => Effect::BridgeMint {
             value_lo: BabyBear::new(15),
             mint_hash: BabyBear::new(0x9),
@@ -970,8 +1186,14 @@ fn homogeneous_x2_case_for_selector(s: usize) -> Option<(CellState, Vec<Effect>)
             target_hash: eight(0x9),
             death_certificate_hash: eight(0xA),
         },
-        s if s == sel::CELL_SEAL => Effect::CellSeal { target: eight(0x9), reason_hash: eight(0xA) },
-        s if s == sel::REFUSAL => Effect::Refusal { target: eight(0x9), reason_hash: eight(0xA) },
+        s if s == sel::CELL_SEAL => Effect::CellSeal {
+            target: eight(0x9),
+            reason_hash: eight(0xA),
+        },
+        s if s == sel::REFUSAL => Effect::Refusal {
+            target: eight(0x9),
+            reason_hash: eight(0xA),
+        },
         s if s == sel::INCREMENT_NONCE => Effect::IncrementNonce,
         _ => return None,
     };
@@ -1016,11 +1238,23 @@ fn multi_effect_agreement_census() {
     use dregg_circuit::effect_vm::columns::sel;
     // The 17 single-effect-graduated selectors (the AGREE set).
     let graduated: &[usize] = &[
-        sel::TRANSFER, sel::NOTE_SPEND, sel::NOTE_CREATE, sel::EMIT_EVENT,
-        sel::SET_PERMISSIONS, sel::SET_VERIFICATION_KEY, sel::REFRESH_DELEGATION,
-        sel::REVOKE_DELEGATION, sel::EXERCISE_VIA_CAPABILITY, sel::INTRODUCE,
-        sel::PIPELINED_SEND, sel::BRIDGE_MINT, sel::BURN, sel::CELL_DESTROY,
-        sel::CELL_SEAL, sel::REFUSAL, sel::INCREMENT_NONCE,
+        sel::TRANSFER,
+        sel::NOTE_SPEND,
+        sel::NOTE_CREATE,
+        sel::EMIT_EVENT,
+        sel::SET_PERMISSIONS,
+        sel::SET_VERIFICATION_KEY,
+        sel::REFRESH_DELEGATION,
+        sel::REVOKE_DELEGATION,
+        sel::EXERCISE_VIA_CAPABILITY,
+        sel::INTRODUCE,
+        sel::PIPELINED_SEND,
+        sel::BRIDGE_MINT,
+        sel::BURN,
+        sel::CELL_DESTROY,
+        sel::CELL_SEAL,
+        sel::REFUSAL,
+        sel::INCREMENT_NONCE,
     ];
     let mut agree = Vec::new();
     let mut disagree = Vec::new();
@@ -1101,8 +1335,14 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
             sel: sel::TRANSFER,
             st: CellState::new(100_000, 0),
             effects: vec![
-                Effect::Transfer { amount: 50, direction: 1 },
-                Effect::Transfer { amount: 30, direction: 1 },
+                Effect::Transfer {
+                    amount: 50,
+                    direction: 1,
+                },
+                Effect::Transfer {
+                    amount: 30,
+                    direction: 1,
+                },
             ],
         },
         Case {
@@ -1110,9 +1350,18 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
             sel: sel::TRANSFER,
             st: CellState::new(100_000, 0),
             effects: vec![
-                Effect::Transfer { amount: 50, direction: 1 },
-                Effect::Transfer { amount: 20, direction: 0 },
-                Effect::Transfer { amount: 10, direction: 1 },
+                Effect::Transfer {
+                    amount: 50,
+                    direction: 1,
+                },
+                Effect::Transfer {
+                    amount: 20,
+                    direction: 0,
+                },
+                Effect::Transfer {
+                    amount: 10,
+                    direction: 1,
+                },
             ],
         },
         Case {
@@ -1144,7 +1393,12 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
     let mut graduated = 0usize;
     for c in cases {
         let (base_trace, pis) = generate_effect_vm_trace(&c.st, &c.effects);
-        assert_eq!(base_trace[0].len(), 186, "[{}] canonical 186-col layout", c.label);
+        assert_eq!(
+            base_trace[0].len(),
+            186,
+            "[{}] canonical 186-col layout",
+            c.label
+        );
         let json = descriptor_for_selector(c.sel)
             .unwrap_or_else(|| panic!("[{}] selector {} has no descriptor", c.label, c.sel));
         let name = descriptor_name_for_selector(c.sel).unwrap();
@@ -1153,34 +1407,61 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
 
         // (1) DESCRIPTOR INTERPRETER — prove + independent verify, real Plonky3.
         let desc_proof = prove_vm_descriptor(&desc, &base_trace, dpis).unwrap_or_else(|e| {
-            panic!("[{}] descriptor `{name}` failed to PROVE the honest multi-effect witness: {e}", c.label)
+            panic!(
+                "[{}] descriptor `{name}` failed to PROVE the honest multi-effect witness: {e}",
+                c.label
+            )
         });
         verify_vm_descriptor(&desc, &desc_proof, dpis).unwrap_or_else(|e| {
-            panic!("[{}] descriptor multi-effect proof failed independent verify: {e}", c.label)
+            panic!(
+                "[{}] descriptor multi-effect proof failed independent verify: {e}",
+                c.label
+            )
         });
 
         // (2) HAND-AIR — prove + independent verify, same witness.
-        let hand_proof = prove_effect_vm_p3(&base_trace, &pis)
-            .unwrap_or_else(|e| panic!("[{}] hand-AIR failed to prove honest witness: {e:?}", c.label));
+        let hand_proof = prove_effect_vm_p3(&base_trace, &pis).unwrap_or_else(|e| {
+            panic!(
+                "[{}] hand-AIR failed to prove honest witness: {e:?}",
+                c.label
+            )
+        });
         verify_effect_vm_p3(&hand_proof, &pis)
             .unwrap_or_else(|e| panic!("[{}] hand-AIR proof failed verify: {e:?}", c.label));
 
         // (3) THE DIFFERENTIAL — both accept the SAME honest multi-effect witness.
         let hand_accepts = p3_air_accepts(&base_trace, &pis);
         let desc_accepts = descriptor_air_accepts(&desc, &base_trace, dpis);
-        assert!(hand_accepts, "[{}] hand-AIR rejected a witness it just PROVED", c.label);
-        assert!(desc_accepts, "[{}] descriptor rejected a witness it just PROVED", c.label);
-        assert_eq!(hand_accepts, desc_accepts, "[{}] DIFFERENTIAL DISAGREEMENT", c.label);
+        assert!(
+            hand_accepts,
+            "[{}] hand-AIR rejected a witness it just PROVED",
+            c.label
+        );
+        assert!(
+            desc_accepts,
+            "[{}] descriptor rejected a witness it just PROVED",
+            c.label
+        );
+        assert_eq!(
+            hand_accepts, desc_accepts,
+            "[{}] DIFFERENTIAL DISAGREEMENT",
+            c.label
+        );
 
         // (4a) ANTI-GHOST — forged FINAL_BAL_LO is UNSAT for BOTH.
         {
             let mut forged = pis.clone();
             forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
             let fdpis = &forged[..desc.public_input_count];
-            assert!(!p3_air_accepts(&base_trace, &forged), "[{}] hand-AIR took forged bal", c.label);
+            assert!(
+                !p3_air_accepts(&base_trace, &forged),
+                "[{}] hand-AIR took forged bal",
+                c.label
+            );
             assert!(
                 !descriptor_air_accepts(&desc, &base_trace, fdpis),
-                "[{}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO (multi-effect)", c.label
+                "[{}] descriptor MORE PERMISSIVE on forged FINAL_BAL_LO (multi-effect)",
+                c.label
             );
         }
         // (4b) ANTI-GHOST — mutated last-row state-commit cell is UNSAT for the descriptor.
@@ -1191,7 +1472,8 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
                 t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
             assert!(
                 !descriptor_air_accepts(&desc, &t, dpis),
-                "[{}] descriptor took a forged last-row state-commit cell (multi-effect)", c.label
+                "[{}] descriptor took a forged last-row state-commit cell (multi-effect)",
+                c.label
             );
         }
         // (4c) ANTI-GHOST, multi-row-specific — tamper a MIDDLE effect row's post-state
@@ -1203,7 +1485,8 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
                 t[1][STATE_AFTER_BASE + state::BALANCE_LO] + BabyBear::new(7);
             assert!(
                 !descriptor_air_accepts(&desc, &t, dpis),
-                "[{}] descriptor took a tampered INTERIOR row balance (multi-effect)", c.label
+                "[{}] descriptor took a tampered INTERIOR row balance (multi-effect)",
+                c.label
             );
         }
 
@@ -1215,7 +1498,10 @@ fn homogeneous_multi_effect_turns_graduate_into_cutover() {
         );
         graduated += 1;
     }
-    assert_eq!(graduated, 4, "all homogeneous multi-effect cases must graduate");
+    assert_eq!(
+        graduated, 4,
+        "all homogeneous multi-effect cases must graduate"
+    );
 }
 
 /// THE NAMED HETEROGENEOUS CONDITION — why mixed-selector turns stay on the hand-AIR.
@@ -1233,7 +1519,10 @@ fn heterogeneous_multi_effect_is_not_descriptor_provable() {
     use dregg_circuit::effect_vm::columns::sel;
     let st = CellState::new(100_000, 0);
     let effects = vec![
-        Effect::Transfer { amount: 50, direction: 1 },
+        Effect::Transfer {
+            amount: 50,
+            direction: 1,
+        },
         Effect::Burn {
             target_hash: BabyBear::new(0xB0B),
             amount_lo: BabyBear::new(25),
@@ -1285,8 +1574,8 @@ fn heterogeneous_multi_effect_is_not_descriptor_provable() {
 #[test]
 fn attenuate_phase_b_graduates_on_the_hand_air() {
     use dregg_circuit::cap_root::{
-        encode_breadstuff, encode_expiry, fold_bytes32, slot_hash, split_effect_mask,
-        CanonicalCapTree, CapLeaf, CAP_TREE_DEPTH,
+        CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf, encode_breadstuff, encode_expiry, fold_bytes32,
+        slot_hash, split_effect_mask,
     };
     use dregg_circuit::effect_vm::AttenuateWitness;
     use dregg_circuit::effect_vm_p3_full_air::{
@@ -1364,12 +1653,24 @@ fn attenuate_phase_b_graduates_on_the_hand_air() {
         let t = CanonicalCapTree::new(vec![h], CAP_TREE_DEPTH);
         let a = t.attenuation_witness(g).unwrap();
         let w = AttenuateWitness {
-            held: a.held, granted: a.granted, siblings: a.siblings, directions: a.directions,
-            held_tier: 1, granted_tier: 2, held_expiry_height: Some(1000), granted_expiry_height: Some(1000),
+            held: a.held,
+            granted: a.granted,
+            siblings: a.siblings,
+            directions: a.directions,
+            held_tier: 1,
+            granted_tier: 2,
+            held_expiry_height: Some(1000),
+            granted_expiry_height: Some(1000),
         };
-        let mut sl = [BabyBear::ZERO; 8]; sl[0] = h.slot_hash;
-        let mut nl = [BabyBear::ZERO; 8]; nl[0] = g.digest();
-        let e = vec![Effect::AttenuateCapability { cap_slot_hash: sl, narrower_commitment: nl, phase_b: Some(Box::new(w)) }];
+        let mut sl = [BabyBear::ZERO; 8];
+        sl[0] = h.slot_hash;
+        let mut nl = [BabyBear::ZERO; 8];
+        nl[0] = g.digest();
+        let e = vec![Effect::AttenuateCapability {
+            cap_slot_hash: sl,
+            narrower_commitment: nl,
+            phase_b: Some(Box::new(w)),
+        }];
         let init = CellState::with_capability_root(100_000, 0, t.root());
         let (bt, bp) = generate_effect_vm_trace(&init, &e);
         assert!(

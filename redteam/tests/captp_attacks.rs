@@ -6,7 +6,9 @@
 //! Adversary model: a "malicious agent holding a (weaker) capability" who tries
 //! to amplify it, plus a network attacker who intercepts a handoff certificate.
 
-use dregg_captp::handoff::{HandoffCertificate, HandoffError, HandoffPresentation, validate_handoff};
+use dregg_captp::handoff::{
+    validate_handoff, HandoffCertificate, HandoffError, HandoffPresentation,
+};
 use dregg_captp::sturdy::{EnlivenError, SwissTable};
 use dregg_cell::AuthRequired;
 use dregg_redteam::{flip_bit, mint_dalek_keypair, AttackOutcome};
@@ -65,7 +67,11 @@ fn attack_confinement_guess_swiss_number_is_rejected() {
     assert_eq!(any_break, AttackOutcome::Defended);
     // Sanity: the *real* secret still works (the table is not just always-deny).
     assert!(table.enliven(&real, 100).is_ok());
-    eprintln!("[ATTACK 1] confinement vs {} guesses: {}", guesses.len(), any_break);
+    eprintln!(
+        "[ATTACK 1] confinement vs {} guesses: {}",
+        guesses.len(),
+        any_break
+    );
 }
 
 // ===========================================================================
@@ -104,7 +110,10 @@ fn attack_amplify_permissions_is_rejected() {
     let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 100);
     // EVIDENCE: the target reads `held` from its OWN swiss entry and rejects.
     assert_eq!(res.err(), Some(HandoffError::Amplification));
-    eprintln!("[ATTACK 2] permission amplification: {}", AttackOutcome::Defended);
+    eprintln!(
+        "[ATTACK 2] permission amplification: {}",
+        AttackOutcome::Defended
+    );
 }
 
 #[test]
@@ -139,12 +148,24 @@ fn attack_amplify_effect_mask_is_rejected() {
     let mut table2 = SwissTable::new();
     let (swiss2, tc2, tf2) = target_with_held(&mut table2, AuthRequired::Signature, Some(0b0011));
     let cert2 = HandoffCertificate::create(
-        &intro_sk, intro_fed, tf2, tc2, recip_pk.0, AuthRequired::Signature, None, None, None, swiss2,
+        &intro_sk,
+        intro_fed,
+        tf2,
+        tc2,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss2,
     );
     let pres2 = HandoffPresentation::create(cert2, &recip_sk);
     let res2 = validate_handoff(&pres2, &intro_pk, &mut table2, &[intro_fed], 100);
     assert_eq!(res2.err(), Some(HandoffError::Amplification));
-    eprintln!("[ATTACK 2b] effect-mask amplification (both forms): {}", AttackOutcome::Defended);
+    eprintln!(
+        "[ATTACK 2b] effect-mask amplification (both forms): {}",
+        AttackOutcome::Defended
+    );
 }
 
 // ===========================================================================
@@ -162,15 +183,26 @@ fn attack_forge_introducer_signature_is_rejected() {
         target_with_held(&mut table, AuthRequired::Signature, None);
 
     let mut cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     // Tamper a content field AFTER signing (target_cell) — sig no longer covers it.
     cert.target_cell = CellId([0x99; 32]);
     let pres = HandoffPresentation::create(cert, &recip_sk);
     let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 100);
     assert_eq!(res.err(), Some(HandoffError::InvalidIntroducerSignature));
-    eprintln!("[ATTACK 3] post-sign field tamper: {}", AttackOutcome::Defended);
+    eprintln!(
+        "[ATTACK 3] post-sign field tamper: {}",
+        AttackOutcome::Defended
+    );
 }
 
 #[test]
@@ -187,14 +219,25 @@ fn attack_intercept_cert_present_as_wrong_recipient_is_rejected() {
         target_with_held(&mut table, AuthRequired::Signature, None);
 
     let cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, legit_recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        legit_recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     // Attacker signs the presentation with THEIR key, not legit_recip's.
     let pres = HandoffPresentation::create(cert, &attacker_sk);
     let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 100);
     assert_eq!(res.err(), Some(HandoffError::InvalidRecipientSignature));
-    eprintln!("[ATTACK 3b] cert-interception replay: {}", AttackOutcome::Defended);
+    eprintln!(
+        "[ATTACK 3b] cert-interception replay: {}",
+        AttackOutcome::Defended
+    );
 }
 
 // ===========================================================================
@@ -234,9 +277,16 @@ fn finding_amplifying_handoff_consumes_a_use_on_rejection() {
     // (F-2 fix) the read-only `check` path does NOT enliven, so the swiss entry's
     // use_count stays at 0.
     let bad_cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
         AuthRequired::None, // amplifies
-        None, None, None, swiss,
+        None,
+        None,
+        None,
+        swiss,
     );
     let bad_pres = HandoffPresentation::create(bad_cert, &recip_sk);
     let bad = validate_handoff(&bad_pres, &intro_pk, &mut table, &[intro_fed], 100);
@@ -244,7 +294,10 @@ fn finding_amplifying_handoff_consumes_a_use_on_rejection() {
 
     // EVIDENCE the use was NOT consumed: peek the entry — use_count is still 0.
     assert_eq!(
-        table.peek(&swiss).expect("swiss entry must survive a rejected presentation").use_count,
+        table
+            .peek(&swiss)
+            .expect("swiss entry must survive a rejected presentation")
+            .use_count,
         0,
         "a rejected (amplifying) presentation must NOT advance the swiss use budget"
     );
@@ -253,15 +306,23 @@ fn finding_amplifying_handoff_consumes_a_use_on_rejection() {
     // Because the rejected attacker did NOT burn the single use, the honest
     // handoff SUCCEEDS — the cap is no longer griefable on the reject path.
     let good_cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
         AuthRequired::Signature, // legitimate, non-amplifying
-        None, None, None, swiss,
+        None,
+        None,
+        None,
+        swiss,
     );
     let good_pres = HandoffPresentation::create(good_cert, &recip_sk);
     let good = validate_handoff(&good_pres, &intro_pk, &mut table, &[intro_fed], 100);
 
     // DEFENDED: the honest handoff is accepted; the griefing attack failed.
-    let acceptance = good.expect("honest one-shot handoff must succeed after a rejected amplifying attempt");
+    let acceptance =
+        good.expect("honest one-shot handoff must succeed after a rejected amplifying attempt");
     assert_eq!(acceptance.cell_id, target_cell);
     assert_eq!(acceptance.permissions, AuthRequired::Signature);
 
@@ -335,8 +396,16 @@ fn attack_untrusted_introducer_is_rejected() {
         target_with_held(&mut table, AuthRequired::Signature, None);
 
     let cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     let pres = HandoffPresentation::create(cert, &recip_sk);
     // known_federations is EMPTY: even a perfectly valid signature is untrusted.
@@ -347,5 +416,8 @@ fn attack_untrusted_introducer_is_rejected() {
     // amplification/enliven side effects are step 5. UntrustedIntroducer fires
     // before enliven, so this path does NOT grief the use budget. Good.
     let _ = mint_dalek_keypair; // (silence unused import on some toolchains)
-    eprintln!("[ATTACK 6] untrusted introducer: {}", AttackOutcome::Defended);
+    eprintln!(
+        "[ATTACK 6] untrusted introducer: {}",
+        AttackOutcome::Defended
+    );
 }

@@ -29,11 +29,9 @@
 
 use std::collections::BTreeSet;
 
-use dregg_cell::facet::{EFFECT_GRANT_CAPABILITY, EFFECT_SET_FIELD, EFFECT_TRANSFER};
 use dregg_cell::CellId;
-use dregg_intent::agent_mandate::{
-    materialize_revoke, Auth, Caveat, DelegTree, Mandate, Rights,
-};
+use dregg_cell::facet::{EFFECT_GRANT_CAPABILITY, EFFECT_SET_FIELD, EFFECT_TRANSFER};
+use dregg_intent::agent_mandate::{Auth, Caveat, DelegTree, Mandate, Rights, materialize_revoke};
 use dregg_turn::action::Effect;
 
 fn rights(items: &[Auth]) -> Rights {
@@ -93,7 +91,14 @@ fn rust_agrees_with_lean_mandate_list_target() {
 #[test]
 fn teeth_overbudget_clamped() {
     // Lean `demo_overbudget_clamped`: min(parent, 999) = parent, never 999.
-    let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+    let root = Mandate::root(
+        cid(0),
+        cid(1),
+        cid(7),
+        rights(&[Auth::Read]),
+        100,
+        Caveat::any(),
+    );
     let child = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 999, &Caveat::any());
     assert_eq!(child.budget, 100);
 }
@@ -117,7 +122,14 @@ fn teeth_rights_narrow() {
 fn teeth_oversubscription_refused() {
     // The conservation facet (Lean `children_no_oversubscribe`) has teeth: an adversarial runtime
     // that forges two children each with the full parent budget over-subscribes — REFUSED.
-    let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+    let root = Mandate::root(
+        cid(0),
+        cid(1),
+        cid(7),
+        rights(&[Auth::Read]),
+        100,
+        Caveat::any(),
+    );
     let mut c1 = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 100, &Caveat::any());
     let mut c2 = root.sub_delegate(cid(3), &rights(&[Auth::Read]), 100, &Caveat::any());
     c1.budget = 100;
@@ -132,7 +144,14 @@ fn teeth_oversubscription_refused() {
 #[test]
 fn teeth_amplification_refused() {
     // Lean `subtree_rights_le_root` teeth: a forged child claiming MORE rights is refused.
-    let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+    let root = Mandate::root(
+        cid(0),
+        cid(1),
+        cid(7),
+        rights(&[Auth::Read]),
+        100,
+        Caveat::any(),
+    );
     let mut rogue = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 40, &Caveat::any());
     rogue.keep = rights(&[Auth::Read, Auth::Write, Auth::Control]);
     let bad = DelegTree::leaf(root).with_child(DelegTree::leaf(rogue));

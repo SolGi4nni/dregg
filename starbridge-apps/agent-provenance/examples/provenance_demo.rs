@@ -16,7 +16,7 @@
 //!      claims and the committed digests and checks it link-for-link.
 
 use dregg_app_framework::{
-    AgentCipherclerk, AppCipherclerk, CellId, CellMode, EmbeddedExecutor, Effect,
+    AgentCipherclerk, AppCipherclerk, CellId, CellMode, Effect, EmbeddedExecutor,
 };
 use dregg_cell::FactoryCreationParams;
 use starbridge_agent_provenance::{
@@ -78,14 +78,20 @@ fn main() {
     for (i, claim) in claims.iter().enumerate() {
         exec.submit_action(&cclerk, build_append_action(&cclerk, log, i, &prev, claim))
             .unwrap_or_else(|e| panic!("append {i} rejected: {e}"));
-        println!("✓ appended entry {i}: digest {}… (links prev {}…)", hex8(&honest[i]), hex8(&prev));
+        println!(
+            "✓ appended entry {i}: digest {}… (links prev {}…)",
+            hex8(&honest[i]),
+            hex8(&prev)
+        );
         prev = honest[i];
     }
 
     // Read the committed digests back off the ledger.
     let committed: Vec<_> = exec.with_ledger_mut(|ledger| {
         let cell = ledger.get(&log).expect("log cell");
-        (0..claims.len()).map(|i| cell.state.fields[entry_slot(i)]).collect()
+        (0..claims.len())
+            .map(|i| cell.state.fields[entry_slot(i)])
+            .collect()
     });
 
     // (1) TAMPER-EVIDENCE: an overwrite of a committed entry is rejected.
@@ -94,15 +100,19 @@ fn main() {
         cclerk.make_action(
             log,
             "tamper",
-            vec![Effect::SetField { cell: log, index: entry_slot(0), value: forged }],
+            vec![Effect::SetField {
+                cell: log,
+                index: entry_slot(0),
+                value: forged,
+            }],
         )
     };
     match exec.submit_action(&cclerk, tamper) {
         Ok(_) => panic!("TAMPER SUCCEEDED — append-only is broken!"),
         Err(e) => println!("✓ tamper REJECTED by the executor: {e}"),
     }
-    let after: [u8; 32] = exec
-        .with_ledger_mut(|ledger| ledger.get(&log).unwrap().state.fields[entry_slot(0)]);
+    let after: [u8; 32] =
+        exec.with_ledger_mut(|ledger| ledger.get(&log).unwrap().state.fields[entry_slot(0)]);
     assert_eq!(after, honest[0]);
     println!("✓ committed entry 0 UNCHANGED after the rejected tamper");
 
@@ -116,5 +126,7 @@ fn main() {
     assert!(!verify_chain(&claims, &forged));
     println!("✓ a tampered chain is REJECTED by the verifier");
 
-    println!("\nproof-carrying agent provenance: append-only, tamper-evident, verifiable. ( ⌐■_■ )");
+    println!(
+        "\nproof-carrying agent provenance: append-only, tamper-evident, verifiable. ( ⌐■_■ )"
+    );
 }

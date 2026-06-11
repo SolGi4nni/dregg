@@ -115,23 +115,13 @@ pub(super) fn convert_turn_effects_to_vm(
                 Effect::IncrementNonce { cell } if cell == cell_id => {
                     vm_effects.push(VmEffect::IncrementNonce);
                 }
-                
-                
-                
-                
-                
-                
+
                 // ====================================================
                 // Stage 1 (D): wire up the 7 runtime variants whose AIR
                 // counterparts already exist but were previously mapped
                 // to NoOp. The AIR enforces the per-effect arithmetic;
                 // the projection is no longer lossy for these.
                 // ====================================================
-                
-                
-                
-                
-                
                 Effect::MakeSovereign { cell } if cell == cell_id => {
                     vm_effects.push(VmEffect::MakeSovereign);
                 }
@@ -207,7 +197,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         create_hash: hash_to_8(create_hash_bytes.as_bytes()),
                     });
                 }
-                
+
                 Effect::EmitEvent { cell, event } if cell == cell_id => {
                     // Stage 3 + #110: real AIR coverage with canonical
                     // (topic_hash, payload_hash) binding. Each 32-byte
@@ -307,9 +297,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         value_full: portable_proof.value,
                     });
                 }
-                
-                
-                
+
                 Effect::Introduce {
                     introducer,
                     recipient,
@@ -356,12 +344,7 @@ pub(super) fn convert_turn_effects_to_vm(
                         send_hash: hash_to_8(send_hash_bytes.as_bytes()),
                     });
                 }
-                
-                
-                
-                
-                
-                
+
                 Effect::ExerciseViaCapability {
                     cap_slot,
                     inner_effects,
@@ -390,10 +373,6 @@ pub(super) fn convert_turn_effects_to_vm(
                 // The richer Merkle-proof witnesses required to make
                 // the AIR non-tautological are added in P1.C.
                 // ────────────────────────────────────────────────────
-                
-                
-                
-                
 
                 // ────────────────────────────────────────────────────
                 // Near-miss aliasing closure (#100 follow-up): three
@@ -578,4 +557,3 @@ pub(super) fn convert_turn_effects_to_vm(
     }
     vm_effects
 }
-

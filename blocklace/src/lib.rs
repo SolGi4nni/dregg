@@ -207,10 +207,11 @@ impl Block {
                 sequence: self.sequence,
             });
         }
-        let vk = VerifyingKey::from_bytes(&self.creator).map_err(|_| InsertError::BadSignature {
-            creator: self.creator,
-            sequence: self.sequence,
-        })?;
+        let vk =
+            VerifyingKey::from_bytes(&self.creator).map_err(|_| InsertError::BadSignature {
+                creator: self.creator,
+                sequence: self.sequence,
+            })?;
         let sig = ed25519_dalek::Signature::from_bytes(&self.signature);
         vk.verify(&self.id(), &sig)
             .map_err(|_| InsertError::BadSignature {
@@ -313,10 +314,7 @@ impl std::fmt::Display for InsertError {
                 attempted,
                 tip_sequence,
                 ..
-            } => write!(
-                f,
-                "seq {attempted} does not extend tip seq {tip_sequence}"
-            ),
+            } => write!(f, "seq {attempted} does not extend tip seq {tip_sequence}"),
             InsertError::Equivocation(p) => write!(
                 f,
                 "equivocation by creator at seq {} (existing vs conflicting block)",
@@ -896,7 +894,10 @@ mod tests {
         // BOTH forked blocks are retained (evidence is never lost) — this is
         // exactly what `ordering.rs::has_equivocation_in_past` scans for.
         assert!(lace.contains(&f1_id), "first fork retained");
-        assert!(lace.contains(&f2_id), "conflicting fork retained as evidence");
+        assert!(
+            lace.contains(&f2_id),
+            "conflicting fork retained as evidence"
+        );
 
         // The creator is flagged and the honest tip is WITHDRAWN (no single
         // live feed head — the old bug left a silently-overwritten tip).

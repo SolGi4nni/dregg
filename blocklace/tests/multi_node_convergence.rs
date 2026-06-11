@@ -230,9 +230,15 @@ fn three_nodes_partition_heal_equivocate_converge() {
     // Every node ends up with the identical pre-partition DAG.
     let pre = build_rounds(&[&sk_a, &sk_b, &sk_c], 4);
     let pre_flat = flatten(&pre);
-    node_a.merge(pre_flat.clone()).expect("A merges pre-partition DAG");
-    node_b.merge(pre_flat.clone()).expect("B merges pre-partition DAG");
-    node_c.merge(pre_flat.clone()).expect("C merges pre-partition DAG");
+    node_a
+        .merge(pre_flat.clone())
+        .expect("A merges pre-partition DAG");
+    node_b
+        .merge(pre_flat.clone())
+        .expect("B merges pre-partition DAG");
+    node_c
+        .merge(pre_flat.clone())
+        .expect("C merges pre-partition DAG");
 
     assert_eq!(node_a.keyset(), node_b.keyset(), "A,B agree pre-partition");
     assert_eq!(node_b.keyset(), node_c.keyset(), "B,C agree pre-partition");
@@ -256,7 +262,10 @@ fn three_nodes_partition_heal_equivocate_converge() {
         let preds: Vec<BlockId> = if r == 4 {
             last_shared.clone()
         } else {
-            ab_ext[(r - 4 - 1) as usize].iter().map(|b| b.id()).collect()
+            ab_ext[(r - 4 - 1) as usize]
+                .iter()
+                .map(|b| b.id())
+                .collect()
         };
         ab_ext.push(vec![
             round_block(&sk_a, r, &preds, &[r as u8, 0]),
@@ -264,8 +273,12 @@ fn three_nodes_partition_heal_equivocate_converge() {
         ]);
     }
     let ab_ext_flat = flatten(&ab_ext);
-    node_a.merge(ab_ext_flat.clone()).expect("A merges A+B extension");
-    node_b.merge(ab_ext_flat.clone()).expect("B merges A+B extension");
+    node_a
+        .merge(ab_ext_flat.clone())
+        .expect("A merges A+B extension");
+    node_b
+        .merge(ab_ext_flat.clone())
+        .expect("B merges A+B extension");
 
     // During the partition, C's keyset diverges from A/B.
     assert_ne!(
@@ -274,13 +287,19 @@ fn three_nodes_partition_heal_equivocate_converge() {
         "C must diverge while partitioned"
     );
     // A and B (the connected side) agree throughout the partition.
-    assert_eq!(node_a.keyset(), node_b.keyset(), "A,B stay consistent under partition");
+    assert_eq!(
+        node_a.keyset(),
+        node_b.keyset(),
+        "A,B stay consistent under partition"
+    );
 
     // ── Phase 3: HEAL — deliver the missed delta to C ─────────────────────
     // The partition heals. C receives the A+B extension (its causal past — the
     // pre-partition rounds — is already present, so the delta is closed). The
     // engine's `merge` orders it. This is the node's catch-up `handle_push`.
-    node_c.merge(ab_ext_flat.clone()).expect("C catches up on the missed delta");
+    node_c
+        .merge(ab_ext_flat.clone())
+        .expect("C catches up on the missed delta");
 
     // CONVERGENCE (LaceMerge): all three keysets are now identical.
     assert_eq!(node_a.keyset(), node_b.keyset(), "A,B converge after heal");
@@ -315,10 +334,17 @@ fn three_nodes_partition_heal_equivocate_converge() {
     let fork_preds: Vec<BlockId> = ab_ext[2].iter().map(|b| b.id()).collect(); // last round tips
     let fork_left = round_block(&sk_c, fork_seq, &fork_preds, b"FORK-LEFT");
     let fork_right = round_block(&sk_c, fork_seq, &fork_preds, b"FORK-RIGHT");
-    assert_ne!(fork_left.id(), fork_right.id(), "the two forks are distinct blocks");
+    assert_ne!(
+        fork_left.id(),
+        fork_right.id(),
+        "the two forks are distinct blocks"
+    );
 
     // A receives the left fork first (clean), then the right fork (DETECTED).
-    assert!(!node_a.receive(fork_left.clone()), "first fork block inserts cleanly");
+    assert!(
+        !node_a.receive(fork_left.clone()),
+        "first fork block inserts cleanly"
+    );
     assert!(
         node_a.receive(fork_right.clone()),
         "A must DETECT C's equivocation on the conflicting block"
@@ -332,8 +358,14 @@ fn three_nodes_partition_heal_equivocate_converge() {
     );
 
     // DETECTION: both honest nodes recorded C as an equivocator (evidence kept).
-    assert!(node_a.lace.equivocators().contains(&pk_c), "A records C as an equivocator");
-    assert!(node_b.lace.equivocators().contains(&pk_c), "B records C as an equivocator");
+    assert!(
+        node_a.lace.equivocators().contains(&pk_c),
+        "A records C as an equivocator"
+    );
+    assert!(
+        node_b.lace.equivocators().contains(&pk_c),
+        "B records C as an equivocator"
+    );
     // Evidence is RETAINED, not lost: both forks live in the lace.
     assert!(node_a.lace.contains(&fork_left.id()) && node_a.lace.contains(&fork_right.id()));
 
@@ -360,7 +392,9 @@ fn three_nodes_partition_heal_equivocate_converge() {
         "honest nodes A,B still finalize identically AFTER the equivocation"
     );
     assert!(
-        !fin_a2.iter().any(|(creator, seq)| *creator == pk_c && *seq == fork_seq),
+        !fin_a2
+            .iter()
+            .any(|(creator, seq)| *creator == pk_c && *seq == fork_seq),
         "neither fork from the equivocator is finalized (an equivocating leader anchors nothing)"
     );
     // The pre-fork finalized prefix is preserved (tau's finalized prefix is monotone).
@@ -413,7 +447,10 @@ fn late_joiner_catches_up_to_identical_finalized_state() {
     // node reaching the same finalized state IS LaceMerge convergence.
     let fin_a = node_a.finalized(&participants);
     let fin_d = node_d.finalized(&participants);
-    assert_eq!(fin_a, fin_d, "late joiner finalizes identically to the established node");
+    assert_eq!(
+        fin_a, fin_d,
+        "late joiner finalizes identically to the established node"
+    );
     assert!(!fin_a.is_empty());
 }
 
@@ -448,7 +485,11 @@ fn redundant_reordered_delivery_is_inert() {
     rotated.rotate_left(3);
     node_d.merge(rotated).unwrap();
 
-    assert_eq!(node_d.keyset(), keyset_once, "redundant delivery leaves keyset unchanged");
+    assert_eq!(
+        node_d.keyset(),
+        keyset_once,
+        "redundant delivery leaves keyset unchanged"
+    );
     assert_eq!(
         node_d.finalized(&participants),
         fin_once,

@@ -136,9 +136,7 @@ fn effect_body(effect: &Effect) -> String {
         Effect::NoteCreate {
             value, asset_type, ..
         } => format!("create a private note (value {value}, asset {asset_type})"),
-        
-        
-        
+
         Effect::SpawnWithDelegation {
             child_public_key,
             max_staleness,
@@ -157,9 +155,7 @@ fn effect_body(effect: &Effect) -> String {
         Effect::BridgeMint { .. } => {
             "mint a note locally from a portable cross-federation spend proof".to_string()
         }
-        
-        
-        
+
         Effect::Introduce {
             introducer,
             recipient,
@@ -175,15 +171,7 @@ fn effect_body(effect: &Effect) -> String {
             "pipeline a send to an eventual ref, carrying {} sub-effect(s)",
             action.effects.len()
         ),
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         Effect::ExerciseViaCapability {
             cap_slot,
             inner_effects,
@@ -206,15 +194,7 @@ fn effect_body(effect: &Effect) -> String {
             hx32(owner_pubkey),
             hx32(token_id)
         ),
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         Effect::Refusal {
             cell,
             offered_action_commitment,
@@ -224,14 +204,17 @@ fn effect_body(effect: &Effect) -> String {
             hx32(cell.as_bytes()),
             hx32(offered_action_commitment)
         ),
-        
+
         Effect::CellSeal { target, reason } => format!(
             "seal cell {} (reason commitment 0x{})",
             hx32(target.as_bytes()),
             hx32(reason)
         ),
         Effect::CellUnseal { target } => {
-            format!("unseal cell {} (return it to live)", hx32(target.as_bytes()))
+            format!(
+                "unseal cell {} (return it to live)",
+                hx32(target.as_bytes())
+            )
         }
         Effect::CellDestroy { target, .. } => format!(
             "permanently destroy cell {} (bind its death certificate)",
@@ -251,9 +234,7 @@ fn effect_body(effect: &Effect) -> String {
         ),
         Effect::ReceiptArchive {
             prefix_end_height, ..
-        } => format!(
-            "archive this cell's receipt-chain prefix up to height {prefix_end_height}"
-        ),
+        } => format!("archive this cell's receipt-chain prefix up to height {prefix_end_height}"),
     }
 }
 
@@ -331,10 +312,7 @@ pub fn explain_turn(turn: &Turn) -> String {
     // Depth-first pre-order over the call forest: every action, in execution
     // order, including children of every tree node.
     let trees: Vec<&dregg_turn::CallTree> = turn.call_forest.iter_dfs().collect();
-    out.push_str(&format!(
-        "{} action(s) in the call forest:\n",
-        trees.len()
-    ));
+    out.push_str(&format!("{} action(s) in the call forest:\n", trees.len()));
     for (i, tree) in trees.iter().enumerate() {
         out.push_str(&format!("[{}] {}\n", i, explain_action(&tree.action)));
     }

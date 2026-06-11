@@ -203,7 +203,6 @@ fn test_byzantine_equivocation_detection() {
 // Test 3: Byzantine node fabricates CapTP messages
 // =============================================================================
 
-
 // =============================================================================
 // Test 4: Byzantine node replays old handoff certificate
 // =============================================================================
@@ -393,4 +392,3 @@ fn test_byzantine_double_spend_nullifier_replay() {
 // =============================================================================
 // Test 7: Byzantine node sends messages to wrong session
 // =============================================================================
-

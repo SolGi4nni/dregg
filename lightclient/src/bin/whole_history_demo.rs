@@ -27,9 +27,7 @@ use dregg_circuit::ivc_turn_chain::FinalizedTurn;
 use dregg_circuit::joint_turn_aggregation::DescriptorParticipant;
 use dregg_circuit::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
 
-use dregg_lightclient::{
-    FinalityCert, fold_and_attest, verify_finalized_history, verify_history,
-};
+use dregg_lightclient::{FinalityCert, fold_and_attest, verify_finalized_history, verify_history};
 
 /// Build ONE real finalized turn on the PRODUCTION descriptor path: execute a `Transfer` debit of
 /// `amount` for a cell at `(balance, nonce)`, prove the 186-column trace through the Lean transfer
@@ -83,7 +81,10 @@ fn make_chain(
         if i == 0 {
             genesis = old_root;
         } else {
-            assert_eq!(old_root, final_root, "real chain: turn {i} continues the previous");
+            assert_eq!(
+                old_root, final_root,
+                "real chain: turn {i} continues the previous"
+            );
         }
         final_root = new_root;
         turns.push(turn);
@@ -139,13 +140,22 @@ fn main() {
 
     // --- 3. The light client verifies the WHOLE history from the aggregate alone -----------------
     rule("3. LIGHT-VERIFY — trust ALL the history from the aggregate (re-witnessing NOTHING)");
+    // The trust anchor: the honest setup extracts the root circuit's verifier-key fingerprint ONCE
+    // from its own fold and distributes it with the client (like any SNARK VK). The verifier then
+    // refuses any root whose recomputed fingerprint differs — the from-scratch-prover tooth.
+    let vk_anchor = agg.root_vk_fingerprint();
     let v_t0 = Instant::now();
-    let attested = verify_history(&agg).expect("the light client verifies the aggregate");
+    let attested =
+        verify_history(&agg, &vk_anchor).expect("the light client verifies the aggregate");
     let v_elapsed = v_t0.elapsed();
-    println!("  verify_history ran ONE recursive-STARK check in {v_elapsed:?}");
+    println!(
+        "  verify_history ran the VK pin + binding attestation + ONE recursive-STARK check in {v_elapsed:?}"
+    );
     println!("  the light client re-executed 0 turns, re-hashed 0 states, walked 0 of the lace.");
     println!("  it now holds AttestedHistory — meaning, PROVED (under the named engine-soundness");
-    println!("  hypotheses) by Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history:");
+    println!(
+        "  hypotheses) by Dregg2.Circuit.RecursiveAggregation.light_client_verifies_whole_history:"
+    );
     println!(
         "    * all {} turns executed correctly per the verified executor,",
         attested.num_turns
@@ -163,13 +173,16 @@ fn main() {
     rule("4. O(1) — verification cost is INDEPENDENT of history length N");
     let (turns2, _g2, _f2) = make_chain(2_000, 0, 3, 2); // a SHORTER chain (N=2)
     let (agg2, _a2) = fold_and_attest(&turns2).expect("the N=2 chain folds");
+    let vk_anchor2 = agg2.root_vk_fingerprint(); // the anchor is per accepted window shape
     let v2_t0 = Instant::now();
-    verify_history(&agg2).expect("N=2 aggregate verifies");
+    verify_history(&agg2, &vk_anchor2).expect("N=2 aggregate verifies");
     let v2_elapsed = v2_t0.elapsed();
     println!("  history of N={K} turns : light-verify took {v_elapsed:?}");
     println!("  history of N=2 turns : light-verify took {v2_elapsed:?}");
     println!("  both check ONE constant-size root proof — the verifier never sees N turns.");
-    println!("  (this is the compression property: O(1) verify in history length, soundness kept.)");
+    println!(
+        "  (this is the compression property: O(1) verify in history length, soundness kept.)"
+    );
 
     // --- 5. The rejection tooth — a broken order is REFUSED --------------------------------------
     rule("5. ANTI-GHOST TOOTH — a tampered / reordered history is REJECTED");
@@ -178,13 +191,18 @@ fn main() {
     // not continue the previous turn's new_root, so the temporal tooth breaks.
     let (foreign, foreign_old, _fn) = make_turn(500, 50, 3);
     let prev_new = tampered[0].new_root();
-    assert_ne!(foreign_old, prev_new, "the foreign turn must NOT continue the chain");
+    assert_ne!(
+        foreign_old, prev_new,
+        "the foreign turn must NOT continue the chain"
+    );
     tampered[1] = foreign;
     match fold_and_attest(&tampered) {
         Ok(_) => panic!("a broken order must NOT yield a whole-history attestation"),
         Err(e) => println!("  reordered chain REFUSED: {e}"),
     }
-    println!("  (mirrors Lean tampered_aggregate_cannot_bind: a reordered chain has no valid binding)");
+    println!(
+        "  (mirrors Lean tampered_aggregate_cannot_bind: a reordered chain has no valid binding)"
+    );
 
     // --- 6. The THIRD leg — finality (a correct history must also be FINALIZED) ------------------
     rule("6. FINALITY LEG — the trusted root was QUORUM-finalized (three-leg client)");
@@ -201,7 +219,7 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    let finalized = verify_finalized_history(&agg, final_root, &cert)
+    let finalized = verify_finalized_history(&agg, &vk_anchor, final_root, &cert)
         .expect("aggregate + root-seam + 3-of-4 quorum cert all hold");
     println!(
         "  three legs hold: aggregate verifies, root seam binds, {} of 4 distinct signers ratify.",
@@ -212,7 +230,9 @@ fn main() {
         finalized.finalized_root.as_u32(),
         finalized.history.num_turns
     );
-    println!("  AND was finalized by a BFT supermajority — re-witnessing nothing, never seeing the lace.");
+    println!(
+        "  AND was finalized by a BFT supermajority — re-witnessing nothing, never seeing the lace."
+    );
 
     // Sub-quorum is refused (the fork-attack defense).
     let weak = FinalityCert {
@@ -220,9 +240,18 @@ fn main() {
         participant_count: 4,
         finalized_root: final_root,
     };
-    match verify_finalized_history(&agg, final_root, &weak) {
+    match verify_finalized_history(&agg, &vk_anchor, final_root, &weak) {
         Ok(_) => panic!("a sub-quorum cert must be refused"),
         Err(e) => println!("  sub-quorum finality cert REFUSED: {e}"),
+    }
+
+    // A wrong trust anchor is refused too — the VK pin (item: a root proof of a DIFFERENT circuit
+    // can no longer be laundered through the chain verifier).
+    let mut wrong_anchor = vk_anchor;
+    wrong_anchor.0[0] ^= 0xFF;
+    match verify_history(&agg, &wrong_anchor) {
+        Ok(_) => panic!("a mismatched VK anchor must be refused"),
+        Err(e) => println!("  mismatched VK anchor REFUSED: {e}"),
     }
 
     rule("DONE — N turns of history, trusted from ONE constant-size aggregate");

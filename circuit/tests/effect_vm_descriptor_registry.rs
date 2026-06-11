@@ -14,8 +14,8 @@
 
 use dregg_circuit::effect_vm::columns::sel;
 use dregg_circuit::effect_vm_descriptors::{
-    descriptor_for_name, descriptor_for_selector, descriptor_name_for_selector,
-    fingerprint_for_name, ALL_DESCRIPTORS, NAME_ONLY_DESCRIPTORS, SELECTOR_DESCRIPTORS,
+    ALL_DESCRIPTORS, NAME_ONLY_DESCRIPTORS, SELECTOR_DESCRIPTORS, descriptor_for_name,
+    descriptor_for_selector, descriptor_name_for_selector, fingerprint_for_name,
 };
 use dregg_circuit::lean_descriptor_air::parse_vm_descriptor;
 
@@ -51,7 +51,11 @@ fn every_registered_descriptor_parses() {
 fn selector_lookup_drives_the_dispatcher() {
     for (s, name, json, _fp) in SELECTOR_DESCRIPTORS {
         assert_eq!(descriptor_for_selector(*s), Some(*json), "selector {s}");
-        assert_eq!(descriptor_name_for_selector(*s), Some(*name), "selector {s}");
+        assert_eq!(
+            descriptor_name_for_selector(*s),
+            Some(*name),
+            "selector {s}"
+        );
         parse_vm_descriptor(json)
             .unwrap_or_else(|e| panic!("selector {s} ({name}) failed to parse: {e}"));
     }

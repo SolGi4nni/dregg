@@ -156,7 +156,7 @@ pub use ring_closure::{
 #[cfg(feature = "crypto")]
 pub use seal::{SealError, SealPair, SealedBox, SealerPublic, test_seal_pair};
 pub use state::{
-    CellState, FIELD_ZERO, FieldElement, FieldVisibility, FIELDS_ROOT_CONTEXT, PublicFieldView,
+    CellState, FIELD_ZERO, FIELDS_ROOT_CONTEXT, FieldElement, FieldVisibility, PublicFieldView,
     STATE_SLOTS, compute_fields_root, empty_fields_root,
 };
 #[cfg(feature = "crypto")]

@@ -95,9 +95,8 @@ fn fresh_env(seed: u8) -> Env {
         }]),
     );
 
-    let mk_cell = |domain: &[u8]| {
-        Cell::with_balance(owner_pk, *blake3::hash(domain).as_bytes(), 1_000_000)
-    };
+    let mk_cell =
+        |domain: &[u8]| Cell::with_balance(owner_pk, *blake3::hash(domain).as_bytes(), 1_000_000);
 
     let cwm_obj = mk_cell(b"compartment-workflow-mandate");
     let cwm_cell = cwm_obj.id();
@@ -109,8 +108,14 @@ fn fresh_env(seed: u8) -> Env {
             &mut cell.state,
             &[
                 (STEP_CURSOR_SLOT as usize, field_from_u64(0)),
-                (CWM_ANCHOR_SLOT as usize, field_from_u64(DEFAULT_COMMITMENT_ANCHOR)),
-                (CHARTER_TERMINAL_SLOT as usize, field_from_u64(DEFAULT_CHARTER_STEPS)),
+                (
+                    CWM_ANCHOR_SLOT as usize,
+                    field_from_u64(DEFAULT_COMMITMENT_ANCHOR),
+                ),
+                (
+                    CHARTER_TERMINAL_SLOT as usize,
+                    field_from_u64(DEFAULT_CHARTER_STEPS),
+                ),
                 (
                     starbridge_compartment_workflow_mandate::CLEARANCE_GRAPH_ROOT_SLOT as usize,
                     clearance_label("officer"),
@@ -135,9 +140,18 @@ fn fresh_env(seed: u8) -> Env {
                 (OBJECT_KEY_SLOT as usize, field_from_u64(0)),
                 (LAST_OP_SLOT as usize, field_from_u64(0)),
                 (VOLUME_SPENT_SLOT as usize, field_from_u64(0)),
-                (SGM_ANCHOR_SLOT as usize, field_from_u64(DEFAULT_COMMITMENT_ANCHOR)),
-                (VOLUME_CEILING_SLOT as usize, field_from_u64(DEFAULT_VOLUME_CEILING)),
-                (KEY_PREFIX_HASH_SLOT as usize, key_prefix_field(DEFAULT_KEY_PREFIX)),
+                (
+                    SGM_ANCHOR_SLOT as usize,
+                    field_from_u64(DEFAULT_COMMITMENT_ANCHOR),
+                ),
+                (
+                    VOLUME_CEILING_SLOT as usize,
+                    field_from_u64(DEFAULT_VOLUME_CEILING),
+                ),
+                (
+                    KEY_PREFIX_HASH_SLOT as usize,
+                    key_prefix_field(DEFAULT_KEY_PREFIX),
+                ),
                 (
                     READ_COMPARTMENT_SLOT as usize,
                     clearance_label(DEFAULT_READ_COMPARTMENT),
@@ -255,15 +269,14 @@ fn cross_app_mandate_storage_chains_one_receipt_chain_and_emits_events() {
     let actions = build_actions(&env);
     let receipts = submit_all(&env, &actions);
 
-    assert_eq!(
-        receipts.len(),
-        7,
-        "issue, present, verify, cwm×3, sgm put"
-    );
+    assert_eq!(receipts.len(), 7, "issue, present, verify, cwm×3, sgm put");
 
     for (i, r) in receipts.iter().enumerate() {
         assert!(!r.emitted_events.is_empty(), "turn {i} must emit an event");
-        assert_eq!(r.action_count, 1, "each composition turn carries one action");
+        assert_eq!(
+            r.action_count, 1,
+            "each composition turn carries one action"
+        );
     }
 
     assert_eq!(
@@ -310,7 +323,10 @@ fn cross_app_mandate_storage_chains_one_receipt_chain_and_emits_events() {
         "storage-op emit must carry blob hash"
     );
 
-    assert_eq!(receipts[0].previous_receipt_hash, None, "first turn is genesis");
+    assert_eq!(
+        receipts[0].previous_receipt_hash, None,
+        "first turn is genesis"
+    );
     for i in 1..receipts.len() {
         assert_eq!(
             receipts[i].previous_receipt_hash,
@@ -330,7 +346,10 @@ fn cross_app_mandate_storage_state_transitions_are_deterministic_on_replay() {
 
     assert_eq!(first.len(), second.len());
     for (i, (a, b)) in first.iter().zip(second.iter()).enumerate() {
-        assert_eq!(a.turn_hash, b.turn_hash, "turn_hash deterministic (turn {i})");
+        assert_eq!(
+            a.turn_hash, b.turn_hash,
+            "turn_hash deterministic (turn {i})"
+        );
         assert_eq!(
             a.pre_state_hash, b.pre_state_hash,
             "pre_state deterministic (turn {i})"

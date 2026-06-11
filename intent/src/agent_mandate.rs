@@ -44,8 +44,8 @@
 use std::collections::BTreeSet;
 
 use dregg_cell::facet::{
-    EffectMask, EFFECT_GRANT_CAPABILITY, EFFECT_REVOKE_CAPABILITY, EFFECT_SET_FIELD,
-    EFFECT_TRANSFER,
+    EFFECT_GRANT_CAPABILITY, EFFECT_REVOKE_CAPABILITY, EFFECT_SET_FIELD, EFFECT_TRANSFER,
+    EffectMask,
 };
 use dregg_cell::{AuthRequired, CapabilityRef, CellId};
 use dregg_turn::action::Effect;
@@ -183,13 +183,7 @@ impl Mandate {
     /// mandate. The child's `grantor` is THIS mandate's holder; its rights are `self.keep ∩ req`
     /// (so ⊆ `self.keep`); its budget is `min(self.budget, b)` (so ≤ `self.budget`); its caveat is
     /// `self.caveat ∧ cv`. No face is ever widened — a sub-delegation can only attenuate.
-    pub fn sub_delegate(
-        &self,
-        child: CellId,
-        req: &Rights,
-        b: u64,
-        cv: &Caveat,
-    ) -> Mandate {
+    pub fn sub_delegate(&self, child: CellId, req: &Rights, b: u64, cv: &Caveat) -> Mandate {
         Mandate {
             grantor: self.holder,
             holder: child,
@@ -266,7 +260,10 @@ impl DelegTree {
                     .all(|&m| !c.mandate.caveat.admits(m) || self.mandate.caveat.admits(m))
                 && c.mandate.target == self.mandate.target
                 && c.mandate.grantor == self.mandate.holder
-        }) && self.children.iter().all(|c| c.well_attenuated(caveat_probes))
+        }) && self
+            .children
+            .iter()
+            .all(|c| c.well_attenuated(caveat_probes))
     }
 
     /// **`no_amplify`** (Lean `subtree_rights_le_root`) — NO sub-agent out-authorizes the root:
@@ -291,8 +288,7 @@ impl DelegTree {
     /// FULL parent budget; this forbids it.
     pub fn budget_partitioned(&self) -> bool {
         let children_sum: u64 = self.children.iter().map(|c| c.mandate.budget).sum();
-        children_sum <= self.mandate.budget
-            && self.children.iter().all(|c| c.budget_partitioned())
+        children_sum <= self.mandate.budget && self.children.iter().all(|c| c.budget_partitioned())
     }
 
     /// Iterate every mandate in the subtree (root first, pre-order) — Lean `mandateList`.
@@ -383,7 +379,14 @@ mod tests {
     #[test]
     fn overbudget_is_clamped() {
         // Lean `demo_overbudget_clamped`: asking 999 against a parent of 100 yields 100, never 999.
-        let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+        let root = Mandate::root(
+            cid(0),
+            cid(1),
+            cid(7),
+            rights(&[Auth::Read]),
+            100,
+            Caveat::any(),
+        );
         let child = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 999, &Caveat::any());
         assert_eq!(child.budget, 100);
     }
@@ -391,7 +394,14 @@ mod tests {
     #[test]
     fn rights_genuinely_narrow() {
         // Lean `demo_rights_narrow`: a read-only sub-delegation drops write.
-        let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read, Auth::Write]), 100, Caveat::any());
+        let root = Mandate::root(
+            cid(0),
+            cid(1),
+            cid(7),
+            rights(&[Auth::Read, Auth::Write]),
+            100,
+            Caveat::any(),
+        );
         let child = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 40, &Caveat::any());
         assert_eq!(child.keep, rights(&[Auth::Read]));
         assert!(!child.keep.contains(&Auth::Write));
@@ -400,7 +410,14 @@ mod tests {
     #[test]
     fn caveat_window_narrows() {
         // Lean `subDelegate_caveat_narrows`: if the child admits a method, so does the parent.
-        let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::only(&[1, 2, 3]));
+        let root = Mandate::root(
+            cid(0),
+            cid(1),
+            cid(7),
+            rights(&[Auth::Read]),
+            100,
+            Caveat::only(&[1, 2, 3]),
+        );
         let child = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 40, &Caveat::only(&[2]));
         // child admits only 2 (intersection of {1,2,3} and {2}); parent admits it too.
         assert!(child.caveat.admits(2));
@@ -416,7 +433,14 @@ mod tests {
     fn oversubscription_is_caught() {
         // TEETH for budget_partitioned: two children each carrying the full parent budget
         // over-subscribes — the predicate REFUSES it (the conservation facet has teeth).
-        let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+        let root = Mandate::root(
+            cid(0),
+            cid(1),
+            cid(7),
+            rights(&[Auth::Read]),
+            100,
+            Caveat::any(),
+        );
         // Bypass `sub_delegate`'s clamp to forge an over-subscribing tree (an adversarial runtime).
         let mut c1 = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 100, &Caveat::any());
         let mut c2 = root.sub_delegate(cid(3), &rights(&[Auth::Read]), 100, &Caveat::any());
@@ -434,7 +458,14 @@ mod tests {
     #[test]
     fn amplification_is_caught() {
         // TEETH for no_amplify: a forged child claiming MORE rights than its parent is refused.
-        let root = Mandate::root(cid(0), cid(1), cid(7), rights(&[Auth::Read]), 100, Caveat::any());
+        let root = Mandate::root(
+            cid(0),
+            cid(1),
+            cid(7),
+            rights(&[Auth::Read]),
+            100,
+            Caveat::any(),
+        );
         let mut rogue = root.sub_delegate(cid(2), &rights(&[Auth::Read]), 40, &Caveat::any());
         rogue.keep = rights(&[Auth::Read, Auth::Write, Auth::Control]); // forged amplification
         let bad = DelegTree::leaf(root).with_child(DelegTree::leaf(rogue));

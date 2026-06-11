@@ -586,9 +586,3 @@ fn captp_delivered_rejects_wrong_introducer_pk() {
 // effect's carried `(recipient_pk, introducer_pk)` MUST match the
 // CapTpDelivered authorization's cert. Forged keys → rejection.
 // ---------------------------------------------------------------------------
-
-
-
-
-
-

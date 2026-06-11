@@ -36,7 +36,7 @@
 
 use crate::caveat::CaveatSet;
 use crate::crypto;
-use crate::macaroon::{create_discharge, Macaroon};
+use crate::macaroon::{Macaroon, create_discharge};
 
 // ───────────────────────────── Lean model, transcribed to Rust ─────────────────────────────
 // These mirror `MacaroonDischarge.lean` §1 exactly.
@@ -83,7 +83,8 @@ fn root_with_3p(root_key: &[u8; 32], shared_key: &[u8; 32]) -> (Macaroon, [u8; 3
         .unwrap();
     let tp_caveats = mac.caveats.third_party_caveats();
     let tp = crate::caveat_3p::ThirdPartyCaveat::decode_body(&tp_caveats[0].body).unwrap();
-    let wire_ticket = crate::caveat_3p::ThirdPartyCaveat::decrypt_ticket(&tp.ticket, shared_key).unwrap();
+    let wire_ticket =
+        crate::caveat_3p::ThirdPartyCaveat::decrypt_ticket(&tp.ticket, shared_key).unwrap();
     let mut dk = [0u8; 32];
     dk.copy_from_slice(&wire_ticket.discharge_key);
     (mac, dk, tp.ticket.clone())
@@ -176,8 +177,7 @@ fn binding_not_replayable_to_other_root() {
     // The binding body in `discharge` names R1's tail; R2's tail differs (different root key), so the
     // binding check fails (DischargeUnbound / unbound for R2).
     assert_ne!(
-        mac1.tail,
-        mac2.tail,
+        mac1.tail, mac2.tail,
         "the two roots must have different tails"
     );
     assert!(

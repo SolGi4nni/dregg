@@ -73,17 +73,53 @@ fn corpus() -> Vec<Row> {
     vec![
         // byzantine_node_different_session_cannot_drop_others_refs (gc.rs:670):
         // fed20's session (99) presented against fed10's slot ⇒ Invalid, total stays 2.
-        Row { holders: demo(), drop_fed: 10, drop_session: Some(99), expected_verdict: DropResult::Invalid, expected_total: 2 },
+        Row {
+            holders: demo(),
+            drop_fed: 10,
+            drop_session: Some(99),
+            expected_verdict: DropResult::Invalid,
+            expected_total: 2,
+        },
         // honest drop on the CORRECT session (still held by the peer): total 2 → 1.
-        Row { holders: demo(), drop_fed: 10, drop_session: Some(42), expected_verdict: DropResult::StillHeld, expected_total: 1 },
+        Row {
+            holders: demo(),
+            drop_fed: 10,
+            drop_session: Some(42),
+            expected_verdict: DropResult::StillHeld,
+            expected_total: 1,
+        },
         // export_drop_rejected_from_wrong_session: re-export superseded the session ⇒ old session 1 fails.
-        Row { holders: superseded(), drop_fed: 10, drop_session: Some(1), expected_verdict: DropResult::Invalid, expected_total: 2 },
+        Row {
+            holders: superseded(),
+            drop_fed: 10,
+            drop_session: Some(1),
+            expected_verdict: DropResult::Invalid,
+            expected_total: 2,
+        },
         // current (superseding) session 7 succeeds: 2 → 1.
-        Row { holders: superseded(), drop_fed: 10, drop_session: Some(7), expected_verdict: DropResult::StillHeld, expected_total: 1 },
+        Row {
+            holders: superseded(),
+            drop_fed: 10,
+            drop_session: Some(7),
+            expected_verdict: DropResult::StillHeld,
+            expected_total: 1,
+        },
         // legacy session-unaware path (Lean `expected = none`, modelled as session 0): 2 → 1.
-        Row { holders: vec![(10u8, 1u64, 0 as SessionId), (20u8, 1u64, 99 as SessionId)], drop_fed: 10, drop_session: None, expected_verdict: DropResult::StillHeld, expected_total: 1 },
+        Row {
+            holders: vec![(10u8, 1u64, 0 as SessionId), (20u8, 1u64, 99 as SessionId)],
+            drop_fed: 10,
+            drop_session: None,
+            expected_verdict: DropResult::StillHeld,
+            expected_total: 1,
+        },
         // unknown federation ⇒ Invalid, total stays 2.
-        Row { holders: demo(), drop_fed: 99, drop_session: Some(1), expected_verdict: DropResult::Invalid, expected_total: 2 },
+        Row {
+            holders: demo(),
+            drop_fed: 99,
+            drop_session: Some(1),
+            expected_verdict: DropResult::Invalid,
+            expected_total: 2,
+        },
     ]
 }
 
@@ -117,7 +153,11 @@ fn byzantine_wrong_session_is_a_no_op() {
     // byzantine fed20 forges fed10's slot but can only present its OWN session 99 ⇒ rejected.
     let verdict = mgr.process_drop_with_session(c, fed(10), 99);
     assert_eq!(verdict, DropResult::Invalid);
-    assert_eq!(mgr.get(&c).unwrap().total_refs, 2, "victim's ref must survive");
+    assert_eq!(
+        mgr.get(&c).unwrap().total_refs,
+        2,
+        "victim's ref must survive"
+    );
 
     // the victim, on its correct session 42, CAN drop its own ref (de-vacuity: not a blanket refusal).
     let verdict = mgr.process_drop_with_session(c, fed(10), 42);

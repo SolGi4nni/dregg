@@ -35,7 +35,12 @@ pub fn lean_producer_env_enabled() -> bool {
     {
         !matches!(
             std::env::var("DREGG_LEAN_PRODUCER").ok().as_deref(),
-            Some("0") | Some("false") | Some("FALSE") | Some("off") | Some("OFF") | Some("no")
+            Some("0")
+                | Some("false")
+                | Some("FALSE")
+                | Some("off")
+                | Some("OFF")
+                | Some("no")
                 | Some("NO")
         )
     }

@@ -1015,7 +1015,10 @@ impl TurnExecutor {
             return;
         }
 
-        let leaves: Vec<_> = holder_caps.iter().map(dregg_cell::cap_ref_to_leaf).collect();
+        let leaves: Vec<_> = holder_caps
+            .iter()
+            .map(dregg_cell::cap_ref_to_leaf)
+            .collect();
         let tree = CanonicalCapTree::new(leaves, CAP_TREE_DEPTH);
         let Some(pos) = tree.position_of(leaf.slot_hash) else {
             tracing::warn!(
@@ -2085,12 +2088,12 @@ impl TurnExecutor {
                 }
                 // Locking funds in an escrow or obligation stake is equivalent to
                 // sending value out — require Send permission on the source cell.
-                
+
                 // Settlement actions (release/refund/fulfill/slash) are checked for
                 // creator/beneficiary authorization in the handler, but still require
                 // at least Access permission to be mapped so that cells with
                 // Access: None cannot be targeted.
-                
+
                 // Refusal mutates the target cell's audit slot + nonce
                 // (CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.3); it requires
                 // SetState authority because it overwrites slot[4] with
@@ -2131,7 +2134,6 @@ impl TurnExecutor {
         fn walk(out: &mut Vec<CellId>, effects: &[Effect]) {
             for e in effects {
                 match e {
-                    
                     Effect::Transfer { from, to, .. } => {
                         push(out, *from);
                         push(out, *to);

@@ -207,12 +207,10 @@ fn note_spend_always_rejects_without_proof() {
 // CreateSealPair — grants sealer and unsealer capabilities to two cells.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // Seal — seals a capability reference using the sealer pair.
 // Sequence: CreateSealPair → Seal.
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // Unseal — full Seal->Unseal round-trip through the executor. Exercises the
@@ -222,7 +220,6 @@ fn note_spend_always_rejects_without_proof() {
 // (Previously apply_unseal used from_keys([0u8;32], …), zeroing sealer_public,
 // which always produced the wrong key and failed with DecryptionFailed.)
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // Helper: replicate the executor's seal_capability_id derivation.
@@ -239,30 +236,25 @@ fn seal_capability_id_for_test(pair_id: &[u8; 32], is_sealer: bool) -> CellId {
 // CreateCommittedEscrow — locks funds behind cryptographic commitments.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // ReleaseCommittedEscrow — pays out to recipient after claim authorization.
 // Sequence: CreateCommittedEscrow → ReleaseCommittedEscrow.
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // RefundCommittedEscrow — returns funds to creator after timeout.
 // Sequence: CreateCommittedEscrow → advance block height → RefundCommittedEscrow.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // BridgeFinalize — finalizes a pending bridge using a trusted receipt.
 // Sequence: BridgeLock → BridgeFinalize.
 // ---------------------------------------------------------------------------
 
-
 // ---------------------------------------------------------------------------
 // BridgeCancel — cancels a pending bridge after timeout.
 // Sequence: BridgeLock → advance block height → BridgeCancel.
 // ---------------------------------------------------------------------------
-
 
 // ---------------------------------------------------------------------------
 // Introduce — introducer with caps to both recipient and target grants

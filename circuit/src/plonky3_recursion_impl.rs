@@ -428,6 +428,127 @@ pub mod recursive {
         verify_recursive_batch_proof(&output.0)
     }
 
+    // ========================================================================
+    // VK fingerprint: pinning the verifier-reconstruction inputs.
+    // ========================================================================
+
+    /// A fingerprint of a recursive batch proof's **verifier-reconstruction
+    /// inputs** — the closest thing the fork's proof format has to a verifying
+    /// key. [`verify_recursive_batch_proof`] reconstructs the circuit table
+    /// AIRs and the preprocessed binding **from the proof itself**
+    /// (`table_packing`, `rows`, `alu_variant`, `ext_degree`, `w_binomial`,
+    /// the non-primitive table manifest, and `stark_common` — whose
+    /// `preprocessed.commitment` is the Merkle binding of the verifier
+    /// circuit's static op-list). Left unpinned, "the root verifies" means
+    /// only "*some* circuit's proof verifies": a from-scratch prover could
+    /// aggregate a DIFFERENT circuit's proofs and present a root this
+    /// verifier accepts.
+    ///
+    /// The fingerprint hashes exactly those reconstruction inputs (shape +
+    /// preprocessed binding; runtime values are excluded), so an accepted
+    /// proof whose fingerprint equals a trusted anchor is — under blake3
+    /// collision resistance and the MMCS commitment binding — a proof of the
+    /// SAME verifier-circuit structure the anchor was extracted from.
+    ///
+    /// ## What this does and does NOT pin (be precise)
+    ///
+    /// PINS: the root layer's circuit structure — its op-list (via the
+    /// preprocessed commitment), table shapes, packing, lookups (derived from
+    /// the rebuilt AIRs), and the non-primitive table manifest shape.
+    ///
+    /// Does NOT (cannot, harness-side) pin: the **child** proofs' circuit
+    /// identity. The fork's aggregation circuit takes each child's
+    /// preprocessed commitment as a runtime PUBLIC INPUT of the parent
+    /// circuit (`MerkleCapTargets::new` → `alloc_public_input_array`), and
+    /// circuit public-input VALUES live in the constraint-free `PublicAir`
+    /// main trace, which `verify_all_tables` never checks against
+    /// caller-supplied values. Pinning child identity through the root needs
+    /// fork work — see the module docs of [`crate::ivc_turn_chain`] for the
+    /// precise follow-up.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct RecursionVk(pub [u8; 32]);
+
+    impl RecursionVk {
+        /// Hex rendering for error messages.
+        pub fn to_hex(&self) -> String {
+            self.0.iter().map(|b| format!("{b:02x}")).collect()
+        }
+    }
+
+    /// Compute the [`RecursionVk`] fingerprint of a recursive batch proof's
+    /// verifier-reconstruction inputs. Deterministic in the circuit structure;
+    /// independent of the witness content (two proofs of the same circuit
+    /// shape over different data fingerprint identically — that is what makes
+    /// it usable as a trust anchor).
+    pub fn recursion_vk_fingerprint(
+        proof: &p3_circuit_prover::BatchStarkProof<DreggRecursionConfig>,
+    ) -> RecursionVk {
+        fn ser<T: serde::Serialize>(h: &mut blake3::Hasher, label: &str, v: &T) {
+            let bytes = postcard::to_allocvec(v).expect(
+                "VK-material field must postcard-serialize (alloc serializer is infallible)",
+            );
+            h.update(label.as_bytes());
+            h.update(&(bytes.len() as u64).to_le_bytes());
+            h.update(&bytes);
+        }
+
+        let mut h = blake3::Hasher::new();
+        h.update(b"dregg-recursion-vk-v1");
+
+        // The shape fields verify_all_tables rebuilds the table AIRs from.
+        ser(&mut h, "table_packing", &proof.table_packing);
+        ser(&mut h, "rows", &proof.rows);
+        ser(&mut h, "alu_variant", &proof.alu_variant);
+        h.update(&[proof.alu_quintic_trinomial as u8]);
+        h.update(&(proof.ext_degree as u64).to_le_bytes());
+        ser(&mut h, "w_binomial", &proof.w_binomial);
+
+        // Per-table degree bits (the FRI domain shape the verifier trusts).
+        ser(&mut h, "degree_bits", &proof.proof.degree_bits);
+
+        // Non-primitive table manifest SHAPE (op_type / rows / lanes /
+        // variant). `entry.public_values` are runtime values the host
+        // verifier passes through to `verify_batch` — excluded so the
+        // fingerprint stays content-independent.
+        h.update(&(proof.non_primitives.len() as u64).to_le_bytes());
+        for entry in &proof.non_primitives {
+            ser(&mut h, "npo_op_type", &entry.op_type);
+            h.update(&(entry.rows as u64).to_le_bytes());
+            h.update(&(entry.lanes as u64).to_le_bytes());
+            ser(&mut h, "npo_air_variant", &entry.air_variant);
+        }
+
+        // The preprocessed binding — THE verifying-key core: the Merkle
+        // commitment to the verifier circuit's static op-list columns, plus
+        // the per-instance metadata the verifier interprets it with.
+        match &proof.stark_common.preprocessed {
+            None => {
+                h.update(&[0u8]);
+            }
+            Some(gp) => {
+                h.update(&[1u8]);
+                ser(&mut h, "preprocessed_commitment", &gp.commitment);
+                h.update(&(gp.instances.len() as u64).to_le_bytes());
+                for inst in &gp.instances {
+                    match inst {
+                        None => {
+                            h.update(&[0u8]);
+                        }
+                        Some(m) => {
+                            h.update(&[1u8]);
+                            h.update(&(m.matrix_index as u64).to_le_bytes());
+                            h.update(&(m.width as u64).to_le_bytes());
+                            h.update(&(m.degree_bits as u64).to_le_bytes());
+                        }
+                    }
+                }
+                ser(&mut h, "matrix_to_instance", &gp.matrix_to_instance);
+            }
+        }
+
+        RecursionVk(*h.finalize().as_bytes())
+    }
+
     /// Verify a recursive proof from just the inner `BatchStarkProof`.
     ///
     /// Useful when the proof was serialised by itself (the

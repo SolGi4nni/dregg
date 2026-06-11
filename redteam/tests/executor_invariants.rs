@@ -21,9 +21,7 @@
 //! exists, nonce matches, fee covered) so the attack reaches the deep
 //! enforcement — this is not security theater against the empty-forest guard.
 
-use dregg_cell::{
-    AuthRequired, Cell, CellId, Ledger, Permissions,
-};
+use dregg_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use std::collections::HashMap;
 
@@ -47,7 +45,10 @@ impl Kp {
         s[0] = b;
         let sk = SigningKey::from_bytes(&s);
         let pk: VerifyingKey = (&sk).into();
-        Kp { sk, pk: pk.to_bytes() }
+        Kp {
+            sk,
+            pk: pk.to_bytes(),
+        }
     }
     /// A real signature over the action's canonical signing message.
     fn sign(&self, action: &Action) -> Authorization {
@@ -81,7 +82,12 @@ fn sig_cell(seed: u8, balance: u64) -> (Cell, Kp) {
 
 fn total_balance(ledger: &Ledger, ids: &[CellId]) -> u128 {
     ids.iter()
-        .map(|id| ledger.get(id).map(|c| c.state.balance() as u128).unwrap_or(0))
+        .map(|id| {
+            ledger
+                .get(id)
+                .map(|c| c.state.balance() as u128)
+                .unwrap_or(0)
+        })
         .sum()
 }
 
@@ -204,7 +210,14 @@ fn unauthorized_transfer_is_rejected_and_state_unchanged() {
 
     // Attack A: Authorization::Unchecked against a signature-required cell.
     let nonce = ledger.get(&victim_id).unwrap().state.nonce();
-    let t_unchecked = transfer_turn(victim_id, recipient_id, 5_000, nonce, Authorization::Unchecked, None);
+    let t_unchecked = transfer_turn(
+        victim_id,
+        recipient_id,
+        5_000,
+        nonce,
+        Authorization::Unchecked,
+        None,
+    );
     let r1 = exec.execute(&t_unchecked, &mut ledger);
     assert!(
         !r1.is_committed(),
@@ -220,7 +233,11 @@ fn unauthorized_transfer_is_rejected_and_state_unchanged() {
         args: vec![],
         authorization: Authorization::Unchecked, // placeholder; replaced below
         preconditions: Default::default(),
-        effects: vec![Effect::Transfer { from: victim_id, to: recipient_id, amount: 5_000 }],
+        effects: vec![Effect::Transfer {
+            from: victim_id,
+            to: recipient_id,
+            amount: 5_000,
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
@@ -258,7 +275,9 @@ fn unauthorized_transfer_is_rejected_and_state_unchanged() {
 fn destination_overflow_does_not_mint() {
     let (mut sender, _) = open_cell(11, u64::MAX);
     let (recipient, _) = open_cell(12, u64::MAX);
-    sender.capabilities.grant(recipient.id(), AuthRequired::None);
+    sender
+        .capabilities
+        .grant(recipient.id(), AuthRequired::None);
     let sid = sender.id();
     let rid = recipient.id();
 
@@ -273,7 +292,10 @@ fn destination_overflow_does_not_mint() {
     let nonce = ledger.get(&sid).unwrap().state.nonce();
     let turn = transfer_turn(sid, rid, 1, nonce, Authorization::Unchecked, None);
     let r = exec.execute(&turn, &mut ledger);
-    assert!(!r.is_committed(), "FINDING: overflowing transfer committed (wrap-around mint)");
+    assert!(
+        !r.is_committed(),
+        "FINDING: overflowing transfer committed (wrap-around mint)"
+    );
     assert_eq!(
         total_balance(&ledger, &[sid, rid]),
         before,
@@ -315,8 +337,16 @@ fn multi_effect_overspend_rolls_back_atomically() {
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
         effects: vec![
-            Effect::Transfer { from: sid, to: aid, amount: 80 },
-            Effect::Transfer { from: sid, to: bid, amount: 80 },
+            Effect::Transfer {
+                from: sid,
+                to: aid,
+                amount: 80,
+            },
+            Effect::Transfer {
+                from: sid,
+                to: bid,
+                amount: 80,
+            },
         ],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
@@ -345,11 +375,22 @@ fn multi_effect_overspend_rolls_back_atomically() {
         effect_witness_index_map: Vec::new(),
     };
     let r = exec.execute(&turn, &mut ledger);
-    assert!(!r.is_committed(), "FINDING: an over-balance multi-transfer turn committed (double-spend)");
+    assert!(
+        !r.is_committed(),
+        "FINDING: an over-balance multi-transfer turn committed (double-spend)"
+    );
 
     // ATOMICITY: neither transfer applied — sender keeps all 100, a/b stay 0.
-    assert_eq!(ledger.get(&sid).unwrap().state.balance(), 100, "FINDING: partial debit — first transfer was NOT rolled back");
-    assert_eq!(ledger.get(&aid).unwrap().state.balance(), 0, "FINDING: partial credit leaked through rollback");
+    assert_eq!(
+        ledger.get(&sid).unwrap().state.balance(),
+        100,
+        "FINDING: partial debit — first transfer was NOT rolled back"
+    );
+    assert_eq!(
+        ledger.get(&aid).unwrap().state.balance(),
+        0,
+        "FINDING: partial credit leaked through rollback"
+    );
     assert_eq!(ledger.get(&bid).unwrap().state.balance(), 0);
     assert_eq!(total_balance(&ledger, &[sid, aid, bid]), before);
 }
@@ -364,7 +405,9 @@ fn multi_effect_overspend_rolls_back_atomically() {
 fn replay_at_same_nonce_is_rejected() {
     let (mut sender, _) = open_cell(31, 1_000);
     let (recipient, _) = open_cell(32, 0);
-    sender.capabilities.grant(recipient.id(), AuthRequired::None);
+    sender
+        .capabilities
+        .grant(recipient.id(), AuthRequired::None);
     let (sid, rid) = (sender.id(), recipient.id());
 
     let mut ledger = Ledger::new();

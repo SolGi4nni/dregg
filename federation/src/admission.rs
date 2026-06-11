@@ -345,11 +345,7 @@ impl AdmissionRegistry {
         };
         // Seeds first (deterministic order), then vouchers/candidates, then bond owners, then query —
         // the exact set the wire carries; interning is by first appearance, injective by construction.
-        let seeds: Vec<u64> = self
-            .seeds
-            .iter()
-            .map(|s| intern(s, &mut ids))
-            .collect();
+        let seeds: Vec<u64> = self.seeds.iter().map(|s| intern(s, &mut ids)).collect();
         let vouches: Vec<(u64, u64)> = self
             .vouches
             .iter()
@@ -510,7 +506,11 @@ mod tests {
         reg.add_vouch(Vouch::create(&sk_s2, victim));
         reg.add_vouch(Vouch::create(&sk_s1, s2));
         reg.add_vouch(Vouch::create(&sk_s2, s1));
-        assert_eq!(reg.vouched_by(&victim), 0, "unrooted vouchers must not count");
+        assert_eq!(
+            reg.vouched_by(&victim),
+            0,
+            "unrooted vouchers must not count"
+        );
         assert!(!reg.admitted(&victim));
         assert!(!reg.admitted(&s1));
         assert!(!reg.admitted(&s2));
@@ -547,7 +547,10 @@ mod tests {
         let burned = reg.slash(&ev).expect("valid equivocation slashes");
         assert_eq!(burned, 250, "slash burns the whole bond");
         assert!(!reg.has_valid_bond(&newcomer));
-        assert!(!reg.admitted(&newcomer), "slashed newcomer falls out of admission");
+        assert!(
+            !reg.admitted(&newcomer),
+            "slashed newcomer falls out of admission"
+        );
     }
 
     #[test]
@@ -563,7 +566,10 @@ mod tests {
             conflicting: [9u8; 32],
         };
         assert!(reg.slash(&bogus).is_none());
-        assert!(reg.admitted(&newcomer), "an unproven fork must not slash a member");
+        assert!(
+            reg.admitted(&newcomer),
+            "an unproven fork must not slash a member"
+        );
     }
 
     #[test]
@@ -629,7 +635,10 @@ mod tests {
         assert!(admitted.contains(&vouched), "vouched strand admitted");
         assert!(admitted.contains(&bonded), "bonded strand admitted");
         assert!(admitted.contains(&equiv));
-        assert!(!admitted.contains(&sybil), "F-4: the Sybil strand is NOT admitted/finalizable");
+        assert!(
+            !admitted.contains(&sybil),
+            "F-4: the Sybil strand is NOT admitted/finalizable"
+        );
         assert!(!reg.is_finalizable(&sybil));
 
         // now the equivocator forks — it is slashed and drops out of the admitted participant set.

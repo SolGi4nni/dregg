@@ -525,8 +525,10 @@ impl BlocklaceHandle {
         // VERIFIED rule admits. Default ON (`DREGG_STRAND_ADMISSION_GATE`); fail-safe (the gate is
         // the identity on the constitutional members, and `admitted` falls back to its Rust sibling
         // when the Lean archive is absent).
-        let participants =
-            crate::strand_admission_gate::admitted_participants(&raw_participants, &raw_participants);
+        let participants = crate::strand_admission_gate::admitted_participants(
+            &raw_participants,
+            &raw_participants,
+        );
         if participants.len() != raw_participants.len() {
             warn!(
                 admitted = participants.len(),
@@ -657,8 +659,7 @@ impl BlocklaceHandle {
         // committed prefix BEFORE that block (we do NOT advance `executed_up_to` past it), so it is
         // re-evaluated on a later poll once the lace has grown enough — preserving liveness (tau's
         // finalized prefix is monotone).
-        let gate_armed =
-            participants.len() > 1 && crate::finality_gate::finality_gate_enabled();
+        let gate_armed = participants.len() > 1 && crate::finality_gate::finality_gate_enabled();
         let verified = if gate_armed {
             crate::finality_gate::VerifiedFinality::compute(&lace, &participants)
         } else {
@@ -1678,7 +1679,9 @@ fn spawn_block_cadence(
             // instead, the pending ack stays armed for the next tick rather
             // than being silently swallowed. It is cleared only on the
             // ReactiveAck branch, just before the ack block is created.
-            let ack_pending = handle.ack_pending.load(std::sync::atomic::Ordering::Relaxed);
+            let ack_pending = handle
+                .ack_pending
+                .load(std::sync::atomic::Ordering::Relaxed);
             let idle_for = handle.last_produced.read().await.elapsed();
 
             match cadence_decision(queued.len(), ack_pending, idle_for, idle_heartbeat_ms) {
@@ -1996,12 +1999,8 @@ async fn execute_finalized_turn(
             // A gate whose remaining slice = the agent's bounded-counter remaining for THIS silo.
             // The gate's numeric silo tag is a stable u32 fingerprint of the node's SiloId (only an
             // identifier; the load-bearing value is the slice ceiling the verified Budget leg reads).
-            let silo_tag = u32::from_le_bytes([
-                s.silo_id[0],
-                s.silo_id[1],
-                s.silo_id[2],
-                s.silo_id[3],
-            ]);
+            let silo_tag =
+                u32::from_le_bytes([s.silo_id[0], s.silo_id[1], s.silo_id[2], s.silo_id[3]]);
             let slice = dregg_turn::BudgetSlice::new(remaining);
             executor.set_budget_gate(dregg_turn::BudgetGate::new(silo_tag, slice));
         }
@@ -2230,8 +2229,7 @@ async fn execute_finalized_turn(
                         .into_iter()
                         .cloned()
                         .collect();
-                    let spent_nullifiers =
-                        crate::turn_proving::spent_nullifiers(&effects);
+                    let spent_nullifiers = crate::turn_proving::spent_nullifiers(&effects);
                     let actor_cap_witness = crate::turn_proving::actor_consumed_cap(
                         &receipt.consumed_capabilities,
                         &signed_turn.turn.agent,
@@ -2306,10 +2304,12 @@ async fn execute_finalized_turn(
                             );
                             Some(proof_bytes)
                         }
-                        Err(crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
-                            have,
-                            max,
-                        }) => {
+                        Err(
+                            crate::turn_proving::FullTurnProvingError::RevocationCapacityExceeded {
+                                have,
+                                max,
+                            },
+                        ) => {
                             // KNOWN LIMITATION (not a soundness failure): the canonical
                             // nullifier set outgrew the fixed-depth non-revocation circuit.
                             // We do not silently truncate the set (that could hide a
@@ -2485,7 +2485,10 @@ async fn execute_finalized_turn(
                     touched_cells,
                 };
                 let expected_ordinal = s.store.commit_cursor().unwrap_or(0);
-                match s.store.commit_finalized_turn(expected_ordinal, &commit_record) {
+                match s
+                    .store
+                    .commit_finalized_turn(expected_ordinal, &commit_record)
+                {
                     Ok(assigned) => {
                         debug!(
                             turn_hash = %turn_hash_hex,

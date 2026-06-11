@@ -105,8 +105,12 @@ fn two_cell_ledger() -> (Ledger, CellId, CellId) {
 /// Compare two ledgers cell-by-cell (balance + nonce + all state fields) AND on `.root()`.
 fn assert_ledgers_agree(committed: &mut Ledger, rust: &mut Ledger, ids: &[CellId]) {
     for id in ids {
-        let c = committed.get(id).unwrap_or_else(|| panic!("cell {id:?} missing from COMMITTED ledger"));
-        let r = rust.get(id).unwrap_or_else(|| panic!("cell {id:?} missing from RUST differential ledger"));
+        let c = committed
+            .get(id)
+            .unwrap_or_else(|| panic!("cell {id:?} missing from COMMITTED ledger"));
+        let r = rust
+            .get(id)
+            .unwrap_or_else(|| panic!("cell {id:?} missing from RUST differential ledger"));
         assert_eq!(
             c.state.balance(),
             r.state.balance(),
@@ -154,8 +158,7 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
     // FRESH executor (matching the node, which builds one per finalized turn).
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut ledger = pre.clone();
-    let (_rust_result_inner, outcome) =
-        lean_apply::produce_via_lean(&executor, &turn, &mut ledger);
+    let (_rust_result_inner, outcome) = lean_apply::produce_via_lean(&executor, &turn, &mut ledger);
 
     match outcome {
         ProducerOutcome::LeanProduced {
@@ -215,7 +218,11 @@ fn producer_mode_transfer_commits_lean_state_matching_rust() {
         a_id,
         a_id,
         0,
-        Effect::Transfer { from: a_id, to: b_id, amount: 30 },
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 30,
+        },
     );
     run_producer_mode(pre, turn, true, &[a_id, b_id]);
 }
@@ -232,7 +239,11 @@ fn producer_mode_setfield_commits_lean_state_matching_rust() {
         a_id,
         a_id,
         0,
-        Effect::SetField { cell: a_id, index: 6, value: field_from_u64(42) },
+        Effect::SetField {
+            cell: a_id,
+            index: 6,
+            value: field_from_u64(42),
+        },
     );
     run_producer_mode(pre, turn, true, &[a_id, b_id]);
 }

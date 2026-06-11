@@ -34,8 +34,8 @@
 #![cfg(test)]
 
 use super::threshold_decrypt::{
-    combine_shares, gf256, generate_epoch_key, produce_decryption_share, shamir_reconstruct_byte,
-    shamir_split_byte, threshold_encrypt, ThresholdDecryptError,
+    ThresholdDecryptError, combine_shares, generate_epoch_key, gf256, produce_decryption_share,
+    shamir_reconstruct_byte, shamir_split_byte, threshold_encrypt,
 };
 
 // ───────────────────────────── Lean model, transcribed to Rust ─────────────────────────────
@@ -144,7 +144,11 @@ fn diff_gf256_inv_full_sweep_agrees() {
             gf256::inv(a),
             "gf256 inv disagreement at a={a:#04x}"
         );
-        assert_eq!(gf256::mul(a, lean_gf256_inv(a)), 1, "inverse law broken at a={a:#04x}");
+        assert_eq!(
+            gf256::mul(a, lean_gf256_inv(a)),
+            1,
+            "inverse law broken at a={a:#04x}"
+        );
     }
 }
 
@@ -176,8 +180,16 @@ fn diff_reconstruct_lean_golden_vectors() {
         vec![(1, y1), (3, y3)],
         vec![(2, y2), (3, y3)],
     ] {
-        assert_eq!(shamir_reconstruct_byte(&subset), s, "real reconstruct ≠ secret");
-        assert_eq!(lean_reconstruct_byte(&subset), s, "lean reconstruct ≠ secret");
+        assert_eq!(
+            shamir_reconstruct_byte(&subset),
+            s,
+            "real reconstruct ≠ secret"
+        );
+        assert_eq!(
+            lean_reconstruct_byte(&subset),
+            s,
+            "lean reconstruct ≠ secret"
+        );
         assert_eq!(
             shamir_reconstruct_byte(&subset),
             lean_reconstruct_byte(&subset),
@@ -205,8 +217,14 @@ fn diff_shamir_any_t_reconstruct_concrete() {
                     .collect();
                 let real = shamir_reconstruct_byte(&pts);
                 let lean = lean_reconstruct_byte(&pts);
-                assert_eq!(real, secret, "any-t reconstruct failed: t={t} n={n} secret={secret:#04x}");
-                assert_eq!(real, lean, "real ≠ lean on t={t} n={n} secret={secret:#04x}");
+                assert_eq!(
+                    real, secret,
+                    "any-t reconstruct failed: t={t} n={n} secret={secret:#04x}"
+                );
+                assert_eq!(
+                    real, lean,
+                    "real ≠ lean on t={t} n={n} secret={secret:#04x}"
+                );
             }
         }
     }

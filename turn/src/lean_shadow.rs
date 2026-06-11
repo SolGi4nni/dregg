@@ -29,9 +29,9 @@ use std::collections::HashMap;
 use dregg_cell::state::FieldElement;
 use dregg_cell::{Cell, CellId, Ledger};
 
+use crate::action::Effect;
 #[cfg(feature = "lean-shadow")]
 use crate::action::{Authorization, DelegationProofData};
-use crate::action::Effect;
 use crate::forest::CallTree;
 use crate::turn::{Turn, TurnResult};
 
@@ -289,40 +289,19 @@ pub fn effect_kind(eff: &Effect) -> &'static str {
         Effect::SetVerificationKey { .. } => "SetVerificationKey",
         Effect::NoteSpend { .. } => "NoteSpend",
         Effect::NoteCreate { .. } => "NoteCreate",
-        
-        
-        
+
         Effect::SpawnWithDelegation { .. } => "SpawnWithDelegation",
         Effect::RefreshDelegation => "RefreshDelegation",
         Effect::RevokeDelegation { .. } => "RevokeDelegation",
         Effect::BridgeMint { .. } => "BridgeMint",
-        
-        
-        
+
         Effect::Introduce { .. } => "Introduce",
         Effect::PipelinedSend { .. } => "PipelinedSend",
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         Effect::ExerciseViaCapability { .. } => "ExerciseViaCapability",
         Effect::MakeSovereign { .. } => "MakeSovereign",
         Effect::CreateCellFromFactory { .. } => "CreateCellFromFactory",
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+
         Effect::Refusal { .. } => "Refusal",
         Effect::CellSeal { .. } => "CellSeal",
         Effect::CellUnseal { .. } => "CellUnseal",
@@ -635,7 +614,10 @@ pub fn shadow_report(
     // context at the harness's chosen `block_height`. The ChainHead leg is still REAL (genesis
     // matches the corpus turn's `previous_receipt_hash: None`); the production node feeds the
     // advancing head / freeze-set / budget via `maybe_shadow_turn`'s `ShadowHostCtx`.
-    let host = ShadowHostCtx { block_height, ..ShadowHostCtx::diag() };
+    let host = ShadowHostCtx {
+        block_height,
+        ..ShadowHostCtx::diag()
+    };
     match run_shadow(turn, &pre, &host) {
         Ok(lean_committed) => ShadowReport {
             effect_kinds,
@@ -772,7 +754,9 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         Effect::CellDestroy { target, .. } => has(target),
         // Burn: ONLY the canonical balance slot (`slot == 0`) is modelled; other slots are
         // left unmapped (skip the turn rather than mis-encode).
-        Effect::Burn { target, slot: 0, .. } => has(target),
+        Effect::Burn {
+            target, slot: 0, ..
+        } => has(target),
         Effect::RevokeCapability { cell, .. } => has(cell),
         // AttenuateCapability: dregg1 narrows a HELD c-list slot in place (apply.rs requires
         // `cell == actor`). The verified `attenuateStepA actor idx keep` narrows the actor's own
@@ -784,7 +768,7 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // ─── GAP-shrink batch (the swap surface, MUST mirror effect_to_wire) ─────────────
         // QueueAllocate: the action target IS the gate cell (always in the map). The fresh
         // queue id is intrinsic (assigned deterministically), so the effect is always mappable.
-        
+
         // GrantCapability: dregg1 `del`. The granter `from`, grantee `to`, and the cap target
         // must all be in the id map (the wire `del` carries delegator + recipient + target Nats).
         Effect::GrantCapability { from, to, cap } => has(from) && has(to) && has(&cap.target),
@@ -798,21 +782,23 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // access + monotone-attenuation + target consent. For a turn where those diverge the
         // commit bits differ and the differential's `CoveredDivergence` keeps the Rust state (safe,
         // surfaced, never a silent commit).
-        Effect::Introduce { introducer, recipient, target, .. } => {
-            has(introducer) && has(recipient) && has(target)
-        }
+        Effect::Introduce {
+            introducer,
+            recipient,
+            target,
+            ..
+        } => has(introducer) && has(recipient) && has(target),
         // ─── §SIDE-TABLE families (the holding-store batch — MUST mirror effect_to_wire) ────────
         // ESCROW (root-AGREEING). `apply_create_escrow` debits the creator's `balance` and parks the
         // value in the off-cell-merkle-root `escrows` store; the verified `createEscrowKAsset` does
         // the SAME single-cell `bal` debit (recDebit) + record insert, gated on the same `authorizedB`
         // transfer leg + balance + account + id-uniqueness. The debit reconstitutes via the `bal`
         // side-table and the record is off-root, so the reconstituted `.root()` AGREES with Rust.
-        
+
         // release/refund settle effects look the record up by id (off-root) and single-cell CREDIT
         // the recipient/creator (`recCredit` ⟺ `set_balance(old + amount)`). Mappable when the id is
         // non-null; the credited cell is read from the record (no extra cells to name).
-        
-        
+
         // OBLIGATION CREATE (root-AGREEING). `apply_create_obligation` debits the obligor
         // (action target) `balance` + inserts an off-root `ObligationRecord`; the verified
         // `createObligationA` dispatch-aliases to `createEscrowChainA` (the SAME single-cell debit +
@@ -820,7 +806,7 @@ fn effect_is_mappable(eff: &Effect, id_map: &HashMap<CellId, u64>) -> bool {
         // (reconstitutes) and the record is off-root. The settle effects (fulfill/slash) reference
         // the Rust-DERIVED obligation id, which the wire-id collapse cannot reproduce, so they are
         // characterized root-gaps (record-lookup divergence), not mapped here.
-        
+
         // Everything else (escrows/bridge/seal-pairs/captp/factory/introduce/CreateCell/…) not
         // yet projected. NOTE on CreateCell: deliberately NOT projected — the verified
         // `createCellChainA` gate requires `mintAuthorizedB actor newCell` (cell creation is
@@ -892,21 +878,14 @@ fn effect_cells(eff: &Effect) -> Vec<CellId> {
         // The off-cell-merkle-root holding-store effects: the cells whose `balance` the
         // create debits / the settle credits need wire Nats (the side-table record itself is
         // off-root, so only the touched cells must be named).
-        
+
         // Settle effects (release/refund/fulfill/slash) carry only an id; the credited cell is
         // read from the record, so the actor (action target) — already collected — suffices.
-        
-        
-        
-        
-        
-        
-        
+
         // QueueAllocate creates a FRESH queue cell whose id is NOT in the pre-state id map; only
         // the actor (the action target) needs a Nat, collected by `collect_tree_ids` already. The
         // fresh id is assigned deterministically in `effect_to_wire` (above the pre-id-map range)
         // so it never collides with a snapshot id.
-        
         _ => vec![],
     }
 }
@@ -969,7 +948,10 @@ fn effect_to_wire(
             amt: *amount as i128,
             asset: 0,
         },
-        Effect::SetPermissions { cell, new_permissions } => WireAction::SetPerms {
+        Effect::SetPermissions {
+            cell,
+            new_permissions,
+        } => WireAction::SetPerms {
             actor,
             cell: id(cell)?,
             perms: permissions_to_i128(new_permissions),
@@ -1008,7 +990,11 @@ fn effect_to_wire(
         // proofless spend, both proceed to the SET transition when a proof is present). The proof
         // BYTES (and the STARK Merkle-membership) remain the circuit's concern — only the
         // PRESENCE bit, which the commit decision turns on, crosses the wire.
-        Effect::NoteSpend { nullifier, spending_proof, .. } => WireAction::NoteSpend {
+        Effect::NoteSpend {
+            nullifier,
+            spending_proof,
+            ..
+        } => WireAction::NoteSpend {
             nf: bytes32_to_nat(&nullifier.0),
             actor,
             spend_proof: !spending_proof.is_empty(),
@@ -1048,9 +1034,7 @@ fn effect_to_wire(
         Effect::IncrementNonce { cell } => WireAction::IncNonce {
             actor,
             cell: id(cell)?,
-            new_nonce: (pre_nonce_of(pre, cell) as i128)
-                + 1
-                + if cell == agent { 1 } else { 0 },
+            new_nonce: (pre_nonce_of(pre, cell) as i128) + 1 + if cell == agent { 1 } else { 0 },
         },
         // Refusal: the proof-of-non-action bumps the target cell's nonce + records the refusal
         // (dregg1 `apply.rs` Refusal). `.refusalA` routes to `stateStep` on the refusal field
@@ -1062,10 +1046,7 @@ fn effect_to_wire(
         // ReceiptArchive: declares the cell's receipt-prefix archived; `.receiptArchiveA` routes
         // to `stateStep` on the lifecycle field (authority-gated). The action target IS the
         // archived cell (its `checkpoint.cell_id` must equal `action.target`).
-        Effect::ReceiptArchive { .. } => WireAction::ReceiptArchive {
-            actor,
-            cell: actor,
-        },
+        Effect::ReceiptArchive { .. } => WireAction::ReceiptArchive { actor, cell: actor },
         // CellSeal / CellUnseal: the lifecycle state machine. `.cellSealA`/`.cellUnsealA` gate on
         // `stateAuthB ∧ acceptsEffects`/`== Sealed` — a self-owned live cell SEALS; only a sealed
         // cell UNSEALS. The target IS the sealed cell (`target` must equal `action.target`).
@@ -1081,7 +1062,10 @@ fn effect_to_wire(
         // `.cellDestroyA` gates on `stateAuthB ∧ lifecycle != Destroyed`. The death-cert hash is
         // carried collapsed to its low 64 bits (the gate's commit-bit reads the lifecycle, not
         // the hash bytes; the hash is bound into the post-state faithfully).
-        Effect::CellDestroy { target, certificate } => WireAction::CellDestroy {
+        Effect::CellDestroy {
+            target,
+            certificate,
+        } => WireAction::CellDestroy {
             actor,
             cell: id(target)?,
             cert_hash: bytes32_to_nat(&certificate.certificate_hash()),
@@ -1099,7 +1083,11 @@ fn effect_to_wire(
         // (signed well balance) and apply.rs's burn becomes the well move. Only the canonical
         // balance slot (`slot == 0`) is modelled; a non-zero slot is left UNMAPPED so the turn
         // is skipped rather than mis-encoded.
-        Effect::Burn { target, slot: 0, amount } => WireAction::Burn {
+        Effect::Burn {
+            target,
+            slot: 0,
+            amount,
+        } => WireAction::Burn {
             actor,
             cell: id(target)?,
             asset: 0,
@@ -1148,7 +1136,7 @@ fn effect_to_wire(
         // (InsufficientBalance) while the verified executor commits — a characterised model
         // difference (the verified queue is a pure structural insert; the deposit accounting is a
         // separate `bal` concern). The corpus exercises the FUNDED case (agree) so this is sound.
-        
+
         // GrantCapability: dregg1 `apply_grant_capability` (`apply.rs:595`) copies a held cap (or,
         // for a SELF-grant `cap.target == from`, the implicit strongest self-cap — no c-list
         // lookup) into the grantee `to`'s c-list. `.delegate del rec t` routes to `recCDelegate`
@@ -1168,7 +1156,12 @@ fn effect_to_wire(
         // `del`), gated on the introducer holding an edge to `target`. The granted cap's leaf
         // (target + permissions + host-derived expiry) is not kernel state — it is reconstructed
         // EXACTLY by `lean_apply::apply_cap_ops` (`grant_with_expiry`), so cap_root agrees.
-        Effect::Introduce { introducer, recipient, target, .. } => WireAction::Introduce {
+        Effect::Introduce {
+            introducer,
+            recipient,
+            target,
+            ..
+        } => WireAction::Introduce {
             introducer: id(introducer)?,
             recipient: id(recipient)?,
             target: id(target)?,
@@ -1182,12 +1175,11 @@ fn effect_to_wire(
         // transfer-authority leg + `0≤amount≤bal creator` + `creator∈accounts` + id-uniqueness. The
         // wire `id` is the escrow_id collapsed to its low 64 bits (the create+settle pair carries the
         // SAME explicit `escrow_id`, so the collapsed wire ids coincide across a forest). asset 0.
-        
+
         // ESCROW release/refund: look the record up by id, single-cell CREDIT the recipient/creator
         // (`recCredit` ⟺ `set_balance(old + amount)`), mark resolved. The credited cell is read from
         // the record (off-root), so only the id + actor cross the wire.
-        
-        
+
         // OBLIGATION create: dregg1 `apply_create_obligation` debits the OBLIGOR (= action target)
         // `balance` by `stake_amount` + inserts an off-root `ObligationRecord`. `.createObligationA id
         // actor obligor beneficiary asset stake` dispatch-aliases to `createEscrowChainA` (the SAME
@@ -1195,7 +1187,7 @@ fn effect_to_wire(
         // beneficiary is the record's `recipient`. The wire `id` is the STAKE commitment collapsed —
         // a fresh-enough id for the create gate's uniqueness leg (the settle effects, which reference
         // the Rust-derived obligation id, are characterized root-gaps, not routed here).
-        
+
         // CreateCell: dregg1 inserts a fresh cell with the given balance (`apply.rs` CreateCell).
         // `.createcell actor newCell` routes to the cell-creation chained step, gated on the
         // actor's authority over its own action. The new cell's wire Nat is assigned ABOVE the
@@ -1263,7 +1255,8 @@ fn run_shadow(turn: &Turn, pre: &ShadowPreLedger, host: &ShadowHostCtx) -> Resul
         stored_head: stored_head_nat,
         budget: host.budget,
     };
-    let wire = marshal_turn_hosted(&host_wire, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
+    let wire =
+        marshal_turn_hosted(&host_wire, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
     if std::env::var("DREGG_LEAN_SHADOW_DEBUG").as_deref() == Ok("1") {
         eprintln!("[shadow wire IN ] {wire}");
     }
@@ -1304,7 +1297,8 @@ pub(crate) fn run_shadow_state(
         stored_head: stored_head_nat,
         budget: host.budget,
     };
-    let wire = marshal_turn_hosted(&host_wire, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
+    let wire =
+        marshal_turn_hosted(&host_wire, &wire_state, &wire_turn).map_err(|e| e.to_string())?;
     if std::env::var("DREGG_LEAN_SHADOW_DEBUG").as_deref() == Ok("1") {
         eprintln!("[shadow wire IN ] {wire}");
     }
@@ -1316,7 +1310,9 @@ pub(crate) fn run_shadow_state(
 }
 
 #[cfg(feature = "lean-shadow")]
-fn ledger_to_wire_state(pre: &ShadowPreLedger) -> Result<dregg_lean_ffi::marshal::WireState, String> {
+fn ledger_to_wire_state(
+    pre: &ShadowPreLedger,
+) -> Result<dregg_lean_ffi::marshal::WireState, String> {
     use dregg_lean_ffi::marshal::{WireState, WireValue};
 
     use dregg_lean_ffi::marshal::Cap;
@@ -1441,7 +1437,7 @@ fn turn_to_wire_turn(
     pre: &ShadowPreLedger,
     block_height: u64,
 ) -> Result<dregg_lean_ffi::marshal::WireTurn, String> {
-    use dregg_lean_ffi::marshal::{Cap, WForest, WChild, WireTurn};
+    use dregg_lean_ffi::marshal::{Cap, WChild, WForest, WireTurn};
 
     let agent = *pre
         .id_map
@@ -1510,10 +1506,7 @@ struct FullMapped {
 /// Flatten the forest into wire actions paired with their originating credential. Each
 /// Rust action's auth decorates every effect-node it produced.
 #[cfg(feature = "lean-shadow")]
-fn flatten_forest_actions_full(
-    turn: &Turn,
-    pre: &ShadowPreLedger,
-) -> Option<Vec<FullMapped>> {
+fn flatten_forest_actions_full(turn: &Turn, pre: &ShadowPreLedger) -> Option<Vec<FullMapped>> {
     let mut out = Vec::new();
     // A single fresh-id counter threaded across the WHOLE pre-order walk, so each created
     // cell/queue gets a distinct never-snapshotted wire Nat (no cross-effect id collision).
@@ -1777,12 +1770,22 @@ mod producer_coverage_tests {
         assert!(!covered.is_empty(), "producer coverage must not be empty");
         let mut seen = std::collections::HashSet::new();
         for name in covered {
-            assert!(seen.insert(*name), "duplicate effect in coverage list: {name}");
-            assert!(producer_covers_kind(name), "producer_covers_kind disagrees for {name}");
+            assert!(
+                seen.insert(*name),
+                "duplicate effect in coverage list: {name}"
+            );
+            assert!(
+                producer_covers_kind(name),
+                "producer_covers_kind disagrees for {name}"
+            );
         }
         // Twenty-one effect kinds are projected to the wire today (mirrors effect_is_mappable;
         // VERB-LOCKSTEP: the escrow/obligation §SIDE-TABLE batch died with its Effect variants).
-        assert_eq!(covered.len(), 21, "producer coverage count changed — update the report and confirm effect_is_mappable agrees");
+        assert_eq!(
+            covered.len(),
+            21,
+            "producer coverage count changed — update the report and confirm effect_is_mappable agrees"
+        );
     }
 
     /// Every covered effect must appear in the full enumeration, and the
@@ -1790,9 +1793,16 @@ mod producer_coverage_tests {
     #[test]
     fn coverage_partitions_the_effect_surface() {
         let all: std::collections::HashSet<&str> = all_effect_kinds().iter().copied().collect();
-        assert_eq!(all.len(), all_effect_kinds().len(), "all_effect_kinds has duplicates");
+        assert_eq!(
+            all.len(),
+            all_effect_kinds().len(),
+            "all_effect_kinds has duplicates"
+        );
         for c in producer_covered_effects() {
-            assert!(all.contains(c), "covered effect {c} missing from all_effect_kinds");
+            assert!(
+                all.contains(c),
+                "covered effect {c} missing from all_effect_kinds"
+            );
         }
         let uncovered: std::collections::HashSet<&str> =
             producer_uncovered_effects().into_iter().collect();

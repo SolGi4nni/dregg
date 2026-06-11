@@ -179,15 +179,29 @@ fn escrow_fund_then_release_on_condition_commits() {
         .expect("valid terms");
     deploy_and_open(&mut runtime, &plan);
 
-    assert_eq!(balance_of(&runtime, plan.cell_id), 40, "value held IN the escrow cell");
-    assert_eq!(state_slot_of(&runtime, plan.cell_id), field_from_u64(STATE_OPEN));
+    assert_eq!(
+        balance_of(&runtime, plan.cell_id),
+        40,
+        "value held IN the escrow cell"
+    );
+    assert_eq!(
+        state_slot_of(&runtime, plan.cell_id),
+        field_from_u64(STATE_OPEN)
+    );
 
     runtime
-        .execute_on(plan.cell_id, release_escrow(plan.cell_id, &terms, field_from_u64(99)))
+        .execute_on(
+            plan.cell_id,
+            release_escrow(plan.cell_id, &terms, field_from_u64(99)),
+        )
         .expect("release with the correct witness must commit");
 
     assert_eq!(balance_of(&runtime, plan.cell_id), 0, "escrow drained");
-    assert_eq!(balance_of(&runtime, beneficiary), 40, "beneficiary credited exactly");
+    assert_eq!(
+        balance_of(&runtime, beneficiary),
+        40,
+        "beneficiary credited exactly"
+    );
     assert_eq!(
         state_slot_of(&runtime, plan.cell_id),
         field_from_u64(STATE_RESOLVED_A)
@@ -225,14 +239,20 @@ fn escrow_release_without_condition_rejected_by_program() {
 
     // (b) The builder's shape with a WRONG witness.
     assert_program_violation(
-        runtime.execute_on(plan.cell_id, release_escrow(plan.cell_id, &terms, field_from_u64(7))),
+        runtime.execute_on(
+            plan.cell_id,
+            release_escrow(plan.cell_id, &terms, field_from_u64(7)),
+        ),
         "release with wrong witness",
     );
 
     // Nothing moved; the escrow is still open and settleable.
     assert_eq!(balance_of(&runtime, plan.cell_id), 40);
     assert_eq!(balance_of(&runtime, beneficiary), 0);
-    assert_eq!(state_slot_of(&runtime, plan.cell_id), field_from_u64(STATE_OPEN));
+    assert_eq!(
+        state_slot_of(&runtime, plan.cell_id),
+        field_from_u64(STATE_OPEN)
+    );
 }
 
 /// The published refund timeout gates the refund leg on REAL block height:
@@ -258,7 +278,11 @@ fn escrow_refund_before_timeout_rejected_after_timeout_commits() {
         .execute_on(plan.cell_id, refund_escrow(plan.cell_id, &terms))
         .expect("refund at the timeout height must commit");
     assert_eq!(balance_of(&runtime, plan.cell_id), 0);
-    assert_eq!(balance_of(&runtime, depositor), 40, "depositor refunded exactly");
+    assert_eq!(
+        balance_of(&runtime, depositor),
+        40,
+        "depositor refunded exactly"
+    );
     assert_eq!(
         state_slot_of(&runtime, plan.cell_id),
         field_from_u64(STATE_RESOLVED_B)
@@ -278,7 +302,10 @@ fn escrow_no_double_resolve() {
     deploy_and_open(&mut runtime, &plan);
 
     runtime
-        .execute_on(plan.cell_id, release_escrow(plan.cell_id, &terms, field_from_u64(99)))
+        .execute_on(
+            plan.cell_id,
+            release_escrow(plan.cell_id, &terms, field_from_u64(99)),
+        )
         .expect("first release commits");
 
     // Balance-free attempts: the PROGRAM (no transition row out of a
@@ -368,7 +395,11 @@ fn obligation_fulfill_on_condition_commits() {
     let plan = create_obligation_cell(&terms, agent_pubkey(&runtime), [0x06u8; 32], agent, agent)
         .expect("valid terms");
     deploy_and_open(&mut runtime, &plan);
-    assert_eq!(balance_of(&runtime, plan.cell_id), 50, "bond held IN the cell");
+    assert_eq!(
+        balance_of(&runtime, plan.cell_id),
+        50,
+        "bond held IN the cell"
+    );
 
     runtime
         .execute_on(
@@ -377,7 +408,11 @@ fn obligation_fulfill_on_condition_commits() {
         )
         .expect("fulfil with the discharge witness must commit");
     assert_eq!(balance_of(&runtime, plan.cell_id), 0);
-    assert_eq!(balance_of(&runtime, obligor), 50, "bond returned to the obligor exactly");
+    assert_eq!(
+        balance_of(&runtime, obligor),
+        50,
+        "bond returned to the obligor exactly"
+    );
 
     // No-double-resolve: a fulfilled obligation cannot be slashed even past
     // the deadline (Lean `no_double_resolve_fulfilled`).
@@ -436,7 +471,11 @@ fn obligation_slash_gates_on_deadline_and_condition() {
         .execute_on(plan.cell_id, slash_obligation(plan.cell_id, &terms))
         .expect("slash past the deadline must commit");
     assert_eq!(balance_of(&runtime, plan.cell_id), 0);
-    assert_eq!(balance_of(&runtime, obligee), 50, "bond forfeited to the obligee");
+    assert_eq!(
+        balance_of(&runtime, obligee),
+        50,
+        "bond forfeited to the obligee"
+    );
     assert_eq!(
         state_slot_of(&runtime, plan.cell_id),
         field_from_u64(STATE_RESOLVED_B)
@@ -483,7 +522,11 @@ fn bridge_finalize_requires_finality_witness() {
     let plan = bridge_lock_cell(&terms, agent_pubkey(&runtime), [0x08u8; 32], agent, agent)
         .expect("valid terms");
     deploy_and_open(&mut runtime, &plan);
-    assert_eq!(balance_of(&runtime, plan.cell_id), 75, "locked IN the bridge cell");
+    assert_eq!(
+        balance_of(&runtime, plan.cell_id),
+        75,
+        "locked IN the bridge cell"
+    );
 
     // Without the witness: a hand-built finalize is rejected.
     assert_program_violation(

@@ -82,12 +82,12 @@ use dregg_cell::permissions::AuthRequired;
 use dregg_cell::{Cell, CellId, Ledger, Permissions, VerificationKey};
 use dregg_lean_ffi::marshal::{Cap, WireState, WireValue};
 
+use crate::TurnResult;
 use crate::action::Effect;
 use crate::executor::TurnExecutor;
 use crate::forest::CallTree;
 use crate::lean_shadow::{self, ShadowHostCtx};
 use crate::turn::Turn;
-use crate::TurnResult;
 
 /// A deterministic capability-set mutation a committed turn applies to ONE holder cell's c-list.
 ///
@@ -157,7 +157,10 @@ fn collect_cap_ops(turn: &Turn, intro_expiry: u64) -> Vec<CapOp> {
         for eff in &tree.action.effects {
             match eff {
                 Effect::GrantCapability { to, cap, .. } => {
-                    out.push(CapOp::Grant { to: *to, cap: cap.clone() });
+                    out.push(CapOp::Grant {
+                        to: *to,
+                        cap: cap.clone(),
+                    });
                 }
                 Effect::Introduce {
                     recipient,
@@ -235,18 +238,31 @@ pub enum StateOp {
     /// `CellSeal { target, reason }` — Live/Archived → `Sealed { reason_hash, sealed_at }`.
     /// `reason_hash` is the turn's `reason`; `sealed_at` is the HOST block height (the value
     /// `apply_cell_seal` stamps via `self.block_height`).
-    Seal { target: CellId, reason_hash: [u8; 32], sealed_at: u64 },
+    Seal {
+        target: CellId,
+        reason_hash: [u8; 32],
+        sealed_at: u64,
+    },
     /// `CellUnseal { target }` — Sealed → Live (payload-free; collected so lifecycle sequences
     /// replay in the executor's forest order).
     Unseal { target: CellId },
     /// `CellDestroy { target, certificate }` — any non-terminal → `Destroyed { hash, at }`, both
     /// derived from the FULL turn-supplied certificate (`certificate_hash()` /
     /// `destroyed_at_height`), never the lossy low-64 wire value.
-    Destroy { target: CellId, certificate: DeathCertificate },
+    Destroy {
+        target: CellId,
+        certificate: DeathCertificate,
+    },
     /// `SetPermissions { cell, new_permissions }` — install the full turn-supplied 8-field struct.
-    SetPermissions { cell: CellId, new_permissions: Permissions },
+    SetPermissions {
+        cell: CellId,
+        new_permissions: Permissions,
+    },
     /// `SetVerificationKey { cell, new_vk }` — install the turn-supplied VK (or clear it).
-    SetVerificationKey { cell: CellId, new_vk: Option<VerificationKey> },
+    SetVerificationKey {
+        cell: CellId,
+        new_vk: Option<VerificationKey>,
+    },
     /// `MakeSovereign { cell }` — remove the cell from `Ledger::cells` and park its state
     /// commitment in `sovereign_commitments` (the structural ledger move).
     MakeSovereign { cell: CellId },
@@ -295,13 +311,19 @@ fn collect_state_ops(turn: &Turn, seal_height: u64) -> Vec<StateOp> {
                 Effect::CellUnseal { target } if *target == action_target => {
                     out.push(StateOp::Unseal { target: *target });
                 }
-                Effect::CellDestroy { target, certificate } if *target == action_target => {
+                Effect::CellDestroy {
+                    target,
+                    certificate,
+                } if *target == action_target => {
                     out.push(StateOp::Destroy {
                         target: *target,
                         certificate: certificate.clone(),
                     });
                 }
-                Effect::SetPermissions { cell, new_permissions } => {
+                Effect::SetPermissions {
+                    cell,
+                    new_permissions,
+                } => {
                     out.push(StateOp::SetPermissions {
                         cell: *cell,
                         new_permissions: new_permissions.clone(),
@@ -317,7 +339,10 @@ fn collect_state_ops(turn: &Turn, seal_height: u64) -> Vec<StateOp> {
                     out.push(StateOp::MakeSovereign { cell: *cell });
                 }
                 Effect::RevokeDelegation { child } => {
-                    out.push(StateOp::RevokeDelegation { parent: action_target, child: *child });
+                    out.push(StateOp::RevokeDelegation {
+                        parent: action_target,
+                        child: *child,
+                    });
                 }
                 _ => {}
             }
@@ -362,17 +387,26 @@ impl std::fmt::Display for ExtractError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExtractError::UnknownCellNat(n) => {
-                write!(f, "produced cell Nat {n} has no inverse in the pre-state id map (marshaller gap: a created/unmapped cell)")
+                write!(
+                    f,
+                    "produced cell Nat {n} has no inverse in the pre-state id map (marshaller gap: a created/unmapped cell)"
+                )
             }
             ExtractError::NoTemplateCell { nat, cell } => {
-                write!(f, "produced cell Nat {nat} -> {cell:?} has no pre-state template cell")
+                write!(
+                    f,
+                    "produced cell Nat {nat} -> {cell:?} has no pre-state template cell"
+                )
             }
             ExtractError::NonIntScalar { nat, field } => {
                 write!(f, "produced cell Nat {nat} carried a non-Int `{field}`")
             }
             ExtractError::Ffi(e) => write!(f, "lean FFI / decode failed: {e}"),
             ExtractError::Ineligible => {
-                write!(f, "turn forest not fully marshallable — no verified post-state to install")
+                write!(
+                    f,
+                    "turn forest not fully marshallable — no verified post-state to install"
+                )
             }
             ExtractError::RootGap { kind } => {
                 write!(
@@ -391,10 +425,13 @@ impl std::error::Error for ExtractError {}
 /// Read a named `Int` field out of a cell record (returns `None` if absent or not an Int).
 fn record_int(v: &WireValue, name: &str) -> Option<i128> {
     match v {
-        WireValue::Record(fs) => fs.iter().find(|(k, _)| k == name).and_then(|(_, x)| match x {
-            WireValue::Int(i) => Some(*i),
-            _ => None,
-        }),
+        WireValue::Record(fs) => fs
+            .iter()
+            .find(|(k, _)| k == name)
+            .and_then(|(_, x)| match x {
+                WireValue::Int(i) => Some(*i),
+                _ => None,
+            }),
         _ => None,
     }
 }
@@ -508,7 +545,10 @@ fn apply_cap_ops(
                 let cell = template
                     .get(&holder)
                     .cloned()
-                    .ok_or(ExtractError::NoTemplateCell { nat: u64::MAX, cell: holder })?;
+                    .ok_or(ExtractError::NoTemplateCell {
+                        nat: u64::MAX,
+                        cell: holder,
+                    })?;
                 out_cells.insert(holder, cell);
             }
             // Reset the working c-list to the EXACT pre-state (the template carries the real
@@ -527,7 +567,10 @@ fn apply_cap_ops(
         let holder = op.holder();
         let cell = out_cells
             .get_mut(&holder)
-            .ok_or(ExtractError::NoTemplateCell { nat: u64::MAX, cell: holder })?;
+            .ok_or(ExtractError::NoTemplateCell {
+                nat: u64::MAX,
+                cell: holder,
+            })?;
         match op {
             CapOp::Grant { cap, .. } => {
                 cell.capabilities.grant_ref(cap);
@@ -592,10 +635,14 @@ fn apply_state_ops(
         for cell_id in op.touched() {
             if touched.insert(cell_id) {
                 if !out_cells.contains_key(&cell_id) {
-                    let cell = template
-                        .get(&cell_id)
-                        .cloned()
-                        .ok_or(ExtractError::NoTemplateCell { nat: u64::MAX, cell: cell_id })?;
+                    let cell =
+                        template
+                            .get(&cell_id)
+                            .cloned()
+                            .ok_or(ExtractError::NoTemplateCell {
+                                nat: u64::MAX,
+                                cell: cell_id,
+                            })?;
                     out_cells.insert(cell_id, cell);
                 }
                 let template_caps = template
@@ -611,7 +658,11 @@ fn apply_state_ops(
     // Replay the mutations in forest order, mirroring the `executor::apply` arms byte-for-byte.
     for op in state_ops {
         match op {
-            StateOp::Seal { target, reason_hash, sealed_at } => {
+            StateOp::Seal {
+                target,
+                reason_hash,
+                sealed_at,
+            } => {
                 if let Some(cell) = out_cells.get_mut(target) {
                     // `apply_cell_seal` → `c.seal(reason, self.block_height)`; a refused
                     // transition (already sealed / terminal) made Rust roll back — skip.
@@ -624,7 +675,10 @@ fn apply_state_ops(
                     let _ = cell.unseal();
                 }
             }
-            StateOp::Destroy { target, certificate } => {
+            StateOp::Destroy {
+                target,
+                certificate,
+            } => {
                 if let Some(cell) = out_cells.get_mut(target) {
                     // `apply_cell_destroy` → `c.destroy(certificate)`. `Cell::destroy` itself
                     // checks `certificate.cell_id == self.id` and binds the FULL
@@ -632,7 +686,10 @@ fn apply_state_ops(
                     let _ = cell.destroy(certificate);
                 }
             }
-            StateOp::SetPermissions { cell, new_permissions } => {
+            StateOp::SetPermissions {
+                cell,
+                new_permissions,
+            } => {
                 if let Some(c) = out_cells.get_mut(cell) {
                     // `apply_set_permissions` → `c.permissions = new_permissions.clone()`. The
                     // cross-cell authority legs (`check_cross_cell_permission`) are commit-bit
@@ -786,15 +843,25 @@ pub fn wire_state_to_ledger(
         let mut cell = template
             .get(&cell_id)
             .cloned()
-            .ok_or(ExtractError::NoTemplateCell { nat: *nat, cell: cell_id })?;
+            .ok_or(ExtractError::NoTemplateCell {
+                nat: *nat,
+                cell: cell_id,
+            })?;
 
         // nonce is carried as a named scalar Int field in the cell record.
-        let nonce = record_int(value, "nonce")
-            .ok_or(ExtractError::NonIntScalar { nat: *nat, field: "nonce" })?;
+        let nonce = record_int(value, "nonce").ok_or(ExtractError::NonIntScalar {
+            nat: *nat,
+            field: "nonce",
+        })?;
         // balance: prefer the authoritative asset-0 `bal` entry; fall back to the record scalar.
-        let bal = asset0_bal.get(nat).copied().or_else(|| record_int(value, "balance")).ok_or(
-            ExtractError::NonIntScalar { nat: *nat, field: "balance" },
-        )?;
+        let bal = asset0_bal
+            .get(nat)
+            .copied()
+            .or_else(|| record_int(value, "balance"))
+            .ok_or(ExtractError::NonIntScalar {
+                nat: *nat,
+                field: "balance",
+            })?;
         cell.state.set_balance(bal.max(0) as u64);
         cell.state.set_nonce(nonce.max(0) as u64);
 
@@ -848,7 +915,10 @@ pub fn wire_state_to_ledger(
         let mut cell = template
             .get(&cell_id)
             .cloned()
-            .ok_or(ExtractError::NoTemplateCell { nat: *holder_nat, cell: cell_id })?;
+            .ok_or(ExtractError::NoTemplateCell {
+                nat: *holder_nat,
+                cell: cell_id,
+            })?;
         cell.capabilities = rebuild_capabilities(edges, inv_id_map)?;
         produced_ids.insert(cell_id);
         out_cells.insert(cell_id, cell);

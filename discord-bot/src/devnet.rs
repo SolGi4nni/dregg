@@ -390,7 +390,10 @@ pub enum DevnetError {
     /// response body. Prefer this over `Api` for live-node calls so
     /// [`DevnetError::user_message`] can classify the failure (auth gate, rate
     /// limit, node down, …) into actionable guidance for the user.
-    Status { code: u16, body: String },
+    Status {
+        code: u16,
+        body: String,
+    },
     /// An opaque, already-formatted error string (decode failures, app-level
     /// rejections from a JSON `success:false` body, etc).
     Api(String),
@@ -418,9 +421,13 @@ impl DevnetError {
         match self {
             DevnetError::Http(e) => {
                 if e.is_timeout() {
-                    format!("The node didn't respond in time while trying to {action}. The devnet may be busy — try again in a moment.")
+                    format!(
+                        "The node didn't respond in time while trying to {action}. The devnet may be busy — try again in a moment."
+                    )
                 } else if e.is_connect() {
-                    format!("Couldn't reach the node to {action}. The devnet may be offline; check `/status`.")
+                    format!(
+                        "Couldn't reach the node to {action}. The devnet may be offline; check `/status`."
+                    )
                 } else {
                     format!("Network error while trying to {action}: {e}")
                 }
@@ -463,9 +470,9 @@ impl DevnetError {
                     format!("Couldn't {action}: {m}")
                 }
             }
-            DevnetError::Unsupported(msg) => format!(
-                "That isn't available on this node yet ({msg})."
-            ),
+            DevnetError::Unsupported(msg) => {
+                format!("That isn't available on this node yet ({msg}).")
+            }
         }
     }
 }
@@ -477,7 +484,10 @@ fn body_hint(body: &str) -> String {
     if b.is_empty() || b.starts_with('<') {
         String::new()
     } else {
-        format!(" Node said: \"{}\".", b.chars().take(160).collect::<String>())
+        format!(
+            " Node said: \"{}\".",
+            b.chars().take(160).collect::<String>()
+        )
     }
 }
 
@@ -1280,19 +1290,38 @@ mod tests {
 
     #[test]
     fn user_message_classifies_http_status() {
-        let auth = DevnetError::Status { code: 403, body: String::new() };
+        let auth = DevnetError::Status {
+            code: 403,
+            body: String::new(),
+        };
         let m = auth.user_message("submit the transfer");
         assert!(m.contains("Not authorized"), "got: {m}");
         assert!(m.contains("DEVNET_API_TOKEN"), "should hint the token: {m}");
 
-        let rate = DevnetError::Status { code: 429, body: String::new() };
-        assert!(rate.user_message("request faucet tokens").contains("Rate limited"));
+        let rate = DevnetError::Status {
+            code: 429,
+            body: String::new(),
+        };
+        assert!(
+            rate.user_message("request faucet tokens")
+                .contains("Rate limited")
+        );
 
-        let nf = DevnetError::Status { code: 404, body: String::new() };
+        let nf = DevnetError::Status {
+            code: 404,
+            body: String::new(),
+        };
         assert!(nf.user_message("query your balance").contains("/faucet"));
 
-        let server = DevnetError::Status { code: 503, body: String::new() };
-        assert!(server.user_message("cast your vote").contains("node-side fault"));
+        let server = DevnetError::Status {
+            code: 503,
+            body: String::new(),
+        };
+        assert!(
+            server
+                .user_message("cast your vote")
+                .contains("node-side fault")
+        );
     }
 
     #[test]
@@ -1311,7 +1340,11 @@ mod tests {
             code: 400,
             body: "nonce too low".to_string(),
         };
-        assert!(short.user_message("submit the transfer").contains("nonce too low"));
+        assert!(
+            short
+                .user_message("submit the transfer")
+                .contains("nonce too low")
+        );
     }
 
     #[test]

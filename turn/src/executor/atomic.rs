@@ -909,11 +909,7 @@ impl TurnExecutor {
             let target_cell = match ledger.get(&action.target) {
                 Some(c) => c.clone(),
                 None => {
-                    journal.rollback(
-                        ledger,
-                        &self.bridged_nullifiers,
-                        &self.note_nullifiers,
-                    );
+                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
                         reason: format!("hosted action #{} target cell not found", idx),
@@ -931,11 +927,7 @@ impl TurnExecutor {
                 &path,
                 mixed_turn.nonce,
             ) {
-                journal.rollback(
-                    ledger,
-                    &self.bridged_nullifiers,
-                    &self.note_nullifiers,
-                );
+                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
                     reason: format!("{err}"),
@@ -944,11 +936,7 @@ impl TurnExecutor {
 
             // 3. Preconditions.
             if let Err((err, _)) = self.check_preconditions(action, &target_cell, &path) {
-                journal.rollback(
-                    ledger,
-                    &self.bridged_nullifiers,
-                    &self.note_nullifiers,
-                );
+                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
                     reason: format!("{err}"),
@@ -1001,11 +989,7 @@ impl TurnExecutor {
                     &mixed_turn.agent,
                     &mut journal,
                 ) {
-                    journal.rollback(
-                        ledger,
-                        &self.bridged_nullifiers,
-                        &self.note_nullifiers,
-                    );
+                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
                         reason: format!("{err}"),
@@ -1032,11 +1016,7 @@ impl TurnExecutor {
         let total_delta: i64 = sovereign_deltas.iter().sum::<i64>() + hosted_total;
         if total_delta != 0 {
             // Roll back ALL hosted mutations before returning.
-            journal.rollback(
-                ledger,
-                &self.bridged_nullifiers,
-                &self.note_nullifiers,
-            );
+            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
             return Err(AtomicTurnError::ConservationViolation {
                 net_excess: total_delta,
             });

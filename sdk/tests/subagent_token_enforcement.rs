@@ -103,7 +103,7 @@ fn subagent_chains_multiple_turns_provenance_holds() {
     // We use `EmitEvent` as the work effect: unlike `IncrementNonce` it does not
     // itself advance the cell's actor nonce, so the receipt chain is the sole
     // provenance link (the audit-relevant shape).
-    use dregg_turn::action::{symbol, Event};
+    use dregg_turn::action::{Event, symbol};
     let (runtime, root_token) = runtime_with_root();
     let worker = runtime
         .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &["execute"])
@@ -112,11 +112,16 @@ fn subagent_chains_multiple_turns_provenance_holds() {
     let work = |job: &str| -> Effect {
         Effect::EmitEvent {
             cell: worker.cell_id(),
-            event: Event { topic: symbol(job), data: Vec::new() },
+            event: Event {
+                topic: symbol(job),
+                data: Vec::new(),
+            },
         }
     };
 
-    let r1 = worker.execute(vec![work("job-1")]).expect("turn #1 must commit");
+    let r1 = worker
+        .execute(vec![work("job-1")])
+        .expect("turn #1 must commit");
     let r2 = worker
         .execute(vec![work("job-2")])
         .expect("turn #2 must commit (chained to #1) — the per-worker provenance chain must hold");
@@ -148,7 +153,11 @@ fn subagent_multi_method_scope_enforced_per_verb() {
     let (runtime, root_token) = runtime_with_root();
 
     let granted = runtime
-        .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &["execute", "refresh"])
+        .spawn_sub_agent_scoped(
+            &Attenuation::default(),
+            &root_token,
+            &["execute", "refresh"],
+        )
         .expect("spawn granted worker");
     granted
         .execute_method(
@@ -160,7 +169,11 @@ fn subagent_multi_method_scope_enforced_per_verb() {
         .expect("granted `refresh` verb must be authorized by the executor");
 
     let scoped = runtime
-        .spawn_sub_agent_scoped(&Attenuation::default(), &root_token, &["execute", "refresh"])
+        .spawn_sub_agent_scoped(
+            &Attenuation::default(),
+            &root_token,
+            &["execute", "refresh"],
+        )
         .expect("spawn scoped worker");
     let err = scoped
         .execute_method(

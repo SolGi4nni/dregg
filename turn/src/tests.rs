@@ -4663,7 +4663,6 @@ fn test_introduction_emits_gc_export_records() {
     );
 }
 
-
 #[test]
 fn test_introduction_attenuation_preserves_level() {
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();
@@ -6051,7 +6050,6 @@ fn test_fee_distribution() {
 // =============================================================================
 // ADVERSARIAL TEST: CreateEscrow permission check (MEDIUM-HIGH fix)
 // =============================================================================
-
 
 // =============================================================================
 // Tests: Committed (Pedersen) conservation path
@@ -8738,7 +8736,6 @@ fn test_bearer_cap_stark_delegation_invalid_proof_rejected() {
 // Queue Operations Tests
 // =============================================================================
 
-
 // =============================================================================
 // Privacy wiring tests (NullifierSet, EncryptedTurn, destination_federation)
 // =============================================================================
@@ -11026,11 +11023,9 @@ fn test_exercise_via_cap_transfer_foreign_from_with_cap_succeeds() {
     assert_eq!(agent_cell.state.balance(), 5000 + 500);
 }
 
-
 // =============================================================================
 // Adversarial tests: Bug #114 — Queue ACL enforcement
 // =============================================================================
-
 
 // =============================================================================
 // Adversarial tests: Bug #115 — NoteCreate/NoteSpend value_commitment +

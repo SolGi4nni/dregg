@@ -162,9 +162,9 @@
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, Authorization, AuthorizedSet, CapTarget, CapTemplate,
     CellId, CellMode, CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event,
-    FactoryDescriptor, FieldElement, InputRef, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate,
-    WitnessedPredicateKind, field_from_bytes, field_from_u64, hex_encode_32, symbol,
+    FactoryDescriptor, FieldElement, InputRef, InspectorDescriptor, StarbridgeAppContext,
+    StateConstraint, TransitionCase, TransitionGuard, WitnessedPredicate, WitnessedPredicateKind,
+    field_from_bytes, field_from_u64, hex_encode_32, symbol,
 };
 use dregg_dfa::{GovernedRouter, KindRegistry, RouteTable, RouteTableBuilder, RouteTarget, Router};
 use dregg_turn::action::WitnessBlob;
@@ -1026,10 +1026,19 @@ pub fn web_constants() -> ConstantsModule {
     ConstantsModule::new("governed-namespace")
         .slot("ROUTE_TABLE_ROOT_SLOT", ROUTE_TABLE_ROOT_SLOT as u64)
         .slot("VERSION_SLOT", VERSION_SLOT as u64)
-        .slot("GOVERNANCE_COMMITTEE_ROOT_SLOT", GOVERNANCE_COMMITTEE_ROOT_SLOT as u64)
+        .slot(
+            "GOVERNANCE_COMMITTEE_ROOT_SLOT",
+            GOVERNANCE_COMMITTEE_ROOT_SLOT as u64,
+        )
         .slot("THRESHOLD_SLOT", THRESHOLD_SLOT as u64)
-        .slot("DISPUTE_WINDOW_HEIGHT_SLOT", DISPUTE_WINDOW_HEIGHT_SLOT as u64)
-        .slot("PENDING_PROPOSAL_ROOT_SLOT", PENDING_PROPOSAL_ROOT_SLOT as u64)
+        .slot(
+            "DISPUTE_WINDOW_HEIGHT_SLOT",
+            DISPUTE_WINDOW_HEIGHT_SLOT as u64,
+        )
+        .slot(
+            "PENDING_PROPOSAL_ROOT_SLOT",
+            PENDING_PROPOSAL_ROOT_SLOT as u64,
+        )
         .string("FACTORY_VK_HEX", hex_encode_32(&GOVERNANCE_FACTORY_VK))
         // Method names (the executor's `MethodIs` guards key off these).
         .string("METHOD_PROPOSE", "propose_table_update")

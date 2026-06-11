@@ -762,7 +762,13 @@ mod tests {
 
         let effects = vec![note_spend_effect(nf, 500)];
         let proven = prove_and_verify_finalized_turn_freshness(
-            &alice, 1000, 0, &effects, [0xB0u8; 32], &nf, &previously,
+            &alice,
+            1000,
+            0,
+            &effects,
+            [0xB0u8; 32],
+            &nf,
+            &previously,
         )
         .expect("honest spend proves");
 
@@ -810,7 +816,13 @@ mod tests {
 
         let effects = vec![note_spend_effect(n, 500)];
         let result = prove_and_verify_finalized_turn_freshness(
-            &alice, 1000, 0, &effects, [0xC0u8; 32], &m, &previously,
+            &alice,
+            1000,
+            0,
+            &effects,
+            [0xC0u8; 32],
+            &m,
+            &previously,
         );
         match result {
             Err(FullTurnProvingError::Verify(FullTurnVerifyError::NullifierMismatch {
@@ -840,7 +852,13 @@ mod tests {
 
         let effects = vec![note_spend_effect(nf, 500)];
         let result = prove_and_verify_finalized_turn_freshness(
-            &alice, 1000, 0, &effects, [0xD0u8; 32], &nf, &previously,
+            &alice,
+            1000,
+            0,
+            &effects,
+            [0xD0u8; 32],
+            &nf,
+            &previously,
         );
         assert!(
             matches!(result, Err(FullTurnProvingError::NullifierAlreadyRevoked)),
@@ -989,8 +1007,7 @@ mod tests {
         let agent_id = agent.id();
         // The CANONICAL pre-state capability root, from the authoritative
         // pre-execution c-list (the same capture the commit path performs).
-        let pre_cap_root =
-            dregg_cell::compute_canonical_capability_root_felt(&agent.capabilities);
+        let pre_cap_root = dregg_cell::compute_canonical_capability_root_felt(&agent.capabilities);
 
         let mut ledger = Ledger::new();
         ledger.insert_cell(agent).unwrap();
@@ -1052,7 +1069,10 @@ mod tests {
         )
         .expect("honest capability-gated turn must prove + cap-bound-verify");
 
-        assert!(proven.proof.components.has_cap_membership, "cap leg attached");
+        assert!(
+            proven.proof.components.has_cap_membership,
+            "cap leg attached"
+        );
         assert!(!proven.proof_bytes().is_empty());
 
         // Independent re-verification (a light client's path): recompute the
@@ -1087,7 +1107,15 @@ mod tests {
         let mut tampered = consumed.clone();
         tampered.siblings[2] ^= 1;
         let result = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCBu8; 32], &tampered, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xCBu8; 32],
+            &tampered,
+            None,
+            &[],
         );
         assert!(
             matches!(
@@ -1100,7 +1128,15 @@ mod tests {
         // (b) Honest proof, verified against a DIFFERENT expected root: the
         // cap leg's in-circuit-bound root mismatches → CapRootMismatch.
         let proven = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCCu8; 32], &consumed, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xCCu8; 32],
+            &consumed,
+            None,
+            &[],
         )
         .expect("honest proof");
         let wrong_root = pre_cap_root + BabyBear::new(1);
@@ -1141,8 +1177,14 @@ mod tests {
 
         // The committed cap's rights are NARROW (exactly SetField) — the
         // inflation below is a REAL amplification, not a no-op.
-        assert_eq!(consumed.leaf_mask_lo, 1, "fixture grants a SetField-only mask");
-        assert_eq!(consumed.leaf_mask_hi, 0, "fixture grants a SetField-only mask");
+        assert_eq!(
+            consumed.leaf_mask_lo, 1,
+            "fixture grants a SetField-only mask"
+        );
+        assert_eq!(
+            consumed.leaf_mask_hi, 0,
+            "fixture grants a SetField-only mask"
+        );
 
         // (a) Prover side: an inflated-mask witness has no membership path to
         // the canonical root (the inflated leaf is NOT in the tree).
@@ -1150,7 +1192,15 @@ mod tests {
         inflated.leaf_mask_lo = 0xFFFF;
         inflated.leaf_mask_hi = 0xFFFF;
         let result = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCDu8; 32], &inflated, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xCDu8; 32],
+            &inflated,
+            None,
+            &[],
         );
         assert!(
             matches!(
@@ -1163,7 +1213,15 @@ mod tests {
         // (b) Verifier side: an honest proof checked against an inflated-leaf
         // expectation mismatches the in-circuit-bound leaf digest.
         let proven = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xCEu8; 32], &consumed, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xCEu8; 32],
+            &consumed,
+            None,
+            &[],
         )
         .expect("honest proof");
         let mut inflated_leaf = consumed.cap_leaf();
@@ -1208,13 +1266,23 @@ mod tests {
         other
             .capabilities
             .grant(CellId::from_bytes([0x55u8; 32]), AuthRequired::None);
-        let other_root =
-            dregg_cell::compute_canonical_capability_root_felt(&other.capabilities);
-        assert_ne!(other_root, pre_cap_root, "distinct c-lists ⇒ distinct roots");
+        let other_root = dregg_cell::compute_canonical_capability_root_felt(&other.capabilities);
+        assert_ne!(
+            other_root, pre_cap_root,
+            "distinct c-lists ⇒ distinct roots"
+        );
 
         // (a) Prover refuses: the witness does not open to the other cell's root.
         let result = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, other_root, &effects, [0xCFu8; 32], &consumed, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            other_root,
+            &effects,
+            [0xCFu8; 32],
+            &consumed,
+            None,
+            &[],
         );
         assert!(
             matches!(
@@ -1226,7 +1294,15 @@ mod tests {
 
         // (b) Verifier rejects an honest proof bound to the other cell's root.
         let proven = prove_and_verify_finalized_turn_capability(
-            &agent_id, 1_000, 0, pre_cap_root, &effects, [0xD0u8; 32], &consumed, None, &[],
+            &agent_id,
+            1_000,
+            0,
+            pre_cap_root,
+            &effects,
+            [0xD0u8; 32],
+            &consumed,
+            None,
+            &[],
         )
         .expect("honest proof");
         let expectation = dregg_sdk::CapMembershipExpectation {

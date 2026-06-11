@@ -77,7 +77,9 @@ fn party_signed_consent(lace: &[ConsentBlock], party: u64, digest: u64) -> bool 
 
 /// Mirror of `consentLaceComplete`: EVERY required party has a signed self-authored consent.
 fn consent_lace_complete(lace: &[ConsentBlock], parties: &[u64], digest: u64) -> bool {
-    parties.iter().all(|&p| party_signed_consent(lace, p, digest))
+    parties
+        .iter()
+        .all(|&p| party_signed_consent(lace, p, digest))
 }
 
 // ───────────────────────── GOLDEN VECTORS (copied from Lean §9.1 `#guard`s) ─────────────────────
@@ -150,10 +152,22 @@ fn differential_consent_binding_decision() {
 
     // Specifically: unsigned, wrong-author, wrong-digest, and revoke all FAIL — the three
     // consent-binding teeth + the kind discriminator.
-    assert!(!is_approval_for(&diff_corpus()[1], 7, 42), "unsigned must not count");
-    assert!(!is_approval_for(&diff_corpus()[2], 7, 42), "impersonation must not count");
-    assert!(!is_approval_for(&diff_corpus()[3], 7, 42), "wrong digest must not count");
-    assert!(!is_approval_for(&diff_corpus()[4], 7, 42), "a revoke is not an approve");
+    assert!(
+        !is_approval_for(&diff_corpus()[1], 7, 42),
+        "unsigned must not count"
+    );
+    assert!(
+        !is_approval_for(&diff_corpus()[2], 7, 42),
+        "impersonation must not count"
+    );
+    assert!(
+        !is_approval_for(&diff_corpus()[3], 7, 42),
+        "wrong digest must not count"
+    );
+    assert!(
+        !is_approval_for(&diff_corpus()[4], 7, 42),
+        "a revoke is not an approve"
+    );
 }
 
 #[test]

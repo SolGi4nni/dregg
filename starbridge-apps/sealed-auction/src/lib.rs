@@ -42,7 +42,7 @@
 use std::collections::BTreeMap;
 
 use dregg_intent::verified_settle::{
-    settle_ring_verified, VerifiedLeg, VerifiedLedger, VerifiedSettleError,
+    VerifiedLedger, VerifiedLeg, VerifiedSettleError, settle_ring_verified,
 };
 
 /// A cell id, restricted to the low byte the verified per-asset ledger indexes by (the Rust view of
@@ -75,7 +75,11 @@ pub struct Bid {
 impl Bid {
     /// Construct a bid.
     pub fn new(bidder: CellId, value: i128, nonce: u64) -> Self {
-        Self { bidder, value, nonce }
+        Self {
+            bidder,
+            value,
+            nonce,
+        }
     }
 
     /// The sealed commitment of this bid — `BLAKE3(bidder || value || nonce)`. Binding (under CR a
@@ -132,11 +136,15 @@ impl std::fmt::Display for AuctionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotCommitPhase => write!(f, "commit attempted outside the commit phase"),
-            Self::NotRevealPhase => write!(f, "reveal/settle attempted before the commit phase closed"),
+            Self::NotRevealPhase => {
+                write!(f, "reveal/settle attempted before the commit phase closed")
+            }
             Self::AlreadySettled => write!(f, "the auction is already settled"),
             Self::NotCommitted => write!(f, "the revealed bid was not among the committed seals"),
             Self::NoWinner => write!(f, "no valid reveals collected; no winner to award"),
-            Self::SettlementRejected(e) => write!(f, "award settlement rejected by the verified executor: {e}"),
+            Self::SettlementRejected(e) => {
+                write!(f, "award settlement rejected by the verified executor: {e}")
+            }
         }
     }
 }
@@ -232,10 +240,7 @@ impl Auction {
     /// (sealed-bid first-price). `None` if no valid reveals were collected. Mirrors the Lean
     /// `SealedAuction.winnerOf`.
     pub fn winner(&self) -> Option<Bid> {
-        self.revealed
-            .values()
-            .copied()
-            .max_by_key(|b| b.value)
+        self.revealed.values().copied().max_by_key(|b| b.value)
     }
 
     /// The award ring — the two balanced legs settled atomically. Leg 1: the winner pays its bid of
@@ -273,14 +278,16 @@ impl Auction {
     /// `settle_conserves` (the verified fold checks every asset's total supply is preserved). The
     /// returned `(ledger, winner)` provably has the winner among the committed parties
     /// (`winner_was_committed`) because only validly-revealed (hence committed) bids enter `revealed`.
-    pub fn settle(&mut self, ledger: &VerifiedLedger) -> Result<(VerifiedLedger, Bid), AuctionError> {
+    pub fn settle(
+        &mut self,
+        ledger: &VerifiedLedger,
+    ) -> Result<(VerifiedLedger, Bid), AuctionError> {
         if self.phase != Phase::Reveal {
             return Err(AuctionError::NotRevealPhase);
         }
         let winner = self.winner().ok_or(AuctionError::NoWinner)?;
         let ring = self.award_ring(&winner);
-        let post = settle_ring_verified(ledger, &ring)
-            .map_err(AuctionError::SettlementRejected)?;
+        let post = settle_ring_verified(ledger, &ring).map_err(AuctionError::SettlementRejected)?;
         self.phase = Phase::Settled;
         Ok((post, winner))
     }

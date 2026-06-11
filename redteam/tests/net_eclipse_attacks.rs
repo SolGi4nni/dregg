@@ -21,7 +21,7 @@
 //! assert DEFENDED. The stem-origin invariant itself is pinned by net-internal
 //! `gossip::tests::stem_plan_*` (StemPlan is crate-private).
 
-use dregg_net::peer_score::{Penalty, PeerScoreboard};
+use dregg_net::peer_score::{PeerScoreboard, Penalty};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 
@@ -45,7 +45,11 @@ fn attack_sybil_flood_cannot_evict_trusted_anchor_from_eager_set() {
 
     let mut all: Vec<SocketAddr> = Vec::new();
     for i in 0..200u16 {
-        let a = addr(&format!("10.0.{}.{}:9000", (i >> 8) as u8, (i & 0xff) as u8));
+        let a = addr(&format!(
+            "10.0.{}.{}:9000",
+            (i >> 8) as u8,
+            (i & 0xff) as u8
+        ));
         for _ in 0..40 {
             sb.reward_fresh_delivery(a); // attacker looks maximally reliable
         }
@@ -165,6 +169,9 @@ fn attack_byzantine_anchor_is_not_pinned() {
         !eager.contains(&anchor),
         "FINDING: a proven-Byzantine anchor was still pinned eager (trust != license)"
     );
-    assert!(eager.contains(&honest), "the honest peer takes the slot instead");
+    assert!(
+        eager.contains(&honest),
+        "the honest peer takes the slot instead"
+    );
     eprintln!("[NET ATTACK 3 / F-5] byzantine anchor pinning: DEFENDED (graylisted, not pinned)");
 }

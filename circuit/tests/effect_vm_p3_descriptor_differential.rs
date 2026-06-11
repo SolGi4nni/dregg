@@ -52,10 +52,10 @@
 //! asserts the honest-corpus faithfulness check is non-vacuous (the honest traces
 //! really are accepted by both, not trivially rejected by both).
 
+use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi};
 use dregg_circuit::effect_vm_p3_full_air::{bespoke_air_accepts, p3_air_accepts};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 
 /// Independent alphas for the bespoke alpha-fold (so "fold == 0" faithfully ANDs
 /// the individual gates rather than canceling for one unlucky challenge).
@@ -79,15 +79,34 @@ fn honest_corpus() -> Vec<(&'static str, Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)
         (trace, pis)
     };
 
-    let one = |label: &'static str, bal: u64, e: Effect| {
-        (label, vec![mk(bal, vec![e])])
-    };
+    let one = |label: &'static str, bal: u64, e: Effect| (label, vec![mk(bal, vec![e])]);
 
     vec![
         one("NoOp", 100_000, Effect::NoOp),
-        one("Transfer-out", 100_000, Effect::Transfer { amount: 50, direction: 1 }),
-        one("Transfer-in", 100_000, Effect::Transfer { amount: 50, direction: 0 }),
-        one("SetField", 100_000, Effect::SetField { field_idx: 2, value: BabyBear::new(0x42) }),
+        one(
+            "Transfer-out",
+            100_000,
+            Effect::Transfer {
+                amount: 50,
+                direction: 1,
+            },
+        ),
+        one(
+            "Transfer-in",
+            100_000,
+            Effect::Transfer {
+                amount: 50,
+                direction: 0,
+            },
+        ),
+        one(
+            "SetField",
+            100_000,
+            Effect::SetField {
+                field_idx: 2,
+                value: BabyBear::new(0x42),
+            },
+        ),
         (
             "GrantCapability",
             vec![mk(
@@ -105,21 +124,36 @@ fn honest_corpus() -> Vec<(&'static str, Vec<(Vec<Vec<BabyBear>>, Vec<BabyBear>)
         one(
             "NoteCreate",
             100_000,
-            Effect::NoteCreate { commitment: BabyBear::new(0x5678), value: 50 },
+            Effect::NoteCreate {
+                commitment: BabyBear::new(0x5678),
+                value: 50,
+            },
         ),
         one(
             "NoteSpend",
             100_000,
-            Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 },
+            Effect::NoteSpend {
+                nullifier: BabyBear::new(0x1234),
+                value: 100,
+            },
         ),
         (
             "multi-effect",
             vec![mk(
                 100_000,
                 vec![
-                    Effect::Transfer { amount: 100, direction: 1 },
-                    Effect::SetField { field_idx: 0, value: BabyBear::new(1) },
-                    Effect::Transfer { amount: 40, direction: 0 },
+                    Effect::Transfer {
+                        amount: 100,
+                        direction: 1,
+                    },
+                    Effect::SetField {
+                        field_idx: 0,
+                        value: BabyBear::new(1),
+                    },
+                    Effect::Transfer {
+                        amount: 40,
+                        direction: 0,
+                    },
                 ],
             )],
         ),
@@ -162,9 +196,18 @@ fn running_air_never_accepts_what_the_reference_rejects() {
     // A base honest turn with a real non-last row + a balance move to tamper.
     let st = CellState::new(100_000, 0);
     let effects = vec![
-        Effect::Transfer { amount: 100, direction: 1 },
-        Effect::SetField { field_idx: 3, value: BabyBear::new(9) },
-        Effect::Transfer { amount: 25, direction: 0 },
+        Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
+        Effect::SetField {
+            field_idx: 3,
+            value: BabyBear::new(9),
+        },
+        Effect::Transfer {
+            amount: 25,
+            direction: 0,
+        },
     ];
     let (base_trace, base_pis) = generate_effect_vm_trace(&st, &effects);
     let n = base_trace.len();
@@ -326,11 +369,17 @@ fn running_air_never_accepts_what_the_reference_rejects() {
 #[test]
 fn drift_is_caught_by_the_differential() {
     let st = CellState::new(100_000, 0);
-    let effects = vec![Effect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let (base_trace, base_pis) = generate_effect_vm_trace(&st, &effects);
 
     // Honest base: both accept (non-vacuity of the honest side).
-    assert!(p3_air_accepts(&base_trace, &base_pis), "honest must p3-accept");
+    assert!(
+        p3_air_accepts(&base_trace, &base_pis),
+        "honest must p3-accept"
+    );
     assert!(
         bespoke_air_accepts(&base_trace, &base_pis, &alphas()),
         "honest must reference-accept"

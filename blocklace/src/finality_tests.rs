@@ -880,24 +880,40 @@ fn merge_join_order_independent_with_fork_differential() {
     // Replica R3 — everything as ONE closed delta onto empty (a fresh joiner), with b0
     // listed AFTER the fork blocks (topological_sort reorders for insertion). `replica3`.
     let mut r3 = Blocklace::new_simple(random_key());
-    r3.merge(vec![fork2.clone(), fork1.clone(), b0.clone()]).unwrap();
+    r3.merge(vec![fork2.clone(), fork1.clone(), b0.clone()])
+        .unwrap();
 
     let ids = |b: &Blocklace| -> HashSet<_> { b.iter().map(|(id, _)| *id).collect() };
 
     // ORDER-INDEPENDENCE at n>1 THROUGH a Byzantine fork: all three converge to the
     // SAME keyset = laceIds B ∪ laceIds Δ  (Lean `laceIds_mergeLace` + `merge_comm`/`_assoc`).
-    assert_eq!(ids(&r1), expected, "R1 keyset must be the join {{b0,fork1,fork2}}");
-    assert_eq!(ids(&r1), ids(&r2), "merge_comm: R1 and R2 converge (opposite order)");
+    assert_eq!(
+        ids(&r1),
+        expected,
+        "R1 keyset must be the join {{b0,fork1,fork2}}"
+    );
+    assert_eq!(
+        ids(&r1),
+        ids(&r2),
+        "merge_comm: R1 and R2 converge (opposite order)"
+    );
     assert_eq!(ids(&r2), ids(&r3), "merge_assoc: R3 (single delta) agrees");
 
     // IDEMPOTENCE / ABSORPTION (Lean `merge_idem` / `merge_absorb`): re-merging
     // already-present blocks is inert on the keyset.
     r1.merge(vec![fork1.clone(), fork2.clone()]).unwrap();
-    assert_eq!(ids(&r1), expected, "merge_idem: re-merging the fork delta is inert");
+    assert_eq!(
+        ids(&r1),
+        expected,
+        "merge_idem: re-merging the fork delta is inert"
+    );
 
     // MONOTONICITY (Lean `merge_monotone`): the honest genesis survives the fork-merge —
     // merging never drops a block.
-    assert!(ids(&r1).contains(&b0.id()), "merge_monotone: b0 retained through fork");
+    assert!(
+        ids(&r1).contains(&b0.id()),
+        "merge_monotone: b0 retained through fork"
+    );
 
     // The fork IS detected (the equivocation view is a deterministic function of the
     // converged keyset — the same on every replica, per LaceMerge's §1 note).

@@ -31,11 +31,11 @@
 #![cfg(test)]
 
 use crate::epoch::{
-    apply_epoch_transition, compute_bft_threshold, propose_epoch_transition,
-    verify_epoch_transition, EpochConfig, ValidatorInfo,
+    EpochConfig, ValidatorInfo, apply_epoch_transition, compute_bft_threshold,
+    propose_epoch_transition, verify_epoch_transition,
 };
 use crate::quorum_threshold;
-use crate::types::{generate_keypair, sign, PublicKey, QuorumCertificate, Signature, SigningKey};
+use crate::types::{PublicKey, QuorumCertificate, Signature, SigningKey, generate_keypair, sign};
 
 // ───────────────────────────── Lean model, transcribed to Rust ─────────────────────────────
 // These mirror `EpochReconfig.lean` §1–§2 exactly.
@@ -47,7 +47,11 @@ fn lean_quorum_threshold(n: usize) -> usize {
 
 /// Lean `applyDelta old d` (`EpochReconfig.lean` §2): drop removals (by key), append additions —
 /// returns the new member key list.
-fn lean_apply_delta(old: &[PublicKey], added: &[PublicKey], removed: &[PublicKey]) -> Vec<PublicKey> {
+fn lean_apply_delta(
+    old: &[PublicKey],
+    added: &[PublicKey],
+    removed: &[PublicKey],
+) -> Vec<PublicKey> {
     let mut out: Vec<PublicKey> = old
         .iter()
         .filter(|m| !removed.iter().any(|r| r == *m))
@@ -100,7 +104,11 @@ fn lean_threshold_matches_rust_golden() {
     ] {
         assert_eq!(lean_quorum_threshold(n), t, "lean golden n={n}");
         assert_eq!(quorum_threshold(n), t, "rust quorum_threshold n={n}");
-        assert_eq!(compute_bft_threshold(n), t, "rust compute_bft_threshold n={n}");
+        assert_eq!(
+            compute_bft_threshold(n),
+            t,
+            "rust compute_bft_threshold n={n}"
+        );
     }
 }
 
@@ -142,7 +150,11 @@ fn lean_apply_delta_matches_rust_member_set_and_count() {
         EpochConfig::genesis(vec![v0.clone(), v1.clone(), v2.clone(), v3.clone()], 100);
     assert_eq!(config.threshold, 3);
 
-    let old_keys: Vec<PublicKey> = config.members.iter().map(|m| m.public_key.clone()).collect();
+    let old_keys: Vec<PublicKey> = config
+        .members
+        .iter()
+        .map(|m| m.public_key.clone())
+        .collect();
 
     // Real propose.
     let mut transition =
@@ -161,7 +173,10 @@ fn lean_apply_delta_matches_rust_member_set_and_count() {
     assert_eq!(lean_new.len(), 4);
 
     // Lean new-threshold = quorumThreshold of new count.
-    assert_eq!(transition.new_threshold, lean_quorum_threshold(lean_new.len()));
+    assert_eq!(
+        transition.new_threshold,
+        lean_quorum_threshold(lean_new.len())
+    );
 
     // Drive the REAL apply with a genuine old-epoch quorum (3 valid old-member sigs).
     sign_quorum(&mut transition.attestation, &[&sk0, &sk1, &sk2], 3);
@@ -169,7 +184,11 @@ fn lean_apply_delta_matches_rust_member_set_and_count() {
     apply_epoch_transition(&mut config, &transition).unwrap();
 
     // Real applied member-key set ≡ Lean applyDelta (as a set: removals gone, additions present).
-    let rust_new: Vec<PublicKey> = config.members.iter().map(|m| m.public_key.clone()).collect();
+    let rust_new: Vec<PublicKey> = config
+        .members
+        .iter()
+        .map(|m| m.public_key.clone())
+        .collect();
     for k in &lean_new {
         assert!(rust_new.contains(k), "lean member missing from rust");
     }
@@ -178,7 +197,10 @@ fn lean_apply_delta_matches_rust_member_set_and_count() {
     }
     assert_eq!(rust_new.len(), lean_new.len());
     // Real applied threshold ≡ supermajority of new count (Lean applied_threshold_is_supermajority).
-    assert_eq!(config.threshold, lean_quorum_threshold(config.members.len()));
+    assert_eq!(
+        config.threshold,
+        lean_quorum_threshold(config.members.len())
+    );
     assert_eq!(config.current_epoch, 1); // apply_advances_one
 }
 
@@ -198,7 +220,11 @@ fn build_verifiable() -> (
 
     let config = EpochConfig::genesis(vec![v0, v1, v2], 100);
     let mut transition = propose_epoch_transition(&config, &[v3], &[]).unwrap();
-    sign_quorum(&mut transition.attestation, &[&sk0, &sk1, &sk2], config.threshold);
+    sign_quorum(
+        &mut transition.attestation,
+        &[&sk0, &sk1, &sk2],
+        config.threshold,
+    );
     transition.attestation.threshold = config.threshold;
     (config, transition, (sk0, sk1, sk2))
 }

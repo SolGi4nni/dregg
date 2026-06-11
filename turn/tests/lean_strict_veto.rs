@@ -59,7 +59,11 @@ fn burn_turn(agent: CellId) -> Turn {
         args: vec![],
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
-        effects: vec![Effect::Burn { target: agent, slot: 0, amount: 10 }],
+        effects: vec![Effect::Burn {
+            target: agent,
+            slot: 0,
+            amount: 10,
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,

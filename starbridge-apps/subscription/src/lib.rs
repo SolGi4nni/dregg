@@ -154,9 +154,9 @@
 
 use dregg_app_framework::{
     Action, AppCipherclerk, AuthRequired, AuthorizedSet, CapTarget, CapTemplate, CellId, CellMode,
-    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor,
-    FieldElement, InspectorDescriptor, StarbridgeAppContext, StateConstraint,
-    TransitionCase, TransitionGuard, canonical_program_vk, hex_encode_32, symbol,
+    CellProgram, ChildVkStrategy, ConstantsModule, Effect, Event, FactoryDescriptor, FieldElement,
+    InspectorDescriptor, StarbridgeAppContext, StateConstraint, TransitionCase, TransitionGuard,
+    canonical_program_vk, hex_encode_32, symbol,
 };
 use dregg_cell::program::SimpleStateConstraint;
 

@@ -15,7 +15,7 @@
 //! the in-crate unit tests, but pinned as the cross-checked golden vectors the Lean `#guard`s
 //! encode — if either side drifts, this test fails.)
 
-use dregg_blocklace::constitution::{compute_threshold, Constitution, MembershipProposal};
+use dregg_blocklace::constitution::{Constitution, MembershipProposal, compute_threshold};
 
 const TIMEOUT: u64 = 10;
 
@@ -73,7 +73,8 @@ fn differential_h_rule_required_votes() {
         for new in 1..=6usize {
             let mut cc = Constitution::new(participants(6), TIMEOUT);
             cc.threshold = cur;
-            let req = cc.required_votes_for(&MembershipProposal::AmendThreshold { new_threshold: new });
+            let req =
+                cc.required_votes_for(&MembershipProposal::AmendThreshold { new_threshold: new });
             assert!(req >= cur, "H-rule: required {req} < current {cur}");
             assert!(req >= new, "H-rule: required {req} < new {new}");
             assert_eq!(req, cur.max(new));

@@ -115,13 +115,17 @@ async fn council(
         &crate::output::abbrev_hex(&slot(PROPOSAL_HASH_SLOT), 8, 4),
     );
     for (i, a) in approvals.iter().enumerate() {
-        ctx.kv(
-            &format!("Member {i}"),
-            if *a { "APPROVED" } else { "—" },
-        );
+        ctx.kv(&format!("Member {i}"), if *a { "APPROVED" } else { "—" });
     }
     ctx.kv("Approvals", &approval_count.to_string());
-    ctx.kv("Certified", if certified { "YES (threshold met)" } else { "no" });
+    ctx.kv(
+        "Certified",
+        if certified {
+            "YES (threshold met)"
+        } else {
+            "no"
+        },
+    );
     ctx.kv(
         "Members commit",
         &crate::output::abbrev_hex(&slot(MEMBERS_COMMIT_SLOT), 8, 4),

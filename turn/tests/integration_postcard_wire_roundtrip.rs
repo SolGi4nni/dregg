@@ -13,9 +13,7 @@
 //! This test pins the fix: no `skip_serializing_if` may reappear on any field
 //! that rides inside `Turn` over the wire.
 
-use dregg_turn::action::{
-    symbol, Action, Authorization, DelegationMode, Effect,
-};
+use dregg_turn::action::{Action, Authorization, DelegationMode, Effect, symbol};
 use dregg_turn::forest::CallForest;
 use dregg_turn::turn::Turn;
 use dregg_types::CellId;
@@ -62,8 +60,8 @@ fn turn_with(effects: Vec<Effect>) -> Turn {
 
 fn assert_roundtrips(turn: &Turn) {
     let bytes = postcard::to_stdvec(turn).expect("postcard serialize");
-    let decoded: Turn =
-        postcard::from_bytes(&bytes).expect("postcard MUST round-trip Turn (no skip_serializing_if)");
+    let decoded: Turn = postcard::from_bytes(&bytes)
+        .expect("postcard MUST round-trip Turn (no skip_serializing_if)");
     // Re-encode the decoded value; a positional desync would also corrupt this.
     let bytes2 = postcard::to_stdvec(&decoded).expect("re-serialize decoded turn");
     assert_eq!(bytes, bytes2, "postcard re-encode must be byte-stable");

@@ -444,8 +444,14 @@ mod tests {
     #[test]
     fn binding_only_settlement_round_trips() {
         let root_commit = [0xAB; 32];
-        let p = wrap_for_ethereum(root_commit, pis(1, 2, 5), SnarkSystem::BindingOnly, None, [0; 32])
-            .expect("binding-only wrap must succeed");
+        let p = wrap_for_ethereum(
+            root_commit,
+            pis(1, 2, 5),
+            SnarkSystem::BindingOnly,
+            None,
+            [0; 32],
+        )
+        .expect("binding-only wrap must succeed");
         assert!(!p.is_snark_backed());
         assert!(verify_settlement_binding(&p).unwrap());
 
@@ -466,8 +472,14 @@ mod tests {
     /// A real SNARK system requires proof bytes; binding-only does not.
     #[test]
     fn real_snark_requires_proof_bytes() {
-        let err = wrap_for_ethereum([0xAB; 32], pis(1, 2, 1), SnarkSystem::Groth16Bn254, None, [9; 32])
-            .unwrap_err();
+        let err = wrap_for_ethereum(
+            [0xAB; 32],
+            pis(1, 2, 1),
+            SnarkSystem::Groth16Bn254,
+            None,
+            [9; 32],
+        )
+        .unwrap_err();
         assert!(matches!(err, EthBridgeError::InvalidProof { .. }));
     }
 
@@ -503,8 +515,14 @@ mod tests {
     #[test]
     fn discontinuous_advance_rejected() {
         let mut state = EthBridgeState::new([1; 32]);
-        let p = wrap_for_ethereum([0xAB; 32], pis(9, 2, 1), SnarkSystem::BindingOnly, None, [0; 32])
-            .unwrap();
+        let p = wrap_for_ethereum(
+            [0xAB; 32],
+            pis(9, 2, 1),
+            SnarkSystem::BindingOnly,
+            None,
+            [0; 32],
+        )
+        .unwrap();
         let advance = EthStateAdvance {
             old_root: [9; 32], // != proven_root [1;32]
             new_root: [2; 32],

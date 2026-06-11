@@ -1,11 +1,11 @@
-//! GOLD: genuine recursive N-to-1 joint-turn aggregation.
+//! GOLD: genuine recursive N-to-1 joint-turn aggregation — REAL descriptor leaves.
 //!
 //! ## Silver -> Gold, for real
 //!
 //! [`joint_turn_aggregation`](crate::joint_turn_aggregation) is **Silver**: a
 //! bundle = {N per-cell whole-turn proofs} + ONE aggregation STARK that binds
 //! their shared turn id (CG-2) and folds their commitments. The verifier still
-//! re-runs `stark::verify` on **every** per-cell proof, so verification cost
+//! re-runs verification on **every** per-cell proof, so verification cost
 //! grows linearly with the number of cells.
 //!
 //! This module is **Gold**: it recursively verifies the N per-cell whole-turn
@@ -21,7 +21,7 @@
 //!   per-cell leaves           binding leaf
 //!   ┌─────────┐ ┌─────────┐   ┌────────────┐
 //!   │ cell 0  │ │ cell 1  │…  │ shared-tid │   (uni-STARK inner proofs)
-//!   │ EffectVm│ │ EffectVm│   │  + digest  │
+//!   │ DESC AIR│ │ DESC AIR│   │  + digest  │
 //!   └────┬────┘ └────┬────┘   └─────┬──────┘
 //!        │  next-layer (uni→batch)  │            build_and_prove_next_layer
 //!   ┌────▼────┐ ┌────▼────┐   ┌─────▼──────┐
@@ -37,81 +37,68 @@
 //! ```
 //!
 //! Each leaf is a genuine recursion-compatible uni-STARK proof:
-//!   - per-cell leaves: [`EffectVmShapeAir`] (the EffectVm's real width/PI shape
-//!     with selector-booleanity, NoOp passthrough, Transfer-delta, chain
-//!     continuity, and commitment boundary constraints), with the
-//!     [`pi::TURN_HASH`] public input pinned to the shared turn id and
-//!     [`pi::NEW_COMMIT`] pinned to that cell's post-state commitment;
+//!   - per-cell leaves: **the Lean-descriptor EffectVM AIR itself**
+//!     ([`EffectVmDescriptorAir`], the graduated ONE-circuit cutover constraint
+//!     set — Poseidon2 state-commit hash sites, per-row gates, transition
+//!     continuity, `OLD/NEW_COMMIT` PI bindings, range checks), re-proven over
+//!     each cell's REAL 186-column execution trace via the SAME
+//!     [`prove_descriptor_leaf`](crate::ivc_turn_chain) recipe the whole-chain
+//!     fold cut over to. The descriptor PI prefix includes the
+//!     [`pi::TURN_HASH_BASE`] slot, so each leaf's wrap binds the shared turn
+//!     id AND the cell's genuine state commitments in-circuit;
 //!   - binding leaf: [`JointTurnAggregationAir`] over the N participants,
 //!     enforcing CG-2 (every cell's `shared_turn_id == published id`) and the
 //!     commitment hash-chain digest.
 //!
-//! ## HONEST GAP — the per-cell leaves here are still SHAPE STUBS (chain fold is not)
+//! The former `EffectVmShapeAir` SHAPE-STUB leaves (a passthrough trace any
+//! fabricated `cell_commit` could satisfy — per-cell execution soundness
+//! rested on the host gate) are GONE. The discriminating check that earns the
+//! claim is `ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root`:
+//! a prover that SKIPS the host-side descriptor admission and forges a
+//! post-state commitment has NO satisfying leaf — the descriptor's hash sites
+//! force the commit cells to be the genuine Poseidon2 digests — so no root
+//! exists. The host gate is an admission discipline, not the soundness
+//! boundary.
 //!
-//! [`EffectVmShapeAir`] is NOT the full Effect VM constraint set (its own docs:
-//! a trace that passes it would not pass the real AIR), so in THIS module
-//! per-cell execution soundness still rests on the HOST-side gate
-//! (`check_joint_preconditions` verifying each participant's bespoke proof) —
-//! a trusted-prover assumption for the per-cell leg. The whole-chain fold
-//! ([`crate::ivc_turn_chain`], the light-client path) has been CUT OVER: its
-//! leaves are the REAL Lean-descriptor EffectVM AIR
-//! (`EffectVmDescriptorAir`) re-proven over each turn's own execution trace
-//! and verified in-circuit, with ungated-prover tamper tests proving the host
-//! gate is not load-bearing there. Converting THIS joint-turn fold the same
-//! way needs its participants re-pointed from the bespoke `JointParticipant`
-//! (legacy `stark::StarkProof`) onto `DescriptorParticipant` + carried traces
-//! — the same recipe `ivc_turn_chain::prove_descriptor_leaf` applies — and is
-//! deliberately left for the joint-turn lane so the Silver surface
-//! (`joint_turn_aggregation`) stays intact in this pass. The ignored test
-//! `gold_joint_leaf_is_still_a_shape_stub_no_in_circuit_execution_tooth`
-//! documents the exact missing tooth.
+//! ## What the verifier checks
 //!
-//! Each leaf is first wrapped in its own recursive verifier layer
-//! (`build_and_prove_next_layer`, uni→batch), then the resulting batch proofs
-//! are pairwise aggregated (`build_and_prove_aggregation_layer`) up a binary
-//! tree, chaining via [`RecursionOutput::into_recursion_input::<BatchOnly>`],
-//! until ONE root batch proof remains.
+//! [`verify_joint_turn_recursive`] mirrors the whole-chain verifier's three
+//! teeth (see [`crate::ivc_turn_chain`]'s module docs for the precise
+//! guarantee statements and the fork follow-up each one names):
 //!
-//! ## The tooth
+//!   1. **VK pin** — the root's verifier-key fingerprint
+//!     ([`RecursionVk`]) must equal a caller-held trust anchor;
+//!   2. **claimed-publics attestation** — the carried `shared_turn_id` /
+//!      `bundle_digest` must verify as the public inputs of the carried
+//!      binding proof (Fiat–Shamir binds them);
+//!   3. **the root** batch-STARK proof verifies.
 //!
-//! Two independent failure modes, both surfacing as "no valid root proof":
-//!
-//!   1. **Tampered participant proof.** If any per-cell inner proof is
-//!      corrupted, its leaf verifier circuit is unsatisfiable, so
-//!      `build_and_prove_next_layer` for that leaf fails — there is no batch
-//!      proof to feed the tree, hence no root. (Test:
-//!      `recursive_rejects_tampered_participant_proof`.)
-//!   2. **Disagreeing turn ids.** If two cells carry different turn ids, the
-//!      binding leaf's [`JointTurnAggregationAir`] CG-2 constraint is violated;
-//!      its inner proof is unsatisfiable and the host check rejects it before
-//!      any tree is built. (Test:
-//!      `recursive_rejects_disagreeing_turn_ids`.)
-//!
-//! The wrap layers genuinely re-derive each LEAF proof's FRI/quotient checks
-//! in-circuit — but per the HONEST GAP above, the per-cell leaves attest the
-//! SHAPE subset, not full execution; the root's constant-cost verification is
-//! real, while the per-cell execution leg still rides the host gate.
+//! The residual floor is the same as the whole-chain fold's, named there once:
+//! engine soundness (`recursive_sound`), child-circuit identity under the
+//! harness VK pin, and cross-leaf public-value linkage — all three pinned to
+//! the same precise fork follow-up (thread `table_public_inputs` up the tree +
+//! host-check the circuit public vector).
 
 #![cfg(feature = "recursion")]
 
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing as _;
-use p3_matrix::dense::RowMajorMatrix;
+use p3_recursion::ProveNextLayerParams;
+use p3_recursion::build_and_prove_next_layer;
 use p3_recursion::{BatchOnly, RecursionInput, RecursionOutput};
 
-use crate::effect_vm::pi;
-use crate::effect_vm_p3_air::EffectVmShapeAir;
 use crate::field::BabyBear;
-use crate::joint_turn_aggregation::{JointAggError, JointParticipant, JointTurnAggregationAir};
-use crate::plonky3_recursion_impl::recursive::{
-    DreggRecursionConfig, RecursionCompatibleProof, create_recursion_backend,
-    create_recursion_config, prove_inner_for_air, verify_inner_for_air, verify_recursive_batch_proof,
+use crate::ivc_turn_chain::prove_descriptor_leaf;
+use crate::joint_turn_aggregation::{
+    DescriptorParticipant, JointAggError, JointTurnAggregationAir,
+    recursion_binding_trace_descriptor, verify_descriptor_participant,
 };
-use p3_recursion::ProveNextLayerParams;
-use p3_recursion::build_and_prove_aggregation_layer;
-use p3_recursion::build_and_prove_next_layer;
-
-use crate::effect_vm::{EFFECT_VM_WIDTH, NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, sel, state};
+use crate::lean_descriptor_air::EffectVmDescriptorAir;
+use crate::plonky3_recursion_impl::recursive::{
+    DreggRecursionConfig, RecursionCompatibleProof, RecursionVk, create_recursion_backend,
+    create_recursion_config, prove_inner_for_air, recursion_vk_fingerprint, verify_inner_for_air,
+    verify_recursive_batch_proof,
+};
 
 const D: usize = 4;
 
@@ -120,82 +107,30 @@ fn to_p3(v: BabyBear) -> P3BabyBear {
 }
 
 // ============================================================================
-// Per-cell leaf: a recursion-compatible EffectVm-shape whole-turn proof.
+// Per-cell input: a whole-turn descriptor proof + the trace it attests.
 // ============================================================================
 
-/// Build a recursion-compatible EffectVm-shape whole-turn trace for one cell,
-/// with the shared turn id and the cell commitment pinned into the public
-/// inputs the binding layer reads.
-///
-/// Row 0 is a Transfer with `amount = 0, direction = 0` (balance + commitment
-/// passthrough), rows 1.. are NoOp passthroughs — satisfying every
-/// [`EffectVmShapeAir`] constraint. The `shared_turn_id` is written to
-/// [`pi::TURN_HASH`] and `cell_commit` to both [`pi::OLD_COMMIT`] /
-/// [`pi::NEW_COMMIT`] (and the boundary state-commit columns), so the leaf's
-/// public inputs genuinely carry the per-cell content the binding folds.
-fn build_cell_leaf_trace(
-    shared_turn_id: BabyBear,
-    cell_commit: BabyBear,
-    n_rows: usize,
-) -> (RowMajorMatrix<P3BabyBear>, Vec<BabyBear>) {
-    assert!(n_rows >= 2 && n_rows.is_power_of_two());
-
-    let mut flat: Vec<P3BabyBear> = Vec::with_capacity(n_rows * EFFECT_VM_WIDTH);
-
-    // Row 0: Transfer amount=0 dir=0 → passthrough; commit boundary = cell_commit.
-    let mut row0 = vec![BabyBear::ZERO; EFFECT_VM_WIDTH];
-    row0[sel::TRANSFER] = BabyBear::ONE;
-    row0[STATE_BEFORE_BASE + state::STATE_COMMIT] = cell_commit;
-    row0[STATE_AFTER_BASE + state::STATE_COMMIT] = cell_commit;
-    row0[PARAM_BASE] = BabyBear::ZERO; // amount
-    row0[PARAM_BASE + 1] = BabyBear::ZERO; // direction
-    flat.extend(row0.iter().map(|&v| to_p3(v)));
-
-    // Rows 1..n_rows: NoOp passthroughs preserving the commitment.
-    for _ in 1..n_rows {
-        let mut row = vec![BabyBear::ZERO; EFFECT_VM_WIDTH];
-        row[sel::NOOP] = BabyBear::ONE;
-        row[STATE_BEFORE_BASE + state::STATE_COMMIT] = cell_commit;
-        row[STATE_AFTER_BASE + state::STATE_COMMIT] = cell_commit;
-        flat.extend(row.iter().map(|&v| to_p3(v)));
-    }
-    debug_assert_eq!(NUM_EFFECTS >= 2, true);
-
-    let mut public_inputs = vec![BabyBear::ZERO; pi::BASE_COUNT];
-    // Commitment boundary PIs (single-felt continuity binding the shape AIR
-    // enforces against the trace).
-    public_inputs[pi::OLD_COMMIT] = cell_commit;
-    public_inputs[pi::NEW_COMMIT] = cell_commit;
-    // Shared turn id — the projection the binding layer / Silver aggregator reads.
-    public_inputs[pi::TURN_HASH_BASE] = shared_turn_id;
-
-    (RowMajorMatrix::new(flat, EFFECT_VM_WIDTH), public_inputs)
-}
-
-/// Produce one cell's recursion-compatible inner proof + its public inputs.
-fn prove_cell_leaf(
-    shared_turn_id: BabyBear,
-    cell_commit: BabyBear,
-    n_rows: usize,
-) -> (RecursionCompatibleProof, Vec<BabyBear>) {
-    let (matrix, pis) = build_cell_leaf_trace(shared_turn_id, cell_commit, n_rows);
-    let air = EffectVmShapeAir;
-    let proof = prove_inner_for_air(&air, matrix, &pis);
-    (proof, pis)
-}
+/// One cell's contribution to a joint turn on the Gold path: its whole-turn
+/// DESCRIPTOR-INTERPRETER proof ([`DescriptorParticipant`]) plus the
+/// 186-column execution trace the proof attests — the prover-side witness from
+/// which the in-circuit leaf is re-proven. Identical in shape and recipe to
+/// the whole-chain fold's per-turn input; the joint aggregator additionally
+/// reads [`pi::TURN_HASH_BASE`](crate::effect_vm::pi) (the shared turn id)
+/// out of the PI prefix, which the descriptor leaf's wrap binds in-circuit.
+pub type JointCell = crate::ivc_turn_chain::FinalizedTurn;
 
 // ============================================================================
 // Binding leaf: the shared-turn-id agreement + commitment digest.
 // ============================================================================
 
-/// Build the [`JointTurnAggregationAir`] inner proof binding the N participants'
-/// shared turn id (CG-2) and the commitment hash-chain digest. Reuses the
-/// Silver trace generator (host-side mismatch check + the AIR's own CG-2
-/// constraint) so a disagreeing turn id is rejected here before the tree.
+/// Build the [`JointTurnAggregationAir`] inner proof binding the N
+/// participants' shared turn id (CG-2) and the commitment hash-chain digest.
+/// The trace generator performs the host-side mismatch check and the AIR's own
+/// CG-2 constraint rejects a disagreement in-circuit too.
 fn prove_binding_leaf(
-    participants: &[JointParticipant],
+    participants: &[&DescriptorParticipant],
 ) -> Result<(RecursionCompatibleProof, Vec<BabyBear>), JointAggError> {
-    let (matrix, pis) = crate::joint_turn_aggregation::recursion_binding_trace(participants)?;
+    let (matrix, pis) = recursion_binding_trace_descriptor(participants)?;
     let air = JointTurnAggregationAir;
     let proof = prove_inner_for_air(&air, matrix, &pis);
     verify_inner_for_air(&air, &proof, &pis)
@@ -208,74 +143,157 @@ fn prove_binding_leaf(
 // ============================================================================
 
 /// The Gold deliverable: ONE succinct recursive proof attesting that **all** N
-/// per-cell whole-turn leaves AND the shared-turn-id binding leaf verified
-/// in-circuit. The verifier checks only this root proof; cost is independent of
-/// the number of cells.
+/// per-cell whole-turn DESCRIPTOR leaves AND the shared-turn-id binding leaf
+/// verified in-circuit. The verifier checks only this root proof (plus the VK
+/// pin and the carried binding attestation); cost is independent of the number
+/// of cells.
 pub struct RecursiveJointTurnProof {
     /// The single root batch-STARK proof (the whole tree folded to one).
     pub root: RecursionOutput<DreggRecursionConfig>,
+    /// The binding uni-STARK (the SAME statement the fold wraps in-circuit),
+    /// carried so the verifier checks the claimed publics below AGAINST A
+    /// PROOF instead of trusting bare fields (Fiat–Shamir binds them).
+    pub binding_proof: RecursionCompatibleProof,
     /// The shared turn id all participants agreed on.
     pub shared_turn_id: BabyBear,
+    /// The bundle digest: the hash-chain fold of the ordered
+    /// `(shared_turn_id, cell_commit)` pairs the binding leaf attests.
+    pub bundle_digest: BabyBear,
     /// The number of participating cells.
     pub num_cells: usize,
 }
 
-/// Width of a per-cell leaf trace, chosen so the EffectVm-shape AIR has enough
-/// rows for the prover. 4 rows is the minimal power-of-two that exercises
-/// row-0 Transfer + NoOp passthrough + a transition.
-const LEAF_ROWS: usize = 4;
+impl RecursiveJointTurnProof {
+    /// The root proof's verifier-key fingerprint — see
+    /// [`WholeChainProof::root_vk_fingerprint`](crate::ivc_turn_chain::WholeChainProof::root_vk_fingerprint)
+    /// for the trust-anchor discipline (an honest SETUP extracts it once; a
+    /// verifier must never take it from the artifact under verification).
+    pub fn root_vk_fingerprint(&self) -> RecursionVk {
+        recursion_vk_fingerprint(&self.root.0)
+    }
+}
 
 /// Prove a joint (cross-cell) turn **recursively**: fold the N per-cell
-/// whole-turn proofs and the shared-turn-id binding into ONE succinct recursive
-/// proof.
+/// whole-turn DESCRIPTOR proofs and the shared-turn-id binding into ONE
+/// succinct recursive proof.
 ///
 /// Steps:
-///   1. structural + host-side CG-2 check (>= 2 participants, agreeing turn id);
+///   1. host admission: >= 2 cells; every cell's production descriptor proof
+///      verifies SELECTOR-BOUND through the Lean descriptor verifier
+///      ([`verify_descriptor_participant`], which also determines each cell's
+///      selector); all cells agree on the shared turn id (CG-2, host side);
 ///   2. prove the binding leaf (rejects disagreeing turn ids in-circuit too);
-///   3. prove one recursion-compatible EffectVm-shape leaf per cell, pinning
-///      each cell's `(shared_turn_id, cell_commit)` into its public inputs;
-///   4. wrap every leaf in its own recursive verifier layer (uni→batch);
+///   3. re-prove each cell's REAL descriptor AIR over its OWN execution trace
+///      as a recursion-compatible uni-STARK
+///      ([`prove_descriptor_leaf`](crate::ivc_turn_chain) — the whole-chain
+///      recipe, applied per cell);
+///   4. wrap every leaf in its own IN-CIRCUIT verifier layer (uni→batch);
 ///   5. pairwise-aggregate all batch leaves up a binary tree to ONE root.
 ///
-/// A tampered participant proof makes the corresponding leaf's verifier circuit
-/// unsatisfiable, so step 4 fails for that leaf and no root is produced —
-/// the recursive teeth.
+/// The host gate (step 1) is an admission discipline, NOT the soundness
+/// boundary: a prover that skips it
+/// ([`prove_joint_turn_recursive_without_host_gate`]) still cannot produce a
+/// verifying root for a forged cell, because a forged `cell_commit` has no
+/// satisfying descriptor leaf.
 pub fn prove_joint_turn_recursive(
-    participants: &[JointParticipant],
+    cells: &[JointCell],
 ) -> Result<RecursiveJointTurnProof, JointAggError> {
-    // (1) structural + host CG-2: also verifies each per-cell proof individually
-    //     (the Silver per-cell soundness gate), and rejects disagreeing tids.
-    let shared_turn_id = crate::joint_turn_aggregation::check_joint_preconditions(participants)?;
+    if cells.len() < 2 {
+        return Err(JointAggError::TooFewParticipants { count: cells.len() });
+    }
+    // (1a) per-cell descriptor admission, selector-bound.
+    let mut selectors = Vec::with_capacity(cells.len());
+    for (i, c) in cells.iter().enumerate() {
+        let s = verify_descriptor_participant(&c.participant)
+            .map_err(|reason| JointAggError::ParticipantProofInvalid { index: i, reason })?;
+        selectors.push(s);
+    }
+    // (1b) CG-2 host check.
+    let shared_tid = cells[0].participant.shared_turn_id();
+    for (i, c) in cells.iter().enumerate() {
+        if c.participant.shared_turn_id() != shared_tid {
+            return Err(JointAggError::SharedTurnIdMismatch {
+                index: i,
+                expected: shared_tid.0,
+                found: c.participant.shared_turn_id().0,
+            });
+        }
+    }
+    let refs: Vec<&JointCell> = cells.iter().collect();
+    prove_joint_core(&refs, &selectors)
+}
+
+/// **THE UNGATED PROVER (tamper surface).** Fold a joint turn WITHOUT the
+/// host-side descriptor admission, taking the prover's CLAIMED selectors at
+/// face value. Exists to make the soundness claim falsifiable: a malicious
+/// prover that skips the gate and feeds a forged `cell_commit` still has to
+/// satisfy the REAL descriptor AIR at the leaf — and a forged commitment has
+/// no satisfying witness, so the fold fails and no verifying root exists
+/// (`ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root`).
+pub fn prove_joint_turn_recursive_without_host_gate(
+    cells: &[JointCell],
+    claimed_selectors: &[usize],
+) -> Result<RecursiveJointTurnProof, JointAggError> {
+    let refs: Vec<&JointCell> = cells.iter().collect();
+    prove_joint_core(&refs, claimed_selectors)
+}
+
+/// The shared fold core (steps 2–5 of [`prove_joint_turn_recursive`]).
+fn prove_joint_core(
+    cells: &[&JointCell],
+    selectors: &[usize],
+) -> Result<RecursiveJointTurnProof, JointAggError> {
+    if selectors.len() != cells.len() {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: format!(
+                "selector count {} != cell count {}",
+                selectors.len(),
+                cells.len()
+            ),
+        });
+    }
+    let participants: Vec<&DescriptorParticipant> = cells.iter().map(|c| &c.participant).collect();
 
     let config = create_recursion_config();
     let backend = create_recursion_backend();
     let params = ProveNextLayerParams::default();
 
     // (2) binding leaf (shared-tid agreement + digest), proven in-circuit-ready.
-    let (binding_inner, binding_pis) = prove_binding_leaf(participants)?;
+    let (binding_inner, binding_pis) = prove_binding_leaf(&participants)?;
+    let shared_turn_id = binding_pis[0];
+    let bundle_digest = binding_pis[2];
 
-    // (3)+(4) one EffectVm-shape leaf per cell, each wrapped uni→batch.
+    // (3) one REAL descriptor leaf per cell — FAIL FAST before any wrap: a
+    // forged cell has no satisfying leaf, so no recursion work happens for it.
+    let mut leaves: Vec<(
+        EffectVmDescriptorAir,
+        RecursionCompatibleProof,
+        Vec<BabyBear>,
+    )> = Vec::with_capacity(cells.len());
+    for (i, c) in cells.iter().enumerate() {
+        let leaf = prove_descriptor_leaf(c, selectors[i])
+            .map_err(|reason| JointAggError::ParticipantProofInvalid { index: i, reason })?;
+        leaves.push(leaf);
+    }
+
+    // (4) wrap every leaf in its own in-circuit verifier layer (uni→batch).
     let mut batch_leaves: Vec<RecursionOutput<DreggRecursionConfig>> =
-        Vec::with_capacity(participants.len() + 1);
-
-    for (i, p) in participants.iter().enumerate() {
-        let cell_commit = p.cell_commit();
-        let (leaf_inner, leaf_pis) = prove_cell_leaf(shared_turn_id, cell_commit, LEAF_ROWS);
-        let air = EffectVmShapeAir;
+        Vec::with_capacity(cells.len() + 1);
+    for (i, (air, leaf_inner, leaf_pis)) in leaves.iter().enumerate() {
         let p3_pis: Vec<P3BabyBear> = leaf_pis.iter().map(|&v| to_p3(v)).collect();
         let input = RecursionInput::UniStark {
-            proof: &leaf_inner,
-            air: &air,
+            proof: leaf_inner,
+            air,
             public_inputs: p3_pis,
             preprocessed_commit: None,
         };
         let wrapped =
-            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmShapeAir, _, D>(
+            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmDescriptorAir, _, D>(
                 &input, &config, &backend, &params,
             )
             .map_err(|e| JointAggError::ParticipantProofInvalid {
                 index: i,
-                reason: format!("recursive leaf layer failed: {e:?}"),
+                reason: format!("recursive descriptor leaf failed: {e:?}"),
             })?;
         batch_leaves.push(wrapped);
     }
@@ -305,25 +323,23 @@ pub fn prove_joint_turn_recursive(
 
     Ok(RecursiveJointTurnProof {
         root,
+        binding_proof: binding_inner,
         shared_turn_id,
-        num_cells: participants.len(),
+        bundle_digest,
+        num_cells: cells.len(),
     })
 }
 
 /// Fold a vector of batch-STARK proofs to ONE via 2-to-1 aggregation layers.
 ///
 /// On each level, consecutive pairs are aggregated with
-/// [`build_and_prove_aggregation_layer`] (chained via [`BatchOnly`]). An odd
-/// proof out is carried to the next level unchanged. Repeats until one remains.
+/// [`build_and_prove_aggregation_layer`](p3_recursion::build_and_prove_aggregation_layer)
+/// (chained via [`BatchOnly`]). An odd proof out is carried to the next level
+/// unchanged. Repeats until one remains.
 fn aggregate_tree(
     mut proofs: Vec<RecursionOutput<DreggRecursionConfig>>,
     config: &DreggRecursionConfig,
-    backend: &p3_recursion::FriRecursionBackendForExt<
-        D,
-        16,
-        8,
-        p3_recursion::ops::Poseidon2Config,
-    >,
+    backend: &p3_recursion::FriRecursionBackendForExt<D, 16, 8, p3_recursion::ops::Poseidon2Config>,
     params: &ProveNextLayerParams,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     if proofs.is_empty() {
@@ -339,7 +355,7 @@ fn aggregate_tree(
         while i + 1 < proofs.len() {
             let left = proofs[i].into_recursion_input::<BatchOnly>();
             let right = proofs[i + 1].into_recursion_input::<BatchOnly>();
-            let out = build_and_prove_aggregation_layer::<
+            let out = p3_recursion::build_and_prove_aggregation_layer::<
                 DreggRecursionConfig,
                 BatchOnly,
                 BatchOnly,
@@ -362,11 +378,37 @@ fn aggregate_tree(
     Ok(proofs.pop().unwrap())
 }
 
-/// Verify the Gold artifact: check the single root batch-STARK proof. Cost is
-/// independent of the number of cells (the per-cell proofs are folded inside).
+/// Verify the Gold artifact against a caller-held trust anchor. Three teeth
+/// (the joint mirror of
+/// [`verify_turn_chain_recursive`](crate::ivc_turn_chain::verify_turn_chain_recursive),
+/// whose docs state precisely what each guarantees):
+///
+///   1. **VK pin** — the presented root's verifier-key fingerprint must equal
+///      `expected_vk`;
+///   2. **claimed-publics attestation** — the carried
+///      `shared_turn_id`/`bundle_digest` must verify as the carried binding
+///      proof's public inputs;
+///   3. **the root** batch-STARK proof verifies (cost independent of the
+///      number of cells — the per-cell proofs are folded inside).
 pub fn verify_joint_turn_recursive(
     proof: &RecursiveJointTurnProof,
+    expected_vk: &RecursionVk,
 ) -> Result<(), JointAggError> {
+    // (1) VK pin.
+    let found = recursion_vk_fingerprint(&proof.root.0);
+    if found != *expected_vk {
+        return Err(JointAggError::VkFingerprintMismatch {
+            expected: expected_vk.to_hex(),
+            found: found.to_hex(),
+        });
+    }
+
+    // (2) Claimed publics, read against the carried binding proof.
+    let claimed_pis = vec![proof.shared_turn_id, BabyBear::ZERO, proof.bundle_digest];
+    verify_inner_for_air(&JointTurnAggregationAir, &proof.binding_proof, &claimed_pis)
+        .map_err(|reason| JointAggError::ClaimedPublicsUnattested { reason })?;
+
+    // (3) The root.
     verify_recursive_batch_proof(&proof.root.0)
         .map_err(|reason| JointAggError::AggregationProofInvalid { reason })
 }
@@ -379,15 +421,18 @@ pub fn verify_joint_turn_recursive(
 mod tests {
     use super::*;
     use crate::effect_vm::pi;
-    use crate::effect_vm::{CellState, Effect, EffectVmAir, generate_effect_vm_trace};
+    use crate::effect_vm::{CellState, Effect, generate_effect_vm_trace, sel};
+    use crate::effect_vm_descriptors::descriptor_for_selector;
     use crate::field::BabyBear;
-    use crate::stark;
+    use crate::lean_descriptor_air::{parse_vm_descriptor, prove_vm_descriptor};
 
-    /// Build a real EffectVm whole-turn participant with a chosen shared turn id
-    /// and (implicitly) its own commitment, exactly as the Silver tests do. The
-    /// per-cell proof is used for the host-side per-cell soundness gate; the
-    /// in-circuit leaf is rebuilt from `(shared_turn_id, cell_commit)`.
-    fn make_participant(balance: u64, nonce: u32, turn_id: u32) -> JointParticipant {
+    /// Build a REAL per-cell joint participant on the production descriptor
+    /// path: execute a `Transfer` debit, write the shared turn id into
+    /// [`pi::TURN_HASH_BASE`] BEFORE proving (the descriptor PI prefix covers
+    /// it, so the proof Fiat–Shamir-binds the turn id), prove the 186-column
+    /// trace through the Lean transfer descriptor, and carry the trace as the
+    /// leaf witness.
+    fn make_cell(balance: u64, nonce: u32, turn_id: u32) -> JointCell {
         let state = CellState::new(balance, nonce);
         let effects = vec![Effect::Transfer {
             amount: 5,
@@ -395,45 +440,86 @@ mod tests {
         }];
         let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
         public_inputs[pi::TURN_HASH_BASE] = BabyBear::new(turn_id);
-        let air = EffectVmAir::new(trace.len());
-        let proof = stark::prove(&air, &trace, &public_inputs);
-        JointParticipant {
-            proof,
-            public_inputs,
-        }
+        let json = descriptor_for_selector(sel::TRANSFER).expect("transfer descriptor registered");
+        let desc = parse_vm_descriptor(json).expect("transfer descriptor parses");
+        let dpis = &public_inputs[..desc.public_input_count];
+        let proof =
+            prove_vm_descriptor(&desc, &trace, dpis).expect("descriptor proves honest transfer");
+        JointCell::new(
+            DescriptorParticipant {
+                proof,
+                public_inputs,
+            },
+            trace,
+        )
     }
 
-    /// GOLD: a 3-cell joint turn folded into ONE recursive proof that verifies.
-    /// The verifier checks only the root; it never touches the 3 per-cell
-    /// proofs — constant-cost in the number of cells.
+    /// GOLD: a 3-cell joint turn — REAL descriptor leaves, each the full
+    /// `EffectVmDescriptorAir` constraint set re-proven over its own execution
+    /// trace and verified IN-CIRCUIT by the wrap layer — folded into ONE
+    /// recursive proof that verifies under its honest VK anchor.
+    ///
+    /// Piggybacked REFUSED cases (no extra proving): a mismatched VK anchor is
+    /// refused; relabeled carried publics (`bundle_digest`, `shared_turn_id`)
+    /// are refused by the claimed-publics attestation.
     #[test]
     fn three_cell_joint_turn_recursive_proves_and_verifies() {
-        let ps = vec![
-            make_participant(100, 0, 0x5151),
-            make_participant(200, 1, 0x5151),
-            make_participant(300, 2, 0x5151),
+        let cells = vec![
+            make_cell(100, 0, 0x5151),
+            make_cell(200, 1, 0x5151),
+            make_cell(300, 2, 0x5151),
         ];
 
-        let gold = prove_joint_turn_recursive(&ps)
+        let mut gold = prove_joint_turn_recursive(&cells)
             .expect("agreeing 3-cell joint turn must prove recursively");
         assert_eq!(gold.num_cells, 3);
         assert_eq!(gold.shared_turn_id, BabyBear::new(0x5151));
 
-        verify_joint_turn_recursive(&gold)
-            .expect("recursive 3-cell joint-turn root proof must verify");
+        let vk = gold.root_vk_fingerprint();
+        verify_joint_turn_recursive(&gold, &vk)
+            .expect("recursive 3-cell joint-turn root proof must verify under its anchor");
+
+        // REFUSED: a mismatched VK anchor.
+        let mut wrong = vk;
+        wrong.0[0] ^= 0xFF;
+        match verify_joint_turn_recursive(&gold, &wrong) {
+            Err(JointAggError::VkFingerprintMismatch { .. }) => {}
+            other => panic!("a mismatched VK anchor must be refused; got {other:?}"),
+        }
+
+        // REFUSED: relabeled bundle_digest (claiming a different cell bundle).
+        let honest_digest = gold.bundle_digest;
+        gold.bundle_digest = honest_digest + BabyBear::ONE;
+        match verify_joint_turn_recursive(&gold, &vk) {
+            Err(JointAggError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled bundle_digest must be refused; got {other:?}"),
+        }
+        gold.bundle_digest = honest_digest;
+
+        // REFUSED: relabeled shared_turn_id.
+        let honest_tid = gold.shared_turn_id;
+        gold.shared_turn_id = honest_tid + BabyBear::ONE;
+        match verify_joint_turn_recursive(&gold, &vk) {
+            Err(JointAggError::ClaimedPublicsUnattested { .. }) => {}
+            other => panic!("a relabeled shared_turn_id must be refused; got {other:?}"),
+        }
+        gold.shared_turn_id = honest_tid;
+
+        // The restored artifact still verifies.
+        verify_joint_turn_recursive(&gold, &vk).expect("restored honest artifact verifies again");
     }
 
     /// GOLD teeth (turn-id): disagreeing turn ids are rejected (the binding
     /// leaf's CG-2 is unsatisfiable / the host check fires) before any tree.
     #[test]
     fn recursive_rejects_disagreeing_turn_ids() {
-        let ps = vec![
-            make_participant(100, 0, 0xABCD),
-            make_participant(200, 7, 0x1234), // DIFFERENT turn id
-            make_participant(300, 2, 0xABCD),
+        let cells = vec![
+            make_cell(100, 0, 0xABCD),
+            make_cell(200, 7, 0x1234), // DIFFERENT turn id
+            make_cell(300, 2, 0xABCD),
         ];
 
-        match prove_joint_turn_recursive(&ps) {
+        match prove_joint_turn_recursive(&cells) {
             Err(JointAggError::SharedTurnIdMismatch {
                 expected, found, ..
             }) => {
@@ -445,153 +531,110 @@ mod tests {
         }
     }
 
-    /// GOLD teeth (tampered participant): corrupting a per-cell proof makes the
-    /// host-side per-cell soundness gate reject it before the recursion tree —
-    /// so no root proof is produced. (A tampered *leaf trace* would instead make
-    /// the in-circuit leaf verifier unsatisfiable; this exercises the host gate,
-    /// the first line of defense.)
+    /// GOLD teeth (tampered participant): forging a cell's claimed post-state
+    /// commitment makes the host-side descriptor admission reject it at its
+    /// index — the first line of defense. (The in-circuit line is
+    /// `ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root`.)
     #[test]
     fn recursive_rejects_tampered_participant_proof() {
-        let mut ps = vec![
-            make_participant(100, 0, 0x77),
-            make_participant(200, 1, 0x77),
-            make_participant(300, 2, 0x77),
+        let mut cells = vec![
+            make_cell(100, 0, 0x77),
+            make_cell(200, 1, 0x77),
+            make_cell(300, 2, 0x77),
         ];
-        // Corrupt cell 1's per-cell proof commitment (turn ids still agree).
-        ps[1].proof.trace_commitment[0] ^= 0xFF;
+        // Forge cell 1's claimed post-state commitment (turn ids still agree).
+        cells[1].participant.public_inputs[pi::NEW_COMMIT] =
+            cells[1].participant.public_inputs[pi::NEW_COMMIT] + BabyBear::ONE;
 
-        match prove_joint_turn_recursive(&ps) {
+        match prove_joint_turn_recursive(&cells) {
             Err(JointAggError::ParticipantProofInvalid { index, .. }) => {
                 assert_eq!(index, 1, "the tampered cell must be the one rejected");
             }
-            Ok(_) => panic!("a tampered participant proof must not produce a recursive root proof"),
+            Ok(_) => panic!("a tampered participant must not produce a recursive root proof"),
             Err(other) => panic!("expected ParticipantProofInvalid, got {other:?}"),
         }
     }
 
-    /// **THE MISSING TOOTH (documented, not yet bitten).** The whole-chain fold
-    /// (`ivc_turn_chain`) proves that a host-gate-skipping prover cannot
-    /// produce a verifying root, because its leaves are the REAL descriptor
-    /// AIR. THIS module's per-cell leaves are `EffectVmShapeAir` stubs rebuilt
-    /// from `(shared_turn_id, cell_commit)` — so an ungated joint prover
-    /// feeding a forged `cell_commit` (a post-state that execution never
-    /// reached) CAN still wrap a satisfying stub leaf; only the host gate
-    /// catches it. This test is the tamper case that must pass once the
-    /// joint-turn leaves are cut over to `DescriptorParticipant` + carried
-    /// traces (the `ivc_turn_chain::prove_descriptor_leaf` recipe); it is
-    /// ignored until then because TODAY it would FAIL exactly as described.
+    /// **THE LEAF TOOTH, NOW BITING (formerly the `#[ignore]`d
+    /// `gold_joint_leaf_is_still_a_shape_stub_no_in_circuit_execution_tooth`).**
+    /// The per-cell leaves are no longer `EffectVmShapeAir` stubs: they are
+    /// the REAL descriptor AIR re-proven over each cell's own execution trace.
+    /// So an UNGATED joint prover — skipping the host-side descriptor
+    /// admission entirely — that forges a `cell_commit` (a post-state that
+    /// execution never reached) has NO satisfying leaf: the descriptor's
+    /// Poseidon2 hash sites force the commit cells to be the genuine digests.
+    /// The fold fails (prover refuses the unsatisfiable trace in debug;
+    /// self-verify rejects in release) and no verifying root exists — per-cell
+    /// execution soundness no longer rests on the host gate.
     #[test]
-    #[ignore = "gold-joint per-cell leaves are still EffectVmShapeAir stubs: an ungated prover \
-                CAN wrap a forged cell_commit (only the host gate rejects it). Cut the leaves \
-                over to the descriptor AIR (ivc_turn_chain::prove_descriptor_leaf recipe) and \
-                then this in-circuit rejection must hold."]
-    fn gold_joint_leaf_is_still_a_shape_stub_no_in_circuit_execution_tooth() {
-        let config = create_recursion_config();
-        let backend = create_recursion_backend();
-        let params = ProveNextLayerParams::default();
+    fn ungated_joint_prover_with_forged_cell_commit_cannot_produce_a_root() {
+        // The forged cell FIRST so the fold fails at its leaf before any
+        // expensive wrap runs for the honest cell.
+        let mut forged = make_cell(100, 0, 0x77);
+        let honest = make_cell(200, 1, 0x77);
 
-        // A cell_commit no execution ever produced. With REAL descriptor
-        // leaves, no satisfying leaf exists for it; with the shape stub, the
-        // fabricated passthrough trace satisfies the leaf and wraps fine —
-        // the exact gap.
-        let forged_commit = BabyBear::new(0xDEAD_BEE);
-        let shared = BabyBear::new(0x77);
-        let (leaf_inner, leaf_pis) = prove_cell_leaf(shared, forged_commit, LEAF_ROWS);
+        // The lie: claim a post-state commitment execution never reached.
+        forged.participant.public_inputs[pi::NEW_COMMIT] =
+            forged.participant.public_inputs[pi::NEW_COMMIT] + BabyBear::ONE;
+        let cells = [forged, honest];
 
-        let air = EffectVmShapeAir;
-        let p3_pis: Vec<P3BabyBear> = leaf_pis.iter().map(|&v| to_p3(v)).collect();
-        let input = RecursionInput::UniStark {
-            proof: &leaf_inner,
-            air: &air,
-            public_inputs: p3_pis,
-            preprocessed_commit: None,
-        };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmShapeAir, _, D>(
-                &input, &config, &backend, &params,
-            )
+            prove_joint_turn_recursive_without_host_gate(&cells, &[sel::TRANSFER, sel::TRANSFER])
         }));
         let rejected = match result {
-            Ok(Ok(_)) => false,
+            Ok(Ok(_)) => false, // a verifying root over a forged cell — soundness hole!
             Ok(Err(_)) => true,
             Err(_) => true,
         };
         assert!(
             rejected,
-            "a forged cell_commit must have NO satisfying per-cell leaf once the joint-turn \
-             leaves are the real descriptor AIR (today the shape stub accepts it — the gap)"
+            "a host-gate-skipping joint prover with a forged cell_commit must NOT obtain a \
+             root — the descriptor leaf is the in-circuit tooth"
         );
     }
 
-    /// GOLD teeth (in-circuit, the load-bearing one): a per-cell leaf proven for
-    /// commitment A but fed to the recursive verifier layer with public inputs
-    /// claiming commitment B. The leaf's IN-CIRCUIT verifier pins the public
-    /// inputs against the proof's opened values, so the mismatched-PI leaf is
-    /// UNSATISFIABLE — `build_and_prove_next_layer` MUST fail. This proves the
-    /// rejection is the recursion itself (not merely the host pre-check): the
-    /// recursive layer will not certify a leaf whose claimed PIs disagree with
-    /// what the proof actually attests.
+    /// GOLD teeth (in-circuit wrap, the load-bearing one): a descriptor leaf
+    /// honestly proven for its real commitments but fed to the recursive
+    /// verifier layer with public inputs claiming a FORGED commitment. The
+    /// wrap layer's IN-CIRCUIT verifier pins the claimed PIs against the
+    /// proof, so the mismatched-PI leaf is unsatisfiable and
+    /// `build_and_prove_next_layer` MUST fail — even a "valid proof object"
+    /// cannot be re-labelled with a different cell_commit at the wrap.
     #[test]
     fn recursive_layer_rejects_mismatched_leaf_public_inputs() {
+        let cell = make_cell(100, 0, 0x99);
+        let (air, inner, dpis) =
+            prove_descriptor_leaf(&cell, sel::TRANSFER).expect("honest descriptor leaf proves");
+
         let config = create_recursion_config();
         let backend = create_recursion_backend();
         let params = ProveNextLayerParams::default();
 
-        let shared = BabyBear::new(0x99);
-        let honest_commit = BabyBear::new(0xAAAA);
-        let forged_commit = BabyBear::new(0xBBBB);
-
-        // Prove a leaf for (shared, honest_commit).
-        let (leaf_inner, honest_pis) = prove_cell_leaf(shared, honest_commit, LEAF_ROWS);
-
-        // Sanity: the honest leaf wraps fine.
-        {
-            let air = EffectVmShapeAir;
-            let p3_pis: Vec<P3BabyBear> = honest_pis.iter().map(|&v| to_p3(v)).collect();
-            let input = RecursionInput::UniStark {
-                proof: &leaf_inner,
-                air: &air,
-                public_inputs: p3_pis,
-                preprocessed_commit: None,
-            };
-            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmShapeAir, _, D>(
-                &input, &config, &backend, &params,
-            )
-            .expect("honest leaf must wrap into a recursive layer");
-        }
-
-        // Now FORGE the commitment in the public inputs fed to the layer.
-        let mut forged_pis = honest_pis.clone();
-        forged_pis[pi::NEW_COMMIT] = forged_commit;
-        forged_pis[pi::OLD_COMMIT] = forged_commit;
-
-        let air = EffectVmShapeAir;
-        let p3_forged: Vec<P3BabyBear> = forged_pis.iter().map(|&v| to_p3(v)).collect();
+        // FORGE the post-state commitment in the PIs fed to the wrap layer.
+        let mut forged = dpis.clone();
+        forged[pi::NEW_COMMIT] = forged[pi::NEW_COMMIT] + BabyBear::ONE;
+        let p3_forged: Vec<P3BabyBear> = forged.iter().map(|&v| to_p3(v)).collect();
         let input = RecursionInput::UniStark {
-            proof: &leaf_inner,
+            proof: &inner,
             air: &air,
             public_inputs: p3_forged,
             preprocessed_commit: None,
         };
 
-        // The in-circuit verifier must reject the mismatched-PI leaf. The fork
-        // surfaces an unsatisfiable verifier circuit either as an Err or as a
-        // panic from the constraint check; either is a rejection. Catch both.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmShapeAir, _, D>(
+            build_and_prove_next_layer::<DreggRecursionConfig, EffectVmDescriptorAir, _, D>(
                 &input, &config, &backend, &params,
             )
         }));
-
         let rejected = match result {
-            Ok(Ok(_)) => false, // produced a proof — soundness hole!
+            Ok(Ok(_)) => false, // wrapped a forged-PI leaf — soundness hole!
             Ok(Err(_)) => true, // recursion returned an error — rejected.
-            Err(_) => true,     // unsatisfiable circuit panicked — rejected.
+            Err(_) => true,     // unsatisfiable verifier circuit panicked — rejected.
         };
         assert!(
             rejected,
-            "a leaf fed mismatched public inputs (forged commitment) must be rejected by the \
-             in-circuit recursive verifier — the recursion, not just the host check, is the tooth"
+            "a descriptor leaf fed a forged cell_commit must be rejected by the IN-CIRCUIT \
+             recursive verifier — the recursion, not the host check, is the tooth"
         );
     }
 }

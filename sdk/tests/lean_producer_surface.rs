@@ -120,14 +120,24 @@ fn producer_actually_runs_not_fallback() {
         a_id,
         a_id,
         0,
-        Effect::Transfer { from: a_id, to: b_id, amount: 30 },
+        Effect::Transfer {
+            from: a_id,
+            to: b_id,
+            amount: 30,
+        },
     );
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let (_rust_result, outcome) = lean_apply::produce_via_lean(&executor, &turn, &mut ledger);
 
     match outcome {
-        ProducerOutcome::LeanProduced { committed, agree, lean_root, rust_root, .. } => {
+        ProducerOutcome::LeanProduced {
+            committed,
+            agree,
+            lean_root,
+            rust_root,
+            ..
+        } => {
             assert!(
                 committed,
                 "expected the verified producer to COMMIT the transfer (open permissions, funded)"
@@ -146,8 +156,16 @@ fn producer_actually_runs_not_fallback() {
 
     // Post-state: A funded 100 - 30 = 70, B 5 + 30 = 35 (asset-0 balances installed from the Lean
     // post-state by the extractor).
-    assert_eq!(ledger.get(&a_id).unwrap().state.balance(), 70, "A balance after verified transfer");
-    assert_eq!(ledger.get(&b_id).unwrap().state.balance(), 35, "B balance after verified transfer");
+    assert_eq!(
+        ledger.get(&a_id).unwrap().state.balance(),
+        70,
+        "A balance after verified transfer"
+    );
+    assert_eq!(
+        ledger.get(&b_id).unwrap().state.balance(),
+        35,
+        "B balance after verified transfer"
+    );
 }
 
 /// SURFACE ROOT-EQUALITY. Run identical effects through the real `AgentRuntime::execute` surface
@@ -178,7 +196,9 @@ fn sdk_execute_producer_matches_rust_reference() {
             "set_lean_producer did not stick (feature compiled in, so it must)"
         );
         let receipt = runtime
-            .execute(vec![Effect::IncrementNonce { cell: runtime.cell_id() }])
+            .execute(vec![Effect::IncrementNonce {
+                cell: runtime.cell_id(),
+            }])
             .expect("turn must commit through the SDK surface");
         let _ = receipt; // proof of execution; we compare on ledger root below.
         let mut ledger = runtime.ledger().lock().unwrap();

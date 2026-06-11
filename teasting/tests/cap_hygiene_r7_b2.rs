@@ -174,7 +174,6 @@ fn seal_attack_setup() -> (
 // R7 — seal / unseal
 // ===========================================================================
 
-
 // ===========================================================================
 // R7 — exercise-via-capability with a delegated snapshot
 // ===========================================================================
@@ -348,7 +347,11 @@ fn grant_effect(from: CellId, to: CellId, cap: CapabilityRef) -> Effect {
 /// both the `None` (= EFFECT_ALL) widening and an explicit superset mask.
 #[test]
 fn b2_grant_rejects_mask_amplification() {
-    for widened_mask in [None, Some(EFFECT_TRANSFER | EFFECT_SET_FIELD), Some(EFFECT_ALL)] {
+    for widened_mask in [
+        None,
+        Some(EFFECT_TRANSFER | EFFECT_SET_FIELD),
+        Some(EFFECT_ALL),
+    ] {
         let (mut ledger, g_id, b_id, t_id) = grant_setup();
         let executor = zero_executor();
         let mut cap = plain_cap(t_id);
@@ -490,4 +493,3 @@ fn b2_self_grant_carries_requested_attenuation() {
     assert_eq!(installed.allowed_effects, Some(EFFECT_TRANSFER));
     assert_eq!(installed.expires_at, Some(10));
 }
-

@@ -341,33 +341,61 @@ fn receipt_hash_v3_is_deterministic_and_binds_consumed_witness() {
 
     let mut t = base.clone();
     t.consumed_capabilities[0].leaf_mask_lo ^= 1;
-    assert_ne!(t.receipt_hash(), h1, "tampered leaf_mask_lo must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered leaf_mask_lo must change receipt_hash"
+    );
 
     let mut t = base.clone();
     t.consumed_capabilities[0].slot ^= 1;
-    assert_ne!(t.receipt_hash(), h1, "tampered slot must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered slot must change receipt_hash"
+    );
 
     let mut t = base.clone();
     t.consumed_capabilities[0].cap_root ^= 1;
-    assert_ne!(t.receipt_hash(), h1, "tampered cap_root must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered cap_root must change receipt_hash"
+    );
 
     let mut t = base.clone();
     t.consumed_capabilities[0].siblings[0] ^= 1;
-    assert_ne!(t.receipt_hash(), h1, "tampered sibling must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered sibling must change receipt_hash"
+    );
 
     let mut t = base.clone();
     t.consumed_capabilities[0].directions[0] ^= 1;
-    assert_ne!(t.receipt_hash(), h1, "tampered direction bit must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered direction bit must change receipt_hash"
+    );
 
     let mut t = base.clone();
     t.consumed_capabilities[0].holder = CellId::from_bytes([0xEE; 32]);
-    assert_ne!(t.receipt_hash(), h1, "tampered holder must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "tampered holder must change receipt_hash"
+    );
 
     // STRIPPING the witness entirely must also change the hash (the
     // disclosure cannot be silently removed).
     let mut t = base.clone();
     t.consumed_capabilities.clear();
-    assert_ne!(t.receipt_hash(), h1, "stripped witness must change receipt_hash");
+    assert_ne!(
+        t.receipt_hash(),
+        h1,
+        "stripped witness must change receipt_hash"
+    );
 
     // And a tampered witness no longer verifies (the path is real).
     let mut t = base;

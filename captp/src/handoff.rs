@@ -561,16 +561,20 @@ pub fn validate_handoff(
     //       mask attenuates it); a concrete held mask requires the granted mask be a bitwise subset.
     let rust_non_amplifying = cert.permissions.is_narrower_or_equal(&held.permissions)
         && match (cert.allowed_effects, held.allowed_effects) {
-            (_, None) => true,                       // held unrestricted: granted always attenuates
-            (None, Some(_)) => false,                // held restricted, granted unrestricted: amplify
+            (_, None) => true,        // held unrestricted: granted always attenuates
+            (None, Some(_)) => false, // held restricted, granted unrestricted: amplify
             (Some(granted_mask), Some(held_mask)) => {
                 dregg_cell::is_facet_attenuation(held_mask, granted_mask)
             }
         };
     // The AUTHORITATIVE verdict: the verified Lean gate when linked, else the Rust lattice.
-    let non_amplifying =
-        verified_non_amplifying(&cert.permissions, &held.permissions, cert.allowed_effects, held.allowed_effects)
-            .unwrap_or(rust_non_amplifying);
+    let non_amplifying = verified_non_amplifying(
+        &cert.permissions,
+        &held.permissions,
+        cert.allowed_effects,
+        held.allowed_effects,
+    )
+    .unwrap_or(rust_non_amplifying);
     if !non_amplifying {
         return Err(HandoffError::Amplification);
     }
@@ -928,14 +932,8 @@ mod tests {
 
         // Introducer registers the swiss entry recording what IT holds.
         let mut swiss_table = SwissTable::new();
-        let swiss = swiss_table.export_with_options(
-            target_cell,
-            held_perm,
-            100,
-            None,
-            held_effects,
-            None,
-        );
+        let swiss =
+            swiss_table.export_with_options(target_cell, held_perm, 100, None, held_effects, None);
 
         // Introducer creates a certificate granting (possibly inflated) authority.
         let cert = HandoffCertificate::create(
@@ -1014,8 +1012,12 @@ mod tests {
         // Held = {transfer, emit}; granted = {emit} (subset). Must pass.
         let held = Some(EFFECT_TRANSFER | EFFECT_EMIT_EVENT);
         let granted = Some(EFFECT_EMIT_EVENT);
-        let (presentation, intro_pk, intro_fed, mut swiss_table) =
-            handoff_with_auth(AuthRequired::Signature, held, AuthRequired::Signature, granted);
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = handoff_with_auth(
+            AuthRequired::Signature,
+            held,
+            AuthRequired::Signature,
+            granted,
+        );
         let known = vec![intro_fed];
         let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert!(
@@ -1031,8 +1033,12 @@ mod tests {
         // Granting an effect bit the introducer doesn't hold is amplification.
         let held = Some(EFFECT_EMIT_EVENT);
         let granted = Some(EFFECT_TRANSFER | EFFECT_EMIT_EVENT);
-        let (presentation, intro_pk, intro_fed, mut swiss_table) =
-            handoff_with_auth(AuthRequired::Signature, held, AuthRequired::Signature, granted);
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = handoff_with_auth(
+            AuthRequired::Signature,
+            held,
+            AuthRequired::Signature,
+            granted,
+        );
         let known = vec![intro_fed];
         let result = validate_handoff(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(result.unwrap_err(), HandoffError::Amplification);

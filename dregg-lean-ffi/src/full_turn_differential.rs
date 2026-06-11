@@ -248,11 +248,33 @@ fn confers_edge_to(t: u64, cap: &Cap) -> bool {
 enum FullAction {
     /// (method, effect_tag, actor, src, dst, amt). The balance branch runs `recCexec s.move` and
     /// is INDIFFERENT to method/effect — we round-trip them but they do not affect the result.
-    Balance { method: u64, effect: u64, actor: u64, src: u64, dst: u64, amt: i128 },
-    Delegate { delegator: u64, recipient: u64, t: u64 },
-    Revoke { holder: u64, t: u64 },
-    Mint { actor: u64, cell: u64, amt: i128 },
-    Burn { actor: u64, cell: u64, amt: i128 },
+    Balance {
+        method: u64,
+        effect: u64,
+        actor: u64,
+        src: u64,
+        dst: u64,
+        amt: i128,
+    },
+    Delegate {
+        delegator: u64,
+        recipient: u64,
+        t: u64,
+    },
+    Revoke {
+        holder: u64,
+        t: u64,
+    },
+    Mint {
+        actor: u64,
+        cell: u64,
+        amt: i128,
+    },
+    Burn {
+        actor: u64,
+        cell: u64,
+        amt: i128,
+    },
 }
 
 /// `execFull s fa` — the reference single-action executor. Returns Some(new state) on commit,
@@ -260,7 +282,13 @@ enum FullAction {
 fn ref_exec_full(s: &State, fa: &FullAction) -> Option<State> {
     match fa {
         // .balance a => recCexec s a.move : recKExec gate (authority + availability + liveness).
-        FullAction::Balance { actor, src, dst, amt, .. } => {
+        FullAction::Balance {
+            actor,
+            src,
+            dst,
+            amt,
+            ..
+        } => {
             let accounts = s.account_ids();
             let src_bal = s.lookup(*src).bal_of();
             let ok = authorized_b(s, *actor, *src)
@@ -280,7 +308,11 @@ fn ref_exec_full(s: &State, fa: &FullAction) -> Option<State> {
         }
         // .delegate del rec t => recKDelegate: commits iff delegator holds a t-conferring cap;
         // on commit grant rec a `node t` cap. Balances/accounts untouched.
-        FullAction::Delegate { delegator, recipient, t } => {
+        FullAction::Delegate {
+            delegator,
+            recipient,
+            t,
+        } => {
             let grounded = s.caps_of(*delegator).iter().any(|c| confers_edge_to(*t, c));
             if !grounded {
                 return None;
@@ -433,10 +465,21 @@ fn encode_caps(caps: &[(u64, Vec<Cap>)]) -> String {
 
 fn encode_action(a: &FullAction) -> String {
     match a {
-        FullAction::Balance { method, effect, actor, src, dst, amt } => {
+        FullAction::Balance {
+            method,
+            effect,
+            actor,
+            src,
+            dst,
+            amt,
+        } => {
             format!("{{\"bal\":[{method},{effect},{actor},{src},{dst},{amt}]}}")
         }
-        FullAction::Delegate { delegator, recipient, t } => {
+        FullAction::Delegate {
+            delegator,
+            recipient,
+            t,
+        } => {
             format!("{{\"del\":[{delegator},{recipient},{t}]}}")
         }
         FullAction::Revoke { holder, t } => format!("{{\"rev\":[{holder},{t}]}}"),
@@ -472,7 +515,10 @@ struct P<'a> {
 }
 impl<'a> P<'a> {
     fn new(s: &'a str) -> Self {
-        P { s: s.as_bytes(), i: 0 }
+        P {
+            s: s.as_bytes(),
+            i: 0,
+        }
     }
     fn lit(&mut self, lit: &str) -> Result<(), String> {
         let b = lit.as_bytes();
@@ -495,7 +541,8 @@ impl<'a> P<'a> {
             self.i += 1;
         }
         let txt = std::str::from_utf8(&self.s[start..self.i]).map_err(|e| e.to_string())?;
-        txt.parse::<i128>().map_err(|e| format!("bad int `{txt}`: {e}"))
+        txt.parse::<i128>()
+            .map_err(|e| format!("bad int `{txt}`: {e}"))
     }
     fn nat(&mut self) -> Result<u64, String> {
         let v = self.int()?;
@@ -693,7 +740,9 @@ impl<'a> P<'a> {
 }
 
 /// Decode the full-turn output `{"cells":CELLS,"caps":CAPS,"loglen":N,"ok":B}`.
-fn decode_full_out(wire: &str) -> Result<(Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)>, usize, bool), String> {
+fn decode_full_out(
+    wire: &str,
+) -> Result<(Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)>, usize, bool), String> {
     let mut p = P::new(wire);
     p.lit("{\"cells\":")?;
     let cells = p.cells()?;
@@ -718,8 +767,14 @@ fn decode_full_out(wire: &str) -> Result<(Vec<(u64, Value)>, Vec<(u64, Vec<Cap>)
 
 fn action_labels(a: &FullAction) -> Vec<u64> {
     match a {
-        FullAction::Balance { actor, src, dst, .. } => vec![*actor, *src, *dst],
-        FullAction::Delegate { delegator, recipient, t } => vec![*delegator, *recipient, *t],
+        FullAction::Balance {
+            actor, src, dst, ..
+        } => vec![*actor, *src, *dst],
+        FullAction::Delegate {
+            delegator,
+            recipient,
+            t,
+        } => vec![*delegator, *recipient, *t],
         FullAction::Revoke { holder, t } => vec![*holder, *t],
         FullAction::Mint { actor, cell, .. } => vec![*actor, *cell],
         FullAction::Burn { actor, cell, .. } => vec![*actor, *cell],
@@ -762,14 +817,24 @@ fn ref_cells_readout(s: &State) -> Vec<(u64, Value)> {
 fn compare(s0: &State, actions: &[FullAction]) -> Result<bool, String> {
     let wire = encode_turn(s0, actions);
     let lean_wire = lean_full_turn(&wire);
-    let (lean_cells, lean_caps, lean_loglen, lean_ok) =
-        decode_full_out(&lean_wire).map_err(|e| format!("lean decode err: {e}\n  wire={lean_wire}"))?;
+    let (lean_cells, lean_caps, lean_loglen, lean_ok) = decode_full_out(&lean_wire)
+        .map_err(|e| format!("lean decode err: {e}\n  wire={lean_wire}"))?;
 
     let labels = observed_labels(s0, actions);
     let (rust_cells, rust_caps, rust_loglen, rust_ok) = match ref_exec_full_turn(s0, actions) {
-        Some(s1) => (ref_cells_readout(&s1), ref_caps_readout(&s1, &labels), s1.log_len, true),
+        Some(s1) => (
+            ref_cells_readout(&s1),
+            ref_caps_readout(&s1, &labels),
+            s1.log_len,
+            true,
+        ),
         // Rollback: pre-state echoed, loglen 0 (matching the Lean side's none branch).
-        None => (ref_cells_readout(s0), ref_caps_readout(s0, &labels), 0, false),
+        None => (
+            ref_cells_readout(s0),
+            ref_caps_readout(s0, &labels),
+            0,
+            false,
+        ),
     };
 
     if lean_ok == rust_ok
@@ -814,9 +879,18 @@ const N_STRUCTURED: usize = 5_000;
 fn base_state(rng: &mut Rng) -> State {
     State {
         cells: vec![
-            (0u64, Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))])),
-            (1u64, Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))])),
-            (2u64, Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))])),
+            (
+                0u64,
+                Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))]),
+            ),
+            (
+                1u64,
+                Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))]),
+            ),
+            (
+                2u64,
+                Value::Record(vec![("balance".to_string(), Value::Int(rng.bal()))]),
+            ),
         ],
         // 9 can mint/burn cells 0 and 1 (node caps); 0 can delegate connectivity to 7.
         caps: vec![
@@ -834,27 +908,46 @@ fn random_action(rng: &mut Rng) -> FullAction {
             method: rng.next_u64() % 8,
             effect: rng.next_u64() % 2,
             // actor 0 owns src 0 ~half the time; else arbitrary (often unauthorized).
-            actor: if rng.next_u64() % 2 == 0 { 0 } else { rng.next_u64() % 20 },
+            actor: if rng.next_u64() % 2 == 0 {
+                0
+            } else {
+                rng.next_u64() % 20
+            },
             src: 0,
             dst: 1,
             amt: rng.bal(),
         },
         1 => FullAction::Mint {
-            actor: if rng.next_u64() % 2 == 0 { 9 } else { rng.next_u64() % 20 },
+            actor: if rng.next_u64() % 2 == 0 {
+                9
+            } else {
+                rng.next_u64() % 20
+            },
             cell: rng.next_u64() % 3,
             amt: rng.bal(),
         },
         2 => FullAction::Burn {
-            actor: if rng.next_u64() % 2 == 0 { 9 } else { rng.next_u64() % 20 },
+            actor: if rng.next_u64() % 2 == 0 {
+                9
+            } else {
+                rng.next_u64() % 20
+            },
             cell: rng.next_u64() % 3,
             amt: rng.bal(),
         },
         3 => FullAction::Delegate {
-            delegator: if rng.next_u64() % 2 == 0 { 0 } else { rng.next_u64() % 20 },
+            delegator: if rng.next_u64() % 2 == 0 {
+                0
+            } else {
+                rng.next_u64() % 20
+            },
             recipient: rng.next_u64() % 20,
             t: 7,
         },
-        4 => FullAction::Revoke { holder: rng.next_u64() % 20, t: 7 },
+        4 => FullAction::Revoke {
+            holder: rng.next_u64() % 20,
+            t: 7,
+        },
         _ => FullAction::Balance {
             method: 0,
             effect: 1,
@@ -880,7 +973,14 @@ fn run_structured() -> (usize, usize, usize) {
         // all-or-nothing rollback (an unauthorized mint by a label with no node cap).
         if !actions.is_empty() && rng.next_u64() % 4 == 0 {
             let mid = actions.len() / 2;
-            actions.insert(mid, FullAction::Mint { actor: 13, cell: 0, amt: 5 });
+            actions.insert(
+                mid,
+                FullAction::Mint {
+                    actor: 13,
+                    cell: 0,
+                    amt: 5,
+                },
+            );
         }
         match compare(&s0, &actions) {
             Ok(committed) => {
@@ -906,8 +1006,14 @@ fn run_witnesses() -> bool {
     let mut ok = true;
     let st = || State {
         cells: vec![
-            (0u64, Value::Record(vec![("balance".to_string(), Value::Int(100))])),
-            (1u64, Value::Record(vec![("balance".to_string(), Value::Int(5))])),
+            (
+                0u64,
+                Value::Record(vec![("balance".to_string(), Value::Int(100))]),
+            ),
+            (
+                1u64,
+                Value::Record(vec![("balance".to_string(), Value::Int(5))]),
+            ),
         ],
         caps: vec![(9u64, vec![Cap::Node(0)]), (0u64, vec![Cap::Node(7)])],
         log_len: 0,
@@ -915,9 +1021,24 @@ fn run_witnesses() -> bool {
 
     // W1 — mixed turn nets to 0, all commit, log grows by 3.
     let mixed = vec![
-        FullAction::Mint { actor: 9, cell: 0, amt: 50 },
-        FullAction::Balance { method: 0, effect: 1, actor: 0, src: 0, dst: 1, amt: 30 },
-        FullAction::Burn { actor: 9, cell: 0, amt: 50 },
+        FullAction::Mint {
+            actor: 9,
+            cell: 0,
+            amt: 50,
+        },
+        FullAction::Balance {
+            method: 0,
+            effect: 1,
+            actor: 0,
+            src: 0,
+            dst: 1,
+            amt: 30,
+        },
+        FullAction::Burn {
+            actor: 9,
+            cell: 0,
+            amt: 50,
+        },
     ];
     match compare(&st(), &mixed) {
         Ok(true) => println!("    W1 mixed (mint+transfer+burn, net 0): COMMIT, agree"),
@@ -934,11 +1055,21 @@ fn run_witnesses() -> bool {
     // W2 — ROLLBACK: 2nd action unauthorized (actor 0 cannot mint) ⇒ whole turn rejects,
     // state UNCHANGED in both. The all-or-nothing case the mission requires.
     let bad = vec![
-        FullAction::Mint { actor: 9, cell: 0, amt: 50 },
-        FullAction::Mint { actor: 0, cell: 0, amt: 50 }, // 0 has no node-0 cap ⇒ fail
+        FullAction::Mint {
+            actor: 9,
+            cell: 0,
+            amt: 50,
+        },
+        FullAction::Mint {
+            actor: 0,
+            cell: 0,
+            amt: 50,
+        }, // 0 has no node-0 cap ⇒ fail
     ];
     match compare(&st(), &bad) {
-        Ok(false) => println!("    W2 rollback (2nd action unauthorized): REJECT, state unchanged, agree"),
+        Ok(false) => {
+            println!("    W2 rollback (2nd action unauthorized): REJECT, state unchanged, agree")
+        }
         Ok(true) => {
             println!("    W2 FAIL: expected rollback");
             ok = false;
@@ -951,7 +1082,11 @@ fn run_witnesses() -> bool {
 
     // W3 — delegate then revoke: caps mutate, balances fixed; both commit.
     let dr = vec![
-        FullAction::Delegate { delegator: 0, recipient: 1, t: 7 },
+        FullAction::Delegate {
+            delegator: 0,
+            recipient: 1,
+            t: 7,
+        },
         FullAction::Revoke { holder: 0, t: 7 },
     ];
     match compare(&st(), &dr) {
@@ -1004,20 +1139,21 @@ fn cap_strategy() -> impl Strategy<Value = Cap> {
     prop_oneof![
         Just(Cap::Null),
         (0u64..6).prop_map(Cap::Node),
-        (0u64..6, prop::collection::vec(auth_strategy(), 0..4)).prop_map(|(t, r)| Cap::Endpoint(t, r)),
+        (0u64..6, prop::collection::vec(auth_strategy(), 0..4))
+            .prop_map(|(t, r)| Cap::Endpoint(t, r)),
     ]
 }
 
 /// Adversarial amounts: small, around-balance, negative, and near i64/i128 overflow boundaries.
 fn amt_strategy() -> impl Strategy<Value = i128> {
     prop_oneof![
-        -5i128..50,                                  // small incl. negative (under-flow)
+        -5i128..50, // small incl. negative (under-flow)
         Just(0i128),
-        Just(i64::MAX as i128),                      // i64 overflow boundary
+        Just(i64::MAX as i128), // i64 overflow boundary
         Just(i64::MAX as i128 + 1),
         Just(i64::MIN as i128),
         (i64::MAX as i128 - 100..i64::MAX as i128 + 100), // straddle the i64 boundary
-        -3i128..1_000_000,                           // wide range
+        -3i128..1_000_000,                                // wide range
     ]
 }
 
@@ -1025,12 +1161,13 @@ fn amt_strategy() -> impl Strategy<Value = i128> {
 /// record with a possibly-absent/ill-typed balance field.
 fn cells_strategy() -> impl Strategy<Value = Vec<(u64, Value)>> {
     let one_value = prop_oneof![
-        (-5i128..1_000_000).prop_map(|b| Value::Record(vec![("balance".to_string(), Value::Int(b))])),
+        (-5i128..1_000_000)
+            .prop_map(|b| Value::Record(vec![("balance".to_string(), Value::Int(b))])),
         (-5i128..100, 0u64..1000).prop_map(|(b, n)| Value::Record(vec![
             ("balance".to_string(), Value::Int(b)),
             ("nonce".to_string(), Value::Int(n as i128)),
         ])),
-        Just(Value::Record(vec![])),                          // no balance field (balOf => 0)
+        Just(Value::Record(vec![])), // no balance field (balOf => 0)
         Just(Value::Record(vec![("balance".to_string(), Value::Dig(7))])), // ill-typed balance
     ];
     prop::collection::vec((0u64..6, one_value), 0..4)
@@ -1044,18 +1181,29 @@ fn action_strategy() -> impl Strategy<Value = FullAction> {
     prop_oneof![
         (0u64..8, 0u64..2, 0u64..8, 0u64..6, 0u64..6, amt_strategy()).prop_map(
             |(method, effect, actor, src, dst, amt)| FullAction::Balance {
-                method, effect, actor, src, dst, amt
+                method,
+                effect,
+                actor,
+                src,
+                dst,
+                amt
             }
         ),
         (0u64..8, 0u64..8, 0u64..6).prop_map(|(delegator, recipient, t)| FullAction::Delegate {
-            delegator, recipient, t
+            delegator,
+            recipient,
+            t
         }),
         (0u64..8, 0u64..6).prop_map(|(holder, t)| FullAction::Revoke { holder, t }),
         (0u64..8, 0u64..6, amt_strategy()).prop_map(|(actor, cell, amt)| FullAction::Mint {
-            actor, cell, amt
+            actor,
+            cell,
+            amt
         }),
         (0u64..8, 0u64..6, amt_strategy()).prop_map(|(actor, cell, amt)| FullAction::Burn {
-            actor, cell, amt
+            actor,
+            cell,
+            amt
         }),
     ]
 }
@@ -1082,7 +1230,11 @@ fn run_fuzzer() -> (u64, u64) {
     let strat = (cells_strategy(), caps_strategy(), actions_strategy());
     let result = runner.run(&strat, |(cells, caps, actions)| {
         cases.set(cases.get() + 1);
-        let s0 = State { cells, caps, log_len: 0 };
+        let s0 = State {
+            cells,
+            caps,
+            log_len: 0,
+        };
         match compare(&s0, &actions) {
             Ok(_) => Ok(()),
             Err(msg) => Err(TestCaseError::fail(msg)),
@@ -1127,7 +1279,9 @@ fn main() -> ExitCode {
         );
         ExitCode::SUCCESS
     } else {
-        eprintln!("{total_diverged} divergence sources — Lean execFullTurn \u{2262} Rust reference");
+        eprintln!(
+            "{total_diverged} divergence sources — Lean execFullTurn \u{2262} Rust reference"
+        );
         ExitCode::FAILURE
     }
 }

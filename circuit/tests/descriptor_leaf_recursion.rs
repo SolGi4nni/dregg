@@ -22,12 +22,12 @@ use dregg_circuit::lean_descriptor_air::{
     EffectVmDescriptorAir, descriptor_recursion_matrix, parse_vm_descriptor,
 };
 use dregg_circuit::plonky3_recursion_impl::recursive::{
-    create_recursion_backend, create_recursion_config, prove_inner_for_air, verify_inner_for_air,
-    verify_recursive_batch_proof, DreggRecursionConfig,
+    DreggRecursionConfig, create_recursion_backend, create_recursion_config, prove_inner_for_air,
+    verify_inner_for_air, verify_recursive_batch_proof,
 };
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing as _;
-use p3_recursion::{build_and_prove_next_layer, ProveNextLayerParams, RecursionInput};
+use p3_recursion::{ProveNextLayerParams, RecursionInput, build_and_prove_next_layer};
 
 const D: usize = 4;
 
@@ -59,7 +59,11 @@ fn descriptor_leaf_proves_and_wraps_in_circuit() {
 
     let t0 = Instant::now();
     let matrix = descriptor_recursion_matrix(&desc, &base_trace).expect("extend trace");
-    eprintln!("extended matrix: {} cols ({:?})", matrix.width, t0.elapsed());
+    eprintln!(
+        "extended matrix: {} cols ({:?})",
+        matrix.width,
+        t0.elapsed()
+    );
 
     let air = EffectVmDescriptorAir::new(desc.clone());
 

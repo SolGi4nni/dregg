@@ -76,7 +76,10 @@ fn oversize_payload_is_refused_by_encoder() {
     };
     let r = dregg_wire::codec::encode(&msg);
     assert!(
-        matches!(r, Err(dregg_wire::codec::CodecError::MessageTooLarge { .. })),
+        matches!(
+            r,
+            Err(dregg_wire::codec::CodecError::MessageTooLarge { .. })
+        ),
         "encoder accepted an over-cap payload — memory-exhaustion lever (FINDING)"
     );
 }
@@ -99,7 +102,9 @@ fn arb_effect() -> impl Strategy<Value = Effect> {
             to: cell_from_byte(t),
             amount,
         }),
-        (any::<u8>()).prop_map(|c| Effect::IncrementNonce { cell: cell_from_byte(c) }),
+        (any::<u8>()).prop_map(|c| Effect::IncrementNonce {
+            cell: cell_from_byte(c)
+        }),
         // NoteCreate with BOTH optionals exercised at None (the desync trigger)
         (any::<u64>(), any::<u64>()).prop_map(|(value, asset_type)| {
             Effect::NoteCreate {
@@ -124,17 +129,19 @@ fn arb_effect() -> impl Strategy<Value = Effect> {
 }
 
 fn arb_action() -> impl Strategy<Value = Action> {
-    (any::<u8>(), proptest::collection::vec(arb_effect(), 0..4)).prop_map(|(target, effects)| Action {
-        target: cell_from_byte(target),
-        method: symbol("submit"),
-        args: vec![],
-        authorization: Authorization::Unchecked,
-        preconditions: Default::default(),
-        effects,
-        may_delegate: DelegationMode::None,
-        commitment_mode: Default::default(),
-        balance_change: None,
-        witness_blobs: vec![],
+    (any::<u8>(), proptest::collection::vec(arb_effect(), 0..4)).prop_map(|(target, effects)| {
+        Action {
+            target: cell_from_byte(target),
+            method: symbol("submit"),
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: Default::default(),
+            effects,
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        }
     })
 }
 

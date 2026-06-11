@@ -176,10 +176,14 @@ mod tests {
         );
         let effect = Effect::EmitEvent {
             cell: target,
-            event: dregg_turn::action::Event { topic: symbol("captp.test"), data: vec![] },
+            event: dregg_turn::action::Event {
+                topic: symbol("captp.test"),
+                data: vec![],
+            },
         };
-        let turn =
-            build_captp_turn_delivered_from_parts(agent, target, effect, 0, cert, pk.0, pk.0, [0u8; 64]);
+        let turn = build_captp_turn_delivered_from_parts(
+            agent, target, effect, 0, cert, pk.0, pk.0, [0u8; 64],
+        );
         assert_eq!(turn.agent, agent);
         assert_eq!(turn.call_forest.roots.len(), 1);
         assert!(matches!(

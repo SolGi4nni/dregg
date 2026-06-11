@@ -26,17 +26,15 @@
 //! a full real-Plonky3 prove+verify roundtrip via `prove_effect_vm_p3_attenuation`
 //! / `verify_effect_vm_p3`.
 
+use dregg_cell::facet::{EFFECT_ALL, EFFECT_EMIT_EVENT, EFFECT_SET_FIELD, EFFECT_TRANSFER};
 use dregg_circuit::cap_root::{
-    CanonicalCapTree, CapLeaf, encode_breadstuff, encode_expiry, fold_bytes32, slot_hash,
-    split_effect_mask, CAP_TREE_DEPTH,
+    CAP_TREE_DEPTH, CanonicalCapTree, CapLeaf, encode_breadstuff, encode_expiry, fold_bytes32,
+    slot_hash, split_effect_mask,
 };
-use dregg_circuit::effect_vm::{
-    AttenuateWitness, CellState, Effect, generate_effect_vm_trace,
-};
+use dregg_circuit::effect_vm::{AttenuateWitness, CellState, Effect, generate_effect_vm_trace};
 use dregg_circuit::effect_vm_p3_full_air::{
     p3_air_accepts_attenuation, prove_effect_vm_p3_attenuation, verify_effect_vm_p3,
 };
-use dregg_cell::facet::{EFFECT_ALL, EFFECT_EMIT_EVENT, EFFECT_SET_FIELD, EFFECT_TRANSFER};
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::poseidon2::hash_many;
 
@@ -150,7 +148,14 @@ impl Scenario {
 /// just sentinels).
 fn tree_with_held(held: CapLeaf) -> CanonicalCapTree {
     let other_a = leaf(3, 0x22, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, None, None);
-    let other_b = leaf(42, 0x33, builtin_tag(TIER_PROOF), EFFECT_TRANSFER, Some(500), None);
+    let other_b = leaf(
+        42,
+        0x33,
+        builtin_tag(TIER_PROOF),
+        EFFECT_TRANSFER,
+        Some(500),
+        None,
+    );
     CanonicalCapTree::new(vec![held, other_a, other_b], CAP_TREE_DEPTH)
 }
 
@@ -206,7 +211,14 @@ fn control_honest_attenuation_proves_and_verifies() {
 #[test]
 fn control_unbounded_to_bounded_expiry_is_narrowing() {
     let held = leaf(7, 0x11, builtin_tag(TIER_EITHER), EFFECT_ALL, None, None);
-    let granted = leaf(7, 0x11, builtin_tag(TIER_EITHER), EFFECT_ALL, Some(900), None);
+    let granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_EITHER),
+        EFFECT_ALL,
+        Some(900),
+        None,
+    );
     let scn = Scenario {
         tree: tree_with_held(held),
         held,
@@ -305,11 +317,32 @@ fn forgery2_incomparable_auth_rejected_by_lattice_not_gte() {
     // GTE/numeric-≤ (2 ≤ 1 is false, or 1 ≤ 2 is true) would mis-decide; the
     // admissible-pair LATTICE has NO (2,1) entry and (2,1) is not the vk path ⇒
     // UNSAT. Mask + expiry are held FIXED so the lattice is the SOLE rejecter.
-    let held = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
-    let forged_granted = leaf(7, 0x11, builtin_tag(TIER_PROOF), EFFECT_ALL, Some(1000), None);
+    let held = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
+    let forged_granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_PROOF),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
 
     // Non-vacuity control: granted == held (Signature ⊑ Signature) PASSES.
-    let honest_granted = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
+    let honest_granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn_ok = Scenario {
         tree: tree_with_held(held),
         held,
@@ -350,8 +383,22 @@ fn forgery2_incomparable_auth_rejected_by_lattice_not_gte() {
 
     // Belt: the OTHER incomparable direction (held=Proof, granted=Signature) is
     // ALSO rejected (the table omits BOTH (1,2) and (2,1)).
-    let held2 = leaf(7, 0x11, builtin_tag(TIER_PROOF), EFFECT_ALL, Some(1000), None);
-    let granted2 = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(1000), None);
+    let held2 = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_PROOF),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
+    let granted2 = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(1000),
+        None,
+    );
     let scn2 = Scenario {
         tree: tree_with_held(held2),
         held: held2,
@@ -381,7 +428,14 @@ fn forgery3_fabricated_held_rejected_by_membership_open() {
     // genuine cap looks valid on the lattices, then attenuates from the inflated
     // fake. But the fake held leaf is NOT in old_cap_root, so its membership path
     // cannot reach the seeded root ⇒ GATE 1 fails.
-    let real_held = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_SET_FIELD, Some(1000), None);
+    let real_held = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_SET_FIELD,
+        Some(1000),
+        None,
+    );
     let tree = tree_with_held(real_held);
     let real_root = tree.root();
 
@@ -389,7 +443,14 @@ fn forgery3_fabricated_held_rejected_by_membership_open() {
     let fake_held = leaf(7, 0x11, builtin_tag(TIER_NONE), EFFECT_ALL, None, None);
     // Granted: looks like a valid narrowing OF THE FAKE (Signature ⊑ None,
     // {SetField} ⊆ ALL, finite ≤ None).
-    let granted = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_SET_FIELD, Some(1000), None);
+    let granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_SET_FIELD,
+        Some(1000),
+        None,
+    );
 
     // Build a membership path for the fake held leaf by inserting it into a
     // DIFFERENT tree (so the path is internally consistent but tops out at the
@@ -500,11 +561,32 @@ fn forgery4_custom_vk_mismatch_rejected_by_vk_subgate() {
 fn forgery5_expiry_extension_rejected_by_monotone_gate() {
     // Held expiry 500; granted "narrows" to 900 (EXTENDS the bound — a widening).
     // Auth + mask are held FIXED, so the expiry gate is the SOLE rejecter.
-    let held = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(500), None);
-    let forged_granted = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(900), None);
+    let held = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(500),
+        None,
+    );
+    let forged_granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(900),
+        None,
+    );
 
     // Non-vacuity control: shrink 500 → 400 PASSES.
-    let honest_granted = leaf(7, 0x11, builtin_tag(TIER_SIGNATURE), EFFECT_ALL, Some(400), None);
+    let honest_granted = leaf(
+        7,
+        0x11,
+        builtin_tag(TIER_SIGNATURE),
+        EFFECT_ALL,
+        Some(400),
+        None,
+    );
     let scn_ok = Scenario {
         tree: tree_with_held(held),
         held,

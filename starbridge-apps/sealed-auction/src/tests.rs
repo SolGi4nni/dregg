@@ -35,10 +35,10 @@ fn three_agent_auction() -> (Auction, Bid, Bid, Bid) {
 /// executor requires both endpoints of a transfer to be live.
 fn demo_ledger() -> VerifiedLedger {
     fund_ledger(&[
-        (AGENT_B, PAY, 100),  // winner B can pay its 50 bid
-        (SELLER, PAY, 0),     // seller is a live account (receives the payment)
-        (SLOT, TOKEN, 100),   // the slot holds the task-token
-        (AGENT_B, TOKEN, 0),  // winner is a live account in the token column (receives the award)
+        (AGENT_B, PAY, 100), // winner B can pay its 50 bid
+        (SELLER, PAY, 0),    // seller is a live account (receives the payment)
+        (SLOT, TOKEN, 100),  // the slot holds the task-token
+        (AGENT_B, TOKEN, 0), // winner is a live account in the token column (receives the award)
     ])
 }
 
@@ -182,7 +182,10 @@ fn late_commit_after_phase_closes_is_rejected() {
     let (mut auction, _a, _b, _c) = three_agent_auction();
     auction.seal_commit_phase();
     let late = Bid::new(13, 5, 5);
-    assert_eq!(auction.commit(late.seal()), Err(AuctionError::NotCommitPhase));
+    assert_eq!(
+        auction.commit(late.seal()),
+        Err(AuctionError::NotCommitPhase)
+    );
 }
 
 #[test]

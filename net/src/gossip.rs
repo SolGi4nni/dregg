@@ -38,7 +38,7 @@ use dregg_types::{PublicKey, Signature as Ed25519Signature, SigningKey};
 
 use crate::message::PeerMessage;
 use crate::node::{NodeId, fmt_node_id};
-use crate::peer_score::{Penalty, PeerScoreboard};
+use crate::peer_score::{PeerScoreboard, Penalty};
 
 /// A topic identifier (32-byte blake3 hash of the topic name).
 pub type TopicId = [u8; 32];
@@ -2367,10 +2367,7 @@ mod tests {
         // Receiver builds the registry exactly as `peer_keys_map` does:
         // blake3(public_key) -> public_key.
         let mut peer_keys: HashMap<NodeId, PublicKey> = HashMap::new();
-        peer_keys.insert(
-            *blake3::hash(public_key.as_bytes()).as_bytes(),
-            public_key,
-        );
+        peer_keys.insert(*blake3::hash(public_key.as_bytes()).as_bytes(), public_key);
 
         // The sender resolves in the registry (NOT "unknown sender")...
         let resolved = peer_keys.get(&signed.sender).copied();
@@ -2957,7 +2954,11 @@ mod tests {
         // 50 attacker Sybils in 10.0/16, all max reputation.
         let mut all: Vec<SocketAddr> = Vec::new();
         for i in 0..50u16 {
-            let a = mk(&format!("10.0.{}.{}:9000", (i >> 8) as u8, (i & 0xff) as u8));
+            let a = mk(&format!(
+                "10.0.{}.{}:9000",
+                (i >> 8) as u8,
+                (i & 0xff) as u8
+            ));
             for _ in 0..30 {
                 sb.reward_fresh_delivery(a);
             }
@@ -2983,7 +2984,7 @@ mod tests {
     /// is not a license to equivocate.
     #[test]
     fn graylisted_anchor_is_not_pinned() {
-        use crate::peer_score::{Penalty, PeerScoreboard};
+        use crate::peer_score::{PeerScoreboard, Penalty};
         use std::collections::HashSet;
         use std::net::SocketAddr;
 

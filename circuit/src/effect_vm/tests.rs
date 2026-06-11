@@ -475,7 +475,8 @@ fn test_notespend_nullifier_cross_binding_positive() {
 
     // The trace generator surfaced the folded nullifier into the PI slot.
     assert_eq!(
-        public_inputs[pi::NOTESPEND_NULLIFIER], nullifier,
+        public_inputs[pi::NOTESPEND_NULLIFIER],
+        nullifier,
         "PI[NOTESPEND_NULLIFIER] must carry the NoteSpend's nullifier"
     );
     // ...and the NoteSpend row's param0 carries the same value.
@@ -585,7 +586,8 @@ fn test_notecreate_commitment_cross_binding_positive() {
 
     // The trace generator surfaced the folded commitment into the PI slot.
     assert_eq!(
-        public_inputs[pi::NOTECREATE_COMMITMENT], commitment,
+        public_inputs[pi::NOTECREATE_COMMITMENT],
+        commitment,
         "PI[NOTECREATE_COMMITMENT] must carry the NoteCreate's commitment"
     );
     // ...and the NoteCreate row's param0 carries the same value.
@@ -701,7 +703,8 @@ fn test_burn_target_cross_binding_positive() {
     let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
 
     assert_eq!(
-        public_inputs[pi::BURN_TARGET_PI], target_hash,
+        public_inputs[pi::BURN_TARGET_PI],
+        target_hash,
         "PI[BURN_TARGET_PI] must carry the Burn's target"
     );
     let burn_row = trace
@@ -832,7 +835,10 @@ fn test_stage3_multi_variant_compose() {
     let state = make_initial_state(10_000);
     let effects = vec![
         // Cap-root transition variants:
-        Effect::GrantCapability { cap_entry: w8(1), phase_b: None },
+        Effect::GrantCapability {
+            cap_entry: w8(1),
+            phase_b: None,
+        },
         Effect::RevokeCapability { slot_hash: w8(2) },
         // Stateless side-effects (passthrough):
         Effect::EmitEvent {
@@ -1199,7 +1205,6 @@ fn test_integration_real_multi_effect_turn() {
         );
     }
 }
-
 
 /// IVC compression test: prove sequential turns and compress via the state
 /// transition hash chain.
@@ -1588,7 +1593,6 @@ fn test_commitment_chain_continuity() {
     }
 }
 
-
 /// Test: effects_hash binding prevents subset attacks.
 /// A prover cannot claim a subset of effects and get a valid proof.
 #[test]
@@ -1691,7 +1695,6 @@ fn test_proof_size_measurement() {
 // CapTP EFFECT TESTS
 // ========================================================================
 
-
 /// Test: Multi-effect CapTP turn (export + enliven + drop).
 #[test]
 fn test_captp_multi_effect_turn() {
@@ -1702,12 +1705,10 @@ fn test_captp_multi_effect_turn() {
     state.fields[7] = BabyBear::new(0);
     state.refresh_commitment();
 
-    let effects = vec![
-        Effect::Transfer {
-            amount: 100,
-            direction: 1,
-        },
-    ];
+    let effects = vec![Effect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
 
     let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
     let air = EffectVmAir::new(trace.len());
@@ -1741,7 +1742,6 @@ fn test_captp_multi_effect_turn() {
     let delta = extract_net_delta(&public_inputs).unwrap();
     assert_eq!(delta, -100);
 }
-
 
 // ========================================================================
 // SOUNDNESS TESTS: Adversarial exploitation attempts
@@ -1949,16 +1949,13 @@ fn test_soundness_limb_range_validation_catches_wrap() {
 // STORAGE QUEUE EFFECT TESTS
 // ========================================================================
 
-
 // ========================================================================
 // STORAGE PHASE 3: AtomicQueueTx and PipelineStep TESTS
 // ========================================================================
 
-
 // ========================================================================
 // SOVEREIGN CELL QUEUE OPERATION TESTS (Bug fix verification)
 // ========================================================================
-
 
 // ========================================================================
 // P0-1 ADVERSARIAL TESTS: net_delta PI binding
@@ -2120,7 +2117,6 @@ fn test_soundness_p0_1_final_bal_pi_tampered_rejected() {
 // The fix adds an aux column (aux[6] = pipeline_id^-1) and constraint
 //   s_pipeline * (pipeline_id * aux[6] - 1) == 0
 // forcing pipeline_id != 0 when the PipelineStep selector is active.
-
 
 // ====================================================================
 // Stage 1 (`EFFECT-VM-SHAPE-A.md`) adversarial tests
@@ -2343,7 +2339,6 @@ fn test_stage2_acc_row0_shift_rejected() {
     );
 }
 
-
 /// Stage 2 adversarial: applying MakeSovereign to an already-sovereign
 /// cell is rejected. The cell's old reserved has mode bit == 1; the
 /// new constraint `s_makesov * mode_bit == 0` fires.
@@ -2365,7 +2360,6 @@ fn test_stage2_make_sovereign_double_transition_rejected() {
         "Stage 2: MakeSovereign on an already-sovereign cell must violate the AIR",
     );
 }
-
 
 /// Stage 2 adversarial: setting a sealed field is rejected.
 /// The bit-decomposition of `old_reserved` is constrained to match
@@ -2395,7 +2389,6 @@ fn test_stage2_setfield_on_sealed_field_rejected() {
     );
 }
 
-
 /// Stage 2 adversarial: the reserved bit-decomposition is constrained
 /// for EVERY row (not just sealing-effect rows). Tampering any bit so
 /// the decomposition no longer reconstructs the reserved value must
@@ -2406,7 +2399,10 @@ fn test_stage2_reserved_bit_decomposition_tamper_rejected() {
     // reserved-bit decomposition constraints are UNCONDITIONAL on every row, so
     // a Transfer row exercises the same tooth.)
     let state = make_initial_state(1000);
-    let effects = vec![Effect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
     // Honest: reserved == 0 on row 0, so all decomposition bits are 0.
     // Tamper: claim bit_0 = 1 — the recomposition no longer equals old_reserved.
@@ -2505,7 +2501,6 @@ fn assert_air_rejects(
         label,
     );
 }
-
 
 // ========================================================================
 // Stage 7 / §B: trace-side ACTOR_NONCE boundary tests.

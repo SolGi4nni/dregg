@@ -93,11 +93,7 @@ pub struct Grant {
 ///   * single-step increment `new == old + 1` and sane prior `0 <= old`;
 ///   * RATE:     `new <= g.rate_limit`.
 pub fn deleg_admit(g: &Grant, now: i64, tool: i64, old: i64, new: i64) -> bool {
-    tool == g.tool_id
-        && now <= g.deadline
-        && new == old + 1
-        && 0 <= old
-        && new <= g.rate_limit
+    tool == g.tool_id && now <= g.deadline && new == old + 1 && 0 <= old && new <= g.rate_limit
 }
 
 /// The old-value grid for a grant of `N` calls: the counter ranges over `0..=N` (the Lean `oldGrid`).
@@ -426,7 +422,10 @@ mod tests {
 
     #[test]
     fn factory_descriptor_is_stable() {
-        assert_eq!(tad_factory_descriptor().hash(), tad_factory_descriptor().hash());
+        assert_eq!(
+            tad_factory_descriptor().hash(),
+            tad_factory_descriptor().hash()
+        );
     }
 
     #[test]

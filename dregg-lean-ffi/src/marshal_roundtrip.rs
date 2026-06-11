@@ -83,7 +83,10 @@ fn wide_demo_state() -> WireState {
                     ("nonce".into(), WireValue::Int(7)),
                 ]),
             ),
-            (1, WireValue::Record(vec![("balance".into(), WireValue::Int(5))])),
+            (
+                1,
+                WireValue::Record(vec![("balance".into(), WireValue::Int(5))]),
+            ),
         ],
         caps: vec![(9, vec![Cap::Node(0)])],
         bal: vec![(0, 0, 100), (1, 0, 5)],
@@ -93,14 +96,19 @@ fn wide_demo_state() -> WireState {
             recipient: 1,
             amount: 7,
             resolved: false,
-            asset: 0,    // wideDemoState omits asset/bridge/queue* => they default to 0/false/none
+            asset: 0, // wideDemoState omits asset/bridge/queue* => they default to 0/false/none
             bridge: false,
             queue_dep: None,
             queue_msg: None,
         }],
         nullifiers: vec![111],
         commitments: vec![222],
-        queues: vec![WireQueue { id: 1, owner: 0, capacity: 4, buffer: vec![333, 444] }],
+        queues: vec![WireQueue {
+            id: 1,
+            owner: 0,
+            capacity: 4,
+            buffer: vec![333, 444],
+        }],
         swiss: vec![WireSwiss {
             swiss: 5,
             exporter: 0,
@@ -109,7 +117,7 @@ fn wide_demo_state() -> WireState {
             refcount: 1,
             cert: Some(99),
         }],
-        revoked: vec![], // wideDemoState omits `revoked` => defaults empty
+        revoked: vec![],   // wideDemoState omits `revoked` => defaults empty
         lifecycle: vec![], // wideDemoState omits lifecycle => defaults empty (all Live)
         death_cert: vec![],
     }
@@ -132,9 +140,23 @@ fn gated_demo_turn() -> WireTurn {
         block_height: 0,
         prev_hash: Digest::default(),
         root: WForest {
-            auth: WireAuth::Signature { pubkey: Digest::from_u64(7), sig: 7 },
-            caveats: vec![WireCaveat { tier: 0, cell: 0, asset: 0, min: 0 }],
-            action: WireAction::Balance { actor: 0, src: 0, dst: 1, amt: 30, asset: 0 },
+            auth: WireAuth::Signature {
+                pubkey: Digest::from_u64(7),
+                sig: 7,
+            },
+            caveats: vec![WireCaveat {
+                tier: 0,
+                cell: 0,
+                asset: 0,
+                min: 0,
+            }],
+            action: WireAction::Balance {
+                actor: 0,
+                src: 0,
+                dst: 1,
+                amt: 30,
+                asset: 0,
+            },
             children: vec![],
         },
     }
@@ -157,9 +179,18 @@ fn forged_turn() -> WireTurn {
         block_height: 0,
         prev_hash: Digest::default(),
         root: WForest {
-            auth: WireAuth::Signature { pubkey: Digest::from_u64(7), sig: 8 },
+            auth: WireAuth::Signature {
+                pubkey: Digest::from_u64(7),
+                sig: 8,
+            },
             caveats: vec![],
-            action: WireAction::Balance { actor: 0, src: 0, dst: 1, amt: 30, asset: 0 },
+            action: WireAction::Balance {
+                actor: 0,
+                src: 0,
+                dst: 1,
+                amt: 30,
+                asset: 0,
+            },
             children: vec![],
         },
     }
@@ -194,7 +225,13 @@ fn overspend_turn() -> WireTurn {
         root: WForest {
             auth: WireAuth::Unchecked,
             caveats: vec![],
-            action: WireAction::Balance { actor: 0, src: 0, dst: 1, amt: 1000, asset: 0 },
+            action: WireAction::Balance {
+                actor: 0,
+                src: 0,
+                dst: 1,
+                amt: 1000,
+                asset: 0,
+            },
             children: vec![],
         },
     }
@@ -208,7 +245,13 @@ fn overspend_turn() -> WireTurn {
 fn deleg_state() -> WireState {
     let mut s = wide_demo_state();
     s.caps = vec![
-        (0, vec![Cap::Endpoint(1, vec![Auth::Read, Auth::Write]), Cap::Node(0)]),
+        (
+            0,
+            vec![
+                Cap::Endpoint(1, vec![Auth::Read, Auth::Write]),
+                Cap::Node(0),
+            ],
+        ),
         (9, vec![Cap::Node(0)]),
     ];
     s
@@ -230,17 +273,33 @@ fn deleg_turn(keep: Vec<Auth>, parent_cap: Cap) -> WireTurn {
         block_height: 0,
         prev_hash: Digest::default(),
         root: WForest {
-            auth: WireAuth::Signature { pubkey: Digest::from_u64(7), sig: 7 },
+            auth: WireAuth::Signature {
+                pubkey: Digest::from_u64(7),
+                sig: 7,
+            },
             caveats: vec![],
-            action: WireAction::Emit { actor: 0, cell: 0, topic: 0, data: 0 },
+            action: WireAction::Emit {
+                actor: 0,
+                cell: 0,
+                topic: 0,
+                data: 0,
+            },
             children: vec![WChild {
                 holder: 1,
                 keep,
                 parent_cap,
                 sub: WForest {
-                    auth: WireAuth::Signature { pubkey: Digest::from_u64(7), sig: 7 },
+                    auth: WireAuth::Signature {
+                        pubkey: Digest::from_u64(7),
+                        sig: 7,
+                    },
                     caveats: vec![],
-                    action: WireAction::Emit { actor: 1, cell: 1, topic: 0, data: 0 },
+                    action: WireAction::Emit {
+                        actor: 1,
+                        cell: 1,
+                        topic: 0,
+                        data: 0,
+                    },
                     children: vec![],
                 },
             }],
@@ -320,10 +379,8 @@ fn main() -> ExitCode {
                 let post0 = bal_of(&res.state, 0, 0);
                 let post1 = bal_of(&res.state, 1, 0);
                 // Expect: ok:1; cell0 asset0 100->70, cell1 asset0 5->35; conserved (sum=105).
-                let ok = res.committed
-                    && post0 == 70
-                    && post1 == 35
-                    && (post0 + post1) == (pre0 + pre1);
+                let ok =
+                    res.committed && post0 == 70 && post1 == 35 && (post0 + post1) == (pre0 + pre1);
                 if ok {
                     println!(
                         "  [case1] PASS: COMMIT (ok:1), loglen={}, bal cell0 asset0 {pre0}->{post0}, cell1 asset0 {pre1}->{post1} (conserved sum {})",
@@ -396,7 +453,9 @@ fn main() -> ExitCode {
                     && bal_of(&res.state, 0, 0) == 100
                     && bal_of(&res.state, 1, 0) == 5;
                 if unchanged {
-                    println!("  [case3] PASS: over-spend ROLLED BACK (ok:0), bal unchanged (100/5)");
+                    println!(
+                        "  [case3] PASS: over-spend ROLLED BACK (ok:0), bal unchanged (100/5)"
+                    );
                 } else {
                     println!(
                         "  [case3] FAIL: expected rollback; got committed={} bal0={} bal1={}",
@@ -526,7 +585,11 @@ fn main() -> ExitCode {
     {
         let state = wide_demo_state();
         let arms = all_action_arms_demo();
-        assert_eq!(arms.len(), 29, "all_action_arms_demo must cover every Lean arm");
+        assert_eq!(
+            arms.len(),
+            29,
+            "all_action_arms_demo must cover every Lean arm"
+        );
         let mut arm_failures = 0u32;
         for (i, action) in arms.iter().enumerate() {
             let turn = demo_turn_for_action(action.clone());
@@ -561,7 +624,10 @@ fn main() -> ExitCode {
                 arms.len()
             );
         } else {
-            println!("  [case5] FAIL: {arm_failures}/{} arms did not parse", arms.len());
+            println!(
+                "  [case5] FAIL: {arm_failures}/{} arms did not parse",
+                arms.len()
+            );
             failures += arm_failures;
         }
     }
@@ -581,7 +647,10 @@ fn main() -> ExitCode {
     // ---------------------------------------------------------------------
     {
         let state = deleg_state();
-        let turn = deleg_turn(vec![Auth::Read, Auth::Write], Cap::Endpoint(1, vec![Auth::Read]));
+        let turn = deleg_turn(
+            vec![Auth::Read, Auth::Write],
+            Cap::Endpoint(1, vec![Auth::Read]),
+        );
         let wire = marshal_turn(&state, &turn).expect("marshal amplifying deleg");
         let out = lean_forest_auth(&wire);
         match unmarshal_result(&out) {
@@ -628,7 +697,10 @@ fn main() -> ExitCode {
     // ---------------------------------------------------------------------
     {
         let state = deleg_state();
-        let turn = deleg_turn(vec![Auth::Read], Cap::Endpoint(1, vec![Auth::Read, Auth::Write]));
+        let turn = deleg_turn(
+            vec![Auth::Read],
+            Cap::Endpoint(1, vec![Auth::Read, Auth::Write]),
+        );
         let wire = marshal_turn(&state, &turn).expect("marshal within-authority deleg");
         let out = lean_forest_auth(&wire);
         match unmarshal_result(&out) {
@@ -676,7 +748,9 @@ fn main() -> ExitCode {
         );
         ExitCode::SUCCESS
     } else {
-        eprintln!("{failures} round-trip assertion(s) FAILED — the marshaller is NOT byte-correct.");
+        eprintln!(
+            "{failures} round-trip assertion(s) FAILED — the marshaller is NOT byte-correct."
+        );
         ExitCode::FAILURE
     }
 }

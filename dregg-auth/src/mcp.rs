@@ -61,11 +61,7 @@ impl ToolCall {
     fn to_request(&self) -> Request {
         let mut req = Request::tool(&self.tool);
         req.now = self.now;
-        req.args = self
-            .args
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        req.args = self.args.iter().map(|(k, v)| format!("{k}={v}")).collect();
         req
     }
 }

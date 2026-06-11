@@ -27,9 +27,9 @@ pub mod derivation;
 // so the module is gated to match — without this, a `mock`-only build of the
 // crate (e.g. transitively via `dregg-cell` on wasm32) fails to find
 // `AirBuilder::{Expr,Var}`.
+pub mod descriptors;
 #[cfg(feature = "recursion")]
 pub mod dsl_p3_air;
-pub mod descriptors;
 pub mod fold;
 pub mod garbled;
 pub mod membership;

@@ -139,8 +139,14 @@ mod tests {
         // candidates = the two members + a fresh Sybil keypair not in the constitution.
         let candidates = vec![*a.as_bytes(), *b.as_bytes(), *sybil.as_bytes()];
         let admitted = admitted_participants(&participants, &candidates);
-        assert!(admitted.contains(a.as_bytes()), "constitutional member a admitted");
-        assert!(admitted.contains(b.as_bytes()), "constitutional member b admitted");
+        assert!(
+            admitted.contains(a.as_bytes()),
+            "constitutional member a admitted"
+        );
+        assert!(
+            admitted.contains(b.as_bytes()),
+            "constitutional member b admitted"
+        );
         assert!(
             !admitted.contains(sybil.as_bytes()),
             "F-4: a fresh non-member Sybil strand is filtered out of the participant set"
@@ -156,13 +162,18 @@ mod tests {
         let prev = std::env::var("DREGG_STRAND_ADMISSION_GATE").ok();
         // SAFETY (edition 2024): single-threaded test; we restore the prior value
         // below so no other test in this process observes a torn env.
-        unsafe { std::env::set_var("DREGG_STRAND_ADMISSION_GATE", "0"); }
+        unsafe {
+            std::env::set_var("DREGG_STRAND_ADMISSION_GATE", "0");
+        }
         let (_, a) = generate_keypair();
         let (_, sybil) = generate_keypair();
         let participants = vec![*a.as_bytes()];
         let candidates = vec![*a.as_bytes(), *sybil.as_bytes()];
         let admitted = admitted_participants(&participants, &candidates);
-        assert_eq!(admitted, candidates, "disabled gate is the identity on the candidate list");
+        assert_eq!(
+            admitted, candidates,
+            "disabled gate is the identity on the candidate list"
+        );
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("DREGG_STRAND_ADMISSION_GATE", v),

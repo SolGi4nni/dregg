@@ -52,10 +52,7 @@ impl Rate {
                 )));
             }
         };
-        Ok(Rate {
-            count,
-            per: per_ch,
-        })
+        Ok(Rate { count, per: per_ch })
     }
 }
 
@@ -175,7 +172,6 @@ impl Grant {
 
         Ok(Token::new(token, keypair.public()))
     }
-
 }
 
 /// Strict allowlist sanitizer for values interpolated into biscuit Datalog.

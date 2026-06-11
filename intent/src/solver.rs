@@ -1388,7 +1388,10 @@ mod tests {
             .find(|s| s.to == CommitmentId([0x02; 32]))
             .unwrap();
         assert_eq!(to_b.asset, asset(0xAA));
-        assert_eq!(to_b.amount, 7, "settled at receiver's want_min, not offerer's offer");
+        assert_eq!(
+            to_b.amount, 7,
+            "settled at receiver's want_min, not offerer's offer"
+        );
         // Leg to A carries B's offer asset BB, amount = A's want_min = 5.
         let to_a = trade
             .settlements

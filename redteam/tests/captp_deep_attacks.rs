@@ -13,7 +13,9 @@
 //!  - the presentation message binding: does the recipient signature bind the
 //!    recipient_pk, or can a cert be re-bound to a different recipient?
 
-use dregg_captp::handoff::{validate_handoff, HandoffCertificate, HandoffError, HandoffPresentation};
+use dregg_captp::handoff::{
+    validate_handoff, HandoffCertificate, HandoffError, HandoffPresentation,
+};
 use dregg_captp::sturdy::{EnlivenError, SwissTable};
 use dregg_cell::AuthRequired;
 use dregg_types::{generate_keypair, CellId, FederationId, PublicKey, SigningKey};
@@ -54,8 +56,16 @@ fn finding_handoff_nonce_replay_is_not_prevented() {
     let swiss = table.export(target_cell, AuthRequired::Signature, 100, None);
 
     let cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     let pres = HandoffPresentation::create(cert, &recip_sk);
 
@@ -91,8 +101,16 @@ fn finding_handoff_nonce_replay_is_not_prevented() {
     // A DISTINCT certificate (fresh nonce) for the same swiss still works — the
     // defense rejects replays, not legitimate re-handoffs.
     let cert2 = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     let pres2 = HandoffPresentation::create(cert2, &recip_sk);
     let r4 = validate_handoff(&pres2, &intro_pk, &mut table, &[intro_fed], 153);
@@ -137,8 +155,16 @@ fn deep_custom_cross_vk_grant_is_rejected() {
     );
     // Grant a DIFFERENT custom verifier.
     let cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-        AuthRequired::Custom { vk_hash: vk_b }, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        recip_pk.0,
+        AuthRequired::Custom { vk_hash: vk_b },
+        None,
+        None,
+        None,
+        swiss,
     );
     let pres = HandoffPresentation::create(cert, &recip_sk);
     let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 150);
@@ -171,11 +197,24 @@ fn deep_custom_vs_concrete_both_directions_rejected() {
     {
         let mut table = SwissTable::new();
         let swiss = table.export_with_options(
-            target_cell, AuthRequired::Custom { vk_hash: vk }, 100, None, None, None,
+            target_cell,
+            AuthRequired::Custom { vk_hash: vk },
+            100,
+            None,
+            None,
+            None,
         );
         let cert = HandoffCertificate::create(
-            &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-            AuthRequired::Signature, None, None, None, swiss,
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
         );
         let pres = HandoffPresentation::create(cert, &recip_sk);
         let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 150);
@@ -184,12 +223,19 @@ fn deep_custom_vs_concrete_both_directions_rejected() {
     // (b) held Signature, granted Custom.
     {
         let mut table = SwissTable::new();
-        let swiss = table.export_with_options(
-            target_cell, AuthRequired::Signature, 100, None, None, None,
-        );
+        let swiss =
+            table.export_with_options(target_cell, AuthRequired::Signature, 100, None, None, None);
         let cert = HandoffCertificate::create(
-            &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-            AuthRequired::Custom { vk_hash: vk }, None, None, None, swiss,
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            AuthRequired::Custom { vk_hash: vk },
+            None,
+            None,
+            None,
+            swiss,
         );
         let pres = HandoffPresentation::create(cert, &recip_sk);
         let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 150);
@@ -221,8 +267,16 @@ fn deep_proof_signature_sibling_grants_rejected() {
         let mut table = SwissTable::new();
         let swiss = table.export_with_options(target_cell, held.clone(), 100, None, None, None);
         let cert = HandoffCertificate::create(
-            &intro_sk, intro_fed, target_fed, target_cell, recip_pk.0,
-            granted.clone(), None, None, None, swiss,
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            granted.clone(),
+            None,
+            None,
+            None,
+            swiss,
         );
         let pres = HandoffPresentation::create(cert, &recip_sk);
         let res = validate_handoff(&pres, &intro_pk, &mut table, &[intro_fed], 150);
@@ -251,7 +305,10 @@ fn deep_revoked_swiss_does_not_resurrect() {
     assert!(table.enliven(&old, 100).is_ok());
 
     assert!(table.revoke(&old), "revoke must succeed");
-    assert_eq!(table.enliven(&old, 100).unwrap_err(), EnlivenError::NotFound);
+    assert_eq!(
+        table.enliven(&old, 100).unwrap_err(),
+        EnlivenError::NotFound
+    );
 
     // Re-export the same cell: new secret. Old secret still dead.
     let new = table.export(cell, AuthRequired::Signature, 100, None);
@@ -281,7 +338,10 @@ fn deep_expiration_boundary_is_exact() {
     let swiss = table.export(cell, AuthRequired::Signature, 10, Some(50));
 
     // At expiry height: valid.
-    assert!(table.enliven(&swiss, 50).is_ok(), "height==exp must be valid");
+    assert!(
+        table.enliven(&swiss, 50).is_ok(),
+        "height==exp must be valid"
+    );
     // One past: expired.
     assert_eq!(
         table.enliven(&swiss, 51).unwrap_err(),
@@ -313,8 +373,16 @@ fn deep_recipient_rebind_after_sign_is_rejected() {
     let swiss = table.export(target_cell, AuthRequired::Signature, 100, None);
 
     let mut cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, target_cell, legit_recip_pk.0,
-        AuthRequired::Signature, None, None, None, swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        target_cell,
+        legit_recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        swiss,
     );
     // Attacker rewrites recipient_pk to themselves so their own presentation sig
     // would verify — but this mutates a SIGNED field, breaking the introducer sig.
@@ -354,8 +422,16 @@ fn deep_swiss_swap_after_sign_is_rejected() {
     let powerful_swiss = table.export(powerful_cell, AuthRequired::None, 100, None);
 
     let mut cert = HandoffCertificate::create(
-        &intro_sk, intro_fed, target_fed, weak_cell, recip_pk.0,
-        AuthRequired::Signature, None, None, None, weak_swiss,
+        &intro_sk,
+        intro_fed,
+        target_fed,
+        weak_cell,
+        recip_pk.0,
+        AuthRequired::Signature,
+        None,
+        None,
+        None,
+        weak_swiss,
     );
     // Swap the swiss to the powerful entry after signing.
     cert.swiss = powerful_swiss;
