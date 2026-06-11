@@ -6,6 +6,8 @@
 
 Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a direct expression of my original impetus to build <https://rbg.systems>. Maybe Dragon's Egg will be a Robigalia userspace. In the meantime, here's what the LLMs have to say about it:
 
+**Hands-on in 15 minutes:** [QUICKSTART.md](QUICKSTART.md) — talk to the live devnet, sign a real turn, run the guided demo, run the site locally, drive a governance ceremony. Every command verified.
+
 (end-of-human-text)
 
 > ### The question underneath
@@ -46,7 +48,8 @@ Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a
 >
 > **Start with the ideas:** [`metatheory/CONSTRUCTIVE-KNOWLEDGE.md`](metatheory/CONSTRUCTIVE-KNOWLEDGE.md)
 > → [`metatheory/README.md`](metatheory/README.md) → [`metatheory/docs/NAVIGATION.md`](metatheory/docs/NAVIGATION.md).
-> **Start with something runnable:** `cargo run -p dregg-node run`, or the live devnet below.
+> **Start with something runnable:** [QUICKSTART.md](QUICKSTART.md) (the verified 15-minute walkthrough),
+> `cargo run -p dregg-node run`, or the live devnet below.
 
 ## What's actually true today (honest, grounded in the tree)
 

@@ -89,7 +89,7 @@ async fn export(
         "target_cell": cell_id,
         "action": action,
     });
-    let data = post_json(cfg, "/turns/bearer-auth", &body).await?;
+    let data = post_json(cfg, "/api/turns/bearer-auth", &body).await?;
     spinner.finish_and_clear();
 
     if cfg.is_json() {

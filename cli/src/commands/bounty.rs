@@ -144,7 +144,9 @@ async fn submit_effects(
         "memo": serde_json::Value::Null,
         "actions": [{ "target": target, "method": method, "effects": effects }],
     });
-    let data = post_json(cfg, "/turn/submit", &req).await?;
+    // `/api/turns/submit` = the `/turn/submit` alias that also passes
+    // gateway proxies which only forward `/api/*` (the public devnet).
+    let data = post_json(cfg, "/api/turns/submit", &req).await?;
     Ok(data)
 }
 

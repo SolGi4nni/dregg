@@ -34,7 +34,8 @@ use super::{get_json, post_json};
 const NAME_HASH_SLOT: usize = 2;
 const OWNER_HASH_SLOT: usize = 3;
 const EXPIRY_SLOT: usize = 4;
-const REVOKED_SLOT: usize = 5;
+/// Public: `demo` recycles this slot between runs on the program-less demo cell.
+pub(crate) const REVOKED_SLOT: usize = 5;
 const RESOLVE_TARGET_SLOT: usize = 6;
 
 #[derive(Subcommand)]
@@ -253,7 +254,10 @@ async fn submit_effects(
         "memo": serde_json::Value::Null,
         "actions": [{ "target": target, "method": method, "effects": effects }],
     });
-    let data = post_json(cfg, "/turn/submit", &req).await?;
+    // `/api/turns/submit` is the node's alias for `/turn/submit` — same
+    // handler, same auth — but it also passes gateway proxies that only
+    // forward `/api/*` (the public devnet's Caddy).
+    let data = post_json(cfg, "/api/turns/submit", &req).await?;
     Ok(data)
 }
 

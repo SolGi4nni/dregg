@@ -79,27 +79,51 @@ pub async fn run(
     // ── 2. Unlock ───────────────────────────────────────────────────────────
     step(ctx, 2, "Unlocking the cipherclerk");
     let mut cfg = cfg.clone();
+    // A gateway-fronted node (like the public devnet) does not expose
+    // /cipherclerk/unlock — it is unlocked at boot and you carry its bearer
+    // token instead (--token / DREGG_API_TOKEN). Detect that case up front.
+    let has_token = cfg.node.token.as_deref().is_some_and(|t| !t.is_empty());
+    let already_unlocked = || async {
+        get_json(&cfg, "/api/node/identity")
+            .await
+            .map(|i| i["unlocked"].as_bool().unwrap_or(false))
+            .unwrap_or(false)
+    };
     match passphrase {
         Some(ref pass) => {
-            let unlock = post_json(
+            match post_json(
                 &cfg,
                 "/cipherclerk/unlock",
                 &serde_json::json!({ "passphrase": pass }),
             )
             .await
-            .map_err(|e| format!("unlock failed: {e}"))?;
-            let token = unlock["bearer_token"].as_str().unwrap_or("").to_string();
-            if token.is_empty() {
-                return Err("unlock did not return a bearer token".into());
+            {
+                Ok(unlock) => {
+                    let token = unlock["bearer_token"].as_str().unwrap_or("").to_string();
+                    if token.is_empty() {
+                        return Err("unlock did not return a bearer token".into());
+                    }
+                    cfg.node.token = Some(token);
+                    ctx.success("Cipherclerk unlocked (bearer token acquired).");
+                }
+                Err(e) if has_token && already_unlocked().await => {
+                    ctx.warn(&format!(
+                        "unlock endpoint unavailable ({e}) — node is already unlocked; \
+                         continuing with your configured bearer token."
+                    ));
+                }
+                Err(e) => return Err(format!("unlock failed: {e}").into()),
             }
-            cfg.node.token = Some(token);
-            ctx.success("Cipherclerk unlocked (bearer token acquired).");
+        }
+        None if has_token && already_unlocked().await => {
+            ctx.success("Node already unlocked; using your configured bearer token.");
         }
         None => {
             ctx.warn("No --passphrase given; cannot sign turns.");
             ctx.info(
-                "  Re-run with `dregg demo --passphrase <pass>` to drive the full mutating flow.",
+                "  Re-run with `dregg demo --passphrase <pass>` to drive the full mutating flow,",
             );
+            ctx.info("  or set DREGG_API_TOKEN if the node is already unlocked (public devnet).");
             ctx.info("  (On a fresh node, the first unlock SETS the passphrase.)");
             return Ok(());
         }
@@ -132,6 +156,42 @@ pub async fn run(
         ctx.warn(&format!(
             "faucet: {err} (continuing — cell may already be funded)"
         ));
+    }
+
+    // ── 3b. Recycle the demo cell if a previous run tombstoned it ──────────
+    // A revoke is one-way on a programmed registry cell; the demo cell carries
+    // no registry program, so a re-run may clear the previous run's tombstone
+    // and host a fresh lifecycle. Without this, every demo after the first
+    // resolves as REVOKED at step 5.
+    let detail = get_json(&cfg, &format!("/api/cell/{agent_cell}")).await?;
+    let revoked_slot = detail["fields"]
+        .as_array()
+        .and_then(|f| f.get(name::REVOKED_SLOT))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !revoked_slot.is_empty() && revoked_slot.trim_start_matches('0') != "" {
+        let clear = post_json(
+            &cfg,
+            "/api/turns/submit",
+            &serde_json::json!({
+                "agent": agent_cell,
+                "nonce": 0,
+                "fee": 1000,
+                "memo": "demo: recycle (clear previous tombstone)",
+                "actions": [{ "effects": [
+                    { "kind": "set_field", "index": name::REVOKED_SLOT, "value": "0" }
+                ]}],
+            }),
+        )
+        .await?;
+        if clear["accepted"].as_bool().unwrap_or(false) {
+            ctx.info("  Recycled the demo cell (cleared a previous run's tombstone).");
+        } else {
+            ctx.warn(&format!(
+                "could not recycle the demo cell: {} — the resolve step may show REVOKED",
+                clear["error"].as_str().unwrap_or("unknown")
+            ));
+        }
     }
 
     // ── 4. Register ─────────────────────────────────────────────────────────

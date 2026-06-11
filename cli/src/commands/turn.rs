@@ -248,7 +248,9 @@ async fn submit_request(
     req: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let spinner = ctx.spinner("Submitting turn (sign → execute → consensus)...");
-    let data = post_json(cfg, "/turn/submit", &req).await?;
+    // `/api/turns/submit` = the `/turn/submit` alias that also passes
+    // gateway proxies which only forward `/api/*` (the public devnet).
+    let data = post_json(cfg, "/api/turns/submit", &req).await?;
     spinner.finish_and_clear();
 
     if cfg.is_json() {

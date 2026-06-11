@@ -113,7 +113,7 @@ async fn transfer(
         "fee": 0u64,
         "memo": format!("CLI transfer intent amount={} to={} note={}", amount, to, user_memo),
     });
-    let data = post_json(cfg, "/turn/submit", &body).await?;
+    let data = post_json(cfg, "/api/turns/submit", &body).await?;
     spinner.finish_and_clear();
 
     if cfg.is_json() {

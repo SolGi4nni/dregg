@@ -99,11 +99,11 @@
       "semantics": "Conjunction — match if every child matches."
     }
   ],
-  "constraint_count": 38,
+  "constraint_count": 42,
   "coverage": {
-    "constraints_in_view": 38,
+    "constraints_in_view": 42,
     "locally_evaluable": 15,
-    "simple": 11,
+    "simple": 16,
     "missing_from_view": [],
     "extra_in_view": [
       "Not"
@@ -470,7 +470,7 @@
       "semantics": "The action must reveal a preimage whose hash equals `slot[commitment_index]`.",
       "in_view": true,
       "locally_evaluable": false,
-      "simple": false
+      "simple": true
     },
     {
       "name": "MonotonicSequence",
@@ -743,6 +743,58 @@
       "in_view": true,
       "locally_evaluable": false,
       "simple": false
+    },
+    {
+      "name": "SenderIs",
+      "fields": [
+        {
+          "name": "pk",
+          "type": "Hash32"
+        }
+      ],
+      "semantics": "The turn's sender (acting cell's public key) must equal `pk`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": true
+    },
+    {
+      "name": "SenderInSlot",
+      "fields": [
+        {
+          "name": "index",
+          "type": "u8"
+        }
+      ],
+      "semantics": "The turn's sender must equal the identity held in `new[index]`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": true
+    },
+    {
+      "name": "BalanceGte",
+      "fields": [
+        {
+          "name": "min",
+          "type": "u64"
+        }
+      ],
+      "semantics": "The cell's own post-turn balance must be `>= min`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": true
+    },
+    {
+      "name": "BalanceLte",
+      "fields": [
+        {
+          "name": "max",
+          "type": "u64"
+        }
+      ],
+      "semantics": "The cell's own post-turn balance must be `<= max`.",
+      "in_view": true,
+      "locally_evaluable": false,
+      "simple": true
     }
   ],
   "expressibility_limits": [

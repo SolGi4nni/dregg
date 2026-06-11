@@ -8,8 +8,10 @@
   <section class="sb__manifesto" id="sb-manifesto">
     <div class="sb__manifesto-inner">
       <div class="sb__manifesto-lede">
-        <strong>Starbridge is the polis IDE</strong> — one workbench over a living dregg federation,
-        in three connected surfaces:
+        <strong>Starbridge is the polis IDE</strong> — one workbench over a living dregg federation.
+        <strong>This page is the inspector:</strong> it boots a real in-browser wasm runtime —
+        <em>empty until you seed it</em> (use Start here, below) — and renders every object as a
+        <code>dregg://</code> URI. The same inspectors back its three sibling surfaces:
         <a href="/explorer/">Explorer</a> (browse a live devnet — cells, receipts with witness/proof
         status, receipt <em>time travel</em> per cell; offline it offers a loudly-labeled sample
         snapshot, never silent fakes) ·
@@ -18,8 +20,7 @@
         with a real STARK, or submit the thin-HTTP fragment to a node) ·
         <a href="/studio.html">Studio</a> (author turns, predicates, and <em>factories</em> from
         generated-from-source catalogs — proof badges come from Lean's own axiom audit, never
-        hand-set). This page is the inspector workbench that ties them together: every object is a
-        <code>dregg://</code> URI rendered by the same platform inspectors everywhere.
+        hand-set).
       </div>
       <div class="sb__manifesto-honest">
         Live tonight: in-browser wasm runtime · remote read-only node connect · generated
@@ -29,6 +30,27 @@
       </div>
       <button class="sb__manifesto-dismiss" id="sb-manifesto-dismiss" type="button" title="hide">×</button>
     </div>
+  </section>
+
+  <!-- First-run orientation: three concrete actions, each wired to controls
+       that already exist on this page. Dismissable; nothing here is a second
+       implementation of anything. -->
+  <section class="sb__starthere" id="sb-starthere">
+    <span class="sb__starthere-label">Start here</span>
+    <button class="sb__starthere-step" id="sb-sh-seed" type="button"
+            title="Creates the alice + bob agent cells in the in-browser runtime (same as Scripts → Seed alice + bob)">
+      <b>1</b> Seed a sandbox world
+    </button>
+    <button class="sb__starthere-step" id="sb-sh-transfer" type="button"
+            title="Executes a real transfer turn between the seeded cells (same as Scripts → Run transfer turn)">
+      <b>2</b> Run a transfer turn
+    </button>
+    <span class="sb__starthere-hint">…then click the receipt that appears under <em>Receipts</em> in the left rail.</span>
+    <button class="sb__starthere-step sb__starthere-step--alt" id="sb-sh-devnet" type="button"
+            title="Switches the Runtime picker to the remote node (read-only) pointed at the live devnet">
+      <b>or</b> Browse the live devnet
+    </button>
+    <button class="sb__manifesto-dismiss" id="sb-starthere-dismiss" type="button" title="hide">×</button>
   </section>
 
   <header class="sb__topbar">
@@ -237,6 +259,17 @@
   .sb__manifesto-dismiss { position: absolute; top: 6px; right: 8px; background: none; border: 0;
     color: var(--fg-dim); font-size: 1rem; cursor: pointer; }
   .sb__manifesto-dismiss:hover { color: var(--fg); }
+  .sb__starthere { position: relative; display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px; padding: 8px 38px 8px 14px; border-bottom: 1px solid var(--line);
+    background: var(--bg-raised); font-size: 0.74rem; }
+  .sb__starthere-label { font-weight: 700; color: var(--accent-bright, #8fddff);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+  .sb__starthere-step { background: none; border: 1px solid var(--line); border-radius: 4px;
+    color: var(--fg); padding: 3px 10px; cursor: pointer; font-size: 0.74rem; }
+  .sb__starthere-step b { color: var(--accent-bright, #8fddff); margin-right: 4px; }
+  .sb__starthere-step:hover { border-color: var(--accent-bright, #8fddff); }
+  .sb__starthere-step--alt { margin-left: auto; }
+  .sb__starthere-hint { color: var(--fg-dim); }
 </style>
 <script>
   (function () {
@@ -246,6 +279,52 @@
     document.getElementById('sb-manifesto-dismiss')?.addEventListener('click', function () {
       if (el) el.style.display = 'none';
       try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+  })();
+
+  // Start-here strip: each step drives a control that already exists on this
+  // page (the Scripts buttons / the Runtime picker) — no parallel code paths.
+  (function () {
+    var KEY = 'dregg_sb_starthere_dismissed';
+    var el = document.getElementById('sb-starthere');
+    try { if (localStorage.getItem(KEY) === '1' && el) el.style.display = 'none'; } catch (e) {}
+    document.getElementById('sb-starthere-dismiss')?.addEventListener('click', function () {
+      if (el) el.style.display = 'none';
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+
+    function whenReady(btn, fn) {
+      var status = document.getElementById('sb-status');
+      if (status && status.dataset.state !== 'ready') {
+        var prior = btn.innerHTML;
+        btn.textContent = 'still booting…';
+        setTimeout(function () { btn.innerHTML = prior; }, 1200);
+        return;
+      }
+      fn();
+    }
+    document.getElementById('sb-sh-seed')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        document.getElementById('sb-seed-world')?.click();
+      });
+    });
+    document.getElementById('sb-sh-transfer')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        document.getElementById('sb-run-transfer')?.click();
+      });
+    });
+    document.getElementById('sb-sh-devnet')?.addEventListener('click', function (e) {
+      whenReady(e.currentTarget, function () {
+        var picker = document.getElementById('sb-runtime');
+        if (!picker) return;
+        for (var i = 0; i < picker.options.length; i++) {
+          if (picker.options[i].value === 'remote') {
+            picker.value = 'remote';
+            picker.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+        }
+      });
     });
   })();
 </script>
