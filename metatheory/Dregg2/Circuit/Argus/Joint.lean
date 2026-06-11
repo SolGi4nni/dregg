@@ -200,25 +200,69 @@ theorem argusPar_conserves (k k' : RecordKernelState) (legs : List Leg)
     (h : argusJointApply k legs = some k') : ∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b :=
   jointApplyAll_conserves legs k k' ((jointApplyAll_eq_argusJointApply k legs).trans h)
 
-/-- **`argusPar_separates_on_disjoint` — the SEPARATION on disjoint cells.** When a single Argus
-leg `l` is composed (as a head) with a tail par `ls`, and `l`'s touched cells (`src`/`dst`) are DISJOINT
-from the tail's touched cells, the head's ledger edit and the tail's are independent: the whole par's cap
-graph / accounts are frame-invariant (no leg's authority leaks into another), and value is conserved across
-the join. This is the ⊗-structure: `par (l) (ls)` over disjoint supports is the independent product of the
-single-cell edit `l` and the sub-par `ls`. The disjointness hypothesis `hdisj` is the SEPARATION premise —
-it is what makes the two writes non-interfering (each leg writes only its own `src`/`dst` ledger columns).
-Stated as the conjunction the join preserves; the disjoint supports witness that the edits do not collide. -/
+/-- **`argusPar_leg_bal_frame` — a single Argus leg leaves every UNtouched cell's ledger frozen.**
+When the head Argus leg `l` commits (`argusPar k l = some k₁`), every cell `c` NOT in `l.touched`
+(i.e. `c ≠ src ∧ c ≠ dst`) has its WHOLE per-asset ledger row unchanged: `k₁.bal c = k.bal c`. The
+`recKExecAsset` step rewrites ONLY `src`/`dst` of the moved asset, so a cell outside `l`'s support sees
+nothing. This is the genuine per-leg locality the separation premise `hdisj` exploits — the leg's write
+is confined to its own touched cells. -/
+theorem argusPar_leg_bal_frame (k k₁ : RecordKernelState) (l : Leg)
+    (h : argusPar k l = some k₁) (c : CellId) (hc : c ∉ Leg.touched l) :
+    k₁.bal c = k.bal c := by
+  -- `argusPar k l = interp (legStmt l) k = applyLeg k l = recKExecAsset k l.turn l.asset`.
+  rw [argusPar, ← applyLeg_eq_interp_legStmt, applyLeg, recKExecAsset] at h
+  -- `c` is neither `src` nor `dst` (it is outside `l.touched = [src, dst]`).
+  have hne : c ≠ l.turn.src ∧ c ≠ l.turn.dst := by
+    simp only [Leg.touched, List.mem_cons, List.not_mem_nil, or_false, not_or] at hc
+    exact hc
+  -- the only committing branch is the `some` of the gate; decode it.
+  by_cases hg : authorizedB k.caps l.turn = true ∧ 0 ≤ l.turn.amt ∧ l.turn.amt ≤ k.bal l.turn.src l.asset
+      ∧ l.turn.src ≠ l.turn.dst ∧ l.turn.src ∈ k.accounts ∧ l.turn.dst ∈ k.accounts
+  · rw [if_pos hg] at h
+    rw [Option.some.injEq] at h
+    subst h
+    -- `k₁.bal c = recTransferBal …`, which is the identity at `c` (neither `src` nor `dst`), every asset.
+    funext b
+    show recTransferBal k.bal l.turn.src l.turn.dst l.asset l.turn.amt c b = k.bal c b
+    unfold recTransferBal
+    by_cases hb : b = l.asset
+    · subst hb; rw [if_pos rfl, if_neg hne.1, if_neg hne.2]
+    · rw [if_neg hb]
+  · rw [if_neg hg] at h; exact absurd h (by simp)
+
+/-- **`argusPar_separates_on_disjoint` — the SEPARATION on disjoint cells (the ⊗-independence,
+genuinely using disjointness).** When a single Argus leg `l` is composed (as a head) with a tail par `ls`,
+and `l`'s touched cells (`src`/`dst`) are DISJOINT from the tail's touched cells, then in ADDITION to the
+unconditional frame/conservation facts, the head edit is INVISIBLE on every tail-touched cell: for every
+cell `c` the tail touches, the post-HEAD ledger row equals the pre-head one (`k₁.bal c = k.bal c`). So the
+head and the tail write DISJOINT ledger supports — the genuine `⊗` of two non-interfering single-cell
+edits, not merely two edits that happen to both conserve. The disjointness hypothesis `hdisj` is now
+LOAD-BEARING: it is what forces every tail-touched cell to lie outside `l`'s support, where
+`argusPar_leg_bal_frame` freezes it. -/
 theorem argusPar_separates_on_disjoint (k k' : RecordKernelState) (l : Leg) (ls : List Leg)
     (hdisj : ∀ c ∈ Leg.touched l, c ∉ touchedCells ls)
     (h : argusJointApply k (l :: ls) = some k') :
-    -- the join is authority-frame-stable and value-conserving — the ⊗ of the head edit and the tail par,
-    -- non-interfering because their supports are disjoint (`hdisj`).
+    -- (a) the whole join is authority-frame-stable and value-conserving (unconditional), AND
     (k'.caps = k.caps ∧ k'.accounts = k.accounts)
-    ∧ (∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b) :=
-  ⟨argusPar_caps_frame k k' (l :: ls) h, argusPar_conserves k k' (l :: ls) h⟩
+    ∧ (∀ b : AssetId, recTotalAsset k' b = recTotalAsset k b)
+    -- (b) the head edit does NOT touch any cell the tail touches — the genuine ⊗-separation `hdisj` buys:
+    ∧ (∃ k₁, argusPar k l = some k₁
+        ∧ ∀ c ∈ touchedCells ls, k₁.bal c = k.bal c) := by
+  refine ⟨argusPar_caps_frame k k' (l :: ls) h, argusPar_conserves k k' (l :: ls) h, ?_⟩
+  -- the head leg commits (else the whole fold would be `none`); extract its post-state `k₁`.
+  have hcommit := h
+  rw [argusJointApply_cons] at hcommit
+  -- `Option.bind … = some` forces the head `argusPar k l` to be `some k₁`.
+  obtain ⟨k₁, hhead, _htail⟩ := Option.bind_eq_some_iff.mp hcommit
+  refine ⟨k₁, hhead, ?_⟩
+  intro c hc
+  -- `c` is touched by the tail, hence (by `hdisj`, contrapositive) NOT by the head — frozen by the frame.
+  have hcNotHead : c ∉ Leg.touched l := fun hcl => hdisj c hcl hc
+  exact argusPar_leg_bal_frame k k₁ l hhead c hcNotHead
 
 #assert_axioms argusPar_caps_frame
 #assert_axioms argusPar_conserves
+#assert_axioms argusPar_leg_bal_frame
 #assert_axioms argusPar_separates_on_disjoint
 
 /-! ## §6 — THE KEYSTONE: the Argus joint par is sound under the irreducible CG-2 binding.

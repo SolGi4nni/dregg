@@ -358,7 +358,9 @@ Chains `stateCommit_binds_cells_and_rest` (equal leaves ⟸ equal root) with `Le
 `cellCommit`) — equal `Value`s give equal `cellCommit` by `congrArg`. -/
 theorem stateCommit_binds_cellCommit
     (restLimbs : CellId → List ℤ)
-    (hBridge : LeafIsCellCommit CH compressN compress2 restLimbs)
+    -- (`hBridge : LeafIsCellCommit …` DISCHARGED — the conclusion is stated in `cellCommit` terms and the
+    --  proof routes through `cellCommit_determined`; the leaf-factors-through-cellCommit portal is not
+    --  needed here, so the lemma stands without it — strictly fewer named-floor assumptions.)
     (hCmb : compressInjective cmb) (hCompress : compressInjective compress)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrame RH)
@@ -386,7 +388,8 @@ the touched cell. The executor's receipt-chain-bearing proof ALSO constrains the
 Same factoring chain off `setFieldCommit_binds_all`. -/
 theorem setFieldCommit_binds_cellCommit
     (restLimbs : CellId → List ℤ)
-    (hBridge : LeafIsCellCommit CH compressN compress2 restLimbs)
+    -- (`hBridge : LeafIsCellCommit …` DISCHARGED — same as the circuit-side crown: the conclusion is in
+    --  `cellCommit` terms, proved via `cellCommit_determined`; the bridge portal is not consumed here.)
     (hCmb : compressInjective cmb)
     (hCompressN : compressNInjective compressN) (hLeaf : cellLeafInjective CH)
     (hRest : RestHashIffFrame RH) (hLog : logHashInjective LH)
