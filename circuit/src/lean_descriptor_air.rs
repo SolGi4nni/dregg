@@ -90,7 +90,7 @@ impl LeanExpr {
 
     /// The maximum column index referenced by this expression, if any. Used to
     /// sanity-check `trace_width` against the constraints.
-    fn max_var(&self) -> Option<usize> {
+    pub(crate) fn max_var(&self) -> Option<usize> {
         match self {
             LeanExpr::Var(i) => Some(*i),
             LeanExpr::Const(_) => None,
@@ -105,7 +105,7 @@ impl LeanExpr {
     /// The total degree of this expression as a polynomial over the columns.
     /// `Const` = 0, `Var` = 1, `Add` = max, `Mul` = sum. Used to set the AIR's
     /// `max_constraint_degree` so the config's FRI blowup is sufficient.
-    fn degree(&self) -> usize {
+    pub(crate) fn degree(&self) -> usize {
         match self {
             LeanExpr::Const(_) => 0,
             LeanExpr::Var(_) => 1,
@@ -117,7 +117,7 @@ impl LeanExpr {
     /// Evaluate this expression as an `AB::Expr` polynomial over the row columns.
     /// `Var(i)` → `local[i]`, `Const(c)` → field constant, `Add`/`Mul` → field ops.
     /// Mirrors how `P3MerklePoseidon2Air::eval` reads `local[..]` and combines.
-    fn eval_expr<AB>(&self, local: &[AB::Var]) -> AB::Expr
+    pub(crate) fn eval_expr<AB>(&self, local: &[AB::Var]) -> AB::Expr
     where
         AB: AirBuilder,
         AB::F: PrimeField32,
@@ -308,13 +308,13 @@ impl LeanDescriptor {
 // needs. This keeps the swap a pure additive change with no new crate dependency.
 
 /// A tiny cursor over the JSON bytes (whitespace-skipping, fixed-schema).
-struct JsonCursor<'a> {
+pub(crate) struct JsonCursor<'a> {
     s: &'a [u8],
     i: usize,
 }
 
 impl<'a> JsonCursor<'a> {
-    fn new(s: &'a str) -> Self {
+    pub(crate) fn new(s: &'a str) -> Self {
         JsonCursor {
             s: s.as_bytes(),
             i: 0,
@@ -327,13 +327,13 @@ impl<'a> JsonCursor<'a> {
         }
     }
 
-    fn peek(&mut self) -> Option<u8> {
+    pub(crate) fn peek(&mut self) -> Option<u8> {
         self.skip_ws();
         self.s.get(self.i).copied()
     }
 
     /// Consume an exact byte, erroring with context on mismatch.
-    fn expect(&mut self, c: u8) -> Result<(), String> {
+    pub(crate) fn expect(&mut self, c: u8) -> Result<(), String> {
         self.skip_ws();
         match self.s.get(self.i) {
             Some(&b) if b == c => {
@@ -351,7 +351,7 @@ impl<'a> JsonCursor<'a> {
     /// Parse a double-quoted string with no escape handling beyond what the Lean
     /// emitter produces (the only strings are the AIR name + the fixed keys/tags,
     /// none of which contain quotes or backslashes).
-    fn parse_string(&mut self) -> Result<String, String> {
+    pub(crate) fn parse_string(&mut self) -> Result<String, String> {
         self.expect(b'"')?;
         let start = self.i;
         while self.i < self.s.len() && self.s[self.i] != b'"' {
@@ -372,7 +372,7 @@ impl<'a> JsonCursor<'a> {
     }
 
     /// Parse a (possibly negative) integer literal into i64.
-    fn parse_int(&mut self) -> Result<i64, String> {
+    pub(crate) fn parse_int(&mut self) -> Result<i64, String> {
         self.skip_ws();
         let start = self.i;
         if self.peek() == Some(b'-') {
@@ -392,7 +392,7 @@ impl<'a> JsonCursor<'a> {
     }
 
     /// Expect a specific quoted key followed by a colon: `"key":`.
-    fn expect_key(&mut self, key: &str) -> Result<(), String> {
+    pub(crate) fn expect_key(&mut self, key: &str) -> Result<(), String> {
         let got = self.parse_string()?;
         if got != key {
             return Err(format!("expected key \"{}\", found \"{}\"", key, got));
@@ -402,7 +402,7 @@ impl<'a> JsonCursor<'a> {
 }
 
 /// Parse one `<expr>` object: `{"t":"var"|"const"|"add"|"mul", …}`.
-fn parse_expr(c: &mut JsonCursor) -> Result<LeanExpr, String> {
+pub(crate) fn parse_expr(c: &mut JsonCursor) -> Result<LeanExpr, String> {
     c.expect(b'{')?;
     c.expect_key("t")?;
     let tag = c.parse_string()?;
@@ -453,7 +453,7 @@ fn parse_constraint(c: &mut JsonCursor) -> Result<LeanConstraint, String> {
 }
 
 /// Parse one range-spec object: `{"wire":i,"bits":k}` (Lean's `RangeSpec.toJson`).
-fn parse_range(c: &mut JsonCursor) -> Result<RangeSpec, String> {
+pub(crate) fn parse_range(c: &mut JsonCursor) -> Result<RangeSpec, String> {
     c.expect(b'{')?;
     c.expect_key("wire")?;
     let wire = c.parse_int()?;
@@ -603,7 +603,7 @@ pub fn i64_to_babybear(c: i64) -> BabyBear {
 
 /// A signed integer constant as an `AB::Expr` over BabyBear. Negatives are
 /// reduced modulo p first (the field has no native sign).
-fn const_to_expr<AB>(c: i64) -> AB::Expr
+pub(crate) fn const_to_expr<AB>(c: i64) -> AB::Expr
 where
     AB: AirBuilder,
     AB::F: PrimeField32,
@@ -1112,10 +1112,10 @@ impl EffectVmDescriptor {
 // The EffectVM layout offsets (the Rust mirror of Lean's `EffectVmEmit` §0 — kept here so
 // the interpreter can decode `transition` forms into absolute columns without depending on
 // `effect_vm/columns.rs`, which the bespoke air owns). These match `columns.rs` exactly.
-const EFFECTVM_NUM_EFFECTS: usize = 54;
-const EFFECTVM_STATE_SIZE: usize = 14;
-const EFFECTVM_STATE_BEFORE_BASE: usize = EFFECTVM_NUM_EFFECTS; // 54
-const EFFECTVM_STATE_AFTER_BASE: usize = EFFECTVM_NUM_EFFECTS + EFFECTVM_STATE_SIZE + 8; // 76
+pub(crate) const EFFECTVM_NUM_EFFECTS: usize = 54;
+pub(crate) const EFFECTVM_STATE_SIZE: usize = 14;
+pub(crate) const EFFECTVM_STATE_BEFORE_BASE: usize = EFFECTVM_NUM_EFFECTS; // 54
+pub(crate) const EFFECTVM_STATE_AFTER_BASE: usize = EFFECTVM_NUM_EFFECTS + EFFECTVM_STATE_SIZE + 8; // 76
 
 // ----------------------------------------------------------------------------
 // PART 6b — JSON decode for the EffectVM grammar (`emitVmJson`).
@@ -1130,7 +1130,7 @@ const EFFECTVM_STATE_AFTER_BASE: usize = EFFECTVM_NUM_EFFECTS + EFFECTVM_STATE_S
 //   <r> = {"wire":i,"bits":i}
 // ----------------------------------------------------------------------------
 
-fn parse_hash_input(c: &mut JsonCursor) -> Result<HashInput, String> {
+pub(crate) fn parse_hash_input(c: &mut JsonCursor) -> Result<HashInput, String> {
     c.expect(b'{')?;
     c.expect_key("t")?;
     let tag = c.parse_string()?;
@@ -1160,7 +1160,7 @@ fn parse_hash_input(c: &mut JsonCursor) -> Result<HashInput, String> {
     Ok(out)
 }
 
-fn parse_hash_site(c: &mut JsonCursor) -> Result<VmHashSite, String> {
+pub(crate) fn parse_hash_site(c: &mut JsonCursor) -> Result<VmHashSite, String> {
     c.expect(b'{')?;
     c.expect_key("digest_col")?;
     let digest_col = c.parse_int()?;
@@ -1207,11 +1207,24 @@ fn parse_hash_site(c: &mut JsonCursor) -> Result<VmHashSite, String> {
     })
 }
 
-fn parse_vm_constraint(c: &mut JsonCursor) -> Result<VmConstraint, String> {
+pub(crate) fn parse_vm_constraint(c: &mut JsonCursor) -> Result<VmConstraint, String> {
     c.expect(b'{')?;
     c.expect_key("t")?;
     let tag = c.parse_string()?;
-    let out = match tag.as_str() {
+    let out = parse_vm_constraint_body(c, &tag)?;
+    c.expect(b'}')?;
+    Ok(out)
+}
+
+/// The tag-dispatched BODY of one v1 constraint object (the cursor is just past the
+/// `"t":"<tag>"` pair; the closing `}` is the caller's). Split out so the IR v2 decoder
+/// (`descriptor_ir2::parse_vm_descriptor2`) can reuse the v1 arms verbatim for `.base`
+/// constraints while adding the `lookup` / `mem_op` / `map_op` arms of the v2 grammar.
+pub(crate) fn parse_vm_constraint_body(
+    c: &mut JsonCursor,
+    tag: &str,
+) -> Result<VmConstraint, String> {
+    let out = match tag {
         "gate" => {
             c.expect(b',')?;
             c.expect_key("body")?;
@@ -1275,7 +1288,6 @@ fn parse_vm_constraint(c: &mut JsonCursor) -> Result<VmConstraint, String> {
         }
         other => return Err(format!("unknown vm-constraint tag \"{other}\"")),
     };
-    c.expect(b'}')?;
     Ok(out)
 }
 

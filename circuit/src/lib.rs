@@ -224,6 +224,20 @@ pub mod plonky3_recursion_impl;
 #[cfg(feature = "recursion")]
 pub mod lean_lookup_air;
 
+/// Descriptor IR v2 — THE EPOCH multi-table batch-STARK interpreter
+/// (`docs/EPOCH-DESIGN.md`). Parses the versioned `"ir":2` wire emitted by Lean
+/// (`Dregg2.Circuit.DescriptorIR2.emitVmJson2`) and assembles the five-table
+/// batch STARK (main + Poseidon2 chip + range/byte + memory + map-ops) over the
+/// fork's `p3-batch-stark` + `p3-lookup` LogUp argument. Hashing becomes a
+/// boundary phenomenon: hash sites ride the chip bus, state accesses ride the
+/// offline-memory-checking multiset (Blum), and authenticated openings only
+/// materialize at the map-ops boundary. The law is descriptor-driven — Rust
+/// authors NO constraints; it realizes the declared tables/lookups/mem-ops/
+/// map-ops. v1 descriptors keep proving through `lean_descriptor_air` until the
+/// flag-day. See module docs.
+#[cfg(feature = "recursion")]
+pub mod descriptor_ir2;
+
 /// Recursive (Golden Vision) compression bridge for `dregg_turn::WitnessedReceipt`
 /// scope-2 replay. See the module docs for the Silver→Golden mapping and
 /// the VK v2 layered encoding of the recursive VK hash.
