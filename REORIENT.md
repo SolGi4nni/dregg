@@ -112,6 +112,18 @@ pruning (graduate 10 fallback selectors → hand-AIR dies → compaction rotatio
 turn/conditional.rs:342, bridge/verifier.rs:193), #155 census debts, #149/#150 Argus
 apex + non-revocation depth, W1 Rust 7-step (in the rotation).
 
+## THE 9:30AM PLAN (ember, 2026-06-11 ~06:15, napping until session refresh)
+
+Quiet until ~9:30am EDT (land in-flight lanes only: ROTATION + extension +
+persvati gauntlet). At 9:30 GO HAM: (1) site/ polish — webcomponents, explorer,
+playground (the shell landed; bring the rest up to it); (2) MASSIVELY boosted
+temporal stuff (the modal layer landed; extend it); (3) the proof/plonky
+overhaul — #168 hash-table/LogUp trace shape, PI/VK changes EXPLICITLY
+authorized ("we can do LOTS of changes to the PI/VK next turn"); (4) polyglot
+SDKs: the TS SDK needs real work + a NEW python SDK via pyo3 — "take dregg to
+where it needs to be." Also standing: wave gauntlet results → fix; rotation
+landing review; n=4 quorum decision (#170); extension landing.
+
 ## Ops crib
 
 **BATCH CARGO VERIFICATION (ember 2026-06-11):** concurrent lanes sharing ./target
