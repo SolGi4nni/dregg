@@ -131,7 +131,27 @@ parties is a wave; a VRF-grade public beacon is its own later effort.
 **Pre-rotation**: every key-state event in an identity cell commits to the
 digest of the NEXT, unexposed key set; rotation must exhibit the preimage.
 Compromise of current keys no longer suffices to rotate. One register + one
-guarded-write rule; composes with the recovery cooling period. Also: the
+guarded-write rule; composes with the recovery cooling period.
+
+The kernel-side semantics is proven (`metatheory/Dregg2/Apps/PreRotation.lean`):
+the `next_keys_digest` register + the rotate verb as a guarded write
+(`stateStepGuarded` — authority/membership/liveness/slot-caveats compose for
+free, so the council's threshold constitution gates rotation with no extra
+wiring). Keystones: a rotation is admitted ONLY exhibiting the preimage of the
+committed next-digest (`rotate_exhibits_preimage`); admission is a function of
+the commitment alone — current keys do not occur in the guard
+(`rotate_current_keys_irrelevant`, by `rfl`); under the named hash-CR carrier
+(`KeySetCR`, dischargeable at the BLAKE3/Poseidon2 floor) any presented key set
+other than the pre-committed one is refused (`rotate_compromise_resistant` —
+an admitted forgery would BE a collision); the public commitment stream pins
+the entire key history (`rotChain_pinned_by_commitments`). The cooling
+composition strictly dominates either gate alone — pre-rotation removes the
+attacker's ABILITY (no next-preimage ⇒ no admissible event at any height),
+cooling removes their SPEED/STEALTH (even a preimage-holding event waits in
+the open, visible to the council) — witnessed both ways
+(`cooling_blocks_admitted_preimage` / `preimage_blocks_cooled_rotation`).
+
+Also: the
 identity cell's event history exports as an externally verifiable log
 (KERI-shaped — chained, signed, witness-receipted by the federation), making
 identity portable and independently checkable; the export is a contained
