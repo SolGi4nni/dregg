@@ -7,8 +7,17 @@
 //! found most variants collapsed to NoOp in projection and many were
 //! unreachable through DSL. Per-function unit tests miss this category — you
 //! only see it by trying to round-trip every variant. This module enumerates
-//! the 52 runtime Effect variants exhaustively and walks each through three
-//! stages of the pipeline:
+//! the current runtime Effect variants exhaustively and walks each through
+//! three stages of the pipeline:
+//!
+//! NOTE (dregg3 verb reduction): the seal-pair / standalone-seal-unseal,
+//! bridge lock-finalize-cancel, queue (allocate/enqueue/dequeue/resize/
+//! atomic-tx/pipeline-step), escrow (plain + committed), obligation
+//! (create/fulfill/slash) and CapTP sturdy-ref lifecycle
+//! (export/enliven/drop/validate-handoff) effect families were dissolved by
+//! the verb-reduction campaign. Their `Effect` variants no longer exist, so
+//! they are absent from the table below — the coverage loss is the deletion
+//! of those verbs, not a gap in this test.
 //!
 //!   1. Executor: build a minimal Turn, call `executor.execute(...)`.
 //!      Required to return a `TurnResult` (Committed or Rejected) — NOT
@@ -33,18 +42,15 @@
 
 use std::collections::HashMap;
 
-use dregg_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
+use dregg_cell::note_bridge::PortableNoteProof;
 use dregg_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, CellMode, Ledger, NoteCommitment, Nullifier,
-    Permissions, Preconditions, SealedBox, ValueCommitmentBytes, factory::FactoryCreationParams,
+    Permissions, Preconditions, factory::FactoryCreationParams,
 };
 use dregg_circuit::effect_vm::{Effect as VmEffect, EffectVmContext, generate_effect_vm_trace_ext};
-use dregg_circuit::poseidon2::hash_2_to_1;
 use dregg_circuit::{CellState as VmCellState, EffectVmAir, stark};
 use dregg_sdk::AgentCipherclerk;
-use dregg_turn::action::{BearerCapProof, DelegationProofData, QueueTxOp, symbol};
-use dregg_turn::conditional::ProofCondition;
-use dregg_turn::escrow::{EscrowClaimAuth, EscrowCondition};
+use dregg_turn::action::{BearerCapProof, DelegationProofData, symbol};
 use dregg_turn::eventual::EventualRef;
 use dregg_turn::{
     Action, Authorization, ComputronCosts, DelegationMode, Effect, Event, Turn, TurnExecutor,
@@ -71,11 +77,9 @@ struct Variant {
 /// panic. Stubs are deterministic (zero or seed-bytes) so test failures
 /// are reproducible.
 ///
-/// All 52 variants of `Effect` (excluding `PipelinedSend` only when its
-/// boxed inner action would create a cycle — see comment below) appear
-/// here exactly once. Adding a new variant to `Effect` without adding it
-/// here is a compile-time match-exhaustiveness failure in
-/// [`assert_variant_coverage`].
+/// Every current variant of `Effect` appears here exactly once. Adding a
+/// new variant to `Effect` without adding it here is a compile-time
+/// match-exhaustiveness failure in [`assert_variant_coverage`].
 fn all_effect_variants() -> Vec<Variant> {
     let cell_a = cell_id(b"variant-cell-a");
     let cell_b = cell_id(b"variant-cell-b");
@@ -179,36 +183,8 @@ fn all_effect_variants() -> Vec<Variant> {
                 range_proof: None,
             },
         },
-        // -- Seal / unseal --------------------------------------------------------
-        Variant {
-            label: "CreateSealPair",
-            effect: Effect::CreateSealPair {
-                sealer_holder: cell_a,
-                unsealer_holder: cell_b,
-            },
-        },
-        Variant {
-            label: "Seal",
-            effect: Effect::Seal {
-                pair_id: [3u8; 32],
-                capability: cap.clone(),
-            },
-        },
-        Variant {
-            label: "Unseal",
-            effect: Effect::Unseal {
-                sealed_box: SealedBox {
-                    pair_id: [3u8; 32],
-                    ephemeral_public: [0u8; 32],
-                    commitment: [0u8; 32],
-                    ciphertext: vec![],
-                    nonce: [0u8; 32],
-                    sealer: None,
-                    seal_epoch: 0,
-                },
-                recipient: cell_a,
-            },
-        },
+        // -- Seal / unseal: RETIRED (dregg3) — CreateSealPair/Seal/Unseal verbs
+        //    dissolved into cell-program patterns; no surviving Effect variant.
         // -- Delegation -----------------------------------------------------------
         Variant {
             label: "SpawnWithDelegation",
@@ -254,35 +230,9 @@ fn all_effect_variants() -> Vec<Variant> {
                 },
             },
         },
-        Variant {
-            label: "BridgeLock",
-            effect: Effect::BridgeLock {
-                nullifier: [0u8; 32],
-                destination: [0u8; 32],
-                value: 1,
-                asset_type: 0,
-                timeout_height: 100,
-                spending_proof: vec![],
-            },
-        },
-        Variant {
-            label: "BridgeFinalize",
-            effect: Effect::BridgeFinalize {
-                nullifier: [0u8; 32],
-                receipt: BridgeReceipt {
-                    nullifier: [0u8; 32],
-                    destination_federation: [0u8; 32],
-                    mint_height: 0,
-                    signature: [0u8; 64],
-                },
-            },
-        },
-        Variant {
-            label: "BridgeCancel",
-            effect: Effect::BridgeCancel {
-                nullifier: [0u8; 32],
-            },
-        },
+        // BridgeLock / BridgeFinalize / BridgeCancel: RETIRED (dregg3) — the
+        // lock/finalize/cancel bridge legs were dissolved; only BridgeMint
+        // (above) survives as an Effect variant.
         // -- Composition: introduce / pipelined send ------------------------------
         Variant {
             label: "Introduce",
@@ -311,94 +261,12 @@ fn all_effect_variants() -> Vec<Variant> {
                 }),
             },
         },
-        // -- Obligation -----------------------------------------------------------
-        Variant {
-            label: "CreateObligation",
-            effect: Effect::CreateObligation {
-                beneficiary: cell_b,
-                condition: ProofCondition::HashPreimage { hash: [0u8; 32] },
-                deadline_height: 100,
-                stake: NoteCommitment([0u8; 32]),
-                stake_amount: 1,
-            },
-        },
-        Variant {
-            label: "FulfillObligation",
-            effect: Effect::FulfillObligation {
-                obligation_id: [0u8; 32],
-                proof: dregg_turn::ConditionProof::Preimage([0u8; 32]),
-            },
-        },
-        Variant {
-            label: "SlashObligation",
-            effect: Effect::SlashObligation {
-                obligation_id: [0u8; 32],
-            },
-        },
-        // -- Escrow ---------------------------------------------------------------
-        Variant {
-            label: "CreateEscrow",
-            effect: Effect::CreateEscrow {
-                cell: cell_a,
-                recipient: cell_b,
-                amount: 1,
-                condition: EscrowCondition::ProofPresented {
-                    verification_key: [0u8; 32],
-                },
-                timeout_height: 100,
-                escrow_id: [0u8; 32],
-            },
-        },
-        Variant {
-            label: "ReleaseEscrow",
-            effect: Effect::ReleaseEscrow {
-                escrow_id: [0u8; 32],
-                proof: None,
-            },
-        },
-        Variant {
-            label: "RefundEscrow",
-            effect: Effect::RefundEscrow {
-                escrow_id: [0u8; 32],
-            },
-        },
-        Variant {
-            label: "CreateCommittedEscrow",
-            effect: Effect::CreateCommittedEscrow {
-                creator_commitment: [0u8; 32],
-                recipient_commitment: [0u8; 32],
-                value_commitment: ValueCommitmentBytes([0u8; 32]),
-                condition_commitment: [0u8; 32],
-                timeout_height: 100,
-                escrow_id: [0u8; 32],
-                range_proof: vec![],
-                amount: 1,
-            },
-        },
-        Variant {
-            label: "ReleaseCommittedEscrow",
-            effect: Effect::ReleaseCommittedEscrow {
-                escrow_id: [0u8; 32],
-                claim_auth: EscrowClaimAuth {
-                    cell_id: cell_b,
-                    blinding: [0u8; 32],
-                    signature: [0u8; 64],
-                },
-                recipient: cell_b,
-            },
-        },
-        Variant {
-            label: "RefundCommittedEscrow",
-            effect: Effect::RefundCommittedEscrow {
-                escrow_id: [0u8; 32],
-                claim_auth: EscrowClaimAuth {
-                    cell_id: cell_a,
-                    blinding: [0u8; 32],
-                    signature: [0u8; 64],
-                },
-                creator: cell_a,
-            },
-        },
+        // -- Obligation: RETIRED (dregg3) — CreateObligation/FulfillObligation/
+        //    SlashObligation verbs dissolved (obligations are now a factory/
+        //    cell-program pattern); no surviving Effect variants.
+        // -- Escrow: RETIRED (dregg3) — CreateEscrow/ReleaseEscrow/RefundEscrow
+        //    and the committed-escrow trio dissolved into the factory pattern;
+        //    the `dregg_turn::escrow` module was removed. No surviving variants.
         // -- Capability exercise / sovereign / factory ----------------------------
         Variant {
             label: "ExerciseViaCapability",
@@ -426,79 +294,12 @@ fn all_effect_variants() -> Vec<Variant> {
                 },
             },
         },
-        // -- Queues ---------------------------------------------------------------
-        Variant {
-            label: "QueueAllocate",
-            effect: Effect::QueueAllocate {
-                capacity: 4,
-                program_vk: None,
-            },
-        },
-        Variant {
-            label: "QueueEnqueue",
-            effect: Effect::QueueEnqueue {
-                queue: cell_b,
-                message_hash: [0u8; 32],
-                deposit: 0,
-            },
-        },
-        Variant {
-            label: "QueueDequeue",
-            effect: Effect::QueueDequeue { queue: cell_b },
-        },
-        Variant {
-            label: "QueueResize",
-            effect: Effect::QueueResize {
-                queue: cell_b,
-                new_capacity: 8,
-            },
-        },
-        Variant {
-            label: "QueueAtomicTx",
-            effect: Effect::QueueAtomicTx {
-                operations: vec![QueueTxOp::Dequeue { queue: cell_b }],
-            },
-        },
-        Variant {
-            label: "QueuePipelineStep",
-            effect: Effect::QueuePipelineStep {
-                pipeline_id: [7u8; 32],
-                source: cell_b,
-                sinks: vec![cell_c],
-            },
-        },
-        // -- CapTP runtime effects (Stage 7 / P1.A) -----------------------------
-        Variant {
-            label: "ExportSturdyRef",
-            effect: Effect::ExportSturdyRef {
-                swiss_number: [0xCDu8; 32],
-                target: cell_b,
-                permissions: dregg_cell::permissions::AuthRequired::None,
-            },
-        },
-        Variant {
-            label: "EnlivenRef",
-            effect: Effect::EnlivenRef {
-                swiss_number: [0xCDu8; 32],
-                bearer: cell_b,
-                expected_cell_id: cell_b,
-                expected_permissions: dregg_cell::permissions::AuthRequired::None,
-            },
-        },
-        Variant {
-            label: "DropRef",
-            effect: Effect::DropRef {
-                ref_id: [0xCDu8; 32],
-            },
-        },
-        Variant {
-            label: "ValidateHandoff",
-            effect: Effect::ValidateHandoff {
-                cert_hash: [0xCDu8; 32],
-                recipient_pk: [0xAAu8; 32],
-                introducer_pk: [0xBBu8; 32],
-            },
-        },
+        // -- Queues: RETIRED (dregg3) — QueueAllocate/Enqueue/Dequeue/Resize/
+        //    AtomicTx/PipelineStep verbs dissolved into the factory-cell
+        //    pattern; no surviving Effect variants (and `QueueTxOp` removed).
+        // -- CapTP sturdy-ref lifecycle: RETIRED (dregg3) — ExportSturdyRef/
+        //    EnlivenRef/DropRef/ValidateHandoff verbs dissolved; no surviving
+        //    Effect variants.
         // -- Refusal (evidence-of-absence) ----------------------------------------
         Variant {
             label: "Refusal",
@@ -589,40 +390,15 @@ fn assert_variant_coverage(e: &Effect) -> &'static str {
         Effect::SetVerificationKey { .. } => "SetVerificationKey",
         Effect::NoteSpend { .. } => "NoteSpend",
         Effect::NoteCreate { .. } => "NoteCreate",
-        Effect::CreateSealPair { .. } => "CreateSealPair",
-        Effect::Seal { .. } => "Seal",
-        Effect::Unseal { .. } => "Unseal",
         Effect::SpawnWithDelegation { .. } => "SpawnWithDelegation",
         Effect::RefreshDelegation => "RefreshDelegation",
         Effect::RevokeDelegation { .. } => "RevokeDelegation",
         Effect::BridgeMint { .. } => "BridgeMint",
-        Effect::BridgeLock { .. } => "BridgeLock",
-        Effect::BridgeFinalize { .. } => "BridgeFinalize",
-        Effect::BridgeCancel { .. } => "BridgeCancel",
         Effect::Introduce { .. } => "Introduce",
         Effect::PipelinedSend { .. } => "PipelinedSend",
-        Effect::CreateObligation { .. } => "CreateObligation",
-        Effect::FulfillObligation { .. } => "FulfillObligation",
-        Effect::SlashObligation { .. } => "SlashObligation",
-        Effect::CreateEscrow { .. } => "CreateEscrow",
-        Effect::ReleaseEscrow { .. } => "ReleaseEscrow",
-        Effect::RefundEscrow { .. } => "RefundEscrow",
-        Effect::CreateCommittedEscrow { .. } => "CreateCommittedEscrow",
-        Effect::ReleaseCommittedEscrow { .. } => "ReleaseCommittedEscrow",
-        Effect::RefundCommittedEscrow { .. } => "RefundCommittedEscrow",
         Effect::ExerciseViaCapability { .. } => "ExerciseViaCapability",
         Effect::MakeSovereign { .. } => "MakeSovereign",
         Effect::CreateCellFromFactory { .. } => "CreateCellFromFactory",
-        Effect::QueueAllocate { .. } => "QueueAllocate",
-        Effect::QueueEnqueue { .. } => "QueueEnqueue",
-        Effect::QueueDequeue { .. } => "QueueDequeue",
-        Effect::QueueResize { .. } => "QueueResize",
-        Effect::QueueAtomicTx { .. } => "QueueAtomicTx",
-        Effect::QueuePipelineStep { .. } => "QueuePipelineStep",
-        Effect::ExportSturdyRef { .. } => "ExportSturdyRef",
-        Effect::EnlivenRef { .. } => "EnlivenRef",
-        Effect::DropRef { .. } => "DropRef",
-        Effect::ValidateHandoff { .. } => "ValidateHandoff",
         Effect::Refusal { .. } => "Refusal",
         Effect::CellSeal { .. } => "CellSeal",
         Effect::CellUnseal { .. } => "CellUnseal",
@@ -907,33 +683,15 @@ fn historically_weak_variants_project_to_dedicated_vm_selectors() {
         AgentCipherclerk::convert_effects_to_vm(&agent, &[effect.effect.clone()])
     };
 
+    // Unseal / QueueAtomicTx / QueuePipelineStep / DropRef / ValidateHandoff
+    // selectors RETIRED (dregg3) along with their runtime Effect variants.
     assert!(matches!(
         projected_for("IncrementNonce").as_slice(),
         [VmEffect::IncrementNonce]
     ));
     assert!(matches!(
-        projected_for("Unseal").as_slice(),
-        [VmEffect::Unseal { .. }]
-    ));
-    assert!(matches!(
         projected_for("CreateCellFromFactory").as_slice(),
         [VmEffect::CreateCellFromFactory { .. }]
-    ));
-    assert!(matches!(
-        projected_for("QueueAtomicTx").as_slice(),
-        [VmEffect::AtomicQueueTx { .. }]
-    ));
-    assert!(matches!(
-        projected_for("QueuePipelineStep").as_slice(),
-        [VmEffect::PipelineStep { .. }]
-    ));
-    assert!(matches!(
-        projected_for("DropRef").as_slice(),
-        [VmEffect::DropRef { .. }]
-    ));
-    assert!(matches!(
-        projected_for("ValidateHandoff").as_slice(),
-        [VmEffect::ValidateHandoff { .. }]
     ));
 }
 
@@ -1013,45 +771,13 @@ fn prove_and_verify_variant(
 fn prepare_variant_proof_fixture(
     initial_state: &mut VmCellState,
     projected: &mut [VmEffect],
-    ctx: &mut EffectVmContext,
+    _ctx: &mut EffectVmContext,
 ) {
-    for effect in projected {
-        match effect {
-            VmEffect::Unseal { field_idx, .. } => {
-                initial_state.sealed_field_mask |= 1u32 << *field_idx;
-            }
-            VmEffect::AtomicQueueTx {
-                combined_old_root, ..
-            } => {
-                initial_state.fields[4] = *combined_old_root;
-            }
-            VmEffect::PipelineStep {
-                source_old_root, ..
-            } => {
-                initial_state.fields[4] = *source_old_root;
-            }
-            VmEffect::DropRef {
-                current_refcount, ..
-            } => {
-                if *current_refcount == 0 {
-                    *current_refcount = 1;
-                }
-                initial_state.fields[5] = dregg_circuit::field::BabyBear::new(*current_refcount);
-            }
-            VmEffect::ValidateHandoff {
-                certificate_hash,
-                recipient_pk,
-                introducer_pk,
-                ..
-            } => {
-                let pks = hash_2_to_1(*recipient_pk, *introducer_pk);
-                let leaf = hash_2_to_1(*certificate_hash, pks);
-                ctx.approved_handoffs_root[0] =
-                    hash_2_to_1(leaf, dregg_circuit::field::BabyBear::ZERO);
-            }
-            _ => {}
-        }
-    }
+    // The per-variant proof-fixture preconditions (Unseal sealed-field mask,
+    // queue atomic-tx / pipeline-step roots, DropRef refcount, ValidateHandoff
+    // approved-handoffs root) were all tied to RETIRED (dregg3) VM effects and
+    // removed with them. The surviving variants need no extra state seeding.
+    let _ = &projected;
 
     initial_state.state_commitment = VmCellState::compute_commitment(
         initial_state.balance,
