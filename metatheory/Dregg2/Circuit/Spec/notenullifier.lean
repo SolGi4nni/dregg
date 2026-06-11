@@ -93,11 +93,12 @@ theorem recKernel_ext {k k' : RecordKernelState}
     (h11 : k'.factories = k.factories) (h12 : k'.lifecycle = k.lifecycle)
     (h13 : k'.deathCert = k.deathCert) (h14 : k'.delegate = k.delegate)
     (h15 : k'.delegations = k.delegations)
-    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt) :
+    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt)
+    (h19 : k'.heaps = k.heaps) :
     k' = k := by
   cases k; cases k'
-  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
-  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
+  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
   rfl
 
 /-! ## §4 — `noteSpendChainA_correct` — the post-state helper validated DECLARATIVELY.
@@ -161,6 +162,7 @@ def NoteSpendSpec (st : RecChainedState) (nf : Nat) (actor : CellId) (spendProof
   ∧ st'.kernel.delegations = st.kernel.delegations
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+  ∧ st'.kernel.heaps = st.kernel.heaps
 
 /-! ## §6 — `execFullA_noteSpend_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions). -/
 
@@ -193,8 +195,9 @@ theorem execFullA_noteSpend_iff_spec (st : RecChainedState) (nf : Nat) (actor : 
         simp only [Option.some.injEq] at h
         subst h
         exact ⟨⟨hproof, hfresh⟩, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-          rfl, rfl, rfl⟩
-      · rintro ⟨_, hnull, hlog, h1, h2, h3, h6, h7, h9, h10, h11, h12, h13, h14, h15, h17, h18⟩
+          rfl, rfl, rfl, rfl⟩
+      · rintro ⟨_, hnull, hlog, h1, h2, h3, h6, h7, h9, h10, h11, h12, h13, h14, h15, h17, h18,
+          h19⟩
         -- rebuild `st'` from the nullifier post-image + log post-image + the 14 frame equalities.
         have hk : st'.kernel = { st.kernel with nullifiers := nf :: st.kernel.nullifiers } := by
           apply recKernel_ext
@@ -213,6 +216,7 @@ theorem execFullA_noteSpend_iff_spec (st : RecChainedState) (nf : Nat) (actor : 
           · simpa using h15
           · simpa using h17
           · simpa using h18
+          · simpa using h19
         cases st' with
         | mk k' lg' =>
           simp only at hk hlog

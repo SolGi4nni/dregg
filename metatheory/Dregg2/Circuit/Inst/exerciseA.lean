@@ -159,7 +159,8 @@ theorem recordKernel_eq_of_fields {k k' : RecordKernelState}
     (hlifecycle : k.lifecycle = k'.lifecycle) (hdeathCert : k.deathCert = k'.deathCert)
     (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)
     (hdelegationEpoch : k.delegationEpoch = k'.delegationEpoch)
-    (hdelegationEpochAt : k.delegationEpochAt = k'.delegationEpochAt) : k = k' := by
+    (hdelegationEpochAt : k.delegationEpochAt = k'.delegationEpochAt)
+    (hheaps : k.heaps = k'.heaps) : k = k' := by
   cases k; cases k'; simp_all
 
 /-- Chained-state extensionality from kernel + log agreement. -/
@@ -184,10 +185,10 @@ theorem apex_iff_exerciseHoldSpec (s : RecChainedState) (args : ExerciseHoldArgs
   unfold ExerciseHoldSpec exerciseGuardProp exerciseGuard exerciseHoldState kernelFrame
   constructor
   · rintro ⟨hguard, hcell, hlog, hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hDE, hDEA⟩
+      hDC, hDel, hDgs, hDE, hDEA, hHp⟩
     have hker : s'.kernel = s.kernel :=
       recordKernel_eq_of_fields hAcc hcell hCaps hNul hRev hCom hBal hSC hFac hLif hDC hDel
-        hDgs hDE hDEA
+        hDgs hDE hDEA hHp
     refine ⟨hguard, ?_⟩
     exact recChainedState_eq_of_fields hker hlog
   · rintro ⟨hguard, hhold⟩

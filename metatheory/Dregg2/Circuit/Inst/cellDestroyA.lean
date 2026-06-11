@@ -40,7 +40,8 @@ def RestIffNoLifecycleDeathCert (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 structure CellDestroyArgs where
   actor    : CellId
@@ -97,7 +98,8 @@ def cellDestroyE (DLif : (CellId → Nat) → ℤ) (hDLif : Function.Injective D
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
   guardGates   := cellDestroyGuardGates
   guardProp    := cellDestroyGuardProp
   guardWidth   := 1

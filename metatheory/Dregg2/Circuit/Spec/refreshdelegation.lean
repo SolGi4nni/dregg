@@ -46,6 +46,7 @@ def RefreshDelegationSpec (s : RecChainedState) (actor child : CellId) (s' : Rec
   ∧ s'.kernel.delegate = s.kernel.delegate
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
 
 /-! ## §2 — executor ⟺ spec. -/
 
@@ -61,12 +62,12 @@ theorem refreshDelegation_iff_spec (s : RecChainedState) (actor child : CellId) 
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hdgs, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hdgs, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
       obtain ⟨k', lg'⟩ := s'
-      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea⟩ := k'
-      simp only at hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-      subst hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
+      simp only at hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      subst hdgs hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
       rfl
   · rw [if_neg hg]
     constructor

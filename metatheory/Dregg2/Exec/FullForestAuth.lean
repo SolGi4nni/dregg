@@ -52,6 +52,7 @@ FIELD (the §8 discipline), NOT an axiom. Reuses `FullForest`/`AuthModes`/`Crede
 -/
 import Dregg2.Exec.FullForest
 import Dregg2.Exec.AuthModes
+import Dregg2.Substrate.HeapKernel
 import Dregg2.Exec.CrossCaveat
 import Dregg2.Authority.Credential
 import Dregg2.Authority.CaveatChain
@@ -588,6 +589,107 @@ theorem gatedNode_check_eq_use (s s' : RecChainedState)
     gateOK na s = true ∧ execFullA s a = some s' :=
   (execFullAGated_some_iff s s' na a).mp h
 
+/-! ## §4.5 — the STAGED gated HEAP WRITE (REFINEMENT-DESIGN Decision 1, splice phase 2).
+
+The heap update is a `write`-verb instance (`Substrate.HeapKernel.heapStepGuarded`, built ON the
+proven `stateStepGuarded` gate stack). Here it receives the SAME per-node credential gate
+`execFullForestG` applies (`gateOK` in front, fail-closed) — so the gated heap write carries the
+full stack: credential ∧ cap-authority ∧ caveats ∧ not-revoked ∧ heap-atoms ∧ kernel authority ∧
+membership ∧ lifecycle ∧ slot caveats. The `FullActionA` heap-update CONSTRUCTOR (which would make
+this reachable as a forest NODE) rides THE ONE ROTATION: adding it today forces a wire tag
+(`FFI.encodeActionW` / `CodecRoundtrip/Action`) and a circuit dispatch arm
+(`Circuit/ActionDispatch.actionTag` 56/56, `EffectEmitRegistry`) — exactly the wire/circuit binding
+the rotation owns. At rotation time the dispatch arm routes to THIS def; the gate semantics are
+pinned NOW by `execHeapWriteG_some_iff` (the `execFullAGated_some_iff` shape). -/
+
+/-- **`execHeapWriteG` — the credential-gated heap write (STAGED for the rotation's dispatch
+arm).** `if gateOK na s then heapStepGuarded … else none`: the SAME fail-closed gate front
+`execFullAGated` puts on every forest node, on the spliced `write`-verb heap instance. NOT a new
+turn entry — the per-effect gated step the rotation's `FullActionA` arm will route to. -/
+def execHeapWriteG (hash : List ℤ → ℤ) (s : RecChainedState)
+    (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag))
+    (atoms : List Substrate.HeapKernel.HeapAtom)
+    (actor target : Dregg2.Exec.CellId) (coll key v : ℤ) : Option RecChainedState :=
+  if gateOK na s = true then
+    Substrate.HeapKernel.heapStepGuarded hash s atoms actor target coll key v
+  else none
+
+/-- **`execHeapWriteG_some_iff` (the load-bearing unfolding lemma).** The gated heap write commits
+IFF the credential gate passed AND the underlying spliced heap step committed — the
+`execFullAGated_some_iff` shape, so the within-cell no-TOCTOU reading (gate and step read the SAME
+pre-state `s`) carries over verbatim. -/
+theorem execHeapWriteG_some_iff (hash : List ℤ → ℤ) (s s' : RecChainedState)
+    (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag))
+    (atoms : List Substrate.HeapKernel.HeapAtom)
+    (actor target : Dregg2.Exec.CellId) (coll key v : ℤ) :
+    execHeapWriteG hash s na atoms actor target coll key v = some s' ↔
+      (gateOK na s = true ∧
+        Substrate.HeapKernel.heapStepGuarded hash s atoms actor target coll key v = some s') := by
+  unfold execHeapWriteG
+  by_cases hg : gateOK na s = true
+  · rw [if_pos hg]
+    exact ⟨fun h => ⟨hg, h⟩, fun h => h.2⟩
+  · rw [if_neg hg]
+    exact ⟨fun h => absurd h (by simp), fun h => absurd h.1 hg⟩
+
+/-- **REVOCATION TEETH on the heap write.** A revoked credential (nullifier in the COMMITTED
+registry) cannot heap-write, no matter how valid its signature or its heap atoms — `gateOK`
+fail-closes in front (`gateOK_revoked_fails`). -/
+theorem execHeapWriteG_revoked_fails (hash : List ℤ → ℤ) (s : RecChainedState)
+    (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag))
+    (atoms : List Substrate.HeapKernel.HeapAtom)
+    (actor target : Dregg2.Exec.CellId) (coll key v : ℤ)
+    (hrev : s.kernel.revoked.contains na.credNul = true) :
+    execHeapWriteG hash s na atoms actor target coll key v = none := by
+  unfold execHeapWriteG
+  rw [if_neg (by rw [gateOK_revoked_fails na s hrev]; simp)]
+
+/-- **ATOM TEETH survive the gate.** A violated heap atom refuses the gated write too (fail-closed
+composes). -/
+theorem execHeapWriteG_atom_violation_fails (hash : List ℤ → ℤ) (s : RecChainedState)
+    (na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag))
+    (atoms : List Substrate.HeapKernel.HeapAtom)
+    (actor target : Dregg2.Exec.CellId) (coll key v : ℤ)
+    (hviol : Substrate.HeapKernel.heapAtomsAdmit hash atoms (s.kernel.heaps target) = false) :
+    execHeapWriteG hash s na atoms actor target coll key v = none := by
+  unfold execHeapWriteG
+  rw [Substrate.HeapKernel.heapStep_atom_violation_fails hash s atoms actor target coll key v hviol]
+  simp
+
+/-- **Conservation lifts through the gate** — the gated heap write is balance-neutral (the gate
+touches no ledger; the heap step is proven neutral). -/
+theorem execHeapWriteG_conserves {hash : List ℤ → ℤ} {s s' : RecChainedState}
+    {na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag)}
+    {atoms : List Substrate.HeapKernel.HeapAtom}
+    {actor target : Dregg2.Exec.CellId} {coll key v : ℤ}
+    (h : execHeapWriteG hash s na atoms actor target coll key v = some s') :
+    recTotal s'.kernel = recTotal s.kernel :=
+  Substrate.HeapKernel.heapStep_conserves
+    ((execHeapWriteG_some_iff hash s s' na atoms actor target coll key v).mp h).2
+
+/-- **The kernel authority gate still fires under the credential gate** — a committed gated heap
+write means the actor held cap-table authority over the target (defense in depth: WHO ∧ WHAT). -/
+theorem execHeapWriteG_authorized {hash : List ℤ → ℤ} {s s' : RecChainedState}
+    {na : NodeAuthC (Digest := Digest) (Proof := Proof) (Request := Request) (Stmt := Stmt)
+      (Wit := Wit) (CellId := CellId) (Rights := Rights) (Ctx := Ctx) (Gateway := Gateway)
+      (Bytes := Bytes) (Tag := Tag)}
+    {atoms : List Substrate.HeapKernel.HeapAtom}
+    {actor target : Dregg2.Exec.CellId} {coll key v : ℤ}
+    (h : execHeapWriteG hash s na atoms actor target coll key v = some s') :
+    EffectsState.stateAuthB s.kernel.caps actor target = true :=
+  Substrate.HeapKernel.heapStep_authorized
+    ((execHeapWriteG_some_iff hash s s' na atoms actor target coll key v).mp h).2
+
 /-! ## §5 — The gated LINEAR layer: `lowerForestG`, `execFullTurnG`, the append mirror.
 
 The pre-order pairing of each node's `auth` with its `action`, and the gated linear fold. These mirror
@@ -1050,6 +1152,11 @@ the circuit's obligation, never a Lean law). -/
 #assert_axioms execFullAGated_some_iff
 #assert_axioms gatedNode_check_eq_use
 #assert_axioms gateOK_revoked_fails
+#assert_axioms execHeapWriteG_some_iff
+#assert_axioms execHeapWriteG_revoked_fails
+#assert_axioms execHeapWriteG_atom_violation_fails
+#assert_axioms execHeapWriteG_conserves
+#assert_axioms execHeapWriteG_authorized
 #assert_axioms execFullTurnG_append
 #assert_axioms execFullForestG_eq_execFullTurnG
 #assert_axioms execFullTurnG_erases

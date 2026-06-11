@@ -51,7 +51,8 @@ def RestIffNoSpawnTouched (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 /-! ## §2 — the `spawnE` quint instance. -/
 
@@ -135,7 +136,8 @@ def spawnE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
   guardGates   := spawnGuardGates
   guardProp    := spawnGuardProp
   guardWidth   := 1
@@ -213,6 +215,7 @@ def SpawnCircuitSpec (st : RecChainedState) (actor child target : CellId) (st' :
   ∧ st'.kernel.factories = st.kernel.factories
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+  ∧ st'.kernel.heaps = st.kernel.heaps
 
 theorem SpawnSpec_implies_circuitSpec (st : RecChainedState) (actor child target : CellId)
     (st' : RecChainedState) (h : SpawnSpec st actor child target st') :

@@ -51,7 +51,8 @@ def RestIffNoFactoryTouched (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 /-! ## §2 — the `createFromFactoryE` quint instance. -/
 
@@ -172,7 +173,8 @@ def createFromFactoryE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
   guardGates   := createFromFactoryGuardGates
   guardProp    := createFromFactoryGuardProp
   guardWidth   := 1
@@ -255,6 +257,7 @@ def CreateFromFactoryCircuitSpec (st : RecChainedState) (actor newCell : CellId)
     ∧ st'.kernel.factories = st.kernel.factories
     ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
     ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+    ∧ st'.kernel.heaps = st.kernel.heaps
 
 theorem CreateFromFactorySpec_implies_circuitSpec (st : RecChainedState) (actor newCell : CellId)
     (vk : Int) (st' : RecChainedState) (h : CreateFromFactorySpec st actor newCell vk st') :

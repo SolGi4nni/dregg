@@ -103,11 +103,12 @@ theorem recKernel_ext {k k' : RecordKernelState}
     (h11 : k'.factories = k.factories) (h12 : k'.lifecycle = k.lifecycle)
     (h13 : k'.deathCert = k.deathCert) (h14 : k'.delegate = k.delegate)
     (h15 : k'.delegations = k.delegations)
-    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt) :
+    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt)
+    (h19 : k'.heaps = k.heaps) :
     k' = k := by
   cases k; cases k'
-  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
-  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
+  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
   rfl
 
 /-! ## §3 — the FULL-STATE declarative spec of a committed `pipelinedSendA` (the INDEPENDENT reference).
@@ -140,6 +141,7 @@ def PipelinedSendSpec (st : RecChainedState) (actor : CellId) (st' : RecChainedS
   ∧ st'.kernel.delegations = st.kernel.delegations
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+  ∧ st'.kernel.heaps = st.kernel.heaps
 
 /-! ## §4 — `execFullA_pipelinedSend_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions). -/
 
@@ -163,12 +165,12 @@ theorem execFullA_pipelinedSend_iff_spec (st : RecChainedState) (actor : CellId)
     subst h
     -- the committed post-state is `{ kernel := st.kernel, log := escrowReceiptA actor :: st.log }`;
     -- read its log + every kernel field off that literal. The log clause uses the receipt eq.
-    refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    refine ⟨?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
     simp only [pipelinedSendReceipt, escrowReceiptA]
-  · rintro ⟨hlog, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18⟩
-    -- rebuild `st'` from the log post-image + the 17 kernel-field equalities.
+  · rintro ⟨hlog, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18, h19⟩
+    -- rebuild `st'` from the log post-image + the 18 kernel-field equalities.
     have hk : st'.kernel = st.kernel :=
-      recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+      recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
     cases st' with
     | mk k' lg' =>
       simp only at hk hlog
@@ -196,8 +198,8 @@ NEUTRAL — no ledger move, no side-table touched. -/
 theorem execFullA_pipelinedSend_kernel {st st' : RecChainedState} {actor : CellId}
     (h : execFullA st (.pipelinedSendA actor) = some st') :
     st'.kernel = st.kernel := by
-  obtain ⟨_, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18⟩ := (execFullA_pipelinedSend_iff_spec st actor st').mp h
-  exact recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+  obtain ⟨_, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18, h19⟩ := (execFullA_pipelinedSend_iff_spec st actor st').mp h
+  exact recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
 
 /-- The executor ALWAYS COMMITS a `pipelinedSendA` (the TOTALITY of the effect — there is no
 fail-closed gate at apply time). The dual of `emitEventA`'s `commits_iff` with a `True` guard:

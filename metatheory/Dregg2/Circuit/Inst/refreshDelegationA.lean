@@ -39,7 +39,8 @@ def RestIffNoDelegations (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 structure RefreshDelegationArgs where
   actor : CellId
@@ -90,7 +91,8 @@ def refreshDelegationE (D : (CellId → List Cap) → ℤ) (hD : Function.Inject
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
   guardGates   := refreshDelegationGuardGates
   guardProp    := refreshDelegationGuardProp
   guardWidth   := 1

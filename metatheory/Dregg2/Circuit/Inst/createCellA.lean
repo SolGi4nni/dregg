@@ -49,7 +49,8 @@ def RestIffNoAccountsBalBorn (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 /-! ## §2 — the `createCellE` triple instance (`accounts` + `bal` + born-empty side). -/
 
@@ -117,7 +118,8 @@ def createCellE (LE : CellId → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.commitments = k.commitments
       ∧ k'.factories = k.factories
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
   guardGates   := createCellGuardGates
   guardProp    := createCellGuardProp
   guardWidth   := 1

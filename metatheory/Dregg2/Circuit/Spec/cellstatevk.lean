@@ -137,6 +137,7 @@ def SetVKSpec (s : RecChainedState) (actor cell : CellId) (vk : Int)
   ∧ s'.kernel.delegations = s.kernel.delegations
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
 
 /-- **`vkStateStep_iff_spec` — the GENERIC `stateStep` characterization (executor⟺spec, full state),
 re-derived LOCALLY.** The bare `stateStep` (the engine the `.setVKA` arm runs) commits a write of
@@ -162,7 +163,8 @@ theorem vkStateStep_iff_spec (s : RecChainedState) (f : FieldName) (actor cell :
         ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
         ∧ s'.kernel.delegations = s.kernel.delegations
         ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
-        ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt ) := by
+        ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+        ∧ s'.kernel.heaps = s.kernel.heaps ) := by
   unfold stateStep
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
       ∧ cellLive s.kernel cell = true
@@ -170,12 +172,12 @@ theorem vkStateStep_iff_spec (s : RecChainedState) (f : FieldName) (actor cell :
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      refine ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+      refine ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
       obtain ⟨k', l'⟩ := s'
-      obtain ⟨a, ce, ca, nu, re, co, ba, sl, fa, li, dc, de, dg, dge, dgea⟩ := k'
-      simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-      subst hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+      obtain ⟨a, ce, ca, nu, re, co, ba, sl, fa, li, dc, de, dg, dge, dgea, hp⟩ := k'
+      simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      subst hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
       rfl
   · rw [if_neg hg]
     constructor

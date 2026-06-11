@@ -127,6 +127,7 @@ def NoteCreateASpec (st : RecChainedState) (cm : Nat) (actor : CellId)
   ∧ st'.kernel.delegations = st.kernel.delegations
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+  ∧ st'.kernel.heaps = st.kernel.heaps
 
 /-- **`noteCreateChainA_iff_spec` — CHAINED EXECUTOR ⟺ SPEC (FULL state, both directions).** The
 chained note-create commits into `st'` IFF `st'` is EXACTLY the spec'd full post-state. The `→`
@@ -142,13 +143,13 @@ theorem noteCreateChainA_iff_spec (st : RecChainedState) (cm : Nat) (actor : Cel
   · intro h
     simp only [Option.some.injEq] at h
     subst h
-    exact ⟨trivial, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-  · rintro ⟨_, hcm, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+    exact ⟨trivial, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  · rintro ⟨_, hcm, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
     -- reconstruct st' from the spec: split both records and substitute every field.
     obtain ⟨k', lg'⟩ := st'
-    obtain ⟨acc, cl, cp, nl, rv, cm', bl, sc, fc, lc, dc, dl, dn, dge, dgea⟩ := k'
-    simp only at hcm hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-    subst hcm hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+    obtain ⟨acc, cl, cp, nl, rv, cm', bl, sc, fc, lc, dc, dl, dn, dge, dgea, hp⟩ := k'
+    simp only at hcm hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+    subst hcm hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
     rfl
 
 /-- **`execNoteCreateA_iff_spec` — THE DELIVERABLE: `execFullA`-LEVEL EXECUTOR ⟺ SPEC (FULL state,

@@ -45,7 +45,8 @@ def RestIffNoBalEscrows (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle ∧ k'.deathCert = k.deathCert
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 /-! ## §1 — `EffectSpec2Dual` (two touched non-`cell` components). -/
 

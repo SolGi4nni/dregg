@@ -149,7 +149,8 @@ theorem auditStateStep_iff_spec (s : RecChainedState) (f : FieldName) (actor cel
         ∧ s'.kernel.deathCert = s.kernel.deathCert ∧ s'.kernel.delegate = s.kernel.delegate
         ∧ s'.kernel.delegations = s.kernel.delegations
         ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
-        ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt ) := by
+        ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+        ∧ s'.kernel.heaps = s.kernel.heaps ) := by
   unfold stateStep
   by_cases hg : stateAuthB s.kernel.caps actor cell = true ∧ cell ∈ s.kernel.accounts
       ∧ cellLive s.kernel cell = true
@@ -157,12 +158,12 @@ theorem auditStateStep_iff_spec (s : RecChainedState) (f : FieldName) (actor cel
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      refine ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+      refine ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
       obtain ⟨k', l'⟩ := s'
-      obtain ⟨a, ce, ca, nu, re, co, ba, sl, fa, li, dc, de, dg, dge, dgea⟩ := k'
-      simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-      subst hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+      obtain ⟨a, ce, ca, nu, re, co, ba, sl, fa, li, dc, de, dg, dge, dgea, hp⟩ := k'
+      simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      subst hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
       rfl
   · rw [if_neg hg]
     constructor
@@ -197,6 +198,7 @@ def RefusalSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedStat
   ∧ s'.kernel.delegations = s.kernel.delegations
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
 
 /-- The `.refusalA` arm of `execFullA` is DEFINITIONALLY the bare authority-gated refusal-slot write
 — the seam the whole bridge sits on. -/
@@ -241,6 +243,7 @@ def ReceiptArchiveSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChai
   ∧ s'.kernel.delegations = s.kernel.delegations
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.heaps = s.kernel.heaps
 
 /-- The `.receiptArchiveA` arm of `execFullA` is DEFINITIONALLY the bare authority-gated lifecycle-slot
 write. -/

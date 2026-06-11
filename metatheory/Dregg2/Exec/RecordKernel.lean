@@ -405,6 +405,19 @@ structure RecordKernelState where
   Refresh re-stamps it to the parent's current epoch. Epochs touch NO balance — balance-NEUTRAL. DEFAULTS
   `0` (the additive extension). -/
   delegationEpochAt : CellId → Nat := fun _ => 0
+  /-- **THE HEAP** (REFINEMENT-DESIGN Decision 1, wave R2 — the Lean-side splice): each cell's
+  openable sorted map, the leaf list whose recomputed `Substrate.Heap.root` the `heap_root` register
+  carries. The type is `Substrate.Heap.FeltHeap` stated literally (`FeltHeap` is an `abbrev` for
+  `List (ℤ × ℤ)`; `Substrate.Heap` sits ABOVE this module in the import order — via
+  `Circuit.Poseidon2Binding → Circuit.StateCommit → Circuit.Transfer → RecordKernel` — so the field
+  cannot name the abbrev; they are definitionally the same type, pinned by
+  `Substrate.HeapKernel.heaps_isFeltHeap`). Heap updates are `write`-verb instances
+  (`Substrate.HeapKernel.heapStepGuarded`, built ON `stateStepGuarded`) — balance-NEUTRAL
+  (`recTotalAsset` reads `bal`, never `heaps`). DEFAULTS EMPTY (the additive extension, exactly as
+  `nullifiers`/`commitments`/`slotCaveats` were added — a cell that never heap-writes is unaffected).
+  The WIRE/CIRCUIT binding of `heap_root` (registers 8→16, PI v3, the state-commitment conjunct)
+  rides THE ONE ROTATION; until then the field is Lean-side only and uncommitted. -/
+  heaps : CellId → List (ℤ × ℤ) := fun _ => []
 
 /-- **The `balance`-domain measure** over the record cell-state: the total `balance` field across
 the live accounts. This is the conserved quantity — a domain measure over the named `balance`

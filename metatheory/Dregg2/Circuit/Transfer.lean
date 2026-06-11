@@ -330,9 +330,9 @@ theorem recKExec_iff_guard (k : RecordKernelState) (t : Turn) :
 `admitGuard` + debit/credit/conserve is a PROJECTION of correctness onto the conserved slice — NOT
 full semantic correctness. The whole truth of a committed transfer is the COMPLETE state
 transition: the two moved cells get the debit/credit (their other record fields preserved), every
-OTHER cell is untouched, and ALL 16 non-`cell` state components — `accounts` `caps` `bal` `escrows`
+OTHER cell is untouched, and ALL non-`cell` state components — `accounts` `caps` `bal` `escrows`
 `nullifiers` `revoked` `commitments` `queues` `swiss` `slotCaveats` `factories` `lifecycle`
-`deathCert` `delegate` `delegations` `sealedBoxes` — are LITERALLY unchanged. `TransferSpec` is that
+`deathCert` `delegate` `delegations` `sealedBoxes` `heaps` — are LITERALLY unchanged. `TransferSpec` is that
 complete declarative post-state, written INDEPENDENTLY of the executor (no `recKExec`/`recCexec`
 term in any frame clause), and `recKExec_iff_spec` proves the executor meets it EXACTLY, both ways.
 This is the apex reference truth that the executor (here) and the circuit (§7b, full-state) are each
@@ -366,6 +366,7 @@ def TransferSpec (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) : P
   ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
   ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
   ∧ k'.delegationEpoch = k.delegationEpoch ∧ k'.delegationEpochAt = k.delegationEpochAt
+  ∧ k'.heaps = k.heaps
 
 /-- **`recKExec_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** The executable record
 kernel commits a transfer into `k'` IFF `k'` is EXACTLY the spec'd full post-state. The `→`
@@ -382,10 +383,10 @@ theorem recKExec_iff_spec (k : RecordKernelState) (t : Turn) (k' : RecordKernelS
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
       cases k'
-      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
       rfl
   · rw [if_neg hg]
     constructor

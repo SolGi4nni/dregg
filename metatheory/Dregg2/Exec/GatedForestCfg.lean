@@ -287,6 +287,39 @@ theorem logBumpForestG_log_one {s' : RecChainedState}
 #guard ((execFullForestG fmaDeleg goodFullForestG).map
         (fun s' => decide (fmaDeleg.log.length < s'.log.length)) == some true)
 
+/-! ### R2 — the STAGED gated HEAP WRITE at the production carriers (non-vacuity).
+
+`execHeapWriteG` (the gated `write`-verb heap instance the rotation's `FullActionA` arm will route
+to) exercised at the SAME starbridge carriers / credential / caveat the forest witnesses use:
+a credentialed, kernel-authorized heap write COMMITS (and reads back, balance-neutrally, off the
+SPLICED `RecordKernelState.heaps`); a forged credential, an unauthorized actor, and a violated
+heap atom each REFUSE (fail-closed at their respective gate legs). -/
+
+section HeapWriteWitness
+open Dregg2.Substrate.Heap (refSponge)
+
+-- The full gate stack passes ⇒ the heap write COMMITS:
+#guard ((execHeapWriteG refSponge fma0 (mkAuth goodCred [trueCaveat]) [] 0 0 1 2 42).isSome)
+-- ...the written (coll 1, key 2) reads back 42 off the SPLICED kernel field:
+#guard ((execHeapWriteG refSponge fma0 (mkAuth goodCred [trueCaveat]) [] 0 0 1 2 42).map
+        (fun s => Dregg2.Substrate.Heap.hget refSponge (s.kernel.heaps 0) 1 2))
+       == some (some 42)
+-- ...balance-neutral through the gate (both real assets unmoved):
+#guard ((execHeapWriteG refSponge fma0 (mkAuth goodCred [trueCaveat]) [] 0 0 1 2 42).map
+        (fun s => (recTotalAsset s.kernel 0, recTotalAsset s.kernel 1))) == some (105, 7)
+-- A FORGED credential refuses (the WHO leg, in front of a perfectly valid heap write):
+#guard ((execHeapWriteG refSponge fma0 (mkAuth forgedCred [trueCaveat]) [] 0 0 1 2 42).isSome)
+       == false
+-- An UNAUTHORIZED actor (5 holds no cap, not self) refuses (the kernel authority gate UNDER the
+-- credential gate — defense in depth):
+#guard ((execHeapWriteG refSponge fma0 (mkAuth goodCred [trueCaveat]) [] 5 0 1 2 42).isSome)
+       == false
+-- A VIOLATED heap atom refuses (the guard-algebra teeth survive the gate):
+#guard ((execHeapWriteG refSponge fma0 (mkAuth goodCred [trueCaveat])
+          [.heapContains 1 2] 0 0 1 2 42).isSome) == false
+
+end HeapWriteWitness
+
 /-! ### A1 — the WHAT leg (`capAuthorityG`) now has REAL TEETH at the wire.
 
 The two forests below share EVERYTHING — the same genuine credential, the same caveat, the same

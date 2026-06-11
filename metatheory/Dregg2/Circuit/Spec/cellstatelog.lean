@@ -95,11 +95,12 @@ theorem recKernel_ext {k k' : RecordKernelState}
     (h11 : k'.factories = k.factories) (h12 : k'.lifecycle = k.lifecycle)
     (h13 : k'.deathCert = k.deathCert) (h14 : k'.delegate = k.delegate)
     (h15 : k'.delegations = k.delegations)
-    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt) :
+    (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt)
+    (h19 : k'.heaps = k.heaps) :
     k' = k := by
   cases k; cases k'
-  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
-  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
+  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
   rfl
 
 /-! ## §4 — the FULL-STATE declarative spec of a committed `emitEventA` (the INDEPENDENT reference).
@@ -129,6 +130,7 @@ def EmitEventSpec (st : RecChainedState) (actor cell : CellId) (topic data : Int
   ∧ st'.kernel.delegations = st.kernel.delegations
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
+  ∧ st'.kernel.heaps = st.kernel.heaps
 
 /-! ## §5 — `execFullA_emitEvent_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions). -/
 
@@ -151,12 +153,12 @@ theorem execFullA_emitEvent_iff_spec (st : RecChainedState) (actor cell : CellId
       simp only [Option.some.injEq] at h
       subst h
       -- the committed post-state is `emitStep …`; read its log + every kernel field off `emitStep`.
-      refine ⟨hlive, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      refine ⟨hlive, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
       simp only [emitStep, emitReceipt]
-    · rintro ⟨_, hlog, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18⟩
-      -- rebuild `st'` from the log post-image + the 17 kernel-field equalities.
+    · rintro ⟨_, hlog, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18, h19⟩
+      -- rebuild `st'` from the log post-image + the 18 kernel-field equalities.
       have hk : st'.kernel = st.kernel :=
-        recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+        recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
       cases st' with
       | mk k' lg' =>
         simp only at hk hlog
@@ -186,8 +188,8 @@ theorem execFullA_emitEvent_kernel {st st' : RecChainedState} {actor cell : Cell
     {topic data : Int}
     (h : execFullA st (.emitEventA actor cell topic data) = some st') :
     st'.kernel = st.kernel := by
-  obtain ⟨_, _, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18⟩ := (execFullA_emitEvent_iff_spec st actor cell topic data st').mp h
-  exact recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18
+  obtain ⟨_, _, h1, h2, h3, h4, h5, h6, h7, h10, h11, h12, h13, h14, h15, h17, h18, h19⟩ := (execFullA_emitEvent_iff_spec st actor cell topic data st').mp h
+  exact recKernel_ext h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
 
 /-- The executor COMMITS an `emitEventA` IFF the cell is live (the guard projection of the spec ↔). -/
 theorem execFullA_emitEvent_commits_iff (st : RecChainedState) (actor cell : CellId)

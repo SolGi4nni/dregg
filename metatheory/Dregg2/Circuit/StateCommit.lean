@@ -223,7 +223,7 @@ import the log CR portal from `StateCommit` directly, not from a specific instan
 explicit binder — the `Surface` section variables `CH`/`RH`/… are irrelevant to it.) -/
 def logHashInjective (LH : List Turn → ℤ) : Prop := ∀ xs ys : List Turn, LH xs = LH ys → xs = ys
 
-/-- **PORTAL `RestHashIffFrame`** — the rest hash is injective on the 16 non-`cell` components
+/-- **PORTAL `RestHashIffFrame`** — the rest hash is injective on the non-`cell` components (incl. the spliced `heaps`)
 (BIDIRECTIONAL: `→` binds them in soundness/anti-ghost, `←` rebuilds the hash in completeness). Pure
 injectivity, stated as the iff. -/
 def RestHashIffFrame : Prop :=
@@ -234,7 +234,8 @@ def RestHashIffFrame : Prop :=
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.heaps = k.heaps)
 
 /-- **LEMMA `MovedDigestBindsCells` (from `compressInjective compress` + `cellLeafInjective`).**
 Equal moved (2-leaf) node hashes force WHOLE-`Value` equality of BOTH `src` and `dst` leaves. The old
@@ -478,11 +479,11 @@ theorem transfer_circuit_full_sound
     hsat cSFrameReuse (by unfold stateCircuit; simp)
   have hmovedgate : cSMovedBind.holds (encodeS CH RH cmb compress compressN k t k') :=
     hsat cSMovedBind (by unfold stateCircuit; simp)
-  -- rest hash equal ⇒ 16 non-cell fields equal (RestHashIffFrame.→).
+  -- rest hash equal ⇒ the non-cell fields (incl. heaps) equal (RestHashIffFrame.→).
   have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
   have hframe16 := (hRest k k').mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
-    hDE, hDEA⟩ := hframe16
+    hDE, hDEA, hHeaps⟩ := hframe16
   -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells).
   have hfdeq : frameDigest CH compressN k (frameCarrier k t)
       = frameDigest CH compressN k' (frameCarrier k t) :=
@@ -516,9 +517,9 @@ theorem transfer_circuit_full_sound
           rw [hwf' c hk'acc]
           simp only [recTransfer, if_neg hcsrc, if_neg hcdst]
           exact (hwf c hcacc).symm
-  -- assemble TransferSpec (admitGuard ∧ cell map ∧ the 16 frame clauses).
+  -- assemble TransferSpec (admitGuard ∧ cell map ∧ the frame clauses, `heaps` included).
   exact ⟨⟨hauth, hnn, hav, hne, hsrc, hdst⟩, hcellmap,
-    hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA⟩
+    hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps⟩
 
 #assert_axioms transfer_circuit_full_sound
 
@@ -556,7 +557,7 @@ theorem transfer_circuit_full_complete
     satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   have hexec : recKExec k t = some k' := (recKExec_iff_spec k t k').mpr hspec
   obtain ⟨hg, hcell, hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel,
-    hDgs, hDE, hDEA⟩ := hspec
+    hDgs, hDE, hDEA, hHeaps⟩ := hspec
   obtain ⟨_, _, _, hne, hsrc, hdst⟩ := hg
   -- the 9 transfer gates hold under encodeT (Transfer's completeness), transport to encodeS.
   have htsat : satisfied transferCircuit (encodeT k t k') := transfer_circuit_complete hexec
@@ -573,7 +574,7 @@ theorem transfer_circuit_full_complete
   have e10 := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDstLive  (by decide)
   -- frame-gate facts.
   have hRHeq : RH k = RH k' := (hRest k k').mpr
-    ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA⟩
+    ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps⟩
   have hcellc : ∀ c ∈ frameCarrier k t, CH c (k.cell c) = CH c (k'.cell c) := by
     intro c hc
     unfold frameCarrier at hc
